@@ -1071,6 +1071,8 @@ export const MarketChartTickerSearch = ({
   flowSuggestionSymbols = [],
   signalSuggestionSymbols = [],
   embedded = false,
+  initialMarketFilter = null,
+  persistMarketFilter = true,
   strictTradeResolution = false,
   onClose,
   onSelectTicker,
@@ -1084,7 +1086,9 @@ export const MarketChartTickerSearch = ({
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [marketFilter, setMarketFilter] = useState(() =>
-    normalizeTickerSearchMarketFilter(_initialState.marketGridTickerSearchMarketFilter),
+    normalizeTickerSearchMarketFilter(
+      initialMarketFilter ?? _initialState.marketGridTickerSearchMarketFilter,
+    ),
   );
   const [visibleResultLimit, setVisibleResultLimit] = useState(
     TICKER_SEARCH_INITIAL_RESULT_LIMIT,
@@ -1139,8 +1143,9 @@ export const MarketChartTickerSearch = ({
     searchEnabled && searchQuery.isFetching && (hasLiveResults || suggestionRowCount > 0);
 
   useEffect(() => {
+    if (!persistMarketFilter) return;
     persistState({ marketGridTickerSearchMarketFilter: marketFilter });
-  }, [marketFilter]);
+  }, [marketFilter, persistMarketFilter]);
 
   useEffect(() => {
     persistState({ marketGridTickerSearchFavorites: favoriteRows });
@@ -1790,6 +1795,8 @@ export function TickerSearchLab() {
     </div>
   );
 }
+
+export const MiniChartTickerSearch = MarketChartTickerSearch;
 
 
 export const TickerUniverseSearchPanel = ({

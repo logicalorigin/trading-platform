@@ -1830,13 +1830,6 @@ export const HeaderBroadcastScrollerStack = memo(({
           : MISSING_VALUE;
   const signalProfileTimeframe =
     signalDraft.timeframe ?? (signalSnapshot?.profile?.timeframe || "5m");
-  const signalProfileFreshWindowBars =
-    signalDraft.freshWindowBars ?? (signalSnapshot?.profile?.freshWindowBars ?? "");
-  const signalProfileMaxSymbols =
-    signalDraft.maxSymbols ??
-    (signalStatusSnapshot.configuredMaxSymbols ??
-      signalSnapshot?.profile?.maxSymbols ??
-      "");
   const signalSettings = (
     <HeaderLaneSettingsPopover
       testId="header-signal-settings-popover"
@@ -1880,24 +1873,6 @@ export const HeaderBroadcastScrollerStack = memo(({
             { value: "1d", label: "1d" },
           ]}
         />
-        <HeaderLanePairRow>
-          <HeaderLaneNumberControl
-            label="Max"
-            value={signalProfileMaxSymbols}
-            min={1}
-            max={250}
-            onChange={(value) => scheduleSignalProfileChange("maxSymbols", value)}
-            testId="header-signal-settings-max-symbols"
-          />
-          <HeaderLaneNumberControl
-            label="Fresh"
-            value={signalProfileFreshWindowBars}
-            min={1}
-            max={20}
-            onChange={(value) => scheduleSignalProfileChange("freshWindowBars", value)}
-            testId="header-signal-settings-fresh-window-bars"
-          />
-        </HeaderLanePairRow>
       </HeaderLanePopoverSection>
       <HeaderLanePopoverSection
         title="Status"
@@ -1906,27 +1881,12 @@ export const HeaderBroadcastScrollerStack = memo(({
         <HeaderLaneInfoRow label="Visible" value={signalItems.length} />
         <HeaderLaneInfoRow
           label="Tracked"
-          value={
-            signalStateSummary.total
-              ? `${signalStateSummary.total} · ${signalStateSummary.fresh} fresh`
-              : MISSING_VALUE
-          }
+          value={signalStateSummary.total || MISSING_VALUE}
           tone={
             signalNoTrackedSymbols || signalNoFreshSignals
               ? CSS_COLOR.amber
               : CSS_COLOR.textSec
           }
-        />
-        <HeaderLaneInfoRow
-          label="Resolved"
-          value={
-            signalStatusSnapshot.resolvedSymbols == null
-              ? MISSING_VALUE
-              : signalStatusSnapshot.expansionSymbols
-                ? `${signalStatusSnapshot.resolvedSymbols} (+${signalStatusSnapshot.expansionSymbols} expanded)`
-                : `${signalStatusSnapshot.resolvedSymbols}`
-          }
-          tone={signalStatusSnapshot.shortfall ? CSS_COLOR.amber : CSS_COLOR.textSec}
         />
         <HeaderLaneInfoRow
           label="Signal Source"

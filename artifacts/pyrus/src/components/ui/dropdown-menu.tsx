@@ -1,10 +1,15 @@
 import * as React from "react"
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
-import { Check, ChevronRight, Circle } from "lucide-react"
-
-import { cn } from "@/lib/utils"
+import {
+  Check,
+  ChevronRight,
+  Circle,
+} from "lucide-react";
+import {
+  cn,
+} from "@/lib/utils";
 // @ts-expect-error JSX module imported into TypeScript context
-import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx"
+import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 
 const CSS_COLOR = {
   bg1: "var(--ra-surface-1)",

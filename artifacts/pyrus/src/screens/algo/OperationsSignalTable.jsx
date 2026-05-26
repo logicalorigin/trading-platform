@@ -674,6 +674,10 @@ export const OperationsSignalTable = ({
       latestSignalAt: latestSignalMs ? new Date(latestSignalMs).toISOString() : null,
       latestScanAt: latestScanMs ? new Date(latestScanMs).toISOString() : null,
       scanRunning: scanStageRecord.status === "running",
+      scanDetail:
+        typeof scanStageRecord.detail === "string" && scanStageRecord.detail.trim()
+          ? scanStageRecord.detail.trim()
+          : null,
     };
   }, [cockpitGeneratedAt, cockpitStageItems, signals]);
 
@@ -683,7 +687,9 @@ export const OperationsSignalTable = ({
       : "Signal --",
     freshness.scanRunning
       ? "Scan running"
-      : freshness.latestScanAt
+      : freshness.scanDetail
+        ? freshness.scanDetail
+        : freshness.latestScanAt
         ? `Scan ${formatRelativeTimeShort(freshness.latestScanAt)}`
         : "Scan --",
   ];
@@ -974,7 +980,7 @@ export const OperationsSignalTable = ({
               />
             </div>
           ) : (
-            pageRows.map(({ signal, candidate, scoreBreakdown }) => {
+            pageRows.map(({ signal, candidate, scoreBreakdown }, index) => {
               const symbol = asRecord(signal).symbol;
               const expanded = focus.focusedSymbol === symbol;
               return (
@@ -1002,6 +1008,8 @@ export const OperationsSignalTable = ({
                   }
                   algoIsPhone={algoIsPhone}
                   columns={visibleColumns}
+                  scanActive={freshness.scanRunning}
+                  scanIndex={index}
                   onRowAction={handleRowAction}
                 />
               );

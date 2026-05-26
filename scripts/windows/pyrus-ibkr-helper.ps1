@@ -1551,18 +1551,59 @@ function Test-IBGatewayWindowCandidate($Window) {
     return $false
 }
 
+function Get-IBGatewayWindowCandidateScore($Window) {
+    if (-not $Window) {
+        return -1000
+    }
+
+    $score = 0
+    $title = [string]$Window.Title
+    if ($title -match '(?i)\b(log\s*in|login|sign\s*in)\b') {
+        $score += 30
+    }
+    if ($title -match '(?i)\bIB\s+Gateway\b') {
+        $score += 40
+    }
+    if ($title -match '(?i)\b(Interactive\s+Brokers|Trader\s+Workstation|IBKR)\b') {
+        $score += 20
+    }
+    if ($title -match '(?i)\b(update|settings|configuration|warning|message)\b') {
+        $score -= 30
+    }
+
+    $processName = [string]$Window.ProcessName
+    $processPath = [string]$Window.ProcessPath
+    $commandText = [string]$Window.CommandText
+    if (-not $commandText) {
+        $commandText = Get-ProcessCommandText -ProcessId ([int]$Window.ProcessId)
+        $Window.CommandText = $commandText
+    }
+    $haystack = "$processName $processPath $commandText"
+    if ($processName -ieq 'ibgateway') {
+        $score += 80
+    }
+    if ($haystack -match '(?i)(\\|/)Jts(\\|/)ibgateway(\\|/)') {
+        $score += 70
+    } elseif ($haystack -match '(?i)(\\|/)ibgateway(\\|/)') {
+        $score += 60
+    } elseif ($haystack -match '(?i)\bibgateway(\.exe)?\b') {
+        $score += 50
+    }
+
+    return $score
+}
+
 function Get-IBGatewayWindowCandidate {
     $windows = @(Get-VisibleTopLevelWindows | Where-Object { Test-IBGatewayWindowCandidate $_ })
     if ($windows.Count -eq 0) {
         return $null
     }
 
-    $titled = @($windows | Where-Object { [string]$_.Title })
-    if ($titled.Count -gt 0) {
-        return $titled | Select-Object -First 1
-    }
-
-    return $windows | Select-Object -First 1
+    return $windows |
+        Sort-Object `
+            @{ Expression = { Get-IBGatewayWindowCandidateScore $_ }; Descending = $true },
+            @{ Expression = { [string]$_.Title }; Descending = $true } |
+        Select-Object -First 1
 }
 
 function Activate-IBGatewayWindowCandidate($Window) {
@@ -1718,16 +1759,37 @@ function Wait-IBGatewayWindow([int]$TimeoutSeconds = 90, [switch]$AllowForegroun
     throw 'Timed out waiting for the IB Gateway login window.'
 }
 
+function Set-ClipboardTextForPaste([string]$Text) {
+    Add-Type -AssemblyName System.Windows.Forms
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            [System.Windows.Forms.Clipboard]::Clear()
+            Start-Sleep -Milliseconds 80
+            [System.Windows.Forms.Clipboard]::SetText($Text, [System.Windows.Forms.TextDataFormat]::UnicodeText)
+            return $true
+        } catch {
+            if ($attempt -ge 3) {
+                throw
+            }
+            Start-Sleep -Milliseconds (160 * $attempt)
+        }
+    }
+    return $false
+}
+
 function Invoke-SendKeysPaste($Shell, [string]$Text) {
     try {
-        Add-Type -AssemblyName System.Windows.Forms
-        [System.Windows.Forms.Clipboard]::SetText($Text)
-        Start-Sleep -Milliseconds 350
-        Invoke-ControlKey -VirtualKey 0x56 -AfterMilliseconds 450
+        if (Set-ClipboardTextForPaste -Text $Text) {
+            Start-Sleep -Milliseconds 250
+            Invoke-ControlKey -VirtualKey 0x56 -AfterMilliseconds 500
+            return
+        }
     } catch {
-        $Shell.SendKeys((ConvertTo-SendKeysLiteral -Value $Text))
-        Start-Sleep -Milliseconds 450
+        Write-Log "Clipboard paste unavailable; falling back to SendKeys text entry: $($_.Exception.Message)"
     }
+
+    $Shell.SendKeys((ConvertTo-SendKeysLiteral -Value $Text))
+    Start-Sleep -Milliseconds 650
 }
 
 function ConvertTo-SendKeysLiteral([string]$Value) {
@@ -1780,6 +1842,12 @@ function Invoke-IBGatewayCredentialTyping($Credential) {
         $windowWaitSeconds = 45
     }
     $shell = Wait-IBGatewayWindow -TimeoutSeconds $windowWaitSeconds -AllowForegroundFallback
+    $activeGatewayWindow = Get-IBGatewayWindowCandidate
+    if ($activeGatewayWindow) {
+        [void](Activate-IBGatewayWindowCandidate -Window $activeGatewayWindow)
+        Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_active' -Message "IB Gateway login window is active; typing one-time credentials."
+        Start-Sleep -Milliseconds 700
+    }
     $clipboardText = $null
     $hadClipboardText = $false
     try {

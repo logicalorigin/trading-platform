@@ -221,6 +221,7 @@ test("trade monitor worker prevents concurrent evaluation of the same profile", 
     resolveUniverse: async (inputProfile: SignalMonitorProfileRow) => ({
       profile: inputProfile,
       symbols: ["AAPL"],
+      watchlistSymbols: ["AAPL"],
       skippedSymbols: [],
       truncated: false,
       universe: signalMonitorTestUniverse(inputProfile, ["AAPL"]),
@@ -263,6 +264,7 @@ test("trade monitor worker skips unchanged completed bars and reevaluates after 
     resolveUniverse: async (inputProfile) => ({
       profile: inputProfile,
       symbols: ["AAPL"],
+      watchlistSymbols: ["AAPL"],
       skippedSymbols: [],
       truncated: false,
       universe: signalMonitorTestUniverse(inputProfile, ["AAPL"]),
@@ -297,6 +299,43 @@ test("trade monitor worker skips unchanged completed bars and reevaluates after 
   assert.equal(evaluateCalls, 2);
 });
 
+test("trade monitor worker rotates across all watchlist symbols under the per-pass cap", async () => {
+  const evaluatedSymbols: string[] = [];
+  let now = new Date("2026-04-24T14:33:00.000Z");
+  const worker = createTradeMonitorWorker({
+    listProfiles: async () => [profile({ maxSymbols: 2 })],
+    resolveUniverse: async (inputProfile) => ({
+      profile: inputProfile,
+      symbols: ["AAPL", "MSFT"],
+      watchlistSymbols: ["AAPL", "MSFT", "NVDA", "TSLA"],
+      skippedSymbols: ["NVDA", "TSLA"],
+      truncated: true,
+      universe: signalMonitorTestUniverse(inputProfile, ["AAPL", "MSFT"]),
+    }),
+    loadCompletedBars: async () => ({
+      bars: [],
+      latestBarAt: new Date("2026-04-24T14:30:00.000Z"),
+    }),
+    evaluateSymbolFromCompletedBars: async (input: { symbol: string }) => {
+      evaluatedSymbols.push(input.symbol);
+      return symbolState({ symbol: input.symbol, lastEvaluatedAt: now });
+    },
+    updateProfileEvaluationMetadata: async (input: {
+      profile: SignalMonitorProfileRow;
+    }) => input.profile,
+    updateProfileLastError: async () => {},
+    acquireTickLock: async () => async () => {},
+    now: () => now,
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+  now = new Date("2026-04-24T14:33:05.000Z");
+  await worker.runOnce();
+
+  assert.deepEqual(evaluatedSymbols, ["AAPL", "MSFT", "NVDA", "TSLA"]);
+});
+
 test("trade monitor worker retries errored same-bar evaluations after a cooldown", async () => {
   let evaluateCalls = 0;
   let now = new Date("2026-04-24T14:33:00.000Z");
@@ -306,6 +345,7 @@ test("trade monitor worker retries errored same-bar evaluations after a cooldown
     resolveUniverse: async (inputProfile) => ({
       profile: inputProfile,
       symbols: ["AAPL"],
+      watchlistSymbols: ["AAPL"],
       skippedSymbols: [],
       truncated: false,
       universe: signalMonitorTestUniverse(inputProfile, ["AAPL"]),
@@ -343,6 +383,50 @@ test("trade monitor worker retries errored same-bar evaluations after a cooldown
   assert.equal(evaluateCalls, 2);
 });
 
+test("trade monitor worker retries stale same-bar evaluations on the next poll", async () => {
+  let evaluateCalls = 0;
+  let now = new Date("2026-04-24T14:33:00.000Z");
+  const worker = createTradeMonitorWorker({
+    listProfiles: async () => [profile({ pollIntervalSeconds: 15 })],
+    resolveUniverse: async (inputProfile) => ({
+      profile: inputProfile,
+      symbols: ["AAPL"],
+      watchlistSymbols: ["AAPL"],
+      skippedSymbols: [],
+      truncated: false,
+      universe: signalMonitorTestUniverse(inputProfile, ["AAPL"]),
+    }),
+    loadCompletedBars: async () => ({
+      bars: [],
+      latestBarAt: new Date("2026-04-24T14:30:00.000Z"),
+    }),
+    evaluateSymbolFromCompletedBars: async (input: { symbol: string }) => {
+      evaluateCalls += 1;
+      return symbolState({
+        symbol: input.symbol,
+        status: "stale",
+        latestBarAt: new Date("2026-04-24T14:30:00.000Z"),
+        lastError: "Latest signal monitor bar is delayed.",
+      });
+    },
+    updateProfileEvaluationMetadata: async (input: {
+      profile: SignalMonitorProfileRow;
+    }) => input.profile,
+    updateProfileLastError: async () => {},
+    acquireTickLock: async () => async () => {},
+    now: () => now,
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+  now = new Date("2026-04-24T14:33:10.000Z");
+  await worker.runOnce();
+  now = new Date("2026-04-24T14:33:16.000Z");
+  await worker.runOnce();
+
+  assert.equal(evaluateCalls, 2);
+});
+
 test("trade monitor worker ignores symbols without a latest completed bar", async () => {
   let evaluateCalls = 0;
   const worker = createTradeMonitorWorker({
@@ -350,6 +434,7 @@ test("trade monitor worker ignores symbols without a latest completed bar", asyn
     resolveUniverse: async (inputProfile) => ({
       profile: inputProfile,
       symbols: ["AAPL"],
+      watchlistSymbols: ["AAPL"],
       skippedSymbols: [],
       truncated: false,
       universe: signalMonitorTestUniverse(inputProfile, ["AAPL"]),

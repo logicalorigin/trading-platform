@@ -159,9 +159,9 @@ export type PyrusSignalsRuntimeSettings = {
 };
 
 export const DEFAULT_PYRUS_SIGNALS_SETTINGS: PyrusSignalsRuntimeSettings = {
-  timeHorizon: 10,
+  timeHorizon: 8,
   structureLineStyle: "solid",
-  bosConfirmation: "close",
+  bosConfirmation: "wicks",
   chochAtrBuffer: 0,
   chochBodyExpansionAtr: 0,
   chochVolumeGate: 0,

@@ -28,16 +28,14 @@ test.afterEach(() => {
   }
 });
 
-test("getIbkrLineUsageSnapshot exposes pressure-capped filler without reducing primary lines", async () => {
+test("getIbkrLineUsageSnapshot reports visible prewarm demand without filler", async () => {
+  const visibleSymbols = Array.from({ length: 90 }, (_, index) => `WL${index}`);
   __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
     getLaneDiagnostics: async () => ({
       subscriptions: {
-        activeQuoteSubscriptions: 80,
+        activeQuoteSubscriptions: 90,
         marketDataLineBudget: 200,
-        activeEquitySymbols: Array.from(
-          { length: 80 },
-          (_, index) => `WL${index}`,
-        ),
+        activeEquitySymbols: visibleSymbols,
         activeOptionProviderContractIds: [],
       },
     }),
@@ -45,25 +43,120 @@ test("getIbkrLineUsageSnapshot exposes pressure-capped filler without reducing p
   updateApiResourcePressure({ rssMb: 1_650 });
   admitMarketDataLeases({
     owner: "watchlist-prewarm",
-    intent: "watchlist-live",
-    requests: Array.from({ length: 80 }, (_, index) => ({
+    intent: "visible-live",
+    requests: visibleSymbols.map((symbol) => ({
       assetClass: "equity",
-      symbol: `WL${index}`,
+      symbol,
     })),
-    fallbackProvider: "cache",
+    fallbackProvider: "polygon",
   });
 
   const snapshot = await getIbkrLineUsageSnapshot();
 
-  assert.equal(snapshot.admission.activeLineCount, 80);
+  assert.equal(snapshot.admission.activeLineCount, 90);
   assert.equal(snapshot.lineUtilizationAudit.targetLineCount, 200);
-  assert.equal(snapshot.lineUtilizationAudit.idleToTargetLineCount, 120);
+  assert.equal(snapshot.lineUtilizationAudit.idleToTargetLineCount, 110);
   assert.equal(
     snapshot.lineUtilizationAudit.topLimitingReason,
-    "scanner-resource-pressure",
+    "active-demand-satisfied",
   );
   assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 80);
   assert.equal(snapshot.lineUtilizationAudit.watchlist.fillerCapSymbolCount, 0);
+  assert.equal(snapshot.lineUtilizationAudit.watchlist.fillerEnabled, false);
+});
+
+test("getIbkrLineUsageSnapshot reports active scanner work instead of idle resource pressure", async () => {
+  const watchlistSymbols = Array.from({ length: 90 }, (_, index) => `WL${index}`);
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: async () => ({
+      subscriptions: {
+        activeQuoteSubscriptions: 90,
+        marketDataLineBudget: 200,
+        activeEquitySymbols: watchlistSymbols,
+        activeOptionProviderContractIds: [],
+      },
+    }),
+  }));
+  updateApiResourcePressure({ rssMb: 1_650 });
+  admitMarketDataLeases({
+    owner: "watchlist-prewarm",
+    intent: "visible-live",
+    requests: watchlistSymbols.map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+    fallbackProvider: "polygon",
+  });
+  admitMarketDataLeases({
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    requests: Array.from({ length: 40 }, (_, index) => ({
+      assetClass: "option" as const,
+      symbol: "SPY",
+      providerContractId: `twsopt:scanner-${index}`,
+    })),
+    fallbackProvider: "none",
+  });
+
+  const snapshot = await getIbkrLineUsageSnapshot();
+
+  assert.equal(snapshot.admission.activeLineCount, 130);
+  assert.equal(snapshot.admission.flowScannerLineCount, 40);
+  assert.equal(
+    snapshot.admission.optionsFlowScanner.backgroundBlockedReason,
+    null,
+  );
+  assert.equal(
+    snapshot.lineUtilizationAudit.topLimitingReason,
+    "scanner-active",
+  );
+  assert.equal(snapshot.lineUtilizationAudit.scanner.activeLineCount, 40);
+  assert.equal(snapshot.lineUtilizationAudit.admissionVsBridgeLineDelta, 0);
+  assert.equal(snapshot.drift.reconciliation.status, "matched");
+  assert.equal(snapshot.drift.reconciliation.snapshotOnlyApiLineCount, 40);
+});
+
+test("getIbkrLineUsageSnapshot excludes scanner snapshot leases from bridge drift", async () => {
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: async () => ({
+      subscriptions: {
+        activeQuoteSubscriptions: 2,
+        marketDataLineBudget: 200,
+        activeEquitySymbols: ["AAPL", "MSFT"],
+        activeOptionProviderContractIds: [],
+      },
+    }),
+  }));
+  admitMarketDataLeases({
+    owner: "watchlist-prewarm",
+    intent: "visible-live",
+    requests: ["AAPL", "MSFT"].map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+    fallbackProvider: "polygon",
+  });
+  admitMarketDataLeases({
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    requests: ["one", "two"].map((suffix) => ({
+      assetClass: "option" as const,
+      symbol: "SPY",
+      providerContractId: `twsopt:scanner-${suffix}`,
+    })),
+    fallbackProvider: "none",
+  });
+
+  const snapshot = await getIbkrLineUsageSnapshot();
+
+  assert.equal(snapshot.admission.activeLineCount, 4);
+  assert.equal(snapshot.drift.reconciliation.status, "matched");
+  assert.equal(snapshot.drift.reconciliation.apiLineCount, 2);
+  assert.equal(snapshot.drift.reconciliation.totalApiLineCount, 4);
+  assert.equal(snapshot.drift.reconciliation.snapshotOnlyApiLineCount, 2);
+  assert.deepEqual(snapshot.drift.reconciliation.apiOnlyLineSample, []);
+  assert.equal(snapshot.drift.admissionVsBridgeLineDelta, 0);
+  assert.equal(snapshot.lineUtilizationAudit.admissionVsBridgeLineDelta, 0);
 });
 
 test("getIbkrLineUsageSnapshot reconciles bridge prewarm groups after API restart", async () => {
@@ -92,49 +185,44 @@ test("getIbkrLineUsageSnapshot reconciles bridge prewarm groups after API restar
 
   const snapshot = await getIbkrLineUsageSnapshot();
 
-  assert.equal(snapshot.admission.activeLineCount, 4);
-  assert.equal(snapshot.admission.watchlistLineCount, 2);
-  assert.equal(snapshot.admission.fillerLineCount, 2);
+  assert.equal(snapshot.admission.activeLineCount, 2);
+  assert.equal(snapshot.admission.visibleLineCount, 2);
+  assert.equal(snapshot.admission.watchlistLineCount, 0);
+  assert.equal(snapshot.admission.fillerLineCount, 0);
   assert.equal(snapshot.lineUtilizationAudit.watchlist.primaryActiveSymbolCount, 2);
-  assert.equal(snapshot.lineUtilizationAudit.watchlist.fillerActiveSymbolCount, 2);
-  assert.equal(snapshot.drift.reconciliation.status, "matched");
+  assert.equal(snapshot.lineUtilizationAudit.watchlist.fillerActiveSymbolCount, 0);
+  assert.equal(
+    snapshot.drift.reconciliation.status,
+    "api_released_bridge_active",
+  );
 });
 
-test("getIbkrLineUsageSnapshot exposes scanner capacity reclaimable from filler", async () => {
-  const watchlistSymbols = Array.from({ length: 80 }, (_, index) => `WL${index}`);
-  const fillerSymbols = Array.from({ length: 120 }, (_, index) => `FL${index}`);
+test("getIbkrLineUsageSnapshot leaves scanner capacity schedulable without filler", async () => {
+  const watchlistSymbols = Array.from({ length: 90 }, (_, index) => `WL${index}`);
   __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
     getLaneDiagnostics: async () => ({
       subscriptions: {
-        activeQuoteSubscriptions: 200,
+        activeQuoteSubscriptions: 90,
         marketDataLineBudget: 200,
-        activeEquitySymbols: [...watchlistSymbols, ...fillerSymbols],
+        activeEquitySymbols: watchlistSymbols,
         activeOptionProviderContractIds: [],
       },
     }),
   }));
   admitMarketDataLeases({
     owner: "watchlist-prewarm",
-    intent: "watchlist-live",
+    intent: "visible-live",
     requests: watchlistSymbols.map((symbol) => ({
       assetClass: "equity" as const,
       symbol,
     })),
-    fallbackProvider: "cache",
-  });
-  admitMarketDataLeases({
-    owner: "watchlist-prewarm-filler",
-    intent: "delayed-ok",
-    requests: fillerSymbols.map((symbol) => ({
-      assetClass: "equity" as const,
-      symbol,
-    })),
-    fallbackProvider: "cache",
+    fallbackProvider: "polygon",
   });
 
   const snapshot = await getIbkrLineUsageSnapshot();
 
-  assert.equal(snapshot.admission.activeLineCount, 200);
+  assert.equal(snapshot.admission.activeLineCount, 90);
+  assert.equal(snapshot.allocation.fillerLineCount, 0);
   assert.equal(snapshot.allocation.scannerEffectiveLineCap, 80);
   assert.equal(snapshot.allocation.scannerSchedulableLineCap, 80);
   assert.equal(snapshot.allocation.scannerSchedulableRemainingLineCount, 80);
@@ -142,7 +230,10 @@ test("getIbkrLineUsageSnapshot exposes scanner capacity reclaimable from filler"
     snapshot.admission.optionsFlowScanner.lineUtilization.schedulablePoolCap,
     80,
   );
-  assert.equal(snapshot.lineUtilizationAudit.topLimitingReason, "target-filled");
+  assert.equal(
+    snapshot.lineUtilizationAudit.topLimitingReason,
+    "active-demand-satisfied",
+  );
 });
 
 test("getIbkrLineUsageSnapshot returns admission counters when bridge lanes stall", async () => {
@@ -185,7 +276,7 @@ test("getIbkrLineUsageSnapshot returns admission counters when bridge lanes stal
     2,
   );
   assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 80);
-  assert.equal(snapshot.lineUtilizationAudit.watchlist.fillerCapSymbolCount, 200);
+  assert.equal(snapshot.lineUtilizationAudit.watchlist.fillerCapSymbolCount, 0);
   assert.equal(snapshot.admission.poolUsage["account-monitor"].maxLines, 30);
   assert.equal(snapshot.admission.poolUsage["account-monitor"].dynamic, false);
   assert.equal(snapshot.admission.flowScannerLineCount, 1);
@@ -314,6 +405,7 @@ test("getIbkrLineUsageSnapshot classifies API and bridge line drift", async () =
       lineSample: ["option:twsopt:test-bridge-only"],
     },
   ]);
+  assert.equal(snapshot.drift.reconciliation.persistentBridgeOnlyGraceMs, 10_000);
   assert.equal(snapshot.drift.reconciliation.persistentBridgeOnlyLineCount, 0);
 });
 

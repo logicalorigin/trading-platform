@@ -2,25 +2,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { afterEach, test } from "node:test";
 import {
+  __buildWatchlistPrewarmLineRequestsForTests,
   __getWatchlistPrewarmBridgeSyncBlockReasonForTests,
-  resolveIbkrWatchlistFillerSymbolLimit,
+  __orderWatchlistWarmupSymbolsForTests,
   resolveIbkrWatchlistPrewarmSymbolLimit,
 } from "./platform";
 import { __resetMarketDataAdmissionForTests } from "./market-data-admission";
-import {
-  __resetApiResourcePressureForTests,
-  updateApiResourcePressure,
-} from "./resource-pressure";
+import { __resetApiResourcePressureForTests } from "./resource-pressure";
 
-const PREWARM_LIMIT_ENV_NAME = "IBKR_MARKET_DATA_WATCHLIST_LINES";
-const FILLER_ENABLED_ENV_NAME = "IBKR_MARKET_DATA_ENABLE_FILLER_PREWARM";
-const FILLER_MAX_ENV_NAME = "IBKR_WATCHLIST_PREWARM_FILLER_MAX_SYMBOLS";
+const PREWARM_LIMIT_ENV_NAME = "IBKR_MARKET_DATA_VISIBLE_LINES";
 const originalValues = new Map(
-  [
-    PREWARM_LIMIT_ENV_NAME,
-    FILLER_ENABLED_ENV_NAME,
-    FILLER_MAX_ENV_NAME,
-  ].map((name) => [name, process.env[name]]),
+  [PREWARM_LIMIT_ENV_NAME].map((name) => [name, process.env[name]]),
 );
 
 afterEach(() => {
@@ -35,14 +27,15 @@ afterEach(() => {
   }
 });
 
-test("watchlist prewarm defaults to an 80-symbol primary prewarm cap", () => {
+test("watchlist prewarm defaults to visible scanner-aware capacity", () => {
   delete process.env[PREWARM_LIMIT_ENV_NAME];
 
-  assert.equal(resolveIbkrWatchlistPrewarmSymbolLimit(90), 80);
+  assert.equal(resolveIbkrWatchlistPrewarmSymbolLimit(90), 90);
+  assert.equal(resolveIbkrWatchlistPrewarmSymbolLimit(200), 120);
   assert.equal(resolveIbkrWatchlistPrewarmSymbolLimit(12), 12);
 });
 
-test("watchlist line env override can lower or raise the primary prewarm cap", () => {
+test("visible line env override can lower or raise the prewarm cap", () => {
   process.env[PREWARM_LIMIT_ENV_NAME] = "24";
   assert.equal(resolveIbkrWatchlistPrewarmSymbolLimit(90), 24);
 
@@ -121,16 +114,157 @@ test("watchlist prewarm submits all lane sources to the lane policy resolver", (
   assert.match(prewarmBody, /resolveEquityLiveQuoteLaneSymbols\(symbols\)/);
 });
 
-test("watchlist filler leases are persistent and reclaimed by priority, not TTL expiry", () => {
+test("lane architecture reports the same equity live sources used by watchlist prewarm", () => {
+  const lanesSource = readFileSync(new URL("./ibkr-lanes.ts", import.meta.url), "utf8");
+  const equityStart = lanesSource.indexOf(
+    'label: laneLabels["equity-live-quotes"]',
+  );
+  const equityEnd = lanesSource.indexOf(
+    'label: laneLabels["option-live-quotes"]',
+    equityStart,
+  );
+  const equityBlock = lanesSource.slice(equityStart, equityEnd);
+
+  assert.notEqual(equityStart, -1);
+  assert.notEqual(equityEnd, -1);
+  assert.match(equityBlock, /"built-in": flowLaneSources\.builtInSymbols/);
+  assert.match(equityBlock, /watchlists: watchlistSymbols/);
+  assert.match(equityBlock, /"flow-universe": flowUniverseSymbols/);
+  assert.match(equityBlock, /resolveIbkrLaneSymbols\("equity-live-quotes"/);
+});
+
+test("watchlist prewarm orders all watchlist symbols before lane extras", () => {
+  const result = __orderWatchlistWarmupSymbolsForTests({
+    admittedSymbols: [
+      "AAA",
+      "AAB",
+      "AAPL",
+      "FLOW1",
+      "FLOW2",
+      "VRT",
+      "VST",
+      "ZBRA",
+    ],
+    watchlistSymbols: ["VRT", "VST", "ZBRA", "AAPL"],
+    defaultSymbols: ["AAPL"],
+    accountSymbols: [],
+    limit: 5,
+  });
+
+  assert.deepEqual(result.symbols, ["AAPL", "VRT", "VST", "ZBRA", "AAA"]);
+  assert.equal(result.overflowCount, 3);
+});
+
+test("watchlist prewarm line requests protect source symbols ahead of lane extras", () => {
+  const requests = __buildWatchlistPrewarmLineRequestsForTests(
+    ["flow1", "aapl", "vst"],
+    ["AAPL", "VST"],
+  );
+
+  assert.deepEqual(requests, [
+    { assetClass: "equity", symbol: "FLOW1", priorityOffset: -1 },
+    { assetClass: "equity", symbol: "AAPL", priorityOffset: 1 },
+    { assetClass: "equity", symbol: "VST", priorityOffset: 1 },
+  ]);
+});
+
+test("watchlist prewarm rotates overflow while keeping default symbols pinned", () => {
+  const first = __orderWatchlistWarmupSymbolsForTests({
+    admittedSymbols: ["SPY", "AAA", "BBB", "CCC", "DDD", "EEE"],
+    watchlistSymbols: ["AAA", "BBB", "CCC", "DDD", "EEE"],
+    defaultSymbols: ["SPY"],
+    accountSymbols: [],
+    limit: 4,
+    rotationOffset: 0,
+    advanceRotation: true,
+  });
+  const second = __orderWatchlistWarmupSymbolsForTests({
+    admittedSymbols: ["SPY", "AAA", "BBB", "CCC", "DDD", "EEE"],
+    watchlistSymbols: ["AAA", "BBB", "CCC", "DDD", "EEE"],
+    defaultSymbols: ["SPY"],
+    accountSymbols: [],
+    limit: 4,
+    rotationOffset: first.nextRotationOffset,
+    advanceRotation: true,
+  });
+
+  assert.deepEqual(first.symbols, ["SPY", "AAA", "BBB", "CCC"]);
+  assert.deepEqual(second.symbols, ["SPY", "DDD", "EEE", "AAA"]);
+});
+
+test("watchlist prewarm rotates lane extras without displacing fitting watchlists", () => {
+  const result = __orderWatchlistWarmupSymbolsForTests({
+    admittedSymbols: [
+      "SPY",
+      "AAPL",
+      "VRT",
+      "VST",
+      "ZBRA",
+      "FLOW1",
+      "FLOW2",
+      "FLOW3",
+      "FLOW4",
+    ],
+    watchlistSymbols: ["AAPL", "VRT", "VST", "ZBRA"],
+    defaultSymbols: ["SPY"],
+    accountSymbols: [],
+    limit: 7,
+    rotationOffset: 2,
+    advanceRotation: true,
+  });
+
+  assert.deepEqual(result.symbols, [
+    "SPY",
+    "AAPL",
+    "VRT",
+    "VST",
+    "ZBRA",
+    "FLOW3",
+    "FLOW4",
+  ]);
+  assert.equal(result.overflowCount, 2);
+  assert.equal(result.nextRotationOffset, 0);
+});
+
+test("watchlist prewarm does not let account extras displace fitting watchlists", () => {
+  const result = __orderWatchlistWarmupSymbolsForTests({
+    admittedSymbols: ["AAPL", "VRT", "VST", "ZBRA", "FLOW1"],
+    watchlistSymbols: ["AAPL", "VRT", "VST", "ZBRA"],
+    defaultSymbols: [],
+    accountSymbols: ["FCEL", "FRMI", "INDI", "SMCI"],
+    limit: 5,
+  });
+
+  assert.deepEqual(result.symbols, ["AAPL", "VRT", "VST", "ZBRA", "FCEL"]);
+  assert.equal(result.overflowCount, 4);
+});
+
+test("watchlist prewarm uses visible live lines and does not create filler leases", () => {
   const platformSource = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
   const prewarmBody = platformSource.match(
     /function scheduleIbkrWatchlistPrewarm\([\s\S]*?\nfunction scheduleIbkrWatchlistPrewarmFromDb/,
   )?.[0];
 
   assert.ok(prewarmBody);
-  assert.match(prewarmBody, /owner: IBKR_WATCHLIST_PREWARM_FILLER_OWNER/);
-  assert.doesNotMatch(prewarmBody, /ttlMs:/);
-  assert.doesNotMatch(platformSource, /IBKR_MARKET_DATA_FILLER_TTL_MS/);
+  assert.match(prewarmBody, /intent: "visible-live"/);
+  assert.match(
+    prewarmBody,
+    /buildWatchlistPrewarmLineRequests\(cappedWarmupSymbols, symbols\)/,
+  );
+  assert.doesNotMatch(prewarmBody, /intent: "watchlist-live"/);
+  assert.doesNotMatch(prewarmBody, /intent: "delayed-ok"/);
+  assert.doesNotMatch(prewarmBody, /fillerSymbolLimit/);
+});
+
+test("bridge reconciliation preserves watchlist source priority offsets", () => {
+  const platformSource = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
+  const reconcileBody = platformSource.match(
+    /function reconcileIbkrWatchlistPrewarmFromBridgeDiagnostics\([\s\S]*?\nfunction reconcileIbkrWatchlistPrewarmFromBridgeSoon/,
+  )?.[0];
+
+  assert.ok(reconcileBody);
+  assert.match(reconcileBody, /buildWatchlistPrewarmLineRequests\(primarySymbols\)/);
+  assert.doesNotMatch(reconcileBody, /primarySymbols\.map\(\(symbol\) => \(\{/);
 });
 
 test("watchlist prewarm reruns when scanner lease churn hits an in-flight pass", () => {
@@ -202,102 +336,4 @@ test("watchlist bridge sync skips stale streams and quote backoff at the sync bo
   assert.match(syncBlock, /isBridgeWorkBackedOff\("quotes"\)/);
   assert.match(syncBlock, /isBridgeWorkBackoffError\(error\)/);
   assert.match(syncBlock, /IBKR bridge watchlist prewarm sync skipped/);
-});
-
-test("watchlist filler is enabled by default", () => {
-  delete process.env[FILLER_ENABLED_ENV_NAME];
-
-  assert.equal(
-    resolveIbkrWatchlistFillerSymbolLimit({
-      candidateSymbolCount: 80,
-      targetFillLines: 190,
-      nonFillerLineCount: 100,
-    }),
-    80,
-  );
-});
-
-test("watchlist filler respects total slack with the default cap", () => {
-  assert.equal(
-    resolveIbkrWatchlistFillerSymbolLimit({
-      candidateSymbolCount: 80,
-      targetFillLines: 190,
-      nonFillerLineCount: 100,
-    }),
-    80,
-  );
-  assert.equal(
-    resolveIbkrWatchlistFillerSymbolLimit({
-      candidateSymbolCount: 80,
-      targetFillLines: 120,
-      nonFillerLineCount: 100,
-    }),
-    20,
-  );
-});
-
-test("watchlist filler env override can lower or raise the filler cap", () => {
-  process.env[FILLER_ENABLED_ENV_NAME] = "true";
-  process.env[FILLER_MAX_ENV_NAME] = "12";
-
-  assert.equal(
-    resolveIbkrWatchlistFillerSymbolLimit({
-      candidateSymbolCount: 80,
-      targetFillLines: 190,
-      nonFillerLineCount: 100,
-    }),
-    12,
-  );
-
-  process.env[FILLER_MAX_ENV_NAME] = "200";
-
-  assert.equal(
-    resolveIbkrWatchlistFillerSymbolLimit({
-      candidateSymbolCount: 120,
-      targetFillLines: 200,
-      nonFillerLineCount: 85,
-    }),
-    115,
-  );
-});
-
-test("watchlist filler is capped or disabled by API resource pressure", () => {
-  assert.equal(
-    resolveIbkrWatchlistFillerSymbolLimit({
-      candidateSymbolCount: 80,
-      targetFillLines: 190,
-      nonFillerLineCount: 100,
-    }),
-    80,
-  );
-
-  updateApiResourcePressure({ rssMb: 950 });
-  assert.equal(
-    resolveIbkrWatchlistFillerSymbolLimit({
-      candidateSymbolCount: 80,
-      targetFillLines: 190,
-      nonFillerLineCount: 100,
-    }),
-    80,
-  );
-
-  updateApiResourcePressure({ rssMb: 1_250 });
-  assert.equal(
-    resolveIbkrWatchlistFillerSymbolLimit({
-      candidateSymbolCount: 80,
-      targetFillLines: 190,
-      nonFillerLineCount: 100,
-    }),
-    0,
-  );
-
-  updateApiResourcePressure({ rssMb: 1_650 });
-  assert.equal(
-    resolveIbkrWatchlistFillerSymbolLimit({
-      candidateSymbolCount: 80,
-      targetFillLines: 190,
-      nonFillerLineCount: 100,
-    }),
-    0,
-  );
 });

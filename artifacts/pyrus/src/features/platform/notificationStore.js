@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { normalizeToastKind } from "./toastModel.js";
 
 const LAST_READ_STORAGE_KEY = "pyrus.notifications.lastReadAt.v1";
 const RING_BUFFER_LIMIT = 50;
@@ -57,7 +58,7 @@ export const captureToast = (spec) => {
   if (!spec || typeof spec !== "object") return;
   const entry = {
     id: `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    kind: typeof spec.kind === "string" ? spec.kind : "info",
+    kind: normalizeToastKind(spec.kind),
     title: typeof spec.title === "string" ? spec.title : "",
     body: typeof spec.body === "string" ? spec.body : "",
     timestamp: Date.now(),

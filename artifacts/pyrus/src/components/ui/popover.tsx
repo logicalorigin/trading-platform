@@ -1,9 +1,11 @@
 import * as React from "react"
 import * as PopoverPrimitive from "@radix-ui/react-popover"
 
-import { cn } from "@/lib/utils"
+import {
+  cn,
+} from "@/lib/utils";
 // @ts-expect-error JSX module imported into TypeScript context
-import { ELEVATION, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx"
+import { ELEVATION, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 
 const CSS_COLOR = {
   bg1: "var(--ra-surface-1)",

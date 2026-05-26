@@ -6,7 +6,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { renderToString } from "react-dom/server";
 import { TooltipProvider } from "../../components/ui/tooltip";
-import { PlatformAlgoMonitorSidebar } from "./PlatformAlgoMonitorSidebar.jsx";
+import {
+  buildAlgoMonitorSignalActionRows,
+  PlatformAlgoMonitorSidebar,
+} from "./PlatformAlgoMonitorSidebar.jsx";
 
 const repoRoot = new URL("../../../../..", import.meta.url);
 const pyrusSrcRoot = new URL("../../", import.meta.url);
@@ -38,8 +41,12 @@ test("platform root no longer depends on the retired PyrusPlatform module", () =
   assert.equal(existsSync(retiredRootPath), false);
 
   const appSource = readFileSync(new URL("../../app/App.tsx", import.meta.url), "utf8");
-  assert.match(appSource, /features\/platform\/PlatformApp\.jsx/);
+  assert.match(appSource, /\.\/AppContent/);
   assert.doesNotMatch(appSource, /PyrusPlatform/);
+
+  const appContentSource = readFileSync(new URL("../../app/AppContent.tsx", import.meta.url), "utf8");
+  assert.match(appContentSource, /features\/platform\/PlatformApp\.jsx/);
+  assert.doesNotMatch(appContentSource, /PyrusPlatform/);
 
   const sourceHits = collectSourceFiles(pyrusSrcRoot)
     .filter((filePath) => !filePath.endsWith("platformRootSource.test.js"))
@@ -51,6 +58,13 @@ test("platform root no longer depends on the retired PyrusPlatform module", () =
     .map(({ filePath }) => relative(repoRoot.pathname, filePath));
 
   assert.deepEqual(sourceHits, []);
+});
+
+test("retained screen lazy ticker search exports resolve to components", async () => {
+  const tickerSearch = await import("./tickerSearch/TickerSearch.jsx");
+
+  assert.equal(typeof tickerSearch.MarketChartTickerSearch, "function");
+  assert.equal(typeof tickerSearch.MiniChartTickerSearch, "function");
 });
 
 test("api boot does not start the retired shadow equity forward worker", () => {
@@ -369,6 +383,10 @@ test("mobile IBKR header dropdown uses a phone sheet outside clipped header chro
     new URL("../../screens/account/SetupHealthPanel.jsx", import.meta.url),
     "utf8",
   );
+  const platformAppSource = readFileSync(
+    new URL("./PlatformApp.jsx", import.meta.url),
+    "utf8",
+  );
 
   assert.match(appHeaderSource, /className=\{isPhone \? "ra-mobile-app-header" : undefined\}/);
   assert.match(appHeaderSource, /overflow:\s*"hidden"/);
@@ -392,10 +410,65 @@ test("mobile IBKR header dropdown uses a phone sheet outside clipped header chro
   assert.match(statusSource, /setBridgePopoverOpen\(true\)/);
   assert.match(statusSource, /autoLoginUsernameInputRef\.current\?\.focus\?\.\(\)/);
   assert.match(statusSource, /const bridgeCredentialResumeAvailable = Boolean/);
+  assert.match(statusSource, /const desktopReconnectNeeded = Boolean/);
+  assert.match(statusSource, /desktopReconnectNeeded/);
+  assert.match(statusSource, /desktopReconnectUpgradeRequired/);
+  assert.match(statusSource, /Reconnect on desktop/);
   assert.match(statusSource, /const deliverIbkrLoginCredentials = useCallback/);
   assert.match(statusSource, /"Sending credentials to the active Windows helper\."/);
   assert.match(statusSource, /bridgeCredentialResumeAvailable[\s\S]*\? "Send credentials"/);
   assert.match(statusSource, /type=\{autoLoginPrimaryCancelsLaunch \? "button" : "submit"\}/);
+  const deactivateStart = statusSource.indexOf(
+    "const handleDeactivate = useCallback",
+  );
+  const deactivateDetach = statusSource.indexOf(
+    '"/api/ibkr/bridge/detach"',
+    deactivateStart,
+  );
+  const deactivateWait = statusSource.indexOf(
+    "void waitForIbkrDesktopJob",
+    deactivateStart,
+  );
+  assert.notEqual(deactivateStart, -1);
+  assert.notEqual(deactivateDetach, -1);
+  assert.notEqual(deactivateWait, -1);
+  assert.ok(
+    deactivateDetach < deactivateWait,
+    "IBKR deactivate should clear backend runtime before waiting for desktop shutdown confirmation",
+  );
+  assert.match(statusSource, /const shutdownRequest = platformJsonRequest/);
+  assert.match(statusSource, /Queueing Windows shutdown and detaching backend runtime/);
+  assert.match(statusSource, /Waiting for Windows shutdown queue confirmation/);
+  assert.match(statusSource, /IBKR detached\. Waiting for the Windows desktop/);
+  assert.match(statusSource, /HeaderIbkrOperationStepper/);
+  assert.match(statusSource, /buildIbkrLaunchOperationStepper/);
+  assert.match(statusSource, /buildIbkrDeactivateOperationStepper/);
+  assert.match(statusSource, /IBKR_BRIDGE_ACTIVATION_STATUS_POLL_MS/);
+  assert.match(statusSource, /data-testid=\{`ibkr-operation-stepper-\$\{model\.operation\}`\}/);
+  assert.match(statusSource, /IBKR_OPERATION_STEP_ICONS/);
+  assert.match(statusSource, /data-ibkr-step-complete/);
+  assert.match(statusSource, /data-ibkr-step-motion/);
+  assert.match(statusSource, /"--ibkr-step-tone": tone/);
+  assert.match(statusSource, /letterSpacing:\s*0/);
+  assert.match(statusSource, /data-ibkr-step-line/);
+  assert.match(statusSource, /AlertTriangle/);
+  assert.match(platformAppSource, /var\(--ibkr-step-tone,var\(--ra-color-status-warn\)\)/);
+  assert.match(platformAppSource, /@keyframes ibkrStepCheckPop/);
+  assert.match(platformAppSource, /@keyframes ibkrStepIconPulse/);
+  assert.match(platformAppSource, /@keyframes ibkrStepIconDispatch/);
+  assert.match(platformAppSource, /@keyframes ibkrStepIconSecure/);
+  assert.match(platformAppSource, /@keyframes ibkrStepIconBoot/);
+  assert.match(platformAppSource, /@keyframes ibkrStepIconLink/);
+  assert.match(platformAppSource, /@keyframes ibkrStepIconTunnel/);
+  assert.match(platformAppSource, /@keyframes ibkrStepIconQueue/);
+  assert.match(platformAppSource, /@keyframes ibkrStepIconDetach/);
+  assert.match(platformAppSource, /@keyframes ibkrStepIconPower/);
+  assert.match(platformAppSource, /@keyframes ibkrStepLineFill/);
+  assert.match(platformAppSource, /\[data-ibkr-step-complete\] \*/);
+  assert.match(platformAppSource, /\[data-ibkr-step-motion\]/);
+  assert.match(platformAppSource, /\[data-ibkr-step-motion\] \*/);
+  assert.match(statusSource, /\{canDeactivate \? \(/);
+  assert.doesNotMatch(statusSource, /canDeactivate && !showCredentialForm/);
   assert.match(setupHealthSource, /requestIbkrReconnect/);
   assert.match(setupHealthSource, /onReconnect=\{requestIbkrReconnect\}/);
 });
@@ -841,6 +914,155 @@ test("Algo monitor sidebar renders signals to actions candidates", () => {
   assert.ok(html.indexOf("NVDA") < html.indexOf("AMD"));
 });
 
+test("Algo monitor sidebar matches Algo page signal rows before stale candidates", () => {
+  const rows = buildAlgoMonitorSignalActionRows({
+    signals: [
+      {
+        signalKey: "spy-buy",
+        symbol: "SPY",
+        timeframe: "5m",
+        direction: "buy",
+        signalAt: "2026-05-23T22:05:00.000Z",
+      },
+      {
+        signalKey: "qqq-sell",
+        symbol: "QQQ",
+        timeframe: "5m",
+        direction: "sell",
+        signalAt: "2026-05-23T22:00:00.000Z",
+      },
+    ],
+    candidates: [
+      {
+        id: "tsla-unmatched",
+        symbol: "TSLA",
+        direction: "buy",
+        signalAt: "2026-05-23T22:10:00.000Z",
+      },
+      {
+        id: "qqq-candidate",
+        signalKey: "qqq-sell",
+        symbol: "QQQ",
+        timeframe: "5m",
+        direction: "sell",
+      },
+      {
+        id: "spy-candidate",
+        signal: { signalKey: "spy-buy" },
+        selectedContract: { underlying: "SPY" },
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    rows.map((row) => [row.signal.symbol, row.candidate.id || null]),
+    [
+      ["SPY", "spy-candidate"],
+      ["QQQ", "qqq-candidate"],
+    ],
+  );
+});
+
+test("Algo monitor sidebar prefers cockpit signals to stale automation state rows", () => {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+      },
+    },
+  });
+  queryClient.setQueryData(["/api/algo/deployments"], {
+    deployments: [
+      {
+        id: "paper-enabled",
+        name: "Paper shadow algo",
+        mode: "paper",
+        enabled: true,
+        providerAccountId: "shadow",
+      },
+    ],
+  });
+  queryClient.setQueryData(["/api/algo/deployments/paper-enabled/cockpit"], {
+    kpis: { candidates: 1 },
+    risk: {},
+    readiness: { ready: true },
+    pipelineStages: [],
+    attentionItems: [],
+    signals: [
+      {
+        signalKey: "spy-buy",
+        symbol: "SPY",
+        timeframe: "5m",
+        direction: "buy",
+        signalAt: "2026-05-23T22:00:00.000Z",
+      },
+    ],
+    candidates: [
+      {
+        id: "spy-live",
+        signalKey: "spy-buy",
+        symbol: "SPY",
+        timeframe: "5m",
+        direction: "buy",
+        optionAction: "buy_call",
+        actionStatus: "shadow_filled",
+      },
+    ],
+  });
+  queryClient.setQueryData(
+    ["/api/algo/deployments/paper-enabled/signal-options/state"],
+    {
+      activePositions: [],
+      events: [],
+      signals: [
+        {
+          signalKey: "tsla-stale",
+          symbol: "TSLA",
+          timeframe: "5m",
+          direction: "sell",
+          signalAt: "2026-05-23T22:10:00.000Z",
+        },
+      ],
+      candidates: [
+        {
+          id: "tsla-stale",
+          signalKey: "tsla-stale",
+          symbol: "TSLA",
+          timeframe: "5m",
+          direction: "sell",
+          optionAction: "buy_put",
+          actionStatus: "blocked",
+        },
+      ],
+    },
+  );
+
+  const html = renderToString(
+    React.createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(PlatformAlgoMonitorSidebar, {
+          isVisible: true,
+          dataEnabled: true,
+          environment: "paper",
+          externalStreamFreshness: {
+            algoCriticalFresh: true,
+            algoFullFresh: true,
+          },
+        }),
+      ),
+    ),
+  );
+
+  assert.match(html, /SPY/);
+  assert.match(html, /BUY CALL/);
+  assert.doesNotMatch(html, /TSLA/);
+  assert.doesNotMatch(html, /BUY PUT/);
+});
+
 test("mobile primitives keep pinch zoom and touch fallbacks available", () => {
   const indexHtml = readFileSync(
     new URL("../../../index.html", import.meta.url),
@@ -857,6 +1079,11 @@ test("mobile primitives keep pinch zoom and touch fallbacks available", () => {
   assert.match(cssSource, /font-size:\s*max\(16px,\s*1em\)/);
   assert.match(cssSource, /\.ra-shell\[data-viewport="phone"\] \.ra-touch-target/);
   assert.match(tooltipSource, /isInteractiveTooltipTrigger/);
+  assert.match(tooltipSource, /hasInteractiveTooltipDescendant/);
+  assert.match(
+    tooltipSource,
+    /trigger\.props\.asChild &&[\s\S]*hasInteractiveTooltipDescendant\(trigger\.props\.children\)/,
+  );
   assert.match(tooltipSource, /&& !isInteractiveTooltipTrigger\(trigger\)/);
   assert.match(tooltipSource, /event\.pointerType !== "touch"/);
   assert.match(tooltipSource, /setOpen\(true\)/);
@@ -920,6 +1147,9 @@ test("Account panels defer below-fold content and memoize mobile rows", () => {
   assert.match(deferredRenderSource, /ra-deferred-render__skeleton ra-skeleton-shimmer/);
   assert.match(deferredRenderSource, /rootMargin/);
   assert.match(deferredRenderSource, /requestIdleCallback/);
+  assert.match(deferredRenderSource, /DEFAULT_IDLE_DELAY_MS = 2_500/);
+  assert.match(deferredRenderSource, /const scheduleIdleActivation = useCallback/);
+  assert.match(deferredRenderSource, /const cancelIdleActivation = scheduleIdleActivation\(\)/);
   assert.match(deferredRenderSource, /onActivateRef\.current\?\.\(\)/);
   assert.doesNotMatch(deferredRenderSource, /data-deferred-render="mounted"/);
   assert.match(accountSource, /const AccountPanelSuspenseFallback = /);
@@ -1199,17 +1429,17 @@ test("Broad scanner owns Flow across the visible app after startup", () => {
   assert.doesNotMatch(headerSource, /broadScanEnabled\s*\?\s*"loading"/);
   assert.match(
     headerSource,
-    /const flowScanTone = flowScanHasError[\s\S]*flowScanDegraded[\s\S]*\? T\.amber[\s\S]*flowScanBusy[\s\S]*\? T\.accent/,
+    /const flowScanTone = flowScanHasError[\s\S]*flowScanDegraded[\s\S]*\? CSS_COLOR\.amber[\s\S]*flowScanBusy[\s\S]*\? CSS_COLOR\.accent/,
   );
   assert.match(
     headerSource,
-    /const signalScanTone = signalHasError[\s\S]*signalBusy[\s\S]*\? T\.accent/,
+    /const signalScanTone = signalHasError[\s\S]*signalBusy[\s\S]*\? CSS_COLOR\.accent/,
   );
   assert.match(
     headerSource,
-    /label="Flow"[\s\S]*flowHasError[\s\S]*\? T\.red[\s\S]*flowDegraded[\s\S]*\? T\.amber[\s\S]*flowStatus === "loading"[\s\S]*\? T\.accent/,
+    /label="Flow"[\s\S]*flowHasError[\s\S]*\? CSS_COLOR\.red[\s\S]*flowDegraded[\s\S]*\? CSS_COLOR\.amber[\s\S]*flowStatus === "loading"[\s\S]*\? CSS_COLOR\.accent/,
   );
-  assert.doesNotMatch(headerSource, /flowScanBusy\s*\n\s*\? T\.amber/);
+  assert.doesNotMatch(headerSource, /flowScanBusy\s*\n\s*\? CSS_COLOR\.amber/);
   assert.doesNotMatch(headerSource, /waiting for app runtime/);
   assert.doesNotMatch(headerSource, /waiting for app visibility/);
   assert.doesNotMatch(
@@ -1220,7 +1450,7 @@ test("Broad scanner owns Flow across the visible app after startup", () => {
   assert.doesNotMatch(schedulerSource, /flowScreenActive/);
 });
 
-test("signal monitor symbols do not join live market-data fanout", () => {
+test("signal monitor symbols only join live market-data fanout as bounded recent pins", () => {
   const source = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
   const routerSource = readFileSync(
     new URL("./PlatformScreenRouter.jsx", import.meta.url),
@@ -1232,6 +1462,9 @@ test("signal monitor symbols do not join live market-data fanout", () => {
 
   assert.ok(runtimeSymbolBlock, "PlatformApp must define runtime market-data symbols");
   assert.doesNotMatch(runtimeSymbolBlock, /signalMonitorSymbols/);
+  assert.match(source, /const RECENT_SIGNAL_QUOTE_PIN_LIMIT = 4;/);
+  assert.match(source, /resolveRecentSignalMarketDataSymbols\(signalMonitorStates\)/);
+  assert.match(source, /recentSignalMarketDataSymbols/);
   assert.match(
     routerSource,
     /signalSuggestionSymbols=\{signalMonitorSymbols\}/,
@@ -1282,8 +1515,10 @@ test("initial market-data fanout starts with the visible watchlist slice", () =>
   assert.doesNotMatch(
     streamedQuoteSymbolsBlock ?? "",
     /watchlistSymbols/,
-    "quote streams should not subscribe the full active watchlist directly",
+    "quote streams should use bounded rotation rather than raw full watchlist subscription",
   );
+  assert.match(source, /buildWatchlistQuoteRotationBatch/);
+  assert.match(source, /WATCHLIST_QUOTE_STREAM_BATCH_SIZE/);
   assert.match(
     aggregateSymbolsBlock ?? "",
     /marketScreenActive && broadMarketDataHydrationReady[\s\S]*\? MARKET_SNAPSHOT_SYMBOLS[\s\S]*: \[\]/,
@@ -1322,11 +1557,12 @@ test("visible watchlist and open position symbols join bounded priority sparklin
   assert.match(source, /symbols\.length >= OPEN_POSITION_MARKET_DATA_LIMIT/);
   assert.match(runtimeSymbolBlock ?? "", /quoteSymbols, \.\.\.openPositionMarketDataSymbols/);
   assert.match(runtimeSymbolBlock ?? "", /sparklineSymbols, \.\.\.openPositionMarketDataSymbols/);
-  assert.match(runtimeSymbolBlock ?? "", /streamedQuoteSymbols, \.\.\.openPositionMarketDataSymbols/);
+  assert.match(runtimeSymbolBlock ?? "", /\[\.\.\.new Set\(streamedQuoteSymbols\)\]/);
   assert.doesNotMatch(
     runtimeSymbolBlock ?? "",
     /streamedAggregateSymbols, \.\.\.openPositionMarketDataSymbols/,
   );
+  assert.match(source, /openPositionMarketDataSymbols[\s\S]*recentSignalMarketDataSymbols/);
   assert.match(prioritySparklineBlock ?? "", /visibleWatchlistMarketDataSymbols/);
   assert.match(prioritySparklineBlock ?? "", /openPositionMarketDataSymbols/);
   assert.match(source, /prioritySparklineSymbols=\{prioritySparklineSymbols\}/);
@@ -1353,6 +1589,9 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   const matrixReadyBlock = source.match(
     /const signalMatrixRuntimeReady = Boolean\([\s\S]*?\n  \);/,
   )?.[0];
+  const matrixPriorityBlock = source.match(
+    /const signalMatrixPrioritySymbols = useMemo\([\s\S]*?\n  \);/,
+  )?.[0];
 
   assert.match(source, /SIGNAL_MONITOR_DISPLAY_POLL_MS\s*=\s*15_000/);
   assert.match(source, /const signalMonitorDisplayPollMs = Math\.min\(/);
@@ -1363,6 +1602,7 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.match(eventsReadyBlock ?? "", /backgroundResumeReady\.signalDisplay/);
   assert.match(source, /buildSignalMatrixRequestPlan/);
   assert.match(source, /signalMatrixUniverseSymbols/);
+  assert.match(matrixPriorityBlock ?? "", /\.\.\.watchlistSymbols/);
   assert.match(source, /signalMatrixBackgroundReady/);
   assert.match(source, /const signalMatrixPriorityReady = Boolean/);
   assert.match(source, /const signalMatrixRuntimeReady = Boolean/);
@@ -1464,7 +1704,7 @@ test("algo signal-options automation uses generated API ownership path", () => {
   assert.doesNotMatch(algoCorpus, /\/api\/algo\/deployments\/.*signal-options/);
 });
 
-test("screen shell warmup preloads top-level code and idle-mounts retained pages", () => {
+test("screen shell warmup preloads top-level code without default hidden page mounting", () => {
   const appSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
   const registrySource = readFileSync(new URL("./screenRegistry.jsx", import.meta.url), "utf8");
   const routerSource = readFileSync(new URL("./PlatformScreenRouter.jsx", import.meta.url), "utf8");
@@ -1524,8 +1764,9 @@ test("screen shell warmup preloads top-level code and idle-mounts retained pages
   assert.match(appSource, /queues:\s*\{[\s\S]*screenCodePreloadStarted/);
   assert.match(appSource, /backgroundDataWarmupGateOpenedAtMs/);
   assert.match(appSource, /timelineMs:\s*warmupTimelineRef\.current/);
-  assert.match(routerSource, /const useDeferredActiveScreen = \(screen\) =>/);
-  assert.match(routerSource, /window\.requestAnimationFrame\(activate\)/);
+  assert.doesNotMatch(routerSource, /const useDeferredActiveScreen = \(screen\) =>/);
+  assert.doesNotMatch(routerSource, /window\.requestAnimationFrame\(activate\)/);
+  assert.match(routerSource, /const marketDataActive = screen === "market";/);
   assert.match(routerSource, /isVisible=\{backtestDataActive\}/);
   assert.match(registrySource, /SCREEN_MODULE_PRELOAD_ORDER = \[[\s\S]*"flow"/);
   [
@@ -1560,6 +1801,11 @@ test("screen shell warmup preloads top-level code and idle-mounts retained pages
     appSource,
     /screenWarmupPhase !== "ready"[\s\S]*screenShellWarmMountCompleteRef\.current[\s\S]*const warmMountOrder = SCREEN_SHELL_WARM_MOUNT_ORDER\.filter/,
   );
+  assert.match(appSource, /const hiddenScreenPreloadPolicy = useMemo/);
+  assert.match(appSource, /buildPlatformWorkSchedule\([\s\S]*?\.hiddenScreenPreload/);
+  assert.match(appSource, /const hiddenScreenWarmMountAllowed = Boolean/);
+  assert.match(appSource, /!hiddenScreenWarmMountAllowed/);
+  assert.match(appSource, /hiddenScreenWarmMountEnabled:\s*hiddenScreenWarmMountAllowed/);
   assert.match(shellWarmMountEffect, /SCREEN_SHELL_WARM_MOUNT_ORDER\.filter/);
   assert.match(shellWarmMountEffect, /screenId !== screen/);
   assert.match(shellWarmMountEffect, /scheduleIdleWork/);
@@ -1788,7 +2034,7 @@ test("market sparklines render the reduced high-detail point budget", () => {
   assert.doesNotMatch(watchlistSource, /const pointCount = 32/);
 });
 
-test("operational pages defer noncritical presentation work after first paint", () => {
+test("operational pages mount visible shells without artificial route delays", () => {
   const marketSource = readFileSync(
     new URL("../../screens/MarketScreen.jsx", import.meta.url),
     "utf8",
@@ -1799,6 +2045,10 @@ test("operational pages defer noncritical presentation work after first paint", 
   );
   const tradeSource = readFileSync(
     new URL("../../screens/TradeScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const backtestScreenSource = readFileSync(
+    new URL("../../screens/BacktestScreen.jsx", import.meta.url),
     "utf8",
   );
   const accountSource = readFileSync(
@@ -1819,14 +2069,24 @@ test("operational pages defer noncritical presentation work after first paint", 
   assert.doesNotMatch(flowSource, /data-testid="flow-screen-activation-shell"/);
   assert.doesNotMatch(flowSource, /data-testid="flow-screen-suspended"/);
   assert.match(flowSource, /const FlowOverviewPanel =/);
-  assert.match(flowSource, /const FLOW_DEFERRED_PANELS_DELAY_MS = 500/);
-  assert.match(flowSource, /requestAnimationFrame\(\(\) => \{\s*secondFrameId = requestAnimationFrame/);
-  assert.match(flowSource, /FLOW_DEFERRED_PANELS_DELAY_MS/);
+  assert.doesNotMatch(flowSource, /const FLOW_DEFERRED_PANELS_DELAY_MS/);
+  assert.doesNotMatch(flowSource, /requestAnimationFrame\(\(\) => \{\s*secondFrameId = requestAnimationFrame/);
+  assert.doesNotMatch(flowSource, /setShowDeferredPanels/);
+  assert.doesNotMatch(flowSource, /setActivateNews/);
+  assert.match(flowSource, /const showDeferredPanels = Boolean\(isVisible\)/);
+  assert.match(flowSource, /const shouldRenderDeferredPanels = showDeferredPanels/);
+  assert.match(flowSource, /enabled:\s*Boolean\(isVisible\)/);
+  assert.match(flowSource, /refetchInterval:\s*isVisible && !livePaused \? 60_000 : false/);
+  assert.match(flowSource, /isVisible && !livePaused \? FLOW_PREMIUM_WIDGET_REFRESH_MS : false/);
   assert.match(tradeSource, /const TradeScreenInner =/);
   assert.doesNotMatch(tradeSource, /TradeActivationFallback/);
   assert.doesNotMatch(tradeSource, /data-testid="trade-screen-activation-shell"/);
   assert.doesNotMatch(tradeSource, /data-testid="trade-screen-suspended"/);
-  assert.match(tradeSource, /secondaryPanelsVisible:\s*Boolean\(isVisible && secondaryReady\)/);
+  assert.doesNotMatch(tradeSource, /secondaryPanelsVisible:\s*Boolean\(isVisible && secondaryReady\)/);
+  assert.doesNotMatch(tradeSource, /analysisVisible:\s*Boolean\(visibleInteractive && secondaryReady\)/);
+  assert.doesNotMatch(tradeSource, /secondaryTradePanelsReady/);
+  assert.match(tradeSource, /secondaryPanelsVisible:\s*Boolean\(isVisible\)/);
+  assert.match(tradeSource, /analysisVisible:\s*Boolean\(visibleInteractive\)/);
   assert.doesNotMatch(accountSource, /const ACCOUNT_ACTIVATION_DELAY_MS = 90/);
   assert.match(accountSource, /const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 1_000/);
   assert.match(accountSource, /const AccountScreenInner =/);
@@ -1861,11 +2121,15 @@ test("operational pages defer noncritical presentation work after first paint", 
   assert.match(marketSource, /preloadMarketChartModules\(\)/);
   assert.match(marketSource, /<Suspense fallback=\{<MarketChartGridFallback \/>\}>/);
   assert.match(marketSource, /const \[chartGridReady, setChartGridReady\]/);
-  assert.match(marketSource, /MARKET_SECONDARY_PANEL_DELAY_MS\s*=\s*600/);
-  assert.match(marketSource, /setSecondaryPanelsReady\(true\),\s*MARKET_SECONDARY_PANEL_DELAY_MS/);
-  assert.doesNotMatch(marketSource, /chartGridReady \? 600 : MARKET_SECONDARY_PANEL_DELAY_MS/);
+  assert.doesNotMatch(marketSource, /MARKET_SECONDARY_PANEL_DELAY_MS/);
+  assert.doesNotMatch(marketSource, /secondaryPanelsReady/);
   assert.match(marketSource, /criticalReady: Boolean\(isVisible\)/);
   assert.match(marketSource, /derivedReady: Boolean\(isVisible && chartGridReady\)/);
+  assert.match(marketSource, /backgroundAllowed: Boolean\(isVisible && chartGridReady\)/);
+  assert.match(marketSource, /enabled: Boolean\(isVisible\)/);
+  assert.match(marketSource, /refetchInterval: isVisible \? 60_000 : false/);
+  assert.match(marketSource, /enabled: Boolean\(\s*isVisible &&\s*researchConfigured &&/);
+  assert.match(marketSource, /refetchInterval: isVisible \? 300_000 : false/);
   assert.doesNotMatch(marketSource, /criticalReady: Boolean\(isVisible && chartGridReady\)/);
   assert.match(marketSource, /onReady=\{handleMarketChartGridReady\}/);
   assert.doesNotMatch(marketSource, /onReadinessChange\?\.\(\{ criticalReady: true \}\)/);
@@ -1875,6 +2139,9 @@ test("operational pages defer noncritical presentation work after first paint", 
   assert.doesNotMatch(platformAppSource, /BROAD_FLOW_BACKGROUND_STARTUP_DELAY_MS/);
   assert.doesNotMatch(platformAppSource, /backgroundResumeReady\.broadFlow/);
   assert.doesNotMatch(platformAppSource, /broadFlowStartupDelayMs=\{0\}/);
+  assert.match(backtestScreenSource, /const BacktestDraftStrategiesFallback =/);
+  assert.match(backtestScreenSource, /fallback=\{<BacktestDraftStrategiesFallback \/>\}/);
+  assert.doesNotMatch(backtestScreenSource, /<Suspense fallback=\{null\}>/);
 });
 
 test("Trade first render chunk lazy-loads noncritical panels", () => {
@@ -1944,8 +2211,11 @@ test("hidden-mounted Trade keeps execution warm and gates analysis by visibility
   assert.match(tradeScreenSource, /const buildTradeRuntimeActivity =/);
   assert.match(tradeScreenSource, /executionWarm:\s*Boolean\(isVisible\)/);
   assert.match(tradeScreenSource, /primaryVisible:\s*Boolean\(isVisible\)/);
-  assert.match(tradeScreenSource, /secondaryPanelsVisible:\s*Boolean\(isVisible && secondaryReady\)/);
-  assert.match(tradeScreenSource, /analysisVisible:\s*Boolean\(visibleInteractive && secondaryReady\)/);
+  assert.match(tradeScreenSource, /secondaryPanelsVisible:\s*Boolean\(isVisible\)/);
+  assert.match(tradeScreenSource, /analysisVisible:\s*Boolean\(visibleInteractive\)/);
+  assert.doesNotMatch(tradeScreenSource, /secondaryPanelsVisible:\s*Boolean\(isVisible && secondaryReady\)/);
+  assert.doesNotMatch(tradeScreenSource, /analysisVisible:\s*Boolean\(visibleInteractive && secondaryReady\)/);
+  assert.doesNotMatch(tradeScreenSource, /secondaryTradePanelsReady/);
   assert.match(tradeScreenSource, /const tradeExecutionWorkEnabled = tradeRuntimeActivity\.executionWarm/);
   assert.match(tradeScreenSource, /const tradeAnalysisWorkEnabled = tradeRuntimeActivity\.analysisVisible/);
   assert.match(tradeScreenSource, /enabled=\{tradeExecutionWorkEnabled\}/);
@@ -1978,6 +2248,25 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
     "utf8",
   );
 
+  assert.match(algoSource, /const algoCriticalQueriesEnabled = Boolean\(isVisible\);/);
+  assert.match(algoSource, /const algoDerivedQueriesEnabled = Boolean\(isVisible\);/);
+  assert.match(algoSource, /const algoPostCriticalQueriesEnabled = Boolean\(isVisible\);/);
+  assert.doesNotMatch(
+    algoSource,
+    /const algoCriticalQueriesEnabled = Boolean\([^;\n]*algoCriticalFallbackReady/,
+  );
+  assert.doesNotMatch(
+    algoSource,
+    /const algoCriticalQueriesEnabled = Boolean\([^;\n]*algoCockpitStreamFreshness\.algoCriticalFresh/,
+  );
+  assert.match(
+    algoSource,
+    /const algoRoutineRefetchInterval =[\s\S]*!algoCockpitStreamFreshness\.algoCriticalFresh/,
+  );
+  assert.match(
+    algoSource,
+    /const algoDerivedRefetchInterval =[\s\S]*!algoCockpitStreamFreshness\.algoFullFresh/,
+  );
   assert.match(
     algoSource,
     /const draftsQuery = useListBacktestDraftStrategies\(\{[\s\S]*enabled:\s*algoPostCriticalQueriesEnabled/,

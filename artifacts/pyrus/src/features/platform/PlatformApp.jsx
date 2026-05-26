@@ -81,6 +81,13 @@ import {
   mergeSignalMatrixStates,
 } from "./signalMatrixScheduler.js";
 import {
+  WATCHLIST_QUOTE_STREAM_BATCH_SIZE,
+  WATCHLIST_QUOTE_STREAM_CYCLE_WINDOW_MS,
+  WATCHLIST_QUOTE_STREAM_ROTATION_MS,
+  buildWatchlistQuoteRotationBatch,
+  buildWatchlistQuoteRotationDiagnostics,
+} from "./watchlistQuoteRotation.js";
+import {
   QUERY_DEFAULTS,
 } from "./queryDefaults";
 import {
@@ -139,6 +146,7 @@ import {
 import { preloadDynamicImport } from "../../lib/dynamicImport";
 import { getMemoryPressureSnapshot } from "./memoryPressureStore";
 import { captureToast } from "./notificationStore.js";
+import { normalizeToastKind } from "./toastModel.js";
 import {
   SCREEN_READY_EVENT,
   hasPyrusFirstScreenReady,
@@ -173,13 +181,24 @@ input[type=range]{accent-color:var(--ra-color-accent)}
 @keyframes pulseAlertLoss{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ra-color-pnl-negative) 60%,transparent)}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--ra-color-pnl-negative) 0%,transparent)}}
 @keyframes premiumFlowSpin{to{transform:rotate(360deg)}}
 @keyframes premiumFlowPulse{0%,100%{opacity:0.38;transform:scale(0.82)}50%{opacity:1;transform:scale(1)}}
-@keyframes ibkrStatusPulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ra-color-status-warn) 28%,transparent)}50%{box-shadow:0 0 0 3px color-mix(in srgb,var(--ra-color-status-warn) 0%,transparent)}}
+@keyframes ibkrStatusPulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ibkr-step-tone,var(--ra-color-status-warn)) 28%,transparent)}50%{box-shadow:0 0 0 3px color-mix(in srgb,var(--ibkr-step-tone,var(--ra-color-status-warn)) 0%,transparent)}}
+@keyframes ibkrStepIconPulse{0%,100%{opacity:0.72;transform:scale(0.92)}50%{opacity:1;transform:scale(1.08)}}
+@keyframes ibkrStepIconDispatch{0%,100%{opacity:0.74;transform:translateX(-1px) scale(0.95)}45%{opacity:1;transform:translateX(2px) scale(1.05)}}
+@keyframes ibkrStepIconSecure{0%,100%{filter:brightness(0.88);transform:rotate(-5deg) scale(0.96)}50%{filter:brightness(1.24);transform:rotate(5deg) scale(1.04)}}
+@keyframes ibkrStepIconBoot{0%,100%{opacity:0.78;transform:translateY(1px) scale(0.96)}52%{opacity:1;transform:translateY(-1px) scale(1.05)}}
+@keyframes ibkrStepIconLink{0%,100%{filter:drop-shadow(0 0 0 color-mix(in srgb,var(--ra-text-on-accent) 0%,transparent));transform:scaleX(0.92) scaleY(0.98)}50%{filter:drop-shadow(0 0 4px color-mix(in srgb,var(--ra-text-on-accent) 68%,transparent));transform:scaleX(1.08) scaleY(1.02)}}
+@keyframes ibkrStepIconTunnel{0%,100%{opacity:0.72;transform:translateY(0) scale(0.94)}45%{opacity:1;transform:translateY(-1px) scale(1.08)}}
+@keyframes ibkrStepIconQueue{0%,100%{transform:rotate(-8deg) scale(0.98)}50%{transform:rotate(8deg) scale(1.02)}}
+@keyframes ibkrStepIconDetach{0%,100%{filter:brightness(0.9);transform:translateX(0) rotate(0deg)}40%{filter:brightness(1.25);transform:translateX(-1px) rotate(-7deg)}70%{transform:translateX(1px) rotate(5deg)}}
+@keyframes ibkrStepIconPower{0%,100%{opacity:0.74;transform:scale(0.92)}50%{opacity:1;transform:scale(1.08)}}
+@keyframes ibkrStepCheckPop{0%{opacity:0;transform:scale(0.68)}68%{opacity:1;transform:scale(1.14)}100%{opacity:1;transform:scale(1)}}
+@keyframes ibkrStepLineFill{from{opacity:0.35;transform:scaleX(0)}to{opacity:1;transform:scaleX(1)}}
 @keyframes headerBroadcastScroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 @keyframes raPulseHit{0%{transform:scale(1)}30%{transform:scale(1.18)}60%{transform:scale(0.97)}100%{transform:scale(1)}}
 @media (prefers-reduced-motion: reduce){[data-pulse-hit]{animation:none!important}}
 @media (prefers-reduced-motion: reduce){[data-premium-flow-glyph]{animation:none!important}}
 @media (prefers-reduced-motion: reduce){[data-ibkr-wave] *{animation:none!important}}
-@media (prefers-reduced-motion: reduce){[data-ibkr-bridge-spinner],[data-ibkr-state-pulse]{animation:none!important}}
+@media (prefers-reduced-motion: reduce){[data-ibkr-bridge-spinner],[data-ibkr-state-pulse],[data-ibkr-step-complete] *,[data-ibkr-step-motion],[data-ibkr-step-motion] *,[data-ibkr-step-line]{animation:none!important}}
 @media (prefers-reduced-motion: reduce){[data-header-broadcast-track]{animation:none!important;transform:none!important}}
 [data-header-broadcast-viewport]:hover [data-header-broadcast-track],[data-header-broadcast-viewport]:focus-within [data-header-broadcast-track]{animation-play-state:paused!important}
 `;
@@ -199,6 +218,8 @@ const SIGNAL_MONITOR_BACKGROUND_RESUME_DELAY_MS = 3_000;
 const SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS = 6_000;
 const INITIAL_MARKET_DATA_WATCHLIST_LIMIT = 8;
 const OPEN_POSITION_MARKET_DATA_LIMIT = 16;
+const RECENT_SIGNAL_QUOTE_PIN_LIMIT = 4;
+const RECENT_SIGNAL_QUOTE_PIN_MS = 30 * 60_000;
 const SCREEN_SHELL_WARM_MOUNT_IDLE_DELAY_MS = 2_000;
 const SCREEN_SHELL_WARM_MOUNT_IDLE_STAGGER_MS = 700;
 
@@ -216,6 +237,55 @@ const INACTIVE_HEAVY_QUERY_PREFIXES = [
   ["trade-option-chain"],
   ["trade-option-chain-batch"],
 ];
+
+const resolveRecentSignalMarketDataSymbols = (
+  states = [],
+  nowMs = Date.now(),
+) => {
+  const cutoffMs = nowMs - RECENT_SIGNAL_QUOTE_PIN_MS;
+  return states
+    .filter((state) => {
+      if (!state || state.active === false) return false;
+      if (state.fresh) return true;
+      const signalAt = Date.parse(state.currentSignalAt || "");
+      return Number.isFinite(signalAt) && signalAt >= cutoffMs;
+    })
+    .sort((left, right) => {
+      const leftFresh = left?.fresh ? 1 : 0;
+      const rightFresh = right?.fresh ? 1 : 0;
+      if (leftFresh !== rightFresh) return rightFresh - leftFresh;
+      return (
+        (Date.parse(right?.currentSignalAt || "") || 0) -
+        (Date.parse(left?.currentSignalAt || "") || 0)
+      );
+    })
+    .map((state) => normalizeTickerSymbol(state?.symbol))
+    .filter(Boolean)
+    .filter((symbol, index, symbols) => symbols.indexOf(symbol) === index)
+    .slice(0, RECENT_SIGNAL_QUOTE_PIN_LIMIT);
+};
+
+const resolveQuoteStreamGateReason = ({
+  pageVisible,
+  sessionMetadataSettled,
+  brokerConfigured,
+  brokerAuthenticated,
+  ibkrWorkPressure,
+  quoteStreamEnabled,
+}) => {
+  if (!pageVisible) return "page-hidden";
+  if (!sessionMetadataSettled) return "session-not-ready";
+  if (!brokerConfigured) return "ibkr-not-configured";
+  if (!brokerAuthenticated) return "ibkr-not-ready";
+  if (ibkrWorkPressure === "stalled") return "pressure-stalled";
+  if (!quoteStreamEnabled) return "runtime-disabled";
+  return null;
+};
+
+const publishWatchlistQuoteStreamDiagnostics = (snapshot) => {
+  if (typeof window === "undefined") return;
+  window.__PYRUS_WATCHLIST_QUOTE_STREAM_DIAGNOSTICS__ = snapshot;
+};
 
 const scheduleIdleWork = (callback, timeout = 1_500) => {
   if (typeof window === "undefined") {
@@ -785,6 +855,29 @@ export default function PlatformApp() {
       !isPhone &&
       !warmupTestOverrides.disableOperationalCodePreload,
   );
+  const hiddenScreenPreloadPolicy = useMemo(
+    () =>
+      buildPlatformWorkSchedule({
+        pageVisible,
+        sessionMetadataSettled,
+        activeScreen: screen,
+        screenWarmupPhase,
+        memoryPressure: memoryPressureSignal,
+        mobileViewport: isPhone,
+      }).hiddenScreenPreload,
+    [
+      isPhone,
+      memoryPressureSignal,
+      pageVisible,
+      screen,
+      screenWarmupPhase,
+      sessionMetadataSettled,
+    ],
+  );
+  const hiddenScreenWarmMountAllowed = Boolean(
+    hiddenScreenPreloadPolicy.mountScreens &&
+      !warmupTestOverrides.disableHiddenScreenWarmMount,
+  );
   useEffect(() => {
     if (
       activeScreenBackgroundDataAllowed &&
@@ -869,16 +962,6 @@ export default function PlatformApp() {
     visibleWatchlistMarketDataSymbols,
     watchlistSymbols,
   ]);
-  const streamedQuoteSymbols = useMemo(
-    () => [
-      ...new Set(
-        [...quoteSymbols, ...sparklineSymbols]
-          .map(normalizeTickerSymbol)
-          .filter(Boolean),
-      ),
-    ],
-    [quoteSymbols, sparklineSymbols],
-  );
   const streamedAggregateSymbols = useMemo(
     () => [
       ...new Set(
@@ -965,8 +1048,12 @@ export default function PlatformApp() {
   const pushToast = useCallback(
     ({ title, body, kind = "info", duration = 3500 }) => {
       const id = ++toastIdRef.current;
-      captureToast({ title, body, kind });
-      setToasts((prev) => [...prev, { id, title, body, kind, leaving: false }]);
+      const normalizedKind = normalizeToastKind(kind);
+      captureToast({ title, body, kind: normalizedKind });
+      setToasts((prev) => [
+        ...prev,
+        { id, title, body, kind: normalizedKind, leaving: false },
+      ]);
       const dismissTimer = setTimeout(() => {
         setToasts((prev) =>
           prev.map((t) => (t.id === id ? { ...t, leaving: true } : t)),
@@ -1440,7 +1527,7 @@ export default function PlatformApp() {
       !pageVisible ||
       isPhone ||
       screenWarmupPhase !== "ready" ||
-      warmupTestOverrides.disableHiddenScreenWarmMount ||
+      !hiddenScreenWarmMountAllowed ||
       memoryBlocksOperationalPreload ||
       screenShellWarmMountCompleteRef.current
     ) {
@@ -1497,6 +1584,7 @@ export default function PlatformApp() {
       }
     };
   }, [
+    hiddenScreenWarmMountAllowed,
     memoryBlocksOperationalPreload,
     isPhone,
     markWarmupTimeline,
@@ -2111,6 +2199,155 @@ export default function PlatformApp() {
       ],
     [signalMonitorStates],
   );
+  const recentSignalMarketDataSymbols = useMemo(
+    () => resolveRecentSignalMarketDataSymbols(signalMonitorStates),
+    [signalMonitorStates],
+  );
+  const quoteStreamPinnedSymbols = useMemo(
+    () =>
+      [
+        ...new Set(
+          [
+            sym,
+            ...HEADER_KPI_SYMBOLS,
+            ...(marketScreenActive ? MARKET_SNAPSHOT_SYMBOLS : []),
+            ...visibleWatchlistMarketDataSymbols,
+            ...openPositionMarketDataSymbols,
+            ...recentSignalMarketDataSymbols,
+          ]
+            .map(normalizeTickerSymbol)
+            .filter(Boolean),
+        ),
+      ],
+    [
+      marketScreenActive,
+      openPositionMarketDataSymbols,
+      recentSignalMarketDataSymbols,
+      sym,
+      visibleWatchlistMarketDataSymbols,
+    ],
+  );
+  const [watchlistQuoteRotationCursor, setWatchlistQuoteRotationCursor] =
+    useState(0);
+  const [watchlistQuoteLastTouchedBySymbol, setWatchlistQuoteLastTouchedBySymbol] =
+    useState({});
+  const watchlistQuoteRotationBatch = useMemo(
+    () =>
+      buildWatchlistQuoteRotationBatch({
+        watchlistSymbols,
+        pinnedSymbols: quoteStreamPinnedSymbols,
+        cursor: watchlistQuoteRotationCursor,
+        batchSize: WATCHLIST_QUOTE_STREAM_BATCH_SIZE,
+      }),
+    [
+      quoteStreamPinnedSymbols,
+      watchlistQuoteRotationCursor,
+      watchlistSymbols,
+    ],
+  );
+  const streamedQuoteSymbols = useMemo(
+    () => watchlistQuoteRotationBatch.symbols,
+    [watchlistQuoteRotationBatch.symbols],
+  );
+  const streamedQuoteSymbolsKey = useMemo(
+    () => streamedQuoteSymbols.join(","),
+    [streamedQuoteSymbols],
+  );
+  const quoteStreamGateReason = useMemo(
+    () =>
+      resolveQuoteStreamGateReason({
+        pageVisible,
+        sessionMetadataSettled,
+        brokerConfigured,
+        brokerAuthenticated: Boolean(session?.ibkrBridge?.authenticated),
+        ibkrWorkPressure,
+        quoteStreamEnabled: workSchedule.streams.watchlistQuoteStream,
+      }),
+    [
+      brokerConfigured,
+      ibkrWorkPressure,
+      pageVisible,
+      session?.ibkrBridge?.authenticated,
+      sessionMetadataSettled,
+      workSchedule.streams.watchlistQuoteStream,
+    ],
+  );
+  useEffect(() => {
+    if (
+      quoteStreamGateReason ||
+      watchlistQuoteRotationBatch.rotatingUniverseSize <= 0
+    ) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      setWatchlistQuoteRotationCursor((cursor) =>
+        buildWatchlistQuoteRotationBatch({
+          watchlistSymbols,
+          pinnedSymbols: quoteStreamPinnedSymbols,
+          cursor,
+          batchSize: WATCHLIST_QUOTE_STREAM_BATCH_SIZE,
+        }).nextCursor,
+      );
+    }, WATCHLIST_QUOTE_STREAM_ROTATION_MS);
+    return () => window.clearInterval(timer);
+  }, [
+    quoteStreamGateReason,
+    quoteStreamPinnedSymbols,
+    watchlistQuoteRotationBatch.rotatingUniverseSize,
+    watchlistSymbols,
+  ]);
+  useEffect(() => {
+    if (quoteStreamGateReason || streamedQuoteSymbols.length === 0) {
+      return;
+    }
+    const universe = new Set(
+      [...watchlistSymbols, ...streamedQuoteSymbols]
+        .map(normalizeTickerSymbol)
+        .filter(Boolean),
+    );
+    const touchedAt = new Date().toISOString();
+    setWatchlistQuoteLastTouchedBySymbol((current) => {
+      const next = {};
+      Object.entries(current || {}).forEach(([symbol, value]) => {
+        if (universe.has(symbol)) {
+          next[symbol] = value;
+        }
+      });
+      streamedQuoteSymbols.forEach((symbol) => {
+        next[symbol] = touchedAt;
+      });
+      return next;
+    });
+  }, [quoteStreamGateReason, streamedQuoteSymbols.length, streamedQuoteSymbolsKey, watchlistSymbols]);
+  const watchlistQuoteStreamDiagnostics = useMemo(
+    () =>
+      buildWatchlistQuoteRotationDiagnostics({
+        batch: watchlistQuoteRotationBatch,
+        watchlistSymbols,
+        lastTouchedAtBySymbol: watchlistQuoteLastTouchedBySymbol,
+        cycleWindowMs: WATCHLIST_QUOTE_STREAM_CYCLE_WINDOW_MS,
+        disabledReason: quoteStreamGateReason,
+      }),
+    [
+      quoteStreamGateReason,
+      watchlistQuoteLastTouchedBySymbol,
+      watchlistQuoteRotationBatch,
+      watchlistSymbols,
+    ],
+  );
+  useEffect(() => {
+    publishWatchlistQuoteStreamDiagnostics(watchlistQuoteStreamDiagnostics);
+    return () => {
+      if (
+        typeof window !== "undefined" &&
+        window.__PYRUS_WATCHLIST_QUOTE_STREAM_DIAGNOSTICS__ ===
+          watchlistQuoteStreamDiagnostics
+      ) {
+        delete window.__PYRUS_WATCHLIST_QUOTE_STREAM_DIAGNOSTICS__;
+      }
+    };
+  }, [watchlistQuoteStreamDiagnostics]);
   const signalMatrixUniverseSymbols = useMemo(
     () =>
       [
@@ -2128,6 +2365,7 @@ export default function PlatformApp() {
         ...new Set(
           [
             sym,
+            ...watchlistSymbols,
             ...visibleWatchlistMarketDataSymbols,
             ...openPositionMarketDataSymbols,
             ...signalMonitorSymbols,
@@ -2141,6 +2379,7 @@ export default function PlatformApp() {
       signalMonitorSymbols,
       sym,
       visibleWatchlistMarketDataSymbols,
+      watchlistSymbols,
     ],
   );
   const signalMatrixSymbolsKey = useMemo(
@@ -2201,8 +2440,7 @@ export default function PlatformApp() {
       timelineMs: warmupTimelineRef.current,
       gates: {
         operationalCodePreloadReady,
-        hiddenScreenWarmMountEnabled:
-          !warmupTestOverrides.disableHiddenScreenWarmMount,
+        hiddenScreenWarmMountEnabled: hiddenScreenWarmMountAllowed,
         backgroundDataWarmupEnabled,
         activeScreenBackgroundAllowed,
         activeScreenBackgroundDataAllowed,
@@ -2238,6 +2476,7 @@ export default function PlatformApp() {
     broadMarketDataHydrationReady,
     firstScreenReady,
     frameAuxiliaryDataEnabled,
+    hiddenScreenWarmMountAllowed,
     memoryAllowsIdlePrefetch,
     memoryBlocksOperationalPreload,
     memoryPressureLevel,
@@ -2441,8 +2680,8 @@ export default function PlatformApp() {
     ],
   );
   const runtimeStreamedQuoteSymbols = useMemo(
-    () => [...new Set([...streamedQuoteSymbols, ...openPositionMarketDataSymbols])],
-    [openPositionMarketDataSymbols, streamedQuoteSymbols],
+    () => [...new Set(streamedQuoteSymbols)],
+    [streamedQuoteSymbols],
   );
   const runtimeStreamedAggregateSymbols = useMemo(
     () => [...new Set(streamedAggregateSymbols)],
@@ -2999,6 +3238,8 @@ export default function PlatformApp() {
         streamedQuoteSymbols={runtimeStreamedQuoteSymbols}
         streamedAggregateSymbols={runtimeStreamedAggregateSymbols}
         quoteStreamRuntimeEnabled={workSchedule.streams.watchlistQuoteStream}
+        quoteStreamDisabledReason={quoteStreamGateReason}
+        quoteStreamCoverageDiagnostics={watchlistQuoteStreamDiagnostics}
         marketStockAggregateStreamingEnabled={
           workSchedule.streams.marketStockAggregates
         }

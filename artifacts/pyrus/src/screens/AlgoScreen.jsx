@@ -284,6 +284,7 @@ export const AlgoScreen = ({
   const [algoCriticalFallbackReady, setAlgoCriticalFallbackReady] = useState(false);
   const [algoDerivedFallbackReady, setAlgoDerivedFallbackReady] = useState(false);
   const algoTimingStagesRef = useRef(new Set());
+  const autoInitialScanDeploymentIdsRef = useRef(new Set());
   useEffect(() => {
     if (!isVisible) {
       algoTimingStagesRef.current = new Set();
@@ -375,20 +376,9 @@ export const AlgoScreen = ({
     isVisible,
     markAlgoTiming,
   ]);
-  const algoCriticalQueriesEnabled = Boolean(
-    isVisible &&
-      algoCriticalFallbackReady &&
-      !algoCockpitStreamFreshness.algoCriticalFresh,
-  );
-  const algoDerivedQueriesEnabled = Boolean(
-    isVisible &&
-      algoDerivedFallbackReady &&
-      !algoCockpitStreamFreshness.algoFullFresh,
-  );
-  const algoPostCriticalQueriesEnabled = Boolean(
-    isVisible &&
-      (algoCockpitStreamFreshness.algoCriticalFresh || algoCriticalFallbackReady),
-  );
+  const algoCriticalQueriesEnabled = Boolean(isVisible);
+  const algoDerivedQueriesEnabled = Boolean(isVisible);
+  const algoPostCriticalQueriesEnabled = Boolean(isVisible);
   const algoRoutineRefetchInterval =
     isVisible && !algoCockpitStreamFreshness.algoCriticalFresh
       ? QUERY_DEFAULTS.refetchInterval
@@ -432,15 +422,6 @@ export const AlgoScreen = ({
     const matchingMode = drafts.filter((draft) => draft.mode === environment);
     return matchingMode.length ? matchingMode : drafts;
   }, [draftsQuery.data, environment]);
-  const algoSetupDataSettled = Boolean(
-    (algoCockpitStreamFreshness.algoCriticalFresh ||
-      algoCriticalFallbackReady ||
-      deploymentsQuery.isFetched ||
-      deploymentsQuery.isError) &&
-      (!algoPostCriticalQueriesEnabled ||
-        draftsQuery.isFetched ||
-        draftsQuery.isError),
-  );
   const selectedDraft =
     candidateDrafts.find((draft) => draft.id === selectedDraftId) ||
     candidateDrafts[0] ||
@@ -522,6 +503,23 @@ export const AlgoScreen = ({
       },
     },
   );
+  const deploymentsSettled = Boolean(
+    deploymentsQuery.data ||
+      deploymentsQuery.isFetched ||
+      deploymentsQuery.isError,
+  );
+  const draftsSettled = Boolean(
+    draftsQuery.data || draftsQuery.isFetched || draftsQuery.isError,
+  );
+  const signalOptionsStateSettled = Boolean(
+    signalOptionsStateQuery.data ||
+      signalOptionsStateQuery.isFetched ||
+      signalOptionsStateQuery.isError,
+  );
+  const cockpitSettled = Boolean(
+    cockpitQuery.data || cockpitQuery.isFetched || cockpitQuery.isError,
+  );
+  const algoSetupDataSettled = Boolean(deploymentsSettled && draftsSettled);
   const cockpit = cockpitQuery.data || null;
   const transitionsStoreRef = useRef(null);
   if (transitionsStoreRef.current === null) {
@@ -980,6 +978,17 @@ export const AlgoScreen = ({
     mutation: {
       onSuccess: (state) => {
         refreshAlgoQueries();
+        if (
+          state?.status === "already_running" ||
+          state?.reason === "signal_options_scan_running"
+        ) {
+          toast.push({
+            kind: "info",
+            title: "Shadow scan already running",
+            body: "The active signal-options scan will finish before another one starts.",
+          });
+          return;
+        }
         setSelectedCandidateId(state?.candidates?.[0]?.id || null);
         toast.push({
           kind: "success",
@@ -1520,6 +1529,42 @@ export const AlgoScreen = ({
         signalAt: candidate.signalAt,
         signalPrice: candidate.signalPrice,
       }));
+  const algoSignalSurfaceSettled = Boolean(
+    focusedDeployment?.id &&
+      (signalOptionsStateSettled || cockpitSettled),
+  );
+  const algoSignalSurfaceEmpty = Boolean(
+    focusedDeployment?.id &&
+      visibleSignalRows.length === 0 &&
+      signalOptionsCandidates.length === 0,
+  );
+  useEffect(() => {
+    const deploymentId = focusedDeployment?.id || null;
+    if (
+      !isVisible ||
+      !deploymentId ||
+      !focusedDeployment?.enabled ||
+      !gatewayReady ||
+      !algoSignalSurfaceSettled ||
+      !algoSignalSurfaceEmpty ||
+      runShadowScanMutation.isPending ||
+      autoInitialScanDeploymentIdsRef.current.has(deploymentId)
+    ) {
+      return;
+    }
+
+    autoInitialScanDeploymentIdsRef.current.add(deploymentId);
+    runShadowScanMutation.mutate({ deploymentId });
+  }, [
+    algoSignalSurfaceEmpty,
+    algoSignalSurfaceSettled,
+    focusedDeployment?.enabled,
+    focusedDeployment?.id,
+    gatewayReady,
+    isVisible,
+    runShadowScanMutation,
+    runShadowScanMutation.isPending,
+  ]);
 
   return (
     <div

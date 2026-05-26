@@ -16,7 +16,7 @@ import {
   resolveIbkrGatewayHealth,
   shouldShowIbkrReconnectAction,
 } from "./IbkrConnectionStatus.jsx";
-import { bridgeRuntimeTone } from "./bridgeRuntimeModel.js";
+import { bridgeRuntimeMessage, bridgeRuntimeTone } from "./bridgeRuntimeModel.js";
 import { buildHeaderIbkrPopoverModel } from "./ibkrPopoverModel.js";
 import { streamStateTokenVar } from "./streamSemantics";
 import { TooltipProvider } from "../../components/ui/tooltip";
@@ -99,7 +99,7 @@ test("getIbkrConnectionTone maps configured connection states", () => {
       accountsLoaded: true,
       strictReady: false,
     }).label,
-    "stale",
+    "quote stale",
   );
   assert.equal(
     getIbkrConnectionTone({
@@ -347,6 +347,62 @@ test("bridgeRuntimeTone maps in-progress bridge states to accent", () => {
   );
 });
 
+test("bridgeRuntimeTone surfaces desktop reconnect when IBKR is unconfigured", () => {
+  const readyTone = bridgeRuntimeTone({
+    configured: { ibkr: false },
+    runtime: {
+      ibkr: {
+        runtimeOverrideActive: false,
+        desktopAgentOnline: true,
+        desktopAgentUpgradeRequired: false,
+        reconnectAvailable: true,
+      },
+    },
+  });
+  assert.equal(readyTone.label, "reconnect");
+  assert.equal(readyTone.color, CSS_COLOR.amber);
+  assert.equal(readyTone.pulse, true);
+  assert.match(
+    bridgeRuntimeMessage({
+      configured: { ibkr: false },
+      runtime: {
+        ibkr: {
+          runtimeOverrideActive: false,
+          desktopAgentOnline: true,
+          desktopAgentUpgradeRequired: false,
+        },
+      },
+    }),
+    /Reconnect IBKR/,
+  );
+
+  const upgradeTone = bridgeRuntimeTone({
+    configured: { ibkr: false },
+    runtime: {
+      ibkr: {
+        runtimeOverrideActive: false,
+        desktopAgentOnline: true,
+        desktopAgentUpgradeRequired: true,
+        reconnectAvailable: false,
+      },
+    },
+  });
+  assert.equal(upgradeTone.label, "helper update");
+  assert.match(
+    bridgeRuntimeMessage({
+      configured: { ibkr: false },
+      runtime: {
+        ibkr: {
+          runtimeOverrideActive: false,
+          desktopAgentOnline: true,
+          desktopAgentUpgradeRequired: true,
+        },
+      },
+    }),
+    /must update/,
+  );
+});
+
 test("bridgeRuntimeTone keeps reconnect-needed streams out of generic offline tone", () => {
   const tone = bridgeRuntimeTone({
     configured: { ibkr: true },
@@ -425,7 +481,7 @@ test("getIbkrStreamStateMeta keeps quiet reasons visually distinct", () => {
       "market closed",
       "quiet stream",
       "online",
-      "stale",
+      "quote stale",
       "line limited",
       "reconnecting",
     ],
@@ -1648,6 +1704,68 @@ test("buildHeaderIbkrPopoverModel keeps line usage when runtime diagnostics are 
       ["total", 77, 200, 123],
     ],
   );
+});
+
+test("buildHeaderIbkrPopoverModel uses watchlist prewarm reservation when retired watchlist pool is zero", () => {
+  const model = buildHeaderIbkrPopoverModel({
+    connection: {
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      liveMarketDataAvailable: true,
+      healthFresh: true,
+      accountsLoaded: true,
+      configuredLiveMarketDataMode: true,
+      streamFresh: true,
+      strictReady: true,
+    },
+    lineUsageSnapshot: {
+      admission: {
+        activeLineCount: 121,
+        visibleLineCount: 120,
+        watchlistLineCount: 0,
+        budget: {
+          maxLines: 200,
+          visibleLineCap: 120,
+          watchlistLineCap: 0,
+          flowScannerLineCap: 80,
+        },
+        poolUsage: {
+          visible: {
+            activeLineCount: 120,
+            maxLines: 120,
+            remainingLineCount: 0,
+          },
+          watchlist: {
+            activeLineCount: 0,
+            maxLines: 0,
+            effectiveMaxLines: 0,
+            remainingLineCount: 0,
+            strict: true,
+          },
+          "flow-scanner": {
+            activeLineCount: 0,
+            maxLines: 80,
+            remainingLineCount: 80,
+            strict: true,
+          },
+        },
+        counters: {},
+      },
+      watchlistPrewarm: {
+        primaryActiveSymbolCount: 118,
+        primarySymbolLimit: 120,
+      },
+    },
+  });
+
+  const watchlistRow = model.lineUsage.rows.find((row) => row.id === "watchlist");
+
+  assert.equal(watchlistRow.used, 118);
+  assert.equal(watchlistRow.cap, 120);
+  assert.equal(watchlistRow.effectiveCap, 120);
+  assert.equal(watchlistRow.free, 2);
+  assert.equal(watchlistRow.detail, "118 active of 120 reserved");
 });
 
 test("buildHeaderIbkrPopoverModel uses one active line meter with pending reconciliation", () => {

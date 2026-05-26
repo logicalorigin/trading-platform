@@ -291,23 +291,31 @@ test("watchlist displays legacy symbols plus signal-monitor rows and signal sort
   const rowElementPlacement = await spyRow.evaluate((row) => {
     const rowBox = row.getBoundingClientRect();
     const dayChange = row.querySelector('[data-testid="watchlist-day-change"]');
-    const symbol = row.querySelector('[data-testid="watchlist-row-symbol"]');
+    const price = row.querySelector('[data-testid="watchlist-row-price"]');
     const dots = row.querySelector('[data-testid="watchlist-signal-dots"]');
     const signalPill = row.querySelector('[data-testid="watchlist-signal-pill"]');
     const dayChangeBox = dayChange?.getBoundingClientRect();
-    const symbolBox = symbol?.getBoundingClientRect();
+    const priceBox = price?.getBoundingClientRect();
     const dotsBox = dots?.getBoundingClientRect();
     const signalPillBox = signalPill?.getBoundingClientRect();
+    if (!dayChangeBox || !priceBox || !dotsBox || !signalPillBox) {
+      throw new Error("Missing watchlist row placement target");
+    }
     return {
-      symbolRight: symbolBox ? symbolBox.right - rowBox.left : Number.POSITIVE_INFINITY,
-      dayChangeLeft: dayChangeBox ? dayChangeBox.left - rowBox.left : Number.NEGATIVE_INFINITY,
-      dotsRight: dotsBox ? dotsBox.right - rowBox.left : Number.POSITIVE_INFINITY,
-      signalPillLeft: signalPillBox ? signalPillBox.left - rowBox.left : Number.NEGATIVE_INFINITY,
+      priceBottom: priceBox.bottom - rowBox.top,
+      priceRight: priceBox.right - rowBox.left,
+      dayChangeTop: dayChangeBox.top - rowBox.top,
+      dayChangeRight: dayChangeBox.right - rowBox.left,
+      dotsRight: dotsBox.right - rowBox.left,
+      signalPillLeft: signalPillBox.left - rowBox.left,
     };
   });
-  expect(rowElementPlacement.symbolRight).toBeLessThanOrEqual(
-    rowElementPlacement.dayChangeLeft,
+  expect(rowElementPlacement.dayChangeTop).toBeGreaterThanOrEqual(
+    rowElementPlacement.priceBottom - 1,
   );
+  expect(
+    Math.abs(rowElementPlacement.dayChangeRight - rowElementPlacement.priceRight),
+  ).toBeLessThanOrEqual(2);
   expect(rowElementPlacement.dotsRight).toBeLessThanOrEqual(
     rowElementPlacement.signalPillLeft,
   );

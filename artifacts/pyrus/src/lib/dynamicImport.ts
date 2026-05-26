@@ -126,5 +126,13 @@ export function lazyWithRetry<T extends ComponentType<any>>(
   loader: () => Promise<{ default: T }>,
   options: DynamicImportOptions = {},
 ) {
-  return lazy(() => retryDynamicImport(loader, options));
+  return lazy(async () => {
+    const mod = await retryDynamicImport(loader, options);
+    if (mod?.default == null) {
+      throw new Error(
+        `Dynamic import ${options.label || "module"} resolved without a default component.`,
+      );
+    }
+    return mod;
+  });
 }

@@ -14,7 +14,10 @@ import {
 } from "./bridge-quote-stream";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
 import { HttpError } from "../lib/errors";
-import { __resetMarketDataAdmissionForTests } from "./market-data-admission";
+import {
+  __resetMarketDataAdmissionForTests,
+  getMarketDataAdmissionDiagnostics,
+} from "./market-data-admission";
 import {
   __resetBridgeGovernorForTests,
   getBridgeGovernorSnapshot,
@@ -207,6 +210,39 @@ test("fetchBridgeQuoteSnapshots skips bridge client when runtime is not configur
   assert.deepEqual(payload.quotes, []);
   assert.equal(snapshotCalls, 0);
   assert.equal(getBridgeGovernorSnapshot().quotes.failureCount, 0);
+});
+
+test("bridge quote subscriptions avoid admission, bridge calls, and fast retry when runtime is missing", async () => {
+  let streamCalls = 0;
+  __setBridgeQuoteClientForTests({
+    async getQuoteSnapshots() {
+      throw new Error("snapshots should not be read");
+    },
+    streamQuoteSnapshots() {
+      streamCalls += 1;
+      return () => {};
+    },
+  });
+  __setBridgeQuoteRuntimeConfiguredForTests(false);
+
+  const unsubscribe = subscribeBridgeQuoteSnapshots(["SPY"], () => {});
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  const streamDiagnostics = getBridgeQuoteStreamDiagnostics();
+  const admissionDiagnostics = getMarketDataAdmissionDiagnostics();
+  const lastStreamStatus = streamDiagnostics.lastStreamStatus as {
+    reason?: string;
+    retryDelayMs?: number;
+  } | null;
+  unsubscribe();
+
+  assert.equal(streamCalls, 0);
+  assert.equal(streamDiagnostics.activeConsumerCount, 1);
+  assert.equal(streamDiagnostics.unionSymbolCount, 0);
+  assert.equal(streamDiagnostics.requestedSymbolCount, 1);
+  assert.equal(lastStreamStatus?.reason, "ibkr_bridge_not_configured");
+  assert.ok((lastStreamStatus?.retryDelayMs ?? 0) >= 60_000);
+  assert.equal(admissionDiagnostics.activeEquityLineCount, 0);
+  assert.equal(admissionDiagnostics.activeLineCount, 0);
 });
 
 test("fetchBridgeQuoteSnapshots keeps cached rejected symbols in the payload", async () => {
@@ -491,6 +527,64 @@ test("bridge quote stream updates mutable bridge stream symbols without reconnec
   assert.deepEqual(updates.at(-1), ["QQQ", "SPY"]);
   assert.equal(diagnostics.mutableStreamActive, true);
   assert.equal(diagnostics.mutableUpdateCount, 1);
+  assert.equal(diagnostics.reconnectScheduled, false);
+});
+
+test("bridge quote stream closes mutable bridge stream after the last consumer unsubscribes", async () => {
+  const now = new Date("2026-04-28T14:30:00.000Z");
+  let opened = 0;
+  let closed = 0;
+  __setBridgeQuoteStreamNowForTests(now);
+  __setBridgeQuoteClientForTests({
+    async getQuoteSnapshots() {
+      return [];
+    },
+    streamMutableQuoteSnapshots(_symbols, _onSnapshot, _onError, onSignal) {
+      opened += 1;
+      onSignal?.({
+        type: "ready",
+        at: now,
+        status: { state: "open" },
+      });
+      return {
+        async setSymbols() {},
+        close() {
+          closed += 1;
+        },
+      };
+    },
+    streamQuoteSnapshots() {
+      throw new Error("legacy stream should not be used");
+    },
+  });
+
+  const unsubscribe = subscribeBridgeQuoteSnapshots(["SPY"], () => {});
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  let diagnostics = getBridgeQuoteStreamDiagnostics();
+
+  assert.equal(opened, 1);
+  assert.equal(closed, 0);
+  assert.equal(diagnostics.activeConsumerCount, 1);
+  assert.equal(diagnostics.unionSymbolCount, 1);
+  assert.equal(diagnostics.requestedSymbolCount, 1);
+  assert.equal(diagnostics.streamSignature, "SPY");
+  assert.equal(diagnostics.pendingStreamSignature, "");
+  assert.equal(diagnostics.streamActive, true);
+  assert.equal(diagnostics.mutableStreamActive, true);
+
+  unsubscribe();
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  diagnostics = getBridgeQuoteStreamDiagnostics();
+
+  assert.equal(closed, 1);
+  assert.equal(diagnostics.activeConsumerCount, 0);
+  assert.equal(diagnostics.unionSymbolCount, 0);
+  assert.equal(diagnostics.requestedSymbolCount, 0);
+  assert.deepEqual(diagnostics.desiredSymbols, []);
+  assert.equal(diagnostics.streamSignature, "");
+  assert.equal(diagnostics.pendingStreamSignature, "");
+  assert.equal(diagnostics.streamActive, false);
+  assert.equal(diagnostics.mutableStreamActive, false);
   assert.equal(diagnostics.reconnectScheduled, false);
 });
 

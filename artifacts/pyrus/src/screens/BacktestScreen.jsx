@@ -34,6 +34,18 @@ const BacktestWorkspaceFallback = () => (
   />
 );
 
+const BacktestDraftStrategiesFallback = () => (
+  <div
+    data-testid="backtest-draft-strategies-fallback"
+    aria-hidden="true"
+    style={{
+      minHeight: dim(180),
+      borderRadius: dim(8),
+      background: CSS_COLOR.bg1,
+    }}
+  />
+);
+
 export const BacktestScreen = ({
   watchlists,
   defaultWatchlistId,
@@ -57,7 +69,7 @@ export const BacktestScreen = ({
         minWidth: 0,
       }}
     >
-      <Suspense fallback={null}>
+      <Suspense fallback={<BacktestDraftStrategiesFallback />}>
         <LazyAlgoDraftStrategiesPanel
           theme={T}
           scale={{ fs, sp, dim }}

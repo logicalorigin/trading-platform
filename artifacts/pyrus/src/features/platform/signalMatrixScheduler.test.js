@@ -20,17 +20,88 @@ test("signal matrix scheduler sends priority symbols first and rotates backgroun
   assert.equal(plan.coverage.requestSymbols, 10);
 });
 
-test("signal matrix scheduler pauses background coverage under critical pressure", () => {
+test("signal matrix scheduler keeps active priority rows and reserves normal background rotation", () => {
   const plan = buildSignalMatrixRequestPlan({
-    symbols: ["SPY", "QQQ", "AAPL", "NVDA", "MSFT", "TSLA"],
+    symbols: [
+      "SPY",
+      "NVDA",
+      "DIA",
+      "AAPL",
+      "MSFT",
+      "TSLA",
+      "TQQQ",
+      "SQQQ",
+      "PLTR",
+      "COIN",
+      "HOOD",
+      "RBLX",
+      "RKLB",
+      "SMCI",
+      "VXX",
+      "VIXY",
+      "AMD",
+      "AVGO",
+      "QQQ",
+      "IWM",
+    ],
+    prioritySymbols: [
+      "SPY",
+      "NVDA",
+      "DIA",
+      "AAPL",
+      "MSFT",
+      "TSLA",
+      "TQQQ",
+      "SQQQ",
+    ],
+    backgroundReady: true,
+    cursor: 0,
+  });
+
+  assert.equal(plan.requestSymbols.length, 16);
+  assert.deepEqual(plan.prioritySymbols, [
+    "SPY",
+    "NVDA",
+    "DIA",
+    "AAPL",
+    "MSFT",
+    "TSLA",
+    "TQQQ",
+    "SQQQ",
+  ]);
+  assert.deepEqual(plan.backgroundSymbols, [
+    "PLTR",
+    "COIN",
+    "HOOD",
+    "RBLX",
+    "RKLB",
+    "SMCI",
+    "VXX",
+    "VIXY",
+  ]);
+});
+
+test("signal matrix scheduler keeps bounded background rotation under critical pressure", () => {
+  const plan = buildSignalMatrixRequestPlan({
+    symbols: ["SPY", "QQQ", "AAPL", "NVDA", "MSFT", "TSLA", "AMD", "META", "PLTR", "COIN"],
     prioritySymbols: ["SPY", "QQQ", "AAPL", "NVDA", "MSFT"],
     pressureLevel: "critical",
     backgroundReady: true,
   });
 
-  assert.deepEqual(plan.requestSymbols, ["SPY", "QQQ", "AAPL", "NVDA"]);
-  assert.equal(plan.backgroundSymbols.length, 0);
-  assert.equal(plan.backgroundPaused, true);
+  assert.deepEqual(plan.prioritySymbols, ["SPY", "QQQ", "AAPL", "NVDA"]);
+  assert.deepEqual(plan.backgroundSymbols, ["MSFT", "TSLA", "AMD", "META"]);
+  assert.deepEqual(plan.requestSymbols, [
+    "SPY",
+    "QQQ",
+    "AAPL",
+    "NVDA",
+    "MSFT",
+    "TSLA",
+    "AMD",
+    "META",
+  ]);
+  assert.equal(plan.backgroundPaused, false);
 });
 
 test("signal matrix scheduler still hydrates priority symbols before background readiness", () => {

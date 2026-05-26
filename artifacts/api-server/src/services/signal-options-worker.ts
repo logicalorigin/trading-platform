@@ -72,6 +72,15 @@ type DeploymentRuntime = {
   lastOldestSignalBarAt: string | null;
   lastCandidateCount: number;
   lastBlockedCandidateCount: number;
+  lastBatchSymbols: string[];
+  lastBatchSize: number;
+  lastBatchUniverseCount: number;
+  lastBatchStartIndex: number | null;
+  lastBatchNextIndex: number | null;
+  lastBatchCapacity: number | null;
+  lastBatchFullUniverse: boolean;
+  pollIntervalMs: number;
+  nextScanDueAtMs: number | null;
 };
 
 type MaintenanceRuntime = {
@@ -117,6 +126,26 @@ function numeric(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function summarizeScanBatch(value: unknown) {
+  const batch = asRecord(value);
+  const symbols = asArray(batch["symbols"])
+    .map((symbol) => String(symbol ?? "").trim().toUpperCase())
+    .filter(Boolean);
+  if (!symbols.length && !Object.keys(batch).length) {
+    return null;
+  }
+
+  return {
+    symbols,
+    universeCount: numeric(batch["universeCount"]) ?? symbols.length,
+    batchSize: numeric(batch["batchSize"]) ?? symbols.length,
+    startIndex: numeric(batch["startIndex"]),
+    nextIndex: numeric(batch["nextIndex"]),
+    capacity: numeric(batch["capacity"]),
+    fullUniverse: batch["fullUniverse"] === true,
+  };
+}
+
 function summarizeScanResult(result: unknown) {
   const record = asRecord(result);
   const summary = asRecord(record["summary"]);
@@ -137,6 +166,7 @@ function summarizeScanResult(result: unknown) {
           : null,
       candidateCount: numeric(summary["candidateCount"]) ?? 0,
       blockedCandidateCount: numeric(summary["blockedCandidateCount"]) ?? 0,
+      batch: summarizeScanBatch(summary["batch"]),
     };
   }
 
@@ -175,6 +205,7 @@ function summarizeScanResult(result: unknown) {
       const status = String(candidate["status"] ?? "");
       return actionStatus === "blocked" || status === "skipped";
     }).length,
+    batch: null,
   };
 }
 
@@ -186,6 +217,14 @@ function summarizeMaintenanceResult(result: unknown) {
     dueCount: Number(record["dueCount"]) || 0,
     orphanCount: Number(record["orphanCount"]) || 0,
   };
+}
+
+function isScanAlreadyRunningResult(result: unknown): boolean {
+  const record = asRecord(result);
+  return (
+    record["status"] === "already_running" ||
+    record["reason"] === "signal_options_scan_running"
+  );
 }
 
 function positiveInteger(value: unknown, fallback: number, min: number, max: number) {
@@ -240,6 +279,15 @@ function createDeploymentRuntime(signature: string): DeploymentRuntime {
     lastOldestSignalBarAt: null,
     lastCandidateCount: 0,
     lastBlockedCandidateCount: 0,
+    lastBatchSymbols: [],
+    lastBatchSize: 0,
+    lastBatchUniverseCount: 0,
+    lastBatchStartIndex: null,
+    lastBatchNextIndex: null,
+    lastBatchCapacity: null,
+    lastBatchFullUniverse: false,
+    pollIntervalMs: 60_000,
+    nextScanDueAtMs: null,
   };
 }
 
@@ -338,6 +386,15 @@ async function runDeployment(input: {
       forceEvaluate: false,
       source: "worker",
     });
+    if (isScanAlreadyRunningResult(scanResult)) {
+      const skippedAt = dependencies.now();
+      runtime.lastSkippedAtMs = skippedAt.getTime();
+      runtime.lastSkipReason = "scan_running";
+      runtime.skippedScanCount += 1;
+      runtime.lastError = null;
+      runtime.failedUntilMs = 0;
+      return;
+    }
     const scanSummary = summarizeScanResult(scanResult);
     runtime.scanCount += 1;
     runtime.lastSuccessAt = dependencies.now().toISOString();
@@ -352,6 +409,13 @@ async function runDeployment(input: {
     runtime.lastOldestSignalBarAt = scanSummary.oldestSignalBarAt;
     runtime.lastCandidateCount = scanSummary.candidateCount;
     runtime.lastBlockedCandidateCount = scanSummary.blockedCandidateCount;
+    runtime.lastBatchSymbols = scanSummary.batch?.symbols ?? [];
+    runtime.lastBatchSize = scanSummary.batch?.batchSize ?? 0;
+    runtime.lastBatchUniverseCount = scanSummary.batch?.universeCount ?? 0;
+    runtime.lastBatchStartIndex = scanSummary.batch?.startIndex ?? null;
+    runtime.lastBatchNextIndex = scanSummary.batch?.nextIndex ?? null;
+    runtime.lastBatchCapacity = scanSummary.batch?.capacity ?? null;
+    runtime.lastBatchFullUniverse = scanSummary.batch?.fullUniverse === true;
   } catch (error) {
     const failedAt = dependencies.now();
     const message =
@@ -371,6 +435,7 @@ async function runDeployment(input: {
     const scanEndedAtMs = dependencies.now().getTime();
     runtime.lastScanDurationMs = Math.max(0, scanEndedAtMs - scanStartedAtMs);
     runtime.lastCheckedAtMs = scanEndedAtMs;
+    runtime.nextScanDueAtMs = scanEndedAtMs + runtime.pollIntervalMs;
     runtime.pressurePaused = false;
     runtime.pressurePauseStartedAtMs = null;
     runtime.currentScanStartedAtMs = null;
@@ -479,6 +544,11 @@ export function createSignalOptionsWorker(
         }
 
         const pollIntervalMs = resolvePollIntervalSeconds(deployment) * 1000;
+        runtime.pollIntervalMs = pollIntervalMs;
+        runtime.nextScanDueAtMs =
+          runtime.lastCheckedAtMs > 0
+            ? runtime.lastCheckedAtMs + pollIntervalMs
+            : nowMs;
         if (
           !signatureChanged &&
           runtime.lastCheckedAtMs > 0 &&
@@ -503,6 +573,7 @@ export function createSignalOptionsWorker(
         }
 
         runtime.lastCheckedAtMs = nowMs;
+        runtime.nextScanDueAtMs = null;
         await runDeployment({ deployment, runtime, dependencies });
       }
       transientDbBackoff.clear();
@@ -609,6 +680,22 @@ export function createSignalOptionsWorker(
           lastOldestSignalBarAt: runtime.lastOldestSignalBarAt,
           lastCandidateCount: runtime.lastCandidateCount,
           lastBlockedCandidateCount: runtime.lastBlockedCandidateCount,
+          lastBatchSymbols: runtime.lastBatchSymbols,
+          lastBatchSize: runtime.lastBatchSize,
+          lastBatchUniverseCount: runtime.lastBatchUniverseCount,
+          lastBatchStartIndex: runtime.lastBatchStartIndex,
+          lastBatchNextIndex: runtime.lastBatchNextIndex,
+          lastBatchCapacity: runtime.lastBatchCapacity,
+          lastBatchFullUniverse: runtime.lastBatchFullUniverse,
+          pollIntervalMs: runtime.pollIntervalMs,
+          nextScanDueAt:
+            runtime.nextScanDueAtMs === null
+              ? null
+              : new Date(runtime.nextScanDueAtMs).toISOString(),
+          nextScanDueInMs:
+            runtime.nextScanDueAtMs === null
+              ? null
+              : Math.max(0, runtime.nextScanDueAtMs - snapshotNowMs),
         }),
       );
       return {

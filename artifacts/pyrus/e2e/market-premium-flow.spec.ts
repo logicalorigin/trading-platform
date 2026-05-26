@@ -371,10 +371,10 @@ test("Market chart flow markers expose semantic tones", async ({ page }) => {
   await mockMarketApi(page, flowUrls, { showVolume: false });
   await openMarketGrid(page, { showVolume: false });
   await expect(
-    page.getByTestId("market-mini-chart-0-surface-market-closed-overlay"),
+    page.getByTestId("market-chart-0-surface-market-closed-overlay"),
   ).toHaveCount(0);
 
-  const spyMarker = page.getByTestId("market-mini-chart-0-surface-chart-event").first();
+  const spyMarker = page.getByTestId("market-chart-0-surface-chart-event").first();
   await expect(spyMarker).toBeVisible({ timeout: 30_000 });
   await expect(spyMarker).toHaveAttribute("data-chart-event-type", "unusual_flow");
   await expect(spyMarker).toHaveAttribute("data-chart-flow-marker-tone", "bullish");
@@ -390,15 +390,15 @@ test("Market chart flow markers expose semantic tones", async ({ page }) => {
     "data-chart-flow-event-day",
     /^\d{4}-\d{2}-\d{2}$/,
   );
-  await expect(spyMarker).toHaveCSS("color", "rgb(79, 178, 134)");
+  await expect(spyMarker).toHaveCSS("color", "rgb(46, 216, 137)");
   await spyMarker.hover();
-  const spyTooltip = page.getByTestId("market-mini-chart-0-surface-flow-tooltip");
+  const spyTooltip = page.getByTestId("market-chart-0-surface-flow-tooltip");
   await expect(spyTooltip).toBeVisible();
   await expect(spyTooltip).toHaveAttribute("data-chart-flow-tooltip-compact", "true");
   await expect(spyTooltip).toContainText("POLYGON");
   await expect(spyTooltip).toContainText("Prem");
   const tooltipBox = await spyTooltip.boundingBox();
-  const surfaceBox = await page.getByTestId("market-mini-chart-0-surface").boundingBox();
+  const surfaceBox = await page.getByTestId("market-chart-0-surface").boundingBox();
   expect(tooltipBox).not.toBeNull();
   expect(surfaceBox).not.toBeNull();
   if (tooltipBox && surfaceBox) {
@@ -416,7 +416,7 @@ test("Market chart flow markers expose semantic tones", async ({ page }) => {
   await page.mouse.move(1, 1);
   await expect(spyTooltip).toBeHidden({ timeout: 2_000 });
 
-  const qqqMarker = page.getByTestId("market-mini-chart-1-surface-chart-event").first();
+  const qqqMarker = page.getByTestId("market-chart-1-surface-chart-event").first();
   await expect(qqqMarker).toBeVisible({ timeout: 30_000 });
   await expect(qqqMarker).toHaveAttribute("data-chart-event-type", "unusual_flow");
   await expect(qqqMarker).toHaveAttribute("data-chart-flow-marker-tone", "bearish");
@@ -424,7 +424,7 @@ test("Market chart flow markers expose semantic tones", async ({ page }) => {
     "data-chart-flow-marker-basis",
     "confirmed_trade",
   );
-  await expect(qqqMarker).toHaveCSS("color", "rgb(215, 116, 112)");
+  await expect(qqqMarker).toHaveCSS("color", "rgb(255, 48, 72)");
 
   expect(flowUrls.length).toBeGreaterThanOrEqual(2);
 });
@@ -443,23 +443,23 @@ test("Market chart flow honors shared type filters while ignoring ticker queries
     },
   });
 
-  const spyMarker = page.getByTestId("market-mini-chart-0-surface-chart-event").first();
+  const spyMarker = page.getByTestId("market-chart-0-surface-chart-event").first();
   await expect(spyMarker).toBeVisible({ timeout: 30_000 });
   await expect(spyMarker).toHaveAttribute("data-chart-event-type", "unusual_flow");
   await expect(spyMarker).toHaveAttribute("data-chart-event-symbol", "SPY");
   await expect(spyMarker).toHaveAttribute("data-chart-flow-marker-tone", "bearish");
-  const firstSurface = page.getByTestId("market-mini-chart-0-surface");
+  const firstSurface = page.getByTestId("market-chart-0-surface");
   await expect(firstSurface.locator('[data-chart-flow-volume-segment="bearish"]')).toHaveCount(1);
   await expect(firstSurface.locator('[data-chart-flow-volume-segment="bullish"]')).toHaveCount(0);
   await expect(firstSurface.locator('[data-chart-flow-volume-segment="neutral"]')).toHaveCount(0);
 
-  const qqqMarker = page.getByTestId("market-mini-chart-1-surface-chart-event").first();
+  const qqqMarker = page.getByTestId("market-chart-1-surface-chart-event").first();
   await expect(qqqMarker).toBeVisible({ timeout: 30_000 });
   await expect(qqqMarker).toHaveAttribute("data-chart-event-symbol", "QQQ");
   await expect(qqqMarker).toHaveAttribute("data-chart-flow-marker-tone", "bearish");
 });
 
-test("Market chart renders confirmed prints while keeping snapshots off price markers", async ({
+test("Market chart renders confirmed prints with basis-aware snapshot volume", async ({
   page,
 }) => {
   const flowUrls: string[] = [];
@@ -469,7 +469,7 @@ test("Market chart renders confirmed prints while keeping snapshots off price ma
   });
   await openMarketGrid(page, { showVolume: false });
 
-  const surface = page.getByTestId("market-mini-chart-0-surface");
+  const surface = page.getByTestId("market-chart-0-surface");
   await expect
     .poll(
       async () =>
@@ -493,7 +493,7 @@ test("Market chart renders confirmed prints while keeping snapshots off price ma
   ).toHaveCount(0);
   await expect(surface).toHaveAttribute(
     "data-chart-flow-marker-snapshot-skip-count",
-    /[1-9]\d*/,
+    "0",
   );
   await expect(surface).toHaveAttribute(
     "data-chart-flow-volume-bucket-count",
@@ -501,7 +501,7 @@ test("Market chart renders confirmed prints while keeping snapshots off price ma
   );
   await expect(
     surface.locator('[data-chart-flow-volume-basis="snapshot_activity"]'),
-  ).toHaveCount(0);
+  ).toHaveCount(2);
 });
 
 test("Market chart grid premium-flow strips and flow-volume overlays render with regular volume hidden", async ({
@@ -509,11 +509,14 @@ test("Market chart grid premium-flow strips and flow-volume overlays render with
 }) => {
   const flowUrls: string[] = [];
   await mockMarketApi(page, flowUrls, { showVolume: false });
-  await openMarketGrid(page, { showVolume: false });
+  await openMarketGrid(page, {
+    showVolume: false,
+    workspaceState: { sidebarCollapsed: false },
+  });
 
   const strips = page.getByTestId("market-premium-flow-strip");
   await expect(strips).toHaveCount(6);
-  await expect(page.getByTestId("market-mini-chart-0")).toBeVisible();
+  await expect(page.getByTestId("market-chart-0")).toBeVisible();
   await expect(
     page.getByRole("status", {
       name: /SPY options premium flow (Scanning|IBKR snapshot live|POLYGON SNAPSHOT)/i,
@@ -530,39 +533,35 @@ test("Market chart grid premium-flow strips and flow-volume overlays render with
   await expect(strips.nth(0)).toHaveAttribute("data-flow-fallback-used", "false");
   await expect(strips.nth(5)).toHaveAttribute("data-flow-source-provider", "IBKR");
   await expect(strips.nth(5)).toHaveAttribute("data-flow-source-live", "true");
-  const flowLane = page.getByTestId("market-activity-flow-lane");
-  await expect(flowLane).toHaveAttribute("data-flow-snapshot-source", "broad-scanner");
-  await expect(flowLane).toHaveAttribute("data-flow-source-provider", "IBKR");
-  await expect(flowLane).toHaveAttribute("data-flow-source-live", "true");
   await expect(page.locator("[data-premium-flow-glyph]")).toHaveCount(0);
   await expect(
-    page.getByTestId("market-mini-chart-0-surface-chart-event").first(),
+    page.getByTestId("market-chart-0-surface-chart-event").first(),
   ).toBeVisible();
   await expect(
-    page.getByTestId("market-mini-chart-0-surface-chart-event").first(),
+    page.getByTestId("market-chart-0-surface-chart-event").first(),
   ).toHaveAttribute("data-chart-event-type", "unusual_flow");
   await expect(
-    page.getByTestId("market-mini-chart-0-surface-chart-event").first(),
+    page.getByTestId("market-chart-0-surface-chart-event").first(),
   ).toHaveAttribute("data-chart-event-symbol", "SPY");
   await expect(
-    page.getByTestId("market-mini-chart-0-surface-chart-event").first(),
+    page.getByTestId("market-chart-0-surface-chart-event").first(),
   ).toHaveAttribute("data-chart-event-source", "polygon");
   await expect(
-    page.getByTestId("market-mini-chart-0-surface-chart-event").first(),
+    page.getByTestId("market-chart-0-surface-chart-event").first(),
   ).toHaveAttribute("data-chart-flow-marker-tone", "bullish");
   await expect(
-    page.getByTestId("market-mini-chart-1-surface-chart-event").first(),
+    page.getByTestId("market-chart-1-surface-chart-event").first(),
   ).toBeVisible();
   await expect(
-    page.getByTestId("market-mini-chart-1-surface-chart-event").first(),
+    page.getByTestId("market-chart-1-surface-chart-event").first(),
   ).toHaveAttribute("data-chart-event-type", "unusual_flow");
   await expect(
-    page.getByTestId("market-mini-chart-1-surface-chart-event").first(),
+    page.getByTestId("market-chart-1-surface-chart-event").first(),
   ).toHaveAttribute("data-chart-event-symbol", "QQQ");
   await expect(
-    page.getByTestId("market-mini-chart-1-surface-chart-event").first(),
+    page.getByTestId("market-chart-1-surface-chart-event").first(),
   ).toHaveAttribute("data-chart-flow-marker-tone", "bearish");
-  const firstSurface = page.getByTestId("market-mini-chart-0-surface");
+  const firstSurface = page.getByTestId("market-chart-0-surface");
   await expect(firstSurface).toHaveAttribute(
     "data-chart-regular-volume-enabled",
     "false",
@@ -576,7 +575,7 @@ test("Market chart grid premium-flow strips and flow-volume overlays render with
     /[1-9]\d*/,
   );
   await expect(
-    page.getByTestId("market-mini-chart-0-surface-flow-volume").first(),
+    page.getByTestId("market-chart-0-surface-flow-volume").first(),
   ).toBeVisible();
   await expect(
     firstSurface.locator('[data-chart-flow-volume-segment="bullish"]').first(),
@@ -589,7 +588,7 @@ test("Market chart grid premium-flow strips and flow-volume overlays render with
   ).toBeVisible();
   await expect(
     firstSurface.locator('[data-chart-flow-volume-basis="snapshot_activity"]'),
-  ).toHaveCount(0);
+  ).toHaveCount(2);
 
   expect(flowUrls.length).toBeGreaterThanOrEqual(6);
   const historicalFlowUrls = flowUrls.filter((href) => {
@@ -648,7 +647,7 @@ test("Market chart grid premium-flow strips and flow-volume overlays render with
     expect(item.bottomGap ?? -1).toBeGreaterThanOrEqual(-1);
   }
 
-  const firstChartFrame = page.getByTestId("market-mini-chart-0");
+  const firstChartFrame = page.getByTestId("market-chart-0");
   await firstChartFrame.hover();
   await firstChartFrame.getByRole("button", { name: "Settings" }).click();
   const displayMenu = page.getByRole("menu").filter({ hasText: "Display" }).first();

@@ -19,6 +19,8 @@ test("TradeScreen search handlers use the current ticker-search anchor names", (
   assert.match(source, /const openEquitySearch = useCallback/);
   assert.match(source, /onAddNew=\{toggleTabSearch\}/);
   assert.match(source, /onOpenSearch=\{openEquitySearch\}/);
+  assert.match(chromeSource, /data-testid="trade-add-ticker-button"/);
+  assert.match(chromeSource, /type="button"[\s\S]*aria-label="Add ticker"/);
 });
 
 test("TradeScreen chart ticker search selects market search results directly", () => {
@@ -28,6 +30,8 @@ test("TradeScreen chart ticker search selects market search results directly", (
   assert.doesNotMatch(source, /findExactIbkrTradeResolutionRow/);
   assert.match(source, /onSelectTicker=\{handleSelectUniverseTicker\}/);
   assert.match(source, /focusTicker\(nextTicker,\s*result\?\.name \|\| nextTicker\)/);
+  assert.match(source, /initialMarketFilter="all"/);
+  assert.match(source, /persistMarketFilter=\{false\}/);
 });
 
 test("TradeScreen lets pending symbol handoffs beat persisted trade state", () => {

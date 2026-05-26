@@ -41,7 +41,16 @@ const isStreamLifecycleOnlyState = (bridge, streamMeta) =>
 
 export const bridgeRuntimeTone = (session) => {
   // Status color semantics: green=healthy, accent=in progress, amber=attention, red=error.
-  if (!session?.configured?.ibkr) return { label: "offline", color: CSS_COLOR.red };
+  const runtimeIbkr = session?.runtime?.ibkr;
+  if (!session?.configured?.ibkr) {
+    if (runtimeIbkr?.desktopAgentOnline && !runtimeIbkr?.runtimeOverrideActive) {
+      if (runtimeIbkr?.desktopAgentUpgradeRequired) {
+        return { label: "helper update", color: CSS_COLOR.amber, pulse: true };
+      }
+      return { label: "reconnect", color: CSS_COLOR.amber, pulse: true };
+    }
+    return { label: "offline", color: CSS_COLOR.red };
+  }
   const bridge = session?.ibkrBridge;
   if (bridge?.competing) {
     return { label: "competing", color: CSS_COLOR.red };
@@ -73,7 +82,7 @@ export const bridgeRuntimeTone = (session) => {
     bridge?.healthFresh === false &&
     (bridge?.connected || bridge?.authenticated || bridge?.bridgeReachable)
   ) {
-    return { label: "stale", color: CSS_COLOR.amber };
+    return { label: "health pending", color: CSS_COLOR.amber };
   }
   if (bridge?.connected && !bridge?.authenticated) {
     return { label: "login required", color: CSS_COLOR.amber };
@@ -112,7 +121,7 @@ export const bridgeRuntimeTone = (session) => {
     return { label: "live", color: CSS_COLOR.green };
   }
   if (bridge?.authenticated && bridge?.streamFresh === false) {
-    return { label: "stale", color: CSS_COLOR.amber, pulse: true };
+    return { label: "quote stale", color: CSS_COLOR.amber, pulse: true };
   }
   if (bridge?.authenticated) return { label: "waiting", color: CSS_COLOR.accent };
   if (bridge?.lastError) return { label: "error", color: CSS_COLOR.red };
@@ -123,6 +132,13 @@ const bridgeTransportLabel = () => "IB Gateway";
 
 export const bridgeRuntimeMessage = (session) => {
   if (!session?.configured?.ibkr) {
+    const runtimeIbkr = session?.runtime?.ibkr;
+    if (runtimeIbkr?.desktopAgentOnline && !runtimeIbkr?.runtimeOverrideActive) {
+      if (runtimeIbkr?.desktopAgentUpgradeRequired) {
+        return "Windows desktop helper is online but must update before reconnecting IB Gateway.";
+      }
+      return "Windows desktop helper is online. Reconnect IBKR to attach the current Gateway tunnel.";
+    }
     return "Interactive Brokers is not configured in this workspace.";
   }
 

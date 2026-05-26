@@ -89,7 +89,7 @@ export const SIGNAL_TABLE_COLUMNS = [
   },
   {
     key: "since",
-    label: "Since",
+    label: "Age",
     toggleLabel: "Signal age",
     track: "92px",
     sortKey: "bars",
@@ -105,7 +105,7 @@ export const SIGNAL_TABLE_COLUMNS = [
   },
   {
     key: "action",
-    label: "Action",
+    label: "Plan",
     toggleLabel: "Action plan",
     track: "minmax(120px, 0.95fr)",
   },
@@ -151,8 +151,8 @@ export const SIGNAL_TABLE_COLUMNS = [
   },
   {
     key: "score",
-    label: "Score",
-    toggleLabel: "Actionability score",
+    label: "Quality",
+    toggleLabel: "Actionability quality",
     track: "84px",
     sortKey: "score",
     title: "Sort by decision score",
@@ -1301,6 +1301,8 @@ export const OperationsSignalRow = ({
   scoreBreakdown: providedScoreBreakdown = null,
   onRowAction,
   columns = DEFAULT_SIGNAL_VISIBLE_COLUMNS,
+  scanActive = false,
+  scanIndex = 0,
 }) => {
   const signalRecord = asRecord(signal);
   const liveQuote = getStoredOptionQuoteSnapshot(
@@ -1395,6 +1397,7 @@ export const OperationsSignalRow = ({
   const rowClassName = [
     "ra-signal-row-focus",
     freshAndHot && !algoIsPhone ? "ra-signal-row-glow" : null,
+    scanActive ? "ra-signal-row-scan" : null,
   ]
     .filter(Boolean)
     .join(" ");
@@ -1663,7 +1666,11 @@ export const OperationsSignalRow = ({
       borderTone={CSS_COLOR.border}
       dataTestId={`algo-signal-row-${signalRecord.symbol}`}
       rowClassName={rowClassName}
-      rowStyle={{ "--ra-motion-accent": direction.tone }}
+      rowStyle={{
+        "--ra-motion-accent": direction.tone,
+        "--ra-signal-scan-accent": CSS_COLOR.cyan,
+        "--ra-signal-scan-delay": `${Math.min(Math.max(0, Number(scanIndex) || 0), 12) * 45}ms`,
+      }}
       row={
         <div
           style={{

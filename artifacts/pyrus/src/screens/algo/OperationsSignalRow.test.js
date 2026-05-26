@@ -169,7 +169,9 @@ test("signal row presents dense customizable signal action columns", () => {
   assert.match(rowSource, /key: "greeks"[\s\S]*?label: "Greeks"/);
   assert.match(rowSource, /key: "gate"[\s\S]*?label: "Gate"/);
   assert.match(rowSource, /key: "sync"[\s\S]*?label: "Sync"/);
-  assert.match(rowSource, /key: "score"[\s\S]*?label: "Score"/);
+  assert.match(rowSource, /key: "since"[\s\S]*?label: "Age"/);
+  assert.match(rowSource, /key: "action"[\s\S]*?label: "Plan"/);
+  assert.match(rowSource, /key: "score"[\s\S]*?label: "Quality"/);
   assert.match(rowSource, /key: "decision"[\s\S]*?label: "Decision"/);
   assert.match(rowSource, /key: "rowAction"[\s\S]*?label: "Act"[\s\S]*?width: 48/);
   assert.match(rowSource, /signalColumnTemplate/);
@@ -187,6 +189,9 @@ test("signal row presents dense customizable signal action columns", () => {
   assert.doesNotMatch(rowSource, /ScoreBar/);
   assert.doesNotMatch(rowSource, /ScorePill/);
   assert.match(rowSource, /resolveSignalScoreBreakdown/);
+  assert.doesNotMatch(rowSource, /resolveSignalActionStageStates/);
+  assert.doesNotMatch(rowSource, /StageColumnCell/);
+  assert.doesNotMatch(rowSource, /data-stage-state/);
   assert.match(rowSource, /actionabilitySignalRecord/);
   assert.doesNotMatch(rowSource, /Number\(signalRecord\.score\)/);
   assert.match(rowSource, /resolveCandidateGateDisplay/);
@@ -210,6 +215,11 @@ test("signal row presents dense customizable signal action columns", () => {
   assert.match(rowSource, /components\/platform\/signal-language/);
   assert.match(rowSource, /ra-signal-row-glow/);
   assert.match(rowSource, /ra-signal-row-focus/);
+  assert.match(rowSource, /scanActive = false/);
+  assert.match(rowSource, /scanIndex = 0/);
+  assert.match(rowSource, /ra-signal-row-scan/);
+  assert.match(rowSource, /--ra-signal-scan-accent/);
+  assert.match(rowSource, /--ra-signal-scan-delay/);
   assert.match(rowSource, /useValueFlash\(liveUnderlyingPrice\)/);
 });
 
@@ -254,6 +264,11 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(rowSource, /sortDirection === "asc" \? "rotate\(180deg\)" : "none"/);
   assert.match(rowSource, /ChevronDown/);
   assert.match(tableSource, /Scan running/);
+  assert.match(tableSource, /scanStageRecord\.detail/);
+  assert.match(tableSource, /freshness\.scanDetail/);
+  assert.match(tableSource, /pageRows\.map\(\(\{ signal, candidate, scoreBreakdown \}, index\)/);
+  assert.match(tableSource, /scanActive=\{freshness\.scanRunning\}/);
+  assert.match(tableSource, /scanIndex=\{index\}/);
   assert.match(tableSource, /buildSignalMatrixBySymbol\(signalMatrixStates\)/);
   assert.match(tableSource, /useRuntimeTickerSnapshots\(rowSymbols\)/);
   assert.match(tableSource, /SIGNALS_PAGE_SIZE = 30/);
@@ -325,18 +340,20 @@ test("signal row motion classes respect reduced-motion settings", () => {
 
   assert.match(cssSource, /@keyframes raSignalHotGlow/);
   assert.match(cssSource, /@keyframes raSignalGlyphFresh/);
+  assert.match(cssSource, /@keyframes raSignalRowScan/);
   assert.match(cssSource, /\.ra-signal-row-focus:focus-visible/);
+  assert.match(cssSource, /\.ra-signal-row-scan::after/);
   assert.match(
     cssSource,
-    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.ra-signal-row-glow[\s\S]*?animation: none/,
+    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.ra-signal-row-glow[\s\S]*?\.ra-signal-row-scan::after[\s\S]*?animation: none/,
   );
   assert.match(
     cssSource,
-    /html\[data-pyrus-reduced-motion="on"\] \.ra-signal-row-glow[\s\S]*?animation: none/,
+    /html\[data-pyrus-reduced-motion="on"\] \.ra-signal-row-glow[\s\S]*?html\[data-pyrus-reduced-motion="on"\] \.ra-signal-row-scan::after[\s\S]*?animation: none/,
   );
   assert.match(
     cssSource,
-    /html\[data-pyrus-reduced-motion="on"\] \.ra-signal-row-glow[\s\S]*?animation: none/,
+    /html\[data-pyrus-reduced-motion="on"\] \.ra-signal-row-scan::after[\s\S]*?animation: none/,
   );
 });
 

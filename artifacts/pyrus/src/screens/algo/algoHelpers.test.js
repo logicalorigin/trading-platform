@@ -103,8 +103,8 @@ test("algo profile defaults match the tuned h8 signal-options profile", () => {
       overnightExitEnabled: true,
       overnightMinGainPct: 10,
       overnightRunnerGivebackPct: 15,
-      earlyExitBars: 6,
-      earlyExitLossPct: 20,
+      earlyExitBars: 8,
+      earlyExitLossPct: 25,
     },
   );
   assert.deepEqual(SIGNAL_OPTIONS_DEFAULT_PROFILE.riskHaltControls, {
@@ -162,8 +162,8 @@ test("profile merge preserves tuned early and overnight defaults", () => {
   });
 
   assert.equal(profile.exitPolicy.hardStopPct, -35);
-  assert.equal(profile.exitPolicy.earlyExitBars, 6);
-  assert.equal(profile.exitPolicy.earlyExitLossPct, 20);
+  assert.equal(profile.exitPolicy.earlyExitBars, 8);
+  assert.equal(profile.exitPolicy.earlyExitLossPct, 25);
   assert.equal(profile.exitPolicy.overnightExitEnabled, true);
   assert.equal(profile.exitPolicy.overnightMinGainPct, 10);
   assert.equal(profile.exitPolicy.trailActivationPct, 35);
@@ -1112,10 +1112,17 @@ test("algo setup shows a loading state before true empty deployment data", () =>
     new URL("../AlgoScreen.jsx", import.meta.url),
     "utf8",
   );
+  const setupSettledBlock =
+    screenSource.match(/const algoSetupDataSettled = Boolean\([\s\S]*?\);/)?.[0] ?? "";
 
+  assert.match(screenSource, /const deploymentsSettled = Boolean/);
+  assert.match(screenSource, /const draftsSettled = Boolean/);
   assert.match(screenSource, /const algoSetupDataSettled = Boolean/);
   assert.match(screenSource, /deploymentsQuery\.isFetched/);
   assert.match(screenSource, /draftsQuery\.isFetched/);
+  assert.match(setupSettledBlock, /deploymentsSettled && draftsSettled/);
+  assert.doesNotMatch(setupSettledBlock, /algoCriticalFallbackReady/);
+  assert.doesNotMatch(setupSettledBlock, /algoCockpitStreamFreshness/);
   assert.match(screenSource, /setupDataSettled=\{algoSetupDataSettled\}/);
   assert.match(livePageSource, /setupDataSettled = true/);
   assert.match(livePageSource, /data-testid="algo-setup-loading"/);
@@ -1124,4 +1131,48 @@ test("algo setup shows a loading state before true empty deployment data", () =>
     livePageSource.indexOf("!setupDataSettled") <
       livePageSource.indexOf("No promoted draft strategies"),
   );
+});
+
+test("algo screen auto-runs an initial scan and labels sync separately", () => {
+  const screenSource = readFileSync(
+    new URL("../AlgoScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const statusBarSource = readFileSync(
+    new URL("./AlgoStatusBar.jsx", import.meta.url),
+    "utf8",
+  );
+  const livePageSource = readFileSync(
+    new URL("./AlgoLivePage.jsx", import.meta.url),
+    "utf8",
+  );
+  const surfaceSettledBlock =
+    screenSource.match(/const algoSignalSurfaceSettled = Boolean\([\s\S]*?\);/)?.[0] ?? "";
+
+  assert.match(screenSource, /autoInitialScanDeploymentIdsRef/);
+  assert.match(screenSource, /const signalOptionsStateSettled = Boolean/);
+  assert.match(screenSource, /const cockpitSettled = Boolean/);
+  assert.match(screenSource, /const algoSignalSurfaceSettled = Boolean/);
+  assert.match(surfaceSettledBlock, /signalOptionsStateSettled \|\| cockpitSettled/);
+  assert.doesNotMatch(surfaceSettledBlock, /algoCockpitStreamFreshness\.algoCriticalFresh/);
+  assert.match(screenSource, /const algoSignalSurfaceEmpty = Boolean/);
+  assert.match(screenSource, /focusedDeployment\?\.enabled/);
+  assert.match(screenSource, /gatewayReady/);
+  assert.match(
+    screenSource,
+    /autoInitialScanDeploymentIdsRef\.current\.has\(deploymentId\)/,
+  );
+  assert.match(
+    screenSource,
+    /autoInitialScanDeploymentIdsRef\.current\.add\(deploymentId\)/,
+  );
+  assert.match(screenSource, /runShadowScanMutation\.mutate\(\{ deploymentId \}\)/);
+  assert.match(screenSource, /state\?\.status === "already_running"/);
+  assert.match(screenSource, /Shadow scan already running/);
+  assert.match(statusBarSource, /pendingLabel="Syncing\.\.\."/);
+  assert.doesNotMatch(statusBarSource, /pendingLabel="Refreshing\.\.\."/);
+  assert.match(livePageSource, /scanMutationPending/);
+  assert.match(livePageSource, /\? "scanning"/);
+  assert.match(livePageSource, /\? "syncing data"/);
+  assert.doesNotMatch(livePageSource, /\? "refreshing"/);
 });

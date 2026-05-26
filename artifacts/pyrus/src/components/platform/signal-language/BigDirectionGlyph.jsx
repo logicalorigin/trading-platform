@@ -1,6 +1,6 @@
 import React from "react";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { MISSING_VALUE, dim } from "../../../lib/uiTokens.jsx";
+import { MISSING_VALUE, cssColorAlpha, dim } from "../../../lib/uiTokens.jsx";
 import { freshnessTooltip } from "./tooltips.js";
 import { getTone } from "./tones.js";
 
@@ -77,8 +77,8 @@ export const BigDirectionGlyph = ({
             cx={center}
             cy={center}
             r={radius}
-            fill={`${color}12`}
-            stroke={`${color}66`}
+            fill={cssColorAlpha(color, "12")}
+            stroke={cssColorAlpha(color, "66")}
             strokeWidth="1.5"
             strokeDasharray={circumference}
             strokeDashoffset={circumference * (1 - freshness)}

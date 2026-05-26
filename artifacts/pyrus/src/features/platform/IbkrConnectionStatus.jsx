@@ -7,7 +7,7 @@ import {
   PlugZap,
   RadioTower,
 } from "lucide-react";
-import { FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { ActionButton } from "../../components/ui/ActionButton.jsx";
 import {
   STREAM_STATE_LABEL,
@@ -401,10 +401,10 @@ export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
       };
     case "stale":
       return {
-        label: "stale",
+        label: "quote stale",
         status: state,
-        healthLabel: "Stale Stream",
-        detail: "Gateway is authenticated but stream events are stale",
+        healthLabel: "Quote Stream Stale",
+        detail: "Gateway is authenticated but quote stream events are stale",
         color: tokenColor,
         background: tokenBackground,
         Icon: Activity,
@@ -569,7 +569,7 @@ export const getIbkrConnectionTone = (connection) => {
     !streamHasCurrentEvidence
   ) {
     return {
-      label: "stale",
+      label: "health pending",
       color: CSS_COLOR.amber,
       Icon: CircleAlert,
       wave: "flat",
@@ -659,7 +659,7 @@ export const getIbkrConnectionTone = (connection) => {
         ready
           ? "online"
           : streamStale
-            ? "stale"
+            ? "quote stale"
             : "checking",
       color: ready
         ? CSS_COLOR.green
@@ -795,7 +795,7 @@ export const resolveIbkrGatewayHealth = ({
   ) {
     return {
       status: "stale",
-      label: "Stale",
+      label: "Health Pending",
       color: CSS_COLOR.amber,
       detail: "Gateway health is pending; waiting for the next successful check",
     };
@@ -902,7 +902,7 @@ export const resolveIbkrGatewayHealth = ({
   if (proof.strictReady !== true) {
     return {
       status: "stale",
-      label: "Stale Stream",
+      label: "Quote Stream Stale",
       color: streamStateTokenVar("stale"),
       detail: "Gateway is authenticated but fresh stream events are not confirmed",
     };
@@ -1346,8 +1346,8 @@ export const IbkrConnectionLane = ({
             minHeight: dim(24),
             padding: sp("3px 8px"),
             borderRadius: dim(RADII.sm),
-            border: `1px solid ${health.color}55`,
-            background: `${health.color}12`,
+            border: `1px solid ${cssColorAlpha(health.color, "55")}`,
+            background: cssColorAlpha(health.color, "12"),
             color: health.color,
             flexShrink: 0,
           }}

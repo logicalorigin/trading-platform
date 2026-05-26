@@ -3,11 +3,13 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   applyAccountPageCriticalPayloadToCache,
+  applyAccountPageDerivedPayloadToCache,
   applyAccountPageLivePayloadToCache,
   applyAccountPagePayloadToCache,
   applyIbkrAccountPayloadToCache,
   applyShadowAccountPayloadToCache,
   flushAccountPagePayloadQueue,
+  getAccountPerformanceCalendarEquityQueryKey,
   getAccountPositionRowSnapshot,
   getAccountPageStreamUrl,
   getAlgoCockpitStreamUrl,
@@ -889,6 +891,14 @@ test("applyAccountPagePayloadToCache seeds visible account page query caches", (
     "/api/accounts/combined/equity-history",
     { mode: "paper", range: "1D", benchmark: "SPY" },
   ];
+  const calendarEquityKey = getAccountPerformanceCalendarEquityQueryKey(
+    "combined",
+    { mode: "paper" },
+  );
+  const selectedOneYearEquityKey = [
+    "/api/accounts/combined/equity-history",
+    { mode: "paper", range: "1Y" },
+  ];
   const sourceScopedPositionsKey = [
     "/api/accounts/combined/positions",
     { mode: "paper", assetClass: "Options", source: "signal_options_replay" },
@@ -910,6 +920,7 @@ test("applyAccountPagePayloadToCache seeds visible account page query caches", (
     calendarTradesKey,
     equityKey,
     benchmarkKey,
+    calendarEquityKey as unknown as unknown[],
     sourceScopedPositionsKey,
     sourceScopedTradesKey,
     sourceScopedEquityKey,
@@ -973,10 +984,72 @@ test("applyAccountPagePayloadToCache seeds visible account page query caches", (
     (writes.get(JSON.stringify(benchmarkKey)) as any)?.points[0].timestamp,
     "spy",
   );
+  assert.equal(
+    (writes.get(JSON.stringify(calendarEquityKey)) as any)?.points[0].timestamp,
+    "calendar",
+  );
+  assert.equal(writes.get(JSON.stringify(selectedOneYearEquityKey)), undefined);
   assert.equal(writes.get(JSON.stringify(sourceScopedPositionsKey)), undefined);
   assert.equal(writes.get(JSON.stringify(sourceScopedTradesKey)), undefined);
   assert.equal(writes.get(JSON.stringify(sourceScopedEquityKey)), undefined);
   assert.equal((writes.get(JSON.stringify(healthKey)) as any)?.flexConfigured, true);
+});
+
+test("applyAccountPageDerivedPayloadToCache keeps selected 1Y and calendar equity caches separate", () => {
+  const selectedOneYearEquityKey = [
+    "/api/accounts/shadow/equity-history",
+    { mode: "paper", range: "1Y" },
+  ];
+  const calendarEquityKey = getAccountPerformanceCalendarEquityQueryKey(
+    "shadow",
+    { mode: "paper" },
+  );
+  const { queryClient, writes } = createMockQueryClient([
+    selectedOneYearEquityKey,
+    calendarEquityKey as unknown as unknown[],
+  ]);
+
+  applyAccountPageDerivedPayloadToCache(queryClient as any, {
+    stream: "account-page-derived",
+    accountId: "shadow",
+    mode: "paper",
+    range: "1Y",
+    tradeFilters: {
+      from: null,
+      to: null,
+      symbol: null,
+      assetClass: null,
+      pnlSign: null,
+      holdDuration: null,
+    },
+    performanceCalendarFrom: "2025-04-01T00:00:00.000Z",
+    updatedAt: "2026-05-13T15:03:12.357Z",
+    equityHistory: {
+      accountId: "shadow",
+      range: "1Y",
+      points: [{ timestamp: "selected-1y" }],
+    },
+    benchmarkEquityHistory: {},
+    performanceCalendarEquity: {
+      accountId: "shadow",
+      range: "1Y",
+      points: [{ timestamp: "calendar-1y" }],
+    },
+    performanceCalendarTrades: { accountId: "shadow", trades: [] },
+    closedTrades: { accountId: "shadow", trades: [] },
+    cashActivity: { accountId: "shadow", activities: [] },
+    flexHealth: null,
+  } as any);
+
+  assert.equal(
+    (writes.get(JSON.stringify(selectedOneYearEquityKey)) as any)?.points[0]
+      .timestamp,
+    "selected-1y",
+  );
+  assert.equal(
+    (writes.get(JSON.stringify(calendarEquityKey)) as any)?.points[0].timestamp,
+    "calendar-1y",
+  );
 });
 
 test("queueAccountPagePayloadToCache coalesces account page live writes until frame flush", () => {
@@ -1108,10 +1181,10 @@ test("applyAccountPageCriticalPayloadToCache seeds account operational queries",
 });
 
 test("applyAccountPageLivePayloadToCache patches performance-calendar equity ranges from live summary", () => {
-  const equityKey = [
-    "/api/accounts/shadow/equity-history",
-    { mode: "paper", range: "1Y" },
-  ];
+  const equityKey = getAccountPerformanceCalendarEquityQueryKey(
+    "shadow",
+    { mode: "paper" },
+  );
   const initialData = new Map<string, unknown>([
     [
       JSON.stringify(equityKey),
@@ -1146,7 +1219,10 @@ test("applyAccountPageLivePayloadToCache patches performance-calendar equity ran
       },
     ],
   ]);
-  const { queryClient, writes } = createMockQueryClient([equityKey], initialData);
+  const { queryClient, writes } = createMockQueryClient(
+    [equityKey as unknown as unknown[]],
+    initialData,
+  );
 
   applyAccountPageLivePayloadToCache(queryClient as any, {
     stream: "account-page-live",
@@ -1195,6 +1271,149 @@ test("applyAccountPageLivePayloadToCache patches performance-calendar equity ran
   assert.equal(patched.liveTerminalIncluded, true);
   assert.equal(patched.terminalPointSource, "shadow_ledger");
   assert.equal(Number(patched.points[1].returnPercent.toFixed(4)), 0.3738);
+});
+
+test("derived account page snapshots preserve newer calendar live terminal returns", () => {
+  const calendarEquityKey = getAccountPerformanceCalendarEquityQueryKey(
+    "shadow",
+    { mode: "paper" },
+  );
+  const initialData = new Map<string, unknown>([
+    [
+      JSON.stringify(calendarEquityKey),
+      {
+        accountId: "shadow",
+        range: "1Y",
+        currency: "USD",
+        flexConfigured: true,
+        lastFlexRefreshAt: null,
+        benchmark: null,
+        asOf: "2026-05-12T20:00:00.000Z",
+        latestSnapshotAt: "2026-05-12T20:00:00.000Z",
+        isStale: false,
+        staleReason: null,
+        terminalPointSource: "shadow_ledger",
+        liveTerminalIncluded: false,
+        points: [
+          {
+            timestamp: "2026-05-12T20:00:00.000Z",
+            netLiquidation: 30_000,
+            currency: "USD",
+            source: "SHADOW_LEDGER",
+            deposits: 0,
+            withdrawals: 0,
+            dividends: 0,
+            fees: 0,
+            returnPercent: 0,
+            benchmarkPercent: null,
+          },
+        ],
+        events: [],
+      },
+    ],
+  ]);
+  const { queryClient, writes } = createMockQueryClient(
+    [calendarEquityKey as unknown as unknown[]],
+    initialData,
+  );
+
+  applyAccountPageLivePayloadToCache(queryClient as any, {
+    stream: "account-page-live",
+    accountId: "shadow",
+    mode: "paper",
+    orderTab: "history",
+    assetClass: null,
+    updatedAt: "2026-05-13T15:03:12.357Z",
+    summary: {
+      accountId: "shadow",
+      isCombined: false,
+      mode: "paper",
+      currency: "USD",
+      accounts: [],
+      updatedAt: "2026-05-13T15:03:12.357Z",
+      fx: { baseCurrency: "USD", timestamp: null, rates: {}, warning: null },
+      badges: {},
+      metrics: {
+        netLiquidation: {
+          value: 30_112.14,
+          currency: "USD",
+          source: "SHADOW_LEDGER",
+          field: "netLiquidation",
+          updatedAt: "2026-05-13T15:03:12.357Z",
+        },
+      },
+    },
+    intradayEquity: {
+      accountId: "shadow",
+      range: "1D",
+      currency: "USD",
+      points: [],
+      events: [],
+    },
+    allocation: { accountId: "shadow", assetClass: [] },
+    positions: { accountId: "shadow", positions: [] },
+    orders: { accountId: "shadow", tab: "history", orders: [] },
+    risk: { accountId: "shadow", margin: {} },
+  } as any);
+
+  const afterLive = writes.get(JSON.stringify(calendarEquityKey)) as any;
+  assert.equal(afterLive.points.length, 2);
+  assert.equal(Number(afterLive.points[1].returnPercent.toFixed(4)), 0.3738);
+
+  applyAccountPageDerivedPayloadToCache(queryClient as any, {
+    stream: "account-page-derived",
+    accountId: "shadow",
+    mode: "paper",
+    range: "ALL",
+    tradeFilters: {
+      from: null,
+      to: null,
+      symbol: null,
+      assetClass: null,
+      pnlSign: null,
+      holdDuration: null,
+    },
+    performanceCalendarFrom: "2025-04-01T00:00:00.000Z",
+    updatedAt: "2026-05-13T15:03:30.000Z",
+    equityHistory: {
+      accountId: "shadow",
+      range: "ALL",
+      points: [],
+    },
+    benchmarkEquityHistory: {},
+    performanceCalendarEquity: {
+      accountId: "shadow",
+      range: "1Y",
+      currency: "USD",
+      points: [
+        {
+          timestamp: "2026-05-12T20:00:00.000Z",
+          netLiquidation: 30_000,
+          currency: "USD",
+          source: "SHADOW_LEDGER",
+          deposits: 0,
+          withdrawals: 0,
+          dividends: 0,
+          fees: 0,
+          returnPercent: 0,
+          benchmarkPercent: null,
+        },
+      ],
+      events: [],
+    },
+    performanceCalendarTrades: { accountId: "shadow", trades: [] },
+    closedTrades: { accountId: "shadow", trades: [] },
+    cashActivity: { accountId: "shadow", activities: [] },
+    flexHealth: null,
+  } as any);
+
+  const afterDerived = writes.get(JSON.stringify(calendarEquityKey)) as any;
+  assert.equal(afterDerived.points.length, 2);
+  assert.equal(afterDerived.points[1].timestamp, "2026-05-13T15:03:12.357Z");
+  assert.equal(afterDerived.points[1].netLiquidation, 30_112.14);
+  assert.equal(afterDerived.liveTerminalIncluded, true);
+  assert.equal(afterDerived.terminalPointSource, "shadow_ledger");
+  assert.equal(Number(afterDerived.points[1].returnPercent.toFixed(4)), 0.3738);
 });
 
 test("applyAccountPageLivePayloadToCache preserves 1D benchmark overlays", () => {

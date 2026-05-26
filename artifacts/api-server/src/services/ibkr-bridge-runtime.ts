@@ -44,6 +44,7 @@ type LauncherResult = {
 
 type IbkrRemoteDesktop = {
   desktopId: string;
+  helperHeartbeatAtByVersion: Record<string, number>;
   helperVersion: string | null;
   lastHeartbeatAt: number | null;
   label: string | null;
@@ -111,6 +112,16 @@ type RemoteDesktopJobStatusResult = {
   state: "queued" | "claimed" | "completed" | "failed" | "expired";
 };
 
+export type IbkrBridgeRuntimeSessionState = {
+  runtimeOverrideActive: boolean;
+  runtimeOverrideUpdatedAt: Date | null;
+  desktopAgentOnline: boolean;
+  desktopAgentHelperVersion: string | null;
+  desktopAgentExpectedHelperVersion: string;
+  desktopAgentUpgradeRequired: boolean;
+  reconnectAvailable: boolean;
+};
+
 type AttachIbkrBridgeRuntimeResult = {
   runtimeOverrideActive: true;
   bridgeUrl: string;
@@ -153,6 +164,21 @@ type LegacyBridgeActivationProgress = {
   helperVersion: string | null;
   bridgeUrl: string | null;
   updatedAt: Date;
+};
+
+type LegacyBridgeActivationProgressSnapshot = Omit<
+  LegacyBridgeActivationProgress,
+  "updatedAt"
+> & {
+  updatedAt: string;
+};
+
+type LegacyBridgeActivationStatusResult = {
+  active: boolean;
+  canceled: boolean;
+  expiresAt: string;
+  latestProgress: LegacyBridgeActivationProgressSnapshot | null;
+  recentProgress: LegacyBridgeActivationProgressSnapshot[];
 };
 
 type LegacyBridgeLoginKeyReadResult =
@@ -271,6 +297,36 @@ function readOptionalString(value: unknown, maxLength = 512): string | null {
   return value.trim().slice(0, maxLength);
 }
 
+function readOptionalTimestamp(value: unknown): number | null {
+  const timestamp =
+    typeof value === "string" || value instanceof Date
+      ? new Date(value).getTime()
+      : typeof value === "number"
+        ? value
+        : Number.NaN;
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function readHelperHeartbeatAtByVersion(
+  value: unknown,
+): Record<string, number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const result: Record<string, number> = {};
+  for (const [rawVersion, rawTimestamp] of Object.entries(
+    value as Record<string, unknown>,
+  )) {
+    const helperVersion = readOptionalString(rawVersion, 120);
+    const timestamp = readOptionalTimestamp(rawTimestamp);
+    if (helperVersion && timestamp != null) {
+      result[helperVersion] = timestamp;
+    }
+  }
+  return result;
+}
+
 function getIbkrRemoteDesktopsFile(): string {
   for (const name of REMOTE_DESKTOPS_FILE_ENV_NAMES) {
     const value = process.env[name]?.trim();
@@ -325,37 +381,27 @@ function loadIbkrRemoteDesktops(): void {
         continue;
       }
 
-      const registeredAt =
-        typeof record.registeredAt === "string" ||
-        record.registeredAt instanceof Date
-          ? new Date(record.registeredAt).getTime()
-          : typeof record.registeredAt === "number"
-            ? record.registeredAt
-            : Date.now();
+      const registeredAt = readOptionalTimestamp(record.registeredAt) ?? Date.now();
       const lastSeenAt =
-        typeof record.lastSeenAt === "string" ||
-        record.lastSeenAt instanceof Date
-          ? new Date(record.lastSeenAt).getTime()
-          : typeof record.lastSeenAt === "number"
-            ? record.lastSeenAt
-            : registeredAt;
-      const lastHeartbeatAt =
-        typeof record.lastHeartbeatAt === "string" ||
-        record.lastHeartbeatAt instanceof Date
-          ? new Date(record.lastHeartbeatAt).getTime()
-          : typeof record.lastHeartbeatAt === "number"
-            ? record.lastHeartbeatAt
-            : null;
+        readOptionalTimestamp(record.lastSeenAt) ?? registeredAt;
+      const lastHeartbeatAt = readOptionalTimestamp(record.lastHeartbeatAt);
+      const helperVersion = readOptionalString(record.helperVersion, 120);
+      const helperHeartbeatAtByVersion = readHelperHeartbeatAtByVersion(
+        record.helperHeartbeatAtByVersion,
+      );
+      if (helperVersion && lastHeartbeatAt != null) {
+        helperHeartbeatAtByVersion[helperVersion] =
+          helperHeartbeatAtByVersion[helperVersion] ?? lastHeartbeatAt;
+      }
 
       ibkrRemoteDesktops.set(desktopId, {
         desktopId,
-        helperVersion: readOptionalString(record.helperVersion, 120),
-        lastHeartbeatAt: Number.isFinite(lastHeartbeatAt)
-          ? lastHeartbeatAt
-          : null,
+        helperHeartbeatAtByVersion,
+        helperVersion,
+        lastHeartbeatAt,
         label: readOptionalString(record.label, 160),
-        lastSeenAt: Number.isFinite(lastSeenAt) ? lastSeenAt : Date.now(),
-        registeredAt: Number.isFinite(registeredAt) ? registeredAt : Date.now(),
+        lastSeenAt,
+        registeredAt,
         secretHash,
       });
     }
@@ -374,6 +420,14 @@ function persistIbkrRemoteDesktops(): void {
         version: 1,
         desktops: Array.from(ibkrRemoteDesktops.values()).map((desktop) => ({
           desktopId: desktop.desktopId,
+          helperHeartbeatAtByVersion: Object.fromEntries(
+            Object.entries(desktop.helperHeartbeatAtByVersion).map(
+              ([helperVersion, timestamp]) => [
+                helperVersion,
+                new Date(timestamp).toISOString(),
+              ],
+            ),
+          ),
           helperVersion: desktop.helperVersion,
           lastHeartbeatAt:
             desktop.lastHeartbeatAt == null
@@ -495,18 +549,109 @@ function summarizeIbkrRemoteJobStatus(
   };
 }
 
+function isIbkrRemoteHelperHeartbeatOnline(
+  timestamp: number | null | undefined,
+  now: number,
+): timestamp is number {
+  return timestamp != null && now - timestamp <= REMOTE_DESKTOP_STALE_MS;
+}
+
+function resolveEffectiveIbkrRemoteHelper(
+  desktop: IbkrRemoteDesktop,
+  now = Date.now(),
+): { helperVersion: string | null; lastHeartbeatAt: number | null } {
+  const currentHelperHeartbeatAt =
+    desktop.helperHeartbeatAtByVersion[BRIDGE_HELPER_VERSION] ??
+    (desktop.helperVersion === BRIDGE_HELPER_VERSION
+      ? desktop.lastHeartbeatAt
+      : null);
+  if (isIbkrRemoteHelperHeartbeatOnline(currentHelperHeartbeatAt, now)) {
+    return {
+      helperVersion: BRIDGE_HELPER_VERSION,
+      lastHeartbeatAt: currentHelperHeartbeatAt,
+    };
+  }
+
+  const latestOnlineHelper = Object.entries(desktop.helperHeartbeatAtByVersion)
+    .filter(([, timestamp]) =>
+      isIbkrRemoteHelperHeartbeatOnline(timestamp, now),
+    )
+    .sort((left, right) => right[1] - left[1])[0];
+  if (latestOnlineHelper) {
+    return {
+      helperVersion: latestOnlineHelper[0],
+      lastHeartbeatAt: latestOnlineHelper[1],
+    };
+  }
+
+  if (
+    desktop.helperVersion &&
+    isIbkrRemoteHelperHeartbeatOnline(desktop.lastHeartbeatAt, now)
+  ) {
+    return {
+      helperVersion: desktop.helperVersion,
+      lastHeartbeatAt: desktop.lastHeartbeatAt,
+    };
+  }
+
+  return {
+    helperVersion: null,
+    lastHeartbeatAt: null,
+  };
+}
+
+function applyEffectiveIbkrRemoteHelper(
+  desktop: IbkrRemoteDesktop,
+  now = Date.now(),
+): { helperVersion: string | null; lastHeartbeatAt: number | null } {
+  const effectiveHelper = resolveEffectiveIbkrRemoteHelper(desktop, now);
+  if (effectiveHelper.helperVersion) {
+    desktop.helperVersion = effectiveHelper.helperVersion;
+  }
+  desktop.lastHeartbeatAt = effectiveHelper.lastHeartbeatAt;
+  return effectiveHelper;
+}
+
+function recordIbkrRemoteHelperHeartbeat(
+  desktop: IbkrRemoteDesktop,
+  helperVersion: string | null,
+  now = Date.now(),
+): { helperVersion: string | null; lastHeartbeatAt: number | null } {
+  if (helperVersion) {
+    desktop.helperHeartbeatAtByVersion[helperVersion] = now;
+  }
+  desktop.lastSeenAt = now;
+  return applyEffectiveIbkrRemoteHelper(desktop, now);
+}
+
+function canIbkrRemoteHelperClaimJobs(
+  desktop: IbkrRemoteDesktop,
+  helperVersion: string | null,
+  now = Date.now(),
+): boolean {
+  if (helperVersion === BRIDGE_HELPER_VERSION) {
+    return true;
+  }
+
+  return !isIbkrRemoteHelperHeartbeatOnline(
+    desktop.helperHeartbeatAtByVersion[BRIDGE_HELPER_VERSION],
+    now,
+  );
+}
+
 function summarizeIbkrRemoteDesktop(
   desktop: IbkrRemoteDesktop,
   now = Date.now(),
 ): IbkrRemoteDesktopSummary {
+  const effectiveHelper = resolveEffectiveIbkrRemoteHelper(desktop, now);
   return {
     desktopId: desktop.desktopId,
-    helperVersion: desktop.helperVersion,
+    helperVersion: effectiveHelper.helperVersion ?? desktop.helperVersion,
     label: desktop.label,
-    lastSeenAt: new Date(desktop.lastSeenAt).toISOString(),
-    online:
-      desktop.lastHeartbeatAt != null &&
-      now - desktop.lastHeartbeatAt <= REMOTE_DESKTOP_STALE_MS,
+    lastSeenAt: new Date(
+      effectiveHelper.lastHeartbeatAt ?? desktop.lastSeenAt,
+    ).toISOString(),
+    online: Boolean(effectiveHelper.helperVersion),
     registeredAt: new Date(desktop.registeredAt).toISOString(),
   };
 }
@@ -555,12 +700,17 @@ function selectIbkrRemoteDesktop(
   pruneIbkrRemoteLaunchJobs();
   const now = Date.now();
   const candidates = Array.from(ibkrRemoteDesktops.values())
-    .filter(
-      (desktop) =>
-        desktop.lastHeartbeatAt != null &&
-        now - desktop.lastHeartbeatAt <= REMOTE_DESKTOP_STALE_MS,
+    .map((desktop) => ({
+      desktop,
+      effectiveHelper: resolveEffectiveIbkrRemoteHelper(desktop, now),
+    }))
+    .filter(({ effectiveHelper }) => effectiveHelper.helperVersion)
+    .sort(
+      (left, right) =>
+        (right.effectiveHelper.lastHeartbeatAt ?? 0) -
+        (left.effectiveHelper.lastHeartbeatAt ?? 0),
     )
-    .sort((left, right) => right.lastSeenAt - left.lastSeenAt);
+    .map(({ desktop }) => desktop);
 
   if (requestedDesktopId) {
     const desktop = candidates.find(
@@ -607,16 +757,6 @@ function assertLegacyBridgeActivationIsCurrent(
   activation: LegacyBridgeActivation,
   options: { allowCanceled?: boolean } = {},
 ): void {
-  if (activation.canceledAt && !options.allowCanceled) {
-    throw new HttpError(
-      409,
-      "IB Gateway bridge activation was canceled.",
-      {
-        code: "ibkr_bridge_activation_canceled",
-      },
-    );
-  }
-
   if (
     latestLegacyBridgeActivationId &&
     latestLegacyBridgeActivationId !== activationId
@@ -626,6 +766,16 @@ function assertLegacyBridgeActivationIsCurrent(
       "IB Gateway bridge activation was superseded by a newer launch.",
       {
         code: "ibkr_bridge_activation_superseded",
+      },
+    );
+  }
+
+  if (activation.canceledAt && !options.allowCanceled) {
+    throw new HttpError(
+      409,
+      "IB Gateway bridge activation was canceled.",
+      {
+        code: "ibkr_bridge_activation_canceled",
       },
     );
   }
@@ -653,6 +803,23 @@ function createLegacyBridgeActivation(input: {
   callbackSecret: string;
 } {
   pruneLegacyBridgeActivations();
+  const now = Date.now();
+  for (const [existingActivationId, activation] of legacyBridgeActivations) {
+    if (!activation.canceledAt) {
+      activation.canceledAt = now;
+      const events = legacyBridgeActivationProgress.get(existingActivationId) ?? [];
+      events.push({
+        activationId: existingActivationId,
+        status: "canceled",
+        step: "superseded",
+        message: "IB Gateway bridge launch was superseded by a newer launch.",
+        helperVersion: BRIDGE_HELPER_VERSION,
+        bridgeUrl: null,
+        updatedAt: new Date(now),
+      });
+      legacyBridgeActivationProgress.set(existingActivationId, events.slice(-20));
+    }
+  }
   const activationId = randomBytes(16).toString("hex");
   const callbackSecret = randomBytes(32).toString("hex");
   legacyBridgeActivations.set(activationId, {
@@ -661,8 +828,8 @@ function createLegacyBridgeActivation(input: {
     canceledAt: null,
     loginHandoff: null,
     managementToken: input.managementToken,
-    issuedAt: Date.now(),
-    expiresAt: Date.now() + LEGACY_ACTIVATION_TTL_MS,
+    issuedAt: now,
+    expiresAt: now + LEGACY_ACTIVATION_TTL_MS,
   });
   legacyBridgeActivationProgress.set(activationId, []);
   latestLegacyBridgeActivationId = activationId;
@@ -1066,6 +1233,31 @@ export function listIbkrRemoteDesktops(): {
   };
 }
 
+export function getIbkrBridgeRuntimeSessionState(): IbkrBridgeRuntimeSessionState {
+  const runtimeOverride = getIbkrBridgeRuntimeOverride();
+  const remoteDesktops = listIbkrRemoteDesktops();
+  const onlineDesktop =
+    remoteDesktops.desktops.find((desktop) => desktop.online) ?? null;
+  const desktopAgentHelperVersion = onlineDesktop?.helperVersion ?? null;
+  const desktopAgentUpgradeRequired = Boolean(
+    onlineDesktop && desktopAgentHelperVersion !== BRIDGE_HELPER_VERSION,
+  );
+
+  return {
+    runtimeOverrideActive: Boolean(runtimeOverride),
+    runtimeOverrideUpdatedAt: runtimeOverride?.updatedAt ?? null,
+    desktopAgentOnline: Boolean(onlineDesktop),
+    desktopAgentHelperVersion,
+    desktopAgentExpectedHelperVersion: BRIDGE_HELPER_VERSION,
+    desktopAgentUpgradeRequired,
+    reconnectAvailable: Boolean(
+      !runtimeOverride &&
+        onlineDesktop &&
+        desktopAgentHelperVersion === BRIDGE_HELPER_VERSION,
+    ),
+  };
+}
+
 export function registerIbkrRemoteDesktop(body: unknown): {
   desktop: IbkrRemoteDesktopSummary;
   helperVersion: string;
@@ -1118,15 +1310,21 @@ export function registerIbkrRemoteDesktop(body: unknown): {
   }
 
   const now = Date.now();
+  const helperVersion = readOptionalString(payload.helperVersion, 120);
   const desktop: IbkrRemoteDesktop = {
     desktopId,
-    helperVersion: readOptionalString(payload.helperVersion, 120),
+    helperHeartbeatAtByVersion: existing?.helperHeartbeatAtByVersion ?? {},
+    helperVersion,
     lastHeartbeatAt: existing?.lastHeartbeatAt ?? null,
     label: readOptionalString(payload.label, 160),
     lastSeenAt: now,
     registeredAt: existing?.registeredAt ?? now,
     secretHash: hashDesktopSecret(desktopSecret),
   };
+  const effectiveHelper = applyEffectiveIbkrRemoteHelper(desktop, now);
+  if (!effectiveHelper.helperVersion && helperVersion) {
+    desktop.helperVersion = helperVersion;
+  }
   ibkrRemoteDesktops.set(desktopId, desktop);
   if (
     !existing ||
@@ -1152,14 +1350,15 @@ export function heartbeatIbkrRemoteDesktop(body: unknown): {
 } {
   const desktop = assertIbkrRemoteDesktopAuthenticated(body);
   const payload = body as Record<string, unknown>;
-  desktop.helperVersion =
+  const helperVersion =
     readOptionalString(payload.helperVersion, 120) ?? desktop.helperVersion;
   desktop.label = readOptionalString(payload.label, 160) ?? desktop.label;
   const now = Date.now();
-  desktop.lastHeartbeatAt = now;
-  desktop.lastSeenAt = now;
+  recordIbkrRemoteHelperHeartbeat(desktop, helperVersion, now);
+  const canClaimJobs = canIbkrRemoteHelperClaimJobs(desktop, helperVersion, now);
   const pendingJobCount = Array.from(ibkrRemoteLaunchJobs.values()).filter(
     (job) =>
+      canClaimJobs &&
       job.desktopId === desktop.desktopId &&
       !job.claimedAt &&
       job.expiresAt > now &&
@@ -1190,7 +1389,7 @@ export function claimIbkrRemoteDesktopLaunchJob(body: unknown):
       ready: true;
       shutdown?: boolean;
     }
-  | {
+    | {
       action: "shutdown";
       completionToken: string | null;
       expiresAt: string;
@@ -1198,15 +1397,19 @@ export function claimIbkrRemoteDesktopLaunchJob(body: unknown):
       jobId: string;
       launchUrl: string;
       ready: true;
-    } {
+} {
   const desktop = assertIbkrRemoteDesktopAuthenticated(body);
   const payload = body as Record<string, unknown>;
-  desktop.helperVersion =
+  const helperVersion =
     readOptionalString(payload.helperVersion, 120) ?? desktop.helperVersion;
   desktop.label = readOptionalString(payload.label, 160) ?? desktop.label;
   const now = Date.now();
-  desktop.lastHeartbeatAt = now;
-  desktop.lastSeenAt = now;
+  recordIbkrRemoteHelperHeartbeat(desktop, helperVersion, now);
+  const canClaimLaunchJobs = canIbkrRemoteHelperClaimJobs(
+    desktop,
+    helperVersion,
+    now,
+  );
   const jobs = Array.from(ibkrRemoteLaunchJobs.values())
     .filter((job) => job.desktopId === desktop.desktopId && !job.claimedAt)
     .sort((left, right) => left.createdAt - right.createdAt);
@@ -1216,12 +1419,12 @@ export function claimIbkrRemoteDesktopLaunchJob(body: unknown):
       ibkrRemoteLaunchJobs.delete(job.jobId);
       continue;
     }
-    job.claimedAt = now;
     if (job.action === "shutdown") {
       if (!job.launchUrl) {
         ibkrRemoteLaunchJobs.delete(job.jobId);
         continue;
       }
+      job.claimedAt = now;
       const launchUrl = rewriteIbkrProtocolScheme(
         job.launchUrl,
         selectIbkrProtocolSchemeForDesktop(desktop),
@@ -1240,11 +1443,16 @@ export function claimIbkrRemoteDesktopLaunchJob(body: unknown):
       };
     }
 
+    if (!canClaimLaunchJobs) {
+      continue;
+    }
+
     if (!job.activationId || !job.launchUrl) {
       ibkrRemoteLaunchJobs.delete(job.jobId);
       continue;
     }
 
+    job.claimedAt = now;
     const launchUrl = rewriteIbkrProtocolScheme(
       job.launchUrl,
       selectIbkrProtocolSchemeForDesktop(desktop),
@@ -1360,11 +1568,7 @@ export function createIbkrRemoteBridgeShutdown(input: {
 
   const now = Date.now();
   for (const [jobId, job] of ibkrRemoteLaunchJobs) {
-    if (
-      job.desktopId === desktop.desktopId &&
-      !job.claimedAt &&
-      job.action === "shutdown"
-    ) {
+    if (job.desktopId === desktop.desktopId && !job.claimedAt) {
       ibkrRemoteLaunchJobs.delete(jobId);
     }
   }
@@ -1513,10 +1717,19 @@ export function recordLegacyIbkrBridgeActivationProgress(
   };
 }
 
+function serializeLegacyBridgeActivationProgress(
+  event: LegacyBridgeActivationProgress,
+): LegacyBridgeActivationProgressSnapshot {
+  return {
+    ...event,
+    updatedAt: event.updatedAt.toISOString(),
+  };
+}
+
 export function readLegacyIbkrBridgeActivationStatus(
   activationId: string,
   body: unknown,
-): { active: boolean; canceled: boolean; expiresAt: string } {
+): LegacyBridgeActivationStatusResult {
   pruneLegacyBridgeActivations();
   if (!body || typeof body !== "object") {
     throw new HttpError(400, "Bridge activation callback payload is required.", {
@@ -1552,11 +1765,15 @@ export function readLegacyIbkrBridgeActivationStatus(
   assertLegacyBridgeActivationIsCurrent(activationId, activation, {
     allowCanceled: true,
   });
+  const recentProgress = (legacyBridgeActivationProgress.get(activationId) ?? [])
+    .map(serializeLegacyBridgeActivationProgress);
 
   return {
     active: true,
     canceled: Boolean(activation.canceledAt),
     expiresAt: new Date(activation.expiresAt).toISOString(),
+    latestProgress: recentProgress.at(-1) ?? null,
+    recentProgress,
   };
 }
 

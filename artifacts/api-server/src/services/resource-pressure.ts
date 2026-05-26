@@ -13,7 +13,6 @@ export type ApiResourcePressureCaps = {
     maintenanceOnly: boolean;
     skipDeploymentScans: boolean;
   };
-  watchlistFillerMaxSymbols: number | null;
 };
 
 export type ApiResourcePressureSnapshot = {
@@ -115,18 +114,16 @@ export function getApiResourcePressureCaps(
     case "critical":
       return {
         signalOptions: {
-          maintenanceOnly: true,
-          skipDeploymentScans: true,
+          maintenanceOnly: false,
+          skipDeploymentScans: false,
         },
-        watchlistFillerMaxSymbols: 0,
       };
     case "high":
       return {
         signalOptions: {
           maintenanceOnly: false,
-          skipDeploymentScans: true,
+          skipDeploymentScans: false,
         },
-        watchlistFillerMaxSymbols: 0,
       };
     case "watch":
       return {
@@ -134,7 +131,6 @@ export function getApiResourcePressureCaps(
           maintenanceOnly: false,
           skipDeploymentScans: false,
         },
-        watchlistFillerMaxSymbols: null,
       };
     default:
       return {
@@ -142,7 +138,6 @@ export function getApiResourcePressureCaps(
           maintenanceOnly: false,
           skipDeploymentScans: false,
         },
-        watchlistFillerMaxSymbols: null,
       };
   }
 }

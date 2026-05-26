@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const DEFAULT_ROOT_MARGIN = "360px 0px";
-const DEFAULT_IDLE_DELAY_MS = 750;
+const DEFAULT_IDLE_DELAY_MS = 2_500;
 
 const DeferredRender = ({
   children,
@@ -30,6 +30,22 @@ const DeferredRender = ({
     onActivateRef.current?.();
   }, []);
 
+  const scheduleIdleActivation = useCallback(() => {
+    if (typeof window === "undefined") {
+      return () => {};
+    }
+
+    if (typeof window.requestIdleCallback === "function") {
+      const idleId = window.requestIdleCallback(activate, {
+        timeout: idleDelayMs,
+      });
+      return () => window.cancelIdleCallback?.(idleId);
+    }
+
+    const timeoutId = window.setTimeout(activate, idleDelayMs);
+    return () => window.clearTimeout(timeoutId);
+  }, [activate, idleDelayMs]);
+
   useEffect(() => {
     if (activated) {
       return undefined;
@@ -42,6 +58,7 @@ const DeferredRender = ({
     }
 
     if (typeof window.IntersectionObserver === "function") {
+      const cancelIdleActivation = scheduleIdleActivation();
       const observer = new window.IntersectionObserver(
         (entries) => {
           if (
@@ -56,19 +73,14 @@ const DeferredRender = ({
         { rootMargin, threshold: 0 },
       );
       observer.observe(element);
-      return () => observer.disconnect();
+      return () => {
+        observer.disconnect();
+        cancelIdleActivation();
+      };
     }
 
-    if (typeof window.requestIdleCallback === "function") {
-      const idleId = window.requestIdleCallback(activate, {
-        timeout: idleDelayMs,
-      });
-      return () => window.cancelIdleCallback?.(idleId);
-    }
-
-    const timeoutId = window.setTimeout(activate, idleDelayMs);
-    return () => window.clearTimeout(timeoutId);
-  }, [activated, activate, idleDelayMs, rootMargin]);
+    return scheduleIdleActivation();
+  }, [activated, activate, rootMargin, scheduleIdleActivation]);
 
   return (
     <div

@@ -436,10 +436,27 @@ export interface IbkrRemoteDesktopJobStatusResponse {
   state: IbkrRemoteDesktopJobStatusResponseState;
 }
 
+export interface IbkrBridgeActivationProgress {
+  activationId: string;
+  /** @nullable */
+  status: string | null;
+  /** @nullable */
+  step: string | null;
+  /** @nullable */
+  message: string | null;
+  /** @nullable */
+  helperVersion: string | null;
+  /** @nullable */
+  bridgeUrl: string | null;
+  updatedAt: string;
+}
+
 export interface IbkrBridgeActivationStatusResponse {
   active: boolean;
   canceled: boolean;
   expiresAt: string;
+  latestProgress: IbkrBridgeActivationProgress | null;
+  recentProgress: IbkrBridgeActivationProgress[];
 }
 
 export interface IbkrBridgeActivationCancelResponse {
@@ -498,6 +515,22 @@ export interface SessionMarketDataProviders {
   live: MarketDataProvider;
   historical: MarketDataProvider;
   research: typeof SessionMarketDataProvidersResearch[keyof typeof SessionMarketDataProvidersResearch];
+}
+
+export interface SessionIbkrRuntime {
+  runtimeOverrideActive: boolean;
+  /** @nullable */
+  runtimeOverrideUpdatedAt: string | null;
+  desktopAgentOnline: boolean;
+  /** @nullable */
+  desktopAgentHelperVersion: string | null;
+  desktopAgentExpectedHelperVersion: string;
+  desktopAgentUpgradeRequired: boolean;
+  reconnectAvailable: boolean;
+}
+
+export interface SessionRuntime {
+  ibkr: SessionIbkrRuntime;
 }
 
 export type IbkrBridgeConnectionHealthTransport = typeof IbkrBridgeConnectionHealthTransport[keyof typeof IbkrBridgeConnectionHealthTransport];
@@ -691,6 +724,7 @@ export interface SessionInfo {
   marketDataProviders: SessionMarketDataProviders;
   configured: SessionInfoConfigured;
   ibkrBridge: IbkrBridgeHealth | null;
+  runtime: SessionRuntime;
   timestamp: string;
 }
 
@@ -755,6 +789,15 @@ export interface RuntimeIbkrDiagnostics {
   configured: boolean;
   bridgeUrlConfigured: boolean;
   bridgeTokenConfigured: boolean;
+  runtimeOverrideActive: boolean;
+  /** @nullable */
+  runtimeOverrideUpdatedAt: string | null;
+  desktopAgentOnline: boolean;
+  /** @nullable */
+  desktopAgentHelperVersion: string | null;
+  desktopAgentExpectedHelperVersion: string;
+  desktopAgentUpgradeRequired: boolean;
+  reconnectAvailable: boolean;
   legacyIbkrEnvPresent: boolean;
   reachable: boolean;
   /** @nullable */

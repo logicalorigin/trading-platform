@@ -958,6 +958,7 @@ export class IbkrBridgeClient {
   async getOptionQuoteSnapshots(input: {
     underlying?: string | null;
     providerContractIds: string[];
+    signal?: AbortSignal;
   }): Promise<QuoteSnapshot[]> {
     const normalizedProviderContractIds = Array.from(
       new Set(
@@ -976,7 +977,7 @@ export class IbkrBridgeClient {
       >;
     }>(
       "/options/quotes",
-      { timeoutMs: this.optionQuoteRequestTimeoutMs },
+      { signal: input.signal, timeoutMs: this.optionQuoteRequestTimeoutMs },
       {
         underlying: input.underlying ?? undefined,
         contracts: normalizedProviderContractIds.join(","),

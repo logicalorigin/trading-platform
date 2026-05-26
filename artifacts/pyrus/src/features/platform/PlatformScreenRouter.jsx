@@ -1,7 +1,5 @@
 import {
-  useEffect,
   useMemo,
-  useState,
 } from "react";
 import {
   MemoAccountScreen,
@@ -28,40 +26,6 @@ const SCREEN_IDS = [
   "diagnostics",
   "settings",
 ];
-
-const useDeferredActiveScreen = (screen) => {
-  const [deferredScreen, setDeferredScreen] = useState(screen);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      setDeferredScreen(screen);
-      return undefined;
-    }
-
-    let cancelled = false;
-    const activate = () => {
-      if (!cancelled) {
-        setDeferredScreen(screen);
-      }
-    };
-
-    if (typeof window.requestAnimationFrame === "function") {
-      const frameId = window.requestAnimationFrame(activate);
-      return () => {
-        cancelled = true;
-        window.cancelAnimationFrame?.(frameId);
-      };
-    }
-
-    const timerId = window.setTimeout(activate, 16);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timerId);
-    };
-  }, [screen]);
-
-  return deferredScreen;
-};
 
 export const PlatformScreenRouter = ({
   screenId,
@@ -107,22 +71,16 @@ export const PlatformScreenRouter = ({
   onToggleActivitySidebar,
   onScreenReadiness,
 }) => {
-  const deferredActiveScreen = useDeferredActiveScreen(screen);
-  const marketDataActive = screen === "market" && deferredActiveScreen === "market";
-  const flowDataActive = screen === "flow" && deferredActiveScreen === "flow";
-  const gexDataActive = screen === "gex" && deferredActiveScreen === "gex";
-  const tradeDataActive = screen === "trade" && deferredActiveScreen === "trade";
-  const accountDataActive =
-    screen === "account" && deferredActiveScreen === "account";
-  const researchDataActive =
-    screen === "research" && deferredActiveScreen === "research";
-  const algoDataActive = screen === "algo" && deferredActiveScreen === "algo";
-  const backtestDataActive =
-    screen === "backtest" && deferredActiveScreen === "backtest";
-  const diagnosticsDataActive =
-    screen === "diagnostics" && deferredActiveScreen === "diagnostics";
-  const settingsDataActive =
-    screen === "settings" && deferredActiveScreen === "settings";
+  const marketDataActive = screen === "market";
+  const flowDataActive = screen === "flow";
+  const gexDataActive = screen === "gex";
+  const tradeDataActive = screen === "trade";
+  const accountDataActive = screen === "account";
+  const researchDataActive = screen === "research";
+  const algoDataActive = screen === "algo";
+  const backtestDataActive = screen === "backtest";
+  const diagnosticsDataActive = screen === "diagnostics";
+  const settingsDataActive = screen === "settings";
   const readinessHandlers = useMemo(
     () =>
       Object.fromEntries(

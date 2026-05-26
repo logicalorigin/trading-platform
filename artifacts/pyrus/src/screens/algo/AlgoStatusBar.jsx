@@ -148,7 +148,7 @@ export const AlgoStatusBar = ({
             data-testid="algo-status-refresh"
             onClick={onRefresh}
             pending={refreshPending}
-            pendingLabel="Refreshing..."
+            pendingLabel="Syncing..."
             size="sm"
           >
             Refresh

@@ -40,6 +40,16 @@ export type SignalOptionsWorkerSnapshot = {
     lastOldestSignalBarAt: string | null;
     lastCandidateCount: number;
     lastBlockedCandidateCount: number;
+    lastBatchSymbols?: string[];
+    lastBatchSize?: number;
+    lastBatchUniverseCount?: number;
+    lastBatchStartIndex?: number | null;
+    lastBatchNextIndex?: number | null;
+    lastBatchCapacity?: number | null;
+    lastBatchFullUniverse?: boolean;
+    pollIntervalMs?: number;
+    nextScanDueAt?: string | null;
+    nextScanDueInMs?: number | null;
   }>;
 };
 

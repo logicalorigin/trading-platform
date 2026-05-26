@@ -332,6 +332,9 @@ export const TickerTabStrip = ({
         />
       ))}
       <AppTooltip content="Add ticker"><button
+        type="button"
+        aria-label="Add ticker"
+        data-testid="trade-add-ticker-button"
         onClick={onAddNew}
         style={{
           background: "transparent",

@@ -1646,28 +1646,6 @@ const AccountScreenInner = ({
         </div>
 
         <DeferredRender
-          minHeight={accountIsPhone ? 340 : 300}
-          onActivate={() => markAccountPanelActivated("today")}
-          testId="account-deferred-today"
-        >
-          <DeferredPanelSuspense minHeight={accountIsPhone ? 340 : 300}>
-            <LazyTodaySnapshotPanel
-              positionsQuery={positionsQuery}
-              intradayQuery={intradayPnlQuery}
-              currency={currency}
-              maskValues={maskAccountValues}
-              liveOptionQuotesEnabled={accountLiveOptionQuotesEnabled}
-              streamLiveOptionQuotes={false}
-              emptyHeatmapBody={
-                shadowMode
-                  ? "Treemap renders once Shadow ledger positions are opened or marked."
-                  : undefined
-              }
-            />
-          </DeferredPanelSuspense>
-        </DeferredRender>
-
-        <DeferredRender
           minHeight={accountIsPhone ? 430 : 300}
           testId="account-deferred-positions"
         >
@@ -1689,6 +1667,28 @@ const AccountScreenInner = ({
               isPhone={accountIsPhone}
               liveOptionQuotesEnabled={accountLiveOptionQuotesEnabled}
               streamLiveOptionQuotes={false}
+            />
+          </DeferredPanelSuspense>
+        </DeferredRender>
+
+        <DeferredRender
+          minHeight={accountIsPhone ? 340 : 300}
+          onActivate={() => markAccountPanelActivated("today")}
+          testId="account-deferred-today"
+        >
+          <DeferredPanelSuspense minHeight={accountIsPhone ? 340 : 300}>
+            <LazyTodaySnapshotPanel
+              positionsQuery={positionsQuery}
+              intradayQuery={intradayPnlQuery}
+              currency={currency}
+              maskValues={maskAccountValues}
+              liveOptionQuotesEnabled={accountLiveOptionQuotesEnabled}
+              streamLiveOptionQuotes={false}
+              emptyHeatmapBody={
+                shadowMode
+                  ? "Treemap renders once Shadow ledger positions are opened or marked."
+                  : undefined
+              }
             />
           </DeferredPanelSuspense>
         </DeferredRender>

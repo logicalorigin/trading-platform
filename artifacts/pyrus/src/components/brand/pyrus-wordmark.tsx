@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import React, { type CSSProperties } from "react";
 
 const PYRUS_WORDMARK_DARK_SRC = "/brand/pyrus-wordmark-tight.png";
 const PYRUS_WORDMARK_LIGHT_SRC = "/brand/pyrus-wordmark-tight-light.png";

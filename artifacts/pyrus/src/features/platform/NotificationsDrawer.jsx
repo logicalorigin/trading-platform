@@ -21,11 +21,12 @@ import {
   markNotificationsRead,
   useNotificationSnapshot,
 } from "./notificationStore.js";
+import { normalizeToastKind } from "./toastModel.js";
 
 const KIND_ICONS = {
   info: Info,
   success: Sparkles,
-  warning: Bell,
+  warn: Bell,
   error: Bell,
   algo: RadioTower,
 };
@@ -33,7 +34,7 @@ const KIND_ICONS = {
 const KIND_TONES = {
   info: CSS_COLOR.textSec,
   success: CSS_COLOR.green,
-  warning: CSS_COLOR.amber,
+  warn: CSS_COLOR.amber,
   error: CSS_COLOR.red,
   algo: CSS_COLOR.accent,
 };
@@ -267,16 +268,19 @@ const NotificationsDrawerInner = ({
               No recent toasts.
             </div>
           ) : (
-            toasts.map((toast) => (
-              <NotificationRow
-                key={toast.id}
-                icon={KIND_ICONS[toast.kind] || Info}
-                tone={KIND_TONES[toast.kind] || CSS_COLOR.textSec}
-                title={toast.title}
-                body={toast.body}
-                timestamp={toast.timestamp}
-              />
-            ))
+            toasts.map((toast) => {
+              const kind = normalizeToastKind(toast.kind);
+              return (
+                <NotificationRow
+                  key={toast.id}
+                  icon={KIND_ICONS[kind] || Info}
+                  tone={KIND_TONES[kind] || CSS_COLOR.textSec}
+                  title={toast.title}
+                  body={toast.body}
+                  timestamp={toast.timestamp}
+                />
+              );
+            })
           )}
           <SectionHeader title="Algo events" count={algoList.length} />
           {algoList.length === 0 ? (

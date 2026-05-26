@@ -802,7 +802,7 @@ test("options flow scanner refresh queue continues through options backoff", asy
   }, 6_000);
 });
 
-test("options flow scanner pauses background work under critical API pressure", () => {
+test("options flow scanner keeps rotating under critical API pressure", () => {
   const scanner = admitMarketDataLeases({
     owner: "flow-scanner:previous",
     intent: "flow-scanner-live",
@@ -820,7 +820,7 @@ test("options flow scanner pauses background work under critical API pressure", 
   const diagnostics = getOptionsFlowScannerDiagnostics();
   const admission = getMarketDataAdmissionDiagnostics();
 
-  assert.equal(diagnostics.backgroundBlockedReason, "resource-pressure");
+  assert.equal(diagnostics.backgroundBlockedReason, null);
   assert.equal(diagnostics.resourcePressure.level, "critical");
   assert.equal(diagnostics.lineBudget, 40);
   assert.equal(diagnostics.lineUtilization.poolCap, 80);
@@ -831,6 +831,17 @@ test("options flow scanner pauses background work under critical API pressure", 
   assert.equal(diagnostics.lineUtilization.unusedPoolLines, 0);
   assert.equal(admission.budget.flowScannerLineCap, 80);
   assert.equal(admission.flowScannerLineCount, 40);
+});
+
+test("options flow scanner keeps rotating under high API pressure", () => {
+  updateApiResourcePressure({ rssMb: 1_250 });
+
+  const diagnostics = getOptionsFlowScannerDiagnostics();
+
+  assert.equal(diagnostics.resourcePressure.level, "high");
+  assert.equal(diagnostics.backgroundBlockedReason, null);
+  assert.equal(diagnostics.lineUtilization.schedulablePoolCap, 80);
+  assert.equal(diagnostics.lineUtilization.maxDeepScanLines, 80);
 });
 
 test("options flow scanner diagnostics drop stale transport skip reasons", async () => {
@@ -911,7 +922,7 @@ test("options flow radar quote failures do not open the quotes governor", async 
   assert.equal(getBridgeGovernorSnapshot().quotes.circuitOpen, false);
 });
 
-test("options flow scanner pauses while the quotes lane is backed off", async () => {
+test("options flow radar keeps sampling while the quotes lane is backed off", async () => {
   await openQuotesLaneBackoff();
   let quoteCalls = 0;
   __setIbkrBridgeClientFactoryForTests(
@@ -929,12 +940,12 @@ test("options flow scanner pauses while the quotes lane is backed off", async ()
     promoteCount: 0,
   });
 
-  assert.equal(quoteCalls, 0);
-  assert.deepEqual(result.scannedSymbols, []);
-  assert.equal(result.error, "quotes-backoff");
+  assert.equal(quoteCalls, 1);
+  assert.deepEqual(result.scannedSymbols, ["SPY"]);
+  assert.equal(result.error, null);
   assert.equal(
     getOptionsFlowScannerDiagnostics().backgroundBlockedReason,
-    "quotes-backoff",
+    null,
   );
 });
 

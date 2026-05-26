@@ -1,0 +1,26 @@
+# Live Session Recovery — Dropped Goal PTS0
+
+- Session ID: `pending`
+- Last updated: `2026-05-26 17:27 UTC`
+- Current CWD: `/home/runner/workspace`
+- Observed live process:
+  - Node wrapper PID: `869`
+  - Codex binary PID: `876`
+  - TTY: `pts/0`
+  - Process start shown by `ps`: `Tue May 26 11:19:54 2026`
+  - `ps etimes` at `2026-05-26 17:27 UTC`: `483` seconds, so this process is minutes old in the post-reset window, not several hours old.
+  - Lock path: `/home/runner/.codex/tmp/arg0/codex-arg0awQh6H/.lock`
+  - Unpersisted thread ID seen in logs for this terminal startup: `019e654d-8840-7d33-9657-ffb65f611b49`
+- Current request: find the long-running goal session that dropped about a minute ago.
+- Current status:
+  - This is the only live Codex terminal in `/home/runner/workspace` that does not map to a persisted rollout/session row.
+  - It has open handles to the current `/home/runner/.codex/state_5.sqlite`, `/home/runner/.codex/goals_1.sqlite`, and `/home/runner/.codex/log/codex-tui.log`, but no open rollout JSONL path was visible in `/proc/876/fd`.
+  - The log entry for `019e654d-8840-7d33-9657-ffb65f611b49` shows only startup/thread-settings activity from `2026-05-26T17:20:40Z` to `2026-05-26T17:20:48Z`; no user-input turn or goal state was found for it.
+  - A separate transient memory worker thread, `019e654d-ebeb-7712-91b6-44784d9a2525`, ran against `/home/runner/.codex/memories` at `2026-05-26T17:21:06Z`; it is not a workspace product session and is not in `state_5.sqlite`.
+  - `/home/runner/.codex/goals_1.sqlite` currently has `thread_goals` count `0`.
+  - `/home/runner/.codex/state_5.sqlite` currently has only two persisted post-reset threads: `019e654d-c053-7120-9fd4-c5b9d8ca6ec9` on `pts/1` and `019e654e-1409-7621-bde7-f8c231fda8d0` on `pts/3`.
+  - No genuinely several-hour-old Codex processes are visible in the current container. If the user saw several-hour-old goal threads in the UI, those belong to the pre-reset Codex state that is no longer present locally.
+- Validation state:
+  - Inspection-only: `ps`, `/proc/*/cwd`, `/proc/*/fd`, goal DB query, thread DB query, logs DB query, rollout-file listing, and repo handoff review.
+- Next step:
+  - If the UI still exposes terminal `pts/0`, inspect that terminal directly; it is not resumable by local Codex session ID because no goal row or rollout file exists for it.

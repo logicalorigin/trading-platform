@@ -15,6 +15,7 @@ import {
   detachIbkrBridgeRuntime,
   getIbkrBridgeActivationDiagnostics,
   getIbkrBridgeLauncher,
+  getIbkrBridgeRuntimeSessionState,
   heartbeatIbkrRemoteDesktop,
   listIbkrRemoteDesktops,
   readIbkrRemoteDesktopJobStatus,
@@ -271,6 +272,74 @@ test("IBKR remote desktop launch queues the same one-time launch for the paired 
   });
 });
 
+test("IBKR runtime session state exposes desktop reconnect readiness by helper version", () => {
+  const pairing = getIbkrBridgeLauncher({
+    apiBaseUrl: "https://pyrus.example.com",
+  });
+  const pairingParams = new URL(pairing.launchUrl).searchParams;
+  const activationId = pairingParams.get("activationId");
+  const callbackSecret = pairingParams.get("callbackSecret");
+  assert.ok(activationId);
+  assert.ok(callbackSecret);
+
+  registerIbkrRemoteDesktop({
+    activationId,
+    callbackSecret,
+    desktopId: "desktop-win-runtime-state",
+    desktopSecret: "s".repeat(64),
+    helperVersion: "2026-05-20.remote-desktop-agent-v19",
+    label: "TRADING-PC\\Riley",
+  });
+  heartbeatIbkrRemoteDesktop({
+    desktopId: "desktop-win-runtime-state",
+    desktopSecret: "s".repeat(64),
+    helperVersion: "2026-05-20.remote-desktop-agent-v19",
+  });
+
+  const oldHelper = getIbkrBridgeRuntimeSessionState();
+  assert.equal(oldHelper.runtimeOverrideActive, false);
+  assert.equal(oldHelper.desktopAgentOnline, true);
+  assert.equal(
+    oldHelper.desktopAgentHelperVersion,
+    "2026-05-20.remote-desktop-agent-v19",
+  );
+  assert.equal(oldHelper.desktopAgentUpgradeRequired, true);
+  assert.equal(oldHelper.reconnectAvailable, false);
+
+  heartbeatIbkrRemoteDesktop({
+    desktopId: "desktop-win-runtime-state",
+    desktopSecret: "s".repeat(64),
+    helperVersion: pairing.helperVersion,
+  });
+
+  const currentHelper = getIbkrBridgeRuntimeSessionState();
+  assert.equal(currentHelper.desktopAgentExpectedHelperVersion, pairing.helperVersion);
+  assert.equal(currentHelper.desktopAgentHelperVersion, pairing.helperVersion);
+  assert.equal(currentHelper.desktopAgentUpgradeRequired, false);
+  assert.equal(currentHelper.reconnectAvailable, true);
+
+  heartbeatIbkrRemoteDesktop({
+    desktopId: "desktop-win-runtime-state",
+    desktopSecret: "s".repeat(64),
+    helperVersion: "2026-05-20.remote-desktop-agent-v19",
+  });
+
+  const stillCurrentHelper = getIbkrBridgeRuntimeSessionState();
+  assert.equal(stillCurrentHelper.desktopAgentHelperVersion, pairing.helperVersion);
+  assert.equal(stillCurrentHelper.desktopAgentUpgradeRequired, false);
+  assert.equal(stillCurrentHelper.reconnectAvailable, true);
+  assert.equal(
+    listIbkrRemoteDesktops().desktops[0]?.helperVersion,
+    pairing.helperVersion,
+  );
+
+  setIbkrBridgeRuntimeOverride({
+    baseUrl: "https://runtime-bridge.example.com",
+    apiToken: "runtime-token",
+  });
+  assert.equal(getIbkrBridgeRuntimeSessionState().reconnectAvailable, false);
+});
+
 test("IBKR remote desktop launch can queue a non-auto-login helper launch", () => {
   const pairing = getIbkrBridgeLauncher({
     apiBaseUrl: "https://pyrus.example.com",
@@ -307,6 +376,91 @@ test("IBKR remote desktop launch can queue a non-auto-login helper launch", () =
   assert.equal(claimed.launchUrl, remoteLaunch.launchUrl);
   assert.notEqual(claimed.launchUrl, remoteLaunch.autoLoginLaunchUrl);
   assert.match(claimed.launchUrl, /^pyrus-ibkr:\/\/launch\?/);
+});
+
+test("IBKR remote desktop launch stays current but shutdown reaches duplicate helpers", () => {
+  const pairing = getIbkrBridgeLauncher({
+    apiBaseUrl: "https://pyrus.example.com",
+  });
+  const pairingParams = new URL(pairing.launchUrl).searchParams;
+  registerIbkrRemoteDesktop({
+    activationId: pairingParams.get("activationId"),
+    callbackSecret: pairingParams.get("callbackSecret"),
+    desktopId: "desktop-win-main",
+    desktopSecret: "s".repeat(64),
+    helperVersion: pairing.helperVersion,
+    label: "TRADING-PC\\Riley",
+  });
+  heartbeatIbkrRemoteDesktop({
+    desktopId: "desktop-win-main",
+    desktopSecret: "s".repeat(64),
+    helperVersion: pairing.helperVersion,
+    label: "TRADING-PC\\Riley",
+  });
+  heartbeatIbkrRemoteDesktop({
+    desktopId: "desktop-win-main",
+    desktopSecret: "s".repeat(64),
+    helperVersion: "2026-05-20.remote-desktop-agent-v19",
+    label: "TRADING-PC\\Riley",
+  });
+
+  const remoteLaunch = createIbkrRemoteBridgeLaunch({
+    apiBaseUrl: "https://pyrus.example.com",
+    body: { autoLogin: true },
+  });
+  assert.deepEqual(
+    claimIbkrRemoteDesktopLaunchJob({
+      desktopId: "desktop-win-main",
+      desktopSecret: "s".repeat(64),
+      helperVersion: "2026-05-20.remote-desktop-agent-v19",
+    }),
+    {
+      helperVersion: pairing.helperVersion,
+      ready: false,
+    },
+  );
+
+  const launchClaim = claimIbkrRemoteDesktopLaunchJob({
+    desktopId: "desktop-win-main",
+    desktopSecret: "s".repeat(64),
+    helperVersion: pairing.helperVersion,
+  });
+  if (!launchClaim.ready || launchClaim.action !== "launch") {
+    assert.fail("Expected current helper to claim launch job.");
+  }
+  assert.equal(launchClaim.jobId, remoteLaunch.remoteLaunch.jobId);
+
+  const pendingLaunch = createIbkrRemoteBridgeLaunch({
+    apiBaseUrl: "https://pyrus.example.com",
+    body: { autoLogin: true },
+  });
+  const shutdown = createIbkrRemoteBridgeShutdown({
+    apiBaseUrl: "https://pyrus.example.com",
+    body: { force: true },
+  });
+
+  const shutdownClaim = claimIbkrRemoteDesktopLaunchJob({
+    desktopId: "desktop-win-main",
+    desktopSecret: "s".repeat(64),
+    helperVersion: "2026-05-20.remote-desktop-agent-v19",
+  });
+  if (!shutdownClaim.ready || shutdownClaim.action !== "launch") {
+    assert.fail("Expected duplicate helper to claim shutdown job.");
+  }
+  assert.equal(shutdownClaim.jobId, shutdown.shutdown.jobId);
+  assert.equal(shutdownClaim.shutdown, true);
+  assert.notEqual(shutdownClaim.jobId, pendingLaunch.remoteLaunch.jobId);
+  assert.deepEqual(
+    claimIbkrRemoteDesktopLaunchJob({
+      desktopId: "desktop-win-main",
+      desktopSecret: "s".repeat(64),
+      helperVersion: pairing.helperVersion,
+    }),
+    {
+      helperVersion: pairing.helperVersion,
+      ready: false,
+    },
+  );
 });
 
 test("IBKR remote desktop shutdown queues a shutdown job for the paired desktop", () => {
@@ -483,7 +637,7 @@ test("IBKR remote desktop launch bootstraps outdated helpers before switching to
   assert.match(claimed.launchUrl, /helperUrl=https%3A%2F%2Fpyrus\.example\.com%2Fapi%2Fibkr%2Fbridge%2Fhelper\.ps1/);
 });
 
-test("IBKR remote desktop claim adapts protocol to the agent process that claimed the job", () => {
+test("IBKR remote desktop claim keeps jobs for the current helper", () => {
   const pairing = getIbkrBridgeLauncher({
     apiBaseUrl: "https://pyrus.example.com",
   });
@@ -509,10 +663,22 @@ test("IBKR remote desktop claim adapts protocol to the agent process that claime
   });
   assert.match(remoteLaunch.autoLoginLaunchUrl, /^pyrus-ibkr:\/\/launch\?/);
 
+  assert.deepEqual(
+    claimIbkrRemoteDesktopLaunchJob({
+      desktopId: "desktop-win-main",
+      desktopSecret: "s".repeat(64),
+      helperVersion: "2026-05-20.remote-desktop-agent-v19",
+    }),
+    {
+      helperVersion: pairing.helperVersion,
+      ready: false,
+    },
+  );
+
   const claimed = claimIbkrRemoteDesktopLaunchJob({
     desktopId: "desktop-win-main",
     desktopSecret: "s".repeat(64),
-    helperVersion: "2026-05-20.remote-desktop-agent-v19",
+    helperVersion: pairing.helperVersion,
   });
 
   if (!claimed.ready || claimed.action !== "launch") {
@@ -545,6 +711,10 @@ test("IBKR Windows helper restarts stale Gateway sessions instead of cycling bri
   assert.match(source, /\$strictReason -eq 'gateway_socket_disconnected'/);
   assert.match(source, /gateway_server_disconnected/);
   assert.match(source, /gateway_login_required/);
+  assert.match(source, /function Get-IBGatewayWindowCandidateScore/);
+  assert.match(source, /gateway_login_window_active/);
+  assert.match(source, /function Set-ClipboardTextForPaste/);
+  assert.match(source, /\[System\.Windows\.Forms\.TextDataFormat\]::UnicodeText/);
   assert.match(
     source,
     /if \(\$script:AutoLoginCredentialClaimed\)\s*\{\s*return \$false\s*\}/,
@@ -665,6 +835,50 @@ test("IBKR bridge login handoff stores only encrypted credential chunks", () => 
   );
 });
 
+test("new IBKR bridge launch supersedes older credential handoff windows", () => {
+  const first = getIbkrBridgeLauncher({
+    apiBaseUrl: "https://pyrus.example.com",
+  });
+  const firstParams = new URL(first.autoLoginLaunchUrl).searchParams;
+  const firstActivationId = firstParams.get("activationId");
+  const firstCallbackSecret = firstParams.get("callbackSecret");
+  assert.ok(firstActivationId);
+  assert.ok(firstCallbackSecret);
+
+  submitLegacyIbkrBridgeLoginKey(firstActivationId, {
+    callbackSecret: firstCallbackSecret,
+    helperInstanceId: "helper-old",
+    algorithm: "RSA-OAEP-256-CHUNKED",
+    publicKeyJwk: {
+      kty: "RSA",
+      n: "modulus",
+      e: "AQAB",
+    },
+  });
+
+  const second = getIbkrBridgeLauncher({
+    apiBaseUrl: "https://pyrus.example.com",
+  });
+  const secondParams = new URL(second.autoLoginLaunchUrl).searchParams;
+  const secondActivationId = secondParams.get("activationId");
+  assert.ok(secondActivationId);
+  assert.notEqual(secondActivationId, firstActivationId);
+
+  assert.equal(getIbkrBridgeActivationDiagnostics().activeCount, 1);
+  assert.equal(
+    getIbkrBridgeActivationDiagnostics().latestActivationId,
+    secondActivationId,
+  );
+  assert.throws(
+    () =>
+      claimLegacyIbkrBridgeLoginEnvelope(firstActivationId, {
+        callbackSecret: firstCallbackSecret,
+        helperInstanceId: "helper-old",
+      }),
+    /superseded by a newer launch/,
+  );
+});
+
 test("IBKR bridge login handoff requires the browser management token", () => {
   const launcher = getIbkrBridgeLauncher({
     apiBaseUrl: "https://pyrus.example.com",
@@ -721,6 +935,8 @@ test("IBKR bridge activation cancellation stops helper credential polling", () =
   assert.equal(initialStatus.active, true);
   assert.equal(initialStatus.canceled, false);
   assert.match(initialStatus.expiresAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(initialStatus.latestProgress, null);
+  assert.deepEqual(initialStatus.recentProgress, []);
   assert.equal(
     readLegacyIbkrBridgeActivationStatus(activationId, {
       managementToken: launcher.managementToken,
@@ -740,6 +956,10 @@ test("IBKR bridge activation cancellation stops helper credential polling", () =
   });
   assert.equal(status.active, true);
   assert.equal(status.canceled, true);
+  assert.equal(status.latestProgress?.step, "cancel_requested");
+  assert.equal(status.latestProgress?.status, "canceled");
+  assert.match(status.latestProgress?.updatedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(status.recentProgress.length, 1);
 
   assert.deepEqual(
     claimLegacyIbkrBridgeLoginEnvelope(activationId, {
@@ -827,6 +1047,15 @@ test("legacy IBKR bridge activation progress is available for diagnostics", () =
     message: "Downloading bundle",
     helperVersion: launcher.helperVersion,
   });
+
+  const status = readLegacyIbkrBridgeActivationStatus(activationId, {
+    managementToken: launcher.managementToken,
+  });
+  assert.equal(status.latestProgress?.step, "downloading_bridge_bundle");
+  assert.equal(status.latestProgress?.helperVersion, launcher.helperVersion);
+  assert.equal(status.latestProgress?.message, "Downloading bundle");
+  assert.match(status.latestProgress?.updatedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(status.recentProgress.length, 1);
 
   const diagnostics = getIbkrBridgeActivationDiagnostics();
   assert.equal(diagnostics.activeCount, 1);

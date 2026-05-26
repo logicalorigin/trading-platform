@@ -50,6 +50,8 @@ test("keeps account realtime during backoff for active trading state", () => {
 
   assert.equal(schedule.streams.accountRealtime, true);
   assert.equal(schedule.classes.foregroundIbkr, false);
+  assert.equal(schedule.classes.realtimeIbkr, true);
+  assert.equal(schedule.streams.watchlistQuoteStream, true);
 });
 
 test("keeps broad flow runtime active on account after first-screen warmup", () => {
@@ -136,6 +138,8 @@ test("keeps header flow owner when active Flow IBKR work is stalled", () => {
   });
 
   assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.classes.realtimeIbkr, false);
+  assert.equal(schedule.streams.watchlistQuoteStream, false);
 });
 
 test("keeps shared flow runtime disabled while broad scanner owns flow", () => {
@@ -210,7 +214,7 @@ test("memory watch pressure blocks low-priority background hydration first", () 
   assert.equal(schedule.hiddenScreenPreload.mountScreens, false);
 });
 
-test("critical memory pressure stalls heavy hydration but keeps broad flow reader alive", () => {
+test("critical memory pressure stalls heavy hydration but keeps core quote reader alive", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "flow",
@@ -229,6 +233,9 @@ test("critical memory pressure stalls heavy hydration but keeps broad flow reade
   assert.equal(schedule.pressureCaps.signalMatrixWideSymbolLimit, 8);
   assert.equal(schedule.pressureCaps.signalMatrixNarrowSymbolLimit, 8);
   assert.equal(schedule.pressureCaps.sparklineEnabled, false);
+  assert.equal(schedule.classes.foregroundIbkr, false);
+  assert.equal(schedule.classes.realtimeIbkr, true);
+  assert.equal(schedule.streams.watchlistQuoteStream, true);
   assert.equal(schedule.streams.lowPriorityHistory, false);
   assert.equal(schedule.resume.backgroundRefresh, false);
   assert.equal(schedule.hiddenScreenPreload.codeOnly, false);

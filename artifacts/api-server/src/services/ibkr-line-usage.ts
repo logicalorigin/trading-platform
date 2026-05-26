@@ -42,6 +42,7 @@ type DriftGroup = {
 const BRIDGE_LANE_USAGE_CACHE_MS = 2_000;
 const DEFAULT_BRIDGE_LANE_USAGE_TIMEOUT_MS = 1_500;
 const PERSISTENT_BRIDGE_ONLY_OBSERVATION_COUNT = 2;
+const PERSISTENT_BRIDGE_ONLY_GRACE_MS = 10_000;
 let cachedBridgeLaneDiagnostics: CachedBridgeLaneDiagnostics | null = null;
 let bridgeLaneDiagnosticsPromise: Promise<CachedBridgeLaneDiagnostics> | null = null;
 let bridgeLaneDiagnosticsStartedAt = 0;
@@ -207,14 +208,32 @@ function lineAssetClass(lineId: string): string | null {
   return null;
 }
 
-function buildAdmissionLineIds(
+function isSnapshotOnlyAdmissionLease(lease: MarketDataLease): boolean {
+  return lease.intent === "flow-scanner-live" && lease.assetClass === "option";
+}
+
+function buildAdmissionLineIdSets(
   admission: ReturnType<typeof getMarketDataAdmissionDiagnostics>,
-): Set<string> {
-  const result = new Set<string>();
+): {
+  all: Set<string>;
+  comparable: Set<string>;
+  snapshotOnly: Set<string>;
+} {
+  const all = new Set<string>();
+  const comparable = new Set<string>();
+  const snapshotOnly = new Set<string>();
   admission.leases.forEach((lease) => {
-    lease.lineIds.forEach((lineId) => result.add(lineId));
+    lease.lineIds.forEach((lineId) => {
+      all.add(lineId);
+      if (isSnapshotOnlyAdmissionLease(lease)) {
+        snapshotOnly.add(lineId);
+      } else {
+        comparable.add(lineId);
+      }
+    });
   });
-  return result;
+  comparable.forEach((lineId) => snapshotOnly.delete(lineId));
+  return { all, comparable, snapshotOnly };
 }
 
 function buildBridgeLineIds(subscriptions: Record<string, unknown>): Set<string> {
@@ -340,7 +359,8 @@ function buildBridgeOnlyLineGroups(lineIds: Set<string>): DriftGroup[] {
 }
 
 function updateBridgeOnlyLineObservations(lineIds: Set<string>) {
-  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
   Array.from(bridgeOnlyLineObservations.keys()).forEach((lineId) => {
     if (!lineIds.has(lineId)) {
       bridgeOnlyLineObservations.delete(lineId);
@@ -359,7 +379,8 @@ function updateBridgeOnlyLineObservations(lineIds: Set<string>) {
     .filter(
       (entry) =>
         lineIds.has(entry.lineId) &&
-        entry.observedCount >= PERSISTENT_BRIDGE_ONLY_OBSERVATION_COUNT,
+        entry.observedCount >= PERSISTENT_BRIDGE_ONLY_OBSERVATION_COUNT &&
+        nowMs - Date.parse(entry.firstSeenAt) >= PERSISTENT_BRIDGE_ONLY_GRACE_MS,
     )
     .sort((left, right) => left.lineId.localeCompare(right.lineId));
 }
@@ -369,7 +390,8 @@ function buildLineDriftReconciliation(input: {
   subscriptions: Record<string, unknown>;
   bridgeDiagnosticsAvailable: boolean;
 }) {
-  const apiLineIds = buildAdmissionLineIds(input.admission);
+  const apiLineSets = buildAdmissionLineIdSets(input.admission);
+  const apiLineIds = apiLineSets.comparable;
   const bridgeLineIds = input.bridgeDiagnosticsAvailable
     ? buildBridgeLineIds(input.subscriptions)
     : new Set<string>();
@@ -393,17 +415,25 @@ function buildLineDriftReconciliation(input: {
       bridgeDiagnosticsAvailable: input.bridgeDiagnosticsAvailable,
     }),
     apiLineCount: apiLineIds.size,
+    totalApiLineCount: apiLineSets.all.size,
+    snapshotOnlyApiLineCount: apiLineSets.snapshotOnly.size,
     bridgeLineCount: bridgeLineIds.size,
     matchedLineCount: matchedLineIds.size,
     apiOnlyLineCount: apiOnlyLineIds.size,
     bridgeOnlyLineCount: bridgeOnlyLineIds.size,
+    snapshotOnlyApiLineSample: lineDriftSample(apiLineSets.snapshotOnly),
     apiOnlyLineSample: lineDriftSample(apiOnlyLineIds),
     bridgeOnlyLineSample: lineDriftSample(bridgeOnlyLineIds),
+    snapshotOnlyApiGroups: buildApiOnlyLineGroups({
+      lineIds: apiLineSets.snapshotOnly,
+      leases: input.admission.leases,
+    }),
     apiOnlyGroups: buildApiOnlyLineGroups({
       lineIds: apiOnlyLineIds,
       leases: input.admission.leases,
     }),
     bridgeOnlyGroups: buildBridgeOnlyLineGroups(bridgeOnlyLineIds),
+    persistentBridgeOnlyGraceMs: PERSISTENT_BRIDGE_ONLY_GRACE_MS,
     persistentBridgeOnlyLineCount: persistentBridgeOnlyLines.length,
     persistentBridgeOnlyLineSample: persistentBridgeOnlyLines
       .map((entry) => entry.lineId)
@@ -646,10 +676,20 @@ function buildLineUtilizationAudit(input: {
   const scannerUnusedPoolLineCount = readNumber(
     scannerUtilization.unusedPoolLines,
   );
-  const watchlistFillerCap = input.watchlistPrewarm.fillerConfiguredMaxSymbolCount;
-  const watchlistFillerHasPendingCandidates =
-    input.watchlistPrewarm.fillerEnabled &&
-    input.watchlistPrewarm.fillerCandidateSymbolCount > 0;
+  const scannerActiveLineCount = readNumber(admission.flowScannerLineCount) ?? 0;
+  const deepScanner = admission.optionsFlowScanner.deepScanner;
+  const scannerWorkActive =
+    scannerActiveLineCount > 0 ||
+    Boolean(deepScanner.draining) ||
+    deepScanner.activeCount > 0 ||
+    deepScanner.queuedCount > 0;
+  const admissionVsBridgeLineDelta =
+    input.driftReconciliation.status === "unknown"
+      ? input.bridgeActiveLineCount === null
+        ? null
+        : admission.activeLineCount - input.bridgeActiveLineCount
+      : input.driftReconciliation.apiLineCount -
+        input.driftReconciliation.bridgeLineCount;
   const topLimitingReason =
     idleToTargetLineCount === 0
       ? "target-filled"
@@ -657,21 +697,15 @@ function buildLineUtilizationAudit(input: {
         ? "bridge-budget-full"
         : input.driftReconciliation.status === "unknown"
           ? "bridge-diagnostics-unavailable"
+          : scannerWorkActive
+            ? "scanner-active"
           : admission.optionsFlowScanner.backgroundBlockedReason
             ? `scanner-${admission.optionsFlowScanner.backgroundBlockedReason}`
-            : (scannerUnusedPoolLineCount ?? 0) > 0
-              ? "scanner-concurrency-cap"
-              : watchlistFillerHasPendingCandidates &&
-                  input.watchlistPrewarm.fillerActiveSymbolCount >=
-                    watchlistFillerCap
-                ? "watchlist-filler-cap"
-                : watchlistFillerHasPendingCandidates
-                  ? "watchlist-filler-pending"
-                : input.watchlistPrewarm.laneDroppedSymbolCount > 0
-                  ? "watchlist-lane-cap"
-                  : input.driftReconciliation.status !== "matched"
-                    ? "line-drift"
-                    : "candidate-demand";
+            : input.watchlistPrewarm.laneDroppedSymbolCount > 0
+              ? "visible-lane-cap"
+              : input.driftReconciliation.status !== "matched"
+                ? "line-drift"
+                : "active-demand-satisfied";
 
   return {
     targetLineCount: admission.budget.targetFillLines,
@@ -680,14 +714,11 @@ function buildLineUtilizationAudit(input: {
     bridgeActiveLineCount: input.bridgeActiveLineCount,
     bridgeLineBudget: input.bridgeLineBudget,
     bridgeRemainingLineCount,
-    admissionVsBridgeLineDelta:
-      input.bridgeActiveLineCount === null
-        ? null
-        : admission.activeLineCount - input.bridgeActiveLineCount,
+    admissionVsBridgeLineDelta,
     driftStatus: input.driftReconciliation.status,
     topLimitingReason,
     scanner: {
-      activeLineCount: admission.flowScannerLineCount,
+      activeLineCount: scannerActiveLineCount,
       staticLineCap: admission.budget.flowScannerLineCap,
       effectiveLineCap: scannerUtilization.effectivePoolCap,
       configuredConcurrency: scannerUtilization.configuredConcurrency,
@@ -695,6 +726,11 @@ function buildLineUtilizationAudit(input: {
       scannerLineBudget: scannerUtilization.scannerLineBudget,
       maxDeepScanLines: scannerUtilization.maxDeepScanLines,
       unusedPoolLineCount: scannerUnusedPoolLineCount,
+      backgroundBlockedReason:
+        admission.optionsFlowScanner.backgroundBlockedReason,
+      activeDeepScanCount: deepScanner.activeCount,
+      queuedDeepScanCount: deepScanner.queuedCount,
+      draining: deepScanner.draining,
       recentRotatedCount:
         admission.flowScannerActivity?.recentRotatedCount ?? 0,
       recentRejectedCount:
@@ -703,17 +739,21 @@ function buildLineUtilizationAudit(input: {
     watchlist: {
       primaryActiveSymbolCount:
         input.watchlistPrewarm.primaryActiveSymbolCount,
+      primaryActiveSourceSymbolCount:
+        input.watchlistPrewarm.primaryActiveSourceSymbolCount,
+      primaryMissingSourceSymbolCount:
+        input.watchlistPrewarm.primaryMissingSourceSymbolCount,
+      primaryMissingSourceSymbolSample:
+        input.watchlistPrewarm.primaryMissingSourceSymbolSample,
       primarySymbolLimit: input.watchlistPrewarm.primarySymbolLimit,
       laneDroppedSymbolCount:
         input.watchlistPrewarm.laneDroppedSymbolCount,
       droppedAfterPrimarySymbolCount:
         input.watchlistPrewarm.droppedAfterPrimarySymbolCount,
-      fillerActiveSymbolCount:
-        input.watchlistPrewarm.fillerActiveSymbolCount,
-      fillerCandidateSymbolCount:
-        input.watchlistPrewarm.fillerCandidateSymbolCount,
-      fillerCapSymbolCount: watchlistFillerCap,
-      fillerEnabled: input.watchlistPrewarm.fillerEnabled,
+      fillerActiveSymbolCount: 0,
+      fillerCandidateSymbolCount: 0,
+      fillerCapSymbolCount: 0,
+      fillerEnabled: false,
     },
   };
 }
@@ -824,9 +864,9 @@ export async function getIbkrLineUsageSnapshot() {
     signalOptions: admission.signalOptions,
     drift: {
       admissionVsBridgeLineDelta:
-        bridgeActiveLines === null
+        driftReconciliation.status === "unknown" || bridgeActiveLines === null
           ? null
-          : admission.activeLineCount - bridgeActiveLines,
+          : driftReconciliation.apiLineCount - driftReconciliation.bridgeLineCount,
       reconciliation: driftReconciliation,
     },
   };

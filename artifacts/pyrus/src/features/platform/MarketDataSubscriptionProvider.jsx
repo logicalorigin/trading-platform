@@ -54,6 +54,23 @@ const settleWithConcurrency = async (items, concurrency, mapper) => {
 
 const SPARKLINE_HISTORY_TIMEFRAME = "1m";
 const SPARKLINE_HISTORY_LIMIT = 720;
+const QUOTE_STREAM_DIAGNOSTICS_GLOBAL =
+  "__PYRUS_MARKET_DATA_SUBSCRIPTION_DIAGNOSTICS__";
+
+export const resolveQuoteStreamDisabledReason = ({
+  pageVisible,
+  quoteStreamRuntimeEnabled,
+  symbolCount,
+  eventSourceAvailable,
+  upstreamDisabledReason = null,
+} = {}) => {
+  if (!pageVisible) return "page-hidden";
+  if (upstreamDisabledReason) return upstreamDisabledReason;
+  if (!quoteStreamRuntimeEnabled) return "runtime-disabled";
+  if (!symbolCount) return "empty-symbol-batch";
+  if (!eventSourceAvailable) return "eventsource-unavailable";
+  return null;
+};
 
 const thinBarsForSparkline = (bars, limit = SPARKLINE_RENDER_POINT_LIMIT) => {
   if (!Array.isArray(bars) || bars.length <= limit) {
@@ -80,6 +97,8 @@ export const MarketDataSubscriptionProvider = ({
   streamedQuoteSymbols,
   streamedAggregateSymbols,
   quoteStreamRuntimeEnabled = false,
+  quoteStreamDisabledReason: upstreamQuoteStreamDisabledReason = null,
+  quoteStreamCoverageDiagnostics = null,
   marketStockAggregateStreamingEnabled,
   marketScreenActive = false,
   lowPriorityHistoryEnabled = true,
@@ -125,12 +144,55 @@ export const MarketDataSubscriptionProvider = ({
   const sparklineHistoryEnabled = Boolean(
     sparklineHistoryRuntimeEnabled && requestedSparklineSymbols.length > 0,
   );
+  const eventSourceAvailable =
+    typeof window === "undefined" || typeof window.EventSource !== "undefined";
+  const quoteStreamDisabledReason = resolveQuoteStreamDisabledReason({
+    pageVisible,
+    quoteStreamRuntimeEnabled,
+    symbolCount: streamedQuoteSymbols.length,
+    eventSourceAvailable,
+    upstreamDisabledReason: upstreamQuoteStreamDisabledReason,
+  });
   const quoteStreamRuntimeActive = Boolean(
-    pageVisible && quoteStreamRuntimeEnabled && streamedQuoteSymbols.length > 0,
+    !quoteStreamDisabledReason,
   );
   const marketAggregateStreamRuntimeActive = Boolean(
     pageVisible && marketStockAggregateStreamingEnabled && marketScreenActive,
   );
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const snapshot = {
+      quoteStream: {
+        active: quoteStreamRuntimeActive,
+        disabledReason: quoteStreamDisabledReason,
+        requestedSymbols: streamedQuoteSymbols,
+        requestedSymbolCount: streamedQuoteSymbols.length,
+        eventSourceAvailable,
+        coverage: quoteStreamCoverageDiagnostics,
+      },
+      aggregateStream: {
+        active: marketAggregateStreamRuntimeActive,
+        requestedSymbolCount: streamedAggregateSymbols.length,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    window[QUOTE_STREAM_DIAGNOSTICS_GLOBAL] = snapshot;
+    return () => {
+      if (window[QUOTE_STREAM_DIAGNOSTICS_GLOBAL] === snapshot) {
+        delete window[QUOTE_STREAM_DIAGNOSTICS_GLOBAL];
+      }
+    };
+  }, [
+    eventSourceAvailable,
+    marketAggregateStreamRuntimeActive,
+    quoteStreamCoverageDiagnostics,
+    quoteStreamDisabledReason,
+    quoteStreamRuntimeActive,
+    streamedAggregateSymbols.length,
+    streamedQuoteSymbols,
+  ]);
 
   useRuntimeWorkloadFlag(
     "market:subscription-streams",

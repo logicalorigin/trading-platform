@@ -104,6 +104,42 @@ test("signal lane filters active state signals older than two days", () => {
   );
 });
 
+test("signal lane ignores stale persisted current states", () => {
+  const rows = buildSignalLaneRows(
+    {
+      selectedTimeframe: "5m",
+      states: [
+        {
+          id: "stale-current",
+          symbol: "RBLX",
+          timeframe: "5m",
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-04-30T15:55:00Z",
+          fresh: true,
+          active: true,
+          status: "stale",
+        },
+        {
+          id: "ok-current",
+          symbol: "MSFT",
+          timeframe: "5m",
+          currentSignalDirection: "sell",
+          currentSignalAt: "2026-04-30T15:56:00Z",
+          fresh: false,
+          active: true,
+          status: "ok",
+        },
+      ],
+    },
+    { nowMs: Date.parse("2026-04-30T16:00:00Z") },
+  );
+
+  assert.deepEqual(
+    rows.map((row) => row.symbol),
+    ["MSFT"],
+  );
+});
+
 test("signal lane sorts newest signal rows before freshness ties", () => {
   const rows = buildSignalLaneRows(
     {

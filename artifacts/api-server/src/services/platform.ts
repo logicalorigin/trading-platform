@@ -30,12 +30,15 @@ import {
   getRuntimeMode,
 } from "../lib/runtime";
 import { logger } from "../lib/logger";
+import { getApiResourcePressureSnapshot } from "./resource-pressure";
 import {
   createTransientPostgresBackoff,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
-import { getApiResourcePressureSnapshot } from "./resource-pressure";
-import { getIbkrBridgeActivationDiagnostics } from "./ibkr-bridge-runtime";
+import {
+  getIbkrBridgeActivationDiagnostics,
+  getIbkrBridgeRuntimeSessionState,
+} from "./ibkr-bridge-runtime";
 import { getCachedStorageHealthSnapshot } from "./storage-health";
 import { normalizeSymbol } from "../lib/values";
 import {
@@ -655,16 +658,12 @@ async function getWatchlistById(
 let pendingIbkrWatchlistPrewarmSignature: string | null = null;
 let pendingIbkrWatchlistPrewarmRerunReason: string | null = null;
 let ibkrWatchlistPrewarmSequence = 0;
+let ibkrWatchlistPrewarmRotationOffset = 0;
 let liveWarmupBackgroundHoldUntil = 0;
 const watchlistDbBackoff = createTransientPostgresBackoff();
 const IBKR_BRIDGE_STARTUP_PREWARM_OWNER = "bridge-startup";
 const IBKR_WATCHLIST_PREWARM_OWNER = "watchlist-prewarm";
 const IBKR_WATCHLIST_PREWARM_FILLER_OWNER = "watchlist-prewarm-filler";
-const IBKR_WATCHLIST_PREWARM_FILLER_ENABLED_ENV =
-  "IBKR_MARKET_DATA_ENABLE_FILLER_PREWARM";
-const IBKR_WATCHLIST_PREWARM_FILLER_MAX_SYMBOLS_ENV =
-  "IBKR_WATCHLIST_PREWARM_FILLER_MAX_SYMBOLS";
-const IBKR_WATCHLIST_PREWARM_FILLER_DEFAULT_MAX_SYMBOLS = 200;
 const IBKR_WATCHLIST_PREWARM_BRIDGE_RESYNC_MS = readPositiveIntegerEnv(
   "IBKR_WATCHLIST_PREWARM_BRIDGE_RESYNC_MS",
   15_000,
@@ -686,56 +685,8 @@ export function resolveIbkrWatchlistPrewarmSymbolLimit(
     0,
     Math.floor(Number.isFinite(candidateSymbolCount) ? candidateSymbolCount : 0),
   );
-  const watchlistLineCap = getMarketDataAdmissionBudget().watchlistLineCap;
-  return Math.min(normalizedCandidateSymbolCount, watchlistLineCap);
-}
-
-function isIbkrWatchlistFillerPrewarmEnabled(): boolean {
-  return readBooleanEnv(IBKR_WATCHLIST_PREWARM_FILLER_ENABLED_ENV, true);
-}
-
-function resolveIbkrWatchlistFillerConfiguredMaxSymbolCount(): number {
-  const configuredMax =
-    readOptionalPositiveIntegerEnv(IBKR_WATCHLIST_PREWARM_FILLER_MAX_SYMBOLS_ENV) ??
-    IBKR_WATCHLIST_PREWARM_FILLER_DEFAULT_MAX_SYMBOLS;
-  const pressureCap =
-    getApiResourcePressureSnapshot().caps.watchlistFillerMaxSymbols;
-  return Math.max(
-    0,
-    pressureCap == null ? configuredMax : Math.min(configuredMax, pressureCap),
-  );
-}
-
-export function resolveIbkrWatchlistFillerSymbolLimit(input: {
-  candidateSymbolCount: number;
-  targetFillLines: number;
-  nonFillerLineCount: number;
-}): number {
-  if (!isIbkrWatchlistFillerPrewarmEnabled()) {
-    return 0;
-  }
-
-  const candidateSymbolCount = Math.max(
-    0,
-    Math.floor(
-      Number.isFinite(input.candidateSymbolCount)
-        ? input.candidateSymbolCount
-        : 0,
-    ),
-  );
-  const totalLineSlack = Math.max(
-    0,
-    Math.floor(input.targetFillLines - input.nonFillerLineCount),
-  );
-  const configuredMax = resolveIbkrWatchlistFillerConfiguredMaxSymbolCount();
-  return Math.max(
-    0,
-    Math.min(
-      candidateSymbolCount,
-      totalLineSlack,
-      configuredMax,
-    ),
-  );
+  const visibleLineCap = getMarketDataAdmissionBudget().visibleLineCap;
+  return Math.min(normalizedCandidateSymbolCount, visibleLineCap);
 }
 
 export function getIbkrWatchlistPrewarmDiagnostics() {
@@ -745,8 +696,12 @@ export function getIbkrWatchlistPrewarmDiagnostics() {
     resolvedSymbols.admittedSymbols.length,
   );
   const primarySymbols = leaseSymbolsForOwner(IBKR_WATCHLIST_PREWARM_OWNER);
-  const fillerSymbols = leaseSymbolsForOwner(
-    IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
+  const primarySymbolSet = new Set(primarySymbols);
+  const primaryActiveSourceSymbols = symbols.filter((symbol) =>
+    primarySymbolSet.has(symbol),
+  );
+  const primaryMissingSourceSymbols = symbols.filter(
+    (symbol) => !primarySymbolSet.has(symbol),
   );
   const droppedAfterPrimarySymbolCount = Math.max(
     0,
@@ -759,19 +714,18 @@ export function getIbkrWatchlistPrewarmDiagnostics() {
     laneDroppedSymbolCount: resolvedSymbols.droppedSymbols.length,
     primarySymbolLimit,
     primaryActiveSymbolCount: primarySymbols.length,
+    primaryActiveSourceSymbolCount: primaryActiveSourceSymbols.length,
+    primaryMissingSourceSymbolCount: primaryMissingSourceSymbols.length,
+    primaryMissingSourceSymbolSample: primaryMissingSourceSymbols.slice(0, 20),
     primaryRemainingSymbolCount: Math.max(
       0,
       primarySymbolLimit - primarySymbols.length,
     ),
     droppedAfterPrimarySymbolCount,
-    fillerCandidateSymbolCount: Math.max(
-      0,
-      droppedAfterPrimarySymbolCount - fillerSymbols.length,
-    ),
-    fillerActiveSymbolCount: fillerSymbols.length,
-    fillerEnabled: isIbkrWatchlistFillerPrewarmEnabled(),
-    fillerConfiguredMaxSymbolCount:
-      resolveIbkrWatchlistFillerConfiguredMaxSymbolCount(),
+    fillerCandidateSymbolCount: 0,
+    fillerActiveSymbolCount: 0,
+    fillerEnabled: false,
+    fillerConfiguredMaxSymbolCount: 0,
   };
 }
 
@@ -825,52 +779,166 @@ function collectAccountMonitorQuoteSymbols(): string[] {
   ).sort();
 }
 
+function buildWatchlistPrewarmLineRequests(
+  symbols: string[],
+  sourceSymbols: string[] = latestWatchlistLaneSymbols,
+): Array<{
+  assetClass: "equity";
+  symbol: string;
+  priorityOffset: number;
+}> {
+  const sourceSymbolSet = new Set(
+    sourceSymbols
+      .map((symbol) => normalizeSymbol(symbol).toUpperCase())
+      .filter(Boolean),
+  );
+  return symbols
+    .map((symbol) => normalizeSymbol(symbol).toUpperCase())
+    .filter(Boolean)
+    .map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+      priorityOffset: sourceSymbolSet.has(symbol) ? 1 : -1,
+    }));
+}
+
+export function __buildWatchlistPrewarmLineRequestsForTests(
+  symbols: string[],
+  sourceSymbols: string[],
+) {
+  return buildWatchlistPrewarmLineRequests(symbols, sourceSymbols);
+}
+
 function orderWarmupSymbols(input: {
   admittedSymbols: string[];
+  watchlistSymbols: string[];
   defaultSymbols: string[];
   accountSymbols: string[];
-}): string[] {
+  limit: number;
+  rotationOffset: number;
+  advanceRotation: boolean;
+}): {
+  symbols: string[];
+  nextRotationOffset: number;
+  overflowCount: number;
+} {
   const admitted = new Set(input.admittedSymbols);
-  const result: string[] = [];
-  const add = (symbol: string, requireAdmitted: boolean) => {
+  const pinned: string[] = [];
+  const watchlistCandidates: string[] = [];
+  const extraCandidates: string[] = [];
+  const seen = new Set<string>();
+  const normalize = (symbol: string) => normalizeSymbol(symbol).toUpperCase();
+  const addPinned = (symbol: string, requireAdmitted: boolean) => {
     const normalized = normalizeSymbol(symbol).toUpperCase();
-    if (!normalized || result.includes(normalized)) {
+    if (!normalized || seen.has(normalized)) {
       return;
     }
     if (requireAdmitted && !admitted.has(normalized)) {
       return;
     }
-    result.push(normalized);
+    seen.add(normalized);
+    pinned.push(normalized);
+  };
+  const addCandidate = (
+    target: string[],
+    symbol: string,
+    requireAdmitted: boolean,
+  ) => {
+    const normalized = normalize(symbol);
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    if (requireAdmitted && !admitted.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    target.push(normalized);
   };
 
-  input.accountSymbols.forEach((symbol) => add(symbol, false));
-  input.defaultSymbols.forEach((symbol) => add(symbol, true));
-  input.admittedSymbols.forEach((symbol) => add(symbol, true));
-  return result;
+  input.defaultSymbols.forEach((symbol) => addPinned(symbol, true));
+  input.watchlistSymbols.forEach((symbol) =>
+    addCandidate(watchlistCandidates, symbol, true),
+  );
+  input.accountSymbols.forEach((symbol) =>
+    addCandidate(extraCandidates, symbol, false),
+  );
+  input.admittedSymbols.forEach((symbol) =>
+    addCandidate(extraCandidates, symbol, true),
+  );
+
+  const limit = Math.max(0, Math.floor(input.limit));
+  const candidateSlots = Math.max(0, limit - pinned.length);
+  const watchlistOverflowCount = Math.max(
+    0,
+    watchlistCandidates.length - candidateSlots,
+  );
+  const rotate = (symbols: string[], rotationOffset: number) =>
+    symbols.length > 0
+      ? [
+          ...symbols.slice(rotationOffset),
+          ...symbols.slice(0, rotationOffset),
+        ]
+      : symbols;
+  let selectedCandidates: string[];
+  let nextRotationOffset = Math.max(0, Math.floor(input.rotationOffset));
+  if (watchlistOverflowCount > 0) {
+    const rotationOffset = nextRotationOffset % watchlistCandidates.length;
+    selectedCandidates = rotate(watchlistCandidates, rotationOffset).slice(
+      0,
+      candidateSlots,
+    );
+    nextRotationOffset =
+      input.advanceRotation && watchlistCandidates.length > 0
+        ? (rotationOffset + Math.max(1, candidateSlots)) %
+          watchlistCandidates.length
+        : rotationOffset;
+  } else {
+    const extraSlots = Math.max(
+      0,
+      candidateSlots - watchlistCandidates.length,
+    );
+    const extraOverflowCount = Math.max(0, extraCandidates.length - extraSlots);
+    const rotationOffset =
+      extraCandidates.length > 0
+        ? nextRotationOffset % extraCandidates.length
+        : 0;
+    const selectedExtras =
+      extraOverflowCount > 0
+        ? rotate(extraCandidates, rotationOffset).slice(0, extraSlots)
+        : extraCandidates.slice(0, extraSlots);
+    selectedCandidates = [...watchlistCandidates, ...selectedExtras];
+    nextRotationOffset =
+      input.advanceRotation && extraOverflowCount > 0 && extraCandidates.length > 0
+        ? (rotationOffset + Math.max(1, extraSlots)) % extraCandidates.length
+        : rotationOffset;
+  }
+  const overflowCount = Math.max(
+    0,
+    watchlistCandidates.length + extraCandidates.length - candidateSlots,
+  );
+  const symbols = [...pinned, ...selectedCandidates].slice(0, limit);
+
+  return {
+    symbols,
+    nextRotationOffset,
+    overflowCount,
+  };
 }
 
-function countActiveLinesExcludingOwner(owner: string): number {
-  const lineIds = new Set<string>();
-  getMarketDataLeasesSnapshot()
-    .filter((lease) => lease.owner !== owner)
-    .forEach((lease) => {
-      lease.lineIds.forEach((lineId) => lineIds.add(lineId));
-    });
-  return lineIds.size;
-}
-
-function activeEquitySymbolsExcludingOwner(owner: string): Set<string> {
-  const symbols = new Set<string>();
-  getMarketDataLeasesSnapshot()
-    .filter((lease) => lease.owner !== owner)
-    .forEach((lease) => {
-      lease.lineIds.forEach((lineId) => {
-        if (lineId.startsWith("equity:")) {
-          symbols.add(lineId.slice("equity:".length).toUpperCase());
-        }
-      });
-    });
-  return symbols;
+export function __orderWatchlistWarmupSymbolsForTests(input: {
+  admittedSymbols: string[];
+  watchlistSymbols: string[];
+  defaultSymbols: string[];
+  accountSymbols: string[];
+  limit: number;
+  rotationOffset?: number;
+  advanceRotation?: boolean;
+}) {
+  return orderWarmupSymbols({
+    ...input,
+    rotationOffset: input.rotationOffset ?? 0,
+    advanceRotation: input.advanceRotation ?? false,
+  });
 }
 
 function leaseSymbolsForOwner(owner: string): string[] {
@@ -925,24 +993,24 @@ export function reconcileIbkrWatchlistPrewarmFromBridgeDiagnostics(
   if (primarySymbols.length > 0) {
     admitMarketDataLeases({
       owner: IBKR_WATCHLIST_PREWARM_OWNER,
-      intent: "watchlist-live",
-      requests: primarySymbols.map((symbol) => ({
-        assetClass: "equity" as const,
-        symbol,
-      })),
+      intent: "visible-live",
+      requests: buildWatchlistPrewarmLineRequests(primarySymbols),
       fallbackProvider: "cache",
     });
   }
 
   if (fillerSymbols.length > 0) {
-    admitMarketDataLeases({
-      owner: IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-      intent: "delayed-ok",
-      requests: fillerSymbols.map((symbol) => ({
-        assetClass: "equity" as const,
-        symbol,
-      })),
-      fallbackProvider: "cache",
+    releaseMarketDataLeases(
+      IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
+      "retired_filler_reconcile",
+    );
+    void syncWatchlistPrewarmBridgeGroups({
+      primarySymbols,
+    }).catch((error) => {
+      logger.debug(
+        { err: error },
+        "IBKR bridge retired watchlist filler clear skipped",
+      );
     });
   }
 }
@@ -988,22 +1056,7 @@ function getOptionsFlowScannerSchedulableLineCap(): number {
     diagnostics.pressure.scannerStaticLineCap ??
     diagnostics.budget.flowScannerLineCap;
   const effectiveLineCap = diagnostics.pressure.scannerEffectiveLineCap ?? 0;
-  return Math.max(
-    0,
-    Math.min(
-      staticLineCap,
-      effectiveLineCap + diagnostics.convenienceLineCount,
-    ),
-  );
-}
-
-function getOptionsFlowScannerResourcePressureBlockReason(): string | null {
-  const level = getApiResourcePressureSnapshot().level;
-  if (level === "high" || level === "critical") {
-    return "resource-pressure";
-  }
-  const rssMb = process.memoryUsage().rss / 1024 / 1024;
-  return rssMb >= 1_600 ? "resource-pressure" : null;
+  return Math.max(0, Math.min(staticLineCap, effectiveLineCap));
 }
 
 let optionsFlowSessionBlockReason: string | null = null;
@@ -1087,14 +1140,6 @@ function getOptionsFlowScannerBackgroundBlockReason(input: {
   if (sessionBlockReason) {
     return sessionBlockReason;
   }
-  if (isBridgeWorkBackedOff("quotes")) {
-    return "quotes-backoff";
-  }
-  const resourcePressureBlockReason =
-    getOptionsFlowScannerResourcePressureBlockReason();
-  if (resourcePressureBlockReason) {
-    return resourcePressureBlockReason;
-  }
   if (!input.ignoreLineCapacity) {
     if (getOptionsFlowScannerSchedulableLineCap() <= 0) {
       return "line-cap-exhausted";
@@ -1170,7 +1215,6 @@ export function __getWatchlistPrewarmBridgeSyncBlockReasonForTests(
 
 async function syncWatchlistPrewarmBridgeGroups(input: {
   primarySymbols: string[];
-  fillerSymbols: string[];
 }): Promise<void> {
   const groups = [
     {
@@ -1185,7 +1229,7 @@ async function syncWatchlistPrewarmBridgeGroups(input: {
     },
     {
       owner: IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-      symbols: input.fillerSymbols,
+      symbols: [],
       state: lastBridgeFillerPrewarmSync,
     },
   ];
@@ -1197,7 +1241,6 @@ async function syncWatchlistPrewarmBridgeGroups(input: {
       {
         blockReason,
         primarySymbolCount: input.primarySymbols.length,
-        fillerSymbolCount: input.fillerSymbols.length,
       },
       "IBKR bridge watchlist prewarm sync skipped",
     );
@@ -1268,14 +1311,20 @@ function scheduleIbkrWatchlistPrewarm(
   const defaultSymbols = collectDefaultWatchlistSymbols(watchlists);
   const accountSymbols = collectAccountMonitorQuoteSymbols();
   const resolvedSymbols = resolveEquityLiveQuoteLaneSymbols(symbols);
-  const warmupSymbols = orderWarmupSymbols({
+  const warmupLimit = resolveIbkrWatchlistPrewarmSymbolLimit(
+    resolvedSymbols.admittedSymbols.length,
+  );
+  const orderedWarmup = orderWarmupSymbols({
     admittedSymbols: resolvedSymbols.admittedSymbols,
+    watchlistSymbols: symbols,
     defaultSymbols,
     accountSymbols,
+    limit: warmupLimit,
+    rotationOffset: ibkrWatchlistPrewarmRotationOffset,
+    advanceRotation: reason.includes("runtime-resync"),
   });
-  const warmupLimit = resolveIbkrWatchlistPrewarmSymbolLimit(
-    warmupSymbols.length,
-  );
+  ibkrWatchlistPrewarmRotationOffset = orderedWarmup.nextRotationOffset;
+  const warmupSymbols = orderedWarmup.symbols;
   const cappedWarmupSymbols = warmupSymbols.slice(0, warmupLimit);
   const prewarmDroppedSymbols = warmupSymbols.slice(warmupLimit);
   const requestedSignature = cappedWarmupSymbols.join(",");
@@ -1286,11 +1335,10 @@ function scheduleIbkrWatchlistPrewarm(
     releaseMarketDataLeases(IBKR_WATCHLIST_PREWARM_OWNER, "prewarm_empty");
     releaseMarketDataLeases(
       IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-      "prewarm_empty",
+      "retired_filler_clear",
     );
     void syncWatchlistPrewarmBridgeGroups({
       primarySymbols: [],
-      fillerSymbols: [],
     }).catch((error) => {
       logger.warn({ err: error, reason }, "IBKR bridge prewarm clear failed");
     });
@@ -1328,11 +1376,8 @@ function scheduleIbkrWatchlistPrewarm(
 
       const primaryAdmission = admitMarketDataLeases({
         owner: IBKR_WATCHLIST_PREWARM_OWNER,
-        intent: "watchlist-live",
-        requests: cappedWarmupSymbols.map((symbol) => ({
-          assetClass: "equity" as const,
-          symbol,
-        })),
+        intent: "visible-live",
+        requests: buildWatchlistPrewarmLineRequests(cappedWarmupSymbols, symbols),
         fallbackProvider: "cache",
       });
       const admittedSymbols = primaryAdmission.admitted
@@ -1342,57 +1387,21 @@ function scheduleIbkrWatchlistPrewarm(
         releaseMarketDataLeases(IBKR_WATCHLIST_PREWARM_OWNER, "prewarm_empty");
         releaseMarketDataLeases(
           IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-          "prewarm_primary_empty",
+          "retired_filler_clear",
         );
         return syncWatchlistPrewarmBridgeGroups({
           primarySymbols: [],
-          fillerSymbols: [],
         });
       }
-      const nonFillerLineCount = countActiveLinesExcludingOwner(
+      releaseMarketDataLeases(
         IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
+        "retired_filler_clear",
       );
-      const targetFillLines =
-        primaryAdmission.budget.targetFillLines ?? primaryAdmission.budget.maxLines;
-      const coveredNonFillerEquities = activeEquitySymbolsExcludingOwner(
-        IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-      );
-      const fillerCandidates = prewarmDroppedSymbols.filter((symbol) => {
-        const normalized = normalizeSymbol(symbol).toUpperCase();
-        return normalized && !coveredNonFillerEquities.has(normalized);
-      });
-      const fillerSymbolLimit = resolveIbkrWatchlistFillerSymbolLimit({
-        candidateSymbolCount: fillerCandidates.length,
-        targetFillLines,
-        nonFillerLineCount,
-      });
-      if (fillerSymbolLimit > 0) {
-        admitMarketDataLeases({
-          owner: IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-          intent: "delayed-ok",
-          requests: fillerCandidates
-            .slice(0, fillerSymbolLimit)
-            .map((symbol) => ({
-              assetClass: "equity" as const,
-              symbol,
-            })),
-          fallbackProvider: "cache",
-        });
-      } else {
-        releaseMarketDataLeases(
-          IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-          "filler_no_slack",
-        );
-      }
 
       const primarySymbols = leaseSymbolsForOwner(IBKR_WATCHLIST_PREWARM_OWNER);
-      const fillerSymbols = leaseSymbolsForOwner(
-        IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-      );
 
       return syncWatchlistPrewarmBridgeGroups({
         primarySymbols,
-        fillerSymbols,
       }).then(() => {
         if (sequence !== ibkrWatchlistPrewarmSequence) {
           return;
@@ -1401,7 +1410,6 @@ function scheduleIbkrWatchlistPrewarm(
         logger.info(
           {
             symbols: primarySymbols,
-            fillerSymbols,
             accountSymbols,
             defaultSymbols,
             droppedSymbols: [
@@ -1420,7 +1428,7 @@ function scheduleIbkrWatchlistPrewarm(
         releaseMarketDataLeases(IBKR_WATCHLIST_PREWARM_OWNER, "prewarm_failed");
         releaseMarketDataLeases(
           IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-          "prewarm_failed",
+          "retired_filler_clear",
         );
       }
       logger.warn(
@@ -2361,6 +2369,7 @@ function getErrorMessage(error: unknown): string {
 
 export async function getSession() {
   const bridgeHealth = await getBridgeHealthForSession();
+  const ibkrRuntime = getIbkrBridgeRuntimeSessionState();
   return {
     environment: getRuntimeMode(),
     brokerProvider: "ibkr" as const,
@@ -2372,6 +2381,9 @@ export async function getSession() {
       research: "fmp" as const,
     },
     ibkrBridge: bridgeHealth,
+    runtime: {
+      ibkr: ibkrRuntime,
+    },
     timestamp: new Date(),
   };
 }
@@ -2665,6 +2677,7 @@ export async function listOrdersWithResilience(input: {
 export async function getRuntimeDiagnostics() {
   const bridgeConfig = getIbkrBridgeRuntimeConfig();
   const bridgeOverride = getIbkrBridgeRuntimeOverride();
+  const ibkrRuntime = getIbkrBridgeRuntimeSessionState();
   const ignoredBridgeEnvNames = getIgnoredIbkrBridgeRuntimeEnvNames();
   const configured = getProviderConfiguration();
   const {
@@ -2720,6 +2733,12 @@ export async function getRuntimeDiagnostics() {
       bridgeTokenConfigured: Boolean(bridgeConfig?.apiToken),
       runtimeOverrideActive: Boolean(bridgeOverride),
       runtimeOverrideUpdatedAt: bridgeOverride?.updatedAt ?? null,
+      desktopAgentOnline: ibkrRuntime.desktopAgentOnline,
+      desktopAgentHelperVersion: ibkrRuntime.desktopAgentHelperVersion,
+      desktopAgentExpectedHelperVersion:
+        ibkrRuntime.desktopAgentExpectedHelperVersion,
+      desktopAgentUpgradeRequired: ibkrRuntime.desktopAgentUpgradeRequired,
+      reconnectAvailable: ibkrRuntime.reconnectAvailable,
       activation: getIbkrBridgeActivationDiagnostics(),
       ignoredBridgeEnvNames,
       ignoredBridgeEnvConfigured: ignoredBridgeEnvNames.length > 0,
@@ -5034,12 +5053,24 @@ function shouldUseUniverseCatalogImmediateResponse(input: {
     input.requestedMarkets,
   );
 
-  if (isTickerLikeSearch(input.normalizedSearch)) {
-    return hasExactIbkrTradableTickerMatchInMarkets({
+  if (
+    hasExactIbkrTradableTickerMatchInMarkets({
       response: input.response,
       normalizedSearch: input.normalizedSearch,
       markets: primaryMarkets,
-    });
+    })
+  ) {
+    return true;
+  }
+
+  if (
+    hasPrimaryTickerPrefixMatchInMarkets({
+      response: input.response,
+      normalizedSearch: input.normalizedSearch,
+      markets: primaryMarkets,
+    })
+  ) {
+    return true;
   }
 
   return hasStrongPrimaryIbkrNameMatch(
@@ -5047,6 +5078,24 @@ function shouldUseUniverseCatalogImmediateResponse(input: {
     input.normalizedSearch,
     primaryMarkets,
   );
+}
+
+function hasPrimaryTickerPrefixMatchInMarkets(input: {
+  response: UniverseSearchResponse;
+  normalizedSearch: string;
+  markets: UniverseMarket[];
+}) {
+  const normalizedQuery = normalizeSymbol(input.normalizedSearch).toUpperCase();
+  if (!normalizedQuery || input.markets.length === 0) return false;
+
+  const marketSet = new Set(input.markets);
+  return input.response.results.some((row) => {
+    if (!marketSet.has(row.market)) return false;
+    if (!row.providers.length) return false;
+    return buildTickerSearchAliases(row).some((alias) =>
+      alias.startsWith(normalizedQuery),
+    );
+  });
 }
 
 function hasExactCatalogIdentifierMatch(
@@ -5983,7 +6032,6 @@ async function runInteractiveUniverseSearch(input: {
       );
       const hasEarlyPrimaryNameMatch =
         !input.strictTradeResolve &&
-        !isTickerLikeSearch(input.normalizedSearch) &&
         hasStrongPrimaryIbkrNameMatch(
           exactResponse,
           input.normalizedSearch,
@@ -8911,6 +8959,7 @@ type IbkrOptionChainInput = {
   allowDelayedSnapshotHydration?: boolean;
   recordBridgeFailure?: boolean;
   bypassBridgeBackoff?: boolean;
+  signal?: AbortSignal;
 };
 type IbkrOptionChainContracts = Awaited<
   ReturnType<IbkrBridgeClient["getOptionChain"]>
@@ -8920,6 +8969,7 @@ type IbkrOptionExpirationsInput = {
   maxExpirations?: number;
   recordBridgeFailure?: boolean;
   bypassBridgeBackoff?: boolean;
+  signal?: AbortSignal;
 };
 type IbkrOptionExpirationDates = Awaited<
   ReturnType<IbkrBridgeClient["getOptionExpirations"]>
@@ -9529,7 +9579,7 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
         }
       : null;
   },
-  fetchSymbol: ({ symbol, limit, unusualThreshold, lineBudget }) =>
+  fetchSymbol: ({ symbol, limit, unusualThreshold, lineBudget, signal }) =>
     listFlowEventsUncached({
       underlying: symbol,
       limit,
@@ -9537,6 +9587,7 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
       unusualThreshold,
       allowPolygonFallback: false,
       lineBudget,
+      signal,
     }),
   onBatch: (symbols) => {
     flowUniverseManager.noteBatch(symbols);
@@ -10870,6 +10921,9 @@ export function getOptionsFlowScannerDiagnostics() {
     started: optionsFlowScannerStarted,
     resourcePressure: {
       level: resourcePressure.level,
+      drivers: resourcePressure.drivers,
+      inputs: resourcePressure.inputs,
+      caps: resourcePressure.caps,
     },
     radarEnabled: config.radarEnabled,
     scannerAlwaysOn: config.scannerAlwaysOn,
@@ -11050,6 +11104,11 @@ export const __platformBarsCacheTestInternals = {
     byFamilyCacheStatus: { ...barsHydrationBreakdown.byFamilyCacheStatus },
   }),
   shouldFetchHistoricalSynthesisForRecentCoverage,
+};
+
+export const __platformTickerSearchTestInternals = {
+  isTickerLikeSearch,
+  shouldUseUniverseCatalogImmediateResponse,
 };
 
 function pruneOptionChainCache(now: number): void {
@@ -11984,11 +12043,54 @@ function formatOptionChainBatchError(error: unknown): string {
   return "Option chain request failed.";
 }
 
-function waitForOptionChainRetry(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(resolve, ms);
+function optionRequestAbortReason(signal?: AbortSignal): unknown {
+  return signal?.reason ?? new Error("Option metadata request aborted.");
+}
+
+function throwIfOptionRequestAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw optionRequestAbortReason(signal);
+  }
+}
+
+function waitForOptionChainRetry(
+  ms: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(optionRequestAbortReason(signal));
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let cleanup = () => {};
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      cleanup();
+      reject(optionRequestAbortReason(signal));
+    };
+    cleanup = () => {
+      signal?.removeEventListener("abort", abort);
+    };
+    timeout = setTimeout(finish, ms);
     timeout.unref?.();
+    signal?.addEventListener("abort", abort, { once: true });
   });
+}
+
+function optionChainCacheInput(input: IbkrOptionChainInput): IbkrOptionChainInput {
+  const { signal: _signal, ...cacheInput } = input;
+  return cacheInput;
 }
 
 function shouldRetryEmptyOptionChain(input: IbkrOptionChainInput): boolean {
@@ -12037,7 +12139,7 @@ function seedOptionChainCache(input: {
   }
 
   optionChainCache.set(input.key, {
-    input: input.cacheInput,
+    input: optionChainCacheInput(input.cacheInput),
     value: input.contracts,
     centerPrice: deriveOptionChainCenterPrice(input.contracts),
     cachedAt: input.cachedAt,
@@ -12115,6 +12217,7 @@ async function getCachedIbkrOptionChainWithDebug(
   contracts: IbkrOptionChainContracts;
   debug: RequestDebugMetadata;
 }> {
+  throwIfOptionRequestAborted(input.signal);
   const normalizedInput = normalizeIbkrOptionChainInput(input);
   const key = buildOptionChainCacheKey(normalizedInput);
   const requestedAt = Date.now();
@@ -12137,7 +12240,9 @@ async function getCachedIbkrOptionChainWithDebug(
   const inFlight = optionChainInFlight.get(key);
   if (cached && cached.staleExpiresAt > requestedAt) {
     if (!inFlight) {
-      refreshOptionChainCache(key, normalizedInput).catch(() => {});
+      refreshOptionChainCache(key, optionChainCacheInput(normalizedInput)).catch(
+        () => {},
+      );
     }
     return {
       contracts: cached.value,
@@ -12362,6 +12467,7 @@ function refreshOptionChainCache(
       const bridgeWorkOptions = {
         bypassBackoff: input.bypassBridgeBackoff === true,
         recordFailure: input.recordBridgeFailure !== false,
+        signal: input.signal,
       };
       let ibkrValue = await runBridgeWork(
         "options",
@@ -12370,7 +12476,7 @@ function refreshOptionChainCache(
       );
       if (!ibkrValue.length && shouldRetryEmptyOptionChain(input)) {
         for (const delayMs of OPTION_CHAIN_EMPTY_RETRY_DELAYS_MS) {
-          await waitForOptionChainRetry(delayMs);
+          await waitForOptionChainRetry(delayMs, input.signal);
           ibkrValue = await runBridgeWork(
             "options",
             () => getIbkrClient().getOptionChain(input),
@@ -12510,6 +12616,7 @@ async function getCachedIbkrOptionExpirationsWithDebug(
   expirations: IbkrOptionExpirationDates;
   debug: RequestDebugMetadata;
 }> {
+  throwIfOptionRequestAborted(input.signal);
   const key = buildOptionExpirationCacheKey(input);
   const requestedAt = Date.now();
   const cached = optionExpirationCache.get(key);
@@ -12712,6 +12819,7 @@ function refreshOptionExpirationCache(
         {
           bypassBackoff: input.bypassBridgeBackoff === true,
           recordFailure: input.recordBridgeFailure !== false,
+          signal: input.signal,
         },
       );
       const settledAt = Date.now();
@@ -12824,7 +12932,9 @@ export async function batchOptionChains(input: {
   allowDelayedSnapshotHydration?: boolean;
   recordBridgeFailure?: boolean;
   bypassBridgeBackoff?: boolean;
+  signal?: AbortSignal;
 }): Promise<BatchOptionChainsResult> {
+  throwIfOptionRequestAborted(input.signal);
   const requestedAt = Date.now();
   const underlying = normalizeSymbol(input.underlying);
   const expirationDates = Array.from(
@@ -12853,6 +12963,7 @@ export async function batchOptionChains(input: {
     getOptionsFlowRuntimeConfig().optionChainBatchConcurrency,
     async (expirationDate) => {
       try {
+        throwIfOptionRequestAborted(input.signal);
         const { contracts, debug } = await getCachedIbkrOptionChainWithDebug({
           underlying,
           expirationDate,
@@ -12864,6 +12975,7 @@ export async function batchOptionChains(input: {
           allowDelayedSnapshotHydration: input.allowDelayedSnapshotHydration,
           recordBridgeFailure: input.recordBridgeFailure,
           bypassBridgeBackoff: input.bypassBridgeBackoff,
+          signal: input.signal,
         });
 
         const resultDebug: RequestDebugMetadata =
@@ -14578,6 +14690,7 @@ async function listFlowEventsUncached(input: {
   unusualThreshold?: number;
   allowPolygonFallback?: boolean;
   lineBudget?: number;
+  signal?: AbortSignal;
 }): Promise<FlowEventsResult> {
   // Derive IBKR flow from option-chain snapshots. These are not consolidated
   // time-and-sales events, so callers receive `basis: "snapshot"` and the UI
@@ -14622,6 +14735,7 @@ async function listFlowEventsUncached(input: {
       underlying: input.underlying,
       recordBridgeFailure: false,
       bypassBridgeBackoff: true,
+      signal: input.signal,
     });
     ibkrExpirationCount = expirationsResult.expirations.length;
     ibkrReason = expirationsResult.debug.reason ?? null;
@@ -14650,6 +14764,7 @@ async function listFlowEventsUncached(input: {
         allowDelayedSnapshotHydration: false,
         recordBridgeFailure: false,
         bypassBridgeBackoff: true,
+        signal: input.signal,
       });
       const metadataContracts = batch.results.flatMap((result) => result.contracts);
       ibkrMetadataContractCount = metadataContracts.length;
@@ -14674,6 +14789,7 @@ async function listFlowEventsUncached(input: {
               ttlMs: getOptionsFlowScannerQuoteLeaseTtlMs(),
               fallbackProvider: "none",
               requiresGreeks: false,
+              signal: input.signal,
             }).catch((error) => {
               ibkrReason ??= "options_flow_live_quote_unavailable";
               ibkrError = getErrorMessage(error);

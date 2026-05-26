@@ -11,6 +11,7 @@ import type { IbkrBridgeHealth } from './ibkrBridgeHealth';
 import type { MarketDataProvider } from './marketDataProvider';
 import type { SessionInfoConfigured } from './sessionInfoConfigured';
 import type { SessionMarketDataProviders } from './sessionMarketDataProviders';
+import type { SessionRuntime } from './sessionRuntime';
 
 export interface SessionInfo {
   environment: EnvironmentMode;
@@ -19,5 +20,6 @@ export interface SessionInfo {
   marketDataProviders: SessionMarketDataProviders;
   configured: SessionInfoConfigured;
   ibkrBridge: IbkrBridgeHealth | null;
+  runtime: SessionRuntime;
   timestamp: Date;
 }

@@ -4,7 +4,9 @@ import type { AlgoDeployment } from "@workspace/db";
 import { createSignalOptionsWorker } from "./signal-options-worker";
 import {
   __resetApiResourcePressureForTests,
+  getApiResourcePressureSnapshot,
   updateApiResourcePressure,
+  type ApiResourcePressureSnapshot,
 } from "./resource-pressure";
 
 function createNoopLogger() {
@@ -44,6 +46,36 @@ function deployment(
     createdAt: now,
     updatedAt: now,
     ...overrides,
+  };
+}
+
+function scanBlockingPressureSnapshot(): ApiResourcePressureSnapshot {
+  return {
+    level: "critical",
+    observedAt: "2026-04-28T14:00:00.000Z",
+    drivers: [
+      {
+        kind: "test-critical",
+        label: "Test critical pressure",
+        level: "critical",
+        detail: null,
+        score: null,
+      },
+    ],
+    caps: {
+      signalOptions: {
+        maintenanceOnly: true,
+        skipDeploymentScans: true,
+      },
+    },
+    inputs: {
+      rssMb: null,
+      apiP95LatencyMs: null,
+      dominantSlowRouteP95Ms: null,
+      clientLevel: null,
+      cacheLevel: null,
+      automationActiveLongScanCount: null,
+    },
   };
 }
 
@@ -126,7 +158,67 @@ test("signal-options worker runs shadow option maintenance without deployments",
   assert.ok(worker.getRuntimeSnapshot().maintenance.lastRunAt);
 });
 
-test("signal-options worker keeps maintenance but skips scans under critical pressure", async () => {
+test("signal-options worker honors scan-blocking resource-pressure caps", async () => {
+  let maintenanceCalls = 0;
+  let scanCalls = 0;
+  const scanBlockingPressure = scanBlockingPressureSnapshot();
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async () => {
+      scanCalls += 1;
+    },
+    runMaintenance: async () => {
+      maintenanceCalls += 1;
+      return emptyMaintenance();
+    },
+    getResourcePressure: () => scanBlockingPressure,
+    acquireTickLock: async () => async () => {},
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+
+  assert.equal(maintenanceCalls, 1);
+  assert.equal(scanCalls, 0);
+  const runtime = worker.getRuntimeSnapshot().deployments[0];
+  assert.equal(worker.getRuntimeSnapshot().deploymentCount, 1);
+  assert.equal(runtime?.pressurePaused, true);
+  assert.equal(runtime?.lastSkipReason, "resource_pressure");
+  assert.equal(runtime?.skippedScanCount, 1);
+  assert.ok(runtime?.lastSkippedAt);
+});
+
+test("signal-options worker keeps deployment scans rotating under high pressure", async () => {
+  let maintenanceCalls = 0;
+  let scanCalls = 0;
+  updateApiResourcePressure({ rssMb: 1_250 });
+  try {
+    const worker = createSignalOptionsWorker({
+      listDeployments: async () => [deployment()],
+      scanDeployment: async () => {
+        scanCalls += 1;
+      },
+      runMaintenance: async () => {
+        maintenanceCalls += 1;
+        return emptyMaintenance();
+      },
+      acquireTickLock: async () => async () => {},
+      logger: createNoopLogger(),
+    });
+
+    await worker.runOnce();
+
+    assert.equal(maintenanceCalls, 1);
+    assert.equal(scanCalls, 1);
+    const runtime = worker.getRuntimeSnapshot().deployments[0];
+    assert.equal(runtime?.pressurePaused, false);
+    assert.equal(runtime?.lastSkipReason, null);
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
+});
+
+test("signal-options worker keeps deployment scans rotating under critical RSS pressure", async () => {
   let maintenanceCalls = 0;
   let scanCalls = 0;
   updateApiResourcePressure({ rssMb: 1_650 });
@@ -147,13 +239,10 @@ test("signal-options worker keeps maintenance but skips scans under critical pre
     await worker.runOnce();
 
     assert.equal(maintenanceCalls, 1);
-    assert.equal(scanCalls, 0);
+    assert.equal(scanCalls, 1);
     const runtime = worker.getRuntimeSnapshot().deployments[0];
-    assert.equal(worker.getRuntimeSnapshot().deploymentCount, 1);
-    assert.equal(runtime?.pressurePaused, true);
-    assert.equal(runtime?.lastSkipReason, "resource_pressure");
-    assert.equal(runtime?.skippedScanCount, 1);
-    assert.ok(runtime?.lastSkippedAt);
+    assert.equal(runtime?.pressurePaused, false);
+    assert.equal(runtime?.lastSkipReason, null);
   } finally {
     __resetApiResourcePressureForTests();
   }
@@ -161,13 +250,14 @@ test("signal-options worker keeps maintenance but skips scans under critical pre
 
 test("signal-options worker scans immediately once resource pressure clears", async () => {
   let scanCalls = 0;
-  updateApiResourcePressure({ rssMb: 1_650 });
+  let pressure = scanBlockingPressureSnapshot();
   const worker = createSignalOptionsWorker({
     listDeployments: async () => [deployment()],
     scanDeployment: async () => {
       scanCalls += 1;
     },
     runMaintenance: emptyMaintenance,
+    getResourcePressure: () => pressure,
     acquireTickLock: async () => async () => {},
     logger: createNoopLogger(),
   });
@@ -177,6 +267,7 @@ test("signal-options worker scans immediately once resource pressure clears", as
     assert.equal(scanCalls, 0);
 
     __resetApiResourcePressureForTests();
+    pressure = getApiResourcePressureSnapshot();
     await worker.runOnce();
 
     assert.equal(scanCalls, 1);
@@ -191,7 +282,6 @@ test("signal-options worker scans immediately once resource pressure clears", as
 
 test("signal-options worker honors per-deployment resource-pressure override", async () => {
   let scanCalls = 0;
-  updateApiResourcePressure({ rssMb: 1_650 });
   try {
     const worker = createSignalOptionsWorker({
       listDeployments: async () => [
@@ -209,6 +299,7 @@ test("signal-options worker honors per-deployment resource-pressure override", a
         scanCalls += 1;
       },
       runMaintenance: emptyMaintenance,
+      getResourcePressure: () => scanBlockingPressureSnapshot(),
       acquireTickLock: async () => async () => {},
       logger: createNoopLogger(),
     });
@@ -274,6 +365,10 @@ test("signal-options worker interval-gates scans and rescans after config change
 
   await worker.runOnce();
   await worker.runOnce();
+  let runtime = worker.getRuntimeSnapshot().deployments[0];
+  assert.equal(runtime?.pollIntervalMs, 60_000);
+  assert.equal(runtime?.nextScanDueAt, "2026-04-28T14:01:00.000Z");
+  assert.equal(runtime?.nextScanDueInMs, 60_000);
   currentDeployment = deployment({
     config: {
       signalOptions: {
@@ -290,7 +385,9 @@ test("signal-options worker interval-gates scans and rescans after config change
   now = new Date("2026-04-28T14:01:01.000Z");
   await worker.runOnce();
 
+  runtime = worker.getRuntimeSnapshot().deployments[0];
   assert.equal(scanCalls, 3);
+  assert.equal(runtime?.nextScanDueAt, "2026-04-28T14:02:01.000Z");
 });
 
 test("signal-options worker anchors poll interval to scan completion", async () => {
@@ -444,6 +541,14 @@ test("signal-options worker accepts lightweight scan summaries", async () => {
         oldestSignalBarAt: "2026-05-18T18:05:00.000Z",
         candidateCount: 5,
         blockedCandidateCount: 4,
+        batch: {
+          symbols: ["SPY", "QQQ"],
+          universeCount: 90,
+          batchSize: 2,
+          startIndex: 0,
+          nextIndex: 2,
+          capacity: 16,
+        },
       },
     }),
     runMaintenance: emptyMaintenance,
@@ -460,6 +565,36 @@ test("signal-options worker accepts lightweight scan summaries", async () => {
   assert.equal(runtime?.lastOldestSignalBarAt, "2026-05-18T18:05:00.000Z");
   assert.equal(runtime?.lastCandidateCount, 5);
   assert.equal(runtime?.lastBlockedCandidateCount, 4);
+  assert.deepEqual(runtime?.lastBatchSymbols, ["SPY", "QQQ"]);
+  assert.equal(runtime?.lastBatchUniverseCount, 90);
+  assert.equal(runtime?.lastBatchSize, 2);
+  assert.equal(runtime?.lastBatchStartIndex, 0);
+  assert.equal(runtime?.lastBatchNextIndex, 2);
+  assert.equal(runtime?.lastBatchCapacity, 16);
+  assert.equal(runtime?.lastBatchFullUniverse, false);
+});
+
+test("signal-options worker treats active scan conflicts as skips", async () => {
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async () => ({
+      status: "already_running",
+      reason: "signal_options_scan_running",
+      skipped: true,
+    }),
+    runMaintenance: emptyMaintenance,
+    acquireTickLock: async () => async () => {},
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+
+  const runtime = worker.getRuntimeSnapshot().deployments[0];
+  assert.equal(runtime?.scanCount, 0);
+  assert.equal(runtime?.skippedScanCount, 1);
+  assert.equal(runtime?.lastSkipReason, "scan_running");
+  assert.equal(runtime?.failureCount, 0);
+  assert.equal(runtime?.lastError, null);
 });
 
 test("signal-options worker backs off failed deployment scans", async () => {

@@ -150,6 +150,7 @@ test("account screen always renders equity-date positions below the equity curve
   const equityPanelIndex = source.indexOf("<LazyEquityCurvePanel");
   const inspectorIndex = source.indexOf("<LazyPositionsAtDateInspector");
   const positionsPanelIndex = source.indexOf("<LazyPositionsPanel");
+  const todayPanelIndex = source.indexOf("<LazyTodaySnapshotPanel");
   const positionsPanelBlock = source.match(
     /testId="account-deferred-positions"[\s\S]*?<LazyPositionsPanel[\s\S]*?\/>/,
   )?.[0] ?? "";
@@ -159,6 +160,7 @@ test("account screen always renders equity-date positions below the equity curve
   assert.ok(equityPanelIndex >= 0, "EquityCurvePanel must render on AccountScreen");
   assert.ok(inspectorIndex > equityPanelIndex, "PositionsAtDateInspector must render after the equity curve");
   assert.ok(positionsPanelIndex > inspectorIndex, "Current Positions must render after the equity-date inspector");
+  assert.ok(todayPanelIndex > positionsPanelIndex, "Today heatmap must render after Current Positions");
   assert.doesNotMatch(positionsPanelBlock, /positionsAtDateQuery/);
   assert.doesNotMatch(positionsPanelBlock, /activeEquityDate/);
   assert.doesNotMatch(positionsPanelBlock, /pinnedEquityDate/);

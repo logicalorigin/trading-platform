@@ -63,6 +63,7 @@ artifacts/*.log
 
 # local runtime registries
 artifacts/api-server/data/ibkr-remote-desktops.json
+artifacts/api-server/data/ibkr-bridge-runtime-override.json
 
 # accidental root shell arg artifacts
 /'expirationDate'

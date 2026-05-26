@@ -1,4 +1,5 @@
 import {
+  DEFAULT_PYRUS_SIGNALS_SETTINGS,
   PYRUS_SIGNALS_PINE_SCRIPT_KEY,
   resolvePyrusSignalsRuntimeSettings,
 } from "./pyrusSignalsPineAdapter";
@@ -33,10 +34,34 @@ export const resolvePersistedIndicatorPreset = ({
     : mergeIndicatorSelections(defaults, normalized);
 };
 
-export const resolvePersistedPyrusSignalsSettings = (value) =>
-  resolvePyrusSignalsRuntimeSettings(
-    value && typeof value === "object" ? value : undefined,
+const asRecord = (value) =>
+  value && typeof value === "object" ? value : {};
+
+const usesLegacyPyrusSignalDefaults = (value) => {
+  const record = asRecord(value);
+  const marketStructure = asRecord(record.marketStructure);
+  const timeHorizon = marketStructure.timeHorizon ?? record.timeHorizon;
+  const bosConfirmation =
+    marketStructure.bosConfirmation ?? record.bosConfirmation;
+  return (
+    Number(timeHorizon) === 10 &&
+    String(bosConfirmation || "close").trim().toLowerCase() === "close"
   );
+};
+
+export const resolvePersistedPyrusSignalsSettings = (value) => {
+  const source = value && typeof value === "object" ? value : undefined;
+  const resolved = resolvePyrusSignalsRuntimeSettings(source);
+  if (!source || !usesLegacyPyrusSignalDefaults(source)) {
+    return resolved;
+  }
+
+  return {
+    ...resolved,
+    timeHorizon: DEFAULT_PYRUS_SIGNALS_SETTINGS.timeHorizon,
+    bosConfirmation: DEFAULT_PYRUS_SIGNALS_SETTINGS.bosConfirmation,
+  };
+};
 
 export const buildPyrusSignalsIndicatorSettings = (settings) => ({
   [PYRUS_SIGNALS_PINE_SCRIPT_KEY]: settings,

@@ -239,8 +239,8 @@ export const tunedSignalOptionsExecutionProfilePatch = {
     overnightExitEnabled: true,
     overnightMinGainPct: 10,
     overnightRunnerGivebackPct: 15,
-    earlyExitBars: 6,
-    earlyExitLossPct: 20,
+    earlyExitBars: 8,
+    earlyExitLossPct: 25,
   },
 } as const;
 

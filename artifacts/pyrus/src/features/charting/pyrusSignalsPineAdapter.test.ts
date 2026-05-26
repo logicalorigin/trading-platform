@@ -45,6 +45,8 @@ const TEST_SETTINGS = {
 const baseTime = Date.UTC(2026, 0, 2, 14, 30) / 1000;
 
 test("Pyrus Signals preserves the legacy bottom-left dashboard default", () => {
+  assert.equal(DEFAULT_PYRUS_SIGNALS_SETTINGS.timeHorizon, 8);
+  assert.equal(DEFAULT_PYRUS_SIGNALS_SETTINGS.bosConfirmation, "wicks");
   assert.equal(DEFAULT_PYRUS_SIGNALS_SETTINGS.dashboardPosition, "bottom-left");
   assert.equal(DEFAULT_PYRUS_SIGNALS_SETTINGS.signalOffsetAtr, 3.0);
 });
@@ -1049,8 +1051,8 @@ test("Pyrus Signals blanks the flip bar around opposite signals in the real pari
     .filter((event) => event.eventType === "buy_signal")
     .at(-1)?.barIndex;
 
-  assert.equal(sellSignalBar, 187);
-  assert.equal(buySignalBar, 210);
+  assert.equal(sellSignalBar, 181);
+  assert.equal(buySignalBar, 208);
 
   assert.ok(Number.isFinite(bullMain.data[sellSignalBar - 1]?.value));
   assert.equal(bullMain.data[sellSignalBar]?.value, undefined);

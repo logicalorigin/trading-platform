@@ -28,6 +28,7 @@ export type BridgeGovernorConfig = {
 export type BridgeWorkOptions = {
   bypassBackoff?: boolean;
   recordFailure?: boolean;
+  signal?: AbortSignal;
 };
 
 export type BridgeGovernorConfigSource = "default" | "env" | "override";
@@ -332,7 +333,17 @@ export function recordBridgeWorkSuccess(category: BridgeWorkCategory): void {
   current.lastSuccessAt = Date.now();
 }
 
-async function acquireSlot(category: BridgeWorkCategory): Promise<void> {
+function bridgeWorkAbortError(signal?: AbortSignal): unknown {
+  return signal?.reason ?? new Error("Bridge work aborted.");
+}
+
+async function acquireSlot(
+  category: BridgeWorkCategory,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) {
+    throw bridgeWorkAbortError(signal);
+  }
   const current = state[category];
   const config = configFor(category);
   if (current.active < config.concurrency) {
@@ -341,11 +352,35 @@ async function acquireSlot(category: BridgeWorkCategory): Promise<void> {
   }
 
   current.queued += 1;
-  await new Promise<void>((resolve) => {
-    waiters[category].push(resolve);
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let cleanup = () => {};
+    const waiter = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      current.queued = Math.max(0, current.queued - 1);
+      current.active += 1;
+      resolve();
+    };
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      const index = waiters[category].indexOf(waiter);
+      if (index >= 0) {
+        waiters[category].splice(index, 1);
+      }
+      current.queued = Math.max(0, current.queued - 1);
+      reject(bridgeWorkAbortError(signal));
+    };
+    cleanup = () => {
+      signal?.removeEventListener("abort", abort);
+    };
+
+    waiters[category].push(waiter);
+    signal?.addEventListener("abort", abort, { once: true });
   });
-  current.queued = Math.max(0, current.queued - 1);
-  current.active += 1;
 }
 
 function releaseSlot(category: BridgeWorkCategory): void {
@@ -362,11 +397,16 @@ export async function runBridgeWork<T>(
 ): Promise<T> {
   const bypassBackoff = Boolean(options.bypassBackoff);
   const shouldRecordFailure = options.recordFailure !== false;
+  const signal = options.signal;
 
   if (!bypassBackoff && isBridgeWorkBackedOff(category)) {
     throw backoffError(category);
   }
-  await acquireSlot(category);
+  await acquireSlot(category, signal);
+  if (signal?.aborted) {
+    releaseSlot(category);
+    throw bridgeWorkAbortError(signal);
+  }
   if (!bypassBackoff && isBridgeWorkBackedOff(category)) {
     releaseSlot(category);
     throw backoffError(category);
@@ -376,7 +416,7 @@ export async function runBridgeWork<T>(
     recordBridgeWorkSuccess(category);
     return result;
   } catch (error) {
-    if (shouldRecordFailure) {
+    if (shouldRecordFailure && !signal?.aborted) {
       recordBridgeWorkFailure(category, error);
     }
     throw error;

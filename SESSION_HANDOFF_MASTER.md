@@ -6,6 +6,8 @@ Index of durable per-session handoff files. Keep this file short and discoverabl
 
 | Last Updated (MT) | Session ID | Handoff | Workstream | Branch | HEAD | Status |
 | --- | --- | --- | --- | --- | --- | --- |
+| 2026-05-26 11:24:46 MDT | `019e654e-1409-7621-bde7-f8c231fda8d0` | `SESSION_HANDOFF_2026-05-26_019e654e-1409-7621-bde7-f8c231fda8d0.md` | find dropped long-running goal session | main | `d9f06f192a13` | Orphan pts/0 Codex process recorded; local goal DB empty |
+| 2026-05-26 07:30:47 MDT | `019e6477-7493-7191-acfb-8aa632788e6c` | `SESSION_HANDOFF_2026-05-26_019e6477-7493-7191-acfb-8aa632788e6c.md` | please find out last dropped sessions | main | `0b5fccf9cdc0` | Recovery evidence saved; no Git-visible untracked files; prior Codex DB gone |
 | 2026-05-25 12:03:41 MDT | `019e6049-463f-7ab0-a520-95e909a2eff6` | `SESSION_HANDOFF_2026-05-25_019e6049-463f-7ab0-a520-95e909a2eff6.md` | why did we just drop sessions? killing our productivity and my faith in you | main | `9ec051d8590c` | Saved; see handoff |
 | 2026-05-22 11:00:29 MDT | `019e509e-5038-7b20-a757-cf053441bc8d` | `SESSION_HANDOFF_2026-05-22_019e509e-5038-7b20-a757-cf053441bc8d.md` | can you please audit and pick up this work? im still seeing a mismatch between the positions in the algo page positions… | main | `9ec051d8590c` | Saved; see handoff |
 | 2026-05-22 11:00:29 MDT | `019e5096-b2ce-7881-83b4-84fd5ae9aea9` | `SESSION_HANDOFF_2026-05-22_019e5096-b2ce-7881-83b4-84fd5ae9aea9.md` | i need you to familiarize yourself with this app and codebase and find in-flight work. | main | `9ec051d8590c` | Saved; see handoff |

@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import {
+  __setIbkrBridgeLegacyRuntimeOverrideFileForTests,
   clearIbkrBridgeRuntimeOverride,
   getIgnoredIbkrBridgeRuntimeEnvNames,
   getIbkrBridgeProviderRuntimeConfig,
@@ -11,6 +21,7 @@ import {
   getIbkrBridgeRuntimeOverride,
   getIbkrTwsRuntimeConfig,
   getProviderConfiguration,
+  onIbkrBridgeRuntimeChanged,
   setIbkrBridgeRuntimeOverride,
 } from "./runtime";
 
@@ -30,7 +41,10 @@ const ENV_KEYS = [
   "IBKR_BRIDGE_API_TOKEN",
   "IBKR_BRIDGE_TOKEN",
   "IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE",
+  "PYRUS_IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE",
+  "REPL_HOME",
   "TRADING_MODE",
+  "TMPDIR",
 ] as const;
 
 function withRuntimeEnv<T>(
@@ -265,4 +279,190 @@ test("IBKR bridge runtime override persists across API process restarts", () => 
       ]);
     },
   );
+});
+
+test("IBKR bridge runtime migrates legacy tmp override once and does not reload it after clear", () => {
+  const replHome = mkdtempSync(join(tmpdir(), "pyrus-runtime-repl-home-"));
+  const legacyDir = mkdtempSync(join(tmpdir(), "pyrus-runtime-legacy-tmp-"));
+  const legacyFile = join(legacyDir, "ibkr-bridge-runtime-override.json");
+  const defaultFile = join(
+    replHome,
+    "artifacts",
+    "api-server",
+    "data",
+    "ibkr-bridge-runtime-override.json",
+  );
+
+  try {
+    withRuntimeEnv(
+      {
+        IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE: "",
+        REPL_HOME: replHome,
+      },
+      () => {
+        __setIbkrBridgeLegacyRuntimeOverrideFileForTests(legacyFile);
+        mkdirSync(dirname(legacyFile), { recursive: true });
+        writeFileSync(
+          legacyFile,
+          JSON.stringify({
+            version: 1,
+            baseUrl: "https://legacy-tunnel.example.com/",
+            apiToken: "legacy-token",
+            updatedAt: "2026-05-26T17:00:00.000Z",
+          }),
+        );
+        clearIbkrBridgeRuntimeOverride({ deletePersisted: false });
+
+        assert.deepEqual(getIbkrBridgeRuntimeConfig(), {
+          baseUrl: "https://legacy-tunnel.example.com",
+          apiToken: "legacy-token",
+        });
+        assert.equal(existsSync(defaultFile), true);
+        assert.equal(existsSync(legacyFile), false);
+
+        clearIbkrBridgeRuntimeOverride();
+        clearIbkrBridgeRuntimeOverride({ deletePersisted: false });
+        assert.equal(getIbkrBridgeRuntimeConfig(), null);
+      },
+    );
+  } finally {
+    __setIbkrBridgeLegacyRuntimeOverrideFileForTests(null);
+    rmSync(replHome, { recursive: true, force: true });
+    rmSync(legacyDir, { recursive: true, force: true });
+  }
+});
+
+test("IBKR bridge runtime env override does not migrate or delete legacy tmp override", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pyrus-runtime-env-override-"));
+  const legacyDir = mkdtempSync(join(tmpdir(), "pyrus-runtime-env-legacy-tmp-"));
+  const overrideFile = join(dir, "runtime.json");
+  const legacyFile = join(legacyDir, "ibkr-bridge-runtime-override.json");
+
+  try {
+    __setIbkrBridgeLegacyRuntimeOverrideFileForTests(legacyFile);
+    withRuntimeEnv(
+      {
+        IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE: overrideFile,
+      },
+      () => {
+        mkdirSync(dirname(legacyFile), { recursive: true });
+        writeFileSync(
+          legacyFile,
+          JSON.stringify({
+            version: 1,
+            baseUrl: "https://legacy-tunnel.example.com/",
+            apiToken: "legacy-token",
+          }),
+        );
+        clearIbkrBridgeRuntimeOverride({ deletePersisted: false });
+
+        assert.equal(getIbkrBridgeRuntimeConfig(), null);
+        assert.equal(existsSync(legacyFile), true);
+
+        setIbkrBridgeRuntimeOverride({
+          baseUrl: "https://env-override.example.com",
+          apiToken: "env-token",
+        });
+        clearIbkrBridgeRuntimeOverride();
+        assert.equal(existsSync(legacyFile), true);
+      },
+    );
+  } finally {
+    __setIbkrBridgeLegacyRuntimeOverrideFileForTests(null);
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(legacyDir, { recursive: true, force: true });
+  }
+});
+
+test("IBKR bridge runtime override persistence replaces permissive files with 0600 mode", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pyrus-runtime-mode-"));
+  const overrideFile = join(dir, "runtime.json");
+
+  try {
+    writeFileSync(overrideFile, "{}", { mode: 0o644 });
+    chmodSync(overrideFile, 0o644);
+    withRuntimeEnv(
+      {
+        IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE: overrideFile,
+      },
+      () => {
+        setIbkrBridgeRuntimeOverride({
+          baseUrl: "https://secure-mode.example.com",
+          apiToken: "mode-token",
+        });
+
+        assert.equal(statSync(overrideFile).mode & 0o777, 0o600);
+        const persisted = JSON.parse(readFileSync(overrideFile, "utf8")) as {
+          baseUrl?: string;
+        };
+        assert.equal(persisted.baseUrl, "https://secure-mode.example.com");
+      },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("IBKR bridge runtime change events fire after durable mutation and isolate listener failures", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pyrus-runtime-events-"));
+  const overrideFile = join(dir, "runtime.json");
+
+  try {
+    withRuntimeEnv(
+      {
+        IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE: overrideFile,
+      },
+      () => {
+        const events: string[] = [];
+        const removeBadListener = onIbkrBridgeRuntimeChanged(() => {
+          throw new Error("listener failed");
+        });
+        const removeGoodListener = onIbkrBridgeRuntimeChanged((event) => {
+          events.push(event.type);
+        });
+
+        try {
+          setIbkrBridgeRuntimeOverride({
+            baseUrl: "https://events.example.com",
+            apiToken: "events-token",
+          });
+          clearIbkrBridgeRuntimeOverride();
+        } finally {
+          removeBadListener();
+          removeGoodListener();
+        }
+
+        assert.deepEqual(events, ["set", "clear"]);
+      },
+    );
+
+    const blocker = join(dir, "blocker");
+    writeFileSync(blocker, "not a directory");
+    const previous = process.env["IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"];
+    process.env["IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"] = join(blocker, "runtime.json");
+    clearIbkrBridgeRuntimeOverride({ deletePersisted: false });
+    const events: string[] = [];
+    const unsubscribe = onIbkrBridgeRuntimeChanged((event) => {
+      events.push(event.type);
+    });
+    try {
+      assert.throws(() =>
+        setIbkrBridgeRuntimeOverride({
+          baseUrl: "https://persist-failure.example.com",
+          apiToken: "failure-token",
+        }),
+      );
+      assert.deepEqual(events, []);
+    } finally {
+      unsubscribe();
+      if (previous === undefined) {
+        delete process.env["IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"];
+      } else {
+        process.env["IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE"] = previous;
+      }
+      clearIbkrBridgeRuntimeOverride({ deletePersisted: false });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

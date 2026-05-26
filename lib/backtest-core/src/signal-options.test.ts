@@ -36,8 +36,8 @@ test("tuned signal-options preset captures the recovered h8 profile", () => {
       overnightExitEnabled: true,
       overnightMinGainPct: 10,
       overnightRunnerGivebackPct: 15,
-      earlyExitBars: 6,
-      earlyExitLossPct: 20,
+      earlyExitBars: 8,
+      earlyExitLossPct: 25,
     },
   });
   assert.equal(tunedSignalOptionsExecutionProfile.riskCaps.maxOpenSymbols, 10);
@@ -50,7 +50,11 @@ test("tuned signal-options preset captures the recovered h8 profile", () => {
     tunedSignalOptionsExecutionProfile.exitPolicy.overnightExitEnabled,
     true,
   );
-  assert.equal(tunedSignalOptionsExecutionProfile.exitPolicy.earlyExitBars, 6);
+  assert.equal(tunedSignalOptionsExecutionProfile.exitPolicy.earlyExitBars, 8);
+  assert.equal(
+    tunedSignalOptionsExecutionProfile.exitPolicy.earlyExitLossPct,
+    25,
+  );
   assert.equal(
     tunedSignalOptionsExecutionProfile.exitPolicy.tightenAtFiveXGivebackPct,
     30,

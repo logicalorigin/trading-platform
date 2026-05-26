@@ -91,24 +91,27 @@ const SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY = 6;
 const SIGNAL_MONITOR_BARS_FAMILY = "signal-matrix";
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
 const DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE: SignalMonitorUniverseMode =
-  "all_watchlists_plus_universe";
+  "all_watchlists";
+const DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS = 250;
+const DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY = 3;
+const DEFAULT_SIGNAL_MONITOR_POLL_SECONDS = 60;
 const SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,
   { maxSymbols: number; concurrency: number }
 > = {
-  normal: { maxSymbols: 8, concurrency: 2 },
-  watch: { maxSymbols: 6, concurrency: 1 },
-  high: { maxSymbols: 4, concurrency: 1 },
-  critical: { maxSymbols: 2, concurrency: 1 },
+  normal: { maxSymbols: 16, concurrency: 2 },
+  watch: { maxSymbols: 16, concurrency: 1 },
+  high: { maxSymbols: 16, concurrency: 1 },
+  critical: { maxSymbols: 16, concurrency: 1 },
 };
 const SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,
   { maxSymbols: number; concurrency: number }
 > = {
-  normal: { maxSymbols: 32, concurrency: 2 },
-  watch: { maxSymbols: 16, concurrency: 1 },
-  high: { maxSymbols: 8, concurrency: 1 },
-  critical: { maxSymbols: 0, concurrency: 1 },
+  normal: { maxSymbols: 250, concurrency: 3 },
+  watch: { maxSymbols: 250, concurrency: 3 },
+  high: { maxSymbols: 250, concurrency: 3 },
+  critical: { maxSymbols: 250, concurrency: 3 },
 };
 const signalMonitorReadDbBackoff = createTransientPostgresBackoff();
 const runtimeSignalMonitorProfiles = new Map<RuntimeMode, DbSignalMonitorProfile>();
@@ -176,7 +179,7 @@ function resolveSignalMonitorUniverseScope(
     return "all_watchlists";
   }
   if (raw === "all_watchlists") {
-    return "all_watchlists_plus_universe";
+    return "all_watchlists";
   }
   return DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE;
 }
@@ -229,7 +232,7 @@ function cappedSignalMatrixSettings(
   };
 }
 
-function cappedSignalMonitorEvaluationProfile(
+export function cappedSignalMonitorEvaluationProfile(
   profile: DbSignalMonitorProfile,
   pressureLevel?: ApiResourcePressureLevel,
 ) {
@@ -239,10 +242,15 @@ function cappedSignalMonitorEvaluationProfile(
       rssMb: mbFromBytes(process.memoryUsage().rss),
     }).level;
   const caps = SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS[resourcePressureLevel];
-  const configuredMaxSymbols = positiveInteger(profile.maxSymbols, 50, 1, 250);
+  const configuredMaxSymbols = positiveInteger(
+    profile.maxSymbols,
+    DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
+    1,
+    250,
+  );
   const configuredConcurrency = positiveInteger(
     profile.evaluationConcurrency,
-    3,
+    DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY,
     1,
     10,
   );
@@ -545,9 +553,9 @@ export function buildSignalMonitorDbUnavailableProfile(
     timeframe: DEFAULT_SIGNAL_MONITOR_TIMEFRAME,
     pyrusSignalsSettings: {},
     freshWindowBars: 3,
-    pollIntervalSeconds: 60,
-    maxSymbols: 50,
-    evaluationConcurrency: 3,
+    pollIntervalSeconds: DEFAULT_SIGNAL_MONITOR_POLL_SECONDS,
+    maxSymbols: DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
+    evaluationConcurrency: DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY,
     lastEvaluatedAt: null,
     lastError: SIGNAL_MONITOR_DB_UNAVAILABLE_MESSAGE,
     createdAt: now,
@@ -567,9 +575,9 @@ function buildSignalMonitorRuntimeFallbackProfile(
     timeframe: DEFAULT_SIGNAL_MONITOR_TIMEFRAME,
     pyrusSignalsSettings: {},
     freshWindowBars: 3,
-    pollIntervalSeconds: 60,
-    maxSymbols: 50,
-    evaluationConcurrency: 3,
+    pollIntervalSeconds: DEFAULT_SIGNAL_MONITOR_POLL_SECONDS,
+    maxSymbols: DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
+    evaluationConcurrency: DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY,
     lastEvaluatedAt: null,
     lastError: SIGNAL_MONITOR_RUNTIME_FALLBACK_MESSAGE,
     createdAt: now,
@@ -638,12 +646,17 @@ async function updateRuntimeSignalMonitorProfile(input: {
     );
   }
   if (input.maxSymbols !== undefined) {
-    updated.maxSymbols = positiveInteger(input.maxSymbols, 50, 1, 250);
+    updated.maxSymbols = positiveInteger(
+      input.maxSymbols,
+      DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
+      1,
+      250,
+    );
   }
   if (input.evaluationConcurrency !== undefined) {
     updated.evaluationConcurrency = positiveInteger(
       input.evaluationConcurrency,
-      3,
+      DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY,
       1,
       10,
     );
@@ -696,6 +709,13 @@ async function getOrCreateProfile(environment: RuntimeMode) {
       environment,
       watchlistId,
       timeframe: DEFAULT_SIGNAL_MONITOR_TIMEFRAME,
+      pyrusSignalsSettings: withSignalMonitorUniverseScope(
+        {},
+        DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE,
+      ),
+      pollIntervalSeconds: DEFAULT_SIGNAL_MONITOR_POLL_SECONDS,
+      maxSymbols: DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
+      evaluationConcurrency: DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY,
     })
     .onConflictDoNothing()
     .returning();
@@ -759,6 +779,7 @@ function resolveWatchlistSymbols(watchlist: WatchlistRecord, maxSymbols: number)
 
 type ResolvedSignalMonitorUniverse = {
   symbols: string[];
+  watchlistSymbols: string[];
   skippedSymbols: string[];
   truncated: boolean;
   fallbackWatchlists?: boolean;
@@ -770,6 +791,10 @@ type ResolvedSymbolUniverse = Pick<
   ResolvedSignalMonitorUniverse,
   "symbols" | "skippedSymbols" | "truncated"
 >;
+
+type SignalMonitorEvaluationBatch = ResolvedSymbolUniverse & {
+  nextCursor: number;
+};
 
 type SignalMonitorExpansionUniverse = {
   symbols: string[];
@@ -807,6 +832,73 @@ function resolveSymbolUniverse(
   };
 }
 
+const signalMonitorEvaluationRotationCursors = new Map<string, number>();
+
+export function resolveSignalMonitorEvaluationBatch(input: {
+  sourceSymbols: string[];
+  maxSymbols: number;
+  cursor?: number;
+}): SignalMonitorEvaluationBatch {
+  const allSymbols = resolveSymbolUniverse(
+    input.sourceSymbols,
+    Number.MAX_SAFE_INTEGER,
+  ).symbols;
+  const maxSymbols = Math.max(0, Math.floor(Number(input.maxSymbols) || 0));
+  if (!allSymbols.length) {
+    return {
+      symbols: [],
+      skippedSymbols: [],
+      truncated: false,
+      nextCursor: 0,
+    };
+  }
+  if (maxSymbols <= 0) {
+    const cursor = Math.max(0, Math.floor(Number(input.cursor) || 0));
+    return {
+      symbols: [],
+      skippedSymbols: allSymbols,
+      truncated: true,
+      nextCursor: cursor % allSymbols.length,
+    };
+  }
+  if (allSymbols.length <= maxSymbols) {
+    return {
+      symbols: allSymbols,
+      skippedSymbols: [],
+      truncated: false,
+      nextCursor: 0,
+    };
+  }
+
+  const cursor = Math.max(0, Math.floor(Number(input.cursor) || 0));
+  const startIndex = cursor % allSymbols.length;
+  const symbols: string[] = [];
+  for (let offset = 0; offset < maxSymbols; offset += 1) {
+    const symbol = allSymbols[(startIndex + offset) % allSymbols.length];
+    if (symbol) {
+      symbols.push(symbol);
+    }
+  }
+  const selected = new Set(symbols);
+  return {
+    symbols,
+    skippedSymbols: allSymbols.filter((symbol) => !selected.has(symbol)),
+    truncated: true,
+    nextCursor: (startIndex + symbols.length) % allSymbols.length,
+  };
+}
+
+function signalMonitorEvaluationRotationKey(input: {
+  profile: Pick<DbSignalMonitorProfile, "id" | "environment" | "timeframe">;
+  timeframe: SignalMonitorTimeframe;
+}) {
+  return [
+    input.profile.environment,
+    input.profile.id,
+    input.timeframe,
+  ].join(":");
+}
+
 function resolveSignalMonitorUniverseFromWatchlists(input: {
   profile: Pick<DbSignalMonitorProfile, "watchlistId" | "maxSymbols" | "pyrusSignalsSettings">;
   watchlists: WatchlistRecord[];
@@ -821,6 +913,10 @@ function resolveSignalMonitorUniverseFromWatchlists(input: {
   const allWatchlistSymbols = input.watchlists.flatMap((watchlist) =>
     watchlist.items.map((item) => item.symbol),
   );
+  const resolvedWatchlistSymbols = resolveSymbolUniverse(
+    allWatchlistSymbols,
+    Number.MAX_SAFE_INTEGER,
+  ).symbols;
   const selectedWatchlist =
     input.profile.watchlistId
       ? input.watchlists.find((candidate) => candidate.id === input.profile.watchlistId) ??
@@ -859,6 +955,7 @@ function resolveSignalMonitorUniverseFromWatchlists(input: {
 
   return {
     ...resolved,
+    watchlistSymbols: resolvedWatchlistSymbols,
     ...(fallbackWatchlists ? { fallbackWatchlists } : {}),
     fallbackUsed,
     universe: {
@@ -1148,6 +1245,118 @@ function isLatestBarStale(input: {
   return input.evaluatedAt.getTime() - input.latestBarAt.getTime() > staleWindowMs;
 }
 
+function isSignalMonitorStateCurrentForLane(input: {
+  state: Pick<
+    DbSignalMonitorSymbolState,
+    "latestBarAt" | "lastEvaluatedAt" | "status"
+  >;
+  timeframe: SignalMonitorTimeframe;
+  evaluatedAt: Date;
+}) {
+  if (input.state.status !== "ok") {
+    return false;
+  }
+  const latestBarAt = dateOrNull(input.state.latestBarAt);
+  const lastEvaluatedAt = dateOrNull(input.state.lastEvaluatedAt);
+  if (!latestBarAt || !lastEvaluatedAt) {
+    return false;
+  }
+  if (
+    isLatestBarStale({
+      latestBarAt,
+      timeframe: input.timeframe,
+      evaluatedAt: input.evaluatedAt,
+    })
+  ) {
+    return false;
+  }
+
+  const timeframeMs = TIMEFRAME_MS[input.timeframe];
+  const minimumWindowMs =
+    input.timeframe === "1d" ? 4 * TIMEFRAME_MS["1d"] : 30 * 60_000;
+  const evaluationWindowMs = Math.max(timeframeMs * 6, minimumWindowMs);
+  return (
+    input.evaluatedAt.getTime() - lastEvaluatedAt.getTime() <=
+    evaluationWindowMs
+  );
+}
+
+function isSignalMonitorIntradayTimeframe(
+  timeframe: SignalMonitorMatrixTimeframe,
+) {
+  return timeframe !== "1d";
+}
+
+function isSignalMonitorDelayedBar(bar: SignalMonitorBarSnapshot | undefined) {
+  if (!bar) {
+    return false;
+  }
+  const freshness = String(bar.freshness ?? "").toLowerCase();
+  const marketDataMode = String(bar.marketDataMode ?? "").toLowerCase();
+  const source = String(bar.source ?? "").toLowerCase();
+  return (
+    bar.delayed === true ||
+    freshness === "delayed" ||
+    marketDataMode === "delayed" ||
+    source.includes("massive") ||
+    source.includes("polygon-delayed")
+  );
+}
+
+function isSignalMonitorDelayedLatestBar(input: {
+  latestBar: SignalMonitorBarSnapshot | undefined;
+  timeframe: SignalMonitorMatrixTimeframe;
+}) {
+  return (
+    isSignalMonitorIntradayTimeframe(input.timeframe) &&
+    isSignalMonitorDelayedBar(input.latestBar)
+  );
+}
+
+function shouldRetrySignalMonitorCompletedBars(input: {
+  completedBars: SignalMonitorBarSnapshot[];
+  timeframe: SignalMonitorMatrixTimeframe;
+  evaluatedAt: Date;
+}) {
+  const latestBar = input.completedBars.at(-1);
+  const latestBarAt = latestBar ? dateOrNull(latestBar.timestamp) : null;
+  if (!latestBarAt) {
+    return true;
+  }
+  if (
+    isLatestBarStale({
+      latestBarAt,
+      timeframe: input.timeframe,
+      evaluatedAt: input.evaluatedAt,
+    })
+  ) {
+    return true;
+  }
+  return isSignalMonitorDelayedLatestBar({
+    latestBar,
+    timeframe: input.timeframe,
+  });
+}
+
+function isSignalMonitorLatestBarUnavailable(input: {
+  latestBarAt: Date;
+  latestBar: SignalMonitorBarSnapshot | undefined;
+  timeframe: SignalMonitorMatrixTimeframe;
+  evaluatedAt: Date;
+}) {
+  return (
+    isLatestBarStale({
+      latestBarAt: input.latestBarAt,
+      timeframe: input.timeframe,
+      evaluatedAt: input.evaluatedAt,
+    }) ||
+    isSignalMonitorDelayedLatestBar({
+      latestBar: input.latestBar,
+      timeframe: input.timeframe,
+    })
+  );
+}
+
 function directionFromSignal(signal: PyrusSignalsSignalEvent): SignalMonitorDirection {
   return signal.eventType === "buy_signal" ? "buy" : "sell";
 }
@@ -1358,6 +1567,22 @@ function writeSignalMonitorCompletedBarsCache(
   pruneSignalMonitorCompletedBarsCache(nowMs);
 }
 
+function shouldBypassSignalMonitorCompletedBarsCache(input: {
+  cached: SignalMonitorCompletedBarsSnapshot;
+  timeframe: SignalMonitorMatrixTimeframe;
+  evaluatedAt: Date;
+  retryStale?: boolean;
+}): boolean {
+  return (
+    input.retryStale !== false &&
+    shouldRetrySignalMonitorCompletedBars({
+      completedBars: input.cached.bars,
+      timeframe: input.timeframe,
+      evaluatedAt: input.evaluatedAt,
+    })
+  );
+}
+
 export async function loadSignalMonitorCompletedBars(input: {
   symbol: string;
   timeframe: SignalMonitorMatrixTimeframe;
@@ -1386,7 +1611,17 @@ export async function loadSignalMonitorCompletedBars(input: {
   });
   const cached = readSignalMonitorCompletedBarsCache(cacheKey);
   if (cached) {
-    return cached;
+    if (
+      !shouldBypassSignalMonitorCompletedBarsCache({
+        cached,
+        timeframe: input.timeframe,
+        evaluatedAt: input.evaluatedAt,
+        retryStale: input.retryStale,
+      })
+    ) {
+      return cached;
+    }
+    signalMonitorCompletedBarsCache.delete(cacheKey);
   }
   const inFlight = signalMonitorCompletedBarsInFlight.get(cacheKey);
   if (inFlight) {
@@ -1426,13 +1661,6 @@ export async function loadSignalMonitorCompletedBars(input: {
       },
     );
   };
-  const shouldRetry = (barAt: Date | null) =>
-    !barAt ||
-    isLatestBarStale({
-      latestBarAt: barAt,
-      timeframe: input.timeframe,
-      evaluatedAt: input.evaluatedAt,
-    });
   let completedBars: SignalMonitorBarSnapshot[] = [];
   const acceptNewerBars = (
     retryCompletedBars: SignalMonitorBarSnapshot[],
@@ -1446,10 +1674,17 @@ export async function loadSignalMonitorCompletedBars(input: {
     const retryLatestBarAt = retryLatestBar
       ? dateOrNull(retryLatestBar.timestamp)
       : null;
+    const retryReplacesDelayedLatest =
+      currentLatestBarAt &&
+      retryLatestBarAt &&
+      currentLatestBarAt.getTime() === retryLatestBarAt.getTime() &&
+      isSignalMonitorDelayedBar(currentLatestBar) &&
+      !isSignalMonitorDelayedBar(retryLatestBar);
     if (
       retryLatestBarAt &&
       (!currentLatestBarAt ||
-        retryLatestBarAt.getTime() > currentLatestBarAt.getTime())
+        retryLatestBarAt.getTime() > currentLatestBarAt.getTime() ||
+        retryReplacesDelayedLatest)
     ) {
       completedBars = merge
         ? mergeCompletedBars(completedBars, retryCompletedBars, completedLimit)
@@ -1469,13 +1704,25 @@ export async function loadSignalMonitorCompletedBars(input: {
   const request = (async () => {
     completedBars = await fetchCompletedBars("primary");
     let latestBar = completedBars.at(-1);
-    let latestBarAt = latestBar ? dateOrNull(latestBar.timestamp) : null;
-    if (input.retryStale !== false && shouldRetry(latestBarAt)) {
+    if (
+      input.retryStale !== false &&
+      shouldRetrySignalMonitorCompletedBars({
+        completedBars,
+        timeframe: input.timeframe,
+        evaluatedAt: input.evaluatedAt,
+      })
+    ) {
       acceptNewerBars(await fetchCompletedBars("full-retry"), false);
       latestBar = completedBars.at(-1);
-      latestBarAt = latestBar ? dateOrNull(latestBar.timestamp) : null;
     }
-    if (input.retryStale !== false && shouldRetry(latestBarAt)) {
+    if (
+      input.retryStale !== false &&
+      shouldRetrySignalMonitorCompletedBars({
+        completedBars,
+        timeframe: input.timeframe,
+        evaluatedAt: input.evaluatedAt,
+      })
+    ) {
       acceptNewerBars(await fetchCompletedBars("live-edge"), true);
       latestBar = completedBars.at(-1);
     }
@@ -1533,11 +1780,20 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
     });
     const signal = evaluation.signalEvents.at(-1) ?? null;
     const latestBarAt = new Date(latestBar.time * 1000);
-    const stale = isLatestBarStale({
+    const latestSourceBar = input.completedBars.at(-1);
+    const delayedLatestBar = isSignalMonitorDelayedLatestBar({
+      latestBar: latestSourceBar,
+      timeframe: input.timeframe,
+    });
+    const stale = isSignalMonitorLatestBarUnavailable({
       latestBarAt,
+      latestBar: latestSourceBar,
       timeframe: input.timeframe,
       evaluatedAt: input.evaluatedAt,
     });
+    const delayedLatestBarError = delayedLatestBar
+      ? "Latest signal monitor bar is delayed; waiting for live broker history."
+      : null;
 
     if (!signal) {
       return upsertSymbolState({
@@ -1552,6 +1808,7 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
         fresh: false,
         status: stale ? "stale" : "ok",
         evaluatedAt: input.evaluatedAt,
+        lastError: delayedLatestBarError,
       });
     }
 
@@ -1581,6 +1838,7 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
       fresh,
       status: stale ? "stale" : "ok",
       evaluatedAt: input.evaluatedAt,
+      lastError: delayedLatestBarError,
     });
   } catch (error) {
     const message =
@@ -1687,11 +1945,20 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
   });
   const signal = evaluation.signalEvents.at(-1) ?? null;
   const latestBarAt = new Date(latestBar.time * 1000);
-  const stale = isLatestBarStale({
+  const latestSourceBar = input.completedBars.at(-1);
+  const delayedLatestBar = isSignalMonitorDelayedLatestBar({
+    latestBar: latestSourceBar,
+    timeframe: input.timeframe,
+  });
+  const stale = isSignalMonitorLatestBarUnavailable({
     latestBarAt,
+    latestBar: latestSourceBar,
     timeframe: input.timeframe,
     evaluatedAt: input.evaluatedAt,
   });
+  const delayedLatestBarError = delayedLatestBar
+    ? "Latest signal monitor bar is delayed; waiting for live broker history."
+    : null;
 
   if (!signal) {
     return {
@@ -1703,6 +1970,7 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
       barsSinceSignal: null,
       fresh: false,
       status: stale ? "stale" as const : "ok" as const,
+      lastError: delayedLatestBarError,
     };
   }
 
@@ -1716,6 +1984,7 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
     barsSinceSignal,
     fresh: barsSinceSignal <= input.profile.freshWindowBars && !stale,
     status: stale ? "stale" as const : "ok" as const,
+    lastError: delayedLatestBarError,
   };
 }
 
@@ -1806,12 +2075,40 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
   const requestedSymbols = input.symbols
     ? new Set(input.symbols.map((symbol) => normalizeSymbol(symbol).toUpperCase()))
     : null;
-  const symbols = requestedSymbols
-    ? universe.symbols.filter((symbol) => requestedSymbols.has(symbol))
-    : universe.symbols;
+  const resolvedBatch = requestedSymbols
+    ? {
+        ...resolveExplicitSignalMonitorSymbols({
+          symbols: universe.watchlistSymbols.filter((symbol) =>
+            requestedSymbols.has(symbol),
+          ),
+          maxSymbols: evaluationSettings.profile.maxSymbols,
+        }),
+        nextCursor: 0,
+      }
+    : resolveSignalMonitorEvaluationBatch({
+        sourceSymbols: universe.watchlistSymbols,
+        maxSymbols: evaluationSettings.profile.maxSymbols,
+        cursor: signalMonitorEvaluationRotationCursors.get(
+          signalMonitorEvaluationRotationKey({
+            profile: universe.profile,
+            timeframe,
+          }),
+        ),
+      });
+  if (!requestedSymbols) {
+    signalMonitorEvaluationRotationCursors.set(
+      signalMonitorEvaluationRotationKey({
+        profile: universe.profile,
+        timeframe,
+      }),
+      resolvedBatch.nextCursor,
+    );
+  }
+  const symbols = resolvedBatch.symbols;
   const shouldDeactivateMissing =
     input.deactivateMissing !== false &&
     !evaluationSettings.capped &&
+    !resolvedBatch.truncated &&
     !universe.fallbackWatchlists &&
     !universe.fallbackUsed &&
     !requestedSymbols;
@@ -1858,9 +2155,92 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
     profile: profileToResponse(updatedProfile),
     states: evaluatedStates.map(stateToResponse),
     evaluatedAt,
-    truncated: universe.truncated,
-    skippedSymbols: universe.skippedSymbols,
+    truncated: resolvedBatch.truncated,
+    skippedSymbols: resolvedBatch.skippedSymbols,
     universe: universe.universe,
+  };
+}
+
+function resolveExplicitSignalMonitorSymbols(input: {
+  symbols: string[];
+  maxSymbols: number;
+}) {
+  const normalized = Array.from(
+    new Set(
+      input.symbols
+        .map((symbol) => normalizeSymbol(symbol).toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+  const maxSymbols = Math.max(0, Math.floor(input.maxSymbols));
+
+  return {
+    symbols: normalized.slice(0, maxSymbols),
+    skippedSymbols: normalized.slice(maxSymbols),
+    truncated: normalized.length > maxSymbols,
+  };
+}
+
+export async function evaluateSignalMonitorProfileSymbols(input: {
+  profile: DbSignalMonitorProfile;
+  mode?: EvaluationMode;
+  evaluatedAt?: Date;
+  symbols: string[];
+  maxSymbolsOverride?: number;
+}) {
+  const evaluatedAt = input.evaluatedAt ?? new Date();
+  const mode = input.mode ?? "incremental";
+  const evaluationSettings = cappedSignalMonitorEvaluationProfile(input.profile);
+  const maxSymbols =
+    input.maxSymbolsOverride === undefined
+      ? evaluationSettings.profile.maxSymbols
+      : Math.max(
+          0,
+          Math.min(250, Math.floor(Number(input.maxSymbolsOverride) || 0)),
+        );
+  const evaluationProfile = {
+    ...evaluationSettings.profile,
+    maxSymbols,
+  };
+  const timeframe = resolveSignalMonitorTimeframe(
+    evaluationProfile.timeframe,
+  );
+  const resolved = resolveExplicitSignalMonitorSymbols({
+    symbols: input.symbols,
+    maxSymbols,
+  });
+
+  const evaluatedStates = await evaluateSymbolsInBatches({
+    profile: evaluationProfile,
+    symbols: resolved.symbols,
+    timeframe,
+    mode,
+    evaluatedAt,
+  });
+  const updatedProfile = await updateSignalMonitorProfileEvaluationMetadata({
+    profile: evaluationProfile,
+    evaluatedAt,
+    states: evaluatedStates,
+  });
+
+  return {
+    profile: profileToResponse(updatedProfile),
+    states: evaluatedStates.map(stateToResponse),
+    evaluatedAt,
+    truncated: resolved.truncated,
+    skippedSymbols: resolved.skippedSymbols,
+    universe: {
+      mode: "selected_watchlist",
+      configuredMaxSymbols: maxSymbols,
+      resolvedSymbols: resolved.symbols.length,
+      pinnedSymbols: resolved.symbols.length,
+      expansionSymbols: 0,
+      shortfall: 0,
+      source: "selected_watchlist",
+      fallbackUsed: false,
+      degradedReason: null,
+      rankedAt: null,
+    },
   };
 }
 
@@ -1904,7 +2284,6 @@ async function evaluateSignalMonitorMatrixItem(input: {
       timeframe: input.timeframe,
       evaluatedAt: input.evaluatedAt,
       limit: SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
-      retryStale: false,
     });
     return evaluateSignalMonitorMatrixStateFromCompletedBars({
       ...input,
@@ -2174,9 +2553,22 @@ async function evaluateSignalMonitorRuntimeProfileUniverse(input: {
     const timeframe = resolveSignalMonitorTimeframe(evaluationProfile.timeframe);
     const universe =
       await resolveRuntimeSignalMonitorProfileUniverse(evaluationProfile);
+    const rotationKey = signalMonitorEvaluationRotationKey({
+      profile: evaluationProfile,
+      timeframe,
+    });
+    const resolvedBatch = resolveSignalMonitorEvaluationBatch({
+      sourceSymbols: universe.watchlistSymbols,
+      maxSymbols: evaluationProfile.maxSymbols,
+      cursor: signalMonitorEvaluationRotationCursors.get(rotationKey),
+    });
+    signalMonitorEvaluationRotationCursors.set(
+      rotationKey,
+      resolvedBatch.nextCursor,
+    );
     const states = await evaluateRuntimeSymbolsInBatches({
       profile: evaluationProfile,
-      symbols: universe.symbols,
+      symbols: resolvedBatch.symbols,
       timeframe,
       evaluatedAt,
     });
@@ -2199,8 +2591,8 @@ async function evaluateSignalMonitorRuntimeProfileUniverse(input: {
       profile: profileToResponse(updatedProfile),
       states,
       evaluatedAt,
-      truncated: universe.truncated,
-      skippedSymbols: universe.skippedSymbols,
+      truncated: resolvedBatch.truncated,
+      skippedSymbols: resolvedBatch.skippedSymbols,
       universe: universe.universe,
     };
   });
@@ -2469,12 +2861,17 @@ export async function updateSignalMonitorProfile(input: {
       );
     }
     if (input.maxSymbols !== undefined) {
-      patch.maxSymbols = positiveInteger(input.maxSymbols, 50, 1, 250);
+      patch.maxSymbols = positiveInteger(
+        input.maxSymbols,
+        DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
+        1,
+        250,
+      );
     }
     if (input.evaluationConcurrency !== undefined) {
       patch.evaluationConcurrency = positiveInteger(
         input.evaluationConcurrency,
-        3,
+        DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY,
         1,
         10,
       );
@@ -2512,9 +2909,15 @@ export async function updateSignalMonitorProfile(input: {
 
 export const __signalMonitorInternalsForTests = {
   resolveSignalMonitorUniverseFromWatchlists,
+  resolveSignalMonitorEvaluationBatch,
+  resolveExplicitSignalMonitorSymbols,
   cappedSignalMonitorEvaluationProfile,
   cappedSignalMatrixSettings,
   buildSignalMonitorCompletedBarsCacheKey,
+  isSignalMonitorDelayedBar,
+  isSignalMonitorStateCurrentForLane,
+  shouldBypassSignalMonitorCompletedBarsCache,
+  shouldRetrySignalMonitorCompletedBars,
   clearSignalMonitorMatrixEvaluationCache,
   withSignalMonitorMatrixEvaluationCache,
   getSignalMonitorCompletedBarsCacheDiagnostics() {
@@ -2550,9 +2953,17 @@ export async function getSignalMonitorState(input: {
 
   try {
     const profile = await getOrCreateProfile(environment);
-    const { profile: hydratedProfile, skippedSymbols, truncated, universe } =
+    const {
+      profile: hydratedProfile,
+      watchlistSymbols,
+      skippedSymbols,
+      truncated,
+      universe,
+    } =
       await resolveSignalMonitorProfileUniverse(profile);
     const timeframe = resolveSignalMonitorTimeframe(hydratedProfile.timeframe);
+    const currentUniverseSymbols = new Set(watchlistSymbols);
+    const evaluatedAt = new Date();
     const states = await db
       .select()
       .from(signalMonitorSymbolStatesTable)
@@ -2568,10 +2979,21 @@ export async function getSignalMonitorState(input: {
         desc(signalMonitorSymbolStatesTable.currentSignalAt),
         desc(signalMonitorSymbolStatesTable.latestBarAt),
       );
+    const currentStates = states.filter((state) => {
+      const symbol = normalizeSymbol(state.symbol).toUpperCase();
+      return (
+        currentUniverseSymbols.has(symbol) &&
+        isSignalMonitorStateCurrentForLane({
+          state,
+          timeframe,
+          evaluatedAt,
+        })
+      );
+    });
 
     return {
       profile: profileToResponse(hydratedProfile),
-      states: states.map(stateToResponse),
+      states: currentStates.map(stateToResponse),
       evaluatedAt: hydratedProfile.lastEvaluatedAt ?? new Date(),
       truncated,
       skippedSymbols,

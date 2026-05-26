@@ -1,4 +1,12 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -55,6 +63,15 @@ export type IbkrBridgeRuntimeOverrideSnapshot = IbkrBridgeRuntimeConfig & {
   bridgeId: string | null;
   managementTokenHash: string | null;
 };
+export type IbkrBridgeRuntimeChangeEvent =
+  | {
+      type: "set";
+      override: IbkrBridgeRuntimeOverrideSnapshot;
+    }
+  | {
+      type: "clear";
+      override: null;
+    };
 
 const POLYGON_API_KEY_ENV_NAMES = [
   "POLYGON_API_KEY",
@@ -129,6 +146,10 @@ const IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE_ENV_NAMES = [
 ];
 let ibkrBridgeRuntimeOverride: IbkrBridgeRuntimeOverrideSnapshot | null = null;
 let ibkrBridgeRuntimeOverrideLoaded = false;
+let ibkrBridgeLegacyRuntimeOverrideFileForTests: string | null = null;
+const ibkrBridgeRuntimeChangeListeners = new Set<
+  (event: IbkrBridgeRuntimeChangeEvent) => void
+>();
 
 function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
@@ -150,11 +171,59 @@ function getOptionalEnv(names: string[]): string | null {
   return null;
 }
 
+function getExplicitIbkrBridgeRuntimeOverrideFile(): string | null {
+  return getOptionalEnv(IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE_ENV_NAMES);
+}
+
+function getDefaultIbkrBridgeRuntimeOverrideFile(): string {
+  const replHome = process.env["REPL_HOME"]?.trim();
+  if (replHome) {
+    return join(
+      replHome,
+      "artifacts",
+      "api-server",
+      "data",
+      "ibkr-bridge-runtime-override.json",
+    );
+  }
+
+  return join(process.cwd(), "data", "ibkr-bridge-runtime-override.json");
+}
+
 function getIbkrBridgeRuntimeOverrideFile(): string {
   return (
-    getOptionalEnv(IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE_ENV_NAMES) ??
-    join(tmpdir(), "pyrus", "ibkr-bridge-runtime-override.json")
+    getExplicitIbkrBridgeRuntimeOverrideFile() ??
+    getDefaultIbkrBridgeRuntimeOverrideFile()
   );
+}
+
+function getLegacyIbkrBridgeRuntimeOverrideFile(): string {
+  if (ibkrBridgeLegacyRuntimeOverrideFileForTests) {
+    return ibkrBridgeLegacyRuntimeOverrideFileForTests;
+  }
+
+  return join(tmpdir(), "pyrus", "ibkr-bridge-runtime-override.json");
+}
+
+function isDefaultIbkrBridgeRuntimeOverrideFile(): boolean {
+  return getExplicitIbkrBridgeRuntimeOverrideFile() === null;
+}
+
+function deleteLegacyIbkrBridgeRuntimeOverride(): void {
+  try {
+    rmSync(getLegacyIbkrBridgeRuntimeOverrideFile(), { force: true });
+  } catch {
+    // Best effort cleanup; the active persistent file is already authoritative.
+  }
+}
+
+function cloneIbkrBridgeRuntimeOverride(
+  snapshot: IbkrBridgeRuntimeOverrideSnapshot,
+): IbkrBridgeRuntimeOverrideSnapshot {
+  return {
+    ...snapshot,
+    updatedAt: new Date(snapshot.updatedAt),
+  };
 }
 
 function normalizeIbkrBridgeRuntimeConfig(
@@ -171,11 +240,11 @@ function normalizeIbkrBridgeRuntimeConfig(
   };
 }
 
-function readPersistedIbkrBridgeRuntimeOverride(): IbkrBridgeRuntimeOverrideSnapshot | null {
+function readIbkrBridgeRuntimeOverrideFile(
+  path: string,
+): IbkrBridgeRuntimeOverrideSnapshot | null {
   try {
-    const parsed = JSON.parse(
-      readFileSync(getIbkrBridgeRuntimeOverrideFile(), "utf8"),
-    ) as unknown;
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
 
     if (!parsed || typeof parsed !== "object") {
       return null;
@@ -221,6 +290,31 @@ function readPersistedIbkrBridgeRuntimeOverride(): IbkrBridgeRuntimeOverrideSnap
   }
 }
 
+function readPersistedIbkrBridgeRuntimeOverride(): IbkrBridgeRuntimeOverrideSnapshot | null {
+  const path = getIbkrBridgeRuntimeOverrideFile();
+  const currentFileExists = existsSync(path);
+  const current = readIbkrBridgeRuntimeOverrideFile(path);
+  if (current || currentFileExists || !isDefaultIbkrBridgeRuntimeOverrideFile()) {
+    return current;
+  }
+
+  const legacy = readIbkrBridgeRuntimeOverrideFile(
+    getLegacyIbkrBridgeRuntimeOverrideFile(),
+  );
+  if (!legacy) {
+    return null;
+  }
+
+  try {
+    persistIbkrBridgeRuntimeOverride(legacy);
+    deleteLegacyIbkrBridgeRuntimeOverride();
+  } catch {
+    return legacy;
+  }
+
+  return legacy;
+}
+
 function loadIbkrBridgeRuntimeOverride(): IbkrBridgeRuntimeOverrideSnapshot | null {
   if (!ibkrBridgeRuntimeOverrideLoaded) {
     ibkrBridgeRuntimeOverride =
@@ -235,25 +329,61 @@ function persistIbkrBridgeRuntimeOverride(
   snapshot: IbkrBridgeRuntimeOverrideSnapshot,
 ): void {
   const path = getIbkrBridgeRuntimeOverrideFile();
+  const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(
-    path,
-    JSON.stringify(
+  try {
+    writeFileSync(
+      tempPath,
+      JSON.stringify(
+        {
+          version: 1,
+          baseUrl: snapshot.baseUrl,
+          apiToken: snapshot.apiToken,
+          bridgeId: snapshot.bridgeId,
+          managementTokenHash: snapshot.managementTokenHash,
+          updatedAt: snapshot.updatedAt.toISOString(),
+        },
+        null,
+        2,
+      ),
       {
-        version: 1,
-        baseUrl: snapshot.baseUrl,
-        apiToken: snapshot.apiToken,
-        bridgeId: snapshot.bridgeId,
-        managementTokenHash: snapshot.managementTokenHash,
-        updatedAt: snapshot.updatedAt.toISOString(),
+        mode: 0o600,
       },
-      null,
-      2,
-    ),
-    {
-      mode: 0o600,
-    },
-  );
+    );
+    chmodSync(tempPath, 0o600);
+    renameSync(tempPath, path);
+    chmodSync(path, 0o600);
+  } catch (error) {
+    rmSync(tempPath, { force: true });
+    throw error;
+  }
+}
+
+function notifyIbkrBridgeRuntimeChanged(
+  event: IbkrBridgeRuntimeChangeEvent,
+): void {
+  for (const listener of ibkrBridgeRuntimeChangeListeners) {
+    try {
+      listener(event);
+    } catch {
+      // Runtime attach/detach must not fail because a stream wake-up failed.
+    }
+  }
+}
+
+export function onIbkrBridgeRuntimeChanged(
+  listener: (event: IbkrBridgeRuntimeChangeEvent) => void,
+): () => void {
+  ibkrBridgeRuntimeChangeListeners.add(listener);
+  return () => {
+    ibkrBridgeRuntimeChangeListeners.delete(listener);
+  };
+}
+
+export function __setIbkrBridgeLegacyRuntimeOverrideFileForTests(
+  path: string | null,
+): void {
+  ibkrBridgeLegacyRuntimeOverrideFileForTests = path;
 }
 
 function hasExplicitMassiveCredentials(): boolean {
@@ -443,13 +573,18 @@ export function setIbkrBridgeRuntimeOverride(
   config: IbkrBridgeRuntimeConfig,
   metadata: IbkrBridgeRuntimeOverrideMetadata = {},
 ): IbkrBridgeRuntimeOverrideSnapshot {
-  ibkrBridgeRuntimeOverride = normalizeIbkrBridgeRuntimeConfig(
+  const nextOverride = normalizeIbkrBridgeRuntimeConfig(
     config,
     new Date(),
     metadata,
   );
+  persistIbkrBridgeRuntimeOverride(nextOverride);
+  ibkrBridgeRuntimeOverride = nextOverride;
   ibkrBridgeRuntimeOverrideLoaded = true;
-  persistIbkrBridgeRuntimeOverride(ibkrBridgeRuntimeOverride);
+  notifyIbkrBridgeRuntimeChanged({
+    type: "set",
+    override: cloneIbkrBridgeRuntimeOverride(nextOverride),
+  });
 
   return ibkrBridgeRuntimeOverride;
 }
@@ -457,12 +592,19 @@ export function setIbkrBridgeRuntimeOverride(
 export function clearIbkrBridgeRuntimeOverride(
   options: { deletePersisted?: boolean } = {},
 ): void {
-  ibkrBridgeRuntimeOverride = null;
-  ibkrBridgeRuntimeOverrideLoaded = options.deletePersisted === false ? false : true;
-
   if (options.deletePersisted !== false) {
     rmSync(getIbkrBridgeRuntimeOverrideFile(), { force: true });
+    if (isDefaultIbkrBridgeRuntimeOverrideFile()) {
+      deleteLegacyIbkrBridgeRuntimeOverride();
+    }
+    ibkrBridgeRuntimeOverride = null;
+    ibkrBridgeRuntimeOverrideLoaded = true;
+    notifyIbkrBridgeRuntimeChanged({ type: "clear", override: null });
+    return;
   }
+
+  ibkrBridgeRuntimeOverride = null;
+  ibkrBridgeRuntimeOverrideLoaded = false;
 }
 
 export function getIbkrBridgeRuntimeOverride(): IbkrBridgeRuntimeOverrideSnapshot | null {

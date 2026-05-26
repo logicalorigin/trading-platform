@@ -599,7 +599,6 @@ const WatchlistRow = memo(
               >
                 {item.sym}
               </span>
-              {renderDayChange({ flex: "0 0 auto" })}
             </span>
             {renderSignalCluster({ justifySelf: "end" })}
           </div>
@@ -632,24 +631,40 @@ const WatchlistRow = memo(
               />
             </span>
             <span
-              className={priceFlashClassName}
               style={{
+                alignItems: "flex-end",
                 display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "flex-end",
-                color: CSS_COLOR.text,
-                fontFamily: T.sans,
-                fontSize: textSize("paragraphMuted"),
-                fontVariantNumeric: "tabular-nums",
-                fontWeight: FONT_WEIGHTS.regular,
-                textAlign: "right",
+                flexDirection: "column",
+                gap: sp(3),
+                justifyContent: "center",
                 justifySelf: "end",
-                padding: sp("1px 2px"),
-                borderRadius: dim(RADII.xs),
-                whiteSpace: "nowrap",
+                minWidth: 0,
               }}
             >
-              {formatQuotePrice(displayedPrice)}
+              <span
+                data-testid="watchlist-row-price"
+                className={priceFlashClassName}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
+                  color: CSS_COLOR.text,
+                  fontFamily: T.sans,
+                  fontSize: textSize("paragraphMuted"),
+                  fontVariantNumeric: "tabular-nums",
+                  fontWeight: FONT_WEIGHTS.regular,
+                  textAlign: "right",
+                  padding: sp("1px 2px"),
+                  borderRadius: dim(RADII.xs),
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {formatQuotePrice(displayedPrice)}
+              </span>
+              {renderDayChange({
+                fontSize: textSize("caption"),
+                justifySelf: "end",
+              })}
             </span>
           </div>
         </div>

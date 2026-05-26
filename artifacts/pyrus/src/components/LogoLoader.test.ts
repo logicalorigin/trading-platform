@@ -3,11 +3,20 @@ import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 const logoSource = readFileSync(new URL("./LogoLoader.tsx", import.meta.url), "utf8");
+const brandLoaderSource = readFileSync(new URL("./BrandLoader.tsx", import.meta.url), "utf8");
 const markSource = readFileSync(new URL("./brand/pyrus-mark.tsx", import.meta.url), "utf8");
+const loaderMarkSource = readFileSync(
+  new URL("./brand/pyrus-loader-mark.tsx", import.meta.url),
+  "utf8",
+);
 const wordmarkSource = readFileSync(new URL("./brand/pyrus-wordmark.tsx", import.meta.url), "utf8");
 const brandSource = readFileSync(new URL("./brand/PyrusLogo.tsx", import.meta.url), "utf8");
 const globalCssSource = readFileSync(new URL("../index.css", import.meta.url), "utf8");
 const publicMarkPng = readFileSync(new URL("../../public/brand/pyrus-mark.png", import.meta.url));
+const publicLoaderMarkSvg = readFileSync(
+  new URL("../../public/brand/pyrus-loader-mark-dark.svg", import.meta.url),
+  "utf8",
+);
 const trackedMarkPng = readFileSync(
   new URL("../../../../branding/92767643-0c16-41f8-a80b-780819515a22.png", import.meta.url),
 );
@@ -17,6 +26,7 @@ const publicLightWordmarkPng = readFileSync(
 );
 const indexHtmlSource = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../app/App.tsx", import.meta.url), "utf8");
+const appContentSource = readFileSync(new URL("../app/AppContent.tsx", import.meta.url), "utf8");
 const appHeaderSource = readFileSync(
   new URL("../features/platform/AppHeader.jsx", import.meta.url),
   "utf8",
@@ -40,28 +50,43 @@ const marketSource = readFileSync(
 const publicBrandFiles = readdirSync(new URL("../../public/brand/", import.meta.url));
 
 test("LogoLoader owns the shared branded boot treatment", () => {
-  assert.match(logoSource, /type LogoLoaderProps = \{/);
-  assert.match(logoSource, /label\?: string/);
-  assert.match(logoSource, /minHeight\?: string \| number/);
-  assert.match(logoSource, /tone\?: LogoLoaderTone/);
-  assert.match(logoSource, /testId\?: string/);
-  assert.match(logoSource, /const LOGO_LOADER_PALETTES = \{/);
-  assert.match(logoSource, /document\.documentElement\.dataset\.pyrusTheme/);
-  assert.doesNotMatch(logoSource, /dataset\.pyrusTheme === "light" \|\|/);
-  assert.match(logoSource, /const normalizeMinHeight/);
-  assert.match(logoSource, /LogoLockup/);
+  assert.match(logoSource, /import BrandLoader/);
+  assert.match(logoSource, /type LogoLoaderProps = BrandLoaderProps/);
+  assert.match(logoSource, /testId = "logo-loader"/);
+  assert.match(logoSource, /<BrandLoader testId=\{testId\} \{\.\.\.props\} \/>/);
+  assert.match(brandLoaderSource, /export type BrandLoaderProps = \{/);
+  assert.match(brandLoaderSource, /label\?: string/);
+  assert.match(brandLoaderSource, /minHeight\?: string \| number/);
+  assert.match(brandLoaderSource, /tone\?: BrandLoaderTone/);
+  assert.match(brandLoaderSource, /testId\?: string/);
+  assert.match(brandLoaderSource, /const BRAND_LOADER_SHELL_BG = "#050914"/);
+  assert.match(brandLoaderSource, /const BRAND_LOADER_PANEL_BG = "#050914"/);
+  assert.doesNotMatch(brandLoaderSource, /const BRAND_LOADER_PALETTES/);
+  assert.doesNotMatch(brandLoaderSource, /resolveBrandLoaderTheme/);
+  assert.doesNotMatch(brandLoaderSource, /document\.documentElement\.dataset\.pyrusTheme/);
+  assert.match(brandLoaderSource, /const normalizeMinHeight/);
+  assert.match(brandLoaderSource, /import \{ PyrusLoaderMark \} from "\.\/brand\/pyrus-loader-mark"/);
+  assert.match(brandLoaderSource, /data-theme="dark"/);
+  assert.match(brandLoaderSource, /background: isPanel \? BRAND_LOADER_PANEL_BG : BRAND_LOADER_SHELL_BG/);
+  assert.match(brandLoaderSource, /<div aria-hidden="true" className="brand-loader-lockup">/);
+  assert.match(brandLoaderSource, /className="brand-loader-mark"/);
+  assert.match(
+    brandLoaderSource,
+    /className=\{isPanel \? "h-\[60px\] w-\[60px\]" : "h-\[104px\] w-\[104px\]"\}/,
+  );
+  assert.match(brandLoaderSource, /<PyrusLoaderMark/);
+  assert.match(brandLoaderSource, /className="brand-loader-word"/);
+  assert.match(brandLoaderSource, /height=\{isPanel \? 18 : 26\}/);
+  assert.match(brandLoaderSource, /width=\{isPanel \? 148 : 213\}/);
+  assert.match(brandLoaderSource, /mixBlendMode: "screen"/);
   assert.doesNotMatch(logoSource, /PyrusCircleLogo/);
-  assert.match(logoSource, /className="pyrus-loader-lockup"/);
-  assert.match(logoSource, /descriptor=\{tone === "panel" \? "" : "Algo Trading Platform"\}/);
-  assert.match(logoSource, /markClassName=\{tone === "panel" \? "h-12 w-12" : "h-32 w-32"\}/);
-  assert.match(logoSource, /wordmarkWidth=\{tone === "panel" \? 116 : 190\}/);
-  assert.doesNotMatch(logoSource, /tone === "app" \? \(/);
+  assert.doesNotMatch(brandLoaderSource, /PyrusCircleLogo/);
   assert.doesNotMatch(logoSource, /PyrusRadialMark/);
-  assert.doesNotMatch(logoSource, /pyrusMarkPulse/);
-  assert.doesNotMatch(logoSource, /pyrusBootBar/);
-  assert.doesNotMatch(logoSource, /pyrus-boot-bar/);
-  assert.match(logoSource, /data-testid=\{testId\}/);
-  assert.match(logoSource, /data-tone=\{tone\}/);
+  assert.doesNotMatch(brandLoaderSource, /pyrusMarkPulse/);
+  assert.doesNotMatch(brandLoaderSource, /pyrusBootBar/);
+  assert.doesNotMatch(brandLoaderSource, /pyrus-boot-bar/);
+  assert.match(brandLoaderSource, /data-testid=\{testId\}/);
+  assert.match(brandLoaderSource, /data-tone=\{tone\}/);
 });
 
 test("Pyrus wordmark renders the tight PNG directly, not live font text", () => {
@@ -115,7 +140,7 @@ test("primary brand surfaces render the PNG wordmark", () => {
   );
   assert.match(
     appHeaderSource,
-    /<PyrusMark className="h-\[21px\] w-\[21px\]" \/>[\s\S]*<PyrusWordmark width=\{96\} title="" style=\{\{ color: T\.text \}\} \/>/,
+    /<PyrusMark className="h-\[21px\] w-\[21px\]" \/>[\s\S]*<PyrusWordmark width=\{96\} title="" style=\{\{ color: CSS_COLOR\.text \}\} \/>/,
   );
   assert.match(
     appHeaderSource,
@@ -130,39 +155,109 @@ test("primary brand surfaces render the PNG wordmark", () => {
   assert.doesNotMatch(appHeaderSource, /showDescriptor/);
 });
 
-test("Pyrus mark uses the tracked high-detail ring PNG asset", () => {
+test("Pyrus mark surfaces use the intended ring assets", () => {
+  assert.deepStrictEqual(publicMarkPng, trackedMarkPng);
+  assert.ok(publicBrandFiles.includes("pyrus-mark.png"));
+  assert.ok(publicBrandFiles.includes("pyrus-loader-mark-dark.svg"));
+  assert.equal(publicMarkPng.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+  assert.match(publicLoaderMarkSvg, /<svg/);
+  assert.match(publicLoaderMarkSvg, /viewBox="0 0 200 200"/);
+  assert.match(publicLoaderMarkSvg, /<linearGradient id="pyrus-grad"/);
+  assert.match(publicLoaderMarkSvg, /id="ring-07-particles"/);
+  assert.match(publicLoaderMarkSvg, /id="ring-07b-data-nodes"/);
+  assert.match(publicLoaderMarkSvg, /class="pyrus-ring"/);
+  assert.match(publicLoaderMarkSvg, /@keyframes pyrus-ring-spin/);
   assert.match(markSource, /export function PyrusMark/);
   assert.match(markSource, /const PYRUS_MARK_SRC = "\/brand\/pyrus-mark\.png"/);
   assert.match(markSource, /className=\{cn\("pyrus-mark h-10 w-10", className\)\}/);
   assert.match(markSource, /className="pyrus-mark-image"/);
   assert.match(markSource, /src=\{PYRUS_MARK_SRC\}/);
-  assert.match(markSource, /decoding="async"/);
-  assert.match(markSource, /loading="eager"/);
-  assert.match(markSource, /role=\{title \? "img" : undefined\}/);
   assert.match(markSource, /<img/);
+  assert.doesNotMatch(markSource, /PyrusInstrumentMark/);
   assert.doesNotMatch(markSource, /<svg/);
-  assert.doesNotMatch(markSource, /linearGradient/);
-  assert.doesNotMatch(markSource, /MarkDefs/);
-  assert.doesNotMatch(markSource, /rimDots/);
-  assert.doesNotMatch(markSource, /dataNodeAngles/);
-  assert.doesNotMatch(markSource, /gaugeTicks/);
-  assert.doesNotMatch(markSource, /className="pyrus-ring"/);
+  assert.match(loaderMarkSource, /export function PyrusLoaderMark/);
+  assert.match(loaderMarkSource, /const PYRUS_LOADER_MARK_SRC = "\/brand\/pyrus-loader-mark-dark\.svg"/);
+  assert.match(loaderMarkSource, /className=\{\["pyrus-loader-instrument", className\]\.filter\(Boolean\)\.join\(" "\)\}/);
+  assert.match(loaderMarkSource, /src=\{PYRUS_LOADER_MARK_SRC\}/);
+  assert.match(loaderMarkSource, /<img/);
+  assert.doesNotMatch(loaderMarkSource, /\/brand\/pyrus-mark\.png/);
+  assert.doesNotMatch(loaderMarkSource, /viewBox/);
+  assert.doesNotMatch(loaderMarkSource, /<linearGradient/);
+  assert.doesNotMatch(loaderMarkSource, /rimDots/);
+  assert.doesNotMatch(loaderMarkSource, /dataNodeAngles/);
+  assert.doesNotMatch(loaderMarkSource, /ring-07-particles/);
+  assert.doesNotMatch(loaderMarkSource, /ring-07b-data-nodes/);
+  assert.doesNotMatch(loaderMarkSource, /className="pyrus-ring"/);
   assert.doesNotMatch(markSource, /PyrusRadialMark/);
-  assert.doesNotMatch(markSource, /sectorPath/);
-  assert.doesNotMatch(markSource, /ringBands/);
-  assert.doesNotMatch(markSource, /outerRayAngles/);
+  assert.doesNotMatch(loaderMarkSource, /sectorPath/);
+  assert.doesNotMatch(loaderMarkSource, /ringBands/);
+  assert.doesNotMatch(loaderMarkSource, /outerRayAngles/);
   assert.match(brandSource, /import \{ PyrusMark \} from "\.\/pyrus-mark"/);
   assert.doesNotMatch(brandSource, /PyrusRadialMark/);
   assert.match(globalCssSource, /\.pyrus-mark\s*\{/);
   assert.match(globalCssSource, /\.pyrus-mark-image\s*\{/);
-  assert.match(globalCssSource, /object-fit:\s*cover/);
+  assert.match(globalCssSource, /object-fit:\s*contain/);
+  assert.match(globalCssSource, /\.pyrus-loader-instrument\s*\{/);
+  assert.match(globalCssSource, /\.pyrus-loader-instrument\s*\{[\s\S]*?height:\s*104px/);
+  assert.match(globalCssSource, /\.pyrus-loader-instrument\s*\{[\s\S]*?width:\s*104px/);
+  assert.match(globalCssSource, /\[data-tone="panel"\] \.pyrus-loader-instrument\s*\{[\s\S]*?height:\s*60px/);
+  assert.match(globalCssSource, /\[data-tone="panel"\] \.pyrus-loader-instrument\s*\{[\s\S]*?width:\s*60px/);
   assert.match(globalCssSource, /\.pyrus-loader-lockup\s*\{/);
   assert.match(globalCssSource, /\.pyrus-loader-mark\s*\{/);
-  assert.match(globalCssSource, /\.pyrus-loader-mark \.pyrus-mark\s*\{/);
   assert.doesNotMatch(globalCssSource, /\.pyrus-loader-mark svg\s*\{/);
   assert.doesNotMatch(globalCssSource, /\.pyrus-loader-mark img\s*\{/);
   assert.doesNotMatch(globalCssSource, /\.pyrus-ring\s*\{/);
   assert.doesNotMatch(globalCssSource, /@keyframes pyrus-ring-spin/);
+  assert.match(globalCssSource, /@keyframes brand-loader-spinup/);
+  assert.match(
+    globalCssSource,
+    /@keyframes brand-loader-spinup\s*\{[\s\S]*?0%\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*rotate\(-18deg\) scale\(0\.96\);[\s\S]*?filter:\s*brightness\(0\.86\);/,
+  );
+  assert.match(
+    globalCssSource,
+    /@keyframes brand-loader-spinup\s*\{[\s\S]*?55%\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?filter:\s*blur\(0\) brightness\(1\);/,
+  );
+  assert.match(
+    globalCssSource,
+    /@keyframes brand-loader-spinup\s*\{[\s\S]*?80%\s*\{[\s\S]*?transform:\s*rotate\(5deg\) scale\(1\.045\);[\s\S]*?filter:\s*brightness\(1\.55\);/,
+  );
+  assert.match(
+    globalCssSource,
+    /@keyframes brand-loader-spinup\s*\{[\s\S]*?100%\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*rotate\(0deg\) scale\(1\);[\s\S]*?filter:\s*brightness\(1\);/,
+  );
+  assert.match(globalCssSource, /\.brand-loader-mark\s*\{/);
+  assert.match(
+    globalCssSource,
+    /\.brand-loader-mark\s*\{[\s\S]*?animation:\s*brand-loader-spinup 1\.05s cubic-bezier\(0\.16, 1, 0\.3, 1\) both;/,
+  );
+  assert.match(globalCssSource, /\.brand-loader-mark\s*\{[\s\S]*?opacity:\s*1/);
+  assert.match(globalCssSource, /\.brand-loader-mark\s*\{[\s\S]*?transform-origin:\s*50% 50%/);
+  assert.match(globalCssSource, /\.brand-loader-mark\s*\{[\s\S]*?will-change:\s*opacity, transform, filter/);
+  assert.match(globalCssSource, /@keyframes brand-loader-word/);
+  assert.match(
+    globalCssSource,
+    /@keyframes brand-loader-word\s*\{[\s\S]*?0%\s*\{[\s\S]*?opacity:\s*0;[\s\S]*?transform:\s*translateY\(12px\) scale\(0\.965\);[\s\S]*?filter:\s*blur\(5px\) brightness\(0\.72\);/,
+  );
+  assert.match(
+    globalCssSource,
+    /@keyframes brand-loader-word\s*\{[\s\S]*?48%\s*\{[\s\S]*?opacity:\s*0\.72;[\s\S]*?transform:\s*translateY\(3px\) scale\(0\.99\);[\s\S]*?filter:\s*blur\(1\.4px\) brightness\(1\.18\);/,
+  );
+  assert.match(
+    globalCssSource,
+    /@keyframes brand-loader-word\s*\{[\s\S]*?78%\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*translateY\(-1px\) scale\(1\.018\);[\s\S]*?filter:\s*blur\(0\) brightness\(1\.22\);/,
+  );
+  assert.match(
+    globalCssSource,
+    /@keyframes brand-loader-word\s*\{[\s\S]*?100%\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*translateY\(0\) scale\(1\);[\s\S]*?filter:\s*blur\(0\) brightness\(1\);/,
+  );
+  assert.match(globalCssSource, /\.brand-loader-word\s*\{/);
+  assert.match(
+    globalCssSource,
+    /\.brand-loader-word\s*\{[\s\S]*?animation:\s*brand-loader-word 0\.72s cubic-bezier\(0\.16, 1, 0\.3, 1\) 0\.74s both;/,
+  );
+  assert.match(globalCssSource, /\.brand-loader-word\s*\{[\s\S]*?height:\s*26px/);
+  assert.match(globalCssSource, /\[data-tone="panel"\] \.brand-loader-word\s*\{[\s\S]*?height:\s*18px/);
+  assert.match(globalCssSource, /\.brand-loader-word\s*\{[\s\S]*?will-change:\s*opacity, transform, filter/);
   assert.match(globalCssSource, /\.pyrus-lockup-descriptor\s*\{/);
   assert.match(globalCssSource, /letter-spacing:\s*0\.32em/);
   assert.doesNotMatch(globalCssSource, /\.pyrus-loader-mark::before/);
@@ -170,22 +265,47 @@ test("Pyrus mark uses the tracked high-detail ring PNG asset", () => {
   assert.doesNotMatch(globalCssSource, /pyrus-loader-orbit/);
   assert.doesNotMatch(globalCssSource, /pyrus-loader-aperture/);
   assert.doesNotMatch(globalCssSource, /pyrus-loader-ring-hydrate/);
-  assert.match(globalCssSource, /@keyframes pyrus-loader-breathe/);
+  assert.doesNotMatch(globalCssSource, /@keyframes pyrus-loader-breathe/);
   assert.match(globalCssSource, /\.pyrus-loader-wordmark\s*\{/);
-  assert.match(globalCssSource, /@keyframes pyrus-loader-wordmark-hydrate/);
-  assert.match(globalCssSource, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.pyrus-loader-mark/);
-  assert.match(globalCssSource, /html\[data-pyrus-reduced-motion="on"\] \.pyrus-loader-mark/);
+  assert.doesNotMatch(globalCssSource, /@keyframes pyrus-loader-wordmark-hydrate/);
+  assert.doesNotMatch(globalCssSource, /html\[data-pyrus-reduced-motion="on"\] \.pyrus-ring/);
 });
 
 test("static favicon points to the tracked Pyrus mark PNG", () => {
   assert.match(indexHtmlSource, /<link rel="icon" type="image\/png" href="\/brand\/pyrus-mark\.png" \/>/);
+  assert.doesNotMatch(indexHtmlSource, /pyrus-mark-dark\.svg/);
   assert.doesNotMatch(indexHtmlSource, /favicon\.svg/);
   assert.deepStrictEqual(publicMarkPng, trackedMarkPng);
 });
 
+test("static boot shell renders the SVG ring mark before React mounts", () => {
+  assert.match(indexHtmlSource, /data-testid="pyrus-boot-loader"/);
+  assert.match(indexHtmlSource, /role="status"/);
+  assert.match(indexHtmlSource, /aria-label="Loading PYRUS"/);
+  assert.match(indexHtmlSource, /class="pyrus-boot-mark"/);
+  assert.match(indexHtmlSource, /src="\/brand\/pyrus-loader-mark-dark\.svg"/);
+  assert.match(indexHtmlSource, /class="pyrus-boot-word">PYRUS<\/div>/);
+  assert.match(indexHtmlSource, /@keyframes pyrus-boot-mark/);
+  assert.doesNotMatch(indexHtmlSource, /pyrus-loader-mark-dark\.png/);
+});
+
 test("app and screen chunk fallbacks use LogoLoader", () => {
-  assert.match(appSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
-  assert.match(appSource, /<Suspense fallback=\{<LogoLoader testId="app-loading-fallback" \/>\}>/);
+  assert.doesNotMatch(appSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
+  assert.doesNotMatch(appSource, /components\/brand\/PyrusLogo/);
+  assert.doesNotMatch(appSource, /components\/brand\/pyrus-mark-shared/);
+  assert.doesNotMatch(appSource, /PyrusInstrumentMark/);
+  assert.match(appSource, /import BrandLoader from "\.\.\/components\/BrandLoader"/);
+  assert.doesNotMatch(appSource, /PYRUS_MARK_SRC/);
+  assert.doesNotMatch(appSource, /PYRUS_WORDMARK_DARK_SRC/);
+  assert.doesNotMatch(appSource, /PYRUS_WORDMARK_LIGHT_SRC/);
+  assert.match(appSource, /const AppContent = lazyWithRetry\(async \(\) => \{/);
+  assert.match(appSource, /await import\("\.\/AppContent"\)/);
+  assert.match(appSource, /<BrandLoader label="Loading PYRUS" testId="app-loading-fallback" \/>/);
+  assert.match(appSource, /<Suspense fallback=\{<RootBootFallback \/>\}>/);
+  assert.match(appSource, /<AppContent \/>/);
+
+  assert.match(appContentSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
+  assert.match(appContentSource, /<Suspense fallback=\{<LogoLoader testId="app-loading-fallback" \/>\}>/);
   assert.doesNotMatch(appSource, /APP_LOADING_FALLBACK_PALETTES/);
   assert.doesNotMatch(appSource, /function AppLoadingFallback/);
 

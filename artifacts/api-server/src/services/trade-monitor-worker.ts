@@ -13,6 +13,7 @@ import {
   evaluateSignalMonitorSymbolFromCompletedBars,
   listEnabledSignalMonitorProfiles,
   loadSignalMonitorCompletedBars,
+  resolveSignalMonitorEvaluationBatch,
   resolveSignalMonitorProfileUniverse,
   resolveSignalMonitorTimeframe,
   updateSignalMonitorProfileEvaluationMetadata,
@@ -49,6 +50,7 @@ export type TradeMonitorWorkerOptions = Partial<WorkerDependencies> & {
 type ProfileRuntime = {
   signature: string;
   lastCheckedAtMs: number;
+  evaluationCursor: number;
   evaluatedKeys: Set<string>;
   failedKeys: Map<string, number>;
 };
@@ -188,9 +190,15 @@ async function runProfile(input: {
     const universe = await dependencies.resolveUniverse(profile, {
       ensureWatchlist: false,
     });
+    const resolvedBatch = resolveSignalMonitorEvaluationBatch({
+      sourceSymbols: universe.watchlistSymbols,
+      maxSymbols: profile.maxSymbols,
+      cursor: runtime.evaluationCursor,
+    });
+    runtime.evaluationCursor = resolvedBatch.nextCursor;
     const concurrency = positiveInteger(profile.evaluationConcurrency, 3, 1, 10);
     const latestBars = await runInBatches(
-      universe.symbols,
+      resolvedBatch.symbols,
       concurrency,
       async (symbol) => ({
         symbol,
@@ -267,7 +275,9 @@ async function runProfile(input: {
           return;
         }
         runtime.failedKeys.delete(key);
-        runtime.evaluatedKeys.add(key);
+        if (state.status === "ok") {
+          runtime.evaluatedKeys.add(key);
+        }
       }
     });
   } catch (error) {
@@ -340,6 +350,7 @@ export function createTradeMonitorWorker(
           runtime = {
             signature,
             lastCheckedAtMs: 0,
+            evaluationCursor: 0,
             evaluatedKeys: new Set(),
             failedKeys: new Map(),
           };
@@ -348,8 +359,10 @@ export function createTradeMonitorWorker(
 
         const pollIntervalMs =
           positiveInteger(profile.pollIntervalSeconds, 60, 15, 3600) * 1000;
+        const rotationInProgress = (runtime.evaluationCursor ?? 0) > 0;
         if (
           !signatureChanged &&
+          !rotationInProgress &&
           runtime.lastCheckedAtMs > 0 &&
           nowMs - runtime.lastCheckedAtMs < pollIntervalMs
         ) {

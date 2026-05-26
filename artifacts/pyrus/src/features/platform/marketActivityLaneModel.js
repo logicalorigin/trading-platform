@@ -71,7 +71,10 @@ export const buildSignalLaneRows = (
       !symbol ||
       !direction ||
       state?.active === false ||
-      timeframe !== timeframeFilter
+      timeframe !== timeframeFilter ||
+      ["stale", "error", "unavailable"].includes(
+        String(state?.status || "").toLowerCase(),
+      )
     ) {
       return;
     }

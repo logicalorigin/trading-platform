@@ -44,6 +44,7 @@ export type MarketDataLineRequest = {
   assetClass: MarketDataLineAssetClass;
   requiresGreeks?: boolean;
   underlying?: string | null;
+  priorityOffset?: number;
 };
 
 export type MarketDataLease = {
@@ -184,8 +185,8 @@ const DEFAULT_RESERVE_LINES = 0;
 const MARKET_DATA_ADMISSION_SCHEMA_VERSION = 1;
 const DEFAULT_AUTOMATION_EXECUTION_LINES = 30;
 const DEFAULT_ACCOUNT_MONITOR_LINES = 30;
-const DEFAULT_VISIBLE_LINES = 20;
-const DEFAULT_WATCHLIST_LINES = 80;
+const DEFAULT_MIN_VISIBLE_LINES = 20;
+const DEFAULT_WATCHLIST_LINES = 0;
 const DEFAULT_FLOW_SCANNER_LINES = 40;
 const DEFAULT_FLOW_SCANNER_CONCURRENCY = 2;
 const MAX_FLOW_SCANNER_CONCURRENCY = 2;
@@ -378,17 +379,40 @@ function resolveDefaultFlowScannerLineCap(): number {
   );
 }
 
+function resolveDefaultVisibleLineCap(input: {
+  usableLines: number;
+  flowScannerLineCap: number;
+  watchlistLineCap: number;
+}): number {
+  const visibleFloor = Math.min(input.usableLines, DEFAULT_MIN_VISIBLE_LINES);
+  return Math.min(
+    input.usableLines,
+    Math.max(
+      visibleFloor,
+      input.usableLines - input.flowScannerLineCap - input.watchlistLineCap,
+    ),
+  );
+}
+
 function buildDefaultPoolLineCaps(
   usableLines: number,
 ): Record<MarketDataPoolId, number> {
   const automationExecutionLineCap = resolveAutomationExecutionLineCap(usableLines);
+  const accountMonitorLineCap = Math.min(usableLines, DEFAULT_ACCOUNT_MONITOR_LINES);
+  const watchlistLineCap = Math.min(usableLines, DEFAULT_WATCHLIST_LINES);
+  const flowScannerLineCap = Math.min(usableLines, resolveDefaultFlowScannerLineCap());
+  const visibleLineCap = resolveDefaultVisibleLineCap({
+    usableLines,
+    flowScannerLineCap,
+    watchlistLineCap,
+  });
   return {
     execution: automationExecutionLineCap,
-    "account-monitor": Math.min(usableLines, DEFAULT_ACCOUNT_MONITOR_LINES),
-    visible: Math.min(usableLines, DEFAULT_VISIBLE_LINES),
+    "account-monitor": accountMonitorLineCap,
+    visible: visibleLineCap,
     automation: automationExecutionLineCap,
-    watchlist: Math.min(usableLines, DEFAULT_WATCHLIST_LINES),
-    "flow-scanner": Math.min(usableLines, resolveDefaultFlowScannerLineCap()),
+    watchlist: watchlistLineCap,
+    "flow-scanner": flowScannerLineCap,
     convenience: 0,
   };
 }
@@ -397,6 +421,7 @@ function normalizePoolLineCaps(
   usableLines: number,
 ): Record<MarketDataPoolId, number> {
   const caps = buildDefaultPoolLineCaps(usableLines);
+  const envOverrides = new Set<MarketDataPoolId>();
   (Object.keys(caps) as MarketDataPoolId[]).forEach((pool) => {
     if (pool === "execution" || pool === "automation") {
       return;
@@ -404,12 +429,36 @@ function normalizePoolLineCaps(
     const value = readOptionalNonNegativeIntegerEnv(POOL_ENV_KEYS[pool]);
     if (value !== null) {
       caps[pool] = value;
+      envOverrides.add(pool);
     }
   });
 
   (Object.keys(caps) as MarketDataPoolId[]).forEach((pool) => {
     caps[pool] = Math.min(caps[pool], usableLines);
   });
+
+  if (!envOverrides.has("visible")) {
+    caps.visible = resolveDefaultVisibleLineCap({
+      usableLines,
+      flowScannerLineCap: caps["flow-scanner"],
+      watchlistLineCap: caps.watchlist,
+    });
+  }
+
+  const total = () =>
+    Math.max(caps.execution, caps.automation) +
+    caps["account-monitor"] +
+    caps.visible +
+    caps.watchlist +
+    caps["flow-scanner"] +
+    caps.convenience;
+  const remainingLines = () => Math.max(0, usableLines - total());
+  if (remainingLines() > 0 && !envOverrides.has("visible")) {
+    caps.visible = Math.min(
+      usableLines,
+      caps.visible + remainingLines(),
+    );
+  }
   return caps;
 }
 
@@ -612,7 +661,12 @@ function normalizeRequest(input: MarketDataLineRequest): {
   symbol: string | null;
   providerContractId: string | null;
   lineIds: string[];
+  priorityOffset: number;
 } | null {
+  const priorityOffset =
+    typeof input.priorityOffset === "number" && Number.isFinite(input.priorityOffset)
+      ? Math.max(-10, Math.min(10, Math.trunc(input.priorityOffset)))
+      : 0;
   if (input.assetClass === "equity") {
     const symbol = normalizeSymbol(input.symbol ?? "");
     if (!symbol) {
@@ -624,6 +678,7 @@ function normalizeRequest(input: MarketDataLineRequest): {
       symbol,
       providerContractId: null,
       lineIds: [lineId("equity", symbol)],
+      priorityOffset,
     };
   }
 
@@ -644,6 +699,7 @@ function normalizeRequest(input: MarketDataLineRequest): {
     symbol: underlying || null,
     providerContractId,
     lineIds,
+    priorityOffset,
   };
 }
 
@@ -791,7 +847,7 @@ function buildLineAllocationDiagnostics(budget = getMarketDataAdmissionBudget())
   );
 
   return {
-    policy: "reserved-200-line-allocation",
+    policy: "visible-driven-allocation",
     targetFillLines: budget.targetFillLines,
     protectedLineCount: protectedLineIds.size,
     automationExecutionLineCount: protectedLineIds.size,
@@ -1142,8 +1198,22 @@ function demotionRankForRequest(
   if (intent === "execution-live" && lease.pool === "automation") {
     return 1;
   }
+  if (intent === "execution-live" && lease.pool === "flow-scanner") {
+    return 2;
+  }
+  if (intent === "execution-live" && lease.pool === "watchlist") {
+    return 3;
+  }
+  if (intent === "execution-live" && lease.pool === "visible") {
+    return 4;
+  }
   if (intent === "account-monitor-live") {
-    if (lease.pool === "visible") return 1;
+    if (lease.pool === "flow-scanner") return 1;
+    if (lease.pool === "visible") return 2;
+    if (lease.pool === "watchlist") return 3;
+  }
+  if (intent === "automation-live") {
+    if (lease.pool === "flow-scanner") return 1;
     if (lease.pool === "watchlist") return 2;
   }
   if (intent === "visible-live" && lease.pool === "watchlist") {
@@ -1185,6 +1255,50 @@ function demoteLowerPriorityLeases(input: {
     }
     releaseLease(candidate, "demoted", `preempted_by_${input.intent}`);
     demoted.push(candidate);
+  }
+
+  return demoted;
+}
+
+function demoteLowerPriorityPoolLeases(input: {
+  owner: string;
+  pool: MarketDataPoolId;
+  priority: number;
+  lineIds: string[];
+}): MarketDataLease[] {
+  const demoted: MarketDataLease[] = [];
+  let poolLineIds = activeLineIdsForStrictPoolScope(input.pool);
+  let newPoolLineIds = input.lineIds.filter((id) => !poolLineIds.has(id));
+  let poolCap = getMarketDataPoolEffectiveLineCap(input.pool);
+  if (poolLineIds.size + newPoolLineIds.length <= poolCap) {
+    return demoted;
+  }
+
+  const poolScope = isAutomationExecutionPool(input.pool)
+    ? new Set<MarketDataPoolId>(["execution", "automation"])
+    : new Set<MarketDataPoolId>([input.pool]);
+  const candidates = Array.from(leases.values())
+    .filter(
+      (lease) =>
+        poolScope.has(lease.pool) &&
+        lease.owner !== input.owner &&
+        lease.priority < input.priority,
+    )
+    .sort(
+      (left, right) =>
+        left.priority - right.priority ||
+        Date.parse(left.acquiredAt) - Date.parse(right.acquiredAt),
+    );
+
+  for (const candidate of candidates) {
+    if (poolLineIds.size + newPoolLineIds.length <= poolCap) {
+      break;
+    }
+    releaseLease(candidate, "demoted", `pool_cap_preempted_by_${input.pool}`);
+    demoted.push(candidate);
+    poolLineIds = activeLineIdsForStrictPoolScope(input.pool);
+    newPoolLineIds = input.lineIds.filter((id) => !poolLineIds.has(id));
+    poolCap = getMarketDataPoolEffectiveLineCap(input.pool);
   }
 
   return demoted;
@@ -1336,7 +1450,7 @@ export function getMarketDataLinePressureSnapshot() {
 
   return {
     state,
-    policy: "reserved-200-line-allocation",
+    policy: "visible-driven-allocation",
     budgetSource: budget.budgetSource,
     configuredMaxLines: budget.configuredMaxLines,
     bridgeLineBudget: budget.bridgeLineBudget,
@@ -1409,7 +1523,7 @@ export function admitMarketDataLeases(input: {
     intent: input.intent,
     pool,
   });
-  const priority = resolveMarketDataLeasePriority({
+  const basePriority = resolveMarketDataLeasePriority({
     intent: input.intent,
     ownerClass,
   });
@@ -1446,10 +1560,15 @@ export function admitMarketDataLeases(input: {
         currentLineCount > budget.usableLines ||
         (STRICT_POOL_IDS.has(pool) && currentPoolLineCount > poolCap);
       if (!refreshWouldPreserveOverCap) {
+        const normalizedByInstrument = new Map(
+          normalizedRequests.map((request) => [request.instrumentKey, request]),
+        );
         const refreshedLeases = existingOwnerLeases.map((lease) => ({
           ...lease,
           ownerClass,
-          priority,
+          priority:
+            basePriority +
+            (normalizedByInstrument.get(lease.instrumentKey)?.priorityOffset ?? 0),
           expiresAt,
         }));
         refreshedLeases.forEach((lease) => leases.set(lease.id, lease));
@@ -1483,6 +1602,7 @@ export function admitMarketDataLeases(input: {
     let currentLines = activeLineIds();
     const newLineIds = normalized.lineIds.filter((id) => !currentLines.has(id));
     let neededLineCount = newLineIds.length;
+    const priority = basePriority + normalized.priorityOffset;
 
     if (STRICT_POOL_IDS.has(pool) && neededLineCount > 0) {
       let poolLines = activeLineIdsForStrictPoolScope(pool);
@@ -1497,6 +1617,19 @@ export function admitMarketDataLeases(input: {
             owner: input.owner,
             lineIds: normalized.lineIds,
             cap: poolCap,
+          }),
+        );
+        poolLines = activeLineIdsForStrictPoolScope(pool);
+        newPoolLineIds = normalized.lineIds.filter((id) => !poolLines.has(id));
+        poolCap = getMarketDataPoolEffectiveLineCap(pool, budget);
+      }
+      if (poolLines.size + newPoolLineIds.length > poolCap) {
+        demoted.push(
+          ...demoteLowerPriorityPoolLeases({
+            owner: input.owner,
+            pool,
+            priority,
+            lineIds: normalized.lineIds,
           }),
         );
         poolLines = activeLineIdsForStrictPoolScope(pool);

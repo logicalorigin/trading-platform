@@ -4,6 +4,7 @@ import {
   __cacheBridgeOptionQuoteForTests,
   __resetBridgeOptionQuoteStreamForTests,
   __setBridgeOptionQuoteClientForTests,
+  __setBridgeOptionQuoteRuntimeConfiguredForTests,
   __setBridgeOptionQuoteStreamNowForTests,
   fetchBridgeOptionQuoteSnapshots,
   getBridgeOptionQuoteStreamDiagnostics,
@@ -94,6 +95,20 @@ function structuredOptionProviderContractId(): string {
     }),
     "utf8",
   ).toString("base64url")}`;
+}
+
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 1_000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(predicate(), true);
 }
 
 test.afterEach(() => {
@@ -228,6 +243,81 @@ test("option quote snapshots reuse fresh shared cache before bridge reads", asyn
   assert.equal(payload.debug?.returnedCount, 1);
 });
 
+test("option quote snapshots do not admit leases or call bridge when runtime is missing", async () => {
+  let healthReads = 0;
+  let snapshotReads = 0;
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      healthReads += 1;
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots() {
+      snapshotReads += 1;
+      return [optionQuote("1001", 1.24)];
+    },
+    streamOptionQuoteSnapshots() {
+      throw new Error("stream should not open");
+    },
+  });
+  __setBridgeOptionQuoteRuntimeConfiguredForTests(false);
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["1001"],
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+  });
+
+  assert.equal(healthReads, 0);
+  assert.equal(snapshotReads, 0);
+  assert.equal(payload.quotes.length, 0);
+  assert.equal(payload.debug?.errorCode, "ibkr_bridge_not_configured");
+  assert.equal(payload.debug?.acceptedCount, 0);
+  assert.equal(payload.debug?.rejectedCount, 1);
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.activeOptionLineCount, 0);
+  assert.equal(diagnostics.activeLineCount, 0);
+});
+
+test("option quote subscriptions do not admit leases or open streams while runtime is missing", async () => {
+  let streamReads = 0;
+  const payloads: Array<string | null | undefined> = [];
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      throw new Error("health should not be read");
+    },
+    async getOptionQuoteSnapshots() {
+      throw new Error("snapshots should not be read");
+    },
+    streamOptionQuoteSnapshots() {
+      streamReads += 1;
+      return () => {};
+    },
+  });
+  __setBridgeOptionQuoteRuntimeConfiguredForTests(false);
+
+  const unsubscribe = subscribeBridgeOptionQuoteSnapshots(
+    { underlying: "SPY", providerContractIds: ["1001"] },
+    (payload) => payloads.push(payload.debug?.errorCode),
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  const streamDiagnostics = getBridgeOptionQuoteStreamDiagnostics();
+  const admissionDiagnostics = getMarketDataAdmissionDiagnostics();
+  unsubscribe();
+
+  assert.deepEqual(payloads, ["ibkr_bridge_not_configured"]);
+  assert.equal(streamReads, 0);
+  assert.equal(streamDiagnostics.activeConsumerCount, 1);
+  assert.equal(streamDiagnostics.unionProviderContractIdCount, 0);
+  assert.equal(streamDiagnostics.requestedProviderContractIdCount, 1);
+  assert.equal(admissionDiagnostics.activeOptionLineCount, 0);
+});
+
 test("option quote shared cache preserves prices when a partial zero quote is newer", () => {
   assert.ok(
     __cacheBridgeOptionQuoteForTests(
@@ -325,6 +415,54 @@ test("option quote snapshots expose custom admission results for background call
   const diagnostics = getMarketDataAdmissionDiagnostics();
   assert.equal(diagnostics.flowScannerLineCount, 0);
   assert.equal(diagnostics.activeLineCount, 0);
+});
+
+test("option quote snapshot abort releases flow scanner leases immediately", async () => {
+  const controller = new AbortController();
+  const providerContractId = structuredOptionProviderContractId();
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input) {
+      assert.equal(input.signal, controller.signal);
+      return new Promise<QuoteSnapshot[]>((_resolve, reject) => {
+        input.signal?.addEventListener(
+          "abort",
+          () =>
+            reject(input.signal?.reason ?? new Error("snapshot aborted")),
+          { once: true },
+        );
+      });
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const request = fetchBridgeOptionQuoteSnapshots({
+    underlying: "META",
+    providerContractIds: [providerContractId],
+    owner: "flow-scanner:META",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+    requiresGreeks: false,
+    signal: controller.signal,
+  });
+
+  await waitFor(
+    () => getMarketDataAdmissionDiagnostics().flowScannerLineCount === 1,
+  );
+  controller.abort(new Error("scanner timeout"));
+  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 0);
+
+  const payload = await request;
+  assert.match(payload.debug?.errorMessage ?? "", /scanner timeout/i);
+  assert.equal(getMarketDataAdmissionDiagnostics().activeLineCount, 0);
 });
 
 test("option quote snapshots keep cached rejected contracts in the payload", async () => {

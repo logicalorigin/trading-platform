@@ -16,6 +16,15 @@ export interface RuntimeIbkrDiagnostics {
   configured: boolean;
   bridgeUrlConfigured: boolean;
   bridgeTokenConfigured: boolean;
+  runtimeOverrideActive: boolean;
+  /** @nullable */
+  runtimeOverrideUpdatedAt: Date | null;
+  desktopAgentOnline: boolean;
+  /** @nullable */
+  desktopAgentHelperVersion: string | null;
+  desktopAgentExpectedHelperVersion: string;
+  desktopAgentUpgradeRequired: boolean;
+  reconnectAvailable: boolean;
   legacyIbkrEnvPresent: boolean;
   reachable: boolean;
   /** @nullable */

@@ -31,13 +31,17 @@ import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
 import type { BrokerBarSnapshot, QuoteSnapshot } from "../providers/ibkr/client";
 import {
+  cappedSignalMonitorEvaluationProfile,
   evaluateSignalMonitor,
+  evaluateSignalMonitorProfileSymbols,
   getSignalMonitorProfileRow,
   getSignalMonitorState,
   getSignalMonitorTimeframeMs,
   resolveSignalMonitorTimeframe,
   resolveSignalMonitorProfileUniverse,
   updateSignalMonitorProfile,
+  withSignalMonitorUniverseScope,
+  type SignalMonitorProfileRow,
   type SignalMonitorTimeframe,
 } from "./signal-monitor";
 import {
@@ -80,6 +84,10 @@ export const SIGNAL_OPTIONS_MANUAL_DEVIATION_EVENT =
 
 const activeScanDeploymentIds = new Set<string>();
 const activeScanStartedAtByDeploymentId = new Map<string, Date>();
+const signalOptionsMonitorBatchCursors = new Map<
+  string,
+  { signature: string; nextIndex: number }
+>();
 
 type SignalOptionsRunMetadata = {
   runId: string;
@@ -98,9 +106,9 @@ const activeSignalOptionsRunMetadata = new Map<
   SignalOptionsRunMetadata
 >();
 
-const DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 8;
-const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 1;
-const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 120;
+const DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 250;
+const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 3;
+const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60;
 const SIGNAL_OPTIONS_MONITOR_STALE_GRACE_MS = 5_000;
 const SIGNAL_OPTIONS_POSITION_MARK_SKIP_RATE_LIMIT_MS = 5 * 60 * 1_000;
 const SIGNAL_OPTIONS_SHADOW_MARK_FALLBACK_MAX_AGE_MS = 3 * 60 * 1_000;
@@ -806,12 +814,46 @@ function deploymentToResponse(deployment: AlgoDeployment) {
   };
 }
 
-async function getDeploymentOrThrow(deploymentId: string): Promise<AlgoDeployment> {
-  const [deployment] = await db
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function getDeploymentByAlias(
+  deploymentId: string,
+): Promise<AlgoDeployment | null> {
+  const alias = deploymentId.trim().toLowerCase();
+  if (alias !== "paper-enabled") {
+    return null;
+  }
+
+  const deployments = await db
     .select()
     .from(algoDeploymentsTable)
-    .where(eq(algoDeploymentsTable.id, deploymentId))
-    .limit(1);
+    .where(eq(algoDeploymentsTable.mode, "paper"))
+    .orderBy(desc(algoDeploymentsTable.updatedAt));
+
+  return (
+    deployments.find(
+      (deployment) =>
+        deployment.enabled && deploymentHasSignalOptionsProfile(deployment),
+    ) ??
+    deployments.find(
+      (deployment) =>
+        deployment.name === DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME ||
+        deployment.name === LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME,
+    ) ??
+    null
+  );
+}
+
+async function getDeploymentOrThrow(deploymentId: string): Promise<AlgoDeployment> {
+  const deployment = UUID_PATTERN.test(deploymentId)
+    ? await db
+        .select()
+        .from(algoDeploymentsTable)
+        .where(eq(algoDeploymentsTable.id, deploymentId))
+        .limit(1)
+        .then((rows) => rows[0] ?? null)
+    : await getDeploymentByAlias(deploymentId);
 
   if (!deployment) {
     throw new HttpError(404, "Algorithm deployment not found.", {
@@ -1114,6 +1156,7 @@ function buildWorkerScanSummary(input: {
   universe: Set<string>;
   candidateCount: number;
   blockedCandidateCount: number;
+  batch?: Record<string, unknown> | null;
 }) {
   const states = input.states.filter((state) => {
     const symbol = normalizeSymbol(state.symbol).toUpperCase();
@@ -1149,6 +1192,7 @@ function buildWorkerScanSummary(input: {
     oldestSignalBarAt,
     candidateCount: input.candidateCount,
     blockedCandidateCount: input.blockedCandidateCount,
+    batch: input.batch ?? null,
   };
 }
 
@@ -2207,6 +2251,89 @@ function stateMatchesSignalOptionsUniverse(
   return Boolean(symbol && (universe.size === 0 || universe.has(symbol)));
 }
 
+function normalizeSignalOptionsMonitorUniverseSymbols(universe: Set<string>) {
+  return Array.from(
+    new Set(
+      Array.from(universe)
+        .map((symbol) => normalizeSymbol(symbol).toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function resolveSignalOptionsMonitorFullRefresh(input: {
+  universe: Set<string>;
+}) {
+  const symbols = normalizeSignalOptionsMonitorUniverseSymbols(input.universe);
+  return {
+    symbols,
+    universeCount: symbols.length,
+    batchSize: symbols.length,
+    startIndex: 0,
+    nextIndex: 0,
+    capacity: symbols.length,
+    fullUniverse: true,
+  };
+}
+
+function resolveSignalOptionsMonitorBatch(input: {
+  deploymentId: string;
+  universe: Set<string>;
+  profile: SignalMonitorProfileRow;
+  capacity?: number;
+}) {
+  const uniqueSymbols = normalizeSignalOptionsMonitorUniverseSymbols(input.universe);
+  const capacity =
+    input.capacity ??
+    cappedSignalMonitorEvaluationProfile(input.profile).profile.maxSymbols;
+  const configuredBatchSize = Math.min(
+    DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS,
+    Math.max(0, capacity),
+  );
+  const batchSize = Math.min(configuredBatchSize, uniqueSymbols.length);
+  const signature = uniqueSymbols.join("|");
+  const cursorKey = input.deploymentId;
+  const current = signalOptionsMonitorBatchCursors.get(cursorKey);
+  const startIndex =
+    current?.signature === signature && uniqueSymbols.length > 0
+      ? current.nextIndex % uniqueSymbols.length
+      : 0;
+
+  if (!batchSize) {
+    signalOptionsMonitorBatchCursors.set(cursorKey, {
+      signature,
+      nextIndex: startIndex,
+    });
+    return {
+      symbols: [] as string[],
+      universeCount: uniqueSymbols.length,
+      batchSize: 0,
+      startIndex,
+      nextIndex: startIndex,
+      capacity,
+    };
+  }
+
+  const batch = Array.from({ length: batchSize }, (_, offset) => {
+    const index = (startIndex + offset) % uniqueSymbols.length;
+    return uniqueSymbols[index];
+  });
+  const nextIndex = (startIndex + batchSize) % uniqueSymbols.length;
+  signalOptionsMonitorBatchCursors.set(cursorKey, {
+    signature,
+    nextIndex,
+  });
+
+  return {
+    symbols: batch,
+    universeCount: uniqueSymbols.length,
+    batchSize,
+    startIndex,
+    nextIndex,
+    capacity,
+  };
+}
+
 function shouldRefreshSignalOptionsMonitorState(input: {
   evaluated: unknown;
   universe: Set<string>;
@@ -2263,6 +2390,44 @@ async function loadSignalOptionsMonitorState(input: {
   universe: Set<string>;
   forceEvaluate?: boolean;
 }) {
+  if (input.universe.size > 0) {
+    const profile = await getSignalMonitorProfileRow({
+      environment: input.deployment.mode,
+      ensureWatchlist: true,
+    });
+    if (input.forceEvaluate === true) {
+      const fullRefresh = resolveSignalOptionsMonitorFullRefresh({
+        universe: input.universe,
+      });
+      const evaluated = await evaluateSignalMonitorProfileSymbols({
+        profile,
+        mode: "incremental",
+        symbols: fullRefresh.symbols,
+        maxSymbolsOverride: fullRefresh.symbols.length,
+      });
+
+      return {
+        ...evaluated,
+        signalOptionsBatch: fullRefresh,
+      };
+    }
+    const batch = resolveSignalOptionsMonitorBatch({
+      deploymentId: input.deployment.id,
+      universe: input.universe,
+      profile,
+    });
+    const evaluated = await evaluateSignalMonitorProfileSymbols({
+      profile,
+      mode: "incremental",
+      symbols: batch.symbols,
+    });
+
+    return {
+      ...evaluated,
+      signalOptionsBatch: batch,
+    };
+  }
+
   if (input.forceEvaluate !== false) {
     return evaluateSignalMonitor({
       environment: input.deployment.mode,
@@ -2816,6 +2981,37 @@ async function buildSignalOptionsShadowIndex(
   return { byEventId, byCandidateId };
 }
 
+function shadowLinkClosesPosition(
+  shadowLink: SignalOptionsShadowLink | null | undefined,
+) {
+  const positionQuantity = finiteNumber(shadowLink?.positionQuantity);
+  return positionQuantity != null && positionQuantity <= 0;
+}
+
+function reconcileActivePositionsWithShadowLinks(
+  positions: SignalOptionsPosition[],
+  shadowIndex: SignalOptionsShadowIndex,
+) {
+  return positions.filter((position) => {
+    const candidateId = compactString(position.candidateId);
+    if (!candidateId) {
+      return true;
+    }
+    return !shadowLinkClosesPosition(shadowIndex.byCandidateId.get(candidateId));
+  });
+}
+
+async function reconcileActivePositionsWithShadowLedger(input: {
+  positions: SignalOptionsPosition[];
+  events: ExecutionEvent[];
+}) {
+  if (!input.positions.length) {
+    return input.positions;
+  }
+  const shadowIndex = await buildSignalOptionsShadowIndex(input.events);
+  return reconcileActivePositionsWithShadowLinks(input.positions, shadowIndex);
+}
+
 const RETRYABLE_SIGNAL_OPTION_SKIP_REASONS = new Set([
   "candidate_resolution_failed",
   "no_contract_for_strike_slot",
@@ -3188,7 +3384,7 @@ function deriveCandidateActionStatus(input: {
   const hasSkip = eventTypes.has(SIGNAL_OPTIONS_SKIPPED_EVENT);
   const hasShadowFill = Boolean(input.shadowLink?.fillId || input.shadowLink?.orderId);
   const plannedQuantity = finiteNumber(asRecord(input.candidate.orderPlan).quantity);
-  const positionQuantity = input.shadowLink?.positionQuantity ?? null;
+  const positionQuantity = finiteNumber(input.shadowLink?.positionQuantity);
 
   if (hasExit) {
     return {
@@ -3196,6 +3392,9 @@ function deriveCandidateActionStatus(input: {
         positionQuantity != null && positionQuantity > 0 ? "partial_shadow" : "closed",
       syncStatus: hasShadowFill ? "synced" : "event_only",
     };
+  }
+  if (hasEntry && hasShadowFill && positionQuantity != null && positionQuantity <= 0) {
+    return { actionStatus: "closed", syncStatus: "synced" };
   }
   if (hasEntry && !hasShadowFill) {
     return { actionStatus: "mismatch", syncStatus: "event_only" };
@@ -3312,7 +3511,13 @@ function clearSignalOptionsScanActive(deploymentId: string) {
 }
 
 function signalOptionsActiveScanState(deploymentId: string, now = new Date()) {
-  const startedAt = activeScanStartedAtByDeploymentId.get(deploymentId) ?? null;
+  const activeRun = activeSignalOptionsRunMetadata.get(deploymentId) ?? null;
+  const activeRunStartedAtMs = Date.parse(String(activeRun?.startedAt ?? ""));
+  const startedAt =
+    activeScanStartedAtByDeploymentId.get(deploymentId) ??
+    (Number.isFinite(activeRunStartedAtMs)
+      ? new Date(activeRunStartedAtMs)
+      : null);
   const running = activeScanDeploymentIds.has(deploymentId);
   const ageMs =
     running && startedAt
@@ -3322,6 +3527,42 @@ function signalOptionsActiveScanState(deploymentId: string, now = new Date()) {
     running,
     startedAt,
     ageMs,
+    source: activeRun?.source ?? null,
+    runId: activeRun?.runId ?? null,
+  };
+}
+
+function signalOptionsScanAlreadyRunningResponse(input: {
+  deploymentId: string;
+  source?: "manual" | "worker";
+}) {
+  const scanState = signalOptionsActiveScanState(input.deploymentId);
+  return {
+    status: "already_running",
+    skipped: true,
+    reason: "signal_options_scan_running",
+    message: "A signal-options scan is already running for this deployment.",
+    requestedBy: input.source ?? "manual",
+    activeScan: {
+      running: scanState.running,
+      startedAt: scanState.startedAt?.toISOString() ?? null,
+      ageMs: scanState.ageMs,
+      source: scanState.source,
+      runId: scanState.runId,
+    },
+    signals: [],
+    candidates: [],
+    summary: {
+      signalCount: 0,
+      freshSignalCount: 0,
+      staleSignalCount: 0,
+      unavailableSignalCount: 0,
+      latestSignalBarAt: null,
+      oldestSignalBarAt: null,
+      candidateCount: 0,
+      blockedCandidateCount: 0,
+      batch: null,
+    },
   };
 }
 
@@ -3350,6 +3591,43 @@ function signalOptionsPressurePauseState(deploymentId: string, now = new Date())
     startedAt,
     ageMs,
     reason: paused ? "resource_pressure" : null,
+  };
+}
+
+function signalOptionsWorkerDeploymentState(
+  deploymentId: string,
+  now = new Date(),
+) {
+  const deployment = getSignalOptionsWorkerSnapshot().deployments.find(
+    (entry) => entry.deploymentId === deploymentId,
+  );
+  const record = asRecord(deployment);
+  const nextDueAt = dateOrNull(record.nextScanDueAt);
+  const pollIntervalMs = finiteNumber(record.pollIntervalMs);
+  const lastBatchSize = finiteNumber(record.lastBatchSize);
+  const lastBatchUniverseCount = finiteNumber(record.lastBatchUniverseCount);
+  const nextDueInMs =
+    nextDueAt && !activeScanDeploymentIds.has(deploymentId)
+      ? Math.max(0, nextDueAt.getTime() - now.getTime())
+      : null;
+
+  return {
+    nextDueAt,
+    nextDueInMs,
+    pollIntervalMs,
+    lastBatchSymbols: Array.isArray(record.lastBatchSymbols)
+      ? record.lastBatchSymbols
+          .map((symbol) => normalizeSymbol(String(symbol)).toUpperCase())
+          .filter(Boolean)
+      : [],
+    lastBatchSize,
+    lastBatchUniverseCount,
+    lastBatchStartIndex: finiteNumber(record.lastBatchStartIndex),
+    lastBatchNextIndex: finiteNumber(record.lastBatchNextIndex),
+    lastBatchCapacity: finiteNumber(record.lastBatchCapacity),
+    lastBatchFullUniverse: record.lastBatchFullUniverse === true,
+    lastSkipReason:
+      typeof record.lastSkipReason === "string" ? record.lastSkipReason : null,
   };
 }
 
@@ -3534,6 +3812,15 @@ function buildCockpitPipeline(input: {
     input.now,
   );
   const pressurePauseAge = formatSignalOptionsScanAge(pressurePauseState.ageMs);
+  const workerState = signalOptionsWorkerDeploymentState(
+    input.deployment.id,
+    input.now,
+  );
+  const nextDueAge = formatSignalOptionsScanAge(workerState.nextDueInMs);
+  const lastBatchDetail =
+    workerState.lastBatchUniverseCount && workerState.lastBatchUniverseCount > 0
+      ? `${workerState.lastBatchSize ?? 0}/${workerState.lastBatchUniverseCount} symbols`
+      : null;
 
   return [
     {
@@ -3555,10 +3842,22 @@ function buildCockpitPipeline(input: {
         null,
       scanStartedAt: scanState.startedAt?.toISOString() ?? null,
       scanAgeMs: scanState.ageMs,
+      activeScanSource: scanState.source,
+      activeScanRunId: scanState.runId,
       pressurePaused: pressurePauseState.paused,
       pressurePauseStartedAt:
         pressurePauseState.startedAt?.toISOString() ?? null,
       pressurePauseAgeMs: pressurePauseState.ageMs,
+      nextScanDueAt: workerState.nextDueAt?.toISOString() ?? null,
+      nextScanDueInMs: workerState.nextDueInMs,
+      pollIntervalMs: workerState.pollIntervalMs,
+      lastBatchSymbols: workerState.lastBatchSymbols,
+      lastBatchSize: workerState.lastBatchSize,
+      lastBatchUniverseCount: workerState.lastBatchUniverseCount,
+      lastBatchStartIndex: workerState.lastBatchStartIndex,
+      lastBatchNextIndex: workerState.lastBatchNextIndex,
+      lastBatchCapacity: workerState.lastBatchCapacity,
+      lastBatchFullUniverse: workerState.lastBatchFullUniverse,
       pauseReason: pressurePauseState.reason,
       detail: pressurePauseState.paused
         ? pressurePauseAge
@@ -3568,8 +3867,12 @@ function buildCockpitPipeline(input: {
         ? scanRunningAge
           ? `scan running for ${scanRunningAge}`
           : "scan running"
+        : workerState.nextDueInMs !== null && workerState.nextDueInMs > 0
+          ? `worker waiting ${nextDueAge ?? "for next interval"}${lastBatchDetail ? `; last batch ${lastBatchDetail}` : ""}`
         : input.readiness.ready
-          ? `${input.deployment.symbolUniverse.length} symbols ready`
+          ? lastBatchDetail
+            ? `${input.deployment.symbolUniverse.length} symbols ready; last batch ${lastBatchDetail}`
+            : `${input.deployment.symbolUniverse.length} symbols ready`
           : input.readiness.message,
     },
     {
@@ -4836,11 +5139,26 @@ async function buildStatePayload(input: {
   events: ExecutionEvent[];
 }) {
   const signals = await listSignalOptionsSignalSnapshots(input.deployment);
-  const { signalEvents, activePositions } = stateSignalOptionsEvents(input.events);
-  const activeSignalEvents = signalEvents.filter(
+  const { signalEvents: stateSignalEvents, activePositions: eventActivePositions } =
+    stateSignalOptionsEvents(input.events);
+  const activeSignalEventsBeforeReconciliation = stateSignalEvents.filter(
     (event) => !skipEventDisabledByProfile(event, input.profile),
   );
-  const shadowIndex = await buildSignalOptionsShadowIndex(activeSignalEvents);
+  const shadowIndex = await buildSignalOptionsShadowIndex(
+    activeSignalEventsBeforeReconciliation,
+  );
+  const activePositions = reconcileActivePositionsWithShadowLinks(
+    eventActivePositions,
+    shadowIndex,
+  );
+  const activeSignalEvents = filterOrphanPositionMarkEvents(
+    activeSignalEventsBeforeReconciliation,
+    activePositions,
+  );
+  const signalEvents = filterOrphanPositionMarkEvents(
+    stateSignalEvents,
+    activePositions,
+  );
   const candidateEvents = new Map<string, ExecutionEvent[]>();
   const candidatesById = new Map<string, SignalOptionsCandidate>();
 
@@ -7881,26 +8199,37 @@ async function normalizeDefaultSignalOptionsPaperSignalMonitorProfile() {
     maxSymbols?: number;
     evaluationConcurrency?: number;
     pollIntervalSeconds?: number;
+    pyrusSignalsSettings?: Record<string, unknown>;
   } = { environment: "paper" };
+  const pyrusSignalsSettings = asRecord(profile.pyrusSignalsSettings);
+  const universeScope = String(
+    pyrusSignalsSettings["__signalMonitorUniverseScope"] ??
+      pyrusSignalsSettings["universeScope"] ??
+      "",
+  ).trim();
 
-  if (profile.maxSymbols > DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS) {
+  if (profile.maxSymbols !== DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS) {
     patch.maxSymbols = DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS;
   }
-  if (
-    profile.evaluationConcurrency >
-    DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY
-  ) {
+  if (profile.evaluationConcurrency !== DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY) {
     patch.evaluationConcurrency =
       DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY;
   }
-  if (profile.pollIntervalSeconds < DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS) {
+  if (profile.pollIntervalSeconds !== DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS) {
     patch.pollIntervalSeconds = DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS;
+  }
+  if (universeScope === "all_watchlists_plus_universe") {
+    patch.pyrusSignalsSettings = withSignalMonitorUniverseScope(
+      pyrusSignalsSettings,
+      "all_watchlists",
+    );
   }
 
   if (
     patch.maxSymbols === undefined &&
     patch.evaluationConcurrency === undefined &&
-    patch.pollIntervalSeconds === undefined
+    patch.pollIntervalSeconds === undefined &&
+    patch.pyrusSignalsSettings === undefined
   ) {
     return;
   }
@@ -8455,12 +8784,7 @@ export async function runSignalOptionsShadowScan(input: {
   source?: "manual" | "worker";
 }) {
   if (activeScanDeploymentIds.has(input.deploymentId)) {
-    throw new HttpError(409, "Signal-options scan is already running.", {
-      code: "signal_options_scan_running",
-      detail:
-        "A worker or manual scan is already active for this deployment.",
-      expose: true,
-    });
+    return signalOptionsScanAlreadyRunningResponse(input);
   }
   markSignalOptionsScanActive(input.deploymentId);
   try {
@@ -8500,7 +8824,10 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
   );
   const initialSignalEvents = runtimeSignalOptionsEvents(initialEvents);
-  const initialPositions = deriveActivePositions(initialSignalEvents);
+  const initialPositions = await reconcileActivePositionsWithShadowLedger({
+    positions: deriveActivePositions(initialSignalEvents),
+    events: initialSignalEvents,
+  });
   const unmanagedPositionSymbols = new Set<string>();
 
   for (const position of initialPositions) {
@@ -8549,7 +8876,10 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
   );
   const eventsAfterMarksRuntime = runtimeSignalOptionsEvents(eventsAfterMarks);
-  const activePositionsAfterMarks = deriveActivePositions(eventsAfterMarksRuntime);
+  const activePositionsAfterMarks = await reconcileActivePositionsWithShadowLedger({
+    positions: deriveActivePositions(eventsAfterMarksRuntime),
+    events: eventsAfterMarksRuntime,
+  });
   const profileUpdatedAt = latestSignalOptionsProfileUpdatedAt(
     eventsAfterMarksRuntime,
   );
@@ -8750,6 +9080,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
         universe,
         candidateCount,
         blockedCandidateCount,
+        batch: asRecord(asRecord(evaluated).signalOptionsBatch),
       }),
     };
   }
@@ -8811,6 +9142,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   markSignalOptionsScanActive,
   deriveCandidateActionStatus,
   deriveActivePositions,
+  reconcileActivePositionsWithShadowLinks,
   isSignalOptionsReplayEvent,
   runtimeSignalOptionsEvents,
   stateSignalOptionsEvents,
@@ -8832,6 +9164,8 @@ export const __signalOptionsAutomationInternalsForTests = {
   optionChainBackoffFromAttempts,
   seenSignalKeys,
   shouldRecordPositionMarkSkip,
+  resolveSignalOptionsMonitorBatch,
+  resolveSignalOptionsMonitorFullRefresh,
   shouldRefreshSignalOptionsMonitorState,
   signalOptionsStrikesAroundMoney,
   shouldRecordActivePositionMark,

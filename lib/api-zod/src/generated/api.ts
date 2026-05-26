@@ -101,6 +101,17 @@ export const GetSessionResponse = zod.object({
 })
 })
 }),zod.null()]),
+  "runtime": zod.object({
+  "ibkr": zod.object({
+  "runtimeOverrideActive": zod.boolean(),
+  "runtimeOverrideUpdatedAt": zod.coerce.date().nullable(),
+  "desktopAgentOnline": zod.boolean(),
+  "desktopAgentHelperVersion": zod.string().nullable(),
+  "desktopAgentExpectedHelperVersion": zod.string(),
+  "desktopAgentUpgradeRequired": zod.boolean(),
+  "reconnectAvailable": zod.boolean()
+})
+}),
   "timestamp": zod.coerce.date()
 })
 
@@ -185,6 +196,13 @@ export const GetRuntimeDiagnosticsResponse = zod.object({
   "configured": zod.boolean(),
   "bridgeUrlConfigured": zod.boolean(),
   "bridgeTokenConfigured": zod.boolean(),
+  "runtimeOverrideActive": zod.boolean(),
+  "runtimeOverrideUpdatedAt": zod.coerce.date().nullable(),
+  "desktopAgentOnline": zod.boolean(),
+  "desktopAgentHelperVersion": zod.string().nullable(),
+  "desktopAgentExpectedHelperVersion": zod.string(),
+  "desktopAgentUpgradeRequired": zod.boolean(),
+  "reconnectAvailable": zod.boolean(),
   "legacyIbkrEnvPresent": zod.boolean(),
   "reachable": zod.boolean(),
   "healthError": zod.string().nullable(),
@@ -693,7 +711,25 @@ export const ReadIbkrBridgeActivationStatusBody = zod.record(zod.string(), zod.u
 export const ReadIbkrBridgeActivationStatusResponse = zod.object({
   "active": zod.boolean(),
   "canceled": zod.boolean(),
-  "expiresAt": zod.coerce.date()
+  "expiresAt": zod.coerce.date(),
+  "latestProgress": zod.union([zod.object({
+  "activationId": zod.string(),
+  "status": zod.string().nullable(),
+  "step": zod.string().nullable(),
+  "message": zod.string().nullable(),
+  "helperVersion": zod.string().nullable(),
+  "bridgeUrl": zod.string().nullable(),
+  "updatedAt": zod.coerce.date()
+}),zod.null()]),
+  "recentProgress": zod.array(zod.object({
+  "activationId": zod.string(),
+  "status": zod.string().nullable(),
+  "step": zod.string().nullable(),
+  "message": zod.string().nullable(),
+  "helperVersion": zod.string().nullable(),
+  "bridgeUrl": zod.string().nullable(),
+  "updatedAt": zod.coerce.date()
+}))
 })
 
 

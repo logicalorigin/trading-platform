@@ -1,7 +1,11 @@
 const DEFAULT_PRIORITY_BATCH_SIZE = 8;
 const DEFAULT_BACKGROUND_BATCH_SIZE = 12;
+const DEFAULT_REQUEST_SYMBOL_LIMIT = 16;
 const PRESSURE_PRIORITY_BATCH_SIZE = 4;
 const PRESSURE_BACKGROUND_BATCH_SIZE = 6;
+const PRESSURE_REQUEST_SYMBOL_LIMIT = 12;
+const HIGH_REQUEST_SYMBOL_LIMIT = 12;
+const CRITICAL_REQUEST_SYMBOL_LIMIT = 8;
 
 const normalizeSymbol = (symbol) => symbol?.trim?.().toUpperCase?.() || "";
 
@@ -65,16 +69,26 @@ export function buildSignalMatrixRequestPlan({
   const priorityLimit = pressureActive
     ? PRESSURE_PRIORITY_BATCH_SIZE
     : DEFAULT_PRIORITY_BATCH_SIZE;
-  const backgroundLimit =
+  const requestLimit =
     pressureLevel === "critical"
-      ? 0
-      : pressureActive
+      ? CRITICAL_REQUEST_SYMBOL_LIMIT
+      : pressureLevel === "high"
+        ? HIGH_REQUEST_SYMBOL_LIMIT
+        : pressureLevel === "watch"
+          ? PRESSURE_REQUEST_SYMBOL_LIMIT
+          : DEFAULT_REQUEST_SYMBOL_LIMIT;
+  const rawBackgroundLimit =
+    pressureActive
         ? PRESSURE_BACKGROUND_BATCH_SIZE
         : DEFAULT_BACKGROUND_BATCH_SIZE;
   const priorityBatch = (orderedPriority.length ? orderedPriority : universe)
-    .slice(0, priorityLimit);
+    .slice(0, Math.min(priorityLimit, requestLimit));
   const prioritySet = new Set(priorityBatch);
   const backgroundUniverse = universe.filter((symbol) => !prioritySet.has(symbol));
+  const backgroundLimit = Math.max(
+    0,
+    Math.min(rawBackgroundLimit, requestLimit - priorityBatch.length),
+  );
   const background = backgroundReady
     ? rotateSymbols(backgroundUniverse, cursor, backgroundLimit)
     : { symbols: [], nextCursor: cursor || 0 };

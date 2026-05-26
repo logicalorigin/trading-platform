@@ -54,8 +54,12 @@ import { useDrawingHistory } from "../features/charting/useDrawingHistory";
 import { useIndicatorLibrary } from "../features/charting/pineScripts";
 import {
   PYRUS_SIGNALS_PINE_SCRIPT_KEY,
-  resolvePyrusSignalsRuntimeSettings,
 } from "../features/charting/pyrusSignalsPineAdapter";
+import {
+  buildPyrusSignalsIndicatorSettings,
+  isPyrusSignalsIndicatorSelected,
+  resolvePersistedPyrusSignalsSettings,
+} from "../features/charting/chartIndicatorPersistence";
 import {
   buildChartBarScopeKey,
   resolveChartHydrationPolicy,
@@ -445,18 +449,6 @@ const resolvePersistedIndicatorPreset = ({
     ? normalized
     : mergeIndicatorSelections(defaults, normalized);
 };
-
-const resolvePersistedPyrusSignalsSettings = (value) =>
-  resolvePyrusSignalsRuntimeSettings(
-    value && typeof value === "object" ? value : undefined,
-  );
-
-const buildPyrusSignalsIndicatorSettings = (settings) => ({
-  [PYRUS_SIGNALS_PINE_SCRIPT_KEY]: settings,
-});
-
-const isPyrusSignalsIndicatorSelected = (selectedIndicators = []) =>
-  selectedIndicators.includes(PYRUS_SIGNALS_PINE_SCRIPT_KEY);
 
 const createTradeWorkspace = (ticker, patch = {}) => {
   const normalized = normalizeTradeTickerSymbol(ticker);
@@ -3186,16 +3178,15 @@ const TradeOptionQuoteRuntime = ({
 
 const buildTradeRuntimeActivity = ({
   isVisible,
-  secondaryReady,
   searchOpen,
 } = {}) => {
   const visibleInteractive = Boolean(isVisible && !searchOpen);
   return {
     executionWarm: Boolean(isVisible),
     primaryVisible: Boolean(isVisible),
-    secondaryPanelsVisible: Boolean(isVisible && secondaryReady),
+    secondaryPanelsVisible: Boolean(isVisible),
     visibleInteractive,
-    analysisVisible: Boolean(visibleInteractive && secondaryReady),
+    analysisVisible: Boolean(visibleInteractive),
   };
 };
 
@@ -3310,22 +3301,13 @@ const TradeScreenInner = ({
   const [activeTradePhonePanel, setActiveTradePhonePanel] = useState("chart");
   const [phoneTicketSheetOpen, setPhoneTicketSheetOpen] = useState(false);
   const [phoneL2DrawerOpen, setPhoneL2DrawerOpen] = useState(false);
-  const [secondaryTradePanelsReady, setSecondaryTradePanelsReady] =
-    useState(false);
-  useEffect(() => {
-    if (!isVisible || secondaryTradePanelsReady) return undefined;
-    const timerId = window.setTimeout(() => {
-      setSecondaryTradePanelsReady(true);
-    }, 500);
-    return () => window.clearTimeout(timerId);
-  }, [isVisible, secondaryTradePanelsReady]);
   useEffect(() => {
     onReadinessChange?.({
       criticalReady: Boolean(isVisible),
-      derivedReady: Boolean(isVisible && secondaryTradePanelsReady),
-      backgroundAllowed: Boolean(isVisible && secondaryTradePanelsReady),
+      derivedReady: Boolean(isVisible),
+      backgroundAllowed: Boolean(isVisible),
     });
-  }, [isVisible, onReadinessChange, secondaryTradePanelsReady]);
+  }, [isVisible, onReadinessChange]);
   const stockAggregateStreamingEnabled = Boolean(
     brokerConfigured && brokerAuthenticated,
   );
@@ -3349,7 +3331,6 @@ const TradeScreenInner = ({
   const tradeRuntimeActivity = buildTradeRuntimeActivity({
     isVisible,
     isRetained,
-    secondaryReady: secondaryTradePanelsReady,
     searchOpen: Boolean(tradeTickerSearchAnchor),
   });
   const tradeLiveStreamsEnabled = tradeRuntimeActivity.visibleInteractive;
@@ -3862,6 +3843,8 @@ const TradeScreenInner = ({
             recentTickerRows={tradeRecentTickerRows}
             contextSymbols={recentTickers}
             embedded={embedded}
+            initialMarketFilter="all"
+            persistMarketFilter={false}
             onClose={closeTradeTickerSearch}
             onSelectTicker={handleSelectUniverseTicker}
             onRememberTickerRow={handleRememberTradeTickerRow}

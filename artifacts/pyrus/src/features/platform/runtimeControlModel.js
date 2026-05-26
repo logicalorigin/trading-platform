@@ -21,6 +21,9 @@ const firstFiniteNumber = (...values) => {
   return null;
 };
 
+const recordOrEmpty = (value) =>
+  value && typeof value === "object" && !Array.isArray(value) ? value : {};
+
 const formatRuntimeDuration = (durationMs) => {
   const ms = Number(durationMs);
   if (!Number.isFinite(ms) || ms <= 0) {
@@ -47,7 +50,7 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
     const activeCount = Number(scanner.deepScanner?.activeCount);
     if (Number.isFinite(activeCount) && activeCount > 0) {
       const rounded = Math.round(activeCount);
-      return `${rounded} option-chain scan${rounded === 1 ? "" : "s"} active; 0 quote lines`;
+      return `${rounded} option-chain scan${rounded === 1 ? "" : "s"} active; quotes warming`;
     }
     const queuedCount = Number(scanner.deepScanner?.queuedCount);
     if (Number.isFinite(queuedCount) && queuedCount > 0) {
@@ -65,6 +68,12 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
     if (blockedReason === "line-cap-exhausted") {
       return "paused: no scanner lines available";
     }
+    if (blockedReason === "resource-pressure") {
+      return "degraded: resource pressure";
+    }
+    if (blockedReason) {
+      return `paused: ${blockedReason}`;
+    }
     const skipReason = scanner.lastSkippedReason;
     if (skipReason) {
       if (skipReason === "line-cap-exhausted") {
@@ -76,9 +85,9 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
       return "deep scan starting";
     }
     if (scanner.deepScanner?.lastRunAt || scanner.lastBatch?.length) {
-      return "last scan complete; no active quote lines";
+      return "rotating; awaiting next batch";
     }
-    return "no active quote lines";
+    return "awaiting scanner work";
   }
   return null;
 };
@@ -141,7 +150,7 @@ const normalizeLineDrift = (lineUsageSnapshot) => {
   const labels = {
     matched: "matched",
     api_active_bridge_missing: "pending bridge",
-    api_released_bridge_active: "bridge stale",
+    api_released_bridge_active: "line drift",
     mixed: "mixed drift",
     unknown: "unknown",
   };
@@ -607,6 +616,40 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
   const warmup = normalizeWarmupCoverage(lineUsageSnapshot);
   const allocation = normalizeLineAllocation(admission, lineUsageSnapshot);
   const signalOptions = normalizeSignalOptionsLineUsage(admission, lineUsageSnapshot);
+  const watchlistPrewarm = recordOrEmpty(lineUsageSnapshot?.watchlistPrewarm);
+  const ownerClassSummaries = recordOrEmpty(admission.ownerClasses?.summaries);
+  const watchlistPrewarmOwnerClass = recordOrEmpty(
+    ownerClassSummaries["watchlist-prewarm"],
+  );
+  const watchlistPrewarmActiveLineCount = firstFiniteNumber(
+    watchlistPrewarm.primaryActiveSymbolCount,
+    watchlistPrewarmOwnerClass.activeLineCount,
+  );
+  const watchlistPrewarmActiveLineCountOrUndefined = Number.isFinite(
+    watchlistPrewarmActiveLineCount,
+  )
+    ? watchlistPrewarmActiveLineCount
+    : undefined;
+  const watchlistPrewarmPrimaryLineCap = firstFiniteNumber(
+    watchlistPrewarm.primarySymbolLimit,
+  );
+  const watchlistPrewarmLineCap =
+    Number.isFinite(watchlistPrewarmActiveLineCount) &&
+    watchlistPrewarmActiveLineCount > 0
+      ? firstFiniteNumber(
+          Number.isFinite(watchlistPrewarmPrimaryLineCap) &&
+            watchlistPrewarmPrimaryLineCap > 0
+            ? watchlistPrewarmPrimaryLineCap
+            : undefined,
+          budget.visibleLineCap,
+          admission.visibleLineCap,
+        )
+      : watchlistPrewarmPrimaryLineCap;
+  const watchlistPrewarmLineCapOrUndefined = Number.isFinite(
+    watchlistPrewarmLineCap,
+  )
+    ? watchlistPrewarmLineCap
+    : undefined;
   const pools = {};
   const rows = POOL_ORDER.map(([id, fallbackLabel]) => {
     const pool = poolUsage[id] || {};
@@ -623,6 +666,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
           ? firstFiniteNumber(pool.activeLineCount, admission.flowScannerLineCount)
           : id === "watchlist"
             ? firstFiniteNumber(
+                watchlistPrewarmActiveLineCountOrUndefined,
                 pool.activeLineCount,
                 admission.watchlistLineCount,
                 allocation.watchlistLineCount,
@@ -642,7 +686,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
                 )
               : firstFiniteNumber(pool.activeLineCount);
     const activeLineCount =
-      id === "automation"
+      id === "automation" || id === "watchlist"
         ? rawUsed
         : firstFiniteNumber(pool.activeLineCount, rawUsed);
     const rawCap =
@@ -657,6 +701,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
           ? firstFiniteNumber(pool.maxLines, budget.flowScannerLineCap)
           : id === "watchlist"
             ? firstFiniteNumber(
+                watchlistPrewarmLineCapOrUndefined,
                 pool.maxLines,
                 budget.watchlistLineCap,
                 allocation.watchlistLineCap,
@@ -696,9 +741,15 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
               allocation.elasticTargetLineCapacity,
               cap,
             )
+        : id === "watchlist"
+          ? cap
         : firstFiniteNumber(pool.effectiveMaxLines, cap);
     const free =
-      id === "flow-scanner" &&
+      id === "watchlist" &&
+      Number.isFinite(effectiveCap) &&
+      Number.isFinite(rawUsed)
+        ? Math.max(0, effectiveCap - rawUsed)
+        : id === "flow-scanner" &&
       Number.isFinite(effectiveCap) &&
       Number.isFinite(rawUsed)
         ? Math.max(0, effectiveCap - rawUsed)

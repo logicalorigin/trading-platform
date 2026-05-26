@@ -144,6 +144,11 @@ export const buildPlatformWorkSchedule = ({
       memoryAllowsForeground &&
       isForegroundWorkAllowed(ibkrWorkPressure),
   );
+  const realtimeIbkr = Boolean(
+    visible &&
+      ibkrReady &&
+      ibkrWorkPressure !== WORK_PRESSURE_STATE.stalled,
+  );
   const criticalIbkr = Boolean(
     visible &&
       ibkrReady &&
@@ -179,7 +184,7 @@ export const buildPlatformWorkSchedule = ({
         tradingEnabled ||
         foregroundIbkr),
   );
-  const watchlistQuoteStream = Boolean(sessionReady && foregroundIbkr);
+  const watchlistQuoteStream = Boolean(sessionReady && realtimeIbkr);
 
   return {
     pressure: ibkrWorkPressure,
@@ -201,6 +206,7 @@ export const buildPlatformWorkSchedule = ({
     },
     classes: {
       foregroundIbkr,
+      realtimeIbkr,
       backgroundIbkr,
       criticalIbkr,
       idle: Boolean(sessionReady && backgroundIbkr),

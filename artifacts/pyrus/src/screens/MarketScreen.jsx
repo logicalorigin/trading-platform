@@ -65,7 +65,6 @@ import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 
 
 const MARKET_PANEL_RETRY_DELAYS_MS = [750, 1_500, 3_000, 5_000, 8_000];
-const MARKET_SECONDARY_PANEL_DELAY_MS = 600;
 
 const loadRawMultiChartGridModule = () =>
   import("../features/market/MultiChartGrid.jsx");
@@ -127,27 +126,18 @@ const MarketScreenInner = ({
   const [marketWorkspaceWidth, setMarketWorkspaceWidth] = useState(0);
   const [marketChartRetryRevision, setMarketChartRetryRevision] = useState(0);
   const [chartGridReady, setChartGridReady] = useState(false);
-  const [secondaryPanelsReady, setSecondaryPanelsReady] = useState(false);
   useEffect(() => {
     if (!isVisible) {
       setChartGridReady(false);
-      setSecondaryPanelsReady(false);
-      return undefined;
     }
-    if (secondaryPanelsReady) return undefined;
-    const timerId = window.setTimeout(
-      () => setSecondaryPanelsReady(true),
-      MARKET_SECONDARY_PANEL_DELAY_MS,
-    );
-    return () => window.clearTimeout(timerId);
-  }, [isVisible, secondaryPanelsReady]);
+  }, [isVisible]);
   useEffect(() => {
     onReadinessChange?.({
       criticalReady: Boolean(isVisible),
       derivedReady: Boolean(isVisible && chartGridReady),
-      backgroundAllowed: Boolean(isVisible && chartGridReady && secondaryPanelsReady),
+      backgroundAllowed: Boolean(isVisible && chartGridReady),
     });
-  }, [chartGridReady, isVisible, onReadinessChange, secondaryPanelsReady]);
+  }, [chartGridReady, isVisible, onReadinessChange]);
   useEffect(() => {
     const element = marketWorkspaceRef.current;
     if (!element) {
@@ -262,9 +252,9 @@ const MarketScreenInner = ({
     { limit: 6 },
     {
       query: {
-        enabled: Boolean(isVisible && secondaryPanelsReady),
+        enabled: Boolean(isVisible),
         staleTime: 60_000,
-        refetchInterval: isVisible && secondaryPanelsReady ? 60_000 : false,
+        refetchInterval: isVisible ? 60_000 : false,
         retry: false,
       },
     },
@@ -273,23 +263,22 @@ const MarketScreenInner = ({
     query: {
       enabled: Boolean(
         isVisible &&
-          secondaryPanelsReady &&
           researchConfigured &&
           calendarWindow.from &&
           calendarWindow.to,
       ),
       staleTime: 300_000,
-      refetchInterval: isVisible && secondaryPanelsReady ? 300_000 : false,
+      refetchInterval: isVisible ? 300_000 : false,
       retry: false,
     },
   });
-  useRuntimeWorkloadFlag("market:news", Boolean(isVisible && secondaryPanelsReady), {
+  useRuntimeWorkloadFlag("market:news", Boolean(isVisible), {
     kind: "poll",
     label: "Market news",
     detail: "60s",
     priority: 6,
   });
-  useRuntimeWorkloadFlag("market:earnings", Boolean(isVisible && secondaryPanelsReady && researchConfigured), {
+  useRuntimeWorkloadFlag("market:earnings", Boolean(isVisible && researchConfigured), {
     kind: "poll",
     label: "Market earnings",
     detail: "300s",

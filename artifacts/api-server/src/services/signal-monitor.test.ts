@@ -164,13 +164,144 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
   assert.match(loadBlock ?? "", /family:\s*SIGNAL_MONITOR_BARS_FAMILY/);
   assert.match(loadBlock ?? "", /readSignalMonitorCompletedBarsCache/);
   assert.match(loadBlock ?? "", /signalMonitorCompletedBarsInFlight/);
+  assert.match(loadBlock ?? "", /shouldRetrySignalMonitorCompletedBars/);
   assert.doesNotMatch(fullEvaluationBlock ?? "", /SIGNAL_MONITOR_MATRIX_BARS_LIMIT/);
   assert.doesNotMatch(fullEvaluationBlock ?? "", /retryStale:\s*false/);
   assert.match(matrixItemBlock ?? "", /limit:\s*SIGNAL_MONITOR_MATRIX_BARS_LIMIT/);
-  assert.match(matrixItemBlock ?? "", /retryStale:\s*false/);
+  assert.doesNotMatch(matrixItemBlock ?? "", /retryStale:\s*false/);
 });
 
-test("signal monitor matrix caps server work under API resource pressure", () => {
+test("intraday delayed signal bars force live-edge retry before stale age", () => {
+  const evaluatedAt = new Date("2026-05-26T15:40:00.000Z");
+  const delayedLatest = {
+    timestamp: new Date("2026-05-26T15:35:00.000Z"),
+    open: 100,
+    high: 101,
+    low: 99,
+    close: 100.5,
+    volume: 100,
+    partial: false,
+    delayed: true,
+    freshness: "delayed",
+    marketDataMode: "delayed",
+    source: "massive-history",
+  };
+
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldRetrySignalMonitorCompletedBars({
+      completedBars: [delayedLatest] as never,
+      timeframe: "5m",
+      evaluatedAt,
+    }),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldRetrySignalMonitorCompletedBars({
+      completedBars: [delayedLatest] as never,
+      timeframe: "1d",
+      evaluatedAt,
+    }),
+    false,
+  );
+});
+
+test("signal monitor completed-bars cache bypasses retryable delayed rows", () => {
+  const evaluatedAt = new Date("2026-05-26T15:40:00.000Z");
+  const delayedLatest = {
+    timestamp: new Date("2026-05-26T15:35:00.000Z"),
+    open: 100,
+    high: 101,
+    low: 99,
+    close: 100.5,
+    volume: 100,
+    partial: false,
+    delayed: true,
+    freshness: "delayed",
+    marketDataMode: "delayed",
+    source: "massive-history",
+  };
+  const liveLatest = {
+    ...delayedLatest,
+    delayed: false,
+    freshness: "live",
+    marketDataMode: "live",
+    source: "ibkr-history",
+  };
+
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldBypassSignalMonitorCompletedBarsCache({
+      cached: {
+        bars: [delayedLatest] as never,
+        latestBarAt: delayedLatest.timestamp,
+      },
+      timeframe: "5m",
+      evaluatedAt,
+    }),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldBypassSignalMonitorCompletedBarsCache({
+      cached: {
+        bars: [delayedLatest] as never,
+        latestBarAt: delayedLatest.timestamp,
+      },
+      timeframe: "5m",
+      evaluatedAt,
+      retryStale: false,
+    }),
+    false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldBypassSignalMonitorCompletedBarsCache({
+      cached: {
+        bars: [liveLatest] as never,
+        latestBarAt: liveLatest.timestamp,
+      },
+      timeframe: "5m",
+      evaluatedAt,
+    }),
+    false,
+  );
+});
+
+test("intraday delayed matrix bars are degraded instead of fresh", () => {
+  const evaluatedAt = new Date("2026-05-26T15:40:00.000Z");
+  const delayedLatest = {
+    timestamp: new Date("2026-05-26T15:35:00.000Z"),
+    open: 100,
+    high: 101,
+    low: 99,
+    close: 100.5,
+    volume: 100,
+    partial: false,
+    delayed: true,
+    freshness: "delayed",
+    marketDataMode: "delayed",
+    source: "massive-history",
+  };
+
+  const intraday = evaluateSignalMonitorMatrixStateFromCompletedBars({
+    profile: profile({ timeframe: "5m" }),
+    symbol: "SPY",
+    timeframe: "5m",
+    evaluatedAt,
+    completedBars: [delayedLatest] as never,
+  });
+  const daily = evaluateSignalMonitorMatrixStateFromCompletedBars({
+    profile: profile({ timeframe: "1d" }),
+    symbol: "SPY",
+    timeframe: "1d",
+    evaluatedAt,
+    completedBars: [delayedLatest] as never,
+  });
+
+  assert.equal(intraday.status, "stale");
+  assert.equal(intraday.fresh, false);
+  assert.match(intraday.lastError || "", /delayed/);
+  assert.equal(daily.status, "ok");
+});
+
+test("signal monitor matrix preserves visible coverage under API resource pressure", () => {
   const configured = profile({
     maxSymbols: 250,
     evaluationConcurrency: 10,
@@ -178,23 +309,23 @@ test("signal monitor matrix caps server work under API resource pressure", () =>
 
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "normal"),
-    { pressure: "normal", maxSymbols: 8, concurrency: 2 },
+    { pressure: "normal", maxSymbols: 16, concurrency: 2 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "watch"),
-    { pressure: "watch", maxSymbols: 6, concurrency: 1 },
+    { pressure: "watch", maxSymbols: 16, concurrency: 1 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "high"),
-    { pressure: "high", maxSymbols: 4, concurrency: 1 },
+    { pressure: "high", maxSymbols: 16, concurrency: 1 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "critical"),
-    { pressure: "critical", maxSymbols: 2, concurrency: 1 },
+    { pressure: "critical", maxSymbols: 16, concurrency: 1 },
   );
 });
 
-test("signal monitor profile evaluations cap broad scans under API pressure", () => {
+test("signal monitor profile evaluations preserve breadth under API pressure", () => {
   const configured = profile({
     maxSymbols: 250,
     evaluationConcurrency: 10,
@@ -210,8 +341,8 @@ test("signal monitor profile evaluations cap broad scans under API pressure", ()
       capped: true,
       profile: {
         ...configured,
-        maxSymbols: 32,
-        evaluationConcurrency: 2,
+        maxSymbols: 250,
+        evaluationConcurrency: 3,
       },
     },
   );
@@ -219,23 +350,75 @@ test("signal monitor profile evaluations cap broad scans under API pressure", ()
     __signalMonitorInternalsForTests.cappedSignalMonitorEvaluationProfile(
       configured,
       "watch",
-    ).profile.maxSymbols,
-    16,
+    ).profile,
+    {
+      ...configured,
+      maxSymbols: 250,
+      evaluationConcurrency: 3,
+    },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMonitorEvaluationProfile(
       configured,
       "high",
-    ).profile.maxSymbols,
-    8,
+    ).profile,
+    {
+      ...configured,
+      maxSymbols: 250,
+      evaluationConcurrency: 3,
+    },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMonitorEvaluationProfile(
       configured,
       "critical",
-    ).profile.maxSymbols,
-    0,
+    ).profile,
+    {
+      ...configured,
+      maxSymbols: 250,
+      evaluationConcurrency: 3,
+    },
   );
+});
+
+test("explicit signal monitor symbol batches keep requested order under caps", () => {
+  const resolved =
+    __signalMonitorInternalsForTests.resolveExplicitSignalMonitorSymbols({
+      symbols: ["spy", "NVDA", "SPY", "AAPL", "MSFT"],
+      maxSymbols: 3,
+    });
+
+  assert.deepEqual(resolved.symbols, ["SPY", "NVDA", "AAPL"]);
+  assert.deepEqual(resolved.skippedSymbols, ["MSFT"]);
+  assert.equal(resolved.truncated, true);
+});
+
+test("signal monitor evaluation batches rotate across all watchlist symbols", () => {
+  const sourceSymbols = ["spy", "NVDA", "SPY", "AAPL", "MSFT", "TSLA"];
+  const first =
+    __signalMonitorInternalsForTests.resolveSignalMonitorEvaluationBatch({
+      sourceSymbols,
+      maxSymbols: 2,
+      cursor: 0,
+    });
+  const second =
+    __signalMonitorInternalsForTests.resolveSignalMonitorEvaluationBatch({
+      sourceSymbols,
+      maxSymbols: 2,
+      cursor: first.nextCursor,
+    });
+  const third =
+    __signalMonitorInternalsForTests.resolveSignalMonitorEvaluationBatch({
+      sourceSymbols,
+      maxSymbols: 2,
+      cursor: second.nextCursor,
+    });
+
+  assert.deepEqual(first.symbols, ["SPY", "NVDA"]);
+  assert.deepEqual(first.skippedSymbols, ["AAPL", "MSFT", "TSLA"]);
+  assert.deepEqual(second.symbols, ["AAPL", "MSFT"]);
+  assert.deepEqual(third.symbols, ["TSLA", "SPY"]);
+  assert.equal(first.truncated, true);
 });
 
 test("signal matrix state returns neutral unavailable rows without persisting", () => {
@@ -284,8 +467,43 @@ test("signal monitor all-watchlists scope evaluates the combined universe", () =
     });
 
   assert.deepEqual(result.symbols, ["SPY", "NVDA", "PLTR", "IONQ"]);
+  assert.deepEqual(result.watchlistSymbols, ["SPY", "NVDA", "PLTR", "IONQ"]);
   assert.deepEqual(result.skippedSymbols, []);
   assert.equal(result.truncated, false);
+});
+
+test("signal monitor state universe keeps all watchlist symbols outside max cap", () => {
+  const result =
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({
+      profile: profile({
+        watchlistId: "core",
+        maxSymbols: 2,
+        pyrusSignalsSettings: {
+          __signalMonitorUniverseScope: "all_watchlists",
+        },
+      }),
+      watchlists: [
+        {
+          id: "core",
+          name: "Core",
+          isDefault: true,
+          updatedAt: baseDate,
+          items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
+        },
+        {
+          id: "research",
+          name: "Research",
+          isDefault: false,
+          updatedAt: baseDate,
+          items: [{ symbol: "AAPL" }, { symbol: "MSFT" }] as never,
+        },
+      ],
+    });
+
+  assert.deepEqual(result.symbols, ["SPY", "NVDA"]);
+  assert.deepEqual(result.watchlistSymbols, ["SPY", "NVDA", "AAPL", "MSFT"]);
+  assert.deepEqual(result.skippedSymbols, ["AAPL", "MSFT"]);
+  assert.equal(result.truncated, true);
 });
 
 test("signal monitor selected-watchlist scope stays on the configured watchlist", () => {
@@ -319,12 +537,55 @@ test("signal monitor selected-watchlist scope stays on the configured watchlist"
   assert.deepEqual(result.symbols, ["SPY", "NVDA"]);
 });
 
-test("signal monitor default scope expands watchlists with ranked universe symbols", () => {
+test("signal monitor default scope stays on all watchlists", () => {
   const result =
     __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({
       profile: profile({
         watchlistId: "core",
         maxSymbols: 6,
+      }),
+      watchlists: [
+        {
+          id: "core",
+          name: "Core",
+          isDefault: true,
+          updatedAt: baseDate,
+          items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
+        },
+        {
+          id: "research",
+          name: "Research",
+          isDefault: false,
+          updatedAt: baseDate,
+          items: [{ symbol: "PLTR" }, { symbol: "spy" }] as never,
+        },
+      ],
+      expansionUniverse: {
+        symbols: ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
+        fallbackUsed: false,
+        degradedReason: null,
+        rankedAt: baseDate,
+      },
+    });
+
+  assert.deepEqual(result.symbols, ["SPY", "NVDA", "PLTR"]);
+  assert.deepEqual(result.skippedSymbols, []);
+  assert.equal(result.universe.configuredMaxSymbols, 6);
+  assert.equal(result.universe.pinnedSymbols, 3);
+  assert.equal(result.universe.expansionSymbols, 0);
+  assert.equal(result.universe.shortfall, 3);
+  assert.equal(result.universe.source, "all_watchlists");
+});
+
+test("signal monitor explicit expansion scope adds ranked universe symbols", () => {
+  const result =
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({
+      profile: profile({
+        watchlistId: "core",
+        maxSymbols: 6,
+        pyrusSignalsSettings: {
+          __signalMonitorUniverseScope: "all_watchlists_plus_universe",
+        },
       }),
       watchlists: [
         {
@@ -399,9 +660,53 @@ test("signal monitor state hydration is scoped to the profile timeframe", () => 
     block,
     /const timeframe = resolveSignalMonitorTimeframe\(hydratedProfile\.timeframe\)/,
   );
+  assert.match(block, /watchlistSymbols/);
+  assert.match(block, /currentUniverseSymbols\.has\(symbol\)/);
+  assert.match(block, /isSignalMonitorStateCurrentForLane/);
 });
 
-test("signal monitor full evaluation deactivates stale timeframe rows", () => {
+test("signal monitor lane recency rejects stale persisted fresh rows", () => {
+  const evaluatedAt = new Date("2026-05-26T17:50:00.000Z");
+
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorStateCurrentForLane({
+      state: {
+        status: "ok",
+        latestBarAt: new Date("2026-05-26T17:45:00.000Z"),
+        lastEvaluatedAt: new Date("2026-05-26T17:45:05.000Z"),
+      } as never,
+      timeframe: "5m",
+      evaluatedAt,
+    }),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorStateCurrentForLane({
+      state: {
+        status: "ok",
+        latestBarAt: new Date("2026-05-22T19:55:00.000Z"),
+        lastEvaluatedAt: new Date("2026-05-25T01:38:15.743Z"),
+      } as never,
+      timeframe: "5m",
+      evaluatedAt,
+    }),
+    false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorStateCurrentForLane({
+      state: {
+        status: "stale",
+        latestBarAt: new Date("2026-05-26T17:45:00.000Z"),
+        lastEvaluatedAt: new Date("2026-05-26T17:45:05.000Z"),
+      } as never,
+      timeframe: "5m",
+      evaluatedAt,
+    }),
+    false,
+  );
+});
+
+test("signal monitor capped evaluation preserves skipped all-watchlist rows", () => {
   const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
   const start = source.indexOf("export async function evaluateSignalMonitorProfileUniverse");
   const end = source.indexOf("function resolveSignalMonitorMatrixSymbols", start);
@@ -413,6 +718,10 @@ test("signal monitor full evaluation deactivates stale timeframe rows", () => {
     block,
     /ne\(signalMonitorSymbolStatesTable\.timeframe,\s*timeframe\)/,
   );
+  assert.match(block, /universe\.watchlistSymbols/);
+  assert.match(block, /resolveSignalMonitorEvaluationBatch/);
+  assert.match(block, /!evaluationSettings\.capped/);
+  assert.match(block, /!resolvedBatch\.truncated/);
 });
 
 test("signal matrix cache serves stale data while a refresh is in flight", async () => {

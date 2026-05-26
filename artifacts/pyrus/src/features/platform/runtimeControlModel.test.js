@@ -121,6 +121,158 @@ test("normalizes complete market data admission pools", () => {
   assert.equal(normalized.allocation.fillerLineCount, 0);
 });
 
+test("reports watchlist prewarm lines even when the retired watchlist pool is zero", () => {
+  const normalized = normalizeAdmissionDiagnostics(
+    {
+      activeLineCount: 160,
+      visibleLineCount: 120,
+      watchlistLineCount: 0,
+      budget: {
+        maxLines: 200,
+        visibleLineCap: 120,
+        watchlistLineCap: 0,
+        flowScannerLineCap: 80,
+      },
+      poolUsage: {
+        visible: {
+          id: "visible",
+          label: "Visible",
+          activeLineCount: 120,
+          maxLines: 120,
+          remainingLineCount: 0,
+        },
+        watchlist: {
+          id: "watchlist",
+          label: "Watchlist",
+          activeLineCount: 0,
+          maxLines: 0,
+          effectiveMaxLines: 0,
+          remainingLineCount: 0,
+          strict: true,
+        },
+      },
+    },
+    {
+      watchlistPrewarm: {
+        primaryActiveSymbolCount: 117,
+        primarySymbolLimit: 120,
+      },
+    },
+  );
+
+  assert.equal(normalized.watchlist.used, 117);
+  assert.equal(normalized.watchlist.cap, 120);
+  assert.equal(normalized.watchlist.free, 3);
+  assert.equal(normalized.watchlist.detail, "117 active of 120 reserved");
+});
+
+test("keeps watchlist prewarm cap when the prewarm limit is omitted", () => {
+  const normalized = normalizeAdmissionDiagnostics(
+    {
+      activeLineCount: 161,
+      visibleLineCount: 120,
+      watchlistLineCount: 0,
+      budget: {
+        maxLines: 200,
+        visibleLineCap: 120,
+        watchlistLineCap: 0,
+        flowScannerLineCap: 80,
+      },
+      ownerClasses: {
+        summaries: {
+          "watchlist-prewarm": {
+            activeLineCount: 118,
+          },
+        },
+      },
+      poolUsage: {
+        visible: {
+          id: "visible",
+          label: "Visible",
+          activeLineCount: 120,
+          maxLines: 120,
+          remainingLineCount: 0,
+        },
+        watchlist: {
+          id: "watchlist",
+          label: "Watchlist",
+          activeLineCount: 0,
+          maxLines: 0,
+          effectiveMaxLines: 0,
+          remainingLineCount: 0,
+          strict: true,
+        },
+      },
+    },
+    {
+      watchlistPrewarm: {},
+    },
+  );
+
+  assert.equal(normalized.watchlist.used, 118);
+  assert.equal(normalized.watchlist.cap, 120);
+  assert.equal(normalized.watchlist.free, 2);
+  assert.equal(normalized.watchlist.detail, "118 active of 120 reserved");
+});
+
+test("builds runtime watchlist row from prewarm usage instead of the retired pool", () => {
+  const snapshot = buildRuntimeControlSnapshot({
+    lineUsageSnapshot: {
+      admission: {
+        activeLineCount: 121,
+        accountMonitorLineCount: 5,
+        visibleLineCount: 120,
+        watchlistLineCount: 0,
+        flowScannerLineCount: 0,
+        budget: {
+          maxLines: 200,
+          accountMonitorLineCap: 5,
+          visibleLineCap: 120,
+          watchlistLineCap: 0,
+          flowScannerLineCap: 80,
+        },
+        poolUsage: {
+          "account-monitor": {
+            id: "account-monitor",
+            activeLineCount: 5,
+            maxLines: 5,
+            remainingLineCount: 0,
+          },
+          visible: {
+            id: "visible",
+            activeLineCount: 120,
+            maxLines: 120,
+            remainingLineCount: 0,
+          },
+          watchlist: {
+            id: "watchlist",
+            activeLineCount: 0,
+            maxLines: 0,
+            effectiveMaxLines: 0,
+            remainingLineCount: 0,
+            strict: true,
+          },
+          "flow-scanner": {
+            id: "flow-scanner",
+            activeLineCount: 0,
+            maxLines: 80,
+            remainingLineCount: 80,
+          },
+        },
+      },
+      watchlistPrewarm: {
+        primaryActiveSymbolCount: 118,
+      },
+    },
+  });
+
+  assert.equal(snapshot.lineUsage.watchlist.used, 118);
+  assert.equal(snapshot.lineUsage.watchlist.cap, 120);
+  assert.equal(snapshot.lineUsage.watchlist.effectiveCap, 120);
+  assert.equal(snapshot.lineUsage.watchlist.free, 2);
+  assert.equal(snapshot.lineUsage.watchlist.detail, "118 active of 120 reserved");
+});
+
 test("normalizes top-level automation counts when pool rows are absent", () => {
   const normalized = normalizeAdmissionDiagnostics({
     activeLineCount: 12,
@@ -206,7 +358,7 @@ test("shows active flow scanner work ahead of a stale skip reason", () => {
 
   assert.equal(
     normalized.flowScanner.detail,
-    "2 option-chain scans active; 0 quote lines",
+    "2 option-chain scans active; quotes warming",
   );
 });
 
@@ -250,7 +402,7 @@ test("explains queued flow scanner work without active quote lines", () => {
 
   assert.equal(
     normalized.flowScanner.detail,
-    "3 option-chain scans active; 0 quote lines",
+    "3 option-chain scans active; quotes warming",
   );
 });
 
@@ -322,6 +474,55 @@ test("reports flow scanner background pauses when no scanner work is active", ()
   });
 
   assert.equal(normalized.flowScanner.detail, "paused: no scanner lines available");
+});
+
+test("reports resource-pressure scanner degradation without idle quote-line copy", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 80,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 100,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      backgroundBlockedReason: "resource-pressure",
+      deepScanner: {
+        draining: false,
+        queuedCount: 0,
+        activeCount: 0,
+        snapshotCount: 0,
+      },
+    },
+  });
+
+  assert.equal(normalized.flowScanner.detail, "degraded: resource pressure");
+});
+
+test("reports enabled flow scanner as rotating between batches", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 80,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 100,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      lastBatch: ["SPY"],
+      deepScanner: {
+        draining: false,
+        queuedCount: 0,
+        activeCount: 0,
+        snapshotCount: 0,
+        lastRunAt: "2026-05-26T13:29:51.212Z",
+      },
+    },
+  });
+
+  assert.equal(normalized.flowScanner.detail, "rotating; awaiting next batch");
 });
 
 test("reports live warmup as a temporary foreground-allowed scanner hold", () => {

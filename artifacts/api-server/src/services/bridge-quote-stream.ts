@@ -1,7 +1,10 @@
 import { normalizeSymbol } from "../lib/values";
 import { logger } from "../lib/logger";
 import { isHttpError } from "../lib/errors";
-import { getIbkrBridgeRuntimeConfig } from "../lib/runtime";
+import {
+  getIbkrBridgeRuntimeConfig,
+  onIbkrBridgeRuntimeChanged,
+} from "../lib/runtime";
 import {
   IbkrBridgeClient,
   type MutableQuoteStream,
@@ -12,6 +15,7 @@ import {
   admitMarketDataLeases,
   isMarketDataLeaseActive,
   releaseMarketDataLeases,
+  subscribeMarketDataLeaseChanges,
 } from "./market-data-admission";
 import { runBridgeWork } from "./bridge-governor";
 import { isLikelyUsEquitySession } from "./platform-runtime-status";
@@ -126,7 +130,13 @@ const SNAPSHOT_BOOTSTRAP_TIMEOUT_MS = Math.max(
     10,
   ) || 2_500,
 );
-const UNCONFIGURED_STREAM_RETRY_MS = 1_000;
+const UNCONFIGURED_STREAM_RETRY_MS = Math.max(
+  60_000,
+  Number.parseInt(
+    process.env["IBKR_QUOTE_STREAM_UNCONFIGURED_RETRY_MS"] ?? "60000",
+    10,
+  ) || 60_000,
+);
 
 function isBridgeWorkBackoffError(error: unknown): boolean {
   return isHttpError(error) && error.code === "ibkr_bridge_work_backoff";
@@ -201,6 +211,31 @@ function getRequestedSymbols(): string[] {
       Array.from(subscriber.symbols),
     ),
   );
+}
+
+function admitBridgeQuoteSubscriberLeases(subscriber: Subscriber): void {
+  admitMarketDataLeases({
+    owner: subscriber.owner,
+    intent: "visible-live",
+    requests: Array.from(subscriber.symbols).map((symbol) => ({
+      assetClass: "equity" as const,
+      symbol,
+    })),
+    fallbackProvider: "polygon",
+  });
+}
+
+function admitBridgeQuoteSubscriberLeasesForRuntime(): void {
+  if (!isBridgeRuntimeConfigured()) {
+    return;
+  }
+  subscribers.forEach(admitBridgeQuoteSubscriberLeases);
+}
+
+function releaseBridgeQuoteSubscriberLeases(reason: string): void {
+  subscribers.forEach((subscriber) => {
+    releaseMarketDataLeases(subscriber.owner, reason);
+  });
 }
 
 function addApiLatency(
@@ -692,25 +727,15 @@ function refreshBridgeQuoteStream() {
   clearReconnectTimer();
   clearRefreshTimer();
 
-  const symbols = getDesiredSymbols();
-  const nextSignature = symbols.join(",");
-
-  if (
-    nextSignature === streamSignature ||
-    nextSignature === pendingStreamSignature
-  ) {
-    return;
-  }
-
-  if (!nextSignature) {
-    stopStream();
-    reconnectAttempt = 0;
-    clearInactiveStreamState();
-    return;
-  }
-
   if (!isBridgeRuntimeConfigured()) {
+    const requestedSymbols = getRequestedSymbols();
     stopStream();
+    releaseBridgeQuoteSubscriberLeases("runtime_unconfigured");
+    reconnectAttempt = 0;
+    if (!requestedSymbols.length) {
+      clearInactiveStreamState();
+      return;
+    }
     const now = nowProvider();
     lastSignalAt = now;
     lastError = null;
@@ -719,11 +744,31 @@ function refreshBridgeQuoteStream() {
       state: "closed",
       reason: "ibkr_bridge_not_configured",
       message: "Interactive Brokers bridge is not configured.",
-      requestedCount: symbols.length,
+      requestedCount: requestedSymbols.length,
       admittedCount: 0,
-      rejectedCount: symbols.length,
+      rejectedCount: requestedSymbols.length,
+      retryDelayMs: UNCONFIGURED_STREAM_RETRY_MS,
     };
     scheduleRefreshBridgeQuoteStream(UNCONFIGURED_STREAM_RETRY_MS);
+    return;
+  }
+
+  admitBridgeQuoteSubscriberLeasesForRuntime();
+
+  const symbols = getDesiredSymbols();
+  const nextSignature = symbols.join(",");
+
+  if (!nextSignature) {
+    stopStream();
+    reconnectAttempt = 0;
+    clearInactiveStreamState();
+    return;
+  }
+
+  if (
+    nextSignature === streamSignature ||
+    nextSignature === pendingStreamSignature
+  ) {
     return;
   }
 
@@ -853,6 +898,24 @@ function scheduleRefreshBridgeQuoteStream(
   refreshTimer.unref?.();
 }
 
+onIbkrBridgeRuntimeChanged(() => {
+  scheduleRefreshBridgeQuoteStream(0);
+});
+
+subscribeMarketDataLeaseChanges((event) => {
+  if (!["released", "demoted", "expired"].includes(event.action)) {
+    return;
+  }
+  if (
+    !Array.from(subscribers.values()).some(
+      (subscriber) => subscriber.owner === event.owner,
+    )
+  ) {
+    return;
+  }
+  scheduleRefreshBridgeQuoteStream(0);
+});
+
 export function getCurrentBridgeQuoteSnapshots(symbols: string[]): QuoteWithSource[] {
   return normalizeSymbols(symbols).flatMap((symbol) => {
     const quote = quoteCacheBySymbol.get(symbol);
@@ -970,24 +1033,16 @@ export function subscribeBridgeQuoteSnapshots(
   const subscriberId = nextSubscriberId;
   nextSubscriberId += 1;
   const owner = `bridge-quote-stream:${subscriberId}`;
-  const admission = admitMarketDataLeases({
-    owner,
-    intent: "visible-live",
-    requests: normalizedSymbols.map((symbol) => ({
-      assetClass: "equity" as const,
-      symbol,
-    })),
-    fallbackProvider: "polygon",
-  });
-  const admittedSymbols = admission.admitted
-    .map((lease) => lease.symbol)
-    .filter((symbol): symbol is string => Boolean(symbol));
-  subscribers.set(subscriberId, {
+  const subscriber: Subscriber = {
     id: subscriberId,
     owner,
     symbols: new Set(normalizedSymbols),
     onSnapshot,
-  });
+  };
+  subscribers.set(subscriberId, subscriber);
+  if (isBridgeRuntimeConfigured()) {
+    admitBridgeQuoteSubscriberLeases(subscriber);
+  }
 
   const cachedQuotes = getCurrentBridgeQuoteSnapshots(normalizedSymbols);
   if (cachedQuotes.length > 0) {
@@ -999,14 +1054,14 @@ export function subscribeBridgeQuoteSnapshots(
   return () => {
     subscribers.delete(subscriberId);
     releaseMarketDataLeases(owner, "unsubscribe");
-    scheduleRefreshBridgeQuoteStream();
+    scheduleRefreshBridgeQuoteStream(0);
   };
 }
 
 export function getBridgeQuoteStreamDiagnostics(): BridgeQuoteStreamDiagnostics {
   const desiredSymbols = getDesiredSymbols();
   const requestedSymbols = getRequestedSymbols();
-  const hasQuoteDemand = desiredSymbols.length > 0;
+  const hasQuoteDemand = desiredSymbols.length > 0 || requestedSymbols.length > 0;
   const now = nowProvider().getTime();
   pruneRecentGapEvents(now);
   const lastEventMs = lastEventAt?.getTime() ?? null;

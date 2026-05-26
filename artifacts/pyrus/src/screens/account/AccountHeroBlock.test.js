@@ -10,7 +10,7 @@ test("hero owns net liq, day P&L, and the performance summary", () => {
   assert.match(source, /data-testid="account-hero-primary-row"/);
   assert.match(source, /data-testid="account-hero-performance-rail"/);
   assert.match(source, /fontSize:\s*fs\(isPhone \? 16 : 20\)/);
-  assert.match(source, /background:\s*`\$\{dayTone\}12`/);
+  assert.match(source, /background:\s*cssColorAlpha\(dayTone, "12"\)/);
   assert.match(source, /returnsModel/);
   assert.match(source, /label:\s*"Adj return"/);
   assert.match(source, /label:\s*"P&L Δ"/);

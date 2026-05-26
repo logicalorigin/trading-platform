@@ -2,11 +2,20 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
+  Cable,
   ChevronDown,
+  Check,
+  Clock3,
   Gauge,
+  KeyRound,
+  MonitorUp,
+  Network,
+  Power,
   RadioTower,
   RefreshCw,
+  SendHorizontal,
   ShieldCheck,
+  Unplug,
   X,
 } from "lucide-react";
 import {
@@ -59,6 +68,10 @@ import {
   shouldUseRemoteIbkrLaunchBrowser,
   writeIbkrBridgeSessionValue,
 } from "./ibkrBridgeSession";
+import {
+  buildIbkrDeactivateOperationStepper,
+  buildIbkrLaunchOperationStepper,
+} from "./ibkrConnectionOperationStepperModel";
 import { buildHeaderIbkrPopoverModel } from "./ibkrPopoverModel";
 import { platformJsonRequest } from "./platformJsonRequest";
 import { useRuntimeControlSnapshot } from "./useRuntimeControlSnapshot";
@@ -106,10 +119,11 @@ const cssColorMix = (color, percent) =>
 
 const IBKR_LOGIN_HANDOFF_ALGORITHM = "RSA-OAEP-256-CHUNKED";
 const IBKR_LOGIN_HANDOFF_POLL_MS = 250;
-const IBKR_LOGIN_HANDOFF_REQUEST_TIMEOUT_MS = 4_000;
+const IBKR_LOGIN_HANDOFF_REQUEST_TIMEOUT_MS = 10_000;
 const IBKR_LOGIN_HANDOFF_WAIT_MS = 240_000;
 const IBKR_LOGIN_HANDOFF_RSA_CHUNK_SIZE = 400;
 const IBKR_BRIDGE_RECOGNITION_POLL_MS = 1_000;
+const IBKR_BRIDGE_ACTIVATION_STATUS_POLL_MS = 1_000;
 const IBKR_DESKTOP_JOB_POLL_MS = 750;
 const IBKR_DESKTOP_SHUTDOWN_WAIT_MS = 35_000;
 
@@ -1326,6 +1340,229 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
   );
 };
 
+const getIbkrOperationStepTone = (status) => {
+  if (status === "complete") return CSS_COLOR.green;
+  if (status === "current") return CSS_COLOR.accent;
+  if (status === "warning") return CSS_COLOR.amber;
+  if (status === "error" || status === "canceled") return CSS_COLOR.red;
+  return CSS_COLOR.textMuted;
+};
+
+const getIbkrOperationStepAria = (step) =>
+  `${step.label} ${step.status === "current" ? "current" : step.status}`;
+
+const IBKR_OPERATION_STEP_ICONS = Object.freeze({
+  cable: Cable,
+  clock: Clock3,
+  key: KeyRound,
+  monitor: MonitorUp,
+  network: Network,
+  power: Power,
+  refresh: RefreshCw,
+  send: SendHorizontal,
+  unplug: Unplug,
+});
+
+const getIbkrOperationStepIconAnimation = (step, active) => {
+  if (!active) return "none";
+  if (step.motion === "spin") return "premiumFlowSpin 960ms linear infinite";
+  if (step.motion === "dispatch") return "ibkrStepIconDispatch 1.2s ease-in-out infinite";
+  if (step.motion === "secure") return "ibkrStepIconSecure 1.5s ease-in-out infinite";
+  if (step.motion === "boot") return "ibkrStepIconBoot 1.45s ease-in-out infinite";
+  if (step.motion === "link") return "ibkrStepIconLink 1.25s ease-in-out infinite";
+  if (step.motion === "tunnel") return "ibkrStepIconTunnel 1.35s ease-in-out infinite";
+  if (step.motion === "queue") return "ibkrStepIconQueue 1.1s steps(2, end) infinite";
+  if (step.motion === "detach") return "ibkrStepIconDetach 1.15s ease-in-out infinite";
+  if (step.motion === "power") return "ibkrStepIconPower 1.5s ease-in-out infinite";
+  return "ibkrStepIconPulse 1.35s ease-in-out infinite";
+};
+
+const HeaderIbkrOperationStepper = ({ model }) => {
+  if (!model?.steps?.length) {
+    return null;
+  }
+
+  return (
+    <div
+      data-testid={`ibkr-operation-stepper-${model.operation}`}
+      style={{
+        display: "grid",
+        gap: sp(8),
+        marginBottom: sp(8),
+        padding: sp("10px 12px"),
+        background: CSS_COLOR.bg1,
+        border: `1px solid ${CSS_COLOR.borderLight}`,
+        borderRadius: dim(RADII.sm),
+        fontFamily: T.sans,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: sp(8),
+          minWidth: 0,
+        }}
+      >
+        <span
+          style={{
+            color: CSS_COLOR.text,
+            fontSize: textSize("paragraphMuted"),
+            fontWeight: FONT_WEIGHTS.medium,
+            minWidth: 0,
+          }}
+        >
+          {model.title}
+        </span>
+      </div>
+      <div
+        role="list"
+        aria-label={`${model.title} progress`}
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(${model.steps.length}, minmax(0, 1fr))`,
+          alignItems: "start",
+          gap: 0,
+          minWidth: 0,
+        }}
+      >
+        {model.steps.map((step, index) => {
+          const tone = getIbkrOperationStepTone(step.status);
+          const complete = step.status === "complete";
+          const warned = step.status === "warning";
+          const failed = step.status === "error" || step.status === "canceled";
+          const current = step.status === "current";
+          const StepIcon = IBKR_OPERATION_STEP_ICONS[step.icon] || RadioTower;
+          const StatusIcon = complete
+            ? Check
+            : failed
+              ? X
+              : warned
+                ? AlertTriangle
+                : StepIcon;
+          return (
+            <div
+              key={step.id}
+              role="listitem"
+              aria-label={getIbkrOperationStepAria(step)}
+              data-ibkr-operation-step={step.id}
+              data-ibkr-operation-step-status={step.status}
+              style={{
+                display: "grid",
+                justifyItems: "center",
+                gap: sp(5),
+                minWidth: 0,
+                position: "relative",
+              }}
+            >
+              {index > 0 ? (
+                <span
+                  aria-hidden="true"
+                  data-ibkr-step-line="true"
+                  style={{
+                    position: "absolute",
+                    top: dim(9),
+                    left: "-50%",
+                    width: "100%",
+                    height: 1,
+                    background:
+                      model.steps[index - 1]?.status === "complete"
+                        ? CSS_COLOR.green
+                        : CSS_COLOR.borderLight,
+                    transformOrigin: "left center",
+                    animation:
+                      model.steps[index - 1]?.status === "complete"
+                        ? "ibkrStepLineFill 540ms ease-out"
+                        : "none",
+                  }}
+                />
+              ) : null}
+              <span
+                aria-hidden="true"
+                data-ibkr-step-complete={complete ? "true" : undefined}
+                data-ibkr-state-pulse={current ? "true" : undefined}
+                data-ibkr-step-motion={current ? step.motion || "pulse" : undefined}
+                style={{
+                  "--ibkr-step-tone": tone,
+                  width: dim(18),
+                  height: dim(18),
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: dim(RADII.pill),
+                  border: `1px solid ${tone}`,
+                  background:
+                    complete || current || failed || warned
+                      ? tone
+                      : CSS_COLOR.bg0,
+                  color:
+                    complete || current || failed || warned
+                      ? CSS_COLOR.onAccent
+                      : tone,
+                  boxShadow: current
+                    ? `0 0 0 3px ${cssColorMix(tone, 14)}`
+                    : "none",
+                  animation: current
+                    ? "ibkrStatusPulse 1.8s ease-in-out infinite"
+                    : "none",
+                  position: "relative",
+                  zIndex: 1,
+                }}
+              >
+                <StatusIcon
+                  size={dim(complete ? 11 : failed || warned ? 10 : 10.5)}
+                  strokeWidth={complete || failed || warned ? 2.6 : 2.3}
+                  style={{
+                    opacity: step.status === "pending" ? 0.62 : 1,
+                    transformOrigin: "center",
+                    animation: complete
+                      ? "ibkrStepCheckPop 340ms ease-out"
+                      : getIbkrOperationStepIconAnimation(step, current),
+                  }}
+                />
+              </span>
+              <span
+                style={{
+                  color: tone,
+                  fontSize: fs(8),
+                  fontWeight:
+                    current || complete || failed
+                      ? FONT_WEIGHTS.medium
+                      : FONT_WEIGHTS.regular,
+                  letterSpacing: 0,
+                  lineHeight: 1.1,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textAlign: "center",
+                  textOverflow: "ellipsis",
+                  textTransform: "uppercase",
+                  whiteSpace: "nowrap",
+                  width: "100%",
+                }}
+              >
+                {step.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {model.latestMessage ? (
+        <div
+          style={{
+            color: CSS_COLOR.textSec,
+            fontSize: textSize("paragraphMuted"),
+            lineHeight: 1.35,
+            overflowWrap: "anywhere",
+          }}
+        >
+          {model.latestMessage}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 export const HeaderStatusCluster = ({
   session,
   environment,
@@ -1374,6 +1611,9 @@ export const HeaderStatusCluster = ({
   const [bridgeLauncherBusy, setBridgeLauncherBusy] = useState(false);
   const [bridgeLauncherError, setBridgeLauncherError] = useState(null);
   const [bridgeLauncherNotice, setBridgeLauncherNotice] = useState(null);
+  const [bridgeActivationStatus, setBridgeActivationStatus] = useState(null);
+  const [bridgeManualOperationModel, setBridgeManualOperationModel] =
+    useState(null);
   const [autoLoginUsername, setAutoLoginUsername] = useState("");
   const [autoLoginPassword, setAutoLoginPassword] = useState("");
   useEffect(() => {
@@ -1448,6 +1688,17 @@ export const HeaderStatusCluster = ({
     runtimeControl.runtimeDiagnostics?.ibkr?.runtimeOverrideActive ||
       session?.runtime?.ibkr?.runtimeOverrideActive,
   );
+  const ibkrRuntimeState =
+    session?.runtime?.ibkr || runtimeControl.runtimeDiagnostics?.ibkr || null;
+  const desktopReconnectNeeded = Boolean(
+    ibkrRuntimeState?.desktopAgentOnline && !bridgeRuntimeOverrideActive,
+  );
+  const desktopReconnectReady = Boolean(
+    desktopReconnectNeeded && ibkrRuntimeState?.reconnectAvailable,
+  );
+  const desktopReconnectUpgradeRequired = Boolean(
+    desktopReconnectNeeded && ibkrRuntimeState?.desktopAgentUpgradeRequired,
+  );
   const canDeactivate = Boolean(
     bridgeManagementToken ||
       bridgeRuntimeOverrideActive ||
@@ -1465,7 +1716,8 @@ export const HeaderStatusCluster = ({
     !gatewayConnectedForBridge && bridgeLaunchInFlightUntil > marketClockNow,
   );
   const gatewayReconnectNeeded = Boolean(
-    session?.configured?.ibkr && !gatewayConnectedForBridge,
+    (session?.configured?.ibkr && !gatewayConnectedForBridge) ||
+      desktopReconnectNeeded,
   );
   const bridgePopoverMessage =
     bridgeLauncherError ||
@@ -1473,6 +1725,37 @@ export const HeaderStatusCluster = ({
     (bridgeLaunchInFlight
       ? "IB Gateway activation is running from the Windows helper. Wait for the bridge to attach before launching again."
       : null);
+  const bridgeLaunchOperationModel = useMemo(() => {
+    const hasProgress = Boolean(
+      bridgeActivationStatus?.latestProgress ||
+        bridgeActivationStatus?.recentProgress?.length,
+    );
+    const hasTerminalLaunchState = Boolean(
+      bridgeActivationStatus?.canceled ||
+        (bridgeLauncherError && hasProgress) ||
+        gatewayConnectedForBridge,
+    );
+    if (!bridgeLaunchInFlight && !hasProgress && !hasTerminalLaunchState) {
+      return null;
+    }
+    return buildIbkrLaunchOperationStepper({
+      activationStatus: bridgeActivationStatus,
+      error: bridgeLauncherError,
+      gatewayConnected: gatewayConnectedForBridge,
+      inFlight: bridgeLaunchInFlight,
+      message: gatewayConnectedForBridge
+        ? "IB Gateway bridge attached."
+        : bridgePopoverMessage,
+    });
+  }, [
+    bridgeActivationStatus,
+    bridgeLaunchInFlight,
+    bridgeLauncherError,
+    bridgePopoverMessage,
+    gatewayConnectedForBridge,
+  ]);
+  const bridgeOperationModel =
+    bridgeManualOperationModel || bridgeLaunchOperationModel;
   const popoverLatencyMs = Number.isFinite(gatewayConnection?.lastPingMs)
     ? gatewayConnection.lastPingMs
     : gatewayLatencyStats?.totalMs?.p95;
@@ -1500,6 +1783,7 @@ export const HeaderStatusCluster = ({
   const autoLoginActionDisabled = Boolean(
     gatewayConnectedForBridge ||
       bridgeLauncherBusy ||
+      desktopReconnectUpgradeRequired ||
       (!autoLoginPrimaryCancelsLaunch && !autoLoginCredentialsReady) ||
       (!bridgeLaunchCancelable && bridgeLaunchInFlight),
   );
@@ -1511,6 +1795,10 @@ export const HeaderStatusCluster = ({
           ? "Cancel launch"
       : bridgeLaunchInFlight
       ? "Launching"
+      : desktopReconnectUpgradeRequired
+        ? "Update desktop helper"
+      : desktopReconnectReady
+        ? "Reconnect on desktop"
       : gatewayReconnectNeeded
         ? "Reconnect with credentials"
         : remoteDesktopLaunchBrowser
@@ -1696,6 +1984,7 @@ export const HeaderStatusCluster = ({
     }
 
     let canceled = false;
+    let timerId = null;
     const validateActivation = async () => {
       try {
         const payload = await platformJsonRequest(
@@ -1711,6 +2000,7 @@ export const HeaderStatusCluster = ({
         if (canceled) {
           return;
         }
+        setBridgeActivationStatus(payload || null);
         if (payload?.active && !payload.canceled) {
           setBridgeActivationActive(true);
           return;
@@ -1734,8 +2024,15 @@ export const HeaderStatusCluster = ({
     };
 
     void validateActivation();
+    timerId = window.setInterval(
+      validateActivation,
+      IBKR_BRIDGE_ACTIVATION_STATUS_POLL_MS,
+    );
     return () => {
       canceled = true;
+      if (timerId !== null) {
+        window.clearInterval(timerId);
+      }
     };
   }, [
     bridgeActivationId,
@@ -1895,6 +2192,7 @@ export const HeaderStatusCluster = ({
       setBridgeLauncherError("IBKR username and password are required.");
       return;
     }
+    setBridgeManualOperationModel(null);
 
     if (
       bridgeCredentialResumeAvailable &&
@@ -1935,6 +2233,7 @@ export const HeaderStatusCluster = ({
 
     const useRemoteDesktopLaunch = shouldUseRemoteIbkrLaunchBrowser();
     const protocolLauncher = useRemoteDesktopLaunch ? null : openIbkrProtocolLauncher();
+    setBridgeActivationStatus(null);
     setBridgePopoverOpen(true);
     setBridgeLauncherBusy(true);
     setBridgeLauncherError(null);
@@ -2053,6 +2352,29 @@ export const HeaderStatusCluster = ({
           timeoutMs: 0,
         },
       );
+      setBridgeActivationStatus((current) => {
+        const recentProgress = Array.isArray(current?.recentProgress)
+          ? current.recentProgress
+          : [];
+        const latestProgress = {
+          activationId: bridgeActivationId,
+          status: "canceled",
+          step: "cancel_requested",
+          message: "IB Gateway bridge launch was canceled from PYRUS.",
+          helperVersion: null,
+          bridgeUrl: null,
+          updatedAt: new Date().toISOString(),
+        };
+        return {
+          ...(current || {}),
+          active: false,
+          canceled: true,
+          expiresAt: current?.expiresAt || new Date().toISOString(),
+          latestProgress,
+          recentProgress: [...recentProgress, latestProgress].slice(-20),
+        };
+      });
+      setBridgeManualOperationModel(null);
       setBridgeLauncherNotice("IB Gateway launch canceled.");
       clearBridgeLaunchSessionState();
     } catch (error) {
@@ -2061,6 +2383,36 @@ export const HeaderStatusCluster = ({
         error?.code === "ibkr_bridge_activation_not_found" ||
         error?.code === "ibkr_bridge_activation_superseded"
       ) {
+        setBridgeActivationStatus((current) => ({
+          ...(current || {}),
+          active: false,
+          canceled: true,
+          expiresAt: current?.expiresAt || new Date().toISOString(),
+          latestProgress: {
+            activationId: bridgeActivationId,
+            status: "canceled",
+            step: "cancel_requested",
+            message: "No active IB Gateway launch remained.",
+            helperVersion: null,
+            bridgeUrl: null,
+            updatedAt: new Date().toISOString(),
+          },
+          recentProgress: [
+            ...(Array.isArray(current?.recentProgress)
+              ? current.recentProgress
+              : []),
+            {
+              activationId: bridgeActivationId,
+              status: "canceled",
+              step: "cancel_requested",
+              message: "No active IB Gateway launch remained.",
+              helperVersion: null,
+              bridgeUrl: null,
+              updatedAt: new Date().toISOString(),
+            },
+          ].slice(-20),
+        }));
+        setBridgeManualOperationModel(null);
         setBridgeLauncherNotice("No active IB Gateway launch remained.");
         clearBridgeLaunchSessionState();
       } else {
@@ -2081,22 +2433,34 @@ export const HeaderStatusCluster = ({
     setBridgeLauncherBusy(true);
     setBridgeLauncherError(null);
     setBridgeLauncherNotice(null);
+    setBridgeActivationStatus(null);
+    setBridgeManualOperationModel(
+      buildIbkrDeactivateOperationStepper({
+        queue: "current",
+        message: "Queueing Windows desktop shutdown.",
+      }),
+    );
+    const shutdownRequest = platformJsonRequest("/api/ibkr/remote-shutdown", {
+      method: "POST",
+      body: bridgeManagementToken
+        ? { managementToken: bridgeManagementToken }
+        : { force: true },
+      timeoutMs: 0,
+    }).then(
+      (payload) => ({ payload, error: null }),
+      (error) => ({ payload: null, error }),
+    );
 
     try {
-      const shutdown = await platformJsonRequest("/api/ibkr/remote-shutdown", {
-        method: "POST",
-        body: bridgeManagementToken
-          ? { managementToken: bridgeManagementToken }
-          : { force: true },
-      });
-      if (shutdown?.shutdown?.jobId && shutdown?.shutdown?.statusToken) {
-        setBridgeLauncherNotice("Waiting for the Windows desktop to stop IB Gateway.");
-        await waitForIbkrDesktopJob({
-          jobId: shutdown.shutdown.jobId,
-          statusToken: shutdown.shutdown.statusToken,
-        });
-      }
+      setBridgeManualOperationModel(
+        buildIbkrDeactivateOperationStepper({
+          queue: "current",
+          detach: "current",
+          message: "Queueing Windows shutdown and detaching backend runtime.",
+        }),
+      );
 
+      setBridgeLauncherNotice("Detaching IBKR bridge.");
       if (bridgeManagementToken) {
         try {
           await platformJsonRequest("/api/ibkr/bridge/detach", {
@@ -2126,21 +2490,133 @@ export const HeaderStatusCluster = ({
           },
         );
       }
+      setBridgeManualOperationModel(
+        buildIbkrDeactivateOperationStepper({
+          queue: "current",
+          detach: "complete",
+          refresh: "current",
+          message: "IBKR runtime detached. Refreshing connection state.",
+        }),
+      );
       setBridgeManagementToken(null);
       setBridgeActivationId(null);
       clearIbkrBridgeSessionValues();
       setBridgeLaunchUrl(null);
       setBridgeLaunchInFlightUntil(0);
       invalidateIbkrRuntimeQueries(queryClient);
-      setBridgeLauncherNotice("IB Gateway stopped on the Windows desktop.");
+      void refreshIbkrConnectionStatus();
+      setBridgeManualOperationModel(
+        buildIbkrDeactivateOperationStepper({
+          queue: "current",
+          detach: "complete",
+          refresh: "complete",
+          message: "IBKR detached. Waiting for Windows shutdown queue confirmation.",
+        }),
+      );
+      setBridgeLauncherNotice("IBKR detached.");
+      void shutdownRequest.then(({ payload: shutdown, error }) => {
+        if (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "shutdown request was not queued";
+          setBridgeManualOperationModel(
+            buildIbkrDeactivateOperationStepper({
+              queue: "warning",
+              detach: "complete",
+              refresh: "complete",
+              desktop: "warning",
+              message: `Windows shutdown was not queued: ${message}`,
+            }),
+          );
+          setBridgeLauncherNotice(
+            `IBKR detached. Windows shutdown was not queued: ${message}`,
+          );
+          return;
+        }
+
+        const shutdownJob = shutdown?.shutdown;
+        if (!shutdownJob?.jobId || !shutdownJob?.statusToken) {
+          setBridgeManualOperationModel(
+            buildIbkrDeactivateOperationStepper({
+              queue: "warning",
+              detach: "complete",
+              refresh: "complete",
+              desktop: "warning",
+              message: "IBKR detached. Windows shutdown was not queued.",
+            }),
+          );
+          setBridgeLauncherNotice("IBKR detached.");
+          return;
+        }
+
+        setBridgeManualOperationModel(
+          buildIbkrDeactivateOperationStepper({
+            queue: "complete",
+            detach: "complete",
+            refresh: "complete",
+            desktop: "current",
+            message: "Waiting for the Windows desktop to stop IB Gateway.",
+          }),
+        );
+        setBridgeLauncherNotice(
+          "IBKR detached. Waiting for the Windows desktop to stop IB Gateway.",
+        );
+        void waitForIbkrDesktopJob({
+          jobId: shutdownJob.jobId,
+          statusToken: shutdownJob.statusToken,
+        }).then(
+          () => {
+            invalidateIbkrRuntimeQueries(queryClient);
+            void refreshIbkrConnectionStatus();
+            setBridgeManualOperationModel(
+              buildIbkrDeactivateOperationStepper({
+                queue: "complete",
+                detach: "complete",
+                refresh: "complete",
+                desktop: "complete",
+                message: "IBKR detached and Gateway stopped on the Windows desktop.",
+              }),
+            );
+            setBridgeLauncherNotice(
+              "IBKR detached and Gateway stopped on the Windows desktop.",
+            );
+          },
+          (statusError) => {
+            const message =
+              statusError instanceof Error
+                ? statusError.message
+                : "shutdown was not confirmed";
+            setBridgeManualOperationModel(
+              buildIbkrDeactivateOperationStepper({
+                queue: "complete",
+                detach: "complete",
+                refresh: "complete",
+                desktop: "warning",
+                message: `Windows shutdown was not confirmed: ${message}`,
+              }),
+            );
+            setBridgeLauncherNotice(
+              `IBKR detached. Windows shutdown was not confirmed: ${message}`,
+            );
+          },
+        );
+      });
     } catch (error) {
+      setBridgeManualOperationModel(
+        buildIbkrDeactivateOperationStepper({
+          queue: "current",
+          detach: "error",
+          message: error instanceof Error ? error.message : "Deactivate failed.",
+        }),
+      );
       setBridgeLauncherError(
         error instanceof Error ? error.message : "Deactivate failed.",
       );
     } finally {
       setBridgeLauncherBusy(false);
     }
-  }, [bridgeManagementToken, queryClient]);
+  }, [bridgeManagementToken, queryClient, refreshIbkrConnectionStatus]);
 
   return (
     <div
@@ -2341,7 +2817,7 @@ export const HeaderStatusCluster = ({
               </AppTooltip>
             </div>
 
-            {canDeactivate && !showCredentialForm ? (
+            {canDeactivate ? (
               <div
                 style={{
                   display: "grid",
@@ -2519,7 +2995,7 @@ export const HeaderStatusCluster = ({
               </form>
             ) : null}
 
-            {bridgePopoverMessage?.trim() ? (
+            {bridgePopoverMessage?.trim() && !bridgeOperationModel ? (
               <div
                 style={{
                   minHeight: dim(32),
@@ -2541,6 +3017,8 @@ export const HeaderStatusCluster = ({
                 {bridgePopoverMessage}
               </div>
             ) : null}
+
+            <HeaderIbkrOperationStepper model={bridgeOperationModel} />
 
             <HeaderIbkrConnectionSummary model={gatewayPopoverModel} />
             <HeaderMarketDataLineUsage

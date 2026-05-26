@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
+import { GetSessionResponse } from "@workspace/api-zod";
 import type { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 
 process.env["DATABASE_URL"] = "postgres://test:test@127.0.0.1:5432/test";
@@ -191,6 +192,23 @@ test("runtime stream state is market-aware", () => {
     }),
     "market_session_quiet",
   );
+});
+
+test("session exposes IBKR runtime state even when bridge runtime is unconfigured", async () => {
+  clearIbkrBridgeRuntimeOverride();
+
+  const session = await getSession();
+  assert.equal(session.configured.ibkr, false);
+  assert.equal(session.runtime.ibkr.runtimeOverrideActive, false);
+  assert.equal(typeof session.runtime.ibkr.desktopAgentOnline, "boolean");
+  assert.equal(
+    typeof session.runtime.ibkr.desktopAgentExpectedHelperVersion,
+    "string",
+  );
+
+  const parsed = GetSessionResponse.parse(session);
+  assert.equal(parsed.runtime.ibkr.runtimeOverrideActive, false);
+  assert.equal(typeof parsed.runtime.ibkr.desktopAgentOnline, "boolean");
 });
 
 test("runtime diagnostics are read-only and only inspect bridge health", async () => {

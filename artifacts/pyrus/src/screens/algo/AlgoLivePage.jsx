@@ -495,9 +495,8 @@ export const AlgoLivePage = ({
       : null;
   const DeploymentToggleIcon = focusedDeployment?.enabled ? Pause : Play;
   const deploymentToggleLabel = focusedDeployment?.enabled ? "PAUSE" : "RESUME";
-  const scanButtonLabel = runShadowScanMutation?.isPending
-    ? "SCANNING..."
-    : "SCAN NOW";
+  const scanMutationPending = Boolean(runShadowScanMutation?.isPending);
+  const scanButtonLabel = scanMutationPending ? "SCANNING..." : "SCAN NOW";
   const hasActivitySummary = Boolean(activitySummary?.segments?.length);
   const denseOperationsLayout = algoIsPhone || algoIsNarrow;
   const algoIsPocketWidth =
@@ -535,17 +534,21 @@ export const AlgoLivePage = ({
   const overviewMetrics = [
     {
       label: "Scan",
-      value: refreshPending
-        ? "refreshing"
-        : cockpitGeneratedAt
-          ? formatRelativeTimeShort(cockpitGeneratedAt)
-          : "waiting",
+      value: scanMutationPending
+        ? "scanning"
+        : refreshPending
+          ? "syncing data"
+          : cockpitGeneratedAt
+            ? formatRelativeTimeShort(cockpitGeneratedAt)
+            : "waiting",
       detail: focusedDeployment?.lastEvaluatedAt
         ? `scan ${formatRelativeTimeShort(focusedDeployment.lastEvaluatedAt)}`
         : "no scan yet",
-      color: refreshPending ? CSS_COLOR.amber : CSS_COLOR.textSec,
+      color: scanMutationPending || refreshPending
+        ? CSS_COLOR.amber
+        : CSS_COLOR.textSec,
       icon: Clock,
-      severity: refreshPending ? "warning" : "neutral",
+      severity: scanMutationPending || refreshPending ? "warning" : "neutral",
     },
     {
       label: "Event",

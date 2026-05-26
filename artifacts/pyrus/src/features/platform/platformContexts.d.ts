@@ -1,6 +1,13 @@
 import type { Context } from "react";
 
-export type ToastKind = "success" | "error" | "warn" | "info";
+export type ToastKind =
+  | "success"
+  | "error"
+  | "warn"
+  | "warning"
+  | "critical"
+  | "info"
+  | "algo";
 
 export type ToastInput = {
   title: string;

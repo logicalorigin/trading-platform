@@ -78,6 +78,44 @@ test("bridge governor caps concurrent work by category", async () => {
   assert.equal(maxActive, 1);
 });
 
+test("bridge governor removes aborted queued work without consuming a slot", async () => {
+  process.env["IBKR_BRIDGE_GOVERNOR_OPTIONS_CONCURRENCY"] = "1";
+  let releaseFirst!: (value: string) => void;
+  const firstBlocker = new Promise<string>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let secondStarted = false;
+  const first = runBridgeWork(
+    "options",
+    () => firstBlocker,
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const controller = new AbortController();
+  const second = runBridgeWork(
+    "options",
+    async () => {
+      secondStarted = true;
+      return "second";
+    },
+    { signal: controller.signal },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(getBridgeGovernorSnapshot().options.queued, 1);
+
+  controller.abort(new Error("queued work cancelled"));
+  await assert.rejects(second, /queued work cancelled/);
+  assert.equal(secondStarted, false);
+  assert.equal(getBridgeGovernorSnapshot().options.queued, 0);
+
+  releaseFirst("first");
+  assert.equal(await first, "first");
+  assert.equal(
+    await runBridgeWork("options", async () => "third"),
+    "third",
+  );
+});
+
 test("bridge governor opens a category circuit after transient failures", async () => {
   process.env["IBKR_BRIDGE_GOVERNOR_OPTIONS_FAILURE_THRESHOLD"] = "1";
   process.env["IBKR_BRIDGE_GOVERNOR_OPTIONS_BACKOFF_MS"] = "1000";

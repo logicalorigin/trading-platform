@@ -1,6 +1,10 @@
 import { normalizeSymbol } from "../lib/values";
 import { logger } from "../lib/logger";
 import {
+  getIbkrBridgeRuntimeConfig,
+  onIbkrBridgeRuntimeChanged,
+} from "../lib/runtime";
+import {
   IbkrBridgeClient,
   type QuoteStreamSignal,
 } from "../providers/ibkr/bridge-client";
@@ -15,6 +19,7 @@ import {
   isMarketDataLeaseActive,
   releaseMarketDataLeaseIds,
   releaseMarketDataLeases,
+  subscribeMarketDataLeaseChanges,
   type MarketDataFallbackProvider,
   type MarketDataIntent,
 } from "./market-data-admission";
@@ -39,6 +44,7 @@ export type OptionQuoteSnapshotPayload = {
     bridgeChunks: number;
     providerMode: string | null;
     liveMarketDataAvailable: boolean | null;
+    errorCode?: string | null;
     errorMessage?: string | null;
     acceptedProviderContractIds: string[];
     missingProviderContractIds: string[];
@@ -71,6 +77,9 @@ export type BridgeOptionQuoteStreamDiagnostics = {
 type Subscriber = {
   id: number;
   owner: string;
+  intent: MarketDataIntent;
+  fallbackProvider: MarketDataFallbackProvider;
+  requiresGreeks: boolean;
   underlying: string | null;
   providerContractIds: Set<string>;
   onSnapshot: (payload: OptionQuoteSnapshotPayload) => void;
@@ -85,6 +94,7 @@ type BridgeOptionQuoteClient = {
   getOptionQuoteSnapshots(input: {
     underlying?: string | null;
     providerContractIds: string[];
+    signal?: AbortSignal;
   }): Promise<QuoteSnapshot[]>;
   streamOptionQuoteSnapshots(
     input: {
@@ -111,6 +121,13 @@ const quoteCacheByProviderContractId = new Map<string, QuoteSnapshot>();
 const STREAM_RECONFIGURE_DEBOUNCE_MS = 150;
 const RECONNECT_DELAY_MIN_MS = 1_000;
 const RECONNECT_DELAY_MAX_MS = 30_000;
+const UNCONFIGURED_OPTION_STREAM_RETRY_MS = Math.max(
+  60_000,
+  Number.parseInt(
+    process.env["IBKR_OPTION_QUOTE_STREAM_UNCONFIGURED_RETRY_MS"] ?? "60000",
+    10,
+  ) || 60_000,
+);
 const LIVE_OPTION_QUOTE_STALE_MS = 2_000;
 const OPTION_QUOTE_BRIDGE_CHUNK_SIZE = Math.max(
   1,
@@ -133,6 +150,7 @@ let lastError: string | null = null;
 let lastErrorAt: Date | null = null;
 let lastStreamStatus: NonNullable<QuoteStreamSignal["status"]> | null = null;
 let nowProvider = () => new Date();
+let bridgeRuntimeConfiguredForTests: boolean | null = null;
 
 function normalizeProviderContractIds(providerContractIds: string[]): string[] {
   return Array.from(
@@ -178,6 +196,10 @@ function normalizeUnderlying(value: string | null | undefined): string | null {
   return normalized || null;
 }
 
+function isBridgeRuntimeConfigured(): boolean {
+  return bridgeRuntimeConfiguredForTests ?? Boolean(getIbkrBridgeRuntimeConfig());
+}
+
 function chunkValues<T>(values: T[], chunkSize: number): T[][] {
   const chunks: T[][] = [];
   const normalizedChunkSize = Math.max(1, Math.floor(chunkSize));
@@ -187,8 +209,46 @@ function chunkValues<T>(values: T[], chunkSize: number): T[][] {
   return chunks;
 }
 
-function delayMs(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+function abortReason(signal?: AbortSignal): unknown {
+  return signal?.reason ?? new Error("Option quote snapshot aborted.");
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw abortReason(signal);
+  }
+}
+
+function delayMs(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(abortReason(signal));
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let cleanup = () => {};
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      cleanup();
+      reject(abortReason(signal));
+    };
+    cleanup = () => {
+      signal?.removeEventListener("abort", abort);
+    };
+    timeout = setTimeout(finish, Math.max(0, ms));
+    timeout.unref?.();
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function readTimestampMs(value: unknown): number | null {
@@ -263,6 +323,34 @@ function getRequestedProviderContractIds(): string[] {
       Array.from(subscriber.providerContractIds),
     ),
   );
+}
+
+function admitBridgeOptionSubscriberLeases(subscriber: Subscriber): void {
+  admitMarketDataLeases({
+    owner: subscriber.owner,
+    intent: subscriber.intent,
+    requests: Array.from(subscriber.providerContractIds).map((providerContractId) => ({
+      assetClass: "option" as const,
+      symbol: subscriber.underlying,
+      underlying: subscriber.underlying,
+      providerContractId,
+      requiresGreeks: subscriber.requiresGreeks,
+    })),
+    fallbackProvider: subscriber.fallbackProvider,
+  });
+}
+
+function admitBridgeOptionSubscriberLeasesForRuntime(): void {
+  if (!isBridgeRuntimeConfigured()) {
+    return;
+  }
+  subscribers.forEach(admitBridgeOptionSubscriberLeases);
+}
+
+function releaseBridgeOptionSubscriberLeases(reason: string): void {
+  subscribers.forEach((subscriber) => {
+    releaseMarketDataLeases(subscriber.owner, reason);
+  });
 }
 
 function addApiLatency(
@@ -568,6 +656,36 @@ function refreshBridgeOptionQuoteStream() {
   clearReconnectTimer();
   clearRefreshTimer();
 
+  if (!isBridgeRuntimeConfigured()) {
+    const requestedProviderContractIds = getRequestedProviderContractIds();
+    stopStream();
+    releaseBridgeOptionSubscriberLeases("runtime_unconfigured");
+    reconnectAttempt = 0;
+    if (!requestedProviderContractIds.length) {
+      lastStreamStatus = null;
+      lastError = null;
+      lastErrorAt = null;
+      return;
+    }
+    const now = nowProvider();
+    lastSignalAt = now;
+    lastError = null;
+    lastErrorAt = null;
+    lastStreamStatus = {
+      state: "closed",
+      reason: "ibkr_bridge_not_configured",
+      message: "Interactive Brokers bridge is not configured.",
+      requestedCount: requestedProviderContractIds.length,
+      admittedCount: 0,
+      rejectedCount: requestedProviderContractIds.length,
+      retryDelayMs: UNCONFIGURED_OPTION_STREAM_RETRY_MS,
+    };
+    scheduleRefreshBridgeOptionQuoteStream(UNCONFIGURED_OPTION_STREAM_RETRY_MS);
+    return;
+  }
+
+  admitBridgeOptionSubscriberLeasesForRuntime();
+
   const providerContractIds = getDesiredProviderContractIds();
   const nextSignature = providerContractIds.join(",");
   if (nextSignature === streamSignature) {
@@ -619,6 +737,24 @@ function scheduleRefreshBridgeOptionQuoteStream(
   refreshTimer.unref?.();
 }
 
+onIbkrBridgeRuntimeChanged(() => {
+  scheduleRefreshBridgeOptionQuoteStream(0);
+});
+
+subscribeMarketDataLeaseChanges((event) => {
+  if (!["released", "demoted", "expired"].includes(event.action)) {
+    return;
+  }
+  if (
+    !Array.from(subscribers.values()).some(
+      (subscriber) => subscriber.owner === event.owner,
+    )
+  ) {
+    return;
+  }
+  scheduleRefreshBridgeOptionQuoteStream(0);
+});
+
 function shouldHydrateQuoteSnapshot(
   quote: OptionQuoteWithSource | undefined,
 ): boolean {
@@ -657,6 +793,36 @@ async function getOptionQuoteProviderDebug(): Promise<{
   }
 }
 
+function buildUnconfiguredOptionQuoteSnapshotPayload(input: {
+  underlying: string | null;
+  requestedAt: number;
+  requestedProviderContractIds: string[];
+  normalizedProviderContractIds: string[];
+}): OptionQuoteSnapshotPayload {
+  return {
+    underlying: input.underlying,
+    quotes: [],
+    transport: null,
+    delayed: false,
+    fallbackUsed: false,
+    debug: {
+      totalMs: Math.max(0, Date.now() - input.requestedAt),
+      upstreamMs: null,
+      requestedCount: input.requestedProviderContractIds.length,
+      acceptedCount: 0,
+      rejectedCount: input.requestedProviderContractIds.length,
+      returnedCount: 0,
+      bridgeChunks: 0,
+      providerMode: null,
+      liveMarketDataAvailable: null,
+      errorCode: "ibkr_bridge_not_configured",
+      errorMessage: "Interactive Brokers bridge is not configured.",
+      acceptedProviderContractIds: [],
+      missingProviderContractIds: input.normalizedProviderContractIds,
+    },
+  };
+}
+
 export function getCurrentBridgeOptionQuoteSnapshots(input: {
   underlying?: string | null;
   providerContractIds: string[];
@@ -676,8 +842,10 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   fallbackProvider?: MarketDataFallbackProvider;
   requiresGreeks?: boolean;
   releaseLeasesOnComplete?: boolean;
+  signal?: AbortSignal;
 }): Promise<OptionQuoteSnapshotPayload> {
   const requestedAt = Date.now();
+  throwIfAborted(input.signal);
   const underlying = normalizeUnderlying(input.underlying);
   const requestedProviderContractIds = normalizeProviderContractIds(
     input.providerContractIds,
@@ -732,6 +900,16 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
       },
     };
   }
+  if (!isBridgeRuntimeConfigured()) {
+    stopStream();
+    releaseBridgeOptionSubscriberLeases("runtime_unconfigured");
+    return buildUnconfiguredOptionQuoteSnapshotPayload({
+      underlying,
+      requestedAt,
+      requestedProviderContractIds,
+      normalizedProviderContractIds,
+    });
+  }
   const admission = admitMarketDataLeases({
     owner,
     intent,
@@ -747,6 +925,20 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     replaceOwnerExisting: false,
   });
   const admittedLeaseIds = admission.admitted.map((lease) => lease.id);
+  let releasedAdmittedLeases = false;
+  const releaseAdmittedLeases = (reason: string) => {
+    if (releasedAdmittedLeases) {
+      return;
+    }
+    releasedAdmittedLeases = true;
+    releaseMarketDataLeaseIds(admittedLeaseIds, reason);
+  };
+  const releaseOnAbort = () => releaseAdmittedLeases("snapshot_aborted");
+  if (input.signal?.aborted) {
+    releaseOnAbort();
+    throw abortReason(input.signal);
+  }
+  input.signal?.addEventListener("abort", releaseOnAbort, { once: true });
   const admittedProviderContractIds = admission.admitted
     .map((lease) => lease.providerContractId)
     .filter((providerContractId): providerContractId is string =>
@@ -775,7 +967,8 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   );
 
   if (isBridgeWorkBackedOff(bridgeWorkCategory)) {
-    releaseMarketDataLeaseIds(admittedLeaseIds, "snapshot_complete");
+    input.signal?.removeEventListener("abort", releaseOnAbort);
+    releaseAdmittedLeases("snapshot_complete");
     return {
       ...cachedQuotes,
       debug: {
@@ -812,8 +1005,9 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
               bridgeClient.getOptionQuoteSnapshots({
                 underlying,
                 providerContractIds,
+                signal: input.signal,
               }),
-              bridgeWorkOptions,
+              { ...(bridgeWorkOptions ?? {}), signal: input.signal },
             ),
           ),
         )
@@ -824,19 +1018,22 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
           !quoteCacheByProviderContractId.has(providerContractId),
       );
       if (missingAfterHydration.length > 0) {
-        await delayMs(750);
+        await delayMs(750, input.signal);
         const retryQuotes = (
           await Promise.all(
             chunkValues(
               missingAfterHydration,
               OPTION_QUOTE_BRIDGE_CHUNK_SIZE,
             ).map((providerContractIds) =>
-              runBridgeWork(bridgeWorkCategory, () =>
-                bridgeClient.getOptionQuoteSnapshots({
-                  underlying,
-                  providerContractIds,
-                }),
-                bridgeWorkOptions,
+              runBridgeWork(
+                bridgeWorkCategory,
+                () =>
+                  bridgeClient.getOptionQuoteSnapshots({
+                    underlying,
+                    providerContractIds,
+                    signal: input.signal,
+                  }),
+                { ...(bridgeWorkOptions ?? {}), signal: input.signal },
               ),
             ),
           )
@@ -849,8 +1046,11 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     lastError = upstreamErrorMessage;
     lastErrorAt = nowProvider();
   } finally {
-    if (releaseLeasesOnComplete || upstreamErrorMessage) {
-      releaseMarketDataLeaseIds(admittedLeaseIds, "snapshot_complete");
+    input.signal?.removeEventListener("abort", releaseOnAbort);
+    if (releaseLeasesOnComplete || upstreamErrorMessage || input.signal?.aborted) {
+      releaseAdmittedLeases(
+        input.signal?.aborted ? "snapshot_aborted" : "snapshot_complete",
+      );
     }
   }
 
@@ -911,30 +1111,31 @@ export function subscribeBridgeOptionQuoteSnapshots(
   nextSubscriberId += 1;
   const owner =
     input.owner?.trim() || `bridge-option-quote-stream:${subscriberId}`;
-  const admission = admitMarketDataLeases({
-    owner,
-    intent: input.intent ?? "visible-live",
-    requests: normalizedProviderContractIds.map((providerContractId) => ({
-      assetClass: "option" as const,
-      symbol: underlying,
-      underlying,
-      providerContractId,
-      requiresGreeks: input.requiresGreeks ?? true,
-    })),
-    fallbackProvider: input.fallbackProvider ?? "polygon",
-  });
-  const admittedProviderContractIds = admission.admitted
-    .map((lease) => lease.providerContractId)
-    .filter((providerContractId): providerContractId is string =>
-      Boolean(providerContractId),
-    );
-  subscribers.set(subscriberId, {
+  const subscriber: Subscriber = {
     id: subscriberId,
     owner,
+    intent: input.intent ?? "visible-live",
+    fallbackProvider: input.fallbackProvider ?? "polygon",
+    requiresGreeks: input.requiresGreeks ?? true,
     underlying,
     providerContractIds: new Set(normalizedProviderContractIds),
     onSnapshot,
-  });
+  };
+  subscribers.set(subscriberId, subscriber);
+  if (isBridgeRuntimeConfigured()) {
+    admitBridgeOptionSubscriberLeases(subscriber);
+  } else {
+    onSnapshot(
+      buildUnconfiguredOptionQuoteSnapshotPayload({
+        underlying,
+        requestedAt: Date.now(),
+        requestedProviderContractIds: normalizeProviderContractIds(
+          input.providerContractIds,
+        ),
+        normalizedProviderContractIds,
+      }),
+    );
+  }
 
   const cachedPayload = getPayloadForProviderContractIds(
     normalizedProviderContractIds,
@@ -949,13 +1150,15 @@ export function subscribeBridgeOptionQuoteSnapshots(
   return () => {
     subscribers.delete(subscriberId);
     releaseMarketDataLeases(owner, "unsubscribe");
-    scheduleRefreshBridgeOptionQuoteStream();
+    scheduleRefreshBridgeOptionQuoteStream(0);
   };
 }
 
 export function getBridgeOptionQuoteStreamDiagnostics(): BridgeOptionQuoteStreamDiagnostics {
   const desiredProviderContractIds = getDesiredProviderContractIds();
   const requestedProviderContractIds = getRequestedProviderContractIds();
+  const hasOptionDemand =
+    desiredProviderContractIds.length > 0 || requestedProviderContractIds.length > 0;
   const now = nowProvider().getTime();
   const lastEventMs = lastEventAt?.getTime() ?? null;
   const lastSignalMs = lastSignalAt?.getTime() ?? null;
@@ -987,14 +1190,14 @@ export function getBridgeOptionQuoteStreamDiagnostics(): BridgeOptionQuoteStream
     ),
     reconnectScheduled: Boolean(reconnectTimer),
     desiredProviderContractIds: desiredProviderContractIds.slice(0, 100),
-    lastError: desiredProviderContractIds.length ? lastError : null,
-    lastErrorAt: desiredProviderContractIds.length
+    lastError: hasOptionDemand ? lastError : null,
+    lastErrorAt: hasOptionDemand
       ? (lastErrorAt?.toISOString() ?? null)
       : null,
-    lastStreamStatus: desiredProviderContractIds.length
+    lastStreamStatus: hasOptionDemand
       ? lastStreamStatus
       : null,
-    pressure: !desiredProviderContractIds.length
+    pressure: !hasOptionDemand
       ? "normal"
       : capacityPressure
         ? capacityPressure
@@ -1008,6 +1211,13 @@ export function __setBridgeOptionQuoteClientForTests(
   client: BridgeOptionQuoteClient | null,
 ): void {
   bridgeClient = client ?? new IbkrBridgeClient();
+  bridgeRuntimeConfiguredForTests = client ? true : null;
+}
+
+export function __setBridgeOptionQuoteRuntimeConfiguredForTests(
+  configured: boolean | null,
+): void {
+  bridgeRuntimeConfiguredForTests = configured;
 }
 
 export function __setBridgeOptionQuoteStreamNowForTests(now: Date | null): void {
@@ -1039,5 +1249,6 @@ export function __resetBridgeOptionQuoteStreamForTests(): void {
   lastError = null;
   lastErrorAt = null;
   lastStreamStatus = null;
+  bridgeRuntimeConfiguredForTests = null;
   nowProvider = () => new Date();
 }

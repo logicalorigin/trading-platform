@@ -1,5 +1,5 @@
 import { AppTooltip } from "@/components/ui/tooltip";
-import { RADII, T, dim, sp, textSize } from "../../../lib/uiTokens.jsx";
+import { RADII, T, cssColorAlpha, dim, sp, textSize } from "../../../lib/uiTokens.jsx";
 import { confluenceTooltip } from "./tooltips.js";
 import { getTone } from "./tones.js";
 
@@ -46,8 +46,8 @@ export const ConfluenceChip = ({
           height: dim(16),
           padding: sp("0 5px"),
           borderRadius: dim(RADII.pill),
-          border: `1px solid ${tone}55`,
-          background: `${tone}1A`,
+          border: `1px solid ${cssColorAlpha(tone, "55")}`,
+          background: cssColorAlpha(tone, "1A"),
           color: tone,
           fontFamily: T.sans,
           fontSize: textSize("caption"),

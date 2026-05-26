@@ -167,7 +167,6 @@ const getDisplayableFlowError = (providerSummary) => {
 };
 const FLOW_PREMIUM_WIDGET_COUNT = 16;
 const FLOW_PREMIUM_WIDGET_REFRESH_MS = 30_000;
-const FLOW_DEFERRED_PANELS_DELAY_MS = 500;
 const FLOW_PREMIUM_TIMEFRAME_OPTIONS = [
   ["today", "Today"],
   ["week", "Week"],
@@ -1659,8 +1658,7 @@ const FlowOverviewPanel = ({
   );
   const [copiedEventId, setCopiedEventId] = useState(null);
   const [flowNowMs, setFlowNowMs] = useState(() => Date.now());
-  const [showDeferredPanels, setShowDeferredPanels] = useState(false);
-  const [activateNews, setActivateNews] = useState(false);
+  const showDeferredPanels = Boolean(isVisible);
   const [pausedSnapshot, setPausedSnapshot] = useState(null);
   const flowContentRef = useRef(null);
   const copyStatusTimerRef = useRef(null);
@@ -1776,37 +1774,6 @@ const FlowOverviewPanel = ({
   }, []);
 
   useEffect(() => {
-    if (!isVisible || showDeferredPanels) return undefined;
-    let firstFrameId = null;
-    let secondFrameId = null;
-    let timerId = null;
-    if (typeof requestAnimationFrame === "function") {
-      firstFrameId = requestAnimationFrame(() => {
-        secondFrameId = requestAnimationFrame(() => {
-          timerId = setTimeout(
-            () => setShowDeferredPanels(true),
-            FLOW_DEFERRED_PANELS_DELAY_MS,
-          );
-        });
-      });
-      return () => {
-        cancelAnimationFrame(firstFrameId);
-        if (secondFrameId != null) {
-          cancelAnimationFrame(secondFrameId);
-        }
-        if (timerId != null) {
-          clearTimeout(timerId);
-        }
-      };
-    }
-    const timeoutId = setTimeout(
-      () => setShowDeferredPanels(true),
-      FLOW_DEFERRED_PANELS_DELAY_MS,
-    );
-    return () => clearTimeout(timeoutId);
-  }, [isVisible, showDeferredPanels]);
-
-  useEffect(() => {
     const element = flowContentRef.current;
     if (!element || !isVisible) {
       return undefined;
@@ -1847,12 +1814,6 @@ const FlowOverviewPanel = ({
       observer.disconnect();
     };
   }, [isVisible]);
-
-  useEffect(() => {
-    if (!isVisible || activateNews) return undefined;
-    const timeoutId = setTimeout(() => setActivateNews(true), 450);
-    return () => clearTimeout(timeoutId);
-  }, [activateNews, isVisible]);
 
   const flowScannerControl = useFlowScannerControlState({
     subscribe: isVisible,
@@ -1987,10 +1948,9 @@ const FlowOverviewPanel = ({
     { limit: 12 },
     {
       query: {
-        enabled: isVisible && activateNews,
+        enabled: Boolean(isVisible),
         staleTime: 60_000,
-        refetchInterval:
-          isVisible && activateNews && !livePaused ? 60_000 : false,
+        refetchInterval: isVisible && !livePaused ? 60_000 : false,
         retry: false,
       },
     },
@@ -2003,12 +1963,10 @@ const FlowOverviewPanel = ({
     },
     {
       query: {
-        enabled: Boolean(isVisible && showDeferredPanels),
+        enabled: Boolean(isVisible),
         staleTime: 15_000,
         refetchInterval:
-          isVisible && showDeferredPanels && !livePaused
-            ? FLOW_PREMIUM_WIDGET_REFRESH_MS
-            : false,
+          isVisible && !livePaused ? FLOW_PREMIUM_WIDGET_REFRESH_MS : false,
         retry: false,
       },
     },
@@ -2658,13 +2616,13 @@ const FlowOverviewPanel = ({
   );
 
   const selectedNewsItems = useMemo(() => {
-    if (!activateNews) return [];
+    if (!isVisible) return [];
     if (!newsItems.length) return [];
     const tickerMatches = activeTicker
       ? newsItems.filter((item) => item.tickers.includes(activeTicker))
       : [];
     return (tickerMatches.length ? tickerMatches : newsItems).slice(0, 5);
-  }, [activateNews, activeTicker, newsItems]);
+  }, [activeTicker, isVisible, newsItems]);
 
   const summaryCards = [
     {
@@ -4346,7 +4304,7 @@ const FlowOverviewPanel = ({
     </div>
   );
   const isFlowLoadingShell = flowStatus === "loading" && !flowEvents.length;
-  const shouldRenderDeferredPanels = showDeferredPanels && !isFlowLoadingShell;
+  const shouldRenderDeferredPanels = showDeferredPanels;
   useEffect(() => {
     onReadinessChange?.({
       criticalReady: Boolean(isVisible),
@@ -5470,7 +5428,7 @@ const FlowOverviewPanel = ({
               >
                 Catalyst Context
               </CardTitle>
-                  {activateNews ? (
+                  {isVisible ? (
                     selectedNewsItems.length ? (
                       <div style={{ display: "flex", flexDirection: "column", gap: sp(5) }}>
                         {selectedNewsItems.map((item) => (

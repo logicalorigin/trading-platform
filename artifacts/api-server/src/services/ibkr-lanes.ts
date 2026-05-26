@@ -609,14 +609,21 @@ async function buildLaneMemberships(
     {
       label: laneLabels["equity-live-quotes"],
       availableSources: {
+        "built-in": flowLaneSources.builtInSymbols,
         watchlists: watchlistSymbols,
+        "flow-universe": flowUniverseSymbols,
       },
       resolution: resolveIbkrLaneSymbols("equity-live-quotes", {
+        "built-in": flowLaneSources.builtInSymbols,
         watchlists: watchlistSymbols,
+        "flow-universe": flowUniverseSymbols,
       }),
       activeCount: readNumber(subscriptions.activeEquitySubscriptions),
       queuedCount: readNumber(bridgeSchedulerLane(bridge, "market-subscriptions").queued),
-      notes: ["Feeds header/watchlist quote prewarm and equity quote streams."],
+      notes: [
+        "Feeds header/watchlist quote prewarm and equity quote streams.",
+        "Uses the same lane sources as watchlist prewarm so watchlist priority and expansion pressure are visible.",
+      ],
     },
     {
       label: laneLabels["option-live-quotes"],

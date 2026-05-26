@@ -67,20 +67,43 @@ function pricedQuote(
   };
 }
 
-test("default paper signal-options startup caps its signal monitor profile", () => {
+test("default paper signal-options startup widens its signal monitor profile", () => {
   const source = readFileSync(
     new URL("./signal-options-automation.ts", import.meta.url),
     "utf8",
   );
 
-  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 8/);
-  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 1/);
-  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 120/);
+  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 250/);
+  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 3/);
+  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60/);
+  assert.match(source, /withSignalMonitorUniverseScope/);
+  assert.match(
+    source,
+    /input\.forceEvaluate === true[\s\S]*resolveSignalOptionsMonitorFullRefresh/,
+  );
   assert.match(
     source,
     /await normalizeDefaultSignalOptionsPaperSignalMonitorProfile\(\)/,
   );
   assert.match(source, /await updateSignalMonitorProfile\(patch\)/);
+});
+
+test("signal-options state resolves paper-enabled before UUID lookup", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const lookupBlock = source.match(
+    /async function getDeploymentOrThrow[\s\S]*?\nasync function listDeploymentEvents/,
+  )?.[0];
+
+  assert.match(source, /const UUID_PATTERN =/);
+  assert.match(source, /async function getDeploymentByAlias/);
+  assert.match(source, /alias !== "paper-enabled"/);
+  assert.match(
+    lookupBlock ?? "",
+    /UUID_PATTERN\.test\(deploymentId\)[\s\S]*where\(eq\(algoDeploymentsTable\.id,\s*deploymentId\)\)[\s\S]*:\s*await getDeploymentByAlias\(deploymentId\)/,
+  );
 });
 
 test("selectSignalOptionsExpiration excludes 0DTE by default", () => {
@@ -453,7 +476,87 @@ test("signal-options worker scan summary stays lightweight and universe-scoped",
     oldestSignalBarAt: "2026-05-18T18:10:00.000Z",
     candidateCount: 3,
     blockedCandidateCount: 2,
+    batch: null,
   });
+});
+
+test("signal-options monitor batches rotate through the deployment universe", () => {
+  const resolveBatch =
+    __signalOptionsAutomationInternalsForTests.resolveSignalOptionsMonitorBatch;
+  const profile = {
+    maxSymbols: 16,
+    evaluationConcurrency: 1,
+    timeframe: "5m",
+  } as never;
+  const universe = new Set(["SPY", "AAPL", "MSFT", "TSLA", "NVDA"]);
+  const deploymentId = "deploy-batch-rotation-test";
+
+  const first = resolveBatch({
+    deploymentId,
+    universe,
+    profile,
+    capacity: 2,
+  });
+  const second = resolveBatch({
+    deploymentId,
+    universe,
+    profile,
+    capacity: 2,
+  });
+  const third = resolveBatch({
+    deploymentId,
+    universe,
+    profile,
+    capacity: 2,
+  });
+  const reset = resolveBatch({
+    deploymentId,
+    universe: new Set(["QQQ", "DIA"]),
+    profile,
+    capacity: 2,
+  });
+
+  assert.deepEqual(first.symbols, ["SPY", "AAPL"]);
+  assert.equal(first.nextIndex, 2);
+  assert.deepEqual(second.symbols, ["MSFT", "TSLA"]);
+  assert.equal(second.nextIndex, 4);
+  assert.deepEqual(third.symbols, ["NVDA", "SPY"]);
+  assert.equal(third.nextIndex, 1);
+  assert.deepEqual(reset.symbols, ["QQQ", "DIA"]);
+  assert.equal(reset.startIndex, 0);
+});
+
+test("signal-options manual monitor refresh covers the full deployment universe", () => {
+  const resolveFullRefresh =
+    __signalOptionsAutomationInternalsForTests.resolveSignalOptionsMonitorFullRefresh;
+  const fullRefresh = resolveFullRefresh({
+    universe: new Set([
+      "SPY",
+      "AAPL",
+      "MSFT",
+      "TSLA",
+      "NVDA",
+      "QQQ",
+      "AMD",
+      "META",
+      "PLTR",
+      "COIN",
+      "HOOD",
+      "RBLX",
+      "RKLB",
+      "SMCI",
+      "VXX",
+      "VIXY",
+      "AVGO",
+      "IWM",
+    ]),
+  });
+
+  assert.equal(fullRefresh.symbols.length, 18);
+  assert.equal(fullRefresh.universeCount, 18);
+  assert.equal(fullRefresh.batchSize, 18);
+  assert.equal(fullRefresh.fullUniverse, true);
+  assert.equal(fullRefresh.nextIndex, 0);
 });
 
 test("active position marks record changed downside prices", () => {
@@ -1098,6 +1201,46 @@ test("live signal-options state does not recover positions from mark-skip payloa
 
   assert.deepEqual(stateEvents.activePositions, []);
   assert.deepEqual(stateEvents.signalEvents, []);
+});
+
+test("signal-options active positions drop zero-quantity shadow ledger links", () => {
+  const activePositions = [
+    { candidateId: "candidate-smci", symbol: "SMCI" },
+    { candidateId: "candidate-aapl", symbol: "AAPL" },
+    { candidateId: "candidate-nvda", symbol: "NVDA" },
+  ];
+  const reconciled =
+    __signalOptionsAutomationInternalsForTests.reconcileActivePositionsWithShadowLinks(
+      activePositions as never,
+      {
+        byEventId: new Map(),
+        byCandidateId: new Map([
+          [
+            "candidate-smci",
+            {
+              orderId: "smci-order",
+              fillId: "smci-fill",
+              positionId: "smci-position",
+              positionQuantity: 0,
+            },
+          ],
+          [
+            "candidate-aapl",
+            {
+              orderId: "aapl-order",
+              fillId: "aapl-fill",
+              positionId: "aapl-position",
+              positionQuantity: 2,
+            },
+          ],
+        ]),
+      } as never,
+    );
+
+  assert.deepEqual(
+    reconciled.map((position) => position.symbol),
+    ["AAPL", "NVDA"],
+  );
 });
 
 test("historical backfill uses signal monitor watchlist symbols before deployment symbols", () => {
@@ -2322,6 +2465,27 @@ test("later shadow entries clear earlier skipped candidate blockers", () => {
   assert.equal(mergedAfterMark.status, "open");
   assert.equal(mergedAfterMark.reason, null);
   assert.equal(action.actionStatus, "shadow_filled");
+});
+
+test("signal-options candidate with closed shadow position reports closed", () => {
+  const action =
+    __signalOptionsAutomationInternalsForTests.deriveCandidateActionStatus({
+      candidate: {
+        id: "candidate-smci",
+        status: "open",
+        orderPlan: { quantity: 5 },
+      } as never,
+      events: [{ eventType: SIGNAL_OPTIONS_ENTRY_EVENT }] as never,
+      shadowLink: {
+        orderId: "shadow-order",
+        fillId: "shadow-fill",
+        positionId: "shadow-position",
+        positionQuantity: 0,
+      } as never,
+    });
+
+  assert.equal(action.actionStatus, "closed");
+  assert.equal(action.syncStatus, "synced");
 });
 
 test("signal-options deployments normalize execution to the shadow account", () => {

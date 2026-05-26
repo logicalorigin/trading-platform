@@ -1504,6 +1504,55 @@ const upsertAccountPageLiveEquityTerminalPoint = (
   };
 };
 
+const mergeDerivedAccountPageEquityHistory = (
+  current: LiveAccountEquityHistoryResponse | undefined,
+  incoming: AccountEquityHistoryResponse,
+): AccountEquityHistoryResponse => {
+  if (!current?.liveTerminalIncluded || current.range !== incoming.range) {
+    return reuseEqualJson(current, incoming);
+  }
+
+  const currentPoints = current.points || [];
+  const incomingPoints = incoming.points || [];
+  const terminalPoint = currentPoints[currentPoints.length - 1] ?? null;
+  const terminalMs = terminalPoint ? pointTimestampMs(terminalPoint) : null;
+  if (terminalMs === null) {
+    return reuseEqualJson(current, incoming);
+  }
+
+  const incomingMaxMs = incomingPoints.reduce<number | null>((max, point) => {
+    const pointMs = pointTimestampMs(point);
+    if (pointMs === null) {
+      return max;
+    }
+    return max === null ? pointMs : Math.max(max, pointMs);
+  }, null);
+  if (incomingMaxMs !== null && incomingMaxMs >= terminalMs) {
+    return reuseEqualJson(current, incoming);
+  }
+
+  const nextPoints = recomputeEquityReturns(
+    [...incomingPoints, terminalPoint]
+      .filter((point) => pointTimestampMs(point) !== null)
+      .sort((left, right) => {
+        const leftMs = pointTimestampMs(left) ?? 0;
+        const rightMs = pointTimestampMs(right) ?? 0;
+        return leftMs - rightMs;
+      }),
+  );
+
+  return reuseEqualJson(current, {
+    ...incoming,
+    currency: incoming.currency || current.currency,
+    asOf: current.asOf ?? incoming.asOf,
+    isStale: current.isStale ?? incoming.isStale,
+    staleReason: current.staleReason ?? incoming.staleReason,
+    terminalPointSource: current.terminalPointSource,
+    liveTerminalIncluded: true,
+    points: nextPoints,
+  });
+};
+
 const patchAccountSummaryFromStream = (
   current: AccountSummaryResponse | undefined,
   payload: AccountStreamPayload,
@@ -2473,6 +2522,26 @@ const performanceCalendarParamsMatch = (
 
 const accountModeParams = (mode: StreamMode) => ({ mode });
 
+export const ACCOUNT_PERFORMANCE_CALENDAR_EQUITY_PURPOSE =
+  "performance-calendar";
+
+export const getAccountPerformanceCalendarEquityQueryKey = (
+  accountId: string,
+  params: { mode: StreamMode },
+) =>
+  [
+    `/api/accounts/${accountId}/equity-history`,
+    {
+      mode: params.mode,
+      range: "1Y",
+      purpose: ACCOUNT_PERFORMANCE_CALENDAR_EQUITY_PURPOSE,
+    },
+  ] as const;
+
+const isPerformanceCalendarEquityQuery = (
+  params: Record<string, unknown> | null,
+): boolean => params?.purpose === ACCOUNT_PERFORMANCE_CALENDAR_EQUITY_PURPOSE;
+
 const accountPositionsParams = (
   payload: Pick<AccountPageLivePayload, "mode" | "assetClass">,
 ) => ({
@@ -2571,7 +2640,8 @@ const seedAccountPageDerivedQueryKeys = (
         mode: payload.mode,
         range,
       }),
-      payload.equityHistory,
+      (current: LiveAccountEquityHistoryResponse | undefined) =>
+        mergeDerivedAccountPageEquityHistory(current, payload.equityHistory),
     );
   }
   (["SPY", "QQQ", "DIA"] as const).forEach((benchmark) => {
@@ -2591,11 +2661,14 @@ const seedAccountPageDerivedQueryKeys = (
   });
   setAccountPageQueryData(
     queryClient,
-    getGetAccountEquityHistoryQueryKey(payload.accountId, {
+    getAccountPerformanceCalendarEquityQueryKey(payload.accountId, {
       mode: payload.mode,
-      range: "1Y",
     }),
-    payload.performanceCalendarEquity,
+    (current: LiveAccountEquityHistoryResponse | undefined) =>
+      mergeDerivedAccountPageEquityHistory(
+        current,
+        payload.performanceCalendarEquity,
+      ),
   );
   setAccountPageQueryData(
     queryClient,
@@ -2827,6 +2900,8 @@ export const applyAccountPageDerivedPayloadToCache = (
         }
       } else if (path === `/api/accounts/${payload.accountId}/equity-history`) {
         const range = normalizeAccountHistoryRange(params?.range) ?? "ALL";
+        const performanceCalendarQuery =
+          isPerformanceCalendarEquityQuery(params);
         const benchmark =
           typeof params?.benchmark === "string" ? params.benchmark.toUpperCase() : null;
 
@@ -2837,12 +2912,28 @@ export const applyAccountPageDerivedPayloadToCache = (
               payload.benchmarkEquityHistory[benchmark],
             );
           }
+        } else if (performanceCalendarQuery) {
+          if (range === "1Y") {
+            queryClient.setQueryData(
+              query.queryKey,
+              (current: LiveAccountEquityHistoryResponse | undefined) =>
+                mergeDerivedAccountPageEquityHistory(
+                  current,
+                  payload.performanceCalendarEquity,
+                ),
+            );
+          }
         } else if (range === "1D") {
           return;
         } else if (range === payload.range) {
-          queryClient.setQueryData(query.queryKey, payload.equityHistory);
-        } else if (range === "1Y") {
-          queryClient.setQueryData(query.queryKey, payload.performanceCalendarEquity);
+          queryClient.setQueryData(
+            query.queryKey,
+            (current: LiveAccountEquityHistoryResponse | undefined) =>
+              mergeDerivedAccountPageEquityHistory(
+                current,
+                payload.equityHistory,
+              ),
+          );
         }
       }
     });
