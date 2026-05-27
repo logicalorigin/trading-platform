@@ -6597,3 +6597,38 @@
   - `pnpm --filter @workspace/pyrus run typecheck` failed on pre-existing unrelated issues: missing declarations for `src/lib/uiTokens.jsx` in backtesting/charting files and an unused `@ts-expect-error` in `ResearchChartSurface.tsx`.
   - Scoped `git diff --check` passed for the backend line-allocation files and handoff.
 - Next step: restart through Replit's default **Run Replit App** entry so the rebuilt API bundle is loaded, then recheck `/api/settings/ibkr-line-usage` for visible/account/scanner/algo ownership without active filler lines.
+
+## Signal Matrix Hydration Efficiency Update
+
+- Last updated: `2026-05-27 02:34 UTC`
+- Current request: implement the planned signal scanner/watchlist bubble hydration improvements.
+- Status: complete for the scoped implementation.
+  - Backend matrix evaluation now evaluates per symbol instead of per symbol/timeframe task, reusing one 1m-derived source for 2m and one 5m source for both 5m and derived 15m states.
+  - Synthetic 2m and 15m bars now require complete child source buckets before being considered hydrated signal bars.
+  - Matrix responses now report the hybrid source strategy, source request count, hydrated symbols, missing symbols, and estimated cycle metadata.
+  - Frontend matrix scheduler now considers existing 2m/5m/15m state hydration, skips already hydrated priority rows, and spends remaining scan slots on missing background bubbles.
+  - API schema/generated response types were extended for the new coverage fields.
+- Changed files:
+  - `artifacts/api-server/src/services/signal-monitor.ts`
+  - `artifacts/api-server/src/services/signal-monitor.test.ts`
+  - `artifacts/pyrus/src/features/platform/signalMatrixScheduler.js`
+  - `artifacts/pyrus/src/features/platform/signalMatrixScheduler.test.js`
+  - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+  - `lib/api-spec/openapi.yaml`
+  - `lib/api-zod/src/generated/api.ts`
+  - `lib/api-zod/src/generated/types/index.ts`
+  - `lib/api-zod/src/generated/types/signalMonitorMatrixResponseCoverage.ts`
+  - `lib/api-zod/src/generated/types/signalMonitorMatrixResponseCoverageSourceStrategy.ts`
+  - `lib/api-client-react/src/generated/api.schemas.ts`
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Post-implementation audit found no blocking issues in the scoped signal-matrix hydration changes. Noted residual risk: `sourceRequestCount` counts logical source loads attempted by the evaluator, not guaranteed external broker/API calls after completed-bars cache hits.
+  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts` passed 27/27.
+  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js` passed 7/7.
+  - `pnpm --filter @workspace/api-server run typecheck` passed.
+  - `pnpm --filter @workspace/pyrus run typecheck` passed.
+  - `pnpm --filter @workspace/api-client-react run typecheck` passed.
+  - `pnpm run typecheck:libs` passed.
+  - `pnpm run audit:api-codegen` passed after accepting regenerated orval output.
+  - Scoped `git diff --check` passed for the signal matrix/API schema/generated files and handoff.
+- Guardrail: worktree already contains unrelated user/generated changes. Keep all remaining work scoped and do not revert unrelated files.

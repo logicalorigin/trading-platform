@@ -3990,6 +3990,13 @@ export const SignalMonitorMatrixResponseCacheStatus = {
   miss: 'miss',
 } as const;
 
+export type SignalMonitorMatrixResponseCoverageSourceStrategy = typeof SignalMonitorMatrixResponseCoverageSourceStrategy[keyof typeof SignalMonitorMatrixResponseCoverageSourceStrategy];
+
+
+export const SignalMonitorMatrixResponseCoverageSourceStrategy = {
+  hybrid_1m_5m: 'hybrid_1m_5m',
+} as const;
+
 export type SignalMonitorMatrixResponseCoverageCacheStatus = typeof SignalMonitorMatrixResponseCoverageCacheStatus[keyof typeof SignalMonitorMatrixResponseCoverageCacheStatus];
 
 
@@ -4007,6 +4014,12 @@ export type SignalMonitorMatrixResponseCoverage = {
   totalSymbols: number;
   timeframes: number;
   taskCount: number;
+  sourceStrategy?: SignalMonitorMatrixResponseCoverageSourceStrategy;
+  sourceRequestCount?: number;
+  hydratedSymbols?: number;
+  missingSymbols?: number;
+  /** @nullable */
+  estimatedFullCycleMs?: number | null;
   cacheStatus: SignalMonitorMatrixResponseCoverageCacheStatus;
   durationMs: number;
   skippedSymbols: number;

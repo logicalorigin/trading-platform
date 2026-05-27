@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { SignalMonitorMatrixResponseCoverageCacheStatus } from './signalMonitorMatrixResponseCoverageCacheStatus';
+import type { SignalMonitorMatrixResponseCoverageSourceStrategy } from './signalMonitorMatrixResponseCoverageSourceStrategy';
 
 export type SignalMonitorMatrixResponseCoverage = {
   requestedSymbols: number;
@@ -14,6 +15,12 @@ export type SignalMonitorMatrixResponseCoverage = {
   totalSymbols: number;
   timeframes: number;
   taskCount: number;
+  sourceStrategy?: SignalMonitorMatrixResponseCoverageSourceStrategy;
+  sourceRequestCount?: number;
+  hydratedSymbols?: number;
+  missingSymbols?: number;
+  /** @nullable */
+  estimatedFullCycleMs?: number | null;
   cacheStatus: SignalMonitorMatrixResponseCoverageCacheStatus;
   durationMs: number;
   skippedSymbols: number;

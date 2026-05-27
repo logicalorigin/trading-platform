@@ -2248,6 +2248,7 @@ export default function PlatformApp() {
   const signalMatrixRotationCursorRef = useRef(0);
   const signalMatrixLastPlanRef = useRef(null);
   const signalMatrixUniverseRef = useRef([]);
+  const signalMatrixStatesRef = useRef([]);
   const signalMonitorStates = signalMonitorStateQuery.data?.states || [];
   const signalMonitorEvents = signalMonitorEventsQuery.data?.events || [];
   const signalMonitorSymbols = useMemo(
@@ -2565,6 +2566,10 @@ export default function PlatformApp() {
       signalMonitorDisplayReady &&
       signalMatrixPrioritySymbols.length,
   );
+  const signalMatrixPollMs = Math.max(
+    signalMonitorPollMs,
+    platformPressureCaps.signalMatrixPollMinMs || 0,
+  );
   useEffect(() => {
     signalMatrixUniverseRef.current = signalMatrixUniverseSymbols;
     setSignalMatrixSnapshot((current) => ({
@@ -2575,6 +2580,9 @@ export default function PlatformApp() {
       }),
     }));
   }, [signalMatrixUniverseSymbols, signalMatrixSymbolsKey]);
+  useEffect(() => {
+    signalMatrixStatesRef.current = signalMatrixSnapshot.states;
+  }, [signalMatrixSnapshot.states]);
   const evaluateSignalMonitorMatrixMutation = useEvaluateSignalMonitorMatrix({
     mutation: {
       onSuccess: (data) => {
@@ -2611,9 +2619,12 @@ export default function PlatformApp() {
     const plan = buildSignalMatrixRequestPlan({
       symbols: signalMatrixUniverseSymbols,
       prioritySymbols: signalMatrixPrioritySymbols,
+      currentStates: signalMatrixStatesRef.current,
+      timeframes: SIGNAL_MATRIX_TIMEFRAMES,
       pressureLevel: memoryPressureLevel,
       backgroundReady: signalMatrixBackgroundReady,
       cursor: signalMatrixRotationCursorRef.current,
+      pollMs: signalMatrixPollMs,
     });
     if (!plan.requestSymbols.length) {
       return;
@@ -2635,6 +2646,7 @@ export default function PlatformApp() {
     signalMonitorEnvironment,
     signalMatrixBackgroundReady,
     signalMatrixPrioritySymbols,
+    signalMatrixPollMs,
     signalMatrixSymbolsKey,
     signalMatrixUniverseSymbols,
   ]);
@@ -2643,10 +2655,6 @@ export default function PlatformApp() {
       signalMatrixUniverseSymbols.length &&
       signalMonitorDisplayReady &&
       (signalMatrixPriorityReady || signalMatrixBackgroundReady),
-  );
-  const signalMatrixPollMs = Math.max(
-    signalMonitorPollMs,
-    platformPressureCaps.signalMatrixPollMinMs || 0,
   );
   useEffect(() => {
     if (!signalMatrixRuntimeReady) {

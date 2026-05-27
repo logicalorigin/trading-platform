@@ -8,6 +8,7 @@ process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
 const signalMonitorModule = await import("./signal-monitor");
 const {
   __signalMonitorInternalsForTests,
+  aggregateCompletedFiveMinuteBars,
   aggregateCompletedMinuteBars,
   buildSignalMonitorDbUnavailableProfile,
   createSignalMonitorDbUnavailableError,
@@ -92,6 +93,59 @@ test("2m signal matrix bars roll up completed 1m bars", () => {
   );
 });
 
+test("2m signal matrix bars skip incomplete source buckets", () => {
+  const aggregated = aggregateCompletedMinuteBars(
+    [
+      bar("30", 100, 101),
+      bar("32", 103, 102),
+      bar("33", 102, 104),
+    ] as never,
+    "2m",
+    new Date("2026-04-24T14:35:02.000Z"),
+  );
+
+  assert.deepEqual(
+    aggregated.map((item) => item.timestamp),
+    [new Date("2026-04-24T14:32:00.000Z")],
+  );
+});
+
+test("15m signal matrix bars roll up completed 5m bars", () => {
+  const aggregated = aggregateCompletedFiveMinuteBars(
+    [
+      { ...bar("30", 100, 101), volume: 10 },
+      { ...bar("35", 101, 103), volume: 20 },
+      { ...bar("40", 103, 102), volume: 30 },
+      { ...bar("45", 102, 104), volume: 40 },
+      { ...bar("50", 104, 105), volume: 50 },
+    ] as never,
+    "15m",
+    new Date("2026-04-24T15:01:02.000Z"),
+  );
+
+  assert.equal(aggregated.length, 1);
+  assert.deepEqual(
+    aggregated.map((item) => ({
+      timestamp: item.timestamp,
+      open: item.open,
+      high: item.high,
+      low: item.low,
+      close: item.close,
+      volume: item.volume,
+    })),
+    [
+      {
+        timestamp: new Date("2026-04-24T14:30:00.000Z"),
+        open: 100,
+        high: 104,
+        low: 99,
+        close: 102,
+        volume: 60,
+      },
+    ],
+  );
+});
+
 test("signal monitor bar queries are scoped to the latest completed boundary", () => {
   assert.equal(
     signalMonitorCompletedBarsQueryTo({
@@ -147,8 +201,8 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
   const fullEvaluationBlock = source.match(
     /export async function evaluateSignalMonitorSymbol[\s\S]*?export function evaluateSignalMonitorMatrixStateFromCompletedBars/,
   )?.[0];
-  const matrixItemBlock = source.match(
-    /async function evaluateSignalMonitorMatrixItem[\s\S]*?function withSignalMonitorMatrixMetadata/,
+  const matrixSymbolBlock = source.match(
+    /async function evaluateSignalMonitorMatrixSymbol[\s\S]*?function withSignalMonitorMatrixMetadata/,
   )?.[0];
 
   assert.match(source, /getBarsWithDebug/);
@@ -167,8 +221,11 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
   assert.match(loadBlock ?? "", /shouldRetrySignalMonitorCompletedBars/);
   assert.doesNotMatch(fullEvaluationBlock ?? "", /SIGNAL_MONITOR_MATRIX_BARS_LIMIT/);
   assert.doesNotMatch(fullEvaluationBlock ?? "", /retryStale:\s*false/);
-  assert.match(matrixItemBlock ?? "", /limit:\s*SIGNAL_MONITOR_MATRIX_BARS_LIMIT/);
-  assert.doesNotMatch(matrixItemBlock ?? "", /retryStale:\s*false/);
+  assert.match(matrixSymbolBlock ?? "", /limit:\s*SIGNAL_MONITOR_MATRIX_BARS_LIMIT/);
+  assert.match(matrixSymbolBlock ?? "", /limit:\s*SIGNAL_MONITOR_MATRIX_5M_SOURCE_LIMIT/);
+  assert.match(matrixSymbolBlock ?? "", /aggregateCompletedFiveMinuteBars/);
+  assert.match(matrixSymbolBlock ?? "", /retryStale:\s*false/);
+  assert.match(matrixSymbolBlock ?? "", /sourceRequestCount/);
 });
 
 test("intraday delayed signal bars force live-edge retry before stale age", () => {

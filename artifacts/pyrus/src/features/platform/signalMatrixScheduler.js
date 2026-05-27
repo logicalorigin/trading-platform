@@ -1,11 +1,8 @@
-const DEFAULT_PRIORITY_BATCH_SIZE = 8;
-const DEFAULT_BACKGROUND_BATCH_SIZE = 12;
-const DEFAULT_REQUEST_SYMBOL_LIMIT = 16;
-const PRESSURE_PRIORITY_BATCH_SIZE = 4;
-const PRESSURE_BACKGROUND_BATCH_SIZE = 6;
-const PRESSURE_REQUEST_SYMBOL_LIMIT = 12;
-const HIGH_REQUEST_SYMBOL_LIMIT = 12;
-const CRITICAL_REQUEST_SYMBOL_LIMIT = 8;
+const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze(["2m", "5m", "15m"]);
+const DEFAULT_REQUEST_SYMBOL_LIMIT = 3;
+const WATCH_REQUEST_SYMBOL_LIMIT = 2;
+const HIGH_REQUEST_SYMBOL_LIMIT = 1;
+const CRITICAL_REQUEST_SYMBOL_LIMIT = 1;
 
 const normalizeSymbol = (symbol) => symbol?.trim?.().toUpperCase?.() || "";
 
@@ -34,6 +31,45 @@ const stateKey = (state) => {
   return symbol && timeframe ? `${symbol}:${timeframe}` : "";
 };
 
+const normalizeTimeframes = (timeframes = DEFAULT_SIGNAL_MATRIX_TIMEFRAMES) => {
+  const allowed = new Set(DEFAULT_SIGNAL_MATRIX_TIMEFRAMES);
+  const normalized = Array.isArray(timeframes)
+    ? timeframes
+        .map((timeframe) => String(timeframe || "").trim())
+        .filter((timeframe) => allowed.has(timeframe))
+    : [];
+  const unique = [...new Set(normalized)];
+  return unique.length ? unique : [...DEFAULT_SIGNAL_MATRIX_TIMEFRAMES];
+};
+
+const buildHydrationMap = (states = []) => {
+  const bySymbol = new Map();
+  states.forEach((state) => {
+    const symbol = normalizeSymbol(state?.symbol);
+    const timeframe = String(state?.timeframe || "").trim();
+    if (!symbol || !timeframe) return;
+    const byTimeframe = bySymbol.get(symbol) || {};
+    const current = byTimeframe[timeframe];
+    if (!current || readStateTimeMs(state) >= readStateTimeMs(current)) {
+      byTimeframe[timeframe] = state;
+      bySymbol.set(symbol, byTimeframe);
+    }
+  });
+  return bySymbol;
+};
+
+const isHydratedState = (state) =>
+  Boolean(
+    state &&
+      state.latestBarAt &&
+      (state.status === "ok" || state.status === "stale"),
+  );
+
+const symbolNeedsHydration = (symbol, hydrationMap, timeframes) => {
+  const byTimeframe = hydrationMap.get(symbol) || {};
+  return timeframes.some((timeframe) => !isHydratedState(byTimeframe[timeframe]));
+};
+
 const rotateSymbols = (symbols, cursor, count) => {
   if (!symbols.length || count <= 0) {
     return { symbols: [], nextCursor: cursor || 0 };
@@ -53,44 +89,46 @@ const rotateSymbols = (symbols, cursor, count) => {
 export function buildSignalMatrixRequestPlan({
   symbols = [],
   prioritySymbols = [],
+  currentStates = [],
+  timeframes = DEFAULT_SIGNAL_MATRIX_TIMEFRAMES,
   pressureLevel = "normal",
   backgroundReady = false,
   cursor = 0,
+  pollMs = 0,
 } = {}) {
   const universe = uniqueSymbols(symbols);
+  const matrixTimeframes = normalizeTimeframes(timeframes);
+  const hydrationMap = buildHydrationMap(currentStates);
   const universeSet = new Set(universe);
   const orderedPriority = uniqueSymbols(prioritySymbols).filter((symbol) =>
     universeSet.has(symbol),
   );
-  const pressureActive =
-    pressureLevel === "watch" ||
-    pressureLevel === "high" ||
-    pressureLevel === "critical";
-  const priorityLimit = pressureActive
-    ? PRESSURE_PRIORITY_BATCH_SIZE
-    : DEFAULT_PRIORITY_BATCH_SIZE;
   const requestLimit =
     pressureLevel === "critical"
       ? CRITICAL_REQUEST_SYMBOL_LIMIT
       : pressureLevel === "high"
         ? HIGH_REQUEST_SYMBOL_LIMIT
         : pressureLevel === "watch"
-          ? PRESSURE_REQUEST_SYMBOL_LIMIT
+          ? WATCH_REQUEST_SYMBOL_LIMIT
           : DEFAULT_REQUEST_SYMBOL_LIMIT;
-  const rawBackgroundLimit =
-    pressureActive
-        ? PRESSURE_BACKGROUND_BATCH_SIZE
-        : DEFAULT_BACKGROUND_BATCH_SIZE;
-  const priorityBatch = (orderedPriority.length ? orderedPriority : universe)
-    .slice(0, Math.min(priorityLimit, requestLimit));
+  const needsHydration = (symbol) =>
+    symbolNeedsHydration(symbol, hydrationMap, matrixTimeframes);
+  const missingSymbols = universe.filter(needsHydration);
+  const priorityBatch = orderedPriority
+    .filter(needsHydration)
+    .slice(0, requestLimit);
   const prioritySet = new Set(priorityBatch);
   const backgroundUniverse = universe.filter((symbol) => !prioritySet.has(symbol));
+  const missingBackgroundUniverse = backgroundUniverse.filter(needsHydration);
+  const rotationUniverse = missingBackgroundUniverse.length
+    ? missingBackgroundUniverse
+    : backgroundUniverse;
   const backgroundLimit = Math.max(
     0,
-    Math.min(rawBackgroundLimit, requestLimit - priorityBatch.length),
+    requestLimit - priorityBatch.length,
   );
   const background = backgroundReady
-    ? rotateSymbols(backgroundUniverse, cursor, backgroundLimit)
+    ? rotateSymbols(rotationUniverse, cursor, backgroundLimit)
     : { symbols: [], nextCursor: cursor || 0 };
   const requestSymbols = uniqueSymbols([
     ...priorityBatch,
@@ -110,7 +148,13 @@ export function buildSignalMatrixRequestPlan({
       prioritySymbols: priorityBatch.length,
       backgroundSymbols: background.symbols.length,
       requestSymbols: requestSymbols.length,
-      pendingSymbols: Math.max(0, universe.length - requestSymbols.length),
+      hydratedSymbols: Math.max(0, universe.length - missingSymbols.length),
+      missingSymbols: missingSymbols.length,
+      pendingSymbols: missingSymbols.length,
+      estimatedFullCycleMs:
+        pollMs > 0 && missingSymbols.length > 0 && requestSymbols.length > 0
+          ? Math.ceil(missingSymbols.length / requestSymbols.length) * pollMs
+          : null,
     },
   };
 }

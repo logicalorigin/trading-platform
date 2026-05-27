@@ -10494,6 +10494,17 @@ components:
               type: integer
             taskCount:
               type: integer
+            sourceStrategy:
+              type: string
+              enum: [hybrid_1m_5m]
+            sourceRequestCount:
+              type: integer
+            hydratedSymbols:
+              type: integer
+            missingSymbols:
+              type: integer
+            estimatedFullCycleMs:
+              type: [integer, "null"]
             cacheStatus:
               type: string
               enum: [hit, stale, inflight, miss]

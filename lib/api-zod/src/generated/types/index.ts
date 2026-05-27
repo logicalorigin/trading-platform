@@ -453,6 +453,7 @@ export * from './signalMonitorMatrixResponse';
 export * from './signalMonitorMatrixResponseCacheStatus';
 export * from './signalMonitorMatrixResponseCoverage';
 export * from './signalMonitorMatrixResponseCoverageCacheStatus';
+export * from './signalMonitorMatrixResponseCoverageSourceStrategy';
 export * from './signalMonitorMatrixState';
 export * from './signalMonitorMatrixTimeframe';
 export * from './signalMonitorProfile';
