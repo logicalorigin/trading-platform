@@ -23,6 +23,8 @@ const WORKER_WAKEUP_MS = 5_000;
 export const SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY = 1_930_514_022;
 const ADVISORY_LOCK_KEY = SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY;
 const FAILED_DEPLOYMENT_RETRY_MS = 60_000;
+const SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 20_000;
+const SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 24;
 
 type ReleaseLock = () => Promise<void>;
 type WorkerLogger = Pick<typeof logger, "debug" | "info" | "warn">;
@@ -33,6 +35,8 @@ type WorkerDependencies = {
     deploymentId: string;
     forceEvaluate: boolean;
     source: "worker";
+    actionWorkBudgetMs: number;
+    actionWorkItemLimit: number;
   }) => Promise<unknown>;
   runMaintenance: (input: { source: "worker" }) => Promise<unknown>;
   getResourcePressure: () => ApiResourcePressureSnapshot;
@@ -410,6 +414,7 @@ async function runDeployment(input: {
   }
 
   const scanStartedAtMs = dependencies.now().getTime();
+  let resumeActionWorkNextTick = false;
   activeDeploymentIds.add(deployment.id);
   runtime.currentScanStartedAtMs = scanStartedAtMs;
   try {
@@ -417,6 +422,8 @@ async function runDeployment(input: {
       deploymentId: deployment.id,
       forceEvaluate: false,
       source: "worker",
+      actionWorkBudgetMs: SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS,
+      actionWorkItemLimit: SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT,
     });
     if (isScanAlreadyRunningResult(scanResult)) {
       const skippedAt = dependencies.now();
@@ -444,6 +451,8 @@ async function runDeployment(input: {
     runtime.lastHeavyWorkDeferred = scanSummary.heavyWorkDeferred;
     runtime.lastActiveScanPhase = scanSummary.activeScanPhase;
     runtime.lastResourcePressureLevel = scanSummary.resourcePressureLevel;
+    resumeActionWorkNextTick =
+      scanSummary.heavyWorkDeferred && scanSummary.activeScanPhase === "action_scan";
     runtime.lastCandidateCount = scanSummary.candidateCount;
     runtime.lastBlockedCandidateCount = scanSummary.blockedCandidateCount;
     runtime.lastBatchSymbols = scanSummary.batch?.symbols ?? [];
@@ -472,7 +481,9 @@ async function runDeployment(input: {
     const scanEndedAtMs = dependencies.now().getTime();
     runtime.lastScanDurationMs = Math.max(0, scanEndedAtMs - scanStartedAtMs);
     runtime.lastCheckedAtMs = scanEndedAtMs;
-    runtime.nextScanDueAtMs = scanEndedAtMs + runtime.pollIntervalMs;
+    runtime.nextScanDueAtMs = resumeActionWorkNextTick
+      ? scanEndedAtMs
+      : scanEndedAtMs + runtime.pollIntervalMs;
     runtime.pressurePaused = false;
     runtime.pressurePauseStartedAtMs = null;
     runtime.currentScanStartedAtMs = null;
@@ -582,14 +593,14 @@ export function createSignalOptionsWorker(
 
         const pollIntervalMs = resolvePollIntervalSeconds(deployment) * 1000;
         runtime.pollIntervalMs = pollIntervalMs;
-        runtime.nextScanDueAtMs =
+        runtime.nextScanDueAtMs ??=
           runtime.lastCheckedAtMs > 0
             ? runtime.lastCheckedAtMs + pollIntervalMs
             : nowMs;
         if (
           !signatureChanged &&
           runtime.lastCheckedAtMs > 0 &&
-          nowMs - runtime.lastCheckedAtMs < pollIntervalMs
+          nowMs < runtime.nextScanDueAtMs
         ) {
           continue;
         }

@@ -137,6 +137,12 @@ test("signal-options scans publish fresh signal state before heavy action work",
     scanBody.indexOf("shouldDeferSignalOptionsHeavyWork") <
       scanBody.indexOf("refreshActivePosition"),
   );
+  assert.ok(
+    scanBody.indexOf("createSignalOptionsActionWorkBudget") <
+      scanBody.indexOf("refreshActivePosition"),
+  );
+  assert.match(scanBody, /rememberSignalOptionsActionCursor/);
+  assert.match(scanBody, /unmanagedPositionSymbols\.size === 0/);
   assert.match(scanBody, /activeScanPhase:\s*"deferred"/);
   assert.match(scanBody, /lastSignalScanAt:\s*signalScanCompletedAt\.toISOString\(\)/);
   assert.match(scanBody, /heavyWorkDeferred:\s*true/);

@@ -94,6 +94,16 @@ const signalOptionsMonitorBatchCursors = new Map<
   string,
   { signature: string; nextIndex: number }
 >();
+const signalOptionsActionCursors = new Map<
+  string,
+  {
+    phase: "positions" | "signals";
+    positionSignature: string;
+    positionIndex: number;
+    signalSignature: string;
+    signalIndex: number;
+  }
+>();
 
 type SignalOptionsRunMetadata = {
   runId: string;
@@ -119,6 +129,8 @@ const activeSignalOptionsRunMetadata = new Map<
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 60;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 2;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60;
+const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 20_000;
+const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 24;
 const SIGNAL_OPTIONS_MONITOR_STALE_GRACE_MS = 5_000;
 const SIGNAL_OPTIONS_POSITION_MARK_SKIP_RATE_LIMIT_MS = 5 * 60 * 1_000;
 const SIGNAL_OPTIONS_SHADOW_MARK_FALLBACK_MAX_AGE_MS = 3 * 60 * 1_000;
@@ -1314,6 +1326,142 @@ function shouldDeferSignalOptionsHeavyWork() {
       caps.actionScansAllowed === false ||
       caps.positionMarksAllowed === false,
   };
+}
+
+type SignalOptionsActionWorkBudget = {
+  deadlineMs: number | null;
+  itemLimit: number | null;
+  processedItems: number;
+};
+
+function positiveActionBudget(value: unknown, fallback: number): number {
+  const parsed = Math.floor(Number(value));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function createSignalOptionsActionWorkBudget(input: {
+  source: "manual" | "worker";
+  actionWorkBudgetMs?: number | null;
+  actionWorkItemLimit?: number | null;
+  nowMs?: number;
+}): SignalOptionsActionWorkBudget {
+  if (input.source !== "worker") {
+    return { deadlineMs: null, itemLimit: null, processedItems: 0 };
+  }
+  const nowMs = Number.isFinite(input.nowMs) ? Number(input.nowMs) : Date.now();
+  const budgetMs =
+    input.actionWorkBudgetMs === null
+      ? 0
+      : positiveActionBudget(
+          input.actionWorkBudgetMs,
+          DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS,
+        );
+  const itemLimit =
+    input.actionWorkItemLimit === null
+      ? 0
+      : positiveActionBudget(
+          input.actionWorkItemLimit,
+          DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT,
+        );
+  return {
+    deadlineMs: budgetMs > 0 ? nowMs + budgetMs : null,
+    itemLimit: itemLimit > 0 ? itemLimit : null,
+    processedItems: 0,
+  };
+}
+
+function signalOptionsActionWorkExhausted(
+  budget: SignalOptionsActionWorkBudget,
+  nowMs = Date.now(),
+): boolean {
+  if (budget.itemLimit !== null && budget.processedItems >= budget.itemLimit) {
+    return true;
+  }
+  return budget.deadlineMs !== null && nowMs >= budget.deadlineMs;
+}
+
+function recordSignalOptionsActionWorkItem(
+  budget: SignalOptionsActionWorkBudget,
+): void {
+  budget.processedItems += 1;
+}
+
+function clampActionCursorIndex(value: unknown, length: number): number {
+  const parsed = Math.floor(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0;
+  }
+  return Math.min(parsed, Math.max(0, length));
+}
+
+function signalOptionsPositionActionSignature(
+  positions: SignalOptionsPosition[],
+): string {
+  return positions
+    .map((position) =>
+      [
+        position.id,
+        normalizeSymbol(position.symbol).toUpperCase(),
+        position.direction,
+        position.quantity,
+        position.openedAt,
+        asRecord(position.selectedContract).providerContractId,
+      ]
+        .filter((part) => part != null && String(part).trim())
+        .join(":"),
+    )
+    .join("|");
+}
+
+function signalOptionsStateActionSignature(input: {
+  states: SignalMonitorState[];
+  universe: Set<string>;
+}): string {
+  return input.states
+    .map((state) => {
+      const symbol = normalizeSymbol(state.symbol).toUpperCase();
+      if (!symbol || (input.universe.size > 0 && !input.universe.has(symbol))) {
+        return null;
+      }
+      return [
+        symbol,
+        state.currentSignalDirection ?? "",
+        toIsoString(state.currentSignalAt) ?? "",
+        state.status ?? "",
+        state.fresh === true ? "fresh" : "not-fresh",
+      ].join(":");
+    })
+    .filter((value): value is string => Boolean(value))
+    .join("|");
+}
+
+function actionCursorForDeployment(deploymentId: string) {
+  return (
+    signalOptionsActionCursors.get(deploymentId) ?? {
+      phase: "positions" as const,
+      positionSignature: "",
+      positionIndex: 0,
+      signalSignature: "",
+      signalIndex: 0,
+    }
+  );
+}
+
+function rememberSignalOptionsActionCursor(input: {
+  deploymentId: string;
+  phase: "positions" | "signals";
+  positionSignature: string;
+  positionIndex: number;
+  signalSignature: string;
+  signalIndex: number;
+}) {
+  signalOptionsActionCursors.set(input.deploymentId, {
+    phase: input.phase,
+    positionSignature: input.positionSignature,
+    positionIndex: Math.max(0, Math.floor(input.positionIndex)),
+    signalSignature: input.signalSignature,
+    signalIndex: Math.max(0, Math.floor(input.signalIndex)),
+  });
 }
 
 function daysBetweenUtc(from: Date, to: Date) {
@@ -8958,6 +9106,8 @@ export async function runSignalOptionsShadowScan(input: {
   deploymentId: string;
   forceEvaluate?: boolean;
   source?: "manual" | "worker";
+  actionWorkBudgetMs?: number | null;
+  actionWorkItemLimit?: number | null;
 }) {
   if (activeScanDeploymentIds.has(input.deploymentId)) {
     return signalOptionsScanAlreadyRunningResponse(input);
@@ -8975,6 +9125,8 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   deploymentId: string;
   forceEvaluate?: boolean;
   source?: "manual" | "worker";
+  actionWorkBudgetMs?: number | null;
+  actionWorkItemLimit?: number | null;
 }) {
   const deployment = await getDeploymentOrThrow(input.deploymentId);
   const source = input.source ?? "manual";
@@ -9070,6 +9222,12 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     phase: "action_scan",
     heavyWorkDeferred: false,
   });
+  const actionWorkBudget = createSignalOptionsActionWorkBudget({
+    source,
+    actionWorkBudgetMs: input.actionWorkBudgetMs,
+    actionWorkItemLimit: input.actionWorkItemLimit,
+  });
+  const actionCursor = actionCursorForDeployment(deployment.id);
 
   const initialEvents = await listDeploymentEvents(
     deployment.id,
@@ -9081,8 +9239,51 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     events: initialSignalEvents,
   });
   const unmanagedPositionSymbols = new Set<string>();
+  const evaluatedStates = evaluated.states as SignalMonitorState[];
+  const positionSignature =
+    signalOptionsPositionActionSignature(initialPositions);
+  const signalSignature = signalOptionsStateActionSignature({
+    states: evaluatedStates,
+    universe,
+  });
+  const resumingSignalWork =
+    source === "worker" &&
+    actionCursor.phase === "signals" &&
+    actionCursor.positionSignature === positionSignature;
+  let nextPositionIndex =
+    source === "worker" &&
+    actionCursor.phase === "positions" &&
+    actionCursor.positionSignature === positionSignature
+      ? clampActionCursorIndex(actionCursor.positionIndex, initialPositions.length)
+      : 0;
+  let nextSignalIndex =
+    source === "worker" &&
+    actionCursor.phase === "signals" &&
+    actionCursor.positionSignature === positionSignature &&
+    actionCursor.signalSignature === signalSignature
+      ? clampActionCursorIndex(actionCursor.signalIndex, evaluatedStates.length)
+      : 0;
+  let actionWorkDeferred = false;
 
-  for (const position of initialPositions) {
+  if (resumingSignalWork) {
+    nextPositionIndex = initialPositions.length;
+  }
+
+  for (
+    let positionIndex = nextPositionIndex;
+    positionIndex < initialPositions.length;
+    positionIndex += 1
+  ) {
+    if (signalOptionsActionWorkExhausted(actionWorkBudget)) {
+      actionWorkDeferred = true;
+      nextPositionIndex = positionIndex;
+      break;
+    }
+    const position = initialPositions[positionIndex];
+    if (!position) {
+      nextPositionIndex = positionIndex + 1;
+      continue;
+    }
     const refreshResult = await refreshActivePosition({
       deployment,
       profile,
@@ -9121,6 +9322,54 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     if (!refreshResult.managed) {
       unmanagedPositionSymbols.add(normalizeSymbol(position.symbol).toUpperCase());
     }
+    recordSignalOptionsActionWorkItem(actionWorkBudget);
+    nextPositionIndex = positionIndex + 1;
+  }
+
+  if (
+    source === "worker" &&
+    (actionWorkDeferred ||
+      (nextPositionIndex >= initialPositions.length &&
+        signalOptionsActionWorkExhausted(actionWorkBudget)))
+  ) {
+    const resumeAtSignals =
+      nextPositionIndex >= initialPositions.length &&
+      unmanagedPositionSymbols.size === 0;
+    updateSignalOptionsRunMetadata(deployment.id, {
+      heavyWorkDeferred: true,
+    });
+    rememberSignalOptionsActionCursor({
+      deploymentId: deployment.id,
+      phase: resumeAtSignals ? "signals" : "positions",
+      positionSignature,
+      positionIndex: resumeAtSignals
+        ? initialPositions.length
+        : nextPositionIndex >= initialPositions.length
+          ? 0
+          : nextPositionIndex,
+      signalSignature,
+      signalIndex: resumeAtSignals ? nextSignalIndex : 0,
+    });
+    return {
+      deployment: deploymentToResponse({
+        ...deployment,
+        lastEvaluatedAt: signalScanCompletedAt,
+        lastSignalAt: signalLastSignalAt ?? deployment.lastSignalAt,
+        lastError: null,
+        updatedAt: signalScanCompletedAt,
+      }),
+      summary: buildWorkerScanSummary({
+        states: evaluatedStates,
+        universe,
+        candidateCount: 0,
+        blockedCandidateCount: 0,
+        batch: asRecord(asRecord(evaluated).signalOptionsBatch),
+        lastSignalScanAt: signalScanCompletedAt.toISOString(),
+        heavyWorkDeferred: true,
+        activeScanPhase: "action_scan",
+        resourcePressureLevel: heavyWorkDecision.pressure.level,
+      }),
+    };
   }
 
   const eventsAfterMarks = await listDeploymentEvents(
@@ -9168,7 +9417,21 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   const degradedPositionSymbols = [...unmanagedPositionSymbols].filter(Boolean);
   const positionMarkHaltActive = degradedPositionSymbols.length > 0;
 
-  for (const state of evaluated.states as SignalMonitorState[]) {
+  for (
+    let stateIndex = nextSignalIndex;
+    stateIndex < evaluatedStates.length;
+    stateIndex += 1
+  ) {
+    if (signalOptionsActionWorkExhausted(actionWorkBudget)) {
+      actionWorkDeferred = true;
+      nextSignalIndex = stateIndex;
+      break;
+    }
+    const state = evaluatedStates[stateIndex];
+    if (!state) {
+      nextSignalIndex = stateIndex + 1;
+      continue;
+    }
     const symbol = normalizeSymbol(state.symbol).toUpperCase();
     if (!symbol || (universe.size > 0 && !universe.has(symbol))) {
       continue;
@@ -9203,6 +9466,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       signalMetadata,
     });
     candidateCount += 1;
+    recordSignalOptionsActionWorkItem(actionWorkBudget);
     const currentPosition = activePositionsBySymbol.get(symbol);
 
     if (
@@ -9296,6 +9560,23 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     } else {
       blockedCandidateCount += 1;
     }
+    nextSignalIndex = stateIndex + 1;
+  }
+
+  if (source === "worker" && actionWorkDeferred) {
+    updateSignalOptionsRunMetadata(deployment.id, {
+      heavyWorkDeferred: true,
+    });
+    rememberSignalOptionsActionCursor({
+      deploymentId: deployment.id,
+      phase: "signals",
+      positionSignature,
+      positionIndex: initialPositions.length,
+      signalSignature,
+      signalIndex: nextSignalIndex,
+    });
+  } else {
+    signalOptionsActionCursors.delete(deployment.id);
   }
 
   await db
@@ -9318,12 +9599,13 @@ async function runSignalOptionsShadowScanUnlocked(input: {
         updatedAt: new Date(),
       }),
       summary: buildWorkerScanSummary({
-        states: evaluated.states as SignalMonitorState[],
+        states: evaluatedStates,
         universe,
         candidateCount,
         blockedCandidateCount,
         batch: asRecord(asRecord(evaluated).signalOptionsBatch),
         lastSignalScanAt: signalScanCompletedAt.toISOString(),
+        heavyWorkDeferred: actionWorkDeferred,
         activeScanPhase: "action_scan",
         resourcePressureLevel: heavyWorkDecision.pressure.level,
       }),

@@ -431,6 +431,55 @@ test("signal-options worker anchors poll interval to scan completion", async () 
   assert.equal(scanCalls, 2);
 });
 
+test("signal-options worker resumes deferred action work on the next wakeup", async () => {
+  let scanCalls = 0;
+  let now = new Date("2026-04-28T14:00:00.000Z");
+  const actionBudgets: Array<Record<string, unknown>> = [];
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async (input) => {
+      scanCalls += 1;
+      actionBudgets.push(input);
+      return {
+        summary: {
+          signalCount: 1,
+          freshSignalCount: 1,
+          staleSignalCount: 0,
+          unavailableSignalCount: 0,
+          latestSignalBarAt: "2026-04-28T13:59:00.000Z",
+          oldestSignalBarAt: "2026-04-28T13:59:00.000Z",
+          candidateCount: scanCalls,
+          blockedCandidateCount: 0,
+          lastSignalScanAt: now.toISOString(),
+          signalSourcePolicy: "ibkr-only",
+          heavyWorkDeferred: scanCalls === 1,
+          activeScanPhase: "action_scan",
+        },
+      };
+    },
+    runMaintenance: emptyMaintenance,
+    acquireTickLock: async () => async () => {},
+    now: () => now,
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+  let runtime = worker.getRuntimeSnapshot().deployments[0];
+  assert.equal(scanCalls, 1);
+  assert.equal(runtime?.lastHeavyWorkDeferred, true);
+  assert.equal(runtime?.nextScanDueAt, "2026-04-28T14:00:00.000Z");
+
+  now = new Date("2026-04-28T14:00:05.000Z");
+  await worker.runOnce();
+
+  runtime = worker.getRuntimeSnapshot().deployments[0];
+  assert.equal(scanCalls, 2);
+  assert.equal(runtime?.lastHeavyWorkDeferred, false);
+  assert.equal(runtime?.nextScanDueAt, "2026-04-28T14:01:05.000Z");
+  assert.equal(actionBudgets[0]?.["actionWorkBudgetMs"], 20_000);
+  assert.equal(actionBudgets[0]?.["actionWorkItemLimit"], 24);
+});
+
 test("signal-options worker records signal freshness from successful scans", async () => {
   const worker = createSignalOptionsWorker({
     listDeployments: async () => [deployment()],

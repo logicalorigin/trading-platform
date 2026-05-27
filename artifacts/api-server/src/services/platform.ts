@@ -1312,6 +1312,34 @@ function scheduleIbkrWatchlistPrewarm(
 
   const symbols = collectWatchlistSymbols(watchlists);
   latestWatchlistLaneSymbols = symbols;
+  const resourcePressure = getApiResourcePressureSnapshot();
+  if (resourcePressure.caps.signalOptions.watchlistPrewarmAllowed === false) {
+    ibkrWatchlistPrewarmSequence += 1;
+    pendingIbkrWatchlistPrewarmSignature = null;
+    pendingIbkrWatchlistPrewarmRerunReason = null;
+    releaseMarketDataLeases(
+      IBKR_WATCHLIST_PREWARM_OWNER,
+      "resource_pressure",
+    );
+    releaseMarketDataLeases(
+      IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
+      "resource_pressure",
+    );
+    void syncWatchlistPrewarmBridgeGroups({
+      primarySymbols: [],
+    }).catch((error) => {
+      logger.warn(
+        { err: error, reason, pressureLevel: resourcePressure.level },
+        "IBKR bridge prewarm clear failed under resource pressure",
+      );
+    });
+    logger.debug(
+      { reason, pressureLevel: resourcePressure.level },
+      "IBKR bridge watchlist prewarm deferred under resource pressure",
+    );
+    return;
+  }
+
   const defaultSymbols = collectDefaultWatchlistSymbols(watchlists);
   const accountSymbols = collectAccountMonitorQuoteSymbols();
   const resolvedSymbols = resolveEquityLiveQuoteLaneSymbols(symbols);

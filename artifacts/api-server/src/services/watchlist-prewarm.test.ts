@@ -256,6 +256,28 @@ test("watchlist prewarm uses visible live lines and does not create filler lease
   assert.doesNotMatch(prewarmBody, /fillerSymbolLimit/);
 });
 
+test("watchlist prewarm defers and clears leases under resource pressure", () => {
+  const platformSource = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
+  const prewarmBody = platformSource.match(
+    /function scheduleIbkrWatchlistPrewarm\([\s\S]*?\nfunction scheduleIbkrWatchlistPrewarmFromDb/,
+  )?.[0];
+
+  assert.ok(prewarmBody);
+  assert.match(prewarmBody, /getApiResourcePressureSnapshot\(\)/);
+  assert.match(
+    prewarmBody,
+    /watchlistPrewarmAllowed === false[\s\S]*releaseMarketDataLeases\(\s*IBKR_WATCHLIST_PREWARM_OWNER,\s*"resource_pressure"/,
+  );
+  assert.match(
+    prewarmBody,
+    /watchlistPrewarmAllowed === false[\s\S]*releaseMarketDataLeases\(\s*IBKR_WATCHLIST_PREWARM_FILLER_OWNER,\s*"resource_pressure"/,
+  );
+  assert.match(
+    prewarmBody,
+    /watchlistPrewarmAllowed === false[\s\S]*syncWatchlistPrewarmBridgeGroups\(\{\s*primarySymbols: \[\],\s*\}\)/,
+  );
+});
+
 test("bridge reconciliation preserves watchlist source priority offsets", () => {
   const platformSource = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
   const reconcileBody = platformSource.match(
