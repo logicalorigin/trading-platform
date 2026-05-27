@@ -4043,7 +4043,9 @@ export const EvaluateSignalMonitorMatrixBody = zod.object({
   "environment": zod.enum(['paper', 'live']).optional(),
   "watchlistId": zod.string().nullish(),
   "symbols": zod.array(zod.string()).optional(),
-  "timeframes": zod.array(zod.enum(['2m', '5m', '15m'])).optional()
+  "timeframes": zod.array(zod.enum(['2m', '5m', '15m'])).optional(),
+  "clientRole": zod.enum(['leader', 'follower', 'manual', 'test']).optional(),
+  "requestOrigin": zod.enum(['startup', 'poll', 'manual', 'test']).optional()
 })
 
 export const EvaluateSignalMonitorMatrixResponse = zod.object({
@@ -4100,7 +4102,9 @@ export const EvaluateSignalMonitorMatrixResponse = zod.object({
   "cacheStatus": zod.enum(['hit', 'stale', 'inflight', 'miss']),
   "durationMs": zod.number(),
   "skippedSymbols": zod.number(),
-  "truncated": zod.boolean()
+  "truncated": zod.boolean(),
+  "automaticRequest": zod.boolean().optional(),
+  "debounced": zod.boolean().optional()
 }).optional()
 })
 

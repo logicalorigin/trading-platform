@@ -29,6 +29,7 @@ import {
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import { useNumberTick } from "../../lib/numberTick";
 import { useValueFlash } from "../../lib/motion.jsx";
+import { normalizeLegacyAlgoBrandText } from "../algo/algoBranding.js";
 import {
   CSS_COLOR,
   cssColorMix,
@@ -1402,7 +1403,7 @@ const TradeExpandedDetail = ({
       <DetailMetric label="Entry" value={formatAccountPrice(trade.avgOpen, 2, maskValues)} />
       <DetailMetric label="Exit" value={formatAccountPrice(trade.avgClose, 2, maskValues)} />
       <DetailMetric label="Source" value={trade.sourceType || trade.source || "—"} />
-      <DetailMetric label="Strategy" value={trade.strategyLabel || trade.deploymentName || trade.candidateId || "—"} />
+      <DetailMetric label="Strategy" value={trade.strategyLabel || normalizeLegacyAlgoBrandText(trade.deploymentName) || trade.candidateId || "—"} />
       <DetailMetric label="Exit Reason" value={trade.exitReason ? String(trade.exitReason).replaceAll("_", " ") : "—"} />
       <DetailMetric
         label="Contract"
@@ -1587,7 +1588,7 @@ const strategyOptionsForTrades = (trades) =>
   Array.from(
     new Set(
       arrayValue(trades)
-        .map((trade) => normalizeText(trade?.strategyLabel, normalizeText(trade?.deploymentName, normalizeText(trade?.candidateId))))
+        .map((trade) => normalizeText(trade?.strategyLabel, normalizeText(normalizeLegacyAlgoBrandText(trade?.deploymentName), normalizeText(trade?.candidateId))))
         .filter(Boolean),
     ),
   ).sort();

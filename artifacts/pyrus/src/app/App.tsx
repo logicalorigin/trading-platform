@@ -14,7 +14,10 @@ let appContentImport: Promise<{ default: typeof import("./AppContent").default }
 const loadAppContent = () => {
   if (!appContentImport) {
     appContentImport = import("./AppContent")
-      .then((mod) => ({ default: mod.default }))
+      .then(async (mod) => {
+        await mod.preloadInitialAppContentRoute();
+        return { default: mod.default };
+      })
       .catch((error) => {
         appContentImport = null;
         throw error;

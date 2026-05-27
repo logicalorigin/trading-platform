@@ -44,6 +44,10 @@ import { notifyShadowAccountChanged } from "./shadow-account-events";
 import { loadStoredMarketBars } from "./market-data-store";
 import type { MarketDataIntent } from "./market-data-admission";
 import {
+  normalizeLegacyAlgoBranding,
+  normalizeLegacyAlgoBrandText,
+} from "./algo-branding";
+import {
   assertIbkrGatewayTradingAvailable,
   batchOptionChains,
   getBars,
@@ -63,7 +67,7 @@ import { buildNotionalExposure } from "./account-risk-model";
 
 export const SHADOW_ACCOUNT_ID = "shadow";
 export const SHADOW_ACCOUNT_DISPLAY_NAME = "Shadow";
-export const SHADOW_STARTING_BALANCE = 40_000;
+export const SHADOW_STARTING_BALANCE = 25_000;
 export const SHADOW_EQUITY_COLOR = "#ec4899";
 
 const SHADOW_CURRENCY = "USD";
@@ -129,7 +133,7 @@ const STRUCTURED_OPTION_PROVIDER_CONTRACT_ID_PREFIX = "twsopt:";
 const SIGNAL_OPTIONS_SHADOW_ENTRY_EVENT = "signal_options_shadow_entry";
 const SIGNAL_OPTIONS_SHADOW_EXIT_EVENT = "signal_options_shadow_exit";
 const SHADOW_AUTOMATION_MIRROR_REPAIR_LIMIT = 10_000;
-const SHADOW_AUTOMATION_MIRROR_REPAIR_TTL_MS = 5_000;
+const SHADOW_AUTOMATION_MIRROR_REPAIR_TTL_MS = 60_000;
 
 const shadowAccountDbBackoff = createTransientPostgresBackoff({
   warningCooldownMs: 60_000,
@@ -1160,7 +1164,9 @@ function shadowSourceMetadata(order?: ShadowOrderRow | null) {
     strategyLabel: shadowSourceLabel(sourceType, candidateId ? "Signal Options" : null),
     candidateId,
     deploymentId,
-    deploymentName,
+    deploymentName: deploymentName
+      ? normalizeLegacyAlgoBrandText(deploymentName)
+      : null,
     sourceEventId: order?.sourceEventId ?? null,
     attributionStatus:
       candidateId ||
@@ -1357,7 +1363,10 @@ function buildPositionSourceAttribution(
           strategyLabel: metadata.strategyLabel,
           candidateId: metadata.candidateId,
           deploymentId: metadata.deploymentId,
-          deploymentName: metadata.deploymentName,
+          deploymentName:
+            typeof metadata.deploymentName === "string"
+              ? normalizeLegacyAlgoBrandText(metadata.deploymentName)
+              : metadata.deploymentName,
           sourceEventId: metadata.sourceEventId,
           quantity: 0,
         };
@@ -3795,6 +3804,9 @@ async function readShadowPositionDayChanges(
   preloadedOptionQuoteByProviderContractId:
     | Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>
     | null = null,
+  options: {
+    fetchMissingOptionQuotes?: boolean;
+  } = {},
 ): Promise<Map<string, ShadowPositionDayChange>> {
   const changes = new Map<string, ShadowPositionDayChange>();
   const dayStartByPositionId = new Map(
@@ -3850,7 +3862,11 @@ async function readShadowPositionDayChanges(
           );
         })
       : quoteCandidatePositions;
-    if (!fetchedOptionQuotes && missingQuotePositions.length > 0) {
+    if (
+      options.fetchMissingOptionQuotes !== false &&
+      !fetchedOptionQuotes &&
+      missingQuotePositions.length > 0
+    ) {
       const fetched = await waitForShadowOptionDayChangeQuotes(
         fetchShadowOptionDayChangeQuotes(missingQuotePositions).catch(
           () => new Map(),
@@ -4021,19 +4037,6 @@ function buildShadowAccountSummaryResponse(input: {
 
 export async function getShadowAccountSummary(input: { source?: string | null } = {}) {
   const source = normalizeShadowSourceScope(input.source);
-  try {
-    await repairSignalOptionsAutomationMirrorsForRead(source);
-  } catch (error) {
-    if (isTransientPostgresError(error)) {
-      markShadowAccountDbUnavailable(error);
-      return buildShadowAccountSummaryResponse({
-        totals: buildFallbackShadowTotals(),
-        dayPnl: 0,
-        degraded: true,
-      });
-    }
-    throw error;
-  }
   return withShadowReadCache(`summary:${shadowSourceCacheKey(source)}`, async () => {
   try {
     const totals = source
@@ -4889,9 +4892,11 @@ function buildEmptyShadowAccountPositionsResponse(input: {
 export async function getShadowAccountPositions(input: {
   assetClass?: string | null;
   source?: string | null;
+  liveQuotes?: boolean;
 }) {
   const source = normalizeShadowSourceScope(input.source);
   const assetClassFilter = normalizePositionAssetClass(input.assetClass);
+  const includeLiveQuotes = input.liveQuotes !== false;
   try {
     await repairSignalOptionsAutomationMirrorsForRead(source);
   } catch (error) {
@@ -4905,7 +4910,9 @@ export async function getShadowAccountPositions(input: {
     throw error;
   }
   return withShadowReadCache(
-    `positions:${assetClassFilter || "all"}:${shadowSourceCacheKey(source)}`,
+    `positions:${assetClassFilter || "all"}:${shadowSourceCacheKey(source)}:${
+      includeLiveQuotes ? "live-quotes" : "cached-quotes"
+    }`,
     async () => {
   try {
   const totals = source ? await computeShadowTotalsForSource(source) : await ensureFreshShadowState(true);
@@ -4933,7 +4940,7 @@ export async function getShadowAccountPositions(input: {
       position.assetClass === "option" &&
       Boolean(asOptionContract(position.optionContract)),
   );
-  const [liveOptionQuotes, underlyingMarkets] = hasOptionPositions
+  const [liveOptionQuotes, underlyingMarkets] = hasOptionPositions && includeLiveQuotes
     ? await Promise.all([
         waitForShadowOptionDayChangeQuotes(
           fetchShadowOptionDayChangeQuotes(filtered, {
@@ -4957,6 +4964,7 @@ export async function getShadowAccountPositions(input: {
     filtered,
     new Date(),
     optionQuoteByProviderContractId,
+    { fetchMissingOptionQuotes: includeLiveQuotes },
   );
   const rows = filtered.map((position) => {
     const quantity = toNumber(position.quantity) ?? 0;
@@ -5612,7 +5620,7 @@ function shadowAnalysisTradeEvent(
     readRecord(payloadParts.position.selectedContract) ??
     readRecord(payloadParts.candidate.selectedContract) ??
     {};
-  const metadata = {
+  const metadata = normalizeLegacyAlgoBranding({
     ...payloadParts.metadata,
     reason:
       readString(payloadParts.payload.reason) ??
@@ -5638,7 +5646,7 @@ function shadowAnalysisTradeEvent(
     stop: readRecord(payloadParts.payload.stop) ?? {},
     candidate: payloadParts.candidate,
     position: payloadParts.position,
-  };
+  });
   return {
     id: fill.id,
     orderId: fill.orderId,
@@ -6355,7 +6363,8 @@ async function buildShadowAccountRisk(input: {
       ? await computeShadowTotalsForSource(source)
       : await ensureFreshShadowState(true));
   const positionsResponse =
-    input.positionsResponse ?? (await getShadowAccountPositions({ source }));
+    input.positionsResponse ??
+    (await getShadowAccountPositions({ source, liveQuotes: false }));
   const closedTrades =
     input.closedTrades ?? (await getShadowAccountClosedTrades({ source }));
   const degraded = Boolean(

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import {
+  appendFileSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -25,12 +26,13 @@ const supervisorLockPath = path.join(
   supervisorLockDir,
   `pyrus-dev-supervisor-${apiPort}.lock`,
 );
+const lifecycleLogPath = path.join(
+  supervisorLockDir,
+  `pyrus-dev-lifecycle-${apiPort}.jsonl`,
+);
 const supervisorLockWaitMs = Number(process.env.PYRUS_DEV_LOCK_WAIT_MS || "8000");
 const supervisorTakeoverGraceMs = Number(
   process.env.PYRUS_DEV_TAKEOVER_GRACE_MS || "20000",
-);
-const duplicateRestartAfterMs = Number(
-  process.env.PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS || "30000",
 );
 const runningInsideReplitWorkflow =
   process.env.REPLIT_MODE === "workflow" ||
@@ -40,7 +42,98 @@ const duplicateCheckOnly = process.env.PYRUS_DEV_DUPLICATE_CHECK_ONLY === "1";
 
 let shuttingDown = false;
 let supervisorLockAcquired = false;
+let lifecycleHeartbeatTimer = null;
 const children = new Set();
+
+function writeLifecycleEvent(event, detail = {}) {
+  try {
+    mkdirSync(supervisorLockDir, { recursive: true });
+    appendFileSync(
+      lifecycleLogPath,
+      `${JSON.stringify({
+        time: new Date().toISOString(),
+        event,
+        pid: process.pid,
+        ppid: process.ppid,
+        apiPort,
+        webPort,
+        replitMode: process.env.REPLIT_MODE || null,
+        pyrusReplitRun: process.env.PYRUS_REPLIT_RUN || null,
+        lockPath: supervisorLockPath,
+        ...detail,
+      })}\n`,
+      "utf8",
+    );
+  } catch {
+    // Lifecycle evidence must never block app startup or shutdown.
+  }
+}
+
+function readPreviousLifecycleState() {
+  try {
+    const lines = readFileSync(lifecycleLogPath, "utf8")
+      .trim()
+      .split("\n")
+      .slice(-200)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+    const supervisorLines = lines.filter(
+      (entry) =>
+        ![
+          "duplicate-check-start",
+          "duplicate-check-complete",
+          "duplicate-start-noop",
+          "duplicate-live-exit",
+          "launch-start",
+        ].includes(String(entry.event || "")),
+    );
+    const lastHeartbeat = [...supervisorLines]
+      .reverse()
+      .find((entry) => entry.event === "heartbeat");
+    const lastEvent = supervisorLines.at(-1) || null;
+    if (!lastEvent) {
+      return { classification: "none" };
+    }
+    if (lastEvent.event === "supervisor-shutdown-complete") {
+      return { classification: "clean", lastEvent };
+    }
+    if (isLiveSupervisorPid(Number(lastEvent.pid))) {
+      return { classification: "live", lastEvent, lastHeartbeat };
+    }
+    return {
+      classification: lastHeartbeat ? "abrupt-or-external" : "unknown",
+      lastEvent,
+      lastHeartbeat,
+    };
+  } catch {
+    return { classification: "unavailable" };
+  }
+}
+
+function startLifecycleHeartbeat() {
+  if (lifecycleHeartbeatTimer) return;
+  lifecycleHeartbeatTimer = setInterval(() => {
+    writeLifecycleEvent("heartbeat", {
+      children: [...children].map((child) => ({
+        pid: child.pid || null,
+        killed: Boolean(child.killed),
+      })),
+    });
+  }, 5_000);
+  lifecycleHeartbeatTimer.unref?.();
+}
+
+function stopLifecycleHeartbeat() {
+  if (!lifecycleHeartbeatTimer) return;
+  clearInterval(lifecycleHeartbeatTimer);
+  lifecycleHeartbeatTimer = null;
+}
 
 function spawnService(name, args, env) {
   console.log(`[pyrus-dev] starting ${name}: pnpm ${args.join(" ")}`);
@@ -51,7 +144,20 @@ function spawnService(name, args, env) {
     stdio: "inherit",
   });
   children.add(child);
-  child.once("exit", () => children.delete(child));
+  writeLifecycleEvent("child-start", {
+    childName: name,
+    childPid: child.pid || null,
+    args,
+  });
+  child.once("exit", (code, signal) => {
+    writeLifecycleEvent("child-exit", {
+      childName: name,
+      childPid: child.pid || null,
+      code,
+      signal,
+    });
+    children.delete(child);
+  });
   return child;
 }
 
@@ -176,6 +282,7 @@ function unlinkSupervisorLockState(lockState) {
 function sendSignal(pid, signal) {
   try {
     process.kill(pid, signal);
+    writeLifecycleEvent("signal-sent", { targetPid: pid, signal });
     return true;
   } catch (error) {
     if (error?.code === "ESRCH") return true;
@@ -184,12 +291,6 @@ function sendSignal(pid, signal) {
     );
     return false;
   }
-}
-
-function duplicateRestartThresholdMs() {
-  return Number.isFinite(duplicateRestartAfterMs) && duplicateRestartAfterMs >= 0
-    ? duplicateRestartAfterMs
-    : 30_000;
 }
 
 function supervisorLockAgeMs(lock) {
@@ -204,17 +305,13 @@ function formatDurationMs(value) {
   return `${Math.round(value / 1000)}s`;
 }
 
-function shouldHandoffDuplicateReplitStart(lock) {
-  const ageMs = supervisorLockAgeMs(lock);
-  return ageMs !== null && ageMs >= duplicateRestartThresholdMs();
-}
-
 function skipDuplicateReplitStart(ownerPid, lock) {
   const ageMs = supervisorLockAgeMs(lock);
   const ageMessage = ageMs === null ? "with unknown age" : `for ${formatDurationMs(ageMs)}`;
   console.warn(
-    `[pyrus-dev] duplicate Replit workflow start detected while PYRUS dev supervisor ${ownerPid} is already alive ${ageMessage}; leaving the active API/web processes running and exiting without restart.`,
+    `[pyrus-dev] duplicate Replit workflow start detected while PYRUS dev supervisor ${ownerPid} is already alive ${ageMessage}; leaving the active API/web processes running and exiting without restart. Set PYRUS_DEV_FORCE_RESTART=1 only for an intentional supervisor takeover.`,
   );
+  writeLifecycleEvent("duplicate-start-noop", { ownerPid, ageMs });
   return true;
 }
 
@@ -275,6 +372,7 @@ async function requestSupervisorHandoff(ownerPid) {
   console.warn(
     `[pyrus-dev] another PYRUS dev supervisor is already running as PID ${ownerPid}; requesting controlled handoff so this Replit workflow owns the app without overlapping API/web processes.`,
   );
+  writeLifecycleEvent("supervisor-handoff-requested", { ownerPid });
 
   if (!sendSignal(ownerPid, "SIGTERM")) {
     throw new Error(`Could not signal previous PYRUS dev supervisor ${ownerPid}.`);
@@ -284,6 +382,7 @@ async function requestSupervisorHandoff(ownerPid) {
     console.warn(
       `[pyrus-dev] previous PYRUS dev supervisor ${ownerPid} stopped; continuing startup in this workflow.`,
     );
+    writeLifecycleEvent("supervisor-handoff-complete", { ownerPid });
     return;
   }
 
@@ -322,6 +421,7 @@ async function acquireSupervisorLock() {
         { flag: "wx", mode: 0o600 },
       );
       supervisorLockAcquired = true;
+      writeLifecycleEvent("lock-acquired");
       return true;
     } catch (error) {
       if (error?.code !== "EEXIST") {
@@ -349,15 +449,6 @@ async function acquireSupervisorLock() {
     }
 
     if (runningInsideReplitWorkflow && !forceSupervisorTakeover) {
-      if (shouldHandoffDuplicateReplitStart(lockState.lock)) {
-        const ageMs = supervisorLockAgeMs(lockState.lock);
-        console.warn(
-          `[pyrus-dev] Replit workflow start found PYRUS dev supervisor ${ownerPid} already alive for ${formatDurationMs(ageMs)}; treating this as an intentional Run-button restart after the ${formatDurationMs(duplicateRestartThresholdMs())} duplicate-start guard window.`,
-        );
-        await requestSupervisorHandoff(ownerPid);
-        continue;
-      }
-
       return skipDuplicateReplitStart(ownerPid, lockState.lock)
         ? "duplicate-live"
         : false;
@@ -495,15 +586,19 @@ function apiPortOwnerStatus(apiRootPid) {
 async function shutdown(status = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
+  writeLifecycleEvent("supervisor-shutdown-start", { status });
   for (const child of children) killChild(child, "SIGTERM");
   await delay(1500);
   for (const child of children) killChild(child, "SIGKILL");
+  stopLifecycleHeartbeat();
   removeSupervisorLock();
+  writeLifecycleEvent("supervisor-shutdown-complete", { status });
   process.exit(status);
 }
 
 function ignoreWorkflowHangup() {
   try {
+    writeLifecycleEvent("signal-ignored", { signal: "SIGHUP" });
     console.warn(
       "[pyrus-dev] ignoring SIGHUP from the workflow console so the Replit-owned API/web supervisor stays attached; use Stop/SIGTERM for an intentional shutdown.",
     );
@@ -560,18 +655,42 @@ process.once("exit", removeSupervisorLock);
 
 try {
   if (duplicateCheckOnly) {
-    process.exit(checkDuplicateReplitStartOnly() ? 0 : 2);
+    writeLifecycleEvent("duplicate-check-start", {
+      previous: readPreviousLifecycleState(),
+      forceSupervisorTakeover,
+      runningInsideReplitWorkflow,
+    });
+    const ok = checkDuplicateReplitStartOnly();
+    writeLifecycleEvent("duplicate-check-complete", { ok });
+    process.exit(ok ? 0 : 2);
   }
+
+  const previousLifecycleState = readPreviousLifecycleState();
+  writeLifecycleEvent("launch-start", {
+    previous: previousLifecycleState,
+    forceSupervisorTakeover,
+    runningInsideReplitWorkflow,
+  });
 
   assertAllowedLauncher();
 
   const lockAcquired = await acquireSupervisorLock();
   if (lockAcquired === "duplicate-live") {
+    writeLifecycleEvent("duplicate-live-exit");
+    stopLifecycleHeartbeat();
     process.exit(0);
   }
   if (!lockAcquired) {
+    writeLifecycleEvent("lock-refused-exit");
+    stopLifecycleHeartbeat();
     process.exit(1);
   }
+  writeLifecycleEvent("supervisor-start", {
+    previous: previousLifecycleState,
+    forceSupervisorTakeover,
+    runningInsideReplitWorkflow,
+  });
+  startLifecycleHeartbeat();
 
   const api = spawnService(
     "API",
@@ -599,6 +718,9 @@ try {
   );
   await shutdown(code);
 } catch (error) {
+  writeLifecycleEvent("supervisor-error", {
+    message: error instanceof Error ? error.message : String(error),
+  });
   console.error(
     `[pyrus-dev] ${error instanceof Error ? error.message : String(error)}`,
   );

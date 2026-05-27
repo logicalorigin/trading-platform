@@ -6,6 +6,14 @@ import type {
 } from "../providers/ibkr/client";
 
 export const POSITION_QUANTITY_EPSILON = 1e-9;
+const POSITION_MARKET_TIME_ZONE = "America/New_York";
+
+const positionMarketDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: POSITION_MARKET_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 
 export type PositionMarketHydration = {
   mark: number;
@@ -16,6 +24,111 @@ export type PositionMarketHydration = {
   dayChangePercent: number | null;
   source: "IBKR_POSITIONS" | "QUOTE_SNAPSHOT";
 };
+
+export type PositionMarketHydrationOptions = {
+  openedAt?: Date | string | null;
+  now?: Date | string | null;
+};
+
+function dateOrNull(value: Date | string | null | undefined): Date | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  const raw = value.trim();
+  const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compact) {
+    return new Date(
+      Date.UTC(Number(compact[1]), Number(compact[2]) - 1, Number(compact[3]), 12),
+    );
+  }
+  const dashed = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dashed) {
+    return new Date(
+      Date.UTC(Number(dashed[1]), Number(dashed[2]) - 1, Number(dashed[3]), 12),
+    );
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function dateOnlyMarketDateKey(value: Date | string | null | undefined): string | null {
+  if (typeof value === "string") {
+    const raw = value.trim();
+    const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (compact) return `${compact[1]}-${compact[2]}-${compact[3]}`;
+    const dashed = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dashed) return `${dashed[1]}-${dashed[2]}-${dashed[3]}`;
+  }
+  if (
+    value instanceof Date &&
+    value.getUTCHours() === 0 &&
+    value.getUTCMinutes() === 0 &&
+    value.getUTCSeconds() === 0 &&
+    value.getUTCMilliseconds() === 0
+  ) {
+    return value.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
+function marketDateKey(value: Date | string | null | undefined): string | null {
+  const dateOnlyKey = dateOnlyMarketDateKey(value);
+  if (dateOnlyKey) return dateOnlyKey;
+  const date = dateOrNull(value);
+  if (!date) return null;
+  const parts = positionMarketDateFormatter.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return year && month && day ? `${year}-${month}-${day}` : null;
+}
+
+export function positionOpenedOnSameMarketDay(
+  openedAt: Date | string | null | undefined,
+  now: Date | string | null | undefined = new Date(),
+): boolean {
+  const opened = dateOrNull(openedAt);
+  const observedAt = dateOrNull(now);
+  if (!opened || !observedAt || opened.getTime() > observedAt.getTime()) {
+    return false;
+  }
+  const openedKey = marketDateKey(opened);
+  const nowKey = marketDateKey(observedAt);
+  return Boolean(openedKey && nowKey && openedKey === nowKey);
+}
+
+function positiveFiniteNumberOrNull(value: unknown): number | null {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function quoteMidOrNull(quote: QuoteSnapshot | null | undefined): number | null {
+  const bid = Number(quote?.bid);
+  const ask = Number(quote?.ask);
+  return Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0
+    ? (bid + ask) / 2
+    : null;
+}
+
+function quoteMarkOrNull(
+  quote: QuoteSnapshot | null | undefined,
+  preferQuotePrice = false,
+): number | null {
+  const quotePrice = positiveFiniteNumberOrNull(quote?.price);
+  const quoteMark =
+    positiveFiniteNumberOrNull(
+      (quote as (QuoteSnapshot & { mark?: unknown }) | null | undefined)?.mark,
+    ) ??
+    quoteMidOrNull(quote) ??
+    quotePrice ??
+    positiveFiniteNumberOrNull(
+      (quote as (QuoteSnapshot & { last?: unknown }) | null | undefined)?.last,
+    );
+  return preferQuotePrice ? quotePrice ?? quoteMark : quoteMark;
+}
 
 export function isOpenBrokerPosition(
   position: Pick<BrokerPositionSnapshot, "quantity">,
@@ -72,19 +185,20 @@ export function canHydratePositionFromEquityQuote(
 export function buildPositionMarketHydration(
   position: BrokerPositionSnapshot,
   quote: QuoteSnapshot | null | undefined,
+  options: PositionMarketHydrationOptions = {},
 ): PositionMarketHydration {
   const quantity = Number(position.quantity);
   const averagePrice = Number(position.averagePrice);
   const multiplier = positionMultiplier(position);
-  const quotePrice = Number(quote?.price);
   const quoteChange = Number(quote?.change);
   const quotePrevClose = Number(quote?.prevClose);
-  const hasQuotePrice =
-    canHydratePositionFromEquityQuote(position) &&
-    Number.isFinite(quotePrice) &&
-    quotePrice > 0;
-  const mark = hasQuotePrice
-    ? quotePrice
+  const quoteMark = quoteMarkOrNull(
+    quote,
+    canHydratePositionFromEquityQuote(position),
+  );
+  const hasQuoteMark = quoteMark !== null;
+  const mark = hasQuoteMark
+    ? quoteMark
     : Math.abs(Number(position.marketPrice) || 0) > POSITION_QUANTITY_EPSILON
       ? position.marketPrice
       : averagePrice;
@@ -101,14 +215,34 @@ export function buildPositionMarketHydration(
     Number.isFinite(multiplier)
       ? (mark - averagePrice) * quantity * multiplier
       : position.unrealizedPnl;
-  const unrealizedPnlPercent =
-    Number.isFinite(mark) && Number.isFinite(averagePrice) && averagePrice !== 0
-      ? ((mark - averagePrice) / averagePrice) * 100
-      : position.unrealizedPnlPercent;
-  const dayChange =
-    hasQuotePrice && Number.isFinite(quoteChange)
-      ? quoteChange * quantity * multiplier
+  const costBasis =
+    Number.isFinite(averagePrice) &&
+    Number.isFinite(quantity) &&
+    Number.isFinite(multiplier)
+      ? Math.abs(averagePrice * quantity * multiplier)
       : null;
+  const unrealizedPnlPercent =
+    Number.isFinite(unrealizedPnl) && costBasis && costBasis > 0
+      ? (unrealizedPnl / costBasis) * 100
+      : position.unrealizedPnlPercent;
+  const openedAt = options.openedAt ?? position.openedAt ?? null;
+  const sameDayPosition = positionOpenedOnSameMarketDay(
+    openedAt,
+    options.now ?? new Date(),
+  );
+  let quoteDayChange: number | null = null;
+  if (
+    hasQuoteMark &&
+    Number.isFinite(quantity) &&
+    Number.isFinite(multiplier)
+  ) {
+    if (Number.isFinite(quoteChange)) {
+      quoteDayChange = quoteChange * quantity * multiplier;
+    } else if (Number.isFinite(quotePrevClose) && Number.isFinite(mark)) {
+      quoteDayChange = (mark - quotePrevClose) * quantity * multiplier;
+    }
+  }
+  const dayChange = sameDayPosition ? unrealizedPnl : quoteDayChange;
   const previousValue =
     Number.isFinite(quotePrevClose) &&
     Number.isFinite(quantity) &&
@@ -123,10 +257,12 @@ export function buildPositionMarketHydration(
     unrealizedPnlPercent,
     dayChange,
     dayChangePercent:
-      dayChange !== null && previousValue
+      sameDayPosition
+        ? unrealizedPnlPercent
+        : dayChange !== null && previousValue !== null && previousValue !== 0
         ? (dayChange / Math.abs(previousValue)) * 100
         : null,
-    source: hasQuotePrice ? "QUOTE_SNAPSHOT" : "IBKR_POSITIONS",
+    source: hasQuoteMark ? "QUOTE_SNAPSHOT" : "IBKR_POSITIONS",
   };
 }
 

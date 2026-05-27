@@ -73,6 +73,7 @@ import {
   signalOptionsActionLabel,
   signalOptionsApi,
 } from "./algo/algoHelpers";
+import { normalizeLegacyAlgoBrandText } from "./algo/algoBranding.js";
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
 import {
   useAlgoCockpitStream,
@@ -146,6 +147,7 @@ import { HeroKpi } from "./algo/HeroKpi.jsx";
 import { AttentionList } from "./algo/AttentionList.jsx";
 import { PipelineStrip } from "./algo/PipelineStrip.jsx";
 import { AlgoRightRail } from "./algo/AlgoRightRail.jsx";
+import { retryDynamicImport } from "../lib/dynamicImport";
 
 const LazyAlgoAuditPanel = lazy(() =>
   import("./algo/AlgoAuditPanel").then((module) => ({
@@ -155,14 +157,16 @@ const LazyAlgoAuditPanel = lazy(() =>
 let algoLivePageImport = null;
 const loadAlgoLivePage = () => {
   if (!algoLivePageImport) {
-    algoLivePageImport = import("./algo/AlgoLivePage")
-      .then((module) => ({
-        default: module.AlgoLivePage,
-      }))
-      .catch((error) => {
-        algoLivePageImport = null;
-        throw error;
-      });
+    algoLivePageImport = retryDynamicImport(
+      () =>
+        import("./algo/AlgoLivePage").then((module) => ({
+          default: module.AlgoLivePage,
+        })),
+      { label: "AlgoLivePage" },
+    ).catch((error) => {
+      algoLivePageImport = null;
+      throw error;
+    });
   }
   return algoLivePageImport;
 };
@@ -1161,7 +1165,7 @@ export const AlgoScreen = ({
         toast.push({
           kind: "success",
           title: "Deployment created",
-          body: `${deployment.name} · ${deployment.providerAccountId} · ${deployment.mode.toUpperCase()}`,
+          body: `${normalizeLegacyAlgoBrandText(deployment.name)} · ${deployment.providerAccountId} · ${deployment.mode.toUpperCase()}`,
         });
       },
       onError: (error) => {
@@ -1180,7 +1184,7 @@ export const AlgoScreen = ({
         toast.push({
           kind: "success",
           title: "Deployment enabled",
-          body: deployment.name,
+          body: normalizeLegacyAlgoBrandText(deployment.name),
         });
       },
       onError: (error) => {
@@ -1199,7 +1203,7 @@ export const AlgoScreen = ({
         toast.push({
           kind: "success",
           title: "Deployment paused",
-          body: deployment.name,
+          body: normalizeLegacyAlgoBrandText(deployment.name),
         });
       },
       onError: (error) => {
@@ -1394,7 +1398,9 @@ export const AlgoScreen = ({
       ...candidate,
       deploymentId: focusedDeployment?.id || candidate.deploymentId || null,
       deploymentName:
-        focusedDeployment?.name || candidate.deploymentName || null,
+        normalizeLegacyAlgoBrandText(
+          focusedDeployment?.name || candidate.deploymentName || "",
+        ) || null,
     });
   };
 

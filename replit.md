@@ -243,18 +243,35 @@ recurrence:
 
 If a second Replit-owned artifact workflow starts while the existing PYRUS
 supervisor lock points at a live `runDevApp.mjs` process, `runDevApp.mjs`
-treats it as a duplicate Run event only during the short startup guard window.
-After `PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS` (default `30000`), a new
-Replit-owned Run is treated as an intentional Run-button restart: the new
-workflow asks the live supervisor for a controlled handoff, waits for API/Vite
-to stop, and then becomes the single owner. The immediate duplicate no-op still
-prevents overlapping startup cascades when Replit emits more than one launch
-for the same click. `PYRUS_DEV_FORCE_RESTART=1` remains available for explicit
-recovery restarts, or for stale/missing lock owners where normal startup can
-safely become the single owner.
+treats it as a duplicate Run event and exits without restarting API/Vite. This
+is intentional: Replit workspace reconnects and artifact preview restoration
+can emit duplicate launches long after the original startup, and those must not
+be upgraded into app restarts. `PYRUS_DEV_FORCE_RESTART=1` is the only
+Replit-owned path that may request a controlled handoff from a live supervisor.
+Use it only for explicit recovery restarts, or for stale/missing lock owners
+where normal startup can safely become the single owner.
 Use `PYRUS_DEV_DUPLICATE_CHECK_ONLY=1` for shell smoke tests of the duplicate
 path; that mode only reads the supervisor lock and exits without starting
 API/Vite or running port reapers.
+
+The supervisor also writes lifecycle evidence to
+`/tmp/pyrus/pyrus-dev-lifecycle-8080.jsonl`. Use that JSONL file to distinguish
+clean supervisor shutdowns from external Replit workflow stops: heartbeats,
+child starts/exits, ignored SIGHUP, duplicate-start no-ops, and shutdown events
+are recorded outside the workflow stdout stream.
+
+Replit workspace restoration can leave multiple live artifact iframe records in
+Scribe state. Audit them with `pnpm run replit:scribe:artifacts`; the default
+mode is read-only. If duplicate PYRUS or stale non-PYRUS live artifact cards are
+not removable through the UI, run
+`pnpm run replit:scribe:artifacts -- --backup-and-clean` for a backup-first
+local cleanup of only the audited artifact rows.
+
+Inside Replit, Playwright must attach to the existing app unless explicitly
+overridden. `artifacts/pyrus/playwright.config.ts` disables its `webServer`
+block when Replit env markers are present; set
+`PYRUS_PLAYWRIGHT_ALLOW_WEB_SERVER=1` only for an intentional maintenance run
+that should let Playwright own app startup.
 
 If a service restart still fails with `EADDRINUSE`, run the shared reaper for
 the conflicting pinned port and restart the PYRUS web workflow:

@@ -134,6 +134,7 @@ export const AlgoRightRail = ({
       >
         <div
           data-testid="algo-controls-container"
+          className="algo-rail-cq"
           style={{
             flex: "1 1 auto",
             overflowY: "auto",
@@ -154,8 +155,6 @@ export const AlgoRightRail = ({
             patchProfileDraftPath={patchProfileDraftPath}
             focusedDeployment={focusedDeployment}
             updateProfileMutation={updateProfileMutation}
-            algoIsPhone={algoIsPhone}
-            algoIsNarrow={algoIsNarrow}
           />
           <div data-testid="algo-settings-container">
             <AlgoSettingsRegion
@@ -172,13 +171,12 @@ export const AlgoRightRail = ({
               handleApplyExpandedCapacity={handleApplyExpandedCapacity}
               updateProfileMutation={updateProfileMutation}
               updateStrategySettingsMutation={updateStrategySettingsMutation}
-              algoIsPhone={algoIsPhone}
-              algoIsNarrow={algoIsNarrow}
             />
           </div>
         </div>
         <div
           data-testid="algo-diagnostics-container"
+          className="algo-rail-cq"
           style={{
             flex: "0 0 auto",
             height: algoIsPhone ? "30vh" : "210px",

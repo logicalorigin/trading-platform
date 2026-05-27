@@ -7,6 +7,7 @@ const positionsSource = readFileSync(new URL("./PositionsPanel.jsx", import.meta
 const tradesOrdersSource = readFileSync(new URL("./TradesOrdersPanel.jsx", import.meta.url), "utf8");
 const tradingAnalysisSource = readFileSync(new URL("./TradingAnalysisWorkbench.jsx", import.meta.url), "utf8");
 const cashFundingSource = readFileSync(new URL("./CashFundingPanel.jsx", import.meta.url), "utf8");
+const cssSource = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
 
 test("account table tokens use the balanced density contract", () => {
   assert.match(accountUtilsSource, /return textSize\("caption"\);/);
@@ -37,13 +38,20 @@ test("account desktop tables keep horizontal access without vertical caps", () =
   }
 });
 
-test("account mobile scan rows use the denser row target", () => {
-  assert.match(positionsSource, /gap:\s*sp\(1\)/);
-  assert.match(positionsSource, /minHeight:\s*dim\(40\)/);
-  assert.match(tradesOrdersSource, /gap:\s*sp\(1\)/);
-  assert.match(tradesOrdersSource, /minHeight:\s*dim\(40\)/);
+test("account phone layouts keep the dense horizontal table path", () => {
+  assert.match(positionsSource, /data-testid="account-positions-table-scroll"/);
+  assert.match(positionsSource, /ra-dense-table-scroll/);
+  assert.doesNotMatch(positionsSource, /data-testid="account-positions-row-list"/);
+  assert.match(tradesOrdersSource, /data-testid="account-orders-table-scroll"/);
+  assert.match(tradesOrdersSource, /ra-dense-table-scroll/);
+  assert.doesNotMatch(tradesOrdersSource, /data-testid="account-orders-row-list"/);
   assert.match(tradingAnalysisSource, /dataTestId="account-analysis-trade-row"/);
   assert.match(tradingAnalysisSource, /rowHeight=\{isPhone \? 54 : 38\}/);
+  assert.match(cssSource, /ra-dense-table-scroll \*/);
+  assert.match(
+    cssSource,
+    /\[data-testid="account-screen"\] \[style\*="min-width"\]:not\(\.ra-dense-table-scroll\):not\(\.ra-dense-table-scroll \*\)/,
+  );
 });
 
 test("account report tables use shared client-side pagination", () => {

@@ -1,6 +1,5 @@
 import {
   Suspense,
-  lazy,
   useEffect,
   useMemo,
   useRef,
@@ -46,21 +45,25 @@ import {
 import { filterAccountPositionRowsForDeployment } from "./algoAccountPositions";
 import { buildAttentionStream } from "../algoCockpitDiagnosticsModel";
 import { useIbkrOptionQuoteStream } from "../../features/platform/live-streams";
+import { lazyWithRetry } from "../../lib/dynamicImport";
 
-const LazyOperationsPositionsTable = lazy(() =>
-  import("./OperationsPositionsTable").then((module) => ({
+const LazyOperationsPositionsTable = lazyWithRetry(
+  () => import("./OperationsPositionsTable").then((module) => ({
     default: module.OperationsPositionsTable,
   })),
+  { label: "OperationsPositionsTable" },
 );
-const LazyOperationsSignalDrill = lazy(() =>
-  import("./OperationsSignalDrill").then((module) => ({
+const LazyOperationsSignalDrill = lazyWithRetry(
+  () => import("./OperationsSignalDrill").then((module) => ({
     default: module.OperationsSignalDrill,
   })),
+  { label: "OperationsSignalDrill" },
 );
-const LazyOperationsSignalTable = lazy(() =>
-  import("./OperationsSignalTable").then((module) => ({
+const LazyOperationsSignalTable = lazyWithRetry(
+  () => import("./OperationsSignalTable").then((module) => ({
     default: module.OperationsSignalTable,
   })),
+  { label: "OperationsSignalTable" },
 );
 
 const AlgoDeferredBlock = ({ label }) => (

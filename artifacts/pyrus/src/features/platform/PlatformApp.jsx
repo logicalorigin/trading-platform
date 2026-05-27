@@ -58,6 +58,7 @@ import {
   getRuntimeWorkloadStats,
   useRuntimeWorkloadFlag,
 } from "./workloadStats";
+import { useWorkspaceLeadership } from "./workspaceLeadership.js";
 import { useMemoryPressureMonitor } from "./useMemoryPressureSignal";
 import { PlatformShell } from "./PlatformShell.jsx";
 import { PlatformProviders } from "./PlatformProviders.jsx";
@@ -269,12 +270,14 @@ const resolveRecentSignalMarketDataSymbols = (
 
 const resolveQuoteStreamGateReason = ({
   pageVisible,
+  workspaceLeader,
   sessionMetadataSettled,
   brokerConfigured,
   brokerAuthenticated,
   quoteStreamEnabled,
 }) => {
   if (!pageVisible) return "page-hidden";
+  if (!workspaceLeader) return "workspace-passive";
   if (!sessionMetadataSettled) return "session-not-ready";
   if (!brokerConfigured) return "ibkr-not-configured";
   if (!brokerAuthenticated) return "ibkr-not-ready";
@@ -399,11 +402,16 @@ const isOpenMarketDataPosition = (position) => {
 export default function PlatformApp() {
   const queryClient = useQueryClient();
   const pageVisible = usePageVisible();
+  const workspaceLeadership = useWorkspaceLeadership({
+    artifactId: "artifacts/pyrus",
+  });
+  const workspaceLeader = Boolean(workspaceLeadership.isLeader);
+  const platformWorkVisible = Boolean(pageVisible && workspaceLeader);
   const viewport = useViewport();
   const isPhone = viewport.flags.isPhone;
   const memoryPressureSignal = useMemoryPressureMonitor();
   const userPreferences = useUserPreferences();
-  const previousPageVisibleRef = useRef(pageVisible);
+  const previousPlatformWorkVisibleRef = useRef(platformWorkVisible);
   const latencyDebugEnabled = useMemo(
     () =>
       typeof window !== "undefined" &&
@@ -777,20 +785,22 @@ export default function PlatformApp() {
     activeScreenReadiness.backgroundAllowed,
   );
   const backgroundDataWarmupEnabled = Boolean(
-    !isPhone && !warmupTestOverrides.disableBackgroundDataWarmup,
+    workspaceLeader &&
+      !isPhone &&
+      !warmupTestOverrides.disableBackgroundDataWarmup,
   );
   const activeScreenBackgroundDataAllowed = Boolean(
     activeScreenBackgroundAllowed && backgroundDataWarmupEnabled,
   );
   const frameAuxiliaryDataEnabled = Boolean(
-    pageVisible &&
+    platformWorkVisible &&
       sessionMetadataSettled &&
       screenWarmupPhase === "ready" &&
       activeScreenBackgroundDataAllowed &&
       (backgroundDataWarmupEnabled || isPhone),
   );
   useEffect(() => {
-    if (!pageVisible || !activeScreenCriticalReady) {
+    if (!platformWorkVisible || !activeScreenCriticalReady) {
       updateBackgroundResumeReady("signalDisplay", false);
       return undefined;
     }
@@ -802,13 +812,13 @@ export default function PlatformApp() {
     return () => window.clearTimeout(timer);
   }, [
     activeScreenCriticalReady,
-    pageVisible,
+    platformWorkVisible,
     screen,
     updateBackgroundResumeReady,
   ]);
   useEffect(() => {
     if (
-      !pageVisible ||
+      !platformWorkVisible ||
       !activeScreenBackgroundDataAllowed ||
       screenWarmupPhase !== "ready"
     ) {
@@ -823,7 +833,7 @@ export default function PlatformApp() {
     return () => window.clearTimeout(timer);
   }, [
     activeScreenBackgroundDataAllowed,
-    pageVisible,
+    platformWorkVisible,
     screen,
     screenWarmupPhase,
     updateBackgroundResumeReady,
@@ -853,7 +863,7 @@ export default function PlatformApp() {
       backgroundDataWarmupEnabled,
   );
   const operationalCodePreloadReady = Boolean(
-    pageVisible &&
+    platformWorkVisible &&
       firstScreenReady &&
       !isPhone &&
       !warmupTestOverrides.disableOperationalCodePreload,
@@ -867,7 +877,7 @@ export default function PlatformApp() {
   const hiddenScreenPreloadPolicy = useMemo(
     () =>
       buildPlatformWorkSchedule({
-        pageVisible,
+        pageVisible: platformWorkVisible,
         sessionMetadataSettled,
         activeScreen: screen,
         screenWarmupPhase,
@@ -877,7 +887,7 @@ export default function PlatformApp() {
     [
       isPhone,
       memoryPressureSignal,
-      pageVisible,
+      platformWorkVisible,
       screen,
       screenWarmupPhase,
       sessionMetadataSettled,
@@ -920,7 +930,7 @@ export default function PlatformApp() {
     return limit == null ? watchlistSymbols : watchlistSymbols.slice(0, limit);
   }, [platformPressureCaps.broadMarketSymbolLimit, watchlistSymbols]);
   const broadMarketDataHydrationReady = Boolean(
-    pageVisible &&
+    platformWorkVisible &&
       activeScreenBackgroundDataAllowed &&
       screenWarmupPhase === "ready" &&
       !memoryBlocksOperationalPreload &&
@@ -1404,16 +1414,16 @@ export default function PlatformApp() {
   const researchConfigured = Boolean(session?.configured?.research);
 
   useEffect(() => {
-    setBrokerStockAggregateStreamPaused(!pageVisible);
+    setBrokerStockAggregateStreamPaused(!platformWorkVisible);
     return () => {
       setBrokerStockAggregateStreamPaused(false);
     };
-  }, [pageVisible]);
+  }, [platformWorkVisible]);
 
   useEffect(() => {
-    const wasPageVisible = previousPageVisibleRef.current;
-    previousPageVisibleRef.current = pageVisible;
-    if (wasPageVisible || !pageVisible) {
+    const wasPlatformWorkVisible = previousPlatformWorkVisibleRef.current;
+    previousPlatformWorkVisibleRef.current = platformWorkVisible;
+    if (wasPlatformWorkVisible || !platformWorkVisible) {
       return;
     }
 
@@ -1462,7 +1472,7 @@ export default function PlatformApp() {
     return () => {
       cleanupTasks.forEach((cleanup) => cleanup());
     };
-  }, [pageVisible, queryClient, signalMonitorEnvironment]);
+  }, [platformWorkVisible, queryClient, signalMonitorEnvironment]);
 
   useEffect(() => {
     if (mountedScreens[screen]) {
@@ -2025,7 +2035,7 @@ export default function PlatformApp() {
     {
       query: {
         staleTime: 60_000,
-        refetchInterval: pageVisible ? 60_000 : false,
+        refetchInterval: platformWorkVisible ? 60_000 : false,
         retry: false,
       },
     },
@@ -2040,7 +2050,7 @@ export default function PlatformApp() {
   const workSchedule = useMemo(
     () =>
       buildPlatformWorkSchedule({
-        pageVisible,
+        pageVisible: platformWorkVisible,
         sessionMetadataSettled,
         activeScreen: screen,
         screenWarmupPhase,
@@ -2061,7 +2071,7 @@ export default function PlatformApp() {
       ibkrWorkPressure,
       isPhone,
       memoryPressureSignal,
-      pageVisible,
+      platformWorkVisible,
       screen,
       screenWarmupPhase,
       activeScreenBackgroundDataAllowed,
@@ -2084,7 +2094,7 @@ export default function PlatformApp() {
   useEffect(() => {
     setHydrationPressureState(workSchedule.hydrationPressure);
   }, [workSchedule.hydrationPressure]);
-  useRuntimeWorkloadFlag("signal-monitor:profile", Boolean(pageVisible), {
+  useRuntimeWorkloadFlag("signal-monitor:profile", platformWorkVisible, {
     kind: "poll",
     label: "Signal profile",
     detail: "60s",
@@ -2112,7 +2122,7 @@ export default function PlatformApp() {
     platformPressureCaps.signalDisplayPollMinMs || 0,
   );
   const signalMonitorDisplayReady = Boolean(
-    pageVisible && signalMonitorProfile?.enabled,
+    platformWorkVisible && signalMonitorProfile?.enabled,
   );
   const signalMonitorEventsReady = Boolean(
     signalMonitorDisplayReady &&
@@ -2247,6 +2257,7 @@ export default function PlatformApp() {
   const signalMatrixEvaluationInFlightRef = useRef(false);
   const signalMatrixRotationCursorRef = useRef(0);
   const signalMatrixLastPlanRef = useRef(null);
+  const signalMatrixAutomaticRunCountRef = useRef(0);
   const signalMatrixUniverseRef = useRef([]);
   const signalMatrixStatesRef = useRef([]);
   const signalMonitorStates = signalMonitorStateQuery.data?.states || [];
@@ -2320,6 +2331,7 @@ export default function PlatformApp() {
     () =>
       resolveQuoteStreamGateReason({
         pageVisible,
+        workspaceLeader,
         sessionMetadataSettled,
         brokerConfigured,
         brokerAuthenticated: Boolean(session?.ibkrBridge?.authenticated),
@@ -2330,6 +2342,7 @@ export default function PlatformApp() {
       pageVisible,
       session?.ibkrBridge?.authenticated,
       sessionMetadataSettled,
+      workspaceLeader,
       workSchedule.streams.watchlistQuoteStream,
     ],
   );
@@ -2507,6 +2520,8 @@ export default function PlatformApp() {
       timelineMs: warmupTimelineRef.current,
       screenModulePreloads: getScreenModulePreloadSnapshot(),
       gates: {
+        workspaceLeader,
+        workspaceLeadershipReason: workspaceLeadership.reason,
         operationalCodePreloadReady,
         hiddenScreenWarmMountEnabled: hiddenScreenWarmMountAllowed,
         backgroundDataWarmupEnabled,
@@ -2559,6 +2574,8 @@ export default function PlatformApp() {
     signalMonitorDisplayReady,
     warmupSnapshotRevision,
     warmupTestOverrides,
+    workspaceLeader,
+    workspaceLeadership.reason,
   ]);
   const signalMatrixPriorityReady = Boolean(
     pageVisible &&
@@ -2632,12 +2649,17 @@ export default function PlatformApp() {
     signalMatrixRotationCursorRef.current = plan.nextCursor;
     signalMatrixLastPlanRef.current = plan;
     signalMatrixEvaluationInFlightRef.current = true;
+    const requestOrigin =
+      signalMatrixAutomaticRunCountRef.current === 0 ? "startup" : "poll";
+    signalMatrixAutomaticRunCountRef.current += 1;
     evaluateSignalMonitorMatrixMutation.mutate({
       data: {
         environment: signalMonitorEnvironment,
         watchlistId: null,
         symbols: plan.requestSymbols,
         timeframes: SIGNAL_MATRIX_TIMEFRAMES,
+        clientRole: workspaceLeader ? "leader" : "follower",
+        requestOrigin,
       },
     });
   }, [
@@ -2649,9 +2671,10 @@ export default function PlatformApp() {
     signalMatrixPollMs,
     signalMatrixSymbolsKey,
     signalMatrixUniverseSymbols,
+    workspaceLeader,
   ]);
   const signalMatrixRuntimeReady = Boolean(
-    pageVisible &&
+    platformWorkVisible &&
       signalMatrixUniverseSymbols.length &&
       signalMonitorDisplayReady &&
       (signalMatrixPriorityReady || signalMatrixBackgroundReady),

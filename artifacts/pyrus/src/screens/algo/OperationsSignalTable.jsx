@@ -749,6 +749,7 @@ export const OperationsSignalTable = ({
   return (
     <div
       data-testid="algo-operations-signal-table"
+      className="ra-dense-table-scroll"
       style={{
         background: CSS_COLOR.bg1,
         border: `1px solid ${CSS_COLOR.border}`,
@@ -947,7 +948,7 @@ export const OperationsSignalTable = ({
         ) : null}
       </div>
 
-      <div style={{ minWidth: algoIsPhone ? 0 : tableMinWidth }}>
+      <div style={{ minWidth: tableMinWidth }}>
         <OperationsSignalTableHeader
           algoIsPhone={algoIsPhone}
           columns={visibleColumns}
@@ -1006,7 +1007,7 @@ export const OperationsSignalTable = ({
                       ? renderDrill?.({ signal, candidate, drillTab: focus.drillTab })
                       : null
                   }
-                  algoIsPhone={algoIsPhone}
+                  algoIsPhone={false}
                   columns={visibleColumns}
                   scanActive={freshness.scanRunning}
                   onRowAction={handleRowAction}

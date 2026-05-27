@@ -369,9 +369,9 @@ function buildGovernorControls(): LaneControl[] {
       const limits = governorLimits[key];
       const source = controlSource(config.sources[key]);
       return {
-        id: `api.governor.${category}.${key}`,
-        label: `${formatLabel(category)} ${formatLabel(key)}`,
-        group: "API Governor",
+	        id: `api.governor.${category}.${key}`,
+	        label: `${category === "bars" ? "Legacy Bars" : formatLabel(category)} ${formatLabel(key)}`,
+	        group: "API Governor",
         layer: "platform",
         kind: "number",
         value: config[key],

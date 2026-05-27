@@ -57,7 +57,6 @@ import {
   getShadowAccountSummary,
   isShadowAccountId,
 } from "./shadow-account";
-import { fetchShadowAccountSnapshotBase } from "./shadow-account-streams";
 import {
   accountBenchmarkLimitForRange,
   accountBenchmarkTimeframeForRange,
@@ -1067,18 +1066,35 @@ async function fetchOptionQuoteSnapshotsForPositions(
 async function hydratePositionMarkets(
   positions: BrokerPositionSnapshot[],
   quotesBySymbol?: Map<string, QuoteSnapshot>,
+  optionQuotesByProviderContractId?: Map<string, QuoteSnapshot>,
+  openDatesByPositionId?: Map<
+    string,
+    {
+      openedAt: Date | null;
+      openedAtSource: BrokerPositionSnapshot["openedAtSource"] | null;
+    }
+  >,
 ): Promise<Map<string, PositionMarketHydration>> {
   const positionQuotes =
     quotesBySymbol ?? (await fetchEquityQuoteSnapshotsForPositions(positions));
 
   return new Map(
-    positions.map((position) => [
-      position.id,
-      buildPositionMarketHydration(
+    positions.map((position) => {
+      const providerContractId = position.optionContract?.providerContractId?.trim() ?? "";
+      const quote = position.optionContract
+        ? optionQuotesByProviderContractId?.get(providerContractId)
+        : positionQuotes.get(normalizeSymbol(positionReferenceSymbol(position)));
+      const openedAt = bestOpenedAtForPosition(
         position,
-        positionQuotes.get(normalizeSymbol(positionReferenceSymbol(position))),
-      ),
-    ]),
+        openDatesByPositionId?.get(position.id),
+      );
+      return [
+        position.id,
+        buildPositionMarketHydration(position, quote, {
+          openedAt: openedAt.openedAt,
+        }),
+      ] as const;
+    }),
   );
 }
 
@@ -2556,10 +2572,7 @@ export async function getAccountSummary(input: {
   source?: string | null;
 }) {
   if (isShadowAccountId(input.accountId)) {
-    if (input.source) {
-      return getShadowAccountSummary({ source: input.source });
-    }
-    return (await fetchShadowAccountSnapshotBase()).summary;
+    return getShadowAccountSummary({ source: input.source });
   }
 
   const mode = input.mode ?? getRuntimeMode();
@@ -3139,10 +3152,7 @@ export async function getAccountAllocation(input: {
   source?: string | null;
 }) {
   if (isShadowAccountId(input.accountId)) {
-    if (input.source) {
-      return getShadowAccountAllocation({ source: input.source });
-    }
-    return (await fetchShadowAccountSnapshotBase()).allocation;
+    return getShadowAccountAllocation({ source: input.source });
   }
 
   const mode = input.mode ?? getRuntimeMode();
@@ -3296,7 +3306,12 @@ export async function getAccountPositions(input: {
       fetchFlexOpenDatesForPositions(universe.accountIds, result),
     ),
   ]);
-  const marketHydration = await hydratePositionMarkets(positions, equityQuoteSnapshots);
+  const marketHydration = await hydratePositionMarkets(
+    positions,
+    equityQuoteSnapshots,
+    optionQuoteSnapshots,
+    flexOpenDates,
+  );
   const orders = ordersResult.orders;
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
   const filteredPositions =
@@ -4385,16 +4400,10 @@ export async function getAccountOrders(input: {
   source?: string | null;
 }) {
   if (isShadowAccountId(input.accountId)) {
-    if (input.source) {
-      return getShadowAccountOrders({
-        tab: input.tab,
-        source: input.source,
-      });
-    }
-    const snapshot = await fetchShadowAccountSnapshotBase();
-    return input.tab === "history"
-      ? snapshot.historyOrders
-      : snapshot.workingOrders;
+    return getShadowAccountOrders({
+      tab: input.tab,
+      source: input.source,
+    });
   }
 
   const mode = input.mode ?? getRuntimeMode();
@@ -4472,10 +4481,7 @@ export async function getAccountRisk(input: {
   source?: string | null;
 }) {
   if (isShadowAccountId(input.accountId)) {
-    if (input.source) {
-      return getShadowAccountRisk({ source: input.source });
-    }
-    return (await fetchShadowAccountSnapshotBase()).risk;
+    return getShadowAccountRisk({ source: input.source });
   }
 
   const mode = input.mode ?? getRuntimeMode();

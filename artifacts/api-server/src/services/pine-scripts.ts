@@ -10,6 +10,10 @@ import {
   createTransientPostgresBackoff,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
+import {
+  normalizeLegacyAlgoBranding,
+  normalizeLegacyAlgoBrandText,
+} from "./algo-branding";
 
 type CreatePineScriptInput = {
   scriptKey?: string | null;
@@ -118,22 +122,38 @@ function normalizeNullableText(
   return trimmed ? trimmed : null;
 }
 
+function normalizeNullableLegacyText(
+  value: string | null | undefined,
+): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  return normalizeNullableText(normalizeLegacyAlgoBrandText(value));
+}
+
 function normalizeTags(tags: string[] | undefined): string[] {
   if (!Array.isArray(tags)) {
     return [];
   }
 
-  return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))];
+  return [
+    ...new Set(
+      tags
+        .map((tag) => normalizeLegacyAlgoBrandText(tag).trim())
+        .filter(Boolean),
+    ),
+  ];
 }
 
 function normalizeMetadata(
   metadata: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
-  return isRecord(metadata) ? metadata : {};
+  return isRecord(metadata) ? normalizeLegacyAlgoBranding(metadata) : {};
 }
 
 function normalizeScriptKey(value: string): string {
-  return value
+  return normalizeLegacyAlgoBrandText(value)
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -142,7 +162,7 @@ function normalizeScriptKey(value: string): string {
 }
 
 function ensurePineScriptName(name: string): string {
-  const trimmed = name.trim();
+  const trimmed = normalizeLegacyAlgoBrandText(name).trim();
   if (!trimmed) {
     throw new HttpError(400, "Pine script name is required.", {
       code: "pine_script_name_required",
@@ -153,30 +173,35 @@ function ensurePineScriptName(name: string): string {
 }
 
 function ensurePineSourceCode(sourceCode: string): string {
-  const trimmed = sourceCode.trim();
+  const normalized = normalizeLegacyAlgoBrandText(sourceCode);
+  const trimmed = normalized.trim();
   if (!trimmed) {
     throw new HttpError(400, "Pine source is required.", {
       code: "pine_script_source_required",
     });
   }
 
-  return sourceCode;
+  return normalized;
 }
 
 function pineScriptToResponse(script: PineScript) {
   return {
     id: script.id,
-    scriptKey: script.scriptKey,
-    name: script.name,
-    description: script.description ?? null,
-    sourceCode: script.sourceCode,
+    scriptKey: normalizeLegacyAlgoBrandText(script.scriptKey),
+    name: normalizeLegacyAlgoBrandText(script.name),
+    description: script.description
+      ? normalizeLegacyAlgoBrandText(script.description)
+      : null,
+    sourceCode: normalizeLegacyAlgoBrandText(script.sourceCode),
     status: script.status,
     defaultPaneType: script.defaultPaneType,
     chartAccessEnabled: script.chartAccessEnabled,
-    notes: script.notes ?? null,
-    lastError: script.lastError ?? null,
-    tags: script.tags ?? [],
-    metadata: script.metadata ?? {},
+    notes: script.notes ? normalizeLegacyAlgoBrandText(script.notes) : null,
+    lastError: script.lastError
+      ? normalizeLegacyAlgoBrandText(script.lastError)
+      : null,
+    tags: normalizeLegacyAlgoBranding(script.tags ?? []),
+    metadata: normalizeLegacyAlgoBranding(script.metadata ?? {}),
     createdAt: script.createdAt,
     updatedAt: script.updatedAt,
   };
@@ -201,6 +226,14 @@ function sortScriptsDescending(scripts: PineScript[]): PineScript[] {
       right.updatedAt.getTime() - left.updatedAt.getTime() ||
       right.createdAt.getTime() - left.createdAt.getTime(),
   );
+}
+
+function filterLegacyPineScriptDuplicates(scripts: PineScript[]): PineScript[] {
+  const existingKeys = new Set(scripts.map((script) => script.scriptKey));
+  return scripts.filter((script) => {
+    const normalizedKey = normalizeLegacyAlgoBrandText(script.scriptKey);
+    return normalizedKey === script.scriptKey || !existingKeys.has(normalizedKey);
+  });
 }
 
 async function readFallbackScripts(): Promise<PineScript[]> {
@@ -465,7 +498,9 @@ function deriveUniqueScriptKey(
 export async function listPineScripts() {
   const scripts = await ensureBundledPineScriptsStored();
   return {
-    scripts: scripts.map((script) => pineScriptToResponse(script)),
+    scripts: filterLegacyPineScriptDuplicates(scripts).map((script) =>
+      pineScriptToResponse(script),
+    ),
   };
 }
 
@@ -477,13 +512,13 @@ export async function createPineScript(input: CreatePineScriptInput) {
   const nextRecord = {
     scriptKey,
     name,
-    description: normalizeNullableText(input.description),
+    description: normalizeNullableLegacyText(input.description),
     sourceCode,
     status: input.status ?? "draft",
     defaultPaneType: input.defaultPaneType ?? "price",
     chartAccessEnabled: input.chartAccessEnabled ?? false,
-    notes: normalizeNullableText(input.notes),
-    lastError: normalizeNullableText(input.lastError),
+    notes: normalizeNullableLegacyText(input.notes),
+    lastError: normalizeNullableLegacyText(input.lastError),
     tags: normalizeTags(input.tags),
     metadata: normalizeMetadata(input.metadata),
   } as const;
@@ -523,29 +558,29 @@ export async function updatePineScript(
   const nextName =
     typeof input.name === "string"
       ? ensurePineScriptName(input.name)
-      : existing.name;
+      : ensurePineScriptName(existing.name);
   const nextSource =
     typeof input.sourceCode === "string"
       ? ensurePineSourceCode(input.sourceCode)
-      : existing.sourceCode;
+      : ensurePineSourceCode(existing.sourceCode);
   const nextRecord = {
     name: nextName,
     description:
       input.description === undefined
-        ? existing.description
-        : normalizeNullableText(input.description),
+        ? normalizeNullableLegacyText(existing.description)
+        : normalizeNullableLegacyText(input.description),
     sourceCode: nextSource,
     status: input.status ?? existing.status,
     defaultPaneType: input.defaultPaneType ?? existing.defaultPaneType,
     chartAccessEnabled: input.chartAccessEnabled ?? existing.chartAccessEnabled,
     notes:
       input.notes === undefined
-        ? existing.notes
-        : normalizeNullableText(input.notes),
+        ? normalizeNullableLegacyText(existing.notes)
+        : normalizeNullableLegacyText(input.notes),
     lastError:
       input.lastError === undefined
-        ? existing.lastError
-        : normalizeNullableText(input.lastError),
+        ? normalizeNullableLegacyText(existing.lastError)
+        : normalizeNullableLegacyText(input.lastError),
     tags: input.tags ? normalizeTags(input.tags) : existing.tags,
     metadata:
       input.metadata === undefined

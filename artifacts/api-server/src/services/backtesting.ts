@@ -44,6 +44,10 @@ import { HttpError } from "../lib/errors";
 import { getPolygonRuntimeConfig } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
 import {
+  normalizeLegacyAlgoBranding,
+  normalizeLegacyAlgoBrandText,
+} from "./algo-branding";
+import {
   PolygonMarketDataClient,
   type HistoricalOptionContract,
 } from "../providers/polygon/market-data";
@@ -1325,11 +1329,15 @@ function ensureStrategyCompatibility(
   }
 }
 
+function normalizeBacktestStrategyId(strategyId: string): string {
+  return normalizeLegacyAlgoBrandText(strategyId);
+}
+
 function studyRecordToResponse(study: BacktestStudy) {
   return {
     id: study.id,
-    name: study.name,
-    strategyId: study.strategyId,
+    name: normalizeLegacyAlgoBrandText(study.name),
+    strategyId: normalizeBacktestStrategyId(study.strategyId),
     strategyVersion: study.strategyVersion,
     directionMode: study.directionMode,
     watchlistId: study.watchlistId ?? null,
@@ -1337,19 +1345,19 @@ function studyRecordToResponse(study: BacktestStudy) {
     timeframe: study.timeframe,
     startsAt: study.startsAt,
     endsAt: study.endsAt,
-    parameters: study.parameters,
-    portfolioRules: study.portfolioRules as {
+    parameters: normalizeLegacyAlgoBranding(study.parameters),
+    portfolioRules: normalizeLegacyAlgoBranding(study.portfolioRules) as {
       initialCapital: number;
       positionSizePercent: number;
       maxConcurrentPositions: number;
       maxGrossExposurePercent: number;
     },
-    executionProfile: study.executionProfile as {
+    executionProfile: normalizeLegacyAlgoBranding(study.executionProfile) as {
       commissionBps: number;
       slippageBps: number;
     },
     optimizerMode: study.optimizerMode,
-    optimizerConfig: study.optimizerConfig,
+    optimizerConfig: normalizeLegacyAlgoBranding(study.optimizerConfig),
     createdAt: study.createdAt,
     updatedAt: study.updatedAt,
   };
@@ -1360,15 +1368,20 @@ function runSummaryToResponse(run: BacktestRun) {
     id: run.id,
     studyId: run.studyId,
     sweepId: run.sweepId ?? null,
-    name: run.name,
-    strategyId: run.strategyId,
+    name: normalizeLegacyAlgoBrandText(run.name),
+    strategyId: normalizeBacktestStrategyId(run.strategyId),
     strategyVersion: run.strategyVersion,
     directionMode: run.directionMode,
     status: run.status,
     sortRank: run.sortRank ?? null,
-    metrics: (run.metrics as Record<string, unknown> | null) ?? null,
-    warnings: run.warnings,
-    errorMessage: run.errorMessage ?? null,
+    metrics:
+      normalizeLegacyAlgoBranding(
+        (run.metrics as Record<string, unknown> | null) ?? null,
+      ) ?? null,
+    warnings: normalizeLegacyAlgoBranding(run.warnings),
+    errorMessage: run.errorMessage
+      ? normalizeLegacyAlgoBrandText(run.errorMessage)
+      : null,
     startedAt: run.startedAt ?? null,
     finishedAt: run.finishedAt ?? null,
     createdAt: run.createdAt,
@@ -1735,7 +1748,8 @@ function buildRunIndicatorPayload(
   chartBars: Array<{ time: number; ts: string }>,
   chartBarRanges: Array<{ startMs: number; endMs: number }>,
 ) {
-  if (run.strategyId !== "pyrus_signals" || signalBars.length === 0) {
+  const strategyId = normalizeBacktestStrategyId(run.strategyId);
+  if (strategyId !== "pyrus_signals" || signalBars.length === 0) {
     return {
       indicatorEvents: [],
       indicatorZones: [],
@@ -1765,7 +1779,7 @@ function buildRunIndicatorPayload(
 
     return {
       id: event.id,
-      strategy: run.strategyId,
+      strategy: strategyId,
       eventType: `${event.direction}_${event.kind}`,
       ts: event.occurredAt,
       time: timeIndex != null ? chartBars[timeIndex]?.time ?? null : null,
@@ -1792,7 +1806,7 @@ function buildRunIndicatorPayload(
 
     return {
       id: window.id,
-      strategy: run.strategyId,
+      strategy: strategyId,
       direction: window.direction,
       startTs: window.startAt,
       endTs: window.endAt,
@@ -1933,8 +1947,9 @@ export async function listBacktestStudies() {
 }
 
 export async function createBacktestStudy(input: CreateStudyInput) {
+  const strategyId = normalizeBacktestStrategyId(input.strategyId);
   const strategy = getStrategyCatalogItem(
-    input.strategyId,
+    strategyId,
     input.strategyVersion,
   );
   ensureStrategyCompatibility(strategy, input.timeframe, false);
@@ -1943,8 +1958,8 @@ export async function createBacktestStudy(input: CreateStudyInput) {
   const [study] = await db
     .insert(backtestStudiesTable)
     .values({
-      name: input.name,
-      strategyId: input.strategyId,
+      name: normalizeLegacyAlgoBrandText(input.name),
+      strategyId,
       strategyVersion: input.strategyVersion,
       directionMode: input.directionMode,
       watchlistId: input.watchlistId,
@@ -1954,12 +1969,12 @@ export async function createBacktestStudy(input: CreateStudyInput) {
       endsAt: input.endsAt,
       parameters: {
         ...(strategy?.defaultParameters ?? {}),
-        ...input.parameters,
+        ...normalizeLegacyAlgoBranding(input.parameters),
       },
-      portfolioRules: input.portfolioRules,
-      executionProfile: input.executionProfile,
+      portfolioRules: normalizeLegacyAlgoBranding(input.portfolioRules),
+      executionProfile: normalizeLegacyAlgoBranding(input.executionProfile),
       optimizerMode: input.optimizerMode,
-      optimizerConfig: input.optimizerConfig,
+      optimizerConfig: normalizeLegacyAlgoBranding(input.optimizerConfig),
     })
     .returning();
 
@@ -2061,23 +2076,24 @@ async function buildRunDetail(run: BacktestRun) {
 
 export async function createBacktestRun(input: CreateRunInput) {
   const study = await getStudyOrThrow(input.studyId);
+  const strategyId = normalizeBacktestStrategyId(study.strategyId);
   const strategy = getStrategyCatalogItem(
-    study.strategyId,
+    strategyId,
     study.strategyVersion,
   );
   ensureStrategyCompatibility(strategy, study.timeframe, true);
-  const parameters = {
+  const parameters = normalizeLegacyAlgoBranding({
     ...(study.parameters ?? {}),
     ...(input.parameters ?? {}),
-  };
+  });
 
   const result = await db.transaction(async (tx) => {
     const [run] = await tx
       .insert(backtestRunsTable)
       .values({
         studyId: study.id,
-        name: input.name ?? `${study.name} Run`,
-        strategyId: study.strategyId,
+        name: normalizeLegacyAlgoBrandText(input.name ?? `${study.name} Run`),
+        strategyId,
         strategyVersion: study.strategyVersion,
         directionMode: study.directionMode,
         status: "queued",
@@ -2117,10 +2133,11 @@ export async function getBacktestRunChart(
 ) {
   const run = await getRunOrThrow(runId);
   const study = await getStudyOrThrow(run.studyId);
-  const indicatorParameters = {
+  const strategyId = normalizeBacktestStrategyId(run.strategyId);
+  const indicatorParameters = normalizeLegacyAlgoBranding({
     ...(study.parameters ?? {}),
     ...(run.parameters ?? {}),
-  };
+  });
   const executionMode = resolveRunExecutionMode(indicatorParameters);
   const trades = await db
     .select()
@@ -2289,7 +2306,7 @@ export async function getBacktestRunChart(
       entryTs: trade.entryAt.toISOString(),
       exitTs: trade.exitAt.toISOString(),
       dir: trade.side === "short" ? "short" : "long",
-      strat: run.strategyId,
+      strat: strategyId,
       qty: numericValue(trade.quantity),
       pnl: netPnl,
       pnlPercent: numericValue(trade.netPnlPercent),
@@ -2409,15 +2426,16 @@ export async function getBacktestStudyPreviewChart(studyId: string) {
 
 export async function createBacktestSweep(input: CreateSweepInput) {
   const study = await getStudyOrThrow(input.studyId);
+  const strategyId = normalizeBacktestStrategyId(study.strategyId);
   const strategy = getStrategyCatalogItem(
-    study.strategyId,
+    strategyId,
     study.strategyVersion,
   );
   ensureStrategyCompatibility(strategy, study.timeframe, true);
-  const baseParameters = {
+  const baseParameters = normalizeLegacyAlgoBranding({
     ...(study.parameters ?? {}),
     ...input.baseParameters,
-  };
+  });
   const candidateParameters = buildCandidatesForMode(
     input.mode,
     Object.fromEntries(
@@ -2550,6 +2568,7 @@ export async function cancelBacktestJob(jobId: string) {
 
 export async function promoteBacktestRun(input: PromoteRunInput) {
   const run = await getRunOrThrow(input.runId);
+  const strategyId = normalizeBacktestStrategyId(run.strategyId);
 
   if (run.status !== "completed") {
     throw new HttpError(400, "Only completed runs can be promoted.", {
@@ -2566,7 +2585,7 @@ export async function promoteBacktestRun(input: PromoteRunInput) {
     const [strategy] = await tx
       .insert(algoStrategiesTable)
       .values({
-        name: input.name,
+        name: normalizeLegacyAlgoBrandText(input.name),
         mode: "paper",
         enabled: false,
         symbolUniverse: study.symbols,
@@ -2574,14 +2593,16 @@ export async function promoteBacktestRun(input: PromoteRunInput) {
           source: "backtest",
           sourceRunId: run.id,
           sourceStudyId: study.id,
-          strategyId: run.strategyId,
+          strategyId,
           strategyVersion: run.strategyVersion,
-          parameters: run.parameters,
+          parameters: normalizeLegacyAlgoBranding(run.parameters),
           ...(signalOptions ? { signalOptions } : {}),
-          portfolioRules: run.portfolioRules,
-          executionProfile: run.executionProfile,
-          metrics: run.metrics,
-          notes: input.notes,
+          portfolioRules: normalizeLegacyAlgoBranding(run.portfolioRules),
+          executionProfile: normalizeLegacyAlgoBranding(run.executionProfile),
+          metrics: normalizeLegacyAlgoBranding(run.metrics),
+          notes: input.notes
+            ? normalizeLegacyAlgoBrandText(input.notes)
+            : input.notes,
         },
       })
       .returning();
@@ -2600,11 +2621,11 @@ export async function promoteBacktestRun(input: PromoteRunInput) {
     id: draft.id,
     runId: run.id,
     studyId: study.id,
-    name: draft.name,
+    name: normalizeLegacyAlgoBrandText(draft.name),
     enabled: draft.enabled,
     mode: draft.mode,
     symbolUniverse: draft.symbolUniverse,
-    config: draft.config,
+    config: normalizeLegacyAlgoBranding(draft.config),
     promotedAt: new Date(),
   };
 }
@@ -2627,11 +2648,11 @@ export async function listBacktestDraftStrategies() {
       id: strategy.id,
       runId: promotion.runId,
       studyId: promotion.studyId,
-      name: strategy.name,
+      name: normalizeLegacyAlgoBrandText(strategy.name),
       enabled: strategy.enabled,
       mode: strategy.mode,
       symbolUniverse: strategy.symbolUniverse,
-      config: strategy.config,
+      config: normalizeLegacyAlgoBranding(strategy.config),
       promotedAt: promotion.promotedAt,
     })),
   };

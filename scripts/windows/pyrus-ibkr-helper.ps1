@@ -47,7 +47,7 @@ $AutoLoginSettingsFile = Join-Path $AutoLoginDir 'auto-login.json'
 $AutoLoginCredentialFile = Join-Path $AutoLoginDir 'credential.json'
 $AutoLoginRuntimeRoot = Join-Path $StateDir 'ibc-runtime'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-05-24.remote-desktop-agent-v23'
+$HelperVersion = '2026-05-27.launch-sequence-v24'
 $LoginHandoffAlgorithm = 'RSA-OAEP-256-CHUNKED'
 $script:BridgeBundleHash = ''
 $script:SensitiveValues = New-Object System.Collections.Generic.List[string]
@@ -812,6 +812,10 @@ function Get-IBGatewayProcessSummary {
             }
         }
 
+        if ($summaries.Count -gt 0) {
+            return ($summaries.ToArray() -join ', ')
+        }
+
         $candidateFilter = "Name = 'ibgateway.exe' OR Name = 'java.exe' OR Name = 'javaw.exe'"
         $cimProcesses = @()
         try {
@@ -866,6 +870,10 @@ function Get-IBGatewayProcessIds {
         }
     } catch {
         Write-Log "IB Gateway process scan skipped: $($_.Exception.Message)"
+    }
+
+    if ($ids.Count -gt 0) {
+        return @($ids | Where-Object { $_ -and $_ -ne $PID })
     }
 
     try {
@@ -1573,15 +1581,29 @@ function Get-IBGatewayWindowCandidateScore($Window) {
 
     $processName = [string]$Window.ProcessName
     $processPath = [string]$Window.ProcessPath
+    if ($processName -ieq 'ibgateway') {
+        $score += 80
+        return $score
+    }
+
+    $haystack = "$processName $processPath"
+    if ($haystack -match '(?i)(\\|/)Jts(\\|/)ibgateway(\\|/)') {
+        $score += 70
+        return $score
+    } elseif ($haystack -match '(?i)(\\|/)ibgateway(\\|/)') {
+        $score += 60
+        return $score
+    } elseif ($haystack -match '(?i)\bibgateway(\.exe)?\b') {
+        $score += 50
+        return $score
+    }
+
     $commandText = [string]$Window.CommandText
     if (-not $commandText) {
         $commandText = Get-ProcessCommandText -ProcessId ([int]$Window.ProcessId)
         $Window.CommandText = $commandText
     }
     $haystack = "$processName $processPath $commandText"
-    if ($processName -ieq 'ibgateway') {
-        $score += 80
-    }
     if ($haystack -match '(?i)(\\|/)Jts(\\|/)ibgateway(\\|/)') {
         $score += 70
     } elseif ($haystack -match '(?i)(\\|/)ibgateway(\\|/)') {
@@ -1815,12 +1837,85 @@ function ConvertTo-SendKeysLiteral([string]$Value) {
     return $builder.ToString()
 }
 
+function New-IBGatewayLiveApiSocketWaitMessage([DateTime]$StartedAt, [switch]$InspectLoginWindow) {
+    $elapsedSeconds = [int][Math]::Max(0, [Math]::Floor(((Get-Date) - $StartedAt).TotalSeconds))
+    $message = "Still waiting for IBKR Mobile/2FA approval and live API socket 4001 (${elapsedSeconds}s elapsed)."
+
+    if ($InspectLoginWindow -and $elapsedSeconds -ge 20) {
+        $window = Get-IBGatewayWindowCandidate
+        if ($window) {
+            $title = ([string]$window.Title).Trim()
+            if ($title) {
+                $message += " Gateway window '$title' is still visible; clear any Gateway prompt or confirm credentials were accepted."
+            } else {
+                $message += ' A Gateway window is still visible; clear any Gateway prompt or confirm credentials were accepted.'
+            }
+        } else {
+            $runningGateway = Get-IBGatewayProcessSummary
+            if ($runningGateway) {
+                $message += " IB Gateway is still running ($runningGateway)."
+            }
+        }
+    }
+
+    return (Truncate-Message $message)
+}
+
+function Wait-IBGatewayLiveApiSocket(
+    [int]$TimeoutSeconds = 300,
+    [string]$InitialMessage = 'Waiting for IBKR Mobile/2FA approval and live API socket 4001.',
+    [string]$TimeoutMessage = 'Timed out waiting for IB Gateway live API socket 4001. Approve the IBKR Mobile/2FA prompt, confirm Gateway API settings, then retry.',
+    [System.Diagnostics.Process]$Process = $null,
+    [string]$ProcessExitMessage = '',
+    [switch]$InspectLoginWindow,
+    [int]$ProgressSeconds = 15
+) {
+    Send-BridgeProgress -Status 'waiting_gateway' -Step 'waiting_2fa' -Message $InitialMessage
+
+    $startedAt = Get-Date
+    $deadline = $startedAt.AddSeconds($TimeoutSeconds)
+    $lastProgressAt = $startedAt
+    $progressInterval = [Math]::Max(5, $ProgressSeconds)
+    while ((Get-Date) -lt $deadline) {
+        Assert-ActivationNotCanceled
+        if (Test-TcpPort -HostName '127.0.0.1' -Port 4001) {
+            Send-BridgeProgress -Status 'launched' -Step 'gateway_socket_ready' -Message 'IB Gateway live API socket is reachable on 127.0.0.1:4001.'
+            return
+        }
+        if (Test-TcpPort -HostName '127.0.0.1' -Port 4002) {
+            throw 'IB Gateway paper API socket opened on 127.0.0.1:4002, but live bridge launch requires 127.0.0.1:4001.'
+        }
+        if ($Process -and $Process.HasExited) {
+            $exitDetail = ''
+            try {
+                $exitDetail = " Exit code: $($Process.ExitCode)."
+            } catch {}
+            if ($ProcessExitMessage) {
+                throw "$ProcessExitMessage$exitDetail"
+            }
+            throw "IB Gateway launch process exited before live API socket 4001 opened.$exitDetail"
+        }
+
+        if (((Get-Date) - $lastProgressAt).TotalSeconds -ge $progressInterval) {
+            $lastProgressAt = Get-Date
+            Send-BridgeProgress -Status 'waiting_gateway' -Step 'waiting_2fa' -Message (New-IBGatewayLiveApiSocketWaitMessage -StartedAt $startedAt -InspectLoginWindow:$InspectLoginWindow)
+        }
+
+        Start-Sleep -Seconds 2
+    }
+
+    throw $TimeoutMessage
+}
+
 function Invoke-IBGatewayCredentialTyping($Credential) {
     Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_wait' -Message 'Preparing to type one-time credentials into IB Gateway.'
     Assert-ActivationNotCanceled
 
-    $gatewayProcessSummary = Get-IBGatewayProcessSummary
     $gatewayWindow = Get-IBGatewayWindowCandidate
+    $gatewayProcessSummary = $null
+    if (-not $gatewayWindow) {
+        $gatewayProcessSummary = Get-IBGatewayProcessSummary
+    }
     $startedGateway = $false
     if (-not $gatewayProcessSummary -and -not $gatewayWindow) {
         $gatewayPath = Find-IBGatewayExecutable
@@ -1875,21 +1970,11 @@ function Invoke-IBGatewayCredentialTyping($Credential) {
         } catch {}
     }
 
-    Send-BridgeProgress -Status 'waiting_gateway' -Step 'waiting_2fa' -Message 'Waiting for IBKR Mobile/2FA approval and live API socket 4001.'
-    $deadline = (Get-Date).AddSeconds(300)
-    while ((Get-Date) -lt $deadline) {
-        Assert-ActivationNotCanceled
-        if (Test-TcpPort -HostName '127.0.0.1' -Port 4001) {
-            Send-BridgeProgress -Status 'launched' -Step 'gateway_socket_ready' -Message 'IB Gateway live API socket is reachable on 127.0.0.1:4001.'
-            return
-        }
-        if (Test-TcpPort -HostName '127.0.0.1' -Port 4002) {
-            throw 'IB Gateway paper API socket opened on 127.0.0.1:4002, but live bridge launch requires 127.0.0.1:4001.'
-        }
-        Start-Sleep -Seconds 2
-    }
-
-    throw 'Timed out waiting for IB Gateway live API socket 4001 after typing credentials. Approve the IBKR Mobile/2FA prompt, confirm Gateway API settings, then retry.'
+    Send-BridgeProgress -Status 'waiting_gateway' -Step 'credentials_submitted' -Message 'Submitted one-time credentials to IB Gateway.'
+    Wait-IBGatewayLiveApiSocket `
+        -InitialMessage 'Waiting for IBKR Mobile/2FA approval and live API socket 4001.' `
+        -TimeoutMessage 'Timed out waiting for IB Gateway live API socket 4001 after typing credentials. Approve the IBKR Mobile/2FA prompt, clear any Gateway prompts, confirm Gateway API settings, then retry.' `
+        -InspectLoginWindow
 }
 
 function Start-IBGatewayWithIbc($Credential, [string]$IbcStartGatewayPath) {
@@ -1916,25 +2001,11 @@ function Start-IBGatewayWithIbc($Credential, [string]$IbcStartGatewayPath) {
         Send-BridgeProgress -Status 'waiting_gateway' -Step 'starting_ibc' -Message 'Starting IBC for IB Gateway live mode.'
         $process = Start-Process -FilePath $runtimeFiles.startScript -ArgumentList @('/INLINE') -WorkingDirectory $runtimeFiles.runtimeDir -PassThru
         Send-BridgeProgress -Status 'waiting_gateway' -Step 'credentials_submitted' -Message 'IBC started with one-time credentials from Pyrus.'
-        Send-BridgeProgress -Status 'waiting_gateway' -Step 'waiting_2fa' -Message 'Waiting for IBKR Mobile/2FA approval and live API socket 4001.'
-
-        $deadline = (Get-Date).AddSeconds(300)
-        while ((Get-Date) -lt $deadline) {
-            Assert-ActivationNotCanceled
-            if (Test-TcpPort -HostName '127.0.0.1' -Port 4001) {
-                Send-BridgeProgress -Status 'launched' -Step 'gateway_socket_ready' -Message 'IB Gateway live API socket is reachable on 127.0.0.1:4001.'
-                return
-            }
-            if (Test-TcpPort -HostName '127.0.0.1' -Port 4002) {
-                throw 'IB Gateway paper API socket opened on 127.0.0.1:4002, but live bridge launch requires 127.0.0.1:4001.'
-            }
-            if ($process -and $process.HasExited) {
-                throw "IBC exited before IB Gateway live API socket 4001 opened. Exit code: $($process.ExitCode)."
-            }
-            Start-Sleep -Seconds 2
-        }
-
-        throw 'Timed out waiting for IB Gateway live API socket 4001 after starting IBC. Approve the IBKR Mobile/2FA prompt, confirm Gateway API settings, then retry.'
+        Wait-IBGatewayLiveApiSocket `
+            -InitialMessage 'Waiting for IBKR Mobile/2FA approval and live API socket 4001.' `
+            -TimeoutMessage 'Timed out waiting for IB Gateway live API socket 4001 after starting IBC. Approve the IBKR Mobile/2FA prompt, confirm Gateway API settings, then retry.' `
+            -Process $process `
+            -ProcessExitMessage 'IBC exited before IB Gateway live API socket 4001 opened.'
     } finally {
         Clear-IBCRuntimeSecrets -RuntimeFiles $runtimeFiles
     }

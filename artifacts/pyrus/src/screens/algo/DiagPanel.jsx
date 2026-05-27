@@ -136,11 +136,13 @@ export const DiagPanel = ({
                 {formatEnumLabel(label)}
               </span>
               <span
+                className="tnum"
                 style={{
                   color:
                     Number(count) > 0 && !healthy ? color : CSS_COLOR.text,
-                  fontFamily: T.sans,
+                  fontFamily: T.data,
                   fontSize: textSize("body"),
+                  textAlign: "right",
                 }}
               >
                 {count}

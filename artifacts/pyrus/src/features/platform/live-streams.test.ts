@@ -859,6 +859,43 @@ test("applyShadowAccountPayloadToCache patches shadow account caches without inv
   assert.equal(invalidated.length, 0);
 });
 
+test("applyShadowAccountPayloadToCache keeps good shadow values over degraded stream fallback", () => {
+  const summaryKey = ["/api/accounts/shadow/summary", { mode: "paper" }];
+  const initialData = new Map<string, unknown>([
+    [
+      JSON.stringify(summaryKey),
+      {
+        accountId: "shadow",
+        degraded: false,
+        metrics: { netLiquidation: { value: 177_800, source: "SHADOW_LEDGER" } },
+      },
+    ],
+  ]);
+  const { queryClient, writes } = createMockQueryClient(
+    [summaryKey as unknown as unknown[]],
+    initialData,
+  );
+
+  applyShadowAccountPayloadToCache(queryClient as any, {
+    summary: {
+      accountId: "shadow",
+      degraded: true,
+      metrics: { netLiquidation: { value: 25_000, source: "SHADOW_RUNTIME_FALLBACK" } },
+    },
+    positions: { accountId: "shadow", positions: [] },
+    workingOrders: { accountId: "shadow", tab: "working", orders: [] },
+    historyOrders: { accountId: "shadow", tab: "history", orders: [] },
+    allocation: { accountId: "shadow", degraded: true, assetClass: [] },
+    risk: { accountId: "shadow", degraded: true, margin: {} },
+    updatedAt: "2026-05-27T15:30:00.000Z",
+  } as any);
+
+  const patched = writes.get(JSON.stringify(summaryKey)) as any;
+  assert.equal(patched.degraded, false);
+  assert.equal(patched.metrics.netLiquidation.value, 177_800);
+  assert.equal(patched.metrics.netLiquidation.source, "SHADOW_LEDGER");
+});
+
 test("applyAccountPagePayloadToCache seeds visible account page query caches", () => {
   const summaryKey = ["/api/accounts/combined/summary", { mode: "paper" }];
   const positionsKey = [

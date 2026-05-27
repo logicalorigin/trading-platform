@@ -10276,6 +10276,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SignalMonitorMatrixTimeframe"
+        clientRole:
+          type: string
+          enum: [leader, follower, manual, test]
+        requestOrigin:
+          type: string
+          enum: [startup, poll, manual, test]
 
     SignalMonitorSymbolState:
       type: object
@@ -10513,6 +10519,10 @@ components:
             skippedSymbols:
               type: integer
             truncated:
+              type: boolean
+            automaticRequest:
+              type: boolean
+            debounced:
               type: boolean
           required:
             - requestedSymbols

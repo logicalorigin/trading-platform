@@ -148,6 +148,14 @@ router.get("/diagnostics/export", async (req, res) => {
       from,
       to,
       subsystem: readString(req.query.subsystem),
+      snapshotLimit: readLimit(req.query.snapshotLimit ?? req.query.limit, {
+        fallback: 500,
+        max: 2_500,
+      }),
+      eventLimit: readLimit(req.query.eventLimit, {
+        fallback: 200,
+        max: 1_000,
+      }),
     }),
   );
 });

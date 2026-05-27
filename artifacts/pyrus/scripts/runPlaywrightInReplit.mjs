@@ -14,6 +14,8 @@ const child = spawn(
     env: {
       ...process.env,
       PLAYWRIGHT_CHROMIUM_EXECUTABLE: executablePath,
+      PLAYWRIGHT_WORKERS: process.env.PLAYWRIGHT_WORKERS || "1",
+      PYRUS_PLAYWRIGHT_NO_WEB_SERVER: "1",
     },
   },
 );

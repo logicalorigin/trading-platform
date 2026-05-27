@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { EnvironmentMode } from './environmentMode';
+import type { EvaluateSignalMonitorMatrixRequestClientRole } from './evaluateSignalMonitorMatrixRequestClientRole';
+import type { EvaluateSignalMonitorMatrixRequestRequestOrigin } from './evaluateSignalMonitorMatrixRequestRequestOrigin';
 import type { SignalMonitorMatrixTimeframe } from './signalMonitorMatrixTimeframe';
 
 export interface EvaluateSignalMonitorMatrixRequest {
@@ -14,4 +16,6 @@ export interface EvaluateSignalMonitorMatrixRequest {
   watchlistId?: string | null;
   symbols?: string[];
   timeframes?: SignalMonitorMatrixTimeframe[];
+  clientRole?: EvaluateSignalMonitorMatrixRequestClientRole;
+  requestOrigin?: EvaluateSignalMonitorMatrixRequestRequestOrigin;
 }

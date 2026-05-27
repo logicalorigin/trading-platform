@@ -348,6 +348,33 @@ test("theme colors do not append hex alpha suffixes directly", () => {
   assert.deepEqual(offenders, []);
 });
 
+test("algo rail width utilities use CSS container queries", () => {
+  const cssSource = readIndexCss();
+
+  assert.match(cssSource, /\.tnum \{[\s\S]*?font-variant-numeric: tabular-nums/);
+  assert.match(cssSource, /\.algo-rail-cq \{[\s\S]*?container-type: inline-size/);
+  assert.match(
+    cssSource,
+    /\.algo-settings-grid \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/,
+  );
+  for (const width of [560, 420, 300]) {
+    assert.match(
+      cssSource,
+      new RegExp(`@container \\(max-width: ${width}px\\) \\{[\\s\\S]*?\\.algo-settings-grid`),
+    );
+  }
+  assert.match(
+    cssSource,
+    /@container \(max-width: 300px\) \{[\s\S]*?\.algo-cell--wide \{[\s\S]*?grid-column: 1 \/ -1/,
+  );
+  assert.match(
+    cssSource,
+    /\.algo-diag-kpi-grid \{[\s\S]*?grid-template-columns: repeat\(6, minmax\(0, 1fr\)\)/,
+  );
+  assert.match(cssSource, /\.algo-cell--wide \{[\s\S]*?grid-column: span 2/);
+  assert.match(cssSource, /\.algo-cell--full \{[\s\S]*?grid-column: 1 \/ -1/);
+});
+
 test("MAX_WIDTHS exposes the three documented sizes plus full-width opt-out", () => {
   assert.equal(MAX_WIDTHS.reading, 720);
   assert.equal(MAX_WIDTHS.content, 1280);

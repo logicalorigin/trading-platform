@@ -31,9 +31,11 @@ test("positions source filters are views within the shadow ledger", () => {
   assert.doesNotMatch(source, /label: "Live Ledger"/);
 });
 
-test("positions panel maps option assets to option market identity", () => {
-  assert.match(source, /normalized === "options"/);
-  assert.match(source, /return "options"/);
+test("positions panel keeps option contract identity compact in symbol cells", () => {
+  assert.match(source, /const compactPositionContractDetail/);
+  assert.match(source, /optionContractTermsLabel\(row\?\.optionContract\)/);
+  assert.match(source, /data-testid="account-position-symbol"/);
+  assert.match(source, /data-testid="account-position-date-symbol"/);
 });
 
 test("positions panel surfaces option contract and market detail in rows", () => {
@@ -116,7 +118,8 @@ test("positions panel does not render zero underlying bid ask as live market dat
 });
 
 test("positions panel suppresses redundant option asset chips", () => {
-  assert.match(source, /showChips=\{!isOptionPosition\(row\)\}/);
+  assert.match(source, /data-testid="account-position-symbol"/);
+  assert.doesNotMatch(source, /MarketIdentityInline/);
   assert.match(source, /row\.assetClass && !isOptionPosition\(row\)/);
 });
 
@@ -139,6 +142,7 @@ test("position table defaults keep quote, greeks, sparkline, and signal context 
   const expected = [
     "symbol",
     "quantity",
+    "averageCost",
     "price",
     "quote",
     "day",
@@ -151,21 +155,25 @@ test("position table defaults keep quote, greeks, sparkline, and signal context 
 
   assert.deepEqual(ACCOUNT_POSITION_DEFAULT_COLUMN_IDS, expected);
   assert.deepEqual(ALGO_POSITION_DEFAULT_COLUMN_IDS, expected);
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "averageCost")?.label, "Avg");
+  assert.equal(getPositionTableColumns("algo").find((column) => column.id === "averageCost")?.label, "Avg");
   assert.equal(getPositionTableColumns("account").find((column) => column.id === "quote")?.label, "Bid / Ask");
   assert.equal(getPositionTableColumns("algo").find((column) => column.id === "quote")?.label, "Bid / Ask");
   assert.match(source, /const DenseStackedValue/);
+  assert.match(source, /column\.id === "averageCost"/);
   assert.match(source, /column\.id === "price"/);
   assert.match(source, /column\.id === "quote"/);
   assert.match(source, /column\.id === "greeks"/);
   assert.match(source, /snapshotsBySymbol=\{tickerSnapshotsBySymbol\}/);
-  assert.match(source, /data-testid="account-position-context-strip"/);
+  assert.match(source, /data-testid="account-positions-table-scroll"/);
+  assert.doesNotMatch(source, /secondary=\{`Avg/);
+  assert.doesNotMatch(source, /data-testid="account-position-context-strip"/);
 });
 
 test("position tables render bid ask under the column header without row labels", () => {
   assert.match(source, /const formatPositionBidAskPair/);
   assert.match(source, /`\$\{formatSide\(quote\?\.bid\)\} \/ \$\{formatSide\(quote\?\.ask\)\}`/);
   assert.match(source, /const hasPositionBidAsk/);
-  assert.match(source, /label="Bid \/ Ask"/);
   assert.match(source, /"Bid \/ Ask"/);
   assert.doesNotMatch(source, /`Bid \$\{formatSide/);
   assert.doesNotMatch(source, /label="Quote"/);
@@ -256,7 +264,7 @@ test("positions panel renders compact underlying sparklines inside position rows
   assert.match(source, /positionSparklineShellStyle\(compact, inline\)/);
   assert.match(
     source,
-    /<PositionTrendSparkline[\s\S]*?inline[\s\S]*?<MarketIdentityInline/,
+    /<PositionTrendSparkline[\s\S]*?inline[\s\S]*?data-testid="account-position-symbol"/,
   );
   assert.doesNotMatch(source, /\["trend", "Trend"/);
 });
@@ -290,13 +298,25 @@ test("equity-date inspector keeps the default empty state clean", () => {
   assert.match(source, /onRetry=\{inspecting \? query\.refetch : undefined\}/);
 });
 
-test("equity-date inspector keeps compact position quote fields visible", () => {
-  assert.match(source, /const historicalPositionHeaders = \[/);
-  assert.match(source, /"Qty \/ Avg"/);
-  assert.match(source, /"Bid \/ Ask"/);
-  assert.match(source, /"Greeks"/);
-  assert.match(source, /snapshotsBySymbol=\{\{\}\}/);
-  assert.match(source, /formatPositionBidAskPair\(quote/);
+test("equity-date inspector omits live-only quote and greeks columns", () => {
+  const inspectorSource = source.slice(
+    source.indexOf("const historicalPositionHeaders = ["),
+    source.indexOf("export const PositionsPanel"),
+  );
+
+  assert.match(inspectorSource, /const historicalPositionHeaders = \[/);
+  assert.match(inspectorSource, /"Qty"/);
+  assert.match(inspectorSource, /"Avg"/);
+  assert.match(inspectorSource, /"Price"/);
+  assert.match(inspectorSource, /"Exposure"/);
+  assert.doesNotMatch(inspectorSource, /"Bid \/ Ask"/);
+  assert.doesNotMatch(inspectorSource, /"Greeks"/);
+  assert.match(inspectorSource, /data-testid="account-position-date-symbol"/);
+  assert.match(inspectorSource, /snapshotsBySymbol=\{\{\}\}/);
+  assert.match(inspectorSource, /const markValue = row\.mark/);
+  assert.doesNotMatch(inspectorSource, /formatPositionBidAskPair/);
+  assert.doesNotMatch(inspectorSource, /formatGreek|formatIv/);
+  assert.doesNotMatch(inspectorSource, /Last \$\{formatAccountPrice/);
 });
 
 test("positions panel live quote overlay does not revalue options to zero", () => {
@@ -394,6 +414,61 @@ test("positions panel live quote overlay preserves zero option bid with usable a
   assert.equal(patched.mark, 2.45);
   assert.equal(patched.dayChange, 15);
   assert.equal(patched.dayChangePercent, 6.52);
+});
+
+test("positions panel live quote overlay uses entry basis for same-day options", () => {
+  const openedAt = new Date().toISOString().slice(0, 10);
+  const patched =
+    __positionsPanelInternalsForTests.applyLiveOptionQuoteToRow(
+      {
+        id: "same-day-option",
+        symbol: "SPY",
+        quantity: 1,
+        averageCost: 1,
+        mark: 1,
+        marketValue: 100,
+        dayChange: 5,
+        dayChangePercent: 5,
+        unrealizedPnl: 0,
+        unrealizedPnlPercent: 0,
+        openedAt,
+        optionContract: {
+          providerContractId: "twsopt:spy",
+          multiplier: 100,
+        },
+        optionQuote: null,
+      },
+      {
+        providerContractId: "twsopt:spy",
+        price: 1.5,
+        bid: 1.45,
+        ask: 1.55,
+        change: 0.05,
+        changePercent: 3.45,
+      },
+    );
+
+  assert.equal(Number(patched.unrealizedPnl.toFixed(2)), 50);
+  assert.equal(Number(patched.dayChange.toFixed(2)), 50);
+  assert.equal(Number(patched.dayChangePercent.toFixed(2)), 50);
+  assert.equal(Number(patched.unrealizedPnlPercent.toFixed(2)), 50);
+});
+
+test("positions panel same-day helper accepts date-only market dates", () => {
+  assert.equal(
+    __positionsPanelInternalsForTests.positionOpenedOnCurrentMarketDay(
+      "2026-05-27",
+      new Date("2026-05-27T19:01:00.000Z"),
+    ),
+    true,
+  );
+  assert.equal(
+    __positionsPanelInternalsForTests.positionOpenedOnCurrentMarketDay(
+      new Date("2026-05-27T00:00:00.000Z"),
+      new Date("2026-05-27T19:01:00.000Z"),
+    ),
+    true,
+  );
 });
 
 test("positions panel starts live streams from hydrated option quote conids", () => {

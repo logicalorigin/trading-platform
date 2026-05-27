@@ -9,6 +9,10 @@ import { HttpError } from "../lib/errors";
 import { assertAlgoGatewayReady } from "./algo-gateway";
 import { normalizeAlgoDeploymentProviderAccountId } from "./algo-deployment-account";
 import {
+  normalizeLegacyAlgoBranding,
+  normalizeLegacyAlgoBrandText,
+} from "./algo-branding";
+import {
   getSignalMonitorProfile,
   updateSignalMonitorProfile,
 } from "./signal-monitor";
@@ -152,12 +156,12 @@ function deploymentToResponse(
   return {
     id: deployment.id,
     strategyId: deployment.strategyId,
-    name: deployment.name,
+    name: normalizeLegacyAlgoBrandText(deployment.name),
     mode: deployment.mode,
     enabled: deployment.enabled,
     providerAccountId: deployment.providerAccountId,
     symbolUniverse: deployment.symbolUniverse,
-    config: deployment.config,
+    config: normalizeLegacyAlgoBranding(deployment.config),
     lastEvaluatedAt: deployment.lastEvaluatedAt ?? null,
     lastSignalAt: deployment.lastSignalAt ?? null,
     lastError: deployment.lastError ?? null,
@@ -188,8 +192,8 @@ function executionEventToResponse(
     providerAccountId: event.providerAccountId ?? null,
     symbol: event.symbol ?? null,
     eventType: event.eventType,
-    summary: event.summary,
-    payload: event.payload,
+    summary: normalizeLegacyAlgoBrandText(event.summary),
+    payload: normalizeLegacyAlgoBranding(event.payload),
     occurredAt: event.occurredAt,
     createdAt: event.createdAt,
     updatedAt: event.updatedAt,
@@ -235,7 +239,7 @@ export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
     .insert(algoDeploymentsTable)
     .values({
       strategyId: strategy.id,
-      name: input.name,
+      name: normalizeLegacyAlgoBrandText(input.name),
       mode: input.mode,
       enabled: false,
       providerAccountId,
@@ -302,8 +306,8 @@ export async function setAlgoDeploymentEnabled(input: {
     providerAccountId: deployment.providerAccountId,
     eventType: input.enabled ? "deployment_enabled" : "deployment_paused",
     summary: input.enabled
-      ? `Enabled deployment ${deployment.name}`
-      : `Paused deployment ${deployment.name}`,
+      ? `Enabled deployment ${normalizeLegacyAlgoBrandText(deployment.name)}`
+      : `Paused deployment ${normalizeLegacyAlgoBrandText(deployment.name)}`,
     payload: {
       enabled: input.enabled,
       previousProviderAccountId: existing.providerAccountId,
@@ -391,7 +395,7 @@ export async function updateAlgoDeploymentStrategySettings(input: {
     deploymentId: deployment.id,
     providerAccountId: deployment.providerAccountId,
     eventType: "deployment_strategy_settings_updated",
-    summary: `Updated strategy signal settings for ${deployment.name}`,
+    summary: `Updated strategy signal settings for ${normalizeLegacyAlgoBrandText(deployment.name)}`,
     payload: {
       timeHorizon,
       signalTimeframe,

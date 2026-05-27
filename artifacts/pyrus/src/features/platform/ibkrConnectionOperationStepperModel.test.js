@@ -21,18 +21,85 @@ test("IBKR launch stepper maps helper progress through connection phases", () =>
   );
 
   assert.deepEqual(
-    statuses(
+    icons(
       buildIbkrLaunchOperationStepper({
         activationStatus: {
-          latestProgress: { step: "waiting_secure_credentials" },
-          recentProgress: [{ step: "waiting_secure_credentials" }],
+          latestProgress: { step: "updating_helper" },
+          recentProgress: [{ step: "updating_helper" }],
         },
         inFlight: true,
       }),
     ),
     [
-      ["Request", "current"],
+      ["request", "send", "dispatch"],
+      ["update", "refresh", "spin"],
+      ["credentials", "key", "secure"],
+      ["gateway", "monitor", "boot"],
+      ["bridge", "cable", "link"],
+      ["tunnel", "network", "tunnel"],
+    ],
+  );
+
+  assert.deepEqual(
+    statuses(
+      buildIbkrLaunchOperationStepper({
+        activationStatus: {
+          latestProgress: { step: "updating_helper" },
+          recentProgress: [{ step: "updating_helper" }],
+        },
+        inFlight: true,
+      }),
+    ),
+    [
+      ["Request", "complete"],
+      ["Update", "current"],
       ["Credentials", "pending"],
+      ["Gateway", "pending"],
+      ["Bridge", "pending"],
+      ["Tunnel", "pending"],
+    ],
+  );
+
+  assert.deepEqual(
+    statuses(
+      buildIbkrLaunchOperationStepper({
+        activationStatus: {
+          latestProgress: { step: "helper_launched" },
+          recentProgress: [
+            { step: "updating_helper" },
+            { step: "helper_launched" },
+          ],
+        },
+        inFlight: true,
+      }),
+    ),
+    [
+      ["Request", "complete"],
+      ["Update", "complete"],
+      ["Credentials", "current"],
+      ["Gateway", "pending"],
+      ["Bridge", "pending"],
+      ["Tunnel", "pending"],
+    ],
+  );
+
+  assert.deepEqual(
+    statuses(
+      buildIbkrLaunchOperationStepper({
+        activationStatus: {
+          latestProgress: { step: "waiting_secure_credentials" },
+          recentProgress: [
+            { step: "helper_launched" },
+            { step: "checking_gateway_socket" },
+            { step: "waiting_secure_credentials" },
+          ],
+        },
+        inFlight: true,
+      }),
+    ),
+    [
+      ["Request", "complete"],
+      ["Credentials", "current"],
       ["Gateway", "pending"],
       ["Bridge", "pending"],
       ["Tunnel", "pending"],
@@ -70,6 +137,7 @@ test("IBKR launch stepper maps helper progress through connection phases", () =>
           recentProgress: [
             { step: "waiting_secure_credentials" },
             { step: "credentials_delivered" },
+            { step: "gateway_window_login" },
             { step: "gateway_login_window_active" },
           ],
         },
@@ -78,8 +146,8 @@ test("IBKR launch stepper maps helper progress through connection phases", () =>
     ),
     [
       ["Request", "complete"],
-      ["Credentials", "current"],
-      ["Gateway", "pending"],
+      ["Credentials", "complete"],
+      ["Gateway", "current"],
       ["Bridge", "pending"],
       ["Tunnel", "pending"],
     ],
@@ -167,8 +235,8 @@ test("IBKR launch stepper handles complete, cancel, and error outcomes", () => {
       }),
     ),
     [
-      ["Request", "canceled"],
-      ["Credentials", "pending"],
+      ["Request", "complete"],
+      ["Credentials", "canceled"],
       ["Gateway", "pending"],
       ["Bridge", "pending"],
       ["Tunnel", "pending"],

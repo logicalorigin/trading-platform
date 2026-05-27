@@ -49,7 +49,8 @@ test("platform root no longer depends on the retired PyrusPlatform module", () =
   const appContentSource = readFileSync(new URL("../../app/AppContent.tsx", import.meta.url), "utf8");
   assert.match(appContentSource, /features\/platform\/PlatformApp\.jsx/);
   assert.match(appContentSource, /const loadPlatformApp = \(\) =>/);
-  assert.match(appContentSource, /void loadPlatformApp\(\)/);
+  assert.match(appContentSource, /export const preloadInitialAppContentRoute = \(\) =>/);
+  assert.match(appContentSource, /void preloadInitialAppContentRoute\(\)/);
   assert.doesNotMatch(appContentSource, /PyrusPlatform/);
 
   const sourceHits = collectSourceFiles(pyrusSrcRoot)
@@ -1094,7 +1095,7 @@ test("mobile primitives keep pinch zoom and touch fallbacks available", () => {
   assert.match(tooltipSource, /setOpen\(true\)/);
 });
 
-test("Account phone layout uses card lists for dense trading tables", () => {
+test("Account phone layout keeps dense trading tables horizontally scrollable", () => {
   const accountSource = readFileSync(
     new URL("../../screens/AccountScreen.jsx", import.meta.url),
     "utf8",
@@ -1116,8 +1117,12 @@ test("Account phone layout uses card lists for dense trading tables", () => {
   assert.match(accountSource, /<LazyPositionsPanel[\s\S]*isPhone=\{accountIsPhone\}/);
   assert.match(accountSource, /<LazyTradingAnalysisWorkbench[\s\S]*isPhone=\{accountIsPhone\}/);
   assert.match(accountSource, /<LazyOrdersPanel[\s\S]*isPhone=\{accountIsPhone\}/);
-  assert.match(positionsSource, /data-testid="account-positions-row-list"/);
-  assert.match(tradesOrdersSource, /data-testid="account-orders-row-list"/);
+  assert.match(positionsSource, /data-testid="account-positions-table-scroll"/);
+  assert.match(positionsSource, /ra-dense-table-scroll/);
+  assert.doesNotMatch(positionsSource, /data-testid="account-positions-row-list"/);
+  assert.match(tradesOrdersSource, /data-testid="account-orders-table-scroll"/);
+  assert.match(tradesOrdersSource, /ra-dense-table-scroll/);
+  assert.doesNotMatch(tradesOrdersSource, /data-testid="account-orders-row-list"/);
   assert.match(workbenchSource, /dataTestId="account-analysis-trade-row"/);
   assert.match(workbenchSource, /isPhone \?/);
 });
@@ -1171,13 +1176,14 @@ test("Account panels defer below-fold content and memoize mobile rows", () => {
   assert.match(accountSource, /const LazyEquityCurvePanel = lazy/);
   assert.match(accountSource, /const LazyPositionsPanel = lazy/);
   assert.match(cssSource, /--ra-color-pnl-positive/);
-  assert.match(positionsSource, /const MobilePositionRow = memo/);
-  assert.match(positionsSource, /data-action="chart"/);
-  assert.match(positionsSource, /onRowAction=\{handleMobileRowAction\}/);
-  assert.match(tradesOrdersSource, /const MobileOrderRow = memo/);
+  assert.match(positionsSource, /data-testid="account-positions-table-scroll"/);
+  assert.doesNotMatch(positionsSource, /const MobilePositionRow = memo/);
+  assert.doesNotMatch(positionsSource, /onRowAction=\{handleMobileRowAction\}/);
+  assert.match(tradesOrdersSource, /data-testid="account-orders-table-scroll"/);
+  assert.doesNotMatch(tradesOrdersSource, /const MobileOrderRow = memo/);
   assert.match(workbenchSource, /TableExpandableRow/);
-  assert.match(tradesOrdersSource, /data-action="cancel"/);
-  assert.match(tradesOrdersSource, /onRowAction=\{handleOrderRowAction\}/);
+  assert.doesNotMatch(tradesOrdersSource, /onRowAction=\{handleOrderRowAction\}/);
+  assert.match(cssSource, /ra-dense-table-scroll \*/);
 });
 
 test("Flow page scanner uses one broad scanner panel and no active-symbol merge", () => {
@@ -1611,12 +1617,15 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.doesNotMatch(displayReadyBlock ?? "", /backgroundResumeReady/);
   assert.match(eventsReadyBlock ?? "", /backgroundResumeReady\.signalDisplay/);
   assert.match(source, /buildSignalMatrixRequestPlan/);
+  assert.match(source, /useWorkspaceLeadership/);
+  assert.match(source, /const platformWorkVisible = Boolean\(pageVisible && workspaceLeader\)/);
   assert.match(source, /signalMatrixUniverseSymbols/);
   assert.match(matrixPriorityBlock ?? "", /\.\.\.watchlistSymbols/);
   assert.match(source, /signalMatrixBackgroundReady/);
   assert.match(source, /const signalMatrixPriorityReady = Boolean/);
   assert.match(source, /const signalMatrixRuntimeReady = Boolean/);
   assert.match(matrixReadyBlock ?? "", /signalMonitorDisplayReady/);
+  assert.match(matrixReadyBlock ?? "", /platformWorkVisible/);
   assert.match(matrixReadyBlock ?? "", /signalMatrixPriorityReady \|\| signalMatrixBackgroundReady/);
   assert.match(matrixReadyBlock ?? "", /signalMatrixBackgroundReady/);
   assert.doesNotMatch(matrixReadyBlock ?? "", /screenWarmupPhase === "ready"/);
@@ -1955,7 +1964,10 @@ test("platform background work waits for active screen readiness", () => {
   assert.match(appSource, /const activeScreenBackgroundAllowed = Boolean/);
   assert.match(appSource, /const activeScreenBackgroundDataAllowed = Boolean/);
   assert.match(appSource, /const isPhone = viewport\.flags\.isPhone/);
-  assert.match(appSource, /!isPhone && !warmupTestOverrides\.disableBackgroundDataWarmup/);
+  assert.match(
+    appSource,
+    /workspaceLeader &&\s*!isPhone &&\s*!warmupTestOverrides\.disableBackgroundDataWarmup/,
+  );
   assert.match(appSource, /backgroundDataWarmupEnabled/);
   assert.match(appSource, /\(backgroundDataWarmupEnabled \|\| isPhone\)/);
   assert.match(
@@ -1970,7 +1982,7 @@ test("platform background work waits for active screen readiness", () => {
   assert.doesNotMatch(positionAlertsQueryBlock, /screen !== "market" \|\| activeScreenCriticalReady/);
   assert.match(
     appSource,
-    /const operationalCodePreloadReady = Boolean\(\s*pageVisible &&\s*firstScreenReady &&\s*!isPhone &&\s*!warmupTestOverrides\.disableOperationalCodePreload,\s*\);/,
+    /const operationalCodePreloadReady = Boolean\(\s*platformWorkVisible &&\s*firstScreenReady &&\s*!isPhone &&\s*!warmupTestOverrides\.disableOperationalCodePreload,\s*\);/,
   );
   assert.doesNotMatch(
     appSource,
@@ -2032,7 +2044,7 @@ test("platform root polling stops while the page is hidden", () => {
   assert.match(watchlistsQuery ?? "", /refetchInterval:\s*pageVisible\s*\?\s*60_000\s*:\s*false/);
   assert.match(
     signalMonitorProfileQuery ?? "",
-    /refetchInterval:\s*pageVisible\s*\?\s*60_000\s*:\s*false/,
+    /refetchInterval:\s*platformWorkVisible\s*\?\s*60_000\s*:\s*false/,
   );
 });
 
@@ -2316,6 +2328,8 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
   );
 
   assert.match(algoSource, /const loadAlgoLivePage = \(\) =>/);
+  assert.match(algoSource, /retryDynamicImport\(/);
+  assert.match(algoSource, /label:\s*"AlgoLivePage"/);
   assert.match(algoSource, /const LazyAlgoLivePage = lazy\(loadAlgoLivePage\)/);
   assert.match(algoSource, /void loadAlgoLivePage\(\)/);
   assert.match(algoSource, /const AlgoLiveLoading = \(\) =>/);
@@ -2333,6 +2347,20 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
   assert.doesNotMatch(algoSource, /LazyAlgoRightRail/);
   assert.doesNotMatch(algoSource, /import\("\.\/algo\/AlgoRightRail/);
   assert.match(algoLivePageSource, /data-testid="algo-live-right-column"/);
+  [
+    "LazyOperationsPositionsTable",
+    "LazyOperationsSignalDrill",
+    "LazyOperationsSignalTable",
+  ].forEach((name) => {
+    assert.match(algoLivePageSource, new RegExp(`const ${name} = lazyWithRetry`));
+  });
+  [
+    "OperationsPositionsTable",
+    "OperationsSignalDrill",
+    "OperationsSignalTable",
+  ].forEach((label) => {
+    assert.match(algoLivePageSource, new RegExp(`label:\\s*"${label}"`));
+  });
   assert.match(algoLivePageSource, /\{rightRail\}/);
   assert.doesNotMatch(
     algoSource,

@@ -1,5 +1,1291 @@
 # Current Session Handoff
 
+- Last updated: `2026-05-27 19:40 UTC`
+- Current request: commit and push the current Replit/PYRUS hardening work, then continue down the larger runtime-pressure list and new monitor findings.
+- Current status:
+  - Full 900-second monitor capture completed with browser observer enabled.
+  - Targeting existing app only: frontend/proxy `http://127.0.0.1:18747`, direct API `http://127.0.0.1:8080/api`.
+  - Report artifacts:
+    - `scripts/reports/pyrus-performance-monitor/2026-05-27T19-23-17-275Z/report.md`
+    - `scripts/reports/pyrus-performance-monitor/2026-05-27T19-23-17-275Z/samples-and-report.json`
+  - Verdict is `critical`: API RSS peaked at `2611.7 MB`, API p95 averaged `4706.636 ms` and maxed `7519 ms`, API p99 averaged `19647.245 ms`, event-loop max hit `10024.4 ms`, and 7 sampled endpoints had failures/timeouts.
+  - Slowest routes were `/quotes/snapshot` (`57851 ms` p95/max), shadow account risk/positions/summary/orders (`20-38s` p95), signal-options performance (`36899 ms`), and account equity/summary routes.
+  - Browser observer recorded 17 console errors and 17 request failures, including `ERR_CONNECTION_REFUSED`, `ERR_EMPTY_RESPONSE`, `ERR_INCOMPLETE_CHUNKED_ENCODING`, and a final `chrome-error://chromewebdata/` URL.
+  - IBKR/market data line utilization peaked at `1.0`, admission active lines peaked at `200`, and scheduler pressure included `degraded` and `stalled`.
+  - The paper signal-options deployment is active, but `lastSignalAt` is `2026-05-27T19:00:00.000Z` while mark/exit events continued after `19:27Z`.
+  - Diagnostics report `signal_options_scan_long_running`; at report time latest scan age was `346425 ms`, active scan age was `285417 ms`, and last scan duration was `481520 ms`.
+  - Source/API probes confirm the normal chart bars path can return delayed `massive-history`, but signal-options worker scans request signal monitor bars with `barSourcePolicy: "ibkr-only"`; an explicit IBKR-only bars probe returned current `ibkr-history` bars through `2026-05-27T19:30:00.000Z`.
+  - The stale Signals to Actions table is therefore rooted in long-running/stale signal-options scans plus API/resource pressure, not direct Massive usage in that table. Separate signal matrix/chart paths can still use the `hybrid_1m_5m`/Massive path.
+  - Generated performance-monitor output is intentionally kept local via `.gitignore` (`scripts/reports/pyrus-performance-monitor/`) because the raw sample JSON is about 305 MB.
+  - No app restart, Replit Run action, workflow edit, artifact TOML edit, or startup config edit.
+- Changed files this pass:
+  - `.gitignore`
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Monitor run completed.
+  - Read-only API probes completed: deployments, signal monitor state/events, diagnostics latest, and algo events.
+- Next step:
+  - Commit and push the current work, then start with the monitor's top runtime-pressure sources: `/quotes/snapshot`, shadow account routes, signal-options scan duration, and IBKR line saturation.
+
+- Last updated: `2026-05-27 19:22 UTC`
+- Current request: audit the current PYRUS/Replit hardening, dense-table, and performance-monitor work to make sure it landed cleanly.
+- Current status:
+  - Audit completed.
+  - Found and fixed one signal-matrix cache invalidation bug: environment-scoped clears now match source-strategy matrix cache keys and automatic debounce markers.
+  - Fixed Scribe test fixture names so the retired-branding guard remains green.
+  - Documented newly referenced env vars in `.env.example` so root `typecheck`/`audit:env` stays green.
+  - Confirmed the dense-table CSS exemption is supported by Chromium and preserves dense-table inner min-widths while still applying the phone reset outside dense tables.
+  - No Replit startup config edits, no Replit Run action, and no app restart were performed. The duplicate-start probe exited no-op against the existing supervisor.
+- Changed files this audit pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `.env.example`
+  - `artifacts/api-server/src/services/signal-monitor.ts`
+  - `artifacts/api-server/src/services/signal-monitor.test.ts`
+  - `scripts/src/replit-scribe-artifacts.test.ts`
+- Validation state:
+  - Passed: `node --check artifacts/pyrus/scripts/runDevApp.mjs`
+  - Passed: Chromium CSS selector/exemption check for `.ra-dense-table-scroll`
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts`
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/account-positions.test.ts`
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/workspaceLeadership.test.js src/features/platform/platformRootSource.test.js src/screens/account/accountTableDensity.test.js src/screens/algo/OperationsSignalRow.test.js src/features/trade/TradePositionsPanel.test.js src/screens/account/PositionsPanel.test.js src/screens/algo/algoHelpers.test.js`
+  - Passed: `pnpm --filter @workspace/scripts exec node --import tsx --test src/replit-scribe-artifacts.test.ts`
+  - Passed: `pnpm --filter @workspace/scripts exec node --import tsx --test src/pyrus-performance-monitor.test.ts`
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: `pnpm --filter @workspace/scripts run typecheck`
+  - Passed: `pnpm run audit:guards`
+  - Passed: `pnpm run typecheck`
+  - Passed: `pnpm run replit:config:status`
+  - Passed: `pnpm run replit:scribe:artifacts -- --json`
+  - Passed: `pnpm --filter @workspace/pyrus run smoke:render`
+  - Passed: `curl -fsS -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:18747/src/screens/algo/OperationsSignalTable.jsx` returned `200 text/javascript`
+  - Passed: `PYRUS_DEV_DUPLICATE_CHECK_ONLY=1 pnpm --filter @workspace/pyrus run dev:replit`
+  - Passed: scoped `git diff --check`
+- Next step:
+  - No audit blockers remain. Continue only with the next requested implementation item.
+
+- Last updated: `2026-05-27 19:21 UTC`
+- Current request: implement the 15-minute PYRUS performance monitor plan.
+- Current status:
+  - Implementation complete in the scripts package only.
+  - Added `pyrus:performance-monitor`, a read-only 15-minute sampler for the existing dev app: frontend/proxy on `18747`, direct API on `8080`.
+  - The monitor samples backend diagnostics/runtime/IBKR line usage, local process/cgroup state, and one optional Playwright browser observer page.
+  - It writes raw samples plus a summarized report to `scripts/reports/pyrus-performance-monitor/<timestamp>/` by default; validation smoke runs wrote to `/tmp`.
+  - Startup constraints remain active: no Replit Run action, no app restart, no startup config edits.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `scripts/package.json`
+  - `scripts/src/pyrus-performance-monitor.ts`
+  - `scripts/src/pyrus-performance-monitor.test.ts`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/scripts run test:pyrus-performance-monitor`
+  - Passed: `pnpm --filter @workspace/scripts run typecheck`
+  - Passed: scoped `git diff --check` for tracked files and no-index whitespace checks for new monitor files.
+  - Passed smoke without browser: `pnpm --filter @workspace/scripts run pyrus:performance-monitor -- --seconds=1 --interval-ms=1000 --deep-interval-ms=1000 --no-browser --output-dir=/tmp/pyrus-performance-monitor-smoke`
+  - Passed smoke with browser observer: `pnpm --filter @workspace/scripts run pyrus:performance-monitor -- --seconds=1 --interval-ms=1000 --deep-interval-ms=1000 --output-dir=/tmp/pyrus-performance-monitor-smoke-browser`
+- Next step:
+  - Run the full 15-minute capture when ready: `pnpm --filter @workspace/scripts run pyrus:performance-monitor -- --seconds=900 --frontend-url=http://127.0.0.1:18747 --api-base-url=http://127.0.0.1:8080/api`
+
+- Last updated: `2026-05-27 19:11 UTC`
+- Current request: audit the just-landed dense-table viewport fix and related Replit hardening audit changes to make sure they landed cleanly.
+- Current status:
+  - Audit in progress.
+  - Scope: inspect the recent CSS/table/test changes, Scribe cleanup output fix, supervisor lifecycle logging fix, and rerun focused validation without restarting the app or touching Replit startup config.
+  - Worktree remains broadly dirty from this longer session; preserve unrelated edits.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending this audit pass.
+- Next step:
+  - Inspect exact diffs and run focused tests/typecheck/browser checks as needed.
+
+- Last updated: `2026-05-27 19:09 UTC`
+- Current request: audit the Replit/PYRUS hardening work, then continue the next larger-task item through narrow-viewport dense table validation.
+- Current status:
+  - Completed the Replit hardening audit; fixed two evidence/reporting gaps in the Scribe cleanup output and duplicate-start lifecycle logging.
+  - Completed the narrow-viewport browser validation follow-up against the existing dev server on port `18747`; no app restart, Replit Run action, startup config edit, or artifact startup edit was performed.
+  - Browser validation found a real dense-table CSS bug: the phone global `[style*="min-width"]` guard was forcing `min-width: 0 !important` inside account/algo table regions, collapsing Algo signal-table columns and weakening Account/Algo table min-width guarantees.
+  - Fixed the bug by marking dense table scroll regions with `ra-dense-table-scroll` and excluding that class/descendants from the phone min-width reset.
+  - Final browser validation at `390x844` passes for Account positions/orders, Trade open positions/executions/live orders, Algo signal table, and Algo operations positions table.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `scripts/src/replit-scribe-artifacts.ts`
+  - `artifacts/pyrus/scripts/runDevApp.mjs`
+  - `artifacts/pyrus/src/index.css`
+  - `artifacts/pyrus/src/screens/account/PositionsPanel.jsx`
+  - `artifacts/pyrus/src/screens/account/TradesOrdersPanel.jsx`
+  - `artifacts/pyrus/src/screens/account/accountTableDensity.test.js`
+  - `artifacts/pyrus/src/features/trade/TradePositionsPanel.jsx`
+  - `artifacts/pyrus/src/features/trade/TradePositionsPanel.test.js`
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx`
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/scripts exec node --import tsx --test src/replit-scribe-artifacts.test.ts`
+  - Passed: `pnpm --filter @workspace/scripts run typecheck`
+  - Passed: `pnpm run replit:scribe:artifacts -- --json`
+  - Passed: `node --check artifacts/pyrus/scripts/runDevApp.mjs`
+  - Passed: `pnpm run audit:replit-startup`
+  - Passed: safe duplicate-start probe `PYRUS_DEV_DUPLICATE_CHECK_ONLY=1 pnpm --filter @workspace/pyrus run dev:replit`
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/account/accountTableDensity.test.js src/screens/algo/OperationsSignalRow.test.js src/features/trade/TradePositionsPanel.test.js src/features/platform/platformRootSource.test.js`
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: scoped `git diff --check`
+  - Passed: Playwright narrow-viewport validation at `390x844`; screenshots saved under `/tmp/pyrus-narrow-final-*.png`.
+- Next step:
+  - Continue with the next larger-task item only after confirming which queued item should follow the table validation/fix pass.
+
+- Last updated: `2026-05-27 19:07 UTC`
+- Current request: pass over positions tables to split average cost into its own column, remove extra row text, and reduce symbol-column horizontal footprint.
+- Current status:
+  - Completed focused positions-table UI pass.
+  - Account/Algo positions table defaults now include a standalone `Avg` column immediately after `Qty`.
+  - Account position symbol cells are fixed narrower and render compact ticker text plus only essential option contract terms; removed the market identity chip stack and visible open-age/quote detail from the symbol column.
+  - Account positions-at-date inspector split `Qty / Avg` into separate `Qty` and `Avg` columns and uses the same compact symbol treatment.
+  - Trade open positions now labels its separate entry/average column as `AVG` and keeps open-age/source detail in the tooltip instead of visible row text.
+  - Startup constraints remain active: no Replit Run action, no app restart, no startup config edits.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/features/account/positionTableColumns.js`
+  - `artifacts/pyrus/src/screens/account/PositionsPanel.jsx`
+  - `artifacts/pyrus/src/screens/account/PositionsPanel.test.js`
+  - `artifacts/pyrus/src/features/trade/TradePositionsPanel.jsx`
+  - `artifacts/pyrus/src/features/trade/TradePositionsPanel.test.js`
+- Validation state:
+  - Passed: `node --import tsx --test src/screens/account/PositionsPanel.test.js src/screens/account/accountTableDensity.test.js src/features/trade/TradePositionsPanel.test.js src/screens/algo/algoHelpers.test.js` from `artifacts/pyrus`
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: scoped `git diff --check`
+  - Passed: source scan for retired visible patterns in active source: `Qty / Avg`, `MarketIdentityInline`, `secondary={\`Avg`, `>ENTRY</span>`, and visible open age concatenation.
+- Next step:
+  - Optional follow-up is browser screenshot validation on a narrow viewport against the existing dev server.
+
+- Last updated: `2026-05-27 18:58 UTC`
+- Current request: audit the dense-table/P&L work and make sure it landed and merged properly.
+- Current status:
+  - Audit completed for the table/P&L scope; no remaining blocking findings are open.
+  - Fixed same-day P&L date-only handling so `YYYY-MM-DD`, `YYYYMMDD`, and UTC-midnight `Date` values are treated as date-only market dates instead of shifting across New York market-date boundaries.
+  - Fixed stale Account mobile card/list source by removing the unused `MobilePositionRow`/`MobileOrderRow` branches and related handlers/styles after the all-breakpoint dense-table path landed.
+  - Verified Account current positions/orders, Account positions-at-date balance/activity, Trade open positions/executions/live orders, and Algo signal rows all have dense table surfaces or dense table routing in the implemented scope.
+  - Worktree remains broadly dirty from this longer session; unrelated dirty files were not reverted.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/account-position-model.ts`
+  - `artifacts/api-server/src/services/account-positions.test.ts`
+  - `artifacts/pyrus/src/screens/account/PositionsPanel.jsx`
+  - `artifacts/pyrus/src/screens/account/PositionsPanel.test.js`
+  - `artifacts/pyrus/src/screens/account/TradesOrdersPanel.jsx`
+  - `artifacts/pyrus/src/screens/account/accountTableDensity.test.js`
+- Validation state:
+  - Passed: `node --import tsx --test src/services/account-positions.test.ts` from `artifacts/api-server`
+  - Passed: `node --import tsx --test src/screens/account/PositionsPanel.test.js src/screens/account/TradesOrdersPanel.test.js src/screens/account/accountTableDensity.test.js src/screens/algo/algoHelpers.test.js src/screens/algo/OperationsSignalRow.test.js src/features/trade/TradePositionsPanel.test.js` from `artifacts/pyrus`
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`
+  - Passed: repository `git diff --check`
+  - Passed: source-only stale Account mobile/card search for `MobilePositionRow`, `MobileOrderRow`, row-list test IDs, context strip, and mobile row handlers/styles.
+- Next step:
+  - Optional follow-up is browser screenshot validation at a narrow viewport against the existing dev server; no app restart or Replit Run action was performed during this audit.
+
+- Last updated: `2026-05-27 18:41 UTC`
+- Current request: implement dense table consistency across account/trade/algo operational tables and fix day-vs-unrealized position P&L discrepancies.
+- Current status:
+  - Implementation complete for the accepted scope.
+  - Scope locked by user: phone-sized screens should use horizontal dense tables with sticky key columns, not card/list rows.
+  - Account current positions and orders now use the dense horizontal table path on all screen sizes; the phone row-list branches were removed.
+  - Positions-at-date inspector balance/activity areas were converted from tile/list presentation to compact tables; historical positions and expanded tax-lot/detail tables remain dense horizontal tables.
+  - Trade open positions, broker executions, and live broker orders now expose horizontally scrollable dense table surfaces with table roles/test IDs.
+  - Algo operations positions inherit the Account positions table path; Algo signal table keeps its table header/min-width and desktop column row layout on phone instead of switching to compact mobile rows.
+  - Backend position market hydration now uses same-market-day entry/average-cost basis for day P&L, hydrates option marks from option quote snapshots for current positions, and keeps older equity day P&L on quote previous-close/session change basis.
+  - Frontend live option overlays and Algo runtime-only position rows now apply the same same-market-day day/unrealized basis so live quote updates do not reintroduce day-vs-unrealized discrepancies.
+  - Worktree is already dirty with many unrelated changes; preserve existing user/session edits.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/account-position-model.ts`
+  - `artifacts/api-server/src/services/account.ts`
+  - `artifacts/api-server/src/services/account-positions.test.ts`
+  - `artifacts/pyrus/src/screens/account/PositionsPanel.jsx`
+  - `artifacts/pyrus/src/screens/account/PositionsPanel.test.js`
+  - `artifacts/pyrus/src/screens/account/TradesOrdersPanel.jsx`
+  - `artifacts/pyrus/src/screens/account/accountTableDensity.test.js`
+  - `artifacts/pyrus/src/features/trade/TradePositionsPanel.jsx`
+  - `artifacts/pyrus/src/features/trade/TradePositionsPanel.test.js`
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx`
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx`
+  - `artifacts/pyrus/src/screens/algo/algoAccountPositions.js`
+  - `artifacts/pyrus/src/screens/algo/algoHelpers.test.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`
+  - Passed: `node --import tsx --test src/services/account-positions.test.ts` from `artifacts/api-server`
+  - Passed: `node --import tsx --test src/screens/account/PositionsPanel.test.js src/screens/account/TradesOrdersPanel.test.js src/screens/account/accountTableDensity.test.js src/screens/algo/algoHelpers.test.js src/screens/algo/OperationsSignalRow.test.js src/features/trade/TradePositionsPanel.test.js` from `artifacts/pyrus`
+  - Passed: scoped `git diff --check` for changed table/P&L files.
+  - Note: `pnpm --filter @workspace/api-server run test:unit -- src/services/account-positions.test.ts` runs the broader API unit suite and still reports unrelated pre-existing `option-chain-batch.test.ts` failures; the targeted `node --test` account positions file passes.
+- Next step:
+  - Review in-browser table behavior on a narrow viewport when convenient; no dev server restart was performed.
+
+- Last updated: `2026-05-27 18:35 UTC`
+- Current request: implement the Replit reconnect/crash hardening plan.
+- Current status:
+  - Implemented.
+  - Algo deferred chunks now use the existing retryable dynamic-import path: `AlgoLivePage`, `OperationsPositionsTable`, `OperationsSignalDrill`, and `OperationsSignalTable` retry transient chunk fetch failures before a guarded one-time reload can occur.
+  - Added workspace iframe leadership in `artifacts/pyrus/src/features/platform/workspaceLeadership.js`; `PlatformApp.jsx` now gates expensive reconnect/startup work, background warmups, signal matrix evaluation, signal monitor polling, and quote-stream runtime work on the visible leader iframe.
+  - Extended `/api/signal-monitor/matrix` request metadata with `clientRole` and `requestOrigin`; regenerated API client/zod output. The API records automatic startup/poll duplicate markers, reuses stale matrix cache during the debounce window instead of refreshing again, and exposes debounce metadata in matrix coverage.
+  - Added guarded Scribe artifact audit/cleanup tooling in `scripts/src/replit-scribe-artifacts.ts`.
+  - Ran backup-first Scribe cleanup. Backup: `.local/state/scribe/scribe.db.backup-2026-05-27T18-33-05-539Z`. Follow-up audit shows one live PYRUS artifact iframe and no cleanup candidates.
+  - Added supervisor lifecycle JSONL evidence in `/tmp/pyrus/pyrus-dev-lifecycle-8080.jsonl`.
+  - Updated Replit startup guard/docs to cover duplicate-start no-op, lifecycle logging, Scribe audit/cleanup, and Playwright Replit `webServer` opt-in.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/features/platform/workspaceLeadership.js`
+  - `artifacts/pyrus/src/features/platform/workspaceLeadership.test.js`
+  - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/screens/AlgoScreen.jsx`
+  - `artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx`
+  - `artifacts/api-server/src/services/signal-monitor.ts`
+  - `artifacts/api-server/src/services/signal-monitor.test.ts`
+  - `lib/api-spec/openapi.yaml`
+  - `lib/api-client-react/src/generated/api.schemas.ts`
+  - `lib/api-zod/src/generated/api.ts`
+  - `lib/api-zod/src/generated/types/evaluateSignalMonitorMatrixRequest.ts`
+  - `lib/api-zod/src/generated/types/evaluateSignalMonitorMatrixRequestClientRole.ts`
+  - `lib/api-zod/src/generated/types/evaluateSignalMonitorMatrixRequestRequestOrigin.ts`
+  - `lib/api-zod/src/generated/types/signalMonitorMatrixResponseCoverage.ts`
+  - `lib/api-zod/src/generated/types/index.ts`
+  - `artifacts/pyrus/scripts/runDevApp.mjs`
+  - `scripts/src/replit-scribe-artifacts.ts`
+  - `scripts/src/replit-scribe-artifacts.test.ts`
+  - `scripts/check-replit-startup-guards.mjs`
+  - `scripts/package.json`
+  - `package.json`
+  - `scripts/README.md`
+  - `replit.md`
+- Validation state:
+  - Passed: `node --check artifacts/pyrus/scripts/runDevApp.mjs`
+  - Passed: `pnpm --filter @workspace/api-spec run codegen`
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/workspaceLeadership.test.js src/features/platform/platformRootSource.test.js`
+  - Passed: `pnpm --filter @workspace/scripts exec node --import tsx --test src/replit-scribe-artifacts.test.ts`
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts`
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`
+  - Passed: `pnpm --filter @workspace/scripts run typecheck`
+  - Passed: `pnpm run audit:replit-startup`
+  - Passed: `pnpm run audit:api-codegen`
+  - Passed: `pnpm run audit:markdown-paths`
+  - Passed: `pnpm run replit:config:status`; startup config remains read-only.
+  - Passed: safe duplicate-start probe `PYRUS_DEV_DUPLICATE_CHECK_ONLY=1 pnpm --filter @workspace/pyrus run dev:replit`; supervisor PID `535` remained active and unchanged.
+  - Passed: direct Playwright config check: Replit default `webServer=off`; `PYRUS_PLAYWRIGHT_ALLOW_WEB_SERVER=1` gives `webServer=on`.
+  - Passed: `pnpm --filter @workspace/pyrus run smoke:render` against the existing dev server.
+  - Passed: scoped `git diff --check` for files touched in this pass.
+- Next step:
+  - Watch the next Replit reconnect against `/tmp/pyrus/pyrus-dev-lifecycle-8080.jsonl` and browser/API traffic. The expected behavior is one visible PYRUS iframe leading automatic work, no duplicate Scribe live artifact iframe records, duplicate Replit workflow starts exiting no-op, and transient Algo chunk fetch failures retrying before reaching the root error boundary.
+
+- Last updated: `2026-05-27 18:21 UTC`
+- Current request: implement the Replit reconnect/crash hardening plan, including guarded Scribe cleanup, reconnect leadership, matrix burst collapse, Algo dynamic-import retry, supervisor lifecycle evidence, guard/docs updates, and targeted validation.
+- Current status:
+  - Implementation starting from the accepted plan.
+  - Startup constraints remain active: do not press Run, do not add repo-defined `.replit` workflows/root run commands, keep artifact TOML as the dev startup source of truth, and keep startup config locked.
+  - Worktree is already dirty with many unrelated changes; preserve user/session changes and keep edits scoped to this plan.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending.
+- Next step:
+  - Implement in focused passes: Algo retry path, workspace leadership/matrix gating, API matrix metadata/debounce, Scribe audit/cleanup, supervisor lifecycle logging, docs/guards, then targeted checks.
+
+- Last updated: `2026-05-27 18:11 UTC`
+- Current request: diagnose the `pyrus-root-crash` caused by a failed dynamic import of `OperationsSignalTable.jsx`.
+- Current status:
+  - Diagnosis points to a transient module fetch failure, not a missing file or persistent Vite transform/syntax error.
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx` exists and the live local and public Replit Vite URLs now return `200 OK` for that module with the same ETag.
+  - The failed chunk is lazy-loaded from `artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx` with bare `React.lazy`, while other high-risk screens use `lazyWithRetry` from `artifacts/pyrus/src/lib/dynamicImport.ts`.
+  - Browser diagnostics recorded the same root crash at `2026-05-27T18:08:16.394Z`; workflow logs around `18:08:00-18:08:16Z` show `/api/signal-monitor/matrix`, multiple SSE stream aborts, account latency, and options-flow scanner timeouts.
+  - Current diagnostics remain `down/critical`: API degraded, browser down due to the crash event, resource-pressure down, accounts down, automation degraded.
+  - Current runtime pressure sample: API RSS about `2.34GB`, event loop max about `9865ms`, bars cache `256/256`, signal-matrix hydrations about `3187` with `2776` misses, option chains `128/128`, options-meta `94` timeouts/orphans, and no cgroup OOM kill.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Passed read-only module checks: local and public Replit `GET /src/screens/algo/OperationsSignalTable.jsx` return `200 OK`.
+  - Passed startup lock refresh: `pnpm run replit:config:lock`.
+  - No app restart/stop and no startup config edits.
+- Next step:
+  - If fixing, wrap the Algo lazy chunks, especially `OperationsSignalTable`, with `lazyWithRetry` or a local retrying loader, then address the underlying resource-pressure/reconnect amplification separately.
+
+- Last updated: `2026-05-27 18:07 UTC`
+- Current request: continue the Replit/Codex drop diagnosis until confidence is as high as local evidence allows, assuming API/resource pressure is not the issue.
+- Current status:
+  - Continuing non-pressure investigation. Goal is to distinguish locally provable repo-side behavior from Replit control-plane behavior that may require external telemetry.
+  - Planned checks: shell/Codex command history around the incident, local session logs, workflow-log boundaries, Replit env/toolchain refresh metadata, duplicate-start guard behavior, and any remaining stale workflow/process paths.
+  - Additional diagnosis:
+    - `.local/state/scribe/scribe.db` contains two live PYRUS artifact iframe shapes and one old live RayAlgo iframe shape. That is not repo workflow config, but it explains why the workspace browser can reload app preview iframes on reconnect without anyone pressing Run.
+    - At the `2026-05-27T18:05Z` workspace/LSP reconnect, no new app workflow was created, but the current app log shows fresh browser-driven traffic including `POST /api/signal-monitor/matrix`; this supports "workspace restore reloads live preview iframes" rather than "every reconnect presses Run."
+    - Recent workflow logs mostly end on ordinary app JSON without supervisor exit/controlled-handoff lines, so the local pattern is external workflow stop/restart. The explicit OOM log exists in one older run, but it is not used as the primary explanation under the current premise.
+  - Implemented two repo-side guard changes after identifying remaining plausible repo-controlled triggers:
+    - `artifacts/pyrus/scripts/runDevApp.mjs` no longer treats duplicate Replit workflow starts older than 30s as intentional restarts. Duplicate starts now leave the active supervisor alive and exit unless `PYRUS_DEV_FORCE_RESTART=1` is explicitly set.
+    - `artifacts/pyrus/playwright.config.ts` disables Playwright `webServer` startup automatically inside Replit unless `PYRUS_PLAYWRIGHT_ALLOW_WEB_SERVER=1` is explicitly set.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/scripts/runDevApp.mjs`
+  - `artifacts/pyrus/playwright.config.ts`
+  - `scripts/check-replit-startup-guards.mjs`
+  - `replit.md`
+  - `scripts/README.md`
+- Validation state:
+  - Passed: `node --check artifacts/pyrus/scripts/runDevApp.mjs`
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: safe duplicate-start probe `PYRUS_DEV_DUPLICATE_CHECK_ONLY=1 pnpm --filter @workspace/pyrus run dev:replit`; it reported supervisor PID `535` alive and exited without restart.
+  - Passed: `pnpm run audit:replit-startup`
+  - Passed: `pnpm run audit:markdown-paths`
+  - Passed: scoped `git diff --check`
+  - Passed: direct Playwright config check: Replit default reports `webServer=off`; explicit `PYRUS_PLAYWRIGHT_ALLOW_WEB_SERVER=1` reports `webServer=on`.
+  - Sanity check: supervisor lock remains PID `535`, `startedAt=2026-05-27T17:16:12.551Z`; app process tree remains the same after validation.
+- Next step:
+  - Finalize confidence statement: locally proven causes are Replit/workspace restoration of live artifact iframes and external workflow lifecycle stops; repo-side automatic restarts from duplicate workflow launches and raw Playwright webServer startup have been guarded.
+
+- Last updated: `2026-05-27 17:53 UTC`
+- Current request: continue the crash/reconnect diagnosis while assuming API/resource pressure is not the issue.
+- Current status:
+  - Investigation pivoted to non-pressure causes: Replit control-plane refresh, workflow auto-start/reconnect behavior, raw test-run startup paths, stale non-repo workflows, Postgres/cgroup cascade, and Codex session persistence.
+  - Strongest current non-pressure lead: Replit refreshed `/run/replit`/`.cache/replit` env/toolchain files at `2026-05-27T17:16:11Z`; the current workflow started at `17:16:11-17:16:12Z`; the prior workflow log stopped abruptly at `17:15:27Z` with no supervisor exit line. This followed artifact package/test-wrapper edits at `17:06-17:07Z` and API source edits at `17:11-17:12Z`.
+  - Current app is Replit-owned, not Codex-owned: PID `403` is `pnpm --filter @workspace/pyrus run dev:replit`, supervisor PID `535` started from Replit workflow env (`REPLIT_MODE=workflow`, `PYRUS_REPLIT_RUN=1`), and current Codex started later.
+  - Latest duplicate workflow invocation (`2h9zb5SyAlBz-O5mh6Bkf`) did not kill the app: it saw supervisor PID `535` alive for `10ms` and exited no-op.
+  - Important code-level risk remains: `artifacts/pyrus/scripts/runDevApp.mjs` treats a duplicate Replit workflow start older than `PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS` (`30000ms` default) as an intentional Run-button restart and performs a controlled handoff. If Replit auto-launches the selected workflow on reconnect after that guard window, that path can restart the app even without pressure/OOM.
+  - Raw `pnpm --filter @workspace/pyrus run test:e2e` remains a startup footgun because Playwright `webServer.command` is `PORT=${port} BASE_PATH=/ pnpm dev`; the Replit wrapper `test:e2e:replit` now sets `PYRUS_PLAYWRIGHT_NO_WEB_SERVER=1`.
+  - Historical Postgres/cgroup cascade is not current evidence: `.local/postgres/log/pg.log` has not been touched since `2026-05-14`, and no local `postgres` process is running.
+  - Stale non-repo workflow angle was checked again: current workflow logs only show `artifacts_pyrus__web.shell.exec.0`; historical `.local/tasks` mention stale API/IBKR/RayAlgo workflows, but current local logs do not show them active.
+  - Do not restart/stop the app, press Run, or edit startup config during this pass.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Read-only diagnostics only; no app restart/stop and no startup config edits.
+  - Official Replit docs checked for workflow/run-button/dependency-management behavior.
+- Next step:
+  - If changing code, first consider making duplicate Replit starts always no-op unless an explicit `PYRUS_DEV_FORCE_RESTART=1` or comparable platform/user intent marker is present; separately keep using `test:e2e:replit`/targeted pnpm commands for validation.
+
+- Last updated: `2026-05-27 17:43 UTC`
+- Current request: answer whether the diagnosis is certain and whether forbidden/non-obvious causes were explored.
+- Current status:
+  - Confidence level: not 100%. The API pressure path is confirmed and sufficient to explain the repeated app/workflow drops, but there are two adjacent causes:
+    - At least one prior workflow run ended in an explicit Node/V8 heap OOM: `.local/state/workflow-logs/fjXS5MYe0D_3sxgz-_ZTb/artifacts_pyrus__web.shell.exec.0` contains `FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory`, followed by API `SIGABRT` and the PYRUS web child `SIGTERM`.
+    - Current run has not OOMed yet, but is on the same trajectory: API PID `597` at `2026-05-27T17:43Z` was `~2.10GB RSS`, `~916.9MB heapUsed`, cgroup `memory.current` about `4.97GB`, and `memory.events` still `oom_kill 0`.
+  - Read-only exploration of "do-not-touch" startup config:
+    - `.replit`, `replit.nix`, and `artifacts/pyrus/.replit-artifact/artifact.toml` are read-only and not dirty.
+    - Recent `git log --since='24 hours ago'` for startup-sensitive files only showed `replit.nix` in commit `fcf9106`; current `.replit` and artifact TOML have old mtimes and no dirty changes.
+    - `replit.md` and old `.local/tasks` confirm the historical hazard that editing `.replit`/artifact TOML can reload the workspace; current evidence does not show that as the latest trigger.
+  - Read-only exploration of non-repo/stale workflow angle:
+    - `.local/state/workflow-logs` currently contains only `artifacts_pyrus__web.shell.exec.0` logs, not separate `Configure Your App`, API Server, or IBKR Bridge workflow logs.
+    - `.local/state/replit` local agent state is stale; newest file there is from `2026-05-11`, so it is not useful evidence for the current incident.
+    - Old `.local/tasks/task-36.md` documents stale non-repo workflows from the older RayAlgo era, but current workflow logs do not show those names active.
+  - Test-path exploration:
+    - Raw Playwright `test:e2e` can still start `pnpm dev` through Playwright `webServer`, but `test:e2e:replit` sets `PYRUS_PLAYWRIGHT_NO_WEB_SERVER=1`.
+    - `runDevApp.mjs` has a Codex-launch guard and duplicate-supervisor guard, so a shell/Codex app start should be refused rather than silently taking over the live workflow.
+  - Current live pressure expanded while diagnosing: bars cache full with `1527` `signal-matrix` hydrations and `1352` misses; option chain cache at `128/128`; options-meta lane `72` timeouts/orphans; options-flow deep scanner still active under critical pressure.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `.agents/skills/session-handoff/SKILL.md`
+- Validation state:
+  - Additional read-only checks only; no app restart/stop and no startup config edits.
+  - Prior validation still applies: `pnpm run audit:replit-startup`, `pnpm run audit:markdown-paths`, `pnpm run replit:config:lock`, and scoped `git diff --check` passed.
+- Next step:
+  - Treat the pressure/OOM path as confirmed, while keeping the startup-config reload hazard as a separate guarded class. Fix should first stop API heap/RSS growth from signal-matrix/options-flow/signal-options/live prewarm; separately keep startup config locked and forbid raw Playwright webServer app starts.
+
+- Last updated: `2026-05-27 17:35 UTC`
+- Current request: finish diagnosing the reasons for the Replit/Codex crashes/restarts/drops.
+- Current status:
+  - Diagnosis complete for this pass; no app restart/stop was performed.
+  - Dropped Codex diag session remains not locally recoverable as a Codex session. Runtime/session stores checked in this workstream only contain the current thread, so the durable recovery record is this handoff plus workflow/app diagnostics.
+  - Replit startup wiring is not the root fault: `.replit` still has `[workflows] runButton = "artifacts/pyrus: web"`, the artifact dev command is still `trap '' HUP; exec pnpm --filter @workspace/pyrus run dev:replit`, there is no root `.replit run = [...]`, and the duplicate workflow invocation at `17:16:12Z` exited because supervisor PID `535` was already alive.
+  - Current app was started by Replit workflow infra before this Codex thread: PID `403` is `pnpm --filter @workspace/pyrus run dev:replit`, supervisor PID `535` is `runDevApp.mjs`, API PID `597`, Vite PID `707`; workflow env has `REPLIT_MODE=workflow` and `PYRUS_REPLIT_RUN=1`.
+  - Runtime cause is API pressure/reconnect amplification. API PID `597` is about `2.0GB RSS`, CPU-heavy, diagnostics are `down/critical`, while `/api/healthz` still returns ok. Cgroup memory events still show no current OOM kill.
+  - Concrete pressure creators:
+    - Frontend `PlatformApp.jsx` immediately runs `runSignalMatrixEvaluation()` when the platform page becomes visible/runtime-ready, then repeats on the profile poll interval. A browser reload/reconnect or Replit preview restoration can therefore fire `/api/signal-monitor/matrix` again.
+    - Bars cache pressure is dominated by `signal-matrix`: latest runtime sample had `1114` signal-matrix bar hydration events, `981` signal-matrix misses, `773` provider fetches, and the bars cache full at `256/256`.
+    - Options-flow scanner remains enabled/started/always-on under critical API pressure, with radar selecting about `550` symbols and deep scanner active. The options-meta lane has `65` timeouts/orphans and p95 duration about `45007ms`.
+    - Signal-options automation is contributing a long scan under critical pressure; resource-pressure caps currently show `maintenanceOnly=false` and `skipDeploymentScans=false`, so this pressure does not pause deployment scans by itself.
+    - IBKR/watchlist live demand is an amplifier: about `134` active quote subscriptions, `124` equity subscriptions, `10` option subscriptions, and `119` prewarm symbols, mostly `watchlist-prewarm`.
+    - SSE/browser reconnect churn is a symptom and amplifier: quotes/accounts/orders/account-page streams repeatedly close with `request_aborted`, and one account-page stream hit a write backpressure timeout.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `.agents/skills/session-handoff/SKILL.md`
+- Validation state:
+  - Passed: `pnpm run audit:replit-startup`
+  - Passed: `pnpm run audit:markdown-paths`
+  - Passed: `pnpm run replit:config:status`; startup config files remain read-only.
+  - Passed: `pnpm run replit:config:lock`; startup config files remain locked read-only.
+  - Read-only diagnostics used: process table, cgroup memory state, workflow logs, `/api/healthz`, `/api/diagnostics/latest`, `/api/diagnostics/runtime`, and resource-pressure history.
+- Next step:
+  - If fixing now, start with gating/debouncing initial frontend signal-matrix evaluation on reconnect, pausing optional options-flow/deep scans under critical API resource pressure, and reducing background prewarm/subscription pressure without changing Replit startup config.
+
+- Last updated: `2026-05-27 17:29 UTC`
+- Current request: finish diagnosing the reasons for the Replit/Codex crashes/restarts/drops.
+- Current status:
+  - Investigation resumed from runtime state without restarting or stopping the app.
+  - Current Replit workflow is running as `pnpm --filter @workspace/pyrus run dev:replit`; API PID `597` is already around `2.1GB RSS` and `74% CPU` after about 13 minutes, matching the recurring pressure pattern.
+  - Workflow-log and diagnostics inspection is in progress to separate app resource-pressure causes from Replit workflow restoration and Codex session persistence failures.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending; read-only diagnostics in progress.
+- Next step:
+  - Inspect latest workflow logs, diagnostics endpoints/history, memory/cgroup state, and creator code paths for signal matrix/options/IBKR/SSE pressure.
+
+- Last updated: `2026-05-27 17:26 UTC`
+- Current request: diagnose why Replit keeps starting/rerunning the PYRUS app around workspace reload/reconnect or test requests, recover the dropped diagnostic session if possible, and update the session-handoff skill so dropped-session recovery does not start in repo files.
+- Current status:
+  - Dropped Codex diagnostic session recovery was checked outside the repo first. Local Codex durable stores only contain this current thread: `~/.codex/history.jsonl` has only current user messages; `~/.codex/sessions` has only the current rollout; `~/.codex/state_5.sqlite` has one `threads` row for the current thread; `~/.codex/logs_2.sqlite` contains only current-process/current-thread log entries; `~/.codex/tmp` only has the current Codex lock. Conclusion: the dropped diagnostic thread was not locally recoverable as a Codex session because it appears to have died before writing a durable row/rollout.
+  - The prior diagnostic content is still partially recoverable from this handoff's `2026-05-27 17:05 UTC` entry: that entry captured the app-side evidence around the terminal disconnect/render smoke episode.
+  - Current runtime evidence shows the PYRUS app is already running as a Replit-owned workflow, not as a Codex shell-launched process: PID `403` is `pnpm --filter @workspace/pyrus run dev:replit`, supervisor PID `535` is `runDevApp.mjs`, API PID `597`, and Vite PID `707`.
+  - `/tmp/pyrus/pyrus-dev-supervisor-8080.lock` says the supervisor started at `2026-05-27T17:16:12.551Z`; the app process environment has `REPLIT_MODE=workflow` and `PYRUS_REPLIT_RUN=1`, with no `CODEX_THREAD_ID`. Current Codex process started seconds later and the persisted thread was created at `2026-05-27T17:17:21Z`.
+  - Repo startup wiring explains what Replit starts when it decides to run/restore the selected app: `.replit` points `[workflows] runButton = "artifacts/pyrus: web"`, and the artifact dev command runs `trap '' HUP; exec pnpm --filter @workspace/pyrus run dev:replit`. There is no root `.replit run = ...` and no repo-tracked workflow body.
+  - Updated `.agents/skills/session-handoff/SKILL.md` with a Dropped Session Recovery Rule requiring `~/.codex`, SQLite state/logs, live Codex processes, and Replit runtime state to be checked before repo handoff files when the user says a session was dropped/lost.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `.agents/skills/session-handoff/SKILL.md`
+- Validation state:
+  - Passed: `pnpm run audit:replit-startup`
+  - Passed: `pnpm run replit:config:status`; `.replit`, `replit.nix`, and `artifacts/pyrus/.replit-artifact/artifact.toml` are read-only.
+  - Passed: `pnpm run audit:markdown-paths`
+  - Passed: `pnpm run replit:config:lock`; startup config remains read-only.
+  - Read-only runtime inspection only for Codex/Replit state; no app tests were run and no app restart was requested.
+- Next step:
+  - If this repeats, capture immediately whether the Replit Run button transitions from Run to Stop or was already Stop, then compare `/tmp/pyrus/pyrus-dev-supervisor-8080.lock` `startedAt` against the reconnect time. That distinguishes a fresh Replit workflow launch from mere restoration of an already-running app.
+
+- Last updated: `2026-05-27 17:13 UTC`
+- Current request: ensure the signals going to algo are sourced from IBKR, not Polygon/Massive.
+- Current status:
+  - Implemented and validated.
+  - The worktree is already dirty with many unrelated changes; preserve existing user/session changes and keep this pass scoped to the signal/algo source path.
+  - `signal-monitor` now has an explicit `barSourcePolicy: "ibkr-only"` path. Under that policy it disables historical synthesis, filters completed bars down to IBKR history sources, and keeps Polygon/Massive latest bars retryable/degraded instead of fresh.
+  - `signal-options-automation` now uses `barSourcePolicy: "ibkr-only"` for forced batches, normal scan batches, and no-universe fallback scans, so algo candidates are built only from IBKR-backed signal-monitor evaluations.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/signal-monitor.ts`
+  - `artifacts/api-server/src/services/signal-monitor.test.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.test.ts`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-automation.test.ts`
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`
+  - Passed: scoped `git diff --check` for touched files.
+- Next step:
+  - Restart the API via the default Replit app runner when ready so the running process picks up the backend change.
+
+- Last updated: `2026-05-27 17:05 UTC`
+- Current request: pinpoint and diagnose the terminal disconnect that happened when page rendering/loading was tested, and prevent repeat unsafe render checks.
+- Current status:
+  - Diagnosis and a safe validation path are complete.
+  - Current app supervisor lock shows a fresh Replit-owned run started at `2026-05-27T16:57:16Z` with API PID `586` and Vite PID `703`.
+  - The previous workflow log stopped abruptly at `2026-05-27T16:55:42Z` without a normal `[pyrus-dev] ... exited` line; the replacement workflow started at `16:57:16Z`. Local Codex logs for the crashed turn are not present in the new session, so app-side evidence is the reliable source.
+  - App-side evidence points to render/load validation overlapping heavy live runtime pressure: repeated `Options flow scanner timed out ... after 45000ms`, IBKR bridge health/request 504s, long account/shadow reads, long `/api/signal-monitor/matrix` calls, and mass SSE `request aborted` lines.
+  - Current run reproduced the pressure shape immediately after startup: `/api/signal-monitor/matrix` took `35431ms`, shadow risk took `49019ms`, account stream aborts hit `101-143s`, and API RSS was about `1.67GB` with about `53%` CPU within four minutes.
+  - Added `pnpm --filter @workspace/pyrus run smoke:render`, a bounded Playwright render smoke that attaches to the existing Replit app only, injects warmup overrides, forces Market as the active screen, disables EventSource/SSE, stubs `/api/signal-monitor/matrix`, and reports page/console/request failures.
+  - Hardened `test:e2e:replit` so the wrapper sets `PYRUS_PLAYWRIGHT_NO_WEB_SERVER=1` and defaults `PLAYWRIGHT_WORKERS=1`; it will not ask Playwright to start a dev server from a Codex shell.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/package.json`
+  - `artifacts/pyrus/scripts/runPlaywrightInReplit.mjs`
+  - `artifacts/pyrus/scripts/smokeRenderLoading.mjs`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus run smoke:render` against existing `http://127.0.0.1:18747/`; result `ok: true`, browser duration `1684ms`, no page/console/request failures, only `market` mounted, all background warmup gates disabled.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `node --check artifacts/pyrus/scripts/smokeRenderLoading.mjs && node --check artifacts/pyrus/scripts/runPlaywrightInReplit.mjs`.
+  - Passed: scoped `git diff --check` for touched files.
+  - Runtime doctor still warns that the live API PID started slightly before the current dist mtime and that built Pyrus dist is stale versus sources; use the default Replit Run App restart before validating API-side behavior.
+- Next step:
+  - Use `pnpm --filter @workspace/pyrus run smoke:render` for low-impact page rendering/loading checks. Separately fix the underlying live runtime pressure path if the goal is to stop normal user tabs from driving options-flow/signal-options/background API load.
+
+- Last updated: `2026-05-27 16:06 UTC`
+- Current request: review/audit the loader consolidation work to make sure it functions as intended.
+- Current status:
+  - Audit complete; fixed one issue found during audit.
+  - Initial audit smoke confirmed the duplicate root logo loader was gone (`maxAppFallbackCount=1`) but found a blank handoff interval caused by rendering an already-imported route through `React.lazy` with `fallback={null}`.
+  - Patched `AppContent.tsx` so the awaited/preloaded initial route component is stored and rendered directly. The lazy/null fallback remains only as a defensive path for non-awaited renders.
+  - Repeat browser smoke against `http://127.0.0.1:18747/` passed: `maxBootCount=1`, `maxAppFallbackCount=1`, `blankAfterReactLoaderSamples=0`, sequence was static boot -> React root loader -> route shell -> market workspace, with no console/page errors.
+  - Static grep confirms the only production `app-loading-fallback` is in `App.tsx`; the remaining production `LogoLoader` import is the intended Market chart-grid panel loader.
+  - Production build passed. Vite emitted only the existing/standard chunk-size warnings.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/app/App.tsx`
+  - `artifacts/pyrus/src/app/AppContent.tsx`
+  - `artifacts/pyrus/src/components/LogoLoader.test.ts`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/index.css`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/components/LogoLoader.test.ts`
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js`
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: browser smoke with Playwright against existing dev server at `http://127.0.0.1:18747/`.
+  - Passed: `pnpm --filter @workspace/pyrus run build`
+  - Passed: scoped `git diff --check` for touched files.
+- Next step:
+  - No further loader-consolidation changes required. Optional next workstream is the separate in-app panel/DataUnavailableState loader visual consistency follow-up.
+
+- Last updated: `2026-05-27 16:04 UTC`
+- Current request: review/audit the loader consolidation work to make sure it functions as intended.
+- Current status:
+  - Audit found the duplicate root logo problem was fixed, but the first browser smoke exposed a short blank root interval after `app-loading-fallback` disappeared and before `PlatformShell` committed.
+  - Root cause under review: `AppContent` awaited the `PlatformApp` import, but then rendered it through `React.lazy`; even a resolved lazy module can suspend once, and with `fallback={null}` that briefly commits an empty root.
+  - Fix direction: keep the no-second-logo behavior, but render the preloaded initial route component directly when the outer boot preload has resolved. Retain the lazy/null fallback only as a defensive path for any caller that renders `AppContent` without awaiting the exported preload.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Previous focused tests/typecheck passed before this audit.
+  - Browser smoke against `http://127.0.0.1:18747/` showed `maxAppFallbackCount=1` but a blank interval roughly from 638ms to 1397ms before the platform shell/route shell appeared.
+- Next step:
+  - Patch `AppContent.tsx` to render the preloaded route component directly, update source tests, rerun focused tests/typecheck and browser smoke.
+
+- Last updated: `2026-05-27 15:53 UTC`
+- Current request: implement the loader consolidation plan.
+- Current status:
+  - Implemented the single React boot-loader path.
+  - `App.tsx` now waits for `AppContent` to preload the initial route chunk before resolving the root lazy import, so the existing `BrandLoader` root fallback covers the boot handoff.
+  - `AppContent.tsx` now exports `preloadInitialAppContentRoute()`, caches the PlatformApp/lab dynamic imports, preloads the active initial route, removes the root `LogoLoader` import, and uses `Suspense fallback={null}` instead of a second `app-loading-fallback`.
+  - `LogoLoader.test.ts` and `platformRootSource.test.js` were updated to assert the single-root-fallback wiring and current Research loading shell behavior.
+  - Removed only the verified-dead `.pyrus-loader-lockup` rule from `index.css`; preserved the unrelated existing Algo rail CSS changes and the still-used `.pyrus-loader-*` brand classes.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/app/App.tsx`
+  - `artifacts/pyrus/src/app/AppContent.tsx`
+  - `artifacts/pyrus/src/components/LogoLoader.test.ts`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/index.css`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/components/LogoLoader.test.ts`
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js`
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: scoped `git diff --check` for touched files.
+  - Static grep confirms the only production `app-loading-fallback` remains in `App.tsx`; remaining production `LogoLoader` import is the intended Market chart-grid panel loader.
+- Next step:
+  - Optional browser smoke: hard refresh Pyrus and confirm the static boot shell hands to one React branded loader, with no second full-screen logo replay before the app shell renders.
+
+- Last updated: `2026-05-27 15:50 UTC`
+- Current request: implement the loader consolidation plan.
+- Current status:
+  - Starting implementation after rechecking relevant dirty state.
+  - Relevant boot files are clean before this pass: `artifacts/pyrus/src/app/App.tsx`, `artifacts/pyrus/src/app/AppContent.tsx`, and `artifacts/pyrus/src/components/LogoLoader.test.ts`.
+  - `artifacts/pyrus/src/index.css` already has unrelated Algo rail CSS changes; preserve them and only remove the verified-dead `.pyrus-loader-lockup` rule if touching CSS.
+  - Implementation target remains: one React full-screen `app-loading-fallback`, no `LogoLoader` fallback in `AppContent`, keep static HTML boot and panel chunk loaders.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Not run yet for this implementation pass.
+- Next step:
+  - Patch `App.tsx`/`AppContent.tsx`/`LogoLoader.test.ts` and remove only the unused `.pyrus-loader-lockup` CSS rule, then run focused Pyrus tests/typecheck.
+
+- Last updated: `2026-05-27 15:24 UTC`
+- Current request: user is still seeing multiple competing logo loaders; investigate the dropped loader plan and current source state.
+- Current status:
+  - Source-confirmed three startup loader surfaces: static HTML boot loader in `artifacts/pyrus/index.html` (`data-testid="pyrus-boot-loader"`), React outer root fallback in `artifacts/pyrus/src/app/App.tsx` (`BrandLoader`, `testId="app-loading-fallback"`), and React inner platform fallback in `artifacts/pyrus/src/app/AppContent.tsx` (`LogoLoader`, also `testId="app-loading-fallback"`).
+  - The React double-loader root cause from `LOADER_RING_AND_BOOT_FIX.md` is valid: `AppContent` is lazy-loaded behind `RootBootFallback`, then `PlatformApp` is lazy-loaded behind a second full-screen branded fallback with the same test id.
+  - Intended branded chunk loaders also exist and should not be treated as competing root boot loaders: `screenRegistry.jsx` uses `LogoLoader tone="panel"` for screen chunks, and `MarketScreen.jsx` uses a panel `LogoLoader` for the chart grid fallback.
+  - Plan correction: the dropped plan says generic account `Panel loading` goes through `components/platform/primitives.jsx`, but the account panels named by the plan use `screens/account/accountUtils.jsx`, where `Panel` renders `SkeletonRows`. `primitives.jsx` does have `DataUnavailableState loading` with a bare `LoadingSpinner`, so there is still a separate in-app loader consistency issue, but it is not the same path as the named account panels.
+  - `.pyrus-loader-lockup` is verified unused except for `LogoLoader.test.ts`; do not remove the broader `.pyrus-loader-*` family because it is still used by brand/header surfaces.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Static source inspection only; no production code changed and no test suite run for this loader investigation.
+- Next step:
+  - Implement the single-root-loader fix first: keep the static boot shell and one React root fallback, remove or neutralize the inner `AppContent` full-screen fallback/test id, update source tests, then separately decide which in-app loading paths should use the branded ring versus skeleton/spinner.
+
+- Last updated: `2026-05-27 15:56 UTC`
+- Current request: user restarted after the shadow account fix and asked to check the runtime.
+- Current status:
+  - Restart confirmed at `2026-05-27T15:51:42Z`: API PID changed from `15658` to `21491`; Vite PID is `21566`; both `/api/healthz` endpoints returned ok.
+  - The shadow account value is correct after restart. `/api/accounts/shadow/summary` returned non-degraded `SHADOW_LEDGER` data with NAV around `$176.9K`, not `$40K`.
+  - Session endpoint returned quickly (`~3ms`) but reported `accounts: 0` immediately after restart; likely bridge/account state still warming or not connected after restart.
+  - Post-restart live endpoint timing with the first patch active was still too slow under app load: summary about `8.4s`, positions about `6.0s`, risk about `12.3s`, equity history about `16.2s`.
+  - Diagnostics/line-usage showed post-restart load/pressure building quickly: API process around `1.5GB RSS` and `47%+ CPU`; bridge active lines about `126`; historical family `signal-matrix` accepted `157` shortly after restart.
+  - Implemented an additional backend latency tweak after the check:
+    - Shadow summary no longer blocks on the signal-options mirror-repair sweep; row-level positions still repair before projecting rows.
+    - Mirror repair throttle is now `60s` instead of `5s`.
+    - Shadow risk now calls positions with `liveQuotes: false`.
+  - Rebuilt API dist again; `dist/index.mjs` contains the new direct summary path and risk cached-position path. Running API PID `21491` has not been restarted after this second latency tweak, so live HTTP timings still reflect the first patch until the next app restart.
+  - Source-level timing for the latest code under current load is much better: summary about `0.9s`, positions about `1.9s`, risk about `1.8s`, snapshot base about `3.2s`.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/account.ts`
+  - `artifacts/api-server/src/services/shadow-account.ts`
+  - `artifacts/api-server/src/services/shadow-account-streams.ts`
+  - `artifacts/api-server/src/services/shadow-account.test.ts`
+  - `artifacts/pyrus/src/features/platform/live-streams.ts`
+  - `artifacts/pyrus/src/features/platform/live-streams.test.ts`
+  - `artifacts/pyrus/src/screens/AccountScreen.jsx`
+- Validation state:
+  - Passed after first patch: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/live-streams.test.ts`.
+  - Passed after first patch: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed after first patch: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed after second latency tweak: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/shadow-account.test.ts`.
+  - Passed after second latency tweak: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed after second latency tweak: `pnpm --filter @workspace/api-server run build`.
+  - Passed: scoped `git diff --check` for touched files.
+- Next step:
+  - Restart via the default **Run Replit App** entry again when safe to activate the second latency tweak in the running API process. Then recheck shadow summary/positions/risk timings and bridge/account session readiness.
+
+- Last updated: `2026-05-27 15:38 UTC`
+- Current request: user connected IBKR and reports the shadow account value went to `$40,000`; investigate possible shadow ledger or surface issue.
+- Current status:
+  - Killed the read-only IBKR connection monitor process before pivoting to shadow-account investigation.
+  - Live `/api/accounts/shadow/summary` does not currently show `$40,000`: it reports `netLiquidation=178009.8300000001`, `totalCash=176419.8300000001`, `grossPositionValue=1590`, `totalPnl=153009.8300000001`, `source=SHADOW_LEDGER`.
+  - Live `/api/accounts/shadow/positions` also does not show `$40,000`: it reports one CORZ options position with about `$1,420` gross long exposure.
+  - Direct database inspection shows the persisted shadow account is a `$25,000` account (`starting_balance=25000`, current cash about `$176K`) with automation fills only; the stale `$40,000` value existed in code fallback/static UI paths.
+  - Found a speed coupling bug: `/api/accounts/shadow/summary`, orders, allocation, and risk were routed through `fetchShadowAccountSnapshotBase()`, so a summary read waited for positions/orders/risk and live option quote hydration. Live probes took about `16-21s` per shadow endpoint under current API load.
+  - Implemented a scoped fix:
+    - `SHADOW_STARTING_BALANCE` fallback/default is now `$25,000`.
+    - Account screen copy derives the starting balance from the live summary instead of hard-coding `$40,000`.
+    - Shadow summary/allocation/orders/risk wrappers now call their focused service functions instead of waiting on the full snapshot bundle.
+    - Shadow snapshot stream positions now use cached quote data (`liveQuotes: false`) to avoid a 6.5s visible quote wait every 2s.
+    - Pyrus stream cache now keeps an existing non-degraded shadow response when a degraded runtime fallback payload arrives.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/account.ts`
+  - `artifacts/api-server/src/services/shadow-account.ts`
+  - `artifacts/api-server/src/services/shadow-account-streams.ts`
+  - `artifacts/api-server/src/services/shadow-account.test.ts`
+  - `artifacts/pyrus/src/features/platform/live-streams.ts`
+  - `artifacts/pyrus/src/features/platform/live-streams.test.ts`
+  - `artifacts/pyrus/src/screens/AccountScreen.jsx`
+- Validation state:
+  - Live read-only probes confirmed DB ledger and current API values before patch.
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/shadow-account.test.ts`.
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/live-streams.test.ts`.
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `pnpm --filter @workspace/api-server run build`; built `dist/index.mjs` contains the direct shadow summary fast path and cached-quote snapshot stream change.
+  - Passed: scoped `git diff --check` for touched files.
+  - Source-level timing after patch: `getAccountSummary({ accountId: "shadow" })` about `2.0s`, direct positions about `0.7s`, risk about `2.1s`, snapshot base about `2.1s` under current load. Before the patch, live shadow endpoint probes took about `16-21s`.
+  - Running API process PID `15658` is still the pre-build process started at `2026-05-27 09:20:28 UTC`; API source/dist changes are built but the running process has not been restarted in order to avoid interrupting the active connection test.
+  - Current live `/api/accounts/shadow/summary` is non-degraded and correct, with NAV around `$176,951.78`, source `SHADOW_LEDGER`; `/api/healthz` is ok.
+- Next step:
+  - To fully activate the API-side fallback/default and speed fixes, restart via the default **Run Replit App** entry when safe. The frontend source changes can hot-reload through Vite, but the API process must restart to load rebuilt `dist/index.mjs`.
+
+- Last updated: `2026-05-27 15:13 UTC`
+- Current request: user restarted again and asked for a pre-test check.
+- Current status:
+  - API and web health endpoints both returned ok.
+  - Served Windows helper is current: `$HelperVersion = '2026-05-27.launch-sequence-v24'`, and it contains `updating_helper`, `Wait-IBGatewayLiveApiSocket`, and `credentials_submitted`.
+  - `/api/session` and `/api/ibkr/desktops` show the paired Windows desktop is online but still running old helper `2026-05-20.remote-desktop-agent-v19`; expected helper remains `2026-05-27.launch-sequence-v24`, so the next remote launch should still exercise the self-update flow and new popover `Update` step.
+  - Process list still shows API PID `10255` and web/Vite PID `10320`, so this appears to be a duplicate Run/no-op rather than a full process restart.
+  - Runtime is not clean: diagnostics rollup `down`/`critical`; API degraded warning with p95 about `1946ms`, p99 about `4828ms`, RSS about `2105MB`, heap used about `1071MB`, event-loop p95 about `43.7ms`.
+  - IBKR diagnostics show `connected=true` and `authenticated=true`, but rollup still `down`/`critical` with `streamStateReason=fresh_stream_event_health_stale`.
+  - Line usage is not saturated: active lines `120`, usable remaining `80`, historical active/queued/rejected all `0`, accepted `1456`.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Live read-only probes only; no production code changed in this check pass.
+- Next step:
+  - Functional test of the helper update UI can proceed, but do not use this run for clean launch-speed measurement. If a true clean restart is required, verify API PID changes from `10255` after using the default Run Replit App entry.
+
+- Last updated: `2026-05-27 14:38 UTC`
+- Current request: validate the restart findings and produce a detailed plan before further implementation.
+- Current status:
+  - Revalidated live state at `2026-05-27T14:35:58Z`: API health OK; launcher/helper are serving `2026-05-27.launch-sequence-v24`; Windows desktop online but still on helper `2026-05-20.remote-desktop-agent-v19`.
+  - Correction to the earlier immediate post-restart finding: IBKR bridge recovered. `/api/session` now reports IBKR configured/authenticated/connected, live market data available, `strictReady=true`, selected account `U24762790`, and diagnostics mark IBKR/accounts/orders as OK.
+  - Remaining blocker is API/resource pressure, not bridge readiness. Diagnostics still roll up `down` / `critical` because resource-pressure is critical: RSS about `1857 MB`, dominant driver `api-rss`, with cache pressure at watch.
+  - Historical/signal monitor load remains high: `historicalWork.admission` has `concurrency=50`, `queueCap=50`, `accepted=468`, `completed=290`, `rejected=0`; family `signal-matrix` accounts for `466` accepted / `288` completed. Chart-hydration raw breakdown shows `signal-matrix` dominating bars work (`729` family events, `674` misses).
+  - Signal-options worker is healthy but contributes to the same bars family: last deployment scan batch size `8`, universe `90`, duration `38318ms`, poll `60s`, and it calls `evaluateSignalMonitorProfileSymbols`.
+  - Source validation: historical admission defaults are currently `50/50`; backend signal-monitor matrix caps under critical are `2` symbols / concurrency `1`; signal-options evaluation caps under critical are `8` symbols / concurrency `1`; frontend critical matrix plan is `1` symbol with 120s min poll, but all signal-monitor bar fetches use family `signal-matrix`, so live family counters do not distinguish UI matrix from signal-options/signal-monitor scans.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Live read-only API/process probes and source inspection only. No production code changed.
+- Next step:
+  - Implement a pressure-aware historical admission and signal-monitor attribution plan: separate historical families/callers, clamp background historical concurrency/queue by resource pressure, and add tests/live probes proving visible chart/account paths remain protected while signal-options/matrix background work backs off.
+
+- Last updated: `2026-05-27 14:36 UTC`
+- Current request: include the helper update aspect in the IBKR connection popover animation.
+- Current status:
+  - Implemented a frontend-only launch stepper improvement.
+  - The connection popover now inserts an `Update` step with the existing spinning refresh animation when helper progress includes `updating_helper`.
+  - Normal launches without helper update progress still show the compact five-step sequence: Request, Credentials, Gateway, Bridge, Tunnel.
+  - For old-helper launches, the sequence becomes Request, Update, Credentials, Gateway, Bridge, Tunnel. Once the relaunched helper reports `helper_launched`, the model marks Update complete and advances to Credentials rather than leaving Update stuck current.
+  - No Replit startup files or artifact runner config were touched.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/features/platform/ibkrConnectionOperationStepperModel.js`
+  - `artifacts/pyrus/src/features/platform/ibkrConnectionOperationStepperModel.test.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/ibkrConnectionOperationStepperModel.test.js`.
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js --test-name-pattern "IBKR|operation|stepper|remote launch"`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: scoped `git diff --check` for touched files.
+- Next step:
+  - On the next old-helper Connect flow, verify the popover shows `Update` while `updating_helper` is current, then marks it complete when the v24 helper relaunches.
+
+- Last updated: `2026-05-27 14:33 UTC`
+- Current request: watch live IBKR inbound/API data for 5 minutes and confirm whether different data types are being received/ingested, and whether line rotation/cycling provides the intended coverage and latency.
+- Current status:
+  - Completed a read-only five-minute monitor from `2026-05-27T14:34:09Z` to `2026-05-27T14:39:05Z` using `scripts/src/ibkr-line-usage-monitor.ts` against `http://127.0.0.1:18747/api`.
+  - IBKR bridge/session diagnostics were healthy during the final snapshot; account/position and order probes were healthy.
+  - Visible quote stream ingestion was live: final `quoteStreams.lastEventAgeMs=64`, `dataGapCount=0`, `recentDataGapCount=0`, active consumer count `1`, requested symbol count `17`.
+  - Historical bridge scheduler completed `+99` requests during the window with `0` timed out and `0` rejected; API historical admission had no rejections.
+  - Option flow/scanner activity occurred, but final continuous option quote stream had no active consumer/requested contracts; final active bridge option subscriptions were `0`. During the window a `flow-scanner:AIA` burst held `40` option lines long enough to appear as persistent bridge-only/snapshot-only drift.
+  - Stock aggregate ingestion was idle: `stockAggregates.activeConsumerCount=0`, `eventDelta=0`, `gapDelta=0`.
+  - Line budget stayed under the configured `200` line budget, but rotation was jittery: admission active lines ranged `120-200` and bridge active lines `119-159`; bridge remaining line budget ranged `41-81`.
+  - Persistent coverage mismatch: `equity:QQQ` remained `apiOnly` for visible-live, meaning the API believed it had a live visible lease while bridge active subscriptions did not include it.
+  - Diagnostics rollup still reports `down/critical` due resource pressure even though API/IBKR probes are ok. RSS ranged `1857-1919 MB`; `/settings/ibkr-lanes` p95 was `4927ms`; control scheduler rejected `+92` queued control requests during the sample.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Live read-only monitoring only; no production code changes in this pass.
+- Next step:
+  - If continuing, inspect why visible-live `QQQ` remains API-only, why flow-scanner snapshot-only option lines persist past the bridge-only grace window during bursts, and whether aggregate/bar consumers should be enabled for this monitoring scenario.
+
+- Last updated: `2026-05-27 14:26 UTC`
+- Current request: user restarted the Replit app and asked to check live status.
+- Current status:
+  - Live API is reachable after restart: `/api/healthz` returned `200 {"status":"ok"}`.
+  - Launch helper path is current: `/api/ibkr/bridge/launcher` reports `helperVersion=2026-05-27.launch-sequence-v24`; its `helperUrl` serves a PowerShell helper with `$HelperVersion = '2026-05-27.launch-sequence-v24'`; `bundleUrl` is present and credential handoff is `RSA-OAEP-256-CHUNKED` / `ui-onetime`.
+  - Paired Windows desktop is online but still reports helper `2026-05-20.remote-desktop-agent-v19`; this should update only after the next launch job is claimed and the helper self-update path runs.
+  - The restarted process is serving the new diagnostics limit metadata: `/api/diagnostics/history?...&limit=2500` returned `limits.pressureLimited=true` and clamped to `240` while pressure was elevated.
+  - App is not healthy after restart. `/api/diagnostics/latest` returned rollup `down` / `critical`.
+  - API pressure returned quickly: samples over ~30s showed RSS around `1845-1858 MB`, `resource-pressure` `critical`, API p95 around `6.9-7.1s`, event-loop p95 around `41-43ms`, and process list showed `node --enable-source-maps ./dist/index.mjs` at about `1.89 GB RSS` with high CPU.
+  - IBKR bridge/account diagnostics are failing: IBKR snapshot `down` / `critical`, `connected=false`, `authenticated=false`, `strictReason=health_error`; account probe last error `HTTP 530 <none>: error code: 1033`; order probe degraded/timeouts.
+  - Historical admission is active but not tight enough for the current load: live `historicalWork.admission` reports `concurrency=50`, `queueCap=50`, and `signal-matrix` accepted grew from `138` to `182` in ~30s with no rejections.
+  - Slow API routes include `/positions` p95 `30468ms`, signal-options performance p95 `27860ms`, `/accounts/shadow/positions` p95 `27259ms`, cockpit p95 `21691ms`, and `/signal-monitor/matrix` p95 `20182ms`.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Live read-only probes only; no production code changed in this check pass.
+- Next step:
+  - Treat restart as a failed pressure recovery. Next likely code/config fix is to tighten historical admission/runtime signal-matrix concurrency under pressure and address the IBKR bridge HTTP `530/1033` health failure before relying on account/order/automation probes.
+
+- Last updated: `2026-05-27 14:18 UTC`
+- Current request: fix/improve the IBKR launch sequence speed, order, and function; user reports it appears stuck after Gateway credentials are typed and the helper enters `waiting_2fa`.
+- Current status:
+  - Focused launch-sequence patch complete.
+  - Post-restart pre-test check at `2026-05-27 14:24 UTC`: API and web health endpoints returned ok; `scripts/windows/pyrus-ibkr-helper.ps1` is served with `$HelperVersion = '2026-05-27.launch-sequence-v24'`; rebuilt `artifacts/api-server/dist/index.mjs` contains `BRIDGE_HELPER_VERSION = "2026-05-27.launch-sequence-v24"`.
+  - `/api/session` and `/api/ibkr/desktops` confirm the paired Windows desktop is online but still reporting old helper `2026-05-20.remote-desktop-agent-v19`; this is expected until the next launch job is claimed, at which point the v24 helper self-update path should run.
+  - Caveat before timing-sensitive launch testing: diagnostics currently report critical API latency/heap pressure after restart (`p95 ~= 6.9s`, `p99 ~= 26.9s`, RSS about `1.85GB`, heap used about `1.06GB`), driven by post-restart Algo/signal-monitor requests. IBKR line admission itself is normal (`activeLineCount=0`, `usableRemainingLineCount=200`, historical active/queued/rejected all 0).
+  - Re-locked Replit startup config with `pnpm run replit:config:lock`.
+  - Fixed launch-step phase ordering in Pyrus: `checking_gateway_socket` stays in Request, secure credential handoff now owns Credentials, and Gateway window/login/credential-submit/2FA/socket work now owns Gateway.
+  - Patched the Windows helper hot path so direct `ibgateway.exe` process/window hits skip the slow CIM command-line scans that produced `IB Gateway process command-line detection skipped: Timed out`.
+  - Added shared `Wait-IBGatewayLiveApiSocket` handling for UI and IBC login paths. It now emits `credentials_submitted`, repeats `waiting_2fa` progress about every 15 seconds, keeps paper-port detection, reports IBC process exit, and adds guidance if the Gateway login window is still visible.
+  - Bumped helper/API version to `2026-05-27.launch-sequence-v24` so paired Windows desktops self-update.
+  - Worktree already has many unrelated dirty files from prior sessions; preserve those and keep this pass scoped to launch helper/launch UI/tests unless investigation proves otherwise.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `scripts/windows/pyrus-ibkr-helper.ps1`
+  - `artifacts/api-server/src/services/ibkr-bridge-runtime.ts`
+  - `artifacts/api-server/src/services/ibkr-bridge-runtime.test.ts`
+  - `artifacts/pyrus/src/features/platform/ibkrConnectionOperationStepperModel.js`
+  - `artifacts/pyrus/src/features/platform/ibkrConnectionOperationStepperModel.test.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/ibkrConnectionOperationStepperModel.test.js`.
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-bridge-runtime.test.ts`.
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: scoped `git diff --check` for touched files.
+  - Passed post-restart: `curl -fsS http://127.0.0.1:8080/api/healthz` and `curl -fsS http://127.0.0.1:18747/api/healthz`.
+  - Passed post-restart: served helper and built API dist both contain `2026-05-27.launch-sequence-v24`.
+  - Not run: PowerShell parser validation, because neither `pwsh` nor Windows `powershell` is installed in this Linux workspace.
+- Next step:
+  - For clean launch timing, first let/force the post-restart Algo/signal-monitor workload settle. Then start a fresh IBKR launch from Pyrus so the Windows desktop self-updates to helper `v24`; watch for `credentials_submitted`, repeating `waiting_2fa` heartbeats, then `gateway_socket_ready`.
+
+- Last updated: `2026-05-27 14:18 UTC`
+- Current request: pick up the recovered runtime-pressure implementation plan from the 5-whys / Replit disconnect investigation.
+- Current status:
+  - Recovered the pressure-plan thread and compared it with the dirty tree. The existing uncommitted work already covers the signal-monitor caps, historical admission wrapper, capped trade-monitor worker, signal-options cap bypass fix, line-usage exposure, Settings rows, shared signal hydration, and the later correction that the ten-minute historical pacing window only applies to small bars.
+  - Implemented the missing diagnostics/export pressure slice: diagnostic history/events now resolve a pressure-aware response limit from `getApiResourcePressureSnapshot()`, and raw diagnostics export applies tighter history/event caps under watch/high/critical pressure while normal browsing/export defaults remain unchanged.
+  - Added `limits` metadata to history/events/export payloads so pressure clamping is visible in responses.
+  - No Replit startup files, artifact startup config, or runner scripts were touched.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/diagnostics.ts`
+  - `artifacts/api-server/src/routes/diagnostics.ts`
+  - `artifacts/api-server/src/services/diagnostics.test.ts`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/diagnostics.test.ts` (26/26).
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/diagnostics.test.ts src/services/resource-pressure.test.ts src/services/signal-monitor.test.ts src/services/signal-options-worker.test.ts src/services/watchlist-prewarm.test.ts src/services/market-data-admission.test.ts src/services/ibkr-line-usage.test.ts` (132/132).
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-historical-admission.test.ts` (4/4).
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `git diff --check`.
+- Next step:
+  - If continuing the pressure plan, review the full dirty diff as one stabilization bundle and decide whether to run a live `/api/settings/ibkr-line-usage` + `/api/diagnostics/history` smoke after restarting the current API process.
+
+- Last updated: `2026-05-27 14:14 UTC`
+- Current request: continue the IBKR data-line / historical-request diagnosis; user challenged the hard `54 / 10 min` historical threshold as likely inaccurate.
+- Current status:
+  - Confirmed live `/api/settings/ibkr-line-usage` shows historical admission saturation attributed to `signal-matrix`: `accepted=55`, `rejected=255`, `globalWindowUsedWeight=53/54`, last rejection `api-historical-queue-timeout`.
+  - Checked IBKR docs: current TWS API pacing is primarily request-message rate based on market data lines / 2 per second; the 60 requests / 10 minutes historical rule is documented for small bars / real-time bars, while the older historical limitations note says hard limits for `barSize >= 1 min` were lifted but soft throttling/disconnect risk remains.
+  - Removed the incorrect `54 / 10 min` safety-buffer assumption from active code. The historical admission defaults now use IBKR-documented values where applicable: 50 max open historical requests, 50 requests/sec default pacing for a 100-line account, 15s identical request cooldown, same-contract 2s burst rule, and 60 requests / 10 minutes only for bar sizes `<=30s`.
+  - Removed the briefly-added custom global-window toggle/scope diagnostic after user objected. No fabricated threshold or switch remains in `ibkr-historical-admission.ts`.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/ibkr-historical-admission.ts`
+  - `artifacts/api-server/src/services/ibkr-historical-admission.test.ts`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-historical-admission.test.ts`.
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-historical-admission.test.ts src/services/signal-monitor.test.ts src/services/trade-monitor-worker.test.ts src/services/signal-options-automation.test.ts` (114 tests).
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/api-server run build`.
+  - Passed: `git diff --check`.
+  - Confirmed no remaining `54`, `IBKR_HISTORICAL_GLOBAL_WINDOW_APPLIES_TO_ALL`, `globalWindowScope`, or `small-bars-30s-or-less` strings in the historical admission source/test files.
+- Next step:
+  - Restart the Replit app via the default **Run Replit App** entry if live validation is needed; the current running API process was started before this rebuild and will keep the old limiter until restarted.
+
+- Last updated: `2026-05-27 14:03 UTC`
+- Current request: find the last session, likely from untracked files rather than the master handoff index.
+- Current status:
+  - Recovery/investigation complete; no production code changes made in this pass.
+  - Master index latest persisted session is `019e654e-1409-7621-bde7-f8c231fda8d0` from `2026-05-26 11:24 MDT`, but current repo state has newer untracked root plan files and source files.
+  - Newest untracked artifact by mtime is `LOADER_RING_AND_BOOT_FIX.md` (`2026-05-26 22:31 MDT` / `2026-05-27 04:31 UTC`), which documents verified loader root causes, locked decisions, exact files, and validation steps.
+  - Confirmed `LOADER_RING_AND_BOOT_FIX.md` is not implemented yet: `App.tsx` and `AppContent.tsx` still have the double `app-loading-fallback` Suspense loaders, `index.css` still contains `.pyrus-loader-lockup`, `LogoLoader.test.ts` still asserts the old loader wiring, and `primitives.jsx` still renders a plain `LoadingSpinner` for panel loading with no `PanelRingLoader` / `loaderVariant` path.
+  - Other recent untracked plans include `ACCOUNT_POSITION_INSPECTOR_FIX.md`, `WATCHLIST_CARD_REDESIGN.md`, and `ALGO_RIGHT_RAIL_REDESIGN.md`; the account inspector and right-rail plans appear represented by later handoff entries / code changes, while the loader-ring plan is the current leading dropped-session candidate.
+  - `/home/runner/.codex/state_5.sqlite` and `/home/runner/.codex/goals_1.sqlite` currently contain no schema/tables to recover additional thread metadata from; the only current rollout under `/home/runner/.codex/sessions/2026/05/27/` is this recovery session.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Inspection-only: handoff/master review, git status/diff stat, untracked file mtime ordering, untracked plan content review, source grep/diff correlation, and empty local Codex state DB check.
+- Next step:
+  - Pick up `LOADER_RING_AND_BOOT_FIX.md`: implement Panel ring loader, single boot loader, dead loader CSS cleanup, focused tests/typecheck, and browser loader smoke.
+
+- Last updated: `2026-05-27 14:07 UTC`
+- Current request: correction from user: the last session was fixing stuff, not just the loader plan.
+- Current status:
+  - Reopening recovery scope. Treat `LOADER_RING_AND_BOOT_FIX.md` as a false lead or lower-priority unimplemented plan until source-edit evidence is correlated.
+  - Next investigation target is actual modified/untracked source/test files by mtime and their diffs, especially edits newer than the loader plan.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Inspection-only.
+- Next step:
+  - Group recent source/test diffs by timestamp and compare against `SESSION_HANDOFF_CURRENT.md` entries to identify the latest actual fix session.
+
+- Last updated: `2026-05-27 14:11 UTC`
+- Current request: user clarified the missing thread had a 5-whys analysis, then dropped, then a follow-up diagnosis; likely about function/workflow/competing code hurting performance/crashing.
+- Current status:
+  - Corrected recovery target away from loader and away from the later signal-matrix hydration-efficiency commit.
+  - Best match in `SESSION_HANDOFF_CURRENT.md` is the `Replit Disconnect / IBKR Live Run Investigation` section from `2026-05-25 15:10 UTC`, followed by `Replit Restart / Terminal Disconnect Diagnostic` from `2026-05-27 05:38 UTC` and `Pressure Fix Guardrails Audit` from `2026-05-27 05:48 UTC`.
+  - The 5-whys-style root cause recorded there: the background default paper signal-options deployment/profile was enabled with `maxSymbols=250`, `evaluationConcurrency=10`, `pollIntervalSeconds=60`; it drove thousands of signal-monitor/signal-matrix historical bar hydrations while the live UI was active, pushing API RSS to about `2.0 GB` and event-loop max delay to about `10.9s`, causing slow/stale UI status, progress callback timeouts, and terminal disconnect pressure.
+  - Follow-up restart diagnosis found old/new Replit workflow logs around `2026-05-27 05:15-05:16 UTC`, no explicit OOM/SIGKILL/fatal Node error, RSS dropping from about `2.5 GB` to `176.5 MB` after restart, then regrowing to about `2.0 GB` within ~20 minutes.
+  - Current uncommitted runtime-pressure fix evidence is in the dirty tree, not just commits: `signal-monitor.ts` and `signal-options-automation.ts` reduce defaults back down (`250/10` -> `60/2`), restore pressure caps, add historical-bars lane policy, and add the new untracked `ibkr-historical-admission.ts` pacing gate. `git blame` shows these cap/default lines as `Not Committed Yet`.
+  - Validation run during this recovery:
+    - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js` (7/7).
+    - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts` (27/27).
+    - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-historical-admission.test.ts src/services/trade-monitor-worker.test.ts src/services/signal-options-automation.test.ts` (86/86).
+    - Passed: `git diff --check`.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Recovery/audit only; no production code changed in this pass.
+- Next step:
+  - Resume from the pressure-fix guardrails: audit/finish the uncommitted historical-admission + capped signal-monitor fix, then run API typecheck/build and, if startup-sensitive files remain untouched, avoid `audit:replit-startup`; otherwise run it.
+
+- Last updated: `2026-05-27 14:14 UTC`
+- Current request: pick up the runtime-pressure fix; user recalls an unfinished 4- or 5-part implementation plan.
+- Current status:
+  - Resuming from the 5-whys/runtime-pressure recovery thread.
+  - Need to recover the exact multi-part plan from handoffs/Codex logs, then compare against the current dirty source before editing.
+  - Guardrails remain: preserve unrelated dirty work; do not start a duplicate Replit app runner; do not touch startup config unless intentionally maintaining it.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending for this pickup pass.
+- Next step:
+  - Search handoffs, local Codex rollouts/history, and recent diffs for the 4/5-part plan and implementation evidence.
+
+- Last updated: `2026-05-27 04:44 UTC`
+- Current request: audit the UI/UX work in the Algo controls container after user reported it looks terrible.
+- Current status:
+  - Review/audit only; no UI code changes made in this pass.
+  - Live app was already running at `http://127.0.0.1:18747/`; Algo eventually rendered after a slow workspace load.
+  - Captured rendered evidence:
+    - Full page screenshot: `/tmp/algo-screen-audit-long.png`
+    - Controls-only screenshot: `/tmp/algo-controls-audit-rendered.png`
+  - Runtime metrics show the controls container is about `319px` wide by `512px` tall with `2176px` of scrollable content, forcing more than four visible panes of nested scrolling.
+  - Main audit conclusion: the redesign optimized for compactness/custom visual widgets instead of operator readability and high-frequency control workflow. The result is too dense, badge-heavy, and hard to scan.
+  - Key code hotspots:
+    - `artifacts/pyrus/src/screens/algo/AlgoRightRail.jsx`: controls are a narrow nested scroll region above diagnostics.
+    - `artifacts/pyrus/src/index.css`: `.algo-settings-grid` keeps two columns down to `300px`, producing ~145px cells in the current rail.
+    - `artifacts/pyrus/src/screens/algo/AlgoSettingsRegion.jsx`: slider/log-slider settings now fall through to plain number inputs; compact cells use ellipsized labels and disabled pointer-events.
+    - `artifacts/pyrus/src/screens/algo/algoSettingsFields.js`: all sections, including advanced/low-frequency tuning, are flattened into the rail.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Performed read-only source audit and Playwright/rendered screenshot inspection.
+  - No tests run because no production code changed.
+- Next step:
+  - If user wants implementation, fix direction should be a workflow redesign: restore readable row/sliders for common controls, collapse the rail to one column or move full settings into a drawer/panel, demote advanced signal/exit tuning behind tabs/accordions, and remove/relocate the bespoke strike/exit visuals from the narrow rail.
+
+- Last updated: `2026-05-27 02:55 UTC`
+- Current request: implement `ACCOUNT_POSITION_INSPECTOR_FIX.md`.
+- Current status:
+  - Inspector-only implementation complete.
+  - Confirmed the bug is still present: `positionsAtDateQuery` is gated by `secondaryAccountQueriesEnabled && activeEquityInspectionDate`, and the historical inspector still renders `Bid / Ask` and `Greeks` columns backed by live-only quote data.
+  - Re-gated the on-demand historical query to `accountQueriesEnabled && activeEquityInspectionDate`.
+  - Removed unsupported historical `Bid / Ask`, `Last`, and `Greeks` cells from the equity-date inspector table; the historical `Price` cell now uses `row.mark`.
+  - Updated existing Account/Positions source guards to pin the new query gate and omitted historical quote columns.
+  - Current worktree has many unrelated prior-session edits; preserve them and avoid reverting unrelated files.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/screens/AccountScreen.jsx`
+  - `artifacts/pyrus/src/screens/account/PositionsPanel.jsx`
+  - `artifacts/pyrus/src/screens/account/accountCalendarData.test.js`
+  - `artifacts/pyrus/src/screens/account/PositionsPanel.test.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/account/accountCalendarData.test.js src/screens/account/PositionsPanel.test.js`.
+  - Passed: `pnpm --filter @workspace/pyrus typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run test:unit` (1128 tests).
+  - Passed: `git diff --check`.
+  - Passed: read-only browser smoke of Account route mounting with no page/console errors. The current live data/session state did not render the equity curve inspector text, so a full hover-population manual check remains for a data-rich Account session.
+- Next step:
+  - User review / optional manual hover check on an Account session with visible equity curve data.
+
+- Last updated: `2026-05-27 02:38 UTC`
+- Current request: audit the Algo right-rail redesign work and make sure it went perfectly.
+- Current status:
+  - Implemented the first complete right-rail redesign pass.
+  - Added global Algo rail container-query utilities (`.algo-rail-cq`, `.algo-settings-grid`, `.algo-diag-kpi-grid`, `.algo-cell--wide`, `.algo-cell--full`, `.tnum`) and pinned them in `uiTokens.test.js`.
+  - Replaced the old two-tier settings layout with a single `SETTINGS_SECTIONS` model and render loop. Deleted the unused `SettingsFormRow.jsx` full-size fallback path.
+  - Added the Contract custom block with DTE controls and CALL/PUT strike ladder, plus the Exits custom PnL track with marker edit popover. Kept `trailGivebackPct` as a compact cell so no existing editable setting disappears.
+  - Reworked `HaltStrip` into an always-expanded board with state pills, group rollups, active/forced left accent bars, and CSS container-query grid classes.
+  - Applied diagnostics KPI grid and tabular numeric polish, save-bar value alignment, and section-header spacing polish.
+  - Added an opt-in `radioGroup` mode to shared `SegmentedControl` so Algo segmented fields can expose radiogroup/radio semantics without changing the primitive default elsewhere.
+  - Live browser smoke initially found a runtime crash in `ExitLadderTrack` (`marker.positionValue` numeric/function collision); fixed and reran smoke successfully.
+  - Audit pass found and fixed three additional issues:
+    - At the `<300px` container-query breakpoint, `.algo-cell--wide` still spanned two implicit grid columns because the global span rule won the cascade. Moved the one-column override after the base rule and pinned it in `uiTokens.test.js`.
+    - Strike ladder ArrowUp/ArrowDown moved through the raw ascending slot list instead of the descending visual ladder. Added a visual-order slot list so ArrowUp moves to the row above and ArrowDown moves to the row below.
+    - Strike ladder ARIA/dirty state was incomplete: each row was its own radiogroup and CALL/PUT header dirty dots were missing. Reworked the ladder so each CALL/PUT column is one radiogroup with six radios and header dirty dots appear when the corresponding strike slot is edited.
+  - Audit also found a narrow exit-track overflow from edge marker labels. Added inset-aware marker positioning so min/max labels stay inside the track at forced narrow widths.
+  - Current worktree has many unrelated prior-session edits; preserve them and avoid reverting unrelated files.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/index.css`
+  - `artifacts/pyrus/src/lib/uiTokens.test.js`
+  - `artifacts/pyrus/src/components/platform/primitives.jsx`
+  - `artifacts/pyrus/src/screens/algo/AlgoRightRail.jsx`
+  - `artifacts/pyrus/src/screens/algo/algoSettingsFields.js`
+  - `artifacts/pyrus/src/screens/algo/AlgoSettingsRegion.jsx`
+  - `artifacts/pyrus/src/screens/algo/HaltStrip.jsx`
+  - `artifacts/pyrus/src/screens/algo/AlgoDiagnosticsTab.jsx`
+  - `artifacts/pyrus/src/screens/algo/DiagPanel.jsx`
+  - `artifacts/pyrus/src/screens/algo/AlgoSaveBar.jsx`
+  - `artifacts/pyrus/src/screens/algo/SettingsSectionHeader.jsx`
+  - `artifacts/pyrus/src/screens/algo/algoHelpers.test.js`
+  - Deleted `artifacts/pyrus/src/screens/algo/SettingsFormRow.jsx`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/components/platform/primitives.test.js src/screens/algo/algoHelpers.test.js`.
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js`.
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/lib/uiTokens.test.js src/screens/algo/algoHelpers.test.js`.
+  - Passed: `pnpm --filter @workspace/pyrus typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run test:unit` (1128 tests).
+  - Passed: browser smoke on live app desktop Algo rail: right rail mounted, controls/diagnostics frames reported `container-type: inline-size`, 7 settings sections rendered, strike ladder and exit track rendered, selected call/put slots present, no console/page errors.
+  - Passed: browser smoke on mobile Algo settings drawer: rail mounted in drawer, controls frame reported `container-type: inline-size`, strike ladder and exit track rendered, no root crash.
+  - Passed: browser interaction smoke: exit hard-stop marker opened inline input and Esc closed it without crash.
+  - Passed audit browser checks: forced 280px rail produced one-column `.algo-settings-grid` layouts with no grid overflow; strike ArrowUp changed CALL slot 3→4 and ArrowDown returned 4→3; strike ladder exposes exactly two radiogroups with six radios each; CALL header dirty dot appears after editing; selected CALL fill is green and selected PUT fill is red.
+  - Passed: `git diff --check`.
+- Next step:
+  - User visual review. If follow-up polish is requested, inspect screenshots first and keep changes within the rail files. No Replit startup files were touched, so `pnpm run audit:replit-startup` was not required.
+
+- Last updated: `2026-05-27 01:31 UTC`
+- Current request: after restart, do another pass assuming more old/bad Algo references remain and remove only bad/stale references, not legitimate references.
+- Current status:
+  - Fresh post-restart audit completed with broader patterns, including display names, machine IDs, camel-case object keys, Pine source text, local paths, old HTTP header names, and historical diagnostics.
+  - Removed ignored/generated stale runtime logs under `artifacts/*.log` that still contained `RayAlgo`, `artifacts/rayalgo`, or `x-rayalgo` references. These were not tracked source files.
+  - Source/static scan is clean outside the intended sanitizer/test/guard allowlist. A broader plain `Ray` scan found legitimate non-Algo research content such as `Ray-Ban Meta Smart Glasses`, which was left alone.
+  - Persisted DB scan returned zero hits across 304 text/JSON columns with no skipped columns. Exact checks against the large `bar_cache` text columns also returned zero hits.
+  - Live API body/header probe returned zero hits across health/session, Algo deployments/events/state/cockpit/performance, signal monitor profile/state/events, backtests, Pine scripts, diagnostics, and IBKR settings endpoints.
+  - Desktop/mobile Playwright scan returned zero hits in visible text, body HTML, localStorage, and sessionStorage across Market, Flow, GEX, Trade, Account, Research, Algo, Backtest, Diagnostics, and Settings.
+  - Short Algo cockpit SSE sample also returned zero hits.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - Removed ignored generated logs containing retired references:
+    - `artifacts/pyrus-memory-soak-live-20260428T133818Z.log`
+    - `artifacts/pyrus-memory-soak-live-20260427T194513Z.log`
+    - `artifacts/pyrus-memory-soak-live-post-sse-20260428T151300Z.log`
+    - `artifacts/pyrus-memory-soak-live-post-fixes-20260506T183814Z.log`
+    - `artifacts/pyrus-memory-soak-live-20260427T192922Z.log`
+    - `artifacts/pyrus-browser-console-watch-20260428T140000Z.log`
+    - `artifacts/pyrus-memory-soak-live-post-fixes-20260506T180350Z.log`
+    - `artifacts/pyrus-memory-soak-live-20260427T191757Z.log`
+    - `artifacts/pyrus-memory-soak-live-final-20260428T152030Z.log`
+    - `artifacts/pyrus-memory-soak-live-20260427T190940Z.log`
+    - `artifacts/pyrus-memory-soak-live-final-20260428T151500Z.log`
+    - `artifacts/pyrus-live-soak-api-watch-20260428T162037Z.log`
+    - `artifacts/pyrus-memory-soak-live-20260428T145400Z.log`
+    - `artifacts/pyrus-memory-soak-live-20260506T172739Z.log`
+- Validation state:
+  - Passed: `pnpm run audit:branding`.
+  - Passed: `git diff --check`.
+  - Passed: hidden/source static scan; only sanitizer/test/guard files remain for retired patterns.
+  - Passed: DB broad scan returned `hitColumns: 0`.
+  - Passed: live API body/header probe returned `hitCount: 0`.
+  - Passed: Playwright desktop/mobile DOM/storage scan returned `issueCount: 0`.
+- Next step:
+  - No active stale reference found in this pass. Continue to keep sanitizer/guard fixtures allowlisted; remove any new generated logs if future runs recreate old strings.
+
+- Last updated: `2026-05-27 19:28 UTC`
+- Current request: assume old/bad Algo branding references still exist and do a broader pass.
+- Current status:
+  - Extended retired Algo branding normalization to cover display names, lowercase IDs, camel-case keys, Pine script keys/source, and historical strategy IDs: `RayReplica`, `RayAlgo`, `rayreplica`, `rayReplicaSettings`, `RAYALGO`, `ray_replica_signals`, and `rayalgo-replica-smc-pro-v3`.
+  - Patched additional response boundaries so persisted rows cannot leak retired strings through signal monitor events, backtest studies/runs/drafts/charts/promotions, and Pine script lists/details.
+  - Cleaned persisted DB rows in-place. Updated old strategy/backtest/event/order/diagnostic/Pine data, changed the duplicate legacy Pine key to `pyrus-signals-smc-pro-v3-legacy-import`, and archived/disabled that duplicate row.
+  - Raw DB follow-up checks are clean for the previously hit columns (`diagnostic_snapshots.raw`, `execution_events.payload`, `pine_scripts.source_code`, `signal_monitor_events.source`). A 20s delayed check stayed at zero hits.
+  - Source service probe against persisted data returned `hitCount: 0` across deployments, signal-options state/cockpit, signal monitor events, backtest studies/runs/drafts, and Pine scripts.
+  - Browser DOM scan across desktop/mobile primary nav surfaces returned zero visible retired-branding hits.
+  - Rebuilt API dist. The currently running Replit API process was started before this latest build, so a Replit app restart is still needed for the live process to load the new dist code; DB cleanup prevents the old process from serving the already-cleaned data in the meantime.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/algo-branding.ts`
+  - `artifacts/api-server/src/services/algo-branding.test.ts`
+  - `artifacts/api-server/src/services/backtesting.ts`
+  - `artifacts/api-server/src/services/backtesting-strategies.test.ts`
+  - `artifacts/api-server/src/services/pine-scripts.ts`
+  - `artifacts/api-server/src/services/pine-scripts.test.ts`
+  - `artifacts/api-server/src/services/signal-monitor.ts`
+  - `artifacts/api-server/src/services/signal-monitor.test.ts`
+  - `artifacts/pyrus/src/screens/algo/algoBranding.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/algo-branding.test.ts src/services/signal-monitor.test.ts src/services/backtesting-strategies.test.ts src/services/pine-scripts.test.ts`.
+  - Passed earlier in this pass: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/algo-branding.test.ts src/services/signal-monitor.test.ts src/services/backtesting-strategies.test.ts src/services/pine-scripts.test.ts src/services/automation.test.ts src/services/signal-options-automation.test.ts`.
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `pnpm --filter @workspace/api-server run build`.
+  - Passed: `pnpm run audit:branding`.
+  - Passed: `git diff --check`.
+  - Passed: direct source service probe returned `hitCount: 0`.
+  - Passed: DB targeted residual checks returned zero hits after cleanup.
+  - Passed: desktop/mobile Playwright DOM scan returned zero hits.
+- Next step:
+  - Restart the Replit app once so the running API process loads the rebuilt `dist/index.mjs`; then repeat a short live API/DOM probe if needed.
+
+- Last updated: `2026-05-27 01:51 UTC`
+- Current request: implement the IBKR data-line / historical-request stabilization plan, grounded in IBKR API pacing docs.
+- Current status:
+  - Implemented first stability slice: added `ibkr-historical-admission.ts`, routed platform historical bars through it, lowered signal monitor/matrix caps, made trade monitor worker use capped profiles, stopped signal-options force refresh from bypassing caps, exposed historical admission in line usage, and added Settings rows for historical API/bridge pressure.
+  - Important existing worktree state: many unrelated Algo/branding files are already modified; preserve them. `signal-options-automation.ts` has unrelated branding edits and must be patched carefully around them.
+  - Targeted validation is clean.
+  - Post-restart check completed. The restarted API is serving the built `dist/index.mjs` with `ibkr-historical-admission`, `historicalWork`, and the `Legacy Bars` labels present.
+  - Live `/api/settings/ibkr-line-usage` shows historical admission active and protecting the signal-matrix caller: `concurrency=1`, `queueCap=2`, `accepted=54`, `active=0`, `queued=0`, `lastRejectedReason=global-historical-pacing`, `globalWindowRemainingWeight=0/54`.
+  - Live Settings > Data & Broker renders the new historical rows after the SSE snapshot arrives; first render can show placeholders, then values populate at about 3 seconds.
+  - Follow-up review requested for signal scanner cadence because watchlist signal bubbles are not all hydrated. Live state: signal profile `paper` is enabled, timeframe `5m`, poll `60s`, max symbols `60`, concurrency `2`; all watchlists contain `90` unique symbols; profile state currently resolves `60` and reports historical lane dropping `30`.
+  - Current 2m/5m/15m matrix cadence is intentionally partial: frontend requests at most `8` symbols per poll under normal pressure (`4` priority + `4` rotating background), backend caps matrix to `8` symbols and concurrency `1`, and historical admission caps the family to `54` weighted requests per 10 minutes.
+  - Implementing the accepted shared signal hydration plan: all-watchlist target, hybrid source strategy (`1m` for `2m`, shared `5m` for `5m` plus derived `15m`), keep historical admission guard enabled.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/ibkr-historical-admission.ts`
+  - `artifacts/api-server/src/services/ibkr-historical-admission.test.ts`
+  - `artifacts/api-server/src/services/platform.ts`
+  - `artifacts/api-server/src/services/signal-monitor.ts`
+  - `artifacts/api-server/src/services/signal-monitor.test.ts`
+  - `artifacts/api-server/src/services/trade-monitor-worker.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.test.ts`
+  - `artifacts/api-server/src/services/ibkr-line-usage.ts`
+  - `artifacts/api-server/src/services/ibkr-lanes.ts`
+  - `artifacts/pyrus/src/screens/SettingsScreen.jsx`
+  - `artifacts/pyrus/src/features/platform/signalMatrixScheduler.js`
+  - `artifacts/pyrus/src/features/platform/signalMatrixScheduler.test.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-historical-admission.test.ts src/services/signal-monitor.test.ts src/services/trade-monitor-worker.test.ts src/services/signal-options-automation.test.ts`.
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js`.
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-line-usage.test.ts`.
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `git diff --check`.
+  - Passed post-restart: live API probes for `/api/settings/ibkr-line-usage` and `/api/settings/ibkr-lanes`.
+  - Passed post-restart: Playwright smoke of Settings > Data & Broker for `Historical API work`, `Historical API cap`, `Historical bridge cap`, `Historical rejected`, `Historical pacing`, and `Historical top caller`.
+- Next step:
+  - Refactor matrix evaluation from per-symbol/timeframe work to per-symbol hybrid source work, add coverage diagnostics, update scheduler/tests/typechecks.
+
+- Last updated: `2026-05-27 00:58 UTC`
+- Current request: assume the previous passes still missed old/bad references and do a broader audit.
+- Current status:
+  - Starting stricter pass. Treating this as recurring stale-state cleanup, not a single label fix.
+  - Scope now includes split legacy strings, compatibility/migration paths, creator paths, persisted data read through current source services, rebuilt dist, and rendered desktop/mobile DOM surfaces.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending.
+- Next step:
+  - Tighten the legacy-branding guard so split strings are caught, then whitelist only deliberate sanitizer/migration fixtures.
+
+- Last updated: `2026-05-27 00:46 UTC`
+- Current request: post-restart pass checking for other old/bad references in source, live API, and rendered UI.
+- Current status:
+  - Static guard `pnpm run audit:branding` is clean.
+  - Live API check before this patch still found 140 legacy hits in `candidates[].deploymentName` under `/api/algo/deployments/:id/cockpit` and `/api/algo/deployments/:id/signal-options/state`. Deployment rows and event payload response boundaries were already normalized; this remaining leak came from `candidateFromEvent()` merging persisted event candidate payloads into live state candidates verbatim.
+  - Patched `artifacts/api-server/src/services/signal-options-automation.ts` to normalize candidate objects at the persisted-event reader path and again at the final state candidate response boundary. Also normalized event timeline summaries.
+  - Added a regression assertion in `artifacts/api-server/src/services/signal-options-automation.test.ts` for a persisted legacy candidate deployment name overriding a live preview.
+  - Rebuilt API dist with `pnpm --filter @workspace/api-server run build`. The currently running API process still serves its already-loaded `dist/index.mjs` until it is restarted, but the rebuilt dist is ready.
+  - Verified the current source directly against the same persisted data via API service imports: `getAlgoDeploymentCockpit()` + `listSignalOptionsAutomationState()` returned `hitCount: 0` for retired names.
+  - Browser DOM scan after clicking through desktop Market, Flow, GEX, Trade, Account, Research, Algo, Backtest, Diagnostics, and Settings found zero visible hits for retired Ray/RayReplica/RayAlgo strings and zero obvious placeholder hits (`undefined`, `[object Object]`, `NaN`).
+  - Broader source search still shows only sanitizer/test fixtures, migration compatibility keys, and one Windows IBKR helper previous-state migration path (`Ray` + `Algo\ibkr-bridge`) used to copy existing local bridge state.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/signal-options-automation.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.test.ts`
+- Validation state:
+  - Passed: `pnpm run audit:branding`.
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/algo-branding.test.ts src/services/automation.test.ts src/services/shadow-account.test.ts src/services/signal-options-automation.test.ts`.
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `pnpm --filter @workspace/api-server run build`.
+  - Passed: direct source/runtime service probe against persisted data returned zero retired branding hits.
+  - Passed: browser DOM scan across primary desktop screens returned zero retired branding/placeholder hits.
+  - Passed: `git diff --check`.
+- Next step:
+  - Restart the API once more to make the running `/api/...` endpoints serve the rebuilt dist; after that, the same live API probe should also return zero legacy candidate hits.
+
+- Last updated: `2026-05-27 00:35 UTC`
+- Current request: after restart, do another pass checking for other old/bad references beyond the previously found `RAY` sidebar leak.
+- Current status:
+  - Starting fresh post-restart verification. Scope is broader than static source: run legacy branding/source guards, inspect live API payloads after rebuild/restart, and render the app to scan actual DOM text for retired names.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending.
+- Next step:
+  - Identify live API/web endpoints, run static guards/searches, then probe API and browser DOM for old references.
+
+- Last updated: `2026-05-27 00:34 UTC`
+- Current request: suss out any other errant old `RAY`/Ray/RayReplica references after the Algo sidebar issue.
+- Current status:
+  - Confirmed the visible sidebar issue was real: live API deployment data still contained `RayReplica Signal Options Shadow Paper`, and Algo/event/account payloads could also surface persisted `deploymentName`/strategy metadata with retired Ray branding.
+  - Added shared API response normalizers for retired Algo branding (`RayReplica`, `RayAlgo`, `ray_replica_signals`) and wired them into automation deployments, execution events, signal-options cockpit/state/event payloads, source backtest attribution, replay/profile update summaries, and shadow-account trade/order/position metadata.
+  - Added a lazy signal-options deployment branding normalization path so old persisted default deployment names/config are updated on access after the rebuilt API serves the new code.
+  - Added defensive frontend display normalization for Algo sidebar/status/audit/toasts/account positions/orders/trading analysis, and replaced the hard-coded `RAY ·` halt strip prefix with `Pyrus ·`.
+  - Updated `audit:branding` with a narrow allowlist for the new sanitizer/test files so the existing legacy-branding guard continues to fail on future accidental product references.
+  - Static source search now only finds the new normalizer/test fixtures and intentional migration-only local-storage/preference keys assembled from `["ray", ...].join("")`; no remaining user-facing `RAY ·` display string was found.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/algo-branding.ts`
+  - `artifacts/api-server/src/services/algo-branding.test.ts`
+  - `artifacts/api-server/src/services/automation.ts`
+  - `artifacts/api-server/src/services/automation.test.ts`
+  - `artifacts/api-server/src/services/shadow-account.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.ts`
+  - `artifacts/pyrus/src/screens/algo/algoBranding.js`
+  - `artifacts/pyrus/src/features/platform/PlatformAlgoMonitorSidebar.jsx`
+  - `artifacts/pyrus/src/screens/AlgoScreen.jsx`
+  - `artifacts/pyrus/src/screens/account/PositionsPanel.jsx`
+  - `artifacts/pyrus/src/screens/account/TradesOrdersPanel.jsx`
+  - `artifacts/pyrus/src/screens/account/TradingAnalysisWorkbench.jsx`
+  - `artifacts/pyrus/src/screens/account/accountTradingAnalysis.js`
+  - `artifacts/pyrus/src/screens/account/tradingAnalysisModel.js`
+  - `artifacts/pyrus/src/screens/algo/AlgoAuditPanel.jsx`
+  - `artifacts/pyrus/src/screens/algo/AlgoStatusBar.jsx`
+  - `artifacts/pyrus/src/screens/algo/HaltStrip.jsx`
+  - `artifacts/pyrus/src/screens/algo/algoAccountPositions.js`
+  - `artifacts/pyrus/src/screens/algo/algoAuditModel.js`
+  - `artifacts/pyrus/src/screens/algo/algoHelpers.test.js`
+  - `scripts/check-legacy-branding.mjs`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/algo-branding.test.ts src/services/automation.test.ts src/services/shadow-account.test.ts src/services/signal-options-automation.test.ts`.
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js src/screens/algo/AlgoAuditPanel.test.js src/screens/account/accountTradingAnalysis.test.js src/screens/account/tradingAnalysisModel.test.js src/screens/account/PositionsPanel.test.js src/screens/account/TradesOrdersPanel.test.js`.
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `pnpm run audit:branding`.
+  - Passed: `git diff --check`.
+  - Passed static search: remaining retired Ray hits are normalizer fixtures or migration compatibility keys, not display surfaces.
+- Next step:
+  - Restart/rebuild the API before expecting API JSON to stop returning legacy persisted names. The frontend display normalizer covers visible UI surfaces immediately after Vite refresh, but server-side response normalization and lazy DB cleanup require the rebuilt API code to be running.
+
+- Last updated: `2026-05-27 00:18 UTC`
+- Current request: watch and confirm whether the Algo monitor sidebar is refetching/resetting every few seconds.
+- Current status:
+  - Confirmed in a headless Chromium runtime probe on the live dev app (`127.0.0.1:18747`) that the desktop right Algo Monitor sidebar resets while sitting on the Algo screen.
+  - In a ~70s observation window, the sidebar rendered real signal/action data, then flipped back to `Preparing algo monitor / Waiting for the active section to finish first paint` around `46.1s`, `58.1s`, and `68.3s`, before data returned.
+  - Network trace did not show a tight REST refetch loop. The configured sidebar fallback polls are `30s`, while Algo page fallback queries use `QUERY_DEFAULTS.refetchInterval` (`15s`) when cockpit SSE freshness is not available.
+  - The reset text is rendered only when `PlatformAlgoMonitorSidebar` receives `queryEnabled=false`, which comes from `dataEnabled={algoFrameRuntimeEnabled}` in `PlatformShell`.
+  - Likely source: `algoFrameRuntimeEnabled` depends on `frameAuxiliaryDataEnabled`, which depends on the active screen's `backgroundAllowed` readiness. `AlgoScreen` sets `backgroundAllowed` from `derivedReady`; `derivedReady` drops whenever `algoFullFresh` expires and the 6s derived REST fallback timer has not elapsed. Because stream freshness is only considered fresh for `7s`, intermittent Algo cockpit SSE/full updates can create a repeated off window and make the sidebar look like it is refetching/remounting every few seconds.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Runtime watched via Playwright-style headless Chromium script; no product code edited.
+  - Source inspected: `PlatformAlgoMonitorSidebar.jsx`, `PlatformShell.jsx`, `PlatformApp.jsx`, `AlgoScreen.jsx`, `live-streams.ts`, and query defaults.
+- Next step:
+  - Fix should focus on the readiness/runtime gate rather than indicator settings: make the active Algo frame/sidebar data gate not drop after first derived readiness, or make `backgroundAllowed`/Algo derived readiness sticky while the Algo screen remains mounted.
+
+- Last updated: `2026-05-27 00:06 UTC`
+- Current request: second look at the indicator's wait-for-bar-close setting as a possible cause of Algo/monitor signal timing and jumping.
+- Current status:
+  - Corrected/expanded finding: `waitForBarClose` is important here. Core default is `waitForBarClose=true`; the current live `pyrusSignalsSettings` does not override it, so the monitor is running with wait-for-close enabled.
+  - Server monitor evaluates with `includeProvisionalSignals: false` and also filters to completed bars. In `evaluatePyrusSignalsSignals`, a signal is actionable only when `includeProvisionalSignals || !waitForBarClose || index < chartBars.length - 1`.
+  - Because the server already removes partial bars, `waitForBarClose=true` effectively delays newest-completed-bar signals until one additional completed bar exists. New signals therefore first appear with `barsSinceSignal=1`, not `0`.
+  - This does contribute to the observed timing/reordering: at each 5m bar edge, previously hidden signals become visible together, while older names cross the `freshWindowBars=8` cutoff. The mixed-generation state publication still explains why different surfaces/rows can disagree momentarily.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Source inspected: `waitForBarClose` resolver/default, core `actionable` logic, signal monitor completed-bar filtering, and server monitor `includeProvisionalSignals:false` calls.
+- Next step:
+  - If fixing, decide whether server monitor should treat completed-bar input differently for `waitForBarClose` so alerts fire at candle close instead of one bar later, and separately stabilize monitor state publication by scan generation.
+
+- Last updated: `2026-05-27 00:02 UTC`
+- Current request: review the underlying indicator settings driving the Algo/monitor signals and determine whether those settings explain the fresh/not-fresh jumping.
+- Current status:
+  - Current live signal monitor profile is permissive: `timeframe=5m`, `freshWindowBars=8`, `pollIntervalSeconds=60`, `maxSymbols=250`, `evaluationConcurrency=10`, `pyrusSignalsSettings={ timeHorizon: 8, bosConfirmation: "wicks", chochAtrBuffer: 0, chochBodyExpansionAtr: 0, chochVolumeGate: 0, __signalMonitorUniverseScope: "all_watchlists" }`.
+  - Deployment parameters match the profile: `signalTimeframe=5m`, `timeHorizon=8`, `bosConfirmation=wicks`, CHOCH gates all `0`, 90-symbol universe.
+  - Core defaults fill omitted values with filters disabled (`signalFiltersEnabled=false`, `requireMtf* / requireAdx / requireVolScoreRange=false`, `restrictToSelectedSessions=false`, `waitForBarClose=true`).
+  - Conclusion: these settings explain why many symbols can produce signals, including after-hours/session-labeled signals, but they are not the direct cause of the UI jumping between fresh/not-fresh. The direct cause remains per-row freshness (`barsSinceSignal <= freshWindowBars`) updating across mixed latest-bar generations.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Source inspected in `lib/pyrus-signals-core/src/index.ts`, `artifacts/api-server/src/services/automation.ts`, and Algo helper defaults.
+  - Runtime profile/deployment/cockpit inspected via local API.
+- Next step:
+  - If adjusting behavior, decide separately between signal quality tuning (e.g. close confirmation, CHOCH gates, enabling filters/session restriction) and UI/state stabilization (coherent monitor generation / bar-edge snapshotting).
+
+- Last updated: `2026-05-26 23:56 UTC`
+- Current request: look deeper into codebase and workflow commands that could explain the latest Replit/Codex disconnect/restart under runtime pressure.
+- Current status:
+  - Deeper inspection found the latest startup command path is mostly guarded: `.replit` points Run to `artifacts/pyrus: web`, the artifact command traps `HUP` and runs `pnpm --filter @workspace/pyrus run dev:replit`, and duplicate Replit starts no-op inside the startup guard window. No latest log evidence showed `EADDRINUSE`, root `.replit` runner misuse, or a duplicate workflow restart cascade.
+  - Stronger app/runtime evidence points to API pressure after healthy startup: current API PID `584` sampled around `4.0GB` RSS and high CPU; live diagnostics report resource pressure `critical`, `/signal-monitor/matrix` as dominant slow route with about `84.9s` p95, and bars cache telemetry dominated by `signal-matrix` hydrations (`~13.4k` family events, `~7.9k` misses, `8` in flight).
+  - Current signal monitor profile is aggressive again: enabled all-watchlists paper profile, `90` resolved symbols, `pollIntervalSeconds=60`, `maxSymbols=250`, `evaluationConcurrency=10`.
+  - Code-level creator path: `SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS` currently leaves normal/watch/high/critical profile evaluations at `250` symbols and concurrency `10`; commit `fcf9106` raised this from prior concurrency `3` to `10` and updated tests to assert preserved breadth under pressure.
+  - Additional creator path: `startTradeMonitorWorker()` runs immediately after API `listen` and its worker uses raw `profile.maxSymbols` / `profile.evaluationConcurrency`, not `cappedSignalMonitorEvaluationProfile`; it can therefore run a 90-symbol signal monitor pass while the UI matrix and startup streams are also warming.
+  - Frontend creator path: `PlatformApp.jsx` starts `runSignalMatrixEvaluation()` immediately when `signalMatrixRuntimeReady` is true, then repeats at the profile poll interval. The request planner sends priority symbols before background readiness, and the API evaluates three matrix timeframes (`2m`, `5m`, `15m`), so even the matrix cap of 16 symbols means up to 48 bar evaluations per call plus stale/live-edge retries.
+  - Bridge/watchlist pressure remains an amplifier: `startIbkrWatchlistPrewarmRuntime()` reconciles at startup and every `15s`; latest workflow logs show quote bootstrap HTTP `500`, market-subscription lane `504`, order snapshot timeouts, and many SSE aborts while matrix calls are running.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Inspection only; no product code edited.
+  - Live probes used bounded health/diagnostics/profile/watchlist/session requests. `/api/healthz` returned ok while diagnostics still reported critical resource pressure, which supports the finding that healthz readiness is weaker than app/runtime readiness.
+- Next step:
+  - If fixing, restore pressure-aware caps for full signal monitor evaluations, make the background signal monitor worker use the same caps/resource pressure snapshot, delay or reduce first matrix evaluation during startup/critical pressure, and consider pausing bridge prewarm/optional scanners when diagnostics marks resource pressure critical.
+
+- Last updated: `2026-05-26 23:56 UTC`
+- Current request: diagnose why the Algo page and monitor jump between showing names as updated since VST and not updated since VST.
+- Current status:
+  - Root cause found: the Algo page and monitor both ultimately read `/api/signal-monitor/state`, but the response can contain symbol rows from different per-symbol evaluation moments/latest bars. Freshness is computed per row as `barsSinceSignal <= freshWindowBars` and not stale, so as individual symbols advance from the 23:45 UTC completed bar to the 23:50 UTC completed bar, the fresh/not-fresh boundary and row order move.
+  - Live API sample at 23:53-23:56 UTC showed profile `timeframe=5m`, `freshWindowBars=8`, `maxSymbols=250`, universe 90 symbols, and rows mixed across `latestBarAt=2026-05-26T23:45:00.000Z` and `2026-05-26T23:50:00.000Z`.
+  - `VST` specifically moved from `barsSinceSignal=4`, `latestBarAt=23:45` to `barsSinceSignal=5`, `latestBarAt=23:50`; adjacent names were on different bar edges during the same sampled monitor response.
+  - Algo uses cockpit/state signals from `getSignalMonitorState`; monitor/activity publishes and renders the same signal monitor state plus events. They are not pinned to one coherent scan generation, so both surfaces can show the same transition at slightly different times.
+  - No app code changes made in this pass.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Source inspected: signal monitor service, signal-options automation bridge, Algo UI, PlatformApp signal monitor queries, Market activity lane.
+  - Runtime inspected through local API calls against the running Replit dev app on `127.0.0.1:8080`.
+- Next step:
+  - If fixing, choose whether to stabilize UI by scan generation/bar edge, defer row replacement until a full monitor cycle completes, or explicitly label mixed-generation states as refreshing instead of letting the fresh boundary jump.
+
+- Last updated: `2026-05-26 23:51 UTC`
+- Current request: look deeper into codebase and workflow commands that could cause the latest Replit/Codex disconnect/restart under runtime pressure.
+- Current status:
+  - Investigation starting from the newest top-of-file crash/disconnect handoff, recent workflow logs, Replit startup commands, duplicate-run guards, API warmup/fanout paths, signal-monitor matrix behavior, and IBKR bridge failure/backoff handling.
+  - No code changes yet in this pass.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending; this pass is currently inspection-only.
+- Next step:
+  - Read startup scripts/config and the API/Pyrus warmup callers to identify concrete creator paths for high CPU/RSS, long requests, duplicate app starts, or bridge retry pressure.
+
+- Last updated: `2026-05-26 22:52 UTC`
+- Current request: diagnose the latest disconnect/restart from newest terminal and workspace evidence first.
+- Current status:
+  - Latest source state is clean except this handoff update: `main` is ahead of `origin/main` by commit `fcf9106` (`Stabilize app deficiency cleanup groundwork`), created at `2026-05-26 22:44:26 UTC`.
+  - Newest post-commit workspace evidence is Replit app bring-up, not unfinished source edits: Replit env/toolchain cache refreshed at `22:45:45 UTC`, Pyrus dev supervisor started at `22:45:45 UTC`, API dist rebuilt at `22:45:48 UTC`, and a duplicate Replit workflow invocation immediately exited because supervisor `676` was already alive.
+  - Latest workflow log (`.local/state/workflow-logs/1DRoVVRbzGjUd8ICUnHwP/artifacts_pyrus__web.shell.exec.0`) shows API startup succeeded, then runtime pressure/bridge problems appeared during app warmup: `/api/settings/preferences` about `9.9s`, `/api/watchlists` about `11s`, `/api/signal-monitor/matrix` about `61s` and `73s`, many SSE `request aborted` lines, bridge HTTP `500`, bridge lane `504`, and bridge health timeouts.
+  - No active Playwright/page-surface inventory process remains. The older unfinished audit still has screenshots through `output/app-deficiency-page-surface-inventory/phone-algo-bottom.png` and no JSON result, meaning it stopped before phone Backtest/Diagnostics/Settings, but that predates the latest Replit restart evidence.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Inspected latest file mtimes, process table, git status/reflog, workflow logs, Codex logs, memory, and disk.
+  - Current memory/disk are not exhausted (`free -h` showed about `8.4Gi` available; workspace disk about `3%` used).
+  - Follow-up live process check: API PID `703` was still active at about `2.0GB` RSS and `65.8%` CPU; workflow log continued to show bridge 500/504s, long signal-matrix calls, and long-lived SSE aborts.
+- Next step:
+  - Treat the latest disconnect as a Replit/dev-app restart or UI/session disruption coinciding with API/IBKR runtime pressure, not as an uncommitted code edit. If continuing the interrupted audit, rerun the page-surface inventory or scope it to the missing phone Backtest/Diagnostics/Settings screens.
+
 - Last updated: `2026-05-26 22:43 UTC`
 - Current request: implement the phased app-deficiency cleanup plan.
 - Current status:
@@ -6632,3 +7918,58 @@
   - `pnpm run audit:api-codegen` passed after accepting regenerated orval output.
   - Scoped `git diff --check` passed for the signal matrix/API schema/generated files and handoff.
 - Guardrail: worktree already contains unrelated user/generated changes. Keep all remaining work scoped and do not revert unrelated files.
+
+## Replit Restart / Terminal Disconnect Diagnostic
+
+- Last updated: `2026-05-27 05:38 UTC`
+- Current request: diagnose the last Replit project restart / terminal disconnect, including console and log review.
+- Status: diagnostic pass complete; no app code changes made.
+- Key timeline:
+  - Kernel/microVM evidence: `/proc/stat` boot time reports `2026-05-27 04:59:15 UTC`; PID 1 started immediately after (`/proc/1/stat` start ticks `228` at `CLK_TCK=100`). Current `pid0/pid1/pid2` tree also starts at `2026-05-27 04:59:17 UTC`.
+  - Previous Replit workflow log: `.local/state/workflow-logs/QSmZZh0GW39UsRTXjPyyX/artifacts_pyrus__web.shell.exec.0` was born at `2026-05-27 03:55:26 UTC` and last modified at `2026-05-27 05:15:33 UTC`. Embedded API log times run from `2026-05-27 03:55:30 UTC` to `2026-05-27 05:15:33 UTC`.
+  - New Replit workflow log: `.local/state/workflow-logs/fjXS5MYe0D_3sxgz-_ZTb/artifacts_pyrus__web.shell.exec.0` was born at `2026-05-27 05:16:02 UTC`; API first logged at `2026-05-27 05:16:14 UTC`.
+  - Persisted diagnostics show the old API had uptime `4,809,062 ms` at `2026-05-27 05:15:38 UTC`, then the new API published uptime `984 ms` at `2026-05-27 05:16:11 UTC`.
+- Evidence reviewed:
+  - Replit workflow console logs under `.local/state/workflow-logs`.
+  - Replit local log DB `.local/state/replit/log-query.db`; it is stale for this incident, newest row is `2026-04-22T22:28:29Z`, so it does not contain the current browser console/network data.
+  - Current process tree, cgroup memory events, `/proc/stat`, `/proc/1/stat`, `journalctl`, `dmesg`, and app diagnostic endpoints.
+  - App endpoints checked: `/api/healthz`, `/api/session`, `/api/diagnostics/latest`, `/api/diagnostics/history`, `/api/diagnostics/events`, `/api/settings/ibkr-line-usage`.
+- Findings:
+  - The app restart itself is cleanly visible between `05:15:38 UTC` and `05:16:11 UTC`; RSS dropped from ~`2.5 GB` to `176.5 MB`, and API uptime reset to under 1 second.
+  - Before restart, diagnostics repeatedly marked `resource-pressure` as `critical/down`, driven mainly by API RSS around `2.45-2.56 GB` and event-loop p95 around `416-425 ms`.
+  - Current process has already regrown to roughly `2.0 GB RSS` within ~20 minutes, and `resource-pressure` is again `critical`, driven by API RSS. The current `node --enable-source-maps ./dist/index.mjs` process is the dominant resident process.
+  - Workflow console logs do not show `Killed`, `SIGTERM`, `SIGKILL`, `OOM`, `out of memory`, pnpm lifecycle failure, or a Node fatal error around the handoff. The last old-workflow lines are normal/expected stream aborts and IBKR bridge health/request timeouts, then the file stops.
+  - Current cgroup `memory.events` reports `oom 0` and `oom_kill 0` since the current microVM started, so there is no evidence the current environment has been OOM-killed after restart. Kernel/journal evidence for the previous environment is unavailable (`journalctl` has no entries; `dmesg` is permission-blocked).
+  - Browser/persisted diagnostics around the restart recorded only a COEP report for Replit bridge JS and stale signal-options scan events; no persisted browser crash report points to the restart cause.
+- Likely interpretation:
+  - The Replit terminal disconnect lines up with a Replit microVM/pid service restart around `2026-05-27 04:59:15 UTC`.
+  - The app restart/run-button bring-up occurred later around `2026-05-27 05:16:00 UTC`.
+  - The strongest app-side clue is sustained API memory/resource pressure and slow/event-loop pressure before the restart, not an explicit crash signature.
+- Validation state:
+  - `curl http://127.0.0.1:8080/api/healthz` returned `{"status":"ok"}`.
+  - Current app remains reachable and connected to IBKR according to `/api/session`.
+  - No tests were run because this was a log/diagnostic investigation only.
+- Next step:
+  - If continuing investigation, focus on why API RSS rapidly returns to ~2 GB after restart. Current diagnostics implicate bars/signal-matrix hydration, cache pressure, and repeated slow `signal-monitor/matrix`/diagnostic requests as the main runtime pressure sources.
+
+## Pressure Fix Guardrails Audit
+
+- Last updated: `2026-05-27 05:48 UTC`
+- Current request: make sure the proposed runtime-pressure solution does not undo prior fixes.
+- Status: guardrail audit complete; no app code changes made.
+- Preserve these existing fixes:
+  - Do not restore `watchlist-prewarm-filler` or any filler-based line fill behavior. Existing tests assert watchlist prewarm uses `visible-live` and does not create filler leases.
+  - Do not move watchlist/prewarm back to `watchlist-live` or the watchlist pool. The visible-driven line allocation update intentionally uses visible/on-screen quote demand and a `watchlist` cap of `0`.
+  - Do not reintroduce API resource-pressure as a market-data line-budget authority. Prior cleanup made Flow/runtime config and market-data admission the line-budget authorities.
+  - Do not broadly pause signal-options deployment scans on RSS-only `high` or `critical` pressure. Existing `signal-options-worker.test.ts` asserts deployment scans keep rotating under high and critical RSS pressure; only explicit scan-blocking caps or per-deployment overrides should pause them.
+  - Do not undo signal matrix efficiency work: keep per-symbol evaluation reuse, complete child-bucket requirements for synthetic 2m/15m bars, coverage metadata, and the current matrix caps (`normal 8/1`, `watch 6/1`, `high 4/1`, `critical 2/1`).
+  - Do not bypass the historical admission limiter added for IBKR historical bars.
+  - Do not touch `.replit`, artifact startup config, Replit runner scripts, or startup locks for this fix.
+- Adjusted solution direction:
+  - Target optional/background signal-matrix hydration and diagnostics/export load first.
+  - Keep execution, account, visible quotes, visible-driven prewarm, and signal-options scan rotation intact.
+  - If an emergency self-restart guard is added, it should be opt-in/thresholded and emit diagnostics before exit; it must not change Replit startup configuration.
+- Validation to run before handoff if implementing:
+  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/resource-pressure.test.ts src/services/signal-monitor.test.ts src/services/signal-options-worker.test.ts src/services/watchlist-prewarm.test.ts src/services/market-data-admission.test.ts src/services/ibkr-line-usage.test.ts`
+  - `pnpm --filter @workspace/api-server run typecheck`
+  - Scoped `git diff --check`

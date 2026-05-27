@@ -12,6 +12,7 @@ import {
 import { Badge } from "../../components/platform/primitives.jsx";
 import { PulseDot } from "../../components/ui/PulseDot.jsx";
 import { ActionButton } from "../../components/ui/ActionButton.jsx";
+import { normalizeLegacyAlgoBrandText } from "./algoBranding.js";
 
 export const AlgoStatusBar = ({
   focusedDeployment,
@@ -44,8 +45,11 @@ export const AlgoStatusBar = ({
           : { active: false, color: CSS_COLOR.textDim, label: "Algo idle" };
   const mode = String(focusedDeployment?.mode || environment || "").toUpperCase();
   const symbolCount = focusedDeployment?.symbolUniverse?.length ?? 0;
+  const focusedDeploymentName = normalizeLegacyAlgoBrandText(
+    focusedDeployment?.name || "",
+  );
   const subtitle = focusedDeployment
-    ? `${focusedDeployment.name} · ${mode}${symbolCount ? ` · ${symbolCount} sym` : ""}`
+    ? `${focusedDeploymentName} · ${mode}${symbolCount ? ` · ${symbolCount} sym` : ""}`
     : "no deployment selected";
   const accountLabel =
     accountId || focusedDeployment?.providerAccountId || null;
@@ -113,7 +117,7 @@ export const AlgoStatusBar = ({
           >
             {deployments.map((deployment) => (
               <option key={deployment.id} value={deployment.id}>
-                {deployment.name} · {String(deployment.mode || "").toUpperCase()} · {deployment.enabled ? "on" : "off"}
+                {normalizeLegacyAlgoBrandText(deployment.name)} · {String(deployment.mode || "").toUpperCase()} · {deployment.enabled ? "on" : "off"}
               </option>
             ))}
           </select>

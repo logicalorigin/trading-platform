@@ -138,6 +138,11 @@ const resolveTradePositionSparklineData = (snapshot, position, symbol) => {
 
 const OPEN_POSITION_GRID_TEMPLATE =
   "72px 36px 76px 42px 48px 48px 38px 48px 48px 52px 44px 18px";
+const OPEN_POSITION_TABLE_MIN_WIDTH = 620;
+const EXECUTION_GRID_TEMPLATE = "40px 30px minmax(0,1fr) 24px 50px 64px 42px";
+const EXECUTION_TABLE_MIN_WIDTH = 460;
+const LIVE_ORDER_GRID_TEMPLATE = "42px 30px 44px 22px 28px 58px 42px 24px";
+const LIVE_ORDER_TABLE_MIN_WIDTH = 440;
 
 const tradeNumericCellStyle = (color = CSS_COLOR.textSec) => ({
   color,
@@ -1140,11 +1145,21 @@ export const TradePositionsPanel = ({
               No open positions
             </div>
           ) : (
-            <>
+            <div
+              data-testid="trade-open-positions-table-scroll"
+              className="ra-hide-scrollbar ra-dense-table-scroll"
+              style={{ overflowX: "auto" }}
+            >
               <div
+                role="table"
+                aria-label="Open trade positions"
+                style={{ minWidth: dim(OPEN_POSITION_TABLE_MIN_WIDTH) }}
+              >
+              <div
+                role="row"
                 style={{
-	                  display: "grid",
-	                  gridTemplateColumns: OPEN_POSITION_GRID_TEMPLATE,
+		                  display: "grid",
+		                  gridTemplateColumns: OPEN_POSITION_GRID_TEMPLATE,
 	                  gap: sp(3),
                   fontSize: textSize("caption"),
                   color: CSS_COLOR.textMuted,
@@ -1152,18 +1167,18 @@ export const TradePositionsPanel = ({
                   padding: "0 4px",
                 }}
               >
-                <span>TICK</span>
-                <span>SIDE</span>
-                <span>CONTRACT</span>
-                <span style={{ textAlign: "right" }}>OPEN</span>
-                <span style={{ textAlign: "right" }}>BID</span>
-                <span style={{ textAlign: "right" }}>ASK</span>
-                <span style={{ textAlign: "right" }}>QTY</span>
-                <span style={{ textAlign: "right" }}>ENTRY</span>
-                <span style={{ textAlign: "right" }}>MARK</span>
-                <span style={{ textAlign: "right" }}>P&L $</span>
-                <span style={{ textAlign: "right" }}>P&L %</span>
-                <span></span>
+                <span role="columnheader">TICK</span>
+                <span role="columnheader">SIDE</span>
+                <span role="columnheader">CONTRACT</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>OPEN</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>BID</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>ASK</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>QTY</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>AVG</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>MARK</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>P&L $</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>P&L %</span>
+                <span role="columnheader"></span>
               </div>
               {openPositions.map((p) => {
                 const isLoadable = Boolean(p.optionLoadContract);
@@ -1177,17 +1192,15 @@ export const TradePositionsPanel = ({
                   display.quote?.ask != null ? formatPriceValue(display.quote.ask) : MISSING_VALUE;
                 const entryText = isFiniteNumber(p.entry) ? formatPriceValue(p.entry) : MISSING_VALUE;
                 const markText = isFiniteNumber(p.mark) ? formatPriceValue(p.mark) : MISSING_VALUE;
-                const openedText =
-                  display.openedLabel && display.ageLabel
-                    ? `${display.openedLabel} · ${display.ageLabel}`
-                    : display.openedLabel || MISSING_VALUE;
+                const openedText = display.openedLabel || MISSING_VALUE;
                 return (
                   <AppTooltip key={p._id} content={
                       isLoadable
                         ? `Click to load ${p.ticker} ${p.contract} into Order Ticket`
                         : `${p.ticker} equity position`
                     }><div
-                    key={p._id}
+	                    key={p._id}
+                      role="row"
                     onClick={() => {
                       if (isLoadable) {
                         onLoadPosition({
@@ -1261,7 +1274,7 @@ export const TradePositionsPanel = ({
                       {p.contract}
                     </span>
                     <span
-                      title={display.openedSourceLabel || undefined}
+                      title={[display.ageLabel, display.openedSourceLabel].filter(Boolean).join(" · ") || undefined}
                       style={{ color: display.openedLabel ? CSS_COLOR.textSec : CSS_COLOR.textDim, textAlign: "right" }}
                     >
                       {openedText}
@@ -1328,7 +1341,8 @@ export const TradePositionsPanel = ({
                   </div></AppTooltip>
                 );
               })}
-            </>
+              </div>
+            </div>
           )}
         </div>
       ) : tab === "history" ? (
@@ -1414,12 +1428,21 @@ export const TradePositionsPanel = ({
               No broker executions
             </div>
           ) : (
-            <>
+            <div
+              data-testid="trade-executions-table-scroll"
+              className="ra-hide-scrollbar ra-dense-table-scroll"
+              style={{ overflowX: "auto" }}
+            >
               <div
+                role="table"
+                aria-label="Broker executions"
+                style={{ minWidth: dim(EXECUTION_TABLE_MIN_WIDTH) }}
+              >
+              <div
+                role="row"
                 style={{
                   display: "grid",
-                  gridTemplateColumns:
-                    "40px 30px minmax(0,1fr) 24px 50px 64px 42px",
+                  gridTemplateColumns: EXECUTION_GRID_TEMPLATE,
                   gap: sp(3),
                   fontSize: textSize("caption"),
                   color: CSS_COLOR.textMuted,
@@ -1427,21 +1450,21 @@ export const TradePositionsPanel = ({
                   padding: "0 4px",
                 }}
               >
-                <span>SYM</span>
-                <span>SIDE</span>
-                <span>CONTRACT</span>
-                <span style={{ textAlign: "right" }}>QTY</span>
-                <span style={{ textAlign: "right" }}>PRICE</span>
-                <span style={{ textAlign: "right" }}>NET</span>
-                <span style={{ textAlign: "right" }}>TIME</span>
+                <span role="columnheader">SYM</span>
+                <span role="columnheader">SIDE</span>
+                <span role="columnheader">CONTRACT</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>QTY</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>PRICE</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>NET</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>TIME</span>
               </div>
               {executionRows.map((execution) => (
                 <div
-                  key={execution.id}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns:
-                      "40px 30px minmax(0,1fr) 24px 50px 64px 42px",
+	                  key={execution.id}
+                    role="row"
+	                  style={{
+	                    display: "grid",
+	                    gridTemplateColumns: EXECUTION_GRID_TEMPLATE,
                     gap: sp(3),
                     padding: sp("3px 4px"),
                     fontSize: textSize("caption"),
@@ -1509,7 +1532,8 @@ export const TradePositionsPanel = ({
                   </span>
                 </div>
               ))}
-            </>
+              </div>
+            </div>
           )}
         </div>
       ) : (
@@ -1597,12 +1621,21 @@ export const TradePositionsPanel = ({
               No broker orders
             </div>
           ) : (
-            <>
+            <div
+              data-testid="trade-live-orders-table-scroll"
+              className="ra-hide-scrollbar ra-dense-table-scroll"
+              style={{ overflowX: "auto" }}
+            >
               <div
+                role="table"
+                aria-label="Live broker orders"
+                style={{ minWidth: dim(LIVE_ORDER_TABLE_MIN_WIDTH) }}
+              >
+              <div
+                role="row"
                 style={{
                   display: "grid",
-                  gridTemplateColumns:
-                    "42px 30px 44px 22px 28px 58px 42px 24px",
+                  gridTemplateColumns: LIVE_ORDER_GRID_TEMPLATE,
                   gap: sp(3),
                   fontSize: textSize("caption"),
                   color: CSS_COLOR.textMuted,
@@ -1610,14 +1643,14 @@ export const TradePositionsPanel = ({
                   padding: "0 4px",
                 }}
               >
-                <span>SYM</span>
-                <span>SIDE</span>
-                <span>TYPE</span>
-                <span style={{ textAlign: "right" }}>QTY</span>
-                <span style={{ textAlign: "right" }}>FILL</span>
-                <span style={{ textAlign: "right" }}>STATUS</span>
-                <span style={{ textAlign: "right" }}>TIME</span>
-                <span></span>
+                <span role="columnheader">SYM</span>
+                <span role="columnheader">SIDE</span>
+                <span role="columnheader">TYPE</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>QTY</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>FILL</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>STATUS</span>
+                <span role="columnheader" style={{ textAlign: "right" }}>TIME</span>
+                <span role="columnheader"></span>
               </div>
               {liveOrders.map((order) => {
                 const orderRowId = getTradeLiveOrderRowId(order);
@@ -1633,6 +1666,7 @@ export const TradePositionsPanel = ({
                           })} into Order Ticket`
                         : order.id
                     }><div
+                    role="row"
                     onClick={() => {
                       if (!isOption) return;
                       onLoadPosition({
@@ -1645,9 +1679,8 @@ export const TradePositionsPanel = ({
                       });
                     }}
                     style={{
-                      display: "grid",
-                      gridTemplateColumns:
-                        "42px 30px 44px 22px 28px 58px 42px 24px",
+	                      display: "grid",
+	                      gridTemplateColumns: LIVE_ORDER_GRID_TEMPLATE,
                       gap: sp(3),
                       padding: sp("3px 4px"),
                       fontSize: textSize("caption"),
@@ -1730,7 +1763,8 @@ export const TradePositionsPanel = ({
                   </div></AppTooltip>
                 );
               })}
-            </>
+              </div>
+            </div>
           )}
         </div>
       )}

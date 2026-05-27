@@ -119,16 +119,12 @@ export const AlgoDiagnosticsTab = ({
 
       <div
         data-testid="algo-diag-gate-summary"
+        className="algo-diag-kpi-grid"
         style={{
           border: "none",
           borderRadius: dim(RADII.md),
           background: CSS_COLOR.bg1,
           padding: sp("8px 10px"),
-          display: "grid",
-          gridTemplateColumns: algoIsPhone
-            ? "repeat(2, minmax(0, 1fr))"
-            : "repeat(6, minmax(0, 1fr))",
-          gap: sp(6),
         }}
       >
         {[
@@ -155,14 +151,16 @@ export const AlgoDiagnosticsTab = ({
                 {String(label).toUpperCase()}
               </div>
               <div
+                className="tnum"
                 style={{
                   color: isAlarm
                     ? color
                     : Number(value) > 0 && label !== "Stale"
                       ? color
                       : CSS_COLOR.text,
-                  fontFamily: T.sans,
+                  fontFamily: T.data,
                   fontSize: fs(11),
+                  fontVariantNumeric: "tabular-nums",
                   marginTop: sp(2),
                 }}
               >

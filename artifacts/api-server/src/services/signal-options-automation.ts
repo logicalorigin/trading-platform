@@ -57,6 +57,11 @@ import {
   getAlgoGatewayReadiness,
   type AlgoGatewayReadiness,
 } from "./algo-gateway";
+import {
+  hasLegacyAlgoBranding,
+  normalizeLegacyAlgoBranding,
+  normalizeLegacyAlgoBrandText,
+} from "./algo-branding";
 import { notifyAlgoCockpitChanged } from "./algo-cockpit-events";
 import {
   isSignalOptionsShadowConfig,
@@ -106,8 +111,8 @@ const activeSignalOptionsRunMetadata = new Map<
   SignalOptionsRunMetadata
 >();
 
-const DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 250;
-const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 10;
+const DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 60;
+const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 2;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60;
 const SIGNAL_OPTIONS_MONITOR_STALE_GRACE_MS = 5_000;
 const SIGNAL_OPTIONS_POSITION_MARK_SKIP_RATE_LIMIT_MS = 5 * 60 * 1_000;
@@ -422,7 +427,9 @@ function signalOptionsPayloadWithRunMetadata(input: {
       : {}),
     ...metadata,
     deploymentId: metadata.deploymentId ?? input.deployment.id,
-    deploymentName: metadata.deploymentName ?? input.deployment.name,
+    deploymentName: normalizeLegacyAlgoBrandText(
+      compactString(metadata.deploymentName) ?? input.deployment.name,
+    ),
   };
   return {
     ...input.payload,
@@ -788,8 +795,8 @@ function eventToResponse(event: ExecutionEvent) {
     providerAccountId: event.providerAccountId ?? null,
     symbol: event.symbol ?? null,
     eventType: event.eventType,
-    summary: event.summary,
-    payload: event.payload,
+    summary: normalizeLegacyAlgoBrandText(event.summary),
+    payload: normalizeLegacyAlgoBranding(event.payload),
     occurredAt: event.occurredAt,
     createdAt: event.createdAt,
     updatedAt: event.updatedAt,
@@ -800,12 +807,12 @@ function deploymentToResponse(deployment: AlgoDeployment) {
   return {
     id: deployment.id,
     strategyId: deployment.strategyId,
-    name: deployment.name,
+    name: normalizeLegacyAlgoBrandText(deployment.name),
     mode: deployment.mode,
     enabled: deployment.enabled,
     providerAccountId: deployment.providerAccountId,
     symbolUniverse: deployment.symbolUniverse,
-    config: deployment.config,
+    config: normalizeLegacyAlgoBranding(deployment.config),
     lastEvaluatedAt: deployment.lastEvaluatedAt ?? null,
     lastSignalAt: deployment.lastSignalAt ?? null,
     lastError: deployment.lastError ?? null,
@@ -837,9 +844,13 @@ async function getDeploymentByAlias(
         deployment.enabled && deploymentHasSignalOptionsProfile(deployment),
     ) ??
     deployments.find(
-      (deployment) =>
-        deployment.name === DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME ||
-        deployment.name === LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME,
+      (deployment) => {
+        const deploymentName = normalizeLegacyAlgoBrandText(deployment.name);
+        return (
+          deploymentName === DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME ||
+          deploymentName === LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME
+        );
+      },
     ) ??
     null
   );
@@ -861,7 +872,8 @@ async function getDeploymentOrThrow(deploymentId: string): Promise<AlgoDeploymen
     });
   }
 
-  return normalizeSignalOptionsDeploymentAccount(deployment);
+  const brandNormalized = await normalizeSignalOptionsDeploymentBranding(deployment);
+  return normalizeSignalOptionsDeploymentAccount(brandNormalized);
 }
 
 async function listDeploymentEvents(deploymentId: string, limit = 500) {
@@ -912,7 +924,7 @@ async function normalizeSignalOptionsDeploymentAccount(
     deploymentId: deployment.id,
     providerAccountId,
     eventType: "deployment_account_normalized",
-    summary: `Routed ${deployment.name} to the Shadow account`,
+    summary: `Routed ${normalizeLegacyAlgoBrandText(deployment.name)} to the Shadow account`,
     payload: {
       previousProviderAccountId: deployment.providerAccountId,
       providerAccountId,
@@ -921,6 +933,43 @@ async function normalizeSignalOptionsDeploymentAccount(
   });
 
   return normalized;
+}
+
+async function normalizeSignalOptionsDeploymentBranding(
+  deployment: AlgoDeployment,
+): Promise<AlgoDeployment> {
+  if (!deploymentHasSignalOptionsProfile(deployment)) {
+    return deployment;
+  }
+
+  const nextName = normalizeLegacyAlgoBrandText(deployment.name);
+  const nextConfig = normalizeLegacyAlgoBranding(deployment.config);
+  const patch: {
+    name?: string;
+    config?: AlgoDeployment["config"];
+  } = {};
+
+  if (nextName !== deployment.name) {
+    patch.name = nextName;
+  }
+  if (hasLegacyAlgoBranding(deployment.config)) {
+    patch.config = nextConfig as AlgoDeployment["config"];
+  }
+
+  if (patch.name === undefined && patch.config === undefined) {
+    return deployment;
+  }
+
+  const [updated] = await db
+    .update(algoDeploymentsTable)
+    .set({
+      ...patch,
+      updatedAt: new Date(),
+    })
+    .where(eq(algoDeploymentsTable.id, deployment.id))
+    .returning();
+
+  return updated ?? { ...deployment, ...patch, updatedAt: new Date() };
 }
 
 async function insertSignalOptionsEvent(input: {
@@ -2176,7 +2225,7 @@ function buildCandidateFromSignal(input: {
       signalAt: input.signalAt,
     }),
     deploymentId: input.deployment.id,
-    deploymentName: input.deployment.name,
+    deploymentName: normalizeLegacyAlgoBrandText(input.deployment.name),
     symbol,
     direction,
     optionRight: optionRightForSignal(direction),
@@ -2212,7 +2261,7 @@ function candidateFromSignalSnapshot(input: {
       signalAt: signal.signalAt,
     }),
     deploymentId: input.deployment.id,
-    deploymentName: input.deployment.name,
+    deploymentName: normalizeLegacyAlgoBrandText(input.deployment.name),
     symbol,
     direction: signal.direction,
     optionRight: optionRightForSignal(signal.direction),
@@ -2396,19 +2445,25 @@ async function loadSignalOptionsMonitorState(input: {
       ensureWatchlist: true,
     });
     if (input.forceEvaluate === true) {
-      const fullRefresh = resolveSignalOptionsMonitorFullRefresh({
+      const forcedBatch = resolveSignalOptionsMonitorBatch({
+        deploymentId: input.deployment.id,
         universe: input.universe,
+        profile,
       });
       const evaluated = await evaluateSignalMonitorProfileSymbols({
         profile,
         mode: "incremental",
-        symbols: fullRefresh.symbols,
-        maxSymbolsOverride: fullRefresh.symbols.length,
+        symbols: forcedBatch.symbols,
+        barSourcePolicy: "ibkr-only",
       });
 
       return {
         ...evaluated,
-        signalOptionsBatch: fullRefresh,
+        signalOptionsBatch: {
+          ...forcedBatch,
+          forced: true,
+          fullUniverse: false,
+        },
       };
     }
     const batch = resolveSignalOptionsMonitorBatch({
@@ -2420,6 +2475,7 @@ async function loadSignalOptionsMonitorState(input: {
       profile,
       mode: "incremental",
       symbols: batch.symbols,
+      barSourcePolicy: "ibkr-only",
     });
 
     return {
@@ -2428,28 +2484,11 @@ async function loadSignalOptionsMonitorState(input: {
     };
   }
 
-  if (input.forceEvaluate !== false) {
-    return evaluateSignalMonitor({
-      environment: input.deployment.mode,
-      mode: "incremental",
-    });
-  }
-
-  const current = await getSignalMonitorState({
+  return evaluateSignalMonitor({
     environment: input.deployment.mode,
+    mode: "incremental",
+    barSourcePolicy: "ibkr-only",
   });
-  if (
-    shouldRefreshSignalOptionsMonitorState({
-      evaluated: current,
-      universe: input.universe,
-    })
-  ) {
-    return evaluateSignalMonitor({
-      environment: input.deployment.mode,
-      mode: "incremental",
-    });
-  }
-  return current;
 }
 
 function candidateFromEvent(event: ExecutionEvent): SignalOptionsCandidate | null {
@@ -2486,7 +2525,7 @@ function candidateFromEvent(event: ExecutionEvent): SignalOptionsCandidate | nul
         : event.eventType === SIGNAL_OPTIONS_ENTRY_EVENT
           ? "open"
           : "candidate";
-  return {
+  return normalizeLegacyAlgoBranding({
     id: String(candidateId || event.id),
     deploymentId:
       compactString(candidate.deploymentId) ?? event.deploymentId ?? null,
@@ -2528,7 +2567,7 @@ function candidateFromEvent(event: ExecutionEvent): SignalOptionsCandidate | nul
       : null,
     signal: Object.keys(signal).length ? signal : null,
     action: Object.keys(action).length ? action : null,
-  };
+  });
 }
 
 function mergeSignalOptionsCandidate(
@@ -3371,7 +3410,7 @@ function eventTimelineItem(
     source: "event",
     type: event.eventType,
     occurredAt: event.occurredAt.toISOString(),
-    summary: event.summary,
+    summary: normalizeLegacyAlgoBrandText(event.summary),
     reason: compactString(payload.reason) ?? compactString(payload.skipReason),
     changedFields,
     shadowOrderId: shadowLink?.orderId ?? null,
@@ -5131,7 +5170,7 @@ async function resolveSourceBacktest(deployment: AlgoDeployment) {
 
   return {
     strategyId: deployment.strategyId,
-    strategyName: strategy?.name ?? deployment.name,
+    strategyName: normalizeLegacyAlgoBrandText(strategy?.name ?? deployment.name),
     sourceRunId: sourceRunId ?? null,
     sourceStudyId: sourceStudyId ?? run?.studyId ?? null,
     runName: run?.name ?? null,
@@ -5222,7 +5261,7 @@ async function buildStatePayload(input: {
               orderPlan: asRecord(candidate.orderPlan),
             })
           : null);
-      return {
+      return normalizeLegacyAlgoBranding({
         ...candidate,
         actionStatus,
         syncStatus,
@@ -5234,7 +5273,7 @@ async function buildStatePayload(input: {
           .map((event) =>
             eventTimelineItem(event, shadowIndex.byEventId.get(event.id)),
           ),
-      };
+      });
     })
     .sort((left, right) => {
       const leftTime = dateOrNull(candidateLatestActivityAt(left))?.getTime() ?? 0;
@@ -8121,10 +8160,14 @@ export async function ensureDefaultSignalOptionsPaperDeployment(input: {
     .orderBy(desc(algoDeploymentsTable.updatedAt));
   let deployment =
     existingDeployments.find(
-      (row) =>
-        row.strategyId === strategy.id ||
-        row.name === DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME ||
-        row.name === LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME,
+      (row) => {
+        const deploymentName = normalizeLegacyAlgoBrandText(row.name);
+        return (
+          row.strategyId === strategy.id ||
+          deploymentName === DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME ||
+          deploymentName === LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME
+        );
+      },
     ) ?? null;
 
   if (!deployment) {
@@ -8148,7 +8191,7 @@ export async function ensureDefaultSignalOptionsPaperDeployment(input: {
       deploymentId: deployment.id,
       providerAccountId: deployment.providerAccountId,
       eventType: "deployment_created",
-      summary: `Created deployment ${deployment.name}`,
+      summary: `Created deployment ${normalizeLegacyAlgoBrandText(deployment.name)}`,
       payload: {
         strategyId: deployment.strategyId,
         mode: deployment.mode,
@@ -8176,7 +8219,7 @@ export async function ensureDefaultSignalOptionsPaperDeployment(input: {
       deploymentId: deployment.id,
       providerAccountId: deployment.providerAccountId,
       eventType: "deployment_enabled",
-      summary: `Enabled deployment ${deployment.name}`,
+      summary: `Enabled deployment ${normalizeLegacyAlgoBrandText(deployment.name)}`,
       payload: {
         enabled: true,
         source: "default_signal_options_seed",
@@ -8198,6 +8241,7 @@ export async function ensureDefaultSignalOptionsPaperDeployment(input: {
     deployment = updated ?? deployment;
   }
 
+  deployment = await normalizeSignalOptionsDeploymentBranding(deployment);
   deployment = await normalizeSignalOptionsDeploymentAccount(deployment);
   await normalizeDefaultSignalOptionsPaperSignalMonitorProfile();
 
@@ -8298,14 +8342,16 @@ export async function runSignalOptionsShadowBackfill(input: {
             ...input.replay,
             marketDate: input.replay.marketDate || window.startDate,
             deploymentId: input.replay.deploymentId || deployment.id,
-            deploymentName: input.replay.deploymentName || deployment.name,
+            deploymentName: normalizeLegacyAlgoBrandText(
+              input.replay.deploymentName || deployment.name,
+            ),
           }
         : input.replay
           ? {
               runId: `manual-replay-${window.startDate}-through-${window.endDate}-${Date.now()}`,
               marketDate: window.startDate,
               deploymentId: deployment.id,
-              deploymentName: deployment.name,
+              deploymentName: normalizeLegacyAlgoBrandText(deployment.name),
             }
           : null;
     const commit = input.commit !== false;
@@ -9139,7 +9185,7 @@ export async function updateSignalOptionsExecutionProfile(input: {
   await insertSignalOptionsEvent({
     deployment: nextDeployment,
     eventType: "signal_options_profile_updated",
-    summary: `Updated signal-options profile for ${nextDeployment.name}`,
+    summary: `Updated signal-options profile for ${normalizeLegacyAlgoBrandText(nextDeployment.name)}`,
     payload: {
       profile: nextProfile,
     },

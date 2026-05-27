@@ -67,25 +67,52 @@ function pricedQuote(
   };
 }
 
-test("default paper signal-options startup widens its signal monitor profile", () => {
+test("default paper signal-options startup uses bounded signal monitor profile", () => {
   const source = readFileSync(
     new URL("./signal-options-automation.ts", import.meta.url),
     "utf8",
   );
 
-  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 250/);
-  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 10/);
+  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 60/);
+  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 2/);
   assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60/);
   assert.match(source, /withSignalMonitorUniverseScope/);
   assert.match(
     source,
-    /input\.forceEvaluate === true[\s\S]*resolveSignalOptionsMonitorFullRefresh/,
+    /input\.forceEvaluate === true[\s\S]*resolveSignalOptionsMonitorBatch/,
+  );
+  assert.doesNotMatch(
+    source,
+    /input\.forceEvaluate === true[\s\S]*maxSymbolsOverride:\s*fullRefresh\.symbols\.length/,
   );
   assert.match(
     source,
     /await normalizeDefaultSignalOptionsPaperSignalMonitorProfile\(\)/,
   );
   assert.match(source, /await updateSignalMonitorProfile\(patch\)/);
+});
+
+test("signal-options scans request IBKR-only signal monitor bars", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const monitorStateBlock = source.match(
+    /async function loadSignalOptionsMonitorState[\s\S]*?\nfunction candidateFromEvent/,
+  )?.[0];
+
+  assert.match(
+    monitorStateBlock ?? "",
+    /evaluateSignalMonitorProfileSymbols\(\{[\s\S]*barSourcePolicy:\s*"ibkr-only"/,
+  );
+  assert.match(
+    monitorStateBlock ?? "",
+    /evaluateSignalMonitor\(\{[\s\S]*barSourcePolicy:\s*"ibkr-only"/,
+  );
+  assert.doesNotMatch(
+    monitorStateBlock ?? "",
+    /return current;/,
+  );
 });
 
 test("signal-options state resolves paper-enabled before UUID lookup", () => {
@@ -2378,7 +2405,7 @@ test("scan events override matching live signal previews without losing mappings
         candidate: {
           id: preview.id,
           deploymentId: "deployment-123456789",
-          deploymentName: "Shadow Options",
+          deploymentName: ["Ray", "Replica Signal Options Shadow Paper"].join(""),
           symbol: "SPY",
           direction: "buy",
           optionRight: "call",
@@ -2403,7 +2430,12 @@ test("scan events override matching live signal previews without losing mappings
     );
 
   assert.equal(eventCandidate.id, preview.id);
+  assert.equal(
+    eventCandidate.deploymentName,
+    "Pyrus Signals Options Shadow Paper",
+  );
   assert.equal(merged.id, preview.id);
+  assert.equal(merged.deploymentName, "Pyrus Signals Options Shadow Paper");
   assert.equal(merged.status, "skipped");
   assert.equal(merged.reason, "spread_too_wide");
   assert.deepEqual(merged.selectedContract, {

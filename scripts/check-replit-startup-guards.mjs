@@ -182,19 +182,21 @@ check(
   replitDocs.includes("pnpm --filter @workspace/pyrus run dev:replit") &&
     replitDocs.includes("PYRUS_REPLIT_RUN=1") &&
     replitDocs.includes("PYRUS_DEV_FORCE_RESTART=1") &&
-    replitDocs.includes("PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS") &&
+    replitDocs.includes("artifact preview restoration") &&
+    replitDocs.includes("exits without restarting API/Vite") &&
     replitDocs.includes("PYRUS_DEV_DUPLICATE_CHECK_ONLY=1") &&
     replitDocs.includes("REPLIT_MODE=workflow"),
-  "replit.md must document the dev:replit artifact runner, Replit-owned restart marker, duplicate-start restart window, and duplicate-check-only smoke-test marker.",
+  "replit.md must document the dev:replit artifact runner, Replit-owned restart marker, duplicate-start no-op policy, and duplicate-check-only smoke-test marker.",
 );
 const scriptsReadme = read("scripts/README.md");
 check(
   scriptsReadme.includes("REPLIT_MODE=workflow") &&
     scriptsReadme.includes("PYRUS_REPLIT_RUN=1") &&
     scriptsReadme.includes("PYRUS_DEV_FORCE_RESTART=1") &&
-    scriptsReadme.includes("PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS") &&
+    scriptsReadme.includes("artifact preview restoration") &&
+    scriptsReadme.includes("duplicate Replit-owned Run event exits without restart") &&
     scriptsReadme.includes("PYRUS_DEV_DUPLICATE_CHECK_ONLY=1"),
-  "scripts/README.md must document the Replit-owned restart marker, duplicate-start restart window, explicit force-restart marker, and duplicate-check-only smoke-test marker.",
+  "scripts/README.md must document the Replit-owned restart marker, duplicate-start no-op policy, explicit force-restart marker, and duplicate-check-only smoke-test marker.",
 );
 
 const pyrusRunner = read("artifacts/pyrus/scripts/runDevApp.mjs");
@@ -208,16 +210,21 @@ check(
     pyrusRunner.includes("acquireSupervisorLock") &&
     pyrusRunner.includes("skipDuplicateReplitStart") &&
     pyrusRunner.includes("PYRUS_DEV_FORCE_RESTART") &&
-    pyrusRunner.includes("PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS") &&
     pyrusRunner.includes("PYRUS_DEV_DUPLICATE_CHECK_ONLY") &&
-    pyrusRunner.includes("shouldHandoffDuplicateReplitStart") &&
-    pyrusRunner.includes("intentional Run-button restart after") &&
+    !pyrusRunner.includes("PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS") &&
+    !pyrusRunner.includes("shouldHandoffDuplicateReplitStart") &&
+    !pyrusRunner.includes("intentional Run-button restart after") &&
     pyrusRunner.includes("duplicate-check-only found no valid PYRUS dev supervisor lock") &&
     pyrusRunner.includes("exiting without starting API/web processes") &&
     pyrusRunner.includes("supervisor ${ownerPid} is already alive") &&
     pyrusRunner.includes("duplicate Replit workflow start detected") &&
     pyrusRunner.includes("exiting without restart") &&
+    pyrusRunner.includes("Set PYRUS_DEV_FORCE_RESTART=1 only for an intentional supervisor takeover") &&
     pyrusRunner.includes("requestSupervisorHandoff") &&
+    pyrusRunner.includes("pyrus-dev-lifecycle-${apiPort}.jsonl") &&
+    pyrusRunner.includes("writeLifecycleEvent(\"heartbeat\"") &&
+    pyrusRunner.includes("readPreviousLifecycleState") &&
+    pyrusRunner.includes("supervisor-shutdown-complete") &&
     pyrusRunner.includes('process.env.REPLIT_MODE === "workflow"') &&
     pyrusRunner.includes('process.env.PYRUS_REPLIT_RUN === "1"') &&
     pyrusRunner.includes("launchedByCodexAgent") &&
@@ -230,6 +237,17 @@ check(
   "runDevApp.mjs must keep the supervisor single-flight lock, live duplicate Replit workflow no-op, SIGHUP resilience, and explicit forced recovery handoff so duplicate launches cannot overlap or unnecessarily restart API/web processes.",
 );
 
+const playwrightConfig = read("artifacts/pyrus/playwright.config.ts");
+check(
+  playwrightConfig.includes("PYRUS_PLAYWRIGHT_NO_WEB_SERVER") &&
+    playwrightConfig.includes("PYRUS_PLAYWRIGHT_ALLOW_WEB_SERVER") &&
+    playwrightConfig.includes("runningInReplit") &&
+    playwrightConfig.includes("REPLIT_MODE === \"workflow\"") &&
+    playwrightConfig.includes("disableWebServer") &&
+    playwrightConfig.includes("webServer:"),
+  "PYRUS Playwright config must disable its webServer inside Replit unless PYRUS_PLAYWRIGHT_ALLOW_WEB_SERVER=1 is explicitly set.",
+);
+
 check(
   rootScripts["replit:config:lock"] ===
     "node scripts/protect-replit-config.mjs lock" &&
@@ -238,6 +256,11 @@ check(
     rootScripts["replit:config:status"] ===
       "node scripts/protect-replit-config.mjs status",
   "package.json must keep the Replit startup config lock/unlock/status scripts.",
+);
+check(
+  rootScripts["replit:scribe:artifacts"] ===
+    "pnpm --filter @workspace/scripts run replit:scribe:artifacts",
+  "package.json must keep the guarded Scribe artifact audit/cleanup script entry.",
 );
 
 const configProtector = read("scripts/protect-replit-config.mjs");

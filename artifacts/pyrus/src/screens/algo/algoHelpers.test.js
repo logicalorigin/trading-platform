@@ -44,12 +44,10 @@ import {
 import {
   COMPACT_HALT_SETTING_PAIRS,
   COMPACT_HALT_STANDALONE_SETTINGS,
+  SETTINGS_SECTIONS,
   allSettingFields,
-  compactRailSettingGroups,
   getCompactHaltSettingField,
   getCompactHaltStandaloneFields,
-  isCompactRailSettingPath,
-  settingsRegionFields,
 } from "./algoSettingsFields";
 import { saveAllAlgoAdjustments } from "./saveAllAlgoAdjustments";
 import { __internalsForTests as draftInternals } from "./useServerSyncedDraft";
@@ -676,6 +674,52 @@ test("algo positions adapt to the account positions row contract with live optio
   assert.equal(response.totals.weightPercent, 100);
 });
 
+test("same-day algo position rows keep day P&L aligned with unrealized P&L", () => {
+  const openedAt = new Date().toISOString().slice(0, 10);
+  const rows = buildAlgoAccountPositionRows({
+    positions: [
+      {
+        id: "pos-same-day",
+        symbol: "SPY",
+        quantity: 1,
+        entryPrice: 1,
+        openedAt,
+        selectedContract: {
+          localSymbol: "SPY  260522C00500000",
+          underlying: "SPY",
+          expirationDate: "2026-05-22",
+          strike: 500,
+          right: "call",
+          multiplier: 100,
+          providerContractId: "conid-same-day",
+        },
+      },
+    ],
+    symbolIndex: {
+      SPY: {
+        signal: { signalPrice: 500 },
+        candidate: {
+          quote: { bid: 1, ask: 1.2, change: 0.02, changePercent: 1.8 },
+        },
+      },
+    },
+    liveQuoteByContractId: {
+      "conid-same-day": {
+        bid: 1.45,
+        ask: 1.55,
+        price: 1.5,
+        change: 0.05,
+        changePercent: 3.45,
+      },
+    },
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(Number(rows[0].unrealizedPnl.toFixed(2)), 50);
+  assert.equal(Number(rows[0].dayChange.toFixed(2)), 50);
+  assert.equal(Number(rows[0].dayChangePercent.toFixed(2)), 50);
+});
+
 test("algo account ledger rows can be scoped to the focused deployment without runtime churn", () => {
   const runtimePositions = [
     {
@@ -889,11 +933,14 @@ test("algo runtime positions borrow shadow projection quotes without changing me
 
 test("algo profile UI exposes and saves expanded strategy and exit fields", () => {
   const settingPaths = new Set(allSettingFields.map((field) => field.path));
-  const regionSettingPaths = new Set(
-    settingsRegionFields.flatMap((section) =>
-      section.fields.map((field) => field.path),
-    ),
+  const sectionItemPaths = (item) =>
+    item.kind === "contractSelect" || item.kind === "exitTrack"
+      ? item.fieldPaths
+      : [item.path];
+  const renderedSettingPaths = SETTINGS_SECTIONS.flatMap((section) =>
+    section.fields.flatMap(sectionItemPaths),
   );
+  const renderedPathSet = new Set(renderedSettingPaths);
   const settingsFieldsSource = readFileSync(
     new URL("./algoSettingsFields.js", import.meta.url),
     "utf8",
@@ -966,18 +1013,21 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
     ...COMPACT_HALT_STANDALONE_SETTINGS.map((item) => item.settingPath),
   ].forEach((settingPath) => {
     assert.ok(settingPaths.has(settingPath), `${settingPath} should stay dirty-trackable`);
-    assert.equal(
-      regionSettingPaths.has(settingPath),
-      false,
-      `${settingPath} should render in compact halt strip only`,
-    );
+    assert.ok(renderedPathSet.has(settingPath), `${settingPath} should also render in settings`);
   });
-  const compactRailPaths = compactRailSettingGroups.flatMap((group) =>
-    group.items.flatMap((item) =>
-      item.kind === "compound"
-        ? [item.toggleField.path, item.valueField.path]
-        : [item.path],
-    ),
+  assert.deepEqual(
+    SETTINGS_SECTIONS.map((section) => section.id),
+    ["signal", "risk", "gates", "contract", "fills", "exits", "qualityExits"],
+  );
+  assert.equal(
+    renderedSettingPaths.length,
+    renderedPathSet.size,
+    "each settings field should render once in SETTINGS_SECTIONS",
+  );
+  assert.deepEqual(
+    [...settingPaths].sort(),
+    [...renderedPathSet].sort(),
+    "SETTINGS_SECTIONS should cover every editable setting field",
   );
   [
     "signalTimeframe",
@@ -993,13 +1043,7 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
     "exitPolicy.overnightMinGainPct",
     "exitPolicy.conditionalQualityExitsEnabled",
   ].forEach((settingPath) => {
-    assert.ok(compactRailPaths.includes(settingPath), `${settingPath} should render compact`);
-    assert.ok(isCompactRailSettingPath(settingPath), `${settingPath} should be a compact rail path`);
-    assert.equal(
-      regionSettingPaths.has(settingPath),
-      false,
-      `${settingPath} should not duplicate in fallback settings rows`,
-    );
+    assert.ok(renderedPathSet.has(settingPath), `${settingPath} should render in the unified rail`);
   });
   assert.ok(
     PROFILE_NUMBER_FIELDS.some(
@@ -1028,15 +1072,37 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
   assert.match(settingsFieldsSource, /conditionalQualityExitsEnabled/);
   assert.match(settingsFieldsSource, /highQualityOvernightMinGainPct/);
   assert.match(settingsFieldsSource, /overnightExitEnabled/);
-  assert.match(settingsRegionSource, /settingsRegionFields\.map/);
-  assert.match(settingsRegionSource, /compactRailSettingGroups\.map/);
-  assert.match(settingsRegionSource, /CompactCompoundSettingCell/);
-  assert.match(settingsRegionSource, /SettingsFormRow/);
+  assert.match(settingsFieldsSource, /SETTINGS_SECTIONS/);
+  assert.match(settingsFieldsSource, /kind: "contractSelect"/);
+  assert.match(settingsFieldsSource, /kind: "exitTrack"/);
+  assert.match(settingsRegionSource, /SETTINGS_SECTIONS\.map/);
+  assert.match(settingsRegionSource, /ContractSelectionCell/);
+  assert.match(settingsRegionSource, /ExitLadderTrack/);
+  assert.match(settingsRegionSource, /className="algo-settings-grid"/);
+  assert.match(settingsRegionSource, /data-testid=\{`algo-strike-ladder-\$\{side\.toLowerCase\(\)\}-\$\{slot\}`\}/);
+  assert.match(settingsRegionSource, /aria-checked=\{selected\}/);
+  assert.match(settingsRegionSource, /STRIKE_SLOT_VALUES_DESC/);
+  assert.match(settingsRegionSource, /role="radiogroup"[\s\S]*?aria-label="Call strike slot"/);
+  assert.match(settingsRegionSource, /role="radiogroup"[\s\S]*?aria-label="Put strike slot"/);
+  assert.match(settingsRegionSource, /aria-label=\{`\$\{label\} strike slot unsaved`\}/);
+  assert.match(settingsRegionSource, /patchProfileDraftPath\(field\.path, Number\(slot\)\)/);
+  assert.match(settingsRegionSource, /moveStrikeSlot/);
+  assert.match(settingsRegionSource, /data-testid=\{`algo-exit-track-marker-\$\{marker\.key\}`\}/);
+  assert.match(settingsRegionSource, /data-testid=\{`algo-exit-track-input-\$\{editingMarker\.key\}`\}/);
+  assert.match(settingsRegionSource, /onBlur=\{commitEditor\}/);
+  assert.match(settingsRegionSource, /event\.key === "Escape"/);
+  assert.match(settingsRegionSource, /event\.key === "Enter"/);
+  assert.doesNotMatch(settingsRegionSource, /SettingsFormRow/);
+  assert.doesNotMatch(settingsRegionSource, /compactRailSettingGroups/);
+  assert.doesNotMatch(settingsRegionSource, /settingsRegionFields/);
+  assert.doesNotMatch(settingsRegionSource, /gridTemplateFor|compactGridTemplateFor/);
   assert.match(settingsRegionSource, /patchStrategySettingsPath/);
-  assert.match(
-    readFileSync(new URL("./HaltStrip.jsx", import.meta.url), "utf8"),
-    /algo-halt-input-/,
-  );
+  const haltSource = readFileSync(new URL("./HaltStrip.jsx", import.meta.url), "utf8");
+  assert.match(haltSource, /algo-halt-input-/);
+  assert.match(haltSource, /StatePill/);
+  assert.match(haltSource, /data-state=\{status\.state\}/);
+  assert.match(haltSource, /className="algo-settings-grid"/);
+  assert.doesNotMatch(haltSource, /controlColumns/);
   assert.match(
     readFileSync(new URL("./AlgoSaveBar.jsx", import.meta.url), "utf8"),
     /Save changes/,
@@ -1092,7 +1158,8 @@ test("algo operations views surface contract quote and greeks fields", () => {
   assert.match(accountPositionsSource, /formatPositionBidAskPair/);
   assert.match(accountPositionsSource, /column\.id === "greeks"/);
   assert.match(accountPositionsSource, /DenseSignalCell/);
-  assert.match(accountPositionsSource, /data-testid="account-position-context-strip"/);
+  assert.match(accountPositionsSource, /data-testid="account-positions-table-scroll"/);
+  assert.doesNotMatch(accountPositionsSource, /data-testid="account-position-context-strip"/);
   assert.match(screenSource, /useGetAccountPositions/);
   assert.match(screenSource, /assetClass:\s*"Options"/);
   assert.match(livePageSource, /signalOptionsLedgerPositionsQuery/);
@@ -1175,4 +1242,30 @@ test("algo screen auto-runs an initial scan and labels sync separately", () => {
   assert.match(livePageSource, /\? "scanning"/);
   assert.match(livePageSource, /\? "syncing data"/);
   assert.doesNotMatch(livePageSource, /\? "refreshing"/);
+});
+
+test("algo display surfaces normalize retired Ray branding", () => {
+  const haltSource = readFileSync(
+    new URL("./HaltStrip.jsx", import.meta.url),
+    "utf8",
+  );
+  const statusBarSource = readFileSync(
+    new URL("./AlgoStatusBar.jsx", import.meta.url),
+    "utf8",
+  );
+  const auditSource = readFileSync(
+    new URL("./AlgoAuditPanel.jsx", import.meta.url),
+    "utf8",
+  );
+  const platformSidebarSource = readFileSync(
+    new URL("../../features/platform/PlatformAlgoMonitorSidebar.jsx", import.meta.url),
+    "utf8",
+  );
+
+  [haltSource, statusBarSource, auditSource, platformSidebarSource].forEach(
+    (source) => {
+      assert.match(source, /normalizeLegacyAlgoBrandText/);
+      assert.doesNotMatch(source, /RAY\s*·/);
+    },
+  );
 });

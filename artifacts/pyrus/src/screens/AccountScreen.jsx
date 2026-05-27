@@ -1102,9 +1102,7 @@ const AccountScreenInner = ({
       query: {
         staleTime: ACCOUNT_HISTORY_STALE_MS,
         retry: false,
-        enabled: Boolean(
-          secondaryAccountQueriesEnabled && activeEquityInspectionDate,
-        ),
+        enabled: Boolean(accountQueriesEnabled && activeEquityInspectionDate),
         placeholderData: retainPreviousDateData(activeEquityInspectionDate),
       },
     },
@@ -1419,6 +1417,16 @@ const AccountScreenInner = ({
     accounts[0]?.currency ||
     "USD";
   const displaySummaryData = summaryQuery.data;
+  const shadowStartingBalance = useMemo(() => {
+    const netLiquidation = Number(
+      displaySummaryData?.metrics?.netLiquidation?.value,
+    );
+    const totalPnl = Number(displaySummaryData?.metrics?.totalPnl?.value);
+    if (!Number.isFinite(netLiquidation) || !Number.isFinite(totalPnl)) {
+      return null;
+    }
+    return netLiquidation - totalPnl;
+  }, [displaySummaryData]);
   const openAccountPositions = useMemo(
     () => getOpenPositionRows(positionsQuery.data?.positions || []),
     [positionsQuery.data],
@@ -1782,7 +1790,16 @@ const AccountScreenInner = ({
                     lineHeight: 1.35,
                   }}
                 >
-                  Starting balance is tracked at $40,000. Manual tickets and signal-options automation write to this account without touching IBKR paper.
+                  Starting balance is{" "}
+                  {shadowStartingBalance == null
+                    ? "tracked in the shadow ledger"
+                    : `tracked at ${formatAccountMoney(
+                        shadowStartingBalance,
+                        currency,
+                        true,
+                        maskAccountValues,
+                      )}`}
+                  {". "}Manual tickets and signal-options automation write to this account without touching IBKR paper.
                 </div>
                 <div
                   className="ra-hide-scrollbar"

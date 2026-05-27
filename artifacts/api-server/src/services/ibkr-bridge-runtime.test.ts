@@ -159,7 +159,7 @@ test("IBKR bridge launcher returns only the one-click protocol contract", () => 
   assert.equal(launcher.activationId, launchParams.get("activationId"));
   assert.equal(
     launcher.helperVersion,
-    "2026-05-24.remote-desktop-agent-v23",
+    "2026-05-27.launch-sequence-v24",
   );
   assert.equal(launcher.autoLoginSupported, true);
   assert.equal(launcher.autoLoginConfigured, null);
@@ -593,7 +593,7 @@ test("IBKR remote desktop shutdown gives outdated helpers a self-update launch U
   assert.equal(claimed.shutdown, true);
   assert.match(claimed.launchUrl, /^pyrus-ibkr:\/\/launch\?/);
   assert.match(claimed.launchUrl, /shutdown=1/);
-  assert.match(claimed.launchUrl, /helperVersion=2026-05-24\.remote-desktop-agent-v23/);
+  assert.match(claimed.launchUrl, /helperVersion=2026-05-27\.launch-sequence-v24/);
   assert.match(claimed.launchUrl, /jobId=/);
   assert.match(claimed.launchUrl, /completionToken=/);
 });
@@ -633,7 +633,7 @@ test("IBKR remote desktop launch bootstraps outdated helpers before switching to
   }
   assert.equal(claimed.launchUrl, remoteLaunch.autoLoginLaunchUrl);
   assert.match(claimed.launchUrl, /^pyrus-ibkr:\/\/launch\?/);
-  assert.match(claimed.launchUrl, /helperVersion=2026-05-24\.remote-desktop-agent-v23/);
+  assert.match(claimed.launchUrl, /helperVersion=2026-05-27\.launch-sequence-v24/);
   assert.match(claimed.launchUrl, /helperUrl=https%3A%2F%2Fpyrus\.example\.com%2Fapi%2Fibkr%2Fbridge%2Fhelper\.ps1/);
 });
 
@@ -701,7 +701,7 @@ test("IBKR Windows helper restarts stale Gateway sessions instead of cycling bri
     "utf8",
   );
 
-  assert.match(source, /\$HelperVersion = '2026-05-24\.remote-desktop-agent-v23'/);
+  assert.match(source, /\$HelperVersion = '2026-05-27\.launch-sequence-v24'/);
   assert.match(source, /pyrus-ibkr-helper\.ps1/);
   assert.match(source, /function Invoke-BridgeGatewayReconnectIfNeeded/);
   assert.match(source, /waiting_bridge_gateway_api/);
@@ -715,6 +715,9 @@ test("IBKR Windows helper restarts stale Gateway sessions instead of cycling bri
   assert.match(source, /gateway_login_window_active/);
   assert.match(source, /function Set-ClipboardTextForPaste/);
   assert.match(source, /\[System\.Windows\.Forms\.TextDataFormat\]::UnicodeText/);
+  assert.match(source, /function Wait-IBGatewayLiveApiSocket/);
+  assert.match(source, /Still waiting for IBKR Mobile\/2FA approval and live API socket 4001/);
+  assert.match(source, /Submitted one-time credentials to IB Gateway/);
   assert.match(
     source,
     /if \(\$script:AutoLoginCredentialClaimed\)\s*\{\s*return \$false\s*\}/,

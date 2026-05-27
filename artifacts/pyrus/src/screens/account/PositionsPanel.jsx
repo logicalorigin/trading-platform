@@ -1,13 +1,11 @@
 import {
   Fragment,
-  memo,
   useCallback,
   useEffect,
   useMemo,
   useState,
 } from "react";
 import { ChevronDown, ChevronRight, LineChart } from "lucide-react";
-import { MarketIdentityInline } from "../../features/platform/marketIdentity";
 import {
   getStoredOptionQuoteSnapshot,
   useStoredOptionQuoteSnapshotVersion,
@@ -29,6 +27,7 @@ import {
 } from "../../lib/uiTokens.jsx";
 import { formatEnumLabel, formatRelativeTimeShort } from "../../lib/formatters";
 import { formatAppDateTime } from "../../lib/timeZone";
+import { normalizeLegacyAlgoBrandText } from "../algo/algoBranding.js";
 import {
   EmptyState,
   Panel,
@@ -395,6 +394,80 @@ const isShadowLedgerPositionRow = (row) =>
   String(row?.accountId || "").toLowerCase() === "shadow" ||
   String(row?.source || "").toUpperCase() === "SHADOW_LEDGER";
 
+const positionMarketDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+const dateOrNull = (value) => {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  const raw = value.trim();
+  const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compact) {
+    return new Date(
+      Date.UTC(Number(compact[1]), Number(compact[2]) - 1, Number(compact[3]), 12),
+    );
+  }
+  const dashed = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dashed) {
+    return new Date(
+      Date.UTC(Number(dashed[1]), Number(dashed[2]) - 1, Number(dashed[3]), 12),
+    );
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const dateOnlyMarketDateKey = (value) => {
+  if (typeof value === "string") {
+    const raw = value.trim();
+    const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (compact) return `${compact[1]}-${compact[2]}-${compact[3]}`;
+    const dashed = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dashed) return `${dashed[1]}-${dashed[2]}-${dashed[3]}`;
+  }
+  if (
+    value instanceof Date &&
+    value.getUTCHours() === 0 &&
+    value.getUTCMinutes() === 0 &&
+    value.getUTCSeconds() === 0 &&
+    value.getUTCMilliseconds() === 0
+  ) {
+    return value.toISOString().slice(0, 10);
+  }
+  return null;
+};
+
+const marketDateKey = (value) => {
+  const dateOnlyKey = dateOnlyMarketDateKey(value);
+  if (dateOnlyKey) return dateOnlyKey;
+  const date = dateOrNull(value);
+  if (!date) return null;
+  const parts = positionMarketDateFormatter.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return year && month && day ? `${year}-${month}-${day}` : null;
+};
+
+const positionOpenedOnCurrentMarketDay = (openedAt, now = new Date()) => {
+  const opened = dateOrNull(openedAt);
+  const observedAt = dateOrNull(now);
+  if (!opened || !observedAt || opened.getTime() > observedAt.getTime()) {
+    return false;
+  }
+  const openedKey = marketDateKey(opened);
+  const nowKey = marketDateKey(observedAt);
+  return Boolean(openedKey && nowKey && openedKey === nowKey);
+};
+
 const applyLiveOptionQuoteToRow = (row, liveQuote) => {
   if (!liveQuote) return row;
   const optionQuote = mergeLiveOptionQuote(row.optionQuote, liveQuote);
@@ -425,13 +498,25 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
     averageCost != null && quantity != null && multiplier != null
       ? Math.abs(averageCost * quantity * multiplier)
       : null;
+  const unrealizedPnlPercent =
+    unrealizedPnl != null && costBasis
+      ? (unrealizedPnl / costBasis) * 100
+      : row.unrealizedPnlPercent;
   const perContractDayChange = firstFiniteNumber(optionQuote?.dayChange);
+  const sameDayPosition = positionOpenedOnCurrentMarketDay(row.openedAt);
   const dayChange =
-    perContractDayChange != null && quantity != null && multiplier != null
+    sameDayPosition && unrealizedPnl != null
+      ? unrealizedPnl
+      : perContractDayChange != null && quantity != null && multiplier != null
       ? perContractDayChange * quantity * multiplier
       : row.dayChange;
+  const dayChangePercent =
+    sameDayPosition && unrealizedPnlPercent != null
+      ? unrealizedPnlPercent
+      : firstFiniteNumber(optionQuote?.dayChangePercent, row.dayChangePercent);
   const preserveBackendDayChange = Boolean(
-    isShadowLedgerPositionRow(row) &&
+    !sameDayPosition &&
+      isShadowLedgerPositionRow(row) &&
       (firstFiniteNumber(row.dayChange) != null ||
         firstFiniteNumber(row.dayChangePercent) != null),
   );
@@ -444,12 +529,9 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
     dayChange: preserveBackendDayChange ? row.dayChange : dayChange,
     dayChangePercent: preserveBackendDayChange
       ? row.dayChangePercent
-      : firstFiniteNumber(optionQuote?.dayChangePercent, row.dayChangePercent),
+      : dayChangePercent,
     unrealizedPnl,
-    unrealizedPnlPercent:
-      unrealizedPnl != null && costBasis
-        ? (unrealizedPnl / costBasis) * 100
-        : row.unrealizedPnlPercent,
+    unrealizedPnlPercent,
     marketValue,
     betaWeightedDelta:
       delta != null && quantity != null && multiplier != null
@@ -879,13 +961,7 @@ export const __positionsPanelInternalsForTests = {
   formatAutomationStopDistanceLabel,
   optionDetailMetrics,
   optionInlineDetail,
-};
-
-const marketForAssetClass = (assetClass) => {
-  const normalized = String(assetClass || "").toLowerCase();
-  if (normalized === "etf") return "etf";
-  if (normalized === "option" || normalized === "options") return "options";
-  return "stocks";
+  positionOpenedOnCurrentMarketDay,
 };
 
 const isOptionPosition = (row) =>
@@ -974,127 +1050,6 @@ const mobileFilterRailStyle = {
   WebkitOverflowScrolling: "touch",
 };
 
-const mobileRowListStyle = {
-  display: "grid",
-  gap: sp(1),
-  padding: sp("4px 5px 5px"),
-};
-
-const mobilePositionGrid = "minmax(104px, 1.35fr) minmax(54px, 0.72fr) minmax(42px, 0.56fr) minmax(50px, 0.62fr) minmax(48px, 0.62fr) 42px";
-
-const mobileHeaderStyle = {
-  display: "grid",
-  gridTemplateColumns: mobilePositionGrid,
-  gap: sp(3),
-  padding: sp("0 5px"),
-  color: CSS_COLOR.textDim,
-  fontFamily: T.sans,
-  fontSize: textSize("caption"),
-  letterSpacing: "0.04em",
-  textTransform: "uppercase",
-};
-
-const mobileHeaderEndStyle = { textAlign: "right" };
-const mobileMinWidthStyle = { minWidth: 0 };
-const mobileActionRailStyle = {
-  display: "flex",
-  justifyContent: "flex-end",
-  gap: sp(2),
-};
-const mobilePillWrapStyle = {
-  display: "flex",
-  gap: sp(3),
-  flexWrap: "wrap",
-};
-const mobileTaxLotRowStyle = {
-  display: "grid",
-  gridTemplateColumns: "minmax(0, 1fr) auto",
-  gap: sp(5),
-  color: CSS_COLOR.textSec,
-  fontFamily: T.data,
-  fontSize: textSize("body"),
-};
-const mobileContextGridStyle = {
-  display: "grid",
-  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-  gap: sp("4px 8px"),
-  padding: sp("0 7px 6px"),
-};
-
-const mobileScanShellStyle = (active = false) => ({
-  border: "none",
-  borderRadius: dim(RADII.xs),
-  background: active ? `${cssColorMix(CSS_COLOR.cyan, 6)}` : CSS_COLOR.bg1,
-  boxShadow: active ? `inset 2px 0 0 ${CSS_COLOR.cyan}` : "none",
-  minWidth: 0,
-  overflow: "hidden",
-});
-
-const mobileScanRowStyle = {
-  width: "100%",
-  minHeight: dim(40),
-  padding: sp("4px 5px"),
-  border: "none",
-  background: "transparent",
-  display: "grid",
-  gridTemplateColumns: mobilePositionGrid,
-  gap: sp(3),
-  alignItems: "center",
-  textAlign: "left",
-  cursor: "pointer",
-  minWidth: 0,
-};
-
-const mobileCellTextStyle = (tone = CSS_COLOR.textSec, align = "right") => ({
-  color: tone,
-  fontFamily: T.data,
-  fontSize: textSize("body"),
-  fontWeight: FONT_WEIGHTS.medium,
-  fontVariantNumeric: "tabular-nums",
-  textAlign: align,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-  minWidth: 0,
-});
-
-const mobileDetailStyle = {
-  borderTop: `1px solid ${CSS_COLOR.border}`,
-  padding: sp("6px 7px 7px"),
-  display: "grid",
-  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-  gap: sp("5px 8px"),
-};
-
-const mobileIconButtonStyle = {
-  width: dim(22),
-  height: dim(22),
-  padding: 0,
-  border: "none",
-  borderRadius: dim(RADII.xs),
-  background: CSS_COLOR.bg1,
-  color: CSS_COLOR.textSec,
-  display: "inline-grid",
-  placeItems: "center",
-  cursor: "pointer",
-  flexShrink: 0,
-};
-
-const MobileIconButton = ({ label, onClick, children, expanded = null, ...buttonProps }) => (
-  <AppTooltip content={label}>
-    <button
-      type="button"
-      aria-label={label}
-      aria-expanded={expanded == null ? undefined : expanded}
-      onClick={onClick}
-      style={mobileIconButtonStyle}
-      {...buttonProps}
-    >
-      {children}
-    </button>
-  </AppTooltip>
-);
-
 const positionSparklineShellStyle = (compact = false, inline = false) => ({
   display: inline ? "inline-flex" : "block",
   alignItems: inline ? "center" : undefined,
@@ -1134,47 +1089,6 @@ const PositionTrendSparkline = ({
     </span>
   );
 };
-
-const MobileMetric = ({ label, value, tone = CSS_COLOR.text }) => (
-  <div style={{ minWidth: 0 }}>
-    <div style={mutedLabelStyle}>{label}</div>
-    <div
-      style={{
-        color: tone,
-        fontFamily: T.data,
-        fontSize: textSize("body"),
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {value}
-    </div>
-  </div>
-);
-
-const MobileDetailMetric = ({ label, value, tone = CSS_COLOR.textSec }) => (
-  <div style={{ minWidth: 0 }}>
-    <div style={mutedLabelStyle}>{label}</div>
-    <div style={mobileCellTextStyle(tone, "left")}>{value}</div>
-  </div>
-);
-
-const MobileContextMetric = ({
-  label,
-  value,
-  detail,
-  tone = CSS_COLOR.textSec,
-  detailTone = CSS_COLOR.textDim,
-}) => (
-  <div style={{ minWidth: 0 }}>
-    <div style={mutedLabelStyle}>{label}</div>
-    <div style={mobileCellTextStyle(tone, "left")}>{value || MISSING_VALUE}</div>
-    {detail ? (
-      <div style={cellSubTextStyle(detailTone)}>{detail}</div>
-    ) : null}
-  </div>
-);
 
 const positionDisplayForRow = (row) => buildPositionDisplayModel(row, row?.optionQuote);
 
@@ -1454,6 +1368,12 @@ const positionSearchText = (row) =>
     .join(" ")
     .toLowerCase();
 
+const compactPositionContractDetail = (row) => {
+  if (!isOptionPosition(row)) return "";
+  const detail = optionContractTermsLabel(row?.optionContract);
+  return detail && detail !== MISSING_VALUE ? detail : "";
+};
+
 const DensePositionSymbol = ({
   row,
   expanded,
@@ -1464,16 +1384,17 @@ const DensePositionSymbol = ({
   onToggle,
 }) => {
   const expandable = hasExpandablePositionDetails(row);
-  const detail =
-    [
-      optionInlineDetail(row, maskValues),
-      positionDisplayForRow(row).ageLabel
-        ? `open ${positionDisplayForRow(row).ageLabel}`
-        : null,
-    ].filter(Boolean).join(" · ") ||
-    row.description ||
-    row.assetClass ||
-    "";
+  const contractDetail = compactPositionContractDetail(row);
+  const display = positionDisplayForRow(row);
+  const title = [
+    row.symbol,
+    optionInlineDetail(row, maskValues),
+    row.description,
+    display.openedLabel,
+    display.ageLabel,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: sp(6), minWidth: 0 }}>
@@ -1517,26 +1438,26 @@ const DensePositionSymbol = ({
           cursor: "pointer",
           textAlign: "left",
           minWidth: 0,
+          flex: "1 1 auto",
         }}
-        title={detail || row.symbol}
+        title={title || row.symbol}
       >
-        <MarketIdentityInline
-          item={{
-            ticker: row.symbol,
-            name: row.description || row.symbol,
-            market: marketForAssetClass(row.assetClass),
-            sector: row.sector || null,
-          }}
-          size={14}
-          showMark={false}
-          showChips={!isOptionPosition(row)}
+        <span
+          data-testid="account-position-symbol"
           style={{
-            maxWidth: dim(178),
+            display: "block",
+            maxWidth: "100%",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
             fontFamily: T.mono,
             fontSize: textSize("body"),
+            color: CSS_COLOR.text,
           }}
-        />
-        {detail ? (
+        >
+          {row.symbol || MISSING_VALUE}
+        </span>
+        {contractDetail ? (
           <div
             style={{
               marginTop: sp(1),
@@ -1546,10 +1467,10 @@ const DensePositionSymbol = ({
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
-              maxWidth: dim(218),
+              maxWidth: "100%",
             }}
           >
-            {detail}
+            {contractDetail}
           </div>
         ) : null}
       </button>
@@ -1706,16 +1627,8 @@ const DensePositionCell = ({
   }
 
   if (column.id === "quantity") {
-    return (
-      <td style={denseTableCellStyle(column, expanded)}>
-        <DenseStackedValue
-          primary={formatNumber(row.quantity, 4)}
-          secondary={`Avg ${formatAccountPrice(row.averageCost, 2, maskValues)}`}
-          primaryTone={row.quantity < 0 ? CSS_COLOR.red : CSS_COLOR.textSec}
-          align={column.align}
-        />
-      </td>
-    );
+    content = formatNumber(row.quantity, 4);
+    color = row.quantity < 0 ? CSS_COLOR.red : CSS_COLOR.textSec;
   } else if (column.id === "price") {
     return (
       <td style={denseTableCellStyle(column, expanded)}>
@@ -1948,280 +1861,6 @@ const DenseSummaryRow = ({
   );
 };
 
-const positionMobileRowSignature = (row) =>
-  JSON.stringify([
-    row?.id,
-    row?.symbol,
-    row?.quantity,
-    row?.assetClass,
-    row?.mark,
-    row?.dayChange,
-    row?.dayChangePercent,
-    row?.unrealizedPnl,
-    row?.unrealizedPnlPercent,
-    row?.marketValue,
-    row?.averageCost,
-    row?.weightPercent,
-    row?.sourceType,
-    row?.strategyLabel,
-    row?.accounts,
-    row?.openOrders,
-    row?.lots,
-    row?.optionContract,
-    row?.optionQuote,
-    row?.quote,
-    row?.openedAt,
-    row?.openedAtSource,
-    row?.underlyingMarket,
-    row?.automationContext,
-  ]);
-
-const MobilePositionRow = memo(({
-  row,
-  expanded,
-  currency,
-  maskValues,
-  snapshotsBySymbol,
-  onRowAction,
-  onRowKeyDown,
-}) => {
-  const automationMetrics = automationPositionMetrics(row, currency, maskValues);
-  const display = positionDisplayForRow(row);
-  const expandable = hasExpandablePositionDetails(row);
-  const quoteBidAsk = formatPositionBidAskPair(display.quote, maskValues);
-  const quoteHasBidAsk = hasPositionBidAsk(display.quote);
-  const quoteSpread = formatPositionSpreadLabel(display.quote, (value) =>
-    formatAccountPercent(value, 1, maskValues),
-  );
-  const quoteDetail = [
-    quoteSpread,
-    formatPositionQuoteFreshnessLabel(display.quote),
-  ].filter(Boolean).join(" · ");
-  const greeksPrimary =
-    [
-      formatGreek("Δ", row?.optionQuote?.delta, 2),
-      formatGreek("θ", row?.optionQuote?.theta, 2),
-    ].filter(Boolean).join(" · ") || MISSING_VALUE;
-  const greeksDetail = [
-    formatIv(row?.optionQuote?.impliedVolatility),
-    row?.optionQuote?.openInterest != null
-      ? `OI ${formatMetricCount(row.optionQuote.openInterest)}`
-      : null,
-    row?.optionQuote?.volume != null
-      ? `Vol ${formatMetricCount(row.optionQuote.volume)}`
-      : null,
-  ].filter(Boolean).join(" · ");
-  const signalValue =
-    automationMetrics?.signalMain ||
-    [display.openedLabel, display.ageLabel].filter(Boolean).join(" · ") ||
-    MISSING_VALUE;
-  const signalDetail =
-    automationMetrics?.tableDetail ||
-    display.openedSourceLabel ||
-    (row.sourceType ? formatEnumLabel(row.sourceType) : "");
-  const symbolDetail =
-    [
-      optionInlineDetail(row, maskValues),
-      display.ageLabel ? `open ${display.ageLabel}` : null,
-    ].filter(Boolean).join(" · ") ||
-    `${row.quantity < 0 ? "Short" : "Long"} · ${row.assetClass || "Position"}`;
-  return (
-    <article style={mobileScanShellStyle(expanded)}>
-      <div
-        data-testid="account-position-scan-row"
-        data-action="toggle"
-        data-row-id={row.id}
-        role="button"
-        tabIndex={0}
-        onClick={onRowAction}
-        onKeyDown={onRowKeyDown}
-        style={mobileScanRowStyle}
-      >
-        <div
-          style={{
-            ...mobileMinWidthStyle,
-            display: "flex",
-            alignItems: "flex-start",
-            gap: sp(5),
-          }}
-        >
-          <PositionTrendSparkline
-            row={row}
-            snapshotsBySymbol={snapshotsBySymbol}
-            compact
-            inline
-          />
-          <div style={mobileMinWidthStyle}>
-            <div style={mobileCellTextStyle(CSS_COLOR.text, "left")}>{row.symbol}</div>
-            <div style={cellSubTextStyle(CSS_COLOR.textDim)}>
-              {symbolDetail}
-            </div>
-          </div>
-        </div>
-        <div
-          title={`${formatNumber(row.quantity, 4)} @ ${formatAccountPrice(row.mark, 2, maskValues)}`}
-          style={mobileCellTextStyle(row.quantity < 0 ? CSS_COLOR.red : CSS_COLOR.textSec)}
-        >
-          {formatNumber(row.quantity, 3)} @ {formatAccountPrice(row.mark, 2, maskValues)}
-        </div>
-        <div style={mobileCellTextStyle(toneForValue(row.dayChange))}>
-          {formatAccountMoney(row.dayChange, currency, true, maskValues)}
-        </div>
-        <div style={mobileCellTextStyle(toneForValue(row.unrealizedPnl))}>
-          {formatAccountMoney(row.unrealizedPnl, currency, true, maskValues)}
-        </div>
-        <div style={mobileCellTextStyle(CSS_COLOR.textSec)}>
-          {formatAccountMoney(row.marketValue, currency, true, maskValues)}
-        </div>
-        <div style={mobileActionRailStyle}>
-          <MobileIconButton
-            label={`Open ${row.symbol} chart`}
-            data-action="chart"
-            data-row-id={row.id}
-            data-symbol={row.symbol}
-            onClick={onRowAction}
-          >
-            <LineChart size={13} strokeWidth={1.8} aria-hidden="true" />
-          </MobileIconButton>
-          {expandable ? (
-            <MobileIconButton
-              label={expanded ? `Collapse ${row.symbol} details` : `Expand ${row.symbol} details`}
-              data-action="expand"
-              data-row-id={row.id}
-              expanded={expanded}
-              onClick={onRowAction}
-            >
-              {expanded ? (
-                <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
-              ) : (
-                <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
-              )}
-            </MobileIconButton>
-          ) : null}
-        </div>
-      </div>
-      <div data-testid="account-position-context-strip" style={mobileContextGridStyle}>
-        <MobileContextMetric
-          label="Bid / Ask"
-          value={quoteBidAsk}
-          detail={quoteDetail || (display.quote?.mark != null ? "mark only" : "quote unavailable")}
-          tone={quoteHasBidAsk ? CSS_COLOR.textSec : CSS_COLOR.textDim}
-        />
-        <MobileContextMetric
-          label="Day / Unreal"
-          value={`${signedPercent(row.dayChangePercent, 2, maskValues)} / ${signedPercent(row.unrealizedPnlPercent, 2, maskValues)}`}
-          detail={`Wt ${formatAccountPercent(row.weightPercent, 2, maskValues)}`}
-          tone={toneForValue(row.unrealizedPnl)}
-        />
-        <MobileContextMetric
-          label="Greeks"
-          value={greeksPrimary}
-          detail={greeksDetail}
-          tone={greeksPrimary === MISSING_VALUE ? CSS_COLOR.textDim : CSS_COLOR.textSec}
-        />
-        <MobileContextMetric
-          label="Signal / Risk"
-          value={signalValue}
-          detail={signalDetail}
-          tone={automationMetrics?.stopTone || CSS_COLOR.textSec}
-        />
-      </div>
-      {expanded && expandable ? (
-        <div
-          data-testid="account-position-expanded-details"
-          style={mobileDetailStyle}
-        >
-          <div style={mobileMinWidthStyle}>
-            <div style={{ ...mutedLabelStyle, marginBottom: sp(3) }}>Accounts</div>
-            <div style={mobilePillWrapStyle}>
-              {(row.accounts || []).slice(0, 3).map((accountId) => (
-                <Pill key={`${row.id}:${accountId}`} tone="cyan">
-                  {accountId}
-                </Pill>
-              ))}
-              {row.sourceType ? (
-                <Pill tone={sourceTone(row.sourceType)}>
-                  {row.strategyLabel || row.sourceType}
-                </Pill>
-              ) : null}
-            </div>
-          </div>
-          <div style={mobileMinWidthStyle}>
-            <div style={{ ...mutedLabelStyle, marginBottom: sp(3) }}>Source</div>
-            {row.sourceAttribution?.length ? (
-              <div style={{ display: "grid", gap: sp(3) }}>
-                {row.sourceAttribution.slice(0, 3).map((source, index) => (
-                  <div
-                    key={positionSourceAttributionKey(row.id, source, index)}
-                    style={{ color: CSS_COLOR.textSec, fontSize: textSize("body") }}
-                  >
-                    {source.strategyLabel || source.sourceType || "Source"} · Qty{" "}
-                    {formatNumber(source.quantity, 3)}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption") }}>
-                Source attribution is unavailable.
-              </div>
-            )}
-          </div>
-          <div style={mobileMinWidthStyle}>
-            <div style={{ ...mutedLabelStyle, marginBottom: sp(3) }}>Orders</div>
-            {row.openOrders?.length ? (
-              <div style={mobilePillWrapStyle}>
-                {row.openOrders.slice(0, 3).map((order, index) => (
-                  <Pill
-                    key={positionOpenOrderKey(row.id, order, index)}
-                    tone={/buy/i.test(order.side) ? "side-buy" : "side-sell"}
-                  >
-                    {order.side} {formatNumber(order.quantity, 2)}
-                  </Pill>
-                ))}
-              </div>
-            ) : (
-              <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("caption") }}>No working orders.</div>
-            )}
-          </div>
-          <div style={{ gridColumn: "1 / -1", minWidth: 0 }}>
-            <div style={{ ...mutedLabelStyle, marginBottom: sp(3) }}>Tax Lots</div>
-            {row.lots?.length ? (
-              <div style={{ display: "grid", gap: sp(2) }}>
-                {row.lots.slice(0, 4).map((lot, index) => (
-                  <div
-                    key={`${row.id}:mobile-lot:${index}`}
-                    style={mobileTaxLotRowStyle}
-                  >
-                    <span>{lot.accountId} · {formatNumber(lot.quantity, 4)} @ {formatAccountPrice(lot.averageCost, 2, maskValues)}</span>
-                    <span style={{ color: toneForValue(lot.unrealizedPnl) }}>
-                      {formatAccountMoney(lot.unrealizedPnl, currency, false, maskValues)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div style={{ color: CSS_COLOR.textMuted, fontSize: textSize("body") }}>
-                No tax-lot detail recorded yet.
-              </div>
-            )}
-          </div>
-        </div>
-      ) : null}
-    </article>
-  );
-}, (previous, next) => (
-  previous.expanded === next.expanded &&
-  previous.currency === next.currency &&
-  previous.maskValues === next.maskValues &&
-  previous.snapshotsBySymbol === next.snapshotsBySymbol &&
-  previous.onRowAction === next.onRowAction &&
-  previous.onRowKeyDown === next.onRowKeyDown &&
-  (
-    previous.row === next.row ||
-    positionMobileRowSignature(previous.row) === positionMobileRowSignature(next.row)
-  )
-));
-
 const dateLabel = (date) => {
   if (!date) return "Live";
   const parsed = new Date(`${date}T00:00:00.000Z`);
@@ -2252,13 +1891,12 @@ const ActivityTone = ({ activity }) => {
 
 const historicalPositionHeaders = [
   "Position",
-  "Qty / Avg",
+  "Qty",
+  "Avg",
   "Price",
-  "Bid / Ask",
   "Day",
   "Unreal",
   "Exposure",
-  "Greeks",
 ];
 
 export const PositionsAtDateInspector = ({
@@ -2322,45 +1960,47 @@ export const PositionsAtDateInspector = ({
         <div style={{ display: "grid", gap: sp(6) }}>
           {balance ? (
             <div
+              className="ra-hide-scrollbar"
               style={{
-                display: "grid",
-                gridTemplateColumns: `repeat(auto-fit, minmax(${dim(118)}px, 1fr))`,
-                gap: sp(5),
+                overflowX: "auto",
               }}
             >
-              {[
-                ["Net Liq", formatAccountMoney(balance.netLiquidation, currency, false, maskValues), CSS_COLOR.text],
-                ["Day P&L", formatAccountSignedMoney(balance.dayPnl, currency, false, maskValues), toneForValue(balance.dayPnl)],
-                ["Cash", formatAccountMoney(balance.cash, currency, false, maskValues), CSS_COLOR.text],
-                ["Buying Power", formatAccountMoney(balance.buyingPower, currency, false, maskValues), CSS_COLOR.text],
-              ].map(([label, value, color]) => (
-                <div
-                  key={label}
-                  style={{
-                    border: "none",
-                    borderRadius: dim(RADII.xs),
-                    background: CSS_COLOR.bg0,
-                    padding: sp("5px 6px"),
-                    minWidth: 0,
-                  }}
-                >
-                  <div style={mutedLabelStyle}>{label}</div>
-                  <div
-                    style={{
-                      marginTop: sp(2),
-                      color,
-                      fontFamily: T.data,
-                      fontSize: textSize("bodyStrong"),
-                      fontWeight: FONT_WEIGHTS.regular,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {value}
-                  </div>
-                </div>
-              ))}
+              <table
+                data-testid="account-position-date-balance-table"
+                style={{ width: "100%", borderCollapse: "collapse", minWidth: 520 }}
+              >
+                <thead>
+                  <tr style={tableHeaderStyle}>
+                    {["Net Liq", "Day P&L", "Cash", "Buying Power"].map((label) => (
+                      <th key={label} style={{ ...tableCellStyle, ...tableHeaderStyle, textAlign: "right" }}>
+                        {label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="ra-table-row">
+                    {[
+                      [formatAccountMoney(balance.netLiquidation, currency, false, maskValues), CSS_COLOR.text],
+                      [formatAccountSignedMoney(balance.dayPnl, currency, false, maskValues), toneForValue(balance.dayPnl)],
+                      [formatAccountMoney(balance.cash, currency, false, maskValues), CSS_COLOR.text],
+                      [formatAccountMoney(balance.buyingPower, currency, false, maskValues), CSS_COLOR.text],
+                    ].map(([value, color], index) => (
+                      <td
+                        key={index}
+                        style={{
+                          ...tableCellStyle,
+                          color,
+                          fontFamily: T.data,
+                          textAlign: "right",
+                        }}
+                      >
+                        {value}
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
             </div>
           ) : null}
           <div style={{ display: "flex", gap: sp(4), flexWrap: "wrap" }}>
@@ -2397,7 +2037,7 @@ export const PositionsAtDateInspector = ({
             }}
           >
             <div className="ra-hide-scrollbar" style={{ overflow: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 940 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 790, tableLayout: "fixed" }}>
                 <thead>
                   <tr style={tableHeaderStyle}>
                     {historicalPositionHeaders.map((column) => (
@@ -2410,31 +2050,7 @@ export const PositionsAtDateInspector = ({
                 <tbody>
                   {positions.slice(0, 8).map((row) => {
                     const display = positionDisplayForRow(row);
-                    const quote = display.quote;
-                    const bidAsk = formatPositionBidAskPair(quote, maskValues);
-                    const quoteHasBidAsk = hasPositionBidAsk(quote);
-                    const quoteDetail = [
-                      formatPositionSpreadLabel(quote, (value) =>
-                        formatAccountPercent(value, 1, maskValues),
-                      ),
-                      formatPositionQuoteFreshnessLabel(quote),
-                    ].filter(Boolean).join(" · ");
-                    const markValue = quote?.mark ?? quote?.mid ?? row.mark;
-                    const lastValue = quote?.last ?? quote?.price;
-                    const greeksPrimary =
-                      [
-                        formatGreek("Δ", row?.optionQuote?.delta, 2),
-                        formatGreek("θ", row?.optionQuote?.theta, 2),
-                      ].filter(Boolean).join(" · ") || MISSING_VALUE;
-                    const greeksSecondary = [
-                      formatIv(row?.optionQuote?.impliedVolatility),
-                      row?.optionQuote?.openInterest != null
-                        ? `OI ${formatMetricCount(row.optionQuote.openInterest)}`
-                        : null,
-                      row?.optionQuote?.volume != null
-                        ? `Vol ${formatMetricCount(row.optionQuote.volume)}`
-                        : null,
-                    ].filter(Boolean).join(" · ");
+                    const markValue = row.mark;
 
                     return (
                       <tr key={row.id} className="ra-table-row">
@@ -2459,49 +2075,47 @@ export const PositionsAtDateInspector = ({
                                 minWidth: 0,
                               }}
                             >
-                              <MarketIdentityInline
-                                item={{
-                                  ticker: row.symbol,
-                                  name: row.description || row.symbol,
-                                  market: marketForAssetClass(row.assetClass),
-                                }}
-                                size={14}
-                                showMark={false}
-                                showChips={!isOptionPosition(row)}
-                                style={{ maxWidth: dim(150) }}
-                              />
-                              <div style={cellSubTextStyle(CSS_COLOR.textDim)}>
-                                {[
+                              <span
+                                data-testid="account-position-date-symbol"
+                                title={[
+                                  row.symbol,
                                   optionInlineDetail(row, maskValues),
+                                  row.description,
                                   display.openedLabel,
-                                ].filter(Boolean).join(" · ") || row.assetClass || MISSING_VALUE}
-                              </div>
+                                ].filter(Boolean).join(" · ")}
+                                style={{
+                                  display: "block",
+                                  maxWidth: dim(132),
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                  fontFamily: T.mono,
+                                }}
+                              >
+                                {row.symbol || MISSING_VALUE}
+                              </span>
+                              {compactPositionContractDetail(row) ? (
+                                <div style={cellSubTextStyle(CSS_COLOR.textDim)}>
+                                  {compactPositionContractDetail(row)}
+                                </div>
+                              ) : null}
                             </button>
                           </div>
                         </td>
                         <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                          <DenseStackedValue
-                            primary={formatNumber(row.quantity, 3)}
-                            secondary={`Avg ${formatAccountPrice(row.averageCost, 2, maskValues)}`}
-                            primaryTone={row.quantity < 0 ? CSS_COLOR.red : CSS_COLOR.textSec}
-                          />
+                          <span style={denseColumnTextStyle({ align: "right", color: row.quantity < 0 ? CSS_COLOR.red : CSS_COLOR.textSec })}>
+                            {formatNumber(row.quantity, 3)}
+                          </span>
+                        </td>
+                        <td style={{ ...tableCellStyle, textAlign: "right" }}>
+                          <span style={denseColumnTextStyle({ align: "right", color: CSS_COLOR.textSec })}>
+                            {formatAccountPrice(row.averageCost, 2, maskValues)}
+                          </span>
                         </td>
                         <td style={{ ...tableCellStyle, textAlign: "right" }}>
                           <DenseStackedValue
                             primary={formatAccountPrice(markValue, 2, maskValues)}
-                            secondary={
-                              lastValue != null
-                                ? `Last ${formatAccountPrice(lastValue, 2, maskValues)}`
-                                : ""
-                            }
                             primaryTone={CSS_COLOR.text}
-                          />
-                        </td>
-                        <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                          <DenseStackedValue
-                            primary={bidAsk}
-                            secondary={quoteDetail || (quote?.mark != null ? "mark only" : "quote unavailable")}
-                            primaryTone={quoteHasBidAsk ? CSS_COLOR.textSec : CSS_COLOR.textDim}
                           />
                         </td>
                         <td style={{ ...tableCellStyle, textAlign: "right" }}>
@@ -2527,13 +2141,6 @@ export const PositionsAtDateInspector = ({
                             primaryTone={CSS_COLOR.text}
                           />
                         </td>
-                        <td style={{ ...tableCellStyle, textAlign: "right" }}>
-                          <DenseStackedValue
-                            primary={greeksPrimary}
-                            secondary={greeksSecondary}
-                            primaryTone={greeksPrimary === MISSING_VALUE ? CSS_COLOR.textDim : CSS_COLOR.textSec}
-                          />
-                        </td>
                       </tr>
                     );
                   })}
@@ -2549,43 +2156,56 @@ export const PositionsAtDateInspector = ({
             <div style={{ display: "grid", gap: sp(4) }}>
               <div style={mutedLabelStyle}>DATE ACTIVITY</div>
               {activity.length ? (
-                activity.slice(0, 7).map((row) => (
-                  <div
-                    key={row.id}
-                    style={{
-                      border: "none",
-                      borderRadius: dim(RADII.xs),
-                      background: CSS_COLOR.bg0,
-                      padding: sp("4px 5px"),
-                      display: "grid",
-                      gap: sp(3),
-                    }}
+                <div className="ra-hide-scrollbar" style={{ overflowX: "auto" }}>
+                  <table
+                    data-testid="account-position-date-activity-table"
+                    style={{ width: "100%", borderCollapse: "collapse", minWidth: 360 }}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: sp(5) }}>
-                      <ActivityTone activity={row} />
-                      <span style={{ color: CSS_COLOR.textDim, fontFamily: T.data, fontSize: textSize("body") }}>
-                        {formatAppDateTime(row.timestamp)}
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: sp(5),
-                        color: CSS_COLOR.textSec,
-                        fontFamily: T.data,
-                        fontSize: textSize("body"),
-                      }}
-                    >
-                      <span>{row.symbol || row.source}</span>
-                      <span style={{ color: toneForValue(row.realizedPnl ?? row.amount), fontWeight: FONT_WEIGHTS.regular }}>
-                        {row.realizedPnl != null
-                          ? formatAccountMoney(row.realizedPnl, currency, true, maskValues)
-                          : formatAccountMoney(row.amount, currency, true, maskValues)}
-                      </span>
-                    </div>
-                  </div>
-                ))
+                    <thead>
+                      <tr style={tableHeaderStyle}>
+                        {["Type", "When", "Symbol", "Amount"].map((label) => (
+                          <th
+                            key={label}
+                            style={{
+                              ...tableCellStyle,
+                              ...tableHeaderStyle,
+                              textAlign: label === "Amount" ? "right" : "left",
+                            }}
+                          >
+                            {label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activity.slice(0, 7).map((row) => (
+                        <tr key={row.id} className="ra-table-row">
+                          <td style={tableCellStyle}>
+                            <ActivityTone activity={row} />
+                          </td>
+                          <td style={{ ...tableCellStyle, color: CSS_COLOR.textDim }}>
+                            {formatAppDateTime(row.timestamp)}
+                          </td>
+                          <td style={{ ...tableCellStyle, color: CSS_COLOR.textSec }}>
+                            {row.symbol || row.source}
+                          </td>
+                          <td
+                            style={{
+                              ...tableCellStyle,
+                              color: toneForValue(row.realizedPnl ?? row.amount),
+                              fontFamily: T.data,
+                              textAlign: "right",
+                            }}
+                          >
+                            {row.realizedPnl != null
+                              ? formatAccountMoney(row.realizedPnl, currency, true, maskValues)
+                              : formatAccountMoney(row.amount, currency, true, maskValues)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
                 <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
                   No account activity is recorded for this date.
@@ -2706,47 +2326,6 @@ export const PositionsPanel = ({
     [onPositionSelect, toggleExpanded],
   );
 
-  const rowById = useMemo(
-    () => new Map(sortedRows.map((row) => [row.id, row])),
-    [sortedRows],
-  );
-
-  const handleMobileRowAction = useCallback(
-    (event) => {
-      const { action, rowId, symbol } = event.currentTarget.dataset;
-      if (!rowId) {
-        return;
-      }
-      const row = rowById.get(rowId);
-      if (row) {
-        onPositionSelect?.(row);
-      }
-      if (action === "chart") {
-        event.stopPropagation();
-        onJumpToChart?.(symbol);
-        return;
-      }
-      if (action === "expand") {
-        event.stopPropagation();
-      }
-      if (row && hasExpandablePositionDetails(row)) {
-        toggleExpanded(rowId);
-      }
-    },
-    [onJumpToChart, onPositionSelect, rowById, toggleExpanded],
-  );
-
-  const handleMobileRowKeyDown = useCallback(
-    (event) => {
-      if (event.key !== "Enter" && event.key !== " ") {
-        return;
-      }
-      event.preventDefault();
-      handleMobileRowAction(event);
-    },
-    [handleMobileRowAction],
-  );
-
   const positionsTablePanel = (
     <Panel
       title={`Current Positions · ${rows.length}`}
@@ -2808,70 +2387,21 @@ export const PositionsPanel = ({
             body={emptyBody}
           />
         </div>
-      ) : isPhone ? (
-        <div
-          data-testid="account-positions-row-list"
-          style={mobileRowListStyle}
-        >
-          <div aria-hidden="true" style={mobileHeaderStyle}>
-            <span>Symbol</span>
-            <span style={mobileHeaderEndStyle}>Qty/Mark</span>
-            <span style={mobileHeaderEndStyle}>Day</span>
-            <span style={mobileHeaderEndStyle}>P&L</span>
-            <span style={mobileHeaderEndStyle}>Value</span>
-            <span />
-          </div>
-          {pageRows.map((row) => (
-            <MobilePositionRow
-              key={row.id}
-              row={row}
-              expanded={expandedRows.has(row.id) && hasExpandablePositionDetails(row)}
-              currency={currency}
-              maskValues={maskValues}
-              snapshotsBySymbol={tickerSnapshotsBySymbol}
-              onRowAction={handleMobileRowAction}
-              onRowKeyDown={handleMobileRowKeyDown}
-            />
-          ))}
-          <div
-            data-testid="account-positions-summary-row"
-            className="ra-hide-scrollbar"
-            style={{
-              background: CSS_COLOR.bg1,
-              borderRadius: dim(RADII.sm),
-              display: "flex",
-              flexWrap: "nowrap",
-              overflowX: "auto",
-              minWidth: 0,
-            }}
-          >
-            {[
-              ["Day", formatAccountMoney(totalDayChange, currency, true, maskValues), toneForValue(totalDayChange)],
-              ["Net", formatAccountMoney(displayTotals.netExposure, currency, true, maskValues), undefined],
-              ["Unreal", formatAccountMoney(displayTotals.unrealizedPnl, currency, true, maskValues), toneForValue(displayTotals.unrealizedPnl)],
-              ["Weight", formatAccountPercent(displayTotals.weightPercent, 2, maskValues), undefined],
-            ].map(([label, value, tone], index) => (
-              <div
-                key={label}
-                style={{
-                  flex: "1 1 auto",
-                  minWidth: dim(72),
-                  padding: sp("4px 10px"),
-                  borderLeft: index === 0 ? "none" : `1px solid ${CSS_COLOR.border}`,
-                }}
-              >
-                <MobileMetric label={label} value={value} tone={tone} />
-              </div>
-            ))}
-          </div>
-        </div>
       ) : (
         <div
           data-testid="account-positions-table-scroll"
-          className="ra-hide-scrollbar"
+          className="ra-hide-scrollbar ra-dense-table-scroll"
           style={{ overflowX: "auto" }}
         >
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: surfaceId === "algo" ? 1360 : 1040 }}>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "separate",
+              borderSpacing: 0,
+              minWidth: surfaceId === "algo" ? 1120 : 1110,
+              tableLayout: "fixed",
+            }}
+          >
             <colgroup>
               {visibleColumns.map((column) => (
                 <col key={column.id} style={{ width: column.width }} />
@@ -3050,7 +2580,7 @@ export const PositionsPanel = ({
                                           fontFamily: T.sans,
                                         }}
                                       >
-                                        {source.deploymentName || source.candidateId || source.sourceEventId || "Manual ledger fill"}
+                                        {normalizeLegacyAlgoBrandText(source.deploymentName) || source.candidateId || source.sourceEventId || "Manual ledger fill"}
                                       </div>
                                     </div>
                                   ))}

@@ -129,6 +129,197 @@ test("account position hydration derives mark, day P&L, and unrealized P&L from 
   assert.equal(hydrated.source, "QUOTE_SNAPSHOT");
 });
 
+test("same-day account position hydration uses entry cost basis for day P&L", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const hydrated =
+    __accountPositionInternalsForTests.buildPositionMarketHydration(
+      {
+        id: "U1:XYZ",
+        accountId: "U1",
+        symbol: "XYZ",
+        assetClass: "equity",
+        quantity: 5,
+        averagePrice: 10,
+        marketPrice: 10,
+        marketValue: 50,
+        unrealizedPnl: 0,
+        unrealizedPnlPercent: 0,
+        optionContract: null,
+        openedAt: new Date("2026-05-27T14:30:00.000Z"),
+      },
+      {
+        symbol: "XYZ",
+        price: 11,
+        bid: 10.95,
+        ask: 11.05,
+        bidSize: 100,
+        askSize: 100,
+        change: 0.25,
+        changePercent: 2.3255813953488373,
+        open: 10.7,
+        high: 11.1,
+        low: 10.65,
+        prevClose: 10.75,
+        volume: 1_000,
+        openInterest: null,
+        impliedVolatility: null,
+        delta: null,
+        gamma: null,
+        theta: null,
+        vega: null,
+        providerContractId: "123",
+        delayed: false,
+        freshness: "live",
+        marketDataMode: "live",
+        dataUpdatedAt: new Date("2026-05-27T19:00:00.000Z"),
+        ageMs: null,
+        cacheAgeMs: 0,
+        latency: null,
+        transport: "tws",
+        updatedAt: new Date("2026-05-27T19:00:00.000Z"),
+      },
+      { now: new Date("2026-05-27T19:01:00.000Z") },
+    );
+
+  assert.equal(hydrated.mark, 11);
+  assert.equal(Number(hydrated.unrealizedPnl.toFixed(2)), 5);
+  assert.equal(Number(hydrated.dayChange?.toFixed(2)), 5);
+  assert.equal(Number(hydrated.dayChangePercent?.toFixed(6)), 10);
+  assert.equal(Number(hydrated.unrealizedPnlPercent.toFixed(6)), 10);
+});
+
+test("same-day account position hydration treats date-only open dates as market dates", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const basePosition = {
+    id: "U1:DATEONLY",
+    accountId: "U1",
+    symbol: "DATEONLY",
+    assetClass: "equity",
+    quantity: 10,
+    averagePrice: 20,
+    marketPrice: 20,
+    marketValue: 200,
+    unrealizedPnl: 0,
+    unrealizedPnlPercent: 0,
+    optionContract: null,
+  } as any;
+  const quote = {
+    symbol: "DATEONLY",
+    price: 21,
+    bid: 20.95,
+    ask: 21.05,
+    bidSize: 100,
+    askSize: 100,
+    change: 0.1,
+    changePercent: 0.4784688995215311,
+    open: 20.9,
+    high: 21.1,
+    low: 20.8,
+    prevClose: 20.9,
+    volume: 1_000,
+    openInterest: null,
+    impliedVolatility: null,
+    delta: null,
+    gamma: null,
+    theta: null,
+    vega: null,
+    providerContractId: "date-only",
+    delayed: false,
+    freshness: "live",
+    marketDataMode: "live",
+    dataUpdatedAt: new Date("2026-05-27T19:00:00.000Z"),
+    ageMs: null,
+    cacheAgeMs: 0,
+    latency: null,
+    transport: "tws",
+    updatedAt: new Date("2026-05-27T19:00:00.000Z"),
+  } as any;
+
+  for (const openedAt of [
+    "2026-05-27",
+    "20260527",
+    new Date("2026-05-27T00:00:00.000Z"),
+  ]) {
+    const hydrated =
+      __accountPositionInternalsForTests.buildPositionMarketHydration(
+        { ...basePosition, openedAt },
+        quote,
+        { now: new Date("2026-05-27T19:01:00.000Z") },
+      );
+    assert.equal(Number(hydrated.dayChange?.toFixed(2)), 10);
+    assert.equal(Number(hydrated.unrealizedPnl.toFixed(2)), 10);
+  }
+});
+
+test("same-day option position hydration uses option quote mark and entry basis", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const hydrated =
+    __accountPositionInternalsForTests.buildPositionMarketHydration(
+      {
+        id: "U1:SPY:CALL",
+        accountId: "U1",
+        symbol: "SPY 260522C00500000",
+        assetClass: "option",
+        quantity: 1,
+        averagePrice: 1.2,
+        marketPrice: 1.2,
+        marketValue: 120,
+        unrealizedPnl: 0,
+        unrealizedPnlPercent: 0,
+        openedAt: new Date("2026-05-27T14:31:00.000Z"),
+        optionContract: {
+          underlying: "SPY",
+          expirationDate: "2026-05-22",
+          strike: 500,
+          right: "call",
+          multiplier: 100,
+          providerContractId: "12345",
+        },
+      } as any,
+      {
+        symbol: "SPY 260522C00500000",
+        price: 1.48,
+        mark: 1.5,
+        last: 1.46,
+        bid: 1.4,
+        ask: 1.6,
+        bidSize: 20,
+        askSize: 15,
+        change: 0.05,
+        changePercent: 3.4482758620689653,
+        open: null,
+        high: null,
+        low: null,
+        prevClose: 1.45,
+        volume: 80,
+        openInterest: 500,
+        impliedVolatility: 0.2,
+        delta: 0.5,
+        gamma: 0.01,
+        theta: -0.02,
+        vega: 0.08,
+        providerContractId: "12345",
+        delayed: false,
+        freshness: "live",
+        marketDataMode: "live",
+        dataUpdatedAt: new Date("2026-05-27T19:00:00.000Z"),
+        ageMs: null,
+        cacheAgeMs: 0,
+        latency: null,
+        transport: "tws",
+        updatedAt: new Date("2026-05-27T19:00:00.000Z"),
+      },
+      { now: new Date("2026-05-27T19:01:00.000Z") },
+    );
+
+  assert.equal(hydrated.mark, 1.5);
+  assert.equal(Number(hydrated.marketValue.toFixed(2)), 150);
+  assert.equal(Number(hydrated.unrealizedPnl.toFixed(2)), 30);
+  assert.equal(Number(hydrated.dayChange?.toFixed(2)), 30);
+  assert.equal(Number(hydrated.dayChangePercent?.toFixed(6)), 25);
+  assert.equal(hydrated.source, "QUOTE_SNAPSHOT");
+});
+
 test("account position quote display model derives bid ask spread from snapshots", async () => {
   const { __accountPositionInternalsForTests } = await import("./account");
   const quote = __accountPositionInternalsForTests.buildPositionQuoteFromSnapshot(

@@ -1,3 +1,5 @@
+import { normalizeLegacyAlgoBrandText } from "./algoBranding.js";
+
 export const AUDIT_PAGE_SIZE = 40;
 
 export const AUDIT_STAGE_CHIPS = [
@@ -166,7 +168,7 @@ export const normalizeAuditEvent = (event) => {
     contract.label,
     contract.ticker,
     contract.providerContractId,
-    metadata.deploymentName,
+    normalizeLegacyAlgoBrandText(metadata.deploymentName),
   ].join(" ").toUpperCase();
 
   return {
@@ -191,7 +193,7 @@ export const normalizeAuditEvent = (event) => {
     symbol,
     metadata: {
       deploymentId: firstText(metadata.deploymentId, event?.deploymentId),
-      deploymentName: firstText(metadata.deploymentName),
+      deploymentName: normalizeLegacyAlgoBrandText(firstText(metadata.deploymentName)),
       runId: firstText(metadata.runId, event?.algoRunId),
       runMode: firstText(metadata.runMode),
     },

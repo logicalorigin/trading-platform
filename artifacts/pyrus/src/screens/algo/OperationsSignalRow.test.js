@@ -246,6 +246,7 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
     new URL("../../features/platform/PlatformScreenRouter.jsx", import.meta.url),
     "utf8",
   );
+  const cssSource = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
   const appSource = readFileSync(
     new URL("../../features/platform/PlatformApp.jsx", import.meta.url),
     "utf8",
@@ -301,7 +302,13 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /algoSignalColumnOrder/);
   assert.match(tableSource, /algoSignalVisibleColumns/);
   assert.match(tableSource, /Columns3/);
+  assert.match(tableSource, /className="ra-dense-table-scroll"/);
   assert.match(tableSource, /overflowX: "auto"/);
+  assert.match(tableSource, /minWidth: tableMinWidth/);
+  assert.match(
+    cssSource,
+    /\[data-testid="algo-screen"\]\[data-layout="phone"\] \[style\*="min-width"\]:not\(\.ra-dense-table-scroll\):not\(\.ra-dense-table-scroll \*\)/,
+  );
   assert.doesNotMatch(tableSource, /overflowX: "hidden"/);
   assert.doesNotMatch(tableSource, /a\.signal\.score/);
   assert.doesNotMatch(algoScreenSource, /visibleSignalRows[\s\S]*?\.slice\(0,\s*algoIsPhone \? 8 : 20\)/);

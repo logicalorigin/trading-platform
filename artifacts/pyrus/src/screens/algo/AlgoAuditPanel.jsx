@@ -25,6 +25,7 @@ import { formatAppTimeForPreferences } from "../../lib/timeZone";
 import { motionRowStyle } from "../../lib/motion";
 import { clearAlgoFocus, setAlgoFocus, useAlgoFocus } from "../../features/platform/algoFocusStore";
 import { formatMoney, formatPct, formatPlainPrice } from "./algoHelpers";
+import { normalizeLegacyAlgoBrandText } from "./algoBranding.js";
 import {
   AUDIT_PAGE_SIZE,
   AUDIT_STAGE_CHIPS,
@@ -202,7 +203,12 @@ const AuditDetailPanel = ({ row }) => {
     ["Reason", row.reason],
     ["Readiness", readiness.message],
     ["Event ID", row.id],
-    ["Deployment", row.metadata.deploymentName || row.metadata.deploymentId],
+    [
+      "Deployment",
+      normalizeLegacyAlgoBrandText(
+        row.metadata.deploymentName || row.metadata.deploymentId,
+      ),
+    ],
     ["Run", row.metadata.runId],
     ["Contract ID", row.contract.providerContractId],
     ["Ticker", row.contract.ticker],
@@ -357,7 +363,7 @@ export const AlgoAuditPanel = ({
             style={{ fontSize: textSize("caption"), color: CSS_COLOR.textDim, fontFamily: T.sans }}
           >
             {focusedDeployment
-              ? `filtered to ${focusedDeployment.name}`
+              ? `filtered to ${normalizeLegacyAlgoBrandText(focusedDeployment.name)}`
               : "latest automation events"}
           </div>
         </div>
@@ -749,8 +755,17 @@ export const AlgoAuditPanel = ({
                   <div title={event.account || "system"}>
                     {renderMeta(event.account, "system")}
                   </div>
-                  <div style={{ color: CSS_COLOR.textDim }} title={event.source || event.metadata.deploymentName}>
-                    {renderMeta(event.source || event.metadata.deploymentName)}
+                  <div
+                    style={{ color: CSS_COLOR.textDim }}
+                    title={normalizeLegacyAlgoBrandText(
+                      event.source || event.metadata.deploymentName,
+                    )}
+                  >
+                    {renderMeta(
+                      normalizeLegacyAlgoBrandText(
+                        event.source || event.metadata.deploymentName,
+                      ),
+                    )}
                   </div>
                 </Cell>
               </div>

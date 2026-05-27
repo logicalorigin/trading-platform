@@ -6,6 +6,8 @@ import {
   holdDurationBucket,
 } from "./accountTradingAnalysis";
 
+import { normalizeLegacyAlgoBrandText } from "../algo/algoBranding.js";
+
 const EMPTY_ARRAY = Object.freeze([]);
 const DAY_MS = 86_400_000;
 const RECENT_TRADE_LIMIT = 25;
@@ -224,7 +226,10 @@ const tradeCloseMs = (trade) => {
 const tradeStrategyValue = (trade) =>
   normalizeText(
     trade?.strategyLabel,
-    normalizeText(trade?.deploymentName, normalizeText(trade?.candidateId, "Unattributed")),
+    normalizeText(
+      normalizeLegacyAlgoBrandText(trade?.deploymentName),
+      normalizeText(trade?.candidateId, "Unattributed"),
+    ),
   );
 
 const tradeMatchesSide = (trade, side) => {

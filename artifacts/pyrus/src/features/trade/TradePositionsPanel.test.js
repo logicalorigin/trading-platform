@@ -24,6 +24,13 @@ test("trade open positions reuse runtime ticker snapshots for compact sparklines
   assert.match(source, /pointCount: SPARKLINE_RENDER_POINT_LIMIT/);
   assert.match(source, /return buildTradePositionFallbackSparklineData\(position, snapshot, symbol\)/);
   assert.match(source, /const OPEN_POSITION_GRID_TEMPLATE =/);
+  assert.match(source, /data-testid="trade-open-positions-table-scroll"/);
+  assert.match(source, /data-testid="trade-executions-table-scroll"/);
+  assert.match(source, /data-testid="trade-live-orders-table-scroll"/);
+  assert.match(source, /ra-dense-table-scroll/);
+  assert.match(source, /role="table"/);
+  assert.match(source, />AVG<\/span>/);
+  assert.match(source, /const openedText = display\.openedLabel \|\| MISSING_VALUE/);
   assert.match(
     source,
     /<TradePositionSparkline[\s\S]*?snapshotsBySymbol=\{tickerSnapshotsBySymbol\}[\s\S]*?\{p\.ticker\}/,

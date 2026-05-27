@@ -179,6 +179,7 @@ test("signal monitor completed-bars cache key is stable for the same completed b
       providerLimit: 120,
       completedLimit: 120,
       queryTo: new Date("2026-04-24T14:35:00.000Z"),
+      barSourcePolicy: "mixed",
     });
   const keyB =
     __signalMonitorInternalsForTests.buildSignalMonitorCompletedBarsCacheKey({
@@ -188,9 +189,21 @@ test("signal monitor completed-bars cache key is stable for the same completed b
       providerLimit: 120,
       completedLimit: 120,
       queryTo: new Date("2026-04-24T14:35:00.000Z"),
+      barSourcePolicy: "mixed",
+    });
+  const keyIbkrOnly =
+    __signalMonitorInternalsForTests.buildSignalMonitorCompletedBarsCacheKey({
+      symbol: "SPY",
+      timeframe: "5m",
+      providerTimeframe: "5m",
+      providerLimit: 120,
+      completedLimit: 120,
+      queryTo: new Date("2026-04-24T14:35:00.000Z"),
+      barSourcePolicy: "ibkr-only",
     });
 
   assert.equal(keyA, keyB);
+  assert.notEqual(keyA, keyIbkrOnly);
 });
 
 test("signal monitor matrix bars use the priority-aware bars lane", () => {
@@ -228,6 +241,24 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
   assert.match(matrixSymbolBlock ?? "", /sourceRequestCount/);
 });
 
+test("signal monitor event responses normalize retired algo branding", () => {
+  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  const eventResponseBlock = source.match(
+    /function eventToResponse[\s\S]*?\n}\n\ntype SignalMonitorEventResponse/,
+  )?.[0];
+
+  assert.match(source, /normalizeLegacyAlgoBrandText/);
+  assert.match(source, /normalizeLegacyAlgoBranding/);
+  assert.match(
+    eventResponseBlock ?? "",
+    /source:\s*normalizeLegacyAlgoBrandText\(event\.source\)/,
+  );
+  assert.match(
+    eventResponseBlock ?? "",
+    /payload:\s*normalizeLegacyAlgoBranding\(asRecord\(event\.payload\)\)/,
+  );
+});
+
 test("intraday delayed signal bars force live-edge retry before stale age", () => {
   const evaluatedAt = new Date("2026-05-26T15:40:00.000Z");
   const delayedLatest = {
@@ -259,6 +290,22 @@ test("intraday delayed signal bars force live-edge retry before stale age", () =
       evaluatedAt,
     }),
     false,
+  );
+
+  const polygonLatest = {
+    ...delayedLatest,
+    delayed: false,
+    freshness: "live",
+    marketDataMode: "live",
+    source: "polygon-history",
+  };
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldRetrySignalMonitorCompletedBars({
+      completedBars: [polygonLatest] as never,
+      timeframe: "5m",
+      evaluatedAt,
+    }),
+    true,
   );
 });
 
@@ -321,6 +368,56 @@ test("signal monitor completed-bars cache bypasses retryable delayed rows", () =
   );
 });
 
+test("signal monitor IBKR source policy rejects Polygon and Massive bars", () => {
+  const ibkr = { ...bar("30", 100, 101), source: "ibkr-history" };
+  const overnight = { ...bar("31", 101, 102), source: "ibkr-overnight-history" };
+  const polygon = {
+    ...bar("32", 102, 103),
+    delayed: false,
+    freshness: "live",
+    marketDataMode: "live",
+    source: "polygon-history",
+  };
+  const massive = {
+    ...bar("33", 103, 104),
+    delayed: true,
+    freshness: "delayed",
+    marketDataMode: "delayed",
+    source: "massive-history",
+  };
+
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorIbkrBar(ibkr as never),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorIbkrBar(overnight as never),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorIbkrBar(polygon as never),
+    false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorIbkrBar(massive as never),
+    false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorDelayedBar(polygon as never),
+    true,
+  );
+
+  assert.deepEqual(
+    __signalMonitorInternalsForTests
+      .filterSignalMonitorBarsForSourcePolicy(
+        [polygon, ibkr, massive, overnight] as never,
+        "ibkr-only",
+      )
+      .map((item) => item.source),
+    ["ibkr-history", "ibkr-overnight-history"],
+  );
+});
+
 test("intraday delayed matrix bars are degraded instead of fresh", () => {
   const evaluatedAt = new Date("2026-05-26T15:40:00.000Z");
   const delayedLatest = {
@@ -358,7 +455,7 @@ test("intraday delayed matrix bars are degraded instead of fresh", () => {
   assert.equal(daily.status, "ok");
 });
 
-test("signal monitor matrix preserves visible coverage under API resource pressure", () => {
+test("signal monitor matrix narrows historical work under API resource pressure", () => {
   const configured = profile({
     maxSymbols: 250,
     evaluationConcurrency: 10,
@@ -366,23 +463,23 @@ test("signal monitor matrix preserves visible coverage under API resource pressu
 
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "normal"),
-    { pressure: "normal", maxSymbols: 16, concurrency: 2 },
+    { pressure: "normal", maxSymbols: 8, concurrency: 1 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "watch"),
-    { pressure: "watch", maxSymbols: 16, concurrency: 1 },
+    { pressure: "watch", maxSymbols: 6, concurrency: 1 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "high"),
-    { pressure: "high", maxSymbols: 16, concurrency: 1 },
+    { pressure: "high", maxSymbols: 4, concurrency: 1 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "critical"),
-    { pressure: "critical", maxSymbols: 16, concurrency: 1 },
+    { pressure: "critical", maxSymbols: 2, concurrency: 1 },
   );
 });
 
-test("signal monitor profile evaluations preserve breadth under API pressure", () => {
+test("signal monitor profile evaluations rotate through pressure-aware historical caps", () => {
   const configured = profile({
     maxSymbols: 250,
     evaluationConcurrency: 10,
@@ -395,11 +492,11 @@ test("signal monitor profile evaluations preserve breadth under API pressure", (
     ),
     {
       pressure: "normal",
-      capped: false,
+      capped: true,
       profile: {
         ...configured,
-        maxSymbols: 250,
-        evaluationConcurrency: 10,
+        maxSymbols: 60,
+        evaluationConcurrency: 2,
       },
     },
   );
@@ -410,8 +507,8 @@ test("signal monitor profile evaluations preserve breadth under API pressure", (
     ).profile,
     {
       ...configured,
-      maxSymbols: 250,
-      evaluationConcurrency: 10,
+      maxSymbols: 40,
+      evaluationConcurrency: 1,
     },
   );
   assert.deepEqual(
@@ -421,8 +518,8 @@ test("signal monitor profile evaluations preserve breadth under API pressure", (
     ).profile,
     {
       ...configured,
-      maxSymbols: 250,
-      evaluationConcurrency: 10,
+      maxSymbols: 20,
+      evaluationConcurrency: 1,
     },
   );
   assert.deepEqual(
@@ -432,8 +529,8 @@ test("signal monitor profile evaluations preserve breadth under API pressure", (
     ).profile,
     {
       ...configured,
-      maxSymbols: 250,
-      evaluationConcurrency: 10,
+      maxSymbols: 8,
+      evaluationConcurrency: 1,
     },
   );
 });
@@ -807,6 +904,117 @@ test("signal matrix cache serves stale data while a refresh is in flight", async
   assert.equal(calls, 1);
   resolveRefresh({ states: [{ symbol: "QQQ" }], evaluatedAt: "new" });
   await new Promise((resolve) => setImmediate(resolve));
+  __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
+});
+
+test("signal matrix automatic request marker debounces reconnect duplicates only", () => {
+  __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
+
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.markAutomaticSignalMonitorMatrixRequest(
+      "signal-matrix:paper:unit",
+      { clientRole: "leader", requestOrigin: "startup" },
+      1_000,
+    ),
+    { automatic: true, debounced: false },
+  );
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.markAutomaticSignalMonitorMatrixRequest(
+      "signal-matrix:paper:unit",
+      { clientRole: "leader", requestOrigin: "poll" },
+      2_000,
+    ),
+    { automatic: true, debounced: true },
+  );
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.markAutomaticSignalMonitorMatrixRequest(
+      "signal-matrix:paper:unit",
+      { clientRole: "manual", requestOrigin: "manual" },
+      2_100,
+    ),
+    { automatic: false, debounced: false },
+  );
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.markAutomaticSignalMonitorMatrixRequest(
+      "signal-matrix:paper:unit",
+      { clientRole: "test", requestOrigin: "test" },
+      2_200,
+    ),
+    { automatic: false, debounced: false },
+  );
+
+  __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
+});
+
+test("signal matrix automatic debounce can reuse stale cache without refreshing", () => {
+  const key = "signal-matrix:paper:debounced-cache";
+  const staleValue = { states: [{ symbol: "SPY" }], evaluatedAt: "old" };
+  __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
+  __signalMonitorInternalsForTests.seedSignalMonitorMatrixCache(key, staleValue, {
+    freshUntil: 1_000,
+    staleUntil: 20_000,
+  });
+
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.getDebouncedSignalMonitorMatrixCacheValue(
+      key,
+      2_000,
+    ),
+    { value: staleValue, cacheStatus: "stale" },
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.getDebouncedSignalMonitorMatrixCacheValue(
+      key,
+      21_000,
+    ),
+    null,
+  );
+
+  __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
+});
+
+test("signal matrix environment clear removes source-strategy cache and automatic markers", () => {
+  const key = "signal-matrix:hybrid_1m_5m:paper:profile:default:SPY:2m:1:normal:3:{}";
+  const staleValue = { states: [{ symbol: "SPY" }], evaluatedAt: "old" };
+  __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
+  __signalMonitorInternalsForTests.seedSignalMonitorMatrixCache(key, staleValue, {
+    freshUntil: 1_000,
+    staleUntil: 20_000,
+  });
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.markAutomaticSignalMonitorMatrixRequest(
+      key,
+      { clientRole: "leader", requestOrigin: "startup" },
+      1_000,
+    ),
+    { automatic: true, debounced: false },
+  );
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.getDebouncedSignalMonitorMatrixCacheValue(
+      key,
+      2_000,
+    ),
+    { value: staleValue, cacheStatus: "stale" },
+  );
+
+  __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache("paper");
+
+  assert.equal(
+    __signalMonitorInternalsForTests.getDebouncedSignalMonitorMatrixCacheValue(
+      key,
+      2_000,
+    ),
+    null,
+  );
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.markAutomaticSignalMonitorMatrixRequest(
+      key,
+      { clientRole: "leader", requestOrigin: "poll" },
+      2_100,
+    ),
+    { automatic: true, debounced: false },
+  );
+
   __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
 });
 

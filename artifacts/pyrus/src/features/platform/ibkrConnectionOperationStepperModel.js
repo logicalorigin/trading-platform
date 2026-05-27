@@ -15,6 +15,13 @@ export const IBKR_LAUNCH_OPERATION_STEPS = [
   { id: "tunnel", label: "Tunnel", icon: "network", motion: "tunnel" },
 ];
 
+const IBKR_LAUNCH_UPDATE_STEP = {
+  id: "update",
+  label: "Update",
+  icon: "refresh",
+  motion: "spin",
+};
+
 export const IBKR_DEACTIVATE_OPERATION_STEPS = [
   { id: "queue", label: "Queue", icon: "clock", motion: "queue" },
   { id: "detach", label: "Detach", icon: "unplug", motion: "detach" },
@@ -24,30 +31,34 @@ export const IBKR_DEACTIVATE_OPERATION_STEPS = [
 
 const LAUNCH_STEP_PHASES = {
   request: new Set([
+    "checking_gateway_socket",
     "helper_launched",
-    "waiting_secure_credentials",
+  ]),
+  update: new Set([
+    "helper_updated",
+    "updating_helper",
   ]),
   credentials: new Set([
     "autologin_preflight",
     "credentials_delivered",
+    "waiting_secure_credentials",
+  ]),
+  gateway: new Set([
     "credentials_submitted",
     "gateway_foreground_fallback",
     "gateway_login_window_active",
     "gateway_login_window_wait",
     "gateway_login_window_waiting",
-    "gateway_window_login",
-    "typing_gateway_credentials",
-  ]),
-  gateway: new Set([
-    "checking_gateway_socket",
     "gateway_process_started",
     "gateway_ready",
     "gateway_running_waiting_login",
     "gateway_running_waiting_socket",
     "gateway_socket_ready",
+    "gateway_window_login",
     "launching_gateway",
     "starting_gateway",
     "starting_ibc",
+    "typing_gateway_credentials",
     "waiting_2fa",
   ]),
   bridge: new Set([
@@ -77,9 +88,25 @@ const LAUNCH_STEP_PHASES = {
   ]),
 };
 
-const LAUNCH_STEP_INDEX = new Map(
-  IBKR_LAUNCH_OPERATION_STEPS.map((step, index) => [step.id, index]),
-);
+const HELPER_UPDATE_PROGRESS_STEPS = LAUNCH_STEP_PHASES.update;
+
+const getLaunchOperationSteps = (events) => {
+  const shouldShowUpdate = events.some((event) =>
+    HELPER_UPDATE_PROGRESS_STEPS.has(String(event?.step || "")),
+  );
+  if (!shouldShowUpdate) {
+    return IBKR_LAUNCH_OPERATION_STEPS;
+  }
+
+  return [
+    IBKR_LAUNCH_OPERATION_STEPS[0],
+    IBKR_LAUNCH_UPDATE_STEP,
+    ...IBKR_LAUNCH_OPERATION_STEPS.slice(1),
+  ];
+};
+
+const getLaunchStepIndex = (steps) =>
+  new Map(steps.map((step, index) => [step.id, index]));
 
 const normalizeStatus = (value, fallback = "pending") =>
   STEP_STATUS_SET.has(value) ? value : fallback;
@@ -111,13 +138,28 @@ const getProgressStepPhase = (event) => {
   return "request";
 };
 
-const getLatestLaunchPhaseIndex = (events) => {
+const getLatestLaunchPhaseIndex = (events, steps) => {
   if (!events.length) {
     return 0;
   }
+  const stepIndex = getLaunchStepIndex(steps);
+  const latestEvent = events.at(-1);
+  const latestPhase = getProgressStepPhase(latestEvent);
+  const lastUpdateIndex = events.findLastIndex((event) =>
+    HELPER_UPDATE_PROGRESS_STEPS.has(String(event?.step || "")),
+  );
+  if (
+    lastUpdateIndex >= 0 &&
+    lastUpdateIndex < events.length - 1 &&
+    latestPhase === "request" &&
+    stepIndex.has("credentials")
+  ) {
+    return stepIndex.get("credentials");
+  }
+
   return Math.max(
     0,
-    ...events.map((event) => LAUNCH_STEP_INDEX.get(getProgressStepPhase(event)) ?? 0),
+    ...events.map((event) => stepIndex.get(getProgressStepPhase(event)) ?? 0),
   );
 };
 
@@ -148,7 +190,8 @@ export const buildIbkrLaunchOperationStepper = ({
   const progressEvents = latestProgress
     ? [...recentProgress, latestProgress]
     : recentProgress;
-  const latestPhaseIndex = getLatestLaunchPhaseIndex(progressEvents);
+  const launchSteps = getLaunchOperationSteps(progressEvents);
+  const latestPhaseIndex = getLatestLaunchPhaseIndex(progressEvents, launchSteps);
   const latestStatus = String(latestProgress?.status || "");
   const latestStep = String(latestProgress?.step || "");
   const canceledState =
@@ -182,7 +225,7 @@ export const buildIbkrLaunchOperationStepper = ({
       operation: "launch",
       title: "Connect IBKR",
       latestMessage: connectedMessage,
-      steps: IBKR_LAUNCH_OPERATION_STEPS.map((step) => ({
+      steps: launchSteps.map((step) => ({
         ...step,
         status: "complete",
       })),
@@ -194,7 +237,7 @@ export const buildIbkrLaunchOperationStepper = ({
     operation: "launch",
     title: "Connect IBKR",
     latestMessage,
-    steps: buildSteps(IBKR_LAUNCH_OPERATION_STEPS, latestPhaseIndex, terminalStatus),
+    steps: buildSteps(launchSteps, latestPhaseIndex, terminalStatus),
   };
 };
 

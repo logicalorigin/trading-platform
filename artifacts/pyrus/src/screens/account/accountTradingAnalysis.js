@@ -1,3 +1,5 @@
+import { normalizeLegacyAlgoBrandText } from "../algo/algoBranding.js";
+
 const EMPTY_ARRAY = Object.freeze([]);
 
 const finiteNumber = (value) => {
@@ -48,7 +50,10 @@ const tradeSourceType = (trade) =>
 const tradeStrategy = (trade) =>
   normalizeText(
     trade?.strategyLabel,
-    normalizeText(trade?.deploymentName, normalizeText(trade?.candidateId, "Unattributed")),
+    normalizeText(
+      normalizeLegacyAlgoBrandText(trade?.deploymentName),
+      normalizeText(trade?.candidateId, "Unattributed"),
+    ),
   );
 
 const tradeSide = (trade) => {

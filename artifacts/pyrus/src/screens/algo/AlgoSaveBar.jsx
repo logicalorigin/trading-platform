@@ -138,10 +138,12 @@ export const AlgoSaveBar = ({
                   {field.sectionLabel} · {field.label}
                 </span>
                 <span
+                  className="tnum"
                   style={{
                     color: CSS_COLOR.textMuted,
                     fontFamily: T.data,
                     whiteSpace: "nowrap",
+                    textAlign: "right",
                   }}
                 >
                   {formatSettingValue(field, field.previousValue)} →{" "}

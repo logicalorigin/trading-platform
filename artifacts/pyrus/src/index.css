@@ -2,15 +2,6 @@
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
 
-.pyrus-loader-lockup {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 20px;
-  line-height: 0;
-}
-
 .brand-loader-lockup {
   align-items: center;
   display: inline-flex;
@@ -676,6 +667,78 @@ optgroup {
   max-width: 100%;
   font: inherit;
   font-family: inherit;
+}
+
+/* Algo rail container-query utilities.
+   Numeric values/inputs use .tnum and right alignment; labels stay left.
+   Dense tabular rows should keep fixed-px numeric columns beside minmax()
+   label columns, matching the DenseVirtualTable alignment pattern. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+.algo-rail-cq {
+  container-type: inline-size;
+}
+
+.algo-settings-grid {
+  align-items: start;
+  column-gap: var(--ra-space-5);
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  min-width: 0;
+  row-gap: var(--ra-space-4);
+}
+
+@container (max-width: 560px) {
+  .algo-settings-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 420px) {
+  .algo-settings-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 300px) {
+  .algo-settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.algo-diag-kpi-grid {
+  display: grid;
+  gap: var(--ra-space-6);
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  min-width: 0;
+}
+
+@container (max-width: 520px) {
+  .algo-diag-kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 320px) {
+  .algo-diag-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.algo-cell--wide {
+  grid-column: span 2;
+}
+
+.algo-cell--full {
+  grid-column: 1 / -1;
+}
+
+@container (max-width: 300px) {
+  .algo-cell--wide {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 767px) {
@@ -2191,11 +2254,11 @@ textarea:disabled:not([data-ra-keep-opacity]) {
     grid-column: 1 / -1;
   }
 
-  [data-testid="algo-screen"][data-layout="phone"] [style*="min-width"],
+  [data-testid="algo-screen"][data-layout="phone"] [style*="min-width"]:not(.ra-dense-table-scroll):not(.ra-dense-table-scroll *),
   [data-testid="settings-screen"][data-layout="phone"] [style*="min-width"],
   [data-testid="diagnostics-screen"][data-layout="phone"] [style*="min-width"],
   [data-testid="backtest-workspace"][data-layout="phone"] [style*="min-width"],
-  [data-testid="account-screen"] [style*="min-width"],
+  [data-testid="account-screen"] [style*="min-width"]:not(.ra-dense-table-scroll):not(.ra-dense-table-scroll *),
   .photonics-research-root [style*="min-width"] {
     min-width: 0 !important;
   }

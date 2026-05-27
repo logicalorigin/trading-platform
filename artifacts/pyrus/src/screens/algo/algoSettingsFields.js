@@ -40,7 +40,7 @@ export const formatSettingValue = (field, value) => {
   return String(value);
 };
 
-export const settingFields = [
+const SETTING_FIELD_SECTIONS = [
   {
     sectionId: "signal",
     sectionLabel: "Signal",
@@ -104,7 +104,7 @@ export const settingFields = [
   },
   {
     sectionId: "risk",
-    sectionLabel: "Risk Limits",
+    sectionLabel: "Risk",
     columns: 2,
     fields: [
       {
@@ -154,7 +154,7 @@ export const settingFields = [
   },
   {
     sectionId: "gates",
-    sectionLabel: "Signal Gates",
+    sectionLabel: "Gates",
     columns: 2,
     fields: [
       {
@@ -200,8 +200,8 @@ export const settingFields = [
     ],
   },
   {
-    sectionId: "strikes",
-    sectionLabel: "Strike Slots",
+    sectionId: "contract",
+    sectionLabel: "Contract",
     columns: 3,
     fields: [
       {
@@ -543,7 +543,7 @@ export const settingFields = [
   },
 ];
 
-export const allSettingFields = settingFields.flatMap((section) =>
+export const allSettingFields = SETTING_FIELD_SECTIONS.flatMap((section) =>
   section.fields.map((field) => ({ ...field, sectionLabel: section.sectionLabel })),
 );
 
@@ -560,136 +560,6 @@ export const COMPACT_HALT_STANDALONE_SETTINGS = [
   { groupId: "risk", id: "maxContracts", settingPath: "riskCaps.maxContracts", label: "Contracts" },
 ];
 
-export const COMPACT_RAIL_SETTING_GROUPS = [
-  {
-    groupId: "signal",
-    label: "Signal",
-    columns: 4,
-    items: [
-      {
-        id: "mtfPolicy",
-        label: "MTF",
-        togglePath: "entryGate.mtfAlignment.enabled",
-        toggleLabel: "Gate",
-        valuePath: "entryGate.mtfAlignment.requiredCount",
-        valueLabel: "Count",
-      },
-      { settingPath: "signalTimeframe", label: "TF" },
-      { settingPath: "timeHorizon", label: "Bars" },
-      { settingPath: "bosConfirmation", label: "BOS" },
-      { settingPath: "chochAtrBuffer", label: "CHOCH" },
-      { settingPath: "chochBodyExpansionAtr", label: "Body" },
-      { settingPath: "chochVolumeGate", label: "Volume" },
-      { settingPath: "entryGate.bearishRegime.enabled", label: "Bear gate" },
-      {
-        settingPath: "entryGate.bearishRegime.rejectFullyBullishMtf",
-        label: "Reject bull",
-      },
-    ],
-  },
-  {
-    groupId: "quote",
-    label: "Quote / Fills",
-    columns: 4,
-    items: [
-      { settingPath: "liquidityGate.requireBidAsk", label: "Req bid/ask" },
-      {
-        id: "freshQuotePolicy",
-        label: "Fresh quote",
-        togglePath: "liquidityGate.requireFreshQuote",
-        toggleLabel: "Req",
-        valuePath: "fillPolicy.ttlSeconds",
-        valueLabel: "TTL",
-      },
-      { settingPath: "fillPolicy.chaseSteps", label: "Chase", wide: true },
-    ],
-  },
-  {
-    groupId: "strike",
-    label: "Strike",
-    columns: 4,
-    items: [
-      {
-        id: "minDtePolicy",
-        label: "Min DTE",
-        togglePath: "optionSelection.allowZeroDte",
-        toggleLabel: "0DTE",
-        valuePath: "optionSelection.minDte",
-        valueLabel: "Min",
-      },
-      { settingPath: "optionSelection.targetDte", label: "Target" },
-      { settingPath: "optionSelection.maxDte", label: "Max" },
-      { settingPath: "optionSelection.callStrikeSlot", label: "Call slot" },
-      { settingPath: "optionSelection.putStrikeSlot", label: "Put slot" },
-    ],
-  },
-  {
-    groupId: "exitLadder",
-    label: "Exit Ladder",
-    columns: 4,
-    items: [
-      { settingPath: "exitPolicy.hardStopPct", label: "Stop" },
-      { settingPath: "exitPolicy.trailActivationPct", label: "Trail on" },
-      { settingPath: "exitPolicy.minLockedGainPct", label: "Lock" },
-      { settingPath: "exitPolicy.trailGivebackPct", label: "Giveback" },
-      { settingPath: "exitPolicy.progressiveTrailEnabled", label: "Prog trail" },
-      {
-        settingPath: "exitPolicy.progressiveTrailSteps",
-        label: "Ladder",
-        wide: true,
-      },
-      { settingPath: "exitPolicy.tightenAtFiveXGivebackPct", label: "5x" },
-      { settingPath: "exitPolicy.tightenAtTenXGivebackPct", label: "10x" },
-      { settingPath: "exitPolicy.earlyExitBars", label: "Early bars" },
-      { settingPath: "exitPolicy.earlyExitLossPct", label: "Early loss" },
-      { settingPath: "exitPolicy.flipOnOppositeSignal", label: "Flip exit" },
-    ],
-  },
-  {
-    groupId: "overnight",
-    label: "Overnight",
-    columns: 4,
-    items: [
-      {
-        id: "overnightPolicy",
-        label: "Overnight",
-        togglePath: "exitPolicy.overnightExitEnabled",
-        toggleLabel: "Exit",
-        valuePath: "exitPolicy.overnightMinGainPct",
-        valueLabel: "Min",
-      },
-      { settingPath: "exitPolicy.overnightRunnerGivebackPct", label: "Giveback" },
-    ],
-  },
-  {
-    groupId: "qualityExits",
-    label: "Quality Exits",
-    columns: 4,
-    items: [
-      {
-        settingPath: "exitPolicy.conditionalQualityExitsEnabled",
-        label: "Quality",
-      },
-      { settingPath: "exitPolicy.lowQualityEarlyExitBars", label: "Low bars" },
-      { settingPath: "exitPolicy.lowQualityEarlyExitLossPct", label: "Low loss" },
-      { settingPath: "exitPolicy.highQualityEarlyExitBars", label: "High bars" },
-      { settingPath: "exitPolicy.highQualityEarlyExitLossPct", label: "High loss" },
-      {
-        settingPath: "exitPolicy.weakLiquidityTrailGivebackPct",
-        label: "Weak liq",
-      },
-      {
-        settingPath: "exitPolicy.strongLiquidityTrailGivebackPct",
-        label: "Strong liq",
-      },
-      {
-        settingPath: "exitPolicy.highQualityOvernightMinGainPct",
-        label: "HQ overnight",
-      },
-    ],
-  },
-];
-
 const COMPACT_HALT_SETTING_PATHS = new Set(
   [
     ...COMPACT_HALT_SETTING_PAIRS.map((pair) => pair.settingPath),
@@ -697,30 +567,10 @@ const COMPACT_HALT_SETTING_PATHS = new Set(
   ],
 );
 
-const compactRailItemPaths = (item) =>
-  [item.settingPath, item.togglePath, item.valuePath].filter(Boolean);
-
-const COMPACT_RAIL_SETTING_PATHS = new Set(
-  COMPACT_RAIL_SETTING_GROUPS.flatMap((group) =>
-    group.items.flatMap(compactRailItemPaths),
-  ),
-);
-
-const COMPACT_SETTING_PATHS = new Set([
-  ...COMPACT_HALT_SETTING_PATHS,
-  ...COMPACT_RAIL_SETTING_PATHS,
-]);
-
 export const isCompactHaltSettingPath = (path) =>
   COMPACT_HALT_SETTING_PATHS.has(path);
 
-export const isCompactRailSettingPath = (path) =>
-  COMPACT_RAIL_SETTING_PATHS.has(path);
-
-export const isCompactSettingPath = (path) =>
-  COMPACT_SETTING_PATHS.has(path);
-
-const getSettingFieldByPath = (path) =>
+export const getSettingFieldByPath = (path) =>
   allSettingFields.find((item) => item.path === path) || null;
 
 export const getCompactHaltSettingField = (controlId) => {
@@ -743,54 +593,144 @@ export const getCompactHaltStandaloneFields = (groupId) =>
     })
     .filter(Boolean);
 
-const resolveCompactRailItem = (item) => {
-  if (item.settingPath) {
-    const field = getSettingFieldByPath(item.settingPath);
-    return field
-      ? {
-          kind: "field",
-          ...field,
-          compactId: item.id || item.settingPath,
-          compactLabel: item.label || field.label,
-          compactWide: Boolean(item.wide),
-        }
-      : null;
+const field = (path, overrides = {}) => {
+  const match = getSettingFieldByPath(path);
+  if (!match) {
+    throw new Error(`Unknown algo setting field path: ${path}`);
   }
-
-  const toggleField = getSettingFieldByPath(item.togglePath);
-  const valueField = getSettingFieldByPath(item.valuePath);
-  if (!toggleField || !valueField) return null;
-  return {
-    kind: "compound",
-    compactId: item.id,
-    compactLabel: item.label,
-    toggleField: {
-      ...toggleField,
-      compactLabel: item.toggleLabel || toggleField.label,
-    },
-    valueField: {
-      ...valueField,
-      compactLabel: item.valueLabel || valueField.label,
-    },
-    compactWide: Boolean(item.wide),
-  };
+  return { ...match, ...overrides };
 };
 
-export const compactRailSettingGroups = COMPACT_RAIL_SETTING_GROUPS
-  .map((group) => ({
-    ...group,
-    items: group.items.map(resolveCompactRailItem).filter(Boolean),
-  }))
-  .filter((group) => group.items.length > 0);
-
-export const settingsRegionFields = settingFields
-  .map((section) => ({
-    ...section,
-    fields: section.fields.filter(
-      (field) => !isCompactSettingPath(field.path),
-    ),
-  }))
-  .filter((section) => section.fields.length > 0);
+export const SETTINGS_SECTIONS = [
+  {
+    id: "signal",
+    label: "Signal",
+    fields: [
+      field("signalTimeframe", { compactLabel: "Timeframe" }),
+      field("timeHorizon", { compactLabel: "Horizon" }),
+      field("bosConfirmation", { compactLabel: "BOS" }),
+      field("chochAtrBuffer", { compactLabel: "CHOCH ATR" }),
+      field("chochBodyExpansionAtr", { compactLabel: "Body ATR" }),
+      field("chochVolumeGate", { compactLabel: "Volume" }),
+    ],
+  },
+  {
+    id: "risk",
+    label: "Risk",
+    fields: [
+      field("riskCaps.maxPremiumPerEntry", { compactLabel: "Max Premium" }),
+      field("riskCaps.maxContracts", { compactLabel: "Contracts" }),
+      field("riskCaps.maxOpenSymbols", { compactLabel: "Open Symbols" }),
+      field("riskCaps.maxDailyLoss", { compactLabel: "Daily Halt" }),
+    ],
+  },
+  {
+    id: "gates",
+    label: "Gates",
+    fields: [
+      field("entryGate.mtfAlignment.enabled", { compactLabel: "MTF Gate" }),
+      field("entryGate.mtfAlignment.requiredCount", { compactLabel: "MTF Count" }),
+      field("entryGate.bearishRegime.minAdx", { compactLabel: "Bear ADX" }),
+      field("entryGate.bearishRegime.enabled", { compactLabel: "Bear Gate" }),
+      field("entryGate.bearishRegime.rejectFullyBullishMtf", {
+        compactLabel: "Reject Bull MTF",
+        compactWide: true,
+      }),
+    ],
+  },
+  {
+    id: "contract",
+    label: "Contract",
+    fields: [
+      {
+        kind: "contractSelect",
+        id: "contract-selection",
+        fieldPaths: [
+          "optionSelection.minDte",
+          "optionSelection.targetDte",
+          "optionSelection.maxDte",
+          "optionSelection.allowZeroDte",
+          "optionSelection.callStrikeSlot",
+          "optionSelection.putStrikeSlot",
+        ],
+        fields: [
+          field("optionSelection.minDte", { compactLabel: "Min DTE" }),
+          field("optionSelection.targetDte", { compactLabel: "Target DTE" }),
+          field("optionSelection.maxDte", { compactLabel: "Max DTE" }),
+          field("optionSelection.allowZeroDte", { compactLabel: "0DTE" }),
+          field("optionSelection.callStrikeSlot", { compactLabel: "Call Slot" }),
+          field("optionSelection.putStrikeSlot", { compactLabel: "Put Slot" }),
+        ],
+      },
+    ],
+  },
+  {
+    id: "fills",
+    label: "Fills",
+    fields: [
+      field("liquidityGate.maxSpreadPctOfMid", { compactLabel: "Max Spread" }),
+      field("liquidityGate.minBid", { compactLabel: "Min Bid" }),
+      field("liquidityGate.requireBidAsk", { compactLabel: "Bid/Ask" }),
+      field("liquidityGate.requireFreshQuote", { compactLabel: "Fresh Quote" }),
+      field("fillPolicy.ttlSeconds", { compactLabel: "TTL" }),
+      field("fillPolicy.chaseSteps", { compactLabel: "Chase Ladder", compactWide: true }),
+    ],
+  },
+  {
+    id: "exits",
+    label: "Exits",
+    fields: [
+      {
+        kind: "exitTrack",
+        id: "exit-track",
+        fieldPaths: [
+          "exitPolicy.hardStopPct",
+          "exitPolicy.earlyExitLossPct",
+          "exitPolicy.trailActivationPct",
+          "exitPolicy.minLockedGainPct",
+          "exitPolicy.tightenAtFiveXGivebackPct",
+          "exitPolicy.tightenAtTenXGivebackPct",
+        ],
+        fields: [
+          field("exitPolicy.hardStopPct", { compactLabel: "Stop" }),
+          field("exitPolicy.earlyExitLossPct", { compactLabel: "Early Loss" }),
+          field("exitPolicy.trailActivationPct", { compactLabel: "Trail On" }),
+          field("exitPolicy.minLockedGainPct", { compactLabel: "Lock" }),
+          field("exitPolicy.tightenAtFiveXGivebackPct", { compactLabel: "5x" }),
+          field("exitPolicy.tightenAtTenXGivebackPct", { compactLabel: "10x" }),
+        ],
+      },
+      field("exitPolicy.earlyExitBars", { compactLabel: "Early Bars" }),
+      field("exitPolicy.progressiveTrailEnabled", { compactLabel: "Prog Trail" }),
+      field("exitPolicy.progressiveTrailSteps", {
+        compactLabel: "Prog Steps",
+        compactWide: true,
+      }),
+      field("exitPolicy.trailGivebackPct", { compactLabel: "Trail Giveback" }),
+      field("exitPolicy.flipOnOppositeSignal", { compactLabel: "Flip Exit" }),
+      field("exitPolicy.overnightExitEnabled", { compactLabel: "Overnight" }),
+      field("exitPolicy.overnightMinGainPct", { compactLabel: "ON Min" }),
+      field("exitPolicy.overnightRunnerGivebackPct", { compactLabel: "ON Giveback" }),
+    ],
+  },
+  {
+    id: "qualityExits",
+    label: "Quality Exits",
+    fields: [
+      field("exitPolicy.conditionalQualityExitsEnabled", { compactLabel: "Enabled" }),
+      field("exitPolicy.lowQualityEarlyExitBars", { compactLabel: "Low Bars" }),
+      field("exitPolicy.lowQualityEarlyExitLossPct", { compactLabel: "Low Loss" }),
+      field("exitPolicy.highQualityEarlyExitBars", { compactLabel: "High Bars" }),
+      field("exitPolicy.highQualityEarlyExitLossPct", { compactLabel: "High Loss" }),
+      field("exitPolicy.weakLiquidityTrailGivebackPct", { compactLabel: "Weak Liq" }),
+      field("exitPolicy.strongLiquidityTrailGivebackPct", { compactLabel: "Strong Liq" }),
+      field("exitPolicy.highQualityOvernightMinGainPct", {
+        compactLabel: "HQ ON Min",
+        compactWide: true,
+      }),
+    ],
+  },
+];
 
 export const collectDirtySettingFields = ({
   profileDraft,

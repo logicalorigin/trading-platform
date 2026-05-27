@@ -1104,6 +1104,7 @@ export const SegmentedControl = ({
   onOptionIntent,
   ariaLabel,
   buttonTestId,
+  radioGroup = false,
 }) => {
   const containerRef = useRef(null);
   const buttonRefs = useRef(new Map());
@@ -1137,7 +1138,7 @@ export const SegmentedControl = ({
   return (
     <div
       ref={containerRef}
-      role="tablist"
+      role={radioGroup ? "radiogroup" : "tablist"}
       aria-label={ariaLabel}
       style={{
         position: "relative",
@@ -1176,8 +1177,9 @@ export const SegmentedControl = ({
               else buttonRefs.current.delete(option.value);
             }}
             type="button"
-            role="tab"
-            aria-selected={active}
+            role={radioGroup ? "radio" : "tab"}
+            aria-checked={radioGroup ? active : undefined}
+            aria-selected={radioGroup ? undefined : active}
             data-testid={
               buttonTestId
                 ? typeof buttonTestId === "function"

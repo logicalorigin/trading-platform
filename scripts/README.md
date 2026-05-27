@@ -59,7 +59,9 @@ directory to define separate Replit app runners.
 - `check-replit-startup-guards.mjs` verifies that `.replit` stays in
   `PNPM_WORKSPACE` artifact mode, PYRUS keeps its guarded artifact identity, and the
   PYRUS web artifact owns full app bring-up. It also guards the
-  Replit-workflow replacement path in `reap-dev-port.mjs`.
+  Replit-workflow replacement path in `reap-dev-port.mjs`, the duplicate-start
+  supervisor no-op policy, the supervisor lifecycle JSONL evidence path, and the
+  Playwright Replit `webServer` opt-in.
 - `protect-replit-config.mjs` locks or unlocks Replit startup config files
   (`.replit`, `replit.nix`, and artifact TOMLs) with filesystem permissions.
   Keep them locked during routine work; unlock only for an intentional
@@ -68,6 +70,12 @@ directory to define separate Replit app runners.
   generated output changes.
 - `check-markdown-paths.mjs` verifies path-like references in maintained docs.
   It intentionally skips historical audit and handoff notes.
+- `replit:scribe:artifacts` audits Replit Scribe artifact iframe state from
+  `.local/state/scribe/scribe.db`. The default run is read-only and reports live
+  artifact iframes plus duplicate/stale cleanup candidates. Use
+  `pnpm run replit:scribe:artifacts -- --backup-and-clean` only for an
+  intentional local Scribe cleanup; it copies the DB to a timestamped backup
+  before deleting selected artifact rows and writing tombstones.
 
 ## IBKR Utilities
 
@@ -80,13 +88,19 @@ directory to define separate Replit app runners.
   PYRUS artifact runner (`PYRUS_REPLIT_RUN=1`), it can replace older Replit
   execution scopes on the same pinned port.
 - `artifacts/pyrus/scripts/runDevApp.mjs` owns full dev app bring-up. A
-  duplicate Replit-owned Run event exits without restart only during the
-  startup guard window while the supervisor lock points at a live
-  `artifacts/pyrus/scripts/runDevApp.mjs` process. After
-  `PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS` (default `30000`), a new Replit-owned
-  Run is treated as an intentional Run-button restart and uses a controlled
-  handoff so API/web do not overlap. Use `PYRUS_DEV_FORCE_RESTART=1` only for
-  an intentional Replit-owned recovery restart. Shell smoke tests for the
-  duplicate path must include
+  duplicate Replit-owned Run event exits without restart whenever the
+  supervisor lock points at a live `artifacts/pyrus/scripts/runDevApp.mjs`
+  process. Replit reconnects and artifact preview restoration must not be
+  upgraded into app restarts. Use `PYRUS_DEV_FORCE_RESTART=1` only for an
+  intentional Replit-owned recovery restart that may request a controlled
+  handoff from a live supervisor. Shell smoke tests for the duplicate path must
+  include
   `PYRUS_DEV_DUPLICATE_CHECK_ONLY=1`; that mode reads the supervisor lock and
   exits without starting API/web processes.
+- The supervisor writes lifecycle evidence to
+  `/tmp/pyrus/pyrus-dev-lifecycle-8080.jsonl`, including heartbeats, child
+  starts/exits, duplicate-start no-ops, ignored SIGHUP, shutdown, and previous
+  heartbeat classification.
+- `artifacts/pyrus/playwright.config.ts` disables Playwright `webServer` startup
+  inside Replit by default. Set `PYRUS_PLAYWRIGHT_ALLOW_WEB_SERVER=1` only for an
+  intentional maintenance run that should let Playwright own app startup.

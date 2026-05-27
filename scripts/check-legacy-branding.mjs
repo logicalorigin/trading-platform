@@ -56,9 +56,53 @@ const forbidden = [
   /ray[-_ ]?replica/i,
   /rayReplica/,
   /RAY_REPLICA/,
+  /\bray\b.{0,80}\balgo\b/i,
+  /\bray\b.{0,80}\breplica\b/i,
+  /\bRAY\b\s*·/,
 ];
 
-const allowed = [];
+const allowed = [
+  {
+    path: "artifacts/api-server/src/services/algo-branding.ts",
+    line: /./,
+  },
+  {
+    path: "artifacts/api-server/src/services/algo-branding.test.ts",
+    line: /./,
+  },
+  {
+    path: "artifacts/pyrus/src/screens/algo/algoBranding.js",
+    line: /./,
+  },
+  {
+    path: "artifacts/api-server/src/services/signal-options-automation.test.ts",
+    line: /\["Ray",\s*"Replica Signal Options Shadow Paper"\]\.join\(""\)/,
+  },
+  {
+    path: "scripts/windows/pyrus-ibkr-helper.ps1",
+    line: /\$PreviousStateDir = Join-Path \$env:LOCALAPPDATA \('Ray' \+ 'Algo\\ibkr-bridge'\)/,
+  },
+  {
+    path: "artifacts/api-server/src/services/user-preferences-model.ts",
+    line: /RETIRED_DASHBOARD_SETTING_KEY/,
+  },
+  {
+    path: "artifacts/pyrus/src/features/preferences/userPreferenceModel.ts",
+    line: /RETIRED_(WORKSPACE_STORAGE_KEY|DASHBOARD_SETTING_KEY)/,
+  },
+  {
+    path: "artifacts/pyrus/src/features/preferences/userPreferenceModel.test.ts",
+    line: /retiredStorageKey/,
+  },
+  {
+    path: "artifacts/pyrus/src/lib/uiTokens.jsx",
+    line: /RETIRED_WORKSPACE_STORAGE_KEY/,
+  },
+  {
+    path: "artifacts/pyrus/src/features/platform/ibkrBridgeSession.js",
+    line: /\["ray",\s*"algo\.ibkrBridge/,
+  },
+];
 
 function shouldIgnore(relPath) {
   if (ignoredPathParts.some((part) => relPath.includes(part))) return true;

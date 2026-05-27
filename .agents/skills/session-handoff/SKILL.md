@@ -1,6 +1,6 @@
 ---
 name: session-handoff
-description: Save or resume repo work using dated handoff markdown files that capture the Codex session ID, repo snapshot, recent user messages, and next steps. Use when the user asks to save a handoff, recover where prior work stopped, continue from an earlier session, or create a resumable project snapshot.
+description: Save or resume repo work using dated handoff markdown files that capture the Codex session ID, repo snapshot, recent user messages, and next steps. Also recover dropped Codex/Replit sessions by checking runtime/session storage before repo handoffs. Use when the user asks to save a handoff, recover where prior work stopped, continue from an earlier session, find a dropped session, or create a resumable project snapshot.
 ---
 
 # Session Handoff
@@ -10,6 +10,22 @@ Use this skill for three cases:
 - Resume prior work from existing handoff markdown files and current repo state.
 - Save the current session into a new handoff markdown file for later pickup.
 - Autosave in-flight session state while work is still progressing, so crashes leave a usable handoff.
+- Diagnose a dropped Codex/Replit session by inspecting Codex runtime/session storage and Replit process state before falling back to repo handoff files.
+
+## Dropped Session Recovery Rule
+
+When the user says a Codex session, diagnostic session, terminal, workspace, or Replit thread was dropped, crashed, reset, disconnected, or lost, do not start by searching repo handoff files. A dropped runtime/session may never have reached the repo.
+
+Start with session-layer and runtime evidence:
+
+- `~/.codex/history.jsonl`
+- `~/.codex/sessions/**/rollout-*.jsonl`
+- `~/.codex/state_*.sqlite`
+- `~/.codex/logs_*.sqlite`
+- live Codex processes and their filtered `/proc/<pid>/environ`
+- Replit runtime state such as `ps`, `/tmp` supervisor locks, `/run/replit`, workflow-owned process trees, and Replit-owned environment markers like `REPLIT_MODE=workflow`
+
+Only after that runtime sweep should repo-root handoff files be used as secondary recovery notes. If no Codex thread row, rollout file, history entry, or durable live note exists, report that the dropped session was not locally recoverable and explain which stores were checked. Do not paste secrets from environment files or logs into handoffs or user-facing output.
 
 ## Non-Negotiable Autosave Rule
 
@@ -42,16 +58,17 @@ For any substantial implementation, investigation, test run, multi-terminal task
 
 ## Resume Workflow
 
-1. Open `SESSION_HANDOFF_MASTER.md` first if it exists.
-2. Identify the relevant session ID and handoff file from the master index.
-3. Also list `SESSION_HANDOFF_LIVE_*.md` newest first. A live note may be the only durable record if a terminal reset happened before Codex persisted a session ID.
-4. Read the relevant session/live handoff and any older handoff it explicitly references.
-5. Scan `.codex/state_5.sqlite` for newer persisted Codex threads whose CWD belongs to this repo and report any session IDs missing from the master index.
-6. If the master is missing or stale, list `SESSION_HANDOFF_*.md` in the repo root, newest first, and rebuild enough context from the per-session files plus the Codex state scan.
-7. If the user references a workstream rather than a session ID, search recent handoffs, live notes, rollout JSONL, workflow logs, and recently modified files for the user’s terms and changed-file evidence.
-8. Compare the handoff against current repo state with `git status --short --branch` and `git diff --stat`.
-9. Inspect the referenced files before claiming context is restored.
-10. Report:
+1. If the user explicitly says the prior session was dropped, crashed, reset, disconnected, or lost, run the Dropped Session Recovery Rule first.
+2. Open `SESSION_HANDOFF_MASTER.md` first if it exists.
+3. Identify the relevant session ID and handoff file from the master index.
+4. Also list `SESSION_HANDOFF_LIVE_*.md` newest first. A live note may be the only durable record if a terminal reset happened before Codex persisted a session ID.
+5. Read the relevant session/live handoff and any older handoff it explicitly references.
+6. Scan `.codex/state_5.sqlite` for newer persisted Codex threads whose CWD belongs to this repo and report any session IDs missing from the master index.
+7. If the master is missing or stale, list `SESSION_HANDOFF_*.md` in the repo root, newest first, and rebuild enough context from the per-session files plus the Codex state scan.
+8. If the user references a workstream rather than a session ID, search recent handoffs, live notes, rollout JSONL, workflow logs, and recently modified files for the user’s terms and changed-file evidence.
+9. Compare the handoff against current repo state with `git status --short --branch` and `git diff --stat`.
+10. Inspect the referenced files before claiming context is restored.
+11. Report:
    - the active workstream
    - any newer unsaved Codex sessions discovered in state
    - any live notes with pending session IDs

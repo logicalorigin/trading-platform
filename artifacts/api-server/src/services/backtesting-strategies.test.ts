@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { ListBacktestStrategiesResponse } from "@workspace/api-zod";
 
@@ -42,4 +43,17 @@ test("Pyrus Signals strategy defaults to the selected 5m signal horizon", async 
   assert.equal(strategy?.defaultParameters.timeHorizon, 8);
   assert.equal(timeHorizon?.defaultValue, 8);
   assert.ok(strategy?.supportedTimeframes.includes("5m"));
+});
+
+test("backtesting responses and run creation normalize retired algo branding", () => {
+  const source = readFileSync(new URL("./backtesting.ts", import.meta.url), "utf8");
+
+  assert.match(source, /normalizeBacktestStrategyId/);
+  assert.match(source, /normalizeLegacyAlgoBrandText/);
+  assert.match(source, /normalizeLegacyAlgoBranding/);
+  assert.match(source, /strategyId = normalizeBacktestStrategyId\(input\.strategyId\)/);
+  assert.match(source, /strategyId = normalizeBacktestStrategyId\(study\.strategyId\)/);
+  assert.match(source, /strategyId = normalizeBacktestStrategyId\(run\.strategyId\)/);
+  assert.doesNotMatch(source, /source:\s*run\.strategyId/);
+  assert.doesNotMatch(source, /strat:\s*run\.strategyId/);
 });

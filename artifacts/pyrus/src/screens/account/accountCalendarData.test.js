@@ -54,6 +54,10 @@ test("account screen wires shadow account queries through the paper ledger path"
   const immediateSwitchPrefetchBlock = source.match(
     /useEffect\(\(\) => \{\s*if \(!isVisible \|\| !accountQueriesEnabled\)[\s\S]*?prefetchAccountSectionLiveQueries\(inactiveAccountSection\);[\s\S]*?\}, \[/,
   )?.[0] ?? "";
+  const positionsAtDateQueryBlock = source.slice(
+    source.indexOf("const positionsAtDateQuery = useGetAccountPositionsAtDate"),
+    source.indexOf("const performanceCalendarEquityQuery = useQuery"),
+  );
 
   assert.match(source, /const resolveAccountMode = \(\{ shadowMode = false, environment \} = \{\}\) =>/);
   assert.match(source, /if \(shadowMode\) \{\s*return "paper";\s*\}/);
@@ -90,6 +94,11 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /const secondaryAccountQueriesEnabled\s*=\s*Boolean\(derivedAccountQueriesEnabled\)/);
   assert.match(source, /const benchmarkQueriesEnabled\s*=\s*Boolean\(equityHistoryQueriesEnabled\)/);
   assert.doesNotMatch(source, /const benchmarkQueriesEnabled\s*=\s*Boolean\(derivedAccountQueriesEnabled\)/);
+  assert.match(
+    positionsAtDateQueryBlock,
+    /enabled:\s*Boolean\(accountQueriesEnabled && activeEquityInspectionDate\)/,
+  );
+  assert.doesNotMatch(positionsAtDateQueryBlock, /secondaryAccountQueriesEnabled/);
   assert.match(source, /enabled:\s*equityHistoryQueriesEnabled/);
   assert.match(source, /placeholderData:\s*retainPreviousRangeData\(range\)/);
   assert.match(source, /placeholderData:\s*retainPreviousRangeData\("1Y"\)/);

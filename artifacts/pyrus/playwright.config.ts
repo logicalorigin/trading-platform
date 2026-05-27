@@ -2,9 +2,13 @@ import { defineConfig, devices } from "@playwright/test";
 
 const port = Number(process.env.PLAYWRIGHT_PORT || 18747);
 const baseURL = `http://127.0.0.1:${port}`;
+const runningInReplit =
+  Boolean(process.env.REPL_ID) ||
+  Boolean(process.env.REPLIT_DEV_DOMAIN) ||
+  process.env.REPLIT_MODE === "workflow";
 const disableWebServer =
   process.env.PYRUS_PLAYWRIGHT_NO_WEB_SERVER === "1" ||
-  process.env.PYRUS_PLAYWRIGHT_NO_WEB_SERVER === "1";
+  (runningInReplit && process.env.PYRUS_PLAYWRIGHT_ALLOW_WEB_SERVER !== "1");
 const chromiumExecutablePath =
   process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE?.trim() ||
   process.env.REPLIT_PLAYWRIGHT_CHROMIUM_EXECUTABLE?.trim();

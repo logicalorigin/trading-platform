@@ -2,19 +2,28 @@ import { Suspense, useEffect, type ComponentType } from "react";
 import "./runtime-config";
 import { AppProviders } from "./AppProviders";
 import { lazyWithRetry } from "../lib/dynamicImport";
-import LogoLoader from "../components/LogoLoader";
 import {
   rememberBrowserDiagnosticEvent,
 } from "./crashDiagnostics";
 
+type LazyComponentModule = { default: ComponentType };
+
 let platformAppImport: Promise<{ default: ComponentType }> | null = null;
+let chartParityLabImport: Promise<LazyComponentModule> | null = null;
+let tickerSearchLabImport: Promise<LazyComponentModule> | null = null;
+let PlatformAppComponent: ComponentType | null = null;
+let ChartParityLabComponent: ComponentType | null = null;
+let TickerSearchLabComponent: ComponentType | null = null;
 
 const loadPlatformApp = () => {
   if (!platformAppImport) {
     platformAppImport =
       // @ts-expect-error JSX module has no declaration file in this TS config
       import("../features/platform/PlatformApp.jsx")
-        .then((mod) => ({ default: mod.default as ComponentType }))
+        .then((mod) => {
+          PlatformAppComponent = mod.default as ComponentType;
+          return { default: PlatformAppComponent };
+        })
         .catch((error) => {
           platformAppImport = null;
           throw error;
@@ -23,34 +32,37 @@ const loadPlatformApp = () => {
   return platformAppImport;
 };
 
-if (typeof window !== "undefined") {
-  void loadPlatformApp();
-}
+const loadChartParityLab = () => {
+  if (!chartParityLabImport) {
+    chartParityLabImport = import("../features/charting/ChartParityLab")
+      .then((mod) => {
+        ChartParityLabComponent = mod.ChartParityLab as ComponentType;
+        return { default: ChartParityLabComponent };
+      })
+      .catch((error) => {
+        chartParityLabImport = null;
+        throw error;
+      });
+  }
+  return chartParityLabImport;
+};
 
-const PlatformApp = lazyWithRetry(async () => {
-  return loadPlatformApp();
-}, {
-  label: "PlatformApp",
-});
-
-const ChartParityLab = lazyWithRetry(async () => {
-  const mod = await import("../features/charting/ChartParityLab");
-
-  return { default: mod.ChartParityLab };
-}, {
-  label: "ChartParityLab",
-});
-
-const TickerSearchLab = lazyWithRetry(async () => {
-  // @ts-expect-error JSX module has no declaration file in this TS config
-  const mod = (await import("../features/platform/tickerSearch/TickerSearch.jsx")) as {
-    TickerSearchLab: ComponentType;
-  };
-
-  return { default: mod.TickerSearchLab };
-}, {
-  label: "TickerSearchLab",
-});
+const loadTickerSearchLab = () => {
+  if (!tickerSearchLabImport) {
+    tickerSearchLabImport =
+      // @ts-expect-error JSX module has no declaration file in this TS config
+      import("../features/platform/tickerSearch/TickerSearch.jsx")
+        .then((mod) => {
+          TickerSearchLabComponent = mod.TickerSearchLab as ComponentType;
+          return { default: TickerSearchLabComponent };
+        })
+        .catch((error) => {
+          tickerSearchLabImport = null;
+          throw error;
+        });
+  }
+  return tickerSearchLabImport;
+};
 
 const resolveLabMode = (): string | null => {
   if (typeof window === "undefined") {
@@ -59,6 +71,43 @@ const resolveLabMode = (): string | null => {
 
   return new URLSearchParams(window.location.search).get("lab");
 };
+
+export const preloadInitialAppContentRoute = () => {
+  const labMode = resolveLabMode();
+  if (labMode === "chart-parity") {
+    return loadChartParityLab();
+  }
+  if (labMode === "ticker-search") {
+    return loadTickerSearchLab();
+  }
+  return loadPlatformApp();
+};
+
+const getPreloadedInitialAppContentRoute = (labMode: string | null) => {
+  if (labMode === "chart-parity") {
+    return ChartParityLabComponent;
+  }
+  if (labMode === "ticker-search") {
+    return TickerSearchLabComponent;
+  }
+  return PlatformAppComponent;
+};
+
+if (typeof window !== "undefined") {
+  void preloadInitialAppContentRoute();
+}
+
+const PlatformApp = lazyWithRetry(loadPlatformApp, {
+  label: "PlatformApp",
+});
+
+const ChartParityLab = lazyWithRetry(loadChartParityLab, {
+  label: "ChartParityLab",
+});
+
+const TickerSearchLab = lazyWithRetry(loadTickerSearchLab, {
+  label: "TickerSearchLab",
+});
 
 const resolveDevCrashMode = (): string | null => {
   if (!import.meta.env.DEV || typeof window === "undefined") {
@@ -101,6 +150,7 @@ function diagnosticErrorCode(
 function AppContent() {
   const labMode = resolveLabMode();
   const crashMode = resolveDevCrashMode();
+  const InitialRouteComponent = getPreloadedInitialAppContentRoute(labMode);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -155,15 +205,19 @@ function AppContent() {
     <>
       <DevCrashTrigger mode={crashMode} />
       <AppProviders>
-        <Suspense fallback={<LogoLoader testId="app-loading-fallback" />}>
-          {labMode === "chart-parity" ? (
-            <ChartParityLab />
-          ) : labMode === "ticker-search" ? (
-            <TickerSearchLab />
-          ) : (
-            <PlatformApp />
-          )}
-        </Suspense>
+        {InitialRouteComponent ? (
+          <InitialRouteComponent />
+        ) : (
+          <Suspense fallback={null}>
+            {labMode === "chart-parity" ? (
+              <ChartParityLab />
+            ) : labMode === "ticker-search" ? (
+              <TickerSearchLab />
+            ) : (
+              <PlatformApp />
+            )}
+          </Suspense>
+        )}
       </AppProviders>
     </>
   );

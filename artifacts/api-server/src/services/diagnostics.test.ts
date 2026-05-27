@@ -16,6 +16,7 @@ const signalOptionsWorkerStateModule = await import("./signal-options-worker-sta
 const storageHealthModule = await import("./storage-health");
 const {
   collectDiagnosticSnapshot,
+  exportDiagnostics,
   getDiagnosticThresholds,
   listDiagnosticHistory,
   listDiagnosticEvents,
@@ -25,7 +26,10 @@ const {
   recordServerDiagnosticEvent,
 } = diagnosticsModule;
 const { recordApiRequest, __resetRequestMetricsForTests } = requestMetricsModule;
-const { __resetApiResourcePressureForTests } = resourcePressureModule;
+const {
+  __resetApiResourcePressureForTests,
+  updateApiResourcePressure,
+} = resourcePressureModule;
 const {
   __resetStorageHealthForTests,
   __setStorageHealthProbeForTests,
@@ -715,6 +719,33 @@ test("diagnostics expose defaults, browser events, and memory-backed history", a
   });
   assert.ok(history.snapshots.length > 0);
   assert.ok(history.points.length > 0);
+});
+
+test("diagnostics clamp raw history and export limits under API pressure", async () => {
+  updateApiResourcePressure({ rssMb: 1_650 });
+  const from = new Date(Date.now() - 60_000);
+  const to = new Date(Date.now() + 60_000);
+
+  const history = await listDiagnosticHistory({
+    from,
+    to,
+    limit: 2_500,
+  });
+  assert.equal(history.limits.pressureLevel, "critical");
+  assert.equal(history.limits.appliedLimit, 120);
+  assert.equal(history.limits.pressureLimited, true);
+
+  const exported = await exportDiagnostics({
+    from,
+    to,
+    snapshotLimit: 2_500,
+    eventLimit: 1_000,
+  });
+  assert.equal(exported.limits.pressureLevel, "critical");
+  assert.equal(exported.limits.historyLimit, 60);
+  assert.equal(exported.limits.eventLimit, 40);
+  assert.equal(exported.limits.history.pressureLimited, true);
+  assert.equal(exported.limits.events.pressureLimited, true);
 });
 
 test("diagnostics classify stale IB Gateway tunnels and market-data gaps", async () => {

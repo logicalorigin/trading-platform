@@ -1220,7 +1220,7 @@ export const OperationsSignalTableHeader = ({
     <div
       role="row"
       style={{
-        display: algoIsPhone ? "none" : "grid",
+        display: "grid",
         gridTemplateColumns: signalColumnTemplate(visibleColumns),
         gap: sp(2),
         alignItems: "center",

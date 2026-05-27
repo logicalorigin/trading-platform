@@ -1735,6 +1735,24 @@ const reuseEqualJson = <T>(current: T | undefined, next: T): T => {
   return next;
 };
 
+const isDegradedAccountResponse = (value: unknown): boolean =>
+  Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as { degraded?: unknown }).degraded === true,
+  );
+
+const preferNonDegradedAccountResponse = <T>(current: T | undefined, next: T): T => {
+  if (
+    isDegradedAccountResponse(next) &&
+    current &&
+    !isDegradedAccountResponse(current)
+  ) {
+    return current;
+  }
+  return reuseEqualJson(current, next);
+};
+
 const rowIdOf = (row: { id?: unknown }): string | null => {
   const id = row?.id;
   return id == null ? null : String(id);
@@ -2450,11 +2468,19 @@ export const applyShadowAccountPayloadToCache = (
 
       const path = queryKeyPath(query.queryKey);
       if (path === "/api/accounts/shadow/summary") {
-        queryClient.setQueryData(query.queryKey, payload.summary);
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountSummaryResponse | undefined) =>
+            preferNonDegradedAccountResponse(current, payload.summary),
+        );
       } else if (path === "/api/accounts/shadow/positions") {
         queryClient.setQueryData(
           query.queryKey,
-          shadowPositionsForQuery(payload.positions, query.queryKey),
+          (current: AccountPositionsResponse | undefined) =>
+            preferNonDegradedAccountResponse(
+              current,
+              shadowPositionsForQuery(payload.positions, query.queryKey),
+            ),
         );
       } else if (path === "/api/accounts/shadow/orders") {
         queryClient.setQueryData(
@@ -2462,9 +2488,17 @@ export const applyShadowAccountPayloadToCache = (
           shadowOrdersForQuery(payload, query.queryKey),
         );
       } else if (path === "/api/accounts/shadow/allocation") {
-        queryClient.setQueryData(query.queryKey, payload.allocation);
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountAllocationResponse | undefined) =>
+            preferNonDegradedAccountResponse(current, payload.allocation),
+        );
       } else if (path === "/api/accounts/shadow/risk") {
-        queryClient.setQueryData(query.queryKey, payload.risk);
+        queryClient.setQueryData(
+          query.queryKey,
+          (current: AccountRiskResponse | undefined) =>
+            preferNonDegradedAccountResponse(current, payload.risk),
+        );
       }
     });
 
@@ -2579,25 +2613,28 @@ const seedAccountPageCriticalQueryKeys = (
     queryClient,
     getGetAccountSummaryQueryKey(payload.accountId, modeParams),
     (current: AccountSummaryResponse | undefined) =>
-      reuseEqualJson(current, payload.summary),
+      preferNonDegradedAccountResponse(current, payload.summary),
   );
   setAccountPageQueryData(
     queryClient,
     getGetAccountAllocationQueryKey(payload.accountId, modeParams),
     (current: AccountAllocationResponse | undefined) =>
-      reuseEqualJson(current, payload.allocation),
+      preferNonDegradedAccountResponse(current, payload.allocation),
   );
   setAccountPageQueryData(
     queryClient,
     getGetAccountRiskQueryKey(payload.accountId, modeParams),
     (current: AccountRiskResponse | undefined) =>
-      reuseEqualJson(current, payload.risk),
+      preferNonDegradedAccountResponse(current, payload.risk),
   );
   setAccountPageQueryData(
     queryClient,
     getGetAccountPositionsQueryKey(payload.accountId, accountPositionsParams(payload)),
     (current: AccountPositionsResponse | undefined) =>
-      maybeReuseAccountPositionsResponse(current, payload.positions),
+      preferNonDegradedAccountResponse(
+        current,
+        maybeReuseAccountPositionsResponse(current, payload.positions),
+      ),
   );
   setAccountPageQueryData(
     queryClient,
@@ -2730,19 +2767,19 @@ export const applyAccountPageCriticalPayloadToCache = (
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountSummaryResponse | undefined) =>
-            reuseEqualJson(current, payload.summary),
+            preferNonDegradedAccountResponse(current, payload.summary),
         );
       } else if (path === `/api/accounts/${payload.accountId}/allocation`) {
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountAllocationResponse | undefined) =>
-            reuseEqualJson(current, payload.allocation),
+            preferNonDegradedAccountResponse(current, payload.allocation),
         );
       } else if (path === `/api/accounts/${payload.accountId}/risk`) {
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountRiskResponse | undefined) =>
-            reuseEqualJson(current, payload.risk),
+            preferNonDegradedAccountResponse(current, payload.risk),
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/positions` &&
@@ -2751,7 +2788,10 @@ export const applyAccountPageCriticalPayloadToCache = (
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountPositionsResponse | undefined) =>
-            maybeReuseAccountPositionsResponse(current, payload.positions),
+            preferNonDegradedAccountResponse(
+              current,
+              maybeReuseAccountPositionsResponse(current, payload.positions),
+            ),
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/orders` &&
@@ -2795,19 +2835,19 @@ export const applyAccountPageLivePayloadToCache = (
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountSummaryResponse | undefined) =>
-            reuseEqualJson(current, payload.summary),
+            preferNonDegradedAccountResponse(current, payload.summary),
         );
       } else if (path === `/api/accounts/${payload.accountId}/allocation`) {
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountAllocationResponse | undefined) =>
-            reuseEqualJson(current, payload.allocation),
+            preferNonDegradedAccountResponse(current, payload.allocation),
         );
       } else if (path === `/api/accounts/${payload.accountId}/risk`) {
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountRiskResponse | undefined) =>
-            reuseEqualJson(current, payload.risk),
+            preferNonDegradedAccountResponse(current, payload.risk),
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/positions` &&
@@ -2816,7 +2856,10 @@ export const applyAccountPageLivePayloadToCache = (
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountPositionsResponse | undefined) =>
-            maybeReuseAccountPositionsResponse(current, payload.positions),
+            preferNonDegradedAccountResponse(
+              current,
+              maybeReuseAccountPositionsResponse(current, payload.positions),
+            ),
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/orders` &&

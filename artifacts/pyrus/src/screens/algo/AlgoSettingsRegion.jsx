@@ -1,6 +1,7 @@
 import {
   useId,
   useMemo,
+  useState,
 } from "react";
 import { buildAlgoTuningImpact } from "../../features/platform/algoTuningImpactModel";
 import {
@@ -13,8 +14,10 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { SegmentedControl } from "../../components/platform/primitives.jsx";
 import {
   SIGNAL_OPTIONS_EXPANDED_CAPACITY,
+  SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS,
   compactButtonStyle,
   formatChaseSteps,
   formatMoney,
@@ -24,86 +27,67 @@ import {
   parseProgressiveTrailSteps,
 } from "./algoHelpers";
 import {
-  compactRailSettingGroups,
+  SETTINGS_SECTIONS,
   countDirtyFieldsBySection,
   formatSettingValue,
   getPathValue,
-  isCompactHaltSettingPath,
   isNumericSettingType,
-  settingsRegionFields,
 } from "./algoSettingsFields";
-import { SegmentedControl } from "../../components/platform/primitives.jsx";
-import { SettingsFormRow } from "./SettingsFormRow";
 import { SettingsSectionHeader } from "./SettingsSectionHeader";
-import { Slider } from "../../components/ui/Slider.jsx";
 
-const COMPACT_SLIDER_TYPES = new Set(["slider", "logSlider"]);
+const STRIKE_SLOT_ROWS = [...SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS]
+  .sort((left, right) => Number(right.value) - Number(left.value));
+const STRIKE_SLOT_VALUES_DESC = STRIKE_SLOT_ROWS.map((option) =>
+  Number(option.value),
+);
 
-const formatCompactSliderValue = (field, value) => {
-  if (value == null || value === "") return "—";
-  if (field.format === "money") return formatMoney(value);
-  const num = Number(value);
-  if (!Number.isFinite(num)) return String(value);
-  if (field.step != null && field.step < 1) {
-    const digits = Math.min(
-      3,
-      Math.max(0, -Math.floor(Math.log10(field.step))),
-    );
-    return num.toFixed(digits);
-  }
-  return String(Math.round(num));
-};
+const EXIT_TRACK_MARKERS = [
+  {
+    key: "hard-stop",
+    fieldPath: "exitPolicy.hardStopPct",
+    label: "Stop",
+    tone: CSS_COLOR.red,
+    side: "loss",
+  },
+  {
+    key: "early-loss",
+    fieldPath: "exitPolicy.earlyExitLossPct",
+    label: "Early",
+    tone: CSS_COLOR.red,
+    side: "loss",
+    positionValue: (value) => -Math.abs(Number(value) || 0),
+  },
+  {
+    key: "trail-activation",
+    fieldPath: "exitPolicy.trailActivationPct",
+    label: "Trail",
+    tone: CSS_COLOR.green,
+    side: "gain",
+  },
+  {
+    key: "min-locked",
+    fieldPath: "exitPolicy.minLockedGainPct",
+    label: "Lock",
+    tone: CSS_COLOR.green,
+    side: "gain",
+  },
+  {
+    key: "five-x",
+    fieldPath: "exitPolicy.tightenAtFiveXGivebackPct",
+    label: "5x",
+    tone: CSS_COLOR.green,
+    side: "gain",
+  },
+  {
+    key: "ten-x",
+    fieldPath: "exitPolicy.tightenAtTenXGivebackPct",
+    label: "10x",
+    tone: CSS_COLOR.green,
+    side: "gain",
+  },
+];
 
-const gridTemplateFor = (columns, { algoIsPhone, algoIsNarrow }) => {
-  const resolvedColumns = algoIsPhone
-    ? 1
-    : algoIsNarrow
-      ? Math.min(columns, 2)
-      : columns;
-  return `repeat(${resolvedColumns}, minmax(0, 1fr))`;
-};
-
-const compactGridTemplateFor = (columns, { algoIsPhone, algoIsNarrow }) => {
-  const resolvedColumns = algoIsPhone
-    ? 2
-    : algoIsNarrow
-      ? Math.min(columns, 3)
-      : columns;
-  return `repeat(${resolvedColumns}, minmax(0, 1fr))`;
-};
-
-const compactUnitLabel = (field) => {
-  if (!field?.unit) return null;
-  if (field.format === "money" || field.unit === "USD") return "$";
-  if (field.unit === "% of mid" || field.unit === "%") return "%";
-  if (field.unit === "% from entry") return "%";
-  if (field.unit === "% gain") return "%";
-  if (field.unit === "x ATR") return "ATR";
-  if (field.unit === "x avg") return "avg";
-  if (field.unit === "seconds") return "sec";
-  if (field.unit === "bars") return "bars";
-  if (field.unit === "days") return "d";
-  if (field.unit === "matches") return "of 3";
-  return field.unit;
-};
-
-const compactInputStyle = ({ invalid, disabled }) => ({
-  height: dim(24),
-  width: "100%",
-  minWidth: 0,
-  padding: sp("0 6px"),
-  border: `1px solid ${invalid ? CSS_COLOR.red : CSS_COLOR.border}`,
-  borderRadius: dim(RADII.xs),
-  background: CSS_COLOR.bg1,
-  color: CSS_COLOR.text,
-  fontFamily: T.data,
-  fontSize: textSize("caption"),
-  outline: "none",
-  boxSizing: "border-box",
-  opacity: disabled ? 0.55 : 1,
-});
-
-const fieldKey = (field) => `${field.slice}.${field.path}`;
+export const fieldKey = (field) => `${field.slice}.${field.path}`;
 
 const getDraftRoot = ({ field, profileDraft, strategySettingsDraft }) =>
   field.slice === "profile" ? profileDraft : strategySettingsDraft;
@@ -118,7 +102,81 @@ const getPatchHandler = ({
 }) =>
   field.slice === "profile" ? patchProfileDraftPath : patchStrategySettingsPath;
 
-const CompactSwitch = ({ checked, disabled, ariaLabel, testId, onChange }) => (
+const compactUnitLabel = (field) => {
+  if (!field?.unit) return null;
+  if (field.format === "money" || field.unit === "USD") return "$";
+  if (
+    field.unit === "% of mid" ||
+    field.unit === "%" ||
+    field.unit === "% from entry" ||
+    field.unit === "% gain"
+  ) {
+    return "%";
+  }
+  if (field.unit === "x ATR") return "ATR";
+  if (field.unit === "x avg") return "avg";
+  if (field.unit === "seconds") return "sec";
+  if (field.unit === "bars") return "bars";
+  if (field.unit === "days") return "d";
+  if (field.unit === "matches") return "of 3";
+  return field.unit;
+};
+
+const compactInputStyle = ({ invalid, disabled, numeric = false }) => ({
+  height: dim(24),
+  width: "100%",
+  minWidth: 0,
+  padding: sp("0 6px"),
+  border: `1px solid ${invalid ? CSS_COLOR.red : CSS_COLOR.border}`,
+  borderRadius: dim(RADII.xs),
+  background: CSS_COLOR.bg1,
+  color: invalid ? CSS_COLOR.red : CSS_COLOR.text,
+  fontFamily: numeric ? T.data : T.sans,
+  fontSize: textSize("caption"),
+  outline: "none",
+  boxSizing: "border-box",
+  opacity: disabled ? 0.55 : 1,
+  cursor: disabled ? "not-allowed" : undefined,
+  textAlign: numeric ? "right" : "left",
+});
+
+const compactImpactSummary = (field, impact) => {
+  if (!field.impact || !impact) return null;
+  const count = Number(impact.count || 0);
+  const hasImpact = count > 0;
+  const symbols = (impact.sampleSymbols || [])
+    .slice(0, 5)
+    .map((symbol) => String(symbol || "").toUpperCase())
+    .filter(Boolean);
+  return {
+    color:
+      hasImpact && field.warningWhenNonZero !== false
+        ? CSS_COLOR.amber
+        : CSS_COLOR.textMuted,
+    background:
+      hasImpact && field.warningWhenNonZero !== false
+        ? cssColorMix(CSS_COLOR.amber, 12)
+        : "transparent",
+    label:
+      impact.total != null
+        ? `${count}/${impact.total}`
+        : hasImpact
+          ? `${count} block`
+          : "clear",
+    title: symbols.length ? symbols.join(", ") : field.label,
+  };
+};
+
+const numericField = (field) =>
+  isNumericSettingType(field.type) || field.type === "number";
+
+export const CompactSwitch = ({
+  checked,
+  disabled,
+  ariaLabel,
+  testId,
+  onChange,
+}) => (
   <button
     type="button"
     role="switch"
@@ -133,8 +191,8 @@ const CompactSwitch = ({ checked, disabled, ariaLabel, testId, onChange }) => (
       minWidth: dim(27),
       minHeight: dim(16),
       border: `1px solid ${checked ? CSS_COLOR.accent : CSS_COLOR.border}`,
-      borderRadius: dim(8),
-      background: checked ? `${cssColorMix(CSS_COLOR.accent, 13)}` : "transparent",
+      borderRadius: dim(RADII.pill),
+      background: checked ? cssColorMix(CSS_COLOR.accent, 18) : "transparent",
       padding: dim(1),
       cursor: disabled ? "not-allowed" : "pointer",
       opacity: disabled ? 0.55 : 1,
@@ -144,37 +202,86 @@ const CompactSwitch = ({ checked, disabled, ariaLabel, testId, onChange }) => (
       boxSizing: "border-box",
       lineHeight: 0,
       flex: "0 0 auto",
+      transition: "border-color 140ms ease, background 140ms ease",
     }}
   >
     <span
       aria-hidden="true"
       style={{
-        width: dim(10),
-        height: dim(10),
-        borderRadius: dim(5),
+        width: dim(11),
+        height: dim(11),
+        borderRadius: dim(RADII.pill),
         background: checked ? CSS_COLOR.accent : CSS_COLOR.textMuted,
         display: "block",
+        transition: "transform 140ms ease",
       }}
     />
   </button>
 );
 
-const compactImpactSummary = (field, impact) => {
-  if (!field.impact || !impact) return null;
-  const count = Number(impact.count || 0);
-  const hasImpact = count > 0;
-  return {
-    color: hasImpact && field.warningWhenNonZero !== false ? CSS_COLOR.amber : CSS_COLOR.textMuted,
-    label:
-      impact.total != null
-        ? `${count}/${impact.total}`
-        : hasImpact
-          ? `${count} hit`
-          : "clear",
-  };
-};
+const CompactLabel = ({ label, dirty, previousValue, field, impact }) => (
+  <span
+    style={{
+      display: "flex",
+      alignItems: "baseline",
+      gap: sp(2),
+      minWidth: 0,
+      width: "100%",
+    }}
+  >
+    <span
+      style={{
+        color: CSS_COLOR.textSec,
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        fontWeight: FONT_WEIGHTS.label,
+        lineHeight: 1.1,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        minWidth: 0,
+      }}
+    >
+      {label}
+    </span>
+    {dirty ? (
+      <span
+        role="status"
+        aria-label={`${label} unsaved`}
+        title={`was: ${formatSettingValue(field, previousValue)}`}
+        style={{
+          width: dim(5),
+          height: dim(5),
+          borderRadius: dim(RADII.pill),
+          background: CSS_COLOR.accent,
+          flex: "0 0 auto",
+          opacity: 1,
+          transition: "opacity 120ms ease",
+        }}
+      />
+    ) : null}
+    {impact ? (
+      <span
+        title={impact.title}
+        style={{
+          color: impact.color,
+          background: impact.background,
+          borderRadius: dim(RADII.xs),
+          fontFamily: T.sans,
+          fontSize: textSize("micro"),
+          lineHeight: 1,
+          marginLeft: "auto",
+          padding: sp("0 4px"),
+          flex: "0 0 auto",
+        }}
+      >
+        {impact.label}
+      </span>
+    ) : null}
+  </span>
+);
 
-const CompactFieldInput = ({
+export const CompactFieldInput = ({
   id,
   field,
   value,
@@ -184,7 +291,8 @@ const CompactFieldInput = ({
   testId,
   onPatch,
 }) => {
-  const inputStyle = compactInputStyle({ invalid, disabled });
+  const numeric = numericField(field);
+  const inputStyle = compactInputStyle({ invalid, disabled, numeric });
   if (field.type === "select") {
     return (
       <select
@@ -235,7 +343,7 @@ const CompactFieldInput = ({
               ? parseChaseSteps(event.target.value, value || [])
               : field.format === "progressiveTrailSteps"
                 ? parseProgressiveTrailSteps(event.target.value, value || [])
-              : event.target.value,
+                : event.target.value,
           )
         }
         style={inputStyle}
@@ -259,6 +367,7 @@ const CompactFieldInput = ({
             onPatch(field.path, field.coerce ? field.coerce(next) : next)
           }
           ariaLabel={ariaLabel}
+          radioGroup
           buttonTestId={(option) =>
             `${testId}-${typeof option === "string" ? option : option.value}`
           }
@@ -266,55 +375,10 @@ const CompactFieldInput = ({
       </span>
     );
   }
-  if (COMPACT_SLIDER_TYPES.has(field.type)) {
-    const scale = field.type === "logSlider" ? "log" : "linear";
-    const safeValue = Number.isFinite(Number(value))
-      ? Number(value)
-      : field.min ?? 0;
-    return (
-      <span
-        data-testid={testId}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: sp(2),
-          width: "100%",
-          minWidth: 0,
-          opacity: invalid ? 1 : undefined,
-        }}
-      >
-        <span
-          aria-hidden="true"
-          style={{
-            color: invalid ? CSS_COLOR.red : CSS_COLOR.text,
-            fontFamily: T.data,
-            fontSize: textSize("body"),
-            fontWeight: FONT_WEIGHTS.label,
-            minWidth: dim(28),
-            textAlign: "right",
-            flex: "0 0 auto",
-          }}
-        >
-          {formatCompactSliderValue(field, value)}
-        </span>
-        <span style={{ flex: "1 1 auto", minWidth: 0 }}>
-          <Slider
-            value={safeValue}
-            onChange={(next) => onPatch(field.path, next)}
-            min={field.min}
-            max={field.max}
-            step={field.step}
-            scale={scale}
-            disabled={disabled}
-            ariaLabel={ariaLabel}
-          />
-        </span>
-      </span>
-    );
-  }
   return (
     <input
       id={id}
+      className={numeric ? "tnum" : undefined}
       type="number"
       min={field.min}
       max={field.max}
@@ -334,64 +398,17 @@ const CompactFieldInput = ({
   );
 };
 
-const CompactLabel = ({ label, dirty, previousValue, field, impact }) => (
-  <span
-    style={{
-      display: "flex",
-      alignItems: "center",
-      gap: sp(2),
-      minWidth: 0,
-      width: "100%",
-    }}
-  >
-    <span
-      style={{
-        color: CSS_COLOR.textSec,
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
-        fontWeight: FONT_WEIGHTS.label,
-        lineHeight: 1.1,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        minWidth: 0,
-      }}
-    >
-      {label}
-    </span>
-    {dirty ? (
-      <span
-        role="status"
-        aria-label={`${label} unsaved`}
-        title={`was: ${formatSettingValue(field, previousValue)}`}
-        style={{
-          width: dim(5),
-          height: dim(5),
-          borderRadius: dim(3),
-          background: CSS_COLOR.accent,
-          flex: "0 0 auto",
-        }}
-      />
-    ) : null}
-    {impact ? (
-      <span
-        title={field.label}
-        style={{
-          color: impact.color,
-          fontFamily: T.sans,
-          fontSize: textSize("micro"),
-          lineHeight: 1,
-          marginLeft: "auto",
-          flex: "0 0 auto",
-        }}
-      >
-        {impact.label}
-      </span>
-    ) : null}
-  </span>
-);
+const invalidNumericValue = (field, value) => {
+  if (!numericField(field)) return false;
+  const numericValue = Number(value);
+  return (
+    !Number.isFinite(numericValue) ||
+    (field.min != null && numericValue < field.min) ||
+    (field.max != null && numericValue > field.max)
+  );
+};
 
-const CompactSettingCell = ({
+export const CompactSettingCell = ({
   item,
   profileDraft,
   profileBaseline,
@@ -410,12 +427,7 @@ const CompactSettingCell = ({
   const value = getPathValue(draftRoot, field.path);
   const previousValue = getPathValue(baselineRoot, field.path);
   const dirty = dirtyFieldKeys.has(fieldKey(field));
-  const numericValue = Number(value);
-  const invalid =
-    isNumericSettingType(field.type) &&
-    (!Number.isFinite(numericValue) ||
-      (field.min != null && numericValue < field.min) ||
-      (field.max != null && numericValue > field.max));
+  const invalid = invalidNumericValue(field, value);
   const onPatch = getPatchHandler({
     field,
     patchProfileDraftPath,
@@ -423,10 +435,12 @@ const CompactSettingCell = ({
   });
   const unitLabel = compactUnitLabel(field);
   const impactBadge = compactImpactSummary(field, field.impact ? impact[field.impact] : null);
+  const className = field.compactWide || field.fullWidth ? "algo-cell--wide" : undefined;
 
   return (
     <label
       htmlFor={field.type === "boolean" ? undefined : id}
+      className={className}
       title={[
         field.label,
         formatSettingValue(field, value),
@@ -440,9 +454,10 @@ const CompactSettingCell = ({
         gap: sp(2),
         minHeight: dim(42),
         minWidth: 0,
-        gridColumn: item.compactWide ? "span 2" : undefined,
+        opacity: disabled ? 0.55 : 1,
+        pointerEvents: disabled ? "none" : undefined,
       }}
-      data-testid={`algo-compact-control-${field.compactId}`}
+      data-testid={`algo-compact-control-${field.path}`}
     >
       <CompactLabel
         label={field.compactLabel || field.label}
@@ -456,29 +471,16 @@ const CompactSettingCell = ({
           style={{
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
-            gap: sp(4),
+            justifyContent: "flex-end",
             minWidth: 0,
             height: dim(24),
           }}
         >
-          <span
-            style={{
-              color: value ? CSS_COLOR.textSec : CSS_COLOR.textMuted,
-              fontFamily: T.sans,
-              fontSize: textSize("micro"),
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {value ? "On" : "Off"}
-          </span>
           <CompactSwitch
             checked={Boolean(value)}
             disabled={disabled}
             ariaLabel={field.label}
-            testId={`algo-compact-toggle-${field.compactId}`}
+            testId={`algo-compact-toggle-${field.path}`}
             onChange={(nextValue) => onPatch(field.path, nextValue)}
           />
         </span>
@@ -498,7 +500,7 @@ const CompactSettingCell = ({
             invalid={invalid}
             disabled={disabled}
             ariaLabel={field.label}
-            testId={`algo-compact-input-${field.compactId}`}
+            testId={`algo-compact-input-${field.path}`}
             onPatch={onPatch}
           />
           {unitLabel ? (
@@ -532,174 +534,685 @@ const CompactSettingCell = ({
   );
 };
 
-const CompactCompoundSettingCell = ({
-  item,
+const ContractDteCell = ({
+  minField,
+  zeroDteField,
   profileDraft,
   profileBaseline,
-  strategySettingsDraft,
-  strategyBaseline,
   patchProfileDraftPath,
-  patchStrategySettingsPath,
   disabled,
   dirtyFieldKeys,
 }) => {
   const id = useId().replace(/:/g, "");
-  const { toggleField, valueField } = item;
-  const toggleDraftRoot = getDraftRoot({
-    field: toggleField,
-    profileDraft,
-    strategySettingsDraft,
-  });
-  const toggleBaselineRoot = getBaselineRoot({
-    field: toggleField,
-    profileBaseline,
-    strategyBaseline,
-  });
-  const valueDraftRoot = getDraftRoot({
-    field: valueField,
-    profileDraft,
-    strategySettingsDraft,
-  });
-  const valueBaselineRoot = getBaselineRoot({
-    field: valueField,
-    profileBaseline,
-    strategyBaseline,
-  });
-  const toggleValue = getPathValue(toggleDraftRoot, toggleField.path);
-  const previousToggleValue = getPathValue(toggleBaselineRoot, toggleField.path);
-  const value = getPathValue(valueDraftRoot, valueField.path);
-  const previousValue = getPathValue(valueBaselineRoot, valueField.path);
+  const minValue = getPathValue(profileDraft, minField.path);
+  const zeroDteValue = getPathValue(profileDraft, zeroDteField.path);
+  const minPrevious = getPathValue(profileBaseline, minField.path);
+  const zeroDtePrevious = getPathValue(profileBaseline, zeroDteField.path);
   const dirty =
-    dirtyFieldKeys.has(fieldKey(toggleField)) ||
-    dirtyFieldKeys.has(fieldKey(valueField));
-  const numericValue = Number(value);
-  const invalid =
-    isNumericSettingType(valueField.type) &&
-    (!Number.isFinite(numericValue) ||
-      (valueField.min != null && numericValue < valueField.min) ||
-      (valueField.max != null && numericValue > valueField.max));
-  const togglePatch = getPatchHandler({
-    field: toggleField,
-    patchProfileDraftPath,
-    patchStrategySettingsPath,
-  });
-  const valuePatch = getPatchHandler({
-    field: valueField,
-    patchProfileDraftPath,
-    patchStrategySettingsPath,
-  });
-  const unitLabel = compactUnitLabel(valueField);
+    dirtyFieldKeys.has(fieldKey(minField)) ||
+    dirtyFieldKeys.has(fieldKey(zeroDteField));
+  const invalid = invalidNumericValue(minField, minValue);
 
   return (
     <div
-      title={[
-        toggleField.label,
-        formatSettingValue(toggleField, toggleValue),
-        valueField.label,
-        formatSettingValue(valueField, value),
-        dirty
-          ? `was ${formatSettingValue(toggleField, previousToggleValue)} / ${formatSettingValue(valueField, previousValue)}`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(" · ")}
       style={{
         display: "flex",
         flexDirection: "column",
         gap: sp(2),
         minHeight: dim(42),
         minWidth: 0,
-        gridColumn: "span 2",
       }}
-      data-testid={`algo-compact-control-${item.compactId}`}
+      data-testid="algo-contract-min-dte"
+      title={[
+        minField.label,
+        formatSettingValue(minField, minValue),
+        zeroDteField.label,
+        formatSettingValue(zeroDteField, zeroDteValue),
+        dirty
+          ? `was ${formatSettingValue(minField, minPrevious)} / ${formatSettingValue(zeroDteField, zeroDtePrevious)}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")}
     >
       <CompactLabel
-        label={item.compactLabel}
+        label="Min DTE"
         dirty={dirty}
-        previousValue={`${formatSettingValue(toggleField, previousToggleValue)} / ${formatSettingValue(valueField, previousValue)}`}
-        field={valueField}
+        previousValue={`${formatSettingValue(minField, minPrevious)} / ${formatSettingValue(zeroDteField, zeroDtePrevious)}`}
+        field={minField}
         impact={null}
       />
       <span
         style={{
           display: "grid",
-          gridTemplateColumns: "auto minmax(0, 1fr)",
+          gridTemplateColumns: "minmax(0, 1fr) auto",
           alignItems: "center",
-          columnGap: sp(4),
+          gap: sp(3),
           minWidth: 0,
         }}
       >
+        <CompactFieldInput
+          id={id}
+          field={minField}
+          value={minValue}
+          invalid={invalid}
+          disabled={disabled}
+          ariaLabel={minField.label}
+          testId="algo-contract-min-dte-input"
+          onPatch={patchProfileDraftPath}
+        />
         <span
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: sp(3),
-            minWidth: 0,
-          }}
-        >
-          <span
-            style={{
-              color: CSS_COLOR.textMuted,
-              fontFamily: T.sans,
-              fontSize: textSize("micro"),
-              lineHeight: 1,
-            }}
-          >
-            {toggleField.compactLabel}
-          </span>
-          <CompactSwitch
-            checked={Boolean(toggleValue)}
-            disabled={disabled}
-            ariaLabel={toggleField.label}
-            testId={`algo-compact-toggle-${item.compactId}`}
-            onChange={(nextValue) => togglePatch(toggleField.path, nextValue)}
-          />
-        </span>
-        <span
-          style={{
-            display: "flex",
+            display: "inline-flex",
             alignItems: "center",
             gap: sp(2),
-            minWidth: 0,
-          }}
-        >
-          <CompactFieldInput
-            id={id}
-            field={valueField}
-            value={value}
-            invalid={invalid}
-            disabled={disabled}
-            ariaLabel={valueField.label}
-            testId={`algo-compact-input-${item.compactId}`}
-            onPatch={valuePatch}
-          />
-          {unitLabel ? (
-            <span
-              aria-hidden="true"
-              style={{
-                color: invalid ? CSS_COLOR.red : CSS_COLOR.textMuted,
-                fontFamily: T.sans,
-                fontSize: textSize("micro"),
-                lineHeight: 1,
-                flex: "0 0 auto",
-              }}
-            >
-              {unitLabel}
-            </span>
-          ) : null}
-        </span>
-      </span>
-      {invalid ? (
-        <span
-          style={{
-            color: CSS_COLOR.red,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("micro"),
           }}
         >
-          {valueField.min}-{valueField.max}
+          0DTE
+          <CompactSwitch
+            checked={Boolean(zeroDteValue)}
+            disabled={disabled}
+            ariaLabel={zeroDteField.label}
+            testId="algo-contract-allow-0dte"
+            onChange={(nextValue) => patchProfileDraftPath(zeroDteField.path, nextValue)}
+          />
         </span>
-      ) : null}
+      </span>
+    </div>
+  );
+};
+
+const moveStrikeSlot = (current, direction) => {
+  const slots = STRIKE_SLOT_VALUES_DESC;
+  const currentIndex = Math.max(0, slots.indexOf(Number(current)));
+  const nextIndex = Math.min(
+    slots.length - 1,
+    Math.max(0, currentIndex + direction),
+  );
+  return slots[nextIndex];
+};
+
+const StrikeRadio = ({
+  side,
+  slot,
+  selected,
+  disabled,
+  tone,
+  onSelect,
+  onMove,
+}) => (
+  <button
+    type="button"
+    role="radio"
+    aria-checked={selected}
+    aria-label={`${side} strike slot ${slot}`}
+    data-testid={`algo-strike-ladder-${side.toLowerCase()}-${slot}`}
+    disabled={disabled}
+    onClick={() => onSelect(slot)}
+    onKeyDown={(event) => {
+      if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+        event.preventDefault();
+        onMove(-1);
+      }
+      if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+        event.preventDefault();
+        onMove(1);
+      }
+    }}
+    style={{
+      width: dim(18),
+      height: dim(18),
+      border: "none",
+      borderRadius: dim(RADII.pill),
+      background: "transparent",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 0,
+      cursor: disabled ? "not-allowed" : "pointer",
+      opacity: disabled ? 0.55 : 1,
+      outlineOffset: dim(1),
+    }}
+  >
+    <span
+      aria-hidden="true"
+      style={{
+        width: dim(10),
+        height: dim(10),
+        borderRadius: dim(RADII.pill),
+        border: `1px solid ${selected ? tone : CSS_COLOR.border}`,
+        background: selected ? tone : "transparent",
+        boxShadow: selected ? `0 0 0 2px ${cssColorMix(tone, 18)}` : "none",
+        display: "block",
+      }}
+    />
+  </button>
+);
+
+export const ContractSelectionCell = ({
+  item,
+  profileDraft,
+  profileBaseline,
+  patchProfileDraftPath,
+  disabled,
+  dirtyFieldKeys,
+}) => {
+  const fieldByPath = Object.fromEntries(
+    item.fields.map((field) => [field.path, field]),
+  );
+  const minField = fieldByPath["optionSelection.minDte"];
+  const targetField = fieldByPath["optionSelection.targetDte"];
+  const maxField = fieldByPath["optionSelection.maxDte"];
+  const zeroDteField = fieldByPath["optionSelection.allowZeroDte"];
+  const callField = fieldByPath["optionSelection.callStrikeSlot"];
+  const putField = fieldByPath["optionSelection.putStrikeSlot"];
+  const callValue = Number(getPathValue(profileDraft, callField.path));
+  const putValue = Number(getPathValue(profileDraft, putField.path));
+
+  const patchStrike = (field, slot) => {
+    patchProfileDraftPath(field.path, Number(slot));
+  };
+  const strikeRows = STRIKE_SLOT_ROWS.reduce((rows, option) => {
+    const slot = Number(option.value);
+    if (slot === 2) {
+      rows.push({ id: "atm-divider", type: "divider", row: rows.length + 2 });
+    }
+    rows.push({
+      id: `slot-${slot}`,
+      type: "slot",
+      option,
+      slot,
+      row: rows.length + 2,
+      background:
+        slot === 2 || slot === 3
+          ? cssColorMix(CSS_COLOR.text, 3)
+          : "transparent",
+    });
+    return rows;
+  }, []);
+  const strikeSlotRows = strikeRows.filter((row) => row.type === "slot");
+  const renderStrikeHeader = ({ label, column, field }) => {
+    const dirty = field ? dirtyFieldKeys.has(fieldKey(field)) : false;
+    return (
+      <span
+        key={label}
+        style={{
+          gridColumn: column,
+          gridRow: 1,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: label === "STRIKE" ? "flex-start" : "center",
+          gap: sp(2),
+          color: CSS_COLOR.textMuted,
+          fontFamily: T.sans,
+          fontSize: textSize("micro"),
+          fontWeight: FONT_WEIGHTS.label,
+          textTransform: "uppercase",
+          minWidth: 0,
+        }}
+      >
+        <span>{label}</span>
+        {dirty ? (
+          <span
+            aria-label={`${label} strike slot unsaved`}
+            role="status"
+            style={{
+              width: dim(5),
+              height: dim(5),
+              borderRadius: dim(RADII.pill),
+              background: CSS_COLOR.accent,
+              flex: "0 0 auto",
+            }}
+          />
+        ) : null}
+      </span>
+    );
+  };
+
+  return (
+    <div
+      className="algo-cell--full"
+      data-testid="algo-strike-ladder"
+      style={{
+        display: "grid",
+        gap: sp(5),
+        minWidth: 0,
+      }}
+    >
+      <div className="algo-settings-grid">
+        <ContractDteCell
+          minField={minField}
+          zeroDteField={zeroDteField}
+          profileDraft={profileDraft}
+          profileBaseline={profileBaseline}
+          patchProfileDraftPath={patchProfileDraftPath}
+          disabled={disabled}
+          dirtyFieldKeys={dirtyFieldKeys}
+        />
+        {[targetField, maxField].map((field) => (
+          <CompactSettingCell
+            key={field.path}
+            item={field}
+            profileDraft={profileDraft}
+            profileBaseline={profileBaseline}
+            strategySettingsDraft={null}
+            strategyBaseline={null}
+            patchProfileDraftPath={patchProfileDraftPath}
+            patchStrategySettingsPath={() => {}}
+            disabled={disabled}
+            dirtyFieldKeys={dirtyFieldKeys}
+            impact={{}}
+          />
+        ))}
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `minmax(0, 1fr) ${dim(44)}px ${dim(44)}px`,
+          alignItems: "center",
+          rowGap: sp(1),
+          minWidth: 0,
+        }}
+      >
+        {renderStrikeHeader({ label: "STRIKE", column: 1 })}
+        {renderStrikeHeader({ label: "CALL", column: 2, field: callField })}
+        {renderStrikeHeader({ label: "PUT", column: 3, field: putField })}
+        {strikeRows.map((row) =>
+          row.type === "divider" ? (
+            <div
+              key={row.id}
+              style={{
+                gridColumn: "1 / -1",
+                gridRow: row.row,
+                display: "grid",
+                gridTemplateColumns: "1fr auto 1fr",
+                alignItems: "center",
+                gap: sp(3),
+                color: CSS_COLOR.textMuted,
+                fontFamily: T.sans,
+                fontSize: textSize("micro"),
+                margin: sp("1px 0"),
+              }}
+            >
+              <span style={{ borderTop: `1px solid ${CSS_COLOR.borderLight}` }} />
+              <span>ATM</span>
+              <span style={{ borderTop: `1px solid ${CSS_COLOR.borderLight}` }} />
+            </div>
+          ) : (
+            <span
+              key={`label-${row.slot}`}
+              style={{
+                gridColumn: 1,
+                gridRow: row.row,
+                height: dim(26),
+                display: "flex",
+                alignItems: "center",
+                minWidth: 0,
+                color: CSS_COLOR.textSec,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                background: row.background,
+                paddingLeft: sp(2),
+              }}
+            >
+              {row.option.label}
+            </span>
+          ),
+        )}
+        <span
+          role="radiogroup"
+          aria-label="Call strike slot"
+          style={{ display: "contents" }}
+        >
+          {strikeSlotRows.map((row) => (
+            <span
+              key={`call-${row.slot}`}
+              style={{
+                gridColumn: 2,
+                gridRow: row.row,
+                height: dim(26),
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: row.background,
+              }}
+            >
+              <StrikeRadio
+                side="CALL"
+                slot={row.slot}
+                selected={callValue === row.slot}
+                disabled={disabled}
+                tone={CSS_COLOR.green}
+                onSelect={(nextSlot) => patchStrike(callField, nextSlot)}
+                onMove={(direction) =>
+                  patchStrike(callField, moveStrikeSlot(callValue, direction))
+                }
+              />
+            </span>
+          ))}
+        </span>
+        <span
+          role="radiogroup"
+          aria-label="Put strike slot"
+          style={{ display: "contents" }}
+        >
+          {strikeSlotRows.map((row) => (
+            <span
+              key={`put-${row.slot}`}
+              style={{
+                gridColumn: 3,
+                gridRow: row.row,
+                height: dim(26),
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: row.background,
+              }}
+            >
+              <StrikeRadio
+                side="PUT"
+                slot={row.slot}
+                selected={putValue === row.slot}
+                disabled={disabled}
+                tone={CSS_COLOR.red}
+                onSelect={(nextSlot) => patchStrike(putField, nextSlot)}
+                onMove={(direction) =>
+                  patchStrike(putField, moveStrikeSlot(putValue, direction))
+                }
+              />
+            </span>
+          ))}
+        </span>
+      </div>
+    </div>
+  );
+};
+
+const formatPctLabel = (value) =>
+  Number.isFinite(Number(value)) ? `${Number(value).toFixed(0)}%` : "-";
+
+const markerPositionValue = (marker, value) =>
+  marker.positionValue ? marker.positionValue(value) : Number(value);
+
+export const ExitLadderTrack = ({
+  item,
+  profileDraft,
+  patchProfileDraftPath,
+  disabled,
+  dirtyFieldKeys,
+}) => {
+  const [editingKey, setEditingKey] = useState(null);
+  const [draftValue, setDraftValue] = useState("");
+  const fieldByPath = Object.fromEntries(
+    item.fields.map((field) => [field.path, field]),
+  );
+  const markers = EXIT_TRACK_MARKERS.map((marker) => {
+    const field = fieldByPath[marker.fieldPath];
+    const rawValue = getPathValue(profileDraft, field.path);
+    const positionValue = markerPositionValue(marker, rawValue);
+    return {
+      ...marker,
+      field,
+      rawValue,
+      positionValue,
+      dirty: dirtyFieldKeys.has(fieldKey(field)),
+    };
+  });
+  const lossMin = Math.min(
+    ...markers
+      .filter((marker) => marker.side === "loss")
+      .map((marker) => marker.positionValue),
+    0,
+  );
+  const gainMax = Math.max(
+    ...markers
+      .filter((marker) => marker.side === "gain")
+      .map((marker) => marker.positionValue),
+    0,
+  );
+  const domainMin = Math.floor(lossMin);
+  const domainMax = Math.ceil(gainMax);
+  const domainSpan = Math.max(1, domainMax - domainMin);
+  const positionedMarkers = markers
+    .map((marker) => ({
+      ...marker,
+      leftPct: ((marker.positionValue - domainMin) / domainSpan) * 100,
+    }))
+    .sort((left, right) => left.leftPct - right.leftPct)
+    .map((marker, index, sorted) => {
+      const previous = sorted[index - 1];
+      const collision = previous && Math.abs(marker.leftPct - previous.leftPct) < 8;
+      return { ...marker, stagger: collision ? 1 : 0 };
+    });
+  const entryPct = ((0 - domainMin) / domainSpan) * 100;
+  const editingMarker = positionedMarkers.find((marker) => marker.key === editingKey);
+  const trackInset = dim(24);
+  const trackLeft = (leftPct) =>
+    `calc(${leftPct}% + ${
+      trackInset - (trackInset * 2 * leftPct) / 100
+    }px)`;
+  const popoverAnchor = editingMarker
+    ? editingMarker.leftPct < 12
+      ? { left: trackInset, transform: "none" }
+      : editingMarker.leftPct > 88
+        ? { right: trackInset, transform: "none" }
+        : {
+            left: trackLeft(editingMarker.leftPct),
+            transform: "translateX(-50%)",
+          }
+    : null;
+
+  const openEditor = (marker) => {
+    if (disabled) return;
+    setEditingKey(marker.key);
+    setDraftValue(String(marker.rawValue ?? ""));
+  };
+  const closeEditor = () => {
+    setEditingKey(null);
+    setDraftValue("");
+  };
+  const commitEditor = () => {
+    if (!editingMarker) return;
+    patchProfileDraftPath(
+      editingMarker.field.path,
+      numberFrom(draftValue, editingMarker.rawValue ?? editingMarker.field.min ?? 0),
+    );
+    closeEditor();
+  };
+
+  return (
+    <div
+      className="algo-cell--full"
+      data-testid="algo-exit-track"
+      style={{
+        minWidth: 0,
+        padding: sp("10px 0 4px"),
+      }}
+    >
+      <div
+        style={{
+          position: "relative",
+          minHeight: dim(92),
+          minWidth: 0,
+          padding: sp("28px 6px 20px"),
+        }}
+      >
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: trackInset,
+            right: trackInset,
+            top: dim(48),
+            height: dim(2),
+            background: CSS_COLOR.border,
+          }}
+        />
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: trackLeft(entryPct),
+            top: dim(42),
+            width: dim(2),
+            height: dim(14),
+            background: CSS_COLOR.textDim,
+            transform: "translateX(-50%)",
+          }}
+        />
+        <span
+          className="tnum"
+          style={{
+            position: "absolute",
+            left: trackLeft(entryPct),
+            top: dim(60),
+            transform: "translateX(-50%)",
+            color: CSS_COLOR.textMuted,
+            fontFamily: T.data,
+            fontSize: textSize("micro"),
+          }}
+        >
+          0%
+        </span>
+        {positionedMarkers.map((marker) => (
+          <button
+            key={marker.key}
+            type="button"
+            data-testid={`algo-exit-track-marker-${marker.key}`}
+            disabled={disabled}
+            onClick={() => openEditor(marker)}
+            style={{
+              position: "absolute",
+              left: trackLeft(marker.leftPct),
+              top: dim(43),
+              width: dim(10),
+              height: dim(10),
+              borderRadius: dim(RADII.pill),
+              border: `1px solid ${marker.dirty ? CSS_COLOR.accent : CSS_COLOR.bg2}`,
+              background: marker.tone,
+              boxShadow: marker.dirty
+                ? `0 0 0 2px ${cssColorMix(CSS_COLOR.accent, 24)}`
+                : `0 0 0 2px ${cssColorMix(marker.tone, 16)}`,
+              transform: "translate(-50%, -50%)",
+              cursor: disabled ? "not-allowed" : "pointer",
+              opacity: disabled ? 0.55 : 1,
+              padding: 0,
+            }}
+            aria-label={`${marker.label} ${formatPctLabel(marker.rawValue)}`}
+          >
+            <span
+              style={{
+                position: "absolute",
+                left: "50%",
+                bottom: `${dim(marker.stagger ? 18 : 14)}px`,
+                transform: "translateX(-50%)",
+                color: marker.tone,
+                fontFamily: T.sans,
+                fontSize: textSize("micro"),
+                fontWeight: FONT_WEIGHTS.label,
+                whiteSpace: "nowrap",
+                pointerEvents: "none",
+              }}
+            >
+              {marker.label}
+            </span>
+            <span
+              className="tnum"
+              style={{
+                position: "absolute",
+                left: "50%",
+                top: dim(13),
+                transform: "translateX(-50%)",
+                color: CSS_COLOR.textMuted,
+                fontFamily: T.data,
+                fontSize: textSize("micro"),
+                whiteSpace: "nowrap",
+                pointerEvents: "none",
+              }}
+            >
+              {formatPctLabel(marker.positionValue)}
+            </span>
+          </button>
+        ))}
+        {editingMarker ? (
+          <div
+            role="dialog"
+            aria-label={`${editingMarker.label} level`}
+            style={{
+              position: "absolute",
+              ...popoverAnchor,
+              top: dim(64),
+              zIndex: 3,
+              display: "flex",
+              alignItems: "center",
+              gap: sp(2),
+              minWidth: dim(92),
+              padding: sp(3),
+              border: `1px solid ${CSS_COLOR.border}`,
+              borderRadius: dim(RADII.sm),
+              background: CSS_COLOR.bg2,
+              boxShadow: `0 12px 28px ${cssColorMix(CSS_COLOR.bg0, 70)}`,
+            }}
+          >
+            <input
+              className="tnum"
+              data-testid={`algo-exit-track-input-${editingMarker.key}`}
+              type="number"
+              autoFocus
+              min={editingMarker.field.min}
+              max={editingMarker.field.max}
+              step={editingMarker.field.step}
+              value={draftValue}
+              onChange={(event) => setDraftValue(event.target.value)}
+              onBlur={commitEditor}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  closeEditor();
+                }
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitEditor();
+                }
+              }}
+              style={compactInputStyle({
+                invalid: false,
+                disabled,
+                numeric: true,
+              })}
+            />
+            <span
+              aria-hidden="true"
+              style={{
+                color: CSS_COLOR.textMuted,
+                fontFamily: T.sans,
+                fontSize: textSize("micro"),
+              }}
+            >
+              %
+            </span>
+          </div>
+        ) : null}
+      </div>
+      <div
+        aria-hidden="true"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "auto auto auto",
+          justifyContent: "space-between",
+          color: CSS_COLOR.textMuted,
+          fontFamily: T.data,
+          fontSize: textSize("micro"),
+          padding: sp("0 4px"),
+        }}
+      >
+        <span className="tnum">{formatPctLabel(domainMin)}</span>
+        <span className="tnum">0%</span>
+        <span className="tnum">{formatPctLabel(domainMax)}</span>
+      </div>
     </div>
   );
 };
@@ -716,7 +1229,7 @@ const ExpandedLimitsSection = ({
       style={{
         border: `1px solid ${cssColorMix(CSS_COLOR.amber, 21)}`,
         borderRadius: dim(RADII.sm),
-        background: `${cssColorMix(CSS_COLOR.amber, 5)}`,
+        background: cssColorMix(CSS_COLOR.amber, 5),
         padding: sp("8px 10px"),
         display: "flex",
         alignItems: "center",
@@ -727,9 +1240,10 @@ const ExpandedLimitsSection = ({
       }}
     >
       <span
+        className="tnum"
         style={{
           color: CSS_COLOR.textDim,
-          fontFamily: T.sans,
+          fontFamily: T.data,
           fontSize: textSize("body"),
         }}
       >
@@ -756,6 +1270,74 @@ const ExpandedLimitsSection = ({
   </section>
 );
 
+const renderSectionItem = ({
+  item,
+  profileDraft,
+  profileBaseline,
+  strategySettingsDraft,
+  strategyBaseline,
+  patchProfileDraftPath,
+  patchStrategySettingsPath,
+  disabled,
+  dirtyFieldKeys,
+  impact,
+}) => {
+  if (item.kind === "contractSelect") {
+    return (
+      <ContractSelectionCell
+        key={item.id}
+        item={item}
+        profileDraft={profileDraft}
+        profileBaseline={profileBaseline}
+        patchProfileDraftPath={patchProfileDraftPath}
+        disabled={disabled}
+        dirtyFieldKeys={dirtyFieldKeys}
+      />
+    );
+  }
+  if (item.kind === "exitTrack") {
+    return (
+      <ExitLadderTrack
+        key={item.id}
+        item={item}
+        profileDraft={profileDraft}
+        patchProfileDraftPath={patchProfileDraftPath}
+        disabled={disabled}
+        dirtyFieldKeys={dirtyFieldKeys}
+      />
+    );
+  }
+  return (
+    <CompactSettingCell
+      key={`${item.slice}.${item.path}`}
+      item={item}
+      profileDraft={profileDraft}
+      profileBaseline={profileBaseline}
+      strategySettingsDraft={strategySettingsDraft}
+      strategyBaseline={strategyBaseline}
+      patchProfileDraftPath={patchProfileDraftPath}
+      patchStrategySettingsPath={patchStrategySettingsPath}
+      disabled={disabled}
+      dirtyFieldKeys={dirtyFieldKeys}
+      impact={impact}
+    />
+  );
+};
+
+const sectionDirtyCount = (section, dirtyFieldKeys) =>
+  section.fields.reduce((count, item) => {
+    if (item.kind === "contractSelect" || item.kind === "exitTrack") {
+      return (
+        count +
+        item.fields.reduce(
+          (total, field) => total + (dirtyFieldKeys.has(fieldKey(field)) ? 1 : 0),
+          0,
+        )
+      );
+    }
+    return count + (dirtyFieldKeys.has(fieldKey(item)) ? 1 : 0);
+  }, 0);
+
 export const AlgoSettingsRegion = ({
   cockpit,
   signalOptionsPositions,
@@ -770,8 +1352,6 @@ export const AlgoSettingsRegion = ({
   handleApplyExpandedCapacity,
   updateProfileMutation,
   updateStrategySettingsMutation,
-  algoIsPhone,
-  algoIsNarrow,
 }) => {
   const impact = useMemo(
     () =>
@@ -782,11 +1362,8 @@ export const AlgoSettingsRegion = ({
       }),
     [cockpit, profileDraft, signalOptionsPositions],
   );
-  const regionDirtyFields = dirtyFields.filter(
-    (field) => !isCompactHaltSettingPath(field.path),
-  );
-  const dirtyFieldKeys = new Set(regionDirtyFields.map(fieldKey));
-  const dirtyCounts = countDirtyFieldsBySection(regionDirtyFields);
+  const dirtyFieldKeys = new Set(dirtyFields.map(fieldKey));
+  const dirtyCounts = countDirtyFieldsBySection(dirtyFields);
   const disabled =
     !focusedDeployment ||
     updateProfileMutation?.isPending ||
@@ -803,21 +1380,13 @@ export const AlgoSettingsRegion = ({
         minWidth: 0,
       }}
     >
-      {compactRailSettingGroups.map((group, index) => {
-        const dirtyCount = group.items.reduce((count, item) => {
-          if (item.kind === "compound") {
-            return (
-              count +
-              (dirtyFieldKeys.has(fieldKey(item.toggleField)) ? 1 : 0) +
-              (dirtyFieldKeys.has(fieldKey(item.valueField)) ? 1 : 0)
-            );
-          }
-          return count + (dirtyFieldKeys.has(fieldKey(item)) ? 1 : 0);
-        }, 0);
+      {SETTINGS_SECTIONS.map((section, index) => {
+        const dirtyCount =
+          dirtyCounts[section.label] || sectionDirtyCount(section, dirtyFieldKeys);
         return (
           <section
-            key={group.groupId}
-            data-testid={`algo-compact-group-${group.groupId}`}
+            key={section.id}
+            data-testid={`algo-settings-section-${section.id}`}
             style={{
               borderTop: index === 0 ? "none" : `1px solid ${CSS_COLOR.borderLight}`,
               paddingTop: index === 0 ? 0 : sp(4),
@@ -825,111 +1394,28 @@ export const AlgoSettingsRegion = ({
             }}
           >
             <SettingsSectionHeader
-              label={group.label}
+              label={section.label}
               helper={dirtyCount ? `${dirtyCount} unsaved` : null}
             />
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: compactGridTemplateFor(group.columns, {
-                  algoIsPhone,
-                  algoIsNarrow,
+            <div className="algo-settings-grid">
+              {section.fields.map((item) =>
+                renderSectionItem({
+                  item,
+                  profileDraft,
+                  profileBaseline,
+                  strategySettingsDraft,
+                  strategyBaseline,
+                  patchProfileDraftPath,
+                  patchStrategySettingsPath,
+                  disabled,
+                  dirtyFieldKeys,
+                  impact,
                 }),
-                columnGap: sp(5),
-                rowGap: sp(4),
-                alignItems: "start",
-                minWidth: 0,
-              }}
-            >
-              {group.items.map((item) =>
-                item.kind === "compound" ? (
-                  <CompactCompoundSettingCell
-                    key={item.compactId}
-                    item={item}
-                    profileDraft={profileDraft}
-                    profileBaseline={profileBaseline}
-                    strategySettingsDraft={strategySettingsDraft}
-                    strategyBaseline={strategyBaseline}
-                    patchProfileDraftPath={patchProfileDraftPath}
-                    patchStrategySettingsPath={patchStrategySettingsPath}
-                    disabled={disabled}
-                    dirtyFieldKeys={dirtyFieldKeys}
-                  />
-                ) : (
-                  <CompactSettingCell
-                    key={`${item.slice}.${item.path}`}
-                    item={item}
-                    profileDraft={profileDraft}
-                    profileBaseline={profileBaseline}
-                    strategySettingsDraft={strategySettingsDraft}
-                    strategyBaseline={strategyBaseline}
-                    patchProfileDraftPath={patchProfileDraftPath}
-                    patchStrategySettingsPath={patchStrategySettingsPath}
-                    disabled={disabled}
-                    dirtyFieldKeys={dirtyFieldKeys}
-                    impact={impact}
-                  />
-                ),
               )}
             </div>
           </section>
         );
       })}
-
-      {settingsRegionFields.map((section) => (
-        <section key={section.sectionId} style={{ minWidth: 0 }}>
-          <SettingsSectionHeader
-            label={section.sectionLabel}
-            helper={
-              dirtyCounts[section.sectionLabel]
-                ? `${dirtyCounts[section.sectionLabel]} unsaved`
-                : null
-            }
-          />
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: gridTemplateFor(section.columns, {
-                algoIsPhone,
-                algoIsNarrow,
-              }),
-              columnGap: sp(3),
-              rowGap: sp(3),
-              minWidth: 0,
-            }}
-          >
-            {section.fields.map((field) => {
-              const draft =
-                field.slice === "profile" ? profileDraft : strategySettingsDraft;
-              const baseline =
-                field.slice === "profile" ? profileBaseline : strategyBaseline;
-              const currentValue = getPathValue(draft, field.path);
-              const previousValue = getPathValue(baseline, field.path);
-              const dirty = regionDirtyFields.some(
-                (dirtyField) =>
-                  dirtyField.slice === field.slice &&
-                  dirtyField.path === field.path,
-              );
-              return (
-                <SettingsFormRow
-                  key={`${field.slice}.${field.path}`}
-                  field={field}
-                  value={currentValue}
-                  previousValue={previousValue}
-                  dirty={dirty}
-                  disabled={disabled}
-                  impact={field.impact ? impact[field.impact] : null}
-                  onPatch={
-                    field.slice === "profile"
-                      ? patchProfileDraftPath
-                      : patchStrategySettingsPath
-                  }
-                />
-              );
-            })}
-          </div>
-        </section>
-      ))}
 
       <ExpandedLimitsSection
         disabled={!focusedDeployment}

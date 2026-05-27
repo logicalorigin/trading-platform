@@ -5,6 +5,7 @@ import {
   numberFrom,
   optionProviderContractId,
 } from "./algoHelpers";
+import { normalizeLegacyAlgoBrandText } from "./algoBranding.js";
 
 const firstText = (...values) => {
   for (const value of values) {
@@ -39,6 +40,80 @@ const firstPositiveNumber = (...values) => {
     if (Number.isFinite(numeric) && numeric > 0) return numeric;
   }
   return null;
+};
+
+const positionMarketDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+const dateOrNull = (value) => {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  const raw = value.trim();
+  const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compact) {
+    return new Date(
+      Date.UTC(Number(compact[1]), Number(compact[2]) - 1, Number(compact[3]), 12),
+    );
+  }
+  const dashed = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dashed) {
+    return new Date(
+      Date.UTC(Number(dashed[1]), Number(dashed[2]) - 1, Number(dashed[3]), 12),
+    );
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const dateOnlyMarketDateKey = (value) => {
+  if (typeof value === "string") {
+    const raw = value.trim();
+    const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (compact) return `${compact[1]}-${compact[2]}-${compact[3]}`;
+    const dashed = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dashed) return `${dashed[1]}-${dashed[2]}-${dashed[3]}`;
+  }
+  if (
+    value instanceof Date &&
+    value.getUTCHours() === 0 &&
+    value.getUTCMinutes() === 0 &&
+    value.getUTCSeconds() === 0 &&
+    value.getUTCMilliseconds() === 0
+  ) {
+    return value.toISOString().slice(0, 10);
+  }
+  return null;
+};
+
+const marketDateKey = (value) => {
+  const dateOnlyKey = dateOnlyMarketDateKey(value);
+  if (dateOnlyKey) return dateOnlyKey;
+  const date = dateOrNull(value);
+  if (!date) return null;
+  const parts = positionMarketDateFormatter.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return year && month && day ? `${year}-${month}-${day}` : null;
+};
+
+const positionOpenedOnCurrentMarketDay = (openedAt, now = new Date()) => {
+  const opened = dateOrNull(openedAt);
+  const observedAt = dateOrNull(now);
+  if (!opened || !observedAt || opened.getTime() > observedAt.getTime()) {
+    return false;
+  }
+  const openedKey = marketDateKey(opened);
+  const nowKey = marketDateKey(observedAt);
+  return Boolean(openedKey && nowKey && openedKey === nowKey);
 };
 
 const normalizeRight = (value) => {
@@ -372,6 +447,19 @@ export const buildAlgoAccountPositionRows = ({
       position?.openedAt,
       signalAt,
     );
+    const sameDayPosition = positionOpenedOnCurrentMarketDay(
+      firstText(position?.openedAt, purchasedAt),
+    );
+    const dayChange =
+      sameDayPosition && unrealizedPnl != null
+        ? unrealizedPnl
+        : perContractDayChange != null
+          ? perContractDayChange * quantity * multiplier
+          : null;
+    const dayChangePercent =
+      sameDayPosition && unrealizedPnlPercent != null
+        ? unrealizedPnlPercent
+        : optionDayChangePercent(optionQuote);
     const rowId = buildPositionId(position, optionContract);
     const description = [
       formatContractLabel(optionContract),
@@ -430,11 +518,8 @@ export const buildAlgoAccountPositionRows = ({
       quantity,
       averageCost: entry,
       mark,
-      dayChange:
-        perContractDayChange != null
-          ? perContractDayChange * quantity * multiplier
-          : null,
-      dayChangePercent: optionDayChangePercent(optionQuote),
+      dayChange,
+      dayChangePercent,
       unrealizedPnl,
       unrealizedPnlPercent,
       marketValue,
@@ -467,11 +552,13 @@ export const buildAlgoAccountPositionRows = ({
           candidateId: firstText(position?.candidateId, candidate.id),
           sourceEventId: firstText(position?.id, position?.signalId),
           quantity,
-          deploymentName: firstText(
-            position?.deploymentName,
-            candidate.deploymentName,
-            signal.deploymentName,
-            "Algo signal-options",
+          deploymentName: normalizeLegacyAlgoBrandText(
+            firstText(
+              position?.deploymentName,
+              candidate.deploymentName,
+              signal.deploymentName,
+              "Algo signal-options",
+            ),
           ),
           deploymentId: firstText(
             position?.deploymentId,

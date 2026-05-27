@@ -59,6 +59,7 @@ import {
   signalOptionsActionColor,
   signalOptionsActionLabel,
 } from "../../screens/algo/algoHelpers";
+import { normalizeLegacyAlgoBrandText } from "../../screens/algo/algoBranding.js";
 import { setAlgoFocus } from "./algoFocusStore";
 import { useAlgoCockpitStream } from "./live-streams";
 
@@ -951,6 +952,9 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     () => pickDeployment(deployments, mode),
     [deployments, mode],
   );
+  const focusedDeploymentName = normalizeLegacyAlgoBrandText(
+    focusedDeployment?.name || "Pyrus Signals Shadow",
+  );
   const deploymentId = focusedDeployment?.id || "";
   const ownStreamFreshness = useAlgoCockpitStream({
     deploymentId,
@@ -1228,7 +1232,7 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
           >
             <div style={{ minWidth: 0, display: "grid", gap: sp(1) }}>
               <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: CSS_COLOR.text, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label }}>
-                {focusedDeployment.name || "Pyrus Signals Shadow"}
+                {focusedDeploymentName}
               </span>
               <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: CSS_COLOR.textMuted, fontFamily: T.sans, fontSize: textSize("caption"), letterSpacing: "0.04em", textTransform: "uppercase" }}>
                 {String(focusedDeployment.mode || mode).toUpperCase()} · {focusedDeployment.providerAccountId || "shadow"}

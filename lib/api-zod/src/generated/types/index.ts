@@ -187,6 +187,8 @@ export * from './diagnosticThresholdsUpdateRequestThresholdsItem';
 export * from './ensureDefaultSignalOptionsPaperDeploymentBody';
 export * from './environmentMode';
 export * from './evaluateSignalMonitorMatrixRequest';
+export * from './evaluateSignalMonitorMatrixRequestClientRole';
+export * from './evaluateSignalMonitorMatrixRequestRequestOrigin';
 export * from './evaluateSignalMonitorRequest';
 export * from './evaluateSignalMonitorRequestMode';
 export * from './executionEvent';

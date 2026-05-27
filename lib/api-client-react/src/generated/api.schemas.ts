@@ -3900,12 +3900,34 @@ export interface EvaluateSignalMonitorRequest {
   watchlistId?: string | null;
 }
 
+export type EvaluateSignalMonitorMatrixRequestClientRole = typeof EvaluateSignalMonitorMatrixRequestClientRole[keyof typeof EvaluateSignalMonitorMatrixRequestClientRole];
+
+
+export const EvaluateSignalMonitorMatrixRequestClientRole = {
+  leader: 'leader',
+  follower: 'follower',
+  manual: 'manual',
+  test: 'test',
+} as const;
+
+export type EvaluateSignalMonitorMatrixRequestRequestOrigin = typeof EvaluateSignalMonitorMatrixRequestRequestOrigin[keyof typeof EvaluateSignalMonitorMatrixRequestRequestOrigin];
+
+
+export const EvaluateSignalMonitorMatrixRequestRequestOrigin = {
+  startup: 'startup',
+  poll: 'poll',
+  manual: 'manual',
+  test: 'test',
+} as const;
+
 export interface EvaluateSignalMonitorMatrixRequest {
   environment?: EnvironmentMode;
   /** @nullable */
   watchlistId?: string | null;
   symbols?: string[];
   timeframes?: SignalMonitorMatrixTimeframe[];
+  clientRole?: EvaluateSignalMonitorMatrixRequestClientRole;
+  requestOrigin?: EvaluateSignalMonitorMatrixRequestRequestOrigin;
 }
 
 export interface SignalMonitorSymbolState {
@@ -4024,6 +4046,8 @@ export type SignalMonitorMatrixResponseCoverage = {
   durationMs: number;
   skippedSymbols: number;
   truncated: boolean;
+  automaticRequest?: boolean;
+  debounced?: boolean;
 };
 
 export interface SignalMonitorMatrixResponse {

@@ -16,7 +16,6 @@ import {
   ShieldAlert,
   TrendingDown,
 } from "lucide-react";
-import { StatusPill } from "../../components/platform/primitives.jsx";
 import {
   CSS_COLOR,
   cssColorAlpha,
@@ -42,12 +41,13 @@ import {
   getPathValue,
   isNumericSettingType,
 } from "./algoSettingsFields";
+import { normalizeLegacyAlgoBrandText } from "./algoBranding.js";
 
 const STATUS_TONES = {
-  armed: { color: CSS_COLOR.textSec, border: CSS_COLOR.border, background: CSS_COLOR.bg1 },
-  active: { color: CSS_COLOR.red, border: `${cssColorMix(CSS_COLOR.red, 50)}`, background: `${cssColorMix(CSS_COLOR.red, 7)}` },
-  off: { color: CSS_COLOR.amber, border: `${cssColorMix(CSS_COLOR.amber, 50)}`, background: `${cssColorMix(CSS_COLOR.amber, 7)}` },
-  forced: { color: CSS_COLOR.red, border: CSS_COLOR.red, background: `${cssColorMix(CSS_COLOR.red, 9)}` },
+  armed: { color: CSS_COLOR.cyan, border: CSS_COLOR.cyan, background: cssColorMix(CSS_COLOR.cyan, 7) },
+  active: { color: CSS_COLOR.red, border: cssColorMix(CSS_COLOR.red, 50), background: cssColorMix(CSS_COLOR.red, 7) },
+  off: { color: CSS_COLOR.amber, border: cssColorMix(CSS_COLOR.amber, 50), background: cssColorMix(CSS_COLOR.amber, 7) },
+  forced: { color: CSS_COLOR.red, border: CSS_COLOR.red, background: cssColorMix(CSS_COLOR.red, 9) },
 };
 
 const HALT_GROUP_LABELS = {
@@ -102,12 +102,51 @@ const COMPACT_SETTING_ICONS = {
 
 const overallHaltState = (statuses) => {
   if (statuses.some((status) => status.state === "active" || status.state === "forced")) {
-    return { label: "Active", color: CSS_COLOR.red };
+    return { state: "active", label: "Active", color: CSS_COLOR.red };
   }
   if (statuses.length && statuses.every((status) => status.state === "off")) {
-    return { label: "Off", color: CSS_COLOR.amber };
+    return { state: "off", label: "Off", color: CSS_COLOR.amber };
   }
-  return { label: "Armed", color: CSS_COLOR.cyan };
+  return { state: "armed", label: "Armed", color: CSS_COLOR.cyan };
+};
+
+const STATE_RANK = { armed: 0, off: 1, active: 2, forced: 3 };
+
+const groupRollupState = (statuses) => {
+  if (!statuses.length) return { state: "armed", label: "Armed" };
+  return statuses.reduce((worst, status) =>
+    (STATE_RANK[status.state] || 0) > (STATE_RANK[worst.state] || 0)
+      ? status
+      : worst,
+  );
+};
+
+const StatePill = ({ state, label, mini = false }) => {
+  const tone = STATUS_TONES[state] || STATUS_TONES.armed;
+  return (
+    <span
+      data-testid={`algo-halt-state-pill-${String(label || state).toLowerCase()}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minHeight: mini ? dim(14) : dim(17),
+        padding: mini ? sp("0 4px") : sp("0 5px"),
+        border: `1px solid ${tone.border}`,
+        borderRadius: dim(RADII.pill),
+        background: tone.background,
+        color: tone.color,
+        fontFamily: T.sans,
+        fontSize: textSize("micro"),
+        fontWeight: FONT_WEIGHTS.label,
+        lineHeight: 1,
+        textTransform: "uppercase",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label || state}
+    </span>
+  );
 };
 
 const compactUnitLabel = (field) => {
@@ -133,6 +172,7 @@ const compactInputStyle = ({ invalid, disabled }) => ({
   outline: "none",
   boxSizing: "border-box",
   opacity: disabled ? 0.55 : 1,
+  textAlign: "right",
 });
 
 const CompactSettingInput = ({
@@ -156,6 +196,7 @@ const CompactSettingInput = ({
       }}
     >
       <input
+        className="tnum"
         type="number"
         data-testid={`algo-halt-input-${id}`}
         aria-label={ariaLabel}
@@ -289,6 +330,7 @@ const ControlToggleCell = ({
   return (
     <div
       data-testid={`algo-halt-control-${control.id}`}
+      data-state={status.state}
       title={title}
       style={{
         position: "relative",
@@ -296,7 +338,7 @@ const ControlToggleCell = ({
         flexDirection: "column",
         gap: sp(2),
         minHeight: valueField ? dim(42) : dim(22),
-        padding: sp("2px 0"),
+        padding: sp("2px 0 2px 4px"),
         minWidth: 0,
         width: "100%",
         color: checked ? tone.color : CSS_COLOR.textMuted,
@@ -304,6 +346,21 @@ const ControlToggleCell = ({
         boxSizing: "border-box",
       }}
     >
+      <span
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: dim(2),
+          borderRadius: dim(1),
+          background:
+            status.state === "active" || status.state === "forced"
+              ? tone.color
+              : "transparent",
+        }}
+      />
       <div
         style={{
           display: "flex",
@@ -349,6 +406,7 @@ const ControlToggleCell = ({
             }}
           />
         ) : null}
+        <StatePill state={status.state} label={status.label} mini />
         <InlineSwitch
           checked={checked}
           disabled={disabled}
@@ -369,21 +427,6 @@ const ControlToggleCell = ({
           invalid={invalid}
           ariaLabel={`${control.label} ${valueField.label}`}
           patchProfileDraftPath={patchProfileDraftPath}
-        />
-      ) : null}
-      {status.state === "active" || status.state === "forced" ? (
-        <span
-          aria-hidden="true"
-          style={{
-            position: "absolute",
-            top: 0,
-            right: 0,
-            width: dim(6),
-            height: dim(6),
-            borderRadius: dim(3),
-            background: CSS_COLOR.red,
-            boxShadow: `0 0 0 2px ${CSS_COLOR.bg2}`,
-          }}
         />
       ) : null}
     </div>
@@ -498,25 +541,20 @@ export const HaltStrip = ({
   patchProfileDraftPath,
   focusedDeployment,
   updateProfileMutation,
-  algoIsPhone = false,
-  algoIsNarrow = false,
 }) => {
-  const statuses = SIGNAL_OPTIONS_HALT_CONTROL_GROUPS.flatMap((group) =>
-    group.controls.map((control) =>
-      deriveSignalOptionsHaltControlStatus({
-        control,
-        profile: profileDraft,
-        cockpit,
-      }),
+  const statusesByGroup = SIGNAL_OPTIONS_HALT_CONTROL_GROUPS.map((group) => ({
+    group,
+    statuses: group.controls.map((control) =>
+      deriveSignalOptionsHaltControlStatus({ control, profile: profileDraft, cockpit }),
     ),
-  );
+  }));
+  const statuses = statusesByGroup.flatMap((item) => item.statuses);
   const overall = overallHaltState(statuses);
   const dirty = signalOptionsHaltControlsChanged(
     profileDraft,
     profileBaseline,
   );
   const controlsDisabled = !focusedDeployment || updateProfileMutation?.isPending;
-  const controlColumns = algoIsPhone ? 2 : algoIsNarrow ? 3 : 4;
 
   return (
     <div
@@ -551,9 +589,11 @@ export const HaltStrip = ({
             minWidth: 0,
           }}
         >
-          {focusedDeployment ? `RAY · ${focusedDeployment.name}` : "No deployment selected"}
+          {focusedDeployment
+            ? `Pyrus · ${normalizeLegacyAlgoBrandText(focusedDeployment.name)}`
+            : "No deployment selected"}
         </span>
-        <StatusPill color={overall.color}>{overall.label}</StatusPill>
+        <StatePill state={overall.state} label={overall.label} />
       </div>
       {dirty ? (
         <div
@@ -567,7 +607,9 @@ export const HaltStrip = ({
         </div>
       ) : null}
 
-      {SIGNAL_OPTIONS_HALT_CONTROL_GROUPS.map((group, index) => (
+      {statusesByGroup.map(({ group, statuses: groupStatuses }, index) => {
+        const rollup = groupRollupState(groupStatuses);
+        return (
         <section
           key={group.id}
           aria-label={`${group.label} halt controls`}
@@ -579,28 +621,35 @@ export const HaltStrip = ({
         >
           <div
             style={{
-              color: CSS_COLOR.textMuted,
-              fontFamily: T.sans,
-              fontSize: textSize("micro"),
-              fontWeight: 600,
-              letterSpacing: 0,
-              textTransform: "uppercase",
-              marginBottom: sp(1),
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: sp(4),
+              marginBottom: sp(2),
+              minWidth: 0,
             }}
           >
-            {HALT_GROUP_LABELS[group.id] || group.label}
+            <span
+              style={{
+                color: CSS_COLOR.textSec,
+                fontFamily: T.sans,
+                fontSize: textSize("micro"),
+                fontWeight: 600,
+                letterSpacing: 0,
+                textTransform: "uppercase",
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {HALT_GROUP_LABELS[group.id] || group.label}
+            </span>
+            <StatePill state={rollup.state} label={rollup.label} mini />
           </div>
           <div
             data-testid={`algo-halt-group-${group.id}`}
-            data-halt-columns={controlColumns}
-            data-algo-pocket-grid={controlColumns === 2 ? "two" : undefined}
-            style={{
-              display: "grid",
-              gridTemplateColumns: `repeat(${controlColumns}, minmax(0, 1fr))`,
-              columnGap: sp(5),
-              rowGap: sp(4),
-              minWidth: 0,
-            }}
+            className="algo-settings-grid"
           >
             {group.controls.map((control) => (
               <ControlToggleCell
@@ -626,7 +675,8 @@ export const HaltStrip = ({
             ))}
           </div>
         </section>
-      ))}
+        );
+      })}
     </div>
   );
 };

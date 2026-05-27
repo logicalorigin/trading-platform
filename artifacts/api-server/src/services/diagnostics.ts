@@ -33,6 +33,7 @@ import {
   type ApiRequestSample,
 } from "./request-metrics";
 import {
+  getApiResourcePressureSnapshot,
   normalizeApiResourcePressureLevel,
   updateApiResourcePressure,
   type ApiResourcePressureLevel,
@@ -178,6 +179,44 @@ const API_LATENCY_ALERT_MIN_SAMPLES = 20;
 const SLOW_API_ROUTE_MS = 1_000;
 const MAX_MEMORY_SNAPSHOTS = 2_000;
 const MAX_MEMORY_EVENTS = 500;
+const DIAGNOSTIC_HISTORY_DEFAULT_LIMIT = 500;
+const DIAGNOSTIC_HISTORY_MAX_LIMIT = 2_500;
+const DIAGNOSTIC_EVENTS_DEFAULT_LIMIT = 200;
+const DIAGNOSTIC_EVENTS_MAX_LIMIT = 1_000;
+const DIAGNOSTIC_LIMIT_CAPS: Record<
+  ApiResourcePressureLevel,
+  {
+    history: number;
+    events: number;
+    exportHistory: number;
+    exportEvents: number;
+  }
+> = {
+  normal: {
+    history: DIAGNOSTIC_HISTORY_MAX_LIMIT,
+    events: DIAGNOSTIC_EVENTS_MAX_LIMIT,
+    exportHistory: DIAGNOSTIC_HISTORY_DEFAULT_LIMIT,
+    exportEvents: DIAGNOSTIC_EVENTS_DEFAULT_LIMIT,
+  },
+  watch: {
+    history: DIAGNOSTIC_HISTORY_DEFAULT_LIMIT,
+    events: 300,
+    exportHistory: 240,
+    exportEvents: 150,
+  },
+  high: {
+    history: 240,
+    events: 150,
+    exportHistory: 120,
+    exportEvents: 80,
+  },
+  critical: {
+    history: 120,
+    events: 80,
+    exportHistory: 60,
+    exportEvents: 40,
+  },
+};
 const MAX_RECENT_EVENTS = 50;
 const CLIENT_METRIC_RETENTION_MS = 10 * 60 * 1000;
 const CLIENT_METRIC_MAX_SAMPLES = 500;
@@ -2869,6 +2908,47 @@ function filterMemoryEvents(input: {
   return events;
 }
 
+function normalizeDiagnosticLimit(
+  value: number | null | undefined,
+  fallback: number,
+  max: number,
+): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(1, Math.min(max, Math.floor(value)))
+    : fallback;
+}
+
+function resolveDiagnosticLimit(input: {
+  requestedLimit?: number | null;
+  fallback: number;
+  max: number;
+  cap:
+    | "history"
+    | "events"
+    | "exportHistory"
+    | "exportEvents";
+}) {
+  const requestedLimit = normalizeDiagnosticLimit(
+    input.requestedLimit,
+    input.fallback,
+    input.max,
+  );
+  const pressureLevel = getApiResourcePressureSnapshot().level;
+  const pressureCap = DIAGNOSTIC_LIMIT_CAPS[pressureLevel][input.cap];
+  const appliedLimit = Math.min(requestedLimit, pressureCap);
+  return {
+    limit: appliedLimit,
+    info: {
+      requestedLimit,
+      appliedLimit,
+      maxLimit: Math.min(input.max, pressureCap),
+      absoluteMaxLimit: input.max,
+      pressureLevel,
+      pressureLimited: appliedLimit < requestedLimit,
+    },
+  };
+}
+
 function resolveResolutionMs(from: Date, to: Date): number {
   const span = to.getTime() - from.getTime();
   if (span <= 3 * 60 * 60 * 1000) {
@@ -3812,10 +3892,12 @@ export async function listDiagnosticHistory(input: {
   subsystem?: string | null;
   limit?: number | null;
 }) {
-  const limit =
-    typeof input.limit === "number" && Number.isFinite(input.limit)
-      ? Math.max(1, Math.min(2_500, Math.floor(input.limit)))
-      : 500;
+  const { limit, info: limits } = resolveDiagnosticLimit({
+    requestedLimit: input.limit,
+    fallback: DIAGNOSTIC_HISTORY_DEFAULT_LIMIT,
+    max: DIAGNOSTIC_HISTORY_MAX_LIMIT,
+    cap: "history",
+  });
   const clauses: SQL[] = [
     gte(diagnosticSnapshotsTable.observedAt, input.from),
     lte(diagnosticSnapshotsTable.observedAt, input.to),
@@ -3846,6 +3928,7 @@ export async function listDiagnosticHistory(input: {
     resolutionMs,
     points: aggregateHistory(snapshots, resolutionMs),
     snapshots,
+    limits,
   };
 }
 
@@ -3857,10 +3940,12 @@ export async function listDiagnosticEvents(input: {
   status?: DiagnosticEventStatus | null;
   limit?: number | null;
 }) {
-  const limit =
-    typeof input.limit === "number" && Number.isFinite(input.limit)
-      ? Math.max(1, Math.min(1_000, Math.floor(input.limit)))
-      : 200;
+  const { limit, info: limits } = resolveDiagnosticLimit({
+    requestedLimit: input.limit,
+    fallback: DIAGNOSTIC_EVENTS_DEFAULT_LIMIT,
+    max: DIAGNOSTIC_EVENTS_MAX_LIMIT,
+    cap: "events",
+  });
   const clauses: SQL[] = [
     gte(diagnosticEventsTable.lastSeenAt, input.from),
     lte(diagnosticEventsTable.lastSeenAt, input.to),
@@ -3893,6 +3978,7 @@ export async function listDiagnosticEvents(input: {
       rows.length > 0
         ? rows.map(toEventPayload)
         : filterMemoryEvents({ ...input, limit }),
+    limits,
   };
 }
 
@@ -3932,10 +4018,24 @@ export async function exportDiagnostics(input: {
   from: Date;
   to: Date;
   subsystem?: string | null;
+  snapshotLimit?: number | null;
+  eventLimit?: number | null;
 }) {
+  const { limit: snapshotLimit, info: snapshotLimits } = resolveDiagnosticLimit({
+    requestedLimit: input.snapshotLimit,
+    fallback: DIAGNOSTIC_HISTORY_DEFAULT_LIMIT,
+    max: DIAGNOSTIC_HISTORY_MAX_LIMIT,
+    cap: "exportHistory",
+  });
+  const { limit: eventLimit, info: eventLimits } = resolveDiagnosticLimit({
+    requestedLimit: input.eventLimit,
+    fallback: DIAGNOSTIC_EVENTS_DEFAULT_LIMIT,
+    max: DIAGNOSTIC_EVENTS_MAX_LIMIT,
+    cap: "exportEvents",
+  });
   const [history, events, thresholds] = await Promise.all([
-    listDiagnosticHistory(input),
-    listDiagnosticEvents(input),
+    listDiagnosticHistory({ ...input, limit: snapshotLimit }),
+    listDiagnosticEvents({ ...input, limit: eventLimit }),
     getDiagnosticThresholds(),
   ]);
   return {
@@ -3947,6 +4047,13 @@ export async function exportDiagnostics(input: {
     thresholds,
     history,
     events: events.events,
+    limits: {
+      pressureLevel: snapshotLimits.pressureLevel,
+      historyLimit: snapshotLimits.appliedLimit,
+      eventLimit: eventLimits.appliedLimit,
+      history: snapshotLimits,
+      events: eventLimits,
+    },
   };
 }
 

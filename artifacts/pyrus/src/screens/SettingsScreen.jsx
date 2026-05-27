@@ -1324,6 +1324,18 @@ function IbkrLineUsagePanel({ runtimeControl }) {
   const allocation = runtimeControl.lineUsage?.allocation || safeRecord(snapshot?.allocation);
   const bridge = safeRecord(snapshot?.bridge);
   const bridgeDiagnostics = safeRecord(bridge.diagnostics);
+  const historicalWork = safeRecord(snapshot?.historicalWork);
+  const historicalAdmission = safeRecord(historicalWork.admission);
+  const historicalBridge = safeRecord(historicalWork.bridge);
+  const historicalPacing = safeRecord(historicalAdmission.pacing);
+  const historicalFamilies = safeRecord(historicalAdmission.families);
+  const historicalTopFamily = Object.entries(historicalFamilies)
+    .filter(([, family]) => family && typeof family === "object")
+    .sort(
+      ([, left], [, right]) =>
+        Number(right.rejected || 0) - Number(left.rejected || 0) ||
+        Number(right.accepted || 0) - Number(left.accepted || 0),
+    )[0];
   const governor = safeRecord(snapshot?.governor || bridge.governor);
   const drift = safeRecord(snapshot?.drift);
   const driftReconciliation = safeRecord(drift.reconciliation);
@@ -1389,19 +1401,47 @@ function IbkrLineUsagePanel({ runtimeControl }) {
           <StateRow label="Bridge active lines" value={formatCount(bridge.activeLineCount)} />
           <StateRow label="Bridge equity lines" value={formatCount(lineUsage.bridge.activeEquity)} />
           <StateRow label="Bridge option lines" value={formatCount(lineUsage.bridge.activeOptions)} />
-          <StateRow
-            label="Bridge pressure"
-            value={String(bridgeDiagnostics.pressure || MISSING_VALUE)}
+	          <StateRow
+	            label="Bridge pressure"
+	            value={String(bridgeDiagnostics.pressure || MISSING_VALUE)}
             tone={
               bridgeDiagnostics.pressure === "stalled"
                 ? CSS_COLOR.red
                 : bridgeDiagnostics.pressure === "degraded" ||
                     bridgeDiagnostics.pressure === "backoff"
                   ? CSS_COLOR.amber
-                  : CSS_COLOR.green
-            }
-          />
-        </div>
+	              : CSS_COLOR.green
+	            }
+	          />
+	          <StateRow
+	            label="Historical API work"
+	            value={`${formatCount(historicalAdmission.active)} active · ${formatCount(historicalAdmission.queued)} queued`}
+	            tone={Number(historicalAdmission.queued) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
+	          />
+	          <StateRow
+	            label="Historical API cap"
+	            value={`${formatCount(historicalAdmission.concurrency)} active · ${formatCount(historicalAdmission.queueCap)} queued`}
+	          />
+	          <StateRow
+	            label="Historical bridge cap"
+	            value={`${formatCount(historicalBridge.concurrency)} active · ${formatCount(historicalBridge.queueCap)} queued`}
+	          />
+	          <StateRow
+	            label="Historical rejected"
+	            value={`${formatCount(historicalAdmission.rejected)} API · ${formatCount(historicalBridge.rejected)} bridge`}
+	            tone={Number(historicalAdmission.rejected || historicalBridge.rejected) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
+	          />
+	          <StateRow
+	            label="Historical pacing"
+	            value={`${formatCount(historicalPacing.globalWindowRemainingWeight)} / ${formatCount(historicalPacing.globalWindowMaxWeight)} left`}
+	            tone={Number(historicalPacing.globalWindowRemainingWeight) <= 5 ? CSS_COLOR.amber : CSS_COLOR.green}
+	          />
+	          <StateRow
+	            label="Historical top caller"
+	            value={historicalTopFamily ? `${historicalTopFamily[0]} (${formatCount(historicalTopFamily[1].rejected)} rejected)` : MISSING_VALUE}
+	            tone={historicalTopFamily && Number(historicalTopFamily[1].rejected) > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec}
+	          />
+	        </div>
         <div>
           <StateRow
             label="Watchlist Quotes"

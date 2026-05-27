@@ -202,7 +202,7 @@ test("Pyrus mark surfaces use the intended ring assets", () => {
   assert.match(globalCssSource, /\.pyrus-loader-instrument\s*\{[\s\S]*?width:\s*104px/);
   assert.match(globalCssSource, /\[data-tone="panel"\] \.pyrus-loader-instrument\s*\{[\s\S]*?height:\s*60px/);
   assert.match(globalCssSource, /\[data-tone="panel"\] \.pyrus-loader-instrument\s*\{[\s\S]*?width:\s*60px/);
-  assert.match(globalCssSource, /\.pyrus-loader-lockup\s*\{/);
+  assert.doesNotMatch(globalCssSource, /\.pyrus-loader-lockup\s*\{/);
   assert.match(globalCssSource, /\.pyrus-loader-mark\s*\{/);
   assert.doesNotMatch(globalCssSource, /\.pyrus-loader-mark svg\s*\{/);
   assert.doesNotMatch(globalCssSource, /\.pyrus-loader-mark img\s*\{/);
@@ -289,7 +289,7 @@ test("static boot shell renders the SVG ring mark before React mounts", () => {
   assert.doesNotMatch(indexHtmlSource, /pyrus-loader-mark-dark\.png/);
 });
 
-test("app and screen chunk fallbacks use LogoLoader", () => {
+test("app boot uses one React fallback and screen chunks stay panel scoped", () => {
   assert.doesNotMatch(appSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
   assert.doesNotMatch(appSource, /components\/brand\/PyrusLogo/);
   assert.doesNotMatch(appSource, /components\/brand\/pyrus-mark-shared/);
@@ -299,13 +299,20 @@ test("app and screen chunk fallbacks use LogoLoader", () => {
   assert.doesNotMatch(appSource, /PYRUS_WORDMARK_DARK_SRC/);
   assert.doesNotMatch(appSource, /PYRUS_WORDMARK_LIGHT_SRC/);
   assert.match(appSource, /const AppContent = lazyWithRetry\(async \(\) => \{/);
-  assert.match(appSource, /await import\("\.\/AppContent"\)/);
+  assert.match(appSource, /import\("\.\/AppContent"\)/);
+  assert.match(appSource, /await mod\.preloadInitialAppContentRoute\(\)/);
   assert.match(appSource, /<BrandLoader label="Loading PYRUS" testId="app-loading-fallback" \/>/);
   assert.match(appSource, /<Suspense fallback=\{<RootBootFallback \/>\}>/);
   assert.match(appSource, /<AppContent \/>/);
 
-  assert.match(appContentSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
-  assert.match(appContentSource, /<Suspense fallback=\{<LogoLoader testId="app-loading-fallback" \/>\}>/);
+  assert.match(appContentSource, /export const preloadInitialAppContentRoute = \(\) =>/);
+  assert.match(appContentSource, /const getPreloadedInitialAppContentRoute = \(labMode: string \| null\) =>/);
+  assert.match(appContentSource, /void preloadInitialAppContentRoute\(\)/);
+  assert.match(appContentSource, /const InitialRouteComponent = getPreloadedInitialAppContentRoute\(labMode\)/);
+  assert.match(appContentSource, /<InitialRouteComponent \/>/);
+  assert.match(appContentSource, /<Suspense fallback=\{null\}>/);
+  assert.doesNotMatch(appContentSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
+  assert.doesNotMatch(appContentSource, /testId="app-loading-fallback"/);
   assert.doesNotMatch(appSource, /APP_LOADING_FALLBACK_PALETTES/);
   assert.doesNotMatch(appSource, /function AppLoadingFallback/);
 
@@ -313,9 +320,9 @@ test("app and screen chunk fallbacks use LogoLoader", () => {
   assert.match(registrySource, /export const ScreenLoadingFallback = \(\{ label = "Loading" \}\) =>/);
   assert.match(registrySource, /tone="panel"[\s\S]*label=\{label\}[\s\S]*testId="screen-loading-fallback"/);
 
-  assert.match(researchSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
-  assert.match(researchSource, /<Suspense fallback=\{<LogoLoader tone="panel" minHeight="100%" \/>\}>/);
-  assert.doesNotMatch(researchSource, /ResearchLoadingFallback/);
+  assert.match(researchSource, /data-testid="research-loading-shell"/);
+  assert.match(researchSource, /<Suspense fallback=\{<ResearchLoadingShell \/>\}>/);
+  assert.doesNotMatch(researchSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
 
   assert.match(marketSource, /testId="market-chart-grid-loader"/);
   assert.doesNotMatch(marketSource, /testId="market-activity-loader"/);

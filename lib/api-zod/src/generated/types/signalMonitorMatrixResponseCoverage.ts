@@ -25,4 +25,6 @@ export type SignalMonitorMatrixResponseCoverage = {
   durationMs: number;
   skippedSymbols: number;
   truncated: boolean;
+  automaticRequest?: boolean;
+  debounced?: boolean;
 };

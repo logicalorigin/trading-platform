@@ -30,6 +30,9 @@ test("algo strategy settings API patches deployment and signal monitor settings"
     /RETIRED_SHADOW_EQUITY_FORWARD_EXECUTION_MODE\s*=\s*"signal_equity_shadow"/,
   );
   assert.match(serviceSource, /isRetiredShadowEquityForwardDeployment/);
+  assert.match(serviceSource, /normalizeLegacyAlgoBrandText/);
+  assert.match(serviceSource, /normalizeLegacyAlgoBranding/);
+  assert.match(signalOptionsServiceSource, /normalizeSignalOptionsDeploymentBranding/);
   assert.match(
     serviceSource,
     /\.filter\(\(deployment\) => !isRetiredShadowEquityForwardDeployment\(deployment\)\)/,

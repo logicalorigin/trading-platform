@@ -13,6 +13,7 @@ import {
   evaluateSignalMonitorSymbolFromCompletedBars,
   listEnabledSignalMonitorProfiles,
   loadSignalMonitorCompletedBars,
+  cappedSignalMonitorEvaluationProfile,
   resolveSignalMonitorEvaluationBatch,
   resolveSignalMonitorProfileUniverse,
   resolveSignalMonitorTimeframe,
@@ -186,17 +187,24 @@ async function runProfile(input: {
   try {
     const evaluatedAt = dependencies.now();
     const evaluatedAtMs = evaluatedAt.getTime();
-    const timeframe = resolveSignalMonitorTimeframe(profile.timeframe);
-    const universe = await dependencies.resolveUniverse(profile, {
+    const evaluationSettings = cappedSignalMonitorEvaluationProfile(profile);
+    const evaluationProfile = evaluationSettings.profile;
+    const timeframe = resolveSignalMonitorTimeframe(evaluationProfile.timeframe);
+    const universe = await dependencies.resolveUniverse(evaluationProfile, {
       ensureWatchlist: false,
     });
     const resolvedBatch = resolveSignalMonitorEvaluationBatch({
       sourceSymbols: universe.watchlistSymbols,
-      maxSymbols: profile.maxSymbols,
+      maxSymbols: evaluationProfile.maxSymbols,
       cursor: runtime.evaluationCursor,
     });
     runtime.evaluationCursor = resolvedBatch.nextCursor;
-    const concurrency = positiveInteger(profile.evaluationConcurrency, 3, 1, 10);
+    const concurrency = positiveInteger(
+      evaluationProfile.evaluationConcurrency,
+      2,
+      1,
+      10,
+    );
     const latestBars = await runInBatches(
       resolvedBatch.symbols,
       concurrency,

@@ -11,10 +11,15 @@ import {
   __shadowWatchlistBacktestInternalsForTests,
   buildWatchlistBacktestFills,
   computeShadowOrderFees,
+  SHADOW_STARTING_BALANCE,
 } from "./shadow-account";
 
 test("shadow account snapshot stream uses the visible-page cadence", () => {
   assert.equal(SHADOW_ACCOUNT_STREAM_INTERVAL_MS, 2_000);
+});
+
+test("shadow account default starting balance matches the active paper run", () => {
+  assert.equal(SHADOW_STARTING_BALANCE, 25_000);
 });
 
 test("account page snapshot stream uses the one-second visible-page cadence", () => {
@@ -153,9 +158,39 @@ test("shadow account snapshot invalidation clears stale in-flight base reads", (
     /if \(version === shadowAccountSnapshotBaseVersion\) \{\s*shadowAccountSnapshotBaseCache = \{/,
   );
   assert.match(source, /const request = \(async \(\) => \{/);
+  assert.match(source, /getShadowAccountPositions\(\{\s*liveQuotes: false,?\s*\}\)/);
   assert.match(
     source,
     /if \(shadowAccountSnapshotBaseInFlight === request\) \{\s*shadowAccountSnapshotBaseInFlight = null;/,
+  );
+});
+
+test("shadow account wrappers avoid full snapshot coupling for critical reads", () => {
+  const source = readFileSync(new URL("./account.ts", import.meta.url), "utf8");
+  const summaryBody = source.match(
+    /export async function getAccountSummary\([\s\S]*?\n  const mode = input\.mode/,
+  )?.[0];
+  const allocationBody = source.match(
+    /export async function getAccountAllocation\([\s\S]*?\n  const mode = input\.mode/,
+  )?.[0];
+  const ordersBody = source.match(
+    /export async function getAccountOrders\([\s\S]*?\n  const mode = input\.mode/,
+  )?.[0];
+  const riskBody = source.match(
+    /export async function getAccountRisk\([\s\S]*?\n  const mode = input\.mode/,
+  )?.[0];
+
+  assert.ok(summaryBody);
+  assert.ok(allocationBody);
+  assert.ok(ordersBody);
+  assert.ok(riskBody);
+  assert.match(summaryBody, /return getShadowAccountSummary\(\{ source: input\.source \}\);/);
+  assert.match(allocationBody, /return getShadowAccountAllocation\(\{ source: input\.source \}\);/);
+  assert.match(ordersBody, /return getShadowAccountOrders\(\{/);
+  assert.match(riskBody, /return getShadowAccountRisk\(\{ source: input\.source \}\);/);
+  assert.doesNotMatch(
+    `${summaryBody}\n${allocationBody}\n${ordersBody}\n${riskBody}`,
+    /fetchShadowAccountSnapshotBase/,
   );
 });
 
@@ -678,20 +713,31 @@ test("source-scoped shadow positions require matching source keys and source pre
 
 test("shadow account reads repair live signal-options mirrors before projecting positions", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const summaryBody = source.match(
+    /export async function getShadowAccountSummary\([\s\S]*?\nexport async function getShadowAccountAllocation/,
+  )?.[0];
   const positionsBody = source.match(
     /export async function getShadowAccountPositions\([\s\S]*?\nexport async function getShadowAccountPositionsAtDate/,
   )?.[0];
+  const riskBody = source.match(
+    /async function buildShadowAccountRisk\([\s\S]*?\nfunction shadowPositionForNotionalRisk/,
+  )?.[0];
 
   assert.match(source, /async function repairSignalOptionsAutomationMirrorsForRead/);
+  assert.match(source, /const SHADOW_AUTOMATION_MIRROR_REPAIR_TTL_MS = 60_000;/);
   assert.match(source, /SIGNAL_OPTIONS_SHADOW_ENTRY_EVENT/);
   assert.match(source, /SIGNAL_OPTIONS_SHADOW_EXIT_EVENT/);
   assert.match(source, /recordShadowAutomationEvent\(event,\s*\{\s*source: "automation",\s*\}\)/);
   assert.match(source, /await repairSignalOptionsAutomationMirrorsForRead\(source\);/);
+  assert.ok(summaryBody);
+  assert.doesNotMatch(summaryBody, /repairSignalOptionsAutomationMirrorsForRead/);
   assert.ok(positionsBody);
   assert.ok(
     positionsBody.indexOf("await repairSignalOptionsAutomationMirrorsForRead(source);") <
       positionsBody.indexOf("return withShadowReadCache("),
   );
+  assert.ok(riskBody);
+  assert.match(riskBody, /getShadowAccountPositions\(\{\s*source,\s*liveQuotes: false,?\s*\}\)/);
 });
 
 test("shadow signal-options mirror repair skips historical backfill events", () => {

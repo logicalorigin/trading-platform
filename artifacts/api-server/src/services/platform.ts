@@ -166,6 +166,10 @@ import {
   subscribeMarketDataLeaseChanges,
 } from "./market-data-admission";
 import {
+  isIbkrHistoricalAdmissionError,
+  runIbkrHistoricalRequest,
+} from "./ibkr-historical-admission";
+import {
   normalizeUniverseMarket,
   resolveMarketIdentityFields,
   resolveMarketIdentityMetadata,
@@ -8547,20 +8551,33 @@ async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOption
       ? BARS_BROKER_BACKFILL_BUDGET_MS
       : BARS_PROVIDER_BUDGET_MS;
     const fetchBridgeHistory = (exchange?: string | null) =>
-      bridgeClient.getHistoricalBars({
-        symbol: brokerHistoryInput.symbol,
-        timeframe: brokerHistoryInput.timeframe as HistoryBarTimeframe,
-        limit: brokerHistoryInput.limit,
-        from: brokerHistoryInput.from,
-        to: brokerHistoryInput.to,
-        assetClass: brokerHistoryInput.assetClass,
-        providerContractId: brokerHistoryInput.providerContractId,
-        outsideRth,
-        source: brokerHistoryInput.source,
-        exchange,
-        signal: options.signal,
-        priority: options.priority,
-      });
+      runIbkrHistoricalRequest(
+        {
+          family: options.family,
+          priority: options.priority,
+          symbol: brokerHistoryInput.symbol,
+          timeframe: brokerHistoryInput.timeframe,
+          providerContractId: brokerHistoryInput.providerContractId,
+          source: brokerHistoryInput.source,
+          exchange,
+          signal: options.signal,
+        },
+        () =>
+          bridgeClient.getHistoricalBars({
+            symbol: brokerHistoryInput.symbol,
+            timeframe: brokerHistoryInput.timeframe as HistoryBarTimeframe,
+            limit: brokerHistoryInput.limit,
+            from: brokerHistoryInput.from,
+            to: brokerHistoryInput.to,
+            assetClass: brokerHistoryInput.assetClass,
+            providerContractId: brokerHistoryInput.providerContractId,
+            outsideRth,
+            source: brokerHistoryInput.source,
+            exchange,
+            signal: options.signal,
+            priority: options.priority,
+          }),
+      );
 
     const fetchOnce = async () => {
       const primaryBarsPromise = resolveWithin(
@@ -8648,13 +8665,22 @@ async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOption
           instrumentKey: `equity:${normalizeSymbol(input.symbol)}`,
         });
       }
-    } catch (error) {
-      if (error instanceof HttpError && error.code === "bars_request_aborted") {
-        throw error;
-      }
-      brokerHistoryError = error;
-      ibkrBars = [];
-    }
+	    } catch (error) {
+	      if (error instanceof HttpError && error.code === "bars_request_aborted") {
+	        throw error;
+	      }
+	      if (isIbkrHistoricalAdmissionError(error)) {
+	        recordMarketDataFallback({
+	          owner: "bars-history",
+	          intent: "historical",
+	          fallbackProvider: polygonClient ? "polygon" : "cache",
+	          reason: "ibkr_historical_admission_rejected",
+	          instrumentKey: `equity:${normalizeSymbol(input.symbol)}`,
+	        });
+	      }
+	      brokerHistoryError = error;
+	      ibkrBars = [];
+	    }
   }
   const storedHistoricalBars = allowHistoricalSynthesis
     ? restrictHistoricalSynthesisToBrokerBackfill(

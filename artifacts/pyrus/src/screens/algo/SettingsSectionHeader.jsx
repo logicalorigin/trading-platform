@@ -13,7 +13,7 @@ export const SettingsSectionHeader = ({ label, helper }) => (
       alignItems: "baseline",
       justifyContent: "space-between",
       gap: sp(4),
-      padding: sp("0 0 4px 0"),
+      paddingBottom: sp(4),
       borderBottom: `1px solid ${CSS_COLOR.borderLight}`,
       marginBottom: sp(3),
       minWidth: 0,

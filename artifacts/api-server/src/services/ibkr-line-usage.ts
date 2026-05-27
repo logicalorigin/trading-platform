@@ -14,6 +14,7 @@ import {
   setMarketDataAdmissionBridgeLineBudget,
   type MarketDataLease,
 } from "./market-data-admission";
+import { getIbkrHistoricalAdmissionSnapshot } from "./ibkr-historical-admission";
 import { ensureIbkrLaneRuntimeOverridesLoaded } from "./ibkr-lanes";
 import {
   getIbkrWatchlistPrewarmDiagnostics,
@@ -831,10 +832,20 @@ export async function getIbkrLineUsageSnapshot() {
     watchlistPrewarm,
   });
 
-  return {
-    updatedAt: new Date().toISOString(),
-    admission,
-    policy: buildLineUsagePolicy({
+	  return {
+	    updatedAt: new Date().toISOString(),
+	    admission,
+	    historicalWork: {
+	      admission: getIbkrHistoricalAdmissionSnapshot(),
+	      bridge:
+	        bridge.value &&
+	        typeof bridge.value.scheduler === "object" &&
+	        bridge.value.scheduler &&
+	        "historical" in bridge.value.scheduler
+	          ? (bridge.value.scheduler as Record<string, unknown>).historical ?? null
+	          : null,
+	    },
+	    policy: buildLineUsagePolicy({
       admission,
       bridgeLineBudget,
     }),
