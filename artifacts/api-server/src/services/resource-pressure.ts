@@ -12,6 +12,10 @@ export type ApiResourcePressureCaps = {
   signalOptions: {
     maintenanceOnly: boolean;
     skipDeploymentScans: boolean;
+    signalRefreshAllowed: boolean;
+    actionScansAllowed: boolean;
+    positionMarksAllowed: boolean;
+    watchlistPrewarmAllowed: boolean;
   };
 };
 
@@ -116,6 +120,10 @@ export function getApiResourcePressureCaps(
         signalOptions: {
           maintenanceOnly: false,
           skipDeploymentScans: false,
+          signalRefreshAllowed: true,
+          actionScansAllowed: false,
+          positionMarksAllowed: false,
+          watchlistPrewarmAllowed: false,
         },
       };
     case "high":
@@ -123,6 +131,10 @@ export function getApiResourcePressureCaps(
         signalOptions: {
           maintenanceOnly: false,
           skipDeploymentScans: false,
+          signalRefreshAllowed: true,
+          actionScansAllowed: false,
+          positionMarksAllowed: false,
+          watchlistPrewarmAllowed: false,
         },
       };
     case "watch":
@@ -130,6 +142,10 @@ export function getApiResourcePressureCaps(
         signalOptions: {
           maintenanceOnly: false,
           skipDeploymentScans: false,
+          signalRefreshAllowed: true,
+          actionScansAllowed: true,
+          positionMarksAllowed: true,
+          watchlistPrewarmAllowed: true,
         },
       };
     default:
@@ -137,6 +153,10 @@ export function getApiResourcePressureCaps(
         signalOptions: {
           maintenanceOnly: false,
           skipDeploymentScans: false,
+          signalRefreshAllowed: true,
+          actionScansAllowed: true,
+          positionMarksAllowed: true,
+          watchlistPrewarmAllowed: true,
         },
       };
   }

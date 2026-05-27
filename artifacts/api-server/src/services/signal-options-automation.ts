@@ -76,6 +76,7 @@ import {
   recordShadowAutomationEvent,
   resetSignalOptionsReplayRowsForRange,
 } from "./shadow-account";
+import { getApiResourcePressureSnapshot } from "./resource-pressure";
 
 export const SIGNAL_OPTIONS_EVENT_PREFIX = "signal_options_";
 export const SIGNAL_OPTIONS_ENTRY_EVENT = "signal_options_shadow_entry";
@@ -102,8 +103,12 @@ type SignalOptionsRunMetadata = {
     | "worker"
     | "signal_options_backfill"
     | "signal_options_replay";
+  phase: "signal_refresh" | "action_scan" | "deferred";
   startedAt: string;
   marketDate?: string | null;
+  lastSignalScanAt?: string | null;
+  latestSignalBarAt?: string | null;
+  heavyWorkDeferred?: boolean;
 };
 
 const activeSignalOptionsRunMetadata = new Map<
@@ -402,9 +407,27 @@ function buildSignalOptionsRunMetadata(input: {
     }),
     mode: input.mode,
     source: input.source,
+    phase: "signal_refresh" as const,
     startedAt: startedAt.toISOString(),
     marketDate: input.marketDate ?? null,
+    lastSignalScanAt: null,
+    latestSignalBarAt: null,
+    heavyWorkDeferred: false,
   };
+}
+
+function updateSignalOptionsRunMetadata(
+  deploymentId: string,
+  patch: Partial<SignalOptionsRunMetadata>,
+) {
+  const current = activeSignalOptionsRunMetadata.get(deploymentId);
+  if (!current) {
+    return;
+  }
+  activeSignalOptionsRunMetadata.set(deploymentId, {
+    ...current,
+    ...patch,
+  });
 }
 
 function signalOptionsPayloadWithRunMetadata(input: {
@@ -419,7 +442,17 @@ function signalOptionsPayloadWithRunMetadata(input: {
           runId: activeRun.runId,
           runMode: activeRun.mode,
           runSource: activeRun.source,
+          runPhase: activeRun.phase,
           runStartedAt: activeRun.startedAt,
+          ...(activeRun.lastSignalScanAt
+            ? { lastSignalScanAt: activeRun.lastSignalScanAt }
+            : {}),
+          ...(activeRun.latestSignalBarAt
+            ? { latestSignalBarAt: activeRun.latestSignalBarAt }
+            : {}),
+          ...(activeRun.heavyWorkDeferred
+            ? { heavyWorkDeferred: true }
+            : {}),
           ...(activeRun.marketDate
             ? { marketDate: activeRun.marketDate }
             : {}),
@@ -1206,6 +1239,10 @@ function buildWorkerScanSummary(input: {
   candidateCount: number;
   blockedCandidateCount: number;
   batch?: Record<string, unknown> | null;
+  lastSignalScanAt?: string | null;
+  heavyWorkDeferred?: boolean;
+  activeScanPhase?: SignalOptionsRunMetadata["phase"] | null;
+  resourcePressureLevel?: string | null;
 }) {
   const states = input.states.filter((state) => {
     const symbol = normalizeSymbol(state.symbol).toUpperCase();
@@ -1239,9 +1276,43 @@ function buildWorkerScanSummary(input: {
     ).length,
     latestSignalBarAt,
     oldestSignalBarAt,
+    lastSignalScanAt: input.lastSignalScanAt ?? null,
+    signalSourcePolicy: "ibkr-only" as const,
+    heavyWorkDeferred: input.heavyWorkDeferred === true,
+    activeScanPhase: input.activeScanPhase ?? null,
+    resourcePressureLevel: input.resourcePressureLevel ?? null,
     candidateCount: input.candidateCount,
     blockedCandidateCount: input.blockedCandidateCount,
     batch: input.batch ?? null,
+  };
+}
+
+function latestFreshSignalAtFromStates(input: {
+  states: SignalMonitorState[];
+  universe: Set<string>;
+}): Date | null {
+  let latest: Date | null = null;
+  for (const state of input.states) {
+    const symbol = normalizeSymbol(state.symbol).toUpperCase();
+    if (!symbol || (input.universe.size > 0 && !input.universe.has(symbol))) {
+      continue;
+    }
+    if (!state.fresh || !state.currentSignalDirection || !state.currentSignalAt) {
+      continue;
+    }
+    latest = latestSignalDate(latest, toIsoString(state.currentSignalAt));
+  }
+  return latest;
+}
+
+function shouldDeferSignalOptionsHeavyWork() {
+  const pressure = getApiResourcePressureSnapshot();
+  const caps = pressure.caps.signalOptions;
+  return {
+    pressure,
+    defer:
+      caps.actionScansAllowed === false ||
+      caps.positionMarksAllowed === false,
   };
 }
 
@@ -3578,6 +3649,10 @@ function signalOptionsActiveScanState(deploymentId: string, now = new Date()) {
     ageMs,
     source: activeRun?.source ?? null,
     runId: activeRun?.runId ?? null,
+    phase: activeRun?.phase ?? null,
+    lastSignalScanAt: activeRun?.lastSignalScanAt ?? null,
+    latestSignalBarAt: activeRun?.latestSignalBarAt ?? null,
+    heavyWorkDeferred: activeRun?.heavyWorkDeferred === true,
   };
 }
 
@@ -3598,6 +3673,10 @@ function signalOptionsScanAlreadyRunningResponse(input: {
       ageMs: scanState.ageMs,
       source: scanState.source,
       runId: scanState.runId,
+      phase: scanState.phase,
+      lastSignalScanAt: scanState.lastSignalScanAt,
+      latestSignalBarAt: scanState.latestSignalBarAt,
+      heavyWorkDeferred: scanState.heavyWorkDeferred,
     },
     signals: [],
     candidates: [],
@@ -3608,6 +3687,10 @@ function signalOptionsScanAlreadyRunningResponse(input: {
       unavailableSignalCount: 0,
       latestSignalBarAt: null,
       oldestSignalBarAt: null,
+      lastSignalScanAt: null,
+      signalSourcePolicy: "ibkr-only",
+      heavyWorkDeferred: scanState.heavyWorkDeferred,
+      activeScanPhase: scanState.phase,
       candidateCount: 0,
       blockedCandidateCount: 0,
       batch: null,
@@ -3675,6 +3758,12 @@ function signalOptionsWorkerDeploymentState(
     lastBatchNextIndex: finiteNumber(record.lastBatchNextIndex),
     lastBatchCapacity: finiteNumber(record.lastBatchCapacity),
     lastBatchFullUniverse: record.lastBatchFullUniverse === true,
+    lastLatestSignalBarAt: compactString(record.lastLatestSignalBarAt),
+    lastSignalScanAt: compactString(record.lastSignalScanAt),
+    lastSignalSourcePolicy: compactString(record.lastSignalSourcePolicy),
+    lastHeavyWorkDeferred: record.lastHeavyWorkDeferred === true,
+    lastActiveScanPhase: compactString(record.lastActiveScanPhase),
+    lastResourcePressureLevel: compactString(record.lastResourcePressureLevel),
     lastSkipReason:
       typeof record.lastSkipReason === "string" ? record.lastSkipReason : null,
   };
@@ -3870,6 +3959,10 @@ function buildCockpitPipeline(input: {
     workerState.lastBatchUniverseCount && workerState.lastBatchUniverseCount > 0
       ? `${workerState.lastBatchSize ?? 0}/${workerState.lastBatchUniverseCount} symbols`
       : null;
+  const lastSignalScanAt =
+    scanState.lastSignalScanAt ?? workerState.lastSignalScanAt ?? null;
+  const lastHeavyWorkDeferred =
+    scanState.heavyWorkDeferred || workerState.lastHeavyWorkDeferred;
 
   return [
     {
@@ -3884,6 +3977,7 @@ function buildCockpitPipeline(input: {
           }),
       count: input.deployment.symbolUniverse.length,
       latestAt:
+        lastSignalScanAt ??
         scanState.startedAt?.toISOString() ??
         pressurePauseState.startedAt?.toISOString() ??
         input.deployment.lastEvaluatedAt?.toISOString() ??
@@ -3893,6 +3987,13 @@ function buildCockpitPipeline(input: {
       scanAgeMs: scanState.ageMs,
       activeScanSource: scanState.source,
       activeScanRunId: scanState.runId,
+      activeScanPhase: scanState.phase ?? workerState.lastActiveScanPhase,
+      lastSignalScanAt,
+      latestSignalBarAt:
+        scanState.latestSignalBarAt ?? workerState.lastLatestSignalBarAt ?? null,
+      signalSourcePolicy: workerState.lastSignalSourcePolicy ?? "ibkr-only",
+      heavyWorkDeferred: lastHeavyWorkDeferred,
+      resourcePressureLevel: workerState.lastResourcePressureLevel,
       pressurePaused: pressurePauseState.paused,
       pressurePauseStartedAt:
         pressurePauseState.startedAt?.toISOString() ?? null,
@@ -3912,6 +4013,8 @@ function buildCockpitPipeline(input: {
         ? pressurePauseAge
           ? `paused by resource pressure for ${pressurePauseAge}`
           : "paused by resource pressure"
+        : lastHeavyWorkDeferred
+          ? "fresh signals updated; action work deferred by resource pressure"
         : scanState.running
         ? scanRunningAge
           ? `scan running for ${scanRunningAge}`
@@ -8892,6 +8995,82 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     await recordSignalOptionsGatewayBlocked({ deployment, readiness, source });
   }
 
+  const universe = new Set(
+    deployment.symbolUniverse
+      .map((symbol) => normalizeSymbol(symbol).toUpperCase())
+      .filter(Boolean),
+  );
+  const evaluated = await loadSignalOptionsMonitorState({
+    deployment,
+    universe,
+    forceEvaluate: input.forceEvaluate,
+  });
+  const signalScanCompletedAt = new Date();
+  const signalLastSignalAt = latestFreshSignalAtFromStates({
+    states: evaluated.states as SignalMonitorState[],
+    universe,
+  });
+  const signalSummary = buildWorkerScanSummary({
+    states: evaluated.states as SignalMonitorState[],
+    universe,
+    candidateCount: 0,
+    blockedCandidateCount: 0,
+    batch: asRecord(asRecord(evaluated).signalOptionsBatch),
+    lastSignalScanAt: signalScanCompletedAt.toISOString(),
+    activeScanPhase: "signal_refresh",
+  });
+  updateSignalOptionsRunMetadata(deployment.id, {
+    phase: "signal_refresh",
+    lastSignalScanAt: signalScanCompletedAt.toISOString(),
+    latestSignalBarAt: signalSummary.latestSignalBarAt,
+  });
+  await db
+    .update(algoDeploymentsTable)
+    .set({
+      lastEvaluatedAt: signalScanCompletedAt,
+      lastSignalAt: signalLastSignalAt ?? deployment.lastSignalAt,
+      lastError: null,
+      updatedAt: signalScanCompletedAt,
+    })
+    .where(eq(algoDeploymentsTable.id, deployment.id));
+
+  const heavyWorkDecision = shouldDeferSignalOptionsHeavyWork();
+  if (heavyWorkDecision.defer) {
+    updateSignalOptionsRunMetadata(deployment.id, {
+      phase: "deferred",
+      heavyWorkDeferred: true,
+    });
+    const summary = buildWorkerScanSummary({
+      states: evaluated.states as SignalMonitorState[],
+      universe,
+      candidateCount: 0,
+      blockedCandidateCount: 0,
+      batch: asRecord(asRecord(evaluated).signalOptionsBatch),
+      lastSignalScanAt: signalScanCompletedAt.toISOString(),
+      heavyWorkDeferred: true,
+      activeScanPhase: "deferred",
+      resourcePressureLevel: heavyWorkDecision.pressure.level,
+    });
+    if (source === "worker") {
+      return {
+        deployment: deploymentToResponse({
+          ...deployment,
+          lastEvaluatedAt: signalScanCompletedAt,
+          lastSignalAt: signalLastSignalAt ?? deployment.lastSignalAt,
+          lastError: null,
+          updatedAt: signalScanCompletedAt,
+        }),
+        summary,
+      };
+    }
+    return listSignalOptionsAutomationState({ deploymentId: deployment.id });
+  }
+
+  updateSignalOptionsRunMetadata(deployment.id, {
+    phase: "action_scan",
+    heavyWorkDeferred: false,
+  });
+
   const initialEvents = await listDeploymentEvents(
     deployment.id,
     SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
@@ -8982,17 +9161,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       position,
     ]),
   );
-  const universe = new Set(
-    deployment.symbolUniverse
-      .map((symbol) => normalizeSymbol(symbol).toUpperCase())
-      .filter(Boolean),
-  );
-  const evaluated = await loadSignalOptionsMonitorState({
-    deployment,
-    universe,
-    forceEvaluate: input.forceEvaluate,
-  });
-  let lastSignalAt: Date | null = null;
+  let lastSignalAt: Date | null = signalLastSignalAt;
   let openSymbols = activePositionsBySymbol.size;
   let candidateCount = 0;
   let blockedCandidateCount = 0;
@@ -9132,7 +9301,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   await db
     .update(algoDeploymentsTable)
     .set({
-      lastEvaluatedAt: new Date(),
+      lastEvaluatedAt: signalScanCompletedAt,
       lastSignalAt: lastSignalAt ?? deployment.lastSignalAt,
       lastError: null,
       updatedAt: new Date(),
@@ -9143,7 +9312,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     return {
       deployment: deploymentToResponse({
         ...deployment,
-        lastEvaluatedAt: new Date(),
+        lastEvaluatedAt: signalScanCompletedAt,
         lastSignalAt: lastSignalAt ?? deployment.lastSignalAt,
         lastError: null,
         updatedAt: new Date(),
@@ -9154,6 +9323,9 @@ async function runSignalOptionsShadowScanUnlocked(input: {
         candidateCount,
         blockedCandidateCount,
         batch: asRecord(asRecord(evaluated).signalOptionsBatch),
+        lastSignalScanAt: signalScanCompletedAt.toISOString(),
+        activeScanPhase: "action_scan",
+        resourcePressureLevel: heavyWorkDecision.pressure.level,
       }),
     };
   }

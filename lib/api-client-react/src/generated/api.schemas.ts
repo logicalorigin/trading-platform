@@ -3620,6 +3620,18 @@ export const AlgoCockpitPipelineStageStatus = {
   stale: 'stale',
 } as const;
 
+/**
+ * @nullable
+ */
+export type AlgoCockpitPipelineStageActiveScanPhase = typeof AlgoCockpitPipelineStageActiveScanPhase[keyof typeof AlgoCockpitPipelineStageActiveScanPhase] | null;
+
+
+export const AlgoCockpitPipelineStageActiveScanPhase = {
+  signal_refresh: 'signal_refresh',
+  action_scan: 'action_scan',
+  deferred: 'deferred',
+} as const;
+
 export interface AlgoCockpitPipelineStage {
   id: AlgoCockpitPipelineStageId;
   label: string;
@@ -3628,6 +3640,50 @@ export interface AlgoCockpitPipelineStage {
   /** @nullable */
   latestAt: string | null;
   detail: string;
+  /** @nullable */
+  scanStartedAt?: string | null;
+  /** @nullable */
+  scanAgeMs?: number | null;
+  /** @nullable */
+  activeScanSource?: string | null;
+  /** @nullable */
+  activeScanRunId?: string | null;
+  /** @nullable */
+  activeScanPhase?: AlgoCockpitPipelineStageActiveScanPhase;
+  /** @nullable */
+  lastSignalScanAt?: string | null;
+  /** @nullable */
+  latestSignalBarAt?: string | null;
+  /** @nullable */
+  signalSourcePolicy?: string | null;
+  heavyWorkDeferred?: boolean;
+  /** @nullable */
+  resourcePressureLevel?: string | null;
+  pressurePaused?: boolean;
+  /** @nullable */
+  pressurePauseStartedAt?: string | null;
+  /** @nullable */
+  pressurePauseAgeMs?: number | null;
+  /** @nullable */
+  nextScanDueAt?: string | null;
+  /** @nullable */
+  nextScanDueInMs?: number | null;
+  /** @nullable */
+  pollIntervalMs?: number | null;
+  lastBatchSymbols?: string[];
+  /** @nullable */
+  lastBatchSize?: number | null;
+  /** @nullable */
+  lastBatchUniverseCount?: number | null;
+  /** @nullable */
+  lastBatchStartIndex?: number | null;
+  /** @nullable */
+  lastBatchNextIndex?: number | null;
+  /** @nullable */
+  lastBatchCapacity?: number | null;
+  lastBatchFullUniverse?: boolean;
+  /** @nullable */
+  pauseReason?: string | null;
 }
 
 export type AlgoCockpitAttentionItemSeverity = typeof AlgoCockpitAttentionItemSeverity[keyof typeof AlgoCockpitAttentionItemSeverity];

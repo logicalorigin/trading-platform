@@ -1,8 +1,26 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-27 19:40 UTC`
-- Current request: commit and push the current Replit/PYRUS hardening work, then continue down the larger runtime-pressure list and new monitor findings.
+- Last updated: `2026-05-27 19:59 UTC`
+- Current request: implement trade-management threshold visibility in positions tables using existing controls only.
 - Current status:
+  - Implementation starting. Scope is display-only threshold columns across Account/Algo/Trade positions surfaces.
+  - Existing dirty worktree includes ongoing load-resilience/signals freshness changes; preserve and build around those edits.
+  - Planned sources: broker working close-side orders, signal-options automation stop/trail state already present in rows/events, and local simulated Trade SL/TP fields.
+  - Committed current work as `a91fa79 Stabilize Pyrus reconnect and runtime workload`.
+  - `git push origin main` failed because the GitHub HTTPS remote rejected authentication: `Invalid username or token`.
+  - Pushed the commit to `gitsafe-backup` as a safety copy: `main -> main`.
+  - User supplied the PYRUS Load Resilience and Signals Freshness plan; it is now the active implementation direction.
+  - Sequencing the next fixes as backend coalescing/bounded stale fallback first, then signal-options freshness/action phase split, then UI freshness surfacing.
+  - Implemented first backend-pressure patch:
+    - `/quotes/snapshot` now coalesces identical in-flight service reads, bounds bridge health/quote/fallback waits, and serves stale quote-cache values with `freshness: "stale"` if refresh exceeds budget.
+    - Shadow account cached reads now keep a bounded stale window and return marked stale/degraded cached payloads after a short wait while refresh continues.
+  - Implemented first signal-options freshness split:
+    - Live scans evaluate/publish IBKR-only signal monitor state before position marking, option-chain/contract work, or action processing.
+    - High/critical resource pressure still allows signal refresh but defers action scans, position marks, and watchlist prewarm caps.
+    - Worker/cockpit diagnostics now carry signal scan time, source policy, active phase, heavy-work deferral, and pressure level.
+  - Updated the cockpit API schema/codegen so scan phase/freshness fields are preserved through generated clients.
+  - Updated Signals to Actions header to show latest signal, latest bar, last scan, source policy, and a compact stale/deferred banner.
+  - Documented new quote snapshot timeout/cache env knobs in `.env.example`.
   - Full 900-second monitor capture completed with browser observer enabled.
   - Targeting existing app only: frontend/proxy `http://127.0.0.1:18747`, direct API `http://127.0.0.1:8080/api`.
   - Report artifacts:
@@ -22,10 +40,20 @@
   - `.gitignore`
   - `SESSION_HANDOFF_CURRENT.md`
 - Validation state:
+  - Pending for trade-management threshold implementation.
   - Monitor run completed.
   - Read-only API probes completed: deployments, signal monitor state/events, diagnostics latest, and algo events.
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/platform-quote-snapshot.test.ts src/services/shadow-account.test.ts`
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/platform-quote-snapshot.test.ts`
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts`
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js`
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: `pnpm run audit:api-codegen`
+  - Passed: `pnpm run typecheck`
+  - Passed: `pnpm run audit:guards`
 - Next step:
-  - Commit and push the current work, then start with the monitor's top runtime-pressure sources: `/quotes/snapshot`, shadow account routes, signal-options scan duration, and IBKR line saturation.
+  - Commit/push the load-resilience pass, then add shared trade-management resolver/model and wire Account/Algo/Trade columns.
 
 - Last updated: `2026-05-27 19:22 UTC`
 - Current request: audit the current PYRUS/Replit hardening, dense-table, and performance-monitor work to make sure it landed cleanly.

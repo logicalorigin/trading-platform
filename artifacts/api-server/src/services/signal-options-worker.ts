@@ -70,6 +70,11 @@ type DeploymentRuntime = {
   lastUnavailableSignalCount: number;
   lastLatestSignalBarAt: string | null;
   lastOldestSignalBarAt: string | null;
+  lastSignalScanAt: string | null;
+  lastSignalSourcePolicy: string | null;
+  lastHeavyWorkDeferred: boolean;
+  lastActiveScanPhase: string | null;
+  lastResourcePressureLevel: string | null;
   lastCandidateCount: number;
   lastBlockedCandidateCount: number;
   lastBatchSymbols: string[];
@@ -166,6 +171,23 @@ function summarizeScanResult(result: unknown) {
           : null,
       candidateCount: numeric(summary["candidateCount"]) ?? 0,
       blockedCandidateCount: numeric(summary["blockedCandidateCount"]) ?? 0,
+      lastSignalScanAt:
+        typeof summary["lastSignalScanAt"] === "string"
+          ? summary["lastSignalScanAt"]
+          : null,
+      signalSourcePolicy:
+        typeof summary["signalSourcePolicy"] === "string"
+          ? summary["signalSourcePolicy"]
+          : null,
+      heavyWorkDeferred: summary["heavyWorkDeferred"] === true,
+      activeScanPhase:
+        typeof summary["activeScanPhase"] === "string"
+          ? summary["activeScanPhase"]
+          : null,
+      resourcePressureLevel:
+        typeof summary["resourcePressureLevel"] === "string"
+          ? summary["resourcePressureLevel"]
+          : null,
       batch: summarizeScanBatch(summary["batch"]),
     };
   }
@@ -205,6 +227,11 @@ function summarizeScanResult(result: unknown) {
       const status = String(candidate["status"] ?? "");
       return actionStatus === "blocked" || status === "skipped";
     }).length,
+    lastSignalScanAt: null,
+    signalSourcePolicy: null,
+    heavyWorkDeferred: false,
+    activeScanPhase: null,
+    resourcePressureLevel: null,
     batch: null,
   };
 }
@@ -277,6 +304,11 @@ function createDeploymentRuntime(signature: string): DeploymentRuntime {
     lastUnavailableSignalCount: 0,
     lastLatestSignalBarAt: null,
     lastOldestSignalBarAt: null,
+    lastSignalScanAt: null,
+    lastSignalSourcePolicy: null,
+    lastHeavyWorkDeferred: false,
+    lastActiveScanPhase: null,
+    lastResourcePressureLevel: null,
     lastCandidateCount: 0,
     lastBlockedCandidateCount: 0,
     lastBatchSymbols: [],
@@ -407,6 +439,11 @@ async function runDeployment(input: {
     runtime.lastUnavailableSignalCount = scanSummary.unavailableSignalCount;
     runtime.lastLatestSignalBarAt = scanSummary.latestSignalBarAt;
     runtime.lastOldestSignalBarAt = scanSummary.oldestSignalBarAt;
+    runtime.lastSignalScanAt = scanSummary.lastSignalScanAt;
+    runtime.lastSignalSourcePolicy = scanSummary.signalSourcePolicy;
+    runtime.lastHeavyWorkDeferred = scanSummary.heavyWorkDeferred;
+    runtime.lastActiveScanPhase = scanSummary.activeScanPhase;
+    runtime.lastResourcePressureLevel = scanSummary.resourcePressureLevel;
     runtime.lastCandidateCount = scanSummary.candidateCount;
     runtime.lastBlockedCandidateCount = scanSummary.blockedCandidateCount;
     runtime.lastBatchSymbols = scanSummary.batch?.symbols ?? [];
@@ -678,6 +715,11 @@ export function createSignalOptionsWorker(
           lastUnavailableSignalCount: runtime.lastUnavailableSignalCount,
           lastLatestSignalBarAt: runtime.lastLatestSignalBarAt,
           lastOldestSignalBarAt: runtime.lastOldestSignalBarAt,
+          lastSignalScanAt: runtime.lastSignalScanAt,
+          lastSignalSourcePolicy: runtime.lastSignalSourcePolicy,
+          lastHeavyWorkDeferred: runtime.lastHeavyWorkDeferred,
+          lastActiveScanPhase: runtime.lastActiveScanPhase,
+          lastResourcePressureLevel: runtime.lastResourcePressureLevel,
           lastCandidateCount: runtime.lastCandidateCount,
           lastBlockedCandidateCount: runtime.lastBlockedCandidateCount,
           lastBatchSymbols: runtime.lastBatchSymbols,

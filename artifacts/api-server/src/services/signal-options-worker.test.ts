@@ -66,6 +66,10 @@ function scanBlockingPressureSnapshot(): ApiResourcePressureSnapshot {
       signalOptions: {
         maintenanceOnly: true,
         skipDeploymentScans: true,
+        signalRefreshAllowed: false,
+        actionScansAllowed: false,
+        positionMarksAllowed: false,
+        watchlistPrewarmAllowed: false,
       },
     },
     inputs: {
@@ -193,6 +197,12 @@ test("signal-options worker keeps deployment scans rotating under high pressure"
   let scanCalls = 0;
   updateApiResourcePressure({ rssMb: 1_250 });
   try {
+    const caps = getApiResourcePressureSnapshot().caps.signalOptions;
+    assert.equal(caps.signalRefreshAllowed, true);
+    assert.equal(caps.actionScansAllowed, false);
+    assert.equal(caps.positionMarksAllowed, false);
+    assert.equal(caps.watchlistPrewarmAllowed, false);
+
     const worker = createSignalOptionsWorker({
       listDeployments: async () => [deployment()],
       scanDeployment: async () => {

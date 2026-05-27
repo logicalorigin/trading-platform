@@ -5,6 +5,7 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { AlgoCockpitPipelineStageActiveScanPhase } from './algoCockpitPipelineStageActiveScanPhase';
 import type { AlgoCockpitPipelineStageId } from './algoCockpitPipelineStageId';
 import type { AlgoCockpitPipelineStageStatus } from './algoCockpitPipelineStageStatus';
 
@@ -16,4 +17,48 @@ export interface AlgoCockpitPipelineStage {
   /** @nullable */
   latestAt: Date | null;
   detail: string;
+  /** @nullable */
+  scanStartedAt?: Date | null;
+  /** @nullable */
+  scanAgeMs?: number | null;
+  /** @nullable */
+  activeScanSource?: string | null;
+  /** @nullable */
+  activeScanRunId?: string | null;
+  /** @nullable */
+  activeScanPhase?: AlgoCockpitPipelineStageActiveScanPhase;
+  /** @nullable */
+  lastSignalScanAt?: Date | null;
+  /** @nullable */
+  latestSignalBarAt?: Date | null;
+  /** @nullable */
+  signalSourcePolicy?: string | null;
+  heavyWorkDeferred?: boolean;
+  /** @nullable */
+  resourcePressureLevel?: string | null;
+  pressurePaused?: boolean;
+  /** @nullable */
+  pressurePauseStartedAt?: Date | null;
+  /** @nullable */
+  pressurePauseAgeMs?: number | null;
+  /** @nullable */
+  nextScanDueAt?: Date | null;
+  /** @nullable */
+  nextScanDueInMs?: number | null;
+  /** @nullable */
+  pollIntervalMs?: number | null;
+  lastBatchSymbols?: string[];
+  /** @nullable */
+  lastBatchSize?: number | null;
+  /** @nullable */
+  lastBatchUniverseCount?: number | null;
+  /** @nullable */
+  lastBatchStartIndex?: number | null;
+  /** @nullable */
+  lastBatchNextIndex?: number | null;
+  /** @nullable */
+  lastBatchCapacity?: number | null;
+  lastBatchFullUniverse?: boolean;
+  /** @nullable */
+  pauseReason?: string | null;
 }

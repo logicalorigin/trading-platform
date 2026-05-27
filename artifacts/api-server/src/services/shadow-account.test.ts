@@ -71,6 +71,61 @@ test("shadow read cache coalesces repeated expensive reads until invalidated", a
   assert.equal(calls, 2);
 });
 
+test("shadow read cache serves marked stale data when refresh exceeds budget", async () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: 0,
+    staleTtlMs: 60_000,
+    staleWaitMs: 5,
+  });
+
+  const fresh = await internals.withShadowReadCache("unit-stale-cache", async () => ({
+    accountId: "shadow",
+    degraded: false,
+    reason: null,
+    stale: false,
+    debug: null,
+    value: 1,
+  }));
+  const stale = await internals.withShadowReadCache(
+    "unit-stale-cache",
+    async () =>
+      new Promise<Record<string, unknown>>(() => {
+        // Intentionally unresolved; the cache should protect the caller.
+      }),
+  );
+
+  assert.deepEqual(fresh, {
+    accountId: "shadow",
+    degraded: false,
+    reason: null,
+    stale: false,
+    debug: null,
+    value: 1,
+  });
+  assert.equal(stale.accountId, "shadow");
+  assert.equal(stale.value, 1);
+  assert.equal(stale.degraded, true);
+  assert.equal(stale.stale, true);
+  assert.equal(stale.reason, "shadow_read_stale_cache");
+  const staleDebug = stale.debug as Record<string, unknown>;
+  assert.deepEqual(staleDebug, {
+    message: "Shadow account read exceeded its response budget; serving cached data.",
+    code: "shadow_read_stale_cache",
+    timeoutMs: 5,
+    cacheAgeMs: staleDebug["cacheAgeMs"],
+  });
+  assert.equal(typeof staleDebug["cacheAgeMs"], "number");
+
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: null,
+    staleTtlMs: null,
+    staleWaitMs: null,
+  });
+  internals.invalidateShadowFreshStateCache();
+});
+
 test("shadow fresh-state refresh remains in-flight until settled", async () => {
   const internals = __shadowWatchlistBacktestInternalsForTests;
   const totals = {

@@ -279,6 +279,10 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(rowSource, /sortDirection === "asc" \? "rotate\(180deg\)" : "none"/);
   assert.match(rowSource, /ChevronDown/);
   assert.match(tableSource, /Scan running/);
+  assert.match(tableSource, /Bar \$\{formatRelativeTimeShort\(freshness\.latestBarAt\)\}/);
+  assert.match(tableSource, /formatCompactStatusValue\(freshness\.sourcePolicy\)/);
+  assert.match(tableSource, /Fresh signal state is current; heavy action work is deferred\./);
+  assert.match(tableSource, /<AlertTriangle/);
   assert.match(tableSource, /scanStageRecord\.detail/);
   assert.match(tableSource, /freshness\.scanDetail/);
   assert.match(tableSource, /pageRows\.map\(\(\{ signal, candidate, scoreBreakdown \}\)/);

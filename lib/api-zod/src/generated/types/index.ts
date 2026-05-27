@@ -54,6 +54,7 @@ export * from './algoCockpitAttentionItem';
 export * from './algoCockpitAttentionItemSeverity';
 export * from './algoCockpitFleetSummary';
 export * from './algoCockpitPipelineStage';
+export * from './algoCockpitPipelineStageActiveScanPhase';
 export * from './algoCockpitPipelineStageId';
 export * from './algoCockpitPipelineStageStatus';
 export * from './algoCockpitReadiness';

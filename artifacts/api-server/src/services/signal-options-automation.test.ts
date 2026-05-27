@@ -115,6 +115,33 @@ test("signal-options scans request IBKR-only signal monitor bars", () => {
   );
 });
 
+test("signal-options scans publish fresh signal state before heavy action work", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const scanBody = source.match(
+    /async function runSignalOptionsShadowScanUnlocked[\s\S]*?\nexport async function updateSignalOptionsExecutionProfile/,
+  )?.[0];
+
+  assert.ok(scanBody);
+  assert.ok(
+    scanBody.indexOf("await loadSignalOptionsMonitorState") <
+      scanBody.indexOf("const initialEvents = await listDeploymentEvents"),
+  );
+  assert.ok(
+    scanBody.indexOf("lastEvaluatedAt: signalScanCompletedAt") <
+      scanBody.indexOf("refreshActivePosition"),
+  );
+  assert.ok(
+    scanBody.indexOf("shouldDeferSignalOptionsHeavyWork") <
+      scanBody.indexOf("refreshActivePosition"),
+  );
+  assert.match(scanBody, /activeScanPhase:\s*"deferred"/);
+  assert.match(scanBody, /lastSignalScanAt:\s*signalScanCompletedAt\.toISOString\(\)/);
+  assert.match(scanBody, /heavyWorkDeferred:\s*true/);
+});
+
 test("signal-options state resolves paper-enabled before UUID lookup", () => {
   const source = readFileSync(
     new URL("./signal-options-automation.ts", import.meta.url),
@@ -501,6 +528,11 @@ test("signal-options worker scan summary stays lightweight and universe-scoped",
     unavailableSignalCount: 0,
     latestSignalBarAt: "2026-05-18T18:20:00.000Z",
     oldestSignalBarAt: "2026-05-18T18:10:00.000Z",
+    lastSignalScanAt: null,
+    signalSourcePolicy: "ibkr-only",
+    heavyWorkDeferred: false,
+    activeScanPhase: null,
+    resourcePressureLevel: null,
     candidateCount: 3,
     blockedCandidateCount: 2,
     batch: null,

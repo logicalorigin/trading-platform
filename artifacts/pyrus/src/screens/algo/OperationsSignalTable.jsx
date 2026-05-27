@@ -4,6 +4,7 @@ import {
   useState,
 } from "react";
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
   Ban,
@@ -103,6 +104,12 @@ const timestampMs = (value) => {
   const parsed = Date.parse(value || "");
   return Number.isFinite(parsed) ? parsed : 0;
 };
+
+const formatCompactStatusValue = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
 const latestTimelineMs = (candidate) => {
   const timeline = Array.isArray(candidate?.timeline) ? candidate.timeline : [];
@@ -668,12 +675,45 @@ export const OperationsSignalTable = ({
       (stage) => asRecord(stage).id === "scan_universe",
     );
     const scanStageRecord = asRecord(scanStage);
+    const latestBarMs = timestampMs(scanStageRecord.latestSignalBarAt);
     const latestScanMs =
-      timestampMs(scanStageRecord.latestAt) || timestampMs(cockpitGeneratedAt);
+      timestampMs(scanStageRecord.lastSignalScanAt) ||
+      timestampMs(scanStageRecord.latestAt) ||
+      timestampMs(cockpitGeneratedAt);
+    const pollIntervalMs = Number(scanStageRecord.pollIntervalMs);
+    const staleAfterMs = Number.isFinite(pollIntervalMs)
+      ? Math.max(120_000, pollIntervalMs * 2)
+      : 120_000;
+    const scanAgeMs = latestScanMs ? Date.now() - latestScanMs : null;
+    const sourcePolicy =
+      typeof scanStageRecord.signalSourcePolicy === "string" &&
+      scanStageRecord.signalSourcePolicy.trim()
+        ? scanStageRecord.signalSourcePolicy.trim()
+        : null;
+    const activePhase =
+      typeof scanStageRecord.activeScanPhase === "string" &&
+      scanStageRecord.activeScanPhase.trim()
+        ? scanStageRecord.activeScanPhase.trim()
+        : null;
+    const pressureLevel =
+      typeof scanStageRecord.resourcePressureLevel === "string" &&
+      scanStageRecord.resourcePressureLevel.trim()
+        ? scanStageRecord.resourcePressureLevel.trim()
+        : null;
     return {
       latestSignalAt: latestSignalMs ? new Date(latestSignalMs).toISOString() : null,
+      latestBarAt: latestBarMs ? new Date(latestBarMs).toISOString() : null,
       latestScanAt: latestScanMs ? new Date(latestScanMs).toISOString() : null,
       scanRunning: scanStageRecord.status === "running",
+      scanPhase: activePhase,
+      sourcePolicy,
+      heavyWorkDeferred: scanStageRecord.heavyWorkDeferred === true,
+      pressureLevel,
+      staleScan:
+        Boolean(latestScanMs) &&
+        scanStageRecord.status !== "running" &&
+        scanAgeMs !== null &&
+        scanAgeMs > staleAfterMs,
       scanDetail:
         typeof scanStageRecord.detail === "string" && scanStageRecord.detail.trim()
           ? scanStageRecord.detail.trim()
@@ -685,6 +725,9 @@ export const OperationsSignalTable = ({
     freshness.latestSignalAt
       ? `Signal ${formatRelativeTimeShort(freshness.latestSignalAt)}`
       : "Signal --",
+    freshness.latestBarAt
+      ? `Bar ${formatRelativeTimeShort(freshness.latestBarAt)}`
+      : "Bar --",
     freshness.scanRunning
       ? "Scan running"
       : freshness.scanDetail
@@ -692,11 +735,35 @@ export const OperationsSignalTable = ({
         : freshness.latestScanAt
         ? `Scan ${formatRelativeTimeShort(freshness.latestScanAt)}`
         : "Scan --",
+    freshness.sourcePolicy
+      ? formatCompactStatusValue(freshness.sourcePolicy)
+      : "Source --",
+    freshness.heavyWorkDeferred ? "Heavy deferred" : null,
   ];
+  const staleScanBanner =
+    freshness.heavyWorkDeferred || freshness.staleScan
+      ? [
+          freshness.heavyWorkDeferred
+            ? "Fresh signal state is current; heavy action work is deferred."
+            : "Signal scan freshness is outside the expected window.",
+          freshness.latestScanAt
+            ? `Last scan ${formatRelativeTimeShort(freshness.latestScanAt)}.`
+            : null,
+          freshness.latestBarAt
+            ? `Latest bar ${formatRelativeTimeShort(freshness.latestBarAt)}.`
+            : null,
+          freshness.pressureLevel
+            ? `Pressure ${formatCompactStatusValue(freshness.pressureLevel)}.`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : null;
   const activeFilter = FILTER_OPTIONS.find((option) => option.id === filter) || FILTER_OPTIONS[0];
   const compactTools = algoIsPhone || algoIsNarrow;
-  const statusLine = `${activeFilter.label} ${rows.length} of ${counts.all} signals · ${freshnessItems.join(" · ")}`;
-  const mobileStatusLine = `${activeFilter.label} ${rows.length}/${counts.all} · ${freshnessItems.join(" · ")}`;
+  const freshnessLine = freshnessItems.filter(Boolean).join(" · ");
+  const statusLine = `${activeFilter.label} ${rows.length} of ${counts.all} signals · ${freshnessLine}`;
+  const mobileStatusLine = `${activeFilter.label} ${rows.length}/${counts.all} · ${freshnessLine}`;
   const sortSummary = `Sorted by ${SORT_LABELS[sortKey] || "Newest"} ${
     SORT_DIRECTION_LABELS[sortDirection] || "descending"
   } · ${rows.length} rows`;
@@ -782,7 +849,14 @@ export const OperationsSignalTable = ({
               freshness.latestSignalAt
                 ? `Latest signal ${freshness.latestSignalAt}`
                 : null,
+              freshness.latestBarAt ? `Latest bar ${freshness.latestBarAt}` : null,
               freshness.latestScanAt ? `Latest scan ${freshness.latestScanAt}` : null,
+              freshness.sourcePolicy
+                ? `Source ${formatCompactStatusValue(freshness.sourcePolicy)}`
+                : null,
+              freshness.scanPhase
+                ? `Phase ${formatCompactStatusValue(freshness.scanPhase)}`
+                : null,
             ]
               .filter(Boolean)
               .join(" · ")}
@@ -936,6 +1010,42 @@ export const OperationsSignalTable = ({
             </span>
           ) : null}
         </div>
+        {staleScanBanner ? (
+          <div
+            role="status"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: sp(5),
+              minWidth: 0,
+              padding: sp("5px 7px"),
+              borderRadius: dim(RADII.sm),
+              border: `1px solid ${cssColorAlpha(CSS_COLOR.amber, "66")}`,
+              background: cssColorAlpha(CSS_COLOR.amber, "14"),
+              color: CSS_COLOR.text,
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              lineHeight: 1.25,
+            }}
+          >
+            <AlertTriangle
+              size={13}
+              strokeWidth={1.8}
+              aria-hidden="true"
+              style={{ color: CSS_COLOR.amber, flex: "0 0 auto" }}
+            />
+            <span
+              style={{
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: algoIsPhone ? "normal" : "nowrap",
+              }}
+            >
+              {staleScanBanner}
+            </span>
+          </div>
+        ) : null}
         {columnsOpen && !algoIsPhone ? (
           <OperationsSignalColumnDrawer
             columnOrder={columnOrder}

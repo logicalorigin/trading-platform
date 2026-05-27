@@ -9744,6 +9744,66 @@ components:
           format: date-time
         detail:
           type: string
+        scanStartedAt:
+          type: [string, "null"]
+          format: date-time
+        scanAgeMs:
+          type: [number, "null"]
+        activeScanSource:
+          type: [string, "null"]
+        activeScanRunId:
+          type: [string, "null"]
+        activeScanPhase:
+          type: [string, "null"]
+          enum:
+            - signal_refresh
+            - action_scan
+            - deferred
+            - null
+        lastSignalScanAt:
+          type: [string, "null"]
+          format: date-time
+        latestSignalBarAt:
+          type: [string, "null"]
+          format: date-time
+        signalSourcePolicy:
+          type: [string, "null"]
+        heavyWorkDeferred:
+          type: boolean
+        resourcePressureLevel:
+          type: [string, "null"]
+        pressurePaused:
+          type: boolean
+        pressurePauseStartedAt:
+          type: [string, "null"]
+          format: date-time
+        pressurePauseAgeMs:
+          type: [number, "null"]
+        nextScanDueAt:
+          type: [string, "null"]
+          format: date-time
+        nextScanDueInMs:
+          type: [number, "null"]
+        pollIntervalMs:
+          type: [number, "null"]
+        lastBatchSymbols:
+          type: array
+          items:
+            type: string
+        lastBatchSize:
+          type: [number, "null"]
+        lastBatchUniverseCount:
+          type: [number, "null"]
+        lastBatchStartIndex:
+          type: [number, "null"]
+        lastBatchNextIndex:
+          type: [number, "null"]
+        lastBatchCapacity:
+          type: [number, "null"]
+        lastBatchFullUniverse:
+          type: boolean
+        pauseReason:
+          type: [string, "null"]
       required:
         - id
         - label

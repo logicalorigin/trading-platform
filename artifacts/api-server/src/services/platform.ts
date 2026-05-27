@@ -3678,6 +3678,11 @@ export async function cancelOrder(input: {
   return client.cancelOrder(input);
 }
 
+function positiveIntegerEnv(name: string, fallback: number): number {
+  const configured = Number.parseInt(process.env[name] ?? String(fallback), 10);
+  return Number.isFinite(configured) && configured > 0 ? configured : fallback;
+}
+
 function polygonQuoteToBrokerQuote(quote: PolygonQuoteSnapshot): QuoteSnapshot & {
   source: "polygon";
 } {
@@ -3715,21 +3720,153 @@ function polygonQuoteToBrokerQuote(quote: PolygonQuoteSnapshot): QuoteSnapshot &
   };
 }
 
-export async function getQuoteSnapshots(input: {
+type GetQuoteSnapshotsInput = {
   symbols: string;
   allowPolygonFallback?: boolean;
-}) {
-  const symbols = input.symbols
-    .split(",")
-    .map((symbol) => normalizeSymbol(symbol))
-    .filter(Boolean);
+};
+
+type QuoteSnapshotsServiceResponse = {
+  quotes: Array<QuoteSnapshot & { source: "ibkr" | "polygon" }>;
+  transport: unknown | null;
+  delayed: boolean;
+  fallbackUsed: boolean;
+};
+
+type QuoteSnapshotCacheEntry = {
+  cachedAt: number;
+  expiresAt: number;
+  staleExpiresAt: number;
+  value: QuoteSnapshotsServiceResponse;
+};
+
+const quoteSnapshotCache = new Map<string, QuoteSnapshotCacheEntry>();
+const quoteSnapshotInFlight = new Map<
+  string,
+  Promise<QuoteSnapshotsServiceResponse>
+>();
+let quoteSnapshotCacheTtlMsForTests: number | null = null;
+let quoteSnapshotStaleTtlMsForTests: number | null = null;
+let quoteSnapshotStaleWaitMsForTests: number | null = null;
+
+function quoteSnapshotCacheTtlMs(): number {
+  return (
+    quoteSnapshotCacheTtlMsForTests ??
+    positiveIntegerEnv("QUOTE_SNAPSHOT_CACHE_TTL_MS", 1_000)
+  );
+}
+
+function quoteSnapshotStaleTtlMs(): number {
+  return (
+    quoteSnapshotStaleTtlMsForTests ??
+    positiveIntegerEnv("QUOTE_SNAPSHOT_STALE_TTL_MS", 60_000)
+  );
+}
+
+function quoteSnapshotStaleWaitMs(): number {
+  return (
+    quoteSnapshotStaleWaitMsForTests ??
+    positiveIntegerEnv("QUOTE_SNAPSHOT_STALE_WAIT_MS", 1_500)
+  );
+}
+
+function quoteSnapshotHealthTimeoutMs(): number {
+  return positiveIntegerEnv("QUOTE_SNAPSHOT_HEALTH_TIMEOUT_MS", 750);
+}
+
+function quoteSnapshotBridgeFetchTimeoutMs(): number {
+  return positiveIntegerEnv("QUOTE_SNAPSHOT_BRIDGE_FETCH_TIMEOUT_MS", 3_000);
+}
+
+function quoteSnapshotPolygonFallbackTimeoutMs(): number {
+  return positiveIntegerEnv("QUOTE_SNAPSHOT_POLYGON_FALLBACK_TIMEOUT_MS", 2_000);
+}
+
+function quoteSnapshotCacheKey(input: {
+  symbols: string[];
+  allowPolygonFallback?: boolean;
+}): string {
+  return `${
+    input.allowPolygonFallback === true ? "polygon" : "ibkr"
+  }:${input.symbols.join(",")}`;
+}
+
+function markQuoteSnapshotResponseStale(
+  entry: QuoteSnapshotCacheEntry,
+  now: number,
+): QuoteSnapshotsServiceResponse {
+  return {
+    ...entry.value,
+    quotes: entry.value.quotes.map((quote) => {
+      const updatedAtMs =
+        quote.updatedAt instanceof Date
+          ? quote.updatedAt.getTime()
+          : new Date(quote.updatedAt).getTime();
+      return {
+        ...quote,
+        freshness: "stale" as const,
+        cacheAgeMs: Math.max(0, now - entry.cachedAt),
+        ageMs: Number.isFinite(updatedAtMs)
+          ? Math.max(0, now - updatedAtMs)
+          : (quote.ageMs ?? null),
+      };
+    }),
+  };
+}
+
+async function resolveQuoteSnapshotRequest(
+  request: Promise<QuoteSnapshotsServiceResponse>,
+  cached: QuoteSnapshotCacheEntry | undefined,
+): Promise<QuoteSnapshotsServiceResponse> {
+  const now = Date.now();
+  if (!cached || cached.staleExpiresAt <= now) {
+    return request;
+  }
+
+  return Promise.race([
+    request,
+    new Promise<QuoteSnapshotsServiceResponse>((resolve) => {
+      const timeout = setTimeout(() => {
+        resolve(markQuoteSnapshotResponseStale(cached, Date.now()));
+      }, quoteSnapshotStaleWaitMs());
+      timeout.unref?.();
+    }),
+  ]);
+}
+
+async function getQuoteSnapshotsUncached(input: {
+  symbolsList: string[];
+  allowPolygonFallback?: boolean;
+}): Promise<QuoteSnapshotsServiceResponse> {
+  const symbols = input.symbolsList;
+  if (!symbols.length) {
+    return {
+      quotes: [],
+      transport: null,
+      delayed: false,
+      fallbackUsed: false,
+    };
+  }
   const bridgeClient = getIbkrClient();
   type BridgeQuoteSnapshotPayload = Awaited<
     ReturnType<typeof fetchBridgeQuoteSnapshots>
   >;
   const [bridgeHealth, payload] = await Promise.all([
-    bridgeClient.getHealth().catch(() => null),
-    fetchBridgeQuoteSnapshots(symbols).catch(
+    withTimeout(
+      bridgeClient.getHealth(),
+      quoteSnapshotHealthTimeoutMs(),
+      () =>
+        new Error(
+          `Quote snapshot bridge health timed out after ${quoteSnapshotHealthTimeoutMs()}ms.`,
+        ),
+    ).catch(() => null),
+    withTimeout(
+      fetchBridgeQuoteSnapshots(symbols),
+      quoteSnapshotBridgeFetchTimeoutMs(),
+      () =>
+        new Error(
+          `Quote snapshot bridge fetch timed out after ${quoteSnapshotBridgeFetchTimeoutMs()}ms.`,
+        ),
+    ).catch(
       (): BridgeQuoteSnapshotPayload => ({ quotes: [] }),
     ),
   ]);
@@ -3744,9 +3881,16 @@ export async function getQuoteSnapshots(input: {
     getPolygonRuntimeConfig()
   ) {
     try {
-      polygonQuotes = (await getPolygonClient().getQuoteSnapshots(missingSymbols)).map(
-        polygonQuoteToBrokerQuote,
-      );
+      polygonQuotes = (
+        await withTimeout(
+          getPolygonClient().getQuoteSnapshots(missingSymbols),
+          quoteSnapshotPolygonFallbackTimeoutMs(),
+          () =>
+            new Error(
+              `Quote snapshot Polygon fallback timed out after ${quoteSnapshotPolygonFallbackTimeoutMs()}ms.`,
+            ),
+        )
+      ).map(polygonQuoteToBrokerQuote);
       polygonQuotes.forEach((quote) => {
         recordMarketDataFallback({
           owner: "quote-snapshot",
@@ -3785,6 +3929,55 @@ export async function getQuoteSnapshots(input: {
     delayed: quotes.some((quote) => quote.delayed),
     fallbackUsed: polygonQuotes.length > 0,
   };
+}
+
+export async function getQuoteSnapshots(
+  input: GetQuoteSnapshotsInput,
+): Promise<QuoteSnapshotsServiceResponse> {
+  const symbols = input.symbols
+    .split(",")
+    .map((symbol) => normalizeSymbol(symbol))
+    .filter(Boolean);
+  const key = quoteSnapshotCacheKey({
+    symbols,
+    allowPolygonFallback: input.allowPolygonFallback,
+  });
+  const now = Date.now();
+  const cached = quoteSnapshotCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const existingRequest = quoteSnapshotInFlight.get(key);
+  if (existingRequest) {
+    return resolveQuoteSnapshotRequest(existingRequest, cached);
+  }
+
+  const request = getQuoteSnapshotsUncached({
+    symbolsList: symbols,
+    allowPolygonFallback: input.allowPolygonFallback,
+  })
+    .then((value) => {
+      const cachedAt = Date.now();
+      quoteSnapshotCache.set(key, {
+        value,
+        cachedAt,
+        expiresAt: cachedAt + quoteSnapshotCacheTtlMs(),
+        staleExpiresAt: cachedAt + quoteSnapshotStaleTtlMs(),
+      });
+      return value;
+    })
+    .finally(() => {
+      if (quoteSnapshotInFlight.get(key) === request) {
+        quoteSnapshotInFlight.delete(key);
+      }
+    });
+  quoteSnapshotInFlight.set(key, request);
+  request.catch((error) => {
+    logger.debug({ err: error, key }, "Quote snapshot refresh failed");
+  });
+
+  return resolveQuoteSnapshotRequest(request, cached);
 }
 
 export async function getNews(input: { ticker?: string; limit?: number }) {
@@ -11135,6 +11328,32 @@ export const __platformBarsCacheTestInternals = {
 export const __platformTickerSearchTestInternals = {
   isTickerLikeSearch,
   shouldUseUniverseCatalogImmediateResponse,
+};
+
+export const __platformQuoteSnapshotTestInternals = {
+  resetQuoteSnapshotCache() {
+    quoteSnapshotCache.clear();
+    quoteSnapshotInFlight.clear();
+    quoteSnapshotCacheTtlMsForTests = null;
+    quoteSnapshotStaleTtlMsForTests = null;
+    quoteSnapshotStaleWaitMsForTests = null;
+  },
+  setQuoteSnapshotCacheWindowsForTests(input: {
+    ttlMs?: number | null;
+    staleTtlMs?: number | null;
+    staleWaitMs?: number | null;
+  }) {
+    quoteSnapshotCacheTtlMsForTests =
+      typeof input.ttlMs === "number" ? Math.max(0, input.ttlMs) : null;
+    quoteSnapshotStaleTtlMsForTests =
+      typeof input.staleTtlMs === "number"
+        ? Math.max(0, input.staleTtlMs)
+        : null;
+    quoteSnapshotStaleWaitMsForTests =
+      typeof input.staleWaitMs === "number"
+        ? Math.max(0, input.staleWaitMs)
+        : null;
+  },
 };
 
 function pruneOptionChainCache(now: number): void {

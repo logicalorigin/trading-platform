@@ -38,6 +38,11 @@ export type SignalOptionsWorkerSnapshot = {
     lastUnavailableSignalCount: number;
     lastLatestSignalBarAt: string | null;
     lastOldestSignalBarAt: string | null;
+    lastSignalScanAt?: string | null;
+    lastSignalSourcePolicy?: string | null;
+    lastHeavyWorkDeferred?: boolean;
+    lastActiveScanPhase?: string | null;
+    lastResourcePressureLevel?: string | null;
     lastCandidateCount: number;
     lastBlockedCandidateCount: number;
     lastBatchSymbols?: string[];

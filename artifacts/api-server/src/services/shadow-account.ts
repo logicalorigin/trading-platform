@@ -389,11 +389,24 @@ let shadowPositionMarkRefreshInFlight:
   | Promise<Awaited<ReturnType<typeof refreshShadowPositionMarks>>>
   | null = null;
 const SHADOW_READ_CACHE_TTL_MS = 2_500;
+const SHADOW_READ_CACHE_STALE_TTL_MS = 60_000;
+const SHADOW_READ_CACHE_STALE_WAIT_MS = 1_500;
 const SHADOW_OPTION_QUOTE_CACHE_TTL_MS = 15_000;
 const SHADOW_OPTION_PROVIDER_ID_CACHE_TTL_MS = 60 * 60_000;
-const shadowReadCache = new Map<string, { expiresAt: number; value: unknown }>();
+const shadowReadCache = new Map<
+  string,
+  {
+    cachedAt: number;
+    expiresAt: number;
+    staleExpiresAt: number;
+    value: unknown;
+  }
+>();
 const shadowReadInFlight = new Map<string, Promise<unknown>>();
 let shadowReadCacheVersion = 0;
+let shadowReadCacheTtlMsForTests: number | null = null;
+let shadowReadCacheStaleTtlMsForTests: number | null = null;
+let shadowReadCacheStaleWaitMsForTests: number | null = null;
 const shadowOptionQuoteCache = new Map<
   string,
   {
@@ -442,17 +455,23 @@ async function withShadowReadCache<T>(
   if (cached && cached.expiresAt > now) {
     return cached.value as T;
   }
+  if (cached && cached.staleExpiresAt <= now) {
+    shadowReadCache.delete(key);
+  }
   const inFlight = shadowReadInFlight.get(key);
   if (inFlight) {
-    return inFlight as Promise<T>;
+    return resolveShadowReadRequest(inFlight as Promise<T>, cached);
   }
   const version = shadowReadCacheVersion;
   const request = factory()
     .then((value) => {
       if (version === shadowReadCacheVersion) {
+        const cachedAt = Date.now();
         shadowReadCache.set(key, {
           value,
-          expiresAt: Date.now() + SHADOW_READ_CACHE_TTL_MS,
+          cachedAt,
+          expiresAt: cachedAt + shadowReadCacheTtlMs(),
+          staleExpiresAt: cachedAt + shadowReadCacheStaleTtlMs(),
         });
       }
       return value;
@@ -463,7 +482,86 @@ async function withShadowReadCache<T>(
       }
     });
   shadowReadInFlight.set(key, request);
-  return request;
+  request.catch((error) => {
+    logger.debug({ err: error, key }, "Shadow account cached read failed");
+  });
+  return resolveShadowReadRequest(request, cached);
+}
+
+function shadowReadCacheTtlMs(): number {
+  return shadowReadCacheTtlMsForTests ?? SHADOW_READ_CACHE_TTL_MS;
+}
+
+function shadowReadCacheStaleTtlMs(): number {
+  return shadowReadCacheStaleTtlMsForTests ?? SHADOW_READ_CACHE_STALE_TTL_MS;
+}
+
+function shadowReadStaleWaitMs(): number {
+  return shadowReadCacheStaleWaitMsForTests ?? SHADOW_READ_CACHE_STALE_WAIT_MS;
+}
+
+function markShadowReadValueStale<T>(
+  value: T,
+  input: { cachedAt: number; now: number },
+): T {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+
+  const record = { ...(value as Record<string, unknown>) };
+  record["degraded"] = true;
+  record["stale"] = true;
+  record["reason"] = "shadow_read_stale_cache";
+  if ("isStale" in record) {
+    record["isStale"] = true;
+  }
+  if ("staleReason" in record) {
+    record["staleReason"] = "shadow_read_stale_cache";
+  }
+  if ("debug" in record) {
+    const debug =
+      record["debug"] && typeof record["debug"] === "object"
+        ? { ...(record["debug"] as Record<string, unknown>) }
+        : {};
+    debug["message"] =
+      "Shadow account read exceeded its response budget; serving cached data.";
+    debug["code"] = "shadow_read_stale_cache";
+    debug["timeoutMs"] = shadowReadStaleWaitMs();
+    debug["cacheAgeMs"] = Math.max(0, input.now - input.cachedAt);
+    record["debug"] = debug;
+  }
+  return record as T;
+}
+
+async function resolveShadowReadRequest<T>(
+  request: Promise<T>,
+  cached:
+    | {
+        cachedAt: number;
+        staleExpiresAt: number;
+        value: unknown;
+      }
+    | undefined,
+): Promise<T> {
+  const now = Date.now();
+  if (!cached || cached.staleExpiresAt <= now) {
+    return request;
+  }
+
+  return Promise.race([
+    request,
+    new Promise<T>((resolve) => {
+      const timeout = setTimeout(() => {
+        resolve(
+          markShadowReadValueStale(cached.value as T, {
+            cachedAt: cached.cachedAt,
+            now: Date.now(),
+          }),
+        );
+      }, shadowReadStaleWaitMs());
+      timeout.unref?.();
+    }),
+  ]);
 }
 
 function trackShadowFreshStateRefresh(
@@ -9236,6 +9334,22 @@ async function insertWatchlistBacktestFills(input: {
 
 export const __shadowWatchlistBacktestInternalsForTests = {
   invalidateShadowFreshStateCache,
+  setShadowReadCacheWindowsForTests(input: {
+    ttlMs?: number | null;
+    staleTtlMs?: number | null;
+    staleWaitMs?: number | null;
+  }) {
+    shadowReadCacheTtlMsForTests =
+      typeof input.ttlMs === "number" ? Math.max(0, input.ttlMs) : null;
+    shadowReadCacheStaleTtlMsForTests =
+      typeof input.staleTtlMs === "number"
+        ? Math.max(0, input.staleTtlMs)
+        : null;
+    shadowReadCacheStaleWaitMsForTests =
+      typeof input.staleWaitMs === "number"
+        ? Math.max(0, input.staleWaitMs)
+        : null;
+  },
   withShadowReadCache,
   trackShadowFreshStateRefresh,
   getShadowFreshStateInFlight: () => shadowFreshStateInFlight,
