@@ -96,6 +96,24 @@ test("signal matrix scheduler keeps bounded background rotation under critical p
   assert.equal(plan.backgroundPaused, true);
 });
 
+test("signal matrix scheduler defers background-only work under high pressure", () => {
+  const plan = buildSignalMatrixRequestPlan({
+    symbols: ["SPY", "QQQ", "AAPL", "NVDA", "MSFT"],
+    prioritySymbols: ["SPY", "QQQ"],
+    currentStates: hydratedStates(["SPY", "QQQ"]),
+    pressureLevel: "high",
+    backgroundReady: true,
+    cursor: 0,
+  });
+
+  assert.deepEqual(plan.prioritySymbols, []);
+  assert.deepEqual(plan.backgroundSymbols, []);
+  assert.deepEqual(plan.requestSymbols, []);
+  assert.equal(plan.backgroundReady, false);
+  assert.equal(plan.backgroundPaused, true);
+  assert.equal(plan.coverage.missingSymbols, 3);
+});
+
 test("signal matrix scheduler still hydrates priority symbols before background readiness", () => {
   const plan = buildSignalMatrixRequestPlan({
     symbols: ["SPY", "QQQ", "AAPL"],

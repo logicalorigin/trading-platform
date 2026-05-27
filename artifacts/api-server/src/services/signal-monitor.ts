@@ -86,8 +86,10 @@ const SIGNAL_MONITOR_RUNTIME_FALLBACK_MESSAGE =
   "Postgres is unavailable; using runtime-only signal monitor evaluation.";
 const SIGNAL_MONITOR_DB_UNAVAILABLE_CODE = "signal_monitor_db_unavailable";
 const SIGNAL_MONITOR_RUNTIME_EVALUATION_CACHE_TTL_MS = 10_000;
+const SIGNAL_MONITOR_RUNTIME_EVALUATION_CACHE_MAX_ENTRIES = 64;
 const SIGNAL_MONITOR_MATRIX_CACHE_TTL_MS = 60_000;
 const SIGNAL_MONITOR_MATRIX_STALE_TTL_MS = 5 * 60_000;
+const SIGNAL_MONITOR_MATRIX_EVALUATION_CACHE_MAX_ENTRIES = 64;
 const SIGNAL_MONITOR_MATRIX_AUTOMATIC_DEBOUNCE_MS = 2_000;
 const SIGNAL_MONITOR_COMPLETED_BARS_CACHE_TTL_MS = 30_000;
 const SIGNAL_MONITOR_COMPLETED_BARS_STALE_TTL_MS = 2 * 60_000;
@@ -422,12 +424,69 @@ const signalMonitorCompletedBarsCounters = {
   inFlightJoin: 0,
 };
 
+function trimRuntimeSignalMonitorEvaluationCache(nowMs = Date.now()): void {
+  for (const [key, entry] of runtimeSignalMonitorEvaluationCache.entries()) {
+    if (entry.expiresAt <= nowMs) {
+      runtimeSignalMonitorEvaluationCache.delete(key);
+    }
+  }
+  if (runtimeSignalMonitorEvaluationCache.size <= SIGNAL_MONITOR_RUNTIME_EVALUATION_CACHE_MAX_ENTRIES) {
+    return;
+  }
+  const oldest = [...runtimeSignalMonitorEvaluationCache.entries()].sort(
+    (left, right) => left[1].expiresAt - right[1].expiresAt,
+  );
+  for (
+    let index = 0;
+    runtimeSignalMonitorEvaluationCache.size > SIGNAL_MONITOR_RUNTIME_EVALUATION_CACHE_MAX_ENTRIES &&
+    index < oldest.length;
+    index += 1
+  ) {
+    runtimeSignalMonitorEvaluationCache.delete(oldest[index][0]);
+  }
+}
+
+function trimSignalMonitorMatrixEvaluationCache(nowMs = Date.now()): void {
+  for (const [key, entry] of signalMonitorMatrixEvaluationCache.entries()) {
+    if (entry.staleUntil <= nowMs) {
+      signalMonitorMatrixEvaluationCache.delete(key);
+    }
+  }
+  if (signalMonitorMatrixEvaluationCache.size <= SIGNAL_MONITOR_MATRIX_EVALUATION_CACHE_MAX_ENTRIES) {
+    return;
+  }
+  const oldest = [...signalMonitorMatrixEvaluationCache.entries()].sort(
+    (left, right) => left[1].staleUntil - right[1].staleUntil,
+  );
+  for (
+    let index = 0;
+    signalMonitorMatrixEvaluationCache.size > SIGNAL_MONITOR_MATRIX_EVALUATION_CACHE_MAX_ENTRIES &&
+    index < oldest.length;
+    index += 1
+  ) {
+    signalMonitorMatrixEvaluationCache.delete(oldest[index][0]);
+  }
+}
+
+function getRuntimeSignalMonitorEvaluationCacheValue<T>(
+  key: string,
+  nowMs = Date.now(),
+): { value: T; cacheStatus: SignalMonitorMatrixCacheStatus } | null {
+  trimRuntimeSignalMonitorEvaluationCache(nowMs);
+  const cached = runtimeSignalMonitorEvaluationCache.get(key);
+  if (!cached || cached.expiresAt <= nowMs) {
+    return null;
+  }
+  return { value: cached.value as T, cacheStatus: "hit" };
+}
+
 async function withRuntimeSignalMonitorEvaluationCache<T>(
   key: string,
   factory: () => Promise<T>,
   options: { onCacheStatus?: (status: SignalMonitorMatrixCacheStatus) => void } = {},
 ): Promise<T> {
   const nowMs = Date.now();
+  trimRuntimeSignalMonitorEvaluationCache(nowMs);
   const cached = runtimeSignalMonitorEvaluationCache.get(key);
   if (cached && cached.expiresAt > nowMs) {
     options.onCacheStatus?.("hit");
@@ -445,6 +504,7 @@ async function withRuntimeSignalMonitorEvaluationCache<T>(
       value,
       expiresAt: Date.now() + SIGNAL_MONITOR_RUNTIME_EVALUATION_CACHE_TTL_MS,
     });
+    trimRuntimeSignalMonitorEvaluationCache();
     return value;
   });
   runtimeSignalMonitorEvaluationInFlight.set(key, request);
@@ -510,6 +570,16 @@ function isAutomaticSignalMonitorMatrixRequest(input: {
   );
 }
 
+function shouldServeSignalMonitorMatrixFromCacheOnly(input: {
+  clientRole?: SignalMonitorMatrixClientRole;
+  requestOrigin?: SignalMonitorMatrixRequestOrigin;
+}) {
+  return (
+    input.clientRole === "follower" &&
+    (input.requestOrigin === "startup" || input.requestOrigin === "poll")
+  );
+}
+
 function markAutomaticSignalMonitorMatrixRequest(
   key: string,
   input: {
@@ -535,6 +605,7 @@ function getDebouncedSignalMonitorMatrixCacheValue<T>(
   key: string,
   nowMs = Date.now(),
 ): { value: T; cacheStatus: SignalMonitorMatrixCacheStatus } | null {
+  trimSignalMonitorMatrixEvaluationCache(nowMs);
   const cached = signalMonitorMatrixEvaluationCache.get(key);
   if (!cached || cached.staleUntil <= nowMs) {
     return null;
@@ -554,6 +625,7 @@ async function withSignalMonitorMatrixEvaluationCache<T>(
   } = {},
 ): Promise<T> {
   const nowMs = options.nowMs ?? Date.now();
+  trimSignalMonitorMatrixEvaluationCache(nowMs);
   const cached = signalMonitorMatrixEvaluationCache.get(key);
   if (cached && cached.freshUntil > nowMs) {
     options.onCacheStatus?.("hit");
@@ -578,6 +650,7 @@ async function withSignalMonitorMatrixEvaluationCache<T>(
         freshUntil: completedAt + SIGNAL_MONITOR_MATRIX_CACHE_TTL_MS,
         staleUntil: completedAt + SIGNAL_MONITOR_MATRIX_STALE_TTL_MS,
       });
+      trimSignalMonitorMatrixEvaluationCache(completedAt);
       return value;
     })
     .finally(() => {
@@ -3055,6 +3128,38 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
     JSON.stringify(asRecord(profile.pyrusSignalsSettings)),
   ].join(":");
   const automaticRequest = markAutomaticSignalMonitorMatrixRequest(cacheKey, input);
+  type MatrixRuntimeResponse = {
+    profile: ReturnType<typeof profileToResponse>;
+    states: SignalMonitorMatrixStateResult[];
+    evaluatedAt: Date;
+    timeframes: SignalMonitorMatrixTimeframe[];
+    truncated: boolean;
+    skippedSymbols: string[];
+    sourceRequestCount: number;
+  };
+  const cacheOnlyCached = shouldServeSignalMonitorMatrixFromCacheOnly(input)
+    ? getRuntimeSignalMonitorEvaluationCacheValue<MatrixRuntimeResponse>(cacheKey)
+    : null;
+  if (shouldServeSignalMonitorMatrixFromCacheOnly(input)) {
+    const response =
+      cacheOnlyCached?.value ?? {
+        profile: profileToResponse(profile),
+        states: [],
+        evaluatedAt: new Date(),
+        timeframes,
+        truncated,
+        skippedSymbols,
+        sourceRequestCount: 0,
+      };
+    return withSignalMonitorMatrixMetadata(response, {
+      cacheStatus: cacheOnlyCached?.cacheStatus ?? "miss",
+      requestedSymbols: symbols,
+      totalSymbols: symbols.length + skippedSymbols.length,
+      taskCount: symbols.length * timeframes.length,
+      startedAt,
+      automaticRequest,
+    });
+  }
 
   const response = await withRuntimeSignalMonitorEvaluationCache(cacheKey, async () => {
     const evaluatedAt = new Date();
@@ -3164,18 +3269,42 @@ export async function evaluateSignalMonitorMatrix(input: {
     JSON.stringify(asRecord(profile.pyrusSignalsSettings)),
   ].join(":");
   const automaticRequest = markAutomaticSignalMonitorMatrixRequest(cacheKey, input);
+  type MatrixResponse = {
+    profile: ReturnType<typeof profileToResponse>;
+    states: SignalMonitorMatrixStateResult[];
+    evaluatedAt: Date;
+    timeframes: SignalMonitorMatrixTimeframe[];
+    truncated: boolean;
+    skippedSymbols: string[];
+    sourceRequestCount: number;
+  };
+  const cacheOnlyCached = shouldServeSignalMonitorMatrixFromCacheOnly(input)
+    ? getDebouncedSignalMonitorMatrixCacheValue<MatrixResponse>(cacheKey)
+    : null;
+  if (shouldServeSignalMonitorMatrixFromCacheOnly(input)) {
+    const response =
+      cacheOnlyCached?.value ?? {
+        profile: profileToResponse(profile),
+        states: [],
+        evaluatedAt,
+        timeframes,
+        truncated,
+        skippedSymbols,
+        sourceRequestCount: 0,
+      };
+    return withSignalMonitorMatrixMetadata(response, {
+      cacheStatus: cacheOnlyCached?.cacheStatus ?? "miss",
+      requestedSymbols: symbols,
+      totalSymbols: symbols.length + skippedSymbols.length,
+      taskCount: symbols.length * timeframes.length,
+      startedAt,
+      automaticRequest,
+    });
+  }
 
   const debouncedCached =
     automaticRequest.debounced
-      ? getDebouncedSignalMonitorMatrixCacheValue<{
-          profile: ReturnType<typeof profileToResponse>;
-          states: SignalMonitorMatrixStateResult[];
-          evaluatedAt: Date;
-          timeframes: SignalMonitorMatrixTimeframe[];
-          truncated: boolean;
-          skippedSymbols: string[];
-          sourceRequestCount: number;
-        }>(cacheKey)
+      ? getDebouncedSignalMonitorMatrixCacheValue<MatrixResponse>(cacheKey)
       : null;
   const response =
     debouncedCached?.value ??
@@ -3367,7 +3496,9 @@ export const __signalMonitorInternalsForTests = {
   clearSignalMonitorMatrixEvaluationCache,
   withSignalMonitorMatrixEvaluationCache,
   markAutomaticSignalMonitorMatrixRequest,
+  shouldServeSignalMonitorMatrixFromCacheOnly,
   getDebouncedSignalMonitorMatrixCacheValue,
+  getRuntimeSignalMonitorEvaluationCacheValue,
   getSignalMonitorCompletedBarsCacheDiagnostics() {
     return {
       entries: signalMonitorCompletedBarsCache.size,

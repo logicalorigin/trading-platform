@@ -748,6 +748,37 @@ test("diagnostics clamp raw history and export limits under API pressure", async
   assert.equal(exported.limits.events.pressureLimited, true);
 });
 
+test("diagnostics compact raw payloads retained in memory and events", async () => {
+  const collected = await collectDiagnosticSnapshot({
+    ...healthyDiagnosticInput(),
+    runtime: {
+      ...healthyDiagnosticInput().runtime,
+      largeDebugTree: {
+        items: Array.from({ length: 60 }, (_unused, index) => ({
+          index,
+          text: "x".repeat(2_500),
+        })),
+      },
+    },
+  });
+  const api = collected.snapshots.find((snapshot) => snapshot.subsystem === "api");
+  assert.deepEqual(api?.raw, {});
+
+  const event = await recordServerDiagnosticEvent({
+    subsystem: "api",
+    category: "unit-test",
+    severity: "warning",
+    message: "large raw payload",
+    raw: {
+      items: Array.from({ length: 25 }, (_unused, index) => ({ index })),
+      text: "x".repeat(2_500),
+    },
+  });
+  assert.equal(Array.isArray(event.raw.items), true);
+  assert.equal((event.raw.items as unknown[]).length, 21);
+  assert.equal(String(event.raw.text).length, 2_003);
+});
+
 test("diagnostics classify stale IB Gateway tunnels and market-data gaps", async () => {
   const collected = await collectDiagnosticSnapshot({
     runtime: {

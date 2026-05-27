@@ -222,6 +222,10 @@ const CLIENT_METRIC_RETENTION_MS = 10 * 60 * 1000;
 const CLIENT_METRIC_MAX_SAMPLES = 500;
 const ACTIONABLE_ISOLATION_REPORT_TYPES = new Set(["coep", "coop"]);
 const ACTIONABLE_ISOLATION_BODY_TYPES = new Set(["coep", "coop", "corp"]);
+const DIAGNOSTIC_RAW_MAX_DEPTH = 4;
+const DIAGNOSTIC_RAW_MAX_OBJECT_KEYS = 40;
+const DIAGNOSTIC_RAW_MAX_ARRAY_ITEMS = 20;
+const DIAGNOSTIC_RAW_MAX_STRING_LENGTH = 2_000;
 
 type ResourcePressureLevel = ApiResourcePressureLevel | "shed";
 
@@ -687,6 +691,62 @@ async function safeDb<T>(
   }
 }
 
+function compactDiagnosticRawValue(value: unknown, depth = 0): unknown {
+  if (
+    value === null ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return value.length > DIAGNOSTIC_RAW_MAX_STRING_LENGTH
+      ? `${value.slice(0, DIAGNOSTIC_RAW_MAX_STRING_LENGTH)}...`
+      : value;
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  if (depth >= DIAGNOSTIC_RAW_MAX_DEPTH) {
+    return Array.isArray(value) ? { __truncated: "array-depth" } : { __truncated: "object-depth" };
+  }
+  if (Array.isArray(value)) {
+    const items = value
+      .slice(0, DIAGNOSTIC_RAW_MAX_ARRAY_ITEMS)
+      .map((item) => compactDiagnosticRawValue(item, depth + 1));
+    return value.length > DIAGNOSTIC_RAW_MAX_ARRAY_ITEMS
+      ? [
+          ...items,
+          {
+            __truncated: value.length - DIAGNOSTIC_RAW_MAX_ARRAY_ITEMS,
+          },
+        ]
+      : items;
+  }
+  if (typeof value !== "object") {
+    return null;
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  const compact: JsonRecord = {};
+  entries.slice(0, DIAGNOSTIC_RAW_MAX_OBJECT_KEYS).forEach(([key, item]) => {
+    compact[key] = compactDiagnosticRawValue(item, depth + 1);
+  });
+  if (entries.length > DIAGNOSTIC_RAW_MAX_OBJECT_KEYS) {
+    compact.__truncated = entries.length - DIAGNOSTIC_RAW_MAX_OBJECT_KEYS;
+  }
+  return compact;
+}
+
+function compactDiagnosticRaw(
+  raw: unknown,
+  severity: DiagnosticSeverity = "warning",
+): JsonRecord {
+  if (severity === "info") {
+    return {};
+  }
+  return asJsonRecord(compactDiagnosticRawValue(raw));
+}
+
 function toSnapshotPayload(row: DiagnosticSnapshot): DiagnosticSnapshotPayload {
   return {
     id: row.id,
@@ -697,7 +757,7 @@ function toSnapshotPayload(row: DiagnosticSnapshot): DiagnosticSnapshotPayload {
     summary: row.summary ?? "",
     dimensions: row.dimensions,
     metrics: row.metrics,
-    raw: row.raw,
+    raw: compactDiagnosticRaw(row.raw, row.severity as DiagnosticSeverity),
   };
 }
 
@@ -715,7 +775,7 @@ function toEventPayload(row: DiagnosticEvent): DiagnosticEventPayload {
     lastSeenAt: row.lastSeenAt.toISOString(),
     eventCount: row.eventCount,
     dimensions: row.dimensions,
-    raw: row.raw,
+    raw: compactDiagnosticRaw(row.raw, row.severity as DiagnosticSeverity),
   };
 }
 
@@ -2610,7 +2670,7 @@ function buildSnapshot(
     summary,
     dimensions,
     metrics: asJsonRecord(metrics),
-    raw: asJsonRecord(raw),
+    raw: compactDiagnosticRaw(raw, severity),
   };
 }
 
@@ -2692,6 +2752,7 @@ function isCollectorManagedEvent(event: DiagnosticEventPayload): boolean {
 }
 
 async function persistSnapshot(snapshot: DiagnosticSnapshotPayload): Promise<void> {
+  const raw = compactDiagnosticRaw(snapshot.raw, snapshot.severity);
   await safeDb(
     "insert diagnostic snapshot",
     async () => {
@@ -2703,7 +2764,7 @@ async function persistSnapshot(snapshot: DiagnosticSnapshotPayload): Promise<voi
         summary: snapshot.summary,
         dimensions: snapshot.dimensions,
         metrics: snapshot.metrics,
-        raw: snapshot.severity === "info" ? {} : snapshot.raw,
+        raw,
       });
     },
     undefined,
@@ -2716,6 +2777,10 @@ async function upsertEvent(
   const now = nowIso();
   const key = incidentKey(input);
   const existing = memoryEvents.get(key);
+  const raw =
+    input.raw === undefined && existing
+      ? existing.raw
+      : compactDiagnosticRaw(input.raw ?? {}, input.severity);
   const payload: DiagnosticEventPayload = existing
     ? {
         ...existing,
@@ -2725,7 +2790,7 @@ async function upsertEvent(
         lastSeenAt: now,
         eventCount: existing.eventCount + 1,
         dimensions: input.dimensions ?? existing.dimensions,
-        raw: input.raw ?? existing.raw,
+        raw,
       }
     : {
         id: randomUUID(),
@@ -2740,7 +2805,7 @@ async function upsertEvent(
         lastSeenAt: now,
         eventCount: 1,
         dimensions: input.dimensions ?? {},
-        raw: input.raw ?? {},
+        raw,
       };
   memoryEvents.set(key, payload);
   trimMemoryEvents();
@@ -2762,7 +2827,7 @@ async function upsertEvent(
           lastSeenAt: new Date(payload.lastSeenAt),
           eventCount: 1,
           dimensions: input.dimensions ?? {},
-          raw: input.raw ?? {},
+          raw,
         })
         .onConflictDoUpdate({
           target: diagnosticEventsTable.incidentKey,
@@ -2773,7 +2838,7 @@ async function upsertEvent(
             lastSeenAt: new Date(payload.lastSeenAt),
             eventCount: sql`${diagnosticEventsTable.eventCount} + 1`,
             dimensions: input.dimensions ?? {},
-            raw: input.raw ?? {},
+            raw,
             updatedAt: new Date(),
           },
         });

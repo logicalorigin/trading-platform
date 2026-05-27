@@ -127,7 +127,11 @@ export function buildSignalMatrixRequestPlan({
     0,
     requestLimit - priorityBatch.length,
   );
-  const background = backgroundReady
+  const backgroundAllowed =
+    Boolean(backgroundReady) &&
+    pressureLevel !== "high" &&
+    pressureLevel !== "critical";
+  const background = backgroundAllowed
     ? rotateSymbols(rotationUniverse, cursor, backgroundLimit)
     : { symbols: [], nextCursor: cursor || 0 };
   const requestSymbols = uniqueSymbols([
@@ -140,8 +144,8 @@ export function buildSignalMatrixRequestPlan({
     prioritySymbols: priorityBatch,
     backgroundSymbols: background.symbols,
     nextCursor: background.nextCursor,
-    backgroundReady: Boolean(backgroundReady),
-    backgroundPaused: !backgroundReady || backgroundLimit <= 0,
+    backgroundReady: backgroundAllowed,
+    backgroundPaused: !backgroundAllowed || backgroundLimit <= 0,
     pressureLevel,
     coverage: {
       totalSymbols: universe.length,

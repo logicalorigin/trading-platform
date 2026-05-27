@@ -946,6 +946,37 @@ test("signal matrix automatic request marker debounces reconnect duplicates only
   __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
 });
 
+test("signal matrix follower startup and poll requests are cache-only", () => {
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly({
+      clientRole: "follower",
+      requestOrigin: "startup",
+    }),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly({
+      clientRole: "follower",
+      requestOrigin: "poll",
+    }),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly({
+      clientRole: "leader",
+      requestOrigin: "poll",
+    }),
+    false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly({
+      clientRole: "manual",
+      requestOrigin: "manual",
+    }),
+    false,
+  );
+});
+
 test("signal matrix automatic debounce can reuse stale cache without refreshing", () => {
   const key = "signal-matrix:paper:debounced-cache";
   const staleValue = { states: [{ symbol: "SPY" }], evaluatedAt: "old" };
