@@ -1,11 +1,51 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-28 23:09 UTC`
+- Last updated: `2026-05-28 23:20 UTC`
+- Current request: implement the audited Algo QA remediation plan for the central Algo loader/runtime restart issue.
+- Current status:
+  - Implemented the performance/runtime remediation on the current `main` baseline while preserving unrelated Replit startup handoff work.
+  - Algo first-paint API defaults are now lightweight: signal-options state/cockpit use summary snapshots by default, summary snapshots use a bounded event window/cache, and full detail remains explicit via `view=full`.
+  - Algo event responses now omit full payloads by default; full event payloads require `includePayload=true` or `view=full`.
+  - Algo cockpit SSE critical payloads use concise events and summary state; full stream cockpit/state also use summary data.
+  - Algo route data is no longer gated on the heavy `AlgoLivePage` chunk, the top-level live-page preload was removed, and `algo` was removed from background/boot screen module preload order.
+  - Algo monitor sidebar defers performance REST work until stream full freshness is available.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/routes/automation.ts`
+  - `artifacts/api-server/src/services/automation.ts`
+  - `artifacts/api-server/src/services/algo-cockpit-streams.ts`
+  - `artifacts/api-server/src/services/algo-cockpit-streams.test.ts`
+  - `artifacts/api-server/src/services/route-admission.ts`
+  - `artifacts/api-server/src/services/route-admission.test.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.test.ts`
+  - `artifacts/pyrus/src/features/platform/PlatformAlgoMonitorSidebar.jsx`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/features/platform/screenRegistry.jsx`
+  - `artifacts/pyrus/src/screens/AlgoScreen.jsx`
+  - `lib/api-client-react/src/generated/api.schemas.ts`
+  - `lib/api-spec/openapi.yaml`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/automation.test.ts src/services/signal-options-automation.test.ts src/services/algo-cockpit-streams.test.ts src/services/route-admission.test.ts` (`95` tests).
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/features/platform/live-streams.test.ts src/features/platform/algoEventToasts.source.test.js src/screens/algo/algoHelpers.test.js` (`130` tests).
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `git diff --check`.
+- Blockers:
+  - Live browser QA not rerun against the current process because the already-running supervisor is stale/high-pressure: `/api/diagnostics/runtime` returned 200 in ~19.4s and reported API RSS around `1923 MB`.
+- Next step:
+  - Restart/handoff through Replit's default **Run Replit App** entry, then run the focused browser QA path Market -> Algo and confirm the central loader clears while Signals-to-Action stays populated and runtime pressure remains stable.
+
+- Last updated: `2026-05-28 23:14 UTC`
 - Current request: identify and fix why recent Replit workflow/startup changes are no longer controlling the app correctly.
 - Current status:
   - Root cause found in `artifacts/pyrus/scripts/runDevApp.mjs`: Replit-owned duplicate starts were changed to no-op forever when a live supervisor lock exists.
   - Runtime evidence confirmed a new Replit-owned launch at `2026-05-28T22:31:34Z` exited as `duplicate-live-exit` while the old supervisor PID `22200` kept API/Vite running, so the new workflow did not take control.
   - Restored a bounded duplicate-start guard: quick duplicates still exit, but after `PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS` (default `30000`) a Replit-owned start performs controlled handoff so the current workflow owns API/Vite again.
+  - Startup guard/docs were updated to protect and document the bounded duplicate guard plus controlled handoff path.
+  - Checkpoint commits were created while validating:
+    - `8b8e999 chore: checkpoint replit run handoff changes`
+    - `3d36ff4 chore: checkpoint startup handoff changes`
   - Existing unrelated modified file `artifacts/api-server/src/services/signal-options-automation.ts` remains untouched.
 - Changed files this pass:
   - `SESSION_HANDOFF_CURRENT.md`
@@ -14,8 +54,12 @@
   - `scripts/README.md`
   - `scripts/check-replit-startup-guards.mjs`
 - Validation state:
-  - Pending: run `pnpm run audit:replit-startup` and targeted syntax/static checks.
+  - Passed: `pnpm run audit:replit-startup`.
+  - Passed: `node --check artifacts/pyrus/scripts/runDevApp.mjs`.
+  - Passed: `node --check scripts/check-replit-startup-guards.mjs`.
+  - Passed: `git diff --check`.
+  - Confirmed Replit startup config files remain locked with `pnpm run replit:config:status`.
 - Blockers:
   - None currently.
 - Next step:
-  - Run startup validation, inspect the resulting diff, then refresh this handoff before reporting.
+  - Press Replit's default **Run Replit App** entry when ready; because the current supervisor lock is older than `30000ms`, the next Replit-owned start should request controlled handoff instead of exiting as `duplicate-live-exit`.
