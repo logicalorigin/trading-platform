@@ -1,4 +1,7 @@
 import {
+  useMemo,
+} from "react";
+import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
@@ -11,6 +14,7 @@ import {
   formatNumber,
   toneForValue,
 } from "./accountUtils";
+import { buildAccountReturnsModel } from "./accountReturnsModel";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 const MASKED = "•••••";
@@ -101,13 +105,41 @@ const HeroMetricPill = ({ label, value, tone = CSS_COLOR.text, title, first = fa
 
 export const AccountHeroBlock = ({
   summary,
-  returnsModel,
+  returnsModel: providedReturnsModel,
+  equityHistory,
+  benchmarkHistories,
+  positionsResponse,
+  tradesResponse,
+  cashResponse,
   range,
   currency = "USD",
   maskValues = false,
   shadowMode: _shadowMode = false,
   isPhone = false,
 }) => {
+  const returnsModel = useMemo(
+    () =>
+      providedReturnsModel ||
+      buildAccountReturnsModel({
+        summary,
+        equityHistory,
+        benchmarkHistories,
+        positionsResponse,
+        tradesResponse,
+        cashResponse,
+        range,
+      }),
+    [
+      benchmarkHistories,
+      cashResponse,
+      equityHistory,
+      positionsResponse,
+      providedReturnsModel,
+      range,
+      summary,
+      tradesResponse,
+    ],
+  );
   const summaryMetrics = summary?.metrics || {};
   const equity = returnsModel?.equity || {};
   const trades = returnsModel?.trades || {};

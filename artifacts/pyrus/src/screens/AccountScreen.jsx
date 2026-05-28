@@ -66,13 +66,10 @@ import {
   textSize,
 } from "../lib/uiTokens.jsx";
 import { formatAppDateTime } from "../lib/timeZone";
-import AccountHeroBlock from "./account/AccountHeroBlock";
-import AccountReturnsPanel from "./account/AccountReturnsPanel";
 import {
   PositionOptionQuoteStreams,
   buildPositionOptionQuoteGroups,
 } from "./account/PositionOptionQuoteStreams.jsx";
-import { buildAccountReturnsModel } from "./account/accountReturnsModel";
 import { getOpenPositionRows } from "../features/account/accountPositionRows.js";
 import {
   ACCOUNT_RANGES,
@@ -83,11 +80,9 @@ import {
   formatNumber,
   normalizeAccountRange,
 } from "./account/accountUtils";
-import { buildAccountTradingAnalysisModel } from "./account/accountTradingAnalysis";
 import {
   buildAccountAnalysisQueryParams,
   defaultTradingAnalysisFilters,
-  filterAccountAnalysisTrades,
   tradingAnalysisFilterReducer,
 } from "./account/tradingAnalysisModel";
 import { buildAccountRefreshPolicy } from "./account/accountRefreshPolicy";
@@ -99,6 +94,16 @@ import {
 import { useAccountSection } from "../features/platform/useAccountSection.js";
 
 const LazyTodaySnapshotPanel = lazy(() => import("./account/TodaySnapshotPanel"));
+const LazyAccountHeroBlock = lazy(() =>
+  import("./account/AccountHeroBlock").then((module) => ({
+    default: module.AccountHeroBlock,
+  })),
+);
+const LazyAccountReturnsPanel = lazy(() =>
+  import("./account/AccountReturnsPanel").then((module) => ({
+    default: module.AccountReturnsPanel,
+  })),
+);
 const LazyPortfolioExposurePanel = lazy(() =>
   import("./account/PortfolioExposurePanel"),
 );
@@ -1617,30 +1622,6 @@ const AccountScreenInner = ({
   const accountLiveOptionQuotesEnabled = Boolean(
     accountQueriesEnabled && accountCriticalReady,
   );
-  const accountAnalysisTrades = useMemo(
-    () =>
-      filterAccountAnalysisTrades({
-        trades: tradesQuery.data?.trades || [],
-        filters: tradeFilters,
-        range,
-      }),
-    [range, tradeFilters, tradesQuery.data],
-  );
-  const accountTradingAnalysis = useMemo(
-    () =>
-      buildAccountTradingAnalysisModel({
-        trades: accountAnalysisTrades,
-        orders: ordersQuery.data?.orders || [],
-        positions: openAccountPositions,
-        selectedTradeId: selectedAccountTradeId,
-      }),
-    [
-      accountAnalysisTrades,
-      openAccountPositions,
-      ordersQuery.data,
-      selectedAccountTradeId,
-    ],
-  );
   const shadowAutomationAudit = useMemo(() => {
     const orders = ordersQuery.data?.orders || [];
     return {
@@ -1667,34 +1648,6 @@ const AccountScreenInner = ({
         }),
       [performanceCalendarEquityQuery.data, performanceCalendarTradesQuery.data],
     );
-  const returnsModel = useMemo(
-    () =>
-      buildAccountReturnsModel({
-        summary: displaySummaryData,
-        equityHistory: equityQuery.data,
-        benchmarkHistories: {
-          SPY: spyBenchmarkQuery.data,
-          QQQ: qqqBenchmarkQuery.data,
-          DJIA: djiaBenchmarkQuery.data,
-        },
-        positionsResponse: positionsQuery.data,
-        tradesResponse: tradesQuery.data,
-        cashResponse: cashQuery.data,
-        range,
-      }),
-    [
-      cashQuery.data,
-      djiaBenchmarkQuery.data,
-      equityQuery.data,
-      positionsQuery.data,
-      qqqBenchmarkQuery.data,
-      range,
-      spyBenchmarkQuery.data,
-      displaySummaryData,
-      tradesQuery.data,
-    ],
-  );
-
   const handleCancelOrder = async (order) => {
     if (!gatewayTradingReady) {
       window.alert(gatewayTradingMessage);
@@ -1747,28 +1700,40 @@ const AccountScreenInner = ({
           enabled={accountLiveOptionQuotesEnabled}
         />
 
-        <AccountHeroBlock
-          summary={displaySummaryData}
-          returnsModel={returnsModel}
-          range={range}
-          currency={currency}
-          maskValues={maskAccountValues}
-          shadowMode={shadowMode}
-          isPhone={accountIsPhone}
-        />
+        <DeferredPanelSuspense minHeight={accountIsPhone ? 58 : 42}>
+          <LazyAccountHeroBlock
+            summary={displaySummaryData}
+            equityHistory={equityQuery.data}
+            benchmarkHistories={{
+              SPY: spyBenchmarkQuery.data,
+              QQQ: qqqBenchmarkQuery.data,
+              DJIA: djiaBenchmarkQuery.data,
+            }}
+            positionsResponse={positionsQuery.data}
+            tradesResponse={tradesQuery.data}
+            cashResponse={cashQuery.data}
+            range={range}
+            currency={currency}
+            maskValues={maskAccountValues}
+            shadowMode={shadowMode}
+            isPhone={accountIsPhone}
+          />
+        </DeferredPanelSuspense>
 
         <div
           className="ra-panel-enter ra-account-overview-grid"
         >
           <div className="ra-account-overview-cell ra-account-overview-returns">
-            <AccountReturnsPanel
-              currency={currency}
-              maskValues={maskAccountValues}
-              tradesData={returnsCalendarTradesData}
-              equityPoints={returnsCalendarEquityPoints}
-              dailyPnl={displaySummaryData?.metrics?.dayPnl}
-              isPhone={accountIsPhone}
-            />
+            <DeferredPanelSuspense minHeight={accountIsPhone ? 310 : 350}>
+              <LazyAccountReturnsPanel
+                currency={currency}
+                maskValues={maskAccountValues}
+                tradesData={returnsCalendarTradesData}
+                equityPoints={returnsCalendarEquityPoints}
+                dailyPnl={displaySummaryData?.metrics?.dayPnl}
+                isPhone={accountIsPhone}
+              />
+            </DeferredPanelSuspense>
           </div>
           <div className="ra-account-overview-cell ra-account-overview-exposure">
             <DeferredPanelSuspense minHeight={accountIsPhone ? 174 : 246}>
@@ -1891,7 +1856,8 @@ const AccountScreenInner = ({
               query={tradesQuery}
               trades={tradesQuery.data?.trades || []}
               allTrades={tradesQuery.data?.trades || []}
-              analysis={accountTradingAnalysis}
+              orders={ordersQuery.data?.orders || []}
+              positions={openAccountPositions}
               filters={tradeFilters}
               dispatchFilters={dispatchTradeFilters}
               range={range}
