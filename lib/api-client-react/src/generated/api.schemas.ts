@@ -6065,6 +6065,7 @@ deploymentId?: string;
  * @maximum 500
  */
 limit?: number;
+includePayload?: boolean;
 };
 
 export type ListBacktestRunsParams = {
@@ -6099,4 +6100,3 @@ export type GetBacktestRunChartParams = {
 symbol?: string;
 selectedTradeId?: string;
 };
-

@@ -3428,6 +3428,12 @@ paths:
           required: true
           schema:
             type: string
+        - name: view
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [summary, full]
       responses:
         "200":
           description: Updated deployment
@@ -3447,6 +3453,12 @@ paths:
           required: true
           schema:
             type: string
+        - name: view
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [summary, full]
       responses:
         "200":
           description: Updated deployment
@@ -3672,6 +3684,11 @@ paths:
             type: integer
             minimum: 1
             maximum: 500
+        - name: includePayload
+          in: query
+          required: false
+          schema:
+            type: boolean
       responses:
         "200":
           description: Execution events
