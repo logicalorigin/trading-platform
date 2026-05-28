@@ -243,13 +243,14 @@ recurrence:
 
 If a second Replit-owned artifact workflow starts while the existing PYRUS
 supervisor lock points at a live `runDevApp.mjs` process, `runDevApp.mjs`
-treats it as a duplicate Run event and exits without restarting API/Vite. This
-is intentional: Replit workspace reconnects and artifact preview restoration
-can emit duplicate launches long after the original startup, and those must not
-be upgraded into app restarts. `PYRUS_DEV_FORCE_RESTART=1` is the only
-Replit-owned path that may request a controlled handoff from a live supervisor.
-Use it only for explicit recovery restarts, or for stale/missing lock owners
-where normal startup can safely become the single owner.
+treats it as a duplicate Run event only during the startup guard window and
+exits without restarting API/Vite. After
+`PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS` (default `30000`), a new Replit-owned
+workflow start is treated as an intentional Run-button restart and requests a
+controlled handoff from the old supervisor so the current workflow owns the app
+again without overlapping API/Vite processes. Use `PYRUS_DEV_FORCE_RESTART=1`
+only for explicit recovery restarts, or for stale/missing lock owners where
+normal startup can safely become the single owner.
 Use `PYRUS_DEV_DUPLICATE_CHECK_ONLY=1` for shell smoke tests of the duplicate
 path; that mode only reads the supervisor lock and exits without starting
 API/Vite or running port reapers.

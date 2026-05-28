@@ -1,33 +1,21 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-28 23:04 UTC`
-- Current request: resume `/qa` after checkpointing uncommitted work.
-- Current status:
-  - Created pre-QA checkpoints so browser QA can start from a clean tree:
-    - `92a6ff3 chore: checkpoint before qa`
-    - `ba715a8 chore: checkpoint qa resume changes`
-    - `aa21801 chore: checkpoint algo qa frontend changes`
-  - Repo-local browse binary is available at `.agents/skills/gstack/browse/dist/browse`; status is healthy.
-  - Starting browser QA next against the running app, expected local target from prior sessions is `http://127.0.0.1:18747/`.
-  - Replit startup config must remain untouched; no app runner changes planned.
-- Changed files this pass:
-  - `SESSION_HANDOFF_CURRENT.md`
-- Validation state:
-  - Pending browser QA.
-- Next step:
-  - Detect the running app URL, capture initial screenshots, check console/errors, then exercise the Algo flow and document issues.
-
-- Last updated: `2026-05-28 23:00 UTC`
+- Last updated: `2026-05-28 23:09 UTC`
 - Current request: identify and fix why recent Replit workflow/startup changes are no longer controlling the app correctly.
 - Current status:
-  - Starting investigation on branch/worktree with one pre-existing modified file: `artifacts/api-server/src/services/signal-options-automation.ts`.
-  - Will avoid touching unrelated signal-options automation changes unless startup investigation proves they are involved.
-  - Scope is Replit startup/workflow control: `.replit`, `artifacts/*/.replit-artifact/artifact.toml`, artifact dev scripts, startup guard scripts, and validation.
+  - Root cause found in `artifacts/pyrus/scripts/runDevApp.mjs`: Replit-owned duplicate starts were changed to no-op forever when a live supervisor lock exists.
+  - Runtime evidence confirmed a new Replit-owned launch at `2026-05-28T22:31:34Z` exited as `duplicate-live-exit` while the old supervisor PID `22200` kept API/Vite running, so the new workflow did not take control.
+  - Restored a bounded duplicate-start guard: quick duplicates still exit, but after `PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS` (default `30000`) a Replit-owned start performs controlled handoff so the current workflow owns API/Vite again.
+  - Existing unrelated modified file `artifacts/api-server/src/services/signal-options-automation.ts` remains untouched.
 - Changed files this pass:
   - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/scripts/runDevApp.mjs`
+  - `replit.md`
+  - `scripts/README.md`
+  - `scripts/check-replit-startup-guards.mjs`
 - Validation state:
-  - Pending.
+  - Pending: run `pnpm run audit:replit-startup` and targeted syntax/static checks.
 - Blockers:
   - None currently.
 - Next step:
-  - Inspect Replit workflow/startup config and guard scripts, find the drift, patch the source of truth, then run `pnpm run audit:replit-startup`.
+  - Run startup validation, inspect the resulting diff, then refresh this handoff before reporting.

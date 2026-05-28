@@ -88,13 +88,15 @@ directory to define separate Replit app runners.
   PYRUS artifact runner (`PYRUS_REPLIT_RUN=1`), it can replace older Replit
   execution scopes on the same pinned port.
 - `artifacts/pyrus/scripts/runDevApp.mjs` owns full dev app bring-up. A
-  duplicate Replit-owned Run event exits without restart whenever the
-  supervisor lock points at a live `artifacts/pyrus/scripts/runDevApp.mjs`
-  process. Replit reconnects and artifact preview restoration must not be
-  upgraded into app restarts. Use `PYRUS_DEV_FORCE_RESTART=1` only for an
-  intentional Replit-owned recovery restart that may request a controlled
-  handoff from a live supervisor. Shell smoke tests for the duplicate path must
-  include
+  duplicate Replit-owned Run event exits without restart only during the
+  startup guard window while the supervisor lock points at a live
+  `artifacts/pyrus/scripts/runDevApp.mjs` process. After
+  `PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS` (default `30000`), a new Replit-owned
+  Run is treated as an intentional Run-button restart and uses a controlled
+  handoff so the current workflow owns API/Vite again. Use
+  `PYRUS_DEV_FORCE_RESTART=1` only for an intentional Replit-owned recovery
+  restart that may request a controlled handoff from a live supervisor. Shell
+  smoke tests for the duplicate path must include
   `PYRUS_DEV_DUPLICATE_CHECK_ONLY=1`; that mode reads the supervisor lock and
   exits without starting API/web processes.
 - The supervisor writes lifecycle evidence to
