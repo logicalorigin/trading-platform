@@ -706,6 +706,10 @@ test("Algo monitor is frame-owned and replaces the activity sidebar feed", () =>
   assert.match(algoMonitorSource, /useGetAlgoDeploymentCockpit/);
   assert.match(algoMonitorSource, /useGetSignalOptionsAutomationState/);
   assert.match(algoMonitorSource, /useGetSignalOptionsPerformance/);
+  assert.match(
+    algoMonitorSource,
+    /enabled:\s*Boolean\(queryEnabled && deploymentId && streamFreshness\.algoFullFresh\)/,
+  );
   assert.match(algoMonitorSource, /useGetAccountPositions/);
   assert.match(algoMonitorSource, /useListExecutionEvents/);
   assert.match(algoMonitorSource, /useAlgoCockpitStream/);
