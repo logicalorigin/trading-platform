@@ -13,6 +13,7 @@ import {
   instrumentsTable,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
+import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
 import type {
   BrokerBarSnapshot,
@@ -287,9 +288,9 @@ export async function loadStoredMarketBars(
           .orderBy(desc(barCacheTable.startsAt))
           .limit(limit);
 
-    const freshness: MarketDataFreshness = input.sourceName.includes("massive")
-      ? "delayed"
-      : "live";
+    const delayed =
+      input.sourceName.includes("massive") && !isMassiveStocksRealtimeConfigured();
+    const freshness: MarketDataFreshness = delayed ? "delayed" : "live";
 
     return normalizeBarsToStoreTimeframe(
       rows
@@ -305,7 +306,7 @@ export async function loadStoredMarketBars(
           outsideRth: input.outsideRth !== false,
           partial: false,
           transport: "tws" as const,
-          delayed: input.sourceName.includes("massive"),
+          delayed,
           freshness,
           dataUpdatedAt: row.startsAt,
         }))

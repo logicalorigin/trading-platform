@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
 import {
   GetBarsQueryParams,
   GetBarsResponse,
@@ -82,6 +83,7 @@ import {
   submitRawOrders,
   updateWatchlist,
 } from "../services/platform";
+import type { FootprintSourcePreference } from "@workspace/ibkr-contracts";
 import { getGexDashboardData } from "../services/gex";
 import {
   fetchAccountSnapshotPayload,
@@ -118,6 +120,7 @@ import {
   isStockAggregateStreamingAvailable,
   subscribeMutableStockMinuteAggregates,
 } from "../services/stock-aggregate-stream";
+import { getVolumeFootprints } from "../services/volume-footprints";
 import {
   recordSseStreamClose,
   recordSseStreamOpen,
@@ -1844,6 +1847,88 @@ router.get("/market-depth", async (req, res) => {
   }));
 });
 
+function readDateQuery(value: unknown): Date | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== "string" || !raw.trim()) {
+    return null;
+  }
+  const date = new Date(raw);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function readNumberQuery(value: unknown): number | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== "string" || !raw.trim()) {
+    return undefined;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function readFootprintSourcePreference(
+  value: unknown,
+): FootprintSourcePreference {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (raw === "ibkr_first" || raw === "massive_only") {
+    return raw;
+  }
+  return "massive_first";
+}
+
+function buildFootprintsInput(req: Request) {
+  const query = req.query as Record<string, unknown>;
+  const symbol =
+    typeof query.symbol === "string" && query.symbol.trim()
+      ? query.symbol.trim().toUpperCase()
+      : "";
+  const timeframe =
+    typeof query.timeframe === "string" && query.timeframe.trim()
+      ? query.timeframe.trim()
+      : "";
+  return {
+    symbol,
+    timeframe,
+    assetClass:
+      query.assetClass === "option"
+        ? "option" as const
+        : "equity" as const,
+    from: readDateQuery(query.from),
+    to: readDateQuery(query.to),
+    providerContractId:
+      typeof query.providerContractId === "string" &&
+      query.providerContractId.trim()
+        ? query.providerContractId.trim()
+        : null,
+    optionTicker:
+      typeof query.optionTicker === "string" && query.optionTicker.trim()
+        ? query.optionTicker.trim()
+        : null,
+    outsideRth: readBooleanQueryFlag(query.outsideRth),
+    ticksPerRow: readNumberQuery(query.ticksPerRow),
+    imbalancePercent: readNumberQuery(query.imbalancePercent),
+    maxBars: readNumberQuery(query.maxBars),
+    sourcePreference: readFootprintSourcePreference(query.sourcePreference),
+  };
+}
+
+router.get("/footprints", async (req, res) => {
+  const input = buildFootprintsInput(req);
+  if (!input.symbol || !input.timeframe) {
+    res.status(400).type("application/problem+json").json({
+      type: "https://pyrus.local/problems/invalid-request",
+      title: "Missing footprint input",
+      status: 400,
+      detail: "Provide symbol and timeframe query parameters.",
+    });
+    return;
+  }
+
+  res.json(await getVolumeFootprints({
+    ...input,
+    signal: createRequestAbortSignal(req, res),
+  }));
+});
+
 function readBooleanQueryFlag(value: unknown): boolean | undefined {
   const raw = Array.isArray(value) ? value[0] : value;
   if (typeof raw !== "string") {
@@ -1975,7 +2060,7 @@ router.get("/streams/quotes", async (req, res) => {
     await writeEvent("quotes", await fetchQuoteSnapshotPayload(symbols));
     await writeEvent("ready", {
       symbols,
-      source: "ibkr-bridge",
+      source: isMassiveStocksRealtimeConfigured() ? "massive" : "ibkr-bridge",
     });
 
     return subscribeQuoteSnapshots(symbols, (payload) => {
@@ -2380,6 +2465,70 @@ router.get("/streams/market-depth", async (req, res) => {
         writeEvent("depth", payload);
       },
     );
+  });
+});
+
+router.get("/streams/footprints", async (req, res) => {
+  const input = buildFootprintsInput(req);
+  if (!input.symbol || !input.timeframe) {
+    res.status(400).type("application/problem+json").json({
+      type: "https://pyrus.local/problems/invalid-request",
+      title: "Missing footprint stream input",
+      status: 400,
+      detail: "Provide symbol and timeframe query parameters.",
+    });
+    return;
+  }
+
+  await startSse(req, res, "footprints", async ({ writeEvent }) => {
+    let stopped = false;
+    let lastSignature: string | null = null;
+    const writeFootprints = async () => {
+      const payload = await getVolumeFootprints(input);
+      const signature = JSON.stringify({
+        from: payload.from,
+        to: payload.to,
+        candles: payload.candles.map((candle) => [
+          candle.time,
+          candle.volume,
+          candle.delta,
+          candle.tradeCount,
+        ]),
+        partialReason: payload.partialReason,
+      });
+      if (signature === lastSignature) {
+        return;
+      }
+      lastSignature = signature;
+      await writeEvent("footprints", payload);
+    };
+
+    await writeFootprints();
+    await writeEvent("ready", {
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+      assetClass: input.assetClass,
+      sourcePreference: input.sourcePreference,
+    });
+
+    const poll = setInterval(() => {
+      if (stopped) {
+        return;
+      }
+      void writeFootprints().catch((error) => {
+        void writeEvent("stream-error", {
+          title: "Footprint stream interrupted",
+          detail:
+            error instanceof Error ? error.message : "Unknown stream error.",
+        });
+      });
+    }, 2_500);
+    poll.unref?.();
+
+    return () => {
+      stopped = true;
+      clearInterval(poll);
+    };
   });
 });
 

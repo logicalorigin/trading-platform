@@ -71,6 +71,40 @@ test("account position internals remove closed broker rows", async () => {
   );
 });
 
+test("account position totals include cash balances for the footer", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const totals = __accountPositionInternalsForTests.buildAccountPositionTotals({
+    accounts: [
+      {
+        cash: 1_200,
+        totalCashValue: null,
+        buyingPower: 3_500,
+        netLiquidation: 10_000,
+      },
+      {
+        cash: 250,
+        totalCashValue: 300,
+        buyingPower: 900,
+        netLiquidation: 2_500,
+      },
+    ],
+    rows: [
+      { weightPercent: 20, unrealizedPnl: 125 },
+      { weightPercent: 10, unrealizedPnl: -25 },
+    ],
+    grossLong: 4_000,
+    grossShort: -500,
+    netExposure: 3_500,
+  } as any);
+
+  assert.equal(totals.cash, 1_450);
+  assert.equal(totals.totalCash, 1_450);
+  assert.equal(totals.buyingPower, 4_400);
+  assert.equal(totals.netLiquidation, 12_500);
+  assert.equal(totals.unrealizedPnl, 100);
+  assert.equal(totals.weightPercent, 30);
+});
+
 test("account position hydration derives mark, day P&L, and unrealized P&L from quotes", async () => {
   const { __accountPositionInternalsForTests } = await import("./account");
   const hydrated =

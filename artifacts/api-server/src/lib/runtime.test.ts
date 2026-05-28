@@ -42,6 +42,13 @@ const ENV_KEYS = [
   "IBKR_BRIDGE_TOKEN",
   "IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE",
   "PYRUS_IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE",
+  "POLYGON_API_KEY",
+  "POLYGON_KEY",
+  "POLYGON_BASE_URL",
+  "MASSIVE_API_KEY",
+  "MASSIVE_MARKET_DATA_API_KEY",
+  "MASSIVE_API_BASE_URL",
+  "MASSIVE_STOCKS_RECENCY",
   "REPL_HOME",
   "TRADING_MODE",
   "TMPDIR",
@@ -179,6 +186,28 @@ test("provider configuration reports IBKR only when bridge override is present",
       apiToken: "runtime-token",
     });
     assert.equal(getProviderConfiguration().ibkr, true);
+  });
+});
+
+test("provider configuration distinguishes Massive stock data from legacy Polygon wiring", () => {
+  withRuntimeEnv({ MASSIVE_API_KEY: "massive-test-key" }, () => {
+    assert.deepEqual(
+      {
+        polygon: getProviderConfiguration().polygon,
+        massive: getProviderConfiguration().massive,
+      },
+      { polygon: true, massive: true },
+    );
+  });
+
+  withRuntimeEnv({ POLYGON_API_KEY: "polygon-test-key" }, () => {
+    assert.deepEqual(
+      {
+        polygon: getProviderConfiguration().polygon,
+        massive: getProviderConfiguration().massive,
+      },
+      { polygon: true, massive: false },
+    );
   });
 });
 

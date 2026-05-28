@@ -55,6 +55,7 @@ export type FlowUniverseLiquiditySnapshot = {
   symbol: string;
   price: number | null;
   volume: number | null;
+  source?: string | null;
 };
 
 type FlowUniverseManagerOptions = {
@@ -526,6 +527,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         price: number;
         volume: number;
         dollarVolume: number;
+        source: string;
       }
     >();
     snapshots
@@ -540,7 +542,11 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
             ? (snapshot.volume as number)
             : null;
         const dollarVolume = price && volume ? price * volume : null;
-        return { symbol, price, volume, dollarVolume };
+        const source =
+          typeof snapshot.source === "string" && snapshot.source.trim()
+            ? snapshot.source.trim().toLowerCase()
+            : "unknown";
+        return { symbol, price, volume, dollarVolume, source };
       })
       .filter(
         (snapshot) =>
@@ -560,6 +566,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
             price: snapshot.price as number,
             volume: snapshot.volume as number,
             dollarVolume: snapshot.dollarVolume as number,
+            source: snapshot.source,
           });
         }
       });
@@ -591,7 +598,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
                 : (snapshot.dollarVolume ?? 0) < runtimeOptions.minDollarVolume
                   ? "below_min_dollar_volume"
                   : null,
-            source: "polygon",
+            source: snapshot.source,
             rankedAt: refreshedAt,
             updatedAt: refreshedAt,
           })),

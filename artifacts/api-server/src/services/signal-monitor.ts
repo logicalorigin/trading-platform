@@ -17,7 +17,11 @@ import {
 } from "@workspace/pyrus-signals-core";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
-import { getRuntimeMode, type RuntimeMode } from "../lib/runtime";
+import {
+  getRuntimeMode,
+  isMassiveStocksRealtimeConfigured,
+  type RuntimeMode,
+} from "../lib/runtime";
 import {
   createTransientPostgresBackoff,
   isTransientPostgresError,
@@ -1595,13 +1599,10 @@ function isSignalMonitorDelayedBar(bar: SignalMonitorBarSnapshot | undefined) {
   }
   const freshness = String(bar.freshness ?? "").toLowerCase();
   const marketDataMode = String(bar.marketDataMode ?? "").toLowerCase();
-  const source = String(bar.source ?? "").toLowerCase();
   return (
     bar.delayed === true ||
     freshness === "delayed" ||
-    marketDataMode === "delayed" ||
-    source.includes("massive") ||
-    source.includes("polygon")
+    marketDataMode === "delayed"
   );
 }
 
@@ -1619,6 +1620,12 @@ function filterSignalMonitorBarsForSourcePolicy(
   policy: SignalMonitorBarSourcePolicy,
 ) {
   return policy === "ibkr-only" ? bars.filter(isSignalMonitorIbkrBar) : bars;
+}
+
+function shouldAllowSignalMonitorBrokerLiveEdgeRetry(
+  policy: SignalMonitorBarSourcePolicy,
+) {
+  return policy === "ibkr-only" || !isMassiveStocksRealtimeConfigured();
 }
 
 function isSignalMonitorDelayedLatestBar(input: {
@@ -1986,6 +1993,8 @@ export async function loadSignalMonitorCompletedBars(input: {
       },
     );
   };
+  const allowBrokerLiveEdgeRetry =
+    shouldAllowSignalMonitorBrokerLiveEdgeRetry(barSourcePolicy);
   let completedBars: SignalMonitorBarSnapshot[] = [];
   const acceptNewerBars = (
     retryCompletedBars: SignalMonitorBarSnapshot[],
@@ -2006,6 +2015,7 @@ export async function loadSignalMonitorCompletedBars(input: {
       isSignalMonitorDelayedBar(currentLatestBar) &&
       !isSignalMonitorDelayedBar(retryLatestBar);
     const retryReplacesNonIbkrLatest =
+      allowBrokerLiveEdgeRetry &&
       currentLatestBarAt &&
       retryLatestBarAt &&
       currentLatestBarAt.getTime() === retryLatestBarAt.getTime() &&
@@ -2057,6 +2067,7 @@ export async function loadSignalMonitorCompletedBars(input: {
       latestBar = completedBars.at(-1);
     }
     if (
+      allowBrokerLiveEdgeRetry &&
       input.retryStale !== false &&
       shouldRetrySignalMonitorCompletedBars({
         completedBars,

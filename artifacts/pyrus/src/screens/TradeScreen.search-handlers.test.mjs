@@ -114,6 +114,10 @@ test("TradeScreen keeps option chain snapshots warm while hidden", () => {
     source,
     /if \(isVisible\) \{\s*return;\s*\}[\s\S]*?clearTradeOptionChainSnapshot\(activeTicker\);/,
   );
+  assert.match(source, /readCachedOptionChainSnapshot\(optionChainRuntimeCacheKey\)\.then\(\(cached\) =>/);
+  assert.match(source, /const snapshot = cached\?\.payload/);
+  assert.match(source, /runtimeCache:\s*cached\?\.meta \|\| null/);
+  assert.match(source, /provider:\s*"ibkr"/);
 });
 
 test("TradeScreen queues active and tracked ticker flow refreshes through the scanner", () => {
@@ -128,6 +132,8 @@ test("TradeScreen queues active and tracked ticker flow refreshes through the sc
   assert.match(source, /reason\.includes\("options_flow_historical_"\)/);
   assert.match(source, /\?\s*tradeFlowHistoryTransientRefreshMs\s*:\s*tradeFlowHistoryRefreshMs/);
   assert.match(source, /flowEnabled && !background/);
+  assert.match(source, /readCachedFlowEvents\(flowRuntimeCacheKey\)\.then\(\(cached\) =>/);
+  assert.match(source, /cacheStatus:\s*cached\?\.meta\?\.cacheStatus \|\| "runtime-cache"/);
   assert.match(
     source,
     /listFlowEventsRequest\(\{\s*underlying:\s*ticker,\s*limit:\s*TRADE_FLOW_LIVE_LIMIT,\s*blocking:\s*false,\s*queueRefresh:\s*true,/,

@@ -92,7 +92,7 @@ test("default paper signal-options startup uses bounded signal monitor profile",
   assert.match(source, /await updateSignalMonitorProfile\(patch\)/);
 });
 
-test("signal-options scans request IBKR-only signal monitor bars", () => {
+test("signal-options scans request Massive-primary signal monitor bars", () => {
   const source = readFileSync(
     new URL("./signal-options-automation.ts", import.meta.url),
     "utf8",
@@ -103,12 +103,21 @@ test("signal-options scans request IBKR-only signal monitor bars", () => {
 
   assert.match(
     monitorStateBlock ?? "",
-    /evaluateSignalMonitorProfileSymbols\(\{[\s\S]*barSourcePolicy:\s*"ibkr-only"/,
+    /evaluateSignalMonitorProfileSymbols\(\{[\s\S]*barSourcePolicy:\s*SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY/,
   );
   assert.match(
     monitorStateBlock ?? "",
-    /evaluateSignalMonitor\(\{[\s\S]*barSourcePolicy:\s*"ibkr-only"/,
+    /evaluateSignalMonitor\(\{[\s\S]*barSourcePolicy:\s*SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY/,
   );
+  assert.match(
+    source,
+    /const SIGNAL_OPTIONS_SIGNAL_SOURCE_POLICY = "massive-primary";/,
+  );
+  assert.match(
+    source,
+    /const SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY = "mixed" as const;/,
+  );
+  assert.doesNotMatch(monitorStateBlock ?? "", /barSourcePolicy:\s*"ibkr-only"/);
   assert.doesNotMatch(
     monitorStateBlock ?? "",
     /return current;/,
@@ -535,7 +544,7 @@ test("signal-options worker scan summary stays lightweight and universe-scoped",
     latestSignalBarAt: "2026-05-18T18:20:00.000Z",
     oldestSignalBarAt: "2026-05-18T18:10:00.000Z",
     lastSignalScanAt: null,
-    signalSourcePolicy: "ibkr-only",
+    signalSourcePolicy: "massive-primary",
     heavyWorkDeferred: false,
     activeScanPhase: null,
     resourcePressureLevel: null,
@@ -2870,6 +2879,98 @@ test("signal-options tuned exit profile uses the aggressive trail ladder", () =>
   assert.equal(tenX.exitReason, "runner_trail_stop");
 });
 
+test("signal-options live marks reject frozen market data for exits", () => {
+  const frozenQuote: SignalOptionsOptionQuote = {
+    ...quote(100, "call"),
+    bid: 1.41,
+    ask: 1.41,
+    last: 1.41,
+    mark: 1.41,
+    quoteFreshness: "live",
+    marketDataMode: "frozen",
+  };
+  const liveQuote: SignalOptionsOptionQuote = {
+    ...frozenQuote,
+    quoteFreshness: "live",
+    marketDataMode: "live",
+  };
+
+  const frozenLiquidity = resolveSignalOptionsLiquidity(frozenQuote, profile);
+  const frozenResolution =
+    __signalOptionsAutomationInternalsForTests.resolvePositionMarkQuote({
+      quote: frozenQuote,
+      profile,
+    });
+
+  assert.equal(frozenLiquidity.ok, false);
+  assert.ok(frozenLiquidity.reasons.includes("quote_not_fresh"));
+  assert.equal(frozenResolution.ok, false);
+  assert.equal(frozenResolution.reason, "quote_not_fresh");
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.isSignalOptionsLiveExitQuoteEligible({
+      quote: frozenQuote,
+      markSource: "provider_snapshot",
+      usedShadowMarkFallback: false,
+    }),
+    false,
+  );
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.isSignalOptionsLiveExitQuoteEligible({
+      quote: liveQuote,
+      markSource: "provider_snapshot",
+      usedShadowMarkFallback: false,
+    }),
+    true,
+  );
+});
+
+test("signal-options live exits reject shadow mark fallback pricing", () => {
+  const fallbackQuote: SignalOptionsOptionQuote = {
+    ...quote(100, "call"),
+    bid: null,
+    ask: null,
+    last: 4.17,
+    mark: 4.17,
+    quoteFreshness: "shadow_position_mark",
+    marketDataMode: "shadow",
+  };
+
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.isSignalOptionsLiveExitQuoteEligible({
+      quote: fallbackQuote,
+      markSource: "shadow_position_mark",
+      usedShadowMarkFallback: false,
+    }),
+    false,
+  );
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.isSignalOptionsLiveExitQuoteEligible({
+      quote: fallbackQuote,
+      markSource: "provider_snapshot",
+      usedShadowMarkFallback: true,
+    }),
+    false,
+  );
+});
+
+test("signal-options shadow mark fallback only uses in-session option marks", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const fallbackBody = source.match(
+    /async function readShadowPositionMarkFallback\([\s\S]*?\nfunction isFreshShadowPositionMarkFallback/,
+  )?.[0];
+
+  assert.ok(fallbackBody);
+  assert.match(fallbackBody, /eligibleMarks = marks\.filter/);
+  assert.match(
+    fallbackBody,
+    /isLiveOptionTradingSession\(mark\.asOf,\s*position\.selectedContract\)/,
+  );
+  assert.match(fallbackBody, /peak = eligibleMarks\.reduce/);
+});
+
 test("signal-options progressive trail ladder raises locked profit by peak gain", () => {
   const ladderProfile = resolveSignalOptionsExecutionProfile({
     exitPolicy: {
@@ -3018,6 +3119,44 @@ test("signal-options live overnight exit window is the final regular-session min
   );
   assert.equal(
     isLiveOvernightExitWindow(new Date("2026-05-23T19:50:00.000Z")),
+    false,
+  );
+});
+
+test("signal-options live option exits respect post-close restrictions", () => {
+  const { isLiveOptionTradingSession } =
+    __signalOptionsAutomationInternalsForTests;
+  const apldContract = {
+    underlying: "APLD",
+    expirationDate: "2026-05-29",
+    strike: 46,
+    right: "call",
+  };
+  const spyContract = {
+    underlying: "SPY",
+    expirationDate: "2026-05-29",
+    strike: 600,
+    right: "call",
+  };
+
+  assert.equal(
+    isLiveOptionTradingSession(new Date("2026-05-27T19:59:00.000Z"), apldContract),
+    true,
+  );
+  assert.equal(
+    isLiveOptionTradingSession(new Date("2026-05-27T20:00:00.000Z"), apldContract),
+    false,
+  );
+  assert.equal(
+    isLiveOptionTradingSession(new Date("2026-05-27T20:14:00.000Z"), spyContract),
+    true,
+  );
+  assert.equal(
+    isLiveOptionTradingSession(new Date("2026-05-27T20:15:00.000Z"), spyContract),
+    false,
+  );
+  assert.equal(
+    isLiveOptionTradingSession(new Date("2026-05-27T20:56:00.000Z"), spyContract),
     false,
   );
 });

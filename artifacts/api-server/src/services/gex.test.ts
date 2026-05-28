@@ -311,7 +311,7 @@ test("GEX dashboard data is sourced from IBKR quotes, expirations, and full opti
   assert.equal((parsed.options[0] as any).providerContractId, "ibkr-call-100");
 });
 
-test("GEX prefers Massive option-chain snapshots before spending IBKR snapshot lines", async () => {
+test("GEX keeps option-chain snapshots on IBKR when Massive reference data is configured", async () => {
   const ibkr = configureIbkrGex({
     contracts: [
       option({ right: "call", strike: 100, gamma: 0.02, openInterest: 10 }),
@@ -337,18 +337,18 @@ test("GEX prefers Massive option-chain snapshots before spending IBKR snapshot l
 
   const data = await getGexDashboardData({ underlying: "SPY" });
 
-  assert.equal(reference.optionChainRequests, 1);
-  assert.equal(ibkr.chainRequests, 0);
-  assert.equal(data.source.provider, "massive");
+  assert.equal(reference.optionChainRequests, 0);
+  assert.equal(ibkr.chainRequests, 1);
+  assert.equal(data.source.provider, "ibkr");
   assert.equal(data.source.status, "ok");
-  assert.equal(data.options.length, 2);
-  assert.equal(data.options[0].providerContractId, null);
-  assert.equal(data.options[0].quoteFreshness, "delayed");
-  assert.equal(data.options[0].marketDataMode, "delayed");
-  assert.equal(GetGexDashboardResponse.parse(data).source.provider, "massive");
+  assert.equal(data.options.length, 1);
+  assert.equal(data.options[0].providerContractId, "ibkr-call-100");
+  assert.equal(data.options[0].quoteFreshness, "live");
+  assert.equal(data.options[0].marketDataMode, "live");
+  assert.equal(GetGexDashboardResponse.parse(data).source.provider, "ibkr");
 });
 
-test("GEX falls back to IBKR snapshots when reference option snapshots are unusable", async () => {
+test("GEX does not request Polygon reference option snapshots for live option data", async () => {
   const ibkr = configureIbkrGex({
     contracts: [
       option({ right: "call", strike: 100, gamma: 0.02, openInterest: 10 }),
@@ -368,7 +368,7 @@ test("GEX falls back to IBKR snapshots when reference option snapshots are unusa
 
   const data = await getGexDashboardData({ underlying: "SPY" });
 
-  assert.equal(reference.optionChainRequests, 1);
+  assert.equal(reference.optionChainRequests, 0);
   assert.equal(ibkr.chainRequests, 1);
   assert.equal(data.source.provider, "ibkr");
   assert.equal(data.options.length, 1);
@@ -431,9 +431,37 @@ test("GEX can use option-chain underlying price when the quote snapshot is missi
   assert.equal(data.source.status, "partial");
 });
 
-test("GEX ignores non-IBKR quote fallback for live spot", async () => {
+test("GEX uses live Massive stock spot with IBKR option-chain data", async () => {
   configureIbkrGex({
-    quote: basicQuote({ price: 999, source: "polygon" }),
+    quote: basicQuote({ price: 999, source: "massive" }),
+    contracts: [
+      option({
+        right: "call",
+        strike: 100,
+        gamma: 0.02,
+        openInterest: 10,
+        underlyingPrice: 101,
+      }),
+    ],
+  });
+
+  const data = await getGexDashboardData({ underlying: "SPY" });
+
+  assert.equal(data.spot, 999);
+  assert.equal(data.profile.price, 999);
+  assert.equal(data.source.provider, "ibkr");
+  assert.equal(data.source.status, "ok");
+});
+
+test("GEX ignores delayed non-IBKR quote fallback for live spot", async () => {
+  configureIbkrGex({
+    quote: basicQuote({
+      price: 999,
+      source: "polygon",
+      delayed: true,
+      freshness: "delayed",
+      marketDataMode: "delayed",
+    }),
     contracts: [
       option({
         right: "call",

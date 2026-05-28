@@ -1,4 +1,5 @@
 import { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
+import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
 import { logger } from "../lib/logger";
 import { HttpError, isHttpError } from "../lib/errors";
@@ -25,6 +26,9 @@ import {
   subscribeBridgeQuoteSnapshots,
 } from "./bridge-quote-stream";
 import {
+  subscribeMassiveStockQuoteSnapshots,
+} from "./massive-stock-quote-stream";
+import {
   fetchBridgeOptionQuoteSnapshots,
   subscribeBridgeOptionQuoteSnapshots,
   type OptionQuoteSnapshotPayload,
@@ -39,7 +43,7 @@ import {
   releaseMarketDataLeases,
 } from "./market-data-admission";
 import { recordAccountSnapshots } from "./account";
-import { getOptionChain } from "./platform";
+import { getOptionChain, getQuoteSnapshots } from "./platform";
 
 const bridgeClient = new IbkrBridgeClient();
 const ORDER_SNAPSHOT_STALE_MS = 120_000;
@@ -152,6 +156,8 @@ function marketDataRequestFromInstrument(input: {
   symbol?: string | null;
   assetClass?: string | null;
   optionContract?: { providerContractId?: unknown; underlying?: unknown } | null;
+}, options: {
+  massiveStocksRealtime: boolean;
 }): MarketDataLineRequest | null {
   const assetClass = input.assetClass === "option" ? "option" : "equity";
   const symbol = normalizeSymbol(
@@ -164,15 +170,23 @@ function marketDataRequestFromInstrument(input: {
         ? input.optionContract.providerContractId.trim()
         : String(input.optionContract?.providerContractId ?? "").trim();
     if (!providerContractId) {
-      return symbol ? { assetClass: "equity", symbol } : null;
+      return options.massiveStocksRealtime
+        ? null
+        : symbol
+          ? { assetClass: "equity", symbol }
+          : null;
     }
     return {
       assetClass: "option",
       symbol,
       underlying: symbol,
       providerContractId,
-      requiresGreeks: true,
+      requiresGreeks: !options.massiveStocksRealtime,
     };
+  }
+
+  if (options.massiveStocksRealtime) {
+    return null;
   }
 
   return symbol ? { assetClass: "equity", symbol } : null;
@@ -182,6 +196,11 @@ function prewarmAccountMonitorQuotes(
   owner: string,
   requests: MarketDataLineRequest[],
 ): void {
+  if (isMassiveStocksRealtimeConfigured()) {
+    clearAccountMonitorQuotePrewarm(owner);
+    return;
+  }
+
   const symbols = Array.from(
     new Set(
       requests
@@ -245,12 +264,15 @@ function refreshAccountMonitorLeases(input: {
   const key = accountMonitorOwner(input);
   const snapshot = accountMonitorSnapshots.get(key);
   const requestsByKey = new Map<string, MarketDataLineRequest>();
+  const massiveStocksRealtime = isMassiveStocksRealtimeConfigured();
 
   snapshot?.positions.forEach((position) => {
     if (Math.abs(Number(position.quantity ?? 0)) <= 1e-9) {
       return;
     }
-    const request = marketDataRequestFromInstrument(position);
+    const request = marketDataRequestFromInstrument(position, {
+      massiveStocksRealtime,
+    });
     if (request) {
       requestsByKey.set(
         `${request.assetClass}:${request.providerContractId ?? request.symbol}`,
@@ -268,7 +290,9 @@ function refreshAccountMonitorLeases(input: {
     if (remainingQuantity <= 1e-9) {
       return;
     }
-    const request = marketDataRequestFromInstrument(order);
+    const request = marketDataRequestFromInstrument(order, {
+      massiveStocksRealtime,
+    });
     if (request) {
       requestsByKey.set(
         `${request.assetClass}:${request.providerContractId ?? request.symbol}`,
@@ -399,13 +423,27 @@ type HistoricalBarSnapshotPayload = {
     | null;
 };
 
-export async function fetchQuoteSnapshotPayload(symbols: string[]): Promise<{
+type QuoteStreamPayload = {
   quotes: Array<
     Awaited<ReturnType<IbkrBridgeClient["getQuoteSnapshots"]>>[number] & {
-      source: "ibkr";
+      source: "ibkr" | "massive";
     }
   >;
-}> {
+};
+
+export async function fetchQuoteSnapshotPayload(
+  symbols: string[],
+): Promise<QuoteStreamPayload> {
+  if (isMassiveStocksRealtimeConfigured()) {
+    const payload = await getQuoteSnapshots({ symbols: symbols.join(",") });
+    return {
+      quotes: payload.quotes as Array<
+        Awaited<ReturnType<IbkrBridgeClient["getQuoteSnapshots"]>>[number] & {
+          source: "ibkr" | "massive";
+        }
+      >,
+    };
+  }
   return fetchBridgeQuoteSnapshots(symbols);
 }
 
@@ -623,17 +661,15 @@ export async function fetchMarketDepthSnapshotPayload(input: {
 
 export function subscribeQuoteSnapshots(
   symbols: string[],
-  onSnapshot: (payload: {
-    quotes: Array<
-      Awaited<ReturnType<IbkrBridgeClient["getQuoteSnapshots"]>>[number] & {
-        source: "ibkr";
-      }
-    >;
-  }) => void,
+  onSnapshot: (payload: QuoteStreamPayload) => void,
 ): Unsubscribe {
   const normalizedSymbols = Array.from(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
+
+  if (isMassiveStocksRealtimeConfigured()) {
+    return subscribeMassiveStockQuoteSnapshots(normalizedSymbols, onSnapshot);
+  }
 
   return subscribeBridgeQuoteSnapshots(normalizedSymbols, onSnapshot);
 }

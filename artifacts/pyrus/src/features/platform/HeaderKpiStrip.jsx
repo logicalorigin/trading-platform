@@ -195,18 +195,21 @@ export const HeaderKpiStrip = memo(({ onSelect, compact = false, dense = false, 
   return (
     <div
       data-testid="platform-header-kpis"
+      className="ra-hide-scrollbar"
       style={{
         display: "inline-flex",
         alignItems: "stretch",
         justifyContent: "flex-start",
         gap: 0,
-        flex: "0 0 max-content",
-        width: "max-content",
-        minWidth: "max-content",
+        flex: "1 1 auto",
+        width: "100%",
+        maxWidth: "100%",
+        minWidth: 0,
         background: "transparent",
         border: "none",
         borderRadius: 0,
-        overflow: "visible",
+        overflowX: "auto",
+        overflowY: "hidden",
       }}
     >
       {items.map(({ symbol, label }, index) => (

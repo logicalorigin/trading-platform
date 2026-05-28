@@ -344,12 +344,12 @@ test("options flow runtime defaults use the reserved flow scanner lane", () => {
   assert.equal(config.radarBatchSize, 30);
   assert.equal(config.radarDeepCandidateCount, 3);
   assert.equal(config.radarFallbackDeepCandidateCount, 1);
-  assert.equal(config.radarDeepLineBudget, 40);
+  assert.equal(config.radarDeepLineBudget, 80);
   assert.equal(config.scannerBatchSize, 2);
   assert.equal(config.scannerSymbolTimeoutMs, 45_000);
-  assert.equal(config.scannerLineBudget, 40);
+  assert.equal(config.scannerLineBudget, 80);
   assert.equal(config.scannerConcurrency, 2);
-  assert.equal(config.scannerStrikeCoverage, "full");
+  assert.equal(config.scannerStrikeCoverage, "standard");
   assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 2);
   assert.equal(
     resolveOptionsFlowScannerEffectiveConcurrency({
@@ -412,7 +412,7 @@ test("options flow scanner preserves reserved capacity when visible demand is ca
   assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 2);
   assert.equal(diagnostics.backgroundBlockedReason, null);
   assert.equal(diagnostics.lineUtilization.effectiveConcurrency, 2);
-  assert.equal(diagnostics.lineUtilization.effectivePoolCap, 80);
+  assert.equal(diagnostics.lineUtilization.effectivePoolCap, 160);
 });
 
 test("options flow radar keeps sampling while the options lane is backed off", async () => {
@@ -712,7 +712,7 @@ test("options flow radar keeps sampling while options work is queued", async () 
   }
 });
 
-test("options flow radar promotion can finish through scanner options backoff", async () => {
+test("options flow radar promotion respects scanner options backoff", async () => {
   setOptionsFlowRuntimeOverrides({
     radarDeepCandidateCount: 1,
     radarFallbackDeepCandidateCount: 0,
@@ -757,11 +757,12 @@ test("options flow radar promotion can finish through scanner options backoff", 
   assert.equal(quoteCalls, 1);
   assert.deepEqual(result.promotedSymbols, ["SPY"]);
   assert.equal(result.error, null);
-  await waitFor(() => chainCalls === 1, 6_000);
+  await waitForPlatformScannerIdle();
+  assert.equal(chainCalls, 0);
   assert.equal(getOptionsFlowScannerDiagnostics().deepScanner.queuedCount, 0);
 });
 
-test("non-radar options flow scanner scans through options backoff", async () => {
+test("non-radar options flow scanner respects options backoff", async () => {
   setOptionsFlowRuntimeOverrides({
     radarEnabled: false,
     scannerBatchSize: 1,
@@ -795,14 +796,14 @@ test("non-radar options flow scanner scans through options backoff", async () =>
   });
 
   const diagnostics = getOptionsFlowScannerDiagnostics();
-  assert.equal(chainCalls, 1);
+  assert.equal(chainCalls, 0);
   assert.deepEqual(result.scannedSymbols, ["SPY"]);
   assert.equal(diagnostics.backgroundBlockedReason, null);
   assert.equal(diagnostics.deepScanner.queuedCount, 0);
   assert.deepEqual(diagnostics.lastBatch, ["SPY"]);
 });
 
-test("options flow scanner refresh queue continues through options backoff", async () => {
+test("options flow scanner refresh queue respects options backoff", async () => {
   let chainCalls = 0;
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -832,28 +833,26 @@ test("options flow scanner refresh queue continues through options backoff", asy
   });
 
   assert.equal(queued, true);
-  await waitFor(() => {
-    const diagnostics = getOptionsFlowScannerDiagnostics();
-    return (
-      chainCalls > 0 &&
-      diagnostics.deepScanner.activeCount === 0 &&
-      !diagnostics.deepScanner.draining
-    );
-  }, 6_000);
+  await waitForPlatformScannerIdle();
+  assert.equal(chainCalls, 0);
+  assert.deepEqual(
+    getOptionsFlowScannerDiagnostics().deepScanner.lastScannedSymbols,
+    ["SPY"],
+  );
 });
 
 test("options flow scanner keeps rotating under critical API pressure", () => {
   const scanner = admitMarketDataLeases({
     owner: "flow-scanner:previous",
     intent: "flow-scanner-live",
-    requests: Array.from({ length: 40 }, (_, index) => ({
+    requests: Array.from({ length: 80 }, (_, index) => ({
       assetClass: "option" as const,
       providerContractId: `PREVIOUS${index}`,
       underlying: "SPY",
     })),
   });
-  assert.equal(scanner.admitted.length, 40);
-  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 40);
+  assert.equal(scanner.admitted.length, 80);
+  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 80);
 
   updateApiResourcePressure({ rssMb: 1_650 });
 
@@ -862,15 +861,15 @@ test("options flow scanner keeps rotating under critical API pressure", () => {
 
   assert.equal(diagnostics.backgroundBlockedReason, null);
   assert.equal(diagnostics.resourcePressure.level, "critical");
-  assert.equal(diagnostics.lineBudget, 40);
-  assert.equal(diagnostics.lineUtilization.poolCap, 80);
-  assert.equal(diagnostics.lineUtilization.effectivePoolCap, 80);
-  assert.equal(diagnostics.lineUtilization.scannerLineBudget, 40);
-  assert.equal(diagnostics.lineUtilization.radarDeepLineBudget, 40);
-  assert.equal(diagnostics.lineUtilization.maxDeepScanLines, 80);
+  assert.equal(diagnostics.lineBudget, 80);
+  assert.equal(diagnostics.lineUtilization.poolCap, 160);
+  assert.equal(diagnostics.lineUtilization.effectivePoolCap, 160);
+  assert.equal(diagnostics.lineUtilization.scannerLineBudget, 80);
+  assert.equal(diagnostics.lineUtilization.radarDeepLineBudget, 80);
+  assert.equal(diagnostics.lineUtilization.maxDeepScanLines, 160);
   assert.equal(diagnostics.lineUtilization.unusedPoolLines, 0);
-  assert.equal(admission.budget.flowScannerLineCap, 80);
-  assert.equal(admission.flowScannerLineCount, 40);
+  assert.equal(admission.budget.flowScannerLineCap, 160);
+  assert.equal(admission.flowScannerLineCount, 80);
 });
 
 test("options flow scanner keeps rotating under high API pressure", () => {
@@ -880,8 +879,8 @@ test("options flow scanner keeps rotating under high API pressure", () => {
 
   assert.equal(diagnostics.resourcePressure.level, "high");
   assert.equal(diagnostics.backgroundBlockedReason, null);
-  assert.equal(diagnostics.lineUtilization.schedulablePoolCap, 80);
-  assert.equal(diagnostics.lineUtilization.maxDeepScanLines, 80);
+  assert.equal(diagnostics.lineUtilization.schedulablePoolCap, 160);
+  assert.equal(diagnostics.lineUtilization.maxDeepScanLines, 160);
 });
 
 test("options flow scanner diagnostics drop stale transport skip reasons", async () => {
@@ -1100,6 +1099,7 @@ test("options flow scanner waits for an authenticated live Gateway", async () =>
       configured: true,
       authenticated: true,
       liveMarketDataAvailable: false,
+      marketDataMode: "delayed",
     }),
     fetchSymbol: async ({ symbol }) => {
       fetchCalls += 1;
@@ -1108,9 +1108,31 @@ test("options flow scanner waits for an authenticated live Gateway", async () =>
   });
 
   const delayed = await delayedScanner.runOnce(["spy"], { limit: 10 });
-  assert.equal(fetchCalls, 0);
-  assert.deepEqual(delayed.skippedSymbols, ["SPY"]);
-  assert.equal(delayed.skippedReason, "market-data-not-live");
+  assert.equal(fetchCalls, 1);
+  assert.deepEqual(delayed.scannedSymbols, ["SPY"]);
+  assert.equal(delayed.skippedReason, null);
+  assert.equal(delayed.marketDataMode, "delayed");
+
+  const frozenScanner = createOptionsFlowScanner({
+    preferredTransport: "tws",
+    getTransport: async () => ({
+      transport: "tws",
+      connected: true,
+      configured: true,
+      authenticated: true,
+      liveMarketDataAvailable: false,
+      marketDataMode: "delayed_frozen",
+    }),
+    fetchSymbol: async ({ symbol }) => {
+      fetchCalls += 1;
+      return { events: [{ symbol }] };
+    },
+  });
+
+  const frozen = await frozenScanner.runOnce(["spy"], { limit: 10 });
+  assert.deepEqual(frozen.skippedSymbols, ["SPY"]);
+  assert.equal(frozen.skippedReason, "market-data-delayed-frozen");
+  assert.equal(frozen.marketDataMode, "delayed_frozen");
 });
 
 test("options flow scanner scans once Gateway is authenticated and live", async () => {

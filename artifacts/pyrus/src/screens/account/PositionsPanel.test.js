@@ -145,6 +145,10 @@ test("position table defaults keep quote, greeks, sparkline, and signal context 
     "averageCost",
     "price",
     "quote",
+    "stop",
+    "trail",
+    "target",
+    "riskDistance",
     "day",
     "unrealized",
     "exposure",
@@ -159,13 +163,34 @@ test("position table defaults keep quote, greeks, sparkline, and signal context 
   assert.equal(getPositionTableColumns("algo").find((column) => column.id === "averageCost")?.label, "Avg");
   assert.equal(getPositionTableColumns("account").find((column) => column.id === "quote")?.label, "Bid / Ask");
   assert.equal(getPositionTableColumns("algo").find((column) => column.id === "quote")?.label, "Bid / Ask");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "stop")?.label, "Stop");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "stop")?.shortLabel, "SL");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "trail")?.shortLabel, "TRL");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "target")?.shortLabel, "TP");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "riskDistance")?.label, "Risk / Dist");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "riskDistance")?.shortLabel, "DIST");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "stop")?.groupEdge, "start");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "riskDistance")?.groupEdge, "end");
   assert.match(source, /const DenseStackedValue/);
+  assert.match(source, /column\.shortLabel \|\| column\.label/);
+  assert.match(source, /const denseColumnBoundaryStyle/);
+  assert.match(source, /const denseTableMinWidth/);
   assert.match(source, /column\.id === "averageCost"/);
   assert.match(source, /column\.id === "price"/);
   assert.match(source, /column\.id === "quote"/);
+  assert.match(source, /column\.id === "stop"/);
+  assert.match(source, /column\.id === "trail"/);
+  assert.match(source, /column\.id === "target"/);
+  assert.match(source, /column\.id === "riskDistance"/);
   assert.match(source, /column\.id === "greeks"/);
   assert.match(source, /snapshotsBySymbol=\{tickerSnapshotsBySymbol\}/);
   assert.match(source, /data-testid="account-positions-table-scroll"/);
+  assert.match(source, /data-testid="account-positions-summary-row"/);
+  assert.match(source, /denseSummaryCellStyle/);
+  assert.match(source, /Cash \$\{cashSegment\.value\}/);
+  assert.match(source, /NLV \$\{nlvSegment\.value\}/);
+  assert.match(source, /BP \$\{buyingPowerSegment\.value\}/);
+  assert.doesNotMatch(source, /colSpan=\{columns\.length\}/);
   assert.doesNotMatch(source, /secondary=\{`Avg/);
   assert.doesNotMatch(source, /data-testid="account-position-context-strip"/);
 });
@@ -242,6 +267,39 @@ test("positions panel overlays live option quotes onto displayed rows and totals
   assert.match(source, /displayTotals\.netExposure/);
 });
 
+test("positions display totals preserve cash while recalculating live row values", () => {
+  const { buildDisplayTotals } = __positionsPanelInternalsForTests;
+  const totals = buildDisplayTotals(
+    [
+      {
+        marketValue: 120,
+        unrealizedPnl: 10,
+        dayChange: 3,
+        weightPercent: 12,
+      },
+      {
+        marketValue: -20,
+        unrealizedPnl: -2,
+        dayChange: -1,
+        weightPercent: 2,
+      },
+    ],
+    {
+      cash: 900,
+      buyingPower: 1500,
+      netLiquidation: 1000,
+    },
+  );
+
+  assert.equal(totals.netExposure, 100);
+  assert.equal(totals.unrealizedPnl, 8);
+  assert.equal(totals.dayChange, 2);
+  assert.equal(totals.cash, 900);
+  assert.equal(totals.totalCash, 900);
+  assert.equal(totals.buyingPower, 1500);
+  assert.equal(totals.netLiquidation, 1000);
+});
+
 test("positions panel renders compact underlying sparklines inside position rows", () => {
   assert.match(source, /import \{ MicroSparkline \}/);
   assert.match(source, /import \{ Button \} from "\.\.\/\.\.\/components\/ui\/Button\.jsx"/);
@@ -269,10 +327,11 @@ test("positions panel renders compact underlying sparklines inside position rows
   assert.doesNotMatch(source, /\["trend", "Trend"/);
 });
 
-test("position row expansion is reserved for lots source attribution and orders", () => {
+test("position row expansion includes lots attribution orders and management details", () => {
   assert.match(source, /const hasExpandablePositionDetails/);
   assert.match(source, /row\?\.sourceAttribution\?\.length/);
   assert.match(source, /row\?\.openOrders\?\.length/);
+  assert.match(source, /hasTradeManagementDetail\(row\)/);
   assert.match(source, /if \(hasExpandablePositionDetails\(row\)\)/);
   assert.doesNotMatch(source, /<PositionOptionDetails/);
   assert.doesNotMatch(source, /<PositionFactsDetails/);
@@ -525,7 +584,7 @@ test("positions panel live quote overlay replaces stale provider source labels",
   assert.equal(patched.optionQuote.ask, 1.15);
 });
 
-test("positions panel preserves shadow ledger day percent over live quote overlay", () => {
+test("positions panel keeps shadow ledger valuation stable over live quote overlay", () => {
   const patched =
     __positionsPanelInternalsForTests.applyLiveOptionQuoteToRow(
       {
@@ -539,6 +598,8 @@ test("positions panel preserves shadow ledger day percent over live quote overla
         dayChange: 14,
         dayChangePercent: 7,
         marketValue: 220,
+        unrealizedPnl: 20,
+        unrealizedPnlPercent: 10,
         optionContract: {
           providerContractId: "123456789",
           multiplier: 100,
@@ -561,9 +622,68 @@ test("positions panel preserves shadow ledger day percent over live quote overla
       },
     );
 
-  assert.equal(Number(patched.mark.toFixed(2)), 1.3);
-  assert.equal(Number(patched.marketValue.toFixed(2)), 260);
+  assert.equal(Number(patched.mark.toFixed(2)), 1.1);
+  assert.equal(Number(patched.marketValue.toFixed(2)), 220);
+  assert.equal(Number(patched.unrealizedPnl.toFixed(2)), 20);
   assert.equal(patched.dayChange, 14);
   assert.equal(patched.dayChangePercent, 7);
   assert.equal(patched.optionQuote.source, "option_quote");
+  assert.equal(Number(patched.optionQuote.bid.toFixed(2)), 1.2);
+  assert.equal(Number(patched.optionQuote.ask.toFixed(2)), 1.4);
+});
+
+test("positions panel reprices shadow ledger rows only when backend and quote permit valuation", () => {
+  const baseRow = {
+    id: "shadow-opt",
+    accountId: "shadow",
+    source: "SHADOW_LEDGER",
+    valuationEligible: true,
+    symbol: "HOOD",
+    quantity: 2,
+    averageCost: 1,
+    mark: 1.1,
+    dayChange: 14,
+    dayChangePercent: 7,
+    marketValue: 220,
+    optionContract: {
+      providerContractId: "123456789",
+      multiplier: 100,
+    },
+    optionQuote: {
+      bid: 1.05,
+      ask: 1.15,
+      mark: 1.1,
+      source: "shadow_ledger",
+    },
+  };
+
+  const livePatched =
+    __positionsPanelInternalsForTests.applyLiveOptionQuoteToRow(baseRow, {
+      providerContractId: "123456789",
+      bid: 1.2,
+      ask: 1.4,
+      price: 1.3,
+      change: 0.3,
+      changePercent: 30,
+      freshness: "live",
+      marketDataMode: "live",
+    });
+
+  assert.equal(Number(livePatched.mark.toFixed(2)), 1.3);
+  assert.equal(Number(livePatched.marketValue.toFixed(2)), 260);
+
+  const frozenPatched =
+    __positionsPanelInternalsForTests.applyLiveOptionQuoteToRow(baseRow, {
+      providerContractId: "123456789",
+      bid: 1.3,
+      ask: 1.5,
+      price: 1.4,
+      freshness: "live",
+      marketDataMode: "frozen",
+    });
+
+  assert.equal(Number(frozenPatched.mark.toFixed(2)), 1.1);
+  assert.equal(Number(frozenPatched.marketValue.toFixed(2)), 220);
+  assert.equal(Number(frozenPatched.optionQuote.bid.toFixed(2)), 1.3);
+  assert.equal(Number(frozenPatched.optionQuote.ask.toFixed(2)), 1.5);
 });

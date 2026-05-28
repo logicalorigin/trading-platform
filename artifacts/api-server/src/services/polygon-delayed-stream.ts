@@ -1,6 +1,10 @@
 import { WebSocket } from "ws";
 import { logger } from "../lib/logger";
-import { getPolygonRuntimeConfig } from "../lib/runtime";
+import {
+  getPolygonProviderIdentity,
+  getPolygonRuntimeConfig,
+  isMassiveStocksRealtimeConfigured,
+} from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
 
 export type PolygonDelayedStockAggregate = {
@@ -18,8 +22,8 @@ export type PolygonDelayedStockAggregate = {
   averageTradeSize: number | null;
   startMs: number;
   endMs: number;
-  delayed: true;
-  source: "polygon-delayed-websocket";
+  delayed: boolean;
+  source: "massive-websocket" | "polygon-delayed-websocket";
 };
 
 type Subscriber = {
@@ -63,8 +67,10 @@ function polygonDelayedStocksUrl(): string | null {
   if (!config) {
     return null;
   }
-  if (config.baseUrl.includes("massive.com")) {
-    return "wss://delayed.massive.com/stocks";
+  if (getPolygonProviderIdentity(config) === "massive") {
+    return isMassiveStocksRealtimeConfigured(config)
+      ? "wss://socket.massive.com/stocks"
+      : "wss://delayed.massive.com/stocks";
   }
   return "wss://delayed.polygon.io/stocks";
 }
@@ -129,6 +135,7 @@ function mapAggregate(value: unknown): PolygonDelayedStockAggregate | null {
     return null;
   }
 
+  const realtimeMassive = isMassiveStocksRealtimeConfigured();
   return {
     eventType,
     symbol,
@@ -144,8 +151,8 @@ function mapAggregate(value: unknown): PolygonDelayedStockAggregate | null {
     averageTradeSize: readNumber(record, ["z", "averageTradeSize"]),
     startMs,
     endMs,
-    delayed: true,
-    source: "polygon-delayed-websocket",
+    delayed: !realtimeMassive,
+    source: realtimeMassive ? "massive-websocket" : "polygon-delayed-websocket",
   };
 }
 
@@ -155,11 +162,25 @@ function send(value: unknown): void {
   }
 }
 
+function recordSocketError(error: unknown, message: string): void {
+  lastError = error instanceof Error ? error.message : String(error);
+  lastErrorAt = new Date();
+  logger.warn({ err: error }, message);
+}
+
 function closeSocket(nextAuthState: typeof authState = "idle"): void {
-  if (socket) {
-    socket.removeAllListeners();
-    socket.close();
+  const currentSocket = socket;
+  if (currentSocket) {
     socket = null;
+    currentSocket.removeAllListeners();
+    currentSocket.on("error", (error) => {
+      recordSocketError(error, "Polygon delayed WebSocket failed while closing");
+    });
+    if (currentSocket.readyState === WebSocket.CONNECTING) {
+      currentSocket.terminate();
+    } else if (currentSocket.readyState === WebSocket.OPEN) {
+      currentSocket.close();
+    }
   }
   authState = nextAuthState;
   subscriptionSignature = "";
@@ -233,6 +254,9 @@ function refreshSocket(): void {
     subscribeSocketSymbols(symbols);
     return;
   }
+  if (socket && socket.readyState === WebSocket.CONNECTING) {
+    return;
+  }
 
   closeSocket();
   authState = "authenticating";
@@ -291,9 +315,7 @@ function refreshSocket(): void {
   });
 
   socket.on("error", (error) => {
-    lastError = error instanceof Error ? error.message : String(error);
-    lastErrorAt = new Date();
-    logger.warn({ err: error }, "Polygon delayed WebSocket failed");
+    recordSocketError(error, "Polygon delayed WebSocket failed");
   });
 }
 

@@ -11,6 +11,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getGetAccountAllocationQueryOptions,
+  getGetAccountClosedTradesQueryOptions,
   getGetAccountOrdersQueryOptions,
   getGetAccountEquityHistoryQueryOptions,
   getGetAccountPositionsQueryOptions,
@@ -37,6 +38,12 @@ import {
 } from "../features/platform/live-streams";
 import { useRuntimeControlSnapshot } from "../features/platform/useRuntimeControlSnapshot";
 import { markRouteDataTiming } from "../features/platform/performanceMetrics";
+import {
+  buildAccountHistoryCacheKey,
+  hydrateQueryFromRuntimeCache,
+  readCachedAccountHistory,
+  writeCachedAccountHistory,
+} from "../features/platform/runtimeCache";
 import {
   setAccountSectionTransitionSnapshot,
 } from "../features/platform/accountSectionTransitionStore.js";
@@ -169,6 +176,33 @@ const DEFAULT_EQUITY_BENCHMARK_VISIBILITY = {
   DJIA: false,
 };
 
+const useRuntimeAccountHistoryCache = ({
+  enabled,
+  queryClient,
+  queryKey,
+  cacheKey,
+  data,
+  writeOptions,
+}) => {
+  useEffect(() => {
+    if (!enabled || !cacheKey || !queryKey) {
+      return;
+    }
+    void hydrateQueryFromRuntimeCache({
+      queryClient,
+      queryKey,
+      read: () => readCachedAccountHistory(cacheKey),
+    });
+  }, [cacheKey, enabled, queryClient, queryKey]);
+
+  useEffect(() => {
+    if (!enabled || !cacheKey || !data) {
+      return;
+    }
+    void writeCachedAccountHistory(cacheKey, data, writeOptions);
+  }, [cacheKey, data, enabled, writeOptions]);
+};
+
 const SHADOW_ACCOUNT_ID = "shadow";
 const resolveAccountMode = ({ shadowMode = false, environment } = {}) => {
   if (shadowMode) {
@@ -204,10 +238,8 @@ const summarizeLineOwnerClassesForTiming = (ownerClasses) => {
     [
       "account-monitor",
       "visible",
-      "watchlist-prewarm",
-      "watchlist-filler",
       "flow-scanner",
-      "convenience",
+      "automation",
     ].map((key) => [
       key,
       Number(summaries[key]?.activeLineCount || 0),
@@ -594,6 +626,111 @@ const AccountScreenInner = ({
   const performanceCalendarParams = useMemo(
     () => buildPerformanceCalendarParams(accountDataParams),
     [accountDataParams],
+  );
+  const accountHistoryCacheBase = useMemo(
+    () => ({
+      accountId: accountRequestId,
+      mode: modeParams.mode,
+      environment: modeParams.mode,
+      assetClass: assetFilter === "all" ? "all" : assetFilter,
+    }),
+    [accountRequestId, assetFilter, modeParams.mode],
+  );
+  const equityHistoryRuntimeCacheKey = useMemo(
+    () =>
+      buildAccountHistoryCacheKey({
+        ...accountHistoryCacheBase,
+        range,
+        source: "equity-history",
+      }),
+    [accountHistoryCacheBase, range],
+  );
+  const equityHistoryCacheWriteOptions = useMemo(
+    () => ({
+      ...accountHistoryCacheBase,
+      range,
+      source: "equity-history",
+    }),
+    [accountHistoryCacheBase, range],
+  );
+  const equityHistoryRuntimeQueryKey = useMemo(
+    () =>
+      getGetAccountEquityHistoryQueryOptions(accountRequestId, {
+        ...accountDataParams,
+        range,
+      }).queryKey,
+    [accountDataParams, accountRequestId, range],
+  );
+  const performanceCalendarEquityRuntimeCacheKey = useMemo(
+    () =>
+      buildAccountHistoryCacheKey({
+        ...accountHistoryCacheBase,
+        range: "1Y",
+        source: "performance-calendar-equity",
+      }),
+    [accountHistoryCacheBase],
+  );
+  const performanceCalendarEquityCacheWriteOptions = useMemo(
+    () => ({
+      ...accountHistoryCacheBase,
+      range: "1Y",
+      source: "performance-calendar-equity",
+    }),
+    [accountHistoryCacheBase],
+  );
+  const tradesRuntimeCacheKey = useMemo(
+    () =>
+      buildAccountHistoryCacheKey({
+        ...accountHistoryCacheBase,
+        range,
+        source: "closed-trades",
+        filters: closedTradeParams,
+      }),
+    [accountHistoryCacheBase, closedTradeParams, range],
+  );
+  const tradesCacheWriteOptions = useMemo(
+    () => ({
+      ...accountHistoryCacheBase,
+      range,
+      source: "closed-trades",
+      filters: closedTradeParams,
+    }),
+    [accountHistoryCacheBase, closedTradeParams, range],
+  );
+  const tradesRuntimeQueryKey = useMemo(
+    () =>
+      getGetAccountClosedTradesQueryOptions(
+        accountRequestId,
+        closedTradeParams,
+      ).queryKey,
+    [accountRequestId, closedTradeParams],
+  );
+  const performanceCalendarTradesRuntimeCacheKey = useMemo(
+    () =>
+      buildAccountHistoryCacheKey({
+        ...accountHistoryCacheBase,
+        range: "1Y",
+        source: "performance-calendar-trades",
+        filters: performanceCalendarParams,
+      }),
+    [accountHistoryCacheBase, performanceCalendarParams],
+  );
+  const performanceCalendarTradesCacheWriteOptions = useMemo(
+    () => ({
+      ...accountHistoryCacheBase,
+      range: "1Y",
+      source: "performance-calendar-trades",
+      filters: performanceCalendarParams,
+    }),
+    [accountHistoryCacheBase, performanceCalendarParams],
+  );
+  const performanceCalendarTradesRuntimeQueryKey = useMemo(
+    () =>
+      getGetAccountClosedTradesQueryOptions(
+        accountRequestId,
+        performanceCalendarParams,
+      ).queryKey,
+    [accountRequestId, performanceCalendarParams],
   );
   const getAccountSectionRequest = useCallback(
     (section) => {
@@ -1107,6 +1244,14 @@ const AccountScreenInner = ({
       },
     },
   );
+  const performanceCalendarEquityRuntimeQueryKey = useMemo(
+    () =>
+      getAccountPerformanceCalendarEquityQueryKey(
+        accountRequestId,
+        accountDataParams,
+      ),
+    [accountDataParams, accountRequestId],
+  );
   const performanceCalendarEquityQuery = useQuery({
     ...getGetAccountEquityHistoryQueryOptions(
       accountRequestId,
@@ -1123,10 +1268,7 @@ const AccountScreenInner = ({
         },
       },
     ),
-    queryKey: getAccountPerformanceCalendarEquityQueryKey(
-      accountRequestId,
-      accountDataParams,
-    ),
+    queryKey: performanceCalendarEquityRuntimeQueryKey,
   });
   useEffect(() => {
     const selectedPoints = equityQuery.data?.points || [];
@@ -1229,6 +1371,38 @@ const AccountScreenInner = ({
       enabled: secondaryAccountQueriesEnabled,
       placeholderData: retainPreviousData,
     },
+  });
+  useRuntimeAccountHistoryCache({
+    enabled: Boolean(equityHistoryQueriesEnabled && range !== "1D"),
+    queryClient,
+    queryKey: equityHistoryRuntimeQueryKey,
+    cacheKey: equityHistoryRuntimeCacheKey,
+    data: equityQuery.data,
+    writeOptions: equityHistoryCacheWriteOptions,
+  });
+  useRuntimeAccountHistoryCache({
+    enabled: Boolean(performanceCalendarQueriesEnabled),
+    queryClient,
+    queryKey: performanceCalendarEquityRuntimeQueryKey,
+    cacheKey: performanceCalendarEquityRuntimeCacheKey,
+    data: performanceCalendarEquityQuery.data,
+    writeOptions: performanceCalendarEquityCacheWriteOptions,
+  });
+  useRuntimeAccountHistoryCache({
+    enabled: Boolean(tradingAnalysisQueriesEnabled),
+    queryClient,
+    queryKey: tradesRuntimeQueryKey,
+    cacheKey: tradesRuntimeCacheKey,
+    data: tradesQuery.data,
+    writeOptions: tradesCacheWriteOptions,
+  });
+  useRuntimeAccountHistoryCache({
+    enabled: Boolean(performanceCalendarQueriesEnabled),
+    queryClient,
+    queryKey: performanceCalendarTradesRuntimeQueryKey,
+    cacheKey: performanceCalendarTradesRuntimeCacheKey,
+    data: performanceCalendarTradesQuery.data,
+    writeOptions: performanceCalendarTradesCacheWriteOptions,
   });
   const shadowWatchlistBacktestMutation = useMutation({
     mutationFn: (payload = { timeframe: "15m" }) =>
@@ -1587,6 +1761,7 @@ const AccountScreenInner = ({
               maskValues={maskAccountValues}
               tradesData={returnsCalendarTradesData}
               equityPoints={returnsCalendarEquityPoints}
+              dailyPnl={displaySummaryData?.metrics?.dayPnl}
               isPhone={accountIsPhone}
             />
           </div>

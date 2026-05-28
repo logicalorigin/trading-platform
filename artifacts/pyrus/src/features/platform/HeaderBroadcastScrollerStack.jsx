@@ -89,6 +89,8 @@ import {
   normalizeFlowScannerConfig,
 } from "./marketFlowScannerConfig";
 import { useSignalMonitorSnapshot } from "./signalMonitorStore";
+import { IbkrStatusWave } from "./IbkrConnectionStatus";
+import { canonicalizeStreamState, streamStateTokenVar } from "./streamSemantics";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -1032,6 +1034,30 @@ const HeaderLaneSegmentedControl = ({ value, onChange }) => (
   </div>
 );
 
+const resolveHeaderLaneWaveMotion = (status) => {
+  const state = canonicalizeStreamState(status, "no-subscribers");
+  if (state === "healthy") return "fast";
+  if (state === "checking" || state === "capacity-limited" || state === "reconnecting") {
+    return "slow";
+  }
+  return "flat";
+};
+
+const HeaderLaneWaveIcon = ({ status = "no-subscribers", dataTestId }) => {
+  const state = canonicalizeStreamState(status, "no-subscribers");
+
+  return (
+    <IbkrStatusWave
+      status={state}
+      color={streamStateTokenVar(state)}
+      wave={resolveHeaderLaneWaveMotion(state)}
+      width={20}
+      height={12}
+      dataTestId={dataTestId}
+    />
+  );
+};
+
 const HeaderLaneToggleButton = ({
   active,
   disabled = false,
@@ -1064,7 +1090,6 @@ const HeaderLaneToggleButton = ({
       fontWeight: FONT_WEIGHTS.regular,
     }}
   >
-    <RadioTower size={dim(12)} strokeWidth={2.3} />
     {children}
   </button>
 );
@@ -1189,7 +1214,7 @@ const HeaderBroadcastLane = ({
   emptyLabel,
   emptyTone = null,
   testId,
-  action,
+  statusGlyph,
   children,
   speedPreset = "slow",
   settingsOpen = false,
@@ -1208,6 +1233,13 @@ const HeaderBroadcastLane = ({
       }),
     [scrollDistancePx, speedPreset],
   );
+  const laneGridColumns = [
+    compactSettings ? `${dim(28)}px` : "56px",
+    statusGlyph ? `${dim(compactSettings ? 24 : 26)}px` : null,
+    "minmax(0, 1fr)",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   useEffect(() => {
     if (!shouldScroll) {
@@ -1285,9 +1317,7 @@ const HeaderBroadcastLane = ({
       className={compactSettings ? "ra-mobile-broadcast-lane" : "ra-hairline-bottom"}
       style={{
         display: "grid",
-        gridTemplateColumns: compactSettings
-          ? `${dim(28)}px minmax(0, 1fr) ${dim(28)}px`
-          : "56px minmax(0, 1fr) auto",
+        gridTemplateColumns: laneGridColumns,
         alignItems: "center",
         minHeight: dim(compactSettings ? 22 : 20),
         minWidth: 0,
@@ -1308,6 +1338,22 @@ const HeaderBroadcastLane = ({
       >
         {labelTrigger ?? defaultTrigger}
       </div>
+
+      {statusGlyph ? (
+        <div
+          data-header-lane-status-glyph
+          style={{
+            height: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRight: `1px solid ${CSS_COLOR.border}`,
+            pointerEvents: "none",
+          }}
+        >
+          {statusGlyph}
+        </div>
+      ) : null}
 
       <div
         data-header-broadcast-viewport
@@ -1387,19 +1433,6 @@ const HeaderBroadcastLane = ({
             </span>
           </span>
         )}
-      </div>
-
-      <div
-        style={{
-          height: "100%",
-          minWidth: dim(compactSettings ? 28 : 22),
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          borderLeft: `1px solid ${CSS_COLOR.border}`,
-        }}
-      >
-        {action}
       </div>
     </div>
   );
@@ -1760,25 +1793,6 @@ export const HeaderBroadcastScrollerStack = memo(({
         : broadScanEnabled
           ? "SCAN IDLE"
         : "SCAN OFF";
-  const broadToggleTitle = flowScanHasError
-    ? "Flow scan degraded"
-    : flowScanDegraded
-      ? "Flow scan degraded"
-    : flowScanBusy
-      ? "Flow scan updating"
-    : flowSessionQuietWithRetainedEvents
-      ? "Market session quiet; showing last received flow"
-    : flowSessionQuiet
-      ? "Market session quiet"
-    : flowScanStale
-      ? "Flow scan paused; showing last snapshot"
-    : flowScanPaused
-      ? "Flow scan paused"
-    : broadScanSnapshotActive
-      ? "Flow scan active"
-    : broadScanEnabled
-      ? "Flow scan enabled"
-      : "Start Flow scan";
   const signalScanTone = signalHasError
     ? CSS_COLOR.red
     : signalDegraded
@@ -1790,19 +1804,15 @@ export const HeaderBroadcastScrollerStack = memo(({
       : signalScanEnabled
         ? CSS_COLOR.green
         : CSS_COLOR.textMuted;
-  const signalToggleTitle = signalHasError
-    ? "Signal scan degraded"
-    : signalDegraded
-      ? "Signal scan running in runtime fallback"
-    : signalNoTrackedSymbols
-      ? "Signal scan has no tracked symbols"
-    : signalNoFreshSignals
-      ? "Signal scan has no fresh signals"
+  const signalWaveStatus = !onToggleSignalScan || signalHasError
+    ? "offline"
+    : signalDegraded || signalNoTrackedSymbols || signalNoFreshSignals
+      ? "stale"
     : signalBusy
-      ? "Signal scan updating"
-      : signalScanEnabled
-        ? "Signal scan active"
-        : "Start signal scan";
+      ? "checking"
+    : signalScanEnabled
+      ? "healthy"
+      : "no-subscribers";
   const signalStatusLabel = signalHasError
     ? "SCAN ERROR"
     : signalDegraded
@@ -1820,6 +1830,17 @@ export const HeaderBroadcastScrollerStack = memo(({
         : signalScanEnabled
         ? "SCAN ON"
         : "SCAN OFF";
+  const flowWaveStatus = flowScanHasError
+    ? "offline"
+    : flowScanDegraded || flowSessionQuietWithRetainedEvents || flowScanStale || flowScanPaused
+      ? "stale"
+    : flowScanBusy
+      ? "checking"
+    : flowSessionQuiet
+      ? "market-closed"
+    : broadScanSnapshotActive
+      ? "healthy"
+      : "no-subscribers";
   const signalUniverseLabel =
     signalStatusSnapshot.universeMode === "all_watchlists_plus_universe"
       ? "Watchlist Sources + Candidate Set"
@@ -2168,6 +2189,7 @@ export const HeaderBroadcastScrollerStack = memo(({
   const signalTriggerActive = openSettingsLane === "signals";
   const unusualTriggerActive = openSettingsLane === "unusual";
   const algoLaneTone = algoItems.length ? CSS_COLOR.accent : CSS_COLOR.textMuted;
+  const algoWaveStatus = !enabled ? "checking" : onAlgoAction ? "healthy" : "no-subscribers";
   const algoEmptyLabel = enabled ? "NO ALGO EVENTS" : "ALGO SYNCING";
   const buildLaneTriggerButton = ({ testId, ariaLabel, active, accentTone, content }) => (
     <button
@@ -2240,30 +2262,11 @@ export const HeaderBroadcastScrollerStack = memo(({
               })}
             </PopoverTrigger>
           }
-          action={
-            <AppTooltip content={signalToggleTitle}><button
-              type="button"
-              data-testid="header-signal-scan-toggle"
-              aria-label={signalToggleTitle}
-              aria-pressed={signalScanEnabled}
-              disabled={signalBusy || !onToggleSignalScan}
-              onClick={onToggleSignalScan}
-              style={{
-                width: dim(isPhone ? 24 : 22),
-                height: dim(isPhone ? 22 : 20),
-                minHeight: dim(isPhone ? 22 : 20),
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                border: "none",
-                borderRadius: dim(3),
-                background: signalScanEnabled ? `${cssColorMix(signalScanTone, 9)}` : "transparent",
-                color: signalScanTone,
-                cursor: signalBusy ? "wait" : onToggleSignalScan ? "pointer" : "default",
-              }}
-            >
-              <RadioTower size={14} strokeWidth={2.4} />
-            </button></AppTooltip>
+          statusGlyph={
+            <HeaderLaneWaveIcon
+              status={signalWaveStatus}
+              dataTestId="header-signal-scan-wave"
+            />
           }
         >
           {(item, duplicate, compact) => (
@@ -2312,29 +2315,11 @@ export const HeaderBroadcastScrollerStack = memo(({
               })}
             </PopoverTrigger>
           }
-          action={
-            <AppTooltip content={broadToggleTitle}><button
-              type="button"
-              data-testid="header-unusual-broad-toggle"
-              aria-label={broadToggleTitle}
-              aria-pressed={broadScanEnabled}
-              onClick={toggleBroadScan}
-              style={{
-                width: dim(isPhone ? 24 : 22),
-                height: dim(isPhone ? 22 : 20),
-                minHeight: dim(isPhone ? 22 : 20),
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                border: "none",
-                borderRadius: dim(3),
-                background: broadScanEnabled ? `${cssColorMix(flowScanTone, 9)}` : "transparent",
-                color: flowScanTone,
-                cursor: "pointer",
-              }}
-            >
-              <RadioTower size={14} strokeWidth={2.4} />
-            </button></AppTooltip>
+          statusGlyph={
+            <HeaderLaneWaveIcon
+              status={flowWaveStatus}
+              dataTestId="header-unusual-broad-wave"
+            />
           }
         >
           {(item, duplicate, compact) => (
@@ -2394,30 +2379,11 @@ export const HeaderBroadcastScrollerStack = memo(({
             <Bot size={14} strokeWidth={2} />
           </button>
         }
-        action={
-          <AppTooltip content="Open Algo">
-            <button
-              type="button"
-              data-testid="header-algo-open"
-              aria-label="Open Algo"
-              onClick={() => onAlgoAction?.()}
-              style={{
-                width: dim(isPhone ? 24 : 22),
-                height: dim(isPhone ? 22 : 20),
-                minHeight: dim(isPhone ? 22 : 20),
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                border: "none",
-                borderRadius: dim(3),
-                background: algoItems.length ? `${cssColorMix(algoLaneTone, 9)}` : "transparent",
-                color: algoLaneTone,
-                cursor: onAlgoAction ? "pointer" : "default",
-              }}
-            >
-              <RadioTower size={14} strokeWidth={2.4} />
-            </button>
-          </AppTooltip>
+        statusGlyph={
+          <HeaderLaneWaveIcon
+            status={algoWaveStatus}
+            dataTestId="header-algo-wave"
+          />
         }
       >
         {(item, duplicate, compact) => (

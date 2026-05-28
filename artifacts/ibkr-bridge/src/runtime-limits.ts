@@ -61,7 +61,7 @@ export const BRIDGE_RUNTIME_LIMITS: Record<
   },
   maxLiveOptionLines: {
     envName: "IBKR_MAX_LIVE_OPTION_LINES",
-    defaultValue: 100,
+    defaultValue: 200,
     min: 0,
     max: 500,
     description: "Dedicated live option quote line budget. Zero uses visible option limit.",
@@ -75,7 +75,7 @@ export const BRIDGE_RUNTIME_LIMITS: Record<
   },
   optionQuoteVisibleContractLimit: {
     envName: "OPTION_QUOTES_VISIBLE_CONTRACT_LIMIT",
-    defaultValue: 100,
+    defaultValue: 200,
     min: 1,
     max: 500,
     description: "Maximum option contracts kept visible for quote hydration.",

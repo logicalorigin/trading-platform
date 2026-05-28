@@ -1,4 +1,7 @@
-import { getProviderConfiguration } from "../lib/runtime";
+import {
+  getProviderConfiguration,
+  isMassiveStocksRealtimeConfigured,
+} from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
 import { subscribeBridgeQuoteSnapshots } from "./bridge-quote-stream";
@@ -12,6 +15,7 @@ import {
 
 export type StockMinuteAggregateSource =
   | "ibkr-websocket-derived"
+  | "massive-websocket"
   | "polygon-delayed-websocket";
 
 export type StockMinuteAggregateMessage = {
@@ -253,7 +257,7 @@ export function getCurrentStockMinuteAggregates(
   );
   const provider = getPreferredStockAggregateStreamSource();
 
-  if (provider === "polygon-delayed-websocket") {
+  if (provider === "polygon-delayed-websocket" || provider === "massive-websocket") {
     return getCurrentPolygonStockMinuteAggregates(normalizedSymbols);
   }
 
@@ -414,7 +418,7 @@ function refreshQuoteSubscription() {
     return;
   }
 
-  if (provider === "polygon-delayed-websocket") {
+  if (provider === "polygon-delayed-websocket" || provider === "massive-websocket") {
     clearHeartbeatTimer();
     polygonUnsubscribe = subscribePolygonStockMinuteAggregates(
       symbols,
@@ -448,16 +452,22 @@ export function getPreferredStockAggregateStreamSource():
   return resolvePreferredStockAggregateStreamSource({
     ibkrConfigured: getProviderConfiguration().ibkr,
     polygonDelayedConfigured: isPolygonDelayedWebSocketConfigured(),
+    massiveRealtimeConfigured: isMassiveStocksRealtimeConfigured(),
   });
 }
 
 export function resolvePreferredStockAggregateStreamSource({
   ibkrConfigured,
   polygonDelayedConfigured,
+  massiveRealtimeConfigured = false,
 }: {
   ibkrConfigured: boolean;
   polygonDelayedConfigured: boolean;
+  massiveRealtimeConfigured?: boolean;
 }): StockMinuteAggregateSource | "none" {
+  if (massiveRealtimeConfigured && polygonDelayedConfigured) {
+    return "massive-websocket";
+  }
   if (ibkrConfigured) {
     return "ibkr-websocket-derived";
   }

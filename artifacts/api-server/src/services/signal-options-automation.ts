@@ -131,9 +131,21 @@ const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 2;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 20_000;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 24;
+const SIGNAL_OPTIONS_SIGNAL_SOURCE_POLICY = "massive-primary";
+const SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY = "mixed" as const;
 const SIGNAL_OPTIONS_MONITOR_STALE_GRACE_MS = 5_000;
 const SIGNAL_OPTIONS_POSITION_MARK_SKIP_RATE_LIMIT_MS = 5 * 60 * 1_000;
 const SIGNAL_OPTIONS_SHADOW_MARK_FALLBACK_MAX_AGE_MS = 3 * 60 * 1_000;
+const SIGNAL_OPTIONS_BLOCKED_LIVE_MARKET_DATA_MODES = new Set([
+  "delayed",
+  "frozen",
+]);
+const SIGNAL_OPTIONS_EXTENDED_CLOSE_UNDERLYINGS = new Set([
+  "DIA",
+  "IWM",
+  "QQQ",
+  "SPY",
+]);
 const SIGNAL_OPTIONS_STATE_EVENT_LIMIT = 2_500;
 const SIGNAL_OPTIONS_OPTION_BACKOFF_DEBUG_REASON = "options_backoff";
 const SIGNAL_OPTIONS_GATEWAY_NOT_READY_REASON = "algo_gateway_not_ready";
@@ -385,6 +397,37 @@ function expirationDateKey(value: unknown): string | null {
 
 function compactString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizedQuoteStatus(value: unknown): string | null {
+  return compactString(value)?.toLowerCase() ?? null;
+}
+
+function isBlockedLiveMarketDataMode(value: unknown): boolean {
+  const mode = normalizedQuoteStatus(value);
+  return Boolean(mode && SIGNAL_OPTIONS_BLOCKED_LIVE_MARKET_DATA_MODES.has(mode));
+}
+
+function isSignalOptionsLiveExitQuoteEligible(input: {
+  quote: SignalOptionsOptionQuote | null;
+  markSource: string | null;
+  usedShadowMarkFallback: boolean;
+}) {
+  if (!input.quote || input.usedShadowMarkFallback || input.markSource === "shadow_position_mark") {
+    return false;
+  }
+  const marketDataMode = normalizedQuoteStatus(input.quote.marketDataMode);
+  if (
+    isBlockedLiveMarketDataMode(input.quote.marketDataMode) ||
+    (marketDataMode && marketDataMode !== "live")
+  ) {
+    return false;
+  }
+  const quoteFreshness = normalizedQuoteStatus(input.quote.quoteFreshness);
+  if (quoteFreshness && ["pending", "stale", "unavailable"].includes(quoteFreshness)) {
+    return false;
+  }
+  return true;
 }
 
 function signalOptionsRunId(input: {
@@ -720,22 +763,32 @@ async function readShadowPositionMarkFallback(
   if (!shadowPosition) {
     return null;
   }
-  const markWhere = and(
-    eq(shadowPositionMarksTable.positionId, shadowPosition.id),
-    gte(shadowPositionMarksTable.asOf, openedAt),
-  );
-  const [latest] = await db
+  const marks = await db
     .select()
     .from(shadowPositionMarksTable)
-    .where(markWhere)
+    .where(
+      and(
+        eq(shadowPositionMarksTable.positionId, shadowPosition.id),
+        gte(shadowPositionMarksTable.asOf, openedAt),
+      ),
+    )
     .orderBy(desc(shadowPositionMarksTable.asOf))
-    .limit(1);
-  const [peak] = await db
-    .select()
-    .from(shadowPositionMarksTable)
-    .where(markWhere)
-    .orderBy(desc(shadowPositionMarksTable.mark))
-    .limit(1);
+    .limit(1000);
+  const eligibleMarks = marks.filter((mark) =>
+    isLiveOptionTradingSession(mark.asOf, position.selectedContract),
+  );
+  const [latest] = eligibleMarks;
+  const peak = eligibleMarks.reduce<typeof latest | undefined>((selected, mark) => {
+    const selectedPrice = finiteNumber(selected?.mark);
+    const markPrice = finiteNumber(mark.mark);
+    if (markPrice == null) {
+      return selected;
+    }
+    if (!selected || selectedPrice == null || markPrice > selectedPrice) {
+      return mark;
+    }
+    return selected;
+  }, undefined);
   const latestMarkPrice = finiteNumber(latest?.mark);
   const peakMarkPrice = finiteNumber(peak?.mark);
   if (!latest || !peak || latestMarkPrice == null || peakMarkPrice == null) {
@@ -1289,7 +1342,7 @@ function buildWorkerScanSummary(input: {
     latestSignalBarAt,
     oldestSignalBarAt,
     lastSignalScanAt: input.lastSignalScanAt ?? null,
-    signalSourcePolicy: "ibkr-only" as const,
+    signalSourcePolicy: SIGNAL_OPTIONS_SIGNAL_SOURCE_POLICY,
     heavyWorkDeferred: input.heavyWorkDeferred === true,
     activeScanPhase: input.activeScanPhase ?? null,
     resourcePressureLevel: input.resourcePressureLevel ?? null,
@@ -1775,12 +1828,14 @@ export function resolveSignalOptionsLiquidity(
     bid != null && ask != null && ask >= bid ? Math.max(0, ask - bid) : null;
   const spreadPctOfMid =
     spread != null && mid != null && mid > 0 ? (spread / mid) * 100 : null;
-  const quoteFreshness = String(quote.quoteFreshness || "").toLowerCase();
+  const quoteFreshness = normalizedQuoteStatus(quote.quoteFreshness) ?? "";
+  const blockedMarketDataMode = isBlockedLiveMarketDataMode(quote.marketDataMode);
   const liquidityControls = profile.liquidityHaltControls;
   const quoteFresh =
-    !profile.liquidityGate.requireFreshQuote ||
-    liquidityControls.freshQuoteRequiredEnabled === false ||
-    !["stale", "unavailable", "pending"].includes(quoteFreshness);
+    !blockedMarketDataMode &&
+    (!profile.liquidityGate.requireFreshQuote ||
+      liquidityControls.freshQuoteRequiredEnabled === false ||
+      !["stale", "unavailable", "pending"].includes(quoteFreshness));
   const hasBidAsk = bid != null && ask != null && bid > 0 && ask > 0 && ask >= bid;
   const reasons: string[] = [];
 
@@ -2673,7 +2728,7 @@ async function loadSignalOptionsMonitorState(input: {
         profile,
         mode: "incremental",
         symbols: forcedBatch.symbols,
-        barSourcePolicy: "ibkr-only",
+        barSourcePolicy: SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY,
       });
 
       return {
@@ -2694,7 +2749,7 @@ async function loadSignalOptionsMonitorState(input: {
       profile,
       mode: "incremental",
       symbols: batch.symbols,
-      barSourcePolicy: "ibkr-only",
+      barSourcePolicy: SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY,
     });
 
     return {
@@ -2706,7 +2761,7 @@ async function loadSignalOptionsMonitorState(input: {
   return evaluateSignalMonitor({
     environment: input.deployment.mode,
     mode: "incremental",
-    barSourcePolicy: "ibkr-only",
+    barSourcePolicy: SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY,
   });
 }
 
@@ -3836,7 +3891,7 @@ function signalOptionsScanAlreadyRunningResponse(input: {
       latestSignalBarAt: null,
       oldestSignalBarAt: null,
       lastSignalScanAt: null,
-      signalSourcePolicy: "ibkr-only",
+      signalSourcePolicy: SIGNAL_OPTIONS_SIGNAL_SOURCE_POLICY,
       heavyWorkDeferred: scanState.heavyWorkDeferred,
       activeScanPhase: scanState.phase,
       candidateCount: 0,
@@ -4139,7 +4194,8 @@ function buildCockpitPipeline(input: {
       lastSignalScanAt,
       latestSignalBarAt:
         scanState.latestSignalBarAt ?? workerState.lastLatestSignalBarAt ?? null,
-      signalSourcePolicy: workerState.lastSignalSourcePolicy ?? "ibkr-only",
+      signalSourcePolicy:
+        workerState.lastSignalSourcePolicy ?? SIGNAL_OPTIONS_SIGNAL_SOURCE_POLICY,
       heavyWorkDeferred: lastHeavyWorkDeferred,
       resourcePressureLevel: workerState.lastResourcePressureLevel,
       pressurePaused: pressurePauseState.paused,
@@ -5717,6 +5773,10 @@ async function refreshActivePosition(input: {
   if (!expirationDate) {
     return { managed: false, reason: "invalid_expiration" };
   }
+  const now = new Date();
+  if (!isLiveOptionTradingSession(now, contract)) {
+    return { managed: true, reason: SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON };
+  }
 
   const providerContractId =
     typeof contract.providerContractId === "string"
@@ -5809,6 +5869,7 @@ async function refreshActivePosition(input: {
     quote?: SignalOptionsOptionQuote | null;
     liquidity?: unknown;
     reason?: string;
+    detail?: Record<string, unknown>;
   }) => {
     const occurredAt = new Date();
     const reason = inputSkip.reason ?? "position_mark_unavailable";
@@ -5839,6 +5900,7 @@ async function refreshActivePosition(input: {
         markResolution: {
           attempts: markAttempts,
         },
+        ...(inputSkip.detail ?? {}),
       },
     });
     return { managed: false, reason };
@@ -5853,7 +5915,6 @@ async function refreshActivePosition(input: {
     );
     return null;
   });
-  const now = new Date();
   const fallbackFresh = isFreshShadowPositionMarkFallback({
     fallback: shadowMarkFallback,
     now,
@@ -5945,6 +6006,31 @@ async function refreshActivePosition(input: {
   };
 
   if (exitReason) {
+    const exitQuoteEligible = isSignalOptionsLiveExitQuoteEligible({
+      quote,
+      markSource,
+      usedShadowMarkFallback,
+    });
+    if (!exitQuoteEligible) {
+      return await emitPositionMarkSkip({
+        summary: `${input.position.symbol} shadow exit skipped: live option quote unavailable`,
+        message:
+          "The open shadow position crossed an exit threshold, but the mark came from a fallback or non-live option quote.",
+        quote,
+        liquidity,
+        reason: "position_exit_quote_unavailable",
+        detail: {
+          exitReason,
+          markPrice,
+          markSource,
+          usedShadowMarkFallback,
+          position: positionPatch,
+          stop,
+          overnight,
+          shadowPositionMarkFallback: shadowMarkFallback,
+        },
+      });
+    }
     await insertSignalOptionsEvent({
       deployment: input.deployment,
       symbol: input.position.symbol,
@@ -5973,6 +6059,10 @@ async function refreshActivePosition(input: {
         overnight,
       },
     });
+    return { managed: true, usedShadowMarkFallback };
+  }
+
+  if (usedShadowMarkFallback) {
     return { managed: true, usedShadowMarkFallback };
   }
 
@@ -6937,6 +7027,29 @@ function isRegularMarketSession(value: Date): boolean {
     Number.parseInt(parts.hour ?? "0", 10) * 60 +
     Number.parseInt(parts.minute ?? "0", 10);
   return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
+}
+
+function liveOptionSessionCloseMinute(contract?: Record<string, unknown> | null): number {
+  const underlying = normalizeSymbol(
+    String(contract?.underlying ?? contract?.ticker ?? ""),
+  ).toUpperCase();
+  return SIGNAL_OPTIONS_EXTENDED_CLOSE_UNDERLYINGS.has(underlying)
+    ? 16 * 60 + 15
+    : 16 * 60;
+}
+
+function isLiveOptionTradingSession(
+  value: Date,
+  contract?: Record<string, unknown> | null,
+): boolean {
+  const parts = marketParts(value);
+  if (parts.weekday === "Sat" || parts.weekday === "Sun") {
+    return false;
+  }
+  const minutes =
+    Number.parseInt(parts.hour ?? "0", 10) * 60 +
+    Number.parseInt(parts.minute ?? "0", 10);
+  return minutes >= 9 * 60 + 30 && minutes < liveOptionSessionCloseMinute(contract);
 }
 
 function isLiveOvernightExitWindow(value: Date): boolean {
@@ -9678,6 +9791,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   computeSignalOptionsOpenUnrealizedPnl,
   computeOvernightPositionExit,
   computePositionStop,
+  isLiveOptionTradingSession,
   isLiveOvernightExitWindow,
   evaluateSignalOptionsEntryGate,
   signalOptionsExecutionBlocker,
@@ -9685,6 +9799,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   classifySignalOptionsEntryQuality,
   quoteSnapshotToSignalOptionsQuote,
   resolvePositionMarkQuote,
+  isSignalOptionsLiveExitQuoteEligible,
   selectHistoricalOptionTradeFill,
   selectSignalOptionsContractPlanFromChain,
   optionBackoffFromDebug,

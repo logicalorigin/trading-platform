@@ -58,6 +58,9 @@ test("root crash fallback always renders the diagnostic screen", () => {
   );
 
   assert.match(markup, /data-testid="root-crash-diagnostics"/);
+  assert.match(markup, /PYRUS ROOT CRASH/);
+  assert.match(markup, /src="\/brand\/pyrus-mark-dark\.svg"/);
+  assert.match(markup, /src="\/brand\/pyrus-wordmark-tight\.png"/);
   assert.match(markup, /Open Diagnostics/);
   assert.match(markup, /Redacted Bundle/);
   assert.doesNotMatch(markup, /root-crash-minimal/);

@@ -296,11 +296,19 @@ test("header broadcast scrollers render and open Trade from tape items", async (
   await expect(page.getByTestId("header-broadcast-scrollers")).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByTestId("header-unusual-broad-toggle")).toHaveAttribute(
-    "aria-pressed",
-    "true",
+  await expect(page.getByTestId("header-signal-scan-wave")).toHaveAttribute(
+    "data-ibkr-wave-state",
+    "healthy",
   );
-  await expect(page.getByTestId("header-signal-tape")).toContainText("BUY");
+  await expect(page.getByTestId("header-unusual-broad-wave")).toHaveAttribute(
+    "data-ibkr-wave-state",
+    "healthy",
+  );
+  await expect(page.getByTestId("header-algo-wave")).toHaveAttribute(
+    "data-ibkr-wave-state",
+    "healthy",
+  );
+  await expect(page.getByTestId("header-unusual-broad-wave")).toBeVisible();
   await expect(page.getByTitle("SPY BUY 15m")).toBeVisible();
   await expect(page.getByTestId("header-unusual-tape")).toContainText("QQQ", {
     timeout: 15_000,
@@ -345,29 +353,34 @@ test("header flow lane fills a partial backend universe beyond the active watchl
   });
 });
 
-test("signals radio tower controls the monitor scan state", async ({ page }) => {
+test("signals settings popover controls the monitor scan state", async ({ page }) => {
   const api = await mockHeaderApi(page, { signalMonitorEnabled: false });
   await openPlatform(page);
 
   const signalLane = page.getByTestId("header-signal-tape");
-  const signalTower = page.getByTestId("header-signal-scan-toggle");
+  const signalWave = page.getByTestId("header-signal-scan-wave");
+  const settingsTrigger = page.getByTestId("header-signal-tape-settings-trigger");
 
   await expect(page.getByTestId("header-broadcast-scrollers")).toBeVisible({
     timeout: 30_000,
   });
   await expect(signalLane).toContainText("SIGNALS OFF");
-  await expect(signalTower).toHaveAttribute("aria-pressed", "false");
+  await expect(signalWave).toBeVisible();
+  await expect(signalWave).toHaveAttribute("data-ibkr-wave-state", "no-subscribers");
 
-  await signalTower.click();
+  await settingsTrigger.click();
+  const settingsToggle = page.getByTestId("header-signal-scan-settings-toggle");
+  await expect(settingsToggle).toHaveAttribute("aria-pressed", "false");
+
+  await settingsToggle.click();
   await expect
     .poll(() => api.profileUpdates.at(-1)?.enabled)
     .toBe(true);
   await expect.poll(() => api.evaluations.length).toBe(1);
-  await expect(signalTower).toHaveAttribute("aria-pressed", "true");
-  await expect(signalLane).toContainText("BUY");
+  await expect(settingsToggle).toHaveAttribute("aria-pressed", "true");
+  await expect(signalWave).toHaveAttribute("data-ibkr-wave-state", "healthy");
+  await expect(page.getByTitle("SPY BUY 15m")).toBeVisible();
 
-  await page.getByTestId("header-signal-tape-settings-trigger").click();
-  const settingsToggle = page.getByTestId("header-signal-scan-settings-toggle");
   await expect(settingsToggle).toHaveAttribute("aria-pressed", "true");
   await expect(settingsToggle).toContainText("Signal Scan On");
 
@@ -376,5 +389,5 @@ test("signals radio tower controls the monitor scan state", async ({ page }) => 
     .poll(() => api.profileUpdates.at(-1)?.enabled)
     .toBe(false);
   await expect.poll(() => api.evaluations.length).toBe(1);
-  await expect(signalTower).toHaveAttribute("aria-pressed", "false");
+  await expect(settingsToggle).toHaveAttribute("aria-pressed", "false");
 });

@@ -34,7 +34,7 @@
     </style>
   </defs>
   <g filter="url(#pyrus-glow)">
-    <g id="ring-07-particles" class="pyrus-ring" style="--pyrus-ring-duration: 36s; --pyrus-ring-direction: normal;" fill="url(#pyrus-grad)">
+    <g id="ring-07-particles" class="pyrus-ring" style="--pyrus-ring-duration: 14s; --pyrus-ring-direction: normal;" fill="url(#pyrus-grad)">
       <circle cx="194.000" cy="100.000" r="1"/>
       <circle cx="193.642" cy="108.193" r="1"/>
       <circle cx="192.572" cy="116.323" r="1"/>
@@ -108,7 +108,7 @@
       <circle cx="192.572" cy="83.677" r="1"/>
       <circle cx="193.642" cy="91.807" r="1"/>
     </g>
-    <g id="ring-07b-data-nodes" class="pyrus-ring" style="--pyrus-ring-duration: 44s; --pyrus-ring-direction: reverse;" fill="url(#pyrus-grad)">
+    <g id="ring-07b-data-nodes" class="pyrus-ring" style="--pyrus-ring-duration: 18s; --pyrus-ring-direction: reverse;" fill="url(#pyrus-grad)">
       <rect x="98" y="3.5" width="4" height="5" transform="rotate(0 100 100)"/>
       <rect x="98" y="3.5" width="4" height="5" transform="rotate(20 100 100)"/>
       <rect x="98" y="3.5" width="4" height="5" transform="rotate(40 100 100)"/>
@@ -128,8 +128,8 @@
       <rect x="98" y="3.5" width="4" height="5" transform="rotate(320 100 100)"/>
       <rect x="98" y="3.5" width="4" height="5" transform="rotate(340 100 100)"/>
     </g>
-    <circle id="ring-06-outer-data-grid" class="pyrus-ring" style="--pyrus-ring-duration: 52s; --pyrus-ring-direction: normal;" cx="100" cy="100" r="82" stroke="url(#pyrus-grad)" stroke-opacity="0.95" stroke-width="4" stroke-dasharray="10 6" stroke-linecap="round"/>
-    <circle id="ring-05-execution-track" class="pyrus-ring" style="--pyrus-ring-duration: 68s; --pyrus-ring-direction: reverse;" cx="100" cy="100" r="71" stroke="url(#pyrus-grad)" stroke-opacity="0.9" stroke-width="1.5" stroke-dasharray="1.5 3" stroke-linecap="round"/>
+    <circle id="ring-06-outer-data-grid" class="pyrus-ring" style="--pyrus-ring-duration: 24s; --pyrus-ring-direction: normal;" cx="100" cy="100" r="82" stroke="url(#pyrus-grad)" stroke-opacity="0.95" stroke-width="4" stroke-dasharray="10 6" stroke-linecap="round"/>
+    <circle id="ring-05-execution-track" class="pyrus-ring" style="--pyrus-ring-duration: 32s; --pyrus-ring-direction: reverse;" cx="100" cy="100" r="71" stroke="url(#pyrus-grad)" stroke-opacity="0.9" stroke-width="1.5" stroke-dasharray="1.5 3" stroke-linecap="round"/>
     <circle id="boundary-r62" cx="100" cy="100" r="62" stroke="url(#pyrus-grad)" stroke-opacity="0.9" stroke-width="1.1" stroke-dasharray="0.8 3" stroke-linecap="round"/>
     <g id="gauge-arc" stroke="url(#pyrus-grad)" stroke-width="2" stroke-linecap="round">
       <line x1="100" y1="32" x2="100" y2="45" transform="rotate(-60 100 100)"/>
@@ -158,8 +158,8 @@
       <line x1="100" y1="32" x2="100" y2="45" transform="rotate(55 100 100)"/>
       <line x1="100" y1="32" x2="100" y2="45" transform="rotate(60 100 100)"/>
     </g>
-    <circle id="ring-03-model-transition" class="pyrus-ring" style="--pyrus-ring-duration: 88s; --pyrus-ring-direction: normal;" cx="100" cy="100" r="50" stroke="url(#pyrus-grad)" stroke-opacity="0.95" stroke-width="2.5" stroke-dasharray="6 4" stroke-linecap="round"/>
-    <circle id="ring-01-inner-ticks-outer" class="pyrus-ring" style="--pyrus-ring-duration: 112s; --pyrus-ring-direction: reverse;" cx="100" cy="100" r="40" stroke="url(#pyrus-grad)" stroke-opacity="0.85" stroke-width="1" stroke-dasharray="3 3" stroke-linecap="round"/>
+    <circle id="ring-03-model-transition" class="pyrus-ring" style="--pyrus-ring-duration: 40s; --pyrus-ring-direction: normal;" cx="100" cy="100" r="50" stroke="url(#pyrus-grad)" stroke-opacity="0.95" stroke-width="2.5" stroke-dasharray="6 4" stroke-linecap="round"/>
+    <circle id="ring-01-inner-ticks-outer" class="pyrus-ring" style="--pyrus-ring-duration: 52s; --pyrus-ring-direction: reverse;" cx="100" cy="100" r="40" stroke="url(#pyrus-grad)" stroke-opacity="0.85" stroke-width="1" stroke-dasharray="3 3" stroke-linecap="round"/>
     <circle id="boundary-r30" cx="100" cy="100" r="30" stroke="url(#pyrus-grad)" stroke-opacity="0.85" stroke-width="0.9" stroke-dasharray="0.6 2.4" stroke-linecap="round"/>
   </g>
 </svg>

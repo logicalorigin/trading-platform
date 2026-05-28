@@ -232,6 +232,8 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
   assert.match(loadBlock ?? "", /readSignalMonitorCompletedBarsCache/);
   assert.match(loadBlock ?? "", /signalMonitorCompletedBarsInFlight/);
   assert.match(loadBlock ?? "", /shouldRetrySignalMonitorCompletedBars/);
+  assert.match(loadBlock ?? "", /shouldAllowSignalMonitorBrokerLiveEdgeRetry/);
+  assert.match(loadBlock ?? "", /allowBrokerLiveEdgeRetry[\s\S]*fetchCompletedBars\("live-edge"\)/);
   assert.doesNotMatch(fullEvaluationBlock ?? "", /SIGNAL_MONITOR_MATRIX_BARS_LIMIT/);
   assert.doesNotMatch(fullEvaluationBlock ?? "", /retryStale:\s*false/);
   assert.match(matrixSymbolBlock ?? "", /limit:\s*SIGNAL_MONITOR_MATRIX_BARS_LIMIT/);
@@ -292,20 +294,20 @@ test("intraday delayed signal bars force live-edge retry before stale age", () =
     false,
   );
 
-  const polygonLatest = {
+  const massiveLiveLatest = {
     ...delayedLatest,
     delayed: false,
     freshness: "live",
     marketDataMode: "live",
-    source: "polygon-history",
+    source: "massive-history",
   };
   assert.equal(
     __signalMonitorInternalsForTests.shouldRetrySignalMonitorCompletedBars({
-      completedBars: [polygonLatest] as never,
+      completedBars: [massiveLiveLatest] as never,
       timeframe: "5m",
       evaluatedAt,
     }),
-    true,
+    false,
   );
 });
 
@@ -404,6 +406,10 @@ test("signal monitor IBKR source policy rejects Polygon and Massive bars", () =>
   );
   assert.equal(
     __signalMonitorInternalsForTests.isSignalMonitorDelayedBar(polygon as never),
+    false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorDelayedBar(massive as never),
     true,
   );
 

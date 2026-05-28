@@ -12,7 +12,11 @@ import {
   toIsoDateString,
 } from "../../lib/values";
 import { fetchJson, withSearchParams } from "../../lib/http";
-import type { PolygonRuntimeConfig } from "../../lib/runtime";
+import {
+  getPolygonProviderIdentity,
+  isMassiveStocksRealtimeConfigured,
+  type PolygonRuntimeConfig,
+} from "../../lib/runtime";
 
 type BarTimeframe = "1s" | "5s" | "15s" | "1m" | "5m" | "15m" | "1h" | "1d";
 type OptionRight = "call" | "put";
@@ -29,7 +33,7 @@ export type UniverseMarket =
   | "fx"
   | "crypto"
   | "otc";
-export type MarketDataProvider = "ibkr" | "polygon";
+export type MarketDataProvider = "ibkr" | "polygon" | "massive";
 export type UniverseTickerContractMeta =
   | Record<string, string | number | boolean | null>
   | null;
@@ -522,6 +526,17 @@ function resolveAggregateChunkWindowMs(timeframe: BarTimeframe): number {
   return Math.min(
     INTRADAY_AGGREGATE_WINDOW_MS,
     Math.max(rangeConfig.stepMs, maxBarsPerWindow * rangeConfig.stepMs),
+  );
+}
+
+function shouldLagStockAggregateRequest(
+  config: PolygonRuntimeConfig,
+  timeframe: BarTimeframe,
+): boolean {
+  return (
+    getPolygonProviderIdentity(config) === "massive" &&
+    isIntradayTimeframe(timeframe) &&
+    !isMassiveStocksRealtimeConfigured(config)
   );
 }
 
@@ -1525,6 +1540,18 @@ export type OptionTradePrint = {
   exchange: string | null;
 };
 
+export type MarketTradePrint = OptionTradePrint;
+
+export type MarketQuoteTick = {
+  bid: number;
+  ask: number;
+  bidSize: number | null;
+  askSize: number | null;
+  occurredAt: Date;
+  sequenceNumber: number | null;
+  exchange: string | null;
+};
+
 type OptionPremiumTradePrint = OptionTradePrint;
 
 type OptionTradeConditionMetadata = {
@@ -1577,6 +1604,69 @@ function mapOptionPremiumTradePrint(result: unknown): OptionPremiumTradePrint | 
           .filter((condition): condition is string => condition !== null),
       ),
     ],
+    exchange:
+      firstDefined(asString(record["exchange"]), asString(record["x"])) ?? null,
+  };
+}
+
+function mapMarketQuoteTick(result: unknown): MarketQuoteTick | null {
+  const record = asRecord(result);
+  if (!record) return null;
+
+  const bid =
+    firstDefined(
+      getNumberPath(record, ["bid_price"]),
+      getNumberPath(record, ["bidPrice"]),
+      getNumberPath(record, ["bp"]),
+      getNumberPath(record, ["bid"]),
+      getNumberPath(record, ["p"]),
+    ) ?? null;
+  const ask =
+    firstDefined(
+      getNumberPath(record, ["ask_price"]),
+      getNumberPath(record, ["askPrice"]),
+      getNumberPath(record, ["ap"]),
+      getNumberPath(record, ["ask"]),
+      getNumberPath(record, ["P"]),
+    ) ?? null;
+  const occurredAt =
+    firstDefined(
+      toDate(getNumberPath(record, ["sip_timestamp"])),
+      toDate(getNumberPath(record, ["participant_timestamp"])),
+      toDate(getNumberPath(record, ["t"])),
+      toDate(getNumberPath(record, ["timestamp"])),
+    ) ?? null;
+
+  if (
+    bid === null ||
+    ask === null ||
+    bid <= 0 ||
+    ask <= 0 ||
+    ask < bid ||
+    !occurredAt
+  ) {
+    return null;
+  }
+
+  return {
+    bid,
+    ask,
+    bidSize:
+      firstDefined(
+        getNumberPath(record, ["bid_size"]),
+        getNumberPath(record, ["bidSize"]),
+        getNumberPath(record, ["bs"]),
+        getNumberPath(record, ["s"]),
+      ) ?? null,
+    askSize:
+      firstDefined(
+        getNumberPath(record, ["ask_size"]),
+        getNumberPath(record, ["askSize"]),
+        getNumberPath(record, ["as"]),
+        getNumberPath(record, ["S"]),
+      ) ?? null,
+    occurredAt,
+    sequenceNumber: asNumber(record["sequence_number"]),
     exchange:
       firstDefined(asString(record["exchange"]), asString(record["x"])) ?? null,
   };
@@ -2245,7 +2335,10 @@ function mapPolygonUniverseMarket(
   return null;
 }
 
-function mapUniverseTicker(result: unknown): UniverseTicker | null {
+function mapUniverseTicker(
+  result: unknown,
+  provider: Exclude<MarketDataProvider, "ibkr"> = "polygon",
+): UniverseTicker | null {
   const record = asRecord(result);
 
   if (!record) {
@@ -2291,10 +2384,10 @@ function mapUniverseTicker(result: unknown): UniverseTicker | null {
     compositeFigi: asString(record["composite_figi"]),
     shareClassFigi: asString(record["share_class_figi"]),
     lastUpdatedAt: toDate(record["last_updated_utc"]),
-    provider: "polygon",
-    providers: ["polygon"],
+    provider,
+    providers: [provider],
     tradeProvider: null,
-    dataProviderPreference: "polygon",
+    dataProviderPreference: provider,
     providerContractId: null,
   };
 }
@@ -2323,6 +2416,12 @@ export class PolygonMarketDataClient {
     | null = null;
 
   constructor(private readonly config: PolygonRuntimeConfig) {}
+
+  private get referenceProvider(): Exclude<MarketDataProvider, "ibkr"> {
+    return getPolygonProviderIdentity(this.config) === "massive"
+      ? "massive"
+      : "polygon";
+  }
 
   private async fetchJson<T>(
     input: string | URL,
@@ -2412,7 +2511,7 @@ export class PolygonMarketDataClient {
     const rangeConfig = TIMEFRAME_TO_POLYGON_RANGE[input.timeframe];
     const desiredBars = Math.max(input.limit ?? 200, 1);
     const defaultTo =
-      !input.to && this.config.baseUrl.includes("massive.com") && isIntradayTimeframe(input.timeframe)
+      !input.to && shouldLagStockAggregateRequest(this.config, input.timeframe)
         ? new Date(Date.now() - MASSIVE_DELAYED_INTRADAY_LAG_MS)
         : new Date();
     const to = input.to ?? defaultTo;
@@ -2689,7 +2788,12 @@ export class PolygonMarketDataClient {
       { signal: input.signal },
     );
     const record = asRecord(payload);
-    const results = compact(asArray(record?.["results"]).map(mapUniverseTicker))
+    const referenceProvider = this.referenceProvider;
+    const results = compact(
+      asArray(record?.["results"]).map((result) =>
+        mapUniverseTicker(result, referenceProvider),
+      ),
+    )
       .filter((ticker) => !requestedMarkets.size || requestedMarkets.has(ticker.market))
       .map((ticker) =>
         input.cusip
@@ -2752,7 +2856,11 @@ export class PolygonMarketDataClient {
 
     return {
       count: asNumber(record?.["count"]) ?? 0,
-      results: compact(asArray(record?.["results"]).map(mapUniverseTicker)),
+      results: compact(
+        asArray(record?.["results"]).map((result) =>
+          mapUniverseTicker(result, this.referenceProvider),
+        ),
+      ),
       nextUrl: asString(record?.["next_url"]),
     };
   }
@@ -2845,7 +2953,10 @@ export class PolygonMarketDataClient {
       .map((ticker, index) => ({ ticker, index }))
       .filter(
         ({ ticker }) =>
-          ticker.providers.includes("polygon") || ticker.provider === "polygon",
+          ticker.providers.includes("polygon") ||
+          ticker.providers.includes("massive") ||
+          ticker.provider === "polygon" ||
+          ticker.provider === "massive",
       );
     const logoEntries = await Promise.all(
       logoTargets.map(async ({ ticker, index }) => [
@@ -2873,7 +2984,7 @@ export class PolygonMarketDataClient {
       { signal },
     );
     const record = asRecord(payload);
-    const mapped = mapUniverseTicker(record?.["results"]);
+    const mapped = mapUniverseTicker(record?.["results"], this.referenceProvider);
     return mapped
       ? {
           ...mapped,
@@ -2948,6 +3059,89 @@ export class PolygonMarketDataClient {
     return results;
   }
 
+  private async fetchMarketQuoteTicks(input: {
+    ticker: string;
+    from: Date;
+    to: Date;
+    limit?: number;
+    maxPages?: number;
+    signal?: AbortSignal;
+  }): Promise<unknown[]> {
+    const params: Record<string, string | number | undefined> = {
+      "timestamp.gte": toUnixNanosecondsString(input.from),
+      "timestamp.lte": toUnixNanosecondsString(input.to),
+      order: "asc",
+      sort: "timestamp",
+      limit: Math.max(1, Math.min(input.limit ?? 50_000, 50_000)),
+    };
+    const results: unknown[] = [];
+    let nextUrl: string | null = this.buildUrl(
+      `/v3/quotes/${encodeURIComponent(input.ticker)}`,
+      params,
+    ).toString();
+    const maxPages = Math.max(1, Math.min(input.maxPages ?? 20, 100));
+    let pageCount = 0;
+
+    while (nextUrl && pageCount < maxPages) {
+      const payload = await this.fetchJson<unknown>(nextUrl, {
+        signal: input.signal,
+      });
+      const record = asRecord(payload);
+      results.push(...asArray(record?.["results"]));
+      const rawNextUrl = asString(record?.["next_url"]);
+      nextUrl = rawNextUrl ? this.buildUrl(rawNextUrl).toString() : null;
+      pageCount += 1;
+    }
+
+    return results;
+  }
+
+  async getStockTradePrints(input: {
+    symbol: string;
+    from: Date;
+    to: Date;
+    limit?: number;
+    maxPages?: number;
+    signal?: AbortSignal;
+  }): Promise<MarketTradePrint[]> {
+    const rawTrades = await this.fetchOptionTradePrints({
+      optionTicker: normalizeSymbol(input.symbol),
+      since: input.from,
+      until: input.to,
+      limit: input.limit,
+      maxPages: input.maxPages,
+      exactWindow: true,
+      signal: input.signal,
+    });
+    return compact(rawTrades.map((trade) => mapOptionPremiumTradePrint(trade)))
+      .sort(compareOptionTradePrints);
+  }
+
+  async getStockQuoteTicks(input: {
+    symbol: string;
+    from: Date;
+    to: Date;
+    limit?: number;
+    maxPages?: number;
+    signal?: AbortSignal;
+  }): Promise<MarketQuoteTick[]> {
+    const rawQuotes = await this.fetchMarketQuoteTicks({
+      ticker: normalizeSymbol(input.symbol),
+      from: input.from,
+      to: input.to,
+      limit: input.limit,
+      maxPages: input.maxPages,
+      signal: input.signal,
+    });
+    return compact(rawQuotes.map((quote) => mapMarketQuoteTick(quote))).sort(
+      (left, right) => {
+        const timeDelta = left.occurredAt.getTime() - right.occurredAt.getTime();
+        if (timeDelta !== 0) return timeDelta;
+        return (left.sequenceNumber ?? 0) - (right.sequenceNumber ?? 0);
+      },
+    );
+  }
+
   async getOptionTradePrints(input: {
     optionTicker: string;
     from: Date;
@@ -2973,6 +3167,31 @@ export class PolygonMarketDataClient {
         (trade) => optionTradePrintEligibility(trade, conditionMetadata).eligible,
       )
       .sort(compareOptionTradePrints);
+  }
+
+  async getOptionQuoteTicks(input: {
+    optionTicker: string;
+    from: Date;
+    to: Date;
+    limit?: number;
+    maxPages?: number;
+    signal?: AbortSignal;
+  }): Promise<MarketQuoteTick[]> {
+    const rawQuotes = await this.fetchMarketQuoteTicks({
+      ticker: input.optionTicker,
+      from: input.from,
+      to: input.to,
+      limit: input.limit,
+      maxPages: input.maxPages,
+      signal: input.signal,
+    });
+    return compact(rawQuotes.map((quote) => mapMarketQuoteTick(quote))).sort(
+      (left, right) => {
+        const timeDelta = left.occurredAt.getTime() - right.occurredAt.getTime();
+        if (timeDelta !== 0) return timeDelta;
+        return (left.sequenceNumber ?? 0) - (right.sequenceNumber ?? 0);
+      },
+    );
   }
 
   private async probeOptionQuoteAccess(input: {

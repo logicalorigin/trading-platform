@@ -36,6 +36,7 @@ export type MarketDataProvider = typeof MarketDataProvider[keyof typeof MarketDa
 
 export const MarketDataProvider = {
   polygon: 'polygon',
+  massive: 'massive',
   ibkr: 'ibkr',
 } as const;
 
@@ -247,6 +248,7 @@ export type QuoteSource = typeof QuoteSource[keyof typeof QuoteSource];
 export const QuoteSource = {
   ibkr: 'ibkr',
   polygon: 'polygon',
+  massive: 'massive',
 } as const;
 
 export type BarDataSource = typeof BarDataSource[keyof typeof BarDataSource];
@@ -2283,6 +2285,41 @@ export const FlowEventsSourceIbkrStatus = {
   error: 'error',
 } as const;
 
+/**
+ * @nullable
+ */
+export type FlowEventsSourceScannerPhase = typeof FlowEventsSourceScannerPhase[keyof typeof FlowEventsSourceScannerPhase] | null;
+
+
+export const FlowEventsSourceScannerPhase = {
+  seed: 'seed',
+  expanded: 'expanded',
+  manual: 'manual',
+} as const;
+
+/**
+ * @nullable
+ */
+export type FlowEventsSourceScannerStrikeCoverage = typeof FlowEventsSourceScannerStrikeCoverage[keyof typeof FlowEventsSourceScannerStrikeCoverage] | null;
+
+
+export const FlowEventsSourceScannerStrikeCoverage = {
+  fast: 'fast',
+  standard: 'standard',
+  full: 'full',
+} as const;
+
+/**
+ * @nullable
+ */
+export type FlowEventsSourceUnderlyingSpotSource = typeof FlowEventsSourceUnderlyingSpotSource[keyof typeof FlowEventsSourceUnderlyingSpotSource] | null;
+
+
+export const FlowEventsSourceUnderlyingSpotSource = {
+  massive: 'massive',
+  ibkr: 'ibkr',
+} as const;
+
 export type FlowEventsSourceScannerCoverageMode = typeof FlowEventsSourceScannerCoverageMode[keyof typeof FlowEventsSourceScannerCoverageMode];
 
 
@@ -2386,6 +2423,23 @@ export interface FlowEventsSource {
   ibkrMissingQuoteCount?: number;
   /** @minimum 0 */
   ibkrFilteredEventCount?: number;
+  /** @minimum 0 */
+  ibkrAdmissionBridgeMismatchCount?: number;
+  /** @nullable */
+  ibkrMarketDataMode?: string | null;
+  ibkrDelayedMarketData?: boolean;
+  /** @nullable */
+  scannerPhase?: FlowEventsSourceScannerPhase;
+  /** @minimum 0 */
+  scannerLineBudget?: number;
+  /** @minimum 0 */
+  scannerExpirationScanCount?: number;
+  /** @nullable */
+  scannerStrikeCoverage?: FlowEventsSourceScannerStrikeCoverage;
+  /** @nullable */
+  underlyingSpotPrice?: number | null;
+  /** @nullable */
+  underlyingSpotSource?: FlowEventsSourceUnderlyingSpotSource;
   scannerCoverage?: FlowEventsSourceScannerCoverage;
 }
 
@@ -2616,6 +2670,11 @@ export const AccountPositionRowAttributionStatus = {
   unknown: 'unknown',
 } as const;
 
+/**
+ * Existing automation trade-management state for this open position, when available.
+ */
+export type AccountPositionRowAutomationContext = { [key: string]: unknown } | null;
+
 export interface AccountPositionRow {
   id: string;
   accountId: string;
@@ -2647,6 +2706,8 @@ export interface AccountPositionRow {
   strategyLabel?: string | null;
   attributionStatus?: AccountPositionRowAttributionStatus;
   sourceAttribution?: JsonObject[];
+  /** Existing automation trade-management state for this open position, when available. */
+  automationContext?: AccountPositionRowAutomationContext;
   openedAt?: string | null;
   openedAtSource?: PositionOpenedAtSource | null;
   quote?: PositionQuote | null;
@@ -3405,6 +3466,140 @@ export type OptionChartBarsResponse = BarsResponse & ({
   feedIssue: boolean;
   debug: RequestDebug;
 });
+
+export type FootprintTimeframe = typeof FootprintTimeframe[keyof typeof FootprintTimeframe];
+
+
+export const FootprintTimeframe = {
+  '5s': '5s',
+  '15s': '15s',
+  '30s': '30s',
+  '1m': '1m',
+  '2m': '2m',
+  '5m': '5m',
+  '15m': '15m',
+  '30m': '30m',
+  '1h': '1h',
+} as const;
+
+export type FootprintSourcePreference = typeof FootprintSourcePreference[keyof typeof FootprintSourcePreference];
+
+
+export const FootprintSourcePreference = {
+  massive_first: 'massive_first',
+  ibkr_first: 'ibkr_first',
+  massive_only: 'massive_only',
+} as const;
+
+export type FootprintPartialReason = typeof FootprintPartialReason[keyof typeof FootprintPartialReason];
+
+
+export const FootprintPartialReason = {
+  window_capped: 'window_capped',
+  unsupported_timeframe: 'unsupported_timeframe',
+  provider_unavailable: 'provider_unavailable',
+  missing_option_ticker: 'missing_option_ticker',
+  no_trades: 'no_trades',
+  request_failed: 'request_failed',
+} as const;
+
+export interface FootprintLevel {
+  price: number;
+  buyVolume: number;
+  sellVolume: number;
+  unknownVolume: number;
+  totalVolume: number;
+  delta: number;
+  tradeCount: number;
+  buyImbalance: boolean;
+  sellImbalance: boolean;
+}
+
+export interface FootprintCandle {
+  time: string;
+  endTime: string;
+  /** @nullable */
+  open: number | null;
+  /** @nullable */
+  high: number | null;
+  /** @nullable */
+  low: number | null;
+  /** @nullable */
+  close: number | null;
+  volume: number;
+  buyVolume: number;
+  sellVolume: number;
+  unknownVolume: number;
+  delta: number;
+  tradeCount: number;
+  /** @nullable */
+  pocPrice: number | null;
+  levels: FootprintLevel[];
+  complete: boolean;
+  partialReason: FootprintPartialReason | null;
+}
+
+export type FootprintDiagnosticsSourceProvider = typeof FootprintDiagnosticsSourceProvider[keyof typeof FootprintDiagnosticsSourceProvider];
+
+
+export const FootprintDiagnosticsSourceProvider = {
+  massive: 'massive',
+  polygon: 'polygon',
+  ibkr: 'ibkr',
+  none: 'none',
+} as const;
+
+export type FootprintDiagnosticsClassificationMethod = typeof FootprintDiagnosticsClassificationMethod[keyof typeof FootprintDiagnosticsClassificationMethod];
+
+
+export const FootprintDiagnosticsClassificationMethod = {
+  quote_match: 'quote_match',
+  tick_rule: 'tick_rule',
+  unknown: 'unknown',
+} as const;
+
+export type FootprintDiagnosticsMinTickSource = typeof FootprintDiagnosticsMinTickSource[keyof typeof FootprintDiagnosticsMinTickSource];
+
+
+export const FootprintDiagnosticsMinTickSource = {
+  provider: 'provider',
+  inferred: 'inferred',
+  default: 'default',
+} as const;
+
+export interface FootprintDiagnostics {
+  sourceProvider: FootprintDiagnosticsSourceProvider;
+  sourcePreference: FootprintSourcePreference;
+  classificationMethod: FootprintDiagnosticsClassificationMethod;
+  classifiedVolume: number;
+  unknownVolume: number;
+  quoteMatchedTradeCount: number;
+  tickRuleTradeCount: number;
+  unknownTradeCount: number;
+  tradeCount: number;
+  quoteCount: number;
+  bidAskCoveragePercent: number;
+  minTick: number;
+  minTickSource: FootprintDiagnosticsMinTickSource;
+  rowSize: number;
+  capped: boolean;
+}
+
+export interface FootprintResponse {
+  symbol: string;
+  assetClass: AssetClass;
+  timeframe: FootprintTimeframe;
+  from: string;
+  to: string;
+  /** @nullable */
+  providerContractId: string | null;
+  /** @nullable */
+  optionTicker: string | null;
+  candles: FootprintCandle[];
+  complete: boolean;
+  partialReason: FootprintPartialReason | null;
+  diagnostics: FootprintDiagnostics;
+}
 
 export type SseStream = string;
 
@@ -5382,6 +5577,33 @@ export type GetMarketDepth200 = {
   depth: JsonObject;
 };
 
+export type GetFootprintsParams = {
+symbol: string;
+assetClass?: AssetClass;
+timeframe: FootprintTimeframe;
+from?: string;
+to?: string;
+providerContractId?: string | null;
+optionTicker?: string | null;
+outsideRth?: boolean;
+/**
+ * @minimum 1
+ * @maximum 20
+ */
+ticksPerRow?: number;
+/**
+ * @minimum 100
+ * @maximum 10000
+ */
+imbalancePercent?: number;
+/**
+ * @minimum 1
+ * @maximum 80
+ */
+maxBars?: number;
+sourcePreference?: FootprintSourcePreference;
+};
+
 export type StreamMarketDepthParams = {
 symbol: string;
 accountId?: string;
@@ -5393,6 +5615,33 @@ exchange?: string | null;
 export type StreamAccountsParams = {
 accountId?: string;
 mode?: EnvironmentMode;
+};
+
+export type StreamFootprintsParams = {
+symbol: string;
+assetClass?: AssetClass;
+timeframe: FootprintTimeframe;
+from?: string;
+to?: string;
+providerContractId?: string | null;
+optionTicker?: string | null;
+outsideRth?: boolean;
+/**
+ * @minimum 1
+ * @maximum 20
+ */
+ticksPerRow?: number;
+/**
+ * @minimum 100
+ * @maximum 10000
+ */
+imbalancePercent?: number;
+/**
+ * @minimum 1
+ * @maximum 80
+ */
+maxBars?: number;
+sourcePreference?: FootprintSourcePreference;
 };
 
 export type StreamAccountPageParams = {

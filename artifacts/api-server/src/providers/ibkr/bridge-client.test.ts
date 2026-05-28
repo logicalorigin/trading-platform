@@ -147,6 +147,7 @@ test("getOptionChain forwards quoteHydration to the bridge", async (t) => {
     assert.equal(url.pathname, "/options/chains");
     assert.equal(url.searchParams.get("underlying"), "SPY");
     assert.equal(url.searchParams.get("quoteHydration"), "metadata");
+    assert.equal(url.searchParams.get("underlyingSpotPrice"), "521.25");
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ contracts: [] }));
   });
@@ -164,6 +165,7 @@ test("getOptionChain forwards quoteHydration to the bridge", async (t) => {
   const contracts = await client.getOptionChain({
     underlying: "SPY",
     quoteHydration: "metadata",
+    underlyingSpotPrice: 521.25,
   });
 
   assert.deepEqual(contracts, []);

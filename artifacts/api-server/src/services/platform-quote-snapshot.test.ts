@@ -4,6 +4,7 @@ import type { QuoteSnapshot } from "../providers/ibkr/client";
 import {
   __platformQuoteSnapshotTestInternals,
   __setIbkrBridgeClientFactoryForTests,
+  __setPolygonMarketDataClientFactoryForTests,
   getQuoteSnapshots,
 } from "./platform";
 import {
@@ -16,6 +17,19 @@ import {
   __resetBridgeGovernorForTests,
   resetBridgeGovernorOverrides,
 } from "./bridge-governor";
+
+const MARKET_DATA_ENV_KEYS = [
+  "MASSIVE_API_KEY",
+  "MASSIVE_MARKET_DATA_API_KEY",
+  "MASSIVE_API_BASE_URL",
+  "MASSIVE_STOCKS_RECENCY",
+  "POLYGON_API_KEY",
+  "POLYGON_KEY",
+  "POLYGON_BASE_URL",
+] as const;
+const ORIGINAL_MARKET_DATA_ENV = new Map(
+  MARKET_DATA_ENV_KEYS.map((key) => [key, process.env[key]] as const),
+);
 
 function quote(symbol: string, price: number, updatedAt: string): QuoteSnapshot {
   return {
@@ -72,14 +86,28 @@ function bridgeHealth() {
   };
 }
 
+test.beforeEach(() => {
+  for (const key of MARKET_DATA_ENV_KEYS) {
+    delete process.env[key];
+  }
+});
+
 test.afterEach(() => {
   __platformQuoteSnapshotTestInternals.resetQuoteSnapshotCache();
   __resetBridgeQuoteStreamForTests();
   __setBridgeQuoteClientForTests(null);
   __setIbkrBridgeClientFactoryForTests(null);
+  __setPolygonMarketDataClientFactoryForTests(null);
   __resetMarketDataAdmissionForTests();
   __resetBridgeGovernorForTests();
   resetBridgeGovernorOverrides();
+  for (const [key, value] of ORIGINAL_MARKET_DATA_ENV) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
 });
 
 test("getQuoteSnapshots coalesces concurrent identical snapshot requests", async () => {
@@ -172,4 +200,62 @@ test("getQuoteSnapshots serves bounded stale cache while a refresh is stuck", as
   assert.equal(stale.quotes[0]?.price, 500);
   assert.equal(stale.quotes[0]?.freshness, "stale");
   assert.equal(typeof stale.quotes[0]?.cacheAgeMs, "number");
+});
+
+test("getQuoteSnapshots uses Massive first for real-time stock snapshots", async () => {
+  process.env["MASSIVE_API_KEY"] = "massive-test-key";
+
+  let massiveCalls = 0;
+  let bridgeCalls = 0;
+  __setPolygonMarketDataClientFactoryForTests(
+    () =>
+      ({
+        async getQuoteSnapshots(symbols: string[]) {
+          massiveCalls += 1;
+          return symbols.map((symbol, index) => ({
+            symbol,
+            price: 500 + index,
+            bid: 499 + index,
+            ask: 501 + index,
+            bidSize: 100,
+            askSize: 200,
+            change: 1,
+            changePercent: 0.2,
+            open: 490,
+            high: 510,
+            low: 480,
+            prevClose: 499,
+            volume: 1_000,
+            updatedAt: new Date("2026-05-27T20:30:00.000Z"),
+          }));
+        },
+      }) as never,
+  );
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        async getHealth() {
+          bridgeCalls += 1;
+          return bridgeHealth();
+        },
+      }) as never,
+  );
+
+  try {
+    const payload = await getQuoteSnapshots({ symbols: "SPY,QQQ" });
+
+    assert.equal(massiveCalls, 1);
+    assert.equal(bridgeCalls, 0);
+    assert.equal(payload.delayed, false);
+    assert.equal(payload.fallbackUsed, false);
+    assert.deepEqual(
+      payload.quotes.map((item) => [item.symbol, item.source, item.freshness]),
+      [
+        ["SPY", "massive", "live"],
+        ["QQQ", "massive", "live"],
+      ],
+    );
+  } finally {
+    delete process.env["MASSIVE_API_KEY"];
+  }
 });

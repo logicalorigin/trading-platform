@@ -34,7 +34,7 @@ export type UniverseMarket =
   | "fx"
   | "crypto"
   | "otc";
-export type MarketDataProvider = "ibkr" | "polygon";
+export type MarketDataProvider = "ibkr" | "polygon" | "massive";
 export type MarketDataFreshness =
   | "live"
   | "delayed"
@@ -236,6 +236,89 @@ export type BrokerBarSnapshot = {
   marketDataMode?: IbkrMarketDataMode | null;
   dataUpdatedAt?: Date | null;
   ageMs?: number | null;
+};
+
+export type FootprintAssetClass = "equity" | "option";
+export type FootprintSourcePreference =
+  | "massive_first"
+  | "ibkr_first"
+  | "massive_only";
+export type FootprintSourceProvider = "massive" | "polygon" | "ibkr" | "none";
+export type FootprintDisplayMode = "split" | "delta" | "total";
+export type FootprintSide = "buy" | "sell" | "unknown";
+export type FootprintClassificationMethod =
+  | "quote_match"
+  | "tick_rule"
+  | "unknown";
+export type FootprintPartialReason =
+  | "window_capped"
+  | "unsupported_timeframe"
+  | "provider_unavailable"
+  | "missing_option_ticker"
+  | "no_trades"
+  | "request_failed";
+
+export type FootprintLevel = {
+  price: number;
+  buyVolume: number;
+  sellVolume: number;
+  unknownVolume: number;
+  totalVolume: number;
+  delta: number;
+  tradeCount: number;
+  buyImbalance: boolean;
+  sellImbalance: boolean;
+};
+
+export type FootprintCandle = {
+  time: Date;
+  endTime: Date;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  volume: number;
+  buyVolume: number;
+  sellVolume: number;
+  unknownVolume: number;
+  delta: number;
+  tradeCount: number;
+  pocPrice: number | null;
+  levels: FootprintLevel[];
+  complete: boolean;
+  partialReason: FootprintPartialReason | null;
+};
+
+export type FootprintDiagnostics = {
+  sourceProvider: FootprintSourceProvider;
+  sourcePreference: FootprintSourcePreference;
+  classificationMethod: FootprintClassificationMethod;
+  classifiedVolume: number;
+  unknownVolume: number;
+  quoteMatchedTradeCount: number;
+  tickRuleTradeCount: number;
+  unknownTradeCount: number;
+  tradeCount: number;
+  quoteCount: number;
+  bidAskCoveragePercent: number;
+  minTick: number;
+  minTickSource: "provider" | "inferred" | "default";
+  rowSize: number;
+  capped: boolean;
+};
+
+export type FootprintResponse = {
+  symbol: string;
+  assetClass: FootprintAssetClass;
+  timeframe: HistoryBarTimeframe | "15s" | "30s" | "2m" | "30m";
+  from: Date;
+  to: Date;
+  providerContractId: string | null;
+  optionTicker: string | null;
+  candles: FootprintCandle[];
+  complete: boolean;
+  partialReason: FootprintPartialReason | null;
+  diagnostics: FootprintDiagnostics;
 };
 
 export type ResolvedIbkrContract = {

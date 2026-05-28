@@ -103,7 +103,16 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /placeholderData:\s*retainPreviousRangeData\(range\)/);
   assert.match(source, /placeholderData:\s*retainPreviousRangeData\("1Y"\)/);
   assert.match(source, /getAccountPerformanceCalendarEquityQueryKey/);
-  assert.match(source, /queryKey:\s*getAccountPerformanceCalendarEquityQueryKey\(/);
+  assert.match(source, /const performanceCalendarEquityRuntimeQueryKey = useMemo/);
+  assert.match(source, /queryKey:\s*performanceCalendarEquityRuntimeQueryKey/);
+  assert.match(source, /useRuntimeAccountHistoryCache\(\{/);
+  assert.match(source, /readCachedAccountHistory\(cacheKey\)/);
+  assert.match(source, /writeCachedAccountHistory\(cacheKey, data, writeOptions\)/);
+  assert.match(source, /source:\s*"equity-history"/);
+  assert.match(source, /source:\s*"performance-calendar-equity"/);
+  assert.match(source, /source:\s*"closed-trades"/);
+  assert.doesNotMatch(source, /writeCachedAccountHistory[\s\S]{0,160}positionsQuery\.data/);
+  assert.doesNotMatch(source, /writeCachedAccountHistory[\s\S]{0,160}ordersQuery\.data/);
   assert.match(source, /placeholderData:\s*retainPreviousData/);
   assert.match(source, /shadowMode &&\s*\(range === "1D" \|\| range === "1W"\)/);
   assert.match(source, /performanceCalendarEquityQuery\.data\?\.range === "1Y"/);

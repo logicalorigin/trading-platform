@@ -26,6 +26,15 @@ export type FlowEventsSource = {
   ibkrReturnedQuoteCount?: number;
   ibkrMissingQuoteCount?: number;
   ibkrFilteredEventCount?: number;
+  ibkrAdmissionBridgeMismatchCount?: number;
+  ibkrMarketDataMode?: string | null;
+  ibkrDelayedMarketData?: boolean;
+  scannerPhase?: string | null;
+  scannerLineBudget?: number;
+  scannerExpirationScanCount?: number;
+  scannerStrikeCoverage?: string | null;
+  underlyingSpotPrice?: number | null;
+  underlyingSpotSource?: "massive" | "ibkr" | null;
   scannerCoverage?: FlowUniverseCoverage;
 };
 
@@ -63,6 +72,15 @@ export type FlowSourceInput = {
   ibkrReturnedQuoteCount?: number;
   ibkrMissingQuoteCount?: number;
   ibkrFilteredEventCount?: number;
+  ibkrAdmissionBridgeMismatchCount?: number;
+  ibkrMarketDataMode?: string | null;
+  ibkrDelayedMarketData?: boolean;
+  scannerPhase?: string | null;
+  scannerLineBudget?: number;
+  scannerExpirationScanCount?: number;
+  scannerStrikeCoverage?: string | null;
+  underlyingSpotPrice?: number | null;
+  underlyingSpotSource?: "massive" | "ibkr" | null;
   scannerCoverage?: FlowUniverseCoverage;
 };
 
@@ -291,6 +309,15 @@ export function flowSource(input: FlowSourceInput): FlowEventsSource {
     ibkrReturnedQuoteCount: input.ibkrReturnedQuoteCount,
     ibkrMissingQuoteCount: input.ibkrMissingQuoteCount,
     ibkrFilteredEventCount: input.ibkrFilteredEventCount,
+    ibkrAdmissionBridgeMismatchCount: input.ibkrAdmissionBridgeMismatchCount,
+    ibkrMarketDataMode: input.ibkrMarketDataMode,
+    ibkrDelayedMarketData: input.ibkrDelayedMarketData,
+    scannerPhase: input.scannerPhase,
+    scannerLineBudget: input.scannerLineBudget,
+    scannerExpirationScanCount: input.scannerExpirationScanCount,
+    scannerStrikeCoverage: input.scannerStrikeCoverage,
+    underlyingSpotPrice: input.underlyingSpotPrice,
+    underlyingSpotSource: input.underlyingSpotSource,
     scannerCoverage: input.scannerCoverage,
   };
 }

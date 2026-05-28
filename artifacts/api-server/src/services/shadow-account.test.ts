@@ -22,6 +22,80 @@ test("shadow account default starting balance matches the active paper run", () 
   assert.equal(SHADOW_STARTING_BALANCE, 25_000);
 });
 
+test("shadow automation option exits respect live option trading sessions", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const apldContract = {
+    ticker: "APLD20260529C46",
+    underlying: "APLD",
+    expirationDate: new Date("2026-05-29T00:00:00.000Z"),
+    strike: 46,
+    right: "call" as const,
+    multiplier: 100,
+    sharesPerContract: 100,
+  };
+  const spyContract = {
+    ...apldContract,
+    ticker: "SPY20260529C600",
+    underlying: "SPY",
+    strike: 600,
+  };
+
+  assert.equal(
+    internals.isShadowOptionTradingSession(
+      new Date("2026-05-27T19:59:00.000Z"),
+      apldContract,
+    ),
+    true,
+  );
+  assert.equal(
+    internals.isShadowOptionTradingSession(
+      new Date("2026-05-27T20:00:00.000Z"),
+      apldContract,
+    ),
+    false,
+  );
+  assert.equal(
+    internals.isShadowOptionTradingSession(
+      new Date("2026-05-27T20:14:00.000Z"),
+      spyContract,
+    ),
+    true,
+  );
+  assert.equal(
+    internals.isShadowOptionTradingSession(
+      new Date("2026-05-27T20:15:00.000Z"),
+      spyContract,
+    ),
+    false,
+  );
+  assert.equal(
+    internals.isLiveShadowAutomationPayload({
+      metadata: { runMode: "live_scan", runSource: "worker" },
+    }),
+    true,
+  );
+  assert.equal(
+    internals.isLiveShadowAutomationPayload({
+      metadata: { runMode: "historical_backfill" },
+      backfill: { source: "signal_options_backfill" },
+    }),
+    false,
+  );
+});
+
+test("shadow automation option marks respect live option trading sessions", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const markStart = source.indexOf("async function recordShadowAutomationMark");
+  const markBody = markStart >= 0 ? source.slice(markStart) : "";
+
+  assert.ok(markBody);
+  assert.match(markBody, /isLiveShadowAutomationPayload\(payload\)/);
+  assert.match(
+    markBody,
+    /!isShadowOptionTradingSession\(event\.occurredAt,\s*contract\)/,
+  );
+});
+
 test("account page snapshot stream uses the one-second visible-page cadence", () => {
   assert.equal(ACCOUNT_PAGE_STREAM_INTERVAL_MS, 1_000);
 });
@@ -815,12 +889,95 @@ test("shadow signal-options mirror repair skips historical backfill events", () 
   assert.equal(internals.isSignalOptionsAutomationMirrorEvent(mark as any), false);
 });
 
+test("shadow positions expose signal-options management context from mark events", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+
+  assert.match(source, /const SIGNAL_OPTIONS_SHADOW_MARK_EVENT = "signal_options_shadow_mark";/);
+  assert.match(source, /async function latestShadowAutomationManagementEvents/);
+  assert.match(source, /function buildShadowAutomationContext/);
+  assert.match(source, /tradeManagement:\s*\{/);
+  assert.match(source, /trailActive: eventStop\.trailActive === true/);
+  assert.match(source, /automationContext/);
+  assert.ok(
+    source.indexOf("const automationManagementEvents = await latestShadowAutomationManagementEvents") <
+      source.indexOf("const cachedOptionQuotes = readCachedShadowOptionQuotes(filtered);"),
+  );
+});
+
 test("shadow option quote marks ignore zero-only IBKR snapshots", () => {
   const helper = __shadowWatchlistBacktestInternalsForTests.shadowQuoteMarkPrice;
 
   assert.equal(helper({ bid: 0, ask: 0, mark: 0, price: 0, last: null }), null);
   assert.equal(Number(helper({ bid: 1.2, ask: 1.4, mark: 0 })?.toFixed(2)), 1.3);
   assert.equal(helper({ bid: 0, ask: 2.5, price: 2.45 }), 2.45);
+});
+
+test("shadow option pricing policy blocks frozen and partial quotes from valuation", () => {
+  const helper =
+    __shadowWatchlistBacktestInternalsForTests.buildShadowOptionPricingPolicy;
+
+  const live = helper({
+    quote: {
+      bid: 1.2,
+      ask: 1.4,
+      freshness: "live",
+      marketDataMode: "live",
+      updatedAt: "2026-05-27T15:30:00.000Z",
+    },
+    fallbackMark: 1.1,
+  });
+  assert.equal(live.valuationEligible, true);
+  assert.equal(Number(live.valuationMark?.toFixed(2)), 1.3);
+  assert.equal(live.valuationSource, "option_quote");
+
+  const frozen = helper({
+    quote: {
+      bid: 1.2,
+      ask: 1.4,
+      freshness: "live",
+      marketDataMode: "frozen",
+      updatedAt: "2026-05-27T20:50:00.000Z",
+    },
+    fallbackMark: 1.1,
+  });
+  assert.equal(frozen.valuationEligible, false);
+  assert.equal(frozen.valuationMark, 1.1);
+  assert.equal(frozen.valuationReason, "market_data_frozen");
+
+  const partial = helper({
+    quote: {
+      bid: 0,
+      ask: 1.4,
+      mark: 1.3,
+      freshness: "live",
+      marketDataMode: "live",
+    },
+    fallbackMark: 1.1,
+  });
+  assert.equal(partial.valuationEligible, false);
+  assert.equal(partial.valuationMark, 1.1);
+  assert.equal(partial.valuationReason, "quote_not_two_sided");
+});
+
+test("shadow option day change ignores frozen quote valuation", () => {
+  const helper =
+    __shadowWatchlistBacktestInternalsForTests.buildShadowPositionDayChangeFromQuote;
+
+  assert.deepEqual(
+    helper({
+      quantity: 2,
+      multiplier: 100,
+      quote: {
+        bid: 1.2,
+        ask: 1.4,
+        prevClose: 1,
+        change: 0.3,
+        freshness: "live",
+        marketDataMode: "frozen",
+      },
+    }),
+    { dayChange: null, dayChangePercent: null },
+  );
 });
 
 test("shadow positions expose market-data symbols from contract or ledger key", () => {

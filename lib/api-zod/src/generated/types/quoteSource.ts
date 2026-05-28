@@ -12,4 +12,5 @@ export type QuoteSource = typeof QuoteSource[keyof typeof QuoteSource];
 export const QuoteSource = {
   ibkr: 'ibkr',
   polygon: 'polygon',
+  massive: 'massive',
 } as const;

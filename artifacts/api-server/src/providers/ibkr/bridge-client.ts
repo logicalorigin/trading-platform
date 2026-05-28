@@ -1785,6 +1785,7 @@ export class IbkrBridgeClient {
     maxExpirations?: number;
     strikesAroundMoney?: number;
     strikeCoverage?: "fast" | "standard" | "full";
+    underlyingSpotPrice?: number | null;
     quoteHydration?: "metadata" | "snapshot";
     signal?: AbortSignal;
   }): Promise<OptionChainContract[]> {
@@ -1801,6 +1802,7 @@ export class IbkrBridgeClient {
         maxExpirations: input.maxExpirations,
         strikesAroundMoney: input.strikesAroundMoney,
         strikeCoverage: input.strikeCoverage,
+        underlyingSpotPrice: input.underlyingSpotPrice ?? undefined,
         quoteHydration: input.quoteHydration,
       },
     );

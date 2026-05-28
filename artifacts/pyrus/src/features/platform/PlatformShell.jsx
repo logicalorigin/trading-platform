@@ -726,14 +726,6 @@ export const PlatformShell = ({
   const headerUltraTight =
     !isPhone && headerEffectiveWidth > 0 && headerEffectiveWidth < 1120;
   const headerShowKpis = !isPhone;
-  const headerKpiMaxItems =
-    !headerEffectiveWidth || headerEffectiveWidth >= 1500
-      ? null
-      : headerEffectiveWidth >= 1320
-        ? 5
-        : headerEffectiveWidth >= 1120
-          ? 4
-          : 2;
   const headerAccountMinimal =
     !isPhone && headerEffectiveWidth > 0 && headerEffectiveWidth < 1180;
   const headerCompactStatus =
@@ -998,7 +990,6 @@ export const PlatformShell = ({
       headerTight={headerTight}
       headerGridTemplate={headerGridTemplate}
       headerShowKpis={headerShowKpis}
-      headerKpiMaxItems={headerKpiMaxItems}
       headerAccountMinimal={headerAccountMinimal}
       headerCompactStatus={headerCompactStatus}
       headerStatusMinimal={headerStatusMinimal}

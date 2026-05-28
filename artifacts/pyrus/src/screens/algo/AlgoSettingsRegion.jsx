@@ -40,6 +40,14 @@ const STRIKE_SLOT_ROWS = [...SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS]
 const STRIKE_SLOT_VALUES_DESC = STRIKE_SLOT_ROWS.map((option) =>
   Number(option.value),
 );
+const STRIKE_SLOT_META = {
+  0: { strikeLabel: "-2", callLabel: "ITM 2", putLabel: "OTM 2" },
+  1: { strikeLabel: "-1", callLabel: "ITM 1", putLabel: "OTM 1" },
+  2: { strikeLabel: "ATM-", callLabel: "ATM-", putLabel: "ATM-" },
+  3: { strikeLabel: "ATM+", callLabel: "ATM+", putLabel: "ATM+" },
+  4: { strikeLabel: "+1", callLabel: "OTM 1", putLabel: "ITM 1" },
+  5: { strikeLabel: "+2", callLabel: "OTM 2", putLabel: "ITM 2" },
+};
 
 const EXIT_TRACK_MARKERS = [
   {
@@ -408,6 +416,25 @@ const invalidNumericValue = (field, value) => {
   );
 };
 
+const finiteSettingNumber = (value, fallback = 0) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
+const clampNumber = (value, min, max) =>
+  Math.min(max, Math.max(min, value));
+
+const formatDteWindowLabel = ({ minValue, targetValue, maxValue }) => {
+  const min = Math.max(0, Math.round(finiteSettingNumber(minValue)));
+  const max = Math.max(min, Math.round(finiteSettingNumber(maxValue, min)));
+  const target = clampNumber(
+    Math.round(finiteSettingNumber(targetValue, min)),
+    min,
+    max,
+  );
+  return `${min}-${max}d / target ${target}d`;
+};
+
 export const CompactSettingCell = ({
   item,
   profileDraft,
@@ -635,9 +662,145 @@ const moveStrikeSlot = (current, direction) => {
   return slots[nextIndex];
 };
 
-const StrikeRadio = ({
+const DteWindowRail = ({
+  minValue,
+  targetValue,
+  maxValue,
+  zeroDteValue,
+  dirty,
+  targetDirty,
+}) => {
+  const rawMin = Math.max(0, finiteSettingNumber(minValue));
+  const rawMax = Math.max(rawMin, finiteSettingNumber(maxValue, rawMin));
+  const rawTarget = clampNumber(
+    finiteSettingNumber(targetValue, rawMin),
+    rawMin,
+    rawMax,
+  );
+  const domainMax = Math.max(1, Math.ceil(Math.max(90, rawMin, rawTarget, rawMax)));
+  const leftPct = clampNumber((rawMin / domainMax) * 100, 0, 100);
+  const rightPct = clampNumber((rawMax / domainMax) * 100, 0, 100);
+  const targetPct = clampNumber((rawTarget / domainMax) * 100, 0, 100);
+
+  return (
+    <div
+      data-testid="algo-contract-dte-rail"
+      title={`DTE ${formatDteWindowLabel({ minValue, targetValue, maxValue })}`}
+      style={{
+        display: "grid",
+        gap: sp(4),
+        minWidth: 0,
+        padding: sp("6px 7px 7px"),
+        border: `1px solid ${dirty ? cssColorMix(CSS_COLOR.accent, 34) : CSS_COLOR.borderLight}`,
+        borderRadius: dim(RADII.xs),
+        background: dirty ? cssColorMix(CSS_COLOR.accent, 5) : CSS_COLOR.bg1,
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "auto minmax(0, 1fr) auto",
+          alignItems: "center",
+          gap: sp(5),
+          minWidth: 0,
+        }}
+      >
+        <span
+          style={{
+            color: CSS_COLOR.textMuted,
+            fontFamily: T.sans,
+            fontSize: textSize("micro"),
+            fontWeight: FONT_WEIGHTS.label,
+            textTransform: "uppercase",
+          }}
+        >
+          DTE
+        </span>
+        <span
+          className="tnum"
+          style={{
+            color: CSS_COLOR.textSec,
+            fontFamily: T.data,
+            fontSize: textSize("caption"),
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {formatDteWindowLabel({ minValue, targetValue, maxValue })}
+        </span>
+        <span
+          style={{
+            color: zeroDteValue ? CSS_COLOR.cyan : CSS_COLOR.textMuted,
+            fontFamily: T.sans,
+            fontSize: textSize("micro"),
+            fontWeight: FONT_WEIGHTS.label,
+            textTransform: "uppercase",
+          }}
+        >
+          0DTE {zeroDteValue ? "ON" : "OFF"}
+        </span>
+      </div>
+      <div
+        aria-hidden="true"
+        style={{
+          position: "relative",
+          height: dim(18),
+          minWidth: 0,
+        }}
+      >
+        <span
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: dim(8),
+            height: dim(3),
+            borderRadius: dim(RADII.pill),
+            background: CSS_COLOR.borderLight,
+          }}
+        />
+        <span
+          style={{
+            position: "absolute",
+            left: `${leftPct}%`,
+            width: `${Math.max(1, rightPct - leftPct)}%`,
+            top: dim(7),
+            height: dim(5),
+            borderRadius: dim(RADII.pill),
+            background: cssColorMix(CSS_COLOR.cyan, dirty ? 60 : 42),
+            boxShadow: dirty ? `0 0 0 1px ${cssColorMix(CSS_COLOR.accent, 32)}` : "none",
+          }}
+        />
+        <span
+          style={{
+            position: "absolute",
+            left: `${targetPct}%`,
+            top: dim(2),
+            width: dim(3),
+            height: dim(14),
+            borderRadius: dim(RADII.pill),
+            background: targetDirty ? CSS_COLOR.accent : CSS_COLOR.text,
+            transform: "translateX(-50%)",
+            boxShadow: `0 0 0 2px ${CSS_COLOR.bg1}`,
+          }}
+        />
+      </div>
+    </div>
+  );
+};
+
+const strikeSlotMeta = (slot) =>
+  STRIKE_SLOT_META[Number(slot)] || {
+    strikeLabel: String(slot),
+    callLabel: String(slot),
+    putLabel: String(slot),
+  };
+
+const ChainStrikeButton = ({
   side,
   slot,
+  label,
   selected,
   disabled,
   tone,
@@ -648,8 +811,10 @@ const StrikeRadio = ({
     type="button"
     role="radio"
     aria-checked={selected}
-    aria-label={`${side} strike slot ${slot}`}
+    aria-label={`${side} strike slot ${slot}; ${label}`}
     data-testid={`algo-strike-ladder-${side.toLowerCase()}-${slot}`}
+    title={`${side} ${label}`}
+    className={selected ? "ra-interactive ra-focus-rail" : "ra-interactive"}
     disabled={disabled}
     onClick={() => onSelect(slot)}
     onKeyDown={(event) => {
@@ -663,11 +828,12 @@ const StrikeRadio = ({
       }
     }}
     style={{
-      width: dim(18),
-      height: dim(18),
-      border: "none",
-      borderRadius: dim(RADII.pill),
-      background: "transparent",
+      width: "100%",
+      height: dim(27),
+      border: `1px solid ${selected ? tone : CSS_COLOR.borderLight}`,
+      borderRadius: dim(RADII.xs),
+      background: selected ? cssColorMix(tone, 18) : CSS_COLOR.bg1,
+      color: selected ? tone : CSS_COLOR.textMuted,
       display: "inline-flex",
       alignItems: "center",
       justifyContent: "center",
@@ -675,20 +841,15 @@ const StrikeRadio = ({
       cursor: disabled ? "not-allowed" : "pointer",
       opacity: disabled ? 0.55 : 1,
       outlineOffset: dim(1),
+      boxShadow: selected ? `inset 0 -2px 0 ${tone}` : "none",
+      fontFamily: T.sans,
+      fontSize: textSize("micro"),
+      fontWeight: FONT_WEIGHTS.label,
+      lineHeight: 1,
+      whiteSpace: "nowrap",
     }}
   >
-    <span
-      aria-hidden="true"
-      style={{
-        width: dim(10),
-        height: dim(10),
-        borderRadius: dim(RADII.pill),
-        border: `1px solid ${selected ? tone : CSS_COLOR.border}`,
-        background: selected ? tone : "transparent",
-        boxShadow: selected ? `0 0 0 2px ${cssColorMix(tone, 18)}` : "none",
-        display: "block",
-      }}
-    />
+    <span aria-hidden="true">{label}</span>
   </button>
 );
 
@@ -709,13 +870,28 @@ export const ContractSelectionCell = ({
   const zeroDteField = fieldByPath["optionSelection.allowZeroDte"];
   const callField = fieldByPath["optionSelection.callStrikeSlot"];
   const putField = fieldByPath["optionSelection.putStrikeSlot"];
+  const minValue = getPathValue(profileDraft, minField.path);
+  const targetValue = getPathValue(profileDraft, targetField.path);
+  const maxValue = getPathValue(profileDraft, maxField.path);
+  const zeroDteValue = Boolean(getPathValue(profileDraft, zeroDteField.path));
   const callValue = Number(getPathValue(profileDraft, callField.path));
   const putValue = Number(getPathValue(profileDraft, putField.path));
+  const minDirty = dirtyFieldKeys.has(fieldKey(minField));
+  const targetDirty = dirtyFieldKeys.has(fieldKey(targetField));
+  const maxDirty = dirtyFieldKeys.has(fieldKey(maxField));
+  const zeroDteDirty = dirtyFieldKeys.has(fieldKey(zeroDteField));
+  const callOption = strikeSlotMeta(callValue);
+  const putOption = strikeSlotMeta(putValue);
+  const contractSummary = [
+    `DTE ${formatDteWindowLabel({ minValue, targetValue, maxValue })}`,
+    `Call ${callOption.callLabel}`,
+    `Put ${putOption.putLabel}`,
+  ].join(" · ");
 
   const patchStrike = (field, slot) => {
     patchProfileDraftPath(field.path, Number(slot));
   };
-  const strikeRows = STRIKE_SLOT_ROWS.reduce((rows, option) => {
+  const chainRows = STRIKE_SLOT_ROWS.reduce((rows, option) => {
     const slot = Number(option.value);
     if (slot === 2) {
       rows.push({ id: "atm-divider", type: "divider", row: rows.length + 2 });
@@ -726,14 +902,11 @@ export const ContractSelectionCell = ({
       option,
       slot,
       row: rows.length + 2,
-      background:
-        slot === 2 || slot === 3
-          ? cssColorMix(CSS_COLOR.text, 3)
-          : "transparent",
+      meta: strikeSlotMeta(slot),
     });
     return rows;
   }, []);
-  const strikeSlotRows = strikeRows.filter((row) => row.type === "slot");
+  const chainSlotRows = chainRows.filter((row) => row.type === "slot");
   const renderStrikeHeader = ({ label, column, field }) => {
     const dirty = field ? dirtyFieldKeys.has(fieldKey(field)) : false;
     return (
@@ -744,9 +917,14 @@ export const ContractSelectionCell = ({
           gridRow: 1,
           display: "inline-flex",
           alignItems: "center",
-          justifyContent: label === "STRIKE" ? "flex-start" : "center",
+          justifyContent: "center",
           gap: sp(2),
-          color: CSS_COLOR.textMuted,
+          color:
+            label === "CALLS"
+              ? CSS_COLOR.green
+              : label === "PUTS"
+                ? CSS_COLOR.red
+                : CSS_COLOR.textMuted,
           fontFamily: T.sans,
           fontSize: textSize("micro"),
           fontWeight: FONT_WEIGHTS.label,
@@ -768,6 +946,38 @@ export const ContractSelectionCell = ({
             }}
           />
         ) : null}
+      </span>
+    );
+  };
+
+  const renderChainButton = ({ row, side }) => {
+    const isCall = side === "CALL";
+    const value = isCall ? callValue : putValue;
+    const field = isCall ? callField : putField;
+    return (
+      <span
+        key={`${side.toLowerCase()}-${row.slot}`}
+        style={{
+          gridColumn: isCall ? 1 : 3,
+          gridRow: row.row,
+          minHeight: dim(27),
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <ChainStrikeButton
+          side={side}
+          slot={row.slot}
+          label={isCall ? row.meta.callLabel : row.meta.putLabel}
+          selected={value === row.slot}
+          disabled={disabled}
+          tone={isCall ? CSS_COLOR.green : CSS_COLOR.red}
+          onSelect={(nextSlot) => patchStrike(field, nextSlot)}
+          onMove={(direction) =>
+            patchStrike(field, moveStrikeSlot(value, direction))
+          }
+        />
       </span>
     );
   };
@@ -808,19 +1018,44 @@ export const ContractSelectionCell = ({
           />
         ))}
       </div>
+      <DteWindowRail
+        minValue={minValue}
+        targetValue={targetValue}
+        maxValue={maxValue}
+        zeroDteValue={zeroDteValue}
+        dirty={minDirty || maxDirty || zeroDteDirty}
+        targetDirty={targetDirty}
+      />
       <div
+        data-testid="algo-contract-selection-summary"
+        title={contractSummary}
+        className="tnum"
+        style={{
+          color: CSS_COLOR.textDim,
+          fontFamily: T.data,
+          fontSize: textSize("micro"),
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {contractSummary}
+      </div>
+      <div
+        data-testid="algo-mini-chain"
         style={{
           display: "grid",
-          gridTemplateColumns: `minmax(0, 1fr) ${dim(44)}px ${dim(44)}px`,
+          gridTemplateColumns: `minmax(${dim(68)}px, 1fr) ${dim(48)}px minmax(${dim(68)}px, 1fr)`,
           alignItems: "center",
-          rowGap: sp(1),
+          columnGap: sp(3),
+          rowGap: sp(2),
           minWidth: 0,
         }}
       >
-        {renderStrikeHeader({ label: "STRIKE", column: 1 })}
-        {renderStrikeHeader({ label: "CALL", column: 2, field: callField })}
-        {renderStrikeHeader({ label: "PUT", column: 3, field: putField })}
-        {strikeRows.map((row) =>
+        {renderStrikeHeader({ label: "CALLS", column: 1, field: callField })}
+        {renderStrikeHeader({ label: "STRIKE", column: 2 })}
+        {renderStrikeHeader({ label: "PUTS", column: 3, field: putField })}
+        {chainRows.map((row) =>
           row.type === "divider" ? (
             <div
               key={row.id}
@@ -843,22 +1078,27 @@ export const ContractSelectionCell = ({
             </div>
           ) : (
             <span
-              key={`label-${row.slot}`}
+              key={`strike-${row.slot}`}
               style={{
-                gridColumn: 1,
+                gridColumn: 2,
                 gridRow: row.row,
-                height: dim(26),
+                height: dim(27),
                 display: "flex",
                 alignItems: "center",
+                justifyContent: "center",
                 minWidth: 0,
                 color: CSS_COLOR.textSec,
-                fontFamily: T.sans,
+                fontFamily: T.data,
                 fontSize: textSize("caption"),
-                background: row.background,
-                paddingLeft: sp(2),
+                borderRadius: dim(RADII.xs),
+                border: `1px solid ${CSS_COLOR.borderLight}`,
+                background:
+                  row.slot === 2 || row.slot === 3
+                    ? cssColorMix(CSS_COLOR.text, 5)
+                    : CSS_COLOR.bg1,
               }}
             >
-              {row.option.label}
+              {row.meta.strikeLabel}
             </span>
           ),
         )}
@@ -867,64 +1107,14 @@ export const ContractSelectionCell = ({
           aria-label="Call strike slot"
           style={{ display: "contents" }}
         >
-          {strikeSlotRows.map((row) => (
-            <span
-              key={`call-${row.slot}`}
-              style={{
-                gridColumn: 2,
-                gridRow: row.row,
-                height: dim(26),
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: row.background,
-              }}
-            >
-              <StrikeRadio
-                side="CALL"
-                slot={row.slot}
-                selected={callValue === row.slot}
-                disabled={disabled}
-                tone={CSS_COLOR.green}
-                onSelect={(nextSlot) => patchStrike(callField, nextSlot)}
-                onMove={(direction) =>
-                  patchStrike(callField, moveStrikeSlot(callValue, direction))
-                }
-              />
-            </span>
-          ))}
+          {chainSlotRows.map((row) => renderChainButton({ row, side: "CALL" }))}
         </span>
         <span
           role="radiogroup"
           aria-label="Put strike slot"
           style={{ display: "contents" }}
         >
-          {strikeSlotRows.map((row) => (
-            <span
-              key={`put-${row.slot}`}
-              style={{
-                gridColumn: 3,
-                gridRow: row.row,
-                height: dim(26),
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: row.background,
-              }}
-            >
-              <StrikeRadio
-                side="PUT"
-                slot={row.slot}
-                selected={putValue === row.slot}
-                disabled={disabled}
-                tone={CSS_COLOR.red}
-                onSelect={(nextSlot) => patchStrike(putField, nextSlot)}
-                onMove={(direction) =>
-                  patchStrike(putField, moveStrikeSlot(putValue, direction))
-                }
-              />
-            </span>
-          ))}
+          {chainSlotRows.map((row) => renderChainButton({ row, side: "PUT" }))}
         </span>
       </div>
     </div>

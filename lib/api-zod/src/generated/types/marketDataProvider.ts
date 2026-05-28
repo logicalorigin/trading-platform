@@ -11,5 +11,6 @@ export type MarketDataProvider = typeof MarketDataProvider[keyof typeof MarketDa
 
 export const MarketDataProvider = {
   polygon: 'polygon',
+  massive: 'massive',
   ibkr: 'ibkr',
 } as const;

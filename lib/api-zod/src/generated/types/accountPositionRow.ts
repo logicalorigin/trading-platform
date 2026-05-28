@@ -7,6 +7,7 @@
  */
 import type { AccountPositionLot } from './accountPositionLot';
 import type { AccountPositionRowAttributionStatus } from './accountPositionRowAttributionStatus';
+import type { AccountPositionRowAutomationContext } from './accountPositionRowAutomationContext';
 import type { AccountPositionRowSourceType } from './accountPositionRowSourceType';
 import type { JsonObject } from './jsonObject';
 import type { OptionContract } from './optionContract';
@@ -45,6 +46,8 @@ export interface AccountPositionRow {
   strategyLabel?: string | null;
   attributionStatus?: AccountPositionRowAttributionStatus;
   sourceAttribution?: JsonObject[];
+  /** Existing automation trade-management state for this open position, when available. */
+  automationContext?: AccountPositionRowAutomationContext;
   openedAt?: Date | null;
   openedAtSource?: PositionOpenedAtSource | null;
   quote?: PositionQuote | null;

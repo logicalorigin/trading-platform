@@ -74,9 +74,7 @@ function normalizeIntent(value: unknown): MarketDataIntent {
     value === "account-monitor-live" ||
     value === "visible-live" ||
     value === "automation-live" ||
-    value === "watchlist-live" ||
     value === "flow-scanner-live" ||
-    value === "convenience-live" ||
     value === "delayed-ok" ||
     value === "historical"
     ? value

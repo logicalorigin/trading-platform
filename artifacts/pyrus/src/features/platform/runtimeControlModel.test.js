@@ -63,11 +63,9 @@ test("line allocation UI copy keeps allocator jargon internal", () => {
 test("normalizes complete market data admission pools", () => {
   const normalized = normalizeAdmissionDiagnostics({
     activeLineCount: 100,
-    watchlistLineCount: 20,
     budget: {
       maxLines: 200,
       accountMonitorLineCap: 20,
-      watchlistLineCap: 80,
       flowScannerLineCap: 40,
     },
     accountMonitorLineCount: 12,
@@ -89,14 +87,6 @@ test("normalizes complete market data admission pools", () => {
         remainingLineCount: 6,
         strict: true,
       },
-      watchlist: {
-        id: "watchlist",
-        label: "Watchlist",
-        activeLineCount: 20,
-        maxLines: 80,
-        remainingLineCount: 60,
-        strict: true,
-      },
       visible: {
         id: "visible",
         label: "Visible",
@@ -111,17 +101,16 @@ test("normalizes complete market data admission pools", () => {
   assert.equal(normalized.accountMonitor.used, 12);
   assert.equal(normalized.accountMonitor.cap, 20);
   assert.equal(normalized.flowScanner.used, 34);
-  assert.equal(normalized.watchlist.used, 20);
-  assert.equal(normalized.watchlist.cap, 80);
-  assert.equal(normalized.watchlist.free, 60);
   assert.equal(normalized.pools.visible.cap, 88);
+  assert.equal("watchlist" in normalized.pools, false);
+  assert.equal("convenience" in normalized.pools, false);
   assert.equal(normalized.total.free, 100);
   assert.equal(normalized.allocation.targetFillLines, 200);
   assert.equal(normalized.allocation.remainingToTargetLineCount, 100);
-  assert.equal(normalized.allocation.fillerLineCount, 0);
+  assert.equal("fillerLineCount" in normalized.allocation, false);
 });
 
-test("reports watchlist prewarm lines even when the retired watchlist pool is zero", () => {
+test("does not build retired watchlist or convenience rows from legacy payloads", () => {
   const normalized = normalizeAdmissionDiagnostics(
     {
       activeLineCount: 160,
@@ -150,6 +139,14 @@ test("reports watchlist prewarm lines even when the retired watchlist pool is ze
           remainingLineCount: 0,
           strict: true,
         },
+        convenience: {
+          id: "convenience",
+          label: "Convenience",
+          activeLineCount: 40,
+          maxLines: 0,
+          effectiveMaxLines: 40,
+          remainingLineCount: 0,
+        },
       },
     },
     {
@@ -160,62 +157,15 @@ test("reports watchlist prewarm lines even when the retired watchlist pool is ze
     },
   );
 
-  assert.equal(normalized.watchlist.used, 117);
-  assert.equal(normalized.watchlist.cap, 120);
-  assert.equal(normalized.watchlist.free, 3);
-  assert.equal(normalized.watchlist.detail, "117 active of 120 reserved");
-});
-
-test("keeps watchlist prewarm cap when the prewarm limit is omitted", () => {
-  const normalized = normalizeAdmissionDiagnostics(
-    {
-      activeLineCount: 161,
-      visibleLineCount: 120,
-      watchlistLineCount: 0,
-      budget: {
-        maxLines: 200,
-        visibleLineCap: 120,
-        watchlistLineCap: 0,
-        flowScannerLineCap: 80,
-      },
-      ownerClasses: {
-        summaries: {
-          "watchlist-prewarm": {
-            activeLineCount: 118,
-          },
-        },
-      },
-      poolUsage: {
-        visible: {
-          id: "visible",
-          label: "Visible",
-          activeLineCount: 120,
-          maxLines: 120,
-          remainingLineCount: 0,
-        },
-        watchlist: {
-          id: "watchlist",
-          label: "Watchlist",
-          activeLineCount: 0,
-          maxLines: 0,
-          effectiveMaxLines: 0,
-          remainingLineCount: 0,
-          strict: true,
-        },
-      },
-    },
-    {
-      watchlistPrewarm: {},
-    },
+  assert.equal("watchlist" in normalized.pools, false);
+  assert.equal("convenience" in normalized.pools, false);
+  assert.deepEqual(
+    normalized.rows.map((row) => row.id),
+    ["automation", "account-monitor", "visible", "flow-scanner", "total"],
   );
-
-  assert.equal(normalized.watchlist.used, 118);
-  assert.equal(normalized.watchlist.cap, 120);
-  assert.equal(normalized.watchlist.free, 2);
-  assert.equal(normalized.watchlist.detail, "118 active of 120 reserved");
 });
 
-test("builds runtime watchlist row from prewarm usage instead of the retired pool", () => {
+test("runtime control rows omit retired stock-line groups", () => {
   const snapshot = buildRuntimeControlSnapshot({
     lineUsageSnapshot: {
       admission: {
@@ -244,14 +194,6 @@ test("builds runtime watchlist row from prewarm usage instead of the retired poo
             maxLines: 120,
             remainingLineCount: 0,
           },
-          watchlist: {
-            id: "watchlist",
-            activeLineCount: 0,
-            maxLines: 0,
-            effectiveMaxLines: 0,
-            remainingLineCount: 0,
-            strict: true,
-          },
           "flow-scanner": {
             id: "flow-scanner",
             activeLineCount: 0,
@@ -266,11 +208,12 @@ test("builds runtime watchlist row from prewarm usage instead of the retired poo
     },
   });
 
-  assert.equal(snapshot.lineUsage.watchlist.used, 118);
-  assert.equal(snapshot.lineUsage.watchlist.cap, 120);
-  assert.equal(snapshot.lineUsage.watchlist.effectiveCap, 120);
-  assert.equal(snapshot.lineUsage.watchlist.free, 2);
-  assert.equal(snapshot.lineUsage.watchlist.detail, "118 active of 120 reserved");
+  assert.equal("watchlist" in snapshot.lineUsage.pools, false);
+  assert.equal("convenience" in snapshot.lineUsage.pools, false);
+  assert.deepEqual(
+    snapshot.lineUsage.rows.map((row) => row.id),
+    ["automation", "account-monitor", "visible", "flow-scanner", "total"],
+  );
 });
 
 test("normalizes top-level automation counts when pool rows are absent", () => {
@@ -617,7 +560,7 @@ test("reports live warmup as a temporary foreground-allowed scanner hold", () =>
 
   assert.equal(
     normalized.flowScanner.detail,
-    "warming live watchlist (2m); foreground scans allowed",
+    "warming live data (2m); foreground scans allowed",
   );
 });
 
@@ -758,7 +701,7 @@ test("normalizes signal option quote usage separately from flow scanner demand",
   assert.equal(normalized.signalOptions.streamState, "capacity-limited");
 });
 
-test("normalizes cap-zero convenience usage as elastic slack", () => {
+test("drops obsolete convenience allocation fields from normalized rows", () => {
   const normalized = normalizeAdmissionDiagnostics({
     activeLineCount: 84,
     budget: {
@@ -792,19 +735,9 @@ test("normalizes cap-zero convenience usage as elastic slack", () => {
     },
   });
 
-  assert.equal(normalized.allocation.elasticLineCount, 84);
-  assert.equal(normalized.allocation.reclaimableElasticLineCount, 80);
-  assert.equal(normalized.pools.convenience.used, 80);
-  assert.equal(normalized.pools.convenience.activeLineCount, 84);
-  assert.equal(normalized.pools.convenience.cap, 90);
-  assert.equal(normalized.pools.convenience.effectiveCap, 90);
-  assert.equal(normalized.pools.convenience.free, 10);
-  assert.equal(normalized.pools.convenience.elastic, true);
-  assert.equal(normalized.pools.convenience.streamState, "capacity-limited");
-  assert.equal(
-    normalized.pools.convenience.detail,
-    "84 active of 80 reclaimable",
-  );
+  assert.equal("elasticLineCount" in normalized.allocation, false);
+  assert.equal("reclaimableElasticLineCount" in normalized.allocation, false);
+  assert.equal("convenience" in normalized.pools, false);
 });
 
 test("uses API-active lines as canonical while retaining bridge reconciliation", () => {

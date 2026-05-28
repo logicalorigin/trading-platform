@@ -38,10 +38,10 @@ test.afterEach(() => {
 test("bridge runtime defaults reflect the line booster live quote allowance", () => {
   assert.equal(BRIDGE_RUNTIME_LIMITS.maxMarketDataLines.defaultValue, 200);
   assert.equal(BRIDGE_RUNTIME_LIMITS.maxLiveEquityLines.defaultValue, 0);
-  assert.equal(BRIDGE_RUNTIME_LIMITS.maxLiveOptionLines.defaultValue, 100);
+  assert.equal(BRIDGE_RUNTIME_LIMITS.maxLiveOptionLines.defaultValue, 200);
   assert.equal(
     BRIDGE_RUNTIME_LIMITS.optionQuoteVisibleContractLimit.defaultValue,
-    100,
+    200,
   );
 });
 

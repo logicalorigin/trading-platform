@@ -253,6 +253,38 @@ export const buildDailyPnlSeries = ({
   });
 };
 
+export const applyAccountDailyPnlOverride = (
+  days = [],
+  dailyPnl = null,
+  today = new Date(),
+) => {
+  const fallbackDay = startOfCalendarDay(today);
+  const marketDate =
+    typeof dailyPnl?.marketDate === "string" && dailyPnl.marketDate.trim()
+      ? dailyPnl.marketDate.trim()
+      : fallbackDay
+        ? isoCalendarDay(fallbackDay)
+        : "";
+  const totalDayPnl = finiteNumber(dailyPnl?.totalDayPnl) ?? finiteNumber(dailyPnl?.value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(marketDate) || totalDayPnl == null) {
+    return days;
+  }
+  const realizedDayPnl = finiteNumber(dailyPnl?.realizedDayPnl);
+  return days.map((day) => {
+    if (day.iso !== marketDate) return day;
+    const realized = realizedDayPnl ?? day.realized ?? 0;
+    return {
+      ...day,
+      pnl: totalDayPnl,
+      pnlSource: "account-summary",
+      realized,
+      unrealized: totalDayPnl - realized,
+      total: totalDayPnl,
+      accountDailyPnl: dailyPnl,
+    };
+  });
+};
+
 const summarizeDays = (days) => {
   const activeDays = days.filter((day) => day.trades > 0 || day.pnl !== 0);
   const pnl = activeDays.reduce((sum, day) => sum + day.pnl, 0);
@@ -287,6 +319,7 @@ const summarizeDays = (days) => {
 export const buildMonthPnlCalendarModel = ({
   trades = [],
   equityPoints = [],
+  dailyPnl = null,
   monthDate = new Date(),
   today = new Date(),
 } = {}) => {
@@ -299,12 +332,16 @@ export const buildMonthPnlCalendarModel = ({
   gridEnd.setDate(lastOfMonth.getDate() + (6 - lastOfMonth.getDay()));
   const todayIso = isoCalendarDay(startOfCalendarDay(today) ?? new Date());
   const month = monthKey(visibleMonth);
-  const days = buildDailyPnlSeries({
-    trades,
-    equityPoints,
-    startDate: gridStart,
-    endDate: gridEnd,
-  }).map((day) => ({
+  const days = applyAccountDailyPnlOverride(
+    buildDailyPnlSeries({
+      trades,
+      equityPoints,
+      startDate: gridStart,
+      endDate: gridEnd,
+    }),
+    dailyPnl,
+    today,
+  ).map((day) => ({
     ...day,
     inMonth: monthKey(day.date) === month,
     isToday: day.iso === todayIso,
@@ -323,13 +360,18 @@ export const buildMonthPnlCalendarModel = ({
 export const buildYearPnlCalendarModel = ({
   trades = [],
   equityPoints = [],
+  dailyPnl = null,
   year = new Date().getFullYear(),
   today = new Date(),
 } = {}) => {
   const startDate = new Date(year, 0, 1);
   const endDate = new Date(year, 11, 31);
   const todayMonth = monthKey(startOfCalendarDay(today) ?? new Date());
-  const days = buildDailyPnlSeries({ trades, equityPoints, startDate, endDate });
+  const days = applyAccountDailyPnlOverride(
+    buildDailyPnlSeries({ trades, equityPoints, startDate, endDate }),
+    dailyPnl,
+    today,
+  );
   const months = Array.from({ length: 12 }, (_, monthIndex) => {
     const date = new Date(year, monthIndex, 1);
     const key = monthKey(date);

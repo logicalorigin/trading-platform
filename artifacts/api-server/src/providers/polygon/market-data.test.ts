@@ -5,6 +5,149 @@ import {
   aggregateOptionPremiumDistributionSnapshots,
 } from "./market-data";
 
+test("Massive stock aggregates are real-time by default", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalRecency = process.env["MASSIVE_STOCKS_RECENCY"];
+  let requestedTo: number | null = null;
+
+  delete process.env["MASSIVE_STOCKS_RECENCY"];
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(String(input));
+    requestedTo = Number(url.pathname.split("/").at(-1));
+    return Response.json({ results: [] });
+  }) as typeof fetch;
+
+  try {
+    const client = new PolygonMarketDataClient({
+      apiKey: "test",
+      baseUrl: "https://api.massive.com",
+    });
+    const before = Date.now();
+    await client.getBarsPage({
+      symbol: "SPY",
+      timeframe: "1m",
+      from: new Date(before - 60_000),
+      limit: 1,
+    });
+    const after = Date.now();
+
+    assert.ok(requestedTo !== null);
+    assert.ok(requestedTo >= before);
+    assert.ok(requestedTo <= after + 1_000);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalRecency === undefined) {
+      delete process.env["MASSIVE_STOCKS_RECENCY"];
+    } else {
+      process.env["MASSIVE_STOCKS_RECENCY"] = originalRecency;
+    }
+  }
+});
+
+test("Massive stock aggregates honor delayed recency override", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalRecency = process.env["MASSIVE_STOCKS_RECENCY"];
+  let requestedTo: number | null = null;
+
+  process.env["MASSIVE_STOCKS_RECENCY"] = "delayed";
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(String(input));
+    requestedTo = Number(url.pathname.split("/").at(-1));
+    return Response.json({ results: [] });
+  }) as typeof fetch;
+
+  try {
+    const client = new PolygonMarketDataClient({
+      apiKey: "test",
+      baseUrl: "https://api.massive.com",
+    });
+    const before = Date.now();
+    await client.getBarsPage({
+      symbol: "SPY",
+      timeframe: "1m",
+      from: new Date(before - 16 * 60_000),
+      limit: 1,
+    });
+
+    assert.ok(requestedTo !== null);
+    assert.ok(requestedTo <= before - 15 * 60_000 + 1_000);
+    assert.ok(requestedTo >= before - 16 * 60_000);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalRecency === undefined) {
+      delete process.env["MASSIVE_STOCKS_RECENCY"];
+    } else {
+      process.env["MASSIVE_STOCKS_RECENCY"] = originalRecency;
+    }
+  }
+});
+
+test("Massive reference ticker metadata uses explicit Massive provider identity", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    Response.json({
+      results: {
+        ticker: "SPY",
+        name: "SPDR S&P 500 ETF Trust",
+        market: "stocks",
+        type: "ETF",
+        active: true,
+        primary_exchange: "ARCX",
+      },
+    })) as typeof fetch;
+
+  try {
+    const client = new PolygonMarketDataClient({
+      apiKey: "test",
+      baseUrl: "https://api.massive.com",
+    });
+    const ticker = await client.getUniverseTickerByTicker("SPY");
+
+    assert.equal(ticker?.provider, "massive");
+    assert.deepEqual(ticker?.providers, ["massive"]);
+    assert.equal(ticker?.dataProviderPreference, "massive");
+    assert.equal(ticker?.tradeProvider, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Massive reference ticker pages preserve Massive provider identity", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    Response.json({
+      count: 1,
+      results: [
+        {
+          ticker: "QQQ",
+          name: "Invesco QQQ Trust",
+          market: "stocks",
+          type: "ETF",
+          active: true,
+          primary_exchange: "XNAS",
+        },
+      ],
+      next_url: null,
+    })) as typeof fetch;
+
+  try {
+    const client = new PolygonMarketDataClient({
+      apiKey: "test",
+      baseUrl: "https://api.massive.com",
+    });
+    const page = await client.listUniverseTickersPage({
+      market: "etf",
+      limit: 1,
+    });
+
+    assert.equal(page.results[0]?.provider, "massive");
+    assert.deepEqual(page.results[0]?.providers, ["massive"]);
+    assert.equal(page.results[0]?.dataProviderPreference, "massive");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("option chain contracts include day change fields", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {

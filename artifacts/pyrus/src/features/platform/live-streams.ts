@@ -237,9 +237,7 @@ type OptionQuoteStreamIntent =
   | "account-monitor-live"
   | "visible-live"
   | "automation-live"
-  | "watchlist-live"
   | "flow-scanner-live"
-  | "convenience-live"
   | "delayed-ok"
   | "historical";
 

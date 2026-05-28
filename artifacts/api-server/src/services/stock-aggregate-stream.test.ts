@@ -22,6 +22,7 @@ const ENV_KEYS = [
   "MASSIVE_API_KEY",
   "MASSIVE_MARKET_DATA_API_KEY",
   "MASSIVE_API_BASE_URL",
+  "MASSIVE_STOCKS_RECENCY",
   "IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE",
 ] as const;
 
@@ -73,8 +74,20 @@ test("stock aggregate stream source resolver prefers IBKR over delayed Polygon",
     resolvePreferredStockAggregateStreamSource({
       ibkrConfigured: true,
       polygonDelayedConfigured: true,
+      massiveRealtimeConfigured: false,
     }),
     "ibkr-websocket-derived",
+  );
+});
+
+test("stock aggregate stream source resolver prefers Massive real-time over IBKR", () => {
+  assert.equal(
+    resolvePreferredStockAggregateStreamSource({
+      ibkrConfigured: true,
+      polygonDelayedConfigured: true,
+      massiveRealtimeConfigured: true,
+    }),
+    "massive-websocket",
   );
 });
 
@@ -107,6 +120,44 @@ test("configured IBKR bridge wins even when Polygon credentials are present", ()
         "polygon-delayed-websocket",
       );
 
+      setIbkrBridgeRuntimeOverride({
+        baseUrl: "https://runtime-bridge.example.com",
+        apiToken: "runtime-token",
+      });
+
+      assert.equal(
+        getPreferredStockAggregateStreamSource(),
+        "ibkr-websocket-derived",
+      );
+    },
+  );
+});
+
+test("Massive real-time stock aggregates win even when IBKR is configured", () => {
+  withAggregateRuntimeEnv(
+    {
+      MASSIVE_API_KEY: "massive-test-key",
+    },
+    () => {
+      assert.equal(getPreferredStockAggregateStreamSource(), "massive-websocket");
+
+      setIbkrBridgeRuntimeOverride({
+        baseUrl: "https://runtime-bridge.example.com",
+        apiToken: "runtime-token",
+      });
+
+      assert.equal(getPreferredStockAggregateStreamSource(), "massive-websocket");
+    },
+  );
+});
+
+test("Massive delayed stock aggregate mode falls back to IBKR when configured", () => {
+  withAggregateRuntimeEnv(
+    {
+      MASSIVE_API_KEY: "massive-test-key",
+      MASSIVE_STOCKS_RECENCY: "delayed",
+    },
+    () => {
       setIbkrBridgeRuntimeOverride({
         baseUrl: "https://runtime-bridge.example.com",
         apiToken: "runtime-token",

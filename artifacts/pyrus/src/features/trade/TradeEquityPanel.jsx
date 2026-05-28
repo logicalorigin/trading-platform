@@ -908,6 +908,16 @@ export const TradeEquityPanel = ({
         rangeIdentityKey={chartHydrationScopeKey}
         viewportLayoutKey={chartViewportLayoutKey}
         model={chartModel}
+        footprintContext={
+          ticker
+            ? {
+                symbol: ticker,
+                assetClass: "equity",
+                timeframe: tf,
+                outsideRth: true,
+              }
+            : null
+        }
         compact={resolvedChartFrameCompact}
         placement={resolvedChartFramePlacement}
         style={frameStyle}

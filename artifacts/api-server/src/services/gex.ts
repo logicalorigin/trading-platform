@@ -8,7 +8,6 @@ import type {
 } from "../providers/ibkr/client";
 import {
   PolygonMarketDataClient,
-  type OptionChainContract as PolygonOptionChainContract,
   type UniverseTicker,
 } from "../providers/polygon/market-data";
 import {
@@ -114,7 +113,6 @@ type GexMarketDataClient = Pick<
   | "getUniverseTickerByTicker"
   | "getBarsPage"
   | "getTickerMarketCap"
-  | "getOptionChain"
 >;
 
 type GexMarketDataClientFactory = (
@@ -145,10 +143,6 @@ const GEX_DASHBOARD_LOAD_TIMEOUT_MS = readPositiveIntegerEnv(
   10_000,
 );
 const GEX_EXPIRATION_LIMIT = readPositiveIntegerEnv("GEX_EXPIRATION_LIMIT", 10);
-const GEX_REFERENCE_CHAIN_MAX_PAGES = readPositiveIntegerEnv(
-  "GEX_REFERENCE_CHAIN_MAX_PAGES",
-  20,
-);
 
 let gexMarketDataClientFactory: GexMarketDataClientFactory | null = null;
 let gexPlatformDataClientFactory: GexPlatformDataClientFactory | null = null;
@@ -235,12 +229,6 @@ function getOptionalGexMarketDataClient(): {
   };
 }
 
-function getGexReferenceProvider(
-  config: PolygonRuntimeConfig,
-): GexResponse["source"]["provider"] {
-  return config.baseUrl.includes("massive.com") ? "massive" : "polygon";
-}
-
 function getGexPlatformDataClient(): GexPlatformDataClient {
   return (
     gexPlatformDataClientFactory?.() ?? {
@@ -308,9 +296,19 @@ function deriveSpotFromOptionChain(
   return prices[Math.floor((prices.length - 1) / 2)];
 }
 
-function isIbkrQuoteSnapshot(quote: IbkrQuoteSnapshot): boolean {
+function isLiveGexStockSpotQuote(quote: IbkrQuoteSnapshot): boolean {
   const source = String((quote as { source?: unknown }).source ?? "ibkr").toLowerCase();
-  return source === "ibkr";
+  const freshness = String((quote as { freshness?: unknown }).freshness ?? "").toLowerCase();
+  const marketDataMode = String(
+    (quote as { marketDataMode?: unknown }).marketDataMode ?? "",
+  ).toLowerCase();
+  return (
+    (source === "ibkr" || source === "massive") &&
+    quote.delayed !== true &&
+    freshness !== "delayed" &&
+    marketDataMode !== "delayed" &&
+    marketDataMode !== "delayed_frozen"
+  );
 }
 
 function mapGexOptions(contracts: IbkrOptionChainContract[]): {
@@ -404,135 +402,6 @@ function mapGexOptions(contracts: IbkrOptionChainContract[]): {
     withOpenInterest,
     withImpliedVolatility,
     chainUpdatedAt,
-  };
-}
-
-function mapGexReferenceOptions(
-  contracts: PolygonOptionChainContract[],
-  delayed: boolean,
-): {
-  rows: GexOptionRow[];
-  optionCount: number;
-  usableOptionCount: number;
-  withGamma: number;
-  withOpenInterest: number;
-  withImpliedVolatility: number;
-  chainUpdatedAt: Date | null;
-} {
-  const rows: GexOptionRow[] = [];
-  let withGamma = 0;
-  let withOpenInterest = 0;
-  let withImpliedVolatility = 0;
-  let chainUpdatedAt: Date | null = null;
-  const quoteFreshness: MarketDataFreshness = delayed ? "delayed" : "live";
-  const marketDataMode = delayed ? "delayed" : "live";
-
-  contracts.forEach((snapshot) => {
-    const expiration = optionExpirationParts(snapshot.contract.expirationDate);
-    const strike = finiteOrNull(snapshot.contract.strike);
-    const gamma = finiteOrNull(snapshot.gamma);
-    const openInterest = finiteOrNull(snapshot.openInterest);
-    const impliedVolatility = finiteOrNull(snapshot.impliedVolatility);
-    const multiplier =
-      positiveOrNull(snapshot.contract.multiplier) ??
-      positiveOrNull(snapshot.contract.sharesPerContract) ??
-      100;
-    const sharesPerContract =
-      positiveOrNull(snapshot.contract.sharesPerContract) ?? multiplier;
-    const updatedAt = toDateOrNull(snapshot.updatedAt);
-    const cp =
-      snapshot.contract.right === "call"
-        ? "C"
-        : snapshot.contract.right === "put"
-          ? "P"
-          : null;
-
-    if (gamma != null) withGamma += 1;
-    if (openInterest != null) withOpenInterest += 1;
-    if (impliedVolatility != null) withImpliedVolatility += 1;
-
-    if (
-      !cp ||
-      !expiration ||
-      strike == null ||
-      gamma == null ||
-      openInterest == null
-    ) {
-      return;
-    }
-
-    rows.push({
-      strike,
-      expireYear: expiration.year,
-      expireMonth: expiration.month,
-      expireDay: expiration.day,
-      cp,
-      ticker: snapshot.contract.ticker || null,
-      underlying: snapshot.contract.underlying || null,
-      expirationDate: `${String(expiration.year).padStart(4, "0")}-${String(
-        expiration.month,
-      ).padStart(2, "0")}-${String(expiration.day).padStart(2, "0")}`,
-      providerContractId: snapshot.contract.providerContractId ?? null,
-      gamma,
-      delta: finiteOrZero(snapshot.delta),
-      openInterest: Math.max(0, openInterest),
-      impliedVol: impliedVolatility ?? 0,
-      bid: finiteOrZero(snapshot.bid),
-      ask: finiteOrZero(snapshot.ask),
-      multiplier,
-      sharesPerContract,
-      volume: Math.max(0, finiteOrZero(snapshot.volume)),
-      updatedAt: updatedAt?.toISOString() ?? null,
-      quoteFreshness,
-      marketDataMode,
-    });
-
-    if (
-      updatedAt instanceof Date &&
-      (!chainUpdatedAt || updatedAt.getTime() > chainUpdatedAt.getTime())
-    ) {
-      chainUpdatedAt = updatedAt;
-    }
-  });
-
-  return {
-    rows,
-    optionCount: contracts.length,
-    usableOptionCount: rows.length,
-    withGamma,
-    withOpenInterest,
-    withImpliedVolatility,
-    chainUpdatedAt,
-  };
-}
-
-async function loadGexReferenceOptionSnapshots(input: {
-  client: GexMarketDataClient;
-  ticker: string;
-  expirationDates: Date[];
-  signal?: AbortSignal;
-}): Promise<{
-  contracts: PolygonOptionChainContract[];
-  failedExpirationCount: number;
-}> {
-  const settled = await Promise.all(
-    input.expirationDates.map(async (expirationDate) => {
-      try {
-        return await input.client.getOptionChain({
-          underlying: input.ticker,
-          expirationDate,
-          maxPages: GEX_REFERENCE_CHAIN_MAX_PAGES,
-          signal: input.signal,
-        });
-      } catch {
-        return null;
-      }
-    }),
-  );
-
-  return {
-    contracts: settled.flatMap((contracts) => contracts ?? []),
-    failedExpirationCount: settled.filter((contracts) => contracts === null).length,
   };
 }
 
@@ -762,10 +631,6 @@ async function loadGexDashboardData(input: {
   const platformClient = getGexPlatformDataClient();
   const referenceData = getOptionalGexMarketDataClient();
   const referenceClient = referenceData?.client ?? null;
-  const referenceProvider = referenceData
-    ? getGexReferenceProvider(referenceData.config)
-    : null;
-  const referenceDelayed = referenceProvider === "massive";
   const now = new Date();
   const yearRangeFrom = new Date(now.getTime() - 366 * 24 * 60 * 60 * 1000);
   const [quotePayload, expirationsPayload, tickerDetails, marketCap, yearBarsPage] =
@@ -809,40 +674,20 @@ async function loadGexDashboardData(input: {
     });
   }
 
-  const referenceChainPayload = referenceClient
-    ? await loadGexReferenceOptionSnapshots({
-        client: referenceClient,
-        ticker,
-        expirationDates,
-        signal: input.signal,
-      })
-    : null;
-  let chainPayload: Awaited<ReturnType<typeof platformBatchOptionChains>> | null =
-    null;
-  let chain: IbkrOptionChainContract[] = [];
-  let mappedOptions =
-    referenceChainPayload && referenceProvider
-      ? mapGexReferenceOptions(referenceChainPayload.contracts, referenceDelayed)
-      : null;
-  let sourceProvider: GexResponse["source"]["provider"] =
-    mappedOptions?.rows.length && referenceProvider ? referenceProvider : "ibkr";
-
-  if (mappedOptions === null || mappedOptions.rows.length === 0) {
-    chainPayload = await platformClient.batchOptionChains({
-      underlying: ticker,
-      expirationDates,
-      strikeCoverage: "full",
-      quoteHydration: "snapshot",
-    });
-    chain = chainPayload.results.flatMap((result) => result.contracts);
-    mappedOptions = mapGexOptions(chain);
-    sourceProvider = "ibkr";
-  }
+  const chainPayload = await platformClient.batchOptionChains({
+    underlying: ticker,
+    expirationDates,
+    strikeCoverage: "full",
+    quoteHydration: "snapshot",
+  });
+  const chain = chainPayload.results.flatMap((result) => result.contracts);
+  const mappedOptions = mapGexOptions(chain);
+  const sourceProvider: GexResponse["source"]["provider"] = "ibkr";
 
   const quoteRows = (quotePayload.quotes || []) as IbkrQuoteSnapshot[];
   const quote =
     quoteRows.find(
-      (snapshot) => snapshot.symbol === ticker && isIbkrQuoteSnapshot(snapshot),
+      (snapshot) => snapshot.symbol === ticker && isLiveGexStockSpotQuote(snapshot),
     ) ?? null;
   const latestReferenceClose =
     yearBarsPage.bars.length > 0
@@ -856,7 +701,7 @@ async function loadGexDashboardData(input: {
     throw new HttpError(503, `Spot price unavailable for ${ticker}.`, {
       code: "gex_spot_unavailable",
       detail:
-        "GEX requires a current IBKR underlying quote, option-chain underlying price, or reference-provider close.",
+        "GEX requires a current IBKR or Massive underlying quote, option-chain underlying price, or reference-provider close.",
     });
   }
 
@@ -889,24 +734,12 @@ async function loadGexDashboardData(input: {
         (result) => result.status !== "loaded" || result.contracts.length === 0,
       )
     : false;
-  const referenceHasFailures =
-    sourceProvider !== "ibkr" &&
-    (referenceChainPayload?.failedExpirationCount ?? 0) > 0;
   const partialSource =
     mappedOptions.usableOptionCount < mappedOptions.optionCount ||
     batchHasFailures ||
-    referenceHasFailures ||
     !quote;
-  const providerLabel =
-    sourceProvider === "massive"
-      ? "Massive"
-      : sourceProvider === "polygon"
-        ? "Polygon"
-        : "IBKR";
   const partialMessage =
-    sourceProvider === "ibkr"
-      ? "GEX is computed from IBKR option-chain snapshots. Source is partial when an expiration batch fails, a quote is missing, or contracts lack usable gamma/open interest."
-      : `GEX is computed from ${providerLabel} option-chain snapshots before using IBKR option snapshot lines. Source is partial when a reference expiration fails, a quote is missing, or contracts lack usable gamma/open interest.`;
+    "GEX is computed from IBKR option-chain snapshots with live IBKR or Massive stock spot. Source is partial when an expiration batch fails, a live spot quote is missing, or contracts lack usable gamma/open interest.";
   const flowBasisCounts = {
     quoteMatch: 0,
     tickTest: 0,

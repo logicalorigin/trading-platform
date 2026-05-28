@@ -1,4 +1,11 @@
 export type OptionsFlowScannerTransport = "tws";
+export type OptionsFlowScannerMarketDataMode =
+  | "live"
+  | "frozen"
+  | "delayed"
+  | "delayed_frozen"
+  | "unknown";
+export type OptionsFlowScannerScanPhase = "seed" | "expanded" | "manual";
 
 export type OptionsFlowScannerTransportStatus = {
   transport: OptionsFlowScannerTransport | null;
@@ -6,6 +13,7 @@ export type OptionsFlowScannerTransportStatus = {
   configured?: boolean | null;
   authenticated?: boolean | null;
   liveMarketDataAvailable?: boolean | null;
+  marketDataMode?: OptionsFlowScannerMarketDataMode | string | null;
   lastError?: string | null;
 };
 
@@ -27,6 +35,9 @@ export type OptionsFlowScannerRequest = {
   unusualThreshold?: number;
   lineBudget?: number;
   allowPartial?: boolean;
+  phase?: OptionsFlowScannerScanPhase;
+  expirationScanCount?: number;
+  strikeCoverage?: "fast" | "standard" | "full";
 };
 
 export type OptionsFlowScannerSnapshot<TEvent> = {
@@ -46,6 +57,8 @@ export type OptionsFlowScannerRunResult = {
   failedSymbols: string[];
   transport: OptionsFlowScannerTransport | null;
   skippedReason: string | null;
+  marketDataMode: OptionsFlowScannerMarketDataMode | null;
+  scanPhase: OptionsFlowScannerScanPhase | null;
 };
 
 export type OptionsFlowScannerDiagnostics = {
@@ -63,6 +76,8 @@ export type OptionsFlowScannerDiagnostics = {
   lastFailedSymbols: string[];
   lastSkippedReason: string | null;
   lastTransport: OptionsFlowScannerTransport | null;
+  lastMarketDataMode: OptionsFlowScannerMarketDataMode | null;
+  lastScanPhase: OptionsFlowScannerScanPhase | null;
   scanTimeoutMs: number | null;
 };
 
@@ -72,6 +87,9 @@ export type OptionsFlowScannerOptions<TEvent> = {
     limit: number;
     unusualThreshold?: number;
     lineBudget?: number;
+    phase?: OptionsFlowScannerScanPhase;
+    expirationScanCount?: number;
+    strikeCoverage?: "fast" | "standard" | "full";
     signal?: AbortSignal;
   }) => Promise<OptionsFlowScannerFetchResult<TEvent>>;
   getTransport: () => Promise<OptionsFlowScannerTransportStatus | null>;
@@ -87,6 +105,7 @@ export type OptionsFlowScannerOptions<TEvent> = {
   onBatch?: (symbols: readonly string[]) => void;
   onResult?: (input: {
     symbol: string;
+    request: OptionsFlowScannerRequest;
     result?: OptionsFlowScannerFetchResult<TEvent>;
     failed: boolean;
     error?: string | null;
@@ -105,6 +124,7 @@ type StoredSnapshot<TEvent> = {
   error: string | null;
   requestedLimit: number;
   requestedLineBudget: number | null;
+  requestedPhase: OptionsFlowScannerScanPhase | null;
 };
 
 type QueuedScan = {
@@ -140,6 +160,44 @@ function normalizeLineBudget(value: number | undefined): number | null {
     : null;
 }
 
+function normalizeScanPhase(
+  value: OptionsFlowScannerScanPhase | undefined,
+): OptionsFlowScannerScanPhase | null {
+  return value === "seed" || value === "expanded" || value === "manual"
+    ? value
+    : null;
+}
+
+function normalizePositiveInteger(value: number | undefined): number | null {
+  return Number.isFinite(value) && (value ?? 0) > 0
+    ? Math.floor(value as number)
+    : null;
+}
+
+function normalizeStrikeCoverage(
+  value: OptionsFlowScannerRequest["strikeCoverage"],
+): OptionsFlowScannerRequest["strikeCoverage"] | null {
+  return value === "fast" || value === "standard" || value === "full"
+    ? value
+    : null;
+}
+
+function normalizeMarketDataMode(
+  value: OptionsFlowScannerTransportStatus["marketDataMode"],
+): OptionsFlowScannerMarketDataMode | null {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (
+    normalized === "live" ||
+    normalized === "frozen" ||
+    normalized === "delayed" ||
+    normalized === "delayed_frozen" ||
+    normalized === "unknown"
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
 function normalizeTimeoutMs(value: number | null | undefined): number | null {
   return Number.isFinite(value) && (value ?? 0) > 0
     ? Math.max(1, Math.floor(value as number))
@@ -169,6 +227,15 @@ function mergeQueuedRequest(
     unusualThreshold: current.unusualThreshold ?? next.unusualThreshold,
     lineBudget: mergeLineBudget(current.lineBudget, next.lineBudget),
     allowPartial: Boolean(current.allowPartial && next.allowPartial),
+    phase: next.phase ?? current.phase,
+    expirationScanCount:
+      normalizePositiveInteger(next.expirationScanCount) ??
+      normalizePositiveInteger(current.expirationScanCount) ??
+      undefined,
+    strikeCoverage:
+      normalizeStrikeCoverage(next.strikeCoverage) ??
+      normalizeStrikeCoverage(current.strikeCoverage) ??
+      undefined,
   };
 }
 
@@ -223,11 +290,20 @@ function snapshotSatisfiesRequest<TEvent>(
   }
 
   const requestedLineBudget = normalizeLineBudget(request.lineBudget);
-  return !(
+  if (
     !request.allowPartial &&
     requestedLineBudget !== null &&
     snapshot.requestedLineBudget !== null &&
     snapshot.requestedLineBudget < requestedLineBudget
+  ) {
+    return false;
+  }
+
+  const requestedPhase = normalizeScanPhase(request.phase);
+  return !(
+    !request.allowPartial &&
+    requestedPhase === "expanded" &&
+    snapshot.requestedPhase !== "expanded"
   );
 }
 
@@ -290,7 +366,18 @@ function getTransportSkipReason(
     return "gateway-not-authenticated";
   }
 
-  if (status?.liveMarketDataAvailable === false) {
+  const marketDataMode = normalizeMarketDataMode(status?.marketDataMode);
+  if (marketDataMode === "frozen") {
+    return "market-data-frozen";
+  }
+  if (marketDataMode === "delayed_frozen") {
+    return "market-data-delayed-frozen";
+  }
+
+  if (
+    status?.liveMarketDataAvailable === false &&
+    marketDataMode !== "delayed"
+  ) {
     return "market-data-not-live";
   }
 
@@ -334,6 +421,8 @@ export function createOptionsFlowScanner<TEvent>(
     failedSymbols: [],
     transport: null,
     skippedReason: null,
+    marketDataMode: null,
+    scanPhase: null,
   };
 
   function recordRunResult(
@@ -348,6 +437,8 @@ export function createOptionsFlowScanner<TEvent>(
       failedSymbols: [...result.failedSymbols],
       transport: result.transport,
       skippedReason: result.skippedReason,
+      marketDataMode: result.marketDataMode,
+      scanPhase: result.scanPhase,
     };
     return result;
   }
@@ -416,13 +507,18 @@ export function createOptionsFlowScanner<TEvent>(
             limit: request.limit,
             unusualThreshold: normalizeThreshold(request.unusualThreshold),
             lineBudget: normalizeLineBudget(request.lineBudget) ?? undefined,
+            phase: normalizeScanPhase(request.phase) ?? undefined,
+            expirationScanCount:
+              normalizePositiveInteger(request.expirationScanCount) ?? undefined,
+            strikeCoverage:
+              normalizeStrikeCoverage(request.strikeCoverage) ?? undefined,
             signal,
           }),
         symbol,
       );
       const settledAt = now();
       storeSnapshot(symbol, request, result, transport, scanStartedAt, settledAt);
-      await options.onResult?.({ symbol, result, failed: false });
+      await options.onResult?.({ symbol, request, result, failed: false });
       return { symbol, failed: false };
     } catch (error) {
       const settledAt = now();
@@ -442,12 +538,12 @@ export function createOptionsFlowScanner<TEvent>(
         )
       ) {
         options.onError?.(error, { symbol, phase: "fetch" });
-        await options.onResult?.({ symbol, failed: true, error: message });
+        await options.onResult?.({ symbol, request, failed: true, error: message });
         return { symbol, failed: true };
       }
       snapshots.delete(keyFor(symbol, request.unusualThreshold));
       options.onError?.(error, { symbol, phase: "fetch" });
-      await options.onResult?.({ symbol, failed: true, error: message });
+      await options.onResult?.({ symbol, request, failed: true, error: message });
       return { symbol, failed: true };
     } finally {
       activeSymbols.delete(symbol);
@@ -491,6 +587,7 @@ export function createOptionsFlowScanner<TEvent>(
       error: source?.errorMessage ?? null,
       requestedLimit: request.limit,
       requestedLineBudget: normalizeLineBudget(request.lineBudget),
+      requestedPhase: normalizeScanPhase(request.phase),
     });
   }
 
@@ -517,6 +614,8 @@ export function createOptionsFlowScanner<TEvent>(
     const normalizedSymbols = uniqueSymbols(symbols, normalizeSymbol);
     const transportStatus = await getTransport();
     const transport = transportStatus?.transport ?? null;
+    const marketDataMode = normalizeMarketDataMode(transportStatus?.marketDataMode);
+    const scanPhase = normalizeScanPhase(request.phase);
     const skipReason = getTransportSkipReason(
       transportStatus,
       preferredTransport,
@@ -530,6 +629,8 @@ export function createOptionsFlowScanner<TEvent>(
         failedSymbols: [],
         transport,
         skippedReason: skipReason,
+        marketDataMode,
+        scanPhase,
       });
     }
 
@@ -540,6 +641,8 @@ export function createOptionsFlowScanner<TEvent>(
         failedSymbols: [],
         transport,
         skippedReason: null,
+        marketDataMode,
+        scanPhase,
       });
     }
 
@@ -568,6 +671,8 @@ export function createOptionsFlowScanner<TEvent>(
       failedSymbols,
       transport,
       skippedReason: null,
+      marketDataMode,
+      scanPhase,
     });
   }
 
@@ -581,6 +686,8 @@ export function createOptionsFlowScanner<TEvent>(
       failedSymbols: [],
       transport: null,
       skippedReason: null,
+      marketDataMode: null,
+      scanPhase: null,
     };
 
     try {
@@ -588,7 +695,14 @@ export function createOptionsFlowScanner<TEvent>(
       queued.clear();
       const grouped = new Map<string, QueuedScan[]>();
       for (const item of batch) {
-        const groupKey = `${item.request.limit}:${normalizeThreshold(item.request.unusualThreshold) ?? "default"}:${normalizeLineBudget(item.request.lineBudget) ?? "default"}`;
+        const groupKey = [
+          item.request.limit,
+          normalizeThreshold(item.request.unusualThreshold) ?? "default",
+          normalizeLineBudget(item.request.lineBudget) ?? "default",
+          normalizeScanPhase(item.request.phase) ?? "default",
+          normalizePositiveInteger(item.request.expirationScanCount) ?? "default",
+          normalizeStrikeCoverage(item.request.strikeCoverage) ?? "default",
+        ].join(":");
         const group = grouped.get(groupKey) ?? [];
         group.push(item);
         grouped.set(groupKey, group);
@@ -604,6 +718,8 @@ export function createOptionsFlowScanner<TEvent>(
         result.failedSymbols.push(...groupResult.failedSymbols);
         result.transport = groupResult.transport;
         result.skippedReason = groupResult.skippedReason;
+        result.marketDataMode = groupResult.marketDataMode;
+        result.scanPhase = groupResult.scanPhase;
       }
 
       return result;
@@ -705,6 +821,7 @@ export function createOptionsFlowScanner<TEvent>(
     request: OptionsFlowScannerRequest | (() => OptionsFlowScannerRequest);
     intervalMs: number | (() => number);
     batchSize: number | (() => number);
+    onCycle?: (input: { symbols: readonly string[] }) => void;
   }): void {
     if (timer || stopRotation) {
       return;
@@ -749,6 +866,9 @@ export function createOptionsFlowScanner<TEvent>(
         batch.push(symbols[(start + index) % symbols.length]);
       }
       rotationOffset = (start + size) % symbols.length;
+      if (rotationOffset === 0) {
+        input.onCycle?.({ symbols });
+      }
       return batch;
     };
 
@@ -795,6 +915,8 @@ export function createOptionsFlowScanner<TEvent>(
       failedSymbols: [],
       transport: null,
       skippedReason: null,
+      marketDataMode: null,
+      scanPhase: null,
     };
   }
 
@@ -827,6 +949,8 @@ export function createOptionsFlowScanner<TEvent>(
       lastFailedSymbols: [...lastRunResult.failedSymbols],
       lastSkippedReason: scannerActive ? null : lastRunResult.skippedReason,
       lastTransport: lastRunResult.transport,
+      lastMarketDataMode: lastRunResult.marketDataMode,
+      lastScanPhase: lastRunResult.scanPhase,
       scanTimeoutMs: getScanTimeoutMs(),
     };
   }

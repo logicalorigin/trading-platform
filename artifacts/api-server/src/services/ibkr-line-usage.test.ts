@@ -60,9 +60,8 @@ test("getIbkrLineUsageSnapshot reports visible prewarm demand without filler", a
     snapshot.lineUtilizationAudit.topLimitingReason,
     "active-demand-satisfied",
   );
-  assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 80);
-  assert.equal(snapshot.lineUtilizationAudit.watchlist.fillerCapSymbolCount, 0);
-  assert.equal(snapshot.lineUtilizationAudit.watchlist.fillerEnabled, false);
+  assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 160);
+  assert.equal("watchlist" in snapshot.lineUtilizationAudit, false);
 });
 
 test("getIbkrLineUsageSnapshot reports active scanner work instead of idle resource pressure", async () => {
@@ -187,10 +186,9 @@ test("getIbkrLineUsageSnapshot reconciles bridge prewarm groups after API restar
 
   assert.equal(snapshot.admission.activeLineCount, 2);
   assert.equal(snapshot.admission.visibleLineCount, 2);
-  assert.equal(snapshot.admission.watchlistLineCount, 0);
-  assert.equal(snapshot.admission.fillerLineCount, 0);
-  assert.equal(snapshot.lineUtilizationAudit.watchlist.primaryActiveSymbolCount, 2);
-  assert.equal(snapshot.lineUtilizationAudit.watchlist.fillerActiveSymbolCount, 0);
+  assert.equal("watchlistLineCount" in snapshot.admission, false);
+  assert.equal("fillerLineCount" in snapshot.admission, false);
+  assert.equal("watchlist" in snapshot.lineUtilizationAudit, false);
   assert.equal(
     snapshot.drift.reconciliation.status,
     "api_released_bridge_active",
@@ -222,13 +220,12 @@ test("getIbkrLineUsageSnapshot leaves scanner capacity schedulable without fille
   const snapshot = await getIbkrLineUsageSnapshot();
 
   assert.equal(snapshot.admission.activeLineCount, 90);
-  assert.equal(snapshot.allocation.fillerLineCount, 0);
-  assert.equal(snapshot.allocation.scannerEffectiveLineCap, 80);
-  assert.equal(snapshot.allocation.scannerSchedulableLineCap, 80);
-  assert.equal(snapshot.allocation.scannerSchedulableRemainingLineCount, 80);
+  assert.equal(snapshot.allocation.scannerEffectiveLineCap, 160);
+  assert.equal(snapshot.allocation.scannerSchedulableLineCap, 160);
+  assert.equal(snapshot.allocation.scannerSchedulableRemainingLineCount, 160);
   assert.equal(
     snapshot.admission.optionsFlowScanner.lineUtilization.schedulablePoolCap,
-    80,
+    160,
   );
   assert.equal(
     snapshot.lineUtilizationAudit.topLimitingReason,
@@ -261,9 +258,8 @@ test("getIbkrLineUsageSnapshot returns admission counters when bridge lanes stal
   assert.equal(snapshot.policy.accountMonitorDynamic, true);
   assert.equal(snapshot.allocation.activeLineCount, 1);
   assert.equal(snapshot.allocation.remainingToTargetLineCount, 199);
-  assert.equal(snapshot.allocation.elasticLineCount, 0);
-  assert.equal(snapshot.allocation.reclaimableElasticLineCount, 0);
-  assert.equal(snapshot.allocation.fillerLineCount, 0);
+  assert.equal("elasticLineCount" in snapshot.allocation, false);
+  assert.equal("fillerLineCount" in snapshot.allocation, false);
   assert.equal(snapshot.lineUtilizationAudit.targetLineCount, 200);
   assert.equal(snapshot.lineUtilizationAudit.admissionActiveLineCount, 1);
   assert.equal(snapshot.lineUtilizationAudit.idleToTargetLineCount, 199);
@@ -275,10 +271,10 @@ test("getIbkrLineUsageSnapshot returns admission counters when bridge lanes stal
     snapshot.lineUtilizationAudit.scanner.configuredConcurrency,
     2,
   );
-  assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 80);
-  assert.equal(snapshot.lineUtilizationAudit.watchlist.fillerCapSymbolCount, 0);
-  assert.equal(snapshot.admission.poolUsage["account-monitor"].maxLines, 30);
-  assert.equal(snapshot.admission.poolUsage["account-monitor"].dynamic, false);
+  assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 160);
+  assert.equal("watchlist" in snapshot.lineUtilizationAudit, false);
+  assert.equal(snapshot.admission.poolUsage["account-monitor"]?.maxLines, 30);
+  assert.equal(snapshot.admission.poolUsage["account-monitor"]?.dynamic, false);
   assert.equal(snapshot.admission.flowScannerLineCount, 1);
   assert.equal(typeof snapshot.admission.optionsFlowScanner, "object");
   assert.equal(snapshot.signalOptions.activeLineCount, 0);

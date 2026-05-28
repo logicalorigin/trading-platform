@@ -919,7 +919,7 @@ export const resolveIbkrGatewayHealth = ({
 export const shouldShowIbkrReconnectAction = (health) =>
   Boolean(health?.status && IBKR_RECONNECT_ACTION_STATUSES.has(health.status));
 
-const resolveWaveDuration = (connection, tone) => {
+const resolveWaveDuration = (connection, tone = {}) => {
   const ping = connection?.lastPingMs;
   if (!isIbkrWaveActive(connection)) {
     return null;
@@ -984,6 +984,57 @@ const SINE_WAVE_PHASES = [
   buildSineWavePoints(Math.PI * 2),
 ];
 const SINE_WAVE_VALUES = SINE_WAVE_PHASES.join(";");
+
+const WAVE_DURATION_BY_SPEED = {
+  fast: "0.9s",
+  medium: "1.45s",
+  slow: "2.15s",
+};
+
+const normalizeWaveSpeed = (value) => {
+  const speed = String(value || "").toLowerCase();
+  return WAVE_DURATION_BY_SPEED[speed] ? speed : null;
+};
+
+export const resolveIbkrStatusWaveProfile = ({ status, wave } = {}) => {
+  const explicitSpeed = normalizeWaveSpeed(wave);
+  if (explicitSpeed) {
+    return {
+      state: canonicalizeStreamState(status, "healthy"),
+      wave: explicitSpeed,
+      duration: WAVE_DURATION_BY_SPEED[explicitSpeed],
+      active: true,
+    };
+  }
+  if (wave === "flat") {
+    return {
+      state: canonicalizeStreamState(status, "offline"),
+      wave: "flat",
+      duration: null,
+      active: false,
+    };
+  }
+
+  const state = canonicalizeStreamState(status, "offline");
+  switch (state) {
+    case "healthy":
+      return { state, wave: "fast", duration: WAVE_DURATION_BY_SPEED.fast, active: true };
+    case "quiet":
+    case "no-subscribers":
+    case "market-closed":
+      return { state, wave: "slow", duration: WAVE_DURATION_BY_SPEED.slow, active: true };
+    case "checking":
+    case "capacity-limited":
+    case "reconnecting":
+    case "login-required":
+      return { state, wave: "slow", duration: WAVE_DURATION_BY_SPEED.slow, active: true };
+    case "delayed":
+    case "stale":
+    case "offline":
+    default:
+      return { state, wave: "flat", duration: null, active: false };
+  }
+};
 
 export const getIbkrGatewayBadges = ({
   connection,
@@ -1153,25 +1204,42 @@ export const buildIbkrGatewayTitle = ({
   return details.join(" | ");
 };
 
-export const IbkrPingWavelength = ({ connection, tone }) => {
-  const duration = resolveWaveDuration(connection, tone);
+export const IbkrStatusWave = ({
+  status,
+  tone = {},
+  color,
+  wave,
+  active,
+  duration,
+  width = 34,
+  height = 12,
+  decorative = true,
+  ariaLabel,
+  dataTestId,
+  style,
+}) => {
+  const profile = resolveIbkrStatusWaveProfile({ status, wave });
   const prefersReducedMotion = usePrefersReducedMotion();
-  const active = Boolean(duration) && !prefersReducedMotion;
-  const color = active
-    ? streamStateTokenVar("healthy")
-    : tone.color || CSS_COLOR.textMuted;
-  const staticPoints = active ? SINE_WAVE_PHASES[0] : buildSineWavePoints(0);
+  const resolvedDuration = duration ?? profile.duration;
+  const animated = Boolean(active ?? profile.active) && Boolean(resolvedDuration) && !prefersReducedMotion;
+  const resolvedColor = color || tone.color || CSS_COLOR.textMuted;
 
   return (
     <span
-      aria-hidden="true"
+      aria-hidden={decorative ? "true" : undefined}
+      aria-label={!decorative ? ariaLabel : undefined}
+      role={!decorative && ariaLabel ? "img" : undefined}
       data-ibkr-wave
+      data-ibkr-wave-motion={animated ? "animated" : "static"}
+      data-ibkr-wave-state={profile.state}
+      data-testid={dataTestId}
       style={{
         display: "inline-block",
-        width: dim(34),
-        height: dim(12),
+        width: dim(width),
+        height: dim(height),
         flexShrink: 0,
-        opacity: active ? 1 : 0.68,
+        opacity: animated ? 1 : 0.68,
+        ...style,
       }}
     >
       <svg
@@ -1181,12 +1249,12 @@ export const IbkrPingWavelength = ({ connection, tone }) => {
         focusable="false"
         style={{ display: "block", overflow: "visible" }}
       >
-        {active ? (
+        {animated ? (
           <>
             <polyline
               points={SINE_WAVE_PHASES[0]}
               fill="none"
-              stroke={color}
+              stroke={resolvedColor}
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeWidth="2.25"
@@ -1195,7 +1263,7 @@ export const IbkrPingWavelength = ({ connection, tone }) => {
             >
               <animate
                 attributeName="points"
-                dur={duration}
+                dur={resolvedDuration}
                 repeatCount="indefinite"
                 values={SINE_WAVE_VALUES}
               />
@@ -1203,7 +1271,7 @@ export const IbkrPingWavelength = ({ connection, tone }) => {
             <polyline
               points={SINE_WAVE_PHASES[0]}
               fill="none"
-              stroke={color}
+              stroke={resolvedColor}
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeWidth="1.45"
@@ -1212,7 +1280,7 @@ export const IbkrPingWavelength = ({ connection, tone }) => {
             >
               <animate
                 attributeName="points"
-                dur={duration}
+                dur={resolvedDuration}
                 repeatCount="indefinite"
                 values={SINE_WAVE_VALUES}
               />
@@ -1220,9 +1288,9 @@ export const IbkrPingWavelength = ({ connection, tone }) => {
           </>
         ) : (
           <polyline
-            points={staticPoints}
+            points={SINE_WAVE_PHASES[0]}
             fill="none"
-            stroke={color}
+            stroke={resolvedColor}
             strokeLinecap="round"
             strokeLinejoin="round"
             strokeWidth="1.25"
@@ -1232,6 +1300,24 @@ export const IbkrPingWavelength = ({ connection, tone }) => {
         )}
       </svg>
     </span>
+  );
+};
+
+export const IbkrPingWavelength = ({ connection, tone = {} }) => {
+  const duration = resolveWaveDuration(connection, tone);
+  const active = Boolean(duration);
+  const color = active
+    ? streamStateTokenVar("healthy")
+    : tone.color || CSS_COLOR.textMuted;
+
+  return (
+    <IbkrStatusWave
+      status={active ? "healthy" : "offline"}
+      tone={{ ...tone, color }}
+      wave={tone.wave}
+      active={active}
+      duration={duration}
+    />
   );
 };
 

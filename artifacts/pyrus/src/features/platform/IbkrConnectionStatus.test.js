@@ -11,8 +11,10 @@ import {
   getIbkrStreamStateMeta,
   IbkrConnectionLane,
   IbkrPingWavelength,
+  IbkrStatusWave,
   isIbkrWaveActive,
   maskIbkrAccountId,
+  resolveIbkrStatusWaveProfile,
   resolveIbkrGatewayHealth,
   shouldShowIbkrReconnectAction,
 } from "./IbkrConnectionStatus.jsx";
@@ -616,6 +618,50 @@ test("IbkrPingWavelength renders connected wire as an animated green sine wave",
   assert.equal((html.match(/<animate /g) || []).length, 2);
   assert.match(html, /attributeName="points"/);
   assert.match(html, /1\.00,6\.00/);
+});
+
+test("IbkrStatusWave maps status states to animated and static wave glyphs", () => {
+  assert.deepEqual(resolveIbkrStatusWaveProfile({ status: "healthy" }), {
+    state: "healthy",
+    wave: "fast",
+    duration: "0.9s",
+    active: true,
+  });
+  assert.equal(
+    resolveIbkrStatusWaveProfile({ status: "capacity-limited" }).wave,
+    "slow",
+  );
+  assert.equal(
+    resolveIbkrStatusWaveProfile({ status: "stale" }).active,
+    false,
+  );
+  assert.equal(
+    resolveIbkrStatusWaveProfile({ status: "offline" }).wave,
+    "flat",
+  );
+
+  const healthyHtml = renderToStaticMarkup(
+    React.createElement(IbkrStatusWave, {
+      status: "healthy",
+      tone: { color: CSS_COLOR.green },
+      decorative: false,
+      ariaLabel: "IBKR status Ready",
+    }),
+  );
+  assert.match(healthyHtml, /data-ibkr-wave-motion="animated"/);
+  assert.match(healthyHtml, /data-ibkr-wave-state="healthy"/);
+  assert.match(healthyHtml, /role="img"/);
+  assert.equal((healthyHtml.match(/<animate /g) || []).length, 2);
+
+  const staleHtml = renderToStaticMarkup(
+    React.createElement(IbkrStatusWave, {
+      status: "stale",
+      tone: { color: CSS_COLOR.amber },
+    }),
+  );
+  assert.match(staleHtml, /data-ibkr-wave-motion="static"/);
+  assert.match(staleHtml, /data-ibkr-wave-state="stale"/);
+  assert.equal((staleHtml.match(/<animate /g) || []).length, 0);
 });
 
 test("resolveIbkrGatewayHealth maps Gateway readiness states", () => {
@@ -1706,7 +1752,7 @@ test("buildHeaderIbkrPopoverModel keeps line usage when runtime diagnostics are 
   );
 });
 
-test("buildHeaderIbkrPopoverModel uses watchlist prewarm reservation when retired watchlist pool is zero", () => {
+test("buildHeaderIbkrPopoverModel omits retired watchlist line rows", () => {
   const model = buildHeaderIbkrPopoverModel({
     connection: {
       configured: true,
@@ -1759,13 +1805,11 @@ test("buildHeaderIbkrPopoverModel uses watchlist prewarm reservation when retire
     },
   });
 
-  const watchlistRow = model.lineUsage.rows.find((row) => row.id === "watchlist");
-
-  assert.equal(watchlistRow.used, 118);
-  assert.equal(watchlistRow.cap, 120);
-  assert.equal(watchlistRow.effectiveCap, 120);
-  assert.equal(watchlistRow.free, 2);
-  assert.equal(watchlistRow.detail, "118 active of 120 reserved");
+  assert.equal(
+    model.lineUsage.rows.some((row) => row.id === "watchlist"),
+    false,
+  );
+  assert.equal("watchlist" in (model.lineUsage.pools || {}), false);
 });
 
 test("buildHeaderIbkrPopoverModel uses one active line meter with pending reconciliation", () => {

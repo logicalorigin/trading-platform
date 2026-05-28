@@ -25,6 +25,7 @@ test("option chain hydration defaults to metadata with about ten base strikes", 
   assert.equal(OPTION_CHAIN_METADATA_HYDRATION, "metadata");
   assert.equal(OPTION_CHAIN_FAST_STRIKES_AROUND_MONEY, 5);
   assert.equal(DEFAULT_OPTION_CHAIN_COVERAGE, 5);
+  assert.equal((DEFAULT_OPTION_CHAIN_COVERAGE * 2 + 1) * 2 + 1, 23);
 });
 
 test("option chain coverage normalizes to supported dropdown values", () => {

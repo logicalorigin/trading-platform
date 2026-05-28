@@ -5165,9 +5165,16 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     maxExpirations?: number;
     strikesAroundMoney?: number;
     strikeCoverage?: "fast" | "standard" | "full";
+    underlyingSpotPrice?: number | null;
     quoteHydration?: "metadata" | "snapshot";
     signal?: AbortSignal;
   }): Promise<OptionChainContract[]> {
+    const providedSpotPrice =
+      typeof input.underlyingSpotPrice === "number" &&
+      Number.isFinite(input.underlyingSpotPrice) &&
+      input.underlyingSpotPrice > 0
+        ? input.underlyingSpotPrice
+        : null;
     const normalizedUnderlying = normalizeSymbol(input.underlying);
     const singleFlightKey = JSON.stringify({
       type: "chain",
@@ -5177,6 +5184,8 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       maxExpirations: input.maxExpirations ?? null,
       strikesAroundMoney: input.strikesAroundMoney ?? null,
       strikeCoverage: input.strikeCoverage ?? null,
+      underlyingSpotPrice:
+        providedSpotPrice === null ? null : Number(providedSpotPrice.toFixed(4)),
       quoteHydration: input.quoteHydration ?? "snapshot",
     });
 
@@ -5188,11 +5197,15 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         await this.refreshSession();
         const resolvedUnderlying =
           await this.resolveStockContract(input.underlying);
-        const underlyingQuote = await this.getUnderlyingQuoteForOptionChain({
-          symbol: input.underlying,
-          resolvedUnderlying,
-        });
+        const underlyingQuote =
+          providedSpotPrice === null
+            ? await this.getUnderlyingQuoteForOptionChain({
+                symbol: input.underlying,
+                resolvedUnderlying,
+              })
+            : null;
         const spotPrice =
+          providedSpotPrice ??
           underlyingQuote?.price ??
           underlyingQuote?.bid ??
           underlyingQuote?.ask ??

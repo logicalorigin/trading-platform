@@ -100,6 +100,8 @@ const runtimeBuildFingerprint = {
   nodeEnv: process.env.NODE_ENV || null,
   replitIdPresent: process.env.REPL_ID !== undefined,
 };
+const enableReplitRuntimeErrorModal =
+  process.env.PYRUS_ENABLE_REPLIT_RUNTIME_ERROR_MODAL === "1";
 const isolationHeaders =
   isolationMode === "off"
     ? {}
@@ -127,9 +129,13 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    runtimeErrorOverlay({
-      filter: (error) => error.message !== "(unknown runtime error)",
-    }),
+    ...(enableReplitRuntimeErrorModal
+      ? [
+          runtimeErrorOverlay({
+            filter: (error) => error.message !== "(unknown runtime error)",
+          }),
+        ]
+      : []),
     ...(process.env.NODE_ENV !== "production" &&
     process.env.REPL_ID !== undefined
       ? [

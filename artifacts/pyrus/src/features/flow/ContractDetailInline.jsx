@@ -1033,6 +1033,19 @@ export const ContractDetailInline = ({
                 rangeIdentityKey={optionChartScopeKey}
                 viewportLayoutKey={optionChartViewportLayoutKey}
                 model={optionChartModel}
+                footprintContext={
+                  chartSymbol
+                    ? {
+                        symbol: chartSymbol,
+                        assetClass: "option",
+                        timeframe: optionChartTimeframe,
+                        providerContractId:
+                          effectiveProviderContractId || providerContractId,
+                        optionTicker,
+                        outsideRth: true,
+                      }
+                    : null
+                }
                 chartEvents={optionChartEvents}
                 chartFlowDiagnostics={optionChartEventConversion}
                 placement="workspace"

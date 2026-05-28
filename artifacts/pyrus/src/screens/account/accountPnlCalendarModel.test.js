@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   PNL_CALENDAR_WEEKDAYS,
+  applyAccountDailyPnlOverride,
   buildDailyPnlSeries,
   buildMonthPnlCalendarModel,
   buildYearPnlCalendarModel,
@@ -322,6 +323,30 @@ test("buildDailyPnlSeries uses current terminal NAV for same-day unrealized P&L"
   assert.equal(Number(today.unrealized.toFixed(2)), 112.14);
   assert.equal(Number(today.pnl.toFixed(2)), 112.14);
   assert.equal(today.pnlSource, "total");
+});
+
+test("account daily P&L override makes today match the account summary", () => {
+  const series = buildDailyPnlSeries({
+    startDate: new Date(2026, 4, 27),
+    endDate: new Date(2026, 4, 27),
+    trades: [trade("2026-05-27T16:00:00.000Z", 5)],
+    equityPoints: [
+      equityPoint("2026-05-26T20:00:00.000Z", 1_000),
+      equityPoint("2026-05-27T20:00:00.000Z", 990),
+    ],
+  });
+
+  const overridden = applyAccountDailyPnlOverride(
+    series,
+    { value: -25 },
+    new Date(2026, 4, 27, 12),
+  );
+
+  assert.equal(overridden[0].pnl, -25);
+  assert.equal(overridden[0].total, -25);
+  assert.equal(overridden[0].realized, 5);
+  assert.equal(overridden[0].unrealized, -30);
+  assert.equal(overridden[0].pnlSource, "account-summary");
 });
 
 test("buildDailyPnlSeries does not pile sparse multi-day NAV gaps into the latest day", () => {

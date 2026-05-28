@@ -54,6 +54,18 @@ test("account phone layouts keep the dense horizontal table path", () => {
   );
 });
 
+test("position tables use the compact brokerage density treatment", () => {
+  assert.match(positionsSource, /const POSITION_TABLE_ROW_HEIGHT = 38/);
+  assert.match(positionsSource, /const POSITION_TABLE_HEADER_HEIGHT = 28/);
+  assert.match(positionsSource, /padding:\s*sp\("3px 6px"\)/);
+  assert.match(positionsSource, /textTransform:\s*"none"/);
+  assert.match(positionsSource, /compactPositionHeaderStyle/);
+  assert.match(positionsSource, /compactPositionCellStyle/);
+  assert.match(positionsSource, /ra-position-table-row--alt/);
+  assert.match(cssSource, /\.ra-position-table-row--alt/);
+  assert.match(cssSource, /--ra-surface-1/);
+});
+
 test("account report tables use shared client-side pagination", () => {
   assert.match(positionsSource, /POSITIONS_PAGE_SIZE = 50/);
   assert.match(positionsSource, /dataTestId="account-positions-pagination"/);

@@ -56,6 +56,10 @@ import {
   positionCostBasis,
 } from "../../features/account/positionDisplayModel.js";
 import {
+  buildPositionTradeManagement,
+  TRADE_MANAGEMENT_STATUS,
+} from "../../features/account/positionTradeManagement.js";
+import {
   POSITION_TABLE_SURFACE_ACCOUNT,
   getPositionTableColumns,
 } from "../../features/account/positionTableColumns.js";
@@ -326,6 +330,19 @@ const liveQuoteChangeFieldsAreUsable = (liveQuote) => {
   return Math.abs(impliedPercent - changePercent) <= tolerance;
 };
 
+const liveOptionQuoteValuationEligible = (liveQuote) => {
+  if (!liveQuote) return false;
+  const bid = firstPositiveFiniteNumber(liveQuote.bid);
+  const ask = firstPositiveFiniteNumber(liveQuote.ask);
+  if (bid == null || ask == null) return false;
+  const freshness = firstText(liveQuote.freshness, liveQuote.quoteFreshness).toLowerCase();
+  if (["metadata", "pending", "stale", "unavailable", "frozen", "delayed", "delayed_frozen"].includes(freshness)) {
+    return false;
+  }
+  const marketDataMode = firstText(liveQuote.marketDataMode).toLowerCase();
+  return !marketDataMode || marketDataMode === "live";
+};
+
 const mergeLiveOptionQuote = (quote, liveQuote) => {
   if (!liveQuote) return quote || null;
   const current = quote || {};
@@ -393,6 +410,10 @@ const mergeLiveOptionQuote = (quote, liveQuote) => {
 const isShadowLedgerPositionRow = (row) =>
   String(row?.accountId || "").toLowerCase() === "shadow" ||
   String(row?.source || "").toUpperCase() === "SHADOW_LEDGER";
+
+const shadowRowAllowsLiveOptionValuation = (row, liveQuote) =>
+  !isShadowLedgerPositionRow(row) ||
+  (row?.valuationEligible === true && liveOptionQuoteValuationEligible(liveQuote));
 
 const positionMarketDateFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/New_York",
@@ -470,13 +491,22 @@ const positionOpenedOnCurrentMarketDay = (openedAt, now = new Date()) => {
 
 const applyLiveOptionQuoteToRow = (row, liveQuote) => {
   if (!liveQuote) return row;
+  const liveValuationAllowed = shadowRowAllowsLiveOptionValuation(row, liveQuote);
   const optionQuote = mergeLiveOptionQuote(row.optionQuote, liveQuote);
+  const displayOptionQuote = liveValuationAllowed
+    ? optionQuote
+    : {
+        ...optionQuote,
+        mark: firstPositiveFiniteNumber(row?.optionQuote?.mark, row?.mark),
+        dayChange: firstFiniteNumber(row?.optionQuote?.dayChange),
+        dayChangePercent: firstFiniteNumber(row?.optionQuote?.dayChangePercent),
+      };
   const mark = firstPositiveFiniteNumber(
-    optionQuote?.mark,
-    optionQuote?.mid,
-    quoteMid(optionQuote),
-    optionQuote?.last,
-    optionQuote?.price,
+    liveValuationAllowed ? displayOptionQuote?.mark : null,
+    liveValuationAllowed ? displayOptionQuote?.mid : null,
+    liveValuationAllowed ? quoteMid(displayOptionQuote) : null,
+    liveValuationAllowed ? displayOptionQuote?.last : null,
+    liveValuationAllowed ? displayOptionQuote?.price : null,
     row.mark,
   );
   const quantity = firstFiniteNumber(row.quantity);
@@ -502,7 +532,7 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
     unrealizedPnl != null && costBasis
       ? (unrealizedPnl / costBasis) * 100
       : row.unrealizedPnlPercent;
-  const perContractDayChange = firstFiniteNumber(optionQuote?.dayChange);
+  const perContractDayChange = firstFiniteNumber(displayOptionQuote?.dayChange);
   const sameDayPosition = positionOpenedOnCurrentMarketDay(row.openedAt);
   const dayChange =
     sameDayPosition && unrealizedPnl != null
@@ -524,7 +554,7 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
 
   return {
     ...row,
-    optionQuote,
+    optionQuote: displayOptionQuote,
     mark,
     dayChange: preserveBackendDayChange ? row.dayChange : dayChange,
     dayChangePercent: preserveBackendDayChange
@@ -540,11 +570,33 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
   };
 };
 
-const buildDisplayTotals = (rows, fallbackTotals) => {
-  if (!rows.length) {
-    return fallbackTotals || {};
+const firstDisplayTotalNumber = (...values) => {
+  for (const value of values) {
+    if (value == null || value === "") continue;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
   }
-  return rows.reduce(
+  return null;
+};
+
+const buildDisplayTotals = (rows, fallbackTotals = {}) => {
+  const fallbackCash = firstDisplayTotalNumber(
+    fallbackTotals.cash,
+    fallbackTotals.totalCash,
+    fallbackTotals.totalCashValue,
+  );
+  const fallbackBuyingPower = firstDisplayTotalNumber(fallbackTotals.buyingPower);
+  const fallbackNetLiquidation = firstDisplayTotalNumber(fallbackTotals.netLiquidation);
+  if (!rows.length) {
+    return {
+      ...(fallbackTotals || {}),
+      cash: fallbackCash,
+      totalCash: fallbackCash,
+      buyingPower: fallbackBuyingPower,
+      netLiquidation: fallbackNetLiquidation,
+    };
+  }
+  const totals = rows.reduce(
     (acc, row) => {
       const marketValue = firstFiniteNumber(row.marketValue);
       const unrealizedPnl = firstFiniteNumber(row.unrealizedPnl);
@@ -569,8 +621,16 @@ const buildDisplayTotals = (rows, fallbackTotals) => {
       unrealizedPnl: 0,
       dayChange: 0,
       weightPercent: null,
+      cash: fallbackCash,
+      totalCash: fallbackCash,
+      buyingPower: fallbackBuyingPower,
+      netLiquidation: fallbackNetLiquidation,
     },
   );
+  if (totals.netLiquidation == null && totals.cash != null) {
+    totals.netLiquidation = totals.cash + totals.netExposure;
+  }
+  return totals;
 };
 
 const applyDisplayWeights = (rows) => rows;
@@ -715,6 +775,65 @@ const automationPositionMetrics = (row, currency, maskValues) => {
   };
 };
 
+const tradeManagementForRow = (row) => buildPositionTradeManagement(row);
+
+const formatTradeManagementSource = (source) =>
+  source === "broker"
+    ? "Broker"
+    : source === "automation"
+      ? "Auto"
+      : source === "local"
+        ? "Local"
+        : "";
+
+const tradeManagementTone = (management) => {
+  if (management.status === "breached") return CSS_COLOR.red;
+  if (
+    management.riskDistancePct != null &&
+    management.riskDistancePct <= 10
+  ) {
+    return CSS_COLOR.amber;
+  }
+  return CSS_COLOR.textSec;
+};
+
+const formatTradeManagementPrice = (level, maskValues) =>
+  level?.price != null ? formatAccountPrice(level.price, 2, maskValues) : MISSING_VALUE;
+
+const formatTradeManagementDistance = (management, maskValues) => {
+  const distance = firstFiniteNumber(management?.riskDistancePct);
+  if (distance == null) return MISSING_VALUE;
+  const formatted = formatAccountPercent(Math.abs(distance), 1, maskValues);
+  return distance <= 0 ? `${formatted} past` : `${formatted} away`;
+};
+
+const tradeManagementTitle = (management, currency, maskValues) => {
+  const parts = [
+    management.stop
+      ? `Stop ${formatTradeManagementPrice(management.stop, maskValues)} ${formatTradeManagementSource(management.stop.source)}`
+      : null,
+    management.trail
+      ? `Trail ${formatTradeManagementPrice(management.trail, maskValues)} ${formatTradeManagementSource(management.trail.source)}`
+      : null,
+    management.target
+      ? `Target ${formatTradeManagementPrice(management.target, maskValues)} ${formatTradeManagementSource(management.target.source)}`
+      : null,
+    management.riskDistancePct != null
+      ? `Distance ${formatTradeManagementDistance(management, maskValues)}`
+      : null,
+    management.riskAmount != null
+      ? `Risk ${formatAccountMoney(management.riskAmount, currency, true, maskValues)}`
+      : null,
+    management.statusLabel,
+  ].filter(Boolean);
+  return parts.join(" · ");
+};
+
+const hasTradeManagementDetail = (row) => {
+  const management = tradeManagementForRow(row);
+  return Boolean(management.stop || management.trail || management.target);
+};
+
 const optionInlineDetail = (row, maskValues) => {
   const contract = row?.optionContract || null;
   if (!contract) {
@@ -758,7 +877,8 @@ const optionDetailMetrics = (row, currency, maskValues) => {
   const underlying = row?.underlyingMarket || null;
   const automation = row?.automationContext || null;
   const automationMetrics = automationPositionMetrics(row, currency, maskValues);
-  if (!contract && !quote && !underlying && !automation) return [];
+  const management = tradeManagementForRow(row);
+  if (!contract && !quote && !underlying && !automation && !hasTradeManagementDetail(row)) return [];
 
   const greeksMain = [
     formatGreek("Δ", greeksQuote?.delta, 2),
@@ -829,6 +949,23 @@ const optionDetailMetrics = (row, currency, maskValues) => {
             underlyingBid != null && underlyingAsk != null
               ? `Bid / ask ${formatOptionPrice(underlyingBid, maskValues)} / ${formatOptionPrice(underlyingAsk, maskValues)}`
               : firstText(underlying?.updatedAt),
+        }
+      : null,
+    management.stop || management.trail || management.target
+      ? {
+          label: "Trade Management",
+          value: [
+            management.stop
+              ? `Stop ${formatTradeManagementPrice(management.stop, maskValues)}`
+              : null,
+            management.trail
+              ? `Trail ${formatTradeManagementPrice(management.trail, maskValues)}`
+              : null,
+            management.target
+              ? `Target ${formatTradeManagementPrice(management.target, maskValues)}`
+              : null,
+          ].filter(Boolean).join(" · ") || MISSING_VALUE,
+          detail: tradeManagementTitle(management, currency, maskValues),
         }
       : null,
     automation
@@ -958,6 +1095,7 @@ export const __positionsPanelInternalsForTests = {
   applyLiveOptionQuoteToRow,
   automationPositionMetrics,
   automationStopTone,
+  buildDisplayTotals,
   formatAutomationStopDistanceLabel,
   optionDetailMetrics,
   optionInlineDetail,
@@ -1208,7 +1346,26 @@ const PositionSignalRiskCell = ({ row, currency, maskValues }) => {
   );
 };
 
+const POSITION_TABLE_ROW_HEIGHT = 38;
+const POSITION_TABLE_HEADER_HEIGHT = 28;
+
 const denseTableBorder = () => `1px solid ${CSS_COLOR.borderLight}`;
+const denseTableDivider = () => `1px solid ${CSS_COLOR.border}`;
+
+const denseColumnBoundaryStyle = (column = {}) => ({
+  borderLeft: column.groupEdge === "start" ? denseTableDivider() : undefined,
+  borderRight:
+    column.groupEdge === "end" ? denseTableDivider() : denseTableBorder(),
+  boxSizing: "border-box",
+});
+
+const denseTableColumnWidth = (column) => {
+  const width = Number.parseFloat(String(column?.width ?? ""));
+  return Number.isFinite(width) ? width : 0;
+};
+
+const denseTableMinWidth = (columns) =>
+  columns.reduce((sum, column) => sum + denseTableColumnWidth(column), 0);
 
 const denseColumnTextStyle = ({
   align = "right",
@@ -1272,11 +1429,12 @@ const DenseStackedValue = ({
 );
 
 const denseTableCellStyle = (column, expanded = false) => ({
-  padding: sp("5px 8px"),
+  padding: sp("3px 6px"),
   borderBottom: denseTableBorder(),
-  height: dim(46),
+  height: dim(POSITION_TABLE_ROW_HEIGHT),
   verticalAlign: "middle",
   textAlign: column.align,
+  ...denseColumnBoundaryStyle(column),
   background: column.sticky ? CSS_COLOR.bg1 : "transparent",
   position: column.sticky ? "sticky" : undefined,
   left: column.sticky ? 0 : undefined,
@@ -1288,17 +1446,51 @@ const denseTableCellStyle = (column, expanded = false) => ({
 
 const denseHeaderCellStyle = (column, active) => ({
   ...tableHeaderStyle,
-  padding: sp("5px 8px"),
+  padding: sp("3px 6px"),
+  height: dim(POSITION_TABLE_HEADER_HEIGHT),
   color: active ? CSS_COLOR.text : CSS_COLOR.textMuted,
   fontSize: textSize("caption"),
-  letterSpacing: "0.04em",
+  letterSpacing: 0,
+  textTransform: "none",
   textAlign: column.align,
   background: CSS_COLOR.bg1,
+  ...denseColumnBoundaryStyle(column),
   position: "sticky",
   top: 0,
   left: column.sticky ? 0 : undefined,
   zIndex: column.sticky ? 4 : 3,
   boxShadow: column.sticky ? `2px 0 0 ${CSS_COLOR.borderLight}` : undefined,
+});
+
+const compactPositionHeaderStyle = ({ align = "left" } = {}) => ({
+  ...tableCellStyle,
+  ...tableHeaderStyle,
+  padding: sp("3px 6px"),
+  height: dim(POSITION_TABLE_HEADER_HEIGHT),
+  color: CSS_COLOR.textMuted,
+  fontSize: textSize("caption"),
+  letterSpacing: 0,
+  textTransform: "none",
+  textAlign: align,
+  verticalAlign: "middle",
+  borderRight: denseTableBorder(),
+  boxSizing: "border-box",
+});
+
+const compactPositionCellStyle = ({
+  align = "left",
+  color = CSS_COLOR.textSec,
+  fontFamily = T.sans,
+} = {}) => ({
+  ...tableCellStyle,
+  padding: sp("3px 6px"),
+  height: dim(34),
+  color,
+  fontFamily,
+  textAlign: align,
+  verticalAlign: "middle",
+  borderRight: denseTableBorder(),
+  boxSizing: "border-box",
 });
 
 const denseActionButtonStyle = {
@@ -1326,7 +1518,8 @@ const denseDisplayQuote = (row) => positionDisplayForRow(row).quote;
 const hasExpandablePositionDetails = (row) =>
   (row?.lots?.length || 0) > 0 ||
   (row?.sourceAttribution?.length || 0) > 0 ||
-  (row?.openOrders?.length || 0) > 0;
+  (row?.openOrders?.length || 0) > 0 ||
+  hasTradeManagementDetail(row);
 
 const denseColumnSortValue = (row, id) => {
   const quote = denseDisplayQuote(row);
@@ -1338,6 +1531,10 @@ const denseColumnSortValue = (row, id) => {
   }
   if (id === "price") return quote?.mark ?? quote?.last ?? row.mark;
   if (id === "quote") return quote?.spreadPercent ?? quote?.bid ?? quote?.ask;
+  if (id === "stop") return tradeManagementForRow(row).sortValues.stop;
+  if (id === "trail") return tradeManagementForRow(row).sortValues.trail;
+  if (id === "target") return tradeManagementForRow(row).sortValues.target;
+  if (id === "riskDistance") return tradeManagementForRow(row).sortValues.riskDistance;
   if (id === "day") return row.dayChange;
   if (id === "unrealized") return row.unrealizedPnl;
   if (id === "exposure") return row.marketValue;
@@ -1362,6 +1559,7 @@ const positionSearchText = (row) =>
     row?.strategyLabel,
     row?.sourceType,
     row?.optionContract?.underlying,
+    tradeManagementForRow(row).statusLabel,
     optionInlineDetail(row, false),
   ]
     .filter(Boolean)
@@ -1569,6 +1767,8 @@ const DensePositionCell = ({
   const quoteDetail = [spread, formatQuoteUpdatedDetail(quote)]
     .filter(Boolean)
     .join(" · ");
+  const management = tradeManagementForRow(row);
+  const managementTitle = tradeManagementTitle(management, currency, maskValues);
   const markValue = quote?.mark ?? quote?.mid ?? row.mark;
   const lastValue = quote?.last ?? quote?.price;
   const greeksPrimary =
@@ -1654,6 +1854,54 @@ const DensePositionCell = ({
           primaryTone={quoteHasBidAsk ? CSS_COLOR.textSec : CSS_COLOR.textDim}
           align={column.align}
           title={[bidAsk, quoteDetail].filter(Boolean).join(" · ")}
+        />
+      </td>
+    );
+  } else if (column.id === "stop") {
+    return (
+      <td style={denseTableCellStyle(column, expanded)} title={managementTitle}>
+        <DenseStackedValue
+          primary={formatTradeManagementPrice(management.stop, maskValues)}
+          secondary={formatTradeManagementSource(management.stop?.source) || management.statusLabel}
+          primaryTone={management.stop ? tradeManagementTone(management) : CSS_COLOR.textDim}
+          align={column.align}
+        />
+      </td>
+    );
+  } else if (column.id === "trail") {
+    return (
+      <td style={denseTableCellStyle(column, expanded)} title={managementTitle}>
+        <DenseStackedValue
+          primary={formatTradeManagementPrice(management.trail, maskValues)}
+          secondary={formatTradeManagementSource(management.trail?.source) || "Inactive"}
+          primaryTone={management.trail ? CSS_COLOR.textSec : CSS_COLOR.textDim}
+          align={column.align}
+        />
+      </td>
+    );
+  } else if (column.id === "target") {
+    return (
+      <td style={denseTableCellStyle(column, expanded)} title={managementTitle}>
+        <DenseStackedValue
+          primary={formatTradeManagementPrice(management.target, maskValues)}
+          secondary={formatTradeManagementSource(management.target?.source) || management.statusLabel}
+          primaryTone={management.target ? CSS_COLOR.textSec : CSS_COLOR.textDim}
+          align={column.align}
+        />
+      </td>
+    );
+  } else if (column.id === "riskDistance") {
+    return (
+      <td style={denseTableCellStyle(column, expanded)} title={managementTitle}>
+        <DenseStackedValue
+          primary={formatTradeManagementDistance(management, maskValues)}
+          secondary={
+            management.riskAmount != null
+              ? formatAccountMoney(management.riskAmount, currency, true, maskValues)
+              : management.statusLabel
+          }
+          primaryTone={management.stop ? tradeManagementTone(management) : CSS_COLOR.textDim}
+          align={column.align}
         />
       </td>
     );
@@ -1758,6 +2006,13 @@ const summarySegments = ({ rows, displayTotals, totalDayChange, currency, maskVa
     (sum, row) => sum + (firstFiniteNumber(row?.optionQuote?.theta) ?? 0),
     0,
   );
+  const cash = firstDisplayTotalNumber(
+    displayTotals.cash,
+    displayTotals.totalCash,
+    displayTotals.totalCashValue,
+  );
+  const buyingPower = firstDisplayTotalNumber(displayTotals.buyingPower);
+  const netLiquidation = firstDisplayTotalNumber(displayTotals.netLiquidation);
   return [
     { label: "SUMMARY", value: `${formatNumber(rows.length, 0)} positions`, color: CSS_COLOR.text },
     {
@@ -1765,6 +2020,27 @@ const summarySegments = ({ rows, displayTotals, totalDayChange, currency, maskVa
       value: formatAccountMoney(displayTotals.netExposure, currency, false, maskValues),
       color: CSS_COLOR.textSec,
     },
+    cash != null
+      ? {
+          label: "Cash",
+          value: formatAccountMoney(cash, currency, false, maskValues),
+          color: CSS_COLOR.textSec,
+        }
+      : null,
+    netLiquidation != null
+      ? {
+          label: "NLV",
+          value: formatAccountMoney(netLiquidation, currency, false, maskValues),
+          color: CSS_COLOR.textSec,
+        }
+      : null,
+    buyingPower != null
+      ? {
+          label: "BP",
+          value: formatAccountMoney(buyingPower, currency, false, maskValues),
+          color: CSS_COLOR.textSec,
+        }
+      : null,
     {
       label: "Day",
       value: formatAccountSignedMoney(totalDayChange, currency, false, maskValues),
@@ -1809,6 +2085,17 @@ const summarySegments = ({ rows, displayTotals, totalDayChange, currency, maskVa
   ].filter(Boolean);
 };
 
+const denseSummaryCellStyle = (column) => ({
+  ...denseTableCellStyle(column),
+  padding: sp("3px 6px"),
+  background: CSS_COLOR.bg1,
+  borderTop: denseTableDivider(),
+  position: column.sticky ? "sticky" : undefined,
+  bottom: 0,
+  left: column.sticky ? 0 : undefined,
+  zIndex: column.sticky ? 4 : 3,
+});
+
 const DenseSummaryRow = ({
   columns,
   rows,
@@ -1824,6 +2111,19 @@ const DenseSummaryRow = ({
     currency,
     maskValues,
   });
+  const summaryByColumn = new Map(
+    segments.map((segment) => [segment.label, segment]),
+  );
+  const netSegment = summaryByColumn.get("Net");
+  const cashSegment = summaryByColumn.get("Cash");
+  const nlvSegment = summaryByColumn.get("NLV");
+  const buyingPowerSegment = summaryByColumn.get("BP");
+  const daySegment = summaryByColumn.get("Day");
+  const unrealSegment = summaryByColumn.get("Unreal");
+  const weightSegment = summaryByColumn.get("Wt");
+  const deltaSegment = summaryByColumn.get("Net Delta");
+  const thetaSegment = summaryByColumn.get("Net Theta");
+
   return (
     <tr
       data-testid="account-positions-summary-row"
@@ -1834,29 +2134,83 @@ const DenseSummaryRow = ({
         zIndex: 2,
       }}
     >
-      <td
-        colSpan={columns.length}
-        style={{
-          padding: sp("6px 8px"),
-          borderTop: `1px solid ${CSS_COLOR.border}`,
-          borderBottom: denseTableBorder(),
-          color: CSS_COLOR.textSec,
-          fontFamily: T.data,
-          fontSize: textSize("body"),
-          fontVariantNumeric: "tabular-nums",
-          whiteSpace: "nowrap",
-        }}
-      >
-        <span style={{ display: "inline-flex", gap: sp(8), alignItems: "center" }}>
-          {segments.map((segment) => (
-            <span key={segment.label} style={{ color: segment.color }}>
-              <span style={{ color: CSS_COLOR.textDim }}>{segment.label}</span>{" "}
-              {segment.value}
-              {segment.extra && segment.extra !== MISSING_VALUE ? ` (${segment.extra})` : ""}
-            </span>
-          ))}
-        </span>
-      </td>
+      {columns.map((column) => {
+        let content = "";
+        if (column.id === "symbol") {
+          content = (
+            <DenseStackedValue
+              primary="Total"
+              secondary={[
+                `${formatNumber(rows.length, 0)} positions`,
+                cashSegment ? `Cash ${cashSegment.value}` : null,
+              ].filter(Boolean).join(" · ")}
+              primaryTone={CSS_COLOR.text}
+              align="left"
+            />
+          );
+        } else if (column.id === "day" && daySegment) {
+          content = (
+            <DenseStackedValue
+              primary={daySegment.value}
+              secondary={daySegment.extra}
+              primaryTone={daySegment.color}
+              secondaryTone={daySegment.color}
+              align={column.align}
+            />
+          );
+        } else if (column.id === "unrealized" && unrealSegment) {
+          content = (
+            <DenseStackedValue
+              primary={unrealSegment.value}
+              secondary={unrealSegment.extra}
+              primaryTone={unrealSegment.color}
+              secondaryTone={unrealSegment.color}
+              align={column.align}
+            />
+          );
+        } else if (column.id === "exposure" && netSegment) {
+          content = (
+            <DenseStackedValue
+              primary={netSegment.value}
+              secondary={
+                nlvSegment
+                  ? `NLV ${nlvSegment.value}`
+                  : cashSegment
+                    ? `Cash ${cashSegment.value}`
+                    : weightSegment
+                      ? `Wt ${weightSegment.value}`
+                      : ""
+              }
+              primaryTone={CSS_COLOR.text}
+              align={column.align}
+            />
+          );
+        } else if (column.id === "signalContext" && buyingPowerSegment) {
+          content = (
+            <DenseStackedValue
+              primary={`BP ${buyingPowerSegment.value}`}
+              secondary={weightSegment ? `Wt ${weightSegment.value}` : ""}
+              primaryTone={CSS_COLOR.textSec}
+              align={column.align}
+            />
+          );
+        } else if (column.id === "greeks" && deltaSegment) {
+          content = (
+            <DenseStackedValue
+              primary={deltaSegment.value}
+              secondary={thetaSegment ? `Theta ${thetaSegment.value}` : ""}
+              primaryTone={CSS_COLOR.textSec}
+              align={column.align}
+            />
+          );
+        }
+
+        return (
+          <td key={column.id} style={denseSummaryCellStyle(column)}>
+            {content}
+          </td>
+        );
+      })}
     </tr>
   );
 };
@@ -1972,7 +2326,7 @@ export const PositionsAtDateInspector = ({
                 <thead>
                   <tr style={tableHeaderStyle}>
                     {["Net Liq", "Day P&L", "Cash", "Buying Power"].map((label) => (
-                      <th key={label} style={{ ...tableCellStyle, ...tableHeaderStyle, textAlign: "right" }}>
+                      <th key={label} style={compactPositionHeaderStyle({ align: "right" })}>
                         {label}
                       </th>
                     ))}
@@ -1989,10 +2343,12 @@ export const PositionsAtDateInspector = ({
                       <td
                         key={index}
                         style={{
-                          ...tableCellStyle,
+                          ...compactPositionCellStyle({
+                            align: "right",
+                            color,
+                            fontFamily: T.data,
+                          }),
                           color,
-                          fontFamily: T.data,
-                          textAlign: "right",
                         }}
                       >
                         {value}
@@ -2041,20 +2397,31 @@ export const PositionsAtDateInspector = ({
                 <thead>
                   <tr style={tableHeaderStyle}>
                     {historicalPositionHeaders.map((column) => (
-                      <th key={column} style={{ ...tableCellStyle, ...tableHeaderStyle }}>
+                      <th
+                        key={column}
+                        style={compactPositionHeaderStyle({
+                          align: column === "Symbol" ? "left" : "right",
+                        })}
+                      >
                         {column}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {positions.slice(0, 8).map((row) => {
+                  {positions.slice(0, 8).map((row, rowIndex) => {
                     const display = positionDisplayForRow(row);
                     const markValue = row.mark;
 
                     return (
-                      <tr key={row.id} className="ra-table-row">
-                        <td style={{ ...tableCellStyle, color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.regular }}>
+                      <tr
+                        key={row.id}
+                        className={[
+                          "ra-table-row",
+                          rowIndex % 2 ? "ra-position-table-row--alt" : null,
+                        ].filter(Boolean).join(" ")}
+                      >
+                        <td style={{ ...compactPositionCellStyle({ color: CSS_COLOR.text }), fontWeight: FONT_WEIGHTS.regular }}>
                           <div style={{ display: "flex", alignItems: "center", gap: sp(5), minWidth: 0 }}>
                             <PositionTrendSparkline
                               row={row}
@@ -2102,23 +2469,23 @@ export const PositionsAtDateInspector = ({
                             </button>
                           </div>
                         </td>
-                        <td style={{ ...tableCellStyle, textAlign: "right" }}>
+                        <td style={compactPositionCellStyle({ align: "right" })}>
                           <span style={denseColumnTextStyle({ align: "right", color: row.quantity < 0 ? CSS_COLOR.red : CSS_COLOR.textSec })}>
                             {formatNumber(row.quantity, 3)}
                           </span>
                         </td>
-                        <td style={{ ...tableCellStyle, textAlign: "right" }}>
+                        <td style={compactPositionCellStyle({ align: "right" })}>
                           <span style={denseColumnTextStyle({ align: "right", color: CSS_COLOR.textSec })}>
                             {formatAccountPrice(row.averageCost, 2, maskValues)}
                           </span>
                         </td>
-                        <td style={{ ...tableCellStyle, textAlign: "right" }}>
+                        <td style={compactPositionCellStyle({ align: "right" })}>
                           <DenseStackedValue
                             primary={formatAccountPrice(markValue, 2, maskValues)}
                             primaryTone={CSS_COLOR.text}
                           />
                         </td>
-                        <td style={{ ...tableCellStyle, textAlign: "right" }}>
+                        <td style={compactPositionCellStyle({ align: "right" })}>
                           <DenseStackedValue
                             primary={formatAccountSignedMoney(row.dayChange, currency, false, maskValues)}
                             secondary={signedPercent(row.dayChangePercent, 2, maskValues)}
@@ -2126,7 +2493,7 @@ export const PositionsAtDateInspector = ({
                             secondaryTone={toneForValue(row.dayChangePercent)}
                           />
                         </td>
-                        <td style={{ ...tableCellStyle, textAlign: "right" }}>
+                        <td style={compactPositionCellStyle({ align: "right" })}>
                           <DenseStackedValue
                             primary={formatAccountSignedMoney(row.unrealizedPnl, currency, false, maskValues)}
                             secondary={signedPercent(row.unrealizedPnlPercent, 2, maskValues)}
@@ -2134,7 +2501,7 @@ export const PositionsAtDateInspector = ({
                             secondaryTone={toneForValue(row.unrealizedPnlPercent)}
                           />
                         </td>
-                        <td style={{ ...tableCellStyle, textAlign: "right" }}>
+                        <td style={compactPositionCellStyle({ align: "right" })}>
                           <DenseStackedValue
                             primary={formatAccountMoney(row.marketValue, currency, false, maskValues)}
                             secondary={`Wt ${formatAccountPercent(row.weightPercent, 2, maskValues)}`}
@@ -2166,11 +2533,9 @@ export const PositionsAtDateInspector = ({
                         {["Type", "When", "Symbol", "Amount"].map((label) => (
                           <th
                             key={label}
-                            style={{
-                              ...tableCellStyle,
-                              ...tableHeaderStyle,
-                              textAlign: label === "Amount" ? "right" : "left",
-                            }}
+                            style={compactPositionHeaderStyle({
+                              align: label === "Amount" ? "right" : "left",
+                            })}
                           >
                             {label}
                           </th>
@@ -2178,24 +2543,29 @@ export const PositionsAtDateInspector = ({
                       </tr>
                     </thead>
                     <tbody>
-                      {activity.slice(0, 7).map((row) => (
-                        <tr key={row.id} className="ra-table-row">
-                          <td style={tableCellStyle}>
+                      {activity.slice(0, 7).map((row, rowIndex) => (
+                        <tr
+                          key={row.id}
+                          className={[
+                            "ra-table-row",
+                            rowIndex % 2 ? "ra-position-table-row--alt" : null,
+                          ].filter(Boolean).join(" ")}
+                        >
+                          <td style={compactPositionCellStyle()}>
                             <ActivityTone activity={row} />
                           </td>
-                          <td style={{ ...tableCellStyle, color: CSS_COLOR.textDim }}>
+                          <td style={compactPositionCellStyle({ color: CSS_COLOR.textDim })}>
                             {formatAppDateTime(row.timestamp)}
                           </td>
-                          <td style={{ ...tableCellStyle, color: CSS_COLOR.textSec }}>
+                          <td style={compactPositionCellStyle({ color: CSS_COLOR.textSec })}>
                             {row.symbol || row.source}
                           </td>
                           <td
-                            style={{
-                              ...tableCellStyle,
+                            style={compactPositionCellStyle({
+                              align: "right",
                               color: toneForValue(row.realizedPnl ?? row.amount),
                               fontFamily: T.data,
-                              textAlign: "right",
-                            }}
+                            })}
                           >
                             {row.realizedPnl != null
                               ? formatAccountMoney(row.realizedPnl, currency, true, maskValues)
@@ -2398,7 +2768,7 @@ export const PositionsPanel = ({
               width: "100%",
               borderCollapse: "separate",
               borderSpacing: 0,
-              minWidth: surfaceId === "algo" ? 1120 : 1110,
+              minWidth: denseTableMinWidth(visibleColumns),
               tableLayout: "fixed",
             }}
           >
@@ -2410,29 +2780,38 @@ export const PositionsPanel = ({
             <thead>
               <tr>
                 {visibleColumns.map((column) => (
-                  <th key={column.id} style={denseHeaderCellStyle(column, sort.id === column.id)}>
+                  <th
+                    key={column.id}
+                    title={column.title}
+                    style={denseHeaderCellStyle(column, sort.id === column.id)}
+                  >
                     {column.sortable ? (
                       <SortButton
                         id={column.id}
-                        label={column.label}
+                        label={column.shortLabel || column.label}
                         sort={sort}
                         setSort={setSort}
                         align={column.align}
                       />
                     ) : (
-                      column.label
+                      column.shortLabel || column.label
                     )}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {pageRows.map((row) => {
+              {pageRows.map((row, rowIndex) => {
                 const expanded = expandedRows.has(row.id) && hasExpandablePositionDetails(row);
+                const management = tradeManagementForRow(row);
+                const rowClassName = [
+                  expanded ? "ra-table-row ra-table-row--selected" : "ra-table-row",
+                  rowIndex % 2 ? "ra-position-table-row--alt" : null,
+                ].filter(Boolean).join(" ");
                 return (
                   <Fragment key={row.id}>
                     <tr
-                      className={expanded ? "ra-table-row ra-table-row--selected" : "ra-table-row"}
+                      className={rowClassName}
                       tabIndex={0}
                       onKeyDown={moveTableFocus}
                       style={{
@@ -2462,7 +2841,7 @@ export const PositionsPanel = ({
                         colSpan={visibleColumns.length}
                         style={{
                           ...tableCellStyle,
-                          padding: sp("6px 8px 7px 24px"),
+                          padding: sp("4px 6px 5px 22px"),
                           whiteSpace: "normal",
                           background: CSS_COLOR.bg0,
                         }}
@@ -2489,6 +2868,52 @@ export const PositionsPanel = ({
                               ) : null}
                             </div>
 
+                            {management.stop || management.trail || management.target ? (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  flexWrap: "wrap",
+                                  gap: sp(8),
+                                  padding: sp("6px 0"),
+                                  borderTop: `1px solid ${CSS_COLOR.border}`,
+                                  borderBottom: `1px solid ${CSS_COLOR.border}`,
+                                }}
+                              >
+                                {[
+                                  ["Stop", formatTradeManagementPrice(management.stop, maskValues), formatTradeManagementSource(management.stop?.source)],
+                                  ["Trail", formatTradeManagementPrice(management.trail, maskValues), formatTradeManagementSource(management.trail?.source)],
+                                  ["Target", formatTradeManagementPrice(management.target, maskValues), formatTradeManagementSource(management.target?.source)],
+                                  [
+                                    "Risk",
+                                    formatTradeManagementDistance(management, maskValues),
+                                    management.riskAmount != null
+                                      ? formatAccountMoney(management.riskAmount, currency, true, maskValues)
+                                      : management.statusLabel,
+                                  ],
+                                ].map(([label, value, detail]) => (
+                                  <div key={`${row.id}:management:${label}`} style={{ minWidth: dim(92) }}>
+                                    <div style={mutedLabelStyle}>{label}</div>
+                                    <div
+                                    style={{
+                                      color:
+                                        label === "Stop" || label === "Risk"
+                                          ? tradeManagementTone(management)
+                                          : CSS_COLOR.textSec,
+                                      fontFamily: T.data,
+                                      fontSize: textSize("caption"),
+                                      fontVariantNumeric: "tabular-nums",
+                                    }}
+                                  >
+                                      {value}
+                                    </div>
+                                    <div style={cellSubTextStyle(CSS_COLOR.textDim)}>
+                                      {detail || TRADE_MANAGEMENT_STATUS.unknown}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+
                             <div
                             style={{
                               display: "grid",
@@ -2507,10 +2932,9 @@ export const PositionsPanel = ({
                                         {lotColumns.map((label) => (
                                           <th
                                             key={label}
-                                            style={{
-                                              ...tableHeaderStyle,
-                                              ...tableCellStyle,
-                                            }}
+                                            style={compactPositionHeaderStyle({
+                                              align: label === "Account" ? "left" : "right",
+                                            })}
                                           >
                                             {label}
                                           </th>
@@ -2520,22 +2944,21 @@ export const PositionsPanel = ({
                                     <tbody>
                                       {row.lots.slice(0, 6).map((lot, index) => (
                                         <tr key={`${row.id}:lot:${index}`}>
-                                          <td style={tableCellStyle}>{lot.accountId}</td>
-                                          <td style={{ ...tableCellStyle, textAlign: "right" }}>
+                                          <td style={compactPositionCellStyle()}>{lot.accountId}</td>
+                                          <td style={compactPositionCellStyle({ align: "right" })}>
                                             {formatNumber(lot.quantity, 4)}
                                           </td>
-                                          <td style={{ ...tableCellStyle, textAlign: "right" }}>
+                                          <td style={compactPositionCellStyle({ align: "right" })}>
                                             {formatAccountPrice(lot.averageCost, 2, maskValues)}
                                           </td>
-                                          <td style={{ ...tableCellStyle, textAlign: "right" }}>
+                                          <td style={compactPositionCellStyle({ align: "right" })}>
                                             {formatAccountMoney(lot.marketValue, currency, false, maskValues)}
                                           </td>
                                           <td
-                                            style={{
-                                              ...tableCellStyle,
-                                              textAlign: "right",
+                                            style={compactPositionCellStyle({
+                                              align: "right",
                                               color: toneForValue(lot.unrealizedPnl),
-                                            }}
+                                            })}
                                           >
                                             {formatAccountMoney(lot.unrealizedPnl, currency, false, maskValues)}
                                           </td>

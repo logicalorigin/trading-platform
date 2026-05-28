@@ -574,12 +574,6 @@ test("Market startup resolves nested light theme before React mounts", async ({
   await expect
     .poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor))
     .toBe("rgb(247, 250, 255)");
-  const fallback = page.getByTestId("app-loading-fallback");
-  await expect(fallback).toBeVisible();
-  await expect(fallback).toHaveAttribute("data-theme", "light");
-  expect(await fallback.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(
-    "rgb(247, 250, 255)",
-  );
   await expect(page.getByTestId("market-workspace")).toBeVisible({ timeout: 30_000 });
   await expect
     .poll(() => page.evaluate(() => document.documentElement.dataset.pyrusTheme))

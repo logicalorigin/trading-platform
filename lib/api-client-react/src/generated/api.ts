@@ -77,6 +77,7 @@ import type {
   FlowEventsResponse,
   FlowPremiumDistributionResponse,
   FlowUniverseResponse,
+  FootprintResponse,
   GetAccountAllocationParams,
   GetAccountCashActivityParams,
   GetAccountClosedTradesParams,
@@ -89,6 +90,7 @@ import type {
   GetBacktestRunChartParams,
   GetBarsParams,
   GetFlowPremiumDistributionParams,
+  GetFootprintsParams,
   GetMarketDepth200,
   GetMarketDepthParams,
   GetNewsParams,
@@ -189,6 +191,7 @@ import type {
   StreamAccountsParams,
   StreamBarsParams,
   StreamExecutionsParams,
+  StreamFootprintsParams,
   StreamMarketDepthParams,
   StreamOptionChainsParams,
   StreamOptionQuoteSnapshotsParams,
@@ -7616,6 +7619,88 @@ export function useGetMarketDepth<TData = Awaited<ReturnType<typeof getMarketDep
 
 
 /**
+ * @summary Get volume footprint candles for a visible chart range
+ */
+export const getGetFootprintsUrl = (params: GetFootprintsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/footprints?${stringifiedParams}` : `/api/footprints`
+}
+
+export const getFootprints = async (params: GetFootprintsParams, options?: RequestInit): Promise<FootprintResponse> => {
+
+  return customFetch<FootprintResponse>(getGetFootprintsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetFootprintsQueryKey = (params?: GetFootprintsParams,) => {
+    return [
+    `/api/footprints`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetFootprintsQueryOptions = <TData = Awaited<ReturnType<typeof getFootprints>>, TError = ErrorType<unknown>>(params: GetFootprintsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFootprints>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetFootprintsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getFootprints>>> = ({ signal }) => getFootprints(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getFootprints>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetFootprintsQueryResult = NonNullable<Awaited<ReturnType<typeof getFootprints>>>
+export type GetFootprintsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get volume footprint candles for a visible chart range
+ */
+
+export function useGetFootprints<TData = Awaited<ReturnType<typeof getFootprints>>, TError = ErrorType<unknown>>(
+ params: GetFootprintsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFootprints>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetFootprintsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
  * @summary Stream market depth snapshots over server-sent events
  */
 export const getStreamMarketDepthUrl = (params: StreamMarketDepthParams,) => {
@@ -7844,6 +7929,88 @@ export function useStreamShadowAccount<TData = Awaited<ReturnType<typeof streamS
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getStreamShadowAccountQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary Stream volume footprint candle snapshots over server-sent events
+ */
+export const getStreamFootprintsUrl = (params: StreamFootprintsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/streams/footprints?${stringifiedParams}` : `/api/streams/footprints`
+}
+
+export const streamFootprints = async (params: StreamFootprintsParams, options?: RequestInit): Promise<SseStream> => {
+
+  return customFetch<SseStream>(getStreamFootprintsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getStreamFootprintsQueryKey = (params?: StreamFootprintsParams,) => {
+    return [
+    `/api/streams/footprints`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getStreamFootprintsQueryOptions = <TData = Awaited<ReturnType<typeof streamFootprints>>, TError = ErrorType<unknown>>(params: StreamFootprintsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof streamFootprints>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getStreamFootprintsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof streamFootprints>>> = ({ signal }) => streamFootprints(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof streamFootprints>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type StreamFootprintsQueryResult = NonNullable<Awaited<ReturnType<typeof streamFootprints>>>
+export type StreamFootprintsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Stream volume footprint candle snapshots over server-sent events
+ */
+
+export function useStreamFootprints<TData = Awaited<ReturnType<typeof streamFootprints>>, TError = ErrorType<unknown>>(
+ params: StreamFootprintsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof streamFootprints>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getStreamFootprintsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

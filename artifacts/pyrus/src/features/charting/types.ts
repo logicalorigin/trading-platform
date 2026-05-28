@@ -56,6 +56,78 @@ export type ChartBar = {
   wickColor?: string;
 };
 
+export type ChartFootprintDisplayMode = "split" | "delta" | "total";
+
+export type ChartFootprintContext = {
+  symbol: string;
+  assetClass: "equity" | "option";
+  timeframe: string;
+  providerContractId?: string | null;
+  optionTicker?: string | null;
+  outsideRth?: boolean;
+};
+
+export type ChartFootprintLevel = {
+  price: number;
+  buyVolume: number;
+  sellVolume: number;
+  unknownVolume: number;
+  totalVolume: number;
+  delta: number;
+  tradeCount: number;
+  buyImbalance: boolean;
+  sellImbalance: boolean;
+};
+
+export type ChartFootprintCandle = {
+  time: string;
+  endTime: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  volume: number;
+  buyVolume: number;
+  sellVolume: number;
+  unknownVolume: number;
+  delta: number;
+  tradeCount: number;
+  pocPrice: number | null;
+  levels: ChartFootprintLevel[];
+  complete: boolean;
+  partialReason: string | null;
+};
+
+export type ChartFootprintResponse = {
+  symbol: string;
+  assetClass: "equity" | "option";
+  timeframe: string;
+  from: string;
+  to: string;
+  providerContractId: string | null;
+  optionTicker: string | null;
+  candles: ChartFootprintCandle[];
+  complete: boolean;
+  partialReason: string | null;
+  diagnostics: {
+    sourceProvider: string;
+    sourcePreference: string;
+    classificationMethod: string;
+    classifiedVolume: number;
+    unknownVolume: number;
+    quoteMatchedTradeCount: number;
+    tickRuleTradeCount: number;
+    unknownTradeCount: number;
+    tradeCount: number;
+    quoteCount: number;
+    bidAskCoveragePercent: number;
+    minTick: number;
+    minTickSource: string;
+    rowSize: number;
+    capped: boolean;
+  };
+};
+
 export type ChartBarRange = {
   startMs: number;
   endMs: number;

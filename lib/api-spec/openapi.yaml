@@ -2406,6 +2406,90 @@ paths:
                 required:
                   - depth
 
+  /footprints:
+    get:
+      operationId: getFootprints
+      tags: [market-data]
+      summary: Get volume footprint candles for a visible chart range
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: assetClass
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AssetClass"
+        - name: timeframe
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/FootprintTimeframe"
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: providerContractId
+          in: query
+          required: false
+          schema:
+            type: string
+            nullable: true
+        - name: optionTicker
+          in: query
+          required: false
+          schema:
+            type: string
+            nullable: true
+        - name: outsideRth
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: ticksPerRow
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+        - name: imbalancePercent
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 100
+            maximum: 10000
+        - name: maxBars
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 80
+        - name: sourcePreference
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/FootprintSourcePreference"
+      responses:
+        "200":
+          description: Volume footprint candles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FootprintResponse"
+
   /streams/market-depth:
     get:
       operationId: streamMarketDepth
@@ -2479,6 +2563,90 @@ paths:
       responses:
         "200":
           description: Shadow account SSE stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/SseStream"
+
+  /streams/footprints:
+    get:
+      operationId: streamFootprints
+      tags: [market-data]
+      summary: Stream volume footprint candle snapshots over server-sent events
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: assetClass
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AssetClass"
+        - name: timeframe
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/FootprintTimeframe"
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: providerContractId
+          in: query
+          required: false
+          schema:
+            type: string
+            nullable: true
+        - name: optionTicker
+          in: query
+          required: false
+          schema:
+            type: string
+            nullable: true
+        - name: outsideRth
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: ticksPerRow
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+        - name: imbalancePercent
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 100
+            maximum: 10000
+        - name: maxBars
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 80
+        - name: sourcePreference
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/FootprintSourcePreference"
+      responses:
+        "200":
+          description: Footprint SSE stream
           content:
             text/event-stream:
               schema:
@@ -3912,7 +4080,7 @@ components:
 
     MarketDataProvider:
       type: string
-      enum: [polygon, ibkr]
+      enum: [polygon, massive, ibkr]
 
     FlowDataProvider:
       type: string
@@ -4006,7 +4174,7 @@ components:
 
     QuoteSource:
       type: string
-      enum: [ibkr, polygon]
+      enum: [ibkr, polygon, massive]
 
     BarDataSource:
       type: string
@@ -7325,6 +7493,30 @@ components:
         ibkrFilteredEventCount:
           type: integer
           minimum: 0
+        ibkrAdmissionBridgeMismatchCount:
+          type: integer
+          minimum: 0
+        ibkrMarketDataMode:
+          type: [string, "null"]
+        ibkrDelayedMarketData:
+          type: boolean
+        scannerPhase:
+          type: [string, "null"]
+          enum: [seed, expanded, manual, null]
+        scannerLineBudget:
+          type: integer
+          minimum: 0
+        scannerExpirationScanCount:
+          type: integer
+          minimum: 0
+        scannerStrikeCoverage:
+          type: [string, "null"]
+          enum: [fast, standard, full, null]
+        underlyingSpotPrice:
+          type: [number, "null"]
+        underlyingSpotSource:
+          type: [string, "null"]
+          enum: [massive, ibkr, null]
         scannerCoverage:
           type: object
           properties:
@@ -7905,6 +8097,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/JsonObject"
+        automationContext:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Existing automation trade-management state for this open position, when available.
         openedAt:
           type: string
           format: date-time
@@ -9436,6 +9633,214 @@ components:
             - dataSource
             - feedIssue
             - debug
+
+    FootprintTimeframe:
+      type: string
+      enum: [5s, 15s, 30s, 1m, 2m, 5m, 15m, 30m, 1h]
+
+    FootprintSourcePreference:
+      type: string
+      enum: [massive_first, ibkr_first, massive_only]
+
+    FootprintPartialReason:
+      type: string
+      enum:
+        [
+          window_capped,
+          unsupported_timeframe,
+          provider_unavailable,
+          missing_option_ticker,
+          no_trades,
+          request_failed,
+        ]
+
+    FootprintLevel:
+      type: object
+      properties:
+        price:
+          type: number
+        buyVolume:
+          type: number
+        sellVolume:
+          type: number
+        unknownVolume:
+          type: number
+        totalVolume:
+          type: number
+        delta:
+          type: number
+        tradeCount:
+          type: integer
+        buyImbalance:
+          type: boolean
+        sellImbalance:
+          type: boolean
+      required:
+        - price
+        - buyVolume
+        - sellVolume
+        - unknownVolume
+        - totalVolume
+        - delta
+        - tradeCount
+        - buyImbalance
+        - sellImbalance
+
+    FootprintCandle:
+      type: object
+      properties:
+        time:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        open:
+          type: [number, "null"]
+        high:
+          type: [number, "null"]
+        low:
+          type: [number, "null"]
+        close:
+          type: [number, "null"]
+        volume:
+          type: number
+        buyVolume:
+          type: number
+        sellVolume:
+          type: number
+        unknownVolume:
+          type: number
+        delta:
+          type: number
+        tradeCount:
+          type: integer
+        pocPrice:
+          type: [number, "null"]
+        levels:
+          type: array
+          items:
+            $ref: "#/components/schemas/FootprintLevel"
+        complete:
+          type: boolean
+        partialReason:
+          oneOf:
+            - $ref: "#/components/schemas/FootprintPartialReason"
+            - type: "null"
+      required:
+        - time
+        - endTime
+        - open
+        - high
+        - low
+        - close
+        - volume
+        - buyVolume
+        - sellVolume
+        - unknownVolume
+        - delta
+        - tradeCount
+        - pocPrice
+        - levels
+        - complete
+        - partialReason
+
+    FootprintDiagnostics:
+      type: object
+      properties:
+        sourceProvider:
+          type: string
+          enum: [massive, polygon, ibkr, none]
+        sourcePreference:
+          $ref: "#/components/schemas/FootprintSourcePreference"
+        classificationMethod:
+          type: string
+          enum: [quote_match, tick_rule, unknown]
+        classifiedVolume:
+          type: number
+        unknownVolume:
+          type: number
+        quoteMatchedTradeCount:
+          type: integer
+        tickRuleTradeCount:
+          type: integer
+        unknownTradeCount:
+          type: integer
+        tradeCount:
+          type: integer
+        quoteCount:
+          type: integer
+        bidAskCoveragePercent:
+          type: number
+        minTick:
+          type: number
+        minTickSource:
+          type: string
+          enum: [provider, inferred, default]
+        rowSize:
+          type: number
+        capped:
+          type: boolean
+      required:
+        - sourceProvider
+        - sourcePreference
+        - classificationMethod
+        - classifiedVolume
+        - unknownVolume
+        - quoteMatchedTradeCount
+        - tickRuleTradeCount
+        - unknownTradeCount
+        - tradeCount
+        - quoteCount
+        - bidAskCoveragePercent
+        - minTick
+        - minTickSource
+        - rowSize
+        - capped
+
+    FootprintResponse:
+      type: object
+      properties:
+        symbol:
+          type: string
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        timeframe:
+          $ref: "#/components/schemas/FootprintTimeframe"
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        providerContractId:
+          type: [string, "null"]
+        optionTicker:
+          type: [string, "null"]
+        candles:
+          type: array
+          items:
+            $ref: "#/components/schemas/FootprintCandle"
+        complete:
+          type: boolean
+        partialReason:
+          oneOf:
+            - $ref: "#/components/schemas/FootprintPartialReason"
+            - type: "null"
+        diagnostics:
+          $ref: "#/components/schemas/FootprintDiagnostics"
+      required:
+        - symbol
+        - assetClass
+        - timeframe
+        - from
+        - to
+        - providerContractId
+        - optionTicker
+        - candles
+        - complete
+        - partialReason
+        - diagnostics
 
     SseStream:
       type: string

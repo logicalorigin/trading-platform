@@ -10,6 +10,7 @@ import {
 import { CSS_COLOR, FONT_WEIGHTS, RADII, T, cssColorAlpha, dim } from "../../lib/uiTokens.jsx";
 import {
   ResearchChartSurface,
+  type ChartDisplayType,
   type ChartViewportSnapshot,
   type ChartLegendMetadata,
   type MobileChartInteractionMode,
@@ -17,7 +18,7 @@ import {
   type OverlayContent,
   type VisibleLogicalRange,
 } from "./ResearchChartSurface";
-import type { ChartModel, StudySpec } from "./types";
+import type { ChartFootprintContext, ChartModel, StudySpec } from "./types";
 import type { ChartEvent, FlowChartEventConversion } from "./chartEvents";
 import { useChartPositionOverlays } from "./useChartPositionOverlays";
 import type { ChartPositionOverlayContext } from "./chartPositionOverlays";
@@ -272,6 +273,7 @@ type ResearchChartFrameProps = {
   rangeIdentityKey?: string | null;
   viewportLayoutKey?: string | null;
   symbol?: string | null;
+  footprintContext?: ChartFootprintContext | null;
   placement?: ResearchChartFramePlacement;
   compact?: boolean;
   mobileInteractionMode?: MobileChartInteractionMode;
@@ -329,6 +331,7 @@ export const ResearchChartFrame = ({
   // can leave it null; the watermark only renders when both this prop
   // and userPreferences.chart.showTickerWatermark are truthy.
   symbol = null,
+  footprintContext = null,
   placement = "workspace",
   compact,
   mobileInteractionMode,
@@ -451,6 +454,7 @@ export const ResearchChartFrame = ({
             viewportLayoutKey={viewportLayoutKey}
             model={model}
             symbol={symbol}
+            footprintContext={footprintContext}
             compact={resolvedCompact}
             mobileInteractionMode={resolvedMobileInteractionMode}
             showToolbar={resolvedShowSurfaceToolbar}
@@ -921,13 +925,14 @@ const menuLabelStyle = (theme: WidgetTheme): CSSProperties => ({
 
 const chartTypeOptions = [
   { value: "candles", label: "Candles", Icon: CandlestickChart },
+  { value: "footprint", label: "Footprint", Icon: CandlestickChart },
   { value: "bars", label: "OHLC Bars", Icon: BarChart3 },
   { value: "line", label: "Line", Icon: Activity },
   { value: "area", label: "Area", Icon: AreaChart },
   { value: "baseline", label: "Baseline", Icon: Activity },
 ] as const;
 
-const resolveChartType = (value: ChartSurfaceControls["baseSeriesType"]) =>
+const resolveChartType = (value: ChartDisplayType) =>
   chartTypeOptions.find((option) => option.value === value) ||
   chartTypeOptions[0];
 
@@ -1018,6 +1023,80 @@ const SettingsMenu = ({
       >
         Time scale
       </DropdownMenuCheckboxItem>
+      <DropdownMenuSeparator className={chartMenuSeparatorClassName} />
+      <DropdownMenuLabel
+        className={chartMenuLabelClassName}
+        style={menuLabelStyle(theme)}
+      >
+        Footprint
+      </DropdownMenuLabel>
+      <DropdownMenuRadioGroup
+        value={controls.footprintDisplayMode}
+        onValueChange={(next) =>
+          controls.setFootprintDisplayMode(
+            next as ChartSurfaceControls["footprintDisplayMode"],
+          )
+        }
+      >
+        <DropdownMenuRadioItem
+          className={chartMenuItemClassName}
+          value="split"
+          disabled={!controls.footprintAvailable}
+          style={menuItemStyle(theme)}
+        >
+          Bid x ask
+        </DropdownMenuRadioItem>
+        <DropdownMenuRadioItem
+          className={chartMenuItemClassName}
+          value="delta"
+          disabled={!controls.footprintAvailable}
+          style={menuItemStyle(theme)}
+        >
+          Delta
+        </DropdownMenuRadioItem>
+        <DropdownMenuRadioItem
+          className={chartMenuItemClassName}
+          value="total"
+          disabled={!controls.footprintAvailable}
+          style={menuItemStyle(theme)}
+        >
+          Total
+        </DropdownMenuRadioItem>
+      </DropdownMenuRadioGroup>
+      <DropdownMenuRadioGroup
+        value={String(controls.footprintTicksPerRow)}
+        onValueChange={(next) => controls.setFootprintTicksPerRow(Number(next))}
+      >
+        {[1, 2, 4].map((ticks) => (
+          <DropdownMenuRadioItem
+            className={chartMenuItemClassName}
+            key={ticks}
+            value={String(ticks)}
+            disabled={!controls.footprintAvailable}
+            style={menuItemStyle(theme)}
+          >
+            {ticks} tick row
+          </DropdownMenuRadioItem>
+        ))}
+      </DropdownMenuRadioGroup>
+      <DropdownMenuRadioGroup
+        value={String(controls.footprintImbalancePercent)}
+        onValueChange={(next) =>
+          controls.setFootprintImbalancePercent(Number(next))
+        }
+      >
+        {[300, 400, 500].map((percent) => (
+          <DropdownMenuRadioItem
+            className={chartMenuItemClassName}
+            key={percent}
+            value={String(percent)}
+            disabled={!controls.footprintAvailable}
+            style={menuItemStyle(theme)}
+          >
+            {percent}% imbalance
+          </DropdownMenuRadioItem>
+        ))}
+      </DropdownMenuRadioGroup>
       <DropdownMenuSeparator className={chartMenuSeparatorClassName} />
       <DropdownMenuLabel
         className={chartMenuLabelClassName}
@@ -1192,7 +1271,7 @@ export const ResearchChartWidgetHeader = ({
     () => new Set(favoriteTimeframes || []),
     [favoriteTimeframes],
   );
-  const resolvedChartType = resolveChartType(controls.baseSeriesType);
+  const resolvedChartType = resolveChartType(controls.chartDisplayType);
   const hasAnchoredSearch =
     typeof onSearchOpenChange === "function" && searchContent != null;
   const canSearch = typeof onOpenSearch === "function" || hasAnchoredSearch;
@@ -1547,11 +1626,9 @@ export const ResearchChartWidgetHeader = ({
                 Chart type
               </DropdownMenuLabel>
               <DropdownMenuRadioGroup
-                value={controls.baseSeriesType}
+                value={controls.chartDisplayType}
                 onValueChange={(next) =>
-                  controls.setBaseSeriesType(
-                    next as ChartSurfaceControls["baseSeriesType"],
-                  )
+                  controls.setChartDisplayType(next as ChartDisplayType)
                 }
               >
                 {chartTypeOptions.map((option) => (
@@ -1559,6 +1636,9 @@ export const ResearchChartWidgetHeader = ({
                     className={chartMenuItemClassName}
                     key={option.value}
                     value={option.value}
+                    disabled={
+                      option.value === "footprint" && !controls.footprintAvailable
+                    }
                     style={menuItemStyle(theme)}
                   >
                     <option.Icon

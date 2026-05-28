@@ -180,6 +180,17 @@ type AccountUniverse = {
   staleReason: string | null;
 };
 
+type AccountPositionTotalsInput = {
+  accounts: BrokerAccountSnapshot[];
+  rows: Array<{
+    weightPercent: number | null;
+    unrealizedPnl: number;
+  }>;
+  grossLong: number;
+  grossShort: number;
+  netExposure: number;
+};
+
 type OptionChainCacheEntry = {
   expiresAt: number;
   contracts: OptionChainContract[];
@@ -743,6 +754,31 @@ function latestTimestampOf(accounts: BrokerAccountSnapshot[]): Date | null {
 
 function accountMetricUpdatedAt(accounts: BrokerAccountSnapshot[]): Date | null {
   return latestTimestampOf(accounts);
+}
+
+function buildAccountPositionTotals(input: AccountPositionTotalsInput) {
+  const cash =
+    sumAccounts(input.accounts, "cash") ??
+    sumAccounts(input.accounts, "totalCashValue");
+  const buyingPower = sumAccounts(input.accounts, "buyingPower");
+  const netLiquidation = sumAccounts(input.accounts, "netLiquidation");
+  return {
+    weightPercent: input.rows.reduce(
+      (sum, row) => sum + (row.weightPercent ?? 0),
+      0,
+    ),
+    unrealizedPnl: input.rows.reduce(
+      (sum, row) => sum + row.unrealizedPnl,
+      0,
+    ),
+    grossLong: input.grossLong,
+    grossShort: input.grossShort,
+    netExposure: input.netExposure,
+    cash,
+    totalCash: cash,
+    buyingPower,
+    netLiquidation,
+  };
 }
 
 async function getPersistedBackedAccounts(
@@ -3589,13 +3625,13 @@ export async function getAccountPositions(input: {
     accountId: universe.requestedAccountId,
     currency: universe.primaryCurrency,
     positions: openRows,
-    totals: {
-      weightPercent: openRows.reduce((sum, row) => sum + (row.weightPercent ?? 0), 0),
-      unrealizedPnl: openRows.reduce((sum, row) => sum + row.unrealizedPnl, 0),
+    totals: buildAccountPositionTotals({
+      accounts: universe.accounts,
+      rows: openRows,
       grossLong: exposure.grossLong,
       grossShort: exposure.grossShort,
       netExposure: exposure.netExposure,
-    },
+    }),
     updatedAt: accountMetricUpdatedAt(universe.accounts) ?? new Date(),
   };
 }
@@ -4981,6 +5017,7 @@ export const __accountEquityHistoryInternalsForTests = {
 export const __accountPositionInternalsForTests = {
   aggregateBalanceRows,
   accountPositionMarketDataSymbol,
+  buildAccountPositionTotals,
   buildPositionMarketHydration,
   buildPositionQuoteFromSnapshot,
   filterOpenBrokerPositions,

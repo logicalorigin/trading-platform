@@ -7,10 +7,8 @@ export const DEFAULT_ACCOUNT_MONITOR_LINE_CAP = 30;
 const POOL_ORDER = [
   ["automation", "Algo & Execution"],
   ["account-monitor", "Account"],
-  ["visible", "Visible Page"],
-  ["watchlist", "Watchlist Quotes"],
+  ["visible", "Visible Options"],
   ["flow-scanner", "Flow Scanner"],
-  ["convenience", "Filler"],
 ];
 
 const firstFiniteNumber = (...values) => {
@@ -51,7 +49,7 @@ const formatScannerReason = (reason) => {
     return "resource pressure";
   }
   if (reason === "live-warmup") {
-    return "live watchlist warming";
+    return "live data warming";
   }
   if (reason === "market-session-quiet") {
     return "market session quiet";
@@ -61,6 +59,12 @@ const formatScannerReason = (reason) => {
   }
   if (reason === "market-data-not-live") {
     return "market data not live";
+  }
+  if (reason === "market-data-frozen") {
+    return "market data frozen";
+  }
+  if (reason === "market-data-delayed-frozen") {
+    return "delayed frozen market data";
   }
   return String(reason).replace(/[-_]+/g, " ");
 };
@@ -92,6 +96,14 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
   if (scanner.started === false) {
     return "not started";
   }
+  const marketDataMode = String(scanner.marketDataMode || "").toLowerCase();
+  const phase = scanner.activeScanPhase || scanner.deepScanner?.lastScanPhase;
+  if (marketDataMode === "frozen") {
+    return "paused: market data frozen";
+  }
+  if (marketDataMode === "delayed_frozen") {
+    return "paused: delayed frozen market data";
+  }
   if (Number.isFinite(used) && used === 0) {
     const activeCount = Number(scanner.deepScanner?.activeCount);
     if (Number.isFinite(activeCount) && activeCount > 0) {
@@ -115,10 +127,16 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
       scanner.radar?.degradedReason;
     if (blockedReason === "live-warmup") {
       const remaining = formatRuntimeDuration(scanner.backgroundHoldRemainingMs);
-      return `warming live watchlist${remaining ? ` (${remaining})` : ""}; foreground scans allowed`;
+      return `warming live data${remaining ? ` (${remaining})` : ""}; foreground scans allowed`;
     }
     if (blockedReason === "line-cap-exhausted") {
       return "paused: no scanner lines available";
+    }
+    if (
+      blockedReason === "market-data-frozen" ||
+      blockedReason === "market-data-delayed-frozen"
+    ) {
+      return `paused: ${formatScannerReason(blockedReason)}`;
     }
     if (blockedReason === "resource-pressure") {
       return "degraded: resource pressure";
@@ -148,9 +166,18 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
       return snapshotDetail;
     }
     if (scanner.deepScanner?.lastRunAt || scanner.lastBatch?.length) {
+      if (scanner.delayedMarketData) {
+        return `degraded: delayed options data; ${phase || "seed"} rotation`;
+      }
       return "rotating; awaiting next batch";
     }
     return "awaiting scanner work";
+  }
+  if (scanner.delayedMarketData) {
+    return `degraded: delayed options data; ${phase || "rotating"}`;
+  }
+  if (phase) {
+    return `${phase} rotation`;
   }
   return null;
 };
@@ -249,8 +276,6 @@ const normalizeWarmupCoverage = (lineUsageSnapshot) => {
   const pendingLineCount = firstFiniteNumber(warmup.pendingLineCount, 0);
   const accountTargetLineCount = firstFiniteNumber(warmup.accountTargetLineCount, 0);
   const accountPendingLineCount = firstFiniteNumber(warmup.accountPendingLineCount, 0);
-  const watchlistTargetLineCount = firstFiniteNumber(warmup.watchlistTargetLineCount, 0);
-  const watchlistPendingLineCount = firstFiniteNumber(warmup.watchlistPendingLineCount, 0);
   const visibleTargetLineCount = firstFiniteNumber(warmup.visibleTargetLineCount, 0);
   const visiblePendingLineCount = firstFiniteNumber(warmup.visiblePendingLineCount, 0);
   const available =
@@ -287,8 +312,6 @@ const normalizeWarmupCoverage = (lineUsageSnapshot) => {
     visiblePendingLineCount,
     coverageRatio: firstFiniteNumber(warmup.coverageRatio),
     targetSymbolCount: firstFiniteNumber(warmup.targetSymbolCount, 0),
-    watchlistTargetLineCount,
-    watchlistPendingLineCount,
     summary: available
       ? `${formatRuntimeCount(activeBridgeLineCount)} / ${formatRuntimeCount(targetLineCount)} covered`
       : MISSING_VALUE,
@@ -320,21 +343,13 @@ const normalizeLinePressure = (admission) => {
       pressure.scannerEffectiveLineCap,
       admission?.poolUsage?.["flow-scanner"]?.effectiveMaxLines,
     ),
+    scannerDynamicLineCap: firstFiniteNumber(pressure.scannerDynamicLineCap),
+    optionBudgetLineCount: firstFiniteNumber(pressure.optionBudgetLineCount),
+    nonScannerOptionLineCount: firstFiniteNumber(pressure.nonScannerOptionLineCount),
+    optionReserveLineCount: firstFiniteNumber(pressure.optionReserveLineCount),
     usableRemainingLineCount: firstFiniteNumber(
       pressure.usableRemainingLineCount,
       admission?.usableRemainingLineCount,
-    ),
-    watchlistLineCount: firstFiniteNumber(
-      pressure.watchlistLineCount,
-      admission?.watchlistLineCount,
-    ),
-    watchlistStaticLineCap: firstFiniteNumber(
-      pressure.watchlistStaticLineCap,
-      admission?.budget?.watchlistLineCap,
-    ),
-    watchlistRemainingLineCount: firstFiniteNumber(
-      pressure.watchlistRemainingLineCount,
-      admission?.watchlistRemainingLineCount,
     ),
   };
 };
@@ -405,38 +420,6 @@ const normalizeLineAllocation = (admission, lineUsageSnapshot = null) => {
       lineAllocation.protectedLineCount,
       pressure.protectedLineCount,
     ),
-    elasticLineCount: firstFiniteNumber(
-      allocation.elasticLineCount,
-      lineAllocation.elasticLineCount,
-      admission?.elasticLineCount,
-      admission?.convenienceLineCount,
-      0,
-    ),
-    reclaimableElasticLineCount: firstFiniteNumber(
-      allocation.reclaimableElasticLineCount,
-      lineAllocation.reclaimableElasticLineCount,
-      admission?.reclaimableElasticLineCount,
-      0,
-    ),
-    sharedElasticLineCount: firstFiniteNumber(
-      allocation.sharedElasticLineCount,
-      lineAllocation.sharedElasticLineCount,
-      0,
-    ),
-    reclaimableFillerLineCount: firstFiniteNumber(
-      allocation.reclaimableFillerLineCount,
-      lineAllocation.reclaimableFillerLineCount,
-      admission?.reclaimableFillerLineCount,
-      0,
-    ),
-    elasticTargetLineCapacity: firstFiniteNumber(
-      allocation.elasticTargetLineCapacity,
-      lineAllocation.elasticTargetLineCapacity,
-    ),
-    elasticRemainingLineCount: firstFiniteNumber(
-      allocation.elasticRemainingLineCount,
-      lineAllocation.elasticRemainingLineCount,
-    ),
     visibleLineCount: firstFiniteNumber(
       allocation.visibleLineCount,
       pressure.visibleLineCount,
@@ -447,41 +430,27 @@ const normalizeLineAllocation = (admission, lineUsageSnapshot = null) => {
       allocation.scannerEffectiveLineCap,
       pressure.scannerEffectiveLineCap,
     ),
+    scannerDynamicLineCap: firstFiniteNumber(
+      allocation.scannerDynamicLineCap,
+      pressure.scannerDynamicLineCap,
+    ),
+    optionBudgetLineCount: firstFiniteNumber(
+      allocation.optionBudgetLineCount,
+      pressure.optionBudgetLineCount,
+    ),
+    nonScannerOptionLineCount: firstFiniteNumber(
+      allocation.nonScannerOptionLineCount,
+      pressure.nonScannerOptionLineCount,
+    ),
+    optionReserveLineCount: firstFiniteNumber(
+      allocation.optionReserveLineCount,
+      pressure.optionReserveLineCount,
+    ),
     scannerSchedulableLineCap,
     scannerRemainingLineCount: firstFiniteNumber(
       scannerSchedulableRemainingLineCount ?? undefined,
       allocation.scannerRemainingLineCount,
       pressure.scannerRemainingLineCount,
-    ),
-    watchlistLineCount: firstFiniteNumber(
-      allocation.watchlistLineCount,
-      pressure.watchlistLineCount,
-      admission?.watchlistLineCount,
-      admission?.poolUsage?.watchlist?.activeLineCount,
-      0,
-    ),
-    watchlistLineCap: firstFiniteNumber(
-      allocation.watchlistLineCap,
-      pressure.watchlistStaticLineCap,
-      admission?.budget?.watchlistLineCap,
-      admission?.poolUsage?.watchlist?.maxLines,
-    ),
-    watchlistRemainingLineCount: firstFiniteNumber(
-      allocation.watchlistRemainingLineCount,
-      pressure.watchlistRemainingLineCount,
-      admission?.watchlistRemainingLineCount,
-      admission?.poolUsage?.watchlist?.remainingLineCount,
-    ),
-    convenienceLineCount: firstFiniteNumber(
-      allocation.convenienceLineCount,
-      admission?.convenienceLineCount,
-      admission?.poolUsage?.convenience?.activeLineCount,
-      0,
-    ),
-    fillerLineCount: firstFiniteNumber(
-      allocation.fillerLineCount,
-      admission?.fillerLineCount,
-      0,
     ),
     bridgeActiveLineCount: firstFiniteNumber(
       allocation.bridgeActiveLineCount,
@@ -656,7 +625,6 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
         covered: 0,
         deferred: 0,
       },
-      watchlist: { used: null, cap: null, free: null },
       flowScanner: { used: null, cap: null, free: null },
       signalOptions,
       total: { used: null, cap: null, free: null },
@@ -679,40 +647,6 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
   const warmup = normalizeWarmupCoverage(lineUsageSnapshot);
   const allocation = normalizeLineAllocation(admission, lineUsageSnapshot);
   const signalOptions = normalizeSignalOptionsLineUsage(admission, lineUsageSnapshot);
-  const watchlistPrewarm = recordOrEmpty(lineUsageSnapshot?.watchlistPrewarm);
-  const ownerClassSummaries = recordOrEmpty(admission.ownerClasses?.summaries);
-  const watchlistPrewarmOwnerClass = recordOrEmpty(
-    ownerClassSummaries["watchlist-prewarm"],
-  );
-  const watchlistPrewarmActiveLineCount = firstFiniteNumber(
-    watchlistPrewarm.primaryActiveSymbolCount,
-    watchlistPrewarmOwnerClass.activeLineCount,
-  );
-  const watchlistPrewarmActiveLineCountOrUndefined = Number.isFinite(
-    watchlistPrewarmActiveLineCount,
-  )
-    ? watchlistPrewarmActiveLineCount
-    : undefined;
-  const watchlistPrewarmPrimaryLineCap = firstFiniteNumber(
-    watchlistPrewarm.primarySymbolLimit,
-  );
-  const watchlistPrewarmLineCap =
-    Number.isFinite(watchlistPrewarmActiveLineCount) &&
-    watchlistPrewarmActiveLineCount > 0
-      ? firstFiniteNumber(
-          Number.isFinite(watchlistPrewarmPrimaryLineCap) &&
-            watchlistPrewarmPrimaryLineCap > 0
-            ? watchlistPrewarmPrimaryLineCap
-            : undefined,
-          budget.visibleLineCap,
-          admission.visibleLineCap,
-        )
-      : watchlistPrewarmPrimaryLineCap;
-  const watchlistPrewarmLineCapOrUndefined = Number.isFinite(
-    watchlistPrewarmLineCap,
-  )
-    ? watchlistPrewarmLineCap
-    : undefined;
   const pools = {};
   const rows = POOL_ORDER.map(([id, fallbackLabel]) => {
     const pool = poolUsage[id] || {};
@@ -720,36 +654,21 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
       admission.accountMonitor && typeof admission.accountMonitor === "object"
         ? admission.accountMonitor
         : {};
-    const elasticPool = Boolean(pool.elastic || id === "convenience");
     const dynamicPool = Boolean(pool.dynamic);
     const rawUsed =
       id === "account-monitor"
         ? firstFiniteNumber(pool.activeLineCount, admission.accountMonitorLineCount, 0)
         : id === "flow-scanner"
           ? firstFiniteNumber(pool.activeLineCount, admission.flowScannerLineCount)
-          : id === "watchlist"
-            ? firstFiniteNumber(
-                watchlistPrewarmActiveLineCountOrUndefined,
-                pool.activeLineCount,
-                admission.watchlistLineCount,
-                allocation.watchlistLineCount,
-              )
           : id === "automation"
             ? firstFiniteNumber(
                 admission.automationExecutionLineCount,
                 pool.activeLineCount,
                 admission.automationLineCount,
               )
-            : id === "convenience"
-              ? firstFiniteNumber(
-                  pool.reclaimableLineCount,
-                  pool.chargedLineCount,
-                  allocation.reclaimableElasticLineCount,
-                  pool.activeLineCount,
-                )
-              : firstFiniteNumber(pool.activeLineCount);
+            : firstFiniteNumber(pool.activeLineCount);
     const activeLineCount =
-      id === "automation" || id === "watchlist"
+      id === "automation"
         ? rawUsed
         : firstFiniteNumber(pool.activeLineCount, rawUsed);
     const rawCap =
@@ -762,13 +681,6 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
           )
         : id === "flow-scanner"
           ? firstFiniteNumber(pool.maxLines, budget.flowScannerLineCap)
-          : id === "watchlist"
-            ? firstFiniteNumber(
-                watchlistPrewarmLineCapOrUndefined,
-                pool.maxLines,
-                budget.watchlistLineCap,
-                allocation.watchlistLineCap,
-              )
           : id === "automation"
             ? firstFiniteNumber(
                 pool.effectiveMaxLines,
@@ -776,13 +688,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
                 budget.automationExecutionLineCap,
                 budget.automationLineCap,
               )
-            : id === "convenience"
-              ? firstFiniteNumber(
-                  pool.effectiveMaxLines,
-                  allocation.elasticTargetLineCapacity,
-                  pool.maxLines,
-                )
-              : firstFiniteNumber(pool.maxLines);
+            : firstFiniteNumber(pool.maxLines);
     const legacyVisibleAdjusted =
       id === "visible" &&
       legacyAdmission &&
@@ -798,21 +704,9 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
             pool.effectiveMaxLines,
             pressure.scannerEffectiveLineCap ?? undefined,
           )
-        : id === "convenience"
-          ? firstFiniteNumber(
-              pool.effectiveMaxLines,
-              allocation.elasticTargetLineCapacity,
-              cap,
-            )
-        : id === "watchlist"
-          ? cap
         : firstFiniteNumber(pool.effectiveMaxLines, cap);
     const free =
-      id === "watchlist" &&
-      Number.isFinite(effectiveCap) &&
-      Number.isFinite(rawUsed)
-        ? Math.max(0, effectiveCap - rawUsed)
-        : id === "flow-scanner" &&
+      id === "flow-scanner" &&
       Number.isFinite(effectiveCap) &&
       Number.isFinite(rawUsed)
         ? Math.max(0, effectiveCap - rawUsed)
@@ -850,26 +744,13 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
       effectiveCap,
       free,
       activeLineCount,
-      elastic: elasticPool,
-      reclaimableLineCount: firstFiniteNumber(
-        pool.reclaimableLineCount,
-        allocation.reclaimableElasticLineCount,
-      ),
-      sharedLineCount: firstFiniteNumber(
-        pool.sharedLineCount,
-        allocation.sharedElasticLineCount,
-      ),
       detail:
         id === "account-monitor"
           ? `${formatRuntimeCount(firstFiniteNumber(accountDetails.coveredLineCount, rawUsed, 0))} covered of ${formatRuntimeCount(firstFiniteNumber(accountDetails.neededLineCount, rawUsed, 0))} needed`
-          : id === "watchlist"
-          ? `${formatRuntimeCount(activeLineCount)} active of ${formatRuntimeCount(effectiveCap ?? cap)} reserved`
           : id === "flow-scanner"
           ? formatFlowScannerRuntimeDetail(admission, rawUsed)
           : id === "automation"
             ? `${formatRuntimeCount(firstFiniteNumber(admission.executionLineCount, 0))} execution · ${formatRuntimeCount(firstFiniteNumber(admission.automationLineCount, 0))} algo`
-          : id === "convenience"
-            ? `${formatRuntimeCount(activeLineCount)} active of ${formatRuntimeCount(rawUsed)} reclaimable`
           : null,
       dynamic: dynamicPool,
       strict: Boolean(pool.strict),
@@ -928,7 +809,6 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
     rows,
     pools,
     accountMonitor: pools["account-monitor"],
-    watchlist: pools.watchlist,
     flowScanner: pools["flow-scanner"],
     signalOptions,
     total,

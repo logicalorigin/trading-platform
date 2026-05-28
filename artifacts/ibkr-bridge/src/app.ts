@@ -938,6 +938,12 @@ app.get("/options/chains", async (req, res) => {
         req.query.strikeCoverage === "full"
           ? req.query.strikeCoverage
           : undefined,
+      underlyingSpotPrice:
+        typeof req.query.underlyingSpotPrice === "string" &&
+        Number.isFinite(Number(req.query.underlyingSpotPrice)) &&
+        Number(req.query.underlyingSpotPrice) > 0
+          ? Number(req.query.underlyingSpotPrice)
+          : undefined,
       quoteHydration:
         req.query.quoteHydration === "metadata" ||
         req.query.quoteHydration === "snapshot"

@@ -345,6 +345,25 @@ export function RootCrashDiagnosticsFallback({
             style={{
               display: "flex",
               alignItems: "center",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <img
+              src="/brand/pyrus-mark-dark.svg"
+              alt=""
+              style={{ height: 42, width: 42, objectFit: "contain" }}
+            />
+            <img
+              src="/brand/pyrus-wordmark-tight.png"
+              alt="PYRUS"
+              style={{ height: 28, width: "auto", objectFit: "contain" }}
+            />
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
               gap: 10,
               color: "#D9A864",
               fontSize: 12,
@@ -353,7 +372,7 @@ export function RootCrashDiagnosticsFallback({
             }}
           >
             <AlertTriangle size={18} aria-hidden="true" />
-            PYRUS root crash
+            PYRUS ROOT CRASH
           </div>
           <h1 style={{ margin: 0, fontSize: 24, lineHeight: 1.15 }}>
             {bundle.error.message || "Render failed"}

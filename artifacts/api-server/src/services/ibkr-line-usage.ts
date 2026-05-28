@@ -17,7 +17,6 @@ import {
 import { getIbkrHistoricalAdmissionSnapshot } from "./ibkr-historical-admission";
 import { ensureIbkrLaneRuntimeOverridesLoaded } from "./ibkr-lanes";
 import {
-  getIbkrWatchlistPrewarmDiagnostics,
   getOptionsFlowScannerDiagnostics,
   reconcileIbkrWatchlistPrewarmFromBridgeDiagnostics,
 } from "./platform";
@@ -445,15 +444,12 @@ function buildLineDriftReconciliation(input: {
 
 function liveSurfaceForLease(
   lease: MarketDataLease,
-): "account" | "visible" | "watchlist" | null {
+): "account" | "visible" | null {
   if (lease.intent === "account-monitor-live") {
     return "account";
   }
   if (lease.intent === "visible-live") {
     return "visible";
-  }
-  if (lease.intent === "watchlist-live") {
-    return "watchlist";
   }
   return null;
 }
@@ -478,7 +474,6 @@ function buildWarmupCoverage(input: {
     : new Set<string>();
   const targetLineIds = new Set<string>();
   const accountLineIds = new Set<string>();
-  const watchlistLineIds = new Set<string>();
   const visibleLineIds = new Set<string>();
   const targetSymbols = new Set<string>();
 
@@ -491,8 +486,6 @@ function buildWarmupCoverage(input: {
       targetLineIds.add(lineId);
       if (surface === "account") {
         accountLineIds.add(lineId);
-      } else if (surface === "watchlist") {
-        watchlistLineIds.add(lineId);
       } else {
         visibleLineIds.add(lineId);
       }
@@ -512,9 +505,6 @@ function buildWarmupCoverage(input: {
   const visiblePendingLineIds = new Set(
     Array.from(visibleLineIds).filter((lineId) => !bridgeLineIds.has(lineId)),
   );
-  const watchlistPendingLineIds = new Set(
-    Array.from(watchlistLineIds).filter((lineId) => !bridgeLineIds.has(lineId)),
-  );
   const coverageRatio =
     targetLineIds.size > 0 ? activeLineIds.size / targetLineIds.size : null;
 
@@ -531,15 +521,12 @@ function buildWarmupCoverage(input: {
     pendingLineCount: pendingLineIds.size,
     accountTargetLineCount: accountLineIds.size,
     accountPendingLineCount: accountPendingLineIds.size,
-    watchlistTargetLineCount: watchlistLineIds.size,
-    watchlistPendingLineCount: watchlistPendingLineIds.size,
     visibleTargetLineCount: visibleLineIds.size,
     visiblePendingLineCount: visiblePendingLineIds.size,
     coverageRatio,
     targetSymbolCount: targetSymbols.size,
     pendingLineSample: lineDriftSample(pendingLineIds),
     accountPendingLineSample: lineDriftSample(accountPendingLineIds),
-    watchlistPendingLineSample: lineDriftSample(watchlistPendingLineIds),
     visiblePendingLineSample: lineDriftSample(visiblePendingLineIds),
   };
 }
@@ -563,8 +550,10 @@ function buildLineUsagePolicy(input: {
     accountMonitorLineCap: budget.accountMonitorLineCap,
     accountMonitorDynamic: true,
     automationLineCap: budget.automationLineCap,
-    watchlistLineCap: budget.watchlistLineCap,
     scannerStaticLineCap: budget.flowScannerLineCap,
+    scannerDynamicLineCap: input.admission.pressure.scannerDynamicLineCap,
+    optionReserveLineCount: input.admission.pressure.optionReserveLineCount,
+    nonScannerOptionLineCount: input.admission.pressure.nonScannerOptionLineCount,
   };
 }
 
@@ -598,31 +587,18 @@ function buildLineAllocation(input: {
 
   return {
     activeLineCount,
+    activeEquityLineCount: readNumber(admission.activeEquityLineCount),
+    routineEquityLineCount: readNumber(admission.routineEquityLineCount),
+    optionSupportEquityLineCount: readNumber(
+      admission.optionSupportEquityLineCount,
+    ),
+    manualDepthEquityLineCount: readNumber(admission.manualDepthEquityLineCount),
     targetFillLines,
     remainingToTargetLineCount,
     usableRemainingLineCount: readNumber(admission.usableRemainingLineCount),
     protectedLineCount: readNumber(
       lineAllocation.protectedLineCount,
       pressure.protectedLineCount,
-    ),
-    elasticLineCount: readNumber(
-      lineAllocation.elasticLineCount,
-      admission.elasticLineCount,
-    ),
-    reclaimableElasticLineCount: readNumber(
-      lineAllocation.reclaimableElasticLineCount,
-      admission.reclaimableElasticLineCount,
-    ),
-    sharedElasticLineCount: readNumber(lineAllocation.sharedElasticLineCount),
-    reclaimableFillerLineCount: readNumber(
-      lineAllocation.reclaimableFillerLineCount,
-      admission.reclaimableFillerLineCount,
-    ),
-    elasticTargetLineCapacity: readNumber(
-      lineAllocation.elasticTargetLineCapacity,
-    ),
-    elasticRemainingLineCount: readNumber(
-      lineAllocation.elasticRemainingLineCount,
     ),
     visibleLineCount: readNumber(pressure.visibleLineCount),
     scannerActiveLineCount,
@@ -633,23 +609,10 @@ function buildLineAllocation(input: {
     scannerConstrainedByActiveDemand: Boolean(
       pressure.scannerConstrainedByActiveDemand,
     ),
-    watchlistLineCount: readNumber(
-      lineAllocation.watchlistLineCount,
-      pressure.watchlistLineCount,
-      admission.watchlistLineCount,
-    ),
-    watchlistLineCap: readNumber(
-      pressure.watchlistStaticLineCap,
-      admission.budget.watchlistLineCap,
-      admission.poolUsage.watchlist?.maxLines,
-    ),
-    watchlistRemainingLineCount: readNumber(
-      pressure.watchlistRemainingLineCount,
-      admission.watchlistRemainingLineCount,
-      admission.poolUsage.watchlist?.remainingLineCount,
-    ),
-    convenienceLineCount: readNumber(admission.convenienceLineCount),
-    fillerLineCount: readNumber(admission.fillerLineCount),
+    scannerDynamicLineCap: readNumber(pressure.scannerDynamicLineCap),
+    optionBudgetLineCount: readNumber(pressure.optionBudgetLineCount),
+    nonScannerOptionLineCount: readNumber(pressure.nonScannerOptionLineCount),
+    optionReserveLineCount: readNumber(pressure.optionReserveLineCount),
     bridgeActiveLineCount: input.bridgeActiveLineCount,
     bridgeLineBudget: input.bridgeLineBudget,
   };
@@ -663,7 +626,6 @@ function buildLineUtilizationAudit(input: {
   bridgeActiveLineCount: number | null;
   bridgeLineBudget: number | null;
   driftReconciliation: ReturnType<typeof buildLineDriftReconciliation>;
-  watchlistPrewarm: ReturnType<typeof getIbkrWatchlistPrewarmDiagnostics>;
 }) {
   const admission = input.admission;
   const scannerUtilization = admission.optionsFlowScanner.lineUtilization;
@@ -702,9 +664,7 @@ function buildLineUtilizationAudit(input: {
             ? "scanner-active"
           : admission.optionsFlowScanner.backgroundBlockedReason
             ? `scanner-${admission.optionsFlowScanner.backgroundBlockedReason}`
-            : input.watchlistPrewarm.laneDroppedSymbolCount > 0
-              ? "visible-lane-cap"
-              : input.driftReconciliation.status !== "matched"
+            : input.driftReconciliation.status !== "matched"
                 ? "line-drift"
                 : "active-demand-satisfied";
 
@@ -736,25 +696,6 @@ function buildLineUtilizationAudit(input: {
         admission.flowScannerActivity?.recentRotatedCount ?? 0,
       recentRejectedCount:
         admission.flowScannerActivity?.recentRejectedCount ?? 0,
-    },
-    watchlist: {
-      primaryActiveSymbolCount:
-        input.watchlistPrewarm.primaryActiveSymbolCount,
-      primaryActiveSourceSymbolCount:
-        input.watchlistPrewarm.primaryActiveSourceSymbolCount,
-      primaryMissingSourceSymbolCount:
-        input.watchlistPrewarm.primaryMissingSourceSymbolCount,
-      primaryMissingSourceSymbolSample:
-        input.watchlistPrewarm.primaryMissingSourceSymbolSample,
-      primarySymbolLimit: input.watchlistPrewarm.primarySymbolLimit,
-      laneDroppedSymbolCount:
-        input.watchlistPrewarm.laneDroppedSymbolCount,
-      droppedAfterPrimarySymbolCount:
-        input.watchlistPrewarm.droppedAfterPrimarySymbolCount,
-      fillerActiveSymbolCount: 0,
-      fillerCandidateSymbolCount: 0,
-      fillerCapSymbolCount: 0,
-      fillerEnabled: false,
     },
   };
 }
@@ -804,7 +745,6 @@ export async function getIbkrLineUsageSnapshot() {
     ...getMarketDataAdmissionDiagnostics(),
     optionsFlowScanner: getOptionsFlowScannerDiagnostics(),
   };
-  const watchlistPrewarm = getIbkrWatchlistPrewarmDiagnostics();
   const quoteStreams = getBridgeQuoteStreamDiagnostics();
   const optionQuoteStreams = getBridgeOptionQuoteStreamDiagnostics();
   const stockAggregates = getStockAggregateStreamDiagnostics();
@@ -829,23 +769,22 @@ export async function getIbkrLineUsageSnapshot() {
     bridgeActiveLineCount: bridgeActiveLines,
     bridgeLineBudget,
     driftReconciliation,
-    watchlistPrewarm,
   });
 
-	  return {
-	    updatedAt: new Date().toISOString(),
-	    admission,
-	    historicalWork: {
-	      admission: getIbkrHistoricalAdmissionSnapshot(),
-	      bridge:
-	        bridge.value &&
-	        typeof bridge.value.scheduler === "object" &&
-	        bridge.value.scheduler &&
-	        "historical" in bridge.value.scheduler
-	          ? (bridge.value.scheduler as Record<string, unknown>).historical ?? null
-	          : null,
-	    },
-	    policy: buildLineUsagePolicy({
+  return {
+    updatedAt: new Date().toISOString(),
+    admission,
+    historicalWork: {
+      admission: getIbkrHistoricalAdmissionSnapshot(),
+      bridge:
+        bridge.value &&
+        typeof bridge.value.scheduler === "object" &&
+        bridge.value.scheduler &&
+        "historical" in bridge.value.scheduler
+          ? (bridge.value.scheduler as Record<string, unknown>).historical ?? null
+          : null,
+    },
+    policy: buildLineUsagePolicy({
       admission,
       bridgeLineBudget,
     }),
@@ -869,7 +808,6 @@ export async function getIbkrLineUsageSnapshot() {
       stockAggregates,
     },
     warmup,
-    watchlistPrewarm,
     accountMonitor: buildAccountMonitorLineUsage({ admission, warmup }),
     ownerClasses: admission.ownerClasses,
     signalOptions: admission.signalOptions,

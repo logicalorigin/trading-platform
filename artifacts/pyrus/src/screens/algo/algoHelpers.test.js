@@ -675,7 +675,7 @@ test("algo positions adapt to the account positions row contract with live optio
 });
 
 test("same-day algo position rows keep day P&L aligned with unrealized P&L", () => {
-  const openedAt = new Date().toISOString().slice(0, 10);
+  const openedAt = new Date().toISOString();
   const rows = buildAlgoAccountPositionRows({
     positions: [
       {
@@ -1079,6 +1079,12 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
   assert.match(settingsRegionSource, /ContractSelectionCell/);
   assert.match(settingsRegionSource, /ExitLadderTrack/);
   assert.match(settingsRegionSource, /className="algo-settings-grid"/);
+  assert.match(settingsRegionSource, /data-testid="algo-contract-dte-rail"/);
+  assert.match(settingsRegionSource, /data-testid="algo-contract-selection-summary"/);
+  assert.match(settingsRegionSource, /data-testid="algo-mini-chain"/);
+  assert.match(settingsRegionSource, /STRIKE_SLOT_META/);
+  assert.match(settingsRegionSource, /const ChainStrikeButton/);
+  assert.match(settingsRegionSource, /formatDteWindowLabel/);
   assert.match(settingsRegionSource, /data-testid=\{`algo-strike-ladder-\$\{side\.toLowerCase\(\)\}-\$\{slot\}`\}/);
   assert.match(settingsRegionSource, /aria-checked=\{selected\}/);
   assert.match(settingsRegionSource, /STRIKE_SLOT_VALUES_DESC/);
@@ -1099,8 +1105,10 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
   assert.match(settingsRegionSource, /patchStrategySettingsPath/);
   const haltSource = readFileSync(new URL("./HaltStrip.jsx", import.meta.url), "utf8");
   assert.match(haltSource, /algo-halt-input-/);
-  assert.match(haltSource, /StatePill/);
+  assert.doesNotMatch(haltSource, /StatePill/);
+  assert.doesNotMatch(haltSource, /algo-halt-state-pill/);
   assert.match(haltSource, /data-state=\{status\.state\}/);
+  assert.match(haltSource, /state=\{status\.state\}/);
   assert.match(haltSource, /className="algo-settings-grid"/);
   assert.doesNotMatch(haltSource, /controlColumns/);
   assert.match(

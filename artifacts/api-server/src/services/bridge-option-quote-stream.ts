@@ -864,7 +864,6 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   const isLiveQuoteSnapshotIntent =
     intent === "flow-scanner-live" ||
     intent === "account-monitor-live" ||
-    intent === "watchlist-live" ||
     isSignalOptionsLiveQuoteIntent;
   const bridgeWorkCategory: BridgeWorkCategory =
     isLiveQuoteSnapshotIntent ? "quotes" : "options";

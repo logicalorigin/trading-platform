@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   TRADE_OPTION_VISIBLE_QUOTE_CONTRACT_LIMIT,
+  TRADE_OPTION_VISIBLE_QUOTE_LINE_RESERVE,
+  TRADE_OPTION_VISIBLE_QUOTE_UNDERLYING_LINE_RESERVE,
   buildTradeOptionProviderContractIdPlan,
   buildTradeOptionQuoteSubscriptionPlan,
 } from "./optionQuoteHydrationPlan.js";
@@ -105,6 +107,8 @@ test("buildTradeOptionQuoteSubscriptionPlan caps visible contracts while pinning
     TRADE_OPTION_VISIBLE_QUOTE_CONTRACT_LIMIT,
     40,
   );
+  assert.equal(TRADE_OPTION_VISIBLE_QUOTE_UNDERLYING_LINE_RESERVE, 1);
+  assert.equal(TRADE_OPTION_VISIBLE_QUOTE_LINE_RESERVE, 41);
 });
 
 test("buildTradeOptionQuoteSubscriptionPlan keeps hidden analysis rows out of visible subscriptions", () => {

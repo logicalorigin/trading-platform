@@ -102,6 +102,14 @@ const POLYGON_STATUS_META = {
   unknown: { label: "No checks yet", tone: CSS_COLOR.textSec },
 };
 
+const resolveStockProviderLabel = (provider) => {
+  const identity = String(provider?.provider || provider?.identity || "").toLowerCase();
+  const baseUrl = String(provider?.baseUrl || "").toLowerCase();
+  return identity === "massive" || baseUrl.includes("massive.com")
+    ? "Massive"
+    : "Polygon";
+};
+
 const formatHeaderTimeAgo = (value) => {
   const timestamp = value ? Date.parse(value) : Number.NaN;
   if (!Number.isFinite(timestamp)) {
@@ -201,6 +209,7 @@ const buildCompactLineUsage = (lineUsage) => {
 
 const buildProviderRows = ({ health, liveDataLabel, runtimeDiagnostics }) => {
   const polygon = runtimeDiagnostics?.providers?.polygon;
+  const stockProviderLabel = resolveStockProviderLabel(polygon);
   const polygonMeta =
     POLYGON_STATUS_META[polygon?.status] || POLYGON_STATUS_META.unknown;
   const polygonFreshness =
@@ -221,7 +230,7 @@ const buildProviderRows = ({ health, liveDataLabel, runtimeDiagnostics }) => {
       tone: health.color,
     },
     {
-      label: "Polygon",
+      label: stockProviderLabel,
       value: polygonMeta.label,
       detail: polygonDetail,
       tone: polygonMeta.tone,
@@ -737,7 +746,7 @@ export const buildHeaderIbkrPopoverModel = ({
         { label: "Account", value: accountValue },
         { label: "Market data", value: marketDataMode },
         ...providerRows
-          .filter((row) => row.label === "Polygon")
+          .filter((row) => row.label !== "IBKR")
           .map((row) => ({
             label: row.label,
             value: row.detail ? `${row.value} · ${row.detail}` : row.value,

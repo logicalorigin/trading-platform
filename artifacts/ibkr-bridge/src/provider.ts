@@ -185,6 +185,7 @@ export interface IbkrBridgeProvider {
     maxExpirations?: number;
     strikesAroundMoney?: number;
     strikeCoverage?: "fast" | "standard" | "full";
+    underlyingSpotPrice?: number | null;
     quoteHydration?: "metadata" | "snapshot";
     signal?: AbortSignal;
   }): Promise<OptionChainContract[]>;

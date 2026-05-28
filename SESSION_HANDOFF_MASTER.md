@@ -6,6 +6,8 @@ Index of durable per-session handoff files. Keep this file short and discoverabl
 
 | Last Updated (MT) | Session ID | Handoff | Workstream | Branch | HEAD | Status |
 | --- | --- | --- | --- | --- | --- | --- |
+| 2026-05-28 06:55:20 MDT | `019e6ea4-f32b-7261-8ca3-9d57cc9d40b5` | `SESSION_HANDOFF_2026-05-28_019e6ea4-f32b-7261-8ca3-9d57cc9d40b5.md` | can you find our dropped sessions? look at the latest changes/file stuff | main | `430cd4a862a6` | Saved; see handoff |
+| 2026-05-27 18:08:52 MDT | `019e6bbb-f865-7563-96f6-ede09cfc4167` | `SESSION_HANDOFF_2026-05-27_019e6bbb-f865-7563-96f6-ede09cfc4167.md` | please recover our last sessions (4). we crashed from something we were doing cleaning out old stuff from the repo, we… | main | `4cdac7414d45` | Saved; see handoff |
 | 2026-05-26 11:24:46 MDT | `019e654e-1409-7621-bde7-f8c231fda8d0` | `SESSION_HANDOFF_2026-05-26_019e654e-1409-7621-bde7-f8c231fda8d0.md` | find dropped long-running goal session | main | `d9f06f192a13` | Orphan pts/0 Codex process recorded; local goal DB empty |
 | 2026-05-26 07:30:47 MDT | `019e6477-7493-7191-acfb-8aa632788e6c` | `SESSION_HANDOFF_2026-05-26_019e6477-7493-7191-acfb-8aa632788e6c.md` | please find out last dropped sessions | main | `0b5fccf9cdc0` | Recovery evidence saved; no Git-visible untracked files; prior Codex DB gone |
 | 2026-05-25 12:03:41 MDT | `019e6049-463f-7ab0-a520-95e909a2eff6` | `SESSION_HANDOFF_2026-05-25_019e6049-463f-7ab0-a520-95e909a2eff6.md` | why did we just drop sessions? killing our productivity and my faith in you | main | `9ec051d8590c` | Saved; see handoff |

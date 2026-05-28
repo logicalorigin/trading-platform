@@ -44,11 +44,15 @@ import type {
   TimeChartOptions,
 } from "lightweight-charts";
 import type {
+  ChartFootprintCandle,
+  ChartFootprintContext,
+  ChartFootprintDisplayMode,
   ChartModel,
   IndicatorWindow,
   IndicatorZone,
   StudySpec,
 } from "./types";
+import { useFootprintCandles } from "./useFootprintCandles";
 import type {
   ChartEvent,
   ChartEventBias,
@@ -334,6 +338,7 @@ type HoverBar = {
 };
 
 export type BaseSeriesType = "candles" | "bars" | "line" | "area" | "baseline";
+export type ChartDisplayType = BaseSeriesType | "footprint";
 
 export type MobileChartInteractionMode =
   | "page-first"
@@ -710,6 +715,21 @@ type FlowTooltipState = {
   model: FlowTooltipModel;
 };
 
+type FootprintCellOverlay = {
+  id: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  text: string;
+  title: string;
+  tone: "buy" | "sell" | "neutral";
+  intensity: number;
+  isPoc: boolean;
+  buyImbalance: boolean;
+  sellImbalance: boolean;
+};
+
 const resolveFlowToneColor = (
   tone: ChartEventOverlay["tone"],
   theme: ResearchChartTheme,
@@ -837,6 +857,20 @@ type IndicatorDashboardOverlay = {
 
 const PYRUS_SIGNALS_STRATEGY_KEY = "pyrus-signals-smc-pro-v3";
 const VOLUME_SCALE_TOP_MARGIN = 0.78;
+const FOOTPRINT_TIMEFRAME_MS: Record<string, number> = {
+  "5s": 5_000,
+  "15s": 15_000,
+  "30s": 30_000,
+  "1m": 60_000,
+  "2m": 120_000,
+  "5m": 300_000,
+  "15m": 900_000,
+  "30m": 1_800_000,
+  "1h": 3_600_000,
+};
+const SUPPORTED_FOOTPRINT_TIMEFRAMES = new Set(
+  Object.keys(FOOTPRINT_TIMEFRAME_MS),
+);
 
 const toDataTestIdSegment = (value: string): string =>
   value
@@ -1269,6 +1303,18 @@ type TradeConnectorOverlay = {
 export type ChartSurfaceControls = {
   baseSeriesType: BaseSeriesType;
   setBaseSeriesType: (next: BaseSeriesType) => void;
+  chartDisplayType: ChartDisplayType;
+  setChartDisplayType: (next: ChartDisplayType) => void;
+  footprintDisplayMode: ChartFootprintDisplayMode;
+  setFootprintDisplayMode: (next: ChartFootprintDisplayMode) => void;
+  footprintTicksPerRow: number;
+  setFootprintTicksPerRow: (next: number | ((value: number) => number)) => void;
+  footprintImbalancePercent: number;
+  setFootprintImbalancePercent: (
+    next: number | ((value: number) => number),
+  ) => void;
+  footprintAvailable: boolean;
+  footprintState: "idle" | "loading" | "ready" | "empty" | "unsupported" | "error";
   activeBar: HoverBar | null;
   showVolume: boolean;
   setShowVolume: (next: boolean | ((value: boolean) => boolean)) => void;
@@ -1344,6 +1390,7 @@ type ResearchChartSurfaceProps = {
   leftOverlayWidth?: number;
   bottomOverlayHeight?: number;
   defaultBaseSeriesType?: BaseSeriesType;
+  footprintContext?: ChartFootprintContext | null;
   defaultShowVolume?: boolean;
   defaultShowPriceLine?: boolean;
   defaultScaleMode?: ScaleMode;
@@ -4504,6 +4551,229 @@ const buildFlowVolumeOverlays = (
   }, []);
 };
 
+const formatFootprintNumber = (value: number): string => {
+  const absolute = Math.abs(value);
+  if (absolute >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(absolute >= 10_000_000 ? 0 : 1)}M`;
+  }
+  if (absolute >= 1_000) {
+    return `${(value / 1_000).toFixed(absolute >= 10_000 ? 0 : 1)}K`;
+  }
+  return `${Math.round(value)}`;
+};
+
+const formatFootprintPrice = (value: number): string =>
+  Math.abs(value) >= 100
+    ? value.toFixed(2)
+    : Math.abs(value) >= 1
+      ? value.toFixed(3)
+      : value.toFixed(4);
+
+const resolveFootprintLevelText = (
+  level: ChartFootprintCandle["levels"][number],
+  mode: ChartFootprintDisplayMode,
+): string => {
+  if (mode === "delta") {
+    return level.delta > 0
+      ? `+${formatFootprintNumber(level.delta)}`
+      : formatFootprintNumber(level.delta);
+  }
+  if (mode === "total") {
+    return formatFootprintNumber(level.totalVolume);
+  }
+  return `${formatFootprintNumber(level.sellVolume)}x${formatFootprintNumber(
+    level.buyVolume,
+  )}`;
+};
+
+const resolveFootprintCandleWidth = (
+  chart: ChartApi,
+  candles: ChartFootprintCandle[],
+  index: number,
+): number => {
+  const currentTime = Date.parse(candles[index]?.time ?? "") / 1000;
+  const currentX = chart.timeScale().timeToCoordinate(currentTime);
+  const previousTime =
+    index > 0 ? Date.parse(candles[index - 1]?.time ?? "") / 1000 : null;
+  const nextTime =
+    index < candles.length - 1
+      ? Date.parse(candles[index + 1]?.time ?? "") / 1000
+      : null;
+  const previousX = previousTime ? chart.timeScale().timeToCoordinate(previousTime) : null;
+  const nextX = nextTime ? chart.timeScale().timeToCoordinate(nextTime) : null;
+  const distances = [previousX, nextX]
+    .map((x) =>
+      isFiniteNumber(x) && isFiniteNumber(currentX)
+        ? Math.abs(Number(x) - Number(currentX))
+        : null,
+    )
+    .filter((value): value is number => typeof value === "number" && value > 0);
+  const width = distances.length ? Math.min(...distances) * 0.84 : 42;
+  return clampCoordinate(width, 28, 72);
+};
+
+const resolveFootprintRowSize = (
+  candle: ChartFootprintCandle,
+  fallbackRowSize: number | null,
+): number => {
+  if (fallbackRowSize && Number.isFinite(fallbackRowSize) && fallbackRowSize > 0) {
+    return fallbackRowSize;
+  }
+  const prices = candle.levels
+    .map((level) => level.price)
+    .filter((price) => Number.isFinite(price))
+    .sort((left, right) => left - right);
+  let rowSize = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < prices.length; index += 1) {
+    const delta = prices[index] - prices[index - 1];
+    if (delta > 0) {
+      rowSize = Math.min(rowSize, delta);
+    }
+  }
+  return Number.isFinite(rowSize) ? rowSize : 0;
+};
+
+const buildFootprintCellOverlays = (
+  chart: ChartApi,
+  series: ChartSeriesApi,
+  candles: ChartFootprintCandle[],
+  displayMode: ChartFootprintDisplayMode,
+  rowSize: number | null,
+  viewportWidth: number,
+  viewportHeight: number,
+): FootprintCellOverlay[] => {
+  if (!candles.length || !viewportWidth || !viewportHeight) {
+    return [];
+  }
+
+  const result: FootprintCellOverlay[] = [];
+  const maxCells = 1_600;
+
+  candles.forEach((candle, candleIndex) => {
+    if (result.length >= maxCells) {
+      return;
+    }
+    const candleTime = Date.parse(candle.time) / 1000;
+    if (!Number.isFinite(candleTime)) {
+      return;
+    }
+    const rawX = chart.timeScale().timeToCoordinate(candleTime);
+    if (!isFiniteNumber(rawX)) {
+      return;
+    }
+    const width = resolveFootprintCandleWidth(chart, candles, candleIndex);
+    if (!isOverlayAnchorVisibleOnAxis(rawX, width / 2, viewportWidth)) {
+      return;
+    }
+    const resolvedRowSize = resolveFootprintRowSize(candle, rowSize);
+    const maxLevelVolume = Math.max(
+      1,
+      ...candle.levels.map((level) => level.totalVolume),
+    );
+
+    candle.levels.forEach((level) => {
+      if (result.length >= maxCells) {
+        return;
+      }
+      const rawY = series.priceToCoordinate?.(level.price);
+      if (!isFiniteNumber(rawY)) {
+        return;
+      }
+      const lowerY =
+        resolvedRowSize > 0
+          ? series.priceToCoordinate?.(level.price - resolvedRowSize)
+          : null;
+      const upperY =
+        resolvedRowSize > 0
+          ? series.priceToCoordinate?.(level.price + resolvedRowSize)
+          : null;
+      const rowHeight =
+        isFiniteNumber(lowerY)
+          ? Math.abs(Number(lowerY) - Number(rawY))
+          : isFiniteNumber(upperY)
+            ? Math.abs(Number(rawY) - Number(upperY))
+            : 14;
+      const height = clampCoordinate(rowHeight * 0.9, 8, 24);
+      const left = Number(rawX) - width / 2;
+      const top = Number(rawY) - height / 2;
+      if (
+        !doesRectIntersectViewport(
+          left,
+          top,
+          width,
+          height,
+          viewportWidth,
+          viewportHeight,
+        )
+      ) {
+        return;
+      }
+      const tone =
+        level.delta > 0 ? "buy" : level.delta < 0 ? "sell" : "neutral";
+      result.push({
+        id: `${candle.time}:${level.price}`,
+        left,
+        top,
+        width,
+        height,
+        text: resolveFootprintLevelText(level, displayMode),
+        title: [
+          `${new Date(candle.time).toLocaleTimeString()} ${formatFootprintPrice(level.price)}`,
+          `Buy ${formatFootprintNumber(level.buyVolume)}`,
+          `Sell ${formatFootprintNumber(level.sellVolume)}`,
+          `Delta ${level.delta > 0 ? "+" : ""}${formatFootprintNumber(level.delta)}`,
+          `Vol ${formatFootprintNumber(level.totalVolume)}`,
+          `${level.tradeCount} trades`,
+        ].join(" | "),
+        tone,
+        intensity: clampCoordinate(level.totalVolume / maxLevelVolume, 0.15, 1),
+        isPoc: candle.pocPrice === level.price,
+        buyImbalance: level.buyImbalance,
+        sellImbalance: level.sellImbalance,
+      });
+    });
+  });
+
+  return result;
+};
+
+const resolveFootprintVisibleRange = (
+  bars: ChartModel["chartBars"],
+  visibleRange: VisibleLogicalRange | null,
+  defaultRange: VisibleLogicalRange | null | undefined,
+  timeframe: string | null | undefined,
+): { from: Date; to: Date } | null => {
+  if (!bars.length || !timeframe || !SUPPORTED_FOOTPRINT_TIMEFRAMES.has(timeframe)) {
+    return null;
+  }
+
+  const range = normalizeVisibleLogicalRange(visibleRange) ||
+    normalizeVisibleLogicalRange(defaultRange) || {
+      from: Math.max(0, bars.length - 40),
+      to: bars.length - 1,
+    };
+  const fromIndex = clampCoordinate(Math.floor(range.from), 0, bars.length - 1);
+  const toIndex = clampCoordinate(Math.ceil(range.to), fromIndex, bars.length - 1);
+  const fromBar = bars[fromIndex];
+  const toBar = bars[toIndex];
+  if (!fromBar || !toBar) {
+    return null;
+  }
+
+  const explicitStepMs = FOOTPRINT_TIMEFRAME_MS[timeframe];
+  const inferredStepMs =
+    bars.length > 1
+      ? Math.max(1_000, (bars[Math.min(toIndex + 1, bars.length - 1)].time - toBar.time) * 1_000)
+      : 60_000;
+  const stepMs = explicitStepMs || inferredStepMs;
+  const from = new Date(fromBar.time * 1_000);
+  const to = new Date(toBar.time * 1_000 + stepMs);
+  return Number.isFinite(from.getTime()) && Number.isFinite(to.getTime()) &&
+    from.getTime() < to.getTime()
+    ? { from, to }
+    : null;
+};
+
 const buildSelectedTradeOverlays = (
   chart: ChartApi,
   series: ChartSeriesApi,
@@ -5033,6 +5303,7 @@ const ResearchChartSurfaceComponent = ({
   leftOverlayWidth = 0,
   bottomOverlayHeight = 0,
   defaultBaseSeriesType = "candles",
+  footprintContext = null,
   defaultShowVolume = true,
   defaultShowPriceLine = true,
   defaultScaleMode = "linear",
@@ -5274,6 +5545,14 @@ const ResearchChartSurfaceComponent = ({
   const [baseSeriesType, setBaseSeriesType] = useState<BaseSeriesType>(
     defaultBaseSeriesType,
   );
+  const [chartDisplayType, setChartDisplayTypeState] =
+    useState<ChartDisplayType>(defaultBaseSeriesType);
+  const [footprintDisplayMode, setFootprintDisplayMode] =
+    useState<ChartFootprintDisplayMode>("split");
+  const [footprintTicksPerRow, setFootprintTicksPerRow] = useState(1);
+  const [footprintImbalancePercent, setFootprintImbalancePercent] =
+    useState(300);
+  const [overlayRevision, setOverlayRevision] = useState(0);
   const [showVolume, setShowVolume] = useState(
     defaultShowVolume && initialChartPreferences.showVolume,
   );
@@ -5312,6 +5591,51 @@ const ResearchChartSurfaceComponent = ({
         : undefined) ??
       false,
   );
+  const selectBaseSeriesType = useCallback((next: BaseSeriesType) => {
+    setBaseSeriesType(next);
+    setChartDisplayTypeState(next);
+  }, []);
+  const selectChartDisplayType = useCallback((next: ChartDisplayType) => {
+    setChartDisplayTypeState(next);
+    setBaseSeriesType(next === "footprint" ? "candles" : next);
+  }, []);
+  const footprintEnabled = chartDisplayType === "footprint";
+  const footprintAvailable = Boolean(
+    footprintContext?.symbol &&
+      SUPPORTED_FOOTPRINT_TIMEFRAMES.has(footprintContext.timeframe) &&
+      (footprintContext.assetClass !== "option" || footprintContext.optionTicker),
+  );
+  const footprintVisibleRange = useMemo(
+    () =>
+      footprintAvailable
+        ? resolveFootprintVisibleRange(
+            model.chartBars,
+            visibleLogicalRangeRef.current,
+            model.defaultVisibleLogicalRange,
+            footprintContext?.timeframe,
+          )
+        : null,
+    [
+      footprintAvailable,
+      footprintContext?.timeframe,
+      model.chartBars,
+      model.defaultVisibleLogicalRange,
+      overlayRevision,
+    ],
+  );
+  const footprintCandles = useFootprintCandles({
+    context: footprintContext,
+    visibleRange: footprintVisibleRange,
+    enabled: footprintEnabled && footprintAvailable,
+    displayMode: footprintDisplayMode,
+    ticksPerRow: footprintTicksPerRow,
+    imbalancePercent: footprintImbalancePercent,
+  });
+  const footprintState = footprintAvailable
+    ? footprintCandles.state
+    : footprintEnabled
+      ? "unsupported"
+      : "idle";
   scalePrefsRef.current = {
     scaleMode,
     autoScale,
@@ -5346,7 +5670,6 @@ const ResearchChartSurfaceComponent = ({
     userPreferences.chart.showTimeScale,
     userPreferences.chart.showVolume,
   ]);
-  const [overlayRevision, setOverlayRevision] = useState(0);
   const [windowOverlays, setWindowOverlays] = useState<OverlayShape[]>([]);
   const [positionBubbleOverlays, setPositionBubbleOverlays] = useState<
     PositionBubbleOverlay[]
@@ -9443,7 +9766,17 @@ const ResearchChartSurfaceComponent = ({
   const surfaceControls = useMemo<ChartSurfaceControls>(
     () => ({
       baseSeriesType,
-      setBaseSeriesType,
+      setBaseSeriesType: selectBaseSeriesType,
+      chartDisplayType,
+      setChartDisplayType: selectChartDisplayType,
+      footprintDisplayMode,
+      setFootprintDisplayMode,
+      footprintTicksPerRow,
+      setFootprintTicksPerRow,
+      footprintImbalancePercent,
+      setFootprintImbalancePercent,
+      footprintAvailable,
+      footprintState,
       activeBar: displayBar,
       showVolume,
       setShowVolume,
@@ -9486,8 +9819,14 @@ const ResearchChartSurfaceComponent = ({
       applyMainPriceAutoScale,
       baseSeriesType,
       canFollowRealtime,
+      chartDisplayType,
       crosshairMode,
       displayBar,
+      footprintAvailable,
+      footprintDisplayMode,
+      footprintImbalancePercent,
+      footprintState,
+      footprintTicksPerRow,
       hideCrosshair,
       invertScale,
       isFullscreen,
@@ -9496,6 +9835,8 @@ const ResearchChartSurfaceComponent = ({
       positionOverlaysEnabled,
       realtimeFollowEnabled,
       scaleMode,
+      selectBaseSeriesType,
+      selectChartDisplayType,
       showGrid,
       showFlowEvents,
       showPriceLine,
@@ -9556,6 +9897,40 @@ const ResearchChartSurfaceComponent = ({
   const drawablePlotHeight = resolveChartDrawableHeight(
     chartRef.current,
     plotSize.height,
+  );
+  const footprintCellOverlays = useMemo(
+    () => {
+      const chart = chartRef.current;
+      const series = candleSeriesRef.current || activePriceSeriesRef.current;
+      if (
+        !footprintEnabled ||
+        !chart ||
+        !series ||
+        !footprintCandles.data?.candles.length ||
+        !drawablePlotWidth ||
+        !drawablePlotHeight
+      ) {
+        return [];
+      }
+      return buildFootprintCellOverlays(
+        chart,
+        series,
+        footprintCandles.data.candles,
+        footprintDisplayMode,
+        footprintCandles.data.diagnostics.rowSize,
+        drawablePlotWidth,
+        drawablePlotHeight,
+      );
+    },
+    [
+      drawablePlotHeight,
+      drawablePlotWidth,
+      footprintCandles.data,
+      footprintDisplayMode,
+      footprintEnabled,
+      overlayRevision,
+      scaleMode,
+    ],
   );
   const dashboardOverlayForDisplay = indicatorDashboardOverlay &&
     userPreferences.chart.pyrusSignalsDashboard !== "hidden"
@@ -9628,36 +10003,44 @@ const ResearchChartSurfaceComponent = ({
           key: "candles",
           label: "Candles",
           shortLabel: "C",
-          active: baseSeriesType === "candles",
-          onClick: () => setBaseSeriesType("candles"),
+          active: chartDisplayType === "candles",
+          onClick: () => selectChartDisplayType("candles"),
+        },
+        {
+          key: "footprint",
+          label: "Footprint",
+          shortLabel: "FP",
+          active: chartDisplayType === "footprint",
+          disabled: !footprintAvailable,
+          onClick: () => selectChartDisplayType("footprint"),
         },
         {
           key: "bars",
           label: "Bars",
           shortLabel: "B",
-          active: baseSeriesType === "bars",
-          onClick: () => setBaseSeriesType("bars"),
+          active: chartDisplayType === "bars",
+          onClick: () => selectChartDisplayType("bars"),
         },
         {
           key: "line",
           label: "Line",
           shortLabel: "L",
-          active: baseSeriesType === "line",
-          onClick: () => setBaseSeriesType("line"),
+          active: chartDisplayType === "line",
+          onClick: () => selectChartDisplayType("line"),
         },
         {
           key: "area",
           label: "Area",
           shortLabel: "A",
-          active: baseSeriesType === "area",
-          onClick: () => setBaseSeriesType("area"),
+          active: chartDisplayType === "area",
+          onClick: () => selectChartDisplayType("area"),
         },
         {
           key: "baseline",
           label: "Baseline",
           shortLabel: "BL",
-          active: baseSeriesType === "baseline",
-          onClick: () => setBaseSeriesType("baseline"),
+          active: chartDisplayType === "baseline",
+          onClick: () => selectChartDisplayType("baseline"),
         },
       ],
     },
@@ -9878,6 +10261,20 @@ const ResearchChartSurfaceComponent = ({
       }
       data-chart-visible-logical-range={activeViewportRangeSignature}
       data-chart-rendered-bar-count={model.chartBars.length}
+      data-chart-display-type={chartDisplayType}
+      data-chart-footprint-enabled={footprintEnabled ? "true" : "false"}
+      data-chart-footprint-available={footprintAvailable ? "true" : "false"}
+      data-chart-footprint-state={footprintState}
+      data-chart-footprint-candle-count={
+        footprintCandles.data?.candles.length ?? 0
+      }
+      data-chart-footprint-cell-count={footprintCellOverlays.length}
+      data-chart-footprint-provider={
+        footprintCandles.data?.diagnostics.sourceProvider ?? ""
+      }
+      data-chart-footprint-partial-reason={
+        footprintCandles.data?.partialReason ?? ""
+      }
       data-chart-latest-source={latestRenderedBar?.source || ""}
       data-chart-latest-freshness={latestRenderedBar?.freshness || ""}
       data-chart-latest-market-data-mode={latestRenderedBar?.marketDataMode || ""}
@@ -10243,6 +10640,7 @@ const ResearchChartSurfaceComponent = ({
           {windowOverlays.length ||
           positionBubbleOverlays.length ||
           positionOffPaneOverlays.length ||
+          footprintCellOverlays.length ||
           zoneOverlays.length ||
           verticalDrawingOverlays.length ||
           boxDrawingOverlays.length ||
@@ -10270,6 +10668,78 @@ const ResearchChartSurfaceComponent = ({
                 zIndex: 5,
               }}
             >
+              {footprintCellOverlays.map((overlay) => {
+                const color =
+                  overlay.tone === "buy"
+                    ? theme.green
+                    : overlay.tone === "sell"
+                      ? theme.red
+                      : theme.textMuted;
+                const alpha =
+                  overlay.intensity > 0.72
+                    ? "46"
+                    : overlay.intensity > 0.42
+                      ? "32"
+                      : "22";
+                return (
+                  <div
+                    key={`footprint-${overlay.id}`}
+                    title={overlay.title}
+                    data-testid={
+                      dataTestId ? `${dataTestId}-footprint-cell` : undefined
+                    }
+                    data-chart-footprint-cell=""
+                    data-chart-footprint-tone={overlay.tone}
+                    data-chart-footprint-poc={overlay.isPoc ? "true" : "false"}
+                    data-chart-footprint-buy-imbalance={
+                      overlay.buyImbalance ? "true" : "false"
+                    }
+                    data-chart-footprint-sell-imbalance={
+                      overlay.sellImbalance ? "true" : "false"
+                    }
+                    style={{
+                      position: "absolute",
+                      left: overlay.left,
+                      top: overlay.top,
+                      width: overlay.width,
+                      height: overlay.height,
+                      boxSizing: "border-box",
+                      border: `1px solid ${withAlpha(
+                        overlay.isPoc ? theme.amber : color,
+                        overlay.isPoc ? "e0" : "8c",
+                      )}`,
+                      borderLeft: overlay.sellImbalance
+                        ? `3px solid ${withAlpha(theme.red, "e6")}`
+                        : undefined,
+                      borderRight: overlay.buyImbalance
+                        ? `3px solid ${withAlpha(theme.green, "e6")}`
+                        : undefined,
+                      background: withAlpha(color, alpha),
+                      color: theme.text,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: "0 2px",
+                      fontFamily: theme.mono,
+                      fontSize:
+                        overlay.width <= 34
+                          ? TYPE_CSS_VAR.micro
+                          : TYPE_CSS_VAR.label,
+                      lineHeight: 1,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "clip",
+                      boxShadow: overlay.isPoc
+                        ? `0 0 0 1px ${withAlpha(theme.amber, "54")}`
+                        : "none",
+                      pointerEvents: "auto",
+                      cursor: "help",
+                    }}
+                  >
+                    {overlay.text}
+                  </div>
+                );
+              })}
               {windowOverlays.map((overlay) => (
                 <div
                   key={`window-${overlay.id}`}

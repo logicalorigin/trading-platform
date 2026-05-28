@@ -153,3 +153,18 @@ test("persistMarketDataBars upserts revised provider bars", () => {
   assert.match(source, /close:\s*sql`excluded\.close`/);
   assert.match(source, /volume:\s*sql`excluded\.volume`/);
 });
+
+test("stored Massive bars use runtime recency instead of source-name delayed heuristic", () => {
+  const source = readMarketDataStoreSource();
+  const loadBlock = source.match(
+    /export async function loadStoredMarketBars\([\s\S]*?\nexport async function persistMarketDataBars/,
+  )?.[0];
+
+  assert.ok(loadBlock);
+  assert.match(loadBlock, /isMassiveStocksRealtimeConfigured\(\)/);
+  assert.match(
+    loadBlock,
+    /const delayed =\s*input\.sourceName\.includes\("massive"\) && !isMassiveStocksRealtimeConfigured\(\)/,
+  );
+  assert.doesNotMatch(loadBlock, /delayed: input\.sourceName\.includes\("massive"\)/);
+});

@@ -121,34 +121,6 @@ const groupRollupState = (statuses) => {
   );
 };
 
-const StatePill = ({ state, label, mini = false }) => {
-  const tone = STATUS_TONES[state] || STATUS_TONES.armed;
-  return (
-    <span
-      data-testid={`algo-halt-state-pill-${String(label || state).toLowerCase()}`}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: mini ? dim(14) : dim(17),
-        padding: mini ? sp("0 4px") : sp("0 5px"),
-        border: `1px solid ${tone.border}`,
-        borderRadius: dim(RADII.pill),
-        background: tone.background,
-        color: tone.color,
-        fontFamily: T.sans,
-        fontSize: textSize("micro"),
-        fontWeight: FONT_WEIGHTS.label,
-        lineHeight: 1,
-        textTransform: "uppercase",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label || state}
-    </span>
-  );
-};
-
 const compactUnitLabel = (field) => {
   if (!field?.unit) return null;
   if (field.format === "money" || field.unit === "USD") return "$";
@@ -235,49 +207,58 @@ const InlineSwitch = ({
   checked,
   disabled,
   tone,
+  state,
   ariaLabel,
   testId,
   onClick,
-}) => (
-  <button
-    type="button"
-    role="switch"
-    aria-checked={checked}
-    aria-label={ariaLabel}
-    data-testid={testId}
-    disabled={disabled}
-    onClick={onClick}
-    style={{
-      width: dim(25),
-      height: dim(14),
-      minWidth: dim(25),
-      minHeight: dim(14),
-      border: `1px solid ${checked ? tone.color : CSS_COLOR.border}`,
-      borderRadius: dim(7),
-      background: checked ? cssColorAlpha(tone.color, "22") : "transparent",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: checked ? "flex-end" : "flex-start",
-      padding: dim(1),
-      boxSizing: "border-box",
-      cursor: disabled ? "not-allowed" : "pointer",
-      opacity: disabled ? 0.55 : 1,
-      lineHeight: 0,
-      flex: "0 0 auto",
-    }}
-  >
-    <span
-      aria-hidden="true"
+}) => {
+  const stateIsOff = state === "off";
+  const switchTone = stateIsOff ? STATUS_TONES.off : tone;
+  const switchColor = checked || stateIsOff ? switchTone.color : CSS_COLOR.textMuted;
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={ariaLabel}
+      data-testid={testId}
+      disabled={disabled}
+      onClick={onClick}
       style={{
-        width: dim(8),
-        height: dim(8),
-        borderRadius: dim(4),
-        background: checked ? tone.color : CSS_COLOR.textMuted,
-        display: "block",
+        width: dim(25),
+        height: dim(14),
+        minWidth: dim(25),
+        minHeight: dim(14),
+        border: `1px solid ${checked || stateIsOff ? switchTone.border : CSS_COLOR.border}`,
+        borderRadius: dim(7),
+        background:
+          checked || stateIsOff
+            ? cssColorAlpha(switchTone.color, checked ? "22" : "12")
+            : "transparent",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: checked ? "flex-end" : "flex-start",
+        padding: dim(1),
+        boxSizing: "border-box",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
+        lineHeight: 0,
+        flex: "0 0 auto",
       }}
-    />
-  </button>
-);
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: dim(8),
+          height: dim(8),
+          borderRadius: dim(4),
+          background: switchColor,
+          display: "block",
+        }}
+      />
+    </button>
+  );
+};
 
 const ControlToggleCell = ({
   group,
@@ -406,11 +387,11 @@ const ControlToggleCell = ({
             }}
           />
         ) : null}
-        <StatePill state={status.state} label={status.label} mini />
         <InlineSwitch
           checked={checked}
           disabled={disabled}
           tone={tone}
+          state={status.state}
           ariaLabel={`${control.label} halt control ${checked ? "enabled" : "disabled"}; ${status.label}`}
           testId={`algo-halt-toggle-${control.id}`}
           onClick={() =>
@@ -576,10 +557,11 @@ export const HaltStrip = ({
           gap: sp(4),
           minWidth: 0,
         }}
+        title={`Halt controls ${overall.label}`}
       >
         <span
           style={{
-            color: focusedDeployment ? CSS_COLOR.text : CSS_COLOR.textMuted,
+            color: focusedDeployment ? overall.color : CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("body"),
             fontWeight: FONT_WEIGHTS.label,
@@ -593,7 +575,6 @@ export const HaltStrip = ({
             ? `Pyrus · ${normalizeLegacyAlgoBrandText(focusedDeployment.name)}`
             : "No deployment selected"}
         </span>
-        <StatePill state={overall.state} label={overall.label} />
       </div>
       {dirty ? (
         <div
@@ -630,8 +611,9 @@ export const HaltStrip = ({
             }}
           >
             <span
+              title={`${group.label} halt controls ${rollup.label}`}
               style={{
-                color: CSS_COLOR.textSec,
+                color: (STATUS_TONES[rollup.state] || STATUS_TONES.armed).color,
                 fontFamily: T.sans,
                 fontSize: textSize("micro"),
                 fontWeight: 600,
@@ -645,7 +627,6 @@ export const HaltStrip = ({
             >
               {HALT_GROUP_LABELS[group.id] || group.label}
             </span>
-            <StatePill state={rollup.state} label={rollup.label} mini />
           </div>
           <div
             data-testid={`algo-halt-group-${group.id}`}

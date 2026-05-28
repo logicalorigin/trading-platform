@@ -37,6 +37,10 @@ import {
   formatPositionSpreadLabel,
 } from "../account/positionDisplayModel.js";
 import {
+  buildPositionTradeManagement,
+  orderMatchesManagementPosition,
+} from "../account/positionTradeManagement.js";
+import {
   formatEnumLabel,
   formatExpirationLabel,
   formatOptionContractLabel,
@@ -136,9 +140,50 @@ const resolveTradePositionSparklineData = (snapshot, position, symbol) => {
   return buildTradePositionFallbackSparklineData(position, snapshot, symbol);
 };
 
-const OPEN_POSITION_GRID_TEMPLATE =
-  "72px 36px 76px 42px 48px 48px 38px 48px 48px 52px 44px 18px";
-const OPEN_POSITION_TABLE_MIN_WIDTH = 620;
+const openPositionColumn = ({
+  id,
+  label,
+  title = label,
+  width,
+  align = "right",
+  groupEdge = null,
+}) => ({
+  id,
+  label,
+  title,
+  width,
+  align,
+  groupEdge,
+});
+
+const OPEN_POSITION_COLUMNS = [
+  openPositionColumn({ id: "ticker", label: "Tick", title: "Ticker", width: "72px", align: "left" }),
+  openPositionColumn({ id: "side", label: "Side", width: "36px", align: "center" }),
+  openPositionColumn({ id: "contract", label: "Contract", width: "76px", align: "left" }),
+  openPositionColumn({ id: "opened", label: "Open", width: "42px" }),
+  openPositionColumn({ id: "bid", label: "Bid", width: "48px" }),
+  openPositionColumn({ id: "ask", label: "Ask", width: "48px" }),
+  openPositionColumn({ id: "quantity", label: "Qty", width: "38px" }),
+  openPositionColumn({ id: "averageCost", label: "Avg", title: "Average cost", width: "48px" }),
+  openPositionColumn({ id: "mark", label: "Mark", width: "48px" }),
+  openPositionColumn({ id: "stop", label: "SL", title: "Stop loss", width: "50px", groupEdge: "start" }),
+  openPositionColumn({ id: "trail", label: "TRL", title: "Trailing stop", width: "50px" }),
+  openPositionColumn({ id: "target", label: "TP", title: "Profit target", width: "50px" }),
+  openPositionColumn({ id: "riskDistance", label: "DIST", title: "Risk distance / amount", width: "56px", groupEdge: "end" }),
+  openPositionColumn({ id: "pnl", label: "P&L $", width: "52px" }),
+  openPositionColumn({ id: "pnlPercent", label: "P&L %", width: "44px" }),
+  openPositionColumn({ id: "actions", label: "", title: "Actions", width: "18px", align: "center" }),
+];
+const OPEN_POSITION_COLUMN_BY_ID = new Map(OPEN_POSITION_COLUMNS.map((column) => [column.id, column]));
+const openPositionColumnWidth = (column) => {
+  const width = Number.parseFloat(String(column?.width ?? ""));
+  return Number.isFinite(width) ? width : 0;
+};
+const OPEN_POSITION_GRID_TEMPLATE = OPEN_POSITION_COLUMNS.map((column) => column.width).join(" ");
+const OPEN_POSITION_TABLE_MIN_WIDTH = OPEN_POSITION_COLUMNS.reduce(
+  (sum, column) => sum + openPositionColumnWidth(column),
+  0,
+);
 const EXECUTION_GRID_TEMPLATE = "40px 30px minmax(0,1fr) 24px 50px 64px 42px";
 const EXECUTION_TABLE_MIN_WIDTH = 460;
 const LIVE_ORDER_GRID_TEMPLATE = "42px 30px 44px 22px 28px 58px 42px 24px";
@@ -154,11 +199,97 @@ const tradeNumericCellStyle = (color = CSS_COLOR.textSec) => ({
   whiteSpace: "nowrap",
 });
 
+const tradeOpenPositionBoundaryStyle = (column = {}) => ({
+  borderLeft: column.groupEdge === "start" ? `1px solid ${CSS_COLOR.border}` : undefined,
+  borderRight:
+    column.groupEdge === "end"
+      ? `1px solid ${CSS_COLOR.border}`
+      : `1px solid ${cssColorMix(CSS_COLOR.border, 10)}`,
+  boxSizing: "border-box",
+});
+
+const tradeOpenPositionHeaderCellStyle = (column) => ({
+  ...tradeOpenPositionBoundaryStyle(column),
+  minWidth: 0,
+  padding: sp("2px 4px"),
+  color: CSS_COLOR.textMuted,
+  fontSize: textSize("caption"),
+  fontFamily: T.sans,
+  letterSpacing: 0,
+  textAlign: column.align,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+});
+
+const tradeOpenPositionCellStyle = (id, color = CSS_COLOR.textSec, extra = {}) => {
+  const column = OPEN_POSITION_COLUMN_BY_ID.get(id) || {};
+  const alignedStyle =
+    column.align === "right"
+      ? tradeNumericCellStyle(color)
+      : {
+          color,
+          textAlign: column.align || "left",
+          fontFamily: T.sans,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        };
+  return {
+    ...tradeOpenPositionBoundaryStyle(column),
+    minWidth: 0,
+    padding: sp("2px 4px"),
+    ...alignedStyle,
+    ...extra,
+  };
+};
+
 const tradePnlTone = (value) =>
   !isFiniteNumber(value) ? CSS_COLOR.textDim : value >= 0 ? CSS_COLOR.green : CSS_COLOR.red;
 
 const tradeSignedMoney = (value) =>
   isFiniteNumber(value) ? `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(0)}` : MISSING_VALUE;
+
+const tradeManagementPrice = (level) =>
+  level?.price != null ? formatPriceValue(level.price) : MISSING_VALUE;
+
+const tradeManagementDistance = (management) => {
+  if (!isFiniteNumber(management?.riskDistancePct)) return MISSING_VALUE;
+  return `${Math.abs(management.riskDistancePct).toFixed(1)}${
+    management.riskDistancePct <= 0 ? "% past" : "%"
+  }`;
+};
+
+const tradeManagementTone = (management) => {
+  if (management.status === "breached") return CSS_COLOR.red;
+  if (isFiniteNumber(management.riskDistancePct) && management.riskDistancePct <= 10) {
+    return CSS_COLOR.amber;
+  }
+  return CSS_COLOR.textSec;
+};
+
+const tradePositionOrders = (position, liveOrders) => {
+  const rowOrders = Array.isArray(position?.openOrders) ? position.openOrders : [];
+  const brokerOrders = Array.isArray(position?._brokerPosition?.openOrders)
+    ? position._brokerPosition.openOrders
+    : [];
+  const liveMatches = position?._brokerPosition
+    ? liveOrders.filter((order) =>
+        orderMatchesManagementPosition(position._brokerPosition, order),
+      )
+    : [];
+  return [...rowOrders, ...brokerOrders, ...liveMatches];
+};
+
+const tradeManagementForPosition = (position, liveOrders) =>
+  buildPositionTradeManagement(position._brokerPosition || position, {
+    openOrders: tradePositionOrders(position, liveOrders),
+    mark: position.mark ?? position.entry,
+    quantity: position.side === "SHORT" ? -position.qty : position.qty,
+    side: position.side,
+    localStopLoss: position.sl,
+    localTakeProfit: position.tp,
+  });
 
 const tradePositionDisplay = (position) =>
   buildPositionDisplayModel({
@@ -392,6 +523,8 @@ export const TradePositionsPanel = ({
           ticker: marketDataTicker,
           side: position.quantity >= 0 ? "LONG" : "SHORT",
           contract,
+          optionContract: position.optionContract ?? null,
+          openOrders: position.openOrders ?? [],
           optionLoadContract: isOption
             ? {
                 strike: position.optionContract.strike,
@@ -436,6 +569,18 @@ export const TradePositionsPanel = ({
             { includeSymbol: false },
           )
         : null;
+      const optionContract =
+        p.kind === "option"
+          ? {
+              ticker: p.ticker,
+              underlying: p.ticker,
+              expirationDate: p.exp,
+              strike: p.strike,
+              right: String(p.cp ?? "").toUpperCase().startsWith("P") ? "put" : "call",
+              multiplier: 100,
+              sharesPerContract: 100,
+            }
+          : null;
 
       return {
         _isUser: true,
@@ -449,6 +594,8 @@ export const TradePositionsPanel = ({
           p.kind === "option"
             ? optionContractLabel
             : `${p.side} EQUITY`,
+        optionContract,
+        openOrders: [],
         optionLoadContract,
         qty: p.qty,
         entry: p.entry,
@@ -1155,32 +1302,28 @@ export const TradePositionsPanel = ({
                 aria-label="Open trade positions"
                 style={{ minWidth: dim(OPEN_POSITION_TABLE_MIN_WIDTH) }}
               >
-              <div
-                role="row"
-                style={{
-		                  display: "grid",
-		                  gridTemplateColumns: OPEN_POSITION_GRID_TEMPLATE,
-	                  gap: sp(3),
-                  fontSize: textSize("caption"),
-                  color: CSS_COLOR.textMuted,
-                  letterSpacing: "0.04em",
-                  padding: "0 4px",
-                }}
-              >
-                <span role="columnheader">TICK</span>
-                <span role="columnheader">SIDE</span>
-                <span role="columnheader">CONTRACT</span>
-                <span role="columnheader" style={{ textAlign: "right" }}>OPEN</span>
-                <span role="columnheader" style={{ textAlign: "right" }}>BID</span>
-                <span role="columnheader" style={{ textAlign: "right" }}>ASK</span>
-                <span role="columnheader" style={{ textAlign: "right" }}>QTY</span>
-                <span role="columnheader" style={{ textAlign: "right" }}>AVG</span>
-                <span role="columnheader" style={{ textAlign: "right" }}>MARK</span>
-                <span role="columnheader" style={{ textAlign: "right" }}>P&L $</span>
-                <span role="columnheader" style={{ textAlign: "right" }}>P&L %</span>
-                <span role="columnheader"></span>
-              </div>
-              {openPositions.map((p) => {
+                <div
+                  role="row"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: OPEN_POSITION_GRID_TEMPLATE,
+                    gap: 0,
+                    borderTop: `1px solid ${CSS_COLOR.border}`,
+                    borderBottom: `1px solid ${CSS_COLOR.border}`,
+                  }}
+                >
+                  {OPEN_POSITION_COLUMNS.map((column) => (
+                    <span
+                      key={column.id}
+                      role="columnheader"
+                      title={column.title}
+                      style={tradeOpenPositionHeaderCellStyle(column)}
+                    >
+                      {column.label}
+                    </span>
+                  ))}
+                </div>
+              {openPositions.map((p, rowIndex) => {
                 const isLoadable = Boolean(p.optionLoadContract);
                 const closeDisabled = gatewayActionDisabled;
                 const display = tradePositionDisplay(p);
@@ -1193,6 +1336,19 @@ export const TradePositionsPanel = ({
                 const entryText = isFiniteNumber(p.entry) ? formatPriceValue(p.entry) : MISSING_VALUE;
                 const markText = isFiniteNumber(p.mark) ? formatPriceValue(p.mark) : MISSING_VALUE;
                 const openedText = display.openedLabel || MISSING_VALUE;
+                const management = tradeManagementForPosition(p, liveOrders);
+                const managementTitle = [
+                  management.stop ? `SL ${tradeManagementPrice(management.stop)}` : null,
+                  management.trail ? `TRL ${tradeManagementPrice(management.trail)}` : null,
+                  management.target ? `TP ${tradeManagementPrice(management.target)}` : null,
+                  management.riskAmount != null
+                    ? `Risk $${management.riskAmount.toFixed(0)}`
+                    : null,
+                  management.statusLabel,
+                ].filter(Boolean).join(" · ");
+                const rowBackground = rowIndex % 2
+                  ? cssColorMix(CSS_COLOR.bg1, 72)
+                  : "transparent";
                 return (
                   <AppTooltip key={p._id} content={
                       isLoadable
@@ -1212,33 +1368,31 @@ export const TradePositionsPanel = ({
 	                    style={{
 	                      display: "grid",
 	                      gridTemplateColumns: OPEN_POSITION_GRID_TEMPLATE,
-	                      gap: sp(3),
-                      padding: sp("3px 4px"),
+	                      gap: 0,
+                      padding: sp("1px 0"),
                       fontSize: textSize("caption"),
                       fontFamily: T.sans,
                       borderBottom: `1px solid ${cssColorMix(CSS_COLOR.border, 3)}`,
                       cursor: isLoadable ? "pointer" : "default",
                       alignItems: "center",
                       transition: "background 0.1s",
-                      background: "transparent",
+                      background: rowBackground,
                       boxShadow: p._isUser ? `inset 1px 0 0 ${CSS_COLOR.accent}` : "none",
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.background = CSS_COLOR.bg2;
                     }}
                     onMouseLeave={(e) =>
-                      (e.currentTarget.style.background = "transparent")
+                      (e.currentTarget.style.background = rowBackground)
                     }
                   >
 	                    <span
-	                      style={{
-	                        minWidth: 0,
+	                      style={tradeOpenPositionCellStyle("ticker", CSS_COLOR.text, {
 	                        display: "inline-flex",
 	                        alignItems: "center",
 	                        gap: sp(4),
-	                        color: CSS_COLOR.text,
 	                        fontWeight: FONT_WEIGHTS.regular,
-	                      }}
+	                      })}
 	                    >
 	                      <TradePositionSparkline
 	                        position={p}
@@ -1256,8 +1410,7 @@ export const TradePositionsPanel = ({
 	                      </span>
                     </span>
                     <span
-                      style={{
-                        color: CSS_COLOR.textSec,
+                      style={tradeOpenPositionCellStyle("side", CSS_COLOR.textSec, {
                         fontWeight: FONT_WEIGHTS.regular,
                         fontSize: textSize("caption"),
                         padding: sp("1px 4px"),
@@ -1266,78 +1419,132 @@ export const TradePositionsPanel = ({
                         border: `1px solid ${CSS_COLOR.border}`,
                         textAlign: "center",
                         alignSelf: "center",
-                      }}
+                      })}
                     >
                       {p.side}
                     </span>
-                    <span style={{ color: CSS_COLOR.textSec, fontSize: textSize("body") }}>
+                    <span style={tradeOpenPositionCellStyle("contract", CSS_COLOR.textSec)}>
                       {p.contract}
                     </span>
                     <span
                       title={[display.ageLabel, display.openedSourceLabel].filter(Boolean).join(" · ") || undefined}
-                      style={{ color: display.openedLabel ? CSS_COLOR.textSec : CSS_COLOR.textDim, textAlign: "right" }}
+                      style={tradeOpenPositionCellStyle(
+                        "opened",
+                        display.openedLabel ? CSS_COLOR.textSec : CSS_COLOR.textDim,
+                      )}
                     >
                       {openedText}
                     </span>
                     <span
                       title={[spread, quoteFreshness].filter(Boolean).join(" · ")}
-                      style={tradeNumericCellStyle(display.quote?.bid != null ? CSS_COLOR.textSec : CSS_COLOR.textDim)}
+                      style={tradeOpenPositionCellStyle(
+                        "bid",
+                        display.quote?.bid != null ? CSS_COLOR.textSec : CSS_COLOR.textDim,
+                      )}
                     >
                       {bidText}
                     </span>
                     <span
                       title={[spread, quoteFreshness].filter(Boolean).join(" · ")}
-                      style={tradeNumericCellStyle(display.quote?.ask != null ? CSS_COLOR.textSec : CSS_COLOR.textDim)}
+                      style={tradeOpenPositionCellStyle(
+                        "ask",
+                        display.quote?.ask != null ? CSS_COLOR.textSec : CSS_COLOR.textDim,
+                      )}
                     >
                       {askText}
                     </span>
-                    <span style={tradeNumericCellStyle(CSS_COLOR.textDim)}>
+                    <span style={tradeOpenPositionCellStyle("quantity", CSS_COLOR.textDim)}>
                       {p.qty}
                     </span>
-                    <span style={tradeNumericCellStyle(CSS_COLOR.textSec)}>
+                    <span style={tradeOpenPositionCellStyle("averageCost", CSS_COLOR.textSec)}>
                       {entryText}
                     </span>
-                    <span style={tradeNumericCellStyle(CSS_COLOR.text)}>
+                    <span style={tradeOpenPositionCellStyle("mark", CSS_COLOR.text)}>
                       {markText}
                     </span>
-                    <span style={tradeNumericCellStyle(tradePnlTone(p.pnl))}>
+                    <span
+                      title={managementTitle}
+                      style={tradeOpenPositionCellStyle(
+                        "stop",
+                        management.stop ? tradeManagementTone(management) : CSS_COLOR.textDim,
+                      )}
+                    >
+                      {tradeManagementPrice(management.stop)}
+                    </span>
+                    <span
+                      title={managementTitle}
+                      style={tradeOpenPositionCellStyle(
+                        "trail",
+                        management.trail ? CSS_COLOR.textSec : CSS_COLOR.textDim,
+                      )}
+                    >
+                      {tradeManagementPrice(management.trail)}
+                    </span>
+                    <span
+                      title={managementTitle}
+                      style={tradeOpenPositionCellStyle(
+                        "target",
+                        management.target ? CSS_COLOR.textSec : CSS_COLOR.textDim,
+                      )}
+                    >
+                      {tradeManagementPrice(management.target)}
+                    </span>
+                    <span
+                      title={managementTitle}
+                      style={tradeOpenPositionCellStyle(
+                        "riskDistance",
+                        management.stop ? tradeManagementTone(management) : CSS_COLOR.textDim,
+                      )}
+                    >
+                      {tradeManagementDistance(management)}
+                    </span>
+                    <span style={tradeOpenPositionCellStyle("pnl", tradePnlTone(p.pnl))}>
                       {tradeSignedMoney(p.pnl)}
                     </span>
-                    <span style={tradeNumericCellStyle(tradePnlTone(p.pct))}>
+                    <span style={tradeOpenPositionCellStyle("pnlPercent", tradePnlTone(p.pct))}>
                       {formatSignedPercent(p.pct, 1)}
                     </span>
-                    <AppTooltip content={
+                    <span
+                      style={tradeOpenPositionCellStyle("actions", CSS_COLOR.textSec, {
+                        display: "inline-flex",
+                        justifyContent: "center",
+                      })}
+                    >
+                      <AppTooltip content={
                         closeDisabled
                           ? gatewayTradingMessage
                           : p._isLive
                             ? "Submit broker close-out order"
                             : "Close position"
-                      }><button
-                      disabled={closeDisabled}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (closeDisabled) {
-                          notifyGatewayTradingUnavailable();
-                          return;
-                        }
-                        closeRow(p);
-                      }}
-                      style={{
-                        background: "transparent",
-                        border: `1px solid ${cssColorMix(CSS_COLOR.red, 25)}`,
-                        color: CSS_COLOR.red,
-                        fontSize: textSize("caption"),
-                        fontFamily: T.sans,
-                        fontWeight: FONT_WEIGHTS.regular,
-                        borderRadius: dim(2),
-                        cursor: closeDisabled ? "not-allowed" : "pointer",
-                        padding: sp("1px 0"),
-                        lineHeight: 1,
-                        opacity: closeDisabled ? 0.45 : 1,
-                      }}
-                    >
-                      ✕
-                    </button></AppTooltip>
+                      }>
+                        <button
+                          disabled={closeDisabled}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (closeDisabled) {
+                              notifyGatewayTradingUnavailable();
+                              return;
+                            }
+                            closeRow(p);
+                          }}
+                          style={{
+                            background: "transparent",
+                            border: `1px solid ${cssColorMix(CSS_COLOR.red, 25)}`,
+                            color: CSS_COLOR.red,
+                            fontSize: textSize("caption"),
+                            fontFamily: T.sans,
+                            fontWeight: FONT_WEIGHTS.regular,
+                            borderRadius: dim(2),
+                            cursor: closeDisabled ? "not-allowed" : "pointer",
+                            padding: sp("1px 0"),
+                            lineHeight: 1,
+                            opacity: closeDisabled ? 0.45 : 1,
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </AppTooltip>
+                    </span>
                   </div></AppTooltip>
                 );
               })}

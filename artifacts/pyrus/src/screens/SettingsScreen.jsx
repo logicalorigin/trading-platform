@@ -242,6 +242,13 @@ const DEFAULT_SCREEN_OPTIONS = [
 const safeRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
+const resolveStockDataProvider = (providers) => {
+  const configured = Boolean(providers?.polygon || providers?.massive);
+  const label = providers?.massive ? "Massive" : "Polygon";
+  const code = providers?.massive ? "M" : providers?.polygon ? "P" : "-";
+  return { configured, label, code };
+};
+
 const formatBytes = (bytes) => {
   const value = Number(bytes) || 0;
   if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
@@ -369,8 +376,9 @@ function AboutPanel({ summary, providers }) {
       : summary?.tradingMode === "paper"
         ? CSS_COLOR.green
         : CSS_COLOR.textDim;
+  const stockDataProvider = resolveStockDataProvider(providers);
   const providerOk = Boolean(
-    providers?.polygon && providers?.research && providers?.ibkr,
+    stockDataProvider.configured && providers?.research && providers?.ibkr,
   );
 
   return (
@@ -1342,11 +1350,12 @@ function IbkrLineUsagePanel({ runtimeControl }) {
   const streams = safeRecord(snapshot?.streams);
   const quoteStreams = safeRecord(streams.quoteStreams);
   const optionQuoteStreams = safeRecord(streams.optionQuoteStreams);
+  const stockAggregates = safeRecord(streams.stockAggregates);
   const lineUsage = runtimeControl.lineUsage;
   const accountMonitor = lineUsage.accountMonitor || {};
   const accountMonitorDetails = safeRecord(snapshot?.accountMonitor);
-  const watchlistPool = lineUsage.watchlist || lineUsage.pools.watchlist || {};
   const flowScanner = lineUsage.flowScanner || {};
+  const optionsFlowScanner = safeRecord(admission.optionsFlowScanner);
   const signalOptions = lineUsage.signalOptions || {};
   const automation = lineUsage.pools.automation || {};
   const pressure = lineUsage.pressure || {};
@@ -1377,6 +1386,14 @@ function IbkrLineUsagePanel({ runtimeControl }) {
           <StateRow
             label="Target fill"
             value={formatCount(policy.targetFillLines ?? budget.targetFillLines ?? allocation.targetFillLines)}
+          />
+          <StateRow
+            label="Default chain lines"
+            value={formatCount(budget.visibleOptionChainDefaultLineCount)}
+          />
+          <StateRow
+            label="Visible option reserve"
+            value={formatCount(budget.visibleOptionQuoteLineReserve)}
           />
           <StateRow
             label="Remaining to target"
@@ -1441,13 +1458,8 @@ function IbkrLineUsagePanel({ runtimeControl }) {
 	            value={historicalTopFamily ? `${historicalTopFamily[0]} (${formatCount(historicalTopFamily[1].rejected)} rejected)` : MISSING_VALUE}
 	            tone={historicalTopFamily && Number(historicalTopFamily[1].rejected) > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec}
 	          />
-	        </div>
+        </div>
         <div>
-          <StateRow
-            label="Watchlist Quotes"
-            value={`${formatCount(watchlistPool.used)} active · ${formatCount(watchlistPool.effectiveCap ?? watchlistPool.cap)} reserved`}
-          />
-          <StateRow label="Watchlist available" value={formatCount(watchlistPool.free)} />
           <StateRow
             label="Flow Scanner"
             value={`${formatCount(flowScanner.used)} active · ${formatCount(flowScanner.effectiveCap ?? flowScanner.cap)} available`}
@@ -1455,6 +1467,34 @@ function IbkrLineUsagePanel({ runtimeControl }) {
           {flowScanner.detail ? (
             <StateRow label="Flow status" value={flowScanner.detail} />
           ) : null}
+          <StateRow
+            label="Scanner mode"
+            value={`${String(optionsFlowScanner.scannerMode || MISSING_VALUE)} · ${String(optionsFlowScanner.activeScanPhase || "idle")}`}
+          />
+          <StateRow
+            label="Scanner market data"
+            value={String(optionsFlowScanner.marketDataMode || MISSING_VALUE)}
+            tone={
+              optionsFlowScanner.marketDataMode === "delayed"
+                ? CSS_COLOR.amber
+                : optionsFlowScanner.marketDataMode === "frozen" ||
+                    optionsFlowScanner.marketDataMode === "delayed_frozen"
+                  ? CSS_COLOR.red
+                  : CSS_COLOR.green
+            }
+          />
+          <StateRow
+            label="Scanner dynamic cap"
+            value={`${formatCount(allocation.scannerEffectiveLineCap)} effective · ${formatCount(allocation.scannerDynamicLineCap)} dynamic`}
+          />
+          <StateRow label="Option reserve lines" value={formatCount(allocation.optionReserveLineCount)} />
+          <StateRow label="Non-scanner option lines" value={formatCount(allocation.nonScannerOptionLineCount)} />
+          <StateRow
+            label="Routine stock IBKR lines"
+            value={formatCount(allocation.routineEquityLineCount)}
+            tone={Number(allocation.routineEquityLineCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
+          />
+          <StateRow label="Option support equity lines" value={formatCount(allocation.optionSupportEquityLineCount)} />
           <StateRow
             label="Algo quote health"
             value={signalOptions.detail || MISSING_VALUE}
@@ -1471,9 +1511,12 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             tone={Number(accountMonitor.deferred ?? accountMonitorDetails.recentRejectedCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
           />
           <StateRow label="Algo & Execution" value={formatCount(automation.used)} />
-          <StateRow label="Elastic active" value={formatCount(allocation.elasticLineCount ?? allocation.convenienceLineCount ?? admission.convenienceLineCount)} />
-          <StateRow label="Elastic reclaimable" value={formatCount(allocation.reclaimableElasticLineCount ?? admission.reclaimableElasticLineCount)} />
-          <StateRow label="Elastic filler" value={formatCount(allocation.fillerLineCount ?? admission.fillerLineCount)} />
+          <StateRow
+            label="Massive stock stream"
+            value={String(stockAggregates.activeProvider || stockAggregates.provider || MISSING_VALUE)}
+            tone={String(stockAggregates.activeProvider || "").includes("massive") ? CSS_COLOR.green : CSS_COLOR.textSec}
+          />
+          <StateRow label="Massive stock symbols" value={formatCount(stockAggregates.unionSymbolCount)} />
           <StateRow label="Quote stream symbols" value={formatCount(quoteStreams.unionSymbolCount)} />
           <StateRow label="Option quote contracts" value={formatCount(optionQuoteStreams.unionProviderContractIdCount)} />
           <StateRow label="API vs bridge delta" value={formatCount(drift.admissionVsBridgeLineDelta)} />
@@ -1497,11 +1540,6 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             label="Account pending"
             value={`${formatCount(warmup.accountPendingLineCount)} / ${formatCount(warmup.accountTargetLineCount)}`}
             tone={Number(warmup.accountPendingLineCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
-          />
-          <StateRow
-            label="Watchlist pending"
-            value={`${formatCount(warmup.watchlistPendingLineCount)} / ${formatCount(warmup.watchlistTargetLineCount)}`}
-            tone={Number(warmup.watchlistPendingLineCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
           />
           <StateRow
             label="Drift status"
@@ -1549,7 +1587,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
                 {formatCount(pool.used)} of {formatCount(pool.effectiveCap ?? pool.cap)}
               </div>
               <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body"), marginTop: sp(3) }}>
-                {pool.elastic ? "elastic slack" : pool.strict ? "reserved pool" : pool.dynamic ? "dynamic expansion" : "borrowable"}
+                {pool.dynamic ? "dynamic option rotation" : pool.strict ? "reserved pool" : "borrowable"}
                 {pool.legacyNormalized ? " · normalized" : ""}
               </div>
             </div>
@@ -1889,7 +1927,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
         </div>
         <div style={{ marginTop: sp(8), display: "grid", gap: sp(3) }}>
           <TextField
-            label="Header KPI symbols (comma-separated, blank = default ETFs)"
+            label="Header KPI symbols (comma-separated, blank = active watchlist)"
             value={Array.isArray(prefs.appearance.headerKpiSymbols)
               ? prefs.appearance.headerKpiSymbols.join(", ")
               : ""}
@@ -1919,7 +1957,7 @@ function SyncedUserPreferencesPanel({ userPreferences, theme = "dark", onToggleT
                 padding: sp("2px 4px"),
               }}
             >
-              Reset to defaults
+              Use active watchlist
             </button>
           </div>
         </div>
@@ -2743,6 +2781,7 @@ function SignalMonitorSettingsPanel({ watchlists }) {
 
 function SettingsStatusStrip({ summary, dirtyCount, compact = false }) {
   const providers = safeRecord(summary.providers);
+  const stockDataProvider = resolveStockDataProvider(providers);
   const items = [
     {
       label: "Restart",
@@ -2761,8 +2800,8 @@ function SettingsStatusStrip({ summary, dirtyCount, compact = false }) {
     },
     {
       label: "Providers",
-      value: `${providers.polygon ? "P" : "-"} ${providers.research ? "R" : "-"} ${providers.ibkr ? "I" : "-"}`,
-      tone: providers.polygon && providers.research && providers.ibkr ? CSS_COLOR.green : CSS_COLOR.amber,
+      value: `${stockDataProvider.code} ${providers.research ? "R" : "-"} ${providers.ibkr ? "I" : "-"}`,
+      tone: stockDataProvider.configured && providers.research && providers.ibkr ? CSS_COLOR.green : CSS_COLOR.amber,
     },
     {
       label: "Unsaved",
@@ -2813,6 +2852,7 @@ function SettingsStatusStrip({ summary, dirtyCount, compact = false }) {
 function ResearchProviderPanel({ backendSnapshot }) {
   const research = useResearchStatus();
   const providers = safeRecord(backendSnapshot?.summary?.providers);
+  const stockDataProvider = resolveStockDataProvider(providers);
   return (
     <Panel title="Research / Provider Wiring" action={<button type="button" onClick={research.reload} style={smallButton()}>Refresh</button>}>
       {research.error && (
@@ -2822,7 +2862,7 @@ function ResearchProviderPanel({ backendSnapshot }) {
       )}
       <StateRow label="Research provider" value={research.status?.provider || "none"} tone={research.status?.configured ? CSS_COLOR.green : CSS_COLOR.amber} />
       <StateRow label="Research configured" value={research.status?.configured ? "yes" : "no"} tone={research.status?.configured ? CSS_COLOR.green : CSS_COLOR.amber} />
-      <StateRow label="Market data provider" value={providers.polygon ? "configured" : "missing"} tone={providers.polygon ? CSS_COLOR.green : CSS_COLOR.amber} />
+      <StateRow label="Stock data provider" value={stockDataProvider.configured ? `${stockDataProvider.label} configured` : "missing"} tone={stockDataProvider.configured ? CSS_COLOR.green : CSS_COLOR.amber} />
       <StateRow label="IBKR provider" value={providers.ibkr ? "configured" : "missing"} tone={providers.ibkr ? CSS_COLOR.green : CSS_COLOR.amber} />
     </Panel>
   );
@@ -3092,6 +3132,7 @@ export default function SettingsScreen({
   }, [settings]);
   const summary = backend.snapshot?.summary || {};
   const providers = safeRecord(summary.providers);
+  const stockDataProvider = resolveStockDataProvider(providers);
   const visibleTabs = useMemo(() => {
     const query = settingsSearch.trim().toLowerCase();
     if (!query) return SETTINGS_TABS;
@@ -3346,7 +3387,7 @@ export default function SettingsScreen({
                   <StateRow label="Severity" value={summary.diagnosticsSeverity} />
                 </Panel>
                 <Panel title="Providers">
-                  <StateRow label="Polygon" value={providers.polygon ? "configured" : "missing"} tone={providers.polygon ? CSS_COLOR.green : CSS_COLOR.amber} />
+                  <StateRow label="Stock data" value={stockDataProvider.configured ? `${stockDataProvider.label} configured` : "missing"} tone={stockDataProvider.configured ? CSS_COLOR.green : CSS_COLOR.amber} />
                   <StateRow label="Research" value={providers.research ? "configured" : "missing"} tone={providers.research ? CSS_COLOR.green : CSS_COLOR.amber} />
                   <StateRow label="IBKR" value={providers.ibkr ? "configured" : "missing"} tone={providers.ibkr ? CSS_COLOR.green : CSS_COLOR.amber} />
                 </Panel>

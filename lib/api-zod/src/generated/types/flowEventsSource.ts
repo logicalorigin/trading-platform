@@ -9,7 +9,10 @@ import type { FlowDataProvider } from './flowDataProvider';
 import type { FlowEventsSourceIbkrStatus } from './flowEventsSourceIbkrStatus';
 import type { FlowEventsSourceProvider } from './flowEventsSourceProvider';
 import type { FlowEventsSourceScannerCoverage } from './flowEventsSourceScannerCoverage';
+import type { FlowEventsSourceScannerPhase } from './flowEventsSourceScannerPhase';
+import type { FlowEventsSourceScannerStrikeCoverage } from './flowEventsSourceScannerStrikeCoverage';
 import type { FlowEventsSourceStatus } from './flowEventsSourceStatus';
+import type { FlowEventsSourceUnderlyingSpotSource } from './flowEventsSourceUnderlyingSpotSource';
 
 export interface FlowEventsSource {
   provider: FlowEventsSourceProvider;
@@ -48,5 +51,22 @@ export interface FlowEventsSource {
   ibkrMissingQuoteCount?: number;
   /** @minimum 0 */
   ibkrFilteredEventCount?: number;
+  /** @minimum 0 */
+  ibkrAdmissionBridgeMismatchCount?: number;
+  /** @nullable */
+  ibkrMarketDataMode?: string | null;
+  ibkrDelayedMarketData?: boolean;
+  /** @nullable */
+  scannerPhase?: FlowEventsSourceScannerPhase;
+  /** @minimum 0 */
+  scannerLineBudget?: number;
+  /** @minimum 0 */
+  scannerExpirationScanCount?: number;
+  /** @nullable */
+  scannerStrikeCoverage?: FlowEventsSourceScannerStrikeCoverage;
+  /** @nullable */
+  underlyingSpotPrice?: number | null;
+  /** @nullable */
+  underlyingSpotSource?: FlowEventsSourceUnderlyingSpotSource;
   scannerCoverage?: FlowEventsSourceScannerCoverage;
 }

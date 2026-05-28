@@ -128,6 +128,307 @@
         });
       })();
     </script>
+    <script>
+      (() => {
+        const stateKey = "pyrus:state:v1";
+        const lastCrashKey = "pyrus:last-crash-diagnostics:v1";
+        const recentBrowserEventsKey = "pyrus:recent-browser-diagnostics:v1";
+        const sensitiveKeyPattern =
+          /(authorization|cookie|password|secret|token|account|accountid|selectedaccount|credential|apiKey|session)/i;
+        const benignMessages = new Set([
+          "ResizeObserver loop completed with undelivered notifications.",
+          "ResizeObserver loop limit exceeded",
+        ]);
+
+        const escapeHtml = (value) =>
+          String(value ?? "")
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;");
+
+        const redactString = (value) =>
+          String(value)
+            .replace(/\bU\d{4,}\b/g, "U***")
+            .replace(
+              /([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^/\s@]+@/gi,
+              "$1[redacted]@",
+            )
+            .replace(
+              /([?&](?:token|secret|password|api_key|apikey|authorization)=)[^&\s]+/gi,
+              "$1[redacted]",
+            )
+            .slice(0, 1500);
+
+        const redactValue = (value, key = "", depth = 0) => {
+          if (sensitiveKeyPattern.test(key)) return "[redacted]";
+          if (value == null || typeof value === "boolean" || typeof value === "number") {
+            return value;
+          }
+          if (typeof value === "string") return redactString(value);
+          if (depth >= 5) return "[truncated]";
+          if (Array.isArray(value)) {
+            return value.slice(0, 12).map((entry) => redactValue(entry, key, depth + 1));
+          }
+          if (typeof value === "object") {
+            return Object.fromEntries(
+              Object.entries(value)
+                .slice(0, 40)
+                .map(([entryKey, entryValue]) => [
+                  entryKey,
+                  redactValue(entryValue, entryKey, depth + 1),
+                ]),
+            );
+          }
+          return String(value);
+        };
+
+        const recentBrowserEvents = () => {
+          try {
+            const raw = window.sessionStorage?.getItem(recentBrowserEventsKey);
+            const parsed = raw ? JSON.parse(raw) : [];
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        };
+
+        const getResourceTarget = (event) => {
+          const target = event?.target;
+          if (!target || target === window || target === document) return null;
+          const tagName =
+            typeof target.tagName === "string" ? target.tagName.toLowerCase() : "";
+          if (!tagName) return null;
+          const url =
+            typeof target.currentSrc === "string" && target.currentSrc
+              ? target.currentSrc
+              : typeof target.src === "string" && target.src
+                ? target.src
+                : typeof target.href === "string"
+                  ? target.href
+                  : "";
+          const rel = typeof target.rel === "string" ? target.rel : "";
+          const as = typeof target.as === "string" ? target.as : "";
+          return {
+            tagName,
+            url,
+            rel,
+            as,
+          };
+        };
+
+        const isFatalResourceError = (target) => {
+          if (!target) return false;
+          if (target.tagName === "script") return true;
+          if (target.tagName !== "link") return false;
+          const rel = String(target.rel || "").toLowerCase();
+          const as = String(target.as || "").toLowerCase();
+          return (
+            rel.includes("stylesheet") ||
+            rel.includes("modulepreload") ||
+            (rel.includes("preload") && (as === "script" || as === "style"))
+          );
+        };
+
+        const resourceError = (target) => {
+          const label = String(target?.tagName || "resource").toUpperCase();
+          const url = target?.url ? `: ${target.url}` : "";
+          return new Error(`Failed to load ${label} resource${url}`);
+        };
+
+        const normalizeError = (input) => {
+          if (input instanceof Error) return input;
+          if (input && typeof input === "object" && "message" in input) {
+            const error = new Error(String(input.message || "Boot failed"));
+            if (typeof input.name === "string") error.name = input.name;
+            if (typeof input.stack === "string") error.stack = input.stack;
+            return error;
+          }
+          return new Error(String(input || "Boot failed"));
+        };
+
+        const buildBundle = (error, raw) => {
+          const normalized = normalizeError(error);
+          return redactValue({
+            kind: "pyrus-root-crash",
+            capturedAt: new Date().toISOString(),
+            label: "PYRUS boot",
+            error: {
+              name: normalized.name || "Error",
+              message: normalized.message || "Boot failed",
+              stack: normalized.stack || null,
+            },
+            componentStack: null,
+            route: window.location.href,
+            userAgent: navigator.userAgent,
+            runtime: {
+              buildMode: "pre-react",
+              gitSha: document.documentElement.dataset.pyrusRuntimeGitSha || "unknown",
+              sourceTreeStatus:
+                document.documentElement.dataset.pyrusRuntimeSourceTreeStatus ||
+                "unknown",
+            },
+            recentBrowserEvents: recentBrowserEvents(),
+            raw,
+          });
+        };
+
+        const persistBundle = (bundle) => {
+          try {
+            window.sessionStorage?.setItem(lastCrashKey, JSON.stringify(bundle));
+          } catch {}
+        };
+
+        const openDiagnostics = () => {
+          try {
+            const raw = window.localStorage?.getItem(stateKey) || "{}";
+            const state = JSON.parse(raw);
+            window.localStorage?.setItem(
+              stateKey,
+              JSON.stringify({ ...state, screen: "diagnostics" }),
+            );
+          } catch {
+            try {
+              window.localStorage?.setItem(stateKey, JSON.stringify({ screen: "diagnostics" }));
+            } catch {}
+          }
+          window.location.assign(window.location.pathname || "/");
+        };
+
+        const copyBundle = async () => {
+          const text =
+            document.querySelector("[data-testid='root-crash-diagnostics-bundle']")
+              ?.textContent || "";
+          try {
+            await navigator.clipboard.writeText(text);
+            const button = document.querySelector("[data-pyrus-crash-copy]");
+            if (button) button.textContent = "Copied";
+          } catch {
+            const button = document.querySelector("[data-pyrus-crash-copy]");
+            if (button) button.textContent = "Copy failed";
+          }
+        };
+
+        const renderCrashDiagnostics = (bundle) => {
+          const render = () => {
+            const root = document.getElementById("root") || document.body;
+            if (!root || root.querySelector("[data-testid='root-crash-diagnostics']")) {
+              return;
+            }
+            const bundleText = JSON.stringify(bundle, null, 2);
+            root.innerHTML = `
+              <main data-testid="root-crash-diagnostics" style="min-height:100vh;box-sizing:border-box;padding:24px;background:#16151A;color:#F2EFE9;font-family:IBM Plex Sans,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;">
+                <section style="max-width:1180px;margin:0 auto;display:grid;gap:16px;">
+                  <header style="display:grid;gap:12px;">
+                    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                      <img src="/brand/pyrus-mark-dark.svg" alt="" style="height:42px;width:42px;object-fit:contain;" />
+                      <img src="/brand/pyrus-wordmark-tight.png" alt="PYRUS" style="height:28px;width:auto;object-fit:contain;" />
+                    </div>
+                    <div style="color:#D9A864;font-size:12px;font-weight:700;text-transform:uppercase;">PYRUS ROOT CRASH</div>
+                    <h1 style="margin:0;font-size:24px;line-height:1.15;">${escapeHtml(bundle.error?.message || "Boot failed")}</h1>
+                    <div style="color:#B8B4AC;font-size:12px;">${escapeHtml(bundle.runtime?.buildMode || "pre-react")} / ${escapeHtml(bundle.runtime?.gitSha || "unknown")} / ${escapeHtml(bundle.runtime?.sourceTreeStatus || "unknown")}</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                      <button type="button" data-pyrus-crash-retry style="min-height:34px;border:1px solid rgba(232,229,222,0.24);background:#232227;color:#F2EFE9;padding:7px 11px;font:600 12px IBM Plex Sans,system-ui;cursor:pointer;">Retry</button>
+                      <button type="button" data-pyrus-crash-diagnostics style="min-height:34px;border:1px solid rgba(232,229,222,0.24);background:#232227;color:#F2EFE9;padding:7px 11px;font:600 12px IBM Plex Sans,system-ui;cursor:pointer;">Open Diagnostics</button>
+                      <button type="button" data-pyrus-crash-copy style="min-height:34px;border:1px solid rgba(232,229,222,0.24);background:#232227;color:#F2EFE9;padding:7px 11px;font:600 12px IBM Plex Sans,system-ui;cursor:pointer;">Copy bundle</button>
+                    </div>
+                  </header>
+                  <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;">
+                    <div style="border:1px solid #2F2E35;padding:14px;">
+                      <h2 style="margin:0 0 8px;font-size:13px;">Crash</h2>
+                      <pre style="margin:0;white-space:pre-wrap;color:#B8B4AC;font-size:11px;">${escapeHtml(bundle.error?.stack || bundle.error?.message || "Boot failed")}</pre>
+                    </div>
+                    <div style="border:1px solid #2F2E35;padding:14px;">
+                      <h2 style="margin:0 0 8px;font-size:13px;">Diagnostics</h2>
+                      <div style="color:#B8B4AC;font-size:12px;">React did not mount. The static PYRUS boot guard rendered this page before the app shell could start.</div>
+                    </div>
+                  </section>
+                  <section style="border:1px solid #2F2E35;padding:14px;">
+                    <h2 style="margin:0 0 8px;font-size:13px;">Redacted Bundle</h2>
+                    <pre data-testid="root-crash-diagnostics-bundle" style="max-height:360px;overflow:auto;margin:0;white-space:pre-wrap;color:#B8B4AC;font-size:11px;line-height:1.45;">${escapeHtml(bundleText)}</pre>
+                  </section>
+                </section>
+              </main>
+            `;
+            root.querySelector("[data-pyrus-crash-retry]")?.addEventListener("click", () => {
+              window.location.reload();
+            });
+            root.querySelector("[data-pyrus-crash-diagnostics]")?.addEventListener(
+              "click",
+              openDiagnostics,
+            );
+            root.querySelector("[data-pyrus-crash-copy]")?.addEventListener(
+              "click",
+              copyBundle,
+            );
+          };
+          if (document.getElementById("root") || document.body) {
+            render();
+          } else {
+            document.addEventListener("DOMContentLoaded", render, { once: true });
+          }
+        };
+
+        const handleCrash = (event, kind) => {
+          const message =
+            kind === "error"
+              ? event.message || event.error?.message || ""
+                : event.reason instanceof Error
+                  ? event.reason.message
+                  : String(event.reason || "");
+          if (benignMessages.has(message)) return;
+          const resourceTarget = kind === "error" ? getResourceTarget(event) : null;
+          if (resourceTarget && !isFatalResourceError(resourceTarget)) return;
+          if (
+            kind === "error" &&
+            !resourceTarget &&
+            !message &&
+            !event.error &&
+            !event.filename
+          ) {
+            return;
+          }
+          const bundle = buildBundle(
+            kind === "error"
+              ? event.error || (resourceTarget ? resourceError(resourceTarget) : message)
+              : event.reason || message,
+            kind === "error"
+              ? {
+                  kind,
+                  message,
+                  filename: event.filename,
+                  lineno: event.lineno,
+                  colno: event.colno,
+                  target: resourceTarget,
+                }
+              : { kind, message },
+          );
+          persistBundle(bundle);
+          renderCrashDiagnostics(bundle);
+          event.preventDefault?.();
+          event.stopImmediatePropagation?.();
+        };
+
+        const onBootError = (event) => handleCrash(event, "error");
+        const onBootUnhandledRejection = (event) =>
+          handleCrash(event, "unhandledrejection");
+        const dismiss = () => {
+          window.removeEventListener("error", onBootError, true);
+          window.removeEventListener(
+            "unhandledrejection",
+            onBootUnhandledRejection,
+            true,
+          );
+        };
+
+        window.__PYRUS_BOOT_CRASH_DIAGNOSTICS__ = {
+          renderCrashDiagnostics,
+          dismiss,
+        };
+        window.addEventListener("error", onBootError, true);
+        window.addEventListener("unhandledrejection", onBootUnhandledRejection, true);
+      })();
+    </script>
     <style>
       #root {
         min-height: 100vh;
@@ -148,13 +449,13 @@
         align-items: center;
         display: inline-flex;
         flex-direction: column;
-        gap: 24px;
+        gap: 22px;
         justify-content: center;
         line-height: 0;
       }
 
       .pyrus-boot-mark {
-        animation: pyrus-boot-mark 1.05s cubic-bezier(0.16, 1, 0.3, 1) both;
+        animation: pyrus-boot-mark 680ms cubic-bezier(0.16, 1, 0.3, 1) both;
         display: block;
         height: 104px;
         object-fit: contain;
@@ -165,7 +466,7 @@
       }
 
       .pyrus-boot-word {
-        animation: pyrus-boot-word 0.72s cubic-bezier(0.16, 1, 0.3, 1) 0.74s both;
+        animation: pyrus-boot-word 520ms cubic-bezier(0.16, 1, 0.3, 1) 180ms both;
         color: #f4f8ff;
         font-size: 28px;
         font-weight: 600;
@@ -186,18 +487,13 @@
       @keyframes pyrus-boot-mark {
         0% {
           opacity: 1;
-          transform: rotate(-18deg) scale(0.96);
+          transform: rotate(-16deg) scale(0.96);
           filter: brightness(0.86);
         }
 
-        55% {
-          opacity: 1;
-          filter: blur(0) brightness(1);
-        }
-
-        80% {
-          transform: rotate(5deg) scale(1.045);
-          filter: brightness(1.55);
+        64% {
+          transform: rotate(4deg) scale(1.035);
+          filter: brightness(1.38);
         }
 
         100% {
@@ -210,20 +506,14 @@
       @keyframes pyrus-boot-word {
         0% {
           opacity: 0;
-          transform: translateY(12px) scale(0.965);
-          filter: blur(5px) brightness(0.72);
+          transform: translateY(10px) scale(0.97);
+          filter: blur(4px) brightness(0.78);
         }
 
-        48% {
-          opacity: 0.72;
-          transform: translateY(3px) scale(0.99);
-          filter: blur(1.4px) brightness(1.18);
-        }
-
-        78% {
+        72% {
           opacity: 1;
-          transform: translateY(-1px) scale(1.018);
-          filter: blur(0) brightness(1.22);
+          transform: translateY(-1px) scale(1.012);
+          filter: blur(0) brightness(1.16);
         }
 
         100% {

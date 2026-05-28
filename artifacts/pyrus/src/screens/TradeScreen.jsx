@@ -1499,6 +1499,19 @@ const TradeContractDetailPanel = ({
               rangeIdentityKey={`trade-contract-option:${chartProviderContractId || optionContractScopeKey}:${optionChartTimeframe}`}
               viewportLayoutKey={optionChartViewportLayoutKey}
               model={chartModel}
+              footprintContext={
+                ticker
+                  ? {
+                      symbol: ticker,
+                      assetClass: "option",
+                      timeframe: optionChartTimeframe,
+                      providerContractId:
+                        chartProviderContractId || providerContractId,
+                      optionTicker,
+                      outsideRth: true,
+                    }
+                  : null
+              }
               placement="workspace"
               crosshairSyncGroupId={crosshairSyncGroupId}
               crosshairSyncInstanceId={crosshairSyncInstanceId}
@@ -2229,7 +2242,8 @@ const TradeFlowRuntime = ({
     }
 
     let cancelled = false;
-    readCachedFlowEvents(flowRuntimeCacheKey).then((snapshot) => {
+    readCachedFlowEvents(flowRuntimeCacheKey).then((cached) => {
+      const snapshot = cached?.payload;
       if (cancelled || !snapshot?.events?.length) {
         return;
       }
@@ -2239,8 +2253,9 @@ const TradeFlowRuntime = ({
         source: snapshot.source || {
           provider: "indexeddb",
           status: "stale",
-          cacheStatus: "runtime-cache",
+          cacheStatus: cached?.meta?.cacheStatus || "runtime-cache",
         },
+        runtimeCache: cached?.meta || null,
       });
     });
 
@@ -2397,6 +2412,7 @@ const TradeOptionChainRuntime = ({
         expiration: "all",
         coverage: effectiveChainCoverage,
         marketDataMode: OPTION_CHAIN_METADATA_HYDRATION,
+        provider: "ibkr",
       }),
     [effectiveChainCoverage, ticker],
   );
@@ -2406,7 +2422,8 @@ const TradeOptionChainRuntime = ({
     }
 
     let cancelled = false;
-    readCachedOptionChainSnapshot(optionChainRuntimeCacheKey).then((snapshot) => {
+    readCachedOptionChainSnapshot(optionChainRuntimeCacheKey).then((cached) => {
+      const snapshot = cached?.payload;
       if (cancelled || !snapshot) {
         return;
       }
@@ -2420,6 +2437,7 @@ const TradeOptionChainRuntime = ({
       publishTradeOptionChainSnapshot(ticker, {
         ...snapshot,
         status: snapshot.status === "live" ? "stale" : snapshot.status || "stale",
+        runtimeCache: cached?.meta || null,
       });
     });
 
@@ -3004,6 +3022,7 @@ const TradeOptionChainRuntime = ({
           expiration: "all",
           coverage: effectiveChainCoverage,
           marketDataMode: OPTION_CHAIN_METADATA_HYDRATION,
+          provider: "ibkr",
         },
       );
     }

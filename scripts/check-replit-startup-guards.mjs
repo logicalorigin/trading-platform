@@ -32,9 +32,52 @@ const replit = read(".replit");
 const rootPackage = JSON.parse(read("package.json"));
 const rootScripts = rootPackage.scripts ?? {};
 
+function rootReplitPortMappings(source) {
+  const mappings = [];
+  let current = null;
+  for (const line of source.split(/\r?\n/)) {
+    if (/^\s*\[\[ports\]\]\s*$/.test(line)) {
+      if (current) mappings.push(current);
+      current = {};
+      continue;
+    }
+    if (/^\s*\[/.test(line)) {
+      if (current) mappings.push(current);
+      current = null;
+      continue;
+    }
+    if (!current) continue;
+    const match = line.match(
+      /^\s*(localPort|externalPort|exposeLocalhost)\s*=\s*(.+?)\s*$/,
+    );
+    if (match) current[match[1]] = match[2];
+  }
+  if (current) mappings.push(current);
+  return mappings.map((mapping) => {
+    const normalized = {
+      localPort: Number(mapping.localPort),
+    };
+    if (mapping.externalPort !== undefined) {
+      normalized.externalPort = Number(mapping.externalPort);
+    }
+    if (mapping.exposeLocalhost !== undefined) {
+      normalized.exposeLocalhost = mapping.exposeLocalhost === "true";
+    }
+    return normalized;
+  });
+}
+
 check(
   /^\s*stack\s*=\s*"PNPM_WORKSPACE"\s*$/m.test(replit),
   ".replit must keep [agent] stack = \"PNPM_WORKSPACE\" so the PYRUS web artifact owns app bring-up.",
+);
+check(
+  JSON.stringify(rootReplitPortMappings(replit)) ===
+    JSON.stringify([
+      { localPort: 8080, externalPort: 8080 },
+      { localPort: 18747, externalPort: 3000 },
+    ]),
+  ".replit must expose only the active PYRUS runtime ports: 8080 -> 8080 and 18747 -> 3000. Do not restore stale/generated ports such as 8000, 3002, 3007, 18748, or 18749.",
 );
 check(
   !/^\s*run\s*=/m.test(replit),

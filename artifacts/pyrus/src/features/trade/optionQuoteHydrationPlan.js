@@ -1,5 +1,9 @@
 const normalizeProviderContractId = (value) => String(value || "").trim();
 export const TRADE_OPTION_VISIBLE_QUOTE_CONTRACT_LIMIT = 40;
+export const TRADE_OPTION_VISIBLE_QUOTE_UNDERLYING_LINE_RESERVE = 1;
+export const TRADE_OPTION_VISIBLE_QUOTE_LINE_RESERVE =
+  TRADE_OPTION_VISIBLE_QUOTE_CONTRACT_LIMIT +
+  TRADE_OPTION_VISIBLE_QUOTE_UNDERLYING_LINE_RESERVE;
 
 const pushProviderContractId = (target, seen, providerContractId) => {
   const normalized = normalizeProviderContractId(providerContractId);

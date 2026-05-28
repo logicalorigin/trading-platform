@@ -278,6 +278,28 @@ test("watchlist prewarm defers and clears leases under resource pressure", () =>
   );
 });
 
+test("watchlist prewarm clears IBKR equity leases when Massive stocks are primary", () => {
+  const platformSource = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
+  const prewarmBody = platformSource.match(
+    /function scheduleIbkrWatchlistPrewarm\([\s\S]*?\nfunction scheduleIbkrWatchlistPrewarmFromDb/,
+  )?.[0];
+
+  assert.ok(prewarmBody);
+  assert.match(prewarmBody, /isMassiveStocksRealtimeConfigured\(\)/);
+  assert.match(
+    prewarmBody,
+    /releaseMarketDataLeases\(\s*IBKR_WATCHLIST_PREWARM_OWNER,\s*"massive_stock_primary"/,
+  );
+  assert.match(
+    prewarmBody,
+    /releaseMarketDataLeases\(\s*IBKR_WATCHLIST_PREWARM_FILLER_OWNER,\s*"massive_stock_primary"/,
+  );
+  assert.match(
+    prewarmBody,
+    /isMassiveStocksRealtimeConfigured\(\)[\s\S]*syncWatchlistPrewarmBridgeGroups\(\{\s*primarySymbols: \[\],\s*\}\)/,
+  );
+});
+
 test("bridge reconciliation preserves watchlist source priority offsets", () => {
   const platformSource = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
   const reconcileBody = platformSource.match(

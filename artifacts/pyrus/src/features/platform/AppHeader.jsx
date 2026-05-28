@@ -353,7 +353,6 @@ const AppHeaderInner = ({
   headerTight,
   headerGridTemplate,
   headerShowKpis,
-  headerKpiMaxItems,
   headerAccountMinimal,
   headerCompactStatus,
   headerStatusMinimal,
@@ -441,8 +440,10 @@ const AppHeaderInner = ({
 
   const { preferences: userPreferences } = useUserPreferences();
   const headerKpiSymbols = userPreferences?.appearance?.headerKpiSymbols;
-  const customKpiSymbols =
-    Array.isArray(headerKpiSymbols) && headerKpiSymbols.length > 0 ? headerKpiSymbols : null;
+  const headerKpiFeedSymbols =
+    Array.isArray(headerKpiSymbols) && headerKpiSymbols.length > 0
+      ? headerKpiSymbols
+      : runtimeWatchlistSymbols;
 
   const notifications = useNotificationSnapshot();
   const unseenNotifications = computeUnseenCount(notifications.toasts, notifications.lastReadAt);
@@ -859,8 +860,7 @@ const AppHeaderInner = ({
                 onSelect={onSelectSymbol}
                 compact={headerTight}
                 dense
-                maxItems={headerKpiMaxItems}
-                symbols={customKpiSymbols}
+                symbols={headerKpiFeedSymbols}
               />
             ) : null
           }

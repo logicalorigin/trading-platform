@@ -15,6 +15,8 @@ export type PolygonRuntimeConfig = {
   apiKey: string;
   baseUrl: string;
 };
+export type PolygonProviderIdentity = "polygon" | "massive";
+export type MassiveStocksRecency = "realtime" | "delayed";
 export type FmpRuntimeConfig = {
   apiKey: string;
   baseUrl: string;
@@ -479,6 +481,31 @@ export function getPolygonRuntimeConfig(): PolygonRuntimeConfig | null {
   };
 }
 
+export function getPolygonProviderIdentity(
+  config: PolygonRuntimeConfig | null = getPolygonRuntimeConfig(),
+): PolygonProviderIdentity | null {
+  if (!config) {
+    return null;
+  }
+  return config.baseUrl.includes("massive.com") ? "massive" : "polygon";
+}
+
+export function getMassiveStocksRecency(): MassiveStocksRecency {
+  const normalized = (process.env["MASSIVE_STOCKS_RECENCY"] ?? "")
+    .trim()
+    .toLowerCase();
+  return normalized === "delayed" ? "delayed" : "realtime";
+}
+
+export function isMassiveStocksRealtimeConfigured(
+  config: PolygonRuntimeConfig | null = getPolygonRuntimeConfig(),
+): boolean {
+  return (
+    getPolygonProviderIdentity(config) === "massive" &&
+    getMassiveStocksRecency() === "realtime"
+  );
+}
+
 export function getFmpRuntimeConfig(): FmpRuntimeConfig | null {
   const apiKey = getOptionalEnv(FMP_API_KEY_ENV_NAMES);
 
@@ -650,8 +677,11 @@ export function isLiveIbkrMarketDataMode(
 }
 
 export function getProviderConfiguration() {
+  const polygonConfig = getPolygonRuntimeConfig();
+  const polygonIdentity = getPolygonProviderIdentity(polygonConfig);
   return {
-    polygon: Boolean(getPolygonRuntimeConfig()),
+    polygon: Boolean(polygonConfig),
+    massive: polygonIdentity === "massive",
     research: Boolean(getFmpRuntimeConfig()),
     ibkr: Boolean(getIbkrBridgeRuntimeConfig()),
   } as const;

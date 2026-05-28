@@ -144,12 +144,18 @@ const calendarCellTone = (value, muted = false, style = calendarThemeStyle()) =>
 const calendarMoneyOrDash = (value, currency, maskValues) =>
   value == null ? "—" : formatAccountSignedMoney(value, currency, true, maskValues);
 
+const calendarPnlSourceLabel = (day) => {
+  if (!day) return "—";
+  if (day.pnlSource === "account-summary") return "Account page";
+  return day.pnlSource === "total" ? "NAV total" : "realized fallback";
+};
+
 const dayTooltip = (day, currency, maskValues) => {
   const pnlFmt = formatAccountSignedMoney(day.pnl || 0, currency, true, maskValues);
   const realFmt = formatAccountSignedMoney(day.realized || 0, currency, true, maskValues);
   const totalFmt = calendarMoneyOrDash(day.total, currency, maskValues);
   const unrealFmt = calendarMoneyOrDash(day.unrealized, currency, maskValues);
-  const source = day.pnlSource === "total" ? "NAV total" : "realized fallback";
+  const source = calendarPnlSourceLabel(day);
   return [
     day.iso,
     `P&L ${pnlFmt} (${source})`,
@@ -427,7 +433,7 @@ const CalendarDayDetail = ({ day, currency, maskValues, calendarStyle }) => {
       : day.pnl < 0
         ? calendarStyle.negativeText
         : CSS_COLOR.textDim;
-  const source = day?.pnlSource === "total" ? "NAV total" : day ? "Realized fallback" : "—";
+  const source = calendarPnlSourceLabel(day);
   const detailItemStyle = {
     display: "inline-flex",
     alignItems: "baseline",
@@ -704,6 +710,7 @@ const CalendarSummary = ({ summary, currency, maskValues, calendarStyle, compact
 const DailyPnlCalendar = ({
   trades = [],
   equityPoints = [],
+  dailyPnl = null,
   currency,
   maskValues,
   isPhone = false,
@@ -728,20 +735,22 @@ const DailyPnlCalendar = ({
       buildMonthPnlCalendarModel({
         trades,
         equityPoints,
+        dailyPnl,
         monthDate: visibleMonth,
         today,
       }),
-    [trades, equityPoints, visibleMonth, today],
+    [trades, equityPoints, dailyPnl, visibleMonth, today],
   );
   const yearModel = useMemo(
     () =>
       buildYearPnlCalendarModel({
         trades,
         equityPoints,
+        dailyPnl,
         year: visibleYear,
         today,
       }),
-    [trades, equityPoints, visibleYear, today],
+    [trades, equityPoints, dailyPnl, visibleYear, today],
   );
   const activeLabel = view === "month" ? monthModel.label : yearModel.label;
   const activeSummary = view === "month" ? monthModel.summary : yearModel.summary;
@@ -927,10 +936,12 @@ export const AccountReturnsPanel = ({
   isPhone = false,
   tradesData = null,
   equityPoints = null,
+  dailyPnl = null,
 }) => (
   <DailyPnlCalendar
     trades={tradesData?.trades || []}
     equityPoints={equityPoints || []}
+    dailyPnl={dailyPnl}
     currency={currency}
     maskValues={maskValues}
     isPhone={isPhone}
