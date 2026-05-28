@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   aggressiveSignalOptionsProgressiveTrailSteps,
   resolveSignalOptionsExecutionProfile,
+  signalOptionsStrikeSlotsForRight,
   tunedSignalOptionsExecutionProfile,
   tunedSignalOptionsExecutionProfilePatch,
   tunedSignalOptionsStrategySettings,
@@ -123,4 +124,34 @@ test("signal-options profile normalization sorts progressive trail steps", () =>
     { activationPct: 25, minLockedGainPct: 0, givebackPct: 35 },
     { activationPct: 50, minLockedGainPct: 25, givebackPct: 25 },
   ]);
+});
+
+test("signal-options profile normalization supports ordered strike slot lists", () => {
+  const scalarProfile = resolveSignalOptionsExecutionProfile({
+    optionSelection: {
+      callStrikeSlot: 4,
+      putStrikeSlot: 1,
+    },
+  });
+
+  assert.deepEqual(scalarProfile.optionSelection.callStrikeSlots, [4]);
+  assert.deepEqual(scalarProfile.optionSelection.putStrikeSlots, [1]);
+  assert.equal(scalarProfile.optionSelection.callStrikeSlot, 4);
+  assert.equal(scalarProfile.optionSelection.putStrikeSlot, 1);
+
+  const listProfile = resolveSignalOptionsExecutionProfile({
+    optionSelection: {
+      callStrikeSlots: [3, "4", 4, 9, "bad"],
+      putStrikeSlots: [2, 1, 0, 5],
+      callStrikeSlot: 1,
+      putStrikeSlot: 4,
+    },
+  });
+
+  assert.deepEqual(listProfile.optionSelection.callStrikeSlots, [3, 4, 5]);
+  assert.deepEqual(listProfile.optionSelection.putStrikeSlots, [2, 1, 0]);
+  assert.equal(listProfile.optionSelection.callStrikeSlot, 3);
+  assert.equal(listProfile.optionSelection.putStrikeSlot, 2);
+  assert.deepEqual(signalOptionsStrikeSlotsForRight(listProfile, "call"), [3, 4, 5]);
+  assert.deepEqual(signalOptionsStrikeSlotsForRight(listProfile, "put"), [2, 1, 0]);
 });

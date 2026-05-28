@@ -61,7 +61,6 @@ import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.j
 import { AppTooltip } from "@/components/ui/tooltip";
 import { lazyWithRetry } from "../../lib/dynamicImport";
 import {
-  markScreenReady,
   markScreenSwitchStart,
 } from "./performanceMetrics";
 
@@ -188,25 +187,6 @@ const ScreenTransitionHost = ({ screenId, active, children }) => {
   );
 };
 
-const ScreenReadyProbe = ({ screenId, active }) => {
-  useEffect(() => {
-    if (!active) return undefined;
-    if (
-      typeof window === "undefined" ||
-      typeof window.requestAnimationFrame !== "function"
-    ) {
-      markScreenReady(screenId);
-      return undefined;
-    }
-    const frameId = window.requestAnimationFrame(() => {
-      markScreenReady(screenId);
-    });
-    return () => window.cancelAnimationFrame(frameId);
-  }, [active, screenId]);
-
-  return null;
-};
-
 const screenCanRetainInactive = (screenId) => {
   const renderPolicy = SCREEN_RENDER_POLICIES[screenId] || {};
   return (
@@ -303,7 +283,6 @@ const PlatformScreenStack = memo(({
           >
             <Suspense fallback={<ScreenLoadingFallback screenId={id} />}>
               {renderScreenById(id)}
-              <ScreenReadyProbe screenId={id} active={active} />
             </Suspense>
           </ScreenTransitionHost>
         ) : null;

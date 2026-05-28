@@ -18,6 +18,42 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
+ * Returns liveness, app readiness, broker trading readiness, and resource pressure without running broker probes.
+ * @summary Read app and broker readiness
+ */
+export const GetReadinessResponse = zod.object({
+  "generatedAt": zod.coerce.date(),
+  "liveness": zod.object({
+  "status": zod.enum(['ok'])
+}),
+  "appReadiness": zod.object({
+  "status": zod.enum(['ready', 'degraded', 'not_ready', 'unknown']),
+  "reason": zod.string().nullable(),
+  "diagnosticsStatus": zod.enum(['ok', 'degraded', 'down', 'unknown']),
+  "diagnosticsSeverity": zod.enum(['info', 'warning', 'critical'])
+}),
+  "brokerTradingReadiness": zod.object({
+  "status": zod.enum(['ready', 'blocked', 'unknown']),
+  "ready": zod.boolean(),
+  "reason": zod.string().nullable(),
+  "checks": zod.object({
+  "configured": zod.boolean().nullable(),
+  "reachable": zod.boolean().nullable(),
+  "connected": zod.boolean().nullable(),
+  "authenticated": zod.boolean().nullable(),
+  "competing": zod.boolean().nullable(),
+  "healthFresh": zod.boolean().nullable(),
+  "streamFresh": zod.boolean().nullable(),
+  "strictReady": zod.boolean().nullable()
+})
+}),
+  "pressureLevel": zod.enum(['normal', 'watch', 'high', 'critical']),
+  "degradedReasons": zod.array(zod.string()),
+  "manualTradingBlockedReason": zod.string().nullable()
+})
+
+
+/**
  * Returns environment, provider, and configuration status information.
  * @summary Get runtime session metadata
  */
@@ -4177,7 +4213,11 @@ export const EvaluateSignalMonitorResponse = zod.object({
   "fallbackUsed": zod.boolean(),
   "degradedReason": zod.string().nullable(),
   "rankedAt": zod.coerce.date().nullable()
-})
+}),
+  "cacheStatus": zod.enum(['hit', 'stale', 'inflight', 'miss']).optional(),
+  "refreshing": zod.boolean().optional(),
+  "servedAt": zod.coerce.date().optional(),
+  "stateSource": zod.enum(['database', 'runtime-fallback', 'memory-cache']).optional()
 })
 
 
@@ -4308,7 +4348,11 @@ export const GetSignalMonitorStateResponse = zod.object({
   "fallbackUsed": zod.boolean(),
   "degradedReason": zod.string().nullable(),
   "rankedAt": zod.coerce.date().nullable()
-})
+}),
+  "cacheStatus": zod.enum(['hit', 'stale', 'inflight', 'miss']).optional(),
+  "refreshing": zod.boolean().optional(),
+  "servedAt": zod.coerce.date().optional(),
+  "stateSource": zod.enum(['database', 'runtime-fallback', 'memory-cache']).optional()
 })
 
 

@@ -39,11 +39,20 @@ const {
 const { __resetMarketDataAdmissionForTests } = await import(
   "./market-data-admission"
 );
+const { __resetIbkrHistoricalAdmissionForTests } = await import(
+  "./ibkr-historical-admission"
+);
+const { __setMarketDataStoreDisabledForTests } = await import(
+  "./market-data-store"
+);
 
 const originalPolygonApiKey = process.env["POLYGON_API_KEY"];
 const originalPolygonBaseUrl = process.env["POLYGON_BASE_URL"];
 const originalChartHydrationCursorEnabled =
   process.env["CHART_HYDRATION_CURSOR_ENABLED"];
+const originalHistoricalIdenticalCooldown =
+  process.env["IBKR_HISTORICAL_IDENTICAL_COOLDOWN_MS"];
+const originalMassiveStocksRecency = process.env["MASSIVE_STOCKS_RECENCY"];
 
 function dateOnly(value: Date): string {
   return value.toISOString().slice(0, 10);
@@ -52,6 +61,18 @@ function dateOnly(value: Date): string {
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+test("option chart bars tag IBKR historical requests with a visible family", () => {
+  const source = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
+  const optionChartBarsBody =
+    source.match(
+      /export async function getOptionChartBarsWithDebug\([\s\S]*?\nexport async function getHistoricalOptionTrades/,
+    )?.[0] ?? "";
+
+  assert.match(optionChartBarsBody, /getBarsWithDebug\(/);
+  assert.match(optionChartBarsBody, /family: "option-chart-bars"/);
+  assert.match(optionChartBarsBody, /priority: 6/);
+});
 
 function optionContract(
   expirationDate: Date,
@@ -147,12 +168,21 @@ function brokerBar(
   };
 }
 
+test.beforeEach(() => {
+  __resetIbkrHistoricalAdmissionForTests();
+  __setMarketDataStoreDisabledForTests(true);
+  process.env["IBKR_HISTORICAL_IDENTICAL_COOLDOWN_MS"] = "1";
+  process.env["MASSIVE_STOCKS_RECENCY"] = "delayed";
+});
+
 test.afterEach(() => {
   __setIbkrBridgeClientFactoryForTests(null);
   __setPolygonMarketDataClientFactoryForTests(null);
   __setBridgeOptionQuoteClientForTests(null);
+  __setMarketDataStoreDisabledForTests(false);
   __resetBridgeOptionQuoteStreamForTests();
   __resetMarketDataAdmissionForTests();
+  __resetIbkrHistoricalAdmissionForTests();
   __resetOptionChainCachesForTests();
   __resetBridgeGovernorForTests();
   if (originalPolygonApiKey === undefined) {
@@ -170,6 +200,17 @@ test.afterEach(() => {
   } else {
     process.env["CHART_HYDRATION_CURSOR_ENABLED"] =
       originalChartHydrationCursorEnabled;
+  }
+  if (originalHistoricalIdenticalCooldown === undefined) {
+    delete process.env["IBKR_HISTORICAL_IDENTICAL_COOLDOWN_MS"];
+  } else {
+    process.env["IBKR_HISTORICAL_IDENTICAL_COOLDOWN_MS"] =
+      originalHistoricalIdenticalCooldown;
+  }
+  if (originalMassiveStocksRecency === undefined) {
+    delete process.env["MASSIVE_STOCKS_RECENCY"];
+  } else {
+    process.env["MASSIVE_STOCKS_RECENCY"] = originalMassiveStocksRecency;
   }
 });
 
@@ -1467,6 +1508,7 @@ test("getBarsWithDebug refreshes after durable bar writes invalidate cache", asy
   assert.equal(historyCalls, 1);
 
   __platformBarsCacheTestInternals.invalidateBarsCacheForDurableWrite(input);
+  await wait(2);
 
   const third = await getBarsWithDebug(input);
   const counters =

@@ -168,7 +168,7 @@ const ACCOUNT_SWITCH_PREFETCH_OPTIONS = {
 const ACCOUNT_SWITCH_KEEP_WARM_MS = 60_000;
 const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 1_000;
 const ACCOUNT_LIVE_FALLBACK_DELAY_MS = 5_000;
-const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 35_000;
+const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 6_000;
 
 const DEFAULT_EQUITY_BENCHMARK_VISIBILITY = {
   SPY: true,
@@ -833,23 +833,6 @@ const AccountScreenInner = ({
     performanceCalendarFrom: performanceCalendarParams.from,
     enabled: accountPageStreamEnabled,
   });
-  useAccountPageSnapshotStream({
-    accountId: inactiveAccountPageRequest?.accountId,
-    mode: inactiveAccountPageRequest?.mode || modeParams.mode,
-    range,
-    orderTab: inactiveAccountPageRequest?.orderTab,
-    assetClass: inactiveAccountPageRequest?.assetClass,
-    tradeFilters: {
-      from: closedTradeParams.from,
-      to: closedTradeParams.to,
-      symbol: closedTradeParams.symbol,
-      assetClass: closedTradeParams.assetClass,
-      pnlSign: closedTradeParams.pnlSign,
-      holdDuration: closedTradeParams.holdDuration,
-    },
-    performanceCalendarFrom: performanceCalendarParams.from,
-    enabled: Boolean(accountPageStreamEnabled && inactiveAccountPageRequest),
-  });
   const accountSectionPending = Boolean(
     isVisible && accountSection !== settledAccountSection,
   );
@@ -926,6 +909,30 @@ const AccountScreenInner = ({
       accountPageStreamFreshness.accountDerivedFresh ||
       accountDerivedFallbackReady,
   );
+  const inactiveAccountPrewarmEnabled = Boolean(
+    isVisible && accountQueriesEnabled && accountCriticalReady,
+  );
+  useAccountPageSnapshotStream({
+    accountId: inactiveAccountPageRequest?.accountId,
+    mode: inactiveAccountPageRequest?.mode || modeParams.mode,
+    range,
+    orderTab: inactiveAccountPageRequest?.orderTab,
+    assetClass: inactiveAccountPageRequest?.assetClass,
+    tradeFilters: {
+      from: closedTradeParams.from,
+      to: closedTradeParams.to,
+      symbol: closedTradeParams.symbol,
+      assetClass: closedTradeParams.assetClass,
+      pnlSign: closedTradeParams.pnlSign,
+      holdDuration: closedTradeParams.holdDuration,
+    },
+    performanceCalendarFrom: performanceCalendarParams.from,
+    enabled: Boolean(
+      accountPageStreamEnabled &&
+        accountPageStreamFreshness.accountCriticalFresh &&
+        inactiveAccountPageRequest,
+    ),
+  });
   useEffect(() => {
     onReadinessChange?.({
       criticalReady: Boolean(isVisible && accountCriticalReady),
@@ -939,19 +946,18 @@ const AccountScreenInner = ({
     onReadinessChange,
   ]);
   useEffect(() => {
-    if (!isVisible || !accountQueriesEnabled) {
+    if (!inactiveAccountPrewarmEnabled) {
       return undefined;
     }
     prefetchAccountSectionLiveQueries(inactiveAccountSection);
     return undefined;
   }, [
-    accountQueriesEnabled,
+    inactiveAccountPrewarmEnabled,
     inactiveAccountSection,
-    isVisible,
     prefetchAccountSectionLiveQueries,
   ]);
   useEffect(() => {
-    if (!isVisible || !accountQueriesEnabled) {
+    if (!inactiveAccountPrewarmEnabled) {
       return undefined;
     }
     const timer = window.setInterval(() => {
@@ -961,9 +967,8 @@ const AccountScreenInner = ({
       window.clearInterval(timer);
     };
   }, [
-    accountQueriesEnabled,
+    inactiveAccountPrewarmEnabled,
     inactiveAccountSection,
-    isVisible,
     prefetchAccountSectionLiveQueries,
   ]);
   const accountRuntimeControl = useRuntimeControlSnapshot({

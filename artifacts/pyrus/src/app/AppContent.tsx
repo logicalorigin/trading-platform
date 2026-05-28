@@ -5,12 +5,30 @@ import LogoLoader from "../components/LogoLoader";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import {
+  BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS,
+  completeBootProgressTask,
+  failBootProgressTask,
+  skipBootProgressTasks,
+  startBootProgressTask,
+  useBootProgress,
+  type BootProgressTaskId,
+} from "./bootProgress";
+import {
   rememberBrowserDiagnosticEvent,
 } from "./crashDiagnostics";
 
 type LazyComponentModule = { default: ComponentType };
 const ROOT_ROUTE_CHUNK_RETRIES = 4;
 const ROOT_ROUTE_CHUNK_RETRY_DELAY_MS = 500;
+const PLATFORM_BOOT_PROGRESS_TASK_IDS = [
+  "session",
+  "watchlists",
+  "accounts",
+  "signal-profile",
+  "signal-state",
+  "first-screen",
+  ...BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS,
+] as const satisfies readonly BootProgressTaskId[];
 
 let platformAppImport: Promise<{ default: ComponentType }> | null = null;
 let chartParityLabImport: Promise<LazyComponentModule> | null = null;
@@ -21,15 +39,24 @@ let TickerSearchLabComponent: ComponentType | null = null;
 
 const loadPlatformApp = () => {
   if (!platformAppImport) {
+    startBootProgressTask("workspace-route-chunk", {
+      detail: "Loading workspace",
+    });
     platformAppImport =
       // @ts-expect-error JSX module has no declaration file in this TS config
       import("../features/platform/PlatformApp.jsx")
         .then((mod) => {
           PlatformAppComponent = mod.default as ComponentType;
+          completeBootProgressTask("workspace-route-chunk", {
+            detail: "Workspace loaded",
+          });
           return { default: PlatformAppComponent };
         })
         .catch((error) => {
           platformAppImport = null;
+          failBootProgressTask("workspace-route-chunk", error, {
+            detail: "Workspace failed to load",
+          });
           throw error;
         });
   }
@@ -38,13 +65,22 @@ const loadPlatformApp = () => {
 
 const loadChartParityLab = () => {
   if (!chartParityLabImport) {
+    startBootProgressTask("workspace-route-chunk", {
+      detail: "Loading chart lab",
+    });
     chartParityLabImport = import("../features/charting/ChartParityLab")
       .then((mod) => {
         ChartParityLabComponent = mod.ChartParityLab as ComponentType;
+        completeBootProgressTask("workspace-route-chunk", {
+          detail: "Chart lab loaded",
+        });
         return { default: ChartParityLabComponent };
       })
       .catch((error) => {
         chartParityLabImport = null;
+        failBootProgressTask("workspace-route-chunk", error, {
+          detail: "Chart lab failed to load",
+        });
         throw error;
       });
   }
@@ -53,15 +89,24 @@ const loadChartParityLab = () => {
 
 const loadTickerSearchLab = () => {
   if (!tickerSearchLabImport) {
+    startBootProgressTask("workspace-route-chunk", {
+      detail: "Loading ticker search lab",
+    });
     tickerSearchLabImport =
       // @ts-expect-error JSX module has no declaration file in this TS config
       import("../features/platform/tickerSearch/TickerSearch.jsx")
         .then((mod) => {
           TickerSearchLabComponent = mod.TickerSearchLab as ComponentType;
+          completeBootProgressTask("workspace-route-chunk", {
+            detail: "Ticker search lab loaded",
+          });
           return { default: TickerSearchLabComponent };
         })
         .catch((error) => {
           tickerSearchLabImport = null;
+          failBootProgressTask("workspace-route-chunk", error, {
+            detail: "Ticker search lab failed to load",
+          });
           throw error;
         });
   }
@@ -109,6 +154,10 @@ const getPreloadedInitialAppContentRoute = (labMode: string | null) => {
     return TickerSearchLabComponent;
   }
   return PlatformAppComponent;
+};
+
+type AppContentProps = {
+  bootLoaderElapsedMs?: number | null;
 };
 
 if (typeof window !== "undefined") {
@@ -171,7 +220,7 @@ function diagnosticErrorCode(
   return `${file}:${lineno ?? 0}:${colno ?? 0}`.slice(0, 96);
 }
 
-function AppContent() {
+function AppContent({ bootLoaderElapsedMs = null }: AppContentProps) {
   const labMode = resolveLabMode();
   const crashMode = resolveDevCrashMode();
   const InitialRouteComponent = getPreloadedInitialAppContentRoute(labMode);
@@ -225,6 +274,15 @@ function AppContent() {
     };
   }, []);
 
+  useEffect(() => {
+    if (labMode === "chart-parity" || labMode === "ticker-search") {
+      skipBootProgressTasks(
+        PLATFORM_BOOT_PROGRESS_TASK_IDS,
+        `Workspace startup skipped for ${labMode} lab`,
+      );
+    }
+  }, [labMode]);
+
   return (
     <>
       <DevCrashTrigger mode={crashMode} />
@@ -238,7 +296,7 @@ function AppContent() {
           {InitialRouteComponent ? (
             <InitialRouteComponent />
           ) : (
-            <Suspense fallback={<AppContentRouteFallback />}>
+            <Suspense fallback={<AppContentRouteFallback bootLoaderElapsedMs={bootLoaderElapsedMs} />}>
               {labMode === "chart-parity" ? (
                 <ChartParityLab />
               ) : labMode === "ticker-search" ? (
@@ -256,10 +314,14 @@ function AppContent() {
 
 export default AppContent;
 
-function AppContentRouteFallback() {
+function AppContentRouteFallback({ bootLoaderElapsedMs = null }: AppContentProps) {
+  const progress = useBootProgress();
+
   return (
     <LogoLoader
+      bootHandoffElapsedMs={bootLoaderElapsedMs}
       label="Loading workspace"
+      progress={progress}
       testId="app-content-route-loading"
     />
   );

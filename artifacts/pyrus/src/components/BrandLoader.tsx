@@ -1,13 +1,24 @@
+import type { CSSProperties } from "react";
 import { PyrusLoaderMark } from "./brand/pyrus-loader-mark";
 import { FONT_CSS_VAR } from "../lib/typography";
 
 export type BrandLoaderTone = "app" | "panel";
+
+export type BrandLoaderProgress = {
+  percent: number;
+  label: string;
+  detail?: string | null;
+  failedCount?: number;
+  complete?: boolean;
+};
 
 export type BrandLoaderProps = {
   label?: string;
   minHeight?: string | number;
   tone?: BrandLoaderTone;
   testId?: string;
+  bootHandoffElapsedMs?: number | null;
+  progress?: BrandLoaderProgress | null;
 };
 
 const BRAND_LOADER_SHELL_BG = "#050914";
@@ -16,14 +27,35 @@ const BRAND_LOADER_PANEL_BG = "#050914";
 const normalizeMinHeight = (value: string | number): string =>
   typeof value === "number" ? `${value}px` : value;
 
+const normalizeBootHandoffElapsedMs = (value: number | null | undefined): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.max(0, value);
+};
+
+const normalizeProgressPercent = (value: number): number =>
+  Math.min(100, Math.max(0, Math.round(Number.isFinite(value) ? value : 0)));
+
 export function BrandLoader({
+  bootHandoffElapsedMs = null,
   label = "PYRUS",
   minHeight = "100vh",
+  progress = null,
   tone = "app",
   testId = "brand-loader",
 }: BrandLoaderProps) {
   const normalizedMinHeight = normalizeMinHeight(minHeight);
+  const normalizedBootHandoffElapsedMs = normalizeBootHandoffElapsedMs(bootHandoffElapsedMs);
+  const progressPercent =
+    progress == null ? null : normalizeProgressPercent(progress.percent);
+  const progressLabel = progress?.label?.trim() || label;
+  const progressDetail = progress?.detail?.trim() || null;
   const isPanel = tone === "panel";
+  const bootHandoffStyle =
+    normalizedBootHandoffElapsedMs === null
+      ? {}
+      : ({
+          "--brand-loader-handoff-offset": `${normalizedBootHandoffElapsedMs}ms`,
+        } as CSSProperties);
 
   return (
     <div
@@ -32,6 +64,8 @@ export function BrandLoader({
       data-testid={testId}
       data-theme="dark"
       data-tone={tone}
+      data-boot-handoff={normalizedBootHandoffElapsedMs === null ? undefined : "phase"}
+      data-progress={progressPercent === null ? undefined : progressPercent}
       style={{
         minHeight: normalizedMinHeight,
         height: isPanel ? "100%" : undefined,
@@ -42,6 +76,7 @@ export function BrandLoader({
         position: "relative",
         background: isPanel ? BRAND_LOADER_PANEL_BG : BRAND_LOADER_SHELL_BG,
         fontFamily: FONT_CSS_VAR.sans,
+        ...bootHandoffStyle,
       }}
     >
       <div aria-hidden="true" className="brand-loader-lockup">
@@ -59,6 +94,30 @@ export function BrandLoader({
           style={{ mixBlendMode: "screen" }}
         />
       </div>
+      {progressPercent === null ? null : (
+        <div className="brand-loader-progress" aria-live="polite">
+          <div className="brand-loader-progress-row">
+            <span className="brand-loader-progress-label">{progressLabel}</span>
+            <span className="brand-loader-progress-percent">{progressPercent}%</span>
+          </div>
+          <div
+            className="brand-loader-progress-track"
+            role="progressbar"
+            aria-label={progressLabel}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progressPercent}
+          >
+            <div
+              className="brand-loader-progress-fill"
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+          {progressDetail ? (
+            <div className="brand-loader-progress-detail">{progressDetail}</div>
+          ) : null}
+        </div>
+      )}
       <span
         style={{
           position: "absolute",
@@ -68,7 +127,9 @@ export function BrandLoader({
           clip: "rect(0 0 0 0)",
         }}
       >
-        {label}
+        {progressPercent === null
+          ? label
+          : `${progressLabel} ${progressPercent}%`}
       </span>
     </div>
   );

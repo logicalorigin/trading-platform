@@ -23,6 +23,7 @@ import {
   formatProgressiveTrailSteps,
   mergeOptionQuoteSnapshot,
   mergeSignalOptionsProfile,
+  normalizeSignalOptionsStrikeSlots,
   optionProviderContractId,
   parseProgressiveTrailSteps,
   resolveCandidateGateDisplay,
@@ -184,6 +185,23 @@ test("profile merge preserves tuned early and overnight defaults", () => {
   assert.equal(profile.exitPolicy.highQualityOvernightMinGainPct, -100);
   assert.equal(profile.positionHaltControls.positionMarkFeedHaltEnabled, true);
   assert.equal(profile.infrastructureHaltControls.gatewayReadinessBlockEnabled, true);
+});
+
+test("profile merge normalizes ordered strike slot preferences", () => {
+  const profile = mergeSignalOptionsProfile({
+    signalOptions: {
+      optionSelection: {
+        callStrikeSlots: [3, "4", 4, 9],
+        putStrikeSlot: 1,
+      },
+    },
+  });
+
+  assert.deepEqual(profile.optionSelection.callStrikeSlots, [3, 4, 5]);
+  assert.deepEqual(profile.optionSelection.putStrikeSlots, [1]);
+  assert.equal(profile.optionSelection.callStrikeSlot, 3);
+  assert.equal(profile.optionSelection.putStrikeSlot, 1);
+  assert.deepEqual(normalizeSignalOptionsStrikeSlots(["bad"], [2]), [2]);
 });
 
 test("progressive trail ladder text round-trips through settings helpers", () => {
@@ -1079,19 +1097,43 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
   assert.match(settingsRegionSource, /ContractSelectionCell/);
   assert.match(settingsRegionSource, /ExitLadderTrack/);
   assert.match(settingsRegionSource, /className="algo-settings-grid"/);
+  assert.match(settingsRegionSource, /openSections/);
+  assert.match(settingsRegionSource, /setOpenSections/);
+  assert.match(settingsRegionSource, /collapsible/);
+  assert.match(settingsRegionSource, /section\.defaultOpen/);
+  const sectionHeaderSource = readFileSync(
+    new URL("./SettingsSectionHeader.jsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(sectionHeaderSource, /aria-expanded=\{open\}/);
+  assert.match(sectionHeaderSource, /aria-controls=\{controlsId\}/);
+  const coreSections = new Set(["risk", "contract", "exits"]);
+  for (const section of SETTINGS_SECTIONS) {
+    assert.equal(
+      section.defaultOpen,
+      coreSections.has(section.id),
+      `section ${section.id} default open mismatch`,
+    );
+  }
+  assert.match(settingsRegionSource, /DteTimelineEditor/);
+  assert.match(settingsRegionSource, /data-testid="algo-contract-dte-timeline"/);
   assert.match(settingsRegionSource, /data-testid="algo-contract-dte-rail"/);
+  assert.match(settingsRegionSource, /data-testid=\{`algo-contract-dte-handle-\$\{marker\.key\}`\}/);
   assert.match(settingsRegionSource, /data-testid="algo-contract-selection-summary"/);
   assert.match(settingsRegionSource, /data-testid="algo-mini-chain"/);
   assert.match(settingsRegionSource, /STRIKE_SLOT_META/);
   assert.match(settingsRegionSource, /const ChainStrikeButton/);
   assert.match(settingsRegionSource, /formatDteWindowLabel/);
   assert.match(settingsRegionSource, /data-testid=\{`algo-strike-ladder-\$\{side\.toLowerCase\(\)\}-\$\{slot\}`\}/);
-  assert.match(settingsRegionSource, /aria-checked=\{selected\}/);
+  assert.match(settingsRegionSource, /role="checkbox"[\s\S]*?aria-checked=\{selected\}/);
+  assert.match(settingsRegionSource, /MAX_SIGNAL_OPTIONS_STRIKE_SLOTS/);
+  assert.match(settingsRegionSource, /normalizeSignalOptionsStrikeSlots/);
   assert.match(settingsRegionSource, /STRIKE_SLOT_VALUES_DESC/);
-  assert.match(settingsRegionSource, /role="radiogroup"[\s\S]*?aria-label="Call strike slot"/);
-  assert.match(settingsRegionSource, /role="radiogroup"[\s\S]*?aria-label="Put strike slot"/);
+  assert.match(settingsRegionSource, /role="group"[\s\S]*?aria-label="Call strike slots"/);
+  assert.match(settingsRegionSource, /role="group"[\s\S]*?aria-label="Put strike slots"/);
   assert.match(settingsRegionSource, /aria-label=\{`\$\{label\} strike slot unsaved`\}/);
-  assert.match(settingsRegionSource, /patchProfileDraftPath\(field\.path, Number\(slot\)\)/);
+  assert.match(settingsRegionSource, /patchProfileDraftPath\(slotsField\.path, normalized\)/);
+  assert.match(settingsRegionSource, /patchProfileDraftPath\(primaryField\.path, normalized\[0\]\)/);
   assert.match(settingsRegionSource, /moveStrikeSlot/);
   assert.match(settingsRegionSource, /data-testid=\{`algo-exit-track-marker-\$\{marker\.key\}`\}/);
   assert.match(settingsRegionSource, /data-testid=\{`algo-exit-track-input-\$\{editingMarker\.key\}`\}/);

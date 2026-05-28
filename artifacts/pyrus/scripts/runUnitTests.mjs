@@ -6,6 +6,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const unitTestFiles = [
+  "scripts/flightRecorder.test.mjs",
   "src/features/charting/pyrusSignalsPineAdapter.test.ts",
   "src/features/charting/model.test.ts",
   "src/features/charting/ResearchChartSurface.test.ts",

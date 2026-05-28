@@ -580,23 +580,25 @@ const firstDisplayTotalNumber = (...values) => {
 };
 
 const buildDisplayTotals = (rows, fallbackTotals = {}) => {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const safeFallbackTotals = fallbackTotals || {};
   const fallbackCash = firstDisplayTotalNumber(
-    fallbackTotals.cash,
-    fallbackTotals.totalCash,
-    fallbackTotals.totalCashValue,
+    safeFallbackTotals.cash,
+    safeFallbackTotals.totalCash,
+    safeFallbackTotals.totalCashValue,
   );
-  const fallbackBuyingPower = firstDisplayTotalNumber(fallbackTotals.buyingPower);
-  const fallbackNetLiquidation = firstDisplayTotalNumber(fallbackTotals.netLiquidation);
-  if (!rows.length) {
+  const fallbackBuyingPower = firstDisplayTotalNumber(safeFallbackTotals.buyingPower);
+  const fallbackNetLiquidation = firstDisplayTotalNumber(safeFallbackTotals.netLiquidation);
+  if (!safeRows.length) {
     return {
-      ...(fallbackTotals || {}),
+      ...safeFallbackTotals,
       cash: fallbackCash,
       totalCash: fallbackCash,
       buyingPower: fallbackBuyingPower,
       netLiquidation: fallbackNetLiquidation,
     };
   }
-  const totals = rows.reduce(
+  const totals = safeRows.reduce(
     (acc, row) => {
       const marketValue = firstFiniteNumber(row.marketValue);
       const unrealizedPnl = firstFiniteNumber(row.unrealizedPnl);

@@ -1,5 +1,6 @@
 import {
   resolveSignalOptionsExecutionProfile,
+  signalOptionsStrikeSlotsForRight,
   tunedSignalOptionsExecutionProfile,
   tunedSignalOptionsStrategySettings,
   type SignalOptionsExecutionProfile,
@@ -76,7 +77,16 @@ import {
   recordShadowAutomationEvent,
   resetSignalOptionsReplayRowsForRange,
 } from "./shadow-account";
-import { getApiResourcePressureSnapshot } from "./resource-pressure";
+import {
+  getApiResourcePressureSnapshot,
+  isApiResourcePressureHardBlock,
+} from "./resource-pressure";
+import {
+  buildInitialStopPrice,
+  computeSignalOptionsOvernightPositionExit as computeOvernightPositionExit,
+  computeSignalOptionsPositionStop as computePositionStop,
+  type SignalOptionsEntryQuality,
+} from "./signal-options-exit-policy";
 
 export const SIGNAL_OPTIONS_EVENT_PREFIX = "signal_options_";
 export const SIGNAL_OPTIONS_ENTRY_EVENT = "signal_options_shadow_entry";
@@ -147,12 +157,15 @@ const SIGNAL_OPTIONS_EXTENDED_CLOSE_UNDERLYINGS = new Set([
   "SPY",
 ]);
 const SIGNAL_OPTIONS_STATE_EVENT_LIMIT = 2_500;
+const SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS = 2_000;
+const SIGNAL_OPTIONS_DASHBOARD_CACHE_STALE_TTL_MS = 60_000;
 const SIGNAL_OPTIONS_OPTION_BACKOFF_DEBUG_REASON = "options_backoff";
 const SIGNAL_OPTIONS_GATEWAY_NOT_READY_REASON = "algo_gateway_not_ready";
 const SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON = "market_session_quiet";
 
 type SignalDirection = "buy" | "sell";
 type OptionRight = "call" | "put";
+type SignalOptionsDashboardCacheMode = "normal" | "cache-only";
 type SignalOptionsOptionBackoffReason =
   | "option_chain_backoff"
   | "option_expiration_backoff";
@@ -303,28 +316,6 @@ type SignalOptionsPosition = {
   lastMarkPrice?: number | null;
   lastMarkedAt?: string | null;
   signalQuality?: SignalOptionsEntryQuality | null;
-};
-
-type SignalOptionsEntryQuality = {
-  tier: "high" | "standard" | "low";
-  liquidityTier: "strong" | "standard" | "weak";
-  score: number;
-  reasons: string[];
-  components?: {
-    mtfAlignment: number;
-    freshness: number;
-    trendStrength: number;
-    liquidity: number;
-    riskFit: number;
-    dataQuality: number;
-    total: number;
-  };
-  raw?: Record<string, unknown>;
-  adx: number | null;
-  mtfMatches: number;
-  mtfDirections: number[];
-  spreadPctOfMid: number | null;
-  bullishRegime: boolean;
 };
 
 type SignalMonitorState = {
@@ -1113,6 +1104,7 @@ async function insertSignalOptionsEvent(input: {
     });
   }
 
+  invalidateSignalOptionsDashboardCaches(input.deployment.id);
   notifyAlgoCockpitChanged({
     deploymentId: input.deployment.id,
     mode: input.deployment.mode,
@@ -1373,11 +1365,10 @@ function latestFreshSignalAtFromStates(input: {
 function shouldDeferSignalOptionsHeavyWork() {
   const pressure = getApiResourcePressureSnapshot();
   const caps = pressure.caps.signalOptions;
+  const hardPressureBlock = isApiResourcePressureHardBlock(pressure);
   return {
     pressure,
-    defer:
-      caps.actionScansAllowed === false ||
-      caps.positionMarksAllowed === false,
+    defer: hardPressureBlock || caps.positionMarksAllowed === false,
   };
 }
 
@@ -1625,12 +1616,12 @@ function signalOptionsStrikeSlotsForFallback(input: {
   profile: SignalOptionsExecutionProfile;
   optionRight: OptionRight;
 }) {
-  const slot =
-    input.optionRight === "call"
-      ? input.profile.optionSelection.callStrikeSlot
-      : input.profile.optionSelection.putStrikeSlot;
-  const preferredSlot = Math.min(5, Math.max(0, Math.floor(Number(slot))));
-  const slots = [preferredSlot];
+  const selectedSlots = signalOptionsStrikeSlotsForRight(
+    input.profile,
+    input.optionRight,
+  ).map((slot) => Math.min(5, Math.max(0, Math.floor(Number(slot)))));
+  const preferredSlot = selectedSlots[0] ?? 3;
+  const slots = [...selectedSlots];
   for (let step = 1; step <= SIGNAL_OPTIONS_FALLBACK_STRIKE_STEPS; step += 1) {
     const fallbackSlot =
       input.optionRight === "call" ? preferredSlot + step : preferredSlot - step;
@@ -1675,16 +1666,22 @@ export function selectSignalOptionsContractFromChain(input: {
   }
 
   const spotPrice = input.signalPrice ?? strikes[Math.floor(strikes.length / 2)]!;
-  const slot =
-    optionRight === "call"
-      ? input.profile.optionSelection.callStrikeSlot
-      : input.profile.optionSelection.putStrikeSlot;
-  const strike = strikes[resolveStrikeIndex({ strikes, spotPrice, slot })];
-  return (
-    candidates.find(
-      (quote) => finiteNumber(asRecord(quote.contract).strike) === strike,
-    ) ?? null
-  );
+  const attemptedStrikes = new Set<number>();
+  for (const slot of signalOptionsStrikeSlotsForRight(input.profile, optionRight)) {
+    const strike = strikes[resolveStrikeIndex({ strikes, spotPrice, slot })];
+    if (strike == null || attemptedStrikes.has(strike)) {
+      continue;
+    }
+    attemptedStrikes.add(strike);
+    const quote =
+      candidates.find(
+        (item) => finiteNumber(asRecord(item.contract).strike) === strike,
+      ) ?? null;
+    if (quote) {
+      return quote;
+    }
+  }
+  return null;
 }
 
 function selectSignalOptionsContractPlanFromChain(input: {
@@ -1928,142 +1925,6 @@ export function buildSignalOptionsShadowOrderPlan(
   };
 }
 
-function buildInitialStopPrice(
-  entryPrice: number,
-  profile: SignalOptionsExecutionProfile,
-) {
-  return Number(
-    (entryPrice * (1 + profile.exitPolicy.hardStopPct / 100)).toFixed(2),
-  );
-}
-
-function resolveConditionalExitPolicy(input: {
-  profile: SignalOptionsExecutionProfile;
-  signalQuality?: SignalOptionsEntryQuality | null;
-}) {
-  const { profile, signalQuality } = input;
-  const enabled = profile.exitPolicy.conditionalQualityExitsEnabled;
-  const tier = signalQuality?.tier ?? "standard";
-  const liquidityTier = signalQuality?.liquidityTier ?? "standard";
-  return {
-    earlyExitBars:
-      enabled && tier === "low"
-        ? profile.exitPolicy.lowQualityEarlyExitBars
-        : enabled && tier === "high"
-          ? profile.exitPolicy.highQualityEarlyExitBars
-          : profile.exitPolicy.earlyExitBars,
-    earlyExitLossPct:
-      enabled && tier === "low"
-        ? profile.exitPolicy.lowQualityEarlyExitLossPct
-        : enabled && tier === "high"
-          ? profile.exitPolicy.highQualityEarlyExitLossPct
-          : profile.exitPolicy.earlyExitLossPct,
-    trailGivebackPct:
-      enabled && liquidityTier === "weak"
-        ? profile.exitPolicy.weakLiquidityTrailGivebackPct
-        : enabled && liquidityTier === "strong"
-          ? profile.exitPolicy.strongLiquidityTrailGivebackPct
-          : profile.exitPolicy.trailGivebackPct,
-    overnightMinGainPct:
-      enabled && tier === "high" && signalQuality?.bullishRegime
-        ? profile.exitPolicy.highQualityOvernightMinGainPct
-        : profile.exitPolicy.overnightMinGainPct,
-  };
-}
-
-function selectProgressiveTrailStep(
-  profile: SignalOptionsExecutionProfile,
-  peakReturnPct: number,
-) {
-  if (
-    !profile.exitPolicy.progressiveTrailEnabled ||
-    !profile.exitPolicy.progressiveTrailSteps.length
-  ) {
-    return null;
-  }
-  return profile.exitPolicy.progressiveTrailSteps.reduce<
-    SignalOptionsExecutionProfile["exitPolicy"]["progressiveTrailSteps"][number] | null
-  >(
-    (selected, step) =>
-      peakReturnPct >= step.activationPct &&
-      (!selected || step.activationPct > selected.activationPct)
-        ? step
-        : selected,
-    null,
-  );
-}
-
-function computePositionStop(input: {
-  entryPrice: number;
-  peakPrice: number;
-  markPrice: number;
-  profile: SignalOptionsExecutionProfile;
-  barsSinceEntry?: number | null;
-  signalQuality?: SignalOptionsEntryQuality | null;
-}) {
-  const { entryPrice, peakPrice, markPrice, profile } = input;
-  const conditional = resolveConditionalExitPolicy({
-    profile,
-    signalQuality: input.signalQuality,
-  });
-  const hardStopPrice = buildInitialStopPrice(entryPrice, profile);
-  const returnPct = entryPrice > 0 ? ((peakPrice - entryPrice) / entryPrice) * 100 : 0;
-  const markReturnPct =
-    entryPrice > 0 ? ((markPrice - entryPrice) / entryPrice) * 100 : 0;
-  const progressiveTrailStep = selectProgressiveTrailStep(profile, returnPct);
-  const usesProgressiveTrail =
-    profile.exitPolicy.progressiveTrailEnabled &&
-    profile.exitPolicy.progressiveTrailSteps.length > 0;
-  const trailActive = usesProgressiveTrail
-    ? progressiveTrailStep != null
-    : returnPct >= profile.exitPolicy.trailActivationPct;
-  const minLockedGainPct =
-    progressiveTrailStep?.minLockedGainPct ?? profile.exitPolicy.minLockedGainPct;
-  const givebackPct =
-    peakPrice >= entryPrice * 10
-      ? profile.exitPolicy.tightenAtTenXGivebackPct
-      : peakPrice >= entryPrice * 5
-        ? profile.exitPolicy.tightenAtFiveXGivebackPct
-        : (progressiveTrailStep?.givebackPct ?? conditional.trailGivebackPct);
-  const trailStopPrice = trailActive
-    ? Math.max(
-        entryPrice * (1 + minLockedGainPct / 100),
-        peakPrice * (1 - givebackPct / 100),
-      )
-    : null;
-  const stopPrice = Number(
-    Math.max(hardStopPrice, trailStopPrice ?? hardStopPrice).toFixed(2),
-  );
-  const exitReason =
-    markPrice <= stopPrice
-      ? trailActive && trailStopPrice != null && markPrice <= trailStopPrice
-        ? "runner_trail_stop"
-        : "hard_stop"
-      : !trailActive &&
-          conditional.earlyExitBars > 0 &&
-          conditional.earlyExitLossPct > 0 &&
-          (input.barsSinceEntry ?? -1) >= conditional.earlyExitBars &&
-          markReturnPct <= -conditional.earlyExitLossPct
-        ? "early_invalidation"
-      : null;
-
-  return {
-    hardStopPrice,
-    trailActive,
-    trailStopPrice:
-      trailStopPrice == null ? null : Number(trailStopPrice.toFixed(2)),
-    givebackPct,
-    stopPrice,
-    exitReason,
-    returnPct,
-    markReturnPct,
-    barsSinceEntry: input.barsSinceEntry ?? null,
-    signalQuality: input.signalQuality ?? null,
-    conditionalExitPolicy: conditional,
-    progressiveTrailStep,
-  };
-}
-
 function signalBarsSinceEntry(input: {
   openedAt: unknown;
   markAt: Date;
@@ -2081,58 +1942,6 @@ function signalBarsSinceEntry(input: {
     0,
     Math.floor((input.markAt.getTime() - openedAt.getTime()) / timeframeMs),
   );
-}
-
-function computeOvernightPositionExit(input: {
-  entryPrice: number;
-  peakPrice: number;
-  markPrice: number;
-  profile: SignalOptionsExecutionProfile;
-  signalQuality?: SignalOptionsEntryQuality | null;
-}) {
-  const { entryPrice, peakPrice, markPrice, profile } = input;
-  const conditional = resolveConditionalExitPolicy({
-    profile,
-    signalQuality: input.signalQuality,
-  });
-  if (!profile.exitPolicy.overnightExitEnabled) {
-    return {
-      exitReason: null,
-      markReturnPct:
-        entryPrice > 0 ? ((markPrice - entryPrice) / entryPrice) * 100 : 0,
-      overnightTrailStopPrice: null,
-    };
-  }
-
-  const markReturnPct =
-    entryPrice > 0 ? ((markPrice - entryPrice) / entryPrice) * 100 : 0;
-  const peakReturnPct =
-    entryPrice > 0 ? ((peakPrice - entryPrice) / entryPrice) * 100 : 0;
-  const trailActive = peakReturnPct >= profile.exitPolicy.trailActivationPct;
-  const overnightTrailStopPrice =
-    trailActive && profile.exitPolicy.overnightRunnerGivebackPct > 0
-      ? Number(
-          Math.max(
-            entryPrice * (1 + profile.exitPolicy.minLockedGainPct / 100),
-            peakPrice *
-              (1 - profile.exitPolicy.overnightRunnerGivebackPct / 100),
-          ).toFixed(2),
-        )
-      : null;
-  const exitReason =
-    markReturnPct < conditional.overnightMinGainPct
-      ? "overnight_risk_exit"
-      : overnightTrailStopPrice != null && markPrice <= overnightTrailStopPrice
-        ? "overnight_runner_stop"
-        : null;
-
-  return {
-    exitReason,
-    markReturnPct,
-    overnightTrailStopPrice,
-    signalQuality: input.signalQuality ?? null,
-    conditionalExitPolicy: conditional,
-  };
 }
 
 function shouldRecordActivePositionMark(input: {
@@ -5411,20 +5220,47 @@ export function buildSignalOptionsPerformanceFromInputs(input: {
 
 export async function getSignalOptionsPerformance(input: {
   deploymentId: string;
+  cacheMode?: SignalOptionsDashboardCacheMode;
 }) {
-  const deployment = await getDeploymentOrThrow(input.deploymentId);
-  const profile = resolveDeploymentProfile(deployment);
-  const events = await listDeploymentEvents(deployment.id, SIGNAL_OPTIONS_STATE_EVENT_LIMIT);
-  const state = await buildStatePayload({ deployment, profile, events });
+  const cached = readSignalOptionsCachedPayload(
+    signalOptionsPerformanceCache,
+    input.deploymentId,
+    input.cacheMode ?? "normal",
+  );
+  if (cached) {
+    return cached;
+  }
+  if (input.cacheMode === "cache-only") {
+    throw new HttpError(503, "Signal-options performance cache unavailable.", {
+      code: "signal_options_performance_cache_unavailable",
+      detail:
+        "API pressure requires a cached signal-options performance payload, but no usable payload is available yet.",
+    });
+  }
+  const { deployment, profile, events, state } =
+    await getSignalOptionsDashboardSnapshot(input);
   const shadowTradeDiagnostics = await computeShadowTradeDiagnostics({ range: "1M" });
 
-  return buildSignalOptionsPerformanceFromInputs({
+  const payload = buildSignalOptionsPerformanceFromInputs({
     deploymentId: deployment.id,
     profile,
     state,
     events: stateSignalOptionsEvents(events).signalEvents,
     shadowTradeDiagnostics,
   });
+  writeSignalOptionsCachedPayload(
+    signalOptionsPerformanceCache,
+    deployment.id,
+    payload,
+  );
+  if (deployment.id !== input.deploymentId) {
+    writeSignalOptionsCachedPayload(
+      signalOptionsPerformanceCache,
+      input.deploymentId,
+      payload,
+    );
+  }
+  return payload;
 }
 
 function formatEnumReason(value: string) {
@@ -5624,23 +5460,198 @@ async function buildStatePayload(input: {
   };
 }
 
-export async function listSignalOptionsAutomationState(input: {
-  deploymentId: string;
-}) {
-  const deployment = await getDeploymentOrThrow(input.deploymentId);
-  const profile = resolveDeploymentProfile(deployment);
-  const events = await listDeploymentEvents(deployment.id, SIGNAL_OPTIONS_STATE_EVENT_LIMIT);
+type SignalOptionsDashboardSnapshot = {
+  deployment: AlgoDeployment;
+  profile: SignalOptionsExecutionProfile;
+  events: ExecutionEvent[];
+  state: Awaited<ReturnType<typeof buildStatePayload>>;
+  cachedAt: string;
+  expiresAt: number;
+  staleExpiresAt: number;
+};
 
-  return buildStatePayload({ deployment, profile, events });
+type SignalOptionsCachedPayload<T> = {
+  value: T;
+  cachedAt: string;
+  expiresAt: number;
+  staleExpiresAt: number;
+};
+
+const signalOptionsDashboardCache = new Map<
+  string,
+  SignalOptionsDashboardSnapshot
+>();
+const signalOptionsDashboardInFlight = new Map<
+  string,
+  Promise<SignalOptionsDashboardSnapshot>
+>();
+const signalOptionsCockpitCache = new Map<
+  string,
+  SignalOptionsCachedPayload<Awaited<ReturnType<typeof buildAlgoDeploymentCockpitPayload>>>
+>();
+const signalOptionsPerformanceCache = new Map<
+  string,
+  SignalOptionsCachedPayload<ReturnType<typeof buildSignalOptionsPerformanceFromInputs>>
+>();
+
+function invalidateSignalOptionsDashboardCaches(deploymentId?: string) {
+  if (!deploymentId) {
+    signalOptionsDashboardCache.clear();
+    signalOptionsDashboardInFlight.clear();
+    signalOptionsCockpitCache.clear();
+    signalOptionsPerformanceCache.clear();
+    return;
+  }
+  signalOptionsDashboardCache.delete(deploymentId);
+  signalOptionsDashboardInFlight.delete(deploymentId);
+  signalOptionsCockpitCache.delete(deploymentId);
+  signalOptionsPerformanceCache.delete(deploymentId);
 }
 
-export async function getAlgoDeploymentCockpit(input: {
+function withSignalOptionsCacheMetadata<T>(
+  value: T,
+  input: {
+    cachedAt: string;
+    cacheStatus: "hit" | "stale";
+    reason?: string;
+  },
+): T {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    ...record,
+    cachedAt: input.cachedAt,
+    cacheStatus: input.cacheStatus,
+    degraded: input.cacheStatus === "stale" ? true : record["degraded"],
+    stale: input.cacheStatus === "stale" ? true : record["stale"],
+    reason:
+      input.cacheStatus === "stale"
+        ? input.reason ?? "signal_options_dashboard_stale_cache"
+        : record["reason"],
+  } as T;
+}
+
+function readSignalOptionsCachedPayload<T>(
+  cache: Map<string, SignalOptionsCachedPayload<T>>,
+  deploymentId: string,
+  cacheMode: SignalOptionsDashboardCacheMode,
+): T | null {
+  const now = Date.now();
+  const cached = cache.get(deploymentId);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expiresAt > now) {
+    return withSignalOptionsCacheMetadata(cached.value, {
+      cachedAt: cached.cachedAt,
+      cacheStatus: "hit",
+    });
+  }
+  if (cached.staleExpiresAt > now) {
+    return withSignalOptionsCacheMetadata(cached.value, {
+      cachedAt: cached.cachedAt,
+      cacheStatus: "stale",
+    });
+  }
+  cache.delete(deploymentId);
+  return cacheMode === "cache-only" ? null : null;
+}
+
+function writeSignalOptionsCachedPayload<T>(
+  cache: Map<string, SignalOptionsCachedPayload<T>>,
+  deploymentId: string,
+  value: T,
+) {
+  const now = Date.now();
+  cache.set(deploymentId, {
+    value,
+    cachedAt: new Date(now).toISOString(),
+    expiresAt: now + SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS,
+    staleExpiresAt: now + SIGNAL_OPTIONS_DASHBOARD_CACHE_STALE_TTL_MS,
+  });
+}
+
+async function getSignalOptionsDashboardSnapshot(input: {
+  deploymentId: string;
+  cacheMode?: SignalOptionsDashboardCacheMode;
+}): Promise<SignalOptionsDashboardSnapshot> {
+  const cacheMode = input.cacheMode ?? "normal";
+  const now = Date.now();
+  const cached = signalOptionsDashboardCache.get(input.deploymentId);
+  if (cached && cached.expiresAt > now) {
+    return cached;
+  }
+  if (cached && cached.staleExpiresAt > now && cacheMode === "cache-only") {
+    return {
+      ...cached,
+      state: withSignalOptionsCacheMetadata(cached.state, {
+        cachedAt: cached.cachedAt,
+        cacheStatus: "stale",
+      }),
+    };
+  }
+  if (cacheMode === "cache-only") {
+    throw new HttpError(503, "Signal-options dashboard snapshot unavailable.", {
+      code: "signal_options_dashboard_cache_unavailable",
+      detail:
+        "API pressure requires a cached signal-options dashboard snapshot, but no usable snapshot is available yet.",
+    });
+  }
+
+  const inFlight = signalOptionsDashboardInFlight.get(input.deploymentId);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const request = (async () => {
+    const deployment = await getDeploymentOrThrow(input.deploymentId);
+    const profile = resolveDeploymentProfile(deployment);
+    const events = await listDeploymentEvents(
+      deployment.id,
+      SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
+    );
+    const state = await buildStatePayload({ deployment, profile, events });
+    const cachedAt = new Date().toISOString();
+    const snapshot = {
+      deployment,
+      profile,
+      events,
+      state,
+      cachedAt,
+      expiresAt: Date.now() + SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS,
+      staleExpiresAt: Date.now() + SIGNAL_OPTIONS_DASHBOARD_CACHE_STALE_TTL_MS,
+    };
+    signalOptionsDashboardCache.set(deployment.id, snapshot);
+    if (deployment.id !== input.deploymentId) {
+      signalOptionsDashboardCache.set(input.deploymentId, snapshot);
+    }
+    return snapshot;
+  })().finally(() => {
+    signalOptionsDashboardInFlight.delete(input.deploymentId);
+  });
+
+  signalOptionsDashboardInFlight.set(input.deploymentId, request);
+  return request;
+}
+
+export async function listSignalOptionsAutomationState(input: {
+  deploymentId: string;
+  cacheMode?: SignalOptionsDashboardCacheMode;
+}) {
+  const snapshot = await getSignalOptionsDashboardSnapshot(input);
+  return snapshot.state;
+}
+
+async function buildAlgoDeploymentCockpitPayload(input: {
   deploymentId: string;
 }) {
-  const deployment = await getDeploymentOrThrow(input.deploymentId);
-  const [profile, events, readiness, fleetRows] = await Promise.all([
-    Promise.resolve(resolveDeploymentProfile(deployment)),
-    listDeploymentEvents(deployment.id, SIGNAL_OPTIONS_STATE_EVENT_LIMIT),
+  const snapshot = await getSignalOptionsDashboardSnapshot({
+    deploymentId: input.deploymentId,
+  });
+  const { deployment, profile, events, state } = snapshot;
+  const [readiness, fleetRows] = await Promise.all([
     getAlgoGatewayReadiness(),
     db
       .select()
@@ -5648,7 +5659,6 @@ export async function getAlgoDeploymentCockpit(input: {
       .where(eq(algoDeploymentsTable.mode, deployment.mode))
       .orderBy(desc(algoDeploymentsTable.updatedAt)),
   ]);
-  const state = await buildStatePayload({ deployment, profile, events });
   const pipelineStages = buildCockpitPipeline({
     deployment,
     readiness,
@@ -5743,6 +5753,45 @@ export async function getAlgoDeploymentCockpit(input: {
   };
 }
 
+export async function getAlgoDeploymentCockpit(input: {
+  deploymentId: string;
+  cacheMode?: SignalOptionsDashboardCacheMode;
+}) {
+  const cached = readSignalOptionsCachedPayload(
+    signalOptionsCockpitCache,
+    input.deploymentId,
+    input.cacheMode ?? "normal",
+  );
+  if (cached) {
+    return cached;
+  }
+  if (input.cacheMode === "cache-only") {
+    throw new HttpError(503, "Signal-options cockpit cache unavailable.", {
+      code: "signal_options_cockpit_cache_unavailable",
+      detail:
+        "API pressure requires a cached signal-options cockpit payload, but no usable payload is available yet.",
+    });
+  }
+  const payload = await buildAlgoDeploymentCockpitPayload(input);
+  writeSignalOptionsCachedPayload(
+    signalOptionsCockpitCache,
+    input.deploymentId,
+    payload,
+  );
+  const payloadDeploymentId =
+    payload.deployment && typeof payload.deployment === "object"
+      ? String((payload.deployment as Record<string, unknown>)["id"] ?? "")
+      : "";
+  if (payloadDeploymentId && payloadDeploymentId !== input.deploymentId) {
+    writeSignalOptionsCachedPayload(
+      signalOptionsCockpitCache,
+      payloadDeploymentId,
+      payload,
+    );
+  }
+  return payload;
+}
+
 export async function listEnabledSignalOptionsDeployments() {
   const deployments = await db
     .select()
@@ -5790,6 +5839,9 @@ async function refreshActivePosition(input: {
     resolution: null,
   };
   const markAttempts: ReturnType<typeof positionMarkAttemptPayload>[] = [];
+  const livePositionMarksAllowed =
+    getApiResourcePressureSnapshot().caps.signalOptions.positionMarksAllowed;
+  const pressureMarkBlockedReason = "resource_pressure_position_marks_blocked";
   const useQuote = (
     source: "provider_snapshot" | "chain_standard" | "chain_full",
     candidateQuote: SignalOptionsOptionQuote | null,
@@ -5813,7 +5865,15 @@ async function refreshActivePosition(input: {
     return Boolean(resolution?.ok);
   };
 
-  if (providerContractId) {
+  if (!livePositionMarksAllowed) {
+    markAttempts.push(
+      positionMarkAttemptPayload({
+        source: providerContractId ? "provider_snapshot" : "chain_standard",
+        quote: null,
+        reason: pressureMarkBlockedReason,
+      }),
+    );
+  } else if (providerContractId) {
     const snapshot = await fetchBridgeOptionQuoteSnapshots({
       underlying: input.position.symbol,
       providerContractIds: [providerContractId],
@@ -5848,7 +5908,7 @@ async function refreshActivePosition(input: {
     useQuote("chain_standard", chainQuote, chain.debug);
   }
 
-  if (!markState.resolution?.ok) {
+  if (livePositionMarksAllowed && !markState.resolution?.ok) {
     const chain = await getOptionChainWithDebug({
       underlying: input.position.symbol,
       expirationDate,
@@ -5945,7 +6005,9 @@ async function refreshActivePosition(input: {
     return await emitPositionMarkSkip({
       summary: `${input.position.symbol} shadow mark skipped: option quote unavailable`,
       message: "No option quote was returned for the open shadow position.",
-      reason: "position_mark_unavailable",
+      reason: livePositionMarksAllowed
+        ? "position_mark_unavailable"
+        : pressureMarkBlockedReason,
     });
   }
 
@@ -5982,6 +6044,7 @@ async function refreshActivePosition(input: {
       timeframe: input.position.timeframe,
     }),
   });
+  const stopPayload = { ...stop, enforcementSource: "automation_scan" };
   const overnight =
     !stop.exitReason && isLiveOvernightExitWindow(markAt)
       ? computeOvernightPositionExit({
@@ -6025,7 +6088,7 @@ async function refreshActivePosition(input: {
           markSource,
           usedShadowMarkFallback,
           position: positionPatch,
-          stop,
+          stop: stopPayload,
           overnight,
           shadowPositionMarkFallback: shadowMarkFallback,
         },
@@ -6055,7 +6118,7 @@ async function refreshActivePosition(input: {
           attempts: markAttempts,
           shadowPositionMarkFallback: shadowMarkFallback,
         },
-        stop,
+        stop: stopPayload,
         overnight,
       },
     });
@@ -6088,7 +6151,7 @@ async function refreshActivePosition(input: {
           attempts: markAttempts,
           shadowPositionMarkFallback: shadowMarkFallback,
         },
-        stop,
+        stop: stopPayload,
       },
     });
   }
@@ -9771,6 +9834,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   buildCockpitPipeline,
   clearSignalOptionsScanActive,
   signalOptionsPressurePauseState,
+  shouldDeferSignalOptionsHeavyWork,
   buildWorkerScanSummary,
   buildSignalOptionsActionMapping,
   buildSignalOptionsSignalSnapshot,

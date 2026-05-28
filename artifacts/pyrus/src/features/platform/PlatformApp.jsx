@@ -6,6 +6,7 @@ import {
   useMemo,
 } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import LogoLoader from "../../components/LogoLoader";
 import {
   getGetNewsQueryOptions,
   getGetQuoteSnapshotsQueryOptions,
@@ -97,6 +98,7 @@ import {
 } from "./bridgeRuntimeModel";
 import {
   BOOT_SCREEN_MODULE_PRELOAD_ORDER,
+  SCREENS,
   SCREEN_MODULE_PRELOAD_ORDER,
   SCREEN_SHELL_WARM_MOUNT_ORDER,
   buildMountedScreenState,
@@ -163,6 +165,16 @@ import {
   isFiniteNumber,
 } from "../../lib/formatters";
 import { useUserPreferences } from "../preferences/useUserPreferences";
+import {
+  BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS,
+  completeBootProgressTask,
+  failBootProgressTask,
+  skipBootProgressTasks,
+  startBootProgressTask,
+  useBootProgress,
+} from "../../app/bootProgress";
+
+const SCREEN_ID_SET = new Set(SCREENS.map(({ id }) => id));
 
 // ═══════════════════════════════════════════════════════════════════
 // FONTS
@@ -217,6 +229,7 @@ const WATCHLIST_SIDEBAR_WIDTH_MAX = 320;
 const ACTIVITY_SIDEBAR_WIDTH_DEFAULT = 220;
 const ACTIVITY_SIDEBAR_WIDTH_MIN = 196;
 const ACTIVITY_SIDEBAR_WIDTH_MAX = 320;
+const STARTUP_PROTECTION_COOLDOWN_MS = 8_000;
 const SIGNAL_MONITOR_BACKGROUND_RESUME_DELAY_MS = 3_000;
 const SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS = 6_000;
 const INITIAL_MARKET_DATA_WATCHLIST_LIMIT = 8;
@@ -401,6 +414,7 @@ const isOpenMarketDataPosition = (position) => {
 
 export default function PlatformApp() {
   const queryClient = useQueryClient();
+  const bootProgress = useBootProgress();
   const pageVisible = usePageVisible();
   const workspaceLeadership = useWorkspaceLeadership({
     artifactId: "artifacts/pyrus",
@@ -411,7 +425,7 @@ export default function PlatformApp() {
   const isPhone = viewport.flags.isPhone;
   const memoryPressureSignal = useMemoryPressureMonitor();
   const userPreferences = useUserPreferences();
-  const previousPlatformWorkVisibleRef = useRef(platformWorkVisible);
+  const startupRefreshQueuedRef = useRef(false);
   const latencyDebugEnabled = useMemo(
     () =>
       typeof window !== "undefined" &&
@@ -431,12 +445,35 @@ export default function PlatformApp() {
     ),
   );
   const [firstScreenReady, setFirstScreenReady] = useState(false);
+  const [startupProtectionActive, setStartupProtectionActive] = useState(true);
   const [screenWarmupPhase, setScreenWarmupPhase] = useState("initial");
   const [warmupSnapshotRevision, setWarmupSnapshotRevision] = useState(0);
   const [screenReadiness, setScreenReadiness] = useState({});
   const [backgroundResumeReady, setBackgroundResumeReady] = useState(
     EMPTY_BACKGROUND_RESUME_READY,
   );
+  const activateScreen = useCallback((nextScreen) => {
+    const normalizedScreen = nextScreen === "unusual" ? "flow" : nextScreen;
+    if (!SCREEN_ID_SET.has(normalizedScreen)) {
+      return;
+    }
+    setMountedScreens((current) =>
+      current[normalizedScreen]
+        ? current
+        : { ...current, [normalizedScreen]: true },
+    );
+    setScreen(normalizedScreen);
+  }, []);
+  useEffect(() => {
+    [
+      "session",
+      "watchlists",
+      "accounts",
+      "signal-profile",
+      "signal-state",
+      "first-screen",
+    ].forEach((taskId) => startBootProgressTask(taskId));
+  }, []);
   const [sym, setSym] = useState(_initialState.sym || "SPY");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     _initialState.sidebarCollapsed || false,
@@ -598,6 +635,11 @@ export default function PlatformApp() {
       setFirstScreenReady(true);
       markWarmupTimeline("firstScreenReadyAtMs");
       const readyScreenId = event?.detail?.screenId;
+      completeBootProgressTask("first-screen", {
+        detail: readyScreenId
+          ? `${readyScreenId} screen ready`
+          : "First screen ready",
+      });
       if (readyScreenId) {
         if (readyScreenId === screen) {
           setScreenWarmupPhase("ready");
@@ -614,12 +656,33 @@ export default function PlatformApp() {
       setScreenWarmupPhase("ready");
       markWarmupTimeline("firstScreenReadyAtMs");
       markWarmupTimeline("screenWarmupReadyAtMs");
+      completeBootProgressTask("first-screen", {
+        detail: "First screen ready",
+      });
     }
 
     return () => {
       window.removeEventListener(SCREEN_READY_EVENT, handleScreenReady);
     };
   }, [handleScreenReadiness, markWarmupTimeline, screen]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    if (!firstScreenReady || !platformWorkVisible) {
+      setStartupProtectionActive(true);
+      return undefined;
+    }
+
+    setStartupProtectionActive(true);
+    const timer = window.setTimeout(
+      () => setStartupProtectionActive(false),
+      STARTUP_PROTECTION_COOLDOWN_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [firstScreenReady, platformWorkVisible]);
 
   useEffect(() => {
     setBackgroundResumeReady({ ...EMPTY_BACKGROUND_RESUME_READY, screen });
@@ -778,6 +841,9 @@ export default function PlatformApp() {
   const flowScreenActive = screen === "flow";
   const activeScreenReadiness =
     screenReadiness[screen] || EMPTY_SCREEN_READINESS;
+  const activeScreenFrameReady = Boolean(
+    activeScreenReadiness.frameReady,
+  );
   const activeScreenCriticalReady = Boolean(
     activeScreenReadiness.criticalReady,
   );
@@ -795,8 +861,7 @@ export default function PlatformApp() {
   const frameAuxiliaryDataEnabled = Boolean(
     platformWorkVisible &&
       sessionMetadataSettled &&
-      screenWarmupPhase === "ready" &&
-      activeScreenBackgroundDataAllowed &&
+      activeScreenFrameReady &&
       (backgroundDataWarmupEnabled || isPhone),
   );
   useEffect(() => {
@@ -859,12 +924,14 @@ export default function PlatformApp() {
   );
   const memoryAllowsIdlePrefetch = Boolean(
     firstScreenReady &&
+      !startupProtectionActive &&
       memoryAllowsBackgroundWarmup &&
       backgroundDataWarmupEnabled,
   );
   const operationalCodePreloadReady = Boolean(
     platformWorkVisible &&
       firstScreenReady &&
+      !startupProtectionActive &&
       !isPhone &&
       !warmupTestOverrides.disableOperationalCodePreload,
   );
@@ -881,6 +948,7 @@ export default function PlatformApp() {
         sessionMetadataSettled,
         activeScreen: screen,
         screenWarmupPhase,
+        startupProtectionActive,
         memoryPressure: memoryPressureSignal,
         mobileViewport: isPhone,
       }).hiddenScreenPreload,
@@ -891,6 +959,7 @@ export default function PlatformApp() {
       screen,
       screenWarmupPhase,
       sessionMetadataSettled,
+      startupProtectionActive,
     ],
   );
   const hiddenScreenWarmMountAllowed = Boolean(
@@ -900,7 +969,8 @@ export default function PlatformApp() {
   useEffect(() => {
     if (
       activeScreenBackgroundDataAllowed &&
-      screenWarmupPhase === "ready"
+      screenWarmupPhase === "ready" &&
+      !startupProtectionActive
     ) {
       markWarmupTimeline("backgroundDataWarmupGateOpenedAtMs");
     }
@@ -908,6 +978,7 @@ export default function PlatformApp() {
     activeScreenBackgroundDataAllowed,
     markWarmupTimeline,
     screenWarmupPhase,
+    startupProtectionActive,
   ]);
   const preloadCalendarWindow = useMemo(() => {
     const from = new Date();
@@ -933,6 +1004,7 @@ export default function PlatformApp() {
     platformWorkVisible &&
       activeScreenBackgroundDataAllowed &&
       screenWarmupPhase === "ready" &&
+      !startupProtectionActive &&
       !memoryBlocksOperationalPreload &&
       platformPressureCaps.broadMarketSymbolLimit !== 0,
   );
@@ -1017,6 +1089,63 @@ export default function PlatformApp() {
     },
   );
   const accounts = accountsQuery.data?.accounts || [];
+  useEffect(() => {
+    if (!sessionMetadataSettled) {
+      return;
+    }
+    if (sessionQuery.isError) {
+      failBootProgressTask("session", sessionQuery.error || "Session unavailable", {
+        detail: "Session unavailable",
+      });
+      return;
+    }
+    completeBootProgressTask("session", { detail: "Session loaded" });
+  }, [sessionMetadataSettled, sessionQuery.error, sessionQuery.isError]);
+  useEffect(() => {
+    if (!watchlistsQuery.data && !watchlistsQuery.isFetched && !watchlistsQuery.isError) {
+      return;
+    }
+    if (watchlistsQuery.isError) {
+      failBootProgressTask(
+        "watchlists",
+        watchlistsQuery.error || "Watchlists unavailable",
+        { detail: "Watchlists unavailable" },
+      );
+      return;
+    }
+    completeBootProgressTask("watchlists", { detail: "Watchlists loaded" });
+  }, [
+    watchlistsQuery.data,
+    watchlistsQuery.error,
+    watchlistsQuery.isError,
+    watchlistsQuery.isFetched,
+  ]);
+  useEffect(() => {
+    if (!sessionQuery.data && sessionMetadataSettled) {
+      skipBootProgressTasks(["accounts"], "Accounts skipped without a session");
+      return;
+    }
+    if (!sessionQuery.data) {
+      return;
+    }
+    if (!accountsQuery.data && !accountsQuery.isFetched && !accountsQuery.isError) {
+      return;
+    }
+    if (accountsQuery.isError) {
+      failBootProgressTask("accounts", accountsQuery.error || "Accounts unavailable", {
+        detail: "Accounts unavailable",
+      });
+      return;
+    }
+    completeBootProgressTask("accounts", { detail: "Accounts loaded" });
+  }, [
+    accountsQuery.data,
+    accountsQuery.error,
+    accountsQuery.isError,
+    accountsQuery.isFetched,
+    sessionMetadataSettled,
+    sessionQuery.data,
+  ]);
   const marketStockAggregateStreamingEnabled = Boolean(
     sessionQuery.data?.configured?.ibkr &&
       sessionQuery.data?.ibkrBridge?.authenticated &&
@@ -1421,11 +1550,15 @@ export default function PlatformApp() {
   }, [platformWorkVisible]);
 
   useEffect(() => {
-    const wasPlatformWorkVisible = previousPlatformWorkVisibleRef.current;
-    previousPlatformWorkVisibleRef.current = platformWorkVisible;
-    if (wasPlatformWorkVisible || !platformWorkVisible) {
+    if (
+      startupRefreshQueuedRef.current ||
+      !platformWorkVisible ||
+      !firstScreenReady ||
+      startupProtectionActive
+    ) {
       return;
     }
+    startupRefreshQueuedRef.current = true;
 
     queryClient.invalidateQueries({ queryKey: WATCHLISTS_QUERY_KEY });
     queryClient.invalidateQueries({
@@ -1472,7 +1605,13 @@ export default function PlatformApp() {
     return () => {
       cleanupTasks.forEach((cleanup) => cleanup());
     };
-  }, [platformWorkVisible, queryClient, signalMonitorEnvironment]);
+  }, [
+    firstScreenReady,
+    platformWorkVisible,
+    queryClient,
+    signalMonitorEnvironment,
+    startupProtectionActive,
+  ]);
 
   useEffect(() => {
     if (mountedScreens[screen]) {
@@ -1542,6 +1681,47 @@ export default function PlatformApp() {
   }, [
     screenCodePreloadReady,
     markWarmupTimeline,
+  ]);
+
+  useEffect(() => {
+    if (isPhone) {
+      skipBootProgressTasks(
+        BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS,
+        "Screen preloads skipped on phone layout",
+      );
+      return;
+    }
+    if (!pageVisible && firstScreenReady && !startupProtectionActive) {
+      skipBootProgressTasks(
+        BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS,
+        "Screen preloads skipped while workspace is inactive",
+      );
+      return;
+    }
+    if (warmupTestOverrides.disableOperationalCodePreload) {
+      skipBootProgressTasks(
+        BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS,
+        "Screen preloads disabled by warmup override",
+      );
+      return;
+    }
+    if (
+      firstScreenReady &&
+      !startupProtectionActive &&
+      !backgroundScreenPreloadReady
+    ) {
+      skipBootProgressTasks(
+        BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS,
+        "Screen preload gate did not open during startup",
+      );
+    }
+  }, [
+    backgroundScreenPreloadReady,
+    firstScreenReady,
+    isPhone,
+    pageVisible,
+    startupProtectionActive,
+    warmupTestOverrides.disableOperationalCodePreload,
   ]);
 
   useEffect(() => {
@@ -1889,6 +2069,7 @@ export default function PlatformApp() {
             activeScreenBackgroundAllowed &&
             backgroundDataWarmupEnabled &&
             screenWarmupPhase === "ready" &&
+            !startupProtectionActive &&
             !memoryBlocksOperationalPreload &&
             brokerAuthenticated &&
             primaryAccountId,
@@ -2055,6 +2236,7 @@ export default function PlatformApp() {
         activeScreen: screen,
         screenWarmupPhase,
         activeScreenBackgroundAllowed: activeScreenBackgroundDataAllowed,
+        startupProtectionActive,
         ibkrWorkPressure,
         memoryPressure: memoryPressureSignal,
         brokerConfigured,
@@ -2074,6 +2256,7 @@ export default function PlatformApp() {
       platformWorkVisible,
       screen,
       screenWarmupPhase,
+      startupProtectionActive,
       activeScreenBackgroundDataAllowed,
       sessionMetadataSettled,
       session?.ibkrBridge?.authenticated,
@@ -2122,7 +2305,7 @@ export default function PlatformApp() {
     platformPressureCaps.signalDisplayPollMinMs || 0,
   );
   const signalMonitorDisplayReady = Boolean(
-    platformWorkVisible && signalMonitorProfile?.enabled,
+    platformWorkVisible && firstScreenReady && signalMonitorProfile?.enabled,
   );
   const signalMonitorEventsReady = Boolean(
     signalMonitorDisplayReady &&
@@ -2155,6 +2338,71 @@ export default function PlatformApp() {
       },
     },
   );
+  useEffect(() => {
+    if (
+      !signalMonitorProfileQuery.data &&
+      !signalMonitorProfileQuery.isFetched &&
+      !signalMonitorProfileQuery.isError
+    ) {
+      return;
+    }
+    if (signalMonitorProfileQuery.isError) {
+      failBootProgressTask(
+        "signal-profile",
+        signalMonitorProfileQuery.error || "Signal profile unavailable",
+        { detail: "Signal profile unavailable" },
+      );
+      return;
+    }
+    completeBootProgressTask("signal-profile", {
+      detail: "Signal profile loaded",
+    });
+  }, [
+    signalMonitorProfileQuery.data,
+    signalMonitorProfileQuery.error,
+    signalMonitorProfileQuery.isError,
+    signalMonitorProfileQuery.isFetched,
+  ]);
+  useEffect(() => {
+    if (
+      signalMonitorProfileQuery.data ||
+      signalMonitorProfileQuery.isFetched ||
+      signalMonitorProfileQuery.isError
+    ) {
+      if (!signalMonitorProfileQuery.data?.enabled) {
+        skipBootProgressTasks(["signal-state"], "Signal monitor disabled");
+        return;
+      }
+    }
+    if (!signalMonitorDisplayReady) {
+      return;
+    }
+    if (
+      !signalMonitorStateQuery.data &&
+      !signalMonitorStateQuery.isFetched &&
+      !signalMonitorStateQuery.isError
+    ) {
+      return;
+    }
+    if (signalMonitorStateQuery.isError) {
+      failBootProgressTask(
+        "signal-state",
+        signalMonitorStateQuery.error || "Signal state unavailable",
+        { detail: "Signal state unavailable" },
+      );
+      return;
+    }
+    completeBootProgressTask("signal-state", { detail: "Signal state loaded" });
+  }, [
+    signalMonitorDisplayReady,
+    signalMonitorProfileQuery.data,
+    signalMonitorProfileQuery.isError,
+    signalMonitorProfileQuery.isFetched,
+    signalMonitorStateQuery.data,
+    signalMonitorStateQuery.error,
+    signalMonitorStateQuery.isError,
+    signalMonitorStateQuery.isFetched,
+  ]);
   const signalMonitorDegraded = Boolean(
     signalMonitorProfileDegraded ||
       isSignalMonitorDegradedProfile(signalMonitorStateQuery.data?.profile),
@@ -2464,7 +2712,8 @@ export default function PlatformApp() {
     backgroundResumeReady.screen === screen &&
       backgroundResumeReady.signalMatrix &&
       activeScreenBackgroundDataAllowed &&
-      screenWarmupPhase === "ready",
+      screenWarmupPhase === "ready" &&
+      !startupProtectionActive,
   );
   useEffect(() => {
     const mountedScreenIds = Object.keys(mountedScreens).filter(
@@ -2525,10 +2774,12 @@ export default function PlatformApp() {
         operationalCodePreloadReady,
         hiddenScreenWarmMountEnabled: hiddenScreenWarmMountAllowed,
         backgroundDataWarmupEnabled,
+        activeScreenFrameReady,
         activeScreenBackgroundAllowed,
         activeScreenBackgroundDataAllowed,
         frameAuxiliaryDataEnabled,
         broadMarketDataHydrationReady,
+        startupProtectionActive,
         memoryPressureObserved,
         memoryPressureLevel,
         memoryBlocksOperationalPreload,
@@ -2554,6 +2805,7 @@ export default function PlatformApp() {
   }, [
     activeScreenBackgroundAllowed,
     activeScreenBackgroundDataAllowed,
+    activeScreenFrameReady,
     backgroundDataWarmupEnabled,
     backgroundResumeReady,
     broadMarketDataHydrationReady,
@@ -2572,6 +2824,7 @@ export default function PlatformApp() {
     screenWarmupPhase,
     signalMatrixBackgroundReady,
     signalMonitorDisplayReady,
+    startupProtectionActive,
     warmupSnapshotRevision,
     warmupTestOverrides,
     workspaceLeader,
@@ -2640,6 +2893,7 @@ export default function PlatformApp() {
       timeframes: SIGNAL_MATRIX_TIMEFRAMES,
       pressureLevel: memoryPressureLevel,
       backgroundReady: signalMatrixBackgroundReady,
+      startupProtectionActive,
       cursor: signalMatrixRotationCursorRef.current,
       pollMs: signalMatrixPollMs,
     });
@@ -2671,10 +2925,12 @@ export default function PlatformApp() {
     signalMatrixPollMs,
     signalMatrixSymbolsKey,
     signalMatrixUniverseSymbols,
+    startupProtectionActive,
     workspaceLeader,
   ]);
   const signalMatrixRuntimeReady = Boolean(
     platformWorkVisible &&
+      !startupProtectionActive &&
       signalMatrixUniverseSymbols.length &&
       signalMonitorDisplayReady &&
       (signalMatrixPriorityReady || signalMatrixBackgroundReady),
@@ -2807,9 +3063,9 @@ export default function PlatformApp() {
     const normalizedScreen = screen === "unusual" ? "flow" : screen;
     persistState({ screen: normalizedScreen });
     if (screen !== normalizedScreen) {
-      setScreen(normalizedScreen);
+      activateScreen(normalizedScreen);
     }
-  }, [screen]);
+  }, [activateScreen, screen]);
   useEffect(() => {
     persistState({ sym });
   }, [sym]);
@@ -2935,8 +3191,8 @@ export default function PlatformApp() {
       n: prev.n + 1,
       contract: null,
     }));
-    setScreen("trade");
-  }, []);
+    activateScreen("trade");
+  }, [activateScreen]);
 
   const handleToggleSignalMonitor = useCallback(() => {
     const nextEnabled = !signalMonitorProfile?.enabled;
@@ -3170,8 +3426,8 @@ export default function PlatformApp() {
         exp: formatExpirationLabel(evt.expirationDate || evt.exp),
       },
     }));
-    setScreen("trade");
-  }, []);
+    activateScreen("trade");
+  }, [activateScreen]);
 
   const handleJumpToTradeFromSignalOptionsCandidate = useCallback((candidate) => {
     const ticker = candidate?.symbol?.toUpperCase?.() || candidate?.symbol;
@@ -3196,8 +3452,8 @@ export default function PlatformApp() {
       },
       automationCandidate: candidate,
     }));
-    setScreen("trade");
-  }, []);
+    activateScreen("trade");
+  }, [activateScreen]);
 
   // Jump to Trade tab from Research with a ticker preloaded.
   // Research passes a plain ticker string rather than a flow event.
@@ -3212,13 +3468,13 @@ export default function PlatformApp() {
       n: prev.n + 1,
       contract: null,
     }));
-    setScreen("trade");
-  }, []);
+    activateScreen("trade");
+  }, [activateScreen]);
 
   const handleAccountJumpToTrade = useCallback((symbol) => {
     handleSelectSymbol(symbol);
-    setScreen("trade");
-  }, [handleSelectSymbol]);
+    activateScreen("trade");
+  }, [activateScreen, handleSelectSymbol]);
 
   const renderScreenById = useCallback((screenId) => (
     <PlatformScreenRouter
@@ -3355,7 +3611,7 @@ export default function PlatformApp() {
         <PlatformShell
             activeScreen={screen}
             mountedScreens={mountedScreens}
-            setScreen={setScreen}
+            setScreen={activateScreen}
             renderScreenById={renderScreenById}
             fontCss={FONT_CSS}
             toasts={toasts}
@@ -3429,6 +3685,19 @@ export default function PlatformApp() {
             onChangeSignalMonitorMaxSymbols={handleChangeSignalMonitorMaxSymbols}
         />
       </PlatformRuntimeLayer>
+      {!bootProgress.complete ? (
+        <div
+          className="pyrus-boot-progress-overlay"
+          data-testid="pyrus-boot-progress-overlay"
+        >
+          <LogoLoader
+            bootHandoffElapsedMs={null}
+            label="Loading workspace"
+            progress={bootProgress}
+            testId="workspace-boot-progress-loader"
+          />
+        </div>
+      ) : null}
     </PlatformProviders>
   );
 }

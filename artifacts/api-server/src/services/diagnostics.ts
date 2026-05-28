@@ -42,6 +42,7 @@ import {
   markStorageHealthDegraded,
   refreshStorageHealthSnapshot,
 } from "./storage-health";
+import { getRuntimeFlightRecorderDiagnostics } from "./runtime-flight-recorder";
 
 const SIGNAL_OPTIONS_EVENT_PREFIX = "signal_options_";
 const SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT =
@@ -62,7 +63,8 @@ export type DiagnosticSubsystem =
   | "automation"
   | "orders"
   | "accounts"
-  | "storage";
+  | "storage"
+  | "runtime";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -2435,6 +2437,7 @@ function buildResourcePressureMetrics(
   ]);
   const resourcePressure = updateApiResourcePressure({
     rssMb: numeric(api["rssMb"]),
+    apiHeapUsedPercent: heapUsedPercent,
     apiP95LatencyMs: numeric(api["rawP95LatencyMs"]),
     dominantSlowRouteP95Ms: numeric(api["dominantSlowRouteP95Ms"]),
     clientLevel: clientLevel
@@ -2445,7 +2448,8 @@ function buildResourcePressureMetrics(
       automationMetrics["activeLongScanCount"],
     ),
   });
-  const level = resourcePressure.level;
+  const apiPressureLevel = resourcePressure.level;
+  const level = maxPressureLevel([apiPressureLevel, baseLevel]);
   const dominantDrivers = [
     ...sanitizeDominantDrivers(clientPressure["dominantDrivers"]),
     ...resourcePressure.drivers.map((entry) => ({
@@ -2458,6 +2462,8 @@ function buildResourcePressureMetrics(
   ].slice(0, 6);
   return {
     pressureLevel: level,
+    effectivePressureLevel: level,
+    apiPressureLevel,
     basePressureLevel: baseLevel,
     clientPressureLevel: normalizeFooterPressureLevel(clientPressure["level"]),
     clientPressureTrend: textValue(clientPressure["trend"]) ?? "steady",
@@ -2489,10 +2495,12 @@ function buildResourcePressureMetrics(
       physicalMb: mb(space.physical_space_size),
     })),
     recommendedAction:
-      level === "critical"
+      apiPressureLevel === "critical"
         ? "Pause optional scanners and clear stale caches."
-        : level === "high"
+        : apiPressureLevel === "high"
           ? "Shed background hydration and stale cache entries."
+          : level === "critical" || level === "high"
+            ? "Inspect browser memory and workload drivers."
           : level === "watch"
             ? "Monitor growth and prepare to shed optional work."
             : "No pressure response required.",
@@ -2651,6 +2659,37 @@ function storageSnapshotSummary(metrics: JsonRecord): string {
     return `${sourceLabel} is reachable, but diagnostics storage is degraded`;
   }
   return `${sourceLabel} storage is not reachable`;
+}
+
+function classifyRuntimeRecorderSnapshot(metrics: JsonRecord): DiagnosticSeverity {
+  const classification = textValue(metrics["latestIncidentClassification"]);
+  const longRunningTestProcessCount =
+    numeric(metrics["workspaceLongRunningTestProcessCount"]) ?? 0;
+  if (
+    classification === "api-child-exit" ||
+    classification === "web-child-exit" ||
+    classification === "suspected-resource-pressure"
+  ) {
+    return "critical";
+  }
+  if (classification === "container-replaced" || longRunningTestProcessCount > 0) {
+    return "warning";
+  }
+  return "info";
+}
+
+function runtimeRecorderSnapshotSummary(metrics: JsonRecord): string {
+  const classification = textValue(metrics["latestIncidentClassification"]);
+  const longRunningTestProcessCount =
+    numeric(metrics["workspaceLongRunningTestProcessCount"]) ?? 0;
+  if (!classification) {
+    if (longRunningTestProcessCount > 0) {
+      const suffix = longRunningTestProcessCount === 1 ? "" : "es";
+      return `${longRunningTestProcessCount} long-running workspace test process${suffix} detected`;
+    }
+    return "Replit flight recorder is active";
+  }
+  return `Last Replit restart classified as ${classification}`;
 }
 
 function buildSnapshot(
@@ -3360,6 +3399,10 @@ export async function collectDiagnosticSnapshot(
   const resourceSeverity = classifyResourcePressureSnapshot(resourceMetrics);
   const isolationMetrics = buildIsolationMetrics();
   const isolationSeverity = classifyIsolationSnapshot(isolationMetrics);
+  const runtimeRecorder = getRuntimeFlightRecorderDiagnostics();
+  const runtimeRecorderSeverity = classifyRuntimeRecorderSnapshot(
+    runtimeRecorder.metrics,
+  );
 
   const snapshots = [
     buildSnapshot(
@@ -3415,6 +3458,13 @@ export async function collectDiagnosticSnapshot(
         : "Memory, cache, or workload pressure is elevated",
       resourceMetrics,
       resourceMetrics,
+    ),
+    buildSnapshot(
+      "runtime",
+      runtimeRecorderSeverity,
+      runtimeRecorderSnapshotSummary(runtimeRecorder.metrics),
+      runtimeRecorder.metrics,
+      runtimeRecorder.raw,
     ),
     buildSnapshot(
       "isolation",

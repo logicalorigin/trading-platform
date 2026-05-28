@@ -31,8 +31,7 @@ import {
 } from "../../lib/uiTokens.jsx";
 import { joinMotionClasses, motionVars } from "../../lib/motion.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
-import { PyrusBrandLockup, PyrusWordmark } from "../../components/brand/PyrusLogo";
-import { PyrusMark } from "../../components/brand/pyrus-mark";
+import { PyrusBrandLockup } from "../../components/brand/PyrusLogo";
 import { PortfolioPulseZone } from "./PortfolioPulseZone.jsx";
 import { CommandPalette } from "./CommandPalette.jsx";
 import { SCREENS, preloadScreenModule } from "./screenRegistry.jsx";
@@ -106,58 +105,6 @@ const AccountSectionTransitionStatus = () => {
 };
 
 const ICONIZED_SCREEN_IDS = new Set(["settings"]);
-
-const ModeChip = ({ environment }) => {
-  const mode = String(environment || "").toLowerCase();
-  const isLive = mode === "live";
-  const label = isLive ? "LIVE" : mode === "paper" ? "PAPER" : (environment || "—").toString().toUpperCase();
-  const isPaper = mode === "paper";
-  const palette = isLive
-    ? { bg: `${cssColorMix(CSS_COLOR.red, 13)}`, border: CSS_COLOR.red, text: CSS_COLOR.red }
-    : isPaper
-      ? { bg: CSS_COLOR.bg0, border: CSS_COLOR.borderLight, text: CSS_COLOR.textSec }
-      : { bg: CSS_COLOR.bg0, border: CSS_COLOR.borderLight, text: CSS_COLOR.textMuted };
-  return (
-    <AppTooltip
-      content={
-        isLive
-          ? "LIVE mode — real broker account, real money"
-          : isPaper
-            ? "Paper trading mode — no real money at risk"
-            : `Mode: ${label}`
-      }
-    >
-      <span
-        data-testid="header-mode-chip"
-        data-mode={mode}
-        aria-label={`Trading mode: ${label}`}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          padding: sp("0px 6px"),
-          minHeight: dim(18),
-          borderRadius: dim(RADII.pill),
-          border: `1px solid ${palette.border}`,
-          background: palette.bg,
-          color: palette.text,
-          fontFamily: T.sans,
-          fontSize: fs(9),
-          fontWeight: FONT_WEIGHTS.medium,
-          letterSpacing: "0.08em",
-          textTransform: "uppercase",
-          lineHeight: 1,
-          whiteSpace: "nowrap",
-          flex: "0 0 auto",
-          ...(isLive
-            ? { boxShadow: `0 0 0 0 ${cssColorMix(CSS_COLOR.red, 20)}`, animation: "pulseAlertLoss 2.8s ease-in-out infinite" }
-            : {}),
-        }}
-      >
-        {label}
-      </span>
-    </AppTooltip>
-  );
-};
 
 const isLiveMode = (environment) => String(environment || "").toLowerCase() === "live";
 
@@ -546,9 +493,14 @@ const AppHeaderInner = ({
                   minWidth: 0,
                 }}
               >
-                <PyrusMark className="h-[21px] w-[21px]" />
-                <PyrusWordmark width={96} title="" style={{ color: CSS_COLOR.text }} />
-                <ModeChip environment={environment} />
+                <PyrusBrandLockup
+                  animatedMark
+                  compact
+                  className="pyrus-header-brand-lockup"
+                  markClassName="h-[24px] w-[24px]"
+                  markImageClassName="pyrus-header-mark-image"
+                  wordmarkWidth={86}
+                />
               </div>
               <MobileHeaderContext
                 activeScreen={activeScreen}
@@ -599,8 +551,14 @@ const AppHeaderInner = ({
                 paddingInline: sp(3),
               }}
             >
-              <PyrusBrandLockup compact={headerTight} />
-              <ModeChip environment={environment} />
+              <PyrusBrandLockup
+                animatedMark
+                compact={headerTight}
+                className="pyrus-header-brand-lockup"
+                markClassName={headerTight ? "h-[25px] w-[25px]" : "h-[31px] w-[31px]"}
+                markImageClassName="pyrus-header-mark-image"
+                wordmarkWidth={headerTight ? 106 : 136}
+              />
             </div>
 
             <div

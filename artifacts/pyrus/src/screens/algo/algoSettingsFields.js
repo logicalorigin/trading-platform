@@ -238,11 +238,24 @@ const SETTING_FIELD_SECTIONS = [
       },
       {
         slice: "profile",
+        path: "optionSelection.callStrikeSlots",
+        label: "CALL STRIKE SLOTS",
+        type: "array",
+      },
+      {
+        slice: "profile",
+        path: "optionSelection.putStrikeSlots",
+        label: "PUT STRIKE SLOTS",
+        type: "array",
+      },
+      {
+        slice: "profile",
         path: "optionSelection.callStrikeSlot",
         label: "CALL STRIKE SLOT",
         type: "select",
         options: SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS,
         coerce: Number,
+        dirtySummary: false,
       },
       {
         slice: "profile",
@@ -251,6 +264,7 @@ const SETTING_FIELD_SECTIONS = [
         type: "select",
         options: SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS,
         coerce: Number,
+        dirtySummary: false,
       },
       {
         slice: "profile",
@@ -605,6 +619,7 @@ export const SETTINGS_SECTIONS = [
   {
     id: "signal",
     label: "Signal",
+    defaultOpen: false,
     fields: [
       field("signalTimeframe", { compactLabel: "Timeframe" }),
       field("timeHorizon", { compactLabel: "Horizon" }),
@@ -617,6 +632,7 @@ export const SETTINGS_SECTIONS = [
   {
     id: "risk",
     label: "Risk",
+    defaultOpen: true,
     fields: [
       field("riskCaps.maxPremiumPerEntry", { compactLabel: "Max Premium" }),
       field("riskCaps.maxContracts", { compactLabel: "Contracts" }),
@@ -627,6 +643,7 @@ export const SETTINGS_SECTIONS = [
   {
     id: "gates",
     label: "Gates",
+    defaultOpen: false,
     fields: [
       field("entryGate.mtfAlignment.enabled", { compactLabel: "MTF Gate" }),
       field("entryGate.mtfAlignment.requiredCount", { compactLabel: "MTF Count" }),
@@ -641,6 +658,7 @@ export const SETTINGS_SECTIONS = [
   {
     id: "contract",
     label: "Contract",
+    defaultOpen: true,
     fields: [
       {
         kind: "contractSelect",
@@ -650,6 +668,8 @@ export const SETTINGS_SECTIONS = [
           "optionSelection.targetDte",
           "optionSelection.maxDte",
           "optionSelection.allowZeroDte",
+          "optionSelection.callStrikeSlots",
+          "optionSelection.putStrikeSlots",
           "optionSelection.callStrikeSlot",
           "optionSelection.putStrikeSlot",
         ],
@@ -658,6 +678,8 @@ export const SETTINGS_SECTIONS = [
           field("optionSelection.targetDte", { compactLabel: "Target DTE" }),
           field("optionSelection.maxDte", { compactLabel: "Max DTE" }),
           field("optionSelection.allowZeroDte", { compactLabel: "0DTE" }),
+          field("optionSelection.callStrikeSlots", { compactLabel: "Call Slots" }),
+          field("optionSelection.putStrikeSlots", { compactLabel: "Put Slots" }),
           field("optionSelection.callStrikeSlot", { compactLabel: "Call Slot" }),
           field("optionSelection.putStrikeSlot", { compactLabel: "Put Slot" }),
         ],
@@ -667,6 +689,7 @@ export const SETTINGS_SECTIONS = [
   {
     id: "fills",
     label: "Fills",
+    defaultOpen: false,
     fields: [
       field("liquidityGate.maxSpreadPctOfMid", { compactLabel: "Max Spread" }),
       field("liquidityGate.minBid", { compactLabel: "Min Bid" }),
@@ -679,6 +702,7 @@ export const SETTINGS_SECTIONS = [
   {
     id: "exits",
     label: "Exits",
+    defaultOpen: true,
     fields: [
       {
         kind: "exitTrack",
@@ -716,6 +740,7 @@ export const SETTINGS_SECTIONS = [
   {
     id: "qualityExits",
     label: "Quality Exits",
+    defaultOpen: false,
     fields: [
       field("exitPolicy.conditionalQualityExitsEnabled", { compactLabel: "Enabled" }),
       field("exitPolicy.lowQualityEarlyExitBars", { compactLabel: "Low Bars" }),
@@ -753,10 +778,11 @@ export const collectDirtySettingFields = ({
         dirty: !isEqual(currentValue, previousValue),
       };
     })
-    .filter((field) => field.dirty);
+    .filter((field) => field.dirty && field.dirtySummary !== false);
 
 export const countDirtyFieldsBySection = (dirtyFields) =>
   dirtyFields.reduce((counts, field) => {
+    if (field.dirtySummary === false) return counts;
     counts[field.sectionLabel] = (counts[field.sectionLabel] || 0) + 1;
     return counts;
   }, {});

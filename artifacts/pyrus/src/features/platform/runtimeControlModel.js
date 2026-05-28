@@ -328,8 +328,35 @@ const normalizeLinePressure = (admission) => {
     admission?.pressure && typeof admission.pressure === "object"
       ? admission.pressure
       : {};
+  const activeLineCount = firstFiniteNumber(
+    pressure.activeLineCount,
+    admission?.activeLineCount,
+  );
+  const usableLineCount = firstFiniteNumber(
+    pressure.usableLineCount,
+    admission?.budget?.usableLines,
+    admission?.budget?.maxLines,
+  );
+  const usableRemainingLineCount = firstFiniteNumber(
+    pressure.usableRemainingLineCount,
+    admission?.usableRemainingLineCount,
+  );
+  const utilizationPercent = firstFiniteNumber(
+    pressure.utilizationPercent,
+    lineUsageUtilizationPercent(activeLineCount, usableLineCount),
+  );
+  const utilizationLevel =
+    typeof pressure.utilizationLevel === "string"
+      ? pressure.utilizationLevel
+      : lineUsageUtilizationLevel(
+          activeLineCount,
+          usableLineCount,
+          usableRemainingLineCount,
+        );
   return {
     state: typeof pressure.state === "string" ? pressure.state : "unknown",
+    utilizationLevel,
+    utilizationPercent,
     policy: typeof pressure.policy === "string" ? pressure.policy : "unknown",
     budgetSource:
       typeof pressure.budgetSource === "string"
@@ -347,10 +374,7 @@ const normalizeLinePressure = (admission) => {
     optionBudgetLineCount: firstFiniteNumber(pressure.optionBudgetLineCount),
     nonScannerOptionLineCount: firstFiniteNumber(pressure.nonScannerOptionLineCount),
     optionReserveLineCount: firstFiniteNumber(pressure.optionReserveLineCount),
-    usableRemainingLineCount: firstFiniteNumber(
-      pressure.usableRemainingLineCount,
-      admission?.usableRemainingLineCount,
-    ),
+    usableRemainingLineCount,
   };
 };
 
@@ -419,6 +443,28 @@ const normalizeLineAllocation = (admission, lineUsageSnapshot = null) => {
       allocation.protectedLineCount,
       lineAllocation.protectedLineCount,
       pressure.protectedLineCount,
+    ),
+    portfolioPolicy:
+      typeof allocation.portfolioPolicy === "string"
+        ? allocation.portfolioPolicy
+        : typeof admission?.portfolio?.policy === "string"
+          ? admission.portfolio.policy
+          : null,
+    pinnedLineCount: firstFiniteNumber(
+      allocation.pinnedLineCount,
+      admission?.portfolio?.pinned?.activeLineCount,
+    ),
+    priorityLineCount: firstFiniteNumber(
+      allocation.priorityLineCount,
+      admission?.portfolio?.priority?.activeLineCount,
+    ),
+    scannerRotatingLineCount: firstFiniteNumber(
+      allocation.scannerRotatingLineCount,
+      admission?.portfolio?.scannerRotating?.activeLineCount,
+    ),
+    rotatingReclaimableLineCount: firstFiniteNumber(
+      allocation.rotatingReclaimableLineCount,
+      admission?.portfolio?.rotatingReclaimableLineCount,
     ),
     visibleLineCount: firstFiniteNumber(
       allocation.visibleLineCount,
@@ -570,12 +616,36 @@ export const lineUsageState = (used, cap, degraded = false) => {
   }
   if (cap <= 0) return used > 0 ? "capacity-limited" : "no-subscribers";
   const ratio = used / cap;
-  if (ratio >= 0.75) return "capacity-limited";
+  if (ratio >= 0.85) return "capacity-limited";
   return "healthy";
 };
 
 export const lineUsageTone = (used, cap, degraded = false) =>
   streamStateTokenVar(lineUsageState(used, cap, degraded));
+
+export const lineUsageUtilizationLevel = (used, cap, remaining = null) => {
+  if (!Number.isFinite(used) || !Number.isFinite(cap) || cap <= 0) {
+    return "unknown";
+  }
+  const ratio = used / cap;
+  const free = Number(remaining);
+  if (
+    ratio >= 0.95 ||
+    (ratio >= 0.85 && Number.isFinite(free) && free <= 5)
+  ) {
+    return "protected";
+  }
+  if (ratio >= 0.85) return "constrained";
+  if (ratio >= 0.65) return "watch";
+  return "normal";
+};
+
+const lineUsageUtilizationPercent = (used, cap) => {
+  if (!Number.isFinite(used) || !Number.isFinite(cap) || cap <= 0) {
+    return null;
+  }
+  return Math.round((used / cap) * 1_000) / 10;
+};
 
 export const hasAccountMonitorAdmission = (admission) =>
   Boolean(

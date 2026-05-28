@@ -6,6 +6,8 @@ Index of durable per-session handoff files. Keep this file short and discoverabl
 
 | Last Updated (MT) | Session ID | Handoff | Workstream | Branch | HEAD | Status |
 | --- | --- | --- | --- | --- | --- | --- |
+| 2026-05-28 09:52:47 MDT | `019e6f32-5565-76d0-8ae0-06b4e2e30a0e` | `SESSION_HANDOFF_2026-05-28_019e6f32-5565-76d0-8ae0-06b4e2e30a0e.md` | Dropped-session recovery + account/algo pickup | main | `b6dbc17eab0c` | Account stream and Algo monitor gate validated; post-restart perf sampled |
+| 2026-05-28 09:47:54 MDT | `019e6f40-5f2f-78f1-afca-4032e91e55db` | `SESSION_HANDOFF_2026-05-28_019e6f40-5f2f-78f1-afca-4032e91e55db.md` | Loading algo monitor render-policy pickup | main | `b6dbc17eab0c` | Render-policy cluster validated; ready to hand off separately |
 | 2026-05-28 06:55:20 MDT | `019e6ea4-f32b-7261-8ca3-9d57cc9d40b5` | `SESSION_HANDOFF_2026-05-28_019e6ea4-f32b-7261-8ca3-9d57cc9d40b5.md` | can you find our dropped sessions? look at the latest changes/file stuff | main | `430cd4a862a6` | Saved; see handoff |
 | 2026-05-27 18:08:52 MDT | `019e6bbb-f865-7563-96f6-ede09cfc4167` | `SESSION_HANDOFF_2026-05-27_019e6bbb-f865-7563-96f6-ede09cfc4167.md` | please recover our last sessions (4). we crashed from something we were doing cleaning out old stuff from the repo, we… | main | `4cdac7414d45` | Saved; see handoff |
 | 2026-05-26 11:24:46 MDT | `019e654e-1409-7621-bde7-f8c231fda8d0` | `SESSION_HANDOFF_2026-05-26_019e654e-1409-7621-bde7-f8c231fda8d0.md` | find dropped long-running goal session | main | `d9f06f192a13` | Orphan pts/0 Codex process recorded; local goal DB empty |

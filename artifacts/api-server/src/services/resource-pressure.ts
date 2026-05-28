@@ -26,6 +26,7 @@ export type ApiResourcePressureSnapshot = {
   caps: ApiResourcePressureCaps;
   inputs: {
     rssMb: number | null;
+    apiHeapUsedPercent: number | null;
     apiP95LatencyMs: number | null;
     dominantSlowRouteP95Ms: number | null;
     clientLevel: ApiResourcePressureLevel | null;
@@ -45,12 +46,15 @@ const PRESSURE_RANK: Record<ApiResourcePressureLevel, number> = {
 
 const NORMAL_INPUTS: ApiResourcePressureSnapshot["inputs"] = {
   rssMb: null,
+  apiHeapUsedPercent: null,
   apiP95LatencyMs: null,
   dominantSlowRouteP95Ms: null,
   clientLevel: null,
   cacheLevel: null,
   automationActiveLongScanCount: null,
 };
+
+const API_RSS_HARD_BLOCK_MB = 3_000;
 
 let currentInputs: ApiResourcePressureSnapshot["inputs"] = { ...NORMAL_INPUTS };
 
@@ -82,6 +86,13 @@ function maxLevel(
   }, "normal");
 }
 
+function capLevel(
+  level: ApiResourcePressureLevel,
+  maximum: ApiResourcePressureLevel,
+): ApiResourcePressureLevel {
+  return PRESSURE_RANK[level] > PRESSURE_RANK[maximum] ? maximum : level;
+}
+
 function levelFromThresholds(
   value: number | null,
   thresholds: { watch: number; high: number; critical: number },
@@ -111,6 +122,14 @@ function driver(input: {
   return input;
 }
 
+function cappedDriverDetail(
+  rawLevel: ApiResourcePressureLevel,
+  cappedLevel: ApiResourcePressureLevel,
+): string | null {
+  if (rawLevel === "normal") return null;
+  return rawLevel === cappedLevel ? rawLevel : `${rawLevel} capped at ${cappedLevel}`;
+}
+
 export function getApiResourcePressureCaps(
   level: ApiResourcePressureLevel = currentSnapshot.level,
 ): ApiResourcePressureCaps {
@@ -122,7 +141,7 @@ export function getApiResourcePressureCaps(
           skipDeploymentScans: false,
           signalRefreshAllowed: true,
           actionScansAllowed: false,
-          positionMarksAllowed: false,
+          positionMarksAllowed: true,
           watchlistPrewarmAllowed: false,
         },
       };
@@ -132,8 +151,8 @@ export function getApiResourcePressureCaps(
           maintenanceOnly: false,
           skipDeploymentScans: false,
           signalRefreshAllowed: true,
-          actionScansAllowed: false,
-          positionMarksAllowed: false,
+          actionScansAllowed: true,
+          positionMarksAllowed: true,
           watchlistPrewarmAllowed: false,
         },
       };
@@ -170,6 +189,11 @@ function buildSnapshot(
     high: 1_200,
     critical: 1_600,
   });
+  const heapLevel = levelFromThresholds(inputs.apiHeapUsedPercent, {
+    watch: 70,
+    high: 80,
+    critical: 90,
+  });
   const slowRouteMs = Math.max(
     inputs.apiP95LatencyMs ?? 0,
     inputs.dominantSlowRouteP95Ms ?? 0,
@@ -177,12 +201,15 @@ function buildSnapshot(
   const slowRouteLevel = routeLatencyLevel(
     slowRouteMs > 0 ? slowRouteMs : null,
   );
-  const clientLevel = inputs.clientLevel ?? "normal";
-  const cacheLevel = inputs.cacheLevel ?? "normal";
+  const rawClientLevel = inputs.clientLevel ?? "normal";
+  const clientLevel = capLevel(rawClientLevel, "watch");
+  const rawCacheLevel = inputs.cacheLevel ?? "normal";
+  const cacheLevel = capLevel(rawCacheLevel, "watch");
   const automationCount = inputs.automationActiveLongScanCount ?? 0;
   const automationLevel = automationCount > 0 ? "high" : "normal";
   const level = maxLevel(
     rssLevel,
+    heapLevel,
     slowRouteLevel,
     clientLevel,
     cacheLevel,
@@ -198,6 +225,16 @@ function buildSnapshot(
       score: inputs.rssMb,
     }),
     driver({
+      kind: "api-heap",
+      label: "API heap",
+      level: heapLevel,
+      detail:
+        inputs.apiHeapUsedPercent === null
+          ? null
+          : `${Math.round(inputs.apiHeapUsedPercent)}%`,
+      score: inputs.apiHeapUsedPercent,
+    }),
+    driver({
       kind: "api-latency",
       label: "API latency",
       level: slowRouteLevel,
@@ -208,14 +245,14 @@ function buildSnapshot(
       kind: "client-pressure",
       label: "Client pressure",
       level: clientLevel,
-      detail: clientLevel === "normal" ? null : clientLevel,
+      detail: cappedDriverDetail(rawClientLevel, clientLevel),
       score: null,
     }),
     driver({
       kind: "cache-pressure",
       label: "Cache pressure",
       level: cacheLevel,
-      detail: cacheLevel === "normal" ? null : cacheLevel,
+      detail: cappedDriverDetail(rawCacheLevel, cacheLevel),
       score: null,
     }),
     driver({
@@ -237,6 +274,18 @@ function buildSnapshot(
 }
 
 let currentSnapshot: ApiResourcePressureSnapshot = buildSnapshot(currentInputs);
+const pressureChangeListeners = new Set<
+  (snapshot: ApiResourcePressureSnapshot) => void
+>();
+
+export function subscribeApiResourcePressureChanges(
+  listener: (snapshot: ApiResourcePressureSnapshot) => void,
+): () => void {
+  pressureChangeListeners.add(listener);
+  return () => {
+    pressureChangeListeners.delete(listener);
+  };
+}
 
 export function updateApiResourcePressure(
   inputs: PressureInputs,
@@ -247,6 +296,7 @@ export function updateApiResourcePressure(
       Object.entries(inputs).map(([key, value]) => {
         if (
           key === "rssMb" ||
+          key === "apiHeapUsedPercent" ||
           key === "apiP95LatencyMs" ||
           key === "dominantSlowRouteP95Ms" ||
           key === "automationActiveLongScanCount"
@@ -261,11 +311,35 @@ export function updateApiResourcePressure(
     ),
   };
   currentSnapshot = buildSnapshot(currentInputs);
+  pressureChangeListeners.forEach((listener) => {
+    try {
+      listener(currentSnapshot);
+    } catch {
+      // Resource-pressure listeners must not affect diagnostics sampling.
+    }
+  });
   return currentSnapshot;
 }
 
 export function getApiResourcePressureSnapshot(): ApiResourcePressureSnapshot {
   return currentSnapshot;
+}
+
+export function isApiResourcePressureHardBlock(
+  snapshot: ApiResourcePressureSnapshot = currentSnapshot,
+): boolean {
+  if (snapshot.level !== "critical") {
+    return false;
+  }
+  return snapshot.drivers.some((driver) => {
+    if (driver.level !== "critical") {
+      return false;
+    }
+    if (driver.kind === "api-rss") {
+      return Number(driver.score) >= API_RSS_HARD_BLOCK_MB;
+    }
+    return true;
+  });
 }
 
 export function __resetApiResourcePressureForTests(): void {

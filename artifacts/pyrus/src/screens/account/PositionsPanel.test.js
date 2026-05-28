@@ -300,6 +300,16 @@ test("positions display totals preserve cash while recalculating live row values
   assert.equal(totals.netLiquidation, 1000);
 });
 
+test("positions display totals tolerate missing totals while positions load", () => {
+  const { buildDisplayTotals } = __positionsPanelInternalsForTests;
+  const totals = buildDisplayTotals([], null);
+
+  assert.equal(totals.cash, null);
+  assert.equal(totals.totalCash, null);
+  assert.equal(totals.buyingPower, null);
+  assert.equal(totals.netLiquidation, null);
+});
+
 test("positions panel renders compact underlying sparklines inside position rows", () => {
   assert.match(source, /import \{ MicroSparkline \}/);
   assert.match(source, /import \{ Button \} from "\.\.\/\.\.\/components\/ui\/Button\.jsx"/);

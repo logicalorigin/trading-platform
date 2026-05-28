@@ -114,6 +114,26 @@ test("signal matrix scheduler defers background-only work under high pressure", 
   assert.equal(plan.coverage.missingSymbols, 3);
 });
 
+test("signal matrix scheduler holds all startup work while protection is active", () => {
+  const plan = buildSignalMatrixRequestPlan({
+    symbols: ["SPY", "QQQ", "AAPL"],
+    prioritySymbols: ["QQQ", "SPY"],
+    backgroundReady: true,
+    startupProtectionActive: true,
+    pollMs: 60_000,
+  });
+
+  assert.deepEqual(plan.requestSymbols, []);
+  assert.deepEqual(plan.prioritySymbols, []);
+  assert.deepEqual(plan.backgroundSymbols, []);
+  assert.equal(plan.backgroundReady, false);
+  assert.equal(plan.backgroundPaused, true);
+  assert.equal(plan.startupProtectionActive, true);
+  assert.equal(plan.coverage.startupProtectionActive, true);
+  assert.equal(plan.coverage.missingSymbols, 3);
+  assert.equal(plan.coverage.estimatedFullCycleMs, null);
+});
+
 test("signal matrix scheduler still hydrates priority symbols before background readiness", () => {
   const plan = buildSignalMatrixRequestPlan({
     symbols: ["SPY", "QQQ", "AAPL"],

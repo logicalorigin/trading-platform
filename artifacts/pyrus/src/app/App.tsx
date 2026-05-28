@@ -3,6 +3,12 @@ import LogoLoader from "../components/LogoLoader";
 import { lazyWithRetry } from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import {
+  completeBootProgressTask,
+  failBootProgressTask,
+  startBootProgressTask,
+  useBootProgress,
+} from "./bootProgress";
+import {
   RootCrashDiagnosticsFallback,
   buildRootCrashReportRaw,
   rememberRootCrashDiagnostic,
@@ -13,12 +19,15 @@ let appContentImport: Promise<{ default: typeof import("./AppContent").default }
 
 const loadAppContent = () => {
   if (!appContentImport) {
+    startBootProgressTask("app-content-chunk");
     appContentImport = import("./AppContent")
       .then((mod) => {
+        completeBootProgressTask("app-content-chunk");
         return { default: mod.default };
       })
       .catch((error) => {
         appContentImport = null;
+        failBootProgressTask("app-content-chunk", error);
         throw error;
       });
   }
@@ -37,16 +46,24 @@ const AppContent = lazyWithRetry(async () => {
   retryDelayMs: 500,
 });
 
-function AppShellFallback() {
+type AppProps = {
+  bootLoaderElapsedMs?: number | null;
+};
+
+function AppShellFallback({ bootLoaderElapsedMs = null }: AppProps) {
+  const progress = useBootProgress();
+
   return (
     <LogoLoader
+      bootHandoffElapsedMs={bootLoaderElapsedMs}
       label="Starting PYRUS"
+      progress={progress}
       testId="app-loading-fallback"
     />
   );
 }
 
-function App() {
+function App({ bootLoaderElapsedMs = null }: AppProps) {
   return (
     <PlatformErrorBoundary
       label="PYRUS app shell"
@@ -56,8 +73,8 @@ function App() {
       onBoundaryError={rememberRootCrashDiagnostic}
       fallbackRender={(props) => <RootCrashDiagnosticsFallback {...props} />}
     >
-      <Suspense fallback={<AppShellFallback />}>
-        <AppContent />
+      <Suspense fallback={<AppShellFallback bootLoaderElapsedMs={bootLoaderElapsedMs} />}>
+        <AppContent bootLoaderElapsedMs={bootLoaderElapsedMs} />
       </Suspense>
     </PlatformErrorBoundary>
   );

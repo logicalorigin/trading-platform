@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { getBootProgressSnapshot } from "../../app/bootProgress";
 
 const API_TIMING_EVENT = "pyrus:api-request-timing";
 export const SCREEN_READY_EVENT = "pyrus:screen-ready";
@@ -368,6 +369,7 @@ export const buildPyrusPerformanceMetricsPayload = (reason = "interval") => {
     raw: {
       pendingScreens: Array.from(metrics.pendingScreens.keys()),
       routeDataTimings: metrics.routeDataTimings.slice(-30),
+      bootProgress: getBootProgressSnapshot(),
     },
   };
 };

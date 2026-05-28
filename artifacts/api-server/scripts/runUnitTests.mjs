@@ -34,6 +34,7 @@ const unitTestFiles = [
   "src/services/bridge-governor.test.ts",
   "src/services/bridge-option-quote-stream.test.ts",
   "src/services/ibkr-bridge-runtime.test.ts",
+  "src/services/runtime-flight-recorder.test.ts",
   "src/services/runtime-diagnostics.test.ts",
   "src/services/order-read-resilience.test.ts",
   "src/lib/transient-db-error.test.ts",

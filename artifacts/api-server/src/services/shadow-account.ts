@@ -10,6 +10,10 @@ import {
   type PyrusSignalsBar,
   type PyrusSignalsSignalEvent,
 } from "@workspace/pyrus-signals-core";
+import {
+  resolveSignalOptionsExecutionProfile,
+  type SignalOptionsExecutionProfile,
+} from "@workspace/backtest-core";
 import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
 import {
   algoDeploymentsTable,
@@ -22,6 +26,7 @@ import {
   shadowOrdersTable,
   shadowPositionMarksTable,
   shadowPositionsTable,
+  type AlgoDeployment,
   type ExecutionEvent,
 } from "@workspace/db";
 import { HttpError } from "../lib/errors";
@@ -47,6 +52,11 @@ import {
   normalizeLegacyAlgoBranding,
   normalizeLegacyAlgoBrandText,
 } from "./algo-branding";
+import { notifyAlgoCockpitChanged } from "./algo-cockpit-events";
+import {
+  computeSignalOptionsPositionStop,
+  type SignalOptionsEntryQuality,
+} from "./signal-options-exit-policy";
 import {
   assertIbkrGatewayTradingAvailable,
   batchOptionChains,
@@ -212,6 +222,14 @@ type ShadowOptionPricingPolicy = {
   quoteFreshness: string | null;
   marketDataMode: string | null;
   quoteAsOf: Date | null;
+};
+
+type SignalOptionsShadowMarkExitContext = {
+  deployment: AlgoDeployment;
+  profile: SignalOptionsExecutionProfile;
+  entryOrder: ShadowOrderRow;
+  entryEvent: ExecutionEvent | null;
+  signalQuality: SignalOptionsEntryQuality | null;
 };
 
 type ShadowTotals = {
@@ -3221,8 +3239,344 @@ async function findSignalOptionsEntryOrderForPosition(
       (order) =>
         isSignalOptionsShadowSource(order.source) &&
         shadowPositionKeyForOrder(order) === position.positionKey,
-    ) ?? null
+      ) ?? null
   );
+}
+
+function signalOptionsEntryQualityFromRecord(
+  value: unknown,
+): SignalOptionsEntryQuality | null {
+  const record = readRecord(value);
+  if (!record) {
+    return null;
+  }
+  const tier = readString(record.tier);
+  const liquidityTier = readString(record.liquidityTier);
+  if (
+    tier !== "high" &&
+    tier !== "standard" &&
+    tier !== "low" &&
+    liquidityTier !== "strong" &&
+    liquidityTier !== "standard" &&
+    liquidityTier !== "weak"
+  ) {
+    return null;
+  }
+  if (tier !== "high" && tier !== "standard" && tier !== "low") {
+    return null;
+  }
+  if (
+    liquidityTier !== "strong" &&
+    liquidityTier !== "standard" &&
+    liquidityTier !== "weak"
+  ) {
+    return null;
+  }
+  const mtfDirections = Array.isArray(record.mtfDirections)
+    ? record.mtfDirections.map(toNumber).filter((item): item is number => item != null)
+    : [];
+  const reasons = Array.isArray(record.reasons)
+    ? record.reasons
+        .map((item) => readString(item))
+        .filter((item): item is string => Boolean(item))
+    : [];
+  return {
+    tier,
+    liquidityTier,
+    score: toNumber(record.score) ?? 0,
+    reasons,
+    raw: readRecord(record.raw) ?? undefined,
+    adx: toNumber(record.adx),
+    mtfMatches: toNumber(record.mtfMatches) ?? 0,
+    mtfDirections,
+    spreadPctOfMid: toNumber(record.spreadPctOfMid),
+    bullishRegime: record.bullishRegime === true,
+  };
+}
+
+async function resolveSignalOptionsShadowMarkExitContext(
+  position: ShadowPositionRow,
+): Promise<SignalOptionsShadowMarkExitContext | null> {
+  const entryOrder = await findSignalOptionsEntryOrderForPosition(position);
+  if (!entryOrder || entryOrder.source !== "automation") {
+    return null;
+  }
+  const [entryEvent] = entryOrder.sourceEventId
+    ? await db
+        .select()
+        .from(executionEventsTable)
+        .where(eq(executionEventsTable.id, entryOrder.sourceEventId))
+        .limit(1)
+    : [];
+  const deploymentId =
+    (entryEvent?.deploymentId ? String(entryEvent.deploymentId) : null) ??
+    sourceDeploymentIdFromShadowOrder(entryOrder);
+  if (!deploymentId) {
+    return null;
+  }
+  const [deployment] = await db
+    .select()
+    .from(algoDeploymentsTable)
+    .where(eq(algoDeploymentsTable.id, deploymentId))
+    .limit(1);
+  if (!deployment?.enabled) {
+    return null;
+  }
+  const payload = readRecord(entryEvent?.payload) ?? readRecord(entryOrder.payload) ?? {};
+  const positionPayload = readRecord(payload.position) ?? {};
+  const candidatePayload = readRecord(payload.candidate) ?? {};
+  return {
+    deployment,
+    profile: resolveSignalOptionsExecutionProfile(deployment.config),
+    entryOrder,
+    entryEvent: entryEvent ?? null,
+    signalQuality:
+      signalOptionsEntryQualityFromRecord(positionPayload.signalQuality) ??
+      signalOptionsEntryQualityFromRecord(candidatePayload.signalQuality),
+  };
+}
+
+async function readShadowPositionPeakMarkPrice(
+  position: Pick<ShadowPositionRow, "id" | "openedAt" | "averageCost">,
+) {
+  const [row] = await db
+    .select({
+      peak: sql<string | null>`max(${shadowPositionMarksTable.mark})`,
+    })
+    .from(shadowPositionMarksTable)
+    .where(
+      and(
+        eq(shadowPositionMarksTable.positionId, position.id),
+        gte(shadowPositionMarksTable.asOf, position.openedAt),
+      ),
+    );
+  return Math.max(
+    toNumber(row?.peak) ?? 0,
+    toNumber(position.averageCost) ?? 0,
+  );
+}
+
+function signalOptionsShadowQuotePayload(input: {
+  contract: ShadowOptionContract;
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined;
+  pricing: ShadowOptionPricingPolicy;
+}) {
+  const quote = (input.quote ?? {}) as Record<string, unknown>;
+  return {
+    contract: optionPayload(input.contract),
+    bid: toNumber(quote.bid),
+    ask: toNumber(quote.ask),
+    last: toNumber(quote.last ?? quote.price),
+    mark: input.pricing.quoteMark,
+    quoteFreshness: input.pricing.quoteFreshness,
+    marketDataMode: input.pricing.marketDataMode,
+    quoteUpdatedAt:
+      quote.updatedAt instanceof Date
+        ? quote.updatedAt.toISOString()
+        : readString(quote.updatedAt),
+    dataUpdatedAt:
+      quote.dataUpdatedAt instanceof Date
+        ? quote.dataUpdatedAt.toISOString()
+        : readString(quote.dataUpdatedAt),
+    ageMs: toNumber(quote.ageMs),
+  };
+}
+
+function signalOptionsShadowMarkExitPositionPayload(input: {
+  position: ShadowPositionRow;
+  contract: ShadowOptionContract;
+  context: SignalOptionsShadowMarkExitContext;
+  markPrice: number;
+  peakPrice: number;
+  stopPrice: number;
+  markAt: Date;
+}) {
+  const entryPayload =
+    readRecord(input.context.entryEvent?.payload) ??
+    readRecord(input.context.entryOrder.payload) ??
+    {};
+  const entryPosition = readRecord(entryPayload.position) ?? {};
+  const candidate = readRecord(entryPayload.candidate) ?? {};
+  const quantity = toNumber(input.position.quantity) ?? 0;
+  const entryPrice = toNumber(input.position.averageCost) ?? 0;
+  const multiplier = marketMultiplier({
+    assetClass: "option",
+    optionContract: input.contract,
+  });
+  const direction =
+    candidate.direction === "sell" || entryPosition.direction === "sell"
+      ? "sell"
+      : "buy";
+  return {
+    id:
+      readString(entryPosition.id) ??
+      `${input.context.deployment.id}:${input.position.symbol}`,
+    candidateId:
+      readString(entryPosition.candidateId) ??
+      readString(candidate.id) ??
+      `${input.context.deployment.id}:${input.position.symbol}`,
+    symbol: input.position.symbol,
+    direction,
+    optionRight: input.contract.right,
+    timeframe: readString(entryPosition.timeframe) ?? readString(candidate.timeframe) ?? "5m",
+    signalAt:
+      readString(entryPosition.signalAt) ??
+      readString(candidate.signalAt) ??
+      input.position.openedAt.toISOString(),
+    openedAt: input.position.openedAt.toISOString(),
+    entryPrice,
+    quantity,
+    peakPrice: input.peakPrice,
+    stopPrice: input.stopPrice,
+    premiumAtRisk: Number((entryPrice * quantity * multiplier).toFixed(2)),
+    selectedContract: optionPayload(input.contract),
+    lastMarkPrice: Number(input.markPrice.toFixed(2)),
+    lastMarkedAt: input.markAt.toISOString(),
+    signalQuality: input.context.signalQuality,
+  };
+}
+
+async function recordSignalOptionsShadowMarkExit(input: {
+  position: ShadowPositionRow;
+  contract: ShadowOptionContract;
+  context: SignalOptionsShadowMarkExitContext;
+  markPrice: number;
+  peakPrice: number;
+  exitPrice: number;
+  stop: ReturnType<typeof computeSignalOptionsPositionStop>;
+  pricing: ShadowOptionPricingPolicy;
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined;
+  markAt: Date;
+}) {
+  const [current] = await db
+    .select({ status: shadowPositionsTable.status })
+    .from(shadowPositionsTable)
+    .where(eq(shadowPositionsTable.id, input.position.id))
+    .limit(1);
+  if (current?.status !== "open") {
+    return null;
+  }
+  const quantity = toNumber(input.position.quantity) ?? 0;
+  const entryPrice = toNumber(input.position.averageCost) ?? 0;
+  if (quantity <= 0 || entryPrice <= 0) {
+    return null;
+  }
+  const positionPayload = signalOptionsShadowMarkExitPositionPayload({
+    position: input.position,
+    contract: input.contract,
+    context: input.context,
+    markPrice: input.markPrice,
+    peakPrice: input.peakPrice,
+    stopPrice: input.stop.stopPrice,
+    markAt: input.markAt,
+  });
+  const payload = {
+    metadata: {
+      deploymentId: input.context.deployment.id,
+      deploymentName: normalizeLegacyAlgoBrandText(input.context.deployment.name),
+      positionKey: input.position.positionKey,
+      runMode: "live_shadow_mark",
+      runSource: "shadow_mark",
+      runPhase: "mark_enforcement",
+    },
+    reason: "runner_trail_stop",
+    enforcementSource: "shadow_mark",
+    exitPrice: input.exitPrice,
+    markPrice: input.markPrice,
+    pnl: Number(((input.exitPrice - entryPrice) * quantity * 100).toFixed(2)),
+    position: positionPayload,
+    selectedContract: optionPayload(input.contract),
+    quote: signalOptionsShadowQuotePayload({
+      contract: input.contract,
+      quote: input.quote,
+      pricing: input.pricing,
+    }),
+    liquidity: {
+      bid: input.pricing.quoteBid,
+      ask: input.pricing.quoteAsk,
+      mid: input.pricing.quoteMid,
+    },
+    markResolution: {
+      source: input.pricing.valuationSource,
+      reason: input.pricing.valuationReason,
+      quoteFreshness: input.pricing.quoteFreshness,
+      marketDataMode: input.pricing.marketDataMode,
+      markSource: "shadow_position_marks",
+    },
+    stop: {
+      ...input.stop,
+      enforcementSource: "shadow_mark",
+    },
+  };
+  const [event] = await db
+    .insert(executionEventsTable)
+    .values({
+      deploymentId: input.context.deployment.id,
+      providerAccountId: input.context.deployment.providerAccountId,
+      symbol: normalizeSymbol(input.position.symbol).toUpperCase(),
+      eventType: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+      summary: `${input.position.symbol} shadow exit runner_trail_stop at ${input.exitPrice.toFixed(2)}`,
+      payload,
+      occurredAt: input.markAt,
+    })
+    .returning();
+  await recordShadowAutomationEvent(event, { source: "automation" }).catch((error) => {
+    logger.warn?.(
+      { err: error, eventId: event.id, eventType: event.eventType },
+      "Failed to mirror signal-options mark-time trailing exit into Shadow account ledger",
+    );
+  });
+  notifyAlgoCockpitChanged({
+    deploymentId: input.context.deployment.id,
+    mode: input.context.deployment.mode,
+    reason: SIGNAL_OPTIONS_SHADOW_EXIT_EVENT,
+  });
+  return event;
+}
+
+async function enforceSignalOptionsTrailingStopFromShadowMark(input: {
+  position: ShadowPositionRow;
+  contract: ShadowOptionContract;
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined;
+  pricing: ShadowOptionPricingPolicy;
+  markPrice: number;
+  markAt: Date;
+}) {
+  const context = await resolveSignalOptionsShadowMarkExitContext(input.position);
+  if (!context) {
+    return { exited: false, reason: "not_signal_options_position" };
+  }
+  const peakPrice = Math.max(
+    await readShadowPositionPeakMarkPrice(input.position),
+    input.markPrice,
+  );
+  const entryPrice = toNumber(input.position.averageCost) ?? 0;
+  const decision = computeSignalOptionsShadowMarkExitDecision({
+    contract: input.contract,
+    entryPrice,
+    markPrice: input.markPrice,
+    peakPrice,
+    profile: context.profile,
+    pricing: input.pricing,
+    markAt: input.markAt,
+    signalQuality: context.signalQuality,
+  });
+  if (decision.exitReason !== "runner_trail_stop" || decision.exitPrice == null || !decision.stop) {
+    return { exited: false, reason: decision.skipReason ?? "stop_not_breached" };
+  }
+  await recordSignalOptionsShadowMarkExit({
+    position: input.position,
+    contract: input.contract,
+    context,
+    markPrice: input.markPrice,
+    peakPrice,
+    exitPrice: decision.exitPrice,
+    stop: decision.stop,
+    pricing: input.pricing,
+    quote: input.quote,
+    markAt: input.markAt,
+  });
+  return { exited: true, reason: "runner_trail_stop" };
 }
 
 async function resolveMaintenanceOptionExitPrice(input: {
@@ -3651,6 +4005,21 @@ export async function refreshShadowPositionMarks() {
       source: mark.source,
       asOf: mark.asOf,
     });
+    if (position.assetClass === "option" && contract && optionPricing) {
+      await enforceSignalOptionsTrailingStopFromShadowMark({
+        position,
+        contract,
+        quote: optionQuote,
+        pricing: optionPricing,
+        markPrice: price,
+        markAt: mark.asOf,
+      }).catch((error) => {
+        logger.warn?.(
+          { err: error, positionId: position.id, symbol: position.symbol },
+          "Signal-options mark-time trailing stop enforcement failed",
+        );
+      });
+    }
     updatedCount += 1;
     const snapshotSource = shadowMarkSnapshotSourceForPosition(position);
     const latestMarkAt = latestMarkAtBySnapshotSource.get(snapshotSource);
@@ -3835,6 +4204,67 @@ function buildShadowOptionPricingPolicy(input: {
     quoteFreshness: shadowQuoteText(input.quote, "freshness", "quoteFreshness"),
     marketDataMode: shadowQuoteText(input.quote, "marketDataMode"),
     quoteAsOf: input.quote ? shadowOptionQuoteTimestamp(quoteRecord ?? {}) : null,
+  };
+}
+
+function computeSignalOptionsShadowMarkExitDecision(input: {
+  contract: ShadowOptionContract;
+  entryPrice: number;
+  markPrice: number;
+  peakPrice: number;
+  profile: SignalOptionsExecutionProfile;
+  pricing: ShadowOptionPricingPolicy;
+  markAt: Date;
+  signalQuality?: SignalOptionsEntryQuality | null;
+}) {
+  if (!isShadowOptionTradingSession(input.markAt, input.contract)) {
+    return {
+      exitReason: null,
+      exitPrice: null,
+      skipReason: "option_session_closed",
+      stop: null,
+    };
+  }
+  if (
+    !input.pricing.valuationEligible ||
+    input.pricing.valuationSource !== "option_quote"
+  ) {
+    return {
+      exitReason: null,
+      exitPrice: null,
+      skipReason: "mark_not_actionable",
+      stop: null,
+    };
+  }
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice: input.entryPrice,
+    peakPrice: input.peakPrice,
+    markPrice: input.markPrice,
+    profile: input.profile,
+    signalQuality: input.signalQuality ?? null,
+  });
+  if (stop.exitReason !== "runner_trail_stop") {
+    return {
+      exitReason: null,
+      exitPrice: null,
+      skipReason: null,
+      stop,
+    };
+  }
+  const exitPrice =
+    input.pricing.quoteBid != null && input.pricing.quoteMid != null
+      ? Number(
+          (
+            input.pricing.quoteMid -
+            (input.pricing.quoteMid - input.pricing.quoteBid) * 0.9
+          ).toFixed(2),
+        )
+      : Number(input.markPrice.toFixed(2));
+  return {
+    exitReason: stop.exitReason,
+    exitPrice,
+    skipReason: null,
+    stop,
   };
 }
 
@@ -5296,23 +5726,23 @@ export async function getShadowAccountPositions(input: {
   const source = normalizeShadowSourceScope(input.source);
   const assetClassFilter = normalizePositionAssetClass(input.assetClass);
   const includeLiveQuotes = input.liveQuotes !== false;
-  try {
-    await repairSignalOptionsAutomationMirrorsForRead(source);
-  } catch (error) {
-    if (isTransientPostgresError(error)) {
-      markShadowAccountDbUnavailable(error);
-      return buildEmptyShadowAccountPositionsResponse({
-        totals: buildFallbackShadowTotals(),
-        degraded: true,
-      });
-    }
-    throw error;
-  }
   return withShadowReadCache(
     `positions:${assetClassFilter || "all"}:${shadowSourceCacheKey(source)}:${
       includeLiveQuotes ? "live-quotes" : "cached-quotes"
     }`,
     async () => {
+      try {
+        await repairSignalOptionsAutomationMirrorsForRead(source);
+      } catch (error) {
+        if (isTransientPostgresError(error)) {
+          markShadowAccountDbUnavailable(error);
+          return buildEmptyShadowAccountPositionsResponse({
+            totals: buildFallbackShadowTotals(),
+            degraded: true,
+          });
+        }
+        throw error;
+      }
   try {
   const totals = source ? await computeShadowTotalsForSource(source) : await ensureFreshShadowState(true);
   if (isShadowAccountDbBackoffActive()) {
@@ -9771,6 +10201,7 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   buildShadowPositionDayChangeFromQuote,
   shadowQuoteMarkPrice,
   buildShadowOptionPricingPolicy,
+  computeSignalOptionsShadowMarkExitDecision,
   shadowOptionQuoteValuationBlockReason,
   shadowOptionQuoteIdentifier,
   isPriorOptionExpiration,

@@ -32,7 +32,10 @@ import {
   getRuntimeMode,
 } from "../lib/runtime";
 import { logger } from "../lib/logger";
-import { getApiResourcePressureSnapshot } from "./resource-pressure";
+import {
+  getApiResourcePressureSnapshot,
+  isApiResourcePressureHardBlock,
+} from "./resource-pressure";
 import {
   createTransientPostgresBackoff,
   isTransientPostgresError,
@@ -1059,6 +1062,15 @@ function getLiveWarmupBackgroundHoldRemainingMs(): number {
   return Math.max(0, liveWarmupBackgroundHoldUntil - Date.now());
 }
 
+function holdOptionsFlowScannerBackgroundWork(
+  durationMs = LIVE_WARMUP_BACKGROUND_HOLD_MS,
+): void {
+  liveWarmupBackgroundHoldUntil = Math.max(
+    liveWarmupBackgroundHoldUntil,
+    Date.now() + Math.max(0, durationMs),
+  );
+}
+
 function getOptionsFlowScannerSchedulableLineCap(): number {
   const diagnostics = getMarketDataAdmissionDiagnostics();
   const staticLineCap =
@@ -1066,6 +1078,31 @@ function getOptionsFlowScannerSchedulableLineCap(): number {
     diagnostics.budget.flowScannerLineCap;
   const effectiveLineCap = diagnostics.pressure.scannerEffectiveLineCap ?? 0;
   return Math.max(0, Math.min(staticLineCap, effectiveLineCap));
+}
+
+function isOptionsFlowScannerResourcePressureBlocked(): boolean {
+  return isApiResourcePressureHardBlock(getApiResourcePressureSnapshot());
+}
+
+function releaseOptionsFlowScannerMarketDataLeases(reason: string): void {
+  const owners = new Set(
+    getMarketDataLeasesSnapshot()
+      .filter(
+        (lease) =>
+          lease.ownerClass === "flow-scanner" ||
+          lease.ownerClass === "flow-scanner-benchmark",
+      )
+      .map((lease) => lease.owner),
+  );
+  owners.forEach((owner) => releaseMarketDataLeases(owner, reason));
+}
+
+function enforceOptionsFlowScannerPressureControls(): string | null {
+  if (!isOptionsFlowScannerResourcePressureBlocked()) {
+    return null;
+  }
+  releaseOptionsFlowScannerMarketDataLeases("resource_pressure");
+  return "resource-pressure";
 }
 
 let optionsFlowSessionBlockReason: string | null = null;
@@ -1155,6 +1192,9 @@ function getOptionsFlowScannerBackgroundBlockReason(input: {
   ignoreLiveWarmup?: boolean;
   ignoreLineCapacity?: boolean;
 } = {}): string | null {
+  if (isOptionsFlowScannerResourcePressureBlocked()) {
+    return "resource-pressure";
+  }
   if (!input.ignoreLiveWarmup && isLiveWarmupHoldingBackgroundWork()) {
     return "live-warmup";
   }
@@ -1530,7 +1570,11 @@ function scheduleIbkrWatchlistPrewarm(
 export function __holdOptionsFlowScannerBackgroundForTests(
   durationMs = LIVE_WARMUP_BACKGROUND_HOLD_MS,
 ): void {
-  liveWarmupBackgroundHoldUntil = Date.now() + Math.max(0, durationMs);
+  holdOptionsFlowScannerBackgroundWork(durationMs);
+}
+
+export function __clearOptionsFlowScannerBackgroundHoldForTests(): void {
+  liveWarmupBackgroundHoldUntil = 0;
 }
 
 function scheduleIbkrWatchlistPrewarmFromDb(reason: string) {
@@ -2418,6 +2462,9 @@ function queueOptionsFlowScannerRefresh(input: {
   phase: string;
 }): boolean {
   if (!getOptionsFlowRuntimeConfig().scannerEnabled) {
+    return false;
+  }
+  if (enforceOptionsFlowScannerPressureControls()) {
     return false;
   }
   if (getOptionsFlowScannerBackgroundBlockReason()) {
@@ -8275,7 +8322,10 @@ function refreshBarsCache(
     try {
       const value = await getBarsImpl(input, options);
       const settledAt = Date.now();
-      if (startedInvalidationVersion === barsCacheInvalidationVersion) {
+      if (
+        startedInvalidationVersion === barsCacheInvalidationVersion &&
+        value.emptyReason !== "broker-history-error"
+      ) {
         barsCache.set(key, {
           input,
           value,
@@ -9633,6 +9683,14 @@ const OPTIONS_FLOW_SCANNER_EXPANDED_MIN_PREMIUM = readPositiveNumberEnv(
   "OPTIONS_FLOW_SCANNER_EXPANDED_MIN_PREMIUM",
   250_000,
 );
+const OPTIONS_FLOW_HISTORICAL_CANDIDATE_LIMIT = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_HISTORICAL_CANDIDATE_LIMIT",
+  8,
+);
+const OPTIONS_FLOW_HISTORICAL_CONCURRENCY = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_HISTORICAL_CONCURRENCY",
+  2,
+);
 export type OptionsFlowRuntimeConfig = {
   optionUpstreamBackoffMs: number;
   optionChainBatchConcurrency: number;
@@ -9743,9 +9801,17 @@ export function resolveOptionsFlowScannerEffectiveConcurrency(
     flowScannerLineCap <= 0
       ? 0
       : Math.max(1, Math.floor(flowScannerLineCap / scannerLineBudget));
-  return poolSafeConcurrency <= 0
+  const pressureSnapshot = getApiResourcePressureSnapshot();
+  const pressureLevel = pressureSnapshot.level;
+  const pressureAdjustedConcurrency =
+    isApiResourcePressureHardBlock(pressureSnapshot)
+      ? 0
+      : pressureLevel === "high" || pressureLevel === "critical"
+        ? Math.min(configuredConcurrency, 1)
+        : configuredConcurrency;
+  return poolSafeConcurrency <= 0 || pressureAdjustedConcurrency <= 0
     ? 0
-    : Math.max(1, Math.min(configuredConcurrency, poolSafeConcurrency));
+    : Math.max(1, Math.min(pressureAdjustedConcurrency, poolSafeConcurrency));
 }
 
 function syncOptionsFlowScannerEffectiveConcurrency(
@@ -9767,7 +9833,7 @@ function syncMarketDataAdmissionRuntimeDefaults(
 }
 
 function getOptionsFlowScannerQuoteLeaseTtlMs(): number {
-  return Math.max(30_000, getOptionsFlowDeepScannerIntervalMs() + 15_000);
+  return readPositiveIntegerEnv("OPTIONS_FLOW_SCANNER_QUOTE_SAMPLE_TIMEOUT_MS", 5_000);
 }
 
 function buildOptionsFlowSeedScannerRequest(
@@ -10130,6 +10196,7 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
 const optionsFlowRadarScanner = createOptionsFlowRadarScanner({
   normalizeSymbol,
   shouldSkip: async () =>
+    enforceOptionsFlowScannerPressureControls() ??
     getOptionsFlowScannerBackgroundBlockReason() ??
     (await refreshOptionsFlowSessionBlockReason()),
   fetchBatch: async (symbols) => {
@@ -10150,6 +10217,12 @@ const optionsFlowRadarScanner = createOptionsFlowRadarScanner({
     recordOptionsFlowRadarObservations(observations);
   },
   onPromotions: async (symbols) => {
+    if (enforceOptionsFlowScannerPressureControls()) {
+      return;
+    }
+    if (getOptionsFlowScannerBackgroundBlockReason()) {
+      return;
+    }
     const config = getOptionsFlowRuntimeConfig();
     const expandedRequest = buildOptionsFlowExpandedScannerRequest(config);
     const deepLineBudget = Math.max(1, expandedRequest.lineBudget ?? 1);
@@ -10518,16 +10591,18 @@ export function startOptionsFlowScanner(): void {
   if (optionsFlowScannerStarted || !config.scannerEnabled) {
     return;
   }
-  startMassiveStockUniverseStreams();
 
-  const resolveScannerSymbols = () =>
-    getOptionsFlowScannerBackgroundBlockReason()
-      ? []
-      : getOptionsFlowScannerLaneResolution().admittedSymbols;
+  const resolveScannerSymbols = () => {
+    if (
+      enforceOptionsFlowScannerPressureControls() ||
+      getOptionsFlowScannerBackgroundBlockReason()
+    ) {
+      return [];
+    }
+    startMassiveStockUniverseStreams();
+    return getOptionsFlowScannerLaneResolution().admittedSymbols;
+  };
   const initialSymbols = resolveScannerSymbols();
-  if (!initialSymbols.length) {
-    return;
-  }
 
   const effectiveScannerConcurrency =
     syncOptionsFlowScannerEffectiveConcurrency(config);
@@ -10579,6 +10654,7 @@ export function startOptionsFlowScanner(): void {
   } else {
     optionsFlowScanner.startRotation({
       symbols: () =>
+        enforceOptionsFlowScannerPressureControls() ||
         getOptionsFlowScannerBackgroundBlockReason()
           ? []
           : resolveScannerSymbols(),
@@ -10967,6 +11043,7 @@ export async function listAggregateFlowEvents(input: {
       batchSize: seedBatchSize,
     });
     aggregateSeedBlockReason =
+      enforceOptionsFlowScannerPressureControls() ??
       getOptionsFlowScannerBackgroundBlockReason({
         ignoreLiveWarmup: true,
       }) ?? (await refreshOptionsFlowSessionBlockReason(runtimeConfig));
@@ -11547,9 +11624,30 @@ export async function getFlowPremiumDistribution(input: {
 
 export function getOptionsFlowScannerDiagnostics() {
   const config = getOptionsFlowRuntimeConfig();
-  syncMarketDataAdmissionRuntimeDefaults(config);
   const resourcePressure = getApiResourcePressureSnapshot();
-  const effectiveConcurrency = syncOptionsFlowScannerEffectiveConcurrency(config);
+  const backgroundBlockedReason = getOptionsFlowScannerBackgroundBlockReason();
+  const scannerPressureThrottled =
+    !backgroundBlockedReason &&
+    (resourcePressure.level === "high" || resourcePressure.level === "critical");
+  const scannerFillMode =
+    backgroundBlockedReason === "live-warmup"
+      ? "startup-protected"
+      : backgroundBlockedReason
+        ? "blocked"
+        : scannerPressureThrottled
+          ? "pressure-throttled"
+          : "steady-state";
+  const limitingReason =
+    backgroundBlockedReason === "live-warmup"
+      ? "startup-protected"
+      : backgroundBlockedReason === "resource-pressure"
+        ? "api-pressure-gate"
+        : scannerPressureThrottled
+          ? "scanner-throttled-high-pressure"
+          : backgroundBlockedReason;
+  const effectiveConcurrency = backgroundBlockedReason
+    ? 0
+    : resolveOptionsFlowScannerEffectiveConcurrency(config);
   const deepScanner = optionsFlowScanner.getDiagnostics();
   const radar = optionsFlowRadarScanner.getCoverage();
   const admissionBudget = getMarketDataAdmissionBudget();
@@ -11559,7 +11657,6 @@ export function getOptionsFlowScannerDiagnostics() {
   );
   const schedulableFlowScannerLineCap =
     getOptionsFlowScannerSchedulableLineCap();
-  const backgroundBlockedReason = getOptionsFlowScannerBackgroundBlockReason();
   const lastSkippedReason = currentOptionsFlowScannerSkipReason(
     deepScanner,
     config,
@@ -11586,6 +11683,8 @@ export function getOptionsFlowScannerDiagnostics() {
     },
     radarEnabled: config.radarEnabled,
     scannerMode: config.radarEnabled ? "radar-promoted" : "direct-rotation",
+    scannerFillMode,
+    limitingReason,
     activeScanPhase: deepScanner.lastScanPhase,
     marketDataMode,
     delayedMarketData,
@@ -14340,19 +14439,25 @@ export async function getOptionChartBarsWithDebug(input: {
   let ibkrBarsError: unknown = null;
   if (providerContractId) {
     try {
-      const { debug, ...barsResult } = await getBarsWithDebug({
-        symbol: underlying,
-        timeframe: input.timeframe,
-        limit: input.limit,
-        from: input.from,
-        to: input.to,
-        assetClass: "option",
-        providerContractId,
-        source: "midpoint",
-        outsideRth,
-        allowHistoricalSynthesis: false,
-        allowStudyFallback: false,
-      });
+      const { debug, ...barsResult } = await getBarsWithDebug(
+        {
+          symbol: underlying,
+          timeframe: input.timeframe,
+          limit: input.limit,
+          from: input.from,
+          to: input.to,
+          assetClass: "option",
+          providerContractId,
+          source: "midpoint",
+          outsideRth,
+          allowHistoricalSynthesis: false,
+          allowStudyFallback: false,
+        },
+        {
+          family: "option-chart-bars",
+          priority: 6,
+        },
+      );
       ibkrBarsResult = barsResult;
       ibkrBarsDebug = debug;
     } catch (error) {
@@ -14712,74 +14817,441 @@ function selectFlowScannerLiveCandidateContracts(
   const underlyingPrice = readOptionChainUnderlyingPrice(contracts);
   const limit = Math.max(1, lineBudget);
 
-  const rankedContracts = contracts
-    .filter((contract) => contract.contract.providerContractId)
-    .sort((left, right) => {
-      const leftMark = left.mark ?? left.last ?? 0;
-      const rightMark = right.mark ?? right.last ?? 0;
-      const leftVolume = left.volume ?? 0;
-      const rightVolume = right.volume ?? 0;
-      const leftPremium =
-        leftMark * leftVolume * left.contract.sharesPerContract;
-      const rightPremium =
-        rightMark * rightVolume * right.contract.sharesPerContract;
-      if (leftPremium !== rightPremium) return rightPremium - leftPremium;
-      if ((leftVolume ?? 0) !== (rightVolume ?? 0)) {
-        return (rightVolume ?? 0) - (leftVolume ?? 0);
-      }
-      if ((left.openInterest ?? 0) !== (right.openInterest ?? 0)) {
-        return (right.openInterest ?? 0) - (left.openInterest ?? 0);
-      }
+  const candidateContracts = contracts.filter(
+    (contract) => contract.contract.providerContractId,
+  );
 
-      const leftUnderlyingPrice =
-        typeof left.underlyingPrice === "number" &&
-        Number.isFinite(left.underlyingPrice) &&
-        left.underlyingPrice > 0
-          ? left.underlyingPrice
-          : underlyingPrice;
-      const rightUnderlyingPrice =
-        typeof right.underlyingPrice === "number" &&
-        Number.isFinite(right.underlyingPrice) &&
-        right.underlyingPrice > 0
-          ? right.underlyingPrice
-          : underlyingPrice;
-      const leftDistance =
-        leftUnderlyingPrice !== null && leftUnderlyingPrice > 0
-          ? Math.abs(left.contract.strike - leftUnderlyingPrice) /
-            leftUnderlyingPrice
-          : Number.POSITIVE_INFINITY;
-      const rightDistance =
-        rightUnderlyingPrice !== null && rightUnderlyingPrice > 0
-          ? Math.abs(right.contract.strike - rightUnderlyingPrice) /
-            rightUnderlyingPrice
-          : Number.POSITIVE_INFINITY;
-      if (leftDistance !== rightDistance) {
-        return leftDistance - rightDistance;
-      }
-
-      return (
-        left.contract.expirationDate.getTime() -
-          right.contract.expirationDate.getTime() ||
-        left.contract.right.localeCompare(right.contract.right) ||
-        left.contract.strike - right.contract.strike
-      );
-    });
-
-  if (rankedContracts.length <= limit) {
-    return rankedContracts;
+  if (candidateContracts.length <= limit) {
+    return candidateContracts;
   }
 
-  const anchorCount = limit <= 1 ? 0 : Math.max(1, Math.floor(limit / 2));
-  const rotatingCount = limit - anchorCount;
-  return [
-    ...rankedContracts.slice(0, anchorCount),
-    ...selectRotatingWindow({
-      values: rankedContracts.slice(anchorCount),
-      count: rotatingCount,
-      offsets: flowScannerContractRotationOffsets,
-      rotationKey,
-    }),
-  ];
+  const expirationKeys = Array.from(
+    new Set(
+      candidateContracts
+        .map((contract) => contract.contract.expirationDate.toISOString().slice(0, 10))
+        .sort(),
+    ),
+  );
+  const quartileCount = Math.min(4, Math.max(1, expirationKeys.length));
+  const quartileByExpiration = new Map<string, number>();
+  expirationKeys.forEach((expirationKey, index) => {
+    quartileByExpiration.set(
+      expirationKey,
+      Math.min(
+        quartileCount - 1,
+        Math.floor((index * quartileCount) / expirationKeys.length),
+      ),
+    );
+  });
+
+  const heatRank = (
+    left: IbkrOptionChainContracts[number],
+    right: IbkrOptionChainContracts[number],
+  ) => {
+    const leftExpiration = left.contract.expirationDate.getTime();
+    const rightExpiration = right.contract.expirationDate.getTime();
+    if (leftExpiration !== rightExpiration) {
+      return leftExpiration - rightExpiration;
+    }
+
+    const leftMark = left.mark ?? left.last ?? 0;
+    const rightMark = right.mark ?? right.last ?? 0;
+    const leftVolume = left.volume ?? 0;
+    const rightVolume = right.volume ?? 0;
+    const leftPremium =
+      leftMark * leftVolume * left.contract.sharesPerContract;
+    const rightPremium =
+      rightMark * rightVolume * right.contract.sharesPerContract;
+    if (leftPremium !== rightPremium) return rightPremium - leftPremium;
+    if (leftVolume !== rightVolume) return rightVolume - leftVolume;
+    if ((left.openInterest ?? 0) !== (right.openInterest ?? 0)) {
+      return (right.openInterest ?? 0) - (left.openInterest ?? 0);
+    }
+
+    const leftUnderlyingPrice =
+      typeof left.underlyingPrice === "number" &&
+      Number.isFinite(left.underlyingPrice) &&
+      left.underlyingPrice > 0
+        ? left.underlyingPrice
+        : underlyingPrice;
+    const rightUnderlyingPrice =
+      typeof right.underlyingPrice === "number" &&
+      Number.isFinite(right.underlyingPrice) &&
+      right.underlyingPrice > 0
+        ? right.underlyingPrice
+        : underlyingPrice;
+    const leftDistance =
+      leftUnderlyingPrice !== null && leftUnderlyingPrice > 0
+        ? Math.abs(left.contract.strike - leftUnderlyingPrice) / leftUnderlyingPrice
+        : Number.POSITIVE_INFINITY;
+    const rightDistance =
+      rightUnderlyingPrice !== null && rightUnderlyingPrice > 0
+        ? Math.abs(right.contract.strike - rightUnderlyingPrice) / rightUnderlyingPrice
+        : Number.POSITIVE_INFINITY;
+    if (leftDistance !== rightDistance) return leftDistance - rightDistance;
+
+    return (
+      left.contract.right.localeCompare(right.contract.right) ||
+      left.contract.strike - right.contract.strike
+    );
+  };
+
+  const quartileQueues = Array.from({ length: quartileCount }, () => [] as IbkrOptionChainContracts);
+  candidateContracts.forEach((contract) => {
+    const expirationKey = contract.contract.expirationDate.toISOString().slice(0, 10);
+    quartileQueues[quartileByExpiration.get(expirationKey) ?? 0]?.push(contract);
+  });
+  quartileQueues.forEach((queue) => queue.sort(heatRank));
+
+  const selected: IbkrOptionChainContracts = [];
+  const startOffset = nextRotationOffset(
+    flowScannerContractRotationOffsets,
+    rotationKey,
+    quartileCount,
+  );
+  while (
+    selected.length < limit &&
+    quartileQueues.some((queue) => queue.length > 0)
+  ) {
+    for (let offset = 0; offset < quartileCount; offset += 1) {
+      if (selected.length >= limit) break;
+      const queue = quartileQueues[(startOffset + offset) % quartileCount];
+      const contract = queue?.shift();
+      if (contract) {
+        selected.push(contract);
+      }
+    }
+  }
+
+  return selected;
+}
+
+function selectFlowScannerHistoricalCandidateContracts(
+  contracts: IbkrOptionChainContracts,
+  lineBudget: number,
+  rotationKey?: string | null,
+): IbkrOptionChainContracts {
+  return selectFlowScannerLiveCandidateContracts(
+    contracts,
+    Math.max(
+      1,
+      Math.min(lineBudget, OPTIONS_FLOW_HISTORICAL_CANDIDATE_LIMIT),
+    ),
+    rotationKey,
+  );
+}
+
+function numericValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function positiveValue(value: unknown): number | null {
+  const numeric = numericValue(value);
+  return numeric !== null && numeric > 0 ? numeric : null;
+}
+
+function sumPositiveBarVolume(bars: readonly BrokerBarSnapshot[]): number {
+  return bars.reduce((total, bar) => {
+    const volume = numericValue(bar.volume);
+    return volume !== null && volume > 0 ? total + volume : total;
+  }, 0);
+}
+
+function normalizeContractMarketDataMode(
+  mode: string | null | undefined,
+): IbkrOptionChainContracts[number]["marketDataMode"] {
+  if (
+    mode === "live" ||
+    mode === "frozen" ||
+    mode === "delayed" ||
+    mode === "delayed_frozen" ||
+    mode === "unknown"
+  ) {
+    return mode;
+  }
+  return null;
+}
+
+function applyHistoricalBarsToFlowScannerContract(
+  candidate: IbkrOptionChainContracts[number],
+  barsResult: GetBarsResultWithDebug | null,
+): IbkrOptionChainContracts[number] {
+  const bars = barsResult?.bars ?? [];
+  const latestBar = getLatestBar(bars);
+  if (!latestBar) {
+    return candidate;
+  }
+
+  const historicalClose = positiveValue(latestBar.close);
+  const historicalVolume = sumPositiveBarVolume(bars);
+  const bid = numericValue(candidate.bid);
+  const ask = numericValue(candidate.ask);
+  const fallbackLast = positiveValue(candidate.last);
+  const last = historicalClose ?? fallbackLast ?? candidate.last;
+  const mark =
+    bid !== null && bid > 0 && ask !== null && ask > 0
+      ? (bid + ask) / 2
+      : historicalClose ?? positiveValue(candidate.mark) ?? fallbackLast ?? candidate.mark;
+  const dataUpdatedAt = getBarDataUpdatedAt(latestBar);
+  const marketDataMode =
+    normalizeContractMarketDataMode(latestBar.marketDataMode) ??
+    normalizeContractMarketDataMode(barsResult?.marketDataMode) ??
+    candidate.marketDataMode;
+
+  return {
+    ...candidate,
+    last,
+    mark,
+    volume: historicalVolume > 0 ? historicalVolume : candidate.volume,
+    updatedAt: dataUpdatedAt ?? candidate.updatedAt,
+    quoteUpdatedAt: dataUpdatedAt ?? candidate.quoteUpdatedAt,
+    dataUpdatedAt: dataUpdatedAt ?? candidate.dataUpdatedAt,
+    quoteFreshness:
+      latestBar.freshness ?? barsResult?.freshness ?? candidate.quoteFreshness,
+    marketDataMode,
+    ageMs: dataUpdatedAt ? getAgeMs(dataUpdatedAt) : candidate.ageMs ?? null,
+  };
+}
+
+async function hydrateFlowScannerContractsFromHistoricalBars(input: {
+  underlying: string;
+  candidates: IbkrOptionChainContracts;
+  scanPhase: OptionsFlowScannerScanPhase;
+  signal?: AbortSignal;
+}): Promise<{
+  contracts: IbkrOptionChainContracts;
+  requestedCount: number;
+  returnedCount: number;
+  missingCount: number;
+  errorCount: number;
+  marketDataMode: string | null;
+  firstError: string | null;
+}> {
+  if (!input.candidates.length) {
+    return {
+      contracts: [],
+      requestedCount: 0,
+      returnedCount: 0,
+      missingCount: 0,
+      errorCount: 0,
+      marketDataMode: null,
+      firstError: null,
+    };
+  }
+
+  let firstError: string | null = null;
+  let returnedCount = 0;
+  let missingCount = 0;
+  let errorCount = 0;
+  let marketDataMode: string | null = null;
+  const priority = input.scanPhase === "manual" ? 6 : 4;
+  const contracts = await mapWithConcurrency(
+    input.candidates,
+    OPTIONS_FLOW_HISTORICAL_CONCURRENCY,
+    async (candidate) => {
+      const providerContractId = candidate.contract.providerContractId ?? null;
+      if (!providerContractId) {
+        missingCount += 1;
+        return candidate;
+      }
+
+      try {
+        const barsResult = await getBarsWithDebug(
+          {
+            symbol: input.underlying,
+            timeframe: "1m",
+            limit: 5,
+            assetClass: "option",
+            providerContractId,
+            outsideRth: false,
+            source: "midpoint",
+            allowHistoricalSynthesis: false,
+            allowStudyFallback: false,
+          },
+          {
+            family: "option-flow-history",
+            priority,
+            signal: input.signal,
+          },
+        );
+        if (barsResult.bars.length > 0) {
+          returnedCount += 1;
+          marketDataMode ??= barsResult.marketDataMode ?? null;
+        } else {
+          missingCount += 1;
+          if (barsResult.emptyReason === "broker-history-error") {
+            errorCount += 1;
+            firstError ??= "broker-history-error";
+          }
+        }
+        return applyHistoricalBarsToFlowScannerContract(candidate, barsResult);
+      } catch (error) {
+        errorCount += 1;
+        firstError ??= getErrorMessage(error);
+        return candidate;
+      }
+    },
+  );
+
+  return {
+    contracts,
+    requestedCount: input.candidates.length,
+    returnedCount,
+    missingCount,
+    errorCount,
+    marketDataMode,
+    firstError,
+  };
+}
+
+function applyLiveQuoteToFlowScannerContract(
+  candidate: IbkrOptionChainContracts[number],
+  quote: QuoteSnapshot | null,
+): IbkrOptionChainContracts[number] {
+  if (!quote) {
+    return candidate;
+  }
+
+  const bid = quote.bid ?? candidate.bid ?? null;
+  const ask = quote.ask ?? candidate.ask ?? null;
+  const last = quote.price ?? candidate.last ?? null;
+  return {
+    ...candidate,
+    bid,
+    ask,
+    last,
+    mark:
+      bid !== null && ask !== null && bid > 0 && ask > 0
+        ? (bid + ask) / 2
+        : last ?? candidate.mark,
+    impliedVolatility:
+      quote.impliedVolatility ?? candidate.impliedVolatility ?? null,
+    delta: quote.delta ?? candidate.delta ?? null,
+    gamma: quote.gamma ?? candidate.gamma ?? null,
+    theta: quote.theta ?? candidate.theta ?? null,
+    vega: quote.vega ?? candidate.vega ?? null,
+    openInterest: quote.openInterest ?? candidate.openInterest ?? null,
+    volume: quote.volume ?? candidate.volume ?? null,
+    updatedAt: quote.updatedAt ?? candidate.updatedAt,
+    quoteFreshness: quote.freshness ?? candidate.quoteFreshness,
+    marketDataMode: quote.marketDataMode ?? candidate.marketDataMode,
+    quoteUpdatedAt: quote.dataUpdatedAt ?? quote.updatedAt ?? candidate.quoteUpdatedAt,
+    dataUpdatedAt: quote.dataUpdatedAt ?? quote.updatedAt ?? candidate.dataUpdatedAt,
+    ageMs: quote.ageMs ?? candidate.ageMs ?? null,
+  };
+}
+
+async function hydrateFlowScannerContractsFromLiveQuotes(input: {
+  underlying: string;
+  candidates: IbkrOptionChainContracts;
+  owner: string;
+  signal?: AbortSignal;
+}): Promise<{
+  contracts: IbkrOptionChainContracts;
+  requestedCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  returnedCount: number;
+  missingCount: number;
+  admissionBridgeMismatchCount: number;
+  marketDataMode: string | null;
+  errorMessage: string | null;
+  blockedReason: string | null;
+}> {
+  const providerContractIds = input.candidates
+    .map((contract) => contract.contract.providerContractId)
+    .filter((providerContractId): providerContractId is string =>
+      Boolean(providerContractId),
+    );
+
+  if (!providerContractIds.length) {
+    return {
+      contracts: input.candidates,
+      requestedCount: 0,
+      acceptedCount: 0,
+      rejectedCount: 0,
+      returnedCount: 0,
+      missingCount: 0,
+      admissionBridgeMismatchCount: 0,
+      marketDataMode: null,
+      errorMessage: null,
+      blockedReason: null,
+    };
+  }
+
+  const quotePayload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: input.underlying,
+    providerContractIds,
+    owner: input.owner,
+    intent: "flow-scanner-live",
+    ttlMs: getOptionsFlowScannerQuoteLeaseTtlMs(),
+    fallbackProvider: "none",
+    requiresGreeks: false,
+    releaseLeasesOnComplete: false,
+    signal: input.signal,
+  }).catch((error) => ({
+    underlying: input.underlying,
+    quotes: [] as QuoteSnapshot[],
+    transport: null,
+    delayed: false,
+    fallbackUsed: false,
+    debug: {
+      totalMs: 0,
+      upstreamMs: null,
+      requestedCount: providerContractIds.length,
+      acceptedCount: 0,
+      rejectedCount: providerContractIds.length,
+      returnedCount: 0,
+      bridgeChunks: 0,
+      providerMode: null,
+      liveMarketDataAvailable: null,
+      errorMessage: getErrorMessage(error),
+      blockedReason: "options_flow_live_quote_unavailable",
+      acceptedProviderContractIds: [],
+      missingProviderContractIds: providerContractIds,
+    },
+  }));
+
+  const quotesByProviderContractId = new Map(
+    quotePayload.quotes
+      .map((quote) => [quote.providerContractId?.trim?.() || "", quote] as const)
+      .filter(([providerContractId]) => Boolean(providerContractId)),
+  );
+  const quoteDebug = quotePayload.debug ?? {
+    acceptedCount: 0,
+    rejectedCount: providerContractIds.length,
+    returnedCount: quotePayload.quotes.length,
+    missingProviderContractIds: providerContractIds,
+    errorMessage: null,
+    blockedReason: null,
+  };
+  const acceptedCount = quoteDebug.acceptedCount ?? 0;
+  const returnedCount =
+    quoteDebug.returnedCount ?? quotePayload.quotes.length ?? 0;
+  const missingCount =
+    quoteDebug.missingProviderContractIds?.length ?? 0;
+  const contracts = input.candidates.map((contract) =>
+    applyLiveQuoteToFlowScannerContract(
+      contract,
+      quotesByProviderContractId.get(contract.contract.providerContractId ?? "") ?? null,
+    ),
+  );
+
+  return {
+    contracts,
+    requestedCount: providerContractIds.length,
+    acceptedCount,
+    rejectedCount: quoteDebug.rejectedCount ?? 0,
+    returnedCount,
+    missingCount,
+    admissionBridgeMismatchCount:
+      Math.max(0, returnedCount - acceptedCount) +
+      Math.max(0, acceptedCount - returnedCount - missingCount),
+    marketDataMode:
+      quotePayload.quotes.find((quote) => quote.marketDataMode)?.marketDataMode ?? null,
+    errorMessage: quoteDebug.errorMessage ?? null,
+    blockedReason: quoteDebug.blockedReason ?? null,
+  };
 }
 
 type FlowEventsTimeWindow = {
@@ -15588,121 +16060,59 @@ async function listFlowEventsUncached(input: {
         input.underlying,
       );
       ibkrLiveCandidateCount = liveCandidateContracts.length;
-      const liveCandidateProviderContractIds = liveCandidateContracts
-        .map((contract) => contract.contract.providerContractId)
-        .filter((providerContractId): providerContractId is string =>
-          Boolean(providerContractId),
-        );
-      const quotePayload =
-        liveCandidateProviderContractIds.length > 0
-          ? await fetchBridgeOptionQuoteSnapshots({
-              underlying: input.underlying,
-              providerContractIds: liveCandidateProviderContractIds,
-              owner: `flow-scanner:${normalizeSymbol(input.underlying)}`,
-              intent: "flow-scanner-live",
-              ttlMs: getOptionsFlowScannerQuoteLeaseTtlMs(),
-              fallbackProvider: "none",
-              requiresGreeks: false,
-              signal: input.signal,
-            }).catch((error) => {
-              ibkrReason ??= "options_flow_live_quote_unavailable";
-              ibkrError = getErrorMessage(error);
-              return null;
-            })
-          : null;
-      ibkrAcceptedQuoteCount = quotePayload?.debug?.acceptedCount ?? 0;
-      ibkrRejectedQuoteCount = quotePayload?.debug?.rejectedCount ?? 0;
-      ibkrReturnedQuoteCount =
-        quotePayload?.debug?.returnedCount ?? quotePayload?.quotes.length ?? 0;
-      ibkrMissingQuoteCount = quotePayload?.debug?.missingProviderContractIds.length ?? 0;
+      const historicalHydration =
+        await hydrateFlowScannerContractsFromHistoricalBars({
+          underlying: input.underlying,
+          candidates: liveCandidateContracts,
+          scanPhase,
+          signal: input.signal,
+        });
+      const liveHydration = await hydrateFlowScannerContractsFromLiveQuotes({
+        underlying: input.underlying,
+        candidates: historicalHydration.contracts,
+        owner: `flow-scanner:${normalizeSymbol(input.underlying)}`,
+        signal: input.signal,
+      });
+      ibkrAcceptedQuoteCount = liveHydration.acceptedCount;
+      ibkrRejectedQuoteCount = liveHydration.rejectedCount;
+      ibkrReturnedQuoteCount = liveHydration.returnedCount;
+      ibkrMissingQuoteCount = liveHydration.missingCount;
       ibkrAdmissionBridgeMismatchCount =
-        Math.max(0, ibkrReturnedQuoteCount - ibkrAcceptedQuoteCount) +
-        Math.max(
-          0,
-          ibkrAcceptedQuoteCount - ibkrReturnedQuoteCount - ibkrMissingQuoteCount,
-        );
+        liveHydration.admissionBridgeMismatchCount;
       ibkrMarketDataMode =
-        quotePayload?.quotes.find((quote) => quote.marketDataMode)?.marketDataMode ??
-        null;
-      const quoteHydrationError = quotePayload?.debug?.errorMessage ?? null;
-      if (quoteHydrationError) {
-        ibkrError ??= quoteHydrationError;
-        ibkrReason ??= "options_flow_quote_hydration_failed";
+        liveHydration.marketDataMode ?? historicalHydration.marketDataMode;
+      if (historicalHydration.firstError) {
+        ibkrError ??= historicalHydration.firstError;
+        ibkrReason ??= "options_flow_historical_hydration_degraded";
+      }
+      if (liveHydration.errorMessage) {
+        ibkrError ??= liveHydration.errorMessage;
+        ibkrReason ??= liveHydration.blockedReason
+          ? "options_flow_live_quote_blocked"
+          : "options_flow_quote_hydration_failed";
       } else if (
-        ibkrAcceptedQuoteCount > 0 &&
-        ibkrReturnedQuoteCount === 0 &&
-        ibkrMissingQuoteCount > 0
+        liveHydration.acceptedCount > 0 &&
+        liveHydration.returnedCount === 0 &&
+        liveHydration.missingCount > 0
       ) {
         ibkrReason ??= "options_flow_quote_hydration_empty";
       }
-      const admittedProviderContractIds = new Set(
-        quotePayload?.debug?.acceptedProviderContractIds ?? [],
-      );
-      const admittedContracts = liveCandidateContracts.filter((contract) =>
-        admittedProviderContractIds.has(
-          contract.contract.providerContractId ?? "",
-        ),
-      );
-      if (admittedContracts.length > 0) {
-        const quotes: QuoteSnapshot[] = quotePayload?.quotes ?? [];
-        const quotesByProviderContractId = new Map(
-          quotes
-            .map((quote) => [
-              quote.providerContractId?.trim?.() || "",
-              quote,
-            ] as const)
-            .filter(([providerContractId]) => Boolean(providerContractId)),
-        );
-        contracts = admittedContracts.flatMap((contract) => {
-          const quote = quotesByProviderContractId.get(
-            contract.contract.providerContractId ?? "",
-          );
-          if (!quote) {
-            return quotes.length > 0 ? [] : [contract];
-          }
-          const bid = quote.bid ?? contract.bid ?? null;
-          const ask = quote.ask ?? contract.ask ?? null;
-          const last = quote.price ?? contract.last ?? null;
-          return [
-            {
-              ...contract,
-              bid,
-              ask,
-              last,
-              mark:
-                bid != null && ask != null && bid > 0 && ask > 0
-                  ? (bid + ask) / 2
-                  : last,
-              impliedVolatility:
-                quote.impliedVolatility ?? contract.impliedVolatility ?? null,
-              delta: quote.delta ?? contract.delta ?? null,
-              gamma: quote.gamma ?? contract.gamma ?? null,
-              theta: quote.theta ?? contract.theta ?? null,
-              vega: quote.vega ?? contract.vega ?? null,
-              openInterest: quote.openInterest ?? contract.openInterest ?? null,
-              volume: quote.volume ?? contract.volume ?? null,
-              updatedAt: quote.updatedAt ?? contract.updatedAt,
-              quoteFreshness: quote.freshness ?? contract.quoteFreshness,
-              marketDataMode: quote.marketDataMode ?? contract.marketDataMode,
-              quoteUpdatedAt:
-                quote.dataUpdatedAt ?? quote.updatedAt ?? contract.quoteUpdatedAt,
-              dataUpdatedAt:
-                quote.dataUpdatedAt ?? quote.updatedAt ?? contract.dataUpdatedAt,
-              ageMs: quote.ageMs ?? contract.ageMs ?? null,
-            },
-          ];
-        });
-      } else {
-        contracts = [];
+      if (
+        historicalHydration.requestedCount > 0 &&
+        historicalHydration.returnedCount === 0 &&
+        liveCandidateContracts.every(
+          (contract) => (contract.mark ?? 0) <= 0 || (contract.volume ?? 0) <= 0,
+        )
+      ) {
+        ibkrReason ??= "options_flow_historical_hydration_empty";
       }
+      contracts = liveHydration.contracts;
       ibkrHydratedExpirationCount = batch.results.filter(
         (result) => result.contracts.length > 0,
       ).length;
       ibkrReason ??=
         batch.results.length > 0 && contracts.length === 0
-          ? (quotePayload?.debug?.rejectedCount ?? 0) > 0
-            ? "options_flow_scanner_line_budget_exhausted"
-            : "options_flow_no_hydrated_contracts"
+          ? "options_flow_no_hydrated_contracts"
           : null;
     } else {
       ibkrReason ??= expirationsResult.debug.stale
@@ -16195,37 +16605,31 @@ export async function benchmarkOptionsFlowScannerTickerPass(input: {
       const liveCandidateContracts = selectFlowScannerLiveCandidateContracts(
         metadataContracts,
         lineBudget,
+        underlying,
       );
       liveCandidateCount = liveCandidateContracts.length;
-      const providerContractIds = liveCandidateContracts
-        .map((contract) => contract.contract.providerContractId)
-        .filter((providerContractId): providerContractId is string =>
-          Boolean(providerContractId),
-        );
 
       lineUsageBeforeQuotes = summarizeMarketDataLineUsage(
         getMarketDataAdmissionDiagnostics(),
       );
       const quoteStartedAt = Date.now();
-      const quotePayload =
-        providerContractIds.length > 0
-          ? await fetchBridgeOptionQuoteSnapshots({
-              underlying,
-              providerContractIds,
-              owner: `flow-scanner-benchmark:${underlying}:${lineBudget}:${quoteStartedAt}`,
-              intent: "flow-scanner-live",
-              ttlMs: Math.max(10_000, runtimeConfig.scannerIntervalMs),
-              fallbackProvider: "none",
-              requiresGreeks: false,
-            })
-          : null;
+      const historicalHydration =
+        await hydrateFlowScannerContractsFromHistoricalBars({
+          underlying,
+          candidates: liveCandidateContracts,
+          scanPhase: "manual",
+        });
+      const liveHydration = await hydrateFlowScannerContractsFromLiveQuotes({
+        underlying,
+        candidates: historicalHydration.contracts,
+        owner: `flow-scanner-benchmark:${underlying}:${lineBudget}:${quoteStartedAt}`,
+      });
       quoteMs = Math.max(0, Date.now() - quoteStartedAt);
       lineDwellMs = quoteMs;
-      acceptedQuoteCount = quotePayload?.debug?.acceptedCount ?? 0;
-      rejectedQuoteCount = quotePayload?.debug?.rejectedCount ?? 0;
-      returnedQuoteCount =
-        quotePayload?.debug?.returnedCount ?? quotePayload?.quotes.length ?? 0;
-      missingQuoteCount = Math.max(0, acceptedQuoteCount - returnedQuoteCount);
+      acceptedQuoteCount = liveHydration.acceptedCount;
+      rejectedQuoteCount = liveHydration.rejectedCount;
+      returnedQuoteCount = liveHydration.returnedCount || historicalHydration.returnedCount;
+      missingQuoteCount = liveHydration.missingCount;
 
       results.push({
         underlying,

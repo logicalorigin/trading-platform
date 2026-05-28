@@ -93,10 +93,12 @@ export function buildSignalMatrixRequestPlan({
   timeframes = DEFAULT_SIGNAL_MATRIX_TIMEFRAMES,
   pressureLevel = "normal",
   backgroundReady = false,
+  startupProtectionActive = false,
   cursor = 0,
   pollMs = 0,
 } = {}) {
   const universe = uniqueSymbols(symbols);
+  const startupProtected = Boolean(startupProtectionActive);
   const matrixTimeframes = normalizeTimeframes(timeframes);
   const hydrationMap = buildHydrationMap(currentStates);
   const universeSet = new Set(universe);
@@ -114,9 +116,9 @@ export function buildSignalMatrixRequestPlan({
   const needsHydration = (symbol) =>
     symbolNeedsHydration(symbol, hydrationMap, matrixTimeframes);
   const missingSymbols = universe.filter(needsHydration);
-  const priorityBatch = orderedPriority
-    .filter(needsHydration)
-    .slice(0, requestLimit);
+  const priorityBatch = startupProtected
+    ? []
+    : orderedPriority.filter(needsHydration).slice(0, requestLimit);
   const prioritySet = new Set(priorityBatch);
   const backgroundUniverse = universe.filter((symbol) => !prioritySet.has(symbol));
   const missingBackgroundUniverse = backgroundUniverse.filter(needsHydration);
@@ -128,6 +130,7 @@ export function buildSignalMatrixRequestPlan({
     requestLimit - priorityBatch.length,
   );
   const backgroundAllowed =
+    !startupProtected &&
     Boolean(backgroundReady) &&
     pressureLevel !== "high" &&
     pressureLevel !== "critical";
@@ -146,6 +149,7 @@ export function buildSignalMatrixRequestPlan({
     nextCursor: background.nextCursor,
     backgroundReady: backgroundAllowed,
     backgroundPaused: !backgroundAllowed || backgroundLimit <= 0,
+    startupProtectionActive: startupProtected,
     pressureLevel,
     coverage: {
       totalSymbols: universe.length,
@@ -155,6 +159,7 @@ export function buildSignalMatrixRequestPlan({
       hydratedSymbols: Math.max(0, universe.length - missingSymbols.length),
       missingSymbols: missingSymbols.length,
       pendingSymbols: missingSymbols.length,
+      startupProtectionActive: startupProtected,
       estimatedFullCycleMs:
         pollMs > 0 && missingSymbols.length > 0 && requestSymbols.length > 0
           ? Math.ceil(missingSymbols.length / requestSymbols.length) * pollMs

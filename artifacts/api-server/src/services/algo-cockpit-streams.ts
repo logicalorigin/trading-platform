@@ -13,6 +13,7 @@ import {
   listSignalOptionsAutomationState,
 } from "./signal-options-automation";
 import { getSignalMonitorProfile } from "./signal-monitor";
+import { getApiResourcePressureSnapshot } from "./resource-pressure";
 
 type Unsubscribe = () => void;
 
@@ -51,6 +52,10 @@ const normalizeMode = (mode: RuntimeMode | undefined): RuntimeMode =>
 
 const normalizeEventLimit = (limit: number | undefined): number =>
   Math.min(Math.max(Math.floor(limit ?? 20), 1), 100);
+
+export function shouldUseCriticalOnlyAlgoCockpitPayload(level: unknown): boolean {
+  return level === "high" || level === "critical";
+}
 
 async function resolveAlgoCockpitTarget(input: AlgoCockpitStreamInput = {}) {
   const requestedMode = normalizeMode(input.mode);
@@ -115,6 +120,14 @@ export async function fetchAlgoCockpitStreamPayload(
   input: AlgoCockpitStreamInput = {},
   stream: AlgoCockpitStreamPayload["stream"] = "algo-cockpit-bootstrap",
 ): Promise<AlgoCockpitStreamPayload> {
+  if (
+    shouldUseCriticalOnlyAlgoCockpitPayload(
+      getApiResourcePressureSnapshot().level,
+    )
+  ) {
+    return fetchAlgoCockpitCriticalPayload(input, stream);
+  }
+
   const target = await resolveAlgoCockpitTarget(input);
   const [events, signalOptionsState, cockpit, performance, signalMonitorProfile] =
     await Promise.all([

@@ -806,8 +806,8 @@ test("signal monitor marks built-in fallback universes as non-authoritative", ()
 
 test("signal monitor state hydration is scoped to the profile timeframe", () => {
   const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
-  const start = source.indexOf("export async function getSignalMonitorState");
-  const end = source.indexOf("export async function evaluateSignalMonitor", start);
+  const start = source.indexOf("async function readSignalMonitorStateFresh");
+  const end = source.indexOf("type SignalMonitorStateReadResult", start);
   assert.notEqual(start, -1);
   assert.notEqual(end, -1);
   const block = source.slice(start, end);
@@ -823,6 +823,26 @@ test("signal monitor state hydration is scoped to the profile timeframe", () => 
   assert.match(block, /watchlistSymbols/);
   assert.match(block, /currentUniverseSymbols\.has\(symbol\)/);
   assert.match(block, /isSignalMonitorStateCurrentForLane/);
+});
+
+test("signal monitor state route opts into stale-fast cache metadata", () => {
+  const routeSource = readFileSync(
+    new URL("../routes/signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const zodSource = readFileSync(
+    new URL("../../../../lib/api-zod/src/generated/api.ts", import.meta.url),
+    "utf8",
+  );
+  const start = zodSource.indexOf("export const GetSignalMonitorStateResponse");
+  const end = zodSource.indexOf("/**", start + 1);
+  const block = zodSource.slice(start, end);
+
+  assert.match(routeSource, /staleFast:\s*true/);
+  assert.match(block, /"cacheStatus"/);
+  assert.match(block, /"refreshing"/);
+  assert.match(block, /"servedAt"/);
+  assert.match(block, /"stateSource"/);
 });
 
 test("signal monitor lane recency rejects stale persisted fresh rows", () => {

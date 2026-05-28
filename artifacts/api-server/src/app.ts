@@ -8,6 +8,7 @@ import { isHttpError } from "./lib/errors";
 import { logger } from "./lib/logger";
 import { resolveApiRequestLogLevel } from "./lib/request-logging";
 import { recordApiRequest } from "./services/request-metrics";
+import { apiRouteAdmissionMiddleware } from "./services/route-admission";
 
 const app: Express = express();
 
@@ -101,6 +102,7 @@ app.use(
 app.use(cors());
 app.use(express.json({ type: ["application/json", "application/reports+json"] }));
 app.use(express.urlencoded({ extended: true }));
+app.use(apiRouteAdmissionMiddleware);
 
 app.use("/api", router);
 

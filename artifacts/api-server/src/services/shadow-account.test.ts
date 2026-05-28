@@ -13,6 +13,7 @@ import {
   computeShadowOrderFees,
   SHADOW_STARTING_BALANCE,
 } from "./shadow-account";
+import { tunedSignalOptionsExecutionProfile } from "@workspace/backtest-core";
 
 test("shadow account snapshot stream uses the visible-page cadence", () => {
   assert.equal(SHADOW_ACCOUNT_STREAM_INTERVAL_MS, 2_000);
@@ -840,7 +841,7 @@ test("source-scoped shadow positions require matching source keys and source pre
   assert.match(source, /positionMatchesShadowSource\(position, source\)/);
 });
 
-test("shadow account reads repair live signal-options mirrors before projecting positions", () => {
+test("shadow account positions repair live signal-options mirrors inside cached read", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const summaryBody = source.match(
     /export async function getShadowAccountSummary\([\s\S]*?\nexport async function getShadowAccountAllocation/,
@@ -862,8 +863,8 @@ test("shadow account reads repair live signal-options mirrors before projecting 
   assert.doesNotMatch(summaryBody, /repairSignalOptionsAutomationMirrorsForRead/);
   assert.ok(positionsBody);
   assert.ok(
-    positionsBody.indexOf("await repairSignalOptionsAutomationMirrorsForRead(source);") <
-      positionsBody.indexOf("return withShadowReadCache("),
+    positionsBody.indexOf("return withShadowReadCache(") <
+      positionsBody.indexOf("await repairSignalOptionsAutomationMirrorsForRead(source);"),
   );
   assert.ok(riskBody);
   assert.match(riskBody, /getShadowAccountPositions\(\{\s*source,\s*liveQuotes: false,?\s*\}\)/);
@@ -957,6 +958,167 @@ test("shadow option pricing policy blocks frozen and partial quotes from valuati
   assert.equal(partial.valuationEligible, false);
   assert.equal(partial.valuationMark, 1.1);
   assert.equal(partial.valuationReason, "quote_not_two_sided");
+});
+
+test("shadow mark trailing decision matches APLD live stop breach", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const pricing = internals.buildShadowOptionPricingPolicy({
+    quote: {
+      bid: 2.61,
+      ask: 2.75,
+      freshness: "live",
+      marketDataMode: "live",
+      updatedAt: "2026-05-28T13:50:52.000Z",
+    },
+    fallbackMark: 2.68,
+  });
+
+  const decision = internals.computeSignalOptionsShadowMarkExitDecision({
+    contract: {
+      ticker: "APLD20260529C46",
+      underlying: "APLD",
+      expirationDate: new Date("2026-05-29T00:00:00.000Z"),
+      strike: 46,
+      right: "call" as const,
+      multiplier: 100,
+      sharesPerContract: 100,
+    },
+    entryPrice: 2.4,
+    peakPrice: 3.9,
+    markPrice: 2.68,
+    profile: tunedSignalOptionsExecutionProfile,
+    pricing,
+    markAt: new Date("2026-05-28T13:50:52.000Z"),
+  });
+
+  assert.equal(decision.exitReason, "runner_trail_stop");
+  assert.equal(decision.skipReason, null);
+  assert.equal(decision.exitPrice, 2.62);
+  assert.equal(decision.stop?.trailActive, true);
+  assert.equal(decision.stop?.trailStopPrice, 3.12);
+  assert.deepEqual(decision.stop?.progressiveTrailStep, {
+    activationPct: 45,
+    minLockedGainPct: 25,
+    givebackPct: 20,
+  });
+});
+
+test("shadow mark trailing decision catches CRWV runner giveback from fresh marks", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const pricing = internals.buildShadowOptionPricingPolicy({
+    quote: {
+      bid: 6.9,
+      ask: 7.04,
+      freshness: "live",
+      marketDataMode: "live",
+      updatedAt: "2026-05-28T15:47:00.000Z",
+    },
+    fallbackMark: 6.97,
+  });
+
+  const decision = internals.computeSignalOptionsShadowMarkExitDecision({
+    contract: {
+      ticker: "CRWV20260529C102",
+      underlying: "CRWV",
+      expirationDate: new Date("2026-05-29T00:00:00.000Z"),
+      strike: 102,
+      right: "call" as const,
+      multiplier: 100,
+      sharesPerContract: 100,
+    },
+    entryPrice: 4.2,
+    peakPrice: 8.662342,
+    markPrice: 6.97,
+    profile: tunedSignalOptionsExecutionProfile,
+    pricing,
+    markAt: new Date("2026-05-28T15:47:00.000Z"),
+  });
+
+  assert.equal(decision.exitReason, "runner_trail_stop");
+  assert.equal(decision.skipReason, null);
+  assert.equal(decision.exitPrice, 6.91);
+  assert.equal(decision.stop?.trailActive, true);
+  assert.equal(decision.stop?.trailStopPrice, 7.36);
+  assert.deepEqual(decision.stop?.progressiveTrailStep, {
+    activationPct: 100,
+    minLockedGainPct: 60,
+    givebackPct: 15,
+  });
+});
+
+test("shadow mark trailing decision only uses actionable in-session option quotes", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const contract = {
+    ticker: "CRWV20260529C102",
+    underlying: "CRWV",
+    expirationDate: new Date("2026-05-29T00:00:00.000Z"),
+    strike: 102,
+    right: "call" as const,
+    multiplier: 100,
+    sharesPerContract: 100,
+  };
+  const livePricing = internals.buildShadowOptionPricingPolicy({
+    quote: {
+      bid: 6.9,
+      ask: 7.04,
+      freshness: "live",
+      marketDataMode: "live",
+      updatedAt: "2026-05-28T15:47:00.000Z",
+    },
+    fallbackMark: 6.97,
+  });
+  const frozenPricing = internals.buildShadowOptionPricingPolicy({
+    quote: {
+      bid: 6.9,
+      ask: 7.04,
+      freshness: "live",
+      marketDataMode: "frozen",
+      updatedAt: "2026-05-28T15:47:00.000Z",
+    },
+    fallbackMark: 6.97,
+  });
+  const baseDecision = {
+    contract,
+    entryPrice: 4.2,
+    peakPrice: 8.662342,
+    markPrice: 6.97,
+    profile: tunedSignalOptionsExecutionProfile,
+    markAt: new Date("2026-05-28T15:47:00.000Z"),
+  };
+
+  assert.equal(
+    internals.computeSignalOptionsShadowMarkExitDecision({
+      ...baseDecision,
+      pricing: frozenPricing,
+    }).skipReason,
+    "mark_not_actionable",
+  );
+  assert.equal(
+    internals.computeSignalOptionsShadowMarkExitDecision({
+      ...baseDecision,
+      pricing: livePricing,
+      markAt: new Date("2026-05-28T20:01:00.000Z"),
+    }).skipReason,
+    "option_session_closed",
+  );
+});
+
+test("shadow mark refresh enforces signal-options trailing stops after mark writes", () => {
+  const source = readFileSync(
+    new URL("./shadow-account.ts", import.meta.url),
+    "utf8",
+  );
+  const refreshBody = source.match(
+    /export async function refreshShadowPositionMarks\([\s\S]*?\nasync function ensureFreshShadowState/,
+  )?.[0];
+
+  assert.ok(refreshBody);
+  assert.ok(
+    refreshBody.indexOf("await db.insert(shadowPositionMarksTable).values") <
+      refreshBody.indexOf("await enforceSignalOptionsTrailingStopFromShadowMark"),
+  );
+  assert.match(refreshBody, /position\.assetClass === "option" && contract && optionPricing/);
+  assert.match(source, /enforcementSource: "shadow_mark"/);
 });
 
 test("shadow option day change ignores frozen quote valuation", () => {

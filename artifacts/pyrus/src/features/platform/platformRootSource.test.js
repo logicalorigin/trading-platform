@@ -679,8 +679,12 @@ test("Algo monitor is frame-owned and replaces the activity sidebar feed", () =>
   assert.match(shellSource, /activitySidebarCollapsed/);
   assert.match(shellSource, /activitySidebarWidth/);
   assert.match(appSource, /const frameAuxiliaryDataEnabled = Boolean/);
-  assert.match(appSource, /screenWarmupPhase === "ready"/);
-  assert.match(appSource, /activeScreenBackgroundDataAllowed/);
+  assert.match(appSource, /const activeScreenFrameReady = Boolean/);
+  const frameAuxiliaryDataEnabledBlock =
+    appSource.match(/const frameAuxiliaryDataEnabled = Boolean\([\s\S]*?\n  \);/)?.[0] ??
+    "";
+  assert.match(frameAuxiliaryDataEnabledBlock, /activeScreenFrameReady/);
+  assert.doesNotMatch(frameAuxiliaryDataEnabledBlock, /activeScreenBackgroundDataAllowed/);
   assert.match(appSource, /frameAuxiliaryDataEnabled=\{frameAuxiliaryDataEnabled\}/);
   assert.equal(existsSync(retiredActivitySidebarPath), false);
   assert.match(algoMonitorSource, /useListAlgoDeployments/);
@@ -773,6 +777,8 @@ test("Algo monitor sidebar waits for frame data enablement before querying", () 
   assert.match(html, /data-testid="platform-algo-monitor-card"/);
   assert.match(html, /Algo Monitor/);
   assert.match(html, /Preparing algo monitor/);
+  assert.match(html, /Starting the frame-owned algo data stream\./);
+  assert.doesNotMatch(html, /Waiting for the active section to finish first paint\./);
   assert.doesNotMatch(html, /No algo deployment/);
 });
 
@@ -1646,6 +1652,7 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.match(source, /const signalMonitorRuntimePollMs = Math\.max/);
   assert.match(source, /SIGNAL_MATRIX_TIMEFRAMES\s*=\s*\["2m", "5m", "15m"\]/);
   assert.match(source, /const signalMonitorDisplayReady = Boolean/);
+  assert.match(displayReadyBlock ?? "", /firstScreenReady/);
   assert.doesNotMatch(displayReadyBlock ?? "", /backgroundResumeReady/);
   assert.match(eventsReadyBlock ?? "", /backgroundResumeReady\.signalDisplay/);
   assert.match(source, /buildSignalMatrixRequestPlan/);
@@ -1658,6 +1665,7 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.match(source, /const signalMatrixRuntimeReady = Boolean/);
   assert.match(matrixReadyBlock ?? "", /signalMonitorDisplayReady/);
   assert.match(matrixReadyBlock ?? "", /platformWorkVisible/);
+  assert.match(matrixReadyBlock ?? "", /!startupProtectionActive/);
   assert.match(matrixReadyBlock ?? "", /signalMatrixPriorityReady \|\| signalMatrixBackgroundReady/);
   assert.match(matrixReadyBlock ?? "", /signalMatrixBackgroundReady/);
   assert.doesNotMatch(matrixReadyBlock ?? "", /screenWarmupPhase === "ready"/);
@@ -1826,10 +1834,19 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   );
   assert.doesNotMatch(registrySource, retiredRouteShellPattern);
   assert.doesNotMatch(registrySource, retiredRouteShellTestIdPattern);
+  assert.match(registrySource, /import \{ markScreenReady \} from "\.\/performanceMetrics"/);
+  assert.match(registrySource, /BOOT_SCREEN_MODULE_PRELOAD_TASK_BY_SCREEN_ID/);
+  assert.match(registrySource, /startBootProgressTask\(bootProgressTaskId\)/);
+  assert.match(registrySource, /completeBootProgressTask\(bootProgressTaskId\)/);
   assert.match(registrySource, /props\?\.isVisible === false/);
+  assert.match(registrySource, /const cachedScreenComponent = SCREEN_MODULE_COMPONENTS\.get\(screenId\)/);
+  assert.match(registrySource, /setScreenComponent\(\(\) => cachedScreenComponent\)/);
   assert.match(registrySource, /loadScreenModule\(screenId,\s*\{ label \}\)/);
   assert.match(registrySource, /setScreenComponent\(\(\) => mod\.default\)/);
+  assert.match(registrySource, /markScreenReady\(screenId\)/);
+  assert.match(registrySource, /props\?\.onReadinessChange\?\.\(\{ frameReady: true \}\)/);
   assert.match(registrySource, /export const ScreenLoadingFallback = /);
+  assert.match(registrySource, /\) : props\?\.isVisible === false \? \(\s*null\s*\) : \(/);
   assert.match(registrySource, /<ScreenLoadingFallback screenId=\{screenId\} error=\{loadError\} \/>/);
   assert.doesNotMatch(registrySource, /lazyWithRetry/);
   assert.doesNotMatch(registrySource, /LazyScreen/);
@@ -1857,6 +1874,10 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.match(appSource, /const screenCodePreloadReady = operationalCodePreloadReady/);
   assert.match(appSource, /const backgroundScreenPreloadReady = Boolean/);
   assert.match(appSource, /memoryAllowsBackgroundWarmup/);
+  assert.match(appSource, /useBootProgress\(\)/);
+  assert.match(appSource, /workspace-boot-progress-loader/);
+  assert.match(appSource, /BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS/);
+  assert.match(appSource, /skipBootProgressTasks\(/);
   assert.doesNotMatch(routerSource, /const useDeferredActiveScreen = \(screen\) =>/);
   assert.doesNotMatch(routerSource, /window\.requestAnimationFrame\(activate\)/);
   assert.match(routerSource, /const marketDataActive = screen === "market";/);
@@ -1937,6 +1958,7 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.doesNotMatch(researchScreenSource, /data-testid=.*loading.*shell/);
   assert.match(schedulerSource, /mountScreens:\s*false/);
   assert.match(schedulerSource, /const backgroundHistoryReady = screenWarmupPhase === "ready"/);
+  assert.match(schedulerSource, /startupProtectionActive/);
 });
 
 test("retained hidden screens are isolated from shell and root render churn", () => {
@@ -1950,6 +1972,7 @@ test("retained hidden screens are isolated from shell and root render churn", ()
   assert.match(shellSource, /const PlatformScreenStack = memo/);
   assert.match(shellSource, /data-testid="platform-screen-stack"/);
   assert.match(shellSource, /<PlatformScreenStack/);
+  assert.doesNotMatch(shellSource, /ScreenReadyProbe/);
   assert.match(registrySource, /skipStableHiddenScreenRender/);
   assert.match(
     registrySource,
@@ -1984,6 +2007,7 @@ test("screen activation animation replay avoids forced layout reads", () => {
 test("platform background work waits for active screen readiness", () => {
   const appSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
   const shellSource = readFileSync(new URL("./PlatformShell.jsx", import.meta.url), "utf8");
+  const registrySource = readFileSync(new URL("./screenRegistry.jsx", import.meta.url), "utf8");
   const routerSource = readFileSync(
     new URL("./PlatformScreenRouter.jsx", import.meta.url),
     "utf8",
@@ -1999,8 +2023,14 @@ test("platform background work waits for active screen readiness", () => {
   assert.match(appSource, /frameReady: false/);
   assert.match(appSource, /Boolean\(patch\.frameReady\) \|\| previous\.frameReady/);
   assert.match(appSource, /const activeScreenCriticalReady = Boolean/);
+  assert.match(appSource, /const activeScreenFrameReady = Boolean/);
   assert.match(appSource, /const activeScreenBackgroundAllowed = Boolean/);
   assert.match(appSource, /const activeScreenBackgroundDataAllowed = Boolean/);
+  const frameAuxiliaryDataEnabledBlock =
+    appSource.match(/const frameAuxiliaryDataEnabled = Boolean\([\s\S]*?\n  \);/)?.[0] ??
+    "";
+  assert.match(frameAuxiliaryDataEnabledBlock, /activeScreenFrameReady/);
+  assert.doesNotMatch(frameAuxiliaryDataEnabledBlock, /activeScreenBackgroundDataAllowed/);
   assert.match(appSource, /const isPhone = viewport\.flags\.isPhone/);
   assert.match(
     appSource,
@@ -2010,17 +2040,18 @@ test("platform background work waits for active screen readiness", () => {
   assert.match(appSource, /\(backgroundDataWarmupEnabled \|\| isPhone\)/);
   assert.match(
     appSource,
-    /activeScreenBackgroundAllowed:\s*activeScreenBackgroundDataAllowed,\s*\n\s*ibkrWorkPressure/,
+    /activeScreenBackgroundAllowed:\s*activeScreenBackgroundDataAllowed,\s*\n\s*startupProtectionActive,\s*\n\s*ibkrWorkPressure/,
   );
   assert.match(appSource, /mobileViewport:\s*isPhone/);
   assert.match(positionAlertsQueryBlock, /activeScreenBackgroundAllowed/);
   assert.match(positionAlertsQueryBlock, /backgroundDataWarmupEnabled/);
   assert.match(positionAlertsQueryBlock, /screenWarmupPhase === "ready"/);
+  assert.match(positionAlertsQueryBlock, /!startupProtectionActive/);
   assert.match(positionAlertsQueryBlock, /!memoryBlocksOperationalPreload/);
   assert.doesNotMatch(positionAlertsQueryBlock, /screen !== "market" \|\| activeScreenCriticalReady/);
   assert.match(
     appSource,
-    /const operationalCodePreloadReady = Boolean\(\s*platformWorkVisible &&\s*firstScreenReady &&\s*!isPhone &&\s*!warmupTestOverrides\.disableOperationalCodePreload,\s*\);/,
+    /const operationalCodePreloadReady = Boolean\(\s*platformWorkVisible &&\s*firstScreenReady &&\s*!startupProtectionActive &&\s*!isPhone &&\s*!warmupTestOverrides\.disableOperationalCodePreload,\s*\);/,
   );
   assert.doesNotMatch(
     appSource,
@@ -2040,11 +2071,14 @@ test("platform background work waits for active screen readiness", () => {
     /handleScreenReadiness\(readyScreenId, \{\s*frameReady: true,\s*\}\)/,
   );
   assert.match(appSource, /onScreenReadiness=\{handleScreenReadiness\}/);
-  assert.doesNotMatch(
-    shellSource,
-    /<ScreenReadyProbe screenId=\{id\} active=\{active\} \/>\s*<Suspense/,
-  );
-  assert.match(screenSuspenseBlock, /ScreenReadyProbe/);
+  assert.match(appSource, /const activateScreen = useCallback\(\(nextScreen\) => \{/);
+  assert.match(appSource, /setMountedScreens\(\(current\) =>[\s\S]*current\[normalizedScreen\][\s\S]*\{ \.\.\.current, \[normalizedScreen\]: true \}/);
+  assert.match(appSource, /setScreen\(normalizedScreen\)/);
+  assert.match(appSource, /setScreen=\{activateScreen\}/);
+  assert.match(shellSource, /<Suspense fallback=\{<ScreenLoadingFallback screenId=\{id\} \/>\}>[\s\S]*\{renderScreenById\(id\)\}[\s\S]*<\/Suspense>/);
+  assert.doesNotMatch(shellSource, /ScreenReadyProbe/);
+  assert.doesNotMatch(screenSuspenseBlock, /ScreenReadyProbe/);
+  assert.match(registrySource, /markScreenReady\(screenId\)/);
   assert.match(routerSource, /const readinessHandlers = useMemo/);
   assert.match(routerSource, /SCREEN_IDS\.map/);
   assert.match(routerSource, /const buildReadinessHandler = \(screenId\) => readinessHandlers\[screenId\]/);
@@ -2377,8 +2411,14 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
   assert.match(algoSource, /const algoLiveDataQueriesEnabled = Boolean\(isVisible && algoLivePageReady\);/);
   assert.match(algoSource, /const algoSetupQueriesEnabled = Boolean\(isVisible\);/);
   assert.match(algoSource, /const algoCriticalQueriesEnabled = Boolean\(algoLiveDataQueriesEnabled\);/);
-  assert.match(algoSource, /const algoDerivedQueriesEnabled = Boolean\(algoLiveDataQueriesEnabled\);/);
-  assert.match(algoSource, /const algoPostCriticalQueriesEnabled = Boolean\(algoLiveDataQueriesEnabled\);/);
+  assert.match(
+    algoSource,
+    /const algoDerivedQueriesEnabled = Boolean\(\s*algoLiveDataQueriesEnabled &&\s*algoDerivedFallbackReady &&\s*!algoCockpitStreamFreshness\.algoFullFresh,\s*\);/,
+  );
+  assert.match(
+    algoSource,
+    /const algoPostCriticalQueriesEnabled = Boolean\(\s*algoLiveDataQueriesEnabled &&\s*algoDerivedFallbackReady &&\s*!shadowAccountStreamFreshness\.accountFresh,\s*\);/,
+  );
   assert.match(algoSource, /<Suspense fallback=\{<AlgoLiveLoading \/>\}>/);
   assert.match(algoSource, /import \{ AlgoRightRail \} from "\.\/algo\/AlgoRightRail\.jsx";/);
   assert.match(algoSource, /rightRail=\{\s*<AlgoRightRail/);

@@ -18,7 +18,6 @@ import { getIbkrHistoricalAdmissionSnapshot } from "./ibkr-historical-admission"
 import { ensureIbkrLaneRuntimeOverridesLoaded } from "./ibkr-lanes";
 import {
   getOptionsFlowScannerDiagnostics,
-  reconcileIbkrWatchlistPrewarmFromBridgeDiagnostics,
 } from "./platform";
 import { getStockAggregateStreamDiagnostics } from "./stock-aggregate-stream";
 
@@ -565,6 +564,7 @@ function buildLineAllocation(input: {
   const admission = input.admission;
   const pressure = admission.pressure;
   const lineAllocation = admission.lineAllocation;
+  const portfolio = admission.portfolio;
   const scannerLineUtilization = (
     admission as ReturnType<typeof getMarketDataAdmissionDiagnostics> & {
       optionsFlowScanner?: ReturnType<typeof getOptionsFlowScannerDiagnostics>;
@@ -595,6 +595,11 @@ function buildLineAllocation(input: {
     manualDepthEquityLineCount: readNumber(admission.manualDepthEquityLineCount),
     targetFillLines,
     remainingToTargetLineCount,
+    utilizationLevel:
+      typeof pressure.utilizationLevel === "string"
+        ? pressure.utilizationLevel
+        : null,
+    utilizationPercent: readNumber(pressure.utilizationPercent),
     usableRemainingLineCount: readNumber(admission.usableRemainingLineCount),
     protectedLineCount: readNumber(
       lineAllocation.protectedLineCount,
@@ -615,6 +620,16 @@ function buildLineAllocation(input: {
     optionReserveLineCount: readNumber(pressure.optionReserveLineCount),
     bridgeActiveLineCount: input.bridgeActiveLineCount,
     bridgeLineBudget: input.bridgeLineBudget,
+    portfolioPolicy:
+      typeof portfolio?.policy === "string" ? portfolio.policy : null,
+    pinnedLineCount: readNumber(portfolio?.pinned?.activeLineCount),
+    priorityLineCount: readNumber(portfolio?.priority?.activeLineCount),
+    scannerRotatingLineCount: readNumber(
+      portfolio?.scannerRotating?.activeLineCount,
+    ),
+    rotatingReclaimableLineCount: readNumber(
+      portfolio?.rotatingReclaimableLineCount,
+    ),
   };
 }
 
@@ -646,6 +661,14 @@ function buildLineUtilizationAudit(input: {
     Boolean(deepScanner.draining) ||
     deepScanner.activeCount > 0 ||
     deepScanner.queuedCount > 0;
+  const scannerReclaimableLineCount =
+    readNumber(admission.portfolio?.rotatingReclaimableLineCount) ?? 0;
+  const scannerPressureLevel =
+    admission.optionsFlowScanner.resourcePressure?.level ?? "normal";
+  const scannerThrottledHighPressure =
+    (scannerPressureLevel === "high" || scannerPressureLevel === "critical") &&
+    Number(admission.optionsFlowScanner.lineUtilization?.effectiveConcurrency) <= 1 &&
+    scannerWorkActive;
   const admissionVsBridgeLineDelta =
     input.driftReconciliation.status === "unknown"
       ? input.bridgeActiveLineCount === null
@@ -654,8 +677,14 @@ function buildLineUtilizationAudit(input: {
       : input.driftReconciliation.apiLineCount -
         input.driftReconciliation.bridgeLineCount;
   const topLimitingReason =
-    idleToTargetLineCount === 0
-      ? "target-filled"
+    admission.optionsFlowScanner.backgroundBlockedReason === "resource-pressure"
+      ? "critical-scanner-shed"
+      : scannerThrottledHighPressure
+        ? "scanner-throttled-high-pressure"
+        : idleToTargetLineCount === 0 && scannerReclaimableLineCount > 0
+          ? "scanner-filling-unused-capacity"
+          : idleToTargetLineCount === 0
+            ? "target-filled"
       : bridgeRemainingLineCount === 0
         ? "bridge-budget-full"
         : input.driftReconciliation.status === "unknown"
@@ -689,6 +718,8 @@ function buildLineUtilizationAudit(input: {
       unusedPoolLineCount: scannerUnusedPoolLineCount,
       backgroundBlockedReason:
         admission.optionsFlowScanner.backgroundBlockedReason,
+      scannerFillMode: admission.optionsFlowScanner.scannerFillMode,
+      limitingReason: admission.optionsFlowScanner.limitingReason,
       activeDeepScanCount: deepScanner.activeCount,
       queuedDeepScanCount: deepScanner.queuedCount,
       draining: deepScanner.draining,
@@ -696,6 +727,7 @@ function buildLineUtilizationAudit(input: {
         admission.flowScannerActivity?.recentRotatedCount ?? 0,
       recentRejectedCount:
         admission.flowScannerActivity?.recentRejectedCount ?? 0,
+      reclaimableLineCount: scannerReclaimableLineCount,
     },
   };
 }
@@ -737,9 +769,6 @@ export async function getIbkrLineUsageSnapshot() {
   const bridgeLineBudget = readNumber(subscriptions.marketDataLineBudget);
   if (bridgeLineBudget !== null) {
     setMarketDataAdmissionBridgeLineBudget(bridgeLineBudget, bridge.fetchedAt);
-  }
-  if (bridge.value) {
-    reconcileIbkrWatchlistPrewarmFromBridgeDiagnostics(bridge.value);
   }
   const admission = {
     ...getMarketDataAdmissionDiagnostics(),

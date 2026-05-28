@@ -128,6 +128,9 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /ACCOUNT_SWITCH_PREFETCH_OPTIONS/);
   assert.match(source, /staleTime:\s*90_000/);
   assert.match(source, /const ACCOUNT_SWITCH_KEEP_WARM_MS = 60_000/);
+  assert.match(source, /const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 1_000/);
+  assert.match(source, /const ACCOUNT_LIVE_FALLBACK_DELAY_MS = 5_000/);
+  assert.match(source, /const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 6_000/);
   assert.match(source, /const prefetchAccountSectionLiveQueries = useCallback/);
   assert.match(source, /getGetAccountSummaryQueryOptions/);
   assert.match(source, /getGetAccountPositionsQueryOptions/);
@@ -135,6 +138,8 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /getGetAccountEquityHistoryQueryOptions/);
   assert.match(source, /const inactiveAccountSection = shadowMode \? "real" : "shadow"/);
   assert.match(source, /const inactiveAccountPageRequest = useMemo/);
+  assert.match(source, /const inactiveAccountPrewarmEnabled = Boolean/);
+  assert.match(source, /isVisible && accountQueriesEnabled && accountCriticalReady/);
   assert.match(source, /prefetchAccountSectionLiveQueries\(inactiveAccountSection\)/);
   assert.match(source, /window\.setInterval\(\(\) => \{[\s\S]*prefetchAccountSectionLiveQueries\(inactiveAccountSection\);[\s\S]*ACCOUNT_SWITCH_KEEP_WARM_MS/);
   assert.doesNotMatch(immediateSwitchPrefetchBlock, /requestIdleCallback/);
@@ -160,6 +165,23 @@ test("account screen wires shadow account queries through the paper ledger path"
   );
   assert.doesNotMatch(source, /dataScopeKey="account-equity"/);
   assert.match(source, /const accountCriticalReady = Boolean/);
+  assert.match(source, /const derivedAccountQueriesEnabled = Boolean/);
+  assert.match(
+    source,
+    /accountDerivedFallbackReady && !accountPageStreamFreshness\.accountDerivedFresh/,
+  );
+  assert.match(
+    source,
+    /secondaryAccountQueriesEnabled && activatedAccountPanels\.tradingAnalysis/,
+  );
+  assert.match(
+    source,
+    /secondaryAccountQueriesEnabled && activatedAccountPanels\.support/,
+  );
+  assert.match(
+    source,
+    /!accountPageStreamFreshness\.accountDerivedFresh[\s\S]*return undefined/,
+  );
   assert.match(source, /onReadinessChange\?\.\(\{/);
 });
 

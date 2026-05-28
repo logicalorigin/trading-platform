@@ -8,7 +8,7 @@ import {
   listStrategies,
   resolveSignalOptionsExecutionProfile,
   resolveSignalOptionsStrike,
-  signalOptionsStrikeSlotForRight,
+  signalOptionsStrikeSlotsForRight,
   type SignalOptionsExecutionProfile,
   type BacktestBar,
   type BacktestTimeframe,
@@ -377,19 +377,30 @@ export async function resolveBacktestOptionContract(
   const selected =
     signalOptionsProfile
       ? (() => {
-          const selectedStrike = resolveSignalOptionsStrike({
-            strikes: filteredByExpiry.map((contract) => contract.strike),
-            spotPrice: input.spotPrice,
-            slot: signalOptionsStrikeSlotForRight(
-              signalOptionsProfile,
-              input.right,
-            ),
-          });
-          return (
-            filteredByExpiry.find(
-              (contract) => contract.strike === selectedStrike,
-            ) ?? null
-          );
+          const strikes = filteredByExpiry.map((contract) => contract.strike);
+          const attemptedStrikes = new Set<number>();
+          for (const slot of signalOptionsStrikeSlotsForRight(
+            signalOptionsProfile,
+            input.right,
+          )) {
+            const selectedStrike = resolveSignalOptionsStrike({
+              strikes,
+              spotPrice: input.spotPrice,
+              slot,
+            });
+            if (selectedStrike == null || attemptedStrikes.has(selectedStrike)) {
+              continue;
+            }
+            attemptedStrikes.add(selectedStrike);
+            const contract =
+              filteredByExpiry.find(
+                (item) => item.strike === selectedStrike,
+              ) ?? null;
+            if (contract) {
+              return contract;
+            }
+          }
+          return null;
         })()
       : [...filteredByExpiry].sort((left, right) => {
           const strikeDelta =

@@ -16,6 +16,100 @@ export interface HealthStatus {
   status: HealthStatusStatus;
 }
 
+export type ReadinessState = typeof ReadinessState[keyof typeof ReadinessState];
+
+
+export const ReadinessState = {
+  ready: 'ready',
+  degraded: 'degraded',
+  not_ready: 'not_ready',
+  unknown: 'unknown',
+} as const;
+
+export type BrokerTradingReadinessState = typeof BrokerTradingReadinessState[keyof typeof BrokerTradingReadinessState];
+
+
+export const BrokerTradingReadinessState = {
+  ready: 'ready',
+  blocked: 'blocked',
+  unknown: 'unknown',
+} as const;
+
+export type ReadinessStatusLivenessStatus = typeof ReadinessStatusLivenessStatus[keyof typeof ReadinessStatusLivenessStatus];
+
+
+export const ReadinessStatusLivenessStatus = {
+  ok: 'ok',
+} as const;
+
+export type ReadinessStatusLiveness = {
+  status: ReadinessStatusLivenessStatus;
+};
+
+export type ReadinessStatusAppReadinessDiagnosticsStatus = typeof ReadinessStatusAppReadinessDiagnosticsStatus[keyof typeof ReadinessStatusAppReadinessDiagnosticsStatus];
+
+
+export const ReadinessStatusAppReadinessDiagnosticsStatus = {
+  ok: 'ok',
+  degraded: 'degraded',
+  down: 'down',
+  unknown: 'unknown',
+} as const;
+
+export type ReadinessStatusAppReadinessDiagnosticsSeverity = typeof ReadinessStatusAppReadinessDiagnosticsSeverity[keyof typeof ReadinessStatusAppReadinessDiagnosticsSeverity];
+
+
+export const ReadinessStatusAppReadinessDiagnosticsSeverity = {
+  info: 'info',
+  warning: 'warning',
+  critical: 'critical',
+} as const;
+
+export type ReadinessStatusAppReadiness = {
+  status: ReadinessState;
+  reason: string | null;
+  diagnosticsStatus: ReadinessStatusAppReadinessDiagnosticsStatus;
+  diagnosticsSeverity: ReadinessStatusAppReadinessDiagnosticsSeverity;
+};
+
+export type ReadinessStatusBrokerTradingReadinessChecks = {
+  configured: boolean | null;
+  reachable: boolean | null;
+  connected: boolean | null;
+  authenticated: boolean | null;
+  competing: boolean | null;
+  healthFresh: boolean | null;
+  streamFresh: boolean | null;
+  strictReady: boolean | null;
+};
+
+export type ReadinessStatusBrokerTradingReadiness = {
+  status: BrokerTradingReadinessState;
+  ready: boolean;
+  reason: string | null;
+  checks: ReadinessStatusBrokerTradingReadinessChecks;
+};
+
+export type ReadinessStatusPressureLevel = typeof ReadinessStatusPressureLevel[keyof typeof ReadinessStatusPressureLevel];
+
+
+export const ReadinessStatusPressureLevel = {
+  normal: 'normal',
+  watch: 'watch',
+  high: 'high',
+  critical: 'critical',
+} as const;
+
+export interface ReadinessStatus {
+  generatedAt: string;
+  liveness: ReadinessStatusLiveness;
+  appReadiness: ReadinessStatusAppReadiness;
+  brokerTradingReadiness: ReadinessStatusBrokerTradingReadiness;
+  pressureLevel: ReadinessStatusPressureLevel;
+  degradedReasons: string[];
+  manualTradingBlockedReason: string | null;
+}
+
 export type EnvironmentMode = typeof EnvironmentMode[keyof typeof EnvironmentMode];
 
 
@@ -4244,6 +4338,25 @@ export interface SignalMonitorEvent {
   payload: JsonObject;
 }
 
+export type SignalMonitorStateResponseCacheStatus = typeof SignalMonitorStateResponseCacheStatus[keyof typeof SignalMonitorStateResponseCacheStatus];
+
+
+export const SignalMonitorStateResponseCacheStatus = {
+  hit: 'hit',
+  stale: 'stale',
+  inflight: 'inflight',
+  miss: 'miss',
+} as const;
+
+export type SignalMonitorStateResponseStateSource = typeof SignalMonitorStateResponseStateSource[keyof typeof SignalMonitorStateResponseStateSource];
+
+
+export const SignalMonitorStateResponseStateSource = {
+  database: 'database',
+  'runtime-fallback': 'runtime-fallback',
+  'memory-cache': 'memory-cache',
+} as const;
+
 export interface SignalMonitorStateResponse {
   profile: SignalMonitorProfile;
   states: SignalMonitorSymbolState[];
@@ -4251,6 +4364,10 @@ export interface SignalMonitorStateResponse {
   truncated: boolean;
   skippedSymbols: string[];
   universe: SignalMonitorUniverseSummary;
+  cacheStatus?: SignalMonitorStateResponseCacheStatus;
+  refreshing?: boolean;
+  servedAt?: string;
+  stateSource?: SignalMonitorStateResponseStateSource;
 }
 
 export type SignalMonitorMatrixResponseCacheStatus = typeof SignalMonitorMatrixResponseCacheStatus[keyof typeof SignalMonitorMatrixResponseCacheStatus];

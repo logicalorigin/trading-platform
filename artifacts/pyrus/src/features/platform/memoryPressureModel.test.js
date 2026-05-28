@@ -212,3 +212,26 @@ test("memory pressure footer fill uses score with level fallback", () => {
   assert.equal(memoryPressureFillPercent({ score: 133, level: "critical" }), 100);
   assert.equal(memoryPressureFillPercent({ level: "high" }), 68);
 });
+
+test("memory pressure popover separates load score from critical driver", () => {
+  const model = buildMemoryPressurePopoverModel({
+    level: "critical",
+    score: 50,
+    trend: "steady",
+    pressureDrivers: [
+      {
+        kind: "browser-memory",
+        label: "Browser memory",
+        level: "critical",
+        detail: "900 MB",
+        contribution: 48,
+      },
+    ],
+  });
+
+  assert.equal(
+    model.statusRows.find((row) => row.label === "Load score")?.value,
+    "50 pts",
+  );
+  assert.equal(model.criticalReason, "Browser memory 900 MB");
+});

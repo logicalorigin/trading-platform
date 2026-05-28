@@ -62,6 +62,10 @@ const DEFAULT_RECENT_WINDOW_MINUTES = 60;
 const STORE_BATCH_SIZE = 500;
 let marketDataStoreDisabled = false;
 
+export function __setMarketDataStoreDisabledForTests(disabled: boolean): void {
+  marketDataStoreDisabled = disabled;
+}
+
 const TIMEFRAME_STEP_MS: Partial<Record<MarketDataStoreTimeframe, number>> = {
   "1s": 1_000,
   "5s": 5_000,

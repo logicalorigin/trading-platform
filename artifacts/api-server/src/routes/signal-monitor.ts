@@ -63,7 +63,7 @@ router.post("/signal-monitor/matrix", async (req, res) => {
 router.get("/signal-monitor/state", async (req, res) => {
   const query = GetSignalMonitorStateQueryParams.parse(req.query);
   const data = GetSignalMonitorStateResponse.parse(
-    await getSignalMonitorState(query),
+    await getSignalMonitorState({ ...query, staleFast: true }),
   );
 
   res.json(data);

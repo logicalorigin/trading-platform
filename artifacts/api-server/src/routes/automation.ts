@@ -21,6 +21,10 @@ import {
   runSignalOptionsShadowScan,
   updateSignalOptionsExecutionProfile,
 } from "../services/signal-options-automation";
+import {
+  getApiRouteAdmission,
+  withRouteAdmissionMetadata,
+} from "../services/route-admission";
 
 const router: IRouter = Router();
 
@@ -129,26 +133,41 @@ router.patch("/algo/deployments/:deploymentId/strategy-settings", async (req, re
 });
 
 router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, res): Promise<void> => {
+  const admission = getApiRouteAdmission(res);
   res.json(
-    await listSignalOptionsAutomationState({
-      deploymentId: req.params.deploymentId,
-    }),
+    withRouteAdmissionMetadata(
+      await listSignalOptionsAutomationState({
+        deploymentId: req.params.deploymentId,
+        cacheMode: admission.cacheOnly ? "cache-only" : "normal",
+      }),
+      admission,
+    ),
   );
 });
 
 router.get("/algo/deployments/:deploymentId/cockpit", async (req, res): Promise<void> => {
+  const admission = getApiRouteAdmission(res);
   res.json(
-    await getAlgoDeploymentCockpit({
-      deploymentId: req.params.deploymentId,
-    }),
+    withRouteAdmissionMetadata(
+      await getAlgoDeploymentCockpit({
+        deploymentId: req.params.deploymentId,
+        cacheMode: admission.cacheOnly ? "cache-only" : "normal",
+      }),
+      admission,
+    ),
   );
 });
 
 router.get("/algo/deployments/:deploymentId/signal-options/performance", async (req, res): Promise<void> => {
+  const admission = getApiRouteAdmission(res);
   res.json(
-    await getSignalOptionsPerformance({
-      deploymentId: req.params.deploymentId,
-    }),
+    withRouteAdmissionMetadata(
+      await getSignalOptionsPerformance({
+        deploymentId: req.params.deploymentId,
+        cacheMode: admission.cacheOnly ? "cache-only" : "normal",
+      }),
+      admission,
+    ),
   );
 });
 

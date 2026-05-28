@@ -78,6 +78,36 @@ test("footer memory pressure mini bars keep empty fallback slots", () => {
   );
 });
 
+test("footer memory pressure shows level instead of score percent", () => {
+  const html = renderIndicator({
+    level: "critical",
+    score: 50,
+    trend: "steady",
+    browserMemoryMb: 900,
+    apiHeapUsedPercent: 44,
+    activeWorkloadCount: 2,
+    pressureDrivers: [
+      {
+        kind: "browser-memory",
+        label: "Browser memory",
+        level: "critical",
+        score: 900,
+      },
+    ],
+    dominantDrivers: [
+      {
+        kind: "browser-memory",
+        label: "Browser memory",
+        level: "critical",
+        detail: "900 MB",
+      },
+    ],
+  });
+
+  assert.match(html, />critical</);
+  assert.doesNotMatch(html, />50%<\/span>/);
+});
+
 test("footer memory pressure mini bars keep metric labels visible", () => {
   const source = readFileSync(
     new URL("./FooterMemoryPressureIndicator.jsx", import.meta.url),

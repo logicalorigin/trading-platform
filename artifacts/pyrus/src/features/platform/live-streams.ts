@@ -2134,6 +2134,94 @@ const weightPercentFromNav = (
     : null;
 };
 
+const streamPositionMark = (position: StreamPosition): number =>
+  Number.isFinite(position.marketPrice) && Math.abs(position.marketPrice) > 1e-9
+    ? position.marketPrice
+    : position.averagePrice;
+
+const streamPositionHasMarketMark = (position: StreamPosition): boolean => {
+  const hasNonZeroMarketPrice =
+    Number.isFinite(position.marketPrice) && Math.abs(position.marketPrice) > 1e-9;
+  const hasNonZeroMarketValue =
+    Number.isFinite(position.marketValue) && Math.abs(position.marketValue) > 0.01;
+  const costBasisValue = position.averagePrice * position.quantity;
+  const marketPriceDiffersFromAverage =
+    hasNonZeroMarketPrice &&
+    Math.abs(position.marketPrice - position.averagePrice) > 0.005;
+  const marketValueDiffersFromCost =
+    Math.abs(position.marketValue - costBasisValue) > 0.01;
+  return (
+    marketPriceDiffersFromAverage ||
+    (hasNonZeroMarketPrice && Math.abs(position.unrealizedPnl ?? 0) > 0.01) ||
+    (hasNonZeroMarketValue && marketValueDiffersFromCost)
+  );
+};
+
+const accountPositionsBaseFromStream = (
+  current: AccountPositionsResponse | undefined,
+  payload: AccountStreamPayload,
+  accountId: string,
+): AccountPositionsResponse => {
+  if (current) {
+    return current;
+  }
+
+  const scopedAccounts = accountsForScopedAccountId(payload.accounts, accountId);
+  const timestampMs = latestAccountUpdatedAtMs(scopedAccounts);
+  const cash = sumAccountField(scopedAccounts, "cash");
+
+  return {
+    accountId,
+    currency: scopedAccounts[0]?.currency || "USD",
+    positions: [],
+    totals: {
+      weightPercent: 0,
+      unrealizedPnl: 0,
+      grossLong: 0,
+      grossShort: 0,
+      netExposure: 0,
+      cash,
+      totalCash: cash,
+      buyingPower: sumAccountField(scopedAccounts, "buyingPower"),
+      netLiquidation: sumAccountField(scopedAccounts, "netLiquidation"),
+    },
+    updatedAt: timestampMs
+      ? new Date(timestampMs).toISOString()
+      : new Date().toISOString(),
+  };
+};
+
+const accountPositionTotalsFromStreamRows = (
+  currentTotals: AccountPositionsResponse["totals"] | undefined,
+  rows: AccountPositionRow[],
+  payload: AccountStreamPayload,
+  accountId: string,
+): AccountPositionsResponse["totals"] => {
+  const scopedAccounts = accountsForScopedAccountId(payload.accounts, accountId);
+  const cash = sumAccountField(scopedAccounts, "cash");
+  const buyingPower = sumAccountField(scopedAccounts, "buyingPower");
+  const netLiquidation = sumAccountField(scopedAccounts, "netLiquidation");
+
+  return {
+    ...(currentTotals || {}),
+    weightPercent: rows.reduce((sum, row) => sum + (row.weightPercent ?? 0), 0),
+    unrealizedPnl: rows.reduce((sum, row) => sum + (row.unrealizedPnl ?? 0), 0),
+    grossLong: rows
+      .filter((row) => row.marketValue > 0)
+      .reduce((sum, row) => sum + row.marketValue, 0),
+    grossShort: Math.abs(
+      rows
+        .filter((row) => row.marketValue < 0)
+        .reduce((sum, row) => sum + row.marketValue, 0),
+    ),
+    netExposure: rows.reduce((sum, row) => sum + row.marketValue, 0),
+    cash: cash ?? currentTotals?.cash ?? null,
+    totalCash: cash ?? currentTotals?.totalCash ?? null,
+    buyingPower: buyingPower ?? currentTotals?.buyingPower ?? null,
+    netLiquidation: netLiquidation ?? currentTotals?.netLiquidation ?? null,
+  };
+};
+
 const accountPositionMatchesAssetClass = (
   position: Pick<AccountPositionRow, "assetClass">,
   queryKey: unknown,
@@ -2173,10 +2261,13 @@ const accountPositionRowFromStream = (
   payload: AccountStreamPayload,
   accountId: string,
 ): AccountPositionRow => {
-  const mark =
-    Number.isFinite(position.marketPrice) && Math.abs(position.marketPrice) > 1e-9
-      ? position.marketPrice
-      : position.averagePrice;
+  const hasMarketMark = streamPositionHasMarketMark(position);
+  const mark = hasMarketMark
+    ? streamPositionMark(position)
+    : current?.mark ?? streamPositionMark(position);
+  const marketValue = hasMarketMark
+    ? position.marketValue
+    : current?.marketValue ?? position.marketValue;
 
   return {
     ...(current || {}),
@@ -2193,10 +2284,16 @@ const accountPositionRowFromStream = (
     mark,
     dayChange: current?.dayChange ?? null,
     dayChangePercent: current?.dayChangePercent ?? null,
-    unrealizedPnl: position.unrealizedPnl,
-    unrealizedPnlPercent: position.unrealizedPnlPercent,
-    marketValue: position.marketValue,
-    weightPercent: weightPercentFromNav(position.marketValue, payload, accountId),
+    unrealizedPnl: hasMarketMark
+      ? position.unrealizedPnl
+      : current?.unrealizedPnl ?? position.unrealizedPnl,
+    unrealizedPnlPercent: hasMarketMark
+      ? position.unrealizedPnlPercent
+      : current?.unrealizedPnlPercent ?? position.unrealizedPnlPercent,
+    marketValue,
+    weightPercent: hasMarketMark
+      ? weightPercentFromNav(marketValue, payload, accountId)
+      : current?.weightPercent ?? weightPercentFromNav(marketValue, payload, accountId),
     betaWeightedDelta: current?.betaWeightedDelta ?? null,
     lots: current?.lots ?? [],
     openOrders: current?.openOrders ?? [],
@@ -2225,6 +2322,7 @@ const patchCombinedAccountPositions = (
       averageCostAccumulator: number;
       markAccumulator: number;
       averageWeight: number;
+      hasMarketMark: boolean;
       marketValue: number;
       unrealizedPnl: number;
       unrealizedPnlPercentAccumulator: number;
@@ -2234,10 +2332,8 @@ const patchCombinedAccountPositions = (
 
   payload.positions.forEach((position) => {
     const key = streamPositionGroupKey(position);
-    const mark =
-      Number.isFinite(position.marketPrice) && Math.abs(position.marketPrice) > 1e-9
-        ? position.marketPrice
-        : position.averagePrice;
+    const mark = streamPositionMark(position);
+    const hasMarketMark = streamPositionHasMarketMark(position);
     const quantityWeight = Math.abs(position.quantity);
     const valueWeight = Math.abs(position.marketValue);
     const currentGroup = groups.get(key) ?? {
@@ -2248,6 +2344,7 @@ const patchCombinedAccountPositions = (
       averageCostAccumulator: 0,
       markAccumulator: 0,
       averageWeight: 0,
+      hasMarketMark: false,
       marketValue: 0,
       unrealizedPnl: 0,
       unrealizedPnlPercentAccumulator: 0,
@@ -2259,6 +2356,7 @@ const patchCombinedAccountPositions = (
     currentGroup.averageCostAccumulator += position.averagePrice * quantityWeight;
     currentGroup.markAccumulator += mark * quantityWeight;
     currentGroup.averageWeight += quantityWeight;
+    currentGroup.hasMarketMark ||= hasMarketMark;
     currentGroup.marketValue += position.marketValue;
     currentGroup.unrealizedPnl += position.unrealizedPnl;
     currentGroup.unrealizedPnlPercentAccumulator +=
@@ -2272,6 +2370,16 @@ const patchCombinedAccountPositions = (
     Array.from(groups.entries())
       .map(([id, group]) => {
         const currentRow = group.current;
+        const resolvedMark =
+          group.hasMarketMark || !currentRow
+            ? group.averageWeight > 0
+              ? group.markAccumulator / group.averageWeight
+              : 0
+            : currentRow.mark;
+        const resolvedMarketValue =
+          group.hasMarketMark || !currentRow
+            ? group.marketValue
+            : currentRow.marketValue;
         const row: AccountPositionRow = {
           ...(currentRow || {}),
           id,
@@ -2289,17 +2397,22 @@ const patchCombinedAccountPositions = (
             group.averageWeight > 0
               ? group.averageCostAccumulator / group.averageWeight
               : 0,
-          mark:
-            group.averageWeight > 0 ? group.markAccumulator / group.averageWeight : 0,
+          mark: resolvedMark,
           dayChange: currentRow?.dayChange ?? null,
           dayChangePercent: currentRow?.dayChangePercent ?? null,
-          unrealizedPnl: group.unrealizedPnl,
+          unrealizedPnl: group.hasMarketMark || !currentRow
+            ? group.unrealizedPnl
+            : currentRow.unrealizedPnl,
           unrealizedPnlPercent:
-            group.unrealizedWeight > 0
+            !group.hasMarketMark && currentRow
+              ? currentRow.unrealizedPnlPercent
+              : group.unrealizedWeight > 0
               ? group.unrealizedPnlPercentAccumulator / group.unrealizedWeight
               : 0,
-          marketValue: group.marketValue,
-          weightPercent: weightPercentFromNav(group.marketValue, payload, accountId),
+          marketValue: resolvedMarketValue,
+          weightPercent: group.hasMarketMark || !currentRow
+            ? weightPercentFromNav(resolvedMarketValue, payload, accountId)
+            : currentRow.weightPercent,
           betaWeightedDelta: currentRow?.betaWeightedDelta ?? null,
           lots: currentRow?.lots ?? [],
           openOrders: currentRow?.openOrders ?? [],
@@ -2321,21 +2434,26 @@ const patchAccountPositionsFromStream = (
   accountId: string,
   queryKey: unknown,
 ): AccountPositionsResponse | undefined => {
-  if (!current) {
+  const scopedPositions =
+    accountId === "combined"
+      ? payload.positions
+      : payload.positions.filter((position) => position.accountId === accountId);
+  if (!current && !scopedPositions.some(streamPositionHasMarketMark)) {
     return current;
   }
 
+  const base = accountPositionsBaseFromStream(current, payload, accountId);
   const positions =
     accountId === "combined"
-      ? patchCombinedAccountPositions(current, payload, accountId, queryKey)
+      ? patchCombinedAccountPositions(base, payload, accountId, queryKey)
       : sortPatchedAccountPositions(
-          current.positions,
+          base.positions,
           payload.positions
             .filter((position) => position.accountId === accountId)
             .map((position) =>
               accountPositionRowFromStream(
                 position,
-                current.positions.find((row) => row.id === position.id),
+                base.positions.find((row) => row.id === position.id),
                 payload,
                 accountId,
               ),
@@ -2344,8 +2462,14 @@ const patchAccountPositionsFromStream = (
         );
 
   return {
-    ...current,
+    ...base,
     positions,
+    totals: accountPositionTotalsFromStreamRows(
+      base.totals,
+      positions,
+      payload,
+      accountId,
+    ),
     updatedAt: new Date().toISOString(),
   };
 };

@@ -1,7 +1,16 @@
 import { createServer } from "node:http";
 import app from "./app";
 import { logger } from "./lib/logger";
-import { startDiagnosticsCollector } from "./services/diagnostics";
+import {
+  recordServerDiagnosticEvent,
+  startDiagnosticsCollector,
+} from "./services/diagnostics";
+import {
+  appendRuntimeFlightRecorderEvent,
+  importRuntimeFlightRecorderIncidents,
+  installRuntimeFlightRecorderProcessHandlers,
+  startRuntimeFlightRecorder,
+} from "./services/runtime-flight-recorder";
 import {
   listAccounts,
   startAccountFlexRefreshScheduler,
@@ -36,6 +45,7 @@ if (Number.isNaN(port) || port <= 0) {
 
 const server = createServer(app);
 attachOptionQuoteWebSocket(server);
+installRuntimeFlightRecorderProcessHandlers();
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -146,6 +156,9 @@ async function collectDiagnosticsInput() {
 }
 
 server.once("error", (err) => {
+  appendRuntimeFlightRecorderEvent("api-server-error", {
+    message: err instanceof Error ? err.message : String(err),
+  });
   logger.error({ err }, "Error listening on port");
   process.exit(1);
 });
@@ -171,4 +184,10 @@ server.listen(port, () => {
       startSignalOptionsWorker();
     });
   startDiagnosticsCollector(collectDiagnosticsInput);
+  startRuntimeFlightRecorder();
+  void importRuntimeFlightRecorderIncidents(recordServerDiagnosticEvent).catch(
+    (err) => {
+      logger.warn({ err }, "Failed to import runtime flight recorder incidents");
+    },
+  );
 });

@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { SignalMonitorProfile } from './signalMonitorProfile';
+import type { SignalMonitorStateResponseCacheStatus } from './signalMonitorStateResponseCacheStatus';
+import type { SignalMonitorStateResponseStateSource } from './signalMonitorStateResponseStateSource';
 import type { SignalMonitorSymbolState } from './signalMonitorSymbolState';
 import type { SignalMonitorUniverseSummary } from './signalMonitorUniverseSummary';
 
@@ -16,4 +18,8 @@ export interface SignalMonitorStateResponse {
   truncated: boolean;
   skippedSymbols: string[];
   universe: SignalMonitorUniverseSummary;
+  cacheStatus?: SignalMonitorStateResponseCacheStatus;
+  refreshing?: boolean;
+  servedAt?: Date;
+  stateSource?: SignalMonitorStateResponseStateSource;
 }

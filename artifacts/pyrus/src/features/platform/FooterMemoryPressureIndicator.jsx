@@ -525,10 +525,11 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
               fontSize: textSize("body"),
               fontWeight: FONT_WEIGHTS.medium,
               fontVariantNumeric: "tabular-nums",
+              textTransform: "uppercase",
               whiteSpace: "nowrap",
             }}
           >
-            {fillPercent}%
+            {level}
           </span>
           {preferences.showCompactLabel ? <MiniPressureBars signal={signal} /> : null}
         </button>
@@ -572,6 +573,11 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
               >
                 {diagnosticsStatusLabel(diagnosticsStatus)}
               </div>
+              {model.level === "critical" && model.criticalReason ? (
+                <div style={{ ...rowValueStyle, color: pressureTone(model.level) }}>
+                  Critical driver: {model.criticalReason}
+                </div>
+              ) : null}
             </div>
             <LevelPill level={model.level} />
           </div>

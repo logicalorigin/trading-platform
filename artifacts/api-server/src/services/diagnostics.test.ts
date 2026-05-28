@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 process.env["DATABASE_URL"] = "postgres://test:test@127.0.0.1:5432/test";
@@ -8,6 +17,11 @@ process.env["DB_QUERY_TIMEOUT_MS"] = "50";
 process.env["DB_STATEMENT_TIMEOUT_MS"] = "50";
 process.env["DIAGNOSTICS_SUPPRESS_DB_WARNINGS"] = "1";
 process.env["DIAGNOSTICS_SKIP_STORAGE_TABLE_STATS"] = "1";
+process.env["PYRUS_RUNTIME_TEST_PROCESS_SCAN"] = "0";
+process.env["PYRUS_FLIGHT_RECORDER_DIR"] = path.join(
+  mkdtempSync(path.join(tmpdir(), "pyrus-flight-recorder-diagnostics-")),
+  "flight-recorder",
+);
 
 const diagnosticsModule = await import("./diagnostics");
 const requestMetricsModule = await import("./request-metrics");
@@ -197,6 +211,7 @@ test("diagnostics collect API latency and runtime snapshots without broker mutat
   const marketData = collected.snapshots.find((snapshot) => snapshot.subsystem === "market-data");
   const browser = collected.snapshots.find((snapshot) => snapshot.subsystem === "browser");
   const orders = collected.snapshots.find((snapshot) => snapshot.subsystem === "orders");
+  const runtime = collected.snapshots.find((snapshot) => snapshot.subsystem === "runtime");
   const storage = collected.snapshots.find((snapshot) => snapshot.subsystem === "storage");
 
   assert.equal((api?.metrics.requestCount5m as number) >= 2, true);
@@ -215,8 +230,47 @@ test("diagnostics collect API latency and runtime snapshots without broker mutat
   assert.equal(marketData?.status, "ok");
   assert.equal(browser?.metrics.warningCount5m, 0);
   assert.equal(orders?.metrics.orderCount, 3);
+  assert.equal(runtime?.status, "ok");
+  assert.equal(typeof runtime?.metrics.recorderDir, "string");
   assert.equal(storage?.status, "ok");
   assert.equal(storage?.metrics.status, "ok");
+});
+
+test("diagnostics warn on long-running workspace test processes", async () => {
+  const procRoot = mkdtempSync(path.join(tmpdir(), "pyrus-diagnostics-proc-"));
+  const pidDir = path.join(procRoot, "5252");
+  mkdirSync(pidDir, { recursive: true });
+  writeFileSync(
+    path.join(pidDir, "cmdline"),
+    [
+      process.execPath,
+      "--import",
+      "tsx",
+      "--test",
+      "/home/runner/workspace/artifacts/api-server/src/services/options-flow-scanner.test.ts",
+    ].join("\0"),
+  );
+  symlinkSync("/home/runner/workspace", path.join(pidDir, "cwd"));
+  const oldTime = new Date(Date.now() - 60_000);
+  utimesSync(pidDir, oldTime, oldTime);
+
+  process.env["PYRUS_RUNTIME_TEST_PROCESS_SCAN"] = "1";
+  process.env["PYRUS_RUNTIME_PROCESS_SCAN_DIR"] = procRoot;
+  process.env["PYRUS_RUNTIME_TEST_PROCESS_MIN_AGE_MS"] = "1000";
+  try {
+    const collected = await collectDiagnosticSnapshot(healthyDiagnosticInput());
+    const runtime = collected.snapshots.find(
+      (snapshot) => snapshot.subsystem === "runtime",
+    );
+
+    assert.equal(runtime?.status, "degraded");
+    assert.equal(runtime?.metrics.workspaceLongRunningTestProcessCount, 1);
+    assert.match(runtime?.summary ?? "", /long-running workspace test process/);
+  } finally {
+    process.env["PYRUS_RUNTIME_TEST_PROCESS_SCAN"] = "0";
+    delete process.env["PYRUS_RUNTIME_PROCESS_SCAN_DIR"];
+    delete process.env["PYRUS_RUNTIME_TEST_PROCESS_MIN_AGE_MS"];
+  }
 });
 
 test("diagnostics treat recovered signal-options worker failures as historical", async () => {

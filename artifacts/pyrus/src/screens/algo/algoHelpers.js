@@ -28,6 +28,8 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
     targetDte: 1,
     maxDte: 3,
     allowZeroDte: false,
+    callStrikeSlots: [3],
+    putStrikeSlots: [2],
     callStrikeSlot: 3,
     putStrikeSlot: 2,
   },
@@ -136,6 +138,47 @@ export const SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS = [
   { value: 4, label: "Upper +1" },
   { value: 5, label: "Upper +2" },
 ];
+
+export const MAX_SIGNAL_OPTIONS_STRIKE_SLOTS = 3;
+
+export const normalizeSignalOptionsStrikeSlot = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.min(5, Math.max(0, Math.round(parsed)));
+};
+
+export const normalizeSignalOptionsStrikeSlots = (value, fallback) => {
+  const source = Array.isArray(value) ? value : [value];
+  const slots = [];
+  for (const item of source) {
+    const slot = normalizeSignalOptionsStrikeSlot(item);
+    if (slot != null && !slots.includes(slot)) {
+      slots.push(slot);
+    }
+    if (slots.length >= MAX_SIGNAL_OPTIONS_STRIKE_SLOTS) break;
+  }
+  if (slots.length) return slots;
+  const fallbackSource = Array.isArray(fallback) ? fallback : [fallback];
+  return normalizeSignalOptionsStrikeSlots(fallbackSource, [3]);
+};
+
+export const normalizeSignalOptionsProfileStrikeSlots = (profile) => {
+  const optionSelection = asRecord(profile?.optionSelection);
+  const callStrikeSlots = normalizeSignalOptionsStrikeSlots(
+    optionSelection.callStrikeSlots,
+    optionSelection.callStrikeSlot ?? SIGNAL_OPTIONS_DEFAULT_PROFILE.optionSelection.callStrikeSlots,
+  );
+  const putStrikeSlots = normalizeSignalOptionsStrikeSlots(
+    optionSelection.putStrikeSlots,
+    optionSelection.putStrikeSlot ?? SIGNAL_OPTIONS_DEFAULT_PROFILE.optionSelection.putStrikeSlots,
+  );
+  optionSelection.callStrikeSlots = callStrikeSlots;
+  optionSelection.putStrikeSlots = putStrikeSlots;
+  optionSelection.callStrikeSlot = callStrikeSlots[0];
+  optionSelection.putStrikeSlot = putStrikeSlots[0];
+  profile.optionSelection = optionSelection;
+  return profile;
+};
 
 export const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
 export const PYRUS_SIGNALS_BOS_CONFIRMATION_OPTIONS = ["close", "wicks"];
@@ -708,13 +751,24 @@ export const mergeSignalOptionsProfile = (source) => {
   const config = asRecord(source);
   const signalOptions = asRecord(config.signalOptions);
   const rawProfile = Object.keys(signalOptions).length ? signalOptions : {};
+  const rawOptionSelection = asRecord(rawProfile.optionSelection);
   const parameters = asRecord(config.parameters);
   const profile = cloneProfile({
     ...SIGNAL_OPTIONS_DEFAULT_PROFILE,
     ...rawProfile,
     optionSelection: {
       ...SIGNAL_OPTIONS_DEFAULT_PROFILE.optionSelection,
-      ...asRecord(rawProfile.optionSelection),
+      ...rawOptionSelection,
+      callStrikeSlots:
+        rawOptionSelection.callStrikeSlots ??
+        (rawOptionSelection.callStrikeSlot != null
+          ? [rawOptionSelection.callStrikeSlot]
+          : SIGNAL_OPTIONS_DEFAULT_PROFILE.optionSelection.callStrikeSlots),
+      putStrikeSlots:
+        rawOptionSelection.putStrikeSlots ??
+        (rawOptionSelection.putStrikeSlot != null
+          ? [rawOptionSelection.putStrikeSlot]
+          : SIGNAL_OPTIONS_DEFAULT_PROFILE.optionSelection.putStrikeSlots),
     },
     riskCaps: {
       ...SIGNAL_OPTIONS_DEFAULT_PROFILE.riskCaps,
@@ -789,10 +843,16 @@ export const mergeSignalOptionsProfile = (source) => {
       parameters.signalOptionsCallStrikeSlot,
       profile.optionSelection.callStrikeSlot,
     );
+    profile.optionSelection.callStrikeSlots = [
+      profile.optionSelection.callStrikeSlot,
+    ];
     profile.optionSelection.putStrikeSlot = numberFrom(
       parameters.signalOptionsPutStrikeSlot,
       profile.optionSelection.putStrikeSlot,
     );
+    profile.optionSelection.putStrikeSlots = [
+      profile.optionSelection.putStrikeSlot,
+    ];
     profile.riskCaps.maxPremiumPerEntry = numberFrom(
       parameters.signalOptionsMaxPremium,
       profile.riskCaps.maxPremiumPerEntry,
@@ -815,7 +875,7 @@ export const mergeSignalOptionsProfile = (source) => {
     );
   }
 
-  return profile;
+  return normalizeSignalOptionsProfileStrikeSlots(profile);
 };
 
 export const buildExpandedSignalOptionsProfile = (profile) => {

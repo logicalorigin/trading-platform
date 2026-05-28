@@ -12,6 +12,7 @@ import {
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { createFlightRecorder } from "./flightRecorder.mjs";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const apiPort = process.env.PYRUS_API_PORT || "8080";
@@ -30,6 +31,7 @@ const lifecycleLogPath = path.join(
   supervisorLockDir,
   `pyrus-dev-lifecycle-${apiPort}.jsonl`,
 );
+const flightRecorder = createFlightRecorder({ repoRoot });
 const supervisorLockWaitMs = Number(process.env.PYRUS_DEV_LOCK_WAIT_MS || "8000");
 const supervisorTakeoverGraceMs = Number(
   process.env.PYRUS_DEV_TAKEOVER_GRACE_MS || "20000",
@@ -43,30 +45,35 @@ const duplicateCheckOnly = process.env.PYRUS_DEV_DUPLICATE_CHECK_ONLY === "1";
 let shuttingDown = false;
 let supervisorLockAcquired = false;
 let lifecycleHeartbeatTimer = null;
+let lifecyclePhase = "initializing";
+let apiChild = null;
+let webChild = null;
 const children = new Set();
 
 function writeLifecycleEvent(event, detail = {}) {
+  const payload = {
+    time: new Date().toISOString(),
+    event,
+    pid: process.pid,
+    ppid: process.ppid,
+    apiPort,
+    webPort,
+    replitMode: process.env.REPLIT_MODE || null,
+    pyrusReplitRun: process.env.PYRUS_REPLIT_RUN || null,
+    lockPath: supervisorLockPath,
+    ...detail,
+  };
   try {
     mkdirSync(supervisorLockDir, { recursive: true });
     appendFileSync(
       lifecycleLogPath,
-      `${JSON.stringify({
-        time: new Date().toISOString(),
-        event,
-        pid: process.pid,
-        ppid: process.ppid,
-        apiPort,
-        webPort,
-        replitMode: process.env.REPLIT_MODE || null,
-        pyrusReplitRun: process.env.PYRUS_REPLIT_RUN || null,
-        lockPath: supervisorLockPath,
-        ...detail,
-      })}\n`,
+      `${JSON.stringify(payload)}\n`,
       "utf8",
     );
   } catch {
     // Lifecycle evidence must never block app startup or shutdown.
   }
+  flightRecorder.appendEvent(event, payload);
 }
 
 function readPreviousLifecycleState() {
@@ -116,15 +123,30 @@ function readPreviousLifecycleState() {
   }
 }
 
+function currentChildrenSnapshot() {
+  return [...children].map((child) => ({
+    pid: child.pid || null,
+    killed: Boolean(child.killed),
+  }));
+}
+
+function currentFlightHeartbeat(extra = {}) {
+  return {
+    phase: lifecyclePhase,
+    lockAcquired: supervisorLockAcquired,
+    apiPid: apiChild?.pid ?? null,
+    webPid: webChild?.pid ?? null,
+    children: currentChildrenSnapshot(),
+    ...extra,
+  };
+}
+
 function startLifecycleHeartbeat() {
   if (lifecycleHeartbeatTimer) return;
   lifecycleHeartbeatTimer = setInterval(() => {
-    writeLifecycleEvent("heartbeat", {
-      children: [...children].map((child) => ({
-        pid: child.pid || null,
-        killed: Boolean(child.killed),
-      })),
-    });
+    const heartbeat = currentFlightHeartbeat();
+    writeLifecycleEvent("heartbeat", heartbeat);
+    flightRecorder.writeHeartbeat(heartbeat);
   }, 5_000);
   lifecycleHeartbeatTimer.unref?.();
 }
@@ -586,13 +608,17 @@ function apiPortOwnerStatus(apiRootPid) {
 async function shutdown(status = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
+  lifecyclePhase = "shutdown-start";
   writeLifecycleEvent("supervisor-shutdown-start", { status });
+  flightRecorder.writeHeartbeat(currentFlightHeartbeat({ status }));
   for (const child of children) killChild(child, "SIGTERM");
   await delay(1500);
   for (const child of children) killChild(child, "SIGKILL");
   stopLifecycleHeartbeat();
   removeSupervisorLock();
+  lifecyclePhase = "shutdown-complete";
   writeLifecycleEvent("supervisor-shutdown-complete", { status });
+  flightRecorder.writeHeartbeat(currentFlightHeartbeat({ status, children: [] }));
   process.exit(status);
 }
 
@@ -654,6 +680,12 @@ process.on("SIGHUP", ignoreWorkflowHangup);
 process.once("exit", removeSupervisorLock);
 
 try {
+  flightRecorder.prune();
+  const previousFlightIncident = flightRecorder.classifyAndPersistPreviousRun();
+  writeLifecycleEvent("previous-run-classified", {
+    incident: previousFlightIncident,
+  });
+
   if (duplicateCheckOnly) {
     writeLifecycleEvent("duplicate-check-start", {
       previous: readPreviousLifecycleState(),
@@ -691,15 +723,23 @@ try {
     runningInsideReplitWorkflow,
   });
   startLifecycleHeartbeat();
+  flightRecorder.writeHeartbeat(currentFlightHeartbeat());
 
+  lifecyclePhase = "api-starting";
   const api = spawnService(
     "API",
     ["--filter", "@workspace/api-server", "run", "dev"],
     { PORT: apiPort, LOG_LEVEL: process.env.LOG_LEVEL || "warn" },
   );
+  apiChild = api;
+  flightRecorder.writeHeartbeat(currentFlightHeartbeat());
   const apiExit = exitPromise("API", api);
   await waitForApi(apiExit, api.pid);
+  lifecyclePhase = "api-healthy";
+  writeLifecycleEvent("api-healthy", { childPid: api.pid || null });
+  flightRecorder.writeHeartbeat(currentFlightHeartbeat());
 
+  lifecyclePhase = "web-starting";
   const web = spawnService(
     "PYRUS web",
     ["--filter", "@workspace/pyrus", "run", "dev:web"],
@@ -710,6 +750,10 @@ try {
         process.env.VITE_PROXY_API_TARGET || `http://127.0.0.1:${apiPort}`,
     },
   );
+  webChild = web;
+  lifecyclePhase = "running";
+  writeLifecycleEvent("web-started", { childPid: web.pid || null });
+  flightRecorder.writeHeartbeat(currentFlightHeartbeat());
 
   const firstExit = await Promise.race([apiExit, exitPromise("PYRUS web", web)]);
   const code = firstExit.code ?? (firstExit.signal ? 1 : 0);

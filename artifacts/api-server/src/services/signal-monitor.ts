@@ -95,6 +95,8 @@ const SIGNAL_MONITOR_MATRIX_CACHE_TTL_MS = 60_000;
 const SIGNAL_MONITOR_MATRIX_STALE_TTL_MS = 5 * 60_000;
 const SIGNAL_MONITOR_MATRIX_EVALUATION_CACHE_MAX_ENTRIES = 64;
 const SIGNAL_MONITOR_MATRIX_AUTOMATIC_DEBOUNCE_MS = 2_000;
+const SIGNAL_MONITOR_STATE_CACHE_TTL_MS = 15_000;
+const SIGNAL_MONITOR_STATE_STALE_TTL_MS = 2 * 60_000;
 const SIGNAL_MONITOR_COMPLETED_BARS_CACHE_TTL_MS = 30_000;
 const SIGNAL_MONITOR_COMPLETED_BARS_STALE_TTL_MS = 2 * 60_000;
 const SIGNAL_MONITOR_COMPLETED_BARS_CACHE_MAX_ENTRIES = 512;
@@ -3530,15 +3532,21 @@ export const __signalMonitorInternalsForTests = {
   },
 };
 
-export async function getSignalMonitorState(input: {
-  environment?: RuntimeMode;
+type SignalMonitorStateCacheStatus = "hit" | "stale" | "inflight" | "miss";
+type SignalMonitorStateSource = "database" | "runtime-fallback" | "memory-cache";
+
+async function readSignalMonitorStateFresh(input: {
+  environment: RuntimeMode;
 }) {
   const environment = resolveEnvironment(input.environment);
   if (isSignalMonitorDbBackoffActive()) {
-    return evaluateSignalMonitorRuntimeProfileUniverse({
-      environment,
-      mode: "hydrate",
-    });
+    return {
+      value: await evaluateSignalMonitorRuntimeProfileUniverse({
+        environment,
+        mode: "hydrate",
+      }),
+      stateSource: "runtime-fallback" as const,
+    };
   }
 
   try {
@@ -3582,23 +3590,136 @@ export async function getSignalMonitorState(input: {
     });
 
     return {
-      profile: profileToResponse(hydratedProfile),
-      states: currentStates.map(stateToResponse),
-      evaluatedAt: hydratedProfile.lastEvaluatedAt ?? new Date(),
-      truncated,
-      skippedSymbols,
-      universe,
+      value: {
+        profile: profileToResponse(hydratedProfile),
+        states: currentStates.map(stateToResponse),
+        evaluatedAt: hydratedProfile.lastEvaluatedAt ?? new Date(),
+        truncated,
+        skippedSymbols,
+        universe,
+      },
+      stateSource: "database" as const,
     };
   } catch (error) {
     if (isTransientPostgresError(error)) {
       warnSignalMonitorDbUnavailable(error);
-      return evaluateSignalMonitorRuntimeProfileUniverse({
-        environment,
-        mode: "hydrate",
-      });
+      return {
+        value: await evaluateSignalMonitorRuntimeProfileUniverse({
+          environment,
+          mode: "hydrate",
+        }),
+        stateSource: "runtime-fallback" as const,
+      };
     }
     throw error;
   }
+}
+
+type SignalMonitorStateReadResult = Awaited<
+  ReturnType<typeof readSignalMonitorStateFresh>
+>;
+type SignalMonitorStateValue = SignalMonitorStateReadResult["value"];
+type SignalMonitorStateCacheEntry = SignalMonitorStateReadResult & {
+  fetchedAt: number;
+};
+
+const signalMonitorStateCache = new Map<string, SignalMonitorStateCacheEntry>();
+const signalMonitorStateInFlight = new Map<
+  string,
+  Promise<SignalMonitorStateReadResult>
+>();
+
+function signalMonitorStateCacheKey(environment: RuntimeMode): string {
+  return environment;
+}
+
+function attachSignalMonitorStateCacheMetadata(
+  value: SignalMonitorStateValue,
+  input: {
+    cacheStatus: SignalMonitorStateCacheStatus;
+    refreshing: boolean;
+    servedAt: number;
+    stateSource: SignalMonitorStateSource;
+  },
+) {
+  return {
+    ...value,
+    cacheStatus: input.cacheStatus,
+    refreshing: input.refreshing,
+    servedAt: new Date(input.servedAt),
+    stateSource: input.stateSource,
+  };
+}
+
+function startSignalMonitorStateRefresh(
+  environment: RuntimeMode,
+): Promise<SignalMonitorStateReadResult> {
+  const cacheKey = signalMonitorStateCacheKey(environment);
+  const existing = signalMonitorStateInFlight.get(cacheKey);
+  if (existing) {
+    return existing;
+  }
+  const request = readSignalMonitorStateFresh({ environment })
+    .then((result) => {
+      signalMonitorStateCache.set(cacheKey, {
+        ...result,
+        fetchedAt: Date.now(),
+      });
+      return result;
+    })
+    .finally(() => {
+      if (signalMonitorStateInFlight.get(cacheKey) === request) {
+        signalMonitorStateInFlight.delete(cacheKey);
+      }
+    });
+  signalMonitorStateInFlight.set(cacheKey, request);
+  return request;
+}
+
+export async function getSignalMonitorState(input: {
+  environment?: RuntimeMode;
+  staleFast?: boolean;
+}) {
+  const environment = resolveEnvironment(input.environment);
+  if (!input.staleFast) {
+    const fresh = await readSignalMonitorStateFresh({ environment });
+    return fresh.value;
+  }
+
+  const cacheKey = signalMonitorStateCacheKey(environment);
+  const current = Date.now();
+  const cached = signalMonitorStateCache.get(cacheKey);
+  const inFlight = signalMonitorStateInFlight.get(cacheKey);
+  if (cached && current - cached.fetchedAt <= SIGNAL_MONITOR_STATE_CACHE_TTL_MS) {
+    return attachSignalMonitorStateCacheMetadata(cached.value, {
+      cacheStatus: "hit",
+      refreshing: Boolean(inFlight),
+      servedAt: current,
+      stateSource: "memory-cache",
+    });
+  }
+
+  if (cached && current - cached.fetchedAt <= SIGNAL_MONITOR_STATE_STALE_TTL_MS) {
+    if (!inFlight) {
+      void startSignalMonitorStateRefresh(environment).catch((error) => {
+        logger.warn({ err: error, environment }, "Signal monitor state background refresh failed");
+      });
+    }
+    return attachSignalMonitorStateCacheMetadata(cached.value, {
+      cacheStatus: inFlight ? "inflight" : "stale",
+      refreshing: true,
+      servedAt: current,
+      stateSource: "memory-cache",
+    });
+  }
+
+  const fresh = await (inFlight ?? startSignalMonitorStateRefresh(environment));
+  return attachSignalMonitorStateCacheMetadata(fresh.value, {
+    cacheStatus: cached ? "stale" : "miss",
+    refreshing: false,
+    servedAt: current,
+    stateSource: fresh.stateSource,
+  });
 }
 
 export async function evaluateSignalMonitor(input: {

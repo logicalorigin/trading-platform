@@ -17,12 +17,17 @@ import {
 import {
   admitMarketDataLeases,
   isMarketDataLeaseActive,
+  recordMarketDataFallback,
   releaseMarketDataLeaseIds,
   releaseMarketDataLeases,
   subscribeMarketDataLeaseChanges,
   type MarketDataFallbackProvider,
   type MarketDataIntent,
 } from "./market-data-admission";
+import {
+  getApiResourcePressureSnapshot,
+  subscribeApiResourcePressureChanges,
+} from "./resource-pressure";
 
 type OptionQuoteWithSource = QuoteSnapshot & {
   source: "ibkr";
@@ -46,6 +51,7 @@ export type OptionQuoteSnapshotPayload = {
     liveMarketDataAvailable: boolean | null;
     errorCode?: string | null;
     errorMessage?: string | null;
+    blockedReason?: string | null;
     acceptedProviderContractIds: string[];
     missingProviderContractIds: string[];
   };
@@ -134,6 +140,8 @@ const OPTION_QUOTE_BRIDGE_CHUNK_SIZE = Math.max(
   Number.parseInt(process.env["OPTION_QUOTE_BRIDGE_CHUNK_SIZE"] ?? "100", 10) ||
     100,
 );
+const FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP_ENV =
+  "IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP";
 
 let nextSubscriberId = 1;
 let nextSnapshotOwnerId = 1;
@@ -194,6 +202,19 @@ function normalizeResolvableProviderContractIds(
 function normalizeUnderlying(value: string | null | undefined): string | null {
   const normalized = normalizeSymbol(value ?? "");
   return normalized || null;
+}
+
+function readOptionalNonNegativeIntegerEnv(name: string): number | null {
+  const value = process.env[name];
+  if (value === undefined || value === "") {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
+}
+
+function getFlowScannerLiveOptionQuoteCap(): number | null {
+  return readOptionalNonNegativeIntegerEnv(FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP_ENV);
 }
 
 function isBridgeRuntimeConfigured(): boolean {
@@ -303,6 +324,114 @@ function capacityPressureFromError(
     : "capacity_limited";
 }
 
+type LiveOptionQuotePolicy = {
+  providerContractIds: string[];
+  blockedReason: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+};
+
+function isPressureBlockedFlowScannerLevel(level: string): boolean {
+  return level === "critical";
+}
+
+function isAutomationDisplayOrPositionMarkOwner(owner: string): boolean {
+  const normalizedOwner = owner.toLowerCase();
+  return (
+    normalizedOwner.startsWith("algo-operations:") ||
+    normalizedOwner.startsWith("signal-options-position-mark:")
+  );
+}
+
+function resolveLiveOptionQuotePolicy(input: {
+  owner: string;
+  intent: MarketDataIntent;
+  providerContractIds: string[];
+}): LiveOptionQuotePolicy {
+  const providerContractIds = normalizeProviderContractIds(
+    input.providerContractIds,
+  );
+
+  if (input.intent === "flow-scanner-live") {
+    const pressure = getApiResourcePressureSnapshot();
+    if (isPressureBlockedFlowScannerLevel(pressure.level)) {
+      return {
+        providerContractIds: [],
+        blockedReason: "resource_pressure",
+        errorCode: "ibkr_live_option_quote_blocked",
+        errorMessage:
+          "IBKR live option quote request blocked by API resource pressure.",
+      };
+    }
+
+    const cap = getFlowScannerLiveOptionQuoteCap();
+    if (cap === 0) {
+      return {
+        providerContractIds: [],
+        blockedReason: "flow_scanner_live_quotes_disabled",
+        errorCode: "ibkr_live_option_quote_blocked",
+        errorMessage:
+          "IBKR live option quote request blocked because flow scanner live option quotes are disabled.",
+      };
+    }
+
+    if (cap !== null && providerContractIds.length > cap) {
+      return {
+        providerContractIds: providerContractIds.slice(0, cap),
+        blockedReason: "flow_scanner_live_quote_cap",
+        errorCode: null,
+        errorMessage: null,
+      };
+    }
+  }
+
+  if (
+    input.intent === "automation-live" &&
+    isAutomationDisplayOrPositionMarkOwner(input.owner)
+  ) {
+    const pressure = getApiResourcePressureSnapshot();
+    if (!pressure.caps.signalOptions.positionMarksAllowed) {
+      return {
+        providerContractIds: [],
+        blockedReason: "resource_pressure_position_marks_blocked",
+        errorCode: "ibkr_live_option_quote_blocked",
+        errorMessage:
+          "IBKR live option quote request blocked because automation position marks are disabled under API pressure.",
+      };
+    }
+  }
+
+  return {
+    providerContractIds,
+    blockedReason: null,
+    errorCode: null,
+    errorMessage: null,
+  };
+}
+
+function recordBlockedLiveOptionQuoteRequest(input: {
+  owner: string;
+  intent: MarketDataIntent;
+  fallbackProvider: MarketDataFallbackProvider;
+  reason: string | null;
+  providerContractIds: string[];
+  underlying: string | null;
+}): void {
+  if (!input.reason) {
+    return;
+  }
+  recordMarketDataFallback({
+    owner: input.owner,
+    intent: input.intent,
+    fallbackProvider: input.fallbackProvider,
+    reason: input.reason,
+    instrumentKey:
+      input.providerContractIds.length === 1
+        ? `option:${input.providerContractIds[0]}`
+        : `option:${input.underlying ?? "unknown"}:${input.providerContractIds.length}`,
+  });
+}
+
 function getDesiredProviderContractIds(): string[] {
   return normalizeProviderContractIds(
     Array.from(subscribers.values()).flatMap((subscriber) =>
@@ -326,10 +455,30 @@ function getRequestedProviderContractIds(): string[] {
 }
 
 function admitBridgeOptionSubscriberLeases(subscriber: Subscriber): void {
+  const policy = resolveLiveOptionQuotePolicy({
+    owner: subscriber.owner,
+    intent: subscriber.intent,
+    providerContractIds: Array.from(subscriber.providerContractIds),
+  });
+  if (policy.blockedReason) {
+    releaseMarketDataLeases(subscriber.owner, policy.blockedReason);
+    recordBlockedLiveOptionQuoteRequest({
+      owner: subscriber.owner,
+      intent: subscriber.intent,
+      fallbackProvider: subscriber.fallbackProvider,
+      reason: policy.blockedReason,
+      providerContractIds: Array.from(subscriber.providerContractIds),
+      underlying: subscriber.underlying,
+    });
+  }
+  if (policy.providerContractIds.length === 0) {
+    return;
+  }
+
   admitMarketDataLeases({
     owner: subscriber.owner,
     intent: subscriber.intent,
-    requests: Array.from(subscriber.providerContractIds).map((providerContractId) => ({
+    requests: policy.providerContractIds.map((providerContractId) => ({
       assetClass: "option" as const,
       symbol: subscriber.underlying,
       underlying: subscriber.underlying,
@@ -755,6 +904,12 @@ subscribeMarketDataLeaseChanges((event) => {
   scheduleRefreshBridgeOptionQuoteStream(0);
 });
 
+subscribeApiResourcePressureChanges(() => {
+  if (subscribers.size > 0) {
+    scheduleRefreshBridgeOptionQuoteStream(0);
+  }
+});
+
 function shouldHydrateQuoteSnapshot(
   quote: OptionQuoteWithSource | undefined,
 ): boolean {
@@ -909,10 +1064,58 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
       normalizedProviderContractIds,
     });
   }
+  const liveQuotePolicy = resolveLiveOptionQuotePolicy({
+    owner,
+    intent,
+    providerContractIds: normalizedProviderContractIds,
+  });
+  if (liveQuotePolicy.blockedReason) {
+    recordBlockedLiveOptionQuoteRequest({
+      owner,
+      intent,
+      fallbackProvider,
+      reason: liveQuotePolicy.blockedReason,
+      providerContractIds: normalizedProviderContractIds,
+      underlying,
+    });
+  }
+  if (liveQuotePolicy.providerContractIds.length === 0) {
+    const cachedQuotes = getPayloadForProviderContractIds(
+      normalizedProviderContractIds,
+      underlying,
+    );
+    const cachedQuotesByProviderContractId = new Set(
+      cachedQuotes.quotes
+        .map((quote) => quote.providerContractId?.trim?.() || "")
+        .filter(Boolean),
+    );
+    return {
+      ...cachedQuotes,
+      debug: {
+        totalMs: Math.max(0, Date.now() - requestedAt),
+        upstreamMs: null,
+        requestedCount: requestedProviderContractIds.length,
+        acceptedCount: 0,
+        rejectedCount: requestedProviderContractIds.length,
+        returnedCount: cachedQuotes.quotes.length,
+        bridgeChunks: 0,
+        providerMode: null,
+        liveMarketDataAvailable: null,
+        errorCode: liveQuotePolicy.errorCode,
+        errorMessage: liveQuotePolicy.errorMessage,
+        blockedReason: liveQuotePolicy.blockedReason,
+        acceptedProviderContractIds: [],
+        missingProviderContractIds: normalizedProviderContractIds.filter(
+          (providerContractId) =>
+            !cachedQuotesByProviderContractId.has(providerContractId),
+        ),
+      },
+    };
+  }
   const admission = admitMarketDataLeases({
     owner,
     intent,
-    requests: normalizedProviderContractIds.map((providerContractId) => ({
+    requests: liveQuotePolicy.providerContractIds.map((providerContractId) => ({
       assetClass: "option" as const,
       symbol: underlying,
       underlying,
@@ -981,6 +1184,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
         bridgeChunks: bridgeChunks.length,
         ...providerDebug,
         errorMessage: `IBKR bridge ${bridgeWorkCategory} work is backed off.`,
+        blockedReason: liveQuotePolicy.blockedReason,
         acceptedProviderContractIds: admittedProviderContractIds,
         missingProviderContractIds: normalizedProviderContractIds.filter(
           (providerContractId) =>
@@ -1078,6 +1282,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
       returnedCount: payload.quotes.length,
       bridgeChunks: bridgeChunks.length,
       ...providerDebug,
+      blockedReason: liveQuotePolicy.blockedReason,
       errorMessage: upstreamErrorMessage,
       acceptedProviderContractIds: admittedProviderContractIds,
       missingProviderContractIds: normalizedProviderContractIds.filter(

@@ -1,6 +1,7 @@
 import {
   useId,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { buildAlgoTuningImpact } from "../../features/platform/algoTuningImpactModel";
@@ -17,11 +18,13 @@ import {
 import { SegmentedControl } from "../../components/platform/primitives.jsx";
 import {
   SIGNAL_OPTIONS_EXPANDED_CAPACITY,
+  MAX_SIGNAL_OPTIONS_STRIKE_SLOTS,
   SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS,
   compactButtonStyle,
   formatChaseSteps,
   formatMoney,
   formatProgressiveTrailSteps,
+  normalizeSignalOptionsStrikeSlots,
   numberFrom,
   parseChaseSteps,
   parseProgressiveTrailSteps,
@@ -561,97 +564,6 @@ export const CompactSettingCell = ({
   );
 };
 
-const ContractDteCell = ({
-  minField,
-  zeroDteField,
-  profileDraft,
-  profileBaseline,
-  patchProfileDraftPath,
-  disabled,
-  dirtyFieldKeys,
-}) => {
-  const id = useId().replace(/:/g, "");
-  const minValue = getPathValue(profileDraft, minField.path);
-  const zeroDteValue = getPathValue(profileDraft, zeroDteField.path);
-  const minPrevious = getPathValue(profileBaseline, minField.path);
-  const zeroDtePrevious = getPathValue(profileBaseline, zeroDteField.path);
-  const dirty =
-    dirtyFieldKeys.has(fieldKey(minField)) ||
-    dirtyFieldKeys.has(fieldKey(zeroDteField));
-  const invalid = invalidNumericValue(minField, minValue);
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: sp(2),
-        minHeight: dim(42),
-        minWidth: 0,
-      }}
-      data-testid="algo-contract-min-dte"
-      title={[
-        minField.label,
-        formatSettingValue(minField, minValue),
-        zeroDteField.label,
-        formatSettingValue(zeroDteField, zeroDteValue),
-        dirty
-          ? `was ${formatSettingValue(minField, minPrevious)} / ${formatSettingValue(zeroDteField, zeroDtePrevious)}`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(" · ")}
-    >
-      <CompactLabel
-        label="Min DTE"
-        dirty={dirty}
-        previousValue={`${formatSettingValue(minField, minPrevious)} / ${formatSettingValue(zeroDteField, zeroDtePrevious)}`}
-        field={minField}
-        impact={null}
-      />
-      <span
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) auto",
-          alignItems: "center",
-          gap: sp(3),
-          minWidth: 0,
-        }}
-      >
-        <CompactFieldInput
-          id={id}
-          field={minField}
-          value={minValue}
-          invalid={invalid}
-          disabled={disabled}
-          ariaLabel={minField.label}
-          testId="algo-contract-min-dte-input"
-          onPatch={patchProfileDraftPath}
-        />
-        <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: sp(2),
-            color: CSS_COLOR.textMuted,
-            fontFamily: T.sans,
-            fontSize: textSize("micro"),
-          }}
-        >
-          0DTE
-          <CompactSwitch
-            checked={Boolean(zeroDteValue)}
-            disabled={disabled}
-            ariaLabel={zeroDteField.label}
-            testId="algo-contract-allow-0dte"
-            onChange={(nextValue) => patchProfileDraftPath(zeroDteField.path, nextValue)}
-          />
-        </span>
-      </span>
-    </div>
-  );
-};
-
 const moveStrikeSlot = (current, direction) => {
   const slots = STRIKE_SLOT_VALUES_DESC;
   const currentIndex = Math.max(0, slots.indexOf(Number(current)));
@@ -662,44 +574,243 @@ const moveStrikeSlot = (current, direction) => {
   return slots[nextIndex];
 };
 
-const DteWindowRail = ({
-  minValue,
-  targetValue,
-  maxValue,
-  zeroDteValue,
-  dirty,
-  targetDirty,
-}) => {
-  const rawMin = Math.max(0, finiteSettingNumber(minValue));
-  const rawMax = Math.max(rawMin, finiteSettingNumber(maxValue, rawMin));
-  const rawTarget = clampNumber(
-    finiteSettingNumber(targetValue, rawMin),
-    rawMin,
-    rawMax,
+const normalizeDteValues = ({ minValue, targetValue, maxValue, next = {} }) => {
+  const minSource = next.minValue ?? minValue;
+  const targetSource = next.targetValue ?? targetValue;
+  const maxSource = next.maxValue ?? maxValue;
+  const min = clampNumber(Math.round(finiteSettingNumber(minSource)), 0, 90);
+  const max = clampNumber(
+    Math.round(finiteSettingNumber(maxSource, Math.max(min, 1))),
+    min,
+    90,
   );
-  const domainMax = Math.max(1, Math.ceil(Math.max(90, rawMin, rawTarget, rawMax)));
-  const leftPct = clampNumber((rawMin / domainMax) * 100, 0, 100);
-  const rightPct = clampNumber((rawMax / domainMax) * 100, 0, 100);
-  const targetPct = clampNumber((rawTarget / domainMax) * 100, 0, 100);
+  const target = clampNumber(
+    Math.round(finiteSettingNumber(targetSource, min)),
+    min,
+    max,
+  );
+  return { min, target, max };
+};
+
+const dteTimelineDomain = ({ min, target, max, zeroDte }) => {
+  const activeSpan = Math.max(2, max - min);
+  const pad = Math.max(1, Math.ceil(activeSpan * 0.75));
+  const domainMin = zeroDte || min <= 1 ? 0 : Math.max(0, min - pad);
+  const domainMax = Math.min(90, Math.max(max + pad, target + pad, 6));
+  return {
+    domainMin,
+    domainMax: Math.max(domainMin + 1, domainMax),
+  };
+};
+
+const DteStepper = ({
+  label,
+  value,
+  min,
+  max,
+  dirty,
+  disabled,
+  testId,
+  onChange,
+}) => {
+  const id = useId().replace(/:/g, "");
+  const patch = (nextValue) =>
+    onChange(clampNumber(Math.round(finiteSettingNumber(nextValue, value)), min, max));
+  return (
+    <label
+      htmlFor={id}
+      data-testid={testId}
+      style={{
+        display: "grid",
+        gap: sp(2),
+        minWidth: 0,
+      }}
+    >
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(2),
+          color: CSS_COLOR.textSec,
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.label,
+        }}
+      >
+        {label}
+        {dirty ? (
+          <span
+            aria-label={`${label} DTE unsaved`}
+            role="status"
+            style={{
+              width: dim(5),
+              height: dim(5),
+              borderRadius: dim(RADII.pill),
+              background: CSS_COLOR.accent,
+            }}
+          />
+        ) : null}
+      </span>
+      <span
+        style={{
+          display: "grid",
+          gridTemplateColumns: `${dim(30)}px minmax(0, 1fr) ${dim(30)}px`,
+          minHeight: dim(34),
+          border: `1px solid ${dirty ? cssColorMix(CSS_COLOR.accent, 32) : CSS_COLOR.borderLight}`,
+          borderRadius: dim(RADII.xs),
+          background: dirty ? cssColorMix(CSS_COLOR.accent, 5) : CSS_COLOR.bg1,
+          overflow: "hidden",
+        }}
+      >
+        {[-1, 1].map((delta) => (
+          <button
+            key={delta}
+            type="button"
+            disabled={disabled}
+            aria-label={`${delta < 0 ? "Decrease" : "Increase"} ${label} DTE`}
+            onClick={() => patch(value + delta)}
+            style={{
+              gridColumn: delta < 0 ? 1 : 3,
+              gridRow: 1,
+              border: 0,
+              borderRight: delta < 0 ? `1px solid ${CSS_COLOR.borderLight}` : 0,
+              borderLeft: delta > 0 ? `1px solid ${CSS_COLOR.borderLight}` : 0,
+              background: "transparent",
+              color: CSS_COLOR.textMuted,
+              cursor: disabled ? "not-allowed" : "pointer",
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+            }}
+          >
+            {delta < 0 ? "-" : "+"}
+          </button>
+        ))}
+        <input
+          id={id}
+          className="tnum"
+          type="number"
+          min={min}
+          max={max}
+          step={1}
+          value={value}
+          disabled={disabled}
+          aria-label={`${label} DTE`}
+          onChange={(event) => patch(event.target.value)}
+          style={{
+            gridColumn: 2,
+            gridRow: 1,
+            width: "100%",
+            border: 0,
+            background: "transparent",
+            color: CSS_COLOR.text,
+            fontFamily: T.data,
+            fontSize: textSize("body"),
+            textAlign: "center",
+            outline: "none",
+          }}
+        />
+      </span>
+    </label>
+  );
+};
+
+const DteTimelineEditor = ({
+  minField,
+  targetField,
+  maxField,
+  zeroDteField,
+  profileDraft,
+  profileBaseline,
+  patchProfileDraftPath,
+  disabled,
+  dirtyFieldKeys,
+}) => {
+  const minValue = getPathValue(profileDraft, minField.path);
+  const targetValue = getPathValue(profileDraft, targetField.path);
+  const maxValue = getPathValue(profileDraft, maxField.path);
+  const zeroDteValue = Boolean(getPathValue(profileDraft, zeroDteField.path));
+  const minPrevious = getPathValue(profileBaseline, minField.path);
+  const targetPrevious = getPathValue(profileBaseline, targetField.path);
+  const maxPrevious = getPathValue(profileBaseline, maxField.path);
+  const zeroDtePrevious = getPathValue(profileBaseline, zeroDteField.path);
+  const minDirty = dirtyFieldKeys.has(fieldKey(minField));
+  const targetDirty = dirtyFieldKeys.has(fieldKey(targetField));
+  const maxDirty = dirtyFieldKeys.has(fieldKey(maxField));
+  const zeroDteDirty = dirtyFieldKeys.has(fieldKey(zeroDteField));
+  const dirty = minDirty || targetDirty || maxDirty || zeroDteDirty;
+  const trackRef = useRef(null);
+  const [draggingHandle, setDraggingHandle] = useState(null);
+  const dte = normalizeDteValues({ minValue, targetValue, maxValue });
+  const { domainMin, domainMax } = dteTimelineDomain({
+    ...dte,
+    zeroDte: zeroDteValue,
+  });
+  const domainSpan = Math.max(1, domainMax - domainMin);
+  const percentForValue = (value) =>
+    clampNumber(((value - domainMin) / domainSpan) * 100, 0, 100);
+  const valueFromClientX = (clientX) => {
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return dte.target;
+    const ratio = clampNumber((clientX - rect.left) / rect.width, 0, 1);
+    return Math.round(domainMin + ratio * domainSpan);
+  };
+  const patchDte = (next) => {
+    const normalized = normalizeDteValues({
+      minValue: dte.min,
+      targetValue: dte.target,
+      maxValue: dte.max,
+      next,
+    });
+    patchProfileDraftPath(minField.path, normalized.min);
+    patchProfileDraftPath(targetField.path, normalized.target);
+    patchProfileDraftPath(maxField.path, normalized.max);
+  };
+  const patchHandle = (handle, nextValue) => {
+    if (handle === "min") patchDte({ minValue: nextValue });
+    if (handle === "target") patchDte({ targetValue: nextValue });
+    if (handle === "max") patchDte({ maxValue: nextValue });
+  };
+  const handlePointerMove = (event) => {
+    if (!draggingHandle || disabled) return;
+    event.preventDefault();
+    patchHandle(draggingHandle, valueFromClientX(event.clientX));
+  };
+  const handleKeyDown = (handle, event) => {
+    const delta =
+      event.key === "ArrowLeft" || event.key === "ArrowDown"
+        ? -1
+        : event.key === "ArrowRight" || event.key === "ArrowUp"
+          ? 1
+          : 0;
+    if (!delta) return;
+    event.preventDefault();
+    patchHandle(handle, dte[handle] + delta);
+  };
+  const markers = [
+    { key: "min", label: "Min", value: dte.min, tone: CSS_COLOR.cyan, dirty: minDirty },
+    { key: "target", label: "Target", value: dte.target, tone: CSS_COLOR.accent, dirty: targetDirty },
+    { key: "max", label: "Max", value: dte.max, tone: CSS_COLOR.cyan, dirty: maxDirty },
+  ];
 
   return (
     <div
-      data-testid="algo-contract-dte-rail"
+      className="algo-cell--full"
+      data-testid="algo-contract-dte-timeline"
       title={`DTE ${formatDteWindowLabel({ minValue, targetValue, maxValue })}`}
       style={{
         display: "grid",
-        gap: sp(4),
+        gap: sp(7),
         minWidth: 0,
-        padding: sp("6px 7px 7px"),
+        padding: sp("8px 9px 10px"),
         border: `1px solid ${dirty ? cssColorMix(CSS_COLOR.accent, 34) : CSS_COLOR.borderLight}`,
-        borderRadius: dim(RADII.xs),
+        borderRadius: dim(RADII.sm),
         background: dirty ? cssColorMix(CSS_COLOR.accent, 5) : CSS_COLOR.bg1,
       }}
     >
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "auto minmax(0, 1fr) auto",
+          gridTemplateColumns: "minmax(0, 1fr) auto",
           alignItems: "center",
           gap: sp(5),
           minWidth: 0,
@@ -707,46 +818,87 @@ const DteWindowRail = ({
       >
         <span
           style={{
-            color: CSS_COLOR.textMuted,
-            fontFamily: T.sans,
-            fontSize: textSize("micro"),
-            fontWeight: FONT_WEIGHTS.label,
-            textTransform: "uppercase",
+            display: "grid",
+            gap: sp(1),
+            minWidth: 0,
           }}
         >
-          DTE
+          <span
+            style={{
+              color: CSS_COLOR.textMuted,
+              fontFamily: T.sans,
+              fontSize: textSize("micro"),
+              fontWeight: FONT_WEIGHTS.label,
+              textTransform: "uppercase",
+            }}
+          >
+            Expiration window
+          </span>
+          <span
+            className="tnum"
+            style={{
+              color: CSS_COLOR.text,
+              fontFamily: T.data,
+              fontSize: textSize("body"),
+              fontWeight: FONT_WEIGHTS.emphasis,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Target {dte.target}DTE
+            <span
+              style={{
+                color: CSS_COLOR.textMuted,
+                fontFamily: T.data,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.regular,
+              }}
+            >
+              {" "}within {dte.min}-{dte.max}
+            </span>
+          </span>
         </span>
-        <span
-          className="tnum"
+        <button
+          type="button"
+          role="switch"
+          aria-checked={zeroDteValue}
+          aria-label={zeroDteField.label}
+          data-testid="algo-contract-allow-0dte"
+          disabled={disabled}
+          onClick={() => patchProfileDraftPath(zeroDteField.path, !zeroDteValue)}
           style={{
-            color: CSS_COLOR.textSec,
-            fontFamily: T.data,
-            fontSize: textSize("caption"),
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {formatDteWindowLabel({ minValue, targetValue, maxValue })}
-        </span>
-        <span
-          style={{
+            minHeight: dim(34),
+            border: `1px solid ${zeroDteValue ? CSS_COLOR.cyan : CSS_COLOR.border}`,
+            borderRadius: dim(RADII.xs),
+            background: zeroDteValue ? cssColorMix(CSS_COLOR.cyan, 12) : "transparent",
             color: zeroDteValue ? CSS_COLOR.cyan : CSS_COLOR.textMuted,
+            cursor: disabled ? "not-allowed" : "pointer",
             fontFamily: T.sans,
             fontSize: textSize("micro"),
             fontWeight: FONT_WEIGHTS.label,
+            padding: sp("0 9px"),
             textTransform: "uppercase",
+            transition: "border-color 140ms ease, background 140ms ease, color 140ms ease",
           }}
         >
           0DTE {zeroDteValue ? "ON" : "OFF"}
-        </span>
+          {zeroDteDirty ? (
+            <span style={{ marginLeft: sp(2), color: CSS_COLOR.accent }}>•</span>
+          ) : null}
+        </button>
       </div>
       <div
-        aria-hidden="true"
+        ref={trackRef}
+        data-testid="algo-contract-dte-rail"
+        onPointerMove={handlePointerMove}
+        onPointerUp={() => setDraggingHandle(null)}
+        onPointerCancel={() => setDraggingHandle(null)}
         style={{
           position: "relative",
-          height: dim(18),
+          height: dim(54),
           minWidth: 0,
+          touchAction: "none",
         }}
       >
         <span
@@ -754,8 +906,8 @@ const DteWindowRail = ({
             position: "absolute",
             left: 0,
             right: 0,
-            top: dim(8),
-            height: dim(3),
+            top: dim(25),
+            height: dim(5),
             borderRadius: dim(RADII.pill),
             background: CSS_COLOR.borderLight,
           }}
@@ -763,29 +915,126 @@ const DteWindowRail = ({
         <span
           style={{
             position: "absolute",
-            left: `${leftPct}%`,
-            width: `${Math.max(1, rightPct - leftPct)}%`,
-            top: dim(7),
-            height: dim(5),
+            left: `${percentForValue(dte.min)}%`,
+            width: `${Math.max(2, percentForValue(dte.max) - percentForValue(dte.min))}%`,
+            top: dim(23),
+            height: dim(9),
             borderRadius: dim(RADII.pill),
             background: cssColorMix(CSS_COLOR.cyan, dirty ? 60 : 42),
             boxShadow: dirty ? `0 0 0 1px ${cssColorMix(CSS_COLOR.accent, 32)}` : "none",
           }}
         />
-        <span
-          style={{
-            position: "absolute",
-            left: `${targetPct}%`,
-            top: dim(2),
-            width: dim(3),
-            height: dim(14),
-            borderRadius: dim(RADII.pill),
-            background: targetDirty ? CSS_COLOR.accent : CSS_COLOR.text,
-            transform: "translateX(-50%)",
-            boxShadow: `0 0 0 2px ${CSS_COLOR.bg1}`,
-          }}
+        {markers.map((marker) => (
+          <button
+            key={marker.key}
+            type="button"
+            role="slider"
+            aria-label={`${marker.label} DTE`}
+            aria-valuemin={marker.key === "min" ? 0 : dte.min}
+            aria-valuemax={marker.key === "max" ? 90 : dte.max}
+            aria-valuenow={marker.value}
+            data-testid={`algo-contract-dte-handle-${marker.key}`}
+            disabled={disabled}
+            onPointerDown={(event) => {
+              if (disabled) return;
+              event.preventDefault();
+              event.currentTarget.setPointerCapture?.(event.pointerId);
+              setDraggingHandle(marker.key);
+              patchHandle(marker.key, valueFromClientX(event.clientX));
+            }}
+            onKeyDown={(event) => handleKeyDown(marker.key, event)}
+            style={{
+              position: "absolute",
+              left: `${percentForValue(marker.value)}%`,
+              top: marker.key === "target" ? dim(10) : dim(15),
+              width: marker.key === "target" ? dim(28) : dim(24),
+              height: marker.key === "target" ? dim(34) : dim(28),
+              transform: "translateX(-50%)",
+              border: `1px solid ${marker.dirty ? CSS_COLOR.accent : marker.tone}`,
+              borderRadius: dim(RADII.pill),
+              background: marker.key === "target" ? marker.tone : CSS_COLOR.bg0,
+              color: marker.key === "target" ? CSS_COLOR.bg0 : marker.tone,
+              cursor: disabled ? "not-allowed" : "grab",
+              boxShadow: `0 0 0 2px ${CSS_COLOR.bg1}`,
+              fontFamily: T.data,
+              fontSize: textSize("micro"),
+              fontWeight: FONT_WEIGHTS.label,
+              lineHeight: 1,
+              padding: 0,
+              transition: "border-color 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease",
+            }}
+          >
+            {marker.value}
+          </button>
+        ))}
+        {[domainMin, domainMax].map((value, index) => (
+          <span
+            key={index}
+            className="tnum"
+            style={{
+              position: "absolute",
+              left: index === 0 ? 0 : undefined,
+              right: index === 1 ? 0 : undefined,
+              bottom: 0,
+              color: CSS_COLOR.textMuted,
+              fontFamily: T.data,
+              fontSize: textSize("micro"),
+            }}
+          >
+            {value}
+          </span>
+        ))}
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: sp(4),
+          minWidth: 0,
+        }}
+      >
+        <DteStepper
+          label="Min"
+          value={dte.min}
+          min={0}
+          max={dte.max}
+          dirty={minDirty}
+          disabled={disabled}
+          testId="algo-contract-min-dte"
+          onChange={(nextValue) => patchDte({ minValue: nextValue })}
+        />
+        <DteStepper
+          label="Target"
+          value={dte.target}
+          min={dte.min}
+          max={dte.max}
+          dirty={targetDirty}
+          disabled={disabled}
+          testId="algo-contract-target-dte"
+          onChange={(nextValue) => patchDte({ targetValue: nextValue })}
+        />
+        <DteStepper
+          label="Max"
+          value={dte.max}
+          min={dte.min}
+          max={90}
+          dirty={maxDirty}
+          disabled={disabled}
+          testId="algo-contract-max-dte"
+          onChange={(nextValue) => patchDte({ maxValue: nextValue })}
         />
       </div>
+      {dirty ? (
+        <span
+          style={{
+            color: CSS_COLOR.textMuted,
+            fontFamily: T.sans,
+            fontSize: textSize("micro"),
+          }}
+        >
+          was {formatSettingValue(minField, minPrevious)}-{formatSettingValue(maxField, maxPrevious)} · target {formatSettingValue(targetField, targetPrevious)} · 0DTE {formatSettingValue(zeroDteField, zeroDtePrevious)}
+        </span>
+      ) : null}
     </div>
   );
 };
@@ -802,6 +1051,7 @@ const ChainStrikeButton = ({
   slot,
   label,
   selected,
+  order,
   disabled,
   tone,
   onSelect,
@@ -809,9 +1059,9 @@ const ChainStrikeButton = ({
 }) => (
   <button
     type="button"
-    role="radio"
+    role="checkbox"
     aria-checked={selected}
-    aria-label={`${side} strike slot ${slot}; ${label}`}
+    aria-label={`${side} strike slot ${slot}; ${label}${selected ? `; priority ${order}` : ""}`}
     data-testid={`algo-strike-ladder-${side.toLowerCase()}-${slot}`}
     title={`${side} ${label}`}
     className={selected ? "ra-interactive ra-focus-rail" : "ra-interactive"}
@@ -829,7 +1079,7 @@ const ChainStrikeButton = ({
     }}
     style={{
       width: "100%",
-      height: dim(27),
+      minHeight: dim(34),
       border: `1px solid ${selected ? tone : CSS_COLOR.borderLight}`,
       borderRadius: dim(RADII.xs),
       background: selected ? cssColorMix(tone, 18) : CSS_COLOR.bg1,
@@ -837,6 +1087,7 @@ const ChainStrikeButton = ({
       display: "inline-flex",
       alignItems: "center",
       justifyContent: "center",
+      gap: sp(3),
       padding: 0,
       cursor: disabled ? "not-allowed" : "pointer",
       opacity: disabled ? 0.55 : 1,
@@ -847,8 +1098,30 @@ const ChainStrikeButton = ({
       fontWeight: FONT_WEIGHTS.label,
       lineHeight: 1,
       whiteSpace: "nowrap",
+      transition: "border-color 140ms ease, background 140ms ease, color 140ms ease, transform 120ms ease",
     }}
   >
+    {selected ? (
+      <span
+        aria-hidden="true"
+        className="tnum"
+        style={{
+          width: dim(15),
+          height: dim(15),
+          borderRadius: dim(RADII.pill),
+          background: tone,
+          color: CSS_COLOR.bg0,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: T.data,
+          fontSize: textSize("micro"),
+          lineHeight: 1,
+        }}
+      >
+        {order}
+      </span>
+    ) : null}
     <span aria-hidden="true">{label}</span>
   </button>
 );
@@ -868,28 +1141,60 @@ export const ContractSelectionCell = ({
   const targetField = fieldByPath["optionSelection.targetDte"];
   const maxField = fieldByPath["optionSelection.maxDte"];
   const zeroDteField = fieldByPath["optionSelection.allowZeroDte"];
+  const callSlotsField = fieldByPath["optionSelection.callStrikeSlots"];
+  const putSlotsField = fieldByPath["optionSelection.putStrikeSlots"];
   const callField = fieldByPath["optionSelection.callStrikeSlot"];
   const putField = fieldByPath["optionSelection.putStrikeSlot"];
   const minValue = getPathValue(profileDraft, minField.path);
   const targetValue = getPathValue(profileDraft, targetField.path);
   const maxValue = getPathValue(profileDraft, maxField.path);
-  const zeroDteValue = Boolean(getPathValue(profileDraft, zeroDteField.path));
-  const callValue = Number(getPathValue(profileDraft, callField.path));
-  const putValue = Number(getPathValue(profileDraft, putField.path));
-  const minDirty = dirtyFieldKeys.has(fieldKey(minField));
-  const targetDirty = dirtyFieldKeys.has(fieldKey(targetField));
-  const maxDirty = dirtyFieldKeys.has(fieldKey(maxField));
-  const zeroDteDirty = dirtyFieldKeys.has(fieldKey(zeroDteField));
-  const callOption = strikeSlotMeta(callValue);
-  const putOption = strikeSlotMeta(putValue);
+  const callSlots = normalizeSignalOptionsStrikeSlots(
+    getPathValue(profileDraft, callSlotsField.path),
+    getPathValue(profileDraft, callField.path),
+  );
+  const putSlots = normalizeSignalOptionsStrikeSlots(
+    getPathValue(profileDraft, putSlotsField.path),
+    getPathValue(profileDraft, putField.path),
+  );
+  const callDirty =
+    dirtyFieldKeys.has(fieldKey(callSlotsField)) ||
+    dirtyFieldKeys.has(fieldKey(callField));
+  const putDirty =
+    dirtyFieldKeys.has(fieldKey(putSlotsField)) ||
+    dirtyFieldKeys.has(fieldKey(putField));
+  const formatStrikeList = (slots, side) =>
+    slots
+      .map((slot) => {
+        const meta = strikeSlotMeta(slot);
+        return side === "call" ? meta.callLabel : meta.putLabel;
+      })
+      .join(" → ");
   const contractSummary = [
     `DTE ${formatDteWindowLabel({ minValue, targetValue, maxValue })}`,
-    `Call ${callOption.callLabel}`,
-    `Put ${putOption.putLabel}`,
+    `Calls ${formatStrikeList(callSlots, "call")}`,
+    `Puts ${formatStrikeList(putSlots, "put")}`,
   ].join(" · ");
 
-  const patchStrike = (field, slot) => {
-    patchProfileDraftPath(field.path, Number(slot));
+  const patchStrikeSlots = ({ slotsField, primaryField, currentSlots, slot }) => {
+    const current = normalizeSignalOptionsStrikeSlots(
+      currentSlots,
+      getPathValue(profileDraft, primaryField.path),
+    );
+    const nextSlot = Number(slot);
+    const selected = current.includes(nextSlot);
+    let nextSlots;
+    if (selected) {
+      nextSlots = current.length > 1
+        ? current.filter((item) => item !== nextSlot)
+        : current;
+    } else if (current.length >= MAX_SIGNAL_OPTIONS_STRIKE_SLOTS) {
+      nextSlots = [current[0], ...current.slice(2), nextSlot];
+    } else {
+      nextSlots = [...current, nextSlot];
+    }
+    const normalized = normalizeSignalOptionsStrikeSlots(nextSlots, current);
+    patchProfileDraftPath(slotsField.path, normalized);
+    patchProfileDraftPath(primaryField.path, normalized[0]);
   };
   const chainRows = STRIKE_SLOT_ROWS.reduce((rows, option) => {
     const slot = Number(option.value);
@@ -908,7 +1213,8 @@ export const ContractSelectionCell = ({
   }, []);
   const chainSlotRows = chainRows.filter((row) => row.type === "slot");
   const renderStrikeHeader = ({ label, column, field }) => {
-    const dirty = field ? dirtyFieldKeys.has(fieldKey(field)) : false;
+    const dirty =
+      label === "CALLS" ? callDirty : label === "PUTS" ? putDirty : false;
     return (
       <span
         key={label}
@@ -952,15 +1258,18 @@ export const ContractSelectionCell = ({
 
   const renderChainButton = ({ row, side }) => {
     const isCall = side === "CALL";
-    const value = isCall ? callValue : putValue;
-    const field = isCall ? callField : putField;
+    const slots = isCall ? callSlots : putSlots;
+    const slotsField = isCall ? callSlotsField : putSlotsField;
+    const primaryField = isCall ? callField : putField;
+    const selectedIndex = slots.indexOf(row.slot);
+    const selected = selectedIndex >= 0;
     return (
       <span
         key={`${side.toLowerCase()}-${row.slot}`}
         style={{
           gridColumn: isCall ? 1 : 3,
           gridRow: row.row,
-          minHeight: dim(27),
+          minHeight: dim(34),
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -970,12 +1279,25 @@ export const ContractSelectionCell = ({
           side={side}
           slot={row.slot}
           label={isCall ? row.meta.callLabel : row.meta.putLabel}
-          selected={value === row.slot}
+          selected={selected}
+          order={selectedIndex + 1}
           disabled={disabled}
           tone={isCall ? CSS_COLOR.green : CSS_COLOR.red}
-          onSelect={(nextSlot) => patchStrike(field, nextSlot)}
+          onSelect={(nextSlot) =>
+            patchStrikeSlots({
+              slotsField,
+              primaryField,
+              currentSlots: slots,
+              slot: nextSlot,
+            })
+          }
           onMove={(direction) =>
-            patchStrike(field, moveStrikeSlot(value, direction))
+            patchStrikeSlots({
+              slotsField,
+              primaryField,
+              currentSlots: slots,
+              slot: moveStrikeSlot(row.slot, direction),
+            })
           }
         />
       </span>
@@ -988,43 +1310,20 @@ export const ContractSelectionCell = ({
       data-testid="algo-strike-ladder"
       style={{
         display: "grid",
-        gap: sp(5),
+        gap: sp(7),
         minWidth: 0,
       }}
     >
-      <div className="algo-settings-grid">
-        <ContractDteCell
-          minField={minField}
-          zeroDteField={zeroDteField}
-          profileDraft={profileDraft}
-          profileBaseline={profileBaseline}
-          patchProfileDraftPath={patchProfileDraftPath}
-          disabled={disabled}
-          dirtyFieldKeys={dirtyFieldKeys}
-        />
-        {[targetField, maxField].map((field) => (
-          <CompactSettingCell
-            key={field.path}
-            item={field}
-            profileDraft={profileDraft}
-            profileBaseline={profileBaseline}
-            strategySettingsDraft={null}
-            strategyBaseline={null}
-            patchProfileDraftPath={patchProfileDraftPath}
-            patchStrategySettingsPath={() => {}}
-            disabled={disabled}
-            dirtyFieldKeys={dirtyFieldKeys}
-            impact={{}}
-          />
-        ))}
-      </div>
-      <DteWindowRail
-        minValue={minValue}
-        targetValue={targetValue}
-        maxValue={maxValue}
-        zeroDteValue={zeroDteValue}
-        dirty={minDirty || maxDirty || zeroDteDirty}
-        targetDirty={targetDirty}
+      <DteTimelineEditor
+        minField={minField}
+        targetField={targetField}
+        maxField={maxField}
+        zeroDteField={zeroDteField}
+        profileDraft={profileDraft}
+        profileBaseline={profileBaseline}
+        patchProfileDraftPath={patchProfileDraftPath}
+        disabled={disabled}
+        dirtyFieldKeys={dirtyFieldKeys}
       />
       <div
         data-testid="algo-contract-selection-summary"
@@ -1052,9 +1351,9 @@ export const ContractSelectionCell = ({
           minWidth: 0,
         }}
       >
-        {renderStrikeHeader({ label: "CALLS", column: 1, field: callField })}
+        {renderStrikeHeader({ label: "CALLS", column: 1 })}
         {renderStrikeHeader({ label: "STRIKE", column: 2 })}
-        {renderStrikeHeader({ label: "PUTS", column: 3, field: putField })}
+        {renderStrikeHeader({ label: "PUTS", column: 3 })}
         {chainRows.map((row) =>
           row.type === "divider" ? (
             <div
@@ -1082,7 +1381,7 @@ export const ContractSelectionCell = ({
               style={{
                 gridColumn: 2,
                 gridRow: row.row,
-                height: dim(27),
+                height: dim(34),
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -1103,15 +1402,15 @@ export const ContractSelectionCell = ({
           ),
         )}
         <span
-          role="radiogroup"
-          aria-label="Call strike slot"
+          role="group"
+          aria-label="Call strike slots"
           style={{ display: "contents" }}
         >
           {chainSlotRows.map((row) => renderChainButton({ row, side: "CALL" }))}
         </span>
         <span
-          role="radiogroup"
-          aria-label="Put strike slot"
+          role="group"
+          aria-label="Put strike slots"
           style={{ display: "contents" }}
         >
           {chainSlotRows.map((row) => renderChainButton({ row, side: "PUT" }))}
@@ -1520,7 +1819,11 @@ const sectionDirtyCount = (section, dirtyFieldKeys) =>
       return (
         count +
         item.fields.reduce(
-          (total, field) => total + (dirtyFieldKeys.has(fieldKey(field)) ? 1 : 0),
+          (total, field) =>
+            total +
+            (field.dirtySummary !== false && dirtyFieldKeys.has(fieldKey(field))
+              ? 1
+              : 0),
           0,
         )
       );
@@ -1554,6 +1857,7 @@ export const AlgoSettingsRegion = ({
   );
   const dirtyFieldKeys = new Set(dirtyFields.map(fieldKey));
   const dirtyCounts = countDirtyFieldsBySection(dirtyFields);
+  const [openSections, setOpenSections] = useState({});
   const disabled =
     !focusedDeployment ||
     updateProfileMutation?.isPending ||
@@ -1573,6 +1877,12 @@ export const AlgoSettingsRegion = ({
       {SETTINGS_SECTIONS.map((section, index) => {
         const dirtyCount =
           dirtyCounts[section.label] || sectionDirtyCount(section, dirtyFieldKeys);
+        const override = openSections[section.id];
+        const open =
+          override !== undefined
+            ? override
+            : (section.defaultOpen ?? false) || dirtyCount > 0;
+        const bodyId = `algo-settings-body-${section.id}`;
         return (
           <section
             key={section.id}
@@ -1586,23 +1896,31 @@ export const AlgoSettingsRegion = ({
             <SettingsSectionHeader
               label={section.label}
               helper={dirtyCount ? `${dirtyCount} unsaved` : null}
+              collapsible
+              open={open}
+              controlsId={bodyId}
+              onToggle={() =>
+                setOpenSections((prev) => ({ ...prev, [section.id]: !open }))
+              }
             />
-            <div className="algo-settings-grid">
-              {section.fields.map((item) =>
-                renderSectionItem({
-                  item,
-                  profileDraft,
-                  profileBaseline,
-                  strategySettingsDraft,
-                  strategyBaseline,
-                  patchProfileDraftPath,
-                  patchStrategySettingsPath,
-                  disabled,
-                  dirtyFieldKeys,
-                  impact,
-                }),
-              )}
-            </div>
+            {open ? (
+              <div id={bodyId} className="algo-settings-grid">
+                {section.fields.map((item) =>
+                  renderSectionItem({
+                    item,
+                    profileDraft,
+                    profileBaseline,
+                    strategySettingsDraft,
+                    strategyBaseline,
+                    patchProfileDraftPath,
+                    patchStrategySettingsPath,
+                    disabled,
+                    dirtyFieldKeys,
+                    impact,
+                  }),
+                )}
+              </div>
+            ) : null}
           </section>
         );
       })}

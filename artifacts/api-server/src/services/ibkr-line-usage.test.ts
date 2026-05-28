@@ -40,7 +40,7 @@ test("getIbkrLineUsageSnapshot reports visible prewarm demand without filler", a
       },
     }),
   }));
-  updateApiResourcePressure({ rssMb: 1_650 });
+  updateApiResourcePressure({ rssMb: 1_250 });
   admitMarketDataLeases({
     owner: "watchlist-prewarm",
     intent: "visible-live",
@@ -54,17 +54,21 @@ test("getIbkrLineUsageSnapshot reports visible prewarm demand without filler", a
   const snapshot = await getIbkrLineUsageSnapshot();
 
   assert.equal(snapshot.admission.activeLineCount, 90);
+  assert.equal(snapshot.admission.pressure.utilizationPercent, 45);
+  assert.equal(snapshot.admission.pressure.utilizationLevel, "normal");
+  assert.equal(snapshot.allocation.utilizationPercent, 45);
+  assert.equal(snapshot.allocation.utilizationLevel, "normal");
   assert.equal(snapshot.lineUtilizationAudit.targetLineCount, 200);
   assert.equal(snapshot.lineUtilizationAudit.idleToTargetLineCount, 110);
   assert.equal(
     snapshot.lineUtilizationAudit.topLimitingReason,
     "active-demand-satisfied",
   );
-  assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 160);
+  assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 80);
   assert.equal("watchlist" in snapshot.lineUtilizationAudit, false);
 });
 
-test("getIbkrLineUsageSnapshot reports active scanner work instead of idle resource pressure", async () => {
+test("getIbkrLineUsageSnapshot reports active scanner work instead of idle RSS pressure", async () => {
   const watchlistSymbols = Array.from({ length: 90 }, (_, index) => `WL${index}`);
   __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
     getLaneDiagnostics: async () => ({
@@ -106,8 +110,12 @@ test("getIbkrLineUsageSnapshot reports active scanner work instead of idle resou
     null,
   );
   assert.equal(
+    snapshot.admission.optionsFlowScanner.resourcePressure.level,
+    "critical",
+  );
+  assert.equal(
     snapshot.lineUtilizationAudit.topLimitingReason,
-    "scanner-active",
+    "scanner-throttled-high-pressure",
   );
   assert.equal(snapshot.lineUtilizationAudit.scanner.activeLineCount, 40);
   assert.equal(snapshot.lineUtilizationAudit.admissionVsBridgeLineDelta, 0);
@@ -158,7 +166,7 @@ test("getIbkrLineUsageSnapshot excludes scanner snapshot leases from bridge drif
   assert.equal(snapshot.lineUtilizationAudit.admissionVsBridgeLineDelta, 0);
 });
 
-test("getIbkrLineUsageSnapshot reconciles bridge prewarm groups after API restart", async () => {
+test("getIbkrLineUsageSnapshot reports bridge prewarm groups without changing leases", async () => {
   __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
     getLaneDiagnostics: async () => ({
       subscriptions: {
@@ -184,11 +192,13 @@ test("getIbkrLineUsageSnapshot reconciles bridge prewarm groups after API restar
 
   const snapshot = await getIbkrLineUsageSnapshot();
 
-  assert.equal(snapshot.admission.activeLineCount, 2);
-  assert.equal(snapshot.admission.visibleLineCount, 2);
+  assert.equal(snapshot.admission.activeLineCount, 0);
+  assert.equal(snapshot.admission.visibleLineCount, 0);
   assert.equal("watchlistLineCount" in snapshot.admission, false);
   assert.equal("fillerLineCount" in snapshot.admission, false);
   assert.equal("watchlist" in snapshot.lineUtilizationAudit, false);
+  assert.equal(snapshot.drift.reconciliation.apiLineCount, 0);
+  assert.equal(snapshot.drift.reconciliation.bridgeLineCount, 4);
   assert.equal(
     snapshot.drift.reconciliation.status,
     "api_released_bridge_active",
@@ -220,12 +230,12 @@ test("getIbkrLineUsageSnapshot leaves scanner capacity schedulable without fille
   const snapshot = await getIbkrLineUsageSnapshot();
 
   assert.equal(snapshot.admission.activeLineCount, 90);
-  assert.equal(snapshot.allocation.scannerEffectiveLineCap, 160);
-  assert.equal(snapshot.allocation.scannerSchedulableLineCap, 160);
-  assert.equal(snapshot.allocation.scannerSchedulableRemainingLineCount, 160);
+  assert.equal(snapshot.allocation.scannerEffectiveLineCap, 110);
+  assert.equal(snapshot.allocation.scannerSchedulableLineCap, 110);
+  assert.equal(snapshot.allocation.scannerSchedulableRemainingLineCount, 110);
   assert.equal(
     snapshot.admission.optionsFlowScanner.lineUtilization.schedulablePoolCap,
-    160,
+    110,
   );
   assert.equal(
     snapshot.lineUtilizationAudit.topLimitingReason,
@@ -251,7 +261,7 @@ test("getIbkrLineUsageSnapshot returns admission counters when bridge lanes stal
   assert.ok(Date.now() - startedAt < 1_000);
   assert.equal(snapshot.admission.activeLineCount, 1);
   assert.equal(snapshot.admission.accountMonitorLineCount, 0);
-  assert.equal(snapshot.admission.budget.accountMonitorLineCap, 30);
+  assert.equal(snapshot.admission.budget.accountMonitorLineCap, 200);
   assert.equal(snapshot.policy.maxLines, 200);
   assert.equal(snapshot.policy.reserveLines, 0);
   assert.equal(snapshot.policy.targetFillLines, 200);
@@ -273,7 +283,7 @@ test("getIbkrLineUsageSnapshot returns admission counters when bridge lanes stal
   );
   assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 160);
   assert.equal("watchlist" in snapshot.lineUtilizationAudit, false);
-  assert.equal(snapshot.admission.poolUsage["account-monitor"]?.maxLines, 30);
+  assert.equal(snapshot.admission.poolUsage["account-monitor"]?.maxLines, 200);
   assert.equal(snapshot.admission.poolUsage["account-monitor"]?.dynamic, false);
   assert.equal(snapshot.admission.flowScannerLineCount, 1);
   assert.equal(typeof snapshot.admission.optionsFlowScanner, "object");

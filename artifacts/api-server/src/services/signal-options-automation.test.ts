@@ -26,6 +26,10 @@ import {
   SHADOW_PROVIDER_ACCOUNT_ID,
 } from "./algo-deployment-account";
 import { registerSignalOptionsWorkerSnapshotGetter } from "./signal-options-worker-state";
+import {
+  __resetApiResourcePressureForTests,
+  updateApiResourcePressure,
+} from "./resource-pressure";
 
 const profile = defaultSignalOptionsExecutionProfile;
 
@@ -157,6 +161,32 @@ test("signal-options scans publish fresh signal state before heavy action work",
   assert.match(scanBody, /heavyWorkDeferred:\s*true/);
 });
 
+test("signal-options continues heavy action work under RSS-only API pressure", () => {
+  updateApiResourcePressure({ rssMb: 1_250 });
+  try {
+    const decision =
+      __signalOptionsAutomationInternalsForTests.shouldDeferSignalOptionsHeavyWork();
+
+    assert.equal(decision.pressure.level, "high");
+    assert.equal(decision.defer, false);
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
+});
+
+test("signal-options defers heavy action work under hard API pressure", () => {
+  updateApiResourcePressure({ apiHeapUsedPercent: 91 });
+  try {
+    const decision =
+      __signalOptionsAutomationInternalsForTests.shouldDeferSignalOptionsHeavyWork();
+
+    assert.equal(decision.pressure.level, "critical");
+    assert.equal(decision.defer, true);
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
+});
+
 test("signal-options state resolves paper-enabled before UUID lookup", () => {
   const source = readFileSync(
     new URL("./signal-options-automation.ts", import.meta.url),
@@ -172,6 +202,32 @@ test("signal-options state resolves paper-enabled before UUID lookup", () => {
   assert.match(
     lookupBlock ?? "",
     /UUID_PATTERN\.test\(deploymentId\)[\s\S]*where\(eq\(algoDeploymentsTable\.id,\s*deploymentId\)\)[\s\S]*:\s*await getDeploymentByAlias\(deploymentId\)/,
+  );
+});
+
+test("signal-options dashboard endpoints share a cached state snapshot", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const stateEndpoint = source.match(
+    /export async function listSignalOptionsAutomationState[\s\S]*?\n}\n\nasync function buildAlgoDeploymentCockpitPayload/,
+  )?.[0];
+  const cockpitEndpoint = source.match(
+    /async function buildAlgoDeploymentCockpitPayload[\s\S]*?\nexport async function getAlgoDeploymentCockpit/,
+  )?.[0];
+  const performanceEndpoint = source.match(
+    /export async function getSignalOptionsPerformance[\s\S]*?\nfunction formatEnumReason/,
+  )?.[0];
+
+  assert.match(source, /const signalOptionsDashboardCache = new Map/);
+  assert.match(source, /async function getSignalOptionsDashboardSnapshot/);
+  assert.match(stateEndpoint ?? "", /getSignalOptionsDashboardSnapshot\(input\)/);
+  assert.match(cockpitEndpoint ?? "", /getSignalOptionsDashboardSnapshot/);
+  assert.match(performanceEndpoint ?? "", /getSignalOptionsDashboardSnapshot/);
+  assert.doesNotMatch(
+    performanceEndpoint ?? "",
+    /buildStatePayload\(\{ deployment, profile, events \}\)/,
   );
 });
 
@@ -1582,6 +1638,67 @@ test("signal-options contract selection falls back to cheaper call strikes", () 
   assert.equal(selection.orderPlan?.quantity, 1);
 });
 
+test("signal-options contract selection honors ordered strike slot preferences", () => {
+  const selection =
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsContractPlanFromChain({
+      contracts: [
+        pricedQuote(101, "call", 12, 12.2),
+        pricedQuote(102, "call", 5, 5.2),
+        pricedQuote(103, "call", 4, 4.2),
+      ],
+      direction: "buy",
+      signalPrice: 100,
+      profile: resolveSignalOptionsExecutionProfile({
+        ...profile,
+        optionSelection: {
+          ...profile.optionSelection,
+          callStrikeSlots: [4, 3],
+          callStrikeSlot: 4,
+        },
+        riskCaps: { ...profile.riskCaps, maxPremiumPerEntry: 1_000 },
+      }),
+    });
+
+  assert.equal(selection.ok, true);
+  assert.equal(selection.fallbackUsed, false);
+  assert.equal(selection.preferredSlot, 4);
+  assert.equal(selection.selectedSlot, 4);
+  assert.equal(selection.selectedQuote?.contract?.strike, 102);
+  assert.equal(selection.attempts.length, 1);
+});
+
+test("signal-options contract selection tries selected slots before generated fallbacks", () => {
+  const selection =
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsContractPlanFromChain({
+      contracts: [
+        pricedQuote(101, "call", 12, 12.2),
+        pricedQuote(102, "call", 12, 12.2),
+        pricedQuote(103, "call", 4, 4.2),
+      ],
+      direction: "buy",
+      signalPrice: 100,
+      profile: resolveSignalOptionsExecutionProfile({
+        ...profile,
+        optionSelection: {
+          ...profile.optionSelection,
+          callStrikeSlots: [3, 5],
+          callStrikeSlot: 3,
+        },
+        riskCaps: { ...profile.riskCaps, maxPremiumPerEntry: 1_000 },
+      }),
+    });
+
+  assert.equal(selection.ok, true);
+  assert.equal(selection.fallbackUsed, true);
+  assert.equal(selection.preferredSlot, 3);
+  assert.equal(selection.selectedSlot, 5);
+  assert.equal(selection.selectedQuote?.contract?.strike, 103);
+  assert.deepEqual(
+    selection.attempts.map((attempt) => attempt.slot),
+    [3, 5],
+  );
+});
+
 test("signal-options contract selection falls back to cheaper put strikes", () => {
   const selection =
     __signalOptionsAutomationInternalsForTests.selectSignalOptionsContractPlanFromChain({
@@ -2969,6 +3086,22 @@ test("signal-options shadow mark fallback only uses in-session option marks", ()
     /isLiveOptionTradingSession\(mark\.asOf,\s*position\.selectedContract\)/,
   );
   assert.match(fallbackBody, /peak = eligibleMarks\.reduce/);
+});
+
+test("signal-options active position refresh blocks live mark hydration under pressure caps", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const refreshBody = source.match(
+    /async function refreshActivePosition\([\s\S]*?\nasync function emitSkippedCandidate/,
+  )?.[0];
+
+  assert.ok(refreshBody);
+  assert.match(refreshBody, /positionMarksAllowed/);
+  assert.match(refreshBody, /resource_pressure_position_marks_blocked/);
+  assert.match(refreshBody, /if \(!livePositionMarksAllowed\)/);
+  assert.match(refreshBody, /if \(livePositionMarksAllowed && !markState\.resolution\?\.ok\)/);
 });
 
 test("signal-options progressive trail ladder raises locked profit by peak gain", () => {

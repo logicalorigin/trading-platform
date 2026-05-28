@@ -2,15 +2,23 @@ import { PyrusMark } from "./pyrus-mark";
 import { PyrusWordmark } from "./pyrus-wordmark";
 
 type LockupProps = {
+  animatedMark?: boolean;
   className?: string;
   compact?: boolean;
+  markClassName?: string;
+  markImageClassName?: string;
+  wordmarkWidth?: number;
 };
 
 export { PyrusWordmark };
 
 export function LogoMark({
+  animatedMark = false,
   className,
   compact = false,
+  markClassName,
+  markImageClassName,
+  wordmarkWidth,
 }: LockupProps) {
   return (
     <div
@@ -24,8 +32,12 @@ export function LogoMark({
         flexShrink: 0,
       }}
     >
-      <PyrusMark className={compact ? "h-[22px] w-[22px]" : "h-7 w-7"} />
-      <PyrusWordmark width={compact ? 116 : 150} title="PYRUS" />
+      <PyrusMark
+        animated={animatedMark}
+        className={markClassName ?? (compact ? "h-[22px] w-[22px]" : "h-7 w-7")}
+        imageClassName={markImageClassName}
+      />
+      <PyrusWordmark width={wordmarkWidth ?? (compact ? 116 : 150)} title="PYRUS" />
     </div>
   );
 }

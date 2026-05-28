@@ -259,6 +259,16 @@ const formatBytes = (bytes) => {
 const formatCount = (value) =>
   Number.isFinite(Number(value)) ? Math.round(Number(value)).toLocaleString() : MISSING_VALUE;
 
+const formatPercentValue = (value) =>
+  Number.isFinite(Number(value)) ? `${Number(value).toFixed(1).replace(/\.0$/, "")}%` : MISSING_VALUE;
+
+const lineUtilizationTone = (level) =>
+  level === "protected"
+    ? CSS_COLOR.red
+    : level === "constrained" || level === "watch"
+      ? CSS_COLOR.amber
+      : CSS_COLOR.green;
+
 const formatFreshnessAge = (value) => {
   const timestamp = Number(value);
   if (!Number.isFinite(timestamp)) return MISSING_VALUE;
@@ -1359,6 +1369,14 @@ function IbkrLineUsagePanel({ runtimeControl }) {
   const signalOptions = lineUsage.signalOptions || {};
   const automation = lineUsage.pools.automation || {};
   const pressure = lineUsage.pressure || {};
+  const lineUtilizationLevel = pressure.utilizationLevel || pressure.state || "unknown";
+  const lineUtilizationPercent = Number.isFinite(Number(pressure.utilizationPercent))
+    ? Number(pressure.utilizationPercent)
+    : Number.isFinite(Number(admission.activeLineCount)) &&
+        Number.isFinite(Number(budget.usableLines)) &&
+        Number(budget.usableLines) > 0
+      ? (Number(admission.activeLineCount) / Number(budget.usableLines)) * 100
+      : null;
   const warmup = lineUsage.warmup || {};
   const governorRows = Object.entries(governor).filter(
     ([, lane]) => lane && typeof lane === "object",
@@ -1401,15 +1419,9 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             tone={Number(allocation.remainingToTargetLineCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
           />
           <StateRow
-            label="Line pressure"
-            value={String(pressure.state || "unknown").toUpperCase()}
-            tone={
-              pressure.state === "protected"
-                ? CSS_COLOR.red
-                : pressure.state === "constrained"
-                  ? CSS_COLOR.amber
-                  : CSS_COLOR.green
-            }
+            label="Line utilization"
+            value={`${formatPercentValue(lineUtilizationPercent)} · ${String(lineUtilizationLevel).toUpperCase()}`}
+            tone={lineUtilizationTone(lineUtilizationLevel)}
           />
           <StateRow label="Budget source" value={String(pressure.budgetSource || MISSING_VALUE)} />
           <StateRow label="Reserve" value={formatCount(budget.reserveLines)} />
@@ -1472,6 +1484,10 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             value={`${String(optionsFlowScanner.scannerMode || MISSING_VALUE)} · ${String(optionsFlowScanner.activeScanPhase || "idle")}`}
           />
           <StateRow
+            label="Scanner fill"
+            value={`${String(optionsFlowScanner.scannerFillMode || flowScanner.scannerFillMode || MISSING_VALUE)} · ${String(optionsFlowScanner.limitingReason || flowScanner.limitingReason || "unlimited")}`}
+          />
+          <StateRow
             label="Scanner market data"
             value={String(optionsFlowScanner.marketDataMode || MISSING_VALUE)}
             tone={
@@ -1487,6 +1503,11 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             label="Scanner dynamic cap"
             value={`${formatCount(allocation.scannerEffectiveLineCap)} effective · ${formatCount(allocation.scannerDynamicLineCap)} dynamic`}
           />
+          <StateRow label="Live line policy" value={String(allocation.portfolioPolicy || MISSING_VALUE)} />
+          <StateRow label="Protected live lines" value={formatCount(allocation.pinnedLineCount)} />
+          <StateRow label="Priority live lines" value={formatCount(allocation.priorityLineCount)} />
+          <StateRow label="Scanner rotation lines" value={formatCount(allocation.scannerRotatingLineCount)} />
+          <StateRow label="Scanner move-ready lines" value={formatCount(allocation.rotatingReclaimableLineCount)} />
           <StateRow label="Option reserve lines" value={formatCount(allocation.optionReserveLineCount)} />
           <StateRow label="Non-scanner option lines" value={formatCount(allocation.nonScannerOptionLineCount)} />
           <StateRow

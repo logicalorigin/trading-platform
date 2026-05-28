@@ -1,6 +1,13 @@
 import { memo, useEffect, useState } from "react";
 import LogoLoader from "../../components/LogoLoader";
+import {
+  BOOT_SCREEN_MODULE_PRELOAD_TASK_BY_SCREEN_ID,
+  completeBootProgressTask,
+  failBootProgressTask,
+  startBootProgressTask,
+} from "../../app/bootProgress";
 import { retryDynamicImport } from "../../lib/dynamicImport";
+import { markScreenReady } from "./performanceMetrics";
 
 const SCREEN_LOADERS = {
   market: () => import("../../screens/MarketScreen.jsx"),
@@ -35,6 +42,10 @@ const loadScreenModule = (
     startedAt: Date.now(),
     label,
   });
+  const bootProgressTaskId = BOOT_SCREEN_MODULE_PRELOAD_TASK_BY_SCREEN_ID[screenId];
+  if (bootProgressTaskId) {
+    startBootProgressTask(bootProgressTaskId);
+  }
   const promise = retryDynamicImport(loader, {
     label,
     reloadOnFailure,
@@ -49,6 +60,9 @@ const loadScreenModule = (
         completedAt: Date.now(),
         label,
       });
+      if (bootProgressTaskId) {
+        completeBootProgressTask(bootProgressTaskId);
+      }
       return mod;
     })
     .catch((error) => {
@@ -60,6 +74,9 @@ const loadScreenModule = (
         label,
         error: error instanceof Error ? error.message : String(error),
       });
+      if (bootProgressTaskId) {
+        failBootProgressTask(bootProgressTaskId, error);
+      }
       throw error;
     });
 
@@ -87,6 +104,11 @@ const createPreloadableScreen = (screenId, label) => {
       if (ScreenComponent || props?.isVisible === false) {
         return undefined;
       }
+      const cachedScreenComponent = SCREEN_MODULE_COMPONENTS.get(screenId);
+      if (cachedScreenComponent) {
+        setScreenComponent(() => cachedScreenComponent);
+        return undefined;
+      }
       let cancelled = false;
       setLoadError(null);
       loadScreenModule(screenId, { label })
@@ -105,8 +127,18 @@ const createPreloadableScreen = (screenId, label) => {
       };
     }, [ScreenComponent, props?.isVisible]);
 
+    useEffect(() => {
+      if (!ScreenComponent || props?.isVisible === false) {
+        return;
+      }
+      markScreenReady(screenId);
+      props?.onReadinessChange?.({ frameReady: true });
+    }, [ScreenComponent, props?.isVisible, props?.onReadinessChange]);
+
     return ScreenComponent ? (
       <ScreenComponent {...props} />
+    ) : props?.isVisible === false ? (
+      null
     ) : (
       <ScreenLoadingFallback screenId={screenId} error={loadError} />
     );

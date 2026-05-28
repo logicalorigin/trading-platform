@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import {
   buildRuntimeControlSnapshot,
   isOptionsFlowScannerRuntimeActive,
+  lineUsageState,
+  lineUsageUtilizationLevel,
   normalizeAdmissionDiagnostics,
   selectRuntimeAdmissionDiagnostics,
 } from "./runtimeControlModel.js";
@@ -70,6 +72,13 @@ test("normalizes complete market data admission pools", () => {
     },
     accountMonitorLineCount: 12,
     flowScannerLineCount: 34,
+    portfolio: {
+      policy: "pinned-priority-scanner-rotation",
+      pinned: { activeLineCount: 12 },
+      priority: { activeLineCount: 54 },
+      scannerRotating: { activeLineCount: 34 },
+      rotatingReclaimableLineCount: 34,
+    },
     poolUsage: {
       "account-monitor": {
         id: "account-monitor",
@@ -107,6 +116,11 @@ test("normalizes complete market data admission pools", () => {
   assert.equal(normalized.total.free, 100);
   assert.equal(normalized.allocation.targetFillLines, 200);
   assert.equal(normalized.allocation.remainingToTargetLineCount, 100);
+  assert.equal(normalized.allocation.portfolioPolicy, "pinned-priority-scanner-rotation");
+  assert.equal(normalized.allocation.pinnedLineCount, 12);
+  assert.equal(normalized.allocation.priorityLineCount, 54);
+  assert.equal(normalized.allocation.scannerRotatingLineCount, 34);
+  assert.equal(normalized.allocation.rotatingReclaimableLineCount, 34);
   assert.equal("fillerLineCount" in normalized.allocation, false);
 });
 
@@ -575,6 +589,8 @@ test("normalizes line pressure and scanner effective cap", () => {
     },
     pressure: {
       state: "protected",
+      utilizationLevel: "protected",
+      utilizationPercent: 97.4,
       policy: "active-ui-first",
       budgetSource: "bridge-diagnostics",
       scannerStaticLineCap: 100,
@@ -598,10 +614,22 @@ test("normalizes line pressure and scanner effective cap", () => {
   });
 
   assert.equal(normalized.pressure.state, "protected");
+  assert.equal(normalized.pressure.utilizationLevel, "protected");
+  assert.equal(normalized.pressure.utilizationPercent, 97.4);
   assert.equal(normalized.pressure.budgetSource, "bridge-diagnostics");
   assert.equal(normalized.flowScanner.cap, 100);
   assert.equal(normalized.flowScanner.effectiveCap, 35);
   assert.equal(normalized.flowScanner.free, 15);
+});
+
+test("line utilization model keeps half usage healthy", () => {
+  assert.equal(lineUsageState(100, 200), "healthy");
+  assert.equal(lineUsageUtilizationLevel(100, 200, 100), "normal");
+  assert.equal(lineUsageState(140, 200), "healthy");
+  assert.equal(lineUsageUtilizationLevel(140, 200, 60), "watch");
+  assert.equal(lineUsageState(176, 200), "capacity-limited");
+  assert.equal(lineUsageUtilizationLevel(176, 200, 24), "constrained");
+  assert.equal(lineUsageUtilizationLevel(190, 200, 10), "protected");
 });
 
 test("uses schedulable scanner capacity when filler holds reclaimable lines", () => {

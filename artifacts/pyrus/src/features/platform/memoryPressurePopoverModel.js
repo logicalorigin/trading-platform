@@ -188,12 +188,17 @@ export const buildMemoryPressurePopoverModel = (
     signal?.server?.apiHeapUsedPercent ??
     signal?.server?.heapUsedPercent ??
     apiMetrics?.heapUsedPercent;
+  const driverRows = buildDriverRows(signal);
+  const criticalDriver = driverRows.find((driver) => driver.level === "critical");
 
   return {
     level: signal?.level || "normal",
+    criticalReason: criticalDriver
+      ? `${criticalDriver.label}${criticalDriver.detail !== MISSING_VALUE ? ` ${criticalDriver.detail}` : ""}`
+      : null,
     statusRows: [
       { label: "Level", value: String(signal?.level || "normal").toUpperCase() },
-      { label: "Score", value: formatMemoryDetailValue(signal?.score, "%", 1) },
+      { label: "Load score", value: formatMemoryDetailValue(signal?.score, "pts", 1) },
       { label: "Trend", value: String(signal?.trend || "steady").toUpperCase() },
       { label: "Observed", value: formatObservedAt(signal?.observedAt) },
     ],
@@ -259,7 +264,7 @@ export const buildMemoryPressurePopoverModel = (
         value: formatMemoryDetailValue(apiMetrics?.eventLoopP95Ms, "ms", 1),
       },
     ],
-    driverRows: buildDriverRows(signal),
+    driverRows,
     thresholdRows: buildThresholdRows(),
   };
 };

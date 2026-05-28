@@ -51,6 +51,20 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 
+  /readiness:
+    get:
+      operationId: getReadiness
+      tags: [health]
+      summary: Read app and broker readiness
+      description: Returns liveness, app readiness, broker trading readiness, and resource pressure without running broker probes.
+      responses:
+        "200":
+          description: Readiness snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessStatus"
+
   /session:
     get:
       operationId: getSession
@@ -4069,6 +4083,108 @@ components:
           enum: [ok]
       required:
         - status
+
+    ReadinessState:
+      type: string
+      enum: [ready, degraded, not_ready, unknown]
+
+    BrokerTradingReadinessState:
+      type: string
+      enum: [ready, blocked, unknown]
+
+    ReadinessStatus:
+      type: object
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        liveness:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [ok]
+          required: [status]
+        appReadiness:
+          type: object
+          properties:
+            status:
+              $ref: "#/components/schemas/ReadinessState"
+            reason:
+              type: string
+              nullable: true
+            diagnosticsStatus:
+              type: string
+              enum: [ok, degraded, down, unknown]
+            diagnosticsSeverity:
+              type: string
+              enum: [info, warning, critical]
+          required: [status, reason, diagnosticsStatus, diagnosticsSeverity]
+        brokerTradingReadiness:
+          type: object
+          properties:
+            status:
+              $ref: "#/components/schemas/BrokerTradingReadinessState"
+            ready:
+              type: boolean
+            reason:
+              type: string
+              nullable: true
+            checks:
+              type: object
+              properties:
+                configured:
+                  type: boolean
+                  nullable: true
+                reachable:
+                  type: boolean
+                  nullable: true
+                connected:
+                  type: boolean
+                  nullable: true
+                authenticated:
+                  type: boolean
+                  nullable: true
+                competing:
+                  type: boolean
+                  nullable: true
+                healthFresh:
+                  type: boolean
+                  nullable: true
+                streamFresh:
+                  type: boolean
+                  nullable: true
+                strictReady:
+                  type: boolean
+                  nullable: true
+              required:
+                - configured
+                - reachable
+                - connected
+                - authenticated
+                - competing
+                - healthFresh
+                - streamFresh
+                - strictReady
+          required: [status, ready, reason, checks]
+        pressureLevel:
+          type: string
+          enum: [normal, watch, high, critical]
+        degradedReasons:
+          type: array
+          items:
+            type: string
+        manualTradingBlockedReason:
+          type: string
+          nullable: true
+      required:
+        - generatedAt
+        - liveness
+        - appReadiness
+        - brokerTradingReadiness
+        - pressureLevel
+        - degradedReasons
+        - manualTradingBlockedReason
 
     EnvironmentMode:
       type: string
@@ -10915,6 +11031,17 @@ components:
             type: string
         universe:
           $ref: "#/components/schemas/SignalMonitorUniverseSummary"
+        cacheStatus:
+          type: string
+          enum: [hit, stale, inflight, miss]
+        refreshing:
+          type: boolean
+        servedAt:
+          type: string
+          format: date-time
+        stateSource:
+          type: string
+          enum: [database, runtime-fallback, memory-cache]
       required:
         - profile
         - states

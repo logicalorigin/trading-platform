@@ -1,14 +1,19 @@
 const PYRUS_MARK_SRC = "/brand/pyrus-mark.png";
+const PYRUS_ANIMATED_MARK_SRC = "/brand/pyrus-loader-mark-dark.svg";
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
 export function PyrusMark({
+  animated = false,
   className,
+  imageClassName,
   title,
 }: {
+  animated?: boolean;
   className?: string;
+  imageClassName?: string;
   title?: string;
 }) {
   return (
@@ -21,11 +26,11 @@ export function PyrusMark({
       <img
         alt=""
         aria-hidden="true"
-        className="pyrus-mark-image"
+        className={cn("pyrus-mark-image", imageClassName)}
         decoding="async"
         draggable={false}
         loading="eager"
-        src={PYRUS_MARK_SRC}
+        src={animated ? PYRUS_ANIMATED_MARK_SRC : PYRUS_MARK_SRC}
       />
     </span>
   );

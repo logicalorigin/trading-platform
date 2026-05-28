@@ -1181,7 +1181,7 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       {!queryEnabled ? (
         <DataUnavailableState
           title="Preparing algo monitor"
-          detail="Waiting for the active section to finish first paint."
+          detail="Starting the frame-owned algo data stream."
           minHeight={160}
         />
       ) : loading ? (

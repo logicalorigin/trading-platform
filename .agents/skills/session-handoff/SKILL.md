@@ -24,6 +24,7 @@ Start with session-layer and runtime evidence:
 - `~/.codex/logs_*.sqlite`
 - live Codex processes and their filtered `/proc/<pid>/environ`
 - Replit runtime state such as `ps`, `/tmp` supervisor locks, `/run/replit`, workflow-owned process trees, and Replit-owned environment markers like `REPLIT_MODE=workflow`
+- PYRUS flight-recorder state with `pnpm run diagnose:replit-restarts -- --json` or by inspecting `.pyrus-runtime/flight-recorder/current.json`, `api-current.json`, `incidents.jsonl`, `events-*.jsonl`, and `api-events-*.jsonl`
 
 Only after that runtime sweep should repo-root handoff files be used as secondary recovery notes. If no Codex thread row, rollout file, history entry, or durable live note exists, report that the dropped session was not locally recoverable and explain which stores were checked. Do not paste secrets from environment files or logs into handoffs or user-facing output.
 

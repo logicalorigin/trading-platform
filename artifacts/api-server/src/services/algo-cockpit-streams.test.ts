@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  shouldUseCriticalOnlyAlgoCockpitPayload,
   subscribeAlgoCockpitSnapshots,
   type AlgoCockpitStreamPayload,
 } from "./algo-cockpit-streams";
@@ -23,6 +24,13 @@ function payload(label: string): AlgoCockpitStreamPayload {
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test("algo cockpit stream sheds full derived payloads under API pressure", () => {
+  assert.equal(shouldUseCriticalOnlyAlgoCockpitPayload("normal"), false);
+  assert.equal(shouldUseCriticalOnlyAlgoCockpitPayload("watch"), false);
+  assert.equal(shouldUseCriticalOnlyAlgoCockpitPayload("high"), true);
+  assert.equal(shouldUseCriticalOnlyAlgoCockpitPayload("critical"), true);
+});
 
 test("algo cockpit stream coalesces change events while a poll is in flight", async () => {
   let changeHandler: (change: { mode?: "paper" | "live" }) => void = () => {

@@ -118,7 +118,10 @@ test("account page stream is owned by the visible account screen", () => {
   );
   assert.match(accountScreenSource, /isVisible && accountQueriesEnabled/);
   assert.match(accountScreenSource, /accountId:\s*inactiveAccountPageRequest\?\.accountId/);
-  assert.match(accountScreenSource, /enabled:\s*Boolean\(accountPageStreamEnabled && inactiveAccountPageRequest\)/);
+  assert.match(
+    accountScreenSource,
+    /enabled:\s*Boolean\([\s\S]*accountPageStreamEnabled &&[\s\S]*accountPageStreamFreshness\.accountCriticalFresh &&[\s\S]*inactiveAccountPageRequest/,
+  );
   assert.match(accountScreenSource, /accountPageStreamFresh:\s*accountPageStreamFreshness\.accountCriticalFresh/);
   assert.match(accountScreenSource, /const criticalAccountQueriesEnabled = Boolean/);
   assert.match(accountScreenSource, /const liveAccountQueriesEnabled = Boolean/);
@@ -261,7 +264,7 @@ test("account page stream refreshes freshness on page snapshots", () => {
   assert.doesNotMatch(accountPageHook, /addEventListener\("ready", markFresh/);
 });
 
-test("account page derived freshness uses the slower derived stream cadence", () => {
+test("account page derived freshness stays slow while Account UI fallback is short", () => {
   const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
   const accountScreenSource = readFileSync(
     new URL("../../screens/AccountScreen.jsx", import.meta.url),
@@ -275,7 +278,7 @@ test("account page derived freshness uses the slower derived stream cadence", ()
   );
   assert.match(
     accountScreenSource,
-    /const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 35_000;/,
+    /const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 6_000;/,
   );
 });
 
@@ -297,6 +300,9 @@ test("algo cockpit stream hydrates query caches and gates fallback polling", () 
   assert.match(algoScreenSource, /algoRoutineRefetchInterval/);
   assert.match(algoScreenSource, /algoCriticalQueriesEnabled/);
   assert.match(algoScreenSource, /algoDerivedQueriesEnabled/);
+  assert.match(algoScreenSource, /algoDerivedFallbackReady[\s\S]*!algoCockpitStreamFreshness\.algoFullFresh/);
+  assert.match(algoScreenSource, /algoPostCriticalQueriesEnabled[\s\S]*!shadowAccountStreamFreshness\.accountFresh/);
+  assert.match(algoScreenSource, /signalOptionsLedgerPositionsRefetchInterval[\s\S]*60_000/);
   assert.match(algoScreenSource, /algoCockpitStreamFreshness\.algoCriticalFresh/);
   assert.match(algoScreenSource, /algoCockpitStreamFreshness\.algoFullFresh/);
 });
@@ -729,10 +735,13 @@ const createMockQueryClient = (
       setQueryData: (queryKey: unknown[], value: unknown) => {
         const key = JSON.stringify(queryKey);
         const previous = writes.get(key);
-        writes.set(
-          key,
-          typeof value === "function" ? (value as (current: unknown) => unknown)(previous) : value,
-        );
+        const next =
+          typeof value === "function"
+            ? (value as (current: unknown) => unknown)(previous)
+            : value;
+        if (next !== undefined) {
+          writes.set(key, next);
+        }
       },
       invalidateQueries: ({ predicate }: any = {}) => {
         queries.forEach((query) => {
@@ -1646,6 +1655,323 @@ test("applyIbkrAccountPayloadToCache patches scoped account positions from strea
   assert.equal(patched.positions[0].marketValue, 600);
   assert.equal(patched.positions[0].weightPercent, 0.6);
   assert.equal(invalidated.length, 0);
+});
+
+test("applyIbkrAccountPayloadToCache seeds scoped account positions from stream before REST data", () => {
+  const positionsKey = [
+    "/api/accounts/U1/positions",
+    { mode: "live", assetClass: "Stocks" },
+  ];
+  const { queryClient, writes } = createMockQueryClient([positionsKey]);
+
+  applyIbkrAccountPayloadToCache(
+    queryClient as any,
+    {
+      accounts: [
+        {
+          id: "U1",
+          providerAccountId: "U1",
+          provider: "ibkr",
+          mode: "live",
+          displayName: "IBKR U1",
+          currency: "USD",
+          cash: 10_000,
+          buyingPower: 50_000,
+          netLiquidation: 100_000,
+          updatedAt: "2026-04-30T14:00:03.000Z",
+        },
+      ],
+      positions: [
+        {
+          id: "P1",
+          accountId: "U1",
+          symbol: "AAPL",
+          assetClass: "stock",
+          quantity: 5,
+          averagePrice: 100,
+          marketPrice: 101,
+          marketValue: 505,
+          unrealizedPnl: 5,
+          unrealizedPnlPercent: 1,
+          optionContract: null,
+        },
+        {
+          id: "P2",
+          accountId: "U2",
+          symbol: "MSFT",
+          assetClass: "stock",
+          quantity: 2,
+          averagePrice: 200,
+          marketPrice: 201,
+          marketValue: 402,
+          unrealizedPnl: 2,
+          unrealizedPnlPercent: 0.5,
+          optionContract: null,
+        },
+      ],
+    } as any,
+    { accountId: "U1", mode: "live" },
+  );
+
+  const seeded = writes.get(JSON.stringify(positionsKey)) as any;
+  assert.equal(seeded.accountId, "U1");
+  assert.equal(seeded.currency, "USD");
+  assert.equal(seeded.updatedAt.length > 0, true);
+  assert.deepEqual(
+    seeded.positions.map((position: any) => position.id),
+    ["P1"],
+  );
+  assert.equal(seeded.positions[0].mark, 101);
+  assert.equal(seeded.totals.netLiquidation, 100_000);
+  assert.equal(seeded.totals.netExposure, 505);
+});
+
+test("applyIbkrAccountPayloadToCache seeds combined account positions from stream before REST data", () => {
+  const positionsKey = [
+    "/api/accounts/combined/positions",
+    { mode: "live", assetClass: "Stocks" },
+  ];
+  const { queryClient, writes } = createMockQueryClient([positionsKey]);
+
+  applyIbkrAccountPayloadToCache(
+    queryClient as any,
+    {
+      accounts: [
+        {
+          id: "U1",
+          providerAccountId: "U1",
+          provider: "ibkr",
+          mode: "live",
+          displayName: "IBKR U1",
+          currency: "USD",
+          cash: 10_000,
+          buyingPower: 50_000,
+          netLiquidation: 100_000,
+          updatedAt: "2026-04-30T14:00:03.000Z",
+        },
+        {
+          id: "U2",
+          providerAccountId: "U2",
+          provider: "ibkr",
+          mode: "live",
+          displayName: "IBKR U2",
+          currency: "USD",
+          cash: 20_000,
+          buyingPower: 100_000,
+          netLiquidation: 200_000,
+          updatedAt: "2026-04-30T14:00:04.000Z",
+        },
+      ],
+      positions: [
+        {
+          id: "P1",
+          accountId: "U1",
+          symbol: "AAPL",
+          assetClass: "stock",
+          quantity: 5,
+          averagePrice: 100,
+          marketPrice: 101,
+          marketValue: 505,
+          unrealizedPnl: 5,
+          unrealizedPnlPercent: 1,
+          optionContract: null,
+        },
+        {
+          id: "P2",
+          accountId: "U2",
+          symbol: "AAPL",
+          assetClass: "stock",
+          quantity: 2,
+          averagePrice: 100,
+          marketPrice: 102,
+          marketValue: 204,
+          unrealizedPnl: 4,
+          unrealizedPnlPercent: 2,
+          optionContract: null,
+        },
+      ],
+    } as any,
+    { accountId: "combined", mode: "live" },
+  );
+
+  const seeded = writes.get(JSON.stringify(positionsKey)) as any;
+  assert.equal(seeded.accountId, "combined");
+  assert.equal(seeded.totals.cash, 30_000);
+  assert.equal(seeded.totals.buyingPower, 150_000);
+  assert.equal(seeded.totals.netLiquidation, 300_000);
+  assert.equal(seeded.totals.netExposure, 709);
+  assert.deepEqual(
+    seeded.positions.map((position: any) => position.id),
+    ["equity:AAPL"],
+  );
+  assert.deepEqual(seeded.positions[0].accounts, ["U1", "U2"]);
+  assert.equal(seeded.positions[0].quantity, 7);
+  assert.equal(seeded.positions[0].marketValue, 709);
+  assert.equal(seeded.positions[0].unrealizedPnl, 9);
+  assert.equal(Number(seeded.positions[0].mark.toFixed(4)), 101.2857);
+});
+
+test("applyIbkrAccountPayloadToCache does not seed scoped positions from cost-basis stream rows", () => {
+  const positionsKey = [
+    "/api/accounts/U1/positions",
+    { mode: "live", assetClass: "Stocks" },
+  ];
+  const { queryClient, writes } = createMockQueryClient([positionsKey]);
+
+  applyIbkrAccountPayloadToCache(
+    queryClient as any,
+    {
+      accounts: [
+        {
+          id: "U1",
+          providerAccountId: "U1",
+          provider: "ibkr",
+          mode: "live",
+          displayName: "IBKR U1",
+          currency: "USD",
+          cash: 10_000,
+          buyingPower: 50_000,
+          netLiquidation: 100_000,
+          updatedAt: "2026-04-30T14:00:03.000Z",
+        },
+      ],
+      positions: [
+        {
+          id: "P1",
+          accountId: "U1",
+          symbol: "AAPL",
+          assetClass: "stock",
+          quantity: 5,
+          averagePrice: 100,
+          marketPrice: 100,
+          marketValue: 500,
+          unrealizedPnl: 0,
+          unrealizedPnlPercent: 0,
+          optionContract: null,
+        },
+        {
+          id: "P2",
+          accountId: "U1",
+          symbol: "MSFT",
+          assetClass: "stock",
+          quantity: 2,
+          averagePrice: 200,
+          marketPrice: 0,
+          marketValue: 0,
+          unrealizedPnl: -400,
+          unrealizedPnlPercent: -100,
+          optionContract: null,
+        },
+      ],
+    } as any,
+    { accountId: "U1", mode: "live" },
+  );
+
+  assert.equal(writes.has(JSON.stringify(positionsKey)), false);
+});
+
+test("applyIbkrAccountPayloadToCache preserves hydrated marks when stream only reports cost basis", () => {
+  const positionsKey = [
+    "/api/accounts/U1/positions",
+    { mode: "live", assetClass: "Stocks" },
+  ];
+  const initialData = new Map<string, unknown>([
+    [
+      JSON.stringify(positionsKey),
+      {
+        accountId: "U1",
+        currency: "USD",
+        totals: {
+          weightPercent: 0.52,
+          unrealizedPnl: 20,
+          grossLong: 520,
+          grossShort: 0,
+          netExposure: 520,
+          cash: 10_000,
+          totalCash: 10_000,
+          buyingPower: 50_000,
+          netLiquidation: 100_000,
+        },
+        updatedAt: "2026-04-30T14:00:00.000Z",
+        positions: [
+          {
+            id: "P1",
+            accountId: "U1",
+            accounts: ["U1"],
+            symbol: "AAPL",
+            description: "AAPL",
+            assetClass: "Stocks",
+            optionContract: null,
+            sector: "Technology",
+            quantity: 5,
+            averageCost: 100,
+            mark: 104,
+            dayChange: 1,
+            dayChangePercent: 0.97,
+            unrealizedPnl: 20,
+            unrealizedPnlPercent: 4,
+            marketValue: 520,
+            weightPercent: 0.52,
+            betaWeightedDelta: null,
+            lots: [],
+            openOrders: [],
+            source: "IBKR_POSITIONS",
+          },
+        ],
+      },
+    ],
+  ]);
+  const { queryClient, writes } = createMockQueryClient(
+    [positionsKey],
+    initialData,
+  );
+
+  applyIbkrAccountPayloadToCache(
+    queryClient as any,
+    {
+      accounts: [
+        {
+          id: "U1",
+          providerAccountId: "U1",
+          provider: "ibkr",
+          mode: "live",
+          displayName: "IBKR U1",
+          currency: "USD",
+          cash: 10_000,
+          buyingPower: 50_000,
+          netLiquidation: 100_000,
+          updatedAt: "2026-04-30T14:00:03.000Z",
+        },
+      ],
+      positions: [
+        {
+          id: "P1",
+          accountId: "U1",
+          symbol: "AAPL",
+          assetClass: "stock",
+          quantity: 5,
+          averagePrice: 100,
+          marketPrice: 100,
+          marketValue: 500,
+          unrealizedPnl: 0,
+          unrealizedPnlPercent: 0,
+          optionContract: null,
+        },
+      ],
+    } as any,
+    { accountId: "U1", mode: "live" },
+  );
+
+  const patched = writes.get(JSON.stringify(positionsKey)) as any;
+  assert.equal(patched.positions[0].quantity, 5);
+  assert.equal(patched.positions[0].averageCost, 100);
+  assert.equal(patched.positions[0].mark, 104);
+  assert.equal(patched.positions[0].marketValue, 520);
+  assert.equal(patched.positions[0].unrealizedPnl, 20);
+  assert.equal(patched.positions[0].unrealizedPnlPercent, 4);
+  assert.equal(patched.positions[0].weightPercent, 0.52);
+  assert.equal(patched.totals.netExposure, 520);
+  assert.equal(patched.totals.unrealizedPnl, 20);
 });
 
 test("applyIbkrAccountPayloadToCache does not overwrite Shadow account positions", () => {

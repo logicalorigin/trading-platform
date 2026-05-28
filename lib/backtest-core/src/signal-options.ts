@@ -15,6 +15,8 @@ export type SignalOptionsExecutionProfile = {
     targetDte: number;
     maxDte: number;
     allowZeroDte: boolean;
+    callStrikeSlots: SignalOptionsStrikeSlot[];
+    putStrikeSlots: SignalOptionsStrikeSlot[];
     callStrikeSlot: SignalOptionsStrikeSlot;
     putStrikeSlot: SignalOptionsStrikeSlot;
   };
@@ -119,6 +121,8 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       targetDte: 1,
       maxDte: 3,
       allowZeroDte: false,
+      callStrikeSlots: [3],
+      putStrikeSlots: [2],
       callStrikeSlot: 3,
       putStrikeSlot: 2,
     },
@@ -270,8 +274,39 @@ function strikeSlot(
   value: unknown,
   fallback: SignalOptionsStrikeSlot,
 ): SignalOptionsStrikeSlot {
-  const resolved = finiteInteger(value, fallback, 0, 5);
-  return resolved as SignalOptionsStrikeSlot;
+  return parseStrikeSlot(value) ?? fallback;
+}
+
+const MAX_SIGNAL_OPTIONS_STRIKE_SLOTS = 3;
+
+function parseStrikeSlot(value: unknown): SignalOptionsStrikeSlot | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.min(5, Math.max(0, Math.round(parsed))) as SignalOptionsStrikeSlot;
+}
+
+function strikeSlots(
+  value: unknown,
+  legacyValue: unknown,
+  fallback: SignalOptionsStrikeSlot[],
+): SignalOptionsStrikeSlot[] {
+  const source = Array.isArray(value) ? value : [legacyValue];
+  const slots: SignalOptionsStrikeSlot[] = [];
+  for (const item of source) {
+    const slot = parseStrikeSlot(item);
+    if (slot != null && !slots.includes(slot)) {
+      slots.push(slot);
+    }
+    if (slots.length >= MAX_SIGNAL_OPTIONS_STRIKE_SLOTS) {
+      break;
+    }
+  }
+  if (slots.length) {
+    return slots;
+  }
+  return fallback.length ? fallback.slice(0, MAX_SIGNAL_OPTIONS_STRIKE_SLOTS) : [3];
 }
 
 function chaseSteps(value: unknown, fallback: number[]) {
@@ -364,6 +399,16 @@ export function resolveSignalOptionsExecutionProfile(
     minDte,
     90,
   );
+  const callStrikeSlots = strikeSlots(
+    optionSelection.callStrikeSlots ?? root.callStrikeSlots,
+    optionSelection.callStrikeSlot ?? root.callStrikeSlot,
+    defaults.optionSelection.callStrikeSlots,
+  );
+  const putStrikeSlots = strikeSlots(
+    optionSelection.putStrikeSlots ?? root.putStrikeSlots,
+    optionSelection.putStrikeSlot ?? root.putStrikeSlot,
+    defaults.optionSelection.putStrikeSlots,
+  );
 
   return {
     version: "v1",
@@ -381,14 +426,10 @@ export function resolveSignalOptionsExecutionProfile(
         optionSelection.allowZeroDte ?? root.allowZeroDte,
         defaults.optionSelection.allowZeroDte,
       ),
-      callStrikeSlot: strikeSlot(
-        optionSelection.callStrikeSlot ?? root.callStrikeSlot,
-        defaults.optionSelection.callStrikeSlot,
-      ),
-      putStrikeSlot: strikeSlot(
-        optionSelection.putStrikeSlot ?? root.putStrikeSlot,
-        defaults.optionSelection.putStrikeSlot,
-      ),
+      callStrikeSlots,
+      putStrikeSlots,
+      callStrikeSlot: callStrikeSlots[0] ?? defaults.optionSelection.callStrikeSlot,
+      putStrikeSlot: putStrikeSlots[0] ?? defaults.optionSelection.putStrikeSlot,
     },
     riskCaps: {
       maxPremiumPerEntry: finiteNumber(
@@ -714,9 +755,26 @@ export function signalOptionsStrikeSlotForRight(
   profile: SignalOptionsExecutionProfile,
   right: SignalOptionsRight,
 ): SignalOptionsStrikeSlot {
-  return right === "put"
-    ? profile.optionSelection.putStrikeSlot
-    : profile.optionSelection.callStrikeSlot;
+  return signalOptionsStrikeSlotsForRight(profile, right)[0]!;
+}
+
+export function signalOptionsStrikeSlotsForRight(
+  profile: SignalOptionsExecutionProfile,
+  right: SignalOptionsRight,
+): SignalOptionsStrikeSlot[] {
+  const optionSelection = profile.optionSelection;
+  const slots =
+    right === "put"
+      ? optionSelection.putStrikeSlots
+      : optionSelection.callStrikeSlots;
+  if (Array.isArray(slots) && slots.length) {
+    return slots.slice(0, MAX_SIGNAL_OPTIONS_STRIKE_SLOTS);
+  }
+  return [
+    right === "put"
+      ? optionSelection.putStrikeSlot
+      : optionSelection.callStrikeSlot,
+  ];
 }
 
 export function resolveSignalOptionsStrike(input: {

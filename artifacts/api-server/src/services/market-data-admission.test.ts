@@ -9,6 +9,7 @@ import {
   setMarketDataAdmissionBridgeLineBudget,
   setMarketDataAdmissionRuntimeDefaults,
   releaseMarketDataLeases,
+  expireMarketDataLeases,
 } from "./market-data-admission";
 
 const ENV_KEYS = [
@@ -53,22 +54,22 @@ test("uses a 200-line IBKR budget with visible capacity plus flow line pools by 
   assert.equal(budget.reserveLines, 0);
   assert.equal(budget.usableLines, 200);
   assert.equal(budget.targetFillLines, 200);
-  assert.equal(budget.automationExecutionLineCap, 30);
-  assert.equal(budget.executionLineCap, 30);
-  assert.equal(budget.automationLineCap, 30);
-  assert.equal(budget.accountMonitorLineCap, 30);
-  assert.equal(budget.visibleLineCap, 120);
+  assert.equal(budget.automationExecutionLineCap, 200);
+  assert.equal(budget.executionLineCap, 200);
+  assert.equal(budget.automationLineCap, 200);
+  assert.equal(budget.accountMonitorLineCap, 200);
+  assert.equal(budget.visibleLineCap, 200);
   assert.equal(budget.visibleOptionChainStrikesAroundMoney, 5);
   assert.equal(budget.visibleOptionChainDefaultLineCount, 23);
   assert.equal(budget.visibleOptionQuoteContractLineCap, 40);
   assert.equal(budget.visibleOptionQuoteLineReserve, 41);
-  assert.equal(budget.flowScannerLineCap, 160);
+  assert.equal(budget.flowScannerLineCap, 200);
   assert.deepEqual(budget.poolLineCaps, {
-    execution: 30,
-    "account-monitor": 30,
-    visible: 120,
-    automation: 30,
-    "flow-scanner": 160,
+    execution: 200,
+    "account-monitor": 200,
+    visible: 200,
+    automation: 200,
+    "flow-scanner": 200,
   });
 });
 
@@ -84,32 +85,66 @@ test("uses the bridge-reported line budget when it is lower than the app cap", (
   assert.equal(budget.usableLines, 190);
   assert.equal(budget.targetFillLines, 190);
   assert.deepEqual(budget.poolLineCaps, {
-    execution: 30,
-    "account-monitor": 30,
-    visible: 120,
-    automation: 30,
-    "flow-scanner": 160,
+    execution: 190,
+    "account-monitor": 190,
+    visible: 190,
+    automation: 190,
+    "flow-scanner": 190,
   });
 });
 
-test("scanner respects the reserved flow lane cap by default", () => {
+test("scanner fills the bridge budget by default", () => {
   setEnv({});
 
   const scanner = admitMarketDataLeases({
     owner: "flow-scanner:rotation",
     intent: "flow-scanner-live",
-    requests: Array.from({ length: 165 }, (_, index) => ({
+    requests: Array.from({ length: 205 }, (_, index) => ({
       assetClass: "option" as const,
       providerContractId: `FLOW${index}`,
       underlying: "SPY",
     })),
   });
-  assert.equal(scanner.admitted.length, 160);
+  assert.equal(scanner.admitted.length, 200);
   assert.equal(scanner.rejected.length, 5);
 
   const diagnostics = getMarketDataAdmissionDiagnostics();
-  assert.equal(diagnostics.activeLineCount, 160);
-  assert.equal(diagnostics.flowScannerLineCount, 160);
+  assert.equal(diagnostics.activeLineCount, 200);
+  assert.equal(diagnostics.flowScannerLineCount, 200);
+});
+
+test("market data diagnostics do not expire ttl leases as a side effect", async () => {
+  admitMarketDataLeases({
+    owner: "flow-scanner:ttl",
+    intent: "flow-scanner-live",
+    ttlMs: 1,
+    requests: [
+      {
+        assetClass: "option",
+        providerContractId: "TTL1",
+        underlying: "SPY",
+      },
+    ],
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.activeLineCount, 0);
+  assert.equal(diagnostics.flowScannerLineCount, 0);
+  assert.equal(diagnostics.leaseCount, 0);
+  assert.equal(
+    diagnostics.ownerClasses.summaries["flow-scanner"].recentExpiredCount,
+    0,
+  );
+
+  expireMarketDataLeases();
+
+  assert.equal(
+    getMarketDataAdmissionDiagnostics().ownerClasses.summaries["flow-scanner"]
+      .recentExpiredCount,
+    1,
+  );
 });
 
 test("default visible option reserve leaves the remaining budget for scanner work", () => {
@@ -237,7 +272,7 @@ test("allows target fill lines below the active budget and clamps them to the bu
   assert.equal(budget.targetFillLines, 190);
 });
 
-test("derives scanner headroom from runtime scanner line budget and concurrency", () => {
+test("runtime scanner line budget does not cap the live quote working set", () => {
   setEnv({});
   setMarketDataAdmissionRuntimeDefaults({
     flowScannerLineBudget: 40,
@@ -246,15 +281,15 @@ test("derives scanner headroom from runtime scanner line budget and concurrency"
 
   const budget = getMarketDataAdmissionBudget();
   assert.deepEqual(budget.poolLineCaps, {
-    execution: 30,
-    "account-monitor": 30,
-    visible: 120,
-    automation: 30,
-    "flow-scanner": 80,
+    execution: 200,
+    "account-monitor": 200,
+    visible: 200,
+    automation: 200,
+    "flow-scanner": 200,
   });
 });
 
-test("runtime scanner cap shrink demotes excess flow scanner leases", () => {
+test("runtime scanner cap shrink does not demote scanner live quote leases", () => {
   setEnv({});
   setMarketDataAdmissionRuntimeDefaults({
     flowScannerLineBudget: 40,
@@ -279,11 +314,11 @@ test("runtime scanner cap shrink demotes excess flow scanner leases", () => {
   });
 
   const diagnostics = getMarketDataAdmissionDiagnostics();
-  assert.equal(diagnostics.budget.flowScannerLineCap, 40);
-  assert.equal(diagnostics.poolUsage["flow-scanner"]?.effectiveMaxLines, 40);
-  assert.equal(diagnostics.flowScannerLineCount, 40);
-  assert.equal(diagnostics.activeLineCount, 40);
-  assert.equal(getMarketDataLeasesSnapshot().length, 40);
+  assert.equal(diagnostics.budget.flowScannerLineCap, 200);
+  assert.equal(diagnostics.poolUsage["flow-scanner"]?.effectiveMaxLines, 200);
+  assert.equal(diagnostics.flowScannerLineCount, 80);
+  assert.equal(diagnostics.activeLineCount, 80);
+  assert.equal(getMarketDataLeasesSnapshot().length, 80);
 });
 
 test("keeps explicit admission env caps ahead of runtime scanner defaults", () => {
@@ -297,7 +332,7 @@ test("keeps explicit admission env caps ahead of runtime scanner defaults", () =
 
   const budget = getMarketDataAdmissionBudget();
   assert.equal(budget.flowScannerLineCap, 20);
-  assert.equal(budget.poolLineCaps.visible, 180);
+  assert.equal(budget.poolLineCaps.visible, 200);
 });
 
 test("account monitor live lines respect their reserved cap", () => {
@@ -649,7 +684,7 @@ test("flow scanner does not reclaim visible lines when active demand leaves no s
 
   assert.equal(scanner.admitted.length, 0);
   assert.equal(scanner.rejected.length, 1);
-  assert.equal(scanner.rejected[0].reason, "budget");
+  assert.equal(scanner.rejected[0].reason, "pool-cap");
 
   const diagnostics = getMarketDataAdmissionDiagnostics();
   assert.equal(diagnostics.intentUsage["visible-live"], 2);
@@ -843,6 +878,50 @@ test("keeps scanner headroom fixed when visible demand reaches its own cap", () 
   assert.equal(diagnostics.poolUsage["flow-scanner"]?.effectiveMaxLines, 10);
   assert.equal(diagnostics.flowScannerRemainingLineCount, 0);
   assert.equal(diagnostics.pressure.state, "protected");
+});
+
+test("line pressure keeps half usage normal and escalates near exhaustion", () => {
+  const pressureForActiveLineCount = (count: number) => {
+    __resetMarketDataAdmissionForTests();
+    setEnv({
+      IBKR_MARKET_DATA_APP_MAX_LINES: "200",
+      IBKR_MARKET_DATA_RESERVE_LINES: "0",
+      IBKR_MARKET_DATA_EXECUTION_LINES: "0",
+      IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
+      IBKR_MARKET_DATA_VISIBLE_LINES: "200",
+      IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
+      IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "0",
+    });
+    admitMarketDataLeases({
+      owner: "line-pressure-test",
+      intent: "visible-live",
+      requests: Array.from({ length: count }, (_, index) => ({
+        assetClass: "equity" as const,
+        symbol: `LP${index}`,
+      })),
+    });
+    return getMarketDataAdmissionDiagnostics().pressure;
+  };
+
+  const half = pressureForActiveLineCount(100);
+  assert.equal(half.utilizationPercent, 50);
+  assert.equal(half.utilizationLevel, "normal");
+  assert.equal(half.state, "normal");
+
+  const watch = pressureForActiveLineCount(140);
+  assert.equal(watch.utilizationPercent, 70);
+  assert.equal(watch.utilizationLevel, "watch");
+  assert.equal(watch.state, "normal");
+
+  const constrained = pressureForActiveLineCount(176);
+  assert.equal(constrained.utilizationPercent, 88);
+  assert.equal(constrained.utilizationLevel, "constrained");
+  assert.equal(constrained.state, "constrained");
+
+  const protectedPressure = pressureForActiveLineCount(190);
+  assert.equal(protectedPressure.utilizationPercent, 95);
+  assert.equal(protectedPressure.utilizationLevel, "protected");
+  assert.equal(protectedPressure.state, "protected");
 });
 
 test("flow scanner leases use their pool while preserving visible prewarm lines", () => {

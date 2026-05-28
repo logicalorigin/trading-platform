@@ -432,8 +432,16 @@ export const AlgoScreen = ({
   ]);
   const algoSetupQueriesEnabled = Boolean(isVisible);
   const algoCriticalQueriesEnabled = Boolean(algoLiveDataQueriesEnabled);
-  const algoDerivedQueriesEnabled = Boolean(algoLiveDataQueriesEnabled);
-  const algoPostCriticalQueriesEnabled = Boolean(algoLiveDataQueriesEnabled);
+  const algoDerivedQueriesEnabled = Boolean(
+    algoLiveDataQueriesEnabled &&
+      algoDerivedFallbackReady &&
+      !algoCockpitStreamFreshness.algoFullFresh,
+  );
+  const algoPostCriticalQueriesEnabled = Boolean(
+    algoLiveDataQueriesEnabled &&
+      algoDerivedFallbackReady &&
+      !shadowAccountStreamFreshness.accountFresh,
+  );
   const algoRoutineRefetchInterval =
     isVisible && !algoCockpitStreamFreshness.algoCriticalFresh
       ? QUERY_DEFAULTS.refetchInterval
@@ -444,7 +452,7 @@ export const AlgoScreen = ({
       : false;
   const signalOptionsLedgerPositionsRefetchInterval =
     algoPostCriticalQueriesEnabled && !shadowAccountStreamFreshness.accountFresh
-      ? QUERY_DEFAULTS.refetchInterval
+      ? 60_000
       : false;
   useRuntimeWorkloadFlag("algo:cockpit", isVisible, {
     kind: algoCockpitStreamFreshness.algoCriticalFresh ? "stream" : "poll",

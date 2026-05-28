@@ -126,10 +126,12 @@ export const buildPlatformWorkSchedule = ({
   automationEnabled = false,
   tradingEnabled = false,
   mobileViewport = false,
+  startupProtectionActive = false,
 } = {}) => {
   const screen = normalizeScreen(activeScreen);
   const visible = Boolean(pageVisible);
   const sessionReady = Boolean(sessionMetadataSettled);
+  const startupProtected = Boolean(startupProtectionActive);
   const memoryPressureLevel = normalizeMemoryPressureLevel(memoryPressure?.level);
   const memoryPressureObserved =
     !memoryPressure ||
@@ -158,6 +160,7 @@ export const buildPlatformWorkSchedule = ({
   const backgroundIbkr = Boolean(
     visible &&
       ibkrReady &&
+      !startupProtected &&
       memoryAllowsBackground &&
       isBackgroundWorkAllowed(ibkrWorkPressure),
   );
@@ -173,17 +176,23 @@ export const buildPlatformWorkSchedule = ({
   const broadFlowAllowed = Boolean(
     sessionReady &&
       visible &&
+      !startupProtected &&
       mobileBroadFlowAllowed &&
       pressureCaps.broadFlowRuntimeEnabled,
   );
-  const backgroundHistoryReady = screenWarmupPhase === "ready";
+  const backgroundHistoryReady = screenWarmupPhase === "ready" && !startupProtected;
+  const pressureBlocksBackgroundAccountRealtime =
+    startupProtected ||
+    memoryPressureLevel === "high" ||
+    memoryPressureLevel === "critical";
+  const foregroundAccountRealtime = Boolean(
+    account || trade || tradingEnabled,
+  );
+  const backgroundAccountRealtime = Boolean(automationEnabled || foregroundIbkr);
   const accountRealtimeCritical = Boolean(
     criticalIbkr &&
-      (account ||
-        trade ||
-        automationEnabled ||
-        tradingEnabled ||
-        foregroundIbkr),
+      (foregroundAccountRealtime ||
+        (!pressureBlocksBackgroundAccountRealtime && backgroundAccountRealtime)),
   );
   const watchlistQuoteStream = Boolean(sessionReady && quoteStreamIbkr);
 
@@ -194,6 +203,9 @@ export const buildPlatformWorkSchedule = ({
       observed: memoryPressureObserved,
     },
     pressureCaps,
+    startupProtection: {
+      active: startupProtected,
+    },
     hydrationPressure: maxHydrationPressureState(
       toHydrationPressureState(ibkrWorkPressure),
       memoryHydrationPressureState(memoryPressureLevel),
@@ -236,7 +248,12 @@ export const buildPlatformWorkSchedule = ({
       delayedOptionsRefresh: backgroundIbkr,
     },
     hiddenScreenPreload: {
-      codeOnly: Boolean(sessionReady && firstScreenReady && memoryAllowsForeground),
+      codeOnly: Boolean(
+        sessionReady &&
+          firstScreenReady &&
+          !startupProtected &&
+          memoryAllowsForeground,
+      ),
       mountScreens: false,
     },
   };

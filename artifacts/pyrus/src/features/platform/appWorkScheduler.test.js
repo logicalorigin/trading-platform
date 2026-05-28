@@ -22,6 +22,76 @@ test("keeps account realtime critical for automation away from account screen", 
   assert.equal(schedule.streams.accountRealtimeCritical, true);
 });
 
+test("sheds background automation account realtime under high memory pressure", () => {
+  const schedule = buildPlatformWorkSchedule({
+    ...baseInput,
+    activeScreen: "research",
+    automationEnabled: true,
+    memoryPressure: {
+      level: "high",
+      observedAt: "2026-05-28T16:00:00.000Z",
+    },
+  });
+
+  assert.equal(schedule.streams.accountRealtime, false);
+  assert.equal(schedule.streams.accountRealtimeCritical, false);
+  assert.equal(schedule.streams.watchlistQuoteStream, true);
+});
+
+test("startup protection keeps first-screen quotes while holding background fanout", () => {
+  const schedule = buildPlatformWorkSchedule({
+    ...baseInput,
+    activeScreen: "algo",
+    screenWarmupPhase: "ready",
+    activeScreenBackgroundAllowed: true,
+    automationEnabled: true,
+    startupProtectionActive: true,
+  });
+
+  assert.equal(schedule.startupProtection.active, true);
+  assert.equal(schedule.streams.watchlistQuoteStream, true);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
+  assert.equal(schedule.streams.accountRealtime, false);
+  assert.equal(schedule.streams.lowPriorityHistory, false);
+  assert.equal(schedule.resume.backgroundRefresh, false);
+  assert.equal(schedule.hiddenScreenPreload.codeOnly, false);
+});
+
+test("startup protection still allows active account and trading realtime", () => {
+  const accountSchedule = buildPlatformWorkSchedule({
+    ...baseInput,
+    activeScreen: "account",
+    screenWarmupPhase: "ready",
+    startupProtectionActive: true,
+  });
+  const tradeSchedule = buildPlatformWorkSchedule({
+    ...baseInput,
+    activeScreen: "trade",
+    screenWarmupPhase: "ready",
+    tradingEnabled: true,
+    startupProtectionActive: true,
+  });
+
+  assert.equal(accountSchedule.streams.accountRealtime, true);
+  assert.equal(tradeSchedule.streams.accountRealtime, true);
+  assert.equal(accountSchedule.streams.broadFlowRuntime, false);
+  assert.equal(tradeSchedule.streams.broadFlowRuntime, false);
+});
+
+test("keeps active account realtime under high memory pressure", () => {
+  const schedule = buildPlatformWorkSchedule({
+    ...baseInput,
+    activeScreen: "account",
+    memoryPressure: {
+      level: "high",
+      observedAt: "2026-05-28T16:00:00.000Z",
+    },
+  });
+
+  assert.equal(schedule.streams.accountRealtime, true);
+  assert.equal(schedule.streams.accountRealtimeCritical, true);
+});
+
 test("keeps lightweight quote stream active across visible authenticated screens", () => {
   const accountSchedule = buildPlatformWorkSchedule({
     ...baseInput,
