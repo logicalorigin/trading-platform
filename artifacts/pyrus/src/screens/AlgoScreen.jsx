@@ -32,8 +32,6 @@ import {
   useUpdateAlgoDeploymentStrategySettings,
   useUpdateSignalOptionsExecutionProfile,
 } from "@workspace/api-client-react";
-import { saveAllAlgoAdjustments } from "./algo/saveAllAlgoAdjustments";
-import { useServerSyncedDraft } from "./algo/useServerSyncedDraft";
 import {
   DEFAULT_STRATEGY_SIGNAL_SETTINGS,
   PROFILE_BOOLEAN_FIELDS,
@@ -119,27 +117,13 @@ import {
   motionVars,
 } from "../lib/motion";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
-import {
-  buildTransitionsBufferStore,
-  collectEventTransitions,
-  diffSignalSnapshots,
-  limitToWindow,
-} from "../features/platform/algoTransitionsModel";
-import { summarizeCockpitDelta } from "../features/platform/algoActivitySummary";
-import {
-  buildKpiSample,
-  pruneAlgoKpiHistory,
-  pushAlgoKpiSample,
-} from "../features/platform/algoKpiHistoryStore";
-import {
-  buildAttentionStream,
-  buildCockpitGateSummary,
-  isDiagRowsHealthy,
-  isGateSummaryHealthy,
-} from "./algoCockpitDiagnosticsModel";
-import { AlgoStatusBar } from "./algo/AlgoStatusBar.jsx";
 import { retryDynamicImport } from "../lib/dynamicImport";
 
+const LazyAlgoStatusBar = lazy(() =>
+  import("./algo/AlgoStatusBar.jsx").then((module) => ({
+    default: module.AlgoStatusBar,
+  })),
+);
 const LazyAlgoRightRail = lazy(() =>
   import("./algo/AlgoRightRail.jsx").then((module) => ({
     default: module.AlgoRightRail,
@@ -211,6 +195,199 @@ const cloneStrategySettings = (settings) => ({
   ...DEFAULT_STRATEGY_SIGNAL_SETTINGS,
   ...(settings || {}),
 });
+
+const cloneJson = (value) => JSON.parse(JSON.stringify(value ?? null));
+
+const defaultDraftIsEqual = (left, right) =>
+  JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+
+const draftPathParts = (path) =>
+  Array.isArray(path)
+    ? path
+    : String(path || "")
+        .split(".")
+        .map((part) => part.trim())
+        .filter(Boolean);
+
+const setDraftPathValue = (source, path, value) => {
+  const parts = draftPathParts(path);
+  if (!parts.length) return value;
+
+  const root = Array.isArray(source) ? source.slice() : { ...(source || {}) };
+  let cursor = root;
+  parts.slice(0, -1).forEach((part) => {
+    const current = cursor[part];
+    const next =
+      current && typeof current === "object"
+        ? Array.isArray(current)
+          ? current.slice()
+          : { ...current }
+        : {};
+    cursor[part] = next;
+    cursor = next;
+  });
+  cursor[parts[parts.length - 1]] = value;
+  return root;
+};
+
+const syncTokenFor = (syncKeys) => JSON.stringify(syncKeys || []);
+
+const useServerSyncedDraft = (
+  serverValue,
+  {
+    syncKeys = [],
+    clone = cloneJson,
+    isEqual = defaultDraftIsEqual,
+    onDirtySyncKeyChange,
+  } = {},
+) => {
+  const [draft, setDraft] = useState(() => clone(serverValue));
+  const [baseline, setBaseline] = useState(() => clone(serverValue));
+  const draftRef = useRef(draft);
+  const baselineRef = useRef(baseline);
+  const syncToken = useMemo(() => syncTokenFor(syncKeys), [syncKeys]);
+  const previousSyncTokenRef = useRef(syncToken);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(() => {
+    baselineRef.current = baseline;
+  }, [baseline]);
+
+  useEffect(() => {
+    const syncChanged = previousSyncTokenRef.current !== syncToken;
+    const dirty = !isEqual(draftRef.current, baselineRef.current);
+    if (syncChanged && dirty) {
+      onDirtySyncKeyChange?.();
+    }
+    previousSyncTokenRef.current = syncToken;
+    if (!syncChanged && dirty) {
+      return;
+    }
+
+    const next = clone(serverValue);
+    setDraft(next);
+    setBaseline(clone(serverValue));
+  }, [clone, isEqual, onDirtySyncKeyChange, serverValue, syncToken]);
+
+  const patch = useCallback(
+    (path, value) => {
+      setDraft((current) => setDraftPathValue(clone(current), path, value));
+    },
+    [clone],
+  );
+
+  const replace = useCallback(
+    (nextDraft) => {
+      setDraft((current) =>
+        clone(typeof nextDraft === "function" ? nextDraft(current) : nextDraft),
+      );
+    },
+    [clone],
+  );
+
+  const reset = useCallback(() => {
+    const next = clone(baselineRef.current);
+    setDraft(next);
+  }, [clone]);
+
+  const markClean = useCallback(
+    (nextServerValue) => {
+      const next =
+        nextServerValue === undefined
+          ? clone(draftRef.current)
+          : clone(nextServerValue);
+      setDraft(next);
+      setBaseline(clone(next));
+    },
+    [clone],
+  );
+
+  return {
+    draft,
+    baseline,
+    patch,
+    replace,
+    reset,
+    markClean,
+    isDirty: !isEqual(draft, baseline),
+  };
+};
+
+const EMPTY_COCKPIT_GATE_SUMMARY = Object.freeze({
+  signalFreshness: Object.freeze({}),
+  tradePath: Object.freeze({}),
+  skipReasonRows: Object.freeze([]),
+  skipCategoryRows: Object.freeze([]),
+  entryGateRows: Object.freeze([]),
+  optionChainRows: Object.freeze([]),
+  readinessRows: Object.freeze([]),
+  lifecycleRows: Object.freeze([]),
+  markHealthRows: Object.freeze([]),
+});
+
+const createEmptyTransitionsStore = () => ({
+  push: () => [],
+  get: () => [],
+  prune: () => {},
+});
+
+const DEFAULT_ALGO_RUNTIME_HELPERS = Object.freeze({
+  buildTransitionsBufferStore: createEmptyTransitionsStore,
+  collectEventTransitions: () => [],
+  diffSignalSnapshots: () => [],
+  limitToWindow: (transitions = []) => transitions,
+  summarizeCockpitDelta: () => null,
+  buildKpiSample: () => ({}),
+  pruneAlgoKpiHistory: () => {},
+  pushAlgoKpiSample: () => {},
+  buildCockpitGateSummary: () => EMPTY_COCKPIT_GATE_SUMMARY,
+});
+
+let algoRuntimeHelpersImport = null;
+const loadAlgoRuntimeHelpers = () => {
+  if (!algoRuntimeHelpersImport) {
+    algoRuntimeHelpersImport = Promise.all([
+      import("../features/platform/algoTransitionsModel"),
+      import("../features/platform/algoActivitySummary"),
+      import("../features/platform/algoKpiHistoryStore"),
+      import("./algoCockpitDiagnosticsModel"),
+    ])
+      .then(([transitions, activity, kpi, diagnostics]) => ({
+        buildTransitionsBufferStore:
+          transitions.buildTransitionsBufferStore ||
+          DEFAULT_ALGO_RUNTIME_HELPERS.buildTransitionsBufferStore,
+        collectEventTransitions:
+          transitions.collectEventTransitions ||
+          DEFAULT_ALGO_RUNTIME_HELPERS.collectEventTransitions,
+        diffSignalSnapshots:
+          transitions.diffSignalSnapshots ||
+          DEFAULT_ALGO_RUNTIME_HELPERS.diffSignalSnapshots,
+        limitToWindow:
+          transitions.limitToWindow || DEFAULT_ALGO_RUNTIME_HELPERS.limitToWindow,
+        summarizeCockpitDelta:
+          activity.summarizeCockpitDelta ||
+          DEFAULT_ALGO_RUNTIME_HELPERS.summarizeCockpitDelta,
+        buildKpiSample:
+          kpi.buildKpiSample || DEFAULT_ALGO_RUNTIME_HELPERS.buildKpiSample,
+        pruneAlgoKpiHistory:
+          kpi.pruneAlgoKpiHistory ||
+          DEFAULT_ALGO_RUNTIME_HELPERS.pruneAlgoKpiHistory,
+        pushAlgoKpiSample:
+          kpi.pushAlgoKpiSample || DEFAULT_ALGO_RUNTIME_HELPERS.pushAlgoKpiSample,
+        buildCockpitGateSummary:
+          diagnostics.buildCockpitGateSummary ||
+          DEFAULT_ALGO_RUNTIME_HELPERS.buildCockpitGateSummary,
+      }))
+      .catch((error) => {
+        algoRuntimeHelpersImport = null;
+        throw error;
+      });
+  }
+  return algoRuntimeHelpersImport;
+};
 
 
 const isGatewayReadyForAlgo = (session) => {
@@ -292,6 +469,9 @@ export const AlgoScreen = ({
   const [bridgeLaunchClock, setBridgeLaunchClock] = useState(() => Date.now());
   const [bridgeLaunchInFlightUntil, setBridgeLaunchInFlightUntil] = useState(0);
   const [algoLivePageReady, setAlgoLivePageReady] = useState(false);
+  const [algoRuntimeHelpers, setAlgoRuntimeHelpers] = useState(
+    DEFAULT_ALGO_RUNTIME_HELPERS,
+  );
   const brokerConfigured = Boolean(session?.configured?.ibkr);
   const brokerAuthenticated = Boolean(session?.ibkrBridge?.authenticated);
   const gatewayReady = isGatewayReadyForAlgo(session);
@@ -326,6 +506,22 @@ export const AlgoScreen = ({
       cancelled = true;
     };
   }, [isVisible]);
+  useEffect(() => {
+    if (!isVisible || algoRuntimeHelpers !== DEFAULT_ALGO_RUNTIME_HELPERS) {
+      return undefined;
+    }
+    let cancelled = false;
+    loadAlgoRuntimeHelpers()
+      .then((helpers) => {
+        if (!cancelled) {
+          setAlgoRuntimeHelpers(helpers);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [algoRuntimeHelpers, isVisible]);
   const algoLiveDataQueriesEnabled = Boolean(isVisible && algoLivePageReady);
   const algoCockpitStreamFreshness = useAlgoCockpitStream({
     deploymentId: focusedDeploymentId,
@@ -495,8 +691,8 @@ export const AlgoScreen = ({
     null;
   const eventsQuery = useListExecutionEvents(
     focusedDeployment
-      ? { deploymentId: focusedDeployment.id, limit: 20 }
-      : { limit: 20 },
+      ? { deploymentId: focusedDeployment.id, limit: 100 }
+      : { limit: 100 },
     {
       query: {
         ...QUERY_DEFAULTS,
@@ -584,6 +780,17 @@ export const AlgoScreen = ({
   );
   const algoSetupDataSettled = Boolean(deploymentsSettled && draftsSettled);
   const cockpit = cockpitQuery.data || null;
+  const {
+    buildTransitionsBufferStore,
+    collectEventTransitions,
+    diffSignalSnapshots,
+    limitToWindow,
+    summarizeCockpitDelta,
+    buildKpiSample,
+    pruneAlgoKpiHistory,
+    pushAlgoKpiSample,
+    buildCockpitGateSummary,
+  } = algoRuntimeHelpers;
   const transitionsStoreRef = useRef(null);
   if (transitionsStoreRef.current === null) {
     transitionsStoreRef.current = buildTransitionsBufferStore();
@@ -1371,6 +1578,9 @@ export const AlgoScreen = ({
   };
 
   const handleSaveAllAdjustments = async () => {
+    const { saveAllAlgoAdjustments } = await import(
+      "./algo/saveAllAlgoAdjustments"
+    );
     const result = await saveAllAlgoAdjustments({
       deploymentId: focusedDeployment?.id,
       profileDraft,
@@ -1760,42 +1970,44 @@ export const AlgoScreen = ({
         </div>
       )}
 
-      <AlgoStatusBar
-        focusedDeployment={focusedDeployment}
-        deployments={deployments}
-        onSelectDeployment={setFocusedDeploymentId}
-        gatewayReady={gatewayReady}
-        gatewayBridgeLaunching={gatewayBridgeLaunching}
-        environment={environment}
-        bridgeTone={bridgeTone}
-        accountId={activeAccountId}
-        lastEvalMsAgo={
-          focusedDeployment?.lastEvaluatedAt
-            ? Date.now() -
-              new Date(focusedDeployment.lastEvaluatedAt).getTime()
-            : null
-        }
-        lastEvalLabel={formatRelativeTimeShort(
-          focusedDeployment?.lastEvaluatedAt,
-        )}
-        lastSignalLabel={formatRelativeTimeShort(
-          focusedDeployment?.lastSignalAt,
-        )}
-        onRefresh={() => refreshAlgoQueries()}
-        onToggleEnable={() =>
-          focusedDeployment && handleToggleDeployment(focusedDeployment)
-        }
-        onRunScan={handleRunShadowScan}
-        refreshPending={
-          deploymentsQuery.isFetching || cockpitQuery.isFetching
-        }
-        togglePending={
-          enableDeploymentMutation.isPending ||
-          pauseDeploymentMutation.isPending
-        }
-        scanPending={runShadowScanMutation.isPending}
-        narrow={algoIsNarrow}
-      />
+      <Suspense fallback={null}>
+        <LazyAlgoStatusBar
+          focusedDeployment={focusedDeployment}
+          deployments={deployments}
+          onSelectDeployment={setFocusedDeploymentId}
+          gatewayReady={gatewayReady}
+          gatewayBridgeLaunching={gatewayBridgeLaunching}
+          environment={environment}
+          bridgeTone={bridgeTone}
+          accountId={activeAccountId}
+          lastEvalMsAgo={
+            focusedDeployment?.lastEvaluatedAt
+              ? Date.now() -
+                new Date(focusedDeployment.lastEvaluatedAt).getTime()
+              : null
+          }
+          lastEvalLabel={formatRelativeTimeShort(
+            focusedDeployment?.lastEvaluatedAt,
+          )}
+          lastSignalLabel={formatRelativeTimeShort(
+            focusedDeployment?.lastSignalAt,
+          )}
+          onRefresh={() => refreshAlgoQueries()}
+          onToggleEnable={() =>
+            focusedDeployment && handleToggleDeployment(focusedDeployment)
+          }
+          onRunScan={handleRunShadowScan}
+          refreshPending={
+            deploymentsQuery.isFetching || cockpitQuery.isFetching
+          }
+          togglePending={
+            enableDeploymentMutation.isPending ||
+            pauseDeploymentMutation.isPending
+          }
+          scanPending={runShadowScanMutation.isPending}
+          narrow={algoIsNarrow}
+        />
+      </Suspense>
       <div
         data-testid="algo-live-content"
         className="ra-panel-enter"

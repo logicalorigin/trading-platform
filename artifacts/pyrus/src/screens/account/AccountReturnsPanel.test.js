@@ -108,7 +108,12 @@ test("month calendar day hover is local and exposes a detail strip", () => {
 });
 
 test("pnl calendar hover does not wire into account inspection queries", () => {
-  const usageIndex = accountScreenSource.indexOf("<AccountReturnsPanel");
+  assert.match(accountScreenSource, /const LazyAccountReturnsPanel = lazy/);
+  assert.doesNotMatch(
+    accountScreenSource,
+    /import AccountReturnsPanel from "\.\/account\/AccountReturnsPanel"/,
+  );
+  const usageIndex = accountScreenSource.indexOf("<LazyAccountReturnsPanel");
   assert.ok(usageIndex >= 0, "AccountReturnsPanel must render on AccountScreen");
   const usageBlock = accountScreenSource.slice(usageIndex, usageIndex + 500);
   assert.doesNotMatch(usageBlock, /onHoverInspectionDate/);

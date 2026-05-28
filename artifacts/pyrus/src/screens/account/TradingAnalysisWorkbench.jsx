@@ -53,7 +53,10 @@ import {
   mutedLabelStyle,
   toneForValue,
 } from "./accountUtils";
-import { getAccountTradeId } from "./accountTradingAnalysis";
+import {
+  buildAccountTradingAnalysisModel,
+  getAccountTradeId,
+} from "./accountTradingAnalysis";
 import {
   buildSymbolSparklineMap,
   buildTradingAnalysisKpis,
@@ -1721,6 +1724,8 @@ export const TradingAnalysisWorkbench = ({
   trades = [],
   allTrades = [],
   analysis,
+  orders = [],
+  positions = [],
   filters,
   dispatchFilters,
   range,
@@ -1752,7 +1757,17 @@ export const TradingAnalysisWorkbench = ({
     () => filterAccountAnalysisTrades({ trades, filters: normalizedFilters, range, nowMs }),
     [filters, normalizedFilters, nowMs, range, trades],
   );
-  const scopedAnalysis = analysis;
+  const scopedAnalysis = useMemo(
+    () =>
+      analysis ||
+      buildAccountTradingAnalysisModel({
+        trades: visibleTrades,
+        orders,
+        positions,
+        selectedTradeId,
+      }),
+    [analysis, orders, positions, selectedTradeId, visibleTrades],
+  );
   const scopeLabel = buildTradingAnalysisScopeLabel({
     filters: normalizedFilters,
     range,

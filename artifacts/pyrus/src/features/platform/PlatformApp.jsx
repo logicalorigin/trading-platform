@@ -236,8 +236,10 @@ input[type=range]{accent-color:var(--ra-color-accent)}
 const WATCHLISTS_QUERY_KEY = ["/api/watchlists"];
 const SIGNAL_MONITOR_DISPLAY_POLL_MS = 15_000;
 const SIGNAL_MATRIX_TIMEFRAMES = ["2m", "5m", "15m"];
-const OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS = 150;
-const OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS = 250;
+const PRIORITY_SCREEN_MODULE_PRELOAD_ORDER = ["account"];
+const PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS = 500;
+const OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS = 20_000;
+const OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS = 1_500;
 const WATCHLIST_SIDEBAR_WIDTH_DEFAULT = 220;
 const WATCHLIST_SIDEBAR_WIDTH_MIN = 196;
 const WATCHLIST_SIDEBAR_WIDTH_MAX = 320;
@@ -261,6 +263,8 @@ const SCREEN_SHELL_WARM_MOUNT_IDLE_STAGGER_MS = 700;
 const INACTIVE_HEAVY_QUERY_PREFIXES = [
   ["/api/bars"],
   ["/api/flow/events"],
+  ["/api/universe/logos"],
+  ["/api/universe/logo-proxy"],
   ["market-sparklines"],
   ["market-performance-baselines"],
   ["option-chart-bars"],
@@ -560,6 +564,8 @@ export default function PlatformApp() {
   const warmupTestOverrides = useMemo(readWarmupTestOverrides, []);
   const firstScreenBootCompleteRef = useRef(false);
   const bootScreenShellWarmMountCompleteRef = useRef(false);
+  const priorityScreenCodePreloadStartedRef = useRef(false);
+  const priorityScreenCodePreloadCompleteRef = useRef(false);
   const screenCodePreloadStartedRef = useRef(false);
   const screenCodePreloadCompleteRef = useRef(false);
   const screenShellWarmMountCompleteRef = useRef(false);
@@ -882,10 +888,15 @@ export default function PlatformApp() {
   const activeScreenBackgroundDataAllowed = Boolean(
     activeScreenBackgroundAllowed && backgroundDataWarmupEnabled,
   );
+  const priorityScreenCodePreloadPending = Boolean(
+    priorityScreenCodePreloadStartedRef.current &&
+      !priorityScreenCodePreloadCompleteRef.current,
+  );
   const frameAuxiliaryDataEnabled = Boolean(
     platformWorkVisible &&
       sessionMetadataSettled &&
       activeScreenFrameReady &&
+      !priorityScreenCodePreloadPending &&
       (backgroundDataWarmupEnabled || isPhone),
   );
   useEffect(() => {
@@ -960,7 +971,9 @@ export default function PlatformApp() {
       !warmupTestOverrides.disableOperationalCodePreload,
   );
   const screenCodePreloadReady = Boolean(
-    operationalCodePreloadReady && activeScreenBackgroundAllowed,
+    operationalCodePreloadReady &&
+      activeScreenBackgroundAllowed &&
+      memoryAllowsBackgroundWarmup,
   );
   const backgroundScreenPreloadReady = Boolean(
     operationalCodePreloadReady &&
@@ -1006,6 +1019,54 @@ export default function PlatformApp() {
     screenWarmupPhase,
     startupProtectionActive,
   ]);
+  useEffect(() => {
+    if (
+      !firstScreenReady ||
+      isPhone ||
+      warmupTestOverrides.disableOperationalCodePreload ||
+      priorityScreenCodePreloadStartedRef.current ||
+      priorityScreenCodePreloadCompleteRef.current
+    ) {
+      return undefined;
+    }
+
+    const preloadOrder = PRIORITY_SCREEN_MODULE_PRELOAD_ORDER.filter(
+      (screenId) => screenId !== screen,
+    );
+    if (!preloadOrder.length) {
+      priorityScreenCodePreloadCompleteRef.current = true;
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timerId = window.setTimeout(() => {
+      if (cancelled) {
+        return;
+      }
+      priorityScreenCodePreloadStartedRef.current = true;
+      markWarmupTimeline("priorityScreenCodePreloadQueuedAtMs");
+      void Promise.allSettled(
+        preloadOrder.map((screenId) => preloadScreenModule(screenId)),
+      ).then(() => {
+        if (cancelled) {
+          return;
+        }
+        priorityScreenCodePreloadCompleteRef.current = true;
+        markWarmupTimeline("priorityScreenCodePreloadCompleteAtMs");
+      });
+    }, PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerId);
+    };
+  }, [
+    firstScreenReady,
+    isPhone,
+    markWarmupTimeline,
+    screen,
+    warmupTestOverrides.disableOperationalCodePreload,
+  ]);
   const preloadCalendarWindow = useMemo(() => {
     const from = new Date();
     const to = new Date(from);
@@ -1031,6 +1092,7 @@ export default function PlatformApp() {
       activeScreenBackgroundDataAllowed &&
       screenWarmupPhase === "ready" &&
       !startupProtectionActive &&
+      !priorityScreenCodePreloadPending &&
       !memoryBlocksOperationalPreload &&
       platformPressureCaps.broadMarketSymbolLimit !== 0,
   );
@@ -1650,6 +1712,10 @@ export default function PlatformApp() {
 
   useEffect(() => {
     INACTIVE_HEAVY_QUERY_PREFIXES.forEach((queryKey) => {
+      void queryClient.cancelQueries({
+        queryKey,
+        exact: false,
+      });
       queryClient.removeQueries({
         queryKey,
         exact: false,
@@ -2303,12 +2369,16 @@ export default function PlatformApp() {
   useIbkrAccountSnapshotStream({
     accountId: null,
     mode: environment,
-    enabled: workSchedule.streams.accountRealtime,
+    enabled:
+      workSchedule.streams.accountRealtime &&
+      !priorityScreenCodePreloadPending,
   });
   useIbkrOrderSnapshotStream({
     accountId: null,
     mode: environment,
-    enabled: workSchedule.streams.accountRealtime,
+    enabled:
+      workSchedule.streams.accountRealtime &&
+      !priorityScreenCodePreloadPending,
   });
   useEffect(() => {
     setHydrationPressureState(workSchedule.hydrationPressure);
@@ -2792,6 +2862,8 @@ export default function PlatformApp() {
       completions: {
         bootScreenShellWarmMountComplete:
           bootScreenShellWarmMountCompleteRef.current,
+        priorityScreenCodePreloadComplete:
+          priorityScreenCodePreloadCompleteRef.current,
         screenCodePreloadComplete: screenCodePreloadCompleteRef.current,
         screenShellWarmMountComplete:
           screenShellWarmMountCompleteRef.current,
@@ -2805,6 +2877,10 @@ export default function PlatformApp() {
           warmupTimelineRef.current.bootScreenShellWarmMountQueuedAtMs != null,
         bootScreenShellWarmMountCompleted:
           warmupTimelineRef.current.bootScreenShellWarmMountCompleteAtMs != null,
+        priorityScreenCodePreloadStarted:
+          warmupTimelineRef.current.priorityScreenCodePreloadQueuedAtMs != null,
+        priorityScreenCodePreloadCompleted:
+          warmupTimelineRef.current.priorityScreenCodePreloadCompleteAtMs != null,
         screenCodePreloadStarted:
           warmupTimelineRef.current.screenCodePreloadQueuedAtMs != null,
         screenCodePreloadCompleted:
@@ -2844,6 +2920,7 @@ export default function PlatformApp() {
         memoryPressureLevel,
         memoryBlocksOperationalPreload,
         memoryAllowsIdlePrefetch,
+        priorityScreenCodePreloadPending,
         signalMonitorDisplayReady,
         signalMatrixBackgroundReady,
       },
@@ -2879,6 +2956,7 @@ export default function PlatformApp() {
     mountedScreens,
     operationalCodePreloadReady,
     pageVisible,
+    priorityScreenCodePreloadPending,
     screen,
     screenReadiness,
     screenWarmupPhase,
@@ -3658,21 +3736,34 @@ export default function PlatformApp() {
         prioritySparklineSymbols={prioritySparklineSymbols}
         streamedQuoteSymbols={runtimeStreamedQuoteSymbols}
         streamedAggregateSymbols={runtimeStreamedAggregateSymbols}
-        quoteStreamRuntimeEnabled={workSchedule.streams.watchlistQuoteStream}
+        quoteStreamRuntimeEnabled={
+          workSchedule.streams.watchlistQuoteStream &&
+          !priorityScreenCodePreloadPending
+        }
         quoteStreamDisabledReason={quoteStreamGateReason}
         quoteStreamCoverageDiagnostics={watchlistQuoteStreamDiagnostics}
         marketStockAggregateStreamingEnabled={
-          workSchedule.streams.marketStockAggregates
+          workSchedule.streams.marketStockAggregates &&
+          !priorityScreenCodePreloadPending
         }
         marketScreenActive={marketScreenActive}
-        lowPriorityHistoryEnabled={workSchedule.streams.lowPriorityHistory}
+        lowPriorityHistoryEnabled={
+          workSchedule.streams.lowPriorityHistory &&
+          !priorityScreenCodePreloadPending
+        }
         sparklineHistoryEnabled={platformPressureCaps.sparklineEnabled}
         sparklineConcurrency={platformPressureCaps.sparklineConcurrency}
-        flowRuntimeEnabled={workSchedule.streams.sharedFlowRuntime}
+        flowRuntimeEnabled={
+          workSchedule.streams.sharedFlowRuntime &&
+          !priorityScreenCodePreloadPending
+        }
         flowRuntimeIntervalMs={
           marketScreenActive || flowScreenActive ? 10_000 : 30_000
         }
-        broadFlowRuntimeEnabled={workSchedule.streams.broadFlowRuntime}
+        broadFlowRuntimeEnabled={
+          workSchedule.streams.broadFlowRuntime &&
+          !priorityScreenCodePreloadPending
+        }
         broadFlowScannerConfig={platformPressureCaps.broadFlowScannerConfig}
       >
         <PlatformShell

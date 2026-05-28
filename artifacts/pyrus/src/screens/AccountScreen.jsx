@@ -84,7 +84,7 @@ import {
   buildAccountAnalysisQueryParams,
   defaultTradingAnalysisFilters,
   tradingAnalysisFilterReducer,
-} from "./account/tradingAnalysisModel";
+} from "./account/tradingAnalysisFilters";
 import { buildAccountRefreshPolicy } from "./account/accountRefreshPolicy";
 import {
   buildPerformanceCalendarParams,

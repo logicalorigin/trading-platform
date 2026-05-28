@@ -1224,6 +1224,8 @@ test("Account panels defer below-fold content and memoize mobile rows", () => {
   assert.doesNotMatch(deferredRenderSource, /data-deferred-render="mounted"/);
   assert.match(accountSource, /const AccountPanelSuspenseFallback = /);
   assert.match(accountSource, /fallback=\{<AccountPanelSuspenseFallback minHeight=\{minHeight\} \/>\}/);
+  assert.match(accountSource, /const LazyAccountHeroBlock = lazy/);
+  assert.match(accountSource, /const LazyAccountReturnsPanel = lazy/);
   assert.match(accountSource, /<DeferredPanelSuspense minHeight=\{accountIsPhone \? 174 : 246\}>/);
   assert.match(accountSource, /<DeferredPanelSuspense minHeight=\{accountIsPhone \? 280 : 314\}>/);
   assert.match(accountSource, /<DeferredRender[\s\S]*account-deferred-positions/);
@@ -1235,6 +1237,12 @@ test("Account panels defer below-fold content and memoize mobile rows", () => {
   assert.match(accountSource, /const LazyPortfolioExposurePanel = lazy/);
   assert.match(accountSource, /const LazyEquityCurvePanel = lazy/);
   assert.match(accountSource, /const LazyPositionsPanel = lazy/);
+  assert.doesNotMatch(accountSource, /import AccountHeroBlock from "\.\/account\/AccountHeroBlock"/);
+  assert.doesNotMatch(accountSource, /import AccountReturnsPanel from "\.\/account\/AccountReturnsPanel"/);
+  assert.match(accountSource, /from "\.\/account\/tradingAnalysisFilters"/);
+  assert.doesNotMatch(accountSource, /from "\.\/account\/tradingAnalysisModel"/);
+  assert.doesNotMatch(accountSource, /buildAccountTradingAnalysisModel/);
+  assert.match(workbenchSource, /buildAccountTradingAnalysisModel/);
   assert.match(cssSource, /--ra-color-pnl-positive/);
   assert.match(positionsSource, /data-testid="account-positions-table-scroll"/);
   assert.doesNotMatch(positionsSource, /const MobilePositionRow = memo/);
@@ -1925,15 +1933,28 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.match(appSource, /queues:\s*\{[\s\S]*screenCodePreloadStarted/);
   assert.match(appSource, /bootScreenShellWarmMountStarted/);
   assert.match(appSource, /const screenCodePreloadStartedRef = useRef\(false\)/);
+  assert.match(appSource, /const priorityScreenCodePreloadStartedRef = useRef\(false\)/);
+  assert.match(appSource, /const priorityScreenCodePreloadCompleteRef = useRef\(false\)/);
+  assert.match(appSource, /const PRIORITY_SCREEN_MODULE_PRELOAD_ORDER = \["account"\]/);
+  assert.match(appSource, /const PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS = 500/);
+  assert.match(appSource, /priorityScreenCodePreloadQueuedAtMs/);
+  assert.match(appSource, /priorityScreenCodePreloadCompleteAtMs/);
+  assert.match(
+    appSource,
+    /preloadOrder\.map\(\(screenId\) => preloadScreenModule\(screenId\)\)/,
+  );
   assert.match(appSource, /screenModulePreloads:\s*getScreenModulePreloadSnapshot\(\)/);
   assert.match(appSource, /backgroundDataWarmupGateOpenedAtMs/);
   assert.match(appSource, /timelineMs:\s*warmupTimelineRef\.current/);
   assert.match(
     appSource,
-    /const screenCodePreloadReady = Boolean\(\s*operationalCodePreloadReady && activeScreenBackgroundAllowed,\s*\);/,
+    /const screenCodePreloadReady = Boolean\(\s*operationalCodePreloadReady &&\s*activeScreenBackgroundAllowed &&\s*memoryAllowsBackgroundWarmup,\s*\);/,
   );
   assert.match(appSource, /const backgroundScreenPreloadReady = Boolean/);
   assert.match(appSource, /memoryAllowsBackgroundWarmup/);
+  assert.match(appSource, /\["\/api\/universe\/logos"\]/);
+  assert.match(appSource, /\["\/api\/universe\/logo-proxy"\]/);
+  assert.match(appSource, /queryClient\.cancelQueries\(\{\s*queryKey,\s*exact:\s*false,\s*\}\)/);
   assert.match(appSource, /useBootProgress\(\)/);
   assert.match(appSource, /workspace-boot-progress-loader/);
   assert.match(registrySource, /export const SCREEN_BOOT_DATA_DEPS = \{/);
@@ -1956,6 +1977,10 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.match(routerSource, /const marketDataActive = screen === "market";/);
   assert.match(routerSource, /isVisible=\{backtestDataActive\}/);
   assert.match(registrySource, /SCREEN_MODULE_PRELOAD_ORDER = \[[\s\S]*"flow"/);
+  assert.ok(
+    preloadOrderBlock.indexOf('"account"') < preloadOrderBlock.indexOf('"flow"'),
+    "account must preload before heavier operational screens",
+  );
   assert.match(registrySource, /BOOT_SCREEN_MODULE_PRELOAD_ORDER = \[[\s\S]*"flow"[\s\S]*"trade"[\s\S]*"backtest"/);
   assert.match(appSource, /!firstScreenReady[\s\S]*!backgroundScreenPreloadReady[\s\S]*bootScreenShellWarmMountCompleteRef\.current/);
   assert.match(appSource, /bootScreenShellWarmMountQueuedAtMs[\s\S]*scheduleIdleWork/);
@@ -1982,8 +2007,8 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.match(registrySource, /algo:\s*\{\s*retainInactive:\s*true\s*\}/);
   assert.match(registrySource, /backtest:\s*\{\s*retainInactive:\s*true\s*\}/);
   assert.match(registrySource, /research:\s*\{\s*retainInactive:\s*false\s*\}/);
-  assert.match(appSource, /OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS\s*=\s*150/);
-  assert.match(appSource, /OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS\s*=\s*250/);
+  assert.match(appSource, /OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS\s*=\s*20_000/);
+  assert.match(appSource, /OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS\s*=\s*1_500/);
   assert.doesNotMatch(appSource, /OPERATIONAL_SCREEN_PRELOAD_STAGGER_MS/);
   assert.doesNotMatch(codeWarmupEffect, /scheduleIdleWork/);
   assert.match(codeWarmupEffect, /screenCodePreloadReady/);
@@ -2569,7 +2594,7 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
   );
   assert.match(
     algoSource,
-    /useListExecutionEvents\(\s*focusedDeployment[\s\S]*limit:\s*20[\s\S]*:\s*\{ limit:\s*20 \}/,
+    /useListExecutionEvents\(\s*focusedDeployment[\s\S]*limit:\s*100[\s\S]*:\s*\{ limit:\s*100 \}/,
   );
   assert.equal(
     (backtestSource.match(/useListBacktestDraftStrategies\(\{[\s\S]*?enabled:\s*Boolean\(isVisible\)/g) || []).length,

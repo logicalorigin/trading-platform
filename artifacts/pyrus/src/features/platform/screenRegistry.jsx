@@ -108,10 +108,10 @@ export const SCREEN_BOOT_DATA_DEPS = {
 
 export const SCREEN_MODULE_PRELOAD_ORDER = [
   "market",
+  "account",
   "flow",
   "gex",
   "trade",
-  "account",
   "research",
   "backtest",
   "diagnostics",

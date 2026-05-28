@@ -67,10 +67,16 @@ test("hero carries the full former performance metric set", () => {
 });
 
 test("account screen wires returns model into the hero", () => {
+  assert.match(accountScreenSource, /const LazyAccountHeroBlock = lazy/);
+  assert.doesNotMatch(
+    accountScreenSource,
+    /import AccountHeroBlock from "\.\/account\/AccountHeroBlock"/,
+  );
   assert.match(
     accountScreenSource,
-    /<AccountHeroBlock[\s\S]*?returnsModel=\{returnsModel\}[\s\S]*?range=\{range\}/,
+    /<LazyAccountHeroBlock[\s\S]*?equityHistory=\{equityQuery\.data\}[\s\S]*?range=\{range\}/,
   );
+  assert.match(source, /buildAccountReturnsModel/);
 });
 
 test("hero no longer renders all-time P&L", () => {
