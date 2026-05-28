@@ -1,42 +1,33 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-28 23:22 UTC`
-- Current request: proceed with `$qa`, commit if needed, and report before final handoff.
+- Last updated: `2026-05-28 23:30 UTC`
+- Current request: focused `/qa` of the PYRUS Account page in Real and Shadow modes.
 - Current status:
-  - `/qa` workflow resumed on branch `main`.
-  - Local app target is `http://127.0.0.1:18747/`.
-  - Main source fix was committed as `002e1a1 fix(qa): ISSUE-001 - prioritize active route loading`.
-  - QA result is `DONE_WITH_CONCERNS`: the global PYRUS route loader regression is fixed, but full Algo live/control content still does not reliably finish loading under runtime/API pressure.
-  - Replit startup config was touched earlier in this workstream, so `pnpm run audit:replit-startup` must run before final response.
-- Changed files not yet committed:
-  - `.gstack/qa-reports/qa-report-pyrus-local-2026-05-28.md`
-  - `.gstack/qa-reports/baseline.json`
-  - `artifacts/pyrus/src/app/AppContent.tsx`
-  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
-  - `SESSION_HANDOFF_CURRENT.md`
+  - Local app target: `http://127.0.0.1:18747/`.
+  - Main source fix committed as `002e1a1 fix(qa): ISSUE-001 - prioritize active route loading`.
+  - QA/report wrap-up committed as `3fc3ad0 chore(qa): update pyrus qa report`.
+  - Working tree is clean.
+  - QA result: `DONE_WITH_CONCERNS`.
 - Source fix summary:
-  - Delayed and staggered background screen preloads while the active route warms.
-  - Preloads the Account platform screen as a priority sibling to the initial screen.
-  - Added priority screen code preload tracking and gated non-critical stream work behind it.
-  - Shrank the active Algo screen module chain by lazy-loading heavy runtime helpers and status UI.
-  - Added test coverage for active-route preload and stream-gating behavior.
-- Validation state:
-  - Passed:
-    - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/screens/algo/algoHelpers.test.js src/screens/algo/AlgoAuditPanel.test.js src/screens/algo/OperationsSignalRow.test.js src/features/platform/live-streams.test.ts src/features/platform/runtimeControlModel.test.js src/lib/fontLoadingPolicy.test.ts`
-    - `pnpm --filter @workspace/pyrus run typecheck`
-    - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/account/AccountHeroBlock.test.js src/screens/account/AccountReturnsPanel.test.js src/screens/account/TradingAnalysisWorkbench.test.js src/features/platform/platformRootSource.test.js`
-    - `pnpm --filter @workspace/pyrus run typecheck`
-    - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js`
-    - `pnpm --filter @workspace/pyrus run typecheck`
-    - `pnpm run audit:replit-startup`
-    - `git diff --check`
-  - Browser after source fixes:
-    - `.gstack/qa-reports/screenshots/issue-001-after-static-chain-fix-algo-45s-2026-05-28.png` shows Algo active, right rail live, and no global PYRUS route loader.
-    - JS state at 45s: `activeScreen: "algo"`, `hasAlgoScreen: true`, `hasDeployment: true`, `hasPyrusLoading: false`, scoped loader `algo-live-loading`, no console errors.
-  - Residual browser concern:
-    - `.gstack/qa-reports/screenshots/issue-001-after-static-chain-fix-algo-90s-2026-05-28.png` showed route fallback to Market with 503/runtime pressure.
-- Blockers:
-  - No source blocker for committing the QA wrap-up.
-  - Clean QA is blocked by remaining Algo/API fanout and scoped live-loader latency.
+  - Preloads Account as a priority route during app-content bootstrap, alongside the initial screen.
+  - Keeps a PlatformApp priority Account preload fallback.
+  - Gates non-critical quote/account/aggregate streams while priority Account preload is pending.
+  - Splits AccountScreen’s lightweight trading-analysis filter/query-param helpers out of the heavy workbench model graph.
+  - Keeps heavy Account workbench/model code below lazy/deferred boundaries.
+- Browser QA evidence:
+  - Before fix: Real Account remained on the global PYRUS fallback for about 35 seconds.
+  - After fix: `.gstack/qa-reports/screenshots/account-real-after-fix-final3-immediate-2026-05-28.png` shows fresh Market -> Real Account painting the Account shell immediately.
+  - After fix: `.gstack/qa-reports/screenshots/account-shadow-after-fix-final3-immediate-2026-05-28.png` shows Shadow selected with the Account shell still mounted immediately.
+  - Warmup snapshot showed Account route preload ready at bootstrap with Market.
+- Residual concern:
+  - Full Real/Shadow values and below-fold Account panels still populate slowly under current API/runtime pressure.
+  - Final network sample showed Real account API calls around 37-44s and Shadow account API calls around 84-96s.
+  - Console 404s came from stale aggregate-stream session update posts, not Account route module failures.
+- Validation passed:
+  - `node --import tsx --test src/features/platform/platformRootSource.test.js src/screens/account/AccountHeroBlock.test.js src/screens/account/AccountReturnsPanel.test.js src/screens/account/tradingAnalysisModel.test.js`
+  - `pnpm --filter @workspace/pyrus run typecheck`
+  - `pnpm run audit:replit-startup`
+  - `git diff --check`
+  - `pnpm run replit:config:status`
 - Next step:
-  - Commit QA report/baseline/handoff plus the final priority-preload guardrail changes, then final response.
+  - Follow-up work should reduce Account data/API fanout and investigate stale aggregate-stream session 404s.
