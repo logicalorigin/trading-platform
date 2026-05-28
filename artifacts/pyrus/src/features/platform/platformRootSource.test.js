@@ -2519,10 +2519,10 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
     /const algoPostCriticalQueriesEnabled = Boolean\(\s*algoLiveDataQueriesEnabled &&\s*algoDerivedFallbackReady &&\s*!shadowAccountStreamFreshness\.accountFresh,\s*\);/,
   );
   assert.match(algoSource, /<Suspense fallback=\{<AlgoLiveLoading \/>\}>/);
-  assert.match(algoSource, /import \{ AlgoRightRail \} from "\.\/algo\/AlgoRightRail\.jsx";/);
-  assert.match(algoSource, /rightRail=\{\s*<AlgoRightRail/);
-  assert.doesNotMatch(algoSource, /LazyAlgoRightRail/);
-  assert.doesNotMatch(algoSource, /import\("\.\/algo\/AlgoRightRail/);
+  assert.doesNotMatch(algoSource, /import \{ AlgoRightRail \} from "\.\/algo\/AlgoRightRail\.jsx";/);
+  assert.match(algoSource, /const LazyAlgoRightRail = lazy\(\(\) =>/);
+  assert.match(algoSource, /import\("\.\/algo\/AlgoRightRail\.jsx"\)/);
+  assert.match(algoSource, /rightRail=\{\s*<Suspense fallback=\{null\}>[\s\S]*<LazyAlgoRightRail/);
   assert.match(algoLivePageSource, /data-testid="algo-live-right-column"/);
   [
     "LazyOperationsPositionsTable",

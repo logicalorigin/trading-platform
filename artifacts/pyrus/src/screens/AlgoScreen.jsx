@@ -92,7 +92,6 @@ import {
 } from "../features/platform/ibkrBridgeSession";
 import { QUERY_DEFAULTS } from "../features/platform/queryDefaults";
 import { useToast } from "../features/platform/platformContexts.jsx";
-import { Badge } from "../components/platform/primitives.jsx";
 import {
   formatEnumLabel,
   formatOptionContractLabel,
@@ -138,17 +137,14 @@ import {
   isDiagRowsHealthy,
   isGateSummaryHealthy,
 } from "./algoCockpitDiagnosticsModel";
-import { SectionHeader } from "../components/ui/SectionHeader.jsx";
 import { AlgoStatusBar } from "./algo/AlgoStatusBar.jsx";
-import { DiagPanel } from "./algo/DiagPanel.jsx";
-import { ProfileSection } from "./algo/ProfileSection.jsx";
-import { KpiTile } from "./algo/KpiTile.jsx";
-import { HeroKpi } from "./algo/HeroKpi.jsx";
-import { AttentionList } from "./algo/AttentionList.jsx";
-import { PipelineStrip } from "./algo/PipelineStrip.jsx";
-import { AlgoRightRail } from "./algo/AlgoRightRail.jsx";
 import { retryDynamicImport } from "../lib/dynamicImport";
 
+const LazyAlgoRightRail = lazy(() =>
+  import("./algo/AlgoRightRail.jsx").then((module) => ({
+    default: module.AlgoRightRail,
+  })),
+);
 const LazyAlgoAuditPanel = lazy(() =>
   import("./algo/AlgoAuditPanel").then((module) => ({
     default: module.AlgoAuditPanel,
@@ -1872,37 +1868,39 @@ export const AlgoScreen = ({
             </Suspense>
           }
           rightRail={
-            <AlgoRightRail
-              cockpit={cockpit}
-              signalOptionsPositions={signalOptionsPositions}
-              profileDraft={profileDraft}
-              profileBaseline={profileDraftState.baseline}
-              profileDirty={profileDirty}
-              patchProfileDraftPath={patchProfileDraftPath}
-              strategySettingsDraft={strategySettingsDraft}
-              strategyBaseline={strategySettingsDraftState.baseline}
-              strategyDirty={strategyDirty}
-              patchStrategySettingsPath={patchStrategySettingsPath}
-              focusedDeployment={focusedDeployment}
-              handleApplyExpandedCapacity={handleApplyExpandedCapacity}
-              handleSaveAllAdjustments={handleSaveAllAdjustments}
-              handleDiscardAllAdjustments={handleDiscardAllAdjustments}
-              updateProfileMutation={updateProfileMutation}
-              updateStrategySettingsMutation={updateStrategySettingsMutation}
-              cockpitSkipCategoryRows={cockpitSkipCategoryRows}
-              cockpitSkipReasonRows={cockpitSkipReasonRows}
-              cockpitReadinessRows={cockpitReadinessRows}
-              cockpitMarkHealthRows={cockpitMarkHealthRows}
-              cockpitLifecycleRows={cockpitLifecycleRows}
-              cockpitEntryGateRows={cockpitEntryGateRows}
-              cockpitOptionChainRows={cockpitOptionChainRows}
-              cockpitSignalFreshness={cockpitSignalFreshness}
-              cockpitTradePath={cockpitTradePath}
-              diagExpansion={diagExpansion}
-              setDiagExpansion={setDiagExpansion}
-              algoIsPhone={algoIsPhone}
-              algoIsNarrow={algoIsNarrow}
-            />
+            <Suspense fallback={null}>
+              <LazyAlgoRightRail
+                cockpit={cockpit}
+                signalOptionsPositions={signalOptionsPositions}
+                profileDraft={profileDraft}
+                profileBaseline={profileDraftState.baseline}
+                profileDirty={profileDirty}
+                patchProfileDraftPath={patchProfileDraftPath}
+                strategySettingsDraft={strategySettingsDraft}
+                strategyBaseline={strategySettingsDraftState.baseline}
+                strategyDirty={strategyDirty}
+                patchStrategySettingsPath={patchStrategySettingsPath}
+                focusedDeployment={focusedDeployment}
+                handleApplyExpandedCapacity={handleApplyExpandedCapacity}
+                handleSaveAllAdjustments={handleSaveAllAdjustments}
+                handleDiscardAllAdjustments={handleDiscardAllAdjustments}
+                updateProfileMutation={updateProfileMutation}
+                updateStrategySettingsMutation={updateStrategySettingsMutation}
+                cockpitSkipCategoryRows={cockpitSkipCategoryRows}
+                cockpitSkipReasonRows={cockpitSkipReasonRows}
+                cockpitReadinessRows={cockpitReadinessRows}
+                cockpitMarkHealthRows={cockpitMarkHealthRows}
+                cockpitLifecycleRows={cockpitLifecycleRows}
+                cockpitEntryGateRows={cockpitEntryGateRows}
+                cockpitOptionChainRows={cockpitOptionChainRows}
+                cockpitSignalFreshness={cockpitSignalFreshness}
+                cockpitTradePath={cockpitTradePath}
+                diagExpansion={diagExpansion}
+                setDiagExpansion={setDiagExpansion}
+                algoIsPhone={algoIsPhone}
+                algoIsNarrow={algoIsNarrow}
+              />
+            </Suspense>
           }
         />
         </Suspense>
