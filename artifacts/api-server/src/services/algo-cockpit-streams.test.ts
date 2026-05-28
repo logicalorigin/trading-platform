@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   shouldUseCriticalOnlyAlgoCockpitPayload,
@@ -30,6 +31,21 @@ test("algo cockpit stream sheds full derived payloads under API pressure", () =>
   assert.equal(shouldUseCriticalOnlyAlgoCockpitPayload("watch"), false);
   assert.equal(shouldUseCriticalOnlyAlgoCockpitPayload("high"), true);
   assert.equal(shouldUseCriticalOnlyAlgoCockpitPayload("critical"), true);
+});
+
+test("algo cockpit stream uses lean first-paint payloads", () => {
+  const source = readFileSync(
+    new URL("./algo-cockpit-streams.ts", import.meta.url),
+    "utf8",
+  );
+  const criticalPayload = source.match(
+    /export async function fetchAlgoCockpitCriticalPayload[\s\S]*?\n}\n\nexport async function fetchAlgoCockpitStreamPayload/,
+  )?.[0] ?? "";
+
+  assert.match(criticalPayload, /const criticalEventLimit = Math\.min\(target\.eventLimit, 20\)/);
+  assert.match(criticalPayload, /view:\s*"summary"/);
+  assert.doesNotMatch(criticalPayload, /getAlgoDeploymentCockpit/);
+  assert.match(source, /getAlgoDeploymentCockpit\(\{[\s\S]*view:\s*"summary"/);
 });
 
 test("algo cockpit stream coalesces change events while a poll is in flight", async () => {
