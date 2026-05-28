@@ -2526,13 +2526,13 @@ test("fresh signal snapshots create potential shadow action candidates", () => {
         fresh: false,
       } as never,
     });
-  const agedCandidate =
+  const stillFreshCandidate =
     __signalOptionsAutomationInternalsForTests.candidateFromSignalSnapshot({
       deployment,
       signal: {
         ...baseSignal,
         latestBarAt: "2026-04-28T15:45:00.000Z",
-        barsSinceSignal: 2,
+        barsSinceSignal: 6,
       } as never,
     });
 
@@ -2548,7 +2548,8 @@ test("fresh signal snapshots create potential shadow action candidates", () => {
   assert.equal(sellCandidate.optionRight, "put");
   assert.equal(sellCandidate.action?.optionAction, "buy_put");
   assert.equal(staleCandidate, null);
-  assert.equal(agedCandidate, null);
+  assert.ok(stillFreshCandidate);
+  assert.equal(stillFreshCandidate.symbol, "SPY");
 });
 
 test("signal-options state only treats fresh signal states as action rows", () => {
@@ -2578,9 +2579,9 @@ test("signal-options state only treats fresh signal states as action rows", () =
       fresh: true,
       currentSignalDirection: "buy",
       currentSignalAt: "2026-05-28T19:50:00.000Z",
-      barsSinceSignal: 2,
+      barsSinceSignal: 6,
     } as never),
-    false,
+    true,
   );
   assert.equal(
     isActionable({

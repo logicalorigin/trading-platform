@@ -1,74 +1,303 @@
 # 5-28 Trading Analysis — Greek-Aware, Wireband-Following Trailing Stop
 
-> Update to and continuation of `5-27 trading analysis.md`. The 5-27 doc prescribed greek-aware trade management as a framework; this doc finalizes a concrete, feasibility-checked design for a **wireband-following, greek-modulated trailing stop**, updates the analysis with the greeks data that actually exists today, and specifies the items 5-27 left open.
+> Finalized update to `5-27 trading analysis.md`. This version is handoff-ready for implementation and backtesting. It keeps the 5-27 greek-aware trade-management thesis, but locks the concrete design around a Pyrus wireband-following trailing stop and corrects the feasibility gaps found in code review.
 
-## Why this update
+## Executive summary
 
-The 5-27 framework (looser runner trail while delta/gamma support holds; tighten on theta-burden spikes / delta decay / spread deterioration; greek-gated opposite-signal and overnight handling) is sound but **unimplemented in the exit code**, and it predates the new idea: have the trailing stop **follow the strategy's "wireband" lines** (the Pyrus Signals "Neon Wireframe") and **progressively tighten as price climbs the wires**, modulated by greeks. This doc resolves how that works end-to-end.
+The current signal-options exit stack exits runners in option-premium space only. The 5-26 shadow management review showed that this captured meaningful realized P&L, but left a large upper-bound opportunity behind:
 
-## Current state (verified in code)
+- Realized exit P&L: `$156,036.85`
+- Post-exit high opportunity: `$996,747.00`
+- Opportunity / realized ratio: `6.39x`
+- Largest leak: `runner_trail_stop` exits, with `324` exits, `$93,044.43` realized P&L, and `$485,331.00` later-high opportunity.
+- Reversal-like exits also need caution: `opposite_signal` exits made `$51,853.80`, but left `$255,874.00` later-high opportunity.
 
-- **The trailing stop is option-premium-space only and purely profit/peak-driven.** `computeSignalOptionsPositionStop` (`artifacts/api-server/src/services/signal-options-exit-policy.ts:90`): `stop = max(hardStop, max(entry×(1+minLocked%), peak×(1−giveback%)))`. Giveback precedence today: **10x > 5x peak-multiple > progressiveTrailStep > conditional liquidity > baseline**; locked-gain: progressive step > baseline. There is **no greek, underlying-price, or wire input.**
-- **Greeks are captured but unused in exits.** delta/gamma/theta/vega/IV stream per position (`artifacts/pyrus/src/features/platform/live-streams.ts`, live option quote ~15s stall; account risk per-underlying ~7s) and are captured in `signal-options-automation.ts` — but never passed to the exit math.
-- **Exit cadence is poll-based, not tick/bar.** The worker wakes every 5s (`signal-options-worker.ts:22`); each deployment evaluates on `pollIntervalSeconds` (default 60s, range 15–3600). Exit eval = `refreshActivePosition` (`signal-options-automation.ts:~6079` live, `~8218` backfill).
-- **What the exit scope HAS today:** option mark; **greeks** (live path, bridge quote ~5s TTL, sampled per poll); **spreadPctOfMid** (live `markResolution.liquidity`). **What it LACKS:** underlying spot, underlying bars, regime/CHOCH state. The backfill path has none of greeks/spread/regime.
-- **The wires** (`artifacts/pyrus/src/features/charting/pyrusSignalsPineAdapter.ts:3365-3420`): `trendLine` = the active-regime band; wires = `trendLine ± atrSmoothed×wireSpread×{1,2,3}`, active-side only, ATR-scaled (they breathe with volatility), reset on regime flip. So **trendLine = the tightest structural stop, and wire1 → wire2 → wire3 are progressively looser.** They are frontend-only today, but their inputs (`basis` WMA, `atrSmoothed` SMA-of-ATR, `regimeDirection`) are already computed and returned server-side by `evaluatePyrusSignalsSignals` (`lib/pyrus-signals-core/src/index.ts`), and `shadow-account.ts:8496` already reads `atrSmoothed` server-side. Frontend and core band math are identical (no divergence risk).
-- **Parity gap:** the backtest engine (`lib/backtest-core/src/engine.ts` `resolveRiskExit`) does not run the progressive trail, and greeks are not stored historically.
+The next trade-management improvement should be a dual-leg trailing stop:
 
-## The design
+1. **Structure leg:** follows the Pyrus Signals wirebands on the underlying and exits only when the latest closed signal-timeframe bar violates the selected wire.
+2. **Premium floor:** preserves the existing option-premium stop/floor so theta bleed, IV crush, stale structure context, or premium collapse cannot go unprotected.
 
-### Dual-leg trailing stop — exit if EITHER leg fires
-Each leg protects a different thing, so neither is redundant:
+Phase 1 requires fresh greeks before enabling greek modulation. If greeks are missing or stale, the system must run in conservative fallback: structure leg plus fixed premium floor, no greek loosening.
 
-1. **Structure leg (new) — protects the thesis.** Exit when the **latest closed signal-timeframe bar of the underlying** is through the active wire (close-based, not an intrabar wick). This is what lets a runner run: you don't bail on premium noise while price still respects its wires.
-2. **Premium floor (existing — non-negotiable backstop) — protects capital.** `max(entry×(1+minLocked%), peak×(1−giveback%))`, checked against the freshest option mark. Catches theta bleed, IV crush, and premium collapse the structure leg can't see.
+## Current state verified in code
 
-Worked scenarios that justify "either":
-- *IV crush, structure holds* → premium falls below the floor while the underlying is still above its wire → **floor exits** (the doc's "IV-driven profit without follow-through → take profit faster"). Structure-only would have ridden the gain to zero.
-- *Structure break, premium sticky* → underlying closes below the wire but an IV pop keeps premium up → **structure exits**, locking the gain. Premium-only would have ridden a dead trend.
+- **Exit math is option-premium-only.** `computeSignalOptionsPositionStop` in `artifacts/api-server/src/services/signal-options-exit-policy.ts` currently computes `max(hardStop, max(entry * (1 + minLockedGain%), peak * (1 - giveback%)))`. It has no underlying price, wire, regime, or greek input.
+- **The live exit mark path can carry greeks, but does not require them today.** `SignalOptionsOptionQuote` includes `impliedVolatility`, `delta`, `gamma`, `theta`, and `vega`, but `refreshActivePosition` currently requests bridge position-mark snapshots with `requiresGreeks: false`. Greek modulation must not be considered live until this path sources fresh greeks.
+- **Spread is already available in the live exit mark resolution.** `markResolution.liquidity.spreadPctOfMid` is usable for tightening/fallback decisions.
+- **Exit cadence is deployment-scan-based.** The worker wakes every `5s`, but deployment scans are scheduled by `signalOptions.worker.pollIntervalSeconds` with a `15s` minimum. Per-position runner cadence is not a one-line change.
+- **Wire math is frontend-owned today.** The frontend adapter derives `upperBand`, `lowerBand`, `trendLine`, and bull/bear wires from `basis`, `atrSmoothed`, `volatilityMultiplier`, `wireSpread`, and `regimeDirection`. `pyrus-signals-core` currently returns the ingredients, not the final wire arrays.
+- **Signal monitor state does not currently expose wire context.** The monitor computes Pyrus evaluations internally, but the persisted/current state only includes signal direction/time/price, latest bar time, freshness, and status. Exit code needs an explicit structural-context handoff.
+- **Historical greeks are not stored for signal-options replay.** Backtests can validate the structure leg and fixed premium floor, but greek modulation needs live/shadow validation unless a separate historical-greeks data effort is added.
 
-### Cadence handling
-There is no tick loop, so "structure-on-close / premium-on-mark" is realized **within the poll loop**: each poll, the structure leg checks the latest closed bar and the premium floor checks the freshest mark. For positions in the active-trail/runner state, **shorten the effective poll to ~15–20s** (the worker already supports down to 15s) for responsiveness; 60s is fine pre-activation. (Optional later: a lightweight mark-only stop check on the 5s wakeup between full scans.)
+## Locked design decisions
 
-### Rung selection — profit baseline + greek modulation
-Profit sets the baseline rung (more peak gain → tighter: wire3 → wire2 → wire1 → trendLine). Greeks then adjust:
-- **Loosen** (ride an outer wire) while delta is strong/improving and gamma is strong — let the runner run.
-- **Tighten** (inner wire / exit) on theta-burden spikes, delta decay, or spread widening.
+### 1. Greeks are a phase-1 prerequisite for modulation
 
-This **replaces** the peak-% `progressiveTrailSteps` + 5x/10x ladder as the *tightening driver*; 5x/10x is retained only as an extreme-runner premium-floor tightener.
+Phase 1 does not merely "use greeks if present." It must update the live exit mark path to source fresh `delta`, `gamma`, `theta`, `vega`, and IV for the open contract before greek-modulated rung selection is enabled.
 
-### Giveback sizing, gamma, and fallback
-- **Giveback is delta-sized to the wire** — `|delta| × |S − W| × 100` — so it is moneyness-aware: a deep-ITM runner (delta ≈ 0.9) trails tight, a cheap OTM option (delta ≈ 0.2) keeps a wider premium leash. This reuses the same delta that signals quality.
-- **Rollout:** ship the structure leg with the **existing fixed-% floor first** (prove the novel wire mechanic), then swap the floor's giveback to delta-sizing.
-- **Gamma:** first-order delta with **continuous re-translation each poll** — as price nears the wire the gap → 0, so curvature error self-cancels at the trigger. No explicit `0.5·gamma·ΔS²` term; gamma keeps its job in the quality/rung layer, not the stop arithmetic.
-- **Stale/missing greeks → revert to fixed-% giveback** so protection is never lost.
+Implementation requirements:
 
-### Regime flip — snap-to-tightest, then hand off
-A CHOCH flip against the position is a thesis reversal, **not** a blunt exit here. The trail leg freezes the stop at the last in-regime trendLine, tightens the premium floor to maximum, and raises a **reversal event** to the greek-gated opposite-signal handler, which decides trim / hedge / full-exit / keep-a-greek-strong-runner-on-the-tightened-trail (matches 5-27 lines 154-158). Reversal trigger = "regime flips against the open position's direction," independent of whether a fresh opposite entry signal fires.
+- Change the live position mark quote source to request greeks or reuse a fresh greek-bearing quote source.
+- Record greek values and greek freshness in the stop payload.
+- If greeks are stale or missing:
+  - fixed premium floor remains active;
+  - wire structure leg remains active if structural context is fresh;
+  - greek loosening is disabled;
+  - greek tightening uses conservative fallback only.
 
-### Scope and validation
-Full 5-27 framework, **sequenced**: (1) wire+greek dual-leg trail [core], (2) partial/runner scaling, (3) opposite-signal greek gating, (4) overnight greek residuals. **Validation is live/shadow-first** (greeks available live); the backtest covers the **wire-structure leg only** (no historical greeks).
+### 2. Wire context comes from the existing scan pass
 
-## Implementation approach (files & reuse)
+Do not refetch/recompute underlying bars per open position. During each signal-options scan, compute structural context once per evaluated underlying and pass it in memory to active position refresh.
 
-- **Expose wires server-side (low-risk):** extend `PyrusSignalsEvaluation` with `upperBand`/`lowerBand`/`bullWires[3]`/`bearWires[3]`, add `wireSpread` to settings, derive from the existing `basis`/`atrSmoothed`/`regimeDirection` in `evaluatePyrusSignalsSignals` (`lib/pyrus-signals-core/src/index.ts`).
-- **Thread the underlying eval into the exit (the main new plumbing):** source current wires + `regimeDirection` + underlying spot from the **signal-monitor/matrix evaluation already run for the underlying** (reuse, don't re-fetch per position) into `refreshActivePosition` (`signal-options-automation.ts:~6079`). Greeks + spread are already in scope there.
-- **Exit policy:** extend `computeSignalOptionsPositionStop` (`signal-options-exit-policy.ts`) to take `{ underlyingSpot, wires, regimeDirection, greeks, spreadPctOfMid }`; add the structure leg, rung selection, delta-sized giveback (phase 2), and the regime-flip snap/handoff; keep hardStop + minLockedGain floor; add `exitReason`s (`wire_structure_break`, `regime_flip_handoff`).
-- **Cadence:** in `signal-options-worker.ts`, reduce the effective poll for active-trail/runner positions to ~15–20s.
-- **Profile + UI:** add exitPolicy fields (wire-trail enable, rung-by-profit map, greek thresholds, delta-sizing toggle) to the `lib/backtest-core` signal-options profile, `artifacts/pyrus/src/screens/algo/algoSettingsFields.js`, and the Algo settings UI.
-- **Backtest parity:** port the structure leg into `lib/backtest-core/src/engine.ts` (wires from the eval; greeks neutral).
+Required context per symbol:
 
-## Items 5-27 left open — now specified
+```ts
+type SignalOptionsStructuralContext = {
+  symbol: string;
+  timeframe: SignalMonitorTimeframe;
+  latestClosedBarAt: string;
+  latestClose: number;
+  evaluationIndex: number;
+  regimeDirection: 1 | -1;
+  trendLine: number | null;
+  upperBand: number | null;
+  lowerBand: number | null;
+  bullWires: [number | null, number | null, number | null];
+  bearWires: [number | null, number | null, number | null];
+  source: "signal_monitor_scan";
+};
+```
 
-- **Greek thresholds (starting constants, tunable in shadow):**
-  - Delta: `delta_improvement = |delta_now| − |delta_entry|`; `> +0.05` → eligible to loosen one rung; `< −0.10` → tighten one rung.
-  - Theta burden: `|theta| / mark` (daily decay as % of premium); `> ~8%/day` → tighten one rung (combine with the doc's "gamma high but underlying stalls" note).
-  - Gamma: strong gamma + profitable → permit the looser rung (trim-only bias); gamma collapse (deep-ITM) → manage like delta, no extra loosening.
-  - Spread: `spreadPctOfMid > max(entrySpread×1.5, liquidityGate.maxSpreadPctOfMid)` → tighten/exit.
-- **Partial / runner scaling (phase 2, additive on existing quantity tracking):** add an `exitQuantity` to exit events; on a scale-out reduce `position.quantity` instead of `positions.delete`; reuse the shadow `positionQuantity` / `partial_shadow` infra (`shadow-account.ts:~3559-3581`). Trigger: at the first rung-tighten past `+50%` peak gain, sell 50–70%; keep a 30–50% runner on the wire trail while greek quality stays strong; the runner exits via wire / floor / regime-flip as normal.
-- **Backtest historical greeks:** deferred — the backtest validates the wire-structure leg with greeks neutral; a full greek replay needs net-new historical-greek storage (a separate data effort), pursued only if shadow shows the greek layer adds edge.
+If this context is missing or stale, skip only the structure leg. The premium floor must still run.
 
-## Verification
+### 3. `pyrus-signals-core` becomes the wire source of truth
 
-- **Unit:** exit-policy tests — structure leg fires on an underlying close through the active wire; the premium floor still fires on premium collapse with the underlying holding; "either" wins correctly in both conflict scenarios above; delta-sized giveback (deep-ITM tighter than OTM); stale-greek → fixed-% fallback; regime flip → snap-to-tightest + reversal event (no blunt exit); rung loosens/tightens at the threshold constants. `pyrus-signals-core`: wires match the frontend adapter for a fixture series. `backtest-core`: wire-structure replay. Then API + Pyrus typechecks; existing `signal-options-automation.test.ts` / `algoHelpers.test.js` stay green.
-- **Shadow/live:** confirm runners ride outer wires while delta/gamma are strong and tighten on theta-burden / delta-decay / spread; confirm regime flips hand off to trim/exit rather than blunt-dumping a strong runner; confirm the reduced poll keeps stops responsive; measure realized vs. post-exit opportunity against the 6.39x gap the 5-27 review flagged.
+Move band/wire derivation into `lib/pyrus-signals-core` and extend `PyrusSignalsEvaluation` with:
+
+- `upperBand: number[]`
+- `lowerBand: number[]`
+- `trendLine: number[]`
+- `bullWires: [number[], number[], number[]]`
+- `bearWires: [number[], number[], number[]]`
+
+The frontend adapter should either consume these arrays directly or remain fixture-tested against core output. Until that lands, do not claim "no divergence risk"; today the frontend and core share inputs, but the frontend owns the wire math.
+
+### 4. Regime flip is replay-gated, not an automatic exit
+
+An adverse CHOCH/regime flip is a thesis-warning event, not a phase-1 sell button. Current shadow data supports caution: `opposite_signal` exits captured profit but left substantial later-high opportunity. However, the existing shadow report does not record exact regime-flip timing relative to each trade.
+
+Phase 1 behavior:
+
+- Do not add `regime_flip_handoff` as an `exitReason`; existing automation treats exit reasons as closing events.
+- Record a non-closing reversal-handoff/diagnostic state when structural context shows regime flipped against the open position.
+- Tighten protective state conservatively after handoff, but keep final trim/full-exit rules behind replay validation.
+
+Required replay diagnostic:
+
+- Reconstruct Pyrus regime direction from underlying bars for historical shadow trades.
+- Record whether and when regime flipped against each open position.
+- Compare immediate exit, tighten-only, and partial-trim outcomes.
+- Promote a regime-flip rule only if April train and May holdout results support it.
+
+### 5. Runner cadence is a scheduler decision
+
+The worker schedules scans per deployment, not per position. For phase 1, use the least surprising operational path:
+
+- If wire trail is enabled for a deployment, set or recommend an effective deployment poll of `15-20s` during market hours.
+- Do not promise per-position runner polling until the worker has a separate active-position scheduler or mark-only fast path.
+- Keep the optional future enhancement: a lightweight 5s mark-only premium-floor check between full scans.
+
+### 6. Backtest parity means both relevant engines
+
+There are two historical surfaces to consider:
+
+- `artifacts/api-server/src/services/signal-options-automation.ts` historical signal-options backfill, which replays option entries/exits.
+- `lib/backtest-core/src/engine.ts`, the generic OHLC backtest engine.
+
+For signal-options trade-management validation, the signal-options historical backfill path is the primary target. `backtest-core` parity is useful only if the strategy profile/UI uses it for comparison or sweeps.
+
+## Stop behavior
+
+### Dual-leg stop
+
+Exit if either leg fires:
+
+1. **Structure leg:** latest closed underlying bar violates the selected active-side wire.
+   - Long/call runner: exit when latest close is below the selected bull wire.
+   - Put/short-direction runner: exit when latest close is above the selected bear wire.
+   - Use closed bars only, not intrabar wicks.
+2. **Premium floor:** existing option mark check remains active.
+   - `max(hardStop, entry * (1 + minLockedGain%), peak * (1 - giveback%))`
+   - Always evaluated against the freshest actionable option mark.
+
+The legs protect different failure modes:
+
+- IV crush while structure holds -> premium floor exits.
+- Structure breaks while premium is sticky -> structure leg exits.
+
+### Rung selection
+
+Profit sets the baseline wire rung:
+
+- early runner: outer wire (`wire3`)
+- stronger peak gain: `wire2`
+- mature runner: `wire1`
+- extreme/late runner: `trendLine`
+
+Greeks modulate the rung only when fresh:
+
+- Loosen one rung while delta is strong/improving and gamma is supportive.
+- Tighten one rung on delta decay, theta burden, or spread deterioration.
+- Never loosen on stale greeks.
+- Never disable the premium floor because structure or greeks are unavailable.
+
+Starting greek thresholds:
+
+- Delta improvement: `abs(delta_now) - abs(delta_entry) > 0.05` -> eligible to loosen one rung.
+- Delta decay: `abs(delta_now) - abs(delta_entry) < -0.10` -> tighten one rung.
+- Theta burden: `abs(theta) / mark > 0.08` per day -> tighten one rung.
+- Gamma: strong gamma plus profitable runner permits looser rung; gamma collapse removes extra loosening.
+- Spread: `spreadPctOfMid > max(entrySpread * 1.5, liquidityGate.maxSpreadPctOfMid)` -> tighten or exit depending on severity.
+
+### Premium floor rollout
+
+Use two sub-phases:
+
+1. **Phase 1A:** structure leg plus existing fixed-percent premium floor.
+2. **Phase 1B:** delta-sized giveback after wire mechanics are validated.
+
+Delta-sized floor formula:
+
+```text
+premiumGivebackToWire = abs(delta) * abs(underlyingSpot - selectedWire) * 100
+```
+
+Do not add an explicit `0.5 * gamma * dS^2` term in stop arithmetic. Gamma belongs in the quality/rung layer. Recomputing the delta translation every poll makes the first-order estimate converge as price approaches the wire.
+
+## Implementation sequence
+
+### Phase 1A — core wire trail with fixed premium floor
+
+- Add band/wire arrays to `pyrus-signals-core`.
+- Extend signal-monitor evaluation scan output with ephemeral `SignalOptionsStructuralContext` per symbol.
+- Pass structural context into `refreshActivePosition`.
+- Extend `computeSignalOptionsPositionStop` input with optional structural context and greek payload.
+- Add structure-leg firing and stop payload diagnostics.
+- Preserve existing hard stop, fixed premium floor, early invalidation, and overnight behavior unless explicitly gated by the new policy.
+- Add profile/UI fields:
+  - wire trail enabled;
+  - rung-by-profit map;
+  - greek modulation enabled;
+  - greek freshness max age;
+  - delta-sized floor disabled by default.
+
+### Phase 1B — greek modulation and delta-sized floor
+
+- Update live position mark sourcing so fresh greeks are required for modulation.
+- Add rung loosening/tightening from delta/gamma/theta/spread.
+- Add delta-sized premium giveback behind a feature flag.
+- Record fallback mode whenever greeks are missing or stale.
+
+### Phase 1C — regime replay diagnostic
+
+- Add a shadow/backfill diagnostic that reconstructs Pyrus regime direction over each historical trade.
+- Compare immediate adverse-regime exit vs tightened trail vs partial trim.
+- Use the results to decide whether regime flip becomes:
+  - non-closing handoff only;
+  - partial trim;
+  - full exit after confirmation;
+  - no phase-1 trading action.
+
+### Phase 2 — partial/runner scaling
+
+- Add `exitQuantity` to exit events.
+- On scale-out, reduce open position quantity instead of deleting the position.
+- Reuse existing shadow `positionQuantity` / `partial_shadow` infrastructure.
+- Candidate trigger: first major tighten after `+50%` peak gain sells `50-70%`, keeps `30-50%` runner on wire trail while greek quality stays strong.
+
+### Later phases
+
+- Opposite-signal greek gating.
+- Overnight greek residuals.
+- Historical greek storage only if live/shadow evidence shows the greek layer adds edge.
+
+## Backtesting plan
+
+### Primary: signal-options historical backfill
+
+Backfill should validate:
+
+- structure leg closes on latest closed-bar wire violation;
+- premium floor still closes on premium collapse;
+- missing structural context skips structure leg and keeps premium floor;
+- fixed floor vs wire trail capture on April train and May holdout;
+- replay diagnostic for adverse regime flips.
+
+Historical greeks are neutral in this path unless a separate data source is added.
+
+### Secondary: `backtest-core`
+
+Add generic wire-structure parity only if needed for UI/sweep comparisons. Do not treat `lib/backtest-core/src/engine.ts` as sufficient validation for signal-options trade management by itself.
+
+### Metrics to report
+
+- realized P&L;
+- profit factor;
+- max drawdown;
+- closed trades;
+- win rate;
+- runner-trail capture versus post-exit high opportunity;
+- missed-to-realized ratio versus the `6.39x` baseline;
+- count of structure exits, premium-floor exits, missing-context fallbacks, stale-greek fallbacks, and regime-handoff diagnostics.
+
+## Verification checklist
+
+Unit and integration coverage:
+
+- `pyrus-signals-core`: wire arrays match current frontend adapter fixture output.
+- Exit policy:
+  - structure leg fires on closed-bar wire break;
+  - structure leg ignores intrabar-only wick violation;
+  - premium floor fires while structure holds;
+  - either leg wins correctly in conflict scenarios;
+  - missing/stale structural context does not disable premium floor;
+  - fresh greeks are required for greek loosening;
+  - stale/missing greeks fall back conservatively;
+  - delta-sized giveback is tighter for deep-ITM than OTM when enabled;
+  - adverse regime flip records non-closing handoff/diagnostic state.
+- Signal-options automation:
+  - active position refresh receives structural context from the current scan;
+  - quote source requests or reuses fresh greeks when greek modulation is enabled;
+  - stop payload records structural context, selected rung, greek freshness, and fallback mode.
+- Backfill:
+  - wire-structure replay works with greeks neutral;
+  - regime diagnostic compares immediate exit/tighten-only/partial-trim variants.
+- Frontend/profile:
+  - settings normalize new exit policy fields;
+  - Algo settings UI exposes the feature flags and thresholds without breaking existing profile defaults.
+
+Expected targeted validation commands after implementation:
+
+```bash
+pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts
+pnpm --filter @workspace/api-server exec node --import tsx --test src/services/shadow-account.test.ts
+pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js
+pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/charting/pyrusSignalsPineAdapter.test.ts
+pnpm --filter @workspace/api-server run typecheck
+pnpm --filter @workspace/pyrus run typecheck
+pnpm --filter @workspace/scripts run test:shadow-options-management-review
+```
+
+If startup config, artifact dev scripts, or Replit guard files are touched, also run:
+
+```bash
+pnpm run audit:replit-startup
+```
+
+## Handoff notes
+
+- Do not implement `regime_flip_handoff` as an `exitReason`; exit reasons close positions today.
+- Do not rely on current monitor state as wire context; add an explicit in-memory scan context.
+- Do not enable greek rung loosening without fresh greeks.
+- Do not remove the premium floor under any missing-data condition.
+- Treat the structure leg as the novel mechanic to prove first; treat delta-sized floor and partial runners as subsequent controlled changes.

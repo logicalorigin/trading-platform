@@ -83,6 +83,51 @@ test("signal matrix scheduler skips hydrated priority rows and fills missing bac
   assert.equal(plan.backgroundPaused, false);
 });
 
+test("signal matrix scheduler rotates stale priority symbols instead of starving later bubbles", () => {
+  const plan = buildSignalMatrixRequestPlan({
+    symbols: ["SPY", "NVDA", "DIA", "AAPL", "MSFT", "TSLA"],
+    prioritySymbols: ["SPY", "NVDA", "DIA", "AAPL", "MSFT", "TSLA"],
+    currentStates: hydratedStates(
+      ["SPY", "NVDA", "DIA", "AAPL", "MSFT", "TSLA"],
+    ).map((state) => ({
+      ...state,
+      latestBarAt: "2026-05-28T20:00:00.000Z",
+      lastEvaluatedAt: "2026-05-28T20:00:00.000Z",
+    })),
+    backgroundReady: true,
+    cursor: 3,
+    pollMs: 60_000,
+    nowMs: Date.parse("2026-05-28T20:05:00.000Z"),
+  });
+
+  assert.deepEqual(plan.prioritySymbols, ["AAPL", "MSFT", "TSLA"]);
+  assert.deepEqual(plan.requestSymbols, ["AAPL", "MSFT", "TSLA"]);
+  assert.equal(plan.nextCursor, 0);
+});
+
+test("signal matrix scheduler uses recent evaluation time to avoid requeueing hydrated after-hours rows", () => {
+  const plan = buildSignalMatrixRequestPlan({
+    symbols: ["SPY", "NVDA", "DIA", "AAPL"],
+    prioritySymbols: ["SPY", "NVDA", "DIA", "AAPL"],
+    currentStates: [
+      ...hydratedStates(["SPY", "NVDA", "DIA"]).map((state) => ({
+        ...state,
+        latestBarAt: "2026-05-28T20:00:00.000Z",
+        lastEvaluatedAt: "2026-05-28T20:04:30.000Z",
+      })),
+    ],
+    backgroundReady: true,
+    cursor: 0,
+    pollMs: 60_000,
+    nowMs: Date.parse("2026-05-28T20:05:00.000Z"),
+  });
+
+  assert.deepEqual(plan.prioritySymbols, ["AAPL"]);
+  assert.deepEqual(plan.requestSymbols, ["AAPL", "SPY", "NVDA"]);
+  assert.equal(plan.coverage.hydratedSymbols, 3);
+  assert.equal(plan.coverage.missingSymbols, 1);
+});
+
 test("signal matrix scheduler rehydrates stale Massive-backed signal bubbles", () => {
   const plan = buildSignalMatrixRequestPlan({
     symbols: ["SPY", "NVDA", "DIA", "AAPL"],

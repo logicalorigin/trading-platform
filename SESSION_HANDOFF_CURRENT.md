@@ -1,5 +1,105 @@
 # Current Session Handoff
 
+- Last updated: `2026-05-28 21:37 UTC`
+- Current request: implement the focused `/qa` plan for signal bubbles and Signals-to-Action.
+- Current status:
+  - Starting focused QA execution in Default mode using the `/qa` skill workflow.
+  - User-approved plan choices: focused signal QA, commit current dirty work as the baseline first, and build the gstack browse binary before browser QA.
+  - Live app is running via the Replit artifact runner: web at `http://127.0.0.1:18747/`, API at `http://127.0.0.1:8080`.
+  - Base branch is `main`; current branch is `main` and ahead of `origin/main`.
+  - Replit startup config must remain untouched.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - QA execution pending.
+- Next step:
+  - Commit current work as the QA baseline, build browse if needed, then run focused browser/API QA with screenshots and a report.
+
+- Last updated: `2026-05-28 21:34 UTC`
+- Current request: implement the finalized review plan by updating `5-28 trading analysis.md` so it is ready for handoff and backtesting.
+- Current status:
+  - Rewrote `5-28 trading analysis.md` as the finalized handoff spec for the Greek-aware, wireband-following trailing stop.
+  - Locked the review decisions into the doc: phase-1 greek modulation requires fresh greeks, wire context is passed in memory from the existing signal-options scan, `pyrus-signals-core` becomes the wire source of truth, regime flips are replay-gated non-closing diagnostics, runner cadence is a scheduler-level decision, and backtest parity must cover the signal-options historical backfill path.
+  - Replit startup config untouched; no app processes started or stopped.
+- Changed files this pass:
+  - `5-28 trading analysis.md`
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Passed: `git diff --check -- '5-28 trading analysis.md' SESSION_HANDOFF_CURRENT.md`.
+  - Passed: `pnpm run audit:markdown-paths`.
+- Next step:
+  - Review the updated markdown and, after acceptance, implement the code/backfill changes from the spec.
+
+- Last updated: `2026-05-28 21:36 UTC`
+- Current request: investigate why watchlist/algo signal bubbles are not hydrating after the restart.
+- Current status:
+  - Live `/api/signal-monitor/matrix` does return usable bubble states. Example: ASML returns `2m/5m/15m` states, including a fresh `5m` buy row.
+  - A 3-symbol matrix miss took about `13.4s` and the frontend scheduler only requests `3` symbols per pass under normal pressure.
+  - Root cause found: the frontend signal-matrix scheduler always sliced the first refresh-needed priority symbols. After market bars stop advancing, already-hydrated symbols became refresh-needed again based only on `latestBarAt`, so the first few priority rows could monopolize the tiny request batch and later bubbles appeared unhydrated.
+  - Fixed by rotating refresh-needed priority symbols fairly and using `lastEvaluatedAt` as part of the refresh freshness anchor so hydrated rows do not immediately re-enter the missing queue just because the latest completed market bar is unchanged.
+  - Replit startup config untouched; no processes killed.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/features/platform/signalMatrixScheduler.js`
+  - `artifacts/pyrus/src/features/platform/signalMatrixScheduler.test.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js` (`13` tests).
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js` (`53` tests).
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `git diff --check`.
+- Next step:
+  - Let Vite pick up the frontend change through the running Replit app. Bubbles should hydrate progressively across the priority/watchlist set instead of repeatedly refreshing the same first rows.
+
+- Last updated: `2026-05-28 21:23 UTC`
+- Current request: investigate why Signals-to-Action now shows `Awaiting next scan / Signals appear as soon as the monitor finishes its next pass` with a critical warning, and why rows disappear between scans.
+- Current status:
+  - Root cause found and fixed in backend signal-options state generation.
+  - Live `/api/signal-monitor/state?environment=paper` had fresh monitor states (for example ASML/DIA), but `/api/algo/deployments/7e2e4e6f-749f-4e65-a011-87d3559a23b0/signal-options/state` and `/cockpit` returned `signals: []` and `candidates: []`.
+  - Cause: `isSignalOptionsActionableSignalState` and `isSignalOptionsActionableSignalSnapshot` hard-capped Signals-to-Action rows at `barsSinceSignal <= 1`. Signals still marked fresh by the monitor (profile `freshWindowBars: 8`) disappeared from the action table after one bar, so the table showed `Awaiting next scan` between fresh-new-signal moments.
+  - Fixed by relying on the monitor's `fresh === true` state plus direction/signal timestamp instead of a separate one-bar cap.
+  - The critical warning seen in the UI is separate but related runtime status: cockpit attention reports `gateway-readiness` critical because the market session is closed for algorithm execution, while diagnostics also report resource pressure from a long signal-options scan/API latency.
+  - Replit startup config untouched; no processes killed.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/signal-options-automation.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.test.ts`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts` (`86` tests).
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+- Next step:
+  - Let the running API pick up the backend change through the normal Replit app runner/hot reload, then recheck the Signals-to-Action table: fresh monitor rows should persist until the monitor marks them not fresh.
+
+- Last updated: `2026-05-28 21:26 UTC`
+- Current request: recheck Signals-to-Action after the app picked up the backend change.
+- Current status:
+  - Running API picked up the fix. Runtime uptime reset to about `12s` at first check, confirming restart/reload.
+  - `/api/diagnostics/runtime` now reports normal runtime pressure: API RSS about `457 MB` shortly after restart, no long-scan pressure driver in the extracted summary, IBKR strict ready `true`, stream state `quiet`.
+  - `/api/signal-monitor/state?environment=paper` still showed ASML as fresh with `barsSinceSignal: 5`.
+  - `/api/algo/deployments/7e2e4e6f-749f-4e65-a011-87d3559a23b0/signal-options/state` now returns `signals: 1` and `candidates: 1`; sample signal is ASML with `barsSinceSignal: 5`, `fresh: true`.
+  - `/api/algo/deployments/7e2e4e6f-749f-4e65-a011-87d3559a23b0/cockpit` now returns `signals: 1`, `candidates: 1`; pipeline stages show `signal_detected` healthy and `action_mapped` healthy.
+  - Remaining critical item is `gateway-readiness`: `The market session is closed for algorithm execution.` This is not the disappearing-row bug.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Passed live API recheck after reload.
+- Next step:
+  - UI should no longer show `Awaiting next scan` while the monitor has fresh rows. If the critical warning is still visually alarming after hours, tune its copy/severity separately from row persistence.
+
+- Last updated: `2026-05-28 21:18 UTC`
+- Current request: check whether prior Replit/Codex sessions are still running in the background after the project restarted.
+- Current status:
+  - Live process sweep found the current Replit/PYRUS app chain running from the restart: `pnpm --filter @workspace/pyrus run dev:replit` PID `344`, supervisor PID `412`, API dev PID `419`, API node PID `432`, web dev PID `662`, Vite PID `741`.
+  - PYRUS flight recorder classifies the latest restart as `container-replaced` at `2026-05-28T21:14:19.380Z`; previous supervisor PID `150353`, API PID `150360`, and web PID `150666` from the replaced container are not present in the current process table.
+  - Codex runtime sweep found two live Codex process pairs in `/home/runner/workspace`: PID `1881`/`1888` on `pts/6` and PID `2135`/`2142` on `pts/2`. Both started after the restart; no pre-restart Codex process survived.
+  - Codex persisted session storage currently shows only this session rollout: `019e7072-0e11-7331-81a0-13da2801f90f` at `/home/runner/.codex/sessions/2026/05/28/rollout-2026-05-28T15-16-23-019e7072-0e11-7331-81a0-13da2801f90f.jsonl`.
+  - No app startup config was touched. No processes were killed.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Process/runtime inspection only: `ps`, `pgrep`, `/proc/<pid>`, Codex history/rollout checks, PYRUS flight-recorder diagnostics.
+- Next step:
+  - If cleanup is desired, decide whether the extra post-restart Codex pair on `pts/2` should be left alone or intentionally stopped from its terminal.
+
 - Last updated: `2026-05-28 21:13 UTC`
 - Current request: implement the signal-to-algo action latency plan.
 - Current status:

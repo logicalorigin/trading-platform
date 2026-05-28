@@ -81,13 +81,18 @@ const stateNeedsRefresh = (state, timeframe, nowMs, pollMs) => {
   if (!Number.isFinite(latestBarMs)) {
     return true;
   }
+  const lastEvaluatedMs = Date.parse(state?.lastEvaluatedAt || "");
+  const refreshAnchorMs = Math.max(
+    latestBarMs,
+    Number.isFinite(lastEvaluatedMs) ? lastEvaluatedMs : 0,
+  );
   const timeframeMs = SIGNAL_MATRIX_TIMEFRAME_MS[timeframe] || 5 * 60_000;
   const staleAfterMs = Math.max(
     timeframeMs * 2,
     Number.isFinite(pollMs) && pollMs > 0 ? pollMs * 2 : 0,
     60_000,
   );
-  return nowMs - latestBarMs > staleAfterMs;
+  return nowMs - refreshAnchorMs > staleAfterMs;
 };
 
 const symbolNeedsHydration = (symbol, hydrationMap, timeframes, options = {}) => {
@@ -153,9 +158,15 @@ export function buildSignalMatrixRequestPlan({
       pollMs,
     });
   const missingSymbols = universe.filter(needsHydration);
-  const priorityBatch = startupProtected
+  const priorityCandidates = startupProtected
     ? []
-    : orderedPriority.filter(needsHydration).slice(0, requestLimit);
+    : orderedPriority.filter(needsHydration);
+  const priorityRotation = rotateSymbols(
+    priorityCandidates,
+    cursor,
+    requestLimit,
+  );
+  const priorityBatch = priorityRotation.symbols;
   const prioritySet = new Set(priorityBatch);
   const backgroundUniverse = universe.filter((symbol) => !prioritySet.has(symbol));
   const missingBackgroundUniverse = backgroundUniverse.filter(needsHydration);
@@ -174,6 +185,10 @@ export function buildSignalMatrixRequestPlan({
   const background = backgroundAllowed
     ? rotateSymbols(rotationUniverse, cursor, backgroundLimit)
     : { symbols: [], nextCursor: cursor || 0 };
+  const nextCursor =
+    priorityCandidates.length > requestLimit
+      ? priorityRotation.nextCursor
+      : background.nextCursor;
   const requestSymbols = uniqueSymbols([
     ...priorityBatch,
     ...background.symbols,
@@ -183,7 +198,7 @@ export function buildSignalMatrixRequestPlan({
     requestSymbols,
     prioritySymbols: priorityBatch,
     backgroundSymbols: background.symbols,
-    nextCursor: background.nextCursor,
+    nextCursor,
     backgroundReady: backgroundAllowed,
     backgroundPaused: !backgroundAllowed || backgroundLimit <= 0,
     startupProtectionActive: startupProtected,

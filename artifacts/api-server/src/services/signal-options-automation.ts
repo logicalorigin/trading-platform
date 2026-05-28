@@ -139,7 +139,6 @@ const activeSignalOptionsRunMetadata = new Map<
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 60;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 2;
 const SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY = 6;
-const SIGNAL_OPTIONS_ACTIONABLE_MAX_BARS_SINCE_SIGNAL = 1;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 20_000;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 24;
@@ -1294,26 +1293,20 @@ async function listSignalOptionsSignalSnapshots(deployment: AlgoDeployment) {
 }
 
 function isSignalOptionsActionableSignalState(state: SignalMonitorState) {
-  const barsSinceSignal = optionalFiniteNumber(state.barsSinceSignal);
   return Boolean(
     state.fresh === true &&
       state.currentSignalDirection &&
-      state.currentSignalAt &&
-      barsSinceSignal != null &&
-      barsSinceSignal <= SIGNAL_OPTIONS_ACTIONABLE_MAX_BARS_SINCE_SIGNAL,
+      state.currentSignalAt,
   );
 }
 
 function isSignalOptionsActionableSignalSnapshot(
   signal: SignalOptionsSignalSnapshot,
 ) {
-  const barsSinceSignal = optionalFiniteNumber(signal.barsSinceSignal);
   return Boolean(
     signal.fresh === true &&
       signal.signalAt &&
-      signal.direction &&
-      barsSinceSignal != null &&
-      barsSinceSignal <= SIGNAL_OPTIONS_ACTIONABLE_MAX_BARS_SINCE_SIGNAL,
+      signal.direction,
   );
 }
 
