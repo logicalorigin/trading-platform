@@ -272,57 +272,83 @@ test("Pyrus mark surfaces use the intended ring assets", () => {
 });
 
 test("static favicon points to the tracked Pyrus mark PNG", () => {
-  assert.match(indexHtmlSource, /<link rel="icon" type="image\/png" href="\/brand\/pyrus-mark\.png" \/>/);
-  assert.doesNotMatch(indexHtmlSource, /pyrus-mark-dark\.svg/);
+  const faviconLine = indexHtmlSource.match(/<link rel="icon"[^>]+>/)?.[0] ?? "";
+
+  assert.match(faviconLine, /type="image\/png"/);
+  assert.match(faviconLine, /href="\/brand\/pyrus-mark\.png"/);
+  assert.doesNotMatch(faviconLine, /pyrus-mark-dark\.svg/);
   assert.doesNotMatch(indexHtmlSource, /favicon\.svg/);
   assert.deepStrictEqual(publicMarkPng, trackedMarkPng);
 });
 
-test("static boot shell renders the SVG ring mark before React mounts", () => {
-  assert.match(indexHtmlSource, /data-testid="pyrus-boot-loader"/);
-  assert.match(indexHtmlSource, /role="status"/);
-  assert.match(indexHtmlSource, /aria-label="Loading PYRUS"/);
-  assert.match(indexHtmlSource, /class="pyrus-boot-mark"/);
-  assert.match(indexHtmlSource, /src="\/brand\/pyrus-loader-mark-dark\.svg"/);
-  assert.match(indexHtmlSource, /class="pyrus-boot-word">PYRUS<\/div>/);
-  assert.match(indexHtmlSource, /@keyframes pyrus-boot-mark/);
-  assert.doesNotMatch(indexHtmlSource, /pyrus-loader-mark-dark\.png/);
+test("static HTML leaves the React root empty before mount", () => {
+  assert.match(indexHtmlSource, /<div id="root"><\/div>/);
+  assert.doesNotMatch(indexHtmlSource, /pyrus-boot-/);
+  assert.doesNotMatch(indexHtmlSource, /aria-label="Loading PYRUS"/);
+  assert.doesNotMatch(indexHtmlSource, /role="status"/);
 });
 
-test("app boot uses one React fallback and screen chunks stay panel scoped", () => {
-  assert.doesNotMatch(appSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
+test("static boot shell installs PYRUS crash diagnostics before React mounts", () => {
+  const guardIndex = indexHtmlSource.indexOf("__PYRUS_BOOT_CRASH_DIAGNOSTICS__");
+  const mainIndex = indexHtmlSource.indexOf('src="/src/main.tsx"');
+
+  assert.ok(guardIndex >= 0, "boot crash guard must be installed");
+  assert.ok(mainIndex >= 0, "Vite main module script must be present");
+  assert.ok(guardIndex < mainIndex, "boot crash guard must run before main.tsx");
+  assert.match(indexHtmlSource, /lastCrashKey = "pyrus:last-crash-diagnostics:v1"/);
+  assert.match(indexHtmlSource, /data-testid="root-crash-diagnostics"/);
+  assert.match(indexHtmlSource, /PYRUS ROOT CRASH/);
+  assert.match(indexHtmlSource, /src="\/brand\/pyrus-mark-dark\.svg"/);
+  assert.match(indexHtmlSource, /src="\/brand\/pyrus-wordmark-tight\.png"/);
+  assert.match(indexHtmlSource, /Open Diagnostics/);
+});
+
+test("app boot and screen routing use the React loader without a static boot shell", () => {
+  assert.match(appSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
   assert.doesNotMatch(appSource, /components\/brand\/PyrusLogo/);
   assert.doesNotMatch(appSource, /components\/brand\/pyrus-mark-shared/);
   assert.doesNotMatch(appSource, /PyrusInstrumentMark/);
-  assert.match(appSource, /import BrandLoader from "\.\.\/components\/BrandLoader"/);
+  assert.doesNotMatch(appSource, /import BrandLoader/);
   assert.doesNotMatch(appSource, /PYRUS_MARK_SRC/);
   assert.doesNotMatch(appSource, /PYRUS_WORDMARK_DARK_SRC/);
   assert.doesNotMatch(appSource, /PYRUS_WORDMARK_LIGHT_SRC/);
   assert.match(appSource, /const AppContent = lazyWithRetry\(async \(\) => \{/);
   assert.match(appSource, /import\("\.\/AppContent"\)/);
-  assert.match(appSource, /await mod\.preloadInitialAppContentRoute\(\)/);
-  assert.match(appSource, /<BrandLoader label="Loading PYRUS" testId="app-loading-fallback" \/>/);
-  assert.match(appSource, /<Suspense fallback=\{<RootBootFallback \/>\}>/);
+  assert.doesNotMatch(appSource, /await mod\.preloadInitialAppContentRoute\(\)/);
+  assert.match(appSource, /function AppShellFallback\(\)/);
+  assert.match(appSource, /testId="app-loading-fallback"/);
+  assert.match(appSource, /<Suspense fallback=\{<AppShellFallback \/>\}>/);
   assert.match(appSource, /<AppContent \/>/);
 
+  assert.match(appContentSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
   assert.match(appContentSource, /export const preloadInitialAppContentRoute = \(\) =>/);
+  assert.match(appContentSource, /preloadDynamicImport\(loadPlatformApp/);
+  assert.match(appContentSource, /ROOT_ROUTE_CHUNK_RETRIES/);
   assert.match(appContentSource, /const getPreloadedInitialAppContentRoute = \(labMode: string \| null\) =>/);
-  assert.match(appContentSource, /void preloadInitialAppContentRoute\(\)/);
+  assert.match(appContentSource, /preloadInitialAppContentRoute\(\)/);
   assert.match(appContentSource, /const InitialRouteComponent = getPreloadedInitialAppContentRoute\(labMode\)/);
   assert.match(appContentSource, /<InitialRouteComponent \/>/);
-  assert.match(appContentSource, /<Suspense fallback=\{null\}>/);
-  assert.doesNotMatch(appContentSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
-  assert.doesNotMatch(appContentSource, /testId="app-loading-fallback"/);
+  assert.match(appContentSource, /function AppContentRouteFallback\(\)/);
+  assert.match(appContentSource, /testId="app-content-route-loading"/);
+  assert.match(appContentSource, /import \{ PlatformErrorBoundary \} from "\.\.\/components\/platform\/PlatformErrorBoundary"/);
+  assert.match(appContentSource, /reportCategory="react-workspace-chunk"/);
+  assert.match(appContentSource, /<Suspense fallback=\{<AppContentRouteFallback \/>\}>/);
   assert.doesNotMatch(appSource, /APP_LOADING_FALLBACK_PALETTES/);
   assert.doesNotMatch(appSource, /function AppLoadingFallback/);
 
-  assert.match(registrySource, /import LogoLoader from "\.\.\/\.\.\/components\/LogoLoader"/);
-  assert.match(registrySource, /export const ScreenLoadingFallback = \(\{ label = "Loading" \}\) =>/);
-  assert.match(registrySource, /tone="panel"[\s\S]*label=\{label\}[\s\S]*testId="screen-loading-fallback"/);
+  assert.match(registrySource, /import LogoLoader/);
+  assert.match(registrySource, /export const ScreenLoadingFallback = /);
+  assert.match(registrySource, /testId="screen-loading-fallback"/);
+  assert.match(registrySource, /tone="panel"/);
+  assert.match(registrySource, /return ScreenComponent \? \(/);
+  assert.match(registrySource, /<ScreenLoadingFallback screenId=\{screenId\} error=\{loadError\} \/>/);
+  assert.match(platformShellSource, /<Suspense fallback=\{<ScreenLoadingFallback screenId=\{id\} \/>\}>[\s\S]*renderScreenById\(id\)/);
 
-  assert.match(researchSource, /data-testid="research-loading-shell"/);
-  assert.match(researchSource, /<Suspense fallback=\{<ResearchLoadingShell \/>\}>/);
-  assert.doesNotMatch(researchSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
+  assert.match(researchSource, /const ResearchWorkspaceFallback = \(\) =>/);
+  assert.match(researchSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
+  assert.match(researchSource, /<Suspense fallback=\{<ResearchWorkspaceFallback \/>\}>/);
+  assert.match(researchSource, /testId="research-workspace-loading"/);
+  assert.doesNotMatch(researchSource, /data-testid=.*loading.*shell/);
 
   assert.match(marketSource, /testId="market-chart-grid-loader"/);
   assert.doesNotMatch(marketSource, /testId="market-activity-loader"/);

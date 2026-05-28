@@ -301,9 +301,7 @@ const PlatformScreenStack = memo(({
             screenId={id}
             active={active}
           >
-            <Suspense
-              fallback={<ScreenLoadingFallback label={`Loading ${id}`} />}
-            >
+            <Suspense fallback={<ScreenLoadingFallback screenId={id} />}>
               {renderScreenById(id)}
               <ScreenReadyProbe screenId={id} active={active} />
             </Suspense>

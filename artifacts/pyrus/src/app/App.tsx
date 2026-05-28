@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import BrandLoader from "../components/BrandLoader";
+import LogoLoader from "../components/LogoLoader";
 import { lazyWithRetry } from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import {
@@ -14,8 +14,7 @@ let appContentImport: Promise<{ default: typeof import("./AppContent").default }
 const loadAppContent = () => {
   if (!appContentImport) {
     appContentImport = import("./AppContent")
-      .then(async (mod) => {
-        await mod.preloadInitialAppContentRoute();
+      .then((mod) => {
         return { default: mod.default };
       })
       .catch((error) => {
@@ -34,10 +33,17 @@ const AppContent = lazyWithRetry(async () => {
   return loadAppContent();
 }, {
   label: "AppContent",
+  retries: 4,
+  retryDelayMs: 500,
 });
 
-function RootBootFallback() {
-  return <BrandLoader label="Loading PYRUS" testId="app-loading-fallback" />;
+function AppShellFallback() {
+  return (
+    <LogoLoader
+      label="Starting PYRUS"
+      testId="app-loading-fallback"
+    />
+  );
 }
 
 function App() {
@@ -50,7 +56,7 @@ function App() {
       onBoundaryError={rememberRootCrashDiagnostic}
       fallbackRender={(props) => <RootCrashDiagnosticsFallback {...props} />}
     >
-      <Suspense fallback={<RootBootFallback />}>
+      <Suspense fallback={<AppShellFallback />}>
         <AppContent />
       </Suspense>
     </PlatformErrorBoundary>

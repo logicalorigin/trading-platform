@@ -1,12 +1,16 @@
 import { Suspense, useEffect, type ComponentType } from "react";
 import "./runtime-config";
 import { AppProviders } from "./AppProviders";
-import { lazyWithRetry } from "../lib/dynamicImport";
+import LogoLoader from "../components/LogoLoader";
+import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
+import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import {
   rememberBrowserDiagnosticEvent,
 } from "./crashDiagnostics";
 
 type LazyComponentModule = { default: ComponentType };
+const ROOT_ROUTE_CHUNK_RETRIES = 4;
+const ROOT_ROUTE_CHUNK_RETRY_DELAY_MS = 500;
 
 let platformAppImport: Promise<{ default: ComponentType }> | null = null;
 let chartParityLabImport: Promise<LazyComponentModule> | null = null;
@@ -75,12 +79,26 @@ const resolveLabMode = (): string | null => {
 export const preloadInitialAppContentRoute = () => {
   const labMode = resolveLabMode();
   if (labMode === "chart-parity") {
-    return loadChartParityLab();
+    preloadDynamicImport(loadChartParityLab, {
+      label: "ChartParityLab",
+      retries: ROOT_ROUTE_CHUNK_RETRIES,
+      retryDelayMs: ROOT_ROUTE_CHUNK_RETRY_DELAY_MS,
+    });
+    return;
   }
   if (labMode === "ticker-search") {
-    return loadTickerSearchLab();
+    preloadDynamicImport(loadTickerSearchLab, {
+      label: "TickerSearchLab",
+      retries: ROOT_ROUTE_CHUNK_RETRIES,
+      retryDelayMs: ROOT_ROUTE_CHUNK_RETRY_DELAY_MS,
+    });
+    return;
   }
-  return loadPlatformApp();
+  preloadDynamicImport(loadPlatformApp, {
+    label: "PlatformApp",
+    retries: ROOT_ROUTE_CHUNK_RETRIES,
+    retryDelayMs: ROOT_ROUTE_CHUNK_RETRY_DELAY_MS,
+  });
 };
 
 const getPreloadedInitialAppContentRoute = (labMode: string | null) => {
@@ -94,19 +112,25 @@ const getPreloadedInitialAppContentRoute = (labMode: string | null) => {
 };
 
 if (typeof window !== "undefined") {
-  void preloadInitialAppContentRoute();
+  preloadInitialAppContentRoute();
 }
 
 const PlatformApp = lazyWithRetry(loadPlatformApp, {
   label: "PlatformApp",
+  retries: ROOT_ROUTE_CHUNK_RETRIES,
+  retryDelayMs: ROOT_ROUTE_CHUNK_RETRY_DELAY_MS,
 });
 
 const ChartParityLab = lazyWithRetry(loadChartParityLab, {
   label: "ChartParityLab",
+  retries: ROOT_ROUTE_CHUNK_RETRIES,
+  retryDelayMs: ROOT_ROUTE_CHUNK_RETRY_DELAY_MS,
 });
 
 const TickerSearchLab = lazyWithRetry(loadTickerSearchLab, {
   label: "TickerSearchLab",
+  retries: ROOT_ROUTE_CHUNK_RETRIES,
+  retryDelayMs: ROOT_ROUTE_CHUNK_RETRY_DELAY_MS,
 });
 
 const resolveDevCrashMode = (): string | null => {
@@ -205,22 +229,38 @@ function AppContent() {
     <>
       <DevCrashTrigger mode={crashMode} />
       <AppProviders>
-        {InitialRouteComponent ? (
-          <InitialRouteComponent />
-        ) : (
-          <Suspense fallback={null}>
-            {labMode === "chart-parity" ? (
-              <ChartParityLab />
-            ) : labMode === "ticker-search" ? (
-              <TickerSearchLab />
-            ) : (
-              <PlatformApp />
-            )}
-          </Suspense>
-        )}
+        <PlatformErrorBoundary
+          label="PYRUS workspace"
+          minHeight="100vh"
+          reportCategory="react-workspace-chunk"
+          reportSeverity="warning"
+        >
+          {InitialRouteComponent ? (
+            <InitialRouteComponent />
+          ) : (
+            <Suspense fallback={<AppContentRouteFallback />}>
+              {labMode === "chart-parity" ? (
+                <ChartParityLab />
+              ) : labMode === "ticker-search" ? (
+                <TickerSearchLab />
+              ) : (
+                <PlatformApp />
+              )}
+            </Suspense>
+          )}
+        </PlatformErrorBoundary>
       </AppProviders>
     </>
   );
 }
 
 export default AppContent;
+
+function AppContentRouteFallback() {
+  return (
+    <LogoLoader
+      label="Loading workspace"
+      testId="app-content-route-loading"
+    />
+  );
+}

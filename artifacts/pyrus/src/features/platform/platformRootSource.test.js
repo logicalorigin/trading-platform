@@ -50,7 +50,9 @@ test("platform root no longer depends on the retired PyrusPlatform module", () =
   assert.match(appContentSource, /features\/platform\/PlatformApp\.jsx/);
   assert.match(appContentSource, /const loadPlatformApp = \(\) =>/);
   assert.match(appContentSource, /export const preloadInitialAppContentRoute = \(\) =>/);
-  assert.match(appContentSource, /void preloadInitialAppContentRoute\(\)/);
+  assert.match(appContentSource, /preloadDynamicImport\(loadPlatformApp/);
+  assert.match(appContentSource, /reportCategory="react-workspace-chunk"/);
+  assert.match(appContentSource, /preloadInitialAppContentRoute\(\)/);
   assert.doesNotMatch(appContentSource, /PyrusPlatform/);
 
   const sourceHits = collectSourceFiles(pyrusSrcRoot)
@@ -107,6 +109,20 @@ test("vite keeps React and Query provider dependencies single-instanced", () => 
   ].forEach((moduleName) => {
     assert.match(dedupeBlock, new RegExp(moduleName.replaceAll("/", "\\/")));
   });
+});
+
+test("vite leaves Replit runtime error modal opt-in so PYRUS owns crash diagnostics", () => {
+  const source = readFileSync(
+    new URL("../../../vite.config.ts", import.meta.url),
+    "utf8",
+  );
+  const pluginBlock = source.match(/plugins:\s*\[[\s\S]*?\n  \]/)?.[0] ?? "";
+
+  assert.match(source, /PYRUS_ENABLE_REPLIT_RUNTIME_ERROR_MODAL/);
+  assert.match(source, /const enableReplitRuntimeErrorModal =/);
+  assert.match(pluginBlock, /\.\.\.\(enableReplitRuntimeErrorModal/);
+  assert.match(pluginBlock, /runtimeErrorOverlay\(/);
+  assert.doesNotMatch(pluginBlock, /tailwindcss\(\),\s*\n\s*runtimeErrorOverlay\(/);
 });
 
 test("vite keeps shared UI and stream runtime out of the chart surface chunk", () => {
@@ -594,6 +610,21 @@ test("compact platform header stays flat and exposes line usage", () => {
   assert.doesNotMatch(statusSource, />\s*\{marketClock\.timeLabel\}\s*<\/span>/);
   assert.doesNotMatch(statusSource, />Market<\/span>/);
   assert.match(broadcastSource, /overflowX:\s*"hidden"/);
+  assert.match(broadcastSource, /data-header-lane-status-glyph/);
+  assert.match(broadcastSource, /dataTestId="header-signal-scan-wave"/);
+  assert.match(broadcastSource, /dataTestId="header-unusual-broad-wave"/);
+  assert.match(broadcastSource, /dataTestId="header-algo-wave"/);
+  assert.match(broadcastSource, /streamStateTokenVar\(state\)/);
+  assert.match(broadcastSource, /const signalWaveStatus =/);
+  assert.match(broadcastSource, /const flowWaveStatus =/);
+  assert.match(broadcastSource, /const algoWaveStatus = !enabled \? "checking" : onAlgoAction \? "healthy" : "no-subscribers"/);
+  assert.match(broadcastSource, /status=\{signalWaveStatus\}/);
+  assert.match(broadcastSource, /status=\{flowWaveStatus\}/);
+  assert.match(broadcastSource, /status=\{algoWaveStatus\}/);
+  assert.doesNotMatch(broadcastSource, /active=\{algoItems\.length > 0\}/);
+  assert.doesNotMatch(broadcastSource, /data-testid="header-signal-scan-toggle"/);
+  assert.doesNotMatch(broadcastSource, /data-testid="header-unusual-broad-toggle"/);
+  assert.doesNotMatch(broadcastSource, /data-testid="header-algo-open"/);
 });
 
 test("Algo monitor is frame-owned and replaces the activity sidebar feed", () => {
@@ -1773,6 +1804,8 @@ test("screen shell warmup preloads top-level code without default hidden page mo
       : "";
   const preloadOrderBlock =
     registrySource.match(/SCREEN_MODULE_PRELOAD_ORDER = \[[\s\S]*?\];/)?.[0] ?? "";
+  const retiredRouteShellPattern = new RegExp("Route" + "ScreenShell");
+  const retiredRouteShellTestIdPattern = new RegExp("screen-" + "route-shell");
 
   assert.ok(codeWarmupEffect);
   assert.ok(shellWarmMountEffect);
@@ -1790,12 +1823,13 @@ test("screen shell warmup preloads top-level code without default hidden page mo
     registrySource,
     /useState\(\s*\(\) => SCREEN_MODULE_COMPONENTS\.get\(screenId\) \|\| null/,
   );
-  assert.match(registrySource, /const RouteScreenShell = /);
-  assert.match(registrySource, /data-testid=\{`screen-route-shell-\$\{screenId\}`\}/);
+  assert.doesNotMatch(registrySource, retiredRouteShellPattern);
+  assert.doesNotMatch(registrySource, retiredRouteShellTestIdPattern);
   assert.match(registrySource, /props\?\.isVisible === false/);
   assert.match(registrySource, /loadScreenModule\(screenId,\s*\{ label \}\)/);
   assert.match(registrySource, /setScreenComponent\(\(\) => mod\.default\)/);
-  assert.match(registrySource, /<RouteScreenShell screenId=\{screenId\} error=\{loadError\} \/>/);
+  assert.match(registrySource, /export const ScreenLoadingFallback = /);
+  assert.match(registrySource, /<ScreenLoadingFallback screenId=\{screenId\} error=\{loadError\} \/>/);
   assert.doesNotMatch(registrySource, /lazyWithRetry/);
   assert.doesNotMatch(registrySource, /LazyScreen/);
   assert.match(registrySource, /export const BOOT_SCREEN_MODULE_PRELOAD_ORDER = \[/);
@@ -1895,8 +1929,11 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.match(researchWorkspaceDataPreloadEffect, /queueIdleDataPreload\(5_500/);
   assert.doesNotMatch(researchWorkspaceDataPreloadEffect, /PhotonicsObservatoryPrefetch/);
   assert.match(researchScreenSource, /preloadDynamicImport\(loadPhotonicsObservatory/);
-  assert.match(researchScreenSource, /data-testid="research-loading-shell"/);
-  assert.doesNotMatch(researchScreenSource, /<LogoLoader/);
+  assert.match(researchScreenSource, /const ResearchWorkspaceFallback = \(\) =>/);
+  assert.match(researchScreenSource, /<Suspense fallback=\{<ResearchWorkspaceFallback \/>\}>/);
+  assert.match(researchScreenSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
+  assert.match(researchScreenSource, /testId="research-workspace-loading"/);
+  assert.doesNotMatch(researchScreenSource, /data-testid=.*loading.*shell/);
   assert.match(schedulerSource, /mountScreens:\s*false/);
   assert.match(schedulerSource, /const backgroundHistoryReady = screenWarmupPhase === "ready"/);
 });
