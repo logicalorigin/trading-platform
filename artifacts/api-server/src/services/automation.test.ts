@@ -23,8 +23,16 @@ test("algo strategy settings API patches deployment and signal monitor settings"
   assert.match(routeSource, /\/streams\/algo\/cockpit/);
   assert.match(routeSource, /fetchAlgoCockpitCriticalPayload/);
   assert.match(routeSource, /subscribeAlgoCockpitSnapshots/);
+  assert.match(routeSource, /req\.query\.view === "full" \? "full" : "summary"/);
+  assert.match(routeSource, /req\.query\.includePayload === "true"/);
+  assert.match(routeSource, /includePayload,/);
   assert.match(serviceSource, /updateAlgoDeploymentStrategySettings/);
   assert.match(serviceSource, /notifyAlgoCockpitChanged/);
+  assert.match(serviceSource, /includePayload\?: boolean/);
+  assert.match(
+    serviceSource,
+    /payload:\s*input\.includePayload \? normalizeLegacyAlgoBranding\(event\.payload\) : \{\}/,
+  );
   assert.match(
     serviceSource,
     /RETIRED_SHADOW_EQUITY_FORWARD_EXECUTION_MODE\s*=\s*"signal_equity_shadow"/,

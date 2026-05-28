@@ -232,10 +232,27 @@ test("signal-options dashboard endpoints share a cached state snapshot", () => {
   )?.[0];
 
   assert.match(source, /const signalOptionsDashboardCache = new Map/);
+  assert.match(source, /const signalOptionsSummaryDashboardCache = new Map/);
+  assert.match(source, /const SIGNAL_OPTIONS_STATE_EVENT_LIMIT = 2_500/);
+  assert.match(source, /const SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT = 250/);
+  assert.match(source, /const SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS = 15_000/);
   assert.match(source, /async function getSignalOptionsDashboardSnapshot/);
+  assert.match(source, /async function getSignalOptionsFullDashboardSnapshot/);
+  assert.match(source, /async function getSignalOptionsSummaryDashboardSnapshot/);
+  assert.match(
+    source,
+    /getSignalOptionsSummaryDashboardSnapshot[\s\S]*?SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT/,
+  );
+  assert.doesNotMatch(
+    source.match(
+      /async function getSignalOptionsSummaryDashboardSnapshot[\s\S]*?\nasync function getSignalOptionsDashboardSnapshot/,
+    )?.[0] ?? "",
+    /SIGNAL_OPTIONS_STATE_EVENT_LIMIT/,
+  );
   assert.match(stateEndpoint ?? "", /getSignalOptionsDashboardSnapshot\(input\)/);
   assert.match(cockpitEndpoint ?? "", /getSignalOptionsDashboardSnapshot/);
   assert.match(performanceEndpoint ?? "", /getSignalOptionsDashboardSnapshot/);
+  assert.match(performanceEndpoint ?? "", /view:\s*"full"/);
   assert.doesNotMatch(
     performanceEndpoint ?? "",
     /buildStatePayload\(\{ deployment, profile, events \}\)/,
