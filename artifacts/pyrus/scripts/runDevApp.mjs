@@ -36,6 +36,9 @@ const supervisorLockWaitMs = Number(process.env.PYRUS_DEV_LOCK_WAIT_MS || "8000"
 const supervisorTakeoverGraceMs = Number(
   process.env.PYRUS_DEV_TAKEOVER_GRACE_MS || "20000",
 );
+const duplicateRestartAfterMs = Number(
+  process.env.PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS || "30000",
+);
 const runningInsideReplitWorkflow =
   process.env.REPLIT_MODE === "workflow" ||
   process.env.PYRUS_REPLIT_RUN === "1";
@@ -315,6 +318,12 @@ function sendSignal(pid, signal) {
   }
 }
 
+function duplicateRestartThresholdMs() {
+  return Number.isFinite(duplicateRestartAfterMs) && duplicateRestartAfterMs >= 0
+    ? duplicateRestartAfterMs
+    : 30_000;
+}
+
 function supervisorLockAgeMs(lock) {
   const startedAt = Date.parse(typeof lock?.startedAt === "string" ? lock.startedAt : "");
   if (!Number.isFinite(startedAt)) return null;
@@ -327,11 +336,16 @@ function formatDurationMs(value) {
   return `${Math.round(value / 1000)}s`;
 }
 
+function shouldHandoffDuplicateReplitStart(lock) {
+  const ageMs = supervisorLockAgeMs(lock);
+  return ageMs !== null && ageMs >= duplicateRestartThresholdMs();
+}
+
 function skipDuplicateReplitStart(ownerPid, lock) {
   const ageMs = supervisorLockAgeMs(lock);
   const ageMessage = ageMs === null ? "with unknown age" : `for ${formatDurationMs(ageMs)}`;
   console.warn(
-    `[pyrus-dev] duplicate Replit workflow start detected while PYRUS dev supervisor ${ownerPid} is already alive ${ageMessage}; leaving the active API/web processes running and exiting without restart. Set PYRUS_DEV_FORCE_RESTART=1 only for an intentional supervisor takeover.`,
+    `[pyrus-dev] duplicate Replit workflow start detected while PYRUS dev supervisor ${ownerPid} is already alive ${ageMessage}; still inside the duplicate-start guard window, leaving the active API/web processes running and exiting without restart. Set PYRUS_DEV_FORCE_RESTART=1 only for an intentional supervisor takeover.`,
   );
   writeLifecycleEvent("duplicate-start-noop", { ownerPid, ageMs });
   return true;
@@ -471,6 +485,21 @@ async function acquireSupervisorLock() {
     }
 
     if (runningInsideReplitWorkflow && !forceSupervisorTakeover) {
+      if (shouldHandoffDuplicateReplitStart(lockState.lock)) {
+        const ageMs = supervisorLockAgeMs(lockState.lock);
+        const thresholdMs = duplicateRestartThresholdMs();
+        console.warn(
+          `[pyrus-dev] Replit workflow start found PYRUS dev supervisor ${ownerPid} already alive for ${formatDurationMs(ageMs)}; treating this as an intentional Run-button restart after the ${formatDurationMs(thresholdMs)} duplicate-start guard window.`,
+        );
+        writeLifecycleEvent("duplicate-start-handoff", {
+          ownerPid,
+          ageMs,
+          thresholdMs,
+        });
+        await requestSupervisorHandoff(ownerPid);
+        continue;
+      }
+
       return skipDuplicateReplitStart(ownerPid, lockState.lock)
         ? "duplicate-live"
         : false;

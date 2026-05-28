@@ -1949,7 +1949,7 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.match(routerSource, /const marketDataActive = screen === "market";/);
   assert.match(routerSource, /isVisible=\{backtestDataActive\}/);
   assert.match(registrySource, /SCREEN_MODULE_PRELOAD_ORDER = \[[\s\S]*"flow"/);
-  assert.match(registrySource, /BOOT_SCREEN_MODULE_PRELOAD_ORDER = \[[\s\S]*"flow"[\s\S]*"trade"[\s\S]*"algo"[\s\S]*"backtest"/);
+  assert.match(registrySource, /BOOT_SCREEN_MODULE_PRELOAD_ORDER = \[[\s\S]*"flow"[\s\S]*"trade"[\s\S]*"backtest"/);
   assert.match(appSource, /!firstScreenReady[\s\S]*!backgroundScreenPreloadReady[\s\S]*bootScreenShellWarmMountCompleteRef\.current/);
   assert.match(appSource, /bootScreenShellWarmMountQueuedAtMs[\s\S]*scheduleIdleWork/);
   assert.match(appSource, /BOOT_SCREEN_MODULE_PRELOAD_ORDER\.map\(\(screenId\) =>\s*preloadScreenModule\(screenId\),\s*\)/);
@@ -1962,13 +1962,13 @@ test("screen shell warmup preloads top-level code without default hidden page mo
     "trade",
     "account",
     "research",
-    "algo",
     "backtest",
     "diagnostics",
     "settings",
   ].forEach((screenId) => {
     assert.match(preloadOrderBlock, new RegExp(`"${screenId}"`));
   });
+  assert.doesNotMatch(preloadOrderBlock, /"algo"/);
   assert.doesNotMatch(registrySource, /OPERATIONAL_SCREEN_PRELOAD_ORDER/);
   assert.match(registrySource, /flow:\s*\{\s*retainInactive:\s*true\s*\}/);
   assert.match(registrySource, /gex:\s*\{\s*retainInactive:\s*true\s*\}/);
@@ -2492,12 +2492,12 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
   assert.match(algoSource, /retryDynamicImport\(/);
   assert.match(algoSource, /label:\s*"AlgoLivePage"/);
   assert.match(algoSource, /const LazyAlgoLivePage = lazy\(loadAlgoLivePage\)/);
-  assert.match(algoSource, /void loadAlgoLivePage\(\)/);
+  assert.doesNotMatch(algoSource, /void loadAlgoLivePage\(\)/);
   assert.match(algoSource, /const AlgoLiveLoading = \(\) =>/);
   assert.match(algoSource, /data-testid="algo-live-loading"/);
-  assert.match(algoSource, /const \[algoLivePageReady, setAlgoLivePageReady\] = useState\(false\)/);
-  assert.match(algoSource, /loadAlgoLivePage\(\)[\s\S]*setAlgoLivePageReady\(true\)/);
-  assert.match(algoSource, /const algoLiveDataQueriesEnabled = Boolean\(isVisible && algoLivePageReady\);/);
+  assert.doesNotMatch(algoSource, /algoLivePageReady/);
+  assert.doesNotMatch(algoSource, /setAlgoLivePageReady/);
+  assert.match(algoSource, /const algoLiveDataQueriesEnabled = Boolean\(isVisible\);/);
   assert.match(algoSource, /const algoSetupQueriesEnabled = Boolean\(isVisible\);/);
   assert.match(algoSource, /const algoCriticalQueriesEnabled = Boolean\(algoLiveDataQueriesEnabled\);/);
   assert.match(
@@ -2556,6 +2556,10 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
   assert.match(
     algoSource,
     /const eventsQuery = useListExecutionEvents\([\s\S]*enabled:\s*algoLiveDataQueriesEnabled/,
+  );
+  assert.match(
+    algoSource,
+    /useListExecutionEvents\(\s*focusedDeployment[\s\S]*limit:\s*20[\s\S]*:\s*\{ limit:\s*20 \}/,
   );
   assert.equal(
     (backtestSource.match(/useListBacktestDraftStrategies\(\{[\s\S]*?enabled:\s*Boolean\(isVisible\)/g) || []).length,
