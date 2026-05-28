@@ -295,6 +295,7 @@ export const AlgoScreen = ({
   const [bridgeLauncherError, setBridgeLauncherError] = useState(null);
   const [bridgeLaunchClock, setBridgeLaunchClock] = useState(() => Date.now());
   const [bridgeLaunchInFlightUntil, setBridgeLaunchInFlightUntil] = useState(0);
+  const [algoLivePageReady, setAlgoLivePageReady] = useState(false);
   const brokerConfigured = Boolean(session?.configured?.ibkr);
   const brokerAuthenticated = Boolean(session?.ibkrBridge?.authenticated);
   const gatewayReady = isGatewayReadyForAlgo(session);
@@ -308,7 +309,28 @@ export const AlgoScreen = ({
     selectedAccountId ||
     session?.ibkrBridge?.selectedAccountId ||
     null;
-  const algoLiveDataQueriesEnabled = Boolean(isVisible);
+  useEffect(() => {
+    if (!isVisible) {
+      setAlgoLivePageReady(false);
+      return undefined;
+    }
+    let cancelled = false;
+    loadAlgoLivePage()
+      .then(() => {
+        if (!cancelled) {
+          setAlgoLivePageReady(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAlgoLivePageReady(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isVisible]);
+  const algoLiveDataQueriesEnabled = Boolean(isVisible && algoLivePageReady);
   const algoCockpitStreamFreshness = useAlgoCockpitStream({
     deploymentId: focusedDeploymentId,
     mode: environment || "paper",

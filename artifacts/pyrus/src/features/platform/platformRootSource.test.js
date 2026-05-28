@@ -2499,9 +2499,9 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
   assert.doesNotMatch(algoSource, /void loadAlgoLivePage\(\)/);
   assert.match(algoSource, /const AlgoLiveLoading = \(\) =>/);
   assert.match(algoSource, /data-testid="algo-live-loading"/);
-  assert.doesNotMatch(algoSource, /algoLivePageReady/);
-  assert.doesNotMatch(algoSource, /setAlgoLivePageReady/);
-  assert.match(algoSource, /const algoLiveDataQueriesEnabled = Boolean\(isVisible\);/);
+  assert.match(algoSource, /const \[algoLivePageReady, setAlgoLivePageReady\] = useState\(false\)/);
+  assert.match(algoSource, /loadAlgoLivePage\(\)[\s\S]*setAlgoLivePageReady\(true\)/);
+  assert.match(algoSource, /const algoLiveDataQueriesEnabled = Boolean\(isVisible && algoLivePageReady\);/);
   assert.match(algoSource, /const algoSetupQueriesEnabled = Boolean\(isVisible\);/);
   assert.match(algoSource, /const algoCriticalQueriesEnabled = Boolean\(algoLiveDataQueriesEnabled\);/);
   assert.match(
