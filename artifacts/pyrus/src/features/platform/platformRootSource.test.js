@@ -424,6 +424,11 @@ test("mobile IBKR header dropdown uses a phone sheet outside clipped header chro
   assert.match(statusSource, /bottom:\s*bridgePopoverAsSheet \? 0 : undefined/);
   assert.match(statusSource, /maxHeight:\s*bridgePopoverAsSheet[\s\S]*?"min\(82dvh, 620px\)"/);
   assert.match(statusSource, /zIndex:\s*bridgePopoverAsSheet \? 280 : 240/);
+  assert.match(statusSource, /data-testid="header-ibkr-provider-rows"/);
+  assert.match(statusSource, /<HeaderIbkrProviderRows rows=\{model\.providerRows\}/);
+  assert.match(statusSource, /HeaderMassiveProviderPanel/);
+  assert.match(statusSource, /HeaderProviderChannelChip/);
+  assert.match(statusSource, /HEADER_PROVIDER_ICONS/);
   assert.match(statusSource, /bridgeTriggerRef\.current\?\.contains\(target\)/);
   assert.match(statusSource, /bridgePopoverRef\.current\?\.contains\(target\)/);
   assert.match(statusSource, /IBKR_RECONNECT_REQUEST_EVENT/);
@@ -2621,6 +2626,8 @@ test("color semantics route status surfaces through purpose tokens", () => {
   assert.match(footerSource, /--ra-pressure-high/);
   assert.match(diagnosticsSource, /--ra-toast-info/);
   assert.match(diagnosticsSource, /--ra-toast-success/);
+  assert.match(diagnosticsSource, /Massive REST/);
+  assert.match(diagnosticsSource, /Massive WebSocket/);
   assert.match(accountUtilsSource, /pnl-positive/);
   assert.match(accountUtilsSource, /side-buy/);
   assert.match(accountUtilsSource, /category-automation/);

@@ -70,6 +70,7 @@ import {
 import {
   PolygonMarketDataClient,
   computeUnusualMetrics,
+  getMassiveApiDiagnostics,
   getPolygonApiDiagnostics,
   resolvePremiumDistributionClassificationConfidence,
   type BarSnapshot as PolygonBarSnapshot,
@@ -2604,6 +2605,142 @@ function nsToMs(value: number): number {
   return Math.round((value / 1_000_000) * 10) / 10;
 }
 
+function toFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean))).sort();
+}
+
+function buildMassiveWebSocketDiagnostics(input: {
+  config: ReturnType<typeof getPolygonRuntimeConfig>;
+  streams: ReturnType<typeof getRuntimeMarketDataDiagnostics>;
+}) {
+  const providerIdentity = getPolygonProviderIdentity(input.config);
+  const configured = providerIdentity === "massive";
+  const quote = input.streams.massiveStockQuotes;
+  const aggregate = input.streams.stockAggregates.polygonDelayedWebSocket;
+  const aggregateIsMassive =
+    aggregate.providerIdentity === "massive" ||
+    input.streams.stockAggregates.provider === "massive-websocket" ||
+    input.streams.stockAggregates.activeProvider === "massive-websocket";
+  const feeds = [
+    {
+      id: "stock-quotes",
+      label: "Stock quotes/trades",
+      configured: Boolean(quote.configured),
+      mode: quote.mode ?? "real-time",
+      socketHost: quote.socketHost ?? "socket.massive.com",
+      availableChannels: asStringArray(quote.availableChannels),
+      subscribedChannels: asStringArray(quote.subscribedChannels),
+      subscribedSymbolCount: toFiniteNumber(quote.subscribedSymbolCount) ?? 0,
+      subscriptionCount: toFiniteNumber(quote.subscriptionCount) ?? 0,
+      activeConsumerCount: toFiniteNumber(quote.activeConsumerCount) ?? 0,
+      connected: Boolean(quote.connected),
+      authState: quote.authState ?? "idle",
+      eventCount: toFiniteNumber(quote.eventCount) ?? 0,
+      lastMessageAgeMs: toFiniteNumber(quote.lastMessageAgeMs),
+      reconnectCount: toFiniteNumber(quote.reconnectCount) ?? 0,
+      lastError: quote.lastError ?? null,
+      lastErrorAt: quote.lastErrorAt ?? null,
+    },
+    {
+      id: "stock-aggregates",
+      label: "Stock minute aggregates",
+      configured: Boolean(aggregate.configured && aggregateIsMassive),
+      mode: aggregate.mode ?? (configured ? "delayed" : null),
+      socketHost: aggregateIsMassive ? aggregate.socketHost : null,
+      availableChannels: aggregateIsMassive
+        ? asStringArray(aggregate.availableChannels)
+        : [],
+      subscribedChannels: aggregateIsMassive
+        ? asStringArray(aggregate.subscribedChannels)
+        : [],
+      subscribedSymbolCount: aggregateIsMassive
+        ? toFiniteNumber(aggregate.subscribedSymbolCount) ?? 0
+        : 0,
+      subscriptionCount: aggregateIsMassive
+        ? toFiniteNumber(aggregate.subscriptionCount) ?? 0
+        : 0,
+      activeConsumerCount: aggregateIsMassive
+        ? toFiniteNumber(aggregate.activeConsumerCount) ?? 0
+        : 0,
+      connected: Boolean(aggregateIsMassive && aggregate.connected),
+      authState: aggregate.authState ?? "idle",
+      eventCount: aggregateIsMassive ? toFiniteNumber(aggregate.eventCount) ?? 0 : 0,
+      lastMessageAgeMs: aggregateIsMassive
+        ? toFiniteNumber(aggregate.lastMessageAgeMs)
+        : null,
+      reconnectCount: aggregateIsMassive
+        ? toFiniteNumber(aggregate.reconnectCount) ?? 0
+        : 0,
+      lastError: aggregateIsMassive ? aggregate.lastError ?? null : null,
+      lastErrorAt: aggregateIsMassive ? aggregate.lastErrorAt ?? null : null,
+    },
+  ];
+  const activeFeeds = feeds.filter(
+    (feed) =>
+      feed.configured &&
+      (feed.connected ||
+        feed.subscribedSymbolCount > 0 ||
+        feed.activeConsumerCount > 0),
+  );
+  const lastErrorFeed = feeds.find((feed) => feed.configured && feed.lastError);
+  const lastMessageAges = feeds
+    .map((feed) => feed.lastMessageAgeMs)
+    .filter((value): value is number => Number.isFinite(value));
+
+  return {
+    status: !configured
+      ? "unconfigured"
+      : lastErrorFeed
+        ? "degraded"
+        : activeFeeds.length
+          ? "ok"
+          : "idle",
+    configured,
+    providerIdentity,
+    mode:
+      activeFeeds.find((feed) => feed.mode)?.mode ??
+      (configured
+        ? isMassiveStocksRealtimeConfigured(input.config)
+          ? "real-time"
+          : "delayed"
+        : null),
+    activeChannels: uniqueStrings(
+      activeFeeds.flatMap((feed) => feed.subscribedChannels),
+    ),
+    availableChannels: uniqueStrings(
+      feeds
+        .filter((feed) => feed.configured)
+        .flatMap((feed) => feed.availableChannels),
+    ),
+    subscribedSymbolCount: Math.max(
+      0,
+      ...feeds.map((feed) => feed.subscribedSymbolCount),
+    ),
+    activeConsumerCount: feeds.reduce(
+      (total, feed) => total + feed.activeConsumerCount,
+      0,
+    ),
+    eventCount: feeds.reduce((total, feed) => total + feed.eventCount, 0),
+    lastMessageAgeMs: lastMessageAges.length
+      ? Math.min(...lastMessageAges)
+      : null,
+    reconnectCount: feeds.reduce((total, feed) => total + feed.reconnectCount, 0),
+    lastError: lastErrorFeed?.lastError ?? null,
+    lastErrorAt: lastErrorFeed?.lastErrorAt ?? null,
+    feeds,
+  };
+}
+
 function orderReadTimeoutMs(): number {
   const configured = Number.parseInt(
     process.env["IBKR_ORDER_READ_TIMEOUT_MS"] ?? "9000",
@@ -2887,6 +3024,7 @@ export async function getRuntimeDiagnostics() {
   const marketDataStreams = getRuntimeMarketDataDiagnostics({
     bridgeQuoteDiagnostics,
   });
+  const polygonRuntimeConfig = getPolygonRuntimeConfig();
   const { getAccountPageStreamDiagnostics } = await import(
     "./account-page-streams"
   );
@@ -2916,7 +3054,14 @@ export async function getRuntimeDiagnostics() {
       },
     },
     providers: {
-      polygon: getPolygonApiDiagnostics(getPolygonRuntimeConfig()),
+      polygon: getPolygonApiDiagnostics(polygonRuntimeConfig),
+      massive: {
+        ...getMassiveApiDiagnostics(polygonRuntimeConfig),
+        websocket: buildMassiveWebSocketDiagnostics({
+          config: polygonRuntimeConfig,
+          streams: marketDataStreams,
+        }),
+      },
     },
     storage: getCachedStorageHealthSnapshot(),
     ibkr: {

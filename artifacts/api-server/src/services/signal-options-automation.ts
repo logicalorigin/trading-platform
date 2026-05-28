@@ -10,6 +10,7 @@ import {
   PYRUS_SIGNALS_SIGNAL_WARMUP_BARS,
   resolvePyrusSignalsSignalSettings,
   type PyrusSignalsBar,
+  type PyrusSignalsEvaluation,
   type PyrusSignalsSignalEvent,
 } from "@workspace/pyrus-signals-core";
 import {
@@ -31,6 +32,7 @@ import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
 import type { BrokerBarSnapshot, QuoteSnapshot } from "../providers/ibkr/client";
+import type { OptionChainContract } from "../providers/ibkr/client";
 import {
   cappedSignalMonitorEvaluationProfile,
   evaluateSignalMonitor,
@@ -38,6 +40,7 @@ import {
   getSignalMonitorProfileRow,
   getSignalMonitorState,
   getSignalMonitorTimeframeMs,
+  loadSignalMonitorCompletedBars,
   resolveSignalMonitorTimeframe,
   resolveSignalMonitorProfileUniverse,
   updateSignalMonitorProfile,
@@ -54,6 +57,7 @@ import {
   listWatchlists,
   type OptionTradePrint,
 } from "./platform";
+import { persistDurableOptionChain } from "./option-metadata-store";
 import {
   getAlgoGatewayReadiness,
   type AlgoGatewayReadiness,
@@ -86,6 +90,8 @@ import {
   computeSignalOptionsOvernightPositionExit as computeOvernightPositionExit,
   computeSignalOptionsPositionStop as computePositionStop,
   type SignalOptionsEntryQuality,
+  type SignalOptionsGreekSnapshot,
+  type SignalOptionsWireContext,
 } from "./signal-options-exit-policy";
 
 export const SIGNAL_OPTIONS_EVENT_PREFIX = "signal_options_";
@@ -316,7 +322,11 @@ type SignalOptionsPosition = {
   selectedContract: Record<string, unknown>;
   lastMarkPrice?: number | null;
   lastMarkedAt?: string | null;
+  lastStop?: Record<string, unknown> | null;
+  lastWireTrail?: Record<string, unknown> | null;
   signalQuality?: SignalOptionsEntryQuality | null;
+  entryGreeks?: SignalOptionsGreekSnapshot | null;
+  greekBaselineSource?: "entry" | "first_mark" | null;
 };
 
 type SignalMonitorState = {
@@ -630,6 +640,120 @@ function quoteSnapshotToSignalOptionsQuote(input: {
     dataUpdatedAt: quote.dataUpdatedAt,
     ageMs: finiteNumber(quote.ageMs),
   };
+}
+
+function greekSnapshotFromQuote(
+  quote: SignalOptionsOptionQuote | Record<string, unknown> | null | undefined,
+): SignalOptionsGreekSnapshot | null {
+  if (!quote) {
+    return null;
+  }
+  const snapshot: SignalOptionsGreekSnapshot = {
+    delta: finiteNumber((quote as Record<string, unknown>).delta),
+    gamma: finiteNumber((quote as Record<string, unknown>).gamma),
+    theta: finiteNumber((quote as Record<string, unknown>).theta),
+    vega: finiteNumber((quote as Record<string, unknown>).vega),
+    impliedVolatility: finiteNumber(
+      (quote as Record<string, unknown>).impliedVolatility,
+    ),
+    updatedAt:
+      toIsoString((quote as Record<string, unknown>).quoteUpdatedAt) ??
+      toIsoString((quote as Record<string, unknown>).updatedAt),
+    ageMs: finiteNumber((quote as Record<string, unknown>).ageMs),
+  };
+  return [
+    snapshot.delta,
+    snapshot.gamma,
+    snapshot.theta,
+    snapshot.vega,
+    snapshot.impliedVolatility,
+  ].some((value) => value != null)
+    ? snapshot
+    : null;
+}
+
+function quoteToOptionChainContract(input: {
+  contract: Record<string, unknown>;
+  quote: SignalOptionsOptionQuote;
+}): OptionChainContract | null {
+  const contract = input.contract;
+  const quoteContract = asRecord(input.quote.contract);
+  const expirationDate = dateOrNull(
+    quoteContract.expirationDate ?? contract.expirationDate,
+  );
+  const underlying = compactString(
+    quoteContract.underlying ?? contract.underlying,
+  );
+  const strike = finiteNumber(quoteContract.strike ?? contract.strike);
+  const right =
+    quoteContract.right === "put" || contract.right === "put" ? "put" : "call";
+  if (!underlying || !expirationDate || strike == null) {
+    return null;
+  }
+  return {
+    contract: {
+      ticker:
+        compactString(quoteContract.ticker ?? contract.ticker) ??
+        `${underlying}-${expirationDate.toISOString().slice(0, 10)}-${right}-${strike}`,
+      underlying,
+      expirationDate,
+      strike,
+      right,
+      multiplier:
+        finiteNumber(quoteContract.multiplier ?? contract.multiplier) ?? 100,
+      sharesPerContract:
+        finiteNumber(
+          quoteContract.sharesPerContract ?? contract.sharesPerContract,
+        ) ?? 100,
+      providerContractId:
+        compactString(
+          quoteContract.providerContractId ?? contract.providerContractId,
+        ) ?? null,
+    },
+    bid: finiteNumber(input.quote.bid),
+    ask: finiteNumber(input.quote.ask),
+    last: finiteNumber(input.quote.last),
+    mark: finiteNumber(input.quote.mark),
+    impliedVolatility: finiteNumber(input.quote.impliedVolatility),
+    delta: finiteNumber(input.quote.delta),
+    gamma: finiteNumber(input.quote.gamma),
+    theta: finiteNumber(input.quote.theta),
+    vega: finiteNumber(input.quote.vega),
+    openInterest: finiteNumber(input.quote.openInterest),
+    volume: finiteNumber(input.quote.volume),
+    updatedAt:
+      dateOrNull(input.quote.updatedAt) ??
+      dateOrNull(input.quote.quoteUpdatedAt) ??
+      new Date(),
+    quoteUpdatedAt: dateOrNull(input.quote.quoteUpdatedAt),
+    dataUpdatedAt: dateOrNull(input.quote.dataUpdatedAt),
+    ageMs: finiteNumber(input.quote.ageMs),
+  };
+}
+
+async function persistSignalOptionsQuoteSnapshot(input: {
+  contract: Record<string, unknown>;
+  quote: SignalOptionsOptionQuote | null;
+  source: string;
+}): Promise<void> {
+  if (!input.quote) {
+    return;
+  }
+  const contract = quoteToOptionChainContract({
+    contract: input.contract,
+    quote: input.quote,
+  });
+  if (!contract) {
+    return;
+  }
+  await persistDurableOptionChain({
+    contracts: [contract],
+    source: input.source,
+    asOf:
+      dateOrNull(input.quote.quoteUpdatedAt) ??
+      dateOrNull(input.quote.updatedAt) ??
+      new Date(),
+  });
 }
 
 function findSignalOptionsQuoteForContract(input: {
@@ -2748,6 +2872,12 @@ function positionFromEntryPayload(event: ExecutionEvent): SignalOptionsPosition 
     toIsoString(position.signalAt) ??
     toIsoString(event.occurredAt);
   const signalQuality = asRecord(position.signalQuality ?? candidate.signalQuality);
+  const lastStop = asRecord(position.lastStop ?? payload.stop);
+  const lastWireTrail = asRecord(position.lastWireTrail ?? lastStop.wireTrail);
+  const entryGreeks =
+    greekSnapshotFromQuote(asRecord(position.entryGreeks)) ??
+    greekSnapshotFromQuote(asRecord(payload.quote)) ??
+    greekSnapshotFromQuote(asRecord(candidate.quote));
   if (!event.symbol || entryPrice == null || quantity == null || !signalAt) {
     return null;
   }
@@ -2776,9 +2906,14 @@ function positionFromEntryPayload(event: ExecutionEvent): SignalOptionsPosition 
     selectedContract,
     lastMarkPrice: finiteNumber(position.lastMarkPrice),
     lastMarkedAt: toIsoString(position.lastMarkedAt),
+    lastStop: Object.keys(lastStop).length ? lastStop : null,
+    lastWireTrail: Object.keys(lastWireTrail).length ? lastWireTrail : null,
     signalQuality: Object.keys(signalQuality).length
       ? (signalQuality as SignalOptionsEntryQuality)
       : null,
+    entryGreeks,
+    greekBaselineSource:
+      position.greekBaselineSource === "first_mark" ? "first_mark" : entryGreeks ? "entry" : null,
   };
 }
 
@@ -2838,6 +2973,23 @@ function deriveActivePositions(events: ExecutionEvent[]) {
             toIsoString(position.lastMarkedAt) ??
             toIsoString(event.occurredAt) ??
             current.lastMarkedAt;
+          const lastStop = asRecord(position.lastStop ?? payload.stop);
+          const lastWireTrail = asRecord(position.lastWireTrail ?? lastStop.wireTrail);
+          current.lastStop = Object.keys(lastStop).length
+            ? lastStop
+            : current.lastStop ?? null;
+          current.lastWireTrail = Object.keys(lastWireTrail).length
+            ? lastWireTrail
+            : current.lastWireTrail ?? null;
+          current.entryGreeks =
+            greekSnapshotFromQuote(asRecord(position.entryGreeks)) ??
+            current.entryGreeks ??
+            greekSnapshotFromQuote(asRecord(payload.quote));
+          current.greekBaselineSource =
+            position.greekBaselineSource === "first_mark" ||
+            position.greekBaselineSource === "entry"
+              ? position.greekBaselineSource
+              : current.greekBaselineSource;
           return;
         }
 
@@ -5847,6 +5999,7 @@ async function refreshActivePosition(input: {
   deployment: AlgoDeployment;
   profile: SignalOptionsExecutionProfile;
   position: SignalOptionsPosition;
+  pyrusSignalsSettings?: Record<string, unknown>;
   recentEvents?: ExecutionEvent[];
 }): Promise<{
   managed: boolean;
@@ -5879,6 +6032,8 @@ async function refreshActivePosition(input: {
   const livePositionMarksAllowed =
     getApiResourcePressureSnapshot().caps.signalOptions.positionMarksAllowed;
   const pressureMarkBlockedReason = "resource_pressure_position_marks_blocked";
+  const requiresGreekPositionMark =
+    input.profile.exitPolicy.wireGreekTrail.enabled === true;
   const useQuote = (
     source: "provider_snapshot" | "chain_standard" | "chain_full",
     candidateQuote: SignalOptionsOptionQuote | null,
@@ -5918,7 +6073,7 @@ async function refreshActivePosition(input: {
       intent: "automation-live",
       ttlMs: 5_000,
       fallbackProvider: "cache",
-      requiresGreeks: false,
+      requiresGreeks: requiresGreekPositionMark,
     });
     const matchedQuote =
       snapshot.quotes.find(
@@ -6063,6 +6218,37 @@ async function refreshActivePosition(input: {
 
   const liquidity = markResolution.liquidity;
   const markPrice = markResolution.markPrice;
+  const currentGreeks = greekSnapshotFromQuote(quote);
+  const entryGreeks =
+    input.position.entryGreeks ?? greekSnapshotFromQuote(input.position.selectedContract);
+  await persistSignalOptionsQuoteSnapshot({
+    contract,
+    quote,
+    source: `signal-options:${markSource ?? "mark"}`,
+  }).catch((error: unknown) => {
+    logger.debug?.(
+      { err: error, positionId: input.position.id, symbol: input.position.symbol },
+      "Signal-options quote greek snapshot persistence skipped",
+    );
+  });
+  const wireContext =
+    input.profile.exitPolicy.wireGreekTrail.enabled && input.pyrusSignalsSettings
+      ? await loadSignalOptionsWireContextForPosition({
+          position: input.position,
+          evaluatedAt: now,
+          pyrusSignalsSettings: input.pyrusSignalsSettings,
+        }).catch((error: unknown) => {
+          logger.debug?.(
+            {
+              err: error,
+              positionId: input.position.id,
+              symbol: input.position.symbol,
+            },
+            "Signal-options wire context unavailable for position",
+          );
+          return null;
+        })
+      : null;
   const peakPrice = Math.max(
     input.position.peakPrice,
     markPrice,
@@ -6074,6 +6260,12 @@ async function refreshActivePosition(input: {
     peakPrice,
     markPrice,
     profile: input.profile,
+    direction: input.position.direction,
+    underlyingSpot: wireContext?.latestClose ?? null,
+    wireContext,
+    currentGreeks,
+    entryGreeks,
+    spreadPctOfMid: liquidity.spreadPctOfMid,
     signalQuality: input.position.signalQuality ?? null,
     barsSinceEntry: signalBarsSinceEntry({
       openedAt: input.position.openedAt,
@@ -6103,6 +6295,14 @@ async function refreshActivePosition(input: {
     stopPrice: stop.stopPrice,
     lastMarkPrice: Number(markPrice.toFixed(2)),
     lastMarkedAt: markAt.toISOString(),
+    lastStop: stopPayload as unknown as Record<string, unknown>,
+    lastWireTrail: asRecord(stopPayload.wireTrail),
+    entryGreeks: entryGreeks ?? currentGreeks ?? null,
+    greekBaselineSource: input.position.entryGreeks
+      ? input.position.greekBaselineSource ?? "entry"
+      : currentGreeks
+        ? "first_mark"
+        : input.position.greekBaselineSource ?? null,
   };
 
   if (exitReason) {
@@ -6380,6 +6580,7 @@ async function processEntryCandidate(input: {
   const orderPlan = contractSelection.orderPlan;
   const selectedContract = contractToPayload(selectedQuote);
   const quote = quoteToPayload(selectedQuote);
+  const entryGreeks = greekSnapshotFromQuote(selectedQuote);
   if (!orderPlan?.ok) {
     const reason = String(orderPlan?.reason || "liquidity_gate_failed");
     await emitSkippedCandidate({
@@ -6478,7 +6679,20 @@ async function processEntryCandidate(input: {
     premiumAtRisk,
     selectedContract,
     signalQuality,
+    entryGreeks,
+    greekBaselineSource: entryGreeks ? "entry" : null,
   };
+
+  await persistSignalOptionsQuoteSnapshot({
+    contract: selectedContract,
+    quote: selectedQuote,
+    source: "signal-options:entry",
+  }).catch((error: unknown) => {
+    logger.debug?.(
+      { err: error, symbol: input.candidate.symbol },
+      "Signal-options entry greek snapshot persistence skipped",
+    );
+  });
 
   await insertSignalOptionsEvent({
     deployment: input.deployment,
@@ -6869,7 +7083,10 @@ type HistoricalBackfillResolvedOption = {
 type HistoricalBackfillOpenPosition = SignalOptionsPosition & {
   optionBars: BrokerBarSnapshot[];
   optionTrades: OptionTradePrint[];
+  structuralContexts: SignalOptionsWireContext[];
   nextBarIndex: number;
+  nextStructuralIndex: number;
+  currentWireContext: SignalOptionsWireContext | null;
 };
 
 const DEFAULT_SIGNAL_OPTIONS_BACKFILL_START = "2026-04-01";
@@ -6907,7 +7124,11 @@ const MARKET_PARTS_FORMATTER = new Intl.DateTimeFormat("en-US", {
 });
 const historicalBackfillSignalsCache = new Map<
   string,
-  Promise<{ signals: HistoricalBackfillSignal[]; errors: SignalOptionsBackfillSummary["errors"] }>
+  Promise<{
+    signals: HistoricalBackfillSignal[];
+    errors: SignalOptionsBackfillSummary["errors"];
+    structuralContextsBySymbol: Record<string, SignalOptionsWireContext[]>;
+  }>
 >();
 const historicalOptionResolutionCache = new Map<
   string,
@@ -6938,6 +7159,7 @@ function cacheJson(value: unknown) {
 function cloneHistoricalBackfillSignalsResult(input: {
   signals: HistoricalBackfillSignal[];
   errors: SignalOptionsBackfillSummary["errors"];
+  structuralContextsBySymbol: Record<string, SignalOptionsWireContext[]>;
 }) {
   return {
     signals: input.signals.map((signal) => ({
@@ -6945,6 +7167,12 @@ function cloneHistoricalBackfillSignalsResult(input: {
       signalAt: new Date(signal.signalAt.getTime()),
     })),
     errors: input.errors.map((error) => ({ ...error })),
+    structuralContextsBySymbol: Object.fromEntries(
+      Object.entries(input.structuralContextsBySymbol).map(([symbol, contexts]) => [
+        symbol,
+        contexts.map((context) => ({ ...context })),
+      ]),
+    ),
   };
 }
 
@@ -7199,6 +7427,92 @@ function brokerBarsToPyrusSignalsBars(
     })
     .filter((bar): bar is PyrusSignalsBar => Boolean(bar))
     .sort((left, right) => left.time - right.time);
+}
+
+function lastFiniteAtOrBefore(
+  values: number[],
+  index: number,
+  predicate?: (candidateIndex: number) => boolean,
+): number | null {
+  for (let cursor = Math.min(index, values.length - 1); cursor >= 0; cursor -= 1) {
+    if (predicate && !predicate(cursor)) {
+      continue;
+    }
+    const value = finiteNumber(values[cursor]);
+    if (value != null) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function buildSignalOptionsWireContext(input: {
+  symbol: string;
+  timeframe: SignalMonitorTimeframe;
+  chartBars: PyrusSignalsBar[];
+  evaluation: PyrusSignalsEvaluation;
+  index?: number;
+}): SignalOptionsWireContext | null {
+  const index = input.index ?? input.chartBars.length - 1;
+  const latestBar = input.chartBars[index];
+  if (!latestBar) {
+    return null;
+  }
+  const regimeDirection = finiteNumber(input.evaluation.regimeDirection[index]);
+  return {
+    symbol: input.symbol,
+    timeframe: input.timeframe,
+    latestBarAt: new Date(latestBar.time * 1000).toISOString(),
+    latestClose: latestBar.c,
+    regimeDirection,
+    previousRegimeDirection:
+      index > 0 ? finiteNumber(input.evaluation.regimeDirection[index - 1]) : null,
+    trendLine: finiteNumber(input.evaluation.trendLine[index]),
+    upperBand: finiteNumber(input.evaluation.upperBand[index]),
+    lowerBand: finiteNumber(input.evaluation.lowerBand[index]),
+    bullWires: input.evaluation.bullWires.map((wire) => finiteNumber(wire[index])),
+    bearWires: input.evaluation.bearWires.map((wire) => finiteNumber(wire[index])),
+    lastBullTrendLine: lastFiniteAtOrBefore(
+      input.evaluation.lowerBand,
+      index,
+      (candidateIndex) => input.evaluation.regimeDirection[candidateIndex] === 1,
+    ),
+    lastBearTrendLine: lastFiniteAtOrBefore(
+      input.evaluation.upperBand,
+      index,
+      (candidateIndex) => input.evaluation.regimeDirection[candidateIndex] === -1,
+    ),
+  };
+}
+
+async function loadSignalOptionsWireContextForPosition(input: {
+  position: SignalOptionsPosition;
+  evaluatedAt: Date;
+  pyrusSignalsSettings: Record<string, unknown>;
+}): Promise<SignalOptionsWireContext | null> {
+  const completedBars = await loadSignalMonitorCompletedBars({
+    symbol: input.position.symbol,
+    timeframe: input.position.timeframe,
+    evaluatedAt: input.evaluatedAt,
+    barSourcePolicy: SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY,
+  });
+  const chartBars = brokerBarsToPyrusSignalsBars(
+    completedBars.bars as BrokerBarSnapshot[],
+  );
+  if (!chartBars.length) {
+    return null;
+  }
+  const evaluation = evaluatePyrusSignalsSignals({
+    chartBars,
+    settings: resolvePyrusSignalsSignalSettings(input.pyrusSignalsSettings),
+    includeProvisionalSignals: false,
+  });
+  return buildSignalOptionsWireContext({
+    symbol: input.position.symbol,
+    timeframe: input.position.timeframe,
+    chartBars,
+    evaluation,
+  });
 }
 
 function signalDirection(signal: PyrusSignalsSignalEvent): SignalDirection {
@@ -7965,7 +8279,9 @@ function buildBackfillPosition(input: {
   entryAt: Date;
   optionBars: BrokerBarSnapshot[];
   optionTrades: OptionTradePrint[];
+  structuralContexts: SignalOptionsWireContext[];
   nextBarIndex: number;
+  nextStructuralIndex: number;
   profile: SignalOptionsExecutionProfile;
 }): HistoricalBackfillOpenPosition | null {
   const entryPrice = finiteNumber(input.orderPlan.simulatedFillPrice);
@@ -7992,9 +8308,14 @@ function buildBackfillPosition(input: {
     lastMarkPrice: entryPrice,
     lastMarkedAt: input.entryAt.toISOString(),
     signalQuality: input.signalQuality ?? null,
+    entryGreeks: null,
+    greekBaselineSource: null,
     optionBars: input.optionBars,
     optionTrades: input.optionTrades,
+    structuralContexts: input.structuralContexts,
     nextBarIndex: input.nextBarIndex,
+    nextStructuralIndex: input.nextStructuralIndex,
+    currentWireContext: null,
   };
 }
 
@@ -8018,7 +8339,11 @@ function backfillPositionPayload(
     selectedContract: position.selectedContract,
     lastMarkPrice: position.lastMarkPrice,
     lastMarkedAt: position.lastMarkedAt,
+    lastStop: position.lastStop ?? null,
+    lastWireTrail: position.lastWireTrail ?? null,
     signalQuality: position.signalQuality ?? null,
+    entryGreeks: position.entryGreeks ?? null,
+    greekBaselineSource: position.greekBaselineSource ?? null,
   };
 }
 
@@ -8203,6 +8528,15 @@ async function markBackfillPositionsThrough(input: {
         break;
       }
       position.nextBarIndex += 1;
+      while (position.nextStructuralIndex < position.structuralContexts.length) {
+        const context = position.structuralContexts[position.nextStructuralIndex];
+        const contextAt = dateOrNull(context?.latestBarAt);
+        if (!context || !contextAt || contextAt.getTime() > barAt.getTime()) {
+          break;
+        }
+        position.currentWireContext = context;
+        position.nextStructuralIndex += 1;
+      }
       const markPrice = backfillBarPrice(bar);
       if (markPrice == null || markPrice <= 0) {
         continue;
@@ -8213,6 +8547,12 @@ async function markBackfillPositionsThrough(input: {
         peakPrice,
         markPrice,
         profile: input.profile,
+        direction: position.direction,
+        underlyingSpot: position.currentWireContext?.latestClose ?? null,
+        wireContext: position.currentWireContext,
+        currentGreeks: null,
+        entryGreeks: null,
+        spreadPctOfMid: null,
         signalQuality: position.signalQuality ?? null,
         barsSinceEntry: signalBarsSinceEntry({
           openedAt: position.openedAt,
@@ -8224,6 +8564,8 @@ async function markBackfillPositionsThrough(input: {
       position.stopPrice = stop.stopPrice;
       position.lastMarkPrice = Number(markPrice.toFixed(2));
       position.lastMarkedAt = barAt.toISOString();
+      position.lastStop = stop as unknown as Record<string, unknown>;
+      position.lastWireTrail = asRecord(stop.wireTrail);
 
       if (stop.exitReason) {
         const exitPrice = Number(markPrice.toFixed(2));
@@ -8427,6 +8769,7 @@ async function loadHistoricalBackfillSignalsUncached(input: {
 }) {
   const signals: HistoricalBackfillSignal[] = [];
   const errors: SignalOptionsBackfillSummary["errors"] = [];
+  const structuralContextsBySymbol: Record<string, SignalOptionsWireContext[]> = {};
   const settings = resolvePyrusSignalsSignalSettings(input.profileSettings);
   const equityBarLimit = historicalBackfillEquityBarLimit({
     timeframe: input.timeframe,
@@ -8455,6 +8798,24 @@ async function loadHistoricalBackfillSignalsUncached(input: {
         settings,
         includeProvisionalSignals: false,
       });
+      const normalizedSymbol = normalizeSymbol(symbol).toUpperCase();
+      structuralContextsBySymbol[normalizedSymbol] = chartBars
+        .map((bar, index) => {
+          const barAt = new Date(bar.time * 1000);
+          if (!isWithinBackfillWindow(barAt, input.window)) {
+            return null;
+          }
+          return buildSignalOptionsWireContext({
+            symbol: normalizedSymbol,
+            timeframe: input.timeframe,
+            chartBars,
+            evaluation,
+            index,
+          });
+        })
+        .filter(
+          (context): context is SignalOptionsWireContext => context != null,
+        );
       evaluation.signalEvents.forEach((signal) => {
         const signalAt = new Date(signal.time * 1000);
         if (!isWithinBackfillWindow(signalAt, input.window)) {
@@ -8491,6 +8852,7 @@ async function loadHistoricalBackfillSignalsUncached(input: {
         left.symbol.localeCompare(right.symbol),
     ),
     errors,
+    structuralContextsBySymbol,
   };
 }
 
@@ -8913,7 +9275,8 @@ export async function runSignalOptionsShadowBackfill(input: {
     const existingBackfillEvents = buildBackfillEventIndexes(initialEvents);
     const positionsBySymbol = new Map<string, HistoricalBackfillOpenPosition>();
     const realizedByDay = new Map<string, number>();
-    const { signals, errors } = await loadHistoricalBackfillSignals({
+    const { signals, errors, structuralContextsBySymbol } =
+      await loadHistoricalBackfillSignals({
       profileId: signalProfile.id,
       profileSettings: pyrusSignalsSettings,
       symbols: backfillUniverse.symbols,
@@ -9162,6 +9525,16 @@ export async function runSignalOptionsShadowBackfill(input: {
         firstFutureBarIndex >= 0
           ? firstFutureBarIndex
           : resolved.optionBars.length;
+      const structuralContexts =
+        structuralContextsBySymbol[normalizeSymbol(symbol).toUpperCase()] ?? [];
+      const firstFutureStructuralIndex = structuralContexts.findIndex((context) => {
+        const contextAt = dateOrNull(context.latestBarAt);
+        return Boolean(contextAt && contextAt.getTime() > entryAt.getTime());
+      });
+      const nextStructuralIndex =
+        firstFutureStructuralIndex >= 0
+          ? firstFutureStructuralIndex
+          : structuralContexts.length;
       const signalQuality = classifySignalOptionsEntryQuality({
         candidate,
         orderPlan: resolved.orderPlan,
@@ -9175,7 +9548,9 @@ export async function runSignalOptionsShadowBackfill(input: {
         entryAt,
         optionBars: resolved.optionBars,
         optionTrades: resolved.optionTrades,
+        structuralContexts,
         nextBarIndex,
+        nextStructuralIndex,
         profile,
       });
       if (!position) {
@@ -9453,6 +9828,10 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   });
   const unmanagedPositionSymbols = new Set<string>();
   const evaluatedStates = evaluated.states as SignalMonitorState[];
+  const evaluatedProfile = asRecord(asRecord(evaluated).profile);
+  const evaluatedPyrusSignalsSettings = asRecord(
+    evaluatedProfile.pyrusSignalsSettings,
+  );
   const positionSignature =
     signalOptionsPositionActionSignature(initialPositions);
   const signalSignature = signalOptionsStateActionSignature({
@@ -9501,6 +9880,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       deployment,
       profile,
       position,
+      pyrusSignalsSettings: evaluatedPyrusSignalsSettings,
       recentEvents: initialSignalEvents,
     }).catch(
       async (error: unknown) => {

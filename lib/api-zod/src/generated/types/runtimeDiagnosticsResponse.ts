@@ -5,6 +5,7 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { JsonObject } from './jsonObject';
 import type { RuntimeApiDiagnostics } from './runtimeApiDiagnostics';
 import type { RuntimeIbkrDiagnostics } from './runtimeIbkrDiagnostics';
 
@@ -12,4 +13,6 @@ export interface RuntimeDiagnosticsResponse {
   timestamp: Date;
   api: RuntimeApiDiagnostics;
   ibkr: RuntimeIbkrDiagnostics;
+  providers: JsonObject;
+  storage: JsonObject;
 }

@@ -292,6 +292,62 @@ test("runtime diagnostics are read-only and only inspect bridge health", async (
   );
 });
 
+test("runtime diagnostics expose Massive provider activity without secrets", async () => {
+  const previousMassiveKey = process.env["MASSIVE_API_KEY"];
+  const previousPolygonKey = process.env["POLYGON_API_KEY"];
+  const previousPolygonBaseUrl = process.env["POLYGON_BASE_URL"];
+  const previousMassiveBaseUrl = process.env["MASSIVE_API_BASE_URL"];
+  const previousMassiveRecency = process.env["MASSIVE_STOCKS_RECENCY"];
+
+  process.env["MASSIVE_API_KEY"] = "massive-secret";
+  delete process.env["POLYGON_API_KEY"];
+  delete process.env["POLYGON_BASE_URL"];
+  delete process.env["MASSIVE_API_BASE_URL"];
+  delete process.env["MASSIVE_STOCKS_RECENCY"];
+
+  try {
+    const diagnostics = await getRuntimeDiagnostics();
+    const massive = diagnostics.providers.massive;
+
+    assert.equal(massive.configured, true);
+    assert.equal(massive.providerIdentity, "massive");
+    assert.equal(massive.baseUrlHost, "api.massive.com");
+    assert.equal(massive.stocksRealtimeConfigured, true);
+    assert.equal(massive.rest.status, "idle");
+    assert.equal(massive.websocket.configured, true);
+    assert.ok(massive.websocket.availableChannels.includes("AM"));
+    assert.ok(massive.websocket.availableChannels.includes("Q"));
+    assert.ok(massive.websocket.availableChannels.includes("T"));
+    assert.doesNotMatch(JSON.stringify(massive), /massive-secret|apiKey/);
+  } finally {
+    if (previousMassiveKey === undefined) {
+      delete process.env["MASSIVE_API_KEY"];
+    } else {
+      process.env["MASSIVE_API_KEY"] = previousMassiveKey;
+    }
+    if (previousPolygonKey === undefined) {
+      delete process.env["POLYGON_API_KEY"];
+    } else {
+      process.env["POLYGON_API_KEY"] = previousPolygonKey;
+    }
+    if (previousPolygonBaseUrl === undefined) {
+      delete process.env["POLYGON_BASE_URL"];
+    } else {
+      process.env["POLYGON_BASE_URL"] = previousPolygonBaseUrl;
+    }
+    if (previousMassiveBaseUrl === undefined) {
+      delete process.env["MASSIVE_API_BASE_URL"];
+    } else {
+      process.env["MASSIVE_API_BASE_URL"] = previousMassiveBaseUrl;
+    }
+    if (previousMassiveRecency === undefined) {
+      delete process.env["MASSIVE_STOCKS_RECENCY"];
+    } else {
+      process.env["MASSIVE_STOCKS_RECENCY"] = previousMassiveRecency;
+    }
+  }
+});
+
 test("session refreshes stale cached bridge health before reporting status", async () => {
   const calls: string[] = [];
   let updatedAt = new Date(Date.now() - 30_000);

@@ -1044,6 +1044,48 @@ test("builds runtime control snapshot with root line usage governor", () => {
   assert.equal(snapshot.streams.tradingFresh, true);
 });
 
+test("builds runtime control snapshot with Massive diagnostics", () => {
+  const snapshot = buildRuntimeControlSnapshot({
+    runtimeDiagnostics: {
+      providers: {
+        massive: {
+          configured: true,
+          providerIdentity: "massive",
+          baseUrlHost: "api.massive.com",
+          stocksRealtimeConfigured: true,
+          rest: {
+            status: "ok",
+            lastRequest: {
+              purpose: "bars",
+              symbol: "SPY",
+              timeframe: "1 minute",
+              resultCount: 2,
+              durationMs: 42,
+            },
+            recentRequests: [],
+          },
+          websocket: {
+            status: "ok",
+            mode: "real-time",
+            activeChannels: ["AM", "Q", "T"],
+            availableChannels: ["AM", "Q", "T"],
+            subscribedSymbolCount: 12,
+            activeConsumerCount: 2,
+            eventCount: 30,
+            lastMessageAgeMs: 500,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(snapshot.massive.configured, true);
+  assert.equal(snapshot.massive.label, "OK");
+  assert.equal(snapshot.massive.rest.lastRequestSummary, "bars SPY 1 minute · 2 rows");
+  assert.equal(snapshot.massive.websocket.channelSummary, "AM, Q, T");
+  assert.equal(snapshot.massive.websocket.subscribedSymbolCount, 12);
+});
+
 test("exposes active flow scanner when backend scanner is running", () => {
   const snapshot = buildRuntimeControlSnapshot({
     lineUsageSnapshot: {

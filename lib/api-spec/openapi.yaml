@@ -5202,10 +5202,16 @@ components:
           $ref: "#/components/schemas/RuntimeApiDiagnostics"
         ibkr:
           $ref: "#/components/schemas/RuntimeIbkrDiagnostics"
+        providers:
+          $ref: "#/components/schemas/JsonObject"
+        storage:
+          $ref: "#/components/schemas/JsonObject"
       required:
         - timestamp
         - api
         - ibkr
+        - providers
+        - storage
 
     DiagnosticSeverity:
       type: string

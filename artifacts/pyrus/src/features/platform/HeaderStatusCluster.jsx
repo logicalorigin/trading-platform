@@ -6,7 +6,9 @@ import {
   ChevronDown,
   Check,
   Clock3,
+  Database,
   Gauge,
+  Hash,
   KeyRound,
   MonitorUp,
   Network,
@@ -15,7 +17,9 @@ import {
   RefreshCw,
   SendHorizontal,
   ShieldCheck,
+  Timer,
   Unplug,
+  Wifi,
   X,
 } from "lucide-react";
 import {
@@ -1177,6 +1181,435 @@ const HeaderIbkrConnectionSummary = ({ model }) => {
         </div>
       ) : null}
       <HeaderIbkrMetricRail tiles={model.tiles} />
+      <HeaderIbkrProviderRows rows={model.providerRows} />
+    </div>
+  );
+};
+
+const HEADER_PROVIDER_ICONS = Object.freeze({
+  activity: Activity,
+  alert: AlertTriangle,
+  check: Check,
+  clock: Clock3,
+  database: Database,
+  hash: Hash,
+  network: Network,
+  rest: Database,
+  timer: Timer,
+  unplug: Unplug,
+  websocket: RadioTower,
+  wifi: Wifi,
+});
+
+const HeaderProviderIcon = ({
+  iconKey,
+  color = "currentColor",
+  size = 12,
+  strokeWidth = 2.2,
+  style,
+}) => {
+  const Icon = HEADER_PROVIDER_ICONS[iconKey] || Activity;
+  return (
+    <Icon
+      aria-hidden="true"
+      color={color}
+      size={dim(size)}
+      strokeWidth={strokeWidth}
+      style={style}
+    />
+  );
+};
+
+const HeaderProviderStatusGlyph = ({ iconKey, tone, size = 18 }) => {
+  const color = tone || CSS_COLOR.textSec;
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        width: dim(size),
+        height: dim(size),
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flex: `0 0 ${dim(size)}`,
+        border: `1px solid ${cssColorMix(color, 42)}`,
+        borderRadius: dim(RADII.pill),
+        background: cssColorMix(color, 11),
+        color,
+      }}
+    >
+      <HeaderProviderIcon
+        iconKey={iconKey}
+        color={color}
+        size={size <= 14 ? 8.5 : 10.5}
+        strokeWidth={iconKey === "check" ? 2.8 : 2.35}
+      />
+    </span>
+  );
+};
+
+const HeaderProviderChip = ({ chip, baseTone, compact = false }) => {
+  if (!chip?.label) {
+    return null;
+  }
+  const tone = chip.tone || baseTone || CSS_COLOR.textSec;
+  return (
+    <span
+      title={chip.title || chip.label}
+      style={{
+        minHeight: dim(compact ? 18 : 20),
+        display: "inline-flex",
+        alignItems: "center",
+        gap: sp(3),
+        maxWidth: "100%",
+        padding: sp(compact ? "2px 5px" : "3px 6px"),
+        border: `1px solid ${cssColorMix(tone, compact ? 24 : 30)}`,
+        borderRadius: dim(RADII.pill),
+        background: cssColorMix(tone, compact ? 5 : 7),
+        color: tone,
+        fontSize: fs(compact ? 8 : 9),
+        lineHeight: 1,
+        fontVariantNumeric: "tabular-nums",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {chip.iconKey ? (
+        <HeaderProviderIcon
+          iconKey={chip.iconKey}
+          color={tone}
+          size={compact ? 8 : 9}
+          strokeWidth={2.35}
+        />
+      ) : null}
+      <span
+        style={{
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {chip.label}
+      </span>
+    </span>
+  );
+};
+
+const HeaderProviderChannelChip = ({ channel, tone }) => {
+  if (!channel?.label) {
+    return null;
+  }
+  const active = channel.active === true;
+  const color = active ? tone || CSS_COLOR.green : CSS_COLOR.textDim;
+  return (
+    <span
+      title={channel.title || channel.label}
+      style={{
+        minWidth: dim(24),
+        minHeight: dim(19),
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: sp("2px 6px"),
+        border: `1px solid ${cssColorMix(color, active ? 44 : 20)}`,
+        borderRadius: dim(RADII.xs),
+        background: active ? cssColorMix(color, 11) : CSS_COLOR.bg0,
+        color,
+        fontSize: fs(9),
+        fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
+        lineHeight: 1,
+        fontVariantNumeric: "tabular-nums",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {channel.label}
+    </span>
+  );
+};
+
+const HeaderProviderLane = ({ lane, providerTone }) => {
+  const tone = lane.tone || providerTone || CSS_COLOR.textSec;
+  const metricChips = Array.isArray(lane.chips) ? lane.chips : [];
+  const channels = Array.isArray(lane.channels) ? lane.channels : [];
+
+  return (
+    <div
+      style={{
+        minWidth: 0,
+        display: "grid",
+        alignContent: "start",
+        gap: sp(6),
+        padding: sp("7px 8px"),
+        border: `1px solid ${cssColorMix(tone, 25)}`,
+        borderRadius: dim(RADII.sm),
+        background: cssColorMix(tone, 5),
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: sp(6),
+          minWidth: 0,
+        }}
+      >
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(5),
+            minWidth: 0,
+            color: CSS_COLOR.textMuted,
+            fontSize: fs(8),
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+            whiteSpace: "nowrap",
+          }}
+        >
+          <HeaderProviderIcon iconKey={lane.iconKey} color={tone} size={10} />
+          {lane.label}
+        </span>
+        <HeaderProviderStatusGlyph
+          iconKey={lane.statusIconKey}
+          tone={tone}
+          size={14}
+        />
+      </div>
+      <div
+        title={lane.detail ? `${lane.value} · ${lane.detail}` : lane.value}
+        style={{
+          minWidth: 0,
+          color: tone,
+          fontSize: textSize("paragraphMuted"),
+          fontWeight: FONT_WEIGHTS.medium,
+          lineHeight: 1.25,
+          overflowWrap: "anywhere",
+          textWrap: "pretty",
+        }}
+      >
+        {lane.value || MISSING_VALUE}
+      </div>
+      {channels.length ? (
+        <div
+          aria-label={`${lane.label} channels`}
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: sp(4),
+            minWidth: 0,
+          }}
+        >
+          {channels.map((channel) => (
+            <HeaderProviderChannelChip
+              key={`${lane.id || lane.label}:${channel.label}`}
+              channel={channel}
+              tone={tone}
+            />
+          ))}
+        </div>
+      ) : null}
+      {metricChips.length ? (
+        <div
+          aria-label={`${lane.label} evidence`}
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: sp(4),
+            minWidth: 0,
+          }}
+        >
+          {metricChips.map((chip) => (
+            <HeaderProviderChip
+              key={`${lane.id || lane.label}:${chip.title || chip.label}`}
+              chip={chip}
+              baseTone={tone}
+            />
+          ))}
+        </div>
+      ) : null}
+      {lane.detail ? (
+        <div
+          style={{
+            minWidth: 0,
+            color: CSS_COLOR.textDim,
+            fontSize: fs(9),
+            lineHeight: 1.25,
+            overflowWrap: "anywhere",
+            textWrap: "pretty",
+          }}
+        >
+          {lane.detail}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+const HeaderMassiveProviderPanel = ({ row }) => (
+  <div
+    style={{
+      display: "grid",
+      gap: sp(7),
+      minWidth: 0,
+      fontFamily: T.sans,
+    }}
+  >
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: sp(6),
+        minWidth: 0,
+      }}
+    >
+      <HeaderProviderStatusGlyph iconKey={row.statusIconKey} tone={row.tone} />
+      <span
+        style={{
+          color: CSS_COLOR.textMuted,
+          fontSize: fs(8),
+          fontWeight: FONT_WEIGHTS.regular,
+          letterSpacing: "0.04em",
+          textTransform: "uppercase",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {row.label}
+      </span>
+      <span
+        style={{
+          color: row.tone || CSS_COLOR.textSec,
+          fontSize: textSize("paragraphMuted"),
+          fontWeight: FONT_WEIGHTS.medium,
+          lineHeight: 1.2,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {row.value}
+      </span>
+      {row.host ? (
+        <HeaderProviderChip
+          compact
+          chip={{
+            iconKey: "network",
+            label: row.host,
+            title: "Massive REST host",
+          }}
+          baseTone={CSS_COLOR.textSec}
+        />
+      ) : null}
+      {row.detail ? (
+        <span
+          title={row.detail}
+          style={{
+            minWidth: 0,
+            flex: "1 1 150px",
+            color: CSS_COLOR.textDim,
+            fontSize: fs(9),
+            lineHeight: 1.3,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {row.detail}
+        </span>
+      ) : null}
+    </div>
+    {Array.isArray(row.summary) && row.summary.length ? (
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 148px), 1fr))",
+          gap: sp(6),
+          minWidth: 0,
+        }}
+      >
+        {row.summary.map((lane) => (
+          <HeaderProviderLane
+            key={lane.id || lane.label}
+            lane={lane}
+            providerTone={row.tone}
+          />
+        ))}
+      </div>
+    ) : null}
+  </div>
+);
+
+const HeaderGenericProviderRow = ({ row }) => (
+  <div
+    style={{
+      display: "flex",
+      alignItems: "center",
+      gap: sp(7),
+      minWidth: 0,
+      fontFamily: T.sans,
+    }}
+  >
+    <HeaderProviderStatusGlyph iconKey={row.statusIconKey} tone={row.tone} />
+    <span
+      style={{
+        color: CSS_COLOR.textMuted,
+        fontSize: fs(8),
+        fontWeight: FONT_WEIGHTS.regular,
+        letterSpacing: "0.04em",
+        textTransform: "uppercase",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {row.label}
+    </span>
+    <span
+      style={{
+        minWidth: 0,
+        color: row.tone || CSS_COLOR.textSec,
+        fontSize: textSize("paragraphMuted"),
+        fontWeight: FONT_WEIGHTS.medium,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+      title={row.detail ? `${row.value} · ${row.detail}` : row.value}
+    >
+      {row.value}
+      {row.detail ? (
+        <span style={{ color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular }}>
+          {" · "}
+          {row.detail}
+        </span>
+      ) : null}
+    </span>
+  </div>
+);
+
+const HeaderIbkrProviderRows = ({ rows }) => {
+  const visibleRows = Array.isArray(rows)
+    ? rows.filter((row) => row?.label && row.label !== "IBKR")
+    : [];
+  if (!visibleRows.length) {
+    return null;
+  }
+
+  return (
+    <div
+      data-testid="header-ibkr-provider-rows"
+      style={{
+        display: "grid",
+        gap: sp(7),
+        padding: sp("8px 9px"),
+        border: `1px solid ${CSS_COLOR.borderLight}`,
+        borderRadius: dim(RADII.sm),
+        background: CSS_COLOR.bg1,
+      }}
+    >
+      {visibleRows.map((row) =>
+        row.label === "Massive" && Array.isArray(row.summary) ? (
+          <HeaderMassiveProviderPanel key={row.label} row={row} />
+        ) : (
+          <HeaderGenericProviderRow key={row.label} row={row} />
+        ),
+      )}
     </div>
   );
 };
@@ -1272,7 +1705,7 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))",
             gap: sp(6),
             padding: 0,
             background: "transparent",

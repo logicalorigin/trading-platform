@@ -6,6 +6,7 @@ import {
   resolveIbkrGatewayHealth,
 } from "./IbkrConnectionStatus.jsx";
 import {
+  normalizeMassiveRuntimeDiagnostics,
   normalizeAdmissionDiagnostics,
   selectRuntimeAdmissionDiagnostics,
 } from "./runtimeControlModel.js";
@@ -110,6 +111,199 @@ const resolveStockProviderLabel = (provider) => {
     : "Polygon";
 };
 
+const getProviderStatusIconKey = (status) => {
+  switch (String(status || "").toLowerCase()) {
+    case "ok":
+    case "healthy":
+      return "check";
+    case "degraded":
+      return "alert";
+    case "unconfigured":
+      return "unplug";
+    default:
+      return "activity";
+  }
+};
+
+const formatMassiveEndpointLabel = (request, fallback = MISSING_VALUE) => {
+  if (!request || typeof request !== "object") {
+    return fallback;
+  }
+  const source = request.endpointFamily || request.purpose || request.endpoint || "";
+  const label = String(source).replace(/[-_]+/g, " ").trim();
+  return label || fallback;
+};
+
+const pushMassiveChip = (chips, chip) => {
+  if (chip?.label && chip.label !== MISSING_VALUE) {
+    chips.push(chip);
+  }
+};
+
+const buildMassiveProviderDetail = (massive, fallback) => {
+  if (!massive?.configured) {
+    return fallback;
+  }
+  if (massive.websocket?.lastError) {
+    return massive.websocket.lastError;
+  }
+  if (massive.rest?.lastError && massive.rest.status === "degraded") {
+    return massive.rest.lastError;
+  }
+  const channels = massive.websocket?.activeChannels || [];
+  const restEndpoint = formatMassiveEndpointLabel(
+    massive.rest?.lastRequest,
+    massive.rest?.lastRequestSummary,
+  );
+  if (channels.length > 0) {
+    const symbolCount = Number.isFinite(massive.websocket.subscribedSymbolCount)
+      ? ` · ${formatHeaderCount(massive.websocket.subscribedSymbolCount)} symbols`
+      : "";
+    const age = Number.isFinite(massive.websocket.lastMessageAgeMs)
+      ? ` · ${formatIbkrPingMs(massive.websocket.lastMessageAgeMs)} ago`
+      : "";
+    const rest = restEndpoint && restEndpoint !== MISSING_VALUE
+      ? `REST ${restEndpoint} · `
+      : "";
+    return `${rest}WS ${channels.join(", ")}${symbolCount}${age}`;
+  }
+  if (massive.rest?.lastRequestSummary && massive.rest.lastRequestSummary !== MISSING_VALUE) {
+    const duration = Number.isFinite(massive.rest.lastDurationMs)
+      ? ` · ${formatIbkrPingMs(massive.rest.lastDurationMs)}`
+      : "";
+    return `REST ${massive.rest.lastRequestSummary}${duration}`;
+  }
+  if (massive.websocket?.channelSummary && massive.websocket.channelSummary !== MISSING_VALUE) {
+    return `WS ${massive.websocket.channelSummary}`;
+  }
+  return massive.baseUrlHost || fallback;
+};
+
+const buildMassiveProviderSummary = (massive) => {
+  if (!massive?.configured) {
+    return null;
+  }
+  const restRequest = massive.rest?.lastRequest || null;
+  const restEndpoint = formatMassiveEndpointLabel(restRequest, massive.rest?.label || "REST idle");
+  const restSummary =
+    massive.rest?.lastRequestSummary && massive.rest.lastRequestSummary !== MISSING_VALUE
+      ? massive.rest.lastRequestSummary
+      : massive.rest?.label || "REST idle";
+  const restChips = [];
+  pushMassiveChip(restChips, restRequest?.symbol
+    ? {
+        iconKey: "hash",
+        label: restRequest.symbol,
+        title: "Symbol",
+      }
+    : Number.isFinite(restRequest?.symbolCount)
+      ? {
+          iconKey: "hash",
+          label: `${formatHeaderCount(restRequest.symbolCount)} sym`,
+          title: "Symbols in request",
+        }
+      : null);
+  pushMassiveChip(restChips, Number.isFinite(restRequest?.resultCount)
+    ? {
+        iconKey: "database",
+        label: `${formatHeaderCount(restRequest.resultCount)} rows`,
+        title: "Rows returned",
+      }
+    : null);
+  pushMassiveChip(restChips, Number.isFinite(massive.rest?.lastDurationMs)
+    ? {
+        iconKey: "timer",
+        label: formatIbkrPingMs(massive.rest.lastDurationMs),
+        title: "REST duration",
+      }
+    : null);
+  pushMassiveChip(restChips, massive.rest?.lastRequestAt
+    ? {
+        iconKey: "clock",
+        label: formatHeaderTimeAgo(massive.rest.lastRequestAt),
+        title: "Last REST observation",
+      }
+    : null);
+
+  const wsChannels = massive.websocket?.activeChannels?.length
+    ? massive.websocket.activeChannels.join(", ")
+    : massive.websocket?.availableChannels?.length
+      ? `${massive.websocket.availableChannels.join(", ")} idle`
+      : "standby";
+  const activeChannelSet = new Set(massive.websocket?.activeChannels || []);
+  const channelChips = [
+    ...(massive.websocket?.activeChannels || []),
+    ...(massive.websocket?.availableChannels || []).filter((channel) => !activeChannelSet.has(channel)),
+  ].map((channel) => ({
+    label: channel,
+    active: activeChannelSet.has(channel),
+    title: activeChannelSet.has(channel)
+      ? `Subscribed ${channel} WebSocket channel`
+      : `Available ${channel} WebSocket channel`,
+  }));
+  const wsChips = [];
+  pushMassiveChip(wsChips, massive.websocket?.mode
+    ? {
+        iconKey: "wifi",
+        label: massive.websocket.mode,
+        title: "WebSocket mode",
+      }
+    : null);
+  pushMassiveChip(wsChips, Number.isFinite(massive.websocket?.subscribedSymbolCount)
+    ? {
+        iconKey: "hash",
+        label: `${formatHeaderCount(massive.websocket.subscribedSymbolCount)} sym`,
+        title: "Subscribed symbols",
+      }
+    : null);
+  pushMassiveChip(wsChips, Number.isFinite(massive.websocket?.eventCount)
+    ? {
+        iconKey: "activity",
+        label: `${formatHeaderCount(massive.websocket.eventCount)} ev`,
+        title: "Stream events",
+      }
+    : null);
+  pushMassiveChip(wsChips, Number.isFinite(massive.websocket?.lastMessageAgeMs)
+    ? {
+        iconKey: "clock",
+        label: `${formatIbkrPingMs(massive.websocket.lastMessageAgeMs)} ago`,
+        title: "Last WebSocket message",
+      }
+    : null);
+  pushMassiveChip(wsChips, Number.isFinite(massive.websocket?.reconnectCount) && massive.websocket.reconnectCount > 0
+    ? {
+        iconKey: "alert",
+        label: `${formatHeaderCount(massive.websocket.reconnectCount)} reconnects`,
+        tone: CSS_COLOR.amber,
+        title: "WebSocket reconnects",
+      }
+    : null);
+
+  return [
+    {
+      id: "rest",
+      label: "REST",
+      iconKey: "database",
+      statusIconKey: getProviderStatusIconKey(massive.rest?.status),
+      value: restEndpoint,
+      detail: restSummary !== restEndpoint ? restSummary : null,
+      tone: massive.rest?.tone || massive.tone,
+      chips: restChips,
+    },
+    {
+      id: "websocket",
+      label: "WebSocket",
+      iconKey: "websocket",
+      statusIconKey: getProviderStatusIconKey(massive.websocket?.status),
+      value: wsChannels,
+      detail: massive.websocket?.lastError || null,
+      tone: massive.websocket?.tone || massive.tone,
+      channels: channelChips,
+      chips: wsChips,
+    },
+  ];
+};
+
 const formatHeaderTimeAgo = (value) => {
   const timestamp = value ? Date.parse(value) : Number.NaN;
   if (!Number.isFinite(timestamp)) {
@@ -209,7 +403,21 @@ const buildCompactLineUsage = (lineUsage) => {
 
 const buildProviderRows = ({ health, liveDataLabel, runtimeDiagnostics }) => {
   const polygon = runtimeDiagnostics?.providers?.polygon;
-  const stockProviderLabel = resolveStockProviderLabel(polygon);
+  const massive = normalizeMassiveRuntimeDiagnostics(runtimeDiagnostics);
+  const hasMassiveProvider =
+    massive.configured || massive.providerIdentity === "massive";
+  const hasPolygonProvider = Boolean(
+    polygon?.configured ||
+      polygon?.status ||
+      polygon?.baseUrl ||
+      polygon?.provider ||
+      polygon?.identity,
+  );
+  const stockProviderLabel = hasMassiveProvider
+    ? "Massive"
+    : hasPolygonProvider
+      ? resolveStockProviderLabel(polygon)
+      : null;
   const polygonMeta =
     POLYGON_STATUS_META[polygon?.status] || POLYGON_STATUS_META.unknown;
   const polygonFreshness =
@@ -222,21 +430,49 @@ const buildProviderRows = ({ health, liveDataLabel, runtimeDiagnostics }) => {
         ? `last ${polygonFreshness}`
         : polygon?.baseUrl || MISSING_VALUE;
 
-  return [
+  const rows = [
     {
       label: "IBKR",
       value: health.label,
       detail: liveDataLabel,
       tone: health.color,
     },
+  ];
+
+  if (!stockProviderLabel) {
+    return rows;
+  }
+
+  rows.push(
     {
       label: stockProviderLabel,
-      value: polygonMeta.label,
-      detail: polygonDetail,
-      tone: polygonMeta.tone,
-      wrap: polygon?.status === "degraded",
+      value: stockProviderLabel === "Massive" ? massive.label : polygonMeta.label,
+      detail:
+        stockProviderLabel === "Massive"
+          ? buildMassiveProviderDetail(massive, polygonDetail)
+          : polygonDetail,
+      tone: stockProviderLabel === "Massive" ? massive.tone : polygonMeta.tone,
+      iconKey: stockProviderLabel === "Massive" ? "network" : null,
+      statusIconKey:
+        stockProviderLabel === "Massive"
+          ? getProviderStatusIconKey(massive.status)
+          : getProviderStatusIconKey(polygon?.status),
+      host:
+        stockProviderLabel === "Massive"
+          ? massive.baseUrlHost
+          : null,
+      summary:
+        stockProviderLabel === "Massive"
+          ? buildMassiveProviderSummary(massive)
+          : null,
+      wrap:
+        stockProviderLabel === "Massive"
+          ? massive.status === "degraded"
+          : polygon?.status === "degraded",
     },
-  ];
+  );
+
+  return rows;
 };
 
 const getIssueSeverity = (issue) => {
@@ -489,6 +725,7 @@ export const buildHeaderIbkrPopoverModel = ({
       lineUsageSnapshot,
     );
   const compactLineUsage = buildCompactLineUsage(lineUsage);
+  const massive = normalizeMassiveRuntimeDiagnostics(runtimeDiagnostics);
 
   const healthyStatus = HEALTHY_STATUS_KEYS.has(health.status);
   let issue = {
@@ -878,6 +1115,67 @@ export const buildHeaderIbkrPopoverModel = ({
     },
   ];
 
+  if (massive.configured || massive.providerIdentity === "massive") {
+    detailGroups.splice(1, 0, {
+      title: "Massive",
+      rows: [
+        {
+          label: "Status",
+          value: massive.label,
+          tone: massive.tone,
+        },
+        {
+          label: "Mode",
+          value: massive.websocket.mode || (massive.stocksRealtimeConfigured ? "real-time" : "delayed"),
+        },
+        {
+          label: "REST",
+          value:
+            massive.rest.lastRequestSummary && massive.rest.lastRequestSummary !== MISSING_VALUE
+              ? massive.rest.lastRequestSummary
+              : massive.rest.label,
+          tone: massive.rest.tone,
+          wrap: true,
+        },
+        {
+          label: "REST result",
+          value: massive.rest.lastRequest
+            ? `${formatHeaderCount(massive.rest.lastRequest.resultCount)} rows · ${formatIbkrPingMs(massive.rest.lastDurationMs)}`
+            : MISSING_VALUE,
+        },
+        {
+          label: "WebSocket",
+          value: massive.websocket.channelSummary,
+          tone: massive.websocket.tone,
+        },
+        {
+          label: "WS symbols",
+          value: formatHeaderCount(massive.websocket.subscribedSymbolCount),
+        },
+        {
+          label: "WS events",
+          value: formatHeaderCount(massive.websocket.eventCount),
+        },
+        {
+          label: "WS last",
+          value: Number.isFinite(massive.websocket.lastMessageAgeMs)
+            ? `${formatIbkrPingMs(massive.websocket.lastMessageAgeMs)} ago`
+            : MISSING_VALUE,
+        },
+        ...(massive.rest.lastError || massive.websocket.lastError
+          ? [
+              {
+                label: "Last error",
+                value: massive.rest.lastError || massive.websocket.lastError,
+                tone: CSS_COLOR.red,
+                wrap: true,
+              },
+            ]
+          : []),
+      ],
+    });
+  }
+
   return {
     health,
     badges,
@@ -886,6 +1184,7 @@ export const buildHeaderIbkrPopoverModel = ({
     providerRows,
     lineUsage,
     compactLineUsage,
+    massive,
     detailGroups,
     priorityDetailGroup,
     autoOpenDetails: issue.autoOpenDetails,

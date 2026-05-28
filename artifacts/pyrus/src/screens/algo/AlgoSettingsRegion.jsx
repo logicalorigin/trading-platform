@@ -24,10 +24,12 @@ import {
   formatChaseSteps,
   formatMoney,
   formatProgressiveTrailSteps,
+  formatWireTrailRungs,
   normalizeSignalOptionsStrikeSlots,
   numberFrom,
   parseChaseSteps,
   parseProgressiveTrailSteps,
+  parseWireTrailRungs,
 } from "./algoHelpers";
 import {
   SETTINGS_SECTIONS,
@@ -342,6 +344,8 @@ export const CompactFieldInput = ({
             ? formatChaseSteps(value)
             : field.format === "progressiveTrailSteps"
               ? formatProgressiveTrailSteps(value)
+              : field.format === "wireTrailRungs"
+                ? formatWireTrailRungs(value)
               : value ?? ""
         }
         disabled={disabled}
@@ -354,6 +358,8 @@ export const CompactFieldInput = ({
               ? parseChaseSteps(event.target.value, value || [])
               : field.format === "progressiveTrailSteps"
                 ? parseProgressiveTrailSteps(event.target.value, value || [])
+                : field.format === "wireTrailRungs"
+                  ? parseWireTrailRungs(event.target.value, value || [])
                 : event.target.value,
           )
         }

@@ -945,6 +945,8 @@ export interface RuntimeDiagnosticsResponse {
   timestamp: string;
   api: RuntimeApiDiagnostics;
   ibkr: RuntimeIbkrDiagnostics;
+  providers: JsonObject;
+  storage: JsonObject;
 }
 
 export type DiagnosticSeverity = typeof DiagnosticSeverity[keyof typeof DiagnosticSeverity];

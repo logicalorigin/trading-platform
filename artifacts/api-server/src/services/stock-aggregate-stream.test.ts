@@ -151,6 +151,32 @@ test("Massive real-time stock aggregates win even when IBKR is configured", () =
   );
 });
 
+test("stock aggregate diagnostics expose Massive aggregate WebSocket channel", () => {
+  withAggregateRuntimeEnv(
+    {
+      MASSIVE_API_KEY: "massive-test-key",
+    },
+    () => {
+      const diagnostics = getStockAggregateStreamDiagnostics();
+
+      assert.equal(diagnostics.provider, "massive-websocket");
+      assert.equal(
+        diagnostics.polygonDelayedWebSocket.providerIdentity,
+        "massive",
+      );
+      assert.equal(diagnostics.polygonDelayedWebSocket.mode, "real-time");
+      assert.deepEqual(
+        diagnostics.polygonDelayedWebSocket.availableChannels,
+        ["AM"],
+      );
+      assert.equal(
+        diagnostics.polygonDelayedWebSocket.socketHost,
+        "socket.massive.com",
+      );
+    },
+  );
+});
+
 test("Massive delayed stock aggregate mode falls back to IBKR when configured", () => {
   withAggregateRuntimeEnv(
     {

@@ -1,4 +1,7 @@
-import type { SignalOptionsExecutionProfile } from "@workspace/backtest-core";
+import type {
+  SignalOptionsExecutionProfile,
+  SignalOptionsWireTrailRung,
+} from "@workspace/backtest-core";
 
 export type SignalOptionsEntryQuality = {
   tier: "high" | "standard" | "low";
@@ -20,6 +23,34 @@ export type SignalOptionsEntryQuality = {
   mtfDirections: number[];
   spreadPctOfMid: number | null;
   bullishRegime: boolean;
+};
+
+export type SignalOptionsPositionDirection = "buy" | "sell" | "long" | "short";
+
+export type SignalOptionsGreekSnapshot = {
+  delta?: number | null;
+  gamma?: number | null;
+  theta?: number | null;
+  vega?: number | null;
+  impliedVolatility?: number | null;
+  updatedAt?: Date | string | null;
+  ageMs?: number | null;
+};
+
+export type SignalOptionsWireContext = {
+  symbol?: string | null;
+  timeframe?: string | null;
+  latestBarAt: Date | string | null;
+  latestClose: number | null;
+  regimeDirection: number | null;
+  previousRegimeDirection?: number | null;
+  trendLine?: number | null;
+  upperBand?: number | null;
+  lowerBand?: number | null;
+  bullWires?: Array<number | null | undefined> | null;
+  bearWires?: Array<number | null | undefined> | null;
+  lastBullTrendLine?: number | null;
+  lastBearTrendLine?: number | null;
 };
 
 export function buildInitialStopPrice(
@@ -87,13 +118,222 @@ function selectProgressiveTrailStep(
   );
 }
 
+const WIRE_RUNG_ORDER: SignalOptionsWireTrailRung[] = [
+  "trendLine",
+  "wire1",
+  "wire2",
+  "wire3",
+];
+
+function finiteNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function latestDate(value: unknown): Date | null {
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const date = new Date(value);
+    return Number.isFinite(date.getTime()) ? date : null;
+  }
+  return null;
+}
+
+function positionUnderlyingDirection(direction?: SignalOptionsPositionDirection | null) {
+  return direction === "sell" || direction === "short" ? -1 : 1;
+}
+
+function selectWireBaselineRung(
+  profile: SignalOptionsExecutionProfile,
+  peakReturnPct: number,
+): SignalOptionsExecutionProfile["exitPolicy"]["wireGreekTrail"]["rungByProfit"][number] | null {
+  const steps = profile.exitPolicy.wireGreekTrail.rungByProfit;
+  if (!profile.exitPolicy.wireGreekTrail.enabled || !steps.length) {
+    return null;
+  }
+  return steps.reduce<(typeof steps)[number] | null>(
+    (selected, step) =>
+      peakReturnPct >= step.activationPct &&
+      (!selected || step.activationPct > selected.activationPct)
+        ? step
+        : selected,
+    null,
+  );
+}
+
+function adjustWireRung(
+  rung: SignalOptionsWireTrailRung,
+  adjustment: -1 | 0 | 1,
+): SignalOptionsWireTrailRung {
+  const currentIndex = WIRE_RUNG_ORDER.indexOf(rung);
+  const resolvedIndex = currentIndex >= 0 ? currentIndex : WIRE_RUNG_ORDER.length - 1;
+  return WIRE_RUNG_ORDER[
+    Math.min(WIRE_RUNG_ORDER.length - 1, Math.max(0, resolvedIndex + adjustment))
+  ]!;
+}
+
+function wireValueForRung(input: {
+  context: SignalOptionsWireContext;
+  direction: number;
+  rung: SignalOptionsWireTrailRung;
+}): number | null {
+  const context = input.context;
+  if (input.rung === "trendLine") {
+    const trend =
+      finiteNumber(context.trendLine) ??
+      (input.direction === 1
+        ? finiteNumber(context.lowerBand) ?? finiteNumber(context.lastBullTrendLine)
+        : finiteNumber(context.upperBand) ?? finiteNumber(context.lastBearTrendLine));
+    return trend;
+  }
+  const index = input.rung === "wire1" ? 0 : input.rung === "wire2" ? 1 : 2;
+  const wires = input.direction === 1 ? context.bullWires : context.bearWires;
+  return finiteNumber(wires?.[index]);
+}
+
+function selectUsableWireValue(input: {
+  context: SignalOptionsWireContext;
+  direction: number;
+  rung: SignalOptionsWireTrailRung;
+}): { rung: SignalOptionsWireTrailRung; price: number } | null {
+  const startIndex = WIRE_RUNG_ORDER.indexOf(input.rung);
+  const resolvedStart =
+    startIndex >= 0 ? startIndex : WIRE_RUNG_ORDER.indexOf("wire3");
+  for (let index = resolvedStart; index >= 0; index -= 1) {
+    const rung = WIRE_RUNG_ORDER[index]!;
+    const price = wireValueForRung({ ...input, rung });
+    if (price != null) {
+      return { rung, price };
+    }
+  }
+  for (let index = resolvedStart + 1; index < WIRE_RUNG_ORDER.length; index += 1) {
+    const rung = WIRE_RUNG_ORDER[index]!;
+    const price = wireValueForRung({ ...input, rung });
+    if (price != null) {
+      return { rung, price };
+    }
+  }
+  return null;
+}
+
+function resolveGreekFreshness(input: {
+  greeks?: SignalOptionsGreekSnapshot | null;
+  profile: SignalOptionsExecutionProfile;
+  now?: Date | null;
+}) {
+  const greeks = input.greeks ?? null;
+  if (!greeks) {
+    return { fresh: false, ageMs: null, reason: "missing_greeks" };
+  }
+  const explicitAge = finiteNumber(greeks.ageMs);
+  const updatedAt = latestDate(greeks.updatedAt);
+  const now = input.now ?? new Date();
+  const ageMs =
+    explicitAge ??
+    (updatedAt ? Math.max(0, now.getTime() - updatedAt.getTime()) : null);
+  const fresh =
+    ageMs != null && ageMs <= input.profile.exitPolicy.wireGreekTrail.greekMaxAgeMs;
+  return {
+    fresh,
+    ageMs,
+    reason: fresh ? null : ageMs == null ? "missing_greek_timestamp" : "stale_greeks",
+  };
+}
+
+function resolveWireGreekAdjustment(input: {
+  profile: SignalOptionsExecutionProfile;
+  entryGreeks?: SignalOptionsGreekSnapshot | null;
+  currentGreeks?: SignalOptionsGreekSnapshot | null;
+  markPrice: number;
+  spreadPctOfMid?: number | null;
+  entrySpreadPctOfMid?: number | null;
+  greekFresh: boolean;
+}) {
+  const policy = input.profile.exitPolicy.wireGreekTrail;
+  if (policy.requireFreshGreeks && !input.greekFresh) {
+    return {
+      adjustment: 0 as -1 | 0 | 1,
+      reasons: ["greeks_unavailable"],
+      deltaImprovement: null,
+      thetaBurdenPct: null,
+    };
+  }
+
+  const currentDelta = finiteNumber(input.currentGreeks?.delta);
+  const entryDelta = finiteNumber(input.entryGreeks?.delta);
+  const gamma = finiteNumber(input.currentGreeks?.gamma);
+  const theta = finiteNumber(input.currentGreeks?.theta);
+  const deltaImprovement =
+    currentDelta != null && entryDelta != null
+      ? Math.abs(currentDelta) - Math.abs(entryDelta)
+      : null;
+  const thetaBurdenPct =
+    theta != null && input.markPrice > 0
+      ? Math.abs(theta) / input.markPrice * 100
+      : null;
+  const reasons: string[] = [];
+  let adjustment: -1 | 0 | 1 = 0;
+
+  if (
+    deltaImprovement != null &&
+    deltaImprovement <= policy.deltaTightenThreshold
+  ) {
+    reasons.push("delta_decay");
+    adjustment = -1;
+  }
+  if (thetaBurdenPct != null && thetaBurdenPct >= policy.thetaBurdenTightenPct) {
+    reasons.push("theta_burden");
+    adjustment = -1;
+  }
+
+  const entrySpread = finiteNumber(input.entrySpreadPctOfMid);
+  const spread = finiteNumber(input.spreadPctOfMid);
+  const spreadThreshold = Math.max(
+    input.profile.liquidityGate.maxSpreadPctOfMid,
+    entrySpread != null
+      ? entrySpread * policy.spreadWideningMultiplier
+      : input.profile.liquidityGate.maxSpreadPctOfMid,
+  );
+  if (spread != null && spread > spreadThreshold) {
+    reasons.push("spread_widening");
+    adjustment = -1;
+  }
+
+  if (
+    adjustment === 0 &&
+    deltaImprovement != null &&
+    deltaImprovement >= policy.deltaLoosenThreshold &&
+    gamma != null &&
+    gamma >= policy.strongGammaMin
+  ) {
+    reasons.push("delta_gamma_support");
+    adjustment = 1;
+  }
+
+  return {
+    adjustment,
+    reasons,
+    deltaImprovement,
+    thetaBurdenPct,
+  };
+}
+
 export function computeSignalOptionsPositionStop(input: {
   entryPrice: number;
   peakPrice: number;
   markPrice: number;
   profile: SignalOptionsExecutionProfile;
+  direction?: SignalOptionsPositionDirection | null;
+  underlyingSpot?: number | null;
+  wireContext?: SignalOptionsWireContext | null;
+  currentGreeks?: SignalOptionsGreekSnapshot | null;
+  entryGreeks?: SignalOptionsGreekSnapshot | null;
+  spreadPctOfMid?: number | null;
   barsSinceEntry?: number | null;
   signalQuality?: SignalOptionsEntryQuality | null;
+  now?: Date | null;
 }) {
   const { entryPrice, peakPrice, markPrice, profile } = input;
   const conditional = resolveConditionalExitPolicy({
@@ -105,30 +345,100 @@ export function computeSignalOptionsPositionStop(input: {
   const markReturnPct =
     entryPrice > 0 ? ((markPrice - entryPrice) / entryPrice) * 100 : 0;
   const progressiveTrailStep = selectProgressiveTrailStep(profile, returnPct);
+  const wireBaselineStep = selectWireBaselineRung(profile, returnPct);
+  const greekFreshness = resolveGreekFreshness({
+    greeks: input.currentGreeks,
+    profile,
+    now: input.now,
+  });
+  const greekAdjustment = wireBaselineStep
+    ? resolveWireGreekAdjustment({
+        profile,
+        entryGreeks: input.entryGreeks,
+        currentGreeks: input.currentGreeks,
+        markPrice,
+        spreadPctOfMid: input.spreadPctOfMid,
+        entrySpreadPctOfMid: input.signalQuality?.spreadPctOfMid,
+        greekFresh: greekFreshness.fresh,
+      })
+    : {
+        adjustment: 0 as -1 | 0 | 1,
+        reasons: [] as string[],
+        deltaImprovement: null,
+        thetaBurdenPct: null,
+      };
+  const selectedWireRung = wireBaselineStep
+    ? adjustWireRung(wireBaselineStep.rung, greekAdjustment.adjustment)
+    : null;
+  const underlyingDirection = positionUnderlyingDirection(input.direction);
+  const wireContext = input.wireContext ?? null;
+  const regimeDirection = finiteNumber(wireContext?.regimeDirection);
+  const previousRegimeDirection = finiteNumber(wireContext?.previousRegimeDirection);
+  const regimeFlipAgainstPosition =
+    regimeDirection != null &&
+    previousRegimeDirection != null &&
+    previousRegimeDirection === underlyingDirection &&
+    regimeDirection !== underlyingDirection;
+  const selectedWire =
+    wireContext && selectedWireRung
+      ? selectUsableWireValue({
+          context: wireContext,
+          direction: underlyingDirection,
+          rung: regimeFlipAgainstPosition ? "trendLine" : selectedWireRung,
+        })
+      : null;
+  const latestUnderlyingClose = finiteNumber(wireContext?.latestClose);
+  const structureBreak =
+    Boolean(selectedWire && latestUnderlyingClose != null && !regimeFlipAgainstPosition) &&
+    (underlyingDirection === 1
+      ? latestUnderlyingClose! <= selectedWire!.price
+      : latestUnderlyingClose! >= selectedWire!.price);
   const usesProgressiveTrail =
     profile.exitPolicy.progressiveTrailEnabled &&
     profile.exitPolicy.progressiveTrailSteps.length > 0;
-  const trailActive = usesProgressiveTrail
+  const usesWireTrail =
+    profile.exitPolicy.wireGreekTrail.enabled &&
+    wireBaselineStep != null &&
+    selectedWire != null;
+  const legacyTrailActive = usesProgressiveTrail
     ? progressiveTrailStep != null
     : returnPct >= profile.exitPolicy.trailActivationPct;
+  const trailActive = usesWireTrail || legacyTrailActive;
   const minLockedGainPct =
     progressiveTrailStep?.minLockedGainPct ?? profile.exitPolicy.minLockedGainPct;
-  const givebackPct =
+  const legacyGivebackPct =
     peakPrice >= entryPrice * 10
       ? profile.exitPolicy.tightenAtTenXGivebackPct
       : peakPrice >= entryPrice * 5
         ? profile.exitPolicy.tightenAtFiveXGivebackPct
         : (progressiveTrailStep?.givebackPct ?? conditional.trailGivebackPct);
+  const givebackPct =
+    regimeFlipAgainstPosition && usesWireTrail
+      ? Math.min(legacyGivebackPct, profile.exitPolicy.tightenAtTenXGivebackPct)
+      : legacyGivebackPct;
+  const deltaSizedGiveback =
+    profile.exitPolicy.wireGreekTrail.deltaSizingEnabled &&
+    usesWireTrail &&
+    greekFreshness.fresh &&
+    selectedWire &&
+    (finiteNumber(input.underlyingSpot) ?? latestUnderlyingClose) != null &&
+    finiteNumber(input.currentGreeks?.delta) != null
+      ? Math.abs(finiteNumber(input.currentGreeks?.delta)!) *
+        Math.abs((finiteNumber(input.underlyingSpot) ?? latestUnderlyingClose)! - selectedWire.price) *
+        100
+      : null;
   const trailStopPrice = trailActive
     ? Math.max(
         entryPrice * (1 + minLockedGainPct / 100),
-        peakPrice * (1 - givebackPct / 100),
+        deltaSizedGiveback != null
+          ? peakPrice - deltaSizedGiveback
+          : peakPrice * (1 - givebackPct / 100),
       )
     : null;
   const stopPrice = Number(
     Math.max(hardStopPrice, trailStopPrice ?? hardStopPrice).toFixed(2),
   );
-  const exitReason =
+  const premiumExitReason =
     markPrice <= stopPrice
       ? trailActive && trailStopPrice != null && markPrice <= trailStopPrice
         ? "runner_trail_stop"
@@ -140,6 +450,7 @@ export function computeSignalOptionsPositionStop(input: {
           markReturnPct <= -conditional.earlyExitLossPct
         ? "early_invalidation"
       : null;
+  const exitReason = premiumExitReason ?? (structureBreak ? "wire_structure_break" : null);
 
   return {
     hardStopPrice,
@@ -149,12 +460,32 @@ export function computeSignalOptionsPositionStop(input: {
     givebackPct,
     stopPrice,
     exitReason,
+    premiumExitReason,
     returnPct,
     markReturnPct,
     barsSinceEntry: input.barsSinceEntry ?? null,
     signalQuality: input.signalQuality ?? null,
     conditionalExitPolicy: conditional,
     progressiveTrailStep,
+    wireTrail: {
+      enabled: profile.exitPolicy.wireGreekTrail.enabled,
+      active: usesWireTrail,
+      baselineStep: wireBaselineStep,
+      baselineRung: wireBaselineStep?.rung ?? null,
+      selectedRung: selectedWire?.rung ?? selectedWireRung,
+      selectedWirePrice: selectedWire?.price ?? null,
+      latestUnderlyingClose,
+      latestUnderlyingBarAt: wireContext?.latestBarAt ?? null,
+      structureBreak,
+      regimeDirection,
+      previousRegimeDirection,
+      regimeFlipAgainstPosition,
+      greekFresh: greekFreshness.fresh,
+      greekAgeMs: greekFreshness.ageMs,
+      greekFallbackReason: greekFreshness.reason,
+      greekAdjustment,
+      deltaSizedGiveback,
+    },
   };
 }
 

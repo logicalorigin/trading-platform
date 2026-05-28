@@ -7,6 +7,31 @@ export type SignalOptionsProgressiveTrailStep = {
   givebackPct: number;
 };
 
+export type SignalOptionsWireTrailRung =
+  | "trendLine"
+  | "wire1"
+  | "wire2"
+  | "wire3";
+
+export type SignalOptionsWireTrailStep = {
+  activationPct: number;
+  rung: SignalOptionsWireTrailRung;
+};
+
+export type SignalOptionsWireGreekTrailPolicy = {
+  enabled: boolean;
+  requireFreshGreeks: boolean;
+  greekMaxAgeMs: number;
+  deltaSizingEnabled: boolean;
+  runnerPollIntervalSeconds: number;
+  rungByProfit: SignalOptionsWireTrailStep[];
+  deltaLoosenThreshold: number;
+  deltaTightenThreshold: number;
+  thetaBurdenTightenPct: number;
+  strongGammaMin: number;
+  spreadWideningMultiplier: number;
+};
+
 export type SignalOptionsExecutionProfile = {
   version: "v1";
   mode: "shadow";
@@ -58,6 +83,7 @@ export type SignalOptionsExecutionProfile = {
     tightenAtTenXGivebackPct: number;
     progressiveTrailEnabled: boolean;
     progressiveTrailSteps: SignalOptionsProgressiveTrailStep[];
+    wireGreekTrail: SignalOptionsWireGreekTrailPolicy;
     flipOnOppositeSignal: boolean;
     earlyExitBars: number;
     earlyExitLossPct: number;
@@ -111,6 +137,13 @@ export const tunedSignalOptionsStrategySettings = {
     chochVolumeGate: 0,
   },
 } as const;
+
+export const signalOptionsDefaultWireTrailRungs = [
+  { activationPct: 35, rung: "wire3" },
+  { activationPct: 65, rung: "wire2" },
+  { activationPct: 100, rung: "wire1" },
+  { activationPct: 200, rung: "trendLine" },
+] as const satisfies readonly SignalOptionsWireTrailStep[];
 
 export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile =
   {
@@ -175,6 +208,19 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       tightenAtTenXGivebackPct: 15,
       progressiveTrailEnabled: false,
       progressiveTrailSteps: [],
+      wireGreekTrail: {
+        enabled: false,
+        requireFreshGreeks: true,
+        greekMaxAgeMs: 15_000,
+        deltaSizingEnabled: false,
+        runnerPollIntervalSeconds: 20,
+        rungByProfit: [...signalOptionsDefaultWireTrailRungs],
+        deltaLoosenThreshold: 0.05,
+        deltaTightenThreshold: -0.1,
+        thetaBurdenTightenPct: 8,
+        strongGammaMin: 0.05,
+        spreadWideningMultiplier: 1.5,
+      },
       flipOnOppositeSignal: true,
       earlyExitBars: 0,
       earlyExitLossPct: 0,
@@ -240,6 +286,19 @@ export const tunedSignalOptionsExecutionProfilePatch = {
     tightenAtTenXGivebackPct: 15,
     progressiveTrailEnabled: true,
     progressiveTrailSteps: aggressiveSignalOptionsProgressiveTrailSteps,
+    wireGreekTrail: {
+      enabled: true,
+      requireFreshGreeks: true,
+      greekMaxAgeMs: 15_000,
+      deltaSizingEnabled: false,
+      runnerPollIntervalSeconds: 20,
+      rungByProfit: signalOptionsDefaultWireTrailRungs,
+      deltaLoosenThreshold: 0.05,
+      deltaTightenThreshold: -0.1,
+      thetaBurdenTightenPct: 8,
+      strongGammaMin: 0.05,
+      spreadWideningMultiplier: 1.5,
+    },
     overnightExitEnabled: true,
     overnightMinGainPct: 10,
     overnightRunnerGivebackPct: 15,
@@ -345,6 +404,109 @@ function progressiveTrailSteps(
     .sort((left, right) => left.activationPct - right.activationPct);
 
   return steps.length ? steps : fallback;
+}
+
+const SIGNAL_OPTIONS_WIRE_TRAIL_RUNGS: readonly SignalOptionsWireTrailRung[] = [
+  "trendLine",
+  "wire1",
+  "wire2",
+  "wire3",
+];
+
+function wireTrailRung(
+  value: unknown,
+  fallback: SignalOptionsWireTrailRung,
+): SignalOptionsWireTrailRung {
+  const resolved = String(value || "").trim() as SignalOptionsWireTrailRung;
+  return SIGNAL_OPTIONS_WIRE_TRAIL_RUNGS.includes(resolved)
+    ? resolved
+    : fallback;
+}
+
+function wireTrailSteps(
+  value: unknown,
+  fallback: SignalOptionsWireTrailStep[],
+): SignalOptionsWireTrailStep[] {
+  if (!Array.isArray(value)) {
+    return fallback.map((step) => ({ ...step }));
+  }
+
+  const steps = value
+    .map((step) => asRecord(step))
+    .map((step) => ({
+      activationPct: finiteNumber(step.activationPct, Number.NaN, 0, 10_000),
+      rung: wireTrailRung(step.rung, "wire3"),
+    }))
+    .filter((step) => Number.isFinite(step.activationPct))
+    .sort((left, right) => left.activationPct - right.activationPct);
+
+  return steps.length ? steps : fallback.map((step) => ({ ...step }));
+}
+
+function wireGreekTrailPolicy(
+  value: unknown,
+  root: Record<string, unknown>,
+  fallback: SignalOptionsWireGreekTrailPolicy,
+): SignalOptionsWireGreekTrailPolicy {
+  const source = asRecord(value);
+  return {
+    enabled: booleanValue(source.enabled ?? root.wireGreekTrailEnabled, fallback.enabled),
+    requireFreshGreeks: booleanValue(
+      source.requireFreshGreeks ?? root.wireGreekTrailRequireFreshGreeks,
+      fallback.requireFreshGreeks,
+    ),
+    greekMaxAgeMs: finiteInteger(
+      source.greekMaxAgeMs ?? root.wireGreekTrailGreekMaxAgeMs,
+      fallback.greekMaxAgeMs,
+      1_000,
+      300_000,
+    ),
+    deltaSizingEnabled: booleanValue(
+      source.deltaSizingEnabled ?? root.wireGreekTrailDeltaSizingEnabled,
+      fallback.deltaSizingEnabled,
+    ),
+    runnerPollIntervalSeconds: finiteInteger(
+      source.runnerPollIntervalSeconds ??
+        root.wireGreekTrailRunnerPollIntervalSeconds,
+      fallback.runnerPollIntervalSeconds,
+      15,
+      3_600,
+    ),
+    rungByProfit: wireTrailSteps(
+      source.rungByProfit ?? root.wireGreekTrailRungByProfit,
+      fallback.rungByProfit,
+    ),
+    deltaLoosenThreshold: finiteNumber(
+      source.deltaLoosenThreshold ?? root.wireGreekTrailDeltaLoosenThreshold,
+      fallback.deltaLoosenThreshold,
+      -10,
+      10,
+    ),
+    deltaTightenThreshold: finiteNumber(
+      source.deltaTightenThreshold ?? root.wireGreekTrailDeltaTightenThreshold,
+      fallback.deltaTightenThreshold,
+      -10,
+      10,
+    ),
+    thetaBurdenTightenPct: finiteNumber(
+      source.thetaBurdenTightenPct ?? root.wireGreekTrailThetaBurdenTightenPct,
+      fallback.thetaBurdenTightenPct,
+      0,
+      1_000,
+    ),
+    strongGammaMin: finiteNumber(
+      source.strongGammaMin ?? root.wireGreekTrailStrongGammaMin,
+      fallback.strongGammaMin,
+      0,
+      10,
+    ),
+    spreadWideningMultiplier: finiteNumber(
+      source.spreadWideningMultiplier ?? root.wireGreekTrailSpreadWideningMultiplier,
+      fallback.spreadWideningMultiplier,
+      1,
+      100,
+    ),
+  };
 }
 
 function symbolList(value: unknown, fallback: string[]) {
@@ -571,6 +733,11 @@ export function resolveSignalOptionsExecutionProfile(
       progressiveTrailSteps: progressiveTrailSteps(
         exitPolicy.progressiveTrailSteps ?? root.progressiveTrailSteps,
         defaults.exitPolicy.progressiveTrailSteps,
+      ),
+      wireGreekTrail: wireGreekTrailPolicy(
+        exitPolicy.wireGreekTrail ?? root.wireGreekTrail,
+        root,
+        defaults.exitPolicy.wireGreekTrail,
       ),
       flipOnOppositeSignal: booleanValue(
         exitPolicy.flipOnOppositeSignal ?? root.flipOnOppositeSignal,

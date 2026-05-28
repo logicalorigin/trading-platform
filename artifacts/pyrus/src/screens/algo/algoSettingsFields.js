@@ -5,6 +5,7 @@ import {
   formatChaseSteps,
   formatMoney,
   formatProgressiveTrailSteps,
+  formatWireTrailRungs,
 } from "./algoHelpers";
 
 export const getPathValue = (source, path) =>
@@ -36,6 +37,7 @@ export const formatSettingValue = (field, value) => {
   if (field.format === "chaseSteps") return formatChaseSteps(value);
   if (field.format === "progressiveTrailSteps")
     return formatProgressiveTrailSteps(value);
+  if (field.format === "wireTrailRungs") return formatWireTrailRungs(value);
   if (value == null || value === "") return "blank";
   return String(value);
 };
@@ -400,6 +402,53 @@ const SETTING_FIELD_SECTIONS = [
       },
       {
         slice: "profile",
+        path: "exitPolicy.wireGreekTrail.enabled",
+        label: "WIRE GREEK TRAIL",
+        type: "boolean",
+      },
+      {
+        slice: "profile",
+        path: "exitPolicy.wireGreekTrail.requireFreshGreeks",
+        label: "FRESH GREEKS",
+        type: "boolean",
+      },
+      {
+        slice: "profile",
+        path: "exitPolicy.wireGreekTrail.rungByProfit",
+        label: "WIRE RUNG MAP",
+        type: "text",
+        format: "wireTrailRungs",
+        fullWidth: true,
+        unit: "activation/rung",
+      },
+      {
+        slice: "profile",
+        path: "exitPolicy.wireGreekTrail.runnerPollIntervalSeconds",
+        label: "RUNNER POLL",
+        type: "number",
+        step: 5,
+        min: 15,
+        max: 3600,
+        unit: "sec",
+      },
+      {
+        slice: "profile",
+        path: "exitPolicy.wireGreekTrail.greekMaxAgeMs",
+        label: "GREEK MAX AGE",
+        type: "number",
+        step: 1000,
+        min: 1000,
+        max: 300000,
+        unit: "ms",
+      },
+      {
+        slice: "profile",
+        path: "exitPolicy.wireGreekTrail.deltaSizingEnabled",
+        label: "DELTA FLOOR",
+        type: "boolean",
+      },
+      {
+        slice: "profile",
         path: "exitPolicy.tightenAtFiveXGivebackPct",
         label: "5X GIVEBACK %",
         type: "number",
@@ -729,6 +778,23 @@ export const SETTINGS_SECTIONS = [
       field("exitPolicy.progressiveTrailSteps", {
         compactLabel: "Prog Steps",
         compactWide: true,
+      }),
+      field("exitPolicy.wireGreekTrail.enabled", { compactLabel: "Wire Trail" }),
+      field("exitPolicy.wireGreekTrail.rungByProfit", {
+        compactLabel: "Wire Rungs",
+        compactWide: true,
+      }),
+      field("exitPolicy.wireGreekTrail.requireFreshGreeks", {
+        compactLabel: "Fresh Greeks",
+      }),
+      field("exitPolicy.wireGreekTrail.runnerPollIntervalSeconds", {
+        compactLabel: "Runner Poll",
+      }),
+      field("exitPolicy.wireGreekTrail.greekMaxAgeMs", {
+        compactLabel: "Greek Age",
+      }),
+      field("exitPolicy.wireGreekTrail.deltaSizingEnabled", {
+        compactLabel: "Delta Floor",
       }),
       field("exitPolicy.trailGivebackPct", { compactLabel: "Trail Giveback" }),
       field("exitPolicy.flipOnOppositeSignal", { compactLabel: "Flip Exit" }),

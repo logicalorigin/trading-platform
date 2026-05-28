@@ -34,6 +34,7 @@ type ListAlgoDeploymentsInput = {
 type ListExecutionEventsInput = {
   deploymentId?: string;
   limit?: number;
+  includePayload?: boolean;
 };
 
 const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"] as const;
@@ -184,6 +185,7 @@ function isRetiredShadowEquityForwardConfig(configValue: unknown) {
 
 function executionEventToResponse(
   event: typeof executionEventsTable.$inferSelect,
+  input: { includePayload?: boolean } = {},
 ) {
   return {
     id: event.id,
@@ -193,7 +195,7 @@ function executionEventToResponse(
     symbol: event.symbol ?? null,
     eventType: event.eventType,
     summary: normalizeLegacyAlgoBrandText(event.summary),
-    payload: normalizeLegacyAlgoBranding(event.payload),
+    payload: input.includePayload ? normalizeLegacyAlgoBranding(event.payload) : {},
     occurredAt: event.occurredAt,
     createdAt: event.createdAt,
     updatedAt: event.updatedAt,
@@ -430,6 +432,10 @@ export async function listExecutionEvents(input: ListExecutionEventsInput) {
     .limit(Math.min(Math.max(input.limit ?? 100, 1), 500));
 
   return {
-    events: rows.map(executionEventToResponse),
+    events: rows.map((event) =>
+      executionEventToResponse(event, {
+        includePayload: input.includePayload === true,
+      }),
+    ),
   };
 }

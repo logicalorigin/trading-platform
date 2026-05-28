@@ -281,7 +281,13 @@ function resolvePollIntervalSeconds(deployment: AlgoDeployment): number {
   const config = asRecord(deployment.config);
   const signalOptions = asRecord(config.signalOptions);
   const worker = asRecord(signalOptions.worker);
-  return positiveInteger(worker.pollIntervalSeconds, 60, 15, 3600);
+  const configured = positiveInteger(worker.pollIntervalSeconds, 60, 15, 3600);
+  const profile = resolveSignalOptionsExecutionProfile(config);
+  const wireRunnerPoll =
+    profile.exitPolicy.wireGreekTrail.enabled === true
+      ? profile.exitPolicy.wireGreekTrail.runnerPollIntervalSeconds
+      : configured;
+  return Math.min(configured, positiveInteger(wireRunnerPoll, configured, 15, 3600));
 }
 
 function createDeploymentRuntime(signature: string): DeploymentRuntime {

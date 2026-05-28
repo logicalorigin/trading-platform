@@ -20,6 +20,13 @@ export const SIGNAL_OPTIONS_AGGRESSIVE_PROGRESSIVE_TRAIL_STEPS = [
   { activationPct: 100, minLockedGainPct: 60, givebackPct: 15 },
 ];
 
+export const SIGNAL_OPTIONS_DEFAULT_WIRE_TRAIL_RUNGS = [
+  { activationPct: 35, rung: "wire3" },
+  { activationPct: 65, rung: "wire2" },
+  { activationPct: 100, rung: "wire1" },
+  { activationPct: 200, rung: "trendLine" },
+];
+
 export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
   version: "v1",
   mode: "shadow",
@@ -82,6 +89,19 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
     tightenAtTenXGivebackPct: 15,
     progressiveTrailEnabled: true,
     progressiveTrailSteps: SIGNAL_OPTIONS_AGGRESSIVE_PROGRESSIVE_TRAIL_STEPS,
+    wireGreekTrail: {
+      enabled: true,
+      requireFreshGreeks: true,
+      greekMaxAgeMs: 15000,
+      deltaSizingEnabled: false,
+      runnerPollIntervalSeconds: 20,
+      rungByProfit: SIGNAL_OPTIONS_DEFAULT_WIRE_TRAIL_RUNGS,
+      deltaLoosenThreshold: 0.05,
+      deltaTightenThreshold: -0.1,
+      thetaBurdenTightenPct: 8,
+      strongGammaMin: 0.05,
+      spreadWideningMultiplier: 1.5,
+    },
     flipOnOppositeSignal: true,
     earlyExitBars: 8,
     earlyExitLossPct: 25,
@@ -752,6 +772,7 @@ export const mergeSignalOptionsProfile = (source) => {
   const signalOptions = asRecord(config.signalOptions);
   const rawProfile = Object.keys(signalOptions).length ? signalOptions : {};
   const rawOptionSelection = asRecord(rawProfile.optionSelection);
+  const rawExitPolicy = asRecord(rawProfile.exitPolicy);
   const parameters = asRecord(config.parameters);
   const profile = cloneProfile({
     ...SIGNAL_OPTIONS_DEFAULT_PROFILE,
@@ -796,7 +817,11 @@ export const mergeSignalOptionsProfile = (source) => {
     },
     exitPolicy: {
       ...SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy,
-      ...asRecord(rawProfile.exitPolicy),
+      ...rawExitPolicy,
+      wireGreekTrail: {
+        ...SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy.wireGreekTrail,
+        ...asRecord(rawExitPolicy.wireGreekTrail),
+      },
     },
     riskHaltControls: {
       ...SIGNAL_OPTIONS_DEFAULT_PROFILE.riskHaltControls,
@@ -953,6 +978,191 @@ export const formatProgressiveTrailSteps = (steps) =>
         )
         .join(", ")
     : "";
+
+export const formatWireTrailRungs = (steps) =>
+  Array.isArray(steps)
+    ? steps
+        .map((step) => {
+          const activationPct = Number(step?.activationPct);
+          const rung = String(step?.rung || "").trim();
+          return `${Number.isFinite(activationPct) ? activationPct : ""}/${rung}`;
+        })
+        .join(", ")
+    : "";
+
+const WIRE_TRAIL_RUNG_VALUES = new Set(["trendLine", "wire1", "wire2", "wire3"]);
+const WIRE_TRAIL_DISPLAY_ORDER = ["wire3", "wire2", "wire1", "trendLine"];
+const WIRE_TRAIL_RUNG_LABELS = {
+  wire3: "W3",
+  wire2: "W2",
+  wire1: "W1",
+  trendLine: "TL",
+};
+
+export const parseWireTrailRungs = (value, fallback = []) => {
+  const parsed = String(value || "")
+    .split(/\s*,\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const [activationRaw, rungRaw] = item.split(/[/:|\s]+/);
+      const activationPct = Number(String(activationRaw || "").replace(/%$/, ""));
+      const rung = String(rungRaw || "").trim();
+      return {
+        activationPct,
+        rung: WIRE_TRAIL_RUNG_VALUES.has(rung) ? rung : null,
+      };
+    })
+    .filter((step) => Number.isFinite(step.activationPct) && step.rung)
+    .map((step) => ({
+      activationPct: Math.min(10_000, Math.max(0, step.activationPct)),
+      rung: step.rung,
+    }))
+    .sort((left, right) => left.activationPct - right.activationPct);
+  return parsed.length ? parsed : fallback;
+};
+
+const finiteMetricOrNull = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const textMetricOrNull = (value) => {
+  const text = String(value ?? "").trim();
+  return text || null;
+};
+
+export const resolvePositionWireTrailState = (position) => {
+  const record = asRecord(position);
+  const stop = asRecord(record.lastStop ?? record.stop);
+  const wireTrail = asRecord(record.lastWireTrail ?? stop.wireTrail);
+  const selectedRung = textMetricOrNull(wireTrail.selectedRung);
+  const greekFallbackReason = textMetricOrNull(wireTrail.greekFallbackReason);
+
+  return {
+    enabled: wireTrail.enabled === true,
+    active: wireTrail.active === true,
+    selectedRung: WIRE_TRAIL_RUNG_VALUES.has(selectedRung)
+      ? selectedRung
+      : null,
+    selectedRungLabel: WIRE_TRAIL_RUNG_VALUES.has(selectedRung)
+      ? WIRE_TRAIL_RUNG_LABELS[selectedRung]
+      : MISSING_VALUE,
+    selectedWirePrice: finiteMetricOrNull(wireTrail.selectedWirePrice),
+    latestUnderlyingClose: finiteMetricOrNull(wireTrail.latestUnderlyingClose),
+    structureBreak: wireTrail.structureBreak === true,
+    regimeFlipAgainstPosition: wireTrail.regimeFlipAgainstPosition === true,
+    greekFresh: wireTrail.greekFresh === true,
+    greekAgeMs: finiteMetricOrNull(wireTrail.greekAgeMs),
+    greekFallbackReason,
+    deltaSizedGiveback: finiteMetricOrNull(wireTrail.deltaSizedGiveback),
+  };
+};
+
+export const deriveWireTrailControlSummary = ({
+  profile,
+  positions,
+} = {}) => {
+  const exitPolicy = asRecord(asRecord(profile).exitPolicy);
+  const wireGreekTrail = asRecord(exitPolicy.wireGreekTrail);
+  const enabled = wireGreekTrail.enabled === true;
+  const positionList = Array.isArray(positions) ? positions : [];
+  const states = positionList.map(resolvePositionWireTrailState);
+  const openPositions = positionList.length;
+  const activePositions = states.filter((state) => state.active).length;
+  const floorOnlyPositions = enabled
+    ? Math.max(0, openPositions - activePositions)
+    : openPositions;
+  const missingWireContextPositions = enabled
+    ? states.filter(
+        (state) =>
+          !state.active &&
+          state.selectedWirePrice == null &&
+          state.latestUnderlyingClose == null,
+      ).length
+    : 0;
+  const greekFallbackPositions = states.filter(
+    (state) => Boolean(state.greekFallbackReason),
+  ).length;
+  const staleGreekPositions = states.filter((state) =>
+    /stale/i.test(state.greekFallbackReason || ""),
+  ).length;
+  const missingGreekPositions = states.filter((state) =>
+    /missing|unavailable|absent/i.test(state.greekFallbackReason || ""),
+  ).length;
+  const freshGreekPositions = states.filter((state) => state.greekFresh).length;
+  const structureBreakPositions = states.filter(
+    (state) => state.structureBreak,
+  ).length;
+  const regimeFlipPositions = states.filter(
+    (state) => state.regimeFlipAgainstPosition,
+  ).length;
+  const rungCounts = WIRE_TRAIL_DISPLAY_ORDER.reduce(
+    (counts, rung) => ({ ...counts, [rung]: 0 }),
+    {},
+  );
+  for (const state of states) {
+    if (state.selectedRung && Object.hasOwn(rungCounts, state.selectedRung)) {
+      rungCounts[state.selectedRung] += 1;
+    }
+  }
+  const runnerPollIntervalSeconds = finiteMetricOrNull(
+    wireGreekTrail.runnerPollIntervalSeconds,
+  );
+  const degraded =
+    enabled &&
+    openPositions > 0 &&
+    (missingWireContextPositions > 0 || greekFallbackPositions > 0);
+  const status = !enabled
+    ? "off"
+    : degraded
+      ? "degraded"
+      : activePositions > 0
+        ? "active"
+        : "armed";
+  const statusLabel = {
+    off: "OFF",
+    armed: "ARMED",
+    active: "ACTIVE",
+    degraded: "DEGRADED",
+  }[status];
+  const rungSummary = WIRE_TRAIL_DISPLAY_ORDER.map(
+    (rung) => `${WIRE_TRAIL_RUNG_LABELS[rung]} ${rungCounts[rung] ?? 0}`,
+  ).join(" · ");
+  const greekSummary = !enabled
+    ? MISSING_VALUE
+    : openPositions === 0
+      ? "ready"
+      : greekFallbackPositions > 0
+        ? `${freshGreekPositions}/${openPositions} fresh · ${greekFallbackPositions} fallback`
+        : `${freshGreekPositions}/${openPositions} fresh`;
+  const structureSummary = !enabled
+    ? MISSING_VALUE
+    : openPositions === 0
+      ? "armed"
+      : `${activePositions}/${openPositions} wire`;
+
+  return {
+    enabled,
+    status,
+    statusLabel,
+    openPositions,
+    activePositions,
+    floorOnlyPositions,
+    missingWireContextPositions,
+    freshGreekPositions,
+    greekFallbackPositions,
+    staleGreekPositions,
+    missingGreekPositions,
+    structureBreakPositions,
+    regimeFlipPositions,
+    runnerPollIntervalSeconds,
+    rungCounts,
+    rungSummary,
+    greekSummary,
+    structureSummary,
+  };
+};
 
 export const parseProgressiveTrailSteps = (value, fallback = []) => {
   const parsed = String(value || "")

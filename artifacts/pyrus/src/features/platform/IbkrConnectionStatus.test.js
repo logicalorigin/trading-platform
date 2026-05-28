@@ -1691,6 +1691,132 @@ test("buildHeaderIbkrPopoverModel exposes provider and line usage summaries", ()
   );
 });
 
+test("buildHeaderIbkrPopoverModel surfaces Massive REST and WebSocket details", () => {
+  const model = buildHeaderIbkrPopoverModel({
+    connection: {
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      liveMarketDataAvailable: true,
+      healthFresh: true,
+      accountsLoaded: true,
+      configuredLiveMarketDataMode: true,
+      streamFresh: true,
+      strictReady: true,
+    },
+    runtimeDiagnostics: {
+      providers: {
+        polygon: {
+          configured: true,
+          status: "ok",
+          baseUrl: "https://api.massive.com",
+          lastSuccessAt: new Date().toISOString(),
+        },
+        massive: {
+          configured: true,
+          providerIdentity: "massive",
+          baseUrlHost: "api.massive.com",
+          stocksRealtimeConfigured: true,
+          rest: {
+            status: "ok",
+            lastRequest: {
+              purpose: "bars",
+              symbol: "SPY",
+              timeframe: "1 minute",
+              resultCount: 2,
+              durationMs: 42,
+            },
+            recentRequests: [],
+          },
+          websocket: {
+            status: "ok",
+            mode: "real-time",
+            activeChannels: ["AM"],
+            availableChannels: ["AM", "Q", "T"],
+            subscribedSymbolCount: 8,
+            activeConsumerCount: 1,
+            eventCount: 22,
+            lastMessageAgeMs: 750,
+          },
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(
+    model.providerRows.map((row) => [row.label, row.value]),
+    [
+      ["IBKR", "Ready"],
+      ["Massive", "OK"],
+    ],
+  );
+  assert.match(model.providerRows[1].detail, /WS AM/);
+  assert.equal(model.providerRows[1].statusIconKey, "check");
+  assert.equal(model.providerRows[1].host, "api.massive.com");
+  assert.deepEqual(
+    model.providerRows[1].summary.map((lane) => [lane.id, lane.iconKey, lane.statusIconKey]),
+    [
+      ["rest", "database", "check"],
+      ["websocket", "websocket", "check"],
+    ],
+  );
+  assert.ok(
+    model.providerRows[1].summary[0].chips.some(
+      (chip) => chip.iconKey === "hash" && chip.label === "SPY",
+    ),
+  );
+  assert.ok(
+    model.providerRows[1].summary[1].channels.some(
+      (channel) => channel.label === "AM" && channel.active === true,
+    ),
+  );
+  const massiveGroup = model.detailGroups.find((group) => group.title === "Massive");
+  assert.ok(massiveGroup);
+  assert.equal(
+    massiveGroup.rows.find((row) => row.label === "REST")?.value,
+    "bars SPY 1 minute · 2 rows",
+  );
+  assert.equal(
+    massiveGroup.rows.find((row) => row.label === "WebSocket")?.value,
+    "AM",
+  );
+});
+
+test("buildHeaderIbkrPopoverModel does not invent Polygon while provider diagnostics load", () => {
+  const model = buildHeaderIbkrPopoverModel({
+    connection: {
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      liveMarketDataAvailable: true,
+      healthFresh: true,
+      accountsLoaded: true,
+      configuredLiveMarketDataMode: true,
+      streamFresh: true,
+      strictReady: true,
+    },
+    runtimeDiagnostics: {
+      ibkr: {
+        configured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        liveMarketDataAvailable: true,
+        healthFresh: true,
+        accountsLoaded: true,
+        configuredLiveMarketDataMode: true,
+        streamFresh: true,
+        strictReady: true,
+      },
+    },
+  });
+
+  assert.deepEqual(
+    model.providerRows.map((row) => row.label),
+    ["IBKR"],
+  );
+});
+
 test("buildHeaderIbkrPopoverModel keeps line usage when runtime diagnostics are unavailable", () => {
   const model = buildHeaderIbkrPopoverModel({
     connection: {

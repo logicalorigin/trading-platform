@@ -2615,6 +2615,7 @@ export function createPyrusSignalsPineRuntimeAdapter(
           atrLength,
           atrSmoothing,
           volatilityMultiplier,
+          wireSpread,
           shadowLength,
           shadowStdDev,
           adxLength,

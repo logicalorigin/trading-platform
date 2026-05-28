@@ -22,6 +22,8 @@ const firstFiniteNumber = (...values) => {
 const recordOrEmpty = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
+const arrayOrEmpty = (value) => (Array.isArray(value) ? value : []);
+
 const formatRuntimeDuration = (durationMs) => {
   const ms = Number(durationMs);
   if (!Number.isFinite(ms) || ms <= 0) {
@@ -104,6 +106,127 @@ const formatScannerSymbolList = (symbols) => {
   const visible = normalized.slice(0, 3);
   const remaining = normalized.length - visible.length;
   return `${visible.join(", ")}${remaining > 0 ? ` +${remaining}` : ""}`;
+};
+
+const normalizeProviderStatus = (status) => {
+  const normalized = String(status || "").toLowerCase();
+  if (["ok", "healthy", "ready"].includes(normalized)) return "ok";
+  if (["degraded", "error", "failed"].includes(normalized)) return "degraded";
+  if (["unconfigured", "missing"].includes(normalized)) return "unconfigured";
+  if (["idle", "unknown"].includes(normalized)) return normalized;
+  return "unknown";
+};
+
+const providerStatusLabel = (status) => {
+  switch (normalizeProviderStatus(status)) {
+    case "ok":
+      return "OK";
+    case "degraded":
+      return "Degraded";
+    case "unconfigured":
+      return "Not configured";
+    case "idle":
+      return "Idle";
+    default:
+      return "No checks yet";
+  }
+};
+
+const providerStatusTone = (status) => {
+  switch (normalizeProviderStatus(status)) {
+    case "ok":
+      return streamStateTokenVar("healthy");
+    case "degraded":
+      return streamStateTokenVar("stale");
+    case "unconfigured":
+      return streamStateTokenVar("offline");
+    default:
+      return streamStateTokenVar("quiet");
+  }
+};
+
+const formatMassiveRestRequestSummary = (request) => {
+  if (!request || typeof request !== "object") {
+    return MISSING_VALUE;
+  }
+  const purpose = String(request.purpose || request.endpointFamily || "request")
+    .replace(/[-_]+/g, " ");
+  const symbol = request.symbol ? ` ${request.symbol}` : "";
+  const timeframe = request.timeframe ? ` ${request.timeframe}` : "";
+  const resultCount = firstFiniteNumber(request.resultCount);
+  const rows = Number.isFinite(resultCount) ? ` · ${Math.round(resultCount)} rows` : "";
+  return `${purpose}${symbol}${timeframe}${rows}`.trim();
+};
+
+export const normalizeMassiveRuntimeDiagnostics = (runtimeDiagnostics) => {
+  const massive = recordOrEmpty(runtimeDiagnostics?.providers?.massive);
+  const rest = recordOrEmpty(massive.rest);
+  const websocket = recordOrEmpty(massive.websocket);
+  const restStatus = normalizeProviderStatus(rest.status);
+  const websocketStatus = normalizeProviderStatus(websocket.status);
+  const status =
+    restStatus === "degraded" || websocketStatus === "degraded"
+      ? "degraded"
+      : restStatus === "ok" || websocketStatus === "ok"
+        ? "ok"
+        : massive.configured === false
+          ? "unconfigured"
+          : restStatus === "idle" || websocketStatus === "idle"
+            ? "idle"
+            : "unknown";
+  const activeChannels = arrayOrEmpty(websocket.activeChannels)
+    .map((channel) => String(channel).trim())
+    .filter(Boolean);
+  const availableChannels = arrayOrEmpty(websocket.availableChannels)
+    .map((channel) => String(channel).trim())
+    .filter(Boolean);
+  const subscribedSymbolCount = firstFiniteNumber(websocket.subscribedSymbolCount);
+  const lastRequest = recordOrEmpty(rest.lastRequest);
+  const lastRestDurationMs = firstFiniteNumber(lastRequest.durationMs);
+
+  return {
+    configured: massive.configured === true,
+    providerIdentity: massive.providerIdentity || null,
+    baseUrlHost: massive.baseUrlHost || null,
+    stocksRealtimeConfigured: massive.stocksRealtimeConfigured === true,
+    status,
+    label: providerStatusLabel(status),
+    tone: providerStatusTone(status),
+    rest: {
+      status: restStatus,
+      label: providerStatusLabel(restStatus),
+      tone: providerStatusTone(restStatus),
+      lastRequest: Object.keys(lastRequest).length ? lastRequest : null,
+      lastRequestSummary: formatMassiveRestRequestSummary(lastRequest),
+      lastRequestAt: lastRequest.observedAt || null,
+      lastDurationMs: lastRestDurationMs,
+      recentRequests: arrayOrEmpty(rest.recentRequests),
+      lastSuccessAt: rest.lastSuccessAt || null,
+      lastFailureAt: rest.lastFailureAt || null,
+      lastError: rest.lastError || null,
+    },
+    websocket: {
+      status: websocketStatus,
+      label: providerStatusLabel(websocketStatus),
+      tone: providerStatusTone(websocketStatus),
+      mode: websocket.mode || null,
+      activeChannels,
+      availableChannels,
+      channelSummary:
+        activeChannels.length > 0
+          ? activeChannels.join(", ")
+          : availableChannels.length > 0
+            ? `${availableChannels.join(", ")} idle`
+            : MISSING_VALUE,
+      subscribedSymbolCount,
+      activeConsumerCount: firstFiniteNumber(websocket.activeConsumerCount),
+      eventCount: firstFiniteNumber(websocket.eventCount),
+      lastMessageAgeMs: firstFiniteNumber(websocket.lastMessageAgeMs),
+      reconnectCount: firstFiniteNumber(websocket.reconnectCount),
+      lastError: websocket.lastError || null,
+      feeds: arrayOrEmpty(websocket.feeds),
+    },
+  };
 };
 
 const formatFlowScannerRuntimeDetail = (admission, used) => {
@@ -965,9 +1088,11 @@ export const buildRuntimeControlSnapshot = ({
   const lineUsage = normalizeAdmissionDiagnostics(admission, lineUsageSnapshot);
   const backendFlowScannerActive = isOptionsFlowScannerRuntimeActive(admission);
   const clientFlowScannerActive = Boolean(flowScannerControl?.ownerActive);
+  const massive = normalizeMassiveRuntimeDiagnostics(runtimeDiagnostics);
   return {
     schemaVersion: RUNTIME_CONTROL_SCHEMA_VERSION,
     lineUsage,
+    massive,
     bridgeGovernor:
       runtimeDiagnostics?.ibkr?.governor ||
       lineUsageSnapshot?.governor ||

@@ -382,13 +382,30 @@ export function subscribePolygonStockMinuteAggregates(
 
 export function getPolygonDelayedWebSocketDiagnostics() {
   const now = Date.now();
+  const config = getPolygonRuntimeConfig();
+  const url = polygonDelayedStocksUrl();
+  const providerIdentity = getPolygonProviderIdentity(config);
+  const subscribedSymbolCount = subscriptionSignature
+    ? subscriptionSignature.split(",").filter(Boolean).length
+    : 0;
+  const socketHost = url ? new URL(url).host : null;
+  const mode =
+    providerIdentity === "massive" && isMassiveStocksRealtimeConfigured(config)
+      ? "real-time"
+      : url
+        ? "delayed"
+        : null;
   return {
     configured: isPolygonDelayedWebSocketConfigured(),
+    providerIdentity,
+    mode,
+    socketHost,
+    availableChannels: ["AM"],
+    subscribedChannels: subscribedSymbolCount > 0 ? ["AM"] : [],
     authState,
     connected: socket?.readyState === WebSocket.OPEN,
-    subscribedSymbolCount: subscriptionSignature
-      ? subscriptionSignature.split(",").filter(Boolean).length
-      : 0,
+    subscribedSymbolCount,
+    subscriptionCount: subscribedSymbolCount,
     activeConsumerCount: subscribers.size,
     reconnectCount,
     eventCount,

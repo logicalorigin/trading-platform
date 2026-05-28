@@ -3,18 +3,157 @@ import {
 } from "react";
 import {
   CSS_COLOR,
+  FONT_WEIGHTS,
+  RADII,
   T,
+  cssColorMix,
   sp,
+  textSize,
 } from "../../lib/uiTokens.jsx";
 import { AlgoDiagnosticsFooter } from "./AlgoDiagnosticsFooter";
 import { AlgoSaveBar } from "./AlgoSaveBar";
 import { AlgoSettingsRegion } from "./AlgoSettingsRegion";
 import { HaltStrip } from "./HaltStrip";
 import {
+  deriveWireTrailControlSummary,
   SIGNAL_OPTIONS_HALT_CONTROL_GROUPS,
   signalOptionsHaltControlValue,
 } from "./algoHelpers";
 import { collectDirtySettingFields } from "./algoSettingsFields";
+
+const WIRE_TRAIL_TONE_COLOR = {
+  active: CSS_COLOR.green,
+  armed: CSS_COLOR.cyan,
+  degraded: CSS_COLOR.amber,
+  off: CSS_COLOR.textMuted,
+};
+
+const WireTrailStatusBand = ({ profile, positions }) => {
+  const summary = deriveWireTrailControlSummary({ profile, positions });
+  const tone = WIRE_TRAIL_TONE_COLOR[summary.status] ?? CSS_COLOR.textDim;
+  const structureValue =
+    summary.structureBreakPositions > 0
+      ? `${summary.structureBreakPositions} break`
+      : summary.regimeFlipPositions > 0
+        ? `${summary.regimeFlipPositions} flip`
+        : summary.structureSummary;
+  const floorValue = summary.enabled
+    ? `${summary.floorOnlyPositions} floor`
+    : "--";
+  const pollValue =
+    summary.enabled && summary.runnerPollIntervalSeconds
+      ? `${summary.runnerPollIntervalSeconds}s`
+      : "--";
+  const cells = [
+    { label: "RUNGS", value: summary.rungSummary },
+    { label: "GREEKS", value: summary.greekSummary },
+    { label: "STRUCT", value: structureValue },
+    { label: "FLOOR", value: floorValue },
+    { label: "POLL", value: pollValue },
+  ];
+
+  return (
+    <section
+      data-testid="algo-wire-trail-status"
+      title={`Wire trail ${summary.statusLabel.toLowerCase()}: ${summary.activePositions}/${summary.openPositions} active, ${summary.greekFallbackPositions} Greek fallback`}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: sp(6),
+        padding: `${sp(8)}px ${sp(10)}px`,
+        background: cssColorMix(tone, summary.status === "off" ? 5 : 8),
+        borderBottom: `1px solid ${CSS_COLOR.border}`,
+        boxShadow: `inset 0 1px 0 ${cssColorMix(tone, 12)}`,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: sp(8),
+          minWidth: 0,
+        }}
+      >
+        <span
+          style={{
+            color: CSS_COLOR.textSec,
+            fontFamily: T.data,
+            fontSize: textSize("label"),
+            fontWeight: FONT_WEIGHTS.label,
+            lineHeight: 1,
+          }}
+        >
+          WIRE TRAIL
+        </span>
+        <span
+          style={{
+            flex: "0 0 auto",
+            color: tone,
+            border: `1px solid ${cssColorMix(tone, 46)}`,
+            borderRadius: RADII.xs,
+            padding: `${sp(2)}px ${sp(5)}px`,
+            fontFamily: T.data,
+            fontSize: textSize("label"),
+            fontWeight: FONT_WEIGHTS.emphasis,
+            lineHeight: 1,
+          }}
+        >
+          {summary.statusLabel}
+        </span>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))",
+          gap: sp(4),
+          minWidth: 0,
+        }}
+      >
+        {cells.map((cell) => (
+          <div
+            key={cell.label}
+            title={`${cell.label}: ${cell.value}`}
+            style={{
+              minWidth: 0,
+              border: `1px solid ${CSS_COLOR.border}`,
+              borderRadius: RADII.xs,
+              background: CSS_COLOR.bg1,
+              padding: `${sp(4)}px ${sp(5)}px`,
+            }}
+          >
+            <div
+              style={{
+                color: CSS_COLOR.textMuted,
+                fontFamily: T.data,
+                fontSize: textSize("micro"),
+                fontWeight: FONT_WEIGHTS.label,
+                lineHeight: 1.1,
+              }}
+            >
+              {cell.label}
+            </div>
+            <div
+              style={{
+                color: CSS_COLOR.text,
+                fontFamily: T.data,
+                fontSize: textSize("label"),
+                fontWeight: FONT_WEIGHTS.label,
+                lineHeight: 1.25,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {cell.value}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+};
 
 const collectDirtyHaltFields = ({ profileDraft, profileBaseline }) =>
   SIGNAL_OPTIONS_HALT_CONTROL_GROUPS.flatMap((group) =>
@@ -148,6 +287,10 @@ export const AlgoRightRail = ({
             minWidth: 0,
           }}
         >
+          <WireTrailStatusBand
+            profile={profileDraft}
+            positions={signalOptionsPositions}
+          />
           <HaltStrip
             cockpit={cockpit}
             profileBaseline={profileBaseline}

@@ -532,6 +532,7 @@ test("Pyrus Signals runtime settings preserve Pine bounds and empty session defa
     basisLength: 1,
     atrLength: 1,
     atrSmoothing: 1,
+    wireSpread: 0.01,
     shadowLength: 1,
     shadowStdDev: 0.001,
     adxLength: 1,
@@ -592,6 +593,7 @@ test("Pyrus Signals runtime settings preserve Pine bounds and empty session defa
   assert.equal(core.basisLength, 1);
   assert.equal(core.atrLength, 1);
   assert.equal(core.atrSmoothing, 1);
+  assert.equal(core.wireSpread, 0.01);
   assert.equal(core.shadowLength, 1);
   assert.equal(core.shadowStdDev, 0.001);
   assert.equal(core.adxLength, 1);

@@ -275,7 +275,9 @@ export const GetRuntimeDiagnosticsResponse = zod.object({
   "liveActionConfirmationRequired": zod.boolean(),
   "diagnosticsMutateOrders": zod.boolean()
 })
-})
+}),
+  "providers": zod.record(zod.string(), zod.unknown()),
+  "storage": zod.record(zod.string(), zod.unknown())
 })
 
 

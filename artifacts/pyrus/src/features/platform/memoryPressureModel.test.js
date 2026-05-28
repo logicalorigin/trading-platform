@@ -50,7 +50,7 @@ test("memory pressure model escalates on direct browser memory growth", () => {
     },
   );
 
-  assert.equal(result.level, "high");
+  assert.equal(result.level, "watch");
   assert.equal(result.trend, "rising");
   assert.ok(
     result.dominantDrivers.some((driver) => driver.kind === "browser-memory"),
@@ -80,6 +80,57 @@ test("memory pressure model keeps elevated state until recovery is clear", () =>
 
   assert.equal(result.level, "watch");
   assert.equal(isPressureLevelAtLeast(result.level, "watch"), true);
+});
+
+test("memory pressure model releases stale critical state when current drivers are not critical", () => {
+  const result = buildMemoryPressureState(
+    {
+      browserMemoryMb: 40,
+      browserSource: "performance.memory",
+      apiHeapUsedPercent: 31,
+      activeWorkloadCount: 7,
+      pollCount: 6,
+      streamCount: 1,
+      chartScopeCount: 18,
+      prependScopeCount: 0,
+      queryCount: 85,
+      heavyQueryCount: 4,
+      storeEntryCount: 24,
+    },
+    {
+      previousState: { level: "critical", score: 22 },
+      history: [{ score: 22, level: "critical" }],
+    },
+  );
+
+  assert.equal(result.level, "high");
+  assert.equal(
+    result.dominantDrivers.some((driver) => driver.level === "critical"),
+    false,
+  );
+});
+
+test("memory pressure model does not mark normal poll fanout as critical", () => {
+  const result = buildMemoryPressureState({
+    browserMemoryMb: 40,
+    browserSource: "performance.memory",
+    apiHeapUsedPercent: 40,
+    activeWorkloadCount: 8,
+    pollCount: 7,
+    streamCount: 1,
+    chartScopeCount: 13,
+    prependScopeCount: 0,
+    queryCount: 79,
+    heavyQueryCount: 4,
+    storeEntryCount: 24,
+  });
+
+  assert.equal(result.level, "normal");
+  assert.equal(
+    result.pressureDrivers.find((driver) => driver.kind === "workload")
+      ?.metrics.find((metric) => metric.key === "pollCount")?.level,
+    "normal",
+  );
 });
 
 test("memory pressure thresholds are exported for detail views", () => {

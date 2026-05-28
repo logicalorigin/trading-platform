@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   __massiveStockQuoteStreamInternalsForTests,
   getCurrentMassiveStockQuoteSnapshots,
+  getMassiveStockQuoteStreamDiagnostics,
 } from "./massive-stock-quote-stream";
 
 test.afterEach(() => {
@@ -37,6 +38,16 @@ test("Massive stock quote stream maps quote and trade messages to live snapshots
   assert.equal(quote?.ask, 500.2);
   assert.equal(quote?.freshness, "live");
   assert.equal(quote?.delayed, false);
+});
+
+test("Massive stock quote stream diagnostics expose WebSocket channels", () => {
+  const diagnostics = getMassiveStockQuoteStreamDiagnostics();
+
+  assert.deepEqual(diagnostics.availableChannels, ["Q", "T"]);
+  assert.deepEqual(diagnostics.subscribedChannels, []);
+  assert.equal(diagnostics.providerIdentity, "massive");
+  assert.equal(diagnostics.mode, "real-time");
+  assert.equal(diagnostics.socketHost, "socket.massive.com");
 });
 
 test("Massive stock quote stream closes connecting sockets without unhandled errors", () => {

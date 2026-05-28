@@ -1263,6 +1263,18 @@ test("live signal-options state recovers active positions from mark payloads", (
     payload: {
       position: markedPosition,
       selectedContract: markedPosition.selectedContract,
+      stop: {
+        stopPrice: 5.8,
+        exitReason: null,
+        wireTrail: {
+          enabled: true,
+          active: true,
+          selectedRung: "wire2",
+          selectedWirePrice: 198.4,
+          latestUnderlyingClose: 202.15,
+          greekFresh: true,
+        },
+      },
     },
   };
   const recovered =
@@ -1280,6 +1292,15 @@ test("live signal-options state recovers active positions from mark payloads", (
     ]),
     [["AAPL", "candidate-aapl", 6.44, 2, 6.97]],
   );
+  assert.equal(recovered.activePositions[0]?.lastStop?.stopPrice, 5.8);
+  assert.deepEqual(recovered.activePositions[0]?.lastWireTrail, {
+    enabled: true,
+    active: true,
+    selectedRung: "wire2",
+    selectedWirePrice: 198.4,
+    latestUnderlyingClose: 202.15,
+    greekFresh: true,
+  });
   assert.deepEqual(
     recovered.signalEvents.map((event) => event.id),
     ["mark-aapl"],
@@ -3067,6 +3088,142 @@ test("signal-options tuned exit profile uses the aggressive trail ladder", () =>
   assert.equal(tenX.givebackPct, 15);
   assert.equal(tenX.trailStopPrice, 8.5);
   assert.equal(tenX.exitReason, "runner_trail_stop");
+});
+
+test("signal-options wire trail exits on structural break while premium holds", () => {
+  const profile = resolveSignalOptionsExecutionProfile({
+    exitPolicy: {
+      trailActivationPct: 35,
+      wireGreekTrail: {
+        enabled: true,
+        rungByProfit: [{ activationPct: 35, rung: "wire3" }],
+      },
+    },
+  });
+  const holding =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 4,
+      peakPrice: 6,
+      markPrice: 5.4,
+      profile,
+      direction: "buy",
+      currentGreeks: {
+        delta: 0.65,
+        gamma: 0.07,
+        theta: -0.05,
+        updatedAt: new Date("2026-05-28T14:30:00.000Z"),
+      },
+      entryGreeks: { delta: 0.6 },
+      now: new Date("2026-05-28T14:30:05.000Z"),
+      wireContext: {
+        latestBarAt: "2026-05-28T14:30:00.000Z",
+        latestClose: 101,
+        regimeDirection: 1,
+        previousRegimeDirection: 1,
+        lowerBand: 100,
+        bullWires: [99, 98, 97],
+      },
+    });
+  const broken =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 4,
+      peakPrice: 6,
+      markPrice: 5.4,
+      profile,
+      direction: "buy",
+      currentGreeks: {
+        delta: 0.65,
+        gamma: 0.07,
+        theta: -0.05,
+        updatedAt: new Date("2026-05-28T14:30:00.000Z"),
+      },
+      entryGreeks: { delta: 0.6 },
+      now: new Date("2026-05-28T14:30:05.000Z"),
+      wireContext: {
+        latestBarAt: "2026-05-28T14:30:00.000Z",
+        latestClose: 96.9,
+        regimeDirection: 1,
+        previousRegimeDirection: 1,
+        lowerBand: 100,
+        bullWires: [99, 98, 97],
+      },
+    });
+
+  assert.equal(holding.exitReason, null);
+  assert.equal(holding.wireTrail.active, true);
+  assert.equal(holding.wireTrail.selectedRung, "wire3");
+  assert.equal(holding.wireTrail.structureBreak, false);
+  assert.equal(broken.exitReason, "wire_structure_break");
+  assert.equal(broken.wireTrail.structureBreak, true);
+});
+
+test("signal-options wire trail greek layer tightens and stale greeks fall back", () => {
+  const profile = resolveSignalOptionsExecutionProfile({
+    exitPolicy: {
+      wireGreekTrail: {
+        enabled: true,
+        rungByProfit: [{ activationPct: 35, rung: "wire2" }],
+      },
+    },
+  });
+  const freshTighten =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 4,
+      peakPrice: 6,
+      markPrice: 5.4,
+      profile,
+      direction: "buy",
+      currentGreeks: {
+        delta: 0.45,
+        gamma: 0.02,
+        theta: -0.5,
+        updatedAt: new Date("2026-05-28T14:30:00.000Z"),
+      },
+      entryGreeks: { delta: 0.6 },
+      now: new Date("2026-05-28T14:30:05.000Z"),
+      wireContext: {
+        latestBarAt: "2026-05-28T14:30:00.000Z",
+        latestClose: 98.8,
+        regimeDirection: 1,
+        previousRegimeDirection: 1,
+        lowerBand: 100,
+        bullWires: [99, 98, 97],
+      },
+    });
+  const staleNeutral =
+    __signalOptionsAutomationInternalsForTests.computePositionStop({
+      entryPrice: 4,
+      peakPrice: 6,
+      markPrice: 5.4,
+      profile,
+      direction: "buy",
+      currentGreeks: {
+        delta: 0.75,
+        gamma: 0.07,
+        theta: -0.05,
+        updatedAt: new Date("2026-05-28T14:29:00.000Z"),
+      },
+      entryGreeks: { delta: 0.6 },
+      now: new Date("2026-05-28T14:30:00.000Z"),
+      wireContext: {
+        latestBarAt: "2026-05-28T14:30:00.000Z",
+        latestClose: 98.5,
+        regimeDirection: 1,
+        previousRegimeDirection: 1,
+        lowerBand: 100,
+        bullWires: [99, 98, 97],
+      },
+    });
+
+  assert.equal(freshTighten.wireTrail.selectedRung, "wire1");
+  assert.equal(freshTighten.exitReason, "wire_structure_break");
+  assert.deepEqual(freshTighten.wireTrail.greekAdjustment.reasons, [
+    "delta_decay",
+    "theta_burden",
+  ]);
+  assert.equal(staleNeutral.wireTrail.selectedRung, "wire2");
+  assert.equal(staleNeutral.wireTrail.greekFresh, false);
+  assert.equal(staleNeutral.wireTrail.greekFallbackReason, "stale_greeks");
 });
 
 test("signal-options live marks reject frozen market data for exits", () => {

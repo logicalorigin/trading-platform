@@ -6,10 +6,12 @@ import {
   PROFILE_BOOLEAN_FIELDS,
   PROFILE_NUMBER_FIELDS,
   SIGNAL_OPTIONS_AGGRESSIVE_PROGRESSIVE_TRAIL_STEPS,
+  SIGNAL_OPTIONS_DEFAULT_WIRE_TRAIL_RUNGS,
   SIGNAL_OPTIONS_DEFAULT_PROFILE,
   SIGNAL_OPTIONS_HALT_CONTROL_GROUPS,
   candidateBlockerLabel,
   candidateLatestActivityLabel,
+  deriveWireTrailControlSummary,
   deriveSignalOptionsHaltControlStatus,
   entryQualityLabel,
   formatCompactMetric,
@@ -26,6 +28,7 @@ import {
   normalizeSignalOptionsStrikeSlots,
   optionProviderContractId,
   parseProgressiveTrailSteps,
+  resolvePositionWireTrailState,
   resolveCandidateGateDisplay,
   resolveCandidateSyncDisplay,
   resolveSignalAge,
@@ -78,6 +81,14 @@ test("AlgoScreen keeps startup fallback collections stable before queries resolv
   assert.doesNotMatch(source, /deploymentsQuery\.data\?\.deployments \|\| \[\]/);
 });
 
+test("AlgoRightRail surfaces wire trail state inside the controls container", () => {
+  const source = readFileSync(new URL("./AlgoRightRail.jsx", import.meta.url), "utf8");
+
+  assert.match(source, /data-testid="algo-wire-trail-status"/);
+  assert.match(source, /deriveWireTrailControlSummary/);
+  assert.match(source, /positions=\{signalOptionsPositions\}/);
+});
+
 test("algo profile defaults match the tuned h8 signal-options profile", () => {
   assert.equal(DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe, "5m");
   assert.equal(DEFAULT_STRATEGY_SIGNAL_SETTINGS.timeHorizon, 8);
@@ -105,6 +116,8 @@ test("algo profile defaults match the tuned h8 signal-options profile", () => {
         SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy.progressiveTrailEnabled,
       progressiveTrailSteps:
         SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy.progressiveTrailSteps,
+      wireGreekTrail:
+        SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy.wireGreekTrail,
       overnightExitEnabled:
         SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy.overnightExitEnabled,
       overnightMinGainPct:
@@ -124,6 +137,19 @@ test("algo profile defaults match the tuned h8 signal-options profile", () => {
       tightenAtTenXGivebackPct: 15,
       progressiveTrailEnabled: true,
       progressiveTrailSteps: SIGNAL_OPTIONS_AGGRESSIVE_PROGRESSIVE_TRAIL_STEPS,
+      wireGreekTrail: {
+        enabled: true,
+        requireFreshGreeks: true,
+        greekMaxAgeMs: 15000,
+        deltaSizingEnabled: false,
+        runnerPollIntervalSeconds: 20,
+        rungByProfit: SIGNAL_OPTIONS_DEFAULT_WIRE_TRAIL_RUNGS,
+        deltaLoosenThreshold: 0.05,
+        deltaTightenThreshold: -0.1,
+        thetaBurdenTightenPct: 8,
+        strongGammaMin: 0.05,
+        spreadWideningMultiplier: 1.5,
+      },
       overnightExitEnabled: true,
       overnightMinGainPct: 10,
       overnightRunnerGivebackPct: 15,
@@ -242,6 +268,92 @@ test("progressive trail ladder text round-trips through settings helpers", () =>
       { activationPct: 45, minLockedGainPct: 25, givebackPct: 20 },
     ],
   );
+});
+
+test("wire trail control summary derives active rungs and greek fallbacks", () => {
+  const directState = resolvePositionWireTrailState({
+    lastWireTrail: {
+      enabled: true,
+      active: true,
+      selectedRung: "wire2",
+      selectedWirePrice: 198.4,
+      latestUnderlyingClose: 202.15,
+      greekFresh: true,
+    },
+  });
+  assert.deepEqual(
+    {
+      active: directState.active,
+      selectedRung: directState.selectedRung,
+      selectedRungLabel: directState.selectedRungLabel,
+      greekFresh: directState.greekFresh,
+    },
+    {
+      active: true,
+      selectedRung: "wire2",
+      selectedRungLabel: "W2",
+      greekFresh: true,
+    },
+  );
+
+  const summary = deriveWireTrailControlSummary({
+    profile: SIGNAL_OPTIONS_DEFAULT_PROFILE,
+    positions: [
+      {
+        lastWireTrail: {
+          enabled: true,
+          active: true,
+          selectedRung: "wire2",
+          selectedWirePrice: 198.4,
+          latestUnderlyingClose: 202.15,
+          greekFresh: true,
+        },
+      },
+      {
+        lastStop: {
+          wireTrail: {
+            enabled: true,
+            active: false,
+            greekFresh: false,
+            greekFallbackReason: "stale_greeks",
+          },
+        },
+      },
+    ],
+  });
+
+  assert.equal(summary.status, "degraded");
+  assert.equal(summary.statusLabel, "DEGRADED");
+  assert.equal(summary.openPositions, 2);
+  assert.equal(summary.activePositions, 1);
+  assert.equal(summary.floorOnlyPositions, 1);
+  assert.equal(summary.missingWireContextPositions, 1);
+  assert.equal(summary.freshGreekPositions, 1);
+  assert.equal(summary.greekFallbackPositions, 1);
+  assert.equal(summary.staleGreekPositions, 1);
+  assert.equal(summary.runnerPollIntervalSeconds, 20);
+  assert.equal(summary.rungSummary, "W3 0 · W2 1 · W1 0 · TL 0");
+  assert.equal(summary.greekSummary, "1/2 fresh · 1 fallback");
+  assert.equal(summary.structureSummary, "1/2 wire");
+});
+
+test("wire trail control summary reports disabled and armed states", () => {
+  assert.equal(
+    deriveWireTrailControlSummary({
+      profile: { exitPolicy: { wireGreekTrail: { enabled: false } } },
+      positions: [{ lastWireTrail: { enabled: true, active: true } }],
+    }).status,
+    "off",
+  );
+
+  const armed = deriveWireTrailControlSummary({
+    profile: SIGNAL_OPTIONS_DEFAULT_PROFILE,
+    positions: [],
+  });
+  assert.equal(armed.status, "armed");
+  assert.equal(armed.statusLabel, "ARMED");
+  assert.equal(armed.structureSummary, "armed");
+  assert.equal(armed.greekSummary, "ready");
 });
 
 test("algo halt control helpers detect dirty controls and active states", () => {
@@ -1019,6 +1131,12 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
     "exitPolicy.tightenAtTenXGivebackPct",
     "exitPolicy.progressiveTrailEnabled",
     "exitPolicy.progressiveTrailSteps",
+    "exitPolicy.wireGreekTrail.enabled",
+    "exitPolicy.wireGreekTrail.requireFreshGreeks",
+    "exitPolicy.wireGreekTrail.rungByProfit",
+    "exitPolicy.wireGreekTrail.runnerPollIntervalSeconds",
+    "exitPolicy.wireGreekTrail.greekMaxAgeMs",
+    "exitPolicy.wireGreekTrail.deltaSizingEnabled",
     "exitPolicy.conditionalQualityExitsEnabled",
     "exitPolicy.lowQualityEarlyExitBars",
     "exitPolicy.lowQualityEarlyExitLossPct",
@@ -1082,6 +1200,8 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
     "optionSelection.minDte",
     "exitPolicy.progressiveTrailEnabled",
     "exitPolicy.progressiveTrailSteps",
+    "exitPolicy.wireGreekTrail.enabled",
+    "exitPolicy.wireGreekTrail.rungByProfit",
     "exitPolicy.overnightExitEnabled",
     "exitPolicy.overnightMinGainPct",
     "exitPolicy.conditionalQualityExitsEnabled",
@@ -1112,6 +1232,7 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
   assert.match(settingsFieldsSource, /5X GIVEBACK %/);
   assert.match(settingsFieldsSource, /10X GIVEBACK %/);
   assert.match(settingsFieldsSource, /PROGRESSIVE TRAIL/);
+  assert.match(settingsFieldsSource, /WIRE GREEK TRAIL/);
   assert.match(settingsFieldsSource, /conditionalQualityExitsEnabled/);
   assert.match(settingsFieldsSource, /highQualityOvernightMinGainPct/);
   assert.match(settingsFieldsSource, /overnightExitEnabled/);

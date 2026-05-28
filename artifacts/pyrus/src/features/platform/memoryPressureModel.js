@@ -13,16 +13,16 @@ export const MEMORY_PRESSURE_THRESHOLDS = {
   },
   apiHeapUsedPercent: { watch: 70, high: 78, critical: 85 },
   workload: {
-    activeWorkloadCount: { watch: 7, high: 11, critical: 16 },
-    pollCount: { watch: 3, high: 5, critical: 7 },
+    activeWorkloadCount: { watch: 10, high: 14, critical: 20 },
+    pollCount: { watch: 8, high: 12, critical: null },
     streamCount: { watch: 3, high: 5, critical: 8 },
   },
   chartHydration: {
-    chartScopeCount: { watch: 7, high: 12, critical: null },
+    chartScopeCount: { watch: 18, high: 30, critical: null },
     prependScopeCount: { watch: 1, high: 4, critical: null },
   },
   queryCache: {
-    queryCount: { watch: 60, high: 110, critical: 180 },
+    queryCount: { watch: 100, high: 160, critical: 240 },
     heavyQueryCount: { watch: 12, high: 30, critical: 50 },
   },
   runtimeStores: {
@@ -363,7 +363,8 @@ export const buildMemoryPressureState = (
   if (
     previousState &&
     levelAtLeast(previousState.level, "watch") &&
-    !levelAtLeast(baseLevel, previousState.level)
+    !levelAtLeast(baseLevel, previousState.level) &&
+    !(previousState.level === "critical" && !levelAtLeast(baseLevel, "critical"))
   ) {
     const previousScore = Number(previousState.score);
     if (Number.isFinite(previousScore) && score >= previousScore - 10) {

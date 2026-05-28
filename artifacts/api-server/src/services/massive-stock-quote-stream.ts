@@ -431,13 +431,20 @@ export function subscribeMassiveStockQuoteSnapshots(
 
 export function getMassiveStockQuoteStreamDiagnostics() {
   const now = Date.now();
+  const subscribedSymbolCount = subscriptionSignature
+    ? subscriptionSignature.split(",").filter(Boolean).length
+    : 0;
   return {
     configured: isMassiveStockQuoteStreamConfigured(),
+    providerIdentity: "massive",
+    mode: "real-time",
+    socketHost: "socket.massive.com",
+    availableChannels: ["Q", "T"],
+    subscribedChannels: subscribedSymbolCount > 0 ? ["Q", "T"] : [],
     authState,
     connected: socket?.readyState === WebSocket.OPEN,
-    subscribedSymbolCount: subscriptionSignature
-      ? subscriptionSignature.split(",").filter(Boolean).length
-      : 0,
+    subscribedSymbolCount,
+    subscriptionCount: subscribedSymbolCount * 2,
     activeConsumerCount: subscribers.size,
     cachedQuoteCount: quoteCacheBySymbol.size,
     reconnectCount,

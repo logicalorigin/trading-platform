@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   PolygonMarketDataClient,
+  __resetMassiveApiDiagnosticsForTests,
   aggregateOptionPremiumDistributionSnapshots,
+  getMassiveApiDiagnostics,
 } from "./market-data";
 
 test("Massive stock aggregates are real-time by default", async () => {
@@ -79,6 +81,47 @@ test("Massive stock aggregates honor delayed recency override", async () => {
     } else {
       process.env["MASSIVE_STOCKS_RECENCY"] = originalRecency;
     }
+  }
+});
+
+test("Massive REST diagnostics record sanitized request metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  __resetMassiveApiDiagnosticsForTests();
+  globalThis.fetch = (async () =>
+    Response.json({
+      results: [
+        { t: Date.parse("2026-05-28T14:30:00Z"), o: 1, h: 2, l: 1, c: 2, v: 10 },
+      ],
+      next_url: null,
+    })) as typeof fetch;
+
+  try {
+    const config = {
+      apiKey: "super-secret-key",
+      baseUrl: "https://api.massive.com",
+    };
+    const client = new PolygonMarketDataClient(config);
+    await client.getBarsPage({
+      symbol: "SPY",
+      timeframe: "1m",
+      from: new Date("2026-05-28T14:30:00.000Z"),
+      to: new Date("2026-05-28T14:31:00.000Z"),
+      limit: 1,
+    });
+
+    const diagnostics = getMassiveApiDiagnostics(config);
+    assert.equal(diagnostics.configured, true);
+    assert.equal(diagnostics.baseUrlHost, "api.massive.com");
+    assert.equal(diagnostics.rest.status, "ok");
+    assert.equal(diagnostics.rest.lastRequest?.endpointFamily, "stock_aggregates");
+    assert.equal(diagnostics.rest.lastRequest?.symbol, "SPY");
+    assert.equal(diagnostics.rest.lastRequest?.timeframe, "1 minute");
+    assert.equal(diagnostics.rest.lastRequest?.resultCount, 1);
+    assert.equal(diagnostics.rest.lastRequest?.hasNextPage, false);
+    assert.doesNotMatch(JSON.stringify(diagnostics), /super-secret-key|apiKey/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    __resetMassiveApiDiagnosticsForTests();
   }
 });
 

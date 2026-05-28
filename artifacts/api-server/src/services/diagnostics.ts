@@ -3403,6 +3403,10 @@ export async function collectDiagnosticSnapshot(
   const runtimeRecorderSeverity = classifyRuntimeRecorderSnapshot(
     runtimeRecorder.metrics,
   );
+  const marketDataRaw = {
+    ...asJsonRecord(probes["marketData"]),
+    massive: asJsonRecord(asJsonRecord(runtime["providers"])["massive"]),
+  };
 
   const snapshots = [
     buildSnapshot(
@@ -3430,7 +3434,7 @@ export async function collectDiagnosticSnapshot(
         ? "Market-data streams are healthy or idle"
         : "Market-data streams need attention",
       marketDataMetrics,
-      asJsonRecord(probes["marketData"]),
+      marketDataRaw,
     ),
     buildSnapshot(
       "browser",

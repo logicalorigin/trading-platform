@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   aggressiveSignalOptionsProgressiveTrailSteps,
   resolveSignalOptionsExecutionProfile,
+  signalOptionsDefaultWireTrailRungs,
   signalOptionsStrikeSlotsForRight,
   tunedSignalOptionsExecutionProfile,
   tunedSignalOptionsExecutionProfilePatch,
@@ -34,6 +35,19 @@ test("tuned signal-options preset captures the recovered h8 profile", () => {
       tightenAtTenXGivebackPct: 15,
       progressiveTrailEnabled: true,
       progressiveTrailSteps: aggressiveSignalOptionsProgressiveTrailSteps,
+      wireGreekTrail: {
+        enabled: true,
+        requireFreshGreeks: true,
+        greekMaxAgeMs: 15000,
+        deltaSizingEnabled: false,
+        runnerPollIntervalSeconds: 20,
+        rungByProfit: signalOptionsDefaultWireTrailRungs,
+        deltaLoosenThreshold: 0.05,
+        deltaTightenThreshold: -0.1,
+        thetaBurdenTightenPct: 8,
+        strongGammaMin: 0.05,
+        spreadWideningMultiplier: 1.5,
+      },
       overnightExitEnabled: true,
       overnightMinGainPct: 10,
       overnightRunnerGivebackPct: 15,
@@ -71,6 +85,14 @@ test("tuned signal-options preset captures the recovered h8 profile", () => {
   assert.deepEqual(
     tunedSignalOptionsExecutionProfile.exitPolicy.progressiveTrailSteps,
     aggressiveSignalOptionsProgressiveTrailSteps,
+  );
+  assert.equal(
+    tunedSignalOptionsExecutionProfile.exitPolicy.wireGreekTrail.enabled,
+    true,
+  );
+  assert.deepEqual(
+    tunedSignalOptionsExecutionProfile.exitPolicy.wireGreekTrail.rungByProfit,
+    signalOptionsDefaultWireTrailRungs,
   );
   assert.deepEqual(tunedSignalOptionsExecutionProfile.riskHaltControls, {
     dailyLossHaltEnabled: true,
@@ -123,6 +145,31 @@ test("signal-options profile normalization sorts progressive trail steps", () =>
   assert.deepEqual(profile.exitPolicy.progressiveTrailSteps, [
     { activationPct: 25, minLockedGainPct: 0, givebackPct: 35 },
     { activationPct: 50, minLockedGainPct: 25, givebackPct: 25 },
+  ]);
+});
+
+test("signal-options profile normalization resolves wire-greek trail settings", () => {
+  const profile = resolveSignalOptionsExecutionProfile({
+    exitPolicy: {
+      wireGreekTrail: {
+        enabled: true,
+        greekMaxAgeMs: 500,
+        runnerPollIntervalSeconds: 5,
+        rungByProfit: [
+          { activationPct: 100, rung: "wire1" },
+          { activationPct: 35, rung: "wire3" },
+          { activationPct: "bad", rung: "wire2" },
+        ],
+      },
+    },
+  });
+
+  assert.equal(profile.exitPolicy.wireGreekTrail.enabled, true);
+  assert.equal(profile.exitPolicy.wireGreekTrail.greekMaxAgeMs, 1000);
+  assert.equal(profile.exitPolicy.wireGreekTrail.runnerPollIntervalSeconds, 15);
+  assert.deepEqual(profile.exitPolicy.wireGreekTrail.rungByProfit, [
+    { activationPct: 35, rung: "wire3" },
+    { activationPct: 100, rung: "wire1" },
   ]);
 });
 

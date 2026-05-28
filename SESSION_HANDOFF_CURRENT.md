@@ -1,5 +1,256 @@
 # Current Session Handoff
 
+- Last updated: `2026-05-28 22:32 UTC`
+- Current request: commit the current dirty tree as the `/qa` checkpoint, then stop before running QA.
+- Current status:
+  - User approved committing the current uncommitted changes so `/qa` can later proceed from a clean tree.
+  - Created a single checkpoint commit at current `HEAD` that preserves the existing Massive diagnostics, signal-options wire/Greek trail, Algo control-container, platform UI, QA report, and remediation work already present in the dirty tree.
+  - Replit startup config remains untouched; no browser QA or app runner action should start until the user explicitly resumes QA.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Checkpoint commit created; no new validation was run for the checkpoint itself.
+- Next step:
+  - Report the checkpoint SHA, then wait for explicit QA resume.
+
+- Last updated: `2026-05-28 22:30 UTC`
+- Current request: implement the audited Algo QA remediation plan for the central Algo loader/runtime restart issue.
+- Current status:
+  - Starting implementation on top of an already-dirty tree with existing Massive diagnostics, signal-options wire/Greek trail, and platform UI changes preserved.
+  - Targeted scope: make Algo first paint lighter, decouple Algo data from the heavy live-page chunk, add lean first-paint API/stream behavior, and update regression tests.
+  - Replit startup config must remain untouched; no app runner changes planned.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending.
+- Next step:
+  - Patch API critical/summary payload behavior, then patch Algo route loading gates and focused tests.
+
+- Last updated: `2026-05-28 22:19 UTC`
+- Current request: redesign the Massive API connection surface to show the right REST/WebSocket evidence and use icons/elements instead of prose where appropriate.
+- Current status:
+  - Reworked the Massive provider model into explicit REST and WebSocket lanes with icon keys, status glyphs, channel chips, and metric chips for host, symbols, rows/events, duration, freshness, and reconnects.
+  - Replaced the terse mobile/tablet provider strip with an icon-led Massive panel in the IBKR popover/sheet while preserving generic provider fallback rows.
+  - Advanced popover details now use an auto-fit grid so the details section can collapse cleanly on narrower sheets.
+  - Existing unrelated dirty work remains preserved.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/features/platform/HeaderStatusCluster.jsx`
+  - `artifacts/pyrus/src/features/platform/IbkrConnectionStatus.test.js`
+  - `artifacts/pyrus/src/features/platform/ibkrPopoverModel.js`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/IbkrConnectionStatus.test.js src/features/platform/platformRootSource.test.js` (`96` tests).
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `git diff --check`.
+  - Live check: Vite is serving `HeaderMassiveProviderPanel`/`HeaderProviderChannelChip`; runtime Massive diagnostics show REST and WebSocket both `ok`.
+- Next step:
+  - Browser-check the rendered sheet/popover if further visual tuning is needed.
+
+- Last updated: `2026-05-28 22:18 UTC`
+- Current request: run `/qa` against the app and fix issues found.
+- Current status:
+  - `/qa` skill preamble started on branch `main`; base branch detected as `main`.
+  - QA is blocked at the required clean-working-tree gate: the repo has many uncommitted changes from prior strategy, Massive diagnostics, platform, QA report, and Algo control-container work.
+  - Need user decision before continuing because `/qa` needs a clean tree so any QA fixes can be committed one bug at a time.
+  - Replit startup config must remain untouched; no app runner changes made.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending.
+- Next step:
+  - Commit, stash, or abort based on the user's clean-tree decision; then continue browser QA through the Replit app target.
+
+- Last updated: `2026-05-28 22:14 UTC`
+- Current request: resume the focused `$qa` session for signal bubbles and Signals-to-Action.
+- Current status:
+  - Recovered the QA context: baseline commit exists as `0cea1c5 chore: checkpoint signal qa baseline`.
+  - Used the repo-local gstack browse binary at `.agents/skills/gstack/browse/dist/browse`; the `.claude` lookup path was missing but the repo-local browser was available.
+  - Ran focused browser/API QA against `http://127.0.0.1:18747/`.
+  - Signal bubbles are not currently reproducing as broken: after a fresh load they were initially unknown, then hydrated after one refresh window with visible fresh/stale 5m states in the signal rail and sidebar.
+  - Signals-to-Action is not currently reproducing as empty: the Algo Monitor right rail populated actionable rows instead of `Awaiting next scan`.
+  - Found a separate high-severity runtime/loading issue: the central Algo route stayed on the PYRUS loader beyond 2 minutes while the right rail was populated.
+  - During the QA pass, the PYRUS flight recorder reported a same-container supervisor-abrupt restart at `2026-05-28T22:11:45Z`; no Replit startup config was touched and no app process was intentionally restarted.
+  - Post-restart direct API samples were fast again (`signal-monitor/state` 200 in ~0.19s, `/api/algo/deployments` 200 in ~0.14s), but runtime diagnostics still showed API RSS around `1273 MB` and event-loop delay p95 around `470 ms`.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `.gstack/qa-reports/qa-report-pyrus-local-2026-05-28.md`
+  - `.gstack/qa-reports/screenshots/signal-qa-resume-market-viewport-2026-05-28.png`
+  - `.gstack/qa-reports/screenshots/signal-qa-resume-market-viewport-2026-05-28b.png`
+  - `.gstack/qa-reports/screenshots/signal-qa-resume-market-after-60s-2026-05-28.png`
+  - `.gstack/qa-reports/screenshots/signal-qa-resume-algo-2026-05-28.png`
+  - `.gstack/qa-reports/screenshots/signal-qa-resume-algo-after-nav-2026-05-28.png`
+  - `.gstack/qa-reports/screenshots/signal-qa-resume-algo-after-65s-2026-05-28.png`
+  - `.gstack/qa-reports/screenshots/signal-qa-resume-algo-after-120s-2026-05-28.png`
+  - `.gstack/qa-reports/screenshots/signal-qa-fresh-browser-algo-90s-2026-05-28.png`
+- Validation state:
+  - Passed focused live API rechecks after the restart:
+    - `/api/signal-monitor/state?environment=paper` returned 200 in ~0.19s.
+    - `/api/algo/deployments` returned 200 in ~0.14s.
+  - Browser QA evidence written to `.gstack/qa-reports/qa-report-pyrus-local-2026-05-28.md`.
+  - Passed: `git diff --check -- SESSION_HANDOFF_CURRENT.md .gstack/qa-reports/qa-report-pyrus-local-2026-05-28.md`.
+- Next step:
+  - Treat the original signal-surface QA as passed for the specific disappearing/unknown-row symptoms, then open a separate runtime/loading fix for the central Algo route staying on the loader and for supervisor-abrupt restarts under Algo QA load.
+
+- Last updated: `2026-05-28 22:16 UTC`
+- Current request: plan and proceed with surfacing the wireband/Greek trailing strategy inside the Algo control container.
+- Current status:
+  - Completed a scoped UI/data pass for the Algo right rail/control container.
+  - Active signal-options positions now preserve the latest computed `stop` and `wireTrail` payload from durable mark/backfill events, including recovered active positions.
+  - Added a pure Pyrus summary helper for wire trail status: enabled/off/armed/active/degraded, rung counts, Greek freshness/fallbacks, structure coverage, floor-only count, and runner poll.
+  - Rendered a compact `WIRE TRAIL` status band at the top of `algo-controls-container`, above the Halt strip and settings region, without turning it into a halt control.
+  - Existing dirty Massive diagnostics/platform work and prior signal-options strategy implementation are unrelated and must be preserved.
+  - Replit startup config must remain untouched; no app runner changes planned.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/signal-options-automation.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.test.ts`
+  - `artifacts/pyrus/src/screens/algo/AlgoRightRail.jsx`
+  - `artifacts/pyrus/src/screens/algo/algoHelpers.js`
+  - `artifacts/pyrus/src/screens/algo/algoHelpers.test.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts` (`88` tests).
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js` (`28` tests).
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: scoped `git diff --check`.
+- Next step:
+  - Next UI pass should add a deeper diagnostics panel for wire-context missing/stale-greek causes and per-position drilldown if the compact control band is accepted.
+
+- Last updated: `2026-05-28 22:08 UTC`
+- Current request: make the mobile/tablet Massive provider readout more informative than `OK · WS AM · 13 sym`.
+- Current status:
+  - Expanded the always-visible provider strip into a richer provider summary.
+  - Massive row now includes compact REST and WebSocket subtiles: REST last call/result/duration, and WebSocket channels/mode/symbol count/freshness.
+  - Kept the top line and detailed `Details > Massive` group intact.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/features/platform/HeaderStatusCluster.jsx`
+  - `artifacts/pyrus/src/features/platform/ibkrPopoverModel.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/IbkrConnectionStatus.test.js src/features/platform/platformRootSource.test.js` (`96` tests).
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `git diff --check`.
+- Next step:
+  - Hard-refresh if needed; the mobile/tablet sheet should now show Massive plus REST/WebSocket subtiles immediately.
+
+- Last updated: `2026-05-28 22:06 UTC`
+- Current request: fix the confusing `Polygon / No checks yet / --` row in the mobile/tablet IBKR popover.
+- Current status:
+  - Confirmed runtime diagnostics are correct: `providers.polygon.baseUrl` is `https://api.massive.com`, and `providers.massive` is configured with REST `ok`, websocket `ok`, and channels `AM`, `Q`, `T`.
+  - Root cause: `buildProviderRows` always invented a stock-provider row from an empty/unknown Polygon object while runtime provider diagnostics were still loading. On mobile/tablet the always-visible provider strip made that transient fallback obvious.
+  - Fixed `buildProviderRows` so it does not render a stock-provider row until provider diagnostics are actually present, and it prefers the explicit Massive diagnostics branch when available.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/features/platform/IbkrConnectionStatus.test.js`
+  - `artifacts/pyrus/src/features/platform/ibkrPopoverModel.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/IbkrConnectionStatus.test.js`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `git diff --check`.
+- Next step:
+  - Hard-refresh the mobile/tablet browser if hot reload has not updated the header. The transient `Polygon / No checks yet / --` row should be gone; after diagnostics load, the row should read `Massive`.
+
+- Last updated: `2026-05-28 21:57 UTC`
+- Current request: make the Massive API readout visible in the mobile/tablet IBKR popover sheet.
+- Current status:
+  - Confirmed the running API exposes `providers.massive` with configured Massive REST/WebSocket status and channels `AM`, `Q`, `T`.
+  - Root cause: Massive was present in the popover model, but on mobile/tablet it was only under the collapsed `Details` section, so it was easy to miss.
+  - Added an always-visible provider strip to the IBKR popover summary via `HeaderIbkrProviderRows`, showing non-IBKR provider rows such as Massive before the detailed expandable section.
+  - Kept the detailed Massive group under `Details` for REST/WebSocket breakdown.
+  - Existing dirty signal-options wireband/greek strategy work is unrelated and preserved.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/features/platform/HeaderStatusCluster.jsx`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/IbkrConnectionStatus.test.js src/features/platform/platformRootSource.test.js` (`95` tests).
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `git diff --check`.
+- Next step:
+  - Hard-refresh the mobile/tablet browser if Vite has not hot-reloaded; the Massive row should now be visible immediately after opening the IBKR sheet, above `Details`.
+
+- Last updated: `2026-05-28 21:47 UTC`
+- Current request: implement the new default signal-options wireband/greek trailing strategy from the 5-28 trading analysis plan.
+- Current status:
+  - Implemented the first production pass for the new default signal-options wireband/greek trailing strategy.
+  - Added additive `wireGreekTrail` profile fields and tuned/default UI settings; legacy progressive/premium stop remains as fallback when wire context is unavailable.
+  - Added server-side Pyrus band/wire outputs in `pyrus-signals-core` with frontend parity preserved.
+  - Extended the exit policy with the dual-leg stop: premium floor plus wire structure break, greek rung modulation, stale-greek fallback, delta-sizing feature toggle, and regime-flip diagnostic/tightening behavior without a blunt exit reason.
+  - Live position marks now request greeks for wire-enabled positions, persist live quote greek snapshots through the durable option snapshot store, capture entry/first-mark greek baselines, and pass latest structural context into stop math.
+  - Signal-options historical backfill now replays the wire structure leg from underlying Pyrus evaluations while greeks remain neutral.
+  - Worker cadence now caps wire-enabled deployments at the profile's runner poll interval, without changing Replit startup config.
+  - Existing dirty runtime diagnostics/platform changes are unrelated and must be preserved.
+  - Replit startup config must remain untouched; no app runner changes planned.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `lib/backtest-core/src/signal-options.ts`
+  - `lib/backtest-core/src/signal-options.test.ts`
+  - `lib/pyrus-signals-core/src/index.ts`
+  - `artifacts/api-server/src/services/signal-options-exit-policy.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.test.ts`
+  - `artifacts/api-server/src/services/signal-options-worker.ts`
+  - `artifacts/pyrus/src/features/charting/pyrusSignalsPineAdapter.ts`
+  - `artifacts/pyrus/src/features/charting/pyrusSignalsPineAdapter.test.ts`
+  - `artifacts/pyrus/src/screens/algo/AlgoSettingsRegion.jsx`
+  - `artifacts/pyrus/src/screens/algo/algoHelpers.js`
+  - `artifacts/pyrus/src/screens/algo/algoHelpers.test.js`
+  - `artifacts/pyrus/src/screens/algo/algoSettingsFields.js`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts` (`88` tests).
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-worker.test.ts` (`18` tests).
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/charting/pyrusSignalsPineAdapter.test.ts` (`19` tests).
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js` (`25` tests).
+  - Passed: `pnpm exec node --import tsx /home/runner/workspace/lib/backtest-core/src/signal-options.test.ts` from `artifacts/api-server` (`5` tests; root/backtest package does not have a local `tsx` dependency).
+  - Passed: `pnpm run typecheck:libs`.
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: scoped `git diff --check`.
+- Next step:
+  - Shadow-test the new strategy on live forward greek snapshots and compare wire-structure exits against premium-only exits before enabling delta-sized giveback.
+
+- Last updated: `2026-05-28 21:37 UTC`
+- Current request: implement the audited Massive API activity surface plan.
+- Current status:
+  - Implemented backend Massive REST/WebSocket diagnostics and frontend readouts.
+  - Massive REST calls are recorded as bounded sanitized metadata from the provider fetch boundary: endpoint family/path, purpose, symbol/count, timeframe/window, params, result count, duration, status, and sanitized error.
+  - Runtime diagnostics now expose `providers.massive` with REST and WebSocket summaries, and Diagnostics market-data snapshots include the Massive branch.
+  - Pyrus runtime-control/header popover now normalizes Massive status and shows a Massive detail group; Diagnostics > Market Data now has Massive REST and Massive WebSocket panels.
+  - Existing dirty signal automation/scheduler files are user-owned and preserved. New unrelated dirty `memoryPressureModel*` files appeared during this pass and were not touched.
+  - Replit startup config must remain untouched; no app runner changes planned.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/providers/polygon/market-data.ts`
+  - `artifacts/api-server/src/providers/polygon/market-data.test.ts`
+  - `artifacts/api-server/src/services/diagnostics.ts`
+  - `artifacts/api-server/src/services/massive-stock-quote-stream.ts`
+  - `artifacts/api-server/src/services/massive-stock-quote-stream.test.ts`
+  - `artifacts/api-server/src/services/platform.ts`
+  - `artifacts/api-server/src/services/polygon-delayed-stream.ts`
+  - `artifacts/api-server/src/services/runtime-diagnostics.test.ts`
+  - `artifacts/api-server/src/services/stock-aggregate-stream.test.ts`
+  - `artifacts/pyrus/src/features/platform/IbkrConnectionStatus.test.js`
+  - `artifacts/pyrus/src/features/platform/ibkrPopoverModel.js`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/features/platform/runtimeControlModel.js`
+  - `artifacts/pyrus/src/features/platform/runtimeControlModel.test.js`
+  - `artifacts/pyrus/src/screens/DiagnosticsScreen.jsx`
+  - `lib/api-spec/openapi.yaml`
+  - `lib/api-client-react/src/generated/api.schemas.ts`
+  - `lib/api-zod/src/generated/api.ts`
+  - `lib/api-zod/src/generated/types/runtimeDiagnosticsResponse.ts`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/providers/polygon/market-data.test.ts src/services/runtime-diagnostics.test.ts src/services/massive-stock-quote-stream.test.ts src/services/stock-aggregate-stream.test.ts` (`45` tests).
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/IbkrConnectionStatus.test.js src/features/platform/runtimeControlModel.test.js src/features/platform/platformRootSource.test.js` (`130` tests).
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `pnpm --filter @workspace/api-spec run codegen` (includes `pnpm -w run typecheck:libs`).
+  - Passed after codegen: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `git diff --check`.
+- Next step:
+  - Let the running app pick up the backend/frontend changes through the normal Replit runner or hot reload, then inspect the header IBKR popover and Diagnostics > Market Data Massive panels.
+
 - Last updated: `2026-05-28 21:37 UTC`
 - Current request: implement the focused `/qa` plan for signal bubbles and Signals-to-Action.
 - Current status:

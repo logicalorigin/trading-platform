@@ -373,11 +373,84 @@ export type PolygonApiDiagnostics = {
   lastError: string | null;
 };
 
+export type MassiveRestActivityStatus = "success" | "error";
+
+export type MassiveRestEndpointFamily =
+  | "stock_aggregates"
+  | "stock_snapshots"
+  | "grouped_daily"
+  | "ticker_reference"
+  | "news"
+  | "option_chain"
+  | "option_trades"
+  | "option_quotes"
+  | "reference_conditions"
+  | "unknown";
+
+export type MassiveRestActivity = {
+  id: number;
+  observedAt: string;
+  providerIdentity: Exclude<MarketDataProvider, "ibkr">;
+  baseUrlHost: string | null;
+  method: string;
+  endpointFamily: MassiveRestEndpointFamily;
+  endpoint: string;
+  purpose: string;
+  symbol: string | null;
+  symbolCount: number | null;
+  timeframe: string | null;
+  from: string | null;
+  to: string | null;
+  adjusted: boolean | null;
+  includeOtc: boolean | null;
+  sort: string | null;
+  limit: number | null;
+  pageCount: number;
+  resultCount: number | null;
+  hasNextPage: boolean | null;
+  durationMs: number;
+  status: MassiveRestActivityStatus;
+  httpStatus: number | null;
+  error: string | null;
+};
+
+export type MassiveRestDiagnostics = {
+  status: PolygonApiDiagnosticsStatus | "idle";
+  recentRequests: MassiveRestActivity[];
+  lastRequest: MassiveRestActivity | null;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastError: string | null;
+};
+
+export type MassiveApiDiagnostics = {
+  configured: boolean;
+  providerIdentity: Exclude<MarketDataProvider, "ibkr"> | null;
+  baseUrlHost: string | null;
+  stocksRealtimeConfigured: boolean;
+  rest: MassiveRestDiagnostics;
+};
+
 const polygonApiDiagnosticsState: {
   lastSuccessAt: Date | null;
   lastFailureAt: Date | null;
   lastError: string | null;
 } = {
+  lastSuccessAt: null,
+  lastFailureAt: null,
+  lastError: null,
+};
+
+const MASSIVE_REST_ACTIVITY_MAX = 12;
+const massiveRestDiagnosticsState: {
+  nextId: number;
+  recentRequests: MassiveRestActivity[];
+  lastSuccessAt: Date | null;
+  lastFailureAt: Date | null;
+  lastError: string | null;
+} = {
+  nextId: 1,
+  recentRequests: [],
   lastSuccessAt: null,
   lastFailureAt: null,
   lastError: null,
@@ -389,6 +462,242 @@ const polygonErrorMessage = (error: unknown): string =>
     : typeof error === "string" && error.trim()
       ? error
       : "Polygon request failed.";
+
+const providerErrorMessage = (error: unknown): string =>
+  error instanceof Error && error.message
+    ? error.message
+    : typeof error === "string" && error.trim()
+      ? error
+      : "Provider request failed.";
+
+function truncateProviderError(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= 180) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, 180)}...`;
+}
+
+function parseBooleanParam(value: string | null): boolean | null {
+  if (value === null) {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  return null;
+}
+
+function parseNumberParam(value: string | null): number | null {
+  if (value === null || !value.trim()) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function safeUrlHost(value: string | URL): string | null {
+  try {
+    return new URL(value.toString()).host;
+  } catch {
+    return null;
+  }
+}
+
+function safeDateOrRaw(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 946684800000) {
+    return new Date(numeric).toISOString();
+  }
+  return value;
+}
+
+function countCsvValues(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+  const count = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean).length;
+  return count || null;
+}
+
+function getPayloadResultCount(payload: unknown): number | null {
+  const record = asRecord(payload);
+  if (!record) {
+    return null;
+  }
+  const results = record["results"];
+  if (Array.isArray(results)) {
+    return results.length;
+  }
+  if (results && typeof results === "object") {
+    return 1;
+  }
+  return asNumber(record["count"]);
+}
+
+function getPayloadHasNextPage(payload: unknown): boolean | null {
+  const record = asRecord(payload);
+  if (!record) {
+    return null;
+  }
+  return Boolean(asString(record["next_url"]));
+}
+
+function classifyProviderEndpoint(pathname: string): {
+  endpointFamily: MassiveRestEndpointFamily;
+  purpose: string;
+} {
+  if (/^\/v2\/aggs\/ticker\/[^/]+\/range\//.test(pathname)) {
+    return { endpointFamily: "stock_aggregates", purpose: "bars" };
+  }
+  if (pathname === "/v2/snapshot/locale/us/markets/stocks/tickers") {
+    return { endpointFamily: "stock_snapshots", purpose: "stock snapshots" };
+  }
+  if (/^\/v2\/aggs\/grouped\/locale\/us\/market\/stocks\//.test(pathname)) {
+    return { endpointFamily: "grouped_daily", purpose: "grouped daily bars" };
+  }
+  if (/^\/v3\/reference\/tickers/.test(pathname)) {
+    return { endpointFamily: "ticker_reference", purpose: "ticker reference" };
+  }
+  if (pathname === "/v2/reference/news") {
+    return { endpointFamily: "news", purpose: "news" };
+  }
+  if (/^\/v3\/snapshot\/options\//.test(pathname)) {
+    return { endpointFamily: "option_chain", purpose: "option chain snapshot" };
+  }
+  if (/^\/v3\/trades\//.test(pathname)) {
+    return { endpointFamily: "option_trades", purpose: "trade prints" };
+  }
+  if (/^\/v3\/quotes\//.test(pathname)) {
+    return { endpointFamily: "option_quotes", purpose: "quote ticks" };
+  }
+  if (pathname === "/v3/reference/conditions") {
+    return { endpointFamily: "reference_conditions", purpose: "condition metadata" };
+  }
+  return { endpointFamily: "unknown", purpose: "provider request" };
+}
+
+function readPathSymbol(pathname: string): string | null {
+  const patterns = [
+    /^\/v2\/aggs\/ticker\/([^/]+)\//,
+    /^\/v3\/snapshot\/options\/([^/]+)/,
+    /^\/v3\/reference\/tickers\/([^/]+)/,
+    /^\/v3\/trades\/([^/]+)/,
+    /^\/v3\/quotes\/([^/]+)/,
+  ];
+  for (const pattern of patterns) {
+    const match = pathname.match(pattern);
+    if (match?.[1]) {
+      return decodeURIComponent(match[1]).toUpperCase();
+    }
+  }
+  return null;
+}
+
+function readAggregateRange(pathname: string): {
+  timeframe: string | null;
+  from: string | null;
+  to: string | null;
+} {
+  const match = pathname.match(
+    /^\/v2\/aggs\/ticker\/[^/]+\/range\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)/,
+  );
+  if (!match) {
+    return { timeframe: null, from: null, to: null };
+  }
+  return {
+    timeframe: `${match[1]} ${match[2]}`,
+    from: safeDateOrRaw(decodeURIComponent(match[3])),
+    to: safeDateOrRaw(decodeURIComponent(match[4])),
+  };
+}
+
+function buildMassiveRestActivity(input: {
+  config: PolygonRuntimeConfig;
+  url: string | URL;
+  init: RequestInit;
+  startedAt: number;
+  status: MassiveRestActivityStatus;
+  payload?: unknown;
+  error?: unknown;
+}): MassiveRestActivity | null {
+  const providerIdentity = getPolygonProviderIdentity(input.config);
+  if (providerIdentity !== "massive") {
+    return null;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(input.url.toString());
+  } catch {
+    return null;
+  }
+
+  const { endpointFamily, purpose } = classifyProviderEndpoint(url.pathname);
+  const range = readAggregateRange(url.pathname);
+  const symbol = readPathSymbol(url.pathname);
+  const tickerCount = countCsvValues(url.searchParams.get("tickers"));
+  const now = new Date();
+  const errorMessage = input.error ? truncateProviderError(providerErrorMessage(input.error)) : null;
+  const httpStatus =
+    input.error &&
+    typeof input.error === "object" &&
+    "status" in input.error &&
+    typeof (input.error as { status?: unknown }).status === "number"
+      ? (input.error as { status: number }).status
+      : null;
+
+  return {
+    id: massiveRestDiagnosticsState.nextId++,
+    observedAt: now.toISOString(),
+    providerIdentity,
+    baseUrlHost: safeUrlHost(input.config.baseUrl),
+    method: input.init.method?.toUpperCase() || "GET",
+    endpointFamily,
+    endpoint: url.pathname,
+    purpose,
+    symbol,
+    symbolCount: tickerCount ?? (symbol ? 1 : null),
+    timeframe: range.timeframe,
+    from: range.from ?? safeDateOrRaw(url.searchParams.get("timestamp.gte")),
+    to: range.to ?? safeDateOrRaw(url.searchParams.get("timestamp.lte")),
+    adjusted: parseBooleanParam(url.searchParams.get("adjusted")),
+    includeOtc: parseBooleanParam(url.searchParams.get("include_otc")),
+    sort: url.searchParams.get("sort"),
+    limit: parseNumberParam(url.searchParams.get("limit")),
+    pageCount: 1,
+    resultCount:
+      input.status === "success" ? getPayloadResultCount(input.payload) : null,
+    hasNextPage:
+      input.status === "success" ? getPayloadHasNextPage(input.payload) : null,
+    durationMs: Math.max(0, Math.round(Date.now() - input.startedAt)),
+    status: input.status,
+    httpStatus,
+    error: errorMessage,
+  };
+}
+
+function recordMassiveRestActivity(activity: MassiveRestActivity | null): void {
+  if (!activity) {
+    return;
+  }
+  massiveRestDiagnosticsState.recentRequests.unshift(activity);
+  massiveRestDiagnosticsState.recentRequests =
+    massiveRestDiagnosticsState.recentRequests.slice(0, MASSIVE_REST_ACTIVITY_MAX);
+  if (activity.status === "success") {
+    massiveRestDiagnosticsState.lastSuccessAt = new Date(activity.observedAt);
+    massiveRestDiagnosticsState.lastError = null;
+    return;
+  }
+  massiveRestDiagnosticsState.lastFailureAt = new Date(activity.observedAt);
+  massiveRestDiagnosticsState.lastError = activity.error;
+}
 
 export function recordPolygonApiSuccess(at: Date = new Date()): void {
   polygonApiDiagnosticsState.lastSuccessAt = at;
@@ -433,6 +742,47 @@ export function getPolygonApiDiagnostics(
     lastFailureAt: lastFailureAt?.toISOString() ?? null,
     lastError: polygonApiDiagnosticsState.lastError,
   };
+}
+
+export function getMassiveApiDiagnostics(
+  config: PolygonRuntimeConfig | null | undefined,
+): MassiveApiDiagnostics {
+  const providerIdentity = getPolygonProviderIdentity(config ?? null);
+  const configured = Boolean(config && providerIdentity === "massive");
+  const lastSuccessAt = massiveRestDiagnosticsState.lastSuccessAt;
+  const lastFailureAt = massiveRestDiagnosticsState.lastFailureAt;
+  const restStatus: MassiveRestDiagnostics["status"] = !configured
+    ? "unconfigured"
+    : lastFailureAt && (!lastSuccessAt || lastFailureAt > lastSuccessAt)
+      ? "degraded"
+      : lastSuccessAt
+        ? "ok"
+        : "idle";
+
+  return {
+    configured,
+    providerIdentity,
+    baseUrlHost: config ? safeUrlHost(config.baseUrl) : null,
+    stocksRealtimeConfigured: config
+      ? isMassiveStocksRealtimeConfigured(config)
+      : false,
+    rest: {
+      status: restStatus,
+      recentRequests: massiveRestDiagnosticsState.recentRequests,
+      lastRequest: massiveRestDiagnosticsState.recentRequests[0] ?? null,
+      lastSuccessAt: lastSuccessAt?.toISOString() ?? null,
+      lastFailureAt: lastFailureAt?.toISOString() ?? null,
+      lastError: massiveRestDiagnosticsState.lastError,
+    },
+  };
+}
+
+export function __resetMassiveApiDiagnosticsForTests(): void {
+  massiveRestDiagnosticsState.nextId = 1;
+  massiveRestDiagnosticsState.recentRequests = [];
+  massiveRestDiagnosticsState.lastSuccessAt = null;
+  massiveRestDiagnosticsState.lastFailureAt = null;
+  massiveRestDiagnosticsState.lastError = null;
 }
 
 const TIMEFRAME_TO_POLYGON_RANGE: Record<
@@ -2427,12 +2777,33 @@ export class PolygonMarketDataClient {
     input: string | URL,
     init: RequestInit = {},
   ): Promise<T> {
+    const startedAt = Date.now();
     try {
       const payload = await fetchJson<T>(input, init);
       recordPolygonApiSuccess();
+      recordMassiveRestActivity(
+        buildMassiveRestActivity({
+          config: this.config,
+          url: input,
+          init,
+          startedAt,
+          status: "success",
+          payload,
+        }),
+      );
       return payload;
     } catch (error) {
       recordPolygonApiFailure(error);
+      recordMassiveRestActivity(
+        buildMassiveRestActivity({
+          config: this.config,
+          url: input,
+          init,
+          startedAt,
+          status: "error",
+          error,
+        }),
+      );
       throw error;
     }
   }

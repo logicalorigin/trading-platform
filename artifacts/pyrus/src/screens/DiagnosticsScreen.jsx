@@ -215,8 +215,47 @@ const statusLabel = (value) =>
         ? "OK"
         : "UNKNOWN";
 
+const providerStatusLabel = (value) => {
+  const status = String(value || "").toLowerCase();
+  if (status === "ok") return "OK";
+  if (status === "degraded") return "DEGRADED";
+  if (status === "unconfigured") return "NOT CONFIGURED";
+  if (status === "idle") return "IDLE";
+  return "UNKNOWN";
+};
+
+const providerStatusTone = (value) => {
+  const status = String(value || "").toLowerCase();
+  if (status === "ok") return CSS_COLOR.green;
+  if (status === "degraded") return CSS_COLOR.amber;
+  if (status === "unconfigured") return CSS_COLOR.textDim;
+  return CSS_COLOR.textSec;
+};
+
 const safeRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
+
+const arrayOrEmpty = (value) => (Array.isArray(value) ? value : []);
+
+const formatList = (values) => {
+  const list = arrayOrEmpty(values)
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+  return list.length ? list.join(", ") : MISSING_VALUE;
+};
+
+const formatMassiveRequestSummary = (request) => {
+  const record = safeRecord(request);
+  const purpose = String(record.purpose || record.endpointFamily || "")
+    .replace(/[-_]+/g, " ")
+    .trim();
+  const symbol = record.symbol ? ` ${record.symbol}` : "";
+  const timeframe = record.timeframe ? ` ${record.timeframe}` : "";
+  if (!purpose && !symbol && !timeframe) {
+    return MISSING_VALUE;
+  }
+  return `${purpose}${symbol}${timeframe}`.trim();
+};
 
 const normalizeMetricKey = (key) => key.split(".").at(-1) || key;
 
@@ -880,6 +919,12 @@ export default function DiagnosticsScreen({
   const apiMetrics = safeRecord(apiSnapshot?.metrics);
   const ibkrMetrics = safeRecord(ibkrSnapshot?.metrics);
   const marketDataMetrics = safeRecord(marketDataSnapshot?.metrics);
+  const marketDataRaw = safeRecord(marketDataSnapshot?.raw);
+  const massiveDiagnostics = safeRecord(marketDataRaw.massive);
+  const massiveRest = safeRecord(massiveDiagnostics.rest);
+  const massiveLastRequest = safeRecord(massiveRest.lastRequest);
+  const massiveWebSocket = safeRecord(massiveDiagnostics.websocket);
+  const massiveWebSocketFeeds = arrayOrEmpty(massiveWebSocket.feeds);
   const browserMetrics = safeRecord(browserSnapshot?.metrics);
   const chartHydrationMetrics = safeRecord(chartHydrationSnapshot?.metrics);
   const resourcePressureMetrics = safeRecord(resourcePressureSnapshot?.metrics);
@@ -1311,6 +1356,49 @@ export default function DiagnosticsScreen({
             <StateRow label="Last gap" value={marketDataMetrics.lastGapMs == null ? MISSING_VALUE : `${formatMs(marketDataMetrics.lastGapMs)} / ${formatMs(marketDataMetrics.lastGapAgeMs)} ago`} tone={marketDataMetrics.recentGapCount > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
             <StateRow label="Worst observed gap" value={formatMs(marketDataMetrics.rawMaxGapMs ?? marketDataMetrics.maxGapMs)} tone={marketDataMetrics.recentGapCount > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec} />
             <StateRow label="Last error" value={marketDataMetrics.lastError} tone={marketDataMetrics.lastError ? CSS_COLOR.red : CSS_COLOR.textSec} />
+          </Panel>
+          <Panel title="Massive REST">
+            <StateRow
+              label="Status"
+              value={providerStatusLabel(massiveRest.status)}
+              tone={providerStatusTone(massiveRest.status)}
+            />
+            <StateRow label="Host" value={massiveDiagnostics.baseUrlHost || MISSING_VALUE} />
+            <StateRow label="Last call" value={formatMassiveRequestSummary(massiveLastRequest)} />
+            <StateRow label="Endpoint" value={massiveLastRequest.endpoint || MISSING_VALUE} />
+            <StateRow label="Symbols" value={formatCount(massiveLastRequest.symbolCount)} />
+            <StateRow label="Rows" value={formatCount(massiveLastRequest.resultCount)} />
+            <StateRow label="Limit" value={formatCount(massiveLastRequest.limit)} />
+            <StateRow label="Duration" value={formatMs(massiveLastRequest.durationMs)} />
+            <StateRow label="Observed" value={massiveLastRequest.observedAt ? formatAgo(massiveLastRequest.observedAt) : MISSING_VALUE} />
+            <StateRow label="Last error" value={massiveRest.lastError || MISSING_VALUE} tone={massiveRest.lastError ? CSS_COLOR.red : CSS_COLOR.textSec} />
+          </Panel>
+          <Panel title="Massive WebSocket">
+            <StateRow
+              label="Status"
+              value={providerStatusLabel(massiveWebSocket.status)}
+              tone={providerStatusTone(massiveWebSocket.status)}
+            />
+            <StateRow label="Mode" value={massiveWebSocket.mode || MISSING_VALUE} />
+            <StateRow label="Active channels" value={formatList(massiveWebSocket.activeChannels)} />
+            <StateRow label="Available channels" value={formatList(massiveWebSocket.availableChannels)} />
+            <StateRow label="Subscribed symbols" value={formatCount(massiveWebSocket.subscribedSymbolCount)} />
+            <StateRow label="Consumers" value={formatCount(massiveWebSocket.activeConsumerCount)} />
+            <StateRow label="Events" value={formatCount(massiveWebSocket.eventCount)} />
+            <StateRow label="Last message" value={massiveWebSocket.lastMessageAgeMs == null ? MISSING_VALUE : `${formatMs(massiveWebSocket.lastMessageAgeMs)} ago`} />
+            <StateRow label="Reconnects" value={formatCount(massiveWebSocket.reconnectCount)} tone={(massiveWebSocket.reconnectCount ?? 0) > 0 ? CSS_COLOR.amber : CSS_COLOR.green} />
+            {massiveWebSocketFeeds.slice(0, 2).map((feedValue, index) => {
+              const feed = safeRecord(feedValue);
+              return (
+                <StateRow
+                  key={feed.id || feed.label || `massive-feed-${index}`}
+                  label={feed.label || feed.id || "Feed"}
+                  value={`${formatList(feed.subscribedChannels)} · ${formatCount(feed.subscribedSymbolCount)} symbols`}
+                  tone={feed.lastError ? CSS_COLOR.red : feed.connected ? CSS_COLOR.green : CSS_COLOR.textSec}
+                />
+              );
+            })}
+            <StateRow label="Last error" value={massiveWebSocket.lastError || MISSING_VALUE} tone={massiveWebSocket.lastError ? CSS_COLOR.red : CSS_COLOR.textSec} />
           </Panel>
           <Panel title="Streaming">
             <StateRow label="Consumers" value={formatCount(stream.activeConsumerCount)} />

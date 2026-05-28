@@ -45,6 +45,7 @@ export type PyrusSignalsSignalSettings = {
   atrLength: number;
   atrSmoothing: number;
   volatilityMultiplier: number;
+  wireSpread: number;
   shadowLength: number;
   shadowStdDev: number;
   adxLength: number;
@@ -116,6 +117,11 @@ export type PyrusSignalsEvaluation = {
   basis: number[];
   atrRaw: number[];
   atrSmoothed: number[];
+  upperBand: number[];
+  lowerBand: number[];
+  trendLine: number[];
+  bullWires: [number[], number[], number[]];
+  bearWires: [number[], number[], number[]];
   adx: number[];
   volatilityScore: number[];
   trendDirection: number[];
@@ -142,6 +148,7 @@ export const DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS: PyrusSignalsSignalSettings =
   atrLength: 14,
   atrSmoothing: 21,
   volatilityMultiplier: 2,
+  wireSpread: 0.5,
   shadowLength: 20,
   shadowStdDev: 2,
   adxLength: 14,
@@ -338,6 +345,12 @@ export function resolvePyrusSignalsSignalSettings(
       bands.volatilityMultiplier ?? input.volatilityMultiplier,
       DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS.volatilityMultiplier,
       0.1,
+      10,
+    ),
+    wireSpread: resolveFloatSetting(
+      overlays.wireSpread ?? input.wireSpread,
+      DEFAULT_PYRUS_SIGNALS_SIGNAL_SETTINGS.wireSpread,
+      0.01,
       10,
     ),
     shadowLength: resolveIntegerSetting(
@@ -854,6 +867,35 @@ const resolvePivotLow = (
   return pivotValue;
 };
 
+const resolveMedianPositiveBarInterval = (chartBars: PyrusSignalsBar[]): number => {
+  const intervals: number[] = [];
+  for (let index = 1; index < chartBars.length; index += 1) {
+    const interval = chartBars[index].time - chartBars[index - 1].time;
+    if (Number.isFinite(interval) && interval > 0) {
+      intervals.push(interval);
+    }
+  }
+
+  if (!intervals.length) {
+    return 0;
+  }
+
+  intervals.sort((left, right) => left - right);
+  return intervals[Math.floor(intervals.length / 2)] ?? 0;
+};
+
+const hasHardBarTimeGap = (
+  chartBars: PyrusSignalsBar[],
+  index: number,
+  medianInterval: number,
+): boolean => {
+  if (index <= 0 || medianInterval <= 0) {
+    return false;
+  }
+
+  return chartBars[index].time - chartBars[index - 1].time > medianInterval * 2;
+};
+
 const buildFilterState = (
   chartBars: PyrusSignalsBar[],
   index: number,
@@ -921,6 +963,23 @@ export function evaluatePyrusSignalsSignals(input: {
   const basis = computePyrusSignalsWma(closes, settings.basisLength);
   const atrRaw = computePyrusSignalsAtr(chartBars, settings.atrLength);
   const atrSmoothed = computePyrusSignalsSma(atrRaw, settings.atrSmoothing);
+  const upperBand = basis.map((value, index) =>
+    Number.isFinite(value) && Number.isFinite(atrSmoothed[index])
+      ? Number((value + atrSmoothed[index] * settings.volatilityMultiplier).toFixed(6))
+      : Number.NaN,
+  );
+  const lowerBand = basis.map((value, index) =>
+    Number.isFinite(value) && Number.isFinite(atrSmoothed[index])
+      ? Number((value - atrSmoothed[index] * settings.volatilityMultiplier).toFixed(6))
+      : Number.NaN,
+  );
+  const trendLine = new Array<number>(chartBars.length).fill(Number.NaN);
+  const bullWires = Array.from({ length: 3 }, () =>
+    new Array<number>(chartBars.length).fill(Number.NaN),
+  ) as [number[], number[], number[]];
+  const bearWires = Array.from({ length: 3 }, () =>
+    new Array<number>(chartBars.length).fill(Number.NaN),
+  ) as [number[], number[], number[]];
   const adx = computePyrusSignalsAdx(chartBars, settings.adxLength);
   const volumeSma = computePyrusSignalsSma(
     chartBars.map((bar) => bar.v),
@@ -935,6 +994,7 @@ export function evaluatePyrusSignalsSignals(input: {
   const regimeDirection = new Array<number>(chartBars.length).fill(1);
   const structureEvents: PyrusSignalsStructureEvent[] = [];
   const signalEvents: PyrusSignalsSignalEvent[] = [];
+  const medianBarInterval = resolveMedianPositiveBarInterval(chartBars);
 
   let trendDirection = 1;
   let marketStructureDirection = 0;
@@ -944,6 +1004,7 @@ export function evaluatePyrusSignalsSignals(input: {
   let previousSwingLow = Number.NaN;
   let breakableHigh = Number.NaN;
   let breakableLow = Number.NaN;
+  let previousRegimeDirection: number | null = null;
 
   const passesChochFilters = (
     index: number,
@@ -1000,6 +1061,7 @@ export function evaluatePyrusSignalsSignals(input: {
 
   for (let index = 0; index < chartBars.length; index += 1) {
     const currentBar = chartBars[index];
+    const hardGapBar = hasHardBarTimeGap(chartBars, index, medianBarInterval);
     if (!currentBar) {
       continue;
     }
@@ -1080,6 +1142,32 @@ export function evaluatePyrusSignalsSignals(input: {
 
     regimeDirection[index] =
       marketStructureDirection !== 0 ? marketStructureDirection : trendDirection;
+    const activeRegimeDirection = regimeDirection[index];
+    const activeTrendLine =
+      activeRegimeDirection === 1 ? lowerBand[index] : upperBand[index];
+    const regimeFlipped =
+      previousRegimeDirection != null &&
+      previousRegimeDirection !== activeRegimeDirection;
+    if (!hardGapBar && !regimeFlipped && Number.isFinite(activeTrendLine)) {
+      trendLine[index] = activeTrendLine;
+      const wireStep = Number.isFinite(atrSmoothed[index])
+        ? atrSmoothed[index] * settings.wireSpread
+        : Number.NaN;
+      if (Number.isFinite(wireStep)) {
+        const wireDirection = activeRegimeDirection === 1 ? -1 : 1;
+        const wires = activeRegimeDirection === 1 ? bullWires : bearWires;
+        wires[0][index] = Number(
+          (activeTrendLine + wireDirection * wireStep).toFixed(6),
+        );
+        wires[1][index] = Number(
+          (activeTrendLine + wireDirection * wireStep * 2).toFixed(6),
+        );
+        wires[2][index] = Number(
+          (activeTrendLine + wireDirection * wireStep * 3).toFixed(6),
+        );
+      }
+    }
+    previousRegimeDirection = activeRegimeDirection;
     const actionable =
       includeProvisionalSignals ||
       !settings.waitForBarClose ||
@@ -1160,6 +1248,11 @@ export function evaluatePyrusSignalsSignals(input: {
     basis,
     atrRaw,
     atrSmoothed,
+    upperBand,
+    lowerBand,
+    trendLine,
+    bullWires,
+    bearWires,
     adx,
     volatilityScore,
     trendDirection: trendDirectionSeries,
