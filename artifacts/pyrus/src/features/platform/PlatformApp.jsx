@@ -858,6 +858,9 @@ export default function PlatformApp() {
   const activeScreenCriticalReady = Boolean(
     activeScreenReadiness.criticalReady,
   );
+  const activeScreenBackgroundAllowed = Boolean(
+    activeScreenReadiness.backgroundAllowed,
+  );
   useEffect(() => {
     if (firstScreenBootCompleteRef.current || !activeScreenCriticalReady) {
       return;
@@ -871,9 +874,6 @@ export default function PlatformApp() {
       detail: `${screen} screen ready`,
     });
   }, [activeScreenCriticalReady, markWarmupTimeline, screen]);
-  const activeScreenBackgroundAllowed = Boolean(
-    activeScreenReadiness.backgroundAllowed,
-  );
   const backgroundDataWarmupEnabled = Boolean(
     workspaceLeader &&
       !isPhone &&
@@ -959,7 +959,9 @@ export default function PlatformApp() {
       !isPhone &&
       !warmupTestOverrides.disableOperationalCodePreload,
   );
-  const screenCodePreloadReady = operationalCodePreloadReady;
+  const screenCodePreloadReady = Boolean(
+    operationalCodePreloadReady && activeScreenBackgroundAllowed,
+  );
   const backgroundScreenPreloadReady = Boolean(
     operationalCodePreloadReady &&
       sessionMetadataSettled &&
@@ -1667,33 +1669,42 @@ export default function PlatformApp() {
 
     let cancelled = false;
     const timers = [];
-    const preloadOrder = SCREEN_MODULE_PRELOAD_ORDER;
+    const preloadOrder = SCREEN_MODULE_PRELOAD_ORDER.filter(
+      (screenId) => screenId !== screen,
+    );
     markWarmupTimeline("screenCodePreloadQueuedAtMs");
     screenCodePreloadStartedRef.current = true;
 
-    void Promise.allSettled(
-      preloadOrder.map((screenId, index) =>
-        new Promise((resolve, reject) => {
-          const timerId = window.setTimeout(
-            () => {
-              if (cancelled) {
-                resolve(null);
-                return;
-              }
-              preloadScreenModule(screenId).then(resolve, reject);
-            },
-            OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS +
-              OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS * index,
-          );
-          timers.push(timerId);
-        }),
-      ),
-    ).then((settled) => {
-      if (!cancelled && settled.every((entry) => entry.status === "fulfilled")) {
+    const waitForPreloadTurn = (index) =>
+      new Promise((resolve) => {
+        const timerId = window.setTimeout(
+          resolve,
+          index === 0
+            ? OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS
+            : OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS,
+        );
+        timers.push(timerId);
+      });
+
+    const runSequentialPreload = async () => {
+      let allFulfilled = true;
+      for (let index = 0; index < preloadOrder.length; index += 1) {
+        if (cancelled) return;
+        await waitForPreloadTurn(index);
+        if (cancelled) return;
+        try {
+          await preloadScreenModule(preloadOrder[index]);
+        } catch {
+          allFulfilled = false;
+        }
+      }
+      if (!cancelled && allFulfilled) {
         screenCodePreloadCompleteRef.current = true;
         markWarmupTimeline("screenCodePreloadCompleteAtMs");
       }
-    });
+    };
+
+    void runSequentialPreload();
 
     return () => {
       cancelled = true;
@@ -1703,6 +1714,7 @@ export default function PlatformApp() {
       }
     };
   }, [
+    screen,
     screenCodePreloadReady,
     markWarmupTimeline,
   ]);

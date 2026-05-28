@@ -1823,7 +1823,7 @@ test("screen shell warmup preloads top-level code without default hidden page mo
     "utf8",
   );
   const codeWarmupEffect = appSource.match(
-    /useEffect\(\(\) => \{\s*if \(\s*!screenCodePreloadReady[\s\S]*?\n  \}, \[\s*screenCodePreloadReady,\s*markWarmupTimeline,\s*\]\);/,
+    /useEffect\(\(\) => \{\s*if \(\s*!screenCodePreloadReady[\s\S]*?\n  \}, \[\s*screen,\s*screenCodePreloadReady,\s*markWarmupTimeline,\s*\]\);/,
   )?.[0];
   const shellWarmMountStart = appSource.indexOf(
     "const warmMountOrder = SCREEN_SHELL_WARM_MOUNT_ORDER.filter",
@@ -1928,7 +1928,10 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.match(appSource, /screenModulePreloads:\s*getScreenModulePreloadSnapshot\(\)/);
   assert.match(appSource, /backgroundDataWarmupGateOpenedAtMs/);
   assert.match(appSource, /timelineMs:\s*warmupTimelineRef\.current/);
-  assert.match(appSource, /const screenCodePreloadReady = operationalCodePreloadReady/);
+  assert.match(
+    appSource,
+    /const screenCodePreloadReady = Boolean\(\s*operationalCodePreloadReady && activeScreenBackgroundAllowed,\s*\);/,
+  );
   assert.match(appSource, /const backgroundScreenPreloadReady = Boolean/);
   assert.match(appSource, /memoryAllowsBackgroundWarmup/);
   assert.match(appSource, /useBootProgress\(\)/);
@@ -1986,9 +1989,12 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.match(codeWarmupEffect, /screenCodePreloadReady/);
   assert.doesNotMatch(codeWarmupEffect, /backgroundScreenPreloadReady/);
   assert.doesNotMatch(codeWarmupEffect, /memoryBlocksOperationalPreload/);
-  assert.match(codeWarmupEffect, /const preloadOrder = SCREEN_MODULE_PRELOAD_ORDER/);
-  assert.match(codeWarmupEffect, /Promise\.allSettled/);
-  assert.match(codeWarmupEffect, /preloadScreenModule\(screenId\)/);
+  assert.match(codeWarmupEffect, /const preloadOrder = SCREEN_MODULE_PRELOAD_ORDER\.filter/);
+  assert.match(codeWarmupEffect, /screenId\) => screenId !== screen/);
+  assert.match(codeWarmupEffect, /const runSequentialPreload = async \(\) =>/);
+  assert.match(codeWarmupEffect, /for \(let index = 0; index < preloadOrder\.length; index \+= 1\)/);
+  assert.match(codeWarmupEffect, /await preloadScreenModule\(preloadOrder\[index\]\)/);
+  assert.doesNotMatch(codeWarmupEffect, /Promise\.allSettled/);
   assert.doesNotMatch(codeWarmupEffect, /const completeTimer = window\.setTimeout/);
   assert.doesNotMatch(codeWarmupEffect, /setScreenWarmupPhase/);
   assert.doesNotMatch(codeWarmupEffect, /setMountedScreens/);
