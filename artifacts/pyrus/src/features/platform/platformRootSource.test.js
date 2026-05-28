@@ -1913,10 +1913,14 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.doesNotMatch(registrySource, /void preloadScreenModule/);
   assert.match(screenModulePreloaderSource, /export const getScreenModulePreloadSnapshot = /);
   assert.match(appHeaderSource, /preloadScreenModule/);
-  assert.match(appContentSource, /const preloadInitialPlatformScreenModule = \(\) =>/);
-  assert.match(appContentSource, /preloadScreenModule\(resolveInitialPlatformScreen\(\)\)/);
+  assert.match(appContentSource, /const PRIORITY_PLATFORM_SCREEN_IDS = \["account"\] as const/);
+  assert.match(appContentSource, /const preloadPlatformScreenModule = \(screenId: string\) =>/);
+  assert.match(appContentSource, /const preloadInitialPlatformScreenModule = \(initialScreen = resolveInitialPlatformScreen\(\)\) =>/);
+  assert.match(appContentSource, /const preloadPriorityPlatformScreenModules = \(/);
+  assert.match(appContentSource, /preloadPlatformScreenModule\(screenId\)/);
+  assert.match(appContentSource, /preloadPriorityPlatformScreenModules\(initialScreen\)/);
   assert.ok(
-    appContentSource.indexOf("preloadInitialPlatformScreenModule();") <
+    appContentSource.indexOf("preloadInitialPlatformScreenModule(initialScreen);") <
       appContentSource.indexOf("preloadDynamicImport(loadPlatformApp"),
     "initial screen chunk preload must start alongside the platform app chunk",
   );
@@ -1939,6 +1943,11 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.match(appSource, /const PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS = 500/);
   assert.match(appSource, /priorityScreenCodePreloadQueuedAtMs/);
   assert.match(appSource, /priorityScreenCodePreloadCompleteAtMs/);
+  assert.match(appSource, /const priorityScreenCodePreloadPending = Boolean/);
+  assert.match(appSource, /!priorityScreenCodePreloadPending &&\s*\(backgroundDataWarmupEnabled \|\| isPhone\)/);
+  assert.match(appSource, /quoteStreamRuntimeEnabled=\{\s*workSchedule\.streams\.watchlistQuoteStream &&\s*!priorityScreenCodePreloadPending\s*\}/);
+  assert.match(appSource, /marketStockAggregateStreamingEnabled=\{\s*workSchedule\.streams\.marketStockAggregates &&\s*!priorityScreenCodePreloadPending\s*\}/);
+  assert.match(appSource, /enabled:\s*workSchedule\.streams\.accountRealtime &&\s*!priorityScreenCodePreloadPending/);
   assert.match(
     appSource,
     /preloadOrder\.map\(\(screenId\) => preloadScreenModule\(screenId\)\)/,

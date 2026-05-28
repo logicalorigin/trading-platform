@@ -36,6 +36,7 @@ const PLATFORM_SCREEN_IDS = new Set([
   "diagnostics",
   "settings",
 ]);
+const PRIORITY_PLATFORM_SCREEN_IDS = ["account"] as const;
 const PLATFORM_BOOT_PROGRESS_TASK_IDS = [
   "session",
   "watchlists",
@@ -144,11 +145,25 @@ const resolveInitialPlatformScreen = (): string => {
   return PLATFORM_SCREEN_IDS.has(normalizedScreen) ? normalizedScreen : "market";
 };
 
-const preloadInitialPlatformScreenModule = () => {
-  const preload = preloadScreenModule(resolveInitialPlatformScreen());
+const preloadPlatformScreenModule = (screenId: string) => {
+  const preload = preloadScreenModule(screenId);
   if (preload && typeof preload.catch === "function") {
     void preload.catch(() => {});
   }
+};
+
+const preloadInitialPlatformScreenModule = (initialScreen = resolveInitialPlatformScreen()) => {
+  preloadPlatformScreenModule(initialScreen);
+};
+
+const preloadPriorityPlatformScreenModules = (
+  initialScreen = resolveInitialPlatformScreen(),
+) => {
+  PRIORITY_PLATFORM_SCREEN_IDS.forEach((screenId) => {
+    if (screenId !== initialScreen) {
+      preloadPlatformScreenModule(screenId);
+    }
+  });
 };
 
 export const preloadInitialAppContentRoute = () => {
@@ -169,7 +184,9 @@ export const preloadInitialAppContentRoute = () => {
     });
     return;
   }
-  preloadInitialPlatformScreenModule();
+  const initialScreen = resolveInitialPlatformScreen();
+  preloadInitialPlatformScreenModule(initialScreen);
+  preloadPriorityPlatformScreenModules(initialScreen);
   preloadDynamicImport(loadPlatformApp, {
     label: "PlatformApp",
     retries: ROOT_ROUTE_CHUNK_RETRIES,

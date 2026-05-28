@@ -1,18 +1,42 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-28 23:20 UTC`
-- Current request: run focused `/qa` on the Account page, covering both real account and shadow account surfaces.
+- Last updated: `2026-05-28 23:22 UTC`
+- Current request: proceed with `$qa`, commit if needed, and report before final handoff.
 - Current status:
-  - `/qa` skill started on branch `main`; base branch detected as `main`.
-  - Working tree was clean before this handoff refresh.
-  - Browse daemon is healthy at `http://127.0.0.1:18747/` using repo-local browse binary `.agents/skills/gstack/browse/dist/browse`.
-  - Scope is browser QA for Account real/shadow views, not startup config or broad app QA.
-  - Replit startup config must remain untouched; use the already-running Replit app.
-- Changed files this pass:
+  - `/qa` workflow resumed on branch `main`.
+  - Local app target is `http://127.0.0.1:18747/`.
+  - Main source fix was committed as `002e1a1 fix(qa): ISSUE-001 - prioritize active route loading`.
+  - QA result is `DONE_WITH_CONCERNS`: the global PYRUS route loader regression is fixed, but full Algo live/control content still does not reliably finish loading under runtime/API pressure.
+  - Replit startup config was touched earlier in this workstream, so `pnpm run audit:replit-startup` must run before final response.
+- Changed files not yet committed:
+  - `.gstack/qa-reports/qa-report-pyrus-local-2026-05-28.md`
+  - `.gstack/qa-reports/baseline.json`
+  - `artifacts/pyrus/src/app/AppContent.tsx`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
   - `SESSION_HANDOFF_CURRENT.md`
+- Source fix summary:
+  - Delayed and staggered background screen preloads while the active route warms.
+  - Preloads the Account platform screen as a priority sibling to the initial screen.
+  - Added priority screen code preload tracking and gated non-critical stream work behind it.
+  - Shrank the active Algo screen module chain by lazy-loading heavy runtime helpers and status UI.
+  - Added test coverage for active-route preload and stream-gating behavior.
 - Validation state:
-  - Pending focused browser QA.
+  - Passed:
+    - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/screens/algo/algoHelpers.test.js src/screens/algo/AlgoAuditPanel.test.js src/screens/algo/OperationsSignalRow.test.js src/features/platform/live-streams.test.ts src/features/platform/runtimeControlModel.test.js src/lib/fontLoadingPolicy.test.ts`
+    - `pnpm --filter @workspace/pyrus run typecheck`
+    - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/account/AccountHeroBlock.test.js src/screens/account/AccountReturnsPanel.test.js src/screens/account/TradingAnalysisWorkbench.test.js src/features/platform/platformRootSource.test.js`
+    - `pnpm --filter @workspace/pyrus run typecheck`
+    - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js`
+    - `pnpm --filter @workspace/pyrus run typecheck`
+    - `pnpm run audit:replit-startup`
+    - `git diff --check`
+  - Browser after source fixes:
+    - `.gstack/qa-reports/screenshots/issue-001-after-static-chain-fix-algo-45s-2026-05-28.png` shows Algo active, right rail live, and no global PYRUS route loader.
+    - JS state at 45s: `activeScreen: "algo"`, `hasAlgoScreen: true`, `hasDeployment: true`, `hasPyrusLoading: false`, scoped loader `algo-live-loading`, no console errors.
+  - Residual browser concern:
+    - `.gstack/qa-reports/screenshots/issue-001-after-static-chain-fix-algo-90s-2026-05-28.png` showed route fallback to Market with 503/runtime pressure.
 - Blockers:
-  - None currently.
+  - No source blocker for committing the QA wrap-up.
+  - Clean QA is blocked by remaining Algo/API fanout and scoped live-loader latency.
 - Next step:
-  - Commit this handoff-only checkpoint to keep `/qa` clean-tree discipline, then navigate Account, capture screenshots, inspect console/network state, exercise real/shadow account controls, and document/fix reproducible bugs.
+  - Commit QA report/baseline/handoff plus the final priority-preload guardrail changes, then final response.
