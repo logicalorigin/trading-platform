@@ -171,9 +171,6 @@ const loadAlgoLivePage = () => {
   return algoLivePageImport;
 };
 const LazyAlgoLivePage = lazy(loadAlgoLivePage);
-if (typeof window !== "undefined") {
-  void loadAlgoLivePage();
-}
 
 const ALGO_CRITICAL_FALLBACK_DELAY_MS = 1_000;
 const ALGO_DERIVED_FALLBACK_DELAY_MS = 6_000;
@@ -298,7 +295,6 @@ export const AlgoScreen = ({
   const [bridgeLauncherError, setBridgeLauncherError] = useState(null);
   const [bridgeLaunchClock, setBridgeLaunchClock] = useState(() => Date.now());
   const [bridgeLaunchInFlightUntil, setBridgeLaunchInFlightUntil] = useState(0);
-  const [algoLivePageReady, setAlgoLivePageReady] = useState(false);
   const brokerConfigured = Boolean(session?.configured?.ibkr);
   const brokerAuthenticated = Boolean(session?.ibkrBridge?.authenticated);
   const gatewayReady = isGatewayReadyForAlgo(session);
@@ -312,27 +308,7 @@ export const AlgoScreen = ({
     selectedAccountId ||
     session?.ibkrBridge?.selectedAccountId ||
     null;
-  useEffect(() => {
-    if (!isVisible) {
-      return undefined;
-    }
-    let cancelled = false;
-    loadAlgoLivePage()
-      .then(() => {
-        if (!cancelled) {
-          setAlgoLivePageReady(true);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setAlgoLivePageReady(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isVisible]);
-  const algoLiveDataQueriesEnabled = Boolean(isVisible && algoLivePageReady);
+  const algoLiveDataQueriesEnabled = Boolean(isVisible);
   const algoCockpitStreamFreshness = useAlgoCockpitStream({
     deploymentId: focusedDeploymentId,
     mode: environment || "paper",
@@ -501,8 +477,8 @@ export const AlgoScreen = ({
     null;
   const eventsQuery = useListExecutionEvents(
     focusedDeployment
-      ? { deploymentId: focusedDeployment.id, limit: 100 }
-      : { limit: 100 },
+      ? { deploymentId: focusedDeployment.id, limit: 20 }
+      : { limit: 20 },
     {
       query: {
         ...QUERY_DEFAULTS,

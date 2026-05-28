@@ -980,8 +980,8 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   const performanceQuery = useGetSignalOptionsPerformance(deploymentId, {
     query: {
       ...QUERY_DEFAULTS,
-      enabled: Boolean(queryEnabled && deploymentId),
-      refetchInterval: queryEnabled && !streamFreshness.algoFullFresh ? 30_000 : false,
+      enabled: Boolean(queryEnabled && deploymentId && streamFreshness.algoFullFresh),
+      refetchInterval: false,
     },
   });
   const eventsQuery = useListExecutionEvents(

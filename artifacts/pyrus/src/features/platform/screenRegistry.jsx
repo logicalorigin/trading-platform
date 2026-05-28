@@ -113,7 +113,6 @@ export const SCREEN_MODULE_PRELOAD_ORDER = [
   "trade",
   "account",
   "research",
-  "algo",
   "backtest",
   "diagnostics",
   "settings",
@@ -122,7 +121,6 @@ export const SCREEN_MODULE_PRELOAD_ORDER = [
 export const BOOT_SCREEN_MODULE_PRELOAD_ORDER = [
   "flow",
   "trade",
-  "algo",
   "backtest",
 ];
 
