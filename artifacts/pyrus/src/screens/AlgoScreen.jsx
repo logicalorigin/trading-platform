@@ -177,6 +177,12 @@ if (typeof window !== "undefined") {
 
 const ALGO_CRITICAL_FALLBACK_DELAY_MS = 1_000;
 const ALGO_DERIVED_FALLBACK_DELAY_MS = 6_000;
+const EMPTY_ALGO_DEPLOYMENTS = Object.freeze([]);
+const EMPTY_ALGO_DRAFTS = Object.freeze([]);
+const EMPTY_ALGO_EVENTS = Object.freeze([]);
+const EMPTY_SIGNAL_OPTIONS_CANDIDATES = Object.freeze([]);
+const EMPTY_SIGNAL_OPTIONS_SIGNALS = Object.freeze([]);
+const EMPTY_SIGNAL_OPTIONS_POSITIONS = Object.freeze([]);
 
 const AlgoLiveLoading = () => (
   <div
@@ -479,9 +485,9 @@ export const AlgoScreen = ({
       },
     },
   );
-  const deployments = deploymentsQuery.data?.deployments || [];
+  const deployments = deploymentsQuery.data?.deployments || EMPTY_ALGO_DEPLOYMENTS;
   const candidateDrafts = useMemo(() => {
-    const drafts = draftsQuery.data?.drafts || [];
+    const drafts = draftsQuery.data?.drafts || EMPTY_ALGO_DRAFTS;
     const matchingMode = drafts.filter((draft) => draft.mode === environment);
     return matchingMode.length ? matchingMode : drafts;
   }, [draftsQuery.data, environment]);
@@ -506,7 +512,7 @@ export const AlgoScreen = ({
       },
     },
   );
-  const events = eventsQuery.data?.events || [];
+  const events = eventsQuery.data?.events || EMPTY_ALGO_EVENTS;
   const signalOptionsStateQuery = useGetSignalOptionsAutomationState(
     focusedDeployment?.id || "",
     {
@@ -600,11 +606,17 @@ export const AlgoScreen = ({
   const signalOptionsProfile =
     signalOptionsState?.profile || SIGNAL_OPTIONS_DEFAULT_PROFILE;
   const signalOptionsCandidates =
-    cockpit?.candidates || signalOptionsState?.candidates || [];
+    cockpit?.candidates ||
+    signalOptionsState?.candidates ||
+    EMPTY_SIGNAL_OPTIONS_CANDIDATES;
   const signalOptionsSignals =
-    cockpit?.signals || signalOptionsState?.signals || [];
+    cockpit?.signals ||
+    signalOptionsState?.signals ||
+    EMPTY_SIGNAL_OPTIONS_SIGNALS;
   const signalOptionsPositions =
-    cockpit?.activePositions || signalOptionsState?.activePositions || [];
+    cockpit?.activePositions ||
+    signalOptionsState?.activePositions ||
+    EMPTY_SIGNAL_OPTIONS_POSITIONS;
   const cockpitFleet = cockpit?.fleet || null;
   const cockpitReadiness = cockpit?.readiness || null;
   const cockpitKpis = asRecord(cockpit?.kpis);
@@ -858,7 +870,7 @@ export const AlgoScreen = ({
 
   useEffect(() => {
     if (!deployments.length) {
-      setFocusedDeploymentId(null);
+      setFocusedDeploymentId((current) => (current === null ? current : null));
       return;
     }
 
@@ -894,7 +906,7 @@ export const AlgoScreen = ({
 
   useEffect(() => {
     if (!signalOptionsCandidates.length) {
-      setSelectedCandidateId(null);
+      setSelectedCandidateId((current) => (current === null ? current : null));
       return;
     }
     if (

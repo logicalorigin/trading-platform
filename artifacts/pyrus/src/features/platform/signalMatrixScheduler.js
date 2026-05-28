@@ -3,6 +3,11 @@ const DEFAULT_REQUEST_SYMBOL_LIMIT = 3;
 const WATCH_REQUEST_SYMBOL_LIMIT = 2;
 const HIGH_REQUEST_SYMBOL_LIMIT = 1;
 const CRITICAL_REQUEST_SYMBOL_LIMIT = 1;
+const SIGNAL_MATRIX_TIMEFRAME_MS = Object.freeze({
+  "2m": 2 * 60_000,
+  "5m": 5 * 60_000,
+  "15m": 15 * 60_000,
+});
 
 const normalizeSymbol = (symbol) => symbol?.trim?.().toUpperCase?.() || "";
 
@@ -65,9 +70,36 @@ const isHydratedState = (state) =>
       (state.status === "ok" || state.status === "stale"),
   );
 
-const symbolNeedsHydration = (symbol, hydrationMap, timeframes) => {
+const stateNeedsRefresh = (state, timeframe, nowMs, pollMs) => {
+  if (!isHydratedState(state)) {
+    return true;
+  }
+  if (!Number.isFinite(nowMs)) {
+    return false;
+  }
+  const latestBarMs = Date.parse(state?.latestBarAt || "");
+  if (!Number.isFinite(latestBarMs)) {
+    return true;
+  }
+  const timeframeMs = SIGNAL_MATRIX_TIMEFRAME_MS[timeframe] || 5 * 60_000;
+  const staleAfterMs = Math.max(
+    timeframeMs * 2,
+    Number.isFinite(pollMs) && pollMs > 0 ? pollMs * 2 : 0,
+    60_000,
+  );
+  return nowMs - latestBarMs > staleAfterMs;
+};
+
+const symbolNeedsHydration = (symbol, hydrationMap, timeframes, options = {}) => {
   const byTimeframe = hydrationMap.get(symbol) || {};
-  return timeframes.some((timeframe) => !isHydratedState(byTimeframe[timeframe]));
+  return timeframes.some((timeframe) =>
+    stateNeedsRefresh(
+      byTimeframe[timeframe],
+      timeframe,
+      options.nowMs,
+      options.pollMs,
+    ),
+  );
 };
 
 const rotateSymbols = (symbols, cursor, count) => {
@@ -96,6 +128,7 @@ export function buildSignalMatrixRequestPlan({
   startupProtectionActive = false,
   cursor = 0,
   pollMs = 0,
+  nowMs = null,
 } = {}) {
   const universe = uniqueSymbols(symbols);
   const startupProtected = Boolean(startupProtectionActive);
@@ -113,8 +146,12 @@ export function buildSignalMatrixRequestPlan({
         : pressureLevel === "watch"
           ? WATCH_REQUEST_SYMBOL_LIMIT
           : DEFAULT_REQUEST_SYMBOL_LIMIT;
+  const normalizedNowMs = Number.isFinite(nowMs) ? nowMs : null;
   const needsHydration = (symbol) =>
-    symbolNeedsHydration(symbol, hydrationMap, matrixTimeframes);
+    symbolNeedsHydration(symbol, hydrationMap, matrixTimeframes, {
+      nowMs: normalizedNowMs,
+      pollMs,
+    });
   const missingSymbols = universe.filter(needsHydration);
   const priorityBatch = startupProtected
     ? []
@@ -207,4 +244,11 @@ export function mergeSignalMatrixStates({
       String(right?.timeframe || ""),
     );
   });
+}
+
+export function signalMatrixStatesEqual(left = [], right = []) {
+  if (left === right) return true;
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  if (left.length !== right.length) return false;
+  return left.every((state, index) => state === right[index]);
 }

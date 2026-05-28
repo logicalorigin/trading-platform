@@ -3120,6 +3120,7 @@ export default function SettingsScreen({
   activitySidebarCollapsed = false,
   onToggleActivitySidebar,
   isVisible = false,
+  onReadinessChange,
 } = {}) {
   const [settingsRootRef, settingsRootSize] = useElementSize();
   const { isPhone: settingsIsPhone, isNarrow: settingsIsNarrow } =
@@ -3131,6 +3132,13 @@ export default function SettingsScreen({
       : "minmax(190px, 230px) minmax(0, 1fr)";
   const [activeTab, setActiveTab] = useState(SETTINGS_TABS[0].id);
   const [settingsSearch, setSettingsSearch] = useState("");
+  useEffect(() => {
+    onReadinessChange?.({
+      criticalReady: Boolean(isVisible),
+      derivedReady: Boolean(isVisible),
+      backgroundAllowed: Boolean(isVisible),
+    });
+  }, [isVisible, onReadinessChange]);
   const backend = useBackendSettings();
   const userPreferences = useUserPreferences();
   const ibkr = useIbkrLaneSettings();

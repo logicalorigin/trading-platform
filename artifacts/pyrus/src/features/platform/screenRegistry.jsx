@@ -1,88 +1,12 @@
 import { memo, useEffect, useState } from "react";
 import LogoLoader from "../../components/LogoLoader";
 import {
-  BOOT_SCREEN_MODULE_PRELOAD_TASK_BY_SCREEN_ID,
-  completeBootProgressTask,
-  failBootProgressTask,
-  startBootProgressTask,
-} from "../../app/bootProgress";
-import { retryDynamicImport } from "../../lib/dynamicImport";
+  getPreloadedScreenComponent,
+  getScreenModulePreloadSnapshot,
+  loadScreenModule,
+  preloadScreenModule,
+} from "./screenModulePreloader";
 import { markScreenReady } from "./performanceMetrics";
-
-const SCREEN_LOADERS = {
-  market: () => import("../../screens/MarketScreen.jsx"),
-  flow: () => import("../../screens/FlowScreen.jsx"),
-  gex: () => import("../../screens/GexScreen.jsx"),
-  trade: () => import("../../screens/TradeScreen.jsx"),
-  account: () => import("../../screens/AccountScreen.jsx"),
-  research: () => import("../../screens/ResearchScreen.jsx"),
-  algo: () => import("../../screens/AlgoScreen.jsx"),
-  backtest: () => import("../../screens/BacktestScreen.jsx"),
-  diagnostics: () => import("../../screens/DiagnosticsScreen.jsx"),
-  settings: () => import("../../screens/SettingsScreen.jsx"),
-};
-
-const SCREEN_MODULE_PRELOADS = new Map();
-const SCREEN_MODULE_PRELOAD_STATE = new Map();
-const SCREEN_MODULE_COMPONENTS = new Map();
-
-const screenModuleLabel = (screenId) => `${screenId}ScreenPreload`;
-
-const loadScreenModule = (
-  screenId,
-  { label = screenModuleLabel(screenId), reloadOnFailure = true } = {},
-) => {
-  const loader = SCREEN_LOADERS[screenId];
-  if (!loader) return Promise.resolve(null);
-  const existing = SCREEN_MODULE_PRELOADS.get(screenId);
-  if (existing) return existing;
-
-  SCREEN_MODULE_PRELOAD_STATE.set(screenId, {
-    status: "loading",
-    startedAt: Date.now(),
-    label,
-  });
-  const bootProgressTaskId = BOOT_SCREEN_MODULE_PRELOAD_TASK_BY_SCREEN_ID[screenId];
-  if (bootProgressTaskId) {
-    startBootProgressTask(bootProgressTaskId);
-  }
-  const promise = retryDynamicImport(loader, {
-    label,
-    reloadOnFailure,
-  })
-    .then((mod) => {
-      if (mod?.default) {
-        SCREEN_MODULE_COMPONENTS.set(screenId, mod.default);
-      }
-      SCREEN_MODULE_PRELOAD_STATE.set(screenId, {
-        status: "ready",
-        startedAt: SCREEN_MODULE_PRELOAD_STATE.get(screenId)?.startedAt || null,
-        completedAt: Date.now(),
-        label,
-      });
-      if (bootProgressTaskId) {
-        completeBootProgressTask(bootProgressTaskId);
-      }
-      return mod;
-    })
-    .catch((error) => {
-      SCREEN_MODULE_PRELOADS.delete(screenId);
-      SCREEN_MODULE_PRELOAD_STATE.set(screenId, {
-        status: "failed",
-        startedAt: SCREEN_MODULE_PRELOAD_STATE.get(screenId)?.startedAt || null,
-        completedAt: Date.now(),
-        label,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      if (bootProgressTaskId) {
-        failBootProgressTask(bootProgressTaskId, error);
-      }
-      throw error;
-    });
-
-  SCREEN_MODULE_PRELOADS.set(screenId, promise);
-  return promise;
-};
 
 export const ScreenLoadingFallback = ({ screenId, error = null }) => (
   <LogoLoader
@@ -96,7 +20,7 @@ export const ScreenLoadingFallback = ({ screenId, error = null }) => (
 const createPreloadableScreen = (screenId, label) => {
   return function PreloadableScreen(props) {
     const [ScreenComponent, setScreenComponent] = useState(
-      () => SCREEN_MODULE_COMPONENTS.get(screenId) || null,
+      () => getPreloadedScreenComponent(screenId),
     );
     const [loadError, setLoadError] = useState(null);
 
@@ -104,7 +28,7 @@ const createPreloadableScreen = (screenId, label) => {
       if (ScreenComponent || props?.isVisible === false) {
         return undefined;
       }
-      const cachedScreenComponent = SCREEN_MODULE_COMPONENTS.get(screenId);
+      const cachedScreenComponent = getPreloadedScreenComponent(screenId);
       if (cachedScreenComponent) {
         setScreenComponent(() => cachedScreenComponent);
         return undefined;
@@ -169,6 +93,19 @@ export const SCREENS = [
   { id: "settings", label: "Settings", icon: "⚙" },
 ];
 
+export const SCREEN_BOOT_DATA_DEPS = {
+  market: ["session"],
+  flow: ["session", "watchlists"],
+  gex: ["session", "watchlists"],
+  trade: ["session", "watchlists"],
+  account: ["session", "accounts"],
+  algo: ["session", "accounts", "signal-profile"],
+  research: ["session"],
+  backtest: ["session"],
+  diagnostics: ["session"],
+  settings: ["session"],
+};
+
 export const SCREEN_MODULE_PRELOAD_ORDER = [
   "market",
   "flow",
@@ -206,19 +143,10 @@ export const SCREEN_SHELL_WARM_MOUNT_ORDER = SCREEN_MODULE_PRELOAD_ORDER.filter(
   (screenId) => SCREEN_RENDER_POLICIES[screenId]?.retainInactive === true,
 );
 
+export { getScreenModulePreloadSnapshot, preloadScreenModule };
+
 export const buildMountedScreenState = (activeScreen) =>
   Object.fromEntries(SCREENS.map(({ id }) => [id, id === activeScreen]));
-
-export const preloadScreenModule = (screenId) => {
-  if (!SCREEN_LOADERS[screenId]) return Promise.resolve(null);
-  return loadScreenModule(screenId, {
-    label: screenModuleLabel(screenId),
-    reloadOnFailure: false,
-  });
-};
-
-export const getScreenModulePreloadSnapshot = () =>
-  Object.fromEntries(SCREEN_MODULE_PRELOAD_STATE.entries());
 
 export const skipStableHiddenScreenRender = (prevProps, nextProps) =>
   prevProps?.isVisible === false && nextProps?.isVisible === false;

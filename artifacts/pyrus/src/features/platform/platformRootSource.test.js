@@ -606,6 +606,16 @@ test("compact platform header stays flat and exposes line usage", () => {
 
   assert.match(statusSource, /data-testid="header-ibkr-line-usage"/);
   assert.match(statusSource, /Market data lines/);
+  const lineUsageIndex = statusSource.indexOf(
+    'data-testid="header-ibkr-line-usage"',
+  );
+  const lineUsageSnippet = statusSource.slice(
+    Math.max(0, lineUsageIndex - 500),
+    lineUsageIndex + 700,
+  );
+  assert.match(lineUsageSnippet, /aria-label=\{`Market data lines \$\{lineDisplayValue\}`\}/);
+  assert.match(lineUsageSnippet, /title=\{`Market data lines \$\{lineDisplayValue\}`\}/);
+  assert.doesNotMatch(lineUsageSnippet, /<AppTooltip/);
   assert.match(statusSource, /<IbkrPingWavelength connection=\{connection\}/);
   assert.doesNotMatch(statusSource, /compressed \? null : \(\s*<IbkrPingWavelength/);
   assert.doesNotMatch(statusSource, />\s*\{marketClock\.timeLabel\}\s*<\/span>/);
@@ -1124,11 +1134,14 @@ test("mobile primitives keep pinch zoom and touch fallbacks available", () => {
   assert.match(cssSource, /\.ra-shell\[data-viewport="phone"\] \.ra-touch-target/);
   assert.match(tooltipSource, /isInteractiveTooltipTrigger/);
   assert.match(tooltipSource, /hasInteractiveTooltipDescendant/);
+  assert.match(tooltipSource, /hasCompositeTooltipDescendant/);
+  assert.match(tooltipSource, /canUseRadixTooltipTrigger/);
   assert.match(
     tooltipSource,
     /trigger\.props\.asChild &&[\s\S]*hasInteractiveTooltipDescendant\(trigger\.props\.children\)/,
   );
-  assert.match(tooltipSource, /&& !isInteractiveTooltipTrigger\(trigger\)/);
+  assert.match(tooltipSource, /!canUseRadixTooltipTrigger\(trigger\)/);
+  assert.match(tooltipSource, /<TooltipTrigger asChild>\{touchTrigger\}<\/TooltipTrigger>/);
   assert.match(tooltipSource, /event\.pointerType !== "touch"/);
   assert.match(tooltipSource, /setOpen\(true\)/);
 });
@@ -1643,6 +1656,9 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   const matrixReadyBlock = source.match(
     /const signalMatrixRuntimeReady = Boolean\([\s\S]*?\n  \);/,
   )?.[0];
+  const matrixUniverseBlock = source.match(
+    /const signalMatrixUniverseSymbols = useMemo\([\s\S]*?\n  \);/,
+  )?.[0];
   const matrixPriorityBlock = source.match(
     /const signalMatrixPrioritySymbols = useMemo\([\s\S]*?\n  \);/,
   )?.[0];
@@ -1656,13 +1672,29 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.doesNotMatch(displayReadyBlock ?? "", /backgroundResumeReady/);
   assert.match(eventsReadyBlock ?? "", /backgroundResumeReady\.signalDisplay/);
   assert.match(source, /buildSignalMatrixRequestPlan/);
+  assert.match(source, /signalMatrixStatesEqual/);
+  assert.match(source, /const EMPTY_SIGNAL_MONITOR_STATES = Object\.freeze\(\[\]\)/);
+  assert.match(source, /signalMonitorStateQuery\.data\?\.states \|\| EMPTY_SIGNAL_MONITOR_STATES/);
+  assert.match(source, /signalMonitorEventsQuery\.data\?\.events \|\| EMPTY_SIGNAL_MONITOR_EVENTS/);
   assert.match(source, /useWorkspaceLeadership/);
   assert.match(source, /const platformWorkVisible = Boolean\(pageVisible && workspaceLeader\)/);
   assert.match(source, /signalMatrixUniverseSymbols/);
-  assert.match(matrixPriorityBlock ?? "", /\.\.\.watchlistSymbols/);
+  assert.match(matrixUniverseBlock ?? "", /\.\.\.visibleWatchlistMarketDataSymbols/);
+  assert.match(matrixUniverseBlock ?? "", /\.\.\.watchlistSymbols/);
+  assert.match(matrixUniverseBlock ?? "", /signalMatrixWideSymbolLimit/);
+  assert.doesNotMatch(matrixUniverseBlock ?? "", /allWatchlistSymbolList/);
+  assert.match(matrixPriorityBlock ?? "", /\.\.\.visibleWatchlistMarketDataSymbols/);
+  assert.match(matrixPriorityBlock ?? "", /\.\.\.openPositionMarketDataSymbols/);
+  assert.match(matrixPriorityBlock ?? "", /\.\.\.signalMonitorSymbols/);
+  assert.match(matrixPriorityBlock ?? "", /signalMatrixNarrowSymbolLimit/);
+  assert.doesNotMatch(matrixPriorityBlock ?? "", /\.\.\.watchlistSymbols/);
   assert.match(source, /signalMatrixBackgroundReady/);
   assert.match(source, /const signalMatrixPriorityReady = Boolean/);
   assert.match(source, /const signalMatrixRuntimeReady = Boolean/);
+  assert.match(
+    source,
+    /if \(signalMatrixStatesEqual\(current\.states, nextStates\)\) \{[\s\S]*?return current;/,
+  );
   assert.match(matrixReadyBlock ?? "", /signalMonitorDisplayReady/);
   assert.match(matrixReadyBlock ?? "", /platformWorkVisible/);
   assert.match(matrixReadyBlock ?? "", /!startupProtectionActive/);
@@ -1767,7 +1799,15 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   const appSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
   const appHeaderSource = readFileSync(new URL("./AppHeader.jsx", import.meta.url), "utf8");
   const registrySource = readFileSync(new URL("./screenRegistry.jsx", import.meta.url), "utf8");
+  const screenModulePreloaderSource = readFileSync(
+    new URL("./screenModulePreloader.js", import.meta.url),
+    "utf8",
+  );
   const routerSource = readFileSync(new URL("./PlatformScreenRouter.jsx", import.meta.url), "utf8");
+  const appContentSource = readFileSync(
+    new URL("../../app/AppContent.tsx", import.meta.url),
+    "utf8",
+  );
   const schedulerSource = readFileSync(new URL("./appWorkScheduler.js", import.meta.url), "utf8");
   const researchScreenSource = readFileSync(
     new URL("../../screens/ResearchScreen.jsx", import.meta.url),
@@ -1821,25 +1861,26 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.ok(researchWorkspaceCodePreloadEffect);
   assert.ok(researchWorkspaceDataPreloadEffect);
   assert.notEqual(preloadOrderBlock, "", "screen module preload order must be present");
-  assert.match(registrySource, /export const preloadScreenModule/);
-  assert.match(registrySource, /const SCREEN_MODULE_PRELOADS = new Map\(\)/);
-  assert.match(registrySource, /const SCREEN_MODULE_COMPONENTS = new Map\(\)/);
-  assert.match(registrySource, /const loadScreenModule = /);
-  assert.match(registrySource, /retryDynamicImport\(loader/);
-  assert.match(registrySource, /SCREEN_MODULE_COMPONENTS\.set\(screenId,\s*mod\.default\)/);
+  assert.match(registrySource, /export \{ getScreenModulePreloadSnapshot, preloadScreenModule \}/);
+  assert.match(screenModulePreloaderSource, /export const preloadScreenModule/);
+  assert.match(screenModulePreloaderSource, /const SCREEN_MODULE_PRELOADS = new Map\(\)/);
+  assert.match(screenModulePreloaderSource, /const SCREEN_MODULE_COMPONENTS = new Map\(\)/);
+  assert.match(screenModulePreloaderSource, /export const loadScreenModule = /);
+  assert.match(screenModulePreloaderSource, /retryDynamicImport\(loader/);
+  assert.match(screenModulePreloaderSource, /SCREEN_MODULE_COMPONENTS\.set\(screenId,\s*mod\.default\)/);
   assert.match(registrySource, /const createPreloadableScreen = /);
   assert.match(
     registrySource,
-    /useState\(\s*\(\) => SCREEN_MODULE_COMPONENTS\.get\(screenId\) \|\| null/,
+    /useState\(\s*\(\) => getPreloadedScreenComponent\(screenId\)/,
   );
   assert.doesNotMatch(registrySource, retiredRouteShellPattern);
   assert.doesNotMatch(registrySource, retiredRouteShellTestIdPattern);
   assert.match(registrySource, /import \{ markScreenReady \} from "\.\/performanceMetrics"/);
-  assert.match(registrySource, /BOOT_SCREEN_MODULE_PRELOAD_TASK_BY_SCREEN_ID/);
-  assert.match(registrySource, /startBootProgressTask\(bootProgressTaskId\)/);
-  assert.match(registrySource, /completeBootProgressTask\(bootProgressTaskId\)/);
+  assert.match(screenModulePreloaderSource, /BOOT_SCREEN_MODULE_PRELOAD_TASK_BY_SCREEN_ID/);
+  assert.match(screenModulePreloaderSource, /startBootProgressTask\(bootProgressTaskId\)/);
+  assert.match(screenModulePreloaderSource, /completeBootProgressTask\(bootProgressTaskId\)/);
   assert.match(registrySource, /props\?\.isVisible === false/);
-  assert.match(registrySource, /const cachedScreenComponent = SCREEN_MODULE_COMPONENTS\.get\(screenId\)/);
+  assert.match(registrySource, /const cachedScreenComponent = getPreloadedScreenComponent\(screenId\)/);
   assert.match(registrySource, /setScreenComponent\(\(\) => cachedScreenComponent\)/);
   assert.match(registrySource, /loadScreenModule\(screenId,\s*\{ label \}\)/);
   assert.match(registrySource, /setScreenComponent\(\(\) => mod\.default\)/);
@@ -1853,8 +1894,15 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.match(registrySource, /export const BOOT_SCREEN_MODULE_PRELOAD_ORDER = \[/);
   assert.doesNotMatch(registrySource, /preloadBootScreenModules/);
   assert.doesNotMatch(registrySource, /void preloadScreenModule/);
-  assert.match(registrySource, /export const getScreenModulePreloadSnapshot = /);
+  assert.match(screenModulePreloaderSource, /export const getScreenModulePreloadSnapshot = /);
   assert.match(appHeaderSource, /preloadScreenModule/);
+  assert.match(appContentSource, /const preloadInitialPlatformScreenModule = \(\) =>/);
+  assert.match(appContentSource, /preloadScreenModule\(resolveInitialPlatformScreen\(\)\)/);
+  assert.ok(
+    appContentSource.indexOf("preloadInitialPlatformScreenModule();") <
+      appContentSource.indexOf("preloadDynamicImport(loadPlatformApp"),
+    "initial screen chunk preload must start alongside the platform app chunk",
+  );
   assert.match(appHeaderSource, /const handleScreenIntent = useCallback/);
   assert.match(appHeaderSource, /onFocus=\{\(\) => handleScreenIntent\(screen\.id\)\}/);
   assert.match(appHeaderSource, /onPointerEnter=\{\(\) => handleScreenIntent\(screen\.id\)\}/);
@@ -1876,6 +1924,19 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.match(appSource, /memoryAllowsBackgroundWarmup/);
   assert.match(appSource, /useBootProgress\(\)/);
   assert.match(appSource, /workspace-boot-progress-loader/);
+  assert.match(registrySource, /export const SCREEN_BOOT_DATA_DEPS = \{/);
+  assert.match(registrySource, /market:\s*\["session"\]/);
+  assert.doesNotMatch(registrySource, /market:\s*\["session",\s*"watchlists"\]/);
+  assert.match(appSource, /reclassifyBootBlocking\(\[/);
+  assert.doesNotMatch(appSource, /secondaryBootDataReady/);
+  assert.doesNotMatch(appSource, /initialScreenRequiresWatchlists/);
+  assert.doesNotMatch(appSource, /initialScreenRequiresAccounts/);
+  assert.doesNotMatch(appSource, /initialScreenRequiresSignalProfile/);
+  assert.ok(
+    appSource.indexOf("reclassifyBootBlocking([") <
+      appSource.indexOf('"session",\n      "watchlists",\n      "accounts"'),
+    "boot blocking must be reclassified before boot data tasks start",
+  );
   assert.match(appSource, /BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS/);
   assert.match(appSource, /skipBootProgressTasks\(/);
   assert.doesNotMatch(routerSource, /const useDeferredActiveScreen = \(screen\) =>/);
@@ -2064,7 +2125,10 @@ test("platform background work waits for active screen readiness", () => {
   assert.match(appSource, /!activeScreenBackgroundDataAllowed/);
   assert.match(appSource, /const handleScreenReady = \(event\) =>/);
   assert.match(appSource, /const readyScreenId = event\?\.detail\?\.screenId/);
-  assert.match(appSource, /if \(readyScreenId === screen\) \{\s*setScreenWarmupPhase\("ready"\);/);
+  assert.match(appSource, /markWarmupTimeline\("firstScreenFrameReadyAtMs"\)/);
+  assert.match(appSource, /firstScreenBootCompleteRef\.current \|\| !activeScreenCriticalReady/);
+  assert.match(appSource, /setScreenWarmupPhase\("ready"\)/);
+  assert.match(appSource, /completeBootProgressTask\("first-screen"/);
   assert.match(appSource, /if \(next\.derivedReady \|\| next\.backgroundAllowed\)/);
   assert.match(
     appSource,
@@ -2092,6 +2156,8 @@ test("platform background work waits for active screen readiness", () => {
     "research",
     "algo",
     "backtest",
+    "diagnostics",
+    "settings",
   ].forEach((screenId) => {
     assert.match(
       routerSource,
@@ -2114,10 +2180,12 @@ test("platform root polling stops while the page is hidden", () => {
 
   assert.match(sessionQuery ?? "", /refetchInterval:\s*pageVisible\s*\?\s*5_000\s*:\s*false/);
   assert.match(watchlistsQuery ?? "", /refetchInterval:\s*pageVisible\s*\?\s*60_000\s*:\s*false/);
+  assert.doesNotMatch(watchlistsQuery ?? "", /enabled:/);
   assert.match(
     signalMonitorProfileQuery ?? "",
     /refetchInterval:\s*platformWorkVisible\s*\?\s*60_000\s*:\s*false/,
   );
+  assert.doesNotMatch(signalMonitorProfileQuery ?? "", /enabled:/);
 });
 
 test("market data subscription provider does not fetch quote snapshots while hidden", () => {
@@ -2184,6 +2252,10 @@ test("market sparklines render the reduced high-detail point budget", () => {
 test("operational pages mount visible shells without artificial route delays", () => {
   const marketSource = readFileSync(
     new URL("../../screens/MarketScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const multiChartSource = readFileSync(
+    new URL("../market/MultiChartGrid.jsx", import.meta.url),
     "utf8",
   );
   const flowSource = readFileSync(
@@ -2259,14 +2331,26 @@ test("operational pages mount visible shells without artificial route delays", (
   assert.doesNotMatch(marketSource, /data-testid="market-screen-suspended"/);
   assert.match(marketSource, /return <MarketScreenInner \{\.\.\.props\} \/>/);
   assert.match(marketSource, /const LazyMultiChartGrid = lazyWithRetry/);
-  assert.match(marketSource, /const preloadMarketChartModules = \(\) =>/);
+  assert.match(marketSource, /let marketChartModulesPreloadStarted = false/);
+  assert.match(marketSource, /export const preloadMarketChartModules = \(\) =>/);
   assert.match(marketSource, /preloadDynamicImport\(loadMultiChartGridModule/);
   assert.match(marketSource, /preloadMarketChartRuntime\?\.\(\)/);
+  assert.match(
+    marketSource,
+    /if \(typeof window !== "undefined"\) \{\s*preloadMarketChartModules\(\);\s*\}/,
+  );
   assert.doesNotMatch(marketSource, /loadMarketActivityPanelModule/);
   assert.doesNotMatch(marketSource, /preloadDynamicImport\(\(\) => import\("\.\.\/features\/charting\/ResearchChartSurface"\)/);
   assert.doesNotMatch(marketSource, /preloadDynamicImport\(\(\) => import\("\.\.\/features\/trade\/TradeEquityPanel\.jsx"\)/);
   assert.match(marketSource, /preloadMarketChartModules\(\)/);
-  assert.match(marketSource, /<Suspense fallback=\{<MarketChartGridFallback \/>\}>/);
+  assert.match(
+    marketSource,
+    /fallback=\{\s*<MarketChartGridFallback[\s\S]*symbols=\{symbols\}[\s\S]*isPhone=\{marketLayoutFlags\.isPhone\}/,
+  );
+  assert.match(marketSource, /data-testid="market-chart-grid-shell"/);
+  assert.match(marketSource, /data-testid="market-chart-grid-shell-cell"/);
+  assert.doesNotMatch(marketSource, /market-chart-grid-loader/);
+  assert.match(multiChartSource, /const MARKET_CHART_INITIAL_HYDRATION_SLOTS = 1/);
   assert.match(marketSource, /const \[chartGridReady, setChartGridReady\]/);
   assert.doesNotMatch(marketSource, /MARKET_SECONDARY_PANEL_DELAY_MS/);
   assert.doesNotMatch(marketSource, /secondaryPanelsReady/);
@@ -2281,7 +2365,7 @@ test("operational pages mount visible shells without artificial route delays", (
   assert.match(marketSource, /onReady=\{handleMarketChartGridReady\}/);
   assert.doesNotMatch(marketSource, /onReadinessChange\?\.\(\{ criticalReady: true \}\)/);
   assert.doesNotMatch(marketSource, /import \{ MultiChartGrid \}/);
-  assert.match(marketSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
+  assert.doesNotMatch(marketSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
   assert.doesNotMatch(marketSource, /testId="market-activity-loader"/);
   assert.doesNotMatch(platformAppSource, /BROAD_FLOW_BACKGROUND_STARTUP_DELAY_MS/);
   assert.doesNotMatch(platformAppSource, /backgroundResumeReady\.broadFlow/);

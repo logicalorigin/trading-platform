@@ -69,14 +69,14 @@ const TASKS: BootProgressTaskDefinition[] = [
   { id: "workspace-route-chunk", label: "Loading workspace route", weight: 10, blocking: true },
   { id: "session", label: "Loading session", weight: 10, blocking: true },
   { id: "watchlists", label: "Loading watchlists", weight: 8, blocking: true },
-  { id: "accounts", label: "Loading accounts", weight: 8, blocking: true },
-  { id: "signal-profile", label: "Loading signal profile", weight: 7, blocking: true },
+  { id: "accounts", label: "Loading accounts", weight: 8, blocking: false },
+  { id: "signal-profile", label: "Loading signal profile", weight: 7, blocking: false },
   { id: "signal-state", label: "Loading signal state", weight: 5, blocking: false },
   { id: "first-screen", label: "Preparing first screen", weight: 15, blocking: true },
-  { id: "screen-preload-flow", label: "Preloading Flow screen", weight: 5, blocking: true },
-  { id: "screen-preload-trade", label: "Preloading Trade screen", weight: 5, blocking: true },
-  { id: "screen-preload-algo", label: "Preloading Algo screen", weight: 6, blocking: true },
-  { id: "screen-preload-backtest", label: "Preloading Backtest screen", weight: 6, blocking: true },
+  { id: "screen-preload-flow", label: "Preloading Flow screen", weight: 5, blocking: false },
+  { id: "screen-preload-trade", label: "Preloading Trade screen", weight: 5, blocking: false },
+  { id: "screen-preload-algo", label: "Preloading Algo screen", weight: 6, blocking: false },
+  { id: "screen-preload-backtest", label: "Preloading Backtest screen", weight: 6, blocking: false },
 ];
 
 export const BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS = [
@@ -97,11 +97,6 @@ export const BOOT_SCREEN_MODULE_PRELOAD_TASK_BY_SCREEN_ID: Record<
 };
 
 const TASK_DEFINITIONS = new Map(TASKS.map((task) => [task.id, task]));
-const BLOCKING_TASKS = TASKS.filter((task) => task.blocking);
-const TOTAL_BLOCKING_WEIGHT = BLOCKING_TASKS.reduce(
-  (sum, task) => sum + task.weight,
-  0,
-);
 const SETTLED_STATUSES = new Set<BootProgressTaskStatus>([
   "complete",
   "failed",
@@ -161,10 +156,14 @@ const buildSnapshot = (): BootProgressSnapshot => {
     (sum, task) => sum + task.weight,
     0,
   );
+  const totalBlockingWeight = blockingTasks.reduce(
+    (sum, task) => sum + task.weight,
+    0,
+  );
   const rawPercent =
     settledBlockingTasks.length === blockingTasks.length
       ? 100
-      : Math.min(99, Math.floor((settledWeight / TOTAL_BLOCKING_WEIGHT) * 100));
+      : Math.min(99, Math.floor((settledWeight / totalBlockingWeight) * 100));
   const percent = Math.max(lastPercent, rawPercent);
   lastPercent = percent;
   const activeTask =
@@ -278,6 +277,31 @@ export const skipBootProgressTasks = (
   reason: string,
 ) => {
   ids.forEach((id) => skipBootProgressTask(id, reason));
+};
+
+export const reclassifyBootBlocking = (
+  blockingIds: readonly BootProgressTaskId[],
+) => {
+  const nextBlockingIds = new Set(blockingIds);
+  const timestamp = nowIso();
+  let changed = false;
+
+  for (const definition of TASKS) {
+    const current = taskState.get(definition.id);
+    if (!current) continue;
+    const nextBlocking = nextBlockingIds.has(definition.id);
+    if (current.blocking === nextBlocking) continue;
+    taskState.set(definition.id, {
+      ...current,
+      blocking: nextBlocking,
+      updatedAt: timestamp,
+    });
+    changed = true;
+  }
+
+  if (!changed) return;
+  updatedAt = timestamp;
+  emit();
 };
 
 export const getBootProgressSnapshot = () => snapshot;

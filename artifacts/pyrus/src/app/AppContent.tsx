@@ -4,6 +4,10 @@ import { AppProviders } from "./AppProviders";
 import LogoLoader from "../components/LogoLoader";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
+// @ts-ignore JS module owns workspace state persistence for the platform shell.
+import { _initialState } from "../lib/workspaceState";
+// @ts-ignore JS module keeps screen chunk preload state outside the React registry.
+import { preloadScreenModule } from "../features/platform/screenModulePreloader";
 import {
   BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS,
   completeBootProgressTask,
@@ -20,6 +24,18 @@ import {
 type LazyComponentModule = { default: ComponentType };
 const ROOT_ROUTE_CHUNK_RETRIES = 4;
 const ROOT_ROUTE_CHUNK_RETRY_DELAY_MS = 500;
+const PLATFORM_SCREEN_IDS = new Set([
+  "market",
+  "flow",
+  "gex",
+  "trade",
+  "account",
+  "research",
+  "algo",
+  "backtest",
+  "diagnostics",
+  "settings",
+]);
 const PLATFORM_BOOT_PROGRESS_TASK_IDS = [
   "session",
   "watchlists",
@@ -121,6 +137,20 @@ const resolveLabMode = (): string | null => {
   return new URLSearchParams(window.location.search).get("lab");
 };
 
+const resolveInitialPlatformScreen = (): string => {
+  const storedScreen =
+    typeof _initialState?.screen === "string" ? _initialState.screen : "market";
+  const normalizedScreen = storedScreen === "unusual" ? "flow" : storedScreen || "market";
+  return PLATFORM_SCREEN_IDS.has(normalizedScreen) ? normalizedScreen : "market";
+};
+
+const preloadInitialPlatformScreenModule = () => {
+  const preload = preloadScreenModule(resolveInitialPlatformScreen());
+  if (preload && typeof preload.catch === "function") {
+    void preload.catch(() => {});
+  }
+};
+
 export const preloadInitialAppContentRoute = () => {
   const labMode = resolveLabMode();
   if (labMode === "chart-parity") {
@@ -139,6 +169,7 @@ export const preloadInitialAppContentRoute = () => {
     });
     return;
   }
+  preloadInitialPlatformScreenModule();
   preloadDynamicImport(loadPlatformApp, {
     label: "PlatformApp",
     retries: ROOT_ROUTE_CHUNK_RETRIES,

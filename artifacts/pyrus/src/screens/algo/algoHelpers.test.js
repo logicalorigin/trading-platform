@@ -53,6 +53,31 @@ import {
 import { saveAllAlgoAdjustments } from "./saveAllAlgoAdjustments";
 import { __internalsForTests as draftInternals } from "./useServerSyncedDraft";
 
+test("AlgoScreen keeps startup fallback collections stable before queries resolve", () => {
+  const source = readFileSync(new URL("../AlgoScreen.jsx", import.meta.url), "utf8");
+
+  assert.match(source, /const EMPTY_ALGO_DEPLOYMENTS = Object\.freeze\(\[\]\)/);
+  assert.match(source, /const EMPTY_ALGO_DRAFTS = Object\.freeze\(\[\]\)/);
+  assert.match(source, /const EMPTY_ALGO_EVENTS = Object\.freeze\(\[\]\)/);
+  assert.match(source, /const EMPTY_SIGNAL_OPTIONS_CANDIDATES = Object\.freeze\(\[\]\)/);
+  assert.match(source, /const EMPTY_SIGNAL_OPTIONS_SIGNALS = Object\.freeze\(\[\]\)/);
+  assert.match(source, /const EMPTY_SIGNAL_OPTIONS_POSITIONS = Object\.freeze\(\[\]\)/);
+  assert.match(
+    source,
+    /cockpit\?\.candidates \|\|[\s\S]*signalOptionsState\?\.candidates \|\|[\s\S]*EMPTY_SIGNAL_OPTIONS_CANDIDATES/,
+  );
+  assert.match(
+    source,
+    /setSelectedCandidateId\(\(current\) => \(current === null \? current : null\)\)/,
+  );
+  assert.match(
+    source,
+    /setFocusedDeploymentId\(\(current\) => \(current === null \? current : null\)\)/,
+  );
+  assert.doesNotMatch(source, /signalOptionsState\?\.candidates \|\| \[\]/);
+  assert.doesNotMatch(source, /deploymentsQuery\.data\?\.deployments \|\| \[\]/);
+});
+
 test("algo profile defaults match the tuned h8 signal-options profile", () => {
   assert.equal(DEFAULT_STRATEGY_SIGNAL_SETTINGS.signalTimeframe, "5m");
   assert.equal(DEFAULT_STRATEGY_SIGNAL_SETTINGS.timeHorizon, 8);

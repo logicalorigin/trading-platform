@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildSignalMatrixRequestPlan,
   mergeSignalMatrixStates,
+  signalMatrixStatesEqual,
 } from "./signalMatrixScheduler.js";
 
 const hydratedStates = (symbols, timeframes = ["2m", "5m", "15m"]) =>
@@ -80,6 +81,38 @@ test("signal matrix scheduler skips hydrated priority rows and fills missing bac
   assert.equal(plan.coverage.missingSymbols, 17);
   assert.equal(plan.coverage.estimatedFullCycleMs, 360_000);
   assert.equal(plan.backgroundPaused, false);
+});
+
+test("signal matrix scheduler rehydrates stale Massive-backed signal bubbles", () => {
+  const plan = buildSignalMatrixRequestPlan({
+    symbols: ["SPY", "NVDA", "DIA", "AAPL"],
+    prioritySymbols: ["NVDA", "SPY"],
+    currentStates: [
+      ...hydratedStates(["SPY"], ["2m", "5m", "15m"]).map((state) => ({
+        ...state,
+        latestBarAt: "2026-05-28T20:10:00.000Z",
+      })),
+      ...hydratedStates(["NVDA"], ["2m", "5m", "15m"]).map((state) => ({
+        ...state,
+        latestBarAt:
+          state.timeframe === "2m"
+            ? "2026-05-28T20:08:00.000Z"
+            : "2026-05-28T20:15:00.000Z",
+      })),
+      ...hydratedStates(["DIA"], ["2m", "5m", "15m"]).map((state) => ({
+        ...state,
+        latestBarAt: "2026-05-28T20:15:00.000Z",
+      })),
+    ],
+    backgroundReady: true,
+    cursor: 0,
+    pollMs: 60_000,
+    nowMs: Date.parse("2026-05-28T20:15:00.000Z"),
+  });
+
+  assert.deepEqual(plan.prioritySymbols, ["NVDA", "SPY"]);
+  assert.ok(plan.requestSymbols.includes("NVDA"));
+  assert.equal(plan.coverage.missingSymbols, 3);
 });
 
 test("signal matrix scheduler keeps bounded background rotation under critical pressure", () => {
@@ -257,4 +290,22 @@ test("signal matrix merge rejects older incoming state for an existing symbol", 
   });
 
   assert.equal(merged[0].currentSignalDirection, "buy");
+});
+
+test("signal matrix state equality detects no-op pruning output", () => {
+  const currentStates = [
+    {
+      symbol: "SPY",
+      timeframe: "5m",
+      currentSignalDirection: "buy",
+      lastEvaluatedAt: "2026-05-21T14:30:00.000Z",
+    },
+  ];
+  const merged = mergeSignalMatrixStates({
+    currentStates,
+    knownSymbols: ["SPY"],
+  });
+
+  assert.equal(signalMatrixStatesEqual(currentStates, merged), true);
+  assert.equal(signalMatrixStatesEqual(currentStates, []), false);
 });

@@ -295,7 +295,10 @@ test("ResearchChartFrame exposes shared placement policies without visible pan o
     tooltipSource,
     /trigger\.props\.asChild &&[\s\S]*hasInteractiveTooltipDescendant\(trigger\.props\.children\)/,
   );
-  assert.match(tooltipSource, /&& !isInteractiveTooltipTrigger\(trigger\)/);
+  assert.match(tooltipSource, /hasCompositeTooltipDescendant/);
+  assert.match(tooltipSource, /canUseRadixTooltipTrigger/);
+  assert.match(tooltipSource, /!canUseRadixTooltipTrigger\(trigger\)/);
+  assert.match(tooltipSource, /<TooltipTrigger asChild>\{touchTrigger\}<\/TooltipTrigger>/);
 });
 
 test("ResearchChartWidgetHeader exposes a density-gated context slot", () => {

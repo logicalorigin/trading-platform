@@ -204,7 +204,12 @@ export const PlatformScreenRouter = ({
         />
       );
     case "diagnostics":
-      return <MemoDiagnosticsScreen isVisible={diagnosticsDataActive} />;
+      return (
+        <MemoDiagnosticsScreen
+          isVisible={diagnosticsDataActive}
+          onReadinessChange={buildReadinessHandler("diagnostics")}
+        />
+      );
     case "settings":
       return (
         <MemoSettingsScreen
@@ -215,6 +220,7 @@ export const PlatformScreenRouter = ({
           activitySidebarCollapsed={activitySidebarCollapsed}
           onToggleActivitySidebar={onToggleActivitySidebar}
           isVisible={settingsDataActive}
+          onReadinessChange={buildReadinessHandler("settings")}
         />
       );
     default:

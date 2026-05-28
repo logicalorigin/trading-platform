@@ -88,8 +88,21 @@ function hasInteractiveTooltipDescendant(node: React.ReactNode): boolean {
   return React.Children.toArray(node).some(
     (child) =>
       React.isValidElement<InteractiveTooltipTriggerProps>(child) &&
-      isInteractiveTooltipTrigger(child),
+      (isInteractiveTooltipTrigger(child) ||
+        hasInteractiveTooltipDescendant(child.props.children)),
   )
+}
+
+function hasCompositeTooltipDescendant(node: React.ReactNode): boolean {
+  return React.Children.toArray(node).some((child) => {
+    if (!React.isValidElement<{ children?: React.ReactNode }>(child)) {
+      return false
+    }
+    if (typeof child.type !== "string") {
+      return true
+    }
+    return hasCompositeTooltipDescendant(child.props.children)
+  })
 }
 
 function isInteractiveTooltipTrigger(
@@ -110,6 +123,15 @@ function isInteractiveTooltipTrigger(
     return true
   }
   return typeof trigger.props.onClick === "function"
+}
+
+function canUseRadixTooltipTrigger(
+  trigger: React.ReactElement<InteractiveTooltipTriggerProps>,
+): boolean {
+  if (typeof trigger.type !== "string") return false
+  if (isInteractiveTooltipTrigger(trigger)) return false
+  if (hasInteractiveTooltipDescendant(trigger.props.children)) return false
+  return !hasCompositeTooltipDescendant(trigger.props.children)
 }
 
 const disabledTriggerLayoutStyle = (
@@ -184,6 +206,13 @@ function AppTooltip({
       {children}
     </span>
   )
+  if (
+    React.isValidElement<InteractiveTooltipTriggerProps>(trigger) &&
+    !canUseRadixTooltipTrigger(trigger)
+  ) {
+    return <>{trigger}</>
+  }
+
   const touchTrigger =
     React.isValidElement<
       InteractiveTooltipTriggerProps & {

@@ -706,8 +706,10 @@ const HeaderIbkrTriggerSummary = ({
         </span>}
         <IbkrPingWavelength connection={connection} tone={{ ...tone, color: statusTone }} />
         {showInlineLineUsage ? (
-          <AppTooltip content={`Market data lines ${lineDisplayValue}`}><span
+          <span
             data-testid="header-ibkr-line-usage"
+            aria-label={`Market data lines ${lineDisplayValue}`}
+            title={`Market data lines ${lineDisplayValue}`}
             style={{
               display: "inline-flex",
               alignItems: "baseline",
@@ -733,7 +735,7 @@ const HeaderIbkrTriggerSummary = ({
               {compact || minimal ? "L" : "Lines"}
             </span>
             <span>{inlineLineValue}</span>
-          </span></AppTooltip>
+          </span>
         ) : null}
         <span
           style={{

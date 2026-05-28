@@ -589,7 +589,10 @@ function GatewayPanel({ latest, latencyStats, onMetric }) {
   );
 }
 
-export default function DiagnosticsScreen({ isVisible = false } = {}) {
+export default function DiagnosticsScreen({
+  isVisible = false,
+  onReadinessChange,
+} = {}) {
   const [diagnosticsRootRef, diagnosticsRootSize] = useElementSize();
   const { isPhone: diagnosticsIsPhone, isNarrow: diagnosticsIsNarrow } =
     responsiveFlags(diagnosticsRootSize.width);
@@ -614,6 +617,13 @@ export default function DiagnosticsScreen({ isVisible = false } = {}) {
   const audioContextRef = useRef(null);
   const alertsRef = useRef({});
   const diagnosticsOpenLoggedRef = useRef(false);
+  useEffect(() => {
+    onReadinessChange?.({
+      criticalReady: Boolean(isVisible),
+      derivedReady: Boolean(isVisible),
+      backgroundAllowed: Boolean(isVisible),
+    });
+  }, [isVisible, onReadinessChange]);
   const browserMetricsInputRef = useRef({
     workloadStats,
     hydrationCoordinatorStats,

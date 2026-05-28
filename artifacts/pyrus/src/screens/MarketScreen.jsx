@@ -21,6 +21,7 @@ import {
   MACRO_TICKERS,
   RATES_PROXIES,
   SECTORS,
+  WATCHLIST,
   buildRatesProxySummary,
   buildTrackedBreadthSummary,
 } from "../features/market/marketReferenceData";
@@ -59,7 +60,6 @@ import {
 } from "../lib/motion";
 import { MarketIdentityInline } from "../features/platform/marketIdentity";
 import { AppTooltip } from "@/components/ui/tooltip";
-import LogoLoader from "../components/LogoLoader";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 
@@ -74,7 +74,13 @@ const loadMultiChartGridModule = () =>
     default: module.MultiChartGrid,
   }));
 
-const preloadMarketChartModules = () => {
+let marketChartModulesPreloadStarted = false;
+
+export const preloadMarketChartModules = () => {
+  if (marketChartModulesPreloadStarted) {
+    return;
+  }
+  marketChartModulesPreloadStarted = true;
   preloadDynamicImport(loadMultiChartGridModule, { label: "MultiChartGrid" });
   void loadRawMultiChartGridModule()
     .then((module) => module.preloadMarketChartRuntime?.())
@@ -90,22 +96,108 @@ const MemoMultiChartGrid = memo(function MemoMultiChartGrid(props) {
   return <LazyMultiChartGrid {...props} />;
 });
 
-const MarketChartGridFallback = () => (
-  <Card
-    style={{
-      minHeight: dim(340),
-      display: "grid",
-      padding: 0,
-      overflow: "hidden",
-    }}
-  >
-    <LogoLoader
-      tone="panel"
-      minHeight={dim(340)}
-      testId="market-chart-grid-loader"
-    />
-  </Card>
-);
+if (typeof window !== "undefined") {
+  preloadMarketChartModules();
+}
+
+const buildMarketChartFallbackSymbols = (symbols = []) => {
+  const requestedSymbols = symbols
+    .map((symbol) => normalizeTickerSymbol(symbol))
+    .filter(Boolean);
+  const fallbackSymbols = WATCHLIST.map((item) => normalizeTickerSymbol(item.sym))
+    .filter(Boolean);
+  return Array.from(new Set([...requestedSymbols, ...fallbackSymbols])).slice(0, 4);
+};
+
+const MarketChartGridFallback = ({ symbols = [], isPhone = false }) => {
+  const fallbackSymbols = buildMarketChartFallbackSymbols(symbols);
+  return (
+    <Card
+      data-testid="market-chart-grid-shell"
+      style={{
+        minHeight: dim(340),
+        display: "grid",
+        gridTemplateColumns: isPhone ? "1fr" : "repeat(2, minmax(0, 1fr))",
+        gridAutoRows: "minmax(150px, 1fr)",
+        gap: sp(6),
+        padding: sp(6),
+        overflow: "hidden",
+      }}
+    >
+      {fallbackSymbols.map((symbol, index) => (
+        <div
+          key={`${symbol}-${index}`}
+          data-testid="market-chart-grid-shell-cell"
+          style={{
+            minWidth: 0,
+            minHeight: dim(150),
+            display: "grid",
+            gridTemplateRows: "auto 1fr",
+            gap: sp(6),
+            padding: sp(8),
+            border: `1px solid ${CSS_COLOR.border}`,
+            borderRadius: dim(RADII.sm),
+            background: cssColorMix(CSS_COLOR.bg1, 88),
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: sp(6),
+              minHeight: dim(18),
+            }}
+          >
+            <span
+              style={{
+                color: CSS_COLOR.text,
+                fontFamily: T.mono,
+                fontSize: textSize("body"),
+                fontWeight: FONT_WEIGHTS.medium,
+              }}
+            >
+              {symbol}
+            </span>
+            <span
+              style={{
+                width: dim(46),
+                height: dim(5),
+                borderRadius: dim(RADII.pill),
+                background: cssColorMix(CSS_COLOR.textMuted, 18),
+              }}
+            />
+          </div>
+          <div
+            aria-hidden="true"
+            style={{
+              alignSelf: "stretch",
+              display: "grid",
+              alignItems: "end",
+              gridTemplateColumns: "repeat(10, minmax(0, 1fr))",
+              gap: sp(3),
+              paddingTop: sp(12),
+            }}
+          >
+            {Array.from({ length: 10 }).map((_, barIndex) => (
+              <span
+                key={barIndex}
+                style={{
+                  minHeight: dim(18 + ((barIndex * 17 + index * 11) % 72)),
+                  borderRadius: dim(RADII.xs),
+                  background:
+                    barIndex % 3 === 0
+                      ? cssColorMix(CSS_COLOR.accent, 18)
+                      : cssColorMix(CSS_COLOR.textMuted, 12),
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </Card>
+  );
+};
 
 const MarketScreenInner = ({
   sym,
@@ -488,7 +580,14 @@ const MarketScreenInner = ({
               }
               minHeight={dim(340)}
             >
-              <Suspense fallback={<MarketChartGridFallback />}>
+              <Suspense
+                fallback={
+                  <MarketChartGridFallback
+                    symbols={symbols}
+                    isPhone={marketLayoutFlags.isPhone}
+                  />
+                }
+              >
                 <MemoMultiChartGrid
                   key={`market-chart-grid-${marketChartResetKey}-${marketChartRetryRevision}`}
                   activeSym={sym}
