@@ -32,9 +32,30 @@ test("classifies broker-critical routes separately from analytics routes", () =>
   assert.equal(
     classifyApiRoute({
       method: "GET",
+      path: "/api/algo/deployments/dep-1/signal-options/state?view=full",
+    }),
+    "deferred-analytics",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
       path: "/api/algo/deployments/dep-1/cockpit",
     }),
     "active-screen",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/api/algo/deployments/dep-1/cockpit?view=full",
+    }),
+    "deferred-analytics",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/api/algo/events?includePayload=true",
+    }),
+    "deferred-analytics",
   );
   assert.equal(
     classifyApiRoute({

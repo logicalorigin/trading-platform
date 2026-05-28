@@ -89,14 +89,18 @@ export async function fetchAlgoCockpitCriticalPayload(
   stream: AlgoCockpitStreamPayload["stream"] = "algo-cockpit-live",
 ): Promise<AlgoCockpitStreamPayload> {
   const target = await resolveAlgoCockpitTarget(input);
+  const criticalEventLimit = Math.min(target.eventLimit, 20);
   const [events, signalOptionsState] = await Promise.all([
     listExecutionEvents(
       target.deploymentId
-        ? { deploymentId: target.deploymentId, limit: target.eventLimit }
-        : { limit: target.eventLimit },
+        ? { deploymentId: target.deploymentId, limit: criticalEventLimit }
+        : { limit: criticalEventLimit },
     ),
     target.deploymentId
-      ? listSignalOptionsAutomationState({ deploymentId: target.deploymentId })
+      ? listSignalOptionsAutomationState({
+          deploymentId: target.deploymentId,
+          view: "summary",
+        })
       : Promise.resolve(null),
   ]);
 
@@ -132,15 +136,21 @@ export async function fetchAlgoCockpitStreamPayload(
   const [events, signalOptionsState, cockpit, performance, signalMonitorProfile] =
     await Promise.all([
       listExecutionEvents(
-        target.deploymentId
-          ? { deploymentId: target.deploymentId, limit: target.eventLimit }
-          : { limit: target.eventLimit },
+      target.deploymentId
+        ? { deploymentId: target.deploymentId, limit: target.eventLimit }
+        : { limit: target.eventLimit },
       ),
       target.deploymentId
-        ? listSignalOptionsAutomationState({ deploymentId: target.deploymentId })
+        ? listSignalOptionsAutomationState({
+            deploymentId: target.deploymentId,
+            view: "summary",
+          })
         : Promise.resolve(null),
       target.deploymentId
-        ? getAlgoDeploymentCockpit({ deploymentId: target.deploymentId })
+        ? getAlgoDeploymentCockpit({
+            deploymentId: target.deploymentId,
+            view: "summary",
+          })
         : Promise.resolve(null),
       target.deploymentId
         ? getSignalOptionsPerformance({ deploymentId: target.deploymentId })

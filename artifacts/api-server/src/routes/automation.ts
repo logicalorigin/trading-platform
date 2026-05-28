@@ -134,11 +134,13 @@ router.patch("/algo/deployments/:deploymentId/strategy-settings", async (req, re
 
 router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, res): Promise<void> => {
   const admission = getApiRouteAdmission(res);
+  const view = req.query.view === "full" ? "full" : "summary";
   res.json(
     withRouteAdmissionMetadata(
       await listSignalOptionsAutomationState({
         deploymentId: req.params.deploymentId,
         cacheMode: admission.cacheOnly ? "cache-only" : "normal",
+        view,
       }),
       admission,
     ),
@@ -147,11 +149,13 @@ router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, r
 
 router.get("/algo/deployments/:deploymentId/cockpit", async (req, res): Promise<void> => {
   const admission = getApiRouteAdmission(res);
+  const view = req.query.view === "full" ? "full" : "summary";
   res.json(
     withRouteAdmissionMetadata(
       await getAlgoDeploymentCockpit({
         deploymentId: req.params.deploymentId,
         cacheMode: admission.cacheOnly ? "cache-only" : "normal",
+        view,
       }),
       admission,
     ),
@@ -247,11 +251,14 @@ router.get("/algo/events", async (req, res): Promise<void> => {
     typeof req.query.limit === "string" && req.query.limit.trim()
       ? Number(req.query.limit)
       : undefined;
+  const includePayload =
+    req.query.includePayload === "true" || req.query.view === "full";
 
   res.json(
     await listExecutionEvents({
       deploymentId,
       limit: Number.isFinite(limit) ? limit : undefined,
+      includePayload,
     }),
   );
 });

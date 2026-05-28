@@ -164,14 +164,19 @@ const SIGNAL_OPTIONS_EXTENDED_CLOSE_UNDERLYINGS = new Set([
   "SPY",
 ]);
 const SIGNAL_OPTIONS_STATE_EVENT_LIMIT = 2_500;
+const SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT = 250;
+const SIGNAL_OPTIONS_SUMMARY_RESPONSE_EVENT_LIMIT = 20;
 const SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS = 2_000;
 const SIGNAL_OPTIONS_DASHBOARD_CACHE_STALE_TTL_MS = 60_000;
+const SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS = 15_000;
+const SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS = 120_000;
 const SIGNAL_OPTIONS_OPTION_BACKOFF_DEBUG_REASON = "options_backoff";
 const SIGNAL_OPTIONS_GATEWAY_NOT_READY_REASON = "algo_gateway_not_ready";
 const SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON = "market_session_quiet";
 
 type SignalDirection = "buy" | "sell";
 type OptionRight = "call" | "put";
+type SignalOptionsDashboardView = "summary" | "full";
 type SignalOptionsDashboardCacheMode = "normal" | "cache-only";
 type SignalOptionsOptionBackoffReason =
   | "option_chain_backoff"
@@ -5423,7 +5428,10 @@ export async function getSignalOptionsPerformance(input: {
     });
   }
   const { deployment, profile, events, state } =
-    await getSignalOptionsDashboardSnapshot(input);
+    await getSignalOptionsDashboardSnapshot({
+      ...input,
+      view: "full",
+    });
   const shadowTradeDiagnostics = await computeShadowTradeDiagnostics({ range: "1M" });
 
   const payload = buildSignalOptionsPerformanceFromInputs({
@@ -5670,11 +5678,23 @@ const signalOptionsDashboardCache = new Map<
   string,
   SignalOptionsDashboardSnapshot
 >();
+const signalOptionsSummaryDashboardCache = new Map<
+  string,
+  SignalOptionsDashboardSnapshot
+>();
 const signalOptionsDashboardInFlight = new Map<
   string,
   Promise<SignalOptionsDashboardSnapshot>
 >();
+const signalOptionsSummaryDashboardInFlight = new Map<
+  string,
+  Promise<SignalOptionsDashboardSnapshot>
+>();
 const signalOptionsCockpitCache = new Map<
+  string,
+  SignalOptionsCachedPayload<Awaited<ReturnType<typeof buildAlgoDeploymentCockpitPayload>>>
+>();
+const signalOptionsCockpitSummaryCache = new Map<
   string,
   SignalOptionsCachedPayload<Awaited<ReturnType<typeof buildAlgoDeploymentCockpitPayload>>>
 >();
@@ -5686,14 +5706,20 @@ const signalOptionsPerformanceCache = new Map<
 function invalidateSignalOptionsDashboardCaches(deploymentId?: string) {
   if (!deploymentId) {
     signalOptionsDashboardCache.clear();
+    signalOptionsSummaryDashboardCache.clear();
     signalOptionsDashboardInFlight.clear();
+    signalOptionsSummaryDashboardInFlight.clear();
     signalOptionsCockpitCache.clear();
+    signalOptionsCockpitSummaryCache.clear();
     signalOptionsPerformanceCache.clear();
     return;
   }
   signalOptionsDashboardCache.delete(deploymentId);
+  signalOptionsSummaryDashboardCache.delete(deploymentId);
   signalOptionsDashboardInFlight.delete(deploymentId);
+  signalOptionsSummaryDashboardInFlight.delete(deploymentId);
   signalOptionsCockpitCache.delete(deploymentId);
+  signalOptionsCockpitSummaryCache.delete(deploymentId);
   signalOptionsPerformanceCache.delete(deploymentId);
 }
 
@@ -5752,17 +5778,50 @@ function writeSignalOptionsCachedPayload<T>(
   cache: Map<string, SignalOptionsCachedPayload<T>>,
   deploymentId: string,
   value: T,
+  input: {
+    ttlMs?: number;
+    staleTtlMs?: number;
+  } = {},
 ) {
   const now = Date.now();
   cache.set(deploymentId, {
     value,
     cachedAt: new Date(now).toISOString(),
-    expiresAt: now + SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS,
-    staleExpiresAt: now + SIGNAL_OPTIONS_DASHBOARD_CACHE_STALE_TTL_MS,
+    expiresAt: now + (input.ttlMs ?? SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS),
+    staleExpiresAt:
+      now + (input.staleTtlMs ?? SIGNAL_OPTIONS_DASHBOARD_CACHE_STALE_TTL_MS),
   });
 }
 
-async function getSignalOptionsDashboardSnapshot(input: {
+function compactSignalOptionsEventResponse(
+  event: Awaited<ReturnType<typeof buildStatePayload>>["events"][number],
+) {
+  return {
+    ...event,
+    payload: {},
+  };
+}
+
+function compactSignalOptionsStatePayload(
+  state: Awaited<ReturnType<typeof buildStatePayload>>,
+): Awaited<ReturnType<typeof buildStatePayload>> {
+  return {
+    ...state,
+    events: state.events
+      .slice(0, SIGNAL_OPTIONS_SUMMARY_RESPONSE_EVENT_LIMIT)
+      .map(compactSignalOptionsEventResponse),
+  };
+}
+
+function writeSignalOptionsDashboardSnapshot(
+  cache: Map<string, SignalOptionsDashboardSnapshot>,
+  deploymentId: string,
+  snapshot: SignalOptionsDashboardSnapshot,
+) {
+  cache.set(deploymentId, snapshot);
+}
+
+async function getSignalOptionsFullDashboardSnapshot(input: {
   deploymentId: string;
   cacheMode?: SignalOptionsDashboardCacheMode;
 }): Promise<SignalOptionsDashboardSnapshot> {
@@ -5825,9 +5884,113 @@ async function getSignalOptionsDashboardSnapshot(input: {
   return request;
 }
 
+async function getSignalOptionsSummaryDashboardSnapshot(input: {
+  deploymentId: string;
+  cacheMode?: SignalOptionsDashboardCacheMode;
+}): Promise<SignalOptionsDashboardSnapshot> {
+  const cacheMode = input.cacheMode ?? "normal";
+  const now = Date.now();
+  const cached = signalOptionsSummaryDashboardCache.get(input.deploymentId);
+  if (cached && cached.expiresAt > now) {
+    return cached;
+  }
+  if (cached && cached.staleExpiresAt > now && cacheMode === "cache-only") {
+    return {
+      ...cached,
+      state: withSignalOptionsCacheMetadata(cached.state, {
+        cachedAt: cached.cachedAt,
+        cacheStatus: "stale",
+      }),
+    };
+  }
+
+  const fullCached = signalOptionsDashboardCache.get(input.deploymentId);
+  if (fullCached && fullCached.staleExpiresAt > now) {
+    const cachedAt = new Date(now).toISOString();
+    const summarySnapshot = {
+      deployment: fullCached.deployment,
+      profile: fullCached.profile,
+      events: fullCached.events.slice(0, SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT),
+      state: compactSignalOptionsStatePayload(fullCached.state),
+      cachedAt,
+      expiresAt: now + SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS,
+      staleExpiresAt: now + SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS,
+    };
+    writeSignalOptionsDashboardSnapshot(
+      signalOptionsSummaryDashboardCache,
+      fullCached.deployment.id,
+      summarySnapshot,
+    );
+    if (fullCached.deployment.id !== input.deploymentId) {
+      writeSignalOptionsDashboardSnapshot(
+        signalOptionsSummaryDashboardCache,
+        input.deploymentId,
+        summarySnapshot,
+      );
+    }
+    return summarySnapshot;
+  }
+
+  if (cacheMode === "cache-only") {
+    throw new HttpError(503, "Signal-options summary snapshot unavailable.", {
+      code: "signal_options_summary_cache_unavailable",
+      detail:
+        "API pressure requires a cached signal-options summary payload, but no usable payload is available yet.",
+    });
+  }
+
+  const inFlight = signalOptionsSummaryDashboardInFlight.get(input.deploymentId);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const request = (async () => {
+    const deployment = await getDeploymentOrThrow(input.deploymentId);
+    const profile = resolveDeploymentProfile(deployment);
+    const events = await listDeploymentEvents(
+      deployment.id,
+      SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT,
+    );
+    const state = compactSignalOptionsStatePayload(
+      await buildStatePayload({ deployment, profile, events }),
+    );
+    const cachedAt = new Date().toISOString();
+    const snapshot = {
+      deployment,
+      profile,
+      events,
+      state,
+      cachedAt,
+      expiresAt: Date.now() + SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS,
+      staleExpiresAt: Date.now() + SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS,
+    };
+    signalOptionsSummaryDashboardCache.set(deployment.id, snapshot);
+    if (deployment.id !== input.deploymentId) {
+      signalOptionsSummaryDashboardCache.set(input.deploymentId, snapshot);
+    }
+    return snapshot;
+  })().finally(() => {
+    signalOptionsSummaryDashboardInFlight.delete(input.deploymentId);
+  });
+
+  signalOptionsSummaryDashboardInFlight.set(input.deploymentId, request);
+  return request;
+}
+
+async function getSignalOptionsDashboardSnapshot(input: {
+  deploymentId: string;
+  cacheMode?: SignalOptionsDashboardCacheMode;
+  view?: SignalOptionsDashboardView;
+}): Promise<SignalOptionsDashboardSnapshot> {
+  return input.view === "full"
+    ? getSignalOptionsFullDashboardSnapshot(input)
+    : getSignalOptionsSummaryDashboardSnapshot(input);
+}
+
 export async function listSignalOptionsAutomationState(input: {
   deploymentId: string;
   cacheMode?: SignalOptionsDashboardCacheMode;
+  view?: SignalOptionsDashboardView;
 }) {
   const snapshot = await getSignalOptionsDashboardSnapshot(input);
   return snapshot.state;
@@ -5835,9 +5998,11 @@ export async function listSignalOptionsAutomationState(input: {
 
 async function buildAlgoDeploymentCockpitPayload(input: {
   deploymentId: string;
+  view?: SignalOptionsDashboardView;
 }) {
   const snapshot = await getSignalOptionsDashboardSnapshot({
     deploymentId: input.deploymentId,
+    view: input.view,
   });
   const { deployment, profile, events, state } = snapshot;
   const [readiness, fleetRows] = await Promise.all([
@@ -5945,9 +6110,13 @@ async function buildAlgoDeploymentCockpitPayload(input: {
 export async function getAlgoDeploymentCockpit(input: {
   deploymentId: string;
   cacheMode?: SignalOptionsDashboardCacheMode;
+  view?: SignalOptionsDashboardView;
 }) {
+  const view = input.view ?? "summary";
+  const cockpitCache =
+    view === "full" ? signalOptionsCockpitCache : signalOptionsCockpitSummaryCache;
   const cached = readSignalOptionsCachedPayload(
-    signalOptionsCockpitCache,
+    cockpitCache,
     input.deploymentId,
     input.cacheMode ?? "normal",
   );
@@ -5961,11 +6130,20 @@ export async function getAlgoDeploymentCockpit(input: {
         "API pressure requires a cached signal-options cockpit payload, but no usable payload is available yet.",
     });
   }
-  const payload = await buildAlgoDeploymentCockpitPayload(input);
+  const payload = await buildAlgoDeploymentCockpitPayload({
+    deploymentId: input.deploymentId,
+    view,
+  });
   writeSignalOptionsCachedPayload(
-    signalOptionsCockpitCache,
+    cockpitCache,
     input.deploymentId,
     payload,
+    view === "summary"
+      ? {
+          ttlMs: SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS,
+          staleTtlMs: SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS,
+        }
+      : {},
   );
   const payloadDeploymentId =
     payload.deployment && typeof payload.deployment === "object"
@@ -5973,9 +6151,15 @@ export async function getAlgoDeploymentCockpit(input: {
       : "";
   if (payloadDeploymentId && payloadDeploymentId !== input.deploymentId) {
     writeSignalOptionsCachedPayload(
-      signalOptionsCockpitCache,
+      cockpitCache,
       payloadDeploymentId,
       payload,
+      view === "summary"
+        ? {
+            ttlMs: SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS,
+            staleTtlMs: SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS,
+          }
+        : {},
     );
   }
   return payload;

@@ -31,6 +31,11 @@ const DEFAULT_ADMISSION: ApiRouteAdmission = {
   generatedAt: new Date(0).toISOString(),
 };
 
+const queryParamsForPath = (path: string) => {
+  const query = path.includes("?") ? path.slice(path.indexOf("?") + 1) : "";
+  return new URLSearchParams(query);
+};
+
 const normalizePath = (path: string) => {
   const withoutQuery = path.split("?")[0] || "/";
   return withoutQuery.startsWith("/api/")
@@ -45,7 +50,9 @@ export function classifyApiRoute(input: {
   path?: string | null;
 }): ApiRouteClass {
   const method = String(input.method || "GET").toUpperCase();
-  const path = normalizePath(String(input.path || "/"));
+  const rawPath = String(input.path || "/");
+  const path = normalizePath(rawPath);
+  const query = queryParamsForPath(rawPath);
 
   if (
     path === "/orders/submit" ||
@@ -81,6 +88,12 @@ export function classifyApiRoute(input: {
     path === "/signal-monitor/matrix" ||
     path === "/signal-monitor/state" ||
     path === "/bars" ||
+    (/^\/algo\/deployments\/[^/]+\/signal-options\/state$/.test(path) &&
+      query.get("view") === "full") ||
+    (/^\/algo\/deployments\/[^/]+\/cockpit$/.test(path) &&
+      query.get("view") === "full") ||
+    (path === "/algo/events" && query.get("includePayload") === "true") ||
+    (path === "/algo/events" && query.get("view") === "full") ||
     /^\/algo\/deployments\/[^/]+\/signal-options\/performance$/.test(path)
   ) {
     return "deferred-analytics";
@@ -123,7 +136,7 @@ export function apiRouteAdmissionMiddleware(
   const admission = resolveApiRouteAdmission({
     routeClass: classifyApiRoute({
       method: req.method,
-      path: req.path || req.url,
+      path: req.originalUrl || req.url || req.path,
     }),
     pressureLevel: pressure.level,
   });
