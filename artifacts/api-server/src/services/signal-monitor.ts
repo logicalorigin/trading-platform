@@ -53,6 +53,7 @@ type SignalMonitorMatrixCacheStatus = "hit" | "stale" | "inflight" | "miss";
 type SignalMonitorMatrixClientRole = "leader" | "follower" | "manual" | "test";
 type SignalMonitorMatrixRequestOrigin = "startup" | "poll" | "manual" | "test";
 type SignalMonitorBarSourcePolicy = "mixed" | "ibkr-only";
+type SignalMonitorProfileSymbolEvaluationPressureCapMode = "capped" | "bypass-soft";
 type SignalMonitorUniverseMode =
   | "selected_watchlist"
   | "all_watchlists"
@@ -2573,38 +2574,91 @@ function resolveExplicitSignalMonitorSymbols(input: {
   };
 }
 
+function resolveSignalMonitorProfileSymbolEvaluationSettings(input: {
+  profile: DbSignalMonitorProfile;
+  maxSymbolsOverride?: number;
+  pressureCapMode?: SignalMonitorProfileSymbolEvaluationPressureCapMode;
+  evaluationConcurrencyOverride?: number;
+  pressureLevel?: ApiResourcePressureLevel;
+}) {
+  const pressureCapMode = input.pressureCapMode ?? "capped";
+  const cappedSettings = cappedSignalMonitorEvaluationProfile(
+    input.profile,
+    input.pressureLevel,
+  );
+
+  if (pressureCapMode === "bypass-soft") {
+    const maxSymbols =
+      input.maxSymbolsOverride === undefined
+        ? 250
+        : Math.max(
+            0,
+            Math.min(250, Math.floor(Number(input.maxSymbolsOverride) || 0)),
+          );
+    return {
+      ...cappedSettings,
+      capped: false,
+      pressureCapMode,
+      profile: {
+        ...input.profile,
+        maxSymbols,
+        evaluationConcurrency: positiveInteger(
+          input.evaluationConcurrencyOverride ??
+            input.profile.evaluationConcurrency,
+          DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY,
+          1,
+          10,
+        ),
+      },
+    };
+  }
+
+  const maxSymbols =
+    input.maxSymbolsOverride === undefined
+      ? cappedSettings.profile.maxSymbols
+      : Math.max(
+          0,
+          Math.min(
+            cappedSettings.profile.maxSymbols,
+            250,
+            Math.floor(Number(input.maxSymbolsOverride) || 0),
+          ),
+        );
+  return {
+    ...cappedSettings,
+    pressureCapMode,
+    profile: {
+      ...cappedSettings.profile,
+      maxSymbols,
+    },
+  };
+}
+
 export async function evaluateSignalMonitorProfileSymbols(input: {
   profile: DbSignalMonitorProfile;
   mode?: EvaluationMode;
   evaluatedAt?: Date;
   symbols: string[];
   maxSymbolsOverride?: number;
+  pressureCapMode?: SignalMonitorProfileSymbolEvaluationPressureCapMode;
+  evaluationConcurrencyOverride?: number;
   barSourcePolicy?: SignalMonitorBarSourcePolicy;
 }) {
   const evaluatedAt = input.evaluatedAt ?? new Date();
   const mode = input.mode ?? "incremental";
-  const evaluationSettings = cappedSignalMonitorEvaluationProfile(input.profile);
-  const maxSymbols =
-    input.maxSymbolsOverride === undefined
-      ? evaluationSettings.profile.maxSymbols
-      : Math.max(
-          0,
-          Math.min(
-            evaluationSettings.profile.maxSymbols,
-            250,
-            Math.floor(Number(input.maxSymbolsOverride) || 0),
-          ),
-        );
-  const evaluationProfile = {
-    ...evaluationSettings.profile,
-    maxSymbols,
-  };
+  const evaluationSettings = resolveSignalMonitorProfileSymbolEvaluationSettings({
+    profile: input.profile,
+    maxSymbolsOverride: input.maxSymbolsOverride,
+    pressureCapMode: input.pressureCapMode,
+    evaluationConcurrencyOverride: input.evaluationConcurrencyOverride,
+  });
+  const evaluationProfile = evaluationSettings.profile;
   const timeframe = resolveSignalMonitorTimeframe(
     evaluationProfile.timeframe,
   );
   const resolved = resolveExplicitSignalMonitorSymbols({
     symbols: input.symbols,
-    maxSymbols,
+    maxSymbols: evaluationProfile.maxSymbols,
   });
 
   const evaluatedStates = await evaluateSymbolsInBatches({
@@ -2629,7 +2683,7 @@ export async function evaluateSignalMonitorProfileSymbols(input: {
     skippedSymbols: resolved.skippedSymbols,
     universe: {
       mode: "selected_watchlist",
-      configuredMaxSymbols: maxSymbols,
+      configuredMaxSymbols: evaluationProfile.maxSymbols,
       resolvedSymbols: resolved.symbols.length,
       pinnedSymbols: resolved.symbols.length,
       expansionSymbols: 0,
@@ -3497,6 +3551,7 @@ export const __signalMonitorInternalsForTests = {
   resolveSignalMonitorUniverseFromWatchlists,
   resolveSignalMonitorEvaluationBatch,
   resolveExplicitSignalMonitorSymbols,
+  resolveSignalMonitorProfileSymbolEvaluationSettings,
   cappedSignalMonitorEvaluationProfile,
   cappedSignalMatrixSettings,
   buildSignalMonitorCompletedBarsCacheKey,

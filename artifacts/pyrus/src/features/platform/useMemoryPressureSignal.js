@@ -45,6 +45,28 @@ const readResourceSnapshot = (payload) =>
 const normalizeServerPressureLevel = (summary) =>
   summary?.pressureLevel || summary?.level || null;
 
+const serverPressureDrivers = (summary) => {
+  if (Array.isArray(summary?.pressureDrivers)) {
+    return summary.pressureDrivers;
+  }
+  if (Array.isArray(summary?.dominantDrivers)) {
+    return summary.dominantDrivers;
+  }
+  return [];
+};
+
+const mergePressureDrivers = (clientDrivers = [], serverDrivers = []) => {
+  const next = [];
+  const seen = new Set();
+  [...serverDrivers, ...clientDrivers].forEach((driver) => {
+    const kind = driver?.kind;
+    if (!kind || seen.has(kind)) return;
+    seen.add(kind);
+    next.push(driver);
+  });
+  return next;
+};
+
 export const mergeMemoryPressureServerSummary = ({
   footerMemoryPressure = null,
   resourceMetrics = null,
@@ -82,9 +104,52 @@ export const mergeMemoryPressureServerSummary = ({
       footerMemoryPressure.browserMemoryMb ?? resourceMetrics.browserMemoryMb ?? null,
     sourceQuality:
       footerMemoryPressure.sourceQuality ?? resourceMetrics.sourceQuality ?? null,
+    pressureDrivers: resourceMetrics.dominantDrivers?.length
+      ? resourceMetrics.dominantDrivers
+      : footerMemoryPressure.dominantDrivers,
     dominantDrivers: resourceMetrics.dominantDrivers?.length
       ? resourceMetrics.dominantDrivers
       : footerMemoryPressure.dominantDrivers,
+  };
+};
+
+export const mergeMemoryPressureRuntimeState = (clientState, serverSummary) => {
+  if (!serverSummary) {
+    return clientState;
+  }
+  const clientLevel = clientState?.level || "normal";
+  const serverLevel = normalizeServerPressureLevel(serverSummary);
+  const drivers = mergePressureDrivers(
+    clientState?.pressureDrivers,
+    serverPressureDrivers(serverSummary),
+  );
+  const dominantDrivers = drivers.filter((driver) =>
+    isPressureLevelAtLeast(driver?.level, "watch"),
+  );
+
+  return {
+    ...clientState,
+    level:
+      serverLevel && isPressureLevelAtLeast(serverLevel, clientLevel)
+        ? serverLevel
+        : clientLevel,
+    browserMemoryMb:
+      clientState?.browserMemoryMb ?? serverSummary.browserMemoryMb ?? null,
+    apiHeapUsedPercent:
+      clientState?.apiHeapUsedPercent ?? serverSummary.apiHeapUsedPercent ?? null,
+    apiRssMb: serverSummary.rssMb ?? serverSummary.apiResourcePressure?.inputs?.rssMb ?? null,
+    apiP95LatencyMs:
+      serverSummary.eventLoopP95Ms ??
+      serverSummary.apiResourcePressure?.inputs?.apiP95LatencyMs ??
+      null,
+    sourceQuality:
+      clientState?.sourceQuality === "low" && serverSummary.sourceQuality
+        ? serverSummary.sourceQuality
+        : clientState?.sourceQuality,
+    pressureDrivers: drivers,
+    dominantDrivers: dominantDrivers.length
+      ? dominantDrivers
+      : clientState?.dominantDrivers ?? [],
   };
 };
 
@@ -185,22 +250,7 @@ export const useMemoryPressureMonitor = () => {
         },
       );
 
-      const mergedNext = {
-        ...next,
-        level:
-          serverSummary?.level &&
-          isPressureLevelAtLeast(serverSummary.level, next.level)
-            ? serverSummary.level
-            : next.level,
-        browserMemoryMb:
-          next.browserMemoryMb ?? serverSummary?.browserMemoryMb ?? null,
-        apiHeapUsedPercent:
-          next.apiHeapUsedPercent ?? serverSummary?.apiHeapUsedPercent ?? null,
-        sourceQuality:
-          next.sourceQuality === "low" && serverSummary?.sourceQuality
-            ? serverSummary.sourceQuality
-            : next.sourceQuality,
-      };
+      const mergedNext = mergeMemoryPressureRuntimeState(next, serverSummary);
 
       const snapshot = {
         ...mergedNext,

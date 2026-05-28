@@ -99,6 +99,7 @@ const {
 } = await import("./bridge-option-quote-stream");
 const {
   __resetApiResourcePressureForTests,
+  resolveApiRssPressureThresholds,
   updateApiResourcePressure,
 } = await import("./resource-pressure");
 
@@ -370,6 +371,7 @@ test("options flow runtime defaults use the reserved flow scanner lane", () => {
   const config = getOptionsFlowRuntimeConfig();
 
   assert.equal(config.scannerSessionGuardEnabled, true);
+  assert.equal(config.radarEnabled, true);
   assert.equal(config.radarBatchSize, 30);
   assert.equal(config.radarDeepCandidateCount, 3);
   assert.equal(config.radarFallbackDeepCandidateCount, 1);
@@ -379,6 +381,11 @@ test("options flow runtime defaults use the reserved flow scanner lane", () => {
   assert.equal(config.scannerLineBudget, 80);
   assert.equal(config.scannerConcurrency, 2);
   assert.equal(config.scannerStrikeCoverage, "standard");
+  assert.ok(
+    Math.ceil(config.universeSize / config.radarBatchSize) *
+      config.scannerIntervalMs <=
+      5 * 60_000,
+  );
   assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 2);
   assert.equal(
     resolveOptionsFlowScannerEffectiveConcurrency({
@@ -398,6 +405,19 @@ test("options flow runtime defaults use the reserved flow scanner lane", () => {
   );
   setOptionsFlowRuntimeOverrides({ scannerConcurrency: 8 });
   assert.equal(getOptionsFlowRuntimeConfig().scannerConcurrency, 2);
+});
+
+test("automation-only high pressure does not throttle the flow scanner", () => {
+  updateApiResourcePressure({ automationActiveLongScanCount: 1 });
+
+  const diagnostics = getOptionsFlowScannerDiagnostics();
+
+  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(), 2);
+  assert.equal(diagnostics.resourcePressure.level, "high");
+  assert.equal(diagnostics.scannerPressure.level, "normal");
+  assert.equal(diagnostics.scannerPressure.throttled, false);
+  assert.equal(diagnostics.scannerFillMode, "steady-state");
+  assert.equal(diagnostics.limitingReason, null);
 });
 
 test("options flow scanner concurrency remains capped under runtime overrides", () => {
@@ -423,6 +443,48 @@ test("options flow scanner concurrency remains capped under runtime overrides", 
     getOptionsFlowScannerDiagnostics().deepScanner.maxConcurrency,
     2,
   );
+});
+
+test("flow universe coverage labels radar and direct deep phases distinctly", async () => {
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          configured: true,
+          connected: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
+        getOptionActivitySnapshots: async () => [
+          {
+            symbol: "SPY",
+            price: 500,
+            optionCallVolume: 1_000,
+            optionPutVolume: 100,
+            optionCallOpenInterest: 5_000,
+            optionPutOpenInterest: 4_000,
+            updatedAt: new Date(),
+          },
+        ],
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => [optionContract("SPY")],
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  await __runOptionsFlowRadarScannerOnceForTests(["spy"], {
+    batchSize: 1,
+    promoteCount: 0,
+  });
+  assert.equal(getOptionsFlowUniverseCoverage().scannerPhase, "radar");
+
+  __resetOptionChainCachesForTests({ resetFlowScanner: true });
+  setOptionsFlowRuntimeOverrides({ radarEnabled: false });
+  await __runOptionsFlowScannerOnceForTests(["spy"], { limit: 1 });
+
+  assert.equal(getOptionsFlowUniverseCoverage().scannerPhase, "deep");
 });
 
 test("options flow scanner yields capacity when visible demand fills the budget", () => {
@@ -884,7 +946,9 @@ test("options flow scanner throttles without shedding leases under RSS-only crit
   assert.equal(scanner.admitted.length, 80);
   assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 80);
 
-  updateApiResourcePressure({ rssMb: 1_650 });
+  updateApiResourcePressure({
+    rssMb: resolveApiRssPressureThresholds().critical + 1,
+  });
 
   const diagnostics = getOptionsFlowScannerDiagnostics();
 
@@ -940,7 +1004,9 @@ test("options flow scanner pauses and sheds leases under hard API pressure", () 
 });
 
 test("options flow scanner throttles background rotation under high API pressure", () => {
-  updateApiResourcePressure({ rssMb: 1_250 });
+  updateApiResourcePressure({
+    rssMb: resolveApiRssPressureThresholds().high + 1,
+  });
 
   const diagnostics = getOptionsFlowScannerDiagnostics();
 
@@ -962,7 +1028,9 @@ test("options flow radar keeps polling under high API pressure", async () => {
         },
       }) as unknown as IbkrBridgeClient,
   );
-  updateApiResourcePressure({ rssMb: 1_250 });
+  updateApiResourcePressure({
+    rssMb: resolveApiRssPressureThresholds().high + 1,
+  });
 
   const result = await __runOptionsFlowRadarScannerOnceForTests(["spy"], {
     batchSize: 1,
@@ -1052,6 +1120,12 @@ test("options flow radar quote failures do not open the quotes governor", async 
   assert.deepEqual(quotes, []);
   assert.equal(quoteCalls, 2);
   assert.equal(getBridgeGovernorSnapshot().quotes.circuitOpen, false);
+
+  const skipped = await __runOptionsFlowRadarScannerOnceForTests(["spy"], {
+    batchSize: 1,
+  });
+  assert.equal(skipped.error, "radar-quotes-backoff");
+  assert.equal(quoteCalls, 2);
 });
 
 test("options flow radar keeps sampling while the quotes lane is backed off", async () => {

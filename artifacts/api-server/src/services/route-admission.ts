@@ -81,7 +81,7 @@ export function classifyApiRoute(input: {
     path === "/signal-monitor/matrix" ||
     path === "/signal-monitor/state" ||
     path === "/bars" ||
-    /^\/algo\/deployments\/[^/]+\/(cockpit|signal-options\/(state|performance))$/.test(path)
+    /^\/algo\/deployments\/[^/]+\/signal-options\/performance$/.test(path)
   ) {
     return "deferred-analytics";
   }

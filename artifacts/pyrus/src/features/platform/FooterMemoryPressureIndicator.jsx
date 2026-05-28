@@ -112,7 +112,7 @@ const rawPercentFillPercent = (value) =>
   Number.isFinite(value) ? Math.round(clamp(value, 0, 100)) : null;
 
 const findMiniDriver = (drivers, kind) =>
-  drivers.find((driver) => driver?.kind === kind) || fallbackMiniDriver;
+  drivers.find((driver) => driver?.kind === kind) || null;
 
 const miniTrackStyle = () => ({
   position: "relative",
@@ -155,15 +155,27 @@ const MiniPressureBars = ({ signal }) => {
   const drivers = Array.isArray(signal.pressureDrivers)
     ? signal.pressureDrivers
     : [];
-  const browserDriver = findMiniDriver(drivers, "browser-memory");
-  const apiDriver = findMiniDriver(drivers, "api-heap");
-  const workloadDriver = findMiniDriver(drivers, "workload");
+  const browserDriver = findMiniDriver(drivers, "browser-memory") || fallbackMiniDriver;
+  const apiRssDriver = findMiniDriver(drivers, "api-rss");
+  const apiHeapDriver = findMiniDriver(drivers, "api-heap");
+  const apiDriver = apiRssDriver || apiHeapDriver || fallbackMiniDriver;
+  const workloadDriver = findMiniDriver(drivers, "workload") || fallbackMiniDriver;
   const browserFill =
     rawMetricFillPercent(signal.browserMemoryMb, BROWSER_MEMORY_REFERENCE_MB) ??
     barFillPercent(browserDriver);
+  const apiRssMb = Number.isFinite(Number(signal.apiRssMb))
+    ? Number(signal.apiRssMb)
+    : Number.isFinite(Number(signal.server?.rssMb))
+      ? Number(signal.server.rssMb)
+      : null;
   const apiFill =
-    rawPercentFillPercent(signal.apiHeapUsedPercent) ?? barFillPercent(apiDriver);
+    apiRssDriver
+      ? (rawMetricFillPercent(apiRssMb, 2_000) ?? barFillPercent(apiDriver))
+      : (rawPercentFillPercent(signal.apiHeapUsedPercent) ?? barFillPercent(apiDriver));
   const workloadFill = barFillPercent(workloadDriver);
+  const apiDetail = apiRssDriver
+    ? `API RSS ${formatMetric(apiRssMb, "M")}`
+    : `API ${formatMetric(signal.apiHeapUsedPercent, "%")}`;
   const bars = [
     {
       key: "browser",
@@ -175,7 +187,7 @@ const MiniPressureBars = ({ signal }) => {
       key: "api",
       level: apiDriver.level || "normal",
       fillPercent: apiFill,
-      detail: `API ${formatMetric(signal.apiHeapUsedPercent, "%")}`,
+      detail: apiDetail,
     },
     {
       key: "workload",

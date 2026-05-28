@@ -664,9 +664,13 @@ function buildLineUtilizationAudit(input: {
   const scannerReclaimableLineCount =
     readNumber(admission.portfolio?.rotatingReclaimableLineCount) ?? 0;
   const scannerPressureLevel =
-    admission.optionsFlowScanner.resourcePressure?.level ?? "normal";
+    admission.optionsFlowScanner.scannerPressure?.level ??
+    admission.optionsFlowScanner.resourcePressure?.level ??
+    "normal";
   const scannerThrottledHighPressure =
-    (scannerPressureLevel === "high" || scannerPressureLevel === "critical") &&
+    (Boolean(admission.optionsFlowScanner.scannerPressure?.throttled) ||
+      scannerPressureLevel === "high" ||
+      scannerPressureLevel === "critical") &&
     Number(admission.optionsFlowScanner.lineUtilization?.effectiveConcurrency) <= 1 &&
     scannerWorkActive;
   const admissionVsBridgeLineDelta =

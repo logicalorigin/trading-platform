@@ -5,6 +5,7 @@ import { createSignalOptionsWorker } from "./signal-options-worker";
 import {
   __resetApiResourcePressureForTests,
   getApiResourcePressureSnapshot,
+  resolveApiRssPressureThresholds,
   updateApiResourcePressure,
   type ApiResourcePressureSnapshot,
 } from "./resource-pressure";
@@ -196,7 +197,7 @@ test("signal-options worker honors scan-blocking resource-pressure caps", async 
 test("signal-options worker keeps deployment scans rotating under high pressure", async () => {
   let maintenanceCalls = 0;
   let scanCalls = 0;
-  updateApiResourcePressure({ rssMb: 1_250 });
+  updateApiResourcePressure({ rssMb: resolveApiRssPressureThresholds().high });
   try {
     const caps = getApiResourcePressureSnapshot().caps.signalOptions;
     assert.equal(caps.signalRefreshAllowed, true);

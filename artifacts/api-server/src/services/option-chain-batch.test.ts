@@ -1476,6 +1476,80 @@ test("recent live-edge gaps force Polygon synthesis even when stored history mee
   );
 });
 
+test("signal-matrix Massive bars force gap-fill before 15-minute signal lag", () => {
+  const now = new Date("2026-05-15T16:20:00.000Z");
+  const request = {
+    symbol: "SPY",
+    timeframe: "5m",
+    limit: 1,
+    to: now,
+    assetClass: "equity",
+    outsideRth: true,
+    allowHistoricalSynthesis: true,
+  } as const;
+  const storedHistoricalBars = [
+    {
+      timestamp: new Date("2026-05-15T16:10:00.000Z"),
+      open: 500,
+      high: 501,
+      low: 499,
+      close: 500.5,
+      volume: 100_000,
+      source: "massive-history",
+      providerContractId: null,
+      outsideRth: true,
+      partial: false,
+      transport: "tws",
+      delayed: false,
+      freshness: "live",
+      marketDataMode: "live",
+      dataUpdatedAt: new Date("2026-05-15T16:10:00.000Z"),
+      ageMs: null,
+    },
+  ] satisfies BrokerBarSnapshot[];
+  const previousMassiveStocksRecency = process.env["MASSIVE_STOCKS_RECENCY"];
+  let signalMatrixToleranceMs: number | null = null;
+  try {
+    delete process.env["MASSIVE_STOCKS_RECENCY"];
+    signalMatrixToleranceMs =
+      __platformBarsCacheTestInternals.resolveRecentCoverageStaleToleranceMs({
+        request,
+        providerIdentity: "massive",
+        polygonConfig: { apiKey: "test", baseUrl: "https://api.massive.com" },
+        options: { priority: 4, family: "signal-matrix" },
+      });
+  } finally {
+    if (previousMassiveStocksRecency === undefined) {
+      delete process.env["MASSIVE_STOCKS_RECENCY"];
+    } else {
+      process.env["MASSIVE_STOCKS_RECENCY"] = previousMassiveStocksRecency;
+    }
+  }
+
+  assert.equal(signalMatrixToleranceMs, 5 * 60_000);
+  assert.equal(
+    __platformBarsCacheTestInternals.shouldFetchHistoricalSynthesisForRecentCoverage({
+      request,
+      storedHistoricalBars,
+      brokerBars: [],
+      now,
+      enabled: true,
+    }),
+    false,
+  );
+  assert.equal(
+    __platformBarsCacheTestInternals.shouldFetchHistoricalSynthesisForRecentCoverage({
+      request,
+      storedHistoricalBars,
+      brokerBars: [],
+      now,
+      enabled: true,
+      staleToleranceMs: signalMatrixToleranceMs,
+    }),
+    true,
+  );
+});
+
 test("getBarsWithDebug refreshes after durable bar writes invalidate cache", async () => {
   let historyCalls = 0;
   __setIbkrBridgeClientFactoryForTests(

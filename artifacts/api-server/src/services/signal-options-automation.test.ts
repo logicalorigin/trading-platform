@@ -28,6 +28,7 @@ import {
 import { registerSignalOptionsWorkerSnapshotGetter } from "./signal-options-worker-state";
 import {
   __resetApiResourcePressureForTests,
+  resolveApiRssPressureThresholds,
   updateApiResourcePressure,
 } from "./resource-pressure";
 
@@ -79,15 +80,25 @@ test("default paper signal-options startup uses bounded signal monitor profile",
 
   assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 60/);
   assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 2/);
+  assert.match(source, /SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY = 6/);
   assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60/);
   assert.match(source, /withSignalMonitorUniverseScope/);
   assert.match(
     source,
-    /input\.forceEvaluate === true[\s\S]*resolveSignalOptionsMonitorBatch/,
+    /resolveSignalOptionsMonitorFullRefresh\(\{[\s\S]*universe: input\.universe/,
   );
-  assert.doesNotMatch(
+  assert.match(
     source,
-    /input\.forceEvaluate === true[\s\S]*maxSymbolsOverride:\s*fullRefresh\.symbols\.length/,
+    /maxSymbolsOverride:\s*fullRefresh\.symbols\.length/,
+  );
+  assert.match(source, /pressureCapMode:\s*"bypass-soft"/);
+  assert.match(
+    source,
+    /evaluationConcurrencyOverride:\s*SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY/,
+  );
+  assert.match(
+    source,
+    /hardPressureBlock[\s\S]*resolveSignalOptionsMonitorBatch/,
   );
   assert.match(
     source,
@@ -162,7 +173,7 @@ test("signal-options scans publish fresh signal state before heavy action work",
 });
 
 test("signal-options continues heavy action work under RSS-only API pressure", () => {
-  updateApiResourcePressure({ rssMb: 1_250 });
+  updateApiResourcePressure({ rssMb: resolveApiRssPressureThresholds().high });
   try {
     const decision =
       __signalOptionsAutomationInternalsForTests.shouldDeferSignalOptionsHeavyWork();
@@ -2438,7 +2449,7 @@ test("signal-options candidates preserve Pyrus Signals signal to shadow action m
     currentSignalDirection: "sell",
     currentSignalAt: signalAt,
     currentSignalPrice: 508.25,
-    latestBarAt: "2026-04-28T15:45:00.000Z",
+    latestBarAt: "2026-04-28T15:35:00.000Z",
     barsSinceSignal: 1,
     fresh: true,
     status: "ok",
@@ -2485,7 +2496,7 @@ test("fresh signal snapshots create potential shadow action candidates", () => {
     direction: "buy",
     signalAt,
     signalPrice: 508.25,
-    latestBarAt: "2026-04-28T15:45:00.000Z",
+    latestBarAt: "2026-04-28T15:35:00.000Z",
     barsSinceSignal: 1,
     fresh: true,
     status: "ok",
@@ -2515,6 +2526,15 @@ test("fresh signal snapshots create potential shadow action candidates", () => {
         fresh: false,
       } as never,
     });
+  const agedCandidate =
+    __signalOptionsAutomationInternalsForTests.candidateFromSignalSnapshot({
+      deployment,
+      signal: {
+        ...baseSignal,
+        latestBarAt: "2026-04-28T15:45:00.000Z",
+        barsSinceSignal: 2,
+      } as never,
+    });
 
   assert.ok(buyCandidate);
   assert.equal(buyCandidate.symbol, "SPY");
@@ -2528,6 +2548,58 @@ test("fresh signal snapshots create potential shadow action candidates", () => {
   assert.equal(sellCandidate.optionRight, "put");
   assert.equal(sellCandidate.action?.optionAction, "buy_put");
   assert.equal(staleCandidate, null);
+  assert.equal(agedCandidate, null);
+});
+
+test("signal-options state only treats fresh signal states as action rows", () => {
+  const isActionable =
+    __signalOptionsAutomationInternalsForTests.isSignalOptionsActionableSignalState;
+
+  assert.equal(
+    isActionable({
+      fresh: true,
+      currentSignalDirection: "buy",
+      currentSignalAt: "2026-05-28T20:00:00.000Z",
+      barsSinceSignal: 0,
+    } as never),
+    true,
+  );
+  assert.equal(
+    isActionable({
+      fresh: true,
+      currentSignalDirection: "buy",
+      currentSignalAt: "2026-05-28T19:55:00.000Z",
+      barsSinceSignal: 1,
+    } as never),
+    true,
+  );
+  assert.equal(
+    isActionable({
+      fresh: true,
+      currentSignalDirection: "buy",
+      currentSignalAt: "2026-05-28T19:50:00.000Z",
+      barsSinceSignal: 2,
+    } as never),
+    false,
+  );
+  assert.equal(
+    isActionable({
+      fresh: false,
+      currentSignalDirection: "buy",
+      currentSignalAt: "2026-05-28T19:35:00.000Z",
+      barsSinceSignal: 0,
+    } as never),
+    false,
+  );
+  assert.equal(
+    isActionable({
+      fresh: true,
+      currentSignalDirection: null,
+      currentSignalAt: "2026-05-28T20:00:00.000Z",
+      barsSinceSignal: 0,
+    } as never),
+    false,
+  );
 });
 
 test("scan events override matching live signal previews without losing mappings", () => {
@@ -2549,7 +2621,7 @@ test("scan events override matching live signal previews without losing mappings
         direction: "buy",
         signalAt,
         signalPrice: 508.25,
-        latestBarAt: "2026-04-28T15:45:00.000Z",
+        latestBarAt: "2026-04-28T15:35:00.000Z",
         barsSinceSignal: 1,
         fresh: true,
         status: "ok",

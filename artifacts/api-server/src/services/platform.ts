@@ -35,6 +35,9 @@ import { logger } from "../lib/logger";
 import {
   getApiResourcePressureSnapshot,
   isApiResourcePressureHardBlock,
+  type ApiResourcePressureDriver,
+  type ApiResourcePressureLevel,
+  type ApiResourcePressureSnapshot,
 } from "./resource-pressure";
 import {
   createTransientPostgresBackoff,
@@ -120,6 +123,7 @@ import {
 import {
   createFlowUniverseManager,
   getFlowScannerIntervalMs,
+  isRegularTradingHours,
   type FlowUniverseCoverage,
   type FlowUniverseMode,
 } from "./flow-universe";
@@ -130,7 +134,6 @@ import {
 import {
   fetchBridgeQuoteSnapshots,
 } from "./bridge-quote-stream";
-import { subscribeMassiveStockQuoteSnapshots } from "./massive-stock-quote-stream";
 import { subscribeStockMinuteAggregates } from "./stock-aggregate-stream";
 import {
   fetchBridgeOptionQuoteSnapshots,
@@ -1081,7 +1084,52 @@ function getOptionsFlowScannerSchedulableLineCap(): number {
 }
 
 function isOptionsFlowScannerResourcePressureBlocked(): boolean {
-  return isApiResourcePressureHardBlock(getApiResourcePressureSnapshot());
+  return getOptionsFlowScannerPressureGate().hardBlocked;
+}
+
+const PRESSURE_LEVEL_RANK: Record<ApiResourcePressureLevel, number> = {
+  normal: 0,
+  watch: 1,
+  high: 2,
+  critical: 3,
+};
+
+function maxPressureDriverLevel(
+  drivers: readonly ApiResourcePressureDriver[],
+): ApiResourcePressureLevel {
+  return drivers.reduce<ApiResourcePressureLevel>((level, driver) => {
+    return PRESSURE_LEVEL_RANK[driver.level] > PRESSURE_LEVEL_RANK[level]
+      ? driver.level
+      : level;
+  }, "normal");
+}
+
+function getOptionsFlowScannerPressureGate(
+  snapshot: ApiResourcePressureSnapshot = getApiResourcePressureSnapshot(),
+): {
+  level: ApiResourcePressureLevel;
+  globalLevel: ApiResourcePressureLevel;
+  hardBlocked: boolean;
+  throttled: boolean;
+  drivers: ApiResourcePressureDriver[];
+  ignoredDrivers: ApiResourcePressureDriver[];
+} {
+  const ignoredDrivers = snapshot.drivers.filter(
+    (driver) => driver.kind === "automation",
+  );
+  const scannerDrivers = snapshot.drivers.filter(
+    (driver) => driver.kind !== "automation",
+  );
+  const level = maxPressureDriverLevel(scannerDrivers);
+  const hardBlocked = isApiResourcePressureHardBlock(snapshot);
+  return {
+    level: hardBlocked ? snapshot.level : level,
+    globalLevel: snapshot.level,
+    hardBlocked,
+    throttled: !hardBlocked && (level === "high" || level === "critical"),
+    drivers: scannerDrivers,
+    ignoredDrivers,
+  };
 }
 
 function releaseOptionsFlowScannerMarketDataLeases(reason: string): void {
@@ -1830,6 +1878,14 @@ const OPTIONS_FLOW_AGGREGATE_SEED_BATCH_SIZE = readPositiveIntegerEnv(
 const OPTIONS_FLOW_RADAR_OBSERVATION_TTL_MS = readPositiveIntegerEnv(
   "OPTIONS_FLOW_RADAR_OBSERVATION_TTL_MS",
   10 * 60_000,
+);
+const OPTIONS_FLOW_RADAR_FETCH_FAILURE_BACKOFF_MS = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_RADAR_FETCH_FAILURE_BACKOFF_MS",
+  30_000,
+);
+const OPTIONS_FLOW_COVERAGE_ACTIVE_TARGET_MS = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_COVERAGE_ACTIVE_TARGET_MS",
+  5 * 60_000,
 );
 const HISTORICAL_FLOW_TIMEOUT_COOLDOWN_MS = 30_000;
 const HISTORICAL_FLOW_REFRESHING_REASON =
@@ -7255,6 +7311,7 @@ function shouldFetchHistoricalSynthesisForRecentCoverage(input: {
   brokerBars: BrokerBarSnapshot[];
   now: Date;
   enabled: boolean;
+  staleToleranceMs?: number | null;
 }): boolean {
   if (!input.enabled) {
     return false;
@@ -7284,10 +7341,12 @@ function shouldFetchHistoricalSynthesisForRecentCoverage(input: {
     newestStoredMs ?? Number.NEGATIVE_INFINITY,
     newestBrokerMs ?? Number.NEGATIVE_INFINITY,
   );
-  const staleToleranceMs = Math.max(
-    RECENT_COVERAGE_STALE_TOLERANCE_MS,
-    stepMs * 3,
-  );
+  const configuredStaleToleranceMs = Number(input.staleToleranceMs);
+  const staleToleranceMs =
+    Number.isFinite(configuredStaleToleranceMs) &&
+    configuredStaleToleranceMs >= 0
+      ? configuredStaleToleranceMs
+      : Math.max(RECENT_COVERAGE_STALE_TOLERANCE_MS, stepMs * 3);
 
   if (
     !Number.isFinite(newestExistingMs) ||
@@ -7308,6 +7367,38 @@ function shouldFetchHistoricalSynthesisForRecentCoverage(input: {
   }
 
   return false;
+}
+
+function isRealtimeMassiveSignalMatrixBarsRequest(input: {
+  providerIdentity: ReturnType<typeof getPolygonProviderIdentity>;
+  polygonConfig: ReturnType<typeof getPolygonRuntimeConfig>;
+  options: GetBarsOptions;
+}) {
+  return (
+    input.providerIdentity === "massive" &&
+    isMassiveStocksRealtimeConfigured(input.polygonConfig) &&
+    normalizeBarsRequestFamily(input.options.family) === "signal-matrix"
+  );
+}
+
+function resolveRecentCoverageStaleToleranceMs(input: {
+  request: GetBarsInput;
+  providerIdentity: ReturnType<typeof getPolygonProviderIdentity>;
+  polygonConfig: ReturnType<typeof getPolygonRuntimeConfig>;
+  options: GetBarsOptions;
+}): number | null {
+  const stepMs = BROKER_HISTORY_STEP_MS[input.request.timeframe];
+  if (
+    stepMs &&
+    isRealtimeMassiveSignalMatrixBarsRequest({
+      providerIdentity: input.providerIdentity,
+      polygonConfig: input.polygonConfig,
+      options: input.options,
+    })
+  ) {
+    return Math.max(stepMs, 60_000);
+  }
+  return null;
 }
 
 function shouldFetchIbkrOvernightHistory(
@@ -9139,6 +9230,12 @@ async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOption
       Boolean(polygonClient) &&
       brokerHistoryMayBeRecentLimited &&
       isBrokerHistoryTimeframe,
+    staleToleranceMs: resolveRecentCoverageStaleToleranceMs({
+      request: input,
+      providerIdentity: polygonProviderIdentity,
+      polygonConfig,
+      options,
+    }),
   });
   const chartBackfillRequest = isChartBackfillBarsRequest(input, options);
   const providerCursorContinuationRequested =
@@ -9628,7 +9725,7 @@ const OPTIONS_FLOW_SCANNER_SESSION_GUARD_ENABLED = readBooleanEnv(
 );
 const OPTIONS_FLOW_RADAR_ENABLED = readBooleanEnv(
   "OPTIONS_FLOW_RADAR_ENABLED",
-  false,
+  true,
 );
 const OPTIONS_FLOW_RADAR_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_RADAR_BATCH_SIZE",
@@ -9802,11 +9899,11 @@ export function resolveOptionsFlowScannerEffectiveConcurrency(
       ? 0
       : Math.max(1, Math.floor(flowScannerLineCap / scannerLineBudget));
   const pressureSnapshot = getApiResourcePressureSnapshot();
-  const pressureLevel = pressureSnapshot.level;
+  const scannerPressure = getOptionsFlowScannerPressureGate(pressureSnapshot);
   const pressureAdjustedConcurrency =
-    isApiResourcePressureHardBlock(pressureSnapshot)
+    scannerPressure.hardBlocked
       ? 0
-      : pressureLevel === "high" || pressureLevel === "critical"
+      : scannerPressure.throttled
         ? Math.min(configuredConcurrency, 1)
         : configuredConcurrency;
   return poolSafeConcurrency <= 0 || pressureAdjustedConcurrency <= 0
@@ -10052,6 +10149,33 @@ const optionsFlowRadarObservationCache = new Map<
   OptionsFlowRadarObservation
 >();
 const optionsFlowExpandedSymbolsThisCycle = new Set<string>();
+let optionsFlowRadarQuoteBackoffUntil = 0;
+let optionsFlowRadarQuoteLastError: string | null = null;
+
+type OptionsFlowRadarQuoteFetchResult = {
+  quotes: QuoteSnapshot[];
+  degradedReason: string | null;
+  failedSymbolCount: number;
+  backoffUntil: number | null;
+};
+
+function getOptionsFlowRadarQuoteBackoffReason(now = Date.now()): string | null {
+  return optionsFlowRadarQuoteBackoffUntil > now
+    ? "radar-quotes-backoff"
+    : null;
+}
+
+function clearOptionsFlowRadarQuoteFailure(): void {
+  optionsFlowRadarQuoteBackoffUntil = 0;
+  optionsFlowRadarQuoteLastError = null;
+}
+
+function recordOptionsFlowRadarQuoteFailure(error: unknown, now = Date.now()): void {
+  optionsFlowRadarQuoteLastError =
+    error instanceof Error && error.message ? error.message : String(error);
+  optionsFlowRadarQuoteBackoffUntil =
+    now + OPTIONS_FLOW_RADAR_FETCH_FAILURE_BACKOFF_MS;
+}
 
 function radarObservationTimeMs(
   observation: OptionsFlowRadarObservation,
@@ -10197,16 +10321,21 @@ const optionsFlowRadarScanner = createOptionsFlowRadarScanner({
   normalizeSymbol,
   shouldSkip: async () =>
     enforceOptionsFlowScannerPressureControls() ??
+    getOptionsFlowRadarQuoteBackoffReason() ??
     getOptionsFlowScannerBackgroundBlockReason() ??
     (await refreshOptionsFlowSessionBlockReason()),
   fetchBatch: async (symbols) => {
-    const quotes = await fetchOptionsFlowRadarQuotes(symbols);
+    const quoteResult = await fetchOptionsFlowRadarQuotes(symbols);
     return {
-      quotes,
+      quotes: quoteResult.quotes,
       source: {
         provider: "ibkr",
-        status: quotes.length ? "live" : "empty",
-        errorMessage: null,
+        status: quoteResult.degradedReason
+          ? "degraded"
+          : quoteResult.quotes.length
+            ? "live"
+            : "empty",
+        errorMessage: quoteResult.degradedReason,
       },
     };
   },
@@ -10240,20 +10369,41 @@ const optionsFlowRadarScanner = createOptionsFlowRadarScanner({
 
 async function fetchOptionsFlowRadarQuotes(
   symbols: readonly string[],
-): Promise<QuoteSnapshot[]> {
+): Promise<OptionsFlowRadarQuoteFetchResult> {
   const normalizedSymbols = Array.from(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
+  const backoffReason = getOptionsFlowRadarQuoteBackoffReason();
+  if (backoffReason) {
+    return {
+      quotes: [],
+      degradedReason: backoffReason,
+      failedSymbolCount: normalizedSymbols.length,
+      backoffUntil: optionsFlowRadarQuoteBackoffUntil,
+    };
+  }
   if (!normalizedSymbols.length) {
-    return [];
+    return {
+      quotes: [],
+      degradedReason: null,
+      failedSymbolCount: 0,
+      backoffUntil: null,
+    };
   }
 
   try {
-    return await runBridgeWork(
+    const quotes = await runBridgeWork(
       "quotes",
       () => getIbkrClient().getOptionActivitySnapshots([...normalizedSymbols]),
       { bypassBackoff: true, recordFailure: false },
     );
+    clearOptionsFlowRadarQuoteFailure();
+    return {
+      quotes,
+      degradedReason: null,
+      failedSymbolCount: 0,
+      backoffUntil: null,
+    };
   } catch (error) {
     logger.warn(
       { err: error, symbolCount: normalizedSymbols.length },
@@ -10265,6 +10415,7 @@ async function fetchOptionsFlowRadarQuotes(
     1,
     getBridgeGovernorConfigSnapshot().quotes.concurrency,
   );
+  let failedSymbolCount = 0;
   const results = await mapWithConcurrency(
     normalizedSymbols,
     quoteConcurrency,
@@ -10276,6 +10427,7 @@ async function fetchOptionsFlowRadarQuotes(
           { bypassBackoff: true, recordFailure: false },
         );
       } catch (error) {
+        failedSymbolCount += 1;
         logger.debug(
           { err: error, symbol },
           "Options flow radar symbol quote hydration failed",
@@ -10285,13 +10437,37 @@ async function fetchOptionsFlowRadarQuotes(
     },
   );
 
-  return results.flat();
+  const quotes = results.flat();
+  if (failedSymbolCount >= normalizedSymbols.length && !quotes.length) {
+    recordOptionsFlowRadarQuoteFailure(
+      new Error("Options flow radar quote hydration failed for every symbol."),
+    );
+    return {
+      quotes,
+      degradedReason: "radar-quotes-unavailable",
+      failedSymbolCount,
+      backoffUntil: optionsFlowRadarQuoteBackoffUntil,
+    };
+  }
+
+  if (quotes.length) {
+    clearOptionsFlowRadarQuoteFailure();
+  }
+
+  return {
+    quotes,
+    degradedReason: failedSymbolCount > 0
+      ? "radar-quote-batch-fallback"
+      : "radar-quote-batch-fallback-empty",
+    failedSymbolCount,
+    backoffUntil: null,
+  };
 }
 
 export async function __fetchOptionsFlowRadarQuotesForTests(
   symbols: readonly string[],
 ): Promise<QuoteSnapshot[]> {
-  return fetchOptionsFlowRadarQuotes(symbols);
+  return (await fetchOptionsFlowRadarQuotes(symbols)).quotes;
 }
 
 let optionsFlowScannerStarted = false;
@@ -10397,7 +10573,7 @@ export function getOptionsFlowLaneSourceSymbols(): {
 }
 
 const MASSIVE_STOCK_UNIVERSE_STREAM_REFRESH_MS = 30_000;
-let massiveStockUniverseQuoteUnsubscribe: (() => void) | null = null;
+const MASSIVE_STOCK_UNIVERSE_STREAM_DEFAULT_SYMBOL_CAP = 1_000;
 let massiveStockUniverseAggregateUnsubscribe: (() => void) | null = null;
 let massiveStockUniverseRefreshTimer: NodeJS.Timeout | null = null;
 let massiveStockUniverseSignature = "";
@@ -10409,23 +10585,31 @@ let massiveStockUniverseLastStatus:
   | "active"
   | "empty"
   | "not_configured"
+  | "resource_pressure"
   | "error" = "idle";
 let massiveStockUniverseLastError: string | null = null;
+let massiveStockUniverseLastPressureLevel: string | null = null;
+
+function massiveStockUniverseStreamSymbolCap(): number {
+  return positiveIntegerEnv(
+    "MASSIVE_STOCK_UNIVERSE_STREAM_SYMBOL_CAP",
+    MASSIVE_STOCK_UNIVERSE_STREAM_DEFAULT_SYMBOL_CAP,
+  );
+}
 
 function resolveMassiveStockUniverseSymbols(): string[] {
   const sources = getOptionsFlowLaneSourceSymbols();
+  const symbolCap = massiveStockUniverseStreamSymbolCap();
   return Array.from(
     new Set([
       ...sources.builtInSymbols,
       ...sources.watchlistSymbols,
       ...sources.flowUniverseSymbols,
     ].map((symbol) => normalizeSymbol(symbol).toUpperCase()).filter(Boolean)),
-  ).sort();
+  ).slice(0, symbolCap).sort();
 }
 
 function closeMassiveStockUniverseStreams(status: typeof massiveStockUniverseLastStatus): void {
-  massiveStockUniverseQuoteUnsubscribe?.();
-  massiveStockUniverseQuoteUnsubscribe = null;
   massiveStockUniverseAggregateUnsubscribe?.();
   massiveStockUniverseAggregateUnsubscribe = null;
   massiveStockUniverseSignature = "";
@@ -10436,9 +10620,15 @@ function refreshMassiveStockUniverseStreams(reason: string): void {
   massiveStockUniverseLastRefreshAt = new Date();
   massiveStockUniverseLastReason = reason;
   massiveStockUniverseLastError = null;
+  const resourcePressure = getApiResourcePressureSnapshot();
+  massiveStockUniverseLastPressureLevel = resourcePressure.level;
 
   if (!isMassiveStocksRealtimeConfigured()) {
     closeMassiveStockUniverseStreams("not_configured");
+    return;
+  }
+  if (resourcePressure.level === "high" || resourcePressure.level === "critical") {
+    closeMassiveStockUniverseStreams("resource_pressure");
     return;
   }
 
@@ -10455,10 +10645,6 @@ function refreshMassiveStockUniverseStreams(reason: string): void {
 
   closeMassiveStockUniverseStreams("idle");
   try {
-    massiveStockUniverseQuoteUnsubscribe = subscribeMassiveStockQuoteSnapshots(
-      symbols,
-      () => {},
-    );
     massiveStockUniverseAggregateUnsubscribe = subscribeStockMinuteAggregates(
       symbols,
       () => {},
@@ -10507,7 +10693,10 @@ export function getMassiveStockUniverseStreamDiagnostics() {
     status: massiveStockUniverseLastStatus,
     symbolCount: symbols.length,
     symbolSample: symbols.slice(0, 20),
+    symbolCap: massiveStockUniverseStreamSymbolCap(),
     refreshIntervalMs: MASSIVE_STOCK_UNIVERSE_STREAM_REFRESH_MS,
+    pressureLevel: massiveStockUniverseLastPressureLevel,
+    pressureBlocked: massiveStockUniverseLastStatus === "resource_pressure",
     lastRefreshAt: massiveStockUniverseLastRefreshAt?.toISOString() ?? null,
     lastSubscribedAt:
       massiveStockUniverseLastSubscribedAt?.toISOString() ?? null,
@@ -10525,6 +10714,7 @@ export const __massiveStockUniverseStreamsForTests = {
     massiveStockUniverseLastReason = null;
     massiveStockUniverseLastStatus = "idle";
     massiveStockUniverseLastError = null;
+    massiveStockUniverseLastPressureLevel = null;
   },
   resolveSymbols: resolveMassiveStockUniverseSymbols,
 };
@@ -10733,14 +10923,41 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
   };
   const radarCoverage: OptionsFlowRadarCoverage =
     optionsFlowRadarScanner.getCoverage();
+  const backgroundBlockedReason = getOptionsFlowScannerBackgroundBlockReason();
+  const radarPhaseActive = Boolean(
+    radarCoverage.currentBatch.length || radarCoverage.lastScanAt,
+  );
+  const deepPhaseActive = Boolean(
+    deepScanner.activeSymbols.length ||
+      deepScanner.draining ||
+      baseCoverage.currentBatch.length ||
+      deepScanner.lastBatch.length,
+  );
   const scannerPhase =
-    getOptionsFlowScannerBackgroundBlockReason() !== null
+    backgroundBlockedReason !== null
       ? "blocked"
-      : deepScanner.activeSymbols.length || deepScanner.draining
-        ? "deep"
-        : radarCoverage.currentBatch.length || baseCoverage.currentBatch.length
-          ? "radar"
+      : radarPhaseActive
+        ? "radar"
+        : deepPhaseActive
+          ? "deep"
           : "idle";
+  const marketSessionQuiet = backgroundBlockedReason === "market-session-quiet";
+  const resolveCoverageHealth = (cycleMs: number | null) => {
+    if (marketSessionQuiet) return "quiet";
+    if (backgroundBlockedReason) return "blocked";
+    if (
+      isRegularTradingHours() &&
+      cycleMs !== null &&
+      cycleMs > OPTIONS_FLOW_COVERAGE_ACTIVE_TARGET_MS
+    ) {
+      return "lagging";
+    }
+    return "healthy";
+  };
+  const lastScanAgeMs = (value: Date | null | undefined) => {
+    const time = value instanceof Date ? value.getTime() : null;
+    return Number.isFinite(time) ? Math.max(0, Date.now() - (time as number)) : null;
+  };
   if (!radarCoverage.enabled && !radarCoverage.lastScanAt) {
     return {
       ...baseCoverage,
@@ -10748,6 +10965,12 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
       deepActiveSymbols: deepScanner.activeSymbols,
       deepLastBatch: deepScanner.lastBatch,
       scannerPhase,
+      coverageHealth: resolveCoverageHealth(baseCoverage.estimatedCycleMs),
+      marketSessionQuiet,
+      lastScanAgeMs: lastScanAgeMs(baseCoverage.lastScanAt),
+      coverageTargetMs: OPTIONS_FLOW_COVERAGE_ACTIVE_TARGET_MS,
+      radarLastError: radarCoverage.lastError,
+      radarFailureCount: radarCoverage.failureCount,
     };
   }
   const activeTargetSize = Math.max(
@@ -10783,16 +11006,28 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
     deepLastBatch: deepScanner.lastBatch,
     scannerPhase,
     lastScanAt: radarCoverage.lastScanAt ?? baseCoverage.lastScanAt,
+    lastScanAgeMs: lastScanAgeMs(radarCoverage.lastScanAt ?? baseCoverage.lastScanAt),
     degradedReason:
       radarCoverage.degradedReason ??
       baseCoverage.degradedReason ??
       (selectedShortfall > 0
         ? `Universe fill short: ${activeTargetSize}/${baseCoverage.targetSize}`
         : null),
+    coverageHealth: resolveCoverageHealth(
+      radarActive && radarCoverage.estimatedCycleMs !== null
+        ? radarCoverage.estimatedCycleMs
+        : baseCoverage.estimatedCycleMs,
+    ),
+    marketSessionQuiet,
+    coverageTargetMs: OPTIONS_FLOW_COVERAGE_ACTIVE_TARGET_MS,
     radarSelectedSymbols: radarCoverage.selectedSymbols,
     radarEstimatedCycleMs: radarCoverage.estimatedCycleMs,
     radarBatchSize: radarCoverage.batchSize,
     radarIntervalMs: radarCoverage.intervalMs,
+    radarLastError: radarCoverage.lastError ?? optionsFlowRadarQuoteLastError,
+    radarLastFailedAt: radarCoverage.lastFailedAt,
+    radarFailureCount: radarCoverage.failureCount,
+    radarLastRunDurationMs: radarCoverage.lastRunDurationMs,
     promotedSymbols: radarCoverage.promotedSymbols,
   };
 }
@@ -11625,10 +11860,11 @@ export async function getFlowPremiumDistribution(input: {
 export function getOptionsFlowScannerDiagnostics() {
   const config = getOptionsFlowRuntimeConfig();
   const resourcePressure = getApiResourcePressureSnapshot();
+  const scannerPressure = getOptionsFlowScannerPressureGate(resourcePressure);
   const backgroundBlockedReason = getOptionsFlowScannerBackgroundBlockReason();
   const scannerPressureThrottled =
     !backgroundBlockedReason &&
-    (resourcePressure.level === "high" || resourcePressure.level === "critical");
+    scannerPressure.throttled;
   const scannerFillMode =
     backgroundBlockedReason === "live-warmup"
       ? "startup-protected"
@@ -11681,6 +11917,7 @@ export function getOptionsFlowScannerDiagnostics() {
       inputs: resourcePressure.inputs,
       caps: resourcePressure.caps,
     },
+    scannerPressure,
     radarEnabled: config.radarEnabled,
     scannerMode: config.radarEnabled ? "radar-promoted" : "direct-rotation",
     scannerFillMode,
@@ -11695,6 +11932,7 @@ export function getOptionsFlowScannerDiagnostics() {
     aggregateMinSnapshotSymbols: OPTIONS_FLOW_AGGREGATE_MIN_SNAPSHOT_SYMBOLS,
     radarObservationTtlMs: OPTIONS_FLOW_RADAR_OBSERVATION_TTL_MS,
     radarObservationCount: optionsFlowRadarObservationCache.size,
+    coverage: getOptionsFlowUniverseCoverage(),
     backgroundBlockedReason,
     backgroundHoldRemainingMs: getLiveWarmupBackgroundHoldRemainingMs(),
     lineBudget: config.scannerLineBudget,
@@ -11867,6 +12105,7 @@ export function __resetOptionChainCachesForTests(input?: {
   liveWarmupBackgroundHoldUntil = 0;
   optionsFlowSessionBlockReason = null;
   optionsFlowSessionBlockCheckedAt = 0;
+  clearOptionsFlowRadarQuoteFailure();
   __resetHistoricalFlowEventsForTests();
   if (input?.resetFlowScanner !== false) {
     optionsFlowRadarScanner.reset();
@@ -11887,6 +12126,7 @@ export const __platformBarsCacheTestInternals = {
     byFamilyCacheStatus: { ...barsHydrationBreakdown.byFamilyCacheStatus },
   }),
   shouldFetchHistoricalSynthesisForRecentCoverage,
+  resolveRecentCoverageStaleToleranceMs,
 };
 
 export const __platformTickerSearchTestInternals = {

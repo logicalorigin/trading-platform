@@ -59,7 +59,7 @@ test("broker position display equity quotes use Massive-primary quote routing", 
   assert.doesNotMatch(enrichBlock, /fetchBridgeQuoteSnapshots/);
 });
 
-test("Massive full-universe stock stream uses raw flow sources before IBKR lane caps", () => {
+test("Massive stock universe stream honors configurable symbol cap before IBKR lane caps", () => {
   const universeBlock = platformSource.match(
     /function resolveMassiveStockUniverseSymbols\(\)[\s\S]*?\n}\n/,
   )?.[0];
@@ -69,13 +69,21 @@ test("Massive full-universe stock stream uses raw flow sources before IBKR lane 
 
   assert.ok(universeBlock);
   assert.match(universeBlock, /getOptionsFlowLaneSourceSymbols\(\)/);
+  assert.match(universeBlock, /massiveStockUniverseStreamSymbolCap\(\)/);
   assert.match(universeBlock, /\.\.\.sources\.builtInSymbols/);
   assert.match(universeBlock, /\.\.\.sources\.watchlistSymbols/);
   assert.match(universeBlock, /\.\.\.sources\.flowUniverseSymbols/);
+  assert.match(universeBlock, /\.slice\(0, symbolCap\)\.sort\(\)/);
   assert.doesNotMatch(universeBlock, /resolveIbkrLaneSymbols/);
 
   assert.ok(refreshBlock);
-  assert.match(refreshBlock, /subscribeMassiveStockQuoteSnapshots/);
+  assert.match(refreshBlock, /const resourcePressure = getApiResourcePressureSnapshot\(\)/);
+  assert.match(
+    refreshBlock,
+    /resourcePressure\.level === "high" \|\| resourcePressure\.level === "critical"/,
+  );
+  assert.match(refreshBlock, /closeMassiveStockUniverseStreams\("resource_pressure"\)/);
+  assert.doesNotMatch(refreshBlock, /subscribeMassiveStockQuoteSnapshots/);
   assert.match(refreshBlock, /subscribeStockMinuteAggregates/);
 });
 

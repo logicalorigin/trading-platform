@@ -492,6 +492,12 @@ test("reports quiet market radar state ahead of cached snapshots", () => {
       enabled: true,
       started: true,
       radarDegradedReason: "market-session-quiet",
+      coverage: {
+        coverageHealth: "quiet",
+        cycleScannedSymbols: 120,
+        activeTargetSize: 500,
+        lastScanAgeMs: 180_000,
+      },
       deepScanner: {
         draining: false,
         queuedCount: 0,
@@ -503,7 +509,39 @@ test("reports quiet market radar state ahead of cached snapshots", () => {
 
   assert.equal(
     normalized.flowScanner.detail,
-    "market session quiet; 1 cached flow snapshot",
+    "market session quiet; 120 of 500 covered, last 3m ago",
+  );
+});
+
+test("reports active-session flow scanner coverage lag", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 80,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 100,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      coverage: {
+        coverageHealth: "lagging",
+        cycleScannedSymbols: 7,
+        activeTargetSize: 500,
+        lastScanAgeMs: 360_000,
+      },
+      deepScanner: {
+        draining: false,
+        queuedCount: 0,
+        activeCount: 0,
+        snapshotCount: 0,
+      },
+    },
+  });
+
+  assert.equal(
+    normalized.flowScanner.detail,
+    "coverage lagging: 7 of 500 covered, last 6m ago",
   );
 });
 

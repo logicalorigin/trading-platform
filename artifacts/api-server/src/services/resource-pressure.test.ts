@@ -4,6 +4,8 @@ import {
   __resetApiResourcePressureForTests,
   getApiResourcePressureSnapshot,
   isApiResourcePressureHardBlock,
+  resolveApiRssHardBlockMb,
+  resolveApiRssPressureThresholds,
   updateApiResourcePressure,
 } from "./resource-pressure";
 
@@ -12,9 +14,23 @@ afterEach(() => {
 });
 
 test("resource pressure escalates from API RSS", () => {
-  assert.equal(updateApiResourcePressure({ rssMb: 950 }).level, "watch");
-  assert.equal(updateApiResourcePressure({ rssMb: 1_250 }).level, "high");
-  assert.equal(updateApiResourcePressure({ rssMb: 1_650 }).level, "critical");
+  const thresholds = resolveApiRssPressureThresholds();
+
+  assert.equal(updateApiResourcePressure({ rssMb: thresholds.watch + 1 }).level, "watch");
+  assert.equal(updateApiResourcePressure({ rssMb: thresholds.high + 1 }).level, "high");
+  assert.equal(
+    updateApiResourcePressure({ rssMb: thresholds.critical + 1 }).level,
+    "critical",
+  );
+});
+
+test("RSS pressure scales with the container memory limit", () => {
+  assert.deepEqual(resolveApiRssPressureThresholds(16_384), {
+    watch: 4_096,
+    high: 5_734,
+    critical: 8_192,
+  });
+  assert.equal(resolveApiRssHardBlockMb(16_384), 11_469);
 });
 
 test("resource pressure escalates from API heap pressure", () => {
@@ -24,7 +40,9 @@ test("resource pressure escalates from API heap pressure", () => {
 });
 
 test("high resource pressure keeps deployment scans running", () => {
-  updateApiResourcePressure({ rssMb: 1_250 });
+  updateApiResourcePressure({
+    rssMb: resolveApiRssPressureThresholds().high + 1,
+  });
 
   const snapshot = getApiResourcePressureSnapshot();
 
@@ -74,7 +92,9 @@ test("watch pressure records latency without pausing signal scans", () => {
 });
 
 test("critical RSS pressure records diagnostics without pausing signal scans", () => {
-  const snapshot = updateApiResourcePressure({ rssMb: 1_650 });
+  const snapshot = updateApiResourcePressure({
+    rssMb: resolveApiRssPressureThresholds().critical + 1,
+  });
 
   assert.equal(snapshot.level, "critical");
   assert.equal(isApiResourcePressureHardBlock(snapshot), false);
@@ -85,7 +105,9 @@ test("critical RSS pressure records diagnostics without pausing signal scans", (
 
 test("hard pressure blocks background scanner gates", () => {
   assert.equal(
-    isApiResourcePressureHardBlock(updateApiResourcePressure({ rssMb: 3_000 })),
+    isApiResourcePressureHardBlock(
+      updateApiResourcePressure({ rssMb: resolveApiRssHardBlockMb() + 1 }),
+    ),
     true,
   );
 

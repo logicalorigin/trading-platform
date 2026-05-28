@@ -138,6 +138,8 @@ const activeSignalOptionsRunMetadata = new Map<
 
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 60;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 2;
+const SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY = 6;
+const SIGNAL_OPTIONS_ACTIONABLE_MAX_BARS_SINCE_SIGNAL = 1;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 20_000;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 24;
@@ -1259,9 +1261,10 @@ async function listSignalOptionsSignalSnapshots(deployment: AlgoDeployment) {
     const symbol = normalizeSymbol(state.symbol).toUpperCase();
     return symbol && (universe.size === 0 || universe.has(symbol));
   });
+  const actionableStates = filteredStates.filter(isSignalOptionsActionableSignalState);
 
   const snapshots = await Promise.all(
-    filteredStates.map(async (state) => {
+    actionableStates.map(async (state) => {
       const signalAt = toIsoString(state.currentSignalAt);
       const signalKey =
         signalAt && state.currentSignalDirection
@@ -1288,6 +1291,30 @@ async function listSignalOptionsSignalSnapshots(deployment: AlgoDeployment) {
     const rightTime = dateOrNull(right.signalAt)?.getTime() ?? 0;
     return rightTime - leftTime;
   });
+}
+
+function isSignalOptionsActionableSignalState(state: SignalMonitorState) {
+  const barsSinceSignal = optionalFiniteNumber(state.barsSinceSignal);
+  return Boolean(
+    state.fresh === true &&
+      state.currentSignalDirection &&
+      state.currentSignalAt &&
+      barsSinceSignal != null &&
+      barsSinceSignal <= SIGNAL_OPTIONS_ACTIONABLE_MAX_BARS_SINCE_SIGNAL,
+  );
+}
+
+function isSignalOptionsActionableSignalSnapshot(
+  signal: SignalOptionsSignalSnapshot,
+) {
+  const barsSinceSignal = optionalFiniteNumber(signal.barsSinceSignal);
+  return Boolean(
+    signal.fresh === true &&
+      signal.signalAt &&
+      signal.direction &&
+      barsSinceSignal != null &&
+      barsSinceSignal <= SIGNAL_OPTIONS_ACTIONABLE_MAX_BARS_SINCE_SIGNAL,
+  );
 }
 
 function buildWorkerScanSummary(input: {
@@ -2326,7 +2353,12 @@ function candidateFromSignalSnapshot(input: {
   signal: SignalOptionsSignalSnapshot;
 }): SignalOptionsCandidate | null {
   const { signal } = input;
-  if (!signal.fresh || !signal.signalAt || !signal.direction) {
+  if (!isSignalOptionsActionableSignalSnapshot(signal)) {
+    return null;
+  }
+  const signalAt = signal.signalAt;
+  const direction = signal.direction;
+  if (!signalAt || !direction) {
     return null;
   }
 
@@ -2335,21 +2367,21 @@ function candidateFromSignalSnapshot(input: {
     return null;
   }
 
-  const action = buildSignalOptionsActionMapping(signal.direction);
+  const action = buildSignalOptionsActionMapping(direction);
   return {
     id: buildCandidateId({
       deploymentId: input.deployment.id,
       symbol,
-      direction: signal.direction,
-      signalAt: signal.signalAt,
+      direction,
+      signalAt,
     }),
     deploymentId: input.deployment.id,
     deploymentName: normalizeLegacyAlgoBrandText(input.deployment.name),
     symbol,
-    direction: signal.direction,
-    optionRight: optionRightForSignal(signal.direction),
+    direction,
+    optionRight: optionRightForSignal(direction),
     timeframe: signal.timeframe,
-    signalAt: signal.signalAt,
+    signalAt,
     signalPrice: optionalFiniteNumber(signal.signalPrice),
     status: "candidate",
     selectedContract: null,
@@ -2527,28 +2559,33 @@ async function loadSignalOptionsMonitorState(input: {
       environment: input.deployment.mode,
       ensureWatchlist: true,
     });
-    if (input.forceEvaluate === true) {
-      const forcedBatch = resolveSignalOptionsMonitorBatch({
-        deploymentId: input.deployment.id,
+    const hardPressureBlock = isApiResourcePressureHardBlock(
+      getApiResourcePressureSnapshot(),
+    );
+    if (!hardPressureBlock) {
+      const fullRefresh = resolveSignalOptionsMonitorFullRefresh({
         universe: input.universe,
-        profile,
       });
       const evaluated = await evaluateSignalMonitorProfileSymbols({
         profile,
         mode: "incremental",
-        symbols: forcedBatch.symbols,
+        symbols: fullRefresh.symbols,
+        maxSymbolsOverride: fullRefresh.symbols.length,
+        pressureCapMode: "bypass-soft",
+        evaluationConcurrencyOverride:
+          SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY,
         barSourcePolicy: SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY,
       });
 
       return {
         ...evaluated,
         signalOptionsBatch: {
-          ...forcedBatch,
-          forced: true,
-          fullUniverse: false,
+          ...fullRefresh,
+          forced: input.forceEvaluate === true,
         },
       };
     }
+
     const batch = resolveSignalOptionsMonitorBatch({
       deploymentId: input.deployment.id,
       universe: input.universe,
@@ -2563,7 +2600,10 @@ async function loadSignalOptionsMonitorState(input: {
 
     return {
       ...evaluated,
-      signalOptionsBatch: batch,
+      signalOptionsBatch: {
+        ...batch,
+        forced: input.forceEvaluate === true,
+      },
     };
   }
 
@@ -5363,12 +5403,16 @@ async function buildStatePayload(input: {
       candidatesById.set(candidate.id, candidate);
     }
   }
+  const currentCandidateIds = new Set(candidatesById.keys());
 
   for (const event of [...activeSignalEvents].sort(
     (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
   )) {
     const candidate = candidateFromEvent(event);
     if (!candidate) {
+      continue;
+    }
+    if (!currentCandidateIds.has(candidate.id)) {
       continue;
     }
     const existing = candidatesById.get(candidate.id);
@@ -9612,11 +9656,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     if (!symbol || (universe.size > 0 && !universe.has(symbol))) {
       continue;
     }
-    if (
-      !state.fresh ||
-      !state.currentSignalDirection ||
-      !state.currentSignalAt
-    ) {
+    if (!isSignalOptionsActionableSignalState(state)) {
       continue;
     }
     const signalAt = toIsoString(state.currentSignalAt);
@@ -9839,6 +9879,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   buildSignalOptionsActionMapping,
   buildSignalOptionsSignalSnapshot,
   candidateFromEvent,
+  isSignalOptionsActionableSignalState,
   classifySignalOptionsSkipReason,
   latestSignalDate,
   findSignalOptionsQuoteForContract,

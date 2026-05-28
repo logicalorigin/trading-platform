@@ -78,6 +78,43 @@ test("footer memory pressure mini bars keep empty fallback slots", () => {
   );
 });
 
+test("footer memory pressure mini bars expose API RSS pressure", () => {
+  const html = renderIndicator({
+    level: "critical",
+    score: 92,
+    trend: "rising",
+    browserMemoryMb: 180,
+    apiHeapUsedPercent: 22,
+    apiRssMb: 1639,
+    activeWorkloadCount: 2,
+    pressureDrivers: [
+      {
+        kind: "api-rss",
+        label: "API RSS",
+        level: "critical",
+        detail: "1639 MB",
+        score: 1639,
+      },
+      { kind: "api-heap", label: "API heap", level: "normal", score: 22 },
+      { kind: "workload", label: "Active workload", level: "normal", score: 2 },
+    ],
+    dominantDrivers: [
+      {
+        kind: "api-rss",
+        label: "API RSS",
+        level: "critical",
+        detail: "1639 MB",
+      },
+    ],
+  });
+
+  assert.match(html, /API RSS 1639M/);
+  assert.match(
+    html,
+    /data-testid="footer-memory-pressure-mini-fill-api" style="[^"]*height:82%/,
+  );
+});
+
 test("footer memory pressure shows level instead of score percent", () => {
   const html = renderIndicator({
     level: "critical",

@@ -72,6 +72,27 @@ const formatScannerReason = (reason) => {
 const formatFlowSnapshotCount = (snapshotCount) =>
   formatRuntimeQuantity(snapshotCount, "cached flow snapshot");
 
+const formatFlowScannerCoverageDetail = (coverage) => {
+  if (!coverage || typeof coverage !== "object") {
+    return null;
+  }
+  const scanned = firstFiniteNumber(
+    coverage.cycleScannedSymbols,
+    coverage.scannedSymbols,
+  );
+  const total = firstFiniteNumber(
+    coverage.activeTargetSize,
+    coverage.selectedSymbols,
+    coverage.targetSize,
+    coverage.totalSymbols,
+  );
+  if (!Number.isFinite(scanned) || !Number.isFinite(total) || total <= 0) {
+    return null;
+  }
+  const age = formatRuntimeDuration(coverage.lastScanAgeMs);
+  return `${Math.round(scanned)} of ${Math.round(total)} covered${age ? `, last ${age} ago` : ""}`;
+};
+
 const formatScannerSymbolList = (symbols) => {
   if (!Array.isArray(symbols) || symbols.length === 0) {
     return null;
@@ -142,9 +163,12 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
       return "degraded: resource pressure";
     }
     if (blockedReason === "market-session-quiet") {
-      return snapshotDetail
-        ? `market session quiet; ${snapshotDetail}`
-        : "market session quiet";
+      const coverageDetail = formatFlowScannerCoverageDetail(scanner.coverage);
+      return coverageDetail
+        ? `market session quiet; ${coverageDetail}`
+        : snapshotDetail
+          ? `market session quiet; ${snapshotDetail}`
+          : "market session quiet";
     }
     if (blockedReason) {
       return `paused: ${formatScannerReason(blockedReason)}`;
@@ -161,6 +185,12 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
     );
     if (failedSymbols) {
       return `last scan failed: ${failedSymbols}`;
+    }
+    if (scanner.coverage?.coverageHealth === "lagging") {
+      const coverageDetail = formatFlowScannerCoverageDetail(scanner.coverage);
+      return coverageDetail
+        ? `coverage lagging: ${coverageDetail}`
+        : "coverage lagging";
     }
     if (snapshotDetail) {
       return snapshotDetail;

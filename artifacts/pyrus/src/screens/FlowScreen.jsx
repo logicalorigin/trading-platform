@@ -396,6 +396,17 @@ const resolveFlowQuality = ({
     };
   }
 
+  if (coverage?.coverageHealth === "lagging") {
+    return {
+      label: "Degraded",
+      color: CSS_COLOR.red,
+      ratio: coverageRatio,
+      detail: "Broad scanner coverage is behind the active-session target.",
+      newestAgeMs,
+      oldestAgeMs,
+    };
+  }
+
   if (staleFlowEvents) {
     return {
       label: "Stale",
@@ -2374,6 +2385,8 @@ const FlowOverviewPanel = ({
           ? displayableFlowError
           : flowScannerSessionQuiet
             ? "Regular options flow is quiet outside the active market session."
+            : providerSummary?.coverage?.coverageHealth === "lagging"
+              ? "Broad scanner coverage is behind the active-session target."
             : providerSummary.fallbackUsed
               ? "IBKR returned no active snapshot flow and the Polygon trade fallback was empty."
               : providerSummaryHasTransientFlowState(providerSummary)

@@ -1,17 +1,419 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-28 19:20 UTC`
-- Current request: after user restarted again, run another 5-minute monitor; user also reports the algo section is still getting signals about 15 minutes late.
+- Last updated: `2026-05-28 21:13 UTC`
+- Current request: implement the signal-to-algo action latency plan.
 - Current status:
-  - Do not terminate or clean up other terminals/process groups; user has multiple intentional sessions running.
-  - Preparing a read-only 5-minute monitor of `/api/settings/ibkr-line-usage`.
-  - Also checking live algo/signal-options state endpoints during the monitor so signal freshness lag can be measured against `lastSignalScanAt` / latest signal timestamps, not inferred only from line usage.
+  - Starting scoped implementation from the approved plan: aggressive completed-bar-to-algo action latency, true visible demand first, deduped line/provider demand, and Massive/Polygon treated as one provider family with Massive as the current name.
+  - Planned edits are limited to signal monitor/evaluation cadence, signal-options worker/action budget diagnostics, visible signal-matrix demand planning, provider-family/readout cleanup, a read-only soak monitor, tests, and this handoff/report.
+  - No Replit startup config changes and no process restarts. Existing unrelated dirty work in root-crash, flow-scanner, pressure, and UI files must be preserved.
 - Changed files this pass:
   - `SESSION_HANDOFF_CURRENT.md`
 - Validation state:
-  - Monitor pending.
+  - Pending after implementation: focused API signal-monitor/signal-options/worker/route tests, focused Pyrus signal-matrix/runtime tests, package typechecks/builds as needed, and scoped diff check.
 - Next step:
-  - Run the 5-minute monitor, summarize scanner line state, API CPU/RSS/route latency, and any observed signal-options scan/freshness lag.
+  - Implement bar-boundary-aware signal-options scheduling, true-visible symbol planning/dedup diagnostics, provider-family metadata, readout updates, and a read-only soak monitor.
+
+- Last updated: `2026-05-28 21:04 UTC`
+- Current request: investigate and fix the repeated Pyrus `Maximum update depth exceeded` root crash without bandaid removal.
+- Current status:
+  - Root cause investigation found multiple real render-loop triggers during startup, not one generic tooltip problem.
+  - Confirmed one concrete invalid-tooltip call site in `HeaderStatusCluster.jsx`: `header-ibkr-line-usage` was an `AppTooltip` inside the outer IBKR header button. It now uses native `title`/`aria-label` so Radix no longer mounts a tooltip trigger inside that button.
+  - Kept `AppTooltip` on Radix for safe non-interactive triggers, but added guards so interactive/composite triggers fall back to native title instead of Radix ref composition.
+  - Fixed the `AlgoScreen.jsx:771` crash: signal-options candidates fell back to a fresh `[]` before queries resolved, so the selected-candidate cleanup effect could dispatch every render. Startup fallback arrays are now stable and null resets are idempotent.
+  - Fixed the `PlatformApp.jsx:2529` crash: signal-monitor state fell back to a fresh `[]`, feeding an unstable signal-matrix universe; the signal-matrix pruning effect then committed a fresh snapshot even when no states changed. Signal-monitor fallbacks are now stable, and signal-matrix state updates no-op when the merge output is equivalent.
+  - Live headed browser verification against the reported Replit URL loaded the app without `Maximum update depth exceeded`. Boot reached `100%`; remaining console errors were backend `/api/gex/*` 503s, not React crashes.
+  - Replit startup config was not touched. No repo-defined workflow/startup files were edited.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/components/ui/tooltip.tsx`
+  - `artifacts/pyrus/src/features/platform/HeaderStatusCluster.jsx`
+  - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/features/platform/signalMatrixScheduler.js`
+  - `artifacts/pyrus/src/features/platform/signalMatrixScheduler.test.js`
+  - `artifacts/pyrus/src/features/charting/ResearchChartSurface.test.ts`
+  - `artifacts/pyrus/src/screens/AlgoScreen.jsx`
+  - `artifacts/pyrus/src/screens/algo/algoHelpers.test.js`
+  - `memory/2026-05-28-pyrus-root-crash-update-depth-fix.md`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js`
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js`
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js`
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/charting/ResearchChartSurface.test.ts`
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: `pnpm --filter @workspace/pyrus run build`
+  - Passed: scoped `git diff --check`.
+  - Passed: headed browser load of `https://5950eeb6-fc7d-4b18-87e8-8d1c0536942f-00-36emsiuflovpf.riker.replit.dev/?gbrowser-platform-matrix-fix=...`; app did not crash, boot complete was `true`, and no console entries matched `Maximum update depth`, nested button warnings, `TooltipTrigger`, or Radix `setRef`.
+- Next step:
+  - Treat any remaining delay/errors as separate backend/runtime work. The browser still shows repeated `/api/gex/*` 503 responses after the app loads; those should be investigated separately from this React root crash.
+
+- Last updated: `2026-05-28 20:50 UTC`
+- Current request: implement the audited flow scanner professional coverage plan.
+- Current status:
+  - Implemented the scoped flow scanner plan. Radar-promoted scanning is now default-on, keeps the 30-symbol/15s active-session cadence, and preserves the intended 500-symbol coverage target under 5 minutes.
+  - Added scanner-specific pressure gating so automation-only global pressure no longer throttles or labels the flow scanner as degraded. Hard resource blocks still apply, and non-automation high/critical pressure still limits scanner concurrency.
+  - Added radar quote failure containment: failed batch hydration retries per symbol, records degraded diagnostics, and backs off radar quote fetches locally without opening the shared quotes governor.
+  - Expanded backend coverage diagnostics with radar/deep/blocked phases, coverage health (`healthy`, `lagging`, `quiet`, `blocked`), last scan age, active-session target, radar failure count/error/run duration, and scanner-specific pressure details.
+  - Updated Pyrus lower-corner/runtime readouts and Flow/Settings surfaces so after-hours quiet is explicit and active-session coverage lag is visible instead of looking like generic empty flow.
+  - No app processes were killed/restarted, and Replit startup config was not touched. Existing unrelated dirty work in loading, signal, and pressure files was preserved.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/platform.ts`
+  - `artifacts/api-server/src/services/flow-universe.ts`
+  - `artifacts/api-server/src/services/options-flow-radar-scanner.ts`
+  - `artifacts/api-server/src/services/options-flow-scanner.test.ts`
+  - `artifacts/api-server/src/services/ibkr-line-usage.ts`
+  - `artifacts/api-server/src/services/ibkr-line-usage.test.ts`
+  - `artifacts/pyrus/src/features/platform/runtimeControlModel.js`
+  - `artifacts/pyrus/src/features/platform/runtimeControlModel.test.js`
+  - `artifacts/pyrus/src/screens/FlowScreen.jsx`
+  - `artifacts/pyrus/src/screens/SettingsScreen.jsx`
+  - `memory/2026-05-28-flow-scanner-professional-coverage-fix.md`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/options-flow-scanner.test.ts src/services/ibkr-line-usage.test.ts` (`87` tests).
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/runtimeControlModel.test.js src/features/platform/platformRootSource.test.js` (`87` tests).
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `pnpm --filter @workspace/api-server run build`.
+  - Passed: `pnpm --filter @workspace/pyrus run build`.
+  - Passed: scoped `git diff --check`.
+- Next step:
+  - Let the running app pick up the rebuilt backend/frontend through the normal Replit runner or hot reload, then watch `/api/diagnostics/runtime`, `/api/settings/ibkr-line-usage`, and the lower-corner runtime readout. During regular trading hours, scanner coverage should report healthy unless estimated cycle exceeds the 5-minute target; outside RTH it should read as quiet with coverage context.
+
+- Last updated: `2026-05-28 20:36 UTC`
+- Current request: implement the detailed Pyrus loading follow-up plan and account for the reported root crash during validation.
+- Current status:
+  - Implemented loading-policy refinement: Market initial boot now requires `session` only, while Account/Algo still retain their screen-specific blocking dependencies through dynamic boot reclassification.
+  - Extracted screen module preload/cache state from `screenRegistry.jsx` into `screenModulePreloader.js`, then started the initial active screen module preload directly from `AppContent.tsx` before the full `PlatformApp` route chunk finishes.
+  - Replaced the Market chart full-panel `LogoLoader` fallback with a stable lightweight chart-grid shell and reduced initial chart hydration from four slots to one.
+  - Addressed the reported `Maximum update depth exceeded` crash path by making interactive `AppTooltip` triggers use native titles instead of Radix tooltip refs, avoiding the button/ref update loop seen in the crash stack.
+  - No app processes were killed/restarted, and Replit startup config was not touched.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/app/AppContent.tsx`
+  - `artifacts/pyrus/src/app/bootProgress.test.ts`
+  - `artifacts/pyrus/src/components/ui/tooltip.tsx`
+  - `artifacts/pyrus/src/features/market/MultiChartGrid.jsx`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/features/platform/screenModulePreloader.js`
+  - `artifacts/pyrus/src/features/platform/screenRegistry.jsx`
+  - `artifacts/pyrus/src/screens/MarketScreen.jsx`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/app/bootProgress.test.ts`
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js`
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: `pnpm --filter @workspace/pyrus run build`
+- Next step:
+  - Run a browser timing probe against the live Replit app after the dev server picks up the changed frontend modules, confirming Market boot no longer waits for watchlists and the chart area shows the shell instead of a full-panel loader.
+
+- Last updated: `2026-05-28 20:29 UTC`
+- Current request: fix delayed Massive equity/spot signals and watchlist sidebar signal bubbles not hydrating/refreshing in realtime.
+- Current status:
+  - Root cause for Signals-to-Action lateness was Massive signal-matrix bar freshness plus stale action-row surfacing: 5m signal bars could be accepted 10-15 minutes behind, and action rows could include stale monitor states. Fixed Massive realtime signal-matrix gap-fill tolerance, restricted action rows/scans to current or one-bar-old signals, and made signal-options state/cockpit active-screen routes.
+  - Root cause for watchlist signal bubbles was client matrix scheduling: symbols were treated as hydrated forever after first fill, the foreground priority list included the full active watchlist, and the universe included all saved watchlists. Under `watch` pressure this could put visible sidebar dots behind a long rotation.
+  - Fixed watchlist bubbles by rehydrating stale matrix states based on `latestBarAt`, passing `nowMs` into the scheduler, scoping the matrix universe to selected/visible/open-position/recent-monitor/active-watchlist symbols under pressure caps, and keeping foreground priority to selected/visible/open-position/recent-monitor symbols while the rest rotates in background.
+  - Direct backend matrix probe confirmed Massive can return fresh matrix bars when asked: latest `2m 20:22`, `5m 20:15`, `15m 20:00` at `2026-05-28T20:22Z`.
+  - No app processes were killed/restarted, and Replit startup config was not touched.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/platform.ts`
+  - `artifacts/api-server/src/services/option-chain-batch.test.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.test.ts`
+  - `artifacts/api-server/src/services/signal-options-worker.test.ts`
+  - `artifacts/api-server/src/services/route-admission.ts`
+  - `artifacts/api-server/src/services/route-admission.test.ts`
+  - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/features/platform/signalMatrixScheduler.js`
+  - `artifacts/pyrus/src/features/platform/signalMatrixScheduler.test.js`
+  - `memory/2026-05-28-signals-to-action-lag-fix.md`
+- Validation state:
+  - Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test --test-concurrency=1 src/services/route-admission.test.ts src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts src/services/signal-monitor.test.ts src/services/option-chain-batch.test.ts` (`201` tests).
+  - Passed: `pnpm --filter @workspace/api-server typecheck`.
+  - Passed: `pnpm --filter @workspace/api-server run build`.
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/features/platform/signalMatrixScheduler.test.js src/features/platform/watchlistModel.test.js` (`71` tests).
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run build`.
+  - Passed: scoped `git diff --check`.
+- Next step:
+  - Let the running app pick up the frontend/backend changes through the normal Replit runner or dev hot reload, then verify visible watchlist signal dots refresh ahead of the background watchlist rotation and Signals-to-Action rows do not show stale 15-20 minute candidates.
+
+- Last updated: `2026-05-28 20:27 UTC`
+- Current request: implement the detailed Pyrus loading follow-up plan.
+- Current status:
+  - Starting implementation. Current code confirms Market still declares `watchlists` as an initial boot dependency, and active screen module preload state is embedded in `screenRegistry.jsx`.
+  - Planned edits: split screen module loader/preload state into a pure module, start initial active screen preload from AppContent, remove Market watchlists from boot blocking, replace Market chart full-panel loader with a lightweight stable shell, and reduce initial Market chart hydration to one slot.
+  - No app processes were killed/restarted, and Replit startup config was not touched.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending after edits: targeted Pyrus boot/source tests, typecheck, build, scoped diff check, and browser timing probe if the app is stable.
+- Next step:
+  - Implement the frontend loading changes without touching Replit startup config or unrelated concurrent API work.
+
+- Last updated: `2026-05-28 20:13 UTC`
+- Current request: user challenged the prior aggregate-universe cap/OOM assumption and asked whether higher memory headroom means we were artificially limiting the app and degrading flow scanner potential.
+- Current status:
+  - User was right to challenge the memory assumption. The live container reports a 16GB cgroup limit (`/sys/fs/cgroup/memory.max = 17179869184`), memory.current around 7.4GB during inspection, memory.peak around 10.4GB, `memory.events` with `oom 0`/`oom_kill 0`, and no memory PSI pressure.
+  - Root cause correction: the app was not near container OOM at ~2GB API RSS. The old hardcoded RSS pressure thresholds (`watch 900MB`, `high 1200MB`, `critical 1600MB`, hard block 3000MB) were artificially forcing `scanner-throttled-high-pressure` and effective concurrency `1`.
+  - Implemented corrected pressure model in `resource-pressure.ts`: RSS pressure now scales from the actual cgroup memory limit unless env overrides are set. On this 16GB Replit container the thresholds resolve to watch/high/critical `4096/5734/8192 MB`, with hard block `11469 MB`.
+  - Kept API heap pressure strict and independent; the change only corrects RSS/container pressure so Node heap stress can still throttle when real heap pressure exists.
+  - Revised the Massive aggregate universe cap so it is not an artificial default constraint: `MASSIVE_STOCK_UNIVERSE_STREAM_DEFAULT_SYMBOL_CAP` is now `1000`, while `MASSIVE_STOCK_UNIVERSE_STREAM_SYMBOL_CAP` remains available for an intentional operator cap.
+  - The raw Massive quote firehose remains disabled because that was an event/CPU firehose issue, not a memory-capacity issue.
+  - No app processes were killed/restarted, and Replit startup config was not touched.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/resource-pressure.ts`
+  - `artifacts/api-server/src/services/resource-pressure.test.ts`
+  - `artifacts/api-server/src/services/options-flow-scanner.test.ts`
+  - `artifacts/api-server/src/services/ibkr-line-usage.test.ts`
+  - `artifacts/api-server/src/services/platform.ts`
+  - `artifacts/api-server/src/services/platform-massive-stock-routing.test.ts`
+  - `memory/2026-05-28-pyrus-runtime-pressure-investigation.md`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/resource-pressure.test.ts src/services/options-flow-scanner.test.ts src/services/ibkr-line-usage.test.ts src/services/platform-massive-stock-routing.test.ts src/services/bridge-streams-source.test.ts` (`101` tests).
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/api-server run build`.
+- Next step:
+  - Restart/reload through Replit's default Run Replit App so the running API picks up the corrected pressure model. Then run a post-restart soak and verify ~2GB API RSS is no longer marked high/critical, flow scanner is no longer pressure-throttled on false RSS pressure, and aggregate-universe diagnostics stay within the intentional configured cap.
+
+- Last updated: `2026-05-28 20:18 UTC`
+- Current request: refine the Pyrus loading-policy implementation because the full-screen boot overlay improved, but visible containers/panels still show waiting after entering the app.
+- Current status:
+  - Root cause for this follow-up: the previous loading change conflated "do not block boot" with "do not start until boot is complete" for watchlists/accounts/signal-profile. That moved some waits from the full-screen overlay into visible header/rail/panel containers.
+  - Additional chunk-path finding: the Market chart panel lazy-loads `MultiChartGrid`, which then pulls charting/runtime chunks. The prior preload began only after the Market screen was already visible, so the visible chart container could still show a chunk loader.
+  - Implemented refinement: non-blocking data queries now start immediately again, but the boot overlay still does not wait on unrelated data for screens that do not need it.
+  - Implemented refinement: Market chart module preloading now starts once as soon as the Market screen module evaluates in the browser, before the visible panel effect runs.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/screens/MarketScreen.jsx`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/app/bootProgress.test.ts`
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js`
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: `pnpm --filter @workspace/pyrus run build`
+  - Passed: scoped `git diff --check`.
+- Next step:
+  - Verify in browser timing through the normal Replit app runner if available: Market should not wait on accounts/signal-profile/hidden preloads, and visible containers should have watchlists/accounts/signal-profile and Market chart chunks already warming instead of starting only after overlay dismissal.
+
+- Last updated: `2026-05-28 20:21 UTC`
+- Current request: check whether the loading changes actually improved live performance.
+- Current status:
+  - Ran the repo Pyrus performance monitor with browser enabled against the live Replit app at `http://127.0.0.1:18747/`. Report written to `scripts/reports/pyrus-performance-monitor/loading-policy-check-2026-05-28T2012Z/`.
+  - First monitor window found API critical before a supervisor restart: API p95 about `8141ms`, RSS about `2069MB`, slow route `/accounts/shadow/positions` p95 `30230ms`, and browser long tasks present.
+  - The supervisor restarted the app during a focused probe, invalidating that pass with Vite module `ERR_CONNECTION_RESET/REFUSED`; after restart diagnostics improved to warning/watch pressure with API RSS about `512MB`.
+  - Stable post-restart boot probe verified the loading policy improvement is structurally present: `accounts`, `signal-profile`, `signal-state`, and hidden `screen-preload-*` tasks are nonblocking; `accounts` and `signal-profile` still start warming instead of waiting for boot completion.
+  - Stable post-restart timing still did not meet the user's desired experience: one run completed boot after watchlists in about `3.6s`, but a later selector-timing run showed the boot overlay visible from `~1.4s` to `~14.8s` because `watchlists` took about `13.4s`; `session` took about `5.1s`; `first-screen` completed about `5.1s`; `signal-profile` was nonblocking but took about `11.7s`.
+  - Market chart container remains a major visible wait: `market-chart-grid-loader` was still present after `44.8s` in the selector-timing run. Resource timings show `MarketScreen.jsx` started around `1.0s` but took about `4.2s` in dev mode, `MultiChartGrid.jsx` started around `5.2s`, and charting modules started around `6.4s` / `13.2s` with multi-second durations.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Live browser/performance probes completed; no startup config touched and no app processes intentionally restarted.
+- Next step:
+  - Treat the current implementation as only a partial improvement. Next likely fixes: remove `watchlists` from Market boot blocking by using fallback/cached symbols for first render, and split/warm the Market chart runtime so the first visible chart container does not depend on the full `MultiChartGrid`/charting module chain.
+
+- Last updated: `2026-05-28 20:00 UTC`
+- Current request: user says the app has restarted and they are seeing degradation in the flow scanner; verify live runtime and diagnose without disturbing other concurrent work.
+- Current status:
+  - Investigation complete for this pass. No processes were killed/restarted, Replit startup config was untouched, and unrelated modified files from other active work were not reverted or edited.
+  - Initial process snapshot showed old API PID `113234` saturated at about `88.6%` CPU and `1818 MB` RSS. It then exited; the Replit supervisor restarted the app on its own. New API PID `117113` picked up the second Massive quote-stream fix.
+  - Confirmed second fix live: `massiveStockQuotes.subscribedSymbolCount: 0`, `activeConsumerCount: 0`, and `eventCount: 0`.
+  - Flow scanner degradation root cause confirmed: the remaining Massive aggregate universe still expanded to `550` symbols on runtime resync while pressure was only `watch`, pushing API RSS from about `1.4 GB` to about `2.0 GB`. Once pressure moved to high/critical, scanner diagnostics flipped to `scannerFillMode: pressure-throttled`, `topLimitingReason: scanner-throttled-high-pressure`, and effective concurrency `1`.
+  - Flow scanner was not line-exhausted: usable remaining lines stayed high (typically `171-200`), broker readiness stayed `ready`, and historical work continued slowly. `/api/flow/events?...blocking=false` returned empty rows with `ibkrReason: options_flow_scanner_queued`; aggregate flow returned `options_flow_scanner_no_cached_events`.
+  - Probe summary across 20 samples: app readiness `not_ready` in 19/20 samples; pressure `critical` in 15/20, `high` in 3/20, `watch` in 1/20; API CPU avg `86.72%`; API RSS avg `1800.5 MB`, max `1995 MB`; one full probe sample timed out; flow scanner active live lines stayed `0`; historical work completed 64 additional units but remained pressure-throttled.
+  - Implemented source fix: cap the always-on Massive aggregate universe stream to `MASSIVE_STOCK_UNIVERSE_STREAM_SYMBOL_CAP`, default `80`, and expose `symbolCap` in diagnostics. This prevents startup/runtime resync from subscribing the full 500-symbol flow universe before pressure gates can react.
+  - The rebuilt API bundle includes the cap, but the running API has not restarted onto this latest cap yet.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/platform.ts`
+  - `artifacts/api-server/src/services/platform-massive-stock-routing.test.ts`
+  - `memory/2026-05-28-pyrus-runtime-pressure-investigation.md`
+- Validation state:
+  - Passed: post-restart runtime probes for `/api/healthz`, `/api/readiness`, `/api/diagnostics/runtime`, `/api/diagnostics/latest`, `/api/settings/ibkr-line-usage`, `/api/signal-monitor/state?environment=paper`, `/api/flow/events`, and `/api/flow/events/aggregate`.
+  - Passed: 20-sample flow-scanner pressure probe completed.
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/platform-massive-stock-routing.test.ts src/services/bridge-streams-source.test.ts`
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`
+  - Passed: `pnpm --filter @workspace/api-server run build`
+  - Passed: scoped `git diff --check`.
+- Next step:
+  - Restart/reload through the normal Replit app runner so the running API picks up the aggregate-universe cap. Then run a post-cap soak and verify `massiveStockUniverse.symbolCount <= 80`, API RSS does not climb back to critical, and flow scanner no longer reports `scanner-throttled-high-pressure`.
+
+- Last updated: `2026-05-28 19:59 UTC`
+- Current request: stay focused on the actual signal lateness issue: Massive equity/spot bars reaching the algo signal monitor late, not IBKR option-chain scanning.
+- Current status:
+  - Corrected scope after user pushback. The upstream lag root cause is in the platform bars hydrator accepting recent stored Massive history as fresh enough for signal-monitor requests.
+  - Implemented a signal-monitor-specific Massive realtime tolerance: `signal-matrix` equity bar requests now force provider gap-fill when stored Massive coverage is more than one native bar behind, instead of using the old generic 20-minute tolerance.
+  - This keeps the fix on Massive stock/equity data feeding signals; no app runner restart or process cleanup was performed.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/platform.ts`
+  - `artifacts/api-server/src/services/option-chain-batch.test.ts`
+  - `memory/2026-05-28-massive-signal-bar-lag-fix.md`
+- Validation state:
+  - Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test --test-name-pattern "signal-matrix Massive bars force gap-fill|recent live-edge gaps" src/services/option-chain-batch.test.ts`
+  - Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/signal-monitor.test.ts src/services/option-chain-batch.test.ts`
+  - Passed: `pnpm --filter @workspace/api-server typecheck`
+  - Passed: `pnpm --filter @workspace/api-server run build`
+  - Passed: scoped `git diff --check`.
+- Next step:
+  - Restart/reload through the normal Replit app runner, then verify `/api/signal-monitor/state?environment=paper` latest 5m bars track the newest completed Massive bar instead of sitting 10-15 minutes behind.
+
+- Last updated: `2026-05-28 19:58 UTC`
+- Current request: implement the Pyrus loading policy fix so the full-screen boot overlay waits for the active screen, not unrelated tabs/data.
+- Current status:
+  - Implemented dynamic boot blocking in Pyrus. Default boot no longer blocks on accounts, signal profile, signal state, or hidden screen preload chunks.
+  - Added initial-screen boot dependency policy so Account and Algo direct starts opt their needed data back into the blocking set.
+  - Changed `first-screen` completion to wait for the active screen's `criticalReady` readiness instead of only the screen module/frame event.
+  - Deferred non-required watchlists/accounts/signal-profile queries until the boot overlay is complete, while keeping required initial-screen queries enabled immediately.
+  - Added readiness callbacks for Diagnostics and Settings so direct starts on those screens cannot hang on `first-screen`.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/pyrus/src/app/bootProgress.ts`
+  - `artifacts/pyrus/src/app/bootProgress.test.ts`
+  - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+  - `artifacts/pyrus/src/features/platform/PlatformScreenRouter.jsx`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/features/platform/screenRegistry.jsx`
+  - `artifacts/pyrus/src/screens/DiagnosticsScreen.jsx`
+  - `artifacts/pyrus/src/screens/SettingsScreen.jsx`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/app/bootProgress.test.ts`
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js`
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: `pnpm --filter @workspace/pyrus run build`
+  - Browser timing verification is still pending; no app runner restart was performed in this pass.
+- Next step:
+  - Use the normal Replit app runner/reload, then compare `window.__PYRUS_GET_BOOT_PROGRESS__()` on Market, Account, and Algo starts. Confirm Market no longer waits on accounts/signal-profile/hidden preloads, and Account/Algo do not flash empty active-screen shells.
+
+- Last updated: `2026-05-28 19:55 UTC`
+- Current request: after user restarted, verify the Massive stream-shedding/footer pressure fix live; user also reminded to respect concurrent work.
+- Current status:
+  - Respected concurrent work: did not kill/restart app processes, did not touch Replit startup config, did not revert or edit unrelated modified files. Existing unrelated changes in `signal-monitor*`, `signal-options-automation*`, `bootProgress.ts`, `PlatformApp.jsx`, and `screenRegistry.jsx` were left alone.
+  - Post-restart doctor check confirmed one API server and one Vite server were live. The first probe improved versus the prior run (`/api/readiness` app `degraded`, pressure `watch`), but the API quickly returned to critical pressure.
+  - Five-minute soak showed the first fix did fire: `massiveStockUniverse.status` stayed `resource_pressure`, `active: false`, and `symbolCount: 0` for 16/18 samples after pressure became critical. Broker trading readiness stayed `ready`; IBKR line utilization stayed very low.
+  - The first fix was incomplete: a smaller Massive quote stream remained subscribed (`subscribedSymbolCount: 21`) and quote events climbed from `268945` to `497529` while CPU stayed about `90-95%`, RSS stayed around `1.6-1.7 GB`, and one sample had all API probes time out. The API process then restarted under the Replit supervisor during the soak; this was observed, not initiated.
+  - After the supervisor restart, pressure was normal briefly and the startup/runtime refresh reactivated the stock universe. That confirmed startup must not open a Massive raw quote firehose even before pressure has escalated.
+  - Second source fix implemented: foreground equity quote SSE now uses the IBKR bridge stream instead of the Massive quote websocket, and the Massive full-universe startup path no longer subscribes to raw Massive quote snapshots. Massive REST snapshot/spot routing remains intact.
+  - The rebuilt API bundle includes this second fix, but the currently running API has not been restarted onto it yet.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/bridge-streams.ts`
+  - `artifacts/api-server/src/services/bridge-streams-source.test.ts`
+  - `artifacts/api-server/src/services/platform.ts`
+  - `artifacts/api-server/src/services/platform-massive-stock-routing.test.ts`
+  - `memory/2026-05-28-pyrus-runtime-pressure-investigation.md`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/platform-massive-stock-routing.test.ts src/services/bridge-streams-source.test.ts`
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/massive-stock-quote-stream.test.ts`
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`
+  - Passed: `pnpm --filter @workspace/api-server run build`
+  - Passed: scoped `git diff --check` for the Massive/footer files and handoff/report.
+- Next step:
+  - Restart/reload through Replit's default Run Replit App so the running API picks up the second fix. Then run another post-restart soak and confirm `massiveStockQuotes.subscribedSymbolCount` stays `0` unless an intentional bridge-backed visible quote stream is active, CPU/RSS do not ramp back to critical, and footer/readiness reflect the reduced pressure.
+
+- Last updated: `2026-05-28 19:50 UTC`
+- Current request: implement the realtime signal-to-IBKR scan fix from the approved plan.
+- Current status:
+  - Implemented the targeted fix without touching Replit startup config or other running sessions.
+  - Signal-options deployment scans now full-refresh the deployment universe with soft pressure caps bypassed and concurrency `6` unless API pressure is a hard block.
+  - Hard pressure still falls back to the existing pressure-capped rotating batch path.
+  - Completed-bar signal behavior is unchanged; no provisional/intrabar signals were enabled.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/signal-monitor.ts`
+  - `artifacts/api-server/src/services/signal-monitor.test.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.test.ts`
+  - `memory/2026-05-28-signal-options-full-refresh-fix.md`
+- Validation state:
+  - Passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts`
+  - Passed: `pnpm --filter @workspace/api-server typecheck`
+  - Passed: `pnpm --filter @workspace/api-server run build`
+  - Passed: scoped `git diff --check` for touched signal monitor/options files.
+- Next step:
+  - Restart/reload through Replit's default Run Replit App so the running API picks up the fix, then verify signal-options state shows `lastBatchFullUniverse: true` and `lastBatchSize === lastBatchUniverseCount`.
+
+- Last updated: `2026-05-28 19:44 UTC`
+- Current request: user restarted the app after the Massive universe stream-shedding and footer pressure-readout fixes; verify the patched build is live and check whether the runtime/readout problem is actually fixed.
+- Current status:
+  - Beginning post-restart verification. Do not manually restart or kill app processes; the user already restarted through the app runner.
+  - Need confirm the running API picked up the rebuilt source, then sample readiness, runtime diagnostics, IBKR line usage, signal freshness, and footer-facing diagnostics under live load.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Pending post-restart probes and soak.
+- Next step:
+  - Probe `/api/healthz`, `/api/readiness`, `/api/diagnostics/runtime`, `/api/diagnostics/latest`, `/api/settings/ibkr-line-usage`, `/api/signal-monitor/state`, process stats, and the web root. Then run a short soak if the build is live.
+
+- Last updated: `2026-05-28 19:44 UTC`
+- Current request: identify what still needs to be fixed after Milestone 1, run a soak/monitor to find the runtime cause, and investigate why the lower-corner app readout is not showing the readiness/pressure state while the app runs.
+- Current status:
+  - Root-cause pass complete. The 10-minute soak ran against the currently running pre-patch API process without killing or restarting any intentional sessions.
+  - Soak summary: 40 samples from `2026-05-28T19:31:54Z` to `2026-05-28T19:41:40Z`; API CPU avg `95.57%` (max `97.6%`), RSS avg `1822.5 MB` (max `1930 MB`); readiness was `not_ready`/critical in 37/40 samples; line usage timed out in 5/40 samples.
+  - IBKR lines were not the blocker: `flowScanner` stayed `0`, scanner fill was `pressure-throttled`, and `scannerBlocked` stayed `null`. Broker trading readiness stayed `ready`; app readiness was blocked by `api_resource_pressure_critical`.
+  - Runtime root cause confirmed through `/api/diagnostics/runtime`: the options-flow stock support path starts a Massive full-universe stock quote/aggregate stream for about 550 symbols. The stream had produced roughly 967k quote events within minutes and kept the Node API main thread/RSS saturated.
+  - Signal lag is real, not only a UI readout issue: signal samples showed latest bars 8.45-14 minutes stale and latest signals 14.43-56.44 minutes stale while profile/state evaluation lag was much lower. Re-check after the stream-shedding fix is live.
+  - Lower-corner readout root cause: `FooterMemoryPressureIndicator` was driven by the client memory-pressure hook and did not carry server dominant drivers such as `api-rss` into `pressureDrivers`; the mini API bar also preferred API heap over API RSS. That made the live footer fail to show the actual backend pressure driver the user was looking for.
+  - Implemented source fixes: the API now closes/skips the Massive full-universe stream under high/critical API pressure, and the footer now surfaces server pressure drivers plus an `API RSS` mini readout when RSS is dominant.
+  - Important caveat: the currently running API is still the old build. Source tests/typechecks/build pass, but live acceptance needs a normal Replit Run App restart/reload before the post-fix soak.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+  - `artifacts/api-server/src/services/platform.ts`
+  - `artifacts/api-server/src/services/platform-massive-stock-routing.test.ts`
+  - `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js`
+  - `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js`
+  - `artifacts/pyrus/src/features/platform/FooterMemoryPressureIndicator.jsx`
+  - `artifacts/pyrus/src/features/platform/FooterMemoryPressureIndicator.test.js`
+  - `memory/2026-05-28-pyrus-runtime-pressure-investigation.md`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/platform-massive-stock-routing.test.ts`
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/useMemoryPressureSignal.test.js src/features/platform/FooterMemoryPressureIndicator.test.js`
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`
+  - Passed: `pnpm --filter @workspace/api-server run build`
+  - Passed: scoped `git diff --check` for changed files and handoff.
+  - Caveat: live post-fix runtime verification is pending because the app runner has not restarted onto the rebuilt API.
+- Next step:
+  - Restart/reload through Replit's default Run Replit App flow so the running API picks up the rebuilt stream-shedding and footer changes. Then run a post-restart soak and verify `massiveStockUniverse.status` becomes `resource_pressure` under high/critical pressure, API CPU/RSS trend down, `/api/readiness` improves, and signal freshness recovers.
+
+- Last updated: `2026-05-28 19:29 UTC`
+- Current request: post-restart runtime check of the Milestone 1 Runtime Stabilization implementation.
+- Current status:
+  - User restarted the app through the Replit dev runner. Live validation confirmed the Milestone 1 surfaces are present in the running build.
+  - `/api/healthz` returned `200 {"status":"ok"}`.
+  - `/api/readiness` returned liveness `ok`, app readiness `not_ready`, broker trading readiness `ready`, pressure `critical`, and `manualTradingBlockedReason: null`. This matches the intended split: API pressure degrades app readiness without blocking manual trading when the broker is ready.
+  - Route admission metadata is active. Deferred analytics routes such as `/api/signal-monitor/state`, `/api/algo/deployments/:id/signal-options/state`, `/api/algo/deployments/:id/cockpit`, and `/api/algo/deployments/:id/signal-options/performance` returned `x-pyrus-route-class: deferred-analytics`, `x-pyrus-pressure-level: critical`, and degraded headers under pressure.
+  - Signal-options state and cockpit returned stale cached payloads under critical pressure; performance returned the expected fail-fast `503 signal_options_performance_cache_unavailable` because no cached performance payload was warm yet.
+  - Remaining runtime issue: API PID `90682` stayed saturated after restart, roughly `92-93%` CPU and `1770-1780 MB` RSS over the follow-up sample. `/api/readiness` correctly reports app `not_ready`; `/api/settings/ibkr-line-usage` shows scanner fill `pressure-throttled`, no scanner hard block, and flow scanner lines at `0`.
+  - Preserve unrelated intentional sessions/processes; only this handoff is modified by this check.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Passed: post-restart HTTP probes for `/api/healthz`, `/api/readiness`, `/api/diagnostics/latest`, `/api/signal-monitor/state`, `/api/algo/deployments`, `/api/algo/deployments/:id/signal-options/state`, `/api/algo/deployments/:id/cockpit`, `/api/algo/deployments/:id/signal-options/performance`, `/api/settings/ibkr-line-usage`, and the Vite web root.
+  - Passed: 60-second follow-up sample confirmed readiness/admission behavior stayed stable under critical pressure.
+  - Caveat: runtime remains in critical API pressure after restart; this validates the guardrails but does not clear the CPU/RSS hot path.
+- Next step:
+  - Treat CPU/RSS saturation and signal freshness lag as the next focused fix. The current Milestone 1 work is running and correctly exposing degraded/readiness state.
+
+- Last updated: `2026-05-28 19:27 UTC`
+- Current request: after user restarted again, run another 5-minute monitor; user also reports the algo section is still getting signals about 15 minutes late.
+- Current status:
+  - Do not terminate or clean up other terminals/process groups; user has multiple intentional sessions running.
+  - Completed a read-only 5-minute monitor of `/api/settings/ibkr-line-usage` plus `/api/signal-monitor/state` samples every 30s.
+  - Scanner hard-block stayed fixed: `scannerBlocked: null` in all 60 samples. Scanner fill was `steady-state` for 22 successful samples and `pressure-throttled` for 29.
+  - Flow-scanner live lines did appear in this run (`flowScanner` max 26, avg 1.02), unlike the prior run where it stayed 0 throughout.
+  - API restarted/rolled during the first minute (`apiPids`: 85792 then 90682). After the new process started, RSS climbed from ~243 MB to 1768 MB and CPU climbed to 92.8% by the end. Line-usage still had 9/60 request timeouts.
+  - Signal freshness lag confirmed: 10 signal-monitor samples, latest bar lag avg 12.6 minutes (min 10.38, max 14.85), latest signal lag avg 21.49 minutes. Final signal sample at 19:26:52Z had latestBarAt 19:15Z and latestSignalAt 19:10Z.
+  - Signal monitor profile/state evaluation was less stale than bars: profile last-eval lag avg 4.82 minutes, latest state eval lag avg 4.08 minutes. This points at delayed/stale underlying market bars/signals, not simply the UI failing to poll.
+- Changed files this pass:
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Passed: 5-minute monitor completed with 60 line samples and 10 signal-state samples.
+- Next step:
+  - Investigate the API/RSS hot path and the signal-monitor bar freshness path. Current evidence suggests the app evaluates every ~4-5 minutes but source bars remain 10-15 minutes behind, while API pressure escalates from normal/watch back to critical within minutes after restart.
 
 - Last updated: `2026-05-28 19:20 UTC`
 - Current request: clean up the worktree, merge current work as appropriate, and push it.

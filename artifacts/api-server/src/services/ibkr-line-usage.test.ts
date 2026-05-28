@@ -11,6 +11,7 @@ import {
 } from "./ibkr-line-usage";
 import {
   __resetApiResourcePressureForTests,
+  resolveApiRssPressureThresholds,
   updateApiResourcePressure,
 } from "./resource-pressure";
 
@@ -80,7 +81,9 @@ test("getIbkrLineUsageSnapshot reports active scanner work instead of idle RSS p
       },
     }),
   }));
-  updateApiResourcePressure({ rssMb: 1_650 });
+  updateApiResourcePressure({
+    rssMb: resolveApiRssPressureThresholds().critical + 1,
+  });
   admitMarketDataLeases({
     owner: "watchlist-prewarm",
     intent: "visible-live",
@@ -121,6 +124,37 @@ test("getIbkrLineUsageSnapshot reports active scanner work instead of idle RSS p
   assert.equal(snapshot.lineUtilizationAudit.admissionVsBridgeLineDelta, 0);
   assert.equal(snapshot.drift.reconciliation.status, "matched");
   assert.equal(snapshot.drift.reconciliation.snapshotOnlyApiLineCount, 40);
+});
+
+test("getIbkrLineUsageSnapshot does not report scanner pressure for automation-only pressure", async () => {
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: async () => ({
+      subscriptions: {
+        activeQuoteSubscriptions: 0,
+        marketDataLineBudget: 200,
+        activeEquitySymbols: [],
+        activeOptionProviderContractIds: [],
+      },
+    }),
+  }));
+  updateApiResourcePressure({ automationActiveLongScanCount: 1 });
+  admitMarketDataLeases({
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    requests: Array.from({ length: 40 }, (_, index) => ({
+      assetClass: "option" as const,
+      symbol: "SPY",
+      providerContractId: `twsopt:scanner-${index}`,
+    })),
+    fallbackProvider: "none",
+  });
+
+  const snapshot = await getIbkrLineUsageSnapshot();
+
+  assert.equal(snapshot.admission.optionsFlowScanner.resourcePressure.level, "high");
+  assert.equal(snapshot.admission.optionsFlowScanner.scannerPressure.level, "normal");
+  assert.equal(snapshot.lineUtilizationAudit.topLimitingReason, "scanner-active");
+  assert.equal(snapshot.lineUtilizationAudit.scanner.effectiveConcurrency, 2);
 });
 
 test("getIbkrLineUsageSnapshot excludes scanner snapshot leases from bridge drift", async () => {

@@ -24,6 +24,20 @@ test("classifies broker-critical routes separately from analytics routes", () =>
   );
   assert.equal(
     classifyApiRoute({
+      method: "GET",
+      path: "/api/algo/deployments/dep-1/signal-options/state",
+    }),
+    "active-screen",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/api/algo/deployments/dep-1/cockpit",
+    }),
+    "active-screen",
+  );
+  assert.equal(
+    classifyApiRoute({
       method: "POST",
       path: "/api/algo/deployments/dep-1/signal-options/shadow-scan",
     }),

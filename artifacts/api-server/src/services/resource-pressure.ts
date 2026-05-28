@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 export type ApiResourcePressureLevel = "normal" | "watch" | "high" | "critical";
 
 export type ApiResourcePressureDriver = {
@@ -54,7 +56,14 @@ const NORMAL_INPUTS: ApiResourcePressureSnapshot["inputs"] = {
   automationActiveLongScanCount: null,
 };
 
-const API_RSS_HARD_BLOCK_MB = 3_000;
+const FALLBACK_API_RSS_PRESSURE_THRESHOLDS = {
+  watch: 2_048,
+  high: 3_072,
+  critical: 4_096,
+} as const;
+const FALLBACK_API_RSS_HARD_BLOCK_MB = 6_144;
+const CGROUP_MEMORY_MAX_PATH = "/sys/fs/cgroup/memory.max";
+const MB = 1024 * 1024;
 
 let currentInputs: ApiResourcePressureSnapshot["inputs"] = { ...NORMAL_INPUTS };
 
@@ -102,6 +111,65 @@ function levelFromThresholds(
   if (value >= thresholds.high) return "high";
   if (value >= thresholds.watch) return "watch";
   return "normal";
+}
+
+function readPositiveNumberEnv(name: string): number | null {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function readCgroupMemoryLimitMb(): number | null {
+  try {
+    const raw = readFileSync(CGROUP_MEMORY_MAX_PATH, "utf8").trim();
+    if (!raw || raw === "max") {
+      return null;
+    }
+    const bytes = Number(raw);
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+      return null;
+    }
+    return Math.round(bytes / MB);
+  } catch {
+    return null;
+  }
+}
+
+export function resolveApiRssPressureThresholds(
+  memoryLimitMb = readCgroupMemoryLimitMb(),
+): { watch: number; high: number; critical: number } {
+  const envWatch = readPositiveNumberEnv("API_RSS_PRESSURE_WATCH_MB");
+  const envHigh = readPositiveNumberEnv("API_RSS_PRESSURE_HIGH_MB");
+  const envCritical = readPositiveNumberEnv("API_RSS_PRESSURE_CRITICAL_MB");
+  if (envWatch !== null || envHigh !== null || envCritical !== null) {
+    return {
+      watch: envWatch ?? FALLBACK_API_RSS_PRESSURE_THRESHOLDS.watch,
+      high: envHigh ?? FALLBACK_API_RSS_PRESSURE_THRESHOLDS.high,
+      critical: envCritical ?? FALLBACK_API_RSS_PRESSURE_THRESHOLDS.critical,
+    };
+  }
+
+  if (memoryLimitMb !== null && memoryLimitMb >= 8_192) {
+    return {
+      watch: Math.round(memoryLimitMb * 0.25),
+      high: Math.round(memoryLimitMb * 0.35),
+      critical: Math.round(memoryLimitMb * 0.5),
+    };
+  }
+
+  return { ...FALLBACK_API_RSS_PRESSURE_THRESHOLDS };
+}
+
+export function resolveApiRssHardBlockMb(
+  memoryLimitMb = readCgroupMemoryLimitMb(),
+): number {
+  const configured = readPositiveNumberEnv("API_RSS_HARD_BLOCK_MB");
+  if (configured !== null) {
+    return configured;
+  }
+  if (memoryLimitMb !== null && memoryLimitMb >= 8_192) {
+    return Math.round(memoryLimitMb * 0.7);
+  }
+  return FALLBACK_API_RSS_HARD_BLOCK_MB;
 }
 
 function routeLatencyLevel(value: number | null): ApiResourcePressureLevel {
@@ -184,11 +252,10 @@ export function getApiResourcePressureCaps(
 function buildSnapshot(
   inputs: ApiResourcePressureSnapshot["inputs"],
 ): ApiResourcePressureSnapshot {
-  const rssLevel = levelFromThresholds(inputs.rssMb, {
-    watch: 900,
-    high: 1_200,
-    critical: 1_600,
-  });
+  const rssLevel = levelFromThresholds(
+    inputs.rssMb,
+    resolveApiRssPressureThresholds(),
+  );
   const heapLevel = levelFromThresholds(inputs.apiHeapUsedPercent, {
     watch: 70,
     high: 80,
@@ -336,7 +403,7 @@ export function isApiResourcePressureHardBlock(
       return false;
     }
     if (driver.kind === "api-rss") {
-      return Number(driver.score) >= API_RSS_HARD_BLOCK_MB;
+      return Number(driver.score) >= resolveApiRssHardBlockMb();
     }
     return true;
   });

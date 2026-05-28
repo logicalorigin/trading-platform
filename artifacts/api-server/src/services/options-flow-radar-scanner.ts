@@ -57,6 +57,10 @@ export type OptionsFlowRadarCoverage = {
   scannedSymbols: number;
   promotedSymbols: string[];
   lastScanAt: Date | null;
+  lastFailedAt: Date | null;
+  lastError: string | null;
+  failureCount: number;
+  lastRunDurationMs: number | null;
   lastFullCycleMs: number | null;
   estimatedCycleMs: number | null;
   batchSize: number;
@@ -243,6 +247,10 @@ export function createOptionsFlowRadarScanner(
   let currentBatch: string[] = [];
   let promotedSymbols: string[] = [];
   let lastScanAt: Date | null = null;
+  let lastFailedAt: Date | null = null;
+  let lastError: string | null = null;
+  let failureCount = 0;
+  let lastRunDurationMs: number | null = null;
   let cycleStartedAtMs: number | null = null;
   let lastFullCycleMs: number | null = null;
   let selectedSymbolCount = 0;
@@ -370,8 +378,10 @@ export function createOptionsFlowRadarScanner(
     const symbols = syncSymbolsWithoutAdvancing(symbolsInput);
     currentBatch = [];
     promotedSymbols = [];
+    const runStartedAt = now();
 
     if (!symbols.length) {
+      lastRunDurationMs = Math.max(0, now() - runStartedAt);
       return {
         scannedSymbols: [],
         promotedSymbols: [],
@@ -385,6 +395,8 @@ export function createOptionsFlowRadarScanner(
       currentBatch = [];
       promotedSymbols = [];
       degradedReason = skipReason;
+      lastError = skipReason;
+      lastRunDurationMs = Math.max(0, now() - runStartedAt);
       return {
         scannedSymbols: [],
         promotedSymbols: [],
@@ -456,6 +468,15 @@ export function createOptionsFlowRadarScanner(
       }));
       promotedSymbols = promoted.map((observation) => observation.symbol);
       degradedReason = result.source?.errorMessage ?? null;
+      lastError = degradedReason;
+      if (degradedReason) {
+        failureCount += 1;
+        lastFailedAt = scannedAt;
+      } else {
+        failureCount = 0;
+        lastFailedAt = null;
+      }
+      lastRunDurationMs = Math.max(0, now() - runStartedAt);
 
       await options.onObservations?.(settledObservations);
       if (promotedSymbols.length) {
@@ -479,6 +500,10 @@ export function createOptionsFlowRadarScanner(
       });
       lastScanAt = new Date(now());
       degradedReason = message;
+      lastError = message;
+      lastFailedAt = lastScanAt;
+      failureCount += 1;
+      lastRunDurationMs = Math.max(0, now() - runStartedAt);
       options.onError?.(error, { phase: "radar-fetch" });
       return {
         scannedSymbols: [],
@@ -558,6 +583,10 @@ export function createOptionsFlowRadarScanner(
     currentBatch = [];
     promotedSymbols = [];
     lastScanAt = null;
+    lastFailedAt = null;
+    lastError = null;
+    failureCount = 0;
+    lastRunDurationMs = null;
     cycleStartedAtMs = null;
     lastFullCycleMs = null;
     selectedSymbolCount = 0;
@@ -572,6 +601,10 @@ export function createOptionsFlowRadarScanner(
       scannedSymbols: scannedSymbols.size,
       promotedSymbols,
       lastScanAt,
+      lastFailedAt,
+      lastError,
+      failureCount,
+      lastRunDurationMs,
       lastFullCycleMs,
       estimatedCycleMs: selectedSymbolCount
         ? Math.ceil(selectedSymbolCount / Math.max(1, lastBatchSize)) *

@@ -278,6 +278,14 @@ const formatFreshnessAge = (value) => {
   return `${Math.round(ageMs / 60_000)}m ago`;
 };
 
+const formatDurationMs = (value) => {
+  if (value === null || value === undefined || value === "") return MISSING_VALUE;
+  const durationMs = Number(value);
+  if (!Number.isFinite(durationMs) || durationMs < 0) return MISSING_VALUE;
+  if (durationMs < 60_000) return `${Math.round(durationMs / 1_000)}s`;
+  return `${Math.round(durationMs / 60_000)}m`;
+};
+
 const estimateStorageBytes = (key, value) =>
   (String(key || "").length + String(value || "").length) * 2;
 
@@ -1366,6 +1374,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
   const accountMonitorDetails = safeRecord(snapshot?.accountMonitor);
   const flowScanner = lineUsage.flowScanner || {};
   const optionsFlowScanner = safeRecord(admission.optionsFlowScanner);
+  const scannerCoverage = safeRecord(optionsFlowScanner.coverage);
   const signalOptions = lineUsage.signalOptions || {};
   const automation = lineUsage.pools.automation || {};
   const pressure = lineUsage.pressure || {};
@@ -1486,6 +1495,15 @@ function IbkrLineUsagePanel({ runtimeControl }) {
           <StateRow
             label="Scanner fill"
             value={`${String(optionsFlowScanner.scannerFillMode || flowScanner.scannerFillMode || MISSING_VALUE)} · ${String(optionsFlowScanner.limitingReason || flowScanner.limitingReason || "unlimited")}`}
+          />
+          <StateRow
+            label="Scanner coverage"
+            value={`${formatCount(scannerCoverage.cycleScannedSymbols ?? scannerCoverage.scannedSymbols)} of ${formatCount(scannerCoverage.activeTargetSize ?? scannerCoverage.selectedSymbols ?? scannerCoverage.targetSize)} · ${String(scannerCoverage.coverageHealth || MISSING_VALUE)}`}
+          />
+          <StateRow
+            label="Scanner cycle"
+            value={`${formatDurationMs(scannerCoverage.estimatedCycleMs)} est · ${formatDurationMs(scannerCoverage.lastScanAgeMs)} since last`}
+            tone={scannerCoverage.coverageHealth === "lagging" ? CSS_COLOR.red : scannerCoverage.coverageHealth === "quiet" ? CSS_COLOR.amber : CSS_COLOR.textSec}
           />
           <StateRow
             label="Scanner market data"

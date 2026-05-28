@@ -541,6 +541,35 @@ test("signal monitor profile evaluations rotate through pressure-aware historica
   );
 });
 
+test("explicit signal monitor symbol evaluations can bypass soft pressure caps", () => {
+  const configured = profile({
+    maxSymbols: 250,
+    evaluationConcurrency: 10,
+  });
+
+  const capped =
+    __signalMonitorInternalsForTests.resolveSignalMonitorProfileSymbolEvaluationSettings({
+      profile: configured,
+      maxSymbolsOverride: 90,
+      pressureLevel: "critical",
+    });
+  const bypass =
+    __signalMonitorInternalsForTests.resolveSignalMonitorProfileSymbolEvaluationSettings({
+      profile: configured,
+      maxSymbolsOverride: 90,
+      pressureCapMode: "bypass-soft",
+      evaluationConcurrencyOverride: 6,
+      pressureLevel: "critical",
+    });
+
+  assert.equal(capped.profile.maxSymbols, 8);
+  assert.equal(capped.profile.evaluationConcurrency, 1);
+  assert.equal(bypass.profile.maxSymbols, 90);
+  assert.equal(bypass.profile.evaluationConcurrency, 6);
+  assert.equal(bypass.pressure, "critical");
+  assert.equal(bypass.capped, false);
+});
+
 test("explicit signal monitor symbol batches keep requested order under caps", () => {
   const resolved =
     __signalMonitorInternalsForTests.resolveExplicitSignalMonitorSymbols({
