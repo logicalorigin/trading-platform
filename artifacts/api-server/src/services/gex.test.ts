@@ -437,6 +437,37 @@ test("GEX dashboard queues ingest and reports pending when no persisted snapshot
   );
 });
 
+test("GEX zero-gamma overlay returns empty data while persisted snapshot is pending", async () => {
+  const enqueued: any[] = [];
+  __setGexIngestFacadeForTests({
+    isConfigured: () => true,
+    getLatestGexSnapshot: async () => null,
+    enqueueMarketDataJob: async (input) => {
+      enqueued.push(input);
+      return { queued: true, dedupeKey: `${input.kind}:SPY` };
+    },
+  });
+
+  const data = await getGexZeroGammaData({ underlying: "SPY" });
+
+  assert.equal(data.ticker, "SPY");
+  assert.equal(data.spot, null);
+  assert.equal(data.zeroGamma, null);
+  assert.equal(data.asOf, null);
+  assert.equal(data.isStale, true);
+  assert.equal(data.source.status, "unavailable");
+  assert.equal(data.source.optionCount, 0);
+  assert.equal(data.source.usableOptionCount, 0);
+  assert.match(
+    data.source.message || "",
+    /market-data ingest worker must hydrate option-chain data/i,
+  );
+  assert.deepEqual(
+    enqueued.map((entry) => entry.kind).sort(),
+    ["gex_snapshot", "option_chain_snapshot"],
+  );
+});
+
 test("GEX dashboard data is sourced from IBKR quotes, expirations, and full option-chain batches", async () => {
   let batchRequest: any = null;
   configureIbkrGex({

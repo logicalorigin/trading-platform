@@ -1,4 +1,4 @@
-import { HttpError } from "../lib/errors";
+import { HttpError, isHttpError } from "../lib/errors";
 import { getPolygonRuntimeConfig, type PolygonRuntimeConfig } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
 import type {
@@ -1020,7 +1020,32 @@ export async function getGexZeroGammaData(input: {
   underlying: string;
   signal?: AbortSignal;
 }): Promise<GexZeroGammaResponse> {
-  const data = await getGexDashboardData(input);
+  let data: GexResponse;
+  try {
+    data = await getGexDashboardData(input);
+  } catch (error) {
+    if (isHttpError(error) && error.code === "gex_snapshot_pending") {
+      const ticker = normalizeSymbol(input.underlying);
+      return {
+        ticker,
+        spot: null,
+        zeroGamma: null,
+        asOf: null,
+        isStale: true,
+        source: {
+          provider: "ibkr",
+          status: "unavailable",
+          optionCount: 0,
+          usableOptionCount: 0,
+          message:
+            error.detail ||
+            error.message ||
+            "GEX snapshot is pending while market-data ingest catches up.",
+        },
+      };
+    }
+    throw error;
+  }
   const spot = finiteOrNull(data.spot);
   const zeroGamma = spot != null ? findGexZeroGamma(data.options, spot) : null;
 
