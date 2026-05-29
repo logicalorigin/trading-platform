@@ -2057,15 +2057,41 @@ router.get("/streams/quotes", async (req, res) => {
   }
 
   await startSse(req, res, "quotes", async ({ writeEvent }) => {
-    await writeEvent("quotes", await fetchQuoteSnapshotPayload(symbols));
     await writeEvent("ready", {
       symbols,
       source: isMassiveStocksRealtimeConfigured() ? "massive" : "ibkr-bridge",
     });
 
-    return subscribeQuoteSnapshots(symbols, (payload) => {
-      writeEvent("quotes", payload);
+    let active = true;
+    const unsubscribe = subscribeQuoteSnapshots(symbols, (payload) => {
+      void writeEvent("quotes", payload);
     });
+
+    void fetchQuoteSnapshotPayload(symbols)
+      .then((payload) => {
+        if (!active) {
+          return undefined;
+        }
+        return writeEvent("quotes", payload);
+      })
+      .catch((error: unknown) => {
+        if (!active) {
+          return;
+        }
+        void writeEvent("error", {
+          title: "Initial quote snapshot failed",
+          status: 502,
+          detail:
+            error instanceof Error
+              ? error.message
+              : "Unknown quote snapshot error.",
+        });
+      });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   });
 });
 
