@@ -1,5 +1,19 @@
 # Current Session Handoff
 
+- Last updated: `2026-05-29 14:41 UTC`
+- Current request: user restarted the Replit app and asked to check and commit.
+- Current status:
+  - Post-restart diagnostic confirmed the app is running under the default Replit workflow path: supervisor `pid=4708`, API `pid=4732`, `REPLIT_MODE=workflow`, `PYRUS_REPLIT_RUN=1`.
+  - The restart produced a new warning incident at `2026-05-29T14:40:57.294Z`, classified `same-container-supervisor-abrupt`, evidence `last-event:heartbeat`; this matches the user-initiated Replit restart of the previous supervisor `pid=375`, not the prior shell/Codex handoff bug.
+  - Checked for the previous failure signature after the fix: no new `replitMode:null` `supervisor-handoff-requested` or `signal-sent` event appeared after commit `ff7d882`.
+  - Startup guard audit still passes, and the fixed authority rule remains intact.
+  - I did not start the app, run `dev:replit`, run `dev:web`, or reap ports during this check.
+- Validation state:
+  - Passed: `pnpm run diagnose:replit-restarts` read-only diagnostic.
+  - Passed: `pnpm run audit:replit-startup`.
+- Next step:
+  - Continue avoiding shell/Codex app startup and port-reap commands; use only Replit's default `Run Replit App` entry for intentional full app restarts.
+
 - Last updated: `2026-05-29 14:37 UTC`
 - Current request: finish `$qa` diagnosis of the most recent Replit project container restart / terminal disconnect and terminate the agent action causing it.
 - Current status:
