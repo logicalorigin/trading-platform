@@ -2797,6 +2797,10 @@ export interface AccountPositionRow {
   betaWeightedDelta: number | null;
   lots: AccountPositionLot[];
   openOrders: Order[];
+  /** Active stop-loss price for display and trade-management UI, when available. */
+  stopLoss?: number | null;
+  /** Active explicit take-profit price for display and trade-management UI, when available. */
+  takeProfit?: number | null;
   source: string;
   sourceType?: AccountPositionRowSourceType;
   strategyLabel?: string | null;
@@ -6044,6 +6048,30 @@ export type EnsureDefaultSignalOptionsPaperDeploymentBody = {
 export type ListAlgoDeploymentsParams = {
 mode?: EnvironmentMode;
 };
+
+export type EnableAlgoDeploymentParams = {
+view?: EnableAlgoDeploymentView;
+};
+
+export type EnableAlgoDeploymentView = typeof EnableAlgoDeploymentView[keyof typeof EnableAlgoDeploymentView];
+
+
+export const EnableAlgoDeploymentView = {
+  summary: 'summary',
+  full: 'full',
+} as const;
+
+export type PauseAlgoDeploymentParams = {
+view?: PauseAlgoDeploymentView;
+};
+
+export type PauseAlgoDeploymentView = typeof PauseAlgoDeploymentView[keyof typeof PauseAlgoDeploymentView];
+
+
+export const PauseAlgoDeploymentView = {
+  summary: 'summary',
+  full: 'full',
+} as const;
 
 export type RunSignalOptionsShadowBackfillBody = {
   start?: string;

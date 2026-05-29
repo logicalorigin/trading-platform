@@ -5,13 +5,8 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { PauseAlgoDeploymentView } from './pauseAlgoDeploymentView';
 
-export type ListExecutionEventsParams = {
-deploymentId?: string;
-/**
- * @minimum 1
- * @maximum 500
- */
-limit?: number;
-includePayload?: boolean;
+export type PauseAlgoDeploymentParams = {
+view?: PauseAlgoDeploymentView;
 };

@@ -1318,6 +1318,8 @@ export const GetAccountPositionsResponse = zod.object({
   "providerContractId": zod.string().nullish()
 }),zod.null()])
 })),
+  "stopLoss": zod.number().nullish().describe('Active stop-loss price for display and trade-management UI, when available.'),
+  "takeProfit": zod.number().nullish().describe('Active explicit take-profit price for display and trade-management UI, when available.'),
   "source": zod.string(),
   "sourceType": zod.enum(['manual', 'automation', 'signal_options_replay', 'watchlist_backtest', 'mixed']).optional(),
   "strategyLabel": zod.string().nullish(),
@@ -1435,6 +1437,8 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "providerContractId": zod.string().nullish()
 }),zod.null()])
 })),
+  "stopLoss": zod.number().nullish().describe('Active stop-loss price for display and trade-management UI, when available.'),
+  "takeProfit": zod.number().nullish().describe('Active explicit take-profit price for display and trade-management UI, when available.'),
   "source": zod.string(),
   "sourceType": zod.enum(['manual', 'automation', 'signal_options_replay', 'watchlist_backtest', 'mixed']).optional(),
   "strategyLabel": zod.string().nullish(),
@@ -4693,6 +4697,10 @@ export const EnableAlgoDeploymentParams = zod.object({
   "deploymentId": zod.coerce.string()
 })
 
+export const EnableAlgoDeploymentQueryParams = zod.object({
+  "view": zod.enum(['summary', 'full']).optional()
+})
+
 export const EnableAlgoDeploymentResponse = zod.object({
   "id": zod.string(),
   "strategyId": zod.string(),
@@ -4715,6 +4723,10 @@ export const EnableAlgoDeploymentResponse = zod.object({
  */
 export const PauseAlgoDeploymentParams = zod.object({
   "deploymentId": zod.coerce.string()
+})
+
+export const PauseAlgoDeploymentQueryParams = zod.object({
+  "view": zod.enum(['summary', 'full']).optional()
 })
 
 export const PauseAlgoDeploymentResponse = zod.object({
@@ -5176,7 +5188,8 @@ export const listExecutionEventsQueryLimitMax = 500;
 
 export const ListExecutionEventsQueryParams = zod.object({
   "deploymentId": zod.coerce.string().optional(),
-  "limit": zod.coerce.number().min(1).max(listExecutionEventsQueryLimitMax).optional()
+  "limit": zod.coerce.number().min(1).max(listExecutionEventsQueryLimitMax).optional(),
+  "includePayload": zod.coerce.boolean().optional()
 })
 
 export const ListExecutionEventsResponse = zod.object({

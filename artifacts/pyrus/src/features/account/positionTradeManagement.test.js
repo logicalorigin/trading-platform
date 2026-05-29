@@ -90,6 +90,75 @@ test("trade management exposes automation trailing stop state", () => {
   assert.equal(Math.round(management.riskAmount), 60);
 });
 
+test("trade management separates hard stop from active trailing stop", () => {
+  const management = buildPositionTradeManagement({
+    symbol: "GLD",
+    quantity: 4,
+    mark: 7.65,
+    optionContract: { multiplier: 100 },
+    automationContext: {
+      entryPrice: 4.02,
+      stopPrice: 7.29,
+      stopLossPrice: 2.81,
+      tradeManagement: {
+        hardStopPrice: 2.81,
+        trailActive: true,
+        trailStopPrice: 7.29,
+      },
+    },
+  });
+
+  assert.equal(management.stop.price, 2.81);
+  assert.equal(management.trail.price, 7.29);
+  assert.equal(management.protectiveStop.price, 7.29);
+  assert.equal(Math.round(management.riskAmount), 144);
+});
+
+test("trade management keeps automation trail activation out of target", () => {
+  const management = buildPositionTradeManagement({
+    symbol: "GLD",
+    quantity: 4,
+    mark: 4.2,
+    optionContract: { multiplier: 100 },
+    automationContext: {
+      entryPrice: 4.02,
+      stopLossPrice: 2.81,
+      takeProfitPrice: 5.43,
+      tradeManagement: {
+        hardStopPrice: 2.81,
+        trailActivationPrice: 5.43,
+        targetKind: "trail_activation",
+      },
+    },
+  });
+
+  assert.equal(management.stop.price, 2.81);
+  assert.equal(management.stop.source, "automation");
+  assert.equal(management.target, null);
+  assert.equal(management.trail, null);
+});
+
+test("trade management exposes explicit automation take-profit as target", () => {
+  const management = buildPositionTradeManagement({
+    symbol: "GLD",
+    quantity: 4,
+    mark: 4.2,
+    optionContract: { multiplier: 100 },
+    automationContext: {
+      entryPrice: 4.02,
+      stopLossPrice: 2.81,
+      takeProfitPrice: 6.25,
+      tradeManagement: {
+        hardStopPrice: 2.81,
+        targetKind: "take_profit",
+      },
+    },
+  });
+
+  assert.equal(management.target.price, 6.25);
+  assert.equal(management.target.source, "automation");
+});
+
 test("management order matching requires equivalent option contracts", () => {
   const position = {
     symbol: "AAPL",

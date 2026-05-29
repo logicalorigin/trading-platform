@@ -84,6 +84,21 @@ test("shadow automation option exits respect live option trading sessions", () =
   );
 });
 
+test("shadow automation option entries respect live option trading sessions", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const entryBody = source.match(
+    /async function recordShadowAutomationEntry\([\s\S]*?\nasync function recordShadowAutomationExit/,
+  )?.[0];
+
+  assert.ok(entryBody);
+  assert.match(entryBody, /isLiveShadowAutomationPayload\(payload\)/);
+  assert.match(
+    entryBody,
+    /!isShadowOptionTradingSession\(event\.occurredAt,\s*contract\)/,
+  );
+  assert.match(entryBody, /return null/);
+});
+
 test("shadow automation option marks respect live option trading sessions", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const markStart = source.indexOf("async function recordShadowAutomationMark");
@@ -896,13 +911,102 @@ test("shadow positions expose signal-options management context from mark events
   assert.match(source, /const SIGNAL_OPTIONS_SHADOW_MARK_EVENT = "signal_options_shadow_mark";/);
   assert.match(source, /async function latestShadowAutomationManagementEvents/);
   assert.match(source, /function buildShadowAutomationContext/);
+  assert.match(source, /trailActivationPrice/);
+  assert.match(source, /takeProfit/);
   assert.match(source, /tradeManagement:\s*\{/);
-  assert.match(source, /trailActive: eventStop\.trailActive === true/);
+  assert.match(source, /const trailActive = displayStop\?\.trailActive \?\? eventStop\.trailActive === true/);
+  assert.match(source, /trailActive,/);
   assert.match(source, /automationContext/);
   assert.ok(
     source.indexOf("const automationManagementEvents = await latestShadowAutomationManagementEvents") <
       source.indexOf("const cachedOptionQuotes = readCachedShadowOptionQuotes(filtered);"),
   );
+});
+
+test("shadow automation context keeps trail activation out of take-profit fields", () => {
+  const context =
+    __shadowWatchlistBacktestInternalsForTests.buildShadowAutomationContext({
+      position: {
+        averageCost: "4.02",
+      } as any,
+      sourceOrder: {
+        source: "automation",
+        sourceEventId: "entry-event",
+        payload: {
+          profile: {
+            exitPolicy: {
+              trailActivationPct: 35,
+            },
+          },
+          position: {
+            entryPrice: 4.02,
+            stopPrice: 2.81,
+            openedAt: "2026-05-29T14:39:31.947Z",
+          },
+        },
+      } as any,
+      latestEvent: {
+        id: "mark-event",
+        occurredAt: new Date("2026-05-29T14:50:41.642Z"),
+        payload: {
+          position: {
+            entryPrice: 4.02,
+            peakPrice: 4.17,
+          },
+          stop: {
+            stopPrice: 2.81,
+            hardStopPrice: 2.81,
+            trailActive: false,
+          },
+        },
+      } as any,
+    });
+
+  assert.equal(context?.stopLossPrice, 2.81);
+  assert.equal(context?.stopPrice, 2.81);
+  assert.equal(context?.takeProfitPrice, null);
+  assert.equal(context?.targetPrice, null);
+  assert.equal(context?.trailActivationPrice, 5.43);
+  assert.equal(context?.tradeManagement.trailActivationPrice, 5.43);
+  assert.equal(context?.tradeManagement.targetKind, null);
+});
+
+test("shadow automation context derives active trail from current position marks", () => {
+  const context =
+    __shadowWatchlistBacktestInternalsForTests.buildShadowAutomationContext({
+      position: {
+        averageCost: "4.00",
+        mark: "6.00",
+      } as any,
+      peakMarkPrice: 6,
+      sourceOrder: {
+        source: "automation",
+        sourceEventId: "entry-event",
+        payload: {
+          profile: {
+            exitPolicy: {
+              hardStopPct: -30,
+              trailActivationPct: 35,
+              minLockedGainPct: 15,
+              trailGivebackPct: 20,
+              progressiveTrailEnabled: false,
+            },
+          },
+          position: {
+            entryPrice: 4,
+            stopPrice: 2.8,
+          },
+        },
+      } as any,
+      latestEvent: null,
+    });
+
+  assert.equal(context?.stopLossPrice, 2.8);
+  assert.equal(context?.takeProfitPrice, null);
+  assert.equal(context?.trailActivationPrice, 5.4);
+  assert.equal(context?.tradeManagement.trailActive, true);
+  assert.equal(context?.tradeManagement.trailStopPrice, 4.8);
+  assert.equal(context?.stopPrice, 4.8);
 });
 
 test("shadow option quote marks ignore zero-only IBKR snapshots", () => {

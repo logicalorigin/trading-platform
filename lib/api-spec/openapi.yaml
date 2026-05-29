@@ -8221,6 +8221,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Order"
+        stopLoss:
+          type: number
+          nullable: true
+          description: Active stop-loss price for display and trade-management UI, when available.
+        takeProfit:
+          type: number
+          nullable: true
+          description: Active explicit take-profit price for display and trade-management UI, when available.
         source:
           type: string
         sourceType:

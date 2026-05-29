@@ -6,6 +6,16 @@ import {
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Bell,
+  CircleDollarSign,
+  ClipboardList,
+  RotateCcw,
+  ShieldCheck,
+  SlidersHorizontal,
+  Ticket,
+  XCircle,
+} from "lucide-react";
+import {
   useCancelOrder,
   useListOrders,
   useListPositions,
@@ -70,6 +80,7 @@ import {
   buildDetailedFallbackSparklineData,
 } from "../platform/sparklineConfig";
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
+import { PositionRowActionMenu } from "../account/PositionRowActionMenu.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 const compactOrderKeyPart = (value) => {
@@ -145,6 +156,8 @@ const openPositionColumn = ({
   label,
   title = label,
   width,
+  minWidth = width,
+  track = null,
   align = "right",
   groupEdge = null,
 }) => ({
@@ -152,34 +165,36 @@ const openPositionColumn = ({
   label,
   title,
   width,
+  minWidth,
+  track,
   align,
   groupEdge,
 });
 
 const OPEN_POSITION_COLUMNS = [
-  openPositionColumn({ id: "ticker", label: "Tick", title: "Ticker", width: "72px", align: "left" }),
-  openPositionColumn({ id: "side", label: "Side", width: "36px", align: "center" }),
-  openPositionColumn({ id: "contract", label: "Contract", width: "76px", align: "left" }),
-  openPositionColumn({ id: "opened", label: "Open", width: "42px" }),
-  openPositionColumn({ id: "bid", label: "Bid", width: "48px" }),
-  openPositionColumn({ id: "ask", label: "Ask", width: "48px" }),
-  openPositionColumn({ id: "quantity", label: "Qty", width: "38px" }),
-  openPositionColumn({ id: "averageCost", label: "Avg", title: "Average cost", width: "48px" }),
-  openPositionColumn({ id: "mark", label: "Mark", width: "48px" }),
-  openPositionColumn({ id: "stop", label: "SL", title: "Stop loss", width: "50px", groupEdge: "start" }),
-  openPositionColumn({ id: "trail", label: "TRL", title: "Trailing stop", width: "50px" }),
-  openPositionColumn({ id: "target", label: "TP", title: "Profit target", width: "50px" }),
-  openPositionColumn({ id: "riskDistance", label: "DIST", title: "Risk distance / amount", width: "56px", groupEdge: "end" }),
-  openPositionColumn({ id: "pnl", label: "P&L $", width: "52px" }),
-  openPositionColumn({ id: "pnlPercent", label: "P&L %", width: "44px" }),
-  openPositionColumn({ id: "actions", label: "", title: "Actions", width: "18px", align: "center" }),
+  openPositionColumn({ id: "ticker", label: "Tick", title: "Ticker", width: "minmax(68px, 1fr)", minWidth: "68px", align: "left" }),
+  openPositionColumn({ id: "side", label: "Side", width: "minmax(32px, max-content)", minWidth: "32px", align: "center" }),
+  openPositionColumn({ id: "contract", label: "Contract", width: "minmax(70px, 1fr)", minWidth: "70px", align: "left" }),
+  openPositionColumn({ id: "opened", label: "Open", width: "minmax(36px, max-content)", minWidth: "36px" }),
+  openPositionColumn({ id: "bid", label: "Bid", width: "minmax(40px, max-content)", minWidth: "40px" }),
+  openPositionColumn({ id: "ask", label: "Ask", width: "minmax(40px, max-content)", minWidth: "40px" }),
+  openPositionColumn({ id: "quantity", label: "Qty", width: "minmax(30px, max-content)", minWidth: "30px" }),
+  openPositionColumn({ id: "averageCost", label: "Avg", title: "Average cost", width: "minmax(40px, max-content)", minWidth: "40px" }),
+  openPositionColumn({ id: "mark", label: "Mark", width: "minmax(40px, max-content)", minWidth: "40px" }),
+  openPositionColumn({ id: "stop", label: "SL", title: "Stop loss", width: "minmax(52px, max-content)", minWidth: "52px", groupEdge: "start" }),
+  openPositionColumn({ id: "trail", label: "TRL", title: "Trailing stop", width: "minmax(52px, max-content)", minWidth: "52px", groupEdge: "end" }),
+  openPositionColumn({ id: "pnl", label: "P&L $", width: "minmax(46px, max-content)", minWidth: "46px" }),
+  openPositionColumn({ id: "pnlPercent", label: "P&L %", width: "minmax(38px, max-content)", minWidth: "38px" }),
+  openPositionColumn({ id: "actions", label: "", title: "Actions", width: "minmax(74px, max-content)", minWidth: "74px", align: "center" }),
 ];
 const OPEN_POSITION_COLUMN_BY_ID = new Map(OPEN_POSITION_COLUMNS.map((column) => [column.id, column]));
 const openPositionColumnWidth = (column) => {
-  const width = Number.parseFloat(String(column?.width ?? ""));
+  const width = Number.parseFloat(String(column?.minWidth ?? column?.width ?? ""));
   return Number.isFinite(width) ? width : 0;
 };
-const OPEN_POSITION_GRID_TEMPLATE = OPEN_POSITION_COLUMNS.map((column) => column.width).join(" ");
+const OPEN_POSITION_GRID_TEMPLATE = OPEN_POSITION_COLUMNS.map(
+  (column) => column.track || column.width,
+).join(" ");
 const OPEN_POSITION_TABLE_MIN_WIDTH = OPEN_POSITION_COLUMNS.reduce(
   (sum, column) => sum + openPositionColumnWidth(column),
   0,
@@ -189,11 +204,14 @@ const EXECUTION_TABLE_MIN_WIDTH = 460;
 const LIVE_ORDER_GRID_TEMPLATE = "42px 30px 44px 22px 28px 58px 42px 24px";
 const LIVE_ORDER_TABLE_MIN_WIDTH = 440;
 
+const tradeVisualAlign = (align = "right") => (align === "right" ? "center" : align);
+
 const tradeNumericCellStyle = (color = CSS_COLOR.textSec) => ({
   color,
-  textAlign: "right",
+  textAlign: "center",
   fontFamily: T.data,
   fontVariantNumeric: "tabular-nums",
+  lineHeight: 1.1,
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
@@ -211,12 +229,12 @@ const tradeOpenPositionBoundaryStyle = (column = {}) => ({
 const tradeOpenPositionHeaderCellStyle = (column) => ({
   ...tradeOpenPositionBoundaryStyle(column),
   minWidth: 0,
-  padding: sp("2px 4px"),
+  padding: sp("2px 3px"),
   color: CSS_COLOR.textMuted,
   fontSize: textSize("caption"),
   fontFamily: T.sans,
   letterSpacing: 0,
-  textAlign: column.align,
+  textAlign: tradeVisualAlign(column.align),
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
@@ -229,7 +247,7 @@ const tradeOpenPositionCellStyle = (id, color = CSS_COLOR.textSec, extra = {}) =
       ? tradeNumericCellStyle(color)
       : {
           color,
-          textAlign: column.align || "left",
+          textAlign: tradeVisualAlign(column.align || "left"),
           fontFamily: T.sans,
           overflow: "hidden",
           textOverflow: "ellipsis",
@@ -238,7 +256,7 @@ const tradeOpenPositionCellStyle = (id, color = CSS_COLOR.textSec, extra = {}) =
   return {
     ...tradeOpenPositionBoundaryStyle(column),
     minWidth: 0,
-    padding: sp("2px 4px"),
+    padding: sp("2px 3px"),
     ...alignedStyle,
     ...extra,
   };
@@ -253,12 +271,67 @@ const tradeSignedMoney = (value) =>
 const tradeManagementPrice = (level) =>
   level?.price != null ? formatPriceValue(level.price) : MISSING_VALUE;
 
-const tradeManagementDistance = (management) => {
+const tradeManagementDistanceLabel = (management) => {
   if (!isFiniteNumber(management?.riskDistancePct)) return MISSING_VALUE;
   return `${Math.abs(management.riskDistancePct).toFixed(1)}${
-    management.riskDistancePct <= 0 ? "% past" : "%"
+    management.riskDistancePct <= 0 ? "% past" : "% away"
   }`;
 };
+
+const tradeManagementDistanceBadge = (management) => {
+  if (!isFiniteNumber(management?.riskDistancePct)) return MISSING_VALUE;
+  return `${management.riskDistancePct <= 0 ? "-" : "+"}${Math.abs(
+    management.riskDistancePct,
+  ).toFixed(1)}%`;
+};
+
+const tradeManagementStopBadge = (management) => {
+  if (!management.stop || management.trail) return null;
+  return tradeManagementDistanceBadge(management);
+};
+
+const tradeManagementTrailBadge = (management) => {
+  if (!management.trail) return null;
+  return tradeManagementDistanceBadge(management);
+};
+
+const TradeManagementLevelCell = ({ value, badge, badgeTone = CSS_COLOR.textDim }) => (
+  <span
+    style={{
+      position: "relative",
+      display: "block",
+      minWidth: 0,
+      minHeight: dim(19),
+      paddingTop: badge ? dim(6) : 0,
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+    }}
+  >
+    {badge ? (
+      <span
+        style={{
+          position: "absolute",
+          top: 0,
+          right: 0,
+          maxWidth: "100%",
+          color: badgeTone,
+          fontFamily: T.data,
+          fontSize: fs(9),
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          pointerEvents: "none",
+        }}
+      >
+        {badge}
+      </span>
+    ) : null}
+    <span>{value}</span>
+  </span>
+);
 
 const tradeManagementTone = (management) => {
   if (management.status === "breached") return CSS_COLOR.red;
@@ -267,6 +340,13 @@ const tradeManagementTone = (management) => {
   }
   return CSS_COLOR.textSec;
 };
+
+const tradeManagementBadgeTone = (management) =>
+  management.status === "breached"
+    ? CSS_COLOR.red
+    : isFiniteNumber(management.riskDistancePct) && management.riskDistancePct <= 10
+      ? CSS_COLOR.amber
+      : CSS_COLOR.textDim;
 
 const tradePositionOrders = (position, liveOrders) => {
   const rowOrders = Array.isArray(position?.openOrders) ? position.openOrders : [];
@@ -288,7 +368,6 @@ const tradeManagementForPosition = (position, liveOrders) =>
     quantity: position.side === "SHORT" ? -position.qty : position.qty,
     side: position.side,
     localStopLoss: position.sl,
-    localTakeProfit: position.tp,
   });
 
 const tradePositionDisplay = (position) =>
@@ -540,8 +619,12 @@ export const TradePositionsPanel = ({
           openedAt: position.openedAt ?? null,
           openedAtSource: position.openedAtSource ?? null,
           quote: position.quote ?? null,
-          sl: null,
-          tp: null,
+          sl:
+            position.stopLoss ??
+            position.stopLossPrice ??
+            position.automationContext?.stopLossPrice ??
+            position.automationContext?.stopPrice ??
+            null,
         };
       });
     }
@@ -606,7 +689,6 @@ export const TradePositionsPanel = ({
         openedAtSource: p.openedAt || p.createdAt ? "manual" : null,
         quote: null,
         sl: p.stopLoss ?? +(p.entry * 0.65).toFixed(2),
-        tp: p.takeProfit ?? +(p.entry * 1.75).toFixed(2),
       };
     });
   }, [
@@ -998,6 +1080,130 @@ export const TradePositionsPanel = ({
     });
   };
 
+  const handleProtectRow = async (p) => {
+    if (gatewayActionDisabled) {
+      notifyGatewayTradingUnavailable();
+      return;
+    }
+
+    if (brokerConfigured && !brokerAuthenticated) {
+      toast.push({
+        kind: "warn",
+        title: "IBKR login required",
+        body: "Authenticate the bridge before modifying live risk controls.",
+      });
+      return;
+    }
+
+    if (brokerConfigured && !accountId) {
+      toast.push({
+        kind: "warn",
+        title: "No broker account selected",
+        body: "The bridge is authenticated, but no IBKR account is active yet.",
+      });
+      return;
+    }
+
+    if (p._isLive && p._brokerPosition) {
+      setLiveConfirmError(null);
+      setLiveConfirmState({
+        title: `Protect ${p.ticker} ${p.contract}`,
+        detail: "Preview and synchronize a protective live stop for this broker position.",
+        confirmLabel: "SYNC LIVE STOP",
+        confirmTone: CSS_COLOR.amber,
+        lines: [
+          { label: "ACCOUNT", value: accountId || MISSING_VALUE },
+          { label: "SYMBOL", value: p.ticker },
+          { label: "CONTRACT", value: p.contract },
+          { label: "SIDE", value: p.side },
+          { label: "QTY", value: String(p.qty) },
+        ],
+        onConfirm: async () => {
+          const position = p._brokerPosition;
+          const referencePrice =
+            isFiniteNumber(position.marketPrice) && position.marketPrice > 0
+              ? position.marketPrice
+              : position.averagePrice;
+          if (!isFiniteNumber(referencePrice) || referencePrice <= 0) {
+            throw new Error("A live mark or average price is required before syncing a stop.");
+          }
+
+          const stopPrice = +(
+            position.quantity >= 0
+              ? referencePrice * 0.8
+              : referencePrice * 1.2
+          ).toFixed(2);
+          const stopRequest = buildStopOrderRequest(position, stopPrice);
+          const preview = await previewOrderMutation.mutateAsync({
+            data: stopRequest,
+          });
+          const existingStop = findExistingStopOrder(position);
+
+          if (existingStop && preview?.orderPayload) {
+            await replaceOrderMutation.mutateAsync({
+              orderId: existingStop.id,
+              data: {
+                accountId,
+                mode: environment,
+                confirm: true,
+                order: preview.orderPayload,
+              },
+            });
+          } else {
+            await placeOrderMutation.mutateAsync({
+              data: {
+                ...stopRequest,
+                confirm: true,
+              },
+            });
+          }
+
+          toast.push({
+            kind: "success",
+            title: "Stop updated",
+            body: `${p.ticker} ${p.contract} protected near ${formatPriceValue(stopPrice)}.`,
+          });
+        },
+      });
+      return;
+    }
+
+    if (p._isUser) {
+      pos.updateStops(p._id, {
+        stopLoss: +(p.entry * 0.8).toFixed(2),
+        takeProfit: +(p.entry * 1.5).toFixed(2),
+      });
+      toast.push({
+        kind: "success",
+        title: "Stops applied",
+        body: `${p.ticker} ${p.contract} local risk levels updated.`,
+      });
+    }
+  };
+
+  const handleRollRow = (p) => {
+    if (gatewayActionDisabled) {
+      notifyGatewayTradingUnavailable();
+      return;
+    }
+
+    if (p._isUser && p._position?.kind === "option") {
+      pos.rollPosition(p._id);
+      toast.push({
+        kind: "success",
+        title: "Position rolled",
+        body: `${p.ticker} ${p.contract} extended to the next cycle.`,
+      });
+      return;
+    }
+
+    toast.push({
+      kind: "info",
+      title: "Roll workflow disabled",
+      body: "Live multi-leg rolls still need the broker roll workflow.",
+    });
+  };
+
   const handleRollAll = () => {
     if (gatewayActionDisabled) {
       notifyGatewayTradingUnavailable();
@@ -1326,6 +1532,7 @@ export const TradePositionsPanel = ({
               {openPositions.map((p, rowIndex) => {
                 const isLoadable = Boolean(p.optionLoadContract);
                 const closeDisabled = gatewayActionDisabled;
+                const protectDisabled = gatewayActionDisabled;
                 const display = tradePositionDisplay(p);
                 const spread = formatTradeSpread(display.quote);
                 const quoteFreshness = formatPositionQuoteFreshnessLabel(display.quote);
@@ -1337,10 +1544,16 @@ export const TradePositionsPanel = ({
                 const markText = isFiniteNumber(p.mark) ? formatPriceValue(p.mark) : MISSING_VALUE;
                 const openedText = display.openedLabel || MISSING_VALUE;
                 const management = tradeManagementForPosition(p, liveOrders);
+                const linkedWorkingOrders = tradePositionOrders(p, liveOrders).filter(
+                  (order) => !FINAL_ORDER_STATUSES.has(order.status),
+                );
+                const firstLinkedOrder = linkedWorkingOrders[0] || null;
                 const managementTitle = [
                   management.stop ? `SL ${tradeManagementPrice(management.stop)}` : null,
                   management.trail ? `TRL ${tradeManagementPrice(management.trail)}` : null,
-                  management.target ? `TP ${tradeManagementPrice(management.target)}` : null,
+                  isFiniteNumber(management.riskDistancePct)
+                    ? `Distance ${tradeManagementDistanceLabel(management)}`
+                    : null,
                   management.riskAmount != null
                     ? `Risk $${management.riskAmount.toFixed(0)}`
                     : null,
@@ -1349,6 +1562,13 @@ export const TradePositionsPanel = ({
                 const rowBackground = rowIndex % 2
                   ? cssColorMix(CSS_COLOR.bg1, 72)
                   : "transparent";
+                const loadPositionIntoTicket = () => {
+                  if (!isLoadable) return;
+                  onLoadPosition({
+                    ticker: p.ticker,
+                    ...p.optionLoadContract,
+                  });
+                };
                 return (
                   <AppTooltip key={p._id} content={
                       isLoadable
@@ -1358,12 +1578,7 @@ export const TradePositionsPanel = ({
 	                    key={p._id}
                       role="row"
                     onClick={() => {
-                      if (isLoadable) {
-                        onLoadPosition({
-                          ticker: p.ticker,
-                          ...p.optionLoadContract,
-                        });
-                      }
+                      loadPositionIntoTicket();
                     }}
 	                    style={{
 	                      display: "grid",
@@ -1466,37 +1681,31 @@ export const TradePositionsPanel = ({
                       title={managementTitle}
                       style={tradeOpenPositionCellStyle(
                         "stop",
-                        management.stop ? tradeManagementTone(management) : CSS_COLOR.textDim,
+                        management.stop
+                          ? management.trail
+                            ? CSS_COLOR.textSec
+                            : tradeManagementTone(management)
+                          : CSS_COLOR.textDim,
                       )}
                     >
-                      {tradeManagementPrice(management.stop)}
+                      <TradeManagementLevelCell
+                        value={tradeManagementPrice(management.stop)}
+                        badge={tradeManagementStopBadge(management)}
+                        badgeTone={tradeManagementBadgeTone(management)}
+                      />
                     </span>
                     <span
                       title={managementTitle}
                       style={tradeOpenPositionCellStyle(
                         "trail",
-                        management.trail ? CSS_COLOR.textSec : CSS_COLOR.textDim,
+                        management.trail ? tradeManagementTone(management) : CSS_COLOR.textDim,
                       )}
                     >
-                      {tradeManagementPrice(management.trail)}
-                    </span>
-                    <span
-                      title={managementTitle}
-                      style={tradeOpenPositionCellStyle(
-                        "target",
-                        management.target ? CSS_COLOR.textSec : CSS_COLOR.textDim,
-                      )}
-                    >
-                      {tradeManagementPrice(management.target)}
-                    </span>
-                    <span
-                      title={managementTitle}
-                      style={tradeOpenPositionCellStyle(
-                        "riskDistance",
-                        management.stop ? tradeManagementTone(management) : CSS_COLOR.textDim,
-                      )}
-                    >
-                      {tradeManagementDistance(management)}
+                      <TradeManagementLevelCell
+                        value={tradeManagementPrice(management.trail)}
+                        badge={tradeManagementTrailBadge(management)}
+                        badgeTone={tradeManagementBadgeTone(management)}
+                      />
                     </span>
                     <span style={tradeOpenPositionCellStyle("pnl", tradePnlTone(p.pnl))}>
                       {tradeSignedMoney(p.pnl)}
@@ -1510,40 +1719,138 @@ export const TradePositionsPanel = ({
                         justifyContent: "center",
                       })}
                     >
-                      <AppTooltip content={
-                        closeDisabled
-                          ? gatewayTradingMessage
-                          : p._isLive
-                            ? "Submit broker close-out order"
-                            : "Close position"
-                      }>
-                        <button
-                          disabled={closeDisabled}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (closeDisabled) {
-                              notifyGatewayTradingUnavailable();
-                              return;
-                            }
-                            closeRow(p);
-                          }}
-                          style={{
-                            background: "transparent",
-                            border: `1px solid ${cssColorMix(CSS_COLOR.red, 25)}`,
-                            color: CSS_COLOR.red,
-                            fontSize: textSize("caption"),
-                            fontFamily: T.sans,
-                            fontWeight: FONT_WEIGHTS.regular,
-                            borderRadius: dim(2),
-                            cursor: closeDisabled ? "not-allowed" : "pointer",
-                            padding: sp("1px 0"),
-                            lineHeight: 1,
-                            opacity: closeDisabled ? 0.45 : 1,
-                          }}
-                        >
-                          ✕
-                        </button>
-                      </AppTooltip>
+                      <PositionRowActionMenu
+                        testId="trade-position-row-action-menu"
+                        symbol={p.ticker}
+                        contractLabel={p.contract}
+                        sideLabel={p.side}
+                        statusText={management.statusLabel}
+                        primaryAction={{
+                          id: "trade",
+                          label: "Trade",
+                          description: isLoadable
+                            ? `Load ${p.ticker} ${p.contract} into the order ticket`
+                            : "Equity position ticket loading is not wired from this panel yet",
+                          Icon: Ticket,
+                          onSelect: loadPositionIntoTicket,
+                          disabled: !isLoadable,
+                        }}
+                        quoteItems={[
+                          {
+                            label: "Mark",
+                            value: markText,
+                          },
+                          {
+                            label: "Bid / Ask",
+                            value: `${bidText} / ${askText}`,
+                          },
+                          {
+                            label: "P&L",
+                            value: tradeSignedMoney(p.pnl),
+                            tone: tradePnlTone(p.pnl),
+                          },
+                          {
+                            label: "Stop",
+                            value: tradeManagementPrice(management.stop),
+                            tone: management.stop ? tradeManagementTone(management) : CSS_COLOR.textMuted,
+                          },
+                        ]}
+                        utilityActions={[
+                          {
+                            id: "orders",
+                            label: linkedWorkingOrders.length
+                              ? `${linkedWorkingOrders.length} order${linkedWorkingOrders.length === 1 ? "" : "s"}`
+                              : "Orders",
+                            description: linkedWorkingOrders.length
+                              ? "Open the live order blotter"
+                              : "No linked working orders",
+                            Icon: ClipboardList,
+                            onSelect: () => setTab("orders"),
+                            disabled: !linkedWorkingOrders.length,
+                            tone: "warning",
+                          },
+                          {
+                            id: "cancel",
+                            label: "Cancel",
+                            description: firstLinkedOrder
+                              ? `Cancel ${firstLinkedOrder.type} ${firstLinkedOrder.side} order`
+                              : "No linked order to cancel",
+                            Icon: XCircle,
+                            onSelect: () => handleCancelOrder(firstLinkedOrder),
+                            disabled: !firstLinkedOrder || gatewayActionDisabled,
+                            tone: "danger",
+                          },
+                          {
+                            id: "protect",
+                            label: "Protect",
+                            description: protectDisabled
+                              ? gatewayTradingMessage
+                              : "Preview and sync a protective stop",
+                            Icon: ShieldCheck,
+                            onSelect: () => handleProtectRow(p),
+                            disabled: protectDisabled,
+                            tone: "success",
+                          },
+                          {
+                            id: "quote",
+                            label: "Quote",
+                            description: [spread, quoteFreshness].filter(Boolean).join(" · ") || "Quote unavailable",
+                            Icon: CircleDollarSign,
+                            disabled: true,
+                            tone: "info",
+                          },
+                          {
+                            id: "risk",
+                            label: "Risk",
+                            description: managementTitle || "No risk controls found",
+                            Icon: ShieldCheck,
+                            disabled: true,
+                            tone: management.status === "breached" ? "danger" : "warning",
+                          },
+                          {
+                            id: "alert",
+                            label: "Alert",
+                            description: "Price alerts are not wired to trade positions yet",
+                            Icon: Bell,
+                            disabled: true,
+                            tone: "warning",
+                          },
+                        ]}
+                        managementActions={[
+                          {
+                            id: "adjust",
+                            label: "Adjust",
+                            description: "Manual stop and target adjustment is not wired yet",
+                            Icon: SlidersHorizontal,
+                            disabled: true,
+                            tone: "warning",
+                          },
+                          {
+                            id: "close",
+                            label: "Close",
+                            description: closeDisabled
+                              ? gatewayTradingMessage
+                              : p._isLive
+                                ? "Submit broker close-out order"
+                                : "Close local position",
+                            Icon: XCircle,
+                            onSelect: () => closeRow(p),
+                            disabled: closeDisabled,
+                            tone: "danger",
+                          },
+                          {
+                            id: "roll",
+                            label: "Roll",
+                            description: p._isUser && p._position?.kind === "option"
+                              ? "Roll this local option position"
+                              : "Live roll workflow is not wired yet",
+                            Icon: RotateCcw,
+                            onSelect: () => handleRollRow(p),
+                            disabled: closeDisabled || !(p._isUser && p._position?.kind === "option"),
+                            tone: "info",
+                          },
+                        ]}
+                      />
                     </span>
                   </div></AppTooltip>
                 );

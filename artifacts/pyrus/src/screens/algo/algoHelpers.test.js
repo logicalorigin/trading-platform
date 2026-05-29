@@ -935,7 +935,7 @@ test("algo account ledger rows can be scoped to the focused deployment without r
   );
 });
 
-test("algo runtime positions borrow shadow projection quotes without changing membership", () => {
+test("algo account position merge keeps shadow ledger membership authoritative", () => {
   const runtimeRows = buildAlgoAccountPositionRows({
     positions: [
       {
@@ -1031,7 +1031,7 @@ test("algo runtime positions borrow shadow projection quotes without changing me
     accountRows,
   });
 
-  assert.deepEqual(merged.map((row) => row.symbol), ["HUT", "SMCI"]);
+  assert.deepEqual(merged.map((row) => row.symbol), ["HUT", "AAPL"]);
   assert.equal(runtimeRows[0].underlyingMarket.bid, null);
   assert.equal(runtimeRows[0].underlyingMarket.ask, null);
   assert.equal(merged[0].id, "shadow-hut");
@@ -1044,8 +1044,8 @@ test("algo runtime positions borrow shadow projection quotes without changing me
   assert.equal(merged[0].underlyingMarket.ask, 12.35);
   assert.equal(merged[0].marketValue, 1670);
   assert.equal(merged[0].automationContext.entryPrice, 7.7);
-  assert.equal(merged[1].id, runtimeRows[1].id);
-  assert.equal(merged[1].optionQuote.bid, null);
+  assert.equal(merged[1].id, "shadow-aapl");
+  assert.equal(merged[1].optionQuote.bid, 1);
 
   const ambiguousSymbolOnlyMerge = mergeAlgoRuntimeAndAccountPositionRows({
     runtimeRows: [
@@ -1082,8 +1082,12 @@ test("algo runtime positions borrow shadow projection quotes without changing me
     ],
   });
 
-  assert.equal(ambiguousSymbolOnlyMerge[0].id, "runtime-symbol-only");
-  assert.equal(ambiguousSymbolOnlyMerge[0].optionQuote.bid, null);
+  assert.deepEqual(
+    ambiguousSymbolOnlyMerge.map((row) => row.id),
+    ["shadow-hut-call", "shadow-hut-put"],
+  );
+  assert.equal(ambiguousSymbolOnlyMerge[0].optionQuote.bid, 15);
+  assert.equal(ambiguousSymbolOnlyMerge[1].optionQuote.bid, 1);
 });
 
 test("algo profile UI exposes and saves expanded strategy and exit fields", () => {
@@ -1341,13 +1345,14 @@ test("algo operations views surface contract quote and greeks fields", () => {
   assert.match(positionsSource, /PositionsPanel/);
   assert.match(positionsSource, /buildAlgoAccountPositionRows/);
   assert.match(positionsSource, /accountPositionsQuery/);
-  assert.match(positionsSource, /Runtime positions \+ shadow projection quotes/);
+  assert.match(positionsSource, /Shadow account positions \+ live option quotes/);
+  assert.match(positionsSource, /Runtime positions \+ live option quotes/);
   assert.match(positionsSource, /filterAccountPositionRowsForDeployment/);
-  assert.match(positionsSource, /mergeAlgoRuntimeAndAccountPositionRows/);
+  assert.match(positionsSource, /hasAccountPositionsQuery\s*\?\s*scopedAccountRows\s*:\s*runtimeRows/);
+  assert.doesNotMatch(positionsSource, /mergeAlgoRuntimeAndAccountPositionRows/);
   assert.match(positionsSource, /liveOptionQuotesEnabled=\{true\}/);
   assert.match(positionsSource, /streamLiveOptionQuotes=\{true\}/);
   assert.match(positionsSource, /hasAccountPositionsQuery/);
-  assert.match(positionsSource, /scopedAccountRows\.length\s*>\s*0/);
   assert.match(positionsSource, /useStoredOptionQuoteSnapshotVersion/);
   assert.match(positionsSource, /showFilters=\{false\}/);
   assert.match(accountPositionsSource, /column\.id === "quote"/);

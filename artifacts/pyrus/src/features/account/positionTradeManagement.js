@@ -123,9 +123,35 @@ const brokerLevel = ({ row, options, kind, mark }) => {
 const managementTradeState = (automation = {}) =>
   automation.tradeManagement || automation.management || automation.stop || {};
 
+const automationTargetKind = (automation = {}) =>
+  normalizeText(managementTradeState(automation).targetKind ?? automation.targetKind);
+
+const automationTargetIsTrailActivation = (automation = {}) =>
+  automationTargetKind(automation) === "trail_activation";
+
+const automationTrailIsActive = (automation = {}) => {
+  const state = managementTradeState(automation);
+  return (
+    state.trailActive === true ||
+    firstFiniteNumber(state.trailStopPrice) != null ||
+    (firstFiniteNumber(automation.entryPrice) != null &&
+      firstFiniteNumber(automation.stopPrice) != null &&
+      firstFiniteNumber(automation.stopPrice) > firstFiniteNumber(automation.entryPrice))
+  );
+};
+
 const automationStopLevel = (automation = {}) => {
   const state = managementTradeState(automation);
-  const price = firstFiniteNumber(state.stopPrice, automation.stopPrice);
+  const trailActive = automationTrailIsActive(automation);
+  const price = firstFiniteNumber(
+    state.hardStopPrice,
+    automation.stopLossPrice,
+    state.stopLossPrice,
+    trailActive ? null : state.stopPrice,
+    trailActive ? null : automation.stopPrice,
+    state.stopPrice,
+    automation.stopPrice,
+  );
   return price == null
     ? null
     : {
@@ -137,14 +163,30 @@ const automationStopLevel = (automation = {}) => {
 
 const automationTrailLevel = (automation = {}) => {
   const state = managementTradeState(automation);
-  const active =
-    state.trailActive === true ||
-    firstFiniteNumber(state.trailStopPrice) != null ||
-    (firstFiniteNumber(automation.entryPrice) != null &&
-      firstFiniteNumber(automation.stopPrice) != null &&
-      firstFiniteNumber(automation.stopPrice) > firstFiniteNumber(automation.entryPrice));
-  if (!active) return null;
+  if (!automationTrailIsActive(automation)) return null;
   const price = firstFiniteNumber(state.trailStopPrice, automation.stopPrice);
+  return price == null
+    ? null
+    : {
+        price,
+        source: "automation",
+        detail: state,
+      };
+};
+
+const automationTargetLevel = (automation = {}) => {
+  if (automationTargetIsTrailActivation(automation)) {
+    return null;
+  }
+  const state = managementTradeState(automation);
+  const price = firstFiniteNumber(
+    state.takeProfitPrice,
+    state.targetPrice,
+    state.profitTargetPrice,
+    automation.takeProfitPrice,
+    automation.targetPrice,
+    automation.profitTargetPrice,
+  );
   return price == null
     ? null
     : {
@@ -195,21 +237,27 @@ export const buildPositionTradeManagement = (row = {}, options = {}) => {
     automationStopLevel(automation) ??
     localLevel(options.localStopLoss ?? row?.stopLoss ?? row?.sl, "local");
   const trail = automationTrailLevel(automation);
+  const protectiveStop = trail ?? stop;
   const target =
     brokerTarget ??
-    localLevel(options.localTakeProfit ?? row?.takeProfit ?? row?.tp, "local");
+    automationTargetLevel(automation) ??
+    localLevel(
+      options.localTakeProfit ??
+        (automationTargetIsTrailActivation(automation) ? null : row?.takeProfit ?? row?.tp),
+      "local",
+    );
   const riskDistancePct = distancePctFromStop({
     mark,
-    stopPrice: stop?.price,
+    stopPrice: protectiveStop?.price,
     short,
   });
   const riskAmount = riskAmountFromStop({
     mark,
-    stopPrice: stop?.price,
+    stopPrice: protectiveStop?.price,
     quantity,
     multiplier,
   });
-  const status = stop
+  const status = protectiveStop
     ? riskDistancePct != null && riskDistancePct <= 0
       ? "breached"
       : "protected"
@@ -220,12 +268,13 @@ export const buildPositionTradeManagement = (row = {}, options = {}) => {
   return {
     stop,
     trail,
+    protectiveStop,
     target,
     riskDistancePct,
     riskAmount,
     status,
     statusLabel: TRADE_MANAGEMENT_STATUS[status] ?? TRADE_MANAGEMENT_STATUS.unknown,
-    source: stop?.source ?? target?.source ?? trail?.source ?? null,
+    source: protectiveStop?.source ?? target?.source ?? null,
     sortValues: {
       stop: stop?.price ?? null,
       trail: trail?.price ?? null,

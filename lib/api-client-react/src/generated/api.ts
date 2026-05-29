@@ -67,6 +67,7 @@ import type {
   DiagnosticThresholdsResponse,
   DiagnosticThresholdsUpdateRequest,
   DiagnosticsLatestResponse,
+  EnableAlgoDeploymentParams,
   EnsureDefaultSignalOptionsPaperDeploymentBody,
   EvaluateSignalMonitorMatrixRequest,
   EvaluateSignalMonitorRequest,
@@ -151,6 +152,7 @@ import type {
   Order,
   OrderPreview,
   OrdersResponse,
+  PauseAlgoDeploymentParams,
   PineScriptRecord,
   PineScriptsResponse,
   PlaceOrderRequest,
@@ -10064,17 +10066,26 @@ export const useCreateAlgoDeployment = <TError = ErrorType<unknown>,
 /**
  * @summary Enable an algo deployment
  */
-export const getEnableAlgoDeploymentUrl = (deploymentId: string,) => {
+export const getEnableAlgoDeploymentUrl = (deploymentId: string,
+    params?: EnableAlgoDeploymentParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/algo/deployments/${deploymentId}/enable`
+  return stringifiedParams.length > 0 ? `/api/algo/deployments/${deploymentId}/enable?${stringifiedParams}` : `/api/algo/deployments/${deploymentId}/enable`
 }
 
-export const enableAlgoDeployment = async (deploymentId: string, options?: RequestInit): Promise<AlgoDeployment> => {
+export const enableAlgoDeployment = async (deploymentId: string,
+    params?: EnableAlgoDeploymentParams, options?: RequestInit): Promise<AlgoDeployment> => {
 
-  return customFetch<AlgoDeployment>(getEnableAlgoDeploymentUrl(deploymentId),
+  return customFetch<AlgoDeployment>(getEnableAlgoDeploymentUrl(deploymentId,params),
   {
     ...options,
     method: 'POST'
@@ -10087,8 +10098,8 @@ export const enableAlgoDeployment = async (deploymentId: string, options?: Reque
 
 
 export const getEnableAlgoDeploymentMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enableAlgoDeployment>>, TError,{deploymentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof enableAlgoDeployment>>, TError,{deploymentId: string}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enableAlgoDeployment>>, TError,{deploymentId: string;params?: EnableAlgoDeploymentParams}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof enableAlgoDeployment>>, TError,{deploymentId: string;params?: EnableAlgoDeploymentParams}, TContext> => {
 
 const mutationKey = ['enableAlgoDeployment'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -10100,10 +10111,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof enableAlgoDeployment>>, {deploymentId: string}> = (props) => {
-          const {deploymentId} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof enableAlgoDeployment>>, {deploymentId: string;params?: EnableAlgoDeploymentParams}> = (props) => {
+          const {deploymentId,params} = props ?? {};
 
-          return  enableAlgoDeployment(deploymentId,requestOptions)
+          return  enableAlgoDeployment(deploymentId,params,requestOptions)
         }
 
 
@@ -10121,11 +10132,11 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
  * @summary Enable an algo deployment
  */
 export const useEnableAlgoDeployment = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enableAlgoDeployment>>, TError,{deploymentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enableAlgoDeployment>>, TError,{deploymentId: string;params?: EnableAlgoDeploymentParams}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof enableAlgoDeployment>>,
         TError,
-        {deploymentId: string},
+        {deploymentId: string;params?: EnableAlgoDeploymentParams},
         TContext
       > => {
       return useMutation(getEnableAlgoDeploymentMutationOptions(options));
@@ -10134,17 +10145,26 @@ export const useEnableAlgoDeployment = <TError = ErrorType<unknown>,
 /**
  * @summary Pause an algo deployment
  */
-export const getPauseAlgoDeploymentUrl = (deploymentId: string,) => {
+export const getPauseAlgoDeploymentUrl = (deploymentId: string,
+    params?: PauseAlgoDeploymentParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/algo/deployments/${deploymentId}/pause`
+  return stringifiedParams.length > 0 ? `/api/algo/deployments/${deploymentId}/pause?${stringifiedParams}` : `/api/algo/deployments/${deploymentId}/pause`
 }
 
-export const pauseAlgoDeployment = async (deploymentId: string, options?: RequestInit): Promise<AlgoDeployment> => {
+export const pauseAlgoDeployment = async (deploymentId: string,
+    params?: PauseAlgoDeploymentParams, options?: RequestInit): Promise<AlgoDeployment> => {
 
-  return customFetch<AlgoDeployment>(getPauseAlgoDeploymentUrl(deploymentId),
+  return customFetch<AlgoDeployment>(getPauseAlgoDeploymentUrl(deploymentId,params),
   {
     ...options,
     method: 'POST'
@@ -10157,8 +10177,8 @@ export const pauseAlgoDeployment = async (deploymentId: string, options?: Reques
 
 
 export const getPauseAlgoDeploymentMutationOptions = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof pauseAlgoDeployment>>, TError,{deploymentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof pauseAlgoDeployment>>, TError,{deploymentId: string}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof pauseAlgoDeployment>>, TError,{deploymentId: string;params?: PauseAlgoDeploymentParams}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof pauseAlgoDeployment>>, TError,{deploymentId: string;params?: PauseAlgoDeploymentParams}, TContext> => {
 
 const mutationKey = ['pauseAlgoDeployment'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -10170,10 +10190,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof pauseAlgoDeployment>>, {deploymentId: string}> = (props) => {
-          const {deploymentId} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof pauseAlgoDeployment>>, {deploymentId: string;params?: PauseAlgoDeploymentParams}> = (props) => {
+          const {deploymentId,params} = props ?? {};
 
-          return  pauseAlgoDeployment(deploymentId,requestOptions)
+          return  pauseAlgoDeployment(deploymentId,params,requestOptions)
         }
 
 
@@ -10191,11 +10211,11 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
  * @summary Pause an algo deployment
  */
 export const usePauseAlgoDeployment = <TError = ErrorType<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof pauseAlgoDeployment>>, TError,{deploymentId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof pauseAlgoDeployment>>, TError,{deploymentId: string;params?: PauseAlgoDeploymentParams}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof pauseAlgoDeployment>>,
         TError,
-        {deploymentId: string},
+        {deploymentId: string;params?: PauseAlgoDeploymentParams},
         TContext
       > => {
       return useMutation(getPauseAlgoDeploymentMutationOptions(options));

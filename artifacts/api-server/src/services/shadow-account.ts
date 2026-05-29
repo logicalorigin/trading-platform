@@ -1644,6 +1644,7 @@ function buildShadowAutomationContext(input: {
   position: ShadowPositionRow;
   sourceOrder?: ShadowOrderRow | null;
   latestEvent?: ExecutionEvent | null;
+  peakMarkPrice?: number | null;
 }) {
   const sourceOrder = input.sourceOrder ?? null;
   const latestEvent = input.latestEvent ?? null;
@@ -1659,23 +1660,82 @@ function buildShadowAutomationContext(input: {
   const eventCandidate = readRecord(eventPayload.candidate) ?? {};
   const sourceOrderPlan = readRecord(sourcePayload.orderPlan) ?? {};
   const eventStop = readRecord(eventPayload.stop) ?? {};
+  const sourceProfile = readRecord(sourcePayload.profile) ?? {};
+  const eventProfile = readRecord(eventPayload.profile) ?? {};
+  const sourceExitPolicy = readRecord(sourceProfile.exitPolicy) ?? {};
+  const eventExitPolicy = readRecord(eventProfile.exitPolicy) ?? {};
   const signalQuality = firstRecord(
     eventPosition.signalQuality,
     sourcePosition.signalQuality,
     eventCandidate.signalQuality,
     sourceCandidate.signalQuality,
   );
+  const profilePayload =
+    Object.keys(eventProfile).length > 0
+      ? eventProfile
+      : Object.keys(sourceProfile).length > 0
+        ? sourceProfile
+        : null;
+  const entryPrice =
+    toNumber(eventPosition.entryPrice) ??
+    toNumber(sourcePosition.entryPrice) ??
+    toNumber(input.position.averageCost);
+  const eventStopPrice =
+    toNumber(eventStop.stopPrice) ??
+    toNumber(eventPosition.stopPrice) ??
+    toNumber(sourcePosition.stopPrice);
+  const trailActivationPct =
+    toNumber(eventStop.trailActivationPct) ??
+    toNumber(eventExitPolicy.trailActivationPct) ??
+    toNumber(sourceExitPolicy.trailActivationPct);
+  const trailActivationPrice =
+    entryPrice != null && trailActivationPct != null
+      ? cents(entryPrice * (1 + trailActivationPct / 100))
+      : null;
+  const takeProfitPrice =
+    toNumber(eventStop.takeProfitPrice) ??
+    toNumber(eventStop.profitTargetPrice) ??
+    toNumber(eventStop.targetPrice) ??
+    toNumber(eventPosition.takeProfitPrice) ??
+    toNumber(eventPosition.profitTargetPrice) ??
+    toNumber(eventPosition.targetPrice) ??
+    toNumber(sourcePosition.takeProfitPrice) ??
+    toNumber(sourcePosition.profitTargetPrice) ??
+    toNumber(sourcePosition.targetPrice) ??
+    toNumber(sourceOrderPlan.takeProfitPrice) ??
+    toNumber(sourceOrderPlan.profitTargetPrice) ??
+    toNumber(sourceOrderPlan.targetPrice);
+  const markPrice = toNumber(input.position.mark);
+  const peakPriceCandidates = [
+    toNumber(input.peakMarkPrice),
+    toNumber(eventPosition.peakPrice),
+    toNumber(sourcePosition.peakPrice),
+    markPrice,
+  ].filter((value): value is number => value != null);
+  const peakPrice = peakPriceCandidates.length ? Math.max(...peakPriceCandidates) : null;
+  const displayStop =
+    profilePayload && entryPrice != null && markPrice != null && peakPrice != null
+      ? computeSignalOptionsPositionStop({
+          entryPrice,
+          peakPrice,
+          markPrice,
+          profile: resolveSignalOptionsExecutionProfile(profilePayload),
+        })
+      : null;
+  const hardStopPrice =
+    displayStop?.hardStopPrice ?? toNumber(eventStop.hardStopPrice) ?? eventStopPrice;
+  const stopPrice = displayStop?.stopPrice ?? eventStopPrice;
+  const trailStopPrice = displayStop?.trailStopPrice ?? toNumber(eventStop.trailStopPrice);
+  const trailActive = displayStop?.trailActive ?? eventStop.trailActive === true;
 
   return {
-    entryPrice:
-      toNumber(eventPosition.entryPrice) ??
-      toNumber(sourcePosition.entryPrice) ??
-      toNumber(input.position.averageCost),
-    peakPrice: toNumber(eventPosition.peakPrice) ?? toNumber(sourcePosition.peakPrice),
-    stopPrice:
-      toNumber(eventStop.stopPrice) ??
-      toNumber(eventPosition.stopPrice) ??
-      toNumber(sourcePosition.stopPrice),
+    entryPrice,
+    peakPrice,
+    stopPrice,
+    stopLossPrice: hardStopPrice,
+    targetPrice: takeProfitPrice,
+    takeProfitPrice,
+    trailActivationPrice,
     premiumAtRisk:
       toNumber(eventPosition.premiumAtRisk) ??
       toNumber(sourcePosition.premiumAtRisk) ??
@@ -1701,12 +1761,15 @@ function buildShadowAutomationContext(input: {
     signalReasons: Array.isArray(signalQuality.reasons) ? signalQuality.reasons : [],
     tradeManagement: {
       sourceEventId: latestEvent?.id ?? sourceOrder?.sourceEventId ?? null,
-      hardStopPrice: toNumber(eventStop.hardStopPrice),
-      trailActive: eventStop.trailActive === true,
-      trailStopPrice: toNumber(eventStop.trailStopPrice),
-      givebackPct: toNumber(eventStop.givebackPct),
-      returnPct: toNumber(eventStop.returnPct),
-      markReturnPct: toNumber(eventStop.markReturnPct),
+      hardStopPrice,
+      trailActivationPct,
+      trailActivationPrice,
+      targetKind: takeProfitPrice != null ? "take_profit" : null,
+      trailActive,
+      trailStopPrice,
+      givebackPct: displayStop?.givebackPct ?? toNumber(eventStop.givebackPct),
+      returnPct: displayStop?.returnPct ?? toNumber(eventStop.returnPct),
+      markReturnPct: displayStop?.markReturnPct ?? toNumber(eventStop.markReturnPct),
       barsSinceEntry: toNumber(eventStop.barsSinceEntry),
     },
   };
@@ -3354,6 +3417,38 @@ async function readShadowPositionPeakMarkPrice(
     toNumber(row?.peak) ?? 0,
     toNumber(position.averageCost) ?? 0,
   );
+}
+
+async function readShadowPositionPeakMarkPrices(
+  positions: Pick<ShadowPositionRow, "id" | "averageCost">[],
+) {
+  if (!positions.length) {
+    return new Map<string, number>();
+  }
+  const rows = await db
+    .select({
+      positionId: shadowPositionMarksTable.positionId,
+      peak: sql<string | null>`max(${shadowPositionMarksTable.mark})`,
+    })
+    .from(shadowPositionMarksTable)
+    .where(
+      inArray(
+        shadowPositionMarksTable.positionId,
+        positions.map((position) => position.id),
+      ),
+    )
+    .groupBy(shadowPositionMarksTable.positionId);
+  const averageCostById = new Map(
+    positions.map((position) => [position.id, toNumber(position.averageCost) ?? 0]),
+  );
+  const peakById = new Map<string, number>();
+  for (const row of rows) {
+    peakById.set(
+      row.positionId,
+      Math.max(toNumber(row.peak) ?? 0, averageCostById.get(row.positionId) ?? 0),
+    );
+  }
+  return peakById;
 }
 
 function signalOptionsShadowQuotePayload(input: {
@@ -5800,6 +5895,7 @@ export async function getShadowAccountPositions(input: {
 	    optionQuoteByProviderContractId,
 	    { fetchMissingOptionQuotes: includeLiveQuotes },
 	  );
+  const peakMarkByPositionId = await readShadowPositionPeakMarkPrices(filtered);
   const rows = filtered.map((position) => {
     const quantity = toNumber(position.quantity) ?? 0;
     const averageCost = toNumber(position.averageCost) ?? 0;
@@ -5840,6 +5936,7 @@ export async function getShadowAccountPositions(input: {
 	      position,
 	      sourceOrder,
 	      latestEvent: automationManagementEvents.get(position.positionKey),
+      peakMarkPrice: peakMarkByPositionId.get(position.id) ?? null,
     });
     const automationEventOptionQuote =
       responseProviderContractId &&
@@ -5993,6 +6090,8 @@ export async function getShadowAccountPositions(input: {
 	                    },
 	            })
 	          : null,
+      stopLoss: automationContext?.stopLossPrice ?? automationContext?.stopPrice ?? null,
+      takeProfit: automationContext?.takeProfitPrice ?? automationContext?.targetPrice ?? null,
       ...(automationContext ? { automationContext } : {}),
       ...attribution,
     };
@@ -10178,6 +10277,7 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   isSignalOptionsAutomationMirrorEvent,
   shouldRepairSignalOptionsAutomationMirrors,
   repairSignalOptionsAutomationMirrorsForRead,
+  buildShadowAutomationContext,
   resolveHistoricalBackfillExpirationExitPrice,
   shadowPositionKeyForOrder,
   shadowPositionKeysForOrders,
@@ -11254,6 +11354,12 @@ async function recordShadowAutomationEntry(
     toNumber(payload.fillPrice);
   const quantity = toNumber(orderPlan.quantity) ?? toNumber(position?.quantity);
   if (!symbol || !contract || price == null || !quantity) {
+    return null;
+  }
+  if (
+    isLiveShadowAutomationPayload(payload) &&
+    !isShadowOptionTradingSession(event.occurredAt, contract)
+  ) {
     return null;
   }
   return placeShadowOrder({

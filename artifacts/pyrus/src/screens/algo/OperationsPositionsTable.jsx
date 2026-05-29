@@ -10,7 +10,6 @@ import {
   buildAlgoAccountPositionsResponse,
   collectAlgoRuntimeProviderContractIds,
   filterAccountPositionRowsForDeployment,
-  mergeAlgoRuntimeAndAccountPositionRows,
 } from "./algoAccountPositions";
 
 export const OperationsPositionsTable = ({
@@ -53,14 +52,12 @@ export const OperationsPositionsTable = ({
     quoteVersion,
     symbolIndex,
   ]);
-  const accountQueryHasRows = scopedAccountRows.length > 0;
   const rows = useMemo(
     () =>
-      mergeAlgoRuntimeAndAccountPositionRows({
-        runtimeRows,
-        accountRows: scopedAccountRows,
-      }),
-    [runtimeRows, scopedAccountRows],
+      hasAccountPositionsQuery
+        ? scopedAccountRows
+        : runtimeRows,
+    [hasAccountPositionsQuery, runtimeRows, scopedAccountRows],
   );
   const response = useMemo(
     () => buildAlgoAccountPositionsResponse(rows),
@@ -105,8 +102,8 @@ export const OperationsPositionsTable = ({
         onJumpToChart={(symbol) => setAlgoFocus(symbol, "position")}
         onPositionSelect={(row) => setAlgoFocus(row?.symbol, "position")}
         rightRail={
-          accountQueryHasRows
-            ? "Runtime positions + shadow projection quotes"
+          hasAccountPositionsQuery
+            ? "Shadow account positions + live option quotes"
             : "Runtime positions + live option quotes"
         }
         emptyBody="Open shadow option positions will appear here once an entry signal fills."

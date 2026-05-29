@@ -41,6 +41,10 @@ export interface AccountPositionRow {
   betaWeightedDelta: number | null;
   lots: AccountPositionLot[];
   openOrders: Order[];
+  /** Active stop-loss price for display and trade-management UI, when available. */
+  stopLoss?: number | null;
+  /** Active explicit take-profit price for display and trade-management UI, when available. */
+  takeProfit?: number | null;
   source: string;
   sourceType?: AccountPositionRowSourceType;
   strategyLabel?: string | null;

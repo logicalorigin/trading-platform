@@ -13,6 +13,10 @@ import {
 } from "./PositionsPanel.jsx";
 
 const source = readFileSync(new URL("./PositionsPanel.jsx", import.meta.url), "utf8");
+const rowActionMenuSource = readFileSync(
+  new URL("../../features/account/PositionRowActionMenu.jsx", import.meta.url),
+  "utf8",
+);
 const quoteStreamsSource = readFileSync(
   new URL("./PositionOptionQuoteStreams.jsx", import.meta.url),
   "utf8",
@@ -147,8 +151,6 @@ test("position table defaults keep quote, greeks, sparkline, and signal context 
     "quote",
     "stop",
     "trail",
-    "target",
-    "riskDistance",
     "day",
     "unrealized",
     "exposure",
@@ -165,12 +167,27 @@ test("position table defaults keep quote, greeks, sparkline, and signal context 
   assert.equal(getPositionTableColumns("algo").find((column) => column.id === "quote")?.label, "Bid / Ask");
   assert.equal(getPositionTableColumns("account").find((column) => column.id === "stop")?.label, "Stop");
   assert.equal(getPositionTableColumns("account").find((column) => column.id === "stop")?.shortLabel, "SL");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "stop")?.width, "clamp(52px, 5vw, 62px)");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "stop")?.minWidth, "52px");
   assert.equal(getPositionTableColumns("account").find((column) => column.id === "trail")?.shortLabel, "TRL");
-  assert.equal(getPositionTableColumns("account").find((column) => column.id === "target")?.shortLabel, "TP");
-  assert.equal(getPositionTableColumns("account").find((column) => column.id === "riskDistance")?.label, "Risk / Dist");
-  assert.equal(getPositionTableColumns("account").find((column) => column.id === "riskDistance")?.shortLabel, "DIST");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "trail")?.width, "clamp(52px, 5vw, 62px)");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "trail")?.minWidth, "52px");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "symbol")?.width, "clamp(136px, 14vw, 190px)");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "symbol")?.minWidth, "136px");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "quote")?.width, "clamp(90px, 9vw, 112px)");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "greeks")?.shortLabel, "Δ/θ");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "greeks")?.width, "clamp(50px, 5vw, 64px)");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "greeks")?.minWidth, "50px");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "signalContext")?.shortLabel, "Sig");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "signalContext")?.width, "clamp(66px, 7vw, 92px)");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "signalContext")?.minWidth, "66px");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "signalContext")?.align, "center");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "actions")?.width, "clamp(74px, 8vw, 90px)");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "actions")?.minWidth, "74px");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "target"), undefined);
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "riskDistance"), undefined);
   assert.equal(getPositionTableColumns("account").find((column) => column.id === "stop")?.groupEdge, "start");
-  assert.equal(getPositionTableColumns("account").find((column) => column.id === "riskDistance")?.groupEdge, "end");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "trail")?.groupEdge, "end");
   assert.match(source, /const DenseStackedValue/);
   assert.match(source, /column\.shortLabel \|\| column\.label/);
   assert.match(source, /const denseColumnBoundaryStyle/);
@@ -180,11 +197,35 @@ test("position table defaults keep quote, greeks, sparkline, and signal context 
   assert.match(source, /column\.id === "quote"/);
   assert.match(source, /column\.id === "stop"/);
   assert.match(source, /column\.id === "trail"/);
-  assert.match(source, /column\.id === "target"/);
-  assert.match(source, /column\.id === "riskDistance"/);
+  assert.doesNotMatch(source, /column\.id === "target"/);
+  assert.doesNotMatch(source, /column\.id === "riskDistance"/);
+  assert.match(source, /tradeManagementStopSubtext/);
+  assert.match(source, /tradeManagementTrailSubtext/);
+  assert.match(source, /formatTradeManagementDistanceBadge/);
+  assert.match(source, /tradeManagementDistanceTone/);
+  assert.match(source, /const POSITION_TABLE_ROW_HEIGHT = 34/);
+  assert.match(source, /const POSITION_TABLE_HEADER_HEIGHT = 24/);
+  assert.match(source, /const denseVisualAlign/);
+  assert.match(source, /const denseCellPadding/);
+  assert.match(source, /sp\("1px 2px"\)/);
+  assert.match(source, /textAlign: denseVisualAlign\(column\.align\)/);
+  assert.match(source, /textAlign: align === "right" \? "center" : align/);
+  assert.doesNotMatch(source, /sp\("2px 3px 2px 2px"\)/);
+  assert.doesNotMatch(source, /sp\("2px 3px"\)/);
+  assert.match(source, /const denseTableColumnStyle/);
+  assert.match(source, /style=\{denseTableColumnStyle\(column\)\}/);
+  assert.match(source, /tableLayout: "auto"/);
   assert.match(source, /column\.id === "greeks"/);
+  assert.match(source, /const DenseGreekCell/);
+  assert.match(source, /Δ\{delta\}/);
+  assert.match(source, /θ\{theta\}/);
+  assert.match(source, /<Zap size=\{11\}/);
+  assert.match(source, /PositionRowActionMenu/);
+  assert.match(source, /testId="account-position-row-action-menu"/);
   assert.match(source, /snapshotsBySymbol=\{tickerSnapshotsBySymbol\}/);
   assert.match(source, /data-testid="account-positions-table-scroll"/);
+  assert.match(source, /data-testid="account-positions-cash-row"/);
+  assert.match(source, /<DenseCashRow/);
   assert.match(source, /data-testid="account-positions-summary-row"/);
   assert.match(source, /denseSummaryCellStyle/);
   assert.match(source, /Cash \$\{cashSegment\.value\}/);
@@ -195,11 +236,37 @@ test("position table defaults keep quote, greeks, sparkline, and signal context 
   assert.doesNotMatch(source, /data-testid="account-position-context-strip"/);
 });
 
+test("position row action menu keeps trade and radial management affordances together", () => {
+  assert.match(rowActionMenuSource, /DropdownMenuTrigger asChild/);
+  assert.match(rowActionMenuSource, /data-testid="position-row-action-radial-menu"/);
+  assert.match(rowActionMenuSource, /data-testid="position-row-action-management-bar"/);
+  assert.match(rowActionMenuSource, /primaryAction/);
+  assert.match(rowActionMenuSource, /quoteItems/);
+  assert.match(rowActionMenuSource, /managementActions/);
+  assert.match(rowActionMenuSource, /background-color \$\{motionFast\}/);
+  assert.doesNotMatch(rowActionMenuSource, /transition:\s*["']all/);
+});
+
 test("position tables render bid ask under the column header without row labels", () => {
+  const densePriceBranch = source.slice(
+    source.indexOf('} else if (column.id === "price")'),
+    source.indexOf('} else if (column.id === "quote")'),
+  );
+  const denseQuoteBranch = source.slice(
+    source.indexOf('} else if (column.id === "quote")'),
+    source.indexOf('} else if (column.id === "stop")'),
+  );
+
   assert.match(source, /const formatPositionBidAskPair/);
   assert.match(source, /`\$\{formatSide\(quote\?\.bid\)\} \/ \$\{formatSide\(quote\?\.ask\)\}`/);
   assert.match(source, /const hasPositionBidAsk/);
   assert.match(source, /"Bid \/ Ask"/);
+  assert.match(densePriceBranch, /primary=\{formatAccountPrice\(markValue, 2, maskValues\)\}/);
+  assert.doesNotMatch(densePriceBranch, /secondary=/);
+  assert.doesNotMatch(densePriceBranch, /Last/);
+  assert.match(denseQuoteBranch, /primary=\{bidAsk\}/);
+  assert.doesNotMatch(denseQuoteBranch, /secondary=/);
+  assert.match(denseQuoteBranch, /title=\{\[bidAsk, quoteDetail\]\.filter\(Boolean\)\.join\(" · "\)\}/);
   assert.doesNotMatch(source, /`Bid \$\{formatSide/);
   assert.doesNotMatch(source, /label="Quote"/);
 });

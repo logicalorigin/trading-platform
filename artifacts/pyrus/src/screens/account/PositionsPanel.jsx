@@ -5,7 +5,19 @@ import {
   useMemo,
   useState,
 } from "react";
-import { ChevronDown, ChevronRight, LineChart } from "lucide-react";
+import {
+  Bell,
+  CircleDollarSign,
+  ClipboardList,
+  Eye,
+  Info,
+  RotateCcw,
+  ShieldCheck,
+  SlidersHorizontal,
+  Ticket,
+  XCircle,
+  Zap,
+} from "lucide-react";
 import {
   getStoredOptionQuoteSnapshot,
   useStoredOptionQuoteSnapshotVersion,
@@ -22,6 +34,7 @@ import {
   RADII,
   T,
   dim,
+  fs,
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
@@ -63,6 +76,7 @@ import {
   POSITION_TABLE_SURFACE_ACCOUNT,
   getPositionTableColumns,
 } from "../../features/account/positionTableColumns.js";
+import { PositionRowActionMenu } from "../../features/account/PositionRowActionMenu.jsx";
 import { useRuntimeTickerSnapshots } from "../../features/platform/runtimeTickerStore";
 import {
   SPARKLINE_RENDER_POINT_LIMIT,
@@ -157,7 +171,7 @@ const SortButton = ({ id, label, sort, setSort, align = "right" }) => (
       textTransform: "inherit",
       letterSpacing: "inherit",
       width: "100%",
-      textAlign: align,
+      textAlign: align === "right" ? "center" : align,
       padding: 0,
     }}
   >
@@ -799,6 +813,13 @@ const tradeManagementTone = (management) => {
   return CSS_COLOR.textSec;
 };
 
+const tradeManagementDistanceTone = (management) =>
+  management.status === "breached"
+    ? CSS_COLOR.red
+    : management.riskDistancePct != null && management.riskDistancePct <= 10
+      ? CSS_COLOR.amber
+      : CSS_COLOR.textDim;
+
 const formatTradeManagementPrice = (level, maskValues) =>
   level?.price != null ? formatAccountPrice(level.price, 2, maskValues) : MISSING_VALUE;
 
@@ -809,6 +830,24 @@ const formatTradeManagementDistance = (management, maskValues) => {
   return distance <= 0 ? `${formatted} past` : `${formatted} away`;
 };
 
+const formatTradeManagementDistanceBadge = (management, maskValues) => {
+  const distance = firstFiniteNumber(management?.riskDistancePct);
+  if (distance == null) return MISSING_VALUE;
+  const formatted = formatAccountPercent(Math.abs(distance), 1, maskValues);
+  return maskValues ? formatted : `${distance <= 0 ? "-" : "+"}${formatted}`;
+};
+
+const tradeManagementStopSubtext = (management, maskValues) => {
+  if (!management.stop) return management.statusLabel;
+  if (management.trail) return "Hard";
+  return formatTradeManagementDistanceBadge(management, maskValues);
+};
+
+const tradeManagementTrailSubtext = (management, maskValues) => {
+  if (!management.trail) return "Inactive";
+  return formatTradeManagementDistanceBadge(management, maskValues);
+};
+
 const tradeManagementTitle = (management, currency, maskValues) => {
   const parts = [
     management.stop
@@ -816,9 +855,6 @@ const tradeManagementTitle = (management, currency, maskValues) => {
       : null,
     management.trail
       ? `Trail ${formatTradeManagementPrice(management.trail, maskValues)} ${formatTradeManagementSource(management.trail.source)}`
-      : null,
-    management.target
-      ? `Target ${formatTradeManagementPrice(management.target, maskValues)} ${formatTradeManagementSource(management.target.source)}`
       : null,
     management.riskDistancePct != null
       ? `Distance ${formatTradeManagementDistance(management, maskValues)}`
@@ -833,7 +869,7 @@ const tradeManagementTitle = (management, currency, maskValues) => {
 
 const hasTradeManagementDetail = (row) => {
   const management = tradeManagementForRow(row);
-  return Boolean(management.stop || management.trail || management.target);
+  return Boolean(management.stop || management.trail);
 };
 
 const optionInlineDetail = (row, maskValues) => {
@@ -953,7 +989,7 @@ const optionDetailMetrics = (row, currency, maskValues) => {
               : firstText(underlying?.updatedAt),
         }
       : null,
-    management.stop || management.trail || management.target
+    management.stop || management.trail
       ? {
           label: "Trade Management",
           value: [
@@ -962,9 +998,6 @@ const optionDetailMetrics = (row, currency, maskValues) => {
               : null,
             management.trail
               ? `Trail ${formatTradeManagementPrice(management.trail, maskValues)}`
-              : null,
-            management.target
-              ? `Target ${formatTradeManagementPrice(management.target, maskValues)}`
               : null,
           ].filter(Boolean).join(" · ") || MISSING_VALUE,
           detail: tradeManagementTitle(management, currency, maskValues),
@@ -1348,8 +1381,8 @@ const PositionSignalRiskCell = ({ row, currency, maskValues }) => {
   );
 };
 
-const POSITION_TABLE_ROW_HEIGHT = 38;
-const POSITION_TABLE_HEADER_HEIGHT = 28;
+const POSITION_TABLE_ROW_HEIGHT = 34;
+const POSITION_TABLE_HEADER_HEIGHT = 24;
 
 const denseTableBorder = () => `1px solid ${CSS_COLOR.borderLight}`;
 const denseTableDivider = () => `1px solid ${CSS_COLOR.border}`;
@@ -1362,12 +1395,22 @@ const denseColumnBoundaryStyle = (column = {}) => ({
 });
 
 const denseTableColumnWidth = (column) => {
-  const width = Number.parseFloat(String(column?.width ?? ""));
+  const width = Number.parseFloat(String(column?.minWidth ?? column?.width ?? ""));
   return Number.isFinite(width) ? width : 0;
 };
 
 const denseTableMinWidth = (columns) =>
   columns.reduce((sum, column) => sum + denseTableColumnWidth(column), 0);
+
+const denseTableColumnStyle = (column) => ({
+  width: column.width,
+  minWidth: column.minWidth || column.width,
+});
+
+const denseVisualAlign = (align = "right") => (align === "right" ? "center" : align);
+
+const denseCellPadding = (column = {}) =>
+  column.id === "actions" ? sp("1px 1px") : sp("1px 2px");
 
 const denseColumnTextStyle = ({
   align = "right",
@@ -1381,7 +1424,8 @@ const denseColumnTextStyle = ({
   fontSize,
   fontWeight,
   fontVariantNumeric: "tabular-nums",
-  textAlign: align,
+  lineHeight: 1.12,
+  textAlign: denseVisualAlign(align),
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
@@ -1417,6 +1461,8 @@ const DenseStackedValue = ({
       display: "grid",
       gap: sp(1),
       minWidth: 0,
+      maxWidth: "100%",
+      overflow: "hidden",
     }}
   >
     <span style={denseColumnTextStyle({ align, color: primaryTone })}>
@@ -1430,12 +1476,56 @@ const DenseStackedValue = ({
   </span>
 );
 
+const compactGreekNumber = (value, digits = 2) => {
+  const numeric = finiteNumber(value);
+  if (numeric == null) return null;
+  return numeric
+    .toFixed(digits)
+    .replace(/^(-?)0\./, "$1.");
+};
+
+const DenseGreekCell = ({ row, title }) => {
+  const delta = compactGreekNumber(row?.optionQuote?.delta, 2);
+  const theta = compactGreekNumber(row?.optionQuote?.theta, 2);
+  if (!delta && !theta) {
+    return (
+      <span style={denseColumnTextStyle({ color: CSS_COLOR.textDim })}>
+        {MISSING_VALUE}
+      </span>
+    );
+  }
+  return (
+    <span
+      title={title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: sp(3),
+        width: "100%",
+        minWidth: 0,
+        overflow: "hidden",
+        color: CSS_COLOR.textSec,
+        fontFamily: T.data,
+        fontSize: textSize("caption"),
+        fontVariantNumeric: "tabular-nums",
+        lineHeight: 1,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {delta ? <span aria-label={`Delta ${delta}`}>Δ{delta}</span> : null}
+      {theta ? <span aria-label={`Theta ${theta}`}>θ{theta}</span> : null}
+    </span>
+  );
+};
+
 const denseTableCellStyle = (column, expanded = false) => ({
-  padding: sp("3px 6px"),
+  padding: denseCellPadding(column),
   borderBottom: denseTableBorder(),
   height: dim(POSITION_TABLE_ROW_HEIGHT),
   verticalAlign: "middle",
-  textAlign: column.align,
+  textAlign: denseVisualAlign(column.align),
+  minWidth: column.minWidth || column.width,
   ...denseColumnBoundaryStyle(column),
   background: column.sticky ? CSS_COLOR.bg1 : "transparent",
   position: column.sticky ? "sticky" : undefined,
@@ -1448,13 +1538,14 @@ const denseTableCellStyle = (column, expanded = false) => ({
 
 const denseHeaderCellStyle = (column, active) => ({
   ...tableHeaderStyle,
-  padding: sp("3px 6px"),
+  padding: denseCellPadding(column),
   height: dim(POSITION_TABLE_HEADER_HEIGHT),
   color: active ? CSS_COLOR.text : CSS_COLOR.textMuted,
   fontSize: textSize("caption"),
   letterSpacing: 0,
   textTransform: "none",
-  textAlign: column.align,
+  textAlign: denseVisualAlign(column.align),
+  minWidth: column.minWidth || column.width,
   background: CSS_COLOR.bg1,
   ...denseColumnBoundaryStyle(column),
   position: "sticky",
@@ -1467,7 +1558,7 @@ const denseHeaderCellStyle = (column, active) => ({
 const compactPositionHeaderStyle = ({ align = "left" } = {}) => ({
   ...tableCellStyle,
   ...tableHeaderStyle,
-  padding: sp("3px 6px"),
+  padding: sp("2px 4px"),
   height: dim(POSITION_TABLE_HEADER_HEIGHT),
   color: CSS_COLOR.textMuted,
   fontSize: textSize("caption"),
@@ -1485,8 +1576,8 @@ const compactPositionCellStyle = ({
   fontFamily = T.sans,
 } = {}) => ({
   ...tableCellStyle,
-  padding: sp("3px 6px"),
-  height: dim(34),
+  padding: sp("2px 4px"),
+  height: dim(32),
   color,
   fontFamily,
   textAlign: align,
@@ -1535,8 +1626,6 @@ const denseColumnSortValue = (row, id) => {
   if (id === "quote") return quote?.spreadPercent ?? quote?.bid ?? quote?.ask;
   if (id === "stop") return tradeManagementForRow(row).sortValues.stop;
   if (id === "trail") return tradeManagementForRow(row).sortValues.trail;
-  if (id === "target") return tradeManagementForRow(row).sortValues.target;
-  if (id === "riskDistance") return tradeManagementForRow(row).sortValues.riskDistance;
   if (id === "day") return row.dayChange;
   if (id === "unrealized") return row.unrealizedPnl;
   if (id === "exposure") return row.marketValue;
@@ -1597,7 +1686,7 @@ const DensePositionSymbol = ({
     .join(" · ");
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: sp(6), minWidth: 0 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: sp(4), minWidth: 0 }}>
       {expandable ? (
         <button
           type="button"
@@ -1609,9 +1698,10 @@ const DensePositionSymbol = ({
           aria-expanded={expanded}
           style={{
             ...denseActionButtonStyle,
-            width: dim(18),
-            height: dim(18),
+            width: dim(16),
+            height: dim(16),
             flexShrink: 0,
+            fontSize: fs(10),
           }}
         >
           {expanded ? "−" : "+"}
@@ -1682,70 +1772,205 @@ const DenseSignalCell = ({ row, currency, maskValues }) => {
   const metrics = automationPositionMetrics(row, currency, maskValues);
   if (!metrics) {
     return (
-      <span style={denseColumnTextStyle({ align: "left", color: CSS_COLOR.textDim, fontFamily: T.sans })}>
+      <span style={denseColumnTextStyle({ align: "center", color: CSS_COLOR.textDim, fontFamily: T.sans })}>
         {MISSING_VALUE}
       </span>
     );
   }
+  const score = firstFiniteNumber(row?.automationContext?.signalScore);
+  const timeframe = firstText(row?.automationContext?.timeframe).toUpperCase();
+  const tone =
+    score == null
+      ? CSS_COLOR.textSec
+      : score >= 75
+        ? CSS_COLOR.green
+        : score >= 50
+          ? CSS_COLOR.amber
+          : CSS_COLOR.textSec;
+  const compactLabel = [
+    score != null ? formatNumber(score, 0) : null,
+    timeframe,
+  ].filter(Boolean).join(" ") || metrics.signalMain;
   return (
     <span
       title={[metrics.signalMain, metrics.signalDetail, metrics.riskMain, metrics.riskDetail]
         .filter((item) => item && item !== MISSING_VALUE)
         .join(" · ")}
-      style={{ display: "grid", gap: sp(1), minWidth: 0 }}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: sp(3),
+        width: "100%",
+        minWidth: 0,
+        overflow: "hidden",
+        color: tone,
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        lineHeight: 1,
+        whiteSpace: "nowrap",
+      }}
     >
-      <span style={denseColumnTextStyle({ align: "left", color: CSS_COLOR.textSec, fontFamily: T.sans })}>
-        {metrics.signalMain}
-      </span>
+      <Zap size={11} strokeWidth={2} aria-hidden="true" style={{ flexShrink: 0 }} />
       <span
-        style={denseColumnSubTextStyle({
-          align: "left",
-          color: metrics.stopTone,
-          fontFamily: T.sans,
-        })}
+        style={{
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
       >
-        {metrics.tableDetail || metrics.riskMain}
+        {compactLabel}
       </span>
     </span>
   );
 };
 
-const DensePositionActions = ({ row, expanded, onJumpToChart, onToggle }) => {
+const DensePositionActions = ({
+  row,
+  expanded,
+  currency,
+  maskValues,
+  onJumpToChart,
+  onPositionSelect,
+  onToggle,
+}) => {
   const expandable = hasExpandablePositionDetails(row);
+  const quote = denseDisplayQuote(row);
+  const bidAsk = formatPositionBidAskPair(quote, maskValues);
+  const management = tradeManagementForRow(row);
+  const markValue = quote?.mark ?? quote?.mid ?? row.mark;
+  const openOrderCount = Array.isArray(row?.openOrders) ? row.openOrders.length : 0;
+  const contractLabel =
+    compactPositionContractDetail(row) ||
+    (!isOptionPosition(row) ? row.assetClass : "") ||
+    "";
+  const sideLabel = row.quantity < 0 ? "Short" : "Long";
+  const tradeAction = () => {
+    onPositionSelect?.(row);
+    onJumpToChart?.(row.symbol);
+  };
+
   return (
-    <span style={{ display: "inline-flex", justifyContent: "flex-end", gap: sp(3), width: "100%" }}>
-      <AppTooltip content={`Open ${row.symbol} chart`}>
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onJumpToChart?.(row.symbol);
-          }}
-          style={denseActionButtonStyle}
-        >
-          <LineChart size={13} strokeWidth={1.8} aria-hidden="true" />
-        </button>
-      </AppTooltip>
-      {expandable ? (
-        <AppTooltip content={expanded ? `Collapse ${row.symbol}` : `Expand ${row.symbol}`}>
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggle(row);
-            }}
-            aria-expanded={expanded}
-            style={denseActionButtonStyle}
-          >
-            {expanded ? (
-              <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
-            ) : (
-              <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
-            )}
-          </button>
-        </AppTooltip>
-      ) : null}
-    </span>
+    <PositionRowActionMenu
+      testId="account-position-row-action-menu"
+      symbol={row.symbol}
+      contractLabel={contractLabel}
+      sideLabel={sideLabel}
+      statusText={management.statusLabel}
+      primaryAction={{
+        id: "trade",
+        label: "Trade",
+        description: `Open ${row.symbol} in the trade ticket`,
+        Icon: Ticket,
+        onSelect: tradeAction,
+        disabled: !onJumpToChart,
+      }}
+      quoteItems={[
+        {
+          label: "Mark",
+          value: formatAccountPrice(markValue, 2, maskValues),
+        },
+        {
+          label: "Bid / Ask",
+          value: bidAsk,
+        },
+        {
+          label: "P&L",
+          value: formatAccountSignedMoney(row.unrealizedPnl, currency, false, maskValues),
+          tone: toneForValue(row.unrealizedPnl),
+        },
+        {
+          label: "Stop",
+          value: formatTradeManagementPrice(management.stop, maskValues),
+          tone: management.stop ? tradeManagementTone(management) : CSS_COLOR.textMuted,
+        },
+      ]}
+      utilityActions={[
+        {
+          id: "details",
+          label: expanded ? "Collapse" : "Details",
+          description: expandable
+            ? `${expanded ? "Collapse" : "Expand"} position lots, orders, and attribution`
+            : "No additional detail is available for this row",
+          Icon: Info,
+          onSelect: () => onToggle(row),
+          disabled: !expandable,
+          tone: "info",
+        },
+        {
+          id: "orders",
+          label: openOrderCount ? `${openOrderCount} order${openOrderCount === 1 ? "" : "s"}` : "Orders",
+          description: openOrderCount
+            ? "Expand this row to inspect linked working orders"
+            : "No linked working orders",
+          Icon: ClipboardList,
+          onSelect: () => onToggle(row),
+          disabled: !openOrderCount,
+          tone: "warning",
+        },
+        {
+          id: "quote",
+          label: "Quote",
+          description: "Bid, ask, mark, and quote age are already shown in the row",
+          Icon: CircleDollarSign,
+          disabled: true,
+        },
+        {
+          id: "risk",
+          label: "Risk",
+          description: management.statusLabel || "No stop or trailing stop is attached",
+          Icon: ShieldCheck,
+          disabled: true,
+          tone: management.status === "breached" ? "danger" : "success",
+        },
+        {
+          id: "focus",
+          label: "Focus",
+          description: `Focus ${row.symbol} in the surrounding workspace`,
+          Icon: Eye,
+          onSelect: () => onPositionSelect?.(row),
+          disabled: !onPositionSelect,
+          tone: "info",
+        },
+        {
+          id: "alert",
+          label: "Alert",
+          description: "Price alerts are not wired to account rows yet",
+          Icon: Bell,
+          disabled: true,
+          tone: "warning",
+        },
+      ]}
+      managementActions={[
+        {
+          id: "adjust",
+          label: "Adjust",
+          description: "Stop and target editing is not wired from this table yet",
+          Icon: SlidersHorizontal,
+          disabled: true,
+          tone: "warning",
+        },
+        {
+          id: "close",
+          label: "Close",
+          description: "Close workflows are managed from the trade ticket",
+          Icon: XCircle,
+          disabled: true,
+          tone: "danger",
+        },
+        {
+          id: "roll",
+          label: "Roll",
+          description: isOptionPosition(row)
+            ? "Option roll workflows are managed from the trade ticket"
+            : "Roll is available for option positions",
+          Icon: RotateCcw,
+          disabled: true,
+          tone: "info",
+        },
+      ]}
+    />
   );
 };
 
@@ -1772,7 +1997,6 @@ const DensePositionCell = ({
   const management = tradeManagementForRow(row);
   const managementTitle = tradeManagementTitle(management, currency, maskValues);
   const markValue = quote?.mark ?? quote?.mid ?? row.mark;
-  const lastValue = quote?.last ?? quote?.price;
   const greeksPrimary =
     [
       formatGreek("Δ", row?.optionQuote?.delta, 2),
@@ -1813,7 +2037,10 @@ const DensePositionCell = ({
         <DensePositionActions
           row={row}
           expanded={expanded}
+          currency={currency}
+          maskValues={maskValues}
           onJumpToChart={onJumpToChart}
+          onPositionSelect={onPositionSelect}
           onToggle={onToggle}
         />
       </td>
@@ -1836,14 +2063,9 @@ const DensePositionCell = ({
       <td style={denseTableCellStyle(column, expanded)}>
         <DenseStackedValue
           primary={formatAccountPrice(markValue, 2, maskValues)}
-          secondary={
-            lastValue != null
-              ? `Last ${formatAccountPrice(lastValue, 2, maskValues)}`
-              : "Last —"
-          }
           primaryTone={CSS_COLOR.text}
           align={column.align}
-          title={formatQuoteMarkLast(quote, maskValues)}
+          title={formatQuoteUpdatedDetail(quote)}
         />
       </td>
     );
@@ -1852,7 +2074,6 @@ const DensePositionCell = ({
       <td style={denseTableCellStyle(column, expanded)}>
         <DenseStackedValue
           primary={bidAsk}
-          secondary={quoteDetail || (quote?.mark != null ? "mark only" : "quote unavailable")}
           primaryTone={quoteHasBidAsk ? CSS_COLOR.textSec : CSS_COLOR.textDim}
           align={column.align}
           title={[bidAsk, quoteDetail].filter(Boolean).join(" · ")}
@@ -1864,8 +2085,19 @@ const DensePositionCell = ({
       <td style={denseTableCellStyle(column, expanded)} title={managementTitle}>
         <DenseStackedValue
           primary={formatTradeManagementPrice(management.stop, maskValues)}
-          secondary={formatTradeManagementSource(management.stop?.source) || management.statusLabel}
-          primaryTone={management.stop ? tradeManagementTone(management) : CSS_COLOR.textDim}
+          secondary={tradeManagementStopSubtext(management, maskValues)}
+          primaryTone={
+            management.stop
+              ? management.trail
+                ? CSS_COLOR.textSec
+                : tradeManagementTone(management)
+              : CSS_COLOR.textDim
+          }
+          secondaryTone={
+            management.stop && !management.trail
+              ? tradeManagementDistanceTone(management)
+              : CSS_COLOR.textDim
+          }
           align={column.align}
         />
       </td>
@@ -1875,34 +2107,11 @@ const DensePositionCell = ({
       <td style={denseTableCellStyle(column, expanded)} title={managementTitle}>
         <DenseStackedValue
           primary={formatTradeManagementPrice(management.trail, maskValues)}
-          secondary={formatTradeManagementSource(management.trail?.source) || "Inactive"}
-          primaryTone={management.trail ? CSS_COLOR.textSec : CSS_COLOR.textDim}
-          align={column.align}
-        />
-      </td>
-    );
-  } else if (column.id === "target") {
-    return (
-      <td style={denseTableCellStyle(column, expanded)} title={managementTitle}>
-        <DenseStackedValue
-          primary={formatTradeManagementPrice(management.target, maskValues)}
-          secondary={formatTradeManagementSource(management.target?.source) || management.statusLabel}
-          primaryTone={management.target ? CSS_COLOR.textSec : CSS_COLOR.textDim}
-          align={column.align}
-        />
-      </td>
-    );
-  } else if (column.id === "riskDistance") {
-    return (
-      <td style={denseTableCellStyle(column, expanded)} title={managementTitle}>
-        <DenseStackedValue
-          primary={formatTradeManagementDistance(management, maskValues)}
-          secondary={
-            management.riskAmount != null
-              ? formatAccountMoney(management.riskAmount, currency, true, maskValues)
-              : management.statusLabel
+          secondary={tradeManagementTrailSubtext(management, maskValues)}
+          primaryTone={management.trail ? tradeManagementTone(management) : CSS_COLOR.textDim}
+          secondaryTone={
+            management.trail ? tradeManagementDistanceTone(management) : CSS_COLOR.textDim
           }
-          primaryTone={management.stop ? tradeManagementTone(management) : CSS_COLOR.textDim}
           align={column.align}
         />
       </td>
@@ -1945,11 +2154,8 @@ const DensePositionCell = ({
   } else if (column.id === "greeks") {
     return (
       <td style={denseTableCellStyle(column, expanded)}>
-        <DenseStackedValue
-          primary={greeksPrimary}
-          secondary={greeksSecondary}
-          primaryTone={greeksPrimary === MISSING_VALUE ? CSS_COLOR.textDim : CSS_COLOR.textSec}
-          align={column.align}
+        <DenseGreekCell
+          row={row}
           title={[greeksPrimary, greeksSecondary].filter(Boolean).join(" · ")}
         />
       </td>
@@ -2087,16 +2293,91 @@ const summarySegments = ({ rows, displayTotals, totalDayChange, currency, maskVa
   ].filter(Boolean);
 };
 
-const denseSummaryCellStyle = (column) => ({
+const denseSummaryCellStyle = (column, { bottomOffset = 0 } = {}) => ({
   ...denseTableCellStyle(column),
-  padding: sp("3px 6px"),
+  padding: column.align === "right" ? sp("3px 4px 3px 2px") : sp("3px 6px"),
   background: CSS_COLOR.bg1,
   borderTop: denseTableDivider(),
   position: column.sticky ? "sticky" : undefined,
-  bottom: 0,
+  bottom: bottomOffset ? dim(bottomOffset) : 0,
   left: column.sticky ? 0 : undefined,
   zIndex: column.sticky ? 4 : 3,
 });
+
+const DenseCashRow = ({
+  columns,
+  displayTotals,
+  currency,
+  maskValues,
+}) => {
+  const cash = firstDisplayTotalNumber(
+    displayTotals.cash,
+    displayTotals.totalCash,
+    displayTotals.totalCashValue,
+  );
+  const cashValue =
+    cash == null ? MISSING_VALUE : formatAccountMoney(cash, currency, false, maskValues);
+  const buyingPower = firstDisplayTotalNumber(displayTotals.buyingPower);
+  const netLiquidation = firstDisplayTotalNumber(displayTotals.netLiquidation);
+
+  return (
+    <tr
+      data-testid="account-positions-cash-row"
+      style={{
+        background: CSS_COLOR.bg1,
+        position: "sticky",
+        bottom: dim(POSITION_TABLE_ROW_HEIGHT),
+        zIndex: 2,
+      }}
+    >
+      {columns.map((column) => {
+        let content = "";
+        if (column.id === "symbol") {
+          content = (
+            <DenseStackedValue
+              primary="Cash"
+              secondary="Account balance"
+              primaryTone={CSS_COLOR.text}
+              align="left"
+            />
+          );
+        } else if (column.id === "exposure") {
+          content = (
+            <DenseStackedValue
+              primary={cashValue}
+              secondary={
+                netLiquidation != null
+                  ? `NLV ${formatAccountMoney(netLiquidation, currency, false, maskValues)}`
+                  : ""
+              }
+              primaryTone={CSS_COLOR.text}
+              align={column.align}
+            />
+          );
+        } else if (column.id === "signalContext" && buyingPower != null) {
+          content = (
+            <DenseStackedValue
+              primary={`BP ${formatAccountMoney(buyingPower, currency, false, maskValues)}`}
+              primaryTone={CSS_COLOR.textSec}
+              align={column.align}
+            />
+          );
+        }
+
+        return (
+          <td
+            key={column.id}
+            style={denseSummaryCellStyle(column, {
+              bottomOffset: POSITION_TABLE_ROW_HEIGHT,
+            })}
+          >
+            {content}
+          </td>
+        );
+      })}
+    </tr>
+  );
+};
 
 const DenseSummaryRow = ({
   columns,
@@ -2191,7 +2472,6 @@ const DenseSummaryRow = ({
           content = (
             <DenseStackedValue
               primary={`BP ${buyingPowerSegment.value}`}
-              secondary={weightSegment ? `Wt ${weightSegment.value}` : ""}
               primaryTone={CSS_COLOR.textSec}
               align={column.align}
             />
@@ -2199,8 +2479,8 @@ const DenseSummaryRow = ({
         } else if (column.id === "greeks" && deltaSegment) {
           content = (
             <DenseStackedValue
-              primary={deltaSegment.value}
-              secondary={thetaSegment ? `Theta ${thetaSegment.value}` : ""}
+              primary={`Δ${deltaSegment.value}`}
+              secondary={thetaSegment ? `θ${thetaSegment.value}` : ""}
               primaryTone={CSS_COLOR.textSec}
               align={column.align}
             />
@@ -2771,12 +3051,12 @@ export const PositionsPanel = ({
               borderCollapse: "separate",
               borderSpacing: 0,
               minWidth: denseTableMinWidth(visibleColumns),
-              tableLayout: "fixed",
+              tableLayout: "auto",
             }}
           >
             <colgroup>
               {visibleColumns.map((column) => (
-                <col key={column.id} style={{ width: column.width }} />
+                <col key={column.id} style={denseTableColumnStyle(column)} />
               ))}
             </colgroup>
             <thead>
@@ -2870,7 +3150,7 @@ export const PositionsPanel = ({
                               ) : null}
                             </div>
 
-                            {management.stop || management.trail || management.target ? (
+                            {management.stop || management.trail ? (
                               <div
                                 style={{
                                   display: "flex",
@@ -2884,7 +3164,6 @@ export const PositionsPanel = ({
                                 {[
                                   ["Stop", formatTradeManagementPrice(management.stop, maskValues), formatTradeManagementSource(management.stop?.source)],
                                   ["Trail", formatTradeManagementPrice(management.trail, maskValues), formatTradeManagementSource(management.trail?.source)],
-                                  ["Target", formatTradeManagementPrice(management.target, maskValues), formatTradeManagementSource(management.target?.source)],
                                   [
                                     "Risk",
                                     formatTradeManagementDistance(management, maskValues),
@@ -3087,6 +3366,12 @@ export const PositionsPanel = ({
               })}
             </tbody>
             <tfoot>
+              <DenseCashRow
+                columns={visibleColumns}
+                displayTotals={displayTotals}
+                currency={currency}
+                maskValues={maskValues}
+              />
               <DenseSummaryRow
                 columns={visibleColumns}
                 rows={rows}

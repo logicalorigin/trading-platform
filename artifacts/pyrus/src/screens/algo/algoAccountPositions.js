@@ -712,8 +712,10 @@ const mergeUnderlyingMarket = (runtimeUnderlying, accountUnderlying) => {
   };
 };
 
-const mergeRuntimeRowWithAccountProjection = (runtimeRow, accountRow) => {
-  if (!accountRow) return runtimeRow;
+const mergeAccountRowWithRuntimeSupplement = (accountRow, runtimeRow) => {
+  if (!runtimeRow) return accountRow;
+  const runtimeAutomation = asRecord(runtimeRow.automationContext);
+  const accountAutomation = asRecord(accountRow.automationContext);
   return {
     ...runtimeRow,
     ...accountRow,
@@ -733,8 +735,12 @@ const mergeRuntimeRowWithAccountProjection = (runtimeRow, accountRow) => {
       accountRow.underlyingMarket,
     ),
     automationContext: {
-      ...asRecord(accountRow.automationContext),
-      ...asRecord(runtimeRow.automationContext),
+      ...runtimeAutomation,
+      ...accountAutomation,
+      tradeManagement: {
+        ...asRecord(runtimeAutomation.tradeManagement),
+        ...asRecord(accountAutomation.tradeManagement),
+      },
     },
     sourceAttribution:
       Array.isArray(accountRow.sourceAttribution) && accountRow.sourceAttribution.length
@@ -752,11 +758,11 @@ export const mergeAlgoRuntimeAndAccountPositionRows = ({
 } = {}) => {
   if (!runtimeRows.length) return accountRows || [];
   if (!accountRows.length) return runtimeRows || [];
-  const accountRowIndex = buildAccountRowIndex(accountRows);
-  return runtimeRows.map((runtimeRow) =>
-    mergeRuntimeRowWithAccountProjection(
-      runtimeRow,
-      findMatchingAccountRow(runtimeRow, accountRowIndex),
+  const runtimeRowIndex = buildAccountRowIndex(runtimeRows);
+  return accountRows.map((accountRow) =>
+    mergeAccountRowWithRuntimeSupplement(
+      accountRow,
+      findMatchingAccountRow(accountRow, runtimeRowIndex),
     ),
   );
 };

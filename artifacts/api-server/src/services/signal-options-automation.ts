@@ -31,7 +31,10 @@ import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
-import type { BrokerBarSnapshot, QuoteSnapshot } from "../providers/ibkr/client";
+import type {
+  BrokerBarSnapshot,
+  QuoteSnapshot,
+} from "../providers/ibkr/client";
 import type { OptionChainContract } from "../providers/ibkr/client";
 import {
   cappedSignalMonitorEvaluationProfile,
@@ -69,6 +72,7 @@ import {
 } from "./algo-branding";
 import { notifyAlgoCockpitChanged } from "./algo-cockpit-events";
 import {
+  SHADOW_PROVIDER_ACCOUNT_ID,
   isSignalOptionsShadowConfig,
   normalizeAlgoDeploymentProviderAccountId,
 } from "./algo-deployment-account";
@@ -414,7 +418,9 @@ function normalizedQuoteStatus(value: unknown): string | null {
 
 function isBlockedLiveMarketDataMode(value: unknown): boolean {
   const mode = normalizedQuoteStatus(value);
-  return Boolean(mode && SIGNAL_OPTIONS_BLOCKED_LIVE_MARKET_DATA_MODES.has(mode));
+  return Boolean(
+    mode && SIGNAL_OPTIONS_BLOCKED_LIVE_MARKET_DATA_MODES.has(mode),
+  );
 }
 
 function isSignalOptionsLiveExitQuoteEligible(input: {
@@ -422,7 +428,11 @@ function isSignalOptionsLiveExitQuoteEligible(input: {
   markSource: string | null;
   usedShadowMarkFallback: boolean;
 }) {
-  if (!input.quote || input.usedShadowMarkFallback || input.markSource === "shadow_position_mark") {
+  if (
+    !input.quote ||
+    input.usedShadowMarkFallback ||
+    input.markSource === "shadow_position_mark"
+  ) {
     return false;
   }
   const marketDataMode = normalizedQuoteStatus(input.quote.marketDataMode);
@@ -433,10 +443,69 @@ function isSignalOptionsLiveExitQuoteEligible(input: {
     return false;
   }
   const quoteFreshness = normalizedQuoteStatus(input.quote.quoteFreshness);
-  if (quoteFreshness && ["pending", "stale", "unavailable"].includes(quoteFreshness)) {
+  if (
+    quoteFreshness &&
+    ["pending", "stale", "unavailable"].includes(quoteFreshness)
+  ) {
     return false;
   }
   return true;
+}
+
+function isSignalOptionsShadowMarkFallbackExitEligible(input: {
+  deployment: Pick<AlgoDeployment, "providerAccountId">;
+  fallback: SignalOptionsShadowPositionMarkFallback | null;
+  markSource: string | null;
+  now: Date;
+  position: SignalOptionsPosition;
+  usedShadowMarkFallback: boolean;
+}) {
+  if (
+    input.deployment.providerAccountId !== SHADOW_PROVIDER_ACCOUNT_ID ||
+    !input.usedShadowMarkFallback ||
+    input.markSource !== "shadow_position_mark" ||
+    !input.fallback
+  ) {
+    return false;
+  }
+  return (
+    isFreshShadowPositionMarkFallback({
+      fallback: input.fallback,
+      now: input.now,
+    }) &&
+    normalizedQuoteStatus(input.fallback.source) === "option_quote" &&
+    isLiveOptionTradingSession(
+      input.fallback.latestAsOf,
+      input.position.selectedContract,
+    )
+  );
+}
+
+function signalOptionsTradeEventHasActionableOptionSession(
+  event: ExecutionEvent,
+) {
+  const payload = asRecord(event.payload);
+  const position = asRecord(payload.position);
+  const payloadContract = asRecord(payload.selectedContract);
+  const selectedContract = Object.keys(payloadContract).length
+    ? payloadContract
+    : asRecord(position.selectedContract);
+  if (!Object.keys(selectedContract).length) {
+    return true;
+  }
+  return isLiveOptionTradingSession(event.occurredAt, selectedContract);
+}
+
+function signalOptionsEntryEventHasActionableOptionSession(
+  event: ExecutionEvent,
+) {
+  return signalOptionsTradeEventHasActionableOptionSession(event);
+}
+
+function signalOptionsExitEventHasActionableOptionSession(
+  event: ExecutionEvent,
+) {
+  return signalOptionsTradeEventHasActionableOptionSession(event);
 }
 
 function signalOptionsRunId(input: {
@@ -514,12 +583,8 @@ function signalOptionsPayloadWithRunMetadata(input: {
           ...(activeRun.latestSignalBarAt
             ? { latestSignalBarAt: activeRun.latestSignalBarAt }
             : {}),
-          ...(activeRun.heavyWorkDeferred
-            ? { heavyWorkDeferred: true }
-            : {}),
-          ...(activeRun.marketDate
-            ? { marketDate: activeRun.marketDate }
-            : {}),
+          ...(activeRun.heavyWorkDeferred ? { heavyWorkDeferred: true } : {}),
+          ...(activeRun.marketDate ? { marketDate: activeRun.marketDate } : {}),
         }
       : {}),
     ...metadata,
@@ -536,14 +601,20 @@ function signalOptionsPayloadWithRunMetadata(input: {
 
 function optionContractKey(value: unknown): string | null {
   const contract = asRecord(value);
-  const underlying = normalizeSymbol(String(contract.underlying ?? contract.ticker ?? ""))
-    .toUpperCase();
+  const underlying = normalizeSymbol(
+    String(contract.underlying ?? contract.ticker ?? ""),
+  ).toUpperCase();
   const expiration = expirationDateKey(contract.expirationDate);
   const strike = finiteNumber(contract.strike);
   const right = String(contract.right ?? "").toLowerCase();
   const providerContractId = compactString(contract.providerContractId);
   const ticker = compactString(contract.ticker);
-  if (!underlying || !expiration || strike == null || !["call", "put"].includes(right)) {
+  if (
+    !underlying ||
+    !expiration ||
+    strike == null ||
+    !["call", "put"].includes(right)
+  ) {
     return null;
   }
   return [
@@ -773,7 +844,9 @@ function findSignalOptionsQuoteForContract(input: {
   );
   const targetStrike = finiteNumber(selectedContract.strike);
   const targetRight = selectedContract.right === "put" ? "put" : "call";
-  const targetExpirationKey = expirationDateKey(selectedContract.expirationDate);
+  const targetExpirationKey = expirationDateKey(
+    selectedContract.expirationDate,
+  );
 
   return (
     input.contracts.find((quote) => {
@@ -901,17 +974,20 @@ async function readShadowPositionMarkFallback(
     isLiveOptionTradingSession(mark.asOf, position.selectedContract),
   );
   const [latest] = eligibleMarks;
-  const peak = eligibleMarks.reduce<typeof latest | undefined>((selected, mark) => {
-    const selectedPrice = finiteNumber(selected?.mark);
-    const markPrice = finiteNumber(mark.mark);
-    if (markPrice == null) {
+  const peak = eligibleMarks.reduce<typeof latest | undefined>(
+    (selected, mark) => {
+      const selectedPrice = finiteNumber(selected?.mark);
+      const markPrice = finiteNumber(mark.mark);
+      if (markPrice == null) {
+        return selected;
+      }
+      if (!selected || selectedPrice == null || markPrice > selectedPrice) {
+        return mark;
+      }
       return selected;
-    }
-    if (!selected || selectedPrice == null || markPrice > selectedPrice) {
-      return mark;
-    }
-    return selected;
-  }, undefined);
+    },
+    undefined,
+  );
   const latestMarkPrice = finiteNumber(latest?.mark);
   const peakMarkPrice = finiteNumber(peak?.mark);
   if (!latest || !peak || latestMarkPrice == null || peakMarkPrice == null) {
@@ -946,7 +1022,8 @@ function quoteFromShadowPositionMarkFallback(input: {
 }): SignalOptionsOptionQuote {
   const mark = Number(input.fallback.latestMarkPrice.toFixed(2));
   return {
-    contract: input.position.selectedContract as SignalOptionsOptionQuote["contract"],
+    contract: input.position
+      .selectedContract as SignalOptionsOptionQuote["contract"],
     bid: null,
     ask: null,
     last: mark,
@@ -1064,20 +1141,20 @@ async function getDeploymentByAlias(
       (deployment) =>
         deployment.enabled && deploymentHasSignalOptionsProfile(deployment),
     ) ??
-    deployments.find(
-      (deployment) => {
-        const deploymentName = normalizeLegacyAlgoBrandText(deployment.name);
-        return (
-          deploymentName === DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME ||
-          deploymentName === LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME
-        );
-      },
-    ) ??
+    deployments.find((deployment) => {
+      const deploymentName = normalizeLegacyAlgoBrandText(deployment.name);
+      return (
+        deploymentName === DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME ||
+        deploymentName === LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME
+      );
+    }) ??
     null
   );
 }
 
-async function getDeploymentOrThrow(deploymentId: string): Promise<AlgoDeployment> {
+async function getDeploymentOrThrow(
+  deploymentId: string,
+): Promise<AlgoDeployment> {
   const deployment = UUID_PATTERN.test(deploymentId)
     ? await db
         .select()
@@ -1093,7 +1170,8 @@ async function getDeploymentOrThrow(deploymentId: string): Promise<AlgoDeploymen
     });
   }
 
-  const brandNormalized = await normalizeSignalOptionsDeploymentBranding(deployment);
+  const brandNormalized =
+    await normalizeSignalOptionsDeploymentBranding(deployment);
   return normalizeSignalOptionsDeploymentAccount(brandNormalized);
 }
 
@@ -1295,7 +1373,9 @@ function buildSignalOptionsSignalSnapshot(input: {
     signalKey: input.signalKey ?? null,
     source:
       compactString(input.source) ??
-      (isUuidLike(input.state.profileId) ? "pyrus-signals" : "pyrus-signals-runtime"),
+      (isUuidLike(input.state.profileId)
+        ? "pyrus-signals"
+        : "pyrus-signals-runtime"),
     eventId: compactString(input.eventId),
     symbol: normalizeSymbol(input.state.symbol).toUpperCase(),
     timeframe: input.state.timeframe,
@@ -1391,7 +1471,9 @@ async function listSignalOptionsSignalSnapshots(deployment: AlgoDeployment) {
     const symbol = normalizeSymbol(state.symbol).toUpperCase();
     return symbol && (universe.size === 0 || universe.has(symbol));
   });
-  const actionableStates = filteredStates.filter(isSignalOptionsActionableSignalState);
+  const actionableStates = filteredStates.filter(
+    isSignalOptionsActionableSignalState,
+  );
 
   const snapshots = await Promise.all(
     actionableStates.map(async (state) => {
@@ -1434,11 +1516,7 @@ function isSignalOptionsActionableSignalState(state: SignalMonitorState) {
 function isSignalOptionsActionableSignalSnapshot(
   signal: SignalOptionsSignalSnapshot,
 ) {
-  return Boolean(
-    signal.fresh === true &&
-      signal.signalAt &&
-      signal.direction,
-  );
+  return Boolean(signal.fresh === true && signal.signalAt && signal.direction);
 }
 
 function buildWorkerScanSummary(input: {
@@ -1505,7 +1583,11 @@ function latestFreshSignalAtFromStates(input: {
     if (!symbol || (input.universe.size > 0 && !input.universe.has(symbol))) {
       continue;
     }
-    if (!state.fresh || !state.currentSignalDirection || !state.currentSignalAt) {
+    if (
+      !state.fresh ||
+      !state.currentSignalDirection ||
+      !state.currentSignalAt
+    ) {
       continue;
     }
     latest = latestSignalDate(latest, toIsoString(state.currentSignalAt));
@@ -1728,35 +1810,35 @@ export function selectSignalOptionsExpiration(
     Math.max(minDte, profile.optionSelection.targetDte),
   );
 
-  return expirations
-    .map((expiration) => {
-      const expirationDate = dateOrNull(expiration.expirationDate);
-      if (!expirationDate) {
-        return null;
-      }
-      return {
-        expirationDate,
-        dte: daysBetweenUtc(now, expirationDate),
-      };
-    })
-    .filter(
-      (
-        expiration,
-      ): expiration is {
-        expirationDate: Date;
-        dte: number;
-      } =>
-        Boolean(
-          expiration &&
-            expiration.dte >= minDte &&
-            expiration.dte <= maxDte,
-        ),
-    )
-    .sort((left, right) => {
-      const targetDelta =
-        Math.abs(left.dte - targetDte) - Math.abs(right.dte - targetDte);
-      return targetDelta || left.dte - right.dte;
-    })[0] ?? null;
+  return (
+    expirations
+      .map((expiration) => {
+        const expirationDate = dateOrNull(expiration.expirationDate);
+        if (!expirationDate) {
+          return null;
+        }
+        return {
+          expirationDate,
+          dte: daysBetweenUtc(now, expirationDate),
+        };
+      })
+      .filter(
+        (
+          expiration,
+        ): expiration is {
+          expirationDate: Date;
+          dte: number;
+        } =>
+          Boolean(
+            expiration && expiration.dte >= minDte && expiration.dte <= maxDte,
+          ),
+      )
+      .sort((left, right) => {
+        const targetDelta =
+          Math.abs(left.dte - targetDte) - Math.abs(right.dte - targetDte);
+        return targetDelta || left.dte - right.dte;
+      })[0] ?? null
+  );
 }
 
 function resolveStrikeIndex(input: {
@@ -1816,7 +1898,9 @@ function signalOptionsStrikeSlotsForFallback(input: {
   const slots = [...selectedSlots];
   for (let step = 1; step <= SIGNAL_OPTIONS_FALLBACK_STRIKE_STEPS; step += 1) {
     const fallbackSlot =
-      input.optionRight === "call" ? preferredSlot + step : preferredSlot - step;
+      input.optionRight === "call"
+        ? preferredSlot + step
+        : preferredSlot - step;
     if (fallbackSlot >= 0 && fallbackSlot <= 5) {
       slots.push(fallbackSlot);
     }
@@ -1857,9 +1941,13 @@ export function selectSignalOptionsContractFromChain(input: {
     return null;
   }
 
-  const spotPrice = input.signalPrice ?? strikes[Math.floor(strikes.length / 2)]!;
+  const spotPrice =
+    input.signalPrice ?? strikes[Math.floor(strikes.length / 2)]!;
   const attemptedStrikes = new Set<number>();
-  for (const slot of signalOptionsStrikeSlotsForRight(input.profile, optionRight)) {
+  for (const slot of signalOptionsStrikeSlotsForRight(
+    input.profile,
+    optionRight,
+  )) {
     const strike = strikes[resolveStrikeIndex({ strikes, spotPrice, slot })];
     if (strike == null || attemptedStrikes.has(strike)) {
       continue;
@@ -1923,7 +2011,8 @@ function selectSignalOptionsContractPlanFromChain(input: {
     };
   }
 
-  const spotPrice = input.signalPrice ?? strikes[Math.floor(strikes.length / 2)]!;
+  const spotPrice =
+    input.signalPrice ?? strikes[Math.floor(strikes.length / 2)]!;
   const slots = signalOptionsStrikeSlotsForFallback({
     profile: input.profile,
     optionRight,
@@ -2018,14 +2107,17 @@ export function resolveSignalOptionsLiquidity(
   const spreadPctOfMid =
     spread != null && mid != null && mid > 0 ? (spread / mid) * 100 : null;
   const quoteFreshness = normalizedQuoteStatus(quote.quoteFreshness) ?? "";
-  const blockedMarketDataMode = isBlockedLiveMarketDataMode(quote.marketDataMode);
+  const blockedMarketDataMode = isBlockedLiveMarketDataMode(
+    quote.marketDataMode,
+  );
   const liquidityControls = profile.liquidityHaltControls;
   const quoteFresh =
     !blockedMarketDataMode &&
     (!profile.liquidityGate.requireFreshQuote ||
       liquidityControls.freshQuoteRequiredEnabled === false ||
       !["stale", "unavailable", "pending"].includes(quoteFreshness));
-  const hasBidAsk = bid != null && ask != null && bid > 0 && ask > 0 && ask >= bid;
+  const hasBidAsk =
+    bid != null && ask != null && bid > 0 && ask > 0 && ask >= bid;
   const reasons: string[] = [];
 
   if (
@@ -2092,11 +2184,10 @@ export function buildSignalOptionsShadowOrderPlan(
   const premiumQuantityCap =
     profile.riskHaltControls.premiumBudgetEnabled === false
       ? profile.riskCaps.maxContracts
-      : Math.floor(profile.riskCaps.maxPremiumPerEntry / (simulatedFillPrice * 100));
-  const quantity = Math.min(
-    profile.riskCaps.maxContracts,
-    premiumQuantityCap,
-  );
+      : Math.floor(
+          profile.riskCaps.maxPremiumPerEntry / (simulatedFillPrice * 100),
+        );
+  const quantity = Math.min(profile.riskCaps.maxContracts, premiumQuantityCap);
 
   if (!Number.isFinite(quantity) || quantity <= 0) {
     return {
@@ -2222,7 +2313,9 @@ function signalOptionsGatewayExecutionBlocker(
   readiness: AlgoGatewayReadiness,
   profile?: SignalOptionsExecutionProfile,
 ): SignalOptionsExecutionBlocker | null {
-  if (profile?.infrastructureHaltControls.gatewayReadinessBlockEnabled === false) {
+  if (
+    profile?.infrastructureHaltControls.gatewayReadinessBlockEnabled === false
+  ) {
     return null;
   }
   if (readiness.ready) {
@@ -2303,8 +2396,11 @@ function evaluateSignalOptionsEntryGate(input: {
 
   const gate = input.profile.entryGate.bearishRegime;
   const fullyBullishMtf =
-    mtfDirections.length > 0 && mtfDirections.every((direction) => direction > 0);
-  const bearishMtfCount = mtfDirections.filter((direction) => direction < 0).length;
+    mtfDirections.length > 0 &&
+    mtfDirections.every((direction) => direction > 0);
+  const bearishMtfCount = mtfDirections.filter(
+    (direction) => direction < 0,
+  ).length;
   const effectiveMinAdx =
     bearishMtfCount >= 2 ? Math.min(gate.minAdx, 22) : gate.minAdx;
 
@@ -2353,7 +2449,9 @@ function classifySignalOptionsEntryQuality(input: {
   const filterState = asRecord(signal.filterState);
   const mtfDirections = numericArray(filterState.mtfDirections).slice(0, 3);
   const directionSign = signalDirectionSign(input.candidate.direction);
-  const mtfMatches = mtfDirections.filter((direction) => direction === directionSign).length;
+  const mtfMatches = mtfDirections.filter(
+    (direction) => direction === directionSign,
+  ).length;
   const adx = finiteNumber(filterState.adx);
   const orderLiquidity = asRecord(input.orderPlan?.liquidity);
   const candidateLiquidity = asRecord(input.candidate.liquidity);
@@ -2611,7 +2709,9 @@ function resolveSignalOptionsMonitorBatch(input: {
   profile: SignalMonitorProfileRow;
   capacity?: number;
 }) {
-  const uniqueSymbols = normalizeSignalOptionsMonitorUniverseSymbols(input.universe);
+  const uniqueSymbols = normalizeSignalOptionsMonitorUniverseSymbols(
+    input.universe,
+  );
   const capacity =
     input.capacity ??
     cappedSignalMonitorEvaluationProfile(input.profile).profile.maxSymbols;
@@ -2676,7 +2776,9 @@ function shouldRefreshSignalOptionsMonitorState(input: {
   const now = input.now ?? new Date();
   const states = asArray(evaluated.states)
     .map(asRecord)
-    .filter((state) => stateMatchesSignalOptionsUniverse(state, input.universe));
+    .filter((state) =>
+      stateMatchesSignalOptionsUniverse(state, input.universe),
+    );
 
   if (!runtimeFallbackProfile) {
     if (!lastEvaluatedAt) {
@@ -2693,7 +2795,9 @@ function shouldRefreshSignalOptionsMonitorState(input: {
   if (input.universe.size > 0) {
     const stateSymbols = new Set(
       states
-        .map((state) => normalizeSymbol(String(state.symbol ?? "")).toUpperCase())
+        .map((state) =>
+          normalizeSymbol(String(state.symbol ?? "")).toUpperCase(),
+        )
         .filter(Boolean),
     );
     for (const symbol of input.universe) {
@@ -2779,7 +2883,9 @@ async function loadSignalOptionsMonitorState(input: {
   });
 }
 
-function candidateFromEvent(event: ExecutionEvent): SignalOptionsCandidate | null {
+function candidateFromEvent(
+  event: ExecutionEvent,
+): SignalOptionsCandidate | null {
   const payload = asRecord(event.payload);
   const candidate = asRecord(
     Object.keys(asRecord(payload.candidate)).length
@@ -2793,7 +2899,9 @@ function candidateFromEvent(event: ExecutionEvent): SignalOptionsCandidate | nul
   const action = Object.keys(asRecord(candidate.action)).length
     ? asRecord(candidate.action)
     : asRecord(payload.action);
-  const signalQuality = asRecord(candidate.signalQuality ?? position.signalQuality);
+  const signalQuality = asRecord(
+    candidate.signalQuality ?? position.signalQuality,
+  );
   const candidateId =
     compactString(candidate.id) ??
     compactString(payload.candidateId) ??
@@ -2802,7 +2910,9 @@ function candidateFromEvent(event: ExecutionEvent): SignalOptionsCandidate | nul
     return null;
   }
   const direction =
-    candidate.direction === "sell" || position.direction === "sell" ? "sell" : "buy";
+    candidate.direction === "sell" || position.direction === "sell"
+      ? "sell"
+      : "buy";
   const status =
     event.eventType === SIGNAL_OPTIONS_SKIPPED_EVENT
       ? "skipped"
@@ -2810,9 +2920,9 @@ function candidateFromEvent(event: ExecutionEvent): SignalOptionsCandidate | nul
         ? "closed"
         : event.eventType === SIGNAL_OPTIONS_MANUAL_DEVIATION_EVENT
           ? "manual_override"
-        : event.eventType === SIGNAL_OPTIONS_ENTRY_EVENT
-          ? "open"
-          : "candidate";
+          : event.eventType === SIGNAL_OPTIONS_ENTRY_EVENT
+            ? "open"
+            : "candidate";
   return normalizeLegacyAlgoBranding({
     id: String(candidateId || event.id),
     deploymentId:
@@ -2824,7 +2934,9 @@ function candidateFromEvent(event: ExecutionEvent): SignalOptionsCandidate | nul
       candidate.optionRight === "put" || position.optionRight === "put"
         ? "put"
         : "call",
-    timeframe: String(candidate.timeframe || position.timeframe || "15m") as SignalMonitorTimeframe,
+    timeframe: String(
+      candidate.timeframe || position.timeframe || "15m",
+    ) as SignalMonitorTimeframe,
     signalAt:
       toIsoString(candidate.signalAt) ??
       toIsoString(position.signalAt) ??
@@ -2832,17 +2944,15 @@ function candidateFromEvent(event: ExecutionEvent): SignalOptionsCandidate | nul
       new Date(0).toISOString(),
     signalPrice: finiteNumber(candidate.signalPrice ?? position.signalPrice),
     status,
-    selectedContract:
-      Object.keys(asRecord(payload.selectedContract)).length
-        ? asRecord(payload.selectedContract)
-        : Object.keys(asRecord(candidate.selectedContract)).length
-          ? asRecord(candidate.selectedContract)
-          : asRecord(position.selectedContract),
+    selectedContract: Object.keys(asRecord(payload.selectedContract)).length
+      ? asRecord(payload.selectedContract)
+      : Object.keys(asRecord(candidate.selectedContract)).length
+        ? asRecord(candidate.selectedContract)
+        : asRecord(position.selectedContract),
     quote: asRecord(payload.quote),
-    orderPlan:
-      Object.keys(asRecord(payload.orderPlan)).length
-        ? asRecord(payload.orderPlan)
-        : asRecord(candidate.orderPlan),
+    orderPlan: Object.keys(asRecord(payload.orderPlan)).length
+      ? asRecord(payload.orderPlan)
+      : asRecord(candidate.orderPlan),
     liquidity: asRecord(payload.liquidity),
     reason:
       typeof payload.reason === "string"
@@ -2872,54 +2982,58 @@ function mergeSignalOptionsCandidate(
     ...(existing ?? {}),
     ...candidate,
     status,
-    selectedContract:
-      Object.keys(asRecord(candidate.selectedContract)).length
-        ? candidate.selectedContract
-        : existing?.selectedContract ?? null,
-    quote:
-      Object.keys(asRecord(candidate.quote)).length
-        ? candidate.quote
-        : existing?.quote ?? null,
-    orderPlan:
-      Object.keys(asRecord(candidate.orderPlan)).length
-        ? candidate.orderPlan
-        : existing?.orderPlan ?? null,
-    liquidity:
-      Object.keys(asRecord(candidate.liquidity)).length
-        ? candidate.liquidity
-        : existing?.liquidity ?? null,
+    selectedContract: Object.keys(asRecord(candidate.selectedContract)).length
+      ? candidate.selectedContract
+      : (existing?.selectedContract ?? null),
+    quote: Object.keys(asRecord(candidate.quote)).length
+      ? candidate.quote
+      : (existing?.quote ?? null),
+    orderPlan: Object.keys(asRecord(candidate.orderPlan)).length
+      ? candidate.orderPlan
+      : (existing?.orderPlan ?? null),
+    liquidity: Object.keys(asRecord(candidate.liquidity)).length
+      ? candidate.liquidity
+      : (existing?.liquidity ?? null),
     reason:
-      status === "skipped" ? candidate.reason ?? existing?.reason ?? null : null,
-    signalQuality:
-      candidate.signalQuality ?? existing?.signalQuality ?? null,
-    signal:
-      Object.keys(asRecord(candidate.signal)).length
-        ? candidate.signal
-        : existing?.signal ?? null,
-    action:
-      Object.keys(asRecord(candidate.action)).length
-        ? candidate.action
-        : existing?.action ?? null,
+      status === "skipped"
+        ? (candidate.reason ?? existing?.reason ?? null)
+        : null,
+    signalQuality: candidate.signalQuality ?? existing?.signalQuality ?? null,
+    signal: Object.keys(asRecord(candidate.signal)).length
+      ? candidate.signal
+      : (existing?.signal ?? null),
+    action: Object.keys(asRecord(candidate.action)).length
+      ? candidate.action
+      : (existing?.action ?? null),
   };
 }
 
-function positionFromEntryPayload(event: ExecutionEvent): SignalOptionsPosition | null {
+function positionFromEntryPayload(
+  event: ExecutionEvent,
+): SignalOptionsPosition | null {
   const payload = asRecord(event.payload);
   const position = asRecord(payload.position);
   const candidate = asRecord(payload.candidate);
-  const selectedContract = Object.keys(asRecord(payload.selectedContract)).length
+  const selectedContract = Object.keys(asRecord(payload.selectedContract))
+    .length
     ? asRecord(payload.selectedContract)
     : asRecord(position.selectedContract);
-  const entryPrice = finiteNumber(position.entryPrice ?? payload.simulatedFillPrice);
+  const entryPrice = finiteNumber(
+    position.entryPrice ?? payload.simulatedFillPrice,
+  );
   const quantity = finiteNumber(position.quantity ?? payload.quantity);
   const candidateId = String(candidate.id || position.candidateId || event.id);
   const direction =
-    candidate.direction === "sell" || position.direction === "sell" ? "sell" : "buy";
+    candidate.direction === "sell" || position.direction === "sell"
+      ? "sell"
+      : "buy";
   const signalAt =
     toIsoString(candidate.signalAt) ??
     toIsoString(position.signalAt) ??
     toIsoString(event.occurredAt);
-  const signalQuality = asRecord(position.signalQuality ?? candidate.signalQuality);
+  const signalQuality = asRecord(
+    position.signalQuality ?? candidate.signalQuality,
+  );
   const lastStop = asRecord(position.lastStop ?? payload.stop);
   const lastWireTrail = asRecord(position.lastWireTrail ?? lastStop.wireTrail);
   const entryGreeks =
@@ -2931,7 +3045,9 @@ function positionFromEntryPayload(event: ExecutionEvent): SignalOptionsPosition 
   }
 
   return {
-    id: String(position.id || `${event.deploymentId ?? "deployment"}:${event.symbol}`),
+    id: String(
+      position.id || `${event.deploymentId ?? "deployment"}:${event.symbol}`,
+    ),
     candidateId,
     symbol: event.symbol,
     direction,
@@ -2941,9 +3057,14 @@ function positionFromEntryPayload(event: ExecutionEvent): SignalOptionsPosition 
       selectedContract.right === "put"
         ? "put"
         : "call",
-    timeframe: String(candidate.timeframe || position.timeframe || "15m") as SignalMonitorTimeframe,
+    timeframe: String(
+      candidate.timeframe || position.timeframe || "15m",
+    ) as SignalMonitorTimeframe,
     signalAt,
-    openedAt: toIsoString(position.openedAt) ?? toIsoString(event.occurredAt) ?? signalAt,
+    openedAt:
+      toIsoString(position.openedAt) ??
+      toIsoString(event.occurredAt) ??
+      signalAt,
     entryPrice,
     quantity,
     peakPrice: finiteNumber(position.peakPrice) ?? entryPrice,
@@ -2961,7 +3082,11 @@ function positionFromEntryPayload(event: ExecutionEvent): SignalOptionsPosition 
       : null,
     entryGreeks,
     greekBaselineSource:
-      position.greekBaselineSource === "first_mark" ? "first_mark" : entryGreeks ? "entry" : null,
+      position.greekBaselineSource === "first_mark"
+        ? "first_mark"
+        : entryGreeks
+          ? "entry"
+          : null,
   };
 }
 
@@ -2971,8 +3096,7 @@ function deriveActivePositions(events: ExecutionEvent[]) {
   const closedPositionIds = new Set<string>();
   [...events]
     .sort(
-      (left, right) =>
-        left.occurredAt.getTime() - right.occurredAt.getTime(),
+      (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
     )
     .forEach((event) => {
       const symbol = normalizeSymbol(event.symbol ?? "").toUpperCase();
@@ -2989,6 +3113,9 @@ function deriveActivePositions(events: ExecutionEvent[]) {
         return;
       }
       if (event.eventType === SIGNAL_OPTIONS_EXIT_EVENT) {
+        if (!signalOptionsExitEventHasActionableOptionSession(event)) {
+          return;
+        }
         const payload = asRecord(event.payload);
         const position = asRecord(payload.position);
         const candidateId = positionCandidateIdFromPayload(payload);
@@ -3005,16 +3132,20 @@ function deriveActivePositions(events: ExecutionEvent[]) {
       const isPositionMarkSkip =
         event.eventType === SIGNAL_OPTIONS_SKIPPED_EVENT &&
         ["position_mark_unavailable", "position_mark_failed"].includes(
-          compactString(asRecord(event.payload).reason ?? asRecord(event.payload).skipReason) ??
-            "",
+          compactString(
+            asRecord(event.payload).reason ??
+              asRecord(event.payload).skipReason,
+          ) ?? "",
         );
       if (event.eventType === SIGNAL_OPTIONS_MARK_EVENT || isPositionMarkSkip) {
         const payload = asRecord(event.payload);
         const position = asRecord(payload.position);
         const current = positions.get(symbol);
         if (current) {
-          current.peakPrice = finiteNumber(position.peakPrice) ?? current.peakPrice;
-          current.stopPrice = finiteNumber(position.stopPrice) ?? current.stopPrice;
+          current.peakPrice =
+            finiteNumber(position.peakPrice) ?? current.peakPrice;
+          current.stopPrice =
+            finiteNumber(position.stopPrice) ?? current.stopPrice;
           current.lastMarkPrice =
             finiteNumber(position.lastMarkPrice) ?? current.lastMarkPrice;
           current.lastMarkedAt =
@@ -3022,13 +3153,15 @@ function deriveActivePositions(events: ExecutionEvent[]) {
             toIsoString(event.occurredAt) ??
             current.lastMarkedAt;
           const lastStop = asRecord(position.lastStop ?? payload.stop);
-          const lastWireTrail = asRecord(position.lastWireTrail ?? lastStop.wireTrail);
+          const lastWireTrail = asRecord(
+            position.lastWireTrail ?? lastStop.wireTrail,
+          );
           current.lastStop = Object.keys(lastStop).length
             ? lastStop
-            : current.lastStop ?? null;
+            : (current.lastStop ?? null);
           current.lastWireTrail = Object.keys(lastWireTrail).length
             ? lastWireTrail
-            : current.lastWireTrail ?? null;
+            : (current.lastWireTrail ?? null);
           current.entryGreeks =
             greekSnapshotFromQuote(asRecord(position.entryGreeks)) ??
             current.entryGreeks ??
@@ -3134,7 +3267,10 @@ function stateSignalOptionsEvents(events: ExecutionEvent[]) {
   const runtimeEvents = runtimeSignalOptionsEvents(events);
   const activePositions = deriveActivePositions(runtimeEvents);
   return {
-    signalEvents: filterOrphanPositionMarkEvents(runtimeEvents, activePositions),
+    signalEvents: filterOrphanPositionMarkEvents(
+      runtimeEvents,
+      activePositions,
+    ),
     activePositions,
   };
 }
@@ -3167,9 +3303,13 @@ function computeSignalOptionsDailyRealizedPnl(
     .filter(
       (event) =>
         event.eventType === SIGNAL_OPTIONS_EXIT_EVENT &&
-        isSameUtcDate(event.occurredAt, now),
+        isSameUtcDate(event.occurredAt, now) &&
+        signalOptionsExitEventHasActionableOptionSession(event),
     )
-    .reduce((sum, event) => sum + (finiteNumber(asRecord(event.payload).pnl) ?? 0), 0);
+    .reduce(
+      (sum, event) => sum + (finiteNumber(asRecord(event.payload).pnl) ?? 0),
+      0,
+    );
 }
 
 function computeSignalOptionsOpenUnrealizedPnl(
@@ -3186,8 +3326,7 @@ function computeSignalOptionsOpenUnrealizedPnl(
     const multiplier =
       finiteNumber(asRecord(position.selectedContract).multiplier) ?? 100;
     return (
-      sum +
-      (markPrice - position.entryPrice) * position.quantity * multiplier
+      sum + (markPrice - position.entryPrice) * position.quantity * multiplier
     );
   }, 0);
 }
@@ -3250,9 +3389,11 @@ function mergeShadowLinks(
     return next;
   }
   const sourceType =
-    current.sourceType && next.sourceType && current.sourceType !== next.sourceType
+    current.sourceType &&
+    next.sourceType &&
+    current.sourceType !== next.sourceType
       ? "mixed"
-      : current.sourceType ?? next.sourceType;
+      : (current.sourceType ?? next.sourceType);
   return {
     orderId: current.orderId ?? next.orderId,
     fillId: current.fillId ?? next.fillId,
@@ -3264,7 +3405,9 @@ function mergeShadowLinks(
     sourceType,
     strategyLabel: current.strategyLabel ?? next.strategyLabel,
     attributionStatus:
-      sourceType === "mixed" ? "mixed" : current.attributionStatus ?? next.attributionStatus,
+      sourceType === "mixed"
+        ? "mixed"
+        : (current.attributionStatus ?? next.attributionStatus),
   };
 }
 
@@ -3305,7 +3448,9 @@ async function buildSignalOptionsShadowIndex(
   );
 
   for (const order of orders) {
-    const sourceEventId = order.sourceEventId ? String(order.sourceEventId) : null;
+    const sourceEventId = order.sourceEventId
+      ? String(order.sourceEventId)
+      : null;
     const payload = asRecord(order.payload);
     const candidate = asRecord(payload.candidate);
     const positionPayload = asRecord(payload.position);
@@ -3343,6 +3488,15 @@ function shadowLinkClosesPosition(
   return positionQuantity != null && positionQuantity <= 0;
 }
 
+function positionOpenedInActionableOptionSession(
+  position: SignalOptionsPosition,
+) {
+  const openedAt = dateOrNull(position.openedAt);
+  return openedAt
+    ? isLiveOptionTradingSession(openedAt, position.selectedContract)
+    : true;
+}
+
 function reconcileActivePositionsWithShadowLinks(
   positions: SignalOptionsPosition[],
   shadowIndex: SignalOptionsShadowIndex,
@@ -3350,9 +3504,16 @@ function reconcileActivePositionsWithShadowLinks(
   return positions.filter((position) => {
     const candidateId = compactString(position.candidateId);
     if (!candidateId) {
-      return true;
+      return positionOpenedInActionableOptionSession(position);
     }
-    return !shadowLinkClosesPosition(shadowIndex.byCandidateId.get(candidateId));
+    const shadowLink = shadowIndex.byCandidateId.get(candidateId);
+    if (shadowLinkClosesPosition(shadowLink)) {
+      return false;
+    }
+    if (!shadowLink && !positionOpenedInActionableOptionSession(position)) {
+      return false;
+    }
+    return true;
   });
 }
 
@@ -3376,6 +3537,8 @@ const RETRYABLE_SIGNAL_OPTION_SKIP_REASONS = new Set([
 ]);
 
 const FORCE_RETRYABLE_SIGNAL_OPTION_SKIP_REASONS = new Set([
+  "after_hours_option_entry_blocked",
+  "after_hours_option_exit_blocked",
   "candidate_resolution_failed",
   "missing_bid_ask",
   "missing_mark",
@@ -3451,7 +3614,9 @@ function optionChainBackoffFromAttempts(
         source: "chain",
       }),
     )
-    .filter((backoff): backoff is SignalOptionsOptionBackoff => Boolean(backoff));
+    .filter((backoff): backoff is SignalOptionsOptionBackoff =>
+      Boolean(backoff),
+    );
   if (!backoffs.length) {
     return null;
   }
@@ -3474,8 +3639,9 @@ function signalOptionsPositionMatchesCandidate(input: {
   candidate: Record<string, unknown>;
 }) {
   const positionSymbol = normalizeSymbol(input.position.symbol).toUpperCase();
-  const candidateSymbol = normalizeSymbol(String(input.candidate.symbol ?? ""))
-    .toUpperCase();
+  const candidateSymbol = normalizeSymbol(
+    String(input.candidate.symbol ?? ""),
+  ).toUpperCase();
   const candidateDirection =
     input.candidate.direction === "sell" ? "sell" : "buy";
   return (
@@ -3487,7 +3653,8 @@ function signalOptionsPositionMatchesCandidate(input: {
 function skipPayloadHasSelectedContract(payload: Record<string, unknown>) {
   return (
     Object.keys(asRecord(payload.selectedContract)).length > 0 ||
-    Object.keys(asRecord(asRecord(payload.candidate).selectedContract)).length > 0
+    Object.keys(asRecord(asRecord(payload.candidate).selectedContract)).length >
+      0
   );
 }
 
@@ -3575,7 +3742,8 @@ function isRetryableSignalOptionsSkip(
   if (GATEWAY_READINESS_SKIP_REASONS.has(reason)) {
     return (
       options?.gatewayReadinessBlockEnabled === false ||
-      options?.gatewayReady === true || !skipPayloadHasSelectedContract(payload)
+      options?.gatewayReady === true ||
+      !skipPayloadHasSelectedContract(payload)
     );
   }
 
@@ -3610,7 +3778,8 @@ function isRetryableSignalOptionsSkip(
 
   if (
     options?.contractResolutionBackoffEnabled === false &&
-    (reason === "option_chain_backoff" || reason === "option_expiration_backoff")
+    (reason === "option_chain_backoff" ||
+      reason === "option_expiration_backoff")
   ) {
     return true;
   }
@@ -3644,8 +3813,17 @@ function seenSignalKeys(
   return new Set(
     runtimeSignalOptionsEvents(events)
       .filter((event) => !isRetryableSignalOptionsSkip(event, options))
+      .filter(
+        (event) =>
+          (event.eventType !== SIGNAL_OPTIONS_ENTRY_EVENT ||
+            signalOptionsEntryEventHasActionableOptionSession(event)) &&
+          (event.eventType !== SIGNAL_OPTIONS_EXIT_EVENT ||
+            signalOptionsExitEventHasActionableOptionSession(event)),
+      )
       .map((event) => asRecord(event.payload).signalKey)
-      .filter((signalKey): signalKey is string => typeof signalKey === "string"),
+      .filter(
+        (signalKey): signalKey is string => typeof signalKey === "string",
+      ),
   );
 }
 
@@ -3719,7 +3897,9 @@ function eventTimelineItem(
 ) {
   const payload = asRecord(event.payload);
   const changedFields = Array.isArray(payload.changedFields)
-    ? payload.changedFields.filter((field): field is string => typeof field === "string")
+    ? payload.changedFields.filter(
+        (field): field is string => typeof field === "string",
+      )
     : [];
   return {
     id: event.id,
@@ -3747,18 +3927,29 @@ function deriveCandidateActionStatus(input: {
   const hasExit = eventTypes.has(SIGNAL_OPTIONS_EXIT_EVENT);
   const hasDeviation = eventTypes.has(SIGNAL_OPTIONS_MANUAL_DEVIATION_EVENT);
   const hasSkip = eventTypes.has(SIGNAL_OPTIONS_SKIPPED_EVENT);
-  const hasShadowFill = Boolean(input.shadowLink?.fillId || input.shadowLink?.orderId);
-  const plannedQuantity = finiteNumber(asRecord(input.candidate.orderPlan).quantity);
+  const hasShadowFill = Boolean(
+    input.shadowLink?.fillId || input.shadowLink?.orderId,
+  );
+  const plannedQuantity = finiteNumber(
+    asRecord(input.candidate.orderPlan).quantity,
+  );
   const positionQuantity = finiteNumber(input.shadowLink?.positionQuantity);
 
   if (hasExit) {
     return {
       actionStatus:
-        positionQuantity != null && positionQuantity > 0 ? "partial_shadow" : "closed",
+        positionQuantity != null && positionQuantity > 0
+          ? "partial_shadow"
+          : "closed",
       syncStatus: hasShadowFill ? "synced" : "event_only",
     };
   }
-  if (hasEntry && hasShadowFill && positionQuantity != null && positionQuantity <= 0) {
+  if (
+    hasEntry &&
+    hasShadowFill &&
+    positionQuantity != null &&
+    positionQuantity <= 0
+  ) {
     return { actionStatus: "closed", syncStatus: "synced" };
   }
   if (hasEntry && !hasShadowFill) {
@@ -3865,7 +4056,10 @@ function formatSignalOptionsScanAge(ageMs: number | null): string | null {
     : `${minutes}m`;
 }
 
-function markSignalOptionsScanActive(deploymentId: string, startedAt = new Date()) {
+function markSignalOptionsScanActive(
+  deploymentId: string,
+  startedAt = new Date(),
+) {
   activeScanDeploymentIds.add(deploymentId);
   activeScanStartedAtByDeploymentId.set(deploymentId, startedAt);
 }
@@ -3943,7 +4137,10 @@ function signalOptionsScanAlreadyRunningResponse(input: {
   };
 }
 
-function signalOptionsPressurePauseState(deploymentId: string, now = new Date()) {
+function signalOptionsPressurePauseState(
+  deploymentId: string,
+  now = new Date(),
+) {
   const deployment = getSignalOptionsWorkerSnapshot().deployments.find(
     (entry) => entry.deploymentId === deploymentId,
   );
@@ -3956,9 +4153,7 @@ function signalOptionsPressurePauseState(deploymentId: string, now = new Date())
         String(record.pressurePauseStartedAt ?? record.lastSkippedAt ?? ""),
       )
     : Number.NaN;
-  const startedAt = Number.isFinite(startedAtMs)
-    ? new Date(startedAtMs)
-    : null;
+  const startedAt = Number.isFinite(startedAtMs) ? new Date(startedAtMs) : null;
   const ageMs =
     paused && startedAt
       ? Math.max(0, now.getTime() - startedAt.getTime())
@@ -4028,7 +4223,10 @@ function isPositionNearStop(position: SignalOptionsPosition) {
   return distance != null && distance <= 20;
 }
 
-function isPositionMarkStale(position: SignalOptionsPosition, now = new Date()) {
+function isPositionMarkStale(
+  position: SignalOptionsPosition,
+  now = new Date(),
+) {
   const markedAt = dateOrNull(position.lastMarkedAt);
   return Boolean(markedAt && now.getTime() - markedAt.getTime() > 15 * 60_000);
 }
@@ -4137,10 +4335,12 @@ function blockedCandidateAction(candidate: { reason?: unknown }) {
 function buildCockpitPipeline(input: {
   deployment: AlgoDeployment;
   readiness: AlgoGatewayReadiness;
-  candidates: Array<SignalOptionsCandidate & {
-    actionStatus?: SignalOptionsActionStatus;
-    syncStatus?: SignalOptionsSyncStatus;
-  }>;
+  candidates: Array<
+    SignalOptionsCandidate & {
+      actionStatus?: SignalOptionsActionStatus;
+      syncStatus?: SignalOptionsSyncStatus;
+    }
+  >;
   activePositions: SignalOptionsPosition[];
   risk: Record<string, unknown>;
   events: ExecutionEvent[];
@@ -4155,9 +4355,18 @@ function buildCockpitPipeline(input: {
   const blockedCandidates = input.candidates.filter(candidateIsBlocked);
   const referenceAt = input.deployment.lastEvaluatedAt ?? null;
   const profileUpdatedAt = latestSignalOptionsProfileUpdatedAt(input.events);
-  const currentActionableBlockers = blockedCandidates.filter((candidate) =>
-    candidateIsCurrentCockpitBlocker(candidate, referenceAt, profileUpdatedAt) &&
-    !candidateHasFreshPositionMark(candidate, input.activePositions, referenceAt),
+  const currentActionableBlockers = blockedCandidates.filter(
+    (candidate) =>
+      candidateIsCurrentCockpitBlocker(
+        candidate,
+        referenceAt,
+        profileUpdatedAt,
+      ) &&
+      !candidateHasFreshPositionMark(
+        candidate,
+        input.activePositions,
+        referenceAt,
+      ),
   );
   const signalPolicyBlocked = blockedCandidates.filter((candidate) =>
     candidateMatchesSkipCategories(candidate, ["signal_policy"]),
@@ -4178,7 +4387,8 @@ function buildCockpitPipeline(input: {
   );
   const mismatches = input.candidates.filter(
     (candidate) =>
-      candidate.actionStatus === "mismatch" || candidate.syncStatus === "mismatch",
+      candidate.actionStatus === "mismatch" ||
+      candidate.syncStatus === "mismatch",
   );
   const exitEvents = input.events.filter(
     (event) => event.eventType === SIGNAL_OPTIONS_EXIT_EVENT,
@@ -4188,7 +4398,10 @@ function buildCockpitPipeline(input: {
   );
   const nearStopCount = input.activePositions.filter(isPositionNearStop).length;
   const dailyHaltActive = input.risk.dailyHaltActive === true;
-  const scanState = signalOptionsActiveScanState(input.deployment.id, input.now);
+  const scanState = signalOptionsActiveScanState(
+    input.deployment.id,
+    input.now,
+  );
   const scanRunningAge = formatSignalOptionsScanAge(scanState.ageMs);
   const pressurePauseState = signalOptionsPressurePauseState(
     input.deployment.id,
@@ -4250,9 +4463,12 @@ function buildCockpitPipeline(input: {
       activeScanPhase,
       lastSignalScanAt,
       latestSignalBarAt:
-        scanState.latestSignalBarAt ?? workerState.lastLatestSignalBarAt ?? null,
+        scanState.latestSignalBarAt ??
+        workerState.lastLatestSignalBarAt ??
+        null,
       signalSourcePolicy:
-        workerState.lastSignalSourcePolicy ?? SIGNAL_OPTIONS_SIGNAL_SOURCE_POLICY,
+        workerState.lastSignalSourcePolicy ??
+        SIGNAL_OPTIONS_SIGNAL_SOURCE_POLICY,
       heavyWorkDeferred: lastHeavyWorkDeferred,
       resourcePressureLevel,
       pressurePaused: pressurePauseState.paused,
@@ -4278,24 +4494,26 @@ function buildCockpitPipeline(input: {
           ? heavyWorkDeferredByPressure
             ? "fresh signals updated; action work deferred by resource pressure"
             : "fresh signals updated; action work deferred before contract selection"
-        : scanState.running
-        ? scanRunningAge
-          ? `scan running for ${scanRunningAge}`
-          : "scan running"
-        : workerState.nextDueInMs !== null && workerState.nextDueInMs > 0
-          ? `worker waiting ${nextDueAge ?? "for next interval"}${lastBatchDetail ? `; last batch ${lastBatchDetail}` : ""}`
-        : input.readiness.ready
-          ? lastBatchDetail
-            ? `${input.deployment.symbolUniverse.length} symbols ready; last batch ${lastBatchDetail}`
-            : `${input.deployment.symbolUniverse.length} symbols ready`
-          : input.readiness.message,
+          : scanState.running
+            ? scanRunningAge
+              ? `scan running for ${scanRunningAge}`
+              : "scan running"
+            : workerState.nextDueInMs !== null && workerState.nextDueInMs > 0
+              ? `worker waiting ${nextDueAge ?? "for next interval"}${lastBatchDetail ? `; last batch ${lastBatchDetail}` : ""}`
+              : input.readiness.ready
+                ? lastBatchDetail
+                  ? `${input.deployment.symbolUniverse.length} symbols ready; last batch ${lastBatchDetail}`
+                  : `${input.deployment.symbolUniverse.length} symbols ready`
+                : input.readiness.message,
     },
     {
       id: "signal_detected",
       label: "Signal Detected",
       status: stageStatus({ count: input.candidates.length }),
       count: input.candidates.length,
-      latestAt: latestIso(input.candidates.map((candidate) => candidate.signalAt)),
+      latestAt: latestIso(
+        input.candidates.map((candidate) => candidate.signalAt),
+      ),
       detail: input.candidates.length
         ? `${input.candidates.length} recent signal candidates`
         : "awaiting fresh Pyrus Signals signal",
@@ -4328,17 +4546,17 @@ function buildCockpitPipeline(input: {
         ? `${contractBlocked.length} candidates blocked at contract selection`
         : selectedContracts.length
           ? `${selectedContracts.length} contracts resolved`
-        : contractSelectionWaitingOnScan
-          ? activeScanPhase === "signal_refresh"
-            ? "waiting for signal refresh before contract selection"
-            : activeScanPhase === "action_scan"
-              ? "action scan running before contract selection"
-              : "scan running before contract selection"
-        : contractSelectionDeferred
-          ? heavyWorkDeferredByPressure
-            ? "action work deferred by resource pressure before contract selection"
-            : "action work deferred before contract selection"
-        : "no resolved contracts yet",
+          : contractSelectionWaitingOnScan
+            ? activeScanPhase === "signal_refresh"
+              ? "waiting for signal refresh before contract selection"
+              : activeScanPhase === "action_scan"
+                ? "action scan running before contract selection"
+                : "scan running before contract selection"
+            : contractSelectionDeferred
+              ? heavyWorkDeferredByPressure
+                ? "action work deferred by resource pressure before contract selection"
+                : "action work deferred before contract selection"
+              : "no resolved contracts yet",
     },
     {
       id: "liquidity_risk_gate",
@@ -4385,10 +4603,10 @@ function buildCockpitPipeline(input: {
       detail: markingBlocked.length
         ? `${markingBlocked.length} mark updates need attention`
         : nearStopCount
-        ? `${nearStopCount} positions near stop`
-        : input.activePositions.length
-          ? `${input.activePositions.length} positions marked`
-          : "no open shadow positions",
+          ? `${nearStopCount} positions near stop`
+          : input.activePositions.length
+            ? `${input.activePositions.length} positions marked`
+            : "no open shadow positions",
     },
     {
       id: "exit_close",
@@ -4406,11 +4624,13 @@ function buildCockpitPipeline(input: {
 function buildCockpitAttention(input: {
   deployment: AlgoDeployment;
   readiness: AlgoGatewayReadiness;
-  candidates: Array<SignalOptionsCandidate & {
-    actionStatus?: SignalOptionsActionStatus;
-    syncStatus?: SignalOptionsSyncStatus;
-    shadowLink?: SignalOptionsShadowLink | null;
-  }>;
+  candidates: Array<
+    SignalOptionsCandidate & {
+      actionStatus?: SignalOptionsActionStatus;
+      syncStatus?: SignalOptionsSyncStatus;
+      shadowLink?: SignalOptionsShadowLink | null;
+    }
+  >;
   activePositions: SignalOptionsPosition[];
   risk: Record<string, unknown>;
   events: ExecutionEvent[];
@@ -4435,7 +4655,8 @@ function buildCockpitAttention(input: {
       summary: "Market data readiness is blocking scans.",
       detail: input.readiness.message,
       occurredAt: new Date().toISOString(),
-      action: "Start or repair the IBKR bridge/data mode before running Shadow scans.",
+      action:
+        "Start or repair the IBKR bridge/data mode before running Shadow scans.",
     });
   }
 
@@ -4469,9 +4690,18 @@ function buildCockpitAttention(input: {
   const profileUpdatedAt = latestSignalOptionsProfileUpdatedAt(input.events);
 
   input.candidates
-    .filter((candidate) =>
-      candidateIsCurrentCockpitBlocker(candidate, referenceAt, profileUpdatedAt) &&
-      !candidateHasFreshPositionMark(candidate, input.activePositions, referenceAt),
+    .filter(
+      (candidate) =>
+        candidateIsCurrentCockpitBlocker(
+          candidate,
+          referenceAt,
+          profileUpdatedAt,
+        ) &&
+        !candidateHasFreshPositionMark(
+          candidate,
+          input.activePositions,
+          referenceAt,
+        ),
     )
     .slice(0, 8)
     .forEach((candidate) => {
@@ -4482,7 +4712,8 @@ function buildCockpitAttention(input: {
         symbol: candidate.symbol,
         summary: `${candidate.symbol} candidate blocked.`,
         detail: formatEnumReason(candidate.reason ?? "gate_failed"),
-        occurredAt: candidateLatestTimelineAt(candidate) ?? candidate.signalAt ?? null,
+        occurredAt:
+          candidateLatestTimelineAt(candidate) ?? candidate.signalAt ?? null,
         action: blockedCandidateAction(candidate),
       });
     });
@@ -4499,13 +4730,16 @@ function buildCockpitAttention(input: {
     .forEach((candidate) => {
       items.push({
         id: `shadow-${candidate.id}`,
-        severity: candidate.actionStatus === "mismatch" ? "critical" : "warning",
+        severity:
+          candidate.actionStatus === "mismatch" ? "critical" : "warning",
         stage: "order_shadow",
         symbol: candidate.symbol,
         summary: `${candidate.symbol} shadow ledger attribution needs review.`,
         detail: shadowLinkStatus(candidate.shadowLink),
-        occurredAt: candidateLatestTimelineAt(candidate) ?? candidate.signalAt ?? null,
-        action: "Compare execution event, shadow order, fill, and position link.",
+        occurredAt:
+          candidateLatestTimelineAt(candidate) ?? candidate.signalAt ?? null,
+        action:
+          "Compare execution event, shadow order, fill, and position link.",
       });
     });
 
@@ -4692,9 +4926,11 @@ function updateDiagnosticIncident(
 
 function buildCockpitDiagnostics(input: {
   signals: SignalOptionsSignalSnapshot[];
-  candidates: Array<SignalOptionsCandidate & {
-    actionStatus?: SignalOptionsActionStatus;
-  }>;
+  candidates: Array<
+    SignalOptionsCandidate & {
+      actionStatus?: SignalOptionsActionStatus;
+    }
+  >;
   activePositions: SignalOptionsPosition[];
   events: ExecutionEvent[];
   profile?: SignalOptionsExecutionProfile;
@@ -4931,9 +5167,7 @@ function profitFactorMetric(values: number[]) {
     .filter((value) => value > 0)
     .reduce((sum, value) => sum + value, 0);
   const losses = Math.abs(
-    values
-      .filter((value) => value < 0)
-      .reduce((sum, value) => sum + value, 0),
+    values.filter((value) => value < 0).reduce((sum, value) => sum + value, 0),
   );
   if (!losses) {
     return gains > 0 ? null : 0;
@@ -5007,7 +5241,10 @@ function eventDte(event: ExecutionEvent) {
   if (!expirationDate || !openedAt) {
     return null;
   }
-  return daysBetweenUtc(new Date(openedAt), new Date(`${expirationDate}T00:00:00.000Z`));
+  return daysBetweenUtc(
+    new Date(openedAt),
+    new Date(`${expirationDate}T00:00:00.000Z`),
+  );
 }
 
 function eventEntryGateWouldPass(
@@ -5096,7 +5333,10 @@ function summarizeSignalOptionsRoundTrips(roundTrips: unknown[]) {
       pnls.reduce((sum, value) => sum + value, 0),
       2,
     ),
-    fees: roundMetric(fees.reduce((sum, value) => sum + value, 0), 2),
+    fees: roundMetric(
+      fees.reduce((sum, value) => sum + value, 0),
+      2,
+    ),
     averageWin: roundMetric(averageMetric(winners), 2),
     averageLoss: roundMetric(averageMetric(losers), 2),
     expectancy: roundMetric(averageMetric(pnls), 2),
@@ -5239,7 +5479,8 @@ function buildRuleAdherence(input: {
   const bearishPutGateViolations = entryEvents.filter(
     (event) => !eventEntryGateWouldPass(event, input.profile),
   ).length;
-  const openSymbols = finiteNumber(input.risk.openSymbols) ?? input.activePositions.length;
+  const openSymbols =
+    finiteNumber(input.risk.openSymbols) ?? input.activePositions.length;
   const unmarkedPositions = input.activePositions.filter(
     (position) => finiteNumber(position.lastMarkPrice) == null,
   ).length;
@@ -5352,8 +5593,7 @@ function buildRuleAdherence(input: {
             ? "warning"
             : "pass",
       observations: skippedEvents.length + input.activePositions.length,
-      violations:
-        openSymbols > input.profile.riskCaps.maxOpenSymbols ? 1 : 0,
+      violations: openSymbols > input.profile.riskCaps.maxOpenSymbols ? 1 : 0,
       detail: skipCount("max_open_symbols_reached")
         ? `${skipCount("max_open_symbols_reached")} candidates were blocked by the open-symbol cap; current exposure is ${openSymbols}/${input.profile.riskCaps.maxOpenSymbols}.`
         : `${openSymbols}/${input.profile.riskCaps.maxOpenSymbols} open symbols.`,
@@ -5371,10 +5611,10 @@ function buildRuleAdherence(input: {
       detail: !dailyLossHaltEnabled
         ? "Daily loss halt is disabled."
         : input.risk.dailyHaltActive === true
-        ? `Daily P&L ${input.risk.dailyPnl ?? 0} is at or below halt ${input.profile.riskCaps.maxDailyLoss}.`
-        : dailyLossHaltSkipCount
-          ? `${dailyLossHaltSkipCount} candidates were blocked by the daily halt.`
-          : "Daily loss halt is clear.",
+          ? `Daily P&L ${input.risk.dailyPnl ?? 0} is at or below halt ${input.profile.riskCaps.maxDailyLoss}.`
+          : dailyLossHaltSkipCount
+            ? `${dailyLossHaltSkipCount} candidates were blocked by the daily halt.`
+            : "Daily loss halt is clear.",
     }),
     rule({
       id: "position_marking",
@@ -5384,11 +5624,14 @@ function buildRuleAdherence(input: {
           ? "warning"
           : "pass",
       observations:
-        markEvents.length + input.activePositions.length + positionMarkFeedBlocks,
+        markEvents.length +
+        input.activePositions.length +
+        positionMarkFeedBlocks,
       violations: markProblemEvents + positionMarkFeedBlocks,
-      detail: unmarkedPositions || markProblemEvents || positionMarkFeedBlocks
-        ? `${unmarkedPositions} open positions lack marks; ${markProblemEvents} mark events reported quote issues; ${positionMarkFeedBlocks} scans blocked new entries while marking was degraded.`
-        : "Open positions have marks for current exposure.",
+      detail:
+        unmarkedPositions || markProblemEvents || positionMarkFeedBlocks
+          ? `${unmarkedPositions} open positions lack marks; ${markProblemEvents} mark events reported quote issues; ${positionMarkFeedBlocks} scans blocked new entries while marking was degraded.`
+          : "Open positions have marks for current exposure.",
     }),
   ];
 }
@@ -5434,7 +5677,9 @@ export function buildSignalOptionsPerformanceFromInputs(input: {
 
   return {
     deploymentId: input.deploymentId,
-    range: compactString(asRecord(input.shadowTradeDiagnostics.context).range) ?? "1M",
+    range:
+      compactString(asRecord(input.shadowTradeDiagnostics.context).range) ??
+      "1M",
     summary: {
       ...summarizeSignalOptionsRoundTrips(roundTrips),
       openLots: openLots.length,
@@ -5446,11 +5691,13 @@ export function buildSignalOptionsPerformanceFromInputs(input: {
     },
     openExposure: {
       openPositions: input.state.activePositions.length,
-      openSymbols: input.state.risk.openSymbols ?? input.state.activePositions.length,
+      openSymbols:
+        input.state.risk.openSymbols ?? input.state.activePositions.length,
       maxOpenSymbols: input.profile.riskCaps.maxOpenSymbols,
       atOpenSymbolCapacity:
-        Number(input.state.risk.openSymbols ?? input.state.activePositions.length) >=
-        input.profile.riskCaps.maxOpenSymbols,
+        Number(
+          input.state.risk.openSymbols ?? input.state.activePositions.length,
+        ) >= input.profile.riskCaps.maxOpenSymbols,
       openPremium: input.state.risk.openPremium ?? 0,
       maxPremiumPerEntry: input.profile.riskCaps.maxPremiumPerEntry,
       openUnrealizedPnl: input.state.risk.openUnrealizedPnl ?? 0,
@@ -5503,7 +5750,9 @@ export async function getSignalOptionsPerformance(input: {
       ...input,
       view: "full",
     });
-  const shadowTradeDiagnostics = await computeShadowTradeDiagnostics({ range: "1M" });
+  const shadowTradeDiagnostics = await computeShadowTradeDiagnostics({
+    range: "1M",
+  });
 
   const payload = buildSignalOptionsPerformanceFromInputs({
     deploymentId: deployment.id,
@@ -5532,7 +5781,9 @@ function formatEnumReason(value: string) {
 }
 
 function formatNumberForPayload(value: number | null) {
-  return value == null || !Number.isFinite(value) ? null : Number(value.toFixed(1));
+  return value == null || !Number.isFinite(value)
+    ? null
+    : Number(value.toFixed(1));
 }
 
 function shadowLinkStatus(value: SignalOptionsShadowLink | null | undefined) {
@@ -5577,7 +5828,9 @@ async function resolveSourceBacktest(deployment: AlgoDeployment) {
 
   return {
     strategyId: deployment.strategyId,
-    strategyName: normalizeLegacyAlgoBrandText(strategy?.name ?? deployment.name),
+    strategyName: normalizeLegacyAlgoBrandText(
+      strategy?.name ?? deployment.name,
+    ),
     sourceRunId: sourceRunId ?? null,
     sourceStudyId: sourceStudyId ?? run?.studyId ?? null,
     runName: run?.name ?? null,
@@ -5585,7 +5838,8 @@ async function resolveSourceBacktest(deployment: AlgoDeployment) {
       compactString(config.strategyVersion) ?? run?.strategyVersion ?? null,
     metrics: (run?.metrics as Record<string, unknown> | null) ?? null,
     promotedAt:
-      strategy?.createdAt?.toISOString?.() ?? deployment.createdAt.toISOString(),
+      strategy?.createdAt?.toISOString?.() ??
+      deployment.createdAt.toISOString(),
   };
 }
 
@@ -5595,8 +5849,10 @@ async function buildStatePayload(input: {
   events: ExecutionEvent[];
 }) {
   const signals = await listSignalOptionsSignalSnapshots(input.deployment);
-  const { signalEvents: stateSignalEvents, activePositions: eventActivePositions } =
-    stateSignalOptionsEvents(input.events);
+  const {
+    signalEvents: stateSignalEvents,
+    activePositions: eventActivePositions,
+  } = stateSignalOptionsEvents(input.events);
   const activeSignalEventsBeforeReconciliation = stateSignalEvents.filter(
     (event) => !skipEventDisabledByProfile(event, input.profile),
   );
@@ -5680,15 +5936,20 @@ async function buildStatePayload(input: {
         signalQuality,
         timeline: eventsForCandidate
           .slice()
-          .sort((left, right) => left.occurredAt.getTime() - right.occurredAt.getTime())
+          .sort(
+            (left, right) =>
+              left.occurredAt.getTime() - right.occurredAt.getTime(),
+          )
           .map((event) =>
             eventTimelineItem(event, shadowIndex.byEventId.get(event.id)),
           ),
       });
     })
     .sort((left, right) => {
-      const leftTime = dateOrNull(candidateLatestActivityAt(left))?.getTime() ?? 0;
-      const rightTime = dateOrNull(candidateLatestActivityAt(right))?.getTime() ?? 0;
+      const leftTime =
+        dateOrNull(candidateLatestActivityAt(left))?.getTime() ?? 0;
+      const rightTime =
+        dateOrNull(candidateLatestActivityAt(right))?.getTime() ?? 0;
       return rightTime - leftTime;
     })
     .slice(0, 75);
@@ -5700,7 +5961,8 @@ async function buildStatePayload(input: {
   const openUnrealizedPnl =
     computeSignalOptionsOpenUnrealizedPnl(activePositions);
   const dailyPnl = dailyRealizedPnl + openUnrealizedPnl;
-  const dailyLossBreached = dailyPnl <= -Math.abs(input.profile.riskCaps.maxDailyLoss);
+  const dailyLossBreached =
+    dailyPnl <= -Math.abs(input.profile.riskCaps.maxDailyLoss);
 
   return {
     deployment: deploymentToResponse(input.deployment),
@@ -5763,15 +6025,21 @@ const signalOptionsSummaryDashboardInFlight = new Map<
 >();
 const signalOptionsCockpitCache = new Map<
   string,
-  SignalOptionsCachedPayload<Awaited<ReturnType<typeof buildAlgoDeploymentCockpitPayload>>>
+  SignalOptionsCachedPayload<
+    Awaited<ReturnType<typeof buildAlgoDeploymentCockpitPayload>>
+  >
 >();
 const signalOptionsCockpitSummaryCache = new Map<
   string,
-  SignalOptionsCachedPayload<Awaited<ReturnType<typeof buildAlgoDeploymentCockpitPayload>>>
+  SignalOptionsCachedPayload<
+    Awaited<ReturnType<typeof buildAlgoDeploymentCockpitPayload>>
+  >
 >();
 const signalOptionsPerformanceCache = new Map<
   string,
-  SignalOptionsCachedPayload<ReturnType<typeof buildSignalOptionsPerformanceFromInputs>>
+  SignalOptionsCachedPayload<
+    ReturnType<typeof buildSignalOptionsPerformanceFromInputs>
+  >
 >();
 
 function invalidateSignalOptionsDashboardCaches(deploymentId?: string) {
@@ -5814,7 +6082,7 @@ function withSignalOptionsCacheMetadata<T>(
     stale: input.cacheStatus === "stale" ? true : record["stale"],
     reason:
       input.cacheStatus === "stale"
-        ? input.reason ?? "signal_options_dashboard_stale_cache"
+        ? (input.reason ?? "signal_options_dashboard_stale_cache")
         : record["reason"],
   } as T;
 }
@@ -6010,7 +6278,9 @@ async function getSignalOptionsSummaryDashboardSnapshot(input: {
     });
   }
 
-  const inFlight = signalOptionsSummaryDashboardInFlight.get(input.deploymentId);
+  const inFlight = signalOptionsSummaryDashboardInFlight.get(
+    input.deploymentId,
+  );
   if (inFlight) {
     return inFlight;
   }
@@ -6185,7 +6455,9 @@ export async function getAlgoDeploymentCockpit(input: {
 }) {
   const view = input.view ?? "summary";
   const cockpitCache =
-    view === "full" ? signalOptionsCockpitCache : signalOptionsCockpitSummaryCache;
+    view === "full"
+      ? signalOptionsCockpitCache
+      : signalOptionsCockpitSummaryCache;
   const cached = readSignalOptionsCachedPayload(
     cockpitCache,
     input.deploymentId,
@@ -6269,7 +6541,10 @@ async function refreshActivePosition(input: {
   }
   const now = new Date();
   if (!isLiveOptionTradingSession(now, contract)) {
-    return { managed: true, reason: SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON };
+    return {
+      managed: true,
+      reason: SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON,
+    };
   }
 
   const providerContractId =
@@ -6295,7 +6570,10 @@ async function refreshActivePosition(input: {
     chainDebug?: unknown,
   ) => {
     const resolution = candidateQuote
-      ? resolvePositionMarkQuote({ quote: candidateQuote, profile: input.profile })
+      ? resolvePositionMarkQuote({
+          quote: candidateQuote,
+          profile: input.profile,
+        })
       : null;
     markAttempts.push(
       positionMarkAttemptPayload({
@@ -6417,7 +6695,11 @@ async function refreshActivePosition(input: {
     input.position,
   ).catch((error: unknown) => {
     logger.warn?.(
-      { err: error, positionId: input.position.id, symbol: input.position.symbol },
+      {
+        err: error,
+        positionId: input.position.id,
+        symbol: input.position.symbol,
+      },
       "Failed to read signal-options Shadow position mark fallback",
     );
     return null;
@@ -6436,7 +6718,10 @@ async function refreshActivePosition(input: {
       position: input.position,
       fallback: shadowMarkFallback,
     });
-    markResolution = resolvePositionMarkQuote({ quote, profile: input.profile });
+    markResolution = resolvePositionMarkQuote({
+      quote,
+      profile: input.profile,
+    });
     markAttempts.push(
       positionMarkAttemptPayload({
         source: "shadow_position_mark",
@@ -6475,19 +6760,25 @@ async function refreshActivePosition(input: {
   const markPrice = markResolution.markPrice;
   const currentGreeks = greekSnapshotFromQuote(quote);
   const entryGreeks =
-    input.position.entryGreeks ?? greekSnapshotFromQuote(input.position.selectedContract);
+    input.position.entryGreeks ??
+    greekSnapshotFromQuote(input.position.selectedContract);
   await persistSignalOptionsQuoteSnapshot({
     contract,
     quote,
     source: `signal-options:${markSource ?? "mark"}`,
   }).catch((error: unknown) => {
     logger.debug?.(
-      { err: error, positionId: input.position.id, symbol: input.position.symbol },
+      {
+        err: error,
+        positionId: input.position.id,
+        symbol: input.position.symbol,
+      },
       "Signal-options quote greek snapshot persistence skipped",
     );
   });
   const wireContext =
-    input.profile.exitPolicy.wireGreekTrail.enabled && input.pyrusSignalsSettings
+    input.profile.exitPolicy.wireGreekTrail.enabled &&
+    input.pyrusSignalsSettings
       ? await loadSignalOptionsWireContextForPosition({
           position: input.position,
           evaluatedAt: now,
@@ -6542,7 +6833,9 @@ async function refreshActivePosition(input: {
   const exitReason = stop.exitReason ?? overnight?.exitReason ?? null;
   const exitPrice =
     liquidity.bid != null && liquidity.mid != null
-      ? Number((liquidity.mid - (liquidity.mid - liquidity.bid) * 0.9).toFixed(2))
+      ? Number(
+          (liquidity.mid - (liquidity.mid - liquidity.bid) * 0.9).toFixed(2),
+        )
       : Number(markPrice.toFixed(2));
   const positionPatch = {
     ...input.position,
@@ -6554,18 +6847,27 @@ async function refreshActivePosition(input: {
     lastWireTrail: asRecord(stopPayload.wireTrail),
     entryGreeks: entryGreeks ?? currentGreeks ?? null,
     greekBaselineSource: input.position.entryGreeks
-      ? input.position.greekBaselineSource ?? "entry"
+      ? (input.position.greekBaselineSource ?? "entry")
       : currentGreeks
         ? "first_mark"
-        : input.position.greekBaselineSource ?? null,
+        : (input.position.greekBaselineSource ?? null),
   };
 
   if (exitReason) {
-    const exitQuoteEligible = isSignalOptionsLiveExitQuoteEligible({
-      quote,
-      markSource,
-      usedShadowMarkFallback,
-    });
+    const exitQuoteEligible =
+      isSignalOptionsLiveExitQuoteEligible({
+        quote,
+        markSource,
+        usedShadowMarkFallback,
+      }) ||
+      isSignalOptionsShadowMarkFallbackExitEligible({
+        deployment: input.deployment,
+        fallback: shadowMarkFallback,
+        markSource,
+        now: markAt,
+        position: input.position,
+        usedShadowMarkFallback,
+      });
     if (!exitQuoteEligible) {
       return await emitPositionMarkSkip({
         summary: `${input.position.symbol} shadow exit skipped: live option quote unavailable`,
@@ -6597,9 +6899,11 @@ async function refreshActivePosition(input: {
         exitPrice,
         markPrice,
         pnl: Number(
-          ((exitPrice - input.position.entryPrice) *
+          (
+            (exitPrice - input.position.entryPrice) *
             input.position.quantity *
-            100).toFixed(2),
+            100
+          ).toFixed(2),
         ),
         position: positionPatch,
         selectedContract: input.position.selectedContract,
@@ -6826,7 +7130,8 @@ async function processEntryCandidate(input: {
         chainAttempts,
         retryable: true,
         ...(chainBackoff ? optionBackoffPayload(chainBackoff) : {}),
-        contractSelection: signalOptionsContractSelectionPayload(contractSelection),
+        contractSelection:
+          signalOptionsContractSelectionPayload(contractSelection),
       },
     });
     return false;
@@ -6836,6 +7141,7 @@ async function processEntryCandidate(input: {
   const selectedContract = contractToPayload(selectedQuote);
   const quote = quoteToPayload(selectedQuote);
   const entryGreeks = greekSnapshotFromQuote(selectedQuote);
+  const entryNow = new Date();
   if (!orderPlan?.ok) {
     const reason = String(orderPlan?.reason || "liquidity_gate_failed");
     await emitSkippedCandidate({
@@ -6853,7 +7159,33 @@ async function processEntryCandidate(input: {
           reason === "missing_mark" ||
           reason === "quote_not_fresh" ||
           reason === "spread_too_wide",
-        contractSelection: signalOptionsContractSelectionPayload(contractSelection),
+        contractSelection:
+          signalOptionsContractSelectionPayload(contractSelection),
+        selectedExpiration: {
+          expirationDate: selectedExpiration.expirationDate.toISOString(),
+          dte: selectedExpiration.dte,
+        },
+        chainDebug: chain.debug,
+        chainAttempts,
+      },
+    });
+    return false;
+  }
+
+  if (!isLiveOptionTradingSession(entryNow, selectedContract)) {
+    await emitSkippedCandidate({
+      deployment: input.deployment,
+      candidate: input.candidate,
+      signalKey: input.signalKey,
+      reason: "after_hours_option_entry_blocked",
+      detail: {
+        retryable: true,
+        selectedContract,
+        quote,
+        orderPlan,
+        liquidity: orderPlan.liquidity,
+        contractSelection:
+          signalOptionsContractSelectionPayload(contractSelection),
         selectedExpiration: {
           expirationDate: selectedExpiration.expirationDate.toISOString(),
           dte: selectedExpiration.dte,
@@ -6877,7 +7209,8 @@ async function processEntryCandidate(input: {
         quote,
         liquidity: orderPlan.liquidity,
         orderPlan,
-        contractSelection: signalOptionsContractSelectionPayload(contractSelection),
+        contractSelection:
+          signalOptionsContractSelectionPayload(contractSelection),
         selectedExpiration: {
           expirationDate: selectedExpiration.expirationDate.toISOString(),
           dte: selectedExpiration.dte,
@@ -6926,7 +7259,7 @@ async function processEntryCandidate(input: {
     optionRight: input.candidate.optionRight,
     timeframe: input.candidate.timeframe,
     signalAt: input.candidate.signalAt,
-    openedAt: new Date().toISOString(),
+    openedAt: entryNow.toISOString(),
     entryPrice: simulatedFillPrice,
     quantity,
     peakPrice: simulatedFillPrice,
@@ -6977,7 +7310,8 @@ async function processEntryCandidate(input: {
       liquidity: orderPlan.liquidity,
       position,
       chainDebug: chain.debug,
-      contractSelection: signalOptionsContractSelectionPayload(contractSelection),
+      contractSelection:
+        signalOptionsContractSelectionPayload(contractSelection),
     },
   });
 
@@ -6992,6 +7326,22 @@ async function closePositionForOppositeSignal(input: {
   candidate: SignalOptionsCandidate;
 }) {
   const exitPrice = input.position.lastMarkPrice ?? input.position.entryPrice;
+  const now = new Date();
+  if (!isLiveOptionTradingSession(now, input.position.selectedContract)) {
+    await emitSkippedCandidate({
+      deployment: input.deployment,
+      candidate: input.candidate,
+      signalKey: input.signalKey,
+      reason: "after_hours_option_exit_blocked",
+      detail: {
+        retryable: true,
+        intendedExitReason: "opposite_signal",
+        intendedExitPrice: exitPrice,
+        position: input.position,
+      },
+    });
+    return false;
+  }
   await insertSignalOptionsEvent({
     deployment: input.deployment,
     symbol: input.position.symbol,
@@ -7005,15 +7355,18 @@ async function closePositionForOppositeSignal(input: {
       candidate: input.candidate,
       exitPrice,
       pnl: Number(
-        ((exitPrice - input.position.entryPrice) *
+        (
+          (exitPrice - input.position.entryPrice) *
           input.position.quantity *
-          100).toFixed(2),
+          100
+        ).toFixed(2),
       ),
       position: input.position,
       selectedContract: input.position.selectedContract,
       profile: input.profile,
     },
   });
+  return true;
 }
 
 async function recordSignalOptionsGatewayBlocked(input: {
@@ -7106,7 +7459,9 @@ export async function recordSignalOptionsManualDeviation(input: {
 }) {
   const deployment = await getDeploymentOrThrow(input.deploymentId);
   const candidateId = readNonEmptyString(input.deviation.candidateId);
-  const symbol = normalizeSymbol(String(input.deviation.symbol ?? "")).toUpperCase();
+  const symbol = normalizeSymbol(
+    String(input.deviation.symbol ?? ""),
+  ).toUpperCase();
   const source = readNonEmptyString(input.deviation.source) ?? "trade_preview";
   const changedFields = readChangedFields(input.deviation.changedFields);
 
@@ -7254,12 +7609,7 @@ const PYRUS_SIGNALS_SETTINGS_PATCH_GROUPS: Readonly<
     "chochVolumeGate",
     "volumeGate",
   ],
-  bands: [
-    "basisLength",
-    "atrLength",
-    "atrSmoothing",
-    "volatilityMultiplier",
-  ],
+  bands: ["basisLength", "atrLength", "atrSmoothing", "volatilityMultiplier"],
   overlays: ["shadowLength", "shadowStdDev"],
   confirmation: [
     "adxLength",
@@ -7294,7 +7644,9 @@ function mergePyrusSignalsSettingsPatch(
     ...patch,
   };
 
-  for (const [group, keys] of Object.entries(PYRUS_SIGNALS_SETTINGS_PATCH_GROUPS)) {
+  for (const [group, keys] of Object.entries(
+    PYRUS_SIGNALS_SETTINGS_PATCH_GROUPS,
+  )) {
     const currentGroup = asRecord(current[group]);
     const patchGroup = asRecord(patch[group]);
     const nextGroup: Record<string, unknown> = {
@@ -7348,8 +7700,7 @@ const DEFAULT_SIGNAL_OPTIONS_BACKFILL_START = "2026-04-01";
 const DEFAULT_SIGNAL_OPTIONS_STRATEGY_NAME = "Pyrus Signals Options Shadow";
 const DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME =
   "Pyrus Signals Options Shadow Paper";
-const LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME =
-  "Pyrus Signals Shadow Paper";
+const LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME = "Pyrus Signals Shadow Paper";
 const SIGNAL_OPTIONS_BACKFILL_SOURCE = "signal_options_backfill";
 const SIGNAL_OPTIONS_BACKFILL_VERSION = 1;
 const SIGNAL_OPTIONS_OPTION_MARK_TIMEFRAME = "1m";
@@ -7423,10 +7774,12 @@ function cloneHistoricalBackfillSignalsResult(input: {
     })),
     errors: input.errors.map((error) => ({ ...error })),
     structuralContextsBySymbol: Object.fromEntries(
-      Object.entries(input.structuralContextsBySymbol).map(([symbol, contexts]) => [
-        symbol,
-        contexts.map((context) => ({ ...context })),
-      ]),
+      Object.entries(input.structuralContextsBySymbol).map(
+        ([symbol, contexts]) => [
+          symbol,
+          contexts.map((context) => ({ ...context })),
+        ],
+      ),
     ),
   };
 }
@@ -7444,14 +7797,17 @@ function cloneHistoricalResolvedOption(
     liquidity: { ...value.liquidity },
     orderPlan: { ...value.orderPlan },
     selectedExpiration: {
-      expirationDate: new Date(value.selectedExpiration.expirationDate.getTime()),
+      expirationDate: new Date(
+        value.selectedExpiration.expirationDate.getTime(),
+      ),
       dte: value.selectedExpiration.dte,
     },
   };
 }
 
 function parseBackfillDate(value: unknown, fallback: string): string {
-  const raw = typeof value === "string" && value.trim() ? value.trim() : fallback;
+  const raw =
+    typeof value === "string" && value.trim() ? value.trim() : fallback;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
     throw new HttpError(400, "Invalid backfill date.", {
       code: "invalid_signal_options_backfill_date",
@@ -7530,7 +7886,10 @@ function historicalBackfillEquityBarLimit(input: {
 
 function previousBackfillWeekdayOrSame(value: string) {
   let cursor = value;
-  while (backfillDateWeekday(cursor) === 0 || backfillDateWeekday(cursor) === 6) {
+  while (
+    backfillDateWeekday(cursor) === 0 ||
+    backfillDateWeekday(cursor) === 6
+  ) {
     cursor = addDaysToBackfillDate(cursor, -1);
   }
   return cursor;
@@ -7612,7 +7971,9 @@ function isRegularMarketSession(value: Date): boolean {
   return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
 }
 
-function liveOptionSessionCloseMinute(contract?: Record<string, unknown> | null): number {
+function liveOptionSessionCloseMinute(
+  contract?: Record<string, unknown> | null,
+): number {
   const underlying = normalizeSymbol(
     String(contract?.underlying ?? contract?.ticker ?? ""),
   ).toUpperCase();
@@ -7632,7 +7993,9 @@ function isLiveOptionTradingSession(
   const minutes =
     Number.parseInt(parts.hour ?? "0", 10) * 60 +
     Number.parseInt(parts.minute ?? "0", 10);
-  return minutes >= 9 * 60 + 30 && minutes < liveOptionSessionCloseMinute(contract);
+  return (
+    minutes >= 9 * 60 + 30 && minutes < liveOptionSessionCloseMinute(contract)
+  );
 }
 
 function isLiveOvernightExitWindow(value: Date): boolean {
@@ -7646,8 +8009,14 @@ function isLiveOvernightExitWindow(value: Date): boolean {
   return minutes >= 15 * 60 + 45 && minutes < 16 * 60;
 }
 
-function isWithinBackfillWindow(value: Date, window: SignalOptionsBackfillWindow) {
-  if (value.getTime() < window.from.getTime() || value.getTime() > window.to.getTime()) {
+function isWithinBackfillWindow(
+  value: Date,
+  window: SignalOptionsBackfillWindow,
+) {
+  if (
+    value.getTime() < window.from.getTime() ||
+    value.getTime() > window.to.getTime()
+  ) {
     return false;
   }
   return window.session === "all" || isRegularMarketSession(value);
@@ -7689,7 +8058,11 @@ function lastFiniteAtOrBefore(
   index: number,
   predicate?: (candidateIndex: number) => boolean,
 ): number | null {
-  for (let cursor = Math.min(index, values.length - 1); cursor >= 0; cursor -= 1) {
+  for (
+    let cursor = Math.min(index, values.length - 1);
+    cursor >= 0;
+    cursor -= 1
+  ) {
     if (predicate && !predicate(cursor)) {
       continue;
     }
@@ -7721,21 +8094,29 @@ function buildSignalOptionsWireContext(input: {
     latestClose: latestBar.c,
     regimeDirection,
     previousRegimeDirection:
-      index > 0 ? finiteNumber(input.evaluation.regimeDirection[index - 1]) : null,
+      index > 0
+        ? finiteNumber(input.evaluation.regimeDirection[index - 1])
+        : null,
     trendLine: finiteNumber(input.evaluation.trendLine[index]),
     upperBand: finiteNumber(input.evaluation.upperBand[index]),
     lowerBand: finiteNumber(input.evaluation.lowerBand[index]),
-    bullWires: input.evaluation.bullWires.map((wire) => finiteNumber(wire[index])),
-    bearWires: input.evaluation.bearWires.map((wire) => finiteNumber(wire[index])),
+    bullWires: input.evaluation.bullWires.map((wire) =>
+      finiteNumber(wire[index]),
+    ),
+    bearWires: input.evaluation.bearWires.map((wire) =>
+      finiteNumber(wire[index]),
+    ),
     lastBullTrendLine: lastFiniteAtOrBefore(
       input.evaluation.lowerBand,
       index,
-      (candidateIndex) => input.evaluation.regimeDirection[candidateIndex] === 1,
+      (candidateIndex) =>
+        input.evaluation.regimeDirection[candidateIndex] === 1,
     ),
     lastBearTrendLine: lastFiniteAtOrBefore(
       input.evaluation.upperBand,
       index,
-      (candidateIndex) => input.evaluation.regimeDirection[candidateIndex] === -1,
+      (candidateIndex) =>
+        input.evaluation.regimeDirection[candidateIndex] === -1,
     ),
   };
 }
@@ -7823,7 +8204,9 @@ function replayPositionMarketDate(input: {
     dateOrNull(candidate.signalAt) ??
     input.occurredAt ??
     null;
-  return positionAt ? marketDateKeyFromDate(positionAt) : input.fallbackMarketDate;
+  return positionAt
+    ? marketDateKeyFromDate(positionAt)
+    : input.fallbackMarketDate;
 }
 
 function replayEventMarketDate(input: {
@@ -7952,7 +8335,11 @@ async function insertSignalOptionsBackfillEvent(input: {
             : "automation",
       }).catch((error) => {
         logger.warn?.(
-          { err: error, eventId: existing.id, backfillEventKey: input.backfillEventKey },
+          {
+            err: error,
+            eventId: existing.id,
+            backfillEventKey: input.backfillEventKey,
+          },
           "Failed to repair existing signal-options backfill shadow mirror",
         );
       });
@@ -8113,9 +8500,8 @@ function computeBackfillPostExitOutcome(input: {
   const remainingBars = input.position.optionBars
     .slice(input.position.nextBarIndex)
     .map((bar) => ({ bar, at: dateOrNull(bar.timestamp) }))
-    .filter(
-      (item): item is { bar: BrokerBarSnapshot; at: Date } =>
-        Boolean(item.at && item.at.getTime() > input.exitAt.getTime()),
+    .filter((item): item is { bar: BrokerBarSnapshot; at: Date } =>
+      Boolean(item.at && item.at.getTime() > input.exitAt.getTime()),
     );
   if (!remainingBars.length) {
     return {
@@ -8171,21 +8557,25 @@ function computeBackfillPostExitOutcome(input: {
     lastAt: lastAt?.toISOString() ?? null,
     highVsExitPct:
       highPrice != null && input.exitPrice > 0
-        ? roundMetric(((highPrice - input.exitPrice) / input.exitPrice) * 100, 1)
+        ? roundMetric(
+            ((highPrice - input.exitPrice) / input.exitPrice) * 100,
+            1,
+          )
         : null,
     lastVsExitPct:
       lastClose != null && input.exitPrice > 0
-        ? roundMetric(((lastClose - input.exitPrice) / input.exitPrice) * 100, 1)
+        ? roundMetric(
+            ((lastClose - input.exitPrice) / input.exitPrice) * 100,
+            1,
+          )
         : null,
-    recoveredEntry:
-      highPrice != null && highPrice >= input.position.entryPrice,
+    recoveredEntry: highPrice != null && highPrice >= input.position.entryPrice,
     reachedTwentyFivePctGain:
       highPrice != null && highPrice >= input.position.entryPrice * 1.25,
     reachedFiftyPctGain:
       highPrice != null && highPrice >= input.position.entryPrice * 1.5,
     finalAboveExit: lastClose != null && lastClose > input.exitPrice,
-    finalAboveEntry:
-      lastClose != null && lastClose > input.position.entryPrice,
+    finalAboveEntry: lastClose != null && lastClose > input.position.entryPrice,
   };
 }
 
@@ -8258,11 +8648,10 @@ function buildHistoricalOrderPlan(
   const premiumQuantityCap =
     profile.riskHaltControls.premiumBudgetEnabled === false
       ? profile.riskCaps.maxContracts
-      : Math.floor(profile.riskCaps.maxPremiumPerEntry / (simulatedFillPrice * 100));
-  const quantity = Math.min(
-    profile.riskCaps.maxContracts,
-    premiumQuantityCap,
-  );
+      : Math.floor(
+          profile.riskCaps.maxPremiumPerEntry / (simulatedFillPrice * 100),
+        );
+  const quantity = Math.min(profile.riskCaps.maxContracts, premiumQuantityCap);
   if (!Number.isFinite(quantity) || quantity <= 0) {
     return {
       ok: false,
@@ -8326,8 +8715,7 @@ function historicalOptionResolutionCacheKey(input: {
       maxPremiumPerEntry: input.profile.riskCaps.maxPremiumPerEntry,
     },
     riskHaltControls: {
-      premiumBudgetEnabled:
-        input.profile.riskHaltControls.premiumBudgetEnabled,
+      premiumBudgetEnabled: input.profile.riskHaltControls.premiumBudgetEnabled,
     },
     window: {
       from: input.window.from.toISOString(),
@@ -8347,10 +8735,12 @@ async function resolveHistoricalOptionForBackfill(input: {
   if (cached) {
     return cloneHistoricalResolvedOption(await cached);
   }
-  const request = resolveHistoricalOptionForBackfillUncached(input).catch((error) => {
-    historicalOptionResolutionCache.delete(key);
-    throw error;
-  });
+  const request = resolveHistoricalOptionForBackfillUncached(input).catch(
+    (error) => {
+      historicalOptionResolutionCache.delete(key);
+      throw error;
+    },
+  );
   rememberBoundedCacheEntry(
     historicalOptionResolutionCache,
     key,
@@ -8369,7 +8759,10 @@ async function resolveHistoricalOptionForBackfillUncached(input: {
   if (!signalAt) {
     return null;
   }
-  const expirations = selectHistoricalExpirationCandidates(signalAt, input.profile);
+  const expirations = selectHistoricalExpirationCandidates(
+    signalAt,
+    input.profile,
+  );
   const strikes = selectHistoricalStrikeCandidates({
     signalPrice: input.candidate.signalPrice,
     direction: input.candidate.direction,
@@ -8394,7 +8787,12 @@ async function resolveHistoricalOptionForBackfillUncached(input: {
         optionTicker,
         skipBrokerContractResolution: true,
         timeframe: SIGNAL_OPTIONS_OPTION_MARK_TIMEFRAME,
-        from: new Date(Math.max(input.window.from.getTime(), signalAt.getTime() - 15 * 60_000)),
+        from: new Date(
+          Math.max(
+            input.window.from.getTime(),
+            signalAt.getTime() - 15 * 60_000,
+          ),
+        ),
         to: input.window.to,
         limit: BACKFILL_OPTION_BAR_LIMIT,
         outsideRth: false,
@@ -8418,7 +8816,9 @@ async function resolveHistoricalOptionForBackfillUncached(input: {
       const entryBar =
         optionBars.find((bar) => {
           const timestamp = dateOrNull(bar.timestamp);
-          return Boolean(timestamp && timestamp.getTime() >= signalAt.getTime());
+          return Boolean(
+            timestamp && timestamp.getTime() >= signalAt.getTime(),
+          );
         }) ?? null;
       const entryAt = entryBar ? dateOrNull(entryBar.timestamp) : null;
       const fillPrice = entryBar ? backfillBarPrice(entryBar) : null;
@@ -8442,18 +8842,26 @@ async function resolveHistoricalOptionForBackfillUncached(input: {
         at: signalAt,
       });
       const entryFillPrice = entryTrade?.price ?? fillPrice;
-      const orderPlan = buildHistoricalOrderPlan(entryFillPrice, input.profile, {
-        source: entryTrade ? "polygon-option-trade" : "polygon-option-aggregates",
-        trade: entryTrade,
-        markPrice: fillPrice,
-      });
+      const orderPlan = buildHistoricalOrderPlan(
+        entryFillPrice,
+        input.profile,
+        {
+          source: entryTrade
+            ? "polygon-option-trade"
+            : "polygon-option-aggregates",
+          trade: entryTrade,
+          markPrice: fillPrice,
+        },
+      );
       if (!orderPlan.ok) {
         continue;
       }
       const selectedContract = {
         ticker: optionTicker,
         underlying: input.candidate.symbol,
-        expirationDate: selectedExpiration.expirationDate.toISOString().slice(0, 10),
+        expirationDate: selectedExpiration.expirationDate
+          .toISOString()
+          .slice(0, 10),
         strike,
         right: input.candidate.optionRight,
         multiplier: 100,
@@ -8495,12 +8903,10 @@ async function emitBackfillSkippedCandidate(input: {
     eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
     summary: `${input.candidate.symbol} shadow backfill candidate skipped: ${input.reason}`,
     occurredAt: input.occurredAt,
-    backfillEventKey: backfillEventKey([
-      input.deployment.id,
-      input.signalKey,
-      "skip",
-      input.reason,
-    ], eventSource),
+    backfillEventKey: backfillEventKey(
+      [input.deployment.id, input.signalKey, "skip", input.reason],
+      eventSource,
+    ),
     source: eventSource,
     replay: input.replay,
     existingBackfillEvents: input.existingBackfillEvents,
@@ -8645,7 +9051,8 @@ function isBackfillOvernightBoundary(input: {
   return Boolean(
     nextBarAt &&
       nextBarAt.getTime() <= input.until.getTime() &&
-      marketDateKeyFromDate(nextBarAt) !== marketDateKeyFromDate(input.currentBarAt),
+      marketDateKeyFromDate(nextBarAt) !==
+        marketDateKeyFromDate(input.currentBarAt),
   );
 }
 
@@ -8672,15 +9079,14 @@ async function closeBackfillPosition(input: {
   const exitMarkPrice = input.exitPrice;
   const exitPrice = Number((exitTrade?.price ?? exitMarkPrice).toFixed(2));
   const pnl = Number(
-    ((exitPrice - input.position.entryPrice) *
+    (
+      (exitPrice - input.position.entryPrice) *
       input.position.quantity *
-      100).toFixed(2),
+      100
+    ).toFixed(2),
   );
   const dayKey = input.occurredAt.toISOString().slice(0, 10);
-  input.realizedByDay.set(
-    dayKey,
-    (input.realizedByDay.get(dayKey) ?? 0) + pnl,
-  );
+  input.realizedByDay.set(dayKey, (input.realizedByDay.get(dayKey) ?? 0) + pnl);
   const positionPatch = {
     ...backfillPositionPayload(input.position),
     lastMarkPrice: exitPrice,
@@ -8698,13 +9104,16 @@ async function closeBackfillPosition(input: {
     eventType: SIGNAL_OPTIONS_EXIT_EVENT,
     summary: `${input.position.symbol} shadow backfill exit ${input.reason} at ${exitPrice.toFixed(2)}`,
     occurredAt: input.occurredAt,
-    backfillEventKey: backfillEventKey([
-      input.deployment.id,
-      input.position.candidateId,
-      "exit",
-      input.reason,
-      input.occurredAt.toISOString(),
-    ], eventSource),
+    backfillEventKey: backfillEventKey(
+      [
+        input.deployment.id,
+        input.position.candidateId,
+        "exit",
+        input.reason,
+        input.occurredAt.toISOString(),
+      ],
+      eventSource,
+    ),
     source: eventSource,
     replay: input.replay,
     existingBackfillEvents: input.existingBackfillEvents,
@@ -8719,7 +9128,9 @@ async function closeBackfillPosition(input: {
       exitPrice,
       exitMarkPrice,
       exitFill: {
-        source: exitTrade ? "polygon-option-trade" : "polygon-option-aggregates",
+        source: exitTrade
+          ? "polygon-option-trade"
+          : "polygon-option-aggregates",
         trade: optionTradeSnapshot(exitTrade),
         markPrice: exitMarkPrice,
         maxDelayMs: HISTORICAL_OPTION_TRADE_FILL_MAX_DELAY_MS,
@@ -8775,7 +9186,9 @@ async function markBackfillPositionsThrough(input: {
   replay?: SignalOptionsReplayMetadata | null;
 }) {
   const eventSource = input.eventSource ?? SIGNAL_OPTIONS_BACKFILL_SOURCE;
-  for (const [symbol, position] of Array.from(input.positionsBySymbol.entries())) {
+  for (const [symbol, position] of Array.from(
+    input.positionsBySymbol.entries(),
+  )) {
     while (position.nextBarIndex < position.optionBars.length) {
       const bar = position.optionBars[position.nextBarIndex];
       const barAt = dateOrNull(bar?.timestamp);
@@ -8783,8 +9196,11 @@ async function markBackfillPositionsThrough(input: {
         break;
       }
       position.nextBarIndex += 1;
-      while (position.nextStructuralIndex < position.structuralContexts.length) {
-        const context = position.structuralContexts[position.nextStructuralIndex];
+      while (
+        position.nextStructuralIndex < position.structuralContexts.length
+      ) {
+        const context =
+          position.structuralContexts[position.nextStructuralIndex];
         const contextAt = dateOrNull(context?.latestBarAt);
         if (!context || !contextAt || contextAt.getTime() > barAt.getTime()) {
           break;
@@ -8881,12 +9297,15 @@ async function markBackfillPositionsThrough(input: {
         eventType: SIGNAL_OPTIONS_MARK_EVENT,
         summary: `${position.symbol} shadow backfill mark ${markPrice.toFixed(2)} stop ${stop.stopPrice.toFixed(2)}`,
         occurredAt: barAt,
-        backfillEventKey: backfillEventKey([
-          input.deployment.id,
-          position.candidateId,
-          "mark",
-          barAt.toISOString(),
-        ], eventSource),
+        backfillEventKey: backfillEventKey(
+          [
+            input.deployment.id,
+            position.candidateId,
+            "mark",
+            barAt.toISOString(),
+          ],
+          eventSource,
+        ),
         source: eventSource,
         replay: input.replay,
         existingBackfillEvents: input.existingBackfillEvents,
@@ -8974,7 +9393,9 @@ function historicalBackfillSignalsCacheKey(input: {
   return cacheJson({
     profileId: input.profileId,
     profileSettings: input.profileSettings,
-    symbols: input.symbols.map((symbol) => normalizeSymbol(symbol).toUpperCase()),
+    symbols: input.symbols.map((symbol) =>
+      normalizeSymbol(symbol).toUpperCase(),
+    ),
     timeframe: input.timeframe,
     window: {
       from: input.window.from.toISOString(),
@@ -9001,10 +9422,12 @@ async function loadHistoricalBackfillSignals(input: {
     }
     return cloneHistoricalBackfillSignalsResult(await cached);
   }
-  const request = loadHistoricalBackfillSignalsUncached(input).catch((error) => {
-    historicalBackfillSignalsCache.delete(key);
-    throw error;
-  });
+  const request = loadHistoricalBackfillSignalsUncached(input).catch(
+    (error) => {
+      historicalBackfillSignalsCache.delete(key);
+      throw error;
+    },
+  );
   rememberBoundedCacheEntry(
     historicalBackfillSignalsCache,
     key,
@@ -9024,7 +9447,8 @@ async function loadHistoricalBackfillSignalsUncached(input: {
 }) {
   const signals: HistoricalBackfillSignal[] = [];
   const errors: SignalOptionsBackfillSummary["errors"] = [];
-  const structuralContextsBySymbol: Record<string, SignalOptionsWireContext[]> = {};
+  const structuralContextsBySymbol: Record<string, SignalOptionsWireContext[]> =
+    {};
   const settings = resolvePyrusSignalsSignalSettings(input.profileSettings);
   const equityBarLimit = historicalBackfillEquityBarLimit({
     timeframe: input.timeframe,
@@ -9118,12 +9542,13 @@ async function resolveDefaultSignalOptionsSymbols() {
     watchlists.find((item) => item.isDefault) ??
     watchlists[0] ??
     null;
-  const preferredSymbols =
-    watchlist?.items.map((item) => item.symbol) ?? [];
+  const preferredSymbols = watchlist?.items.map((item) => item.symbol) ?? [];
   const symbols = [
     ...preferredSymbols,
     ...watchlists.flatMap((item) =>
-      item === watchlist ? [] : item.items.map((watchlistItem) => watchlistItem.symbol),
+      item === watchlist
+        ? []
+        : item.items.map((watchlistItem) => watchlistItem.symbol),
     ),
   ]
     .map((symbol) => normalizeSymbol(symbol).toUpperCase())
@@ -9131,7 +9556,10 @@ async function resolveDefaultSignalOptionsSymbols() {
   return Array.from(new Set(symbols));
 }
 
-function sameSymbolUniverse(left: readonly unknown[], right: readonly unknown[]) {
+function sameSymbolUniverse(
+  left: readonly unknown[],
+  right: readonly unknown[],
+) {
   const normalize = (symbols: readonly unknown[]) =>
     normalizeSignalOptionsUniverseSymbols(symbols).join("\n");
   return normalize(left) === normalize(right);
@@ -9190,16 +9618,22 @@ function isDefaultSignalOptionsSeedConfig(value: unknown): boolean {
   );
 }
 
-export async function ensureDefaultSignalOptionsPaperDeployment(input: {
-  enabled?: boolean;
-  preserveExistingPaused?: boolean;
-} = {}) {
+export async function ensureDefaultSignalOptionsPaperDeployment(
+  input: {
+    enabled?: boolean;
+    preserveExistingPaused?: boolean;
+  } = {},
+) {
   const symbols = await resolveDefaultSignalOptionsSymbols();
   if (!symbols.length) {
-    throw new HttpError(409, "No symbols are available for the default signal-options deployment.", {
-      code: "signal_options_default_universe_empty",
-      expose: true,
-    });
+    throw new HttpError(
+      409,
+      "No symbols are available for the default signal-options deployment.",
+      {
+        code: "signal_options_default_universe_empty",
+        expose: true,
+      },
+    );
   }
   const enabled = input.enabled !== false;
   const existingStrategies = await db
@@ -9208,8 +9642,9 @@ export async function ensureDefaultSignalOptionsPaperDeployment(input: {
     .where(eq(algoStrategiesTable.mode, "paper"))
     .orderBy(desc(algoStrategiesTable.updatedAt));
   let strategy =
-    existingStrategies.find((row) => isDefaultSignalOptionsSeedConfig(row.config)) ??
-    null;
+    existingStrategies.find((row) =>
+      isDefaultSignalOptionsSeedConfig(row.config),
+    ) ?? null;
 
   if (!strategy) {
     [strategy] = await db
@@ -9240,16 +9675,14 @@ export async function ensureDefaultSignalOptionsPaperDeployment(input: {
     .where(eq(algoDeploymentsTable.mode, "paper"))
     .orderBy(desc(algoDeploymentsTable.updatedAt));
   let deployment =
-    existingDeployments.find(
-      (row) => {
-        const deploymentName = normalizeLegacyAlgoBrandText(row.name);
-        return (
-          row.strategyId === strategy.id ||
-          deploymentName === DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME ||
-          deploymentName === LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME
-        );
-      },
-    ) ?? null;
+    existingDeployments.find((row) => {
+      const deploymentName = normalizeLegacyAlgoBrandText(row.name);
+      return (
+        row.strategyId === strategy.id ||
+        deploymentName === DEFAULT_SIGNAL_OPTIONS_DEPLOYMENT_NAME ||
+        deploymentName === LEGACY_SIGNAL_OPTIONS_DEPLOYMENT_NAME
+      );
+    }) ?? null;
 
   if (!deployment) {
     [deployment] = await db
@@ -9363,11 +9796,14 @@ async function normalizeDefaultSignalOptionsPaperSignalMonitorProfile() {
   if (profile.maxSymbols !== DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS) {
     patch.maxSymbols = DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS;
   }
-  if (profile.evaluationConcurrency !== DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY) {
-    patch.evaluationConcurrency =
-      DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY;
+  if (
+    profile.evaluationConcurrency !== DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY
+  ) {
+    patch.evaluationConcurrency = DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY;
   }
-  if (profile.pollIntervalSeconds !== DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS) {
+  if (
+    profile.pollIntervalSeconds !== DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS
+  ) {
     patch.pollIntervalSeconds = DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS;
   }
   if (universeScope === "all_watchlists_plus_universe") {
@@ -9469,7 +9905,9 @@ export async function runSignalOptionsShadowBackfill(input: {
     });
     const signalUniverse =
       await resolveSignalMonitorProfileUniverse(signalProfile);
-    const pyrusSignalsProfileSettings = asRecord(signalProfile.pyrusSignalsSettings);
+    const pyrusSignalsProfileSettings = asRecord(
+      signalProfile.pyrusSignalsSettings,
+    );
     const pyrusSignalsSettings = mergePyrusSignalsSettingsPatch(
       pyrusSignalsProfileSettings,
       input.pyrusSignalsSettingsPatch,
@@ -9487,7 +9925,9 @@ export async function runSignalOptionsShadowBackfill(input: {
       skippedSymbols: input.forceDeploymentUniverse
         ? []
         : signalUniverse.skippedSymbols,
-      truncated: input.forceDeploymentUniverse ? false : signalUniverse.truncated,
+      truncated: input.forceDeploymentUniverse
+        ? false
+        : signalUniverse.truncated,
     });
     const signalProfileTimeframe = resolveSignalMonitorTimeframe(
       signalUniverse.profile.timeframe,
@@ -9515,9 +9955,10 @@ export async function runSignalOptionsShadowBackfill(input: {
       closedTrades: [],
       errors: [],
     };
-    const initialEvents = replay || !commit
-      ? []
-      : await listDeploymentBackfillEvents(deployment.id);
+    const initialEvents =
+      replay || !commit
+        ? []
+        : await listDeploymentBackfillEvents(deployment.id);
     const seenSignals = seenSignalKeys(initialEvents, {
       currentPremiumCap: profile.riskCaps.maxPremiumPerEntry,
       dailyLossHaltEnabled: profile.riskHaltControls.dailyLossHaltEnabled,
@@ -9532,13 +9973,13 @@ export async function runSignalOptionsShadowBackfill(input: {
     const realizedByDay = new Map<string, number>();
     const { signals, errors, structuralContextsBySymbol } =
       await loadHistoricalBackfillSignals({
-      profileId: signalProfile.id,
-      profileSettings: pyrusSignalsSettings,
-      symbols: backfillUniverse.symbols,
-      timeframe,
-      window,
-      progress: input.progress,
-    });
+        profileId: signalProfile.id,
+        profileSettings: pyrusSignalsSettings,
+        symbols: backfillUniverse.symbols,
+        timeframe,
+        window,
+        progress: input.progress,
+      });
     summary.errors.push(...errors);
     summary.signalsEvaluated = signals.length;
     if (input.progress) {
@@ -9615,7 +10056,10 @@ export async function runSignalOptionsShadowBackfill(input: {
         continue;
       }
 
-      if (currentPosition && currentPosition.direction !== candidate.direction) {
+      if (
+        currentPosition &&
+        currentPosition.direction !== candidate.direction
+      ) {
         if (
           !profile.exitPolicy.flipOnOppositeSignal &&
           profile.positionHaltControls.oppositeSignalFlipBlockEnabled !== false
@@ -9636,7 +10080,8 @@ export async function runSignalOptionsShadowBackfill(input: {
           continue;
         }
         const exitPrice =
-          finiteNumber(currentPosition.lastMarkPrice) ?? currentPosition.entryPrice;
+          finiteNumber(currentPosition.lastMarkPrice) ??
+          currentPosition.entryPrice;
         await closeBackfillPosition({
           deployment,
           profile,
@@ -9771,7 +10216,8 @@ export async function runSignalOptionsShadowBackfill(input: {
         continue;
       }
 
-      const entryAt = dateOrNull(resolved.entryBar.timestamp) ?? historicalSignal.signalAt;
+      const entryAt =
+        dateOrNull(resolved.entryBar.timestamp) ?? historicalSignal.signalAt;
       const firstFutureBarIndex = resolved.optionBars.findIndex((bar) => {
         const barAt = dateOrNull(bar.timestamp);
         return Boolean(barAt && barAt.getTime() > entryAt.getTime());
@@ -9782,10 +10228,12 @@ export async function runSignalOptionsShadowBackfill(input: {
           : resolved.optionBars.length;
       const structuralContexts =
         structuralContextsBySymbol[normalizeSymbol(symbol).toUpperCase()] ?? [];
-      const firstFutureStructuralIndex = structuralContexts.findIndex((context) => {
-        const contextAt = dateOrNull(context.latestBarAt);
-        return Boolean(contextAt && contextAt.getTime() > entryAt.getTime());
-      });
+      const firstFutureStructuralIndex = structuralContexts.findIndex(
+        (context) => {
+          const contextAt = dateOrNull(context.latestBarAt);
+          return Boolean(contextAt && contextAt.getTime() > entryAt.getTime());
+        },
+      );
       const nextStructuralIndex =
         firstFutureStructuralIndex >= 0
           ? firstFutureStructuralIndex
@@ -9834,11 +10282,10 @@ export async function runSignalOptionsShadowBackfill(input: {
         eventType: SIGNAL_OPTIONS_ENTRY_EVENT,
         summary: `${candidate.symbol} shadow backfill ${candidate.optionRight.toUpperCase()} ${resolved.selectedContract.strike ?? "strike"} ${resolved.selectedContract.expirationDate ?? "expiry"} x${resolved.orderPlan.quantity}`,
         occurredAt: entryAt,
-        backfillEventKey: backfillEventKey([
-          deployment.id,
-          signalKey,
-          "entry",
-        ], eventSource),
+        backfillEventKey: backfillEventKey(
+          [deployment.id, signalKey, "entry"],
+          eventSource,
+        ),
         source: eventSource,
         replay,
         existingBackfillEvents,
@@ -9857,7 +10304,8 @@ export async function runSignalOptionsShadowBackfill(input: {
           },
           profile,
           selectedExpiration: {
-            expirationDate: resolved.selectedExpiration.expirationDate.toISOString(),
+            expirationDate:
+              resolved.selectedExpiration.expirationDate.toISOString(),
             dte: resolved.selectedExpiration.dte,
           },
           selectedContract: resolved.selectedContract,
@@ -10101,7 +10549,10 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     source === "worker" &&
     actionCursor.phase === "positions" &&
     actionCursor.positionSignature === positionSignature
-      ? clampActionCursorIndex(actionCursor.positionIndex, initialPositions.length)
+      ? clampActionCursorIndex(
+          actionCursor.positionIndex,
+          initialPositions.length,
+        )
       : 0;
   let nextSignalIndex =
     source === "worker" &&
@@ -10138,38 +10589,40 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       position,
       pyrusSignalsSettings: evaluatedPyrusSignalsSettings,
       recentEvents: initialSignalEvents,
-    }).catch(
-      async (error: unknown) => {
-        const occurredAt = new Date();
-        if (
-          !shouldRecordPositionMarkSkip({
-            events: initialSignalEvents,
-            position,
-            reason: "position_mark_failed",
-            now: occurredAt,
-          })
-        ) {
-          return { managed: false, reason: "position_mark_failed" };
-        }
-        await insertSignalOptionsEvent({
-          deployment,
-          symbol: position.symbol,
-          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
-          summary: `${position.symbol} shadow mark skipped: option quote unavailable`,
-          occurredAt,
-          payload: {
-            reason: "position_mark_failed",
-            message:
-              error instanceof Error ? error.message : "Unknown position mark error",
-            retryable: true,
-            position,
-          },
-        });
+    }).catch(async (error: unknown) => {
+      const occurredAt = new Date();
+      if (
+        !shouldRecordPositionMarkSkip({
+          events: initialSignalEvents,
+          position,
+          reason: "position_mark_failed",
+          now: occurredAt,
+        })
+      ) {
         return { managed: false, reason: "position_mark_failed" };
-      },
-    );
+      }
+      await insertSignalOptionsEvent({
+        deployment,
+        symbol: position.symbol,
+        eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+        summary: `${position.symbol} shadow mark skipped: option quote unavailable`,
+        occurredAt,
+        payload: {
+          reason: "position_mark_failed",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Unknown position mark error",
+          retryable: true,
+          position,
+        },
+      });
+      return { managed: false, reason: "position_mark_failed" };
+    });
     if (!refreshResult.managed) {
-      unmanagedPositionSymbols.add(normalizeSymbol(position.symbol).toUpperCase());
+      unmanagedPositionSymbols.add(
+        normalizeSymbol(position.symbol).toUpperCase(),
+      );
     }
     recordSignalOptionsActionWorkItem(actionWorkBudget);
     nextPositionIndex = positionIndex + 1;
@@ -10245,10 +10698,11 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     SIGNAL_OPTIONS_STATE_EVENT_LIMIT,
   );
   const eventsAfterMarksRuntime = runtimeSignalOptionsEvents(eventsAfterMarks);
-  const activePositionsAfterMarks = await reconcileActivePositionsWithShadowLedger({
-    positions: deriveActivePositions(eventsAfterMarksRuntime),
-    events: eventsAfterMarksRuntime,
-  });
+  const activePositionsAfterMarks =
+    await reconcileActivePositionsWithShadowLedger({
+      positions: deriveActivePositions(eventsAfterMarksRuntime),
+      events: eventsAfterMarksRuntime,
+    });
   const profileUpdatedAt = latestSignalOptionsProfileUpdatedAt(
     eventsAfterMarksRuntime,
   );
@@ -10269,9 +10723,11 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     eventsAfterMarksRuntime,
     activePositionsAfterMarks,
   );
-  const dailyLossBreached = dailyPnl <= -Math.abs(profile.riskCaps.maxDailyLoss);
+  const dailyLossBreached =
+    dailyPnl <= -Math.abs(profile.riskCaps.maxDailyLoss);
   const dailyHaltActive =
-    profile.riskHaltControls.dailyLossHaltEnabled !== false && dailyLossBreached;
+    profile.riskHaltControls.dailyLossHaltEnabled !== false &&
+    dailyLossBreached;
   const activePositionsBySymbol = new Map(
     activePositionsAfterMarks.map((position) => [
       normalizeSymbol(position.symbol).toUpperCase(),
@@ -10367,13 +10823,17 @@ async function runSignalOptionsShadowScanUnlocked(input: {
         });
         continue;
       }
-      await closePositionForOppositeSignal({
+      const closed = await closePositionForOppositeSignal({
         deployment,
         profile,
         position: currentPosition,
         signalKey,
         candidate,
       });
+      if (!closed) {
+        blockedCandidateCount += 1;
+        continue;
+      }
       activePositionsBySymbol.delete(symbol);
       openSymbols = Math.max(0, openSymbols - 1);
     }
@@ -10391,14 +10851,15 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       continue;
     }
 
-    const executionBlocker = signalOptionsExecutionBlocker({
-      dailyHaltActive,
-      dailyPnl,
-      profile,
-      openSymbols,
-      positionMarkHaltActive,
-      degradedPositionSymbols,
-    }) ?? signalOptionsGatewayExecutionBlocker(readiness, profile);
+    const executionBlocker =
+      signalOptionsExecutionBlocker({
+        dailyHaltActive,
+        dailyPnl,
+        profile,
+        openSymbols,
+        positionMarkHaltActive,
+        degradedPositionSymbols,
+      }) ?? signalOptionsGatewayExecutionBlocker(readiness, profile);
 
     const opened = await processEntryCandidate({
       deployment,
@@ -10560,6 +11021,10 @@ export const __signalOptionsAutomationInternalsForTests = {
   quoteSnapshotToSignalOptionsQuote,
   resolvePositionMarkQuote,
   isSignalOptionsLiveExitQuoteEligible,
+  isSignalOptionsShadowMarkFallbackExitEligible,
+  signalOptionsEntryEventHasActionableOptionSession,
+  signalOptionsExitEventHasActionableOptionSession,
+  signalOptionsTradeEventHasActionableOptionSession,
   selectHistoricalOptionTradeFill,
   selectSignalOptionsContractPlanFromChain,
   optionBackoffFromDebug,
