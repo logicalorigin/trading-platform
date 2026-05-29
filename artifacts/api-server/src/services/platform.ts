@@ -15326,6 +15326,25 @@ function selectFlowScannerHistoricalCandidateContracts(
   );
 }
 
+function mergeFlowScannerHydratedContracts(
+  baseContracts: IbkrOptionChainContracts,
+  hydratedContracts: IbkrOptionChainContracts,
+): IbkrOptionChainContracts {
+  const hydratedByProviderContractId = new Map(
+    hydratedContracts
+      .map((contract) => [
+        contract.contract.providerContractId?.trim?.() ?? "",
+        contract,
+      ] as const)
+      .filter(([providerContractId]) => Boolean(providerContractId)),
+  );
+
+  return baseContracts.map((contract) => {
+    const providerContractId = contract.contract.providerContractId?.trim?.() ?? "";
+    return hydratedByProviderContractId.get(providerContractId) ?? contract;
+  });
+}
+
 function numericValue(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -16445,16 +16464,26 @@ async function listFlowEventsUncached(input: {
         input.underlying,
       );
       ibkrLiveCandidateCount = liveCandidateContracts.length;
+      const historicalCandidateContracts =
+        selectFlowScannerHistoricalCandidateContracts(
+          metadataContracts,
+          lineBudget,
+          input.underlying,
+        );
       const historicalHydration =
         await hydrateFlowScannerContractsFromHistoricalBars({
           underlying: input.underlying,
-          candidates: liveCandidateContracts,
+          candidates: historicalCandidateContracts,
           scanPhase,
           signal: input.signal,
         });
+      const liveHydrationCandidates = mergeFlowScannerHydratedContracts(
+        liveCandidateContracts,
+        historicalHydration.contracts,
+      );
       const liveHydration = await hydrateFlowScannerContractsFromLiveQuotes({
         underlying: input.underlying,
-        candidates: historicalHydration.contracts,
+        candidates: liveHydrationCandidates,
         owner: `flow-scanner:${normalizeSymbol(input.underlying)}`,
         signal: input.signal,
       });
@@ -16485,7 +16514,8 @@ async function listFlowEventsUncached(input: {
       if (
         historicalHydration.requestedCount > 0 &&
         historicalHydration.returnedCount === 0 &&
-        liveCandidateContracts.every(
+        liveHydration.returnedCount === 0 &&
+        historicalCandidateContracts.every(
           (contract) => (contract.mark ?? 0) <= 0 || (contract.volume ?? 0) <= 0,
         )
       ) {
@@ -16998,15 +17028,25 @@ export async function benchmarkOptionsFlowScannerTickerPass(input: {
         getMarketDataAdmissionDiagnostics(),
       );
       const quoteStartedAt = Date.now();
+      const historicalCandidateContracts =
+        selectFlowScannerHistoricalCandidateContracts(
+          metadataContracts,
+          lineBudget,
+          underlying,
+        );
       const historicalHydration =
         await hydrateFlowScannerContractsFromHistoricalBars({
           underlying,
-          candidates: liveCandidateContracts,
+          candidates: historicalCandidateContracts,
           scanPhase: "manual",
         });
+      const liveHydrationCandidates = mergeFlowScannerHydratedContracts(
+        liveCandidateContracts,
+        historicalHydration.contracts,
+      );
       const liveHydration = await hydrateFlowScannerContractsFromLiveQuotes({
         underlying,
-        candidates: historicalHydration.contracts,
+        candidates: liveHydrationCandidates,
         owner: `flow-scanner-benchmark:${underlying}:${lineBudget}:${quoteStartedAt}`,
       });
       quoteMs = Math.max(0, Date.now() - quoteStartedAt);

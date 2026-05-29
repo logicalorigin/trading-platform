@@ -661,6 +661,11 @@ function buildLineUtilizationAudit(input: {
     Boolean(deepScanner.draining) ||
     deepScanner.activeCount > 0 ||
     deepScanner.queuedCount > 0;
+  const scannerWaitingForLiveLines =
+    scannerWorkActive &&
+    scannerActiveLineCount === 0 &&
+    (idleToTargetLineCount ?? 0) > 0 &&
+    (bridgeRemainingLineCount === null || bridgeRemainingLineCount > 0);
   const scannerReclaimableLineCount =
     readNumber(admission.portfolio?.rotatingReclaimableLineCount) ?? 0;
   const scannerPressureLevel =
@@ -693,13 +698,15 @@ function buildLineUtilizationAudit(input: {
         ? "bridge-budget-full"
         : input.driftReconciliation.status === "unknown"
           ? "bridge-diagnostics-unavailable"
+          : input.driftReconciliation.status !== "matched"
+            ? "line-drift"
+          : scannerWaitingForLiveLines
+            ? "scanner-waiting-for-live-lines"
           : scannerWorkActive
             ? "scanner-active"
           : admission.optionsFlowScanner.backgroundBlockedReason
             ? `scanner-${admission.optionsFlowScanner.backgroundBlockedReason}`
-            : input.driftReconciliation.status !== "matched"
-                ? "line-drift"
-                : "active-demand-satisfied";
+            : "active-demand-satisfied";
 
   return {
     targetLineCount: admission.budget.targetFillLines,

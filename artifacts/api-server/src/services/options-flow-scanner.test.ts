@@ -2615,9 +2615,10 @@ test("listFlowEvents does not cache transient historical option hydration emptie
   }
 });
 
-test("listFlowEvents caps nonblocking scanner refreshes to historical option candidates", async () => {
+test("listFlowEvents caps historical hydration while admitting live scanner quotes", async () => {
   const base = optionContract("SPY");
   const historicalProviderContractIds: string[] = [];
+  const liveProviderContractIds: string[] = [];
   const contracts = Array.from(
     { length: getOptionsFlowRuntimeConfig().scannerLineBudget },
     (_unused, index) => ({
@@ -2643,8 +2644,10 @@ test("listFlowEvents caps nonblocking scanner refreshes to historical option can
     },
     async getOptionQuoteSnapshots(input: { providerContractIds?: string[] }) {
       liveQuoteCalls += 1;
-      throw new Error(
-        `flow scanner should not use live option quote snapshots: ${input.providerContractIds?.join(",")}`,
+      const providerContractIds = input.providerContractIds ?? [];
+      liveProviderContractIds.push(...providerContractIds);
+      return providerContractIds.map((providerContractId) =>
+        optionQuote(providerContractId, { volume: 250 }),
       );
     },
     streamOptionQuoteSnapshots() {
@@ -2681,15 +2684,21 @@ test("listFlowEvents caps nonblocking scanner refreshes to historical option can
 
   for (
     let attempt = 0;
-    attempt < 20 && historicalProviderContractIds.length === 0;
+    attempt < 20 && liveProviderContractIds.length === 0;
     attempt += 1
   ) {
     await wait(10);
   }
 
-  assert.equal(historicalProviderContractIds.length, 50);
+  assert.equal(historicalProviderContractIds.length, 8);
   assert.equal(liveQuoteCalls, 1);
-  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 0);
+  assert.ok(
+    liveProviderContractIds.length > historicalProviderContractIds.length,
+  );
+  assert.equal(
+    getMarketDataAdmissionDiagnostics().flowScannerLineCount,
+    liveProviderContractIds.length,
+  );
 });
 
 test("flow scanner quote leases stay admitted after quote snapshot completion", async () => {
