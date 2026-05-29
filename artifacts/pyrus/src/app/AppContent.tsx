@@ -1,5 +1,6 @@
 import { Suspense, useEffect, type ComponentType } from "react";
 import "./runtime-config";
+import { isPyrusSafeQaMode } from "./qa-mode";
 import { AppProviders } from "./AppProviders";
 import LogoLoader from "../components/LogoLoader";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
@@ -159,6 +160,9 @@ const preloadInitialPlatformScreenModule = (initialScreen = resolveInitialPlatfo
 const preloadPriorityPlatformScreenModules = (
   initialScreen = resolveInitialPlatformScreen(),
 ) => {
+  if (isPyrusSafeQaMode()) {
+    return;
+  }
   PRIORITY_PLATFORM_SCREEN_IDS.forEach((screenId) => {
     if (screenId !== initialScreen) {
       preloadPlatformScreenModule(screenId);

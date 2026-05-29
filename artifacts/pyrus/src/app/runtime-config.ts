@@ -1,4 +1,5 @@
 import { setBaseUrl } from "@workspace/api-client-react";
+import { installPyrusQaMode } from "./qa-mode";
 
 const LOOPBACK_API_HOSTS = new Set(["127.0.0.1", "localhost", "0.0.0.0", "::1"]);
 
@@ -52,4 +53,5 @@ export const runtimeConfig = {
   apiBaseUrl: resolveBrowserApiBaseUrl(rawApiBaseUrl),
 } as const;
 
+installPyrusQaMode();
 setBaseUrl(runtimeConfig.apiBaseUrl);

@@ -6,6 +6,7 @@ import {
   useMemo,
 } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { isPyrusSafeQaMode } from "../../app/qa-mode";
 import LogoLoader from "../../components/LogoLoader";
 import {
   getGetNewsQueryOptions,
@@ -439,11 +440,12 @@ export default function PlatformApp() {
   const queryClient = useQueryClient();
   const bootProgress = useBootProgress();
   const pageVisible = usePageVisible();
+  const safeQaMode = isPyrusSafeQaMode();
   const workspaceLeadership = useWorkspaceLeadership({
     artifactId: "artifacts/pyrus",
   });
   const workspaceLeader = Boolean(workspaceLeadership.isLeader);
-  const platformWorkVisible = Boolean(pageVisible && workspaceLeader);
+  const platformWorkVisible = Boolean(pageVisible && workspaceLeader && !safeQaMode);
   const viewport = useViewport();
   const isPhone = viewport.flags.isPhone;
   const memoryPressureSignal = useMemoryPressureMonitor();
@@ -886,6 +888,7 @@ export default function PlatformApp() {
   }, [activeScreenCriticalReady, markWarmupTimeline, screen]);
   const backgroundDataWarmupEnabled = Boolean(
     workspaceLeader &&
+      !safeQaMode &&
       !isPhone &&
       !warmupTestOverrides.disableBackgroundDataWarmup,
   );
@@ -1243,7 +1246,8 @@ export default function PlatformApp() {
     sessionQuery.data,
   ]);
   const marketStockAggregateStreamingEnabled = Boolean(
-    sessionQuery.data?.configured?.ibkr &&
+    !safeQaMode &&
+      sessionQuery.data?.configured?.ibkr &&
       sessionQuery.data?.ibkrBridge?.authenticated &&
       sessionQuery.data?.ibkrBridge?.healthFresh !== false &&
       marketScreenActive,
@@ -1624,7 +1628,7 @@ export default function PlatformApp() {
   const effectiveGatewayTradingBlockReason =
     gatewayTradingReady && !accountOrderStreamsFresh ? "streams_stale" : "gateway";
   const stockAggregateStreamingEnabled = Boolean(
-    brokerConfigured && brokerAuthenticated,
+    brokerConfigured && brokerAuthenticated && !safeQaMode,
   );
   const bridgeTone = bridgeRuntimeTone(session);
   const primaryAccount =
@@ -3658,6 +3662,7 @@ export default function PlatformApp() {
       marketScreenActive={marketScreenActive}
       flowScreenActive={flowScreenActive}
       researchConfigured={researchConfigured}
+      safeQaMode={safeQaMode}
       stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
       watchlists={watchlists}
       defaultWatchlist={defaultWatchlist}
@@ -3714,6 +3719,7 @@ export default function PlatformApp() {
     primaryAccountId,
     researchConfigured,
     runtimeWatchlistSymbols,
+    safeQaMode,
     screen,
     session,
     sidebarCollapsed,

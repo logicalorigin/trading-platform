@@ -186,6 +186,7 @@ const LOGO_PROXY_ALLOWED_HOSTS = new Set([
   "financialmodelingprep.com",
   "images.financialmodelingprep.com",
 ]);
+const LOGO_PROXY_TIMEOUT_MS = 2_000;
 
 function sameOriginLogoUrl(logoUrl: string | null): string | null {
   if (!logoUrl || logoUrl.startsWith("data:") || logoUrl.startsWith("/")) {
@@ -1712,19 +1713,39 @@ router.get("/universe/logo-proxy", async (req, res) => {
     res.status(403).json({ error: "Logo host is not allowed." });
     return;
   }
-  const upstream = await fetch(parsed, {
-    headers: { Accept: "image/avif,image/webp,image/svg+xml,image/*,*/*;q=0.8" },
-    signal: createRequestAbortSignal(req, res),
-  });
-  if (!upstream.ok || !upstream.body) {
-    res.status(upstream.status || 502).end();
-    return;
+  const requestSignal = createRequestAbortSignal(req, res);
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(() => {
+    timeoutController.abort();
+  }, LOGO_PROXY_TIMEOUT_MS);
+  const abortForRequest = () => timeoutController.abort();
+  if (requestSignal.aborted) {
+    timeoutController.abort();
+  } else {
+    requestSignal.addEventListener("abort", abortForRequest, { once: true });
   }
-  res.setHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
-  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-  res.type(upstream.headers.get("content-type") || "image/svg+xml");
-  const bytes = Buffer.from(await upstream.arrayBuffer());
-  res.send(bytes);
+  try {
+    const upstream = await fetch(parsed, {
+      headers: { Accept: "image/avif,image/webp,image/svg+xml,image/*,*/*;q=0.8" },
+      signal: timeoutController.signal,
+    });
+    if (!upstream.ok || !upstream.body) {
+      res.status(204).end();
+      return;
+    }
+    res.setHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
+    res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+    res.type(upstream.headers.get("content-type") || "image/svg+xml");
+    const bytes = Buffer.from(await upstream.arrayBuffer());
+    res.send(bytes);
+  } catch {
+    if (!res.headersSent) {
+      res.status(204).end();
+    }
+  } finally {
+    clearTimeout(timeout);
+    requestSignal.removeEventListener("abort", abortForRequest);
+  }
 });
 
 router.get("/bars", async (req, res) => {

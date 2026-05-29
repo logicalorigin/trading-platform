@@ -204,6 +204,7 @@ const MarketScreenInner = ({
   signalSuggestionSymbols = [],
   isVisible = false,
   researchConfigured = false,
+  safeQaMode = false,
   stockAggregateStreamingEnabled = false,
   unusualThreshold = 1,
   onReadinessChange,
@@ -222,10 +223,10 @@ const MarketScreenInner = ({
   useEffect(() => {
     onReadinessChange?.({
       criticalReady: Boolean(isVisible),
-      derivedReady: Boolean(isVisible && chartGridReady),
-      backgroundAllowed: Boolean(isVisible && chartGridReady),
+      derivedReady: Boolean(isVisible && (safeQaMode || chartGridReady)),
+      backgroundAllowed: Boolean(isVisible && !safeQaMode && chartGridReady),
     });
-  }, [chartGridReady, isVisible, onReadinessChange]);
+  }, [chartGridReady, isVisible, onReadinessChange, safeQaMode]);
   useEffect(() => {
     const element = marketWorkspaceRef.current;
     if (!element) {
@@ -340,9 +341,9 @@ const MarketScreenInner = ({
     { limit: 6 },
     {
       query: {
-        enabled: Boolean(isVisible),
+        enabled: Boolean(isVisible && !safeQaMode),
         staleTime: 60_000,
-        refetchInterval: isVisible ? 60_000 : false,
+        refetchInterval: isVisible && !safeQaMode ? 60_000 : false,
         retry: false,
       },
     },
@@ -351,22 +352,23 @@ const MarketScreenInner = ({
     query: {
       enabled: Boolean(
         isVisible &&
+          !safeQaMode &&
           researchConfigured &&
           calendarWindow.from &&
           calendarWindow.to,
       ),
       staleTime: 300_000,
-      refetchInterval: isVisible ? 300_000 : false,
+      refetchInterval: isVisible && !safeQaMode ? 300_000 : false,
       retry: false,
     },
   });
-  useRuntimeWorkloadFlag("market:news", Boolean(isVisible), {
+  useRuntimeWorkloadFlag("market:news", Boolean(isVisible && !safeQaMode), {
     kind: "poll",
     label: "Market news",
     detail: "60s",
     priority: 6,
   });
-  useRuntimeWorkloadFlag("market:earnings", Boolean(isVisible && researchConfigured), {
+  useRuntimeWorkloadFlag("market:earnings", Boolean(isVisible && !safeQaMode && researchConfigured), {
     kind: "poll",
     label: "Market earnings",
     detail: "300s",
@@ -555,7 +557,7 @@ const MarketScreenInner = ({
             alignItems: "start",
           }}
         >
-          {isVisible ? (
+          {isVisible && !safeQaMode ? (
             <PlatformErrorBoundary
               label="Market chart grid"
               resetKeys={[marketChartResetKey]}
@@ -592,7 +594,9 @@ const MarketScreenInner = ({
                   watchlistSymbols={symbols}
                   popularTickers={stablePopularTickers}
                   signalSuggestionSymbols={signalSuggestionSymbols}
-                  stockAggregateStreamingEnabled={stockAggregateStreamingEnabled}
+                  stockAggregateStreamingEnabled={
+                    stockAggregateStreamingEnabled && !safeQaMode
+                  }
                   isVisible={isVisible}
                   unusualThreshold={chartFlowUnusualThreshold}
                   onReady={handleMarketChartGridReady}

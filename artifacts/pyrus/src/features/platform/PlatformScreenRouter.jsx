@@ -48,6 +48,7 @@ export const PlatformScreenRouter = ({
   marketScreenActive,
   flowScreenActive,
   researchConfigured,
+  safeQaMode = false,
   stockAggregateStreamingEnabled,
   watchlists,
   defaultWatchlist,
@@ -103,8 +104,9 @@ export const PlatformScreenRouter = ({
       signalSuggestionSymbols={signalMonitorSymbols}
       isVisible={marketDataActive}
       researchConfigured={researchConfigured}
+      safeQaMode={safeQaMode}
       stockAggregateStreamingEnabled={
-        stockAggregateStreamingEnabled && marketDataActive
+        stockAggregateStreamingEnabled && marketDataActive && !safeQaMode
       }
       onSignalAction={onSignalAction}
       onScanNow={onScanNow}
@@ -152,6 +154,7 @@ export const PlatformScreenRouter = ({
           brokerAuthenticated={brokerAuthenticated}
           gatewayTradingReady={gatewayTradingReady}
           gatewayTradingMessage={gatewayTradingMessage}
+          safeQaMode={safeQaMode}
           isVisible={tradeDataActive}
           isRetained={screen !== "trade"}
           onReadinessChange={buildReadinessHandler("trade")}
@@ -168,6 +171,7 @@ export const PlatformScreenRouter = ({
           brokerAuthenticated={brokerAuthenticated}
           gatewayTradingReady={gatewayTradingReady}
           gatewayTradingMessage={gatewayTradingMessage}
+          safeQaMode={safeQaMode}
           isVisible={accountDataActive}
           onJumpToTrade={onJumpToTradeFromAccount}
           onReadinessChange={buildReadinessHandler("account")}

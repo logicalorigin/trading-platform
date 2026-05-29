@@ -567,6 +567,7 @@ const AccountScreenInner = ({
   brokerAuthenticated,
   gatewayTradingReady = false,
   gatewayTradingMessage = "IB Gateway must be connected before trading.",
+  safeQaMode = false,
   isVisible = false,
   onJumpToTrade,
   onReadinessChange,
@@ -651,6 +652,7 @@ const AccountScreenInner = ({
   const inactiveAccountSection = shadowMode ? "real" : "shadow";
   const accountQueriesEnabled = Boolean(
     isVisible &&
+      !safeQaMode &&
       accountRequestId &&
       (shadowMode || brokerConfigured || brokerAuthenticated || accounts.length),
   );
@@ -870,7 +872,9 @@ const AccountScreenInner = ({
     },
     [getAccountSectionRequest, queryClient],
   );
-  const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot(!shadowMode);
+  const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot(
+    !shadowMode && !safeQaMode,
+  );
   const accountPageStreamEnabled = Boolean(
     isVisible && accountQueriesEnabled,
   );
@@ -995,13 +999,14 @@ const AccountScreenInner = ({
     onReadinessChange?.({
       criticalReady: Boolean(isVisible && accountCriticalReady),
       derivedReady: Boolean(isVisible && accountDerivedReady),
-      backgroundAllowed: Boolean(isVisible && accountDerivedReady),
+      backgroundAllowed: Boolean(isVisible && !safeQaMode && accountDerivedReady),
     });
   }, [
     accountCriticalReady,
     accountDerivedReady,
     isVisible,
     onReadinessChange,
+    safeQaMode,
   ]);
   useEffect(() => {
     if (!inactiveAccountPrewarmEnabled) {

@@ -3220,6 +3220,7 @@ const TradeScreenInner = ({
   gatewayTradingReady = false,
   gatewayTradingMessage = "IB Gateway must be connected before trading.",
   gatewayTradingBlockReason = "gateway",
+  safeQaMode = false,
   isVisible = false,
   isRetained = false,
   onReadinessChange,
@@ -3324,11 +3325,11 @@ const TradeScreenInner = ({
     onReadinessChange?.({
       criticalReady: Boolean(isVisible),
       derivedReady: Boolean(isVisible),
-      backgroundAllowed: Boolean(isVisible),
+      backgroundAllowed: Boolean(isVisible && !safeQaMode),
     });
-  }, [isVisible, onReadinessChange]);
+  }, [isVisible, onReadinessChange, safeQaMode]);
   const stockAggregateStreamingEnabled = Boolean(
-    brokerConfigured && brokerAuthenticated,
+    brokerConfigured && brokerAuthenticated && !safeQaMode,
   );
   const activeTickerInfo = ensureTradeTickerInfo(activeTicker, activeTicker);
   const activeWorkspace =
@@ -3352,9 +3353,15 @@ const TradeScreenInner = ({
     isRetained,
     searchOpen: Boolean(tradeTickerSearchAnchor),
   });
-  const tradeLiveStreamsEnabled = tradeRuntimeActivity.visibleInteractive;
-  const tradeExecutionWorkEnabled = tradeRuntimeActivity.executionWarm;
-  const tradeAnalysisWorkEnabled = tradeRuntimeActivity.analysisVisible;
+  const tradeLiveStreamsEnabled = Boolean(
+    tradeRuntimeActivity.visibleInteractive && !safeQaMode,
+  );
+  const tradeExecutionWorkEnabled = Boolean(
+    tradeRuntimeActivity.executionWarm && !safeQaMode,
+  );
+  const tradeAnalysisWorkEnabled = Boolean(
+    tradeRuntimeActivity.analysisVisible && !safeQaMode,
+  );
   const renderPrimaryTradePanel = tradeRuntimeActivity.primaryVisible;
   const renderTradePanels = tradeRuntimeActivity.secondaryPanelsVisible;
   const tradeBrokerStreamingEnabled = Boolean(
@@ -3403,10 +3410,10 @@ const TradeScreenInner = ({
   );
   const broadFlowSnapshot = useMarketFlowSnapshotForStoreKey(
     BROAD_MARKET_FLOW_STORE_KEY,
-    { subscribe: isVisible },
+    { subscribe: Boolean(isVisible && !safeQaMode) },
   );
   const activeTickerTradeFlowSnapshot = useTradeFlowSnapshot(activeTicker, {
-    subscribe: isVisible,
+    subscribe: Boolean(isVisible && !safeQaMode),
   });
   const activeTickerBroadFlowEvents = useMemo(
     () => filterFlowEventsForSymbol(broadFlowSnapshot.flowEvents || [], activeTicker),
@@ -3975,7 +3982,7 @@ const TradeScreenInner = ({
     <MemoTradeEquityPanel
       ticker={activeTicker}
       flowEvents={activeTickerChartFlowEvents}
-      historicalDataEnabled={tradeRuntimeActivity.visibleInteractive}
+      historicalDataEnabled={tradeLiveStreamsEnabled}
       stockAggregateStreamingEnabled={tradeBrokerStreamingEnabled}
       onOpenSearch={openEquitySearch}
       searchOpen={tradeTickerSearchAnchor === "equity"}

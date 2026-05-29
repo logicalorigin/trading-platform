@@ -292,13 +292,36 @@ function requestSummary(): JsonRecord {
   const samples = getRecentRequestSamples();
   const durations = samples.map((sample) => sample.durationMs).filter(Number.isFinite);
   const byPath = new Map<string, number[]>();
+  const byStatusFamily: Record<string, number> = {
+    "2xx": 0,
+    "3xx": 0,
+    "4xx": 0,
+    "5xx": 0,
+    other: 0,
+  };
   for (const sample of samples) {
     const key = `${sample.method} ${sample.path}`;
     const current = byPath.get(key) ?? [];
     current.push(sample.durationMs);
     byPath.set(key, current);
+    const family =
+      sample.statusCode >= 200 && sample.statusCode < 300
+        ? "2xx"
+        : sample.statusCode >= 300 && sample.statusCode < 400
+          ? "3xx"
+          : sample.statusCode >= 400 && sample.statusCode < 500
+            ? "4xx"
+            : sample.statusCode >= 500 && sample.statusCode < 600
+              ? "5xx"
+              : "other";
+    byStatusFamily[family] += 1;
   }
   let dominantSlowRoute: JsonRecord | null = null;
+  const routeSummaries = [...byPath.entries()].map(([route, routeDurations]) => ({
+    route,
+    samples: routeDurations.length,
+    p95Ms: percentile(routeDurations, 0.95),
+  }));
   for (const [route, routeDurations] of byPath) {
     const p95 = percentile(routeDurations, 0.95);
     if (p95 !== null && p95 > Number(dominantSlowRoute?.["p95Ms"] ?? 0)) {
@@ -308,7 +331,21 @@ function requestSummary(): JsonRecord {
   return {
     sampleCount: samples.length,
     p95Ms: percentile(durations, 0.95),
+    byStatusFamily,
     dominantSlowRoute,
+    topRoutes: routeSummaries
+      .sort((left, right) => right.samples - left.samples)
+      .slice(0, 8),
+    recentFailures: samples
+      .filter((sample) => sample.statusCode >= 429)
+      .slice(-8)
+      .map((sample) => ({
+        method: sample.method,
+        path: sample.path,
+        statusCode: sample.statusCode,
+        durationMs: sample.durationMs,
+        recordedAt: new Date(sample.recordedAt).toISOString(),
+      })),
   };
 }
 
