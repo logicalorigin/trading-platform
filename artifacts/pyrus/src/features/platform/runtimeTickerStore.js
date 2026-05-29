@@ -87,6 +87,37 @@ export const TRADE_TICKER_INFO = {
   },
 };
 
+const PROTECTED_RUNTIME_TICKER_SYMBOLS = new Set(Object.keys(TRADE_TICKER_INFO));
+const MAX_RUNTIME_TICKER_INFO_ENTRIES = 256;
+
+const runtimeTickerSnapshotListeners = new Map();
+const runtimeTickerSnapshotVersions = new Map();
+
+const pruneRuntimeTickerInfoEntries = (exemptSymbol = null) => {
+  const exempt = exemptSymbol?.toUpperCase?.() || null;
+  const symbols = Object.keys(TRADE_TICKER_INFO);
+  if (symbols.length <= MAX_RUNTIME_TICKER_INFO_ENTRIES) {
+    return;
+  }
+
+  for (const symbol of symbols) {
+    if (Object.keys(TRADE_TICKER_INFO).length <= MAX_RUNTIME_TICKER_INFO_ENTRIES) {
+      break;
+    }
+    if (PROTECTED_RUNTIME_TICKER_SYMBOLS.has(symbol)) {
+      continue;
+    }
+    if (symbol === exempt) {
+      continue;
+    }
+    if ((runtimeTickerSnapshotListeners.get(symbol)?.size ?? 0) > 0) {
+      continue;
+    }
+    delete TRADE_TICKER_INFO[symbol];
+    runtimeTickerSnapshotVersions.delete(symbol);
+  }
+};
+
 export const ensureTradeTickerInfo = (symbol, fallbackName = symbol) => {
   const normalized = symbol.toUpperCase();
   if (!TRADE_TICKER_INFO[normalized]) {
@@ -109,12 +140,20 @@ export const ensureTradeTickerInfo = (symbol, fallbackName = symbol) => {
       spark: [],
       sparkBars: [],
     };
-  } else if (
-    fallbackName &&
-    (!TRADE_TICKER_INFO[normalized].name ||
-      TRADE_TICKER_INFO[normalized].name === normalized)
-  ) {
-    TRADE_TICKER_INFO[normalized].name = fallbackName;
+    pruneRuntimeTickerInfoEntries(normalized);
+  } else {
+    if (
+      fallbackName &&
+      (!TRADE_TICKER_INFO[normalized].name ||
+        TRADE_TICKER_INFO[normalized].name === normalized)
+    ) {
+      TRADE_TICKER_INFO[normalized].name = fallbackName;
+    }
+    if (!PROTECTED_RUNTIME_TICKER_SYMBOLS.has(normalized)) {
+      const current = TRADE_TICKER_INFO[normalized];
+      delete TRADE_TICKER_INFO[normalized];
+      TRADE_TICKER_INFO[normalized] = current;
+    }
   }
 
   if (!Array.isArray(TRADE_TICKER_INFO[normalized].spark)) {
@@ -127,8 +166,11 @@ export const ensureTradeTickerInfo = (symbol, fallbackName = symbol) => {
   return TRADE_TICKER_INFO[normalized];
 };
 
-const runtimeTickerSnapshotListeners = new Map();
-const runtimeTickerSnapshotVersions = new Map();
+export const getRuntimeTickerStoreEntryCount = () =>
+  Object.keys(TRADE_TICKER_INFO).length;
+
+export const getRuntimeTickerStoreCap = () => MAX_RUNTIME_TICKER_INFO_ENTRIES;
+
 const RUNTIME_QUOTE_FIELDS = new Set([
   "price",
   "bid",

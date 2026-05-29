@@ -6,6 +6,7 @@
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
     "build:api-deployment": "pnpm --filter @workspace/api-server run build && pnpm run build:ibkr-bridge-bundle",
     "build:ibkr-bridge-bundle": "pnpm --filter @workspace/ibkr-bridge run build && node scripts/package-ibkr-bridge-bundle.mjs",
+    "build:market-data-worker": "cargo build --release -p market-data-worker",
     "build:pyrus-app": "pnpm --filter @workspace/pyrus run build && pnpm --filter @workspace/api-server run build && pnpm run build:ibkr-bridge-bundle",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "deadcode": "PORT=18747 BASE_PATH=/ knip --include files,dependencies,catalog --no-config-hints",
@@ -21,6 +22,9 @@
     "replit:config:unlock": "node scripts/protect-replit-config.mjs unlock",
     "replit:config:status": "node scripts/protect-replit-config.mjs status",
     "replit:scribe:artifacts": "pnpm --filter @workspace/scripts run replit:scribe:artifacts",
+    "market-data-worker:doctor": "cargo run -p market-data-worker -- doctor",
+    "market-data-worker:once": "cargo run -p market-data-worker -- once",
+    "test:market-data-worker": "cargo test -p market-data-worker",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run audit:replit-startup && pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },

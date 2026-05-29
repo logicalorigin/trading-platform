@@ -124,17 +124,17 @@ test("keeps account realtime during backoff for active trading state", () => {
   assert.equal(schedule.streams.watchlistQuoteStream, true);
 });
 
-test("keeps broad flow runtime active on account after first-screen warmup", () => {
+test("parks broad flow runtime on account after first-screen warmup", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "account",
     screenWarmupPhase: "ready",
   });
 
-  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
 });
 
-test("keeps broad flow runtime independent from background resume gates", () => {
+test("keeps broad flow parked off Flow regardless of background resume gates", () => {
   const beforeResume = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "account",
@@ -148,8 +148,8 @@ test("keeps broad flow runtime independent from background resume gates", () => 
     backgroundResumeReady: true,
   });
 
-  assert.equal(beforeResume.streams.broadFlowRuntime, true);
-  assert.equal(afterResume.streams.broadFlowRuntime, true);
+  assert.equal(beforeResume.streams.broadFlowRuntime, false);
+  assert.equal(afterResume.streams.broadFlowRuntime, false);
 });
 
 test("keeps broad flow runtime owned without broker readiness", () => {
@@ -167,7 +167,7 @@ test("keeps broad flow runtime owned without broker readiness", () => {
   assert.equal(schedule.streams.marketStockAggregates, false);
 });
 
-test("keeps broad flow runtime active off Flow while limiting low-priority history under pressure", () => {
+test("pauses passive market discovery while limiting low-priority history under pressure", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "market",
@@ -176,7 +176,7 @@ test("keeps broad flow runtime active off Flow while limiting low-priority histo
     backgroundResumeReady: true,
   });
 
-  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
   assert.equal(schedule.streams.marketStockAggregates, true);
   assert.equal(schedule.streams.lowPriorityHistory, false);
 });
@@ -243,6 +243,47 @@ test("limits low-priority history to history-heavy active screens", () => {
   assert.equal(marketSchedule.hiddenScreenPreload.mountScreens, false);
 });
 
+test("allows passive market discovery only after active screen background work is ready", () => {
+  const beforeReady = buildPlatformWorkSchedule({
+    ...baseInput,
+    activeScreen: "market",
+    screenWarmupPhase: "ready",
+    activeScreenBackgroundAllowed: false,
+  });
+  const afterReady = buildPlatformWorkSchedule({
+    ...baseInput,
+    activeScreen: "market",
+    screenWarmupPhase: "ready",
+    activeScreenBackgroundAllowed: true,
+  });
+
+  assert.equal(beforeReady.streams.broadFlowRuntime, false);
+  assert.equal(afterReady.streams.broadFlowRuntime, true);
+  assert.equal(afterReady.leases.flowDiscovery, true);
+});
+
+test("idle code preloads require a background lease and never warm-mount hidden screens", () => {
+  const blocked = buildPlatformWorkSchedule({
+    ...baseInput,
+    activeScreen: "market",
+    screenWarmupPhase: "ready",
+    activeScreenBackgroundAllowed: false,
+  });
+  const allowed = buildPlatformWorkSchedule({
+    ...baseInput,
+    activeScreen: "market",
+    screenWarmupPhase: "ready",
+    activeScreenBackgroundAllowed: true,
+  });
+
+  assert.equal(blocked.hiddenScreenPreload.codeOnly, false);
+  assert.equal(blocked.leases.idlePreload, false);
+  assert.equal(allowed.hiddenScreenPreload.codeOnly, true);
+  assert.equal(allowed.leases.idlePreload, true);
+  assert.equal(allowed.hiddenScreenPreload.mountScreens, false);
+  assert.equal(allowed.leases.hiddenMount, false);
+});
+
 test("holds low-priority history until operational preload finishes", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
@@ -262,7 +303,7 @@ test("holds low-priority history until active screen allows background work", ()
     activeScreenBackgroundAllowed: false,
   });
 
-  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
   assert.equal(schedule.streams.lowPriorityHistory, false);
 });
 
@@ -279,7 +320,7 @@ test("memory watch pressure blocks low-priority background hydration first", () 
 
   assert.equal(schedule.hydrationPressure, "degraded");
   assert.equal(schedule.streams.marketStockAggregates, true);
-  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
   assert.equal(schedule.pressureCaps.broadMarketSymbolLimit, 48);
   assert.equal(schedule.pressureCaps.signalMatrixWideSymbolLimit, 96);
   assert.equal(schedule.streams.lowPriorityHistory, false);
@@ -356,14 +397,14 @@ test("defers broad flow runtime before session metadata settles", () => {
   assert.equal(schedule.streams.broadFlowRuntime, false);
 });
 
-test("keeps broad flow runtime independent of first-screen warmup", () => {
+test("holds passive market discovery until first-screen warmup is ready", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "market",
     screenWarmupPhase: "initial",
   });
 
-  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
   assert.equal(schedule.streams.lowPriorityHistory, false);
   assert.equal(schedule.hiddenScreenPreload.codeOnly, false);
   assert.equal(schedule.hiddenScreenPreload.mountScreens, false);
@@ -383,10 +424,10 @@ test("waits for a first memory sample before starting background work", () => {
   assert.equal(schedule.memoryPressure.observed, false);
   assert.equal(schedule.streams.lowPriorityHistory, false);
   assert.equal(schedule.hiddenScreenPreload.mountScreens, false);
-  assert.equal(schedule.streams.broadFlowRuntime, true);
+  assert.equal(schedule.streams.broadFlowRuntime, false);
 });
 
-test("keeps broad flow runtime active on non-market work screens after first-screen warmup", () => {
+test("parks broad flow runtime on non-flow work screens after first-screen warmup", () => {
   const tradeSchedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "trade",
@@ -398,8 +439,8 @@ test("keeps broad flow runtime active on non-market work screens after first-scr
     screenWarmupPhase: "ready",
   });
 
-  assert.equal(tradeSchedule.streams.broadFlowRuntime, true);
-  assert.equal(algoSchedule.streams.broadFlowRuntime, true);
+  assert.equal(tradeSchedule.streams.broadFlowRuntime, false);
+  assert.equal(algoSchedule.streams.broadFlowRuntime, false);
 });
 
 test("mobile startup holds broad flow until Flow is the active screen", () => {

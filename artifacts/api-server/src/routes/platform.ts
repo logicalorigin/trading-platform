@@ -84,7 +84,7 @@ import {
   updateWatchlist,
 } from "../services/platform";
 import type { FootprintSourcePreference } from "@workspace/ibkr-contracts";
-import { getGexDashboardData } from "../services/gex";
+import { getGexDashboardData, getGexZeroGammaData } from "../services/gex";
 import {
   fetchAccountSnapshotPayload,
   fetchExecutionSnapshotPayload,
@@ -1636,6 +1636,15 @@ router.get("/gex/:underlying", async (req, res) => {
   );
 
   res.json(data);
+});
+
+router.get("/gex/:underlying/zero-gamma", async (req, res) => {
+  res.json(
+    await getGexZeroGammaData({
+      underlying: req.params.underlying,
+      signal: createRequestAbortSignal(req, res),
+    }),
+  );
 });
 
 router.post("/options/quotes", async (req, res) => {

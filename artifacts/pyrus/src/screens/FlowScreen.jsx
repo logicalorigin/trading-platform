@@ -76,6 +76,7 @@ import {
   Pill,
   Skeleton,
 } from "../components/platform/primitives.jsx";
+import { MeasuredChartFrame } from "../features/charting/MeasuredChartFrame.jsx";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { DenseVirtualTable } from "../components/platform/DenseVirtualTable.jsx";
 import { Drawer } from "../components/platform/Drawer.jsx";
@@ -5702,7 +5703,12 @@ const FlowOverviewPanel = ({
                     </span>
                   </div>
                 </div>
-                <div style={{ height: dim(200), width: "100%" }}>
+                <MeasuredChartFrame
+                  height={200}
+                  minHeight={200}
+                  placeholderLabel="Preparing premium tide"
+                  testId="flow-premium-tide-frame"
+                >
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={flowTide}>
                       <CartesianGrid
@@ -5743,7 +5749,7 @@ const FlowOverviewPanel = ({
                       />
                     </AreaChart>
                   </ResponsiveContainer>
-                </div>
+                </MeasuredChartFrame>
               </div>
 
               <Card style={{ padding: sp("8px 10px") }}>

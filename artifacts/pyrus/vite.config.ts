@@ -70,10 +70,14 @@ const getNodeModulePackageName = (id: string): string | null => {
 const DEFERRED_MODULE_PRELOAD_PATTERNS = [
   /feature-backtesting/,
   /feature-charting-lab/,
+  /feature-charting-mini/,
   /feature-charting-surface/,
+  /feature-pyrus-signals-settings/,
   /pyrus-signals-core/,
+  /vendor-d3/,
   /vendor-hls/,
   /vendor-lightweight-charts/,
+  /vendor-recharts/,
 ];
 
 const isolationMode =

@@ -45,6 +45,7 @@ import {
 } from "../market/marketReferenceData";
 import {
   getOptionQuoteSnapshotCacheSize,
+  getOptionQuoteSnapshotListenerCount,
   useBrokerStreamFreshnessStatus,
   useIbkrAccountSnapshotStream,
   useIbkrOrderSnapshotStream,
@@ -77,6 +78,7 @@ import { LatencyDebugStrip } from "./LatencyDebugStrip.jsx";
 import { normalizeTickerSymbol } from "./tickerIdentity";
 import {
   ensureTradeTickerInfo,
+  getRuntimeTickerStoreEntryCount,
 } from "./runtimeTickerStore";
 import {
   buildSignalMatrixRequestPlan,
@@ -741,6 +743,8 @@ export default function PlatformApp() {
         marketFlowStoreEntries: getMarketFlowStoreEntryCount(),
         tradeFlowStoreEntries: getTradeFlowStoreEntryCount(),
         tradeOptionChainStoreEntries: getTradeOptionChainStoreEntryCount(),
+        runtimeTickerStoreEntries: getRuntimeTickerStoreEntryCount(),
+        optionQuoteCacheListeners: getOptionQuoteSnapshotListenerCount(),
       };
     };
     window.__PYRUS_MEMORY_DIAGNOSTICS__ = getMemoryDiagnostics;
@@ -987,6 +991,7 @@ export default function PlatformApp() {
         sessionMetadataSettled,
         activeScreen: screen,
         screenWarmupPhase,
+        activeScreenBackgroundAllowed: activeScreenBackgroundDataAllowed,
         startupProtectionActive,
         memoryPressure: memoryPressureSignal,
         mobileViewport: isPhone,
@@ -999,6 +1004,7 @@ export default function PlatformApp() {
       screenWarmupPhase,
       sessionMetadataSettled,
       startupProtectionActive,
+      activeScreenBackgroundDataAllowed,
     ],
   );
   const hiddenScreenWarmMountAllowed = Boolean(
@@ -1021,8 +1027,9 @@ export default function PlatformApp() {
   ]);
   useEffect(() => {
     if (
-      !firstScreenReady ||
-      isPhone ||
+      !operationalCodePreloadReady ||
+      !activeScreenBackgroundAllowed ||
+      !memoryAllowsBackgroundWarmup ||
       warmupTestOverrides.disableOperationalCodePreload ||
       priorityScreenCodePreloadStartedRef.current ||
       priorityScreenCodePreloadCompleteRef.current
@@ -1061,9 +1068,10 @@ export default function PlatformApp() {
       window.clearTimeout(timerId);
     };
   }, [
-    firstScreenReady,
-    isPhone,
+    activeScreenBackgroundAllowed,
     markWarmupTimeline,
+    memoryAllowsBackgroundWarmup,
+    operationalCodePreloadReady,
     screen,
     warmupTestOverrides.disableOperationalCodePreload,
   ]);
@@ -1832,6 +1840,7 @@ export default function PlatformApp() {
       isPhone ||
       !firstScreenReady ||
       !backgroundScreenPreloadReady ||
+      !hiddenScreenWarmMountAllowed ||
       bootScreenShellWarmMountCompleteRef.current
     ) {
       return undefined;
@@ -1871,6 +1880,7 @@ export default function PlatformApp() {
   }, [
     backgroundScreenPreloadReady,
     firstScreenReady,
+    hiddenScreenWarmMountAllowed,
     isPhone,
     markWarmupTimeline,
     pageVisible,
@@ -1950,6 +1960,7 @@ export default function PlatformApp() {
   useEffect(() => {
     if (
       !operationalCodePreloadReady ||
+      screen !== "research" ||
       screenWarmupPhase !== "ready" ||
       !memoryAllowsBackgroundWarmup ||
       warmupTestOverrides.disableResearchWorkspacePreload ||
@@ -1998,12 +2009,14 @@ export default function PlatformApp() {
     markWarmupTimeline,
     memoryAllowsBackgroundWarmup,
     operationalCodePreloadReady,
+    screen,
     screenWarmupPhase,
   ]);
 
   useEffect(() => {
     if (
       !operationalCodePreloadReady ||
+      screen !== "research" ||
       screenWarmupPhase !== "ready" ||
       !memoryAllowsIdlePrefetch ||
       warmupTestOverrides.disableResearchWorkspacePreload ||
@@ -2054,6 +2067,7 @@ export default function PlatformApp() {
     markWarmupTimeline,
     memoryAllowsIdlePrefetch,
     operationalCodePreloadReady,
+    screen,
     screenWarmupPhase,
   ]);
 

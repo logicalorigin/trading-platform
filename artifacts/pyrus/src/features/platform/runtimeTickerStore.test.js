@@ -4,7 +4,10 @@ import {
   __runtimeTickerStoreTestHooks,
   applyRuntimeTickerInfoPatch,
   ensureTradeTickerInfo,
+  getRuntimeTickerStoreCap,
+  getRuntimeTickerStoreEntryCount,
   notifyRuntimeTickerSnapshotSymbols,
+  TRADE_TICKER_INFO,
 } from "./runtimeTickerStore.js";
 
 const uniqueSymbol = (label) =>
@@ -171,5 +174,47 @@ test("runtime ticker store coalesces pending notifications", () => {
   } finally {
     unsubscribe();
     __runtimeTickerStoreTestHooks.clearPendingRuntimeTickerSnapshotNotifications();
+  }
+});
+
+test("runtime ticker store caps unobserved dynamic tickers", () => {
+  const cap = getRuntimeTickerStoreCap();
+
+  for (let index = 0; index < cap + 40; index += 1) {
+    ensureTradeTickerInfo(`ZZCAP${index}`, `ZZCAP${index}`);
+  }
+
+  assert.ok(getRuntimeTickerStoreEntryCount() <= cap);
+  assert.ok(ensureTradeTickerInfo("SPY", "SPY"));
+});
+
+test("runtime ticker store keeps new tickers when observed entries block pruning", () => {
+  const cap = getRuntimeTickerStoreCap();
+  const unsubscribers = Object.keys(TRADE_TICKER_INFO).map((symbol) =>
+    __runtimeTickerStoreTestHooks.subscribeToRuntimeTickerSnapshotSymbols(
+      [symbol],
+      () => {},
+    ),
+  );
+
+  try {
+    for (let index = 0; getRuntimeTickerStoreEntryCount() < cap; index += 1) {
+      const symbol = `ZZOBSERVED${index}`;
+      ensureTradeTickerInfo(symbol, symbol);
+      unsubscribers.push(
+        __runtimeTickerStoreTestHooks.subscribeToRuntimeTickerSnapshotSymbols(
+          [symbol],
+          () => {},
+        ),
+      );
+    }
+
+    const symbol = uniqueSymbol("KEPT");
+    const info = ensureTradeTickerInfo(symbol, symbol);
+
+    assert.equal(info.name, symbol);
+    assert.equal(TRADE_TICKER_INFO[symbol], info);
+  } finally {
+    unsubscribers.forEach((unsubscribe) => unsubscribe());
   }
 });

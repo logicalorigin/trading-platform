@@ -1256,7 +1256,7 @@ export const MultiChartGrid = ({
   ]);
   const focusedLabel =
     phoneGrid
-      ? `${renderedSlotEntries[0]?.slot?.ticker || activeSym} focused`
+      ? `${renderedSlotEntries[0]?.slot?.ticker || activeSym} focused · ${cfg.count}-chart desktop preset`
     : layout === "1x1"
       ? visibleSlotEntries[0]?.slot?.ticker || activeSym
       : `${cfg.count} visible`;
@@ -1437,7 +1437,14 @@ export const MultiChartGrid = ({
             }}
           >
             {Object.keys(MULTI_CHART_LAYOUTS).map((key) => (
-              <AppTooltip key={key} content={`${MULTI_CHART_LAYOUTS[key].count} charts`}><button
+              <AppTooltip
+                key={key}
+                content={
+                  phoneGrid
+                    ? `${MULTI_CHART_LAYOUTS[key].count}-chart desktop preset; phone shows one focused chart`
+                    : `${MULTI_CHART_LAYOUTS[key].count} charts`
+                }
+              ><button
                 key={key}
                 onClick={() => setLayout(key)}
                 style={{

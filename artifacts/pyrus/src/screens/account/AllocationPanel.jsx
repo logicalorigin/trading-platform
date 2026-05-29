@@ -13,6 +13,7 @@ import {
   mutedLabelStyle,
   sectionTitleStyle,
 } from "./accountUtils";
+import { MeasuredChartFrame } from "../../features/charting/MeasuredChartFrame.jsx";
 
 const getColors = () => [CSS_COLOR.blue, CSS_COLOR.cyan, CSS_COLOR.purple, CSS_COLOR.amber, CSS_COLOR.green, CSS_COLOR.pink, CSS_COLOR.textDim];
 const EPSILON = 1e-9;
@@ -66,7 +67,11 @@ const DonutLegend = ({ data, maskValues = false }) => (
 const Donut = ({ title, data, currency, maskValues = false }) => (
   <div style={{ minWidth: 0 }}>
     <div style={{ ...sectionTitleStyle, fontSize: textSize("body"), marginBottom: sp(3) }}>{title}</div>
-    <div style={{ height: dim(96) }}>
+    <MeasuredChartFrame
+      height={96}
+      minHeight={96}
+      placeholderLabel={`Preparing ${title.toLowerCase()} chart`}
+    >
       <ResponsiveContainer>
         <PieChart>
           <Pie
@@ -93,7 +98,7 @@ const Donut = ({ title, data, currency, maskValues = false }) => (
           />
         </PieChart>
       </ResponsiveContainer>
-    </div>
+    </MeasuredChartFrame>
     <DonutLegend data={data} maskValues={maskValues} />
   </div>
 );

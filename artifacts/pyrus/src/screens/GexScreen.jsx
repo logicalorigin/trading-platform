@@ -51,6 +51,7 @@ import {
   GEX_DASHBOARD_QUERY_REFETCH_MS,
   GEX_DASHBOARD_QUERY_STALE_MS,
 } from "../features/gex/useGexZeroGamma.js";
+import { MeasuredChartFrame } from "../features/charting/MeasuredChartFrame.jsx";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import {
@@ -373,8 +374,14 @@ const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
       }
       minHeight={340}
     >
-      <ResponsiveContainer width="100%" height={286}>
-        <BarChart data={data} margin={{ top: 16, right: 16, left: 0, bottom: 8 }}>
+      <MeasuredChartFrame
+        height={286}
+        minHeight={286}
+        placeholderLabel="Preparing strike profile"
+        testId="gex-strike-profile-frame"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 16, right: 16, left: 0, bottom: 8 }}>
           <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="strike"
@@ -417,8 +424,9 @@ const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
               <Bar dataKey="putGex" fill={CSS_COLOR.red} isAnimationActive={false} />
             </>
           )}
-        </BarChart>
-      </ResponsiveContainer>
+          </BarChart>
+        </ResponsiveContainer>
+      </MeasuredChartFrame>
     </ChartShell>
   );
 };
@@ -430,8 +438,14 @@ const ExpiryChart = ({ rows, spot }) => {
       title="Gamma Exposure by Expiry"
       subtitle="Gamma exposure by expiration date (in millions)"
     >
-      <ResponsiveContainer width="100%" height={220}>
-        <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+      <MeasuredChartFrame
+        height={220}
+        minHeight={220}
+        placeholderLabel="Preparing expiry chart"
+        testId="gex-expiry-frame"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
           <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="label"
@@ -464,8 +478,9 @@ const ExpiryChart = ({ rows, spot }) => {
           />
           <Bar dataKey="callGex" fill={CSS_COLOR.green} stackId="expiry" isAnimationActive={false} />
           <Bar dataKey="putGex" fill={CSS_COLOR.red} stackId="expiry" isAnimationActive={false} />
-        </BarChart>
-      </ResponsiveContainer>
+          </BarChart>
+        </ResponsiveContainer>
+      </MeasuredChartFrame>
     </ChartShell>
   );
 };
@@ -503,8 +518,14 @@ const GammaPriceChart = ({ rows, providerIvCount, spot }) => {
       subtitle={`Projected Net Gamma across spot levels using provider IV (${providerIvCount}/${rows.length} contracts).`}
     >
       {data.length ? (
-        <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+        <MeasuredChartFrame
+          height={220}
+          minHeight={220}
+          placeholderLabel="Preparing gamma price profile"
+          testId="gex-gamma-price-frame"
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
             <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
             <XAxis
               dataKey="price"
@@ -555,8 +576,9 @@ const GammaPriceChart = ({ rows, providerIvCount, spot }) => {
                 <Cell key={row.price} fill={row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red} />
               ))}
             </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+            </BarChart>
+          </ResponsiveContainer>
+        </MeasuredChartFrame>
       ) : (
         <DataUnavailableState
           title="Provider IV unavailable"
@@ -594,8 +616,14 @@ const OiChart = ({ rows, spot }) => {
         />
       }
     >
-      <ResponsiveContainer width="100%" height={220}>
-        <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+      <MeasuredChartFrame
+        height={220}
+        minHeight={220}
+        placeholderLabel="Preparing OI strike profile"
+        testId="gex-oi-profile-frame"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
           <CartesianGrid stroke={CSS_COLOR.borderLight} strokeDasharray="0" vertical={false} />
           <XAxis
             dataKey="strike"
@@ -627,8 +655,9 @@ const OiChart = ({ rows, spot }) => {
           />
           <Bar dataKey="callOi" fill={CSS_COLOR.green} stackId="oi" isAnimationActive={false} />
           <Bar dataKey="putOi" fill={CSS_COLOR.red} stackId="oi" isAnimationActive={false} />
-        </BarChart>
-      </ResponsiveContainer>
+          </BarChart>
+        </ResponsiveContainer>
+      </MeasuredChartFrame>
     </ChartShell>
   );
 };
@@ -1822,7 +1851,12 @@ const IntradayCard = ({ snapshots }) => {
           />
         </div>
         {hasSeries ? (
-          <div data-testid="gex-intraday-chart" style={{ height: dim(96) }}>
+          <MeasuredChartFrame
+            height={96}
+            minHeight={96}
+            placeholderLabel="Preparing intraday GEX"
+            testId="gex-intraday-chart"
+          >
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart
                 data={intraday.series}
@@ -1853,7 +1887,7 @@ const IntradayCard = ({ snapshots }) => {
                 />
               </AreaChart>
             </ResponsiveContainer>
-          </div>
+          </MeasuredChartFrame>
         ) : (
           <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
             {intraday.series.length === 1

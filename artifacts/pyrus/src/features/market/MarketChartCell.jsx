@@ -177,7 +177,7 @@ export const MarketChartCell = ({
     ? hydratedTimeframe
     : "5m";
   const gexZeroGamma = useGexZeroGamma(ticker, {
-    enabled: Boolean(ticker),
+    enabled: Boolean(ticker && isActive),
   });
   const gexZeroGammaReferenceLine =
     useGexZeroGammaReferenceLine(gexZeroGamma);

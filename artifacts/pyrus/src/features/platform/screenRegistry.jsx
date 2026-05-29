@@ -9,13 +9,166 @@ import {
 import { markScreenReady } from "./performanceMetrics";
 
 export const ScreenLoadingFallback = ({ screenId, error = null }) => (
-  <LogoLoader
-    tone="panel"
-    label={error ? `Retrying ${screenId}` : `Loading ${screenId}`}
-    minHeight="100%"
-    testId="screen-loading-fallback"
-  />
+  <ScreenRouteShell screenId={screenId} error={error} />
 );
+
+const SCREEN_ROUTE_SHELLS = {
+  account: {
+    title: "Account",
+    eyebrow: "Portfolio workspace",
+    detail: "Loading balances, positions, and account charts.",
+    lanes: ["Equity curve", "Exposure", "Positions"],
+  },
+  flow: {
+    title: "Flow",
+    eyebrow: "Options tape",
+    detail: "Loading flow scanner controls and premium charts.",
+    lanes: ["Tape", "Premium tide", "Contract detail"],
+  },
+  gex: {
+    title: "GEX",
+    eyebrow: "Gamma workspace",
+    detail: "Loading gamma controls and strike profile charts.",
+    lanes: ["Strike profile", "Expiry", "Intraday"],
+  },
+  trade: {
+    title: "Trade",
+    eyebrow: "Chart workspace",
+    detail: "Loading the active spot chart before secondary panels.",
+    lanes: ["Spot chart", "Option chain", "Ticket"],
+  },
+};
+
+const ScreenRouteShell = ({ screenId, error = null }) => {
+  const shell = SCREEN_ROUTE_SHELLS[screenId];
+  if (!shell) {
+    return (
+      <LogoLoader
+        tone="panel"
+        label={error ? `Retrying ${screenId}` : `Loading ${screenId}`}
+        minHeight="100%"
+        testId="screen-loading-fallback"
+      />
+    );
+  }
+
+  return (
+    <section
+      data-testid="screen-loading-fallback"
+      data-screen-route-shell={screenId}
+      aria-busy="true"
+      aria-label={error ? `Retrying ${shell.title}` : `Loading ${shell.title}`}
+      style={{
+        minHeight: "100%",
+        display: "grid",
+        alignContent: "start",
+        gap: 12,
+        padding: "16px",
+        background: "var(--ra-surface-0)",
+        color: "var(--ra-text-primary)",
+        fontFamily: "var(--ra-font-sans)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 12,
+          alignItems: "baseline",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              color: "var(--ra-text-muted)",
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: 0,
+              textTransform: "uppercase",
+            }}
+          >
+            {shell.eyebrow}
+          </div>
+          <h1
+            style={{
+              margin: "3px 0 0",
+              color: "var(--ra-text-primary)",
+              fontSize: 18,
+              fontWeight: 500,
+              letterSpacing: 0,
+              lineHeight: 1.1,
+            }}
+          >
+            {shell.title}
+          </h1>
+        </div>
+        <span
+          style={{
+            color: error ? "var(--ra-color-status-warn)" : "var(--ra-text-dim)",
+            fontSize: 12,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {error ? "Retrying" : "Loading"}
+        </span>
+      </div>
+      <div style={{ color: "var(--ra-text-secondary)", fontSize: 13, lineHeight: 1.35 }}>
+        {error ? "The route module failed to load; retrying the screen bundle." : shell.detail}
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 8,
+          minWidth: 0,
+        }}
+      >
+        {shell.lanes.map((lane, index) => (
+          <div
+            key={lane}
+            style={{
+              minHeight: index === 0 ? 180 : 116,
+              border: "1px solid var(--ra-border-default)",
+              background: "var(--ra-surface-1)",
+              borderRadius: 8,
+              padding: "10px",
+              display: "grid",
+              alignContent: "space-between",
+              gap: 10,
+              minWidth: 0,
+            }}
+          >
+            <div style={{ color: "var(--ra-text-secondary)", fontSize: 12 }}>
+              {lane}
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              <span
+                className="ra-skeleton-shimmer"
+                style={{
+                  display: "block",
+                  width: "72%",
+                  height: 8,
+                  borderRadius: 4,
+                  background: "var(--ra-surface-3)",
+                }}
+              />
+              <span
+                className="ra-skeleton-shimmer"
+                style={{
+                  display: "block",
+                  width: "48%",
+                  height: 8,
+                  borderRadius: 4,
+                  background: "var(--ra-surface-3)",
+                }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+};
 
 const createPreloadableScreen = (screenId, label) => {
   return function PreloadableScreen(props) {

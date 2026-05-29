@@ -1,6 +1,5 @@
 import { useMemo, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getGexDashboard as getGexDashboardRequest } from "@workspace/api-client-react";
 import {
   aggregateMetrics,
   isFiniteNumber,
@@ -10,6 +9,8 @@ import { resolveTokenColor } from "../../lib/uiTokens.jsx";
 
 export const GEX_DASHBOARD_QUERY_STALE_MS = 15_000;
 export const GEX_DASHBOARD_QUERY_REFETCH_MS = 15_000;
+export const GEX_ZERO_GAMMA_QUERY_STALE_MS = 60_000;
+export const GEX_ZERO_GAMMA_QUERY_REFETCH_MS = 60_000;
 export const GEX_ZERO_GAMMA_STALE_MS = 15 * 60_000;
 export const GEX_ZERO_GAMMA_LABEL = "γ flip";
 
@@ -86,6 +87,29 @@ const isStaleAsOf = (asOf, nowMs) => {
   return Number.isFinite(asOfMs) && nowMs - asOfMs > GEX_ZERO_GAMMA_STALE_MS;
 };
 
+export const fetchGexZeroGamma = async (ticker, { signal } = {}) => {
+  const normalizedTicker = normalizeGexTicker(ticker);
+  if (!normalizedTicker) {
+    return null;
+  }
+
+  const response = await fetch(
+    `/api/gex/${encodeURIComponent(normalizedTicker)}/zero-gamma`,
+    { signal },
+  );
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const payload = await response.json();
+      message = payload?.detail || payload?.message || payload?.error || message;
+    } catch {}
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+};
+
 const parseRgbColor = (color) => {
   const value = String(color || "").trim();
   const hexMatch = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
@@ -155,6 +179,15 @@ export const resolveGexZeroGammaOverlay = (
   data,
   nowMs = Date.now(),
 ) => {
+  if (isFiniteNumber(data?.zeroGamma) || "zeroGamma" in (data || {})) {
+    const asOf = data?.asOf || data?.timestamp || null;
+    return {
+      price: isFiniteNumber(data?.zeroGamma) ? Number(data.zeroGamma) : null,
+      asOf,
+      isStale: Boolean(data?.isStale) || isStaleAsOf(asOf, nowMs),
+    };
+  }
+
   const spot = isFiniteNumber(data?.spot) ? Number(data?.spot) : null;
   const { rows } = normalizeGexResponseOptions(data?.options || []);
   const metrics = spot != null ? aggregateMetrics(rows, spot) : null;
@@ -212,12 +245,12 @@ export function useGexZeroGamma(ticker, options = {}) {
   const normalizedTicker = useMemo(() => normalizeGexTicker(ticker), [ticker]);
   const enabled = Boolean((options.enabled ?? true) && normalizedTicker);
   const query = useQuery({
-    queryKey: ["gex-dashboard", normalizedTicker],
+    queryKey: ["gex-zero-gamma", normalizedTicker],
     queryFn: ({ signal }) =>
-      getGexDashboardRequest(encodeURIComponent(normalizedTicker), { signal }),
+      fetchGexZeroGamma(normalizedTicker, { signal }),
     enabled,
-    staleTime: GEX_DASHBOARD_QUERY_STALE_MS,
-    refetchInterval: enabled ? GEX_DASHBOARD_QUERY_REFETCH_MS : false,
+    staleTime: GEX_ZERO_GAMMA_QUERY_STALE_MS,
+    refetchInterval: enabled ? GEX_ZERO_GAMMA_QUERY_REFETCH_MS : false,
     refetchOnWindowFocus: false,
     placeholderData: (previousData) => previousData,
     retry: 1,

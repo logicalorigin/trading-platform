@@ -4,9 +4,11 @@ import { GetGexDashboardResponse } from "@workspace/api-zod";
 import {
   __expireGexDashboardCacheForTests,
   __setGexDashboardLoadTimeoutMsForTests,
+  __setGexIngestFacadeForTests,
   __setGexMarketDataClientFactoryForTests,
   __setGexPlatformDataClientFactoryForTests,
   getGexDashboardData,
+  getGexZeroGammaData,
 } from "./gex";
 
 const GEX_MARKET_DATA_ENV_KEYS = [
@@ -33,6 +35,7 @@ beforeEach(() => {
 
 afterEach(() => {
   __setGexDashboardLoadTimeoutMsForTests(null);
+  __setGexIngestFacadeForTests(null);
   __setGexPlatformDataClientFactoryForTests(null);
   __setGexMarketDataClientFactoryForTests(null);
   clearGexMarketDataEnv();
@@ -274,6 +277,166 @@ function configureReferenceGex(input: {
   };
 }
 
+function persistedGexPayload(overrides: Partial<any> = {}): any {
+  return {
+    ticker: "SPY",
+    tickerDetails: {
+      ticker: "SPY",
+      name: "SPY",
+      sector: "ETF",
+      industry: "ETF",
+      marketCap: null,
+      exchangeShortName: "NYSEARCA",
+      country: "US",
+      isEtf: true,
+      isFund: false,
+    },
+    profile: {
+      price: 100,
+      dayLow: 100,
+      dayHigh: 100,
+      yearLow: null,
+      yearHigh: null,
+      mktCap: null,
+      logo: null,
+    },
+    spot: 100,
+    timestamp: "2026-05-08T15:31:00.000Z",
+    isStale: false,
+    options: [
+      {
+        strike: 100,
+        expireYear: 2026,
+        expireMonth: 5,
+        expireDay: 15,
+        cp: "C",
+        ticker: "SPY-20260515-call-100",
+        underlying: "SPY",
+        expirationDate: "2026-05-15",
+        providerContractId: "ibkr-call-100",
+        gamma: 0.02,
+        delta: 0.5,
+        openInterest: 10,
+        impliedVol: 0.2,
+        bid: 1,
+        ask: 1.05,
+        multiplier: 100,
+        sharesPerContract: 100,
+        volume: 100,
+        updatedAt: "2026-05-08T15:30:00.000Z",
+        quoteFreshness: "live",
+        marketDataMode: "live",
+      },
+    ],
+    snapshots: [{ ts: "2026-05-08T15:31:00.000Z", netGex: 1_000 }],
+    flowContext: null,
+    flowContextStatus: "unavailable",
+    source: {
+      provider: "ibkr",
+      status: "ok",
+      optionCount: 1,
+      usableOptionCount: 1,
+      withGamma: 1,
+      withOpenInterest: 1,
+      withImpliedVolatility: 1,
+      quoteUpdatedAt: "2026-05-08T15:31:00.000Z",
+      chainUpdatedAt: "2026-05-08T15:30:00.000Z",
+      flowStatus: "unavailable",
+      flowEventCount: 0,
+      classifiedFlowEventCount: 0,
+      flowClassificationCoverage: 0,
+      flowClassificationBasisCounts: {
+        quoteMatch: 0,
+        tickTest: 0,
+        none: 0,
+      },
+      flowClassificationConfidenceCounts: {
+        high: 0,
+        medium: 0,
+        low: 0,
+        none: 0,
+      },
+      message: null,
+    },
+    ...overrides,
+  };
+}
+
+test("GEX dashboard returns a fresh persisted snapshot without option-chain fanout", async () => {
+  const enqueued: unknown[] = [];
+  __setGexIngestFacadeForTests({
+    isConfigured: () => true,
+    getLatestGexSnapshot: async () => ({
+      payload: persistedGexPayload(),
+      computedAt: new Date(),
+      ageMs: 100,
+      stale: false,
+    }),
+    enqueueMarketDataJob: async (input) => {
+      enqueued.push(input);
+      return { queued: true, dedupeKey: "test" };
+    },
+  });
+
+  const data = await getGexDashboardData({ underlying: "spy" });
+
+  assert.equal(data.ticker, "SPY");
+  assert.equal(data.source.status, "ok");
+  assert.equal(enqueued.length, 0);
+  assert.equal(GetGexDashboardResponse.parse(data).source.provider, "ibkr");
+});
+
+test("GEX dashboard serves stale persisted data and queues refresh", async () => {
+  const enqueued: any[] = [];
+  __setGexIngestFacadeForTests({
+    isConfigured: () => true,
+    getLatestGexSnapshot: async () => ({
+      payload: persistedGexPayload(),
+      computedAt: new Date(Date.now() - 120_000),
+      ageMs: 120_000,
+      stale: true,
+    }),
+    enqueueMarketDataJob: async (input) => {
+      enqueued.push(input);
+      return { queued: true, dedupeKey: `${input.kind}:SPY` };
+    },
+  });
+
+  const data = await getGexDashboardData({ underlying: "SPY" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(data.isStale, true);
+  assert.equal(data.source.status, "partial");
+  assert.match(data.source.message || "", /persisted GEX snapshot/);
+  assert.deepEqual(
+    enqueued.map((entry) => entry.kind).sort(),
+    ["gex_snapshot", "option_chain_snapshot"],
+  );
+});
+
+test("GEX dashboard queues ingest and reports pending when no persisted snapshot exists", async () => {
+  const enqueued: any[] = [];
+  __setGexIngestFacadeForTests({
+    isConfigured: () => true,
+    getLatestGexSnapshot: async () => null,
+    enqueueMarketDataJob: async (input) => {
+      enqueued.push(input);
+      return { queued: true, dedupeKey: `${input.kind}:SPY` };
+    },
+  });
+
+  await assert.rejects(
+    () => getGexDashboardData({ underlying: "SPY" }),
+    (error: any) =>
+      error?.statusCode === 503 &&
+      error?.code === "gex_snapshot_pending",
+  );
+  assert.deepEqual(
+    enqueued.map((entry) => entry.kind).sort(),
+    ["gex_snapshot", "option_chain_snapshot"],
+  );
+});
+
 test("GEX dashboard data is sourced from IBKR quotes, expirations, and full option-chain batches", async () => {
   let batchRequest: any = null;
   configureIbkrGex({
@@ -309,6 +472,26 @@ test("GEX dashboard data is sourced from IBKR quotes, expirations, and full opti
   const parsed = GetGexDashboardResponse.parse(data);
   assert.equal(parsed.source.provider, "ibkr");
   assert.equal((parsed.options[0] as any).providerContractId, "ibkr-call-100");
+});
+
+test("GEX zero-gamma endpoint returns a compact overlay payload", async () => {
+  configureIbkrGex({
+    contracts: [
+      option({ right: "put", strike: 95, gamma: 0.02, openInterest: 10 }),
+      option({ right: "call", strike: 105, gamma: 0.02, openInterest: 20 }),
+    ],
+  });
+
+  const data = await getGexZeroGammaData({ underlying: "spy" });
+
+  assert.equal(data.ticker, "SPY");
+  assert.equal(data.spot, 100);
+  assert.ok(data.zeroGamma != null && data.zeroGamma > 95 && data.zeroGamma < 105);
+  assert.equal(data.asOf, "2026-05-08T15:30:00.000Z");
+  assert.equal(data.source.provider, "ibkr");
+  assert.equal(data.source.optionCount, 2);
+  assert.equal("options" in data, false);
+  assert.equal("snapshots" in data, false);
 });
 
 test("GEX keeps option-chain snapshots on IBKR when Massive reference data is configured", async () => {

@@ -96,10 +96,6 @@ const MemoMultiChartGrid = memo(function MemoMultiChartGrid(props) {
   return <LazyMultiChartGrid {...props} />;
 });
 
-if (typeof window !== "undefined") {
-  preloadMarketChartModules();
-}
-
 const buildMarketChartFallbackSymbols = (symbols = []) => {
   const requestedSymbols = symbols
     .map((symbol) => normalizeTickerSymbol(symbol))

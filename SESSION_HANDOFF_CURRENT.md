@@ -1,33 +1,243 @@
 # Current Session Handoff
 
-- Last updated: `2026-05-28 23:30 UTC`
-- Current request: focused `/qa` of the PYRUS Account page in Real and Shadow modes.
+- Last updated: `2026-05-29 14:06 UTC`
+- Current request: commit the current worktree first, then run `$qa` on the chart work.
+- Current status:
+  - `$qa` preflight found a dirty working tree and AskUserQuestion is unavailable in this host.
+  - User chose to commit first. Preparing a broad checkpoint commit of the current dirty worktree before starting browser QA so subsequent QA fixes can be separate.
+  - The checkpoint will include chart QA work plus earlier Rust-first ingest/performance changes already present in the worktree.
+- Validation state:
+  - Latest chart QA validation remains: focused Pyrus tests, Pyrus typecheck, Pyrus bundle audit, live browser route checks, and `git diff --check` passed.
+- Next step:
+  - Commit the current worktree, confirm clean status, then run `$qa` against the chart surfaces on the local app.
+
+- Last updated: `2026-05-29 13:32 UTC`
+- Current request: continue the recovered chart QA session and fix the chart-route QA findings.
+- Current status:
+  - Implemented the chart QA recovery pass for the highest-impact findings from `.gstack/qa-reports/qa-report-pyrus-charts-2026-05-29.md`.
+  - Added route-specific activation shells for Account, Flow, GEX, and Trade so route switches show useful screen context instead of a generic PYRUS loader.
+  - Added shared `MeasuredChartFrame` gating for Recharts surfaces and wrapped Flow, GEX, and Account donut chart mounts to avoid zero-size `ResponsiveContainer` warnings.
+  - Labeled Account deferred panel fallbacks on mobile so slow account data shows named loading states instead of blank/unlabeled chart skeletons.
+  - Clarified Market phone copy so responsive focused-chart mode is described as a saved desktop preset rather than the visible chart count.
+  - Preserved all pre-existing dirty Rust-first ingest and performance-plan files; Replit startup config was not touched.
+- Changed files in this chart QA pass:
+  - `artifacts/pyrus/src/features/charting/MeasuredChartFrame.jsx`
+  - `artifacts/pyrus/src/features/charting/chartQaRecovery.test.js`
+  - `artifacts/pyrus/src/features/platform/screenRegistry.jsx`
+  - `artifacts/pyrus/src/screens/AccountScreen.jsx`
+  - `artifacts/pyrus/src/screens/FlowScreen.jsx`
+  - `artifacts/pyrus/src/screens/GexScreen.jsx`
+  - `artifacts/pyrus/src/screens/account/AllocationPanel.jsx`
+  - `artifacts/pyrus/src/screens/account/PortfolioExposurePanel.jsx`
+  - `artifacts/pyrus/src/features/market/MultiChartGrid.jsx`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/charting/chartQaRecovery.test.js src/features/gex/gexDataWiring.test.js src/features/market/marketChartWiring.test.js src/screens/account/PositionTreemapPanel.test.js src/screens/account/IntradayPnlPanel.test.js` (`44` tests).
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run bundle:audit`.
+  - Passed: browser route checks against `http://127.0.0.1:18747/` for Account phone after 10s, Flow phone after 15s, GEX desktop after 5s, and Market phone after 3s. No page errors and no Recharts zero-size warnings were observed.
+  - Passed: `git diff --check`.
+  - Browser evidence saved under `.gstack/qa-reports/screenshots/chart-qa-fix-2026-05-29/`.
+- Remaining follow-up:
+  - Trade startup prioritization from the original QA report was not deeply reworked in this pass beyond the new Trade route shell. A later pass should measure click-to-spot-chart readiness and defer secondary Trade panels if still slow.
+  - Optional: promote the source-level chart QA guards into fuller Playwright specs for route readiness and console-warning assertions.
+
+- Last updated: `2026-05-29 13:20 UTC`
+- Current request: pick up the recovered chart QA session and start fixing the chart QA findings.
+- Current status:
+  - Starting from `.gstack/qa-reports/qa-report-pyrus-charts-2026-05-29.md`.
+  - Prioritized issues for this pass: route-specific loading shells for Flow/GEX/Trade, Recharts zero-size mount guard, Account mobile loading/empty states, and targeted route-readiness/console assertions.
+  - Existing dirty Rust-first ingest and performance-plan files are unrelated to this chart QA pickup and must be preserved.
+  - Replit startup config is not planned to be touched.
+- Validation state:
+  - Pending. Planned targeted validation: focused Pyrus unit/source tests, `pnpm --filter @workspace/pyrus run typecheck`, `pnpm --filter @workspace/pyrus run bundle:audit` if route/chunking changes are made, and browser route checks if the running app can be inspected.
+- Next step:
+  - Inspect Account chart panels, Flow/GEX Recharts usage, screen route fallback/preloader code, and existing tests before patching.
+
+- Last updated: `2026-05-29 13:18 UTC`
+- Current request: find the latest dropped session covering chart QA and the 11-phase Rust/Python migration plan.
+- Current status:
+  - Used `session-handoff` recovery flow for a dropped session: checked `~/.codex/history.jsonl`, `~/.codex/sessions/**/rollout-*.jsonl`, `~/.codex/state_5.sqlite`, `~/.codex/logs_2.sqlite`, live Codex/Replit/PYRUS processes, `SESSION_HANDOFF_MASTER.md`, `SESSION_HANDOFF_CURRENT.md`, repo handoffs, and ignored `.gstack` QA artifacts.
+  - Current Codex runtime only persisted this recovery thread: `019e73e0-acfc-7083-ab8a-53d69f9ee804`. The dropped chart/Rust-plan thread itself is not locally recoverable by session ID from the current Codex state or rollout storage.
+  - Recovered durable chart QA artifact: `.gstack/qa-reports/qa-report-pyrus-charts-2026-05-29.md`, dated `2026-05-29T03:10:20Z`, with screenshots under `.gstack/qa-reports/screenshots/chart-qa-2026-05-29/`.
+  - Recovered Rust-first plan implementation state from `SESSION_HANDOFF_CURRENT.md` and dirty worktree evidence. The latest prior entry records implementation of the "comprehensive Rust-first market-data ingest pipeline plan"; no separate 11-phase plan document was found in repo markdown or current Codex storage.
+  - High-signal dirty/untracked implementation files include `Cargo.toml`, `Cargo.lock`, `crates/market-data-worker/`, `lib/db/src/schema/market-data.ts`, `artifacts/api-server/src/services/market-data-ingest.ts`, `artifacts/api-server/src/services/gex.ts`, `artifacts/api-server/src/services/gex.test.ts`, and frontend GEX/market/platform performance files already listed below.
+  - Current checked state also preserves the earlier performance-plan pass and quote-SSE QA fix context below; do not revert unrelated dirty files.
+- Validation state:
+  - This recovery pass was inspection-only; no product tests were rerun.
+  - Prior recovered Rust-first entry reports passing API GEX tests/typecheck/build, DB typecheck, Rust cargo tests via Nix, and `git diff --check`.
+  - Prior chart QA report reports passing Pyrus typecheck, e2e test listing, bundle audit, and targeted chart/market/GEX/account tests.
+- Blockers:
+  - The original dropped chat transcript and exact 11-phase plan text were not found in local Codex runtime storage. The best available source of truth is the chart QA report plus the current handoff/dirty Rust-first implementation.
+- Next step:
+  - Resume from the Rust-first ingest implementation entry below: apply/push Drizzle tables, run one-shot worker checks for `option_chain_snapshot` and `gex_snapshot` with configured Massive/Polygon credentials, then decide whether to address the chart QA findings first or continue the ingest migration.
+
+- Last updated: `2026-05-29 03:18 UTC`
+- Current request: implement the comprehensive Rust-first market-data ingest pipeline plan.
+- Current status:
+  - Implemented the first Rust-first ingest slice: DB schema/facade, Rust worker scaffold/job lifecycle, Massive/Polygon-compatible option-chain snapshot ingest, pure Rust GEX compute, and DB-first GEX snapshot path.
+  - Existing handoff already records a prior performance-plan implementation pass; preserving that context and working with the dirty handoff file.
+  - Replit startup files/workflows are not planned to be touched in this slice.
+  - Added root Cargo workspace and `crates/market-data-worker`.
+  - Added `.gitignore` entry for Rust `target/` build output.
+  - GEX route/service now reads fresh persisted snapshots first when market-data ingest is configured; stale snapshots are returned immediately while refresh jobs are queued; missing snapshots queue refresh jobs and return `gex_snapshot_pending`.
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/gex.test.ts`.
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/api-server run build`.
+  - Passed: `pnpm exec tsc --build lib/db`.
+  - Passed through Nix Rust toolchain: `nix-shell -p cargo rustc pkg-config openssl --run 'cargo test -p market-data-worker'`.
+  - Passed: `git diff --check`.
+- Next step:
+  - Apply/push the new Drizzle tables to the target database, then run one-shot worker checks for `option_chain_snapshot` and `gex_snapshot` against configured Massive/Polygon credentials.
+
+- Last updated: `2026-05-29 01:35 UTC`
+- Current request: implement the PYRUS performance architecture plan from the read-only QA pass.
+- Current status:
+  - Implemented the first performance plan pass: lease-style scheduler controls, active-chart-only GEX, adaptive preloads, bounded runtime ticker retention, memory diagnostics, and bundle/font cleanup.
+  - Repo rule reminder: do not touch `.replit`, artifact startup config, dev scripts, database startup config, or `scripts/reap-dev-port.mjs`; use targeted `pnpm` validation only.
+  - Replit startup files/workflows were not touched.
+- Changed files:
+  - Backend GEX compact overlay endpoint:
+    - `artifacts/api-server/src/services/gex.ts`
+    - `artifacts/api-server/src/routes/platform.ts`
+    - `artifacts/api-server/src/services/gex.test.ts`
+  - Frontend GEX/market load reduction:
+    - `artifacts/pyrus/src/features/gex/useGexZeroGamma.js`
+    - `artifacts/pyrus/src/features/gex/useGexZeroGamma.test.ts`
+    - `artifacts/pyrus/src/features/market/MarketChartCell.jsx`
+    - `artifacts/pyrus/src/features/market/marketChartWiring.test.js`
+    - `artifacts/pyrus/src/screens/MarketScreen.jsx`
+  - Scheduler/preload/background-work gating:
+    - `artifacts/pyrus/src/features/platform/appWorkScheduler.js`
+    - `artifacts/pyrus/src/features/platform/appWorkScheduler.test.js`
+    - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
+    - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - Runtime memory pressure and ticker-store bounding:
+    - `artifacts/pyrus/src/features/platform/runtimeTickerStore.js`
+    - `artifacts/pyrus/src/features/platform/runtimeTickerStore.d.ts`
+    - `artifacts/pyrus/src/features/platform/runtimeTickerStore.test.js`
+    - `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js`
+  - Bundle/font policy:
+    - `artifacts/pyrus/src/main.tsx`
+    - `artifacts/pyrus/src/lib/fontLoadingPolicy.test.ts`
+    - `artifacts/pyrus/vite.config.ts`
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/gex.test.ts` (`13` tests).
+  - Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/gex/useGexZeroGamma.test.ts src/features/market/marketChartWiring.test.js src/features/platform/appWorkScheduler.test.js src/features/platform/runtimeTickerStore.test.js src/lib/fontLoadingPolicy.test.ts src/features/platform/platformRootSource.test.js` (`121` tests).
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `pnpm --filter @workspace/pyrus run build`.
+  - Passed: `pnpm --filter @workspace/pyrus run bundle:audit`; entry deferred chunk guard reported `ok`, and entry modulepreloads stayed limited to framework/vendor/data/api/runtime/icon/ui/utility/ui-core chunks.
+  - Passed: `git diff --check`.
+- Blockers:
+  - None for this implementation pass.
+- Next step:
+  - Optional follow-up: use browser/performance traces to quantify startup, hidden-screen work, GEX overlay payload reduction, and memory-pressure behavior under a live session.
+
+- Last updated: `2026-05-29 00:45 UTC`
+- Current request: resume the dropped `$qa` market-data run and diagnose the Replit workspace restart / terminal disconnect.
+- Current status:
+  - `/qa` resumed from the recovered market-data soak artifacts and prior handoff context.
+  - Base branch detected as `main`; GitHub origin is `https://github.com/logicalorigin/trading-platform.git`.
+  - Current working tree contains only this handoff file modified before new QA/source work.
+  - AskUserQuestion is unavailable in this Codex host, so normal `/qa` interactive gates cannot be used; proceeding with the user's explicit resume request and preserving source changes separately.
+  - Crash/restart diagnosis: PYRUS flight recorder classified the drop as `container-replaced` at `2026-05-28T23:55:25Z`; the previous heartbeat at `2026-05-28T23:52:06Z` still showed supervisor/API/web children running, and current cgroup counters show no OOM or CPU-throttle kill evidence.
+  - Soak artifacts show critical API pressure with API p95 roughly `7.9s` to `18.5s`, event-loop p95 around `631ms`, RSS near `2.8-3.0GB`, and slow account/signal routes.
+  - IBKR line budget was not exhausted in the last sample: `38` active quote subscriptions out of a `200` line budget, with `162` remaining.
+  - Root cause candidate for a fix: `artifacts/api-server/src/routes/platform.ts` opens `/api/streams/quotes` by awaiting `fetchQuoteSnapshotPayload(symbols)` before emitting the SSE `ready` event, matching the browser evidence of quote EventSource GETs pending for `83-85s` during snapshot/API pressure.
+  - Applied focused fix in `artifacts/api-server/src/routes/platform.ts`: quote SSE now emits `ready`, subscribes to live quote snapshots, and only then sends the initial quote snapshot asynchronously with cleanup guarding.
+  - Added regression source test `artifacts/api-server/src/routes/platform-streams-source.test.ts`.
+  - The already-running API process predates the patch and `/api/diagnostics/runtime` timed out at 10s under current pressure, so live verification needs a controlled dev-app restart/handoff.
+  - Controlled restart/handoff completed through `pnpm --filter @workspace/pyrus run dev:replit`; API rebuilt and app is serving at `http://127.0.0.1:18747/`.
+  - Committed source/test fix as `ef3365f` (`fix(qa): ISSUE-001 - open quote stream before snapshot`).
+  - Wrote QA report `.gstack/qa-reports/qa-report-pyrus-local-2026-05-29.md`.
+  - Deferred residual backpressure issues from the post-fix browser/server pass: `/api/gex/{symbol}` still returns `504` for visible chart overlays around `13-17s`, signal/account routes remain slow under load, and external logo proxy fetches can return `500` on upstream timeout.
+- Validation state:
+  - Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/routes/platform-streams-source.test.ts`.
+  - Passed: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed: `git diff --check`.
+  - Verified quote SSE `ready` timing after restart: `46ms` direct API for a 38-symbol batch, `540ms` through Vite proxy for a 6-symbol batch.
+  - Browser QA screenshots/evidence:
+    - `.gstack/qa-reports/screenshots/issue-001-after.png`
+    - `.gstack/qa-reports/screenshots/market-data-after-30s.png`
+    - `.gstack/qa-reports/market-data-resume-browser-evidence-2026-05-29.json`
+    - `.gstack/qa-reports/market-data-resume-browser-evidence-30s-2026-05-29.json`
+- Next step:
+  - Optional follow-up: run a dedicated performance fix for GEX overlay fanout and the slow signal/account routes. Current tracked dirty file is only `SESSION_HANDOFF_CURRENT.md`; QA artifacts are under ignored `.gstack/`.
+
+- Last updated: `2026-05-29 00:01 UTC`
+- Current request: recover the dropped in-progress `$qa` session.
+- Current status:
+  - Recovered the dropped workstream as the focused `/qa` market-data session recorded below, started around `2026-05-28 23:34-23:39 UTC`.
+  - Scope: PYRUS market-data usage, IBKR line usage, Massive API calls, quote streams, option quotes/greeks, stream ownership, and diagnostics.
+  - Local app target was `http://127.0.0.1:18747/` on branch `main` at commit `dffa2f95fa70958ceeb4a749d16780ce5bd1c1b5`.
+  - Durable QA artifacts exist under `.gstack/qa-reports/market-data-soak-2026-05-28T2339Z/`; samples `0` through `10` completed, ending at `2026-05-28T23:52:03Z`.
+  - The latest soak sample shows quote-stream responses taking about `83.8s` and `85.3s`, pending aggregate/snapshot requests, and console `503`/`504` errors.
+  - Replit/PYRUS flight recorder reports the previous run's last heartbeat at `2026-05-28T23:52:06Z` and a container replacement detected at `2026-05-28T23:55:25Z`, matching the dropped session timing.
+  - Codex runtime recovery found only the two post-drop recovery chats persisted in `~/.codex/state_5.sqlite`: `019e7104-dc9f-7993-ba2a-56fc893b0377` and current `019e7105-5778-7461-bcc2-18f22578c2c9`; the original QA runner thread is not recoverable by session ID from current Codex state.
+  - No project-scoped gstack QA outcome was found under `~/.gstack`; repo-local `.gstack/qa-reports/` is the source of truth for this QA run.
+- Validation state:
+  - Recovery validation completed by inspecting Codex history/rollouts, `state_5.sqlite`, `logs_2.sqlite`, live processes, Replit/PYRUS flight-recorder state, and repo QA artifacts.
+  - No new product tests were run for this recovery task; this was a context lookup.
+- Next step:
+  - Resume from the soak artifacts by writing/finishing the QA report and triage, then decide whether to source-audit/fix the slow market-data stream fanout and diagnostics failures.
+
+- Last updated: `2026-05-28 23:41 UTC`
+- Current request: prepare handoff for the Massive API connection surface redesign.
+- Current status:
+  - Massive API visibility work is present in the repo: backend runtime diagnostics expose Massive REST/WebSocket state, and the Pyrus header popover/mobile sheet renders the redesigned Massive panel.
+  - The UI is no longer a terse `Massive OK · WS AM...` row. It is split into icon-led REST and WebSocket lanes:
+    - REST lane: database/status glyph, endpoint family, symbol/request evidence, returned rows, duration, and last observation.
+    - WebSocket lane: radio/status glyph, active/available channel chips (`AM`, `Q`, `T`), mode, subscribed symbols, event count, freshness, and reconnect warning chip when present.
+  - Diagnostics > Market Data includes separate `Massive REST` and `Massive WebSocket` panels for deeper audit.
+  - `git status --short` currently shows only this handoff file modified; source changes are already present in the current checkout/baseline.
+  - Existing later QA handoff context is preserved below this entry.
+  - Replit startup config was not touched; no `audit:replit-startup` run is required for this work.
+- Key implementation files:
+  - `artifacts/api-server/src/providers/polygon/market-data.ts`
+  - `artifacts/api-server/src/services/platform.ts`
+  - `artifacts/api-server/src/services/diagnostics.ts`
+  - `artifacts/api-server/src/services/massive-stock-quote-stream.ts`
+  - `artifacts/api-server/src/services/polygon-delayed-stream.ts`
+  - `artifacts/pyrus/src/features/platform/runtimeControlModel.js`
+  - `artifacts/pyrus/src/features/platform/ibkrPopoverModel.js`
+  - `artifacts/pyrus/src/features/platform/HeaderStatusCluster.jsx`
+  - `artifacts/pyrus/src/screens/DiagnosticsScreen.jsx`
+  - `lib/api-spec/openapi.yaml`
+  - Generated API/Zod files under `lib/api-client-react/src/generated/` and `lib/api-zod/src/generated/`.
+- Validation state:
+  - Passed backend focused diagnostics/stream tests earlier in this session:
+    - `pnpm --filter @workspace/api-server exec node --import tsx --test src/providers/polygon/market-data.test.ts src/services/runtime-diagnostics.test.ts src/services/massive-stock-quote-stream.test.ts src/services/stock-aggregate-stream.test.ts`
+  - Passed Pyrus focused tests after the redesign:
+    - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/IbkrConnectionStatus.test.js src/features/platform/platformRootSource.test.js` (`96` tests).
+  - Passed:
+    - `pnpm --filter @workspace/api-server run typecheck`
+    - `pnpm --filter @workspace/pyrus run typecheck`
+    - `pnpm --filter @workspace/api-spec run codegen`
+    - `git diff --check`
+  - Live checks during the redesign confirmed:
+    - `/api/diagnostics/runtime` returned `providers.massive` with REST and WebSocket `ok`.
+    - Vite served `HeaderMassiveProviderPanel` and `HeaderProviderChannelChip`.
+- Known caveats / next step:
+  - If the UI appears stale, hard refresh or close/reopen the IBKR popover/mobile sheet; earlier stale-preview symptoms were resolved by refresh.
+  - Optional next pass: browser screenshot QA of the popover/sheet at desktop, tablet, and phone widths to tune spacing.
+
+- Last updated: `2026-05-28 23:39 UTC`
+- Current request: focused `/qa` of PYRUS market-data usage: IBKR line usage, Massive API calls, quote streams, option quotes/greeks, stream ownership, and diagnostics.
 - Current status:
   - Local app target: `http://127.0.0.1:18747/`.
-  - Main source fix committed as `002e1a1 fix(qa): ISSUE-001 - prioritize active route loading`.
-  - QA/report wrap-up committed as `3fc3ad0 chore(qa): update pyrus qa report`.
-  - Working tree is clean.
-  - QA result: `DONE_WITH_CONCERNS`.
-- Source fix summary:
-  - Preloads Account as a priority route during app-content bootstrap, alongside the initial screen.
-  - Keeps a PlatformApp priority Account preload fallback.
-  - Gates non-critical quote/account/aggregate streams while priority Account preload is pending.
-  - Splits AccountScreen’s lightweight trading-analysis filter/query-param helpers out of the heavy workbench model graph.
-  - Keeps heavy Account workbench/model code below lazy/deferred boundaries.
-- Browser QA evidence:
-  - Before fix: Real Account remained on the global PYRUS fallback for about 35 seconds.
-  - After fix: `.gstack/qa-reports/screenshots/account-real-after-fix-final3-immediate-2026-05-28.png` shows fresh Market -> Real Account painting the Account shell immediately.
-  - After fix: `.gstack/qa-reports/screenshots/account-shadow-after-fix-final3-immediate-2026-05-28.png` shows Shadow selected with the Account shell still mounted immediately.
-  - Warmup snapshot showed Account route preload ready at bootstrap with Market.
-- Residual concern:
-  - Full Real/Shadow values and below-fold Account panels still populate slowly under current API/runtime pressure.
-  - Final network sample showed Real account API calls around 37-44s and Shadow account API calls around 84-96s.
-  - Console 404s came from stale aggregate-stream session update posts, not Account route module failures.
-- Validation passed:
-  - `node --import tsx --test src/features/platform/platformRootSource.test.js src/screens/account/AccountHeroBlock.test.js src/screens/account/AccountReturnsPanel.test.js src/screens/account/tradingAnalysisModel.test.js`
-  - `pnpm --filter @workspace/pyrus run typecheck`
-  - `pnpm run audit:replit-startup`
-  - `git diff --check`
-  - `pnpm run replit:config:status`
+  - Baseline preflight complete: branch `main`, commit `dffa2f95fa70958ceeb4a749d16780ce5bd1c1b5`, working tree clean before this handoff update.
+  - Browser controller is healthy against the running local app.
+  - QA artifacts are being written under `.gstack/qa-reports/`.
+  - Baseline walkthrough found slow/stale market-data symptoms before source inspection:
+    - Market initially opened with blank quote chips and loading chart cards.
+    - Algo stayed on the PYRUS route fallback after 20s while sidebars continued streaming.
+    - Diagnostics reported overall `DOWN` with API critical, market freshness around 153s, and resource pressure warnings.
+    - Settings/IBKR route stayed on "Loading settings" after 25s.
+    - Browser network showed overlapping `/api/streams/quotes` sessions and repeated pending `/api/quotes/snapshot` fanout.
+- Planned validation:
+  - Browser walkthrough and 10-minute market-data soak.
+  - Static audit of stream/line-usage owners.
+  - If source fixes are made: targeted tests, `pnpm --filter @workspace/pyrus run typecheck`, and `git diff --check`.
 - Next step:
-  - Follow-up work should reduce Account data/API fanout and investigate stale aggregate-stream session 404s.
+  - Run the requested 10-minute market-data soak, then compare runtime line-usage/stream behavior with source ownership.

@@ -47,7 +47,11 @@ test("PYRUS self-hosts app fonts instead of loading Google Fonts at runtime", ()
   assert.doesNotMatch(indexCss, /@import\s+url\(["']https:\/\/fonts\.googleapis\.com/);
 
   assert.match(mainTsx, /@fontsource\/ibm-plex-sans\/400\.css/);
-  assert.match(mainTsx, /@fontsource\/ibm-plex-sans\/600-italic\.css/);
+  assert.match(mainTsx, /@fontsource\/ibm-plex-sans\/500\.css/);
+  assert.match(mainTsx, /@fontsource\/ibm-plex-sans\/600\.css/);
+  assert.doesNotMatch(mainTsx, /@fontsource\/ibm-plex-sans\/400-italic\.css/);
+  assert.doesNotMatch(mainTsx, /@fontsource\/ibm-plex-sans\/600-italic\.css/);
+  assert.doesNotMatch(mainTsx, /@fontsource\/ibm-plex-sans\/700\.css/);
   assert.doesNotMatch(mainTsx, /@fontsource\/jetbrains-mono/);
   for (const [, importPath] of mainTsx.matchAll(/@fontsource\/([^"]+\.css)/g)) {
     assert.ok(

@@ -133,12 +133,12 @@ test("Market chart cells delegate rendering to the Trade spot chart path", () =>
   assert.doesNotMatch(source, /useUnderfilledChartBackfill/);
 });
 
-test("Market visible chart cells add the GEX zero-gamma reference line", () => {
+test("Market active chart cell adds the GEX zero-gamma reference line", () => {
   const source = readLocalSource("./MarketChartCell.jsx");
 
   assert.doesNotMatch(source, /MARKET_GEX_REFERENCE_DELAY_MS/);
   assert.doesNotMatch(source, /gexReferenceReady/);
-  assert.match(source, /useGexZeroGamma\(ticker,\s*\{\s*enabled: Boolean\(ticker\)/);
+  assert.match(source, /useGexZeroGamma\(ticker,\s*\{\s*enabled: Boolean\(ticker && isActive\)/);
   assert.match(source, /useGexZeroGammaReferenceLine\(gexZeroGamma\)/);
   assert.match(source, /const gexReferenceLines = useMemo/);
   assert.match(source, /referenceLines=\{gexReferenceLines\}/);
@@ -159,7 +159,7 @@ test("Market chart grid staggers candle hydration without hiding chart frames", 
   const gridSource = readLocalSource("./MultiChartGrid.jsx");
   const cellSource = readLocalSource("./MarketChartCell.jsx");
 
-  assert.match(gridSource, /const MARKET_CHART_INITIAL_HYDRATION_SLOTS = 4;/);
+  assert.match(gridSource, /const MARKET_CHART_INITIAL_HYDRATION_SLOTS = 1;/);
   assert.match(gridSource, /const MARKET_CHART_HYDRATION_STAGGER_MS = 1_200;/);
   assert.match(gridSource, /const MARKET_CHART_BACKOFF_HYDRATION_STAGGER_MS = 2_500;/);
   assert.match(gridSource, /useHydrationGate/);

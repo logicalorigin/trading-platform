@@ -13,6 +13,8 @@ import {
   useMemoryPressureSnapshot,
 } from "./memoryPressureStore";
 import { getMarketFlowStoreEntryCount } from "./marketFlowStore";
+import { getOptionQuoteSnapshotCacheSize } from "./live-streams";
+import { getRuntimeTickerStoreEntryCount } from "./runtimeTickerStore";
 import { usePageVisible } from "./usePageVisible";
 import { getTradeFlowStoreEntryCount } from "./tradeFlowStore";
 import { getTradeOptionChainStoreEntryCount } from "./tradeOptionChainStore";
@@ -226,7 +228,9 @@ export const useMemoryPressureMonitor = () => {
         getActiveChartBarStoreEntryCount() +
         getMarketFlowStoreEntryCount() +
         getTradeFlowStoreEntryCount() +
-        getTradeOptionChainStoreEntryCount();
+        getTradeOptionChainStoreEntryCount() +
+        getRuntimeTickerStoreEntryCount() +
+        getOptionQuoteSnapshotCacheSize();
 
       const next = buildMemoryPressureState(
         {

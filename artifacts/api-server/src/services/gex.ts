@@ -15,6 +15,13 @@ import {
   getOptionExpirationsWithDebug as platformGetOptionExpirationsWithDebug,
   getQuoteSnapshots as platformGetQuoteSnapshots,
 } from "./platform";
+import {
+  enqueueMarketDataJob,
+  getLatestGexSnapshot,
+  isMarketDataIngestConfigured,
+  type EnqueueMarketDataJobInput,
+  type LatestGexSnapshot,
+} from "./market-data-ingest";
 
 export type GexOptionRow = {
   strike: number;
@@ -108,6 +115,21 @@ export type GexResponse = {
   };
 };
 
+export type GexZeroGammaResponse = {
+  ticker: string;
+  spot: number | null;
+  zeroGamma: number | null;
+  asOf: string | null;
+  isStale: boolean;
+  source: {
+    provider: GexResponse["source"]["provider"];
+    status: GexResponse["source"]["status"];
+    optionCount: number;
+    usableOptionCount: number;
+    message: string | null;
+  };
+};
+
 type GexMarketDataClient = Pick<
   PolygonMarketDataClient,
   | "getUniverseTickerByTicker"
@@ -143,9 +165,18 @@ const GEX_DASHBOARD_LOAD_TIMEOUT_MS = readPositiveIntegerEnv(
   10_000,
 );
 const GEX_EXPIRATION_LIMIT = readPositiveIntegerEnv("GEX_EXPIRATION_LIMIT", 10);
+const GEX_SNAPSHOT_MAX_AGE_MS = readPositiveIntegerEnv(
+  "GEX_SNAPSHOT_MAX_AGE_MS",
+  60_000,
+);
 
 let gexMarketDataClientFactory: GexMarketDataClientFactory | null = null;
 let gexPlatformDataClientFactory: GexPlatformDataClientFactory | null = null;
+let gexIngestFacadeForTests: {
+  getLatestGexSnapshot?: typeof getLatestGexSnapshot;
+  enqueueMarketDataJob?: typeof enqueueMarketDataJob;
+  isConfigured?: typeof isMarketDataIngestConfigured;
+} | null = null;
 const gexDashboardCache = new Map<
   string,
   {
@@ -179,6 +210,13 @@ export function __setGexDashboardLoadTimeoutMsForTests(
       : null;
 }
 
+export function __setGexIngestFacadeForTests(
+  facade: typeof gexIngestFacadeForTests,
+): void {
+  gexIngestFacadeForTests = facade;
+  gexDashboardCache.clear();
+}
+
 export function __expireGexDashboardCacheForTests(underlying: string): void {
   const ticker = normalizeSymbol(underlying);
   const cached = ticker ? gexDashboardCache.get(ticker) : null;
@@ -187,6 +225,66 @@ export function __expireGexDashboardCacheForTests(underlying: string): void {
     ...cached,
     expiresAt: 0,
   });
+}
+
+function shouldUsePersistedGexSnapshots(): boolean {
+  if (process.env["GEX_DB_FIRST_ENABLED"] === "0") {
+    return false;
+  }
+  if (gexIngestFacadeForTests) {
+    return gexIngestFacadeForTests.isConfigured?.() ?? true;
+  }
+  if (gexPlatformDataClientFactory || gexMarketDataClientFactory) {
+    return false;
+  }
+  return isMarketDataIngestConfigured();
+}
+
+function getGexIngestFacade(): {
+  getLatestGexSnapshot: typeof getLatestGexSnapshot;
+  enqueueMarketDataJob: typeof enqueueMarketDataJob;
+  isConfigured: typeof isMarketDataIngestConfigured;
+} {
+  return {
+    getLatestGexSnapshot:
+      gexIngestFacadeForTests?.getLatestGexSnapshot ?? getLatestGexSnapshot,
+    enqueueMarketDataJob:
+      gexIngestFacadeForTests?.enqueueMarketDataJob ?? enqueueMarketDataJob,
+    isConfigured:
+      gexIngestFacadeForTests?.isConfigured ?? isMarketDataIngestConfigured,
+  };
+}
+
+async function queueGexSnapshotRefresh(
+  ticker: string,
+  reason: string,
+): Promise<void> {
+  const dedupeBucket = Math.floor(Date.now() / 60_000);
+  const facade = getGexIngestFacade();
+  const baseInput = {
+    symbol: ticker,
+    priority: 2,
+    payload: { reason, dedupeBucket },
+  } satisfies Pick<EnqueueMarketDataJobInput, "symbol" | "priority" | "payload">;
+  await Promise.all([
+    facade.enqueueMarketDataJob({
+      ...baseInput,
+      kind: "option_chain_snapshot",
+    }),
+    facade.enqueueMarketDataJob({
+      ...baseInput,
+      kind: "gex_snapshot",
+    }),
+  ]);
+}
+
+function markPersistedGexSnapshotStale(
+  snapshot: LatestGexSnapshot,
+): GexResponse {
+  return markGexDashboardStale(
+    snapshot.payload,
+    "Returning the latest persisted GEX snapshot while a refresh is queued.",
+  );
 }
 
 function firstEnv(names: string[]): string | null {
@@ -462,6 +560,62 @@ function contractGex(option: GexOptionRow, spot: number): number {
     spot *
     spot *
     0.01
+  );
+}
+
+function buildGexStrikeProfile(rows: GexOptionRow[], spot: number): Array<{
+  strike: number;
+  netGex: number;
+}> {
+  const byStrike = new Map<number, { strike: number; netGex: number }>();
+
+  rows.forEach((option) => {
+    const strike = finiteOrNull(option.strike);
+    if (strike == null) return;
+
+    const current = byStrike.get(strike) || { strike, netGex: 0 };
+    current.netGex += contractGex(option, spot);
+    byStrike.set(strike, current);
+  });
+
+  return Array.from(byStrike.values()).sort(
+    (left, right) => left.strike - right.strike,
+  );
+}
+
+function findGexZeroGamma(rows: GexOptionRow[], spot: number): number | null {
+  const profile = buildGexStrikeProfile(rows, spot);
+  if (!profile.length) return null;
+
+  let previousStrike = profile[0].strike;
+  let previousCum = profile[0].netGex;
+  if (previousCum === 0) return previousStrike;
+
+  for (let index = 1; index < profile.length; index += 1) {
+    const row = profile[index];
+    const nextCum = previousCum + row.netGex;
+    if (
+      (previousCum < 0 && nextCum >= 0) ||
+      (previousCum > 0 && nextCum <= 0) ||
+      nextCum === 0
+    ) {
+      const denominator = Math.abs(previousCum) + Math.abs(nextCum);
+      const ratio = denominator > 0 ? Math.abs(previousCum) / denominator : 0;
+      return previousStrike + ratio * (row.strike - previousStrike);
+    }
+    previousStrike = row.strike;
+    previousCum = nextCum;
+  }
+
+  return null;
+}
+
+function resolveGexZeroGammaAsOf(data: GexResponse): string | null {
+  return (
+    data.source.chainUpdatedAt ||
+    data.source.quoteUpdatedAt ||
+    data.timestamp ||
+    null
   );
 }
 
@@ -820,6 +974,38 @@ export async function getGexDashboardData(input: {
     return cached.pending;
   }
 
+  if (shouldUsePersistedGexSnapshots()) {
+    const facade = getGexIngestFacade();
+    const snapshot = await facade.getLatestGexSnapshot(
+      ticker,
+      GEX_SNAPSHOT_MAX_AGE_MS,
+    );
+    if (snapshot && !snapshot.stale) {
+      gexDashboardCache.set(ticker, {
+        expiresAt: Date.now() + GEX_DASHBOARD_CACHE_TTL_MS,
+        data: snapshot.payload,
+      });
+      return snapshot.payload;
+    }
+    if (snapshot) {
+      void queueGexSnapshotRefresh(ticker, "gex_snapshot_stale").catch(() => {});
+      const stale = markPersistedGexSnapshotStale(snapshot);
+      gexDashboardCache.set(ticker, {
+        expiresAt: 0,
+        data: stale,
+      });
+      return stale;
+    }
+    if (facade.isConfigured()) {
+      await queueGexSnapshotRefresh(ticker, "gex_snapshot_missing");
+      throw new HttpError(503, `GEX snapshot is pending for ${ticker}.`, {
+        code: "gex_snapshot_pending",
+        detail:
+          "The market-data ingest worker must hydrate option-chain data and compute a GEX snapshot before this route can return fresh data.",
+      });
+    }
+  }
+
   const pending = startGexDashboardRefresh(ticker, cached?.data);
   if (cached?.data) {
     return markGexDashboardStale(
@@ -828,4 +1014,28 @@ export async function getGexDashboardData(input: {
     );
   }
   return pending;
+}
+
+export async function getGexZeroGammaData(input: {
+  underlying: string;
+  signal?: AbortSignal;
+}): Promise<GexZeroGammaResponse> {
+  const data = await getGexDashboardData(input);
+  const spot = finiteOrNull(data.spot);
+  const zeroGamma = spot != null ? findGexZeroGamma(data.options, spot) : null;
+
+  return {
+    ticker: data.ticker,
+    spot,
+    zeroGamma,
+    asOf: resolveGexZeroGammaAsOf(data),
+    isStale: Boolean(data.isStale),
+    source: {
+      provider: data.source.provider,
+      status: data.source.status,
+      optionCount: data.source.optionCount,
+      usableOptionCount: data.source.usableOptionCount,
+      message: data.source.message,
+    },
+  };
 }

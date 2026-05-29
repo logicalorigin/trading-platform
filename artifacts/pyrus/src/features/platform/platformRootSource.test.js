@@ -2384,7 +2384,7 @@ test("operational pages mount visible shells without artificial route delays", (
   assert.match(marketSource, /export const preloadMarketChartModules = \(\) =>/);
   assert.match(marketSource, /preloadDynamicImport\(loadMultiChartGridModule/);
   assert.match(marketSource, /preloadMarketChartRuntime\?\.\(\)/);
-  assert.match(
+  assert.doesNotMatch(
     marketSource,
     /if \(typeof window !== "undefined"\) \{\s*preloadMarketChartModules\(\);\s*\}/,
   );

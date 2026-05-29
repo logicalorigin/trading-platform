@@ -4,6 +4,7 @@
 dist
 tmp
 out-tsc
+target/
 *.tsbuildinfo
 .expo
 .expo-shared

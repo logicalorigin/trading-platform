@@ -173,11 +173,19 @@ export const buildPlatformWorkSchedule = ({
   const pressureCaps = buildPlatformPressureCaps(memoryPressureLevel);
   const activeBackgroundReady = Boolean(activeScreenBackgroundAllowed);
   const mobileBroadFlowAllowed = !mobileViewport || flow;
+  const passiveMarketDiscoveryAllowed = Boolean(
+    market &&
+      screenWarmupPhase === "ready" &&
+      activeBackgroundReady &&
+      memoryPressureLevel === "normal" &&
+      ibkrWorkPressure === WORK_PRESSURE_STATE.normal,
+  );
   const broadFlowAllowed = Boolean(
     sessionReady &&
       visible &&
       !startupProtected &&
       mobileBroadFlowAllowed &&
+      (flow || passiveMarketDiscoveryAllowed) &&
       pressureCaps.broadFlowRuntimeEnabled,
   );
   const backgroundHistoryReady = screenWarmupPhase === "ready" && !startupProtected;
@@ -195,6 +203,15 @@ export const buildPlatformWorkSchedule = ({
         (!pressureBlocksBackgroundAccountRealtime && backgroundAccountRealtime)),
   );
   const watchlistQuoteStream = Boolean(sessionReady && quoteStreamIbkr);
+  const idleCodePreloadAllowed = Boolean(
+    sessionReady &&
+      firstScreenReady &&
+      !startupProtected &&
+      visible &&
+      !mobileViewport &&
+      activeBackgroundReady &&
+      memoryAllowsBackground,
+  );
 
   return {
     pressure: ibkrWorkPressure,
@@ -248,13 +265,24 @@ export const buildPlatformWorkSchedule = ({
       delayedOptionsRefresh: backgroundIbkr,
     },
     hiddenScreenPreload: {
-      codeOnly: Boolean(
-        sessionReady &&
-          firstScreenReady &&
-          !startupProtected &&
-          memoryAllowsForeground,
-      ),
+      codeOnly: idleCodePreloadAllowed,
       mountScreens: false,
+    },
+    leases: {
+      activeQuotes: watchlistQuoteStream,
+      activeTrading: accountRealtimeCritical,
+      activeCharting: Boolean(foregroundIbkr && (market || trade)),
+      flowDiscovery: broadFlowAllowed,
+      passiveVisuals: Boolean(pressureCaps.sparklineEnabled && memoryAllowsForeground),
+      lowPriorityHistory: Boolean(
+        sessionReady &&
+          backgroundIbkr &&
+          backgroundHistoryReady &&
+          activeBackgroundReady &&
+          historyScreen,
+      ),
+      idlePreload: idleCodePreloadAllowed,
+      hiddenMount: false,
     },
   };
 };

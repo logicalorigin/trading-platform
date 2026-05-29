@@ -125,18 +125,71 @@ const LazyOrdersPanel = lazy(() =>
 const LazyCashFundingPanel = lazy(() => import("./account/CashFundingPanel"));
 const LazySetupHealthPanel = lazy(() => import("./account/SetupHealthPanel"));
 
-const AccountPanelSuspenseFallback = ({ minHeight = 160 }) => (
+const AccountPanelSuspenseFallback = ({
+  detail = "Preparing account data.",
+  minHeight = 160,
+  title = "Loading account panel",
+}) => (
   <div
-    aria-hidden="true"
     className="ra-deferred-render__placeholder"
-    style={{ minHeight: dim(minHeight) }}
+    role="status"
+    aria-live="polite"
+    style={{
+      minHeight: dim(minHeight),
+      display: "grid",
+      alignContent: "start",
+      gap: sp(6),
+      padding: sp("10px 12px"),
+      border: `1px solid ${CSS_COLOR.border}`,
+      borderRadius: dim(RADII.sm),
+      background: CSS_COLOR.bg1,
+      color: CSS_COLOR.textSec,
+    }}
   >
-    <span className="ra-deferred-render__skeleton ra-skeleton-shimmer" />
+    <div
+      style={{
+        color: CSS_COLOR.text,
+        fontFamily: T.sans,
+        fontSize: textSize("bodyStrong"),
+        fontWeight: FONT_WEIGHTS.medium,
+        lineHeight: 1.2,
+      }}
+    >
+      {title}
+    </div>
+    <div
+      style={{
+        color: CSS_COLOR.textDim,
+        fontFamily: T.sans,
+        fontSize: textSize("caption"),
+        lineHeight: 1.35,
+      }}
+    >
+      {detail}
+    </div>
+    <span
+      aria-hidden="true"
+      className="ra-deferred-render__skeleton ra-skeleton-shimmer"
+      style={{ minHeight: dim(Math.max(24, minHeight - 76)) }}
+    />
   </div>
 );
 
-const DeferredPanelSuspense = ({ children, minHeight = 160 }) => (
-  <Suspense fallback={<AccountPanelSuspenseFallback minHeight={minHeight} />}>
+const DeferredPanelSuspense = ({
+  children,
+  detail,
+  minHeight = 160,
+  title,
+}) => (
+  <Suspense
+    fallback={
+      <AccountPanelSuspenseFallback
+        detail={detail}
+        minHeight={minHeight}
+        title={title}
+      />
+    }
+  >
     {children}
   </Suspense>
 );
@@ -1700,7 +1753,11 @@ const AccountScreenInner = ({
           enabled={accountLiveOptionQuotesEnabled}
         />
 
-        <DeferredPanelSuspense minHeight={accountIsPhone ? 58 : 42}>
+        <DeferredPanelSuspense
+          minHeight={accountIsPhone ? 58 : 42}
+          title="Loading account summary"
+          detail="Preparing balances and account status."
+        >
           <LazyAccountHeroBlock
             summary={displaySummaryData}
             equityHistory={equityQuery.data}
@@ -1724,7 +1781,11 @@ const AccountScreenInner = ({
           className="ra-panel-enter ra-account-overview-grid"
         >
           <div className="ra-account-overview-cell ra-account-overview-returns">
-            <DeferredPanelSuspense minHeight={accountIsPhone ? 310 : 350}>
+            <DeferredPanelSuspense
+              minHeight={accountIsPhone ? 310 : 350}
+              title="Loading returns calendar"
+              detail="Preparing realized P&L and equity history."
+            >
               <LazyAccountReturnsPanel
                 currency={currency}
                 maskValues={maskAccountValues}
@@ -1736,7 +1797,11 @@ const AccountScreenInner = ({
             </DeferredPanelSuspense>
           </div>
           <div className="ra-account-overview-cell ra-account-overview-exposure">
-            <DeferredPanelSuspense minHeight={accountIsPhone ? 174 : 246}>
+            <DeferredPanelSuspense
+              minHeight={accountIsPhone ? 174 : 246}
+              title="Loading exposure"
+              detail="Preparing allocation and risk charts."
+            >
               <LazyPortfolioExposurePanel
                 allocationQuery={allocationQuery}
                 riskQuery={riskQuery}
@@ -1757,7 +1822,11 @@ const AccountScreenInner = ({
             className="ra-account-overview-cell ra-account-overview-equity"
             style={{ display: "grid", gap: sp(5) }}
           >
-            <DeferredPanelSuspense minHeight={accountIsPhone ? 280 : 314}>
+            <DeferredPanelSuspense
+              minHeight={accountIsPhone ? 280 : 314}
+              title="Loading equity curve"
+              detail="Preparing account chart and date inspector."
+            >
               <LazyEquityCurvePanel
                 query={equityQuery}
                 benchmarkQueries={{
@@ -1802,7 +1871,11 @@ const AccountScreenInner = ({
           minHeight={accountIsPhone ? 430 : 300}
           testId="account-deferred-positions"
         >
-          <DeferredPanelSuspense minHeight={accountIsPhone ? 430 : 300}>
+          <DeferredPanelSuspense
+            minHeight={accountIsPhone ? 430 : 300}
+            title="Loading positions"
+            detail="Preparing open positions and option quote context."
+          >
             <LazyPositionsPanel
               query={positionsQuery}
               currency={currency}
@@ -1829,7 +1902,11 @@ const AccountScreenInner = ({
           onActivate={() => markAccountPanelActivated("today")}
           testId="account-deferred-today"
         >
-          <DeferredPanelSuspense minHeight={accountIsPhone ? 340 : 300}>
+          <DeferredPanelSuspense
+            minHeight={accountIsPhone ? 340 : 300}
+            title="Loading today snapshot"
+            detail="Preparing intraday P&L and position treemap."
+          >
             <LazyTodaySnapshotPanel
               positionsQuery={positionsQuery}
               intradayQuery={intradayPnlQuery}
@@ -1851,7 +1928,11 @@ const AccountScreenInner = ({
           onActivate={() => markAccountPanelActivated("tradingAnalysis")}
           testId="account-deferred-trading-analysis"
         >
-          <DeferredPanelSuspense minHeight={accountIsPhone ? 760 : 540}>
+          <DeferredPanelSuspense
+            minHeight={accountIsPhone ? 760 : 540}
+            title="Loading trading analysis"
+            detail="Preparing trade lifecycle charts and filters."
+          >
             <LazyTradingAnalysisWorkbench
               query={tradesQuery}
               trades={tradesQuery.data?.trades || []}
@@ -1877,7 +1958,11 @@ const AccountScreenInner = ({
           onActivate={() => markAccountPanelActivated("orders")}
           testId="account-deferred-orders"
         >
-          <DeferredPanelSuspense minHeight={accountIsPhone ? 360 : 240}>
+          <DeferredPanelSuspense
+            minHeight={accountIsPhone ? 360 : 240}
+            title="Loading orders"
+            detail="Preparing working orders and order history."
+          >
             <LazyOrdersPanel
               query={ordersQuery}
               tab={effectiveOrderTab}
@@ -1907,7 +1992,11 @@ const AccountScreenInner = ({
           <div
             className="ra-panel-enter ra-account-support-grid"
           >
-            <DeferredPanelSuspense minHeight={168}>
+            <DeferredPanelSuspense
+              minHeight={168}
+              title="Loading cash activity"
+              detail="Preparing deposits, withdrawals, and funding history."
+            >
               <LazyCashFundingPanel
                 query={cashQuery}
                 currency={currency}
@@ -1986,7 +2075,11 @@ const AccountScreenInner = ({
               </div>
             </Panel>
           ) : (
-            <DeferredPanelSuspense minHeight={130}>
+            <DeferredPanelSuspense
+              minHeight={130}
+              title="Loading setup health"
+              detail="Preparing broker and Flex health checks."
+            >
               <LazySetupHealthPanel
                 session={session}
                 healthQuery={healthQuery}

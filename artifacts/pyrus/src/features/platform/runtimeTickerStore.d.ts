@@ -38,6 +38,10 @@ export function applyRuntimeTickerInfoPatch(
 
 export function notifyRuntimeTickerSnapshotSymbols(symbols: string[]): void;
 
+export function getRuntimeTickerStoreEntryCount(): number;
+
+export function getRuntimeTickerStoreCap(): number;
+
 export function getRuntimeTickerSnapshot<TFallback = null>(
   symbol: string | null | undefined,
   fallback?: TFallback,

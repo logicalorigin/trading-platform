@@ -47,6 +47,46 @@ test("zero-gamma overlay resolves from the same GEX dashboard payload", () => {
   assert.ok(overlay.price != null && overlay.price > 100 && overlay.price < 110);
 });
 
+test("zero-gamma overlay resolves from compact API payloads", () => {
+  const overlay = resolveGexZeroGammaOverlay(
+    {
+      ticker: "SPY",
+      spot: 100,
+      zeroGamma: 104.25,
+      asOf: "2026-05-13T15:30:00.000Z",
+      isStale: false,
+      source: {
+        provider: "ibkr",
+        status: "ok",
+        optionCount: 10,
+        usableOptionCount: 10,
+        message: null,
+      },
+    },
+    Date.parse("2026-05-13T15:31:00.000Z"),
+  );
+
+  assert.equal(overlay.price, 104.25);
+  assert.equal(overlay.asOf, "2026-05-13T15:30:00.000Z");
+  assert.equal(overlay.isStale, false);
+});
+
+test("zero-gamma overlay preserves compact empty values", () => {
+  const overlay = resolveGexZeroGammaOverlay(
+    {
+      ticker: "SPY",
+      spot: 100,
+      zeroGamma: null,
+      asOf: "2026-05-13T15:30:00.000Z",
+      isStale: true,
+    },
+    Date.parse("2026-05-13T15:31:00.000Z"),
+  );
+
+  assert.equal(overlay.price, null);
+  assert.equal(overlay.isStale, true);
+});
+
 test("zero-gamma overlay treats old dashboard timestamps as stale", () => {
   const overlay = resolveGexZeroGammaOverlay(
     {
@@ -83,16 +123,16 @@ test("stale zero-gamma line blends toward the chart surface", () => {
   assert.equal(blendGexOverlayColor("#24C8DB", "#090D18", 0.5), "#176b7a");
 });
 
-test("GEX zero-gamma hook shares the GEX screen query cache key", () => {
+test("GEX zero-gamma hook uses the compact overlay endpoint", () => {
   const source = readFileSync(new URL("./useGexZeroGamma.js", import.meta.url), "utf8");
 
-  assert.match(source, /queryKey:\s*\["gex-dashboard",\s*normalizedTicker\]/);
+  assert.match(source, /queryKey:\s*\["gex-zero-gamma",\s*normalizedTicker\]/);
   assert.match(
     source,
-    /getGexDashboardRequest\(encodeURIComponent\(normalizedTicker\),\s*\{ signal \}\)/,
+    /\/api\/gex\/\$\{encodeURIComponent\(normalizedTicker\)\}\/zero-gamma/,
   );
-  assert.match(source, /staleTime:\s*GEX_DASHBOARD_QUERY_STALE_MS/);
-  assert.match(source, /refetchInterval:\s*enabled \? GEX_DASHBOARD_QUERY_REFETCH_MS : false/);
+  assert.match(source, /staleTime:\s*GEX_ZERO_GAMMA_QUERY_STALE_MS/);
+  assert.match(source, /refetchInterval:\s*enabled \? GEX_ZERO_GAMMA_QUERY_REFETCH_MS : false/);
   assert.match(source, /placeholderData:\s*\(previousData\) => previousData/);
 });
 

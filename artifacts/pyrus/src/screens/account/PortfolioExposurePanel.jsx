@@ -4,6 +4,7 @@ import {
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { RadialStrokeGauge } from "../../components/platform/primitives.jsx";
 import { MarketIdentityInline } from "../../features/platform/marketIdentity";
+import { MeasuredChartFrame } from "../../features/charting/MeasuredChartFrame.jsx";
 import { buildAccountRiskDisplayModel } from "../../features/account/accountPositionRows.js";
 import { chartTooltipContentStyle } from "../../lib/tooltipStyles";
 import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
@@ -280,7 +281,12 @@ const DonutLegend = ({ data, maskValues, valueFormatter, compact = false, maxIte
 
 const AllocationDonut = ({ rows, currency, maskValues, compact = false }) => (
   <div style={{ display: "grid", gridTemplateColumns: `minmax(${dim(compact ? 52 : 74)}px, 0.72fr) minmax(0, 1fr)`, gap: sp(compact ? 2 : 4), alignItems: "center" }}>
-    <div style={{ height: dim(compact ? 56 : 76), minWidth: 0 }}>
+    <MeasuredChartFrame
+      height={compact ? 56 : 76}
+      minHeight={compact ? 56 : 76}
+      placeholderLabel="Preparing allocation"
+      style={{ minWidth: 0 }}
+    >
       <ResponsiveContainer>
         <PieChart>
           <Pie
@@ -307,7 +313,7 @@ const AllocationDonut = ({ rows, currency, maskValues, compact = false }) => (
           />
         </PieChart>
       </ResponsiveContainer>
-    </div>
+    </MeasuredChartFrame>
     <DonutLegend data={rows} maskValues={maskValues} compact={compact} maxItems={compact ? 3 : 4} />
   </div>
 );
