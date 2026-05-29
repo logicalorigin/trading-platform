@@ -104,12 +104,11 @@ const SIGNAL_MONITOR_COMPLETED_BARS_CACHE_MAX_ENTRIES = 512;
 const SIGNAL_MONITOR_STALE_RETRY_BROKER_WINDOW_MINUTES = 240;
 const SIGNAL_MONITOR_STALE_RETRY_BARS = 64;
 const SIGNAL_MONITOR_MATRIX_BARS_LIMIT = 240;
-const SIGNAL_MONITOR_MATRIX_5M_SOURCE_LIMIT = PYRUS_SIGNALS_SIGNAL_WARMUP_BARS;
-const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY = "hybrid_1m_5m";
+const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY = "native_timeframes";
 const DEFAULT_SIGNAL_MONITOR_BAR_SOURCE_POLICY: SignalMonitorBarSourcePolicy =
   "mixed";
-const SIGNAL_MONITOR_BARS_PRIORITY = 4;
-const SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY = 6;
+const SIGNAL_MONITOR_BARS_PRIORITY = 8;
+const SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY = 9;
 const SIGNAL_MONITOR_BARS_FAMILY = "signal-matrix";
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
 const DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE: SignalMonitorUniverseMode =
@@ -121,10 +120,10 @@ const SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,
   { maxSymbols: number; concurrency: number }
 > = {
-  normal: { maxSymbols: 8, concurrency: 1 },
-  watch: { maxSymbols: 6, concurrency: 1 },
-  high: { maxSymbols: 4, concurrency: 1 },
-  critical: { maxSymbols: 2, concurrency: 1 },
+  normal: { maxSymbols: 24, concurrency: 4 },
+  watch: { maxSymbols: 18, concurrency: 4 },
+  high: { maxSymbols: 12, concurrency: 2 },
+  critical: { maxSymbols: 6, concurrency: 1 },
 };
 const SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,
@@ -232,7 +231,7 @@ function mbFromBytes(bytes: number): number {
 }
 
 function cappedSignalMatrixSettings(
-  profile: SignalMonitorProfileRow,
+  _profile: SignalMonitorProfileRow,
   pressureLevel?: ApiResourcePressureLevel,
 ) {
   const resourcePressureLevel =
@@ -243,14 +242,8 @@ function cappedSignalMatrixSettings(
   const caps = SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS[resourcePressureLevel];
   return {
     pressure: resourcePressureLevel,
-    maxSymbols: Math.min(
-      positiveInteger(profile.maxSymbols, 8, 1, 250),
-      caps.maxSymbols,
-    ),
-    concurrency: Math.min(
-      positiveInteger(profile.evaluationConcurrency, 1, 1, 10),
-      caps.concurrency,
-    ),
+    maxSymbols: caps.maxSymbols,
+    concurrency: caps.concurrency,
   };
 }
 
@@ -1842,7 +1835,7 @@ function pruneSignalMonitorCompletedBarsCache(nowMs = Date.now()): void {
 function buildSignalMonitorCompletedBarsCacheKey(input: {
   symbol: string;
   timeframe: SignalMonitorMatrixTimeframe;
-  providerTimeframe: SignalMonitorTimeframe;
+  providerTimeframe: SignalMonitorMatrixTimeframe;
   providerLimit: number;
   completedLimit: number;
   queryTo: Date;
@@ -1923,15 +1916,15 @@ export async function loadSignalMonitorCompletedBars(input: {
 }): Promise<SignalMonitorCompletedBarsSnapshot> {
   const barSourcePolicy =
     input.barSourcePolicy ?? DEFAULT_SIGNAL_MONITOR_BAR_SOURCE_POLICY;
-  const providerTimeframe: SignalMonitorTimeframe =
-    input.timeframe === "2m" ? "1m" : input.timeframe;
-  const providerLimit =
-    input.timeframe === "2m"
-      ? (input.limit ?? PYRUS_SIGNALS_SIGNAL_WARMUP_BARS) * 2 + 4
-      : input.limit ?? PYRUS_SIGNALS_SIGNAL_WARMUP_BARS;
   const completedLimit = input.limit ?? PYRUS_SIGNALS_SIGNAL_WARMUP_BARS;
+  const providerTimeframe = input.timeframe;
+  const providerLimit = completedLimit;
+  const liveEdgeLimit = Math.min(
+    completedLimit,
+    SIGNAL_MONITOR_STALE_RETRY_BARS,
+  );
   const queryTo = signalMonitorCompletedBarsQueryTo({
-    timeframe: providerTimeframe,
+    timeframe: input.timeframe,
     evaluatedAt: input.evaluatedAt,
   });
   const cacheKey = buildSignalMonitorCompletedBarsCacheKey({
@@ -1972,14 +1965,7 @@ export async function loadSignalMonitorCompletedBars(input: {
       {
         symbol: input.symbol,
         timeframe: providerTimeframe,
-        limit: mode === "live-edge"
-          ? Math.min(
-              providerLimit,
-              input.timeframe === "2m"
-                ? SIGNAL_MONITOR_STALE_RETRY_BARS * 2
-                : SIGNAL_MONITOR_STALE_RETRY_BARS,
-            )
-          : providerLimit,
+        limit: mode === "live-edge" ? liveEdgeLimit : providerLimit,
         to: queryTo,
         assetClass: "equity",
         outsideRth: true,
@@ -2036,24 +2022,19 @@ export async function loadSignalMonitorCompletedBars(input: {
         : retryCompletedBars;
     }
   };
-  const buildCompletedBars = (
-    bars: Awaited<ReturnType<typeof getBars>>["bars"],
-  ) => {
+  const buildCompletedBars = (bars: Awaited<ReturnType<typeof getBars>>["bars"]) => {
     const sourceFilteredBars = filterSignalMonitorBarsForSourcePolicy(
       bars,
       barSourcePolicy,
     );
-    return input.timeframe === "2m"
-      ? aggregateCompletedMinuteBars(sourceFilteredBars, "2m", input.evaluatedAt)
-      : filterCompletedBars(
-          sourceFilteredBars,
-          input.timeframe,
-          input.evaluatedAt,
-        );
+    return filterCompletedBars(
+      sourceFilteredBars,
+      input.timeframe,
+      input.evaluatedAt,
+    );
   };
-  const fetchCompletedBars = async (
-    mode: "primary" | "full-retry" | "live-edge",
-  ) => buildCompletedBars((await fetchBars(mode)).bars);
+  const fetchCompletedBars = async (mode: "primary" | "full-retry" | "live-edge") =>
+    buildCompletedBars((await fetchBars(mode)).bars);
 
   const request = (async () => {
     completedBars = await fetchCompletedBars("primary");
@@ -2131,7 +2112,7 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
     const evaluation = evaluatePyrusSignalsSignals({
       chartBars,
       settings,
-      includeProvisionalSignals: false,
+      includeProvisionalSignals: true,
     });
     const signal = evaluation.signalEvents.at(-1) ?? null;
     const latestBarAt = new Date(latestBar.time * 1000);
@@ -2298,7 +2279,7 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
   const evaluation = evaluatePyrusSignalsSignals({
     chartBars,
     settings,
-    includeProvisionalSignals: false,
+    includeProvisionalSignals: true,
   });
   const signal = evaluation.signalEvents.at(-1) ?? null;
   const latestBarAt = new Date(latestBar.time * 1000);
@@ -2731,101 +2712,40 @@ async function evaluateSignalMonitorMatrixSymbol(input: {
   evaluatedAt: Date;
 }) {
   const timeframes = parseSignalMatrixTimeframes(input.timeframes);
-  const states: SignalMonitorMatrixStateResult[] = [];
-  let sourceRequestCount = 0;
-
-  if (timeframes.includes("2m")) {
-    try {
-      sourceRequestCount += 1;
-      const completedBars = await loadSignalMonitorCompletedBars({
-        symbol: input.symbol,
-        timeframe: "2m",
-        evaluatedAt: input.evaluatedAt,
-        limit: SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
-        retryStale: false,
-      });
-      states.push(
-        evaluateSignalMonitorMatrixStateFromCompletedBars({
-          profile: input.profile,
+  const results = await Promise.all(
+    timeframes.map(async (timeframe) => {
+      try {
+        const completedBars = await loadSignalMonitorCompletedBars({
           symbol: input.symbol,
-          timeframe: "2m",
+          timeframe,
           evaluatedAt: input.evaluatedAt,
-          completedBars: completedBars.bars,
-        }),
-      );
-    } catch (error) {
-      states.push(
-        buildSignalMonitorMatrixErrorState({
+          limit: SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
+        });
+        return evaluateSignalMonitorMatrixStateFromCompletedBars({
           profile: input.profile,
           symbol: input.symbol,
-          timeframe: "2m",
+          timeframe,
+          evaluatedAt: input.evaluatedAt,
+          completedBars: completedBars.bars.slice(-SIGNAL_MONITOR_MATRIX_BARS_LIMIT),
+        });
+      } catch (error) {
+        return buildSignalMonitorMatrixErrorState({
+          profile: input.profile,
+          symbol: input.symbol,
+          timeframe,
           evaluatedAt: input.evaluatedAt,
           error,
-        }),
-      );
-    }
-  }
-
-  const needsFiveMinuteSource = timeframes.includes("5m") || timeframes.includes("15m");
-  if (needsFiveMinuteSource) {
-    try {
-      sourceRequestCount += 1;
-      const completedBars = await loadSignalMonitorCompletedBars({
-        symbol: input.symbol,
-        timeframe: "5m",
-        evaluatedAt: input.evaluatedAt,
-        limit: SIGNAL_MONITOR_MATRIX_5M_SOURCE_LIMIT,
-        retryStale: false,
-      });
-      if (timeframes.includes("5m")) {
-        states.push(
-          evaluateSignalMonitorMatrixStateFromCompletedBars({
-            profile: input.profile,
-            symbol: input.symbol,
-            timeframe: "5m",
-            evaluatedAt: input.evaluatedAt,
-            completedBars: completedBars.bars.slice(-SIGNAL_MONITOR_MATRIX_BARS_LIMIT),
-          }),
-        );
-      }
-      if (timeframes.includes("15m")) {
-        states.push(
-          evaluateSignalMonitorMatrixStateFromCompletedBars({
-            profile: input.profile,
-            symbol: input.symbol,
-            timeframe: "15m",
-            evaluatedAt: input.evaluatedAt,
-            completedBars: aggregateCompletedFiveMinuteBars(
-              completedBars.bars,
-              "15m",
-              input.evaluatedAt,
-            ).slice(-SIGNAL_MONITOR_MATRIX_BARS_LIMIT),
-          }),
-        );
-      }
-    } catch (error) {
-      (["5m", "15m"] as const)
-        .filter((timeframe) => timeframes.includes(timeframe))
-        .forEach((timeframe) => {
-          states.push(
-            buildSignalMonitorMatrixErrorState({
-              profile: input.profile,
-              symbol: input.symbol,
-              timeframe,
-              evaluatedAt: input.evaluatedAt,
-              error,
-            }),
-          );
         });
-    }
-  }
+      }
+    }),
+  );
 
-  const stateByTimeframe = new Map(states.map((state) => [state.timeframe, state]));
+  const stateByTimeframe = new Map(results.map((state) => [state.timeframe, state]));
   return {
     states: timeframes
       .map((timeframe) => stateByTimeframe.get(timeframe))
       .filter((state): state is SignalMonitorMatrixStateResult => Boolean(state)),
-    sourceRequestCount,
+    sourceRequestCount: timeframes.length,
   };
 }
 

@@ -220,8 +220,9 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
 
   assert.match(source, /getBarsWithDebug/);
   assert.match(source, /const SIGNAL_MONITOR_MATRIX_BARS_LIMIT = 240;/);
-  assert.match(source, /const SIGNAL_MONITOR_BARS_PRIORITY = 4;/);
-  assert.match(source, /const SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY = 6;/);
+  assert.match(source, /const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY = "native_timeframes";/);
+  assert.match(source, /const SIGNAL_MONITOR_BARS_PRIORITY = 8;/);
+  assert.match(source, /const SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY = 9;/);
   assert.match(source, /const SIGNAL_MONITOR_BARS_FAMILY = "signal-matrix";/);
   assert.match(
     loadBlock ?? "",
@@ -234,13 +235,42 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
   assert.match(loadBlock ?? "", /shouldRetrySignalMonitorCompletedBars/);
   assert.match(loadBlock ?? "", /shouldAllowSignalMonitorBrokerLiveEdgeRetry/);
   assert.match(loadBlock ?? "", /allowBrokerLiveEdgeRetry[\s\S]*fetchCompletedBars\("live-edge"\)/);
+  assert.match(loadBlock ?? "", /const providerTimeframe = input\.timeframe;/);
+  assert.match(loadBlock ?? "", /timeframe:\s*providerTimeframe/);
+  assert.doesNotMatch(loadBlock ?? "", /buildFallbackPlan/);
+  assert.doesNotMatch(loadBlock ?? "", /providerTimeframe:\s*"1m"/);
+  assert.doesNotMatch(loadBlock ?? "", /providerTimeframe:\s*"5m"/);
+  assert.doesNotMatch(loadBlock ?? "", /aggregateCompletedMinuteBars/);
+  assert.doesNotMatch(loadBlock ?? "", /aggregateCompletedFiveMinuteBars/);
   assert.doesNotMatch(fullEvaluationBlock ?? "", /SIGNAL_MONITOR_MATRIX_BARS_LIMIT/);
   assert.doesNotMatch(fullEvaluationBlock ?? "", /retryStale:\s*false/);
   assert.match(matrixSymbolBlock ?? "", /limit:\s*SIGNAL_MONITOR_MATRIX_BARS_LIMIT/);
-  assert.match(matrixSymbolBlock ?? "", /limit:\s*SIGNAL_MONITOR_MATRIX_5M_SOURCE_LIMIT/);
-  assert.match(matrixSymbolBlock ?? "", /aggregateCompletedFiveMinuteBars/);
-  assert.match(matrixSymbolBlock ?? "", /retryStale:\s*false/);
-  assert.match(matrixSymbolBlock ?? "", /sourceRequestCount/);
+  assert.match(matrixSymbolBlock ?? "", /timeframe,/);
+  assert.doesNotMatch(matrixSymbolBlock ?? "", /SIGNAL_MONITOR_MATRIX_5M_SOURCE_LIMIT/);
+  assert.doesNotMatch(matrixSymbolBlock ?? "", /aggregateCompletedFiveMinuteBars/);
+  assert.doesNotMatch(matrixSymbolBlock ?? "", /retryStale:\s*false/);
+  assert.match(matrixSymbolBlock ?? "", /sourceRequestCount:\s*timeframes\.length/);
+});
+
+test("signal monitor evaluates the newest completed bar without an extra bar wait", () => {
+  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  const symbolEvaluationBlock = source.match(
+    /export async function evaluateSignalMonitorSymbolFromCompletedBars[\s\S]*?async function evaluateSignalMonitorSymbol/,
+  )?.[0];
+  const matrixEvaluationBlock = source.match(
+    /export function evaluateSignalMonitorMatrixStateFromCompletedBars[\s\S]*?type SignalMonitorMatrixStateResult/,
+  )?.[0];
+
+  assert.match(symbolEvaluationBlock ?? "", /includeProvisionalSignals:\s*true/);
+  assert.doesNotMatch(
+    symbolEvaluationBlock ?? "",
+    /includeProvisionalSignals:\s*false/,
+  );
+  assert.match(matrixEvaluationBlock ?? "", /includeProvisionalSignals:\s*true/);
+  assert.doesNotMatch(
+    matrixEvaluationBlock ?? "",
+    /includeProvisionalSignals:\s*false/,
+  );
 });
 
 test("signal monitor event responses normalize retired algo branding", () => {
@@ -466,22 +496,30 @@ test("signal monitor matrix narrows historical work under API resource pressure"
     maxSymbols: 250,
     evaluationConcurrency: 10,
   });
+  const lowProfile = profile({
+    maxSymbols: 6,
+    evaluationConcurrency: 1,
+  });
 
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "normal"),
-    { pressure: "normal", maxSymbols: 8, concurrency: 1 },
+    { pressure: "normal", maxSymbols: 24, concurrency: 4 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "watch"),
-    { pressure: "watch", maxSymbols: 6, concurrency: 1 },
+    { pressure: "watch", maxSymbols: 18, concurrency: 4 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "high"),
-    { pressure: "high", maxSymbols: 4, concurrency: 1 },
+    { pressure: "high", maxSymbols: 12, concurrency: 2 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "critical"),
-    { pressure: "critical", maxSymbols: 2, concurrency: 1 },
+    { pressure: "critical", maxSymbols: 6, concurrency: 1 },
+  );
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(lowProfile, "watch"),
+    { pressure: "watch", maxSymbols: 18, concurrency: 4 },
   );
 });
 
@@ -1060,7 +1098,7 @@ test("signal matrix automatic debounce can reuse stale cache without refreshing"
 });
 
 test("signal matrix environment clear removes source-strategy cache and automatic markers", () => {
-  const key = "signal-matrix:hybrid_1m_5m:paper:profile:default:SPY:2m:1:normal:3:{}";
+  const key = "signal-matrix:native_timeframes:paper:profile:default:SPY:2m:1:normal:3:{}";
   const staleValue = { states: [{ symbol: "SPY" }], evaluatedAt: "old" };
   __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
   __signalMonitorInternalsForTests.seedSignalMonitorMatrixCache(key, staleValue, {

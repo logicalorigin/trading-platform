@@ -4285,7 +4285,7 @@ export const EvaluateSignalMonitorMatrixResponse = zod.object({
   "totalSymbols": zod.number(),
   "timeframes": zod.number(),
   "taskCount": zod.number(),
-  "sourceStrategy": zod.enum(['hybrid_1m_5m']).optional(),
+  "sourceStrategy": zod.enum(['native_timeframes']).optional(),
   "sourceRequestCount": zod.number().optional(),
   "hydratedSymbols": zod.number().optional(),
   "missingSymbols": zod.number().optional(),

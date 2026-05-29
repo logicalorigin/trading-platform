@@ -11125,7 +11125,7 @@ components:
               type: integer
             sourceStrategy:
               type: string
-              enum: [hybrid_1m_5m]
+              enum: [native_timeframes]
             sourceRequestCount:
               type: integer
             hydratedSymbols:

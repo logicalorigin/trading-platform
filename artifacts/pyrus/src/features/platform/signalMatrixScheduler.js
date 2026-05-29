@@ -1,8 +1,10 @@
 const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze(["2m", "5m", "15m"]);
-const DEFAULT_REQUEST_SYMBOL_LIMIT = 3;
-const WATCH_REQUEST_SYMBOL_LIMIT = 2;
-const HIGH_REQUEST_SYMBOL_LIMIT = 1;
-const CRITICAL_REQUEST_SYMBOL_LIMIT = 1;
+const REQUEST_SYMBOL_LIMIT_BY_PRESSURE = Object.freeze({
+  normal: 24,
+  watch: 18,
+  high: 12,
+  critical: 6,
+});
 const SIGNAL_MATRIX_TIMEFRAME_MS = Object.freeze({
   "2m": 2 * 60_000,
   "5m": 5 * 60_000,
@@ -10,6 +12,11 @@ const SIGNAL_MATRIX_TIMEFRAME_MS = Object.freeze({
 });
 
 const normalizeSymbol = (symbol) => symbol?.trim?.().toUpperCase?.() || "";
+
+const normalizePressureLevel = (pressureLevel) =>
+  Object.hasOwn(REQUEST_SYMBOL_LIMIT_BY_PRESSURE, pressureLevel)
+    ? pressureLevel
+    : "normal";
 
 const uniqueSymbols = (symbols = []) => {
   const seen = new Set();
@@ -22,6 +29,54 @@ const uniqueSymbols = (symbols = []) => {
   });
   return result;
 };
+
+const applySymbolLimit = (symbols, limit) =>
+  limit == null ? symbols : symbols.slice(0, limit);
+
+export function buildSignalMatrixSymbolSets({
+  selectedSymbol = null,
+  visibleWatchlistSymbols = [],
+  openPositionSymbols = [],
+  signalMonitorSymbols = [],
+  watchlistSymbols = [],
+  wideLimit = null,
+  narrowLimit = null,
+} = {}) {
+  const selected = uniqueSymbols([selectedSymbol]);
+  const visibleWatchlist = uniqueSymbols(visibleWatchlistSymbols);
+  const openPositions = uniqueSymbols(openPositionSymbols);
+  const monitorSymbols = uniqueSymbols(signalMonitorSymbols);
+  const watchlist = uniqueSymbols(watchlistSymbols);
+  const watchlistSet = new Set(watchlist);
+  const suggestedSignalSymbols = monitorSymbols.filter(
+    (symbol) => !watchlistSet.has(symbol),
+  );
+
+  return {
+    suggestedSignalSymbols,
+    universeSymbols: applySymbolLimit(
+      uniqueSymbols([
+        ...selected,
+        ...visibleWatchlist,
+        ...suggestedSignalSymbols,
+        ...openPositions,
+        ...monitorSymbols,
+        ...watchlist,
+      ]),
+      wideLimit,
+    ),
+    prioritySymbols: applySymbolLimit(
+      uniqueSymbols([
+        ...selected,
+        ...visibleWatchlist,
+        ...suggestedSignalSymbols,
+        ...openPositions,
+        ...monitorSymbols,
+      ]),
+      narrowLimit,
+    ),
+  };
+}
 
 const readStateTimeMs = (state) =>
   Math.max(
@@ -143,14 +198,8 @@ export function buildSignalMatrixRequestPlan({
   const orderedPriority = uniqueSymbols(prioritySymbols).filter((symbol) =>
     universeSet.has(symbol),
   );
-  const requestLimit =
-    pressureLevel === "critical"
-      ? CRITICAL_REQUEST_SYMBOL_LIMIT
-      : pressureLevel === "high"
-        ? HIGH_REQUEST_SYMBOL_LIMIT
-        : pressureLevel === "watch"
-          ? WATCH_REQUEST_SYMBOL_LIMIT
-          : DEFAULT_REQUEST_SYMBOL_LIMIT;
+  const normalizedPressureLevel = normalizePressureLevel(pressureLevel);
+  const requestLimit = REQUEST_SYMBOL_LIMIT_BY_PRESSURE[normalizedPressureLevel];
   const normalizedNowMs = Number.isFinite(nowMs) ? nowMs : null;
   const needsHydration = (symbol) =>
     symbolNeedsHydration(symbol, hydrationMap, matrixTimeframes, {
@@ -170,9 +219,6 @@ export function buildSignalMatrixRequestPlan({
   const prioritySet = new Set(priorityBatch);
   const backgroundUniverse = universe.filter((symbol) => !prioritySet.has(symbol));
   const missingBackgroundUniverse = backgroundUniverse.filter(needsHydration);
-  const rotationUniverse = missingBackgroundUniverse.length
-    ? missingBackgroundUniverse
-    : backgroundUniverse;
   const backgroundLimit = Math.max(
     0,
     requestLimit - priorityBatch.length,
@@ -180,10 +226,10 @@ export function buildSignalMatrixRequestPlan({
   const backgroundAllowed =
     !startupProtected &&
     Boolean(backgroundReady) &&
-    pressureLevel !== "high" &&
-    pressureLevel !== "critical";
+    normalizedPressureLevel !== "high" &&
+    normalizedPressureLevel !== "critical";
   const background = backgroundAllowed
-    ? rotateSymbols(rotationUniverse, cursor, backgroundLimit)
+    ? rotateSymbols(missingBackgroundUniverse, cursor, backgroundLimit)
     : { symbols: [], nextCursor: cursor || 0 };
   const nextCursor =
     priorityCandidates.length > requestLimit
@@ -202,12 +248,13 @@ export function buildSignalMatrixRequestPlan({
     backgroundReady: backgroundAllowed,
     backgroundPaused: !backgroundAllowed || backgroundLimit <= 0,
     startupProtectionActive: startupProtected,
-    pressureLevel,
+    pressureLevel: normalizedPressureLevel,
     coverage: {
       totalSymbols: universe.length,
       prioritySymbols: priorityBatch.length,
       backgroundSymbols: background.symbols.length,
       requestSymbols: requestSymbols.length,
+      requestSymbolLimit: requestLimit,
       hydratedSymbols: Math.max(0, universe.length - missingSymbols.length),
       missingSymbols: missingSymbols.length,
       pendingSymbols: missingSymbols.length,

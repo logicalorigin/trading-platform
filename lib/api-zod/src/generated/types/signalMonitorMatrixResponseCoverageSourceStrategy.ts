@@ -10,5 +10,5 @@ export type SignalMonitorMatrixResponseCoverageSourceStrategy = typeof SignalMon
 
 
 export const SignalMonitorMatrixResponseCoverageSourceStrategy = {
-  hybrid_1m_5m: 'hybrid_1m_5m',
+  native_timeframes: 'native_timeframes',
 } as const;
