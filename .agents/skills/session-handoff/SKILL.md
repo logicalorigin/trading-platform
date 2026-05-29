@@ -1,6 +1,6 @@
 ---
 name: session-handoff
-description: Save or resume repo work using dated handoff markdown files that capture the Codex session ID, repo snapshot, recent user messages, and next steps. Also recover dropped Codex/Replit sessions by checking runtime/session storage before repo handoffs. Use when the user asks to save a handoff, recover where prior work stopped, continue from an earlier session, find a dropped session, or create a resumable project snapshot.
+description: Save or resume repo work using one durable markdown file per Codex session ID, cataloged in SESSION_HANDOFF_MASTER.md, with SESSION_HANDOFF_CURRENT.md as a pointer to the active handoff. Also recover dropped Codex/Replit sessions by checking runtime/session storage before repo handoffs. Use when the user asks to save a handoff, recover where prior work stopped, continue from an earlier session, find a dropped session, or create a resumable project snapshot.
 ---
 
 # Session Handoff
@@ -30,7 +30,7 @@ Only after that runtime sweep should repo-root handoff files be used as secondar
 
 ## Non-Negotiable Autosave Rule
 
-For any substantial implementation, investigation, test run, multi-terminal task, or user-described workstream, create or refresh the markdown handoff at the start of the work, then keep it current as the work changes. Treat the markdown as the durable session state, not as a final report.
+For any substantial implementation, investigation, test run, multi-terminal task, or user-described workstream, create or refresh the per-session markdown handoff at the start of the work, then keep it current as the work changes. Treat the per-session markdown as the durable session state, not as a final report.
 
 - Do not wait for the end of the session to create the first handoff.
 - Do not rely on Codex/Replit terminal state as the only recovery source. Terminals, shells, browser tabs, and Replit can reset before a rollout or thread row is durable.
@@ -39,7 +39,9 @@ For any substantial implementation, investigation, test run, multi-terminal task
 - The live note must include `Session ID: pending`, current CWD, observed PID/TTY/lock path if available, user request, active files, current step, next step, and validation status.
 - As soon as a real session ID appears, move the useful live-note content into the canonical `SESSION_HANDOFF_YYYY-MM-DD_<full-session-id>.md` and add the master-index row.
 - When multiple agents or terminals are active, each distinct workstream must have its own progressively updated markdown note. The master index is only a locator; the per-session file is the source of truth.
-- Update the handoff before risky or long-running actions, after meaningful edits, after validation, after a blocker is discovered, and before switching to another workstream.
+- Update the active per-session handoff before risky or long-running actions, after meaningful edits, after validation, after a blocker is discovered, and before switching to another workstream.
+- Keep `SESSION_HANDOFF_MASTER.md` as the changelog/table of contents. It must contain one short row per unique session ID.
+- Keep `SESSION_HANDOFF_CURRENT.md` as a compact pointer to the active/latest per-session handoff. Do not use it as the detailed handoff body.
 
 ## Conventions
 
@@ -48,9 +50,11 @@ For any substantial implementation, investigation, test run, multi-terminal task
 - Name new handoff files `SESSION_HANDOFF_YYYY-MM-DD_<full-session-id>.md`.
 - Legacy short-prefix handoff files may still exist; do not rename them unless explicitly asked.
 - Include the full session ID inside every markdown handoff.
+- Include a scannable summary inside every per-session handoff and master row in this shape: date/time, native Codex session ID, short summary.
 - Keep one handoff file per unique Codex session ID. If a session continues, update that same file; do not create another handoff for the same session.
 - Maintain a repo-root master index named `SESSION_HANDOFF_MASTER.md`.
-- Add or update one master-index row for each unique session ID. The master is an index, not the full handoff narrative.
+- Add or update one master-index row for each unique session ID. The master is an index/changelog, not the full handoff narrative.
+- Maintain a repo-root current pointer named `SESSION_HANDOFF_CURRENT.md`. It should include latest date/time, native Codex session ID, short summary, active handoff filename, master filename, current status, validation snapshot, and next step.
 - Use Mountain Time for handoff dates and master timestamps. Use `America/Denver` semantics and label them `MT`; include UTC only as secondary metadata when useful.
 - Keep handoffs concise, file-specific, and validation-aware.
 - In multi-terminal work, default to saving every persisted Codex thread whose CWD belongs to the current repo.
@@ -62,14 +66,15 @@ For any substantial implementation, investigation, test run, multi-terminal task
 1. If the user explicitly says the prior session was dropped, crashed, reset, disconnected, or lost, run the Dropped Session Recovery Rule first.
 2. Open `SESSION_HANDOFF_MASTER.md` first if it exists.
 3. Identify the relevant session ID and handoff file from the master index.
-4. Also list `SESSION_HANDOFF_LIVE_*.md` newest first. A live note may be the only durable record if a terminal reset happened before Codex persisted a session ID.
-5. Read the relevant session/live handoff and any older handoff it explicitly references.
-6. Scan `.codex/state_5.sqlite` for newer persisted Codex threads whose CWD belongs to this repo and report any session IDs missing from the master index.
-7. If the master is missing or stale, list `SESSION_HANDOFF_*.md` in the repo root, newest first, and rebuild enough context from the per-session files plus the Codex state scan.
-8. If the user references a workstream rather than a session ID, search recent handoffs, live notes, rollout JSONL, workflow logs, and recently modified files for the user’s terms and changed-file evidence.
-9. Compare the handoff against current repo state with `git status --short --branch` and `git diff --stat`.
-10. Inspect the referenced files before claiming context is restored.
-11. Report:
+4. Open `SESSION_HANDOFF_CURRENT.md` only as a pointer to the active/latest handoff; do not treat it as the detailed recovery source.
+5. Also list `SESSION_HANDOFF_LIVE_*.md` newest first. A live note may be the only durable record if a terminal reset happened before Codex persisted a session ID.
+6. Read the relevant session/live handoff and any older handoff it explicitly references.
+7. Scan `.codex/state_5.sqlite` for newer persisted Codex threads whose CWD belongs to this repo and report any session IDs missing from the master index.
+8. If the master is missing or stale, list `SESSION_HANDOFF_*.md` in the repo root, newest first, and rebuild enough context from the per-session files plus the Codex state scan.
+9. If the user references a workstream rather than a session ID, search recent handoffs, live notes, rollout JSONL, workflow logs, and recently modified files for the user’s terms and changed-file evidence.
+10. Compare the handoff against current repo state with `git status --short --branch` and `git diff --stat`.
+11. Inspect the referenced files before claiming context is restored.
+12. Report:
    - the active workstream
    - any newer unsaved Codex sessions discovered in state
    - any live notes with pending session IDs
@@ -101,7 +106,7 @@ node .agents/skills/session-handoff/scripts/write-session-handoff.mjs --watch --
 node .agents/skills/session-handoff/scripts/write-session-handoff.mjs --watch --session <full-session-id> --interval-ms 60000
 ```
 
-5. The watcher refreshes generated metadata, recent user messages, transcript activity, validation detections, `git status`, `git diff --stat`, and the master index on every interval.
+5. The watcher refreshes generated metadata, recent user messages, transcript activity, validation detections, `git status`, `git diff --stat`, the master index, and the current pointer on every interval.
 6. The watcher preserves hand-written `What Changed This Session`, `Current Status`, and `Next Recommended Steps` sections unless `--overwrite` is supplied.
 7. If the watcher reports a live Codex terminal without a persisted thread row or rollout path, record that warning in the live note and in the user-facing handoff response.
 8. For bounded smoke tests, use `--max-cycles <count>` so the watcher exits on its own.
@@ -179,12 +184,13 @@ node .agents/skills/session-handoff/scripts/write-session-handoff.mjs --no-maste
 8. Link older handoffs instead of copying them wholesale.
 9. Add or update the session row in `SESSION_HANDOFF_MASTER.md`:
    - full session ID
-   - handoff filename
    - saved/updated timestamp in MT
-   - short workstream label
+   - summary containing date/time, native Codex session ID, and short workstream label
+   - handoff filename
    - validation/current status
    - next step
-10. Keep the master row short. Put details in the per-session handoff.
+10. Update `SESSION_HANDOFF_CURRENT.md` as a pointer to the active/latest handoff. Keep it short and link to the per-session file.
+11. Keep the master row short. Put details in the per-session handoff.
 
 ## What Good Handoffs Include
 
@@ -194,7 +200,9 @@ node .agents/skills/session-handoff/scripts/write-session-handoff.mjs --no-maste
 - temporary live-note identity when the exact session ID is not yet available
 - verification status
 - unresolved edges and likely next step
+- a scannable summary with date/time, native Codex session ID, and short summary
 - a master-index entry that makes the handoff discoverable by session ID
+- a current pointer entry that leads to the active handoff
 
 ## Avoid
 
@@ -204,3 +212,4 @@ node .agents/skills/session-handoff/scripts/write-session-handoff.mjs --no-maste
 - claiming work is verified when you did not run validation
 - creating duplicate handoff files for the same session ID
 - using the master index as the detailed handoff body
+- using `SESSION_HANDOFF_CURRENT.md` as the detailed handoff body

@@ -367,6 +367,27 @@ function tableCell(value) {
   return oneLine(value || "unknown", 120).replace(/\|/g, "\\|");
 }
 
+function stripMarkdownCode(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/^`/, "")
+    .replace(/`$/, "");
+}
+
+function shortThreadSummary(thread) {
+  return oneLine(
+    thread?.title || thread?.first_user_message || "Updated handoff",
+    120,
+  );
+}
+
+function identitySummary({ generatedAt, sessionId, threadTitle }) {
+  return oneLine(
+    `${generatedAt} | ${sessionId} | ${threadTitle || "Updated handoff"}`,
+    180,
+  );
+}
+
 const HANDOFF_TIME_ZONE = "America/Denver";
 const HANDOFF_TIME_ZONE_LABEL = "MT";
 
@@ -639,88 +660,181 @@ function markdownTimestamp(timestamp) {
   return timestamp ? `\`${timestamp}\`` : "`unknown-time`";
 }
 
+function splitMarkdownTableRow(line) {
+  const trimmed = line.trim();
+  const body = trimmed.startsWith("|") ? trimmed.slice(1) : trimmed;
+  const content = body.endsWith("|") ? body.slice(0, -1) : body;
+  const cells = [];
+  let current = "";
+
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+    const next = content[index + 1];
+    if (char === "\\" && next === "|") {
+      current += "|";
+      index += 1;
+      continue;
+    }
+
+    if (char === "|") {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  cells.push(current.trim());
+  return cells;
+}
+
+function parseMasterSessionRows(markdown) {
+  const rows = [];
+
+  for (const line of markdown.split("\n")) {
+    if (!line.startsWith("|") || line.includes("| --- |")) {
+      continue;
+    }
+
+    const cells = splitMarkdownTableRow(line);
+    const sessionId = cells
+      .map(stripMarkdownCode)
+      .find((cell) => /^[0-9a-f-]{36}$/.test(cell));
+    if (!sessionId) {
+      continue;
+    }
+
+    if (cells.length >= 7) {
+      const lastUpdated = cells[0] || "unknown";
+      const handoff = cells[2] || "unknown";
+      const workstream = cells[3] || "Updated handoff";
+      rows.push({
+        handoff,
+        lastUpdated,
+        nextStep: "See handoff.",
+        sessionId,
+        status: cells[6] || "Saved; see handoff",
+        summary: identitySummary({
+          generatedAt: lastUpdated,
+          sessionId,
+          threadTitle: stripMarkdownCode(workstream),
+        }),
+      });
+      continue;
+    }
+
+    if (cells.length >= 6) {
+      rows.push({
+        handoff: cells[3] || "unknown",
+        lastUpdated: cells[0] || "unknown",
+        nextStep: cells[5] || "See handoff.",
+        sessionId,
+        status: cells[4] || "Saved; see handoff",
+        summary:
+          cells[2] ||
+          identitySummary({
+            generatedAt: cells[0] || "unknown",
+            sessionId,
+            threadTitle: "Updated handoff",
+          }),
+      });
+    }
+  }
+
+  return rows;
+}
+
+function extractMasterTail(markdown) {
+  const prunedHistoryIndex = markdown.indexOf("\n## Pruned History");
+  return prunedHistoryIndex === -1
+    ? ""
+    : markdown.slice(prunedHistoryIndex).trimEnd();
+}
+
+function masterRowTimestampMs(row) {
+  const parsed = Date.parse(
+    stripMarkdownCode(row.lastUpdated)
+      .replace(/\sMDT$/, " GMT-0600")
+      .replace(/\sMST$/, " GMT-0700")
+      .replace(/\sMT$/, ""),
+  );
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatMasterRow(row) {
+  return `| ${[
+    tableCell(stripMarkdownCode(row.lastUpdated)),
+    `\`${stripMarkdownCode(row.sessionId)}\``,
+    tableCell(row.summary),
+    tableCell(row.handoff),
+    tableCell(row.status),
+    tableCell(row.nextStep),
+  ].join(" | ")} |`;
+}
+
+function existingOrIncoming(existingValue, incomingValue, defaultValues) {
+  const normalized = stripMarkdownCode(existingValue);
+  if (!normalized || defaultValues.includes(normalized)) {
+    return incomingValue;
+  }
+
+  return existingValue;
+}
+
 function upsertMasterIndexEntry({
-  branch,
   generatedAt,
-  generatedAtUtc,
-  headSha,
   masterPath,
+  nextStep,
   outputFileName,
   sessionId,
+  status,
   threadTitle,
 }) {
   const existing = existsSync(masterPath)
     ? readFileSync(masterPath, "utf8")
     : null;
-  const existingLine = existing
-    ?.split("\n")
-    .find((line) => line.includes(`\`${sessionId}\``));
-  const existingCells = existingLine
-    ?.split("|")
-    .map((cell) => cell.trim());
-  const workstream =
-    existingCells?.[4] && existingCells[4] !== "unknown"
-      ? existingCells[4]
-      : tableCell(threadTitle || "Updated handoff");
-  const status =
-    existingCells?.[7] && existingCells[7] !== "unknown"
-      ? existingCells[7]
-      : "Saved; see handoff";
-  const shortHead =
-    typeof headSha === "string" && headSha.length >= 12
-      ? headSha.slice(0, 12)
-      : headSha || "unknown";
-  const row = [
-    generatedAt,
-    `\`${sessionId}\``,
-    `\`${outputFileName}\``,
-    workstream,
-    tableCell(branch || "unknown"),
-    `\`${shortHead}\``,
-    status,
-  ].join(" | ");
-  const rowLine = `| ${row} |`;
+  const existingRows = existing ? parseMasterSessionRows(existing) : [];
+  const rowsBySessionId = new Map(
+    existingRows.map((row) => [row.sessionId, row]),
+  );
+  const existingRow = rowsBySessionId.get(sessionId);
 
-  const header = [
+  rowsBySessionId.set(sessionId, {
+    handoff: `\`${outputFileName}\``,
+    lastUpdated: generatedAt,
+    nextStep: existingOrIncoming(existingRow?.nextStep, nextStep, [
+      "See handoff.",
+      "unknown",
+    ]),
+    sessionId,
+    status: existingOrIncoming(existingRow?.status, status, [
+      "Saved; see handoff",
+      "unknown",
+    ]),
+    summary: identitySummary({ generatedAt, sessionId, threadTitle }),
+  });
+
+  const rows = [...rowsBySessionId.values()].sort(
+    (left, right) => masterRowTimestampMs(right) - masterRowTimestampMs(left),
+  );
+  const tail = existing ? extractMasterTail(existing) : "";
+  const markdown = [
     "# Session Handoff Master",
     "",
-    "Index of durable per-session handoff files. Keep detailed notes in the session handoff; keep this file short and discoverable by session ID.",
+    "Changelog and table of contents for durable per-session handoff files. Keep details in the linked session handoff; keep this file short and searchable by date, time, native Codex session ID, and summary.",
     "",
     "## Sessions",
     "",
-    `| Last Updated (${HANDOFF_TIME_ZONE_LABEL}) | Session ID | Handoff | Workstream | Branch | HEAD | Status |`,
-    "| --- | --- | --- | --- | --- | --- | --- |",
-  ].join("\n");
+    `| Last Updated (${HANDOFF_TIME_ZONE_LABEL}) | Session ID | Summary | Handoff | Status | Next Step |`,
+    "| --- | --- | --- | --- | --- | --- |",
+    ...rows.map(formatMasterRow),
+    tail ? `\n${tail}` : "",
+  ]
+    .join("\n")
+    .trimEnd();
 
-  if (!existsSync(masterPath)) {
-    writeFileSync(masterPath, `${header}\n${rowLine}\n`, "utf8");
-    return;
-  }
-
-  const lines = existing.split("\n");
-  const filtered = lines
-    .filter((line) => !line.includes(`\`${sessionId}\``))
-    .map((line) =>
-      line.startsWith("| Last Updated (")
-        ? `| Last Updated (${HANDOFF_TIME_ZONE_LABEL}) | Session ID | Handoff | Workstream | Branch | HEAD | Status |`
-        : line,
-    );
-  const separatorIndex = filtered.findIndex((line) =>
-    line.startsWith("| --- |"),
-  );
-
-  if (separatorIndex === -1) {
-    const trimmed = existing.trimEnd();
-    writeFileSync(
-      masterPath,
-      `${trimmed}\n\n${header.split("\n").slice(4).join("\n")}\n${rowLine}\n`,
-      "utf8",
-    );
-    return;
-  }
-
-  filtered.splice(separatorIndex + 1, 0, rowLine);
-  writeFileSync(masterPath, `${filtered.join("\n").trimEnd()}\n`, "utf8");
+  writeFileSync(masterPath, `${markdown}\n`, "utf8");
 }
 
 function extractMarkdownSection(markdown, heading) {
@@ -779,6 +893,87 @@ function mergeEditableSections(existingMarkdown, generatedMarkdown) {
   }
 
   return merged;
+}
+
+function compactSectionForPointer(markdown, heading, fallback) {
+  const section = extractMarkdownSection(markdown, heading);
+  if (!section?.trim()) {
+    return fallback;
+  }
+
+  return section.trimEnd();
+}
+
+function sectionPreview(markdown, heading, fallback) {
+  const section = extractMarkdownSection(markdown, heading);
+  const firstLine = section
+    ?.split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!firstLine) {
+    return fallback;
+  }
+
+  const normalized = firstLine
+    .replace(/^[-*]\s+/, "")
+    .replace(/^\d+\.\s+/, "");
+  if (/Replace this (section|item)/i.test(normalized)) {
+    return fallback;
+  }
+
+  return oneLine(normalized, 140);
+}
+
+function buildCurrentPointer({
+  generatedAt,
+  generatedAtUtc,
+  handoffFileName,
+  handoffMarkdown,
+  masterFileName,
+  sessionId,
+  threadTitle,
+}) {
+  return `# Current Session Handoff
+
+This is a pointer to the active durable handoff. Do not use this file as the full session narrative.
+
+- Last Updated (${HANDOFF_TIME_ZONE_LABEL}): \`${generatedAt}\`
+- Last Updated (UTC): \`${generatedAtUtc}\`
+- Native Codex Session ID: \`${sessionId}\`
+- Summary: ${identitySummary({ generatedAt, sessionId, threadTitle })}
+- Handoff: \`${handoffFileName}\`
+- Master Index: \`${masterFileName}\`
+
+## Current Status
+
+${compactSectionForPointer(
+  handoffMarkdown,
+  "Current Status",
+  "- See the linked per-session handoff for current status.",
+)}
+
+## Next Recommended Steps
+
+${compactSectionForPointer(
+  handoffMarkdown,
+  "Next Recommended Steps",
+  "1. See the linked per-session handoff for next steps.",
+)}
+
+## Validation Snapshot
+
+${compactSectionForPointer(
+  handoffMarkdown,
+  "Validations Detected In Transcript",
+  "- None detected in this session transcript.",
+)}
+`;
+}
+
+function writeCurrentPointer(repoRoot, pointer) {
+  const currentPath = path.join(repoRoot, "SESSION_HANDOFF_CURRENT.md");
+  writeFileSync(currentPath, pointer, "utf8");
+  return currentPath;
 }
 
 function readlinkSafe(targetPath) {
@@ -989,6 +1184,13 @@ function buildMarkdown({
   statusShort,
   thread,
 }) {
+  const threadTitle = shortThreadSummary(thread);
+  const summary = identitySummary({
+    generatedAt,
+    sessionId: thread.id,
+    threadTitle,
+  });
+
   return `# Session Handoff — ${threadDate(thread)}
 
 ## Session Metadata
@@ -996,6 +1198,7 @@ function buildMarkdown({
 - Session ID: \`${thread.id}\`
 - Saved At (${HANDOFF_TIME_ZONE_LABEL}): \`${generatedAt}\`
 - Saved At (UTC): \`${generatedAtUtc}\`
+- Summary: ${summary}
 - Repo Root: \`${repoRoot}\`
 - Thread CWD: \`${thread.cwd ?? "unknown"}\`
 - Rollout Path: \`${thread.rollout_path ?? "unknown"}\`
@@ -1003,7 +1206,7 @@ function buildMarkdown({
 - HEAD: \`${headSha || thread.git_sha || "unknown"}\`
 - Latest Commit: \`${latestCommitSubject || "unknown"}\`
 - Latest Commit Session ID: \`${latestCommitSessionId ?? "unknown"}\`
-- Title: ${thread.title ?? "Unknown"}
+- Title: ${threadTitle}
 - Model: \`${thread.model ?? "unknown"}\`
 - Reasoning Effort: \`${thread.reasoning_effort ?? "unknown"}\`
 - Tokens Used: \`${thread.tokens_used ?? "unknown"}\`
@@ -1145,6 +1348,7 @@ function saveHandoffsOnce(args, { failOnEmpty = true } = {}) {
   for (const thread of threadsToSave) {
     const outputPath = outputPathForThread({ args, repoRoot, thread });
     const currentFileName = path.basename(outputPath);
+    const threadTitle = shortThreadSummary(thread);
     const rolloutSummary = loadRolloutSummary(thread.rollout_path);
     const recentMessages = mergeUserMessages(
       loadRecentUserMessagesFromHistory(thread.id),
@@ -1170,21 +1374,56 @@ function saveHandoffsOnce(args, { failOnEmpty = true } = {}) {
       thread,
     });
     const action = writeHandoff(outputPath, markdown, args.overwrite);
+    const handoffMarkdown = readFileSync(outputPath, "utf8");
 
     if (!args.skipMaster) {
       upsertMasterIndexEntry({
-        branch,
         generatedAt,
-        generatedAtUtc,
-        headSha,
         masterPath,
+        nextStep: sectionPreview(
+          handoffMarkdown,
+          "Next Recommended Steps",
+          "See handoff.",
+        ),
         outputFileName: currentFileName,
         sessionId: thread.id,
-        threadTitle: thread.title,
+        status: sectionPreview(
+          handoffMarkdown,
+          "Current Status",
+          "Saved; see handoff",
+        ),
+        threadTitle,
       });
     }
 
-    savedOutputs.push({ action, outputPath, sessionId: thread.id });
+    savedOutputs.push({
+      action,
+      generatedAt,
+      generatedAtUtc,
+      handoffMarkdown,
+      outputPath,
+      sessionId: thread.id,
+      threadTitle,
+    });
+  }
+
+  let currentPointerPath = null;
+  const shouldWriteCurrentPointer =
+    !args.skipMaster && !args.output && !args.outputDir && savedOutputs.length > 0;
+  if (shouldWriteCurrentPointer) {
+    const latestOutput = savedOutputs[savedOutputs.length - 1];
+    currentPointerPath = writeCurrentPointer(
+      repoRoot,
+      buildCurrentPointer({
+        generatedAt: latestOutput.generatedAt,
+        generatedAtUtc: latestOutput.generatedAtUtc,
+        handoffFileName: path.basename(latestOutput.outputPath),
+        handoffMarkdown: latestOutput.handoffMarkdown,
+        masterFileName: path.basename(masterPath),
+        sessionId: latestOutput.sessionId,
+        threadTitle: latestOutput.threadTitle,
+      }),
+    );
   }
 
   const persistedThreadIds = new Set(allThreads.map((thread) => thread.id));
@@ -1197,6 +1436,7 @@ function saveHandoffsOnce(args, { failOnEmpty = true } = {}) {
   );
 
   return {
+    currentPointerPath,
     liveWarnings,
     repoRoot,
     savedOutputs,
@@ -1214,6 +1454,12 @@ function printSaveResult(result, { watchCycle = null } = {}) {
   for (const output of result.savedOutputs) {
     process.stdout.write(
       `${prefix}${output.action}: ${output.outputPath} (${output.sessionId})\n`,
+    );
+  }
+
+  if (result.currentPointerPath) {
+    process.stdout.write(
+      `${prefix}updated current pointer: ${result.currentPointerPath}\n`,
     );
   }
 
