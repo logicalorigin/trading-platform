@@ -2078,7 +2078,7 @@ export const HeaderStatusCluster = ({
     runtimeDiagnosticsQueryKey: "ibkr-popover",
     runtimeDiagnosticsRefetchInterval: bridgePopoverOpen ? 5_000 : 15_000,
     lineUsageEnabled: gatewayDiagnosticsEnabled,
-    lineUsageStreamEnabled: true,
+    lineUsageStreamEnabled: false,
     lineUsagePollInterval: bridgePopoverOpen ? 2_000 : 10_000,
   });
   useRuntimeWorkloadFlag(

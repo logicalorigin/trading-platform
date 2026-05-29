@@ -401,9 +401,17 @@ const buildCompactLineUsage = (lineUsage) => {
   };
 };
 
-const buildProviderRows = ({ health, liveDataLabel, runtimeDiagnostics }) => {
+const buildProviderRows = ({
+  health,
+  liveDataLabel,
+  runtimeDiagnostics,
+  lineUsageSnapshot,
+}) => {
   const polygon = runtimeDiagnostics?.providers?.polygon;
-  const massive = normalizeMassiveRuntimeDiagnostics(runtimeDiagnostics);
+  const massive = normalizeMassiveRuntimeDiagnostics(
+    runtimeDiagnostics,
+    lineUsageSnapshot,
+  );
   const hasMassiveProvider =
     massive.configured || massive.providerIdentity === "massive";
   const hasPolygonProvider = Boolean(
@@ -717,6 +725,7 @@ export const buildHeaderIbkrPopoverModel = ({
     health,
     liveDataLabel,
     runtimeDiagnostics,
+    lineUsageSnapshot,
   });
   const lineUsage =
     normalizedLineUsage ||
@@ -725,7 +734,10 @@ export const buildHeaderIbkrPopoverModel = ({
       lineUsageSnapshot,
     );
   const compactLineUsage = buildCompactLineUsage(lineUsage);
-  const massive = normalizeMassiveRuntimeDiagnostics(runtimeDiagnostics);
+  const massive = normalizeMassiveRuntimeDiagnostics(
+    runtimeDiagnostics,
+    lineUsageSnapshot,
+  );
 
   const healthyStatus = HEALTHY_STATUS_KEYS.has(health.status);
   let issue = {

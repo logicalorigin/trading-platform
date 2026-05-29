@@ -204,6 +204,12 @@ test("Market chart grid staggers candle hydration without hiding chart frames", 
   assert.match(cellSource, /<MarketChartPanelFallback dataTestId=\{dataTestId\} \/>/);
 });
 
+test("Market chart grid leaves quote stream ownership to the runtime provider", () => {
+  const gridSource = readLocalSource("./MultiChartGrid.jsx");
+
+  assert.doesNotMatch(gridSource, /useIbkrQuoteSnapshotStream/);
+});
+
 test("Trade spot chart forwards market viewport layout context to the chart surface", () => {
   const panelSource = readLocalSource("../trade/TradeEquityPanel.jsx");
   const frameSource = readLocalSource("../charting/ResearchChartFrame.tsx");

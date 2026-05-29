@@ -158,18 +158,103 @@ const formatMassiveRestRequestSummary = (request) => {
   return `${purpose}${symbol}${timeframe}${rows}`.trim();
 };
 
-export const normalizeMassiveRuntimeDiagnostics = (runtimeDiagnostics) => {
+const fallbackMassiveWebSocketFromLineUsage = (lineUsageSnapshot) => {
+  const stockAggregates = recordOrEmpty(lineUsageSnapshot?.streams?.stockAggregates);
+  const delayedWebSocket = recordOrEmpty(stockAggregates.polygonDelayedWebSocket);
+  const providerIdentity = String(
+    delayedWebSocket.providerIdentity ||
+      stockAggregates.provider ||
+      stockAggregates.activeProvider ||
+      "",
+  ).toLowerCase();
+  const massiveActive = providerIdentity.includes("massive");
+
+  if (!massiveActive) {
+    return {};
+  }
+
+  const subscribedChannels = arrayOrEmpty(delayedWebSocket.subscribedChannels);
+  const availableChannels = arrayOrEmpty(delayedWebSocket.availableChannels);
+  const connected = delayedWebSocket.connected === true;
+  const configured =
+    delayedWebSocket.configured === true ||
+    stockAggregates.provider === "massive-websocket" ||
+    stockAggregates.activeProvider === "massive-websocket";
+
+  return {
+    status: connected ? "ok" : configured ? "idle" : "unknown",
+    mode: delayedWebSocket.mode || null,
+    activeChannels: subscribedChannels,
+    availableChannels,
+    subscribedSymbolCount: firstFiniteNumber(
+      delayedWebSocket.subscribedSymbolCount,
+      stockAggregates.unionSymbolCount,
+    ),
+    activeConsumerCount: firstFiniteNumber(
+      delayedWebSocket.activeConsumerCount,
+      stockAggregates.activeConsumerCount,
+    ),
+    eventCount: firstFiniteNumber(delayedWebSocket.eventCount, stockAggregates.eventCount),
+    lastMessageAgeMs: firstFiniteNumber(
+      delayedWebSocket.lastMessageAgeMs,
+      stockAggregates.lastAggregateAgeMs,
+    ),
+    reconnectCount: firstFiniteNumber(delayedWebSocket.reconnectCount, 0),
+    lastError: delayedWebSocket.lastError || stockAggregates.lastError || null,
+    lastErrorAt: delayedWebSocket.lastErrorAt || stockAggregates.lastErrorAt || null,
+    feeds: [
+      {
+        id: "stock-aggregates",
+        label: "Stock minute aggregates",
+        configured,
+        mode: delayedWebSocket.mode || null,
+        socketHost: delayedWebSocket.socketHost || null,
+        availableChannels,
+        subscribedChannels,
+        subscribedSymbolCount: firstFiniteNumber(
+          delayedWebSocket.subscribedSymbolCount,
+          stockAggregates.unionSymbolCount,
+        ),
+        subscriptionCount: firstFiniteNumber(delayedWebSocket.subscriptionCount),
+        activeConsumerCount: firstFiniteNumber(
+          delayedWebSocket.activeConsumerCount,
+          stockAggregates.activeConsumerCount,
+        ),
+        connected,
+        authState: delayedWebSocket.authState || null,
+        eventCount: firstFiniteNumber(delayedWebSocket.eventCount, stockAggregates.eventCount),
+        lastMessageAgeMs: firstFiniteNumber(
+          delayedWebSocket.lastMessageAgeMs,
+          stockAggregates.lastAggregateAgeMs,
+        ),
+        reconnectCount: firstFiniteNumber(delayedWebSocket.reconnectCount, 0),
+        lastError: delayedWebSocket.lastError || null,
+        lastErrorAt: delayedWebSocket.lastErrorAt || null,
+      },
+    ],
+  };
+};
+
+export const normalizeMassiveRuntimeDiagnostics = (
+  runtimeDiagnostics,
+  lineUsageSnapshot = null,
+) => {
   const massive = recordOrEmpty(runtimeDiagnostics?.providers?.massive);
   const rest = recordOrEmpty(massive.rest);
-  const websocket = recordOrEmpty(massive.websocket);
+  const fallbackWebSocket = fallbackMassiveWebSocketFromLineUsage(lineUsageSnapshot);
+  const websocket = {
+    ...fallbackWebSocket,
+    ...recordOrEmpty(massive.websocket),
+  };
   const restStatus = normalizeProviderStatus(rest.status);
   const websocketStatus = normalizeProviderStatus(websocket.status);
+  const fallbackConfigured = Boolean(Object.keys(fallbackWebSocket).length);
   const status =
     restStatus === "degraded" || websocketStatus === "degraded"
       ? "degraded"
       : restStatus === "ok" || websocketStatus === "ok"
         ? "ok"
-        : massive.configured === false
+        : massive.configured === false && !fallbackConfigured
           ? "unconfigured"
           : restStatus === "idle" || websocketStatus === "idle"
             ? "idle"
@@ -185,10 +270,12 @@ export const normalizeMassiveRuntimeDiagnostics = (runtimeDiagnostics) => {
   const lastRestDurationMs = firstFiniteNumber(lastRequest.durationMs);
 
   return {
-    configured: massive.configured === true,
-    providerIdentity: massive.providerIdentity || null,
+    configured: massive.configured === true || fallbackConfigured,
+    providerIdentity: massive.providerIdentity || (fallbackConfigured ? "massive" : null),
     baseUrlHost: massive.baseUrlHost || null,
-    stocksRealtimeConfigured: massive.stocksRealtimeConfigured === true,
+    stocksRealtimeConfigured:
+      massive.stocksRealtimeConfigured === true ||
+      (fallbackConfigured && websocket.mode === "real-time"),
     status,
     label: providerStatusLabel(status),
     tone: providerStatusTone(status),
@@ -1088,7 +1175,10 @@ export const buildRuntimeControlSnapshot = ({
   const lineUsage = normalizeAdmissionDiagnostics(admission, lineUsageSnapshot);
   const backendFlowScannerActive = isOptionsFlowScannerRuntimeActive(admission);
   const clientFlowScannerActive = Boolean(flowScannerControl?.ownerActive);
-  const massive = normalizeMassiveRuntimeDiagnostics(runtimeDiagnostics);
+  const massive = normalizeMassiveRuntimeDiagnostics(
+    runtimeDiagnostics,
+    lineUsageSnapshot,
+  );
   return {
     schemaVersion: RUNTIME_CONTROL_SCHEMA_VERSION,
     lineUsage,

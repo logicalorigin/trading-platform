@@ -1782,6 +1782,64 @@ test("buildHeaderIbkrPopoverModel surfaces Massive REST and WebSocket details", 
   );
 });
 
+test("buildHeaderIbkrPopoverModel keeps Massive visible when runtime provider diagnostics lag", () => {
+  const model = buildHeaderIbkrPopoverModel({
+    connection: {
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      liveMarketDataAvailable: true,
+      healthFresh: true,
+      accountsLoaded: true,
+      configuredLiveMarketDataMode: true,
+      streamFresh: true,
+      strictReady: true,
+    },
+    runtimeDiagnostics: {
+      ibkr: {
+        streamFresh: true,
+      },
+    },
+    lineUsageSnapshot: {
+      streams: {
+        stockAggregates: {
+          provider: "massive-websocket",
+          activeProvider: "massive-websocket",
+          activeConsumerCount: 1,
+          unionSymbolCount: 37,
+          eventCount: 420,
+          lastAggregateAgeMs: 250,
+          polygonDelayedWebSocket: {
+            configured: true,
+            providerIdentity: "massive",
+            mode: "real-time",
+            socketHost: "socket.massive.com",
+            availableChannels: ["AM"],
+            subscribedChannels: ["AM"],
+            connected: true,
+            authState: "authenticated",
+            subscribedSymbolCount: 37,
+            activeConsumerCount: 1,
+            eventCount: 420,
+            lastMessageAgeMs: 250,
+          },
+        },
+      },
+    },
+  });
+
+  const massiveRow = model.providerRows.find((row) => row.label === "Massive");
+  assert.ok(massiveRow);
+  assert.equal(massiveRow.value, "OK");
+  assert.match(massiveRow.detail, /WS AM/);
+  assert.ok(
+    massiveRow.summary[1].chips.some(
+      (chip) => chip.iconKey === "hash" && chip.label === "37 sym",
+    ),
+  );
+  assert.ok(model.detailGroups.find((group) => group.title === "Massive"));
+});
+
 test("buildHeaderIbkrPopoverModel does not invent Polygon while provider diagnostics load", () => {
   const model = buildHeaderIbkrPopoverModel({
     connection: {

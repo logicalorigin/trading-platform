@@ -1,5 +1,30 @@
 # Current Session Handoff
 
+- Last updated: `2026-05-29 15:08 UTC`
+- Current request: watch the running app for five minutes to inspect data-line usage and investigate why Massive connection info is no longer displaying in the connection popover.
+- Current status:
+  - Completed a five-minute observation of the already-running Replit app only; no `dev`, `dev:replit`, `dev:web`, port reaping, workflow action, or startup-config edit was performed.
+  - Backend diagnostics showed Massive configured and healthy, but the header popover initially showed stale `0 of 200` line usage and no Massive provider detail.
+  - Root cause confirmed:
+    - `MultiChartGrid.jsx` opened its own quote snapshot stream even though the runtime `MarketDataSubscriptionProvider` already owns visible quote ticks, producing duplicate `/api/streams/quotes` consumers for overlapping symbols.
+    - `HeaderStatusCluster.jsx` kept a permanent line-usage SSE connection for a small header readout, contributing another long-lived browser connection and stale UI behavior when diagnostics were delayed.
+    - The popover only rendered Massive from `/api/diagnostics/runtime`; when that request lagged in the browser, it ignored the Massive websocket state already present in `/api/settings/ibkr-line-usage`.
+  - Applied fixes:
+    - Removed the duplicate `useIbkrQuoteSnapshotStream` from `artifacts/pyrus/src/features/market/MultiChartGrid.jsx`.
+    - Changed the header line-usage readout to polling instead of SSE in `artifacts/pyrus/src/features/platform/HeaderStatusCluster.jsx`.
+    - Added a Massive websocket fallback from line-usage stock aggregate diagnostics in `runtimeControlModel.js` and passed it through `ibkrPopoverModel.js`.
+    - Added focused regression tests in `IbkrConnectionStatus.test.js` and `marketChartWiring.test.js`.
+  - Live recheck: with a browser tab open, the header showed `22 of 200`; provider rows showed `MASSIVE OK`, `WS AM`, `real-time`, `550 sym`, and recent events. After closing the browser tab, backend usage fell to `2` active lines, `0` quote consumers, and no active stock aggregate socket.
+  - Debug report saved: `memory/2026-05-29-pyrus-line-usage-popover.md`.
+- Validation state:
+  - Passed: targeted Pyrus tests with `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/IbkrConnectionStatus.test.js src/features/market/marketChartWiring.test.js` (`65/65`).
+  - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
+  - Passed: `git diff --check`.
+  - Live browser verification passed and the browser tab was closed afterward.
+  - Known unrelated failure: full `pnpm --filter @workspace/pyrus run test:unit` fails in unchanged `src/screens/account/accountCalendarData.test.js` expecting `summary: displaySummaryData` in the Account screen source. No Account screen files are modified in this pass.
+- Next step:
+  - Commit only the scoped line-usage/popover files and this handoff/debug report; leave unrelated Rust/GEX/trading-audit worktree changes unstaged.
+
 - Last updated: `2026-05-29 14:41 UTC`
 - Current request: user restarted the Replit app and asked to check and commit.
 - Current status:

@@ -51,7 +51,6 @@ import {
   writeMarketGridTrackSession,
 } from "./marketGridTrackState";
 import { useLiveMarketFlow } from "../platform/useLiveMarketFlow";
-import { useIbkrQuoteSnapshotStream } from "../platform/live-streams";
 import { USER_PREFERENCES_UPDATED_EVENT } from "../preferences/userPreferenceModel";
 import {
   getTickerSearchRowStorageKey,
@@ -844,11 +843,6 @@ export const MultiChartGrid = ({
       ).slice(0, 12),
     [chartFlowEvents],
   );
-  useIbkrQuoteSnapshotStream({
-    symbols: streamedSymbols,
-    enabled: Boolean(stockAggregateStreamingEnabled && streamedSymbols.length > 0),
-  });
-
   useEffect(() => {
     setSlots((current) => {
       let changed = current.length !== MAX_MULTI_CHART_SLOTS;
