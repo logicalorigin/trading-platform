@@ -72,6 +72,30 @@ function pricedQuote(
   };
 }
 
+function signalOptionsEmptyWorkerMaintenanceSnapshot() {
+  return {
+    runCount: 0,
+    totalClosedCount: 0,
+    lastRunAt: null,
+    lastError: null,
+    lastClosedCount: 0,
+    lastSkippedCount: 0,
+    lastDueCount: 0,
+    lastOrphanCount: 0,
+  };
+}
+
+function resetSignalOptionsWorkerSnapshotForTests() {
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: false,
+    tickRunning: false,
+    deploymentCount: 0,
+    activeDeploymentCount: 0,
+    maintenance: signalOptionsEmptyWorkerMaintenanceSnapshot(),
+    deployments: [],
+  }));
+}
+
 test("default paper signal-options startup uses bounded signal monitor profile", () => {
   const source = readFileSync(
     new URL("./signal-options-automation.ts", import.meta.url),
@@ -4041,6 +4065,103 @@ test("cockpit scan stage exposes active scan age", () => {
   }
 });
 
+test("cockpit contract stage reports upstream action scan instead of missing contract", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const scanStartedAt = new Date("2026-04-28T17:58:25.000Z");
+  const deployment = {
+    id: "deployment-contract-wait",
+    name: "Signal Options Paper",
+    mode: "paper",
+    enabled: true,
+    providerAccountId: "DU123",
+    symbolUniverse: ["SPY", "QQQ"],
+    lastEvaluatedAt: new Date("2026-04-28T17:55:00.000Z"),
+    lastSignalAt: null,
+    lastError: null,
+    updatedAt: now,
+  } as never;
+  const readiness = {
+    ready: true,
+    reason: null,
+    message: "ready",
+  } as never;
+  const candidates = [
+    {
+      id: "candidate-spy",
+      symbol: "SPY",
+      signalAt: "2026-04-28T17:59:00.000Z",
+      action: { type: "buy_call" },
+      selectedContract: null,
+    },
+  ] as never;
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: true,
+    deploymentCount: 1,
+    activeDeploymentCount: 1,
+    maintenance: signalOptionsEmptyWorkerMaintenanceSnapshot(),
+    deployments: [
+      {
+        deploymentId: "deployment-contract-wait",
+        lastCheckedAtMs: now.getTime(),
+        failedUntilMs: 0,
+        lastSuccessAt: new Date("2026-04-28T17:55:00.000Z").toISOString(),
+        lastError: null,
+        currentScanStartedAt: scanStartedAt.toISOString(),
+        currentScanAgeMs: 95_000,
+        lastScanDurationMs: null,
+        scanCount: 1,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 1,
+        lastFreshSignalCount: 1,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: "2026-04-28T17:59:00.000Z",
+        lastOldestSignalBarAt: "2026-04-28T17:59:00.000Z",
+        lastHeavyWorkDeferred: false,
+        lastActiveScanPhase: "action_scan",
+        lastResourcePressureLevel: "watch",
+        lastCandidateCount: 1,
+        lastBlockedCandidateCount: 0,
+      },
+    ],
+  }));
+  __signalOptionsAutomationInternalsForTests.markSignalOptionsScanActive(
+    "deployment-contract-wait",
+    scanStartedAt,
+  );
+  try {
+    const stages =
+      __signalOptionsAutomationInternalsForTests.buildCockpitPipeline({
+        deployment,
+        readiness,
+        candidates,
+        activePositions: [],
+        risk: {},
+        events: [],
+        now,
+      });
+    const scanStage = stages.find((stage) => stage.id === "scan_universe");
+    const contractStage = stages.find(
+      (stage) => stage.id === "contract_selected",
+    );
+
+    assert.equal(scanStage?.activeScanPhase, "action_scan");
+    assert.equal(contractStage?.status, "running");
+    assert.equal(
+      contractStage?.detail,
+      "action scan running before contract selection",
+    );
+  } finally {
+    __signalOptionsAutomationInternalsForTests.clearSignalOptionsScanActive(
+      "deployment-contract-wait",
+    );
+    resetSignalOptionsWorkerSnapshotForTests();
+  }
+});
+
 test("cockpit scan stage exposes resource-pressure pause state", () => {
   const now = new Date("2026-04-28T18:00:00.000Z");
   const pauseStartedAt = new Date("2026-04-28T17:52:00.000Z");
@@ -4143,6 +4264,98 @@ test("cockpit scan stage exposes resource-pressure pause state", () => {
       },
       deployments: [],
     }));
+  }
+});
+
+test("cockpit contract stage reports deferred action work before contract selection", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const deployment = {
+    id: "deployment-contract-deferred",
+    name: "Signal Options Paper",
+    mode: "paper",
+    enabled: true,
+    providerAccountId: "DU123",
+    symbolUniverse: ["SPY", "QQQ"],
+    lastEvaluatedAt: new Date("2026-04-28T17:55:00.000Z"),
+    lastSignalAt: null,
+    lastError: null,
+    updatedAt: now,
+  } as never;
+  const readiness = {
+    ready: true,
+    reason: null,
+    message: "ready",
+  } as never;
+  const candidates = [
+    {
+      id: "candidate-qqq",
+      symbol: "QQQ",
+      signalAt: "2026-04-28T17:59:00.000Z",
+      action: { type: "buy_put" },
+      selectedContract: null,
+    },
+  ] as never;
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: false,
+    deploymentCount: 1,
+    activeDeploymentCount: 0,
+    maintenance: signalOptionsEmptyWorkerMaintenanceSnapshot(),
+    deployments: [
+      {
+        deploymentId: "deployment-contract-deferred",
+        lastCheckedAtMs: now.getTime(),
+        failedUntilMs: 0,
+        lastSuccessAt: new Date("2026-04-28T17:55:00.000Z").toISOString(),
+        lastError: null,
+        currentScanStartedAt: null,
+        currentScanAgeMs: null,
+        lastScanDurationMs: 10_000,
+        scanCount: 1,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 1,
+        lastFreshSignalCount: 1,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: "2026-04-28T17:59:00.000Z",
+        lastOldestSignalBarAt: "2026-04-28T17:59:00.000Z",
+        lastHeavyWorkDeferred: true,
+        lastActiveScanPhase: "action_scan",
+        lastResourcePressureLevel: "watch",
+        lastCandidateCount: 1,
+        lastBlockedCandidateCount: 0,
+      },
+    ],
+  }));
+  try {
+    const stages =
+      __signalOptionsAutomationInternalsForTests.buildCockpitPipeline({
+        deployment,
+        readiness,
+        candidates,
+        activePositions: [],
+        risk: {},
+        events: [],
+        now,
+      });
+    const scanStage = stages.find((stage) => stage.id === "scan_universe");
+    const contractStage = stages.find(
+      (stage) => stage.id === "contract_selected",
+    );
+
+    assert.equal(
+      scanStage?.detail,
+      "fresh signals updated; action work deferred before contract selection",
+    );
+    assert.equal(contractStage?.status, "attention");
+    assert.equal(
+      contractStage?.detail,
+      "action work deferred before contract selection",
+    );
+  } finally {
+    resetSignalOptionsWorkerSnapshotForTests();
   }
 });
 

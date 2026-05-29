@@ -10075,7 +10075,10 @@ function syncMarketDataAdmissionRuntimeDefaults(
 }
 
 function getOptionsFlowScannerQuoteLeaseTtlMs(): number {
-  return readPositiveIntegerEnv("OPTIONS_FLOW_SCANNER_QUOTE_SAMPLE_TIMEOUT_MS", 5_000);
+  return readPositiveIntegerEnv(
+    "OPTIONS_FLOW_SCANNER_QUOTE_SAMPLE_TIMEOUT_MS",
+    30_000,
+  );
 }
 
 function buildOptionsFlowSeedScannerRequest(

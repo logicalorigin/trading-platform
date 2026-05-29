@@ -4165,6 +4165,21 @@ function buildCockpitPipeline(input: {
     scanState.lastSignalScanAt ?? workerState.lastSignalScanAt ?? null;
   const lastHeavyWorkDeferred =
     scanState.heavyWorkDeferred || workerState.lastHeavyWorkDeferred;
+  const activeScanPhase = scanState.phase ?? workerState.lastActiveScanPhase;
+  const resourcePressureLevel = workerState.lastResourcePressureLevel;
+  const heavyWorkDeferredByPressure =
+    lastHeavyWorkDeferred &&
+    (resourcePressureLevel === "high" || resourcePressureLevel === "critical");
+  const contractSelectionPendingUpstream =
+    actionMapped.length > 0 &&
+    selectedContracts.length === 0 &&
+    contractBlocked.length === 0;
+  const contractSelectionWaitingOnScan =
+    contractSelectionPendingUpstream && scanState.running;
+  const contractSelectionDeferred =
+    contractSelectionPendingUpstream &&
+    !contractSelectionWaitingOnScan &&
+    lastHeavyWorkDeferred;
 
   return [
     {
@@ -4189,14 +4204,14 @@ function buildCockpitPipeline(input: {
       scanAgeMs: scanState.ageMs,
       activeScanSource: scanState.source,
       activeScanRunId: scanState.runId,
-      activeScanPhase: scanState.phase ?? workerState.lastActiveScanPhase,
+      activeScanPhase,
       lastSignalScanAt,
       latestSignalBarAt:
         scanState.latestSignalBarAt ?? workerState.lastLatestSignalBarAt ?? null,
       signalSourcePolicy:
         workerState.lastSignalSourcePolicy ?? SIGNAL_OPTIONS_SIGNAL_SOURCE_POLICY,
       heavyWorkDeferred: lastHeavyWorkDeferred,
-      resourcePressureLevel: workerState.lastResourcePressureLevel,
+      resourcePressureLevel,
       pressurePaused: pressurePauseState.paused,
       pressurePauseStartedAt:
         pressurePauseState.startedAt?.toISOString() ?? null,
@@ -4217,7 +4232,9 @@ function buildCockpitPipeline(input: {
           ? `paused by resource pressure for ${pressurePauseAge}`
           : "paused by resource pressure"
         : lastHeavyWorkDeferred
-          ? "fresh signals updated; action work deferred by resource pressure"
+          ? heavyWorkDeferredByPressure
+            ? "fresh signals updated; action work deferred by resource pressure"
+            : "fresh signals updated; action work deferred before contract selection"
         : scanState.running
         ? scanRunningAge
           ? `scan running for ${scanRunningAge}`
@@ -4258,7 +4275,8 @@ function buildCockpitPipeline(input: {
       id: "contract_selected",
       label: "Contract Selected",
       status: stageStatus({
-        attention: contractBlocked.length > 0,
+        running: contractSelectionWaitingOnScan,
+        attention: contractBlocked.length > 0 || contractSelectionDeferred,
         count: selectedContracts.length,
       }),
       count: selectedContracts.length,
@@ -4267,6 +4285,16 @@ function buildCockpitPipeline(input: {
         ? `${contractBlocked.length} candidates blocked at contract selection`
         : selectedContracts.length
           ? `${selectedContracts.length} contracts resolved`
+        : contractSelectionWaitingOnScan
+          ? activeScanPhase === "signal_refresh"
+            ? "waiting for signal refresh before contract selection"
+            : activeScanPhase === "action_scan"
+              ? "action scan running before contract selection"
+              : "scan running before contract selection"
+        : contractSelectionDeferred
+          ? heavyWorkDeferredByPressure
+            ? "action work deferred by resource pressure before contract selection"
+            : "action work deferred before contract selection"
         : "no resolved contracts yet",
     },
     {
