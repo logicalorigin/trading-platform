@@ -148,6 +148,8 @@ const SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY = 6;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 20_000;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 24;
+const DEFAULT_SIGNAL_OPTIONS_WORKER_SIGNAL_RESERVE_BUDGET_MS = 20_000;
+const DEFAULT_SIGNAL_OPTIONS_WORKER_SIGNAL_RESERVE_ITEM_LIMIT = 4;
 const SIGNAL_OPTIONS_SIGNAL_SOURCE_POLICY = "massive-primary";
 const SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY = "mixed" as const;
 const SIGNAL_OPTIONS_MONITOR_STALE_GRACE_MS = 5_000;
@@ -1563,6 +1565,19 @@ function createSignalOptionsActionWorkBudget(input: {
   };
 }
 
+function createSignalOptionsSignalReserveBudget(input: {
+  source: "manual" | "worker";
+  nowMs?: number;
+}): SignalOptionsActionWorkBudget {
+  return createSignalOptionsActionWorkBudget({
+    source: input.source,
+    actionWorkBudgetMs: DEFAULT_SIGNAL_OPTIONS_WORKER_SIGNAL_RESERVE_BUDGET_MS,
+    actionWorkItemLimit:
+      DEFAULT_SIGNAL_OPTIONS_WORKER_SIGNAL_RESERVE_ITEM_LIMIT,
+    nowMs: input.nowMs,
+  });
+}
+
 function signalOptionsActionWorkExhausted(
   budget: SignalOptionsActionWorkBudget,
   nowMs = Date.now(),
@@ -1626,6 +1641,34 @@ function signalOptionsStateActionSignature(input: {
     })
     .filter((value): value is string => Boolean(value))
     .join("|");
+}
+
+function hasPendingSignalOptionsActionableState(input: {
+  states: SignalMonitorState[];
+  universe: Set<string>;
+  startIndex?: number;
+}): boolean {
+  const startIndex = clampActionCursorIndex(
+    input.startIndex ?? 0,
+    input.states.length,
+  );
+  for (let index = startIndex; index < input.states.length; index += 1) {
+    const state = input.states[index];
+    if (!state) {
+      continue;
+    }
+    const symbol = normalizeSymbol(state.symbol).toUpperCase();
+    if (!symbol || (input.universe.size > 0 && !input.universe.has(symbol))) {
+      continue;
+    }
+    if (
+      isSignalOptionsActionableSignalState(state) &&
+      toIsoString(state.currentSignalAt)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function actionCursorForDeployment(deploymentId: string) {
@@ -10068,6 +10111,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       ? clampActionCursorIndex(actionCursor.signalIndex, evaluatedStates.length)
       : 0;
   let actionWorkDeferred = false;
+  let positionWorkDeferred = false;
 
   if (resumingSignalWork) {
     nextPositionIndex = initialPositions.length;
@@ -10079,7 +10123,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     positionIndex += 1
   ) {
     if (signalOptionsActionWorkExhausted(actionWorkBudget)) {
-      actionWorkDeferred = true;
+      positionWorkDeferred = true;
       nextPositionIndex = positionIndex;
       break;
     }
@@ -10131,29 +10175,40 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     nextPositionIndex = positionIndex + 1;
   }
 
+  const positionPhaseBudgetExhausted =
+    source === "worker" &&
+    (positionWorkDeferred ||
+      (nextPositionIndex >= initialPositions.length &&
+        signalOptionsActionWorkExhausted(actionWorkBudget)));
+  const hasPendingActionableSignals = hasPendingSignalOptionsActionableState({
+    states: evaluatedStates,
+    universe,
+    startIndex: nextSignalIndex,
+  });
+  let signalActionWorkBudget = actionWorkBudget;
+  if (positionPhaseBudgetExhausted && hasPendingActionableSignals) {
+    signalActionWorkBudget = createSignalOptionsSignalReserveBudget({ source });
+  }
+
   if (
     source === "worker" &&
-    (actionWorkDeferred ||
-      (nextPositionIndex >= initialPositions.length &&
-        signalOptionsActionWorkExhausted(actionWorkBudget)))
+    positionPhaseBudgetExhausted &&
+    !hasPendingActionableSignals
   ) {
-    const resumeAtSignals =
-      nextPositionIndex >= initialPositions.length &&
-      unmanagedPositionSymbols.size === 0;
     updateSignalOptionsRunMetadata(deployment.id, {
       heavyWorkDeferred: true,
     });
     rememberSignalOptionsActionCursor({
       deploymentId: deployment.id,
-      phase: resumeAtSignals ? "signals" : "positions",
+      phase: positionWorkDeferred ? "positions" : "signals",
       positionSignature,
-      positionIndex: resumeAtSignals
-        ? initialPositions.length
-        : nextPositionIndex >= initialPositions.length
+      positionIndex: positionWorkDeferred
+        ? nextPositionIndex >= initialPositions.length
           ? 0
-          : nextPositionIndex,
+          : nextPositionIndex
+        : initialPositions.length,
       signalSignature,
-      signalIndex: resumeAtSignals ? nextSignalIndex : 0,
+      signalIndex: positionWorkDeferred ? 0 : nextSignalIndex,
     });
     return {
       deployment: deploymentToResponse({
@@ -10176,6 +10231,14 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       }),
     };
   }
+
+  const deferredPositionSymbols =
+    positionWorkDeferred && nextPositionIndex < initialPositions.length
+      ? initialPositions
+          .slice(nextPositionIndex)
+          .map((position) => normalizeSymbol(position.symbol).toUpperCase())
+          .filter(Boolean)
+      : [];
 
   const eventsAfterMarks = await listDeploymentEvents(
     deployment.id,
@@ -10219,7 +10282,10 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   let openSymbols = activePositionsBySymbol.size;
   let candidateCount = 0;
   let blockedCandidateCount = 0;
-  const degradedPositionSymbols = [...unmanagedPositionSymbols].filter(Boolean);
+  const degradedPositionSymbols = [
+    ...unmanagedPositionSymbols,
+    ...deferredPositionSymbols,
+  ].filter(Boolean);
   const positionMarkHaltActive = degradedPositionSymbols.length > 0;
 
   for (
@@ -10227,7 +10293,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     stateIndex < evaluatedStates.length;
     stateIndex += 1
   ) {
-    if (signalOptionsActionWorkExhausted(actionWorkBudget)) {
+    if (signalOptionsActionWorkExhausted(signalActionWorkBudget)) {
       actionWorkDeferred = true;
       nextSignalIndex = stateIndex;
       break;
@@ -10267,7 +10333,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       signalMetadata,
     });
     candidateCount += 1;
-    recordSignalOptionsActionWorkItem(actionWorkBudget);
+    recordSignalOptionsActionWorkItem(signalActionWorkBudget);
     const currentPosition = activePositionsBySymbol.get(symbol);
 
     if (
@@ -10364,17 +10430,21 @@ async function runSignalOptionsShadowScanUnlocked(input: {
     nextSignalIndex = stateIndex + 1;
   }
 
-  if (source === "worker" && actionWorkDeferred) {
+  if (source === "worker" && (actionWorkDeferred || positionWorkDeferred)) {
     updateSignalOptionsRunMetadata(deployment.id, {
       heavyWorkDeferred: true,
     });
     rememberSignalOptionsActionCursor({
       deploymentId: deployment.id,
-      phase: "signals",
+      phase: actionWorkDeferred ? "signals" : "positions",
       positionSignature,
-      positionIndex: initialPositions.length,
+      positionIndex: actionWorkDeferred
+        ? initialPositions.length
+        : nextPositionIndex >= initialPositions.length
+          ? 0
+          : nextPositionIndex,
       signalSignature,
-      signalIndex: nextSignalIndex,
+      signalIndex: actionWorkDeferred ? nextSignalIndex : 0,
     });
   } else {
     signalOptionsActionCursors.delete(deployment.id);
@@ -10406,7 +10476,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
         blockedCandidateCount,
         batch: asRecord(asRecord(evaluated).signalOptionsBatch),
         lastSignalScanAt: signalScanCompletedAt.toISOString(),
-        heavyWorkDeferred: actionWorkDeferred,
+        heavyWorkDeferred: actionWorkDeferred || positionWorkDeferred,
         activeScanPhase: "action_scan",
         resourcePressureLevel: heavyWorkDecision.pressure.level,
       }),
@@ -10499,6 +10569,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   resolveSignalOptionsMonitorBatch,
   resolveSignalOptionsMonitorFullRefresh,
   shouldRefreshSignalOptionsMonitorState,
+  hasPendingSignalOptionsActionableState,
   signalOptionsStrikesAroundMoney,
   shouldRecordActivePositionMark,
   shouldRecordActivePositionMarkForScan,

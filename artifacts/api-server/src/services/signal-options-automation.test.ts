@@ -190,10 +190,54 @@ test("signal-options scans publish fresh signal state before heavy action work",
       scanBody.indexOf("refreshActivePosition"),
   );
   assert.match(scanBody, /rememberSignalOptionsActionCursor/);
-  assert.match(scanBody, /unmanagedPositionSymbols\.size === 0/);
+  assert.match(scanBody, /hasPendingSignalOptionsActionableState/);
+  assert.match(scanBody, /createSignalOptionsSignalReserveBudget/);
+  assert.match(
+    scanBody,
+    /positionPhaseBudgetExhausted[\s\S]*!hasPendingActionableSignals/,
+  );
   assert.match(scanBody, /activeScanPhase:\s*"deferred"/);
   assert.match(scanBody, /lastSignalScanAt:\s*signalScanCompletedAt\.toISOString\(\)/);
   assert.match(scanBody, /heavyWorkDeferred:\s*true/);
+});
+
+test("signal-options detects pending actionable states after a worker cursor", () => {
+  const states = [
+    {
+      profileId: "profile-1",
+      symbol: "SQQQ",
+      timeframe: "1m",
+      currentSignalDirection: "buy",
+      currentSignalAt: "2026-05-29T16:10:00.000Z",
+      currentSignalPrice: 37.5,
+      fresh: true,
+    },
+    {
+      profileId: "profile-1",
+      symbol: "CRWV",
+      timeframe: "1m",
+      currentSignalDirection: "buy",
+      currentSignalAt: "2026-05-29T16:15:00.000Z",
+      currentSignalPrice: 82.25,
+      fresh: true,
+    },
+  ] as never;
+
+  const hasPending =
+    __signalOptionsAutomationInternalsForTests.hasPendingSignalOptionsActionableState;
+
+  assert.equal(
+    hasPending({ states, universe: new Set(["CRWV"]), startIndex: 1 }),
+    true,
+  );
+  assert.equal(
+    hasPending({ states, universe: new Set(["CRWV"]), startIndex: 2 }),
+    false,
+  );
+  assert.equal(
+    hasPending({ states, universe: new Set(["IONQ"]), startIndex: 0 }),
+    false,
+  );
 });
 
 test("signal-options continues heavy action work under RSS-only API pressure", () => {
