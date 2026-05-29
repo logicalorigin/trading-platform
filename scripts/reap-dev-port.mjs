@@ -90,9 +90,9 @@ function readCgroup(pid) {
 }
 
 const myCgroup = readCgroup(process.pid);
-const runningInsideReplitWorkflow =
-  process.env.REPLIT_MODE === "workflow" ||
-  process.env.PYRUS_REPLIT_RUN === "1";
+// PYRUS_REPLIT_RUN is set by the package script itself, so a normal shell can
+// have it. Only Replit's workflow env can replace a foreign execution scope.
+const runningInsideReplitWorkflow = process.env.REPLIT_MODE === "workflow";
 
 // Returns pids that share our cgroup (safe to reap) vs pids in a different
 // cgroup (usually a separate supervised service).

@@ -84,9 +84,9 @@ directory to define separate Replit app runners.
   `run-local-postgres.sh` support manual workspace-local Postgres fallback
   diagnosis. They are not part of normal Replit app bring-up.
 - `reap-dev-port.mjs` clears same-cgroup dev processes before package dev
-  scripts start. When run by Replit itself (`REPLIT_MODE=workflow`) or by the
-  PYRUS artifact runner (`PYRUS_REPLIT_RUN=1`), it can replace older Replit
-  execution scopes on the same pinned port.
+  scripts start. When run by Replit itself (`REPLIT_MODE=workflow`), it can
+  replace older Replit execution scopes on the same pinned port.
+  `PYRUS_REPLIT_RUN=1` is a tag only, not restart authority.
 - `artifacts/pyrus/scripts/runDevApp.mjs` owns full dev app bring-up. A
   duplicate Replit-owned Run event exits without restart only during the
   startup guard window while the supervisor lock points at a live

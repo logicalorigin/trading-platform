@@ -55,6 +55,10 @@ command. That command runs `pnpm --filter @workspace/pyrus run dev:replit`,
 which tags the startup with `PYRUS_REPLIT_RUN=1`; its supervisor starts both
 dev servers:
 
+`PYRUS_REPLIT_RUN=1` is a tag only, not restart authority. Only
+`REPLIT_MODE=workflow` may replace an existing supervisor or reap a foreign
+execution scope.
+
 - API Server — `LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev` on port `8080`.
 - PYRUS Platform — `pnpm --filter @workspace/pyrus run dev:web` on port `18747`.
 
@@ -284,9 +288,10 @@ PORT=18747 node scripts/reap-dev-port.mjs   # pyrus preview
 
 From a normal shell this command is intentionally conservative: it refuses to
 kill a listener owned by a different Replit cgroup. When Replit runs the same
-script inside an artifact workflow (`REPLIT_MODE=workflow` or `PYRUS_REPLIT_RUN=1`), it may reclaim the pinned port from an older
-Replit execution scope so the Workflow tab's restart action can recover from
-stale app processes.
+script inside an artifact workflow (`REPLIT_MODE=workflow`), it may reclaim the
+pinned port from an older Replit execution scope so the Workflow tab's restart
+action can recover from stale app processes. `PYRUS_REPLIT_RUN=1` is a tag
+only, not restart authority.
 
 `fuser` is unavailable on this NixOS image, and `ps`/`pgrep` may be unavailable
 depending on the shell environment. If the reaper cannot identify the PID, check
@@ -375,13 +380,11 @@ artifact-service workflow when an agent (or the user) runs
 shell — the shell is in its own `shellexec-*.scope`, so the reaper sees the
 workflow as foreign and aborts before SIGTERM/SIGKILL.
 
-If the current process is itself a Replit workflow (`REPLIT_MODE=workflow`) or
-the PYRUS artifact runner (`PYRUS_REPLIT_RUN=1`), the reaper treats that as
-an intentional workflow restart and may reclaim the pinned port from a different
-Replit execution scope. This matters because Replit does not always preserve
-`REPLIT_MODE` in the long-running child server process even though the restart
-task itself has it. Same-cgroup orphans (the original "previous service restart
-left a node behind" case) still get reaped normally.
+If the current process is itself a Replit workflow (`REPLIT_MODE=workflow`),
+the reaper treats that as an intentional workflow restart and may reclaim the
+pinned port from a different Replit execution scope. `PYRUS_REPLIT_RUN=1` is a
+tag only, not restart authority. Same-cgroup orphans (the original "previous
+service restart left a node behind" case) still get reaped normally.
 
 To intentionally restart the live API or web service, use the workflow
 restart action, not `pnpm dev` from a shell.

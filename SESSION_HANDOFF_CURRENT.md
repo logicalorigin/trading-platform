@@ -1,5 +1,97 @@
 # Current Session Handoff
 
+- Last updated: `2026-05-29 14:37 UTC`
+- Current request: finish `$qa` diagnosis of the most recent Replit project container restart / terminal disconnect and terminate the agent action causing it.
+- Current status:
+  - Root cause found and patched: `PYRUS_REPLIT_RUN=1` was incorrectly treated as workflow authority in `artifacts/pyrus/scripts/runDevApp.mjs` and `scripts/reap-dev-port.mjs`.
+  - Why it caused disconnects/restarts: `dev:replit` sets `PYRUS_REPLIT_RUN=1` itself, so a shell/Codex-launched `pnpm --filter @workspace/pyrus run dev:replit` could be classified as a Replit workflow restart and request controlled handoff, sending `SIGTERM` to the live supervisor/API/web process group after the duplicate-start window.
+  - Flight-recorder evidence:
+    - Latest incident: `2026-05-29T14:26:10.743Z`, `web-child-exit`, evidence `web-exit:code=null signal=SIGTERM`.
+    - Earlier explicit smoking gun: `2026-05-29T00:16:41Z`, `replitMode:null`, `pyrusReplitRun:"1"`, `supervisor-handoff-requested`, then `signal-sent` `SIGTERM` to the live supervisor.
+  - Fix applied: only `REPLIT_MODE=workflow` can authorize supervisor handoff or foreign-cgroup port reaping. `PYRUS_REPLIT_RUN=1` is now documented and guarded as a lifecycle tag only, not restart authority.
+  - Added static regression test: `scripts/replit-startup-authority.test.mjs`.
+  - QA report written: `.gstack/qa-reports/qa-report-replit-restart-2026-05-29.md`.
+  - I did not start the app, run `dev:replit`, install toolchains, or reap ports during this pass.
+- Changed files in this pass:
+  - `artifacts/pyrus/scripts/runDevApp.mjs`
+  - `scripts/reap-dev-port.mjs`
+  - `scripts/check-replit-startup-guards.mjs`
+  - `scripts/replit-startup-authority.test.mjs`
+  - `replit.md`
+  - `scripts/README.md`
+  - `.gstack/qa-reports/qa-report-replit-restart-2026-05-29.md`
+  - `SESSION_HANDOFF_CURRENT.md`
+- Validation state:
+  - Passed: `node --test scripts/replit-startup-authority.test.mjs`.
+  - Passed: `pnpm run audit:replit-startup`.
+  - Passed: `git diff --check`.
+  - Passed diagnostic read: `pnpm run diagnose:replit-restarts`; supervisor remained `pid=375`, phase `running`, latest incident stayed the pre-fix `2026-05-29T14:26:10.743Z` event.
+- Next step:
+  - Stop invoking `pnpm --filter @workspace/pyrus run dev:replit`, `pnpm --filter @workspace/pyrus run dev`, `pnpm --filter @workspace/pyrus run dev:web`, or `scripts/reap-dev-port.mjs` from Codex/shell during routine work. Use Replit's default `Run Replit App` entry only when the user intentionally wants a full app restart.
+
+- Last updated: `2026-05-29 14:35 UTC`
+- Current request: audit trading from Wednesday through today because positions appear not to be properly managed.
+- Current status:
+  - Starting a root-cause investigation/audit, treating Wednesday through today as `2026-05-27` through `2026-05-29` unless local trading data establishes a different session boundary.
+  - Preserving the existing dirty worktree from prior Rust/GEX/Replit work; no app startup, Replit workflow, or config change is planned for the audit.
+  - Initial repo scan found existing `5-27 trading analysis.md`, `5-28 trading analysis.md`, and shadow options/account recovery tooling to inspect.
+- Validation state:
+  - Pending. First pass is read-only data/code inspection.
+- Next step:
+  - Locate execution/order/position/account persistence and run the existing review tooling or targeted queries for `2026-05-27` through `2026-05-29`.
+
+- Last updated: `2026-05-29 14:31 UTC`
+- Current request: `$qa` the most recent Replit project container restart and terminal disconnect, determine the action causing it, and stop performing that action.
+- Current status:
+  - Investigation started from the two active threads noted by the user: last-two-days trading audit/chart QA and Rust/Python/Rust-first market-data worker installation/implementation.
+  - Initial evidence from the prior handoff points to an unsafe partial dev-process restart: after QA fix `3379aae`, a shell/Codex attempt to restart only the API child caused the PYRUS dev supervisor to exit; `dev:replit` then correctly refused to relaunch the full app from a Codex-owned shell.
+  - I am not starting the app, installing toolchains, reaping ports, or running any Replit workflow from this investigation shell.
+  - Current dirty source changes are being preserved: Rust worker continuation files, GEX service/test edits, `package.json`, and untracked `scripts/run-market-data-worker.mjs`.
+- Validation state:
+  - Read-only repo/config inspection has started.
+  - No app restart or live browser pass has been attempted in this investigation.
+- Next step:
+  - Inspect PYRUS supervisor/flight-recorder logs, recent Codex command traces, and startup guard scripts to identify the exact command/action that killed or replaced the live Replit supervisor, then patch guardrails if the repo allows that action.
+
+- Last updated: `2026-05-29 14:19 UTC`
+- Current request: run `$qa` on the chart work after committing the current worktree.
+- Current status:
+  - Checkpoint commit created: `6146e00 chore: checkpoint chart qa and ingest work`.
+  - `$qa` chart pass covered Market desktop/phone, Account phone, Flow phone, GEX desktop, and Trade desktop against `http://127.0.0.1:18747/` while the app was running.
+  - Verified chart QA fixes: Account phone has labeled loading panels, Flow/GEX/Trade show route-specific shells instead of the generic PYRUS loader, and GEX/Flow route checks did not emit Recharts zero-size warnings.
+  - Found/fixed one QA issue: zero-gamma overlay requests returned HTTP `503 gex_snapshot_pending`, creating browser console errors on chart pages while DB-first GEX ingest is catching up.
+  - QA fix commit created: `3379aae fix(qa): ISSUE-001 - avoid zero-gamma pending console errors`.
+  - Attempted to restart only the API child to pick up the backend fix, but the dev supervisor exited. `pnpm --filter @workspace/pyrus run dev:replit` correctly refused from a Codex-owned shell and instructed using the default Replit Run App entry.
+  - App is currently not serving on `127.0.0.1:18747`; final live re-verification is blocked until Replit starts the app.
+  - Unrelated Rust ingest continuation edits appeared during QA and are left unstaged/uncommitted: `crates/market-data-worker/src/compute/gex.rs`, `ingest.rs`, `main.rs`, `providers/polygon.rs`, plus overlapping unstaged GEX service/test changes from that work.
+- Validation state:
+  - Passed before QA fix: Pyrus chart source tests/typecheck/bundle audit and browser route checks from the prior chart pass.
+  - Passed for QA fix: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/gex.test.ts`.
+  - Passed for QA fix: `pnpm --filter @workspace/api-server run typecheck`.
+  - Passed for QA fix: `pnpm --filter @workspace/api-server run build`.
+  - Passed: `git diff --check`.
+  - Live post-fix browser recheck is blocked because the app must be restarted via Replit Run App.
+- Next step:
+  - Start the default Replit `Run Replit App` entry, then re-run the zero-gamma endpoint check and the chart route browser pass. If the endpoint now returns `200` with an empty overlay while pending, finish the QA report and decide whether to separately tackle Trade chart readiness/performance.
+
+- Last updated: `2026-05-29 14:16 UTC`
+- Current request: implement the detailed Rust-first market-data ingest migration continuation plan.
+- Current status:
+  - Resuming the Rust-first ingest work on top of the existing dirty chart-QA/performance worktree; preserve unrelated frontend/chart files, including `artifacts/pyrus/src/features/charting/MeasuredChartFrame.jsx` and chart QA changes.
+  - Existing Rust ingest scaffold is present in `Cargo.toml`, `Cargo.lock`, and `crates/market-data-worker/`; DB-first GEX facade and tests are present in `artifacts/api-server/src/services/gex.ts`, `gex.test.ts`, and `market-data-ingest.ts`.
+  - Implemented the missing `stock_snapshot` slice: Rust Massive/Polygon-compatible stock snapshot fetch/mapping, `quote_cache` persistence, worker `once`/queue processing support, and GEX refresh queue ordering (`stock_snapshot` priority 1, `option_chain_snapshot` priority 2, `gex_snapshot` priority 3).
+  - Current environment exposes `DATABASE_URL`, PG env vars, and `MASSIVE_API_KEY`; target DB for this pass is the current Replit DB.
+  - Normal Drizzle push was aborted because it wanted to drop unrelated `account_overview_snapshots` data; a filtered push failed on unrelated `pine_scripts` drift after creating/verifying `quote_cache`, `bar_cache`, and `option_chain_snapshots`.
+  - Applied only the remaining missing market-data tables/indexes manually with `CREATE TABLE IF NOT EXISTS`: `market_data_ingest_jobs`, `provider_request_log`, `gex_snapshots`, and `flow_summaries`.
+  - Rust worker doctor passed through Nix (`queued_table_rows=0`). The package script still fails in this shell because `cargo` is not on PATH outside Nix.
+  - Default DB watchlist symbols start with `SPY`, `NVDA`, `DIA`, `AAPL`, `MSFT`, `TSLA`, `TQQQ`, `SQQQ`; live smoke will use `SPY` and `NVDA`.
+  - Replit startup config is not planned to be touched.
+- Validation state:
+  - Pre-implementation revalidation passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/gex.test.ts` (`16/16`), `pnpm exec tsc --build lib/db`, `nix-shell -p cargo rustc pkg-config openssl --run 'cargo test -p market-data-worker'` (`3/3`), and `git diff --check`.
+  - Post-implementation focused validation passed so far: GEX service tests (`16/16`), `pnpm exec tsc --build lib/db`, Rust worker tests (`7/7`), and `git diff --check`.
+- Next step:
+  - Run live one-shot worker smoke for `SPY` and `NVDA`: `stock_snapshot`, `option_chain_snapshot`, then `gex_snapshot`.
+
 - Last updated: `2026-05-29 14:06 UTC`
 - Current request: commit the current worktree first, then run `$qa` on the chart work.
 - Current status:

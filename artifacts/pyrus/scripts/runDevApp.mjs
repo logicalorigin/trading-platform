@@ -39,9 +39,10 @@ const supervisorTakeoverGraceMs = Number(
 const duplicateRestartAfterMs = Number(
   process.env.PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS || "30000",
 );
-const runningInsideReplitWorkflow =
-  process.env.REPLIT_MODE === "workflow" ||
-  process.env.PYRUS_REPLIT_RUN === "1";
+// PYRUS_REPLIT_RUN is a tag set by dev:replit. It is not authority to
+// replace a live supervisor because any shell can set it by running that
+// package script. Only Replit's workflow env may request handoff/reaping.
+const runningInsideReplitWorkflow = process.env.REPLIT_MODE === "workflow";
 const forceSupervisorTakeover = process.env.PYRUS_DEV_FORCE_RESTART === "1";
 const duplicateCheckOnly = process.env.PYRUS_DEV_DUPLICATE_CHECK_ONLY === "1";
 

@@ -214,16 +214,18 @@ check(
 const reaper = read("scripts/reap-dev-port.mjs");
 check(
   reaper.includes('process.env.REPLIT_MODE === "workflow"') &&
-    reaper.includes('process.env.PYRUS_REPLIT_RUN === "1"') &&
+    !reaper.includes('process.env.REPLIT_MODE === "workflow" ||') &&
+    reaper.includes("Current PYRUS_REPLIT_RUN") &&
     reaper.includes("another Replit execution scope") &&
     reaper.includes("Shell-launched dev commands must not kill"),
-  "reap-dev-port.mjs must allow Replit workflow/artifact restarts to replace previous Replit execution scopes while preserving shell safety.",
+  "reap-dev-port.mjs must allow only true Replit workflow restarts to replace previous Replit execution scopes while preserving shell safety.",
 );
 
 const replitDocs = read("replit.md");
 check(
   replitDocs.includes("pnpm --filter @workspace/pyrus run dev:replit") &&
     replitDocs.includes("PYRUS_REPLIT_RUN=1") &&
+    replitDocs.includes("tag only, not restart authority") &&
     replitDocs.includes("PYRUS_DEV_FORCE_RESTART=1") &&
     replitDocs.includes("PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS") &&
     replitDocs.includes("intentional Run-button restart") &&
@@ -236,6 +238,7 @@ const scriptsReadme = read("scripts/README.md");
 check(
   scriptsReadme.includes("REPLIT_MODE=workflow") &&
     scriptsReadme.includes("PYRUS_REPLIT_RUN=1") &&
+    scriptsReadme.includes("tag only, not restart authority") &&
     scriptsReadme.includes("PYRUS_DEV_FORCE_RESTART=1") &&
     scriptsReadme.includes("PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS") &&
     scriptsReadme.includes("intentional Run-button restart") &&
@@ -271,7 +274,8 @@ check(
     pyrusRunner.includes("readPreviousLifecycleState") &&
     pyrusRunner.includes("supervisor-shutdown-complete") &&
     pyrusRunner.includes('process.env.REPLIT_MODE === "workflow"') &&
-    pyrusRunner.includes('process.env.PYRUS_REPLIT_RUN === "1"') &&
+    !pyrusRunner.includes('process.env.REPLIT_MODE === "workflow" ||') &&
+    pyrusRunner.includes("not authority to") &&
     pyrusRunner.includes("launchedByCodexAgent") &&
     pyrusRunner.includes("refusing to start the full app supervisor from a Codex-owned shell") &&
     pyrusRunner.includes("controlled handoff") &&
