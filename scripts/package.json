@@ -13,6 +13,7 @@
     "universe:hydrate:ibkr": "tsx ./src/hydrate-universe-catalog-ibkr.ts",
     "db:storage:audit": "tsx ./src/db-storage.ts audit",
     "db:storage:cleanup": "tsx ./src/db-storage.ts cleanup",
+    "db:market-data:audit": "tsx ./src/market-data-schema-audit.ts",
     "db:accounts:recover": "tsx ./src/account-data-recovery.ts",
     "shadow:polygon-options-audit": "tsx ./src/shadow-polygon-options-audit.ts",
     "shadow:management-review": "tsx ./src/shadow-options-management-review.ts",

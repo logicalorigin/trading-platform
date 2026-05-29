@@ -410,7 +410,18 @@ test("GEX dashboard serves stale persisted data and queues refresh", async () =>
   assert.match(data.source.message || "", /persisted GEX snapshot/);
   assert.deepEqual(
     enqueued.map((entry) => entry.kind).sort(),
-    ["gex_snapshot", "option_chain_snapshot"],
+    ["gex_snapshot", "option_chain_snapshot", "stock_snapshot"],
+  );
+  assert.deepEqual(
+    enqueued
+      .slice()
+      .sort((left, right) => left.priority - right.priority)
+      .map((entry) => [entry.kind, entry.priority]),
+    [
+      ["stock_snapshot", 1],
+      ["option_chain_snapshot", 2],
+      ["gex_snapshot", 3],
+    ],
   );
 });
 
@@ -433,7 +444,18 @@ test("GEX dashboard queues ingest and reports pending when no persisted snapshot
   );
   assert.deepEqual(
     enqueued.map((entry) => entry.kind).sort(),
-    ["gex_snapshot", "option_chain_snapshot"],
+    ["gex_snapshot", "option_chain_snapshot", "stock_snapshot"],
+  );
+  assert.deepEqual(
+    enqueued
+      .slice()
+      .sort((left, right) => left.priority - right.priority)
+      .map((entry) => [entry.kind, entry.priority]),
+    [
+      ["stock_snapshot", 1],
+      ["option_chain_snapshot", 2],
+      ["gex_snapshot", 3],
+    ],
   );
 });
 
@@ -464,7 +486,7 @@ test("GEX zero-gamma overlay returns empty data while persisted snapshot is pend
   );
   assert.deepEqual(
     enqueued.map((entry) => entry.kind).sort(),
-    ["gex_snapshot", "option_chain_snapshot"],
+    ["gex_snapshot", "option_chain_snapshot", "stock_snapshot"],
   );
 });
 

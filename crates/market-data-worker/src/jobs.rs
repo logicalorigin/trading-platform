@@ -10,32 +10,55 @@ pub struct IngestJob {
     pub id: String,
     pub kind: String,
     pub symbol: String,
+    pub lease_owner: String,
     pub attempt_count: i32,
     pub max_attempts: i32,
     #[allow(dead_code)]
     pub payload: Option<Value>,
 }
 
-pub async fn claim_next_job(
-    pool: &PgPool,
-    config: &WorkerConfig,
-) -> Result<Option<IngestJob>> {
+pub async fn claim_next_job(pool: &PgPool, config: &WorkerConfig) -> Result<Option<IngestJob>> {
     let lease_expires_at = Utc::now() + Duration::milliseconds(config.job_lease_ms);
     let job = sqlx::query_as::<_, IngestJob>(
         r#"
         with next_job as (
-          select id
-          from market_data_ingest_jobs
-          where
+          select candidate.id
+          from market_data_ingest_jobs candidate
+          where (
             (
-              status = 'queued'
-              and (next_run_at is null or next_run_at <= now())
+              candidate.status = 'queued'
+              and (candidate.next_run_at is null or candidate.next_run_at <= now())
             )
             or (
-              status = 'running'
-              and lease_expires_at < now()
+              candidate.status = 'running'
+              and candidate.lease_expires_at < now()
             )
-          order by priority asc, created_at asc
+          )
+            and (
+              candidate.kind <> 'gex_snapshot'
+              or coalesce(candidate.payload->>'dedupeBucket', '') = ''
+              or (
+                exists (
+                  select 1
+                  from market_data_ingest_jobs prerequisite
+                  where prerequisite.symbol = candidate.symbol
+                    and prerequisite.kind = 'stock_snapshot'
+                    and prerequisite.status = 'completed'
+                    and coalesce(prerequisite.payload->>'dedupeBucket', '') =
+                      coalesce(candidate.payload->>'dedupeBucket', '')
+                )
+                and exists (
+                  select 1
+                  from market_data_ingest_jobs prerequisite
+                  where prerequisite.symbol = candidate.symbol
+                    and prerequisite.kind = 'option_chain_snapshot'
+                    and prerequisite.status = 'completed'
+                    and coalesce(prerequisite.payload->>'dedupeBucket', '') =
+                      coalesce(candidate.payload->>'dedupeBucket', '')
+                )
+              )
+            )
+          order by candidate.priority asc, candidate.created_at asc
           for update skip locked
           limit 1
         )
@@ -52,6 +75,7 @@ pub async fn claim_next_job(
           jobs.id::text as id,
           jobs.kind,
           jobs.symbol,
+          jobs.lease_owner,
           jobs.attempt_count,
           jobs.max_attempts,
           jobs.payload
@@ -64,23 +88,29 @@ pub async fn claim_next_job(
     Ok(job)
 }
 
-#[allow(dead_code)]
-pub async fn heartbeat_job(pool: &PgPool, job_id: &str) -> Result<()> {
-    sqlx::query(
+pub async fn heartbeat_job(pool: &PgPool, job: &IngestJob, lease_ms: i64) -> Result<bool> {
+    let result = sqlx::query(
         r#"
         update market_data_ingest_jobs
-        set last_heartbeat_at = now(), updated_at = now()
-        where id = $1::uuid and status = 'running'
+        set
+          lease_expires_at = now() + ($3::bigint * interval '1 millisecond'),
+          last_heartbeat_at = now(),
+          updated_at = now()
+        where id = $1::uuid
+          and lease_owner = $2
+          and status = 'running'
         "#,
     )
-    .bind(job_id)
+    .bind(&job.id)
+    .bind(&job.lease_owner)
+    .bind(lease_ms)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
-pub async fn complete_job(pool: &PgPool, job_id: &str) -> Result<()> {
-    sqlx::query(
+pub async fn complete_job(pool: &PgPool, job: &IngestJob) -> Result<bool> {
+    let result = sqlx::query(
         r#"
         update market_data_ingest_jobs
         set
@@ -91,12 +121,15 @@ pub async fn complete_job(pool: &PgPool, job_id: &str) -> Result<()> {
           last_error = null,
           updated_at = now()
         where id = $1::uuid
+          and lease_owner = $2
+          and status = 'running'
         "#,
     )
-    .bind(job_id)
+    .bind(&job.id)
+    .bind(&job.lease_owner)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn fail_job(
@@ -104,11 +137,11 @@ pub async fn fail_job(
     job: &IngestJob,
     message: &str,
     transient: bool,
-) -> Result<()> {
+) -> Result<bool> {
     if transient && job.attempt_count < job.max_attempts {
         let delay_seconds = 2_i64.pow(job.attempt_count.max(1).min(6) as u32);
         let next_run_at: DateTime<Utc> = Utc::now() + Duration::seconds(delay_seconds);
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             update market_data_ingest_jobs
             set
@@ -119,15 +152,19 @@ pub async fn fail_job(
               last_error = $3,
               updated_at = now()
             where id = $1::uuid
+              and lease_owner = $4
+              and status = 'running'
             "#,
         )
         .bind(&job.id)
         .bind(next_run_at)
         .bind(message)
+        .bind(&job.lease_owner)
         .execute(pool)
         .await?;
+        return Ok(result.rows_affected() > 0);
     } else {
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             update market_data_ingest_jobs
             set
@@ -137,12 +174,15 @@ pub async fn fail_job(
               last_error = $2,
               updated_at = now()
             where id = $1::uuid
+              and lease_owner = $3
+              and status = 'running'
             "#,
         )
         .bind(&job.id)
         .bind(message)
+        .bind(&job.lease_owner)
         .execute(pool)
         .await?;
+        return Ok(result.rows_affected() > 0);
     }
-    Ok(())
 }

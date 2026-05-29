@@ -11,6 +11,9 @@ pub async fn run_doctor(config: &WorkerConfig) -> Result<()> {
         .fetch_one(&pool)
         .await?;
     let count: i64 = row.try_get("count")?;
-    info!(queued_table_rows = count, "market-data worker database check passed");
+    info!(
+        queued_table_rows = count,
+        "market-data worker database check passed"
+    );
     Ok(())
 }

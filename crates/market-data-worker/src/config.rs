@@ -6,6 +6,12 @@ pub struct WorkerConfig {
     pub worker_id: String,
     pub poll_interval_ms: u64,
     pub job_lease_ms: i64,
+    pub option_chain_max_pages: usize,
+    pub quote_retention_days: i64,
+    pub option_chain_retention_days: i64,
+    pub bar_retention_days: i64,
+    pub gex_retention_days: i64,
+    pub provider_log_retention_days: i64,
     pub market_data_provider: Option<MarketDataProviderConfig>,
 }
 
@@ -21,14 +27,22 @@ impl WorkerConfig {
         let database_url = std::env::var("DATABASE_URL")
             .or_else(|_| build_pg_env_database_url())
             .map_err(|_| anyhow!("DATABASE_URL or PG* database env must be set"))?;
-        let worker_id = std::env::var("MARKET_DATA_WORKER_ID").unwrap_or_else(|_| {
-            format!("market-data-worker:{}", std::process::id())
-        });
+        let worker_id = std::env::var("MARKET_DATA_WORKER_ID")
+            .unwrap_or_else(|_| format!("market-data-worker:{}", std::process::id()));
         Ok(Self {
             database_url,
             worker_id,
             poll_interval_ms: read_u64_env("MARKET_DATA_WORKER_POLL_MS", 3_000),
             job_lease_ms: read_i64_env("MARKET_DATA_JOB_LEASE_MS", 60_000),
+            option_chain_max_pages: read_usize_env("MARKET_DATA_OPTION_CHAIN_MAX_PAGES", 80),
+            quote_retention_days: read_i64_env("MARKET_DATA_QUOTE_RETENTION_DAYS", 7),
+            option_chain_retention_days: read_i64_env("MARKET_DATA_OPTION_CHAIN_RETENTION_DAYS", 7),
+            bar_retention_days: read_i64_env("MARKET_DATA_BAR_RETENTION_DAYS", 30),
+            gex_retention_days: read_i64_env("MARKET_DATA_GEX_RETENTION_DAYS", 30),
+            provider_log_retention_days: read_i64_env(
+                "MARKET_DATA_PROVIDER_LOG_RETENTION_DAYS",
+                14,
+            ),
             market_data_provider: read_market_data_provider_config(),
         })
     }
@@ -50,6 +64,14 @@ fn read_i64_env(name: &str, fallback: i64) -> i64 {
         .unwrap_or(fallback)
 }
 
+fn read_usize_env(name: &str, fallback: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(fallback)
+}
+
 fn build_pg_env_database_url() -> Result<String, std::env::VarError> {
     let host = std::env::var("PGHOST")?;
     let database = std::env::var("PGDATABASE")?;
@@ -65,9 +87,11 @@ fn build_pg_env_database_url() -> Result<String, std::env::VarError> {
 }
 
 fn first_env(names: &[&str]) -> Option<String> {
-    names
-        .iter()
-        .find_map(|name| std::env::var(name).ok().filter(|value| !value.trim().is_empty()))
+    names.iter().find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    })
 }
 
 fn read_market_data_provider_config() -> Option<MarketDataProviderConfig> {

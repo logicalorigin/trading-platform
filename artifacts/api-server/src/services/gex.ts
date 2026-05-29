@@ -18,6 +18,7 @@ import {
 import {
   enqueueMarketDataJob,
   getLatestGexSnapshot,
+  isMarketDataIngestDatabaseConfigured,
   isMarketDataIngestConfigured,
   type EnqueueMarketDataJobInput,
   type LatestGexSnapshot,
@@ -237,7 +238,7 @@ function shouldUsePersistedGexSnapshots(): boolean {
   if (gexPlatformDataClientFactory || gexMarketDataClientFactory) {
     return false;
   }
-  return isMarketDataIngestConfigured();
+  return isMarketDataIngestDatabaseConfigured();
 }
 
 function getGexIngestFacade(): {
@@ -263,16 +264,22 @@ async function queueGexSnapshotRefresh(
   const facade = getGexIngestFacade();
   const baseInput = {
     symbol: ticker,
-    priority: 2,
     payload: { reason, dedupeBucket },
-  } satisfies Pick<EnqueueMarketDataJobInput, "symbol" | "priority" | "payload">;
+  } satisfies Pick<EnqueueMarketDataJobInput, "symbol" | "payload">;
   await Promise.all([
     facade.enqueueMarketDataJob({
       ...baseInput,
+      priority: 1,
+      kind: "stock_snapshot",
+    }),
+    facade.enqueueMarketDataJob({
+      ...baseInput,
+      priority: 2,
       kind: "option_chain_snapshot",
     }),
     facade.enqueueMarketDataJob({
       ...baseInput,
+      priority: 3,
       kind: "gex_snapshot",
     }),
   ]);

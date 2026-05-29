@@ -27,7 +27,16 @@ pub struct GexContract {
     pub multiplier: f64,
     pub shares_per_contract: f64,
     pub volume: Option<f64>,
+    pub source: String,
     pub updated_at: Option<chrono::DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct SpotQuote {
+    spot: f64,
+    change: Option<f64>,
+    source: String,
+    as_of: chrono::DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,6 +58,7 @@ pub fn contract_gex(contract: &GexContract, spot: f64) -> Option<f64> {
         OptionRight::Call => 1.0,
         OptionRight::Put => -1.0,
     };
+    // Approximate dollar gamma exposure for a 1% underlying move.
     Some(sign * gamma * open_interest * contract.multiplier * spot * spot * 0.01)
 }
 
@@ -79,13 +89,13 @@ pub async fn compute_and_persist_gex_snapshot(
         return Err(anyhow!("symbol is required"));
     }
 
-    let spot = load_latest_spot(pool, &symbol).await?;
+    let spot_quote = load_latest_spot(pool, &symbol).await?;
     let contracts = load_latest_option_snapshots(pool, &symbol).await?;
     if contracts.is_empty() {
         return Err(anyhow!("no option-chain snapshots found for {symbol}"));
     }
 
-    let summary = summarize_gex(&symbol, spot, &contracts);
+    let summary = summarize_gex(&symbol, spot_quote.spot, &contracts);
     if summary.usable_option_count == 0 {
         return Err(anyhow!("no usable option contracts found for {symbol}"));
     }
@@ -101,7 +111,14 @@ pub async fn compute_and_persist_gex_snapshot(
     } else {
         None
     };
-    let payload = build_gex_payload(&summary, &contracts, computed_at, source_status, source_message);
+    let payload = build_gex_payload(
+        &summary,
+        &contracts,
+        &spot_quote,
+        computed_at,
+        source_status,
+        source_message,
+    );
 
     sqlx::query(
         r#"
@@ -145,10 +162,14 @@ pub async fn compute_and_persist_gex_snapshot(
     Ok(summary)
 }
 
-async fn load_latest_spot(pool: &PgPool, symbol: &str) -> Result<f64> {
+async fn load_latest_spot(pool: &PgPool, symbol: &str) -> Result<SpotQuote> {
     let row = sqlx::query(
         r#"
-        select last::float8 as spot
+        select
+          last::float8 as spot,
+          change::float8 as change,
+          source,
+          as_of
         from quote_cache
         where symbol = $1 and last is not null
         order by as_of desc
@@ -158,13 +179,19 @@ async fn load_latest_spot(pool: &PgPool, symbol: &str) -> Result<f64> {
     .bind(symbol)
     .fetch_optional(pool)
     .await?;
+    let row = row.ok_or_else(|| anyhow!("no latest spot quote found for {symbol}"))?;
     let spot = row
-        .and_then(|row| row.try_get::<Option<f64>, _>("spot").ok().flatten())
+        .try_get::<Option<f64>, _>("spot")?
         .ok_or_else(|| anyhow!("no latest spot quote found for {symbol}"))?;
     if spot <= 0.0 || !spot.is_finite() {
         return Err(anyhow!("latest spot quote is invalid for {symbol}"));
     }
-    Ok(spot)
+    Ok(SpotQuote {
+        spot,
+        change: row.try_get("change")?,
+        source: row.try_get("source")?,
+        as_of: row.try_get("as_of")?,
+    })
 }
 
 async fn load_latest_option_snapshots(pool: &PgPool, symbol: &str) -> Result<Vec<GexContract>> {
@@ -181,12 +208,13 @@ async fn load_latest_option_snapshots(pool: &PgPool, symbol: &str) -> Result<Vec
             snap.gamma::float8 as gamma,
             snap.open_interest::float8 as open_interest,
             snap.volume::float8 as volume,
+            snap.source,
             snap.as_of,
             contract.polygon_ticker,
             contract.provider_contract_id,
             contract.expiration_date::text as expiration_date,
             contract.strike::float8 as strike,
-            contract.right::text as right,
+            contract."right"::text as right,
             contract.multiplier,
             contract.shares_per_contract
           from option_chain_snapshots snap
@@ -226,6 +254,7 @@ async fn load_latest_option_snapshots(pool: &PgPool, symbol: &str) -> Result<Vec
                 multiplier: row.try_get::<i32, _>("multiplier")? as f64,
                 shares_per_contract: row.try_get::<i32, _>("shares_per_contract")? as f64,
                 volume: row.try_get("volume")?,
+                source: row.try_get("source")?,
                 updated_at: row.try_get("as_of")?,
             })
         })
@@ -235,15 +264,34 @@ async fn load_latest_option_snapshots(pool: &PgPool, symbol: &str) -> Result<Vec
 fn build_gex_payload(
     summary: &GexSummary,
     contracts: &[GexContract],
+    spot_quote: &SpotQuote,
     computed_at: chrono::DateTime<Utc>,
     source_status: &str,
     source_message: Option<&str>,
 ) -> serde_json::Value {
+    let provider = resolve_payload_provider(spot_quote, contracts);
+    let chain_updated_at = contracts
+        .iter()
+        .filter_map(|contract| contract.updated_at)
+        .max();
+    let with_gamma = contracts
+        .iter()
+        .filter(|contract| contract.gamma.is_some())
+        .count();
+    let with_open_interest = contracts
+        .iter()
+        .filter(|contract| contract.open_interest.is_some())
+        .count();
+    let with_implied_volatility = contracts
+        .iter()
+        .filter(|contract| contract.implied_volatility.is_some())
+        .count();
     let options: Vec<_> = contracts
         .iter()
         .filter(|contract| contract_gex(contract, summary.spot).is_some())
         .map(|contract| {
-            let expiration = chrono::NaiveDate::parse_from_str(&contract.expiration_date, "%Y-%m-%d").ok();
+            let expiration =
+                chrono::NaiveDate::parse_from_str(&contract.expiration_date, "%Y-%m-%d").ok();
             json!({
                 "strike": contract.strike,
                 "expireYear": expiration.map(|date| date.year()).unwrap_or_default(),
@@ -279,12 +327,14 @@ fn build_gex_payload(
             "industry": "",
             "marketCap": null,
             "exchangeShortName": "",
-            "country": "US",
+            "country": "",
             "isEtf": false,
             "isFund": false
         },
         "profile": {
             "price": summary.spot,
+            "changes": spot_quote.change.unwrap_or_default(),
+            "range": format!("{:.2}-{:.2}", summary.spot, summary.spot),
             "dayLow": summary.spot,
             "dayHigh": summary.spot,
             "yearLow": null,
@@ -300,15 +350,15 @@ fn build_gex_payload(
         "flowContext": null,
         "flowContextStatus": "unavailable",
         "source": {
-            "provider": "massive",
+            "provider": provider,
             "status": source_status,
             "optionCount": summary.option_count,
             "usableOptionCount": summary.usable_option_count,
-            "withGamma": summary.usable_option_count,
-            "withOpenInterest": summary.usable_option_count,
-            "withImpliedVolatility": contracts.iter().filter(|contract| contract.implied_volatility.is_some()).count(),
-            "quoteUpdatedAt": computed_at.to_rfc3339(),
-            "chainUpdatedAt": computed_at.to_rfc3339(),
+            "withGamma": with_gamma,
+            "withOpenInterest": with_open_interest,
+            "withImpliedVolatility": with_implied_volatility,
+            "quoteUpdatedAt": spot_quote.as_of.to_rfc3339(),
+            "chainUpdatedAt": chain_updated_at.map(|date| date.to_rfc3339()),
             "flowStatus": "unavailable",
             "flowEventCount": 0,
             "classifiedFlowEventCount": 0,
@@ -318,6 +368,17 @@ fn build_gex_payload(
             "message": source_message
         }
     })
+}
+
+fn resolve_payload_provider(spot_quote: &SpotQuote, contracts: &[GexContract]) -> String {
+    let option_source = contracts
+        .iter()
+        .map(|contract| contract.source.as_str())
+        .find(|source| !source.trim().is_empty());
+    option_source
+        .unwrap_or(spot_quote.source.as_str())
+        .trim()
+        .to_string()
 }
 
 #[cfg(test)]
@@ -341,6 +402,7 @@ mod tests {
             multiplier: 100.0,
             shares_per_contract: 100.0,
             volume: Some(10.0),
+            source: "massive".into(),
             updated_at: None,
         }
     }
@@ -370,5 +432,98 @@ mod tests {
         assert_eq!(summary.option_count, 3);
         assert_eq!(summary.usable_option_count, 1);
         assert_eq!(summary.net_gex, 2_000.0);
+    }
+
+    #[test]
+    fn treats_zero_gamma_and_zero_open_interest_as_usable_zero_exposure() {
+        let contracts = vec![
+            contract(OptionRight::Call, Some(0.0), Some(10.0)),
+            contract(OptionRight::Put, Some(0.01), Some(0.0)),
+        ];
+        let summary = summarize_gex("SPY", 100.0, &contracts);
+
+        assert_eq!(summary.option_count, 2);
+        assert_eq!(summary.usable_option_count, 2);
+        assert_eq!(summary.net_gex, 0.0);
+    }
+
+    #[test]
+    fn aggregates_exposure_across_strikes_and_expirations() {
+        let contracts = vec![
+            GexContract {
+                expiration_date: "2026-05-15".into(),
+                strike: 100.0,
+                ..contract(OptionRight::Call, Some(0.02), Some(10.0))
+            },
+            GexContract {
+                expiration_date: "2026-06-19".into(),
+                strike: 110.0,
+                ..contract(OptionRight::Call, Some(0.03), Some(5.0))
+            },
+            GexContract {
+                expiration_date: "2026-06-19".into(),
+                strike: 90.0,
+                ..contract(OptionRight::Put, Some(0.01), Some(20.0))
+            },
+        ];
+        let summary = summarize_gex("SPY", 100.0, &contracts);
+
+        assert_eq!(summary.option_count, 3);
+        assert_eq!(summary.usable_option_count, 3);
+        assert_eq!(summary.net_gex, 1_500.0);
+    }
+
+    #[test]
+    fn gex_payload_uses_actual_provider_timestamps_and_field_counts() {
+        let updated_at = chrono::DateTime::parse_from_rfc3339("2026-05-08T15:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let computed_at = chrono::DateTime::parse_from_rfc3339("2026-05-08T15:31:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let spot_quote = SpotQuote {
+            spot: 100.0,
+            change: Some(1.25),
+            source: "polygon".into(),
+            as_of: updated_at,
+        };
+        let contracts = vec![
+            GexContract {
+                source: "polygon".into(),
+                updated_at: Some(updated_at),
+                ..contract(OptionRight::Call, Some(0.02), Some(10.0))
+            },
+            GexContract {
+                source: "polygon".into(),
+                implied_volatility: None,
+                updated_at: Some(updated_at),
+                ..contract(OptionRight::Put, None, Some(10.0))
+            },
+        ];
+        let summary = summarize_gex("SPY", 100.0, &contracts);
+        let payload = build_gex_payload(
+            &summary,
+            &contracts,
+            &spot_quote,
+            computed_at,
+            "partial",
+            None,
+        );
+
+        assert_eq!(payload["source"]["provider"], "polygon");
+        assert_eq!(payload["source"]["withGamma"], 1);
+        assert_eq!(payload["source"]["withOpenInterest"], 2);
+        assert_eq!(payload["source"]["withImpliedVolatility"], 1);
+        assert_eq!(
+            payload["source"]["quoteUpdatedAt"],
+            "2026-05-08T15:30:00+00:00"
+        );
+        assert_eq!(
+            payload["source"]["chainUpdatedAt"],
+            "2026-05-08T15:30:00+00:00"
+        );
+        assert_eq!(payload["tickerDetails"]["country"], "");
+        assert_eq!(payload["profile"]["changes"], 1.25);
+        assert_eq!(payload["profile"]["range"], "100.00-100.00");
     }
 }
