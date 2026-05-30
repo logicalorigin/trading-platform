@@ -710,6 +710,150 @@ const RiskMetric = ({ label, value, tone = CSS_COLOR.text }) => (
   </div>
 );
 
+const asArray = (value) => (Array.isArray(value) ? value : []);
+
+export const getGreekScenarioSummary = (greekScenarios) => {
+  if (!greekScenarios?.enabled) {
+    return null;
+  }
+
+  const result = greekScenarios.result || {};
+  const scenarios = asArray(result.scenarios);
+  const flags = asArray(result.managementFlags);
+  const sortedScenarios = scenarios
+    .map((scenario) => ({
+      ...scenario,
+      estimatedPnl: finiteMetric(scenario?.estimatedPnl) ?? 0,
+    }))
+    .sort((left, right) => left.estimatedPnl - right.estimatedPnl);
+
+  return {
+    status: greekScenarios.status || "unavailable",
+    warning: greekScenarios.warning || null,
+    scenarioCount:
+      finiteMetric(result.scenarioCount) ?? sortedScenarios.length,
+    flags,
+    worst: sortedScenarios[0] ?? null,
+    best: sortedScenarios[sortedScenarios.length - 1] ?? null,
+  };
+};
+
+const scenarioLabel = (scenario) => {
+  if (!scenario) {
+    return "n/a";
+  }
+  const spot = finiteMetric(scenario.spotShock);
+  const iv = finiteMetric(scenario.ivShockVolPoints);
+  const days = finiteMetric(scenario.dayOffset);
+  return [
+    spot == null ? null : `${formatAccountPercent(spot * 100, 0, false)} spot`,
+    iv == null ? null : `${iv > 0 ? "+" : ""}${formatNumber(iv, 0)} vol`,
+    days == null ? null : `${formatNumber(days, 0)}d`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+};
+
+const GreekScenarioStrip = ({ greekScenarios, currency, maskValues }) => {
+  const summary = getGreekScenarioSummary(greekScenarios);
+  if (!summary) {
+    return null;
+  }
+
+  const flagRows = summary.flags.slice(0, 3);
+  const statusTone =
+    summary.status === "completed"
+      ? CSS_COLOR.green
+      : summary.status === "empty"
+        ? CSS_COLOR.textDim
+        : CSS_COLOR.amber;
+
+  return (
+    <div
+      data-testid="portfolio-exposure-greek-scenarios"
+      style={{
+        display: "grid",
+        gap: sp(3),
+        paddingTop: sp(2),
+        borderTop: `1px solid ${CSS_COLOR.border}`,
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) auto",
+          gap: sp(4),
+          alignItems: "center",
+        }}
+      >
+        <div style={getSectionLabelStyle()}>Greek Scenarios</div>
+        <div style={{ ...mutedLabelStyle, color: statusTone }}>
+          {summary.status === "completed"
+            ? `${formatNumber(summary.scenarioCount, 0)} cases`
+            : summary.status}
+        </div>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(auto-fit, minmax(${dim(68)}px, 1fr))`,
+          gap: sp(3),
+          minWidth: 0,
+        }}
+      >
+        <RiskMetric
+          label="Worst"
+          value={formatAccountMoney(summary.worst?.estimatedPnl, currency, true, maskValues)}
+          tone={toneForValue(summary.worst?.estimatedPnl)}
+        />
+        <RiskMetric
+          label="Best"
+          value={formatAccountMoney(summary.best?.estimatedPnl, currency, true, maskValues)}
+          tone={toneForValue(summary.best?.estimatedPnl)}
+        />
+        <RiskMetric
+          label="Worst Shock"
+          value={scenarioLabel(summary.worst)}
+          tone={CSS_COLOR.textDim}
+        />
+      </div>
+      {flagRows.length ? (
+        <div style={{ display: "grid", gap: sp(2) }}>
+          {flagRows.map((flag) => (
+            <div
+              key={`${flag.symbol}:${asArray(flag.reasons).join(",")}`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr) auto",
+                gap: sp(5),
+                color: CSS_COLOR.textSec,
+                fontSize: textSize("body"),
+                fontFamily: T.sans,
+              }}
+            >
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {flag.symbol || "Option position"}
+              </span>
+              <span
+                style={{
+                  color: CSS_COLOR.amber,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {asArray(flag.reasons).join(" · ")}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : summary.warning ? (
+        <div style={getCompactTextStyle()}>{summary.warning}</div>
+      ) : null}
+    </div>
+  );
+};
+
 const NotionalExposureStrip = ({ notional, currency, maskValues }) => {
   if (!notional) {
     return null;
@@ -998,6 +1142,14 @@ export const PortfolioExposurePanel = ({
           {isPhone ? null : (
             <NotionalExposureStrip
               notional={riskModel?.notional}
+              currency={currency}
+              maskValues={maskValues}
+            />
+          )}
+
+          {isPhone ? null : (
+            <GreekScenarioStrip
+              greekScenarios={riskModel?.greekScenarios}
               currency={currency}
               maskValues={maskValues}
             />

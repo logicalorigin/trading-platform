@@ -200,6 +200,7 @@ import {
   getRuntimeBridgeHealthState,
 } from "./platform-bridge-health";
 import { getRuntimeMarketDataDiagnostics } from "./platform-market-data-diagnostics";
+import { getPythonComputeDiagnostics } from "./python-compute";
 import { getSseStreamDiagnostics } from "./sse-stream-diagnostics";
 export { __setIbkrBridgeClientFactoryForTests } from "./platform-bridge-health";
 export type { IbkrRuntimeStreamState } from "./platform-runtime-status";
@@ -3047,6 +3048,7 @@ export async function getRuntimeDiagnostics() {
       },
       resourceCaches,
       accountPage: getAccountPageStreamDiagnostics(),
+      pythonCompute: getPythonComputeDiagnostics(),
       eventLoopDelayMs: {
         mean: nsToMs(eventLoopDelay.mean),
         max: nsToMs(eventLoopDelay.max),

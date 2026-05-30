@@ -73,7 +73,15 @@ import {
   type AccountRange,
 } from "./account-ranges";
 import { buildPositionQuoteFromSnapshot } from "./account-position-model";
-import { buildNotionalExposure } from "./account-risk-model";
+import {
+  betaForSymbol,
+  buildNotionalExposure,
+  hasOptionContract,
+  scaleOptionGreek,
+  sumNullableValues,
+  type PositionGreekSnapshot,
+} from "./account-risk-model";
+import { resolveAccountGreekScenarios } from "./account-greek-scenarios";
 
 export const SHADOW_ACCOUNT_ID = "shadow";
 export const SHADOW_ACCOUNT_DISPLAY_NAME = "Shadow";
@@ -141,6 +149,11 @@ const SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS = 6_500;
 const SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS = Math.max(
   500,
   SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS - 250,
+);
+const SHADOW_GREEK_QUOTE_MAX_WAIT_MS = 3_500;
+const SHADOW_GREEK_QUOTE_TASK_MAX_WAIT_MS = Math.max(
+  500,
+  SHADOW_GREEK_QUOTE_MAX_WAIT_MS - 250,
 );
 const SHADOW_UNDERLYING_QUOTE_MAX_WAIT_MS = 1_250;
 const SHADOW_ACCOUNT_DB_FALLBACK_REASON =
@@ -448,6 +461,13 @@ let shadowReadCacheTtlMsForTests: number | null = null;
 let shadowReadCacheStaleTtlMsForTests: number | null = null;
 let shadowReadCacheStaleWaitMsForTests: number | null = null;
 const shadowOptionQuoteCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    quote: Partial<QuoteSnapshot> | Record<string, unknown>;
+  }
+>();
+const shadowOptionGreekQuoteCache = new Map<
   string,
   {
     expiresAt: number;
@@ -1866,7 +1886,9 @@ function rememberShadowOptionQuote(
 }
 
 function readCachedShadowOptionQuotes(
-  positions: ShadowPositionRow[],
+  positions: Array<{
+    optionContract?: unknown;
+  }>,
 ): Map<string, Partial<QuoteSnapshot> | Record<string, unknown>> {
   const now = Date.now();
   const quotes = new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>();
@@ -1888,6 +1910,62 @@ function readCachedShadowOptionQuotes(
     quotes.set(providerContractId, cached.quote);
   });
   return quotes;
+}
+
+function rememberShadowOptionGreekQuote(
+  providerContractId: string | null | undefined,
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined,
+) {
+  const key = providerContractId?.trim();
+  const quoteRecord = readRecord(quote);
+  if (!key || !quoteRecord || !shadowQuoteHasAnyGreek(quoteRecord)) {
+    return;
+  }
+  shadowOptionGreekQuoteCache.set(key, {
+    quote: quoteRecord,
+    expiresAt: Date.now() + 2 * 60_000,
+  });
+}
+
+function readCachedShadowOptionGreekQuotes(
+  positions: Array<{
+    symbol: string;
+    optionContract?: unknown;
+  }>,
+): Map<string, Partial<QuoteSnapshot> | Record<string, unknown>> {
+  const now = Date.now();
+  const quotes = new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>();
+  positions.forEach((position) => {
+    const providerContractId = shadowOptionQuoteIdentifier(
+      asOptionContract(position.optionContract),
+    );
+    if (!providerContractId) {
+      return;
+    }
+    const cached = shadowOptionGreekQuoteCache.get(providerContractId);
+    if (!cached) {
+      return;
+    }
+    if (cached.expiresAt <= now) {
+      shadowOptionGreekQuoteCache.delete(providerContractId);
+      return;
+    }
+    quotes.set(providerContractId, cached.quote);
+  });
+  return quotes;
+}
+
+function mergeShadowGreekQuoteMaps(
+  cachedQuotes: Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>,
+  liveQuotes: Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>,
+): Map<string, Partial<QuoteSnapshot> | Record<string, unknown>> {
+  const merged = new Map(cachedQuotes);
+  liveQuotes.forEach((quote, providerContractId) => {
+    if (shadowQuoteHasAnyGreek(readRecord(quote)) || !merged.has(providerContractId)) {
+      merged.set(providerContractId, quote);
+    }
+  });
+  return merged;
 }
 
 function rememberShadowOptionProviderContractId(
@@ -4480,11 +4558,15 @@ async function resolveShadowIbkrOptionProviderIds(
 }
 
 async function fetchShadowOptionDayChangeQuotes(
-  positions: ShadowPositionRow[],
+  positions: Array<{
+    symbol: string;
+    optionContract?: unknown;
+  }>,
   options: {
     intent?: MarketDataIntent;
     ownerPrefix?: string;
     taskMaxWaitMs?: number;
+    requiresGreeks?: boolean;
   } = {},
 ): Promise<Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>> {
   const idsByUnderlying = new Map<string, Set<string>>();
@@ -4582,17 +4664,23 @@ async function fetchShadowOptionDayChangeQuotes(
         providerContractIds: allProviderContractIds,
         owner: `${options.ownerPrefix ?? "shadow-position-day-change"}:${quoteUnderlying ?? "mixed"}`,
         intent: options.intent ?? "account-monitor-live",
-        requiresGreeks: false,
+        requiresGreeks: options.requiresGreeks ?? false,
       }).catch(() => null);
       (payload?.quotes || []).forEach((quote) => {
         const providerContractId = String(quote.providerContractId || "").trim();
         if (providerContractId) {
           quoteByProviderContractId.set(providerContractId, quote);
           rememberShadowOptionQuote(providerContractId, quote);
+          if (options.requiresGreeks) {
+            rememberShadowOptionGreekQuote(providerContractId, quote);
+          }
           (aliasesByProviderContractId.get(providerContractId) ?? new Set()).forEach(
             (alias) => {
               quoteByProviderContractId.set(alias, quote);
               rememberShadowOptionQuote(alias, quote);
+              if (options.requiresGreeks) {
+                rememberShadowOptionGreekQuote(alias, quote);
+              }
             },
           );
         }
@@ -7404,10 +7492,48 @@ async function buildShadowAccountRisk(input: {
       underlyingPrices.set(symbol, price);
     }
   }
+  const cachedGreekQuoteByProviderContractId = readCachedShadowOptionGreekQuotes(
+    positionsResponse.positions,
+  );
+  const liveGreekQuoteByProviderContractId = await fetchShadowOptionDayChangeQuotes(
+    positionsResponse.positions,
+    {
+      intent: "account-monitor-live",
+      ownerPrefix: "shadow-risk-greek",
+      taskMaxWaitMs: SHADOW_GREEK_QUOTE_TASK_MAX_WAIT_MS,
+      requiresGreeks: true,
+    },
+  ).catch(() => new Map());
+  const greekQuoteByProviderContractId = mergeShadowGreekQuoteMaps(
+    cachedGreekQuoteByProviderContractId,
+    liveGreekQuoteByProviderContractId,
+  );
+  const greekByPositionId = shadowGreekSnapshotsFromPositionRows(
+    positionsResponse.positions,
+    notionalPositions,
+    greekQuoteByProviderContractId,
+    underlyingPrices,
+  );
   const notional = buildNotionalExposure(notionalPositions, {
     nav: totals.netLiquidation,
+    greekByPositionId,
     underlyingPrices,
   });
+  const greekScenarios = await resolveAccountGreekScenarios({
+    positions: notionalPositions,
+    greekByPositionId,
+    underlyingPrices,
+  });
+  const totalOptionPositions = positionsResponse.positions.filter(
+    (position) => position.assetClass === "Options",
+  ).length;
+  const matchedOptionPositions = Array.from(greekByPositionId.values()).filter(
+    (greek) => greek.matched,
+  ).length;
+  const shadowGreekWarning =
+    totalOptionPositions > matchedOptionPositions
+      ? `Matched ${matchedOptionPositions} of ${totalOptionPositions} shadow option positions to option greek snapshots.`
+      : null;
 
   return {
     accountId: SHADOW_ACCOUNT_ID,
@@ -7463,37 +7589,323 @@ async function buildShadowAccountRisk(input: {
       },
     },
     greeks: {
-      delta: null,
-      betaWeightedDelta: null,
-      gamma: null,
-      theta: null,
-      vega: null,
-      source: "SHADOW_LEDGER",
+      delta: sumNullableValues(
+        positionsResponse.positions.map(
+          (position) => greekByPositionId.get(position.id)?.delta,
+        ),
+      ),
+      betaWeightedDelta: sumNullableValues(
+        positionsResponse.positions.map(
+          (position) => greekByPositionId.get(position.id)?.betaWeightedDelta,
+        ),
+      ),
+      gamma: sumNullableValues(
+        positionsResponse.positions.map(
+          (position) => greekByPositionId.get(position.id)?.gamma,
+        ),
+      ),
+      theta: sumNullableValues(
+        positionsResponse.positions.map(
+          (position) => greekByPositionId.get(position.id)?.theta,
+        ),
+      ),
+      vega: sumNullableValues(
+        positionsResponse.positions.map(
+          (position) => greekByPositionId.get(position.id)?.vega,
+        ),
+      ),
+      source: "SHADOW_OPTION_QUOTE",
       coverage: {
-        optionPositions: positionsResponse.positions.filter(
-          (position) => position.assetClass === "Options",
-        ).length,
-        matchedOptionPositions: 0,
+        optionPositions: totalOptionPositions,
+        matchedOptionPositions,
       },
       perUnderlying: positionsResponse.positions.map((position) => ({
         underlying: position.symbol,
         exposure: position.marketValue,
-        delta: null,
-        betaWeightedDelta: null,
-        gamma: null,
-        theta: null,
-        vega: null,
+        delta: greekByPositionId.get(position.id)?.delta ?? null,
+        betaWeightedDelta:
+          greekByPositionId.get(position.id)?.betaWeightedDelta ?? null,
+        gamma: greekByPositionId.get(position.id)?.gamma ?? null,
+        theta: greekByPositionId.get(position.id)?.theta ?? null,
+        vega: greekByPositionId.get(position.id)?.vega ?? null,
         positionCount: 1,
         optionPositionCount: position.assetClass === "Options" ? 1 : 0,
       })),
-      warning: positionsResponse.positions.some((position) => position.assetClass === "Options")
-        ? "Shadow option Greeks are not sourced from IBKR snapshots."
-        : null,
+      warning: shadowGreekWarning,
     },
     notional,
+    greekScenarios,
     expiryConcentration: buildShadowExpiryConcentration(positionsResponse.positions),
     updatedAt: totals.updatedAt,
   };
+}
+
+function shadowGreekSnapshotsFromPositionRows(
+  positionRows: Array<{
+    id: string;
+    symbol: string;
+    optionQuote?: unknown;
+  }>,
+  positions: BrokerPositionSnapshot[],
+  greekQuoteByProviderContractId = new Map<
+    string,
+    Partial<QuoteSnapshot> | Record<string, unknown>
+  >(),
+  underlyingPrices = new Map<string, number>(),
+): Map<string, PositionGreekSnapshot> {
+  const rowsById = new Map(positionRows.map((row) => [row.id, row]));
+  const snapshots = new Map<string, PositionGreekSnapshot>();
+
+  positions.filter(hasOptionContract).forEach((position) => {
+    const quoteIdentifier = shadowOptionQuoteIdentifier(position.optionContract);
+    const greekQuote = quoteIdentifier
+      ? readRecord(greekQuoteByProviderContractId.get(quoteIdentifier))
+      : null;
+    const rowQuote = readRecord(rowsById.get(position.id)?.optionQuote);
+    const quote = shadowQuoteHasAnyGreek(greekQuote) ? greekQuote : rowQuote;
+    const estimatedGreeks = estimateShadowOptionGreeks(position, underlyingPrices);
+    const delta = scaleOptionGreek(
+      readOptionalShadowGreekNumber(quote?.delta) ?? estimatedGreeks?.delta ?? null,
+      position,
+    );
+    const gamma = scaleOptionGreek(
+      readOptionalShadowGreekNumber(quote?.gamma) ?? estimatedGreeks?.gamma ?? null,
+      position,
+    );
+    const theta = scaleOptionGreek(
+      readOptionalShadowGreekNumber(quote?.theta) ?? estimatedGreeks?.theta ?? null,
+      position,
+    );
+    const vega = scaleOptionGreek(
+      readOptionalShadowGreekNumber(quote?.vega) ?? estimatedGreeks?.vega ?? null,
+      position,
+    );
+    const impliedVolatility =
+      readOptionalShadowGreekNumber(quote?.impliedVolatility) ??
+      estimatedGreeks?.impliedVolatility ??
+      null;
+    const hasAnyGreek =
+      delta !== null || gamma !== null || theta !== null || vega !== null;
+    const underlying = normalizeSymbol(position.optionContract.underlying);
+    const usedEstimate = Boolean(
+      estimatedGreeks &&
+        [
+          readOptionalShadowGreekNumber(quote?.delta),
+          readOptionalShadowGreekNumber(quote?.gamma),
+          readOptionalShadowGreekNumber(quote?.theta),
+          readOptionalShadowGreekNumber(quote?.vega),
+        ].some((value) => value === null),
+    );
+
+    snapshots.set(position.id, {
+      positionId: position.id,
+      symbol: position.symbol,
+      underlying,
+      delta,
+      betaWeightedDelta: delta === null ? null : delta * betaForSymbol(underlying),
+      gamma,
+      theta,
+      vega,
+      impliedVolatility,
+      source: "SHADOW_OPTION_QUOTE",
+      matched: hasAnyGreek,
+      warning: hasAnyGreek
+        ? usedEstimate
+          ? `Shadow option Greeks for ${position.symbol} include mark-derived estimates.`
+          : null
+        : `Shadow option quote for ${position.symbol} did not include greek values.`,
+    });
+  });
+
+  return snapshots;
+}
+
+function estimateShadowOptionGreeks(
+  position: BrokerPositionSnapshot & { optionContract: NonNullable<BrokerPositionSnapshot["optionContract"]> },
+  underlyingPrices: Map<string, number>,
+  now = new Date(),
+): {
+  impliedVolatility: number;
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+} | null {
+  const contract = position.optionContract;
+  const underlying = normalizeSymbol(contract.underlying);
+  const spot = underlyingPrices.get(underlying);
+  const strike = toNumber(contract.strike);
+  const mark = toNumber(position.marketPrice);
+  if (
+    spot === undefined ||
+    !Number.isFinite(spot) ||
+    spot <= 0 ||
+    strike === null ||
+    strike <= 0 ||
+    mark === null ||
+    mark <= 0
+  ) {
+    return null;
+  }
+  const days = Math.max(
+    1 / 24,
+    (contract.expirationDate.getTime() - now.getTime()) / 86_400_000,
+  );
+  const years = Math.max(days / 365, 1 / 365);
+  const right = contract.right === "put" ? "put" : "call";
+  const rate = 0.045;
+  const volatility = impliedVolatilityFromOptionMark({
+    spot,
+    strike,
+    years,
+    rate,
+    right,
+    mark,
+  });
+  if (volatility === null) {
+    return null;
+  }
+  return {
+    impliedVolatility: volatility,
+    ...blackScholesGreeks({ spot, strike, years, rate, volatility, right }),
+  };
+}
+
+function impliedVolatilityFromOptionMark(input: {
+  spot: number;
+  strike: number;
+  years: number;
+  rate: number;
+  right: "call" | "put";
+  mark: number;
+}): number | null {
+  let low = 0.01;
+  let high = 5;
+  const lowPrice = blackScholesPrice({ ...input, volatility: low });
+  const highPrice = blackScholesPrice({ ...input, volatility: high });
+  if (!Number.isFinite(lowPrice) || !Number.isFinite(highPrice)) {
+    return null;
+  }
+  if (input.mark <= lowPrice) {
+    return low;
+  }
+  if (input.mark >= highPrice) {
+    return high;
+  }
+  for (let index = 0; index < 48; index += 1) {
+    const mid = (low + high) / 2;
+    const price = blackScholesPrice({ ...input, volatility: mid });
+    if (price < input.mark) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  return (low + high) / 2;
+}
+
+function blackScholesPrice(input: {
+  spot: number;
+  strike: number;
+  years: number;
+  rate: number;
+  volatility: number;
+  right: "call" | "put";
+}): number {
+  const { d1, d2 } = blackScholesD1D2(input);
+  const discountedStrike =
+    input.strike * Math.exp(-input.rate * input.years);
+  if (input.right === "put") {
+    return discountedStrike * normalCdf(-d2) - input.spot * normalCdf(-d1);
+  }
+  return input.spot * normalCdf(d1) - discountedStrike * normalCdf(d2);
+}
+
+function blackScholesGreeks(input: {
+  spot: number;
+  strike: number;
+  years: number;
+  rate: number;
+  volatility: number;
+  right: "call" | "put";
+}): { delta: number; gamma: number; theta: number; vega: number } {
+  const { d1, d2 } = blackScholesD1D2(input);
+  const pdf = normalPdf(d1);
+  const sqrtYears = Math.sqrt(input.years);
+  const discountedStrike =
+    input.strike * Math.exp(-input.rate * input.years);
+  const delta =
+    input.right === "put" ? normalCdf(d1) - 1 : normalCdf(d1);
+  const gamma = pdf / (input.spot * input.volatility * sqrtYears);
+  const thetaAnnual =
+    -(input.spot * pdf * input.volatility) / (2 * sqrtYears) +
+    (input.right === "put"
+      ? input.rate * discountedStrike * normalCdf(-d2)
+      : -input.rate * discountedStrike * normalCdf(d2));
+  return {
+    delta,
+    gamma,
+    theta: thetaAnnual / 365,
+    vega: (input.spot * pdf * sqrtYears) / 100,
+  };
+}
+
+function blackScholesD1D2(input: {
+  spot: number;
+  strike: number;
+  years: number;
+  rate: number;
+  volatility: number;
+}): { d1: number; d2: number } {
+  const sqrtYears = Math.sqrt(input.years);
+  const denominator = input.volatility * sqrtYears;
+  const d1 =
+    (Math.log(input.spot / input.strike) +
+      (input.rate + (input.volatility ** 2) / 2) * input.years) /
+    denominator;
+  return { d1, d2: d1 - denominator };
+}
+
+function normalPdf(value: number): number {
+  return Math.exp(-(value ** 2) / 2) / Math.sqrt(2 * Math.PI);
+}
+
+function normalCdf(value: number): number {
+  return 0.5 * (1 + erf(value / Math.SQRT2));
+}
+
+function erf(value: number): number {
+  const sign = value < 0 ? -1 : 1;
+  const x = Math.abs(value);
+  const t = 1 / (1 + 0.3275911 * x);
+  const y =
+    1 -
+    (((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t -
+      0.284496736) *
+      t +
+      0.254829592) *
+      t *
+      Math.exp(-x * x));
+  return sign * y;
+}
+
+function shadowQuoteHasAnyGreek(quote: Record<string, unknown> | null): boolean {
+  return Boolean(
+    quote &&
+      [quote.delta, quote.gamma, quote.theta, quote.vega].some(
+        (value) => readOptionalShadowGreekNumber(value) !== null,
+      ),
+  );
+}
+
+function readOptionalShadowGreekNumber(value: unknown): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "string" && !value.trim()) {
+    return null;
+  }
+  return toNumber(value);
 }
 
 function shadowPositionForNotionalRisk(position: {
@@ -10278,6 +10690,7 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   shouldRepairSignalOptionsAutomationMirrors,
   repairSignalOptionsAutomationMirrorsForRead,
   buildShadowAutomationContext,
+  estimateShadowOptionGreeks,
   resolveHistoricalBackfillExpirationExitPrice,
   shadowPositionKeyForOrder,
   shadowPositionKeysForOrders,

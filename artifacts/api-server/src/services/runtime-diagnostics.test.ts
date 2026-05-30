@@ -282,6 +282,8 @@ test("runtime diagnostics are read-only and only inspect bridge health", async (
   );
   assert.equal(typeof diagnostics.api.accountPage.timings, "object");
   assert.equal(typeof diagnostics.api.accountPage.cache, "object");
+  assert.equal(typeof diagnostics.api.pythonCompute.enabled, "boolean");
+  assert.equal(typeof diagnostics.api.pythonCompute.status, "string");
   assert.equal(diagnostics.storage.source, "external-postgres");
   assert.equal(diagnostics.storage.status, "ok");
   assert.equal(typeof diagnostics.providers.polygon.configured, "boolean");

@@ -249,6 +249,95 @@ test("option quote snapshots reuse fresh shared cache before bridge reads", asyn
   assert.equal(payload.debug?.returnedCount, 1);
 });
 
+test("option quote snapshots rehydrate fresh price-only cache when Greeks are required", async () => {
+  let snapshotReads = 0;
+  const now = new Date("2026-04-28T14:30:00.000Z");
+  __setBridgeOptionQuoteStreamNowForTests(now);
+  assert.ok(
+    __cacheBridgeOptionQuoteForTests({
+      ...optionQuote("1001", 1.23),
+      impliedVolatility: null,
+      delta: null,
+      gamma: null,
+      theta: null,
+      vega: null,
+    }),
+  );
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots() {
+      snapshotReads += 1;
+      return [optionQuote("1001", 1.24)];
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["1001"],
+    requiresGreeks: true,
+  });
+
+  assert.equal(snapshotReads, 1);
+  assert.equal(payload.quotes.length, 1);
+  assert.equal(payload.quotes[0]?.price, 1.24);
+  assert.equal(payload.quotes[0]?.delta, 0.5);
+  assert.equal(payload.quotes[0]?.gamma, 0.01);
+  assert.equal(payload.debug?.upstreamMs !== null, true);
+});
+
+test("option quote snapshots retry price-only bridge results when Greeks are required", async () => {
+  let snapshotReads = 0;
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots() {
+      snapshotReads += 1;
+      if (snapshotReads === 1) {
+        return [
+          {
+            ...optionQuote("1001", 1.23),
+            impliedVolatility: null,
+            delta: null,
+            gamma: null,
+            theta: null,
+            vega: null,
+          },
+        ];
+      }
+      return [optionQuote("1001", 1.24, "2026-04-28T14:30:01.000Z")];
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["1001"],
+    requiresGreeks: true,
+  });
+
+  assert.equal(snapshotReads, 2);
+  assert.equal(payload.quotes.length, 1);
+  assert.equal(payload.quotes[0]?.price, 1.24);
+  assert.equal(payload.quotes[0]?.delta, 0.5);
+  assert.equal(payload.quotes[0]?.gamma, 0.01);
+});
+
 test("option quote snapshots do not admit leases or call bridge when runtime is missing", async () => {
   let healthReads = 0;
   let snapshotReads = 0;
@@ -355,6 +444,31 @@ test("option quote shared cache preserves prices when a partial zero quote is ne
     cached?.updatedAt.toISOString(),
     "2026-04-28T14:31:00.000Z",
   );
+});
+
+test("option quote shared cache preserves Greeks when a newer price-only quote arrives", () => {
+  assert.ok(
+    __cacheBridgeOptionQuoteForTests(
+      optionQuote("1001", 1.23, "2026-04-28T14:30:00.000Z"),
+    ),
+  );
+
+  const priceOnlyQuote = {
+    ...optionQuote("1001", 1.31, "2026-04-28T14:31:00.000Z"),
+    impliedVolatility: null,
+    delta: null,
+    gamma: null,
+    theta: null,
+    vega: null,
+  };
+  const cached = __cacheBridgeOptionQuoteForTests(priceOnlyQuote);
+
+  assert.equal(cached?.price, 1.31);
+  assert.equal(cached?.delta, 0.5);
+  assert.equal(cached?.gamma, 0.01);
+  assert.equal(cached?.theta, -0.02);
+  assert.equal(cached?.vega, 0.1);
+  assert.equal(cached?.impliedVolatility, 0.2);
 });
 
 test("option quote shared cache accepts zero bid when the same quote has a usable ask", () => {

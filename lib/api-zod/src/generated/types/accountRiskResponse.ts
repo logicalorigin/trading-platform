@@ -14,6 +14,7 @@ export interface AccountRiskResponse {
   winnersLosers: JsonObject;
   margin: JsonObject;
   greeks: JsonObject;
+  greekScenarios?: JsonObject;
   expiryConcentration: JsonObject;
   updatedAt: Date;
 }

@@ -112,6 +112,7 @@ import {
 import {
   betaForSymbol,
   buildExpiryConcentration,
+  buildGreekScenarioMatrixInput,
   buildNotionalExposure,
   exposureSummary,
   hasOptionContract,
@@ -128,6 +129,7 @@ import {
   type OptionPositionSnapshot,
   type PositionGreekSnapshot,
 } from "./account-risk-model";
+import { resolveAccountGreekScenarios } from "./account-greek-scenarios";
 import {
   buildFlexBackfillWindows,
   extractFlexRecords,
@@ -1549,6 +1551,7 @@ async function enrichPositionGreeks(
         gamma: 0,
         theta: 0,
         vega: 0,
+        impliedVolatility: null,
         source: "IBKR_POSITIONS",
         matched: true,
         warning: null,
@@ -1600,6 +1603,7 @@ async function enrichPositionGreeks(
         gamma: 0,
         theta: 0,
         vega: 0,
+        impliedVolatility: null,
         source: "IBKR_POSITIONS",
         matched: true,
         warning: null,
@@ -1615,6 +1619,7 @@ async function enrichPositionGreeks(
     const gamma = matchedContract ? scaleOptionGreek(matchedContract.gamma, position) : null;
     const theta = matchedContract ? scaleOptionGreek(matchedContract.theta, position) : null;
     const vega = matchedContract ? scaleOptionGreek(matchedContract.vega, position) : null;
+    const impliedVolatility = matchedContract?.impliedVolatility ?? null;
     const betaWeightedDelta =
       delta === null ? null : delta * betaForSymbol(underlying);
     const hasAnyGreek =
@@ -1640,6 +1645,7 @@ async function enrichPositionGreeks(
       gamma,
       theta,
       vega,
+      impliedVolatility,
       source: "IBKR_OPTION_CHAIN",
       matched: Boolean(matchedContract && hasAnyGreek),
       warning,
@@ -4675,6 +4681,12 @@ export async function getAccountRisk(input: {
     greekByPositionId: greekEnrichment.byPositionId,
     underlyingPrices,
   });
+  const greekScenarios = await resolveAccountGreekScenarios({
+    positions,
+    marketHydration,
+    greekByPositionId: greekEnrichment.byPositionId,
+    underlyingPrices,
+  });
 
   return {
     accountId: universe.requestedAccountId,
@@ -4736,6 +4748,7 @@ export async function getAccountRisk(input: {
       warning: greekWarnings.length ? greekWarnings.join(" ") : null,
     },
     notional,
+    greekScenarios,
     expiryConcentration: buildExpiryConcentration(positions),
     updatedAt: accountMetricUpdatedAt(universe.accounts) ?? new Date(),
   };
@@ -5059,6 +5072,7 @@ export const __accountOverviewInternalsForTests = {
 export const __accountRiskInternalsForTests = {
   betaForSymbol,
   buildExpiryConcentration,
+  buildGreekScenarioMatrixInput,
   buildNotionalExposure,
   matchOptionChainContract,
   mergeOptionChainContracts,

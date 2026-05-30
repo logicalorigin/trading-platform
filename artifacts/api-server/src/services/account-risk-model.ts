@@ -63,7 +63,8 @@ export type PositionGreekSnapshot = {
   gamma: number | null;
   theta: number | null;
   vega: number | null;
-  source: "IBKR_POSITIONS" | "IBKR_OPTION_CHAIN";
+  impliedVolatility: number | null;
+  source: "IBKR_POSITIONS" | "IBKR_OPTION_CHAIN" | "SHADOW_OPTION_QUOTE";
   matched: boolean;
   warning: string | null;
 };
@@ -85,6 +86,51 @@ export type NotionalExposureSummary = {
     pricedPositions: number;
     deltaAdjustedPositions: number;
   };
+};
+
+export type GreekScenarioMatrixPositionInput = {
+  symbol: string;
+  underlying: string;
+  quantity: number;
+  multiplier: number;
+  spot: number;
+  markPrice: number;
+  strike: number | null;
+  right: "call" | "put" | null;
+  delta: number | null;
+  gamma: number | null;
+  theta: number | null;
+  vega: number | null;
+  impliedVolatility: number | null;
+  riskFreeRate: number | null;
+  dividendYield: number | null;
+  pricingModel: "auto";
+  greekScale: "position";
+  daysToExpiration: number | null;
+};
+
+export type GreekScenarioMatrixJobInput = {
+  positions: GreekScenarioMatrixPositionInput[];
+  spotShocks: number[];
+  ivShocks: number[];
+  dayOffsets: number[];
+};
+
+export type GreekScenarioInputCoverage = {
+  totalOptionPositions: number;
+  eligiblePositions: number;
+  skippedPositions: number;
+  skipped: {
+    missingSpot: number;
+    missingMarkPrice: number;
+    missingContractData: number;
+    missingGreekSnapshot: number;
+  };
+};
+
+export type GreekScenarioMatrixBuildResult = {
+  jobInput: GreekScenarioMatrixJobInput;
+  coverage: GreekScenarioInputCoverage;
 };
 
 function formatDateOnly(value: Date): string {
@@ -114,6 +160,14 @@ function toRiskNumber(value: unknown): number | null {
 
 function isFiniteRiskNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function normalizedScenarioImpliedVolatility(value: unknown): number | null {
+  const parsed = toRiskNumber(value);
+  if (parsed === null || parsed <= 0) {
+    return null;
+  }
+  return parsed > 3 ? parsed / 100 : parsed;
 }
 
 export function sectorForSymbol(symbol: string): string {
@@ -176,6 +230,176 @@ function underlyingPriceForPosition(
 ): number | null {
   const price = underlyingPrices.get(normalizeSymbol(position.optionContract.underlying));
   return Number.isFinite(price) && Number(price) > 0 ? Number(price) : null;
+}
+
+function optionMarkPriceForPosition(
+  position: OptionPositionSnapshot,
+  input: {
+    marketHydration?: Map<string, PositionMarketHydration>;
+  },
+): number | null {
+  const hydratedMark = input.marketHydration?.get(position.id)?.mark;
+  if (typeof hydratedMark === "number" && Number.isFinite(hydratedMark) && hydratedMark >= 0) {
+    return hydratedMark;
+  }
+
+  const marketPrice = toRiskNumber(position.marketPrice);
+  if (marketPrice !== null && marketPrice >= 0) {
+    return marketPrice;
+  }
+
+  const quantity = toRiskNumber(position.quantity);
+  const multiplier = contractMultiplierForPosition(position);
+  const marketValue = toRiskNumber(position.marketValue);
+  if (
+    quantity !== null &&
+    marketValue !== null &&
+    Number.isFinite(multiplier) &&
+    Math.abs(quantity) > 0 &&
+    multiplier > 0
+  ) {
+    return Math.abs(marketValue / (quantity * multiplier));
+  }
+
+  return null;
+}
+
+function daysToExpiration(value: Date, now = new Date()): number | null {
+  const expiresAt = value.getTime();
+  const nowAt = now.getTime();
+  if (!Number.isFinite(expiresAt) || !Number.isFinite(nowAt)) {
+    return null;
+  }
+  return Math.max(0, (expiresAt - nowAt) / 86_400_000);
+}
+
+function emptyGreekScenarioCoverage(): GreekScenarioInputCoverage {
+  return {
+    totalOptionPositions: 0,
+    eligiblePositions: 0,
+    skippedPositions: 0,
+    skipped: {
+      missingSpot: 0,
+      missingMarkPrice: 0,
+      missingContractData: 0,
+      missingGreekSnapshot: 0,
+    },
+  };
+}
+
+function hasUsableGreekSnapshot(greek: PositionGreekSnapshot | undefined): boolean {
+  return Boolean(
+    greek &&
+      [greek.delta, greek.gamma, greek.theta, greek.vega].some(isFiniteRiskNumber),
+  );
+}
+
+export function buildGreekScenarioMatrixInputWithCoverage(
+  positions: BrokerPositionSnapshot[],
+  input: {
+    marketHydration?: Map<string, PositionMarketHydration>;
+    greekByPositionId?: Map<string, PositionGreekSnapshot>;
+    underlyingPrices?: Map<string, number>;
+    now?: Date;
+    spotShocks?: number[];
+    ivShocks?: number[];
+    dayOffsets?: number[];
+  } = {},
+): GreekScenarioMatrixBuildResult {
+  const greekByPositionId = input.greekByPositionId ?? new Map<string, PositionGreekSnapshot>();
+  const underlyingPrices = input.underlyingPrices ?? new Map<string, number>();
+  const coverage = emptyGreekScenarioCoverage();
+  const matrixPositions: GreekScenarioMatrixPositionInput[] = [];
+
+  positions.filter(hasOptionContract).forEach((position) => {
+    coverage.totalOptionPositions += 1;
+
+    const spot = underlyingPriceForPosition(position, underlyingPrices);
+    const markPrice = optionMarkPriceForPosition(position, input);
+    const multiplier = contractMultiplierForPosition(position);
+    const quantity = toRiskNumber(position.quantity);
+    const greek = greekByPositionId.get(position.id);
+    const missingContractData =
+      quantity === null ||
+      Math.abs(quantity) <= 0 ||
+      !Number.isFinite(multiplier) ||
+      multiplier <= 0;
+    const missingSpot = spot === null;
+    const missingMarkPrice = markPrice === null;
+    const missingGreekSnapshot = !hasUsableGreekSnapshot(greek);
+
+    if (missingSpot) {
+      coverage.skipped.missingSpot += 1;
+    }
+    if (missingMarkPrice) {
+      coverage.skipped.missingMarkPrice += 1;
+    }
+    if (missingContractData) {
+      coverage.skipped.missingContractData += 1;
+    }
+    if (missingGreekSnapshot) {
+      coverage.skipped.missingGreekSnapshot += 1;
+    }
+
+    if (
+      missingSpot ||
+      missingMarkPrice ||
+      missingContractData ||
+      missingGreekSnapshot
+    ) {
+      coverage.skippedPositions += 1;
+      return;
+    }
+
+    matrixPositions.push({
+      symbol: position.symbol,
+      underlying: normalizeSymbol(position.optionContract.underlying),
+      quantity,
+      multiplier,
+      spot,
+      markPrice,
+      strike: toRiskNumber(position.optionContract.strike),
+      right: position.optionContract.right,
+      delta: greek?.delta ?? null,
+      gamma: greek?.gamma ?? null,
+      theta: greek?.theta ?? null,
+      vega: greek?.vega ?? null,
+      impliedVolatility: normalizedScenarioImpliedVolatility(
+        greek?.impliedVolatility,
+      ),
+      riskFreeRate: null,
+      dividendYield: null,
+      pricingModel: "auto",
+      greekScale: "position",
+      daysToExpiration: daysToExpiration(position.optionContract.expirationDate, input.now),
+    });
+    coverage.eligiblePositions += 1;
+  });
+
+  return {
+    jobInput: {
+      positions: matrixPositions,
+      spotShocks: input.spotShocks ?? [-0.08, -0.05, -0.02, 0, 0.02, 0.05, 0.08],
+      ivShocks: input.ivShocks ?? [-10, -5, 0, 5, 10],
+      dayOffsets: input.dayOffsets ?? [0, 1, 3, 5],
+    },
+    coverage,
+  };
+}
+
+export function buildGreekScenarioMatrixInput(
+  positions: BrokerPositionSnapshot[],
+  input: {
+    marketHydration?: Map<string, PositionMarketHydration>;
+    greekByPositionId?: Map<string, PositionGreekSnapshot>;
+    underlyingPrices?: Map<string, number>;
+    now?: Date;
+    spotShocks?: number[];
+    ivShocks?: number[];
+    dayOffsets?: number[];
+  } = {},
+): GreekScenarioMatrixJobInput {
+  return buildGreekScenarioMatrixInputWithCoverage(positions, input).jobInput;
 }
 
 export function buildNotionalExposure(

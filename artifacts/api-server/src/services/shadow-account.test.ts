@@ -2966,6 +2966,70 @@ test("shadow risk reuses projected underlying markets before quote fallback", ()
   assert.match(source, /withShadowReadCache\(`risk:\$\{shadowSourceCacheKey\(source\)\}`/);
 });
 
+test("shadow risk exposes python greek scenario coverage", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const riskBody = source.match(
+    /async function buildShadowAccountRisk\([\s\S]*?\nfunction shadowPositionForNotionalRisk/,
+  )?.[0];
+  const greekBody = source.match(
+    /function shadowGreekSnapshotsFromPositionRows\([\s\S]*?\nfunction shadowPositionForNotionalRisk/,
+  )?.[0];
+
+  assert.ok(riskBody);
+  assert.match(riskBody, /shadowGreekSnapshotsFromPositionRows\(/);
+  assert.match(riskBody, /readCachedShadowOptionGreekQuotes/);
+  assert.match(riskBody, /mergeShadowGreekQuoteMaps/);
+  assert.match(riskBody, /requiresGreeks: true/);
+  assert.match(riskBody, /ownerPrefix: "shadow-risk-greek"/);
+  assert.match(riskBody, /SHADOW_GREEK_QUOTE_TASK_MAX_WAIT_MS/);
+  assert.match(riskBody, /resolveAccountGreekScenarios\(\{/);
+  assert.match(riskBody, /greekScenarios,/);
+  assert.ok(greekBody);
+  assert.match(greekBody, /greekQuoteByProviderContractId/);
+  assert.match(greekBody, /readOptionalShadowGreekNumber\(quote\?\.delta\)/);
+  assert.match(greekBody, /value === null \|\| value === undefined/);
+  assert.match(greekBody, /source: "SHADOW_OPTION_QUOTE"/);
+  assert.match(source, /const shadowOptionGreekQuoteCache = new Map/);
+  assert.match(source, /function rememberShadowOptionGreekQuote/);
+  assert.match(source, /function estimateShadowOptionGreeks/);
+});
+
+test("shadow option greek estimates fill missing quote greeks", () => {
+  const estimate =
+    __shadowWatchlistBacktestInternalsForTests.estimateShadowOptionGreeks(
+      {
+        id: "position-1",
+        accountId: "shadow",
+        symbol: "MSFT",
+        assetClass: "option",
+        quantity: 1,
+        averagePrice: 5,
+        marketPrice: 10.55,
+        marketValue: 1055,
+        unrealizedPnl: 0,
+        unrealizedPnlPercent: 0,
+        optionContract: {
+          ticker: "MSFT20260601C440",
+          underlying: "MSFT",
+          expirationDate: new Date("2026-06-01T00:00:00.000Z"),
+          strike: 440,
+          right: "call",
+          multiplier: 100,
+          sharesPerContract: 100,
+          providerContractId: "1001",
+        },
+      } as any,
+      new Map([["MSFT", 449.99]]),
+      new Date("2026-05-30T18:00:00.000Z"),
+    );
+
+  assert.ok(estimate);
+  assert.ok(estimate.delta > 0.4 && estimate.delta < 1);
+  assert.ok(estimate.gamma > 0);
+  assert.ok(estimate.theta < 0);
+  assert.ok(estimate.vega > 0);
+});
+
 test("shadow equity quote hydration opts out of Polygon fallback", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const equityMarkBody = source.match(

@@ -1642,6 +1642,7 @@ export const GetAccountRiskResponse = zod.object({
   "winnersLosers": zod.record(zod.string(), zod.unknown()),
   "margin": zod.record(zod.string(), zod.unknown()),
   "greeks": zod.record(zod.string(), zod.unknown()),
+  "greekScenarios": zod.record(zod.string(), zod.unknown()).optional(),
   "expiryConcentration": zod.record(zod.string(), zod.unknown()),
   "updatedAt": zod.coerce.date()
 })

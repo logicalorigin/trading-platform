@@ -20,6 +20,7 @@
     "signal-options:apply-tuned-profile": "tsx ./src/apply-signal-options-tuned-profile.ts",
     "signal-options:exit-policy-sweep": "tsx ./src/signal-options-exit-policy-sweep.ts",
     "pyrus-signals:signal-options-sweep": "tsx ./src/pyrus-signals-options-sweep.ts",
+    "pyrus:greek-scenarios": "tsx ./src/pyrus-greek-scenarios.ts",
     "pyrus:performance-monitor": "tsx ./src/pyrus-performance-monitor.ts",
     "replit:scribe:artifacts": "tsx ./src/replit-scribe-artifacts.ts",
     "test:signal-options-exit-policy-sweep": "node --import tsx --test ./src/signal-options-exit-policy-sweep.test.ts",

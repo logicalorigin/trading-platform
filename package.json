@@ -28,6 +28,12 @@
     "market-data-worker:run": "node scripts/run-market-data-worker.mjs run -p market-data-worker -- run",
     "market-data-worker:retention": "node scripts/run-market-data-worker.mjs run -p market-data-worker -- retention",
     "market-data-worker:once": "node scripts/run-market-data-worker.mjs run -p market-data-worker -- once",
+    "python-compute:doctor": "node scripts/run-python-compute.mjs doctor",
+    "python-compute:benchmark": "node scripts/run-python-compute.mjs benchmark",
+    "python-compute:service": "node scripts/run-python-compute.mjs service",
+    "python-compute:test": "node scripts/run-python-compute.mjs test",
+    "python-compute:lint": "node scripts/run-python-compute.mjs lint",
+    "python-compute:typecheck": "node scripts/run-python-compute.mjs typecheck",
     "test:market-data-worker": "node scripts/run-market-data-worker.mjs test -p market-data-worker",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run audit:replit-startup && pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"

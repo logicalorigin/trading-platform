@@ -587,6 +587,15 @@ function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function quoteHasAnyGreek(quote: QuoteSnapshot | undefined): boolean {
+  return Boolean(
+    quote &&
+      [quote.delta, quote.gamma, quote.theta, quote.vega].some(
+        (value) => finiteNumber(value) !== null,
+      ),
+  );
+}
+
 function midpoint(bid: unknown, ask: unknown): number | null {
   const numericBid = positiveNumber(bid);
   const numericAsk = positiveNumber(ask);
@@ -637,6 +646,14 @@ function mergeQuoteForCache(
     changePercent: incomingHasUsablePrice
       ? quote.changePercent
       : current?.changePercent ?? quote.changePercent,
+    impliedVolatility:
+      finiteNumber(quote.impliedVolatility) ??
+      finiteNumber(current?.impliedVolatility) ??
+      quote.impliedVolatility,
+    delta: finiteNumber(quote.delta) ?? finiteNumber(current?.delta) ?? quote.delta,
+    gamma: finiteNumber(quote.gamma) ?? finiteNumber(current?.gamma) ?? quote.gamma,
+    theta: finiteNumber(quote.theta) ?? finiteNumber(current?.theta) ?? quote.theta,
+    vega: finiteNumber(quote.vega) ?? finiteNumber(current?.vega) ?? quote.vega,
   };
 }
 
@@ -911,9 +928,13 @@ subscribeApiResourcePressureChanges(() => {
 });
 
 function shouldHydrateQuoteSnapshot(
-  quote: OptionQuoteWithSource | undefined,
+  quote: QuoteSnapshot | undefined,
+  input: { requiresGreeks?: boolean } = {},
 ): boolean {
   if (!quote) {
+    return true;
+  }
+  if (input.requiresGreeks && !quoteHasAnyGreek(quote)) {
     return true;
   }
   return (
@@ -1165,6 +1186,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     (providerContractId) =>
       shouldHydrateQuoteSnapshot(
         cachedQuotesByProviderContractId.get(providerContractId),
+        { requiresGreeks },
       ),
   );
 
@@ -1218,7 +1240,10 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
       freshQuotes.forEach(cacheQuote);
       const missingAfterHydration = hydrateProviderContractIds.filter(
         (providerContractId) =>
-          !quoteCacheByProviderContractId.has(providerContractId),
+          shouldHydrateQuoteSnapshot(
+            quoteCacheByProviderContractId.get(providerContractId),
+            { requiresGreeks },
+          ),
       );
       if (missingAfterHydration.length > 0) {
         await delayMs(750, input.signal);

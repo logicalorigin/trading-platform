@@ -25,6 +25,10 @@ import {
 import { startTradeMonitorWorker } from "./services/trade-monitor-worker";
 import { startSignalOptionsWorker } from "./services/signal-options-worker";
 import { ensureDefaultSignalOptionsPaperDeployment } from "./services/signal-options-automation";
+import {
+  getPythonComputeDiagnostics,
+  startPythonComputeRuntime,
+} from "./services/python-compute";
 import { attachOptionQuoteWebSocket } from "./ws/options-quotes";
 import { getBridgeQuoteStreamDiagnostics } from "./services/bridge-quote-stream";
 import { ensureIbkrLaneRuntimeOverridesLoaded } from "./services/ibkr-lanes";
@@ -151,6 +155,7 @@ async function collectDiagnosticsInput() {
           }
         : { ok: false, error: ordersProbe.error },
       marketData: getBridgeQuoteStreamDiagnostics(),
+      pythonCompute: getPythonComputeDiagnostics(),
     },
   };
 }
@@ -170,6 +175,9 @@ server.listen(port, () => {
   startIbkrWatchlistPrewarmRuntime();
   startOptionsFlowScanner();
   startTradeMonitorWorker();
+  void startPythonComputeRuntime().catch((err) => {
+    logger.warn({ err }, "Failed to start Python compute runtime");
+  });
   void ensureDefaultSignalOptionsPaperDeployment({
     enabled: true,
     preserveExistingPaused: true,

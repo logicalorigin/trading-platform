@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { CSS_COLOR } from "../../lib/uiTokens.jsx";
 import {
+  getGreekScenarioSummary,
   buildRiskLevelDisplayModel,
   getRiskGaugeColorStops,
 } from "./PortfolioExposurePanel.jsx";
@@ -16,6 +17,7 @@ test("portfolio exposure panel renders compact dashboard regions", () => {
   assert.match(source, /data-testid="portfolio-exposure-allocation"/);
   assert.match(source, /data-testid="portfolio-exposure-risk-level"/);
   assert.match(source, /data-testid="portfolio-exposure-notional"/);
+  assert.match(source, /data-testid="portfolio-exposure-greek-scenarios"/);
   assert.match(source, /data-testid="portfolio-exposure-concentration"/);
   assert.match(source, /data-testid="portfolio-exposure-risk-strip"/);
 });
@@ -25,7 +27,11 @@ test("portfolio exposure panel uses dense local composition instead of stacked s
   assert.match(source, /ExposureMetricRail/);
   assert.match(source, /RiskStrip/);
   assert.match(source, /NotionalExposureStrip/);
+  assert.match(source, /GreekScenarioStrip/);
   assert.match(source, /Notional Exposure/);
+  assert.match(source, /Greek Scenarios/);
+  assert.match(source, /label="Worst Shock"/);
+  assert.doesNotMatch(source, /label="Worst Case"/);
   assert.match(source, /Gross Notional/);
   assert.match(source, /Net Direction/);
   assert.match(source, /Delta Adj/);
@@ -180,7 +186,31 @@ test("portfolio exposure panel has a phone compact mode for two-up overview", ()
   assert.match(source, /gridTemplateColumns:\s*isPhone[\s\S]*"minmax\(0, 1fr\)"/);
   assert.match(source, /isPhone \? null : <SectorList/);
   assert.match(source, /isPhone \? null : \(\s*<NotionalExposureStrip/);
+  assert.match(source, /isPhone \? null : \(\s*<GreekScenarioStrip/);
   assert.match(source, /isPhone \? null : renderRiskStrip\(\)/);
+});
+
+test("greek scenario summary stays hidden until enabled and sorts scenarios", () => {
+  assert.equal(getGreekScenarioSummary(null), null);
+  assert.equal(getGreekScenarioSummary({ enabled: false }), null);
+
+  const summary = getGreekScenarioSummary({
+    enabled: true,
+    status: "completed",
+    result: {
+      scenarioCount: 2,
+      scenarios: [
+        { estimatedPnl: 125, spotShock: 0.02, ivShockVolPoints: 5, dayOffset: 1 },
+        { estimatedPnl: -80, spotShock: -0.02, ivShockVolPoints: -5, dayOffset: 1 },
+      ],
+      managementFlags: [{ symbol: "SPY 500C", reasons: ["theta_burden"] }],
+    },
+  });
+
+  assert.equal(summary.scenarioCount, 2);
+  assert.equal(summary.worst.estimatedPnl, -80);
+  assert.equal(summary.best.estimatedPnl, 125);
+  assert.equal(summary.flags[0].symbol, "SPY 500C");
 });
 
 test("portfolio exposure panel guards per-half loading and error states", () => {
