@@ -130,6 +130,7 @@ import {
   type PositionGreekSnapshot,
 } from "./account-risk-model";
 import { resolveAccountGreekScenarios } from "./account-greek-scenarios";
+import { buildAccountRiskRecommendations } from "./account-risk-recommendations";
 import {
   buildFlexBackfillWindows,
   extractFlexRecords,
@@ -4687,6 +4688,16 @@ export async function getAccountRisk(input: {
     greekByPositionId: greekEnrichment.byPositionId,
     underlyingPrices,
   });
+  const expiryConcentration = buildExpiryConcentration(positions);
+  const riskRecommendations = buildAccountRiskRecommendations({
+    positions,
+    nav,
+    marketHydration,
+    greekByPositionId: greekEnrichment.byPositionId,
+    greekScenarios,
+    notional,
+    expiryConcentration,
+  });
 
   return {
     accountId: universe.requestedAccountId,
@@ -4749,7 +4760,8 @@ export async function getAccountRisk(input: {
     },
     notional,
     greekScenarios,
-    expiryConcentration: buildExpiryConcentration(positions),
+    riskRecommendations,
+    expiryConcentration,
     updatedAt: accountMetricUpdatedAt(universe.accounts) ?? new Date(),
   };
 }

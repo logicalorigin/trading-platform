@@ -3,6 +3,14 @@ import {
   getStrategyCatalogItem,
 } from "./strategies";
 import { calculateBacktestMetrics } from "./analytics";
+import {
+  defaultConservativeOptionFillPolicy,
+  defaultLegacyOptionFillPolicy,
+  resolveOptionFill,
+  type OptionFillPolicy,
+  type OptionFillRejectionReason,
+  type OptionFillSide,
+} from "./option-fills";
 import type {
   BacktestBar,
   BacktestPoint,
@@ -20,6 +28,16 @@ type PendingOrder = {
   signalIndex: number;
 };
 
+type FillResult =
+  | {
+      status: "filled";
+      price: number;
+    }
+  | {
+      status: "no_fill";
+      reason: OptionFillRejectionReason;
+    };
+
 function orderMapKeysAscending(
   pendingOrders: Map<string, PendingOrder>,
 ): PendingOrder[] {
@@ -35,6 +53,46 @@ function computeCommission(value: number, commissionBps: number): number {
 function applySlippage(price: number, side: "buy" | "sell", slippageBps: number): number {
   const multiplier = slippageBps / 10_000;
   return side === "buy" ? price * (1 + multiplier) : price * (1 - multiplier);
+}
+
+function resolveExecutionOptionFillPolicy(
+  study: StudyDefinition,
+): OptionFillPolicy | null {
+  const profile = study.executionProfile.optionFillPolicy;
+  if (!profile) {
+    return null;
+  }
+
+  switch (profile.model) {
+    case "legacy_open_slippage":
+      return {
+        ...defaultLegacyOptionFillPolicy,
+        ...profile,
+      };
+    case "conservative_quote":
+      return {
+        ...defaultConservativeOptionFillPolicy,
+        ...profile,
+      };
+    case "post_and_wait":
+      return {
+        ...defaultConservativeOptionFillPolicy,
+        ...profile,
+        model: "post_and_wait",
+      };
+    default:
+      return null;
+  }
+}
+
+function formatOptionFillWarning(input: {
+  symbol: string;
+  side: OptionFillSide;
+  model: OptionFillPolicy["model"];
+  occurredAt: Date;
+  reason: OptionFillRejectionReason;
+}): string {
+  return `${input.model} ${input.side} ${input.symbol} rejected at ${input.occurredAt.toISOString()} (${input.reason}).`;
 }
 
 function positivePercent(value: number | null | undefined): number | null {
@@ -96,22 +154,21 @@ function resolveRiskExit(
     (stop): stop is { price: number; reason: string } =>
       Boolean(stop && Number.isFinite(stop.price)),
   );
-  const triggeredStops = activeStops.filter((stop) => bar.low <= stop.price);
+  const activeStop = activeStops.sort((left, right) => right.price - left.price)[0] ?? null;
+  const triggeredStop =
+    activeStop && bar.low <= activeStop.price ? activeStop : null;
   const triggeredTarget =
     takeProfit != null && bar.high >= takeProfit
       ? { price: takeProfit, reason: "take_profit" }
       : null;
 
-  if (triggeredStops.length > 0) {
-    const mostConservativeStop = triggeredStops.sort(
-      (left, right) => left.price - right.price,
-    )[0]!;
+  if (triggeredStop) {
     return {
       price:
-        bar.open <= mostConservativeStop.price
+        bar.open <= triggeredStop.price
           ? bar.open
-          : mostConservativeStop.price,
-      reason: mostConservativeStop.reason,
+          : triggeredStop.price,
+      reason: triggeredStop.reason,
     };
   }
 
@@ -163,6 +220,7 @@ export function runBacktest(
   const strategy = getExecutableStrategy(study.strategyId, study.strategyVersion);
   const catalogItem = getStrategyCatalogItem(study.strategyId, study.strategyVersion);
   const warnings = [...(catalogItem?.unsupportedFeatures ?? [])];
+  const optionFillPolicy = resolveExecutionOptionFillPolicy(study);
 
   const timestamps = [...new Set(
     Object.values(barsBySymbol)
@@ -191,6 +249,59 @@ export function runBacktest(
   let cash = study.portfolioRules.initialCapital;
   let peakEquity = study.portfolioRules.initialCapital;
 
+  const resolveFill = (
+    symbol: string,
+    bar: BacktestBar,
+    side: "buy" | "sell",
+    occurredAt: Date,
+    fallbackPrice: number,
+  ): FillResult => {
+    if (!optionFillPolicy) {
+      return {
+        status: "filled",
+        price: applySlippage(
+          fallbackPrice,
+          side,
+          study.executionProfile.slippageBps,
+        ),
+      };
+    }
+
+    const decision = resolveOptionFill({
+      bar,
+      side,
+      policy: optionFillPolicy,
+      occurredAt,
+    });
+    if (decision.status === "filled") {
+      return {
+        status: "filled",
+        price:
+          optionFillPolicy.model === "legacy_open_slippage"
+            ? applySlippage(
+                decision.fillPrice,
+                side,
+                study.executionProfile.slippageBps,
+              )
+            : decision.fillPrice,
+      };
+    }
+
+    warnings.push(
+      formatOptionFillWarning({
+        symbol,
+        side,
+        model: optionFillPolicy.model,
+        occurredAt,
+        reason: decision.reason,
+      }),
+    );
+    return {
+      status: "no_fill",
+      reason: decision.reason,
+    };
+  };
+
   timestamps.forEach((timestamp) => {
     const occurredAt = new Date(timestamp);
 
@@ -201,11 +312,11 @@ export function runBacktest(
         return;
       }
 
-      const exitPrice = applySlippage(
-        bar.open,
-        "sell",
-        study.executionProfile.slippageBps,
-      );
+      const exitFill = resolveFill(order.symbol, bar, "sell", occurredAt, bar.open);
+      if (exitFill.status === "no_fill") {
+        return;
+      }
+      const exitPrice = exitFill.price;
       const exitValue = exitPrice * position.quantity;
       const commissionPaid = computeCommission(
         exitValue,
@@ -242,11 +353,12 @@ export function runBacktest(
       const targetPositionValue =
         study.portfolioRules.initialCapital *
         (study.portfolioRules.positionSizePercent / 100);
-      const fillPrice = applySlippage(
-        bar.open,
-        "buy",
-        study.executionProfile.slippageBps,
-      );
+      const entryFill = resolveFill(order.symbol, bar, "buy", occurredAt, bar.open);
+      if (entryFill.status === "no_fill") {
+        pendingEntries.delete(order.symbol);
+        return;
+      }
+      const fillPrice = entryFill.price;
       const quantity = Math.floor(targetPositionValue / fillPrice);
 
       if (quantity <= 0) {
@@ -297,11 +409,17 @@ export function runBacktest(
       if (position) {
         const riskExit = resolveRiskExit(position, bar, study.riskRules);
         if (riskExit) {
-          const exitPrice = applySlippage(
-            riskExit.price,
+          const exitFill = resolveFill(
+            symbol,
+            bar,
             "sell",
-            study.executionProfile.slippageBps,
+            occurredAt,
+            riskExit.price,
           );
+          if (exitFill.status === "no_fill") {
+            return;
+          }
+          const exitPrice = exitFill.price;
           const exitValue = exitPrice * position.quantity;
           const commissionPaid = computeCommission(
             exitValue,
@@ -373,7 +491,26 @@ export function runBacktest(
     const lastOccurredAt = new Date(lastTimestamp);
     const hadOpenPositions = positions.size > 0;
     [...positions.values()].forEach((position) => {
-      const exitPrice = latestCloseBySymbol.get(position.symbol) ?? position.entryPrice;
+      const lastBar = barsByTimestamp.get(position.symbol)?.get(lastTimestamp);
+      const fallbackPrice = latestCloseBySymbol.get(position.symbol) ?? position.entryPrice;
+      const exitFill =
+        lastBar != null
+          ? resolveFill(position.symbol, lastBar, "sell", lastOccurredAt, fallbackPrice)
+          : {
+              status: "filled" as const,
+              price: applySlippage(
+                fallbackPrice,
+                "sell",
+                study.executionProfile.slippageBps,
+              ),
+            };
+      if (exitFill.status === "no_fill") {
+        warnings.push(
+          `${position.symbol}: unable to liquidate open position at end of test.`,
+        );
+        return;
+      }
+      const exitPrice = exitFill.price;
       const exitValue = exitPrice * position.quantity;
       const commissionPaid = computeCommission(
         exitValue,
@@ -391,17 +528,22 @@ export function runBacktest(
           commissionPaid,
         ),
       );
+      positions.delete(position.symbol);
     });
 
-    positions.clear();
+    const remainingGrossExposure = [...positions.values()].reduce((sum, position) => {
+      const markPrice = latestCloseBySymbol.get(position.symbol) ?? position.entryPrice;
+      return sum + position.quantity * markPrice;
+    }, 0);
+    const finalEquity = cash + remainingGrossExposure;
 
     const finalPoint = {
       occurredAt: lastOccurredAt,
-      equity: cash,
+      equity: finalEquity,
       cash,
-      grossExposure: 0,
+      grossExposure: remainingGrossExposure,
       drawdownPercent:
-        peakEquity > 0 ? ((cash - peakEquity) / peakEquity) * 100 : 0,
+        peakEquity > 0 ? ((finalEquity - peakEquity) / peakEquity) * 100 : 0,
     };
 
     if (hadOpenPositions) {

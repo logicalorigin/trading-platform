@@ -112,6 +112,21 @@ test("ResearchChartSurface mounts the overlay layer for flow event overlays", ()
   assert.match(overlayLayerGate, /chartEventOverlays\.length/);
 });
 
+test("ResearchChartSurface renders secondary signal badge metadata", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /"secondary_signal"/);
+  assert.match(
+    source,
+    /data-chart-indicator-badge-variant=\{overlay\.variant\}/,
+  );
+  assert.match(
+    source,
+    /data-chart-indicator-source-timeframe=\{\s*overlay\.sourceTimeframe \|\| undefined\s*\}/,
+  );
+  assert.match(source, /const isSecondarySignal = overlay\.variant === "secondary_signal"/);
+});
+
 test("ResearchChartSurface resolves CSS variable colors before chart canvas usage", () => {
   assert.equal(
     resolveCanvasColor("color-mix(in srgb, #ff0000 28%, transparent)", "#000000"),
@@ -159,9 +174,37 @@ test("ResearchChartSurface mounts position bubbles and mini off-pane indicators"
   assert.ok(overlayLayerGate, "overlay layer gate must be present");
   assert.match(overlayLayerGate, /positionBubbleOverlays\.length/);
   assert.match(overlayLayerGate, /positionOffPaneOverlays\.length/);
+  assert.match(overlayLayerGate, /positionRiskLineOverlays\.length/);
   assert.match(source, /dataTestId: `chart-position-pnl-\$\{bubble\.id\}`/);
   assert.match(source, /dataTestId: `chart-position-offpane-\$\{indicator\.id\}`/);
+  assert.match(source, /data-chart-position-risk-line=""/);
+  assert.match(source, /resolvedPositionOverlays\.riskLinePaths/);
   assert.match(source, /resolvedPositionOverlays\.density === "mini"/);
+});
+
+test("ResearchChartSurface emphasizes active position risk lines", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /const resolvePositionRiskLineVisualStyle = /);
+  assert.match(source, /line\.kind === "stopLoss" \|\| line\.kind === "trailingStop"/);
+  assert.match(source, /strokeWidth: activeRiskLine \? 2\.75/);
+  assert.match(source, /haloWidth: activeRiskLine \? 6/);
+  assert.match(source, /labelHeight: activeRiskLine \? 20/);
+  assert.match(source, /data-chart-position-risk-line-halo=""/);
+  assert.match(source, /strokeWidth=\{overlay\.haloWidth\}/);
+  assert.match(source, /strokeWidth=\{overlay\.strokeWidth\}/);
+  assert.match(source, /opacity=\{overlay\.opacity\}/);
+  assert.match(source, /height: overlay\.labelHeight/);
+});
+
+test("useChartPositionOverlays reads account positions for risk overlays", () => {
+  const source = readSource("./useChartPositionOverlays.ts");
+
+  assert.match(source, /useGetAccountPositions/);
+  assert.match(source, /getGetAccountPositionsQueryKey/);
+  assert.match(source, /resolveChartPositionOverlayAccountRequest/);
+  assert.match(source, /useAccountSection/);
+  assert.doesNotMatch(source, /useListPositions/);
 });
 
 test("ResearchChartSurface applies semantic colors to flow markers", () => {

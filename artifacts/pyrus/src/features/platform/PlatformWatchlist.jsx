@@ -47,7 +47,6 @@ import {
   TABLE_SPARKLINE_WIDTH,
   buildDetailedFallbackSparklineData,
 } from "./sparklineConfig";
-import { normalizeTickerSymbol } from "./tickerIdentity";
 import {
   WATCHLIST_SORT_MODE,
   buildSignalMatrixBySymbol,
@@ -186,10 +185,7 @@ const WatchlistRow = memo(
     );
     const snapshot = useRuntimeTickerSnapshot(item.sym, fallback);
     const signalState = useSignalMonitorStateForSymbol(item.sym);
-    const bestSignalState = getBestWatchlistSignalState(
-      signalStatesByTimeframe,
-      signalState,
-    );
+    const bestSignalState = getBestWatchlistSignalState(signalStatesByTimeframe);
     const rowSelectable = Boolean(item.canRemove && item.id);
     const selectedRow = selected === item.sym;
     const signalDirection = bestSignalState?.currentSignalDirection;
@@ -360,7 +356,6 @@ const WatchlistRow = memo(
       >
         <SignalDots
           statesByTimeframe={signalStatesByTimeframe}
-          fallbackState={signalState}
           onSelect={(state) => onSignalAction?.(item.sym, state)}
           style={{ minWidth: dim(34), gap: sp(3) }}
         />
@@ -763,15 +758,6 @@ export const Watchlist = ({
     [items],
   );
   const snapshotsBySymbol = useRuntimeTickerSnapshots(itemSymbols);
-  const signalStatesBySymbol = useMemo(
-    () =>
-      Object.fromEntries(
-        (signalStates || [])
-          .map((state) => [normalizeTickerSymbol(state?.symbol), state])
-          .filter(([symbol]) => Boolean(symbol)),
-      ),
-    [signalStates],
-  );
   const signalMatrixBySymbol = useMemo(
     () => buildSignalMatrixBySymbol(signalMatrixStates),
     [signalMatrixStates],
@@ -808,13 +794,11 @@ export const Watchlist = ({
         mode: sortMode,
         direction: sortDirection,
         snapshotsBySymbol,
-        signalStatesBySymbol,
         signalMatrixBySymbol,
       }),
     [
       filtered,
       signalMatrixBySymbol,
-      signalStatesBySymbol,
       snapshotsBySymbol,
       sortDirection,
       sortMode,

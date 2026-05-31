@@ -9,7 +9,11 @@ import {
   useStockMinuteAggregateSymbolsVersion,
 } from "../charting/useMassiveStockAggregateStream";
 import { MARKET_PERFORMANCE_SYMBOLS } from "../market/marketReferenceData";
-import { useIbkrQuoteSnapshotStream } from "./live-streams";
+import {
+  useIbkrQuoteSnapshotStream,
+  usePositionQuoteSnapshotStream,
+} from "./live-streams";
+import { usePositionMarketDataSymbols } from "./positionMarketDataStore";
 import { usePageVisible } from "./usePageVisible";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import {
@@ -107,6 +111,7 @@ export const MarketDataSubscriptionProvider = ({
   children,
 }) => {
   const pageVisible = usePageVisible();
+  const positionQuoteSymbols = usePositionMarketDataSymbols();
   const marketAggregateStoreVersion = useStockMinuteAggregateSymbolsVersion(
     streamedAggregateSymbols,
   );
@@ -153,8 +158,17 @@ export const MarketDataSubscriptionProvider = ({
     eventSourceAvailable,
     upstreamDisabledReason: upstreamQuoteStreamDisabledReason,
   });
+  const positionQuoteStreamDisabledReason = resolveQuoteStreamDisabledReason({
+    pageVisible,
+    quoteStreamRuntimeEnabled: true,
+    symbolCount: positionQuoteSymbols.length,
+    eventSourceAvailable,
+  });
   const quoteStreamRuntimeActive = Boolean(
     !quoteStreamDisabledReason,
+  );
+  const positionQuoteStreamRuntimeActive = Boolean(
+    !positionQuoteStreamDisabledReason,
   );
   const marketAggregateStreamRuntimeActive = Boolean(
     pageVisible && marketStockAggregateStreamingEnabled && marketScreenActive,
@@ -172,6 +186,13 @@ export const MarketDataSubscriptionProvider = ({
         eventSourceAvailable,
         coverage: quoteStreamCoverageDiagnostics,
       },
+      positionQuoteStream: {
+        active: positionQuoteStreamRuntimeActive,
+        disabledReason: positionQuoteStreamDisabledReason,
+        requestedSymbols: positionQuoteSymbols,
+        requestedSymbolCount: positionQuoteSymbols.length,
+        eventSourceAvailable,
+      },
       aggregateStream: {
         active: marketAggregateStreamRuntimeActive,
         requestedSymbolCount: streamedAggregateSymbols.length,
@@ -187,6 +208,9 @@ export const MarketDataSubscriptionProvider = ({
   }, [
     eventSourceAvailable,
     marketAggregateStreamRuntimeActive,
+    positionQuoteStreamDisabledReason,
+    positionQuoteStreamRuntimeActive,
+    positionQuoteSymbols,
     quoteStreamCoverageDiagnostics,
     quoteStreamDisabledReason,
     quoteStreamRuntimeActive,
@@ -207,6 +231,16 @@ export const MarketDataSubscriptionProvider = ({
       label: "Market runtime streams",
       detail: `${streamedQuoteSymbols.length}q/${streamedAggregateSymbols.length}a`,
       priority: 3,
+    },
+  );
+  useRuntimeWorkloadFlag(
+    "market:position-quote-stream",
+    Boolean(pageVisible && positionQuoteStreamRuntimeActive),
+    {
+      kind: "stream",
+      label: "Position spot stream",
+      detail: `${positionQuoteSymbols.length}q`,
+      priority: 2,
     },
   );
   useRuntimeWorkloadFlag("market:sparklines", sparklineHistoryEnabled, {
@@ -337,6 +371,11 @@ export const MarketDataSubscriptionProvider = ({
   useIbkrQuoteSnapshotStream({
     symbols: streamedQuoteSymbols,
     enabled: quoteStreamRuntimeActive,
+    onQuotes: handleStreamQuotes,
+  });
+  usePositionQuoteSnapshotStream({
+    symbols: positionQuoteSymbols,
+    enabled: positionQuoteStreamRuntimeActive,
     onQuotes: handleStreamQuotes,
   });
   useBrokerStockAggregateStream({

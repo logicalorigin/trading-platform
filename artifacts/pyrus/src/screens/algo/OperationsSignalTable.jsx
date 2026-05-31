@@ -3,6 +3,11 @@ import {
   useMemo,
   useState,
 } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  getBars as getBarsRequest,
+  useGetQuoteSnapshots,
+} from "@workspace/api-client-react";
 import {
   AlertTriangle,
   ArrowDown,
@@ -29,23 +34,28 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { formatRelativeTimeShort } from "../../lib/formatters";
-import {
-  algoFocusStore,
-  clearAlgoFocus,
-  setAlgoFocus,
-  useAlgoFocus,
-} from "../../features/platform/algoFocusStore";
-import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
 import { useStoredOptionQuoteSnapshotVersion } from "../../features/platform/live-streams";
-import { useRuntimeTickerSnapshots } from "../../features/platform/runtimeTickerStore";
+import {
+  BARS_QUERY_DEFAULTS,
+  BARS_REQUEST_PRIORITY,
+  HEAVY_PAYLOAD_GC_MS,
+  buildBarsRequestOptions,
+} from "../../features/platform/queryDefaults";
+import { applyRuntimeQuoteSnapshots } from "../../features/platform/runtimeMarketDataModel";
+import {
+  publishRuntimeTickerSnapshot,
+  useRuntimeTickerSnapshots,
+} from "../../features/platform/runtimeTickerStore";
+import { SPARKLINE_RENDER_POINT_LIMIT } from "../../features/platform/sparklineConfig";
 import { buildSignalMatrixBySymbol } from "../../features/platform/watchlistModel";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
   asRecord,
   findSignalOptionsCandidateForSignal,
   optionProviderContractId,
+  resolveSignalMove,
   resolveSignalScoreBreakdown,
 } from "./algoHelpers";
 import {
@@ -68,6 +78,25 @@ const FILTER_OPTIONS = [
 ];
 
 const SIGNALS_PAGE_SIZE = 30;
+const SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
+const SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT = 120;
+const SIGNAL_TABLE_SPARKLINE_CONCURRENCY = 4;
+const SIGNAL_COLUMN_VISIBILITY_VERSION = 2;
+const LEGACY_DEFAULT_SIGNAL_VISIBLE_COLUMNS = [
+  "signal",
+  "since",
+  "move",
+  "action",
+  "contract",
+  "quote",
+  "spread",
+  "greeks",
+  "gate",
+  "sync",
+  "score",
+  "decision",
+  "rowAction",
+];
 
 const SORT_LABELS = {
   newest: "Newest",
@@ -99,6 +128,51 @@ const DEFAULT_SORT_DIRECTIONS = {
 const defaultSortDirection = (sortKey) => DEFAULT_SORT_DIRECTIONS[sortKey] || "desc";
 
 const toggleSortDirection = (direction) => (direction === "asc" ? "desc" : "asc");
+
+const settleWithConcurrency = async (items, concurrency, mapper) => {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        try {
+          results[index] = {
+            status: "fulfilled",
+            value: await mapper(items[index], index),
+          };
+        } catch (reason) {
+          results[index] = { status: "rejected", reason };
+        }
+      }
+    }),
+  );
+
+  return results;
+};
+
+const barCloseValue = (bar) => {
+  const close = Number(bar?.close ?? bar?.c);
+  return Number.isFinite(close) ? close : null;
+};
+
+const thinBarsForSignalSparkline = (bars) => {
+  const validBars = Array.isArray(bars)
+    ? bars.filter((bar) => barCloseValue(bar) != null)
+    : [];
+  if (validBars.length <= SPARKLINE_RENDER_POINT_LIMIT) return validBars;
+
+  const lastIndex = validBars.length - 1;
+  return Array.from({ length: SPARKLINE_RENDER_POINT_LIMIT }, (_, index) => {
+    const sourceIndex = Math.round(
+      (index * lastIndex) / (SPARKLINE_RENDER_POINT_LIMIT - 1),
+    );
+    return validBars[sourceIndex];
+  });
+};
 
 const timestampMs = (value) => {
   const parsed = Date.parse(value || "");
@@ -141,11 +215,6 @@ const sortNumberOrNaN = (value) => {
   return Number.isFinite(number) ? number : Number.NaN;
 };
 
-const positiveSortNumberOrNaN = (value) => {
-  const number = sortNumberOrNaN(value);
-  return number > 0 ? number : Number.NaN;
-};
-
 const firstFiniteSortNumber = (...values) => {
   for (const value of values) {
     const number = sortNumberOrNaN(value);
@@ -155,20 +224,16 @@ const firstFiniteSortNumber = (...values) => {
 };
 
 const signalMoveSortValue = (row) => {
-  const signal = asRecord(row.signal);
+  const pct = resolveSignalMove(row.signal, null, row.candidate).pct;
+  return pct == null ? Number.NaN : Number(pct);
+};
+
+const signalContractPreview = (signal) => asRecord(asRecord(signal).contractPreview);
+
+const rowMetricCandidate = (row) => {
   const candidate = asRecord(row.candidate);
-  const signalPrice = positiveSortNumberOrNaN(signal.signalPrice);
-  const currentPrice = firstFiniteSortNumber(
-    signal.currentPrice,
-    signal.last,
-    signal.mark,
-    candidate.underlyingPrice,
-    candidate.currentPrice,
-  );
-  if (!Number.isFinite(signalPrice) || !Number.isFinite(currentPrice)) {
-    return Number.NaN;
-  }
-  return ((currentPrice - signalPrice) / signalPrice) * 100;
+  if (Object.keys(candidate).length) return candidate;
+  return signalContractPreview(row.signal);
 };
 
 const quoteAgeSortValue = (candidate) => {
@@ -233,12 +298,39 @@ const compareTimestampValues = (aMs, bMs, sortDirection) =>
     sortDirection,
   );
 
-const classifySignal = (signal, candidate) => {
-  if (signal?.status === "unavailable") return "unavailable";
-  if (candidate?.actionStatus === "blocked" || candidate?.status === "blocked") {
+const sameColumnSet = (columns, expected) => {
+  const source = new Set(columns);
+  const target = new Set(expected);
+  return source.size === target.size && expected.every((columnId) => source.has(columnId));
+};
+
+const resolveInitialSignalVisibleColumns = () => {
+  const normalized = normalizeSignalVisibleColumns(_initialState.algoSignalVisibleColumns);
+  if (_initialState.algoSignalColumnVisibilityVersion === SIGNAL_COLUMN_VISIBILITY_VERSION) {
+    return normalized;
+  }
+  if (
+    Array.isArray(_initialState.algoSignalVisibleColumns) &&
+    sameColumnSet(normalized, LEGACY_DEFAULT_SIGNAL_VISIBLE_COLUMNS)
+  ) {
+    return normalized.filter((columnId) => columnId !== "sync");
+  }
+  return normalized;
+};
+
+export const classifySignal = (signal, candidate) => {
+  const signalRecord = asRecord(signal);
+  const candidateRecord = asRecord(candidate);
+  if (signalRecord.status === "unavailable") return "unavailable";
+  if (signalRecord.actionEligible === false || signalRecord.actionBlocker) {
     return "blocked";
   }
-  if (candidate?.reason) return "blocked";
+  if (!Object.keys(candidateRecord).length) return "blocked";
+  const actionStatus = String(
+    candidateRecord.actionStatus || candidateRecord.status || "",
+  ).toLowerCase();
+  if (actionStatus === "blocked" || actionStatus === "skipped") return "blocked";
+  if (candidateRecord.reason) return "blocked";
   return "ready";
 };
 
@@ -247,9 +339,13 @@ const normalizeSearchText = (value) => String(value || "").trim().toUpperCase();
 const rowSearchText = (row) => {
   const signal = asRecord(row.signal);
   const candidate = asRecord(row.candidate);
+  const previewContract = asRecord(signalContractPreview(signal).selectedContract);
   return [
     signal.symbol,
     candidate.symbol,
+    previewContract.ticker,
+    previewContract.expirationDate,
+    previewContract.strike,
     signal.strategyLabel,
     candidate.strategyLabel,
     candidate.sourceType,
@@ -303,8 +399,8 @@ export const sortRows = (
     if (sortKey === "quoteAge") {
       return (
         compareFiniteValues(
-          quoteAgeSortValue(a.candidate),
-          quoteAgeSortValue(b.candidate),
+          quoteAgeSortValue(rowMetricCandidate(a)),
+          quoteAgeSortValue(rowMetricCandidate(b)),
           sortDirection,
         ) || fallbackCompare(a, b)
       );
@@ -312,8 +408,8 @@ export const sortRows = (
     if (sortKey === "spread") {
       return (
         compareFiniteValues(
-          spreadSortValue(a.candidate),
-          spreadSortValue(b.candidate),
+          spreadSortValue(rowMetricCandidate(a)),
+          spreadSortValue(rowMetricCandidate(b)),
           sortDirection,
         ) || fallbackCompare(a, b)
       );
@@ -546,7 +642,6 @@ export const OperationsSignalTable = ({
   algoIsPhone,
   algoIsNarrow = false,
   onOpenCandidateInTrade,
-  renderDrill,
 }) => {
   const [filter, setFilter] = useState("all");
   const [sortState, setSortState] = useState({
@@ -560,9 +655,8 @@ export const OperationsSignalTable = ({
     normalizeSignalColumnOrder(_initialState.algoSignalColumnOrder),
   );
   const [visibleColumnIds, setVisibleColumnIds] = useState(() =>
-    normalizeSignalVisibleColumns(_initialState.algoSignalVisibleColumns),
+    resolveInitialSignalVisibleColumns(),
   );
-  const focus = useAlgoFocus();
   const sortKey = sortState.key;
   const sortDirection = sortState.direction;
   const visibleColumns = useMemo(
@@ -580,14 +674,19 @@ export const OperationsSignalTable = ({
     () =>
       Array.from(
         new Set(
-          (candidates || [])
-            .map((candidate) =>
+          [
+            ...(candidates || []).map((candidate) =>
               optionProviderContractId(asRecord(candidate).selectedContract),
-            )
-            .filter(Boolean),
+            ),
+            ...(signals || []).map((signal) =>
+              optionProviderContractId(
+                asRecord(signalContractPreview(signal).selectedContract),
+              ),
+            ),
+          ].filter(Boolean),
         ),
       ),
-    [candidates],
+    [candidates, signals],
   );
   useStoredOptionQuoteSnapshotVersion(providerContractIds);
   const signalMatrixBySymbol = useMemo(
@@ -612,11 +711,10 @@ export const OperationsSignalTable = ({
     const filtered = normalizedQuery
       ? filteredByStatus.filter((row) => rowSearchText(row).includes(normalizedQuery))
       : filteredByStatus;
-    return sortRows(filtered, sortKey, focus.focusedSymbol, sortDirection);
+    return sortRows(filtered, sortKey, null, sortDirection);
   }, [
     candidates,
     filter,
-    focus.focusedSymbol,
     searchQuery,
     signals,
     sortDirection,
@@ -634,10 +732,67 @@ export const OperationsSignalTable = ({
         .filter(Boolean),
     [pageRows],
   );
+  const rowSymbolsKey = useMemo(() => rowSymbols.join(","), [rowSymbols]);
+  const rowQuotesQuery = useGetQuoteSnapshots(
+    { symbols: rowSymbolsKey },
+    {
+      query: {
+        enabled: Boolean(rowSymbolsKey),
+        staleTime: 30_000,
+        retry: false,
+      },
+    },
+  );
+  const rowSparklineQuery = useQuery({
+    queryKey: ["algo-signal-row-sparklines", rowSymbolsKey],
+    queryFn: async () => {
+      const symbols = rowSymbols;
+      const results = await settleWithConcurrency(
+        symbols,
+        SIGNAL_TABLE_SPARKLINE_CONCURRENCY,
+        (symbol) =>
+          getBarsRequest(
+            {
+              symbol,
+              timeframe: SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
+              limit: SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT,
+              outsideRth: true,
+              source: "trades",
+            },
+            buildBarsRequestOptions(
+              BARS_REQUEST_PRIORITY.background,
+              "algo-signal-sparkline",
+            ),
+          ),
+      );
+
+      return Object.fromEntries(
+        results.map((result, index) => [
+          symbols[index],
+          result.status === "fulfilled"
+            ? thinBarsForSignalSparkline(result.value?.bars || [])
+            : [],
+        ]),
+      );
+    },
+    ...BARS_QUERY_DEFAULTS,
+    enabled: Boolean(rowSymbolsKey),
+    retry: false,
+    gcTime: HEAVY_PAYLOAD_GC_MS,
+  });
   const tickerSnapshotsBySymbol = useRuntimeTickerSnapshots(rowSymbols);
   useEffect(() => {
+    applyRuntimeQuoteSnapshots(rowQuotesQuery.data?.quotes || []);
+  }, [rowQuotesQuery.dataUpdatedAt, rowQuotesQuery.data]);
+  useEffect(() => {
+    Object.entries(rowSparklineQuery.data || {}).forEach(([symbol, sparkBars]) => {
+      if (!Array.isArray(sparkBars) || sparkBars.length < 2) return;
+      publishRuntimeTickerSnapshot(symbol, symbol, { sparkBars });
+    });
+  }, [rowSparklineQuery.dataUpdatedAt, rowSparklineQuery.data]);
+  useEffect(() => {
     setPage(0);
-  }, [filter, focus.focusedSymbol, searchQuery, sortDirection, sortKey]);
+  }, [filter, searchQuery, sortDirection, sortKey]);
   useEffect(() => {
     if (paginatedRows.safePage !== page) {
       setPage(paginatedRows.safePage);
@@ -647,6 +802,7 @@ export const OperationsSignalTable = ({
     persistState({
       algoSignalColumnOrder: normalizeSignalColumnOrder(columnOrder),
       algoSignalVisibleColumns: normalizeSignalVisibleColumns(visibleColumnIds),
+      algoSignalColumnVisibilityVersion: SIGNAL_COLUMN_VISIBILITY_VERSION,
     });
   }, [columnOrder, visibleColumnIds]);
   useEffect(() => {
@@ -804,25 +960,20 @@ export const OperationsSignalTable = ({
     setColumnOrder(DEFAULT_SIGNAL_COLUMN_ORDER);
     setVisibleColumnIds(DEFAULT_SIGNAL_VISIBLE_COLUMNS);
   };
-  const handleRowAction = ({ actionId, signal, candidate }) => {
-    const symbol = asRecord(signal).symbol;
+  const handleRowAction = ({ actionId, candidate }) => {
     if (actionId === "submit" && candidate && onOpenCandidateInTrade) {
       onOpenCandidateInTrade(candidate);
-      return;
     }
-    setAlgoFocus(symbol, "action");
   };
 
   return (
     <div
       data-testid="algo-operations-signal-table"
-      className="ra-dense-table-scroll"
       style={{
         background: CSS_COLOR.bg1,
         border: `1px solid ${CSS_COLOR.border}`,
         borderRadius: dim(RADII.md),
-        overflowX: "auto",
-        overflowY: "hidden",
+        overflow: "hidden",
         minWidth: 0,
       }}
     >
@@ -871,7 +1022,7 @@ export const OperationsSignalTable = ({
               textOverflow: "ellipsis",
             }}
           >
-            {algoIsPhone ? `Signals · ${mobileStatusLine}` : `Signals to Action · ${statusLine}`}
+            {algoIsPhone ? `Signals · ${mobileStatusLine}` : `Signals to Actions · ${statusLine}`}
           </span>
         </div>
         <div
@@ -1058,73 +1209,68 @@ export const OperationsSignalTable = ({
         ) : null}
       </div>
 
-      <div style={{ minWidth: tableMinWidth }}>
-        <OperationsSignalTableHeader
-          algoIsPhone={algoIsPhone}
-          columns={visibleColumns}
-          sortKey={sortKey}
-          sortDirection={sortDirection}
-          onSortChange={handleSortChange}
-        />
+      <div
+        data-testid="algo-signal-table-scroll"
+        className="ra-dense-table-scroll"
+        style={{
+          overflowX: "auto",
+          overflowY: "hidden",
+          minWidth: 0,
+        }}
+      >
+        <div style={{ minWidth: tableMinWidth }}>
+          <OperationsSignalTableHeader
+            columns={visibleColumns}
+            sortKey={sortKey}
+            sortDirection={sortDirection}
+            onSortChange={handleSortChange}
+          />
 
-        <div style={{ maxHeight: 520, overflowY: "auto", minWidth: 0 }}>
-          {rows.length === 0 ? (
-            <div style={{ padding: sp(6) }}>
-              <DataUnavailableState
-                title={
-                  searchQuery.trim()
-                    ? "No signals match this search"
-                    : filter === "all"
-                    ? "Awaiting next scan"
-                    : "No signals match this filter"
-                }
-                detail={
-                  searchQuery.trim()
-                    ? "Clear search to return to the current signal list."
-                    : filter === "all"
-                    ? "Signals appear as soon as the monitor finishes its next pass."
-                    : "Switch filter to All to see signals in other states."
-                }
-                icon={<Inbox size={20} strokeWidth={1.8} aria-hidden="true" />}
-                minHeight={56}
-                loading={filter === "all" && !searchQuery.trim()}
-              />
-            </div>
-          ) : (
-            pageRows.map(({ signal, candidate, scoreBreakdown }) => {
-              const symbol = asRecord(signal).symbol;
-              const expanded = focus.focusedSymbol === symbol;
-              return (
-                <OperationsSignalRow
-                  key={asRecord(signal).signalKey || symbol}
-                  signal={signal}
-                  candidate={candidate}
-                  scoreBreakdown={scoreBreakdown}
-                  tfMatrix={signalMatrixBySymbol?.[String(symbol || "").toUpperCase()] || null}
-                  tickerSnapshot={
-                    tickerSnapshotsBySymbol?.[String(symbol || "").toUpperCase()] || null
+          <div style={{ maxHeight: 520, overflowY: "auto", minWidth: 0 }}>
+            {rows.length === 0 ? (
+              <div style={{ padding: sp(6) }}>
+                <DataUnavailableState
+                  title={
+                    searchQuery.trim()
+                      ? "No signals match this search"
+                      : filter === "all"
+                      ? "Awaiting next scan"
+                      : "No signals match this filter"
                   }
-                  expanded={expanded && !algoIsPhone}
-                  onToggle={() => {
-                    if (expanded) {
-                      clearAlgoFocus();
-                    } else {
-                      setAlgoFocus(symbol);
-                    }
-                  }}
-                  expandedContent={
-                    expanded && !algoIsPhone
-                      ? renderDrill?.({ signal, candidate, drillTab: focus.drillTab })
-                      : null
+                  detail={
+                    searchQuery.trim()
+                      ? "Clear search to return to the current signal list."
+                      : filter === "all"
+                      ? "Signals appear as soon as the monitor finishes its next pass."
+                      : "Switch filter to All to see signals in other states."
                   }
-                  algoIsPhone={false}
-                  columns={visibleColumns}
-                  scanActive={freshness.scanRunning}
-                  onRowAction={handleRowAction}
+                  icon={<Inbox size={20} strokeWidth={1.8} aria-hidden="true" />}
+                  minHeight={56}
+                  loading={filter === "all" && !searchQuery.trim()}
                 />
-              );
-            })
-          )}
+              </div>
+            ) : (
+              pageRows.map(({ signal, candidate, scoreBreakdown }, rowIndex) => {
+                const symbol = asRecord(signal).symbol;
+                return (
+                  <OperationsSignalRow
+                    key={asRecord(signal).signalKey || symbol}
+                    signal={signal}
+                    candidate={candidate}
+                    scoreBreakdown={scoreBreakdown}
+                    tfMatrix={signalMatrixBySymbol?.[String(symbol || "").toUpperCase()] || null}
+                    tickerSnapshot={
+                      tickerSnapshotsBySymbol?.[String(symbol || "").toUpperCase()] || null
+                    }
+                    alt={rowIndex % 2 === 1}
+                    columns={visibleColumns}
+                    scanActive={freshness.scanRunning}
+                    onRowAction={handleRowAction}
+                  />
+                );
+              })
+            )}
+          </div>
         </div>
       </div>
       <PaginationFooter
@@ -1140,30 +1286,6 @@ export const OperationsSignalTable = ({
           borderTop: `1px solid ${CSS_COLOR.border}`,
         }}
       />
-      {algoIsPhone && focus.focusedSymbol ? (
-        <BottomSheet
-          open={Boolean(focus.focusedSymbol)}
-          onClose={clearAlgoFocus}
-          title={focus.focusedSymbol}
-          testId="algo-signal-drill-sheet"
-        >
-          {(() => {
-            const focusedRow = rows.find(
-              ({ signal }) =>
-                String(asRecord(signal).symbol || "").toUpperCase() ===
-                String(focus.focusedSymbol || "").toUpperCase(),
-            );
-            return (
-              focusedRow &&
-              renderDrill?.({
-                signal: focusedRow.signal,
-                candidate: focusedRow.candidate,
-                drillTab: focus.drillTab,
-              })
-            );
-          })()}
-        </BottomSheet>
-      ) : null}
     </div>
   );
 };

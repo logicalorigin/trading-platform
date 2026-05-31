@@ -279,11 +279,29 @@ export type StudySpec = {
 
 export type IndicatorPluginInput = {
   chartBars: ChartBar[];
+  chartBarRanges: ChartBarRange[];
   rawBars: MarketBar[];
   dailyBars?: MarketBar[];
   settings?: Record<string, unknown>;
   timeframe: string;
   selectedIndicators: string[];
+  sourceSeries?: IndicatorPluginSourceSeries[];
+};
+
+export type IndicatorSourceSeriesInput = {
+  id: string;
+  timeframe: string;
+  sourceTimeframe: string;
+  bars: MarketBar[];
+};
+
+export type IndicatorPluginSourceSeries = {
+  id: string;
+  timeframe: string;
+  sourceTimeframe: string;
+  chartBars: ChartBar[];
+  chartBarRanges: ChartBarRange[];
+  rawBars: MarketBar[];
 };
 
 export type IndicatorPluginOutput = {
@@ -340,5 +358,6 @@ export type BuildChartModelInput = {
   selectedIndicators?: string[];
   indicatorSettings?: Record<string, Record<string, unknown>>;
   indicatorMarkers?: ChartMarker[];
+  indicatorSourceSeries?: IndicatorSourceSeriesInput[];
   indicatorRegistry?: IndicatorRegistry;
 };

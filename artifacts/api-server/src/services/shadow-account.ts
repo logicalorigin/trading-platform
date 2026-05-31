@@ -82,6 +82,7 @@ import {
   type PositionGreekSnapshot,
 } from "./account-risk-model";
 import { resolveAccountGreekScenarios } from "./account-greek-scenarios";
+import { buildAccountRiskRecommendations } from "./account-risk-recommendations";
 
 export const SHADOW_ACCOUNT_ID = "shadow";
 export const SHADOW_ACCOUNT_DISPLAY_NAME = "Shadow";
@@ -1744,14 +1745,36 @@ function buildShadowAutomationContext(input: {
       : null;
   const hardStopPrice =
     displayStop?.hardStopPrice ?? toNumber(eventStop.hardStopPrice) ?? eventStopPrice;
-  const stopPrice = displayStop?.stopPrice ?? eventStopPrice;
+  const rawStopPrice = displayStop?.stopPrice ?? eventStopPrice;
   const trailStopPrice = displayStop?.trailStopPrice ?? toNumber(eventStop.trailStopPrice);
   const trailActive = displayStop?.trailActive ?? eventStop.trailActive === true;
+  const trailHasTakenOver =
+    displayStop?.trailHasTakenOver ??
+    (trailActive && hardStopPrice != null && trailStopPrice != null
+      ? trailStopPrice > hardStopPrice
+      : trailActive && trailStopPrice != null && hardStopPrice == null);
+  const activeStopKind =
+    displayStop?.activeStopKind ??
+    (trailHasTakenOver
+      ? "trailing_stop"
+      : hardStopPrice != null
+        ? "hard_stop"
+        : trailStopPrice != null
+          ? "trailing_stop"
+          : null);
+  const activeStopPrice =
+    displayStop?.activeStopPrice ??
+    (activeStopKind === "trailing_stop" ? trailStopPrice : hardStopPrice) ??
+    rawStopPrice;
+  const stopPrice = activeStopPrice ?? rawStopPrice;
 
   return {
     entryPrice,
     peakPrice,
     stopPrice,
+    activeStopPrice,
+    activeStopKind,
+    trailHasTakenOver,
     stopLossPrice: hardStopPrice,
     targetPrice: takeProfitPrice,
     takeProfitPrice,
@@ -1785,13 +1808,104 @@ function buildShadowAutomationContext(input: {
       trailActivationPct,
       trailActivationPrice,
       targetKind: takeProfitPrice != null ? "take_profit" : null,
+      activeStopPrice,
+      activeStopKind,
       trailActive,
       trailStopPrice,
+      trailHasTakenOver,
       givebackPct: displayStop?.givebackPct ?? toNumber(eventStop.givebackPct),
+      minLockedGainPct:
+        displayStop?.progressiveTrailStep?.minLockedGainPct ??
+        toNumber(eventStop.minLockedGainPct),
       returnPct: displayStop?.returnPct ?? toNumber(eventStop.returnPct),
       markReturnPct: displayStop?.markReturnPct ?? toNumber(eventStop.markReturnPct),
       barsSinceEntry: toNumber(eventStop.barsSinceEntry),
     },
+  };
+}
+
+function buildShadowPositionRiskOverlay(input: {
+  automationContext: ReturnType<typeof buildShadowAutomationContext>;
+  openedAt?: Date | string | null;
+}) {
+  const automationContext = input.automationContext;
+  if (!automationContext) {
+    return null;
+  }
+
+  const management = readRecord(automationContext.tradeManagement) ?? {};
+  const hardStopPrice =
+    toNumber(management.hardStopPrice) ?? toNumber(automationContext.stopLossPrice);
+  const trailStopPrice = toNumber(management.trailStopPrice);
+  const stopPrice = toNumber(automationContext.stopPrice) ?? toNumber(management.stopPrice);
+  const takeProfitPrice =
+    toNumber(management.takeProfitPrice) ??
+    toNumber(management.targetPrice) ??
+    toNumber(management.profitTargetPrice) ??
+    toNumber(automationContext.takeProfitPrice) ??
+    toNumber(automationContext.targetPrice);
+  const trailActive = management.trailActive === true || trailStopPrice != null;
+  const explicitActiveStopKind = readString(
+    management.activeStopKind ?? automationContext.activeStopKind,
+  );
+  const explicitTrailHasTakenOver =
+    management.trailHasTakenOver === true ||
+    automationContext.trailHasTakenOver === true ||
+    explicitActiveStopKind === "trailing_stop";
+  const trailHasTakenOver =
+    explicitActiveStopKind === "hard_stop"
+      ? false
+      : explicitTrailHasTakenOver ||
+        (trailActive && trailStopPrice != null && hardStopPrice != null
+          ? trailStopPrice > hardStopPrice
+          : trailActive && trailStopPrice != null && hardStopPrice == null);
+  const activeStopKind =
+    explicitActiveStopKind === "trailing_stop" || explicitActiveStopKind === "hard_stop"
+      ? explicitActiveStopKind
+      : trailHasTakenOver
+        ? "trailing_stop"
+        : hardStopPrice != null
+          ? "hard_stop"
+          : trailStopPrice != null
+            ? "trailing_stop"
+            : null;
+  const activeStopPrice =
+    toNumber(management.activeStopPrice) ??
+    toNumber(automationContext.activeStopPrice) ??
+    (activeStopKind === "trailing_stop" ? trailStopPrice : hardStopPrice) ??
+    stopPrice;
+
+  if (hardStopPrice == null && trailStopPrice == null && takeProfitPrice == null) {
+    return null;
+  }
+
+  const openedAt =
+    readString(automationContext.purchasedAt) ??
+    readString(automationContext.openedAt) ??
+    (input.openedAt instanceof Date
+      ? input.openedAt.toISOString()
+      : readString(input.openedAt));
+
+  return {
+    source: "shadow_automation",
+    openedAt: openedAt ?? null,
+    entryPrice: toNumber(automationContext.entryPrice) ?? null,
+    hardStopPrice: hardStopPrice ?? null,
+    stopPrice: stopPrice ?? null,
+    takeProfitPrice: takeProfitPrice ?? null,
+    activeStopPrice: activeStopPrice ?? null,
+    activeStopKind,
+    trailActive,
+    trailStopPrice: trailStopPrice ?? null,
+    trailHasTakenOver,
+    trailActivationPrice:
+      toNumber(management.trailActivationPrice) ??
+      toNumber(automationContext.trailActivationPrice) ??
+      null,
+    trailActivationPct: toNumber(management.trailActivationPct) ?? null,
+    givebackPct: toNumber(management.givebackPct) ?? null,
+    minLockedGainPct: toNumber(management.minLockedGainPct) ?? null,
+    peakPrice: toNumber(automationContext.peakPrice) ?? null,
   };
 }
 
@@ -6108,6 +6222,10 @@ export async function getShadowAccountPositions(input: {
                 : rawPositionQuote.spreadPercent,
           }
         : rawPositionQuote;
+    const riskOverlay = buildShadowPositionRiskOverlay({
+      automationContext,
+      openedAt,
+    });
     return {
       id: position.id,
       accountId: SHADOW_ACCOUNT_ID,
@@ -6178,8 +6296,14 @@ export async function getShadowAccountPositions(input: {
 	                    },
 	            })
 	          : null,
-      stopLoss: automationContext?.stopLossPrice ?? automationContext?.stopPrice ?? null,
+      stopLoss:
+        riskOverlay?.activeStopPrice ??
+        automationContext?.activeStopPrice ??
+        automationContext?.stopPrice ??
+        automationContext?.stopLossPrice ??
+        null,
       takeProfit: automationContext?.takeProfitPrice ?? automationContext?.targetPrice ?? null,
+      riskOverlay,
       ...(automationContext ? { automationContext } : {}),
       ...attribution,
     };
@@ -7534,6 +7658,17 @@ async function buildShadowAccountRisk(input: {
     totalOptionPositions > matchedOptionPositions
       ? `Matched ${matchedOptionPositions} of ${totalOptionPositions} shadow option positions to option greek snapshots.`
       : null;
+  const expiryConcentration = buildShadowExpiryConcentration(
+    positionsResponse.positions,
+  );
+  const riskRecommendations = buildAccountRiskRecommendations({
+    positions: notionalPositions,
+    nav: totals.netLiquidation,
+    greekByPositionId,
+    greekScenarios,
+    notional,
+    expiryConcentration,
+  });
 
   return {
     accountId: SHADOW_ACCOUNT_ID,
@@ -7635,7 +7770,8 @@ async function buildShadowAccountRisk(input: {
     },
     notional,
     greekScenarios,
-    expiryConcentration: buildShadowExpiryConcentration(positionsResponse.positions),
+    riskRecommendations,
+    expiryConcentration,
     updatedAt: totals.updatedAt,
   };
 }
@@ -10690,6 +10826,7 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   shouldRepairSignalOptionsAutomationMirrors,
   repairSignalOptionsAutomationMirrorsForRead,
   buildShadowAutomationContext,
+  buildShadowPositionRiskOverlay,
   estimateShadowOptionGreeks,
   resolveHistoricalBackfillExpirationExitPrice,
   shadowPositionKeyForOrder,

@@ -72,6 +72,17 @@ export type SignalMonitorCompletedBarsSnapshot = {
 
 type WatchlistRecord = Awaited<ReturnType<typeof listWatchlists>>["watchlists"][number];
 
+function throwIfSignalMonitorAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) {
+    return;
+  }
+  const reason = signal.reason;
+  if (reason instanceof Error) {
+    throw reason;
+  }
+  throw new Error("Signal monitor evaluation aborted.");
+}
+
 const SIGNAL_MONITOR_TIMEFRAMES: readonly SignalMonitorTimeframe[] = [
   "1m",
   "5m",
@@ -370,6 +381,38 @@ function stateToResponse(state: DbSignalMonitorSymbolState) {
     active: state.active,
     lastEvaluatedAt: state.lastEvaluatedAt ?? null,
     lastError: state.lastError ?? null,
+  };
+}
+
+function stateToResponseForSnapshot(
+  state: DbSignalMonitorSymbolState,
+  input: {
+    timeframe: SignalMonitorTimeframe;
+    evaluatedAt: Date;
+    markNonCurrentStale?: boolean;
+  },
+) {
+  const response = stateToResponse(state);
+  if (
+    !input.markNonCurrentStale ||
+    isSignalMonitorStateCurrentForLane({
+      state,
+      timeframe: input.timeframe,
+      evaluatedAt: input.evaluatedAt,
+    })
+  ) {
+    return response;
+  }
+
+  return {
+    ...response,
+    fresh: false,
+    status: response.latestBarAt ? "stale" as const : "unavailable" as const,
+    lastError:
+      response.lastError ??
+      (response.latestBarAt
+        ? "Signal monitor state is stale; using persisted state without live bar refresh."
+        : "Signal monitor state has no latest bar; using persisted state without live bar refresh."),
   };
 }
 
@@ -1913,7 +1956,9 @@ export async function loadSignalMonitorCompletedBars(input: {
   limit?: number;
   retryStale?: boolean;
   barSourcePolicy?: SignalMonitorBarSourcePolicy;
+  signal?: AbortSignal;
 }): Promise<SignalMonitorCompletedBarsSnapshot> {
+  throwIfSignalMonitorAborted(input.signal);
   const barSourcePolicy =
     input.barSourcePolicy ?? DEFAULT_SIGNAL_MONITOR_BAR_SOURCE_POLICY;
   const completedLimit = input.limit ?? PYRUS_SIGNALS_SIGNAL_WARMUP_BARS;
@@ -1953,7 +1998,9 @@ export async function loadSignalMonitorCompletedBars(input: {
   const inFlight = signalMonitorCompletedBarsInFlight.get(cacheKey);
   if (inFlight) {
     signalMonitorCompletedBarsCounters.inFlightJoin += 1;
-    return cloneCompletedBarsSnapshot(await inFlight);
+    const snapshot = await inFlight;
+    throwIfSignalMonitorAborted(input.signal);
+    return cloneCompletedBarsSnapshot(snapshot);
   }
   signalMonitorCompletedBarsCounters.miss += 1;
   const fetchBars = (mode: "primary" | "full-retry" | "live-edge") => {
@@ -1979,6 +2026,7 @@ export async function loadSignalMonitorCompletedBars(input: {
       {
         priority,
         family: SIGNAL_MONITOR_BARS_FAMILY,
+        signal: input.signal,
       },
     );
   };
@@ -2033,11 +2081,16 @@ export async function loadSignalMonitorCompletedBars(input: {
       input.evaluatedAt,
     );
   };
-  const fetchCompletedBars = async (mode: "primary" | "full-retry" | "live-edge") =>
-    buildCompletedBars((await fetchBars(mode)).bars);
+  const fetchCompletedBars = async (mode: "primary" | "full-retry" | "live-edge") => {
+    throwIfSignalMonitorAborted(input.signal);
+    const result = buildCompletedBars((await fetchBars(mode)).bars);
+    throwIfSignalMonitorAborted(input.signal);
+    return result;
+  };
 
   const request = (async () => {
     completedBars = await fetchCompletedBars("primary");
+    throwIfSignalMonitorAborted(input.signal);
     let latestBar = completedBars.at(-1);
     if (
       input.retryStale !== false &&
@@ -2048,6 +2101,7 @@ export async function loadSignalMonitorCompletedBars(input: {
       })
     ) {
       acceptNewerBars(await fetchCompletedBars("full-retry"), false);
+      throwIfSignalMonitorAborted(input.signal);
       latestBar = completedBars.at(-1);
     }
     if (
@@ -2060,6 +2114,7 @@ export async function loadSignalMonitorCompletedBars(input: {
       })
     ) {
       acceptNewerBars(await fetchCompletedBars("live-edge"), true);
+      throwIfSignalMonitorAborted(input.signal);
       latestBar = completedBars.at(-1);
     }
     const snapshot = {
@@ -2205,20 +2260,25 @@ export async function evaluateSignalMonitorSymbol(input: {
   mode: EvaluationMode;
   evaluatedAt: Date;
   barSourcePolicy?: SignalMonitorBarSourcePolicy;
+  signal?: AbortSignal;
 }) {
   try {
+    throwIfSignalMonitorAborted(input.signal);
     const completedBars = await loadSignalMonitorCompletedBars({
       symbol: input.symbol,
       timeframe: input.timeframe,
       evaluatedAt: input.evaluatedAt,
       barSourcePolicy: input.barSourcePolicy,
+      signal: input.signal,
     });
+    throwIfSignalMonitorAborted(input.signal);
 
     return evaluateSignalMonitorSymbolFromCompletedBars({
       ...input,
       completedBars: completedBars.bars,
     });
   } catch (error) {
+    throwIfSignalMonitorAborted(input.signal);
     const message =
       error instanceof Error && error.message
         ? error.message
@@ -2365,6 +2425,7 @@ async function evaluateSymbolsInBatches(input: {
   mode: EvaluationMode;
   evaluatedAt: Date;
   barSourcePolicy?: SignalMonitorBarSourcePolicy;
+  signal?: AbortSignal;
 }) {
   const concurrency = positiveInteger(
     input.profile.evaluationConcurrency,
@@ -2375,6 +2436,7 @@ async function evaluateSymbolsInBatches(input: {
   const states: DbSignalMonitorSymbolState[] = [];
 
   for (let index = 0; index < input.symbols.length; index += concurrency) {
+    throwIfSignalMonitorAborted(input.signal);
     const batch = input.symbols.slice(index, index + concurrency);
     const batchStates = await Promise.all(
       batch.map((symbol) =>
@@ -2385,9 +2447,11 @@ async function evaluateSymbolsInBatches(input: {
           mode: input.mode,
           evaluatedAt: input.evaluatedAt,
           barSourcePolicy: input.barSourcePolicy,
+          signal: input.signal,
         }),
       ),
     );
+    throwIfSignalMonitorAborted(input.signal);
     states.push(...batchStates);
   }
 
@@ -2624,7 +2688,9 @@ export async function evaluateSignalMonitorProfileSymbols(input: {
   pressureCapMode?: SignalMonitorProfileSymbolEvaluationPressureCapMode;
   evaluationConcurrencyOverride?: number;
   barSourcePolicy?: SignalMonitorBarSourcePolicy;
+  signal?: AbortSignal;
 }) {
+  throwIfSignalMonitorAborted(input.signal);
   const evaluatedAt = input.evaluatedAt ?? new Date();
   const mode = input.mode ?? "incremental";
   const evaluationSettings = resolveSignalMonitorProfileSymbolEvaluationSettings({
@@ -2649,7 +2715,9 @@ export async function evaluateSignalMonitorProfileSymbols(input: {
     mode,
     evaluatedAt,
     barSourcePolicy: input.barSourcePolicy,
+    signal: input.signal,
   });
+  throwIfSignalMonitorAborted(input.signal);
   const updatedProfile = await updateSignalMonitorProfileEvaluationMetadata({
     profile: evaluationProfile,
     evaluatedAt,
@@ -3479,6 +3547,7 @@ export const __signalMonitorInternalsForTests = {
   isSignalMonitorIbkrBar,
   isSignalMonitorDelayedBar,
   isSignalMonitorStateCurrentForLane,
+  stateToResponseForSnapshot,
   shouldBypassSignalMonitorCompletedBarsCache,
   shouldRetrySignalMonitorCompletedBars,
   clearSignalMonitorMatrixEvaluationCache,
@@ -3512,6 +3581,8 @@ type SignalMonitorStateSource = "database" | "runtime-fallback" | "memory-cache"
 
 async function readSignalMonitorStateFresh(input: {
   environment: RuntimeMode;
+  includeNonCurrent?: boolean;
+  markNonCurrentStale?: boolean;
 }) {
   const environment = resolveEnvironment(input.environment);
   if (isSignalMonitorDbBackoffActive()) {
@@ -3552,7 +3623,11 @@ async function readSignalMonitorStateFresh(input: {
         desc(signalMonitorSymbolStatesTable.currentSignalAt),
         desc(signalMonitorSymbolStatesTable.latestBarAt),
       );
-    const currentStates = states.filter((state) => {
+    const universeStates = states.filter((state) => {
+      const symbol = normalizeSymbol(state.symbol).toUpperCase();
+      return currentUniverseSymbols.has(symbol);
+    });
+    const currentStates = universeStates.filter((state) => {
       const symbol = normalizeSymbol(state.symbol).toUpperCase();
       return (
         currentUniverseSymbols.has(symbol) &&
@@ -3563,11 +3638,18 @@ async function readSignalMonitorStateFresh(input: {
         })
       );
     });
+    const visibleStates = input.includeNonCurrent ? universeStates : currentStates;
 
     return {
       value: {
         profile: profileToResponse(hydratedProfile),
-        states: currentStates.map(stateToResponse),
+        states: visibleStates.map((state) =>
+          stateToResponseForSnapshot(state, {
+            timeframe,
+            evaluatedAt,
+            markNonCurrentStale: input.markNonCurrentStale,
+          }),
+        ),
         evaluatedAt: hydratedProfile.lastEvaluatedAt ?? new Date(),
         truncated,
         skippedSymbols,
@@ -3588,6 +3670,19 @@ async function readSignalMonitorStateFresh(input: {
     }
     throw error;
   }
+}
+
+export async function getSignalMonitorStoredState(input: {
+  environment?: RuntimeMode;
+  markNonCurrentStale?: boolean;
+}) {
+  const environment = resolveEnvironment(input.environment);
+  const snapshot = await readSignalMonitorStateFresh({
+    environment,
+    includeNonCurrent: true,
+    markNonCurrentStale: input.markNonCurrentStale,
+  });
+  return snapshot.value;
 }
 
 type SignalMonitorStateReadResult = Awaited<

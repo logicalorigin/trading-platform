@@ -39,6 +39,7 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { formatEnumLabel, formatRelativeTimeShort } from "../../lib/formatters";
+import { useValueFlash } from "../../lib/motion.jsx";
 import { formatAppDateTime } from "../../lib/timeZone";
 import { normalizeLegacyAlgoBrandText } from "../algo/algoBranding.js";
 import {
@@ -77,6 +78,7 @@ import {
   getPositionTableColumns,
 } from "../../features/account/positionTableColumns.js";
 import { PositionRowActionMenu } from "../../features/account/PositionRowActionMenu.jsx";
+import { useRegisterPositionMarketDataSymbols } from "../../features/platform/positionMarketDataStore";
 import { useRuntimeTickerSnapshots } from "../../features/platform/runtimeTickerStore";
 import {
   SPARKLINE_RENDER_POINT_LIMIT,
@@ -851,7 +853,7 @@ const tradeManagementTrailSubtext = (management, maskValues) => {
 const tradeManagementTitle = (management, currency, maskValues) => {
   const parts = [
     management.stop
-      ? `Stop ${formatTradeManagementPrice(management.stop, maskValues)} ${formatTradeManagementSource(management.stop.source)}`
+      ? `${management.trail ? "Hard stop" : "Stop"} ${formatTradeManagementPrice(management.stop, maskValues)} ${formatTradeManagementSource(management.stop.source)}`
       : null,
     management.trail
       ? `Trail ${formatTradeManagementPrice(management.trail, maskValues)} ${formatTradeManagementSource(management.trail.source)}`
@@ -1141,7 +1143,7 @@ const isOptionPosition = (row) =>
   Boolean(row?.optionContract) ||
   ["option", "options"].includes(String(row?.assetClass || "").toLowerCase());
 
-const resolvePositionSparklineSymbol = (row) => {
+const resolvePositionUnderlyingSymbol = (row) => {
   const symbol = firstDisplayText(
     row?.marketDataSymbol,
     row?.optionContract?.underlying,
@@ -1150,6 +1152,45 @@ const resolvePositionSparklineSymbol = (row) => {
   );
   const normalized = normalizeTickerSymbol(symbol);
   return normalized && !isInternalOptionIdentifier(normalized) ? normalized : "";
+};
+
+const resolvePositionSparklineSymbol = (row) => resolvePositionUnderlyingSymbol(row);
+
+const resolvePositionUnderlyingPrice = (row, snapshotsBySymbol = {}) => {
+  const symbol = resolvePositionUnderlyingSymbol(row);
+  const snapshot = symbol ? snapshotsBySymbol?.[symbol] : null;
+  const staticUnderlying = row?.underlyingMarket || null;
+  const equityFallback = !isOptionPosition(row)
+    ? firstPositiveFiniteNumber(row?.mark, row?.marketPrice)
+    : null;
+  return firstPositiveFiniteNumber(
+    snapshot?.price,
+    snapshot?.mark,
+    snapshot?.last,
+    quoteMid(snapshot),
+    staticUnderlying?.price,
+    staticUnderlying?.mark,
+    quoteMid(staticUnderlying),
+    equityFallback,
+  );
+};
+
+const positionUnderlyingPriceTitle = (row, snapshotsBySymbol, maskValues) => {
+  const symbol = resolvePositionUnderlyingSymbol(row);
+  const snapshot = symbol ? snapshotsBySymbol?.[symbol] : null;
+  const price = resolvePositionUnderlyingPrice(row, snapshotsBySymbol);
+  const updatedAt = firstText(
+    snapshot?.dataUpdatedAt,
+    snapshot?.updatedAt,
+    row?.underlyingMarket?.updatedAt,
+  );
+  return [
+    "Underlying spot",
+    price != null ? formatAccountPrice(price, 2, maskValues) : null,
+    updatedAt ? formatRelativeTimeShort(updatedAt) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 };
 
 const buildPositionFallbackSparklineData = (row, snapshot, symbol) => {
@@ -1614,9 +1655,10 @@ const hasExpandablePositionDetails = (row) =>
   (row?.openOrders?.length || 0) > 0 ||
   hasTradeManagementDetail(row);
 
-const denseColumnSortValue = (row, id) => {
+const denseColumnSortValue = (row, id, snapshotsBySymbol = {}) => {
   const quote = denseDisplayQuote(row);
   if (id === "symbol") return row.symbol;
+  if (id === "underlyingPrice") return resolvePositionUnderlyingPrice(row, snapshotsBySymbol);
   if (id === "openedAt") {
     const openedAt = positionDisplayForRow(row).openedAt;
     const timestamp = openedAt ? new Date(openedAt).getTime() : null;
@@ -1974,12 +2016,46 @@ const DensePositionActions = ({
   );
 };
 
+const DenseUnderlyingPriceCell = ({
+  row,
+  column,
+  maskValues,
+  snapshotsBySymbol,
+  expanded,
+}) => {
+  const underlyingPrice = resolvePositionUnderlyingPrice(row, snapshotsBySymbol);
+  const flashClassName = useValueFlash(underlyingPrice);
+  return (
+    <td style={denseTableCellStyle(column, expanded)}>
+      <span
+        className={flashClassName}
+        title={positionUnderlyingPriceTitle(row, snapshotsBySymbol, maskValues)}
+        style={{
+          ...denseColumnTextStyle({
+            align: column.align,
+            color: underlyingPrice != null ? CSS_COLOR.text : CSS_COLOR.textDim,
+          }),
+          display: "inline-flex",
+          justifyContent: denseVisualAlign(column.align),
+          maxWidth: "100%",
+          padding: sp("1px 2px"),
+          borderRadius: dim(RADII.xs),
+          whiteSpace: "nowrap",
+        }}
+      >
+        {formatAccountPrice(underlyingPrice, 2, maskValues)}
+      </span>
+    </td>
+  );
+};
+
 const DensePositionCell = ({
   row,
   column,
   currency,
   maskValues,
   snapshotsBySymbol,
+  underlyingSnapshotsBySymbol,
   expanded,
   onJumpToChart,
   onPositionSelect,
@@ -2058,6 +2134,16 @@ const DensePositionCell = ({
   if (column.id === "quantity") {
     content = formatNumber(row.quantity, 4);
     color = row.quantity < 0 ? CSS_COLOR.red : CSS_COLOR.textSec;
+  } else if (column.id === "underlyingPrice") {
+    return (
+      <DenseUnderlyingPriceCell
+        row={row}
+        column={column}
+        maskValues={maskValues}
+        snapshotsBySymbol={underlyingSnapshotsBySymbol}
+        expanded={expanded}
+      />
+    );
   } else if (column.id === "price") {
     return (
       <td style={denseTableCellStyle(column, expanded)}>
@@ -2911,12 +2997,24 @@ export const PositionsPanel = ({
     enabled: liveOptionQuotesEnabled,
     totals: query.data?.totals,
   });
+  const positionUnderlyingSymbols = useMemo(
+    () =>
+      Array.from(
+        new Set(rows.map(resolvePositionUnderlyingSymbol).filter(Boolean)),
+      ),
+    [rows],
+  );
+  useRegisterPositionMarketDataSymbols(
+    `positions:${surfaceId}`,
+    positionUnderlyingSymbols,
+  );
+  const underlyingSnapshotsBySymbol = useRuntimeTickerSnapshots(positionUnderlyingSymbols);
   const sortedRows = useMemo(() => {
     if (!sort.id || !sort.dir) return rows;
     const copy = [...rows];
     copy.sort((a, b) => {
-      const av = denseColumnSortValue(a, sort.id);
-      const bv = denseColumnSortValue(b, sort.id);
+      const av = denseColumnSortValue(a, sort.id, underlyingSnapshotsBySymbol);
+      const bv = denseColumnSortValue(b, sort.id, underlyingSnapshotsBySymbol);
       const numericA = Number(av);
       const numericB = Number(bv);
       const result =
@@ -2926,7 +3024,7 @@ export const PositionsPanel = ({
       return sort.dir === "desc" ? -result : result;
     });
     return copy;
-  }, [rows, sort]);
+  }, [rows, sort, underlyingSnapshotsBySymbol]);
   const paginatedPositions = paginateRows(sortedRows, page, POSITIONS_PAGE_SIZE);
   const pageRows = paginatedPositions.pageRows;
   const positionSparklineSymbols = useMemo(
@@ -3110,6 +3208,7 @@ export const PositionsPanel = ({
                           currency={currency}
                           maskValues={maskValues}
                           snapshotsBySymbol={tickerSnapshotsBySymbol}
+                          underlyingSnapshotsBySymbol={underlyingSnapshotsBySymbol}
                           expanded={expanded}
                           onJumpToChart={onJumpToChart}
                           onPositionSelect={onPositionSelect}
@@ -3162,7 +3261,11 @@ export const PositionsPanel = ({
                                 }}
                               >
                                 {[
-                                  ["Stop", formatTradeManagementPrice(management.stop, maskValues), formatTradeManagementSource(management.stop?.source)],
+                                  [
+                                    management.trail ? "Hard stop" : "Stop",
+                                    formatTradeManagementPrice(management.stop, maskValues),
+                                    formatTradeManagementSource(management.stop?.source),
+                                  ],
                                   ["Trail", formatTradeManagementPrice(management.trail, maskValues), formatTradeManagementSource(management.trail?.source)],
                                   [
                                     "Risk",

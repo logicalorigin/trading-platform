@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   DEFAULT_STRATEGY_SIGNAL_SETTINGS,
   PROFILE_BOOLEAN_FIELDS,
@@ -35,6 +37,7 @@ import {
   resolveSignalMove,
   resolveSignalScoreBreakdown,
   resolveStrategySignalSettings,
+  signalActionBlockerLabel,
   signalOptionsHaltControlsChanged,
 } from "./algoHelpers";
 import {
@@ -53,6 +56,7 @@ import {
   getCompactHaltSettingField,
   getCompactHaltStandaloneFields,
 } from "./algoSettingsFields";
+import { AlgoSaveBar } from "./AlgoSaveBar.jsx";
 import { saveAllAlgoAdjustments } from "./saveAllAlgoAdjustments";
 import { __internalsForTests as draftInternals } from "./useServerSyncedDraft";
 
@@ -65,10 +69,11 @@ test("AlgoScreen keeps startup fallback collections stable before queries resolv
   assert.match(source, /const EMPTY_SIGNAL_OPTIONS_CANDIDATES = Object\.freeze\(\[\]\)/);
   assert.match(source, /const EMPTY_SIGNAL_OPTIONS_SIGNALS = Object\.freeze\(\[\]\)/);
   assert.match(source, /const EMPTY_SIGNAL_OPTIONS_POSITIONS = Object\.freeze\(\[\]\)/);
-  assert.match(
-    source,
-    /cockpit\?\.candidates \|\|[\s\S]*signalOptionsState\?\.candidates \|\|[\s\S]*EMPTY_SIGNAL_OPTIONS_CANDIDATES/,
-  );
+  assert.match(source, /const preferNonEmptySourceArray = \(primary, fallback, emptyValue\) =>/);
+  assert.match(source, /if \(primaryArray\?\.length\) return primaryArray/);
+  assert.match(source, /if \(fallbackArray\?\.length\) return fallbackArray/);
+  assert.match(source, /cockpit\?\.candidates,\s*signalOptionsState\?\.candidates/);
+  assert.match(source, /cockpit\?\.signals,\s*signalOptionsState\?\.signals/);
   assert.match(
     source,
     /setSelectedCandidateId\(\(current\) => \(current === null \? current : null\)\)/,
@@ -87,6 +92,53 @@ test("AlgoRightRail surfaces wire trail state inside the controls container", ()
   assert.match(source, /data-testid="algo-wire-trail-status"/);
   assert.match(source, /deriveWireTrailControlSummary/);
   assert.match(source, /positions=\{signalOptionsPositions\}/);
+  assert.match(source, /controlBaselineReady = true/);
+  assert.match(source, /saveAllPending = false/);
+  assert.match(source, /saveAllPending \|\|/);
+  assert.match(source, /const controlsReady = Boolean\(focusedDeployment && controlBaselineReady\)/);
+});
+
+test("AlgoScreen uses shared server-synced draft model for live controls", () => {
+  const source = readFileSync(
+    new URL("../AlgoScreen.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /import \{ useServerSyncedDraft \} from "\.\/algo\/useServerSyncedDraft"/);
+  assert.match(source, /deploymentSignalOptionsBaselineAvailable/);
+  assert.match(source, /key\.startsWith\("signalOptions"\)/);
+  assert.match(source, /const saveAllInFlightRef = useRef\(false\)/);
+  assert.match(source, /const \[saveAllPending, setSaveAllPending\] = useState\(false\)/);
+  assert.match(source, /if \(saveAllInFlightRef\.current\)/);
+  assert.match(source, /setSaveAllPending\(true\)/);
+  assert.match(source, /setSaveAllPending\(false\)/);
+  assert.match(source, /saveAllPending=\{saveAllPending\}/);
+  assert.match(
+    source,
+    /focusedDeployment\?\.config && deploymentSignalOptionsBaselineAvailable/,
+  );
+  assert.doesNotMatch(source, /const useServerSyncedDraft = \(/);
+  assert.doesNotMatch(source, /const setDraftPathValue = /);
+});
+
+test("AlgoScreen profile save patches cached controls and refreshes state async", () => {
+  const source = readFileSync(
+    new URL("../AlgoScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const profileSaveBlock = source.match(
+    /const updateProfileMutation = useUpdateSignalOptionsExecutionProfile[\s\S]*?\n  const updateStrategySettingsMutation/,
+  )?.[0];
+
+  assert.ok(profileSaveBlock);
+  assert.match(profileSaveBlock, /onSuccess:\s*\(payload, variables\)/);
+  assert.match(profileSaveBlock, /setQueryData\([\s\S]*\(current\) =>/);
+  assert.match(profileSaveBlock, /\.\.\.current/);
+  assert.match(profileSaveBlock, /deployment:\s*payload\.deployment/);
+  assert.match(profileSaveBlock, /profile:\s*payload\.profile/);
+  assert.match(profileSaveBlock, /includeSignalMonitorProfile:\s*false/);
+  assert.match(profileSaveBlock, /includeSignalOptionsState:\s*true/);
+  assert.match(profileSaveBlock, /profileDraftState\.markClean\(payload\?\.profile \|\| variables\?\.data\)/);
 });
 
 test("algo profile defaults match the tuned h8 signal-options profile", () => {
@@ -462,12 +514,91 @@ test("unified algo save fans out only dirty slices and reports partial failure",
   assert.equal(failures.length, 1);
 });
 
+test("unified algo save runs dirty slice writes sequentially to avoid config races", async () => {
+  const calls = [];
+  let profileResolved = false;
+  const profileMutation = {
+    mutateAsync: async (payload) => {
+      calls.push(["profile-start", payload]);
+      await Promise.resolve();
+      profileResolved = true;
+      calls.push(["profile-end"]);
+      return { profile: payload.data };
+    },
+  };
+  const strategyMutation = {
+    mutateAsync: async (payload) => {
+      calls.push(["strategy-start", payload, profileResolved]);
+      return { deployment: { id: payload.deploymentId } };
+    },
+  };
+
+  const result = await saveAllAlgoAdjustments({
+    deploymentId: "dep-1",
+    profileDraft: SIGNAL_OPTIONS_DEFAULT_PROFILE,
+    strategySettingsDraft: {
+      ...DEFAULT_STRATEGY_SIGNAL_SETTINGS,
+      timeHorizon: 12,
+    },
+    profileDirty: true,
+    strategyDirty: true,
+    updateProfileMutation: profileMutation,
+    updateStrategySettingsMutation: strategyMutation,
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    calls.map((call) => call[0]),
+    ["profile-start", "profile-end", "strategy-start"],
+  );
+  assert.equal(calls[2][2], true);
+  assert.equal(calls[2][1].data.timeHorizon, 12);
+});
+
+test("algo save bar keeps Save clickable for dirty focused deployments", () => {
+  const previousReact = globalThis.React;
+  globalThis.React = React;
+  let html = "";
+  try {
+    html = renderToStaticMarkup(
+      React.createElement(AlgoSaveBar, {
+        dirtyFields: [
+          {
+            slice: "profile",
+            path: "riskCaps.maxOpenSymbols",
+            sectionLabel: "Risk",
+            label: "Max open symbols",
+            previousValue: 2,
+            currentValue: 3,
+          },
+        ],
+        isDirty: true,
+        pending: false,
+        focusedDeployment: { id: "dep-1" },
+        onDiscard: () => {},
+        onSave: () => {},
+      }),
+    );
+  } finally {
+    globalThis.React = previousReact;
+  }
+
+  const saveButton = html.match(/<button[^>]*>Save changes<\/button>/)?.[0] || "";
+  assert.match(saveButton, /Save changes/);
+  assert.doesNotMatch(saveButton, /\sdisabled=""/);
+});
+
 test("algo row helpers summarize blocker, timeline, and entry quality fields", () => {
   assert.equal(
     candidateBlockerLabel({ reason: "spread_too_wide" }),
     "Spread Too Wide",
   );
   assert.equal(candidateBlockerLabel({}), "—");
+  assert.equal(
+    signalActionBlockerLabel({ actionBlocker: "signal_too_old" }),
+    "Signal Too Old",
+  );
+  assert.equal(signalActionBlockerLabel({}), "—");
   assert.equal(
     candidateLatestActivityLabel({
       timeline: [
@@ -538,12 +669,69 @@ test("algo signal enrichment derives counters scoring gates and sync", () => {
       detail: "30m since signal",
     },
   );
+  assert.deepEqual(
+    resolveSignalAge(
+      {
+        ...signal,
+        barsSinceSignal: 5,
+        freshWindowBars: 8,
+        actionEligible: false,
+        actionBlocker: "signal_too_old",
+      },
+      { now: Date.parse("2026-05-21T14:30:00.000Z") },
+    ),
+    {
+      signalAt: "2026-05-21T14:00:00.000Z",
+      barsSinceSignal: 5,
+      freshWindowBars: 8,
+      freshnessPct: 37.5,
+      label: "5/8 bars",
+      detail: "30m since signal",
+    },
+  );
 
   assert.deepEqual(resolveSignalMove(signal, { price: 510 }), {
     value: 10,
     pct: 2,
-    label: "+10.00",
-    detail: "+2.0% since signal",
+    label: "+2.0%",
+    detail: "+10.00",
+  });
+  assert.deepEqual(resolveSignalMove({ signalPrice: 500 }, null, { underlyingPrice: 510 }), {
+    value: 10,
+    pct: 2,
+    label: "+2.0%",
+    detail: "+10.00",
+  });
+  assert.deepEqual(resolveSignalMove({ signalPrice: 500 }, null, { currentPrice: 490 }), {
+    value: -10,
+    pct: -2,
+    label: "-2.0%",
+    detail: "-10.00",
+  });
+  assert.deepEqual(resolveSignalMove({}, null, { signalPrice: 500, currentPrice: 510 }), {
+    value: 10,
+    pct: 2,
+    label: "+2.0%",
+    detail: "+10.00",
+  });
+  assert.deepEqual(
+    resolveSignalMove(
+      { signalPrice: null, currentPrice: null },
+      { price: null },
+      { signalPrice: 500, underlyingPrice: 510 },
+    ),
+    {
+      value: 10,
+      pct: 2,
+      label: "+2.0%",
+      detail: "+10.00",
+    },
+  );
+  assert.deepEqual(resolveSignalMove({ signalPrice: 500 }, null, {}), {
+    value: null,
+    pct: null,
+    label: "—",
+    detail: "—",
   });
 
   const score = resolveSignalScoreBreakdown({ signal, candidate });
@@ -1303,11 +1491,19 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
   assert.match(haltSource, /state=\{status\.state\}/);
   assert.match(haltSource, /className="algo-settings-grid"/);
   assert.doesNotMatch(haltSource, /controlColumns/);
-  assert.match(
-    readFileSync(new URL("./AlgoSaveBar.jsx", import.meta.url), "utf8"),
-    /Save changes/,
+  const saveBarSource = readFileSync(
+    new URL("./AlgoSaveBar.jsx", import.meta.url),
+    "utf8",
   );
+  assert.match(saveBarSource, /Save changes/);
+  assert.match(
+    saveBarSource,
+    /const saveDisabled = !focusedDeployment \|\| !isDirty \|\| pending;/,
+  );
+  assert.doesNotMatch(saveBarSource, /controlBaselineReady/);
   assert.match(screenSource, /saveAllAlgoAdjustments/);
+  assert.doesNotMatch(saveAllSource, /Promise\.allSettled/);
+  assert.match(saveAllSource, /for \(const task of tasks\)/);
   assert.match(saveAllSource, /bosConfirmation,/);
   assert.match(saveAllSource, /chochBodyExpansionAtr:/);
   assert.match(saveAllSource, /chochVolumeGate:/);
@@ -1365,6 +1561,11 @@ test("algo operations views surface contract quote and greeks fields", () => {
   assert.match(screenSource, /assetClass:\s*"Options"/);
   assert.match(livePageSource, /signalOptionsLedgerPositionsQuery/);
   assert.match(livePageSource, /ledgerPositions: focusedLedgerPositions/);
+  assert.match(livePageSource, /signals: visibleSignalRows/);
+  assert.match(livePageSource, /source === "preview" \? "preview" : "primary"/);
+  assert.match(livePageSource, /signal-options-preview:\$\{focusedDeploymentId \|\| "active"\}:\$\{group\.underlying\}/);
+  assert.match(livePageSource, /owner=\{group\.owner\}/);
+  assert.match(livePageSource, /requiresGreeks=\{group\.requiresGreeks\}/);
   assert.match(drillSource, /contractSelection/);
   assert.match(drillSource, /quoteUpdatedAt/);
   assert.match(livePageSource, /useIbkrOptionQuoteStream/);

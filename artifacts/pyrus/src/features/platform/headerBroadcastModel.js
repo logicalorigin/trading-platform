@@ -81,34 +81,10 @@ const buildSignalIntervalStatesBySymbol = (states = []) => {
   return bySymbol;
 };
 
-const signalItemToIntervalState = (item) => {
-  const timeframe = normalizeSignalIntervalTimeframe(item?.timeframe);
-  if (!timeframe) return null;
-  return {
-    ...(item?.raw || {}),
-    symbol: item.symbol,
-    timeframe,
-    currentSignalDirection: item.direction,
-    currentSignalAt: item.time,
-    currentSignalPrice: item.price,
-    barsSinceSignal: item?.raw?.barsSinceSignal ?? null,
-    fresh: Boolean(item.fresh),
-    status: item?.raw?.status || (item.fresh ? "ok" : item.source || "signal"),
-  };
-};
-
 const withSignalIntervalStates = (item, intervalStatesBySymbol) => {
-  const intervalStates = { ...(intervalStatesBySymbol[item.symbol] || {}) };
-  const fallbackState = signalItemToIntervalState(item);
-  if (fallbackState) {
-    const currentState = intervalStates[fallbackState.timeframe];
-    if (!normalizeDirection(currentState?.currentSignalDirection)) {
-      intervalStates[fallbackState.timeframe] = fallbackState;
-    }
-  }
   return {
     ...item,
-    intervalStates,
+    intervalStates: { ...(intervalStatesBySymbol[item.symbol] || {}) },
     intervalTimeframes: WATCHLIST_SIGNAL_TIMEFRAMES,
   };
 };

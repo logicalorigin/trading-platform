@@ -14,6 +14,7 @@ import {
   setMarketDataAdmissionBridgeLineBudget,
   type MarketDataLease,
 } from "./market-data-admission";
+import { buildMarketDataWorkPlan } from "./market-data-work-planner";
 import { getIbkrHistoricalAdmissionSnapshot } from "./ibkr-historical-admission";
 import { ensureIbkrLaneRuntimeOverridesLoaded } from "./ibkr-lanes";
 import {
@@ -42,19 +43,18 @@ const BRIDGE_LANE_USAGE_CACHE_MS = 2_000;
 const DEFAULT_BRIDGE_LANE_USAGE_TIMEOUT_MS = 1_500;
 const PERSISTENT_BRIDGE_ONLY_OBSERVATION_COUNT = 2;
 const PERSISTENT_BRIDGE_ONLY_GRACE_MS = 10_000;
+type PersistentLineObservation = {
+  lineId: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  observedCount: number;
+};
 let cachedBridgeLaneDiagnostics: CachedBridgeLaneDiagnostics | null = null;
 let bridgeLaneDiagnosticsPromise: Promise<CachedBridgeLaneDiagnostics> | null = null;
 let bridgeLaneDiagnosticsStartedAt = 0;
 let bridgeLaneDiagnosticsRequestId = 0;
-const bridgeOnlyLineObservations = new Map<
-  string,
-  {
-    lineId: string;
-    firstSeenAt: string;
-    lastSeenAt: string;
-    observedCount: number;
-  }
->();
+const bridgeOnlyLineObservations = new Map<string, PersistentLineObservation>();
+const apiOnlyLineObservations = new Map<string, PersistentLineObservation>();
 let bridgeLaneDiagnosticsClientFactory: () => BridgeLaneDiagnosticsClient = () =>
   new IbkrBridgeClient();
 
@@ -208,7 +208,8 @@ function lineAssetClass(lineId: string): string | null {
 }
 
 function isSnapshotOnlyAdmissionLease(lease: MarketDataLease): boolean {
-  return lease.intent === "flow-scanner-live" && lease.assetClass === "option";
+  void lease;
+  return false;
 }
 
 function buildAdmissionLineIdSets(
@@ -357,24 +358,27 @@ function buildBridgeOnlyLineGroups(lineIds: Set<string>): DriftGroup[] {
     );
 }
 
-function updateBridgeOnlyLineObservations(lineIds: Set<string>) {
+function updatePersistentLineObservations(
+  observations: Map<string, PersistentLineObservation>,
+  lineIds: Set<string>,
+) {
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
-  Array.from(bridgeOnlyLineObservations.keys()).forEach((lineId) => {
+  Array.from(observations.keys()).forEach((lineId) => {
     if (!lineIds.has(lineId)) {
-      bridgeOnlyLineObservations.delete(lineId);
+      observations.delete(lineId);
     }
   });
   lineIds.forEach((lineId) => {
-    const existing = bridgeOnlyLineObservations.get(lineId);
-    bridgeOnlyLineObservations.set(lineId, {
+    const existing = observations.get(lineId);
+    observations.set(lineId, {
       lineId,
       firstSeenAt: existing?.firstSeenAt ?? now,
       lastSeenAt: now,
       observedCount: (existing?.observedCount ?? 0) + 1,
     });
   });
-  return Array.from(bridgeOnlyLineObservations.values())
+  return Array.from(observations.values())
     .filter(
       (entry) =>
         lineIds.has(entry.lineId) &&
@@ -382,6 +386,111 @@ function updateBridgeOnlyLineObservations(lineIds: Set<string>) {
         nowMs - Date.parse(entry.firstSeenAt) >= PERSISTENT_BRIDGE_ONLY_GRACE_MS,
     )
     .sort((left, right) => left.lineId.localeCompare(right.lineId));
+}
+
+function updateBridgeOnlyLineObservations(lineIds: Set<string>) {
+  return updatePersistentLineObservations(bridgeOnlyLineObservations, lineIds);
+}
+
+function updateApiOnlyLineObservations(lineIds: Set<string>) {
+  return updatePersistentLineObservations(apiOnlyLineObservations, lineIds);
+}
+
+function leaseForLine(
+  lineId: string,
+  leases: MarketDataLease[],
+): MarketDataLease | null {
+  return leases.find((lease) => lease.lineIds.includes(lineId)) ?? null;
+}
+
+function buildLineStateSample(input: {
+  matchedLineIds: Set<string>;
+  apiOnlyLineIds: Set<string>;
+  bridgeOnlyLineIds: Set<string>;
+  snapshotOnlyLineIds: Set<string>;
+  leases: MarketDataLease[];
+  persistentApiOnlyLineIds: Set<string>;
+  persistentBridgeOnlyLineIds: Set<string>;
+}) {
+  const rows: Array<{
+    lineId: string;
+    state: "live" | "planned" | "stale" | "releasing" | "unexpected";
+    owner: string | null;
+    intent: string | null;
+    pool: string | null;
+    assetClass: string | null;
+    reason: string;
+  }> = [];
+  const append = (
+    lineIds: Set<string>,
+    stateForLine: (lineId: string) => {
+      state: "live" | "planned" | "stale" | "releasing" | "unexpected";
+      reason: string;
+    },
+    limit: number,
+  ) => {
+    lineDriftSample(lineIds)
+      .slice(0, limit)
+      .forEach((lineId) => {
+        const lease = leaseForLine(lineId, input.leases);
+        const { state, reason } = stateForLine(lineId);
+        rows.push({
+          lineId,
+          state,
+          owner: lease?.owner ?? null,
+          intent: lease?.intent ?? null,
+          pool: lease?.pool ?? null,
+          assetClass: lineAssetClass(lineId),
+          reason,
+        });
+      });
+  };
+
+  append(
+    input.apiOnlyLineIds,
+    (lineId) =>
+      input.persistentApiOnlyLineIds.has(lineId)
+        ? {
+            state: "stale",
+            reason: "API admission persistently owns this line, but bridge diagnostics do not show it live.",
+          }
+        : {
+            state: "planned",
+            reason: "API admission owns this line and is waiting for bridge activation.",
+          },
+    20,
+  );
+  append(
+    input.bridgeOnlyLineIds,
+    (lineId) =>
+      input.persistentBridgeOnlyLineIds.has(lineId)
+        ? {
+            state: "unexpected",
+            reason: "Bridge persistently has this line without an API admission owner.",
+          }
+        : {
+            state: "releasing",
+            reason: "Bridge has this line after API admission released it.",
+          },
+    20,
+  );
+  append(
+    input.snapshotOnlyLineIds,
+    () => ({
+      state: "planned",
+      reason: "API admission marked this line as snapshot-only.",
+    }),
+    10,
+  );
+  append(
+    input.matchedLineIds,
+    () => ({
+      state: "live",
+      reason: "API admission and bridge diagnostics both show this line live.",
+    }),
+    Math.max(0, 40 - rows.length),
+  );
+  return rows.slice(0, 40);
 }
 
 function buildLineDriftReconciliation(input: {
@@ -406,6 +515,15 @@ function buildLineDriftReconciliation(input: {
   const persistentBridgeOnlyLines = input.bridgeDiagnosticsAvailable
     ? updateBridgeOnlyLineObservations(bridgeOnlyLineIds)
     : [];
+  const persistentApiOnlyLines = input.bridgeDiagnosticsAvailable
+    ? updateApiOnlyLineObservations(apiOnlyLineIds)
+    : [];
+  const persistentBridgeOnlyLineIds = new Set(
+    persistentBridgeOnlyLines.map((entry) => entry.lineId),
+  );
+  const persistentApiOnlyLineIds = new Set(
+    persistentApiOnlyLines.map((entry) => entry.lineId),
+  );
 
   return {
     status: classifyLineDrift({
@@ -438,6 +556,21 @@ function buildLineDriftReconciliation(input: {
       .map((entry) => entry.lineId)
       .slice(0, 20),
     persistentBridgeOnlyLines: persistentBridgeOnlyLines.slice(0, 20),
+    persistentApiOnlyGraceMs: PERSISTENT_BRIDGE_ONLY_GRACE_MS,
+    persistentApiOnlyLineCount: persistentApiOnlyLines.length,
+    persistentApiOnlyLineSample: persistentApiOnlyLines
+      .map((entry) => entry.lineId)
+      .slice(0, 20),
+    persistentApiOnlyLines: persistentApiOnlyLines.slice(0, 20),
+    lineStates: buildLineStateSample({
+      matchedLineIds,
+      apiOnlyLineIds,
+      bridgeOnlyLineIds,
+      snapshotOnlyLineIds: apiLineSets.snapshotOnly,
+      leases: input.admission.leases,
+      persistentApiOnlyLineIds,
+      persistentBridgeOnlyLineIds,
+    }),
   };
 }
 
@@ -781,9 +914,10 @@ export async function getIbkrLineUsageSnapshot() {
   if (bridgeLineBudget !== null) {
     setMarketDataAdmissionBridgeLineBudget(bridgeLineBudget, bridge.fetchedAt);
   }
+  const optionsFlowScanner = getOptionsFlowScannerDiagnostics();
   const admission = {
     ...getMarketDataAdmissionDiagnostics(),
-    optionsFlowScanner: getOptionsFlowScannerDiagnostics(),
+    optionsFlowScanner,
   };
   const quoteStreams = getBridgeQuoteStreamDiagnostics();
   const optionQuoteStreams = getBridgeOptionQuoteStreamDiagnostics();
@@ -809,6 +943,17 @@ export async function getIbkrLineUsageSnapshot() {
     bridgeActiveLineCount: bridgeActiveLines,
     bridgeLineBudget,
     driftReconciliation,
+  });
+  const marketDataWorkPlan = buildMarketDataWorkPlan({
+    admission,
+    optionsFlowScanner: admission.optionsFlowScanner,
+    bridge: {
+      diagnosticsAvailable: Boolean(bridge.value),
+      activeLineCount: bridgeActiveLines,
+      lineBudget: bridgeLineBudget,
+    },
+    drift: driftReconciliation,
+    stockAggregates,
   });
 
   return {
@@ -858,6 +1003,7 @@ export async function getIbkrLineUsageSnapshot() {
           : driftReconciliation.apiLineCount - driftReconciliation.bridgeLineCount,
       reconciliation: driftReconciliation,
     },
+    marketDataWorkPlan,
   };
 }
 
@@ -874,4 +1020,5 @@ export function __resetIbkrLineUsageForTests(): void {
   bridgeLaneDiagnosticsStartedAt = 0;
   bridgeLaneDiagnosticsRequestId += 1;
   bridgeOnlyLineObservations.clear();
+  apiOnlyLineObservations.clear();
 }

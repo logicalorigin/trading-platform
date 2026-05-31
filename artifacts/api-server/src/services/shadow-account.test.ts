@@ -23,6 +23,68 @@ test("shadow account default starting balance matches the active paper run", () 
   assert.equal(SHADOW_STARTING_BALANCE, 25_000);
 });
 
+test("shadow position risk overlay keeps hard stop separate from trailing stop", () => {
+  const riskOverlay =
+    __shadowWatchlistBacktestInternalsForTests.buildShadowPositionRiskOverlay({
+      openedAt: new Date("2026-05-27T14:30:00.000Z"),
+      automationContext: {
+        entryPrice: 10,
+        peakPrice: 14,
+        stopPrice: 11.2,
+        stopLossPrice: 7,
+        takeProfitPrice: 16,
+        purchasedAt: "2026-05-27T14:31:00.000Z",
+        tradeManagement: {
+          hardStopPrice: 7,
+          trailActive: true,
+          trailStopPrice: 11.2,
+          trailActivationPrice: 12,
+          trailActivationPct: 20,
+          givebackPct: 20,
+          minLockedGainPct: 0,
+        },
+      },
+    } as any);
+
+  assert.deepEqual(riskOverlay, {
+    source: "shadow_automation",
+    openedAt: "2026-05-27T14:31:00.000Z",
+    entryPrice: 10,
+    hardStopPrice: 7,
+    stopPrice: 11.2,
+    takeProfitPrice: 16,
+    activeStopPrice: 11.2,
+    activeStopKind: "trailing_stop",
+    trailActive: true,
+    trailStopPrice: 11.2,
+    trailHasTakenOver: true,
+    trailActivationPrice: 12,
+    trailActivationPct: 20,
+    givebackPct: 20,
+    minLockedGainPct: 0,
+    peakPrice: 14,
+  });
+});
+
+test("shadow position risk overlay can carry take-profit without stop lines", () => {
+  const riskOverlay =
+    __shadowWatchlistBacktestInternalsForTests.buildShadowPositionRiskOverlay({
+      openedAt: new Date("2026-05-27T14:30:00.000Z"),
+      automationContext: {
+        entryPrice: 10,
+        takeProfitPrice: 16,
+        purchasedAt: "2026-05-27T14:31:00.000Z",
+        tradeManagement: {
+          targetKind: "take_profit",
+        },
+      },
+    } as any);
+
+  assert.equal(riskOverlay?.takeProfitPrice, 16);
+  assert.equal(riskOverlay?.activeStopPrice, null);
+  assert.equal(riskOverlay?.activeStopKind, null);
+});
+
 test("shadow automation option exits respect live option trading sessions", () => {
   const internals = __shadowWatchlistBacktestInternalsForTests;
   const apldContract = {
@@ -1007,6 +1069,53 @@ test("shadow automation context derives active trail from current position marks
   assert.equal(context?.tradeManagement.trailActive, true);
   assert.equal(context?.tradeManagement.trailStopPrice, 4.8);
   assert.equal(context?.stopPrice, 4.8);
+});
+
+test("shadow automation context recomputes chart risk lines from Algo exit settings", () => {
+  const buildContext = (exitPolicy: Record<string, unknown>) =>
+    __shadowWatchlistBacktestInternalsForTests.buildShadowAutomationContext({
+      position: {
+        averageCost: "4.00",
+        mark: "6.00",
+      } as any,
+      peakMarkPrice: 6,
+      sourceOrder: {
+        source: "automation",
+        sourceEventId: "entry-event",
+        payload: {
+          profile: {
+            exitPolicy: {
+              ...exitPolicy,
+              progressiveTrailEnabled: false,
+            },
+          },
+          position: {
+            entryPrice: 4,
+          },
+        },
+      } as any,
+      latestEvent: null,
+    });
+
+  const baseline = buildContext({
+    hardStopPct: -30,
+    trailActivationPct: 35,
+    minLockedGainPct: 15,
+    trailGivebackPct: 20,
+  });
+  const tighter = buildContext({
+    hardStopPct: -40,
+    trailActivationPct: 25,
+    minLockedGainPct: 20,
+    trailGivebackPct: 10,
+  });
+
+  assert.equal(baseline?.stopLossPrice, 2.8);
+  assert.equal(baseline?.tradeManagement.trailStopPrice, 4.8);
+  assert.equal(tighter?.stopLossPrice, 2.4);
+  assert.equal(tighter?.tradeManagement.trailStopPrice, 5.4);
+  assert.equal(tighter?.activeStopPrice, 5.4);
+  assert.equal(tighter?.activeStopKind, "trailing_stop");
 });
 
 test("shadow option quote marks ignore zero-only IBKR snapshots", () => {

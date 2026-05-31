@@ -45,6 +45,7 @@ Implement the plan for integrating Python into the app, grounded in the earlier 
 - Added the internal `portfolio_optimization` Python compute job. It accepts positions/current weights, returns or covariance input, objective, and constraints; returns advisory-only proposed weights, risk contribution, turnover, concentration, warnings, variance, and volatility. It does not emit trade instructions or connect to broker/order paths.
 - The first implementation is deterministic and dependency-free: native NumPy covariance/diagonal fallback, inverse-variance min-variance weights, risk-parity inverse-vol weights, positive-return max-return fallback, long-only clamping, max-weight cap handling, and optional turnover limiting.
 - Updated Python compute capabilities and the API-server `PythonComputeJobType` union to include `portfolio_optimization`.
+- Added `scripts/src/pyrus-portfolio-optimization.ts` and `pnpm --filter @workspace/scripts run pyrus:portfolio-optimization` as a read-only live inspector. It discovers Python compute from `/api/diagnostics/runtime` by default, confirms `portfolio_optimization` capability, and submits only a deterministic sample advisory job. The default timeout is 30s because runtime diagnostics can exceed 10s under current app load.
 
 ## Validation
 
@@ -126,6 +127,18 @@ Implement the plan for integrating Python into the app, grounded in the earlier 
 - After the user restarted the default Replit Run App, live Python compute validation passed on 2026-05-30T20:57:xxZ: Python compute `healthy`, pid `46715`, capabilities include `portfolio_optimization`, and a direct internal `portfolio_optimization` sample job completed with `advisoryOnly=true`, `objective=min_variance`, no warnings, and no error.
 - Post-restart shadow Greek inspector also passed on 2026-05-30T20:58:08Z: Python compute pid `46715`, `pricingModel=black_scholes`, `repricedPositionScenarioCount=700`, `fallbackPositionScenarioCount=0`, `boundedPositionScenarioCount=0`, 5/5 eligible positions, worst estimated PnL `-10216.96508`.
 - Final commit validation on 2026-05-30: Python compute doctor/test/lint/typecheck, focused API Python/Greek/shadow/quote/runtime tests, API-server typecheck/build, scripts typecheck, API-client typecheck, account exposure panel test, and staged diff check passed. `pnpm --filter @workspace/pyrus run typecheck` is blocked by unrelated unstaged charting errors in `ResearchChartSurface.tsx` and `chartPositionOverlays.ts`.
+- `pnpm --filter @workspace/scripts run test:pyrus-portfolio-optimization` passed on 2026-05-30T21:43:xxZ: 5 tests.
+- `pnpm --filter @workspace/scripts run typecheck` passed after adding the portfolio optimization inspector.
+- `pnpm --filter @workspace/scripts run pyrus:portfolio-optimization -- --help` passed.
+- Live portfolio optimization inspector passed on 2026-05-30T21:48:18Z against `http://127.0.0.1:18747/api`: Python compute `healthy`, pid `601`, runtime diagnostics latency `13957ms`, capabilities include `portfolio_optimization`, sample job completed in `1.361ms` with `advisoryOnly=true`, `objective=min_variance`, no warnings, and no error.
+- `git diff --check -- scripts/src/pyrus-portfolio-optimization.ts scripts/src/pyrus-portfolio-optimization.test.ts scripts/package.json SESSION_HANDOFF_LIVE_2026-05-29_python-compute-implementation.md SESSION_HANDOFF_MASTER.md` passed after handoff updates.
+- Task 8A library spike completed on 2026-05-30T22:19:42Z. `docs/spikes/portfolio-risk-library-spike-2026-05-30.md` records source checks, isolated install/runtime measurements, sample outputs, and the decision to admit no external optimizer dependency this wave.
+- Post-spike validation passed: `pnpm run python-compute:doctor`, `pnpm run python-compute:test` (20 tests), `pnpm run python-compute:lint`, `pnpm run python-compute:typecheck`, `pnpm run audit:markdown-paths`, and targeted `git diff --check`.
+- `pnpm --dir artifacts/pyrus exec node --import tsx --test src/screens/account/accountSafeQaFixtures.test.js src/screens/account/PortfolioExposurePanel.test.js` passed after adding the safe-QA Portfolio Exposure fixture: 16 tests.
+- `pnpm --dir artifacts/pyrus run typecheck` passed after fixture wiring.
+- `pnpm --dir artifacts/pyrus exec node --import tsx --test --test-name-pattern "safe QA mode disables platform live and diagnostics side effects" src/features/platform/platformRootSource.test.js` passed. A prior incorrectly ordered pattern run executed the full source file and hit the known unrelated pre-existing failures in that file; the safe-QA guard itself passed.
+- `git diff --check -- artifacts/pyrus/src/screens/AccountScreen.jsx artifacts/pyrus/src/screens/account/accountSafeQaFixtures.js artifacts/pyrus/src/screens/account/accountSafeQaFixtures.test.js SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_LIVE_2026-05-29_python-compute-implementation.md` passed.
+- `pnpm run replit:config:lock` passed; startup config remains locked.
 
 ## Current Status
 
@@ -162,6 +175,17 @@ Implement the plan for integrating Python into the app, grounded in the earlier 
 - Implemented option-value-bounded scenario PnL in Python compute. Source-level and live shadow validation now report worst estimated PnL below the `10217.50` shadow option premium exposure. The live post-restart inspector reports worst estimated PnL `-8795.995295`.
 - Implemented and live-validated Black-Scholes scenario repricing. The current Replit app reports all shadow scenario rows as Black-Scholes repriced with no fallback rows.
 - User explicitly declined new pricing diagnostics in the UI. The next Python-plan slice is now implemented and live-validated as internal compute only: `portfolio_optimization` for advisory weights/risk contribution with no UI and no broker/order path.
+- Added and live-validated the read-only portfolio optimization inspector. It does not read broker state, write account state, create orders, or expose UI/API surfaces.
+- Completed Task 8A portfolio risk library spike. Immediate decision: reject adding `skfolio`, `Riskfolio-Lib`, `PyPortfolioOpt`, or `empyrical-reloaded` as a Python compute dependency now. Keep the native advisory optimizer; use `skfolio` as the preferred future candidate only if advanced solver-backed optimization is explicitly needed.
+- Added the next options-native account-risk advisory slice: `riskRecommendations` is now built from option premium exposure, Greek coverage, Greek scenario worst shock, management flags, expiry buckets, and underlying premium concentration. It is explicitly read-only (`advisoryOnly=true`) and contains no order actions, sides, quantities, limit prices, or trade-ticket wiring.
+- Surfaced the advisory payload in the desktop Portfolio Exposure panel as `Option Risk Reviews`, next to Greek scenarios. It stays scoped to options risk language: premium, worst shock, theta, gamma, vega, expiry, coverage, and concentration. Updated `docs/plans/awesome-quant-pyrus-improvements.md` so Task 10 is now explicitly options-risk recommendations rather than generic allocation/rebalance suggestions.
+- Live API validation after the user restarted Replit confirmed `/api/accounts/shadow/risk?mode=paper` returns completed Greek scenarios plus `riskRecommendations.status=ready`, 5 option positions, 5 underlyings, premium exposure `10217.5`, worst shock PnL `-10217.5`, and review-only recommendations.
+- Browser QA with `?pyrusQa=safe` verified the desktop Account / Portfolio Exposure `Option Risk Reviews` strip renders without trade-action language. During QA, patched safe-mode gaps so the platform shell no longer fires live positions/orders, market quote/bars, latest diagnostics, or client-metrics writes while safe QA is active.
+- Resumed on 2026-05-31 at 09:38:29 MDT. Current task is the next recorded slice: add a deterministic safe-QA Portfolio Exposure fixture so completed Greek shock and option-risk review rows render without live account queries or a warmed React Query cache.
+- Safe-QA Portfolio Exposure now has deterministic fixture data for completed Greek scenario shock details and option-risk reviews, independent of live account requests and prior React Query cache state.
+- Added `artifacts/pyrus/src/screens/account/accountSafeQaFixtures.js` with deterministic safe-QA summary, allocation, positions, completed Black-Scholes Greek scenarios, and options-scoped review-only `riskRecommendations`.
+- Added `artifacts/pyrus/src/screens/account/accountSafeQaFixtures.test.js` to prove the fixture includes completed shock/review content, remains review-only, seeds React Query with requests disabled, and is wired from `AccountScreen.jsx`.
+- Wired `AccountScreen.jsx` to pass safe-QA fixture data as `initialData` for account summary, allocation, positions, and risk queries only when `safeQaMode` is active.
 
 ## ib_async Recommendation
 
@@ -173,7 +197,7 @@ Implement the plan for integrating Python into the app, grounded in the earlier 
 
 ## Next Step
 
-If continuing this work, decide whether to expose `portfolio_optimization` through an API/service wrapper or first add a read-only inspector/sample script. The restarted live Python service now advertises and runs the job.
+If continuing this work, decide whether the native `portfolio_optimization` job should feed a future options-risk advisory wrapper, or remain internal. Do not expose generic allocation/rebalance recommendations; this platform surface should stay grounded in options trading risk.
 
 ## Planned Black-Scholes Upgrade
 
@@ -231,4 +255,13 @@ Implementation slices:
 20. Completed: restart Replit Run App and re-run the shadow inspector to confirm live `pricingModel` and repriced/fallback diagnostics.
 21. Completed by user decision: keep pricing-model diagnostics out of the UI and leave them inspector/API-only.
 22. Completed and live-validated: add an internal advisory `portfolio_optimization` Python job with deterministic weights, risk contribution, turnover, warnings, and no trade instructions.
-23. Next: decide whether to expose the job through API account/risk surfaces, add a read-only inspector first, or keep it internal while evaluating external optimization libraries.
+23. Completed and live-validated: add a read-only `pyrus:portfolio-optimization` inspector that discovers Python compute, checks capabilities, and runs a deterministic advisory sample job.
+24. Completed: Task 8A portfolio risk library spike. Compared `skfolio`, `Riskfolio-Lib`, `PyPortfolioOpt`, and `empyrical-reloaded`; recorded decision in `docs/spikes/portfolio-risk-library-spike-2026-05-30.md`; no external optimizer dependency admitted for this wave. Keep native advisory `portfolio_optimization`; prefer `skfolio` only for a future advanced optimizer spike.
+25. Completed locally: added options-native `riskRecommendations` to live and shadow account risk payloads, with a pure builder/test suite that consumes option premium, Greek coverage, scenario shock PnL, management flags, expiry, and concentration. The builder stays advisory-only and does not emit trade-ticket fields.
+26. Completed locally: rendered `Option Risk Reviews` in the desktop Portfolio Exposure panel and added frontend summary/source tests.
+27. Validation passed: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/account-risk-recommendations.test.ts src/services/account-greek-scenarios.test.ts`; `pnpm --dir artifacts/pyrus exec node --import tsx --test src/screens/account/PortfolioExposurePanel.test.js`; `pnpm --dir artifacts/api-server run typecheck`; `pnpm --dir artifacts/pyrus run typecheck`; `pnpm --filter @workspace/api-spec run codegen`; `pnpm run audit:api-codegen`; `pnpm run audit:markdown-paths`; targeted `git diff --check`; `pnpm run replit:config:lock`.
+28. Completed: live-dogfooded `/api/accounts/shadow/risk?mode=paper` after restart; confirmed option-risk advisory payload is present, ready, options-scoped, and read-only.
+29. Completed: browser-dogfooded the Account / Portfolio Exposure panel with `?pyrusQa=safe`; confirmed `Option Risk Reviews` renders. Also fixed safe-QA shell/runtime gaps that caused 429 console noise from live positions/orders, market quote/bars, latest diagnostics, and client-metrics writes.
+30. Validation passed: focused safe-QA source test, `useMemoryPressureSignal.test.js`, `PortfolioExposurePanel.test.js`, Pyrus typecheck, and targeted `git diff --check`. Full `platformRootSource.test.js` still has unrelated pre-existing failures outside the safe-QA test pattern.
+31. Completed: added a dedicated safe fixture for Portfolio Exposure so `?pyrusQa=safe` can show completed Greek scenario shock details without relying on live account queries or prior React Query cache.
+32. Next: optionally browser-dogfood Account / Portfolio Exposure with `?pyrusQa=safe` after the Replit Run App reloads the updated bundle.

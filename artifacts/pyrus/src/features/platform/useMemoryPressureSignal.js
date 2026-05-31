@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { getLatestDiagnostics } from "@workspace/api-client-react";
+import { isPyrusSafeQaMode } from "../../app/qa-mode";
 import { getActiveChartBarStoreEntryCount } from "../charting/activeChartBarStore";
 import { getChartHydrationStatsSnapshot } from "../charting/chartHydrationStats";
 import { readBrowserMemoryMeasurement } from "./memoryPressureClient";
@@ -57,10 +58,38 @@ const serverPressureDrivers = (summary) => {
   return [];
 };
 
+const MEMORY_PRESSURE_DRIVER_KINDS = new Set([
+  "api-heap",
+  "api-rss",
+  "browser-memory",
+  "chart-hydration",
+  "client-pressure",
+  "query-cache",
+  "runtime-stores",
+  "workload",
+]);
+
+const isMemoryPressureDriver = (driver) =>
+  MEMORY_PRESSURE_DRIVER_KINDS.has(driver?.kind);
+
+const memoryPressureDrivers = (drivers) =>
+  Array.isArray(drivers) ? drivers.filter(isMemoryPressureDriver) : [];
+
+const maxMemoryPressureDriverLevel = (drivers) =>
+  drivers.reduce((level, driver) => {
+    const driverLevel = driver?.level || "normal";
+    if (!isPressureLevelAtLeast(driverLevel, "watch")) {
+      return level;
+    }
+    return !level || isPressureLevelAtLeast(driverLevel, level)
+      ? driverLevel
+      : level;
+  }, null);
+
 const mergePressureDrivers = (clientDrivers = [], serverDrivers = []) => {
   const next = [];
   const seen = new Set();
-  [...serverDrivers, ...clientDrivers].forEach((driver) => {
+  [...memoryPressureDrivers(serverDrivers), ...clientDrivers].forEach((driver) => {
     const kind = driver?.kind;
     if (!kind || seen.has(kind)) return;
     seen.add(kind);
@@ -76,22 +105,32 @@ export const mergeMemoryPressureServerSummary = ({
   if (!footerMemoryPressure && !resourceMetrics) {
     return null;
   }
+  const footerDrivers = memoryPressureDrivers(serverPressureDrivers(footerMemoryPressure));
+  const resourceDrivers = memoryPressureDrivers(serverPressureDrivers(resourceMetrics));
+  const resourceMemoryLevel = maxMemoryPressureDriverLevel(resourceDrivers);
   if (!footerMemoryPressure) {
     return {
       ...resourceMetrics,
-      level: normalizeServerPressureLevel(resourceMetrics) || "normal",
+      level: resourceMemoryLevel || "normal",
+      pressureDrivers: resourceDrivers,
+      dominantDrivers: resourceDrivers,
     };
   }
   if (!resourceMetrics) {
-    return footerMemoryPressure;
+    return {
+      ...footerMemoryPressure,
+      pressureDrivers: footerDrivers,
+      dominantDrivers: footerDrivers,
+    };
   }
 
   const footerLevel = normalizeServerPressureLevel(footerMemoryPressure) || "normal";
-  const resourceLevel = normalizeServerPressureLevel(resourceMetrics);
+  const resourceLevel = resourceMemoryLevel;
   const level =
     resourceLevel && isPressureLevelAtLeast(resourceLevel, footerLevel)
       ? resourceLevel
       : footerLevel;
+  const pressureDrivers = resourceDrivers.length ? resourceDrivers : footerDrivers;
 
   return {
     ...footerMemoryPressure,
@@ -106,12 +145,8 @@ export const mergeMemoryPressureServerSummary = ({
       footerMemoryPressure.browserMemoryMb ?? resourceMetrics.browserMemoryMb ?? null,
     sourceQuality:
       footerMemoryPressure.sourceQuality ?? resourceMetrics.sourceQuality ?? null,
-    pressureDrivers: resourceMetrics.dominantDrivers?.length
-      ? resourceMetrics.dominantDrivers
-      : footerMemoryPressure.dominantDrivers,
-    dominantDrivers: resourceMetrics.dominantDrivers?.length
-      ? resourceMetrics.dominantDrivers
-      : footerMemoryPressure.dominantDrivers,
+    pressureDrivers,
+    dominantDrivers: pressureDrivers,
   };
 };
 
@@ -120,10 +155,11 @@ export const mergeMemoryPressureRuntimeState = (clientState, serverSummary) => {
     return clientState;
   }
   const clientLevel = clientState?.level || "normal";
-  const serverLevel = normalizeServerPressureLevel(serverSummary);
+  const serverDrivers = memoryPressureDrivers(serverPressureDrivers(serverSummary));
+  const serverLevel = maxMemoryPressureDriverLevel(serverDrivers);
   const drivers = mergePressureDrivers(
     clientState?.pressureDrivers,
-    serverPressureDrivers(serverSummary),
+    serverDrivers,
   );
   const dominantDrivers = drivers.filter((driver) =>
     isPressureLevelAtLeast(driver?.level, "watch"),
@@ -178,6 +214,7 @@ const prefersReducedMotion = () =>
 
 export const useMemoryPressureMonitor = () => {
   const pageVisible = usePageVisible();
+  const safeQaMode = isPyrusSafeQaMode();
   const historyRef = useRef([]);
   const latestRef = useRef(getMemoryPressureSnapshot());
   const nextServerRefreshAtRef = useRef(0);
@@ -199,7 +236,7 @@ export const useMemoryPressureMonitor = () => {
       let serverSummary = latestRef.current.server || null;
       const now = Date.now();
       const currentLevel = latestRef.current.level || "normal";
-      if (now >= nextServerRefreshAtRef.current) {
+      if (!safeQaMode && now >= nextServerRefreshAtRef.current) {
         nextServerRefreshAtRef.current =
           now + jitterMs(SERVER_INTERVALS_MS[currentLevel] || SERVER_INTERVALS_MS.normal);
         try {
@@ -287,7 +324,7 @@ export const useMemoryPressureMonitor = () => {
         window.clearTimeout(timeoutId);
       }
     };
-  }, [pageVisible]);
+  }, [pageVisible, safeQaMode]);
 
   return useMemoryPressureSnapshot(true);
 };

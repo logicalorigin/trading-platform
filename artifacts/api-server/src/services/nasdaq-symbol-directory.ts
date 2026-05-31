@@ -3,6 +3,8 @@ import type { UniverseTicker } from "../providers/polygon/market-data";
 
 export const NASDAQ_LISTED_SYMBOL_DIRECTORY_URL =
   "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt";
+export const OTHER_LISTED_SYMBOL_DIRECTORY_URL =
+  "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt";
 
 export type NasdaqListedSymbolRecord = {
   symbol: string;
@@ -14,6 +16,19 @@ export type NasdaqListedSymbolRecord = {
   roundLotSize: number | null;
   etf: boolean;
   nextShares: boolean;
+  sourceLine: number;
+};
+
+export type OtherListedSymbolRecord = {
+  symbol: string;
+  rawSymbol: string;
+  securityName: string;
+  exchangeCode: string | null;
+  cqsSymbol: string | null;
+  etf: boolean;
+  roundLotSize: number | null;
+  testIssue: boolean;
+  nasdaqSymbol: string | null;
   sourceLine: number;
 };
 
@@ -31,6 +46,13 @@ export type NasdaqListedParseResult = {
   skippedCount: number;
 };
 
+export type OtherListedParseResult = {
+  records: OtherListedSymbolRecord[];
+  parsedAt: Date;
+  fileCreationTime: string | null;
+  skippedCount: number;
+};
+
 const NASDAQ_LISTED_HEADER = [
   "Symbol",
   "Security Name",
@@ -41,6 +63,27 @@ const NASDAQ_LISTED_HEADER = [
   "ETF",
   "NextShares",
 ];
+const OTHER_LISTED_HEADER = [
+  "ACT Symbol",
+  "Security Name",
+  "Exchange",
+  "CQS Symbol",
+  "ETF",
+  "Round Lot Size",
+  "Test Issue",
+  "NASDAQ Symbol",
+];
+
+const OTHER_LISTED_EXCHANGE_MIC: Record<
+  string,
+  { mic: string; display: string; primaryExchange: string }
+> = {
+  A: { mic: "XASE", display: "NYSE American", primaryExchange: "NYSE American" },
+  N: { mic: "XNYS", display: "NYSE", primaryExchange: "NYSE" },
+  P: { mic: "ARCX", display: "NYSE Arca", primaryExchange: "NYSE Arca" },
+  V: { mic: "IEXG", display: "IEX", primaryExchange: "IEX" },
+  Z: { mic: "BATS", display: "Cboe BZX", primaryExchange: "Cboe BZX" },
+};
 
 function readNasdaqFlag(value: string | undefined): boolean {
   return value?.trim().toUpperCase() === "Y";
@@ -93,6 +136,26 @@ function shouldIncludeNasdaqRecord(
     options.normalFinancialStatusOnly &&
     !isNormalFinancialStatus(record.financialStatus)
   ) {
+    return false;
+  }
+  if (
+    !options.includeNonCommonStock &&
+    !record.etf &&
+    !isLikelyCommonEquitySecurityName(record.securityName)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function shouldIncludeOtherListedRecord(
+  record: OtherListedSymbolRecord,
+  options: Required<NasdaqListedParseOptions>,
+): boolean {
+  if (!options.includeTestIssues && record.testIssue) {
+    return false;
+  }
+  if (!options.includeEtfs && record.etf) {
     return false;
   }
   if (
@@ -182,6 +245,83 @@ export function parseNasdaqListedDirectory(
   };
 }
 
+export function parseOtherListedDirectory(
+  text: string,
+  options: NasdaqListedParseOptions = {},
+): OtherListedParseResult {
+  const filterOptions: Required<NasdaqListedParseOptions> = {
+    includeEtfs: options.includeEtfs ?? false,
+    includeTestIssues: options.includeTestIssues ?? false,
+    includeNonCommonStock: options.includeNonCommonStock ?? false,
+    normalFinancialStatusOnly: options.normalFinancialStatusOnly ?? true,
+  };
+  const lines = text.split(/\r?\n/);
+  const headerIndex = lines.findIndex((line) => {
+    const fields = line.split("|").map((field) => field.trim());
+    return OTHER_LISTED_HEADER.every((field, index) => fields[index] === field);
+  });
+
+  if (headerIndex < 0) {
+    throw new Error("Other-listed symbol directory header was not found.");
+  }
+
+  const records: OtherListedSymbolRecord[] = [];
+  let fileCreationTime: string | null = null;
+  let skippedCount = 0;
+
+  for (let index = headerIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index]?.trim() ?? "";
+    if (!line) {
+      continue;
+    }
+    if (line.startsWith("File Creation Time:")) {
+      fileCreationTime =
+        line.slice("File Creation Time:".length).split("|")[0]?.trim() || null;
+      break;
+    }
+
+    const fields = line.split("|");
+    if (fields.length < OTHER_LISTED_HEADER.length) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const rawSymbol = fields[0]?.trim() ?? "";
+    const symbol = normalizeSymbol(rawSymbol);
+    const securityName = fields[1]?.trim() ?? "";
+    if (!symbol || !securityName) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const record: OtherListedSymbolRecord = {
+      symbol,
+      rawSymbol,
+      securityName,
+      exchangeCode: readNasdaqString(fields[2]),
+      cqsSymbol: readNasdaqString(fields[3]),
+      etf: readNasdaqFlag(fields[4]),
+      roundLotSize: readNasdaqInteger(fields[5]),
+      testIssue: readNasdaqFlag(fields[6]),
+      nasdaqSymbol: readNasdaqString(fields[7]),
+      sourceLine: index + 1,
+    };
+
+    if (shouldIncludeOtherListedRecord(record, filterOptions)) {
+      records.push(record);
+    } else {
+      skippedCount += 1;
+    }
+  }
+
+  return {
+    records,
+    parsedAt: new Date(),
+    fileCreationTime,
+    skippedCount,
+  };
+}
+
 export function nasdaqListedRecordToUniverseTicker(
   record: NasdaqListedSymbolRecord,
 ): UniverseTicker {
@@ -225,6 +365,52 @@ export function nasdaqListedRecordToUniverseTicker(
   };
 }
 
+export function otherListedRecordToUniverseTicker(
+  record: OtherListedSymbolRecord,
+): UniverseTicker {
+  const exchange = record.exchangeCode
+    ? OTHER_LISTED_EXCHANGE_MIC[record.exchangeCode.toUpperCase()] ?? null
+    : null;
+  return {
+    ticker: record.symbol,
+    name: record.securityName,
+    market: record.etf ? "etf" : "stocks",
+    rootSymbol: record.symbol.split(/[./:\s-]+/)[0] || record.symbol,
+    normalizedExchangeMic: exchange?.mic ?? null,
+    exchangeDisplay: exchange?.display ?? record.exchangeCode,
+    logoUrl: null,
+    countryCode: "US",
+    exchangeCountryCode: "US",
+    sector: null,
+    industry: null,
+    contractDescription: record.securityName,
+    contractMeta: {
+      listingSource: "nasdaqtrader-otherlisted",
+      otherListedActSymbol: record.rawSymbol,
+      otherListedExchangeCode: record.exchangeCode,
+      otherListedCqsSymbol: record.cqsSymbol,
+      otherListedRoundLotSize: record.roundLotSize,
+      otherListedEtf: record.etf,
+      otherListedNasdaqSymbol: record.nasdaqSymbol,
+      otherListedSourceLine: record.sourceLine,
+    },
+    locale: "us",
+    type: record.etf ? "ETF" : "CS",
+    active: true,
+    primaryExchange: exchange?.primaryExchange ?? record.exchangeCode,
+    currencyName: "USD",
+    cik: null,
+    compositeFigi: null,
+    shareClassFigi: null,
+    lastUpdatedAt: null,
+    provider: null,
+    providers: [],
+    tradeProvider: null,
+    dataProviderPreference: null,
+    providerContractId: null,
+  };
+}
+
 export async function fetchNasdaqListedDirectory(
   url = NASDAQ_LISTED_SYMBOL_DIRECTORY_URL,
 ): Promise<string> {
@@ -237,6 +423,24 @@ export async function fetchNasdaqListedDirectory(
   if (!response.ok) {
     throw new Error(
       `NASDAQ listed symbol directory request failed with HTTP ${response.status}.`,
+    );
+  }
+
+  return response.text();
+}
+
+export async function fetchOtherListedDirectory(
+  url = OTHER_LISTED_SYMBOL_DIRECTORY_URL,
+): Promise<string> {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "text/plain,*/*",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Other-listed symbol directory request failed with HTTP ${response.status}.`,
     );
   }
 

@@ -14,6 +14,7 @@ test("live trade order rows keep stable identities when broker ids are absent", 
 test("trade open positions reuse runtime ticker snapshots for compact sparklines", () => {
   assert.match(source, /import \{ DataUnavailableState, MicroSparkline \}/);
   assert.match(source, /useRuntimeTickerSnapshots\(openPositionSymbols\)/);
+  assert.match(source, /useRegisterPositionMarketDataSymbols\(\s*`trade-positions:\$\{environment\}:\$\{accountId \|\| "none"\}`,\s*openPositionSymbols,\s*isVisible,\s*\)/);
   assert.match(source, /data-testid="trade-position-sparkline"/);
   assert.match(source, /<TradePositionSparkline/);
   assert.match(source, /const buildTradePositionFallbackSparklineData = /);
@@ -26,6 +27,7 @@ test("trade open positions reuse runtime ticker snapshots for compact sparklines
   assert.match(source, /const OPEN_POSITION_GRID_TEMPLATE =/);
   assert.match(source, /const OPEN_POSITION_COLUMNS = \[/);
   assert.match(source, /id: "ticker", label: "Tick", title: "Ticker", width: "minmax\(68px, 1fr\)", minWidth: "68px"/);
+  assert.match(source, /id: "spot", label: "Spot", title: "Underlying price", width: "minmax\(40px, max-content\)", minWidth: "40px"/);
   assert.match(source, /id: "stop", label: "SL", title: "Stop loss", width: "minmax\(52px, max-content\)", minWidth: "52px"/);
   assert.match(source, /id: "trail", label: "TRL", title: "Trailing stop", width: "minmax\(52px, max-content\)", minWidth: "52px"/);
   assert.match(source, /id: "actions", label: "", title: "Actions", width: "minmax\(74px, max-content\)", minWidth: "74px"/);
@@ -40,6 +42,15 @@ test("trade open positions reuse runtime ticker snapshots for compact sparklines
   assert.match(source, /TradeManagementLevelCell/);
   assert.match(source, /OPEN_POSITION_COLUMNS\.map\(/);
   assert.match(source, /tradeOpenPositionHeaderCellStyle\(column\)/);
+  assert.match(source, /const resolveTradeSpotPrice = /);
+  assert.match(source, /const TradeSpotPriceCell = /);
+  assert.match(source, /resolveTradeSpotPrice\(position, snapshotsBySymbol\)/);
+  assert.match(source, /useValueFlash\(spotPrice\)/);
+  assert.match(source, /className=\{flashClassName\}/);
+  assert.match(source, /tradeOpenPositionCellStyle\(\s*"spot"/);
+  assert.match(source, /title=\{tradeSpotTitle\(position, snapshotsBySymbol\)\}/);
+  assert.match(source, /<TradeSpotPriceCell[\s\S]*?snapshotsBySymbol=\{tickerSnapshotsBySymbol\}/);
+  assert.match(source, /position\?\.optionContract[\s\S]*\?[\s\S]*null[\s\S]*firstPositiveNumber\(position\?\.mark/);
   assert.match(source, /tradeManagementForPosition\(p, liveOrders\)/);
   assert.match(source, /data-testid="trade-open-positions-table-scroll"/);
   assert.match(source, /testId="trade-position-row-action-menu"/);

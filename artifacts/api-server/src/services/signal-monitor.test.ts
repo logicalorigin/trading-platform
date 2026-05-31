@@ -50,6 +50,38 @@ function bar(minute: string, open: number, close: number) {
   };
 }
 
+test("stored signal monitor snapshots mark non-current states stale", () => {
+  const state = {
+    id: "state-1",
+    profileId: "profile-1",
+    symbol: "SPY",
+    timeframe: "5m",
+    currentSignalDirection: "buy",
+    currentSignalAt: new Date("2026-04-24T14:30:00.000Z"),
+    currentSignalPrice: "500.000000",
+    latestBarAt: new Date("2026-04-24T14:30:00.000Z"),
+    barsSinceSignal: 1,
+    fresh: true,
+    status: "ok",
+    active: true,
+    lastEvaluatedAt: new Date("2026-04-24T14:35:00.000Z"),
+    lastError: null,
+  } as never;
+
+  const snapshot =
+    __signalMonitorInternalsForTests.stateToResponseForSnapshot(state, {
+      timeframe: "5m",
+      evaluatedAt: new Date("2026-04-24T16:00:00.000Z"),
+      markNonCurrentStale: true,
+    });
+
+  assert.equal(snapshot.currentSignalDirection, "buy");
+  assert.equal(snapshot.currentSignalPrice, 500);
+  assert.equal(snapshot.fresh, false);
+  assert.equal(snapshot.status, "stale");
+  assert.match(snapshot.lastError ?? "", /persisted state/);
+});
+
 test("2m signal matrix bars roll up completed 1m bars", () => {
   const aggregated = aggregateCompletedMinuteBars(
     [

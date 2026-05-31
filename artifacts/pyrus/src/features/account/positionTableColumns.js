@@ -39,6 +39,7 @@ export const POSITION_TABLE_COLUMNS = [
     numeric: false,
     sticky: true,
   }),
+  column({ id: "underlyingPrice", label: "Spot", title: "Underlying price", width: "clamp(50px, 5vw, 64px)", minWidth: "50px" }),
   column({ id: "quantity", label: "Qty", width: "clamp(38px, 4vw, 48px)", minWidth: "38px" }),
   column({ id: "averageCost", label: "Avg", title: "Average cost", width: "clamp(46px, 5vw, 58px)", minWidth: "46px" }),
   column({ id: "price", label: "Price", width: "clamp(54px, 6vw, 66px)", minWidth: "54px" }),
@@ -109,6 +110,7 @@ export const POSITION_TABLE_COLUMNS = [
 
 export const ACCOUNT_POSITION_DEFAULT_COLUMN_IDS = [
   "symbol",
+  "underlyingPrice",
   "quantity",
   "averageCost",
   "price",
@@ -125,6 +127,7 @@ export const ACCOUNT_POSITION_DEFAULT_COLUMN_IDS = [
 
 export const ALGO_POSITION_DEFAULT_COLUMN_IDS = [
   "symbol",
+  "underlyingPrice",
   "quantity",
   "averageCost",
   "price",

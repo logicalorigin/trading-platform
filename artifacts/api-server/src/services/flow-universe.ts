@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   flowUniverseRankingsTable,
   universeCatalogListingsTable,
@@ -19,6 +19,10 @@ export type FlowUniverseCoverage = {
   stale: boolean;
   fallbackUsed: boolean;
   cooldownCount: number;
+  verifiedSymbols: number;
+  needsVerificationSymbols: number;
+  rejectedSymbols: number;
+  verificationBacklogSymbols: number;
   scannedSymbols: number;
   cycleScannedSymbols: number;
   lastScannedAt: Record<string, number>;
@@ -49,6 +53,7 @@ export type FlowUniverseCoverage = {
   radarFailureCount?: number;
   radarLastRunDurationMs?: number | null;
   promotedSymbols?: string[];
+  planner?: Record<string, unknown>;
 };
 
 export type FlowUniverseObservation = {
@@ -57,6 +62,7 @@ export type FlowUniverseObservation = {
   events?: Array<{ premium?: number; unusualScore?: number; isUnusual?: boolean }>;
   failed?: boolean;
   reason?: string | null;
+  optionabilityVerified?: boolean;
 };
 
 export type FlowUniverseLiquiditySnapshot = {
@@ -79,7 +85,6 @@ type FlowUniverseManagerOptions = {
   minPrice: number;
   minDollarVolume: number;
   fallbackSymbols: readonly string[];
-  fetchFallbackSymbols?: () => Promise<readonly string[]>;
   fetchLiquiditySnapshots?: (
     symbols: readonly string[],
   ) => Promise<FlowUniverseLiquiditySnapshot[]>;
@@ -155,7 +160,19 @@ export function isOptionableUniverseContractMeta(value: unknown): boolean {
   if (!value || typeof value !== "object") {
     return false;
   }
-  const raw = (value as Record<string, unknown>)["derivativeSecTypes"];
+  const record = value as Record<string, unknown>;
+  const optionability = record["optionability"];
+  const optionabilityRecord =
+    optionability && typeof optionability === "object" && !Array.isArray(optionability)
+      ? (optionability as Record<string, unknown>)
+      : null;
+  if (
+    record["optionabilityStatus"] === "verified" ||
+    optionabilityRecord?.["status"] === "verified"
+  ) {
+    return true;
+  }
+  const raw = record["derivativeSecTypes"];
   if (Array.isArray(raw)) {
     return raw.some(
       (entry) =>
@@ -169,7 +186,32 @@ export function isOptionableUniverseContractMeta(value: unknown): boolean {
 }
 
 function optionableUniverseContractMetaSql() {
-  return sql`coalesce(${universeCatalogListingsTable.contractMeta}->>'derivativeSecTypes', '') ~* '(^|,)\\s*OPT\\s*(,|$)'`;
+  return sql`(
+    coalesce(${universeCatalogListingsTable.contractMeta}->>'derivativeSecTypes', '') ~* '(^|,)\\s*OPT\\s*(,|$)'
+    or ${universeCatalogListingsTable.contractMeta}->>'optionabilityStatus' = 'verified'
+    or ${universeCatalogListingsTable.contractMeta}->'optionability'->>'status' = 'verified'
+  )`;
+}
+
+function optionableFlowUniverseRankingMetadataSql() {
+  return sql`(
+    ${flowUniverseRankingsTable.metadata}->>'optionabilityStatus' = 'verified'
+    or ${flowUniverseRankingsTable.metadata}->'optionability'->>'status' = 'verified'
+  )`;
+}
+
+function rejectedUniverseContractMetaSql() {
+  return sql`(
+    ${universeCatalogListingsTable.contractMeta}->>'optionabilityStatus' = 'rejected'
+    or ${universeCatalogListingsTable.contractMeta}->'optionability'->>'status' = 'rejected'
+  )`;
+}
+
+function rejectedFlowUniverseRankingMetadataSql() {
+  return sql`(
+    ${flowUniverseRankingsTable.metadata}->>'optionabilityStatus' = 'rejected'
+    or ${flowUniverseRankingsTable.metadata}->'optionability'->>'status' = 'rejected'
+  )`;
 }
 
 function isMissingFlowUniverseRankingsTableError(error: unknown): boolean {
@@ -350,8 +392,12 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     fallbackSymbols: uniqueSymbols(options.fallbackSymbols),
     markets: [...options.markets],
   };
-  let lastGoodSymbols = uniqueSymbols(runtimeOptions.fallbackSymbols);
-  let selectedSymbols = lastGoodSymbols;
+  let lastGoodSymbols: string[] = [];
+  let selectedSymbols: string[] = [];
+  let verifiedSymbolSet = new Set<string>();
+  let verifiedSymbols = 0;
+  let needsVerificationSymbols = 0;
+  let rejectedSymbols = 0;
   let refreshPromise: Promise<string[]> | null = null;
   let lastRefreshAt: Date | null = null;
   let lastGoodAt: Date | null = null;
@@ -362,40 +408,117 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
   let currentBatch: string[] = [];
   let lastScanAt: Date | null = null;
 
-  function shortfallReason(selectedCount: number, targetSize = runtimeOptions.targetSize) {
+  function shortfallReason(
+    selectedCount: number,
+    targetSize = runtimeOptions.targetSize,
+  ) {
     return selectedCount < targetSize
       ? `Universe fill short: ${selectedCount}/${targetSize}`
       : null;
   }
 
-  async function loadFallbackFillSymbols(): Promise<{
-    symbols: string[];
-    error: string | null;
-  }> {
-    if (!runtimeOptions.fetchFallbackSymbols) {
-      return {
-        symbols: uniqueSymbols(runtimeOptions.fallbackSymbols),
-        error: null,
-      };
-    }
+  function catalogEligibilityFilters() {
+    return [
+      eq(universeCatalogListingsTable.active, true),
+      eq(universeCatalogListingsTable.ibkrHydrationStatus, "hydrated"),
+      inArray(
+        universeCatalogListingsTable.market,
+        [...runtimeOptions.markets] as Array<
+          "stocks" | "etf" | "indices" | "futures" | "fx" | "crypto" | "otc"
+        >,
+      ),
+      sql`${universeCatalogListingsTable.providerContractId} ~ '^[0-9]+$'`,
+      sql`coalesce(${universeCatalogListingsTable.primaryExchange}, '') <> 'OTC'`,
+    ];
+  }
 
-    try {
-      return {
-        symbols: uniqueSymbols([
-          ...(await runtimeOptions.fetchFallbackSymbols()),
-          ...runtimeOptions.fallbackSymbols,
-        ]),
-        error: null,
-      };
-    } catch (error) {
-      return {
-        symbols: uniqueSymbols(runtimeOptions.fallbackSymbols),
-        error:
-          error instanceof Error
-            ? error.message
-            : "Flow universe fallback symbol fetch failed.",
-      };
+  function catalogOptionabilityVerifiedFilter() {
+    return sql`(${optionableUniverseContractMetaSql()} or ${optionableFlowUniverseRankingMetadataSql()})`;
+  }
+
+  function catalogOptionabilityRejectedFilter() {
+    return sql`(${rejectedUniverseContractMetaSql()} or ${rejectedFlowUniverseRankingMetadataSql()})`;
+  }
+
+  async function refreshVerificationCounts(): Promise<void> {
+    const statusExpression = sql<"verified" | "rejected" | "needs_verification">`
+      case
+        when ${catalogOptionabilityVerifiedFilter()} then 'verified'
+        when ${catalogOptionabilityRejectedFilter()} then 'rejected'
+        else 'needs_verification'
+      end
+    `;
+    const rows = await runtimeOptions.db
+      .select({
+        status: statusExpression,
+        value: count(),
+      })
+      .from(universeCatalogListingsTable)
+      .leftJoin(
+        flowUniverseRankingsTable,
+        eq(
+          flowUniverseRankingsTable.symbol,
+          universeCatalogListingsTable.normalizedTicker,
+        ),
+      )
+      .where(and(...catalogEligibilityFilters()))
+      .groupBy(statusExpression);
+
+    let verifiedCount = 0;
+    let needsVerificationCount = 0;
+    let rejectedCount = 0;
+    for (const row of rows) {
+      if (row.status === "verified") {
+        verifiedCount = Number(row.value) || 0;
+      } else if (row.status === "rejected") {
+        rejectedCount = Number(row.value) || 0;
+      } else if (row.status === "needs_verification") {
+        needsVerificationCount = Number(row.value) || 0;
+      }
     }
+    verifiedSymbols = verifiedCount;
+    needsVerificationSymbols = needsVerificationCount;
+    rejectedSymbols = rejectedCount;
+  }
+
+  async function loadVerifiedSymbols(
+    symbols: readonly string[],
+  ): Promise<Set<string>> {
+    const normalizedSymbols = uniqueSymbols(symbols)
+      .map(normalizeSymbol)
+      .filter(Boolean);
+    const verified = new Set<string>();
+    for (let index = 0; index < normalizedSymbols.length; index += 500) {
+      const chunk = normalizedSymbols.slice(index, index + 500);
+      const rows = await runtimeOptions.db
+        .select({
+          symbol: universeCatalogListingsTable.normalizedTicker,
+        })
+        .from(universeCatalogListingsTable)
+        .leftJoin(
+          flowUniverseRankingsTable,
+          eq(
+            flowUniverseRankingsTable.symbol,
+            universeCatalogListingsTable.normalizedTicker,
+          ),
+        )
+        .where(
+          and(
+            ...catalogEligibilityFilters(),
+            inArray(universeCatalogListingsTable.normalizedTicker, chunk),
+            catalogOptionabilityVerifiedFilter(),
+          ),
+        );
+      for (const row of rows) {
+        const symbol = normalizeSymbol(row.symbol);
+        if (symbol) {
+          verified.add(symbol);
+          verifiedSymbolSet.add(symbol);
+        }
+      }
+    }
+    verifiedSymbols = Math.max(verifiedSymbols, verifiedSymbolSet.size);
+    return verified;
   }
 
   async function loadCatalogCandidates(): Promise<RankingCandidate[]> {
@@ -411,7 +534,9 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
           eq(universeCatalogListingsTable.ibkrHydrationStatus, "hydrated"),
           inArray(
             universeCatalogListingsTable.market,
-            [...runtimeOptions.markets] as Array<"stocks" | "etf" | "indices" | "futures" | "fx" | "crypto" | "otc">,
+            [...runtimeOptions.markets] as Array<
+              "stocks" | "etf" | "indices" | "futures" | "fx" | "crypto" | "otc"
+            >,
           ),
           sql`${universeCatalogListingsTable.providerContractId} ~ '^[0-9]+$'`,
           sql`coalesce(${universeCatalogListingsTable.primaryExchange}, '') <> 'OTC'`,
@@ -419,9 +544,11 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         ),
       )
       .orderBy(asc(universeCatalogListingsTable.normalizedTicker))
-      .limit(Math.max(runtimeOptions.targetSize * 4, runtimeOptions.targetSize + 100));
+      .limit(
+        Math.max(runtimeOptions.targetSize * 4, runtimeOptions.targetSize + 100),
+      );
 
-    return rows.map((row) => ({
+    const candidates = rows.map((row) => ({
       symbol: row.symbol,
       market: row.market,
       price: null,
@@ -436,6 +563,13 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       lastScannedAt: null,
       cooldownUntil: null,
     }));
+    verifiedSymbolSet = new Set(
+      candidates.map((candidate) => normalizeSymbol(candidate.symbol)),
+    );
+    verifiedSymbols = verifiedSymbolSet.size;
+    needsVerificationSymbols = 0;
+    rejectedSymbols = 0;
+    return candidates;
   }
 
   async function loadCandidates(): Promise<RankingCandidate[]> {
@@ -467,17 +601,8 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         )
         .where(
           and(
-            eq(universeCatalogListingsTable.active, true),
-            eq(universeCatalogListingsTable.ibkrHydrationStatus, "hydrated"),
-            inArray(
-              universeCatalogListingsTable.market,
-              [...runtimeOptions.markets] as Array<"stocks" | "etf" | "indices" | "futures" | "fx" | "crypto" | "otc">,
-            ),
-            sql`${universeCatalogListingsTable.providerContractId} ~ '^[0-9]+$'`,
-            sql`coalesce(${universeCatalogListingsTable.primaryExchange}, '') <> 'OTC'`,
-            optionableUniverseContractMetaSql(),
-            sql`(${flowUniverseRankingsTable.price} is null or ${flowUniverseRankingsTable.price} >= ${runtimeOptions.minPrice.toString()})`,
-            sql`(${flowUniverseRankingsTable.dollarVolume} is null or ${flowUniverseRankingsTable.dollarVolume} >= ${runtimeOptions.minDollarVolume.toString()})`,
+            ...catalogEligibilityFilters(),
+            catalogOptionabilityVerifiedFilter(),
           ),
         )
         .orderBy(
@@ -485,7 +610,9 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
           desc(flowUniverseRankingsTable.flowScore),
           desc(flowUniverseRankingsTable.dollarVolume),
         )
-        .limit(Math.max(runtimeOptions.targetSize * 4, runtimeOptions.targetSize + 100));
+        .limit(
+          Math.max(runtimeOptions.targetSize * 4, runtimeOptions.targetSize + 100),
+        );
 
       const strictCandidates = rows.map((row) => ({
         symbol: row.symbol,
@@ -502,6 +629,11 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         lastScannedAt: row.lastScannedAt ?? null,
         cooldownUntil: row.cooldownUntil ?? null,
       }));
+      verifiedSymbolSet = new Set(
+        strictCandidates.map((candidate) => normalizeSymbol(candidate.symbol)),
+      );
+      verifiedSymbols = verifiedSymbolSet.size;
+      await refreshVerificationCounts().catch(() => undefined);
       return strictCandidates;
     } catch (error) {
       if (isMissingFlowUniverseRankingsTableError(error)) {
@@ -526,7 +658,9 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     }
 
     const snapshots = (
-      await mapConcurrent(chunks, 2, (chunk) => runtimeOptions.fetchLiquiditySnapshots!(chunk))
+      await mapConcurrent(chunks, 2, (chunk) =>
+        runtimeOptions.fetchLiquiditySnapshots!(chunk),
+      )
     ).flat();
     const rankedBySymbol = new Map<
       string,
@@ -660,6 +794,10 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
             market: "stocks",
             eligible: true,
             source: "ibkr",
+            metadata: {
+              selectionSource: "flow_universe",
+              selectedAt: selectedAt.toISOString(),
+            },
             selected: true,
             selectedAt,
             liquidityRank: index + 1,
@@ -672,6 +810,9 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
           set: {
             eligible: true,
             selected: true,
+            source: sql`excluded.source`,
+            liquidityRank: sql`excluded.liquidity_rank`,
+            metadata: sql`coalesce(${flowUniverseRankingsTable.metadata}, '{}'::jsonb) || excluded.metadata`,
             selectedAt,
             rankedAt: selectedAt,
             updatedAt: selectedAt,
@@ -693,11 +834,17 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
 
   async function refresh(input: { pinnedSymbols?: readonly string[] } = {}) {
     if (runtimeOptions.mode === "watchlist") {
-      selectedSymbols = uniqueSymbols(
+      await loadCandidates().catch(() => []);
+      const requestedSymbols = uniqueSymbols(
         input.pinnedSymbols?.length
           ? input.pinnedSymbols
           : runtimeOptions.fallbackSymbols,
       );
+      await loadVerifiedSymbols(requestedSymbols).catch(() => new Set<string>());
+      selectedSymbols = requestedSymbols.filter((symbol) =>
+        verifiedSymbolSet.has(normalizeSymbol(symbol)),
+      );
+      degradedReason = shortfallReason(selectedSymbols.length);
       return selectedSymbols;
     }
 
@@ -712,32 +859,15 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         runtimeOptions.mode === "hybrid"
           ? input.pinnedSymbols ?? runtimeOptions.fallbackSymbols
           : [];
-      const eligibleCandidateSymbols = new Set(
-        [
-          ...uniqueSymbols(pinnedSymbols),
-          ...candidates
-            .filter(
-              (candidate) =>
-                !candidate.cooldownUntil || candidate.cooldownUntil <= selectionNow,
-            )
-            .map((candidate) => normalizeSymbol(candidate.symbol))
-            .filter(Boolean),
-        ],
-      );
-      let fallbackFillSymbols = runtimeOptions.fallbackSymbols;
-      let fallbackFillError: string | null = null;
-      if (
-        eligibleCandidateSymbols.size < runtimeOptions.targetSize &&
-        runtimeOptions.fetchFallbackSymbols
-      ) {
-        const fallback = await loadFallbackFillSymbols();
-        fallbackFillSymbols = fallback.symbols;
-        fallbackFillError = fallback.error;
+      if (pinnedSymbols.length) {
+        await loadVerifiedSymbols(pinnedSymbols).catch(() => new Set<string>());
       }
       const selected = rankFlowUniverseCandidates({
         candidates,
-        pinnedSymbols,
-        fallbackSymbols: fallbackFillSymbols,
+        pinnedSymbols: uniqueSymbols(pinnedSymbols).filter((symbol) =>
+          verifiedSymbolSet.has(normalizeSymbol(symbol)),
+        ),
+        fallbackSymbols: [],
         targetSize: runtimeOptions.targetSize,
         minPrice: runtimeOptions.minPrice,
         minDollarVolume: runtimeOptions.minDollarVolume,
@@ -762,32 +892,11 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
         (candidate) => candidate.cooldownUntil && candidate.cooldownUntil > refreshedAt,
       ).length;
       degradedReason =
-        shortfallReason(selected.length) ??
-        (fallbackFillError
-          ? `Fallback universe fill skipped: ${fallbackFillError}`
-          : persistenceDegradedReason);
+        shortfallReason(selected.length) ?? persistenceDegradedReason;
       return selectedSymbols;
     } catch (error) {
       const refreshedAt = now();
-      const fallback = await loadFallbackFillSymbols();
-      const selected = rankFlowUniverseCandidates({
-        candidates: [],
-        pinnedSymbols:
-          runtimeOptions.mode === "hybrid"
-            ? input.pinnedSymbols ?? runtimeOptions.fallbackSymbols
-            : [],
-        fallbackSymbols: fallback.symbols,
-        targetSize: runtimeOptions.targetSize,
-        minPrice: runtimeOptions.minPrice,
-        minDollarVolume: runtimeOptions.minDollarVolume,
-        now: refreshedAt,
-      });
-
-      selectedSymbols = selected.length
-        ? selected
-        : lastGoodSymbols.length
-          ? lastGoodSymbols
-          : uniqueSymbols(runtimeOptions.fallbackSymbols);
+      selectedSymbols = lastGoodSymbols.length ? lastGoodSymbols : [];
       lastGoodSymbols = selectedSymbols;
       lastRefreshAt = refreshedAt;
       lastGoodAt = refreshedAt;
@@ -796,14 +905,14 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
 
       const refreshError =
         error instanceof Error ? error.message : "Flow universe refresh failed.";
-      degradedReason =
-        fallback.error
-          ? `Flow universe refresh failed; provider fallback also failed: ${fallback.error}`
-          : isTransientPostgresError(error)
-            ? "Flow universe database unavailable; using provider fallback universe."
-            : `Flow universe refresh failed; using provider fallback universe: ${refreshError}`;
-      degradedReason =
-        shortfallReason(selectedSymbols.length) ?? degradedReason;
+      const rootDegradedReason =
+        isTransientPostgresError(error)
+          ? "Flow universe database unavailable; using last verified universe."
+          : `Flow universe refresh failed; using last verified universe: ${refreshError}`;
+      const fillShortfallReason = shortfallReason(selectedSymbols.length);
+      degradedReason = fillShortfallReason
+        ? `${rootDegradedReason} ${fillShortfallReason}.`
+        : rootDegradedReason;
       return selectedSymbols;
     }
   }
@@ -821,7 +930,13 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     }
     return selectedSymbols.length
       ? selectedSymbols
-      : uniqueSymbols(runtimeOptions.fallbackSymbols);
+      : [];
+  }
+
+  function filterVerifiedSymbols(symbols: readonly string[]): string[] {
+    return uniqueSymbols(symbols).filter((symbol) =>
+      verifiedSymbolSet.has(normalizeSymbol(symbol)),
+    );
   }
 
   function noteBatch(symbols: readonly string[]): void {
@@ -837,6 +952,16 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     const flowScore = scoreObservation(input.events);
     const hasEvents = Boolean(input.events?.length);
     const failed = Boolean(input.failed);
+    const optionabilityMetadata =
+      !failed && input.optionabilityVerified !== false
+        ? {
+            optionability: {
+              status: "verified",
+              source: "scanner_scan",
+              verifiedAt: observedAt.toISOString(),
+            },
+          }
+        : null;
     try {
       await runtimeOptions.db
         .insert(flowUniverseRankingsTable)
@@ -850,6 +975,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
           failureCount: failed ? 1 : 0,
           cooldownUntil: null,
           reason: input.reason ?? null,
+          metadata: optionabilityMetadata,
           updatedAt: observedAt,
         })
         .onConflictDoUpdate({
@@ -867,11 +993,18 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
               ? sql`case when ${flowUniverseRankingsTable.failureCount} + 1 >= ${COOLDOWN_FAILURE_THRESHOLD} then ${new Date(observedAt.getTime() + COOLDOWN_MS)} else ${flowUniverseRankingsTable.cooldownUntil} end`
               : null,
             reason: input.reason ?? null,
+            metadata: optionabilityMetadata
+              ? sql`coalesce(${flowUniverseRankingsTable.metadata}, '{}'::jsonb) || ${JSON.stringify(optionabilityMetadata)}::jsonb`
+              : sql`${flowUniverseRankingsTable.metadata}`,
             updatedAt: observedAt,
           },
         });
       if (isTransientFlowUniverseDegradedReason(degradedReason)) {
         degradedReason = shortfallReason(selectedSymbols.length);
+      }
+      if (optionabilityMetadata) {
+        verifiedSymbolSet.add(symbol);
+        verifiedSymbols = verifiedSymbolSet.size;
       }
     } catch {
       // The scanner must keep running even before the DB schema is pushed.
@@ -920,6 +1053,10 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
       ),
       fallbackUsed: Boolean(degradedReason),
       cooldownCount,
+      verifiedSymbols,
+      needsVerificationSymbols,
+      rejectedSymbols,
+      verificationBacklogSymbols: needsVerificationSymbols + rejectedSymbols,
       scannedSymbols: scanTimes.length,
       cycleScannedSymbols: scanTimes.length,
       lastScannedAt,
@@ -953,8 +1090,12 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
   }
 
   function reset(): void {
-    selectedSymbols = uniqueSymbols(runtimeOptions.fallbackSymbols);
+    selectedSymbols = [];
     lastGoodSymbols = selectedSymbols;
+    verifiedSymbolSet = new Set();
+    verifiedSymbols = 0;
+    needsVerificationSymbols = 0;
+    rejectedSymbols = 0;
     refreshPromise = null;
     lastRefreshAt = null;
     lastGoodAt = null;
@@ -970,6 +1111,7 @@ export function createFlowUniverseManager(options: FlowUniverseManagerOptions) {
     getConfig,
     getCoverage,
     getSymbols,
+    filterVerifiedSymbols,
     noteBatch,
     recordObservation,
     refresh,

@@ -12,7 +12,13 @@ import {
   resolvePyrusSignalsRuntimeSettings,
   PYRUS_SIGNALS_PINE_SCRIPT_KEY,
 } from "./pyrusSignalsPineAdapter";
-import type { ChartBar, IndicatorEvent, StudySpec } from "./types";
+import type {
+  ChartBar,
+  ChartBarRange,
+  IndicatorEvent,
+  IndicatorPluginSourceSeries,
+  StudySpec,
+} from "./types";
 
 const SCRIPT_RECORD = {
   scriptKey: PYRUS_SIGNALS_PINE_SCRIPT_KEY,
@@ -109,6 +115,62 @@ const buildGapBars = (): ChartBar[] => {
         }
       : bar,
   );
+};
+
+const timeframeSeconds = (timeframe: string): number =>
+  ({
+    "1m": 60,
+    "2m": 120,
+    "5m": 300,
+    "15m": 900,
+    "30m": 1_800,
+    "1h": 3_600,
+    "4h": 14_400,
+    D: 86_400,
+  })[timeframe] || 60;
+
+const buildChartBarRanges = (
+  bars: ChartBar[],
+  timeframe = "1m",
+): ChartBarRange[] => {
+  const fallbackStepSeconds = timeframeSeconds(timeframe);
+  return bars.map((bar, index) => ({
+    startMs: bar.time * 1000,
+    endMs: (bars[index + 1]?.time ?? bar.time + fallbackStepSeconds) * 1000,
+  }));
+};
+
+const buildSourceSeries = (
+  id: string,
+  timeframe: string,
+  chartBars: ChartBar[],
+): IndicatorPluginSourceSeries => ({
+  id,
+  timeframe,
+  sourceTimeframe: timeframe,
+  chartBars,
+  chartBarRanges: buildChartBarRanges(chartBars, timeframe),
+  rawBars: [],
+});
+
+const buildFiveMinuteDisplayBars = (sourceBars: ChartBar[]): ChartBar[] => {
+  const displayBars: ChartBar[] = [];
+  for (let index = 0; index < sourceBars.length; index += 5) {
+    const chunk = sourceBars.slice(index, index + 5);
+    if (!chunk.length) {
+      continue;
+    }
+    const first = chunk[0];
+    const last = chunk[chunk.length - 1];
+    displayBars.push({
+      ...first,
+      h: Math.max(...chunk.map((bar) => bar.h)),
+      l: Math.min(...chunk.map((bar) => bar.l)),
+      c: last.c,
+      v: chunk.reduce((total, bar) => total + bar.v, 0),
+    });
+  }
+  return displayBars;
 };
 
 const AAPL_APRIL_23_FIVE_MINUTE_BARS = [
@@ -320,13 +382,20 @@ const computePyrusSignals = (
   chartBars: ChartBar[],
   settings: Record<string, unknown> = TEST_SETTINGS,
   timeframe = "1m",
+  inputOverrides: Partial<
+    Parameters<
+      ReturnType<typeof createPyrusSignalsPineRuntimeAdapter>["compute"]
+    >[0]
+  > = {},
 ) =>
   createPyrusSignalsPineRuntimeAdapter(SCRIPT_RECORD).compute({
     chartBars,
+    chartBarRanges: buildChartBarRanges(chartBars, timeframe),
     rawBars: [],
     timeframe,
     selectedIndicators: [PYRUS_SIGNALS_PINE_SCRIPT_KEY],
     settings,
+    ...inputOverrides,
   });
 
 const findStudy = (studySpecs: StudySpec[] | undefined, suffix: string) => {
@@ -523,6 +592,8 @@ test("Pyrus Signals runtime settings preserve Pine bounds and empty session defa
     tp2Rr: 0.2,
     tp3Rr: 0.3,
     sessions: [],
+    showSecondarySignals: true,
+    secondarySignalTimeframes: ["2m", "15m", "bogus", "2m"],
   });
   const core = resolvePyrusSignalsSignalSettings({
     timeHorizon: 2,
@@ -585,6 +656,8 @@ test("Pyrus Signals runtime settings preserve Pine bounds and empty session defa
   assert.equal(runtime.tp2Rr, 0.2);
   assert.equal(runtime.tp3Rr, 0.3);
   assert.deepEqual(runtime.sessions, []);
+  assert.equal(runtime.showSecondarySignals, true);
+  assert.deepEqual(runtime.secondarySignalTimeframes, ["2m", "15m"]);
 
   assert.equal(core.timeHorizon, 2);
   assert.equal(core.chochAtrBuffer, 0.25);
@@ -601,6 +674,91 @@ test("Pyrus Signals runtime settings preserve Pine bounds and empty session defa
   assert.equal(core.adxMin, 1);
   assert.equal(core.signalOffsetAtr, 2.75);
   assert.deepEqual(core.sessions, []);
+});
+
+test("Pyrus Signals secondary settings default off", () => {
+  const runtime = resolvePyrusSignalsRuntimeSettings({});
+
+  assert.equal(runtime.showSecondarySignals, false);
+  assert.deepEqual(runtime.secondarySignalTimeframes, []);
+});
+
+test("Pyrus Signals emits close-confirmed secondary badges from source timeframe series", () => {
+  const sourceBars = buildFlipBars();
+  const boundarySourceBars = sourceBars.map((bar) => {
+    const time = bar.time - 60;
+    return {
+      ...bar,
+      time,
+      ts: new Date(time * 1000).toISOString(),
+    };
+  });
+  const displayBars = buildFiveMinuteDisplayBars(sourceBars);
+  const output = computePyrusSignals(
+    displayBars,
+    {
+      ...TEST_SETTINGS,
+      showSecondarySignals: true,
+      secondarySignalTimeframes: ["1m"],
+    },
+    "5m",
+    {
+      sourceSeries: [
+        buildSourceSeries("fixture:1m", "1m", boundarySourceBars),
+      ],
+    },
+  );
+  const secondaryEvents =
+    output.events?.filter((event) =>
+      event.eventType.startsWith("secondary_"),
+    ) ?? [];
+
+  assert.ok(secondaryEvents.length > 0);
+  assert.ok(
+    secondaryEvents.every(
+      (event) => event.meta?.variant === "secondary_signal",
+    ),
+  );
+  assert.ok(
+    secondaryEvents.every((event) => event.meta?.sourceTimeframe === "1m"),
+  );
+  assert.ok(
+    secondaryEvents.every(
+      (event) =>
+        typeof event.barIndex === "number" &&
+        event.barIndex >= 0 &&
+        event.barIndex < displayBars.length,
+    ),
+  );
+  assert.ok(
+    secondaryEvents.some((event) => /^1m (BUY|SELL)/.test(event.label || "")),
+  );
+  assert.deepEqual(
+    secondaryEvents.map((event) => event.label),
+    ["1m BUY", "1m SELL"],
+  );
+  assert.equal(secondaryEvents[0]?.barIndex, 1);
+});
+
+test("Pyrus Signals does not duplicate the current chart timeframe as secondary", () => {
+  const bars = buildFlipBars();
+  const output = computePyrusSignals(
+    bars,
+    {
+      ...TEST_SETTINGS,
+      showSecondarySignals: true,
+      secondarySignalTimeframes: ["1m"],
+    },
+    "1m",
+    {
+      sourceSeries: [buildSourceSeries("fixture:1m", "1m", bars)],
+    },
+  );
+
+  assert.equal(
+    output.events?.some((event) => event.eventType.startsWith("secondary_")),
+    false,
+  );
 });
 
 test("Pyrus Signals display session toggles return background windows", () => {

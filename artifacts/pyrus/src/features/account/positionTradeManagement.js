@@ -140,6 +140,25 @@ const automationTrailIsActive = (automation = {}) => {
   );
 };
 
+const automationTrailHasTakenOver = (automation = {}) => {
+  const state = managementTradeState(automation);
+  const activeStopKind = normalizeText(state.activeStopKind ?? automation.activeStopKind);
+  if (activeStopKind === "trailing_stop") return true;
+  if (activeStopKind === "hard_stop") return false;
+  if (state.trailHasTakenOver === true || automation.trailHasTakenOver === true) {
+    return true;
+  }
+  if (!automationTrailIsActive(automation)) return false;
+  const trailStopPrice = firstFiniteNumber(state.trailStopPrice, automation.stopPrice);
+  const hardStopPrice = firstFiniteNumber(
+    state.hardStopPrice,
+    automation.stopLossPrice,
+    state.stopLossPrice,
+  );
+  if (trailStopPrice == null) return false;
+  return hardStopPrice == null || trailStopPrice > hardStopPrice;
+};
+
 const automationStopLevel = (automation = {}) => {
   const state = managementTradeState(automation);
   const trailActive = automationTrailIsActive(automation);
@@ -163,8 +182,13 @@ const automationStopLevel = (automation = {}) => {
 
 const automationTrailLevel = (automation = {}) => {
   const state = managementTradeState(automation);
-  if (!automationTrailIsActive(automation)) return null;
-  const price = firstFiniteNumber(state.trailStopPrice, automation.stopPrice);
+  if (!automationTrailHasTakenOver(automation)) return null;
+  const price = firstFiniteNumber(
+    state.trailStopPrice,
+    state.activeStopPrice,
+    automation.activeStopPrice,
+    automation.stopPrice,
+  );
   return price == null
     ? null
     : {
@@ -214,7 +238,24 @@ const riskAmountFromStop = ({ mark, stopPrice, quantity, multiplier }) => {
 };
 
 export const buildPositionTradeManagement = (row = {}, options = {}) => {
-  const automation = options.automationContext ?? row?.automationContext ?? {};
+  const sourceAutomation = options.automationContext ?? row?.automationContext ?? {};
+  const riskOverlay =
+    row?.riskOverlay && typeof row.riskOverlay === "object" ? row.riskOverlay : null;
+  const automation = riskOverlay
+    ? {
+        ...sourceAutomation,
+        entryPrice: sourceAutomation.entryPrice ?? riskOverlay.entryPrice,
+        stopPrice: sourceAutomation.stopPrice ?? riskOverlay.stopPrice,
+        activeStopPrice: sourceAutomation.activeStopPrice ?? riskOverlay.activeStopPrice,
+        activeStopKind: sourceAutomation.activeStopKind ?? riskOverlay.activeStopKind,
+        stopLossPrice: sourceAutomation.stopLossPrice ?? riskOverlay.hardStopPrice,
+        takeProfitPrice: sourceAutomation.takeProfitPrice ?? riskOverlay.takeProfitPrice,
+        tradeManagement: {
+          ...riskOverlay,
+          ...managementTradeState(sourceAutomation),
+        },
+      }
+    : sourceAutomation;
   const mark = firstFiniteNumber(
     options.mark,
     row?.mark,

@@ -106,11 +106,47 @@ export const universeCatalogSyncStatesTable = pgTable(
   ],
 );
 
+export const universeSourceMembershipsTable = pgTable(
+  "universe_source_memberships",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sourceId: varchar("source_id", { length: 64 }).notNull(),
+    sourceSymbol: varchar("source_symbol", { length: 64 }).notNull(),
+    normalizedTicker: varchar("normalized_ticker", { length: 64 }).notNull(),
+    listingKey: varchar("listing_key", { length: 160 }),
+    market: universeMarketEnum("market").notNull(),
+    active: boolean("active").notNull().default(true),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    lastMissingAt: timestamp("last_missing_at", { withTimezone: true }),
+    metadata: jsonb("metadata").$type<Record<string, unknown> | null>(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("universe_source_membership_source_symbol_idx").on(
+      table.sourceId,
+      table.sourceSymbol,
+    ),
+    index("universe_source_membership_source_idx").on(table.sourceId),
+    index("universe_source_membership_ticker_idx").on(table.normalizedTicker),
+    index("universe_source_membership_listing_key_idx").on(table.listingKey),
+    index("universe_source_membership_market_idx").on(table.market),
+    index("universe_source_membership_active_idx").on(table.active),
+  ],
+);
+
 export const insertUniverseCatalogListingSchema = createInsertSchema(
   universeCatalogListingsTable,
 );
 export const insertUniverseCatalogSyncStateSchema = createInsertSchema(
   universeCatalogSyncStatesTable,
+);
+export const insertUniverseSourceMembershipSchema = createInsertSchema(
+  universeSourceMembershipsTable,
 );
 
 export type UniverseCatalogListing =
@@ -121,3 +157,7 @@ export type UniverseCatalogSyncState =
   typeof universeCatalogSyncStatesTable.$inferSelect;
 export type InsertUniverseCatalogSyncState =
   typeof universeCatalogSyncStatesTable.$inferInsert;
+export type UniverseSourceMembership =
+  typeof universeSourceMembershipsTable.$inferSelect;
+export type InsertUniverseSourceMembership =
+  typeof universeSourceMembershipsTable.$inferInsert;

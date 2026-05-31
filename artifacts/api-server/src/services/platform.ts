@@ -128,13 +128,9 @@ import {
   type FlowUniverseCoverage,
   type FlowUniverseMode,
 } from "./flow-universe";
-import {
-  fetchNasdaqListedDirectory,
-  parseNasdaqListedDirectory,
-} from "./nasdaq-symbol-directory";
-import {
-  fetchBridgeQuoteSnapshots,
-} from "./bridge-quote-stream";
+import { createFlowUniverseOptionabilityVerifier } from "./flow-universe-optionability-verifier";
+import { createFlowUniversePlanner } from "./flow-universe-planner";
+import { fetchBridgeQuoteSnapshots } from "./bridge-quote-stream";
 import { subscribeStockMinuteAggregates } from "./stock-aggregate-stream";
 import {
   fetchBridgeOptionQuoteSnapshots,
@@ -149,15 +145,15 @@ import {
   runBridgeWork,
 } from "./bridge-governor";
 import { listIbkrExecutions } from "./ibkr-account-bridge";
-import {
-  getBridgeOrderReadSuppression,
-} from "./bridge-order-read-state";
+import { getBridgeOrderReadSuppression } from "./bridge-order-read-state";
 import { resolveIbkrLaneSymbols } from "./ibkr-lane-policy";
 import {
   loadStoredMarketBars,
   normalizeBarsToStoreTimeframe,
   persistMarketDataBars,
 } from "./market-data-store";
+import { getMarketDataIngestDiagnostics } from "./market-data-ingest";
+import { buildMarketDataWorkPlan } from "./market-data-work-planner";
 import {
   listHistoricalFlowEvents,
   normalizeHistoricalFlowSampleBucketSeconds,
@@ -395,12 +391,14 @@ function readWatchlistIdentityMetadata(
       undefined,
     exchangeDisplay:
       readIdentityString(readFromMetadata("exchangeDisplay"), 80) ?? undefined,
-    countryCode: readIdentityString(readFromMetadata("countryCode"), 8) ?? undefined,
+    countryCode:
+      readIdentityString(readFromMetadata("countryCode"), 8) ?? undefined,
     exchangeCountryCode:
       readIdentityString(readFromMetadata("exchangeCountryCode"), 8) ??
       undefined,
     sector: readIdentityString(readFromMetadata("sector"), 80) ?? undefined,
-    industry: readIdentityString(readFromMetadata("industry"), 120) ?? undefined,
+    industry:
+      readIdentityString(readFromMetadata("industry"), 120) ?? undefined,
   };
 }
 
@@ -413,14 +411,17 @@ function buildWatchlistIdentityFields(
     input.normalizedExchangeMic,
     32,
   );
-  const normalizedExchangeMic = (
-    incomingNormalizedExchangeMic ??
-    existing.normalizedExchangeMic ??
-    null
-  )?.toUpperCase() ?? null;
+  const normalizedExchangeMic =
+    (
+      incomingNormalizedExchangeMic ??
+      existing.normalizedExchangeMic ??
+      null
+    )?.toUpperCase() ?? null;
   const exchangeDisplay =
     readIdentityString(input.exchangeDisplay, 80) ??
-    (incomingNormalizedExchangeMic ? normalizedExchangeMic : existing.exchangeDisplay) ??
+    (incomingNormalizedExchangeMic
+      ? normalizedExchangeMic
+      : existing.exchangeDisplay) ??
     normalizedExchangeMic;
   const market =
     normalizeUniverseMarket(input.market) ?? existing.market ?? null;
@@ -463,7 +464,8 @@ function mergeInstrumentMetadata(
   const base = isRecord(metadata) ? metadata : {};
   return {
     ...base,
-    [WATCHLIST_IDENTITY_METADATA_KEY]: compactWatchlistIdentityMetadata(identity),
+    [WATCHLIST_IDENTITY_METADATA_KEY]:
+      compactWatchlistIdentityMetadata(identity),
   };
 }
 
@@ -585,12 +587,16 @@ function mapWatchlistRows(
     };
 
     if (row.itemId && row.symbol) {
-      const storedIdentity = readWatchlistIdentityMetadata(row.instrumentMetadata);
+      const storedIdentity = readWatchlistIdentityMetadata(
+        row.instrumentMetadata,
+      );
       const identity = buildWatchlistIdentityFields(
         row.symbol,
         {
           normalizedExchangeMic:
-            storedIdentity.normalizedExchangeMic ?? row.instrumentExchange ?? null,
+            storedIdentity.normalizedExchangeMic ??
+            row.instrumentExchange ??
+            null,
           exchangeDisplay:
             storedIdentity.exchangeDisplay ?? row.instrumentExchange ?? null,
           market: storedIdentity.market,
@@ -685,14 +691,17 @@ const IBKR_WATCHLIST_PREWARM_BRIDGE_RESYNC_MS = readPositiveIntegerEnv(
   "IBKR_WATCHLIST_PREWARM_BRIDGE_RESYNC_MS",
   15_000,
 );
-const IBKR_WATCHLIST_PREWARM_BRIDGE_RECONCILE_TIMEOUT_MS = readPositiveIntegerEnv(
-  "IBKR_WATCHLIST_PREWARM_BRIDGE_RECONCILE_TIMEOUT_MS",
-  1_500,
-);
+const IBKR_WATCHLIST_PREWARM_BRIDGE_RECONCILE_TIMEOUT_MS =
+  readPositiveIntegerEnv(
+    "IBKR_WATCHLIST_PREWARM_BRIDGE_RECONCILE_TIMEOUT_MS",
+    1_500,
+  );
 const LIVE_WARMUP_BACKGROUND_HOLD_MS = Math.max(
   5_000,
-  Number.parseInt(process.env["IBKR_LIVE_WARMUP_BACKGROUND_HOLD_MS"] ?? "15000", 10) ||
-    15_000,
+  Number.parseInt(
+    process.env["IBKR_LIVE_WARMUP_BACKGROUND_HOLD_MS"] ?? "15000",
+    10,
+  ) || 15_000,
 );
 
 export function resolveIbkrWatchlistPrewarmSymbolLimit(
@@ -700,7 +709,9 @@ export function resolveIbkrWatchlistPrewarmSymbolLimit(
 ): number {
   const normalizedCandidateSymbolCount = Math.max(
     0,
-    Math.floor(Number.isFinite(candidateSymbolCount) ? candidateSymbolCount : 0),
+    Math.floor(
+      Number.isFinite(candidateSymbolCount) ? candidateSymbolCount : 0,
+    ),
   );
   const visibleLineCap = getMarketDataAdmissionBudget().visibleLineCap;
   return Math.min(normalizedCandidateSymbolCount, visibleLineCap);
@@ -767,7 +778,9 @@ function collectWatchlistSymbols(watchlists: WatchlistRecord[]): string[] {
   );
 }
 
-function collectDefaultWatchlistSymbols(watchlists: WatchlistRecord[]): string[] {
+function collectDefaultWatchlistSymbols(
+  watchlists: WatchlistRecord[],
+): string[] {
   return Array.from(
     new Set(
       watchlists
@@ -790,6 +803,28 @@ function collectAccountMonitorQuoteSymbols(): string[] {
     new Set(
       getMarketDataLeasesSnapshot()
         .filter((lease) => lease.intent === "account-monitor-live")
+        .map((lease) => normalizeSymbol(lease.symbol ?? "").toUpperCase())
+        .filter(Boolean),
+    ),
+  ).sort();
+}
+
+function collectFlowScannerPriorityLeaseSymbols(): string[] {
+  const priorityIntents = new Set([
+    "execution-live",
+    "account-monitor-live",
+    "automation-live",
+    "visible-live",
+  ]);
+  return Array.from(
+    new Set(
+      getMarketDataLeasesSnapshot()
+        .filter(
+          (lease) =>
+            priorityIntents.has(lease.intent) &&
+            lease.pool !== "flow-scanner" &&
+            lease.assetClass === "equity",
+        )
         .map((lease) => normalizeSymbol(lease.symbol ?? "").toUpperCase())
         .filter(Boolean),
     ),
@@ -891,10 +926,7 @@ function orderWarmupSymbols(input: {
   );
   const rotate = (symbols: string[], rotationOffset: number) =>
     symbols.length > 0
-      ? [
-          ...symbols.slice(rotationOffset),
-          ...symbols.slice(0, rotationOffset),
-        ]
+      ? [...symbols.slice(rotationOffset), ...symbols.slice(0, rotationOffset)]
       : symbols;
   let selectedCandidates: string[];
   let nextRotationOffset = Math.max(0, Math.floor(input.rotationOffset));
@@ -910,10 +942,7 @@ function orderWarmupSymbols(input: {
           watchlistCandidates.length
         : rotationOffset;
   } else {
-    const extraSlots = Math.max(
-      0,
-      candidateSlots - watchlistCandidates.length,
-    );
+    const extraSlots = Math.max(0, candidateSlots - watchlistCandidates.length);
     const extraOverflowCount = Math.max(0, extraCandidates.length - extraSlots);
     const rotationOffset =
       extraCandidates.length > 0
@@ -925,7 +954,9 @@ function orderWarmupSymbols(input: {
         : extraCandidates.slice(0, extraSlots);
     selectedCandidates = [...watchlistCandidates, ...selectedExtras];
     nextRotationOffset =
-      input.advanceRotation && extraOverflowCount > 0 && extraCandidates.length > 0
+      input.advanceRotation &&
+      extraOverflowCount > 0 &&
+      extraCandidates.length > 0
         ? (rotationOffset + Math.max(1, extraSlots)) % extraCandidates.length
         : rotationOffset;
   }
@@ -1037,11 +1068,10 @@ function reconcileIbkrWatchlistPrewarmFromBridgeSoon(reason: string): void {
     return;
   }
   void withTimeout(
-    runBridgeWork(
-      "health",
-      () => getIbkrClient().getLaneDiagnostics(),
-      { bypassBackoff: true, recordFailure: false },
-    ),
+    runBridgeWork("health", () => getIbkrClient().getLaneDiagnostics(), {
+      bypassBackoff: true,
+      recordFailure: false,
+    }),
     IBKR_WATCHLIST_PREWARM_BRIDGE_RECONCILE_TIMEOUT_MS,
     () =>
       new Error(
@@ -1116,9 +1146,10 @@ function getOptionsFlowScannerPressureGate(
   drivers: ApiResourcePressureDriver[];
   ignoredDrivers: ApiResourcePressureDriver[];
 } {
-  const ignoredDrivers = snapshot.drivers.filter(
-    (driver) => driver.kind === "automation",
-  );
+  const ignoredDrivers = [
+    ...snapshot.drivers.filter((driver) => driver.kind === "automation"),
+    ...(snapshot.scannerPressure?.drivers ?? []),
+  ];
   const scannerDrivers = snapshot.drivers.filter(
     (driver) => driver.kind !== "automation",
   );
@@ -1158,7 +1189,9 @@ function enforceOptionsFlowScannerPressureControls(): string | null {
 let optionsFlowSessionBlockReason: string | null = null;
 let optionsFlowSessionBlockCheckedAt = 0;
 
-function normalizeOptionsFlowSessionBlockReason(reason: unknown): string | null {
+function normalizeOptionsFlowSessionBlockReason(
+  reason: unknown,
+): string | null {
   if (reason === "market_session_quiet") {
     return "market-session-quiet";
   }
@@ -1190,6 +1223,16 @@ function getCachedOptionsFlowSessionBlockReason(): string | null {
   return optionsFlowSessionBlockReason;
 }
 
+function effectiveOptionsFlowSessionBlockReason(
+  reason: string | null,
+  config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
+): string | null {
+  if (reason === "market-session-quiet" && config.scannerAlwaysOn) {
+    return null;
+  }
+  return reason;
+}
+
 async function refreshOptionsFlowSessionBlockReason(
   config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
 ): Promise<string | null> {
@@ -1200,11 +1243,8 @@ async function refreshOptionsFlowSessionBlockReason(
   }
 
   try {
-    const {
-      annotatedHealth,
-      fallbackStreamState,
-      healthErrorCode,
-    } = await getRuntimeBridgeHealthState();
+    const { annotatedHealth, fallbackStreamState, healthErrorCode } =
+      await getRuntimeBridgeHealthState();
     const marketDataMode = String(
       annotatedHealth?.marketDataMode ??
         (fallbackStreamState as { marketDataMode?: unknown }).marketDataMode ??
@@ -1226,7 +1266,7 @@ async function refreshOptionsFlowSessionBlockReason(
             : normalizedReason;
     optionsFlowSessionBlockReason = reason;
     optionsFlowSessionBlockCheckedAt = Date.now();
-    return reason;
+    return effectiveOptionsFlowSessionBlockReason(reason, config);
   } catch (error) {
     logger.debug(
       { err: error },
@@ -1238,17 +1278,24 @@ async function refreshOptionsFlowSessionBlockReason(
   }
 }
 
-function getOptionsFlowScannerBackgroundBlockReason(input: {
-  ignoreLiveWarmup?: boolean;
-  ignoreLineCapacity?: boolean;
-} = {}): string | null {
+function getOptionsFlowScannerBackgroundBlockReason(
+  input: {
+    ignoreLiveWarmup?: boolean;
+    ignoreLineCapacity?: boolean;
+    config?: OptionsFlowRuntimeConfig;
+  } = {},
+): string | null {
+  const config = input.config ?? getOptionsFlowRuntimeConfig();
   if (isOptionsFlowScannerResourcePressureBlocked()) {
     return "resource-pressure";
   }
   if (!input.ignoreLiveWarmup && isLiveWarmupHoldingBackgroundWork()) {
     return "live-warmup";
   }
-  const sessionBlockReason = getCachedOptionsFlowSessionBlockReason();
+  const sessionBlockReason = effectiveOptionsFlowSessionBlockReason(
+    getCachedOptionsFlowSessionBlockReason(),
+    config,
+  );
   if (sessionBlockReason) {
     return sessionBlockReason;
   }
@@ -1451,10 +1498,7 @@ function scheduleIbkrWatchlistPrewarm(
     ibkrWatchlistPrewarmSequence += 1;
     pendingIbkrWatchlistPrewarmSignature = null;
     pendingIbkrWatchlistPrewarmRerunReason = null;
-    releaseMarketDataLeases(
-      IBKR_WATCHLIST_PREWARM_OWNER,
-      "resource_pressure",
-    );
+    releaseMarketDataLeases(IBKR_WATCHLIST_PREWARM_OWNER, "resource_pressure");
     releaseMarketDataLeases(
       IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
       "resource_pressure",
@@ -1543,7 +1587,10 @@ function scheduleIbkrWatchlistPrewarm(
       const primaryAdmission = admitMarketDataLeases({
         owner: IBKR_WATCHLIST_PREWARM_OWNER,
         intent: "visible-live",
-        requests: buildWatchlistPrewarmLineRequests(cappedWarmupSymbols, symbols),
+        requests: buildWatchlistPrewarmLineRequests(
+          cappedWarmupSymbols,
+          symbols,
+        ),
         fallbackProvider: "cache",
       });
       const admittedSymbols = primaryAdmission.admitted
@@ -1702,7 +1749,9 @@ async function ensureInstrumentForSymbol({
     .limit(1);
 
   if (existing[0]) {
-    const storedMetadataIdentity = readWatchlistIdentityMetadata(existing[0].metadata);
+    const storedMetadataIdentity = readWatchlistIdentityMetadata(
+      existing[0].metadata,
+    );
     const storedIdentity = {
       ...storedMetadataIdentity,
       normalizedExchangeMic:
@@ -1817,7 +1866,8 @@ type PolygonMarketDataClientFactory = (
   config: NonNullable<ReturnType<typeof getPolygonRuntimeConfig>>,
 ) => PolygonMarketDataClient;
 
-let polygonMarketDataClientFactory: PolygonMarketDataClientFactory | null = null;
+let polygonMarketDataClientFactory: PolygonMarketDataClientFactory | null =
+  null;
 
 function getPolygonClient(): PolygonMarketDataClient {
   const config = getPolygonRuntimeConfig();
@@ -1830,7 +1880,10 @@ function getPolygonClient(): PolygonMarketDataClient {
     });
   }
 
-  return polygonMarketDataClientFactory?.(config) ?? new PolygonMarketDataClient(config);
+  return (
+    polygonMarketDataClientFactory?.(config) ??
+    new PolygonMarketDataClient(config)
+  );
 }
 
 export function __setPolygonMarketDataClientFactoryForTests(
@@ -1854,13 +1907,7 @@ function getMarketDataConnectionCapabilities(): string[] {
       : ["historical-bars", "delayed-bars", "stock-stream", "ticker-search"];
   }
 
-  return [
-    "quotes",
-    "bars",
-    "options-chain",
-    "stock-stream",
-    "options-flow",
-  ];
+  return ["quotes", "bars", "options-chain", "stock-stream", "options-flow"];
 }
 
 const FLOW_EVENTS_CACHE_TTL_MS = 60_000;
@@ -1890,8 +1937,7 @@ const OPTIONS_FLOW_COVERAGE_ACTIVE_TARGET_MS = readPositiveIntegerEnv(
   5 * 60_000,
 );
 const HISTORICAL_FLOW_TIMEOUT_COOLDOWN_MS = 30_000;
-const HISTORICAL_FLOW_REFRESHING_REASON =
-  "options_flow_historical_refreshing";
+const HISTORICAL_FLOW_REFRESHING_REASON = "options_flow_historical_refreshing";
 const HISTORICAL_FLOW_PROVIDER_TIMEOUT_REASON =
   "options_flow_historical_provider_timeout";
 const FLOW_PREMIUM_DISTRIBUTION_CACHE_TTL_MS = 45_000;
@@ -1905,21 +1951,18 @@ const FLOW_PREMIUM_DISTRIBUTION_CANDIDATE_TIMEOUT_MS = readPositiveIntegerEnv(
   "FLOW_PREMIUM_DISTRIBUTION_CANDIDATE_TIMEOUT_MS",
   60_000,
 );
-const FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_CANDIDATES =
-  readPositiveIntegerEnv(
-    "FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_CANDIDATES",
-    10,
-  );
-const FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_TIMEOUT_MS =
-  readPositiveIntegerEnv(
-    "FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_TIMEOUT_MS",
-    5_000,
-  );
-const FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_MAX_PAGES =
-  readPositiveIntegerEnv(
-    "FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_MAX_PAGES",
-    2,
-  );
+const FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_CANDIDATES = readPositiveIntegerEnv(
+  "FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_CANDIDATES",
+  10,
+);
+const FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_TIMEOUT_MS = readPositiveIntegerEnv(
+  "FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_TIMEOUT_MS",
+  5_000,
+);
+const FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_MAX_PAGES = readPositiveIntegerEnv(
+  "FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_MAX_PAGES",
+  2,
+);
 const FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_TRADE_CONTRACT_LIMIT =
   readPositiveIntegerEnv(
     "FLOW_PREMIUM_DISTRIBUTION_FIRST_PAINT_TRADE_CONTRACT_LIMIT",
@@ -2113,7 +2156,8 @@ function combinePremiumHydrationDiagnostics(
   widgets.forEach((widget) => {
     const diagnostics = widget.hydrationDiagnostics;
     combined.snapshotCount += diagnostics.snapshotCount;
-    combined.usablePremiumSnapshotCount += diagnostics.usablePremiumSnapshotCount;
+    combined.usablePremiumSnapshotCount +=
+      diagnostics.usablePremiumSnapshotCount;
     combined.usablePremiumTotal += diagnostics.usablePremiumTotal;
     combined.selectedPremiumTotal += diagnostics.selectedPremiumTotal;
     combined.classificationTargetPremiumCoverage = Math.max(
@@ -2121,15 +2165,18 @@ function combinePremiumHydrationDiagnostics(
       diagnostics.classificationTargetPremiumCoverage,
     );
     combined.pageCount += diagnostics.pageCount;
-    combined.tradeContractCandidateCount += diagnostics.tradeContractCandidateCount;
-    combined.tradeContractHydratedCount += diagnostics.tradeContractHydratedCount;
+    combined.tradeContractCandidateCount +=
+      diagnostics.tradeContractCandidateCount;
+    combined.tradeContractHydratedCount +=
+      diagnostics.tradeContractHydratedCount;
     combined.tradeCallAttemptCount += diagnostics.tradeCallAttemptCount;
     combined.tradeCallSuccessCount += diagnostics.tradeCallSuccessCount;
     combined.tradeCallErrorCount += diagnostics.tradeCallErrorCount;
     combined.tradeCallForbiddenCount += diagnostics.tradeCallForbiddenCount;
     combined.eligibleTradeCount += diagnostics.eligibleTradeCount;
     combined.ineligibleTradeCount += diagnostics.ineligibleTradeCount;
-    combined.unknownConditionTradeCount += diagnostics.unknownConditionTradeCount;
+    combined.unknownConditionTradeCount +=
+      diagnostics.unknownConditionTradeCount;
     diagnostics.conditionCodes.forEach((code) => conditionCodes.add(code));
     diagnostics.exchangeCodes.forEach((code) => exchangeCodes.add(code));
     if (
@@ -2179,7 +2226,8 @@ function combinePremiumHydrationDiagnostics(
   combined.exchangeCodes = [...exchangeCodes].sort();
   combined.classifiedContractCoverage =
     combined.usablePremiumSnapshotCount > 0
-      ? combined.tradeContractHydratedCount / combined.usablePremiumSnapshotCount
+      ? combined.tradeContractHydratedCount /
+        combined.usablePremiumSnapshotCount
       : 0;
   combined.selectedPremiumCoverage =
     combined.usablePremiumTotal > 0
@@ -2244,12 +2292,13 @@ function buildFlowPremiumDistributionSourceDiagnostics(
   const sideBasis = combinePremiumDistributionSideBasis(widgets);
   const quoteAccess = combinePremiumDistributionAccess(widgets, "quoteAccess");
   const tradeAccess = combinePremiumDistributionAccess(widgets, "tradeAccess");
-  const classificationConfidence = resolvePremiumDistributionClassificationConfidence({
-    classificationCoverage,
-    sideBasis,
-    quoteAccess,
-    tradeAccess,
-  });
+  const classificationConfidence =
+    resolvePremiumDistributionClassificationConfidence({
+      classificationCoverage,
+      sideBasis,
+      quoteAccess,
+      tradeAccess,
+    });
   const hydrationDiagnostics = combinePremiumHydrationDiagnostics(widgets);
 
   return {
@@ -2275,7 +2324,9 @@ function isPremiumDistributionCandidate(symbol: string): boolean {
   return /^[A-Z][A-Z0-9.]{0,7}$/.test(symbol);
 }
 
-function normalizeFlowPremiumDistributionLimit(value: number | undefined): number {
+function normalizeFlowPremiumDistributionLimit(
+  value: number | undefined,
+): number {
   if (!Number.isFinite(value)) return FLOW_PREMIUM_DISTRIBUTION_DEFAULT_LIMIT;
   return Math.max(
     1,
@@ -2289,20 +2340,29 @@ function normalizeFlowPremiumDistributionCandidateLimit(
   if (!Number.isFinite(value)) return FLOW_PREMIUM_DISTRIBUTION_CANDIDATE_LIMIT;
   return Math.max(
     6,
-    Math.min(Math.floor(value as number), FLOW_PREMIUM_DISTRIBUTION_MAX_CANDIDATES),
+    Math.min(
+      Math.floor(value as number),
+      FLOW_PREMIUM_DISTRIBUTION_MAX_CANDIDATES,
+    ),
   );
 }
 
 function normalizeFlowPremiumDistributionTimeframe(
   value: unknown,
 ): PremiumDistributionTimeframe {
-  return String(value ?? "").trim().toLowerCase() === "week" ? "week" : "today";
+  return String(value ?? "")
+    .trim()
+    .toLowerCase() === "week"
+    ? "week"
+    : "today";
 }
 
 function normalizeFlowPremiumDistributionCoverageMode(
   value: unknown,
 ): FlowPremiumDistributionCoverageMode {
-  return String(value ?? "").trim().toLowerCase() === "ranked"
+  return String(value ?? "")
+    .trim()
+    .toLowerCase() === "ranked"
     ? "ranked"
     : "universe";
 }
@@ -2342,7 +2402,9 @@ async function fetchLatestGroupedStockAggregates(input: {
     );
 
     try {
-      const aggregates = await input.client.getGroupedDailyStockAggregates({ date });
+      const aggregates = await input.client.getGroupedDailyStockAggregates({
+        date,
+      });
       if (aggregates.length) {
         collected.push(aggregates);
         candidateDates.push(date.toISOString().slice(0, 10));
@@ -2427,7 +2489,9 @@ function flowSource(input: FlowSourceInput): FlowEventsSource {
   });
 }
 
-function deferredFlowEventsResult(input: DeferredFlowEventsResultInput): FlowEventsResult {
+function deferredFlowEventsResult(
+  input: DeferredFlowEventsResultInput,
+): FlowEventsResult {
   return buildDeferredFlowEventsResult({
     ...input,
     scannerCoverage: input.scannerCoverage ?? getOptionsFlowUniverseCoverage(),
@@ -2451,7 +2515,9 @@ function historicalFlowEventsTransientResult(input: {
   };
 }
 
-function isHistoricalFlowProviderTimeoutResult(value: FlowEventsResult): boolean {
+function isHistoricalFlowProviderTimeoutResult(
+  value: FlowEventsResult,
+): boolean {
   return (
     value.events.length === 0 &&
     value.source.ibkrReason === HISTORICAL_FLOW_PROVIDER_TIMEOUT_REASON
@@ -2665,25 +2731,27 @@ function buildMassiveWebSocketDiagnostics(input: {
         ? asStringArray(aggregate.subscribedChannels)
         : [],
       subscribedSymbolCount: aggregateIsMassive
-        ? toFiniteNumber(aggregate.subscribedSymbolCount) ?? 0
+        ? (toFiniteNumber(aggregate.subscribedSymbolCount) ?? 0)
         : 0,
       subscriptionCount: aggregateIsMassive
-        ? toFiniteNumber(aggregate.subscriptionCount) ?? 0
+        ? (toFiniteNumber(aggregate.subscriptionCount) ?? 0)
         : 0,
       activeConsumerCount: aggregateIsMassive
-        ? toFiniteNumber(aggregate.activeConsumerCount) ?? 0
+        ? (toFiniteNumber(aggregate.activeConsumerCount) ?? 0)
         : 0,
       connected: Boolean(aggregateIsMassive && aggregate.connected),
       authState: aggregate.authState ?? "idle",
-      eventCount: aggregateIsMassive ? toFiniteNumber(aggregate.eventCount) ?? 0 : 0,
+      eventCount: aggregateIsMassive
+        ? (toFiniteNumber(aggregate.eventCount) ?? 0)
+        : 0,
       lastMessageAgeMs: aggregateIsMassive
         ? toFiniteNumber(aggregate.lastMessageAgeMs)
         : null,
       reconnectCount: aggregateIsMassive
-        ? toFiniteNumber(aggregate.reconnectCount) ?? 0
+        ? (toFiniteNumber(aggregate.reconnectCount) ?? 0)
         : 0,
-      lastError: aggregateIsMassive ? aggregate.lastError ?? null : null,
-      lastErrorAt: aggregateIsMassive ? aggregate.lastErrorAt ?? null : null,
+      lastError: aggregateIsMassive ? (aggregate.lastError ?? null) : null,
+      lastErrorAt: aggregateIsMassive ? (aggregate.lastErrorAt ?? null) : null,
     },
   ];
   const activeFeeds = feeds.filter(
@@ -2735,7 +2803,10 @@ function buildMassiveWebSocketDiagnostics(input: {
     lastMessageAgeMs: lastMessageAges.length
       ? Math.min(...lastMessageAges)
       : null,
-    reconnectCount: feeds.reduce((total, feed) => total + feed.reconnectCount, 0),
+    reconnectCount: feeds.reduce(
+      (total, feed) => total + feed.reconnectCount,
+      0,
+    ),
     lastError: lastErrorFeed?.lastError ?? null,
     lastErrorAt: lastErrorFeed?.lastErrorAt ?? null,
     feeds,
@@ -2801,7 +2872,9 @@ function serializeOrderReadDebug(error: unknown, timeoutMs: number) {
   };
 }
 
-function getBridgeBackoffRemainingMs(category: "orders" | "options" | "health"): number {
+function getBridgeBackoffRemainingMs(
+  category: "orders" | "options" | "health",
+): number {
   return getBridgeGovernorSnapshot()[category].backoffRemainingMs;
 }
 
@@ -2865,7 +2938,8 @@ export async function listOrdersWithResilience(input: {
       accountId: input.accountId,
       mode: input.mode,
       reason: suppression.reason,
-      message: "Skipping open-orders read while the IBKR bridge order endpoint is suppressed.",
+      message:
+        "Skipping open-orders read while the IBKR bridge order endpoint is suppressed.",
       stale: true,
       detail: suppression.message,
     });
@@ -2938,23 +3012,21 @@ export async function listOrdersWithResilience(input: {
   timeout.unref?.();
 
   try {
-    const result: BridgeOrdersResult = await runBridgeWork(
-      "orders",
-      () =>
-        withTimeout(
-          client.listOrdersWithMeta({
-            accountId: input.accountId,
-            mode: input.mode ?? getRuntimeMode(),
-            status: input.status,
-            signal: controller.signal,
+    const result: BridgeOrdersResult = await runBridgeWork("orders", () =>
+      withTimeout(
+        client.listOrdersWithMeta({
+          accountId: input.accountId,
+          mode: input.mode ?? getRuntimeMode(),
+          status: input.status,
+          signal: controller.signal,
+        }),
+        timeoutMs,
+        () =>
+          new HttpError(504, "IBKR order read timed out.", {
+            code: "orders_timeout",
+            detail: `Order read did not respond within ${timeoutMs}ms.`,
           }),
-          timeoutMs,
-          () =>
-            new HttpError(504, "IBKR order read timed out.", {
-              code: "orders_timeout",
-              detail: `Order read did not respond within ${timeoutMs}ms.`,
-            }),
-        ),
+      ),
     );
     if (result.degraded) {
       void recordOrderReadDegraded({
@@ -3025,6 +3097,7 @@ export async function getRuntimeDiagnostics() {
   const marketDataStreams = getRuntimeMarketDataDiagnostics({
     bridgeQuoteDiagnostics,
   });
+  const marketDataIngest = await getMarketDataIngestDiagnostics();
   const polygonRuntimeConfig = getPolygonRuntimeConfig();
   const { getAccountPageStreamDiagnostics } = await import(
     "./account-page-streams"
@@ -3034,9 +3107,20 @@ export async function getRuntimeDiagnostics() {
     ...marketDataStreams.marketDataAdmission,
     optionsFlowScanner: optionsFlowScannerDiagnostics,
   };
+  const marketDataStreamsWithIngest = {
+    ...marketDataStreams,
+    marketDataIngest,
+  };
+  const marketDataWorkPlan = buildMarketDataWorkPlan({
+    admission: marketDataAdmissionWithScanner,
+    optionsFlowScanner: optionsFlowScannerDiagnostics,
+    ingest: marketDataIngest,
+    stockAggregates: marketDataStreams.stockAggregates,
+  });
 
   return {
     timestamp: new Date(),
+    marketDataWorkPlan,
     api: {
       uptimeMs: Math.round(process.uptime() * 1000),
       memoryMb: {
@@ -3109,9 +3193,11 @@ export async function getRuntimeDiagnostics() {
         : healthErrorCode || healthError
           ? "health_error"
           : "health_unavailable",
-      streamState: annotatedHealth?.streamState ?? fallbackStreamState.streamState,
+      streamState:
+        annotatedHealth?.streamState ?? fallbackStreamState.streamState,
       streamStateReason:
-        annotatedHealth?.streamStateReason ?? fallbackStreamState.streamStateReason,
+        annotatedHealth?.streamStateReason ??
+        fallbackStreamState.streamStateReason,
       connected: annotatedHealth?.connected ?? false,
       authenticated: annotatedHealth?.authenticated ?? false,
       competing: annotatedHealth?.competing ?? false,
@@ -3141,9 +3227,10 @@ export async function getRuntimeDiagnostics() {
       },
       governor: getBridgeGovernorSnapshot(),
       streams: {
-        ...marketDataStreams,
+        ...marketDataStreamsWithIngest,
         massiveStockUniverse: getMassiveStockUniverseStreamDiagnostics(),
         marketDataAdmission: marketDataAdmissionWithScanner,
+        marketDataWorkPlan,
         sse: getSseStreamDiagnostics(),
       },
     },
@@ -3152,7 +3239,9 @@ export async function getRuntimeDiagnostics() {
 
 export function getPlatformResourceDiagnostics() {
   const now = Date.now();
-  const countExpired = <T extends { expiresAt?: number; staleExpiresAt?: number }>(
+  const countExpired = <
+    T extends { expiresAt?: number; staleExpiresAt?: number },
+  >(
     entries: Iterable<T>,
   ) => {
     let expired = 0;
@@ -3635,24 +3724,35 @@ async function enrichBrokerPositionsForDisplay(
   const equitySymbols = Array.from(
     new Set(
       positions
-        .filter((position) => !position.optionContract && position.assetClass !== "option")
+        .filter(
+          (position) =>
+            !position.optionContract && position.assetClass !== "option",
+        )
         .map((position) => normalizeSymbol(positionReferenceSymbol(position)))
         .filter(Boolean),
     ),
   );
   const equityQuotes =
     equitySymbols.length > 0
-      ? await getQuoteSnapshots({ symbols: equitySymbols.join(",") }).catch(() => ({
-          quotes: [],
-        }))
+      ? await getQuoteSnapshots({ symbols: equitySymbols.join(",") }).catch(
+          () => ({
+            quotes: [],
+          }),
+        )
       : { quotes: [] };
   const equityQuoteBySymbol = new Map(
-    (equityQuotes.quotes || []).map((quote) => [normalizeSymbol(quote.symbol), quote]),
+    (equityQuotes.quotes || []).map((quote) => [
+      normalizeSymbol(quote.symbol),
+      quote,
+    ]),
   );
 
   const optionPositionsByUnderlying = positions.reduce((map, position) => {
-    const providerContractId = position.optionContract?.providerContractId?.trim();
-    const underlying = normalizeSymbol(position.optionContract?.underlying ?? "");
+    const providerContractId =
+      position.optionContract?.providerContractId?.trim();
+    const underlying = normalizeSymbol(
+      position.optionContract?.underlying ?? "",
+    );
     if (!providerContractId || !underlying) {
       return map;
     }
@@ -3682,10 +3782,13 @@ async function enrichBrokerPositionsForDisplay(
   const optionQuoteByProviderContractId = new Map(optionQuotePairs);
 
   return positions.map((position) => {
-    const providerContractId = position.optionContract?.providerContractId ?? "";
+    const providerContractId =
+      position.optionContract?.providerContractId ?? "";
     const quoteSnapshot = position.optionContract
       ? optionQuoteByProviderContractId.get(providerContractId)
-      : equityQuoteBySymbol.get(normalizeSymbol(positionReferenceSymbol(position)));
+      : equityQuoteBySymbol.get(
+          normalizeSymbol(positionReferenceSymbol(position)),
+        );
     const quote = choosePositionQuote(
       position.quote,
       buildPositionQuoteFromSnapshot(
@@ -4024,7 +4127,9 @@ function positiveIntegerEnv(name: string, fallback: number): number {
 
 type StockQuoteSnapshotSource = "ibkr" | "polygon" | "massive";
 
-function polygonQuoteToBrokerQuote(quote: PolygonQuoteSnapshot): QuoteSnapshot & {
+function polygonQuoteToBrokerQuote(
+  quote: PolygonQuoteSnapshot,
+): QuoteSnapshot & {
   source: Exclude<StockQuoteSnapshotSource, "ibkr">;
 } {
   const config = getPolygonRuntimeConfig();
@@ -4124,7 +4229,10 @@ function quoteSnapshotBridgeFetchTimeoutMs(): number {
 }
 
 function quoteSnapshotPolygonFallbackTimeoutMs(): number {
-  return positiveIntegerEnv("QUOTE_SNAPSHOT_POLYGON_FALLBACK_TIMEOUT_MS", 2_000);
+  return positiveIntegerEnv(
+    "QUOTE_SNAPSHOT_POLYGON_FALLBACK_TIMEOUT_MS",
+    2_000,
+  );
 }
 
 function quoteSnapshotCacheKey(input: {
@@ -4253,12 +4361,12 @@ async function getQuoteSnapshotsUncached(input: {
         new Error(
           `Quote snapshot bridge fetch timed out after ${quoteSnapshotBridgeFetchTimeoutMs()}ms.`,
         ),
-    ).catch(
-      (): BridgeQuoteSnapshotPayload => ({ quotes: [] }),
-    ),
+    ).catch((): BridgeQuoteSnapshotPayload => ({ quotes: [] })),
   ]);
   const ibkrQuotes = payload.quotes;
-  const ibkrSymbols = new Set(ibkrQuotes.map((quote) => normalizeSymbol(quote.symbol)));
+  const ibkrSymbols = new Set(
+    ibkrQuotes.map((quote) => normalizeSymbol(quote.symbol)),
+  );
   const missingSymbols = symbols.filter((symbol) => !ibkrSymbols.has(symbol));
   let polygonQuotes: Array<
     QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }
@@ -4284,8 +4392,7 @@ async function getQuoteSnapshotsUncached(input: {
         recordMarketDataFallback({
           owner: "quote-snapshot",
           intent: "visible-live",
-          fallbackProvider:
-            quote.source === "massive" ? "massive" : "polygon",
+          fallbackProvider: quote.source === "massive" ? "massive" : "polygon",
           reason: "ibkr_missing_or_not_admitted",
           instrumentKey: `equity:${quote.symbol}`,
         });
@@ -4424,7 +4531,8 @@ type UniverseLogoRecord = {
 
 const UNIVERSE_LOGO_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 const UNIVERSE_LOGO_BATCH_LIMIT = 50;
-const TRADINGVIEW_SYMBOL_LOGO_BASE_URL = "https://s3-symbol-logo.tradingview.com";
+const TRADINGVIEW_SYMBOL_LOGO_BASE_URL =
+  "https://s3-symbol-logo.tradingview.com";
 const TRADINGVIEW_LOGO_SLUGS: Record<string, string> = {
   AAPL: "apple",
   ABBV: "abbvie",
@@ -4673,7 +4781,10 @@ function normalizeTickerSearchQuery(value: string) {
 }
 
 function normalizeUniverseSearchInput(value: string) {
-  const raw = value.trim().toUpperCase().replace(/^[\s$^]+/, "");
+  const raw = value
+    .trim()
+    .toUpperCase()
+    .replace(/^[\s$^]+/, "");
   if (!raw) return "";
 
   const compact = raw.replace(/^X:/, "").replace(/[\s./-]+/g, "");
@@ -5030,9 +5141,7 @@ function mapUniverseCatalogRowToUniverseTicker(
     provider: (row.tradeProvider as MarketDataProvider | null) ?? null,
     providers: (row.providers ?? []).filter(
       (provider): provider is MarketDataProvider =>
-        provider === "ibkr" ||
-        provider === "polygon" ||
-        provider === "massive",
+        provider === "ibkr" || provider === "polygon" || provider === "massive",
     ),
     tradeProvider: (row.tradeProvider as MarketDataProvider | null) ?? null,
     dataProviderPreference:
@@ -5185,11 +5294,7 @@ function mergeUniverseTicker(
     shareClassFigi: existing.shareClassFigi || next.shareClassFigi,
     lastUpdatedAt: existing.lastUpdatedAt || next.lastUpdatedAt,
     providers,
-    provider:
-      tradeProvider ??
-      dataProviderPreference ??
-      providers[0] ??
-      null,
+    provider: tradeProvider ?? dataProviderPreference ?? providers[0] ?? null,
     tradeProvider,
     dataProviderPreference,
     providerContractId,
@@ -5234,7 +5339,8 @@ function scoreUniverseTicker(
   if (
     ticker.providers.includes("polygon") ||
     ticker.providers.includes("massive")
-  ) score += 12;
+  )
+    score += 12;
   if (ticker.active) score += 10;
   if (strongNamePrefixMatch) {
     if (/^[A-Z]{1,6}$/.test(normalizedTicker)) score += 180;
@@ -6109,7 +6215,9 @@ function normalizeUniverseLogoSymbols(symbols: string[] | string | undefined) {
       ? symbols.split(",")
       : [];
   return Array.from(
-    new Set(rawSymbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+    new Set(
+      rawSymbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
+    ),
   ).slice(0, UNIVERSE_LOGO_BATCH_LIMIT);
 }
 
@@ -7058,14 +7166,10 @@ export async function searchUniverseTickers(
   }
 }
 
-type NativeBarTimeframe =
-  Parameters<PolygonMarketDataClient["getBars"]>[0]["timeframe"];
-type ChartBarTimeframe =
-  | NativeBarTimeframe
-  | "30s"
-  | "2m"
-  | "30m"
-  | "4h";
+type NativeBarTimeframe = Parameters<
+  PolygonMarketDataClient["getBars"]
+>[0]["timeframe"];
+type ChartBarTimeframe = NativeBarTimeframe | "30s" | "30m" | "4h";
 
 type GetBarsInput = {
   symbol: string;
@@ -7193,7 +7297,11 @@ type ResolveOptionContractResult = {
   errorMessage: string | null;
   debug: RequestDebugMetadata;
 };
-type OptionChartBarsResolutionSource = "chain" | "provided" | "resolver" | "none";
+type OptionChartBarsResolutionSource =
+  | "chain"
+  | "provided"
+  | "resolver"
+  | "none";
 type OptionChartBarsDataSource =
   | "ibkr-history"
   | "mixed-history"
@@ -7301,9 +7409,11 @@ function shouldLimitBrokerHistoryToRecent(
   input: GetBarsInput,
   options: BrokerRecentHistoryOptions = {},
 ): boolean {
-  return Boolean(options.historicalSynthesisAvailable) &&
+  return (
+    Boolean(options.historicalSynthesisAvailable) &&
     input.assetClass !== "option" &&
-    input.market !== "futures";
+    input.market !== "futures"
+  );
 }
 
 function sanitizeBarsLimit(input: GetBarsInput): number {
@@ -7420,7 +7530,9 @@ function restrictHistoricalSynthesisToBrokerBackfill(
 
   const oldestBrokerTimestampMs = brokerBars.reduce((oldest, bar) => {
     const timestampMs = bar.timestamp.getTime();
-    return Number.isFinite(timestampMs) ? Math.min(oldest, timestampMs) : oldest;
+    return Number.isFinite(timestampMs)
+      ? Math.min(oldest, timestampMs)
+      : oldest;
   }, Number.POSITIVE_INFINITY);
   if (!Number.isFinite(oldestBrokerTimestampMs)) {
     return synthesisBars;
@@ -7482,7 +7594,9 @@ function shouldFetchHistoricalSynthesisForRecentCoverage(input: {
     return false;
   }
 
-  const newestStoredMs = resolveNewestBarTimestampMs(input.storedHistoricalBars);
+  const newestStoredMs = resolveNewestBarTimestampMs(
+    input.storedHistoricalBars,
+  );
   const newestBrokerMs = resolveNewestBarTimestampMs(input.brokerBars);
   const newestExistingMs = Math.max(
     newestStoredMs ?? Number.NEGATIVE_INFINITY,
@@ -7587,11 +7701,7 @@ function readNewYorkOvernightClockParts(
   const weekday = WEEKDAY_INDEX[read("weekday")];
   const hour = Number(read("hour"));
   const minute = Number(read("minute"));
-  if (
-    weekday == null ||
-    !Number.isFinite(hour) ||
-    !Number.isFinite(minute)
-  ) {
+  if (weekday == null || !Number.isFinite(hour) || !Number.isFinite(minute)) {
     return null;
   }
   return { weekday, minutes: hour * 60 + minute };
@@ -7827,13 +7937,18 @@ function shouldInvalidateBarsEntryForDurableWrite(
   entryInput: GetBarsInput,
   writeInput: GetBarsInput,
 ): boolean {
-  if (normalizeSymbol(entryInput.symbol) !== normalizeSymbol(writeInput.symbol)) {
+  if (
+    normalizeSymbol(entryInput.symbol) !== normalizeSymbol(writeInput.symbol)
+  ) {
     return false;
   }
   if (entryInput.timeframe !== writeInput.timeframe) {
     return false;
   }
-  if (entryInput.assetClass === "option" || entryInput.providerContractId?.trim()) {
+  if (
+    entryInput.assetClass === "option" ||
+    entryInput.providerContractId?.trim()
+  ) {
     return false;
   }
   if (entryInput.source && entryInput.source !== "trades") {
@@ -7930,7 +8045,15 @@ function resolveChartHistoryCursor(input: {
   signature: string;
 }):
   | { ok: true; providerNextUrl: string }
-  | { ok: false; reason: "disabled" | "missing" | "not_found" | "expired" | "signature_mismatch" } {
+  | {
+      ok: false;
+      reason:
+        | "disabled"
+        | "missing"
+        | "not_found"
+        | "expired"
+        | "signature_mismatch";
+    } {
   if (!isChartHydrationCursorEnabled()) {
     return { ok: false, reason: "disabled" };
   }
@@ -8005,7 +8128,8 @@ function sliceBarsResultForRequest(
     historyPage: buildBarsHistoryPage({
       request: input,
       bars,
-      provider: bars[bars.length - 1]?.source ?? value.historyPage?.provider ?? null,
+      provider:
+        bars[bars.length - 1]?.source ?? value.historyPage?.provider ?? null,
       exhaustedBefore: value.historyPage?.exhaustedBefore ?? false,
       providerCursor: value.historyPage?.providerCursor ?? null,
       providerNextUrl: value.historyPage?.providerNextUrl ?? null,
@@ -8031,7 +8155,10 @@ const DEFAULT_BARS_REQUEST_FAMILY = "unspecified";
 function normalizeBarsRequestFamily(value?: string | null): string {
   const normalized =
     typeof value === "string"
-      ? value.trim().toLowerCase().replace(/[^a-z0-9_.:-]+/g, "-")
+      ? value
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9_.:-]+/g, "-")
       : "";
   return normalized ? normalized.slice(0, 64) : DEFAULT_BARS_REQUEST_FAMILY;
 }
@@ -8081,7 +8208,7 @@ function recordBarsHydrationBreakdown(debug: RequestDebugMetadata): void {
 
 function isBrokerBackfillSensitiveBarsRequest(input: GetBarsInput): boolean {
   return Boolean(
-      input.allowHistoricalSynthesis !== false &&
+    input.allowHistoricalSynthesis !== false &&
       input.assetClass !== "option" &&
       input.market !== "futures" &&
       input.outsideRth !== false &&
@@ -8115,16 +8242,19 @@ function isChartBackfillBarsRequest(
   );
 }
 
-function isBarsProviderCursorContinuationRequested(input: GetBarsInput): boolean {
+function isBarsProviderCursorContinuationRequested(
+  input: GetBarsInput,
+): boolean {
   return Boolean(input.preferCursor && input.historyCursor?.trim());
 }
 
 function hasBrokerHistoryBars(value: GetBarsResult): boolean {
   return value.bars.some((bar) => {
-    const source = String(bar.source || "").trim().toLowerCase();
+    const source = String(bar.source || "")
+      .trim()
+      .toLowerCase();
     return (
-      source === IBKR_HISTORY_SOURCE ||
-      source === IBKR_OVERNIGHT_HISTORY_SOURCE
+      source === IBKR_HISTORY_SOURCE || source === IBKR_OVERNIGHT_HISTORY_SOURCE
     );
   });
 }
@@ -8293,8 +8423,8 @@ function withBarsDebug(
   const hydrationStatus: BarsHistoryPage["hydrationStatus"] =
     enrichedDebug.stale
       ? "warming"
-      : value.historyPage?.hydrationStatus ??
-        (value.bars.length ? "warm" : "cold");
+      : (value.historyPage?.hydrationStatus ??
+        (value.bars.length ? "warm" : "cold"));
   return {
     ...value,
     historyPage: value.historyPage
@@ -8330,11 +8460,15 @@ function resolveWithin<T>(
     ? new Promise<never>((_resolve, reject) => {
         abortListener = () =>
           reject((options.createAbortError ?? createBarsRequestAbortedError)());
-        options.signal?.addEventListener("abort", abortListener, { once: true });
+        options.signal?.addEventListener("abort", abortListener, {
+          once: true,
+        });
       })
     : null;
 
-  return Promise.race(abort ? [promise, timeout, abort] : [promise, timeout]).finally(() => {
+  return Promise.race(
+    abort ? [promise, timeout, abort] : [promise, timeout],
+  ).finally(() => {
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
@@ -8610,13 +8744,16 @@ const BAR_TIMEFRAME_MS: Partial<Record<GetBarsInput["timeframe"], number>> = {
   "1d": 24 * 60 * 60_000,
 };
 
-const BASE_TIMEFRAME_BY_TIMEFRAME: Record<ChartBarTimeframe, NativeBarTimeframe> = {
+const BASE_TIMEFRAME_BY_TIMEFRAME: Record<
+  ChartBarTimeframe,
+  NativeBarTimeframe
+> = {
   "1s": "1s",
   "5s": "5s",
   "15s": "5s",
   "30s": "5s",
   "1m": "1m",
-  "2m": "1m",
+  "2m": "2m",
   "5m": "5m",
   "15m": "15m",
   "30m": "15m",
@@ -8625,7 +8762,9 @@ const BASE_TIMEFRAME_BY_TIMEFRAME: Record<ChartBarTimeframe, NativeBarTimeframe>
   "1d": "1d",
 };
 
-function getBaseBarsTimeframe(timeframe: ChartBarTimeframe): NativeBarTimeframe {
+function getBaseBarsTimeframe(
+  timeframe: ChartBarTimeframe,
+): NativeBarTimeframe {
   return BASE_TIMEFRAME_BY_TIMEFRAME[timeframe] ?? timeframe;
 }
 
@@ -8646,7 +8785,10 @@ function rollupBarsResultToTimeframe(input: {
   requestedInput: GetBarsInput;
   baseResult: GetBarsResult;
 }): GetBarsResult {
-  const targetLimit = Math.max(input.requestedInput.limit ?? DEFAULT_BARS_LIMIT, 1);
+  const targetLimit = Math.max(
+    input.requestedInput.limit ?? DEFAULT_BARS_LIMIT,
+    1,
+  );
   const rolledBars = normalizeBarsToStoreTimeframe(
     input.baseResult.bars,
     input.requestedInput.timeframe,
@@ -8679,7 +8821,8 @@ function rollupBarsResultToTimeframe(input: {
     transport: latestBar?.transport ?? input.baseResult.transport,
     delayed: rolledBars.some((bar) => bar.delayed),
     freshness,
-    marketDataMode: latestBar?.marketDataMode ?? input.baseResult.marketDataMode,
+    marketDataMode:
+      latestBar?.marketDataMode ?? input.baseResult.marketDataMode,
     dataUpdatedAt,
     ageMs: getAgeMs(dataUpdatedAt),
     emptyReason: rolledBars.length ? null : input.baseResult.emptyReason,
@@ -8695,7 +8838,8 @@ function rollupBarsResultToTimeframe(input: {
       exhaustedBefore: input.baseResult.historyPage?.exhaustedBefore ?? false,
       providerCursor: input.baseResult.historyPage?.providerCursor ?? null,
       providerNextUrl: input.baseResult.historyPage?.providerNextUrl ?? null,
-      providerPageCount: input.baseResult.historyPage?.providerPageCount ?? null,
+      providerPageCount:
+        input.baseResult.historyPage?.providerPageCount ?? null,
       providerPageLimitReached:
         input.baseResult.historyPage?.providerPageLimitReached ?? false,
       historyCursor: input.baseResult.historyPage?.historyCursor ?? null,
@@ -8733,7 +8877,7 @@ function normalizeFreshness(input: {
 function getLatestBar(
   bars: readonly BrokerBarSnapshot[],
 ): BrokerBarSnapshot | null {
-  return bars.length ? bars[bars.length - 1] ?? null : null;
+  return bars.length ? (bars[bars.length - 1] ?? null) : null;
 }
 
 function getBarDataUpdatedAt(bar: BrokerBarSnapshot | null): Date | null {
@@ -8750,7 +8894,7 @@ function getAgeMs(value: Date | null, now = Date.now()): number | null {
 function getOldestBar(
   bars: readonly BrokerBarSnapshot[],
 ): BrokerBarSnapshot | null {
-  return bars.length ? bars[0] ?? null : null;
+  return bars.length ? (bars[0] ?? null) : null;
 }
 
 function sanitizeProviderNextUrl(value?: string | null): string | null {
@@ -8783,7 +8927,8 @@ function buildPolygonHistoryPageMetadata(
   return {
     providerCursor: providerNextUrl,
     providerNextUrl,
-    providerPageCount: typeof page?.pageCount === "number" ? page.pageCount : null,
+    providerPageCount:
+      typeof page?.pageCount === "number" ? page.pageCount : null,
     providerPageLimitReached: Boolean(page?.pageLimitReached),
     historyCursor: createChartHistoryCursor(cursorSignature, page?.nextUrl),
   };
@@ -8795,24 +8940,26 @@ function mapPolygonBarsToBrokerBars(input: {
   outsideRth: boolean;
   delayed: boolean;
 }): BrokerBarSnapshot[] {
-  return input.bars.map((bar): BrokerBarSnapshot => ({
-    timestamp: bar.timestamp,
-    open: bar.open,
-    high: bar.high,
-    low: bar.low,
-    close: bar.close,
-    volume: bar.volume,
-    source: input.sourceName,
-    providerContractId: null,
-    outsideRth: input.outsideRth,
-    partial: false,
-    transport: "tws",
-    delayed: input.delayed,
-    freshness: input.delayed ? "delayed" : "live",
-    marketDataMode: input.delayed ? "delayed" : "live",
-    dataUpdatedAt: bar.timestamp,
-    ageMs: getAgeMs(bar.timestamp),
-  }));
+  return input.bars.map(
+    (bar): BrokerBarSnapshot => ({
+      timestamp: bar.timestamp,
+      open: bar.open,
+      high: bar.high,
+      low: bar.low,
+      close: bar.close,
+      volume: bar.volume,
+      source: input.sourceName,
+      providerContractId: null,
+      outsideRth: input.outsideRth,
+      partial: false,
+      transport: "tws",
+      delayed: input.delayed,
+      freshness: input.delayed ? "delayed" : "live",
+      marketDataMode: input.delayed ? "delayed" : "live",
+      dataUpdatedAt: bar.timestamp,
+      ageMs: getAgeMs(bar.timestamp),
+    }),
+  );
 }
 
 async function fetchPolygonBarsPage(
@@ -8911,7 +9058,11 @@ function buildBarsHistoryPage(input: {
     historyCursor: input.historyCursor ?? null,
     hydrationStatus:
       input.hydrationStatus ??
-      (input.exhaustedBefore ? "exhausted" : input.bars.length ? "warm" : "cold"),
+      (input.exhaustedBefore
+        ? "exhausted"
+        : input.bars.length
+          ? "warm"
+          : "cold"),
     cacheStatus: input.cacheStatus ?? null,
   };
 }
@@ -8941,7 +9092,10 @@ function resolveBarsEmptyReason(input: {
   attemptedBrokerHistory: boolean;
   brokerHistoryError: unknown;
 }): string | null {
-  if (input.request.assetClass === "option" && !input.request.providerContractId) {
+  if (
+    input.request.assetClass === "option" &&
+    !input.request.providerContractId
+  ) {
     return "missing-provider-contract-id";
   }
   if (!input.attemptedBrokerHistory) {
@@ -9041,9 +9195,10 @@ async function fetchOptionStudyFallbackBar(input: {
         BARS_PROVIDER_BUDGET_MS,
         [],
       );
-  const quote = quotes.find(
-    (entry) => entry.providerContractId === providerContractId,
-  ) ?? quotes[0] ?? null;
+  const quote =
+    quotes.find((entry) => entry.providerContractId === providerContractId) ??
+    quotes[0] ??
+    null;
 
   return quote
     ? buildOptionStudyFallbackBar({
@@ -9102,8 +9257,7 @@ function decorateBarsResult(input: {
     symbol: normalizeSymbol(input.request.symbol),
     timeframe: input.request.timeframe,
     bars: input.bars,
-    transport:
-      latestBar?.transport ?? input.bridgeHealth?.transport ?? null,
+    transport: latestBar?.transport ?? input.bridgeHealth?.transport ?? null,
     delayed: input.bars.some((bar) => bar.delayed),
     gapFilled: input.gapFilled,
     freshness,
@@ -9153,7 +9307,10 @@ async function getBarsImpl(input: GetBarsInput, options: GetBarsOptions = {}) {
   });
 }
 
-async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOptions = {}) {
+async function getBaseBarsImpl(
+  input: NativeGetBarsInput,
+  options: GetBarsOptions = {},
+) {
   throwIfBarsSignalAborted(options.signal);
   const bridgeClient = getIbkrClient();
   const bridgeHealth = await awaitWithBarsAbort(
@@ -9189,16 +9346,18 @@ async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOption
   const historicalSynthesisAvailable = Boolean(
     allowHistoricalSynthesis && input.market !== "futures" && polygonClient,
   );
-  const brokerHistoryMayBeRecentLimited = shouldLimitBrokerHistoryToRecent(input, {
-    historicalSynthesisAvailable,
-  });
+  const brokerHistoryMayBeRecentLimited = shouldLimitBrokerHistoryToRecent(
+    input,
+    {
+      historicalSynthesisAvailable,
+    },
+  );
   let ibkrBars: Awaited<ReturnType<IbkrBridgeClient["getHistoricalBars"]>> = [];
   let attemptedBrokerHistory = false;
   let brokerHistoryError: unknown = null;
   const fetchBrokerHistory = async (brokerHistoryInput: GetBarsInput) => {
-    const brokerBackfillSensitive = isBrokerBackfillSensitiveBarsRequest(
-      brokerHistoryInput,
-    );
+    const brokerBackfillSensitive =
+      isBrokerBackfillSensitiveBarsRequest(brokerHistoryInput);
     const brokerHistoryBudgetMs = brokerBackfillSensitive
       ? BARS_BROKER_BACKFILL_BUDGET_MS
       : BARS_PROVIDER_BUDGET_MS;
@@ -9317,22 +9476,22 @@ async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOption
           instrumentKey: `equity:${normalizeSymbol(input.symbol)}`,
         });
       }
-	    } catch (error) {
-	      if (error instanceof HttpError && error.code === "bars_request_aborted") {
-	        throw error;
-	      }
-	      if (isIbkrHistoricalAdmissionError(error)) {
-	        recordMarketDataFallback({
-	          owner: "bars-history",
-	          intent: "historical",
-	          fallbackProvider: historicalFallbackProvider,
-	          reason: "ibkr_historical_admission_rejected",
-	          instrumentKey: `equity:${normalizeSymbol(input.symbol)}`,
-	        });
-	      }
-	      brokerHistoryError = error;
-	      ibkrBars = [];
-	    }
+    } catch (error) {
+      if (error instanceof HttpError && error.code === "bars_request_aborted") {
+        throw error;
+      }
+      if (isIbkrHistoricalAdmissionError(error)) {
+        recordMarketDataFallback({
+          owner: "bars-history",
+          intent: "historical",
+          fallbackProvider: historicalFallbackProvider,
+          reason: "ibkr_historical_admission_rejected",
+          instrumentKey: `equity:${normalizeSymbol(input.symbol)}`,
+        });
+      }
+      brokerHistoryError = error;
+      ibkrBars = [];
+    }
   }
   const storedHistoricalBars = allowHistoricalSynthesis
     ? restrictHistoricalSynthesisToBrokerBackfill(
@@ -9364,26 +9523,27 @@ async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOption
     : [];
   throwIfBarsSignalAborted(options.signal);
   const desiredBars = Math.max(
-    input.limit ?? (ibkrBars.length + storedHistoricalBars.length),
+    input.limit ?? ibkrBars.length + storedHistoricalBars.length,
     1,
   );
-  const recentCoverageNeedsGapFill = shouldFetchHistoricalSynthesisForRecentCoverage({
-    request: input,
-    storedHistoricalBars,
-    brokerBars: ibkrBars,
-    now: new Date(),
-    enabled:
-      allowHistoricalSynthesis &&
-      Boolean(polygonClient) &&
-      brokerHistoryMayBeRecentLimited &&
-      isBrokerHistoryTimeframe,
-    staleToleranceMs: resolveRecentCoverageStaleToleranceMs({
+  const recentCoverageNeedsGapFill =
+    shouldFetchHistoricalSynthesisForRecentCoverage({
       request: input,
-      providerIdentity: polygonProviderIdentity,
-      polygonConfig,
-      options,
-    }),
-  });
+      storedHistoricalBars,
+      brokerBars: ibkrBars,
+      now: new Date(),
+      enabled:
+        allowHistoricalSynthesis &&
+        Boolean(polygonClient) &&
+        brokerHistoryMayBeRecentLimited &&
+        isBrokerHistoryTimeframe,
+      staleToleranceMs: resolveRecentCoverageStaleToleranceMs({
+        request: input,
+        providerIdentity: polygonProviderIdentity,
+        polygonConfig,
+        options,
+      }),
+    });
   const chartBackfillRequest = isChartBackfillBarsRequest(input, options);
   const providerCursorContinuationRequested =
     isBarsProviderCursorContinuationRequested(input);
@@ -9399,7 +9559,9 @@ async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOption
       recentCoverageNeedsGapFill);
   const needsProviderHistoryFetch =
     historicalProviderAvailable &&
-    (needsGapFill || chartBackfillRequest || providerCursorContinuationRequested);
+    (needsGapFill ||
+      chartBackfillRequest ||
+      providerCursorContinuationRequested);
 
   let bars = [...storedHistoricalBars, ...ibkrBars];
   let gapFilled = false;
@@ -9429,7 +9591,10 @@ async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOption
           }).catch(() => null),
           BARS_PROVIDER_BUDGET_MS,
           null,
-          { signal: options.signal, createAbortError: createBarsRequestAbortedError },
+          {
+            signal: options.signal,
+            createAbortError: createBarsRequestAbortedError,
+          },
         );
         usedCursorContinuation = Boolean(polygonBarsPage);
       }
@@ -9449,7 +9614,10 @@ async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOption
           }),
           BARS_PROVIDER_BUDGET_MS,
           null,
-          { signal: options.signal, createAbortError: createBarsRequestAbortedError },
+          {
+            signal: options.signal,
+            createAbortError: createBarsRequestAbortedError,
+          },
         );
       }
       if (polygonBarsPage) {
@@ -9584,7 +9752,8 @@ async function getBaseBarsImpl(input: NativeGetBarsInput, options: GetBarsOption
         });
         bars = Array.from(merged.values())
           .sort(
-            (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
+            (left, right) =>
+              left.timestamp.getTime() - right.timestamp.getTime(),
           )
           .slice(-desiredBars);
       }
@@ -9756,8 +9925,12 @@ function readStringListEnv(
 }
 
 function readFlowUniverseModeEnv(): FlowUniverseMode {
-  const normalized = process.env["OPTIONS_FLOW_UNIVERSE_MODE"]?.trim().toLowerCase();
-  return normalized === "watchlist" || normalized === "market" || normalized === "hybrid"
+  const normalized = process.env["OPTIONS_FLOW_UNIVERSE_MODE"]
+    ?.trim()
+    .toLowerCase();
+  return normalized === "watchlist" ||
+    normalized === "market" ||
+    normalized === "hybrid"
     ? normalized
     : "hybrid";
 }
@@ -9854,14 +10027,40 @@ const OPTIONS_FLOW_UNIVERSE_MIN_DOLLAR_VOLUME = readPositiveNumberEnv(
   "OPTIONS_FLOW_UNIVERSE_MIN_DOLLAR_VOLUME",
   25_000_000,
 );
-const OPTIONS_FLOW_UNIVERSE_NASDAQ_FALLBACK_ENABLED = readBooleanEnv(
-  "OPTIONS_FLOW_UNIVERSE_NASDAQ_FALLBACK_ENABLED",
+const OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFIER_ENABLED = readBooleanEnv(
+  "OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFIER_ENABLED",
   true,
 );
-const OPTIONS_FLOW_UNIVERSE_NASDAQ_FALLBACK_TTL_MS = readPositiveIntegerEnv(
-  "OPTIONS_FLOW_UNIVERSE_NASDAQ_FALLBACK_TTL_MS",
-  24 * 60 * 60_000,
-);
+const OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_INTERVAL_MS =
+  readPositiveIntegerEnv(
+    "OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_INTERVAL_MS",
+    60_000,
+  );
+const OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_INITIAL_DELAY_MS =
+  readNonNegativeIntegerEnv(
+    "OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_INITIAL_DELAY_MS",
+    15_000,
+  );
+const OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_BATCH_SIZE =
+  readPositiveIntegerEnv(
+    "OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_BATCH_SIZE",
+    5,
+  );
+const OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_DELAY_MS =
+  readNonNegativeIntegerEnv(
+    "OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_DELAY_MS",
+    1_000,
+  );
+const OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_BACKOFF_MS =
+  readPositiveIntegerEnv(
+    "OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_BACKOFF_MS",
+    5 * 60_000,
+  );
+const OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_MAX_ERRORS =
+  readPositiveIntegerEnv(
+    "OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_MAX_ERRORS",
+    3,
+  );
 const OPTIONS_FLOW_SCANNER_ALWAYS_ON = readBooleanEnv(
   "OPTIONS_FLOW_SCANNER_ALWAYS_ON",
   true,
@@ -10033,36 +10232,65 @@ export function resolveOptionsFlowScannerEffectiveConcurrency(
       Math.floor(config.scannerConcurrency || 1),
     ),
   );
-  const scannerLineBudget = Math.max(
-    1,
-    Math.floor(config.scannerLineBudget || 1),
-  );
   const flowScannerLineCap = Math.max(
+    0,
+    Math.min(
+      Math.floor(getOptionsFlowScannerSchedulableLineCap()),
+      Math.max(0, Math.floor(config.scannerLineBudget || 0)),
+    ),
+  );
+  const pressureSnapshot = getApiResourcePressureSnapshot();
+  const scannerPressure = getOptionsFlowScannerPressureGate(pressureSnapshot);
+  const pressureAdjustedConcurrency = scannerPressure.hardBlocked
+    ? 0
+    : scannerPressure.throttled
+      ? Math.min(configuredConcurrency, 1)
+      : configuredConcurrency;
+  return flowScannerLineCap <= 0 || pressureAdjustedConcurrency <= 0
+    ? 0
+    : Math.max(1, Math.min(pressureAdjustedConcurrency, flowScannerLineCap));
+}
+
+function resolveOptionsFlowScannerPerScanLineBudget(
+  config: OptionsFlowRuntimeConfig,
+  phaseLineCap: number,
+): number {
+  const configuredConcurrency = Math.max(
+    1,
+    Math.min(
+      OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY,
+      Math.floor(config.scannerConcurrency || 1),
+    ),
+  );
+  const effectiveConcurrency =
+    resolveOptionsFlowScannerEffectiveConcurrency(config) ||
+    configuredConcurrency;
+  const schedulableLineCap = Math.max(
     0,
     Math.floor(getOptionsFlowScannerSchedulableLineCap()),
   );
-  const poolSafeConcurrency =
-    flowScannerLineCap <= 0
-      ? 0
-      : Math.max(1, Math.floor(flowScannerLineCap / scannerLineBudget));
-  const pressureSnapshot = getApiResourcePressureSnapshot();
-  const scannerPressure = getOptionsFlowScannerPressureGate(pressureSnapshot);
-  const pressureAdjustedConcurrency =
-    scannerPressure.hardBlocked
-      ? 0
-      : scannerPressure.throttled
-        ? Math.min(configuredConcurrency, 1)
-        : configuredConcurrency;
-  return poolSafeConcurrency <= 0 || pressureAdjustedConcurrency <= 0
-    ? 0
-    : Math.max(1, Math.min(pressureAdjustedConcurrency, poolSafeConcurrency));
+  const targetLineBudget = Math.max(
+    1,
+    Math.min(
+      Math.max(1, Math.floor(config.scannerLineBudget || 1)),
+      schedulableLineCap > 0 ? schedulableLineCap : config.scannerLineBudget,
+    ),
+  );
+  return Math.max(
+    1,
+    Math.min(
+      Math.max(1, Math.floor(phaseLineCap || 1)),
+      Math.ceil(targetLineBudget / Math.max(1, effectiveConcurrency)),
+    ),
+  );
 }
 
 function syncOptionsFlowScannerEffectiveConcurrency(
   config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
 ): number {
   syncMarketDataAdmissionRuntimeDefaults(config);
-  const effectiveConcurrency = resolveOptionsFlowScannerEffectiveConcurrency(config);
+  const effectiveConcurrency =
+    resolveOptionsFlowScannerEffectiveConcurrency(config);
   optionsFlowScanner.setMaxConcurrency(effectiveConcurrency);
   return effectiveConcurrency;
 }
@@ -10086,9 +10314,9 @@ function getOptionsFlowScannerQuoteLeaseTtlMs(): number {
 function buildOptionsFlowSeedScannerRequest(
   config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
 ): OptionsFlowScannerRequest {
-  const lineBudget = Math.max(
-    1,
-    Math.min(config.scannerLineBudget, OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET),
+  const lineBudget = resolveOptionsFlowScannerPerScanLineBudget(
+    config,
+    OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET,
   );
   return {
     limit: Math.min(config.scannerLimit, lineBudget),
@@ -10103,10 +10331,12 @@ function buildOptionsFlowSeedScannerRequest(
 function buildOptionsFlowExpandedScannerRequest(
   config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
 ): OptionsFlowScannerRequest {
-  const lineBudget = Math.max(
-    1,
+  const lineBudget = resolveOptionsFlowScannerPerScanLineBudget(
+    config,
     Math.min(
-      config.scannerLineBudget,
+      config.radarEnabled
+        ? config.radarDeepLineBudget
+        : OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET,
       OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET,
     ),
   );
@@ -10159,9 +10389,11 @@ export function getOptionsFlowRuntimeConfigSnapshot(): OptionsFlowRuntimeConfigS
         : undefined,
     },
     sources: Object.fromEntries(
-      (Object.keys(OPTIONS_FLOW_DEFAULT_CONFIG) as Array<
-        keyof OptionsFlowRuntimeConfig
-      >).map((key) => [
+      (
+        Object.keys(OPTIONS_FLOW_DEFAULT_CONFIG) as Array<
+          keyof OptionsFlowRuntimeConfig
+        >
+      ).map((key) => [
         key,
         optionsFlowRuntimeOverrides[key] === undefined ? "default" : "override",
       ]),
@@ -10183,16 +10415,11 @@ export function setOptionsFlowRuntimeOverrides(
   const next = getOptionsFlowRuntimeConfig();
   syncMarketDataAdmissionRuntimeDefaults(next);
   syncOptionsFlowScannerEffectiveConcurrency(next);
-  flowUniverseManager.updateConfig({
-    mode: next.universeMode,
-    targetSize:
-      next.universeMode === "watchlist" ? BUILT_IN_SYMBOLS.length : next.universeSize,
-    refreshMs: next.universeRefreshMs,
-    markets: next.universeMarkets,
-    minPrice: next.universeMinPrice,
-    minDollarVolume: next.universeMinDollarVolume,
-  });
-  if (optionsFlowScannerStarted && JSON.stringify(previous) !== JSON.stringify(next)) {
+  updateFlowUniverseRuntimePlanningConfig(next);
+  if (
+    optionsFlowScannerStarted &&
+    JSON.stringify(previous) !== JSON.stringify(next)
+  ) {
     stopOptionsFlowScanner();
     startOptionsFlowScanner();
   }
@@ -10211,15 +10438,7 @@ export function resetOptionsFlowRuntimeOverrides(
   const next = getOptionsFlowRuntimeConfig();
   syncMarketDataAdmissionRuntimeDefaults(next);
   syncOptionsFlowScannerEffectiveConcurrency(next);
-  flowUniverseManager.updateConfig({
-    mode: next.universeMode,
-    targetSize:
-      next.universeMode === "watchlist" ? BUILT_IN_SYMBOLS.length : next.universeSize,
-    refreshMs: next.universeRefreshMs,
-    markets: next.universeMarkets,
-    minPrice: next.universeMinPrice,
-    minDollarVolume: next.universeMinDollarVolume,
-  });
+  updateFlowUniverseRuntimePlanningConfig(next);
   if (optionsFlowScannerStarted) {
     stopOptionsFlowScanner();
     startOptionsFlowScanner();
@@ -10227,42 +10446,6 @@ export function resetOptionsFlowRuntimeOverrides(
 }
 const initialOptionsFlowConfig = getOptionsFlowRuntimeConfig();
 syncMarketDataAdmissionRuntimeDefaults(initialOptionsFlowConfig);
-let flowUniverseNasdaqFallbackCache: {
-  includeEtfs: boolean;
-  expiresAt: number;
-  symbols: string[];
-} | null = null;
-
-async function fetchFlowUniverseNasdaqFallbackSymbols(): Promise<string[]> {
-  if (!OPTIONS_FLOW_UNIVERSE_NASDAQ_FALLBACK_ENABLED) {
-    return [];
-  }
-
-  const includeEtfs = getOptionsFlowRuntimeConfig().universeMarkets.includes("etf");
-  const current = Date.now();
-  if (
-    flowUniverseNasdaqFallbackCache &&
-    flowUniverseNasdaqFallbackCache.includeEtfs === includeEtfs &&
-    flowUniverseNasdaqFallbackCache.expiresAt > current
-  ) {
-    return flowUniverseNasdaqFallbackCache.symbols;
-  }
-
-  const parsed = parseNasdaqListedDirectory(await fetchNasdaqListedDirectory(), {
-    includeEtfs,
-    includeTestIssues: false,
-    includeNonCommonStock: false,
-    normalFinancialStatusOnly: true,
-  });
-  const symbols = [...new Set(parsed.records.map((record) => record.symbol))];
-  flowUniverseNasdaqFallbackCache = {
-    includeEtfs,
-    expiresAt: current + OPTIONS_FLOW_UNIVERSE_NASDAQ_FALLBACK_TTL_MS,
-    symbols,
-  };
-  return symbols;
-}
-
 const flowUniverseManager = createFlowUniverseManager({
   db,
   mode: initialOptionsFlowConfig.universeMode,
@@ -10275,7 +10458,6 @@ const flowUniverseManager = createFlowUniverseManager({
   minPrice: initialOptionsFlowConfig.universeMinPrice,
   minDollarVolume: initialOptionsFlowConfig.universeMinDollarVolume,
   fallbackSymbols: BUILT_IN_SYMBOLS,
-  fetchFallbackSymbols: fetchFlowUniverseNasdaqFallbackSymbols,
   fetchLiquiditySnapshots: async (symbols) => {
     const payload = await getQuoteSnapshots({
       symbols: [...symbols].join(","),
@@ -10294,6 +10476,84 @@ const flowUniverseManager = createFlowUniverseManager({
   },
 });
 
+function flowUniversePlannerRefreshMs(
+  config: OptionsFlowRuntimeConfig,
+): number {
+  return Math.max(1_000, getOptionsFlowDeepScannerIntervalMs(config));
+}
+
+const flowUniversePlanner = createFlowUniversePlanner({
+  db,
+  markets: initialOptionsFlowConfig.universeMarkets,
+  minPrice: initialOptionsFlowConfig.universeMinPrice,
+  minDollarVolume: initialOptionsFlowConfig.universeMinDollarVolume,
+  refreshMs: flowUniversePlannerRefreshMs(initialOptionsFlowConfig),
+});
+
+const flowUniverseOptionabilityVerifier =
+  createFlowUniverseOptionabilityVerifier({
+    db,
+    enabled: OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFIER_ENABLED,
+    intervalMs: OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_INTERVAL_MS,
+    initialDelayMs: OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_INITIAL_DELAY_MS,
+    batchSize: OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_BATCH_SIZE,
+    delayMs: OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_DELAY_MS,
+    backoffMs: OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_BACKOFF_MS,
+    maxConsecutiveErrors: OPTIONS_FLOW_UNIVERSE_OPTIONABILITY_VERIFY_MAX_ERRORS,
+    markets: initialOptionsFlowConfig.universeMarkets,
+    prioritySymbols: () =>
+      getOptionsFlowLaneSourceSymbols().verificationSymbols,
+    shouldRun: async () => {
+      const config = getOptionsFlowRuntimeConfig();
+      if (!config.scannerEnabled) {
+        return "scanner-disabled";
+      }
+      const sessionBlockReason =
+        await refreshOptionsFlowSessionBlockReason(config);
+      if (sessionBlockReason) {
+        return sessionBlockReason;
+      }
+      if (isBridgeWorkBackedOff("options")) {
+        return "options-backoff";
+      }
+      const backgroundBlockReason =
+        getOptionsFlowScannerBackgroundBlockReason();
+      if (backgroundBlockReason) {
+        return backgroundBlockReason;
+      }
+      if (getOptionsFlowScannerPressureGate().throttled) {
+        return "resource-pressure";
+      }
+      return null;
+    },
+    fetchExpirations: (input) => getOptionExpirationsWithDebug(input),
+  });
+
+function updateFlowUniverseRuntimePlanningConfig(
+  config: OptionsFlowRuntimeConfig,
+): void {
+  flowUniverseManager.updateConfig({
+    mode: config.universeMode,
+    targetSize:
+      config.universeMode === "watchlist"
+        ? BUILT_IN_SYMBOLS.length
+        : config.universeSize,
+    refreshMs: config.universeRefreshMs,
+    markets: config.universeMarkets,
+    minPrice: config.universeMinPrice,
+    minDollarVolume: config.universeMinDollarVolume,
+  });
+  flowUniversePlanner.updateConfig({
+    markets: config.universeMarkets,
+    minPrice: config.universeMinPrice,
+    minDollarVolume: config.universeMinDollarVolume,
+    refreshMs: flowUniversePlannerRefreshMs(config),
+  });
+  flowUniverseOptionabilityVerifier.updateConfig({
+    markets: config.universeMarkets,
+  });
+}
+
 const optionsFlowRadarObservationCache = new Map<
   string,
   OptionsFlowRadarObservation
@@ -10309,7 +10569,9 @@ type OptionsFlowRadarQuoteFetchResult = {
   backoffUntil: number | null;
 };
 
-function getOptionsFlowRadarQuoteBackoffReason(now = Date.now()): string | null {
+function getOptionsFlowRadarQuoteBackoffReason(
+  now = Date.now(),
+): string | null {
   return optionsFlowRadarQuoteBackoffUntil > now
     ? "radar-quotes-backoff"
     : null;
@@ -10320,7 +10582,10 @@ function clearOptionsFlowRadarQuoteFailure(): void {
   optionsFlowRadarQuoteLastError = null;
 }
 
-function recordOptionsFlowRadarQuoteFailure(error: unknown, now = Date.now()): void {
+function recordOptionsFlowRadarQuoteFailure(
+  error: unknown,
+  now = Date.now(),
+): void {
   optionsFlowRadarQuoteLastError =
     error instanceof Error && error.message ? error.message : String(error);
   optionsFlowRadarQuoteBackoffUntil =
@@ -10356,7 +10621,11 @@ function recordOptionsFlowRadarObservations(
   observations.forEach((observation) => {
     const symbol = normalizeSymbol(observation.symbol);
     const scannedAtMs = radarObservationTimeMs(observation);
-    if (!symbol || scannedAtMs === null || !observation.hasOptionActivityTicks) {
+    if (
+      !symbol ||
+      scannedAtMs === null ||
+      !observation.hasOptionActivityTicks
+    ) {
       return;
     }
     if ((observation.optionVolume ?? 0) <= 0 && observation.score <= 0) {
@@ -10381,7 +10650,9 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
   preferredTransport: "tws",
   allowFallbackTransport: false,
   getTransport: async () => {
-    const health = await getIbkrClient().getHealth().catch(() => null);
+    const health = await getIbkrClient()
+      .getHealth()
+      .catch(() => null);
     return health
       ? {
           transport: health.transport,
@@ -10429,7 +10700,8 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
         isUnusual?: boolean;
       }>,
       failed,
-      reason: error ?? result?.source?.errorMessage ?? result?.source?.status ?? null,
+      reason:
+        error ?? result?.source?.errorMessage ?? result?.source?.status ?? null,
     });
     if (
       !failed &&
@@ -10606,9 +10878,10 @@ async function fetchOptionsFlowRadarQuotes(
 
   return {
     quotes,
-    degradedReason: failedSymbolCount > 0
-      ? "radar-quote-batch-fallback"
-      : "radar-quote-batch-fallback-empty",
+    degradedReason:
+      failedSymbolCount > 0
+        ? "radar-quote-batch-fallback"
+        : "radar-quote-batch-fallback-empty",
     failedSymbolCount,
     backoffUntil: null,
   };
@@ -10653,7 +10926,8 @@ function orderOptionsFlowScannerLaneResolution(
     new Set([
       ...resolution.desiredSymbols
         .filter(
-          (entry) => admitted.has(entry.symbol) && entry.sources.includes("manual"),
+          (entry) =>
+            admitted.has(entry.symbol) && entry.sources.includes("manual"),
         )
         .map((entry) => entry.symbol),
       ...sources.watchlistSymbols,
@@ -10681,7 +10955,8 @@ function orderOptionsFlowUniverseLaneResolution(
     new Set([
       ...resolution.desiredSymbols
         .filter(
-          (entry) => admitted.has(entry.symbol) && entry.sources.includes("manual"),
+          (entry) =>
+            admitted.has(entry.symbol) && entry.sources.includes("manual"),
         )
         .map((entry) => entry.symbol),
       ...sources.watchlistSymbols,
@@ -10711,15 +10986,67 @@ export function getOptionsFlowLaneSourceSymbols(): {
   builtInSymbols: string[];
   watchlistSymbols: string[];
   flowUniverseSymbols: string[];
+  candidateBuiltInSymbols: string[];
+  candidateWatchlistSymbols: string[];
+  candidatePrioritySymbols: string[];
+  verificationSymbols: string[];
+  planner: Record<string, unknown>;
 } {
   const config = getOptionsFlowRuntimeConfig();
-  const builtInSymbols = getFlowScannerPinnedSymbols();
-  const watchlistSymbols = latestWatchlistLaneSymbols;
-  const flowUniverseSymbols =
-    config.universeMode === "watchlist"
-      ? (watchlistSymbols.length ? watchlistSymbols : builtInSymbols)
-      : flowUniverseManager.getSymbols({ pinnedSymbols: builtInSymbols });
-  return { builtInSymbols, watchlistSymbols, flowUniverseSymbols };
+  const candidateBuiltInSymbols = getFlowScannerPinnedSymbols();
+  const candidateWatchlistSymbols = latestWatchlistLaneSymbols;
+  const candidatePrioritySymbols = collectFlowScannerPriorityLeaseSymbols();
+  const runtimePrioritySymbols = Array.from(
+    optionsFlowRadarObservationCache.keys(),
+  );
+  const schedulableLineCap = getOptionsFlowScannerSchedulableLineCap();
+  const directScannerLineBudget = resolveOptionsFlowScannerPerScanLineBudget(
+    config,
+    OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET,
+  );
+  const plannerBatchSize = config.radarEnabled
+    ? config.radarBatchSize
+    : config.scannerBatchSize;
+  const plannerPerScanLineBudget = config.radarEnabled
+    ? 1
+    : directScannerLineBudget;
+  const plannerEffectiveConcurrency = config.radarEnabled
+    ? Math.max(0, Math.min(config.radarBatchSize, schedulableLineCap))
+    : resolveOptionsFlowScannerEffectiveConcurrency(config);
+  const plannerPlan = flowUniversePlanner.getPlan({
+    prioritySymbolGroups: {
+      account: candidatePrioritySymbols,
+      runtime: runtimePrioritySymbols,
+      watchlists: candidateWatchlistSymbols,
+      "built-in": candidateBuiltInSymbols,
+    },
+    targetSize:
+      config.universeMode === "watchlist"
+        ? Math.max(
+            candidateWatchlistSymbols.length,
+            candidateBuiltInSymbols.length,
+            1,
+          )
+        : config.universeSize,
+    batchSize: plannerBatchSize,
+    lineBudget: schedulableLineCap,
+    perScanLineBudget: plannerPerScanLineBudget,
+    effectiveConcurrency: plannerEffectiveConcurrency,
+  });
+  const builtInSymbols = plannerPlan.prioritySymbolsBySource["built-in"];
+  const watchlistSymbols = plannerPlan.prioritySymbolsBySource.watchlists;
+  const flowUniverseSymbols = plannerPlan.nextScanBatch;
+  const verificationSymbols = plannerPlan.verificationSymbols;
+  return {
+    builtInSymbols,
+    watchlistSymbols,
+    flowUniverseSymbols,
+    candidateBuiltInSymbols,
+    candidateWatchlistSymbols,
+    candidatePrioritySymbols,
+    verificationSymbols,
+    planner: plannerPlan as unknown as Record<string, unknown>,
+  };
 }
 
 const MASSIVE_STOCK_UNIVERSE_STREAM_REFRESH_MS = 30_000;
@@ -10751,15 +11078,24 @@ function resolveMassiveStockUniverseSymbols(): string[] {
   const sources = getOptionsFlowLaneSourceSymbols();
   const symbolCap = massiveStockUniverseStreamSymbolCap();
   return Array.from(
-    new Set([
-      ...sources.builtInSymbols,
-      ...sources.watchlistSymbols,
-      ...sources.flowUniverseSymbols,
-    ].map((symbol) => normalizeSymbol(symbol).toUpperCase()).filter(Boolean)),
-  ).slice(0, symbolCap).sort();
+    new Set(
+      [
+        ...sources.candidateBuiltInSymbols,
+        ...sources.candidateWatchlistSymbols,
+        ...sources.candidatePrioritySymbols,
+        ...sources.flowUniverseSymbols,
+      ]
+        .map((symbol) => normalizeSymbol(symbol).toUpperCase())
+        .filter(Boolean),
+    ),
+  )
+    .slice(0, symbolCap)
+    .sort();
 }
 
-function closeMassiveStockUniverseStreams(status: typeof massiveStockUniverseLastStatus): void {
+function closeMassiveStockUniverseStreams(
+  status: typeof massiveStockUniverseLastStatus,
+): void {
   massiveStockUniverseAggregateUnsubscribe?.();
   massiveStockUniverseAggregateUnsubscribe = null;
   massiveStockUniverseSignature = "";
@@ -10777,7 +11113,10 @@ function refreshMassiveStockUniverseStreams(reason: string): void {
     closeMassiveStockUniverseStreams("not_configured");
     return;
   }
-  if (resourcePressure.level === "high" || resourcePressure.level === "critical") {
+  if (
+    resourcePressure.level === "high" ||
+    resourcePressure.level === "critical"
+  ) {
     closeMassiveStockUniverseStreams("resource_pressure");
     return;
   }
@@ -10951,17 +11290,22 @@ export function startOptionsFlowScanner(): void {
   const resolveRadarPromotionCapacity = () => {
     const runtimeConfig = getOptionsFlowRuntimeConfig();
     syncMarketDataAdmissionRuntimeDefaults(runtimeConfig);
-    const lineBudget = Math.max(
-      1,
-      Math.min(
-        runtimeConfig.radarDeepLineBudget || 1,
-        runtimeConfig.scannerLineBudget || 1,
-      ),
+    const lineBudget = resolveOptionsFlowScannerPerScanLineBudget(
+      runtimeConfig,
+      runtimeConfig.radarDeepLineBudget,
     );
     const schedulableLines = getOptionsFlowScannerSchedulableLineCap();
-    return schedulableLines <= 0
+    const effectiveConcurrency =
+      resolveOptionsFlowScannerEffectiveConcurrency(runtimeConfig);
+    return schedulableLines <= 0 || effectiveConcurrency <= 0
       ? 0
-      : Math.max(1, Math.floor(schedulableLines / lineBudget));
+      : Math.max(
+          1,
+          Math.min(
+            effectiveConcurrency,
+            Math.floor(schedulableLines / lineBudget),
+          ),
+        );
   };
   if (config.radarEnabled) {
     optionsFlowRadarScanner.startRotation({
@@ -10983,13 +11327,18 @@ export function startOptionsFlowScanner(): void {
         );
       },
       fallbackPromoteCount: () =>
-        Math.max(
-          0,
-          Math.min(
-            getOptionsFlowRuntimeConfig().radarFallbackDeepCandidateCount,
-            resolveRadarPromotionCapacity(),
-          ),
-        ),
+        (() => {
+          const runtimeConfig = getOptionsFlowRuntimeConfig();
+          const configuredFallback = Math.max(
+            0,
+            Math.floor(runtimeConfig.radarFallbackDeepCandidateCount || 0),
+          );
+          const capacity = resolveRadarPromotionCapacity();
+          if (configuredFallback <= 0 || capacity <= 0) {
+            return 0;
+          }
+          return Math.min(Math.max(configuredFallback, capacity), capacity);
+        })(),
     });
   } else {
     optionsFlowScanner.startRotation({
@@ -11048,14 +11397,47 @@ export function stopOptionsFlowScanner(): void {
   optionsFlowScannerStarted = false;
 }
 
+export function startFlowUniverseOptionabilityVerifier(): void {
+  flowUniverseOptionabilityVerifier.start();
+}
+
+export function stopFlowUniverseOptionabilityVerifier(): void {
+  flowUniverseOptionabilityVerifier.stop();
+}
+
+export function getFlowUniverseOptionabilityVerifierDiagnostics() {
+  return flowUniverseOptionabilityVerifier.getDiagnostics();
+}
+
 export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
   const config = getOptionsFlowRuntimeConfig();
   const intervalMs = getOptionsFlowDeepScannerIntervalMs(config);
   const batchSize = Math.max(1, Math.floor(config.scannerBatchSize || 1));
   const deepScanner = optionsFlowScanner.getDiagnostics();
+  const laneSources = getOptionsFlowLaneSourceSymbols();
+  const planner = laneSources.planner;
+  const plannerDiagnostics = isRecord(planner.diagnostics)
+    ? planner.diagnostics
+    : {};
+  const plannerSelectableSymbols =
+    typeof plannerDiagnostics.selectableSymbols === "number"
+      ? plannerDiagnostics.selectableSymbols
+      : 0;
+  const plannerCandidateSymbols =
+    typeof plannerDiagnostics.candidateSymbols === "number"
+      ? plannerDiagnostics.candidateSymbols
+      : 0;
+  const plannerLastError =
+    typeof plannerDiagnostics.lastError === "string" &&
+    plannerDiagnostics.lastError.trim()
+      ? plannerDiagnostics.lastError
+      : null;
   const rawCoverage = flowUniverseManager.getCoverage();
   const estimatedCycleMs = estimateOptionsFlowScannerCycleMs({
-    activeTargetSize: rawCoverage.activeTargetSize,
+    activeTargetSize: Math.max(
+      rawCoverage.activeTargetSize,
+      plannerSelectableSymbols,
+    ),
     batchSize,
     intervalMs,
   });
@@ -11063,8 +11445,48 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
     scanWindowMs:
       estimatedCycleMs === null ? undefined : estimatedCycleMs + intervalMs,
   });
+  const mergedActiveTargetSize = Math.max(
+    coverage.activeTargetSize,
+    plannerSelectableSymbols,
+  );
+  const mergedSelectedSymbols = Math.max(
+    coverage.selectedSymbols,
+    plannerSelectableSymbols,
+  );
+  const mergedSelectedShortfall = Math.max(
+    0,
+    coverage.targetSize - mergedSelectedSymbols,
+  );
+  const mergedFillShortReason =
+    mergedSelectedShortfall > 0
+      ? `Universe fill short: ${mergedSelectedSymbols}/${coverage.targetSize}`
+      : null;
+  const managerShortfallOnly =
+    typeof coverage.degradedReason === "string" &&
+    coverage.degradedReason.startsWith("Universe fill short:");
+  const plannerErrorReason = plannerLastError
+    ? `Flow universe planner unavailable: ${plannerLastError}`
+    : null;
+  const mergedDegradedReason =
+    plannerErrorReason ??
+    (managerShortfallOnly
+      ? mergedFillShortReason
+      : coverage.degradedReason ?? mergedFillShortReason);
   const baseCoverage = {
     ...coverage,
+    activeTargetSize: mergedActiveTargetSize,
+    selectedSymbols: mergedSelectedSymbols,
+    selectedShortfall: mergedSelectedShortfall,
+    verifiedSymbols: Math.max(
+      coverage.verifiedSymbols,
+      plannerCandidateSymbols,
+    ),
+    currentBatch: coverage.currentBatch.length
+      ? coverage.currentBatch
+      : laneSources.flowUniverseSymbols,
+    degradedReason: mergedDegradedReason,
+    fallbackUsed: Boolean(mergedDegradedReason),
+    planner,
     batchSize,
     intervalMs,
     lineBudget: config.scannerLineBudget,
@@ -11106,7 +11528,9 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
   };
   const lastScanAgeMs = (value: Date | null | undefined) => {
     const time = value instanceof Date ? value.getTime() : null;
-    return Number.isFinite(time) ? Math.max(0, Date.now() - (time as number)) : null;
+    return Number.isFinite(time)
+      ? Math.max(0, Date.now() - (time as number))
+      : null;
   };
   if (!radarCoverage.enabled && !radarCoverage.lastScanAt) {
     return {
@@ -11128,7 +11552,10 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
     baseCoverage.selectedSymbols,
     radarCoverage.selectedSymbols,
   );
-  const selectedShortfall = Math.max(0, baseCoverage.targetSize - activeTargetSize);
+  const selectedShortfall = Math.max(
+    0,
+    baseCoverage.targetSize - activeTargetSize,
+  );
   const cycleScannedSymbols = Math.max(
     baseCoverage.cycleScannedSymbols,
     baseCoverage.scannedSymbols,
@@ -11143,7 +11570,9 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
     scannedSymbols: cycleScannedSymbols,
     cycleScannedSymbols,
     batchSize: radarActive ? radarCoverage.batchSize : baseCoverage.batchSize,
-    intervalMs: radarActive ? radarCoverage.intervalMs : baseCoverage.intervalMs,
+    intervalMs: radarActive
+      ? radarCoverage.intervalMs
+      : baseCoverage.intervalMs,
     estimatedCycleMs:
       radarActive && radarCoverage.estimatedCycleMs !== null
         ? radarCoverage.estimatedCycleMs
@@ -11156,7 +11585,9 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
     deepLastBatch: deepScanner.lastBatch,
     scannerPhase,
     lastScanAt: radarCoverage.lastScanAt ?? baseCoverage.lastScanAt,
-    lastScanAgeMs: lastScanAgeMs(radarCoverage.lastScanAt ?? baseCoverage.lastScanAt),
+    lastScanAgeMs: lastScanAgeMs(
+      radarCoverage.lastScanAt ?? baseCoverage.lastScanAt,
+    ),
     degradedReason:
       radarCoverage.degradedReason ??
       baseCoverage.degradedReason ??
@@ -11218,9 +11649,10 @@ function flowEventNumber(value: unknown): number {
 }
 
 function flowEventAggregateIdentity(event: unknown): string {
-  const record = event && typeof event === "object"
-    ? (event as Record<string, unknown>)
-    : {};
+  const record =
+    event && typeof event === "object"
+      ? (event as Record<string, unknown>)
+      : {};
   const id = String(record.id || "").trim();
   if (id) {
     return id;
@@ -11241,12 +11673,12 @@ function flowEventAggregateIdentity(event: unknown): string {
 }
 
 function compareAggregateFlowEvents(left: unknown, right: unknown): number {
-  const leftRecord = left && typeof left === "object"
-    ? (left as Record<string, unknown>)
-    : {};
-  const rightRecord = right && typeof right === "object"
-    ? (right as Record<string, unknown>)
-    : {};
+  const leftRecord =
+    left && typeof left === "object" ? (left as Record<string, unknown>) : {};
+  const rightRecord =
+    right && typeof right === "object"
+      ? (right as Record<string, unknown>)
+      : {};
 
   const leftUnusual = Boolean(leftRecord.isUnusual);
   const rightUnusual = Boolean(rightRecord.isUnusual);
@@ -11303,7 +11735,11 @@ function selectAggregateFlowSeedSymbols(input: {
   }
 
   const laneSymbols = Array.from(
-    new Set(input.laneSymbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+    new Set(
+      input.laneSymbols
+        .map((symbol) => normalizeSymbol(symbol))
+        .filter(Boolean),
+    ),
   );
   if (laneSymbols.length && selected.length < batchSize) {
     const start = optionsFlowAggregateSeedOffset % laneSymbols.length;
@@ -11335,14 +11771,16 @@ export function __selectAggregateFlowSeedSymbolsForTests(input: {
   return selectAggregateFlowSeedSymbols(input);
 }
 
-export async function listAggregateFlowEvents(input: {
-  limit?: number;
-  scope?: FlowEventsScope;
-  minPremium?: number;
-  maxDte?: number;
-  unusualThreshold?: number;
-  lineBudget?: number;
-} = {}): Promise<FlowEventsResult> {
+export async function listAggregateFlowEvents(
+  input: {
+    limit?: number;
+    scope?: FlowEventsScope;
+    minPremium?: number;
+    maxDte?: number;
+    unusualThreshold?: number;
+    lineBudget?: number;
+  } = {},
+): Promise<FlowEventsResult> {
   const limit = Math.max(1, Math.min(input.limit ?? 100, 1_000));
   const unusualThreshold =
     Number.isFinite(input.unusualThreshold) && (input.unusualThreshold ?? 0) > 0
@@ -11431,7 +11869,8 @@ export async function listAggregateFlowEvents(input: {
       enforceOptionsFlowScannerPressureControls() ??
       getOptionsFlowScannerBackgroundBlockReason({
         ignoreLiveWarmup: true,
-      }) ?? (await refreshOptionsFlowSessionBlockReason(runtimeConfig));
+      }) ??
+      (await refreshOptionsFlowSessionBlockReason(runtimeConfig));
     if (
       seedSymbols.length > 0 &&
       diagnostics.queuedCount === 0 &&
@@ -11440,12 +11879,14 @@ export async function listAggregateFlowEvents(input: {
     ) {
       queuedSeedRefresh = true;
       syncOptionsFlowScannerEffectiveConcurrency(runtimeConfig);
-      optionsFlowScanner.requestScan(seedSymbols, scannerRequest).catch((error) => {
-        logger.warn(
-          { err: error, symbols: seedSymbols, phase: "aggregate-seed" },
-          "Failed to queue aggregate options flow scanner refresh",
-        );
-      });
+      optionsFlowScanner
+        .requestScan(seedSymbols, scannerRequest)
+        .catch((error) => {
+          logger.warn(
+            { err: error, symbols: seedSymbols, phase: "aggregate-seed" },
+            "Failed to queue aggregate options flow scanner refresh",
+          );
+        });
     }
   }
   const seenEvents = new Set<string>();
@@ -11481,9 +11922,7 @@ export async function listAggregateFlowEvents(input: {
     source: flowSource({
       provider: filteredEvents.length ? "ibkr" : "none",
       status: sourceStatus,
-      fallbackUsed:
-        staleSnapshots > 0 ||
-        Boolean(scannerCoverage.fallbackUsed),
+      fallbackUsed: staleSnapshots > 0 || Boolean(scannerCoverage.fallbackUsed),
       attemptedProviders: ["ibkr"],
       unusualThreshold: unusualThreshold ?? 1,
       ibkrStatus: filteredEvents.length ? "loaded" : "empty",
@@ -11494,20 +11933,22 @@ export async function listAggregateFlowEvents(input: {
             ? "options_flow_scanner_queued"
             : aggregateSeedBlockReason
               ? `options_flow_scanner_${aggregateSeedBlockReason.replace(/-/g, "_")}`
-            : scannerCoverage.lastScanAt
-            ? "options_flow_scanner_no_cached_events"
-            : "options_flow_scanner_snapshot_pending",
+              : scannerCoverage.lastScanAt
+                ? "options_flow_scanner_no_cached_events"
+                : "options_flow_scanner_snapshot_pending",
       scannerCoverage,
     }),
   };
 }
 
-export async function getFlowPremiumDistribution(input: {
-  limit?: number;
-  candidateLimit?: number;
-  coverageMode?: FlowPremiumDistributionCoverageMode;
-  timeframe?: PremiumDistributionTimeframe;
-} = {}): Promise<FlowPremiumDistributionResponse> {
+export async function getFlowPremiumDistribution(
+  input: {
+    limit?: number;
+    candidateLimit?: number;
+    coverageMode?: FlowPremiumDistributionCoverageMode;
+    timeframe?: PremiumDistributionTimeframe;
+  } = {},
+): Promise<FlowPremiumDistributionResponse> {
   const requestedAt = Date.now();
   const limit = normalizeFlowPremiumDistributionLimit(input.limit);
   const candidateLimit = normalizeFlowPremiumDistributionCandidateLimit(
@@ -11534,7 +11975,11 @@ export async function getFlowPremiumDistribution(input: {
   if (cached && cached.expiresAt > requestedAt) {
     return withFlowPremiumDistributionCacheState(cached.value, "fresh");
   }
-  if (cached && cached.staleExpiresAt > requestedAt && coverageMode === "universe") {
+  if (
+    cached &&
+    cached.staleExpiresAt > requestedAt &&
+    coverageMode === "universe"
+  ) {
     return withFlowPremiumDistributionCacheState(
       cached.value,
       "stale",
@@ -11658,7 +12103,9 @@ export async function getFlowPremiumDistribution(input: {
             rank: index + 1,
           }))
         : grouped.aggregates
-            .filter((aggregate) => isPremiumDistributionCandidate(aggregate.symbol))
+            .filter((aggregate) =>
+              isPremiumDistributionCandidate(aggregate.symbol),
+            )
             .sort((left, right) => right.volume - left.volume)
             .slice(0, candidateLimit)
             .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
@@ -11728,7 +12175,8 @@ export async function getFlowPremiumDistribution(input: {
           const premiumDelta = right.premiumTotal - left.premiumTotal;
           if (premiumDelta !== 0) return premiumDelta;
 
-          const classifiedDelta = right.classifiedPremium - left.classifiedPremium;
+          const classifiedDelta =
+            right.classifiedPremium - left.classifiedPremium;
           if (classifiedDelta !== 0) return classifiedDelta;
 
           const volumeDelta =
@@ -11835,7 +12283,9 @@ export async function getFlowPremiumDistribution(input: {
 
     const resolveHydrationStatus = (
       input: HydrationRun,
-      sourceDiagnostics: ReturnType<typeof buildFlowPremiumDistributionSourceDiagnostics>,
+      sourceDiagnostics: ReturnType<
+        typeof buildFlowPremiumDistributionSourceDiagnostics
+      >,
       refreshing: boolean,
     ): FlowPremiumDistributionHydrationStatus => {
       if (input.errorCount > 0) {
@@ -11895,7 +12345,9 @@ export async function getFlowPremiumDistribution(input: {
       maxPages: firstPaintMaxPages,
     });
     const baselineSourceDiagnostics =
-      buildFlowPremiumDistributionSourceDiagnostics(baseline.rankedDistributions);
+      buildFlowPremiumDistributionSourceDiagnostics(
+        baseline.rankedDistributions,
+      );
     const shouldDeepRefresh =
       !flowPremiumDistributionDeepRefreshInFlight.has(cacheKey) &&
       candidates.length > 0 &&
@@ -11920,7 +12372,10 @@ export async function getFlowPremiumDistribution(input: {
         const timer = setTimeout(() => {
           void (async () => {
             const deepCandidates = candidates;
-            const combinedBySymbol = new Map<string, OptionPremiumDistribution>();
+            const combinedBySymbol = new Map<
+              string,
+              OptionPremiumDistribution
+            >();
             baseline.rankedDistributions.forEach((distribution) => {
               combinedBySymbol.set(distribution.symbol, distribution);
             });
@@ -11943,7 +12398,8 @@ export async function getFlowPremiumDistribution(input: {
 
               const deepChunk = await hydrateCandidates({
                 candidateList: chunk,
-                tradeContractLimit: FLOW_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT,
+                tradeContractLimit:
+                  FLOW_PREMIUM_DISTRIBUTION_TRADE_CONTRACT_LIMIT,
                 tradePremiumCoverageTarget: classificationTarget,
                 candidateTimeoutMs:
                   FLOW_PREMIUM_DISTRIBUTION_DEEP_CANDIDATE_TIMEOUT_MS,
@@ -11989,7 +12445,10 @@ export async function getFlowPremiumDistribution(input: {
       const trackedRefresh = deepRefresh;
       flowPremiumDistributionDeepRefreshInFlight.set(cacheKey, trackedRefresh);
       trackedRefresh.finally(() => {
-        if (flowPremiumDistributionDeepRefreshInFlight.get(cacheKey) === trackedRefresh) {
+        if (
+          flowPremiumDistributionDeepRefreshInFlight.get(cacheKey) ===
+          trackedRefresh
+        ) {
           flowPremiumDistributionDeepRefreshInFlight.delete(cacheKey);
         }
       });
@@ -12009,12 +12468,12 @@ export async function getFlowPremiumDistribution(input: {
 
 export function getOptionsFlowScannerDiagnostics() {
   const config = getOptionsFlowRuntimeConfig();
+  syncMarketDataAdmissionRuntimeDefaults(config);
   const resourcePressure = getApiResourcePressureSnapshot();
   const scannerPressure = getOptionsFlowScannerPressureGate(resourcePressure);
   const backgroundBlockedReason = getOptionsFlowScannerBackgroundBlockReason();
   const scannerPressureThrottled =
-    !backgroundBlockedReason &&
-    scannerPressure.throttled;
+    !backgroundBlockedReason && scannerPressure.throttled;
   const scannerFillMode =
     backgroundBlockedReason === "live-warmup"
       ? "startup-protected"
@@ -12036,6 +12495,7 @@ export function getOptionsFlowScannerDiagnostics() {
     : resolveOptionsFlowScannerEffectiveConcurrency(config);
   const deepScanner = optionsFlowScanner.getDiagnostics();
   const radar = optionsFlowRadarScanner.getCoverage();
+  const coverage = getOptionsFlowUniverseCoverage();
   const admissionBudget = getMarketDataAdmissionBudget();
   const effectiveFlowScannerLineCap = getMarketDataPoolEffectiveLineCap(
     "flow-scanner",
@@ -12043,6 +12503,26 @@ export function getOptionsFlowScannerDiagnostics() {
   );
   const schedulableFlowScannerLineCap =
     getOptionsFlowScannerSchedulableLineCap();
+  const scannerTargetLineBudget = Math.min(
+    config.scannerLineBudget,
+    schedulableFlowScannerLineCap,
+  );
+  const seedLineBudget = resolveOptionsFlowScannerPerScanLineBudget(
+    config,
+    OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET,
+  );
+  const expandedLineBudget = resolveOptionsFlowScannerPerScanLineBudget(
+    config,
+    OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET,
+  );
+  const radarDeepLineBudget = resolveOptionsFlowScannerPerScanLineBudget(
+    config,
+    config.radarDeepLineBudget,
+  );
+  const maxDeepScanLines =
+    effectiveConcurrency <= 0
+      ? 0
+      : Math.min(effectiveFlowScannerLineCap, scannerTargetLineBudget);
   const lastSkippedReason = currentOptionsFlowScannerSkipReason(
     deepScanner,
     config,
@@ -12082,18 +12562,27 @@ export function getOptionsFlowScannerDiagnostics() {
     aggregateMinSnapshotSymbols: OPTIONS_FLOW_AGGREGATE_MIN_SNAPSHOT_SYMBOLS,
     radarObservationTtlMs: OPTIONS_FLOW_RADAR_OBSERVATION_TTL_MS,
     radarObservationCount: optionsFlowRadarObservationCache.size,
-    coverage: getOptionsFlowUniverseCoverage(),
+    optionabilityVerifier: getFlowUniverseOptionabilityVerifierDiagnostics(),
+    coverage,
+    plannedHorizon: {
+      symbolCount:
+        coverage.activeTargetSize ?? coverage.selectedSymbols ?? null,
+      symbols: coverage.currentBatch.length
+        ? coverage.currentBatch
+        : deepScanner.lastBatch.length
+          ? deepScanner.lastBatch
+          : radar.promotedSymbols,
+      batchSize: coverage.batchSize,
+      intervalMs: coverage.intervalMs,
+      estimatedCycleMs: coverage.estimatedCycleMs,
+      coverageHealth: coverage.coverageHealth,
+      scannerPhase: coverage.scannerPhase,
+    },
     backgroundBlockedReason,
     backgroundHoldRemainingMs: getLiveWarmupBackgroundHoldRemainingMs(),
     lineBudget: config.scannerLineBudget,
-    seedLineBudget: Math.min(
-      config.scannerLineBudget,
-      OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET,
-    ),
-    expandedLineBudget: Math.min(
-      config.scannerLineBudget,
-      OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET,
-    ),
+    seedLineBudget,
+    expandedLineBudget,
     expandedMinPremium: OPTIONS_FLOW_SCANNER_EXPANDED_MIN_PREMIUM,
     scanTimeoutMs: config.scannerSymbolTimeoutMs,
     lineUtilization: {
@@ -12103,27 +12592,15 @@ export function getOptionsFlowScannerDiagnostics() {
       configuredConcurrency: config.scannerConcurrency,
       effectiveConcurrency,
       scannerLineBudget: config.scannerLineBudget,
-      seedLineBudget: Math.min(
-        config.scannerLineBudget,
-        OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET,
-      ),
-      expandedLineBudget: Math.min(
-        config.scannerLineBudget,
-        OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET,
-      ),
+      scannerTargetLineBudget,
+      seedLineBudget,
+      expandedLineBudget,
       radarDeepLineBudget: config.radarDeepLineBudget,
-      effectiveDeepLineBudget: Math.min(
-        config.radarDeepLineBudget,
-        config.scannerLineBudget,
-      ),
-      maxDeepScanLines: Math.min(
-        effectiveFlowScannerLineCap,
-        effectiveConcurrency * config.scannerLineBudget,
-      ),
+      effectiveDeepLineBudget: radarDeepLineBudget,
+      maxDeepScanLines,
       unusedPoolLines: Math.max(
         0,
-        effectiveFlowScannerLineCap -
-          effectiveConcurrency * config.scannerLineBudget,
+        effectiveFlowScannerLineCap - maxDeepScanLines,
       ),
     },
     deepScanner: diagnosticDeepScanner,
@@ -12365,7 +12842,9 @@ function buildOptionChainCacheKey(input: IbkrOptionChainInput): string {
     strikeCoverage: input.strikeCoverage ?? null,
     strikesAroundMoney: input.strikesAroundMoney ?? null,
     underlyingSpotPrice:
-      underlyingSpotPrice === null ? null : Number(underlyingSpotPrice.toFixed(4)),
+      underlyingSpotPrice === null
+        ? null
+        : Number(underlyingSpotPrice.toFixed(4)),
     quoteHydration: input.quoteHydration ?? "snapshot",
     delayedSnapshotHydration: input.allowDelayedSnapshotHydration !== false,
   });
@@ -12383,7 +12862,9 @@ function buildOptionChainScopeKey(input: IbkrOptionChainInput): string {
     contractType: input.contractType ?? null,
     maxExpirations: input.maxExpirations ?? null,
     underlyingSpotPrice:
-      underlyingSpotPrice === null ? null : Number(underlyingSpotPrice.toFixed(4)),
+      underlyingSpotPrice === null
+        ? null
+        : Number(underlyingSpotPrice.toFixed(4)),
     quoteHydration: input.quoteHydration ?? "snapshot",
     delayedSnapshotHydration: input.allowDelayedSnapshotHydration !== false,
   });
@@ -12454,7 +12935,10 @@ function buildPolygonOptionTicker(input: {
   strike: number;
   right: "call" | "put";
 }): string | null {
-  const underlying = normalizeSymbol(input.underlying).replace(/[^A-Z0-9]/g, "");
+  const underlying = normalizeSymbol(input.underlying).replace(
+    /[^A-Z0-9]/g,
+    "",
+  );
   if (!underlying || !Number.isFinite(input.strike) || input.strike <= 0) {
     return null;
   }
@@ -12511,11 +12995,15 @@ function mapPolygonOptionBarsToBrokerBars(input: {
   }));
 }
 
-function optionBarsHavePositiveVolume(bars: readonly BrokerBarSnapshot[]): boolean {
+function optionBarsHavePositiveVolume(
+  bars: readonly BrokerBarSnapshot[],
+): boolean {
   return bars.some((bar) => Number.isFinite(bar.volume) && bar.volume > 0);
 }
 
-function barTimestampMs(bar: { timestamp: Date | string | number }): number | null {
+function barTimestampMs(bar: {
+  timestamp: Date | string | number;
+}): number | null {
   const value =
     bar.timestamp instanceof Date
       ? bar.timestamp.getTime()
@@ -12536,7 +13024,10 @@ function mergeIbkrAndPolygonOptionBars(input: {
   limit?: number;
 }): { bars: BrokerBarSnapshot[]; gapFilled: boolean } {
   if (!input.polygonBars.length) {
-    return { bars: input.ibkrBars.map(decorateIbkrHistoryBar), gapFilled: false };
+    return {
+      bars: input.ibkrBars.map(decorateIbkrHistoryBar),
+      gapFilled: false,
+    };
   }
 
   const desiredBars = Math.max(
@@ -12701,7 +13192,10 @@ async function fetchOptionChartPolygonBars(input: {
     usedCursorContinuation = Boolean(polygonPage);
   }
   if (!polygonPage) {
-    if (attemptedCursorContinuation || (input.preferCursor && input.historyCursor)) {
+    if (
+      attemptedCursorContinuation ||
+      (input.preferCursor && input.historyCursor)
+    ) {
       barsHydrationCounters.cursorFallback += 1;
     }
     polygonPage = await fetchPolygonOptionBarsPage(getPolygonClient(), {
@@ -12734,7 +13228,9 @@ async function fetchOptionChartPolygonBars(input: {
     page: polygonPage,
     cursorSignature,
     cursorExhausted:
-      usedCursorContinuation && polygonPage.bars.length === 0 && !polygonPage.nextUrl,
+      usedCursorContinuation &&
+      polygonPage.bars.length === 0 &&
+      !polygonPage.nextUrl,
   };
 }
 
@@ -12807,7 +13303,11 @@ async function hydrateOptionChainWithPolygonSnapshots(input: {
       });
       const snapshot = polygonTicker ? byTicker.get(polygonTicker) : null;
       return snapshot
-        ? mergePolygonOptionSnapshotIntoIbkrContract(contract, snapshot, delayed)
+        ? mergePolygonOptionSnapshotIntoIbkrContract(
+            contract,
+            snapshot,
+            delayed,
+          )
         : contract;
     });
   } catch (error) {
@@ -12900,8 +13400,11 @@ function normalizeIbkrOptionChainInput(
     quoteHydration: normalizePublicOptionChainQuoteHydration(
       input.quoteHydration,
     ),
-    underlyingSpotPrice: normalizeUnderlyingSpotPrice(input.underlyingSpotPrice),
-    allowDelayedSnapshotHydration: input.allowDelayedSnapshotHydration !== false,
+    underlyingSpotPrice: normalizeUnderlyingSpotPrice(
+      input.underlyingSpotPrice,
+    ),
+    allowDelayedSnapshotHydration:
+      input.allowDelayedSnapshotHydration !== false,
   };
 }
 
@@ -12981,7 +13484,9 @@ function readOptionChainUnderlyingPrice(
   return prices[Math.floor((prices.length - 1) / 2)];
 }
 
-async function fetchMassiveStockSpotPrice(symbol: string): Promise<number | null> {
+async function fetchMassiveStockSpotPrice(
+  symbol: string,
+): Promise<number | null> {
   if (!isMassiveStocksRealtimeConfigured()) {
     return null;
   }
@@ -13001,7 +13506,9 @@ async function fetchMassiveStockSpotPrice(symbol: string): Promise<number | null
     (candidate) => normalizeSymbol(candidate.symbol) === normalized,
   );
   const price =
-    typeof quote?.price === "number" && Number.isFinite(quote.price) && quote.price > 0
+    typeof quote?.price === "number" &&
+    Number.isFinite(quote.price) &&
+    quote.price > 0
       ? quote.price
       : typeof quote?.bid === "number" &&
           typeof quote?.ask === "number" &&
@@ -13223,12 +13730,20 @@ function isTransientOptionUpstreamError(error: unknown): boolean {
   return error.statusCode >= 500 || error.statusCode === 429;
 }
 
-function getOptionBackoffKey(kind: "chain" | "expiration", key: string): string {
+function getOptionBackoffKey(
+  kind: "chain" | "expiration",
+  key: string,
+): string {
   return `${kind}:${key}`;
 }
 
-function isOptionUpstreamBackedOff(kind: "chain" | "expiration", key: string): boolean {
-  const until = optionUpstreamBackoffUntilByKey.get(getOptionBackoffKey(kind, key));
+function isOptionUpstreamBackedOff(
+  kind: "chain" | "expiration",
+  key: string,
+): boolean {
+  const until = optionUpstreamBackoffUntilByKey.get(
+    getOptionBackoffKey(kind, key),
+  );
   if (!until) {
     return false;
   }
@@ -13336,7 +13851,9 @@ function waitForOptionChainRetry(
   });
 }
 
-function optionChainCacheInput(input: IbkrOptionChainInput): IbkrOptionChainInput {
+function optionChainCacheInput(
+  input: IbkrOptionChainInput,
+): IbkrOptionChainInput {
   const { signal: _signal, ...cacheInput } = input;
   return cacheInput;
 }
@@ -13488,9 +14005,10 @@ async function getCachedIbkrOptionChainWithDebug(
   const inFlight = optionChainInFlight.get(key);
   if (cached && cached.staleExpiresAt > requestedAt) {
     if (!inFlight) {
-      refreshOptionChainCache(key, optionChainCacheInput(normalizedInput)).catch(
-        () => {},
-      );
+      refreshOptionChainCache(
+        key,
+        optionChainCacheInput(normalizedInput),
+      ).catch(() => {});
     }
     return {
       contracts: cached.value,
@@ -13855,7 +14373,9 @@ export function shouldUseDurableOptionExpirationsForRequest(
     return false;
   }
 
-  return durable.expirations.length >= Math.max(1, Math.floor(input.maxExpirations));
+  return (
+    durable.expirations.length >= Math.max(1, Math.floor(input.maxExpirations))
+  );
 }
 
 async function getCachedIbkrOptionExpirationsWithDebug(
@@ -13980,9 +14500,10 @@ async function getCachedIbkrOptionExpirationsWithDebug(
             upstreamMs: null,
             stale: true,
             degraded: true,
-            reason: !input.bypassBridgeBackoff && isBridgeWorkBackedOff("options")
-              ? "options_backoff"
-              : "options_upstream_failure",
+            reason:
+              !input.bypassBridgeBackoff && isBridgeWorkBackedOff("options")
+                ? "options_backoff"
+                : "options_upstream_failure",
             backoffRemainingMs: getBridgeBackoffRemainingMs("options"),
           },
         };
@@ -14030,9 +14551,10 @@ async function getCachedIbkrOptionExpirationsWithDebug(
           upstreamMs: Math.max(0, Date.now() - upstreamStartedAt),
           stale: true,
           degraded: true,
-          reason: !input.bypassBridgeBackoff && isBridgeWorkBackedOff("options")
-            ? "options_backoff"
-            : "options_upstream_failure",
+          reason:
+            !input.bypassBridgeBackoff && isBridgeWorkBackedOff("options")
+              ? "options_backoff"
+              : "options_upstream_failure",
           backoffRemainingMs: getBridgeBackoffRemainingMs("options"),
         },
       };
@@ -14103,13 +14625,17 @@ export async function getOptionChainWithDebug(input: {
   allowDelayedSnapshotHydration?: boolean;
   recordBridgeFailure?: boolean;
   bypassBridgeBackoff?: boolean;
+  signal?: AbortSignal;
 }): Promise<GetOptionChainResultWithDebug> {
   const requestedAt = Date.now();
   const normalizedUnderlying = normalizeSymbol(input.underlying);
   const optionChain = await getCachedIbkrOptionChainWithDebug({
     ...input,
   }).catch((error) => {
-    if (isUnderlyingResolutionError(error) || !isTransientOptionUpstreamError(error)) {
+    if (
+      isUnderlyingResolutionError(error) ||
+      !isTransientOptionUpstreamError(error)
+    ) {
       throw error;
     }
 
@@ -14251,7 +14777,9 @@ export async function batchOptionChains(input: {
           expirationDate,
           status: contracts.length ? "loaded" : "failed",
           contracts,
-          error: contracts.length ? null : "IBKR returned an empty option chain.",
+          error: contracts.length
+            ? null
+            : "IBKR returned an empty option chain.",
           debug: resultDebug,
         } satisfies BatchOptionChainResult;
       } catch (error) {
@@ -14265,12 +14793,12 @@ export async function batchOptionChains(input: {
           contracts: [],
           error: formatOptionChainBatchError(error),
           debug: {
-        cacheStatus: "miss",
-        totalMs: 0,
-        upstreamMs: null,
-        degraded: true,
-        reason: "options_batch_failure",
-      },
+            cacheStatus: "miss",
+            totalMs: 0,
+            upstreamMs: null,
+            degraded: true,
+            reason: "options_batch_failure",
+          },
         } satisfies BatchOptionChainResult;
       }
     },
@@ -14310,6 +14838,7 @@ export async function getOptionExpirationsWithDebug(input: {
   maxExpirations?: number;
   recordBridgeFailure?: boolean;
   bypassBridgeBackoff?: boolean;
+  signal?: AbortSignal;
 }): Promise<GetOptionExpirationsResultWithDebug> {
   const requestedAt = Date.now();
   const normalizedUnderlying = normalizeSymbol(input.underlying);
@@ -14318,8 +14847,12 @@ export async function getOptionExpirationsWithDebug(input: {
     maxExpirations: input.maxExpirations,
     recordBridgeFailure: input.recordBridgeFailure,
     bypassBridgeBackoff: input.bypassBridgeBackoff,
+    signal: input.signal,
   }).catch((error) => {
-    if (isUnderlyingResolutionError(error) || !isTransientOptionUpstreamError(error)) {
+    if (
+      isUnderlyingResolutionError(error) ||
+      !isTransientOptionUpstreamError(error)
+    ) {
       throw error;
     }
 
@@ -14463,7 +14996,8 @@ export async function resolveOptionContractWithDebug(input: {
       right,
       strike,
     });
-    const providerContractId = match?.contract.providerContractId?.trim() || null;
+    const providerContractId =
+      match?.contract.providerContractId?.trim() || null;
     const result: ResolveOptionContractResult = {
       underlying,
       expirationDate,
@@ -14471,7 +15005,7 @@ export async function resolveOptionContractWithDebug(input: {
       right,
       status: providerContractId ? "resolved" : "not_found",
       providerContractId,
-      contract: providerContractId ? match?.contract ?? null : null,
+      contract: providerContractId ? (match?.contract ?? null) : null,
       errorMessage: providerContractId
         ? null
         : match
@@ -14487,7 +15021,7 @@ export async function resolveOptionContractWithDebug(input: {
         returnedCount: providerContractId ? 1 : 0,
         degraded: providerContractId ? debug.degraded : true,
         reason: providerContractId
-          ? debug.reason ?? null
+          ? (debug.reason ?? null)
           : match
             ? "option_contract_missing_provider_contract_id"
             : "option_contract_not_found",
@@ -14795,7 +15329,8 @@ export async function getOptionChartBarsWithDebug(input: {
       strike,
     });
     contract = match?.contract ?? null;
-    const chainProviderContractId = contract?.providerContractId?.trim() || null;
+    const chainProviderContractId =
+      contract?.providerContractId?.trim() || null;
     if (chainProviderContractId) {
       providerContractId = chainProviderContractId;
       resolutionSource = "chain";
@@ -14971,8 +15506,12 @@ export async function getOptionChartBarsWithDebug(input: {
         marketDataMode: merged.gapFilled
           ? (latestBar?.marketDataMode ?? ibkrBarsResult.marketDataMode)
           : ibkrBarsResult.marketDataMode,
-        dataUpdatedAt: merged.gapFilled ? dataUpdatedAt : ibkrBarsResult.dataUpdatedAt,
-        ageMs: merged.gapFilled ? getAgeMs(dataUpdatedAt) : ibkrBarsResult.ageMs,
+        dataUpdatedAt: merged.gapFilled
+          ? dataUpdatedAt
+          : ibkrBarsResult.dataUpdatedAt,
+        ageMs: merged.gapFilled
+          ? getAgeMs(dataUpdatedAt)
+          : ibkrBarsResult.ageMs,
         historySource,
         historyPage,
       },
@@ -14985,19 +15524,16 @@ export async function getOptionChartBarsWithDebug(input: {
           (ibkrBarsDebug as RequestDebugMetadata | null)?.upstreamMs ??
           (chainDebug as RequestDebugMetadata | null)?.upstreamMs ??
           null,
-        stale:
-          stale,
+        stale: stale,
         ageMs:
           (ibkrBarsDebug as RequestDebugMetadata | null)?.ageMs ??
           (chainDebug as RequestDebugMetadata | null)?.ageMs,
-        degraded:
-          Boolean(stale),
-        reason:
-          (ibkrBarsDebug as RequestDebugMetadata | null)?.stale
-            ? "stale_ibkr_option_history_cache"
-            : (chainDebug as RequestDebugMetadata | null)?.stale
-              ? "stale_option_chain_cache"
-              : null,
+        degraded: Boolean(stale),
+        reason: (ibkrBarsDebug as RequestDebugMetadata | null)?.stale
+          ? "stale_ibkr_option_history_cache"
+          : (chainDebug as RequestDebugMetadata | null)?.stale
+            ? "stale_option_chain_cache"
+            : null,
       },
     );
   }
@@ -15218,7 +15754,9 @@ function selectFlowScannerLiveCandidateContracts(
   const expirationKeys = Array.from(
     new Set(
       candidateContracts
-        .map((contract) => contract.contract.expirationDate.toISOString().slice(0, 10))
+        .map((contract) =>
+          contract.contract.expirationDate.toISOString().slice(0, 10),
+        )
         .sort(),
     ),
   );
@@ -15248,8 +15786,7 @@ function selectFlowScannerLiveCandidateContracts(
     const rightMark = right.mark ?? right.last ?? 0;
     const leftVolume = left.volume ?? 0;
     const rightVolume = right.volume ?? 0;
-    const leftPremium =
-      leftMark * leftVolume * left.contract.sharesPerContract;
+    const leftPremium = leftMark * leftVolume * left.contract.sharesPerContract;
     const rightPremium =
       rightMark * rightVolume * right.contract.sharesPerContract;
     if (leftPremium !== rightPremium) return rightPremium - leftPremium;
@@ -15272,11 +15809,13 @@ function selectFlowScannerLiveCandidateContracts(
         : underlyingPrice;
     const leftDistance =
       leftUnderlyingPrice !== null && leftUnderlyingPrice > 0
-        ? Math.abs(left.contract.strike - leftUnderlyingPrice) / leftUnderlyingPrice
+        ? Math.abs(left.contract.strike - leftUnderlyingPrice) /
+          leftUnderlyingPrice
         : Number.POSITIVE_INFINITY;
     const rightDistance =
       rightUnderlyingPrice !== null && rightUnderlyingPrice > 0
-        ? Math.abs(right.contract.strike - rightUnderlyingPrice) / rightUnderlyingPrice
+        ? Math.abs(right.contract.strike - rightUnderlyingPrice) /
+          rightUnderlyingPrice
         : Number.POSITIVE_INFINITY;
     if (leftDistance !== rightDistance) return leftDistance - rightDistance;
 
@@ -15286,10 +15825,17 @@ function selectFlowScannerLiveCandidateContracts(
     );
   };
 
-  const quartileQueues = Array.from({ length: quartileCount }, () => [] as IbkrOptionChainContracts);
+  const quartileQueues = Array.from(
+    { length: quartileCount },
+    () => [] as IbkrOptionChainContracts,
+  );
   candidateContracts.forEach((contract) => {
-    const expirationKey = contract.contract.expirationDate.toISOString().slice(0, 10);
-    quartileQueues[quartileByExpiration.get(expirationKey) ?? 0]?.push(contract);
+    const expirationKey = contract.contract.expirationDate
+      .toISOString()
+      .slice(0, 10);
+    quartileQueues[quartileByExpiration.get(expirationKey) ?? 0]?.push(
+      contract,
+    );
   });
   quartileQueues.forEach((queue) => queue.sort(heatRank));
 
@@ -15323,10 +15869,7 @@ function selectFlowScannerHistoricalCandidateContracts(
 ): IbkrOptionChainContracts {
   return selectFlowScannerLiveCandidateContracts(
     contracts,
-    Math.max(
-      1,
-      Math.min(lineBudget, OPTIONS_FLOW_HISTORICAL_CANDIDATE_LIMIT),
-    ),
+    Math.max(1, Math.min(lineBudget, OPTIONS_FLOW_HISTORICAL_CANDIDATE_LIMIT)),
     rotationKey,
   );
 }
@@ -15337,15 +15880,19 @@ function mergeFlowScannerHydratedContracts(
 ): IbkrOptionChainContracts {
   const hydratedByProviderContractId = new Map(
     hydratedContracts
-      .map((contract) => [
-        contract.contract.providerContractId?.trim?.() ?? "",
-        contract,
-      ] as const)
+      .map(
+        (contract) =>
+          [
+            contract.contract.providerContractId?.trim?.() ?? "",
+            contract,
+          ] as const,
+      )
       .filter(([providerContractId]) => Boolean(providerContractId)),
   );
 
   return baseContracts.map((contract) => {
-    const providerContractId = contract.contract.providerContractId?.trim?.() ?? "";
+    const providerContractId =
+      contract.contract.providerContractId?.trim?.() ?? "";
     return hydratedByProviderContractId.get(providerContractId) ?? contract;
   });
 }
@@ -15400,7 +15947,10 @@ function applyHistoricalBarsToFlowScannerContract(
   const mark =
     bid !== null && bid > 0 && ask !== null && ask > 0
       ? (bid + ask) / 2
-      : historicalClose ?? positiveValue(candidate.mark) ?? fallbackLast ?? candidate.mark;
+      : (historicalClose ??
+        positiveValue(candidate.mark) ??
+        fallbackLast ??
+        candidate.mark);
   const dataUpdatedAt = getBarDataUpdatedAt(latestBar);
   const marketDataMode =
     normalizeContractMarketDataMode(latestBar.marketDataMode) ??
@@ -15418,7 +15968,7 @@ function applyHistoricalBarsToFlowScannerContract(
     quoteFreshness:
       latestBar.freshness ?? barsResult?.freshness ?? candidate.quoteFreshness,
     marketDataMode,
-    ageMs: dataUpdatedAt ? getAgeMs(dataUpdatedAt) : candidate.ageMs ?? null,
+    ageMs: dataUpdatedAt ? getAgeMs(dataUpdatedAt) : (candidate.ageMs ?? null),
   };
 }
 
@@ -15532,7 +16082,7 @@ function applyLiveQuoteToFlowScannerContract(
     mark:
       bid !== null && ask !== null && bid > 0 && ask > 0
         ? (bid + ask) / 2
-        : last ?? candidate.mark,
+        : (last ?? candidate.mark),
     impliedVolatility:
       quote.impliedVolatility ?? candidate.impliedVolatility ?? null,
     delta: quote.delta ?? candidate.delta ?? null,
@@ -15544,8 +16094,10 @@ function applyLiveQuoteToFlowScannerContract(
     updatedAt: quote.updatedAt ?? candidate.updatedAt,
     quoteFreshness: quote.freshness ?? candidate.quoteFreshness,
     marketDataMode: quote.marketDataMode ?? candidate.marketDataMode,
-    quoteUpdatedAt: quote.dataUpdatedAt ?? quote.updatedAt ?? candidate.quoteUpdatedAt,
-    dataUpdatedAt: quote.dataUpdatedAt ?? quote.updatedAt ?? candidate.dataUpdatedAt,
+    quoteUpdatedAt:
+      quote.dataUpdatedAt ?? quote.updatedAt ?? candidate.quoteUpdatedAt,
+    dataUpdatedAt:
+      quote.dataUpdatedAt ?? quote.updatedAt ?? candidate.dataUpdatedAt,
     ageMs: quote.ageMs ?? candidate.ageMs ?? null,
   };
 }
@@ -15623,7 +16175,9 @@ async function hydrateFlowScannerContractsFromLiveQuotes(input: {
 
   const quotesByProviderContractId = new Map(
     quotePayload.quotes
-      .map((quote) => [quote.providerContractId?.trim?.() || "", quote] as const)
+      .map(
+        (quote) => [quote.providerContractId?.trim?.() || "", quote] as const,
+      )
       .filter(([providerContractId]) => Boolean(providerContractId)),
   );
   const quoteDebug = quotePayload.debug ?? {
@@ -15637,12 +16191,13 @@ async function hydrateFlowScannerContractsFromLiveQuotes(input: {
   const acceptedCount = quoteDebug.acceptedCount ?? 0;
   const returnedCount =
     quoteDebug.returnedCount ?? quotePayload.quotes.length ?? 0;
-  const missingCount =
-    quoteDebug.missingProviderContractIds?.length ?? 0;
+  const missingCount = quoteDebug.missingProviderContractIds?.length ?? 0;
   const contracts = input.candidates.map((contract) =>
     applyLiveQuoteToFlowScannerContract(
       contract,
-      quotesByProviderContractId.get(contract.contract.providerContractId ?? "") ?? null,
+      quotesByProviderContractId.get(
+        contract.contract.providerContractId ?? "",
+      ) ?? null,
     ),
   );
 
@@ -15657,7 +16212,8 @@ async function hydrateFlowScannerContractsFromLiveQuotes(input: {
       Math.max(0, returnedCount - acceptedCount) +
       Math.max(0, acceptedCount - returnedCount - missingCount),
     marketDataMode:
-      quotePayload.quotes.find((quote) => quote.marketDataMode)?.marketDataMode ?? null,
+      quotePayload.quotes.find((quote) => quote.marketDataMode)
+        ?.marketDataMode ?? null,
     errorMessage: quoteDebug.errorMessage ?? null,
     blockedReason: quoteDebug.blockedReason ?? null,
   };
@@ -15712,7 +16268,9 @@ function normalizeFlowEventsTimeWindow(input: {
   };
 }
 
-function flowEventsTimeWindowCacheKey(window: FlowEventsTimeWindow | null): string {
+function flowEventsTimeWindowCacheKey(
+  window: FlowEventsTimeWindow | null,
+): string {
   return window
     ? `from=${window.from?.toISOString() ?? ""}:to=${
         window.to?.toISOString() ?? ""
@@ -15855,7 +16413,9 @@ export async function listFlowEvents(input: {
   const allowPolygonFallback = input.allowPolygonFallback === true;
   const nonblockingScannerRead = !blocking;
   const nonblockingScannerRefresh =
-    nonblockingScannerRead && shouldQueueRefresh && allowPolygonFallback !== true;
+    nonblockingScannerRead &&
+    shouldQueueRefresh &&
+    allowPolygonFallback !== true;
   const explicitLineBudget =
     Number.isFinite(input.lineBudget) && (input.lineBudget ?? 0) > 0
       ? Math.max(
@@ -16017,8 +16577,10 @@ export async function listFlowEvents(input: {
     unusualThreshold,
     lineBudget: scannerLineBudget,
     allowPolygonFallback,
-    phase: nonblockingScannerRefresh ? "seed" as const : "manual" as const,
-    expirationScanCount: nonblockingScannerRefresh ? 1 : runtimeConfig.expirationScanCount,
+    phase: nonblockingScannerRefresh ? ("seed" as const) : ("manual" as const),
+    expirationScanCount: nonblockingScannerRefresh
+      ? 1
+      : runtimeConfig.expirationScanCount,
     strikeCoverage: "standard" as const,
   };
   const scannerSnapshotLimit = nonblockingScannerRead
@@ -16387,7 +16949,8 @@ async function listFlowEventsUncached(input: {
   let polygonError: string | null = null;
   const scanPhase = input.scanPhase ?? "manual";
   const expirationScanCount =
-    Number.isFinite(input.expirationScanCount) && (input.expirationScanCount ?? 0) >= 0
+    Number.isFinite(input.expirationScanCount) &&
+    (input.expirationScanCount ?? 0) >= 0
       ? Math.max(0, Math.floor(input.expirationScanCount as number))
       : getOptionsFlowRuntimeConfig().expirationScanCount;
   const strikeCoverage = input.strikeCoverage ?? "standard";
@@ -16461,7 +17024,9 @@ async function listFlowEventsUncached(input: {
         bypassBridgeBackoff: input.bypassBridgeBackoff === true,
         signal: input.signal,
       });
-      const metadataContracts = batch.results.flatMap((result) => result.contracts);
+      const metadataContracts = batch.results.flatMap(
+        (result) => result.contracts,
+      );
       ibkrMetadataContractCount = metadataContracts.length;
       const liveCandidateContracts = selectFlowScannerLiveCandidateContracts(
         metadataContracts,
@@ -16521,7 +17086,8 @@ async function listFlowEventsUncached(input: {
         historicalHydration.returnedCount === 0 &&
         liveHydration.returnedCount === 0 &&
         historicalCandidateContracts.every(
-          (contract) => (contract.mark ?? 0) <= 0 || (contract.volume ?? 0) <= 0,
+          (contract) =>
+            (contract.mark ?? 0) <= 0 || (contract.volume ?? 0) <= 0,
         )
       ) {
         ibkrReason ??= "options_flow_historical_hydration_empty";
@@ -16574,108 +17140,109 @@ async function listFlowEventsUncached(input: {
   // Require both a marked contract and non-zero day volume to filter out the
   // inactive long tail.
   const candidateEvents = qualifiedContracts.map((c) => {
-      const mark = c.mark ?? 0;
-      const mid = ((c.bid ?? 0) + (c.ask ?? 0)) / 2;
-      const side: "buy" | "sell" | "unknown" =
-        (c.bid ?? 0) > 0 && (c.ask ?? 0) > 0 && c.last != null
-          ? c.last >= (c.ask ?? 0)
-            ? "buy"
-            : c.last <= (c.bid ?? 0)
-              ? "sell"
-              : c.last > mid
-                ? "buy"
-                : c.last < mid
-                  ? "sell"
-                  : "unknown"
-          : "unknown";
-      const sentiment: "bullish" | "bearish" | "neutral" =
-        side === "unknown"
-          ? "neutral"
-          : (c.contract.right === "call" && side === "buy") ||
-              (c.contract.right === "put" && side === "sell")
-            ? "bullish"
-            : "bearish";
-      const price = (c.last ?? 0) > 0 ? (c.last ?? mark) : mark;
-      const size = c.volume ?? 0;
-      const { unusualScore, isUnusual } = computeUnusualMetrics(
-        size,
-        c.openInterest ?? 0,
-        input.unusualThreshold,
-      );
-      const underlyingPrice =
-        typeof c.underlyingPrice === "number" &&
-        Number.isFinite(c.underlyingPrice) &&
-        c.underlyingPrice > 0
-          ? c.underlyingPrice
-          : underlyingSpotPrice;
-      const distancePercent =
-        underlyingPrice !== null && underlyingPrice > 0
-          ? ((c.contract.strike - underlyingPrice) / underlyingPrice) * 100
-          : null;
-      const atmBand =
-        underlyingPrice !== null && underlyingPrice > 0
-          ? Math.max(0.01, underlyingPrice * 0.0025)
-          : null;
-      const absoluteDistance =
-        underlyingPrice !== null ? Math.abs(c.contract.strike - underlyingPrice) : null;
-      const moneyness =
-        underlyingPrice === null || atmBand === null || absoluteDistance === null
-          ? null
-          : absoluteDistance <= atmBand
-            ? "ATM"
-            : c.contract.right === "call"
-              ? c.contract.strike < underlyingPrice
-                ? "ITM"
-                : "OTM"
-              : c.contract.strike > underlyingPrice
-                ? "ITM"
-                : "OTM";
-      // Rank by mark-based premium (mark × volume × multiplier) so the
-      // ordering is stable even when `last` is stale or zero. The display
-      // `price` still prefers the last field when available.
-      const occurredAt =
-        coerceIbkrSnapshotFlowOccurredAt(
-          c.dataUpdatedAt ?? c.quoteUpdatedAt ?? c.updatedAt ?? new Date(),
-        );
-      return {
-        id: `${c.contract.ticker}-${occurredAt.getTime()}`,
-        underlying: normalizeSymbol(c.contract.underlying),
-        provider: "ibkr" as const,
-        basis: "snapshot" as const,
-        optionTicker: c.contract.ticker,
-        providerContractId: c.contract.providerContractId ?? null,
-        strike: c.contract.strike,
-        expirationDate: c.contract.expirationDate,
-        right: c.contract.right,
-        price,
-        bid: c.bid,
-        ask: c.ask,
-        last: c.last,
-        mark,
-        size,
-        premium: mark * size * c.contract.sharesPerContract,
-        multiplier: c.contract.multiplier,
-        sharesPerContract: c.contract.sharesPerContract,
-        openInterest: c.openInterest ?? 0,
-        impliedVolatility: c.impliedVolatility,
-        delta: c.delta,
-        gamma: c.gamma,
-        theta: c.theta,
-        vega: c.vega,
-        underlyingPrice,
-        moneyness,
-        distancePercent,
-        confidence: "snapshot_activity" as const,
-        sourceBasis: "snapshot_activity" as const,
-        exchange: "IBKR",
-        side,
-        sentiment,
-        tradeConditions: [] as string[],
-        occurredAt,
-        unusualScore,
-        isUnusual,
-      };
-    });
+    const mark = c.mark ?? 0;
+    const mid = ((c.bid ?? 0) + (c.ask ?? 0)) / 2;
+    const side: "buy" | "sell" | "unknown" =
+      (c.bid ?? 0) > 0 && (c.ask ?? 0) > 0 && c.last != null
+        ? c.last >= (c.ask ?? 0)
+          ? "buy"
+          : c.last <= (c.bid ?? 0)
+            ? "sell"
+            : c.last > mid
+              ? "buy"
+              : c.last < mid
+                ? "sell"
+                : "unknown"
+        : "unknown";
+    const sentiment: "bullish" | "bearish" | "neutral" =
+      side === "unknown"
+        ? "neutral"
+        : (c.contract.right === "call" && side === "buy") ||
+            (c.contract.right === "put" && side === "sell")
+          ? "bullish"
+          : "bearish";
+    const price = (c.last ?? 0) > 0 ? (c.last ?? mark) : mark;
+    const size = c.volume ?? 0;
+    const { unusualScore, isUnusual } = computeUnusualMetrics(
+      size,
+      c.openInterest ?? 0,
+      input.unusualThreshold,
+    );
+    const underlyingPrice =
+      typeof c.underlyingPrice === "number" &&
+      Number.isFinite(c.underlyingPrice) &&
+      c.underlyingPrice > 0
+        ? c.underlyingPrice
+        : underlyingSpotPrice;
+    const distancePercent =
+      underlyingPrice !== null && underlyingPrice > 0
+        ? ((c.contract.strike - underlyingPrice) / underlyingPrice) * 100
+        : null;
+    const atmBand =
+      underlyingPrice !== null && underlyingPrice > 0
+        ? Math.max(0.01, underlyingPrice * 0.0025)
+        : null;
+    const absoluteDistance =
+      underlyingPrice !== null
+        ? Math.abs(c.contract.strike - underlyingPrice)
+        : null;
+    const moneyness =
+      underlyingPrice === null || atmBand === null || absoluteDistance === null
+        ? null
+        : absoluteDistance <= atmBand
+          ? "ATM"
+          : c.contract.right === "call"
+            ? c.contract.strike < underlyingPrice
+              ? "ITM"
+              : "OTM"
+            : c.contract.strike > underlyingPrice
+              ? "ITM"
+              : "OTM";
+    // Rank by mark-based premium (mark × volume × multiplier) so the
+    // ordering is stable even when `last` is stale or zero. The display
+    // `price` still prefers the last field when available.
+    const occurredAt = coerceIbkrSnapshotFlowOccurredAt(
+      c.dataUpdatedAt ?? c.quoteUpdatedAt ?? c.updatedAt ?? new Date(),
+    );
+    return {
+      id: `${c.contract.ticker}-${occurredAt.getTime()}`,
+      underlying: normalizeSymbol(c.contract.underlying),
+      provider: "ibkr" as const,
+      basis: "snapshot" as const,
+      optionTicker: c.contract.ticker,
+      providerContractId: c.contract.providerContractId ?? null,
+      strike: c.contract.strike,
+      expirationDate: c.contract.expirationDate,
+      right: c.contract.right,
+      price,
+      bid: c.bid,
+      ask: c.ask,
+      last: c.last,
+      mark,
+      size,
+      premium: mark * size * c.contract.sharesPerContract,
+      multiplier: c.contract.multiplier,
+      sharesPerContract: c.contract.sharesPerContract,
+      openInterest: c.openInterest ?? 0,
+      impliedVolatility: c.impliedVolatility,
+      delta: c.delta,
+      gamma: c.gamma,
+      theta: c.theta,
+      vega: c.vega,
+      underlyingPrice,
+      moneyness,
+      distancePercent,
+      confidence: "snapshot_activity" as const,
+      sourceBasis: "snapshot_activity" as const,
+      exchange: "IBKR",
+      side,
+      sentiment,
+      tradeConditions: [] as string[],
+      occurredAt,
+      unusualScore,
+      isUnusual,
+    };
+  });
   const filteredEvents = candidateEvents.filter((event) =>
     flowEventMatchesFilters(event, input.filters, input.unusualThreshold),
   );
@@ -16758,7 +17325,9 @@ async function listFlowEventsUncached(input: {
   }
 
   const ibkrLoadedEmptySnapshot = ibkrStatus === "loaded";
-  const errorMessage = ibkrLoadedEmptySnapshot ? null : polygonError ?? ibkrError;
+  const errorMessage = ibkrLoadedEmptySnapshot
+    ? null
+    : (polygonError ?? ibkrError);
   return {
     events: [],
     source: flowSource({
@@ -16841,7 +17410,8 @@ function summarizeMarketDataLineUsage(
     activeLineCount: diagnostics.activeLineCount,
     activeOptionLineCount: diagnostics.activeOptionLineCount,
     accountMonitorLineCount: diagnostics.accountMonitorLineCount,
-    accountMonitorRemainingLineCount: diagnostics.accountMonitorRemainingLineCount,
+    accountMonitorRemainingLineCount:
+      diagnostics.accountMonitorRemainingLineCount,
     flowScannerLineCount: diagnostics.flowScannerLineCount,
     flowScannerRemainingLineCount: diagnostics.flowScannerRemainingLineCount,
     usableRemainingLineCount: diagnostics.usableRemainingLineCount,
@@ -16863,9 +17433,7 @@ function normalizeFlowScannerBenchmarkLineBudgets(
   ).sort((left, right) => left - right);
 }
 
-function summarizeBenchmarkBatchDebug(
-  batch: BatchOptionChainsResult | null,
-): {
+function summarizeBenchmarkBatchDebug(batch: BatchOptionChainsResult | null): {
   failedExpirationCount: number;
   errorSamples: string[];
   debugReasonCounts: Array<{ reason: string; count: number }>;
@@ -16922,7 +17490,9 @@ export async function benchmarkOptionsFlowScannerTickerPass(input: {
   }
 
   const runtimeConfig = getOptionsFlowRuntimeConfig();
-  const lineBudgets = normalizeFlowScannerBenchmarkLineBudgets(input.lineBudgets);
+  const lineBudgets = normalizeFlowScannerBenchmarkLineBudgets(
+    input.lineBudgets,
+  );
   const maxDte =
     input.maxDte === undefined
       ? null
@@ -16956,7 +17526,8 @@ export async function benchmarkOptionsFlowScannerTickerPass(input: {
     let metadataFailedExpirationCount = 0;
     let metadataContractCount = 0;
     let metadataErrorSamples: string[] = [];
-    let metadataDebugReasonCounts: Array<{ reason: string; count: number }> = [];
+    let metadataDebugReasonCounts: Array<{ reason: string; count: number }> =
+      [];
     let liveCandidateCount = 0;
     let acceptedQuoteCount = 0;
     let rejectedQuoteCount = 0;
@@ -16994,8 +17565,7 @@ export async function benchmarkOptionsFlowScannerTickerPass(input: {
         strikeCoverage,
       });
       selectedStrikeCoverage = metadataSelection.strikeCoverage ?? "standard";
-      selectedStrikesAroundMoney =
-        metadataSelection.strikesAroundMoney ?? null;
+      selectedStrikesAroundMoney = metadataSelection.strikesAroundMoney ?? null;
 
       const metadataStartedAt = Date.now();
       const batch =
@@ -17015,8 +17585,7 @@ export async function benchmarkOptionsFlowScannerTickerPass(input: {
         batch?.results.filter((result) => result.contracts.length > 0).length ??
         0;
       const batchDebugSummary = summarizeBenchmarkBatchDebug(batch);
-      metadataFailedExpirationCount =
-        batchDebugSummary.failedExpirationCount;
+      metadataFailedExpirationCount = batchDebugSummary.failedExpirationCount;
       metadataErrorSamples = batchDebugSummary.errorSamples;
       metadataDebugReasonCounts = batchDebugSummary.debugReasonCounts;
       const metadataContracts =
@@ -17058,7 +17627,8 @@ export async function benchmarkOptionsFlowScannerTickerPass(input: {
       lineDwellMs = quoteMs;
       acceptedQuoteCount = liveHydration.acceptedCount;
       rejectedQuoteCount = liveHydration.rejectedCount;
-      returnedQuoteCount = liveHydration.returnedCount || historicalHydration.returnedCount;
+      returnedQuoteCount =
+        liveHydration.returnedCount || historicalHydration.returnedCount;
       missingQuoteCount = liveHydration.missingCount;
 
       results.push({

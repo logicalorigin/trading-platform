@@ -53,12 +53,6 @@ const LazyOperationsPositionsTable = lazyWithRetry(
   })),
   { label: "OperationsPositionsTable" },
 );
-const LazyOperationsSignalDrill = lazyWithRetry(
-  () => import("./OperationsSignalDrill").then((module) => ({
-    default: module.OperationsSignalDrill,
-  })),
-  { label: "OperationsSignalDrill" },
-);
 const LazyOperationsSignalTable = lazyWithRetry(
   () => import("./OperationsSignalTable").then((module) => ({
     default: module.OperationsSignalTable,
@@ -242,33 +236,62 @@ const buildAlgoOptionQuoteGroups = ({
   candidates = [],
   positions = [],
   ledgerPositions = [],
+  signals = [],
 }) => {
   const groups = new Map();
-  const addContract = (contract, symbol) => {
+  const primaryContractKeys = new Set();
+  const addContract = (contract, symbol, source = "primary") => {
     const record = asRecord(contract);
     const providerContractId = optionProviderContractId(record);
     const underlying = String(record.underlying || symbol || "").trim().toUpperCase();
     if (!providerContractId || !underlying) return;
-    if (!groups.has(underlying)) groups.set(underlying, new Set());
-    groups.get(underlying).add(providerContractId);
+    const contractKey = `${underlying}:${providerContractId}`;
+    if (source === "preview" && primaryContractKeys.has(contractKey)) return;
+    if (source !== "preview") primaryContractKeys.add(contractKey);
+
+    const groupKey = `${source === "preview" ? "preview" : "primary"}:${underlying}`;
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, {
+        source: source === "preview" ? "preview" : "primary",
+        underlying,
+        providerContractIds: [],
+        providerContractIdSet: new Set(),
+        requiresGreeks: true,
+      });
+    }
+    const group = groups.get(groupKey);
+    if (group.providerContractIdSet.has(providerContractId)) return;
+    group.providerContractIdSet.add(providerContractId);
+    group.providerContractIds.push(providerContractId);
   };
   positions.forEach((position) => {
-    addContract(asRecord(position).selectedContract, asRecord(position).symbol);
+    addContract(asRecord(position).selectedContract, asRecord(position).symbol, "primary");
   });
   ledgerPositions.forEach((position) => {
-    addContract(asRecord(position).optionContract, asRecord(position).symbol);
+    addContract(asRecord(position).optionContract, asRecord(position).symbol, "primary");
   });
   candidates.forEach((candidate) => {
-    addContract(asRecord(candidate).selectedContract, asRecord(candidate).symbol);
+    addContract(asRecord(candidate).selectedContract, asRecord(candidate).symbol, "primary");
   });
-  return Array.from(groups, ([underlying, ids]) => ({
-    underlying,
-    providerContractIds: Array.from(ids),
-  }));
+  signals.forEach((signal) => {
+    const record = asRecord(signal);
+    addContract(
+      asRecord(asRecord(record.contractPreview).selectedContract),
+      record.symbol,
+      "preview",
+    );
+  });
+  return Array.from(groups.values()).map(({ providerContractIdSet, ...group }) => group);
 };
 
 const ALGO_OPTION_QUOTE_CANDIDATE_LIMIT = 12;
 const ALGO_OPTION_QUOTE_CONTRACT_LIMIT = 16;
+
+const countAlgoOptionQuoteGroupContracts = (groups) =>
+  (groups || []).reduce(
+    (total, group) => total + (group.providerContractIds || []).length,
+    0,
+  );
 
 const limitAlgoOptionQuoteGroups = (
   groups,
@@ -287,14 +310,19 @@ const limitAlgoOptionQuoteGroups = (
   });
 };
 
-const AlgoOptionQuoteStreamGroup = ({ underlying, providerContractIds }) => {
+const AlgoOptionQuoteStreamGroup = ({
+  underlying,
+  providerContractIds,
+  owner,
+  requiresGreeks = true,
+}) => {
   useIbkrOptionQuoteStream({
     underlying,
     providerContractIds,
     enabled: Boolean(underlying && providerContractIds.length),
-    owner: `algo-operations:${underlying}`,
+    owner: owner || `algo-operations:${underlying}`,
     intent: "automation-live",
-    requiresGreeks: true,
+    requiresGreeks,
   });
   return null;
 };
@@ -470,21 +498,33 @@ export const AlgoLivePage = ({
       ALGO_OPTION_QUOTE_CANDIDATE_LIMIT,
     );
   }, [selectedCandidate, signalOptionsCandidates, visibleSignalSymbols]);
-  const optionQuoteGroups = useMemo(
-    () =>
-      limitAlgoOptionQuoteGroups(
-        buildAlgoOptionQuoteGroups({
-          candidates: optionQuoteCandidates,
-          positions: signalOptionsPositions,
-          ledgerPositions: focusedLedgerPositions,
-        }),
+  const optionQuoteGroups = useMemo(() => {
+    const groups = buildAlgoOptionQuoteGroups({
+      candidates: optionQuoteCandidates,
+      positions: signalOptionsPositions,
+      ledgerPositions: focusedLedgerPositions,
+      signals: visibleSignalRows,
+    }).map((group) => ({
+      ...group,
+      owner:
+        group.source === "preview"
+          ? `signal-options-preview:${focusedDeploymentId || "active"}:${group.underlying}`
+          : `algo-operations:${group.underlying}`,
+    }));
+    return limitAlgoOptionQuoteGroups(
+      groups,
+      Math.max(
+        ALGO_OPTION_QUOTE_CONTRACT_LIMIT,
+        countAlgoOptionQuoteGroupContracts(groups),
       ),
-    [
-      focusedLedgerPositions,
-      optionQuoteCandidates,
-      signalOptionsPositions,
-    ],
-  );
+    );
+  }, [
+    focusedDeploymentId,
+    focusedLedgerPositions,
+    optionQuoteCandidates,
+    signalOptionsPositions,
+    visibleSignalRows,
+  ]);
 
   useEffect(() => {
     if (!settingsDrawerOpen) return;
@@ -666,9 +706,11 @@ export const AlgoLivePage = ({
     >
       {optionQuoteGroups.map((group) => (
         <AlgoOptionQuoteStreamGroup
-          key={group.underlying}
+          key={`${group.source}:${group.underlying}`}
           underlying={group.underlying}
           providerContractIds={group.providerContractIds}
+          owner={group.owner}
+          requiresGreeks={group.requiresGreeks}
         />
       ))}
 
@@ -970,22 +1012,6 @@ export const AlgoLivePage = ({
               algoIsPhone={algoIsPhone}
               algoIsNarrow={algoIsNarrow}
               onOpenCandidateInTrade={onOpenCandidateInTrade}
-              renderDrill={({ signal, candidate }) => {
-                const symbol = String(signal?.symbol || "").toUpperCase();
-                const indexed = symbolIndex?.[symbol] || {};
-                return (
-                  <Suspense fallback={<AlgoDeferredBlock label="Loading signal drilldown..." />}>
-                    <LazyOperationsSignalDrill
-                      signal={signal}
-                      candidate={candidate || indexed.candidate}
-                      position={indexed.position}
-                      events={events || []}
-                      userPreferences={userPreferences}
-                      signalOptionsProfile={signalOptionsProfile}
-                    />
-                  </Suspense>
-                );
-              }}
             />
           </Suspense>
 

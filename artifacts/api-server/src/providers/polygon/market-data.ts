@@ -18,7 +18,16 @@ import {
   type PolygonRuntimeConfig,
 } from "../../lib/runtime";
 
-type BarTimeframe = "1s" | "5s" | "15s" | "1m" | "5m" | "15m" | "1h" | "1d";
+type BarTimeframe =
+  | "1s"
+  | "5s"
+  | "15s"
+  | "1m"
+  | "2m"
+  | "5m"
+  | "15m"
+  | "1h"
+  | "1d";
 type OptionRight = "call" | "put";
 type FlowSentiment = "bullish" | "bearish" | "neutral";
 type FlowEventSideBasis = "quote_match" | "tick_test" | "none";
@@ -793,6 +802,7 @@ const TIMEFRAME_TO_POLYGON_RANGE: Record<
   "5s": { multiplier: 5, timespan: "second", stepMs: 5_000 },
   "15s": { multiplier: 15, timespan: "second", stepMs: 15_000 },
   "1m": { multiplier: 1, timespan: "minute", stepMs: 60_000 },
+  "2m": { multiplier: 2, timespan: "minute", stepMs: 120_000 },
   "5m": { multiplier: 5, timespan: "minute", stepMs: 300_000 },
   "15m": { multiplier: 15, timespan: "minute", stepMs: 900_000 },
   "1h": { multiplier: 1, timespan: "hour", stepMs: 3_600_000 },
@@ -834,6 +844,8 @@ function resolveAggregateBaseLimit(timeframe: BarTimeframe, desiredBars: number)
       return safeBars * 15;
     case "1m":
       return safeBars;
+    case "2m":
+      return safeBars * 2;
     case "5m":
       return safeBars * 5;
     case "15m":

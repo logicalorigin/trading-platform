@@ -104,6 +104,15 @@ test("TradeScreen option chart uses shared contract flow marker hydration", () =
   assert.match(source, /chartFlowDiagnostics=\{chartEventConversion\}/);
 });
 
+test("TradeScreen applies active Algo Pyrus Signals settings to the option chart", () => {
+  assert.match(source, /useGetSignalMonitorProfile/);
+  assert.match(source, /signalMonitorProfile=\{signalMonitorProfile\}/);
+  assert.match(source, /resolvePyrusSignalsSettingsWithAlgoDefaults/);
+  assert.match(source, /resolveAlgoPyrusSignalsSettingsPatch/);
+  assert.match(source, /lastAlgoPyrusSignalsSettingsRef/);
+  assert.match(source, /lastAlgoSignalTimeframeRef/);
+});
+
 test("TradeScreen hydrates option charts from complete option identity without waiting for broker id", () => {
   assert.doesNotMatch(source, /requireProviderContractId:\s*true/);
   assert.doesNotMatch(source, /requireMarketIdentifier:\s*true/);

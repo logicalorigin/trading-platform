@@ -56,7 +56,7 @@ const PositionOptionQuoteStreamGroup = ({
     providerContractIds,
     enabled: Boolean(enabled && underlying && providerContractIds.length),
     owner: `account-positions:${underlying}`,
-    intent: "visible-live",
+    intent: "account-monitor-live",
     requiresGreeks: true,
   });
   return null;

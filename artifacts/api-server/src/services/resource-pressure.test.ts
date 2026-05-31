@@ -78,6 +78,19 @@ test("cache pressure cannot force API critical without server pressure", () => {
   assert.equal(snapshot.drivers[0]?.detail, "critical capped at watch");
 });
 
+test("automation long scans are scanner pressure, not global API pressure", () => {
+  const snapshot = updateApiResourcePressure({
+    automationActiveLongScanCount: 1,
+  });
+
+  assert.equal(snapshot.level, "normal");
+  assert.equal(snapshot.drivers.some((driver) => driver.kind === "automation"), false);
+  assert.equal(snapshot.scannerPressure.level, "high");
+  assert.equal(snapshot.scannerPressure.activeLongScanCount, 1);
+  assert.equal(snapshot.scannerPressure.drivers[0]?.kind, "automation");
+  assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
+});
+
 test("watch pressure records latency without pausing signal scans", () => {
   updateApiResourcePressure({ dominantSlowRouteP95Ms: 12_000 });
 

@@ -197,8 +197,13 @@ async fn load_latest_spot(pool: &PgPool, symbol: &str) -> Result<SpotQuote> {
 async fn load_latest_option_snapshots(pool: &PgPool, symbol: &str) -> Result<Vec<GexContract>> {
     let rows = sqlx::query(
         r#"
-        with latest as (
-          select distinct on (snap.option_contract_id)
+        with latest_snapshot as (
+          select max(snap.as_of) as as_of
+          from option_chain_snapshots snap
+          join instruments underlying on underlying.id = snap.underlying_instrument_id
+          where underlying.symbol = $1
+        )
+        select
             snap.option_contract_id,
             snap.bid::float8 as bid,
             snap.ask::float8 as ask,
@@ -217,13 +222,12 @@ async fn load_latest_option_snapshots(pool: &PgPool, symbol: &str) -> Result<Vec
             contract."right"::text as right,
             contract.multiplier,
             contract.shares_per_contract
-          from option_chain_snapshots snap
-          join option_contracts contract on contract.id = snap.option_contract_id
-          join instruments underlying on underlying.id = snap.underlying_instrument_id
-          where underlying.symbol = $1
-          order by snap.option_contract_id, snap.as_of desc
-        )
-        select * from latest order by expiration_date asc, strike asc
+        from option_chain_snapshots snap
+        join option_contracts contract on contract.id = snap.option_contract_id
+        join instruments underlying on underlying.id = snap.underlying_instrument_id
+        join latest_snapshot latest on latest.as_of = snap.as_of
+        where underlying.symbol = $1
+        order by contract.expiration_date asc, contract.strike asc
         "#,
     )
     .bind(symbol)
@@ -375,10 +379,26 @@ fn resolve_payload_provider(spot_quote: &SpotQuote, contracts: &[GexContract]) -
         .iter()
         .map(|contract| contract.source.as_str())
         .find(|source| !source.trim().is_empty());
-    option_source
-        .unwrap_or(spot_quote.source.as_str())
-        .trim()
-        .to_string()
+    normalize_payload_provider(option_source.unwrap_or(spot_quote.source.as_str())).unwrap_or_else(
+        || normalize_payload_provider(&spot_quote.source).unwrap_or_else(|| "polygon".to_string()),
+    )
+}
+
+fn normalize_payload_provider(source: &str) -> Option<String> {
+    let normalized = source.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+    if normalized.contains("massive") {
+        return Some("massive".to_string());
+    }
+    if normalized.contains("polygon") {
+        return Some("polygon".to_string());
+    }
+    if normalized.contains("ibkr") {
+        return Some("ibkr".to_string());
+    }
+    None
 }
 
 #[cfg(test)]
@@ -525,5 +545,30 @@ mod tests {
         assert_eq!(payload["tickerDetails"]["country"], "");
         assert_eq!(payload["profile"]["changes"], 1.25);
         assert_eq!(payload["profile"]["range"], "100.00-100.00");
+    }
+
+    #[test]
+    fn gex_payload_normalizes_internal_provider_source_names() {
+        let updated_at = chrono::DateTime::parse_from_rfc3339("2026-05-08T15:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let computed_at = chrono::DateTime::parse_from_rfc3339("2026-05-08T15:31:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let spot_quote = SpotQuote {
+            spot: 100.0,
+            change: None,
+            source: "massive-websocket".into(),
+            as_of: updated_at,
+        };
+        let contracts = vec![GexContract {
+            source: "ibkr-metadata".into(),
+            updated_at: Some(updated_at),
+            ..contract(OptionRight::Call, Some(0.02), Some(10.0))
+        }];
+        let summary = summarize_gex("SPY", 100.0, &contracts);
+        let payload = build_gex_payload(&summary, &contracts, &spot_quote, computed_at, "ok", None);
+
+        assert_eq!(payload["source"]["provider"], "ibkr");
     }
 }

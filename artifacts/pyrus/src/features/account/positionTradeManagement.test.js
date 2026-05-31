@@ -114,6 +114,53 @@ test("trade management separates hard stop from active trailing stop", () => {
   assert.equal(Math.round(management.riskAmount), 144);
 });
 
+test("trade management keeps hard stop protective until trail takes over", () => {
+  const management = buildPositionTradeManagement({
+    symbol: "GLD",
+    quantity: 4,
+    mark: 9.5,
+    optionContract: { multiplier: 100 },
+    automationContext: {
+      entryPrice: 10,
+      stopPrice: 9,
+      stopLossPrice: 9,
+      tradeManagement: {
+        hardStopPrice: 9,
+        trailActive: true,
+        trailStopPrice: 8,
+      },
+    },
+  });
+
+  assert.equal(management.stop.price, 9);
+  assert.equal(management.trail, null);
+  assert.equal(management.protectiveStop.price, 9);
+});
+
+test("trade management can use normalized risk overlay without automation context", () => {
+  const management = buildPositionTradeManagement({
+    symbol: "GLD",
+    quantity: 4,
+    mark: 7.65,
+    optionContract: { multiplier: 100 },
+    riskOverlay: {
+      entryPrice: 4.02,
+      hardStopPrice: 2.81,
+      stopPrice: 7.29,
+      activeStopPrice: 7.29,
+      activeStopKind: "trailing_stop",
+      trailActive: true,
+      trailStopPrice: 7.29,
+      trailHasTakenOver: true,
+      takeProfitPrice: 9.5,
+    },
+  });
+
+  assert.equal(management.stop.price, 2.81);
+  assert.equal(management.trail.price, 7.29);
+  assert.equal(management.target.price, 9.5);
+});
+
 test("trade management keeps automation trail activation out of target", () => {
   const management = buildPositionTradeManagement({
     symbol: "GLD",

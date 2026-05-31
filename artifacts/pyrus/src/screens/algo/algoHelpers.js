@@ -272,6 +272,8 @@ export const SIGNAL_OPTIONS_REASON_CATEGORIES = {
   same_direction_position_open: "signal_policy",
   opposite_signal_flip_disabled: "signal_policy",
   candidate_resolution_failed: "signal_policy",
+  signal_age_unavailable: "signal_policy",
+  signal_too_old: "signal_policy",
 };
 
 export const asRecord = (value) =>
@@ -404,6 +406,11 @@ export const candidateBlockerLabel = (candidate) => {
   return reason ? formatEnumLabel(reason) : MISSING_VALUE;
 };
 
+export const signalActionBlockerLabel = (signal) => {
+  const reason = String(asRecord(signal).actionBlocker || "").trim();
+  return reason ? formatEnumLabel(reason) : MISSING_VALUE;
+};
+
 export const candidateLatestActivityLabel = (candidate) => {
   const timeline = Array.isArray(asRecord(candidate).timeline)
     ? asRecord(candidate).timeline
@@ -438,6 +445,27 @@ const firstFiniteMetric = (...values) => {
   for (const value of values) {
     const numeric = finiteNumberOrNull(value);
     if (numeric != null) return numeric;
+  }
+  return null;
+};
+
+const finitePresentNumberOrNull = (value) => {
+  if (value == null || value === "") return null;
+  return finiteNumberOrNull(value);
+};
+
+const firstPresentFiniteMetric = (...values) => {
+  for (const value of values) {
+    const numeric = finitePresentNumberOrNull(value);
+    if (numeric != null) return numeric;
+  }
+  return null;
+};
+
+const firstPositivePresentMetric = (...values) => {
+  for (const value of values) {
+    const numeric = finitePresentNumberOrNull(value);
+    if (numeric != null && numeric > 0) return numeric;
   }
   return null;
 };
@@ -495,15 +523,23 @@ export const resolveSignalAge = (signal, { freshWindowBars, now } = {}) => {
   };
 };
 
-export const resolveSignalMove = (signal, tickerSnapshot = null) => {
+export const resolveSignalMove = (signal, tickerSnapshot = null, candidate = null) => {
   const record = asRecord(signal);
   const snapshot = asRecord(tickerSnapshot);
-  const signalPrice = finiteNumberOrNull(record.signalPrice);
-  const currentPrice = firstFiniteMetric(
+  const candidateRecord = asRecord(candidate);
+  const signalPrice = firstPositivePresentMetric(
+    record.signalPrice,
+    candidateRecord.signalPrice,
+  );
+  const currentPrice = firstPresentFiniteMetric(
     snapshot.price,
     snapshot.last,
     snapshot.mark,
     record.currentPrice,
+    record.last,
+    record.mark,
+    candidateRecord.underlyingPrice,
+    candidateRecord.currentPrice,
   );
   if (signalPrice == null || currentPrice == null || signalPrice <= 0) {
     return { value: null, pct: null, label: MISSING_VALUE, detail: MISSING_VALUE };
@@ -513,8 +549,8 @@ export const resolveSignalMove = (signal, tickerSnapshot = null) => {
   return {
     value,
     pct,
-    label: `${value >= 0 ? "+" : ""}${value.toFixed(2)}`,
-    detail: `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}% since signal`,
+    label: `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`,
+    detail: `${value >= 0 ? "+" : ""}${value.toFixed(2)}`,
   };
 };
 

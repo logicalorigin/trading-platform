@@ -1678,6 +1678,14 @@ export interface Bar {
   low: number;
   close: number;
   volume: number;
+  /** @nullable */
+  bid?: number | null;
+  /** @nullable */
+  ask?: number | null;
+  /** @nullable */
+  mid?: number | null;
+  /** @nullable */
+  quoteAsOf?: string | null;
   source?: string;
   /** @nullable */
   providerContractId?: string | null;
@@ -2746,6 +2754,28 @@ export interface AccountPositionLot {
   source: string;
 }
 
+/**
+ * Normalized chart overlay state for position risk lines.
+ */
+export interface AccountPositionRiskOverlay {
+  source: string;
+  openedAt: string | null;
+  entryPrice: number | null;
+  hardStopPrice: number | null;
+  stopPrice: number | null;
+  takeProfitPrice: number | null;
+  activeStopPrice: number | null;
+  activeStopKind: 'hard_stop' | 'trailing_stop' | null;
+  trailActive: boolean;
+  trailStopPrice: number | null;
+  trailHasTakenOver: boolean;
+  trailActivationPrice: number | null;
+  trailActivationPct: number | null;
+  givebackPct: number | null;
+  minLockedGainPct: number | null;
+  peakPrice: number | null;
+}
+
 export type AccountPositionRowSourceType = typeof AccountPositionRowSourceType[keyof typeof AccountPositionRowSourceType];
 
 
@@ -2801,6 +2831,8 @@ export interface AccountPositionRow {
   stopLoss?: number | null;
   /** Active explicit take-profit price for display and trade-management UI, when available. */
   takeProfit?: number | null;
+  /** Normalized chart overlay state for stop-loss and trailing-stop lines, when available. */
+  riskOverlay?: AccountPositionRiskOverlay | null;
   source: string;
   sourceType?: AccountPositionRowSourceType;
   strategyLabel?: string | null;
@@ -3022,6 +3054,7 @@ export interface AccountRiskResponse {
   margin: JsonObject;
   greeks: JsonObject;
   greekScenarios?: JsonObject;
+  riskRecommendations?: JsonObject;
   expiryConcentration: JsonObject;
   updatedAt: string;
 }
@@ -3330,10 +3363,26 @@ export interface RequestDebug {
   backoffRemainingMs?: number | null;
 }
 
+export type OptionQuoteSnapshotsRequestIntent = typeof OptionQuoteSnapshotsRequestIntent[keyof typeof OptionQuoteSnapshotsRequestIntent];
+
+
+export const OptionQuoteSnapshotsRequestIntent = {
+  'execution-live': 'execution-live',
+  'account-monitor-live': 'account-monitor-live',
+  'visible-live': 'visible-live',
+  'automation-live': 'automation-live',
+  'flow-scanner-live': 'flow-scanner-live',
+  'delayed-ok': 'delayed-ok',
+  historical: 'historical',
+} as const;
+
 export interface OptionQuoteSnapshotsRequest {
   underlying?: string | null;
   /** @minItems 1 */
   providerContractIds: string[];
+  owner?: string;
+  intent?: OptionQuoteSnapshotsRequestIntent;
+  requiresGreeks?: boolean;
 }
 
 export type OptionQuoteSnapshotsResponse = QuoteSnapshotsResponse & ({
@@ -3831,6 +3880,11 @@ export interface SignalOptionsExecutionProfile {
   infrastructureHaltControls: JsonObject;
 }
 
+export interface UpdateSignalOptionsExecutionProfileResponse {
+  deployment: AlgoDeployment;
+  profile: SignalOptionsExecutionProfile;
+}
+
 export type SignalOptionsAutomationStateMode = typeof SignalOptionsAutomationStateMode[keyof typeof SignalOptionsAutomationStateMode];
 
 
@@ -4111,6 +4165,14 @@ export interface FlowUniverseCoverage {
   /** @minimum 0 */
   cooldownCount?: number;
   /** @minimum 0 */
+  verifiedSymbols?: number;
+  /** @minimum 0 */
+  needsVerificationSymbols?: number;
+  /** @minimum 0 */
+  rejectedSymbols?: number;
+  /** @minimum 0 */
+  verificationBacklogSymbols?: number;
+  /** @minimum 0 */
   scannedSymbols?: number;
   /** @minimum 0 */
   cycleScannedSymbols?: number;
@@ -4143,11 +4205,18 @@ export interface FlowUniverseCoverage {
   lastScanAt?: string | null;
   /** @nullable */
   degradedReason?: string | null;
+  planner?: JsonObject;
 }
 
 export interface FlowUniverseSources {
   builtInSymbols: string[];
+  watchlistSymbols: string[];
   flowUniverseSymbols: string[];
+  candidateBuiltInSymbols: string[];
+  candidateWatchlistSymbols: string[];
+  candidatePrioritySymbols: string[];
+  verificationSymbols: string[];
+  planner: JsonObject;
 }
 
 export interface FlowUniverseResponse {

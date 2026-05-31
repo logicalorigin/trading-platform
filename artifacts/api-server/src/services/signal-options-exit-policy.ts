@@ -427,7 +427,7 @@ export function computeSignalOptionsPositionStop(input: {
         Math.abs((finiteNumber(input.underlyingSpot) ?? latestUnderlyingClose)! - selectedWire.price) *
         100
       : null;
-  const trailStopPrice = trailActive
+  const rawTrailStopPrice = trailActive
     ? Math.max(
         entryPrice * (1 + minLockedGainPct / 100),
         deltaSizedGiveback != null
@@ -435,12 +435,16 @@ export function computeSignalOptionsPositionStop(input: {
           : peakPrice * (1 - givebackPct / 100),
       )
     : null;
-  const stopPrice = Number(
-    Math.max(hardStopPrice, trailStopPrice ?? hardStopPrice).toFixed(2),
-  );
+  const trailStopPrice =
+    rawTrailStopPrice == null ? null : Number(rawTrailStopPrice.toFixed(2));
+  const trailHasTakenOver =
+    trailActive && trailStopPrice != null && trailStopPrice > hardStopPrice;
+  const activeStopKind = trailHasTakenOver ? "trailing_stop" : "hard_stop";
+  const activeStopPrice = trailHasTakenOver ? trailStopPrice : hardStopPrice;
+  const stopPrice = Number(activeStopPrice.toFixed(2));
   const premiumExitReason =
     markPrice <= stopPrice
-      ? trailActive && trailStopPrice != null && markPrice <= trailStopPrice
+      ? activeStopKind === "trailing_stop"
         ? "runner_trail_stop"
         : "hard_stop"
       : !trailActive &&
@@ -454,9 +458,11 @@ export function computeSignalOptionsPositionStop(input: {
 
   return {
     hardStopPrice,
+    activeStopPrice,
+    activeStopKind,
     trailActive,
-    trailStopPrice:
-      trailStopPrice == null ? null : Number(trailStopPrice.toFixed(2)),
+    trailStopPrice,
+    trailHasTakenOver,
     givebackPct,
     stopPrice,
     exitReason,

@@ -521,6 +521,7 @@ export const HaltStrip = ({
   profileDraft,
   patchProfileDraftPath,
   focusedDeployment,
+  controlBaselineReady = true,
   updateProfileMutation,
 }) => {
   const statusesByGroup = SIGNAL_OPTIONS_HALT_CONTROL_GROUPS.map((group) => ({
@@ -535,7 +536,8 @@ export const HaltStrip = ({
     profileDraft,
     profileBaseline,
   );
-  const controlsDisabled = !focusedDeployment || updateProfileMutation?.isPending;
+  const controlsDisabled =
+    !focusedDeployment || !controlBaselineReady || updateProfileMutation?.isPending;
 
   return (
     <div

@@ -270,6 +270,7 @@ let runtimeBridgeLineBudget:
       observedAt: number;
     }
   | null = null;
+let runtimeFlowScannerLineCap: number | null = null;
 
 function classifyMarketDataOwner(input: {
   owner: string;
@@ -362,6 +363,12 @@ function readOptionalNonNegativeIntegerEnv(name: string): number | null {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+function normalizeOptionalRuntimeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : null;
+}
+
 function resolveAutomationExecutionLineCap(usableLines: number): number {
   const executionOverride = readOptionalNonNegativeIntegerEnv(
     POOL_ENV_KEYS.execution,
@@ -388,7 +395,10 @@ function buildDefaultPoolLineCaps(
     "account-monitor": usableLines,
     visible: usableLines,
     automation: automationExecutionLineCap,
-    "flow-scanner": usableLines,
+    "flow-scanner":
+      runtimeFlowScannerLineCap === null
+        ? usableLines
+        : Math.min(usableLines, Math.max(0, runtimeFlowScannerLineCap)),
   };
 }
 
@@ -413,7 +423,14 @@ export function setMarketDataAdmissionRuntimeDefaults(input: {
   flowScannerLineBudget?: number | null;
   flowScannerConcurrency?: number | null;
 }): void {
-  void input;
+  const lineBudget = normalizeOptionalRuntimeInteger(input.flowScannerLineBudget);
+  const concurrency = normalizeOptionalRuntimeInteger(input.flowScannerConcurrency);
+  runtimeFlowScannerLineCap =
+    lineBudget === null || concurrency === null
+      ? null
+      : concurrency <= 0
+        ? 0
+        : lineBudget;
   rebalanceFlowScannerLeasesAboveEffectiveCap("scanner_runtime_cap_changed");
 }
 
@@ -749,6 +766,17 @@ function activeLineIdsForPools(pools: readonly MarketDataPoolId[]): Set<string> 
   return result;
 }
 
+function activeNonFlowScannerLineIds(): Set<string> {
+  const result = new Set<string>();
+  activeLeaseValues().forEach((lease) => {
+    if (lease.pool === "flow-scanner") {
+      return;
+    }
+    lease.lineIds.forEach((id) => result.add(id));
+  });
+  return result;
+}
+
 function isAutomationExecutionPool(pool: MarketDataPoolId): boolean {
   return pool === "execution" || pool === "automation";
 }
@@ -757,6 +785,34 @@ function activeLineIdsForStrictPoolScope(pool: MarketDataPoolId): Set<string> {
   return isAutomationExecutionPool(pool)
     ? activeLineIdsForPools(["execution", "automation"])
     : activeLineIds({ pool });
+}
+
+function activeChargeableLineIdsForStrictPoolScope(
+  pool: MarketDataPoolId,
+): Set<string> {
+  if (pool !== "flow-scanner") {
+    return activeLineIdsForStrictPoolScope(pool);
+  }
+  const nonScannerLineIds = activeNonFlowScannerLineIds();
+  return new Set(
+    Array.from(activeLineIds({ pool: "flow-scanner" })).filter(
+      (id) => !nonScannerLineIds.has(id),
+    ),
+  );
+}
+
+function chargeableNewLineIdsForPool(
+  pool: MarketDataPoolId,
+  lineIds: readonly string[],
+): string[] {
+  const poolLineIds = activeChargeableLineIdsForStrictPoolScope(pool);
+  if (pool !== "flow-scanner") {
+    return lineIds.filter((id) => !poolLineIds.has(id));
+  }
+  const nonScannerLineIds = activeNonFlowScannerLineIds();
+  return lineIds.filter(
+    (id) => !poolLineIds.has(id) && !nonScannerLineIds.has(id),
+  );
 }
 
 function activeLineIdsForOwnerPrefix(ownerPrefix: string): Set<string> {
@@ -792,21 +848,26 @@ function buildLineAllocationDiagnostics(budget = getMarketDataAdmissionBudget())
   const accountLineIds = new Set<string>();
   const visibleLineIds = new Set<string>();
   const scannerLineIds = new Set<string>();
+  const nonScannerLineIds = new Set<string>();
 
   activeLeaseValues().forEach((lease) => {
     lease.lineIds.forEach((id) => {
       if (lease.pool === "execution") {
         protectedLineIds.add(id);
         executionLineIds.add(id);
+        nonScannerLineIds.add(id);
       } else if (lease.pool === "automation") {
         protectedLineIds.add(id);
         automationLineIds.add(id);
+        nonScannerLineIds.add(id);
       } else {
         dynamicLineIds.add(id);
         if (lease.pool === "account-monitor") {
           accountLineIds.add(id);
+          nonScannerLineIds.add(id);
         } else if (lease.pool === "visible") {
           visibleLineIds.add(id);
+          nonScannerLineIds.add(id);
         } else if (lease.pool === "flow-scanner") {
           scannerLineIds.add(id);
         }
@@ -819,6 +880,12 @@ function buildLineAllocationDiagnostics(budget = getMarketDataAdmissionBudget())
     ...dynamicLineIds,
   ]);
   const flowScannerDynamic = buildFlowScannerDynamicLineCap(budget);
+  const scannerSharedLineIds = new Set(
+    Array.from(scannerLineIds).filter((id) => nonScannerLineIds.has(id)),
+  );
+  const scannerChargedLineIds = new Set(
+    Array.from(scannerLineIds).filter((id) => !nonScannerLineIds.has(id)),
+  );
 
   return {
     policy: "options-flow-rotation-allocation",
@@ -831,6 +898,8 @@ function buildLineAllocationDiagnostics(budget = getMarketDataAdmissionBudget())
     accountLineCount: accountLineIds.size,
     visibleLineCount: visibleLineIds.size,
     scannerLineCount: scannerLineIds.size,
+    scannerChargedLineCount: scannerChargedLineIds.size,
+    scannerSharedLineCount: scannerSharedLineIds.size,
     scannerStaticLineCap: flowScannerDynamic.scannerStaticLineCap,
     scannerDynamicLineCap: flowScannerDynamic.dynamicScannerLineCap,
     scannerEffectiveLineCap: flowScannerDynamic.scannerEffectiveLineCap,
@@ -850,6 +919,8 @@ function buildLineAllocationDiagnostics(budget = getMarketDataAdmissionBudget())
     accountLineSample: sampleDiagnosticLineIds(accountLineIds),
     visibleLineSample: sampleDiagnosticLineIds(visibleLineIds),
     scannerLineSample: sampleDiagnosticLineIds(scannerLineIds),
+    scannerChargedLineSample: sampleDiagnosticLineIds(scannerChargedLineIds),
+    scannerSharedLineSample: sampleDiagnosticLineIds(scannerSharedLineIds),
   };
 }
 
@@ -1104,6 +1175,110 @@ function buildOwnerClassDiagnostics() {
   };
 }
 
+function buildLineOwnershipDiagnostics() {
+  const groups = new Map<
+    string,
+    {
+      lineId: string;
+      assetClass: MarketDataLineAssetClass;
+      owners: Set<string>;
+      ownerClasses: Set<MarketDataOwnerClass>;
+      intents: Set<MarketDataIntent>;
+      pools: Set<MarketDataPoolId>;
+      roles: Set<MarketDataLineRole>;
+      leaseCount: number;
+      highestPriority: number;
+      highestPriorityOwner: string | null;
+      highestPriorityOwnerClass: MarketDataOwnerClass | null;
+    }
+  >();
+
+  activeLeaseValues().forEach((lease) => {
+    lease.lineIds.forEach((id) => {
+      const assetClass: MarketDataLineAssetClass = id.startsWith("option:")
+        ? "option"
+        : "equity";
+      const group =
+        groups.get(id) ??
+        {
+          lineId: id,
+          assetClass,
+          owners: new Set<string>(),
+          ownerClasses: new Set<MarketDataOwnerClass>(),
+          intents: new Set<MarketDataIntent>(),
+          pools: new Set<MarketDataPoolId>(),
+          roles: new Set<MarketDataLineRole>(),
+          leaseCount: 0,
+          highestPriority: Number.NEGATIVE_INFINITY,
+          highestPriorityOwner: null,
+          highestPriorityOwnerClass: null,
+        };
+      group.owners.add(lease.owner);
+      group.ownerClasses.add(lease.ownerClass);
+      group.intents.add(lease.intent);
+      group.pools.add(lease.pool);
+      group.roles.add(lease.lineRoles[id] ?? lease.role ?? "stock");
+      group.leaseCount += 1;
+      if (lease.priority > group.highestPriority) {
+        group.highestPriority = lease.priority;
+        group.highestPriorityOwner = lease.owner;
+        group.highestPriorityOwnerClass = lease.ownerClass;
+      }
+      groups.set(id, group);
+    });
+  });
+
+  const lines = Array.from(groups.values()).map((group) => {
+    const owners = Array.from(group.owners).sort();
+    const ownerClasses = Array.from(group.ownerClasses).sort();
+    const pools = Array.from(group.pools).sort();
+    const sharedWithScanner =
+      group.pools.has("flow-scanner") && group.pools.size > 1;
+    return {
+      lineId: group.lineId,
+      assetClass: group.assetClass,
+      owners,
+      ownerClasses,
+      intents: Array.from(group.intents).sort(),
+      pools,
+      roles: Array.from(group.roles).sort(),
+      leaseCount: group.leaseCount,
+      ownerCount: owners.length,
+      highestPriority:
+        group.highestPriority === Number.NEGATIVE_INFINITY
+          ? null
+          : group.highestPriority,
+      chargedOwner: group.highestPriorityOwner,
+      chargedOwnerClass: group.highestPriorityOwnerClass,
+      shared: owners.length > 1,
+      sharedWithScanner,
+      scannerOwned: group.pools.has("flow-scanner"),
+      scannerCharged: group.pools.has("flow-scanner") && !sharedWithScanner,
+    };
+  });
+  const duplicateLines = lines.filter((line) => line.ownerCount > 1);
+  const scannerOverlapLines = lines.filter((line) => line.sharedWithScanner);
+
+  return {
+    lineCount: lines.length,
+    duplicateLineCount: duplicateLines.length,
+    scannerOverlapLineCount: scannerOverlapLines.length,
+    duplicateLines: duplicateLines.slice(0, MARKET_DATA_DIAGNOSTIC_SAMPLE_LIMIT),
+    scannerOverlapLines: scannerOverlapLines.slice(
+      0,
+      MARKET_DATA_DIAGNOSTIC_SAMPLE_LIMIT,
+    ),
+    lines: lines
+      .sort(
+        (left, right) =>
+          Number(right.shared) - Number(left.shared) ||
+          (right.highestPriority ?? 0) - (left.highestPriority ?? 0) ||
+          left.lineId.localeCompare(right.lineId),
+      )
+      .slice(0, MARKET_DATA_DIAGNOSTIC_SAMPLE_LIMIT),
+  };
+}
+
 type MarketDataPortfolioClass =
   | "pinned"
   | "priority"
@@ -1302,8 +1477,8 @@ function demoteLowerPriorityPoolLeases(input: {
   lineIds: string[];
 }): MarketDataLease[] {
   const demoted: MarketDataLease[] = [];
-  let poolLineIds = activeLineIdsForStrictPoolScope(input.pool);
-  let newPoolLineIds = input.lineIds.filter((id) => !poolLineIds.has(id));
+  let poolLineIds = activeChargeableLineIdsForStrictPoolScope(input.pool);
+  let newPoolLineIds = chargeableNewLineIdsForPool(input.pool, input.lineIds);
   let poolCap = getMarketDataPoolEffectiveLineCap(input.pool);
   if (poolLineIds.size + newPoolLineIds.length <= poolCap) {
     return demoted;
@@ -1331,8 +1506,8 @@ function demoteLowerPriorityPoolLeases(input: {
     }
     releaseLease(candidate, "demoted", `pool_cap_preempted_by_${input.pool}`);
     demoted.push(candidate);
-    poolLineIds = activeLineIdsForStrictPoolScope(input.pool);
-    newPoolLineIds = input.lineIds.filter((id) => !poolLineIds.has(id));
+    poolLineIds = activeChargeableLineIdsForStrictPoolScope(input.pool);
+    newPoolLineIds = chargeableNewLineIdsForPool(input.pool, input.lineIds);
     poolCap = getMarketDataPoolEffectiveLineCap(input.pool);
   }
 
@@ -1376,7 +1551,7 @@ function rebalanceFlowScannerLeasesAboveEffectiveCap(
   reason: string,
 ): MarketDataLease[] {
   const demoted: MarketDataLease[] = [];
-  let scannerLineIds = activeLineIds({ pool: "flow-scanner" });
+  let scannerLineIds = activeChargeableLineIdsForStrictPoolScope("flow-scanner");
   let scannerLineCap = getMarketDataPoolEffectiveLineCap("flow-scanner");
   if (scannerLineIds.size <= scannerLineCap) {
     return demoted;
@@ -1396,7 +1571,7 @@ function rebalanceFlowScannerLeasesAboveEffectiveCap(
     }
     releaseLease(candidate, "demoted", reason);
     demoted.push(candidate);
-    scannerLineIds = activeLineIds({ pool: "flow-scanner" });
+    scannerLineIds = activeChargeableLineIdsForStrictPoolScope("flow-scanner");
     scannerLineCap = getMarketDataPoolEffectiveLineCap("flow-scanner");
   }
 
@@ -1409,8 +1584,8 @@ function rotateFlowScannerLeasesForRequest(input: {
   lineIds: string[];
 }): MarketDataLease[] {
   const rotated: MarketDataLease[] = [];
-  let scannerLineIds = activeLineIds({ pool: "flow-scanner" });
-  let newScannerLineIds = input.lineIds.filter((id) => !scannerLineIds.has(id));
+  let scannerLineIds = activeChargeableLineIdsForStrictPoolScope("flow-scanner");
+  let newScannerLineIds = chargeableNewLineIdsForPool("flow-scanner", input.lineIds);
   let scannerLineCap = getMarketDataPoolEffectiveLineCap("flow-scanner");
   if (scannerLineIds.size + newScannerLineIds.length <= scannerLineCap) {
     return rotated;
@@ -1435,8 +1610,8 @@ function rotateFlowScannerLeasesForRequest(input: {
     }
     releaseLease(candidate, "demoted", "flow_scanner_rotated");
     rotated.push(candidate);
-    scannerLineIds = activeLineIds({ pool: "flow-scanner" });
-    newScannerLineIds = input.lineIds.filter((id) => !scannerLineIds.has(id));
+    scannerLineIds = activeChargeableLineIdsForStrictPoolScope("flow-scanner");
+    newScannerLineIds = chargeableNewLineIdsForPool("flow-scanner", input.lineIds);
     scannerLineCap = getMarketDataPoolEffectiveLineCap("flow-scanner");
   }
 
@@ -1460,12 +1635,18 @@ function buildFlowScannerDynamicLineCap(
       }
     });
   });
-  const optionBudgetLineCount = budget.usableLines;
+  const scannerSharedLineIds = new Set(
+    Array.from(scannerLineIds).filter((id) => nonScannerLineIds.has(id)),
+  );
+  const scannerChargedLineIds = new Set(
+    Array.from(scannerLineIds).filter((id) => !nonScannerLineIds.has(id)),
+  );
+  const optionBudgetLineCount = budget.targetFillLines;
   const optionReserveLineCount = 0;
-  const protectedVisibleOptionLineCount = nonScannerLineIds.size;
+  const protectedPriorityLineCount = nonScannerLineIds.size;
   const dynamicScannerLineCap = Math.max(
     0,
-    optionBudgetLineCount - protectedVisibleOptionLineCount,
+    optionBudgetLineCount - protectedPriorityLineCount,
   );
   const effectiveScannerLineCap = Math.max(
     0,
@@ -1479,13 +1660,17 @@ function buildFlowScannerDynamicLineCap(
     scannerStaticLineCap: budget.flowScannerLineCap,
     scannerEffectiveLineCap: effectiveScannerLineCap,
     scannerActiveLineCount: scannerLineIds.size,
+    scannerChargedLineCount: scannerChargedLineIds.size,
+    scannerSharedLineCount: scannerSharedLineIds.size,
     scannerRemainingLineCount: Math.max(
       0,
-      effectiveScannerLineCap - scannerLineIds.size,
+      effectiveScannerLineCap - scannerChargedLineIds.size,
     ),
     nonScannerOptionLineSample: sampleDiagnosticLineIds(
       nonScannerOptionLineIds,
     ),
+    scannerChargedLineSample: sampleDiagnosticLineIds(scannerChargedLineIds),
+    scannerSharedLineSample: sampleDiagnosticLineIds(scannerSharedLineIds),
   };
 }
 
@@ -1528,6 +1713,8 @@ export function getMarketDataLinePressureSnapshot() {
   const budget = getMarketDataAdmissionBudget();
   const activeLines = activeLineIds();
   const flowScannerLines = activeLineIds({ pool: "flow-scanner" });
+  const flowScannerChargedLines =
+    activeChargeableLineIdsForStrictPoolScope("flow-scanner");
   const visibleLines = activeLineIds({ pool: "visible" });
   const executionLines = activeLineIds({ intent: "execution-live" });
   const automationExecutionLines = activeLineIdsForPools([
@@ -1591,9 +1778,13 @@ export function getMarketDataLinePressureSnapshot() {
     optionReserveLineCount: flowScannerDynamic.optionReserveLineCount,
     nonScannerOptionLineSample: flowScannerDynamic.nonScannerOptionLineSample,
     scannerActiveLineCount: flowScannerLines.size,
+    scannerChargedLineCount: flowScannerChargedLines.size,
+    scannerSharedLineCount: flowScannerDynamic.scannerSharedLineCount,
+    scannerChargedLineSample: flowScannerDynamic.scannerChargedLineSample,
+    scannerSharedLineSample: flowScannerDynamic.scannerSharedLineSample,
     scannerRemainingLineCount: Math.max(
       0,
-      scannerEffectiveLineCap - flowScannerLines.size,
+      scannerEffectiveLineCap - flowScannerChargedLines.size,
     ),
     scannerConstrainedByActiveDemand: constrainedByActiveDemand,
   };
@@ -1709,9 +1900,24 @@ export function admitMarketDataLeases(input: {
     let neededLineCount = newLineIds.length;
     const priority = basePriority + normalized.priorityOffset;
 
+    if (pool === "flow-scanner" && getMarketDataPoolEffectiveLineCap(pool, budget) <= 0) {
+      rejected.push({ request, reason: "pool-cap", fallbackProvider });
+      recordEvent({
+        action: "rejected",
+        owner: input.owner,
+        intent: input.intent,
+        pool,
+        instrumentKey: normalized.instrumentKey,
+        lineCost: normalized.lineIds.length,
+        reason: "pool-cap",
+        fallbackProvider,
+      });
+      return;
+    }
+
     if (STRICT_POOL_IDS.has(pool) && neededLineCount > 0) {
-      let poolLines = activeLineIdsForStrictPoolScope(pool);
-      let newPoolLineIds = normalized.lineIds.filter((id) => !poolLines.has(id));
+      let poolLines = activeChargeableLineIdsForStrictPoolScope(pool);
+      let newPoolLineIds = chargeableNewLineIdsForPool(pool, normalized.lineIds);
       let poolCap = getMarketDataPoolEffectiveLineCap(pool, budget);
       if (
         pool === "execution" &&
@@ -1724,8 +1930,8 @@ export function admitMarketDataLeases(input: {
             cap: poolCap,
           }),
         );
-        poolLines = activeLineIdsForStrictPoolScope(pool);
-        newPoolLineIds = normalized.lineIds.filter((id) => !poolLines.has(id));
+        poolLines = activeChargeableLineIdsForStrictPoolScope(pool);
+        newPoolLineIds = chargeableNewLineIdsForPool(pool, normalized.lineIds);
         poolCap = getMarketDataPoolEffectiveLineCap(pool, budget);
       }
       if (poolLines.size + newPoolLineIds.length > poolCap) {
@@ -1737,8 +1943,8 @@ export function admitMarketDataLeases(input: {
             lineIds: normalized.lineIds,
           }),
         );
-        poolLines = activeLineIdsForStrictPoolScope(pool);
-        newPoolLineIds = normalized.lineIds.filter((id) => !poolLines.has(id));
+        poolLines = activeChargeableLineIdsForStrictPoolScope(pool);
+        newPoolLineIds = chargeableNewLineIdsForPool(pool, normalized.lineIds);
         poolCap = getMarketDataPoolEffectiveLineCap(pool, budget);
       }
       if (
@@ -1753,8 +1959,8 @@ export function admitMarketDataLeases(input: {
             intent: input.intent,
           }),
         );
-        poolLines = activeLineIdsForStrictPoolScope(pool);
-        newPoolLineIds = normalized.lineIds.filter((id) => !poolLines.has(id));
+        poolLines = activeChargeableLineIdsForStrictPoolScope(pool);
+        newPoolLineIds = chargeableNewLineIdsForPool(pool, normalized.lineIds);
         poolCap = getMarketDataPoolEffectiveLineCap(pool, budget);
       }
       if (
@@ -1768,8 +1974,8 @@ export function admitMarketDataLeases(input: {
             lineIds: normalized.lineIds,
           }),
         );
-        poolLines = activeLineIdsForStrictPoolScope(pool);
-        newPoolLineIds = normalized.lineIds.filter((id) => !poolLines.has(id));
+        poolLines = activeChargeableLineIdsForStrictPoolScope(pool);
+        newPoolLineIds = chargeableNewLineIdsForPool(pool, normalized.lineIds);
         poolCap = getMarketDataPoolEffectiveLineCap(pool, budget);
       }
       if (poolLines.size + newPoolLineIds.length > poolCap) {
@@ -1860,6 +2066,14 @@ export function admitMarketDataLeases(input: {
     });
   });
 
+  if (pool !== "flow-scanner") {
+    demoted.push(
+      ...rebalanceFlowScannerLeasesAboveEffectiveCap(
+        `protected_demand_rebalanced_by_${pool}`,
+      ),
+    );
+  }
+
   return {
     admitted,
     rejected,
@@ -1924,6 +2138,7 @@ export function getMarketDataAdmissionDiagnostics() {
   const lineAllocation = buildLineAllocationDiagnostics(budget);
   const accountMonitor = buildAccountMonitorDiagnostics(budget);
   const ownerClasses = buildOwnerClassDiagnostics();
+  const lineOwnership = buildLineOwnershipDiagnostics();
   const portfolio = buildPortfolioDiagnostics();
   const flowScannerActivity = buildFlowScannerActivityDiagnostics();
   const equityRoleDiagnostics = activeEquityLineRoleDiagnostics();
@@ -1943,6 +2158,8 @@ export function getMarketDataAdmissionDiagnostics() {
   const accountMonitorLines = activeLineIds({ intent: "account-monitor-live" });
   const visibleLines = activeLineIds({ pool: "visible" });
   const flowScannerLines = activeLineIds({ intent: "flow-scanner-live" });
+  const flowScannerChargedLines =
+    activeChargeableLineIdsForStrictPoolScope("flow-scanner");
   const intentUsage = Object.fromEntries(
     (Object.keys(INTENT_PRIORITY) as MarketDataIntent[]).map((intent) => [
       intent,
@@ -1959,6 +2176,10 @@ export function getMarketDataAdmissionDiagnostics() {
     OPERATOR_POOL_IDS.map((pool) => {
       const lines = activeLineIds({ pool });
       const scopedLines = activeLineIdsForStrictPoolScope(pool);
+      const chargedLines =
+        pool === "flow-scanner"
+          ? activeChargeableLineIdsForStrictPoolScope(pool)
+          : lines;
       const maxLines = isAutomationExecutionPool(pool)
         ? budget.automationExecutionLineCap
         : budget.poolLineCaps[pool];
@@ -1966,7 +2187,7 @@ export function getMarketDataAdmissionDiagnostics() {
       const effectiveMaxLines = getMarketDataPoolEffectiveLineCap(pool, budget);
       const effectiveActiveLineCount = isAutomationExecutionPool(pool)
         ? scopedLines.size
-        : lines.size;
+        : chargedLines.size;
       const usage = {
         id: pool,
         label: POOL_LABELS[pool],
@@ -1980,7 +2201,7 @@ export function getMarketDataAdmissionDiagnostics() {
         strict: STRICT_POOL_IDS.has(pool),
         dynamic,
         intents: POOL_INTENTS[pool],
-        chargedLineCount: lines.size,
+        chargedLineCount: chargedLines.size,
       };
       return [pool, usage];
     }),
@@ -2006,6 +2227,7 @@ export function getMarketDataAdmissionDiagnostics() {
     budget,
     pressure,
     lineAllocation,
+    lineOwnership,
     portfolio,
     activeLineCount: uniqueLines.size,
     reserveLineCount: Math.max(0, budget.maxLines - uniqueLines.size),
@@ -2035,6 +2257,11 @@ export function getMarketDataAdmissionDiagnostics() {
       getMarketDataPoolEffectiveLineCap("visible", budget) - visibleLines.size,
     ),
     flowScannerLineCount: flowScannerLines.size,
+    flowScannerChargedLineCount: flowScannerChargedLines.size,
+    flowScannerSharedLineCount: Math.max(
+      0,
+      flowScannerLines.size - flowScannerChargedLines.size,
+    ),
     flowScannerActivity,
     flowScannerRemainingLineCount: Math.max(
       0,
@@ -2059,4 +2286,5 @@ export function __resetMarketDataAdmissionForTests(): void {
   recentEvents.length = 0;
   nextLeaseId = 1;
   runtimeBridgeLineBudget = null;
+  runtimeFlowScannerLineCap = null;
 }

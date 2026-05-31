@@ -7,6 +7,7 @@ import type {
   BacktestPoint,
   BacktestTrade,
   BacktestValidationMetrics,
+  BacktestValidationWarning,
 } from "./types";
 
 type MetricsOptions = {
@@ -20,6 +21,13 @@ type MetricsOptions = {
 const TRADING_PERIODS_PER_YEAR = 252;
 const MONTE_CARLO_SAMPLE_COUNT = 250;
 const MONTE_CARLO_SEED = 42_417;
+const MIN_TRADE_COUNT_FOR_CONFIDENCE = 30;
+const MIN_RETURN_SAMPLE_FOR_ADVANCED_METRICS = 30;
+const MANY_TRIALS_THRESHOLD = 50;
+const DRAWDOWN_DURATION_MIN_BARS = 8;
+const DRAWDOWN_DURATION_FRACTION = 0.5;
+const RAW_SHARPE_WARNING_THRESHOLD = 1;
+const DEFLATED_SHARPE_PENALTY_THRESHOLD = 0.5;
 
 function safeDivide(numerator: number, denominator: number): number {
   return denominator === 0 || !Number.isFinite(denominator)
@@ -320,6 +328,138 @@ function calculateAdvancedMetrics(
   };
 }
 
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function buildValidationWarningDetails(input: {
+  externalWarnings: string[];
+  tradeCount: number;
+  trialCount: number;
+  oosWindowCount: number;
+  parameterCount: number;
+  points: BacktestPoint[];
+  returns: number[];
+  sharpeRatio: number;
+  advanced: BacktestAdvancedMetrics;
+}): BacktestValidationWarning[] {
+  const warningDetails: BacktestValidationWarning[] = input.externalWarnings.map(
+    (message, index) => ({
+      code: "external_validation_warning",
+      severity: "info",
+      scope: "external",
+      message,
+      evidence: {
+        index,
+      },
+    }),
+  );
+
+  if (input.tradeCount < MIN_TRADE_COUNT_FOR_CONFIDENCE) {
+    warningDetails.push({
+      code: "low_trade_count",
+      severity: "warning",
+      scope: "sample",
+      message: "Trade count is below 30; statistical confidence is limited.",
+      evidence: {
+        tradeCount: input.tradeCount,
+        minimumTradeCount: MIN_TRADE_COUNT_FOR_CONFIDENCE,
+      },
+    });
+  }
+
+  if (input.trialCount >= MANY_TRIALS_THRESHOLD) {
+    warningDetails.push({
+      code: "too_many_trials",
+      severity: "warning",
+      scope: "optimization",
+      message:
+        "Parameter search tested many candidates; overfitting risk increases with trial count.",
+      evidence: {
+        trialCount: input.trialCount,
+        trialThreshold: MANY_TRIALS_THRESHOLD,
+        parameterCount: input.parameterCount,
+      },
+    });
+  }
+
+  if (input.trialCount > 1 && input.oosWindowCount === 0) {
+    warningDetails.push({
+      code: "missing_out_of_sample_window",
+      severity: "warning",
+      scope: "optimization",
+      message:
+        "Multiple tested candidates without an out-of-sample window increase overfitting risk.",
+      evidence: {
+        trialCount: input.trialCount,
+        oosWindowCount: input.oosWindowCount,
+      },
+    });
+  }
+
+  const drawdownDurationThreshold = Math.max(
+    DRAWDOWN_DURATION_MIN_BARS,
+    Math.ceil(input.points.length * DRAWDOWN_DURATION_FRACTION),
+  );
+  if (
+    input.advanced.maxDrawdownDurationBars >= drawdownDurationThreshold &&
+    input.advanced.maxDrawdownDurationBars > 0
+  ) {
+    warningDetails.push({
+      code: "excessive_drawdown_duration",
+      severity: "warning",
+      scope: "risk",
+      message:
+        "Drawdown duration is elevated; review recovery time before trusting the strategy.",
+      evidence: {
+        maxDrawdownDurationBars: input.advanced.maxDrawdownDurationBars,
+        drawdownDurationThreshold,
+        pointCount: input.points.length,
+      },
+    });
+  }
+
+  const sharpePenalty = Math.abs(
+    input.sharpeRatio - input.advanced.deflatedSharpeRatio,
+  );
+  if (
+    input.trialCount > 1 &&
+    input.returns.length >= MIN_RETURN_SAMPLE_FOR_ADVANCED_METRICS &&
+    Math.abs(input.sharpeRatio) >= RAW_SHARPE_WARNING_THRESHOLD &&
+    sharpePenalty >= DEFLATED_SHARPE_PENALTY_THRESHOLD
+  ) {
+    warningDetails.push({
+      code: "unstable_sharpe",
+      severity: "warning",
+      scope: "metric",
+      message:
+        "Deflated Sharpe is materially lower than raw Sharpe after trial adjustment.",
+      evidence: {
+        sharpeRatio: input.sharpeRatio,
+        deflatedSharpeRatio: input.advanced.deflatedSharpeRatio,
+        sharpePenalty,
+        trialCount: input.trialCount,
+      },
+    });
+  }
+
+  if (input.returns.length < MIN_RETURN_SAMPLE_FOR_ADVANCED_METRICS) {
+    warningDetails.push({
+      code: "insufficient_sample_size",
+      severity: "info",
+      scope: "sample",
+      message:
+        "Return sample is below 30 observations; advanced metrics may be unstable.",
+      evidence: {
+        returnSampleSize: input.returns.length,
+        minimumReturnSampleSize: MIN_RETURN_SAMPLE_FOR_ADVANCED_METRICS,
+      },
+    });
+  }
+
+  return warningDetails;
+}
+
 export function calculateBacktestMetrics(
   points: BacktestPoint[],
   trades: BacktestTrade[],
@@ -346,6 +486,8 @@ export function calculateBacktestMetrics(
       ? totalReturnPercent
       : totalReturnPercent / Math.abs(maxDrawdownPercent);
   const trialCount = Math.max(1, Math.round(options.trialCount ?? 1));
+  const oosWindowCount = Math.max(0, Math.round(options.oosWindowCount ?? 0));
+  const parameterCount = Math.max(0, Math.round(options.parameterCount ?? 0));
   const baseMetrics = {
     netPnl,
     totalReturnPercent,
@@ -356,38 +498,37 @@ export function calculateBacktestMetrics(
     sharpeRatio: calculateSharpe(points),
     returnOverMaxDrawdown,
   };
+  const advanced = calculateAdvancedMetrics(
+    points,
+    trades,
+    initialCapital,
+    baseMetrics,
+    trialCount,
+  );
+  const warningDetails = buildValidationWarningDetails({
+    externalWarnings: options.validationWarnings ?? [],
+    tradeCount: trades.length,
+    trialCount,
+    oosWindowCount,
+    parameterCount,
+    points,
+    returns: equityReturns(points),
+    sharpeRatio: baseMetrics.sharpeRatio,
+    advanced,
+  });
   const validation: BacktestValidationMetrics = {
     trialCount,
-    oosWindowCount: Math.max(0, Math.round(options.oosWindowCount ?? 0)),
-    parameterCount: Math.max(0, Math.round(options.parameterCount ?? 0)),
+    oosWindowCount,
+    parameterCount,
     pboProbabilityPercent: null,
     cpcvFoldCount: null,
-    warnings: options.validationWarnings ?? [],
+    warnings: uniqueStrings(warningDetails.map((warning) => warning.message)),
+    warningDetails,
   };
-
-  if (trialCount > 1 && validation.oosWindowCount === 0) {
-    validation.warnings = [
-      ...validation.warnings,
-      "Multiple tested candidates without an out-of-sample window increase overfitting risk.",
-    ];
-  }
-
-  if (trades.length < 30) {
-    validation.warnings = [
-      ...validation.warnings,
-      "Trade count is below 30; statistical confidence is limited.",
-    ];
-  }
 
   return {
     ...baseMetrics,
-    advanced: calculateAdvancedMetrics(
-      points,
-      trades,
-      initialCapital,
-      baseMetrics,
-      trialCount,
-    ),
+    advanced,
     validation,
     benchmarks: options.benchmarks,
   };

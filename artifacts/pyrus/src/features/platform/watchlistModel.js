@@ -91,7 +91,7 @@ export const buildSignalMatrixBySymbol = (states = []) => {
   return bySymbol;
 };
 
-export const getBestWatchlistSignalState = (statesByTimeframe = {}, fallbackState = null) => {
+export const getBestWatchlistSignalState = (statesByTimeframe = {}) => {
   const matrixStates = WATCHLIST_SIGNAL_TIMEFRAMES.map(
     (timeframe) => statesByTimeframe?.[timeframe],
   ).filter((state) => isSignalDirection(state?.currentSignalDirection));
@@ -104,7 +104,7 @@ export const getBestWatchlistSignalState = (statesByTimeframe = {}, fallbackStat
     return WATCHLIST_SIGNAL_TIMEFRAMES.indexOf(left?.timeframe) -
       WATCHLIST_SIGNAL_TIMEFRAMES.indexOf(right?.timeframe);
   });
-  return sorted[0] || fallbackState || null;
+  return sorted[0] || null;
 };
 
 const normalizeWatchlistItem = (item, index) => {
@@ -228,7 +228,6 @@ export const sortWatchlistRows = (
     mode = WATCHLIST_SORT_MODE.MANUAL,
     direction = "desc",
     snapshotsBySymbol = {},
-    signalStatesBySymbol = {},
     signalMatrixBySymbol = {},
   } = {},
 ) => {
@@ -248,11 +247,9 @@ export const sortWatchlistRows = (
     if (mode === WATCHLIST_SORT_MODE.SIGNAL) {
       const leftState = getBestWatchlistSignalState(
         signalMatrixBySymbol[left.row.sym],
-        signalStatesBySymbol[left.row.sym],
       );
       const rightState = getBestWatchlistSignalState(
         signalMatrixBySymbol[right.row.sym],
-        signalStatesBySymbol[right.row.sym],
       );
       const bucketDelta =
         getSignalSortBucket(leftState) - getSignalSortBucket(rightState);

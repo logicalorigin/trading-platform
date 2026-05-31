@@ -272,6 +272,84 @@ function diagnosticErrorCode(
   return `${file}:${lineno ?? 0}:${colno ?? 0}`.slice(0, 96);
 }
 
+const VITE_OVERLAY_SELECTOR = "vite-error-overlay";
+const VITE_ERROR_RAW_TEXT_LIMIT = 4_000;
+const VITE_ERROR_MESSAGE_LIMIT = 320;
+
+const diagnosticRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+
+const diagnosticString = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() ? value.trim() : null;
+
+const compactDiagnosticText = (value: string): string =>
+  value.replace(/\s+/g, " ").trim();
+
+function readViteOverlayText(): string | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+  const overlay = document.querySelector(VITE_OVERLAY_SELECTOR);
+  if (!overlay) {
+    return null;
+  }
+  const text =
+    overlay.shadowRoot?.textContent || overlay.textContent || "";
+  return compactDiagnosticText(text);
+}
+
+function viteDiagnosticCode(text: string, err: Record<string, unknown>): string {
+  const pluginMatch = text.match(/\[plugin:[^\]]+\]/);
+  const id = diagnosticString(err["id"]);
+  const plugin = diagnosticString(err["plugin"]);
+  const location =
+    typeof err["loc"] === "object" && err["loc"] !== null
+      ? diagnosticRecord(err["loc"])
+      : null;
+  const line =
+    typeof location?.["line"] === "number" ? location["line"] : null;
+  const column =
+    typeof location?.["column"] === "number" ? location["column"] : null;
+  const file = id?.split("/").at(-1);
+  const fileCode = file ? `${file}:${line ?? 0}:${column ?? 0}` : null;
+  return (
+    pluginMatch?.[0] ||
+    (plugin ? `[plugin:${plugin}]` : null) ||
+    fileCode ||
+    "vite-dev-overlay"
+  ).slice(0, 96);
+}
+
+function buildViteDiagnosticEvent(payload: unknown, fallbackText: string | null) {
+  const record = diagnosticRecord(payload);
+  const err = diagnosticRecord(record["err"]);
+  const message = diagnosticString(err["message"]);
+  const stack = diagnosticString(err["stack"]);
+  const text = compactDiagnosticText(
+    [message, stack, fallbackText].filter(Boolean).join(" "),
+  );
+  if (!text) {
+    return null;
+  }
+  const rawText = text.slice(0, VITE_ERROR_RAW_TEXT_LIMIT);
+  return {
+    category: "vite-dev-overlay",
+    severity: "critical" as const,
+    code: viteDiagnosticCode(text, err),
+    message:
+      text.length > VITE_ERROR_MESSAGE_LIMIT
+        ? `${text.slice(0, VITE_ERROR_MESSAGE_LIMIT)}...`
+        : text,
+    raw: {
+      route: typeof window === "undefined" ? "" : window.location.href,
+      source: "vite:error",
+      text: rawText,
+      file: diagnosticString(err["id"]),
+      plugin: diagnosticString(err["plugin"]),
+    },
+  };
+}
+
 function AppContent({ bootLoaderElapsedMs = null }: AppContentProps) {
   const labMode = resolveLabMode();
   const crashMode = resolveDevCrashMode();
@@ -323,6 +401,71 @@ function AppContent({ bootLoaderElapsedMs = null }: AppContentProps) {
     return () => {
       window.removeEventListener("error", onError);
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || typeof window === "undefined") {
+      return undefined;
+    }
+
+    let lastSignature = "";
+    let shadowObserver: MutationObserver | null = null;
+    const reportViteDiagnostic = (payload: unknown = null) => {
+      const overlayText = readViteOverlayText();
+      const diagnosticEvent = buildViteDiagnosticEvent(payload, overlayText);
+      if (!diagnosticEvent) {
+        return;
+      }
+      const signature = `${diagnosticEvent.code}:${diagnosticEvent.message}`;
+      if (signature === lastSignature) {
+        return;
+      }
+      lastSignature = signature;
+      rememberBrowserDiagnosticEvent(diagnosticEvent);
+      postClientDiagnosticEvent(diagnosticEvent);
+    };
+    const attachOverlayObserver = () => {
+      if (typeof MutationObserver === "undefined") {
+        return;
+      }
+      const overlay = document.querySelector(VITE_OVERLAY_SELECTOR);
+      const root = overlay?.shadowRoot;
+      if (!root || shadowObserver) {
+        return;
+      }
+      shadowObserver = new MutationObserver(() => reportViteDiagnostic());
+      shadowObserver.observe(root, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+    };
+    const onViteError = (payload: unknown) => {
+      reportViteDiagnostic(payload);
+      attachOverlayObserver();
+    };
+    import.meta.hot?.on("vite:error", onViteError);
+    reportViteDiagnostic();
+    attachOverlayObserver();
+
+    if (typeof MutationObserver === "undefined") {
+      return () => {
+        import.meta.hot?.off("vite:error", onViteError);
+      };
+    }
+    const observer = new MutationObserver(() => {
+      reportViteDiagnostic();
+      attachOverlayObserver();
+    });
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+    return () => {
+      import.meta.hot?.off("vite:error", onViteError);
+      observer.disconnect();
+      shadowObserver?.disconnect();
     };
   }, []);
 

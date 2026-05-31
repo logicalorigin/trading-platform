@@ -17,6 +17,7 @@ import {
   updateSignalMonitorProfile,
 } from "./signal-monitor";
 import { notifyAlgoCockpitChanged } from "./algo-cockpit-events";
+import { invalidateSignalOptionsDashboardCaches } from "./signal-options-automation";
 
 type CreateAlgoDeploymentInput = {
   strategyId: string;
@@ -267,6 +268,7 @@ export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
     },
   });
 
+  invalidateSignalOptionsDashboardCaches(deployment.id);
   notifyAlgoCockpitChanged({
     deploymentId: deployment.id,
     mode: deployment.mode,
@@ -317,6 +319,7 @@ export async function setAlgoDeploymentEnabled(input: {
     },
   });
 
+  invalidateSignalOptionsDashboardCaches(deployment.id);
   notifyAlgoCockpitChanged({
     deploymentId: deployment.id,
     mode: deployment.mode,
@@ -407,6 +410,7 @@ export async function updateAlgoDeploymentStrategySettings(input: {
     },
   });
 
+  invalidateSignalOptionsDashboardCaches(deployment.id);
   notifyAlgoCockpitChanged({
     deploymentId: deployment.id,
     mode: deployment.mode,

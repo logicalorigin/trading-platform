@@ -37,3 +37,14 @@ test("quote SSE emits ready before the initial snapshot work", () => {
     /await writeEvent\("quotes", await fetchQuoteSnapshotPayload\(symbols\)\)/,
   );
 });
+
+test("position quote SSE uses the position-specific Massive-first stream", () => {
+  const routeBlock = platformSource.match(
+    /router\.get\("\/streams\/position-quotes",[\s\S]*?\n\}\);\n\nrouter\.get\("\/streams\/options\/chains"/,
+  )?.[0];
+
+  assert.ok(routeBlock);
+  assert.match(routeBlock, /subscribePositionQuoteSnapshots\(symbols/);
+  assert.match(routeBlock, /fetchPositionQuoteSnapshotPayload\(symbols\)/);
+  assert.doesNotMatch(routeBlock, /subscribeQuoteSnapshots\(symbols/);
+});

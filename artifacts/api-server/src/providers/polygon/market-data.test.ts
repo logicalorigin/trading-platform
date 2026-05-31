@@ -84,6 +84,38 @@ test("Massive stock aggregates honor delayed recency override", async () => {
   }
 });
 
+test("Massive stock aggregates support native 2-minute bars", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedPath = "";
+  let requestedLimit: string | null = null;
+
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(String(input));
+    requestedPath = url.pathname;
+    requestedLimit = url.searchParams.get("limit");
+    return Response.json({ results: [] });
+  }) as typeof fetch;
+
+  try {
+    const client = new PolygonMarketDataClient({
+      apiKey: "test",
+      baseUrl: "https://api.massive.com",
+    });
+    await client.getBarsPage({
+      symbol: "SPY",
+      timeframe: "2m",
+      from: new Date("2026-05-28T14:00:00.000Z"),
+      to: new Date("2026-05-28T14:10:00.000Z"),
+      limit: 6,
+    });
+
+    assert.match(requestedPath, /\/v2\/aggs\/ticker\/SPY\/range\/2\/minute\//);
+    assert.equal(requestedLimit, "12");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Massive REST diagnostics record sanitized request metadata", async () => {
   const originalFetch = globalThis.fetch;
   __resetMassiveApiDiagnosticsForTests();

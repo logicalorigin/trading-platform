@@ -44,6 +44,10 @@ const registrySource = readFileSync(
   new URL("../features/platform/screenRegistry.jsx", import.meta.url),
   "utf8",
 );
+const screenModulePreloaderSource = readFileSync(
+  new URL("../features/platform/screenModulePreloader.js", import.meta.url),
+  "utf8",
+);
 const researchSource = readFileSync(
   new URL("../screens/ResearchScreen.jsx", import.meta.url),
   "utf8",
@@ -497,10 +501,10 @@ test("app boot and screen routing use the React loader after the static shell", 
   assert.doesNotMatch(appSource, /function AppLoadingFallback/);
 
   assert.match(registrySource, /import LogoLoader/);
-  assert.match(registrySource, /BOOT_SCREEN_MODULE_PRELOAD_TASK_BY_SCREEN_ID/);
-  assert.match(registrySource, /startBootProgressTask\(bootProgressTaskId\)/);
-  assert.match(registrySource, /completeBootProgressTask\(bootProgressTaskId\)/);
-  assert.match(registrySource, /failBootProgressTask\(bootProgressTaskId, error\)/);
+  assert.match(screenModulePreloaderSource, /BOOT_SCREEN_MODULE_PRELOAD_TASK_BY_SCREEN_ID/);
+  assert.match(screenModulePreloaderSource, /startBootProgressTask\(bootProgressTaskId\)/);
+  assert.match(screenModulePreloaderSource, /completeBootProgressTask\(bootProgressTaskId\)/);
+  assert.match(screenModulePreloaderSource, /failBootProgressTask\(bootProgressTaskId, error\)/);
   assert.match(registrySource, /export const ScreenLoadingFallback = /);
   assert.match(registrySource, /testId="screen-loading-fallback"/);
   assert.match(registrySource, /tone="panel"/);
@@ -514,7 +518,9 @@ test("app boot and screen routing use the React loader after the static shell", 
   assert.match(researchSource, /testId="research-workspace-loading"/);
   assert.doesNotMatch(researchSource, /data-testid=.*loading.*shell/);
 
-  assert.match(marketSource, /testId="market-chart-grid-loader"/);
+  assert.match(marketSource, /data-testid="market-chart-grid-shell"/);
+  assert.match(marketSource, /data-testid="market-chart-grid-shell-cell"/);
+  assert.doesNotMatch(marketSource, /market-chart-grid-loader/);
   assert.doesNotMatch(marketSource, /testId="market-activity-loader"/);
   assert.doesNotMatch(marketSource, /Market Charts<\/CardTitle>[\s\S]*aria-hidden="true"/);
 });

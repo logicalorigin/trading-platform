@@ -1748,9 +1748,10 @@ export class IbkrBridgeClient {
     const bridgeSymbol = toBridgeStockSymbolForRequest(input);
     const payload = await this.request<{
       bars: Array<
-        Omit<BrokerBarSnapshot, "timestamp" | "dataUpdatedAt"> & {
+        Omit<BrokerBarSnapshot, "timestamp" | "dataUpdatedAt" | "quoteAsOf"> & {
           timestamp: string | Date;
           dataUpdatedAt?: string | Date | null;
+          quoteAsOf?: string | Date | null;
         }
       >;
     }>(
@@ -1775,6 +1776,7 @@ export class IbkrBridgeClient {
       timestamp:
         bar.timestamp instanceof Date ? bar.timestamp : new Date(bar.timestamp),
       dataUpdatedAt: bar.dataUpdatedAt ? toDate(bar.dataUpdatedAt) : null,
+      quoteAsOf: bar.quoteAsOf ? toDate(bar.quoteAsOf) : null,
     }));
   }
 

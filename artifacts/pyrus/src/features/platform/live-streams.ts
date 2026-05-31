@@ -3717,11 +3717,13 @@ export const groupOptionChainContractsByExpiration = (
   return contractsByExpiration;
 };
 
-export const useIbkrQuoteSnapshotStream = ({
+const useQuoteSnapshotStream = ({
+  streamPath,
   symbols,
   enabled = true,
   onQuotes,
 }: {
+  streamPath: string;
   symbols: string[];
   enabled?: boolean;
   onQuotes?: (quotes: QuoteSnapshot[]) => void;
@@ -3735,10 +3737,10 @@ export const useIbkrQuoteSnapshotStream = ({
   const normalizedSymbols = useMemo(() => normalizeSymbols(symbols), [symbols]);
   const streamUrl = useMemo(
     () =>
-      buildStreamUrl("/api/streams/quotes", {
+      buildStreamUrl(streamPath, {
         symbols: normalizedSymbols.join(","),
       }),
-    [normalizedSymbols],
+    [normalizedSymbols, streamPath],
   );
 
   useEffect(() => {
@@ -3833,6 +3835,38 @@ export const useIbkrQuoteSnapshotStream = ({
     };
   }, [enabled, onQuotes, pageVisible, queryClient, streamUrl]);
 };
+
+export const useIbkrQuoteSnapshotStream = ({
+  symbols,
+  enabled = true,
+  onQuotes,
+}: {
+  symbols: string[];
+  enabled?: boolean;
+  onQuotes?: (quotes: QuoteSnapshot[]) => void;
+}) =>
+  useQuoteSnapshotStream({
+    streamPath: "/api/streams/quotes",
+    symbols,
+    enabled,
+    onQuotes,
+  });
+
+export const usePositionQuoteSnapshotStream = ({
+  symbols,
+  enabled = true,
+  onQuotes,
+}: {
+  symbols: string[];
+  enabled?: boolean;
+  onQuotes?: (quotes: QuoteSnapshot[]) => void;
+}) =>
+  useQuoteSnapshotStream({
+    streamPath: "/api/streams/position-quotes",
+    symbols,
+    enabled,
+    onQuotes,
+  });
 
 export const useIbkrAccountSnapshotStream = ({
   accountId,
@@ -4284,6 +4318,7 @@ export const useAlgoCockpitStream = ({
     const handleFreshness = (event: MessageEvent<string>) => {
       const payload = parseJsonPayload<{
         stream?: string;
+        phase?: "critical" | "full" | null;
         stale?: boolean;
         degraded?: boolean;
       }>(event.data);
@@ -4295,7 +4330,13 @@ export const useAlgoCockpitStream = ({
       ) {
         return;
       }
-      markFresh("full");
+      if (payload.phase === "full") {
+        markFresh("full");
+      } else if (payload.phase === "critical") {
+        markFresh("critical");
+      } else {
+        markFresh("heartbeat");
+      }
     };
     const handleReady = () => {
       markFresh("heartbeat");
@@ -4720,6 +4761,9 @@ export const useIbkrOptionQuoteStream = ({
           const payload = await getOptionQuoteSnapshots({
             underlying: normalizedUnderlying,
             providerContractIds: fallbackProviderContractIds,
+            owner: normalizedOwner || undefined,
+            intent,
+            requiresGreeks,
           });
           recordOptionHydrationMetric(
             "quoteSnapshotMs",

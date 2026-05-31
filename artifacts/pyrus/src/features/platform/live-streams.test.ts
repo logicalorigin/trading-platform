@@ -155,7 +155,7 @@ test("account page real requests follow the frame selected account", () => {
   assert.doesNotMatch(platformRouterSource, /onSelectTradingAccount/);
 });
 
-test("account page owns one visible option quote stream for positions surfaces", () => {
+test("account page owns one account-monitor option quote stream for positions surfaces", () => {
   const accountScreenSource = readFileSync(
     new URL("../../screens/AccountScreen.jsx", import.meta.url),
     "utf8",
@@ -166,6 +166,10 @@ test("account page owns one visible option quote stream for positions surfaces",
   );
   const positionsSource = readFileSync(
     new URL("../../screens/account/PositionsPanel.jsx", import.meta.url),
+    "utf8",
+  );
+  const quoteStreamsSource = readFileSync(
+    new URL("../../screens/account/PositionOptionQuoteStreams.jsx", import.meta.url),
     "utf8",
   );
 
@@ -181,6 +185,18 @@ test("account page owns one visible option quote stream for positions surfaces",
   assert.match(todaySource, /getOpenPositionRows\(positionsQuery\?\.data\?\.positions \|\| \[\]\)/);
   assert.match(todaySource, /streamLiveOptionQuotes = true/);
   assert.match(positionsSource, /streamLiveOptionQuotes = true/);
+  assert.match(quoteStreamsSource, /intent: "account-monitor-live"/);
+});
+
+test("option quote REST fallback preserves websocket owner and intent", () => {
+  const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+  const fallbackCall = source.match(
+    /getOptionQuoteSnapshots\(\{[\s\S]*?providerContractIds: fallbackProviderContractIds,[\s\S]*?\}\)/,
+  )?.[0] ?? "";
+
+  assert.match(fallbackCall, /owner: normalizedOwner \|\| undefined/);
+  assert.match(fallbackCall, /intent,/);
+  assert.match(fallbackCall, /requiresGreeks,/);
 });
 
 test("account critical queries stay mounted after page readiness", () => {
@@ -212,7 +228,7 @@ test("broker account and order streams refresh freshness on readiness and poll s
 test("stock quote stream batches React Query cache writes", () => {
   const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
   const hookSource = source.match(
-    /export const useIbkrQuoteSnapshotStream = \([\s\S]*?\nexport const useIbkrAccountSnapshotStream/,
+    /const useQuoteSnapshotStream = \([\s\S]*?\nexport const useIbkrAccountSnapshotStream/,
   )?.[0];
 
   assert.match(source, /QUOTE_STREAM_CACHE_FLUSH_MS\s*=\s*100/);
@@ -223,6 +239,8 @@ test("stock quote stream batches React Query cache writes", () => {
   );
   assert.match(hookSource ?? "", /queryClient\.setQueryData/);
   assert.match(hookSource ?? "", /flushQuoteStreamSnapshots\(\)/);
+  assert.match(source, /streamPath: "\/api\/streams\/quotes"/);
+  assert.match(source, /streamPath: "\/api\/streams\/position-quotes"/);
 });
 
 test("shadow account stream refreshes freshness on readiness and poll success", () => {
@@ -296,6 +314,9 @@ test("algo cockpit stream hydrates query caches and gates fallback polling", () 
   assert.match(liveStreamsSource, /getGetSignalOptionsAutomationStateQueryKey/);
   assert.match(liveStreamsSource, /getGetSignalOptionsPerformanceQueryKey/);
   assert.match(liveStreamsSource, /getGetSignalMonitorProfileQueryKey/);
+  assert.match(liveStreamsSource, /phase\?: "critical" \| "full" \| null/);
+  assert.match(liveStreamsSource, /if \(payload\.phase === "full"\)[\s\S]*markFresh\("full"\)/);
+  assert.match(liveStreamsSource, /else if \(payload\.phase === "critical"\)[\s\S]*markFresh\("critical"\)/);
   assert.match(algoScreenSource, /useAlgoCockpitStream/);
   assert.match(algoScreenSource, /algoRoutineRefetchInterval/);
   assert.match(algoScreenSource, /algoCriticalQueriesEnabled/);
@@ -305,6 +326,12 @@ test("algo cockpit stream hydrates query caches and gates fallback polling", () 
   assert.match(algoScreenSource, /signalOptionsLedgerPositionsRefetchInterval[\s\S]*60_000/);
   assert.match(algoScreenSource, /algoCockpitStreamFreshness\.algoCriticalFresh/);
   assert.match(algoScreenSource, /algoCockpitStreamFreshness\.algoFullFresh/);
+  assert.match(algoScreenSource, /deploymentSignalOptionsProfile/);
+  assert.match(algoScreenSource, /controlBaselineReady/);
+  assert.match(
+    algoScreenSource,
+    /signalOptionsState\?\.profile \|\|[\s\S]*deploymentSignalOptionsProfile \|\|[\s\S]*SIGNAL_OPTIONS_DEFAULT_PROFILE/,
+  );
 });
 
 test("algo cockpit stream exposes live event callback without replaying bootstrap", () => {

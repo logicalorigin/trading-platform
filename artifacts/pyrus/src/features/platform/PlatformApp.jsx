@@ -1228,7 +1228,7 @@ export default function PlatformApp() {
     { mode: sessionQuery.data?.environment || "paper" },
     {
       query: {
-        enabled: Boolean(sessionQuery.data),
+        enabled: Boolean(sessionQuery.data && !safeQaMode),
         staleTime: 60_000,
         retry: false,
       },
@@ -1267,6 +1267,10 @@ export default function PlatformApp() {
     watchlistsQuery.isFetched,
   ]);
   useEffect(() => {
+    if (safeQaMode) {
+      skipBootProgressTasks(["accounts"], "Accounts skipped in safe QA mode");
+      return;
+    }
     if (!sessionQuery.data && sessionMetadataSettled) {
       skipBootProgressTasks(["accounts"], "Accounts skipped without a session");
       return;
@@ -1289,6 +1293,7 @@ export default function PlatformApp() {
     accountsQuery.error,
     accountsQuery.isError,
     accountsQuery.isFetched,
+    safeQaMode,
     sessionMetadataSettled,
     sessionQuery.data,
   ]);
@@ -4049,12 +4054,13 @@ export default function PlatformApp() {
         watchlistSymbols={runtimeWatchlistSymbols}
         broadFlowWatchlistSymbols={broadFlowWatchlistSymbols}
         activeWatchlistItems={activeWatchlist?.items}
-        quoteSymbols={runtimeQuoteSymbols}
-        sparklineSymbols={runtimeSparklineSymbols}
-        prioritySparklineSymbols={prioritySparklineSymbols}
-        streamedQuoteSymbols={runtimeStreamedQuoteSymbols}
-        streamedAggregateSymbols={runtimeStreamedAggregateSymbols}
+        quoteSymbols={safeQaMode ? [] : runtimeQuoteSymbols}
+        sparklineSymbols={safeQaMode ? [] : runtimeSparklineSymbols}
+        prioritySparklineSymbols={safeQaMode ? [] : prioritySparklineSymbols}
+        streamedQuoteSymbols={safeQaMode ? [] : runtimeStreamedQuoteSymbols}
+        streamedAggregateSymbols={safeQaMode ? [] : runtimeStreamedAggregateSymbols}
         quoteStreamRuntimeEnabled={
+          !safeQaMode &&
           workSchedule.streams.watchlistQuoteStream &&
           !priorityScreenCodePreloadPending &&
           !signalHydrationBootstrapActive
@@ -4062,18 +4068,22 @@ export default function PlatformApp() {
         quoteStreamDisabledReason={quoteStreamGateReason}
         quoteStreamCoverageDiagnostics={watchlistQuoteStreamDiagnostics}
         marketStockAggregateStreamingEnabled={
+          !safeQaMode &&
           workSchedule.streams.marketStockAggregates &&
           !priorityScreenCodePreloadPending &&
           !signalHydrationBootstrapActive
         }
         marketScreenActive={marketScreenActive}
         lowPriorityHistoryEnabled={
+          !safeQaMode &&
           workSchedule.streams.lowPriorityHistory &&
           !priorityScreenCodePreloadPending &&
           !signalHydrationBootstrapActive
         }
         sparklineHistoryEnabled={
-          platformPressureCaps.sparklineEnabled && !signalHydrationBootstrapActive
+          !safeQaMode &&
+          platformPressureCaps.sparklineEnabled &&
+          !signalHydrationBootstrapActive
         }
         sparklineConcurrency={platformPressureCaps.sparklineConcurrency}
         flowRuntimeEnabled={
@@ -4143,6 +4153,7 @@ export default function PlatformApp() {
             bridgeTone={bridgeTone}
             theme={theme}
             onToggleTheme={toggleTheme}
+            safeQaMode={safeQaMode}
             runtimeWatchlistSymbols={runtimeWatchlistSymbols}
             sessionMetadataSettled={sessionMetadataSettled}
             frameAuxiliaryDataEnabled={frameAuxiliaryDataEnabled}

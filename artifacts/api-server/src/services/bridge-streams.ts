@@ -25,6 +25,7 @@ import {
   fetchBridgeQuoteSnapshots,
   subscribeBridgeQuoteSnapshots,
 } from "./bridge-quote-stream";
+import { subscribeMassiveStockQuoteSnapshots } from "./massive-stock-quote-stream";
 import {
   fetchBridgeOptionQuoteSnapshots,
   subscribeBridgeOptionQuoteSnapshots,
@@ -444,6 +445,12 @@ export async function fetchQuoteSnapshotPayload(
   return fetchBridgeQuoteSnapshots(symbols);
 }
 
+export async function fetchPositionQuoteSnapshotPayload(
+  symbols: string[],
+): Promise<QuoteStreamPayload> {
+  return fetchQuoteSnapshotPayload(symbols);
+}
+
 export async function fetchOptionChainSnapshotPayload(
   underlyings: string[],
 ): Promise<OptionChainSnapshotPayload> {
@@ -663,6 +670,21 @@ export function subscribeQuoteSnapshots(
   const normalizedSymbols = Array.from(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
+
+  return subscribeBridgeQuoteSnapshots(normalizedSymbols, onSnapshot);
+}
+
+export function subscribePositionQuoteSnapshots(
+  symbols: string[],
+  onSnapshot: (payload: QuoteStreamPayload) => void,
+): Unsubscribe {
+  const normalizedSymbols = Array.from(
+    new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+  );
+
+  if (isMassiveStocksRealtimeConfigured()) {
+    return subscribeMassiveStockQuoteSnapshots(normalizedSymbols, onSnapshot);
+  }
 
   return subscribeBridgeQuoteSnapshots(normalizedSymbols, onSnapshot);
 }

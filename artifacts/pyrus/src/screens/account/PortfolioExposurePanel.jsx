@@ -712,6 +712,60 @@ const RiskMetric = ({ label, value, tone = CSS_COLOR.text }) => (
 
 const asArray = (value) => (Array.isArray(value) ? value : []);
 
+const recommendationSeverityTone = (severity) => {
+  if (severity === "attention") return CSS_COLOR.red;
+  if (severity === "watch") return CSS_COLOR.amber;
+  return CSS_COLOR.textDim;
+};
+
+const recommendationSeverityLabel = (severity) => {
+  if (severity === "attention") return "Attention";
+  if (severity === "watch") return "Watch";
+  return "Info";
+};
+
+const recommendationScopeLabel = (recommendation) =>
+  recommendation?.underlying ||
+  recommendation?.symbol ||
+  String(recommendation?.category || "option").toUpperCase();
+
+export const getRiskRecommendationSummary = (riskRecommendations) => {
+  if (!riskRecommendations?.advisoryOnly || riskRecommendations.scope !== "options") {
+    return null;
+  }
+
+  const summary = riskRecommendations.summary || {};
+  const optionPositionCount = finiteMetric(summary.optionPositionCount) ?? 0;
+  const recommendations = asArray(riskRecommendations.recommendations)
+    .filter((recommendation) => recommendation && typeof recommendation === "object")
+    .slice(0, 4);
+
+  if (optionPositionCount <= 0 && recommendations.length === 0) {
+    return null;
+  }
+
+  const highestSeverity = recommendations.reduce((current, recommendation) => {
+    if (current === "attention" || recommendation.severity === "attention") {
+      return "attention";
+    }
+    if (current === "watch" || recommendation.severity === "watch") {
+      return "watch";
+    }
+    return "info";
+  }, "info");
+
+  return {
+    status: riskRecommendations.status || "ready",
+    highestSeverity,
+    recommendations,
+    optionPositionCount,
+    totalPremiumExposure: finiteMetric(summary.totalPremiumExposure),
+    premiumToNavPercent: finiteMetric(summary.premiumToNavPercent),
+    worstShockPnl: finiteMetric(summary.worstShockPnl),
+    worstShockToNavPercent: finiteMetric(summary.worstShockToNavPercent),
+  };
+};
+
 export const getGreekScenarioSummary = (greekScenarios) => {
   if (!greekScenarios?.enabled) {
     return null;
@@ -752,6 +806,166 @@ const scenarioLabel = (scenario) => {
   ]
     .filter(Boolean)
     .join(" · ");
+};
+
+const OptionRiskReviewStrip = ({ riskRecommendations, currency, maskValues }) => {
+  const summary = getRiskRecommendationSummary(riskRecommendations);
+  if (!summary) {
+    return null;
+  }
+
+  const statusTone =
+    summary.status === "degraded"
+      ? CSS_COLOR.amber
+      : recommendationSeverityTone(summary.highestSeverity);
+  const statusLabel =
+    summary.recommendations.length > 0
+      ? recommendationSeverityLabel(summary.highestSeverity)
+      : summary.status === "degraded"
+        ? "Degraded"
+        : "Ready";
+
+  return (
+    <div
+      data-testid="portfolio-exposure-risk-recommendations"
+      style={{
+        display: "grid",
+        gap: sp(3),
+        paddingTop: sp(2),
+        borderTop: `1px solid ${CSS_COLOR.border}`,
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) auto",
+          gap: sp(4),
+          alignItems: "center",
+        }}
+      >
+        <div style={getSectionLabelStyle()}>Option Risk Reviews</div>
+        <div style={{ ...mutedLabelStyle, color: statusTone }}>
+          {statusLabel}
+        </div>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(auto-fit, minmax(${dim(68)}px, 1fr))`,
+          gap: sp(3),
+          minWidth: 0,
+        }}
+      >
+        <RiskMetric
+          label="Premium"
+          value={formatAccountMoney(summary.totalPremiumExposure, currency, true, maskValues)}
+        />
+        <RiskMetric
+          label="Worst Shock"
+          value={formatAccountMoney(summary.worstShockPnl, currency, true, maskValues)}
+          tone={toneForValue(summary.worstShockPnl)}
+        />
+        <RiskMetric
+          label="Reviews"
+          value={formatNumber(summary.recommendations.length, 0)}
+          tone={summary.recommendations.length ? statusTone : CSS_COLOR.textDim}
+        />
+        <RiskMetric
+          label="Premium / NLV"
+          value={
+            summary.premiumToNavPercent == null
+              ? "—"
+              : formatAccountPercent(summary.premiumToNavPercent, 1, maskValues)
+          }
+          tone={
+            summary.premiumToNavPercent != null && summary.premiumToNavPercent > 10
+              ? CSS_COLOR.amber
+              : CSS_COLOR.text
+          }
+        />
+      </div>
+      {summary.recommendations.length ? (
+        <div style={{ display: "grid", gap: sp(2) }}>
+          {summary.recommendations.map((recommendation) => {
+            const tone = recommendationSeverityTone(recommendation.severity);
+            return (
+              <div
+                key={recommendation.id || `${recommendation.category}:${recommendation.title}`}
+                style={{
+                  display: "grid",
+                  gap: sp(1),
+                  minWidth: 0,
+                  padding: `${sp(2)} ${sp(2)}`,
+                  borderRadius: RADII.sm,
+                  background: CSS_COLOR.bg2,
+                  border: `1px solid ${CSS_COLOR.border}`,
+                }}
+              >
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "auto minmax(0, 1fr) auto",
+                    alignItems: "center",
+                    gap: sp(2),
+                    minWidth: 0,
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      width: dim(5),
+                      height: dim(5),
+                      borderRadius: RADII.pill,
+                      background: tone,
+                    }}
+                  />
+                  <span
+                    style={{
+                      color: CSS_COLOR.text,
+                      fontFamily: T.sans,
+                      fontSize: textSize("body"),
+                      fontWeight: FONT_WEIGHTS.label,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {recommendation.title || "Review option risk"}
+                  </span>
+                  <span
+                    style={{
+                      color: CSS_COLOR.textDim,
+                      fontFamily: T.sans,
+                      fontSize: textSize("caption"),
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {recommendationScopeLabel(recommendation)}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    color: CSS_COLOR.textSec,
+                    fontFamily: T.sans,
+                    fontSize: textSize("body"),
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {recommendation.suggestedReview || recommendation.rationale || "Review the option risk inputs."}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div style={getCompactTextStyle()}>No active option risk reviews.</div>
+      )}
+    </div>
+  );
 };
 
 const GreekScenarioStrip = ({ greekScenarios, currency, maskValues }) => {
@@ -1150,6 +1364,14 @@ export const PortfolioExposurePanel = ({
           {isPhone ? null : (
             <GreekScenarioStrip
               greekScenarios={riskModel?.greekScenarios}
+              currency={currency}
+              maskValues={maskValues}
+            />
+          )}
+
+          {isPhone ? null : (
+            <OptionRiskReviewStrip
+              riskRecommendations={riskModel?.riskRecommendations}
               currency={currency}
               maskValues={maskValues}
             />

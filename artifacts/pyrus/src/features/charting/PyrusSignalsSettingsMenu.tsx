@@ -98,6 +98,7 @@ type BooleanSettingKey =
   | "showNewYorkSession"
   | "showTokyoSession"
   | "showSydneySession"
+  | "showSecondarySignals"
   | "colorCandles";
 
 const triggerStyle = (
@@ -500,6 +501,18 @@ export function PyrusSignalsSettingsMenu({
       sessions: settings.sessions.includes(session)
         ? settings.sessions.filter((value) => value !== session)
         : [...settings.sessions, session],
+    });
+  };
+
+  const toggleSecondarySignalTimeframe = (
+    timeframe: PyrusSignalsRuntimeSettings["secondarySignalTimeframes"][number],
+  ) => {
+    update({
+      secondarySignalTimeframes: settings.secondarySignalTimeframes.includes(
+        timeframe,
+      )
+        ? settings.secondarySignalTimeframes.filter((value) => value !== timeframe)
+        : [...settings.secondarySignalTimeframes, timeframe],
     });
   };
 
@@ -1221,8 +1234,25 @@ export function PyrusSignalsSettingsMenu({
               borderTop={false}
             >
               <div style={noteBoxStyle(theme)}>
-                TradingView's per-timeframe visibility, min/max bars-to-show, and last-bar-only controls are not wired into this chart surface yet. The controls below are the real on-chart visibility switches currently supported by the adapter.
+                The switches below control the Pyrus Signals elements this adapter renders on the chart, including secondary BUY/SELL badges from selected source timeframes when source bars are available.
               </div>
+              <Row theme={theme} label="Secondary Signal Badges">
+                <input type="checkbox" checked={settings.showSecondarySignals} onChange={() => toggle("showSecondarySignals")} style={checkboxStyle(theme)} />
+              </Row>
+              <Row theme={theme} label="Secondary Source Timeframes">
+                <div style={threeColumnStyle}>
+                  {PYRUS_SIGNALS_MTF_OPTIONS.map((timeframe) => (
+                    <InlineCheckbox
+                      key={timeframe}
+                      theme={theme}
+                      label={timeframe}
+                      checked={settings.secondarySignalTimeframes.includes(timeframe)}
+                      onChange={() => toggleSecondarySignalTimeframe(timeframe)}
+                      disabled={!settings.showSecondarySignals}
+                    />
+                  ))}
+                </div>
+              </Row>
               <Row theme={theme} label="Trend Candles">
                 <input type="checkbox" checked={settings.colorCandles} onChange={() => toggle("colorCandles")} style={checkboxStyle(theme)} />
               </Row>

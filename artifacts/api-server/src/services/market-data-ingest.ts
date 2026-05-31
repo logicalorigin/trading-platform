@@ -62,6 +62,11 @@ export const SUPPORTED_MARKET_DATA_INGEST_JOB_KINDS = [
 const SUPPORTED_MARKET_DATA_INGEST_JOB_KIND_SET = new Set<string>(
   SUPPORTED_MARKET_DATA_INGEST_JOB_KINDS,
 );
+const FORWARD_REFRESH_JOB_KINDS = [
+  "stock_snapshot",
+  "option_chain_snapshot",
+  "gex_snapshot",
+] as const satisfies readonly MarketDataIngestJobKind[];
 
 type DbModule = {
   db: any;
@@ -99,6 +104,49 @@ const stablePayloadPart = (
   const dedupeBucket = payload?.["dedupeBucket"];
   return dedupeBucket == null ? "" : String(dedupeBucket);
 };
+
+function numericDedupeBucket(
+  payload: Record<string, unknown> | null | undefined,
+): number | null {
+  const value = payload?.["dedupeBucket"];
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value === "string" && /^[0-9]+$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+  }
+  return null;
+}
+
+async function cancelSupersededForwardRefreshJobs(
+  pool: DbModule["pool"],
+  symbol: string,
+  payload: Record<string, unknown> | null | undefined,
+): Promise<void> {
+  const dedupeBucket = numericDedupeBucket(payload);
+  if (dedupeBucket == null) {
+    return;
+  }
+
+  await pool.query(
+    `
+    update market_data_ingest_jobs
+       set status = 'cancelled',
+           lease_owner = null,
+           lease_expires_at = null,
+           last_heartbeat_at = null,
+           last_error = concat('superseded by newer market-data refresh bucket ', $2::text),
+           updated_at = now()
+     where symbol = $1
+       and kind = any($3::text[])
+       and status in ('queued', 'running', 'failed')
+       and coalesce(payload->>'dedupeBucket', '') ~ '^[0-9]+$'
+       and (payload->>'dedupeBucket')::bigint < $2::bigint
+    `,
+    [symbol, dedupeBucket, [...FORWARD_REFRESH_JOB_KINDS]],
+  );
+}
 
 export function isMarketDataIngestDatabaseConfigured(): boolean {
   return Boolean(
@@ -167,7 +215,7 @@ export async function enqueueMarketDataJob(
     return { queued: false, dedupeKey, reason: "database_unconfigured" };
   }
 
-  const { db, marketDataIngestJobsTable } = dbModule;
+  const { db, pool, marketDataIngestJobsTable } = dbModule;
   const priority =
     Number.isFinite(input.priority) && (input.priority ?? 0) > 0
       ? Math.floor(input.priority as number)
@@ -212,6 +260,7 @@ export async function enqueueMarketDataJob(
           updatedAt: now,
         },
       });
+    await cancelSupersededForwardRefreshJobs(pool, symbol, input.payload ?? null);
     return { queued: true, dedupeKey };
   } catch (error) {
     logger.debug(
@@ -571,5 +620,6 @@ function mapBlockedGexDiagnosticsRows(
 }
 
 export const __marketDataIngestInternalsForTests = {
+  numericDedupeBucket,
   mapBlockedGexDiagnosticsRows,
 };

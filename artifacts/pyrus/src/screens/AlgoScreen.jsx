@@ -72,6 +72,7 @@ import {
   signalOptionsApi,
 } from "./algo/algoHelpers";
 import { normalizeLegacyAlgoBrandText } from "./algo/algoBranding.js";
+import { useServerSyncedDraft } from "./algo/useServerSyncedDraft";
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
 import {
   useAlgoCockpitStream,
@@ -124,11 +125,21 @@ const LazyAlgoStatusBar = lazy(() =>
     default: module.AlgoStatusBar,
   })),
 );
-const LazyAlgoRightRail = lazy(() =>
-  import("./algo/AlgoRightRail.jsx").then((module) => ({
-    default: module.AlgoRightRail,
-  })),
-);
+let algoRightRailImport = null;
+const loadAlgoRightRail = () => {
+  if (!algoRightRailImport) {
+    algoRightRailImport = import("./algo/AlgoRightRail.jsx")
+      .then((module) => ({
+        default: module.AlgoRightRail,
+      }))
+      .catch((error) => {
+        algoRightRailImport = null;
+        throw error;
+      });
+  }
+  return algoRightRailImport;
+};
+const LazyAlgoRightRail = lazy(loadAlgoRightRail);
 const LazyAlgoAuditPanel = lazy(() =>
   import("./algo/AlgoAuditPanel").then((module) => ({
     default: module.AlgoAuditPanel,
@@ -161,6 +172,14 @@ const EMPTY_SIGNAL_OPTIONS_CANDIDATES = Object.freeze([]);
 const EMPTY_SIGNAL_OPTIONS_SIGNALS = Object.freeze([]);
 const EMPTY_SIGNAL_OPTIONS_POSITIONS = Object.freeze([]);
 
+const preferNonEmptySourceArray = (primary, fallback, emptyValue) => {
+  const primaryArray = Array.isArray(primary) ? primary : null;
+  const fallbackArray = Array.isArray(fallback) ? fallback : null;
+  if (primaryArray?.length) return primaryArray;
+  if (fallbackArray?.length) return fallbackArray;
+  return primaryArray || fallbackArray || emptyValue;
+};
+
 const AlgoLiveLoading = () => (
   <div
     data-testid="algo-live-loading"
@@ -180,6 +199,48 @@ const AlgoLiveLoading = () => (
   </div>
 );
 
+const AlgoRightRailLoading = () => (
+  <div
+    data-testid="algo-right-rail-loading"
+    style={{
+      minHeight: dim(260),
+      height: "100%",
+      display: "grid",
+      alignContent: "start",
+      gap: sp(8),
+      padding: sp(10),
+      border: `1px dashed ${CSS_COLOR.border}`,
+      borderRadius: dim(RADII.sm),
+      background: CSS_COLOR.bg1,
+      color: CSS_COLOR.textDim,
+      fontFamily: T.sans,
+      fontSize: textSize("caption"),
+    }}
+  >
+    <span>Loading algo controls...</span>
+    <span
+      aria-hidden="true"
+      className="ra-skeleton-shimmer"
+      style={{
+        display: "block",
+        minHeight: dim(96),
+        borderRadius: dim(RADII.sm),
+        background: cssColorMix(CSS_COLOR.textMuted, 10),
+      }}
+    />
+    <span
+      aria-hidden="true"
+      className="ra-skeleton-shimmer"
+      style={{
+        display: "block",
+        minHeight: dim(140),
+        borderRadius: dim(RADII.sm),
+        background: cssColorMix(CSS_COLOR.textMuted, 8),
+      }}
+    />
+  </div>
+);
+
 const signalOptionsRuleColor = (status) => {
   if (status === "fail") return CSS_COLOR.red;
   if (status === "warning") return CSS_COLOR.amber;
@@ -195,126 +256,6 @@ const cloneStrategySettings = (settings) => ({
   ...DEFAULT_STRATEGY_SIGNAL_SETTINGS,
   ...(settings || {}),
 });
-
-const cloneJson = (value) => JSON.parse(JSON.stringify(value ?? null));
-
-const defaultDraftIsEqual = (left, right) =>
-  JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
-
-const draftPathParts = (path) =>
-  Array.isArray(path)
-    ? path
-    : String(path || "")
-        .split(".")
-        .map((part) => part.trim())
-        .filter(Boolean);
-
-const setDraftPathValue = (source, path, value) => {
-  const parts = draftPathParts(path);
-  if (!parts.length) return value;
-
-  const root = Array.isArray(source) ? source.slice() : { ...(source || {}) };
-  let cursor = root;
-  parts.slice(0, -1).forEach((part) => {
-    const current = cursor[part];
-    const next =
-      current && typeof current === "object"
-        ? Array.isArray(current)
-          ? current.slice()
-          : { ...current }
-        : {};
-    cursor[part] = next;
-    cursor = next;
-  });
-  cursor[parts[parts.length - 1]] = value;
-  return root;
-};
-
-const syncTokenFor = (syncKeys) => JSON.stringify(syncKeys || []);
-
-const useServerSyncedDraft = (
-  serverValue,
-  {
-    syncKeys = [],
-    clone = cloneJson,
-    isEqual = defaultDraftIsEqual,
-    onDirtySyncKeyChange,
-  } = {},
-) => {
-  const [draft, setDraft] = useState(() => clone(serverValue));
-  const [baseline, setBaseline] = useState(() => clone(serverValue));
-  const draftRef = useRef(draft);
-  const baselineRef = useRef(baseline);
-  const syncToken = useMemo(() => syncTokenFor(syncKeys), [syncKeys]);
-  const previousSyncTokenRef = useRef(syncToken);
-
-  useEffect(() => {
-    draftRef.current = draft;
-  }, [draft]);
-
-  useEffect(() => {
-    baselineRef.current = baseline;
-  }, [baseline]);
-
-  useEffect(() => {
-    const syncChanged = previousSyncTokenRef.current !== syncToken;
-    const dirty = !isEqual(draftRef.current, baselineRef.current);
-    if (syncChanged && dirty) {
-      onDirtySyncKeyChange?.();
-    }
-    previousSyncTokenRef.current = syncToken;
-    if (!syncChanged && dirty) {
-      return;
-    }
-
-    const next = clone(serverValue);
-    setDraft(next);
-    setBaseline(clone(serverValue));
-  }, [clone, isEqual, onDirtySyncKeyChange, serverValue, syncToken]);
-
-  const patch = useCallback(
-    (path, value) => {
-      setDraft((current) => setDraftPathValue(clone(current), path, value));
-    },
-    [clone],
-  );
-
-  const replace = useCallback(
-    (nextDraft) => {
-      setDraft((current) =>
-        clone(typeof nextDraft === "function" ? nextDraft(current) : nextDraft),
-      );
-    },
-    [clone],
-  );
-
-  const reset = useCallback(() => {
-    const next = clone(baselineRef.current);
-    setDraft(next);
-  }, [clone]);
-
-  const markClean = useCallback(
-    (nextServerValue) => {
-      const next =
-        nextServerValue === undefined
-          ? clone(draftRef.current)
-          : clone(nextServerValue);
-      setDraft(next);
-      setBaseline(clone(next));
-    },
-    [clone],
-  );
-
-  return {
-    draft,
-    baseline,
-    patch,
-    replace,
-    reset,
-    markClean,
-    isDirty: !isEqual(draft, baseline),
-  };
-};
 
 const EMPTY_COCKPIT_GATE_SUMMARY = Object.freeze({
   signalFreshness: Object.freeze({}),
@@ -469,6 +410,8 @@ export const AlgoScreen = ({
   const [bridgeLaunchClock, setBridgeLaunchClock] = useState(() => Date.now());
   const [bridgeLaunchInFlightUntil, setBridgeLaunchInFlightUntil] = useState(0);
   const [algoLivePageReady, setAlgoLivePageReady] = useState(false);
+  const saveAllInFlightRef = useRef(false);
+  const [saveAllPending, setSaveAllPending] = useState(false);
   const [algoRuntimeHelpers, setAlgoRuntimeHelpers] = useState(
     DEFAULT_ALGO_RUNTIME_HELPERS,
   );
@@ -491,6 +434,7 @@ export const AlgoScreen = ({
       return undefined;
     }
     let cancelled = false;
+    void loadAlgoRightRail().catch(() => undefined);
     loadAlgoLivePage()
       .then(() => {
         if (!cancelled) {
@@ -727,8 +671,8 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: Boolean(algoDerivedQueriesEnabled && focusedDeployment?.id),
-        refetchInterval: algoDerivedRefetchInterval,
+        enabled: Boolean(algoCriticalQueriesEnabled && focusedDeployment?.id),
+        refetchInterval: algoRoutineRefetchInterval,
         retry: false,
       },
     },
@@ -804,20 +748,50 @@ export const AlgoScreen = ({
   const signalOptionsPerformance = signalOptionsPerformanceQuery.data || null;
   const signalOptionsState = signalOptionsStateQuery.data || null;
   const signalMonitorProfile = signalMonitorProfileQuery.data || null;
+  const deploymentSignalOptionsBaselineAvailable = useMemo(() => {
+    const config = asRecord(focusedDeployment?.config);
+    const signalOptions = asRecord(config.signalOptions);
+    if (Object.keys(signalOptions).length) {
+      return true;
+    }
+    const parameters = asRecord(config.parameters);
+    return (
+      parameters.executionMode === "signal_options" ||
+      Object.keys(parameters).some((key) => key.startsWith("signalOptions"))
+    );
+  }, [focusedDeployment?.config]);
+  const deploymentSignalOptionsProfile = useMemo(
+    () =>
+      focusedDeployment?.config && deploymentSignalOptionsBaselineAvailable
+        ? mergeSignalOptionsProfile(focusedDeployment.config)
+        : null,
+    [deploymentSignalOptionsBaselineAvailable, focusedDeployment?.config],
+  );
   const signalOptionsProfile =
-    signalOptionsState?.profile || SIGNAL_OPTIONS_DEFAULT_PROFILE;
-  const signalOptionsCandidates =
-    cockpit?.candidates ||
-    signalOptionsState?.candidates ||
-    EMPTY_SIGNAL_OPTIONS_CANDIDATES;
-  const signalOptionsSignals =
-    cockpit?.signals ||
-    signalOptionsState?.signals ||
-    EMPTY_SIGNAL_OPTIONS_SIGNALS;
-  const signalOptionsPositions =
-    cockpit?.activePositions ||
-    signalOptionsState?.activePositions ||
-    EMPTY_SIGNAL_OPTIONS_POSITIONS;
+    signalOptionsState?.profile ||
+    deploymentSignalOptionsProfile ||
+    SIGNAL_OPTIONS_DEFAULT_PROFILE;
+  const controlBaselineReady = Boolean(
+    focusedDeployment &&
+      (signalOptionsState?.profile ||
+        deploymentSignalOptionsProfile ||
+        signalOptionsStateSettled),
+  );
+  const signalOptionsCandidates = preferNonEmptySourceArray(
+    cockpit?.candidates,
+    signalOptionsState?.candidates,
+    EMPTY_SIGNAL_OPTIONS_CANDIDATES,
+  );
+  const signalOptionsSignals = preferNonEmptySourceArray(
+    cockpit?.signals,
+    signalOptionsState?.signals,
+    EMPTY_SIGNAL_OPTIONS_SIGNALS,
+  );
+  const signalOptionsPositions = preferNonEmptySourceArray(
+    cockpit?.activePositions,
+    signalOptionsState?.activePositions,
+    EMPTY_SIGNAL_OPTIONS_POSITIONS,
+  );
   const cockpitFleet = cockpit?.fleet || null;
   const cockpitReadiness = cockpit?.readiness || null;
   const cockpitKpis = asRecord(cockpit?.kpis);
@@ -1293,22 +1267,34 @@ export const AlgoScreen = ({
           });
         }
       },
-      onSuccess: (state, variables) => {
+      onSuccess: (payload, variables) => {
         const deploymentId = variables?.deploymentId || focusedDeployment?.id;
-        if (deploymentId && state) {
+        if (deploymentId && payload) {
           queryClient.setQueryData(
             getGetSignalOptionsAutomationStateQueryKey(deploymentId),
-            state,
+            (current) => {
+              if (!current || typeof current !== "object") {
+                return current;
+              }
+              return {
+                ...current,
+                ...(payload.deployment
+                  ? { deployment: payload.deployment }
+                  : {}),
+                ...(payload.profile ? { profile: payload.profile } : {}),
+              };
+            },
           );
         }
-        if (state?.deployment) {
-          setDeploymentCache(state.deployment);
+        if (payload?.deployment) {
+          setDeploymentCache(payload.deployment);
         }
         refreshAlgoQueries({
-          includeDeployments: !state?.deployment,
-          includeSignalOptionsState: false,
+          includeDeployments: !payload?.deployment,
+          includeSignalMonitorProfile: false,
+          includeSignalOptionsState: true,
         });
-        profileDraftState.markClean(state?.profile || variables?.data);
+        profileDraftState.markClean(payload?.profile || variables?.data);
         if (!variables?.silent) {
           toast.push({
             kind: "success",
@@ -1578,39 +1564,49 @@ export const AlgoScreen = ({
   };
 
   const handleSaveAllAdjustments = async () => {
-    const { saveAllAlgoAdjustments } = await import(
-      "./algo/saveAllAlgoAdjustments"
-    );
-    const result = await saveAllAlgoAdjustments({
-      deploymentId: focusedDeployment?.id,
-      profileDraft,
-      strategySettingsDraft,
-      profileDirty,
-      strategyDirty,
-      updateProfileMutation,
-      updateStrategySettingsMutation,
-      onPartialFailure: ({ failures }) => {
-        toast.push({
-          kind: "error",
-          title: "Save partially failed",
-          body: failures
-            .map(
-              (failure) =>
-                `${failure.section}: ${
-                  failure.error?.message || "save failed"
-                }`,
-            )
-            .join(" · "),
-        });
-      },
-    });
-
-    if (result.ok) {
-      toast.push({
-        kind: "success",
-        title: "Algo settings saved",
-        body: "Signal and profile adjustments were updated.",
+    if (saveAllInFlightRef.current) {
+      return;
+    }
+    saveAllInFlightRef.current = true;
+    setSaveAllPending(true);
+    try {
+      const { saveAllAlgoAdjustments } = await import(
+        "./algo/saveAllAlgoAdjustments"
+      );
+      const result = await saveAllAlgoAdjustments({
+        deploymentId: focusedDeployment?.id,
+        profileDraft,
+        strategySettingsDraft,
+        profileDirty,
+        strategyDirty,
+        updateProfileMutation,
+        updateStrategySettingsMutation,
+        onPartialFailure: ({ failures }) => {
+          toast.push({
+            kind: "error",
+            title: "Save partially failed",
+            body: failures
+              .map(
+                (failure) =>
+                  `${failure.section}: ${
+                    failure.error?.message || "save failed"
+                  }`,
+              )
+              .join(" · "),
+          });
+        },
       });
+
+      if (result.ok) {
+        toast.push({
+          kind: "success",
+          title: "Algo settings saved",
+          body: "Signal and profile adjustments were updated.",
+        });
+      }
+    } finally {
+      saveAllInFlightRef.current = false;
+      setSaveAllPending(false);
     }
   };
 
@@ -2080,7 +2076,7 @@ export const AlgoScreen = ({
             </Suspense>
           }
           rightRail={
-            <Suspense fallback={null}>
+            <Suspense fallback={<AlgoRightRailLoading />}>
               <LazyAlgoRightRail
                 cockpit={cockpit}
                 signalOptionsPositions={signalOptionsPositions}
@@ -2093,6 +2089,8 @@ export const AlgoScreen = ({
                 strategyDirty={strategyDirty}
                 patchStrategySettingsPath={patchStrategySettingsPath}
                 focusedDeployment={focusedDeployment}
+                controlBaselineReady={controlBaselineReady}
+                saveAllPending={saveAllPending}
                 handleApplyExpandedCapacity={handleApplyExpandedCapacity}
                 handleSaveAllAdjustments={handleSaveAllAdjustments}
                 handleDiscardAllAdjustments={handleDiscardAllAdjustments}

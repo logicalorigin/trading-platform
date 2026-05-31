@@ -14,9 +14,31 @@ export type ChartPositionOptionContract = {
   sharesPerContract?: number | null;
 };
 
+export type ChartPositionRiskOverlay = {
+  openedAt?: string | Date | null;
+  entryPrice?: number | string | null;
+  hardStopPrice?: number | string | null;
+  stopLossPrice?: number | string | null;
+  stopPrice?: number | string | null;
+  activeStopPrice?: number | string | null;
+  activeStopKind?: string | null;
+  takeProfitPrice?: number | string | null;
+  profitTargetPrice?: number | string | null;
+  targetPrice?: number | string | null;
+  trailActive?: boolean | null;
+  trailStopPrice?: number | string | null;
+  trailHasTakenOver?: boolean | null;
+  trailActivationPrice?: number | string | null;
+  trailActivationPct?: number | string | null;
+  givebackPct?: number | string | null;
+  minLockedGainPct?: number | string | null;
+  peakPrice?: number | string | null;
+};
+
 export type ChartPositionOverlayContext = {
   surfaceKind: ChartPositionSurfaceKind;
   symbol: string;
+  accountId?: string | null;
   optionContract?: ChartPositionOptionContract | null;
 };
 
@@ -27,10 +49,17 @@ export type ChartPosition = {
   assetClass?: string | null;
   quantity?: number | string | null;
   averagePrice?: number | string | null;
+  averageCost?: number | string | null;
   marketPrice?: number | string | null;
+  mark?: number | string | null;
   unrealizedPnl?: number | string | null;
   unrealizedPnlPercent?: number | string | null;
   optionContract?: ChartPositionOptionContract | null;
+  stopLoss?: number | string | null;
+  takeProfit?: number | string | null;
+  openedAt?: string | Date | null;
+  riskOverlay?: ChartPositionRiskOverlay | null;
+  automationContext?: Record<string, unknown> | null;
 };
 
 export type ChartExecution = {
@@ -87,12 +116,37 @@ export type ChartPositionOffPaneIndicator = {
   label: string;
 };
 
+export type ChartPositionRiskLineKind =
+  | "stopLoss"
+  | "hardStop"
+  | "takeProfit"
+  | "trailingStop";
+
+export type ChartPositionRiskLinePoint = {
+  time: number;
+  barIndex: number;
+  price: number;
+};
+
+export type ChartPositionRiskLinePath = {
+  id: string;
+  kind: ChartPositionRiskLineKind;
+  label: "SL" | "HSL" | "TP" | "TRL";
+  direction: ChartPositionDirection;
+  currentPrice: number;
+  points: ChartPositionRiskLinePoint[];
+  fallbackOnly: boolean;
+  accountId: string | null;
+  positionId: string | null;
+};
+
 export type ChartPositionOverlays = {
   density: "full" | "mini";
   entryLines: ChartPositionEntryLine[];
   fillMarkers: ChartPositionFillMarker[];
   pnlBubbles: ChartPositionPnlBubble[];
   offPaneIndicators: ChartPositionOffPaneIndicator[];
+  riskLinePaths: ChartPositionRiskLinePath[];
 };
 
 export type BuildChartPositionOverlaysInput = {
@@ -105,12 +159,53 @@ export type BuildChartPositionOverlaysInput = {
   visiblePriceRange?: { min: number; max: number } | null;
 };
 
+export type ChartPositionOverlayAccountSection = "real" | "shadow";
+
+export type ChartPositionOverlayAccountRequest = {
+  accountId: string | null;
+  params?: {
+    mode: "paper";
+    assetClass: "Options" | "Stocks";
+  };
+};
+
+export const resolveChartPositionOverlayAccountRequest = ({
+  accountSection = "real",
+  chartContext = null,
+  selectedAccountId = null,
+}: {
+  accountSection?: ChartPositionOverlayAccountSection | null;
+  chartContext?: ChartPositionOverlayContext | null;
+  selectedAccountId?: string | null;
+}): ChartPositionOverlayAccountRequest => {
+  const accountId =
+    chartContext?.accountId ||
+    (accountSection === "shadow" ? "shadow" : selectedAccountId) ||
+    null;
+
+  if (accountId !== "shadow") {
+    return { accountId };
+  }
+
+  return {
+    accountId,
+    params: {
+      mode: "paper",
+      assetClass:
+        chartContext?.surfaceKind === "option" || chartContext?.optionContract
+          ? "Options"
+          : "Stocks",
+    },
+  };
+};
+
 export const EMPTY_CHART_POSITION_OVERLAYS: ChartPositionOverlays = {
   density: "full",
   entryLines: [],
   fillMarkers: [],
   pnlBubbles: [],
   offPaneIndicators: [],
+  riskLinePaths: [],
 };
 
 const normalizeSymbol = (value: unknown): string =>
@@ -123,6 +218,35 @@ const finiteNumber = (value: unknown): number | null => {
   if (typeof value === "string") {
     const parsed = Number(value.replace(/[$,%\s,]/g, ""));
     return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const firstFiniteNumber = (...values: unknown[]): number | null => {
+  for (const value of values) {
+    const parsed = finiteNumber(value);
+    if (parsed != null) return parsed;
+  }
+  return null;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === "object" && !Array.isArray(value));
+
+const readRecord = (value: unknown): Record<string, unknown> =>
+  isRecord(value) ? value : {};
+
+const firstRecord = (...values: unknown[]): Record<string, unknown> => {
+  for (const value of values) {
+    if (isRecord(value)) return value;
+  }
+  return {};
+};
+
+const firstDateLike = (...values: unknown[]): string | Date | null => {
+  for (const value of values) {
+    if (value instanceof Date) return value;
+    if (typeof value === "string" && value.trim()) return value.trim();
   }
   return null;
 };
@@ -292,6 +416,302 @@ const findBarIndexForTimestamp = (
   return resolvedIndex;
 };
 
+type ResolvedRiskOverlay = {
+  openedAt: string | Date | null;
+  entryPrice: number | null;
+  hardStopPrice: number | null;
+  takeProfitPrice: number | null;
+  stopPrice: number | null;
+  activeStopPrice: number | null;
+  activeStopKind: "hard_stop" | "trailing_stop" | null;
+  trailActive: boolean;
+  trailStopPrice: number | null;
+  trailHasTakenOver: boolean;
+  trailActivationPrice: number | null;
+  trailActivationPct: number | null;
+  givebackPct: number | null;
+  minLockedGainPct: number | null;
+  peakPrice: number | null;
+};
+
+const readBoolean = (value: unknown): boolean | null => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  return null;
+};
+
+const readActiveStopKind = (
+  value: unknown,
+): "hard_stop" | "trailing_stop" | null => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "hard_stop" || normalized === "trailing_stop"
+    ? normalized
+    : null;
+};
+
+const trailingStopIsMoreProtective = ({
+  direction,
+  hardStopPrice,
+  trailStopPrice,
+}: {
+  direction: ChartPositionDirection;
+  hardStopPrice: number | null;
+  trailStopPrice: number | null;
+}): boolean => {
+  if (trailStopPrice == null) return false;
+  if (hardStopPrice == null) return true;
+  return direction === "short"
+    ? trailStopPrice < hardStopPrice
+    : trailStopPrice > hardStopPrice;
+};
+
+const resolveRiskOverlay = (
+  position: ChartPosition,
+  averagePrice: number,
+  direction: ChartPositionDirection,
+): ResolvedRiskOverlay | null => {
+  const explicit = readRecord(position.riskOverlay);
+  const automation = readRecord(position.automationContext);
+  const management = firstRecord(
+    automation.tradeManagement,
+    automation.management,
+    automation.stop,
+  );
+  const entryPrice = firstFiniteNumber(
+    explicit.entryPrice,
+    automation.entryPrice,
+    averagePrice,
+  );
+  const stopPrice = firstFiniteNumber(
+    explicit.stopPrice,
+    management.stopPrice,
+    automation.stopPrice,
+  );
+  const explicitActiveStopPrice = firstFiniteNumber(
+    explicit.activeStopPrice,
+    management.activeStopPrice,
+    automation.activeStopPrice,
+  );
+  const explicitActiveStopKind = readActiveStopKind(
+    explicit.activeStopKind ??
+      management.activeStopKind ??
+      automation.activeStopKind,
+  );
+  const takeProfitPrice = firstFiniteNumber(
+    explicit.takeProfitPrice,
+    explicit.profitTargetPrice,
+    explicit.targetPrice,
+    position.takeProfit,
+    management.takeProfitPrice,
+    management.profitTargetPrice,
+    management.targetPrice,
+    automation.takeProfitPrice,
+    automation.profitTargetPrice,
+    automation.targetPrice,
+  );
+  const explicitTrailStopPrice = firstFiniteNumber(
+    explicit.trailStopPrice,
+    management.trailStopPrice,
+  );
+  const trailActive =
+    readBoolean(explicit.trailActive) === true ||
+    readBoolean(management.trailActive) === true ||
+    explicitTrailStopPrice != null ||
+    (entryPrice != null && stopPrice != null && stopPrice > entryPrice);
+  const hardStopPrice = firstFiniteNumber(
+    explicit.hardStopPrice,
+    explicit.stopLossPrice,
+    management.hardStopPrice,
+    automation.stopLossPrice,
+    management.stopLossPrice,
+    position.stopLoss,
+    trailActive ? null : stopPrice,
+  );
+  const trailStopPrice = firstFiniteNumber(
+    explicitTrailStopPrice,
+    trailActive ? stopPrice : null,
+  );
+  const explicitTrailHasTakenOver =
+    readBoolean(explicit.trailHasTakenOver) === true ||
+    readBoolean(management.trailHasTakenOver) === true ||
+    readBoolean(automation.trailHasTakenOver) === true ||
+    explicitActiveStopKind === "trailing_stop";
+  const trailHasTakenOver =
+    explicitActiveStopKind === "hard_stop"
+      ? false
+      : explicitTrailHasTakenOver ||
+        (trailActive &&
+          trailingStopIsMoreProtective({
+            direction,
+            hardStopPrice,
+            trailStopPrice,
+          }));
+  const activeStopKind =
+    explicitActiveStopKind ??
+    (trailHasTakenOver
+      ? "trailing_stop"
+      : hardStopPrice != null
+        ? "hard_stop"
+        : trailStopPrice != null
+          ? "trailing_stop"
+          : null);
+  const activeStopPrice =
+    explicitActiveStopPrice ??
+    (activeStopKind === "trailing_stop" ? trailStopPrice : hardStopPrice) ??
+    stopPrice;
+
+  if (hardStopPrice == null && takeProfitPrice == null && trailStopPrice == null) {
+    return null;
+  }
+
+  return {
+    openedAt: firstDateLike(
+      explicit.openedAt,
+      position.openedAt,
+      automation.purchasedAt,
+      automation.openedAt,
+      automation.signalAt,
+    ),
+    entryPrice,
+    hardStopPrice,
+    takeProfitPrice,
+    stopPrice,
+    activeStopPrice,
+    activeStopKind,
+    trailActive,
+    trailStopPrice,
+    trailHasTakenOver,
+    trailActivationPrice: firstFiniteNumber(
+      explicit.trailActivationPrice,
+      management.trailActivationPrice,
+      automation.trailActivationPrice,
+    ),
+    trailActivationPct: firstFiniteNumber(
+      explicit.trailActivationPct,
+      management.trailActivationPct,
+      automation.trailActivationPct,
+    ),
+    givebackPct: firstFiniteNumber(
+      explicit.givebackPct,
+      management.givebackPct,
+      automation.givebackPct,
+    ),
+    minLockedGainPct: firstFiniteNumber(
+      explicit.minLockedGainPct,
+      management.minLockedGainPct,
+      automation.minLockedGainPct,
+      0,
+    ),
+    peakPrice: firstFiniteNumber(
+      explicit.peakPrice,
+      automation.peakPrice,
+      management.peakPrice,
+    ),
+  };
+};
+
+const buildHorizontalRiskPoints = (
+  chartBars: ChartBar[],
+  startIndex: number,
+  price: number,
+): ChartPositionRiskLinePoint[] =>
+  chartBars.slice(startIndex).map((bar, offset) => ({
+    time: bar.time,
+    barIndex: startIndex + offset,
+    price,
+  }));
+
+const buildCurrentRiskSegment = (
+  chartBars: ChartBar[],
+  startIndex: number,
+  price: number,
+): ChartPositionRiskLinePoint[] => {
+  if (!chartBars.length) {
+    return [];
+  }
+  const segmentStart = Math.max(startIndex, chartBars.length - 2);
+  return buildHorizontalRiskPoints(chartBars, segmentStart, price);
+};
+
+const buildTrailingRiskPoints = ({
+  chartBars,
+  startIndex,
+  direction,
+  riskOverlay,
+}: {
+  chartBars: ChartBar[];
+  startIndex: number;
+  direction: ChartPositionDirection;
+  riskOverlay: ResolvedRiskOverlay;
+}): { points: ChartPositionRiskLinePoint[]; fallbackOnly: boolean } => {
+  const currentTrailPrice = riskOverlay.trailStopPrice;
+  if (!riskOverlay.trailActive || currentTrailPrice == null) {
+    return { points: [], fallbackOnly: false };
+  }
+
+  const entryPrice = riskOverlay.entryPrice;
+  const givebackPct = riskOverlay.givebackPct;
+  const minLockedGainPct = riskOverlay.minLockedGainPct ?? 0;
+  const hasActivation =
+    riskOverlay.trailActivationPrice != null ||
+    riskOverlay.trailActivationPct != null;
+  const canReconstruct =
+    direction === "long" &&
+    entryPrice != null &&
+    entryPrice > 0 &&
+    givebackPct != null &&
+    hasActivation;
+
+  if (!canReconstruct) {
+    return {
+      points: buildCurrentRiskSegment(chartBars, startIndex, currentTrailPrice),
+      fallbackOnly: true,
+    };
+  }
+
+  let peakPrice = entryPrice;
+  const points: ChartPositionRiskLinePoint[] = [];
+  chartBars.slice(startIndex).forEach((bar, offset) => {
+    const barHigh = finiteNumber(bar.h) ?? finiteNumber(bar.c);
+    if (barHigh == null) return;
+    peakPrice = Math.max(peakPrice, barHigh);
+    const trailActive =
+      riskOverlay.trailActivationPrice != null
+        ? peakPrice >= riskOverlay.trailActivationPrice
+        : ((peakPrice - entryPrice) / entryPrice) * 100 >=
+          (riskOverlay.trailActivationPct ?? Number.POSITIVE_INFINITY);
+    if (!trailActive) return;
+    const lockedPrice = entryPrice * (1 + minLockedGainPct / 100);
+    const trailPrice = Math.max(
+      lockedPrice,
+      peakPrice * (1 - givebackPct / 100),
+    );
+    points.push({
+      time: bar.time,
+      barIndex: startIndex + offset,
+      price: Number(trailPrice.toFixed(2)),
+    });
+  });
+
+  if (!points.length) {
+    return {
+      points: buildCurrentRiskSegment(chartBars, startIndex, currentTrailPrice),
+      fallbackOnly: true,
+    };
+  }
+
+  points[points.length - 1] = {
+    ...points[points.length - 1],
+    price: currentTrailPrice,
+  };
+
+  return { points, fallbackOnly: false };
+};
+
 export const buildChartPositionOverlays = ({
   positions = [],
   executions = [],
@@ -312,7 +732,8 @@ export const buildChartPositionOverlays = ({
     .filter((position) => matchesChartContext(position, chartContext))
     .filter((position) => {
       const quantity = finiteNumber(position.quantity);
-      const averagePrice = finiteNumber(position.averagePrice);
+      const averagePrice =
+        finiteNumber(position.averagePrice) ?? finiteNumber(position.averageCost);
       return Boolean(quantity && Math.abs(quantity) > 1e-9 && averagePrice != null);
     });
 
@@ -323,11 +744,14 @@ export const buildChartPositionOverlays = ({
   const entryLines: ChartPositionEntryLine[] = [];
   const pnlBubbles: ChartPositionPnlBubble[] = [];
   const offPaneIndicators: ChartPositionOffPaneIndicator[] = [];
+  const riskLinePaths: ChartPositionRiskLinePath[] = [];
 
   matchedPositions.forEach((position, index) => {
     const quantity = finiteNumber(position.quantity) ?? 0;
-    const averagePrice = finiteNumber(position.averagePrice) ?? 0;
-    const fallbackMarketPrice = finiteNumber(position.marketPrice);
+    const averagePrice =
+      finiteNumber(position.averagePrice) ?? finiteNumber(position.averageCost) ?? 0;
+    const fallbackMarketPrice =
+      finiteNumber(position.marketPrice) ?? finiteNumber(position.mark);
     const anchorPrice = finiteNumber(mark) ?? fallbackMarketPrice ?? averagePrice;
     const direction: ChartPositionDirection = quantity >= 0 ? "long" : "short";
     const positionId = position.id ? String(position.id) : null;
@@ -383,6 +807,82 @@ export const buildChartPositionOverlays = ({
       label: formatMoney(pnl),
       detail: `${quantity >= 0 ? "+" : ""}${quantity} @ ${formatPrice(averagePrice)} ${formatPercent(pnlPercent)}`.trim(),
     });
+
+    const riskOverlay = resolveRiskOverlay(position, averagePrice, direction);
+    if (riskOverlay && resolvedChartBars.length) {
+      const startIndex =
+        findBarIndexForTimestamp(
+          riskOverlay.openedAt,
+          resolvedChartBars,
+          resolvedChartBarRanges,
+        ) ?? 0;
+      if (riskOverlay.hardStopPrice != null) {
+        const points = buildHorizontalRiskPoints(
+          resolvedChartBars,
+          startIndex,
+          riskOverlay.hardStopPrice,
+        );
+        if (points.length) {
+          const hardStopIsContext = riskOverlay.trailHasTakenOver;
+          riskLinePaths.push({
+            id: hardStopIsContext ? `${id}:hsl` : `${id}:sl`,
+            kind: hardStopIsContext ? "hardStop" : "stopLoss",
+            label: hardStopIsContext ? "HSL" : "SL",
+            direction,
+            currentPrice: riskOverlay.hardStopPrice,
+            points,
+            fallbackOnly: false,
+            accountId: position.accountId ? String(position.accountId) : null,
+            positionId,
+          });
+        }
+      }
+
+      if (riskOverlay.takeProfitPrice != null) {
+        const points = buildHorizontalRiskPoints(
+          resolvedChartBars,
+          startIndex,
+          riskOverlay.takeProfitPrice,
+        );
+        if (points.length) {
+          riskLinePaths.push({
+            id: `${id}:tp`,
+            kind: "takeProfit",
+            label: "TP",
+            direction,
+            currentPrice: riskOverlay.takeProfitPrice,
+            points,
+            fallbackOnly: false,
+            accountId: position.accountId ? String(position.accountId) : null,
+            positionId,
+          });
+        }
+      }
+
+      const trailingPath = buildTrailingRiskPoints({
+        chartBars: resolvedChartBars,
+        startIndex,
+        direction,
+        riskOverlay,
+      });
+      if (
+        trailingPath.points.length &&
+        riskOverlay.trailStopPrice != null &&
+        riskOverlay.trailHasTakenOver
+      ) {
+        riskLinePaths.push({
+          id: `${id}:trl`,
+          kind: "trailingStop",
+          label: "TRL",
+          direction,
+          currentPrice: riskOverlay.trailStopPrice,
+          points: trailingPath.points,
+          fallbackOnly: trailingPath.fallbackOnly,
+          accountId: position.accountId ? String(position.accountId) : null,
+          positionId,
+        });
+      }
+    }
   });
 
   const fillMarkers =
@@ -423,5 +923,6 @@ export const buildChartPositionOverlays = ({
     fillMarkers,
     pnlBubbles,
     offPaneIndicators,
+    riskLinePaths,
   };
 };

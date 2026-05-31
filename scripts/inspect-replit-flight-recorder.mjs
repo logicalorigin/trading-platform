@@ -79,6 +79,29 @@ function readJsonlTail(filePath, limit) {
   }
 }
 
+function eventText(event) {
+  return [event?.name, event?.message, event?.stack]
+    .filter((value) => typeof value === "string" && value.length > 0)
+    .join("\n");
+}
+
+function isPostgresDisconnectEvent(event) {
+  if (!event || typeof event !== "object") {
+    return false;
+  }
+  if (event.event !== "uncaught-exception" && event.event !== "node-warning") {
+    return false;
+  }
+
+  const text = eventText(event);
+  return (
+    /connection terminated unexpectedly/i.test(text) ||
+    /connection terminated due to connection timeout/i.test(text) ||
+    /node_modules\/(?:\.pnpm\/)?pg@?[^/]*\/node_modules\/pg\/lib\/client\.js/i.test(text) ||
+    /node_modules\/pg\/lib\/client\.js/i.test(text)
+  );
+}
+
 function listJsonlFiles(dir, prefix) {
   try {
     return readdirSync(dir)
@@ -109,6 +132,7 @@ function collectEvidence(dir) {
     latestIncident: incidents.at(-1) ?? null,
     recentSupervisorEvents,
     recentApiEvents,
+    recentPostgresDisconnects: recentApiEvents.filter(isPostgresDisconnectEvent),
   };
 }
 
@@ -129,6 +153,26 @@ function printEventTail(title, events) {
     const code = event.code !== undefined ? ` code=${value(event.code)}` : "";
     const signal = event.signal !== undefined ? ` signal=${value(event.signal)}` : "";
     console.log(`  ${value(event.time)} ${name} pid=${pid}${child}${code}${signal}`);
+  }
+}
+
+function printPostgresDisconnects(events) {
+  console.log("\nRecent Postgres Disconnects");
+  if (events.length === 0) {
+    console.log("  none");
+    return;
+  }
+
+  for (const event of events.slice(-5)) {
+    const message = value(event.message);
+    const stackFirstFrame =
+      typeof event.stack === "string"
+        ? event.stack.split("\n").slice(1, 2).join("").trim()
+        : "";
+    const stackSuffix = stackFirstFrame ? ` (${stackFirstFrame})` : "";
+    console.log(
+      `  ${value(event.time)} ${value(event.event)} pid=${value(event.pid)} ${message}${stackSuffix}`,
+    );
   }
 }
 
@@ -183,6 +227,7 @@ function printEvidence(evidence) {
   }
 
   console.log(`\nIncident Count: ${evidence.incidents.length}`);
+  printPostgresDisconnects(evidence.recentPostgresDisconnects);
   printEventTail("Recent Supervisor Events", evidence.recentSupervisorEvents);
   printEventTail("Recent API Events", evidence.recentApiEvents);
 }

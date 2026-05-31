@@ -1,0 +1,222 @@
+# Flow Universe Coverage Handoff
+
+- Last Updated (MT): `2026-05-29 19:09:30 MDT`
+- Last Updated (UTC): `2026-05-30T01:09:30Z`
+- Native Codex Session ID: `pending`
+- Summary: Flow scanner universe data activation and bounded IBKR hydration
+
+## Current Status
+
+- Implemented durable source membership storage via `universe_source_memberships` and an idempotent migration that creates the universe catalog, sync state, source membership, watchlist, and flow ranking dependencies when absent.
+- Added NASDAQ Trader listed + other-listed parsing/sync coverage and S&P 500 constituent parsing/sync coverage.
+- Added scripts:
+  - `pnpm --filter @workspace/scripts run universe:sync:listings`
+  - `pnpm --filter @workspace/scripts run universe:sync:sp500`
+  - `pnpm --filter @workspace/scripts run universe:verify:optionability`
+- Removed the scanner manager's NASDAQ/provider fallback universe path. The scanner now selects only IBKR-hydrated, numeric-contract, optionability-verified symbols, or the last verified universe during transient failures.
+- Added scanner optionability proof persistence from successful scans and from the verifier script.
+- Added full hydrated-catalog verification diagnostics: verified, needs verification, rejected, and backlog counts.
+- Updated flow universe API schema/client generation and frontend scanner fallback behavior so unverified client fallback symbols are no longer appended.
+- Added the DB-backed Flow Universe planner. It builds priority, hot, S&P core, broad listed, and verification pools from verified catalog rows plus source memberships.
+- Flow Scanner source selection now consumes the planner's budgeted `nextScanBatch` instead of the old manager-selected universe.
+- Planner priority overlays include protected non-scanner IBKR demand symbols from execution/account/automation/visible leases, recent radar runtime symbols, watchlists, and built-ins.
+- Planner batch admission is capped by schedulable scanner lines and per-scan line budget; it deliberately does not multiply per-scan line budget by concurrency.
+- `/flow/universe` now exposes planner diagnostics in coverage/sources for pool sizes, selected pool counts, skipped unverified priority symbols, cooldown skips, and line-budget skips.
+- Added `flow-universe-optionability-verifier`, an API-side background verifier that probes hydrated-but-unverified listed names in small batches.
+- Runtime verifier guardrails: scanner enabled, fresh session health, no scanner background block, no scanner pressure throttling, no line-cap exhaustion, no live-warmup hold, and no options bridge backoff.
+- Runtime verifier diagnostics are included in Flow Scanner diagnostics as `optionabilityVerifier`.
+- The existing `universe:verify:optionability` script now reuses the shared candidate loader, transient-aware classifier, and optionability persistence helper.
+- Transient/degraded empty expiration responses are no longer persisted as rejected optionability.
+- Applied `lib/db/migrations/20260529_flow_universe_coverage.sql` directly with `psql`; it completed cleanly and was mostly already present.
+- Real listed sync completed: 10,464 rows upserted, with 4,128 `nasdaq_listed` and 6,336 `other_listed` source memberships.
+- Real S&P sync completed: 503 memberships, all matched existing catalog rows, no fallback catalog rows required.
+- Live IBKR hydration succeeded in bounded batches:
+  - ETF limited run hydrated 100 rows through `AIPO|etf|XNAS`.
+  - Stock limited run hydrated/marked 100 rows through `AIM|stocks|XASE`.
+- Fixed two live activation script bugs:
+  - `sync-listed-universe` and `sync-sp500-universe` now chunk source membership upserts at 1,000 rows to avoid PostgreSQL bind protocol limits.
+  - `hydrate-universe-catalog-ibkr` now pauses when it hits `--limit` instead of marking the market finished.
+- Fixed the next live hydration issue: `hydrate-universe-catalog-ibkr` now treats `--limit` as a per-run cap on resume instead of comparing it to cumulative `rows_synced`.
+- Added priority hydration modes to `hydrate-universe-catalog-ibkr`:
+  - Default `--mode=priority-then-broad` runs priority rows first and spends any remaining per-market limit on the existing broad cursor.
+  - `--mode=priority` hydrates only priority rows.
+  - `--mode=broad` preserves the old cursor-only behavior.
+  - Priority lanes default to `symbols`, `watchlists`, `sp500`, `nasdaq_listed`, `other_listed`; they can be narrowed with `--priority=...`.
+  - Explicit urgent/account/runtime names can be passed with `--symbols=AAPL,MSFT`.
+  - `--dry-run=true` prints selected rows without touching IBKR or sync state.
+- Priority hydration writes to separate sync scopes such as `ibkr-priority-hydration:stocks:active`; broad hydration keeps using `ibkr-hydration:stocks:active`.
+- Added shared script helper `scripts/src/universe-priority.ts` for symbol normalization, explicit symbol parsing, and DB watchlist symbol loading.
+- Manual optionability verification now accepts explicit/watchlist priority symbols and forwards them to the shared candidate loader.
+- The shared optionability candidate loader now preserves explicit priority order before falling back to S&P, NASDAQ-listed, other-listed, and ticker ordering.
+- Fixed priority symbol listing resolution after dry-run caught ETF duplicate selection:
+  - Explicit/watchlist symbol hydration now chooses the best canonical listing before applying hydration status.
+  - Canonical scoring prefers US locale, then known US venues (`XNAS`, `XNYS`, `ARCX`, `XASE`, `BATS`, etc.).
+  - This prevents hydrating foreign alternate listings such as `SPY|etf|ASX` and `SPY|etf|MEXI` when `SPY|etf|ARCX` is already the correct hydrated listing.
+  - Source membership hydration now joins by exact membership `listing_key`, not only by normalized ticker/market, so source queues do not duplicate across cross-listed rows.
+- Corrected the earlier ETF limited-run sync state so future hydration resumes instead of skipping.
+- Controlled manual optionability verification succeeded: 25 attempted, 25 verified, 0 rejected/errors.
+- Live priority hydration proof succeeded:
+  - `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=priority --markets=stocks --limit=10 --batch=5`
+  - Hydrated PLTR, COIN, HOOD, RBLX, RKLB, SMCI, AMZN, META, GOOGL, and CRWV from watchlist priority.
+  - Broad stock cursor remained unchanged at `AIM|stocks|XASE`.
+- Second priority hydration pass succeeded:
+  - `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=priority --markets=stocks,etf --limit=30 --batch=10`
+  - Hydrated 30 stock priority rows and 30 ETF priority rows.
+  - ETF rows selected canonical US listings after the duplicate-listing fix.
+  - Broad cursors remained unchanged at `AIM|stocks|XASE` and `AIPO|etf|XNAS`.
+- Second priority optionability verification succeeded:
+  - `pnpm --filter @workspace/scripts run universe:verify:optionability -- --limit=20 --delay-ms=750`
+  - 20 attempted, 20 verified, 0 rejected, 0 errors.
+- User selected 100 scanner-ready symbols as the first live-diagnostics threshold.
+- Priority verification catch-up reached the threshold:
+  - Non-persisting probe: `pnpm --filter @workspace/scripts run universe:verify:optionability -- --limit=30 --dry-run=true --delay-ms=0`
+    - Important: the script's dry-run still probes option expirations; it only suppresses DB writes.
+    - 30 attempted, 29 verified, 0 rejected, 1 transient/error.
+  - Persisting batch 1: `pnpm --filter @workspace/scripts run universe:verify:optionability -- --limit=30 --delay-ms=750`
+    - 30 attempted, 30 verified, 0 rejected/errors.
+  - Persisting batch 2: same command
+    - 30 attempted, 29 verified, 0 rejected, 1 transient `options_upstream_failure` on `BRK.B`.
+- Current post-run scanner-ready stock/ETF count: 104 distinct verified, hydrated, numeric-contract symbols.
+- Current verified hydrated stock/ETF rows: 115; needs verification: 1,119; rejected: 0.
+- After-hours Friday live diagnostic result:
+  - Replit artifact app is running and healthy on port 18747.
+  - IBKR is connected, reachable, strict-ready, and live-market-data-capable.
+  - Runtime stream state is quiet with `market_session_quiet`; scanner phase is blocked/quiet by session guard, not by line starvation.
+  - IBKR line pressure is normal: 35 active live quote lines, 165 remaining out of 200, 0 active scanner option lines while quiet.
+  - Flow scanner lane membership had 93 admitted symbols and 0 dropped symbols, but the planner still exposed only 40 candidates in the running app before this source fix.
+- Root cause found after the 100-symbol threshold:
+  - The scanner-ready database count was correct, but both `flow-universe-planner` and the older `flow-universe` manager still hard-gated catalog candidates on `flow_universe_rankings.price` and `flow_universe_rankings.dollar_volume >= 25,000,000`.
+  - That duplicated liquidity gate reduced hundreds of hydrated optionable rows to the same 40 symbols the app showed.
+  - Several verified priority names were incorrectly excluded because their ranking `dollar_volume` snapshots were stale or tiny, for example MSFT, NVDA, QQQ, TQQQ, SQQQ, AAOI, APH, ACHR, VRT, and AVGO.
+  - Excluded verified priority names were then misreported as `verificationSymbols`, so the verifier kept spending work on names that were already optionability-proven but filtered out before planner admission.
+- Implemented source fix:
+  - Removed `price`/`dollarVolume` hard admission filters from `artifacts/api-server/src/services/flow-universe-planner.ts`.
+  - Removed the same hard filters from `artifacts/api-server/src/services/flow-universe.ts`; liquidity still influences ranking in `rankFlowUniverseCandidates`, but it no longer erases verified catalog candidates.
+  - Updated `artifacts/api-server/src/services/platform.ts` so merged coverage does not keep a stale manager-only `Universe fill short: 40/500` reason after planner-selected coverage is higher.
+  - Added a planner regression test proving verified low-liquidity priority symbols scan and are not sent back to verification.
+- Source-level DB probe after the fix:
+  - Planner candidate count would rise from 40 to 601 on the current DB.
+  - Source counts in that candidate pool: 94 S&P symbols, 575 listed-source symbols, 26 currently without source membership.
+  - Liquidity distribution confirms the old gate was the issue: only 38 candidates have `dollar_volume >= 25,000,000`, while 558 have lower ranked dollar volume and 5 have null dollar volume.
+  - Priority presence after source fix: MSFT, NVDA, QQQ, TQQQ, SQQQ, AAOI, APH, ACHR, VRT, and AVGO are candidates; IWM remains absent because it still needs hydration/verification.
+- Runtime caveat:
+  - The currently running API still reports 40 planner candidates because it is executing the pre-change `dist/index.mjs`.
+  - Do not manually restart from shell. Use Replit Run App when ready; the API `dev` script builds `dist` before starting.
+  - Because it is after hours on Friday, scanner active-line count should remain quiet/blocked even after restart. Validate planner candidate/coverage diagnostics first, then active scans during the next regular/liquid session.
+- Proceeded with activation steps 1-5 as far as possible from the agent shell:
+  - Confirmed Replit startup config is locked/read-only and app is healthy on port 18747.
+  - Confirmed the running API process is still the pre-change `dist/index.mjs` process, so live `/api/flow/universe` remains stale until Replit Run App restart.
+  - Ran `pnpm --filter @workspace/api-server run build`; `artifacts/api-server/dist/index.mjs` now contains the fixed candidate loader for the next Replit Run App restart.
+  - Rechecked live runtime after-hours state: IBKR is connected/live-market-data-capable, but strict readiness is blocked by `market_session_quiet`; scanner effective concurrency and deep scan lines are 0 by design.
+  - Rechecked line usage after verification: bridge has 5 active option quote lines, 195 remaining of 200; no scanner starvation signal. Bridge pressure reported `degraded` while active line count remained low.
+  - Audited fixed-source watchlist coverage: 90 watchlist priority symbols, 601 candidates before the final fill, 22 watchlist misses, all due to missing IBKR hydration.
+  - Priority hydrated the 22 watchlist misses with explicit symbols:
+    - `PWR, POWL, IONQ, RGTI, QBTS, APLD, CLSK, HUT, CORZ, SYM, AMBA, CGNX, ZBRA, ISRG, ROK, TSM, MU, QCOM, ARM, ASML, MRVL, ANET`
+    - Dry-run selected the correct canonical listings first; actual run hydrated all 22.
+  - Persisted optionability verification for the same 22 symbols: 22 attempted, 22 verified, 0 rejected, 0 errors.
+  - Post-fill fixed-source audit: 623 planner candidates, 90 watchlist priority symbols, 0 watchlist misses.
+- Stale running API moved only from 40 to 50 candidates because new rows passed the old gate; it still needs Replit Run App restart to expose the full fixed-source 623-candidate planner pool.
+- Post-Replit-restart validation succeeded:
+  - `/api/flow/universe` loaded the fixed planner instead of the stale 40/50-symbol runtime.
+  - IWM was the only remaining priority verification symbol; it was missing IBKR hydration as `IWM|etf|ARCX`.
+  - `IWM` was hydrated with provider contract `9579970` and optionability-verified successfully.
+  - Coverage then showed 624 candidates/selectable/verified, 0 verification symbols, 0 verification backlog, and no degraded reason.
+  - Line usage showed scanner work blocked by `market-session-quiet`, scanner effective concurrency 0, scanner active lines 0 after cleanup, and no scanner starvation of account/execution/visible lines.
+- Tightened broad IBKR hydration before spending more calls:
+  - Dry-run showed the broad cursor was walking all catalog rows and would include Polygon-only warrants/preferreds with no NASDAQ/S&P source membership, such as `AIRJW` and `AISPW`.
+  - Updated `scripts/src/hydrate-universe-catalog-ibkr.ts` so broad mode now requires an exact active source membership in `sp500`, `nasdaq_listed`, or `other_listed`.
+  - The corrected dry-run removed the no-source warrant/preferred rows from the next stock batch.
+- Ran a bounded broad hydration pass after the hygiene fix:
+  - Command: `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=broad --markets=stocks,etf --limit=50 --batch=10`
+  - Processed 50 stock listings and 50 ETF listings.
+  - Broad cursors advanced to `ALLT|stocks|XNAS` and `APRJ|etf|BATS`.
+  - Post-run planner coverage rose to 680 candidates/selectable/verified, 0 verification symbols, 0 verification backlog, and no degraded reason.
+- Broad optionability persistence remains intentionally deferred:
+  - Dry-run probing of the next 10 unverified names returned 8 verified, 1 transient/error on `BRK.B`, and 1 suspicious reject on `FDX` (`no_option_expirations`).
+  - Because FDX is known optionable, do not persist broad rejections from this after-hours probe without a regular-session or explicit-symbol confirmation pass.
+- Broad hydration cursors remained unchanged during verification catch-up:
+  - stocks: `AIM|stocks|XASE`
+  - ETF: `AIPO|etf|XNAS`
+- Post-priority snapshot:
+  - `nasdaq_listed`: 515 hydrated, 44 verified optionable, 3,613 still needing hydration.
+  - `other_listed`: 433 hydrated, 58 verified optionable, 5,903 still needing hydration.
+  - `sp500`: 94 hydrated, 68 verified optionable, 409 still needing hydration.
+- Post-activation snapshot: 34 verified optionable hydrated stock/ETF symbols, 1,130 hydrated stock/ETF symbols still needing optionability verification.
+- Dry-run source facts from 2026-05-29:
+  - Listed universe dry-run parsed 10,464 rows: 4,128 NASDAQ-listed and 6,336 other-listed, from file creation `0529202617:01`.
+  - S&P 500 dry-run parsed 503 constituents from `datasets/s-and-p-500-companies`.
+
+## Validation Snapshot
+
+- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/flow-universe-optionability-verifier.test.ts src/services/flow-universe-planner.test.ts src/services/flow-universe.test.ts`
+- `pnpm --filter @workspace/api-server exec node --import tsx -e "const m = await import('./src/services/platform.ts'); console.log(typeof m.startFlowUniverseOptionabilityVerifier, typeof m.getFlowUniverseOptionabilityVerifierDiagnostics);"`
+- `git diff --check -- artifacts/api-server/src/services/flow-universe-optionability-verifier.ts artifacts/api-server/src/services/flow-universe-optionability-verifier.test.ts artifacts/api-server/src/services/platform.ts artifacts/api-server/src/index.ts scripts/src/verify-flow-universe-optionability.ts SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_LIVE_2026-05-29_flow-universe-coverage.md`
+- `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f lib/db/migrations/20260529_flow_universe_coverage.sql`
+- `pnpm --filter @workspace/scripts run universe:sync:listings -- --dry-run=true`
+- `pnpm --filter @workspace/scripts run universe:sync:sp500 -- --dry-run=true`
+- `pnpm --filter @workspace/scripts run universe:sync:listings`
+- `pnpm --filter @workspace/scripts run universe:sync:sp500`
+- `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --markets=stocks,etf --limit=100 --batch=25` (stocks skipped due prior limited-run bug; ETF hydrated 100)
+- `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --markets=stocks --limit=100 --batch=25 --reset=true`
+- `pnpm --filter @workspace/scripts run universe:verify:optionability -- --limit=25 --delay-ms=750`
+- `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=priority --markets=stocks --limit=12 --batch=5 --dry-run=true`
+- `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=priority --markets=stocks --limit=10 --batch=5`
+- `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=priority --markets=stocks --limit=8 --batch=4 --dry-run=true`
+- `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=broad --markets=stocks --limit=5 --batch=5 --dry-run=true`
+- `pnpm --filter @workspace/scripts run universe:verify:optionability -- --limit=3 --dry-run=true --delay-ms=0 --symbols=MSFT,NVDA,BLK --watchlists=false`
+- `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=priority --markets=stocks,etf --limit=20 --batch=10 --dry-run=true` (caught ETF duplicate-listing issue, then passed after fix)
+- `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=priority --markets=stocks,etf --limit=30 --batch=10`
+- `pnpm --filter @workspace/scripts run universe:verify:optionability -- --limit=20 --delay-ms=750`
+- `pnpm --filter @workspace/scripts run universe:verify:optionability -- --limit=30 --dry-run=true --delay-ms=0`
+- `pnpm --filter @workspace/scripts run universe:verify:optionability -- --limit=30 --delay-ms=750` (run twice)
+- Post-threshold DB audits for scanner-ready count, verified/needs-verification/rejected rows, sync-state cursors, and source-level coverage.
+- After-hours live diagnostics:
+  - `GET /api/flow/universe`: running app still 40 candidates before restart.
+  - `GET /api/settings/ibkr-line-usage`: 35 active lines, 165 remaining, scanner 0 active lines while quiet, no flow lane drops.
+  - `GET /api/diagnostics/runtime`: IBKR strict-ready/live, scanner blocked by `market-session-quiet`, effective scanner concurrency 0 while quiet.
+- Source-level planner DB probe after removing duplicated liquidity gates: 601 candidates on current DB.
+- `pnpm --filter @workspace/api-server run build`
+- `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=priority --markets=stocks --limit=22 --batch=8 --dry-run=true --symbols=PWR,POWL,IONQ,RGTI,QBTS,APLD,CLSK,HUT,CORZ,SYM,AMBA,CGNX,ZBRA,ISRG,ROK,TSM,MU,QCOM,ARM,ASML,MRVL,ANET --watchlists=false`
+- `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=priority --markets=stocks --limit=22 --batch=8 --symbols=PWR,POWL,IONQ,RGTI,QBTS,APLD,CLSK,HUT,CORZ,SYM,AMBA,CGNX,ZBRA,ISRG,ROK,TSM,MU,QCOM,ARM,ASML,MRVL,ANET --watchlists=false`
+- `pnpm --filter @workspace/scripts run universe:verify:optionability -- --limit=22 --delay-ms=750 --symbols=PWR,POWL,IONQ,RGTI,QBTS,APLD,CLSK,HUT,CORZ,SYM,AMBA,CGNX,ZBRA,ISRG,ROK,TSM,MU,QCOM,ARM,ASML,MRVL,ANET --watchlists=false`
+- Post-fill fixed-source audit: 623 planner candidates and 0 watchlist priority misses.
+- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/flow-universe-planner.test.ts src/services/flow-universe.test.ts`
+- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/flow-universe-planner.test.ts src/services/flow-universe.test.ts src/services/market-data-work-planner.test.ts src/services/ibkr-line-usage.test.ts src/services/options-flow-scanner.test.ts` (112 passing)
+- `pnpm --filter @workspace/api-server run typecheck`
+- `git diff --check -- artifacts/api-server/src/services/flow-universe-planner.ts artifacts/api-server/src/services/flow-universe-planner.test.ts artifacts/api-server/src/services/flow-universe.ts artifacts/api-server/src/services/platform.ts`
+- Post-run DB audits for source membership coverage, hydration status counts, optionability counts, scanner-ready count, sync-state cursors, and source membership missing listing keys.
+- `pnpm --filter @workspace/scripts run typecheck`
+- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/flow-universe-optionability-verifier.test.ts src/services/flow-universe-planner.test.ts`
+- `pnpm run replit:config:status`
+- `git diff --check -- scripts/src/sync-listed-universe.ts scripts/src/sync-sp500-universe.ts scripts/src/hydrate-universe-catalog-ibkr.ts SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_LIVE_2026-05-29_flow-universe-coverage.md SESSION_HANDOFF_MASTER.md`
+- Post-restart live validation:
+  - `GET /api/flow/universe`: 680 candidates/selectable/verified, 0 verification symbols/backlog, no degraded reason.
+  - `GET /api/settings/ibkr-line-usage`: scanner active lines 0, scanner remaining 80, bridge budget 200, scanner blocked by `market-session-quiet`.
+  - `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=priority --markets=etf --limit=1 --batch=1 --dry-run=true --symbols=IWM --watchlists=false`
+  - `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=priority --markets=etf --limit=1 --batch=1 --symbols=IWM --watchlists=false`
+  - `pnpm --filter @workspace/scripts run universe:verify:optionability -- --limit=1 --delay-ms=750 --symbols=IWM --watchlists=false`
+  - `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=broad --markets=stocks --limit=25 --batch=10 --dry-run=true`
+  - `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=broad --markets=etf --limit=25 --batch=10 --dry-run=true`
+  - `pnpm --filter @workspace/scripts run universe:hydrate:ibkr -- --mode=broad --markets=stocks,etf --limit=50 --batch=10`
+  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/flow-universe-planner.test.ts src/services/flow-universe.test.ts src/services/market-data-work-planner.test.ts src/services/ibkr-line-usage.test.ts`
+  - `pnpm --filter @workspace/scripts run typecheck`
+  - `git diff --check -- scripts/src/hydrate-universe-catalog-ibkr.ts artifacts/api-server/src/services/flow-universe-planner.ts artifacts/api-server/src/services/flow-universe.ts artifacts/api-server/src/services/platform.ts artifacts/api-server/src/services/flow-universe-planner.test.ts SESSION_HANDOFF_LIVE_2026-05-29_flow-universe-coverage.md SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_MASTER.md`
+- Previous focused validations retained:
+  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/nasdaq-symbol-directory.test.ts src/services/sp500-constituents.test.ts src/services/flow-universe.test.ts`
+  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/flow-universe-planner.test.ts src/services/flow-universe.test.ts src/services/nasdaq-symbol-directory.test.ts src/services/sp500-constituents.test.ts`
+  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/marketFlowScannerConfig.test.js`
+  - `pnpm --filter @workspace/api-spec run codegen`
+  - `pnpm --filter @workspace/scripts run universe:sync:listings -- --dry-run=true`
+  - `pnpm --filter @workspace/scripts run universe:sync:sp500 -- --dry-run=true`
+- Current blocked broad validations:
+  - `pnpm --filter @workspace/api-server run typecheck` fails at unrelated `src/services/signal-options-automation.ts(7533,34): Property 'detail' does not exist on type 'never'.`
+  - `pnpm --filter @workspace/scripts run typecheck` fails at the same unrelated API file.
+  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js` has three unrelated source-contract failures around platform background readiness, operational page route delays, and hidden-mounted Trade execution warmth.
+
+## Next Recommended Steps
+
+1. During the next regular/liquid session, inspect line usage/admission diagnostics while scanner batches are active; confirm account, execution, automation, visible, and watchlist line users stay protected while scanner rotates through the 680-symbol pool.
+2. Add a safe broad optionability verification policy before persisting non-priority rejects; specifically re-probe suspicious rejects like `FDX` before writing `rejected`.
+3. Continue bounded source-backed broad hydration toward NASDAQ/S&P/listed coverage using the corrected broad hydrator.
+4. Consider filtering low-value listed ETFs/funds separately from single-name equity hydration if broad ETF coverage proves noisy.
+5. Clear or quarantine unrelated dirty-worktree/broad-validation items before treating full-repo status as clean.

@@ -42,6 +42,7 @@ const {
 const { recordApiRequest, __resetRequestMetricsForTests } = requestMetricsModule;
 const {
   __resetApiResourcePressureForTests,
+  resolveApiRssPressureThresholds,
   updateApiResourcePressure,
 } = resourcePressureModule;
 const {
@@ -584,6 +585,135 @@ test("diagnostics separate long-running scans from stopped stale scans", async (
   assert.equal(stoppedScanEvent, undefined);
 });
 
+test("diagnostics keep automation long-scan pressure out of footer memory pressure", async () => {
+  const nowMs = Date.now();
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: true,
+    deploymentCount: 1,
+    activeDeploymentCount: 1,
+    maintenance: emptyWorkerMaintenanceSnapshot(),
+    deployments: [
+      {
+        deploymentId: "deployment-1",
+        lastCheckedAtMs: nowMs - 150_000,
+        failedUntilMs: 0,
+        lastSuccessAt: new Date(nowMs - 150_000).toISOString(),
+        lastError: null,
+        currentScanStartedAt: new Date(nowMs - 150_000).toISOString(),
+        currentScanAgeMs: 150_000,
+        lastScanDurationMs: 12_000,
+        scanCount: 4,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 8,
+        lastFreshSignalCount: 8,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: new Date(nowMs - 150_000).toISOString(),
+        lastOldestSignalBarAt: new Date(nowMs - 150_000).toISOString(),
+        lastCandidateCount: 0,
+        lastBlockedCandidateCount: 0,
+      },
+    ],
+  }));
+
+  const collected = await collectDiagnosticSnapshot(healthyDiagnosticInput());
+  const resourcePressure = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "resource-pressure",
+  );
+  const apiResourcePressure = resourcePressure?.metrics.apiResourcePressure as
+    | {
+        scannerPressure?: {
+          level?: string;
+          activeLongScanCount?: number | null;
+        };
+      }
+    | undefined;
+  const dominantDrivers = Array.isArray(
+    resourcePressure?.metrics.dominantDrivers,
+  )
+    ? resourcePressure?.metrics.dominantDrivers
+    : [];
+
+  assert.equal(resourcePressure?.status, "ok");
+  assert.equal(resourcePressure?.metrics.pressureLevel, "normal");
+  assert.equal(resourcePressure?.metrics.apiPressureLevel, "normal");
+  assert.equal(apiResourcePressure?.scannerPressure?.level, "high");
+  assert.equal(
+    apiResourcePressure?.scannerPressure?.activeLongScanCount,
+    1,
+  );
+  assert.equal(
+    dominantDrivers.some((driver) => driver?.kind === "automation"),
+    false,
+  );
+  assert.equal(collected.footerMemoryPressure?.level, "normal");
+});
+
+test("diagnostics keep API latency and cache pressure out of footer memory pressure", async () => {
+  for (let index = 0; index < 20; index += 1) {
+    recordApiRequest({
+      method: "GET",
+      path: "/api/slow-resource",
+      statusCode: 200,
+      durationMs: 1_250,
+    });
+  }
+
+  const collected = await collectDiagnosticSnapshot({
+    runtime: {
+      api: {
+        uptimeMs: 10_000,
+        memoryMb: {
+          heapUsed: 128,
+          heapTotal: 256,
+          rss: 512,
+          external: 16,
+          arrayBuffers: 4,
+        },
+        resourceCaches: {
+          bars: { entries: 256, maxEntries: 256, inFlight: 0 },
+        },
+      },
+      ibkr: {
+        configured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        competing: false,
+        lastTickleAt: new Date().toISOString(),
+      },
+    },
+    probes: {
+      accounts: { ok: true, count: 1 },
+      positions: { ok: true, count: 1 },
+      orders: { ok: true, count: 0 },
+    },
+  });
+  const resourcePressure = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "resource-pressure",
+  );
+  const dominantDrivers = Array.isArray(
+    resourcePressure?.metrics.dominantDrivers,
+  )
+    ? resourcePressure?.metrics.dominantDrivers
+    : [];
+
+  assert.equal(resourcePressure?.metrics.pressureLevel, "watch");
+  assert.equal(
+    dominantDrivers.some((driver) => driver?.kind === "api-latency"),
+    true,
+  );
+  assert.equal(
+    dominantDrivers.some((driver) => driver?.kind === "cache-pressure"),
+    true,
+  );
+  assert.equal(collected.footerMemoryPressure?.level, "normal");
+  assert.deepEqual(collected.footerMemoryPressure?.dominantDrivers, []);
+});
+
 test("diagnostics reports resource-pressure paused scans without stale critical paging", async () => {
   const nowMs = Date.now();
   registerSignalOptionsWorkerSnapshotGetter(() => ({
@@ -776,7 +906,9 @@ test("diagnostics expose defaults, browser events, and memory-backed history", a
 });
 
 test("diagnostics clamp raw history and export limits under API pressure", async () => {
-  updateApiResourcePressure({ rssMb: 1_650 });
+  updateApiResourcePressure({
+    rssMb: resolveApiRssPressureThresholds().critical + 1,
+  });
   const from = new Date(Date.now() - 60_000);
   const to = new Date(Date.now() + 60_000);
 

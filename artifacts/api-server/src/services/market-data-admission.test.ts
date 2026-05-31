@@ -272,7 +272,7 @@ test("allows target fill lines below the active budget and clamps them to the bu
   assert.equal(budget.targetFillLines, 190);
 });
 
-test("runtime scanner line budget does not cap the live quote working set", () => {
+test("runtime scanner line budget caps the scanner working set", () => {
   setEnv({});
   setMarketDataAdmissionRuntimeDefaults({
     flowScannerLineBudget: 40,
@@ -285,11 +285,11 @@ test("runtime scanner line budget does not cap the live quote working set", () =
     "account-monitor": 200,
     visible: 200,
     automation: 200,
-    "flow-scanner": 200,
+    "flow-scanner": 40,
   });
 });
 
-test("runtime scanner cap shrink does not demote scanner live quote leases", () => {
+test("runtime scanner cap shrink demotes scanner live quote leases", () => {
   setEnv({});
   setMarketDataAdmissionRuntimeDefaults({
     flowScannerLineBudget: 40,
@@ -305,8 +305,9 @@ test("runtime scanner cap shrink does not demote scanner live quote leases", () 
       underlying: "SPY",
     })),
   });
-  assert.equal(scanner.admitted.length, 80);
-  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 80);
+  assert.equal(scanner.admitted.length, 40);
+  assert.equal(scanner.rejected.length, 40);
+  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 40);
 
   setMarketDataAdmissionRuntimeDefaults({
     flowScannerLineBudget: 20,
@@ -314,11 +315,12 @@ test("runtime scanner cap shrink does not demote scanner live quote leases", () 
   });
 
   const diagnostics = getMarketDataAdmissionDiagnostics();
-  assert.equal(diagnostics.budget.flowScannerLineCap, 200);
-  assert.equal(diagnostics.poolUsage["flow-scanner"]?.effectiveMaxLines, 200);
-  assert.equal(diagnostics.flowScannerLineCount, 80);
-  assert.equal(diagnostics.activeLineCount, 80);
-  assert.equal(getMarketDataLeasesSnapshot().length, 80);
+  assert.equal(diagnostics.budget.flowScannerLineCap, 20);
+  assert.equal(diagnostics.poolUsage["flow-scanner"]?.effectiveMaxLines, 20);
+  assert.equal(diagnostics.flowScannerLineCount, 20);
+  assert.equal(diagnostics.flowScannerChargedLineCount, 20);
+  assert.equal(diagnostics.activeLineCount, 20);
+  assert.equal(getMarketDataLeasesSnapshot().length, 20);
 });
 
 test("keeps explicit admission env caps ahead of runtime scanner defaults", () => {
@@ -532,6 +534,31 @@ test("signal option quote leases preempt lower-priority automation lines inside 
   assert.equal(diagnostics.ownerClasses.summaries.automation.activeLineCount, 2);
 });
 
+test("signal options preview quote leases classify with signal option owners", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "4",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "0",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "0",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "4",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "0",
+  });
+
+  const signal = admitMarketDataLeases({
+    owner: "signal-options-preview:deploy-1:NVDA",
+    intent: "automation-live",
+    requests: [{ assetClass: "option" as const, providerContractId: "SIG1", underlying: "NVDA" }],
+    fallbackProvider: "cache",
+  });
+
+  assert.equal(signal.admitted.length, 1);
+  assert.equal(signal.rejected.length, 0);
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.signalOptions.activeLineCount, 1);
+  assert.equal(diagnostics.ownerClasses.summaries["signal-options"].activeLineCount, 1);
+});
+
 test("enforces the flow scanner live-line cap", () => {
   setEnv({
     IBKR_MARKET_DATA_APP_MAX_LINES: "100",
@@ -689,6 +716,90 @@ test("flow scanner does not reclaim visible lines when active demand leaves no s
   const diagnostics = getMarketDataAdmissionDiagnostics();
   assert.equal(diagnostics.intentUsage["visible-live"], 2);
   assert.equal(diagnostics.flowScannerLineCount, 0);
+});
+
+test("protected demand shrinks scanner headroom below the global budget", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "200",
+    IBKR_MARKET_DATA_TARGET_FILL_LINES: "80",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "80",
+  });
+
+  const scanner = admitMarketDataLeases({
+    owner: "flow-scanner:rotation",
+    intent: "flow-scanner-live",
+    requests: Array.from({ length: 80 }, (_, index) => ({
+      assetClass: "option" as const,
+      providerContractId: `FLOW${index}`,
+      underlying: "SPY",
+    })),
+  });
+  assert.equal(scanner.admitted.length, 80);
+
+  const visible = admitMarketDataLeases({
+    owner: "trade-option-visible:SPY",
+    intent: "visible-live",
+    requests: Array.from({ length: 30 }, (_, index) => ({
+      assetClass: "option" as const,
+      providerContractId: `VISIBLE${index}`,
+      underlying: "SPY",
+    })),
+  });
+
+  assert.equal(visible.admitted.length, 30);
+  assert.equal(visible.demoted.length, 30);
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.activeLineCount, 80);
+  assert.equal(diagnostics.visibleLineCount, 30);
+  assert.equal(diagnostics.flowScannerChargedLineCount, 50);
+  assert.equal(diagnostics.poolUsage["flow-scanner"]?.effectiveMaxLines, 50);
+});
+
+test("shared option demand is counted once and charged to the highest-priority owner", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "10",
+    IBKR_MARKET_DATA_TARGET_FILL_LINES: "10",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "5",
+  });
+
+  admitMarketDataLeases({
+    owner: "trade-option-visible:SPY",
+    intent: "visible-live",
+    requests: [
+      {
+        assetClass: "option" as const,
+        providerContractId: "SHARED1",
+        underlying: "SPY",
+      },
+    ],
+  });
+  const scanner = admitMarketDataLeases({
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    requests: [
+      {
+        assetClass: "option" as const,
+        providerContractId: "SHARED1",
+        underlying: "SPY",
+      },
+    ],
+  });
+
+  assert.equal(scanner.admitted.length, 1);
+  assert.equal(scanner.admitted[0]?.lineCost, 0);
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.activeLineCount, 1);
+  assert.equal(diagnostics.flowScannerLineCount, 1);
+  assert.equal(diagnostics.flowScannerChargedLineCount, 0);
+  assert.equal(diagnostics.lineOwnership.duplicateLineCount, 1);
+  assert.equal(
+    diagnostics.lineOwnership.duplicateLines[0]?.chargedOwnerClass,
+    "visible",
+  );
+  assert.equal(
+    diagnostics.lineOwnership.duplicateLines[0]?.sharedWithScanner,
+    true,
+  );
 });
 
 test("signal option quote leases stay in the Algo & Execution bundle and reclaim lower-priority scanner lines", () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getRuntimeDiagnostics } from "@workspace/api-client-react";
 import { useBrokerStreamFreshnessSnapshot } from "./live-streams";
@@ -44,11 +44,15 @@ export const useRuntimeControlSnapshot = ({
 
   const [streamedLineUsage, setStreamedLineUsage] = useState(lineUsageSnapshot);
   const [lineUsageError, setLineUsageError] = useState(null);
+  const lineUsageRequestRef = useRef(null);
   const refreshLineUsage = useCallback(() => {
     if (!active || !lineUsageEnabled) {
       return Promise.resolve(null);
     }
-    return readLineUsageSnapshot()
+    if (lineUsageRequestRef.current) {
+      return lineUsageRequestRef.current;
+    }
+    const request = readLineUsageSnapshot()
       .then((payload) => {
         setStreamedLineUsage(payload);
         setLineUsageError(null);
@@ -57,7 +61,14 @@ export const useRuntimeControlSnapshot = ({
       .catch((error) => {
         setLineUsageError(error);
         throw error;
+      })
+      .finally(() => {
+        if (lineUsageRequestRef.current === request) {
+          lineUsageRequestRef.current = null;
+        }
       });
+    lineUsageRequestRef.current = request;
+    return request;
   }, [active, lineUsageEnabled]);
 
   useEffect(() => {

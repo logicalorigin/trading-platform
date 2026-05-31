@@ -1848,6 +1848,7 @@ export const AlgoSettingsRegion = ({
   patchStrategySettingsPath,
   dirtyFields,
   focusedDeployment,
+  controlBaselineReady = true,
   handleApplyExpandedCapacity,
   updateProfileMutation,
   updateStrategySettingsMutation,
@@ -1866,6 +1867,7 @@ export const AlgoSettingsRegion = ({
   const [openSections, setOpenSections] = useState({});
   const disabled =
     !focusedDeployment ||
+    !controlBaselineReady ||
     updateProfileMutation?.isPending ||
     updateStrategySettingsMutation?.isPending;
 

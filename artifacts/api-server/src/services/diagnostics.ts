@@ -146,6 +146,7 @@ export type DiagnosticsLatestPayload = {
   snapshots: DiagnosticSnapshotPayload[];
   events: DiagnosticEventPayload[];
   thresholds: DiagnosticThreshold[];
+  marketDataWorkPlan?: JsonRecord;
   footerMemoryPressure?: {
     observedAt: string | null;
     level: "normal" | "watch" | "high" | "critical";
@@ -166,6 +167,17 @@ export type DiagnosticsLatestPayload = {
 type FooterMemoryPressureDriver = NonNullable<
   DiagnosticsLatestPayload["footerMemoryPressure"]
 >["dominantDrivers"][number];
+
+const FOOTER_MEMORY_DRIVER_KINDS = new Set([
+  "api-heap",
+  "api-rss",
+  "browser-memory",
+  "chart-hydration",
+  "client-pressure",
+  "query-cache",
+  "runtime-stores",
+  "workload",
+]);
 
 const SNAPSHOT_RETENTION_MS = 24 * 60 * 60 * 1000;
 const SNAPSHOT_RETENTION_DAYS = SNAPSHOT_RETENTION_MS / (24 * 60 * 60 * 1000);
@@ -2375,12 +2387,13 @@ function normalizeFooterPressureLevel(
 
 function sanitizeDominantDrivers(
   value: unknown,
+  options: { memoryOnly?: boolean } = {},
 ): FooterMemoryPressureDriver[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
-  return value.slice(0, 4).map((entry) => {
+  const drivers = value.map((entry) => {
     const record = asJsonRecord(entry);
     return {
       kind: textValue(record["kind"]),
@@ -2390,6 +2403,29 @@ function sanitizeDominantDrivers(
       score: numeric(record["score"]),
     };
   });
+
+  return (options.memoryOnly
+    ? drivers.filter((driver) =>
+        driver.kind !== null && FOOTER_MEMORY_DRIVER_KINDS.has(driver.kind),
+      )
+    : drivers
+  ).slice(0, 4);
+}
+
+function maxFooterPressureLevel(
+  levels: unknown[],
+): "normal" | "watch" | "high" | "critical" {
+  return levels.reduce<"normal" | "watch" | "high" | "critical">(
+    (current, next) => {
+      const normalized = normalizeFooterPressureLevel(next);
+      return maxPressureLevel([current, normalized]) as
+        | "normal"
+        | "watch"
+        | "high"
+        | "critical";
+    },
+    "normal",
+  );
 }
 
 function buildResourcePressureMetrics(
@@ -3236,20 +3272,27 @@ export async function recordBrowserDiagnosticEvent(input: {
 function buildFooterMemoryPressureSummary(
   resourceMetrics: JsonRecord,
 ): DiagnosticsLatestPayload["footerMemoryPressure"] {
+  const dominantDrivers = sanitizeDominantDrivers(
+    resourceMetrics["dominantDrivers"],
+    { memoryOnly: true },
+  );
+  const level = maxFooterPressureLevel([
+    resourceMetrics["clientPressureLevel"],
+    ...dominantDrivers.map((driver) => driver.level),
+  ]);
+
   return {
     observedAt:
       textValue(resourceMetrics["browserObservedAt"]) ??
       textValue(resourceMetrics["latestClientAt"]) ??
       null,
-    level: normalizeFooterPressureLevel(
-      resourceMetrics["clientPressureLevel"] ?? resourceMetrics["pressureLevel"],
-    ),
+    level,
     trend: (textValue(resourceMetrics["clientPressureTrend"]) ??
       "steady") as "steady" | "rising" | "recovering",
     browserMemoryMb: numeric(resourceMetrics["browserMemoryMb"]),
     apiHeapUsedPercent: numeric(resourceMetrics["heapUsedPercent"]),
     sourceQuality: textValue(resourceMetrics["sourceQuality"]),
-    dominantDrivers: sanitizeDominantDrivers(resourceMetrics["dominantDrivers"]),
+    dominantDrivers,
   };
 }
 
@@ -3403,9 +3446,11 @@ export async function collectDiagnosticSnapshot(
   const runtimeRecorderSeverity = classifyRuntimeRecorderSnapshot(
     runtimeRecorder.metrics,
   );
+  const marketDataWorkPlan = asJsonRecord(runtime["marketDataWorkPlan"]);
   const marketDataRaw = {
     ...asJsonRecord(probes["marketData"]),
     massive: asJsonRecord(asJsonRecord(runtime["providers"])["massive"]),
+    marketDataWorkPlan,
   };
 
   const snapshots = [
@@ -3940,6 +3985,7 @@ export async function collectDiagnosticSnapshot(
     snapshots,
     events,
     thresholds: await getDiagnosticThresholds(),
+    marketDataWorkPlan,
     footerMemoryPressure: buildFooterMemoryPressureSummary(resourceMetrics),
   };
   broadcast({ type: "snapshot", payload: latestPayload });

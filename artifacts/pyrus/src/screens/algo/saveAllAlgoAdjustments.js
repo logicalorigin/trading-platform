@@ -67,34 +67,36 @@ export const saveAllAlgoAdjustments = async ({
   if (profileDirty) {
     tasks.push({
       section: "Profile",
-      promise: updateProfileMutation.mutateAsync({
-        deploymentId,
-        data: profileDraft,
-        silent: true,
-      }),
+      run: () =>
+        updateProfileMutation.mutateAsync({
+          deploymentId,
+          data: profileDraft,
+          silent: true,
+        }),
     });
   }
   if (strategyDirty) {
     tasks.push({
       section: "Signal",
-      promise: updateStrategySettingsMutation.mutateAsync({
-        deploymentId,
-        data: buildStrategySettingsPayload(strategySettingsDraft),
-        silent: true,
-      }),
+      run: () =>
+        updateStrategySettingsMutation.mutateAsync({
+          deploymentId,
+          data: buildStrategySettingsPayload(strategySettingsDraft),
+          silent: true,
+        }),
     });
   }
 
   if (!tasks.length) return { ok: true };
 
-  const results = await Promise.allSettled(tasks.map((task) => task.promise));
-  const failures = results
-    .map((result, index) =>
-      result.status === "rejected"
-        ? { section: tasks[index].section, error: result.reason }
-        : null,
-    )
-    .filter(Boolean);
+  const failures = [];
+  for (const task of tasks) {
+    try {
+      await task.run();
+    } catch (error) {
+      failures.push({ section: task.section, error });
+    }
+  }
 
   if (failures.length) {
     onPartialFailure?.({ failures });

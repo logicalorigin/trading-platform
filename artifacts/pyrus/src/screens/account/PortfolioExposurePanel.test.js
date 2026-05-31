@@ -4,6 +4,7 @@ import test from "node:test";
 import { CSS_COLOR } from "../../lib/uiTokens.jsx";
 import {
   getGreekScenarioSummary,
+  getRiskRecommendationSummary,
   buildRiskLevelDisplayModel,
   getRiskGaugeColorStops,
 } from "./PortfolioExposurePanel.jsx";
@@ -18,6 +19,7 @@ test("portfolio exposure panel renders compact dashboard regions", () => {
   assert.match(source, /data-testid="portfolio-exposure-risk-level"/);
   assert.match(source, /data-testid="portfolio-exposure-notional"/);
   assert.match(source, /data-testid="portfolio-exposure-greek-scenarios"/);
+  assert.match(source, /data-testid="portfolio-exposure-risk-recommendations"/);
   assert.match(source, /data-testid="portfolio-exposure-concentration"/);
   assert.match(source, /data-testid="portfolio-exposure-risk-strip"/);
 });
@@ -28,8 +30,10 @@ test("portfolio exposure panel uses dense local composition instead of stacked s
   assert.match(source, /RiskStrip/);
   assert.match(source, /NotionalExposureStrip/);
   assert.match(source, /GreekScenarioStrip/);
+  assert.match(source, /OptionRiskReviewStrip/);
   assert.match(source, /Notional Exposure/);
   assert.match(source, /Greek Scenarios/);
+  assert.match(source, /Option Risk Reviews/);
   assert.match(source, /label="Worst Shock"/);
   assert.doesNotMatch(source, /label="Worst Case"/);
   assert.match(source, /Gross Notional/);
@@ -187,6 +191,7 @@ test("portfolio exposure panel has a phone compact mode for two-up overview", ()
   assert.match(source, /isPhone \? null : <SectorList/);
   assert.match(source, /isPhone \? null : \(\s*<NotionalExposureStrip/);
   assert.match(source, /isPhone \? null : \(\s*<GreekScenarioStrip/);
+  assert.match(source, /isPhone \? null : \(\s*<OptionRiskReviewStrip/);
   assert.match(source, /isPhone \? null : renderRiskStrip\(\)/);
 });
 
@@ -211,6 +216,55 @@ test("greek scenario summary stays hidden until enabled and sorts scenarios", ()
   assert.equal(summary.worst.estimatedPnl, -80);
   assert.equal(summary.best.estimatedPnl, 125);
   assert.equal(summary.flags[0].symbol, "SPY 500C");
+});
+
+test("risk recommendation summary stays options-scoped and preserves advisory severity", () => {
+  assert.equal(getRiskRecommendationSummary(null), null);
+  assert.equal(
+    getRiskRecommendationSummary({
+      advisoryOnly: true,
+      scope: "options",
+      summary: { optionPositionCount: 0 },
+      recommendations: [],
+    }),
+    null,
+  );
+
+  const summary = getRiskRecommendationSummary({
+    advisoryOnly: true,
+    scope: "options",
+    status: "degraded",
+    summary: {
+      optionPositionCount: 2,
+      totalPremiumExposure: 1_600,
+      premiumToNavPercent: 3.2,
+      worstShockPnl: -6_200,
+      worstShockToNavPercent: -12.4,
+    },
+    recommendations: [
+      {
+        id: "scenario:worst-option-shock",
+        category: "scenario",
+        severity: "watch",
+        title: "Review worst option shock",
+        suggestedReview: "Review hedging, expiries, and volatility assumptions.",
+      },
+      {
+        id: "gamma:spy",
+        category: "gamma",
+        severity: "attention",
+        title: "Review short gamma convexity",
+        suggestedReview: "Review the position's convexity exposure.",
+      },
+    ],
+  });
+
+  assert.equal(summary.status, "degraded");
+  assert.equal(summary.highestSeverity, "attention");
+  assert.equal(summary.optionPositionCount, 2);
+  assert.equal(summary.totalPremiumExposure, 1_600);
+  assert.equal(summary.worstShockPnl, -6_200);
+  assert.equal(summary.recommendations.length, 2);
 });
 
 test("portfolio exposure panel guards per-half loading and error states", () => {

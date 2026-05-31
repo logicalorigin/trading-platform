@@ -1320,6 +1320,20 @@ export const GetAccountPositionsResponse = zod.object({
 })),
   "stopLoss": zod.number().nullish().describe('Active stop-loss price for display and trade-management UI, when available.'),
   "takeProfit": zod.number().nullish().describe('Active explicit take-profit price for display and trade-management UI, when available.'),
+  "riskOverlay": zod.union([zod.object({
+  "source": zod.string(),
+  "openedAt": zod.coerce.date().nullable(),
+  "entryPrice": zod.number().nullable(),
+  "hardStopPrice": zod.number().nullable(),
+  "stopPrice": zod.number().nullable(),
+  "trailActive": zod.boolean(),
+  "trailStopPrice": zod.number().nullable(),
+  "trailActivationPrice": zod.number().nullable(),
+  "trailActivationPct": zod.number().nullable(),
+  "givebackPct": zod.number().nullable(),
+  "minLockedGainPct": zod.number().nullable(),
+  "peakPrice": zod.number().nullable()
+}).describe('Normalized chart overlay state for position risk lines.'),zod.null()]).optional().describe('Normalized chart overlay state for stop-loss and trailing-stop lines, when available.'),
   "source": zod.string(),
   "sourceType": zod.enum(['manual', 'automation', 'signal_options_replay', 'watchlist_backtest', 'mixed']).optional(),
   "strategyLabel": zod.string().nullish(),
@@ -1439,6 +1453,20 @@ export const GetAccountPositionsAtDateResponse = zod.object({
 })),
   "stopLoss": zod.number().nullish().describe('Active stop-loss price for display and trade-management UI, when available.'),
   "takeProfit": zod.number().nullish().describe('Active explicit take-profit price for display and trade-management UI, when available.'),
+  "riskOverlay": zod.union([zod.object({
+  "source": zod.string(),
+  "openedAt": zod.coerce.date().nullable(),
+  "entryPrice": zod.number().nullable(),
+  "hardStopPrice": zod.number().nullable(),
+  "stopPrice": zod.number().nullable(),
+  "trailActive": zod.boolean(),
+  "trailStopPrice": zod.number().nullable(),
+  "trailActivationPrice": zod.number().nullable(),
+  "trailActivationPct": zod.number().nullable(),
+  "givebackPct": zod.number().nullable(),
+  "minLockedGainPct": zod.number().nullable(),
+  "peakPrice": zod.number().nullable()
+}).describe('Normalized chart overlay state for position risk lines.'),zod.null()]).optional().describe('Normalized chart overlay state for stop-loss and trailing-stop lines, when available.'),
   "source": zod.string(),
   "sourceType": zod.enum(['manual', 'automation', 'signal_options_replay', 'watchlist_backtest', 'mixed']).optional(),
   "strategyLabel": zod.string().nullish(),
@@ -1643,6 +1671,7 @@ export const GetAccountRiskResponse = zod.object({
   "margin": zod.record(zod.string(), zod.unknown()),
   "greeks": zod.record(zod.string(), zod.unknown()),
   "greekScenarios": zod.record(zod.string(), zod.unknown()).optional(),
+  "riskRecommendations": zod.record(zod.string(), zod.unknown()).optional(),
   "expiryConcentration": zod.record(zod.string(), zod.unknown()),
   "updatedAt": zod.coerce.date()
 })
@@ -2455,7 +2484,10 @@ export const GetGexDashboardResponse = zod.object({
 
 export const GetOptionQuoteSnapshotsBody = zod.object({
   "underlying": zod.string().nullish(),
-  "providerContractIds": zod.array(zod.string()).min(1)
+  "providerContractIds": zod.array(zod.string()).min(1),
+  "owner": zod.string().optional(),
+  "intent": zod.enum(['execution-live', 'account-monitor-live', 'visible-live', 'automation-live', 'flow-scanner-live', 'delayed-ok', 'historical']).optional(),
+  "requiresGreeks": zod.boolean().optional()
 })
 
 export const getOptionQuoteSnapshotsResponseTwoDebugRequestedCountMin = 0;
@@ -2662,6 +2694,10 @@ export const GetBarsResponse = zod.object({
   "low": zod.number(),
   "close": zod.number(),
   "volume": zod.number(),
+  "bid": zod.number().nullish(),
+  "ask": zod.number().nullish(),
+  "mid": zod.number().nullish(),
+  "quoteAsOf": zod.coerce.date().nullish(),
   "source": zod.string().optional(),
   "providerContractId": zod.string().nullish(),
   "outsideRth": zod.boolean().optional(),
@@ -2999,6 +3035,10 @@ export const GetOptionChartBarsResponse = zod.object({
   "low": zod.number(),
   "close": zod.number(),
   "volume": zod.number(),
+  "bid": zod.number().nullish(),
+  "ask": zod.number().nullish(),
+  "mid": zod.number().nullish(),
+  "quoteAsOf": zod.coerce.date().nullish(),
   "source": zod.string().optional(),
   "providerContractId": zod.string().nullish(),
   "outsideRth": zod.boolean().optional(),
@@ -4022,6 +4062,14 @@ export const getFlowUniverseResponseCoverageSelectedShortfallMin = 0;
 
 export const getFlowUniverseResponseCoverageCooldownCountMin = 0;
 
+export const getFlowUniverseResponseCoverageVerifiedSymbolsMin = 0;
+
+export const getFlowUniverseResponseCoverageNeedsVerificationSymbolsMin = 0;
+
+export const getFlowUniverseResponseCoverageRejectedSymbolsMin = 0;
+
+export const getFlowUniverseResponseCoverageVerificationBacklogSymbolsMin = 0;
+
 export const getFlowUniverseResponseCoverageScannedSymbolsMin = 0;
 
 export const getFlowUniverseResponseCoverageCycleScannedSymbolsMin = 0;
@@ -4057,6 +4105,10 @@ export const GetFlowUniverseResponse = zod.object({
   "stale": zod.boolean().optional(),
   "fallbackUsed": zod.boolean().optional(),
   "cooldownCount": zod.number().min(getFlowUniverseResponseCoverageCooldownCountMin).optional(),
+  "verifiedSymbols": zod.number().min(getFlowUniverseResponseCoverageVerifiedSymbolsMin).optional(),
+  "needsVerificationSymbols": zod.number().min(getFlowUniverseResponseCoverageNeedsVerificationSymbolsMin).optional(),
+  "rejectedSymbols": zod.number().min(getFlowUniverseResponseCoverageRejectedSymbolsMin).optional(),
+  "verificationBacklogSymbols": zod.number().min(getFlowUniverseResponseCoverageVerificationBacklogSymbolsMin).optional(),
   "scannedSymbols": zod.number().min(getFlowUniverseResponseCoverageScannedSymbolsMin).optional(),
   "cycleScannedSymbols": zod.number().min(getFlowUniverseResponseCoverageCycleScannedSymbolsMin).optional(),
   "lastScannedAt": zod.record(zod.string(), zod.number().min(getFlowUniverseResponseCoverageLastScannedAtMinOne)).optional(),
@@ -4069,12 +4121,19 @@ export const GetFlowUniverseResponse = zod.object({
   "estimatedCycleMs": zod.number().min(getFlowUniverseResponseCoverageEstimatedCycleMsMin).nullish(),
   "currentBatch": zod.array(zod.string()).optional(),
   "lastScanAt": zod.coerce.date().nullish(),
-  "degradedReason": zod.string().nullish()
+  "degradedReason": zod.string().nullish(),
+  "planner": zod.record(zod.string(), zod.unknown()).optional()
 }),
   "symbols": zod.array(zod.string()),
   "sources": zod.object({
   "builtInSymbols": zod.array(zod.string()),
-  "flowUniverseSymbols": zod.array(zod.string())
+  "watchlistSymbols": zod.array(zod.string()),
+  "flowUniverseSymbols": zod.array(zod.string()),
+  "candidateBuiltInSymbols": zod.array(zod.string()),
+  "candidateWatchlistSymbols": zod.array(zod.string()),
+  "candidatePrioritySymbols": zod.array(zod.string()),
+  "verificationSymbols": zod.array(zod.string()),
+  "planner": zod.record(zod.string(), zod.unknown())
 })
 })
 
@@ -5158,25 +5217,7 @@ export const UpdateSignalOptionsExecutionProfileResponse = zod.object({
   "liquidityHaltControls": zod.record(zod.string(), zod.unknown()),
   "positionHaltControls": zod.record(zod.string(), zod.unknown()),
   "infrastructureHaltControls": zod.record(zod.string(), zod.unknown())
-}),
-  "mode": zod.enum(['shadow']),
-  "candidates": zod.array(zod.record(zod.string(), zod.unknown())),
-  "signals": zod.array(zod.record(zod.string(), zod.unknown())),
-  "activePositions": zod.array(zod.record(zod.string(), zod.unknown())),
-  "risk": zod.record(zod.string(), zod.unknown()),
-  "events": zod.array(zod.object({
-  "id": zod.string(),
-  "deploymentId": zod.string().nullable(),
-  "algoRunId": zod.string().nullable(),
-  "providerAccountId": zod.string().nullable(),
-  "symbol": zod.string().nullable(),
-  "eventType": zod.string(),
-  "summary": zod.string(),
-  "payload": zod.record(zod.string(), zod.unknown()),
-  "occurredAt": zod.coerce.date(),
-  "createdAt": zod.coerce.date(),
-  "updatedAt": zod.coerce.date()
-}))
+})
 })
 
 

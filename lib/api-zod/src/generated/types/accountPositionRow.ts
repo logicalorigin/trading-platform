@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { AccountPositionLot } from './accountPositionLot';
+import type { AccountPositionRiskOverlay } from './accountPositionRiskOverlay';
 import type { AccountPositionRowAttributionStatus } from './accountPositionRowAttributionStatus';
 import type { AccountPositionRowAutomationContext } from './accountPositionRowAutomationContext';
 import type { AccountPositionRowSourceType } from './accountPositionRowSourceType';
@@ -45,6 +46,8 @@ export interface AccountPositionRow {
   stopLoss?: number | null;
   /** Active explicit take-profit price for display and trade-management UI, when available. */
   takeProfit?: number | null;
+  /** Normalized chart overlay state for stop-loss and trailing-stop lines, when available. */
+  riskOverlay?: AccountPositionRiskOverlay | null;
   source: string;
   sourceType?: AccountPositionRowSourceType;
   strategyLabel?: string | null;

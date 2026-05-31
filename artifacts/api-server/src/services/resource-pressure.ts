@@ -25,6 +25,11 @@ export type ApiResourcePressureSnapshot = {
   level: ApiResourcePressureLevel;
   observedAt: string;
   drivers: ApiResourcePressureDriver[];
+  scannerPressure: {
+    level: ApiResourcePressureLevel;
+    drivers: ApiResourcePressureDriver[];
+    activeLongScanCount: number | null;
+  };
   caps: ApiResourcePressureCaps;
   inputs: {
     rssMb: number | null;
@@ -280,7 +285,6 @@ function buildSnapshot(
     slowRouteLevel,
     clientLevel,
     cacheLevel,
-    automationLevel,
   );
 
   const drivers = [
@@ -322,6 +326,9 @@ function buildSnapshot(
       detail: cappedDriverDetail(rawCacheLevel, cacheLevel),
       score: null,
     }),
+  ].filter((entry): entry is ApiResourcePressureDriver => Boolean(entry));
+
+  const scannerDrivers = [
     driver({
       kind: "automation",
       label: "Signal-options automation",
@@ -335,6 +342,11 @@ function buildSnapshot(
     level,
     observedAt: new Date().toISOString(),
     drivers,
+    scannerPressure: {
+      level: maxLevel(...scannerDrivers.map((entry) => entry.level)),
+      drivers: scannerDrivers,
+      activeLongScanCount: inputs.automationActiveLongScanCount,
+    },
     caps: getApiResourcePressureCaps(level),
     inputs: { ...inputs },
   };

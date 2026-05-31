@@ -681,6 +681,7 @@ export const PlatformShell = ({
   bridgeTone,
   theme,
   onToggleTheme,
+  safeQaMode = false,
   runtimeWatchlistSymbols,
   sessionMetadataSettled,
   frameAuxiliaryDataEnabled = false,
@@ -981,6 +982,7 @@ export const PlatformShell = ({
       bridgeTone={bridgeTone}
       theme={theme}
       onToggleTheme={onToggleTheme}
+      safeQaMode={safeQaMode}
       accounts={accounts}
       primaryAccountId={primaryAccountId}
       primaryAccount={primaryAccount}
@@ -1037,6 +1039,7 @@ export const PlatformShell = ({
       onClose={() => setMobileActivityOpen(false)}
       environment={environment}
       dataEnabled={algoFrameRuntimeEnabled}
+      signalMatrixStates={signalMatrixStates}
       onOpenAlgo={(focus) => {
         setMobileActivityOpen(false);
         handleSetScreen("algo", focus);
@@ -1069,7 +1072,7 @@ export const PlatformShell = ({
       brokerAuthenticated={brokerAuthenticated}
       watchlistsBusy={watchlistsBusy}
       algoEvents={algoEventsQuery?.data?.events}
-      enabled={sessionMetadataSettled}
+      enabled={sessionMetadataSettled && !safeQaMode}
       onAlertClick={() => handleSetScreen("trade")}
       onPositionsClick={() => handleSetScreen("trade")}
       onOrdersClick={() => handleSetScreen("trade")}
@@ -1193,6 +1196,7 @@ export const PlatformShell = ({
           <PlatformAlgoMonitorSidebar
             isVisible={!activitySidebarCollapsed}
             dataEnabled={algoFrameRuntimeEnabled}
+            signalMatrixStates={signalMatrixStates}
             externalStreamFreshness={
               algoFrameRuntimeEnabled ? algoCockpitStreamFreshness : null
             }

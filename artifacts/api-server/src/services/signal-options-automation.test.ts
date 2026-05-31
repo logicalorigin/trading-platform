@@ -109,21 +109,34 @@ test("default paper signal-options startup uses bounded signal monitor profile",
   assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 2/);
   assert.match(source, /SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY = 6/);
   assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60/);
+  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_WORKER_MONITOR_BATCH_SIZE = 12/);
+  assert.match(source, /getSignalMonitorStoredState/);
   assert.match(source, /withSignalMonitorUniverseScope/);
   assert.match(
     source,
     /resolveSignalOptionsMonitorFullRefresh\(\{[\s\S]*universe: input\.universe/,
   );
+  assert.match(source, /input\.source !== "worker"/);
   assert.match(source, /maxSymbolsOverride:\s*fullRefresh\.symbols\.length/);
   assert.match(source, /pressureCapMode:\s*"bypass-soft"/);
   assert.match(
     source,
     /evaluationConcurrencyOverride:\s*SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY/,
   );
+  assert.match(source, /signal:\s*input\.signal/);
   assert.match(
     source,
-    /hardPressureBlock[\s\S]*resolveSignalOptionsMonitorBatch/,
+    /input\.source !== "worker"[\s\S]*resolveSignalOptionsMonitorBatch/,
   );
+  assert.match(
+    source,
+    /input\.source === "worker"[\s\S]*resolveSignalOptionsWorkerMonitorBatchCapacity\(profile\)/,
+  );
+  assert.match(
+    source,
+    /input\.source === "worker"[\s\S]*SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON[\s\S]*getSignalMonitorStoredState/,
+  );
+  assert.match(source, /source:\s*"stored_state"/);
   assert.match(
     source,
     /await normalizeDefaultSignalOptionsPaperSignalMonitorProfile\(\)/,
@@ -178,6 +191,14 @@ test("signal-options scans publish fresh signal state before heavy action work",
       scanBody.indexOf("const initialEvents = await listDeploymentEvents"),
   );
   assert.ok(
+    scanBody.indexOf('phase: "signal_refresh"') <
+      scanBody.indexOf("await loadSignalOptionsMonitorState"),
+  );
+  assert.match(
+    scanBody,
+    /!\(source === "worker" && readiness\.reason === SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON\)/,
+  );
+  assert.ok(
     scanBody.indexOf("lastEvaluatedAt: signalScanCompletedAt") <
       scanBody.indexOf("refreshActivePosition"),
   );
@@ -204,6 +225,23 @@ test("signal-options scans publish fresh signal state before heavy action work",
   assert.match(scanBody, /heavyWorkDeferred:\s*true/);
 });
 
+test("signal-options profile update returns persisted controls without rebuilding state", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const updateBlock = source.match(
+    /export async function updateSignalOptionsExecutionProfile[\s\S]*?\n}\n\nexport const __signalOptionsAutomationInternalsForTests/,
+  )?.[0];
+
+  assert.ok(updateBlock);
+  assert.match(updateBlock, /await insertSignalOptionsEvent/);
+  assert.match(updateBlock, /deployment:\s*deploymentToResponse\(nextDeployment\)/);
+  assert.match(updateBlock, /profile:\s*nextProfile/);
+  assert.doesNotMatch(updateBlock, /listSignalOptionsAutomationState/);
+  assert.doesNotMatch(updateBlock, /buildStatePayload/);
+});
+
 test("signal-options detects pending actionable states after a worker cursor", () => {
   const states = [
     {
@@ -213,6 +251,7 @@ test("signal-options detects pending actionable states after a worker cursor", (
       currentSignalDirection: "buy",
       currentSignalAt: "2026-05-29T16:10:00.000Z",
       currentSignalPrice: 37.5,
+      barsSinceSignal: 1,
       fresh: true,
     },
     {
@@ -222,6 +261,7 @@ test("signal-options detects pending actionable states after a worker cursor", (
       currentSignalDirection: "buy",
       currentSignalAt: "2026-05-29T16:15:00.000Z",
       currentSignalPrice: 82.25,
+      barsSinceSignal: 0,
       fresh: true,
     },
   ] as never;
@@ -269,6 +309,23 @@ test("signal-options defers heavy action work under hard API pressure", () => {
   }
 });
 
+test("signal-options defers heavy action work when action scans are disallowed", () => {
+  updateApiResourcePressure({
+    rssMb: resolveApiRssPressureThresholds().critical + 1,
+  });
+  try {
+    const decision =
+      __signalOptionsAutomationInternalsForTests.shouldDeferSignalOptionsHeavyWork();
+
+    assert.equal(decision.pressure.level, "critical");
+    assert.equal(decision.pressure.caps.signalOptions.actionScansAllowed, false);
+    assert.equal(decision.pressure.caps.signalOptions.positionMarksAllowed, true);
+    assert.equal(decision.defer, true);
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
+});
+
 test("signal-options state resolves paper-enabled before UUID lookup", () => {
   const source = readFileSync(
     new URL("./signal-options-automation.ts", import.meta.url),
@@ -304,6 +361,15 @@ test("signal-options dashboard endpoints share a cached state snapshot", () => {
 
   assert.match(source, /const signalOptionsDashboardCache = new Map/);
   assert.match(source, /const signalOptionsSummaryDashboardCache = new Map/);
+  assert.match(source, /export function invalidateSignalOptionsDashboardCaches/);
+  assert.match(source, /SIGNAL_OPTIONS_CONTROL_UPDATE_EVENT_TYPES/);
+  assert.match(source, /"signal_options_profile_updated"/);
+  assert.match(source, /"deployment_strategy_settings_updated"/);
+  assert.match(source, /latestSignalOptionsControlUpdatedAt/);
+  assert.match(
+    source,
+    /function latestSignalOptionsControlUpdatedAt\(events: ExecutionEvent\[\]\) \{[\s\S]*?return events\.reduce/,
+  );
   assert.match(source, /const SIGNAL_OPTIONS_STATE_EVENT_LIMIT = 2_500/);
   assert.match(source, /const SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT = 250/);
   assert.match(source, /const SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS = 15_000/);
@@ -782,6 +848,28 @@ test("signal-options monitor batches rotate through the deployment universe", ()
   assert.equal(third.nextIndex, 1);
   assert.deepEqual(reset.symbols, ["QQQ", "DIA"]);
   assert.equal(reset.startIndex, 0);
+});
+
+test("signal-options worker monitor batch capacity is tighter than the manual profile cap", () => {
+  const resolveWorkerCapacity =
+    __signalOptionsAutomationInternalsForTests.resolveSignalOptionsWorkerMonitorBatchCapacity;
+
+  assert.equal(
+    resolveWorkerCapacity({
+      maxSymbols: 60,
+      evaluationConcurrency: 2,
+      timeframe: "5m",
+    } as never),
+    12,
+  );
+  assert.equal(
+    resolveWorkerCapacity({
+      maxSymbols: 6,
+      evaluationConcurrency: 2,
+      timeframe: "5m",
+    } as never),
+    6,
+  );
 });
 
 test("signal-options manual monitor refresh covers the full deployment universe", () => {
@@ -2633,7 +2721,7 @@ test("signal-options candidates preserve Pyrus Signals signal to shadow action m
   assert.deepEqual(candidate.signal?.filterState, { mtf: "aligned" });
 });
 
-test("fresh signal snapshots create potential shadow action candidates", () => {
+test("current-bar signal snapshots create potential shadow action candidates", () => {
   const signalAt = "2026-04-28T15:30:00.000Z";
   const deployment = {
     id: "deployment-123456789",
@@ -2649,9 +2737,12 @@ test("fresh signal snapshots create potential shadow action candidates", () => {
     direction: "buy",
     signalAt,
     signalPrice: 508.25,
-    latestBarAt: "2026-04-28T15:35:00.000Z",
-    barsSinceSignal: 1,
+    latestBarAt: "2026-04-28T15:30:00.000Z",
+    barsSinceSignal: 0,
+    freshWindowBars: 8,
     fresh: true,
+    actionEligible: true,
+    actionBlocker: null,
     status: "ok",
     filterState: { mtf: "aligned" },
   };
@@ -2686,6 +2777,8 @@ test("fresh signal snapshots create potential shadow action candidates", () => {
         ...baseSignal,
         latestBarAt: "2026-04-28T15:45:00.000Z",
         barsSinceSignal: 6,
+        actionEligible: false,
+        actionBlocker: "signal_too_old",
       } as never,
     });
 
@@ -2701,43 +2794,182 @@ test("fresh signal snapshots create potential shadow action candidates", () => {
   assert.equal(sellCandidate.optionRight, "put");
   assert.equal(sellCandidate.action?.optionAction, "buy_put");
   assert.equal(staleCandidate, null);
-  assert.ok(stillFreshCandidate);
-  assert.equal(stillFreshCandidate.symbol, "SPY");
+  assert.equal(stillFreshCandidate, null);
 });
 
-test("signal-options state only treats fresh signal states as action rows", () => {
+test("fresh-but-aged signal snapshots can carry read-only contract previews", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const signalAt = "2026-04-28T15:30:00.000Z";
+  const deployment = {
+    id: "deployment-123456789",
+    name: "Shadow Options",
+  } as never;
+  const signal = {
+    profileId: "11111111-1111-1111-1111-111111111111",
+    signalKey: "profile:SPY:15m:buy:2026-04-28T15:30:00.000Z",
+    source: "pyrus-signals",
+    eventId: null,
+    symbol: "spy",
+    timeframe: "15m",
+    direction: "buy",
+    signalAt,
+    signalPrice: 508.25,
+    latestBarAt: "2026-04-28T15:45:00.000Z",
+    barsSinceSignal: 3,
+    freshWindowBars: 8,
+    fresh: true,
+    actionEligible: false,
+    actionBlocker: "signal_too_old",
+    status: "ok",
+    filterState: null,
+  };
+
+  const executable =
+    __signalOptionsAutomationInternalsForTests.candidateFromSignalSnapshot({
+      deployment,
+      signal: signal as never,
+    });
+  const previewCandidate =
+    __signalOptionsAutomationInternalsForTests.previewCandidateFromSignalSnapshot({
+      deployment,
+      signal: signal as never,
+    });
+  assert.equal(executable, null);
+  assert.ok(previewCandidate);
+  assert.equal(previewCandidate.symbol, "SPY");
+  assert.equal(previewCandidate.optionRight, "call");
+  assert.equal(previewCandidate.reason, "signal_too_old");
+
+  const selectedQuote = pricedQuote(510, "call", 1, 1.2);
+  const orderPlan = buildSignalOptionsShadowOrderPlan(selectedQuote, profile);
+  const preview =
+    __signalOptionsAutomationInternalsForTests.signalOptionsContractPreviewFromResolution(
+      {
+        candidate: previewCandidate,
+        generatedAt: "2026-04-28T15:46:00.000Z",
+        resolution: {
+          selectedExpiration: {
+            expirationDate: new Date("2026-04-29T00:00:00.000Z"),
+            dte: 1,
+          },
+          selectedQuote,
+          selectedContract: {
+            ticker: "SPY260429C510",
+            underlying: "SPY",
+            expirationDate: "2026-04-29",
+            strike: 510,
+            right: "call",
+            multiplier: 100,
+            sharesPerContract: 100,
+            providerContractId: "call-510",
+          },
+          quote: {
+            bid: 1,
+            ask: 1.2,
+            last: 1.1,
+            mark: 1.1,
+            quoteFreshness: "live",
+          },
+          orderPlan,
+          liquidity: orderPlan.liquidity,
+          entryGreeks: null,
+          contractSelection: null,
+          contractSelectionPayload: { selectedSlot: 3 },
+          chainDebug: null,
+          chainAttempts: [],
+          reason: null,
+          detail: { selectedExpiration: "test" },
+          retryable: false,
+        } as never,
+      },
+    );
+
+  assert.equal(preview.status, "resolved");
+  assert.equal(preview.source, "profile_contract_preview");
+  assert.equal(preview.selectedContract?.strike, 510);
+  assert.equal(preview.quote?.bid, 1);
+  assert.equal(preview.tradeReady, true);
+  assert.equal(preview.reason, null);
+  assert.match(source, /SIGNAL_OPTIONS_CONTRACT_PREVIEW_TIMEOUT_MS = 2_000/);
+  assert.match(
+    source,
+    /SIGNAL_OPTIONS_CONTRACT_PREVIEW_STATE_BUDGET_MS = 2_000/,
+  );
+  assert.match(source, /previewDeadlineMs/);
+  assert.match(source, /scope: "state_payload"/);
+  assert.match(source, /new AbortController\(\)/);
+  assert.match(source, /contract_preview_timeout/);
+  assert.match(source, /signalOptionsContractPreviewBackoff/);
+});
+
+test("signal-options state shows fresh signals but only trades current-bar signals", () => {
+  const isVisible =
+    __signalOptionsAutomationInternalsForTests.isSignalOptionsVisibleSignalState;
   const isActionable =
     __signalOptionsAutomationInternalsForTests.isSignalOptionsActionableSignalState;
+  const buildSnapshot =
+    __signalOptionsAutomationInternalsForTests.buildSignalOptionsSignalSnapshot;
 
+  const currentBarState = {
+    fresh: true,
+    profileId: "profile-1",
+    symbol: "SPY",
+    timeframe: "5m",
+    currentSignalDirection: "buy",
+    currentSignalAt: "2026-05-28T20:00:00.000Z",
+    currentSignalPrice: 500,
+    latestBarAt: "2026-05-28T20:00:00.000Z",
+    barsSinceSignal: 0,
+    status: "ok",
+  };
+
+  assert.equal(isVisible(currentBarState as never), true);
+  assert.equal(isActionable(currentBarState as never), true);
   assert.equal(
     isActionable({
-      fresh: true,
-      currentSignalDirection: "buy",
-      currentSignalAt: "2026-05-28T20:00:00.000Z",
-      barsSinceSignal: 0,
-    } as never),
-    true,
-  );
-  assert.equal(
-    isActionable({
+      ...currentBarState,
       fresh: true,
       currentSignalDirection: "buy",
       currentSignalAt: "2026-05-28T19:55:00.000Z",
       barsSinceSignal: 1,
     } as never),
-    true,
+    false,
   );
+  const olderFreshState = {
+    ...currentBarState,
+    fresh: true,
+    currentSignalDirection: "buy",
+    currentSignalAt: "2026-05-28T19:50:00.000Z",
+    barsSinceSignal: 6,
+  };
+  assert.equal(isVisible(olderFreshState as never), true);
+  assert.equal(isActionable(olderFreshState as never), false);
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.isSignalOptionsSignalAgeActionable(6),
+    false,
+  );
+
+  const olderSnapshot = buildSnapshot({
+    state: olderFreshState as never,
+    freshWindowBars: 8,
+  });
+  assert.equal(olderSnapshot.freshWindowBars, 8);
+  assert.equal(olderSnapshot.actionEligible, false);
+  assert.equal(olderSnapshot.actionBlocker, "signal_too_old");
+  assert.equal(olderSnapshot.barsSinceSignal, 6);
+
+  const currentSnapshot = buildSnapshot({
+    state: currentBarState as never,
+    freshWindowBars: 8,
+  });
+  assert.equal(currentSnapshot.actionEligible, true);
+  assert.equal(currentSnapshot.actionBlocker, null);
   assert.equal(
     isActionable({
-      fresh: true,
-      currentSignalDirection: "buy",
-      currentSignalAt: "2026-05-28T19:50:00.000Z",
-      barsSinceSignal: 6,
-    } as never),
-    true,
-  );
-  assert.equal(
-    isActionable({
+      ...currentBarState,
       fresh: false,
       currentSignalDirection: "buy",
       currentSignalAt: "2026-05-28T19:35:00.000Z",
@@ -2747,6 +2979,7 @@ test("signal-options state only treats fresh signal states as action rows", () =
   );
   assert.equal(
     isActionable({
+      ...currentBarState,
       fresh: true,
       currentSignalDirection: null,
       currentSignalAt: "2026-05-28T20:00:00.000Z",
@@ -2775,8 +3008,8 @@ test("scan events override matching live signal previews without losing mappings
         direction: "buy",
         signalAt,
         signalPrice: 508.25,
-        latestBarAt: "2026-04-28T15:35:00.000Z",
-        barsSinceSignal: 1,
+        latestBarAt: "2026-04-28T15:30:00.000Z",
+        barsSinceSignal: 0,
         fresh: true,
         status: "ok",
         filterState: null,

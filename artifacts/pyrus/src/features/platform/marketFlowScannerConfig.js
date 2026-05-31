@@ -46,7 +46,7 @@ export const FLOW_SCANNER_CONFIG_LIMITS = Object.freeze({
   maxSymbols: { min: 1, max: 2000 },
   batchSize: { min: 1, max: 250 },
   intervalMs: { min: 2_500, max: 120_000 },
-  concurrency: { min: 1, max: 1 },
+  concurrency: { min: 1, max: 2 },
   limit: { min: 1, max: 1000 },
   unusualThreshold: { min: 0.1, max: 100 },
   minPremium: { min: 0, max: 50_000_000 },
@@ -59,7 +59,7 @@ export const DEFAULT_FLOW_SCANNER_CONFIG = Object.freeze({
   maxSymbols: 500,
   batchSize: UNUSUAL_SCANNER_BATCH_SIZE,
   intervalMs: UNUSUAL_SCANNER_INTERVAL_MS,
-  concurrency: 1,
+  concurrency: 2,
   limit: UNUSUAL_SCANNER_PER_SYMBOL_LIMIT,
   unusualThreshold: 1,
   minPremium: 0,
@@ -215,8 +215,7 @@ export const buildFlowScannerMarketUniverseSymbols = ({
   prioritizeRuntimeSignals = false,
 } = {}) => {
   const backend = uniqueSymbols(backendSymbols);
-  const fallback = uniqueSymbols(fallbackSymbols);
-  const selectedUniverse = backend.length ? [...backend, ...fallback] : fallback;
+  const selectedUniverse = backend;
   const runtimePriority = prioritizeRuntimeSignals
     ? [...uniqueSymbols(prioritySymbols), ...uniqueSymbols(currentBatchSymbols)]
     : [];

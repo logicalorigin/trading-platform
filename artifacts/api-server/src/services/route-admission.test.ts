@@ -1,10 +1,19 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { afterEach, test } from "node:test";
+import {
+  __resetApiResourcePressureForTests,
+  getApiResourcePressureSnapshot,
+  updateApiResourcePressure,
+} from "./resource-pressure";
 import {
   classifyApiRoute,
   resolveApiRouteAdmission,
   withRouteAdmissionMetadata,
 } from "./route-admission";
+
+afterEach(() => {
+  __resetApiResourcePressureForTests();
+});
 
 test("classifies broker-critical routes separately from analytics routes", () => {
   assert.equal(
@@ -100,6 +109,25 @@ test("route admission degrades only deferred work under API pressure", () => {
   assert.equal(analytics.degraded, true);
   assert.equal(analytics.action, "cache-only");
   assert.equal(analytics.reason, "api-resource-pressure-high");
+});
+
+test("automation-only scanner pressure does not shed manual shadow scans", () => {
+  updateApiResourcePressure({ automationActiveLongScanCount: 1 });
+  const pressure = getApiResourcePressureSnapshot();
+
+  const admission = resolveApiRouteAdmission({
+    routeClass: classifyApiRoute({
+      method: "POST",
+      path: "/api/algo/deployments/dep-1/signal-options/shadow-scan",
+    }),
+    pressureLevel: pressure.level,
+    now: new Date("2026-05-28T19:00:00.000Z"),
+  });
+
+  assert.equal(pressure.level, "normal");
+  assert.equal(pressure.scannerPressure.level, "high");
+  assert.equal(admission.action, "allow");
+  assert.equal(admission.reason, null);
 });
 
 test("route admission sheds safe browser QA fanout", () => {

@@ -361,6 +361,28 @@ The workspace-local Postgres scripts remain only as fallback/diagnostic tools:
   fallback.
 - `scripts/run-local-postgres.sh` — foreground diagnostic entry point.
 
+### 2026-05-31 Postgres disconnect incident
+
+Flight-recorder evidence for the 2026-05-31 disconnect points to an API-side
+Postgres connection failure, alongside a separate Replit container replacement:
+
+- `2026-05-31T16:33:38.159Z` — `.pyrus-runtime/flight-recorder/api-events-2026-05-31.jsonl`
+  recorded `uncaught-exception`, pid `182`, message `Connection terminated
+  unexpectedly`, with the stack in `pg@8.20.0/.../pg/lib/client.js`.
+- `2026-05-31T16:33:38.160Z` — the same file recorded `api-process-exit`,
+  code `1`.
+- `2026-05-31T16:33:48.405Z` — `incidents.jsonl` classified the previous run
+  as `container-replaced`, with evidence `previous-boot:btime:1780220834` and
+  `current-boot:btime:1780242802`.
+- `2026-05-31T16:33:51.546Z` — the API flight recorder started again with pid
+  `384`.
+
+When triaging a similar report, run `pnpm run diagnose:replit-restarts` first.
+If it shows both `container-replaced` and a recent Postgres disconnect, treat
+the container replacement as platform/runtime context and the unhandled `pg`
+disconnect as the app-level hardening target. Do not add Replit workflows,
+local Postgres startup, or root runners to address this class of incident.
+
 Repo rule: `.replit` intentionally has no repo-defined
 `[[workflows.workflow]]` tasks and no root `run = [...]` command. Keep
 `[workflows] runButton = "artifacts/pyrus: web"` so the Replit primary Run

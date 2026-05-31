@@ -46,6 +46,10 @@ test("algo cockpit stream uses lean first-paint payloads", () => {
   assert.match(criticalPayload, /view:\s*"summary"/);
   assert.doesNotMatch(criticalPayload, /getAlgoDeploymentCockpit/);
   assert.match(source, /getAlgoDeploymentCockpit\(\{[\s\S]*view:\s*"summary"/);
+  assert.match(
+    readFileSync(new URL("../routes/automation.ts", import.meta.url), "utf8"),
+    /writeSseEvent\(res,\s*"freshness"[\s\S]*phase:\s*payload\.phase \?\? null/,
+  );
 });
 
 test("algo cockpit stream coalesces change events while a poll is in flight", async () => {

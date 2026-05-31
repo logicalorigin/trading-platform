@@ -19,6 +19,7 @@ import {
   getRuntimeDiagnostics,
   listOrders,
   listPositions,
+  startFlowUniverseOptionabilityVerifier,
   startIbkrWatchlistPrewarmRuntime,
   startOptionsFlowScanner,
 } from "./services/platform";
@@ -174,6 +175,7 @@ server.listen(port, () => {
   startAccountFlexRefreshScheduler();
   startIbkrWatchlistPrewarmRuntime();
   startOptionsFlowScanner();
+  startFlowUniverseOptionabilityVerifier();
   startTradeMonitorWorker();
   void startPythonComputeRuntime().catch((err) => {
     logger.warn({ err }, "Failed to start Python compute runtime");
@@ -195,7 +197,10 @@ server.listen(port, () => {
   startRuntimeFlightRecorder();
   void importRuntimeFlightRecorderIncidents(recordServerDiagnosticEvent).catch(
     (err) => {
-      logger.warn({ err }, "Failed to import runtime flight recorder incidents");
+      logger.warn(
+        { err },
+        "Failed to import runtime flight recorder incidents",
+      );
     },
   );
 });

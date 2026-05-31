@@ -24,16 +24,8 @@ const cssColorMix = (color, percent) =>
 
 const isSignalDirection = (value) => value === "buy" || value === "sell";
 
-const getFallbackSignalForTimeframe = (fallbackState, timeframe) => {
-  if (!fallbackState) return null;
-  const fallbackTimeframe = String(fallbackState.timeframe || "5m").trim();
-  if (fallbackTimeframe !== timeframe) return null;
-  return fallbackState;
-};
-
 export const SignalDots = ({
   statesByTimeframe = {},
-  fallbackState = null,
   onSelect,
   timeframes = SIGNAL_TIMEFRAMES,
   showLabels = false,
@@ -51,11 +43,10 @@ export const SignalDots = ({
     }}
   >
     {timeframes.map((timeframe) => {
-      const state =
-        statesByTimeframe?.[timeframe] ||
-        getFallbackSignalForTimeframe(fallbackState, timeframe);
+      const state = statesByTimeframe?.[timeframe];
       const direction = String(state?.currentSignalDirection || "").toLowerCase();
       const hasDirection = isSignalDirection(direction);
+      const pending = !state;
       const color =
         direction === "buy"
           ? CSS_COLOR.blue
@@ -64,9 +55,11 @@ export const SignalDots = ({
             : CSS_COLOR.textMuted;
       const fresh = Boolean(state?.fresh);
       const status = state?.status || "unknown";
-      const label = hasDirection
-        ? `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "stale"} - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
-        : `${timeframe} no signal - ${status}`;
+      const label = pending
+        ? `${timeframe} pending`
+        : hasDirection
+          ? `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "stale"} - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
+          : `${timeframe} no signal - ${status}`;
       const dotStyle = {
         display: "inline-flex",
         alignItems: "center",
@@ -93,7 +86,7 @@ export const SignalDots = ({
         fontWeight: FONT_WEIGHTS.medium,
         lineHeight: 1,
         letterSpacing: 0,
-        opacity: hasDirection ? (fresh ? 1 : 0.76) : 0.88,
+        opacity: pending ? 0.72 : hasDirection ? (fresh ? 1 : 0.76) : 0.88,
         boxShadow:
           hasDirection && fresh && !showLabels
             ? `0 0 0 2px ${cssColorMix(color, 13)}`
@@ -105,11 +98,12 @@ export const SignalDots = ({
       const triggerProps = {
         "data-testid": `watchlist-signal-dot-${timeframe}`,
         "data-timeframe": timeframe,
-        "data-direction": hasDirection ? direction : "none",
+        "data-direction": pending ? "pending" : hasDirection ? direction : "none",
         className: [
           "ra-signal-dot",
           hasDirection ? "ra-signal-dot-active" : null,
           hasDirection && fresh ? "ra-signal-dot-fresh" : null,
+          pending ? "ra-signal-dot-pending" : null,
         ]
           .filter(Boolean)
           .join(" "),

@@ -3660,11 +3660,11 @@ paths:
               $ref: "#/components/schemas/SignalOptionsExecutionProfile"
       responses:
         "200":
-          description: Updated signal-options automation state
+          description: Updated signal-options execution profile
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SignalOptionsAutomationState"
+                $ref: "#/components/schemas/UpdateSignalOptionsExecutionProfileResponse"
 
   /algo/events:
     get:
@@ -6575,6 +6575,15 @@ components:
           type: number
         volume:
           type: number
+        bid:
+          type: [number, "null"]
+        ask:
+          type: [number, "null"]
+        mid:
+          type: [number, "null"]
+        quoteAsOf:
+          type: [string, "null"]
+          format: date-time
         source:
           type: string
         providerContractId:
@@ -8159,6 +8168,77 @@ components:
         - asOf
         - source
 
+    AccountPositionRiskOverlay:
+      type: object
+      description: Normalized chart overlay state for position risk lines.
+      properties:
+        source:
+          type: string
+        openedAt:
+          type: string
+          format: date-time
+          nullable: true
+        entryPrice:
+          type: number
+          nullable: true
+        hardStopPrice:
+          type: number
+          nullable: true
+        stopPrice:
+          type: number
+          nullable: true
+        takeProfitPrice:
+          type: number
+          nullable: true
+        activeStopPrice:
+          type: number
+          nullable: true
+        activeStopKind:
+          type: string
+          enum:
+            - hard_stop
+            - trailing_stop
+          nullable: true
+        trailActive:
+          type: boolean
+        trailStopPrice:
+          type: number
+          nullable: true
+        trailHasTakenOver:
+          type: boolean
+        trailActivationPrice:
+          type: number
+          nullable: true
+        trailActivationPct:
+          type: number
+          nullable: true
+        givebackPct:
+          type: number
+          nullable: true
+        minLockedGainPct:
+          type: number
+          nullable: true
+        peakPrice:
+          type: number
+          nullable: true
+      required:
+        - source
+        - openedAt
+        - entryPrice
+        - hardStopPrice
+        - stopPrice
+        - takeProfitPrice
+        - activeStopPrice
+        - activeStopKind
+        - trailActive
+        - trailStopPrice
+        - trailHasTakenOver
+        - trailActivationPrice
+        - trailActivationPct
+        - givebackPct
+        - minLockedGainPct
+        - peakPrice
+
     AccountPositionRow:
       type: object
       properties:
@@ -8229,6 +8309,11 @@ components:
           type: number
           nullable: true
           description: Active explicit take-profit price for display and trade-management UI, when available.
+        riskOverlay:
+          oneOf:
+            - $ref: "#/components/schemas/AccountPositionRiskOverlay"
+            - type: "null"
+          description: Normalized chart overlay state for stop-loss and trailing-stop lines, when available.
         source:
           type: string
         sourceType:
@@ -8716,6 +8801,8 @@ components:
         greeks:
           $ref: "#/components/schemas/JsonObject"
         greekScenarios:
+          $ref: "#/components/schemas/JsonObject"
+        riskRecommendations:
           $ref: "#/components/schemas/JsonObject"
         expiryConcentration:
           $ref: "#/components/schemas/JsonObject"
@@ -9420,6 +9507,20 @@ components:
           minItems: 1
           items:
             type: string
+        owner:
+          type: string
+        intent:
+          type: string
+          enum:
+            - execution-live
+            - account-monitor-live
+            - visible-live
+            - automation-live
+            - flow-scanner-live
+            - delayed-ok
+            - historical
+        requiresGreeks:
+          type: boolean
       required:
         - providerContractIds
 
@@ -10136,6 +10237,17 @@ components:
         - deployment
         - signalMonitorProfile
 
+    UpdateSignalOptionsExecutionProfileResponse:
+      type: object
+      properties:
+        deployment:
+          $ref: "#/components/schemas/AlgoDeployment"
+        profile:
+          $ref: "#/components/schemas/SignalOptionsExecutionProfile"
+      required:
+        - deployment
+        - profile
+
     SignalOptionsExecutionProfile:
       type: object
       properties:
@@ -10664,6 +10776,18 @@ components:
         cooldownCount:
           type: integer
           minimum: 0
+        verifiedSymbols:
+          type: integer
+          minimum: 0
+        needsVerificationSymbols:
+          type: integer
+          minimum: 0
+        rejectedSymbols:
+          type: integer
+          minimum: 0
+        verificationBacklogSymbols:
+          type: integer
+          minimum: 0
         scannedSymbols:
           type: integer
           minimum: 0
@@ -10705,6 +10829,8 @@ components:
           format: date-time
         degradedReason:
           type: [string, "null"]
+        planner:
+          $ref: "#/components/schemas/JsonObject"
 
     FlowUniverseSources:
       type: object
@@ -10713,13 +10839,41 @@ components:
           type: array
           items:
             type: string
+        watchlistSymbols:
+          type: array
+          items:
+            type: string
         flowUniverseSymbols:
           type: array
           items:
             type: string
+        candidateBuiltInSymbols:
+          type: array
+          items:
+            type: string
+        candidateWatchlistSymbols:
+          type: array
+          items:
+            type: string
+        candidatePrioritySymbols:
+          type: array
+          items:
+            type: string
+        verificationSymbols:
+          type: array
+          items:
+            type: string
+        planner:
+          $ref: "#/components/schemas/JsonObject"
       required:
         - builtInSymbols
+        - watchlistSymbols
         - flowUniverseSymbols
+        - candidateBuiltInSymbols
+        - candidateWatchlistSymbols
+        - candidatePrioritySymbols
+        - verificationSymbols
+        - planner
 
     FlowUniverseResponse:
       type: object

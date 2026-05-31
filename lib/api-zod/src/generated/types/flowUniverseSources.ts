@@ -5,8 +5,15 @@
  * Internal trading platform API for Polygon market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { JsonObject } from './jsonObject';
 
 export interface FlowUniverseSources {
   builtInSymbols: string[];
+  watchlistSymbols: string[];
   flowUniverseSymbols: string[];
+  candidateBuiltInSymbols: string[];
+  candidateWatchlistSymbols: string[];
+  candidatePrioritySymbols: string[];
+  verificationSymbols: string[];
+  planner: JsonObject;
 }

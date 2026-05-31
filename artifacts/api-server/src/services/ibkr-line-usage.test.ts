@@ -121,9 +121,14 @@ test("getIbkrLineUsageSnapshot reports active scanner work instead of idle RSS p
     "scanner-throttled-high-pressure",
   );
   assert.equal(snapshot.lineUtilizationAudit.scanner.activeLineCount, 40);
-  assert.equal(snapshot.lineUtilizationAudit.admissionVsBridgeLineDelta, 0);
-  assert.equal(snapshot.drift.reconciliation.status, "matched");
-  assert.equal(snapshot.drift.reconciliation.snapshotOnlyApiLineCount, 40);
+  assert.equal(snapshot.lineUtilizationAudit.admissionVsBridgeLineDelta, 40);
+  assert.equal(
+    snapshot.drift.reconciliation.status,
+    "api_active_bridge_missing",
+  );
+  assert.equal(snapshot.drift.reconciliation.snapshotOnlyApiLineCount, 0);
+  assert.equal(snapshot.drift.reconciliation.apiOnlyLineCount, 40);
+  assert.equal(snapshot.marketDataWorkPlan.summary.ibkrOptionLineCount, 40);
 });
 
 test("getIbkrLineUsageSnapshot does not report scanner pressure for automation-only pressure", async () => {
@@ -153,11 +158,11 @@ test("getIbkrLineUsageSnapshot does not report scanner pressure for automation-o
 
   assert.equal(snapshot.admission.optionsFlowScanner.resourcePressure.level, "high");
   assert.equal(snapshot.admission.optionsFlowScanner.scannerPressure.level, "normal");
-  assert.equal(snapshot.lineUtilizationAudit.topLimitingReason, "scanner-active");
+  assert.equal(snapshot.lineUtilizationAudit.topLimitingReason, "line-drift");
   assert.equal(snapshot.lineUtilizationAudit.scanner.effectiveConcurrency, 2);
 });
 
-test("getIbkrLineUsageSnapshot excludes scanner snapshot leases from bridge drift", async () => {
+test("getIbkrLineUsageSnapshot includes scanner option leases in bridge drift", async () => {
   __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
     getLaneDiagnostics: async () => ({
       subscriptions: {
@@ -191,13 +196,20 @@ test("getIbkrLineUsageSnapshot excludes scanner snapshot leases from bridge drif
   const snapshot = await getIbkrLineUsageSnapshot();
 
   assert.equal(snapshot.admission.activeLineCount, 4);
-  assert.equal(snapshot.drift.reconciliation.status, "matched");
-  assert.equal(snapshot.drift.reconciliation.apiLineCount, 2);
+  assert.equal(
+    snapshot.drift.reconciliation.status,
+    "api_active_bridge_missing",
+  );
+  assert.equal(snapshot.drift.reconciliation.apiLineCount, 4);
   assert.equal(snapshot.drift.reconciliation.totalApiLineCount, 4);
-  assert.equal(snapshot.drift.reconciliation.snapshotOnlyApiLineCount, 2);
-  assert.deepEqual(snapshot.drift.reconciliation.apiOnlyLineSample, []);
-  assert.equal(snapshot.drift.admissionVsBridgeLineDelta, 0);
-  assert.equal(snapshot.lineUtilizationAudit.admissionVsBridgeLineDelta, 0);
+  assert.equal(snapshot.drift.reconciliation.snapshotOnlyApiLineCount, 0);
+  assert.deepEqual(snapshot.drift.reconciliation.apiOnlyLineSample, [
+    "option:twsopt:scanner-one",
+    "option:twsopt:scanner-two",
+  ]);
+  assert.equal(snapshot.drift.admissionVsBridgeLineDelta, 2);
+  assert.equal(snapshot.lineUtilizationAudit.admissionVsBridgeLineDelta, 2);
+  assert.equal(snapshot.marketDataWorkPlan.summary.ibkrOptionLineCount, 2);
 });
 
 test("getIbkrLineUsageSnapshot reports bridge prewarm groups without changing leases", async () => {
@@ -264,12 +276,12 @@ test("getIbkrLineUsageSnapshot leaves scanner capacity schedulable without fille
   const snapshot = await getIbkrLineUsageSnapshot();
 
   assert.equal(snapshot.admission.activeLineCount, 90);
-  assert.equal(snapshot.allocation.scannerEffectiveLineCap, 110);
-  assert.equal(snapshot.allocation.scannerSchedulableLineCap, 110);
-  assert.equal(snapshot.allocation.scannerSchedulableRemainingLineCount, 110);
+  assert.equal(snapshot.allocation.scannerEffectiveLineCap, 80);
+  assert.equal(snapshot.allocation.scannerSchedulableLineCap, 80);
+  assert.equal(snapshot.allocation.scannerSchedulableRemainingLineCount, 80);
   assert.equal(
     snapshot.admission.optionsFlowScanner.lineUtilization.schedulablePoolCap,
-    110,
+    80,
   );
   assert.equal(
     snapshot.lineUtilizationAudit.topLimitingReason,
@@ -315,7 +327,7 @@ test("getIbkrLineUsageSnapshot returns admission counters when bridge lanes stal
     snapshot.lineUtilizationAudit.scanner.configuredConcurrency,
     2,
   );
-  assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 160);
+  assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 80);
   assert.equal("watchlist" in snapshot.lineUtilizationAudit, false);
   assert.equal(snapshot.admission.poolUsage["account-monitor"]?.maxLines, 200);
   assert.equal(snapshot.admission.poolUsage["account-monitor"]?.dynamic, false);
@@ -447,6 +459,15 @@ test("getIbkrLineUsageSnapshot classifies API and bridge line drift", async () =
   ]);
   assert.equal(snapshot.drift.reconciliation.persistentBridgeOnlyGraceMs, 10_000);
   assert.equal(snapshot.drift.reconciliation.persistentBridgeOnlyLineCount, 0);
+  assert.equal(snapshot.drift.reconciliation.persistentApiOnlyGraceMs, 10_000);
+  assert.equal(snapshot.drift.reconciliation.persistentApiOnlyLineCount, 0);
+  assert.ok(
+    snapshot.drift.reconciliation.lineStates.some(
+      (line) =>
+        line.lineId === "option:twsopt:test-api-only" &&
+        line.state === "planned",
+    ),
+  );
 });
 
 test("getIbkrLineUsageSnapshot reports account and visible bridge warm-up coverage", async () => {

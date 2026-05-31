@@ -62,6 +62,7 @@ import {
 import { normalizeLegacyAlgoBrandText } from "../../screens/algo/algoBranding.js";
 import { setAlgoFocus } from "./algoFocusStore";
 import { useAlgoCockpitStream } from "./live-streams";
+import { buildSignalMatrixBySymbol } from "./watchlistModel";
 
 const QUERY_DEFAULTS = {
   retry: false,
@@ -358,20 +359,6 @@ const signalFreshnessRatio = (signal) => {
   return signal?.fresh ? 1 : 0;
 };
 
-const signalFallbackState = (signal, directionPrimitive) => {
-  if (!signal?.timeframe) return null;
-  return {
-    timeframe: String(signal.timeframe),
-    currentSignalDirection: directionPrimitive,
-    currentSignalAt: signal.signalAt,
-    currentSignalPrice: signal.signalPrice,
-    barsSinceSignal: signal.barsSinceSignal,
-    fresh: signal.fresh,
-    status: signal.status,
-    latestBarAt: signal.latestBarAt,
-  };
-};
-
 const scoreTone = (score) => {
   const numeric = Number(score);
   if (!Number.isFinite(numeric)) return CSS_COLOR.textDim;
@@ -528,7 +515,7 @@ const SignalActionStatusPill = ({ signal, candidate, blocker, statusMeta }) => {
   );
 };
 
-const SignalActionRow = ({ row, onOpenAlgo }) => {
+const SignalActionRow = ({ row, onOpenAlgo, signalStatesByTimeframe = null }) => {
   const signal = asRecord(row.signal);
   const candidate = asRecord(row.candidate);
   const symbol = readSignalSymbol(signal, candidate);
@@ -537,7 +524,6 @@ const SignalActionRow = ({ row, onOpenAlgo }) => {
   const detail = signalActionDetail(row) || "Candidate waiting on scan";
   const direction = signalDirectionMeta(signal.direction);
   const freshnessRatio = signalFreshnessRatio(signal);
-  const fallbackState = signalFallbackState(signal, direction.primitive);
   const blocker = candidateBlockerLabel(candidate);
   const statusMeta = signalActionStatusMeta(signal, candidate, blocker);
   const scoreBreakdown = resolveSignalScoreBreakdown({
@@ -636,7 +622,7 @@ const SignalActionRow = ({ row, onOpenAlgo }) => {
         >
           <SignalDots
             testId="algo-monitor-signal-dots"
-            fallbackState={fallbackState}
+            statesByTimeframe={signalStatesByTimeframe}
             style={{ minWidth: dim(36), gap: sp(4), flex: "0 0 auto" }}
           />
           <span
@@ -931,6 +917,7 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   dataEnabled = isVisible,
   externalStreamFreshness = null,
   environment = "paper",
+  signalMatrixStates = [],
   headerAccessory = null,
   onOpenAlgo,
   onOpenTradeSymbol,
@@ -1029,6 +1016,10 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       candidates: signalOptionsCandidates,
     });
   }, [signalOptionsCandidates, signalOptionsSignals]);
+  const signalMatrixBySymbol = useMemo(
+    () => buildSignalMatrixBySymbol(signalMatrixStates),
+    [signalMatrixStates],
+  );
   const visibleSignalActionRows = signalActionRows.slice(0, 4);
   const latestEvent = events[0] || null;
   const pipelineStages = cockpit?.pipelineStages || [];
@@ -1206,6 +1197,10 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
                     key={row.id}
                     row={row}
                     onOpenAlgo={onOpenAlgo}
+                    signalStatesByTimeframe={
+                      signalMatrixBySymbol[readSignalSymbol(row.signal, row.candidate)] ||
+                      null
+                    }
                   />
                 ))
               ) : (

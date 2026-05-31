@@ -67,6 +67,39 @@ test("platform root no longer depends on the retired PyrusPlatform module", () =
   assert.deepEqual(sourceHits, []);
 });
 
+test("safe QA mode disables platform live and diagnostics side effects", () => {
+  const appSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+  const shellSource = readFileSync(new URL("./PlatformShell.jsx", import.meta.url), "utf8");
+  const headerSource = readFileSync(new URL("./AppHeader.jsx", import.meta.url), "utf8");
+  const performanceSource = readFileSync(
+    new URL("./performanceMetrics.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(appSource, /safeQaMode=\{safeQaMode\}/);
+  assert.match(appSource, /quoteSymbols=\{safeQaMode \? \[\] : runtimeQuoteSymbols\}/);
+  assert.match(appSource, /sparklineSymbols=\{safeQaMode \? \[\] : runtimeSparklineSymbols\}/);
+  assert.match(appSource, /streamedQuoteSymbols=\{safeQaMode \? \[\] : runtimeStreamedQuoteSymbols\}/);
+  assert.match(appSource, /quoteStreamRuntimeEnabled=\{\s*!safeQaMode &&/);
+  assert.match(appSource, /lowPriorityHistoryEnabled=\{\s*!safeQaMode &&/);
+  assert.match(appSource, /enabled:\s*Boolean\(sessionQuery\.data && !safeQaMode\)/);
+  assert.match(appSource, /skipBootProgressTasks\(\["accounts"\], "Accounts skipped in safe QA mode"\)/);
+  assert.match(shellSource, /safeQaMode = false/);
+  assert.match(shellSource, /<AppHeader[\s\S]*safeQaMode=\{safeQaMode\}/);
+  assert.match(shellSource, /enabled=\{sessionMetadataSettled && !safeQaMode\}/);
+  assert.match(headerSource, /safeQaMode = false/);
+  assert.match(headerSource, /<HeaderStatusClusterComponent[\s\S]*safeQaMode=\{safeQaMode\}/);
+  assert.match(headerSource, /enabled=\{sessionMetadataSettled && !safeQaMode\}/);
+  const statusSource = readFileSync(
+    new URL("./HeaderStatusCluster.jsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(statusSource, /safeQaMode = false/);
+  assert.match(statusSource, /const gatewayDiagnosticsEnabled = Boolean\(\s*!safeQaMode &&/);
+  assert.match(performanceSource, /import \{ isPyrusSafeQaMode \}/);
+  assert.match(performanceSource, /isPyrusSafeQaMode\(\) \|\|/);
+});
+
 test("retained screen lazy ticker search exports resolve to components", async () => {
   const tickerSearch = await import("./tickerSearch/TickerSearch.jsx");
 

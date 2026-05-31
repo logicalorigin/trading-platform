@@ -16,6 +16,14 @@ export interface Bar {
   low: number;
   close: number;
   volume: number;
+  /** @nullable */
+  bid?: number | null;
+  /** @nullable */
+  ask?: number | null;
+  /** @nullable */
+  mid?: number | null;
+  /** @nullable */
+  quoteAsOf?: Date | null;
   source?: string;
   /** @nullable */
   providerContractId?: string | null;

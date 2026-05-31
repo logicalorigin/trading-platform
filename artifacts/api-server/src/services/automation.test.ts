@@ -28,6 +28,7 @@ test("algo strategy settings API patches deployment and signal monitor settings"
   assert.match(routeSource, /includePayload,/);
   assert.match(serviceSource, /updateAlgoDeploymentStrategySettings/);
   assert.match(serviceSource, /notifyAlgoCockpitChanged/);
+  assert.match(serviceSource, /invalidateSignalOptionsDashboardCaches/);
   assert.match(serviceSource, /includePayload\?: boolean/);
   assert.match(
     serviceSource,
@@ -57,6 +58,12 @@ test("algo strategy settings API patches deployment and signal monitor settings"
   assert.match(serviceSource, /chochVolumeGate/);
   assert.match(serviceSource, /pyrusSignalsSettingsPatch\s*=\s*\{[\s\S]*timeHorizon,[\s\S]*bosConfirmation/);
   assert.match(serviceSource, /updateSignalMonitorProfile\(\{[\s\S]*timeframe:\s*signalTimeframe,[\s\S]*pyrusSignalsSettings:\s*nextPyrusSignalsSettings,/);
+  assert.match(
+    serviceSource.match(
+      /export async function updateAlgoDeploymentStrategySettings[\s\S]*?\n}\n\nexport async function listExecutionEvents/,
+    )?.[0] ?? "",
+    /deployment_strategy_settings_updated[\s\S]*invalidateSignalOptionsDashboardCaches\(deployment\.id\)[\s\S]*notifyAlgoCockpitChanged/,
+  );
   assert.doesNotMatch(
     serviceSource,
     /signalOptions:\s*resolveSignalOptionsExecutionProfile/,

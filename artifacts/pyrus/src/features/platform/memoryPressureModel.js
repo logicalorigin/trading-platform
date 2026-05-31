@@ -98,6 +98,24 @@ const scoreFromLevel = (level, weight) => {
   }
 };
 
+const resolveScoreLevel = (score, pressureDrivers) => {
+  if (
+    pressureDrivers.some((driver) => normalizeLevel(driver.level) === "critical")
+  ) {
+    return "critical";
+  }
+  if (score >= 50) {
+    return "high";
+  }
+  if (
+    score > 0 ||
+    pressureDrivers.some((driver) => levelAtLeast(driver.level, "watch"))
+  ) {
+    return "watch";
+  }
+  return "normal";
+};
+
 const formatDriverDetail = (value, suffix = "") =>
   Number.isFinite(value) ? `${Math.round(value)}${suffix}` : null;
 
@@ -351,24 +369,24 @@ export const buildMemoryPressureState = (
     scoreFromLevel(queryLevel, DRIVER_WEIGHTS["query-cache"]) +
     scoreFromLevel(storeLevel, DRIVER_WEIGHTS["runtime-stores"]);
   const score = round(clamp(rawScore, 0, 100));
-  const baseLevel = maxLevel(
-    browserLevel,
-    apiLevel,
-    workloadLevel,
-    chartLevel,
-    queryLevel,
-    storeLevel,
-  );
+  const baseLevel = resolveScoreLevel(score, pressureDrivers);
   let level = baseLevel;
+  const previousLevel = normalizeLevel(previousState?.level);
+  const previousScore = Number(previousState?.score);
   if (
-    previousState &&
-    levelAtLeast(previousState.level, "watch") &&
-    !levelAtLeast(baseLevel, previousState.level) &&
-    !(previousState.level === "critical" && !levelAtLeast(baseLevel, "critical"))
+    levelAtLeast(previousLevel, "watch") &&
+    !levelAtLeast(baseLevel, previousLevel)
   ) {
-    const previousScore = Number(previousState.score);
-    if (Number.isFinite(previousScore) && score >= previousScore - 10) {
-      level = previousState.level;
+    if (previousLevel === "critical" && baseLevel !== "critical") {
+      level = maxLevel(baseLevel, "high");
+    } else if (Number.isFinite(previousScore) && score >= previousScore - 10) {
+      level = previousLevel;
+    } else if (
+      baseLevel === "normal" &&
+      Number.isFinite(previousScore) &&
+      previousScore >= 10
+    ) {
+      level = "watch";
     }
   }
 

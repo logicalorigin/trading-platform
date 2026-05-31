@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { OptionFillPolicy } from "./option-fills";
 
 export const backtestTimeframes = ["1m", "5m", "15m", "1h", "1d"] as const;
 export type BacktestTimeframe = (typeof backtestTimeframes)[number];
@@ -55,6 +56,11 @@ export type BacktestBar = {
   low: number;
   close: number;
   volume: number;
+  bid?: number | null;
+  ask?: number | null;
+  mid?: number | null;
+  quoteAsOf?: Date | null;
+  providerContractId?: string | null;
   source?: string;
   delayed?: boolean;
 };
@@ -74,6 +80,9 @@ export type PositionState = {
 export type ExecutionProfile = {
   commissionBps: number;
   slippageBps: number;
+  optionFillPolicy?: (Partial<Omit<OptionFillPolicy, "model">> & {
+    model: OptionFillPolicy["model"];
+  }) | null;
 };
 
 export type PortfolioRules = {
@@ -196,6 +205,38 @@ export type BacktestAdvancedMetrics = {
   monteCarlo: BacktestMonteCarloMetrics;
 };
 
+export type BacktestValidationWarningCode =
+  | "external_validation_warning"
+  | "low_trade_count"
+  | "too_many_trials"
+  | "missing_out_of_sample_window"
+  | "excessive_drawdown_duration"
+  | "unstable_sharpe"
+  | "insufficient_sample_size";
+
+export type BacktestValidationWarningSeverity = "info" | "warning" | "critical";
+
+export type BacktestValidationWarningScope =
+  | "external"
+  | "metric"
+  | "optimization"
+  | "risk"
+  | "sample";
+
+export type BacktestValidationWarningEvidenceValue =
+  | boolean
+  | number
+  | string
+  | null;
+
+export type BacktestValidationWarning = {
+  code: BacktestValidationWarningCode;
+  severity: BacktestValidationWarningSeverity;
+  scope: BacktestValidationWarningScope;
+  message: string;
+  evidence: Record<string, BacktestValidationWarningEvidenceValue>;
+};
+
 export type BacktestValidationMetrics = {
   trialCount: number;
   oosWindowCount: number;
@@ -203,6 +244,7 @@ export type BacktestValidationMetrics = {
   pboProbabilityPercent: number | null;
   cpcvFoldCount: number | null;
   warnings: string[];
+  warningDetails: BacktestValidationWarning[];
 };
 
 export type BacktestDataQualityMetrics = {

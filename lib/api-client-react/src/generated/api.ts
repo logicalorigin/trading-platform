@@ -208,6 +208,7 @@ import type {
   UpdateAlgoDeploymentStrategySettingsResponse,
   UpdatePineScriptRequest,
   UpdateSignalMonitorProfileRequest,
+  UpdateSignalOptionsExecutionProfileResponse,
   UpdateStockAggregateStreamSymbolsBody,
   UpdateWatchlistRequest,
   Watchlist,
@@ -10744,9 +10745,9 @@ export const getUpdateSignalOptionsExecutionProfileUrl = (deploymentId: string,)
 }
 
 export const updateSignalOptionsExecutionProfile = async (deploymentId: string,
-    signalOptionsExecutionProfile: SignalOptionsExecutionProfile, options?: RequestInit): Promise<SignalOptionsAutomationState> => {
+    signalOptionsExecutionProfile: SignalOptionsExecutionProfile, options?: RequestInit): Promise<UpdateSignalOptionsExecutionProfileResponse> => {
 
-  return customFetch<SignalOptionsAutomationState>(getUpdateSignalOptionsExecutionProfileUrl(deploymentId),
+  return customFetch<UpdateSignalOptionsExecutionProfileResponse>(getUpdateSignalOptionsExecutionProfileUrl(deploymentId),
   {
     ...options,
     method: 'PATCH',

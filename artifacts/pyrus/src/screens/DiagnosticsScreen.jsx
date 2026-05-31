@@ -925,6 +925,12 @@ export default function DiagnosticsScreen({
   const massiveLastRequest = safeRecord(massiveRest.lastRequest);
   const massiveWebSocket = safeRecord(massiveDiagnostics.websocket);
   const massiveWebSocketFeeds = arrayOrEmpty(massiveWebSocket.feeds);
+  const marketDataWorkPlan = safeRecord(
+    latest?.marketDataWorkPlan || marketDataRaw.marketDataWorkPlan,
+  );
+  const marketDataWorkPlanSummary = safeRecord(marketDataWorkPlan.summary);
+  const marketDataWorkPlanScanner = safeRecord(marketDataWorkPlan.scanner);
+  const marketDataWorkPlanMemory = safeRecord(marketDataWorkPlan.memoryAction);
   const browserMetrics = safeRecord(browserSnapshot?.metrics);
   const chartHydrationMetrics = safeRecord(chartHydrationSnapshot?.metrics);
   const resourcePressureMetrics = safeRecord(resourcePressureSnapshot?.metrics);
@@ -1440,6 +1446,40 @@ export default function DiagnosticsScreen({
             ) : (
               <StateRow label="Line usage" value={MISSING_VALUE} />
             )}
+          </Panel>
+          <Panel title="Work Planner">
+            <StateRow label="Generation" value={marketDataWorkPlan.generation || MISSING_VALUE} />
+            <StateRow
+              label="IBKR equity"
+              value={`${formatCount(marketDataWorkPlanSummary.ibkrEquityLineCount)} lines · ${formatCount(marketDataWorkPlanSummary.ibkrEquitySymbolCount)} symbols`}
+            />
+            <StateRow
+              label="IBKR options"
+              value={`${formatCount(marketDataWorkPlanSummary.ibkrOptionLineCount)} lines · ${formatCount(marketDataWorkPlanSummary.ibkrOptionSymbolCount)} symbols`}
+            />
+            <StateRow
+              label="Persist queue"
+              value={`${formatCount(marketDataWorkPlanSummary.persistQueuedJobCount)} queued · ${formatCount(marketDataWorkPlanSummary.persistRunningJobCount)} running`}
+              tone={(marketDataWorkPlanSummary.persistQueuedJobCount ?? 0) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
+            />
+            <StateRow
+              label="Blocked GEX"
+              value={formatCount(marketDataWorkPlanSummary.persistBlockedJobCount)}
+              tone={(marketDataWorkPlanSummary.persistBlockedJobCount ?? 0) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
+            />
+            <StateRow
+              label="Scanner horizon"
+              value={`${formatCount(marketDataWorkPlanScanner.plannedHorizonCount)} symbols · ${formatMs(marketDataWorkPlanScanner.estimatedCycleMs)}`}
+            />
+            <StateRow
+              label="Scanner lines"
+              value={`${formatCount(marketDataWorkPlanSummary.scannerMaxDeepScanLines)} max · ${formatCount(marketDataWorkPlanSummary.scannerEffectiveConcurrency)} workers`}
+            />
+            <StateRow
+              label="Memory action"
+              value={marketDataWorkPlanMemory.action || MISSING_VALUE}
+              tone={marketDataWorkPlanMemory.action && marketDataWorkPlanMemory.action !== "normal" ? CSS_COLOR.amber : CSS_COLOR.green}
+            />
           </Panel>
           <Panel title="Option Hydration">
             <StateRow label="Active chain p95" value={formatMs(metrics.activeChainMs?.p95)} />

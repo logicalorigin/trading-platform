@@ -36,10 +36,21 @@ test("account monitor skips routine IBKR equity quote demand under Massive realt
 
 test("foreground equity quote SSE uses bridge stream instead of Massive quote firehose", () => {
   const subscribeBlock = bridgeStreamsSource.match(
-    /export function subscribeQuoteSnapshots\([\s\S]*?\n}\n\nexport function subscribeOptionChains/,
+    /export function subscribeQuoteSnapshots\([\s\S]*?\n}\n\nexport function subscribePositionQuoteSnapshots/,
   )?.[0];
 
   assert.ok(subscribeBlock);
   assert.match(subscribeBlock, /subscribeBridgeQuoteSnapshots\(normalizedSymbols, onSnapshot\)/);
   assert.doesNotMatch(subscribeBlock, /subscribeMassiveStockQuoteSnapshots/);
+});
+
+test("position quote SSE uses Massive when realtime stocks are configured", () => {
+  const subscribeBlock = bridgeStreamsSource.match(
+    /export function subscribePositionQuoteSnapshots\([\s\S]*?\n}\n\nexport function subscribeOptionChains/,
+  )?.[0];
+
+  assert.ok(subscribeBlock);
+  assert.match(subscribeBlock, /isMassiveStocksRealtimeConfigured\(\)/);
+  assert.match(subscribeBlock, /subscribeMassiveStockQuoteSnapshots\(normalizedSymbols, onSnapshot\)/);
+  assert.match(subscribeBlock, /subscribeBridgeQuoteSnapshots\(normalizedSymbols, onSnapshot\)/);
 });

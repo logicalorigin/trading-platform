@@ -200,6 +200,11 @@ export const historicalBarsTable = pgTable(
     low: numeric("low", { precision: 18, scale: 6 }).notNull(),
     close: numeric("close", { precision: 18, scale: 6 }).notNull(),
     volume: numeric("volume", { precision: 20, scale: 4 }).notNull(),
+    bid: numeric("bid", { precision: 18, scale: 6 }),
+    ask: numeric("ask", { precision: 18, scale: 6 }),
+    mid: numeric("mid", { precision: 18, scale: 6 }),
+    quoteAsOf: timestamp("quote_as_of", { withTimezone: true }),
+    providerContractId: varchar("provider_contract_id", { length: 128 }),
     ...timestamps,
   },
   (table) => [

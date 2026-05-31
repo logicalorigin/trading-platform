@@ -306,56 +306,62 @@ async fn process_job(pool: &sqlx::PgPool, config: &WorkerConfig, job: &IngestJob
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("MASSIVE_API_KEY or POLYGON_API_KEY must be set"))?;
             let client = reqwest::Client::new();
-            let started_at = Instant::now();
-            let snapshot = match fetch_stock_snapshot(&client, provider, &job.symbol).await {
-                Ok(fetch) => {
-                    log_provider_request(
-                        pool,
-                        &provider.provider,
-                        "stock_snapshot",
-                        &job.symbol,
-                        started_at,
-                        "ok",
-                        fetch.metadata.http_status,
-                        Some(1),
-                        Some(1),
-                        fetch.metadata.rate_limit_reset_at,
-                        None,
-                    )
-                    .await?;
-                    fetch.snapshot
-                }
-                Err(error) => {
-                    log_provider_request(
-                        pool,
-                        &provider.provider,
-                        "stock_snapshot",
-                        &job.symbol,
-                        started_at,
-                        "error",
-                        http_status_from_error(&error),
-                        None,
-                        Some(1),
-                        None,
-                        Some(error.to_string()),
-                    )
-                    .await?;
-                    return Err(error);
-                }
-            };
-            persist_stock_snapshot(pool, &job.symbol, &provider.provider, &snapshot).await?;
-            info!(
-                symbol = snapshot.symbol,
-                provider = provider.provider,
-                last = snapshot.last,
-                as_of = %snapshot.as_of,
-                "persisted stock snapshot"
-            );
-            Ok(())
+            with_job_heartbeat(pool, config, job, async {
+                let started_at = Instant::now();
+                let snapshot = match fetch_stock_snapshot(&client, provider, &job.symbol).await {
+                    Ok(fetch) => {
+                        log_provider_request(
+                            pool,
+                            &provider.provider,
+                            "stock_snapshot",
+                            &job.symbol,
+                            started_at,
+                            "ok",
+                            fetch.metadata.http_status,
+                            Some(1),
+                            Some(1),
+                            fetch.metadata.rate_limit_reset_at,
+                            None,
+                        )
+                        .await?;
+                        fetch.snapshot
+                    }
+                    Err(error) => {
+                        log_provider_request(
+                            pool,
+                            &provider.provider,
+                            "stock_snapshot",
+                            &job.symbol,
+                            started_at,
+                            "error",
+                            http_status_from_error(&error),
+                            None,
+                            Some(1),
+                            None,
+                            Some(error.to_string()),
+                        )
+                        .await?;
+                        return Err(error);
+                    }
+                };
+                persist_stock_snapshot(pool, &job.symbol, &provider.provider, &snapshot).await?;
+                info!(
+                    symbol = snapshot.symbol,
+                    provider = provider.provider,
+                    last = snapshot.last,
+                    as_of = %snapshot.as_of,
+                    "persisted stock snapshot"
+                );
+                Ok(())
+            })
+            .await
         }
         "gex_snapshot" => {
-            compute_and_persist_gex_snapshot(pool, &job.symbol).await?;
-            Ok(())
+            with_job_heartbeat(pool, config, job, async {
+                compute_and_persist_gex_snapshot(pool, &job.symbol).await?;
+                Ok(())
+            })
+            .await
         }
         "option_chain_snapshot" => {
             let provider = config
@@ -363,68 +369,68 @@ async fn process_job(pool: &sqlx::PgPool, config: &WorkerConfig, job: &IngestJob
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("MASSIVE_API_KEY or POLYGON_API_KEY must be set"))?;
             let client = reqwest::Client::new();
-            let started_at = Instant::now();
-            let fetch = with_job_heartbeat(pool, config, job, async {
-                fetch_option_chain_snapshots(
+            with_job_heartbeat(pool, config, job, async {
+                let started_at = Instant::now();
+                let fetch = match fetch_option_chain_snapshots(
                     &client,
                     provider,
                     &job.symbol,
                     config.option_chain_max_pages,
                 )
                 .await
+                {
+                    Ok(fetch) => fetch,
+                    Err(error) => {
+                        log_provider_request(
+                            pool,
+                            &provider.provider,
+                            "option_chain_snapshot",
+                            &job.symbol,
+                            started_at,
+                            "error",
+                            http_status_from_error(&error),
+                            None,
+                            None,
+                            None,
+                            Some(error.to_string()),
+                        )
+                        .await?;
+                        return Err(error);
+                    }
+                };
+                log_provider_request(
+                    pool,
+                    &provider.provider,
+                    "option_chain_snapshot",
+                    &job.symbol,
+                    started_at,
+                    if fetch.truncated { "partial" } else { "ok" },
+                    fetch.metadata.http_status,
+                    Some(fetch.snapshots.len()),
+                    Some(fetch.page_count),
+                    fetch.metadata.rate_limit_reset_at,
+                    fetch.truncated.then(|| {
+                        format!("option-chain response exceeded {} pages", fetch.page_count)
+                    }),
+                )
+                .await?;
+                ensure_complete_option_chain(&fetch, &job.symbol)?;
+                let persisted = persist_option_chain_snapshots(
+                    pool,
+                    &job.symbol,
+                    &provider.provider,
+                    &fetch.snapshots,
+                )
+                .await?;
+                info!(
+                    symbol = job.symbol,
+                    provider = provider.provider,
+                    persisted,
+                    "persisted option-chain snapshots"
+                );
+                Ok(())
             })
-            .await;
-            let fetch = match fetch {
-                Ok(fetch) => fetch,
-                Err(error) => {
-                    log_provider_request(
-                        pool,
-                        &provider.provider,
-                        "option_chain_snapshot",
-                        &job.symbol,
-                        started_at,
-                        "error",
-                        http_status_from_error(&error),
-                        None,
-                        None,
-                        None,
-                        Some(error.to_string()),
-                    )
-                    .await?;
-                    return Err(error);
-                }
-            };
-            log_provider_request(
-                pool,
-                &provider.provider,
-                "option_chain_snapshot",
-                &job.symbol,
-                started_at,
-                if fetch.truncated { "partial" } else { "ok" },
-                fetch.metadata.http_status,
-                Some(fetch.snapshots.len()),
-                Some(fetch.page_count),
-                fetch.metadata.rate_limit_reset_at,
-                fetch
-                    .truncated
-                    .then(|| format!("option-chain response exceeded {} pages", fetch.page_count)),
-            )
-            .await?;
-            ensure_complete_option_chain(&fetch, &job.symbol)?;
-            let persisted = persist_option_chain_snapshots(
-                pool,
-                &job.symbol,
-                &provider.provider,
-                &fetch.snapshots,
-            )
-            .await?;
-            info!(
-                symbol = job.symbol,
-                provider = provider.provider,
-                persisted,
-                "persisted option-chain snapshots"
-            );
-            Ok(())
+            .await
         }
         other => bail!("unsupported market-data job kind: {other}"),
     }

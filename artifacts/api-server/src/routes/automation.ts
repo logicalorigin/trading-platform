@@ -326,6 +326,7 @@ router.get("/streams/algo/cockpit", async (req, res): Promise<void> => {
           if (!closed) {
             writeSseEvent(res, "freshness", {
               stream: "algo-cockpit",
+              phase: payload.phase ?? null,
               mode: payload.mode,
               deploymentId: payload.deploymentId,
               changed,

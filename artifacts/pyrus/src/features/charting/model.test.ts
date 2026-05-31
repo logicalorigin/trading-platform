@@ -24,6 +24,7 @@ import {
   resolveDisplayChartOutsideRth,
   resolveDisplayChartPrice,
 } from "./displayChartSession";
+import type { IndicatorPluginInput } from "./types";
 
 const buildSequentialBars = (count: number, startIndex = 0) => {
   const start = Date.parse("2026-04-25T13:30:00.000Z");
@@ -124,6 +125,43 @@ test("buildResearchChartModel uses explicit target visible range counts", () => 
       to: 2_499,
     });
   });
+});
+
+test("buildResearchChartModel passes normalized source series to indicator plugins", () => {
+  let receivedSourceBars = 0;
+  let receivedSourceRangeEnd: number | undefined;
+  const sourceBars = buildSequentialBars(3);
+  const indicatorRegistry = {
+    probe: {
+      id: "probe",
+      compute: (input: IndicatorPluginInput) => {
+        receivedSourceBars = input.sourceSeries?.[0]?.chartBars.length ?? 0;
+        receivedSourceRangeEnd = input.sourceSeries?.[0]?.chartBarRanges[0]?.endMs;
+        return {};
+      },
+    },
+  };
+
+  buildResearchChartModel({
+    timeframe: "5m",
+    bars: buildSequentialBars(2),
+    selectedIndicators: ["probe"],
+    indicatorRegistry,
+    indicatorSourceSeries: [
+      {
+        id: "test-source:1m",
+        timeframe: "1m",
+        sourceTimeframe: "1m",
+        bars: sourceBars,
+      },
+    ],
+  });
+
+  assert.equal(receivedSourceBars, 3);
+  assert.equal(
+    new Date(receivedSourceRangeEnd ?? 0).toISOString(),
+    "2026-04-25T13:30:01.000Z",
+  );
 });
 
 test("buildResearchChartModel shows all loaded bars when target exceeds loaded bars", () => {

@@ -7,6 +7,7 @@
  */
 import type { FlowUniverseCoverageLastScannedAt } from './flowUniverseCoverageLastScannedAt';
 import type { FlowUniverseCoverageMode } from './flowUniverseCoverageMode';
+import type { JsonObject } from './jsonObject';
 
 export interface FlowUniverseCoverage {
   mode?: FlowUniverseCoverageMode;
@@ -28,6 +29,14 @@ export interface FlowUniverseCoverage {
   fallbackUsed?: boolean;
   /** @minimum 0 */
   cooldownCount?: number;
+  /** @minimum 0 */
+  verifiedSymbols?: number;
+  /** @minimum 0 */
+  needsVerificationSymbols?: number;
+  /** @minimum 0 */
+  rejectedSymbols?: number;
+  /** @minimum 0 */
+  verificationBacklogSymbols?: number;
   /** @minimum 0 */
   scannedSymbols?: number;
   /** @minimum 0 */
@@ -61,4 +70,5 @@ export interface FlowUniverseCoverage {
   lastScanAt?: Date | null;
   /** @nullable */
   degradedReason?: string | null;
+  planner?: JsonObject;
 }

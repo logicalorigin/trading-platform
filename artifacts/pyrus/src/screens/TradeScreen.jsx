@@ -18,6 +18,7 @@ import {
   batchOptionChains as batchOptionChainsRequest,
   getOptionChain as getOptionChainRequest,
   listFlowEvents as listFlowEventsRequest,
+  useGetSignalMonitorProfile,
   useGetOptionExpirations,
   useGetQuoteSnapshots,
   useListOrders,
@@ -56,8 +57,10 @@ import {
   PYRUS_SIGNALS_PINE_SCRIPT_KEY,
 } from "../features/charting/pyrusSignalsPineAdapter";
 import {
+  resolveAlgoPyrusSignalsSettingsPatch,
   buildPyrusSignalsIndicatorSettings,
   isPyrusSignalsIndicatorSelected,
+  resolvePyrusSignalsSettingsWithAlgoDefaults,
   resolvePersistedPyrusSignalsSettings,
 } from "../features/charting/chartIndicatorPersistence";
 import {
@@ -869,6 +872,7 @@ const TradeContractDetailPanel = ({
   historicalDataEnabled = liveDataEnabled,
   optionChartTimeframeOverride = null,
   onOptionChartTimeframeChange,
+  signalMonitorProfile = null,
   chartFrameStyle,
   crosshairSyncGroupId = null,
   crosshairSyncInstanceId = null,
@@ -945,6 +949,8 @@ const TradeContractDetailPanel = ({
   const [pyrusSignalsSettings, setPyrusSignalsSettings] = useState(() =>
     resolvePersistedPyrusSignalsSettings(_initialState.tradeOptionPyrusSignalsSettings),
   );
+  const lastAlgoPyrusSignalsSettingsRef = useRef(null);
+  const lastAlgoSignalTimeframeRef = useRef(null);
   const indicatorSettings = useMemo(
     () => buildPyrusSignalsIndicatorSettings(pyrusSignalsSettings),
     [pyrusSignalsSettings],
@@ -1002,6 +1008,7 @@ const TradeContractDetailPanel = ({
   );
   const {
     baseBars,
+    bars: optionSourceBars,
     baseTimeframe: optionChartBaseTimeframe,
     chartProviderContractId,
     displayBars,
@@ -1113,6 +1120,41 @@ const TradeContractDetailPanel = ({
   useEffect(() => {
     persistState({ tradeOptionPyrusSignalsSettings: pyrusSignalsSettings });
   }, [pyrusSignalsSettings]);
+  useEffect(() => {
+    if (!signalMonitorProfile) {
+      return;
+    }
+    const previousAlgoSettings = lastAlgoPyrusSignalsSettingsRef.current;
+    const nextAlgoSettings = resolveAlgoPyrusSignalsSettingsPatch({
+      signalMonitorProfile,
+    });
+    lastAlgoPyrusSignalsSettingsRef.current = nextAlgoSettings;
+    setPyrusSignalsSettings((current) =>
+      resolvePyrusSignalsSettingsWithAlgoDefaults({
+        currentSettings: current,
+        signalMonitorProfile,
+        previousAlgoSettings,
+      }),
+    );
+  }, [signalMonitorProfile]);
+  useEffect(() => {
+    const nextAlgoTimeframe = normalizeChartTimeframe(signalMonitorProfile?.timeframe);
+    if (
+      !nextAlgoTimeframe ||
+      !isTimeframeValidForOption(nextAlgoTimeframe) ||
+      optionChartTimeframeOverride
+    ) {
+      return;
+    }
+    const previousAlgoTimeframe = lastAlgoSignalTimeframeRef.current;
+    lastAlgoSignalTimeframeRef.current = nextAlgoTimeframe;
+    setOptionChartTimeframe((current) => {
+      const shouldSync =
+        current === TRADE_OPTION_CHART_TIMEFRAME ||
+        (previousAlgoTimeframe && current === previousAlgoTimeframe);
+      return shouldSync ? nextAlgoTimeframe : current;
+    });
+  }, [optionChartTimeframeOverride, signalMonitorProfile?.timeframe]);
   const optionChartScopeKey =
     optionContractScopeKey ||
     [
@@ -1123,6 +1165,22 @@ const TradeContractDetailPanel = ({
       Number.isFinite(contract.strike) ? contract.strike : "__missing__",
       optionChartTimeframe,
     ].join("::");
+  const optionIndicatorSourceSeries = useMemo(
+    () => [
+      {
+        id: `${optionContractScopeKey || optionChartScopeKey}:pyrus-source:${optionChartBaseTimeframe}`,
+        timeframe: optionChartBaseTimeframe,
+        sourceTimeframe: optionChartBaseTimeframe,
+        bars: optionSourceBars,
+      },
+    ],
+    [
+      optionChartBaseTimeframe,
+      optionChartScopeKey,
+      optionContractScopeKey,
+      optionSourceBars,
+    ],
+  );
   const chartModel = useMeasuredChartModel({
     scopeKey: optionChartScopeKey,
     bars: displayBars,
@@ -1133,6 +1191,7 @@ const TradeContractDetailPanel = ({
       selectedIndicators,
       indicatorSettings,
       indicatorRegistry,
+      indicatorSourceSeries: optionIndicatorSourceSeries,
     },
     deps: [
       displayBars,
@@ -1143,6 +1202,7 @@ const TradeContractDetailPanel = ({
       contract.strike,
       indicatorRegistry,
       indicatorSettings,
+      optionIndicatorSourceSeries,
       optionChartTimeframe,
       optionProgressiveBars.targetLimit,
       selectedIndicators,
@@ -3228,6 +3288,17 @@ const TradeScreenInner = ({
   const toast = useToast();
   const queryClient = useQueryClient();
   const positions = usePositions();
+  const signalMonitorProfileQuery = useGetSignalMonitorProfile(
+    { environment },
+    {
+      query: {
+        enabled: Boolean(environment && isVisible),
+        staleTime: 60_000,
+        retry: false,
+      },
+    },
+  );
+  const signalMonitorProfile = signalMonitorProfileQuery.data || null;
   const [tradeRootRef, tradeRootSize] = useElementSize();
   const tradeWidth = tradeRootSize.width;
   const { isPhone: tradeIsPhone, isNarrow: tradeIsNarrow } =
@@ -4020,6 +4091,7 @@ const TradeScreenInner = ({
       historicalDataEnabled={tradeAnalysisWorkEnabled}
       liveDataEnabled={tradeAnalysisWorkEnabled}
       optionChartTimeframeOverride={equityTimeframeForOptionSync}
+      signalMonitorProfile={signalMonitorProfile}
       onOptionChartTimeframeChange={(timeframe) => {
         if (
           tradeTimeframeSync &&

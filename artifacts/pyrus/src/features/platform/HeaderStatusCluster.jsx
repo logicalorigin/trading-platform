@@ -2009,6 +2009,7 @@ export const HeaderStatusCluster = ({
   minimal = false,
   mobileSheet = false,
   showThemeToggle = true,
+  safeQaMode = false,
 }) => {
   const isDense = dense && !compact;
   const compressed = compact || isDense || minimal;
@@ -2063,11 +2064,12 @@ export const HeaderStatusCluster = ({
   const gatewayTone = getIbkrConnectionTone(gatewayConnection);
   const gatewayLatencyStats = useIbkrLatencyStats();
   const gatewayDiagnosticsEnabled = Boolean(
-    bridgePopoverOpen ||
-      session?.configured?.ibkr ||
-      gatewayConnection?.configured ||
-      gatewayConnection?.reachable ||
-      gatewayConnection?.authenticated,
+    !safeQaMode &&
+      (bridgePopoverOpen ||
+        session?.configured?.ibkr ||
+        gatewayConnection?.configured ||
+        gatewayConnection?.reachable ||
+        gatewayConnection?.authenticated),
   );
   const gatewayRuntimeDiagnosticsEnabled = Boolean(
     bridgePopoverOpen && gatewayDiagnosticsEnabled,

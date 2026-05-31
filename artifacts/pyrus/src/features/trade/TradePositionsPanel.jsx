@@ -50,6 +50,7 @@ import {
   buildPositionTradeManagement,
   orderMatchesManagementPosition,
 } from "../account/positionTradeManagement.js";
+import { useValueFlash } from "../../lib/motion.jsx";
 import {
   formatEnumLabel,
   formatExpirationLabel,
@@ -74,6 +75,7 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { DataUnavailableState, MicroSparkline } from "../../components/platform/primitives.jsx";
+import { useRegisterPositionMarketDataSymbols } from "../platform/positionMarketDataStore";
 import { useRuntimeTickerSnapshots } from "../platform/runtimeTickerStore";
 import {
   SPARKLINE_RENDER_POINT_LIMIT,
@@ -123,6 +125,14 @@ const firstNumber = (...values) => {
   return null;
 };
 
+const firstText = (...values) => {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+};
+
 const buildTradePositionFallbackSparklineData = (position, snapshot, symbol) => {
   const current = firstPositiveNumber(snapshot?.price, position?.mark, position?.entry);
   if (current == null) return [];
@@ -151,6 +161,48 @@ const resolveTradePositionSparklineData = (snapshot, position, symbol) => {
   return buildTradePositionFallbackSparklineData(position, snapshot, symbol);
 };
 
+const quoteMid = (quote) => {
+  const bid = firstPositiveNumber(quote?.bid);
+  const ask = firstPositiveNumber(quote?.ask);
+  return bid != null && ask != null ? (bid + ask) / 2 : null;
+};
+
+const resolveTradeSpotSymbol = (position) =>
+  normalizeTickerSymbol(
+    position?.ticker ||
+      position?.optionContract?.underlying ||
+      position?.symbol,
+  );
+
+const resolveTradeSpotPrice = (position, snapshotsBySymbol = {}) => {
+  const symbol = resolveTradeSpotSymbol(position);
+  const snapshot = symbol ? snapshotsBySymbol?.[symbol] : null;
+  const equityFallback = position?.optionContract
+    ? null
+    : firstPositiveNumber(position?.mark, position?.marketPrice, position?.entry);
+  return firstPositiveNumber(
+    snapshot?.price,
+    snapshot?.mark,
+    snapshot?.last,
+    quoteMid(snapshot),
+    equityFallback,
+  );
+};
+
+const tradeSpotTitle = (position, snapshotsBySymbol = {}) => {
+  const symbol = resolveTradeSpotSymbol(position);
+  const snapshot = symbol ? snapshotsBySymbol?.[symbol] : null;
+  const price = resolveTradeSpotPrice(position, snapshotsBySymbol);
+  const updatedAt = firstText(snapshot?.dataUpdatedAt, snapshot?.updatedAt);
+  return [
+    "Underlying spot",
+    price != null ? formatPriceValue(price) : null,
+    updatedAt ? formatRelativeTimeShort(updatedAt) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+};
+
 const openPositionColumn = ({
   id,
   label,
@@ -175,6 +227,7 @@ const OPEN_POSITION_COLUMNS = [
   openPositionColumn({ id: "ticker", label: "Tick", title: "Ticker", width: "minmax(68px, 1fr)", minWidth: "68px", align: "left" }),
   openPositionColumn({ id: "side", label: "Side", width: "minmax(32px, max-content)", minWidth: "32px", align: "center" }),
   openPositionColumn({ id: "contract", label: "Contract", width: "minmax(70px, 1fr)", minWidth: "70px", align: "left" }),
+  openPositionColumn({ id: "spot", label: "Spot", title: "Underlying price", width: "minmax(40px, max-content)", minWidth: "40px" }),
   openPositionColumn({ id: "opened", label: "Open", width: "minmax(36px, max-content)", minWidth: "36px" }),
   openPositionColumn({ id: "bid", label: "Bid", width: "minmax(40px, max-content)", minWidth: "40px" }),
   openPositionColumn({ id: "ask", label: "Ask", width: "minmax(40px, max-content)", minWidth: "40px" }),
@@ -347,6 +400,34 @@ const tradeManagementBadgeTone = (management) =>
     : isFiniteNumber(management.riskDistancePct) && management.riskDistancePct <= 10
       ? CSS_COLOR.amber
       : CSS_COLOR.textDim;
+
+const TradeSpotPriceCell = ({ position, snapshotsBySymbol }) => {
+  const spotPrice = resolveTradeSpotPrice(position, snapshotsBySymbol);
+  const flashClassName = useValueFlash(spotPrice);
+  return (
+    <span
+      title={tradeSpotTitle(position, snapshotsBySymbol)}
+      style={tradeOpenPositionCellStyle(
+        "spot",
+        isFiniteNumber(spotPrice) ? CSS_COLOR.text : CSS_COLOR.textDim,
+      )}
+    >
+      <span
+        className={flashClassName}
+        style={{
+          display: "inline-flex",
+          justifyContent: "center",
+          maxWidth: "100%",
+          padding: sp("1px 2px"),
+          borderRadius: dim(RADII.xs),
+          whiteSpace: "nowrap",
+        }}
+      >
+        {isFiniteNumber(spotPrice) ? formatPriceValue(spotPrice) : MISSING_VALUE}
+      </span>
+    </span>
+  );
+};
 
 const tradePositionOrders = (position, liveOrders) => {
   const rowOrders = Array.isArray(position?.openOrders) ? position.openOrders : [];
@@ -620,8 +701,10 @@ export const TradePositionsPanel = ({
           openedAtSource: position.openedAtSource ?? null,
           quote: position.quote ?? null,
           sl:
+            position.riskOverlay?.activeStopPrice ??
             position.stopLoss ??
             position.stopLossPrice ??
+            position.automationContext?.activeStopPrice ??
             position.automationContext?.stopLossPrice ??
             position.automationContext?.stopPrice ??
             null,
@@ -703,11 +786,16 @@ export const TradePositionsPanel = ({
       Array.from(
         new Set(
           openPositions
-            .map((position) => normalizeTickerSymbol(position.ticker))
+            .map(resolveTradeSpotSymbol)
             .filter(Boolean),
         ),
       ),
     [openPositions],
+  );
+  useRegisterPositionMarketDataSymbols(
+    `trade-positions:${environment}:${accountId || "none"}`,
+    openPositionSymbols,
+    isVisible,
   );
   const tickerSnapshotsBySymbol = useRuntimeTickerSnapshots(openPositionSymbols);
   const liveOrders = useMemo(
@@ -1549,7 +1637,9 @@ export const TradePositionsPanel = ({
                 );
                 const firstLinkedOrder = linkedWorkingOrders[0] || null;
                 const managementTitle = [
-                  management.stop ? `SL ${tradeManagementPrice(management.stop)}` : null,
+                  management.stop
+                    ? `${management.trail ? "HSL" : "SL"} ${tradeManagementPrice(management.stop)}`
+                    : null,
                   management.trail ? `TRL ${tradeManagementPrice(management.trail)}` : null,
                   isFiniteNumber(management.riskDistancePct)
                     ? `Distance ${tradeManagementDistanceLabel(management)}`
@@ -1641,6 +1731,10 @@ export const TradePositionsPanel = ({
                     <span style={tradeOpenPositionCellStyle("contract", CSS_COLOR.textSec)}>
                       {p.contract}
                     </span>
+                    <TradeSpotPriceCell
+                      position={p}
+                      snapshotsBySymbol={tickerSnapshotsBySymbol}
+                    />
                     <span
                       title={[display.ageLabel, display.openedSourceLabel].filter(Boolean).join(" · ") || undefined}
                       style={tradeOpenPositionCellStyle(

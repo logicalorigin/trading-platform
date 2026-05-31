@@ -10,11 +10,13 @@ import {
 } from "@workspace/pyrus-signals-core";
 import type {
   ChartBar,
+  ChartBarRange,
   ChartBarStyle,
   ChartMarker,
   IndicatorEvent,
   IndicatorPlugin,
   IndicatorPluginOutput,
+  IndicatorPluginSourceSeries,
   IndicatorWindow,
   IndicatorZone,
   MarketBar,
@@ -22,6 +24,7 @@ import type {
   StudySpec,
 } from "./types";
 import { resolveUsEquityMarketSession } from "./marketSession";
+import { getChartTimeframeStepMs, normalizeChartTimeframe } from "./timeframes";
 
 export const PYRUS_SIGNALS_PINE_SCRIPT_KEY = "pyrus-signals-smc-pro-v3";
 
@@ -155,6 +158,8 @@ export type PyrusSignalsRuntimeSettings = {
   showSydneySession: boolean;
   visibleTimeframes: PyrusSignalsTimeframeOption[];
   showLastBarOnly: boolean;
+  showSecondarySignals: boolean;
+  secondarySignalTimeframes: PyrusSignalsTimeframeOption[];
   plotOverrides: Partial<Record<PyrusSignalsPlotKey, PyrusSignalsPlotOverride>>;
 };
 
@@ -245,6 +250,8 @@ export const DEFAULT_PYRUS_SIGNALS_SETTINGS: PyrusSignalsRuntimeSettings = {
   showSydneySession: false,
   visibleTimeframes: [],
   showLastBarOnly: false,
+  showSecondarySignals: false,
+  secondarySignalTimeframes: [],
   plotOverrides: {},
 };
 const REACTION_COLOR = "#EBCB9C";
@@ -428,6 +435,8 @@ type PyrusSignalsNormalizedSettings = {
   visibility: {
     visibleTimeframes: PyrusSignalsTimeframeOption[];
     showLastBarOnly: boolean;
+    showSecondarySignals: boolean;
+    secondarySignalTimeframes: PyrusSignalsTimeframeOption[];
   };
   plotStyle: {
     plotOverrides: Partial<Record<PyrusSignalsPlotKey, PyrusSignalsPlotOverride>>;
@@ -1101,6 +1110,14 @@ function normalizePyrusSignalsSettings(
         visibility.showLastBarOnly ?? input.showLastBarOnly,
         DEFAULT_PYRUS_SIGNALS_SETTINGS.showLastBarOnly,
       ),
+      showSecondarySignals: resolveBooleanSetting(
+        visibility.showSecondarySignals ?? input.showSecondarySignals,
+        DEFAULT_PYRUS_SIGNALS_SETTINGS.showSecondarySignals,
+      ),
+      secondarySignalTimeframes: resolveVisibleTimeframeSelections(
+        visibility.secondarySignalTimeframes ?? input.secondarySignalTimeframes,
+        DEFAULT_PYRUS_SIGNALS_SETTINGS.secondarySignalTimeframes,
+      ),
     },
     plotStyle: {
       plotOverrides: resolvePlotOverrides(
@@ -1309,6 +1326,8 @@ export function resolvePyrusSignalsRuntimeSettings(
     showSydneySession: normalized.sessionDisplay.showSydneySession,
     visibleTimeframes: normalized.visibility.visibleTimeframes,
     showLastBarOnly: normalized.visibility.showLastBarOnly,
+    showSecondarySignals: normalized.visibility.showSecondarySignals,
+    secondarySignalTimeframes: normalized.visibility.secondarySignalTimeframes,
     plotOverrides: normalized.plotStyle.plotOverrides,
   };
 }
@@ -1427,6 +1446,131 @@ const normalizePyrusSignalsTimeframe = (
     : null;
 };
 
+const pyrusTimeframeToChartTimeframe = (
+  timeframe: PyrusSignalsTimeframeOption,
+): string => (timeframe === "D" ? "1d" : timeframe);
+
+const formatSecondarySignalTimeframeLabel = (
+  timeframe: PyrusSignalsTimeframeOption,
+): string => (timeframe === "D" ? "1D" : timeframe);
+
+const resolvePyrusTimeframeStepMs = (
+  timeframe: PyrusSignalsTimeframeOption | string | null | undefined,
+): number => {
+  if (!timeframe) {
+    return 0;
+  }
+  const normalized = normalizePyrusSignalsTimeframe(timeframe);
+  return normalized
+    ? getChartTimeframeStepMs(pyrusTimeframeToChartTimeframe(normalized))
+    : getChartTimeframeStepMs(normalizeChartTimeframe(timeframe));
+};
+
+const canRollSourceToTargetTimeframe = (
+  sourceTimeframe: string | null | undefined,
+  targetTimeframe: PyrusSignalsTimeframeOption,
+): boolean => {
+  const sourceStepMs = resolvePyrusTimeframeStepMs(sourceTimeframe);
+  const targetStepMs = resolvePyrusTimeframeStepMs(targetTimeframe);
+  return (
+    sourceStepMs > 0 &&
+    targetStepMs > 0 &&
+    sourceStepMs <= targetStepMs &&
+    targetStepMs % sourceStepMs === 0
+  );
+};
+
+type PyrusSignalEvaluationBars = Parameters<
+  typeof evaluatePyrusSignalsSignals
+>[0]["chartBars"];
+
+const resolveBestSourceSeriesForTimeframe = (
+  sourceSeries: IndicatorPluginSourceSeries[] | undefined,
+  targetTimeframe: PyrusSignalsTimeframeOption,
+): IndicatorPluginSourceSeries | null => {
+  let selected: IndicatorPluginSourceSeries | null = null;
+  let selectedStepMs = 0;
+
+  (sourceSeries || []).forEach((series) => {
+    if (!series.chartBars.length) {
+      return;
+    }
+    const sourceTimeframe = series.sourceTimeframe || series.timeframe;
+    if (!canRollSourceToTargetTimeframe(sourceTimeframe, targetTimeframe)) {
+      return;
+    }
+    const sourceStepMs = resolvePyrusTimeframeStepMs(sourceTimeframe);
+    if (sourceStepMs >= selectedStepMs) {
+      selected = series;
+      selectedStepMs = sourceStepMs;
+    }
+  });
+
+  return selected;
+};
+
+const resolveSecondarySignalSourceBars = ({
+  chartBars,
+  displayTimeframe,
+  sourceSeries,
+  targetTimeframe,
+}: {
+  chartBars: ChartBar[];
+  displayTimeframe: string;
+  sourceSeries: IndicatorPluginSourceSeries[] | undefined;
+  targetTimeframe: PyrusSignalsTimeframeOption;
+}): PyrusSignalEvaluationBars | null => {
+  const source = resolveBestSourceSeriesForTimeframe(
+    sourceSeries,
+    targetTimeframe,
+  );
+  if (source) {
+    const normalizedSourceTimeframe =
+      normalizePyrusSignalsTimeframe(source.sourceTimeframe) ||
+      normalizePyrusSignalsTimeframe(source.timeframe);
+    return normalizedSourceTimeframe === targetTimeframe
+      ? source.chartBars
+      : aggregatePyrusSignalsBarsForTimeframe(
+          source.chartBars,
+          targetTimeframe,
+        );
+  }
+
+  if (!canRollSourceToTargetTimeframe(displayTimeframe, targetTimeframe)) {
+    return null;
+  }
+
+  const normalizedDisplayTimeframe = normalizePyrusSignalsTimeframe(displayTimeframe);
+  return normalizedDisplayTimeframe === targetTimeframe
+    ? chartBars
+    : aggregatePyrusSignalsBarsForTimeframe(chartBars, targetTimeframe);
+};
+
+const resolveDisplayBarIndexForSignalClose = (
+  chartBars: ChartBar[],
+  chartBarRanges: ChartBarRange[] | undefined,
+  closeMs: number,
+): number | null => {
+  const rangeIndex = (chartBarRanges || []).findIndex(
+    (range) => closeMs > range.startMs && closeMs <= range.endMs,
+  );
+  if (rangeIndex >= 0) {
+    return rangeIndex;
+  }
+
+  let fallbackIndex: number | null = null;
+  for (let index = 0; index < chartBars.length; index += 1) {
+    const barStartMs = chartBars[index].time * 1000;
+    if (barStartMs <= closeMs) {
+      fallbackIndex = index;
+      continue;
+    }
+    break;
+  }
+
+  return fallbackIndex;
+};
+
 const resolvePlotOverride = (
   overrides: Partial<Record<PyrusSignalsPlotKey, PyrusSignalsPlotOverride>>,
   key: PyrusSignalsPlotKey,
@@ -1511,6 +1655,152 @@ const buildEvent = (
   label,
   meta,
 });
+
+const buildSecondarySignalEvents = ({
+  chartBars,
+  chartBarRanges,
+  sourceSeries,
+  displayTimeframe,
+  sourceTimeframes,
+  signalSettings,
+  atrRaw,
+  signalOffsetAtr,
+  bullColor,
+  bearColor,
+  scriptKey,
+}: {
+  chartBars: ChartBar[];
+  chartBarRanges: ChartBarRange[] | undefined;
+  sourceSeries: IndicatorPluginSourceSeries[] | undefined;
+  displayTimeframe: string;
+  sourceTimeframes: PyrusSignalsTimeframeOption[];
+  signalSettings: Parameters<typeof evaluatePyrusSignalsSignals>[0]["settings"];
+  atrRaw: number[];
+  signalOffsetAtr: number;
+  bullColor: string;
+  bearColor: string;
+  scriptKey: string;
+}): IndicatorEvent[] => {
+  const groups = new Map<
+    string,
+    {
+      barIndex: number;
+      direction: "long" | "short";
+      sourceTimeframe: PyrusSignalsTimeframeOption;
+      sourceOrder: number;
+      count: number;
+    }
+  >();
+
+  sourceTimeframes.forEach((sourceTimeframe, sourceOrder) => {
+    const sourceBars = resolveSecondarySignalSourceBars({
+      chartBars,
+      displayTimeframe,
+      sourceSeries,
+      targetTimeframe: sourceTimeframe,
+    });
+    if (!sourceBars?.length) {
+      return;
+    }
+
+    const sourceStepMs = resolvePyrusTimeframeStepMs(sourceTimeframe);
+    if (!sourceStepMs) {
+      return;
+    }
+
+    const evaluation = evaluatePyrusSignalsSignals({
+      chartBars: sourceBars,
+      settings: signalSettings,
+      includeProvisionalSignals: false,
+    });
+
+    evaluation.signalEvents.forEach((signalEvent) => {
+      const sourceBar = sourceBars[signalEvent.barIndex];
+      if (!sourceBar) {
+        return;
+      }
+
+      const displayBarIndex = resolveDisplayBarIndexForSignalClose(
+        chartBars,
+        chartBarRanges,
+        sourceBar.time * 1000 + sourceStepMs,
+      );
+      if (displayBarIndex == null || !chartBars[displayBarIndex]) {
+        return;
+      }
+
+      const direction = signalEvent.direction === "short" ? "short" : "long";
+      const key = `${displayBarIndex}:${sourceTimeframe}:${direction}`;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.count += 1;
+        return;
+      }
+
+      groups.set(key, {
+        barIndex: displayBarIndex,
+        direction,
+        sourceTimeframe,
+        sourceOrder,
+        count: 1,
+      });
+    });
+  });
+
+  return Array.from(groups.values())
+    .sort(
+      (left, right) =>
+        left.barIndex - right.barIndex ||
+        left.sourceOrder - right.sourceOrder ||
+        left.direction.localeCompare(right.direction),
+    )
+    .map((group) => {
+      const bar = chartBars[group.barIndex];
+      const color = group.direction === "long" ? bullColor : bearColor;
+      const atr = atrRaw[group.barIndex];
+      const fallbackOffset = Math.max(
+        (bar.h - bar.l) * 0.5,
+        Math.abs(bar.c) * 0.001,
+      );
+      const offset =
+        Number.isFinite(atr) && atr > 0
+          ? atr * (signalOffsetAtr + 1.25 + group.sourceOrder * 0.7)
+          : fallbackOffset * (1 + group.sourceOrder * 0.5);
+      const price =
+        group.direction === "long"
+          ? Number((bar.l - offset).toFixed(6))
+          : Number((bar.h + offset).toFixed(6));
+      const actionLabel = group.direction === "long" ? "BUY" : "SELL";
+      const timeframeLabel = formatSecondarySignalTimeframeLabel(
+        group.sourceTimeframe,
+      );
+      const countSuffix = group.count > 1 ? ` x${group.count}` : "";
+
+      return buildEvent(
+        `${scriptKey}-secondary-${group.sourceTimeframe}-${group.direction}-${group.barIndex}`,
+        bar,
+        group.barIndex,
+        group.direction === "long"
+          ? "secondary_buy_signal"
+          : "secondary_sell_signal",
+        group.direction,
+        `${timeframeLabel} ${actionLabel}${countSuffix}`,
+        {
+          overlay: "badge",
+          variant: "secondary_signal",
+          placement: group.direction === "long" ? "below" : "above",
+          arrow: group.direction === "long" ? "up" : "down",
+          price,
+          background: withHexAlpha(color, "22"),
+          borderColor: withHexAlpha(color, "d9"),
+          textColor: color,
+          sourceTimeframe: group.sourceTimeframe,
+          sourceSignalCount: group.count,
+          secondary: true,
+        },
+      );
+    });
+};
 
 const computeSma = (values: number[], period: number): number[] => {
   const result = new Array<number>(values.length).fill(Number.NaN);
@@ -2458,7 +2748,14 @@ export function createPyrusSignalsPineRuntimeAdapter(
   return {
     id: script.scriptKey,
     liveUpdateMode: "defer-on-tail-patch",
-    compute({ chartBars, dailyBars, settings, timeframe }): IndicatorPluginOutput {
+    compute({
+      chartBars,
+      chartBarRanges,
+      dailyBars,
+      settings,
+      timeframe,
+      sourceSeries,
+    }): IndicatorPluginOutput {
       if (!chartBars.length) {
         return {};
       }
@@ -2549,6 +2846,8 @@ export function createPyrusSignalsPineRuntimeAdapter(
         showSydneySession,
         visibleTimeframes,
         showLastBarOnly,
+        showSecondarySignals,
+        secondarySignalTimeframes,
         plotOverrides,
       } = resolvePyrusSignalsRuntimeSettings(settings);
       const normalizedTimeframe = normalizePyrusSignalsTimeframe(timeframe);
@@ -2603,40 +2902,41 @@ export function createPyrusSignalsPineRuntimeAdapter(
         shadowLength,
         shadowStdDev,
       );
+      const signalSettings = {
+        timeHorizon,
+        bosConfirmation,
+        chochAtrBuffer,
+        chochBodyExpansionAtr,
+        chochVolumeGate,
+        basisLength,
+        atrLength,
+        atrSmoothing,
+        volatilityMultiplier,
+        wireSpread,
+        shadowLength,
+        shadowStdDev,
+        adxLength,
+        volumeMaLength,
+        mtf1,
+        mtf2,
+        mtf3,
+        signalFiltersEnabled,
+        requireMtf1,
+        requireMtf2,
+        requireMtf3,
+        requireAdx,
+        adxMin,
+        requireVolScoreRange,
+        volScoreMin,
+        volScoreMax,
+        restrictToSelectedSessions,
+        sessions: sessions as CorePyrusSignalsSessionOption[],
+        waitForBarClose,
+        signalOffsetAtr,
+      } as Parameters<typeof evaluatePyrusSignalsSignals>[0]["settings"];
       const signalEvaluation = evaluatePyrusSignalsSignals({
         chartBars,
-        settings: {
-          timeHorizon,
-          bosConfirmation,
-          chochAtrBuffer,
-          chochBodyExpansionAtr,
-          chochVolumeGate,
-          basisLength,
-          atrLength,
-          atrSmoothing,
-          volatilityMultiplier,
-          wireSpread,
-          shadowLength,
-          shadowStdDev,
-          adxLength,
-          volumeMaLength,
-          mtf1,
-          mtf2,
-          mtf3,
-          signalFiltersEnabled,
-          requireMtf1,
-          requireMtf2,
-          requireMtf3,
-          requireAdx,
-          adxMin,
-          requireVolScoreRange,
-          volScoreMin,
-          volScoreMax,
-          restrictToSelectedSessions,
-          sessions: sessions as CorePyrusSignalsSessionOption[],
-          waitForBarClose,
-          signalOffsetAtr,
-        } as Parameters<typeof evaluatePyrusSignalsSignals>[0]["settings"],
+        settings: signalSettings,
         includeProvisionalSignals: true,
       });
       const structureEventByBarIndex = new Map(
@@ -3484,6 +3784,30 @@ export function createPyrusSignalsPineRuntimeAdapter(
             wickColor: candleColor,
           };
         }
+      }
+
+      const secondaryTimeframes =
+        showSecondarySignals && normalizedTimeframe
+          ? secondarySignalTimeframes.filter(
+              (sourceTimeframe) => sourceTimeframe !== normalizedTimeframe,
+            )
+          : [];
+      if (secondaryTimeframes.length) {
+        events.push(
+          ...buildSecondarySignalEvents({
+            chartBars,
+            chartBarRanges,
+            sourceSeries,
+            displayTimeframe: timeframe,
+            sourceTimeframes: secondaryTimeframes,
+            signalSettings,
+            atrRaw,
+            signalOffsetAtr,
+            bullColor,
+            bearColor,
+            scriptKey: script.scriptKey,
+          }),
+        );
       }
 
       if (showOrderBlocks) {

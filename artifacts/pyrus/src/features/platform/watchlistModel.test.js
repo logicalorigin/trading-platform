@@ -157,11 +157,11 @@ test("sortWatchlistRows ranks fresh signals, stale signals, and quote fields", (
   });
   const signalSorted = sortWatchlistRows(rows, {
     mode: WATCHLIST_SORT_MODE.SIGNAL,
-    signalStatesBySymbol: {
-      SPY: { symbol: "SPY", currentSignalDirection: "buy", fresh: false, barsSinceSignal: 6 },
-      QQQ: { symbol: "QQQ", currentSignalDirection: "sell", fresh: true, barsSinceSignal: 1 },
-      NVDA: { symbol: "NVDA", currentSignalDirection: null, fresh: false },
-    },
+    signalMatrixBySymbol: buildSignalMatrixBySymbol([
+      { symbol: "SPY", timeframe: "5m", currentSignalDirection: "buy", fresh: false, barsSinceSignal: 6 },
+      { symbol: "QQQ", timeframe: "2m", currentSignalDirection: "sell", fresh: true, barsSinceSignal: 1 },
+      { symbol: "NVDA", timeframe: "15m", currentSignalDirection: null, fresh: false },
+    ]),
   });
 
   assert.deepEqual(
@@ -198,7 +198,7 @@ test("watchlist signal matrix groups timeframe dots by symbol", () => {
   assert.equal(matrix.QQQ, undefined);
 });
 
-test("signal sort prefers fresh matrix dots over legacy monitor state", () => {
+test("signal sort ignores legacy monitor state when matrix is missing", () => {
   const rows = buildWatchlistRows({
     activeWatchlist: { symbols: ["SPY", "QQQ", "NVDA"] },
   });
@@ -211,17 +211,22 @@ test("signal sort prefers fresh matrix dots over legacy monitor state", () => {
     getBestWatchlistSignalState(signalMatrixBySymbol.SPY).currentSignalDirection,
     "buy",
   );
+  assert.equal(
+    getBestWatchlistSignalState(undefined, {
+      symbol: "NVDA",
+      currentSignalDirection: "buy",
+      fresh: true,
+    }),
+    null,
+  );
 
   const sorted = sortWatchlistRows(rows, {
     mode: WATCHLIST_SORT_MODE.SIGNAL,
-    signalStatesBySymbol: {
-      NVDA: { symbol: "NVDA", currentSignalDirection: "buy", fresh: true, barsSinceSignal: 1 },
-    },
     signalMatrixBySymbol,
   });
 
   assert.deepEqual(
     sorted.map((row) => row.sym),
-    ["QQQ", "NVDA", "SPY"],
+    ["QQQ", "SPY", "NVDA"],
   );
 });

@@ -85,6 +85,7 @@ import {
   type ChartPositionOffPaneIndicator,
   type ChartPositionOverlays,
   type ChartPositionPnlBubble,
+  type ChartPositionRiskLinePath,
 } from "./chartPositionOverlays";
 import {
   buildUsEquityExtendedSessionWindows,
@@ -590,6 +591,26 @@ type PositionOffPaneOverlay = {
   label: string;
 };
 
+type PositionRiskLineOverlay = {
+  id: string;
+  dataTestId: string;
+  path: string;
+  color: string;
+  strokeWidth: number;
+  strokeDasharray?: string;
+  opacity: number;
+  haloColor: string;
+  haloWidth: number;
+  label: string;
+  labelLeft: number;
+  labelTop: number;
+  labelWidth: number;
+  labelHeight: number;
+  labelFill: string;
+  labelBorder: string;
+  labelBorderWidth: number;
+};
+
 type TradeMarkerTarget = {
   id: string;
   left: number;
@@ -622,7 +643,8 @@ type IndicatorBadgeOverlay = {
   textColor: string;
   placement: "above" | "below" | "center";
   arrow?: "up" | "down";
-  variant: "signal" | "swing" | "structure" | "triangle";
+  variant: "signal" | "secondary_signal" | "swing" | "structure" | "triangle";
+  sourceTimeframe?: string;
 };
 
 type IndicatorDotOverlay = {
@@ -3258,6 +3280,47 @@ const tradeThresholdOverlaysEqual = (
   return true;
 };
 
+const positionRiskLineOverlaysEqual = (
+  left: PositionRiskLineOverlay[],
+  right: PositionRiskLineOverlay[],
+): boolean => {
+  if (left === right) {
+    return true;
+  }
+
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    const leftOverlay = left[index];
+    const rightOverlay = right[index];
+
+    if (
+      leftOverlay.id !== rightOverlay.id ||
+      leftOverlay.path !== rightOverlay.path ||
+      leftOverlay.color !== rightOverlay.color ||
+      !numbersClose(leftOverlay.strokeWidth, rightOverlay.strokeWidth) ||
+      leftOverlay.strokeDasharray !== rightOverlay.strokeDasharray ||
+      !numbersClose(leftOverlay.opacity, rightOverlay.opacity) ||
+      leftOverlay.haloColor !== rightOverlay.haloColor ||
+      !numbersClose(leftOverlay.haloWidth, rightOverlay.haloWidth) ||
+      leftOverlay.label !== rightOverlay.label ||
+      !numbersClose(leftOverlay.labelLeft, rightOverlay.labelLeft) ||
+      !numbersClose(leftOverlay.labelTop, rightOverlay.labelTop) ||
+      !numbersClose(leftOverlay.labelWidth, rightOverlay.labelWidth) ||
+      !numbersClose(leftOverlay.labelHeight, rightOverlay.labelHeight) ||
+      leftOverlay.labelFill !== rightOverlay.labelFill ||
+      leftOverlay.labelBorder !== rightOverlay.labelBorder ||
+      !numbersClose(leftOverlay.labelBorderWidth, rightOverlay.labelBorderWidth)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
 const indicatorBadgeOverlaysEqual = (
   left: IndicatorBadgeOverlay[],
   right: IndicatorBadgeOverlay[],
@@ -3282,6 +3345,7 @@ const indicatorBadgeOverlaysEqual = (
       current.placement !== next.placement ||
       current.arrow !== next.arrow ||
       current.variant !== next.variant ||
+      current.sourceTimeframe !== next.sourceTimeframe ||
       !numbersClose(current.left, next.left) ||
       !numbersClose(current.top, next.top)
     ) {
@@ -4130,6 +4194,138 @@ const buildPositionOffPaneOverlays = ({
       direction: indicator.direction,
       label: indicator.label,
     };
+  });
+};
+
+const formatPositionRiskLinePrice = (value: number): string =>
+  Math.abs(value) >= 100 ? value.toFixed(2) : value.toFixed(3).replace(/0$/, "");
+
+const buildStepPath = (
+  coordinates: Array<{ x: number; y: number }>,
+): string => {
+  if (!coordinates.length) {
+    return "";
+  }
+  const [first, ...rest] = coordinates;
+  return rest.reduce(
+    (path, point) =>
+      `${path} H ${point.x.toFixed(2)} V ${point.y.toFixed(2)}`,
+    `M ${first.x.toFixed(2)} ${first.y.toFixed(2)}`,
+  );
+};
+
+const resolvePositionRiskLineVisualStyle = (
+  line: ChartPositionRiskLinePath,
+  theme: ResearchChartTheme,
+) => {
+  const activeRiskLine =
+    line.kind === "stopLoss" || line.kind === "trailingStop";
+  const contextHardStop = line.kind === "hardStop";
+  const color =
+    line.kind === "stopLoss"
+      ? theme.red
+      : contextHardStop
+        ? withAlpha(theme.red, "8c")
+        : line.kind === "takeProfit"
+          ? theme.green
+          : theme.amber;
+
+  return {
+    color,
+    strokeWidth: activeRiskLine ? 2.75 : line.kind === "takeProfit" ? 2 : 1.35,
+    strokeDasharray:
+      contextHardStop
+        ? "2 4"
+        : line.kind === "trailingStop"
+          ? "6 4"
+          : undefined,
+    opacity: activeRiskLine ? 1 : contextHardStop ? 0.68 : 0.92,
+    haloColor: activeRiskLine ? withAlpha(theme.bg2, "f2") : "transparent",
+    haloWidth: activeRiskLine ? 6 : 0,
+    labelHeight: activeRiskLine ? 20 : 18,
+    labelFill: withAlpha(
+      theme.bg4,
+      activeRiskLine ? "f4" : contextHardStop ? "c8" : "ec",
+    ),
+    labelBorder: withAlpha(color, activeRiskLine ? "f2" : "b8"),
+    labelBorderWidth: activeRiskLine ? 1.5 : 1,
+  };
+};
+
+const buildPositionRiskLineOverlays = ({
+  chart,
+  series,
+  riskLinePaths,
+  theme,
+  viewportWidth,
+  viewportHeight,
+}: {
+  chart: ChartApi;
+  series: ChartSeriesApi;
+  riskLinePaths: ChartPositionRiskLinePath[];
+  theme: ResearchChartTheme;
+  viewportWidth: number;
+  viewportHeight: number;
+}): PositionRiskLineOverlay[] => {
+  if (viewportWidth <= 0 || viewportHeight <= 0) {
+    return [];
+  }
+
+  return riskLinePaths.flatMap<PositionRiskLineOverlay>((line) => {
+    const coordinates = line.points
+      .map((point) => {
+        const x = chart.timeScale().timeToCoordinate(point.time);
+        const y = series.priceToCoordinate?.(point.price);
+        return isFiniteNumber(x) && isFiniteNumber(y) ? { x, y } : null;
+      })
+      .filter((point): point is { x: number; y: number } => point != null);
+
+    if (coordinates.length < 2) {
+      return [];
+    }
+
+    const path = buildStepPath(coordinates);
+    if (!path) {
+      return [];
+    }
+
+    const visualStyle = resolvePositionRiskLineVisualStyle(line, theme);
+    const latest = coordinates[coordinates.length - 1];
+    const label = `${line.label} ${formatPositionRiskLinePrice(line.currentPrice)}`;
+    const labelWidth = Math.max(
+      visualStyle.labelHeight === 20 ? 48 : 42,
+      estimateMonoTextWidth(label, 9, 7),
+    );
+    const clampedLabel = clampOverlayRectPosition({
+      left: viewportWidth - labelWidth - 4,
+      top: latest.y - visualStyle.labelHeight / 2,
+      width: labelWidth,
+      height: visualStyle.labelHeight,
+      viewportWidth,
+      viewportHeight,
+    });
+
+    return [
+      {
+        id: line.id,
+        dataTestId: `chart-position-risk-line-${line.id}`,
+        path,
+        color: visualStyle.color,
+        strokeWidth: visualStyle.strokeWidth,
+        strokeDasharray: visualStyle.strokeDasharray,
+        opacity: visualStyle.opacity,
+        haloColor: visualStyle.haloColor,
+        haloWidth: visualStyle.haloWidth,
+        label,
+        labelLeft: clampedLabel.left,
+        labelTop: clampedLabel.top,
+        labelWidth,
+        labelHeight: visualStyle.labelHeight,
+        labelFill: visualStyle.labelFill,
+        labelBorder: visualStyle.labelBorder,
+        labelBorderWidth: visualStyle.labelBorderWidth,
+      },
+    ];
   });
 };
 
@@ -5132,6 +5328,10 @@ const buildIndicatorEventOverlays = (
         placement,
         arrow: meta.arrow as IndicatorBadgeOverlay["arrow"] | undefined,
         variant,
+        sourceTimeframe:
+          typeof meta.sourceTimeframe === "string"
+            ? meta.sourceTimeframe
+            : undefined,
       });
       return;
     }
@@ -5677,6 +5877,9 @@ const ResearchChartSurfaceComponent = ({
   const [positionOffPaneOverlays, setPositionOffPaneOverlays] = useState<
     PositionOffPaneOverlay[]
   >([]);
+  const [positionRiskLineOverlays, setPositionRiskLineOverlays] = useState<
+    PositionRiskLineOverlay[]
+  >([]);
   const [zoneOverlays, setZoneOverlays] = useState<OverlayShape[]>([]);
   const [verticalDrawingOverlays, setVerticalDrawingOverlays] = useState<
     OverlayShape[]
@@ -5955,6 +6158,13 @@ const ResearchChartSurfaceComponent = ({
   const syncTradeThresholdOverlaysState = (next: TradeThresholdOverlay[]) => {
     setTradeThresholdOverlays((current) =>
       tradeThresholdOverlaysEqual(current, next) ? current : next,
+    );
+  };
+  const syncPositionRiskLineOverlaysState = (
+    next: PositionRiskLineOverlay[],
+  ) => {
+    setPositionRiskLineOverlays((current) =>
+      positionRiskLineOverlaysEqual(current, next) ? current : next,
     );
   };
   const syncSelectedTradeConnectorState = (
@@ -8598,6 +8808,7 @@ const ResearchChartSurfaceComponent = ({
       syncOverlayState(setWindowOverlays, []);
       setPositionBubbleOverlays([]);
       setPositionOffPaneOverlays([]);
+      syncPositionRiskLineOverlaysState([]);
       syncOverlayState(setZoneOverlays, []);
       syncOverlayState(setVerticalDrawingOverlays, []);
       syncOverlayState(setBoxDrawingOverlays, []);
@@ -8653,6 +8864,18 @@ const ResearchChartSurfaceComponent = ({
             entryLines: resolvedPositionOverlays.entryLines,
             offPaneIndicators: resolvedPositionOverlays.offPaneIndicators,
             series: activePriceSeriesRef.current,
+            theme,
+            viewportWidth,
+            viewportHeight,
+          })
+        : [],
+    );
+    syncPositionRiskLineOverlaysState(
+      positionOverlaysEnabled
+        ? buildPositionRiskLineOverlays({
+            chart: chartRef.current,
+            series: activePriceSeriesRef.current,
+            riskLinePaths: resolvedPositionOverlays.riskLinePaths,
             theme,
             viewportWidth,
             viewportHeight,
@@ -8792,6 +9015,7 @@ const ResearchChartSurfaceComponent = ({
     resolvedPositionOverlays.entryLines,
     resolvedPositionOverlays.offPaneIndicators,
     resolvedPositionOverlays.pnlBubbles,
+    resolvedPositionOverlays.riskLinePaths,
     positionOverlaysEnabled,
     rootWidth,
     scaleMode,
@@ -10640,6 +10864,7 @@ const ResearchChartSurfaceComponent = ({
           {windowOverlays.length ||
           positionBubbleOverlays.length ||
           positionOffPaneOverlays.length ||
+          positionRiskLineOverlays.length ||
           footprintCellOverlays.length ||
           zoneOverlays.length ||
           verticalDrawingOverlays.length ||
@@ -10853,6 +11078,78 @@ const ResearchChartSurfaceComponent = ({
                     }}
                   />
                   <span>{overlay.label}</span>
+                </div>
+              ))}
+              {positionRiskLineOverlays.length ? (
+                <svg
+                  aria-hidden="true"
+                  data-chart-position-risk-lines=""
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: "100%",
+                    height: "100%",
+                    overflow: "visible",
+                  }}
+                >
+                  {positionRiskLineOverlays
+                    .filter((overlay) => overlay.haloWidth > 0)
+                    .map((overlay) => (
+                      <path
+                        key={`position-risk-halo-${overlay.id}`}
+                        data-chart-position-risk-line-halo=""
+                        d={overlay.path}
+                        fill="none"
+                        stroke={overlay.haloColor}
+                        strokeWidth={overlay.haloWidth}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeDasharray={overlay.strokeDasharray}
+                        opacity={0.9}
+                      />
+                    ))}
+                  {positionRiskLineOverlays.map((overlay) => (
+                    <path
+                      key={`position-risk-path-${overlay.id}`}
+                      data-testid={overlay.dataTestId}
+                      data-chart-position-risk-line=""
+                      d={overlay.path}
+                      fill="none"
+                      stroke={overlay.color}
+                      strokeWidth={overlay.strokeWidth}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeDasharray={overlay.strokeDasharray}
+                      opacity={overlay.opacity}
+                    />
+                  ))}
+                </svg>
+              ) : null}
+              {positionRiskLineOverlays.map((overlay) => (
+                <div
+                  key={`position-risk-label-${overlay.id}`}
+                  data-chart-position-risk-label=""
+                  style={{
+                    position: "absolute",
+                    left: overlay.labelLeft,
+                    top: overlay.labelTop,
+                    width: overlay.labelWidth,
+                    height: overlay.labelHeight,
+                    boxSizing: "border-box",
+                    border: `${overlay.labelBorderWidth}px solid ${overlay.labelBorder}`,
+                    borderRadius: RADII.xs,
+                    background: overlay.labelFill,
+                    color: overlay.color,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontFamily: theme.mono,
+                    fontSize: TYPE_CSS_VAR.label,
+                    lineHeight: 1,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {overlay.label}
                 </div>
               ))}
               {verticalDrawingOverlays.map((overlay) => (
@@ -11728,6 +12025,7 @@ const ResearchChartSurfaceComponent = ({
                 : null}
               {indicatorBadgeOverlays.map((overlay) => {
                 const isSignal = overlay.variant === "signal";
+                const isSecondarySignal = overlay.variant === "secondary_signal";
                 const isTriangle = overlay.variant === "triangle";
                 const isStructure = overlay.variant === "structure";
                 const isSwing = overlay.variant === "swing";
@@ -11777,6 +12075,10 @@ const ResearchChartSurfaceComponent = ({
                   <div
                     key={`indicator-badge-${overlay.id}`}
                     data-testid={overlay.dataTestId}
+                    data-chart-indicator-badge-variant={overlay.variant}
+                    data-chart-indicator-source-timeframe={
+                      overlay.sourceTimeframe || undefined
+                    }
                     style={{
                       position: "absolute",
                       left: overlay.left,
@@ -11793,12 +12095,14 @@ const ResearchChartSurfaceComponent = ({
                             ? "0"
                             : isSignal
                             ? "4px 10px"
+                            : isSecondarySignal
+                              ? "3px 7px"
                             : isTriangle
                               ? "0"
                               : isStructure
                                 ? "2px 7px"
                                 : "2px 8px",
-                        borderRadius: isSwing ? 0 : isSignal ? 999 : 8,
+                        borderRadius: isSwing ? 0 : isSignal ? 999 : 6,
                         border: isSwing || isTriangle
                           ? "none"
                           : `1px solid ${overlay.borderColor}`,
@@ -11809,7 +12113,11 @@ const ResearchChartSurfaceComponent = ({
                           : isTriangle
                             ? overlay.background
                             : overlay.textColor,
-                        fontSize: isTriangle ? TYPE_CSS_VAR.bodyStrong : isSignal || isSwing ? TYPE_CSS_VAR.body : TYPE_CSS_VAR.label,
+                        fontSize: isTriangle
+                          ? TYPE_CSS_VAR.bodyStrong
+                          : isSignal || isSwing
+                            ? TYPE_CSS_VAR.body
+                            : TYPE_CSS_VAR.label,
                         fontFamily: theme.mono,
                         fontWeight: FONT_WEIGHTS.regular,
                         whiteSpace: "nowrap",
@@ -11817,7 +12125,7 @@ const ResearchChartSurfaceComponent = ({
                           ? "none"
                           : `0 4px 12px ${withAlpha(theme.bg4, "88")}`,
                         letterSpacing:
-                          isSignal || isStructure || isSwing ? "0.04em" : "normal",
+                          isSignal || isStructure || isSwing ? "0.04em" : 0,
                       }}
                     >
                       {overlay.text}

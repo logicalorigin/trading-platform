@@ -17,6 +17,7 @@ import {
   type SignalOptionsExecutionProfile,
   type StudyDefinition,
 } from "@workspace/backtest-core";
+import { pathToFileURL } from "node:url";
 import {
   backtestRunDatasetsTable,
   backtestRunPointsTable,
@@ -32,6 +33,25 @@ import {
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { logger } from "./logger";
 import {
+  OPTIONS_AGGREGATE_BARS_WARNING,
+  SIGNAL_OPTIONS_AGGREGATE_BARS_WARNING,
+  normalizeApiBar,
+  normalizeStoredHistoricalBar,
+  toHistoricalBarInsert,
+  type ApiBacktestBar,
+} from "./backtest-bars";
+import {
+  shouldRankWalkForwardCandidatesWithSharedCore,
+  shouldRunOptionsBacktest,
+} from "./backtest-execution";
+import {
+  formatOptionFillNoFillWarning,
+  isQuoteReplayEligible,
+  resolveWorkerOptionFill,
+  resolveWorkerOptionFillPolicy,
+  resolveWorkerSameBarConservativeExit,
+} from "./option-fill-policy";
+import {
   API_BASE_URL,
   BAR_STORAGE_TARGET_BYTES,
   JOB_STALE_AFTER_MS,
@@ -43,16 +63,7 @@ import {
 type ApiBarsResponse = {
   symbol: string;
   timeframe: string;
-  bars: Array<{
-    timestamp: string;
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    volume: number;
-    source?: string;
-    delayed?: boolean;
-  }>;
+  bars: ApiBacktestBar[];
 };
 
 type ApiResolvedOptionContractResponse = {
@@ -157,32 +168,6 @@ function wait(ms: number): Promise<void> {
   });
 }
 
-function safeNumber(value: unknown): number {
-  if (typeof value === "number") {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-
-  return 0;
-}
-
-function normalizeBar(bar: ApiBarsResponse["bars"][number]): BacktestBar {
-  return {
-    startsAt: new Date(bar.timestamp),
-    open: bar.open,
-    high: bar.high,
-    low: bar.low,
-    close: bar.close,
-    volume: bar.volume,
-    source: bar.source,
-    delayed: bar.delayed,
-  };
-}
-
 function isRegularSessionBar(date: Date): boolean {
   const parts = newYorkTimeFormatter.formatToParts(date);
   const weekday = parts.find((part) => part.type === "weekday")?.value ?? "";
@@ -257,7 +242,7 @@ async function fetchBarsRange(input: HistoricalBarsRequest): Promise<BacktestBar
   const payload = await fetchJson<ApiBarsResponse>(url.toString());
   return filterRegularSessionBars(
     input.timeframe,
-    payload.bars.map(normalizeBar),
+    payload.bars.map(normalizeApiBar),
   );
 }
 
@@ -362,15 +347,7 @@ async function insertBars(datasetId: string, bars: BacktestBar[]): Promise<void>
   for (let index = 0; index < bars.length; index += chunkSize) {
     const chunk = bars.slice(index, index + chunkSize);
     await db.insert(historicalBarsTable).values(
-      chunk.map((bar) => ({
-        datasetId,
-        startsAt: bar.startsAt,
-        open: String(bar.open),
-        high: String(bar.high),
-        low: String(bar.low),
-        close: String(bar.close),
-        volume: String(bar.volume),
-      })),
+      chunk.map((bar) => toHistoricalBarInsert(datasetId, bar)),
     );
   }
 }
@@ -397,14 +374,7 @@ async function loadBarsFromDataset(
     .set({ lastAccessedAt: new Date(), updatedAt: new Date() })
     .where(eq(historicalBarDatasetsTable.id, dataset.id));
 
-  return rows.map((row) => ({
-    startsAt: row.startsAt,
-    open: safeNumber(row.open),
-    high: safeNumber(row.high),
-    low: safeNumber(row.low),
-    close: safeNumber(row.close),
-    volume: safeNumber(row.volume),
-  }));
+  return rows.map(normalizeStoredHistoricalBar);
 }
 
 async function findCoveringDataset(
@@ -816,15 +786,6 @@ function applySlippage(price: number, side: "buy" | "sell", slippageBps: number)
   return side === "buy" ? price * (1 + multiplier) : price * (1 - multiplier);
 }
 
-function resolveExecutionMode(
-  study: StudyDefinition,
-): "spot" | "options" | "signal_options" {
-  return study.parameters["executionMode"] === "options" ||
-    study.parameters["executionMode"] === "signal_options"
-    ? study.parameters["executionMode"]
-    : "spot";
-}
-
 function resolveSignalOptionsProfileFromStudy(
   study: StudyDefinition,
 ): SignalOptionsExecutionProfile | null {
@@ -1058,7 +1019,7 @@ function resolveSignalOptionsRiskExit(
   position: OptionPositionState,
   profile: SignalOptionsExecutionProfile,
   untilMs: number,
-): { bar: BacktestBar; price: number; reason: string } | null {
+): { bar: BacktestBar; price: number; reason: string; index: number } | null {
   for (
     let index = position.lastRiskBarIndex + 1;
     index < position.bars.length;
@@ -1112,6 +1073,7 @@ function resolveSignalOptionsRiskExit(
         bar,
         price: bar.open <= conservative.price ? bar.open : conservative.price,
         reason: conservative.reason,
+        index,
       };
     }
   }
@@ -1119,26 +1081,32 @@ function resolveSignalOptionsRiskExit(
   return null;
 }
 
-async function runOptionsBacktest(
+type RunOptionsBacktestDependencies = {
+  resolveOptionContractForSignal?: typeof resolveOptionContractForSignal;
+  loadDataset?: typeof loadDataset;
+};
+
+export async function runOptionsBacktest(
   study: StudyDefinition,
   barsBySymbol: Record<string, BacktestBar[]>,
+  dependencies: RunOptionsBacktestDependencies = {},
 ): Promise<{
   result: PersistedResult;
   datasetBindings: RunDatasetBinding[];
 }> {
-  const warnings: string[] = [
-    "Options backtests use trade-derived option aggregates/bars; historical quote/NBBO replay is not available on the current Massive Developer plans.",
-  ];
+  const resolveContract =
+    dependencies.resolveOptionContractForSignal ?? resolveOptionContractForSignal;
+  const loadHistoricalDataset = dependencies.loadDataset ?? loadDataset;
+  const optionFillPolicy = resolveWorkerOptionFillPolicy(study.parameters);
+  const warnings: string[] = optionFillPolicy ? [] : [OPTIONS_AGGREGATE_BARS_WARNING];
   const trades: SimulatedOptionTrade[] = [];
   const datasetBindings: RunDatasetBinding[] = [];
   const positions = new Map<string, OptionPositionState>();
   const signalOptionsProfile = resolveSignalOptionsProfileFromStudy(study);
   const dailyRealizedPnl = new Map<string, number>();
   let cash = study.portfolioRules.initialCapital;
-  if (signalOptionsProfile) {
-    warnings.push(
-      "Signal-options backtests replay real option aggregate bars; historical bid/ask freshness gates are reported as configuration only.",
-    );
+  if (signalOptionsProfile && !optionFillPolicy) {
+    warnings.push(SIGNAL_OPTIONS_AGGREGATE_BARS_WARNING);
   }
 
   const recordClosedPosition = (
@@ -1169,12 +1137,50 @@ async function runOptionsBacktest(
     }
   };
 
+  const resolveOptionExitPrice = (
+    position: OptionPositionState,
+    exitBar: BacktestBar,
+    occurredAt: Date,
+    side: "sell",
+  ): number | null => {
+    if (!optionFillPolicy) {
+      return applySlippage(
+        exitBar.open,
+        side,
+        study.executionProfile.slippageBps,
+      );
+    }
+
+    const decision = resolveWorkerOptionFill({
+      bar: exitBar,
+      side,
+      policy: optionFillPolicy,
+      occurredAt,
+    });
+    if (decision.status === "filled") {
+      return decision.fillPrice;
+    }
+
+    warnings.push(
+      formatOptionFillNoFillWarning({
+        symbol: position.symbol,
+        optionTicker: position.contract.ticker,
+        side,
+        model: optionFillPolicy.model,
+        occurredAt,
+        reason: decision.reason,
+      }),
+    );
+    return null;
+  };
+
   const closeSignalOptionsRiskExits = (untilMs: number): void => {
     if (!signalOptionsProfile) {
       return;
     }
 
     [...positions.values()].forEach((position) => {
+      const previousLastRiskBarIndex = position.lastRiskBarIndex;
       const riskExit = resolveSignalOptionsRiskExit(
         position,
         signalOptionsProfile,
@@ -1184,11 +1190,17 @@ async function runOptionsBacktest(
         return;
       }
 
-      const exitPrice = applySlippage(
-        riskExit.price,
-        "sell",
-        study.executionProfile.slippageBps,
-      );
+      const exitPrice = optionFillPolicy
+        ? resolveOptionExitPrice(position, riskExit.bar, riskExit.bar.startsAt, "sell")
+        : applySlippage(
+            riskExit.price,
+            "sell",
+            study.executionProfile.slippageBps,
+          );
+      if (exitPrice == null) {
+        position.lastRiskBarIndex = previousLastRiskBarIndex;
+        return;
+      }
       recordClosedPosition(position, riskExit.bar, exitPrice, riskExit.reason);
     });
   };
@@ -1256,11 +1268,15 @@ async function runOptionsBacktest(
           );
         }
 
-        const exitPrice = applySlippage(
-          exitBar.open,
+        const exitPrice = resolveOptionExitPrice(
+          existingPosition,
+          exitBar,
+          event.occurredAt,
           "sell",
-          study.executionProfile.slippageBps,
         );
+        if (exitPrice == null) {
+          continue;
+        }
         recordClosedPosition(
           existingPosition,
           exitBar,
@@ -1299,7 +1315,7 @@ async function runOptionsBacktest(
       continue;
     }
 
-    const contract = await resolveOptionContractForSignal({
+    const contract = await resolveContract({
       underlying: event.symbol,
       occurredAt: event.occurredAt,
       right: desiredRight,
@@ -1322,7 +1338,7 @@ async function runOptionsBacktest(
     const optionTo = new Date(
       Math.min(study.to.getTime(), contract.expirationDate.getTime()),
     );
-    const optionData = await loadDataset({
+    const optionData = await loadHistoricalDataset({
       symbol: contract.ticker,
       timeframe: study.timeframe,
       from: event.occurredAt,
@@ -1348,17 +1364,52 @@ async function runOptionsBacktest(
       continue;
     }
 
+    if (
+      optionFillPolicy &&
+      !isQuoteReplayEligible(study.timeframe, optionData.bars)
+    ) {
+      warnings.push(
+        `${event.symbol}: ${contract.ticker} ${optionFillPolicy.model} fill skipped at ${event.occurredAt.toISOString()} because quote replay is unavailable for ${study.timeframe} option bars.`,
+      );
+      continue;
+    }
+
     if (entryBar.startsAt.getTime() > event.occurredAt.getTime()) {
       warnings.push(
         `${event.symbol}: ${contract.ticker} filled on the next available intraday bar after the signal.`,
       );
     }
 
-    const entryPrice = applySlippage(
-      entryBar.open,
-      "buy",
-      study.executionProfile.slippageBps,
-    );
+    const entryFill = optionFillPolicy
+      ? resolveWorkerOptionFill({
+          bar: entryBar,
+          side: "buy",
+          policy: optionFillPolicy,
+          occurredAt: event.occurredAt,
+        })
+      : null;
+    if (entryFill?.status === "no_fill") {
+      warnings.push(
+        formatOptionFillNoFillWarning({
+          symbol: event.symbol,
+          optionTicker: contract.ticker,
+          side: "buy",
+          model: optionFillPolicy!.model,
+          occurredAt: event.occurredAt,
+          reason: entryFill.reason,
+        }),
+      );
+      continue;
+    }
+
+    const entryPrice =
+      entryFill?.status === "filled"
+        ? entryFill.fillPrice
+        : applySlippage(
+            entryBar.open,
+            "buy",
+            study.executionProfile.slippageBps,
+          );
     const contractCost = entryPrice * contract.multiplier;
     const targetPositionValue =
       study.portfolioRules.initialCapital *
@@ -1396,7 +1447,7 @@ async function runOptionsBacktest(
     }
 
     cash -= totalCost;
-    positions.set(event.symbol, {
+    const openedPosition: OptionPositionState = {
       symbol: event.symbol,
       right: desiredRight,
       dataset: optionData.dataset,
@@ -1411,7 +1462,24 @@ async function runOptionsBacktest(
       entryCommissionPaid,
       peakPrice: entryPrice,
       trailingStopPrice: null,
-    });
+    };
+    positions.set(event.symbol, openedPosition);
+
+    if (optionFillPolicy && signalOptionsProfile) {
+      const sameBarExit = resolveWorkerSameBarConservativeExit({
+        entryBar,
+        entryPrice,
+        hardStopPct: signalOptionsProfile.exitPolicy.hardStopPct,
+      });
+      if (sameBarExit) {
+        recordClosedPosition(
+          openedPosition,
+          entryBar,
+          sameBarExit.price,
+          sameBarExit.reason,
+        );
+      }
+    }
   }
 
   closeSignalOptionsRiskExits(study.to.getTime());
@@ -1424,11 +1492,17 @@ async function runOptionsBacktest(
       return;
     }
 
-    const exitPrice = applySlippage(
-      exitBar.close,
-      "sell",
-      study.executionProfile.slippageBps,
-    );
+    const exitPrice = optionFillPolicy
+      ? resolveOptionExitPrice(position, exitBar, exitBar.startsAt, "sell")
+      : applySlippage(
+          exitBar.close,
+          "sell",
+          study.executionProfile.slippageBps,
+        );
+    if (exitPrice == null) {
+      warnings.push(`${symbol}: unable to liquidate ${position.contract.ticker} at run end.`);
+      return;
+    }
     recordClosedPosition(position, exitBar, exitPrice, "end_of_run");
   });
 
@@ -1481,8 +1555,10 @@ async function executeStudyRun(
   datasetBindings: RunDatasetBinding[];
 }> {
   if (
-    resolveExecutionMode(study) !== "spot" &&
-    study.strategyId === "pyrus_signals"
+    shouldRunOptionsBacktest({
+      strategyId: study.strategyId,
+      parameters: study.parameters,
+    })
   ) {
     const optionResult = await runOptionsBacktest(study, barsBySymbol);
     return {
@@ -1852,9 +1928,11 @@ async function processSweep(job: JobRow): Promise<void> {
   let effectiveCandidates = candidateParameters;
 
   if (
-    sweep.mode === "walk_forward" &&
-    windows.length > 0 &&
-    resolveExecutionMode(buildStudyDefinition(study, baseParameters)) === "spot"
+    shouldRankWalkForwardCandidatesWithSharedCore({
+      sweepMode: sweep.mode,
+      windowsCount: windows.length,
+      parameters: buildStudyDefinition(study, baseParameters).parameters,
+    })
   ) {
     const firstTrainingWindow = windows[0]!;
     const trainingBars = sliceBarsByWindow(
@@ -2241,27 +2319,33 @@ async function runWorkerLoop(): Promise<void> {
   }
 }
 
-const command = process.argv[2];
+const entrypointPath = process.argv[1];
+const isDirectEntrypoint =
+  entrypointPath != null && import.meta.url === pathToFileURL(entrypointPath).href;
 
-if (command === "seed-benchmarks") {
-  seedBenchmarks()
-    .then(() => {
-      logger.info("Benchmark seed complete");
-      process.exit(0);
-    })
-    .catch((error) => {
+if (isDirectEntrypoint) {
+  const command = process.argv[2];
+
+  if (command === "seed-benchmarks") {
+    seedBenchmarks()
+      .then(() => {
+        logger.info("Benchmark seed complete");
+        process.exit(0);
+      })
+      .catch((error) => {
+        logger.error(
+          { err: error instanceof Error ? error : new Error(String(error)) },
+          "Benchmark seed failed",
+        );
+        process.exit(1);
+      });
+  } else {
+    runWorkerLoop().catch((error) => {
       logger.error(
         { err: error instanceof Error ? error : new Error(String(error)) },
-        "Benchmark seed failed",
+        "Backtest worker crashed",
       );
       process.exit(1);
     });
-} else {
-  runWorkerLoop().catch((error) => {
-    logger.error(
-      { err: error instanceof Error ? error : new Error(String(error)) },
-      "Backtest worker crashed",
-    );
-    process.exit(1);
-  });
+  }
 }

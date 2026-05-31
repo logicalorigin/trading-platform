@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
-  HelpCircle,
   MinusCircle,
   Radar,
   Send,
@@ -25,7 +24,6 @@ import {
 import { formatRelativeTimeShort } from "../../lib/formatters";
 import {
   MicroSparkline,
-  TableExpandableRow,
 } from "../../components/platform/primitives.jsx";
 import { getStoredOptionQuoteSnapshot } from "../../features/platform/live-streams";
 import { useValueFlash } from "../../lib/motion.jsx";
@@ -56,13 +54,20 @@ import {
   resolveSignalAge,
   resolveSignalMove,
   resolveSignalScoreBreakdown,
+  signalActionBlockerLabel,
   signalActionLabel,
   signalFreshnessLabel,
   signalOptionsActionColor,
   signalOptionsActionLabel,
 } from "./algoHelpers";
 
+export const SIGNAL_TABLE_ROW_HEIGHT = 34;
+export const SIGNAL_TABLE_HEADER_HEIGHT = 24;
+
 const SIGNAL_ICON_SIZE = 12;
+const SIGNAL_TABLE_CELL_PADDING = "1px 4px";
+const SIGNAL_TABLE_ACTION_CELL_PADDING = "1px 2px";
+const SIGNAL_TABLE_BORDER = () => `1px solid ${CSS_COLOR.borderLight}`;
 
 const columnTrack = (column) => {
   if (column.track) return column.track;
@@ -182,7 +187,6 @@ export const DEFAULT_SIGNAL_VISIBLE_COLUMNS = [
   "spread",
   "greeks",
   "gate",
-  "sync",
   "score",
   "decision",
   "rowAction",
@@ -346,7 +350,8 @@ const formatQuoteAge = (ageMs) => {
   return `${(numeric / 3_600_000).toFixed(1)}h`;
 };
 
-const formatSpreadWidth = (widthPct) => {
+export const formatSpreadWidth = (widthPct) => {
+  if (widthPct == null || widthPct === "") return MISSING_VALUE;
   const numeric = Number(widthPct);
   if (!Number.isFinite(numeric)) return MISSING_VALUE;
   const pct = numeric * 100;
@@ -371,48 +376,27 @@ const scoreTierLabel = (tier) => {
     .join(" ");
 };
 
-const compactSignalMovePct = (signalMove) => {
-  const detail = String(signalMove?.detail || "");
-  const match = detail.match(/[+-]?\d+(?:\.\d+)?%/);
-  if (match) return match[0];
-  return signalMove?.label || MISSING_VALUE;
-};
-
 const missingDisplay = (main, detail = MISSING_VALUE) => ({ main, detail });
 
 const missingContractDisplay = (candidate, blocker) => {
-  if (!candidate) return missingDisplay("Monitor only", "not in action queue");
-  if (blocker !== MISSING_VALUE) return missingDisplay("Not selected", blocker);
+  if (!candidate || blocker !== MISSING_VALUE) {
+    return missingDisplay(MISSING_VALUE, MISSING_VALUE);
+  }
   const actionStatus = candidate?.actionStatus || candidate?.status;
   if (actionStatus) {
-    return missingDisplay("Selection pending", signalOptionsActionLabel(actionStatus));
+    return missingDisplay("Selecting", MISSING_VALUE);
   }
-  return missingDisplay("Selection pending", "option chain scan");
+  return missingDisplay("Selecting", MISSING_VALUE);
 };
 
-const missingQuoteDisplay = ({ candidate, blocker, selectedContractId }) => {
-  if (selectedContractId) return missingDisplay("Quote pending", "waiting for bid/ask");
-  if (!candidate) return missingDisplay("Not requested", "monitor signal only");
-  if (blocker !== MISSING_VALUE) {
-    return missingDisplay("Not requested", "blocked before quote");
+const missingQuoteDisplay = ({ blocker, selectedContractId }) => {
+  if (selectedContractId && blocker === MISSING_VALUE) {
+    return missingDisplay("Quote pending", MISSING_VALUE);
   }
-  return missingDisplay("Waiting on contract", "selection pending");
+  return missingDisplay(MISSING_VALUE, MISSING_VALUE);
 };
 
-const missingGreeksDisplay = ({
-  candidate,
-  blocker,
-  hasQuote,
-  selectedContractId,
-}) => {
-  if (hasQuote) return missingDisplay("Greeks unavailable", "quote lacks greeks");
-  if (selectedContractId) return missingDisplay("Quote pending", "greeks wait for quote");
-  if (!candidate) return missingDisplay("Not requested", "monitor signal only");
-  if (blocker !== MISSING_VALUE) {
-    return missingDisplay("Not requested", "blocked before quote");
-  }
-  return missingDisplay("Waiting on quote", "selection pending");
-};
+const missingGreeksDisplay = () => missingDisplay(MISSING_VALUE, MISSING_VALUE);
 
 const statusPillMeta = (signal, candidate, blocker) => {
   if (blocker !== MISSING_VALUE) {
@@ -564,19 +548,19 @@ const DECISION_DETAIL_META = {
 };
 
 const resolveDecisionDetailMeta = ({ candidate, gate, blocker, statusMeta }) => {
-  if (!candidate) {
-    return {
-      tone: CSS_COLOR.cyan,
-      shortLabel: "Monitor only",
-      fullLabel: "No action candidate resolved",
-    };
-  }
   if (blocker !== MISSING_VALUE) {
     const base = DECISION_DETAIL_META[gate.category] || DECISION_DETAIL_META.other;
     return {
       tone: gate.tone || base.tone,
       shortLabel: gate.detail || blocker,
       fullLabel: `${base.label}: ${gate.detail || blocker}`,
+    };
+  }
+  if (!candidate) {
+    return {
+      tone: CSS_COLOR.cyan,
+      shortLabel: "Monitor only",
+      fullLabel: "No action candidate resolved",
     };
   }
 
@@ -648,20 +632,6 @@ const resolveFreshnessRatio = (signal) => {
   return signal?.fresh ? 1 : 0;
 };
 
-const signalFallbackState = (signal, directionPrimitive) => {
-  if (!signal?.timeframe) return null;
-  return {
-    timeframe: String(signal.timeframe),
-    currentSignalDirection: directionPrimitive,
-    currentSignalAt: signal.signalAt,
-    currentSignalPrice: signal.signalPrice,
-    barsSinceSignal: signal.barsSinceSignal,
-    fresh: signal.fresh,
-    status: signal.status,
-    latestBarAt: signal.latestBarAt,
-  };
-};
-
 const quoteGaugeInput = (quote, liquidity) => {
   const quoteRecord = asRecord(quote);
   const liquidityRecord = asRecord(liquidity);
@@ -719,7 +689,7 @@ const actionPlanDisplay = (signal, candidate) => {
   ].filter(Boolean);
   return {
     main: detail.length ? detail.join(" · ") : action,
-    detail: compactJoin([action, formatContractDetail(candidate.selectedContract).main]),
+    detail: detail.length ? action : MISSING_VALUE,
   };
 };
 
@@ -740,151 +710,103 @@ const DataCell = ({
   titleValue,
   motionState = null,
   className = null,
-}) => (
-  <span
-    className={signalCellClassName(motionState, className)}
-    title={[
-      titleValue ?? (typeof value === "string" ? value : null),
-      detail,
-    ].filter(Boolean).join(" · ")}
-    style={{
-      display: "grid",
-      gap: 0,
-      minWidth: 0,
-      color: tone,
-      overflow: "hidden",
-      lineHeight: 1.12,
-    }}
-  >
+}) => {
+  const hasDetail = hasDisplayValue(detail) || Boolean(detailExtra);
+  return (
     <span
+      className={signalCellClassName(motionState, className)}
+      title={[
+        titleValue ?? (typeof value === "string" ? value : null),
+        hasDisplayValue(detail) ? detail : null,
+      ].filter(Boolean).join(" · ")}
       style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(3),
+        display: "grid",
+        gap: 0,
         minWidth: 0,
+        color: tone,
         overflow: "hidden",
-        whiteSpace: "nowrap",
         lineHeight: 1.12,
       }}
     >
-      {icon ? (
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(3),
+          minWidth: 0,
+          overflow: "hidden",
+          whiteSpace: "nowrap",
+          lineHeight: 1.12,
+        }}
+      >
+        {icon ? (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              flex: "0 0 auto",
+            }}
+          >
+            {icon}
+          </span>
+        ) : null}
         <span
           style={{
-            display: "inline-flex",
-            alignItems: "center",
-            flex: "0 0 auto",
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
           }}
         >
-          {icon}
+          {value}
         </span>
-      ) : null}
-      <span
-        style={{
-          minWidth: 0,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {value}
       </span>
-    </span>
-    <span
-      style={{
-        color: detailTone,
-        fontSize: textSize("caption"),
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(3),
-        minWidth: 0,
-        lineHeight: 1.12,
-      }}
-    >
-      <span
-        style={{
-          minWidth: 0,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {detail}
-      </span>
-      {detailExtra ? (
-        <span style={{ flex: "0 0 auto", display: "inline-flex" }}>
-          {detailExtra}
+      {hasDetail ? (
+        <span
+          style={{
+            color: detailTone,
+            fontSize: textSize("caption"),
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(3),
+            minWidth: 0,
+            lineHeight: 1.12,
+          }}
+        >
+          {hasDisplayValue(detail) ? (
+            <span
+              style={{
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {detail}
+            </span>
+          ) : null}
+          {detailExtra ? (
+            <span style={{ flex: "0 0 auto", display: "inline-flex" }}>
+              {detailExtra}
+            </span>
+          ) : null}
         </span>
       ) : null}
     </span>
-  </span>
-);
-
-const MobileMetricChip = ({
-  label,
-  value,
-  detail,
-  tone = CSS_COLOR.textSec,
-  titleValue,
-  motionState = null,
-  className = null,
-}) => (
-  <span
-    className={signalCellClassName(motionState, className)}
-    title={compactJoin([titleValue, value, detail])}
-    style={{
-      display: "inline-grid",
-      gridTemplateColumns: "auto minmax(0, 1fr)",
-      alignItems: "baseline",
-      columnGap: sp(3),
-      minWidth: 0,
-      height: dim(18),
-      padding: sp("0 4px"),
-      border: `1px solid ${CSS_COLOR.border}`,
-      borderRadius: dim(RADII.pill),
-      background: `${cssColorMix(CSS_COLOR.bg2, 80)}`,
-      overflow: "hidden",
-      lineHeight: 1,
-    }}
-  >
-    <span
-      style={{
-        color: CSS_COLOR.textMuted,
-        fontSize: fs(8),
-        lineHeight: 1,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </span>
-    <span
-      style={{
-        color: tone,
-        fontSize: fs(9),
-        fontWeight: FONT_WEIGHTS.medium,
-        fontVariantNumeric: "tabular-nums",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {value}
-    </span>
-  </span>
-);
+  );
+};
 
 const SignalHeroCell = ({
   signalRecord,
   candidate,
   direction,
   tfMatrix,
-  fallbackState,
   freshnessRatio,
   price,
   priceFlashClassName,
   sparklineData,
   signalMove,
+  showSignalMove = true,
 }) => (
   <span
     data-testid="algo-signal-hero-cell"
@@ -922,7 +844,11 @@ const SignalHeroCell = ({
           freshnessRatio={freshnessRatio}
           freshnessBars={signalRecord.barsSinceSignal}
           tone={CSS_COLOR.textSec}
-          className={signalRecord.fresh ? "ra-signal-glyph-fresh" : undefined}
+          className={
+            signalRecord.fresh && signalRecord.actionEligible !== false
+              ? "ra-signal-glyph-fresh"
+              : undefined
+          }
         />
         <StrategyTag candidate={candidate} signal={signalRecord} />
         <span
@@ -964,7 +890,6 @@ const SignalHeroCell = ({
         <SignalDots
           testId="algo-signal-dots"
           statesByTimeframe={tfMatrix}
-          fallbackState={fallbackState}
           style={{ minWidth: dim(36), gap: sp(4) }}
         />
         <span
@@ -998,15 +923,17 @@ const SignalHeroCell = ({
             />
           </span>
         ) : null}
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-          {[
-            signalMove?.detail && signalMove.detail !== MISSING_VALUE
-              ? signalMove.detail
-              : null,
-          ]
-            .filter(Boolean)
-            .join(" · ") || MISSING_VALUE}
-        </span>
+        {showSignalMove ? (
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+            {[
+              signalMove?.label && signalMove.label !== MISSING_VALUE
+                ? signalMove.label
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || MISSING_VALUE}
+          </span>
+        ) : null}
       </span>
     </span>
   </span>
@@ -1032,7 +959,9 @@ const decisionDetailText = ({
     pushDistinctLabel(parts, detailLabel);
   }
   pushDistinctLabel(parts, statusMeta?.label);
-  pushDistinctLabel(parts, sync?.label);
+  if (sync?.label === "Mismatch" || sync?.label === "Event only") {
+    pushDistinctLabel(parts, sync.label);
+  }
   if (!parts.length) pushDistinctLabel(parts, latest);
   pushDistinctLabel(parts, latestTime);
   return compactJoin(parts);
@@ -1136,15 +1065,7 @@ const DecisionCell = ({
 
 const resolveRowAction = ({ candidate, blocker, signalRecord, verdict }) => {
   if (signalRecord?.status === "unavailable" || !candidate) return null;
-  if (blocker !== MISSING_VALUE) {
-    return {
-      id: "why",
-      label: "Why?",
-      title: blocker,
-      tone: CSS_COLOR.amber,
-      Icon: HelpCircle,
-    };
-  }
+  if (blocker !== MISSING_VALUE) return null;
   if (verdict?.bucket !== "try") return null;
   return {
     id: "submit",
@@ -1161,14 +1082,11 @@ const RowActionButton = ({ action, onAction }) => {
       <span
         aria-hidden="true"
         style={{
-          color: CSS_COLOR.textDim,
-          display: "inline-flex",
-          justifyContent: "center",
+          display: "block",
           width: "100%",
+          height: dim(24),
         }}
-      >
-        -
-      </span>
+      />
     );
   }
   const Icon = action.Icon;
@@ -1178,7 +1096,6 @@ const RowActionButton = ({ action, onAction }) => {
       className={classNames(
         "ra-signal-action-button",
         action.id === "submit" ? "ra-signal-action-button-ready" : null,
-        action.id === "why" ? "ra-signal-action-button-blocked" : null,
       )}
       data-testid={`algo-signal-row-action-${action.id}`}
       title={action.title || action.label}
@@ -1209,7 +1126,6 @@ const RowActionButton = ({ action, onAction }) => {
 };
 
 export const OperationsSignalTableHeader = ({
-  algoIsPhone,
   columns = DEFAULT_SIGNAL_VISIBLE_COLUMNS,
   sortKey = "newest",
   sortDirection = "desc",
@@ -1222,16 +1138,17 @@ export const OperationsSignalTableHeader = ({
       style={{
         display: "grid",
         gridTemplateColumns: signalColumnTemplate(visibleColumns),
-        gap: sp(2),
+        gap: 0,
         alignItems: "center",
-        padding: sp("2px 6px"),
+        height: dim(SIGNAL_TABLE_HEADER_HEIGHT),
+        padding: 0,
         borderBottom: `1px solid ${CSS_COLOR.border}`,
         background: CSS_COLOR.bg1,
         color: CSS_COLOR.textMuted,
         fontFamily: T.sans,
         fontSize: textSize("caption"),
         letterSpacing: 0,
-        textTransform: "uppercase",
+        textTransform: "none",
         position: "sticky",
         top: 0,
         zIndex: 1,
@@ -1274,8 +1191,16 @@ export const OperationsSignalTableHeader = ({
           aria-sort={sort ? ariaSort : undefined}
           style={{
             display: "inline-flex",
-            alignItems: "baseline",
+            alignItems: "center",
             gap: sp(4),
+            height: "100%",
+            padding: sp(
+              column.key === "rowAction"
+                ? SIGNAL_TABLE_ACTION_CELL_PADDING
+                : SIGNAL_TABLE_CELL_PADDING,
+            ),
+            borderRight: SIGNAL_TABLE_BORDER(),
+            boxSizing: "border-box",
             minWidth: 0,
           }}
         >
@@ -1293,6 +1218,7 @@ export const OperationsSignalTableHeader = ({
                 alignItems: "center",
                 gap: sp(4),
                 minWidth: 0,
+                height: "100%",
                 padding: 0,
                 border: 0,
                 background: "transparent",
@@ -1301,7 +1227,7 @@ export const OperationsSignalTableHeader = ({
                 fontSize: textSize("caption"),
                 fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
                 letterSpacing: 0,
-                textTransform: "uppercase",
+                textTransform: "none",
                 cursor: "pointer",
                 textDecoration: active ? `underline ${cssColorMix(CSS_COLOR.accent, 40)}` : "none",
                 textUnderlineOffset: dim(3),
@@ -1331,37 +1257,67 @@ export const OperationsSignalTableHeader = ({
 export const OperationsSignalRow = ({
   signal,
   candidate,
-  expanded,
-  onToggle,
-  expandedContent,
-  algoIsPhone,
   tfMatrix = null,
   tickerSnapshot = null,
   scoreBreakdown: providedScoreBreakdown = null,
   onRowAction,
   columns = DEFAULT_SIGNAL_VISIBLE_COLUMNS,
   scanActive = false,
+  alt = false,
 }) => {
   const signalRecord = asRecord(signal);
-  const liveQuote = getStoredOptionQuoteSnapshot(
-    optionProviderContractId(candidate?.selectedContract),
+  const contractPreview = asRecord(signalRecord.contractPreview);
+  const candidateContract = asRecord(candidate?.selectedContract);
+  const previewContract = asRecord(contractPreview.selectedContract);
+  const hasCandidateContract = Object.keys(candidateContract).length > 0;
+  const hasPreviewContract = Object.keys(previewContract).length > 0;
+  const effectiveSelectedContract = hasCandidateContract
+    ? candidate?.selectedContract
+    : hasPreviewContract
+      ? previewContract
+      : candidate?.selectedContract;
+  const contractIsPreview = !hasCandidateContract && hasPreviewContract;
+  const selectedContractId = optionProviderContractId(effectiveSelectedContract);
+  const liveQuote = getStoredOptionQuoteSnapshot(selectedContractId);
+  const previewQuote = contractIsPreview ? asRecord(contractPreview.quote) : null;
+  const previewLiquidity = contractIsPreview
+    ? asRecord(contractPreview.liquidity)
+    : null;
+  const effectiveQuote = mergeOptionQuoteSnapshot(
+    candidate?.quote ?? previewQuote,
+    liveQuote,
   );
-  const effectiveQuote = mergeOptionQuoteSnapshot(candidate?.quote, liveQuote);
+  const effectiveLiquidity = candidate?.liquidity ?? previewLiquidity;
   const signalState = signalDisplay(signalRecord);
   const direction = signalState.direction;
-  const blocker = candidateBlockerLabel(candidate);
-  const selectedContractId = optionProviderContractId(candidate?.selectedContract);
-  const rawContract = formatContractDetail(candidate?.selectedContract);
+  const candidateBlocker = candidateBlockerLabel(candidate);
+  const signalBlocker = signalActionBlockerLabel(signalRecord);
+  const blocker =
+    candidateBlocker !== MISSING_VALUE ? candidateBlocker : signalBlocker;
+  const rawContract = formatContractDetail(effectiveSelectedContract);
   const contract = hasDisplayValue(rawContract.main)
-    ? rawContract
+    ? {
+        ...rawContract,
+        detail: contractIsPreview
+          ? compactJoin(["Preview", rawContract.detail])
+          : rawContract.detail,
+      }
     : missingContractDisplay(candidate, blocker);
   const actionPlan = actionPlanDisplay(signalRecord, candidate);
-  const rawQuote = formatQuoteSummary(effectiveQuote, candidate?.liquidity);
+  const rawQuote = formatQuoteSummary(effectiveQuote, effectiveLiquidity);
   const hasQuote = hasDisplayValue(rawQuote.main);
   const quote = hasQuote
     ? rawQuote
     : missingQuoteDisplay({ candidate, blocker, selectedContractId });
-  const quoteState = liquidityMeta(candidate);
+  const quoteState = liquidityMeta(
+    contractIsPreview
+      ? {
+          reason: contractPreview.reason,
+          quote: previewQuote,
+          liquidity: previewLiquidity,
+        }
+      : candidate,
+  );
   const QuoteIcon = quoteState.Icon;
   const rawGreeks = formatQuoteGreeksSummary(effectiveQuote);
   const greeks = hasDisplayValue(rawGreeks.main)
@@ -1373,7 +1329,7 @@ export const OperationsSignalRow = ({
       signal: signalRecord,
       candidate,
       quote: effectiveQuote,
-      liquidity: candidate?.liquidity,
+      liquidity: effectiveLiquidity,
     });
   const actionabilityScore =
     scoreBreakdown?.score == null ? null : Number(scoreBreakdown.score);
@@ -1381,7 +1337,17 @@ export const OperationsSignalRow = ({
     ...signalRecord,
     score: Number.isFinite(actionabilityScore) ? actionabilityScore : null,
   };
-  const gate = resolveCandidateGateDisplay(candidate);
+  const gate =
+    candidateBlocker !== MISSING_VALUE
+      ? resolveCandidateGateDisplay(candidate)
+      : signalBlocker !== MISSING_VALUE
+        ? {
+            category: "signal_policy",
+            label: "Policy",
+            detail: signalBlocker,
+            tone: CSS_COLOR.amber,
+          }
+        : resolveCandidateGateDisplay(candidate);
   const sync = resolveCandidateSyncDisplay(candidate);
   const statusMeta = statusPillMeta(signalRecord, candidate, blocker);
   const latest = candidateLatestActivityLabel(candidate);
@@ -1398,16 +1364,20 @@ export const OperationsSignalRow = ({
   const bars = formatBars(signalRecord.barsSinceSignal);
   const signalAge = resolveSignalAge(signalRecord);
   const since = signalSinceDisplay(signalRecord, signalAge, bars);
-  const signalMove = resolveSignalMove(signalRecord, tickerSnapshot);
+  const signalMove = resolveSignalMove(signalRecord, tickerSnapshot, candidate);
   const freshnessRatio = resolveFreshnessRatio(signalRecord);
-  const fallbackState = signalFallbackState(signalRecord, direction.primitive);
+  const signalAgeBlocked =
+    signalRecord.actionEligible === false || Boolean(signalRecord.actionBlocker);
+  const signalAgeTone =
+    signalRecord.fresh && !signalAgeBlocked ? CSS_COLOR.green : CSS_COLOR.amber;
   const freshAndHot = Boolean(
     signalRecord.fresh &&
+      !signalAgeBlocked &&
       Number.isFinite(actionabilityScore) &&
       actionabilityScore >= SCORE_FRESH_ROW_GLOW,
   );
   const sparklineData = resolveSparklineData(tickerSnapshot, signalRecord);
-  const spreadGauge = quoteGaugeInput(effectiveQuote, candidate?.liquidity);
+  const spreadGauge = quoteGaugeInput(effectiveQuote, effectiveLiquidity);
   const verdict = resolveSignalVerdict({
     signal: actionabilitySignalRecord,
     signalRecord: actionabilitySignalRecord,
@@ -1417,7 +1387,7 @@ export const OperationsSignalRow = ({
   const rowAction = resolveRowAction({ candidate, blocker, signalRecord, verdict });
   const quoteAge = formatQuoteAge(effectiveQuote?.ageMs ?? effectiveQuote?.cacheAgeMs);
   const actionValue = actionPlan.main;
-  const actionDetail = compactJoin([actionPlan.detail, contract.detail]);
+  const actionDetail = actionPlan.detail;
   const executionTitle = compactJoin([
     quote.main,
     quote.detail,
@@ -1433,34 +1403,35 @@ export const OperationsSignalRow = ({
     statusMeta,
   });
   const rowClassName = [
+    "ra-table-row",
+    alt ? "ra-position-table-row--alt" : null,
     "ra-signal-row-focus",
-    freshAndHot && !algoIsPhone ? "ra-signal-row-glow" : null,
+    freshAndHot ? "ra-signal-row-glow" : null,
   ]
     .filter(Boolean)
     .join(" ");
   const handleRowAction = (actionId) => {
     onRowAction?.({ actionId, signal: signalRecord, candidate });
   };
-  const mobileVerdictMeta = {
-    label: verdict?.label || statusMeta.label,
-    tone: verdict?.tone || statusMeta.tone,
-    Icon: verdict?.Icon || statusMeta.Icon,
-  };
-  const showMobileSignalDots =
-    direction.primitive &&
-    Object.values(asRecord(tfMatrix)).some((state) => {
-      const timeframeDirection = asRecord(state).currentSignalDirection;
-      return timeframeDirection && timeframeDirection !== direction.primitive;
-    });
   const visibleColumns = resolveSignalVisibleColumnObjects(columns);
+  const hasMoveColumn = visibleColumns.some((column) => column.key === "move");
   const spreadWidth = formatSpreadWidth(spreadGauge.widthPct);
-  const spreadTone = Number.isFinite(Number(spreadGauge.widthPct))
-    ? spreadGaugeTone(spreadGauge.widthPct)
-    : quoteState.tone;
-  const spreadDetail = compactJoin([
-    hasQuote ? compactQuoteText(quote.detail) : quote.detail,
-    quoteAge !== MISSING_VALUE ? `age ${quoteAge}` : null,
-  ]);
+  const quoteTone = contractIsPreview ? CSS_COLOR.textDim : quoteState.tone;
+  const spreadTone = contractIsPreview
+    ? CSS_COLOR.textDim
+    : Number.isFinite(Number(spreadGauge.widthPct))
+      ? spreadGaugeTone(spreadGauge.widthPct)
+      : quoteState.tone;
+  const contractTone =
+    hasDisplayValue(rawContract.main) && !contractIsPreview
+      ? CSS_COLOR.textSec
+      : CSS_COLOR.textDim;
+  const greeksTone =
+    hasDisplayValue(rawGreeks.main) && !contractIsPreview
+      ? CSS_COLOR.textSec
+      : CSS_COLOR.textDim;
+  const quoteDetail = quoteAge !== MISSING_VALUE ? `age ${quoteAge}` : MISSING_VALUE;
+  const spreadDetail = quoteDetail;
   const scoreValue = formatScore(actionabilityScore);
   const scoreDetail = compactJoin([
     scoreTierLabel(scoreBreakdown?.tier),
@@ -1505,7 +1476,11 @@ export const OperationsSignalRow = ({
   const scoreFlashClassName = useValueFlash(actionabilityScore);
   const awaitingScan = /awaiting scan/i.test(statusMeta.label);
   const quoteEvaluating =
-    scanActive && Boolean(candidate) && blocker === MISSING_VALUE && !hasQuote;
+    !contractIsPreview &&
+    scanActive &&
+    Boolean(candidate) &&
+    blocker === MISSING_VALUE &&
+    !hasQuote;
   const contractEvaluating =
     scanActive &&
     Boolean(candidate) &&
@@ -1513,9 +1488,15 @@ export const OperationsSignalRow = ({
     !hasDisplayValue(rawContract.main);
   const spreadEvaluating =
     quoteEvaluating ||
-    (scanActive && hasQuote && !Number.isFinite(Number(spreadGauge.widthPct)));
+    (!contractIsPreview &&
+      scanActive &&
+      hasQuote &&
+      !Number.isFinite(Number(spreadGauge.widthPct)));
   const greeksEvaluating =
-    scanActive && Boolean(selectedContractId) && !hasDisplayValue(rawGreeks.main);
+    !contractIsPreview &&
+    scanActive &&
+    Boolean(selectedContractId) &&
+    !hasDisplayValue(rawGreeks.main);
   const scoreEvaluating = scanActive && !Number.isFinite(actionabilityScore);
   const gateMotionState =
     blocker !== MISSING_VALUE || gate.category !== "clear"
@@ -1539,68 +1520,7 @@ export const OperationsSignalRow = ({
         : scanActive || awaitingScan
           ? "evaluating"
           : "wait";
-  const rowActionMotionState =
-    rowAction?.id === "submit" ? "ready" : rowAction?.id === "why" ? "blocked" : null;
-  const mobileAgeValue = compactJoin([
-    bars !== MISSING_VALUE ? `${bars}b` : null,
-    signalRecord.timeframe,
-  ]);
-  const mobileGateDetail = compactJoin([
-    blocker !== MISSING_VALUE
-      ? blocker
-      : gate.category === "clear"
-        ? "Gate clear"
-        : gate.detail || gate.label,
-    sync.label,
-  ]);
-  const mobileMetricCells = [
-    {
-      id: "age",
-      label: "Age",
-      value: mobileAgeValue,
-      detail: since.detail,
-      tone: signalRecord.fresh ? CSS_COLOR.green : CSS_COLOR.amber,
-      titleValue: compactJoin([since.main, since.detail, signalRecord.signalAt]),
-      className: ageFlashClassName,
-    },
-    {
-      id: "move",
-      label: "Mv",
-      value: compactSignalMovePct(signalMove),
-      detail: signalMove.label,
-      tone:
-        Number(signalMove.value) > 0
-          ? CSS_COLOR.green
-          : Number(signalMove.value) < 0
-            ? CSS_COLOR.red
-            : CSS_COLOR.textDim,
-      titleValue: signalMove.detail,
-      className: signalMoveFlashClassName,
-    },
-    {
-      id: "quote",
-      label: "Q",
-      value: compactQuoteText(quote.main),
-      detail: compactJoin([
-        spreadWidth !== MISSING_VALUE ? `${spreadWidth} spread` : null,
-        quoteAge !== MISSING_VALUE ? quoteAge : null,
-      ]),
-      tone: quoteState.tone,
-      titleValue: executionTitle,
-      motionState: quoteEvaluating ? "evaluating" : hasQuote ? "ready" : null,
-      className: quoteFlashClassName,
-    },
-    {
-      id: "score",
-      label: "Sc",
-      value: scoreValue,
-      detail: scoreTierLabel(scoreBreakdown?.tier),
-      tone: scoreTone(actionabilityScore),
-      titleValue: scoreTitle,
-      motionState: scoreEvaluating ? "evaluating" : null,
-      className: scoreFlashClassName,
-    },
-  ];
+  const rowActionMotionState = rowAction?.id === "submit" ? "ready" : null;
   const desktopCells = {
     signal: (
       <SignalHeroCell
@@ -1608,19 +1528,19 @@ export const OperationsSignalRow = ({
         candidate={candidate}
         direction={direction}
         tfMatrix={tfMatrix}
-        fallbackState={fallbackState}
         freshnessRatio={freshnessRatio}
         price={underlyingPrice}
         priceFlashClassName={priceFlashClassName}
         sparklineData={sparklineData}
         signalMove={signalMove}
+        showSignalMove={!hasMoveColumn}
       />
     ),
     since: (
       <DataCell
         value={since.main}
         detail={since.detail}
-        tone={signalRecord.fresh ? CSS_COLOR.green : CSS_COLOR.amber}
+        tone={signalAgeTone}
         titleValue={compactJoin([
           since.main !== MISSING_VALUE ? `${since.main} since signal` : null,
           since.detail,
@@ -1634,9 +1554,9 @@ export const OperationsSignalRow = ({
         value={signalMove.label}
         detail={signalMove.detail}
         tone={
-          Number(signalMove.value) > 0
+          Number(signalMove.pct) > 0
             ? CSS_COLOR.green
-            : Number(signalMove.value) < 0
+            : Number(signalMove.pct) < 0
               ? CSS_COLOR.red
               : CSS_COLOR.textDim
         }
@@ -1652,7 +1572,9 @@ export const OperationsSignalRow = ({
         value={actionValue}
         detail={actionDetail}
         tone={
-          signalState.freshness === "FRESH"
+          blocker !== MISSING_VALUE
+            ? CSS_COLOR.textDim
+            : signalState.freshness === "FRESH"
             ? CSS_COLOR.green
             : signalState.freshness === "STALE"
               ? CSS_COLOR.amber
@@ -1671,12 +1593,12 @@ export const OperationsSignalRow = ({
       <DataCell
         value={contract.main}
         detail={contract.detail}
-        tone={hasDisplayValue(rawContract.main) ? CSS_COLOR.textSec : CSS_COLOR.textDim}
+        tone={contractTone}
         titleValue={compactJoin([contract.main, contract.detail])}
         motionState={
           contractEvaluating
             ? "evaluating"
-            : hasDisplayValue(rawContract.main)
+            : hasDisplayValue(rawContract.main) && !contractIsPreview
               ? "ready"
               : null
         }
@@ -1685,21 +1607,22 @@ export const OperationsSignalRow = ({
     quote: (
       <DataCell
         value={compactQuoteText(quote.main)}
-        detail={compactJoin([
-          compactQuoteText(quote.detail),
-          quoteAge !== MISSING_VALUE ? `age ${quoteAge}` : null,
-        ])}
-        tone={quoteState.tone}
+        detail={quoteDetail}
+        tone={quoteTone}
         titleValue={executionTitle}
-        motionState={quoteEvaluating ? "evaluating" : hasQuote ? "ready" : null}
+        motionState={
+          quoteEvaluating ? "evaluating" : hasQuote && !contractIsPreview ? "ready" : null
+        }
         className={quoteFlashClassName}
         icon={
-          <QuoteIcon
-            size={SIGNAL_ICON_SIZE}
-            strokeWidth={1.8}
-            aria-hidden="true"
-            style={{ color: quoteState.tone }}
-          />
+          hasQuote ? (
+            <QuoteIcon
+              size={SIGNAL_ICON_SIZE}
+              strokeWidth={1.8}
+              aria-hidden="true"
+              style={{ color: quoteTone }}
+            />
+          ) : null
         }
       />
     ),
@@ -1708,7 +1631,9 @@ export const OperationsSignalRow = ({
         value={spreadWidth}
         detail={spreadDetail}
         tone={spreadTone}
-        motionState={spreadEvaluating ? "evaluating" : hasQuote ? "ready" : null}
+        motionState={
+          spreadEvaluating ? "evaluating" : hasQuote && !contractIsPreview ? "ready" : null
+        }
         className={spreadFlashClassName}
         detailExtra={
           hasQuote ? (
@@ -1727,12 +1652,12 @@ export const OperationsSignalRow = ({
       <DataCell
         value={compactGreeksText(greeks.main)}
         detail={compactGreeksText(greeks.detail)}
-        tone={hasDisplayValue(rawGreeks.main) ? CSS_COLOR.textSec : CSS_COLOR.textDim}
+        tone={greeksTone}
         titleValue={compactJoin([greeks.main, greeks.detail, greeks.full])}
         motionState={
           greeksEvaluating
             ? "evaluating"
-            : hasDisplayValue(rawGreeks.main)
+            : hasDisplayValue(rawGreeks.main) && !contractIsPreview
               ? "ready"
               : null
         }
@@ -1740,8 +1665,8 @@ export const OperationsSignalRow = ({
     ),
     gate: (
       <DataCell
-        value={gate.label}
-        detail={gate.detail}
+        value={gate.category === "clear" ? MISSING_VALUE : gate.label}
+        detail={gate.category === "clear" ? MISSING_VALUE : gate.detail}
         tone={gate.tone}
         titleValue={compactJoin([gate.label, gate.detail, blocker])}
         motionState={gateMotionState}
@@ -1795,203 +1720,59 @@ export const OperationsSignalRow = ({
     ),
   };
   return (
-    <TableExpandableRow
-      expanded={expanded}
-      onToggle={onToggle}
-      rowHeight={algoIsPhone ? 84 : 56}
-      expandedHeight={320}
-      selectionAccent={direction.tone}
-      borderTone={CSS_COLOR.border}
-      dataTestId={`algo-signal-row-${signalRecord.symbol}`}
-      rowClassName={rowClassName}
-      rowStyle={{
+    <div
+      data-testid={`algo-signal-row-${signalRecord.symbol}`}
+      role="row"
+      className={rowClassName}
+      style={{
         "--ra-motion-accent": direction.tone,
+        borderBottom: `1px solid ${CSS_COLOR.border}`,
+        minWidth: 0,
       }}
-      row={
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: algoIsPhone
-              ? "minmax(0, 1fr) auto"
-              : signalColumnTemplate(visibleColumns),
-            gap: algoIsPhone ? sp(4) : sp(2),
-            alignItems: "center",
-            paddingLeft: algoIsPhone ? sp(7) : sp(8),
-            paddingRight: algoIsPhone ? sp(4) : sp(5),
-            width: "100%",
-            height: "100%",
-            boxSizing: "border-box",
-            fontFamily: T.sans,
-            fontSize: fs(11),
-            color: CSS_COLOR.text,
-            lineHeight: 1.12,
-            boxShadow: `inset ${algoIsPhone ? 2 : 3}px 0 0 ${direction.tone}`,
-            background: freshAndHot
-              ? `linear-gradient(90deg, ${cssColorAlpha(verdict.tone, algoIsPhone ? "0D" : "12")} 0%, transparent 55%)`
-              : "transparent",
-          }}
-        >
-          {algoIsPhone ? (
-            <>
-              <span
-                style={{
-                  display: "grid",
-                  gap: sp(3),
-                  minWidth: 0,
-                  height: "100%",
-                  alignContent: "center",
-                  overflow: "hidden",
-                }}
-              >
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: sp(4),
-                    minWidth: 0,
-                    overflow: "hidden",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  <BigDirectionGlyph
-                    direction={direction.primitive}
-                    freshnessRatio={freshnessRatio}
-                    freshnessBars={signalRecord.barsSinceSignal}
-                    tone={CSS_COLOR.textSec}
-                    size={16}
-                    className={signalRecord.fresh ? "ra-signal-glyph-fresh" : undefined}
-                  />
-                  <span
-                    style={{
-                      minWidth: 0,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      fontWeight: FONT_WEIGHTS.medium,
-                    }}
-                  >
-                    {signalRecord.symbol || MISSING_VALUE}
-                  </span>
-                  <span style={{ color: direction.tone, flex: "0 0 auto" }}>
-                    {direction.label}
-                  </span>
-                  {showMobileSignalDots ? (
-                    <SignalDots
-                      testId="algo-signal-dots"
-                      statesByTimeframe={tfMatrix}
-                      fallbackState={fallbackState}
-                      style={{ minWidth: dim(36), gap: sp(4) }}
-                    />
-                  ) : null}
-                  <StrategyTag candidate={candidate} signal={signalRecord} />
-                  <span
-                    className={priceFlashClassName}
-                    style={{
-                      color: CSS_COLOR.textMuted,
-                      fontVariantNumeric: "tabular-nums",
-                      flex: "0 0 auto",
-                    }}
-                  >
-                    {underlyingPrice}
-                  </span>
-                </span>
-                <span
-                  title={compactJoin([actionValue, contract.main, mobileGateDetail])}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: sp(4),
-                    minWidth: 0,
-                    color: CSS_COLOR.textDim,
-                    fontSize: textSize("caption"),
-                    fontWeight: FONT_WEIGHTS.regular,
-                    overflow: "hidden",
-                    whiteSpace: "nowrap",
-                    lineHeight: 1.12,
-                  }}
-                >
-                  <span
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      flex: "0 1 auto",
-                    }}
-                  >
-                    {actionValue}
-                  </span>
-                  <span
-                    style={{
-                      color: CSS_COLOR.textSec,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      flex: "0 1 auto",
-                    }}
-                  >
-                    {contract.main}
-                  </span>
-                  <span
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      flex: "1 1 auto",
-                    }}
-                  >
-                    {mobileGateDetail}
-                  </span>
-                </span>
-                <span
-                  data-testid="algo-signal-mobile-metrics"
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                    gap: sp(3),
-                    minWidth: 0,
-                  }}
-                >
-                  {mobileMetricCells.map((metric) => (
-                    <MobileMetricChip
-                      key={metric.id}
-                      label={metric.label}
-                      value={metric.value}
-                      detail={metric.detail}
-                      tone={metric.tone}
-                      titleValue={metric.titleValue}
-                      motionState={metric.motionState}
-                      className={metric.className}
-                    />
-                  ))}
-                </span>
-              </span>
-              <span
-                style={{
-                  display: "grid",
-                  gap: sp(6),
-                  justifyItems: "end",
-                  minWidth: dim(20),
-                  alignSelf: "center",
-                }}
-              >
-                <StatusPill
-                  meta={mobileVerdictMeta}
-                  compact
-                  motionState={decisionMotionState}
-                />
-                {rowAction ? (
-                  <RowActionButton action={rowAction} onAction={handleRowAction} />
-                ) : null}
-              </span>
-            </>
-          ) : (
-            visibleColumns.map((column) => (
-              <span key={column.key} style={{ minWidth: 0, overflow: "hidden" }}>
-                {desktopCells[column.key]}
-              </span>
-            ))
-          )}
-        </div>
-      }
-      expandedContent={expandedContent}
-    />
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: signalColumnTemplate(visibleColumns),
+          gap: 0,
+          alignItems: "center",
+          width: "100%",
+          height: dim(SIGNAL_TABLE_ROW_HEIGHT),
+          boxSizing: "border-box",
+          fontFamily: T.sans,
+          fontSize: fs(11),
+          color: CSS_COLOR.text,
+          lineHeight: 1.08,
+          boxShadow: `inset 2px 0 0 ${direction.tone}`,
+          background: freshAndHot
+            ? `linear-gradient(90deg, ${cssColorAlpha(verdict.tone, "12")} 0%, transparent 55%)`
+            : "transparent",
+        }}
+      >
+        {visibleColumns.map((column) => (
+          <span
+            key={column.key}
+            role="cell"
+            style={{
+              minWidth: 0,
+              height: "100%",
+              padding: sp(
+                column.key === "rowAction"
+                  ? SIGNAL_TABLE_ACTION_CELL_PADDING
+                  : SIGNAL_TABLE_CELL_PADDING,
+              ),
+              borderRight: SIGNAL_TABLE_BORDER(),
+              boxSizing: "border-box",
+              display: "grid",
+              alignItems: "center",
+              overflow: "hidden",
+            }}
+          >
+            {desktopCells[column.key]}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 };
 

@@ -63,6 +63,11 @@ function scanBlockingPressureSnapshot(): ApiResourcePressureSnapshot {
         score: null,
       },
     ],
+    scannerPressure: {
+      level: "normal",
+      drivers: [],
+      activeLongScanCount: null,
+    },
     caps: {
       signalOptions: {
         maintenanceOnly: true,
@@ -587,6 +592,99 @@ test("signal-options worker exposes active scan timing", async () => {
   assert.equal(runtime?.currentScanStartedAt, null);
   assert.equal(runtime?.currentScanAgeMs, null);
   assert.equal(runtime?.lastScanDurationMs, 30_000);
+});
+
+test("signal-options worker passes an abort signal into scans", async () => {
+  let receivedSignal: AbortSignal | undefined;
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async (input) => {
+      receivedSignal = input.signal;
+      return {
+        summary: {
+          signalCount: 1,
+          freshSignalCount: 1,
+          staleSignalCount: 0,
+          unavailableSignalCount: 0,
+          candidateCount: 0,
+          blockedCandidateCount: 0,
+        },
+      };
+    },
+    runMaintenance: emptyMaintenance,
+    acquireTickLock: async () => async () => {},
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+
+  assert.ok(receivedSignal instanceof AbortSignal);
+  assert.equal(receivedSignal.aborted, false);
+});
+
+test("signal-options worker times out scans and fails closed until they settle", async () => {
+  let now = new Date("2026-04-28T14:00:00.000Z");
+  let scanCalls = 0;
+  let resolveScan!: () => void;
+  const scanDone = new Promise<void>((resolve) => {
+    resolveScan = resolve;
+  });
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async (input) => {
+      scanCalls += 1;
+      await new Promise<void>((resolve) => {
+        input.signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      await scanDone;
+      return {
+        summary: {
+          signalCount: 1,
+          freshSignalCount: 1,
+          staleSignalCount: 0,
+          unavailableSignalCount: 0,
+          candidateCount: 0,
+          blockedCandidateCount: 0,
+        },
+      };
+    },
+    runMaintenance: emptyMaintenance,
+    acquireTickLock: async () => async () => {},
+    now: () => now,
+    scanTimeoutMs: 5,
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+
+  let snapshot = worker.getRuntimeSnapshot();
+  let runtime = snapshot.deployments[0];
+  assert.equal(scanCalls, 1);
+  assert.equal(snapshot.activeDeploymentCount, 1);
+  assert.equal(runtime?.timedOut, true);
+  assert.equal(runtime?.timeoutReason, "worker_scan_timeout");
+  assert.equal(runtime?.unsettledAfterTimeout, true);
+  assert.equal(runtime?.lastScanOutcome, "timed_out_unsettled");
+  assert.equal(runtime?.currentScanStartedAt, "2026-04-28T14:00:00.000Z");
+
+  now = new Date("2026-04-28T14:01:01.000Z");
+  await worker.runOnce();
+  assert.equal(scanCalls, 1);
+  assert.equal(worker.getRuntimeSnapshot().activeDeploymentCount, 1);
+
+  resolveScan();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  snapshot = worker.getRuntimeSnapshot();
+  runtime = snapshot.deployments[0];
+  assert.equal(snapshot.activeDeploymentCount, 0);
+  assert.equal(runtime?.unsettledAfterTimeout, false);
+  assert.equal(runtime?.lastScanOutcome, "timed_out");
+  assert.equal(runtime?.currentScanStartedAt, null);
+
+  now = new Date("2026-04-28T14:02:01.000Z");
+  await worker.runOnce();
+  assert.equal(scanCalls, 2);
 });
 
 test("signal-options worker accepts lightweight scan summaries", async () => {

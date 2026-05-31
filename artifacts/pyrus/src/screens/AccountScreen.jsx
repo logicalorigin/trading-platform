@@ -91,6 +91,10 @@ import {
   performanceCalendarQueriesEnabled as resolvePerformanceCalendarQueriesEnabled,
   resolveReturnsCalendarData,
 } from "./account/accountCalendarData";
+import {
+  buildSafeQaPortfolioExposureFixture,
+  getSafeQaInitialQueryOptions,
+} from "./account/accountSafeQaFixtures.js";
 import { useAccountSection } from "../features/platform/useAccountSection.js";
 
 const LazyTodaySnapshotPanel = lazy(() => import("./account/TodaySnapshotPanel"));
@@ -667,6 +671,16 @@ const AccountScreenInner = ({
     () => ({ ...modeParams }),
     [modeParams],
   );
+  const safeQaExposureFixture = useMemo(
+    () =>
+      safeQaMode
+        ? buildSafeQaPortfolioExposureFixture({
+            accountId: accountRequestId,
+            currency: "USD",
+          })
+        : null,
+    [accountRequestId, safeQaMode],
+  );
   const equityHistoryQuerySettings = useMemo(
     () => ({
       staleTime: ACCOUNT_HISTORY_STALE_MS,
@@ -1192,6 +1206,7 @@ const AccountScreenInner = ({
       refetchInterval: liveRefreshInterval,
       enabled: criticalAccountQueriesEnabled,
       placeholderData: retainPreviousData,
+      ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.summary),
     },
   });
   const equityQuery = useGetAccountEquityHistory(
@@ -1278,6 +1293,7 @@ const AccountScreenInner = ({
       refetchInterval: secondaryRefreshInterval,
       enabled: criticalAccountQueriesEnabled,
       placeholderData: retainPreviousData,
+      ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.allocation),
     },
   });
   const positionsQuery = useGetAccountPositions(
@@ -1292,6 +1308,7 @@ const AccountScreenInner = ({
         refetchInterval: liveRefreshInterval,
         enabled: criticalAccountQueriesEnabled,
         placeholderData: retainPreviousData,
+        ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.positions),
       },
     },
   );
@@ -1398,6 +1415,7 @@ const AccountScreenInner = ({
       refetchInterval: secondaryRefreshInterval,
       enabled: criticalAccountQueriesEnabled,
       placeholderData: retainPreviousData,
+      ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.risk),
     },
   });
   const sectionSwitching = Boolean(
@@ -1724,8 +1742,11 @@ const AccountScreenInner = ({
     } catch {}
   };
   useEffect(() => {
+    if (!accountQueriesEnabled) {
+      return;
+    }
     prefetchAccountSectionLiveQueries(accountSection);
-  }, [accountSection, prefetchAccountSectionLiveQueries]);
+  }, [accountQueriesEnabled, accountSection, prefetchAccountSectionLiveQueries]);
 
   return (
     <div

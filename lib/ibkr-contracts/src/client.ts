@@ -226,6 +226,10 @@ export type BrokerBarSnapshot = {
   low: number;
   close: number;
   volume: number;
+  bid?: number | null;
+  ask?: number | null;
+  mid?: number | null;
+  quoteAsOf?: Date | null;
   source: string;
   providerContractId: string | null;
   outsideRth: boolean;

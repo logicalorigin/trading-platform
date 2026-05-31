@@ -1,5 +1,6 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
+import { attachPostgresPoolErrorHandler } from "./pool-error-handler";
 import { resolveDatabaseRuntimeConfig } from "./runtime";
 import * as schema from "./schema";
 
@@ -66,6 +67,7 @@ export const pool = new Pool({
   ...optionalIntegerOption("DB_STATEMENT_TIMEOUT_MS", "statement_timeout"),
   ...optionalIntegerOption("DB_IDLE_TIMEOUT_MS", "idleTimeoutMillis"),
 });
+attachPostgresPoolErrorHandler(pool);
 export const db = drizzle(pool, { schema });
 
 export * from "./runtime";

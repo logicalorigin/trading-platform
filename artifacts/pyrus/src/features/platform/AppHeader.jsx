@@ -312,6 +312,7 @@ const AppHeaderInner = ({
   bridgeTone,
   theme,
   onToggleTheme,
+  safeQaMode = false,
   accounts,
   primaryAccountId,
   primaryAccount,
@@ -463,6 +464,7 @@ const AppHeaderInner = ({
                   bridgeTone={bridgeTone}
                   theme={theme}
                   onToggleTheme={onToggleTheme}
+                  safeQaMode={safeQaMode}
                   compact
                   mobileSheet
                 />
@@ -784,6 +786,7 @@ const AppHeaderInner = ({
                 bridgeTone={bridgeTone}
                 theme={theme}
                 onToggleTheme={onToggleTheme}
+                safeQaMode={safeQaMode}
                 showThemeToggle={false}
                 compact={headerCompactStatus}
                 minimal={headerStatusMinimal}
@@ -810,7 +813,7 @@ const AppHeaderInner = ({
           onAlgoClick={() => handleSetScreen("algo")}
           scrollersCollapsed={scrollersCollapsed}
           onToggleScrollers={handleToggleScrollers}
-          enabled={sessionMetadataSettled}
+          enabled={sessionMetadataSettled && !safeQaMode}
           compact={headerTight}
           centerSlot={
             headerShowKpis ? (

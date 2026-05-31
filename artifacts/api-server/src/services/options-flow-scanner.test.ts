@@ -413,7 +413,11 @@ test("automation-only high pressure does not throttle the flow scanner", () => {
   const diagnostics = getOptionsFlowScannerDiagnostics();
 
   assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(), 2);
-  assert.equal(diagnostics.resourcePressure.level, "high");
+  assert.equal(diagnostics.resourcePressure.level, "normal");
+  assert.equal(
+    diagnostics.resourcePressure.inputs.automationActiveLongScanCount,
+    1,
+  );
   assert.equal(diagnostics.scannerPressure.level, "normal");
   assert.equal(diagnostics.scannerPressure.throttled, false);
   assert.equal(diagnostics.scannerFillMode, "steady-state");
@@ -734,6 +738,51 @@ test("flow universe coverage reports the active radar cadence", async () => {
   assert.equal(coverage.estimatedCycleMs, coverage.radarEstimatedCycleMs);
 });
 
+test("options flow radar fallback fills available scanner slots when activity is quiet", async () => {
+  setOptionsFlowRuntimeOverrides({
+    universeMode: "watchlist",
+    radarEnabled: true,
+    radarBatchSize: 3,
+    radarDeepCandidateCount: 3,
+    radarFallbackDeepCandidateCount: 1,
+    scannerConcurrency: 2,
+    scannerLineBudget: 80,
+    scannerIntervalMs: 1_000,
+  });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionActivitySnapshots: async (symbols: string[]) =>
+          symbols.map(
+            (symbol) =>
+              ({
+                ...radarQuote(symbol),
+                optionCallVolume: undefined,
+                optionPutVolume: undefined,
+                optionCallOpenInterest: undefined,
+                optionPutOpenInterest: undefined,
+              }) as QuoteSnapshot,
+          ),
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  startOptionsFlowScanner();
+  __clearOptionsFlowScannerBackgroundHoldForTests();
+  await waitFor(
+    () => (getOptionsFlowUniverseCoverage().promotedSymbols ?? []).length === 2,
+  );
+
+  const coverage = getOptionsFlowUniverseCoverage();
+  assert.deepEqual(
+    coverage.promotedSymbols,
+    (coverage.radarCurrentBatch ?? []).slice(0, 2),
+  );
+  assert.equal(
+    getOptionsFlowScannerDiagnostics().lineUtilization.effectiveDeepLineBudget,
+    40,
+  );
+});
+
 test("options flow radar does not wait for deep promotion hydration before returning", async () => {
   let releasePromotion: () => void = () => {};
   let promotionStarted = false;
@@ -957,13 +1006,13 @@ test("options flow scanner throttles without shedding leases under RSS-only crit
   assert.equal(diagnostics.scannerFillMode, "pressure-throttled");
   assert.equal(diagnostics.limitingReason, "scanner-throttled-high-pressure");
   assert.equal(diagnostics.lineBudget, 80);
-  assert.equal(diagnostics.lineUtilization.poolCap, 200);
-  assert.equal(diagnostics.lineUtilization.effectivePoolCap, 200);
+  assert.equal(diagnostics.lineUtilization.poolCap, 80);
+  assert.equal(diagnostics.lineUtilization.effectivePoolCap, 80);
   assert.equal(diagnostics.lineUtilization.effectiveConcurrency, 1);
   assert.equal(diagnostics.lineUtilization.scannerLineBudget, 80);
   assert.equal(diagnostics.lineUtilization.radarDeepLineBudget, 80);
   assert.equal(diagnostics.lineUtilization.maxDeepScanLines, 80);
-  assert.equal(diagnostics.lineUtilization.unusedPoolLines, 120);
+  assert.equal(diagnostics.lineUtilization.unusedPoolLines, 0);
   assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 80);
 });
 
@@ -988,7 +1037,7 @@ test("options flow scanner pauses and sheds leases under hard API pressure", () 
   assert.equal(diagnostics.resourcePressure.level, "critical");
   assert.equal(diagnostics.lineUtilization.effectiveConcurrency, 0);
   assert.equal(diagnostics.lineUtilization.maxDeepScanLines, 0);
-  assert.equal(diagnostics.lineUtilization.unusedPoolLines, 200);
+  assert.equal(diagnostics.lineUtilization.unusedPoolLines, 80);
   assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 80);
   assert.equal(
     __queueOptionsFlowScannerRefreshForTests({
@@ -999,7 +1048,7 @@ test("options flow scanner pauses and sheds leases under hard API pressure", () 
     false,
   );
   const admission = getMarketDataAdmissionDiagnostics();
-  assert.equal(admission.budget.flowScannerLineCap, 200);
+  assert.equal(admission.budget.flowScannerLineCap, 80);
   assert.equal(admission.flowScannerLineCount, 0);
 });
 
@@ -1013,7 +1062,7 @@ test("options flow scanner throttles background rotation under high API pressure
   assert.equal(diagnostics.resourcePressure.level, "high");
   assert.equal(diagnostics.backgroundBlockedReason, null);
   assert.equal(diagnostics.lineUtilization.effectiveConcurrency, 1);
-  assert.equal(diagnostics.lineUtilization.schedulablePoolCap, 200);
+  assert.equal(diagnostics.lineUtilization.schedulablePoolCap, 80);
   assert.equal(diagnostics.lineUtilization.maxDeepScanLines, 80);
 });
 
@@ -1045,7 +1094,7 @@ test("options flow radar keeps polling under high API pressure", async () => {
 });
 
 test("options flow scanner diagnostics drop stale transport skip reasons", async () => {
-  setOptionsFlowRuntimeOverrides({ scannerIntervalMs: 1 });
+  setOptionsFlowRuntimeOverrides({ scannerIntervalMs: 100 });
   __setIbkrBridgeClientFactoryForTests(
     () =>
       ({
@@ -1060,7 +1109,7 @@ test("options flow scanner diagnostics drop stale transport skip reasons", async
     "transport-unavailable",
   );
 
-  await wait(10);
+  await wait(250);
 
   const diagnostics = getOptionsFlowScannerDiagnostics();
   assert.equal(diagnostics.lastSkippedReason, null);
@@ -1969,6 +2018,7 @@ test("listAggregateFlowEvents does not seed deep scans while session quiet is ca
   setOptionsFlowRuntimeOverrides({
     scannerBatchSize: 1,
     scannerSessionGuardEnabled: true,
+    scannerAlwaysOn: false,
   });
   __setOptionsFlowSessionBlockReasonForTests("market-session-quiet");
   __setIbkrBridgeClientFactoryForTests(
@@ -2018,6 +2068,61 @@ test("listAggregateFlowEvents does not seed deep scans while session quiet is ca
   const diagnostics = getOptionsFlowScannerDiagnostics().deepScanner;
   assert.equal(diagnostics.queuedCount, 0);
   assert.equal(diagnostics.draining, false);
+});
+
+test("listAggregateFlowEvents seeds deep scans during quiet sessions when scannerAlwaysOn is true", async () => {
+  const scannedSymbols: string[] = [];
+  setOptionsFlowRuntimeOverrides({
+    scannerBatchSize: 1,
+    scannerSessionGuardEnabled: true,
+    scannerAlwaysOn: true,
+  });
+  __setOptionsFlowSessionBlockReasonForTests("market-session-quiet");
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          connected: true,
+          configured: true,
+          authenticated: true,
+          accounts: ["DU123"],
+          liveMarketDataAvailable: true,
+          marketDataMode: "live",
+          updatedAt: new Date(),
+        }),
+        getOptionExpirations: async (underlying: string) => {
+          scannedSymbols.push(underlying);
+          return [new Date("2026-05-15T00:00:00.000Z")];
+        },
+        getOptionChain: async (input: { underlying?: string }) => {
+          const symbol = input.underlying || "SPY";
+          scannedSymbols.push(symbol);
+          return [optionContract(symbol)];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const pending = ListFlowEventsResponse.parse(
+    await listAggregateFlowEvents({
+      limit: 5,
+      scope: "all",
+    }),
+  );
+
+  assert.equal(getOptionsFlowScannerDiagnostics().backgroundBlockedReason, null);
+  assert.equal(pending.events.length, 0);
+  assert.equal(pending.source.ibkrReason, "options_flow_scanner_queued");
+
+  for (
+    let attempt = 0;
+    attempt < 60 && scannedSymbols.length === 0;
+    attempt += 1
+  ) {
+    await wait(50);
+  }
+
+  assert.ok(scannedSymbols.length > 0);
 });
 
 test("listAggregateFlowEvents seeds foreground aggregate scans during live warmup hold", async () => {

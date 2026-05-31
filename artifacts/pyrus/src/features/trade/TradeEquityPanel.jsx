@@ -634,6 +634,17 @@ export const TradeEquityPanel = ({
     () => buildTradeBarsFromApi(streamedSourceBars),
     [streamedSourceBars],
   );
+  const indicatorSourceSeries = useMemo(
+    () => [
+      {
+        id: `${baseBarsScopeKey}:pyrus-source:${rollupBaseTimeframe}`,
+        timeframe: rollupBaseTimeframe,
+        sourceTimeframe: rollupBaseTimeframe,
+        bars: liveBars,
+      },
+    ],
+    [baseBarsScopeKey, liveBars, rollupBaseTimeframe],
+  );
   const streamedChartBars = useMemo(
     () => rollupMarketBars(liveBars, rollupBaseTimeframe, tf),
     [liveBars, rollupBaseTimeframe, tf],
@@ -755,10 +766,12 @@ export const TradeEquityPanel = ({
       indicatorSettings,
       indicatorRegistry,
       indicatorMarkers: [],
+      indicatorSourceSeries,
     },
     deps: [
       bars,
       chartHydrationScopeKey,
+      indicatorSourceSeries,
       indicatorRegistry,
       indicatorSettings,
       progressiveBars.targetLimit,

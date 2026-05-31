@@ -7,6 +7,7 @@ import type {
   ChartBar,
   ChartBarRange,
   ChartBarStyle,
+  IndicatorPluginSourceSeries,
   ChartMarker,
   ChartModel,
   IndicatorPluginOutput,
@@ -23,6 +24,7 @@ export type ResearchChartModelBuildState = {
     selectedIndicators: string[];
     indicatorSettings: Record<string, Record<string, unknown>>;
     indicatorMarkers: ChartMarker[];
+    indicatorSourceSeries: BuildChartModelInput["indicatorSourceSeries"];
     indicatorRegistry: BuildChartModelInput["indicatorRegistry"];
   };
   plugins: ReturnType<typeof resolveIndicatorPlugins>;
@@ -31,6 +33,10 @@ export type ResearchChartModelBuildState = {
   pluginOutputs: IndicatorPluginOutput[];
   model: ChartModel;
 };
+
+const EMPTY_INDICATOR_SOURCE_SERIES: NonNullable<
+  BuildChartModelInput["indicatorSourceSeries"]
+> = [];
 
 const timeframeToStepMs = (timeframe: string): number =>
   getChartTimeframeStepMs(normalizeChartTimeframe(timeframe)) || 300_000;
@@ -198,6 +204,21 @@ const applyBarStyles = (
     ...bar,
     ...(barStyles[index] || {}),
   }));
+
+const buildIndicatorPluginSourceSeries = (
+  sourceSeries: BuildChartModelInput["indicatorSourceSeries"] = [],
+): IndicatorPluginSourceSeries[] =>
+  sourceSeries.map((series) => {
+    const normalized = buildChartBars(series.bars, series.sourceTimeframe);
+    return {
+      id: series.id,
+      timeframe: series.timeframe,
+      sourceTimeframe: series.sourceTimeframe,
+      rawBars: series.bars,
+      chartBars: normalized.chartBars,
+      chartBarRanges: normalized.chartBarRanges,
+    };
+  });
 
 const buildStudyVisibilityMap = (
   studyKeys: string[],
@@ -585,6 +606,7 @@ export const buildResearchChartModelIncremental = (
     selectedIndicators = [],
     indicatorSettings = {},
     indicatorMarkers = [],
+    indicatorSourceSeries = EMPTY_INDICATOR_SOURCE_SERIES,
     indicatorRegistry = defaultIndicatorRegistry,
   } = input;
   const barMutationMode =
@@ -602,6 +624,7 @@ export const buildResearchChartModelIncremental = (
       : null;
   const { chartBars, chartBarRanges } =
     incrementalChartBars ?? buildChartBars(bars, timeframe);
+  const pluginSourceSeries = buildIndicatorPluginSourceSeries(indicatorSourceSeries);
   const plugins = resolveIndicatorPlugins(
     selectedIndicators,
     indicatorRegistry,
@@ -613,6 +636,7 @@ export const buildResearchChartModelIncremental = (
       previousState.input.dailyBars === dailyBars &&
       previousState.input.indicatorSettings === indicatorSettings &&
       previousState.input.indicatorMarkers === indicatorMarkers &&
+      previousState.input.indicatorSourceSeries === indicatorSourceSeries &&
       previousState.input.indicatorRegistry === indicatorRegistry &&
       shallowStringArrayEqual(
         previousState.input.selectedIndicators,
@@ -633,11 +657,13 @@ export const buildResearchChartModelIncremental = (
 
     return plugin.compute({
       chartBars,
+      chartBarRanges,
       rawBars: bars,
       dailyBars,
       settings: indicatorSettings[plugin.id],
       timeframe,
       selectedIndicators,
+      sourceSeries: pluginSourceSeries,
     });
   });
 
@@ -661,6 +687,7 @@ export const buildResearchChartModelIncremental = (
         selectedIndicators,
         indicatorSettings,
         indicatorMarkers,
+        indicatorSourceSeries,
         indicatorRegistry,
       },
       plugins,

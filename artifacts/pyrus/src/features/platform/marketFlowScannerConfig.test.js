@@ -20,7 +20,7 @@ test("default flow scanner covers 500 symbols inside five minutes", () => {
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.scope, FLOW_SCANNER_SCOPE.all);
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.batchSize, UNUSUAL_SCANNER_BATCH_SIZE);
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.intervalMs, UNUSUAL_SCANNER_INTERVAL_MS);
-  assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.concurrency, 1);
+  assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.concurrency, 2);
   assert.ok(
     Math.ceil(
       DEFAULT_FLOW_SCANNER_CONFIG.maxSymbols / DEFAULT_FLOW_SCANNER_CONFIG.batchSize,
@@ -50,14 +50,14 @@ test("normalizeFlowScannerConfig applies defaults and clamps capacity settings",
       maxSymbols: 2000,
       batchSize: 250,
       intervalMs: 2500,
-      concurrency: 1,
+      concurrency: 2,
       limit: 1000,
       unusualThreshold: 0.1,
       minPremium: 0,
       maxDte: null,
     },
   );
-  assert.equal(FLOW_SCANNER_CONFIG_LIMITS.concurrency.max, 1);
+  assert.equal(FLOW_SCANNER_CONFIG_LIMITS.concurrency.max, 2);
 });
 
 test("normalizeFlowScannerConfig aliases legacy scanner modes", () => {
@@ -128,7 +128,7 @@ test("default flow scanner keeps routine flow visible for Flow tape filters", ()
   );
 });
 
-test("buildFlowScannerMarketUniverseSymbols keeps runtime signals from replacing the universe", () => {
+test("buildFlowScannerMarketUniverseSymbols does not append unverified client fallback", () => {
   assert.deepEqual(
     buildFlowScannerMarketUniverseSymbols({
       backendSymbols: ["AMD", "NVDA", "SPY"],
@@ -137,7 +137,7 @@ test("buildFlowScannerMarketUniverseSymbols keeps runtime signals from replacing
       fallbackSymbols: ["SPY", "AAPL"],
       prioritizeRuntimeSignals: true,
     }),
-    ["AMD", "QQQ", "NVDA", "SPY", "AAPL"],
+    ["AMD", "QQQ", "NVDA", "SPY"],
   );
 });
 

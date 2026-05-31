@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { getBootProgressSnapshot } from "../../app/bootProgress";
+import { isPyrusSafeQaMode } from "../../app/qa-mode";
 
 const API_TIMING_EVENT = "pyrus:api-request-timing";
 export const SCREEN_READY_EVENT = "pyrus:screen-ready";
@@ -383,7 +384,11 @@ const hasReportableMetrics = () =>
   metrics.longTasks.length > 0;
 
 const postPerformanceMetrics = (reason: string) => {
-  if (typeof fetch !== "function" || !hasReportableMetrics()) {
+  if (
+    typeof fetch !== "function" ||
+    isPyrusSafeQaMode() ||
+    !hasReportableMetrics()
+  ) {
     return;
   }
 

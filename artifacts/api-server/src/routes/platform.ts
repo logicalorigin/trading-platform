@@ -93,6 +93,7 @@ import {
   fetchHistoricalBarSnapshotPayload,
   fetchOptionQuoteSnapshotPayload,
   fetchOrderSnapshotPayload,
+  fetchPositionQuoteSnapshotPayload,
   fetchQuoteSnapshotPayload,
   subscribeAccountSnapshots,
   subscribeExecutionSnapshots,
@@ -101,6 +102,7 @@ import {
   subscribeHistoricalBarSnapshots,
   subscribeOptionQuoteSnapshots,
   subscribeOrderSnapshots,
+  subscribePositionQuoteSnapshots,
   subscribeQuoteSnapshots,
 } from "../services/bridge-streams";
 import {
@@ -1654,6 +1656,9 @@ router.post("/options/quotes", async (req, res) => {
     await fetchOptionQuoteSnapshotPayload({
       underlying: body.underlying ?? null,
       providerContractIds: body.providerContractIds,
+      owner: body.owner ?? undefined,
+      intent: body.intent ?? undefined,
+      requiresGreeks: body.requiresGreeks ?? undefined,
     }),
   );
 
@@ -2115,6 +2120,66 @@ router.get("/streams/quotes", async (req, res) => {
             error instanceof Error
               ? error.message
               : "Unknown quote snapshot error.",
+        });
+      });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  });
+});
+
+router.get("/streams/position-quotes", async (req, res) => {
+  const rawSymbols = Array.isArray(req.query.symbols)
+    ? req.query.symbols.join(",")
+    : typeof req.query.symbols === "string"
+      ? req.query.symbols
+      : "";
+  const symbols = rawSymbols
+    .split(",")
+    .map((symbol) => symbol.trim().toUpperCase())
+    .filter(Boolean);
+
+  if (!symbols.length) {
+    res.status(400).type("application/problem+json").json({
+      type: "https://pyrus.local/problems/invalid-request",
+      title: "Missing symbols",
+      status: 400,
+      detail: "Provide one or more comma-separated stock symbols in the symbols query parameter.",
+    });
+    return;
+  }
+
+  await startSse(req, res, "position-quotes", async ({ writeEvent }) => {
+    await writeEvent("ready", {
+      symbols,
+      source: isMassiveStocksRealtimeConfigured() ? "massive" : "ibkr-bridge",
+    });
+
+    let active = true;
+    const unsubscribe = subscribePositionQuoteSnapshots(symbols, (payload) => {
+      void writeEvent("quotes", payload);
+    });
+
+    void fetchPositionQuoteSnapshotPayload(symbols)
+      .then((payload) => {
+        if (!active) {
+          return undefined;
+        }
+        return writeEvent("quotes", payload);
+      })
+      .catch((error: unknown) => {
+        if (!active) {
+          return;
+        }
+        void writeEvent("error", {
+          title: "Initial position quote snapshot failed",
+          status: 502,
+          detail:
+            error instanceof Error
+              ? error.message
+              : "Unknown position quote snapshot error.",
         });
       });
 

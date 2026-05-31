@@ -371,6 +371,16 @@ test("flow universe optionability gate recognizes IBKR derivative metadata", () 
     isOptionableUniverseContractMeta({ derivativeSecTypes: "WAR" }),
     false,
   );
+  assert.equal(
+    isOptionableUniverseContractMeta({
+      optionability: { status: "verified", source: "option_expirations_probe" },
+    }),
+    true,
+  );
+  assert.equal(
+    isOptionableUniverseContractMeta({ optionabilityStatus: "verified" }),
+    true,
+  );
   assert.equal(isOptionableUniverseContractMeta(null), false);
 });
 
@@ -452,7 +462,7 @@ function createFlowUniverseTestDb(input: {
   } as never;
 }
 
-test("flow universe uses provider fallback when Helium-backed catalog reads fail", async () => {
+test("flow universe does not trust provider fallback when catalog reads fail", async () => {
   const manager = createFlowUniverseManager({
     db: createFlowUniverseTestDb({ selectError: transientDbError() }),
     mode: "market",
@@ -462,15 +472,14 @@ test("flow universe uses provider fallback when Helium-backed catalog reads fail
     minPrice: 5,
     minDollarVolume: 25_000_000,
     fallbackSymbols: ["SPY"],
-    fetchFallbackSymbols: async () => ["AAPL", "NVDA", "MSFT", "TSLA"],
     now: () => new Date("2026-05-08T15:30:00.000Z"),
   });
 
   const selected = await manager.refresh();
   const coverage = manager.getCoverage();
 
-  assert.deepEqual(selected, ["AAPL", "NVDA", "MSFT", "TSLA"]);
-  assert.equal(coverage.selectedShortfall, 0);
+  assert.deepEqual(selected, []);
+  assert.equal(coverage.selectedShortfall, 4);
   assert.equal(coverage.fallbackUsed, true);
   assert.match(coverage.degradedReason || "", /database unavailable/i);
 });

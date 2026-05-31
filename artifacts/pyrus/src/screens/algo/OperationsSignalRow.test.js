@@ -6,10 +6,11 @@ import {
   spreadGaugeTone,
 } from "../../components/platform/signal-language/SpreadGauge.jsx";
 import { resolveSignalVerdict } from "../../components/platform/signal-language/VerdictGlyph.jsx";
-import { sortRows } from "./OperationsSignalTable.jsx";
+import { classifySignal, sortRows } from "./OperationsSignalTable.jsx";
 import {
   ALWAYS_VISIBLE_SIGNAL_COLUMN_IDS,
   DEFAULT_SIGNAL_VISIBLE_COLUMNS,
+  formatSpreadWidth,
   normalizeSignalColumnOrder,
   normalizeSignalVisibleColumns,
 } from "./OperationsSignalRow.jsx";
@@ -31,9 +32,9 @@ test("signal table sorting honors column key and direction", () => {
         signalAt: "2026-05-22T19:10:00.000Z",
         barsSinceSignal: 7,
         signalPrice: 100,
-        currentPrice: 102,
       },
       candidate: {
+        underlyingPrice: 102,
         updatedAt: "2026-05-22T19:11:00.000Z",
         quote: { ageMs: 5000 },
         liquidity: { spreadPctOfMid: 4 },
@@ -125,6 +126,48 @@ test("signal table sorting honors column key and direction", () => {
   assert.equal(sortRows(rows, "bars", "AAPL", "asc")[0].signal.symbol, "AAPL");
 });
 
+test("signal table classifies only unblocked candidates as ready", () => {
+  assert.equal(
+    classifySignal(
+      {
+        symbol: "LMT",
+        status: "ok",
+        actionEligible: false,
+        actionBlocker: "signal_too_old",
+      },
+      null,
+    ),
+    "blocked",
+  );
+  assert.equal(
+    classifySignal({ symbol: "CCJ", status: "ok", actionEligible: true }, null),
+    "blocked",
+  );
+  assert.equal(
+    classifySignal(
+      { symbol: "NVDA", status: "ok", actionEligible: true },
+      { symbol: "NVDA", status: "candidate" },
+    ),
+    "ready",
+  );
+  assert.equal(
+    classifySignal(
+      { symbol: "SPY", status: "ok", actionEligible: true },
+      { symbol: "SPY", status: "skipped", reason: "no_contract_for_strike_slot" },
+    ),
+    "blocked",
+  );
+  assert.equal(classifySignal({ symbol: "TSLA", status: "unavailable" }, null), "unavailable");
+});
+
+test("signal row spread display treats missing quote data as empty", () => {
+  assert.equal(formatSpreadWidth(null), "—");
+  assert.equal(formatSpreadWidth(undefined), "—");
+  assert.equal(formatSpreadWidth(""), "—");
+  assert.equal(formatSpreadWidth(Number.NaN), "—");
+  assert.equal(formatSpreadWidth(0.0123), "1.2%");
+});
+
 test("signal row presents dense customizable signal action columns", () => {
   const rowSource = readSource("./OperationsSignalRow.jsx");
 
@@ -144,7 +187,6 @@ test("signal row presents dense customizable signal action columns", () => {
     "spread",
     "greeks",
     "gate",
-    "sync",
     "score",
     "decision",
     "rowAction",
@@ -178,13 +220,23 @@ test("signal row presents dense customizable signal action columns", () => {
   assert.match(rowSource, /signalTableMinWidth/);
   assert.match(rowSource, /columns = DEFAULT_SIGNAL_VISIBLE_COLUMNS/);
   assert.match(rowSource, /visibleColumns\.map\(\(column\)/);
-  assert.match(rowSource, /MobileMetricChip/);
-  assert.match(rowSource, /mobileMetricCells/);
-  assert.match(rowSource, /mobileAgeValue/);
   assert.match(rowSource, /label: "Age"/);
-  assert.match(rowSource, /label: "Q"/);
-  assert.match(rowSource, /data-testid="algo-signal-mobile-metrics"/);
-  assert.match(rowSource, /rowHeight=\{algoIsPhone \? 84 : 56\}/);
+  assert.match(rowSource, /export const SIGNAL_TABLE_ROW_HEIGHT = 34/);
+  assert.match(rowSource, /export const SIGNAL_TABLE_HEADER_HEIGHT = 24/);
+  assert.match(rowSource, /const SIGNAL_TABLE_CELL_PADDING = "1px 4px"/);
+  assert.match(rowSource, /const SIGNAL_TABLE_ACTION_CELL_PADDING = "1px 2px"/);
+  assert.match(rowSource, /height: dim\(SIGNAL_TABLE_ROW_HEIGHT\)/);
+  assert.match(rowSource, /height: dim\(SIGNAL_TABLE_HEADER_HEIGHT\)/);
+  assert.match(rowSource, /textTransform: "none"/);
+  assert.match(rowSource, /role="row"/);
+  assert.match(rowSource, /role="cell"/);
+  assert.match(rowSource, /ra-position-table-row--alt/);
+  assert.doesNotMatch(rowSource, /TableExpandableRow/);
+  assert.doesNotMatch(rowSource, /MobileMetricChip/);
+  assert.doesNotMatch(rowSource, /mobileMetricCells/);
+  assert.doesNotMatch(rowSource, /mobileAgeValue/);
+  assert.doesNotMatch(rowSource, /data-testid="algo-signal-mobile-metrics"/);
+  assert.doesNotMatch(rowSource, /rowHeight=\{algoIsPhone \? 84 : 56\}/);
   assert.match(rowSource, /signalSinceDisplay/);
   assert.doesNotMatch(rowSource, /ScoreBar/);
   assert.doesNotMatch(rowSource, /ScorePill/);
@@ -196,6 +248,10 @@ test("signal row presents dense customizable signal action columns", () => {
   assert.doesNotMatch(rowSource, /Number\(signalRecord\.score\)/);
   assert.match(rowSource, /resolveCandidateGateDisplay/);
   assert.match(rowSource, /resolveCandidateSyncDisplay/);
+  assert.match(rowSource, /signalActionBlockerLabel/);
+  assert.match(rowSource, /signalAgeBlocked/);
+  assert.match(rowSource, /signalAgeTone/);
+  assert.match(rowSource, /actionEligible !== false/);
   assert.match(rowSource, /resolveDecisionDetailMeta/);
   assert.match(rowSource, /decisionDetailText/);
   assert.match(rowSource, /DECISION_DETAIL_META/);
@@ -205,6 +261,19 @@ test("signal row presents dense customizable signal action columns", () => {
   assert.match(rowSource, /compactQuoteText/);
   assert.match(rowSource, /formatQuoteAge/);
   assert.match(rowSource, /formatSpreadWidth/);
+  assert.match(rowSource, /if \(widthPct == null \|\| widthPct === ""\) return MISSING_VALUE/);
+  assert.doesNotMatch(rowSource, /not in action queue/);
+  assert.doesNotMatch(rowSource, /monitor signal only/);
+  assert.doesNotMatch(rowSource, /blocked before quote/);
+  assert.match(rowSource, /signalRecord\.contractPreview/);
+  assert.match(rowSource, /contractIsPreview/);
+  assert.match(rowSource, /compactJoin\(\["Preview", rawContract\.detail\]\)/);
+  assert.match(rowSource, /hasQuote && !contractIsPreview/);
+  assert.match(rowSource, /detail: detail\.length \? action : MISSING_VALUE/);
+  assert.match(rowSource, /const hasDetail = hasDisplayValue\(detail\) \|\| Boolean\(detailExtra\)/);
+  assert.match(rowSource, /showSignalMove=\{!hasMoveColumn\}/);
+  assert.match(rowSource, /sync\?\.label === "Mismatch" \|\| sync\?\.label === "Event only"/);
+  assert.match(rowSource, /value=\{gate\.category === "clear" \? MISSING_VALUE : gate\.label\}/);
   assert.match(rowSource, /scoreTone/);
   assert.match(rowSource, /BigDirectionGlyph/);
   assert.match(rowSource, /SignalDots/);
@@ -253,6 +322,9 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   );
 
   assert.match(tableSource, /signalMatrixStates = \[\]/);
+  assert.match(tableSource, /signalContractPreview/);
+  assert.match(tableSource, /rowMetricCandidate/);
+  assert.match(tableSource, /optionProviderContractId\(\s*asRecord\(signalContractPreview\(signal\)\.selectedContract\),/);
   assert.match(tableSource, /key: "newest",\s*direction: defaultSortDirection\("newest"\)/);
   assert.match(tableSource, /toggleSortDirection\(current\.direction\)/);
   assert.match(tableSource, /compareTimestampValues\(\s*signalTimestampMs\(a\.signal\),\s*signalTimestampMs\(b\.signal\),\s*sortDirection,/);
@@ -285,10 +357,19 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /<AlertTriangle/);
   assert.match(tableSource, /scanStageRecord\.detail/);
   assert.match(tableSource, /freshness\.scanDetail/);
-  assert.match(tableSource, /pageRows\.map\(\(\{ signal, candidate, scoreBreakdown \}\)/);
+  assert.match(tableSource, /pageRows\.map\(\(\{ signal, candidate, scoreBreakdown \}, rowIndex\)/);
+  assert.match(tableSource, /alt=\{rowIndex % 2 === 1\}/);
   assert.match(tableSource, /scanActive=\{freshness\.scanRunning\}/);
   assert.doesNotMatch(tableSource, /scanIndex=\{index\}/);
   assert.match(tableSource, /buildSignalMatrixBySymbol\(signalMatrixStates\)/);
+  assert.match(tableSource, /useGetQuoteSnapshots\(/);
+  assert.match(tableSource, /applyRuntimeQuoteSnapshots\(rowQuotesQuery\.data\?\.quotes \|\| \[\]\)/);
+  assert.match(tableSource, /queryKey: \["algo-signal-row-sparklines", rowSymbolsKey\]/);
+  assert.match(tableSource, /getBarsRequest\(/);
+  assert.match(tableSource, /SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m"/);
+  assert.match(tableSource, /SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT = 120/);
+  assert.match(tableSource, /thinBarsForSignalSparkline/);
+  assert.match(tableSource, /publishRuntimeTickerSnapshot\(symbol, symbol, \{ sparkBars \}\)/);
   assert.match(tableSource, /useRuntimeTickerSnapshots\(rowSymbols\)/);
   assert.match(tableSource, /SIGNALS_PAGE_SIZE = 30/);
   assert.match(tableSource, /dataTestId="algo-signals-pagination"/);
@@ -297,18 +378,38 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /columns=\{visibleColumns\}/);
   assert.match(tableSource, /scoreBreakdown: resolveSignalScoreBreakdown\(\{ signal, candidate \}\)/);
   assert.match(tableSource, /compareFiniteValues\(\s*scoreSortValue\(a\.scoreBreakdown\),\s*scoreSortValue\(b\.scoreBreakdown\),\s*sortDirection,/);
+  assert.match(rowSource, /resolveSignalMove\(signalRecord,\s*tickerSnapshot,\s*candidate\)/);
+  assert.match(tableSource, /resolveSignalMove\(row\.signal,\s*null,\s*row\.candidate\)/);
   assert.match(tableSource, /signalMoveSortValue\(a\)/);
-  assert.match(tableSource, /quoteAgeSortValue\(a\.candidate\)/);
-  assert.match(tableSource, /spreadSortValue\(a\.candidate\)/);
+  assert.match(tableSource, /quoteAgeSortValue\(rowMetricCandidate\(a\)\)/);
+  assert.match(tableSource, /spreadSortValue\(rowMetricCandidate\(a\)\)/);
   assert.match(tableSource, /rowActivityTimestampMs\(a\)/);
   assert.match(tableSource, /OperationsSignalColumnDrawer/);
   assert.match(tableSource, /data-testid="algo-signal-column-drawer"/);
   assert.match(tableSource, /algoSignalColumnOrder/);
   assert.match(tableSource, /algoSignalVisibleColumns/);
+  assert.match(tableSource, /SIGNAL_COLUMN_VISIBILITY_VERSION = 2/);
+  assert.match(tableSource, /LEGACY_DEFAULT_SIGNAL_VISIBLE_COLUMNS/);
+  assert.match(tableSource, /algoSignalColumnVisibilityVersion/);
+  assert.match(tableSource, /Signals to Actions/);
   assert.match(tableSource, /Columns3/);
+  assert.match(tableSource, /data-testid="algo-signal-table-scroll"/);
   assert.match(tableSource, /className="ra-dense-table-scroll"/);
-  assert.match(tableSource, /overflowX: "auto"/);
+  assert.match(
+    tableSource,
+    /data-testid="algo-signal-table-scroll"[\s\S]*?overflowX: "auto"/,
+  );
+  assert.match(
+    tableSource,
+    /data-testid="algo-signal-table-scroll"[\s\S]*?<OperationsSignalTableHeader[\s\S]*?<div style=\{\{ maxHeight: 520, overflowY: "auto", minWidth: 0 \}\}>/,
+  );
   assert.match(tableSource, /minWidth: tableMinWidth/);
+  assert.doesNotMatch(tableSource, /BottomSheet/);
+  assert.doesNotMatch(tableSource, /renderDrill/);
+  assert.doesNotMatch(tableSource, /algoFocusStore/);
+  assert.doesNotMatch(tableSource, /setAlgoFocus/);
+  assert.doesNotMatch(tableSource, /clearAlgoFocus/);
+  assert.doesNotMatch(tableSource, /algo-signal-drill-sheet/);
   assert.match(
     cssSource,
     /\[data-testid="algo-screen"\]\[data-layout="phone"\] \[style\*="min-width"\]:not\(\.ra-dense-table-scroll\):not\(\.ra-dense-table-scroll \*\)/,
@@ -320,6 +421,8 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(livePageSource, /signalMatrixStates=\{signalMatrixStates\}/);
   assert.match(livePageSource, /cockpitGeneratedAt=\{cockpitGeneratedAt\}/);
   assert.match(livePageSource, /cockpitStageItems=\{cockpitStageItems\}/);
+  assert.doesNotMatch(livePageSource, /LazyOperationsSignalDrill/);
+  assert.doesNotMatch(livePageSource, /OperationsSignalDrill/);
   assert.match(livePageSource, /data-testid="algo-settings-drawer-open"[\s\S]*?fill: false/);
   assert.match(livePageSource, /padding: algoIsPhone \? sp\("4px 6px"\) : sp\("6px 10px"\)/);
   assert.match(livePageSource, /fontSize: fs\(algoIsPhone \? 11 : 13\)/);
@@ -352,12 +455,15 @@ test("shared signal dots preserve watchlist behavior after extraction", () => {
   assert.match(signalDotsSource, /showLabels = false/);
   assert.match(signalDotsSource, /testId = "watchlist-signal-dots"/);
   assert.match(signalDotsSource, /data-testid=\{testId\}/);
-  assert.match(signalDotsSource, /fallbackState\.timeframe \|\| "5m"/);
+  assert.match(signalDotsSource, /const state = statesByTimeframe\?\.\[timeframe\]/);
+  assert.doesNotMatch(signalDotsSource, /fallbackState/);
   assert.match(rowSource, /testId="algo-signal-dots"/);
+  assert.doesNotMatch(rowSource, /fallbackState=\{/);
   assert.match(compatibilitySource, /signal-language\/SignalDots/);
   assert.doesNotMatch(watchlistSource, /const WatchlistSignalDots/);
   assert.match(watchlistSource, /components\/platform\/signal-language/);
   assert.match(watchlistSource, /<SignalDots/);
+  assert.doesNotMatch(watchlistSource, /fallbackState=\{/);
 });
 
 test("signal row motion classes respect reduced-motion settings", () => {

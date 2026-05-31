@@ -190,6 +190,8 @@ export const AlgoRightRail = ({
   strategyDirty,
   patchStrategySettingsPath,
   focusedDeployment,
+  controlBaselineReady = true,
+  saveAllPending = false,
   handleApplyExpandedCapacity,
   handleSaveAllAdjustments,
   handleDiscardAllAdjustments,
@@ -224,8 +226,10 @@ export const AlgoRightRail = ({
   const dirtyFields = [...haltDirtyFields, ...settingDirtyFields];
   const isDirty = profileDirty || strategyDirty;
   const pending =
+    saveAllPending ||
     updateProfileMutation?.isPending ||
     updateStrategySettingsMutation?.isPending;
+  const controlsReady = Boolean(focusedDeployment && controlBaselineReady);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -297,6 +301,7 @@ export const AlgoRightRail = ({
             profileDraft={profileDraft}
             patchProfileDraftPath={patchProfileDraftPath}
             focusedDeployment={focusedDeployment}
+            controlBaselineReady={controlsReady}
             updateProfileMutation={updateProfileMutation}
           />
           <div data-testid="algo-settings-container">
@@ -311,6 +316,7 @@ export const AlgoRightRail = ({
               patchStrategySettingsPath={patchStrategySettingsPath}
               dirtyFields={settingDirtyFields}
               focusedDeployment={focusedDeployment}
+              controlBaselineReady={controlsReady}
               handleApplyExpandedCapacity={handleApplyExpandedCapacity}
               updateProfileMutation={updateProfileMutation}
               updateStrategySettingsMutation={updateStrategySettingsMutation}

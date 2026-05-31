@@ -29,6 +29,31 @@ test("market-data ingest dedupe key includes the refresh bucket", () => {
   );
 });
 
+test("market-data ingest only treats numeric refresh buckets as supersedable", () => {
+  assert.equal(
+    __marketDataIngestInternalsForTests.numericDedupeBucket({
+      dedupeBucket: 29667979,
+    }),
+    29667979,
+  );
+  assert.equal(
+    __marketDataIngestInternalsForTests.numericDedupeBucket({
+      dedupeBucket: "29667979",
+    }),
+    29667979,
+  );
+  assert.equal(
+    __marketDataIngestInternalsForTests.numericDedupeBucket({
+      dedupeBucket: "2026-05-29T14:30",
+    }),
+    null,
+  );
+  assert.equal(
+    __marketDataIngestInternalsForTests.numericDedupeBucket(null),
+    null,
+  );
+});
+
 test("market-data ingest maps blocked GEX diagnostics with counts and ages", () => {
   const now = new Date("2026-05-29T16:00:00.000Z");
   const diagnostics =

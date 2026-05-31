@@ -145,6 +145,7 @@ test("positions panel surfaces algo signal lifecycle and risk counters", () => {
 test("position table defaults keep quote, greeks, sparkline, and signal context visible", () => {
   const expected = [
     "symbol",
+    "underlyingPrice",
     "quantity",
     "averageCost",
     "price",
@@ -161,6 +162,9 @@ test("position table defaults keep quote, greeks, sparkline, and signal context 
 
   assert.deepEqual(ACCOUNT_POSITION_DEFAULT_COLUMN_IDS, expected);
   assert.deepEqual(ALGO_POSITION_DEFAULT_COLUMN_IDS, expected);
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "underlyingPrice")?.label, "Spot");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "underlyingPrice")?.title, "Underlying price");
+  assert.equal(getPositionTableColumns("account").find((column) => column.id === "underlyingPrice")?.width, "clamp(50px, 5vw, 64px)");
   assert.equal(getPositionTableColumns("account").find((column) => column.id === "averageCost")?.label, "Avg");
   assert.equal(getPositionTableColumns("algo").find((column) => column.id === "averageCost")?.label, "Avg");
   assert.equal(getPositionTableColumns("account").find((column) => column.id === "quote")?.label, "Bid / Ask");
@@ -192,6 +196,10 @@ test("position table defaults keep quote, greeks, sparkline, and signal context 
   assert.match(source, /column\.shortLabel \|\| column\.label/);
   assert.match(source, /const denseColumnBoundaryStyle/);
   assert.match(source, /const denseTableMinWidth/);
+  assert.match(source, /column\.id === "underlyingPrice"/);
+  assert.match(source, /const DenseUnderlyingPriceCell = /);
+  assert.match(source, /useValueFlash\(underlyingPrice\)/);
+  assert.match(source, /className=\{flashClassName\}/);
   assert.match(source, /column\.id === "averageCost"/);
   assert.match(source, /column\.id === "price"/);
   assert.match(source, /column\.id === "quote"/);
@@ -223,6 +231,8 @@ test("position table defaults keep quote, greeks, sparkline, and signal context 
   assert.match(source, /PositionRowActionMenu/);
   assert.match(source, /testId="account-position-row-action-menu"/);
   assert.match(source, /snapshotsBySymbol=\{tickerSnapshotsBySymbol\}/);
+  assert.match(source, /underlyingSnapshotsBySymbol=\{underlyingSnapshotsBySymbol\}/);
+  assert.doesNotMatch(source, /secondary=\{underlyingSymbol\}/);
   assert.match(source, /data-testid="account-positions-table-scroll"/);
   assert.match(source, /data-testid="account-positions-cash-row"/);
   assert.match(source, /<DenseCashRow/);
@@ -381,7 +391,16 @@ test("positions panel renders compact underlying sparklines inside position rows
   assert.match(source, /import \{ MicroSparkline \}/);
   assert.match(source, /import \{ Button \} from "\.\.\/\.\.\/components\/ui\/Button\.jsx"/);
   assert.match(source, /useRuntimeTickerSnapshots\(positionSparklineSymbols\)/);
+  assert.match(source, /const positionUnderlyingSymbols = useMemo/);
+  assert.match(source, /useRegisterPositionMarketDataSymbols\(\s*`positions:\$\{surfaceId\}`,\s*positionUnderlyingSymbols,\s*\)/);
+  assert.match(source, /useRuntimeTickerSnapshots\(positionUnderlyingSymbols\)/);
+  assert.match(source, /denseColumnSortValue\(a, sort\.id, underlyingSnapshotsBySymbol\)/);
   assert.match(source, /const resolvePositionSparklineSymbol/);
+  assert.match(source, /const resolvePositionUnderlyingSymbol/);
+  assert.match(source, /const resolvePositionUnderlyingPrice/);
+  assert.match(source, /snapshot\?\.price/);
+  assert.match(source, /staticUnderlying\?\.price/);
+  assert.match(source, /!isOptionPosition\(row\)/);
   assert.match(source, /row\?\.marketDataSymbol/);
   assert.match(source, /row\?\.optionContract\?\.underlying/);
   assert.match(source, /row\?\.underlyingMarket\?\.symbol/);

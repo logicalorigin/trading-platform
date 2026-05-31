@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  getGetAccountPositionsQueryKey,
+  useGetAccountPositions,
   useGetQuoteSnapshots,
-  useListPositions,
 } from "@workspace/api-client-react";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import { useAccountSelection } from "../platform/platformContexts.jsx";
+import { useAccountSection } from "../platform/useAccountSection.js";
 import { useStoredOptionQuoteSnapshot } from "../platform/live-streams";
 import { listBrokerExecutionsRequest } from "../trade/tradeBrokerRequests.js";
 import type { ChartModel } from "./types";
 import {
   buildChartPositionOverlays,
   EMPTY_CHART_POSITION_OVERLAYS,
+  resolveChartPositionOverlayAccountRequest,
   type ChartPositionOverlayContext,
   type ChartPositionOverlays,
 } from "./chartPositionOverlays";
@@ -67,6 +70,7 @@ export const useChartPositionOverlays = ({
 } => {
   const { preferences } = useUserPreferences();
   const { selectedAccountId } = useAccountSelection();
+  const [accountSection] = useAccountSection();
   const surfaceKind = chartContext?.surfaceKind ?? null;
   const globalEnabled = preferences.trading.showPositionLines;
   const available = Boolean(chartContext?.symbol && globalEnabled);
@@ -92,8 +96,18 @@ export const useChartPositionOverlays = ({
     [surfaceKind],
   );
 
+  const positionAccountRequest = useMemo(
+    () =>
+      resolveChartPositionOverlayAccountRequest({
+        accountSection,
+        chartContext,
+        selectedAccountId,
+      }),
+    [accountSection, chartContext, selectedAccountId],
+  );
+  const effectiveAccountId = positionAccountRequest.accountId;
   const enabled = Boolean(
-    available && globalEnabled && localEnabled && selectedAccountId,
+    available && globalEnabled && localEnabled && effectiveAccountId,
   );
   const symbol = normalizeSymbol(chartContext?.symbol);
   const isOption = chartContext?.surfaceKind === "option";
@@ -101,14 +115,15 @@ export const useChartPositionOverlays = ({
   const providerContractId =
     chartContext?.optionContract?.providerContractId || null;
 
-  const positionsQuery = useListPositions(
-    { accountId: selectedAccountId || undefined },
+  const positionsQuery = useGetAccountPositions(
+    effectiveAccountId || "__none__",
+    positionAccountRequest.params,
     {
       query: {
-        queryKey: [
-          "/api/positions",
-          { accountId: selectedAccountId || undefined },
-        ],
+        queryKey: getGetAccountPositionsQueryKey(
+          effectiveAccountId || "__none__",
+          positionAccountRequest.params,
+        ),
         enabled,
         staleTime: 5_000,
         refetchInterval: false,
@@ -120,20 +135,20 @@ export const useChartPositionOverlays = ({
   const executionsQuery = useQuery({
     queryKey: [
       "chart-position-executions",
-      selectedAccountId,
+      effectiveAccountId,
       symbol,
       providerContractId || null,
       isOption ? "option" : "equity",
     ],
     queryFn: () =>
       listBrokerExecutionsRequest({
-        accountId: selectedAccountId,
+        accountId: effectiveAccountId,
         symbol,
         providerContractId: isOption ? providerContractId : null,
         days: 14,
         limit: 100,
       }),
-    enabled: Boolean(enabled && !isMini && symbol),
+    enabled: Boolean(enabled && effectiveAccountId !== "shadow" && !isMini && symbol),
     staleTime: 5_000,
     refetchInterval: false,
     retry: false,
@@ -206,6 +221,7 @@ export const useChartPositionOverlays = ({
     model.chartBarRanges,
     model.chartBars,
     positionsQuery.data,
+    positionAccountRequest.params,
     setLocalEnabled,
   ]);
 };

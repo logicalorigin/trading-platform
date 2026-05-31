@@ -158,6 +158,15 @@ test("buildHeaderSignalTapeItems attaches interval context to 5m signal pills", 
         },
         {
           symbol: "SPY",
+          timeframe: "5m",
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-04-27T15:55:00Z",
+          currentSignalPrice: 510.25,
+          barsSinceSignal: 0,
+          fresh: true,
+        },
+        {
+          symbol: "SPY",
           timeframe: "15m",
           currentSignalDirection: "buy",
           currentSignalAt: "2026-04-27T15:45:00Z",
@@ -203,7 +212,7 @@ test("buildHeaderSignalTapeItems does not promote matrix-only intervals into pil
   assert.deepEqual(items, []);
 });
 
-test("buildHeaderSignalTapeItems uses pill state as the 5m dot fallback", () => {
+test("buildHeaderSignalTapeItems does not use pill state as the 5m dot fallback", () => {
   const items = buildHeaderSignalTapeItems(
     {
       events: [
@@ -231,9 +240,9 @@ test("buildHeaderSignalTapeItems uses pill state as the 5m dot fallback", () => 
   );
 
   assert.equal(items.length, 1);
-  assert.equal(items[0].intervalStates["5m"].currentSignalDirection, "sell");
-  assert.equal(items[0].intervalStates["5m"].currentSignalPrice, 910.12);
-  assert.equal(items[0].intervalStates["5m"].fresh, false);
+  assert.equal(items[0].intervalStates["5m"].currentSignalDirection, null);
+  assert.equal(items[0].intervalStates["5m"].currentSignalPrice, undefined);
+  assert.equal(items[0].intervalStates["5m"].fresh, undefined);
 });
 
 test("buildHeaderSignalContextSymbols includes every visible signal pill symbol", () => {
