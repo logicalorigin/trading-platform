@@ -64,6 +64,7 @@ const unitTestFiles = [
   "src/features/platform/runtimeCache.test.js",
   "src/features/platform/flowSourceState.test.js",
   "src/features/platform/signalMonitorStatusModel.test.js",
+  "src/features/signals/signalsRowModel.test.js",
   "src/features/platform/signalMonitorStore.test.js",
   "src/features/platform/signalMatrixScheduler.test.js",
   "src/features/platform/ToastStack.test.js",
