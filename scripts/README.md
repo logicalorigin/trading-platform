@@ -70,6 +70,14 @@ directory to define separate Replit app runners.
   generated output changes.
 - `check-markdown-paths.mjs` verifies path-like references in maintained docs.
   It intentionally skips historical audit and handoff notes.
+- `run-validation-command.mjs` wraps broad validation commands that can contend
+  with the live PYRUS app. Root `typecheck:libs` runs through this wrapper, which
+  reads `.pyrus-runtime/flight-recorder/current.json` and the
+  `/tmp/pyrus/pyrus-dev-supervisor-8080.lock` owner process, refuses while the
+  Replit-owned supervisor is hot, writes a JSONL ledger to
+  `.pyrus-runtime/validation/commands.jsonl`, and holds a single-validation lock.
+  Use targeted package tests during live app work; set
+  `PYRUS_ALLOW_HOT_VALIDATION=1` only for an intentional maintenance window.
 - `replit:scribe:artifacts` audits Replit Scribe artifact iframe state from
   `.local/state/scribe/scribe.db`. The default run is read-only and reports live
   artifact iframes plus duplicate/stale cleanup candidates. Use

@@ -35,7 +35,8 @@
     "python-compute:lint": "node scripts/run-python-compute.mjs lint",
     "python-compute:typecheck": "node scripts/run-python-compute.mjs typecheck",
     "test:market-data-worker": "node scripts/run-market-data-worker.mjs test -p market-data-worker",
-    "typecheck:libs": "tsc --build",
+    "validation:guard:test": "node --test scripts/run-validation-command.test.mjs",
+    "typecheck:libs": "node scripts/run-validation-command.mjs --label typecheck:libs -- tsc --build",
     "typecheck": "pnpm run audit:replit-startup && pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
   "private": true,

@@ -429,6 +429,15 @@ Evidence (audited 2026-05-11): of the last three commits touching `.replit`, two
 - Verifying a route end-to-end: `curl -sS http://127.0.0.1:8080/api/healthz` against the already-running api-server, then `restart_workflow "artifacts/api-server: API Server"` only if the change is in compiled output. The artifact-service restart by itself does not edit any watched file.
 - For pyrus: `pnpm --filter @workspace/pyrus run typecheck` plus the live Vite HMR; do not restart the pyrus workflow to "see" a change unless you edited `vite.config.ts` or `package.json`.
 
+Root workspace validation is deliberately more conservative. `pnpm run typecheck:libs`
+runs through `scripts/run-validation-command.mjs`, which reads the PYRUS
+flight recorder plus the `/tmp/pyrus/pyrus-dev-supervisor-8080.lock` owner
+process and refuses broad `tsc --build` while the Replit-owned supervisor is hot.
+Refusals and executions are recorded in
+`.pyrus-runtime/validation/commands.jsonl`. During live app work, prefer the
+targeted package checks above; use `PYRUS_ALLOW_HOT_VALIDATION=1` only for an
+intentional maintenance window where the app can tolerate broad compiler load.
+
 If a test genuinely requires a config change, batch all the config edits into a single save and warn the user beforehand that one workspace reload is about to happen.
 
 For routine work, keep the watched startup files read-only:

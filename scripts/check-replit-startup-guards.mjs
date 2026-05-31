@@ -202,6 +202,31 @@ check(
     "pnpm --filter @workspace/pyrus run build && pnpm --filter @workspace/api-server run build && pnpm run build:ibkr-bridge-bundle",
   "package.json must keep build:pyrus-app building web, API, and the IBKR bridge bundle.",
 );
+check(
+  rootScripts["typecheck:libs"] ===
+    "node scripts/run-validation-command.mjs --label typecheck:libs -- tsc --build",
+  "package.json typecheck:libs must run through scripts/run-validation-command.mjs so broad lib builds are refused while the live PYRUS runtime is hot.",
+);
+check(
+  existsSync(path.join(repoRoot, "scripts/run-validation-command.mjs")) &&
+    existsSync(path.join(repoRoot, "scripts/run-validation-command.test.mjs")) &&
+    rootScripts["validation:guard:test"] ===
+      "node --test scripts/run-validation-command.test.mjs",
+  "package.json must keep validation:guard:test and the guarded validation runner test file.",
+);
+const validationRunner = read("scripts/run-validation-command.mjs");
+check(
+  validationRunner.includes("/tmp/pyrus/pyrus-dev-supervisor-8080.lock") &&
+    validationRunner.includes("readProcessCommand(pid).includes(\"runDevApp.mjs\")") &&
+    validationRunner.includes("supervisorLock") &&
+    validationRunner.includes("live-pyrus-runtime-hot"),
+  "run-validation-command.mjs must keep both flight-recorder and live supervisor-lock admission evidence.",
+);
+check(
+  rootScripts["typecheck"]?.includes("pnpm run typecheck:libs") &&
+    !rootScripts["typecheck"]?.includes("tsc --build"),
+  "package.json typecheck must delegate lib validation through the guarded typecheck:libs script.",
+);
 
 const apiApp = read("artifacts/api-server/src/app.ts");
 check(
@@ -234,6 +259,14 @@ check(
     replitDocs.includes("REPLIT_MODE=workflow"),
   "replit.md must document the dev:replit artifact runner, Replit-owned restart marker, bounded duplicate-start no-op policy, controlled handoff restart path, and duplicate-check-only smoke-test marker.",
 );
+check(
+  replitDocs.includes("scripts/run-validation-command.mjs") &&
+    replitDocs.includes("/tmp/pyrus/pyrus-dev-supervisor-8080.lock") &&
+    replitDocs.includes(".pyrus-runtime/validation/commands.jsonl") &&
+    replitDocs.includes("PYRUS_ALLOW_HOT_VALIDATION=1") &&
+    replitDocs.includes("targeted package checks"),
+  "replit.md must document the guarded root validation path, validation ledger, explicit hot-validation override, and targeted-check preference.",
+);
 const scriptsReadme = read("scripts/README.md");
 check(
   scriptsReadme.includes("REPLIT_MODE=workflow") &&
@@ -243,8 +276,12 @@ check(
     scriptsReadme.includes("PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS") &&
     scriptsReadme.includes("intentional Run-button restart") &&
     scriptsReadme.includes("duplicate Replit-owned Run event exits without restart") &&
-    scriptsReadme.includes("PYRUS_DEV_DUPLICATE_CHECK_ONLY=1"),
-  "scripts/README.md must document the Replit-owned restart marker, bounded duplicate-start no-op policy, controlled handoff restart path, explicit force-restart marker, and duplicate-check-only smoke-test marker.",
+    scriptsReadme.includes("PYRUS_DEV_DUPLICATE_CHECK_ONLY=1") &&
+    scriptsReadme.includes("run-validation-command.mjs") &&
+    scriptsReadme.includes("/tmp/pyrus/pyrus-dev-supervisor-8080.lock") &&
+    scriptsReadme.includes("PYRUS_ALLOW_HOT_VALIDATION=1") &&
+    scriptsReadme.includes(".pyrus-runtime/validation/commands.jsonl"),
+  "scripts/README.md must document the Replit-owned restart marker, bounded duplicate-start no-op policy, controlled handoff restart path, explicit force-restart marker, duplicate-check-only smoke-test marker, and guarded validation ledger.",
 );
 
 const pyrusRunner = read("artifacts/pyrus/scripts/runDevApp.mjs");
