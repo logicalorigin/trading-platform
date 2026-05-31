@@ -79,8 +79,10 @@ import {
   PYRUS_SIGNALS_PINE_SCRIPT_KEY,
   resolvePyrusSignalsRuntimeSettings,
 } from "../charting/pyrusSignalsPineAdapter";
-// @ts-expect-error JSX-era chart persistence helpers are authored in JavaScript.
-import { resolveAlgoPyrusSignalsSettingsPatch, resolvePyrusSignalsSettingsWithAlgoDefaults } from "../charting/chartIndicatorPersistence";
+import {
+  resolveAlgoPyrusSignalsSettingsPatch,
+  resolvePyrusSignalsSettingsWithAlgoDefaults,
+} from "../charting/chartIndicatorPersistence";
 import {
   buildBacktestChartModel,
   buildHydratedBacktestSpotChartModel,
