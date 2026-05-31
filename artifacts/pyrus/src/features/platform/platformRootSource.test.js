@@ -82,8 +82,17 @@ test("safe QA mode disables platform live and diagnostics side effects", () => {
   assert.match(appSource, /streamedQuoteSymbols=\{safeQaMode \? \[\] : runtimeStreamedQuoteSymbols\}/);
   assert.match(appSource, /quoteStreamRuntimeEnabled=\{\s*!safeQaMode &&/);
   assert.match(appSource, /lowPriorityHistoryEnabled=\{\s*!safeQaMode &&/);
+  assert.match(appSource, /sparklineHistoryEnabled=\{\s*!safeQaMode &&/);
   assert.match(appSource, /enabled:\s*Boolean\(sessionQuery\.data && !safeQaMode\)/);
   assert.match(appSource, /skipBootProgressTasks\(\["accounts"\], "Accounts skipped in safe QA mode"\)/);
+  const marketDataSubscriptionSource = readFileSync(
+    new URL("./MarketDataSubscriptionProvider.jsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    marketDataSubscriptionSource,
+    /const positionQuoteStreamDisabledReason = resolveQuoteStreamDisabledReason\(\{\s*pageVisible,\s*quoteStreamRuntimeEnabled,/,
+  );
   assert.match(shellSource, /safeQaMode = false/);
   assert.match(shellSource, /<AppHeader[\s\S]*safeQaMode=\{safeQaMode\}/);
   assert.match(shellSource, /enabled=\{sessionMetadataSettled && !safeQaMode\}/);
@@ -2738,6 +2747,8 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
   assert.match(backtestSource, /useGetBacktestRun\([\s\S]*enabled:\s*Boolean\(isVisible && selectedRunId\)/);
   assert.match(backtestSource, /useGetBacktestRunChart\([\s\S]*enabled:\s*Boolean\(isVisible && selectedRunId\)/);
   assert.match(backtestSource, /useGetBacktestStudyPreviewChart\([\s\S]*enabled:\s*Boolean\(isVisible && selectedStudyId\)/);
+  assert.match(backtestSource, /resolvePyrusSignalsSettingsWithAlgoDefaults/);
+  assert.match(backtestSource, /lastStudyPyrusSignalsSettingsRef/);
 });
 
 test("Research noncritical enrichment waits for settled screen visibility", () => {

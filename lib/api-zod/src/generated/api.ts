@@ -4268,6 +4268,7 @@ export const EvaluateSignalMonitorResponse = zod.object({
   "evaluatedAt": zod.coerce.date(),
   "truncated": zod.boolean(),
   "skippedSymbols": zod.array(zod.string()),
+  "universeSymbols": zod.array(zod.string()),
   "universe": zod.object({
   "mode": zod.enum(['selected_watchlist', 'all_watchlists', 'all_watchlists_plus_universe']),
   "configuredMaxSymbols": zod.number(),
@@ -6096,5 +6097,4 @@ export const ListBacktestDraftStrategiesResponse = zod.object({
   "promotedAt": zod.coerce.date()
 }))
 })
-
 

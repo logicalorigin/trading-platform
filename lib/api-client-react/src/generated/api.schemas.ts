@@ -4439,6 +4439,8 @@ export interface SignalMonitorStateResponse {
   evaluatedAt: string;
   truncated: boolean;
   skippedSymbols: string[];
+  /** Every symbol in the resolved signal-tracked universe, including symbols with missing, stale, or skipped state. */
+  universeSymbols: string[];
   universe: SignalMonitorUniverseSummary;
   cacheStatus?: SignalMonitorStateResponseCacheStatus;
   refreshing?: boolean;

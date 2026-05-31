@@ -1075,6 +1075,24 @@ export function resolveSignalMonitorEvaluationBatch(input: {
   };
 }
 
+function resolveSignalMonitorUniverseSymbols(input: {
+  symbols?: string[];
+  watchlistSymbols?: string[];
+  skippedSymbols?: string[];
+}) {
+  return Array.from(
+    new Set(
+      [
+        ...(input.watchlistSymbols ?? []),
+        ...(input.symbols ?? []),
+        ...(input.skippedSymbols ?? []),
+      ]
+        .map((symbol) => normalizeSymbol(symbol).toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+}
+
 function signalMonitorEvaluationRotationKey(input: {
   profile: Pick<DbSignalMonitorProfile, "id" | "environment" | "timeframe">;
   timeframe: SignalMonitorTimeframe;
@@ -2595,6 +2613,7 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
     evaluatedAt,
     truncated: resolvedBatch.truncated,
     skippedSymbols: resolvedBatch.skippedSymbols,
+    universeSymbols: resolveSignalMonitorUniverseSymbols(universe),
     universe: universe.universe,
   };
 }
@@ -2730,6 +2749,7 @@ export async function evaluateSignalMonitorProfileSymbols(input: {
     evaluatedAt,
     truncated: resolved.truncated,
     skippedSymbols: resolved.skippedSymbols,
+    universeSymbols: resolveSignalMonitorUniverseSymbols(resolved),
     universe: {
       mode: "selected_watchlist",
       configuredMaxSymbols: evaluationProfile.maxSymbols,
@@ -3134,6 +3154,7 @@ async function evaluateSignalMonitorRuntimeProfileUniverse(input: {
       evaluatedAt,
       truncated: resolvedBatch.truncated,
       skippedSymbols: resolvedBatch.skippedSymbols,
+      universeSymbols: resolveSignalMonitorUniverseSymbols(universe),
       universe: universe.universe,
     };
   });
@@ -3537,6 +3558,7 @@ export async function updateSignalMonitorProfile(input: {
 
 export const __signalMonitorInternalsForTests = {
   resolveSignalMonitorUniverseFromWatchlists,
+  resolveSignalMonitorUniverseSymbols,
   resolveSignalMonitorEvaluationBatch,
   resolveExplicitSignalMonitorSymbols,
   resolveSignalMonitorProfileSymbolEvaluationSettings,
@@ -3599,6 +3621,7 @@ async function readSignalMonitorStateFresh(input: {
     const profile = await getOrCreateProfile(environment);
     const {
       profile: hydratedProfile,
+      symbols,
       watchlistSymbols,
       skippedSymbols,
       truncated,
@@ -3653,6 +3676,11 @@ async function readSignalMonitorStateFresh(input: {
         evaluatedAt: hydratedProfile.lastEvaluatedAt ?? new Date(),
         truncated,
         skippedSymbols,
+        universeSymbols: resolveSignalMonitorUniverseSymbols({
+          symbols,
+          watchlistSymbols,
+          skippedSymbols,
+        }),
         universe,
       },
       stateSource: "database" as const,

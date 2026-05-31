@@ -185,6 +185,7 @@ test("account page owns one account-monitor option quote stream for positions su
   assert.match(todaySource, /getOpenPositionRows\(positionsQuery\?\.data\?\.positions \|\| \[\]\)/);
   assert.match(todaySource, /streamLiveOptionQuotes = true/);
   assert.match(positionsSource, /streamLiveOptionQuotes = true/);
+  assert.match(positionsSource, /useRegisterPositionMarketDataSymbols\(\s*`positions:\$\{surfaceId\}`,\s*positionUnderlyingSymbols,\s*liveOptionQuotesEnabled,\s*\)/);
   assert.match(quoteStreamsSource, /intent: "account-monitor-live"/);
 });
 

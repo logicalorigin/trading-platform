@@ -4,6 +4,7 @@ import {
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type { CSSProperties, ReactNode } from "react";
@@ -78,6 +79,8 @@ import {
   PYRUS_SIGNALS_PINE_SCRIPT_KEY,
   resolvePyrusSignalsRuntimeSettings,
 } from "../charting/pyrusSignalsPineAdapter";
+// @ts-expect-error JSX-era chart persistence helpers are authored in JavaScript.
+import { resolveAlgoPyrusSignalsSettingsPatch, resolvePyrusSignalsSettingsWithAlgoDefaults } from "../charting/chartIndicatorPersistence";
 import {
   buildBacktestChartModel,
   buildHydratedBacktestSpotChartModel,
@@ -1498,6 +1501,7 @@ export function BacktestWorkspace({
   const [pyrusSignalsSettings, setPyrusSignalsSettings] = useState(() =>
     resolvePyrusSignalsRuntimeSettings(),
   );
+  const lastStudyPyrusSignalsSettingsRef = useRef<Record<string, unknown> | null>(null);
   const [hasAutoEnabledPyrusSignalsOverlay, setHasAutoEnabledPyrusSignalsOverlay] =
     useState(false);
   const [summaryTradeLens, setSummaryTradeLens] =
@@ -1565,6 +1569,29 @@ export function BacktestWorkspace({
           strategy.version === selectedStudy.strategyVersion,
       ) ?? null)
     : null;
+  useEffect(() => {
+    if (!selectedStudy) {
+      lastStudyPyrusSignalsSettingsRef.current = null;
+      return;
+    }
+    const studyDeploymentSettings = {
+      config: {
+        parameters: selectedStudy.parameters,
+      },
+    };
+    const previousAlgoSettings = lastStudyPyrusSignalsSettingsRef.current;
+    const nextAlgoSettings = resolveAlgoPyrusSignalsSettingsPatch({
+      deployment: studyDeploymentSettings,
+    });
+    lastStudyPyrusSignalsSettingsRef.current = nextAlgoSettings;
+    setPyrusSignalsSettings((current) =>
+      resolvePyrusSignalsSettingsWithAlgoDefaults({
+        currentSettings: current,
+        deployment: studyDeploymentSettings,
+        previousAlgoSettings,
+      }),
+    );
+  }, [selectedStudy]);
 
   const runsQuery = useListBacktestRuns(
     selectedStudyId ? { studyId: selectedStudyId } : undefined,

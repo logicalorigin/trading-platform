@@ -160,7 +160,7 @@ export const MarketDataSubscriptionProvider = ({
   });
   const positionQuoteStreamDisabledReason = resolveQuoteStreamDisabledReason({
     pageVisible,
-    quoteStreamRuntimeEnabled: true,
+    quoteStreamRuntimeEnabled,
     symbolCount: positionQuoteSymbols.length,
     eventSourceAvailable,
   });

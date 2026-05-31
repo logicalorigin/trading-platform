@@ -762,6 +762,10 @@ test("signal monitor state universe keeps all watchlist symbols outside max cap"
   assert.deepEqual(result.symbols, ["SPY", "NVDA"]);
   assert.deepEqual(result.watchlistSymbols, ["SPY", "NVDA", "AAPL", "MSFT"]);
   assert.deepEqual(result.skippedSymbols, ["AAPL", "MSFT"]);
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseSymbols(result),
+    ["SPY", "NVDA", "AAPL", "MSFT"],
+  );
   assert.equal(result.truncated, true);
 });
 
@@ -872,6 +876,10 @@ test("signal monitor explicit expansion scope adds ranked universe symbols", () 
 
   assert.deepEqual(result.symbols, ["SPY", "NVDA", "PLTR", "AAPL", "MSFT", "TSLA"]);
   assert.deepEqual(result.skippedSymbols, ["AMD"]);
+  assert.deepEqual(
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseSymbols(result),
+    ["SPY", "NVDA", "PLTR", "AAPL", "MSFT", "TSLA", "AMD"],
+  );
   assert.equal(result.universe.configuredMaxSymbols, 6);
   assert.equal(result.universe.pinnedSymbols, 3);
   assert.equal(result.universe.expansionSymbols, 3);
@@ -942,6 +950,7 @@ test("signal monitor state route opts into stale-fast cache metadata", () => {
   assert.match(block, /"refreshing"/);
   assert.match(block, /"servedAt"/);
   assert.match(block, /"stateSource"/);
+  assert.match(block, /"universeSymbols":\s*zod\.array\(zod\.string\(\)\)/);
 });
 
 test("signal monitor lane recency rejects stale persisted fresh rows", () => {

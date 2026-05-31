@@ -11216,6 +11216,11 @@ components:
           type: array
           items:
             type: string
+        universeSymbols:
+          type: array
+          description: Every symbol in the resolved signal-tracked universe, including symbols with missing, stale, or skipped state.
+          items:
+            type: string
         universe:
           $ref: "#/components/schemas/SignalMonitorUniverseSummary"
         cacheStatus:
@@ -11235,6 +11240,7 @@ components:
         - evaluatedAt
         - truncated
         - skippedSymbols
+        - universeSymbols
         - universe
 
     SignalMonitorMatrixResponse:

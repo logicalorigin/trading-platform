@@ -3007,6 +3007,7 @@ export const PositionsPanel = ({
   useRegisterPositionMarketDataSymbols(
     `positions:${surfaceId}`,
     positionUnderlyingSymbols,
+    liveOptionQuotesEnabled,
   );
   const underlyingSnapshotsBySymbol = useRuntimeTickerSnapshots(positionUnderlyingSymbols);
   const sortedRows = useMemo(() => {

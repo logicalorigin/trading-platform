@@ -17,6 +17,7 @@ export interface SignalMonitorStateResponse {
   evaluatedAt: Date;
   truncated: boolean;
   skippedSymbols: string[];
+  universeSymbols: string[];
   universe: SignalMonitorUniverseSummary;
   cacheStatus?: SignalMonitorStateResponseCacheStatus;
   refreshing?: boolean;
