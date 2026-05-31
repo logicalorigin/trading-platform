@@ -41,8 +41,10 @@ import {
 import {
   buildPyrusSignalsIndicatorSettings,
   isPyrusSignalsIndicatorSelected,
+  resolveAlgoPyrusSignalsSettingsPatch,
   resolvePersistedIndicatorPreset,
   resolvePersistedPyrusSignalsSettings,
+  resolvePyrusSignalsSettingsWithAlgoDefaults,
 } from "../charting/chartIndicatorPersistence";
 import {
   buildChartBarScopeKey,
@@ -112,6 +114,7 @@ export const TradeEquityPanel = ({
   workspaceChart = null,
   onWorkspaceChartChange,
   referenceLines = [],
+  signalMonitorProfile = null,
   showSignalFrameBorder = true,
   prewarmFavoriteTimeframesEnabled = true,
   flowEventsSourceMode = "merge-store",
@@ -190,6 +193,8 @@ export const TradeEquityPanel = ({
   const [pyrusSignalsSettings, setPyrusSignalsSettings] = useState(() =>
     resolvePersistedPyrusSignalsSettings(_initialState.tradeEquityPyrusSignalsSettings),
   );
+  const lastAlgoPyrusSignalsSettingsRef = useRef(null);
+  const lastAlgoSignalTimeframeRef = useRef(null);
   useEffect(() => {
     const nextWorkspaceTimeframe = normalizeChartTimeframe(
       workspaceChart?.timeframe,
@@ -209,6 +214,42 @@ export const TradeEquityPanel = ({
     () => buildPyrusSignalsIndicatorSettings(pyrusSignalsSettings),
     [pyrusSignalsSettings],
   );
+  useEffect(() => {
+    if (!signalMonitorProfile) {
+      return;
+    }
+    const previousAlgoSettings = lastAlgoPyrusSignalsSettingsRef.current;
+    const nextAlgoSettings = resolveAlgoPyrusSignalsSettingsPatch({
+      signalMonitorProfile,
+    });
+    lastAlgoPyrusSignalsSettingsRef.current = nextAlgoSettings;
+    setPyrusSignalsSettings((current) =>
+      resolvePyrusSignalsSettingsWithAlgoDefaults({
+        currentSettings: current,
+        signalMonitorProfile,
+        previousAlgoSettings,
+      }),
+    );
+  }, [signalMonitorProfile]);
+  useEffect(() => {
+    const nextAlgoTimeframe = normalizeChartTimeframe(signalMonitorProfile?.timeframe);
+    if (!nextAlgoTimeframe) {
+      return;
+    }
+    const previousAlgoTimeframe = lastAlgoSignalTimeframeRef.current;
+    lastAlgoSignalTimeframeRef.current = nextAlgoTimeframe;
+    setTf((currentTimeframe) => {
+      const shouldSync =
+        currentTimeframe === "5m" ||
+        (previousAlgoTimeframe && currentTimeframe === previousAlgoTimeframe);
+      if (!shouldSync || currentTimeframe === nextAlgoTimeframe) {
+        return currentTimeframe;
+      }
+      setIntervalChangeRevision((revision) => revision + 1);
+      onWorkspaceChartChange?.({ timeframe: nextAlgoTimeframe });
+      return nextAlgoTimeframe;
+    });
+  }, [onWorkspaceChartChange, signalMonitorProfile?.timeframe]);
   const prewarmedFavoriteTimeframesRef = useRef(null);
   const { drawings, addDrawing, clearDrawings, undo, redo, canUndo, canRedo } =
     useDrawingHistory();

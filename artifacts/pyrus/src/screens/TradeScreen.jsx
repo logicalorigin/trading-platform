@@ -4071,6 +4071,7 @@ const TradeScreenInner = ({
         })
       }
       referenceLines={equityReferenceLines}
+      signalMonitorProfile={signalMonitorProfile}
       crosshairSyncGroupId={tradeCrosshairSync ? "trade" : null}
       crosshairSyncInstanceId={tradeCrosshairSync ? "trade-equity" : null}
       frameStyle={tradeIsPhone ? tradeMobileChartFrameStyle : undefined}

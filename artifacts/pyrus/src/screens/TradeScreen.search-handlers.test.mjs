@@ -104,9 +104,12 @@ test("TradeScreen option chart uses shared contract flow marker hydration", () =
   assert.match(source, /chartFlowDiagnostics=\{chartEventConversion\}/);
 });
 
-test("TradeScreen applies active Algo Pyrus Signals settings to the option chart", () => {
+test("TradeScreen applies active Algo Pyrus Signals settings to Trade charts", () => {
   assert.match(source, /useGetSignalMonitorProfile/);
-  assert.match(source, /signalMonitorProfile=\{signalMonitorProfile\}/);
+  assert.equal(
+    (source.match(/signalMonitorProfile=\{signalMonitorProfile\}/g) || []).length,
+    2,
+  );
   assert.match(source, /resolvePyrusSignalsSettingsWithAlgoDefaults/);
   assert.match(source, /resolveAlgoPyrusSignalsSettingsPatch/);
   assert.match(source, /lastAlgoPyrusSignalsSettingsRef/);
