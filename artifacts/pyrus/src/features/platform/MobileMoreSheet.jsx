@@ -26,6 +26,7 @@ import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.j
 import { SCREENS } from "./screenRegistry.jsx";
 
 const SECONDARY_SCREEN_IDS = new Set([
+  "flow",
   "gex",
   "research",
   "algo",

@@ -368,6 +368,7 @@ test("mobile shell uses bottom navigation and separates watchlist activity surfa
   assert.match(shellSource, /data-viewport=/);
   assert.match(moreSheetSource, /testId="mobile-more-sheet"/);
   assert.match(moreSheetSource, /mobile-more-screen-/);
+  assert.match(moreSheetSource, /"flow",\s*"gex"/);
   assert.match(activitySheetSource, /testId="mobile-activity-sheet"/);
   assert.match(activitySheetSource, /<Drawer/);
   assert.match(activitySheetSource, /side="right"/);
