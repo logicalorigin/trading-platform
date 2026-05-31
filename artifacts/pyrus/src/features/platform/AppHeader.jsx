@@ -808,7 +808,7 @@ const AppHeaderInner = ({
           onAlertClick={() => handleSetScreen("trade")}
           onPositionsClick={() => handleSetScreen("trade")}
           onOrdersClick={() => handleSetScreen("trade")}
-          onSignalsClick={() => handleSetScreen("flow")}
+          onSignalsClick={() => handleSetScreen("signals")}
           onFlowClick={() => handleSetScreen("flow")}
           onAlgoClick={() => handleSetScreen("algo")}
           scrollersCollapsed={scrollersCollapsed}

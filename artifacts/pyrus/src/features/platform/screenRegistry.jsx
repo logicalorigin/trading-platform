@@ -25,6 +25,12 @@ const SCREEN_ROUTE_SHELLS = {
     detail: "Loading flow scanner controls and premium charts.",
     lanes: ["Tape", "Premium tide", "Contract detail"],
   },
+  signals: {
+    title: "Signals",
+    eyebrow: "Pyrus Signals",
+    detail: "Loading signal monitor state and ticker coverage.",
+    lanes: ["Tracked tickers", "Signal matrix", "Coverage"],
+  },
   gex: {
     title: "GEX",
     eyebrow: "Gamma workspace",
@@ -223,6 +229,7 @@ const createPreloadableScreen = (screenId, label) => {
 };
 
 const MarketScreen = createPreloadableScreen("market", "MarketScreen");
+const SignalsScreen = createPreloadableScreen("signals", "SignalsScreen");
 const FlowScreen = createPreloadableScreen("flow", "FlowScreen");
 const GexScreen = createPreloadableScreen("gex", "GexScreen");
 const TradeScreen = createPreloadableScreen("trade", "TradeScreen");
@@ -235,6 +242,7 @@ const SettingsScreen = createPreloadableScreen("settings", "SettingsScreen");
 
 export const SCREENS = [
   { id: "market", label: "Market", icon: "◉" },
+  { id: "signals", label: "Signals", icon: "◌" },
   { id: "flow", label: "Flow", icon: "◈" },
   { id: "gex", label: "GEX", icon: "✳" },
   { id: "trade", label: "Trade", icon: "◧" },
@@ -248,6 +256,7 @@ export const SCREENS = [
 
 export const SCREEN_BOOT_DATA_DEPS = {
   market: ["session"],
+  signals: ["session", "signal-profile"],
   flow: ["session", "watchlists"],
   gex: ["session", "watchlists"],
   trade: ["session", "watchlists"],
@@ -262,6 +271,7 @@ export const SCREEN_BOOT_DATA_DEPS = {
 export const SCREEN_MODULE_PRELOAD_ORDER = [
   "market",
   "account",
+  "signals",
   "flow",
   "gex",
   "trade",
@@ -279,6 +289,7 @@ export const BOOT_SCREEN_MODULE_PRELOAD_ORDER = [
 
 export const SCREEN_RENDER_POLICIES = {
   market: { retainInactive: true },
+  signals: { retainInactive: true },
   trade: { retainInactive: true },
   flow: { retainInactive: true },
   gex: { retainInactive: true },
@@ -303,6 +314,7 @@ export const skipStableHiddenScreenRender = (prevProps, nextProps) =>
   prevProps?.isVisible === false && nextProps?.isVisible === false;
 
 export const MemoMarketScreen = memo(MarketScreen, skipStableHiddenScreenRender);
+export const MemoSignalsScreen = memo(SignalsScreen, skipStableHiddenScreenRender);
 export const MemoFlowScreen = memo(FlowScreen, skipStableHiddenScreenRender);
 export const MemoGexScreen = memo(GexScreen, skipStableHiddenScreenRender);
 export const MemoTradeScreen = memo(TradeScreen, skipStableHiddenScreenRender);

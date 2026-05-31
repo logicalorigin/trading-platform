@@ -2470,6 +2470,7 @@ export default function PlatformApp() {
   );
   const signalWorkFastScreen = Boolean(
     marketScreenActive ||
+      screen === "signals" ||
       flowScreenActive ||
       screen === "trade" ||
       screen === "algo",
@@ -3980,6 +3981,9 @@ export default function PlatformApp() {
       onToggleMonitor={handleToggleSignalMonitor}
       onChangeMonitorTimeframe={handleChangeSignalMonitorTimeframe}
       onChangeMonitorWatchlist={handleChangeSignalMonitorWatchlist}
+      onChangeMonitorFreshWindowBars={handleChangeSignalMonitorFreshWindowBars}
+      onChangeMonitorMaxSymbols={handleChangeSignalMonitorMaxSymbols}
+      onJumpToTradeFromSignals={handleJumpToTradeFromResearch}
       onJumpToTradeFromFlow={handleJumpToTradeFromFlow}
       onJumpToTradeFromAccount={handleAccountJumpToTrade}
       onJumpToTradeFromResearch={handleJumpToTradeFromResearch}
@@ -4005,6 +4009,8 @@ export default function PlatformApp() {
     environment,
     flowScreenActive,
     handleAccountJumpToTrade,
+    handleChangeSignalMonitorFreshWindowBars,
+    handleChangeSignalMonitorMaxSymbols,
     handleChangeSignalMonitorTimeframe,
     handleChangeSignalMonitorWatchlist,
     handleFocusMarketChart,

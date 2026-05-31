@@ -1896,6 +1896,54 @@ test("platform signal monitor uses paper profile for all header-lane signal quer
   );
 });
 
+test("signals screen is registered as a first-class platform route", () => {
+  const preloaderSource = readFileSync(
+    new URL("./screenModulePreloader.js", import.meta.url),
+    "utf8",
+  );
+  const registrySource = readFileSync(
+    new URL("./screenRegistry.jsx", import.meta.url),
+    "utf8",
+  );
+  const routerSource = readFileSync(
+    new URL("./PlatformScreenRouter.jsx", import.meta.url),
+    "utf8",
+  );
+  const appContentSource = readFileSync(
+    new URL("../../app/AppContent.tsx", import.meta.url),
+    "utf8",
+  );
+  const appHeaderSource = readFileSync(
+    new URL("./AppHeader.jsx", import.meta.url),
+    "utf8",
+  );
+  const shellSource = readFileSync(
+    new URL("./PlatformShell.jsx", import.meta.url),
+    "utf8",
+  );
+  const signalsScreenSource = readFileSync(
+    new URL("../../screens/SignalsScreen.jsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(preloaderSource, /signals:\s*\(\) => import\("\.\.\/\.\.\/screens\/SignalsScreen\.jsx"\)/);
+  assert.match(registrySource, /const SignalsScreen = createPreloadableScreen\("signals", "SignalsScreen"\)/);
+  assert.match(registrySource, /\{ id: "signals", label: "Signals"/);
+  assert.match(registrySource, /signals:\s*\["session", "signal-profile"\]/);
+  assert.match(registrySource, /export const MemoSignalsScreen = memo\(SignalsScreen/);
+  assert.match(routerSource, /MemoSignalsScreen/);
+  assert.match(routerSource, /case "signals":/);
+  assert.match(routerSource, /onChangeMonitorFreshWindowBars=\{onChangeMonitorFreshWindowBars\}/);
+  assert.match(appContentSource, /"signals"/);
+  assert.match(appHeaderSource, /onSignalsClick=\{\(\) => handleSetScreen\("signals"\)\}/);
+  assert.match(shellSource, /signals:\s*ScanLine/);
+  assert.match(signalsScreenSource, /useGetSignalMonitorProfile/);
+  assert.match(signalsScreenSource, /useGetSignalMonitorState/);
+  assert.match(signalsScreenSource, /useListSignalMonitorEvents/);
+  assert.match(signalsScreenSource, /buildSignalsRows/);
+  assert.match(signalsScreenSource, /DenseVirtualTable/);
+});
+
 test("algo signal-options automation uses generated API ownership path", () => {
   const algoScreenSource = readFileSync(
     new URL("../../screens/AlgoScreen.jsx", import.meta.url),

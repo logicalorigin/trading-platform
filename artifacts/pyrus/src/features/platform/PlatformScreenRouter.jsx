@@ -11,11 +11,13 @@ import {
   MemoMarketScreen,
   MemoResearchScreen,
   MemoSettingsScreen,
+  MemoSignalsScreen,
   MemoTradeScreen,
 } from "./screenRegistry.jsx";
 
 const SCREEN_IDS = [
   "market",
+  "signals",
   "flow",
   "gex",
   "trade",
@@ -63,6 +65,9 @@ export const PlatformScreenRouter = ({
   onToggleMonitor,
   onChangeMonitorTimeframe,
   onChangeMonitorWatchlist,
+  onChangeMonitorFreshWindowBars,
+  onChangeMonitorMaxSymbols,
+  onJumpToTradeFromSignals,
   onJumpToTradeFromFlow,
   onJumpToTradeFromAccount,
   onJumpToTradeFromResearch,
@@ -73,6 +78,7 @@ export const PlatformScreenRouter = ({
   onScreenReadiness,
 }) => {
   const marketDataActive = screen === "market";
+  const signalsDataActive = screen === "signals";
   const flowDataActive = screen === "flow";
   const gexDataActive = screen === "gex";
   const tradeDataActive = screen === "trade";
@@ -122,6 +128,26 @@ export const PlatformScreenRouter = ({
   switch (screenId) {
     case "market":
       return renderMarketScreen();
+    case "signals":
+      return (
+        <MemoSignalsScreen
+          environment={environment}
+          watchlists={watchlists}
+          defaultWatchlist={defaultWatchlist}
+          signalMonitorSymbols={signalMonitorSymbols}
+          signalMatrixStates={signalMatrixStates}
+          isVisible={signalsDataActive}
+          onSelectSymbol={onSelectSymbol}
+          onJumpToTrade={onJumpToTradeFromSignals}
+          onScanNow={onScanNow}
+          onToggleMonitor={onToggleMonitor}
+          onChangeMonitorTimeframe={onChangeMonitorTimeframe}
+          onChangeMonitorWatchlist={onChangeMonitorWatchlist}
+          onChangeMonitorFreshWindowBars={onChangeMonitorFreshWindowBars}
+          onChangeMonitorMaxSymbols={onChangeMonitorMaxSymbols}
+          onReadinessChange={buildReadinessHandler("signals")}
+        />
+      );
     case "flow":
     case "unusual":
       return (

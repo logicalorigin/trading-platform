@@ -22,6 +22,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   RadioTower,
+  ScanLine,
   Search,
   Settings as SettingsIcon,
   Tv,
@@ -105,7 +106,7 @@ const cssColorMix = (color, percent) =>
   `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
 const TRANSIENT_SCREEN_IDS = new Set(["diagnostics", "settings"]);
-const MOBILE_PRIMARY_SCREEN_IDS = ["market", "flow", "trade", "account"];
+const MOBILE_PRIMARY_SCREEN_IDS = ["market", "signals", "trade", "account"];
 const WATCHLIST_SIDEBAR_WIDTH_DEFAULT = 220;
 const WATCHLIST_SIDEBAR_WIDTH_MIN = 196;
 const WATCHLIST_SIDEBAR_WIDTH_MAX = 320;
@@ -126,6 +127,7 @@ const clampActivitySidebarWidth = (value) =>
 const MOBILE_PRIMARY_SCREEN_SET = new Set(MOBILE_PRIMARY_SCREEN_IDS);
 const MOBILE_NAV_ICONS = {
   market: LineChart,
+  signals: ScanLine,
   flow: Activity,
   trade: ChartCandlestick,
   account: WalletCards,

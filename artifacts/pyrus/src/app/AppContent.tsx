@@ -27,6 +27,7 @@ const ROOT_ROUTE_CHUNK_RETRIES = 4;
 const ROOT_ROUTE_CHUNK_RETRY_DELAY_MS = 500;
 const PLATFORM_SCREEN_IDS = new Set([
   "market",
+  "signals",
   "flow",
   "gex",
   "trade",
