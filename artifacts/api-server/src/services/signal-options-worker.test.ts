@@ -208,7 +208,7 @@ test("signal-options worker keeps deployment scans rotating under high pressure"
     assert.equal(caps.signalRefreshAllowed, true);
     assert.equal(caps.actionScansAllowed, true);
     assert.equal(caps.positionMarksAllowed, true);
-    assert.equal(caps.watchlistPrewarmAllowed, false);
+    assert.equal(caps.watchlistPrewarmAllowed, true);
 
     const worker = createSignalOptionsWorker({
       listDeployments: async () => [deployment()],
@@ -407,6 +407,42 @@ test("signal-options worker interval-gates scans and rescans after config change
   assert.equal(runtime?.nextScanDueAt, "2026-04-28T14:02:01.000Z");
 });
 
+test("signal-options worker reschedules active position monitoring inside the mark SLO", async () => {
+  let now = new Date("2026-04-28T14:00:00.000Z");
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async () => ({
+      summary: {
+        signalCount: 1,
+        freshSignalCount: 0,
+        staleSignalCount: 1,
+        unavailableSignalCount: 0,
+        latestSignalBarAt: "2026-04-28T13:55:00.000Z",
+        oldestSignalBarAt: "2026-04-28T13:55:00.000Z",
+        candidateCount: 0,
+        blockedCandidateCount: 0,
+        activePositionCount: 3,
+      },
+    }),
+    runMaintenance: emptyMaintenance,
+    acquireTickLock: async () => async () => {},
+    now: () => now,
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+
+  const runtime = worker.getRuntimeSnapshot().deployments[0];
+  assert.equal(runtime?.pollIntervalMs, 60_000);
+  assert.equal(runtime?.lastActivePositionCount, 3);
+  assert.equal(runtime?.nextScanDueAt, "2026-04-28T14:00:05.000Z");
+  assert.equal(runtime?.nextScanDueInMs, 5_000);
+
+  now = new Date("2026-04-28T14:00:06.000Z");
+  await worker.runOnce();
+  assert.equal(worker.getRuntimeSnapshot().deployments[0]?.scanCount, 2);
+});
+
 test("signal-options worker anchors poll interval to scan completion", async () => {
   let scanCalls = 0;
   let now = new Date("2026-04-28T14:00:00.000Z");
@@ -483,7 +519,7 @@ test("signal-options worker resumes deferred action work on the next wakeup", as
   assert.equal(scanCalls, 2);
   assert.equal(runtime?.lastHeavyWorkDeferred, false);
   assert.equal(runtime?.nextScanDueAt, "2026-04-28T14:01:05.000Z");
-  assert.equal(actionBudgets[0]?.["actionWorkBudgetMs"], 20_000);
+  assert.equal(actionBudgets[0]?.["actionWorkBudgetMs"], 60_000);
   assert.equal(actionBudgets[0]?.["actionWorkItemLimit"], 24);
 });
 

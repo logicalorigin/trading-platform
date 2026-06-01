@@ -55,6 +55,7 @@ export type SignalOptionsWorkerSnapshot = {
     lastResourcePressureLevel?: string | null;
     lastCandidateCount: number;
     lastBlockedCandidateCount: number;
+    lastActivePositionCount?: number;
     lastBatchSymbols?: string[];
     lastBatchSize?: number;
     lastBatchUniverseCount?: number;

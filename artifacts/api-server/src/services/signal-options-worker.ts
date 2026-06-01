@@ -23,12 +23,13 @@ const WORKER_WAKEUP_MS = 5_000;
 export const SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY = 1_930_514_022;
 const ADVISORY_LOCK_KEY = SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY;
 const FAILED_DEPLOYMENT_RETRY_MS = 60_000;
-const SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 20_000;
+const SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 60_000;
 const SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 24;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS = 120_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MIN_MS = 1_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MAX_MS = 3_600_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_REASON = "worker_scan_timeout";
+const SIGNAL_OPTIONS_ACTIVE_POSITION_POLL_MS = 5_000;
 
 type ReleaseLock = () => Promise<void>;
 type WorkerLogger = Pick<typeof logger, "debug" | "info" | "warn">;
@@ -99,6 +100,7 @@ type DeploymentRuntime = {
   lastResourcePressureLevel: string | null;
   lastCandidateCount: number;
   lastBlockedCandidateCount: number;
+  lastActivePositionCount: number;
   lastBatchSymbols: string[];
   lastBatchSize: number;
   lastBatchUniverseCount: number;
@@ -193,6 +195,7 @@ function summarizeScanResult(result: unknown) {
           : null,
       candidateCount: numeric(summary["candidateCount"]) ?? 0,
       blockedCandidateCount: numeric(summary["blockedCandidateCount"]) ?? 0,
+      activePositionCount: numeric(summary["activePositionCount"]) ?? 0,
       lastSignalScanAt:
         typeof summary["lastSignalScanAt"] === "string"
           ? summary["lastSignalScanAt"]
@@ -249,6 +252,7 @@ function summarizeScanResult(result: unknown) {
       const status = String(candidate["status"] ?? "");
       return actionStatus === "blocked" || status === "skipped";
     }).length,
+    activePositionCount: asArray(record["activePositions"]).length,
     lastSignalScanAt: null,
     signalSourcePolicy: null,
     heavyWorkDeferred: false,
@@ -382,6 +386,7 @@ function createDeploymentRuntime(signature: string): DeploymentRuntime {
     lastResourcePressureLevel: null,
     lastCandidateCount: 0,
     lastBlockedCandidateCount: 0,
+    lastActivePositionCount: 0,
     lastBatchSymbols: [],
     lastBatchSize: 0,
     lastBatchUniverseCount: 0,
@@ -574,6 +579,7 @@ async function runDeployment(input: {
       scanSummary.heavyWorkDeferred && scanSummary.activeScanPhase === "action_scan";
     runtime.lastCandidateCount = scanSummary.candidateCount;
     runtime.lastBlockedCandidateCount = scanSummary.blockedCandidateCount;
+    runtime.lastActivePositionCount = scanSummary.activePositionCount;
     runtime.lastBatchSymbols = scanSummary.batch?.symbols ?? [];
     runtime.lastBatchSize = scanSummary.batch?.batchSize ?? 0;
     runtime.lastBatchUniverseCount = scanSummary.batch?.universeCount ?? 0;
@@ -611,9 +617,13 @@ async function runDeployment(input: {
     const scanEndedAtMs = dependencies.now().getTime();
     runtime.lastScanDurationMs = Math.max(0, scanEndedAtMs - scanStartedAtMs);
     runtime.lastCheckedAtMs = scanEndedAtMs;
+    const nextIntervalMs =
+      runtime.lastActivePositionCount > 0
+        ? Math.min(runtime.pollIntervalMs, SIGNAL_OPTIONS_ACTIVE_POSITION_POLL_MS)
+        : runtime.pollIntervalMs;
     runtime.nextScanDueAtMs = resumeActionWorkNextTick
       ? scanEndedAtMs
-      : scanEndedAtMs + runtime.pollIntervalMs;
+      : scanEndedAtMs + nextIntervalMs;
     runtime.pressurePaused = false;
     runtime.pressurePauseStartedAtMs = null;
     if (leaveActiveUntilSettled && timedOutScanPromise) {
@@ -880,6 +890,7 @@ export function createSignalOptionsWorker(
           lastResourcePressureLevel: runtime.lastResourcePressureLevel,
           lastCandidateCount: runtime.lastCandidateCount,
           lastBlockedCandidateCount: runtime.lastBlockedCandidateCount,
+          lastActivePositionCount: runtime.lastActivePositionCount,
           lastBatchSymbols: runtime.lastBatchSymbols,
           lastBatchSize: runtime.lastBatchSize,
           lastBatchUniverseCount: runtime.lastBatchUniverseCount,

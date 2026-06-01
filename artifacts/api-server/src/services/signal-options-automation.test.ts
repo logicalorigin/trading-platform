@@ -34,6 +34,17 @@ import {
 
 const profile = defaultSignalOptionsExecutionProfile;
 
+test("Greek smoke integer config preserves uncapped null values", () => {
+  const { readGreekSmokeInteger } =
+    __signalOptionsAutomationInternalsForTests;
+
+  assert.equal(readGreekSmokeInteger(null, null, 1, 1_000), null);
+  assert.equal(readGreekSmokeInteger(undefined, null, 1, 1_000), null);
+  assert.equal(readGreekSmokeInteger("all", null, 1, 1_000), null);
+  assert.equal(readGreekSmokeInteger("0", null, 1, 1_000), 1);
+  assert.equal(readGreekSmokeInteger("12", null, 1, 1_000), 12);
+});
+
 function quote(
   strike: number,
   right: "call" | "put",
@@ -75,6 +86,35 @@ function pricedQuote(
   };
 }
 
+function greekPricedQuote(
+  strike: number,
+  right: "call" | "put",
+  bid: number,
+  ask: number,
+  greeks: {
+    impliedVolatility?: number | null;
+    delta?: number | null;
+    gamma?: number | null;
+    theta?: number | null;
+    vega?: number | null;
+    volume?: number | null;
+  },
+): SignalOptionsOptionQuote {
+  return {
+    ...pricedQuote(strike, right, bid, ask),
+    contract: {
+      ...quote(strike, right).contract,
+      expirationDate: "2026-06-05",
+    },
+    impliedVolatility: greeks.impliedVolatility ?? null,
+    delta: greeks.delta ?? null,
+    gamma: greeks.gamma ?? null,
+    theta: greeks.theta ?? null,
+    vega: greeks.vega ?? null,
+    volume: greeks.volume ?? 200,
+  };
+}
+
 function signalOptionsEmptyWorkerMaintenanceSnapshot() {
   return {
     runCount: 0,
@@ -99,14 +139,18 @@ function resetSignalOptionsWorkerSnapshotForTests() {
   }));
 }
 
-test("default paper signal-options startup uses bounded signal monitor profile", () => {
+test("default paper signal-options startup uses full signal monitor coverage", () => {
   const source = readFileSync(
     new URL("./signal-options-automation.ts", import.meta.url),
     "utf8",
   );
+  const monitorBody = source.match(
+    /async function loadSignalOptionsMonitorState\([\s\S]*?\nfunction candidateFromEvent/,
+  )?.[0];
 
-  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 60/);
-  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 2/);
+  assert.ok(monitorBody);
+  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 250/);
+  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 6/);
   assert.match(source, /SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY = 6/);
   assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60/);
   assert.match(source, /DEFAULT_SIGNAL_OPTIONS_WORKER_MONITOR_BATCH_SIZE = 12/);
@@ -116,7 +160,7 @@ test("default paper signal-options startup uses bounded signal monitor profile",
     source,
     /resolveSignalOptionsMonitorFullRefresh\(\{[\s\S]*universe: input\.universe/,
   );
-  assert.match(source, /input\.source !== "worker"/);
+  assert.doesNotMatch(monitorBody, /input\.source !== "worker"/);
   assert.match(source, /maxSymbolsOverride:\s*fullRefresh\.symbols\.length/);
   assert.match(source, /pressureCapMode:\s*"bypass-soft"/);
   assert.match(
@@ -213,6 +257,12 @@ test("signal-options scans publish fresh signal state before heavy action work",
   assert.match(scanBody, /rememberSignalOptionsActionCursor/);
   assert.match(scanBody, /hasPendingSignalOptionsActionableState/);
   assert.match(scanBody, /createSignalOptionsSignalReserveBudget/);
+  assert.match(scanBody, /withSignalOptionsActionItemTimeout/);
+  assert.match(scanBody, /position_mark_timeout/);
+  assert.match(source, /SIGNAL_OPTIONS_POSITION_MARK_TIMEOUT_MS = 9_000/);
+  assert.match(scanBody, /timeoutMs:\s*SIGNAL_OPTIONS_POSITION_MARK_TIMEOUT_MS/);
+  assert.match(scanBody, /signalOptionsPositionMarkErrorReason\(error\)/);
+  assert.match(scanBody, /candidate_resolution_timeout/);
   assert.match(
     scanBody,
     /positionPhaseBudgetExhausted[\s\S]*!hasPendingActionableSignals/,
@@ -223,6 +273,11 @@ test("signal-options scans publish fresh signal state before heavy action work",
     /lastSignalScanAt:\s*signalScanCompletedAt\.toISOString\(\)/,
   );
   assert.match(scanBody, /heavyWorkDeferred:\s*true/);
+  assert.match(
+    scanBody,
+    /const deferredActivePositionCount =[\s\S]*loadSignalOptionsActivePositionCountForWorkerSummary/,
+  );
+  assert.match(scanBody, /activePositionCount:\s*deferredActivePositionCount/);
 });
 
 test("signal-options profile update returns persisted controls without rebuilding state", () => {
@@ -280,6 +335,54 @@ test("signal-options detects pending actionable states after a worker cursor", (
   assert.equal(
     hasPending({ states, universe: new Set(["IONQ"]), startIndex: 0 }),
     false,
+  );
+});
+
+test("signal-options action scan prioritizes newest actionable signals", () => {
+  const orderStates =
+    __signalOptionsAutomationInternalsForTests.orderSignalOptionsActionStates;
+  const states = [
+    {
+      profileId: "profile-1",
+      symbol: "LMT",
+      timeframe: "5m",
+      currentSignalDirection: "buy",
+      currentSignalAt: "2026-06-01T16:50:00.000Z",
+      currentSignalPrice: 519,
+      latestBarAt: "2026-06-01T17:15:00.000Z",
+      barsSinceSignal: 5,
+      fresh: true,
+      status: "ok",
+    },
+    {
+      profileId: "profile-1",
+      symbol: "KTOS",
+      timeframe: "5m",
+      currentSignalDirection: "buy",
+      currentSignalAt: "2026-06-01T17:10:00.000Z",
+      currentSignalPrice: 63,
+      latestBarAt: "2026-06-01T17:15:00.000Z",
+      barsSinceSignal: 1,
+      fresh: true,
+      status: "ok",
+    },
+    {
+      profileId: "profile-1",
+      symbol: "SPY",
+      timeframe: "5m",
+      currentSignalDirection: null,
+      currentSignalAt: null,
+      latestBarAt: "2026-06-01T17:15:00.000Z",
+      fresh: false,
+      status: "stale",
+    },
+  ] as never;
+
+  assert.deepEqual(
+    orderStates({ states, universe: new Set(["LMT", "KTOS", "SPY"]) }).map(
+      (state) => state.symbol,
+    ),
+    ["KTOS", "LMT", "SPY"],
   );
 });
 
@@ -373,6 +476,12 @@ test("signal-options dashboard endpoints share a cached state snapshot", () => {
   assert.match(source, /const SIGNAL_OPTIONS_STATE_EVENT_LIMIT = 2_500/);
   assert.match(source, /const SIGNAL_OPTIONS_SUMMARY_EVENT_LIMIT = 250/);
   assert.match(source, /const SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS = 15_000/);
+  assert.match(
+    source,
+    /const SIGNAL_OPTIONS_DASHBOARD_SUMMARY_BUILD_TIMEOUT_MS = 4_000/,
+  );
+  assert.match(source, /readSignalOptionsDashboardInFlight/);
+  assert.match(source, /withSignalOptionsDashboardBuildTimeout/);
   assert.match(source, /async function getSignalOptionsDashboardSnapshot/);
   assert.match(source, /async function getSignalOptionsFullDashboardSnapshot/);
   assert.match(
@@ -454,7 +563,7 @@ test("historical backfill strike and ticker helpers mirror signal-options defaul
       },
     );
   const ticker =
-    __signalOptionsAutomationInternalsForTests.buildHistoricalPolygonOptionTicker(
+    __signalOptionsAutomationInternalsForTests.buildHistoricalMassiveOptionTicker(
       {
         underlying: "SPY",
         expirationDate: new Date("2026-05-11T00:00:00.000Z"),
@@ -482,7 +591,7 @@ test("historical backfill order plan sizes from option bar close", () => {
       trade.price,
       profile,
       {
-        source: "polygon-option-trade",
+        source: "massive-option-trade",
         trade,
         markPrice: 1.2,
       },
@@ -493,11 +602,11 @@ test("historical backfill order plan sizes from option bar close", () => {
   assert.equal(orderPlan.quantity, 3);
   assert.equal(orderPlan.premiumAtRisk, 375);
   assert.equal(orderPlan.historicalPricing, true);
-  assert.equal(orderPlan.historicalFill.source, "polygon-option-trade");
+  assert.equal(orderPlan.historicalFill.source, "massive-option-trade");
   assert.equal(orderPlan.historicalFill.trade?.price, 1.25);
 });
 
-test("historical option trade fills use the first timely Polygon print", () => {
+test("historical option trade fills use the first timely Massive print", () => {
   const at = new Date("2026-05-11T13:30:00.000Z");
   const trades = [
     {
@@ -639,6 +748,57 @@ test("position mark quote snapshots map onto signal option quotes", () => {
   assert.equal(quote.quoteFreshness, "live");
   assert.equal(quote.marketDataMode, "live");
   assert.equal(quote.ageMs, 25);
+});
+
+test("signal-options position marks declare live demand before reading quote state", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const managePositionBody = source.match(
+    /async function refreshActivePosition\([\s\S]*?\nasync function emitSkippedCandidate/,
+  )?.[0];
+
+  assert.ok(managePositionBody);
+  assert.match(managePositionBody, /declareIbkrLiveDemand/);
+  assert.match(managePositionBody, /readIbkrLiveDemandState/);
+  assert.doesNotMatch(managePositionBody, /fetchBridgeOptionQuoteSnapshots/);
+});
+
+test("signal-options entry candidates select contracts before hydrating selected live quotes", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const entryBody = source.match(
+    /async function processEntryCandidate\([\s\S]*?\nasync function runSignalOptionsShadowScanUnlocked/,
+  )?.[0];
+  const resolverBody = source.match(
+    /async function resolveSignalOptionsCandidateContract\([\s\S]*?\nfunction unavailableSignalOptionsContractPreview/,
+  )?.[0];
+  const scanBody = source.match(
+    /async function runSignalOptionsShadowScanUnlocked\([\s\S]*?\nexport async function updateSignalOptionsExecutionProfile/,
+  )?.[0];
+
+  assert.ok(entryBody);
+  assert.ok(resolverBody);
+  assert.ok(scanBody);
+  assert.match(entryBody, /quoteHydration:\s*"metadata"/);
+  assert.match(entryBody, /allowDelayedSnapshotHydration:\s*false/);
+  assert.match(scanBody, /timeoutMs:\s*SIGNAL_OPTIONS_CANDIDATE_RESOLUTION_TIMEOUT_MS/);
+  assert.match(entryBody, /greekSelectorRuntimeMode:[\s\S]*SHADOW_PROVIDER_ACCOUNT_ID/);
+  assert.match(entryBody, /liveQuoteDemand:\s*{/);
+  assert.match(entryBody, /owner:\s*`signal-options-entry:/);
+  assert.match(source, /SIGNAL_OPTIONS_CANDIDATE_RESOLUTION_TIMEOUT_MS = 9_000/);
+  assert.match(source, /SIGNAL_OPTIONS_LIVE_QUOTE_DEMAND_TTL_MS = 120_000/);
+  assert.match(entryBody, /ttlMs:\s*SIGNAL_OPTIONS_LIVE_QUOTE_DEMAND_TTL_MS/);
+  assert.match(resolverBody, /declareIbkrLiveDemand/);
+  assert.match(resolverBody, /fetchBridgeOptionQuoteSnapshots/);
+  assert.match(resolverBody, /releaseLeasesOnComplete:\s*false/);
+  assert.match(resolverBody, /const snapshotQuote =[\s\S]*snapshotPayload\.quotes\.find/);
+  assert.match(resolverBody, /readIbkrLiveDemandState/);
+  assert.match(resolverBody, /const quoteHydration =[\s\S]*input\.quoteHydration \?\? "snapshot"/);
+  assert.match(scanBody, /signalOptionsCandidateResolutionErrorReason\(error\)/);
 });
 
 test("signal-options worker refreshes degraded monitor state before scanning", () => {
@@ -800,6 +960,7 @@ test("signal-options worker scan summary stays lightweight and universe-scoped",
     resourcePressureLevel: null,
     candidateCount: 3,
     blockedCandidateCount: 2,
+    activePositionCount: 0,
     batch: null,
   });
 });
@@ -850,14 +1011,14 @@ test("signal-options monitor batches rotate through the deployment universe", ()
   assert.equal(reset.startIndex, 0);
 });
 
-test("signal-options worker monitor batch capacity is tighter than the manual profile cap", () => {
+test("signal-options hard-pressure fallback batch stays bounded", () => {
   const resolveWorkerCapacity =
     __signalOptionsAutomationInternalsForTests.resolveSignalOptionsWorkerMonitorBatchCapacity;
 
   assert.equal(
     resolveWorkerCapacity({
-      maxSymbols: 60,
-      evaluationConcurrency: 2,
+      maxSymbols: 250,
+      evaluationConcurrency: 6,
       timeframe: "5m",
     } as never),
     12,
@@ -870,6 +1031,21 @@ test("signal-options worker monitor batch capacity is tighter than the manual pr
     } as never),
     6,
   );
+});
+
+test("signal-options hard-pressure batch refresh reads full stored signal state", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const workerRefreshBlock = source.match(
+    /const batch = resolveSignalOptionsMonitorBatch\([\s\S]*?return \{\n      \.\.\.stored,/,
+  )?.[0];
+
+  assert.ok(workerRefreshBlock);
+  assert.match(workerRefreshBlock, /evaluateSignalMonitorProfileSymbols/);
+  assert.match(workerRefreshBlock, /getSignalMonitorStoredState/);
+  assert.match(workerRefreshBlock, /markNonCurrentStale: true/);
 });
 
 test("signal-options manual monitor refresh covers the full deployment universe", () => {
@@ -941,7 +1117,7 @@ test("active position marks record changed downside prices", () => {
   );
 });
 
-test("active position scan marks once per UTC minute", () => {
+test("active position scan marks before the position SLO expires", () => {
   const shouldRecord =
     __signalOptionsAutomationInternalsForTests.shouldRecordActivePositionMarkForScan;
 
@@ -955,16 +1131,23 @@ test("active position scan marks once per UTC minute", () => {
   assert.equal(
     shouldRecord({
       position: { lastMarkedAt: "2026-05-12T14:30:02.000Z" } as never,
-      markAt: new Date("2026-05-12T14:30:59.000Z"),
+      markAt: new Date("2026-05-12T14:30:06.999Z"),
     }),
     false,
+  );
+  assert.equal(
+    shouldRecord({
+      position: { lastMarkedAt: "2026-05-12T14:30:02.000Z" } as never,
+      markAt: new Date("2026-05-12T14:30:07.000Z"),
+    }),
+    true,
   );
   assert.equal(
     shouldRecord({
       position: { lastMarkedAt: "2026-05-12T14:30:59.000Z" } as never,
       markAt: new Date("2026-05-12T14:31:00.000Z"),
     }),
-    true,
+    false,
   );
 });
 
@@ -1575,6 +1758,70 @@ test("live signal-options state does not recover positions from mark-skip payloa
   assert.deepEqual(stateEvents.signalEvents, []);
 });
 
+test("live signal-options state keeps fresh marks after later mark skips", () => {
+  const selectedContract = {
+    underlying: "HOOD",
+    expirationDate: "2026-06-05",
+    strike: 90,
+    right: "call",
+    multiplier: 100,
+  };
+  const stalePosition = {
+    id: "deployment-1:HOOD",
+    candidateId: "candidate-hood",
+    symbol: "HOOD",
+    direction: "buy",
+    optionRight: "call",
+    timeframe: "5m",
+    signalAt: "2026-06-01T17:00:00.000Z",
+    openedAt: "2026-06-01T17:55:00.000Z",
+    entryPrice: 4.1,
+    quantity: 1,
+    peakPrice: 4.4,
+    stopPrice: 3,
+    premiumAtRisk: 410,
+    selectedContract,
+    lastMarkPrice: 4.38,
+    lastMarkedAt: "2026-06-01T18:02:40.005Z",
+  };
+  const freshPosition = {
+    ...stalePosition,
+    lastMarkPrice: 3.8,
+    lastMarkedAt: "2026-06-01T18:40:53.619Z",
+  };
+  const markEvent = {
+    id: "mark-hood",
+    eventType: SIGNAL_OPTIONS_MARK_EVENT,
+    symbol: "HOOD",
+    deploymentId: "deployment-1",
+    occurredAt: new Date("2026-06-01T18:40:53.619Z"),
+    payload: {
+      position: freshPosition,
+      selectedContract,
+    },
+  };
+  const laterSkipEvent = {
+    id: "mark-skip-hood",
+    eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+    symbol: "HOOD",
+    deploymentId: "deployment-1",
+    occurredAt: new Date("2026-06-01T18:41:00.762Z"),
+    payload: {
+      reason: "position_mark_unavailable",
+      position: stalePosition,
+    },
+  };
+
+  const stateEvents =
+    __signalOptionsAutomationInternalsForTests.stateSignalOptionsEvents([
+      markEvent,
+      laterSkipEvent,
+    ] as never);
+
+  assert.equal(stateEvents.activePositions[0]?.lastMarkedAt, freshPosition.lastMarkedAt);
+  assert.equal(stateEvents.activePositions[0]?.lastMarkPrice, freshPosition.lastMarkPrice);
+});
+
 test("signal-options active positions drop zero-quantity shadow ledger links", () => {
   const activePositions = [
     { candidateId: "candidate-smci", symbol: "SMCI" },
@@ -1865,7 +2112,7 @@ test("selectSignalOptionsContractFromChain maps buy to call above and sell to pu
 
 test("signal-options contract selection falls back to cheaper call strikes", () => {
   const selection =
-    __signalOptionsAutomationInternalsForTests.selectSignalOptionsContractPlanFromChain(
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsLegacyContractPlanFromChain(
       {
         contracts: [
           pricedQuote(101, "call", 12, 12.2),
@@ -1890,7 +2137,7 @@ test("signal-options contract selection falls back to cheaper call strikes", () 
 
 test("signal-options contract selection honors ordered strike slot preferences", () => {
   const selection =
-    __signalOptionsAutomationInternalsForTests.selectSignalOptionsContractPlanFromChain(
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsLegacyContractPlanFromChain(
       {
         contracts: [
           pricedQuote(101, "call", 12, 12.2),
@@ -1921,7 +2168,7 @@ test("signal-options contract selection honors ordered strike slot preferences",
 
 test("signal-options contract selection tries selected slots before generated fallbacks", () => {
   const selection =
-    __signalOptionsAutomationInternalsForTests.selectSignalOptionsContractPlanFromChain(
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsLegacyContractPlanFromChain(
       {
         contracts: [
           pricedQuote(101, "call", 12, 12.2),
@@ -1955,7 +2202,7 @@ test("signal-options contract selection tries selected slots before generated fa
 
 test("signal-options contract selection falls back to cheaper put strikes", () => {
   const selection =
-    __signalOptionsAutomationInternalsForTests.selectSignalOptionsContractPlanFromChain(
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsLegacyContractPlanFromChain(
       {
         contracts: [
           pricedQuote(97, "put", 6, 6.2),
@@ -1980,7 +2227,7 @@ test("signal-options contract selection falls back to cheaper put strikes", () =
 
 test("signal-options contract fallback keeps liquidity gates intact", () => {
   const selection =
-    __signalOptionsAutomationInternalsForTests.selectSignalOptionsContractPlanFromChain(
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsLegacyContractPlanFromChain(
       {
         contracts: [
           pricedQuote(101, "call", 12, 12.2),
@@ -2001,6 +2248,202 @@ test("signal-options contract fallback keeps liquidity gates intact", () => {
   assert.equal(selection.orderPlan?.ok, false);
   assert.equal(selection.orderPlan?.reason, "premium_budget_too_small");
   assert.equal(selection.attempts[1]?.orderPlan.reason, "spread_too_wide");
+});
+
+test("signal-options Greek selector runtime mode gates shadow and live selection", () => {
+  const shadowOnlyProfile = resolveSignalOptionsExecutionProfile({
+    ...profile,
+    optionSelection: {
+      ...profile.optionSelection,
+      greekSelector: { enabled: true, mode: "shadow" },
+    },
+    riskCaps: { ...profile.riskCaps, maxPremiumPerEntry: 1_000 },
+  });
+  const contracts = [
+    greekPricedQuote(101, "call", 1, 1.2, {
+      impliedVolatility: 1.8,
+      delta: 0.25,
+      gamma: 0.01,
+      theta: -0.2,
+      vega: 0.02,
+    }),
+    greekPricedQuote(102, "call", 1.1, 1.3, {
+      impliedVolatility: 0.55,
+      delta: 0.45,
+      gamma: 0.05,
+      theta: -0.02,
+      vega: 0.04,
+    }),
+  ];
+
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.isSignalOptionsGreekSelectorEnabled(
+      {
+        profile: shadowOnlyProfile,
+        runtimeMode: "shadow",
+      },
+    ),
+    true,
+  );
+  assert.equal(
+    __signalOptionsAutomationInternalsForTests.isSignalOptionsGreekSelectorEnabled(
+      {
+        profile: shadowOnlyProfile,
+        runtimeMode: "live",
+      },
+    ),
+    false,
+  );
+
+  const liveSelection =
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsContractPlanFromChain(
+      {
+        contracts,
+        direction: "buy",
+        signalPrice: 100,
+        profile: shadowOnlyProfile,
+        runtimeMode: "live",
+      },
+    );
+  const shadowSelection =
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsContractPlanFromChain(
+      {
+        contracts,
+        direction: "buy",
+        signalPrice: 100,
+        profile: shadowOnlyProfile,
+        runtimeMode: "shadow",
+      },
+    );
+
+  assert.equal(liveSelection.selectedBy, "legacy");
+  assert.equal(shadowSelection.selectedBy, "greek");
+});
+
+test("signal-options Greek contract selection chooses the highest valid score", () => {
+  const selection =
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsGreekContractPlanFromChain(
+      {
+        contracts: [
+          greekPricedQuote(101, "call", 1, 1.2, {
+            impliedVolatility: 1.8,
+            delta: 0.25,
+            gamma: 0.01,
+            theta: -0.2,
+            vega: 0.02,
+          }),
+          greekPricedQuote(102, "call", 1.1, 1.3, {
+            impliedVolatility: 0.55,
+            delta: 0.45,
+            gamma: 0.05,
+            theta: -0.02,
+            vega: 0.04,
+          }),
+        ],
+        direction: "buy",
+        signalPrice: 100,
+        profile: resolveSignalOptionsExecutionProfile({
+          ...profile,
+          optionSelection: {
+            ...profile.optionSelection,
+            greekSelector: { enabled: true, mode: "all" },
+          },
+          riskCaps: { ...profile.riskCaps, maxPremiumPerEntry: 1_000 },
+        }),
+        at: new Date("2026-06-01T15:00:00.000Z"),
+      },
+    );
+
+  assert.equal(selection.ok, true);
+  assert.equal(selection.selectedQuote?.contract?.strike, 102);
+  assert.equal(selection.selectedBy, "greek");
+  assert.equal(selection.attempts.length, 2);
+  const lowerScoreAttempt = selection.attempts.find(
+    (attempt) => attempt.quote.contract?.strike === 101,
+  );
+  assert.ok(lowerScoreAttempt?.score);
+  assert.ok(
+    (selection.selectedAttempt?.score?.total ?? 0) >
+      lowerScoreAttempt.score.total,
+  );
+});
+
+test("signal-options Greek contract selection rejects missing Greeks when required", () => {
+  const selection =
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsGreekContractPlanFromChain(
+      {
+        contracts: [
+          greekPricedQuote(101, "call", 1, 1.2, {
+            impliedVolatility: null,
+            delta: null,
+            gamma: null,
+            theta: null,
+            vega: null,
+          }),
+        ],
+        direction: "buy",
+        signalPrice: 100,
+        profile: resolveSignalOptionsExecutionProfile({
+          ...profile,
+          optionSelection: {
+            ...profile.optionSelection,
+            greekSelector: { enabled: true, mode: "all" },
+          },
+          riskCaps: { ...profile.riskCaps, maxPremiumPerEntry: 1_000 },
+        }),
+        at: new Date("2026-06-01T15:00:00.000Z"),
+      },
+    );
+
+  assert.equal(selection.ok, false);
+  assert.equal(selection.selectedQuote, null);
+  assert.equal(selection.fallbackReason, "greek_selector_missing_greeks");
+  assert.equal(selection.attempts[0]?.reason, "greek_selector_missing_greeks");
+});
+
+test("signal-options Greek contract selection keeps liquidity gates ahead of score", () => {
+  const selection =
+    __signalOptionsAutomationInternalsForTests.selectSignalOptionsGreekContractPlanFromChain(
+      {
+        contracts: [
+          greekPricedQuote(101, "call", 1, 1.2, {
+            impliedVolatility: 0.65,
+            delta: 0.35,
+            gamma: 0.03,
+            theta: -0.05,
+            vega: 0.03,
+          }),
+          greekPricedQuote(102, "call", 1, 5, {
+            impliedVolatility: 0.5,
+            delta: 0.45,
+            gamma: 0.08,
+            theta: -0.01,
+            vega: 0.05,
+          }),
+        ],
+        direction: "buy",
+        signalPrice: 100,
+        profile: resolveSignalOptionsExecutionProfile({
+          ...profile,
+          optionSelection: {
+            ...profile.optionSelection,
+            greekSelector: { enabled: true, mode: "all" },
+          },
+          riskCaps: { ...profile.riskCaps, maxPremiumPerEntry: 1_000 },
+        }),
+        at: new Date("2026-06-01T15:00:00.000Z"),
+      },
+    );
+
+  assert.equal(selection.ok, true);
+  assert.equal(selection.selectedQuote?.contract?.strike, 101);
+  const liquidityAttempt = selection.attempts.find(
+    (attempt) =>
+      attempt.reason === "greek_selector_liquidity_failed" &&
+      attempt.quote.contract?.strike === 102,
+  );
+  assert.ok(liquidityAttempt);
+  assert.equal(liquidityAttempt.orderPlan.reason, "spread_too_wide");
 });
 
 test("signal-options scan requests a bounded strike window for selected and fallback slots", () => {
@@ -2055,6 +2498,20 @@ test("seen signal keys allow retries after transient option-chain skips", () => 
             chainDebug: {
               reason: "options_upstream_failure",
             },
+          },
+        },
+      ] as never),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys([
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          payload: {
+            signalKey,
+            reason: "candidate_resolution_timeout",
           },
         },
       ] as never),
@@ -2721,7 +3178,7 @@ test("signal-options candidates preserve Pyrus Signals signal to shadow action m
   assert.deepEqual(candidate.signal?.filterState, { mtf: "aligned" });
 });
 
-test("current-bar signal snapshots create potential shadow action candidates", () => {
+test("fresh signal snapshots create potential shadow action candidates", () => {
   const signalAt = "2026-04-28T15:30:00.000Z";
   const deployment = {
     id: "deployment-123456789",
@@ -2777,8 +3234,8 @@ test("current-bar signal snapshots create potential shadow action candidates", (
         ...baseSignal,
         latestBarAt: "2026-04-28T15:45:00.000Z",
         barsSinceSignal: 6,
-        actionEligible: false,
-        actionBlocker: "signal_too_old",
+        actionEligible: true,
+        actionBlocker: null,
       } as never,
     });
 
@@ -2794,7 +3251,9 @@ test("current-bar signal snapshots create potential shadow action candidates", (
   assert.equal(sellCandidate.optionRight, "put");
   assert.equal(sellCandidate.action?.optionAction, "buy_put");
   assert.equal(staleCandidate, null);
-  assert.equal(stillFreshCandidate, null);
+  assert.ok(stillFreshCandidate);
+  assert.equal(stillFreshCandidate.symbol, "SPY");
+  assert.equal(stillFreshCandidate.reason, null);
 });
 
 test("fresh-but-aged signal snapshots can carry read-only contract previews", () => {
@@ -2905,7 +3364,7 @@ test("fresh-but-aged signal snapshots can carry read-only contract previews", ()
   assert.match(source, /signalOptionsContractPreviewBackoff/);
 });
 
-test("signal-options state shows fresh signals but only trades current-bar signals", () => {
+test("signal-options state treats fresh signals as actionable even after evaluator lag", () => {
   const isVisible =
     __signalOptionsAutomationInternalsForTests.isSignalOptionsVisibleSignalState;
   const isActionable =
@@ -2936,7 +3395,7 @@ test("signal-options state shows fresh signals but only trades current-bar signa
       currentSignalAt: "2026-05-28T19:55:00.000Z",
       barsSinceSignal: 1,
     } as never),
-    false,
+    true,
   );
   const olderFreshState = {
     ...currentBarState,
@@ -2946,10 +3405,13 @@ test("signal-options state shows fresh signals but only trades current-bar signa
     barsSinceSignal: 6,
   };
   assert.equal(isVisible(olderFreshState as never), true);
-  assert.equal(isActionable(olderFreshState as never), false);
+  assert.equal(isActionable(olderFreshState as never), true);
   assert.equal(
-    __signalOptionsAutomationInternalsForTests.isSignalOptionsSignalAgeActionable(6),
-    false,
+    __signalOptionsAutomationInternalsForTests.isSignalOptionsSignalAgeActionable(
+      6,
+      { fresh: true },
+    ),
+    true,
   );
 
   const olderSnapshot = buildSnapshot({
@@ -2957,8 +3419,8 @@ test("signal-options state shows fresh signals but only trades current-bar signa
     freshWindowBars: 8,
   });
   assert.equal(olderSnapshot.freshWindowBars, 8);
-  assert.equal(olderSnapshot.actionEligible, false);
-  assert.equal(olderSnapshot.actionBlocker, "signal_too_old");
+  assert.equal(olderSnapshot.actionEligible, true);
+  assert.equal(olderSnapshot.actionBlocker, null);
   assert.equal(olderSnapshot.barsSinceSignal, 6);
 
   const currentSnapshot = buildSnapshot({
@@ -3180,11 +3642,12 @@ test("signal-options candidate with closed shadow position reports closed", () =
   assert.equal(action.syncStatus, "synced");
 });
 
-test("signal-options deployments normalize execution to the shadow account", () => {
+test("signal-options deployments normalize paper execution to shadow and preserve live accounts", () => {
   assert.equal(
     normalizeAlgoDeploymentProviderAccountId({
       providerAccountId: "DU1234567",
       config: { signalOptions: profile },
+      mode: "paper",
     }),
     SHADOW_PROVIDER_ACCOUNT_ID,
   );
@@ -3192,8 +3655,17 @@ test("signal-options deployments normalize execution to the shadow account", () 
     normalizeAlgoDeploymentProviderAccountId({
       providerAccountId: "DU1234567",
       config: { parameters: { executionMode: "signal_options" } },
+      mode: "paper",
     }),
     SHADOW_PROVIDER_ACCOUNT_ID,
+  );
+  assert.equal(
+    normalizeAlgoDeploymentProviderAccountId({
+      providerAccountId: "DU1234567",
+      config: { parameters: { executionMode: "signal_options" } },
+      mode: "live",
+    }),
+    "DU1234567",
   );
   assert.equal(
     normalizeAlgoDeploymentProviderAccountId({
@@ -5265,4 +5737,146 @@ test("cockpit diagnostics summarize trade blockers and signal freshness", () => 
     "ibkr_not_configured",
   );
   assert.equal(diagnostics.readinessIncidents[0]?.count, 3);
+});
+
+test("cockpit diagnostics expose shadow execution SLO breaches", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const diagnostics =
+    __signalOptionsAutomationInternalsForTests.buildCockpitDiagnostics({
+      now,
+      events: [],
+      signals: [
+        {
+          signalKey: "sig-spy-fast",
+          symbol: "SPY",
+          timeframe: "5m",
+          direction: "buy",
+          signalAt: "2026-04-28T17:59:58.000Z",
+          latestBarAt: "2026-04-28T17:59:58.000Z",
+          fresh: true,
+          actionEligible: true,
+          status: "ok",
+        },
+        {
+          signalKey: "sig-qqq-missed",
+          symbol: "QQQ",
+          timeframe: "5m",
+          direction: "sell",
+          signalAt: "2026-04-28T17:59:40.000Z",
+          latestBarAt: "2026-04-28T17:59:40.000Z",
+          fresh: true,
+          actionEligible: true,
+          status: "ok",
+        },
+      ] as never,
+      candidates: [
+        {
+          id: "candidate-spy-fast",
+          symbol: "SPY",
+          timeframe: "5m",
+          direction: "buy",
+          signalAt: "2026-04-28T17:59:58.000Z",
+          selectedContract: { strike: 510 },
+          action: { type: "buy_call" },
+          actionStatus: "ready",
+          signal: { signalKey: "sig-spy-fast" },
+          timeline: [
+            {
+              type: "signal_options_candidate_created",
+              occurredAt: "2026-04-28T18:00:02.000Z",
+            },
+          ],
+        },
+        {
+          id: "candidate-msft-slow",
+          symbol: "MSFT",
+          timeframe: "5m",
+          direction: "buy",
+          signalAt: "2026-04-28T17:59:40.000Z",
+          selectedContract: null,
+          action: { type: "buy_call" },
+          actionStatus: "ready",
+          timeline: [
+            {
+              type: "signal_options_candidate_created",
+              occurredAt: "2026-04-28T18:00:00.000Z",
+            },
+          ],
+        },
+      ] as never,
+      activePositions: [
+        {
+          id: "position-spy-stale",
+          candidateId: "candidate-spy-fast",
+          symbol: "SPY",
+          direction: "buy",
+          lastMarkedAt: "2026-04-28T17:59:45.000Z",
+        },
+      ] as never,
+    });
+
+  assert.equal(diagnostics.shadowExecutionSlo.status, "fail");
+  assert.equal(diagnostics.shadowExecutionSlo.thresholdsMs.signalPickup, 5_000);
+  assert.equal(
+    diagnostics.shadowExecutionSlo.signalPickup.breaches[0]?.reason,
+    "fresh_actionable_signal_not_picked_up",
+  );
+  assert.equal(
+    diagnostics.shadowExecutionSlo.contractDecision.breaches[0]?.reason,
+    "contract_not_selected",
+  );
+  assert.equal(
+    diagnostics.shadowExecutionSlo.positionMonitoring.breaches[0]?.reason,
+    "position_mark_stale",
+  );
+});
+
+test("cockpit diagnostics classify candidate resolution timeouts as contract resolution", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const diagnostics =
+    __signalOptionsAutomationInternalsForTests.buildCockpitDiagnostics({
+      now,
+      signals: [],
+      candidates: [],
+      activePositions: [],
+      events: [
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          occurredAt: now,
+          payload: { reason: "candidate_resolution_timeout" },
+        },
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          occurredAt: now,
+          payload: { reason: "candidate_resolution_failed" },
+        },
+      ] as never,
+    });
+
+  assert.equal(diagnostics.skipReasons.candidate_resolution_timeout, 1);
+  assert.equal(diagnostics.skipReasons.candidate_resolution_failed, 1);
+  assert.equal(diagnostics.skipCategories.contract_resolution, 2);
+  assert.equal(diagnostics.skipCategories.signal_policy ?? 0, 0);
+});
+
+test("cockpit diagnostics classify position mark timeouts as marking", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const diagnostics =
+    __signalOptionsAutomationInternalsForTests.buildCockpitDiagnostics({
+      now,
+      signals: [],
+      candidates: [],
+      activePositions: [],
+      events: [
+        {
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          occurredAt: now,
+          payload: { reason: "position_mark_timeout" },
+        },
+      ] as never,
+    });
+
+  assert.equal(diagnostics.skipReasons.position_mark_timeout, 1);
+  assert.equal(diagnostics.skipCategories.marking, 1);
+  assert.equal(diagnostics.skipCategories.other ?? 0, 0);
 });

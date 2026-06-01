@@ -1,8 +1,13 @@
 import {
+  computeOptionGreeksFromPrice,
   resolveSignalOptionsExecutionProfile,
+  scoreOptionGreekCandidate,
   signalOptionsStrikeSlotsForRight,
+  timeToExpirationYears,
   tunedSignalOptionsExecutionProfile,
   tunedSignalOptionsStrategySettings,
+  type OptionGreekScore,
+  type OptionGreekSnapshot,
   type SignalOptionsExecutionProfile,
 } from "@workspace/backtest-core";
 import {
@@ -80,6 +85,12 @@ import {
 import { getSignalOptionsWorkerSnapshot } from "./signal-options-worker-state";
 import { fetchBridgeOptionQuoteSnapshots } from "./bridge-option-quote-stream";
 import {
+  declareIbkrLiveDemand,
+  readIbkrLiveDemandState,
+  type IbkrLiveDemandDeclaration,
+  type IbkrLiveDemandState,
+} from "./ibkr-live-demand-coordinator";
+import {
   SIGNAL_OPTIONS_REPLAY_MARK_SOURCE,
   SIGNAL_OPTIONS_REPLAY_SOURCE,
   computeShadowTradeDiagnostics,
@@ -147,15 +158,28 @@ const activeSignalOptionsRunMetadata = new Map<
   SignalOptionsRunMetadata
 >();
 
-const DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 60;
-const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 2;
+const DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 250;
+const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 6;
 const SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY = 6;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_MONITOR_BATCH_SIZE = 12;
-const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 20_000;
+const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 60_000;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 24;
-const DEFAULT_SIGNAL_OPTIONS_WORKER_SIGNAL_RESERVE_BUDGET_MS = 20_000;
+const DEFAULT_SIGNAL_OPTIONS_WORKER_SIGNAL_RESERVE_BUDGET_MS = 30_000;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_SIGNAL_RESERVE_ITEM_LIMIT = 4;
+const SIGNAL_OPTIONS_ACTION_ITEM_TIMEOUT_MS = 5_000;
+const SIGNAL_OPTIONS_POSITION_MARK_TIMEOUT_MS = 9_000;
+const SIGNAL_OPTIONS_CANDIDATE_RESOLUTION_TIMEOUT_MS = 9_000;
+const SIGNAL_OPTIONS_LIVE_QUOTE_DEMAND_TTL_MS = 120_000;
+const SIGNAL_OPTIONS_SHADOW_EXECUTION_SLO_MS = {
+  signalPickup: 5_000,
+  contractDecision: 10_000,
+  positionMark: 10_000,
+};
+const SIGNAL_OPTIONS_POSITION_MARK_RECORD_INTERVAL_MS = Math.max(
+  1_000,
+  Math.floor(SIGNAL_OPTIONS_SHADOW_EXECUTION_SLO_MS.positionMark / 2),
+);
 const SIGNAL_OPTIONS_SIGNAL_SOURCE_POLICY = "massive-primary";
 const SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY = "mixed" as const;
 const SIGNAL_OPTIONS_MONITOR_STALE_GRACE_MS = 5_000;
@@ -178,6 +202,8 @@ const SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS = 2_000;
 const SIGNAL_OPTIONS_DASHBOARD_CACHE_STALE_TTL_MS = 60_000;
 const SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS = 15_000;
 const SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS = 120_000;
+const SIGNAL_OPTIONS_DASHBOARD_SUMMARY_BUILD_TIMEOUT_MS = 4_000;
+const SIGNAL_OPTIONS_DASHBOARD_FULL_BUILD_TIMEOUT_MS = 8_000;
 const SIGNAL_OPTIONS_MAX_ACTIONABLE_BARS_SINCE_SIGNAL = 0;
 const SIGNAL_OPTIONS_CONTRACT_PREVIEW_LIMIT = 12;
 const SIGNAL_OPTIONS_CONTRACT_PREVIEW_TIMEOUT_MS = 2_000;
@@ -402,6 +428,61 @@ function throwIfSignalOptionsScanAborted(signal?: AbortSignal): void {
   throw new Error("Signal-options scan aborted.");
 }
 
+function signalOptionsTimeoutError(reason: string, timeoutMs: number): Error {
+  const error = new Error(`${reason} after ${timeoutMs}ms.`);
+  const typed = error as Error & {
+    code?: string;
+    reason?: string;
+    timeoutMs?: number;
+  };
+  typed.code = reason;
+  typed.reason = reason;
+  typed.timeoutMs = timeoutMs;
+  return error;
+}
+
+async function withSignalOptionsActionItemTimeout<T>(input: {
+  reason: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  task: (signal: AbortSignal) => Promise<T>;
+}): Promise<T> {
+  throwIfSignalOptionsScanAborted(input.signal);
+  const timeoutMs = Math.max(
+    1,
+    Math.floor(input.timeoutMs ?? SIGNAL_OPTIONS_ACTION_ITEM_TIMEOUT_MS),
+  );
+  const controller = new AbortController();
+  const parentAbort = () => {
+    controller.abort(
+      input.signal?.reason ?? new Error("Signal-options scan aborted."),
+    );
+  };
+  input.signal?.addEventListener("abort", parentAbort, { once: true });
+  const taskPromise = input.task(controller.signal);
+  taskPromise.catch(() => {});
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      const error = signalOptionsTimeoutError(input.reason, timeoutMs);
+      controller.abort(error);
+      reject(error);
+    }, timeoutMs);
+    timeout.unref?.();
+  });
+  try {
+    return await Promise.race([taskPromise, timeoutPromise]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    input.signal?.removeEventListener("abort", parentAbort);
+    if (!controller.signal.aborted) {
+      controller.abort(new Error("Signal-options action item complete."));
+    }
+  }
+}
+
 function finiteNumber(value: unknown): number | null {
   if (value == null || value === "") return null;
   const parsed = Number(value);
@@ -449,6 +530,53 @@ function expirationDateKey(value: unknown): string | null {
 
 function compactString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function signalOptionsCandidateResolutionErrorReason(error: unknown) {
+  const record = asRecord(error);
+  const reason = compactString(record.reason ?? record.code);
+  return reason === "candidate_resolution_timeout"
+    ? "candidate_resolution_timeout"
+    : "candidate_resolution_failed";
+}
+
+function signalOptionsCandidateResolutionErrorDetail(
+  error: unknown,
+  reason: string,
+) {
+  const record = asRecord(error);
+  const timeoutMs = finiteNumber(record.timeoutMs);
+  return {
+    message:
+      error instanceof Error
+        ? error.message
+        : "Unknown signal-options resolution error",
+    ...(timeoutMs != null ? { timeoutMs } : {}),
+    ...(reason === "candidate_resolution_timeout" ? { retryable: true } : {}),
+  };
+}
+
+function signalOptionsPositionMarkErrorReason(error: unknown) {
+  const record = asRecord(error);
+  const reason = compactString(record.reason ?? record.code);
+  return reason === "position_mark_timeout"
+    ? "position_mark_timeout"
+    : "position_mark_failed";
+}
+
+function signalOptionsPositionMarkErrorDetail(
+  error: unknown,
+  reason: string,
+) {
+  const record = asRecord(error);
+  const timeoutMs = finiteNumber(record.timeoutMs);
+  return {
+    message:
+      error instanceof Error ? error.message : "Unknown position mark error",
+    ...(timeoutMs != null ? { timeoutMs } : {}),
+    retryable: true,
+    timeout: reason === "position_mark_timeout",
+  };
 }
 
 function normalizedQuoteStatus(value: unknown): string | null {
@@ -1099,6 +1227,16 @@ function positionEventMatchesMarkSkip(input: {
   return Boolean(candidateId && candidateId === input.position.candidateId);
 }
 
+const SIGNAL_OPTIONS_POSITION_MARK_SKIP_REASONS = new Set([
+  "position_mark_unavailable",
+  "position_mark_failed",
+  "position_mark_timeout",
+]);
+
+function isSignalOptionsPositionMarkSkipReason(reason: string | null) {
+  return Boolean(reason && SIGNAL_OPTIONS_POSITION_MARK_SKIP_REASONS.has(reason));
+}
+
 function shouldRecordPositionMarkSkip(input: {
   events: ExecutionEvent[];
   position: SignalOptionsPosition;
@@ -1242,6 +1380,7 @@ async function normalizeSignalOptionsDeploymentAccount(
   const providerAccountId = normalizeAlgoDeploymentProviderAccountId({
     providerAccountId: deployment.providerAccountId,
     config: deployment.config,
+    mode: deployment.mode,
   });
   if (providerAccountId === deployment.providerAccountId) {
     return deployment;
@@ -1402,7 +1541,13 @@ function signalOptionsBarsSinceSignal(value: unknown): number | null {
   return Math.max(0, Math.round(bars));
 }
 
-function signalOptionsSignalAgeBlocker(barsSinceSignal: unknown): string | null {
+function signalOptionsSignalAgeBlocker(
+  barsSinceSignal: unknown,
+  options?: { fresh?: boolean | null },
+): string | null {
+  if (options?.fresh === true) {
+    return null;
+  }
   const bars = signalOptionsBarsSinceSignal(barsSinceSignal);
   if (bars == null) return "signal_age_unavailable";
   return bars <= SIGNAL_OPTIONS_MAX_ACTIONABLE_BARS_SINCE_SIGNAL
@@ -1410,8 +1555,11 @@ function signalOptionsSignalAgeBlocker(barsSinceSignal: unknown): string | null 
     : "signal_too_old";
 }
 
-function isSignalOptionsSignalAgeActionable(barsSinceSignal: unknown): boolean {
-  return signalOptionsSignalAgeBlocker(barsSinceSignal) == null;
+function isSignalOptionsSignalAgeActionable(
+  barsSinceSignal: unknown,
+  options?: { fresh?: boolean | null },
+): boolean {
+  return signalOptionsSignalAgeBlocker(barsSinceSignal, options) == null;
 }
 
 function buildSignalOptionsSignalSnapshot(input: {
@@ -1429,9 +1577,11 @@ function buildSignalOptionsSignalSnapshot(input: {
   const barsSinceSignal = signalOptionsBarsSinceSignal(
     input.state.barsSinceSignal,
   );
-  const actionBlocker = signalOptionsSignalAgeBlocker(barsSinceSignal);
   const direction = input.state.currentSignalDirection ?? null;
   const fresh = input.state.fresh === true;
+  const actionBlocker = signalOptionsSignalAgeBlocker(barsSinceSignal, {
+    fresh,
+  });
   return {
     profileId: input.state.profileId,
     signalKey: input.signalKey ?? null,
@@ -1583,10 +1733,7 @@ function isSignalOptionsVisibleSignalState(state: SignalMonitorState) {
 }
 
 function isSignalOptionsActionableSignalState(state: SignalMonitorState) {
-  return Boolean(
-    isSignalOptionsVisibleSignalState(state) &&
-      isSignalOptionsSignalAgeActionable(state.barsSinceSignal),
-  );
+  return isSignalOptionsVisibleSignalState(state);
 }
 
 function isSignalOptionsActionableSignalSnapshot(
@@ -1601,7 +1748,9 @@ function isSignalOptionsActionableSignalSnapshot(
   if (signal.actionEligible === false) {
     return false;
   }
-  return isSignalOptionsSignalAgeActionable(signal.barsSinceSignal);
+  return isSignalOptionsSignalAgeActionable(signal.barsSinceSignal, {
+    fresh: signal.fresh === true,
+  });
 }
 
 function buildWorkerScanSummary(input: {
@@ -1609,6 +1758,7 @@ function buildWorkerScanSummary(input: {
   universe: Set<string>;
   candidateCount: number;
   blockedCandidateCount: number;
+  activePositionCount?: number;
   batch?: Record<string, unknown> | null;
   lastSignalScanAt?: string | null;
   heavyWorkDeferred?: boolean;
@@ -1654,8 +1804,22 @@ function buildWorkerScanSummary(input: {
     resourcePressureLevel: input.resourcePressureLevel ?? null,
     candidateCount: input.candidateCount,
     blockedCandidateCount: input.blockedCandidateCount,
+    activePositionCount: input.activePositionCount ?? 0,
     batch: input.batch ?? null,
   };
+}
+
+async function loadSignalOptionsActivePositionCountForWorkerSummary(
+  deploymentId: string,
+) {
+  const events = runtimeSignalOptionsEvents(
+    await listDeploymentEvents(deploymentId, SIGNAL_OPTIONS_STATE_EVENT_LIMIT),
+  );
+  const activePositions = await reconcileActivePositionsWithShadowLedger({
+    positions: deriveActivePositions(events),
+    events,
+  });
+  return activePositions.length;
 }
 
 function latestFreshSignalAtFromStates(input: {
@@ -1840,6 +2004,55 @@ function hasPendingSignalOptionsActionableState(input: {
     }
   }
   return false;
+}
+
+function orderSignalOptionsActionStates(input: {
+  states: SignalMonitorState[];
+  universe: Set<string>;
+}): SignalMonitorState[] {
+  return input.states
+    .map((state, index) => {
+      const symbol = normalizeSymbol(state.symbol).toUpperCase();
+      const inUniverse =
+        Boolean(symbol) &&
+        (input.universe.size === 0 || input.universe.has(symbol));
+      const signalAtMs = dateOrNull(state.currentSignalAt)?.getTime() ?? 0;
+      const latestBarMs = dateOrNull(state.latestBarAt)?.getTime() ?? 0;
+      const barsSinceSignal =
+        typeof state.barsSinceSignal === "number" &&
+        Number.isFinite(state.barsSinceSignal)
+          ? state.barsSinceSignal
+          : Number.POSITIVE_INFINITY;
+      return {
+        state,
+        index,
+        inUniverse,
+        actionable:
+          inUniverse &&
+          isSignalOptionsActionableSignalState(state) &&
+          Boolean(toIsoString(state.currentSignalAt)),
+        signalAtMs,
+        latestBarMs,
+        barsSinceSignal,
+      };
+    })
+    .filter((item) => item.inUniverse)
+    .sort((left, right) => {
+      if (left.actionable !== right.actionable) {
+        return left.actionable ? -1 : 1;
+      }
+      if (left.signalAtMs !== right.signalAtMs) {
+        return right.signalAtMs - left.signalAtMs;
+      }
+      if (left.barsSinceSignal !== right.barsSinceSignal) {
+        return left.barsSinceSignal - right.barsSinceSignal;
+      }
+      if (left.latestBarMs !== right.latestBarMs) {
+        return right.latestBarMs - left.latestBarMs;
+      }
+      return left.index - right.index;
+    })
+    .map((item) => item.state);
 }
 
 function actionCursorForDeployment(deploymentId: string) {
@@ -2053,31 +2266,57 @@ export function selectSignalOptionsContractFromChain(input: {
   return null;
 }
 
-function selectSignalOptionsContractPlanFromChain(input: {
+type SignalOptionsLegacyContractAttempt = {
+  slot: number;
+  fallback: boolean;
+  quote: SignalOptionsOptionQuote;
+  orderPlan: ReturnType<typeof buildSignalOptionsShadowOrderPlan>;
+  reason: string | null;
+  greeks: null;
+  score: null;
+};
+
+type SignalOptionsLegacyContractSelection = {
+  ok: boolean;
+  selectedBy: "legacy" | "fallback_legacy";
+  selectedQuote: SignalOptionsOptionQuote | null;
+  orderPlan: ReturnType<typeof buildSignalOptionsShadowOrderPlan> | null;
+  selectedAttempt: null;
+  attempts: SignalOptionsLegacyContractAttempt[];
+  preferredSlot: number | null;
+  selectedSlot: number | null;
+  fallbackUsed: boolean;
+  candidateCount: number;
+  rejectedCount: number;
+  fallbackReason: string | null;
+  greekSelection?: SignalOptionsGreekContractSelection | null;
+};
+
+function selectSignalOptionsLegacyContractPlanFromChain(input: {
   contracts: SignalOptionsOptionQuote[];
   direction: SignalDirection;
   signalPrice: number | null;
   profile: SignalOptionsExecutionProfile;
-}) {
+}): SignalOptionsLegacyContractSelection {
   const optionRight = optionRightForSignal(input.direction);
   const candidates = input.contracts.filter(
     (quote) => asRecord(quote.contract).right === optionRight,
   );
-  const attempts: Array<{
-    slot: number;
-    fallback: boolean;
-    quote: SignalOptionsOptionQuote;
-    orderPlan: ReturnType<typeof buildSignalOptionsShadowOrderPlan>;
-  }> = [];
+  const attempts: SignalOptionsLegacyContractAttempt[] = [];
   if (!candidates.length) {
     return {
       ok: false,
+      selectedBy: "legacy",
       selectedQuote: null,
       orderPlan: null,
+      selectedAttempt: null,
       attempts,
       preferredSlot: null,
       selectedSlot: null,
       fallbackUsed: false,
+      candidateCount: 0,
+      rejectedCount: 0,
+      fallbackReason: "legacy_no_candidates",
     };
   }
 
@@ -2091,12 +2330,17 @@ function selectSignalOptionsContractPlanFromChain(input: {
   if (!strikes.length) {
     return {
       ok: false,
+      selectedBy: "legacy",
       selectedQuote: null,
       orderPlan: null,
+      selectedAttempt: null,
       attempts,
       preferredSlot: null,
       selectedSlot: null,
       fallbackUsed: false,
+      candidateCount: candidates.length,
+      rejectedCount: 0,
+      fallbackReason: "legacy_no_strikes",
     };
   }
 
@@ -2128,17 +2372,27 @@ function selectSignalOptionsContractPlanFromChain(input: {
       fallback: slot !== slots[0],
       quote,
       orderPlan,
+      reason: orderPlan.ok
+        ? null
+        : String(orderPlan.reason || "liquidity_gate_failed"),
+      greeks: null,
+      score: null,
     };
     attempts.push(attempt);
     if (orderPlan.ok) {
       return {
         ok: true,
+        selectedBy: "legacy",
         selectedQuote: quote,
         orderPlan,
+        selectedAttempt: null,
         attempts,
         preferredSlot: slots[0] ?? null,
         selectedSlot: slot,
         fallbackUsed: attempt.fallback,
+        candidateCount: candidates.length,
+        rejectedCount: attempts.filter((item) => item.reason).length,
+        fallbackReason: null,
       };
     }
   }
@@ -2146,19 +2400,374 @@ function selectSignalOptionsContractPlanFromChain(input: {
   const firstAttempt = attempts[0] ?? null;
   return {
     ok: false,
+    selectedBy: "legacy",
     selectedQuote: firstAttempt?.quote ?? null,
     orderPlan: firstAttempt?.orderPlan ?? null,
+    selectedAttempt: null,
     attempts,
     preferredSlot: slots[0] ?? null,
     selectedSlot: firstAttempt?.slot ?? null,
     fallbackUsed: false,
+    candidateCount: candidates.length,
+    rejectedCount: attempts.filter((item) => item.reason).length,
+    fallbackReason: firstAttempt?.reason ?? "legacy_no_valid_contract",
   };
+}
+
+function isSignalOptionsGreekSelectorEnabled(input: {
+  profile: SignalOptionsExecutionProfile;
+  runtimeMode: SignalOptionsGreekSelectorRuntimeMode;
+}) {
+  const policy = input.profile.optionSelection.greekSelector;
+  if (!policy.enabled || policy.mode === "off") {
+    return false;
+  }
+  return policy.mode === "all" || policy.mode === input.runtimeMode;
+}
+
+function signalOptionsGreekCandidateQuotes(input: {
+  contracts: SignalOptionsOptionQuote[];
+  direction: SignalDirection;
+  signalPrice: number | null;
+  maxCandidates: number;
+}) {
+  const optionRight = optionRightForSignal(input.direction);
+  const spot = input.signalPrice;
+  return input.contracts
+    .filter((quote) => asRecord(quote.contract).right === optionRight)
+    .filter((quote) => finiteNumber(asRecord(quote.contract).strike) != null)
+    .sort((left, right) => {
+      const leftStrike = finiteNumber(asRecord(left.contract).strike) ?? 0;
+      const rightStrike = finiteNumber(asRecord(right.contract).strike) ?? 0;
+      const leftTicker = compactString(asRecord(left.contract).ticker) ?? "";
+      const rightTicker = compactString(asRecord(right.contract).ticker) ?? "";
+      if (spot != null) {
+        return (
+          Math.abs(leftStrike - spot) - Math.abs(rightStrike - spot) ||
+          leftStrike - rightStrike ||
+          leftTicker.localeCompare(rightTicker)
+        );
+      }
+      return leftStrike - rightStrike || leftTicker.localeCompare(rightTicker);
+    })
+    .slice(0, input.maxCandidates);
+}
+
+function optionGreekSnapshotFromProviderQuote(input: {
+  quote: SignalOptionsOptionQuote;
+  entryPrice: number;
+  at: Date;
+}): OptionGreekSnapshot | null {
+  const contract = asRecord(input.quote.contract);
+  const expirationDate = dateOrNull(contract.expirationDate);
+  if (!expirationDate) {
+    return null;
+  }
+  const years = timeToExpirationYears({
+    at: input.at,
+    expirationDate,
+  });
+  const impliedVolatility = finiteNumber(input.quote.impliedVolatility);
+  const delta = finiteNumber(input.quote.delta);
+  const gamma = finiteNumber(input.quote.gamma);
+  const theta = finiteNumber(input.quote.theta);
+  const vega = finiteNumber(input.quote.vega);
+  if (
+    years <= 0 ||
+    impliedVolatility == null ||
+    impliedVolatility <= 0 ||
+    delta == null ||
+    gamma == null ||
+    theta == null ||
+    vega == null
+  ) {
+    return null;
+  }
+  return {
+    price: input.entryPrice,
+    delta,
+    gamma,
+    theta,
+    vega,
+    impliedVolatility,
+    timeToExpirationYears: years,
+  };
+}
+
+function optionGreekSnapshotForSelector(input: {
+  quote: SignalOptionsOptionQuote;
+  right: OptionRight;
+  spot: number;
+  strike: number;
+  entryPrice: number;
+  at: Date;
+  requireLiveGreeks: boolean;
+}): OptionGreekSnapshot | null {
+  const providerGreeks = optionGreekSnapshotFromProviderQuote({
+    quote: input.quote,
+    entryPrice: input.entryPrice,
+    at: input.at,
+  });
+  if (providerGreeks || input.requireLiveGreeks) {
+    return providerGreeks;
+  }
+  const expirationDate = dateOrNull(asRecord(input.quote.contract).expirationDate);
+  if (!expirationDate) {
+    return null;
+  }
+  return computeOptionGreeksFromPrice({
+    spot: input.spot,
+    strike: input.strike,
+    optionPrice: input.entryPrice,
+    right: input.right,
+    at: input.at,
+    expirationDate,
+    riskFreeRate: 0.05,
+    dividendYield: 0,
+  });
+}
+
+function greekSelectorFallbackReason(
+  attempts: SignalOptionsGreekContractAttempt[],
+  candidateCount: number,
+) {
+  if (candidateCount === 0) {
+    return "greek_selector_no_candidates";
+  }
+  const reasons = attempts
+    .map((attempt) => attempt.reason)
+    .filter((reason): reason is string => Boolean(reason));
+  if (!reasons.length) {
+    return "greek_selector_no_candidates";
+  }
+  if (reasons.every((reason) => reason === "greek_selector_missing_greeks")) {
+    return "greek_selector_missing_greeks";
+  }
+  if (reasons.every((reason) => reason === "greek_selector_below_min_score")) {
+    return "greek_selector_below_min_score";
+  }
+  if (reasons.some((reason) => reason === "greek_selector_liquidity_failed")) {
+    return "greek_selector_liquidity_failed";
+  }
+  return reasons[0] ?? "greek_selector_no_candidates";
+}
+
+function selectSignalOptionsGreekContractPlanFromChain(input: {
+  contracts: SignalOptionsOptionQuote[];
+  direction: SignalDirection;
+  signalPrice: number | null;
+  profile: SignalOptionsExecutionProfile;
+  at?: Date;
+}): SignalOptionsGreekContractSelection {
+  const policy = input.profile.optionSelection.greekSelector;
+  const at = input.at ?? new Date();
+  const spot = input.signalPrice;
+  if (spot == null) {
+    return {
+      ok: false,
+      selectedBy: "greek",
+      mode: policy.mode,
+      selectedQuote: null,
+      orderPlan: null,
+      selectedAttempt: null,
+      attempts: [],
+      candidateCount: 0,
+      rejectedCount: 0,
+      fallbackReason: "greek_selector_no_candidates",
+    };
+  }
+  const candidates = signalOptionsGreekCandidateQuotes({
+    contracts: input.contracts,
+    direction: input.direction,
+    signalPrice: spot,
+    maxCandidates: policy.maxCandidates,
+  });
+  const attempts: SignalOptionsGreekContractAttempt[] = [];
+  const right = optionRightForSignal(input.direction);
+
+  for (const quote of candidates) {
+    const orderPlan = buildSignalOptionsShadowOrderPlan(quote, input.profile);
+    if (!orderPlan.ok) {
+      attempts.push({
+        quote,
+        orderPlan,
+        greeks: null,
+        score: null,
+        reason: "greek_selector_liquidity_failed",
+      });
+      continue;
+    }
+    const strike = finiteNumber(asRecord(quote.contract).strike);
+    const entryPrice = finiteNumber(orderPlan.simulatedFillPrice);
+    if (strike == null || entryPrice == null || entryPrice <= 0) {
+      attempts.push({
+        quote,
+        orderPlan,
+        greeks: null,
+        score: null,
+        reason: "greek_selector_liquidity_failed",
+      });
+      continue;
+    }
+    const greeks = optionGreekSnapshotForSelector({
+      quote,
+      right,
+      spot,
+      strike,
+      entryPrice,
+      at,
+      requireLiveGreeks: policy.requireLiveGreeks,
+    });
+    if (!greeks) {
+      attempts.push({
+        quote,
+        orderPlan,
+        greeks: null,
+        score: null,
+        reason: "greek_selector_missing_greeks",
+      });
+      continue;
+    }
+    const score = scoreOptionGreekCandidate({
+      right,
+      spot,
+      strike,
+      entryPrice,
+      volume: finiteNumber(quote.volume),
+      greeks,
+    });
+    if (score.total < policy.minScore) {
+      attempts.push({
+        quote,
+        orderPlan,
+        greeks,
+        score,
+        reason: "greek_selector_below_min_score",
+      });
+      continue;
+    }
+    attempts.push({
+      quote,
+      orderPlan,
+      greeks,
+      score,
+      reason: null,
+    });
+  }
+
+  const validAttempts = attempts
+    .filter((attempt) => attempt.score && attempt.orderPlan.ok && !attempt.reason)
+    .sort(
+      (left, right) =>
+        (right.score?.total ?? Number.NEGATIVE_INFINITY) -
+          (left.score?.total ?? Number.NEGATIVE_INFINITY) ||
+        (finiteNumber(asRecord(left.quote.contract).strike) ?? 0) -
+          (finiteNumber(asRecord(right.quote.contract).strike) ?? 0),
+    );
+  const selectedAttempt = validAttempts[0] ?? null;
+  return {
+    ok: Boolean(selectedAttempt),
+    selectedBy: "greek",
+    mode: policy.mode,
+    selectedQuote: selectedAttempt?.quote ?? null,
+    orderPlan: selectedAttempt?.orderPlan ?? null,
+    selectedAttempt,
+    attempts,
+    candidateCount: candidates.length,
+    rejectedCount: attempts.filter((attempt) => attempt.reason).length,
+    fallbackReason: selectedAttempt
+      ? null
+      : greekSelectorFallbackReason(attempts, candidates.length),
+  };
+}
+
+function selectSignalOptionsContractPlanFromChain(input: {
+  contracts: SignalOptionsOptionQuote[];
+  direction: SignalDirection;
+  signalPrice: number | null;
+  profile: SignalOptionsExecutionProfile;
+  at?: Date;
+  runtimeMode?: SignalOptionsGreekSelectorRuntimeMode;
+}): SignalOptionsLegacyContractSelection | SignalOptionsGreekContractSelection {
+  if (
+    isSignalOptionsGreekSelectorEnabled({
+      profile: input.profile,
+      runtimeMode: input.runtimeMode ?? "shadow",
+    })
+  ) {
+    const greekSelection = selectSignalOptionsGreekContractPlanFromChain(input);
+    if (greekSelection.ok) {
+      return greekSelection;
+    }
+    if (!input.profile.optionSelection.greekSelector.fallbackToLegacy) {
+      return greekSelection;
+    }
+    return {
+      ...selectSignalOptionsLegacyContractPlanFromChain(input),
+      selectedBy: "fallback_legacy",
+      greekSelection,
+      fallbackReason: greekSelection.fallbackReason,
+    };
+  }
+
+  return selectSignalOptionsLegacyContractPlanFromChain(input);
 }
 
 function signalOptionsContractSelectionPayload(
   selection: ReturnType<typeof selectSignalOptionsContractPlanFromChain>,
+  options?: {
+    greekSelection?: SignalOptionsGreekContractSelection | null;
+    selectedBy?: "greek" | "legacy" | "fallback_legacy";
+  },
 ) {
-  return {
+  if (selection.selectedBy === "greek") {
+    return {
+      selectedBy: "greek",
+      preferredSlot: null,
+      selectedSlot: null,
+      fallbackUsed: false,
+      attempts: selection.attempts.map((attempt) => ({
+        selectedContract: contractToPayload(attempt.quote),
+        quote: quoteToPayload(attempt.quote),
+        orderPlan: attempt.orderPlan,
+        score: attempt.score,
+        reason: attempt.reason,
+      })),
+      greekSelection: {
+        mode: selection.mode,
+        selectedBy: "greek",
+        selectedScore: selection.selectedAttempt?.score?.total ?? null,
+        selectedNotes: selection.selectedAttempt?.score?.notes ?? [],
+        candidateCount: selection.candidateCount,
+        rejectedCount: selection.rejectedCount,
+        fallbackReason: selection.fallbackReason,
+        topCandidates: selection.attempts
+          .filter((attempt) => attempt.score)
+          .sort(
+            (left, right) =>
+              (right.score?.total ?? Number.NEGATIVE_INFINITY) -
+              (left.score?.total ?? Number.NEGATIVE_INFINITY),
+          )
+          .slice(0, 3)
+          .map((attempt) => ({
+            selectedContract: contractToPayload(attempt.quote),
+            quote: quoteToPayload(attempt.quote),
+            score: attempt.score,
+            notes: attempt.score?.notes ?? [],
+            reason: attempt.reason,
+          })),
+        attempts: selection.attempts.map((attempt) => ({
+          selectedContract: contractToPayload(attempt.quote),
+          quote: quoteToPayload(attempt.quote),
+          score: attempt.score,
+          reason: attempt.reason,
+          orderPlan: attempt.orderPlan,
+        })),
+      },
+    };
+  }
+  const payload: Record<string, unknown> = {
+    selectedBy: options?.selectedBy ?? selection.selectedBy,
     preferredSlot: selection.preferredSlot,
     selectedSlot: selection.selectedSlot,
     fallbackUsed: selection.fallbackUsed,
@@ -2172,6 +2781,66 @@ function signalOptionsContractSelectionPayload(
         ? null
         : String(attempt.orderPlan.reason || "liquidity_gate_failed"),
     })),
+  };
+  const greekSelection = options?.greekSelection ?? selection.greekSelection ?? null;
+  if (greekSelection) {
+    const topCandidates = greekSelection.attempts
+      .filter((attempt) => attempt.score)
+      .sort(
+        (left, right) =>
+          (right.score?.total ?? Number.NEGATIVE_INFINITY) -
+          (left.score?.total ?? Number.NEGATIVE_INFINITY),
+      )
+      .slice(0, 3);
+    payload.greekSelection = {
+      mode: greekSelection.mode,
+      selectedBy:
+        options?.selectedBy ?? (greekSelection.ok ? "greek" : "fallback_legacy"),
+      selectedScore: greekSelection.selectedAttempt?.score?.total ?? null,
+      selectedNotes: greekSelection.selectedAttempt?.score?.notes ?? [],
+      candidateCount: greekSelection.candidateCount,
+      rejectedCount: greekSelection.rejectedCount,
+      fallbackReason: greekSelection.fallbackReason,
+      topCandidates: topCandidates.map((attempt) => ({
+        selectedContract: contractToPayload(attempt.quote),
+        quote: quoteToPayload(attempt.quote),
+        score: attempt.score,
+        notes: attempt.score?.notes ?? [],
+        reason: attempt.reason,
+      })),
+      attempts: greekSelection.attempts.map((attempt) => ({
+        selectedContract: contractToPayload(attempt.quote),
+        quote: quoteToPayload(attempt.quote),
+        score: attempt.score,
+        reason: attempt.reason,
+        orderPlan: attempt.orderPlan,
+      })),
+    };
+  }
+  return payload;
+}
+
+function signalOptionsLiveQuoteDemandPayload(input: {
+  owner: string;
+  providerContractId: string;
+  requiresGreeks: boolean;
+  state: IbkrLiveDemandState;
+}) {
+  const matchedState =
+    input.state.states.find(
+      (item) => item.providerContractId === input.providerContractId,
+    ) ?? null;
+  return {
+    owner: input.owner,
+    underlying: input.state.underlying,
+    providerContractId: input.providerContractId,
+    requiresGreeks: input.requiresGreeks,
+    status: matchedState?.status ?? "unavailable",
+    reason: matchedState?.reason ?? "not_requested",
+    cacheAgeMs: matchedState?.cacheAgeMs ?? null,
+    requestedProviderContractIds: input.state.states.map(
+      (item) => item.providerContractId,
+    ),
   };
 }
 
@@ -2343,23 +3012,18 @@ function shouldRecordActivePositionMark(input: {
   );
 }
 
-function sameUtcMinute(left: unknown, right: unknown) {
-  const leftDate = dateOrNull(left);
-  const rightDate = dateOrNull(right);
-  if (!leftDate || !rightDate) {
-    return false;
-  }
-  return (
-    Math.floor(leftDate.getTime() / 60_000) ===
-    Math.floor(rightDate.getTime() / 60_000)
-  );
-}
-
 function shouldRecordActivePositionMarkForScan(input: {
   position: Pick<SignalOptionsPosition, "lastMarkedAt">;
   markAt: Date;
 }) {
-  return !sameUtcMinute(input.position.lastMarkedAt, input.markAt);
+  const lastMarkedAt = dateOrNull(input.position.lastMarkedAt);
+  if (!lastMarkedAt) {
+    return true;
+  }
+  return (
+    input.markAt.getTime() - lastMarkedAt.getTime() >=
+    SIGNAL_OPTIONS_POSITION_MARK_RECORD_INTERVAL_MS
+  );
 }
 
 function signalOptionsExecutionBlocker(input: {
@@ -3018,7 +3682,7 @@ async function loadSignalOptionsMonitorState(input: {
         },
       };
     }
-    if (!hardPressureBlock && input.source !== "worker") {
+    if (!hardPressureBlock) {
       const fullRefresh = resolveSignalOptionsMonitorFullRefresh({
         universe: input.universe,
       });
@@ -3060,9 +3724,19 @@ async function loadSignalOptionsMonitorState(input: {
       barSourcePolicy: SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY,
       signal: input.signal,
     });
+    const stored = await getSignalMonitorStoredState({
+      environment: input.deployment.mode,
+      markNonCurrentStale: true,
+    }).catch((error) => {
+      logger.warn?.(
+        { err: error, deploymentId: input.deployment.id },
+        "Failed to reload full signal monitor state after signal-options batch refresh",
+      );
+      return evaluated;
+    });
 
     return {
-      ...evaluated,
+      ...stored,
       signalOptionsBatch: {
         ...batch,
         forced: input.forceEvaluate === true,
@@ -3325,16 +3999,19 @@ function deriveActivePositions(events: ExecutionEvent[]) {
       }
       const isPositionMarkSkip =
         event.eventType === SIGNAL_OPTIONS_SKIPPED_EVENT &&
-        ["position_mark_unavailable", "position_mark_failed"].includes(
+        isSignalOptionsPositionMarkSkipReason(
           compactString(
             asRecord(event.payload).reason ??
               asRecord(event.payload).skipReason,
-          ) ?? "",
+          ),
         );
       if (event.eventType === SIGNAL_OPTIONS_MARK_EVENT || isPositionMarkSkip) {
         const payload = asRecord(event.payload);
         const position = asRecord(payload.position);
         const current = positions.get(symbol);
+        if (current && isPositionMarkSkip) {
+          return;
+        }
         if (current) {
           current.peakPrice =
             finiteNumber(position.peakPrice) ?? current.peakPrice;
@@ -3442,10 +4119,7 @@ function filterOrphanPositionMarkEvents(
     }
     const payload = asRecord(event.payload);
     const reason = compactString(payload.reason ?? payload.skipReason);
-    if (
-      reason !== "position_mark_unavailable" &&
-      reason !== "position_mark_failed"
-    ) {
+    if (!isSignalOptionsPositionMarkSkipReason(reason)) {
       return true;
     }
     const candidateId = positionCandidateIdFromPayload(payload);
@@ -3729,6 +4403,7 @@ async function reconcileActivePositionsWithShadowLedger(input: {
 
 const RETRYABLE_SIGNAL_OPTION_SKIP_REASONS = new Set([
   "candidate_resolution_failed",
+  "candidate_resolution_timeout",
   "no_contract_for_strike_slot",
   "no_expiration_in_dte_window",
   "option_chain_backoff",
@@ -3739,12 +4414,15 @@ const FORCE_RETRYABLE_SIGNAL_OPTION_SKIP_REASONS = new Set([
   "after_hours_option_entry_blocked",
   "after_hours_option_exit_blocked",
   "candidate_resolution_failed",
+  "candidate_resolution_timeout",
   "missing_bid_ask",
   "missing_mark",
   "no_contract_for_strike_slot",
   "no_expiration_in_dte_window",
   "option_chain_backoff",
   "option_expiration_backoff",
+  "position_mark_failed",
+  "position_mark_timeout",
   "position_mark_unavailable",
   "quote_not_fresh",
   "spread_too_wide",
@@ -3776,6 +4454,39 @@ type SignalOptionsChainAttempt = {
   contractCount: number;
   selectedQuote: boolean;
   chainDebug: unknown;
+};
+
+type SignalOptionsContractQuoteHydration = "metadata" | "snapshot";
+
+type SignalOptionsLiveQuoteDemandConfig = {
+  owner: string;
+  intent?: IbkrLiveDemandDeclaration["intent"];
+  ttlMs?: IbkrLiveDemandDeclaration["ttlMs"];
+  fallbackProvider?: IbkrLiveDemandDeclaration["fallbackProvider"];
+  requiresGreeks?: boolean;
+};
+
+type SignalOptionsGreekSelectorRuntimeMode = "shadow" | "live";
+
+type SignalOptionsGreekContractAttempt = {
+  quote: SignalOptionsOptionQuote;
+  orderPlan: ReturnType<typeof buildSignalOptionsShadowOrderPlan>;
+  greeks: OptionGreekSnapshot | null;
+  score: OptionGreekScore | null;
+  reason: string | null;
+};
+
+type SignalOptionsGreekContractSelection = {
+  ok: boolean;
+  selectedBy: "greek";
+  mode: SignalOptionsExecutionProfile["optionSelection"]["greekSelector"]["mode"];
+  selectedQuote: SignalOptionsOptionQuote | null;
+  orderPlan: ReturnType<typeof buildSignalOptionsShadowOrderPlan> | null;
+  selectedAttempt: SignalOptionsGreekContractAttempt | null;
+  attempts: SignalOptionsGreekContractAttempt[];
+  candidateCount: number;
+  rejectedCount: number;
+  fallbackReason: string | null;
 };
 
 const RETRYABLE_OPTION_DEBUG_REASONS = new Set([
@@ -3984,6 +4695,10 @@ function isRetryableSignalOptionsSkip(
     return true;
   }
 
+  if (reason === "candidate_resolution_timeout") {
+    return true;
+  }
+
   if (
     options?.contractResolutionBackoffEnabled === false &&
     (reason === "option_chain_backoff" ||
@@ -4039,12 +4754,18 @@ function mergeProfilePatch(
   current: SignalOptionsExecutionProfile,
   patch: Record<string, unknown>,
 ) {
+  const patchOptionSelection = asRecord(patch.optionSelection);
   return resolveSignalOptionsExecutionProfile({
     ...current,
     ...patch,
     optionSelection: {
       ...current.optionSelection,
-      ...asRecord(patch.optionSelection),
+      ...patchOptionSelection,
+      greekSelector: {
+        ...current.optionSelection.greekSelector,
+        ...asRecord(patchOptionSelection.greekSelector),
+        ...asRecord(patch.greekSelector),
+      },
     },
     riskCaps: {
       ...current.riskCaps,
@@ -4633,7 +5354,7 @@ function buildCockpitPipeline(input: {
   const resourcePressureLevel = workerState.lastResourcePressureLevel;
   const heavyWorkDeferredByPressure =
     lastHeavyWorkDeferred &&
-    (resourcePressureLevel === "high" || resourcePressureLevel === "critical");
+    resourcePressureLevel === "critical";
   const contractSelectionPendingUpstream =
     actionMapped.length > 0 &&
     selectedContracts.length === 0 &&
@@ -5014,6 +5735,7 @@ function classifySignalOptionsSkipReason(reason: string) {
     [
       "position_mark_unavailable",
       "position_mark_failed",
+      "position_mark_timeout",
       "position_mark_feed_degraded",
       "invalid_position_mark",
     ].includes(reason)
@@ -5026,6 +5748,8 @@ function classifySignalOptionsSkipReason(reason: string) {
       "no_expiration_in_dte_window",
       "option_chain_backoff",
       "option_expiration_backoff",
+      "candidate_resolution_failed",
+      "candidate_resolution_timeout",
       "historical_option_bars_unavailable",
       "options_upstream_failure",
     ].includes(reason)
@@ -5064,7 +5788,6 @@ function classifySignalOptionsSkipReason(reason: string) {
       "entry_gate_failed",
       "same_direction_position_open",
       "opposite_signal_flip_disabled",
-      "candidate_resolution_failed",
     ].includes(reason)
   ) {
     return "signal_policy";
@@ -5082,6 +5805,236 @@ function incrementDiagnosticCounterBy(
     return;
   }
   counter[key] = (counter[key] ?? 0) + count;
+}
+
+type SignalOptionsShadowExecutionSloStatus = "pass" | "fail" | "no_data";
+
+function signalOptionsSloSectionStatus(input: {
+  observed: number;
+  breachCount: number;
+}): SignalOptionsShadowExecutionSloStatus {
+  if (input.breachCount > 0) {
+    return "fail";
+  }
+  return input.observed > 0 ? "pass" : "no_data";
+}
+
+function signalOptionsAuditElapsedMs(
+  start: unknown,
+  end: unknown,
+): number | null {
+  const startDate = dateOrNull(start);
+  const endDate = dateOrNull(end);
+  if (!startDate || !endDate) {
+    return null;
+  }
+  return Math.max(0, endDate.getTime() - startDate.getTime());
+}
+
+function addSignalOptionsAuditKey(
+  keys: Set<string>,
+  type: string,
+  value: unknown,
+) {
+  const text = compactString(value);
+  if (text) {
+    keys.add(`${type}:${text.toUpperCase()}`);
+  }
+}
+
+function signalOptionsAuditIdentityKeys(value: unknown): Set<string> {
+  const record = asRecord(value);
+  const nestedSignal = asRecord(record.signal);
+  const keys = new Set<string>();
+  addSignalOptionsAuditKey(
+    keys,
+    "signal",
+    record.signalKey ?? nestedSignal.signalKey,
+  );
+
+  const symbol = compactString(record.symbol ?? nestedSignal.symbol);
+  const timeframe = compactString(record.timeframe ?? nestedSignal.timeframe);
+  const direction = compactString(record.direction ?? nestedSignal.direction);
+  const signalAt = toIsoString(record.signalAt ?? nestedSignal.signalAt);
+  if (symbol && timeframe && direction && signalAt) {
+    addSignalOptionsAuditKey(
+      keys,
+      "row",
+      [symbol, timeframe, direction, signalAt].join("|"),
+    );
+  }
+  return keys;
+}
+
+function signalOptionsAuditKeysIntersect(
+  left: Set<string>,
+  right: Set<string>,
+) {
+  for (const key of left) {
+    if (right.has(key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasSignalOptionsSelectedContract(candidate: SignalOptionsCandidate) {
+  return Object.keys(asRecord(candidate.selectedContract)).length > 0;
+}
+
+function buildSignalOptionsShadowExecutionSlo(input: {
+  signals: SignalOptionsSignalSnapshot[];
+  candidates: Array<
+    SignalOptionsCandidate & {
+      actionStatus?: SignalOptionsActionStatus;
+    }
+  >;
+  activePositions: SignalOptionsPosition[];
+  now: Date;
+}) {
+  const candidateIdentitySets = input.candidates.map((candidate) =>
+    signalOptionsAuditIdentityKeys(candidate),
+  );
+  const actionableSignals = input.signals.filter(
+    (signal) => signal.fresh && signal.actionEligible && signal.direction,
+  );
+  const signalPickupBreaches = actionableSignals
+    .map((signal) => {
+      const signalKeys = signalOptionsAuditIdentityKeys(signal);
+      const pickedUp = candidateIdentitySets.some((candidateKeys) =>
+        signalOptionsAuditKeysIntersect(signalKeys, candidateKeys),
+      );
+      if (pickedUp) {
+        return null;
+      }
+      const ageMs = signalOptionsAuditElapsedMs(
+        signal.signalAt ?? signal.latestBarAt,
+        input.now,
+      );
+      if (
+        ageMs == null ||
+        ageMs <= SIGNAL_OPTIONS_SHADOW_EXECUTION_SLO_MS.signalPickup
+      ) {
+        return null;
+      }
+      return {
+        symbol: signal.symbol,
+        timeframe: signal.timeframe,
+        direction: signal.direction,
+        signalAt: signal.signalAt ?? signal.latestBarAt,
+        ageMs,
+        reason: "fresh_actionable_signal_not_picked_up",
+      };
+    })
+    .filter((value): value is NonNullable<typeof value> => Boolean(value))
+    .sort((left, right) => right.ageMs - left.ageMs);
+
+  const contractDecisionBreaches = input.candidates
+    .map((candidate) => {
+      const decisionAt =
+        candidateLatestActivityAt(candidate) ?? input.now.toISOString();
+      const elapsedMs = signalOptionsAuditElapsedMs(
+        candidate.signalAt,
+        decisionAt,
+      );
+      if (
+        elapsedMs == null ||
+        elapsedMs <= SIGNAL_OPTIONS_SHADOW_EXECUTION_SLO_MS.contractDecision
+      ) {
+        return null;
+      }
+      const blocked =
+        candidate.actionStatus === "blocked" || candidate.status === "skipped";
+      const selected = hasSignalOptionsSelectedContract(candidate);
+      return {
+        candidateId: candidate.id,
+        symbol: candidate.symbol,
+        signalAt: candidate.signalAt,
+        decisionAt,
+        elapsedMs,
+        reason: selected
+          ? blocked
+            ? "candidate_blocked_after_contract_selection"
+            : "contract_selection_slow"
+          : blocked
+            ? "candidate_blocked_before_contract_selection"
+            : "contract_not_selected",
+      };
+    })
+    .filter((value): value is NonNullable<typeof value> => Boolean(value))
+    .sort((left, right) => right.elapsedMs - left.elapsedMs);
+
+  const positionMarkBreaches = input.activePositions
+    .map((position) => {
+      const ageMs = signalOptionsAuditElapsedMs(position.lastMarkedAt, input.now);
+      if (ageMs == null) {
+        return {
+          positionId: position.id,
+          candidateId: position.candidateId,
+          symbol: position.symbol,
+          lastMarkedAt: position.lastMarkedAt ?? null,
+          ageMs: null,
+          reason: "position_unmarked",
+        };
+      }
+      if (ageMs <= SIGNAL_OPTIONS_SHADOW_EXECUTION_SLO_MS.positionMark) {
+        return null;
+      }
+      return {
+        positionId: position.id,
+        candidateId: position.candidateId,
+        symbol: position.symbol,
+        lastMarkedAt: position.lastMarkedAt ?? null,
+        ageMs,
+        reason: "position_mark_stale",
+      };
+    })
+    .filter((value): value is NonNullable<typeof value> => Boolean(value))
+    .sort(
+      (left, right) => (right.ageMs ?? Infinity) - (left.ageMs ?? Infinity),
+    );
+
+  const breachCount =
+    signalPickupBreaches.length +
+    contractDecisionBreaches.length +
+    positionMarkBreaches.length;
+
+  return {
+    status: breachCount > 0 ? "fail" : "pass",
+    checkedAt: input.now.toISOString(),
+    thresholdsMs: SIGNAL_OPTIONS_SHADOW_EXECUTION_SLO_MS,
+    breachCount,
+    signalPickup: {
+      status: signalOptionsSloSectionStatus({
+        observed: actionableSignals.length,
+        breachCount: signalPickupBreaches.length,
+      }),
+      observedSignals: actionableSignals.length,
+      pickedUpSignals: Math.max(
+        0,
+        actionableSignals.length - signalPickupBreaches.length,
+      ),
+      breaches: signalPickupBreaches.slice(0, 8),
+    },
+    contractDecision: {
+      status: signalOptionsSloSectionStatus({
+        observed: input.candidates.length,
+        breachCount: contractDecisionBreaches.length,
+      }),
+      observedCandidates: input.candidates.length,
+      contractsSelected: input.candidates.filter(hasSignalOptionsSelectedContract)
+        .length,
+      breaches: contractDecisionBreaches.slice(0, 8),
+    },
+    positionMonitoring: {
+      status: signalOptionsSloSectionStatus({
+        observed: input.activePositions.length,
+        breachCount: positionMarkBreaches.length,
+      }),
+      activePositions: input.activePositions.length,
+      breaches: positionMarkBreaches.slice(0, 8),
+    },
+  };
 }
 
 function updateDiagnosticIncident(
@@ -5142,6 +6095,7 @@ function buildCockpitDiagnostics(input: {
   activePositions: SignalOptionsPosition[];
   events: ExecutionEvent[];
   profile?: SignalOptionsExecutionProfile;
+  now?: Date;
 }) {
   const eventTypes: Record<string, number> = {};
   const skipReasons: Record<string, number> = {};
@@ -5254,13 +6208,12 @@ function buildCockpitDiagnostics(input: {
     ),
   );
   const shadowFillCount = Math.max(shadowFilledCandidates.length, entryEvents);
-  const now = new Date();
+  const now = input.now ?? new Date();
   const markFailureEvents = input.events.filter((event) => {
     const reason = compactString(asRecord(event.payload).reason);
     return (
       event.eventType === SIGNAL_OPTIONS_SKIPPED_EVENT &&
-      (reason === "position_mark_unavailable" ||
-        reason === "position_mark_failed")
+      isSignalOptionsPositionMarkSkipReason(reason)
     );
   });
   const markHealthPositions = input.activePositions.map((position) => {
@@ -5322,6 +6275,12 @@ function buildCockpitDiagnostics(input: {
       activePositions: input.activePositions.length,
       blockedCandidates: blockedCandidates.length,
     },
+    shadowExecutionSlo: buildSignalOptionsShadowExecutionSlo({
+      signals: input.signals,
+      candidates: input.candidates,
+      activePositions: input.activePositions,
+      now,
+    }),
     skipReasons: sortedDiagnosticCounter(skipReasons),
     skipCategories: sortedDiagnosticCounter(skipCategories),
     entryGateReasons: sortedDiagnosticCounter(entryGateReasons),
@@ -5695,10 +6654,8 @@ function buildRuleAdherence(input: {
   const markProblemEvents = input.events.filter((event) => {
     const reason = eventReasonValue(event);
     return (
-      event.eventType === SIGNAL_OPTIONS_MARK_EVENT &&
-      ["position_mark_failed", "position_mark_unavailable"].includes(
-        reason ?? "",
-      )
+      event.eventType === SIGNAL_OPTIONS_SKIPPED_EVENT &&
+      isSignalOptionsPositionMarkSkipReason(reason)
     );
   }).length;
   const positionMarkFeedBlocks = skipCount("position_mark_feed_degraded");
@@ -6220,6 +7177,11 @@ type SignalOptionsCachedPayload<T> = {
   staleExpiresAt: number;
 };
 
+type SignalOptionsDashboardInFlight<T> = {
+  promise: Promise<T>;
+  startedAt: number;
+};
+
 const signalOptionsDashboardCache = new Map<
   string,
   SignalOptionsDashboardSnapshot
@@ -6230,11 +7192,11 @@ const signalOptionsSummaryDashboardCache = new Map<
 >();
 const signalOptionsDashboardInFlight = new Map<
   string,
-  Promise<SignalOptionsDashboardSnapshot>
+  SignalOptionsDashboardInFlight<SignalOptionsDashboardSnapshot>
 >();
 const signalOptionsSummaryDashboardInFlight = new Map<
   string,
-  Promise<SignalOptionsDashboardSnapshot>
+  SignalOptionsDashboardInFlight<SignalOptionsDashboardSnapshot>
 >();
 const signalOptionsContractPreviewBackoff = new Map<string, number>();
 const signalOptionsCockpitCache = new Map<
@@ -6346,6 +7308,49 @@ function writeSignalOptionsCachedPayload<T>(
   });
 }
 
+function readSignalOptionsDashboardInFlight<T>(
+  cache: Map<string, SignalOptionsDashboardInFlight<T>>,
+  deploymentId: string,
+  maxAgeMs: number,
+): Promise<T> | null {
+  const inFlight = cache.get(deploymentId);
+  if (!inFlight) {
+    return null;
+  }
+  if (Date.now() - inFlight.startedAt <= maxAgeMs) {
+    return inFlight.promise;
+  }
+  cache.delete(deploymentId);
+  return null;
+}
+
+function withSignalOptionsDashboardBuildTimeout<T>(
+  promise: Promise<T>,
+  input: {
+    timeoutMs: number;
+    view: SignalOptionsDashboardView;
+  },
+): Promise<T> {
+  promise.catch(() => {});
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      reject(
+        new HttpError(504, "Signal-options dashboard build timed out.", {
+          code: "signal_options_dashboard_build_timeout",
+          detail: `The ${input.view} Signal Options dashboard build did not finish within ${input.timeoutMs}ms.`,
+        }),
+      );
+    }, input.timeoutMs);
+    timeout.unref?.();
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  });
+}
+
 function compactSignalOptionsEventResponse(
   event: Awaited<ReturnType<typeof buildStatePayload>>["events"][number],
 ) {
@@ -6401,12 +7406,16 @@ async function getSignalOptionsFullDashboardSnapshot(input: {
     });
   }
 
-  const inFlight = signalOptionsDashboardInFlight.get(input.deploymentId);
+  const inFlight = readSignalOptionsDashboardInFlight(
+    signalOptionsDashboardInFlight,
+    input.deploymentId,
+    SIGNAL_OPTIONS_DASHBOARD_FULL_BUILD_TIMEOUT_MS,
+  );
   if (inFlight) {
     return inFlight;
   }
 
-  const request = (async () => {
+  const work = (async () => {
     const deployment = await getDeploymentOrThrow(input.deploymentId);
     const profile = resolveDeploymentProfile(deployment);
     const events = await listDeploymentEvents(
@@ -6429,11 +7438,18 @@ async function getSignalOptionsFullDashboardSnapshot(input: {
       signalOptionsDashboardCache.set(input.deploymentId, snapshot);
     }
     return snapshot;
-  })().finally(() => {
+  })();
+  const request = withSignalOptionsDashboardBuildTimeout(work, {
+    timeoutMs: SIGNAL_OPTIONS_DASHBOARD_FULL_BUILD_TIMEOUT_MS,
+    view: "full",
+  }).finally(() => {
     signalOptionsDashboardInFlight.delete(input.deploymentId);
   });
 
-  signalOptionsDashboardInFlight.set(input.deploymentId, request);
+  signalOptionsDashboardInFlight.set(input.deploymentId, {
+    promise: request,
+    startedAt: Date.now(),
+  });
   return request;
 }
 
@@ -6492,14 +7508,16 @@ async function getSignalOptionsSummaryDashboardSnapshot(input: {
     });
   }
 
-  const inFlight = signalOptionsSummaryDashboardInFlight.get(
+  const inFlight = readSignalOptionsDashboardInFlight(
+    signalOptionsSummaryDashboardInFlight,
     input.deploymentId,
+    SIGNAL_OPTIONS_DASHBOARD_SUMMARY_BUILD_TIMEOUT_MS,
   );
   if (inFlight) {
     return inFlight;
   }
 
-  const request = (async () => {
+  const work = (async () => {
     const deployment = await getDeploymentOrThrow(input.deploymentId);
     const profile = resolveDeploymentProfile(deployment);
     const events = await listDeploymentEvents(
@@ -6524,11 +7542,18 @@ async function getSignalOptionsSummaryDashboardSnapshot(input: {
       signalOptionsSummaryDashboardCache.set(input.deploymentId, snapshot);
     }
     return snapshot;
-  })().finally(() => {
+  })();
+  const request = withSignalOptionsDashboardBuildTimeout(work, {
+    timeoutMs: SIGNAL_OPTIONS_DASHBOARD_SUMMARY_BUILD_TIMEOUT_MS,
+    view: "summary",
+  }).finally(() => {
     signalOptionsSummaryDashboardInFlight.delete(input.deploymentId);
   });
 
-  signalOptionsSummaryDashboardInFlight.set(input.deploymentId, request);
+  signalOptionsSummaryDashboardInFlight.set(input.deploymentId, {
+    promise: request,
+    startedAt: Date.now(),
+  });
   return request;
 }
 
@@ -6742,6 +7767,7 @@ async function refreshActivePosition(input: {
   position: SignalOptionsPosition;
   pyrusSignalsSettings?: Record<string, unknown>;
   recentEvents?: ExecutionEvent[];
+  signal?: AbortSignal;
 }): Promise<{
   managed: boolean;
   reason?: string;
@@ -6813,23 +7839,41 @@ async function refreshActivePosition(input: {
       }),
     );
   } else if (providerContractId) {
-    const snapshot = await fetchBridgeOptionQuoteSnapshots({
+    const owner = `signal-options-position-mark:${input.deployment.id}:${input.position.id}`;
+    declareIbkrLiveDemand({
       underlying: input.position.symbol,
       providerContractIds: [providerContractId],
-      owner: `signal-options-position-mark:${input.deployment.id}:${input.position.id}`,
+      owner,
       intent: "automation-live",
-      ttlMs: 5_000,
+      ttlMs: SIGNAL_OPTIONS_LIVE_QUOTE_DEMAND_TTL_MS,
       fallbackProvider: "cache",
       requiresGreeks: requiresGreekPositionMark,
     });
-    const matchedQuote =
-      snapshot.quotes.find(
+    const demandState = readIbkrLiveDemandState({
+      owner,
+      underlying: input.position.symbol,
+      providerContractIds: [providerContractId],
+      requiresGreeks: requiresGreekPositionMark,
+    });
+    const matchedState =
+      demandState.states.find(
         (item) => item.providerContractId?.trim() === providerContractId,
       ) ?? null;
+    const matchedQuote = matchedState?.quote ?? null;
     const snapshotQuote = matchedQuote
       ? quoteSnapshotToSignalOptionsQuote({ contract, quote: matchedQuote })
       : null;
-    useQuote("provider_snapshot", snapshotQuote);
+    if (snapshotQuote) {
+      useQuote("provider_snapshot", snapshotQuote);
+    } else {
+      markAttempts.push(
+        positionMarkAttemptPayload({
+          source: "provider_snapshot",
+          quote: null,
+          reason: matchedState?.reason ?? "position_mark_unavailable",
+        }),
+      );
+    }
   } else {
     const chain = await getOptionChainWithDebug({
       underlying: input.position.symbol,
@@ -6838,6 +7882,7 @@ async function refreshActivePosition(input: {
       strikesAroundMoney: 1,
       strikeCoverage: "standard",
       quoteHydration: "snapshot",
+      signal: input.signal,
     });
     const chainQuote =
       findSignalOptionsQuoteForContract({
@@ -6854,6 +7899,7 @@ async function refreshActivePosition(input: {
       contractType: optionRight,
       strikeCoverage: "full",
       quoteHydration: "snapshot",
+      signal: input.signal,
     });
     const chainQuote = findSignalOptionsQuoteForContract({
       contracts: chain.contracts as SignalOptionsOptionQuote[],
@@ -7198,9 +8244,25 @@ async function resolveSignalOptionsCandidateContract(input: {
   candidate: SignalOptionsCandidate;
   profile: SignalOptionsExecutionProfile;
   bypassBridgeBackoff?: boolean;
+  quoteHydration?: SignalOptionsContractQuoteHydration;
+  allowDelayedSnapshotHydration?: boolean;
+  greekSelectorRuntimeMode?: SignalOptionsGreekSelectorRuntimeMode;
+  liveQuoteDemand?: SignalOptionsLiveQuoteDemandConfig | null;
   signal?: AbortSignal;
 }) {
   const bypassBridgeBackoff = input.bypassBridgeBackoff ?? true;
+  const greekSelectorRuntimeMode: SignalOptionsGreekSelectorRuntimeMode =
+    input.greekSelectorRuntimeMode ??
+    (input.liveQuoteDemand ? "live" : "shadow");
+  const greekSelectorEnabled = isSignalOptionsGreekSelectorEnabled({
+    profile: input.profile,
+    runtimeMode: greekSelectorRuntimeMode,
+  });
+  const quoteHydration =
+    greekSelectorEnabled &&
+    input.profile.optionSelection.greekSelector.requireLiveGreeks
+      ? "snapshot"
+      : (input.quoteHydration ?? "snapshot");
   const expirations = await getOptionExpirationsWithDebug({
     underlying: input.candidate.symbol,
     recordBridgeFailure: false,
@@ -7248,7 +8310,8 @@ async function resolveSignalOptionsCandidateContract(input: {
     contractType: input.candidate.optionRight,
     strikesAroundMoney,
     strikeCoverage: "standard",
-    quoteHydration: "snapshot",
+    quoteHydration,
+    allowDelayedSnapshotHydration: input.allowDelayedSnapshotHydration,
     recordBridgeFailure: false,
     bypassBridgeBackoff,
     signal: input.signal,
@@ -7258,6 +8321,7 @@ async function resolveSignalOptionsCandidateContract(input: {
     direction: input.candidate.direction,
     signalPrice: input.candidate.signalPrice,
     profile: input.profile,
+    runtimeMode: greekSelectorRuntimeMode,
   });
   const chainAttempts: SignalOptionsChainAttempt[] = [
     {
@@ -7276,7 +8340,8 @@ async function resolveSignalOptionsCandidateContract(input: {
       expirationDate: selectedExpiration.expirationDate,
       contractType: input.candidate.optionRight,
       strikeCoverage: "full",
-      quoteHydration: "snapshot",
+      quoteHydration,
+      allowDelayedSnapshotHydration: input.allowDelayedSnapshotHydration,
       recordBridgeFailure: false,
       bypassBridgeBackoff,
       signal: input.signal,
@@ -7286,6 +8351,7 @@ async function resolveSignalOptionsCandidateContract(input: {
       direction: input.candidate.direction,
       signalPrice: input.candidate.signalPrice,
       profile: input.profile,
+      runtimeMode: greekSelectorRuntimeMode,
     });
     chainAttempts.push({
       source: "full",
@@ -7301,12 +8367,38 @@ async function resolveSignalOptionsCandidateContract(input: {
     }
   }
 
-  const selectedQuote = contractSelection.selectedQuote;
-  const contractSelectionPayload =
-    signalOptionsContractSelectionPayload(contractSelection);
   const selectedExpirationPayload =
     signalOptionsSelectedExpirationPayload(selectedExpiration);
+  const greekSelection = greekSelectorEnabled
+    ? selectSignalOptionsGreekContractPlanFromChain({
+        contracts: chain.contracts as SignalOptionsOptionQuote[],
+        direction: input.candidate.direction,
+        signalPrice: input.candidate.signalPrice,
+        profile: input.profile,
+      })
+    : null;
+  let selectedBy: "greek" | "legacy" | "fallback_legacy" = "legacy";
+  let selectedQuote = contractSelection.selectedQuote;
+  let orderPlan = contractSelection.orderPlan;
+  if (greekSelection) {
+    if (greekSelection.selectedQuote) {
+      selectedBy = "greek";
+      selectedQuote = greekSelection.selectedQuote;
+      orderPlan = greekSelection.orderPlan;
+    } else if (input.profile.optionSelection.greekSelector.fallbackToLegacy) {
+      selectedBy = "fallback_legacy";
+    } else {
+      selectedBy = "greek";
+      selectedQuote = null;
+      orderPlan = null;
+    }
+  }
   if (!selectedQuote) {
+    const contractSelectionPayload =
+      signalOptionsContractSelectionPayload(contractSelection, {
+        greekSelection,
+        selectedBy,
+      });
     const chainBackoff = optionChainBackoffFromAttempts(chainAttempts);
     return {
       selectedExpiration,
@@ -7320,7 +8412,10 @@ async function resolveSignalOptionsCandidateContract(input: {
       contractSelectionPayload,
       chainDebug: chain.debug,
       chainAttempts,
-      reason: chainBackoff?.reason ?? "no_contract_for_strike_slot",
+      reason:
+        greekSelection?.fallbackReason ??
+        chainBackoff?.reason ??
+        "no_contract_for_strike_slot",
       detail: {
         selectedExpiration: selectedExpirationPayload,
         chainDebug: chain.debug,
@@ -7333,8 +8428,82 @@ async function resolveSignalOptionsCandidateContract(input: {
     };
   }
 
-  const orderPlan = contractSelection.orderPlan;
-  const selectedContract = contractToPayload(selectedQuote);
+  let selectedContract = contractToPayload(selectedQuote);
+  let liveQuoteDemandPayload: ReturnType<
+    typeof signalOptionsLiveQuoteDemandPayload
+  > | null = null;
+  const providerContractId = compactString(selectedContract.providerContractId);
+  if (input.liveQuoteDemand && providerContractId) {
+    const requiresGreeks = input.liveQuoteDemand.requiresGreeks ?? true;
+    const liveQuoteTtlMs =
+      input.liveQuoteDemand.ttlMs ?? SIGNAL_OPTIONS_LIVE_QUOTE_DEMAND_TTL_MS;
+    declareIbkrLiveDemand({
+      underlying: input.candidate.symbol,
+      providerContractIds: [providerContractId],
+      owner: input.liveQuoteDemand.owner,
+      intent: input.liveQuoteDemand.intent ?? "automation-live",
+      ttlMs: liveQuoteTtlMs,
+      fallbackProvider: input.liveQuoteDemand.fallbackProvider ?? "cache",
+      requiresGreeks,
+    });
+    const snapshotPayload = await fetchBridgeOptionQuoteSnapshots({
+      underlying: input.candidate.symbol,
+      providerContractIds: [providerContractId],
+      owner: input.liveQuoteDemand.owner,
+      intent: input.liveQuoteDemand.intent ?? "automation-live",
+      ttlMs: liveQuoteTtlMs,
+      fallbackProvider: input.liveQuoteDemand.fallbackProvider ?? "cache",
+      requiresGreeks,
+      releaseLeasesOnComplete: false,
+      signal: input.signal,
+    });
+    const snapshotQuote =
+      snapshotPayload.quotes.find(
+        (item) =>
+          item.providerContractId?.trim?.() === providerContractId,
+      ) ?? null;
+    const demandState = readIbkrLiveDemandState({
+      owner: input.liveQuoteDemand.owner,
+      underlying: input.candidate.symbol,
+      providerContractIds: [providerContractId],
+      requiresGreeks,
+    });
+    liveQuoteDemandPayload = signalOptionsLiveQuoteDemandPayload({
+      owner: input.liveQuoteDemand.owner,
+      providerContractId,
+      requiresGreeks,
+      state: demandState,
+    });
+    const matchedState =
+      demandState.states.find(
+        (item) => item.providerContractId === providerContractId,
+      ) ?? null;
+    const liveQuote = snapshotQuote
+      ? quoteSnapshotToSignalOptionsQuote({
+          contract: selectedContract,
+          quote: snapshotQuote,
+        })
+      : matchedState?.quote
+        ? quoteSnapshotToSignalOptionsQuote({
+            contract: selectedContract,
+            quote: matchedState.quote,
+          })
+        : null;
+    if (liveQuote) {
+      const liveOrderPlan = buildSignalOptionsShadowOrderPlan(
+        liveQuote,
+        input.profile,
+      );
+      selectedQuote = liveQuote;
+      orderPlan = liveOrderPlan;
+      selectedContract = contractToPayload(selectedQuote);
+    }
+  }
+  const contractSelectionPayload =
+    signalOptionsContractSelectionPayload(contractSelection, {
+      greekSelection,
+      selectedBy,
+    });
   const quote = quoteToPayload(selectedQuote);
   const entryGreeks = greekSnapshotFromQuote(selectedQuote);
   return {
@@ -7355,6 +8524,9 @@ async function resolveSignalOptionsCandidateContract(input: {
       chainDebug: chain.debug,
       chainAttempts,
       contractSelection: contractSelectionPayload,
+      ...(liveQuoteDemandPayload
+        ? { liveQuoteDemand: liveQuoteDemandPayload }
+        : {}),
     },
     retryable: false,
   };
@@ -7635,6 +8807,7 @@ async function processEntryCandidate(input: {
   candidate: SignalOptionsCandidate;
   signalKey: string;
   executionBlocker?: SignalOptionsExecutionBlocker | null;
+  signal?: AbortSignal;
 }) {
   const entryGate = evaluateSignalOptionsEntryGate({
     candidate: input.candidate,
@@ -7672,6 +8845,20 @@ async function processEntryCandidate(input: {
     candidate: input.candidate,
     profile: input.profile,
     bypassBridgeBackoff: true,
+    quoteHydration: "metadata",
+    allowDelayedSnapshotHydration: false,
+    greekSelectorRuntimeMode:
+      input.deployment.providerAccountId === SHADOW_PROVIDER_ACCOUNT_ID
+        ? "shadow"
+        : "live",
+    liveQuoteDemand: {
+      owner: `signal-options-entry:${input.deployment.id}:${input.signalKey}`,
+      intent: "automation-live",
+      ttlMs: SIGNAL_OPTIONS_LIVE_QUOTE_DEMAND_TTL_MS,
+      fallbackProvider: "cache",
+      requiresGreeks: true,
+    },
+    signal: input.signal,
   });
   const selectedExpiration = contractResolution.selectedExpiration;
   if (!selectedExpiration) {
@@ -8117,6 +9304,7 @@ type SignalOptionsBackfillSummary = {
     reason: string;
     selectedContract: Record<string, unknown>;
     signalQuality?: SignalOptionsEntryQuality | null;
+    wireTrail?: Record<string, unknown> | null;
     postExitOutcome?: {
       bars: number;
       highPrice: number | null;
@@ -8244,6 +9432,87 @@ type HistoricalBackfillOpenPosition = SignalOptionsPosition & {
   nextBarIndex: number;
   nextStructuralIndex: number;
   currentWireContext: SignalOptionsWireContext | null;
+};
+
+export type SignalOptionsGreekSelectorSmokeCandidate = {
+  ticker: string;
+  expirationDate: string;
+  dte: number;
+  strike: number;
+  right: OptionRight;
+  entryAt: string;
+  entryPrice: number;
+  exitAt: string | null;
+  exitPrice: number | null;
+  quantity: number;
+  pnl: number | null;
+  volume: number | null;
+  greeks: OptionGreekSnapshot;
+  score: OptionGreekScore;
+};
+
+export type SignalOptionsGreekSelectorSmokeRow = {
+  candidateId: string;
+  symbol: string;
+  direction: SignalDirection;
+  signalAt: string;
+  underlyingPrice: number | null;
+  outcome: "closed_trade" | "end_of_window_mark" | "unmarked";
+  legacy: {
+    ticker: string | null;
+    expirationDate: string | null;
+    strike: number | null;
+    right: string | null;
+    entryPrice: number | null;
+    exitPrice: number | null;
+    quantity: number | null;
+    pnl: number | null;
+    closedAt: string | null;
+  };
+  selected: SignalOptionsGreekSelectorSmokeCandidate | null;
+  candidatesScored: number;
+  candidatesSkipped: number;
+  skipReasons: Record<string, number>;
+  topCandidates: SignalOptionsGreekSelectorSmokeCandidate[];
+  pnlDelta: number | null;
+  notes: string[];
+};
+
+export type SignalOptionsGreekSelectorSmokeResult = {
+  generatedAt: string;
+  date: string;
+  deployment: {
+    id: string;
+    name: string;
+    mode: AlgoDeployment["mode"];
+  };
+  window: Record<string, unknown>;
+  timeframe: SignalMonitorTimeframe;
+  config: {
+    maxSignals: number | null;
+    maxCandidatesPerSignal: number;
+    riskFreeRate: number;
+    dividendYield: number;
+  };
+  summary: {
+    actionCandidates: number;
+    reportedSignals: number;
+    legacyClosedTrades: number;
+    comparedSignals: number;
+    changedSelections: number;
+    totalLegacyPnl: number;
+    totalSelectedPnl: number;
+    totalPnlDelta: number;
+    totalSelectedMarkedPnl: number;
+    candidatesScored: number;
+    candidatesSkipped: number;
+    skipReasons: Record<string, number>;
+    rowsWithSelection: number;
+    rowsWithMarkedPnl: number;
+    rowsWithoutSelection: number;
+  };
+  rows: SignalOptionsGreekSelectorSmokeRow[];
+  errors: Array<{ symbol?: string | null; message: string }>;
 };
 
 const DEFAULT_SIGNAL_OPTIONS_BACKFILL_START = "2026-04-01";
@@ -9018,7 +10287,7 @@ function selectHistoricalStrikeCandidates(input: {
   );
 }
 
-function buildHistoricalPolygonOptionTicker(input: {
+function buildHistoricalMassiveOptionTicker(input: {
   underlying: string;
   expirationDate: Date;
   strike: number;
@@ -9189,7 +10458,7 @@ function buildHistoricalOrderPlan(
   fillPrice: number,
   profile: SignalOptionsExecutionProfile,
   fill?: {
-    source: "polygon-option-trade" | "polygon-option-aggregates";
+    source: "massive-option-trade" | "massive-option-aggregates";
     trade?: OptionTradePrint | null;
     markPrice?: number | null;
   },
@@ -9230,7 +10499,7 @@ function buildHistoricalOrderPlan(
       spread: null,
       spreadPctOfMid: null,
       quoteFreshness:
-        fill?.source === "polygon-option-trade"
+        fill?.source === "massive-option-trade"
           ? "historical_option_trades"
           : "historical_option_bars",
       marketDataMode: "historical",
@@ -9239,7 +10508,7 @@ function buildHistoricalOrderPlan(
     },
     historicalPricing: true,
     historicalFill: {
-      source: fill?.source ?? "polygon-option-aggregates",
+      source: fill?.source ?? "massive-option-aggregates",
       trade: optionTradeSnapshot(fill?.trade ?? null),
       markPrice: fill?.markPrice ?? null,
       maxDelayMs: HISTORICAL_OPTION_TRADE_FILL_MAX_DELAY_MS,
@@ -9320,7 +10589,7 @@ async function resolveHistoricalOptionForBackfillUncached(input: {
   });
   for (const selectedExpiration of expirations) {
     for (const strike of strikes) {
-      const optionTicker = buildHistoricalPolygonOptionTicker({
+      const optionTicker = buildHistoricalMassiveOptionTicker({
         underlying: input.candidate.symbol,
         expirationDate: selectedExpiration.expirationDate,
         strike,
@@ -9397,8 +10666,8 @@ async function resolveHistoricalOptionForBackfillUncached(input: {
         input.profile,
         {
           source: entryTrade
-            ? "polygon-option-trade"
-            : "polygon-option-aggregates",
+            ? "massive-option-trade"
+            : "massive-option-aggregates",
           trade: entryTrade,
           markPrice: fillPrice,
         },
@@ -9431,6 +10700,571 @@ async function resolveHistoricalOptionForBackfillUncached(input: {
     }
   }
   return null;
+}
+
+function readGreekSmokeInteger(
+  value: unknown,
+  fallback: number | null,
+  min: number,
+  max: number,
+): number | null {
+  if (value == null || value === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(parsed)));
+}
+
+function readGreekSmokeNumber(value: unknown, fallback: number): number {
+  if (value == null || value === "") return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function greekSelectorCombos(input: {
+  expirations: ReturnType<typeof selectHistoricalExpirationCandidates>;
+  strikes: number[];
+  maxCandidates: number;
+}) {
+  const combos: Array<{
+    selectedExpiration: { expirationDate: Date; dte: number };
+    strike: number;
+  }> = [];
+  for (const strike of input.strikes) {
+    for (const selectedExpiration of input.expirations) {
+      combos.push({ selectedExpiration, strike });
+      if (combos.length >= input.maxCandidates) {
+        return combos;
+      }
+    }
+  }
+  return combos;
+}
+
+function selectGreekSelectorExitBar(input: {
+  optionBars: BrokerBarSnapshot[];
+  exitAt: Date;
+}) {
+  const atOrAfter =
+    input.optionBars.find((bar) => {
+      const timestamp = dateOrNull(bar.timestamp);
+      return Boolean(timestamp && timestamp.getTime() >= input.exitAt.getTime());
+    }) ?? null;
+  if (atOrAfter) return atOrAfter;
+  return (
+    input.optionBars
+      .slice()
+      .reverse()
+      .find((bar) => {
+        const timestamp = dateOrNull(bar.timestamp);
+        return Boolean(timestamp && timestamp.getTime() <= input.exitAt.getTime());
+      }) ?? null
+  );
+}
+
+async function resolveSignalOptionsGreekSelectorCandidates(input: {
+  candidate: SignalOptionsCandidate;
+  profile: SignalOptionsExecutionProfile;
+  window: SignalOptionsBackfillWindow;
+  exitAt: Date;
+  riskFreeRate: number;
+  dividendYield: number;
+  maxCandidates: number;
+}): Promise<{
+  candidates: SignalOptionsGreekSelectorSmokeCandidate[];
+  skipped: number;
+  skipReasons: Record<string, number>;
+  notes: string[];
+}> {
+  const signalAt = dateOrNull(input.candidate.signalAt);
+  if (!signalAt || input.candidate.signalPrice == null) {
+    return {
+      candidates: [],
+      skipped: 0,
+      skipReasons: { missing_signal_price: 1 },
+      notes: ["missing_signal_price"],
+    };
+  }
+  const expirations = selectHistoricalExpirationCandidates(signalAt, input.profile);
+  const strikes = selectHistoricalStrikeCandidates({
+    signalPrice: input.candidate.signalPrice,
+    direction: input.candidate.direction,
+    profile: input.profile,
+  });
+  const combos = greekSelectorCombos({
+    expirations,
+    strikes,
+    maxCandidates: input.maxCandidates,
+  });
+  const candidates: SignalOptionsGreekSelectorSmokeCandidate[] = [];
+  const notes: string[] = [];
+  const skipReasons = new Map<string, number>();
+  let skipped = 0;
+  const skip = (reason: string) => {
+    skipped += 1;
+    skipReasons.set(reason, (skipReasons.get(reason) ?? 0) + 1);
+  };
+
+  for (const { selectedExpiration, strike } of combos) {
+    const optionTicker = buildHistoricalMassiveOptionTicker({
+      underlying: input.candidate.symbol,
+      expirationDate: selectedExpiration.expirationDate,
+      strike,
+      right: input.candidate.optionRight,
+    });
+    if (!optionTicker) {
+      skip("missing_option_ticker");
+      continue;
+    }
+    const result = await getOptionChartBarsWithDebug({
+      underlying: input.candidate.symbol,
+      expirationDate: selectedExpiration.expirationDate,
+      strike,
+      right: input.candidate.optionRight,
+      optionTicker,
+      skipBrokerContractResolution: true,
+      timeframe: SIGNAL_OPTIONS_OPTION_MARK_TIMEFRAME,
+      from: new Date(
+        Math.max(input.window.from.getTime(), signalAt.getTime() - 15 * 60_000),
+      ),
+      to: input.window.to,
+      limit: BACKFILL_OPTION_BAR_LIMIT,
+      outsideRth: false,
+    }).catch(() => null);
+    const optionBars = (result?.bars ?? [])
+      .filter((bar) => {
+        const timestamp = dateOrNull(bar.timestamp);
+        const price = backfillBarPrice(bar);
+        return Boolean(
+          timestamp &&
+            price != null &&
+            price > 0 &&
+            isWithinBackfillWindow(timestamp, input.window),
+        );
+      })
+      .sort((left, right) => {
+        const leftTime = dateOrNull(left.timestamp)?.getTime() ?? 0;
+        const rightTime = dateOrNull(right.timestamp)?.getTime() ?? 0;
+        return leftTime - rightTime;
+      });
+    const entryBar =
+      optionBars.find((bar) => {
+        const timestamp = dateOrNull(bar.timestamp);
+        return Boolean(timestamp && timestamp.getTime() >= signalAt.getTime());
+      }) ?? null;
+    const entryAt = entryBar ? dateOrNull(entryBar.timestamp) : null;
+    const markPrice = entryBar ? backfillBarPrice(entryBar) : null;
+    if (
+      !entryBar ||
+      !entryAt ||
+      !isHistoricalOptionEntryBarTimely(signalAt, entryAt) ||
+      markPrice == null ||
+      markPrice <= 0
+    ) {
+      skip("missing_entry_bar");
+      continue;
+    }
+    const optionTrades = await getHistoricalOptionTrades({
+      optionTicker,
+      from: signalAt,
+      to: input.window.to,
+      limit: BACKFILL_OPTION_TRADE_LIMIT,
+    }).catch(() => [] as OptionTradePrint[]);
+    const entryTrade = selectHistoricalOptionTradeFill({
+      trades: optionTrades,
+      at: signalAt,
+    });
+    const entryPrice = Number((entryTrade?.price ?? markPrice).toFixed(2));
+    const orderPlan = buildHistoricalOrderPlan(entryPrice, input.profile, {
+      source: entryTrade ? "massive-option-trade" : "massive-option-aggregates",
+      trade: entryTrade,
+      markPrice,
+    });
+    if (!orderPlan.ok) {
+      skip(`order_plan_${String(orderPlan.reason || "failed")}`);
+      continue;
+    }
+    const exitBar = selectGreekSelectorExitBar({ optionBars, exitAt: input.exitAt });
+    const exitAt = exitBar ? dateOrNull(exitBar.timestamp) : null;
+    const exitPrice = exitBar ? backfillBarPrice(exitBar) : null;
+    const greeks = computeOptionGreeksFromPrice({
+      spot: input.candidate.signalPrice,
+      strike,
+      optionPrice: entryPrice,
+      right: input.candidate.optionRight,
+      at: entryAt,
+      expirationDate: selectedExpiration.expirationDate,
+      riskFreeRate: input.riskFreeRate,
+      dividendYield: input.dividendYield,
+    });
+    if (!greeks) {
+      skip("invalid_greek_reconstruction");
+      continue;
+    }
+    const volume = finiteNumber(entryBar.volume);
+    const score = scoreOptionGreekCandidate({
+      right: input.candidate.optionRight,
+      spot: input.candidate.signalPrice,
+      strike,
+      entryPrice,
+      volume,
+      hasExitPrice: exitPrice != null,
+      greeks,
+    });
+    const quantity = finiteNumber(orderPlan.quantity) ?? 0;
+    const pnl =
+      exitPrice != null && quantity > 0
+        ? Number(((Number(exitPrice.toFixed(2)) - entryPrice) * quantity * 100).toFixed(2))
+        : null;
+    candidates.push({
+      ticker: optionTicker,
+      expirationDate: selectedExpiration.expirationDate.toISOString().slice(0, 10),
+      dte: selectedExpiration.dte,
+      strike,
+      right: input.candidate.optionRight,
+      entryAt: entryAt.toISOString(),
+      entryPrice,
+      exitAt: exitAt?.toISOString() ?? null,
+      exitPrice: exitPrice == null ? null : Number(exitPrice.toFixed(2)),
+      quantity,
+      pnl,
+      volume,
+      greeks,
+      score,
+    });
+  }
+
+  if (combos.length >= input.maxCandidates) {
+    notes.push(`candidate_cap_${input.maxCandidates}`);
+  }
+  return {
+    candidates: candidates.sort(
+      (left, right) =>
+        right.score.total - left.score.total ||
+        (right.pnl ?? Number.NEGATIVE_INFINITY) -
+          (left.pnl ?? Number.NEGATIVE_INFINITY) ||
+        left.ticker.localeCompare(right.ticker),
+    ),
+    skipped,
+    skipReasons: Object.fromEntries(skipReasons),
+    notes,
+  };
+}
+
+function emptyGreekSelectorSmokeLegacy(): SignalOptionsGreekSelectorSmokeRow["legacy"] {
+  return {
+    ticker: null,
+    expirationDate: null,
+    strike: null,
+    right: null,
+    entryPrice: null,
+    exitPrice: null,
+    quantity: null,
+    pnl: null,
+    closedAt: null,
+  };
+}
+
+function greekSelectorSmokeLegacyFromTrade(
+  trade: Record<string, unknown>,
+): SignalOptionsGreekSelectorSmokeRow["legacy"] {
+  const selectedContract = asRecord(trade["selectedContract"]);
+  return {
+    ticker:
+      typeof selectedContract["ticker"] === "string"
+        ? selectedContract["ticker"]
+        : null,
+    expirationDate:
+      typeof selectedContract["expirationDate"] === "string"
+        ? selectedContract["expirationDate"]
+        : null,
+    strike: finiteNumber(selectedContract["strike"]),
+    right:
+      typeof selectedContract["right"] === "string"
+        ? selectedContract["right"]
+        : null,
+    entryPrice: finiteNumber(trade["entryPrice"]),
+    exitPrice: finiteNumber(trade["exitPrice"]),
+    quantity: finiteNumber(trade["quantity"]),
+    pnl: finiteNumber(trade["pnl"]),
+    closedAt: dateOrNull(trade["closedAt"])?.toISOString() ?? null,
+  };
+}
+
+function summarizeGreekSelectorSmokeRows(
+  actionCandidates: number,
+  legacyClosedTrades: number,
+  rows: SignalOptionsGreekSelectorSmokeRow[],
+) {
+  const comparableRows = rows.filter((row) => row.pnlDelta != null);
+  const markedRows = rows.filter((row) => row.selected?.pnl != null);
+  const totalLegacyPnl = comparableRows.reduce(
+    (sum, row) => sum + (row.legacy.pnl ?? 0),
+    0,
+  );
+  const totalSelectedPnl = comparableRows.reduce(
+    (sum, row) => sum + (row.selected?.pnl ?? 0),
+    0,
+  );
+  const totalSelectedMarkedPnl = markedRows.reduce(
+    (sum, row) => sum + (row.selected?.pnl ?? 0),
+    0,
+  );
+  return {
+    actionCandidates,
+    reportedSignals: rows.length,
+    legacyClosedTrades,
+    comparedSignals: comparableRows.length,
+    changedSelections: rows.filter((row) => {
+      const legacyTicker = row.legacy.ticker;
+      const selectedTicker = row.selected?.ticker ?? null;
+      return Boolean(legacyTicker && selectedTicker && legacyTicker !== selectedTicker);
+    }).length,
+    totalLegacyPnl: Number(totalLegacyPnl.toFixed(2)),
+    totalSelectedPnl: Number(totalSelectedPnl.toFixed(2)),
+    totalPnlDelta: Number((totalSelectedPnl - totalLegacyPnl).toFixed(2)),
+    totalSelectedMarkedPnl: Number(totalSelectedMarkedPnl.toFixed(2)),
+    candidatesScored: rows.reduce((sum, row) => sum + row.candidatesScored, 0),
+    candidatesSkipped: rows.reduce((sum, row) => sum + row.candidatesSkipped, 0),
+    skipReasons: rows.reduce<Record<string, number>>((counts, row) => {
+      for (const [reason, count] of Object.entries(row.skipReasons)) {
+        counts[reason] = (counts[reason] ?? 0) + count;
+      }
+      return counts;
+    }, {}),
+    rowsWithSelection: rows.filter((row) => row.selected).length,
+    rowsWithMarkedPnl: markedRows.length,
+    rowsWithoutSelection: rows.filter((row) => !row.selected).length,
+  };
+}
+
+export async function runSignalOptionsGreekSelectorSmoke(input: {
+  deploymentId: string;
+  date?: unknown;
+  session?: unknown;
+  signalTimeframe?: unknown;
+  profilePatch?: unknown;
+  pyrusSignalsSettingsPatch?: unknown;
+  forceDeploymentUniverse?: boolean;
+  symbolUniverseOverride?: string[];
+  maxSignals?: unknown;
+  maxCandidatesPerSignal?: unknown;
+  riskFreeRate?: unknown;
+  dividendYield?: unknown;
+  progress?: boolean;
+}): Promise<SignalOptionsGreekSelectorSmokeResult> {
+  const date = parseBackfillDate(input.date, "2026-05-29");
+  const maxCandidatesPerSignal =
+    readGreekSmokeInteger(input.maxCandidatesPerSignal, 24, 1, 200) ?? 24;
+  const maxSignals = readGreekSmokeInteger(input.maxSignals, null, 1, 1_000);
+  const riskFreeRate = readGreekSmokeNumber(input.riskFreeRate, 0.05);
+  const dividendYield = readGreekSmokeNumber(input.dividendYield, 0);
+  const backfillInput = {
+    deploymentId: input.deploymentId,
+    start: date,
+    end: date,
+    session: input.session,
+    commit: false,
+    profilePatch: input.profilePatch,
+    pyrusSignalsSettingsPatch: input.pyrusSignalsSettingsPatch,
+    signalTimeframe: input.signalTimeframe,
+    forceDeploymentUniverse: input.forceDeploymentUniverse,
+    symbolUniverseOverride: input.symbolUniverseOverride,
+    progress: input.progress,
+  };
+  const legacyResult = await runSignalOptionsShadowBackfill(backfillInput);
+  let deployment = await getDeploymentOrThrow(input.deploymentId);
+  deployment = await normalizeSignalOptionsDeploymentBranding(deployment);
+  deployment = await normalizeSignalOptionsDeploymentAccount(deployment);
+  const window = resolveSignalOptionsBackfillWindow(backfillInput);
+  const baseProfile = resolveDeploymentProfile(deployment);
+  const profilePatch = asRecord(input.profilePatch);
+  const profile = Object.keys(profilePatch).length
+    ? mergeProfilePatch(baseProfile, profilePatch)
+    : baseProfile;
+  const signalProfile = await getSignalMonitorProfileRow({
+    environment: deployment.mode,
+  });
+  const signalUniverse = await resolveSignalMonitorProfileUniverse(signalProfile);
+  const pyrusSignalsSettings = mergePyrusSignalsSettingsPatch(
+    asRecord(signalProfile.pyrusSignalsSettings),
+    input.pyrusSignalsSettingsPatch,
+  );
+  const backfillUniverse = buildSignalOptionsBackfillUniverse({
+    deploymentSymbols: input.symbolUniverseOverride?.length
+      ? input.symbolUniverseOverride
+      : deployment.symbolUniverse,
+    signalMonitorSymbols: input.forceDeploymentUniverse
+      ? []
+      : signalUniverse.symbols,
+    watchlistId: signalUniverse.profile.watchlistId,
+    skippedSymbols: input.forceDeploymentUniverse
+      ? []
+      : signalUniverse.skippedSymbols,
+    truncated: input.forceDeploymentUniverse ? false : signalUniverse.truncated,
+  });
+  const timeframe = resolveSignalMonitorTimeframe(
+    input.signalTimeframe,
+    resolveSignalMonitorTimeframe(signalUniverse.profile.timeframe),
+  );
+  const loadedSignals = await loadHistoricalBackfillSignals({
+    profileId: signalProfile.id,
+    profileSettings: pyrusSignalsSettings,
+    symbols: backfillUniverse.symbols,
+    timeframe,
+    window,
+    progress: input.progress,
+  });
+  const candidatesById = new Map<string, SignalOptionsCandidate>();
+  for (const historicalSignal of loadedSignals.signals) {
+    const state = buildBackfillSignalSnapshot({
+      profileId: signalProfile.id,
+      symbol: historicalSignal.symbol,
+      timeframe,
+      signal: historicalSignal.signal,
+    });
+    const signalAt = historicalSignal.signalAt.toISOString();
+    const candidate = buildCandidateFromSignal({
+      deployment,
+      state,
+      signalAt,
+      signalKey: buildSignalKey(state, signalAt),
+      signalMetadata: {
+        source: "pyrus-signals-backfill",
+        filterState: asRecord(historicalSignal.signal.filterState),
+      },
+    });
+    candidatesById.set(candidate.id, candidate);
+  }
+
+  const closedTrades = asArray(asRecord(legacyResult.summary)["closedTrades"]);
+  const closedTradesByCandidateId = new Map<string, Record<string, unknown>>();
+  for (const trade of closedTrades) {
+    const record = asRecord(trade);
+    const candidateId = String(record["candidateId"] ?? "");
+    if (candidateId && !closedTradesByCandidateId.has(candidateId)) {
+      closedTradesByCandidateId.set(candidateId, record);
+    }
+  }
+  const actionCandidates = Array.from(candidatesById.values()).sort(
+    (left, right) =>
+      new Date(left.signalAt).getTime() - new Date(right.signalAt).getTime() ||
+      left.symbol.localeCompare(right.symbol) ||
+      left.id.localeCompare(right.id),
+  );
+  const selectedActionCandidates = maxSignals
+    ? actionCandidates.slice(0, maxSignals)
+    : actionCandidates;
+  if (input.progress) {
+    console.log(
+      `[signal-options-greek-smoke] scoring ${selectedActionCandidates.length}/${actionCandidates.length} action candidates maxCandidates=${maxCandidatesPerSignal}`,
+    );
+  }
+  const rows: SignalOptionsGreekSelectorSmokeRow[] = [];
+  const errors = [
+    ...asArray(asRecord(legacyResult.summary)["errors"]).map((error) => ({
+      symbol:
+        typeof asRecord(error)["symbol"] === "string"
+          ? String(asRecord(error)["symbol"])
+          : null,
+      message: String(asRecord(error)["message"] ?? "Legacy backfill error."),
+    })),
+    ...loadedSignals.errors,
+  ];
+
+  for (let index = 0; index < selectedActionCandidates.length; index += 1) {
+    const candidate = selectedActionCandidates[index];
+    if (input.progress && (index === 0 || (index + 1) % 10 === 0)) {
+      console.log(
+        `[signal-options-greek-smoke] candidate ${index + 1}/${selectedActionCandidates.length} ${candidate.symbol} ${candidate.signalAt}`,
+      );
+    }
+    const record = closedTradesByCandidateId.get(candidate.id) ?? null;
+    const closedAt = record ? dateOrNull(record["closedAt"]) : null;
+    const legacy = record
+      ? greekSelectorSmokeLegacyFromTrade(record)
+      : emptyGreekSelectorSmokeLegacy();
+    const legacyPnl = legacy.pnl;
+    const resolved = await resolveSignalOptionsGreekSelectorCandidates({
+      candidate,
+      profile,
+      window,
+      exitAt: closedAt ?? window.to,
+      riskFreeRate,
+      dividendYield,
+      maxCandidates: maxCandidatesPerSignal,
+    }).catch((error) => {
+      errors.push({
+        symbol: candidate.symbol,
+        message:
+          error instanceof Error && error.message
+            ? error.message
+            : "Greek selector candidate resolution failed.",
+      });
+      return {
+        candidates: [],
+        skipped: 0,
+        skipReasons: { candidate_resolution_error: 1 },
+        notes: ["candidate_resolution_error"],
+      };
+    });
+    const selected = resolved.candidates[0] ?? null;
+    const outcome: SignalOptionsGreekSelectorSmokeRow["outcome"] = closedAt
+      ? "closed_trade"
+      : selected?.pnl != null
+        ? "end_of_window_mark"
+        : "unmarked";
+    rows.push({
+      candidateId: candidate.id,
+      symbol: candidate.symbol,
+      direction: candidate.direction,
+      signalAt: candidate.signalAt,
+      underlyingPrice: candidate.signalPrice,
+      outcome,
+      legacy,
+      selected,
+      candidatesScored: resolved.candidates.length,
+      candidatesSkipped: resolved.skipped,
+      skipReasons: resolved.skipReasons,
+      topCandidates: resolved.candidates.slice(0, 3),
+      pnlDelta:
+        selected?.pnl != null && legacyPnl != null
+          ? Number((selected.pnl - legacyPnl).toFixed(2))
+          : null,
+      notes: closedAt
+        ? resolved.notes
+        : [
+            ...resolved.notes,
+            outcome === "end_of_window_mark"
+              ? "marked_to_window_end"
+              : "missing_exit_price",
+          ],
+    });
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    date,
+    deployment: {
+      id: deployment.id,
+      name: normalizeLegacyAlgoBrandText(deployment.name),
+      mode: deployment.mode,
+    },
+    window: asRecord(legacyResult.window),
+    timeframe,
+    config: {
+      maxSignals,
+      maxCandidatesPerSignal,
+      riskFreeRate,
+      dividendYield,
+    },
+    summary: summarizeGreekSelectorSmokeRows(
+      actionCandidates.length,
+      closedTrades.length,
+      rows,
+    ),
+    rows,
+    errors,
+  };
 }
 
 async function emitBackfillSkippedCandidate(input: {
@@ -9679,8 +11513,8 @@ async function closeBackfillPosition(input: {
       exitMarkPrice,
       exitFill: {
         source: exitTrade
-          ? "polygon-option-trade"
-          : "polygon-option-aggregates",
+          ? "massive-option-trade"
+          : "massive-option-aggregates",
         trade: optionTradeSnapshot(exitTrade),
         markPrice: exitMarkPrice,
         maxDelayMs: HISTORICAL_OPTION_TRADE_FILL_MAX_DELAY_MS,
@@ -9718,6 +11552,7 @@ async function closeBackfillPosition(input: {
       reason: input.reason,
       selectedContract: input.position.selectedContract,
       signalQuality: input.position.signalQuality ?? null,
+      wireTrail: input.position.lastWireTrail ?? null,
       postExitOutcome,
     });
   }
@@ -10865,7 +12700,7 @@ export async function runSignalOptionsShadowBackfill(input: {
           signalQuality,
           position: backfillPositionPayload(position),
           historicalPricing: {
-            source: "polygon-option-aggregates",
+            source: "massive-option-aggregates",
             entryBarAt: entryAt.toISOString(),
           },
         },
@@ -11046,11 +12881,17 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       phase: "deferred",
       heavyWorkDeferred: true,
     });
+    const deferredActivePositionCount =
+      source === "worker"
+        ? await loadSignalOptionsActivePositionCountForWorkerSummary(deployment.id)
+        : 0;
+    throwIfSignalOptionsScanAborted(input.signal);
     const summary = buildWorkerScanSummary({
       states: evaluated.states as SignalMonitorState[],
       universe,
       candidateCount: 0,
       blockedCandidateCount: 0,
+      activePositionCount: deferredActivePositionCount,
       batch: asRecord(asRecord(evaluated).signalOptionsBatch),
       lastSignalScanAt: signalScanCompletedAt.toISOString(),
       heavyWorkDeferred: true,
@@ -11095,6 +12936,10 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   });
   const unmanagedPositionSymbols = new Set<string>();
   const evaluatedStates = evaluated.states as SignalMonitorState[];
+  const signalActionStates = orderSignalOptionsActionStates({
+    states: evaluatedStates,
+    universe,
+  });
   const evaluatedProfile = asRecord(asRecord(evaluated).profile);
   const evaluatedPyrusSignalsSettings = asRecord(
     evaluatedProfile.pyrusSignalsSettings,
@@ -11102,7 +12947,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
   const positionSignature =
     signalOptionsPositionActionSignature(initialPositions);
   const signalSignature = signalOptionsStateActionSignature({
-    states: evaluatedStates,
+    states: signalActionStates,
     universe,
   });
   const resumingSignalWork =
@@ -11120,10 +12965,10 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       : 0;
   let nextSignalIndex =
     source === "worker" &&
-    actionCursor.phase === "signals" &&
-    actionCursor.positionSignature === positionSignature &&
-    actionCursor.signalSignature === signalSignature
-      ? clampActionCursorIndex(actionCursor.signalIndex, evaluatedStates.length)
+      actionCursor.phase === "signals" &&
+      actionCursor.positionSignature === positionSignature &&
+      actionCursor.signalSignature === signalSignature
+      ? clampActionCursorIndex(actionCursor.signalIndex, signalActionStates.length)
       : 0;
   let actionWorkDeferred = false;
   let positionWorkDeferred = false;
@@ -11148,42 +12993,46 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       nextPositionIndex = positionIndex + 1;
       continue;
     }
-    const refreshResult = await refreshActivePosition({
-      deployment,
-      profile,
-      position,
-      pyrusSignalsSettings: evaluatedPyrusSignalsSettings,
-      recentEvents: initialSignalEvents,
+    const refreshResult = await withSignalOptionsActionItemTimeout({
+      reason: "position_mark_timeout",
+      timeoutMs: SIGNAL_OPTIONS_POSITION_MARK_TIMEOUT_MS,
+      signal: input.signal,
+      task: (signal) =>
+        refreshActivePosition({
+          deployment,
+          profile,
+          position,
+          pyrusSignalsSettings: evaluatedPyrusSignalsSettings,
+          recentEvents: initialSignalEvents,
+          signal,
+        }),
     }).catch(async (error: unknown) => {
       throwIfSignalOptionsScanAborted(input.signal);
       const occurredAt = new Date();
+      const reason = signalOptionsPositionMarkErrorReason(error);
       if (
         !shouldRecordPositionMarkSkip({
           events: initialSignalEvents,
           position,
-          reason: "position_mark_failed",
+          reason,
           now: occurredAt,
         })
       ) {
-        return { managed: false, reason: "position_mark_failed" };
+        return { managed: false, reason };
       }
       await insertSignalOptionsEvent({
         deployment,
         symbol: position.symbol,
         eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
-        summary: `${position.symbol} shadow mark skipped: option quote unavailable`,
+        summary: `${position.symbol} shadow mark skipped: ${reason}`,
         occurredAt,
         payload: {
-          reason: "position_mark_failed",
-          message:
-            error instanceof Error
-              ? error.message
-              : "Unknown position mark error",
-          retryable: true,
+          reason,
+          ...signalOptionsPositionMarkErrorDetail(error, reason),
           position,
         },
       });
-      return { managed: false, reason: "position_mark_failed" };
+      return { managed: false, reason };
     });
     throwIfSignalOptionsScanAborted(input.signal);
     if (!refreshResult.managed) {
@@ -11201,7 +13050,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       (nextPositionIndex >= initialPositions.length &&
         signalOptionsActionWorkExhausted(actionWorkBudget)));
   const hasPendingActionableSignals = hasPendingSignalOptionsActionableState({
-    states: evaluatedStates,
+    states: signalActionStates,
     universe,
     startIndex: nextSignalIndex,
   });
@@ -11243,6 +13092,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
         universe,
         candidateCount: 0,
         blockedCandidateCount: 0,
+        activePositionCount: initialPositions.length,
         batch: asRecord(asRecord(evaluated).signalOptionsBatch),
         lastSignalScanAt: signalScanCompletedAt.toISOString(),
         heavyWorkDeferred: true,
@@ -11314,7 +13164,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
 
   for (
     let stateIndex = nextSignalIndex;
-    stateIndex < evaluatedStates.length;
+    stateIndex < signalActionStates.length;
     stateIndex += 1
   ) {
     throwIfSignalOptionsScanAborted(input.signal);
@@ -11323,7 +13173,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
       nextSignalIndex = stateIndex;
       break;
     }
-    const state = evaluatedStates[stateIndex];
+    const state = signalActionStates[stateIndex];
     if (!state) {
       nextSignalIndex = stateIndex + 1;
       continue;
@@ -11433,25 +13283,28 @@ async function runSignalOptionsShadowScanUnlocked(input: {
         degradedPositionSymbols,
       }) ?? signalOptionsGatewayExecutionBlocker(readiness, profile);
 
-    const opened = await processEntryCandidate({
-      deployment,
-      profile,
-      candidate,
-      signalKey,
-      executionBlocker,
+    const opened = await withSignalOptionsActionItemTimeout({
+      reason: "candidate_resolution_timeout",
+      timeoutMs: SIGNAL_OPTIONS_CANDIDATE_RESOLUTION_TIMEOUT_MS,
+      signal: input.signal,
+      task: (signal) =>
+        processEntryCandidate({
+          deployment,
+          profile,
+          candidate,
+          signalKey,
+          executionBlocker,
+          signal,
+        }),
     }).catch(async (error: unknown) => {
       throwIfSignalOptionsScanAborted(input.signal);
+      const reason = signalOptionsCandidateResolutionErrorReason(error);
       await emitSkippedCandidate({
         deployment,
         candidate,
         signalKey,
-        reason: "candidate_resolution_failed",
-        detail: {
-          message:
-            error instanceof Error
-              ? error.message
-              : "Unknown signal-options resolution error",
-        },
+        reason,
+        detail: signalOptionsCandidateResolutionErrorDetail(error, reason),
       });
       return false;
     });
@@ -11510,6 +13363,7 @@ async function runSignalOptionsShadowScanUnlocked(input: {
         universe,
         candidateCount,
         blockedCandidateCount,
+        activePositionCount: activePositionsBySymbol.size,
         batch: asRecord(asRecord(evaluated).signalOptionsBatch),
         lastSignalScanAt: signalScanCompletedAt.toISOString(),
         heavyWorkDeferred: actionWorkDeferred || positionWorkDeferred,
@@ -11605,7 +13459,10 @@ export const __signalOptionsAutomationInternalsForTests = {
   signalOptionsExitEventHasActionableOptionSession,
   signalOptionsTradeEventHasActionableOptionSession,
   selectHistoricalOptionTradeFill,
+  selectSignalOptionsLegacyContractPlanFromChain,
   selectSignalOptionsContractPlanFromChain,
+  selectSignalOptionsGreekContractPlanFromChain,
+  isSignalOptionsGreekSelectorEnabled,
   signalOptionsContractPreviewFromResolution,
   optionBackoffFromDebug,
   optionChainBackoffFromAttempts,
@@ -11616,11 +13473,12 @@ export const __signalOptionsAutomationInternalsForTests = {
   resolveSignalOptionsMonitorFullRefresh,
   shouldRefreshSignalOptionsMonitorState,
   hasPendingSignalOptionsActionableState,
+  orderSignalOptionsActionStates,
   signalOptionsStrikesAroundMoney,
   shouldRecordActivePositionMark,
   shouldRecordActivePositionMarkForScan,
   SIGNAL_OPTIONS_OPTION_MARK_TIMEFRAME,
-  buildHistoricalPolygonOptionTicker,
+  buildHistoricalMassiveOptionTicker,
   buildHistoricalOrderPlan,
   buildSignalOptionsBackfillUniverse,
   mergePyrusSignalsSettingsPatch,
@@ -11632,5 +13490,6 @@ export const __signalOptionsAutomationInternalsForTests = {
   selectHistoricalExpirationCandidates,
   selectHistoricalStrikeCandidates,
   isHistoricalOptionEntryBarTimely,
+  readGreekSmokeInteger,
   shouldCloseBackfillPositionAtExpiration,
 };
