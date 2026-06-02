@@ -4,6 +4,7 @@ import {
   SIGNALS_ROW_STATUS,
   buildSignalsRows,
   filterSignalsRows,
+  resolveSignalMatrixVerdict,
   summarizeSignalsRows,
 } from "./signalsRowModel.js";
 
@@ -270,6 +271,104 @@ test("signals rows summarize five interval stack and indicator dashboard", () =>
   assert.equal(rows[0].dashboardSummary.strength, "strong");
   assert.equal(rows[0].dashboardSummary.volatilityScore, 7);
   assert.equal(rows[0].dashboardSummary.mtf.length, 3);
+});
+
+test("signal matrix verdict confirms aligned higher-timeframe trend", () => {
+  const rows = buildSignalsRows({
+    stateResponse: response({
+      profile: { timeframe: "5m" },
+      universeSymbols: ["SPY"],
+    }),
+    matrixStates: ["1m", "2m", "5m", "15m", "1h"].map((timeframe, index) =>
+      state("SPY", {
+        timeframe,
+        currentSignalDirection: "buy",
+        currentSignalAt: `2026-05-31T14:2${index}:00.000Z`,
+        barsSinceSignal: index,
+        fresh: true,
+      }),
+    ),
+  });
+
+  const verdict = rows[0].matrixVerdict;
+  assert.equal(verdict.direction, "buy");
+  assert.equal(verdict.regime, "bull_trend");
+  assert.equal(verdict.transition, "confirmed");
+  assert.equal(verdict.tradeReadiness, "ready");
+  assert.equal(verdict.riskPosture, "normal");
+  assert.ok(verdict.alignmentScore >= 90);
+  assert.ok(verdict.freshnessScore >= 90);
+  assert.ok(verdict.readinessScore >= 75);
+  assert.ok(verdict.reasonCodes.includes("matrix_confirmed"));
+  assert.ok(verdict.reasonCodes.includes("higher_timeframe_aligned"));
+});
+
+test("signal matrix verdict detects pullback pressure against the higher-timeframe trend", () => {
+  const rows = buildSignalsRows({
+    stateResponse: response({
+      profile: { timeframe: "5m" },
+      universeSymbols: ["QQQ"],
+    }),
+    matrixStates: [
+      state("QQQ", { timeframe: "1m", currentSignalDirection: "sell", fresh: true }),
+      state("QQQ", { timeframe: "2m", currentSignalDirection: "sell", fresh: true }),
+      state("QQQ", { timeframe: "5m", currentSignalDirection: "buy", fresh: true }),
+      state("QQQ", { timeframe: "15m", currentSignalDirection: "buy", fresh: true }),
+      state("QQQ", { timeframe: "1h", currentSignalDirection: "buy", fresh: true }),
+    ],
+  });
+
+  const verdict = rows[0].matrixVerdict;
+  assert.equal(verdict.direction, "buy");
+  assert.equal(verdict.regime, "pullback");
+  assert.equal(verdict.transition, "fading");
+  assert.equal(verdict.tradeReadiness, "wait");
+  assert.equal(verdict.riskPosture, "tighten");
+  assert.ok(verdict.reasonCodes.includes("lower_frame_pullback"));
+});
+
+test("signal matrix verdict detects lower-timeframe reversal attempts", () => {
+  const matrixStatesByTimeframe = {
+    "1m": state("IWM", { timeframe: "1m", currentSignalDirection: "sell", fresh: true }),
+    "2m": state("IWM", { timeframe: "2m", currentSignalDirection: "sell", fresh: true }),
+    "5m": state("IWM", { timeframe: "5m", currentSignalDirection: "sell", fresh: true }),
+    "15m": state("IWM", { timeframe: "15m", currentSignalDirection: "buy", fresh: true }),
+    "1h": state("IWM", { timeframe: "1h" }),
+  };
+
+  const verdict = resolveSignalMatrixVerdict({
+    matrixStatesByTimeframe,
+    profileTimeframe: "5m",
+  });
+
+  assert.equal(verdict.direction, "sell");
+  assert.equal(verdict.regime, "reversal_attempt");
+  assert.equal(verdict.transition, "building");
+  assert.equal(verdict.tradeReadiness, "watch");
+  assert.equal(verdict.riskPosture, "tighten");
+  assert.ok(verdict.reasonCodes.includes("reversal_attempt"));
+});
+
+test("signal matrix verdict avoids stale or insufficient matrix data", () => {
+  const verdict = resolveSignalMatrixVerdict({
+    matrixStatesByTimeframe: {
+      "1m": state("DIA", {
+        timeframe: "1m",
+        currentSignalDirection: "buy",
+        status: "stale",
+        fresh: true,
+      }),
+      "5m": state("DIA", { timeframe: "5m" }),
+    },
+    profileTimeframe: "5m",
+  });
+
+  assert.equal(verdict.direction, null);
+  assert.equal(verdict.regime, "no_data");
+  assert.equal(verdict.transition, "pending");
+  assert.equal(verdict.tradeReadiness, "avoid");
+  assert.equal(verdict.riskPosture, "exit_watch");
+  assert.ok(verdict.reasonCodes.includes("insufficient_matrix_data"));
 });
 
 test("signals rows attach the latest event per symbol", () => {
