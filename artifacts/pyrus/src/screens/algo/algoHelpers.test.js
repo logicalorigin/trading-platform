@@ -1666,7 +1666,7 @@ test("algo operations views surface contract quote and greeks fields", () => {
   assert.doesNotMatch(positionsSource, /mergeAlgoRuntimeAndAccountPositionRows/);
   assert.match(positionsSource, /liveOptionQuotesEnabled=\{true\}/);
   assert.match(positionsSource, /streamLiveOptionQuotes=\{true\}/);
-  assert.match(positionsSource, /hasAccountPositionsQuery/);
+  assert.doesNotMatch(positionsSource, /hasAccountPositionsQuery/);
   assert.match(positionsSource, /useStoredOptionQuoteSnapshotVersion/);
   assert.match(positionsSource, /showFilters=\{false\}/);
   assert.match(accountPositionsSource, /column\.id === "quote"/);

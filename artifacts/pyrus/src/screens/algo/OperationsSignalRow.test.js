@@ -469,6 +469,57 @@ test("signal row plan cell leads with token-colored contract intent", () => {
   assert(html.indexOf(">PUT<") < html.indexOf('data-testid="algo-signal-plan-detail"'));
 });
 
+test("signal row renders advisory signal matrix verdict column", () => {
+  const previousReact = globalThis.React;
+  globalThis.React = React;
+  let html = "";
+  try {
+    html = renderToStaticMarkup(
+      React.createElement(OperationsSignalRow, {
+        signal: {
+          symbol: "MSFT",
+          direction: "buy",
+          timeframe: "5m",
+          signalAt: "2026-06-01T21:25:00.000Z",
+          actionEligible: true,
+          fresh: true,
+          barsSinceSignal: 0,
+        },
+        candidate: {
+          symbol: "MSFT",
+          direction: "buy",
+          actionStatus: "ready",
+        },
+        tfMatrix: Object.fromEntries(
+          ["1m", "2m", "5m", "15m", "1h"].map((timeframe) => [
+            timeframe,
+            {
+              symbol: "MSFT",
+              timeframe,
+              currentSignalDirection: "buy",
+              currentSignalAt: "2026-06-01T21:25:00.000Z",
+              latestBarAt: "2026-06-01T21:25:00.000Z",
+              lastEvaluatedAt: "2026-06-01T21:26:00.000Z",
+              barsSinceSignal: 0,
+              fresh: true,
+              status: "ok",
+            },
+          ]),
+        ),
+        columns: ["matrix"],
+        scanActive: false,
+      }),
+    );
+  } finally {
+    globalThis.React = previousReact;
+  }
+
+  assert.match(html, /Ready/);
+  assert.match(html, /Bull Trend/);
+  assert.match(html, /100%/);
+  assert.match(html, /Ready Buy trend/);
+});
+
 test("signal row presents dense customizable signal action columns", () => {
   const rowSource = readSource("./OperationsSignalRow.jsx");
 
@@ -491,6 +542,7 @@ test("signal row presents dense customizable signal action columns", () => {
     "move",
     "action",
     "gate",
+    "matrix",
     "contract",
     "quote",
     "spread",
@@ -517,6 +569,7 @@ test("signal row presents dense customizable signal action columns", () => {
   assert.match(rowSource, /key: "move"[\s\S]*?label: "Move"[\s\S]*?track: "64px"/);
   assert.match(rowSource, /key: "action"[\s\S]*?label: "Plan"[\s\S]*?track: "minmax\(84px, 0\.58fr\)"/);
   assert.match(rowSource, /key: "action"[\s\S]*?label: "Plan"[\s\S]*?key: "gate"/);
+  assert.match(rowSource, /key: "matrix"[\s\S]*?label: "Matrix"/);
   assert.match(rowSource, /key: "contract"[\s\S]*?label: "Contract"/);
   assert.match(rowSource, /key: "quote"[\s\S]*?label: "Quote"/);
   assert.match(rowSource, /key: "spread"[\s\S]*?label: "Spread"/);
@@ -764,7 +817,7 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /onReorder=\{reorderColumn\}/);
   assert.match(tableSource, /algoSignalColumnOrder/);
   assert.match(tableSource, /algoSignalVisibleColumns/);
-  assert.match(tableSource, /SIGNAL_COLUMN_VISIBILITY_VERSION = 6/);
+  assert.match(tableSource, /SIGNAL_COLUMN_VISIBILITY_VERSION = 7/);
   assert.match(tableSource, /LEGACY_DEFAULT_SIGNAL_VISIBLE_COLUMNS/);
   assert.match(tableSource, /PREVIOUS_DEFAULT_SIGNAL_VISIBLE_COLUMNS/);
   assert.match(tableSource, /PRIOR_GATE_FIRST_SIGNAL_COLUMN_ORDER/);
