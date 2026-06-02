@@ -273,25 +273,35 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
   const queryCount = finiteNumber(signal.queryCount);
   const heavyQueryCount = finiteNumber(signal.heavyQueryCount);
   const storeEntryCount = finiteNumber(signal.storeEntryCount) ?? 0;
-  const apiRssLevel =
-    apiRssDriver?.level || levelFromThresholds(apiRssMb, apiRssThresholds);
-  const apiHeapLevel =
-    apiHeapDriver.level ||
+  const browserLevel = maxPressureLevel(
+    browserDriver.level,
+    levelFromThresholds(browserMemoryMb, browserThresholds),
+  );
+  const apiRssLevel = maxPressureLevel(
+    apiRssDriver?.level,
+    levelFromThresholds(apiRssMb, apiRssThresholds),
+  );
+  const apiHeapLevel = maxPressureLevel(
+    apiHeapDriver.level,
     levelFromThresholds(
       apiHeapUsedPercent,
       MEMORY_PRESSURE_THRESHOLDS.apiHeapUsedPercent,
-    );
+    ),
+  );
   const queryCountLevel = levelFromThresholds(queryCount, queryCountThresholds);
   const heavyQueryCountLevel = levelFromThresholds(
     heavyQueryCount,
     heavyQueryCountThresholds,
   );
+  const cacheLevel = maxPressureLevel(
+    queryCacheDriver.level,
+    queryCountLevel,
+    heavyQueryCountLevel,
+  );
   const bars = [
     {
       key: "browser",
-      level:
-        browserDriver.level ||
-        levelFromThresholds(browserMemoryMb, browserThresholds),
+      level: browserLevel,
       fillPercent: thresholdFillPercent(
         browserMemoryMb,
         browserThresholds,
@@ -316,9 +326,7 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
     },
     {
       key: "cache",
-      level:
-        queryCacheDriver.level ||
-        maxPressureLevel(queryCountLevel, heavyQueryCountLevel),
+      level: cacheLevel,
       fillPercent: Math.max(
         thresholdFillPercent(queryCount, queryCountThresholds, 240),
         thresholdFillPercent(heavyQueryCount, heavyQueryCountThresholds, 50),

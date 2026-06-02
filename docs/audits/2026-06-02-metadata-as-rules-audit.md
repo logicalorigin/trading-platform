@@ -31,9 +31,9 @@ Regression coverage:
 
 - `artifacts/pyrus/src/screens/DiagnosticsScreen.test.js` guards the memory overview source selection.
 
-### Existing Footer Pressure Bars Stay Consumption-Based
+### Footer Pressure Bars Stay Consumption-Based And Non-Duplicative
 
-The prior footer update remains part of this audit outcome: worker counts, poll counts, and stream counts are metadata only. The fourth footer bar is `Runtime`, backed by runtime/store consumption, so the four horizontal bars represent consumption pressure rather than object count pressure.
+The footer update remains part of this audit outcome: worker counts, poll counts, and stream counts are metadata only. The compact four-bar footer now shows `Browser`, combined `API`, `Cache`, and `Runtime`. API heap remains available in the popover details, but it no longer gets a separate compact bar next to API RSS.
 
 ## Remaining Ranked Suspects
 
