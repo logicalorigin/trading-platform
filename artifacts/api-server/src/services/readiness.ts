@@ -143,13 +143,10 @@ function buildAppReadiness(input: {
     };
   }
 
-  if (input.pressure.level === "high" || input.diagnostics.status === "degraded") {
+  if (input.pressure.level === "high") {
     return {
       status: "degraded",
-      reason:
-        input.pressure.level === "high"
-          ? "api_resource_pressure_high"
-          : "diagnostics_degraded",
+      reason: "api_resource_pressure_high",
       diagnosticsStatus: input.diagnostics.status,
       diagnosticsSeverity: input.diagnostics.severity,
     };
