@@ -9,6 +9,7 @@ import { AppTooltip } from "@/components/ui/tooltip";
 import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   MEMORY_PRESSURE_THRESHOLDS,
+  resolveBrowserMemoryThresholds,
 } from "./memoryPressureModel";
 import { buildMemoryPressurePopoverModel } from "./memoryPressurePopoverModel.js";
 import { useMemoryPressurePreferences } from "./memoryPressurePreferences";
@@ -190,13 +191,28 @@ const buildCacheDetail = (queryCount, heavyQueryCount) => {
   return `Cache ${queryLabel} / ${heavyLabel}`;
 };
 
+const buildBrowserMemoryDetail = (memoryMb, limitMb) => {
+  if (memoryMb === null && limitMb === null) return "Browser --";
+  if (memoryMb !== null && limitMb !== null) {
+    return `Browser ${formatMetric(memoryMb, "M")} / limit ${formatMetric(limitMb, "M")}`;
+  }
+  if (memoryMb !== null) return `Browser ${formatMetric(memoryMb, "M")}`;
+  return `Browser limit ${formatMetric(limitMb, "M")}`;
+};
+
 const browserThresholdsForSignal = (signal) => {
   const source = signal?.browserSource || signal?.measurement?.memory?.source;
-  return normalizeThresholds(
-    MEMORY_PRESSURE_THRESHOLDS.browserMemoryMb[source] ||
-      MEMORY_PRESSURE_THRESHOLDS.browserMemoryMb.heuristic,
-  );
+  return normalizeThresholds(resolveBrowserMemoryThresholds({
+    source,
+    limitMb: readBrowserMemoryLimitMb(signal),
+  }));
 };
+
+const readBrowserMemoryLimitMb = (signal) =>
+  finiteNumber(signal?.browserMemoryLimitMb) ??
+  (Number.isFinite(Number(signal?.measurement?.memory?.jsHeapSizeLimit))
+    ? Number(signal.measurement.memory.jsHeapSizeLimit) / 1024 / 1024
+    : null);
 
 const readApiRssMb = (signal) =>
   finiteNumber(signal?.apiRssMb) ?? finiteNumber(signal?.server?.rssMb);
@@ -268,6 +284,7 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
     MEMORY_PRESSURE_THRESHOLDS.runtimeStores.storeEntryCount,
   );
   const browserMemoryMb = finiteNumber(signal.browserMemoryMb);
+  const browserMemoryLimitMb = readBrowserMemoryLimitMb(signal);
   const apiRssMb = readApiRssMb(signal);
   const apiHeapUsedPercent = finiteNumber(signal.apiHeapUsedPercent);
   const queryCount = finiteNumber(signal.queryCount);
@@ -308,7 +325,7 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
         BROWSER_MEMORY_REFERENCE_MB,
       ),
       label: `Browser ${formatMetric(browserMemoryMb, "M")}`,
-      detail: `Browser ${formatMetric(browserMemoryMb, "M")}`,
+      detail: buildBrowserMemoryDetail(browserMemoryMb, browserMemoryLimitMb),
     },
     {
       key: "api",
@@ -408,7 +425,10 @@ const buildTitle = (signal) => {
   return [
     `Memory pressure ${String(signal?.level || "normal").toUpperCase()}`,
     `Trend ${String(signal?.trend || "steady").toUpperCase()}`,
-    `Browser ${formatMetric(signal?.browserMemoryMb, " MB")}`,
+    buildBrowserMemoryDetail(
+      finiteNumber(signal?.browserMemoryMb),
+      readBrowserMemoryLimitMb(signal),
+    ),
     buildApiMemoryDetail(readApiRssMb(signal), finiteNumber(signal?.apiHeapUsedPercent)),
     buildCacheDetail(finiteNumber(signal?.queryCount), finiteNumber(signal?.heavyQueryCount)),
     `Runtime ${formatMetric(signal?.storeEntryCount)} entries`,

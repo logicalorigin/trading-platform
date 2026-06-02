@@ -7,10 +7,11 @@ const PRESSURE_RANK = {
 
 export const MEMORY_PRESSURE_THRESHOLDS = {
   browserMemoryMb: {
-    measureUserAgentSpecificMemory: { watch: 320, high: 520, critical: 820 },
-    "performance.memory": { watch: 180, high: 280, critical: 420 },
+    measureUserAgentSpecificMemory: { watch: 1_000, high: 1_500, critical: 2_500 },
+    "performance.memory": { watch: 1_000, high: 1_500, critical: 2_500 },
     heuristic: { watch: null, high: null, critical: null },
   },
+  browserHeapLimitRatio: { watch: 0.6, high: 0.75, critical: 0.9 },
   apiHeapUsedPercent: { watch: 70, high: 78, critical: 85 },
   workload: {
     activeWorkloadCount: { watch: null, high: null, critical: null },
@@ -31,6 +32,7 @@ export const MEMORY_PRESSURE_THRESHOLDS = {
 };
 
 const BROWSER_THRESHOLDS_MB = MEMORY_PRESSURE_THRESHOLDS.browserMemoryMb;
+const BROWSER_HEAP_LIMIT_RATIOS = MEMORY_PRESSURE_THRESHOLDS.browserHeapLimitRatio;
 
 const DRIVER_WEIGHTS = {
   "browser-memory": 48,
@@ -69,6 +71,31 @@ const levelFromThresholds = (value, thresholds) => {
     return "watch";
   }
   return "normal";
+};
+
+const dynamicThresholdsFromLimit = (limitMb) => {
+  const numericLimit = Number(limitMb);
+  if (!Number.isFinite(numericLimit) || numericLimit <= 0) {
+    return null;
+  }
+  return {
+    watch: round(numericLimit * BROWSER_HEAP_LIMIT_RATIOS.watch),
+    high: round(numericLimit * BROWSER_HEAP_LIMIT_RATIOS.high),
+    critical: round(numericLimit * BROWSER_HEAP_LIMIT_RATIOS.critical),
+  };
+};
+
+export const resolveBrowserMemoryThresholds = ({
+  source = "heuristic",
+  limitMb = null,
+} = {}) => {
+  if (source === "performance.memory") {
+    const dynamicThresholds = dynamicThresholdsFromLimit(limitMb);
+    if (dynamicThresholds) {
+      return dynamicThresholds;
+    }
+  }
+  return BROWSER_THRESHOLDS_MB[source] || BROWSER_THRESHOLDS_MB.heuristic;
 };
 
 const levelFromThresholdGroup = (metrics, thresholdGroup) =>
@@ -194,6 +221,7 @@ export const buildMemoryPressureState = (
   { previousState = null, history = [] } = {},
 ) => {
   const browserMemoryMb = Number(input.browserMemoryMb);
+  const browserMemoryLimitMb = Number(input.browserMemoryLimitMb);
   const browserSource = String(input.browserSource || "heuristic");
   const sourceQuality = String(
     input.sourceQuality ||
@@ -203,8 +231,10 @@ export const buildMemoryPressureState = (
           ? "medium"
           : "low"),
   );
-  const browserThresholds =
-    BROWSER_THRESHOLDS_MB[browserSource] || BROWSER_THRESHOLDS_MB.heuristic;
+  const browserThresholds = resolveBrowserMemoryThresholds({
+    source: browserSource,
+    limitMb: browserMemoryLimitMb,
+  });
   const browserLevel = levelFromThresholds(browserMemoryMb, browserThresholds);
   const apiHeapUsedPercent = Number(input.apiHeapUsedPercent);
   const apiLevel = levelFromThresholds(
@@ -402,6 +432,9 @@ export const buildMemoryPressureState = (
     trend: resolveTrend(historyEntries, score),
     sourceQuality,
     browserMemoryMb: Number.isFinite(browserMemoryMb) ? round(browserMemoryMb) : null,
+    browserMemoryLimitMb: Number.isFinite(browserMemoryLimitMb)
+      ? round(browserMemoryLimitMb)
+      : null,
     browserSource,
     apiHeapUsedPercent: Number.isFinite(apiHeapUsedPercent)
       ? round(apiHeapUsedPercent)

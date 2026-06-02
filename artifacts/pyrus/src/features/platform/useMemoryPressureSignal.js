@@ -185,6 +185,8 @@ export const mergeMemoryPressureRuntimeState = (clientState, serverSummary) => {
         : clientLevel,
     browserMemoryMb:
       clientState?.browserMemoryMb ?? serverSummary.browserMemoryMb ?? null,
+    browserMemoryLimitMb:
+      clientState?.browserMemoryLimitMb ?? serverSummary.browserMemoryLimitMb ?? null,
     apiHeapUsedPercent:
       clientState?.apiHeapUsedPercent ?? serverSummary.apiHeapUsedPercent ?? null,
     apiRssMb:
@@ -330,6 +332,7 @@ export const useMemoryPressureMonitor = () => {
       {
         observedAt: new Date().toISOString(),
         browserMemoryMb: current.browserMemoryMb,
+        browserMemoryLimitMb: current.browserMemoryLimitMb,
         browserSource: current.browserSource,
         sourceQuality: current.sourceQuality,
         apiHeapUsedPercent: current.apiHeapUsedPercent,
@@ -453,6 +456,10 @@ export const useMemoryPressureMonitor = () => {
           : Number.isFinite(Number(measurement.memory?.usedJsHeapSize))
             ? Number(measurement.memory.usedJsHeapSize) / 1024 / 1024
             : null;
+      const browserMemoryLimitMb =
+        Number.isFinite(Number(measurement.memory?.jsHeapSizeLimit))
+          ? Number(measurement.memory.jsHeapSizeLimit) / 1024 / 1024
+          : null;
       const storeEntryCount =
         getActiveChartBarStoreEntryCount() +
         getMarketFlowStoreEntryCount() +
@@ -465,6 +472,7 @@ export const useMemoryPressureMonitor = () => {
         {
           observedAt: new Date().toISOString(),
           browserMemoryMb,
+          browserMemoryLimitMb,
           browserSource: measurement.memory?.source,
           sourceQuality: measurement.memory?.confidence,
           apiHeapUsedPercent: serverSummary?.apiHeapUsedPercent ?? serverSummary?.heapUsedPercent,

@@ -4,6 +4,7 @@ import {
   buildMemoryPressureState,
   isPressureLevelAtLeast,
   MEMORY_PRESSURE_THRESHOLDS,
+  resolveBrowserMemoryThresholds,
 } from "./memoryPressureModel.js";
 import { memoryPressureFillPercent } from "./FooterMemoryPressureIndicator.jsx";
 import {
@@ -35,6 +36,7 @@ test("memory pressure model escalates on direct browser memory growth", () => {
     {
       browserMemoryMb: 340,
       browserSource: "performance.memory",
+      browserMemoryLimitMb: 512,
       apiHeapUsedPercent: 55,
       activeWorkloadCount: 7,
       pollCount: 3,
@@ -46,7 +48,7 @@ test("memory pressure model escalates on direct browser memory growth", () => {
       storeEntryCount: 64,
     },
     {
-      history: [{ score: 24, level: "watch" }],
+      history: [{ score: 8, level: "watch" }],
     },
   );
 
@@ -170,7 +172,18 @@ test("memory pressure model treats active worker count as metadata only", () => 
 test("memory pressure thresholds are exported for detail views", () => {
   assert.deepEqual(
     MEMORY_PRESSURE_THRESHOLDS.browserMemoryMb["performance.memory"],
-    { watch: 180, high: 280, critical: 420 },
+    { watch: 1000, high: 1500, critical: 2500 },
+  );
+  assert.deepEqual(
+    MEMORY_PRESSURE_THRESHOLDS.browserHeapLimitRatio,
+    { watch: 0.6, high: 0.75, critical: 0.9 },
+  );
+  assert.deepEqual(
+    resolveBrowserMemoryThresholds({
+      source: "performance.memory",
+      limitMb: 4096,
+    }),
+    { watch: 2457.6, high: 3072, critical: 3686.4 },
   );
   assert.deepEqual(
     MEMORY_PRESSURE_THRESHOLDS.apiHeapUsedPercent,
@@ -189,6 +202,7 @@ test("memory pressure model returns full driver threshold breakdown", () => {
   const result = buildMemoryPressureState({
     browserMemoryMb: 421,
     browserSource: "performance.memory",
+    browserMemoryLimitMb: 460,
     apiHeapUsedPercent: 79,
     activeWorkloadCount: 12,
     pollCount: 2,
@@ -222,6 +236,38 @@ test("memory pressure model returns full driver threshold breakdown", () => {
     ),
     false,
   );
+});
+
+test("memory pressure model does not mark 600 MB browser heap as critical when far below browser limit", () => {
+  const result = buildMemoryPressureState({
+    browserMemoryMb: 600,
+    browserMemoryLimitMb: 4096,
+    browserSource: "performance.memory",
+    apiHeapUsedPercent: 30,
+    activeWorkloadCount: 2,
+    pollCount: 1,
+    streamCount: 1,
+    chartScopeCount: 2,
+    prependScopeCount: 0,
+    queryCount: 12,
+    heavyQueryCount: 0,
+    storeEntryCount: 12,
+  });
+  const browserDriver = result.pressureDrivers.find(
+    (driver) => driver.kind === "browser-memory",
+  );
+  const browserMetric = browserDriver?.metrics.find(
+    (metric) => metric.key === "browserMemoryMb",
+  );
+
+  assert.equal(result.level, "normal");
+  assert.equal(browserDriver?.level, "normal");
+  assert.equal(result.browserMemoryLimitMb, 4096);
+  assert.deepEqual(browserMetric?.thresholds, {
+    watch: 2457.6,
+    high: 3072,
+    critical: 3686.4,
+  });
 });
 
 test("memory pressure model keeps non-memory workload pressure out of footer level", () => {
@@ -336,7 +382,7 @@ test("memory pressure popover model includes diagnostics backed RAM details", ()
     model.thresholdRows.some(
       (row) =>
         row.label === "performance.memory" &&
-        row.summary.includes("critical 420 MB"),
+        row.summary.includes("critical 2500 MB"),
     ),
   );
   assert.ok(model.driverRows.some((row) => row.kind === "api-heap"));

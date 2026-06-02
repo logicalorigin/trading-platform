@@ -21,6 +21,7 @@ test("footer memory pressure compact label renders four horizontal consumption b
     score: 72,
     trend: "rising",
     browserMemoryMb: 412,
+    browserMemoryLimitMb: 4096,
     browserSource: "performance.memory",
     apiRssMb: 1024,
     apiRssThresholds: { watch: 2048, high: 3072, critical: 4096 },
@@ -50,7 +51,7 @@ test("footer memory pressure compact label renders four horizontal consumption b
 
   assert.match(
     html,
-    /data-testid="footer-memory-pressure-mini-fill-browser" style="[^"]*width:98%/,
+    /data-testid="footer-memory-pressure-mini-fill-browser" style="[^"]*width:11%/,
   );
   assert.match(
     html,

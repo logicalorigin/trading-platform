@@ -6,6 +6,7 @@ const INITIAL_STATE = {
   trend: "steady",
   sourceQuality: "low",
   browserMemoryMb: null,
+  browserMemoryLimitMb: null,
   browserSource: "heuristic",
   apiRssMb: null,
   apiRssThresholds: null,
