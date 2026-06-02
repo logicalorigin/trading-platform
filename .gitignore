@@ -71,6 +71,7 @@ attached_assets/
 # local run artifacts and screenshots
 output/
 artifacts/*.log
+scripts/reports/signal-options-greek-selector-smoke/
 scripts/reports/pyrus-performance-monitor/
 
 # local runtime registries
