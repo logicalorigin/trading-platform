@@ -12,9 +12,6 @@ import {
 } from "./gex";
 
 const GEX_MARKET_DATA_ENV_KEYS = [
-  "POLYGON_API_KEY",
-  "POLYGON_KEY",
-  "POLYGON_BASE_URL",
   "MASSIVE_API_KEY",
   "MASSIVE_MARKET_DATA_API_KEY",
   "MASSIVE_API_BASE_URL",
@@ -92,6 +89,7 @@ function option({
   openInterest,
   multiplier = 100,
   underlyingPrice = 100,
+  expirationDate = new Date("2026-05-15T00:00:00Z"),
 }: {
   right: "call" | "put";
   strike: number;
@@ -99,12 +97,14 @@ function option({
   openInterest: number | null;
   multiplier?: number;
   underlyingPrice?: number | null;
+  expirationDate?: Date;
 }) {
+  const expirationKey = expirationDate.toISOString().slice(0, 10).replaceAll("-", "");
   return {
     contract: {
-      ticker: `SPY-20260515-${right}-${strike}`,
+      ticker: `SPY-${expirationKey}-${right}-${strike}`,
       underlying: "SPY",
-      expirationDate: new Date("2026-05-15T00:00:00Z"),
+      expirationDate,
       strike,
       right,
       multiplier,
@@ -177,9 +177,21 @@ function referenceOption({
 function configureIbkrGex(input: {
   quote?: ReturnType<typeof basicQuote> | null;
   contracts: ReturnType<typeof option>[];
+  expirations?: Date[];
+  onExpirationsRequest?: (request: unknown) => void;
   onBatchRequest?: (request: unknown) => void;
 }) {
   let chainRequests = 0;
+  const expirations =
+    input.expirations ??
+    Array.from(
+      new Map(
+        input.contracts.map((contract) => [
+          contract.contract.expirationDate.toISOString().slice(0, 10),
+          contract.contract.expirationDate,
+        ]),
+      ).values(),
+    );
   __setGexPlatformDataClientFactoryForTests(() => ({
     getQuoteSnapshots: async () => ({
       quotes: input.quote === null ? [] : [input.quote ?? basicQuote()],
@@ -187,37 +199,46 @@ function configureIbkrGex(input: {
       delayed: false,
       fallbackUsed: false,
     }),
-    getOptionExpirationsWithDebug: async () => ({
-      underlying: "SPY",
-      expirations: [{ expirationDate: new Date("2026-05-15T00:00:00Z") }],
-      debug: {
-        cacheStatus: "miss",
-        totalMs: 1,
-        upstreamMs: 1,
-        requestedCount: 1,
-        returnedCount: 1,
-        complete: false,
-        capped: true,
-      },
-    }),
+    getOptionExpirationsWithDebug: async (request: unknown) => {
+      input.onExpirationsRequest?.(request);
+      return {
+        underlying: "SPY",
+        expirations: expirations.map((expirationDate) => ({ expirationDate })),
+        debug: {
+          cacheStatus: "miss",
+          totalMs: 1,
+          upstreamMs: 1,
+          requestedCount: expirations.length,
+          returnedCount: expirations.length,
+          complete: true,
+          capped: false,
+        },
+      };
+    },
     batchOptionChains: async (request: any) => {
       chainRequests += 1;
       input.onBatchRequest?.(request);
       return {
         underlying: "SPY",
-        results: [
-          {
-            expirationDate: new Date("2026-05-15T00:00:00Z"),
+        results: request.expirationDates.map((expirationDate: Date) => {
+          const expirationKey = expirationDate.toISOString().slice(0, 10);
+          const contracts = input.contracts.filter(
+            (contract) =>
+              contract.contract.expirationDate.toISOString().slice(0, 10) ===
+              expirationKey,
+          );
+          return {
+            expirationDate,
             status: "loaded",
-            contracts: input.contracts,
+            contracts,
             error: null,
             debug: {
               cacheStatus: "miss",
               totalMs: 1,
               upstreamMs: 1,
             },
-          },
-        ],
+          };
+        }),
         debug: {
           cacheStatus: "miss",
           totalMs: 1,
@@ -238,11 +259,11 @@ function configureIbkrGex(input: {
 
 function configureReferenceGex(input: {
   contracts: ReturnType<typeof referenceOption>[];
-  provider?: "massive" | "polygon";
+  provider?: "massive";
 }) {
-  if (input.provider === "polygon") {
-    process.env["POLYGON_API_KEY"] = "test";
-    process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  if (input.provider === "massive") {
+    process.env["MASSIVE_API_KEY"] = "test";
+    process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   } else {
     process.env["MASSIVE_API_KEY"] = "test";
     process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
@@ -334,6 +355,14 @@ function persistedGexPayload(overrides: Partial<any> = {}): any {
     source: {
       provider: "ibkr",
       status: "ok",
+      expirationCoverage: {
+        requestedCount: 1,
+        returnedCount: 1,
+        loadedCount: 1,
+        failedCount: 0,
+        complete: true,
+        capped: false,
+      },
       optionCount: 1,
       usableOptionCount: 1,
       withGamma: 1,
@@ -382,8 +411,43 @@ test("GEX dashboard returns a fresh persisted snapshot without option-chain fano
 
   assert.equal(data.ticker, "SPY");
   assert.equal(data.source.status, "ok");
+  assert.deepEqual(data.source.expirationCoverage, {
+    requestedCount: 1,
+    returnedCount: 1,
+    loadedCount: 1,
+    failedCount: 0,
+    complete: true,
+    capped: false,
+  });
   assert.equal(enqueued.length, 0);
   assert.equal(GetGexDashboardResponse.parse(data).source.provider, "ibkr");
+});
+
+test("GEX dashboard backfills expiration coverage for legacy persisted snapshots", async () => {
+  const payload = persistedGexPayload();
+  delete payload.source.expirationCoverage;
+  __setGexIngestFacadeForTests({
+    isConfigured: () => true,
+    getLatestGexSnapshot: async () => ({
+      payload,
+      computedAt: new Date(),
+      ageMs: 100,
+      stale: false,
+    }),
+    enqueueMarketDataJob: async () => ({ queued: true, dedupeKey: "test" }),
+  });
+
+  const data = await getGexDashboardData({ underlying: "SPY" });
+
+  assert.deepEqual(data.source.expirationCoverage, {
+    requestedCount: 1,
+    returnedCount: 1,
+    loadedCount: 1,
+    failedCount: 0,
+    complete: true,
+    capped: false,
+  });
+  assert.equal(GetGexDashboardResponse.parse(data).source.expirationCoverage.complete, true);
 });
 
 test("GEX dashboard serves stale persisted data and queues refresh", async () => {
@@ -407,6 +471,14 @@ test("GEX dashboard serves stale persisted data and queues refresh", async () =>
 
   assert.equal(data.isStale, true);
   assert.equal(data.source.status, "partial");
+  assert.deepEqual(data.source.expirationCoverage, {
+    requestedCount: 1,
+    returnedCount: 1,
+    loadedCount: 1,
+    failedCount: 0,
+    complete: true,
+    capped: false,
+  });
   assert.match(data.source.message || "", /persisted GEX snapshot/);
   assert.deepEqual(
     enqueued.map((entry) => entry.kind).sort(),
@@ -511,6 +583,14 @@ test("GEX dashboard data is sourced from IBKR quotes, expirations, and full opti
   assert.equal(data.ticker, "SPY");
   assert.equal(data.source.provider, "ibkr");
   assert.equal(data.source.status, "ok");
+  assert.deepEqual(data.source.expirationCoverage, {
+    requestedCount: 1,
+    returnedCount: 1,
+    loadedCount: 1,
+    failedCount: 0,
+    complete: true,
+    capped: false,
+  });
   assert.equal(data.options.length, 2);
   assert.equal(data.options[0].providerContractId, "ibkr-call-100");
   assert.equal(data.options[0].multiplier, 100);
@@ -525,6 +605,56 @@ test("GEX dashboard data is sourced from IBKR quotes, expirations, and full opti
   const parsed = GetGexDashboardResponse.parse(data);
   assert.equal(parsed.source.provider, "ibkr");
   assert.equal((parsed.options[0] as any).providerContractId, "ibkr-call-100");
+});
+
+test("GEX requests all option expirations without capping and batches every expiration", async () => {
+  const firstExpiration = new Date("2026-05-15T00:00:00Z");
+  const secondExpiration = new Date("2026-05-22T00:00:00Z");
+  let expirationsRequest: any = null;
+  let batchRequest: any = null;
+  configureIbkrGex({
+    expirations: [firstExpiration, secondExpiration],
+    contracts: [
+      option({
+        right: "call",
+        strike: 100,
+        gamma: 0.02,
+        openInterest: 10,
+        expirationDate: firstExpiration,
+      }),
+      option({
+        right: "put",
+        strike: 98,
+        gamma: 0.01,
+        openInterest: 12,
+        expirationDate: secondExpiration,
+      }),
+    ],
+    onExpirationsRequest: (request) => {
+      expirationsRequest = request;
+    },
+    onBatchRequest: (request) => {
+      batchRequest = request;
+    },
+  });
+
+  const data = await getGexDashboardData({ underlying: "spy" });
+
+  assert.equal(expirationsRequest.underlying, "SPY");
+  assert.equal("maxExpirations" in expirationsRequest, false);
+  assert.deepEqual(batchRequest.expirationDates, [firstExpiration, secondExpiration]);
+  assert.equal(batchRequest.strikeCoverage, "full");
+  assert.equal(batchRequest.quoteHydration, "snapshot");
+  assert.deepEqual(data.source.expirationCoverage, {
+    requestedCount: 2,
+    returnedCount: 2,
+    loadedCount: 2,
+    failedCount: 0,
+    complete: true,
+    capped: false,
+  });
+  assert.equal(data.source.status, "ok");
+  assert.equal(GetGexDashboardResponse.parse(data).source.expirationCoverage.loadedCount, 2);
 });
 
 test("GEX zero-gamma endpoint returns a compact overlay payload", async () => {
@@ -584,14 +714,14 @@ test("GEX keeps option-chain snapshots on IBKR when Massive reference data is co
   assert.equal(GetGexDashboardResponse.parse(data).source.provider, "ibkr");
 });
 
-test("GEX does not request Polygon reference option snapshots for live option data", async () => {
+test("GEX does not request Massive reference option snapshots for live option data", async () => {
   const ibkr = configureIbkrGex({
     contracts: [
       option({ right: "call", strike: 100, gamma: 0.02, openInterest: 10 }),
     ],
   });
   const reference = configureReferenceGex({
-    provider: "polygon",
+    provider: "massive",
     contracts: [
       referenceOption({
         right: "call",
@@ -693,7 +823,7 @@ test("GEX ignores delayed non-IBKR quote fallback for live spot", async () => {
   configureIbkrGex({
     quote: basicQuote({
       price: 999,
-      source: "polygon",
+      source: "massive",
       delayed: true,
       freshness: "delayed",
       marketDataMode: "delayed",
@@ -773,6 +903,14 @@ test("GEX marks source partial when an expiration batch is degraded", async () =
 
   assert.equal(data.options.length, 1);
   assert.equal(data.source.status, "partial");
+  assert.deepEqual(data.source.expirationCoverage, {
+    requestedCount: 2,
+    returnedCount: 2,
+    loadedCount: 1,
+    failedCount: 1,
+    complete: false,
+    capped: true,
+  });
 });
 
 test("GEX coalesces and caches full-chain dashboard loads per ticker", async () => {

@@ -128,7 +128,7 @@ test("flow cache helpers treat historical store timeouts as transient", () => {
   const timeoutEmpty: FlowEventsResult = {
     events: [],
     source: flowSource({
-      provider: "polygon",
+      provider: "massive",
       status: "empty",
       ibkrStatus: "empty",
       ibkrReason: "options_flow_historical_store_read_timeout",
@@ -138,10 +138,10 @@ test("flow cache helpers treat historical store timeouts as transient", () => {
   assert.equal(isCacheableFlowEventsResult(timeoutEmpty), false);
 });
 
-test("flow scanner snapshot policy rejects polygon fallback unless allowed", () => {
+test("flow scanner snapshot policy rejects massive fallback unless allowed", () => {
   const snapshot = {
     source: flowSource({
-      provider: "polygon",
+      provider: "massive",
       status: "fallback",
       fallbackUsed: true,
     }),

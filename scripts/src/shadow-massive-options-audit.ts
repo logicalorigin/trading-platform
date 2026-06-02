@@ -61,7 +61,7 @@ type SnapshotSummaryRow = {
 };
 
 type ProviderConfig = {
-  name: "polygon" | "massive";
+  name: "massive";
   baseUrl: string;
   apiKey: string;
 };
@@ -163,8 +163,8 @@ type AuditOutput = {
   results: AuditResult[];
 };
 
-const TRADE_SOURCE = "polygon-option-trade";
-const AGGREGATE_SOURCE = "polygon-option-aggregates";
+const TRADE_SOURCE = "massive-option-trade";
+const AGGREGATE_SOURCE = "massive-option-aggregates";
 const AGGREGATE_WINDOW_MS = 2 * 60_000;
 const DEFAULT_MAX_DELAY_MS = 60_000;
 
@@ -205,38 +205,29 @@ function iso(value: Date | number | null | undefined): string | null {
 }
 
 function readProviderConfig(): ProviderConfig {
-  const polygonKey = process.env["POLYGON_API_KEY"] ?? process.env["POLYGON_KEY"];
-  if (polygonKey?.trim()) {
-    return {
-      name: "polygon",
-      baseUrl: (process.env["POLYGON_BASE_URL"] ?? "https://api.polygon.io").replace(/\/$/, ""),
-      apiKey: polygonKey.trim(),
-    };
-  }
-
   const massiveKey =
     process.env["MASSIVE_API_KEY"] ?? process.env["MASSIVE_MARKET_DATA_API_KEY"];
   if (massiveKey?.trim()) {
     return {
       name: "massive",
-      baseUrl: (process.env["MASSIVE_BASE_URL"] ?? "https://api.massive.com").replace(/\/$/, ""),
+      baseUrl: (process.env["MASSIVE_API_BASE_URL"] ?? "https://api.massive.com").replace(/\/$/, ""),
       apiKey: massiveKey.trim(),
     };
   }
 
   throw new Error(
-    "Missing provider credentials. Set POLYGON_API_KEY/POLYGON_KEY or MASSIVE_API_KEY.",
+    "Missing provider credentials. Set MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY.",
   );
 }
 
 function readConfig() {
   const reportRoot =
-    process.env["SHADOW_POLYGON_AUDIT_REPORT_DIR"] ??
-    path.join("reports", "shadow-polygon-options-audit", slug());
+    process.env["SHADOW_MASSIVE_AUDIT_REPORT_DIR"] ??
+    path.join("reports", "shadow-massive-options-audit", slug());
   return {
-    accountId: process.env["SHADOW_POLYGON_AUDIT_ACCOUNT_ID"] ?? "shadow",
-    concurrency: readPositiveIntegerEnv("SHADOW_POLYGON_AUDIT_CONCURRENCY", 4, 16),
-    maxRows: readOptionalPositiveIntegerEnv("SHADOW_POLYGON_AUDIT_MAX_ROWS"),
+    accountId: process.env["SHADOW_MASSIVE_AUDIT_ACCOUNT_ID"] ?? "shadow",
+    concurrency: readPositiveIntegerEnv("SHADOW_MASSIVE_AUDIT_CONCURRENCY", 4, 16),
+    maxRows: readOptionalPositiveIntegerEnv("SHADOW_MASSIVE_AUDIT_MAX_ROWS"),
     reportDir: path.resolve(process.cwd(), reportRoot),
     provider: readProviderConfig(),
   };
@@ -801,7 +792,7 @@ function buildMarkdown(output: AuditOutput): string {
   );
   const samples = unresolved.slice(0, 25);
   return [
-    "# Shadow Polygon Options Audit",
+    "# Shadow Massive Options Audit",
     "",
     `- Generated: ${summary.generatedAt}`,
     `- Account: ${summary.accountId}`,

@@ -31,7 +31,7 @@ import {
 } from "@workspace/db";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
-import { getPolygonRuntimeConfig, type RuntimeMode } from "../lib/runtime";
+import { getMassiveRuntimeConfig, type RuntimeMode } from "../lib/runtime";
 import {
   createTransientPostgresBackoff,
   isTransientPostgresError,
@@ -44,7 +44,10 @@ import type {
   PlaceOrderInput,
   QuoteSnapshot,
 } from "../providers/ibkr/client";
-import { fetchOptionQuoteSnapshotPayload } from "./bridge-streams";
+import {
+  declareIbkrLiveDemand,
+  readIbkrLiveDemandState,
+} from "./ibkr-live-demand-coordinator";
 import { notifyShadowAccountChanged } from "./shadow-account-events";
 import { loadStoredMarketBars } from "./market-data-store";
 import type { MarketDataIntent } from "./market-data-admission";
@@ -146,7 +149,7 @@ const SHADOW_DAY_CHANGE_QUOTE_TASK_MAX_WAIT_MS = Math.max(
   250,
   SHADOW_DAY_CHANGE_QUOTE_MAX_WAIT_MS - 100,
 );
-const SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS = 6_500;
+const SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS = 750;
 const SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS = Math.max(
   500,
   SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS - 250,
@@ -156,7 +159,7 @@ const SHADOW_GREEK_QUOTE_TASK_MAX_WAIT_MS = Math.max(
   500,
   SHADOW_GREEK_QUOTE_MAX_WAIT_MS - 250,
 );
-const SHADOW_UNDERLYING_QUOTE_MAX_WAIT_MS = 1_250;
+const SHADOW_UNDERLYING_QUOTE_MAX_WAIT_MS = 750;
 const SHADOW_ACCOUNT_DB_FALLBACK_REASON =
   "Shadow account database is unavailable; using runtime-only shadow account fallback.";
 const STRUCTURED_OPTION_PROVIDER_CONTRACT_ID_PREFIX = "twsopt:";
@@ -2747,7 +2750,10 @@ async function resolveEquityMark(symbol: string): Promise<{
   const normalized = normalizeSymbol(symbol).toUpperCase();
   const quotes = await getQuoteSnapshots({
     symbols: normalized,
-    allowPolygonFallback: false,
+    allowMassiveFallback: false,
+    admissionOwner: `shadow-equity-mark:${normalized}`,
+    admissionIntent: "account-monitor-live",
+    admissionFallbackProvider: "cache",
   }).catch(() => ({
     quotes: [],
   }));
@@ -2817,13 +2823,24 @@ async function resolveOptionMark(contract: ShadowOptionContract): Promise<{
       return { price: null, bid: null, ask: null, source: "missing_ibkr_contract_id", asOf: new Date() };
     }
   }
-  const payload = await fetchOptionQuoteSnapshotPayload({
+  const owner = `shadow-option-mark:${providerContractId}`;
+  declareIbkrLiveDemand({
+    owner,
     underlying: contract.underlying,
     providerContractIds: [providerContractId],
-  }).catch(() => null);
-  const quote = payload?.quotes?.find(
-    (candidate) => candidate.providerContractId === providerContractId,
-  );
+    intent: "visible-live",
+    fallbackProvider: "cache",
+    requiresGreeks: false,
+    ttlMs: SHADOW_OPTION_QUOTE_CACHE_TTL_MS,
+  });
+  const quote =
+    readIbkrLiveDemandState({
+      owner,
+      underlying: contract.underlying,
+      providerContractIds: [providerContractId],
+      requiresGreeks: false,
+    }).states.find((state) => state.providerContractId === providerContractId)
+      ?.quote ?? null;
   if (!quote) {
     return { price: null, bid: null, ask: null, source: "quote_unavailable", asOf: new Date() };
   }
@@ -3009,7 +3026,10 @@ async function getBoundedShadowUnderlyingQuoteSnapshots(
   return Promise.race([
     getQuoteSnapshots({
       symbols,
-      allowPolygonFallback: false,
+      allowMassiveFallback: false,
+      admissionOwner: `shadow-underlying-mark:${symbols}`,
+      admissionIntent: "account-monitor-live",
+      admissionFallbackProvider: "cache",
     }).catch(() => fallback),
     sleep(SHADOW_UNDERLYING_QUOTE_MAX_WAIT_MS).then(() => fallback),
   ]);
@@ -4773,14 +4793,22 @@ async function fetchShadowOptionDayChangeQuotes(
   const quoteTasks: Array<() => Promise<void>> = [];
   if (allProviderContractIds.length) {
     quoteTasks.push(async () => {
-      const payload = await fetchOptionQuoteSnapshotPayload({
+      const owner = `${options.ownerPrefix ?? "shadow-position-day-change"}:${quoteUnderlying ?? "mixed"}`;
+      declareIbkrLiveDemand({
         underlying: quoteUnderlying ?? undefined,
         providerContractIds: allProviderContractIds,
-        owner: `${options.ownerPrefix ?? "shadow-position-day-change"}:${quoteUnderlying ?? "mixed"}`,
+        owner,
         intent: options.intent ?? "account-monitor-live",
+        fallbackProvider: "cache",
         requiresGreeks: options.requiresGreeks ?? false,
-      }).catch(() => null);
-      (payload?.quotes || []).forEach((quote) => {
+        ttlMs: SHADOW_OPTION_QUOTE_CACHE_TTL_MS,
+      });
+      readIbkrLiveDemandState({
+        underlying: quoteUnderlying ?? undefined,
+        providerContractIds: allProviderContractIds,
+        owner,
+        requiresGreeks: options.requiresGreeks ?? false,
+      }).states.flatMap((state) => (state.quote ? [state.quote] : [])).forEach((quote) => {
         const providerContractId = String(quote.providerContractId || "").trim();
         if (providerContractId) {
           quoteByProviderContractId.set(providerContractId, quote);
@@ -6095,7 +6123,7 @@ export async function getShadowAccountPositions(input: {
 	    filtered,
 	    observedAt,
 	    optionQuoteByProviderContractId,
-	    { fetchMissingOptionQuotes: includeLiveQuotes },
+	    { fetchMissingOptionQuotes: false },
 	  );
   const peakMarkByPositionId = await readShadowPositionPeakMarkPrices(filtered);
   const rows = filtered.map((position) => {
@@ -7314,7 +7342,6 @@ function buildShadowEquityAnnotations(events: ShadowAnalysisTradeEvent[]) {
     sourceType: event.sourceType,
     strategyLabel: event.strategyLabel,
     candidateId: event.candidateId,
-    metadata: event.metadata,
   }));
 }
 
@@ -8838,11 +8865,11 @@ function watchlistBacktestHydrationStart(input: {
 }
 
 function watchlistBacktestHistorySourceNames() {
-  const configuredSource = getPolygonRuntimeConfig()?.baseUrl.includes("massive.com")
+  const configuredSource = getMassiveRuntimeConfig()?.baseUrl.includes("massive.com")
     ? "massive-history"
-    : "polygon-history";
+    : "massive-history";
   return Array.from(
-    new Set([configuredSource, "massive-history", "polygon-history"]),
+    new Set([configuredSource, "massive-history"]),
   );
 }
 

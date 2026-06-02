@@ -130,6 +130,10 @@ function finiteNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function roundedMetric(value: number | null): number | null {
+  return value == null ? null : Number(value.toFixed(6));
+}
+
 function latestDate(value: unknown): Date | null {
   if (value instanceof Date && Number.isFinite(value.getTime())) {
     return value;
@@ -367,6 +371,15 @@ export function computeSignalOptionsPositionStop(input: {
         deltaImprovement: null,
         thetaBurdenPct: null,
       };
+  const greekManagementAdjustment = resolveWireGreekAdjustment({
+    profile,
+    entryGreeks: input.entryGreeks,
+    currentGreeks: input.currentGreeks,
+    markPrice,
+    spreadPctOfMid: input.spreadPctOfMid,
+    entrySpreadPctOfMid: input.signalQuality?.spreadPctOfMid,
+    greekFresh: greekFreshness.fresh,
+  });
   const selectedWireRung = wireBaselineStep
     ? adjustWireRung(wireBaselineStep.rung, greekAdjustment.adjustment)
     : null;
@@ -400,6 +413,16 @@ export function computeSignalOptionsPositionStop(input: {
     profile.exitPolicy.wireGreekTrail.enabled &&
     wireBaselineStep != null &&
     selectedWire != null;
+  const greekManagementUnavailable =
+    !input.currentGreeks ||
+    greekManagementAdjustment.reasons.includes("greeks_unavailable");
+  const greekManagementRecommendation = greekManagementUnavailable
+    ? "unavailable"
+    : greekManagementAdjustment.adjustment < 0
+      ? "tighten"
+      : greekManagementAdjustment.adjustment > 0
+        ? "loosen"
+        : "hold";
   const legacyTrailActive = usesProgressiveTrail
     ? progressiveTrailStep != null
     : returnPct >= profile.exitPolicy.trailActivationPct;
@@ -473,6 +496,21 @@ export function computeSignalOptionsPositionStop(input: {
     signalQuality: input.signalQuality ?? null,
     conditionalExitPolicy: conditional,
     progressiveTrailStep,
+    greekManagement: {
+      available: Boolean(input.currentGreeks),
+      enforcing: usesWireTrail,
+      recommendation: greekManagementRecommendation,
+      reasons: greekManagementAdjustment.reasons,
+      fresh: greekFreshness.fresh,
+      ageMs: greekFreshness.ageMs,
+      fallbackReason: greekFreshness.reason,
+      currentDelta: roundedMetric(finiteNumber(input.currentGreeks?.delta)),
+      entryDelta: roundedMetric(finiteNumber(input.entryGreeks?.delta)),
+      deltaImprovement: roundedMetric(greekManagementAdjustment.deltaImprovement),
+      currentGamma: roundedMetric(finiteNumber(input.currentGreeks?.gamma)),
+      currentTheta: roundedMetric(finiteNumber(input.currentGreeks?.theta)),
+      thetaBurdenPct: roundedMetric(greekManagementAdjustment.thetaBurdenPct),
+    },
     wireTrail: {
       enabled: profile.exitPolicy.wireGreekTrail.enabled,
       active: usesWireTrail,

@@ -1,9 +1,4 @@
-import { WebSocket } from "ws";
-import { logger } from "../lib/logger";
-import {
-  getPolygonRuntimeConfig,
-  isMassiveStocksRealtimeConfigured,
-} from "../lib/runtime";
+import { isMassiveStocksRealtimeConfigured } from "../lib/runtime";
 import {
   asNumber,
   asRecord,
@@ -12,6 +7,11 @@ import {
   toDate,
 } from "../lib/values";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
+import {
+  __massiveStockWebSocketInternalsForTests,
+  getMassiveStockWebSocketDiagnostics,
+  subscribeMassiveStockWebSocket,
+} from "./massive-stock-websocket";
 
 type MassiveStockQuote = QuoteSnapshot & { source: "massive" };
 type QuoteSnapshotPayload = {
@@ -35,22 +35,12 @@ type QuoteState = {
 
 const subscribers = new Map<number, Subscriber>();
 const quoteCacheBySymbol = new Map<string, QuoteState>();
-const RECONNECT_MIN_MS = 1_000;
-const RECONNECT_MAX_MS = 30_000;
 const REFRESH_DEBOUNCE_MS = 150;
 
 let nextSubscriberId = 1;
-let socket: WebSocket | null = null;
 let subscriptionSignature = "";
 let refreshTimer: NodeJS.Timeout | null = null;
-let reconnectTimer: NodeJS.Timeout | null = null;
-let reconnectAttempt = 0;
-let authState: "idle" | "authenticating" | "authenticated" | "failed" = "idle";
-let lastError: string | null = null;
-let lastErrorAt: Date | null = null;
-let lastOpenAt: Date | null = null;
-let lastMessageAt: Date | null = null;
-let reconnectCount = 0;
+let transportUnsubscribe: (() => void) | null = null;
 let eventCount = 0;
 
 export function isMassiveStockQuoteStreamConfigured(): boolean {
@@ -193,7 +183,6 @@ function mergeQuoteState(input: Partial<QuoteState> & { symbol: string }): void 
     updatedAt: input.updatedAt ?? existing?.updatedAt ?? new Date(),
   });
   eventCount += 1;
-  lastMessageAt = new Date();
   notifySubscribers(symbol);
 }
 
@@ -229,36 +218,6 @@ function handleWebSocketMessage(message: unknown): void {
   }
 }
 
-function send(value: unknown): void {
-  if (socket?.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify(value));
-  }
-}
-
-function recordSocketError(error: unknown, message: string): void {
-  lastError = error instanceof Error ? error.message : String(error);
-  lastErrorAt = new Date();
-  logger.warn({ err: error }, message);
-}
-
-function closeSocket(nextAuthState: typeof authState = "idle"): void {
-  const currentSocket = socket;
-  if (currentSocket) {
-    socket = null;
-    currentSocket.removeAllListeners();
-    currentSocket.on("error", (error) => {
-      recordSocketError(error, "Massive stock WebSocket failed while closing");
-    });
-    if (currentSocket.readyState === WebSocket.CONNECTING) {
-      currentSocket.terminate();
-    } else if (currentSocket.readyState === WebSocket.OPEN) {
-      currentSocket.close();
-    }
-  }
-  authState = nextAuthState;
-  subscriptionSignature = "";
-}
-
 function clearRefreshTimer(): void {
   if (refreshTimer) {
     clearTimeout(refreshTimer);
@@ -266,136 +225,38 @@ function clearRefreshTimer(): void {
   }
 }
 
-function clearReconnectTimer(): void {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
+function closeTransport(): void {
+  transportUnsubscribe?.();
+  transportUnsubscribe = null;
+  subscriptionSignature = "";
 }
 
-function subscribeSocketSymbols(symbols: string[]): void {
-  const signature = symbols.join(",");
-  if (!socket || authState !== "authenticated" || signature === subscriptionSignature) {
-    return;
-  }
-  if (subscriptionSignature) {
-    const previousParams = subscriptionSignature
-      .split(",")
-      .filter(Boolean)
-      .flatMap((symbol) => [`Q.${symbol}`, `T.${symbol}`])
-      .join(",");
-    send({ action: "unsubscribe", params: previousParams });
-  }
-  subscriptionSignature = signature;
-  if (symbols.length) {
-    const params = symbols
-      .flatMap((symbol) => [`Q.${symbol}`, `T.${symbol}`])
-      .join(",");
-    send({ action: "subscribe", params });
-  }
-}
-
-function refreshSocket(): void {
+function refreshTransport(): void {
   clearRefreshTimer();
   const symbols = getDesiredSymbols();
+  const signature = symbols.join(",");
   if (!symbols.length || !isMassiveStockQuoteStreamConfigured()) {
-    closeSocket();
+    closeTransport();
     return;
   }
-
-  const config = getPolygonRuntimeConfig();
-  if (!config) {
-    closeSocket();
+  if (signature === subscriptionSignature) {
     return;
   }
+  closeTransport();
 
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    subscribeSocketSymbols(symbols);
-    return;
-  }
-  if (socket && socket.readyState === WebSocket.CONNECTING) {
-    return;
-  }
-
-  closeSocket();
-  authState = "authenticating";
-  socket = new WebSocket("wss://socket.massive.com/stocks");
-
-  socket.on("open", () => {
-    lastOpenAt = new Date();
-    lastError = null;
-    lastErrorAt = null;
-    send({ action: "auth", params: config.apiKey });
+  transportUnsubscribe = subscribeMassiveStockWebSocket({
+    channels: ["Q", "T"],
+    symbols,
+    onMessage: handleWebSocketMessage,
   });
-
-  socket.on("message", (raw) => {
-    lastMessageAt = new Date();
-    let messages: unknown[];
-    try {
-      const parsed = JSON.parse(raw.toString());
-      messages = Array.isArray(parsed) ? parsed : [parsed];
-    } catch (error) {
-      logger.debug({ err: error }, "Massive stock WebSocket payload parse failed");
-      return;
-    }
-
-    messages.forEach((message) => {
-      const record = asRecord(message);
-      if (record) {
-        const status = readString(record, ["status"]);
-        const authMessage = readString(record, ["message"]);
-        if (status === "auth_success") {
-          authState = "authenticated";
-          reconnectAttempt = 0;
-          subscribeSocketSymbols(getDesiredSymbols());
-          return;
-        }
-        if (status === "auth_failed") {
-          lastError = authMessage ?? "Massive stock WebSocket authentication failed.";
-          lastErrorAt = new Date();
-          closeSocket("failed");
-          return;
-        }
-      }
-      handleWebSocketMessage(message);
-    });
-  });
-
-  socket.on("close", () => {
-    socket = null;
-    subscriptionSignature = "";
-    if (subscribers.size > 0 && authState !== "failed") {
-      scheduleReconnect();
-    }
-  });
-
-  socket.on("error", (error) => {
-    recordSocketError(error, "Massive stock WebSocket failed");
-  });
-}
-
-function scheduleReconnect(): void {
-  if (reconnectTimer || subscribers.size === 0) {
-    return;
-  }
-  reconnectCount += 1;
-  const delayMs = Math.min(
-    RECONNECT_MAX_MS,
-    RECONNECT_MIN_MS * 2 ** reconnectAttempt,
-  );
-  reconnectAttempt += 1;
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    refreshSocket();
-  }, delayMs);
-  reconnectTimer.unref?.();
+  subscriptionSignature = signature;
 }
 
 function scheduleRefresh(): void {
   clearRefreshTimer();
   refreshTimer = setTimeout(() => {
     refreshTimer = null;
-    refreshSocket();
+    refreshTransport();
   }, REFRESH_DEBOUNCE_MS);
   refreshTimer.unref?.();
 }
@@ -430,49 +291,25 @@ export function subscribeMassiveStockQuoteSnapshots(
 }
 
 export function getMassiveStockQuoteStreamDiagnostics() {
-  const now = Date.now();
-  const subscribedSymbolCount = subscriptionSignature
-    ? subscriptionSignature.split(",").filter(Boolean).length
-    : 0;
+  const diagnostics = getMassiveStockWebSocketDiagnostics(["Q", "T"]);
   return {
+    ...diagnostics,
     configured: isMassiveStockQuoteStreamConfigured(),
-    providerIdentity: "massive",
-    mode: "real-time",
-    socketHost: "socket.massive.com",
-    availableChannels: ["Q", "T"],
-    subscribedChannels: subscribedSymbolCount > 0 ? ["Q", "T"] : [],
-    authState,
-    connected: socket?.readyState === WebSocket.OPEN,
-    subscribedSymbolCount,
-    subscriptionCount: subscribedSymbolCount * 2,
     activeConsumerCount: subscribers.size,
     cachedQuoteCount: quoteCacheBySymbol.size,
-    reconnectCount,
     eventCount,
-    lastOpenAt: lastOpenAt?.toISOString() ?? null,
-    lastMessageAt: lastMessageAt?.toISOString() ?? null,
-    lastMessageAgeMs: lastMessageAt ? Math.max(0, now - lastMessageAt.getTime()) : null,
-    lastError,
-    lastErrorAt: lastErrorAt?.toISOString() ?? null,
   };
 }
 
 export const __massiveStockQuoteStreamInternalsForTests = {
   handleWebSocketMessage,
   reset() {
-    closeSocket();
+    closeTransport();
     clearRefreshTimer();
-    clearReconnectTimer();
     subscribers.clear();
     quoteCacheBySymbol.clear();
     nextSubscriberId = 1;
-    reconnectAttempt = 0;
-    reconnectCount = 0;
     eventCount = 0;
-    authState = "idle";
-    lastError = null;
-    lastErrorAt = null;
-    lastOpenAt = null;
-    lastMessageAt = null;
+    __massiveStockWebSocketInternalsForTests.reset();
   },
 };

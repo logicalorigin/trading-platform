@@ -26,7 +26,7 @@ export const flowEventsTable = pgTable(
     optionContractId: uuid("option_contract_id").references(
       () => optionContractsTable.id,
     ),
-    provider: varchar("provider", { length: 32 }).notNull().default("polygon"),
+    provider: varchar("provider", { length: 32 }).notNull().default("massive"),
     providerEventKey: varchar("provider_event_key", { length: 192 }),
     sourceBasis: varchar("source_basis", { length: 64 })
       .notNull()
@@ -90,7 +90,7 @@ export const flowEventHydrationSessionsTable = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     underlyingSymbol: varchar("underlying_symbol", { length: 64 }).notNull(),
-    provider: varchar("provider", { length: 32 }).notNull().default("polygon"),
+    provider: varchar("provider", { length: 32 }).notNull().default("massive"),
     marketDate: text("market_date").notNull(),
     windowFrom: timestamp("window_from", { withTimezone: true }).notNull(),
     windowTo: timestamp("window_to", { withTimezone: true }).notNull(),

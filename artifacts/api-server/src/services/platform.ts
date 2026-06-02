@@ -23,8 +23,8 @@ import { HttpError, isHttpError } from "../lib/errors";
 import {
   getIbkrBridgeRuntimeConfig,
   getIbkrBridgeRuntimeOverride,
-  getPolygonProviderIdentity,
-  getPolygonRuntimeConfig,
+  getMassiveProviderIdentity,
+  getMassiveRuntimeConfig,
   getFmpRuntimeConfig,
   getIgnoredIbkrBridgeRuntimeEnvNames,
   isMassiveStocksRealtimeConfigured,
@@ -68,14 +68,13 @@ import {
   type BridgeOrdersResult,
 } from "../providers/ibkr/bridge-client";
 import {
-  PolygonMarketDataClient,
+  MassiveMarketDataClient,
   computeUnusualMetrics,
   getMassiveApiDiagnostics,
-  getPolygonApiDiagnostics,
   resolvePremiumDistributionClassificationConfidence,
-  type BarSnapshot as PolygonBarSnapshot,
+  type BarSnapshot as MassiveBarSnapshot,
   type MarketDataProvider,
-  type OptionChainContract as PolygonOptionChainContract,
+  type OptionChainContract as MassiveOptionChainContract,
   type OptionPremiumDistribution,
   type OptionTradePrint,
   type PremiumDistributionClassificationConfidence,
@@ -83,13 +82,13 @@ import {
   type PremiumDistributionHydrationDiagnostics,
   type PremiumDistributionSideBasis,
   type PremiumDistributionTimeframe,
-  type PolygonAggregateBarsPage,
-  type QuoteSnapshot as PolygonQuoteSnapshot,
+  type MassiveAggregateBarsPage,
+  type QuoteSnapshot as MassiveQuoteSnapshot,
   type StockGroupedDailyAggregate,
   type UniverseTicker,
   type UniverseMarket,
-} from "../providers/polygon/market-data";
-export type { OptionTradePrint } from "../providers/polygon/market-data";
+} from "../providers/massive/market-data";
+export type { OptionTradePrint } from "../providers/massive/market-data";
 import { FmpResearchClient } from "../providers/fmp/client";
 import {
   createOptionsFlowScanner,
@@ -152,7 +151,12 @@ import {
   normalizeBarsToStoreTimeframe,
   persistMarketDataBars,
 } from "./market-data-store";
-import { getMarketDataIngestDiagnostics } from "./market-data-ingest";
+import {
+  getMarketDataIngestDiagnostics,
+  isMarketDataIngestConfigured,
+  isMarketDataIngestProviderConfigured,
+  type MarketDataIngestDiagnostics,
+} from "./market-data-ingest";
 import { buildMarketDataWorkPlan } from "./market-data-work-planner";
 import {
   listHistoricalFlowEvents,
@@ -172,6 +176,8 @@ import {
   releaseMarketDataLeases,
   setMarketDataAdmissionRuntimeDefaults,
   subscribeMarketDataLeaseChanges,
+  type MarketDataFallbackProvider,
+  type MarketDataIntent,
 } from "./market-data-admission";
 import {
   isIbkrHistoricalAdmissionError,
@@ -1159,7 +1165,7 @@ function getOptionsFlowScannerPressureGate(
     level: hardBlocked ? snapshot.level : level,
     globalLevel: snapshot.level,
     hardBlocked,
-    throttled: !hardBlocked && (level === "high" || level === "critical"),
+    throttled: false,
     drivers: scannerDrivers,
     ignoredDrivers,
   };
@@ -1862,46 +1868,45 @@ async function setDefaultWatchlistIfNeeded(watchlistId: string) {
     .where(eq(watchlistsTable.id, watchlistId));
 }
 
-type PolygonMarketDataClientFactory = (
-  config: NonNullable<ReturnType<typeof getPolygonRuntimeConfig>>,
-) => PolygonMarketDataClient;
+type MassiveMarketDataClientFactory = (
+  config: NonNullable<ReturnType<typeof getMassiveRuntimeConfig>>,
+) => MassiveMarketDataClient;
 
-let polygonMarketDataClientFactory: PolygonMarketDataClientFactory | null =
+let massiveMarketDataClientFactory: MassiveMarketDataClientFactory | null =
   null;
 
-function getPolygonClient(): PolygonMarketDataClient {
-  const config = getPolygonRuntimeConfig();
+function getMassiveClient(): MassiveMarketDataClient {
+  const config = getMassiveRuntimeConfig();
 
   if (!config) {
-    throw new HttpError(503, "Polygon/Massive market data is not configured.", {
-      code: "polygon_not_configured",
-      detail:
-        "Set one of POLYGON_API_KEY, POLYGON_KEY, MASSIVE_API_KEY, or MASSIVE_MARKET_DATA_API_KEY.",
+    throw new HttpError(503, "Massive market data is not configured.", {
+      code: "massive_not_configured",
+      detail: "Set one of MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY.",
     });
   }
 
   return (
-    polygonMarketDataClientFactory?.(config) ??
-    new PolygonMarketDataClient(config)
+    massiveMarketDataClientFactory?.(config) ??
+    new MassiveMarketDataClient(config)
   );
 }
 
-export function __setPolygonMarketDataClientFactoryForTests(
-  factory: PolygonMarketDataClientFactory | null,
+export function __setMassiveMarketDataClientFactoryForTests(
+  factory: MassiveMarketDataClientFactory | null,
 ): void {
-  polygonMarketDataClientFactory = factory;
+  massiveMarketDataClientFactory = factory;
 }
 
 function getMarketDataConnectionName() {
-  const config = getPolygonRuntimeConfig();
-  return getPolygonProviderIdentity(config) === "massive"
+  const config = getMassiveRuntimeConfig();
+  return getMassiveProviderIdentity(config) === "massive"
     ? "Massive Market Data"
-    : "Polygon Market Data";
+    : "Massive Market Data";
 }
 
 function getMarketDataConnectionCapabilities(): string[] {
-  const config = getPolygonRuntimeConfig();
-  if (getPolygonProviderIdentity(config) === "massive") {
+  const config = getMassiveRuntimeConfig();
+  if (getMassiveProviderIdentity(config) === "massive") {
     return isMassiveStocksRealtimeConfigured(config)
       ? ["quotes", "bars", "historical-bars", "stock-stream", "ticker-search"]
       : ["historical-bars", "delayed-bars", "stock-stream", "ticker-search"];
@@ -2036,7 +2041,7 @@ export type FlowPremiumDistributionResponse = {
   asOf: Date;
   timeframe: PremiumDistributionTimeframe;
   source: {
-    provider: "polygon";
+    provider: "massive";
     label: string;
     timeframe: PremiumDistributionTimeframe;
     providerHost: string | null;
@@ -2078,8 +2083,8 @@ const flowPremiumDistributionDeepRefreshInFlight = new Map<
   Promise<void>
 >();
 
-function getPolygonProviderHost(): string | null {
-  const config = getPolygonRuntimeConfig();
+function getMassiveProviderHost(): string | null {
+  const config = getMassiveRuntimeConfig();
   if (!config) return null;
 
   try {
@@ -2243,13 +2248,13 @@ function buildFlowPremiumHydrationWarning(input: {
   classificationCoverage: number;
 }): string | null {
   if (input.quoteAccess === "forbidden" && input.tradeAccess === "forbidden") {
-    return "Option quote-match and option trades are unavailable from the current Polygon/Massive endpoints; totals are hydrated but side bars are unavailable.";
+    return "Option quote-match and option trades are unavailable from the current Massive endpoints; totals are hydrated but side bars are unavailable.";
   }
   if (input.quoteAccess === "forbidden") {
-    return "Option quote-match data is unavailable from the current Polygon/Massive endpoint; side bars use option trade tick-test.";
+    return "Option quote-match data is unavailable from the current Massive endpoint; side bars use option trade tick-test.";
   }
   if (input.tradeAccess === "forbidden") {
-    return "Option trades are unavailable from the current Polygon/Massive endpoint; side bars are unavailable.";
+    return "Option trades are unavailable from the current Massive endpoint; side bars are unavailable.";
   }
   if (
     input.classificationConfidence === "none" ||
@@ -2302,7 +2307,7 @@ function buildFlowPremiumDistributionSourceDiagnostics(
   const hydrationDiagnostics = combinePremiumHydrationDiagnostics(widgets);
 
   return {
-    providerHost: getPolygonProviderHost(),
+    providerHost: getMassiveProviderHost(),
     sideBasis,
     quoteAccess,
     tradeAccess,
@@ -2378,7 +2383,7 @@ function flowPremiumDistributionCacheKey(input: {
 }
 
 async function fetchLatestGroupedStockAggregates(input: {
-  client: PolygonMarketDataClient;
+  client: MassiveMarketDataClient;
   now: Date;
   timeframe: PremiumDistributionTimeframe;
 }): Promise<{
@@ -2416,7 +2421,7 @@ async function fetchLatestGroupedStockAggregates(input: {
       errorMessage =
         error instanceof Error && error.message
           ? error.message
-          : "Polygon grouped daily stock aggregates failed.";
+          : "Massive grouped daily stock aggregates failed.";
     }
   }
 
@@ -2505,9 +2510,9 @@ function historicalFlowEventsTransientResult(input: {
   return {
     events: [],
     source: flowSource({
-      provider: "polygon",
+      provider: "massive",
       status: "empty",
-      attemptedProviders: ["polygon"],
+      attemptedProviders: ["massive"],
       unusualThreshold: input.unusualThreshold ?? 1,
       ibkrStatus: "empty",
       ibkrReason: input.reason,
@@ -2626,9 +2631,9 @@ function getErrorMessage(error: unknown): string {
 export async function getSession() {
   const bridgeHealth = await getBridgeHealthForSession();
   const ibkrRuntime = getIbkrBridgeRuntimeSessionState();
-  const polygonConfig = getPolygonRuntimeConfig();
+  const massiveConfig = getMassiveRuntimeConfig();
   const stockMarketDataProvider: "massive" | "ibkr" =
-    isMassiveStocksRealtimeConfigured(polygonConfig) ? "massive" : "ibkr";
+    isMassiveStocksRealtimeConfigured(massiveConfig) ? "massive" : "ibkr";
   return {
     environment: getRuntimeMode(),
     brokerProvider: "ibkr" as const,
@@ -2636,7 +2641,7 @@ export async function getSession() {
     configured: getProviderConfiguration(),
     marketDataProviders: {
       live: stockMarketDataProvider,
-      historical: isMassiveStocksRealtimeConfigured(polygonConfig)
+      historical: isMassiveStocksRealtimeConfigured(massiveConfig)
         ? "massive"
         : "ibkr",
       research: "fmp" as const,
@@ -2687,13 +2692,13 @@ function uniqueStrings(values: string[]): string[] {
 }
 
 function buildMassiveWebSocketDiagnostics(input: {
-  config: ReturnType<typeof getPolygonRuntimeConfig>;
+  config: ReturnType<typeof getMassiveRuntimeConfig>;
   streams: ReturnType<typeof getRuntimeMarketDataDiagnostics>;
 }) {
-  const providerIdentity = getPolygonProviderIdentity(input.config);
+  const providerIdentity = getMassiveProviderIdentity(input.config);
   const configured = providerIdentity === "massive";
   const quote = input.streams.massiveStockQuotes;
-  const aggregate = input.streams.stockAggregates.polygonDelayedWebSocket;
+  const aggregate = input.streams.stockAggregates.massiveDelayedWebSocket;
   const aggregateIsMassive =
     aggregate.providerIdentity === "massive" ||
     input.streams.stockAggregates.provider === "massive-websocket" ||
@@ -2715,6 +2720,12 @@ function buildMassiveWebSocketDiagnostics(input: {
       eventCount: toFiniteNumber(quote.eventCount) ?? 0,
       lastMessageAgeMs: toFiniteNumber(quote.lastMessageAgeMs),
       reconnectCount: toFiniteNumber(quote.reconnectCount) ?? 0,
+      lastProviderStatus: quote.lastProviderStatus ?? null,
+      lastProviderMessage: quote.lastProviderMessage ?? null,
+      lastProviderStatusAt: quote.lastProviderStatusAt ?? null,
+      lastCloseCode: toFiniteNumber(quote.lastCloseCode),
+      lastCloseReason: quote.lastCloseReason ?? null,
+      lastCloseAt: quote.lastCloseAt ?? null,
       lastError: quote.lastError ?? null,
       lastErrorAt: quote.lastErrorAt ?? null,
     },
@@ -2750,6 +2761,22 @@ function buildMassiveWebSocketDiagnostics(input: {
       reconnectCount: aggregateIsMassive
         ? (toFiniteNumber(aggregate.reconnectCount) ?? 0)
         : 0,
+      lastProviderStatus: aggregateIsMassive
+        ? (aggregate.lastProviderStatus ?? null)
+        : null,
+      lastProviderMessage: aggregateIsMassive
+        ? (aggregate.lastProviderMessage ?? null)
+        : null,
+      lastProviderStatusAt: aggregateIsMassive
+        ? (aggregate.lastProviderStatusAt ?? null)
+        : null,
+      lastCloseCode: aggregateIsMassive
+        ? toFiniteNumber(aggregate.lastCloseCode)
+        : null,
+      lastCloseReason: aggregateIsMassive
+        ? (aggregate.lastCloseReason ?? null)
+        : null,
+      lastCloseAt: aggregateIsMassive ? (aggregate.lastCloseAt ?? null) : null,
       lastError: aggregateIsMassive ? (aggregate.lastError ?? null) : null,
       lastErrorAt: aggregateIsMassive ? (aggregate.lastErrorAt ?? null) : null,
     },
@@ -2765,6 +2792,12 @@ function buildMassiveWebSocketDiagnostics(input: {
   const lastMessageAges = feeds
     .map((feed) => feed.lastMessageAgeMs)
     .filter((value): value is number => Number.isFinite(value));
+  const lastProviderStatusFeed = feeds.find(
+    (feed) => feed.configured && feed.lastProviderStatus,
+  );
+  const lastCloseFeed = feeds.find(
+    (feed) => feed.configured && feed.lastCloseCode !== null,
+  );
 
   return {
     status: !configured
@@ -2803,10 +2836,13 @@ function buildMassiveWebSocketDiagnostics(input: {
     lastMessageAgeMs: lastMessageAges.length
       ? Math.min(...lastMessageAges)
       : null,
-    reconnectCount: feeds.reduce(
-      (total, feed) => total + feed.reconnectCount,
-      0,
-    ),
+    reconnectCount: Math.max(0, ...feeds.map((feed) => feed.reconnectCount)),
+    lastProviderStatus: lastProviderStatusFeed?.lastProviderStatus ?? null,
+    lastProviderMessage: lastProviderStatusFeed?.lastProviderMessage ?? null,
+    lastProviderStatusAt: lastProviderStatusFeed?.lastProviderStatusAt ?? null,
+    lastCloseCode: lastCloseFeed?.lastCloseCode ?? null,
+    lastCloseReason: lastCloseFeed?.lastCloseReason ?? null,
+    lastCloseAt: lastCloseFeed?.lastCloseAt ?? null,
     lastError: lastErrorFeed?.lastError ?? null,
     lastErrorAt: lastErrorFeed?.lastErrorAt ?? null,
     feeds,
@@ -3077,6 +3113,45 @@ export async function listOrdersWithResilience(input: {
   }
 }
 
+const DEFAULT_RUNTIME_DIAGNOSTICS_MARKET_DATA_INGEST_TIMEOUT_MS = 1_500;
+
+function runtimeDiagnosticsMarketDataIngestTimeoutMs(): number {
+  return positiveIntegerEnv(
+    "RUNTIME_DIAGNOSTICS_MARKET_DATA_INGEST_TIMEOUT_MS",
+    DEFAULT_RUNTIME_DIAGNOSTICS_MARKET_DATA_INGEST_TIMEOUT_MS,
+  );
+}
+
+function marketDataIngestDiagnosticsTimeoutFallback(
+  timeoutMs: number,
+): MarketDataIngestDiagnostics {
+  return {
+    configured: isMarketDataIngestConfigured(),
+    providerConfigured: isMarketDataIngestProviderConfigured(),
+    queueDepth: {},
+    oldestQueuedAgeMs: null,
+    runningCount: 0,
+    expiredLeaseCount: 0,
+    blockedGexJobCount: 0,
+    oldestBlockedGexAgeMs: null,
+    blockedGexJobs: [],
+    recentProviderFailures: [],
+    recentCompletedJobs: [],
+    degraded: true,
+    reason: "market_data_ingest_diagnostics_timeout",
+    timeoutMs,
+  };
+}
+
+async function getRuntimeMarketDataIngestDiagnostics(): Promise<MarketDataIngestDiagnostics> {
+  const timeoutMs = runtimeDiagnosticsMarketDataIngestTimeoutMs();
+  return resolveWithin(
+    getMarketDataIngestDiagnostics(),
+    timeoutMs,
+    marketDataIngestDiagnosticsTimeoutFallback(timeoutMs),
+  );
+}
+
 export async function getRuntimeDiagnostics() {
   const bridgeConfig = getIbkrBridgeRuntimeConfig();
   const bridgeOverride = getIbkrBridgeRuntimeOverride();
@@ -3097,8 +3172,8 @@ export async function getRuntimeDiagnostics() {
   const marketDataStreams = getRuntimeMarketDataDiagnostics({
     bridgeQuoteDiagnostics,
   });
-  const marketDataIngest = await getMarketDataIngestDiagnostics();
-  const polygonRuntimeConfig = getPolygonRuntimeConfig();
+  const marketDataIngest = await getRuntimeMarketDataIngestDiagnostics();
+  const massiveRuntimeConfig = getMassiveRuntimeConfig();
   const { getAccountPageStreamDiagnostics } = await import(
     "./account-page-streams"
   );
@@ -3140,11 +3215,10 @@ export async function getRuntimeDiagnostics() {
       },
     },
     providers: {
-      polygon: getPolygonApiDiagnostics(polygonRuntimeConfig),
       massive: {
-        ...getMassiveApiDiagnostics(polygonRuntimeConfig),
+        ...getMassiveApiDiagnostics(massiveRuntimeConfig),
         websocket: buildMassiveWebSocketDiagnostics({
-          config: polygonRuntimeConfig,
+          config: massiveRuntimeConfig,
           streams: marketDataStreams,
         }),
       },
@@ -3354,22 +3428,22 @@ export async function listBrokerConnections() {
   return {
     connections: [
       {
-        id: "polygon-paper",
-        provider: "polygon" as const,
+        id: "massive-paper",
+        provider: "massive" as const,
         name: marketDataName,
         mode: "paper" as const,
-        status: configured.polygon
+        status: configured.massive
           ? ("configured" as const)
           : ("disconnected" as const),
         capabilities: marketDataCapabilities,
         updatedAt: timestamp,
       },
       {
-        id: "polygon-live",
-        provider: "polygon" as const,
+        id: "massive-live",
+        provider: "massive" as const,
         name: marketDataName,
         mode: "live" as const,
-        status: configured.polygon
+        status: configured.massive
           ? ("configured" as const)
           : ("disconnected" as const),
         capabilities: marketDataCapabilities,
@@ -4125,18 +4199,16 @@ function positiveIntegerEnv(name: string, fallback: number): number {
   return Number.isFinite(configured) && configured > 0 ? configured : fallback;
 }
 
-type StockQuoteSnapshotSource = "ibkr" | "polygon" | "massive";
+type StockQuoteSnapshotSource = "ibkr" | "massive";
 
-function polygonQuoteToBrokerQuote(
-  quote: PolygonQuoteSnapshot,
+function massiveQuoteToBrokerQuote(
+  quote: MassiveQuoteSnapshot,
 ): QuoteSnapshot & {
   source: Exclude<StockQuoteSnapshotSource, "ibkr">;
 } {
-  const config = getPolygonRuntimeConfig();
-  const providerIdentity = getPolygonProviderIdentity(config);
-  const source = providerIdentity === "massive" ? "massive" : "polygon";
-  const delayed =
-    source === "massive" ? !isMassiveStocksRealtimeConfigured(config) : true;
+  const config = getMassiveRuntimeConfig();
+  const source = "massive";
+  const delayed = !isMassiveStocksRealtimeConfigured(config);
   return {
     symbol: quote.symbol,
     price: quote.price,
@@ -4173,7 +4245,10 @@ function polygonQuoteToBrokerQuote(
 
 type GetQuoteSnapshotsInput = {
   symbols: string;
-  allowPolygonFallback?: boolean;
+  allowMassiveFallback?: boolean;
+  admissionOwner?: string;
+  admissionIntent?: MarketDataIntent;
+  admissionFallbackProvider?: MarketDataFallbackProvider;
 };
 
 type QuoteSnapshotsServiceResponse = {
@@ -4228,23 +4303,31 @@ function quoteSnapshotBridgeFetchTimeoutMs(): number {
   return positiveIntegerEnv("QUOTE_SNAPSHOT_BRIDGE_FETCH_TIMEOUT_MS", 3_000);
 }
 
-function quoteSnapshotPolygonFallbackTimeoutMs(): number {
+function quoteSnapshotMassiveFallbackTimeoutMs(): number {
   return positiveIntegerEnv(
-    "QUOTE_SNAPSHOT_POLYGON_FALLBACK_TIMEOUT_MS",
+    "QUOTE_SNAPSHOT_MASSIVE_FALLBACK_TIMEOUT_MS",
     2_000,
   );
 }
 
 function quoteSnapshotCacheKey(input: {
   symbols: string[];
-  allowPolygonFallback?: boolean;
+  allowMassiveFallback?: boolean;
+  admissionOwner?: string | null;
+  admissionIntent?: MarketDataIntent | null;
+  admissionFallbackProvider?: MarketDataFallbackProvider | null;
 }): string {
   const providerMode = isMassiveStocksRealtimeConfigured()
     ? "massive"
-    : input.allowPolygonFallback === true
-      ? "polygon"
+    : input.allowMassiveFallback === true
+      ? "massive"
       : "ibkr";
-  return `${providerMode}:${input.symbols.join(",")}`;
+  const ownerKey = input.admissionOwner
+    ? `:${input.admissionOwner}:${input.admissionIntent ?? ""}:${
+        input.admissionFallbackProvider ?? ""
+      }`
+    : "";
+  return `${providerMode}:${input.symbols.join(",")}${ownerKey}`;
 }
 
 function markQuoteSnapshotResponseStale(
@@ -4292,7 +4375,10 @@ async function resolveQuoteSnapshotRequest(
 
 async function getQuoteSnapshotsUncached(input: {
   symbolsList: string[];
-  allowPolygonFallback?: boolean;
+  allowMassiveFallback?: boolean;
+  admissionOwner?: string;
+  admissionIntent?: MarketDataIntent;
+  admissionFallbackProvider?: MarketDataFallbackProvider;
 }): Promise<QuoteSnapshotsServiceResponse> {
   const symbols = input.symbolsList;
   if (!symbols.length) {
@@ -4303,22 +4389,22 @@ async function getQuoteSnapshotsUncached(input: {
       fallbackUsed: false,
     };
   }
-  const polygonConfig = getPolygonRuntimeConfig();
-  if (isMassiveStocksRealtimeConfigured(polygonConfig)) {
+  const massiveConfig = getMassiveRuntimeConfig();
+  if (isMassiveStocksRealtimeConfigured(massiveConfig)) {
     let massiveQuotes: Array<
       QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }
     > = [];
     try {
       massiveQuotes = (
         await withTimeout(
-          getPolygonClient().getQuoteSnapshots(symbols),
-          quoteSnapshotPolygonFallbackTimeoutMs(),
+          getMassiveClient().getQuoteSnapshots(symbols),
+          quoteSnapshotMassiveFallbackTimeoutMs(),
           () =>
             new Error(
-              `Quote snapshot Massive stock fetch timed out after ${quoteSnapshotPolygonFallbackTimeoutMs()}ms.`,
+              `Quote snapshot Massive stock fetch timed out after ${quoteSnapshotMassiveFallbackTimeoutMs()}ms.`,
             ),
         )
-      ).map(polygonQuoteToBrokerQuote);
+      ).map(massiveQuoteToBrokerQuote);
     } catch {
       massiveQuotes = [];
     }
@@ -4355,7 +4441,13 @@ async function getQuoteSnapshotsUncached(input: {
         ),
     ).catch(() => null),
     withTimeout(
-      fetchBridgeQuoteSnapshots(symbols),
+      fetchBridgeQuoteSnapshots(symbols, {
+        owner: input.admissionOwner,
+        intent: input.admissionIntent,
+        fallbackProvider:
+          input.admissionFallbackProvider ??
+          (input.allowMassiveFallback === true ? "massive" : "cache"),
+      }),
       quoteSnapshotBridgeFetchTimeoutMs(),
       () =>
         new Error(
@@ -4368,37 +4460,37 @@ async function getQuoteSnapshotsUncached(input: {
     ibkrQuotes.map((quote) => normalizeSymbol(quote.symbol)),
   );
   const missingSymbols = symbols.filter((symbol) => !ibkrSymbols.has(symbol));
-  let polygonQuotes: Array<
+  let massiveQuotes: Array<
     QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }
   > = [];
 
   if (
-    input.allowPolygonFallback === true &&
+    input.allowMassiveFallback === true &&
     missingSymbols.length > 0 &&
-    polygonConfig
+    massiveConfig
   ) {
     try {
-      polygonQuotes = (
+      massiveQuotes = (
         await withTimeout(
-          getPolygonClient().getQuoteSnapshots(missingSymbols),
-          quoteSnapshotPolygonFallbackTimeoutMs(),
+          getMassiveClient().getQuoteSnapshots(missingSymbols),
+          quoteSnapshotMassiveFallbackTimeoutMs(),
           () =>
             new Error(
-              `Quote snapshot Polygon fallback timed out after ${quoteSnapshotPolygonFallbackTimeoutMs()}ms.`,
+              `Quote snapshot Massive fallback timed out after ${quoteSnapshotMassiveFallbackTimeoutMs()}ms.`,
             ),
         )
-      ).map(polygonQuoteToBrokerQuote);
-      polygonQuotes.forEach((quote) => {
+      ).map(massiveQuoteToBrokerQuote);
+      massiveQuotes.forEach((quote) => {
         recordMarketDataFallback({
           owner: "quote-snapshot",
           intent: "visible-live",
-          fallbackProvider: quote.source === "massive" ? "massive" : "polygon",
+          fallbackProvider: quote.source === "massive" ? "massive" : "massive",
           reason: "ibkr_missing_or_not_admitted",
           instrumentKey: `equity:${quote.symbol}`,
         });
       });
     } catch {
-      polygonQuotes = [];
+      massiveQuotes = [];
     }
   }
   const quotesBySymbol = new Map<
@@ -4412,7 +4504,7 @@ async function getQuoteSnapshotsUncached(input: {
       source: "ibkr" as const,
     });
   });
-  polygonQuotes.forEach((quote) => {
+  massiveQuotes.forEach((quote) => {
     const symbol = normalizeSymbol(quote.symbol);
     if (!quotesBySymbol.has(symbol)) {
       quotesBySymbol.set(symbol, quote);
@@ -4427,7 +4519,7 @@ async function getQuoteSnapshotsUncached(input: {
     quotes,
     transport: quotes[0]?.transport ?? bridgeHealth?.transport ?? null,
     delayed: quotes.some((quote) => quote.delayed),
-    fallbackUsed: polygonQuotes.length > 0,
+    fallbackUsed: massiveQuotes.length > 0,
   };
 }
 
@@ -4438,9 +4530,13 @@ export async function getQuoteSnapshots(
     .split(",")
     .map((symbol) => normalizeSymbol(symbol))
     .filter(Boolean);
+  const allowMassiveFallback = input.allowMassiveFallback === true;
   const key = quoteSnapshotCacheKey({
     symbols,
-    allowPolygonFallback: input.allowPolygonFallback,
+    allowMassiveFallback,
+    admissionOwner: input.admissionOwner,
+    admissionIntent: input.admissionIntent,
+    admissionFallbackProvider: input.admissionFallbackProvider,
   });
   const now = Date.now();
   const cached = quoteSnapshotCache.get(key);
@@ -4455,7 +4551,10 @@ export async function getQuoteSnapshots(
 
   const request = getQuoteSnapshotsUncached({
     symbolsList: symbols,
-    allowPolygonFallback: input.allowPolygonFallback,
+    allowMassiveFallback,
+    admissionOwner: input.admissionOwner,
+    admissionIntent: input.admissionIntent,
+    admissionFallbackProvider: input.admissionFallbackProvider,
   })
     .then((value) => {
       const cachedAt = Date.now();
@@ -4482,7 +4581,7 @@ export async function getQuoteSnapshots(
 
 export async function getNews(input: { ticker?: string; limit?: number }) {
   // IBKR is the primary news source (user has Reuters subscription via IBKR).
-  // We only fall back to Polygon when IBKR returns no headlines — typically
+  // We only fall back to Massive when IBKR returns no headlines — typically
   // for tickerless requests, since IBKR's /iserver/news requires a conid.
   const ibkrClient = getIbkrClient();
   let articles: Awaited<ReturnType<IbkrBridgeClient["getNews"]>> = [];
@@ -4492,10 +4591,10 @@ export async function getNews(input: { ticker?: string; limit?: number }) {
     articles = [];
   }
 
-  if (articles.length === 0 && getPolygonRuntimeConfig()) {
+  if (articles.length === 0 && getMassiveRuntimeConfig()) {
     try {
-      const polygonArticles = await getPolygonClient().getNews(input);
-      return { articles: polygonArticles };
+      const massiveArticles = await getMassiveClient().getNews(input);
+      return { articles: massiveArticles };
     } catch {
       // fall through to empty IBKR result
     }
@@ -4523,7 +4622,7 @@ type UniverseSearchResponse = { count: number; results: UniverseTicker[] };
 type UniverseLogoRecord = {
   symbol: string;
   logoUrl: string | null;
-  source: "tradingview" | "polygon" | "fmp" | "none";
+  source: "tradingview" | "massive" | "fmp" | "none";
   assetType: "symbol_icon" | "provider_logo" | "unknown";
   confidence: number;
   updatedAt: string;
@@ -4590,7 +4689,7 @@ const ALL_UNIVERSE_MARKETS: UniverseMarket[] = [
   "crypto",
   "otc",
 ];
-const POLYGON_SEARCH_MARKETS: UniverseMarket[] = [
+const MASSIVE_SEARCH_MARKETS: UniverseMarket[] = [
   "stocks",
   "etf",
   "indices",
@@ -4608,7 +4707,7 @@ const INTERACTIVE_IBKR_MARKET_GROUPS: UniverseMarket[][] = [
 const UNIVERSE_SEARCH_DEFAULT_LIMIT = 40;
 const UNIVERSE_SEARCH_CACHE_TTL_MS = 30_000;
 const UNIVERSE_SEARCH_IBKR_BUDGET_MS = 6_000;
-const UNIVERSE_SEARCH_POLYGON_EXACT_BUDGET_MS = 1_500;
+const UNIVERSE_SEARCH_MASSIVE_EXACT_BUDGET_MS = 1_500;
 const UNIVERSE_SEARCH_BACKGROUND_BUDGET_MS = 12_000;
 const UNIVERSE_CATALOG_IBKR_HYDRATION_QUEUE_CONCURRENCY = 2;
 const UNIVERSE_CATALOG_IBKR_RETRY_COOLDOWN_MS = 30 * 60_000;
@@ -4961,7 +5060,7 @@ function hydrateUniverseTickerMetadata(ticker: UniverseTicker): UniverseTicker {
       ].filter(
         (provider): provider is MarketDataProvider =>
           provider === "ibkr" ||
-          provider === "polygon" ||
+          provider === "massive" ||
           provider === "massive",
       ),
     ),
@@ -4972,8 +5071,8 @@ function hydrateUniverseTickerMetadata(ticker: UniverseTicker): UniverseTicker {
     ticker.dataProviderPreference ??
     (providers.includes("massive")
       ? "massive"
-      : providers.includes("polygon")
-        ? "polygon"
+      : providers.includes("massive")
+        ? "massive"
         : providers.includes("ibkr")
           ? "ibkr"
           : null);
@@ -5141,7 +5240,7 @@ function mapUniverseCatalogRowToUniverseTicker(
     provider: (row.tradeProvider as MarketDataProvider | null) ?? null,
     providers: (row.providers ?? []).filter(
       (provider): provider is MarketDataProvider =>
-        provider === "ibkr" || provider === "polygon" || provider === "massive",
+        provider === "ibkr" || provider === "massive",
     ),
     tradeProvider: (row.tradeProvider as MarketDataProvider | null) ?? null,
     dataProviderPreference:
@@ -5257,8 +5356,8 @@ function mergeUniverseTicker(
     providerContractId && providers.includes("ibkr") ? "ibkr" : null;
   const dataProviderPreference = providers.includes("massive")
     ? "massive"
-    : providers.includes("polygon")
-      ? "polygon"
+    : providers.includes("massive")
+      ? "massive"
       : providers.includes("ibkr")
         ? "ibkr"
         : null;
@@ -5337,7 +5436,7 @@ function scoreUniverseTicker(
   if (ticker.providers.includes("ibkr")) score += 45;
   if (ticker.providerContractId) score += 30;
   if (
-    ticker.providers.includes("polygon") ||
+    ticker.providers.includes("massive") ||
     ticker.providers.includes("massive")
   )
     score += 12;
@@ -6250,17 +6349,17 @@ async function fetchUniverseLogoRecord(
     };
   }
 
-  const polygonClient = getPolygonRuntimeConfig() ? getPolygonClient() : null;
-  if (polygonClient) {
-    const polygonLogoUrl = await polygonClient.getTickerLogoUrl(
+  const massiveClient = getMassiveRuntimeConfig() ? getMassiveClient() : null;
+  if (massiveClient) {
+    const massiveLogoUrl = await massiveClient.getTickerLogoUrl(
       normalizedSymbol,
       signal,
     );
-    if (polygonLogoUrl) {
+    if (massiveLogoUrl) {
       return {
         symbol: normalizedSymbol,
-        logoUrl: polygonLogoUrl,
-        source: "polygon",
+        logoUrl: massiveLogoUrl,
+        source: "massive",
         assetType: "provider_logo",
         confidence: 0.65,
         updatedAt: nowIso,
@@ -6577,8 +6676,8 @@ async function runInteractiveUniverseSearch(input: {
 }): Promise<UniverseSearchResponse> {
   const startedAt = Date.now();
   const searchLimit = getInteractiveUniverseSearchLimit(input.resultLimit);
-  const polygonConfig = getPolygonRuntimeConfig();
-  const polygonClient = polygonConfig ? getPolygonClient() : null;
+  const massiveConfig = getMassiveRuntimeConfig();
+  const massiveClient = massiveConfig ? getMassiveClient() : null;
   const interactiveIbkrMarketGroups = resolveInteractiveIbkrMarketGroups(
     input.searchInput,
     input.requestedMarkets,
@@ -6639,7 +6738,7 @@ async function runInteractiveUniverseSearch(input: {
       index,
       markets,
     }));
-  const polygonInteractiveTasks: Array<
+  const massiveInteractiveTasks: Array<
     Promise<{
       label: string;
       elapsedMs: number;
@@ -6647,14 +6746,14 @@ async function runInteractiveUniverseSearch(input: {
     }>
   > = [];
 
-  if (polygonClient && isTickerLikeSearch(input.normalizedSearch)) {
-    polygonInteractiveTasks.push(
+  if (massiveClient && isTickerLikeSearch(input.normalizedSearch)) {
+    massiveInteractiveTasks.push(
       runUniverseSearchTask(
-        "polygon-exact",
-        UNIVERSE_SEARCH_POLYGON_EXACT_BUDGET_MS,
+        "massive-exact",
+        UNIVERSE_SEARCH_MASSIVE_EXACT_BUDGET_MS,
         interactiveProviderController.signal,
         async (signal) => {
-          const ticker = await polygonClient.getUniverseTickerByTicker(
+          const ticker = await massiveClient.getUniverseTickerByTicker(
             input.normalizedSearch,
             signal,
           );
@@ -6667,21 +6766,21 @@ async function runInteractiveUniverseSearch(input: {
     );
   }
 
-  if (polygonClient) {
-    const polygonMarkets = POLYGON_SEARCH_MARKETS.filter(
+  if (massiveClient) {
+    const massiveMarkets = MASSIVE_SEARCH_MARKETS.filter(
       (market) =>
         input.requestedMarketSet.has(market) &&
         (market === "stocks" || market === "etf" || market === "otc"),
     );
     for (const cusip of deriveCusipCandidates(input.normalizedSearch)) {
-      for (const market of polygonMarkets) {
-        polygonInteractiveTasks.push(
+      for (const market of massiveMarkets) {
+        massiveInteractiveTasks.push(
           runUniverseSearchTask(
-            `polygon-cusip-${market}`,
-            UNIVERSE_SEARCH_POLYGON_EXACT_BUDGET_MS,
+            `massive-cusip-${market}`,
+            UNIVERSE_SEARCH_MASSIVE_EXACT_BUDGET_MS,
             interactiveProviderController.signal,
             (signal) =>
-              polygonClient.searchUniverseTickers({
+              massiveClient.searchUniverseTickers({
                 market,
                 markets: [market],
                 cusip,
@@ -6769,7 +6868,7 @@ async function runInteractiveUniverseSearch(input: {
             ...input,
             searchLimit,
             seedResults: providerResults,
-            polygonClient,
+            massiveClient,
           });
         }
 
@@ -6781,7 +6880,7 @@ async function runInteractiveUniverseSearch(input: {
               (max, result) => Math.max(max, result.elapsedMs),
               0,
             ),
-            polygonInteractiveElapsedMs: 0,
+            massiveInteractiveElapsedMs: 0,
             count: exactResponse.count,
             firstTicker: exactResponse.results[0]?.ticker ?? null,
             firstTradeProvider: exactResponse.results[0]?.tradeProvider ?? null,
@@ -6797,11 +6896,11 @@ async function runInteractiveUniverseSearch(input: {
       }
     }
 
-    const polygonInteractiveResults = await Promise.all(
-      polygonInteractiveTasks,
+    const massiveInteractiveResults = await Promise.all(
+      massiveInteractiveTasks,
     );
     providerResults.push(
-      ...polygonInteractiveResults.flatMap(
+      ...massiveInteractiveResults.flatMap(
         (result) => result.result?.results ?? [],
       ),
     );
@@ -6830,7 +6929,7 @@ async function runInteractiveUniverseSearch(input: {
         ...input,
         searchLimit,
         seedResults: providerResults,
-        polygonClient,
+        massiveClient,
       });
     }
 
@@ -6842,7 +6941,7 @@ async function runInteractiveUniverseSearch(input: {
           (max, result) => Math.max(max, result.elapsedMs),
           0,
         ),
-        polygonInteractiveElapsedMs: polygonInteractiveResults.reduce(
+        massiveInteractiveElapsedMs: massiveInteractiveResults.reduce(
           (max, result) => Math.max(max, result.elapsedMs),
           0,
         ),
@@ -6886,12 +6985,12 @@ function startUniverseSearchBackgroundEnrichment(input: {
   cacheKey: string;
   searchLimit: number;
   seedResults: UniverseTicker[];
-  polygonClient: PolygonMarketDataClient | null;
+  massiveClient: MassiveMarketDataClient | null;
 }) {
-  if (!input.polygonClient || input.normalizedSearch.length < 2) return;
+  if (!input.massiveClient || input.normalizedSearch.length < 2) return;
   if (universeSearchBackgroundInFlight.has(input.cacheKey)) return;
 
-  const polygonClient = input.polygonClient;
+  const massiveClient = input.massiveClient;
   universeSearchBackgroundInFlight.add(input.cacheKey);
 
   void (async () => {
@@ -6905,7 +7004,7 @@ function startUniverseSearchBackgroundEnrichment(input: {
     ];
 
     try {
-      const polygonMarkets = POLYGON_SEARCH_MARKETS.filter((market) =>
+      const massiveMarkets = MASSIVE_SEARCH_MARKETS.filter((market) =>
         input.requestedMarketSet.has(market),
       );
       const tasks: Array<
@@ -6914,7 +7013,7 @@ function startUniverseSearchBackgroundEnrichment(input: {
 
       if (isTickerLikeSearch(input.normalizedSearch)) {
         tasks.push(
-          polygonClient
+          massiveClient
             .getUniverseTickerByTicker(
               input.normalizedSearch,
               budgetSignal.signal,
@@ -6927,14 +7026,14 @@ function startUniverseSearchBackgroundEnrichment(input: {
       }
 
       for (const cusip of deriveCusipCandidates(input.normalizedSearch)) {
-        for (const market of polygonMarkets.filter(
+        for (const market of massiveMarkets.filter(
           (candidate) =>
             candidate === "stocks" ||
             candidate === "etf" ||
             candidate === "otc",
         )) {
           tasks.push(
-            polygonClient.searchUniverseTickers({
+            massiveClient.searchUniverseTickers({
               market,
               markets: [market],
               cusip,
@@ -6946,9 +7045,9 @@ function startUniverseSearchBackgroundEnrichment(input: {
         }
       }
 
-      for (const market of polygonMarkets) {
+      for (const market of massiveMarkets) {
         tasks.push(
-          polygonClient.searchUniverseTickers({
+          massiveClient.searchUniverseTickers({
             search: input.normalizedSearch,
             market,
             markets: [market],
@@ -7167,7 +7266,7 @@ export async function searchUniverseTickers(
 }
 
 type NativeBarTimeframe = Parameters<
-  PolygonMarketDataClient["getBars"]
+  MassiveMarketDataClient["getBars"]
 >[0]["timeframe"];
 type ChartBarTimeframe = NativeBarTimeframe | "30s" | "30m" | "4h";
 
@@ -7305,7 +7404,7 @@ type OptionChartBarsResolutionSource =
 type OptionChartBarsDataSource =
   | "ibkr-history"
   | "mixed-history"
-  | "polygon-option-aggregates"
+  | "massive-option-aggregates"
   | "none";
 type OptionChartBarsResult = GetBarsResult & {
   underlying: string;
@@ -7508,12 +7607,7 @@ function isHistoricalSynthesisBar(bar: BrokerBarSnapshot): boolean {
       bar.freshness === "delayed" ||
       bar.marketDataMode === "delayed" ||
       !isMassiveStocksRealtimeConfigured());
-  return (
-    source === "polygon-history" ||
-    source.includes("polygon") ||
-    massiveDelayed ||
-    Boolean(bar.delayed)
-  );
+  return massiveDelayed || Boolean(bar.delayed);
 }
 
 function restrictHistoricalSynthesisToBrokerBackfill(
@@ -7631,21 +7725,21 @@ function shouldFetchHistoricalSynthesisForRecentCoverage(input: {
 }
 
 function isRealtimeMassiveSignalMatrixBarsRequest(input: {
-  providerIdentity: ReturnType<typeof getPolygonProviderIdentity>;
-  polygonConfig: ReturnType<typeof getPolygonRuntimeConfig>;
+  providerIdentity: ReturnType<typeof getMassiveProviderIdentity>;
+  massiveConfig: ReturnType<typeof getMassiveRuntimeConfig>;
   options: GetBarsOptions;
 }) {
   return (
     input.providerIdentity === "massive" &&
-    isMassiveStocksRealtimeConfigured(input.polygonConfig) &&
+    isMassiveStocksRealtimeConfigured(input.massiveConfig) &&
     normalizeBarsRequestFamily(input.options.family) === "signal-matrix"
   );
 }
 
 function resolveRecentCoverageStaleToleranceMs(input: {
   request: GetBarsInput;
-  providerIdentity: ReturnType<typeof getPolygonProviderIdentity>;
-  polygonConfig: ReturnType<typeof getPolygonRuntimeConfig>;
+  providerIdentity: ReturnType<typeof getMassiveProviderIdentity>;
+  massiveConfig: ReturnType<typeof getMassiveRuntimeConfig>;
   options: GetBarsOptions;
 }): number | null {
   const stepMs = BROKER_HISTORY_STEP_MS[input.request.timeframe];
@@ -7653,7 +7747,7 @@ function resolveRecentCoverageStaleToleranceMs(input: {
     stepMs &&
     isRealtimeMassiveSignalMatrixBarsRequest({
       providerIdentity: input.providerIdentity,
-      polygonConfig: input.polygonConfig,
+      massiveConfig: input.massiveConfig,
       options: input.options,
     })
   ) {
@@ -7760,7 +7854,7 @@ function mergeBrokerHistoryBars(
 }
 
 // Coalesce identical /api/bars requests so multiple chart panels
-// (or refetches racing each other) share a single upstream IBKR/Polygon
+// (or refetches racing each other) share a single upstream IBKR/Massive
 // fetch. The bridge can hold an upstream history slot for 7-15s, so even
 // a small TTL of a few seconds dramatically reduces request volume.
 const BARS_CACHE_TTL_MS = 30_000;
@@ -7778,7 +7872,8 @@ const BARS_BROKER_BACKFILL_EMPTY_RETRY_DELAY_MS = readPositiveIntegerEnv(
   "BARS_BROKER_BACKFILL_EMPTY_RETRY_DELAY_MS",
   750,
 );
-const BARS_FULL_BROKER_RECOVERY_MIN_PRIORITY = 6;
+const BARS_BROKER_LIVE_EDGE_MIN_PRIORITY = 6;
+const BARS_FULL_BROKER_RECOVERY_MIN_PRIORITY = 10;
 const BARS_SYNTHESIS_ONLY_CACHE_TTL_MS = readPositiveIntegerEnv(
   "BARS_SYNTHESIS_ONLY_CACHE_TTL_MS",
   BARS_CACHE_TTL_MS,
@@ -8168,7 +8263,7 @@ function resolveBarsPriorityBucket(priority?: number | null): string {
     return "unknown";
   }
   if ((priority as number) >= 8) return "active";
-  if ((priority as number) >= BARS_FULL_BROKER_RECOVERY_MIN_PRIORITY) {
+  if ((priority as number) >= BARS_BROKER_LIVE_EDGE_MIN_PRIORITY) {
     return "visible";
   }
   if ((priority as number) >= 4) return "near";
@@ -8491,8 +8586,7 @@ function shouldAttemptFullBrokerHistoryRecovery(
 function shouldAttemptBrokerLiveEdgeHistory(options: GetBarsOptions): boolean {
   const priority = Number(options.priority);
   return (
-    Number.isFinite(priority) &&
-    priority >= BARS_FULL_BROKER_RECOVERY_MIN_PRIORITY
+    Number.isFinite(priority) && priority >= BARS_BROKER_LIVE_EDGE_MIN_PRIORITY
   );
 }
 
@@ -8753,7 +8847,7 @@ const BASE_TIMEFRAME_BY_TIMEFRAME: Record<
   "15s": "5s",
   "30s": "5s",
   "1m": "1m",
-  "2m": "2m",
+  "2m": "1m",
   "5m": "5m",
   "15m": "15m",
   "30m": "15m",
@@ -8912,8 +9006,8 @@ function sanitizeProviderNextUrl(value?: string | null): string | null {
   }
 }
 
-function buildPolygonHistoryPageMetadata(
-  page?: PolygonAggregateBarsPage | null,
+function buildMassiveHistoryPageMetadata(
+  page?: MassiveAggregateBarsPage | null,
   cursorSignature?: string | null,
 ): Pick<
   BarsHistoryPage,
@@ -8934,8 +9028,8 @@ function buildPolygonHistoryPageMetadata(
   };
 }
 
-function mapPolygonBarsToBrokerBars(input: {
-  bars: PolygonBarSnapshot[];
+function mapMassiveBarsToBrokerBars(input: {
+  bars: MassiveBarSnapshot[];
   sourceName: string;
   outsideRth: boolean;
   delayed: boolean;
@@ -8962,12 +9056,12 @@ function mapPolygonBarsToBrokerBars(input: {
   );
 }
 
-async function fetchPolygonBarsPage(
-  client: PolygonMarketDataClient,
-  input: Parameters<PolygonMarketDataClient["getBars"]>[0],
-): Promise<PolygonAggregateBarsPage> {
+async function fetchMassiveBarsPage(
+  client: MassiveMarketDataClient,
+  input: Parameters<MassiveMarketDataClient["getBars"]>[0],
+): Promise<MassiveAggregateBarsPage> {
   const pageFetcher = (
-    client as Partial<Pick<PolygonMarketDataClient, "getBarsPage">>
+    client as Partial<Pick<MassiveMarketDataClient, "getBarsPage">>
   ).getBarsPage;
   if (typeof pageFetcher === "function") {
     return pageFetcher.call(client, input);
@@ -8984,13 +9078,13 @@ async function fetchPolygonBarsPage(
   };
 }
 
-async function fetchPolygonOptionBarsPage(
-  client: PolygonMarketDataClient,
-  input: Parameters<PolygonMarketDataClient["getOptionAggregateBars"]>[0],
-): Promise<PolygonAggregateBarsPage> {
+async function fetchMassiveOptionBarsPage(
+  client: MassiveMarketDataClient,
+  input: Parameters<MassiveMarketDataClient["getOptionAggregateBars"]>[0],
+): Promise<MassiveAggregateBarsPage> {
   const pageFetcher = (
     client as Partial<
-      Pick<PolygonMarketDataClient, "getOptionAggregateBarsPage">
+      Pick<MassiveMarketDataClient, "getOptionAggregateBarsPage">
     >
   ).getOptionAggregateBarsPage;
   if (typeof pageFetcher === "function") {
@@ -9008,10 +9102,10 @@ async function fetchPolygonOptionBarsPage(
   };
 }
 
-async function fetchPolygonBarsProviderCursorPage(
-  client: PolygonMarketDataClient,
-  input: Parameters<PolygonMarketDataClient["getBarsProviderCursorPage"]>[0],
-): Promise<PolygonAggregateBarsPage> {
+async function fetchMassiveBarsProviderCursorPage(
+  client: MassiveMarketDataClient,
+  input: Parameters<MassiveMarketDataClient["getBarsProviderCursorPage"]>[0],
+): Promise<MassiveAggregateBarsPage> {
   return client.getBarsProviderCursorPage(input);
 }
 
@@ -9317,20 +9411,20 @@ async function getBaseBarsImpl(
     bridgeClient.getHealth().catch(() => null),
     options.signal,
   );
-  const polygonConfig = getPolygonRuntimeConfig();
-  const polygonClient = polygonConfig ? getPolygonClient() : null;
-  const polygonProviderIdentity = getPolygonProviderIdentity(polygonConfig);
-  const polygonBarsDelayed =
-    polygonProviderIdentity === "massive" &&
-    !isMassiveStocksRealtimeConfigured(polygonConfig);
+  const massiveConfig = getMassiveRuntimeConfig();
+  const massiveClient = massiveConfig ? getMassiveClient() : null;
+  const massiveProviderIdentity = getMassiveProviderIdentity(massiveConfig);
+  const massiveBarsDelayed =
+    massiveProviderIdentity === "massive" &&
+    !isMassiveStocksRealtimeConfigured(massiveConfig);
   const historicalStoreSource =
-    polygonProviderIdentity === "massive"
+    massiveProviderIdentity === "massive"
       ? "massive-history"
-      : "polygon-history";
-  const historicalFallbackProvider = polygonClient
-    ? polygonProviderIdentity === "massive"
+      : "massive-history";
+  const historicalFallbackProvider = massiveClient
+    ? massiveProviderIdentity === "massive"
       ? "massive"
-      : "polygon"
+      : "massive"
     : "cache";
   // Default to including extended hours across ALL timeframes so the "last close"
   // a chart shows is consistent regardless of the selected interval. Without this,
@@ -9344,7 +9438,7 @@ async function getBaseBarsImpl(
   );
   const allowHistoricalSynthesis = input.allowHistoricalSynthesis !== false;
   const historicalSynthesisAvailable = Boolean(
-    allowHistoricalSynthesis && input.market !== "futures" && polygonClient,
+    allowHistoricalSynthesis && input.market !== "futures" && massiveClient,
   );
   const brokerHistoryMayBeRecentLimited = shouldLimitBrokerHistoryToRecent(
     input,
@@ -9355,10 +9449,15 @@ async function getBaseBarsImpl(
   let ibkrBars: Awaited<ReturnType<IbkrBridgeClient["getHistoricalBars"]>> = [];
   let attemptedBrokerHistory = false;
   let brokerHistoryError: unknown = null;
-  const fetchBrokerHistory = async (brokerHistoryInput: GetBarsInput) => {
-    const brokerBackfillSensitive =
+  const fetchBrokerHistory = async (
+    brokerHistoryInput: GetBarsInput,
+    brokerHistoryOptions: { recoveryMode?: "live-edge" | "full" } = {},
+  ) => {
+    const recoveryMode = brokerHistoryOptions.recoveryMode ?? "live-edge";
+    const fullBrokerRecovery =
+      recoveryMode === "full" &&
       isBrokerBackfillSensitiveBarsRequest(brokerHistoryInput);
-    const brokerHistoryBudgetMs = brokerBackfillSensitive
+    const brokerHistoryBudgetMs = fullBrokerRecovery
       ? BARS_BROKER_BACKFILL_BUDGET_MS
       : BARS_PROVIDER_BUDGET_MS;
     const fetchBridgeHistory = (exchange?: string | null) =>
@@ -9438,7 +9537,7 @@ async function getBaseBarsImpl(
     const bars = await fetchOnce();
     const elapsedMs = Math.max(0, Date.now() - startedAt);
     if (
-      brokerBackfillSensitive &&
+      fullBrokerRecovery &&
       bars.length === 0 &&
       elapsedMs < brokerHistoryBudgetMs - 250
     ) {
@@ -9464,7 +9563,9 @@ async function getBaseBarsImpl(
         !shouldAttemptBrokerLiveEdgeHistory(options);
       if (brokerHistoryInput && !skipBackgroundBrokerHistory) {
         attemptedBrokerHistory = true;
-        ibkrBars = await fetchBrokerHistory(brokerHistoryInput);
+        ibkrBars = await fetchBrokerHistory(brokerHistoryInput, {
+          recoveryMode: "live-edge",
+        });
       } else if (brokerHistoryMayBeRecentLimited) {
         recordMarketDataFallback({
           owner: "bars-history",
@@ -9534,13 +9635,13 @@ async function getBaseBarsImpl(
       now: new Date(),
       enabled:
         allowHistoricalSynthesis &&
-        Boolean(polygonClient) &&
+        Boolean(massiveClient) &&
         brokerHistoryMayBeRecentLimited &&
         isBrokerHistoryTimeframe,
       staleToleranceMs: resolveRecentCoverageStaleToleranceMs({
         request: input,
-        providerIdentity: polygonProviderIdentity,
-        polygonConfig,
+        providerIdentity: massiveProviderIdentity,
+        massiveConfig,
         options,
       }),
     });
@@ -9550,7 +9651,7 @@ async function getBaseBarsImpl(
   const historicalProviderAvailable = Boolean(
     allowHistoricalSynthesis &&
       input.market !== "futures" &&
-      polygonClient &&
+      massiveClient &&
       desiredBars > 0,
   );
   const needsGapFill =
@@ -9565,11 +9666,11 @@ async function getBaseBarsImpl(
 
   let bars = [...storedHistoricalBars, ...ibkrBars];
   let gapFilled = false;
-  let polygonBarsPage: PolygonAggregateBarsPage | null = null;
-  let polygonCursorExhausted = false;
+  let massiveBarsPage: MassiveAggregateBarsPage | null = null;
+  let massiveCursorExhausted = false;
 
-  if (needsProviderHistoryFetch && polygonClient) {
-    let polygonBars: BrokerBarSnapshot[] = [];
+  if (needsProviderHistoryFetch && massiveClient) {
+    let massiveBars: BrokerBarSnapshot[] = [];
     let attemptedCursorContinuation = false;
     let usedCursorContinuation = false;
     const cursorSignature = buildBarsHistoryCursorSignature(input);
@@ -9582,8 +9683,8 @@ async function getBaseBarsImpl(
     try {
       if (cursorResolution.ok) {
         attemptedCursorContinuation = true;
-        polygonBarsPage = await resolveWithin(
-          fetchPolygonBarsProviderCursorPage(polygonClient, {
+        massiveBarsPage = await resolveWithin(
+          fetchMassiveBarsProviderCursorPage(massiveClient, {
             symbol: input.symbol,
             timeframe: input.timeframe,
             limit: desiredBars,
@@ -9596,16 +9697,16 @@ async function getBaseBarsImpl(
             createAbortError: createBarsRequestAbortedError,
           },
         );
-        usedCursorContinuation = Boolean(polygonBarsPage);
+        usedCursorContinuation = Boolean(massiveBarsPage);
       }
-      if (!polygonBarsPage) {
+      if (!massiveBarsPage) {
         if (attemptedCursorContinuation) {
           barsHydrationCounters.cursorFallback += 1;
         } else if (input.preferCursor && input.historyCursor) {
           barsHydrationCounters.cursorFallback += 1;
         }
-        polygonBarsPage = await resolveWithin(
-          fetchPolygonBarsPage(polygonClient, {
+        massiveBarsPage = await resolveWithin(
+          fetchMassiveBarsPage(massiveClient, {
             symbol: input.symbol,
             timeframe: input.timeframe,
             limit: desiredBars,
@@ -9620,9 +9721,9 @@ async function getBaseBarsImpl(
           },
         );
       }
-      if (polygonBarsPage) {
+      if (massiveBarsPage) {
         barsHydrationCounters.providerFetch += 1;
-        barsHydrationCounters.providerPage += polygonBarsPage.pageCount;
+        barsHydrationCounters.providerPage += massiveBarsPage.pageCount;
         if (chartBackfillRequest) {
           barsHydrationCounters.chartBackfillProviderFetch += 1;
         }
@@ -9632,18 +9733,18 @@ async function getBaseBarsImpl(
         if (chartBackfillRequest) {
           barsHydrationCounters.chartBackfillCursorFetch += 1;
         }
-        polygonCursorExhausted = Boolean(
-          polygonBarsPage &&
-            polygonBarsPage.bars.length === 0 &&
-            !polygonBarsPage.nextUrl,
+        massiveCursorExhausted = Boolean(
+          massiveBarsPage &&
+            massiveBarsPage.bars.length === 0 &&
+            !massiveBarsPage.nextUrl,
         );
       }
-      polygonBars = normalizeBarsToStoreTimeframe(
-        mapPolygonBarsToBrokerBars({
-          bars: polygonBarsPage?.bars ?? [],
+      massiveBars = normalizeBarsToStoreTimeframe(
+        mapMassiveBarsToBrokerBars({
+          bars: massiveBarsPage?.bars ?? [],
           sourceName: historicalStoreSource,
           outsideRth,
-          delayed: polygonBarsDelayed,
+          delayed: massiveBarsDelayed,
         }),
         input.timeframe,
       );
@@ -9651,10 +9752,10 @@ async function getBaseBarsImpl(
       if (error instanceof HttpError && error.code === "bars_request_aborted") {
         throw error;
       }
-      polygonBarsPage = null;
-      polygonBars = [];
+      massiveBarsPage = null;
+      massiveBars = [];
     }
-    if (!options.signal?.aborted && polygonBars.length) {
+    if (!options.signal?.aborted && massiveBars.length) {
       const persistRequest = {
         symbol: input.symbol,
         timeframe: input.timeframe,
@@ -9673,23 +9774,23 @@ async function getBaseBarsImpl(
       void persistMarketDataBars({
         request: persistRequest,
         sourceName: historicalStoreSource,
-        bars: polygonBars,
+        bars: massiveBars,
       });
     }
-    const mergeablePolygonBars = restrictHistoricalSynthesisToBrokerBackfill(
+    const mergeableMassiveBars = restrictHistoricalSynthesisToBrokerBackfill(
       input,
-      polygonBars,
+      massiveBars,
       ibkrBars,
     );
     const merged = new Map<number, BrokerBarSnapshot>();
 
     // Tag each bar honestly with its actual source so the chart UI / debugging
-    // can tell what came from where. IBKR bars always overwrite Polygon bars at
+    // can tell what came from where. IBKR bars always overwrite Massive bars at
     // the same timestamp because IBKR is the authoritative live broker feed.
     storedHistoricalBars.forEach((bar) => {
       merged.set(bar.timestamp.getTime(), bar);
     });
-    mergeablePolygonBars.forEach((bar) => {
+    mergeableMassiveBars.forEach((bar) => {
       gapFilled = true;
       merged.set(bar.timestamp.getTime(), {
         ...bar,
@@ -9698,8 +9799,8 @@ async function getBaseBarsImpl(
         outsideRth,
         partial: false,
         transport: "tws",
-        delayed: polygonBarsDelayed,
-        freshness: polygonBarsDelayed ? "delayed" : "live",
+        delayed: massiveBarsDelayed,
+        freshness: massiveBarsDelayed ? "delayed" : "live",
         dataUpdatedAt: bar.timestamp,
       });
     });
@@ -9741,7 +9842,9 @@ async function getBaseBarsImpl(
     });
     try {
       attemptedBrokerHistory = true;
-      const fullBrokerBars = await fetchBrokerHistory(input);
+      const fullBrokerBars = await fetchBrokerHistory(input, {
+        recoveryMode: "full",
+      });
       if (fullBrokerBars.length) {
         const merged = new Map<number, BrokerBarSnapshot>();
         bars.forEach((bar) => {
@@ -9792,12 +9895,12 @@ async function getBaseBarsImpl(
     gapFilled,
     emptyReason,
     studyFallback,
-    historyProvider: polygonClient ? historicalStoreSource : null,
-    historyPageMetadata: buildPolygonHistoryPageMetadata(
-      polygonBarsPage,
+    historyProvider: massiveClient ? historicalStoreSource : null,
+    historyPageMetadata: buildMassiveHistoryPageMetadata(
+      massiveBarsPage,
       buildBarsHistoryCursorSignature(input),
     ),
-    exhaustedBefore: polygonCursorExhausted,
+    exhaustedBefore: massiveCursorExhausted,
   });
 }
 
@@ -10079,24 +10182,26 @@ const OPTIONS_FLOW_RADAR_BATCH_SIZE = readPositiveIntegerEnv(
 );
 const OPTIONS_FLOW_RADAR_DEEP_CANDIDATES = readPositiveIntegerEnv(
   "OPTIONS_FLOW_RADAR_DEEP_CANDIDATES",
-  3,
+  8,
 );
 const OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES = readNonNegativeIntegerEnv(
   "OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES",
   1,
 );
+const OPTIONS_FLOW_SCANNER_DEFAULT_LINE_BUDGET = 200;
+const OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET = 100;
 const OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET",
-  80,
+  OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET,
 );
 const OPTIONS_FLOW_SCANNER_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_BATCH_SIZE",
-  2,
+  8,
 );
-const OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY = 2;
+const OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY = 8;
 const OPTIONS_FLOW_SCANNER_CONCURRENCY = Math.min(
   OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY,
-  readPositiveIntegerEnv("OPTIONS_FLOW_SCANNER_CONCURRENCY", 2),
+  readPositiveIntegerEnv("OPTIONS_FLOW_SCANNER_CONCURRENCY", 8),
 );
 const OPTIONS_FLOW_SCANNER_LIMIT = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_LIMIT",
@@ -10104,7 +10209,7 @@ const OPTIONS_FLOW_SCANNER_LIMIT = readPositiveIntegerEnv(
 );
 const OPTIONS_FLOW_SCANNER_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_LINE_BUDGET",
-  80,
+  OPTIONS_FLOW_SCANNER_DEFAULT_LINE_BUDGET,
 );
 const OPTIONS_FLOW_SCANNER_STRIKE_COVERAGE = readOptionChainStrikeCoverageEnv(
   "OPTIONS_FLOW_SCANNER_STRIKE_COVERAGE",
@@ -10116,11 +10221,11 @@ const OPTIONS_FLOW_EXPIRATION_SCAN_COUNT = readNonNegativeIntegerEnv(
 );
 const OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET",
-  40,
+  OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET,
 );
 const OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET",
-  80,
+  OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET,
 );
 const OPTIONS_FLOW_SCANNER_EXPANDED_MIN_PREMIUM = readPositiveNumberEnv(
   "OPTIONS_FLOW_SCANNER_EXPANDED_MIN_PREMIUM",
@@ -10307,7 +10412,7 @@ function syncMarketDataAdmissionRuntimeDefaults(
 function getOptionsFlowScannerQuoteLeaseTtlMs(): number {
   return readPositiveIntegerEnv(
     "OPTIONS_FLOW_SCANNER_QUOTE_SAMPLE_TIMEOUT_MS",
-    30_000,
+    300_000,
   );
 }
 
@@ -10680,7 +10785,7 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
       limit,
       filters: normalizeFlowEventsFilters({ scope: "all" }),
       unusualThreshold,
-      allowPolygonFallback: false,
+      allowMassiveFallback: false,
       lineBudget,
       scanPhase: phase,
       expirationScanCount,
@@ -11113,10 +11218,7 @@ function refreshMassiveStockUniverseStreams(reason: string): void {
     closeMassiveStockUniverseStreams("not_configured");
     return;
   }
-  if (
-    resourcePressure.level === "high" ||
-    resourcePressure.level === "critical"
-  ) {
+  if (resourcePressure.level === "critical") {
     closeMassiveStockUniverseStreams("resource_pressure");
     return;
   }
@@ -11471,7 +11573,7 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
     plannerErrorReason ??
     (managerShortfallOnly
       ? mergedFillShortReason
-      : coverage.degradedReason ?? mergedFillShortReason);
+      : (coverage.degradedReason ?? mergedFillShortReason));
   const baseCoverage = {
     ...coverage,
     activeTargetSize: mergedActiveTargetSize,
@@ -11629,6 +11731,27 @@ export function getOptionsFlowUniverse() {
     symbols: orderedLaneResolution.admittedSymbols,
     sources,
   };
+}
+
+function getFlowPremiumDistributionUniverseSymbols(): string[] {
+  const universe = getOptionsFlowUniverse();
+  const symbols = universe.symbols.length
+    ? universe.symbols
+    : [
+        ...universe.sources.candidateBuiltInSymbols,
+        ...universe.sources.candidateWatchlistSymbols,
+        ...universe.sources.candidatePrioritySymbols,
+        ...universe.sources.verificationSymbols,
+        ...universe.sources.flowUniverseSymbols,
+      ];
+
+  return Array.from(
+    new Set(
+      symbols
+        .map((symbol) => normalizeSymbol(symbol).toUpperCase())
+        .filter(isPremiumDistributionCandidate),
+    ),
+  ).slice(0, FLOW_PREMIUM_DISTRIBUTION_UNIVERSE_MAX_SYMBOLS);
 }
 
 function flowEventDateMs(value: unknown): number {
@@ -11960,9 +12083,7 @@ export async function getFlowPremiumDistribution(
   );
   const universeSymbols =
     coverageMode === "universe"
-      ? getOptionsFlowUniverse()
-          .symbols.filter(isPremiumDistributionCandidate)
-          .slice(0, FLOW_PREMIUM_DISTRIBUTION_UNIVERSE_MAX_SYMBOLS)
+      ? getFlowPremiumDistributionUniverseSymbols()
       : [];
   const cacheKey = flowPremiumDistributionCacheKey({
     limit,
@@ -12013,15 +12134,15 @@ export async function getFlowPremiumDistribution(
     );
   }
 
-  const config = getPolygonRuntimeConfig();
+  const config = getMassiveRuntimeConfig();
   if (!config) {
     return {
       status: "unconfigured",
       asOf: new Date(),
       timeframe,
       source: {
-        provider: "polygon",
-        label: "Polygon premium snapshots",
+        provider: "massive",
+        label: "Massive premium snapshots",
         timeframe,
         providerHost: null,
         sideBasis: "none",
@@ -12032,14 +12153,14 @@ export async function getFlowPremiumDistribution(
         classificationConfidence: "none",
         coverageMode,
         hydrationStatus: "failed",
-        hydrationWarning: "Polygon/Massive market data is not configured.",
+        hydrationWarning: "Massive market data is not configured.",
         hydratedSymbolCount: 0,
         hydrationDiagnostics: emptyFlowPremiumHydrationDiagnostics(),
         candidateDate: null,
         candidateCount: 0,
         rankedCount: 0,
         errorCount: 0,
-        errorMessage: "Polygon/Massive market data is not configured.",
+        errorMessage: "Massive market data is not configured.",
         cache: "miss",
       },
       widgets: [],
@@ -12048,7 +12169,7 @@ export async function getFlowPremiumDistribution(
 
   const request = (async (): Promise<FlowPremiumDistributionResponse> => {
     const now = new Date();
-    const client = getPolygonClient();
+    const client = getMassiveClient();
     const grouped = await fetchLatestGroupedStockAggregates({
       client,
       now,
@@ -12060,10 +12181,10 @@ export async function getFlowPremiumDistribution(
         asOf: now,
         timeframe,
         source: {
-          provider: "polygon",
-          label: "Polygon premium snapshots",
+          provider: "massive",
+          label: "Massive premium snapshots",
           timeframe,
-          providerHost: getPolygonProviderHost(),
+          providerHost: getMassiveProviderHost(),
           sideBasis: "none",
           quoteAccess: "unknown",
           tradeAccess: "unknown",
@@ -12115,10 +12236,10 @@ export async function getFlowPremiumDistribution(
         asOf: now,
         timeframe,
         source: {
-          provider: "polygon",
-          label: "Polygon premium snapshots",
+          provider: "massive",
+          label: "Massive premium snapshots",
           timeframe,
-          providerHost: getPolygonProviderHost(),
+          providerHost: getMassiveProviderHost(),
           sideBasis: "none",
           quoteAccess: "unknown",
           tradeAccess: "unknown",
@@ -12227,7 +12348,7 @@ export async function getFlowPremiumDistribution(
               errorMessage ??
               (error instanceof Error && error.message
                 ? error.message
-                : "Polygon options premium snapshot failed.");
+                : "Massive options premium snapshot failed.");
             return null;
           }
         },
@@ -12264,8 +12385,8 @@ export async function getFlowPremiumDistribution(
         asOf,
         timeframe,
         source: {
-          provider: "polygon",
-          label: "Polygon premium snapshots",
+          provider: "massive",
+          label: "Massive premium snapshots",
           timeframe,
           ...sourceDiagnostics,
           coverageMode,
@@ -12472,24 +12593,18 @@ export function getOptionsFlowScannerDiagnostics() {
   const resourcePressure = getApiResourcePressureSnapshot();
   const scannerPressure = getOptionsFlowScannerPressureGate(resourcePressure);
   const backgroundBlockedReason = getOptionsFlowScannerBackgroundBlockReason();
-  const scannerPressureThrottled =
-    !backgroundBlockedReason && scannerPressure.throttled;
   const scannerFillMode =
     backgroundBlockedReason === "live-warmup"
       ? "startup-protected"
       : backgroundBlockedReason
         ? "blocked"
-        : scannerPressureThrottled
-          ? "pressure-throttled"
-          : "steady-state";
+        : "steady-state";
   const limitingReason =
     backgroundBlockedReason === "live-warmup"
       ? "startup-protected"
       : backgroundBlockedReason === "resource-pressure"
         ? "api-pressure-gate"
-        : scannerPressureThrottled
-          ? "scanner-throttled-high-pressure"
-          : backgroundBlockedReason;
+        : backgroundBlockedReason;
   const effectiveConcurrency = backgroundBlockedReason
     ? 0
     : resolveOptionsFlowScannerEffectiveConcurrency(config);
@@ -12929,7 +13044,7 @@ function findResolvedOptionContractMatch(
   return nearest;
 }
 
-function buildPolygonOptionTicker(input: {
+function buildMassiveOptionTicker(input: {
   underlying: string;
   expirationDate: Date;
   strike: number;
@@ -12956,7 +13071,7 @@ function buildPolygonOptionTicker(input: {
   return `O:${underlying}${yy}${mm}${dd}${side}${strike}`;
 }
 
-function normalizePolygonOptionTicker(value: unknown): string | null {
+function normalizeMassiveOptionTicker(value: unknown): string | null {
   const normalized =
     typeof value === "string"
       ? value.trim().toUpperCase().replace(/\s+/g, "")
@@ -12969,8 +13084,8 @@ function normalizePolygonOptionTicker(value: unknown): string | null {
   return /^O:[A-Z0-9.-]+\d{6}[CP]\d{8}$/.test(ticker) ? ticker : null;
 }
 
-function mapPolygonOptionBarsToBrokerBars(input: {
-  bars: PolygonBarSnapshot[];
+function mapMassiveOptionBarsToBrokerBars(input: {
+  bars: MassiveBarSnapshot[];
   providerContractId: string | null;
   delayed: boolean;
   outsideRth: boolean;
@@ -12982,7 +13097,7 @@ function mapPolygonOptionBarsToBrokerBars(input: {
     low: bar.low,
     close: bar.close,
     volume: bar.volume,
-    source: "polygon-option-aggregates",
+    source: "massive-option-aggregates",
     providerContractId: input.providerContractId,
     outsideRth: input.outsideRth,
     partial: false,
@@ -13011,19 +13126,19 @@ function barTimestampMs(bar: {
   return Number.isFinite(value) ? value : null;
 }
 
-type OptionChartPolygonBarsResult = {
+type OptionChartMassiveBarsResult = {
   bars: BrokerBarSnapshot[];
-  page: PolygonAggregateBarsPage;
+  page: MassiveAggregateBarsPage;
   cursorSignature: string;
   cursorExhausted: boolean;
 };
 
-function mergeIbkrAndPolygonOptionBars(input: {
+function mergeIbkrAndMassiveOptionBars(input: {
   ibkrBars: readonly BrokerBarSnapshot[];
-  polygonBars: readonly BrokerBarSnapshot[];
+  massiveBars: readonly BrokerBarSnapshot[];
   limit?: number;
 }): { bars: BrokerBarSnapshot[]; gapFilled: boolean } {
-  if (!input.polygonBars.length) {
+  if (!input.massiveBars.length) {
     return {
       bars: input.ibkrBars.map(decorateIbkrHistoryBar),
       gapFilled: false,
@@ -13031,19 +13146,19 @@ function mergeIbkrAndPolygonOptionBars(input: {
   }
 
   const desiredBars = Math.max(
-    input.limit ?? Math.max(input.ibkrBars.length, input.polygonBars.length),
+    input.limit ?? Math.max(input.ibkrBars.length, input.massiveBars.length),
     1,
   );
-  const polygonByTimestamp = new Map<number, BrokerBarSnapshot>();
-  input.polygonBars.forEach((bar) => {
+  const massiveByTimestamp = new Map<number, BrokerBarSnapshot>();
+  input.massiveBars.forEach((bar) => {
     const timestampMs = barTimestampMs(bar);
     if (timestampMs !== null) {
-      polygonByTimestamp.set(timestampMs, bar);
+      massiveByTimestamp.set(timestampMs, bar);
     }
   });
 
   const merged = new Map<number, BrokerBarSnapshot>();
-  input.polygonBars.forEach((bar) => {
+  input.massiveBars.forEach((bar) => {
     const timestampMs = barTimestampMs(bar);
     if (timestampMs !== null) {
       merged.set(timestampMs, bar);
@@ -13054,15 +13169,15 @@ function mergeIbkrAndPolygonOptionBars(input: {
     if (timestampMs === null) {
       return;
     }
-    const polygonBar = polygonByTimestamp.get(timestampMs);
-    const polygonVolume = polygonBar?.volume;
-    const shouldUsePolygonVolume =
+    const massiveBar = massiveByTimestamp.get(timestampMs);
+    const massiveVolume = massiveBar?.volume;
+    const shouldUseMassiveVolume =
       (!Number.isFinite(bar.volume) || bar.volume <= 0) &&
-      Number.isFinite(polygonVolume) &&
-      (polygonVolume ?? 0) > 0;
+      Number.isFinite(massiveVolume) &&
+      (massiveVolume ?? 0) > 0;
     const volume =
-      shouldUsePolygonVolume && polygonVolume !== undefined
-        ? polygonVolume
+      shouldUseMassiveVolume && massiveVolume !== undefined
+        ? massiveVolume
         : bar.volume;
     merged.set(timestampMs, {
       ...decorateIbkrHistoryBar(bar),
@@ -13075,11 +13190,11 @@ function mergeIbkrAndPolygonOptionBars(input: {
     .slice(-desiredBars);
   return {
     bars,
-    gapFilled: bars.some((bar) => bar.source === "polygon-option-aggregates"),
+    gapFilled: bars.some((bar) => bar.source === "massive-option-aggregates"),
   };
 }
 
-function shouldFetchPolygonOptionBarsForIbkrResult(input: {
+function shouldFetchMassiveOptionBarsForIbkrResult(input: {
   bars: readonly BrokerBarSnapshot[];
   timeframe: GetBarsInput["timeframe"];
   limit?: number;
@@ -13136,7 +13251,7 @@ function shouldPreferReferenceOptionHistory(input: {
   );
 }
 
-async function fetchOptionChartPolygonBars(input: {
+async function fetchOptionChartMassiveBars(input: {
   underlying: string;
   expirationDate: Date;
   strike: number;
@@ -13151,7 +13266,7 @@ async function fetchOptionChartPolygonBars(input: {
   preferCursor?: boolean;
   outsideRth: boolean;
   delayed: boolean;
-}): Promise<OptionChartPolygonBarsResult> {
+}): Promise<OptionChartMassiveBarsResult> {
   const aggregateBaseTimeframe = getBaseBarsTimeframe(input.timeframe);
   const aggregateBaseLimit = expandBarsLimitForBaseTimeframe({
     limit: input.limit ?? DEFAULT_BARS_LIMIT,
@@ -13174,13 +13289,13 @@ async function fetchOptionChartPolygonBars(input: {
         signature: cursorSignature,
       })
     : ({ ok: false, reason: "missing" } as const);
-  let polygonPage: PolygonAggregateBarsPage | null = null;
+  let massivePage: MassiveAggregateBarsPage | null = null;
   let attemptedCursorContinuation = false;
   let usedCursorContinuation = false;
   if (cursorResolution.ok) {
     attemptedCursorContinuation = true;
-    polygonPage = await resolveWithin(
-      fetchPolygonBarsProviderCursorPage(getPolygonClient(), {
+    massivePage = await resolveWithin(
+      fetchMassiveBarsProviderCursorPage(getMassiveClient(), {
         symbol: input.optionTicker,
         timeframe: aggregateBaseTimeframe,
         limit: aggregateBaseLimit,
@@ -13189,16 +13304,16 @@ async function fetchOptionChartPolygonBars(input: {
       BARS_PROVIDER_BUDGET_MS,
       null,
     );
-    usedCursorContinuation = Boolean(polygonPage);
+    usedCursorContinuation = Boolean(massivePage);
   }
-  if (!polygonPage) {
+  if (!massivePage) {
     if (
       attemptedCursorContinuation ||
       (input.preferCursor && input.historyCursor)
     ) {
       barsHydrationCounters.cursorFallback += 1;
     }
-    polygonPage = await fetchPolygonOptionBarsPage(getPolygonClient(), {
+    massivePage = await fetchMassiveOptionBarsPage(getMassiveClient(), {
       optionTicker: input.optionTicker,
       timeframe: aggregateBaseTimeframe,
       limit: aggregateBaseLimit,
@@ -13207,12 +13322,12 @@ async function fetchOptionChartPolygonBars(input: {
     });
   }
   barsHydrationCounters.providerFetch += 1;
-  barsHydrationCounters.providerPage += polygonPage.pageCount;
+  barsHydrationCounters.providerPage += massivePage.pageCount;
   if (usedCursorContinuation) {
     barsHydrationCounters.cursorContinuation += 1;
   }
-  const baseBars = mapPolygonOptionBarsToBrokerBars({
-    bars: polygonPage.bars,
+  const baseBars = mapMassiveOptionBarsToBrokerBars({
+    bars: massivePage.bars,
     providerContractId: input.providerContractId,
     delayed: input.delayed,
     outsideRth: input.outsideRth,
@@ -13225,28 +13340,28 @@ async function fetchOptionChartPolygonBars(input: {
         );
   return {
     bars,
-    page: polygonPage,
+    page: massivePage,
     cursorSignature,
     cursorExhausted:
       usedCursorContinuation &&
-      polygonPage.bars.length === 0 &&
-      !polygonPage.nextUrl,
+      massivePage.bars.length === 0 &&
+      !massivePage.nextUrl,
   };
 }
 
-async function tryFetchOptionChartPolygonBars(
-  input: Parameters<typeof fetchOptionChartPolygonBars>[0],
-): Promise<OptionChartPolygonBarsResult | null> {
+async function tryFetchOptionChartMassiveBars(
+  input: Parameters<typeof fetchOptionChartMassiveBars>[0],
+): Promise<OptionChartMassiveBarsResult | null> {
   try {
-    return await fetchOptionChartPolygonBars(input);
+    return await fetchOptionChartMassiveBars(input);
   } catch {
     return null;
   }
 }
 
-function mergePolygonOptionSnapshotIntoIbkrContract(
+function mergeMassiveOptionSnapshotIntoIbkrContract(
   contract: IbkrOptionChainContracts[number],
-  snapshot: PolygonOptionChainContract,
+  snapshot: MassiveOptionChainContract,
   delayed: boolean,
 ): IbkrOptionChainContracts[number] {
   const updatedAt = snapshot.updatedAt;
@@ -13272,38 +13387,38 @@ function mergePolygonOptionSnapshotIntoIbkrContract(
   };
 }
 
-async function hydrateOptionChainWithPolygonSnapshots(input: {
+async function hydrateOptionChainWithMassiveSnapshots(input: {
   request: IbkrOptionChainInput;
   contracts: IbkrOptionChainContracts;
 }): Promise<IbkrOptionChainContracts> {
-  const polygonConfig = getPolygonRuntimeConfig();
-  if (!polygonConfig || input.contracts.length === 0) {
+  const massiveConfig = getMassiveRuntimeConfig();
+  if (!massiveConfig || input.contracts.length === 0) {
     return input.contracts;
   }
 
   try {
-    const snapshots = await getPolygonClient().getOptionChain({
+    const snapshots = await getMassiveClient().getOptionChain({
       underlying: input.request.underlying,
       expirationDate: input.request.expirationDate,
       contractType: input.request.contractType,
     });
     const byTicker = new Map(
       snapshots.map((snapshot) => [
-        normalizePolygonOptionTicker(snapshot.contract.ticker),
+        normalizeMassiveOptionTicker(snapshot.contract.ticker),
         snapshot,
       ]),
     );
-    const delayed = polygonConfig.baseUrl.includes("massive.com");
+    const delayed = massiveConfig.baseUrl.includes("massive.com");
     return input.contracts.map((contract) => {
-      const polygonTicker = buildPolygonOptionTicker({
+      const massiveTicker = buildMassiveOptionTicker({
         underlying: contract.contract.underlying,
         expirationDate: contract.contract.expirationDate,
         strike: contract.contract.strike,
         right: contract.contract.right,
       });
-      const snapshot = polygonTicker ? byTicker.get(polygonTicker) : null;
+      const snapshot = massiveTicker ? byTicker.get(massiveTicker) : null;
       return snapshot
-        ? mergePolygonOptionSnapshotIntoIbkrContract(
+        ? mergeMassiveOptionSnapshotIntoIbkrContract(
             contract,
             snapshot,
             delayed,
@@ -13313,7 +13428,7 @@ async function hydrateOptionChainWithPolygonSnapshots(input: {
   } catch (error) {
     logger.debug(
       { err: error, underlying: input.request.underlying },
-      "Polygon option-chain snapshot hydration failed",
+      "Massive option-chain snapshot hydration failed",
     );
     return input.contracts;
   }
@@ -14256,7 +14371,7 @@ function refreshOptionChainCache(
       const value =
         input.quoteHydration === "metadata" &&
         input.allowDelayedSnapshotHydration !== false
-          ? await hydrateOptionChainWithPolygonSnapshots({
+          ? await hydrateOptionChainWithMassiveSnapshots({
               request: input,
               contracts: ibkrValue,
             })
@@ -15081,7 +15196,7 @@ export async function getOptionChartBarsWithDebug(input: {
   const expirationDate = input.expirationDate;
   const strike = Number(input.strike);
   const right = input.right;
-  const providedOptionTicker = normalizePolygonOptionTicker(input.optionTicker);
+  const providedOptionTicker = normalizeMassiveOptionTicker(input.optionTicker);
   const skipBrokerContractResolution = Boolean(
     input.skipBrokerContractResolution && providedOptionTicker,
   );
@@ -15126,7 +15241,7 @@ export async function getOptionChartBarsWithDebug(input: {
       (value.dataSource !== "none"
         ? value.dataSource
         : value.emptyReason === "no-option-aggregate-bars"
-          ? "polygon-option-aggregates"
+          ? "massive-option-aggregates"
           : null);
     return {
       ...value,
@@ -15198,16 +15313,16 @@ export async function getOptionChartBarsWithDebug(input: {
     : "none";
   let chainDebug: RequestDebugMetadata | null = null;
   let chainError: unknown = null;
-  const polygonConfig = getPolygonRuntimeConfig();
-  const polygonOptionBarsDelayed =
-    polygonConfig?.baseUrl.includes("massive.com") ?? false;
+  const massiveConfig = getMassiveRuntimeConfig();
+  const massiveOptionBarsDelayed =
+    massiveConfig?.baseUrl.includes("massive.com") ?? false;
 
   const fetchReferenceOptionChartBars = async (request: {
     optionTicker: string;
     feedIssue: boolean;
     debugReason?: string | null;
   }): Promise<OptionChartBarsResult> => {
-    const polygonBarsResult = await fetchOptionChartPolygonBars({
+    const massiveBarsResult = await fetchOptionChartMassiveBars({
       underlying,
       expirationDate,
       strike,
@@ -15221,12 +15336,12 @@ export async function getOptionChartBarsWithDebug(input: {
       historyCursor: input.historyCursor,
       preferCursor: input.preferCursor,
       outsideRth,
-      delayed: polygonOptionBarsDelayed,
+      delayed: massiveOptionBarsDelayed,
     });
-    const bars = polygonBarsResult.bars;
+    const bars = massiveBarsResult.bars;
     const latestBar = getLatestBar(bars);
     const dataUpdatedAt = getBarDataUpdatedAt(latestBar);
-    const historySource = "polygon-option-aggregates";
+    const historySource = "massive-option-aggregates";
     const historyPage = buildBarsHistoryPage({
       request: {
         symbol: underlying,
@@ -15241,10 +15356,10 @@ export async function getOptionChartBarsWithDebug(input: {
       },
       bars,
       provider: historySource,
-      exhaustedBefore: polygonBarsResult.cursorExhausted,
-      ...buildPolygonHistoryPageMetadata(
-        polygonBarsResult.page,
-        polygonBarsResult.cursorSignature,
+      exhaustedBefore: massiveBarsResult.cursorExhausted,
+      ...buildMassiveHistoryPageMetadata(
+        massiveBarsResult.page,
+        massiveBarsResult.cursorSignature,
       ),
     });
 
@@ -15256,7 +15371,7 @@ export async function getOptionChartBarsWithDebug(input: {
         contract,
         providerContractId,
         resolutionSource,
-        dataSource: bars.length ? "polygon-option-aggregates" : "none",
+        dataSource: bars.length ? "massive-option-aggregates" : "none",
         emptyReason: bars.length ? null : "no-option-aggregate-bars",
         feedIssue: request.feedIssue,
         transport: null,
@@ -15288,14 +15403,14 @@ export async function getOptionChartBarsWithDebug(input: {
 
   const referenceOptionTicker =
     providedOptionTicker ??
-    buildPolygonOptionTicker({
+    buildMassiveOptionTicker({
       underlying,
       expirationDate,
       strike,
       right,
     });
   if (
-    polygonConfig &&
+    massiveConfig &&
     referenceOptionTicker &&
     !(input.preferCursor && input.historyCursor) &&
     shouldPreferReferenceOptionHistory({ to: input.to, nowMs: requestedAt })
@@ -15390,10 +15505,10 @@ export async function getOptionChartBarsWithDebug(input: {
     }
   }
 
-  const polygonOptionTicker =
+  const massiveOptionTicker =
     providedOptionTicker ??
-    normalizePolygonOptionTicker(contract?.ticker) ??
-    buildPolygonOptionTicker({
+    normalizeMassiveOptionTicker(contract?.ticker) ??
+    buildMassiveOptionTicker({
       underlying,
       expirationDate,
       strike: contract?.strike ?? strike,
@@ -15405,10 +15520,10 @@ export async function getOptionChartBarsWithDebug(input: {
       input.limit ?? DEFAULT_BARS_LIMIT,
       ibkrBarsResult.bars.length,
     );
-    const shouldFetchPolygonBars = Boolean(
-      polygonConfig &&
-        polygonOptionTicker &&
-        shouldFetchPolygonOptionBarsForIbkrResult({
+    const shouldFetchMassiveBars = Boolean(
+      massiveConfig &&
+        massiveOptionTicker &&
+        shouldFetchMassiveOptionBarsForIbkrResult({
           bars: ibkrBarsResult.bars,
           timeframe: input.timeframe,
           limit: input.limit,
@@ -15416,13 +15531,13 @@ export async function getOptionChartBarsWithDebug(input: {
           to: input.to,
         }),
     );
-    const polygonBarsResult = shouldFetchPolygonBars
-      ? await tryFetchOptionChartPolygonBars({
+    const massiveBarsResult = shouldFetchMassiveBars
+      ? await tryFetchOptionChartMassiveBars({
           underlying,
           expirationDate,
           strike,
           right,
-          optionTicker: polygonOptionTicker as string,
+          optionTicker: massiveOptionTicker as string,
           providerContractId,
           timeframe: input.timeframe,
           limit: desiredOptionBars,
@@ -15431,13 +15546,13 @@ export async function getOptionChartBarsWithDebug(input: {
           historyCursor: input.historyCursor,
           preferCursor: input.preferCursor,
           outsideRth,
-          delayed: polygonOptionBarsDelayed,
+          delayed: massiveOptionBarsDelayed,
         })
       : null;
-    const merged = polygonBarsResult
-      ? mergeIbkrAndPolygonOptionBars({
+    const merged = massiveBarsResult
+      ? mergeIbkrAndMassiveOptionBars({
           ibkrBars: ibkrBarsResult.bars,
-          polygonBars: polygonBarsResult.bars,
+          massiveBars: massiveBarsResult.bars,
           limit: desiredOptionBars,
         })
       : {
@@ -15469,11 +15584,11 @@ export async function getOptionChartBarsWithDebug(input: {
           bars,
           provider: historySource,
           exhaustedBefore:
-            polygonBarsResult?.cursorExhausted ??
+            massiveBarsResult?.cursorExhausted ??
             ibkrBarsResult.historyPage.exhaustedBefore,
-          ...buildPolygonHistoryPageMetadata(
-            polygonBarsResult?.page,
-            polygonBarsResult?.cursorSignature,
+          ...buildMassiveHistoryPageMetadata(
+            massiveBarsResult?.page,
+            massiveBarsResult?.cursorSignature,
           ),
         })
       : ibkrBarsResult.historyPage;
@@ -15486,7 +15601,7 @@ export async function getOptionChartBarsWithDebug(input: {
         ...ibkrBarsResult,
         bars,
         gapFilled: ibkrBarsResult.gapFilled || merged.gapFilled,
-        optionTicker: polygonOptionTicker,
+        optionTicker: massiveOptionTicker,
         contract,
         providerContractId,
         resolutionSource,
@@ -15549,34 +15664,34 @@ export async function getOptionChartBarsWithDebug(input: {
           (chainError || (chainDebug as RequestDebugMetadata | null)?.degraded),
       ));
 
-  if (!polygonOptionTicker) {
+  if (!massiveOptionTicker) {
     return finish(
       {
         ...baseResult,
         bars: [],
-        optionTicker: polygonOptionTicker,
+        optionTicker: massiveOptionTicker,
         contract,
         providerContractId,
         resolutionSource,
         dataSource: "none",
-        emptyReason: "missing-polygon-option-ticker",
+        emptyReason: "missing-massive-option-ticker",
         feedIssue,
       },
       { degraded: true },
     );
   }
 
-  if (!polygonConfig) {
+  if (!massiveConfig) {
     return finish(
       {
         ...baseResult,
         bars: [],
-        optionTicker: polygonOptionTicker,
+        optionTicker: massiveOptionTicker,
         contract,
         providerContractId,
         resolutionSource,
         dataSource: "none",
-        emptyReason: "polygon-not-configured",
+        emptyReason: "massive-not-configured",
         feedIssue,
       },
       { degraded: true },
@@ -15585,7 +15700,7 @@ export async function getOptionChartBarsWithDebug(input: {
 
   try {
     return await fetchReferenceOptionChartBars({
-      optionTicker: polygonOptionTicker,
+      optionTicker: massiveOptionTicker,
       feedIssue,
     });
   } catch {
@@ -15593,12 +15708,12 @@ export async function getOptionChartBarsWithDebug(input: {
       {
         ...baseResult,
         bars: [],
-        optionTicker: polygonOptionTicker,
+        optionTicker: massiveOptionTicker,
         contract,
         providerContractId,
         resolutionSource,
         dataSource: "none",
-        emptyReason: "polygon-history-error",
+        emptyReason: "massive-history-error",
         feedIssue,
       },
       { degraded: true },
@@ -15614,7 +15729,7 @@ export async function getHistoricalOptionTrades(input: {
   maxPages?: number;
   signal?: AbortSignal;
 }): Promise<OptionTradePrint[]> {
-  return getPolygonClient().getOptionTradePrints(input);
+  return getMassiveClient().getOptionTradePrints(input);
 }
 
 export async function getMarketDepth(input: {
@@ -15972,12 +16087,7 @@ function applyHistoricalBarsToFlowScannerContract(
   };
 }
 
-async function hydrateFlowScannerContractsFromHistoricalBars(input: {
-  underlying: string;
-  candidates: IbkrOptionChainContracts;
-  scanPhase: OptionsFlowScannerScanPhase;
-  signal?: AbortSignal;
-}): Promise<{
+type FlowScannerHistoricalHydration = {
   contracts: IbkrOptionChainContracts;
   requestedCount: number;
   returnedCount: number;
@@ -15985,17 +16095,28 @@ async function hydrateFlowScannerContractsFromHistoricalBars(input: {
   errorCount: number;
   marketDataMode: string | null;
   firstError: string | null;
-}> {
+};
+
+function emptyFlowScannerHistoricalHydration(): FlowScannerHistoricalHydration {
+  return {
+    contracts: [],
+    requestedCount: 0,
+    returnedCount: 0,
+    missingCount: 0,
+    errorCount: 0,
+    marketDataMode: null,
+    firstError: null,
+  };
+}
+
+async function hydrateFlowScannerContractsFromHistoricalBars(input: {
+  underlying: string;
+  candidates: IbkrOptionChainContracts;
+  scanPhase: OptionsFlowScannerScanPhase;
+  signal?: AbortSignal;
+}): Promise<FlowScannerHistoricalHydration> {
   if (!input.candidates.length) {
-    return {
-      contracts: [],
-      requestedCount: 0,
-      returnedCount: 0,
-      missingCount: 0,
-      errorCount: 0,
-      marketDataMode: null,
-      firstError: null,
-    };
+    return emptyFlowScannerHistoricalHydration();
   }
 
   let firstError: string | null = null;
@@ -16394,7 +16515,7 @@ export async function listFlowEvents(input: {
   to?: Date | string;
   blocking?: boolean;
   queueRefresh?: boolean;
-  allowPolygonFallback?: boolean;
+  allowMassiveFallback?: boolean;
 }): Promise<FlowEventsResult> {
   const underlying = normalizeSymbol(input.underlying ?? "");
   const limit = Math.max(1, Math.min(input.limit ?? 50, 1_000));
@@ -16410,12 +16531,12 @@ export async function listFlowEvents(input: {
   );
   const runtimeConfig = getOptionsFlowRuntimeConfig();
   const shouldQueueRefresh = input.queueRefresh !== false;
-  const allowPolygonFallback = input.allowPolygonFallback === true;
+  const allowMassiveFallback = input.allowMassiveFallback === true;
   const nonblockingScannerRead = !blocking;
   const nonblockingScannerRefresh =
     nonblockingScannerRead &&
     shouldQueueRefresh &&
-    allowPolygonFallback !== true;
+    allowMassiveFallback !== true;
   const explicitLineBudget =
     Number.isFinite(input.lineBudget) && (input.lineBudget ?? 0) > 0
       ? Math.max(
@@ -16444,16 +16565,16 @@ export async function listFlowEvents(input: {
   }
 
   if (timeWindow) {
-    if (!getPolygonRuntimeConfig()) {
+    if (!getMassiveRuntimeConfig()) {
       return {
         events: [],
         source: flowSource({
           provider: "none",
           status: "empty",
-          attemptedProviders: ["polygon"],
+          attemptedProviders: ["massive"],
           unusualThreshold: unusualThreshold ?? 1,
           ibkrStatus: "empty",
-          ibkrReason: "options_flow_historical_requires_polygon",
+          ibkrReason: "options_flow_historical_requires_massive",
         }),
       };
     }
@@ -16508,7 +16629,7 @@ export async function listFlowEvents(input: {
         return listHistoricalFlowEvents({
           underlying,
           providerName: getMarketDataConnectionName(),
-          client: getPolygonClient(),
+          client: getMassiveClient(),
           limit,
           filters,
           unusualThreshold,
@@ -16548,7 +16669,7 @@ export async function listFlowEvents(input: {
       return listHistoricalFlowEvents({
         underlying,
         providerName: getMarketDataConnectionName(),
-        client: getPolygonClient(),
+        client: getMassiveClient(),
         limit,
         filters,
         unusualThreshold,
@@ -16576,7 +16697,7 @@ export async function listFlowEvents(input: {
     limit: Math.max(limit, scannerLimitFloor),
     unusualThreshold,
     lineBudget: scannerLineBudget,
-    allowPolygonFallback,
+    allowMassiveFallback,
     phase: nonblockingScannerRefresh ? ("seed" as const) : ("manual" as const),
     expirationScanCount: nonblockingScannerRefresh
       ? 1
@@ -16605,7 +16726,7 @@ export async function listFlowEvents(input: {
     : null;
   const scannerSnapshot = isFlowScannerSnapshotAllowedForFallbackPolicy(
     rawScannerSnapshot,
-    scannerRequest.allowPolygonFallback,
+    scannerRequest.allowMassiveFallback,
   )
     ? rawScannerSnapshot
     : null;
@@ -16630,7 +16751,7 @@ export async function listFlowEvents(input: {
   const cacheKey = `${underlying}:${limit}:${
     unusualThreshold ?? "default"
   }:${flowEventsFilterCacheKey(filters)}:${
-    scannerRequest.allowPolygonFallback ? "polygon-fallback" : "ibkr-only"
+    scannerRequest.allowMassiveFallback ? "massive-fallback" : "ibkr-only"
   }:${scannerRequest.lineBudget}`;
   const requestedAt = Date.now();
   let cached = flowEventsCache.get(cacheKey);
@@ -16679,7 +16800,7 @@ export async function listFlowEvents(input: {
         scanPhase: scannerRequest.phase,
         expirationScanCount: scannerRequest.expirationScanCount,
         strikeCoverage: scannerRequest.strikeCoverage,
-        allowPolygonFallback: scannerRequest.allowPolygonFallback,
+        allowMassiveFallback: scannerRequest.allowMassiveFallback,
       }).catch(() => {});
     }
     return cached.value;
@@ -16748,7 +16869,7 @@ export async function listFlowEvents(input: {
     scanPhase: scannerRequest.phase,
     expirationScanCount: scannerRequest.expirationScanCount,
     strikeCoverage: scannerRequest.strikeCoverage,
-    allowPolygonFallback: scannerRequest.allowPolygonFallback,
+    allowMassiveFallback: scannerRequest.allowMassiveFallback,
   });
   if (!blocking) {
     return deferredFlowEventsResult({
@@ -16774,7 +16895,7 @@ function refreshFlowEventsCache(
     scanPhase?: OptionsFlowScannerScanPhase;
     expirationScanCount?: number;
     strikeCoverage?: OptionChainStrikeCoverage;
-    allowPolygonFallback?: boolean;
+    allowMassiveFallback?: boolean;
   },
 ): Promise<FlowEventsResult> {
   const existing = flowEventsInFlight.get(cacheKey);
@@ -16805,7 +16926,7 @@ function refreshFlowEventsCache(
     if (
       cacheable &&
       getOptionsFlowRuntimeConfig().scannerEnabled &&
-      input.allowPolygonFallback !== true &&
+      input.allowMassiveFallback !== true &&
       !hasNarrowFlowFilters(input.filters)
     ) {
       optionsFlowScanner.storeSnapshot(
@@ -16861,7 +16982,7 @@ function refreshHistoricalFlowEventsCache(
   const request = listHistoricalFlowEvents({
     underlying: input.underlying,
     providerName: getMarketDataConnectionName(),
-    client: getPolygonClient(),
+    client: getMassiveClient(),
     limit: input.limit,
     filters: input.filters,
     unusualThreshold: input.unusualThreshold,
@@ -16914,7 +17035,7 @@ async function listFlowEventsUncached(input: {
   limit: number;
   filters: FlowEventsFilters;
   unusualThreshold?: number;
-  allowPolygonFallback?: boolean;
+  allowMassiveFallback?: boolean;
   lineBudget?: number;
   scanPhase?: OptionsFlowScannerScanPhase;
   expirationScanCount?: number;
@@ -16946,7 +17067,7 @@ async function listFlowEventsUncached(input: {
   let ibkrMarketDataMode: string | null = null;
   let underlyingSpotPrice: number | null = null;
   let underlyingSpotSource: "massive" | "ibkr" | null = null;
-  let polygonError: string | null = null;
+  let massiveError: string | null = null;
   const scanPhase = input.scanPhase ?? "manual";
   const expirationScanCount =
     Number.isFinite(input.expirationScanCount) &&
@@ -17040,17 +17161,21 @@ async function listFlowEventsUncached(input: {
           lineBudget,
           input.underlying,
         );
-      const historicalHydration =
-        await hydrateFlowScannerContractsFromHistoricalBars({
-          underlying: input.underlying,
-          candidates: historicalCandidateContracts,
-          scanPhase,
-          signal: input.signal,
-        });
-      const liveHydrationCandidates = mergeFlowScannerHydratedContracts(
-        liveCandidateContracts,
-        historicalHydration.contracts,
-      );
+      const shouldHydrateHistoricalBars = scanPhase === "manual";
+      const historicalHydration = shouldHydrateHistoricalBars
+        ? await hydrateFlowScannerContractsFromHistoricalBars({
+            underlying: input.underlying,
+            candidates: historicalCandidateContracts,
+            scanPhase,
+            signal: input.signal,
+          })
+        : emptyFlowScannerHistoricalHydration();
+      const liveHydrationCandidates = shouldHydrateHistoricalBars
+        ? mergeFlowScannerHydratedContracts(
+            liveCandidateContracts,
+            historicalHydration.contracts,
+          )
+        : liveCandidateContracts;
       const liveHydration = await hydrateFlowScannerContractsFromLiveQuotes({
         underlying: input.underlying,
         candidates: liveHydrationCandidates,
@@ -17065,7 +17190,7 @@ async function listFlowEventsUncached(input: {
         liveHydration.admissionBridgeMismatchCount;
       ibkrMarketDataMode =
         liveHydration.marketDataMode ?? historicalHydration.marketDataMode;
-      if (historicalHydration.firstError) {
+      if (shouldHydrateHistoricalBars && historicalHydration.firstError) {
         ibkrError ??= historicalHydration.firstError;
         ibkrReason ??= "options_flow_historical_hydration_degraded";
       }
@@ -17082,6 +17207,7 @@ async function listFlowEventsUncached(input: {
         ibkrReason ??= "options_flow_quote_hydration_empty";
       }
       if (
+        shouldHydrateHistoricalBars &&
         historicalHydration.requestedCount > 0 &&
         historicalHydration.returnedCount === 0 &&
         liveHydration.returnedCount === 0 &&
@@ -17275,13 +17401,13 @@ async function listFlowEventsUncached(input: {
   }
 
   if (
-    input.allowPolygonFallback === true &&
-    getPolygonRuntimeConfig() &&
-    !attemptedProviders.includes("polygon")
+    input.allowMassiveFallback === true &&
+    getMassiveRuntimeConfig() &&
+    !attemptedProviders.includes("massive")
   ) {
-    attemptedProviders.push("polygon");
+    attemptedProviders.push("massive");
     try {
-      const polygonCandidateLimit = hasNarrowFlowFilters(input.filters)
+      const massiveCandidateLimit = hasNarrowFlowFilters(input.filters)
         ? Math.min(
             250,
             Math.max(
@@ -17291,23 +17417,23 @@ async function listFlowEventsUncached(input: {
             ),
           )
         : input.limit;
-      const polygonEvents = await getPolygonClient().getDerivedFlowEvents({
+      const massiveEvents = await getMassiveClient().getDerivedFlowEvents({
         underlying: input.underlying,
-        limit: polygonCandidateLimit,
+        limit: massiveCandidateLimit,
         unusualThreshold: input.unusualThreshold,
       });
-      const filteredPolygonEvents = filterFlowEventsForRequest(
-        polygonEvents,
+      const filteredMassiveEvents = filterFlowEventsForRequest(
+        massiveEvents,
         input.filters,
         input.unusualThreshold,
         input.limit,
       );
 
-      if (filteredPolygonEvents.length > 0) {
+      if (filteredMassiveEvents.length > 0) {
         return {
-          events: filteredPolygonEvents,
+          events: filteredMassiveEvents,
           source: flowSource({
-            provider: "polygon",
+            provider: "massive",
             status: "fallback",
             fallbackUsed: true,
             attemptedProviders,
@@ -17320,20 +17446,20 @@ async function listFlowEventsUncached(input: {
         };
       }
     } catch (error) {
-      polygonError = getErrorMessage(error);
+      massiveError = getErrorMessage(error);
     }
   }
 
   const ibkrLoadedEmptySnapshot = ibkrStatus === "loaded";
   const errorMessage = ibkrLoadedEmptySnapshot
     ? null
-    : (polygonError ?? ibkrError);
+    : (massiveError ?? ibkrError);
   return {
     events: [],
     source: flowSource({
       provider: ibkrLoadedEmptySnapshot ? "ibkr" : "none",
       status: errorMessage ? "error" : "empty",
-      fallbackUsed: attemptedProviders.includes("polygon"),
+      fallbackUsed: attemptedProviders.includes("massive"),
       attemptedProviders,
       errorMessage,
       unusualThreshold: input.unusualThreshold ?? 1,

@@ -1,23 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  __setPolygonMarketDataClientFactoryForTests,
+  __setMassiveMarketDataClientFactoryForTests,
   getFlowPremiumDistribution,
 } from "./platform";
 
-const originalPolygonEnv = Object.fromEntries(
+const originalMassiveEnv = Object.fromEntries(
   [
-    "POLYGON_API_KEY",
-    "POLYGON_KEY",
-    "POLYGON_BASE_URL",
     "MASSIVE_API_KEY",
-    "MASSIVE_MARKET_DATA_API_KEY",
-    "MASSIVE_API_BASE_URL",
+  "MASSIVE_MARKET_DATA_API_KEY",
+  "MASSIVE_API_BASE_URL",
   ].map((key) => [key, process.env[key]]),
 );
 
-function restorePolygonEnv(): void {
-  for (const [key, value] of Object.entries(originalPolygonEnv)) {
+function restoreMassiveEnv(): void {
+  for (const [key, value] of Object.entries(originalMassiveEnv)) {
     if (value === undefined) {
       delete process.env[key];
     } else {
@@ -26,9 +23,9 @@ function restorePolygonEnv(): void {
   }
 }
 
-function configurePolygonEnv(): void {
-  process.env.POLYGON_API_KEY = "test-polygon-key";
-  delete process.env.POLYGON_KEY;
+function configureMassiveEnv(): void {
+  process.env.MASSIVE_API_KEY = "test-massive-key";
+  delete process.env.MASSIVE_MARKET_DATA_API_KEY;
   delete process.env.MASSIVE_API_KEY;
   delete process.env.MASSIVE_MARKET_DATA_API_KEY;
 }
@@ -146,7 +143,7 @@ function makeDistribution(input: {
     sideBasis: input.sideBasis ?? (classifiedPremium > 0 ? "quote_match" : "none"),
     quoteAccess: input.quoteAccess ?? (classifiedPremium > 0 ? "available" : "unavailable"),
     tradeAccess: input.tradeAccess ?? "unavailable",
-    source: "polygon-options-snapshot",
+    source: "massive-options-snapshot",
     confidence: "partial",
     delayed: false,
     pageCount: 4,
@@ -154,12 +151,12 @@ function makeDistribution(input: {
 }
 
 test.afterEach(() => {
-  __setPolygonMarketDataClientFactoryForTests(null);
-  restorePolygonEnv();
+  __setMassiveMarketDataClientFactoryForTests(null);
+  restoreMassiveEnv();
 });
 
 test("flow premium distribution returns ranked widgets before full hydration completes", async () => {
-  configurePolygonEnv();
+  configureMassiveEnv();
   const symbols = Array.from({ length: 30 }, (_, index) => `AAA${index}`);
   const premiumCalls: Array<{
     symbol: string;
@@ -167,7 +164,7 @@ test("flow premium distribution returns ranked widgets before full hydration com
     enrichTrades: boolean | undefined;
   }> = [];
 
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getGroupedDailyStockAggregates: async () =>
@@ -200,7 +197,7 @@ test("flow premium distribution returns ranked widgets before full hydration com
   assert.equal(response.source.hydrationStatus, "refreshing");
   assert.equal(response.source.candidateCount, 24);
   assert.equal(response.source.hydratedSymbolCount, 10);
-  assert.equal(response.source.providerHost, "api.polygon.io");
+  assert.equal(response.source.providerHost, "api.massive.com");
   assert.equal(response.source.sideBasis, "none");
   assert.equal(response.source.tradeAccess, "unavailable");
   assert.equal(response.source.classificationConfidence, "none");
@@ -219,14 +216,14 @@ test("flow premium distribution returns ranked widgets before full hydration com
 });
 
 test("flow premium distribution paints the active flow universe from a small first chunk", async () => {
-  configurePolygonEnv();
+  configureMassiveEnv();
   const premiumCalls: Array<{
     symbol: string;
     maxPages: number | undefined;
     enrichTrades: boolean | undefined;
   }> = [];
 
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getGroupedDailyStockAggregates: async () => [],
@@ -267,10 +264,10 @@ test("flow premium distribution paints the active flow universe from a small fir
 });
 
 test("flow premium distribution source reports very low classification confidence", async () => {
-  configurePolygonEnv();
+  configureMassiveEnv();
   const symbols = Array.from({ length: 7 }, (_, index) => `AAD${index}`);
 
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getGroupedDailyStockAggregates: async () =>
@@ -308,7 +305,7 @@ test("flow premium distribution source reports very low classification confidenc
 });
 
 test("flow premium distribution coalesces in-flight cache-key requests", async () => {
-  configurePolygonEnv();
+  configureMassiveEnv();
   const symbols = Array.from({ length: 8 }, (_, index) => `AAB${index}`);
   let groupedCalls = 0;
   let resolveGrouped: (value: ReturnType<typeof makeAggregate>[]) => void =
@@ -317,7 +314,7 @@ test("flow premium distribution coalesces in-flight cache-key requests", async (
     resolveGrouped = resolve;
   });
 
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getGroupedDailyStockAggregates: async () => {
@@ -359,10 +356,10 @@ test("flow premium distribution coalesces in-flight cache-key requests", async (
 });
 
 test("flow premium distribution degrades instead of failing when candidates error", async () => {
-  configurePolygonEnv();
+  configureMassiveEnv();
   const symbols = Array.from({ length: 6 }, (_, index) => `AAC${index}`);
 
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getGroupedDailyStockAggregates: async () =>
@@ -403,7 +400,7 @@ test("flow premium distribution degrades instead of failing when candidates erro
 });
 
 test("flow premium distribution ranks widgets by scored premium", async () => {
-  configurePolygonEnv();
+  configureMassiveEnv();
   const symbols = ["LOW", "MID", "HIGH", "TAIL"];
   const premiumBySymbol: Record<string, number> = {
     LOW: 100_000,
@@ -412,7 +409,7 @@ test("flow premium distribution ranks widgets by scored premium", async () => {
     TAIL: 50_000,
   };
 
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getGroupedDailyStockAggregates: async () =>
@@ -449,10 +446,10 @@ test("flow premium distribution ranks widgets by scored premium", async () => {
 });
 
 test("flow premium distribution supports the 16-widget Flow page request", async () => {
-  configurePolygonEnv();
+  configureMassiveEnv();
   const symbols = Array.from({ length: 18 }, (_, index) => `AAL${index}`);
 
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getGroupedDailyStockAggregates: async () =>

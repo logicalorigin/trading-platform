@@ -1,6 +1,6 @@
 export type RuntimeMode = "paper" | "live";
 
-export type PolygonRuntimeConfig = {
+export type MassiveRuntimeConfig = {
   apiKey: string;
   baseUrl: string;
 };

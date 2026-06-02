@@ -41,16 +41,16 @@ import type {
 } from "@workspace/db";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
-import { getPolygonRuntimeConfig } from "../lib/runtime";
+import { getMassiveRuntimeConfig } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
 import {
   normalizeLegacyAlgoBranding,
   normalizeLegacyAlgoBrandText,
 } from "./algo-branding";
 import {
-  PolygonMarketDataClient,
+  MassiveMarketDataClient,
   type HistoricalOptionContract,
-} from "../providers/polygon/market-data";
+} from "../providers/massive/market-data";
 
 type NumberLike = number | string | null | undefined;
 
@@ -204,16 +204,16 @@ const POST_EXIT_CONTINUATION_WINDOW_BARS = 10;
 
 const OPTION_CONTRACT_LOOKAHEAD_DAYS = 60;
 
-function getPolygonClient(): PolygonMarketDataClient {
-  const config = getPolygonRuntimeConfig();
+function getMassiveClient(): MassiveMarketDataClient {
+  const config = getMassiveRuntimeConfig();
 
   if (!config) {
-    throw new HttpError(503, "Polygon / Massive market data is not configured.", {
-      code: "polygon_runtime_unavailable",
+    throw new HttpError(503, "Massive market data is not configured.", {
+      code: "massive_runtime_unavailable",
     });
   }
 
-  return new PolygonMarketDataClient(config);
+  return new MassiveMarketDataClient(config);
 }
 
 function startOfUtcDay(value: Date): Date {
@@ -344,8 +344,8 @@ export async function resolveBacktestOptionContract(
     });
   }
 
-  const polygonClient = getPolygonClient();
-  const contracts = await polygonClient.getHistoricalOptionContracts({
+  const massiveClient = getMassiveClient();
+  const contracts = await massiveClient.getHistoricalOptionContracts({
     underlying,
     asOf: occurredAt,
     contractType: input.right,

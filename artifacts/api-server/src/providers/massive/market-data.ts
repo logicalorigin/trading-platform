@@ -13,9 +13,9 @@ import {
 } from "../../lib/values";
 import { fetchJson, withSearchParams } from "../../lib/http";
 import {
-  getPolygonProviderIdentity,
+  getMassiveProviderIdentity,
   isMassiveStocksRealtimeConfigured,
-  type PolygonRuntimeConfig,
+  type MassiveRuntimeConfig,
 } from "../../lib/runtime";
 
 type BarTimeframe =
@@ -32,8 +32,8 @@ type OptionRight = "call" | "put";
 type FlowSentiment = "bullish" | "bearish" | "neutral";
 type FlowEventSideBasis = "quote_match" | "tick_test" | "none";
 type FlowEventSideConfidence = "high" | "medium" | "low" | "none";
-const POLYGON_TICKER_LOGO_CACHE_TTL_MS = 10 * 60 * 1_000;
-const POLYGON_TICKER_DETAILS_CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
+const MASSIVE_TICKER_LOGO_CACHE_TTL_MS = 10 * 60 * 1_000;
+const MASSIVE_TICKER_DETAILS_CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
 export type UniverseMarket =
   | "stocks"
   | "etf"
@@ -42,7 +42,7 @@ export type UniverseMarket =
   | "fx"
   | "crypto"
   | "otc";
-export type MarketDataProvider = "ibkr" | "polygon" | "massive";
+export type MarketDataProvider = "ibkr" | "massive";
 export type UniverseTickerContractMeta =
   | Record<string, string | number | boolean | null>
   | null;
@@ -121,7 +121,7 @@ export type BarSnapshot = {
   volume: number;
 };
 
-export type PolygonAggregateBarsPage = {
+export type MassiveAggregateBarsPage = {
   bars: BarSnapshot[];
   nextUrl: string | null;
   pageCount: number;
@@ -172,7 +172,7 @@ export type HistoricalOptionContract = {
 export type FlowEvent = {
   id: string;
   underlying: string;
-  provider: "polygon";
+  provider: "massive";
   basis: "trade";
   optionTicker: string;
   providerContractId: string | null;
@@ -327,7 +327,7 @@ export type OptionPremiumDistribution = {
   sideBasis: PremiumDistributionSideBasis;
   quoteAccess: PremiumDistributionDataAccess;
   tradeAccess: PremiumDistributionDataAccess;
-  source: "polygon-options-snapshot";
+  source: "massive-options-snapshot";
   confidence: "snapshot" | "partial";
   delayed: boolean;
   pageCount: number;
@@ -358,7 +358,7 @@ export type PremiumDistributionTradeClassification = {
 };
 
 /*
-Polygon/Massive premium distribution mapping:
+Massive premium distribution mapping:
 - Options snapshots provide the session/day price and volume used for total premium.
 - Snapshot last_quote plus last_trade classifies only the latest bid/ask-matched print.
 - Options trades provide the tick-test fallback for top contracts; condition and exchange
@@ -367,20 +367,11 @@ Polygon/Massive premium distribution mapping:
   PYRUS display heuristics, not vendor-defined Webull buckets.
 */
 
-export type PolygonApiDiagnosticsStatus =
+export type MassiveApiDiagnosticsStatus =
   | "ok"
   | "degraded"
   | "unconfigured"
   | "unknown";
-
-export type PolygonApiDiagnostics = {
-  configured: boolean;
-  status: PolygonApiDiagnosticsStatus;
-  baseUrl: string | null;
-  lastSuccessAt: string | null;
-  lastFailureAt: string | null;
-  lastError: string | null;
-};
 
 export type MassiveRestActivityStatus = "success" | "error";
 
@@ -424,7 +415,7 @@ export type MassiveRestActivity = {
 };
 
 export type MassiveRestDiagnostics = {
-  status: PolygonApiDiagnosticsStatus | "idle";
+  status: MassiveApiDiagnosticsStatus | "idle";
   recentRequests: MassiveRestActivity[];
   lastRequest: MassiveRestActivity | null;
   lastSuccessAt: string | null;
@@ -438,16 +429,6 @@ export type MassiveApiDiagnostics = {
   baseUrlHost: string | null;
   stocksRealtimeConfigured: boolean;
   rest: MassiveRestDiagnostics;
-};
-
-const polygonApiDiagnosticsState: {
-  lastSuccessAt: Date | null;
-  lastFailureAt: Date | null;
-  lastError: string | null;
-} = {
-  lastSuccessAt: null,
-  lastFailureAt: null,
-  lastError: null,
 };
 
 const MASSIVE_REST_ACTIVITY_MAX = 12;
@@ -464,13 +445,6 @@ const massiveRestDiagnosticsState: {
   lastFailureAt: null,
   lastError: null,
 };
-
-const polygonErrorMessage = (error: unknown): string =>
-  error instanceof Error && error.message
-    ? error.message
-    : typeof error === "string" && error.trim()
-      ? error
-      : "Polygon request failed.";
 
 const providerErrorMessage = (error: unknown): string =>
   error instanceof Error && error.message
@@ -628,7 +602,7 @@ function readAggregateRange(pathname: string): {
 }
 
 function buildMassiveRestActivity(input: {
-  config: PolygonRuntimeConfig;
+  config: MassiveRuntimeConfig;
   url: string | URL;
   init: RequestInit;
   startedAt: number;
@@ -636,7 +610,7 @@ function buildMassiveRestActivity(input: {
   payload?: unknown;
   error?: unknown;
 }): MassiveRestActivity | null {
-  const providerIdentity = getPolygonProviderIdentity(input.config);
+  const providerIdentity = getMassiveProviderIdentity(input.config);
   if (providerIdentity !== "massive") {
     return null;
   }
@@ -708,55 +682,10 @@ function recordMassiveRestActivity(activity: MassiveRestActivity | null): void {
   massiveRestDiagnosticsState.lastError = activity.error;
 }
 
-export function recordPolygonApiSuccess(at: Date = new Date()): void {
-  polygonApiDiagnosticsState.lastSuccessAt = at;
-}
-
-export function recordPolygonApiFailure(
-  error: unknown,
-  at: Date = new Date(),
-): void {
-  polygonApiDiagnosticsState.lastFailureAt = at;
-  polygonApiDiagnosticsState.lastError = polygonErrorMessage(error);
-}
-
-export function getPolygonApiDiagnostics(
-  config: PolygonRuntimeConfig | null | undefined,
-): PolygonApiDiagnostics {
-  if (!config) {
-    return {
-      configured: false,
-      status: "unconfigured",
-      baseUrl: null,
-      lastSuccessAt: null,
-      lastFailureAt: null,
-      lastError: null,
-    };
-  }
-
-  const lastSuccessAt = polygonApiDiagnosticsState.lastSuccessAt;
-  const lastFailureAt = polygonApiDiagnosticsState.lastFailureAt;
-  const status: PolygonApiDiagnosticsStatus =
-    lastFailureAt && (!lastSuccessAt || lastFailureAt > lastSuccessAt)
-      ? "degraded"
-      : lastSuccessAt
-        ? "ok"
-        : "unknown";
-
-  return {
-    configured: true,
-    status,
-    baseUrl: config.baseUrl,
-    lastSuccessAt: lastSuccessAt?.toISOString() ?? null,
-    lastFailureAt: lastFailureAt?.toISOString() ?? null,
-    lastError: polygonApiDiagnosticsState.lastError,
-  };
-}
-
 export function getMassiveApiDiagnostics(
-  config: PolygonRuntimeConfig | null | undefined,
+  config: MassiveRuntimeConfig | null | undefined,
 ): MassiveApiDiagnostics {
-  const providerIdentity = getPolygonProviderIdentity(config ?? null);
+  const providerIdentity = getMassiveProviderIdentity(config ?? null);
   const configured = Boolean(config && providerIdentity === "massive");
   const lastSuccessAt = massiveRestDiagnosticsState.lastSuccessAt;
   const lastFailureAt = massiveRestDiagnosticsState.lastFailureAt;
@@ -794,7 +723,7 @@ export function __resetMassiveApiDiagnosticsForTests(): void {
   massiveRestDiagnosticsState.lastError = null;
 }
 
-const TIMEFRAME_TO_POLYGON_RANGE: Record<
+const TIMEFRAME_TO_MASSIVE_RANGE: Record<
   BarTimeframe,
   { multiplier: number; timespan: string; stepMs: number }
 > = {
@@ -864,7 +793,7 @@ function resolveAggregateWindowBaseLimit(
   from: Date,
   to: Date,
 ): number {
-  const rangeConfig = TIMEFRAME_TO_POLYGON_RANGE[timeframe];
+  const rangeConfig = TIMEFRAME_TO_MASSIVE_RANGE[timeframe];
   const approximateBars = Math.max(
     1,
     Math.ceil(
@@ -876,7 +805,7 @@ function resolveAggregateWindowBaseLimit(
 }
 
 function resolveAggregateChunkWindowMs(timeframe: BarTimeframe): number {
-  const rangeConfig = TIMEFRAME_TO_POLYGON_RANGE[timeframe];
+  const rangeConfig = TIMEFRAME_TO_MASSIVE_RANGE[timeframe];
   const baseAggregatesPerBar = Math.max(
     1,
     resolveAggregateBaseLimit(timeframe, 1),
@@ -892,11 +821,11 @@ function resolveAggregateChunkWindowMs(timeframe: BarTimeframe): number {
 }
 
 function shouldLagStockAggregateRequest(
-  config: PolygonRuntimeConfig,
+  config: MassiveRuntimeConfig,
   timeframe: BarTimeframe,
 ): boolean {
   return (
-    getPolygonProviderIdentity(config) === "massive" &&
+    getMassiveProviderIdentity(config) === "massive" &&
     isIntradayTimeframe(timeframe) &&
     !isMassiveStocksRealtimeConfigured(config)
   );
@@ -934,7 +863,7 @@ function deriveSnapshotArray(payload: unknown): unknown[] {
   return asArray(record["tickers"] ?? record["results"]);
 }
 
-function readPolygonTicker(snapshot: unknown): string | null {
+function readMassiveTicker(snapshot: unknown): string | null {
   const record = asRecord(snapshot);
 
   if (!record) {
@@ -951,7 +880,7 @@ function mapStockSnapshot(snapshot: unknown): QuoteSnapshot | null {
     return null;
   }
 
-  const symbol = readPolygonTicker(snapshot);
+  const symbol = readMassiveTicker(snapshot);
 
   if (!symbol) {
     return null;
@@ -1872,13 +1801,13 @@ function buildPremiumDistributionHydrationWarning(input: {
   tradeAccess: PremiumDistributionDataAccess;
 }): string | null {
   if (input.quoteAccess === "forbidden" && input.tradeAccess === "forbidden") {
-    return "Option quote-match and option trades are unavailable from the current Polygon/Massive endpoints; totals are hydrated but side split is unavailable.";
+    return "Option quote-match and option trades are unavailable from the current Massive endpoints; totals are hydrated but side split is unavailable.";
   }
   if (input.quoteAccess === "forbidden") {
-    return "Option quote-match data is unavailable from the current Polygon/Massive endpoint; side split uses option trade tick-test.";
+    return "Option quote-match data is unavailable from the current Massive endpoint; side split uses option trade tick-test.";
   }
   if (input.tradeAccess === "forbidden") {
-    return "Option trades are unavailable from the current Polygon/Massive endpoint; side split is unavailable.";
+    return "Option trades are unavailable from the current Massive endpoint; side split is unavailable.";
   }
   if (
     input.classificationConfidence === "none" ||
@@ -2415,7 +2344,7 @@ export function aggregateOptionPremiumDistributionSnapshots(input: {
     sideBasis,
     quoteAccess,
     tradeAccess,
-    source: "polygon-options-snapshot",
+    source: "massive-options-snapshot",
     confidence:
       contractCount > 0 && quoteMatchedCount === contractCount ? "snapshot" : "partial",
     delayed: Boolean(input.delayed),
@@ -2579,7 +2508,7 @@ function mapFlowEvent(
     underlying: normalizeSymbol(
       asString(details["underlying_ticker"]) ?? underlying,
     ),
-    provider: "polygon",
+    provider: "massive",
     basis: "trade",
     optionTicker,
     providerContractId: null,
@@ -2670,7 +2599,7 @@ function mapNewsArticle(article: unknown, preferredTicker?: string): NewsArticle
   };
 }
 
-function mapPolygonUniverseMarket(
+function mapMassiveUniverseMarket(
   market: string,
   type: string | null,
 ): UniverseMarket | null {
@@ -2699,7 +2628,7 @@ function mapPolygonUniverseMarket(
 
 function mapUniverseTicker(
   result: unknown,
-  provider: Exclude<MarketDataProvider, "ibkr"> = "polygon",
+  provider: Exclude<MarketDataProvider, "ibkr"> = "massive",
 ): UniverseTicker | null {
   const record = asRecord(result);
 
@@ -2711,7 +2640,7 @@ function mapUniverseTicker(
   const name = asString(record["name"]);
   const market = asString(record["market"]);
   const type = asString(record["type"]);
-  const mappedMarket = market ? mapPolygonUniverseMarket(market, type) : null;
+  const mappedMarket = market ? mapMassiveUniverseMarket(market, type) : null;
 
   if (!ticker || !name || !mappedMarket) {
     return null;
@@ -2734,8 +2663,8 @@ function mapUniverseTicker(
     industry: null,
     contractDescription: name,
     contractMeta: {
-      polygonMarket: market,
-      polygonType: type,
+      massiveMarket: market,
+      massiveType: type,
     },
     locale: asString(record["locale"]),
     type,
@@ -2754,7 +2683,7 @@ function mapUniverseTicker(
   };
 }
 
-export class PolygonMarketDataClient {
+export class MassiveMarketDataClient {
   private readonly tickerLogoCache = new Map<
     string,
     { expiresAt: number; logoUrl: string | null }
@@ -2777,12 +2706,12 @@ export class PolygonMarketDataClient {
       }
     | null = null;
 
-  constructor(private readonly config: PolygonRuntimeConfig) {}
+  constructor(private readonly config: MassiveRuntimeConfig) {}
 
   private get referenceProvider(): Exclude<MarketDataProvider, "ibkr"> {
-    return getPolygonProviderIdentity(this.config) === "massive"
+    return getMassiveProviderIdentity(this.config) === "massive"
       ? "massive"
-      : "polygon";
+      : "massive";
   }
 
   private async fetchJson<T>(
@@ -2792,7 +2721,6 @@ export class PolygonMarketDataClient {
     const startedAt = Date.now();
     try {
       const payload = await fetchJson<T>(input, init);
-      recordPolygonApiSuccess();
       recordMassiveRestActivity(
         buildMassiveRestActivity({
           config: this.config,
@@ -2805,7 +2733,6 @@ export class PolygonMarketDataClient {
       );
       return payload;
     } catch (error) {
-      recordPolygonApiFailure(error);
       recordMassiveRestActivity(
         buildMassiveRestActivity({
           config: this.config,
@@ -2890,8 +2817,8 @@ export class PolygonMarketDataClient {
     limit?: number;
     from?: Date;
     to?: Date;
-  }): Promise<PolygonAggregateBarsPage> {
-    const rangeConfig = TIMEFRAME_TO_POLYGON_RANGE[input.timeframe];
+  }): Promise<MassiveAggregateBarsPage> {
+    const rangeConfig = TIMEFRAME_TO_MASSIVE_RANGE[input.timeframe];
     const desiredBars = Math.max(input.limit ?? 200, 1);
     const defaultTo =
       !input.to && shouldLagStockAggregateRequest(this.config, input.timeframe)
@@ -3032,7 +2959,7 @@ export class PolygonMarketDataClient {
     timeframe: BarTimeframe;
     providerNextUrl: string;
     limit?: number;
-  }): Promise<PolygonAggregateBarsPage> {
+  }): Promise<MassiveAggregateBarsPage> {
     const desiredBars = Math.max(input.limit ?? 200, 1);
     const bars: BarSnapshot[] = [];
     let nextUrl: string | null = this.buildUrl(input.providerNextUrl).toString();
@@ -3072,7 +2999,7 @@ export class PolygonMarketDataClient {
     limit?: number;
     from?: Date;
     to?: Date;
-  }): Promise<PolygonAggregateBarsPage> {
+  }): Promise<MassiveAggregateBarsPage> {
     const desiredBars = Math.max(input.limit ?? 200, 1);
     const to =
       input.to ??
@@ -3087,7 +3014,7 @@ export class PolygonMarketDataClient {
             (to?.getTime() ?? Date.now()) -
               Math.max(
                 OPTION_AGGREGATE_INTRADAY_LOOKBACK_MS,
-                TIMEFRAME_TO_POLYGON_RANGE[input.timeframe].stepMs * desiredBars * 20,
+                TIMEFRAME_TO_MASSIVE_RANGE[input.timeframe].stepMs * desiredBars * 20,
               ),
           )
         : undefined);
@@ -3141,16 +3068,16 @@ export class PolygonMarketDataClient {
     signal?: AbortSignal;
   }): Promise<{ count: number; results: UniverseTicker[] }> {
     const requestedMarkets = new Set(input.markets ?? (input.market ? [input.market] : []));
-    const polygonMarket =
+    const massiveMarket =
       input.market === "etf"
         ? "stocks"
         : input.market === "futures"
           ? null
           : input.market;
-    const polygonType =
+    const massiveType =
       input.market === "etf" ? input.type ?? "ETF" : asString(input.type);
 
-    if (polygonMarket === null) {
+    if (massiveMarket === null) {
       return { count: 0, results: [] };
     }
 
@@ -3161,8 +3088,8 @@ export class PolygonMarketDataClient {
       this.buildUrl("/v3/reference/tickers", {
         search: input.cusip ? undefined : asString(input.search),
         cusip: asString(input.cusip),
-        market: polygonMarket,
-        type: polygonType,
+        market: massiveMarket,
+        type: massiveType,
         active: input.active,
         sort: "ticker",
         order: "asc",
@@ -3209,16 +3136,16 @@ export class PolygonMarketDataClient {
     results: UniverseTicker[];
     nextUrl: string | null;
   }> {
-    const polygonMarket =
+    const massiveMarket =
       input.market === "etf"
         ? "stocks"
         : input.market === "futures"
           ? null
           : input.market;
-    const polygonType =
+    const massiveType =
       input.market === "etf" ? input.type ?? "ETF" : asString(input.type);
 
-    if (polygonMarket === null) {
+    if (massiveMarket === null) {
       return { count: 0, results: [], nextUrl: null };
     }
 
@@ -3226,8 +3153,8 @@ export class PolygonMarketDataClient {
       input.cursorUrl
         ? this.buildUrl(input.cursorUrl)
         : this.buildUrl("/v3/reference/tickers", {
-            market: polygonMarket,
-            type: polygonType,
+            market: massiveMarket,
+            type: massiveType,
             active: input.active,
             sort: "ticker",
             order: "asc",
@@ -3288,7 +3215,7 @@ export class PolygonMarketDataClient {
     }
 
     this.tickerLogoCache.set(normalizedTicker, {
-      expiresAt: Date.now() + POLYGON_TICKER_LOGO_CACHE_TTL_MS,
+      expiresAt: Date.now() + MASSIVE_TICKER_LOGO_CACHE_TTL_MS,
       logoUrl,
     });
     return logoUrl;
@@ -3320,7 +3247,7 @@ export class PolygonMarketDataClient {
       marketCap !== null && marketCap > 0 ? marketCap : null;
 
     this.tickerMarketCapCache.set(normalizedTicker, {
-      expiresAt: Date.now() + POLYGON_TICKER_DETAILS_CACHE_TTL_MS,
+      expiresAt: Date.now() + MASSIVE_TICKER_DETAILS_CACHE_TTL_MS,
       marketCap: normalizedMarketCap,
     });
     return normalizedMarketCap;
@@ -3334,13 +3261,7 @@ export class PolygonMarketDataClient {
     const logoTargets = input
       .slice(0, Math.max(0, limit))
       .map((ticker, index) => ({ ticker, index }))
-      .filter(
-        ({ ticker }) =>
-          ticker.providers.includes("polygon") ||
-          ticker.providers.includes("massive") ||
-          ticker.provider === "polygon" ||
-          ticker.provider === "massive",
-      );
+      .filter(({ ticker }) => ticker.providers.includes("massive"));
     const logoEntries = await Promise.all(
       logoTargets.map(async ({ ticker, index }) => [
         index,
@@ -3624,7 +3545,7 @@ export class PolygonMarketDataClient {
         const message =
           error instanceof Error && error.message
             ? error.message
-            : "Option quotes are not available for this Polygon/Massive plan.";
+            : "Option quotes are not available for this Massive plan.";
         this.optionQuoteAccessProbeCache = {
           expiresAt: Date.now() + OPTION_QUOTE_ACCESS_PROBE_CACHE_TTL_MS,
           status: "forbidden",

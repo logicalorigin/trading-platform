@@ -49,7 +49,7 @@ test("getIbkrLineUsageSnapshot reports visible prewarm demand without filler", a
       assetClass: "equity",
       symbol,
     })),
-    fallbackProvider: "polygon",
+    fallbackProvider: "massive",
   });
 
   const snapshot = await getIbkrLineUsageSnapshot();
@@ -65,11 +65,11 @@ test("getIbkrLineUsageSnapshot reports visible prewarm demand without filler", a
     snapshot.lineUtilizationAudit.topLimitingReason,
     "active-demand-satisfied",
   );
-  assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 80);
+  assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 110);
   assert.equal("watchlist" in snapshot.lineUtilizationAudit, false);
 });
 
-test("getIbkrLineUsageSnapshot reports active scanner work instead of idle RSS pressure", async () => {
+test("getIbkrLineUsageSnapshot reports active scanner drift instead of throttling on soft RSS pressure", async () => {
   const watchlistSymbols = Array.from({ length: 90 }, (_, index) => `WL${index}`);
   __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
     getLaneDiagnostics: async () => ({
@@ -91,7 +91,7 @@ test("getIbkrLineUsageSnapshot reports active scanner work instead of idle RSS p
       assetClass: "equity" as const,
       symbol,
     })),
-    fallbackProvider: "polygon",
+    fallbackProvider: "massive",
   });
   admitMarketDataLeases({
     owner: "flow-scanner:SPY",
@@ -118,7 +118,7 @@ test("getIbkrLineUsageSnapshot reports active scanner work instead of idle RSS p
   );
   assert.equal(
     snapshot.lineUtilizationAudit.topLimitingReason,
-    "scanner-throttled-high-pressure",
+    "line-drift",
   );
   assert.equal(snapshot.lineUtilizationAudit.scanner.activeLineCount, 40);
   assert.equal(snapshot.lineUtilizationAudit.admissionVsBridgeLineDelta, 40);
@@ -156,10 +156,10 @@ test("getIbkrLineUsageSnapshot does not report scanner pressure for automation-o
 
   const snapshot = await getIbkrLineUsageSnapshot();
 
-  assert.equal(snapshot.admission.optionsFlowScanner.resourcePressure.level, "high");
+  assert.equal(snapshot.admission.optionsFlowScanner.resourcePressure.level, "normal");
   assert.equal(snapshot.admission.optionsFlowScanner.scannerPressure.level, "normal");
   assert.equal(snapshot.lineUtilizationAudit.topLimitingReason, "line-drift");
-  assert.equal(snapshot.lineUtilizationAudit.scanner.effectiveConcurrency, 2);
+  assert.equal(snapshot.lineUtilizationAudit.scanner.effectiveConcurrency, 8);
 });
 
 test("getIbkrLineUsageSnapshot includes scanner option leases in bridge drift", async () => {
@@ -180,7 +180,7 @@ test("getIbkrLineUsageSnapshot includes scanner option leases in bridge drift", 
       assetClass: "equity" as const,
       symbol,
     })),
-    fallbackProvider: "polygon",
+    fallbackProvider: "massive",
   });
   admitMarketDataLeases({
     owner: "flow-scanner:SPY",
@@ -270,18 +270,18 @@ test("getIbkrLineUsageSnapshot leaves scanner capacity schedulable without fille
       assetClass: "equity" as const,
       symbol,
     })),
-    fallbackProvider: "polygon",
+    fallbackProvider: "massive",
   });
 
   const snapshot = await getIbkrLineUsageSnapshot();
 
   assert.equal(snapshot.admission.activeLineCount, 90);
-  assert.equal(snapshot.allocation.scannerEffectiveLineCap, 80);
-  assert.equal(snapshot.allocation.scannerSchedulableLineCap, 80);
-  assert.equal(snapshot.allocation.scannerSchedulableRemainingLineCount, 80);
+  assert.equal(snapshot.allocation.scannerEffectiveLineCap, 110);
+  assert.equal(snapshot.allocation.scannerSchedulableLineCap, 110);
+  assert.equal(snapshot.allocation.scannerSchedulableRemainingLineCount, 110);
   assert.equal(
     snapshot.admission.optionsFlowScanner.lineUtilization.schedulablePoolCap,
-    80,
+    110,
   );
   assert.equal(
     snapshot.lineUtilizationAudit.topLimitingReason,
@@ -325,9 +325,9 @@ test("getIbkrLineUsageSnapshot returns admission counters when bridge lanes stal
   );
   assert.equal(
     snapshot.lineUtilizationAudit.scanner.configuredConcurrency,
-    2,
+    8,
   );
-  assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 80);
+  assert.equal(snapshot.lineUtilizationAudit.scanner.maxDeepScanLines, 200);
   assert.equal("watchlist" in snapshot.lineUtilizationAudit, false);
   assert.equal(snapshot.admission.poolUsage["account-monitor"]?.maxLines, 200);
   assert.equal(snapshot.admission.poolUsage["account-monitor"]?.dynamic, false);
@@ -366,6 +366,81 @@ test("getIbkrLineUsageSnapshot exposes signal option owner-class usage", async (
   assert.equal(
     snapshot.ownerClasses.summaries["signal-options"].activeLineCount,
     1,
+  );
+});
+
+test("getIbkrLineUsageSnapshot exposes shadow account owner-class usage", async () => {
+  process.env["IBKR_LINE_USAGE_BRIDGE_TIMEOUT_MS"] = "10";
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: () => new Promise(() => {}),
+  }));
+  admitMarketDataLeases({
+    owner: "shadow-position-visible:NVDA",
+    intent: "visible-live",
+    requests: [
+      {
+        assetClass: "option",
+        symbol: "NVDA",
+        providerContractId: "SHADOWOPT1",
+      },
+    ],
+    fallbackProvider: "cache",
+  });
+
+  const snapshot = await getIbkrLineUsageSnapshot();
+
+  assert.equal(snapshot.shadowAccount.activeLineCount, 1);
+  assert.equal(snapshot.shadowAccount.ownerCount, 1);
+  assert.equal(snapshot.shadowAccount.activeFallbackProviderLineCounts.cache, 1);
+  assert.equal(snapshot.allocation.shadowAccountLineCount, 1);
+  assert.equal(snapshot.allocation.shadowAccountCacheFallbackLineCount, 1);
+  assert.equal(
+    snapshot.ownerClasses.summaries["shadow-account"].activeLineCount,
+    1,
+  );
+});
+
+test("getIbkrLineUsageSnapshot keeps shadow and signal option usage separate", async () => {
+  process.env["IBKR_LINE_USAGE_BRIDGE_TIMEOUT_MS"] = "10";
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: () => new Promise(() => {}),
+  }));
+  admitMarketDataLeases({
+    owner: "shadow-position-visible:NVDA",
+    intent: "visible-live",
+    requests: [
+      {
+        assetClass: "option",
+        symbol: "NVDA",
+        providerContractId: "SHADOWOPT1",
+      },
+    ],
+    fallbackProvider: "cache",
+  });
+  admitMarketDataLeases({
+    owner: "signal-options-position-mark:deploy-1:position-1",
+    intent: "automation-live",
+    requests: [
+      {
+        assetClass: "option",
+        symbol: "NVDA",
+        providerContractId: "SIGOPT1",
+      },
+    ],
+    fallbackProvider: "cache",
+  });
+
+  const snapshot = await getIbkrLineUsageSnapshot();
+
+  assert.equal(snapshot.shadowAccount.activeLineCount, 1);
+  assert.equal(snapshot.signalOptions.activeLineCount, 1);
+  assert.equal(
+    snapshot.ownerClasses.summaries["shadow-account"].activeOwnerSample[0],
+    "shadow-position-visible:NVDA",
+  );
+  assert.equal(
+    snapshot.ownerClasses.summaries["signal-options"].activeOwnerSample[0],
+    "signal-options-position-mark:deploy-1:position-1",
   );
 });
 

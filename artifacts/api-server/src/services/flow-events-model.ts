@@ -1,6 +1,6 @@
 import type { FlowUniverseCoverage } from "./flow-universe";
 
-export type FlowDataProvider = "ibkr" | "polygon";
+export type FlowDataProvider = "ibkr" | "massive";
 export type FlowSourceProvider = FlowDataProvider | "none";
 export type FlowSourceStatus = "live" | "fallback" | "empty" | "error";
 
@@ -205,9 +205,9 @@ export function hasNarrowFlowFilters(filters: FlowEventsFilters): boolean {
   return filters.scope !== "all" || filters.minPremium > 0 || filters.maxDte !== null;
 }
 
-export function flowEventsSourceUsesPolygonFallback(source: unknown): boolean {
+export function flowEventsSourceUsesMassiveFallback(source: unknown): boolean {
   const candidate = source as Partial<FlowEventsSource> | null | undefined;
-  return candidate?.provider === "polygon" || candidate?.fallbackUsed === true;
+  return candidate?.provider === "massive" || candidate?.fallbackUsed === true;
 }
 
 const TRANSIENT_EMPTY_FLOW_SOURCE_PATTERNS = [
@@ -273,12 +273,12 @@ export function isCacheableFlowEventsResult(value: FlowEventsResult): boolean {
 
 export function isFlowScannerSnapshotAllowedForFallbackPolicy(
   snapshot: { source?: unknown } | null,
-  allowPolygonFallback: boolean,
+  allowMassiveFallback: boolean,
 ): boolean {
   return Boolean(
     snapshot &&
-      (allowPolygonFallback ||
-        !flowEventsSourceUsesPolygonFallback(snapshot.source)),
+      (allowMassiveFallback ||
+        !flowEventsSourceUsesMassiveFallback(snapshot.source)),
   );
 }
 

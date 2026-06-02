@@ -31,7 +31,7 @@ test("watchlist prewarm defaults to visible scanner-aware capacity", () => {
   delete process.env[PREWARM_LIMIT_ENV_NAME];
 
   assert.equal(resolveIbkrWatchlistPrewarmSymbolLimit(90), 90);
-  assert.equal(resolveIbkrWatchlistPrewarmSymbolLimit(200), 120);
+  assert.equal(resolveIbkrWatchlistPrewarmSymbolLimit(200), 200);
   assert.equal(resolveIbkrWatchlistPrewarmSymbolLimit(12), 12);
 });
 
@@ -131,6 +131,14 @@ test("lane architecture reports the same equity live sources used by watchlist p
   assert.match(equityBlock, /watchlists: watchlistSymbols/);
   assert.match(equityBlock, /"flow-universe": flowUniverseSymbols/);
   assert.match(equityBlock, /resolveIbkrLaneSymbols\("equity-live-quotes"/);
+});
+
+test("lane architecture controls do not clamp scanner capacity below runtime defaults", () => {
+  const lanesSource = readFileSync(new URL("./ibkr-lanes.ts", import.meta.url), "utf8");
+
+  assert.match(lanesSource, /scannerConcurrency:\s*\{\s*min:\s*1,\s*max:\s*8\s*\}/);
+  assert.match(lanesSource, /scannerLineBudget:\s*\{\s*min:\s*1,\s*max:\s*500\s*\}/);
+  assert.match(lanesSource, /radarDeepLineBudget:\s*\{\s*min:\s*1,\s*max:\s*500\s*\}/);
 });
 
 test("watchlist prewarm orders all watchlist symbols before lane extras", () => {
@@ -249,7 +257,7 @@ test("watchlist prewarm uses visible live lines and does not create filler lease
   assert.match(prewarmBody, /intent: "visible-live"/);
   assert.match(
     prewarmBody,
-    /buildWatchlistPrewarmLineRequests\(cappedWarmupSymbols, symbols\)/,
+    /buildWatchlistPrewarmLineRequests\(\s*cappedWarmupSymbols,\s*symbols,\s*\)/,
   );
   assert.doesNotMatch(prewarmBody, /intent: "watchlist-live"/);
   assert.doesNotMatch(prewarmBody, /intent: "delayed-ok"/);

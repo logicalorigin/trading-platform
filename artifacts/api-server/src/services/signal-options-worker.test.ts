@@ -474,6 +474,64 @@ test("signal-options worker anchors poll interval to scan completion", async () 
   assert.equal(scanCalls, 2);
 });
 
+test("signal-options worker wake request bypasses the next poll interval", async () => {
+  let scanCalls = 0;
+  let now = new Date("2026-04-28T14:00:00.000Z");
+  const timers: Array<() => void> = [];
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async () => {
+      scanCalls += 1;
+    },
+    runMaintenance: emptyMaintenance,
+    acquireTickLock: async () => async () => {},
+    now: () => now,
+    logger: createNoopLogger(),
+    setTimer: (callback) => {
+      timers.push(callback);
+      return callback as unknown as ReturnType<typeof setTimeout>;
+    },
+    clearTimer: (timer) => {
+      const index = timers.indexOf(timer as unknown as () => void);
+      if (index >= 0) {
+        timers.splice(index, 1);
+      }
+    },
+  });
+
+  worker.start();
+  for (let index = 0; index < 10; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (!worker.getRuntimeSnapshot().tickRunning && timers.length > 0) {
+      break;
+    }
+  }
+  assert.equal(scanCalls, 1);
+  assert.equal(
+    worker.getRuntimeSnapshot().deployments[0]?.nextScanDueAt,
+    "2026-04-28T14:01:00.000Z",
+  );
+
+  now = new Date("2026-04-28T14:00:10.000Z");
+  worker.requestRunSoon();
+  const immediate = timers.shift();
+  assert.ok(immediate);
+  immediate();
+  for (let index = 0; index < 10; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (scanCalls >= 2 && !worker.getRuntimeSnapshot().tickRunning) {
+      break;
+    }
+  }
+
+  assert.equal(scanCalls, 2);
+  assert.equal(
+    worker.getRuntimeSnapshot().deployments[0]?.lastSuccessAt,
+    "2026-04-28T14:00:10.000Z",
+  );
+  worker.stop();
+});
+
 test("signal-options worker resumes deferred action work on the next wakeup", async () => {
   let scanCalls = 0;
   let now = new Date("2026-04-28T14:00:00.000Z");

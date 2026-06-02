@@ -45,23 +45,21 @@ BRIDGE_RUNTIME_OVERRIDE_ENV_KEYS.forEach((key) => {
   process.env[key] = isolatedBridgeRuntimeOverrideFile;
 });
 
-const POLYGON_ENV_KEYS = [
-  "POLYGON_API_KEY",
-  "POLYGON_KEY",
+const MASSIVE_ENV_KEYS = [
   "MASSIVE_API_KEY",
   "MASSIVE_MARKET_DATA_API_KEY",
 ] as const;
-const originalPolygonEnv = Object.fromEntries(
-  POLYGON_ENV_KEYS.map((key) => [key, process.env[key]]),
+const originalMassiveEnv = Object.fromEntries(
+  MASSIVE_ENV_KEYS.map((key) => [key, process.env[key]]),
 );
 
-function clearPolygonEnv(): void {
-  POLYGON_ENV_KEYS.forEach((key) => {
+function clearMassiveEnv(): void {
+  MASSIVE_ENV_KEYS.forEach((key) => {
     delete process.env[key];
   });
 }
 
-clearPolygonEnv();
+clearMassiveEnv();
 
 const platformModule = await import("./platform");
 
@@ -81,7 +79,7 @@ const {
   __setHistoricalFlowDirectFallbackTimeoutMsForTests,
   __setHistoricalFlowStoreDisabledForTests,
   __setHistoricalFlowStoreReadTimeoutMsForTests,
-  __setPolygonMarketDataClientFactoryForTests,
+  __setMassiveMarketDataClientFactoryForTests,
   getOptionsFlowScannerDiagnostics,
   getOptionsFlowRadarIntervalMs,
   getOptionsFlowUniverseCoverage,
@@ -261,11 +259,11 @@ function radarQuote(symbol = "SPY"): QuoteSnapshot {
   } as QuoteSnapshot;
 }
 
-function polygonFlowEvent(id: string, premium: number) {
+function massiveFlowEvent(id: string, premium: number) {
   return {
     id,
     underlying: "SPY",
-    provider: "polygon" as const,
+    provider: "massive" as const,
     basis: "trade" as const,
     optionTicker: `O:${id}`,
     providerContractId: null,
@@ -292,7 +290,7 @@ function polygonFlowEvent(id: string, premium: number) {
     distancePercent: 0,
     confidence: "fallback_estimate" as const,
     sourceBasis: "fallback_estimate" as const,
-    exchange: "POLYGON",
+    exchange: "MASSIVE",
     side: "unknown",
     sentiment: "neutral" as const,
     tradeConditions: [],
@@ -328,7 +326,7 @@ test.afterEach(async () => {
   await waitForPlatformScannerIdle();
   __resetOptionChainCachesForTests();
   __setIbkrBridgeClientFactoryForTests(null);
-  __setPolygonMarketDataClientFactoryForTests(null);
+  __setMassiveMarketDataClientFactoryForTests(null);
   __setBridgeOptionQuoteClientForTests(null);
   __resetBridgeOptionQuoteStreamForTests();
   __resetMarketDataAdmissionForTests();
@@ -340,7 +338,7 @@ test.afterEach(async () => {
   __setHistoricalFlowStoreDisabledForTests(false);
   __setHistoricalFlowStoreReadTimeoutMsForTests(3_000);
   __setHistoricalFlowDirectFallbackTimeoutMsForTests(4_000);
-  clearPolygonEnv();
+  clearMassiveEnv();
 });
 
 test.after(() => {
@@ -357,9 +355,9 @@ test.after(() => {
       delete process.env[key];
     }
   });
-  POLYGON_ENV_KEYS.forEach((key) => {
-    if (originalPolygonEnv[key]) {
-      process.env[key] = originalPolygonEnv[key];
+  MASSIVE_ENV_KEYS.forEach((key) => {
+    if (originalMassiveEnv[key]) {
+      process.env[key] = originalMassiveEnv[key];
     } else {
       delete process.env[key];
     }
@@ -373,27 +371,27 @@ test("options flow runtime defaults use the reserved flow scanner lane", () => {
   assert.equal(config.scannerSessionGuardEnabled, true);
   assert.equal(config.radarEnabled, true);
   assert.equal(config.radarBatchSize, 30);
-  assert.equal(config.radarDeepCandidateCount, 3);
+  assert.equal(config.radarDeepCandidateCount, 8);
   assert.equal(config.radarFallbackDeepCandidateCount, 1);
-  assert.equal(config.radarDeepLineBudget, 80);
-  assert.equal(config.scannerBatchSize, 2);
+  assert.equal(config.radarDeepLineBudget, 100);
+  assert.equal(config.scannerBatchSize, 8);
   assert.equal(config.scannerSymbolTimeoutMs, 45_000);
-  assert.equal(config.scannerLineBudget, 80);
-  assert.equal(config.scannerConcurrency, 2);
+  assert.equal(config.scannerLineBudget, 200);
+  assert.equal(config.scannerConcurrency, 8);
   assert.equal(config.scannerStrikeCoverage, "standard");
   assert.ok(
     Math.ceil(config.universeSize / config.radarBatchSize) *
       config.scannerIntervalMs <=
       5 * 60_000,
   );
-  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 2);
+  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 8);
   assert.equal(
     resolveOptionsFlowScannerEffectiveConcurrency({
       ...config,
       scannerConcurrency: 8,
       scannerLineBudget: 30,
     }),
-    2,
+    8,
   );
   assert.equal(
     resolveOptionsFlowScannerEffectiveConcurrency({
@@ -401,10 +399,10 @@ test("options flow runtime defaults use the reserved flow scanner lane", () => {
       scannerConcurrency: 8,
       scannerLineBudget: 20,
     }),
-    2,
+    8,
   );
   setOptionsFlowRuntimeOverrides({ scannerConcurrency: 8 });
-  assert.equal(getOptionsFlowRuntimeConfig().scannerConcurrency, 2);
+  assert.equal(getOptionsFlowRuntimeConfig().scannerConcurrency, 8);
 });
 
 test("automation-only high pressure does not throttle the flow scanner", () => {
@@ -412,7 +410,7 @@ test("automation-only high pressure does not throttle the flow scanner", () => {
 
   const diagnostics = getOptionsFlowScannerDiagnostics();
 
-  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(), 2);
+  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(), 8);
   assert.equal(diagnostics.resourcePressure.level, "normal");
   assert.equal(
     diagnostics.resourcePressure.inputs.automationActiveLongScanCount,
@@ -430,7 +428,7 @@ test("options flow scanner concurrency remains capped under runtime overrides", 
     scannerLineBudget: 10,
   });
   const config = getOptionsFlowRuntimeConfig();
-  assert.equal(config.scannerConcurrency, 2);
+  assert.equal(config.scannerConcurrency, 8);
 
   setBridgeGovernorOverrides({ options: { concurrency: 10 } });
   admitMarketDataLeases({
@@ -442,10 +440,10 @@ test("options flow scanner concurrency remains capped under runtime overrides", 
     })),
   });
 
-  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 2);
+  assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 8);
   assert.equal(
     getOptionsFlowScannerDiagnostics().deepScanner.maxConcurrency,
-    2,
+    8,
   );
 });
 
@@ -814,6 +812,7 @@ test("options flow radar does not wait for deep promotion hydration before retur
 });
 
 test("options flow radar keeps sampling while options work is queued", async () => {
+  setBridgeGovernorOverrides({ options: { concurrency: 1 } });
   let releaseActiveWork: () => void = () => {};
   const activeWork = runBridgeWork(
     "options",
@@ -982,18 +981,18 @@ test("options flow scanner refresh queue respects options backoff", async () => 
   );
 });
 
-test("options flow scanner throttles without shedding leases under RSS-only critical API pressure", () => {
+test("options flow scanner keeps full throughput under soft RSS-only critical API pressure", () => {
   const scanner = admitMarketDataLeases({
     owner: "flow-scanner:previous",
     intent: "flow-scanner-live",
-    requests: Array.from({ length: 80 }, (_, index) => ({
+    requests: Array.from({ length: 200 }, (_, index) => ({
       assetClass: "option" as const,
       providerContractId: `PREVIOUS${index}`,
       underlying: "SPY",
     })),
   });
-  assert.equal(scanner.admitted.length, 80);
-  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 80);
+  assert.equal(scanner.admitted.length, 200);
+  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 200);
 
   updateApiResourcePressure({
     rssMb: resolveApiRssPressureThresholds().critical + 1,
@@ -1003,31 +1002,32 @@ test("options flow scanner throttles without shedding leases under RSS-only crit
 
   assert.equal(diagnostics.backgroundBlockedReason, null);
   assert.equal(diagnostics.resourcePressure.level, "critical");
-  assert.equal(diagnostics.scannerFillMode, "pressure-throttled");
-  assert.equal(diagnostics.limitingReason, "scanner-throttled-high-pressure");
-  assert.equal(diagnostics.lineBudget, 80);
-  assert.equal(diagnostics.lineUtilization.poolCap, 80);
-  assert.equal(diagnostics.lineUtilization.effectivePoolCap, 80);
-  assert.equal(diagnostics.lineUtilization.effectiveConcurrency, 1);
-  assert.equal(diagnostics.lineUtilization.scannerLineBudget, 80);
-  assert.equal(diagnostics.lineUtilization.radarDeepLineBudget, 80);
-  assert.equal(diagnostics.lineUtilization.maxDeepScanLines, 80);
+  assert.equal(diagnostics.scannerPressure.throttled, false);
+  assert.equal(diagnostics.scannerFillMode, "steady-state");
+  assert.equal(diagnostics.limitingReason, null);
+  assert.equal(diagnostics.lineBudget, 200);
+  assert.equal(diagnostics.lineUtilization.poolCap, 200);
+  assert.equal(diagnostics.lineUtilization.effectivePoolCap, 200);
+  assert.equal(diagnostics.lineUtilization.effectiveConcurrency, 8);
+  assert.equal(diagnostics.lineUtilization.scannerLineBudget, 200);
+  assert.equal(diagnostics.lineUtilization.radarDeepLineBudget, 100);
+  assert.equal(diagnostics.lineUtilization.maxDeepScanLines, 200);
   assert.equal(diagnostics.lineUtilization.unusedPoolLines, 0);
-  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 80);
+  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 200);
 });
 
 test("options flow scanner pauses and sheds leases under hard API pressure", () => {
   const scanner = admitMarketDataLeases({
     owner: "flow-scanner:previous",
     intent: "flow-scanner-live",
-    requests: Array.from({ length: 80 }, (_, index) => ({
+    requests: Array.from({ length: 200 }, (_, index) => ({
       assetClass: "option" as const,
       providerContractId: `PREVIOUS${index}`,
       underlying: "SPY",
     })),
   });
-  assert.equal(scanner.admitted.length, 80);
-  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 80);
+  assert.equal(scanner.admitted.length, 200);
+  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 200);
 
   updateApiResourcePressure({ apiHeapUsedPercent: 91 });
 
@@ -1037,8 +1037,8 @@ test("options flow scanner pauses and sheds leases under hard API pressure", () 
   assert.equal(diagnostics.resourcePressure.level, "critical");
   assert.equal(diagnostics.lineUtilization.effectiveConcurrency, 0);
   assert.equal(diagnostics.lineUtilization.maxDeepScanLines, 0);
-  assert.equal(diagnostics.lineUtilization.unusedPoolLines, 80);
-  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 80);
+  assert.equal(diagnostics.lineUtilization.unusedPoolLines, 200);
+  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 200);
   assert.equal(
     __queueOptionsFlowScannerRefreshForTests({
       underlying: "SPY",
@@ -1048,11 +1048,11 @@ test("options flow scanner pauses and sheds leases under hard API pressure", () 
     false,
   );
   const admission = getMarketDataAdmissionDiagnostics();
-  assert.equal(admission.budget.flowScannerLineCap, 80);
+  assert.equal(admission.budget.flowScannerLineCap, 200);
   assert.equal(admission.flowScannerLineCount, 0);
 });
 
-test("options flow scanner throttles background rotation under high API pressure", () => {
+test("options flow scanner keeps background rotation at configured concurrency under high RSS pressure", () => {
   updateApiResourcePressure({
     rssMb: resolveApiRssPressureThresholds().high + 1,
   });
@@ -1061,9 +1061,10 @@ test("options flow scanner throttles background rotation under high API pressure
 
   assert.equal(diagnostics.resourcePressure.level, "high");
   assert.equal(diagnostics.backgroundBlockedReason, null);
-  assert.equal(diagnostics.lineUtilization.effectiveConcurrency, 1);
-  assert.equal(diagnostics.lineUtilization.schedulablePoolCap, 80);
-  assert.equal(diagnostics.lineUtilization.maxDeepScanLines, 80);
+  assert.equal(diagnostics.scannerPressure.throttled, false);
+  assert.equal(diagnostics.lineUtilization.effectiveConcurrency, 8);
+  assert.equal(diagnostics.lineUtilization.schedulablePoolCap, 200);
+  assert.equal(diagnostics.lineUtilization.maxDeepScanLines, 200);
 });
 
 test("options flow radar keeps polling under high API pressure", async () => {
@@ -2720,7 +2721,7 @@ test("listFlowEvents does not cache transient historical option hydration emptie
   }
 });
 
-test("listFlowEvents caps historical hydration while admitting live scanner quotes", async () => {
+test("background listFlowEvents skips historical bars and admits live scanner quotes", async () => {
   const base = optionContract("SPY");
   const historicalProviderContractIds: string[] = [];
   const liveProviderContractIds: string[] = [];
@@ -2795,11 +2796,9 @@ test("listFlowEvents caps historical hydration while admitting live scanner quot
     await wait(10);
   }
 
-  assert.equal(historicalProviderContractIds.length, 8);
-  assert.equal(liveQuoteCalls, 1);
-  assert.ok(
-    liveProviderContractIds.length > historicalProviderContractIds.length,
-  );
+  assert.equal(historicalProviderContractIds.length, 0);
+  assert.ok(liveQuoteCalls >= 1);
+  assert.ok(liveProviderContractIds.length > 0);
   assert.equal(
     getMarketDataAdmissionDiagnostics().flowScannerLineCount,
     liveProviderContractIds.length,
@@ -2939,8 +2938,8 @@ test("listFlowEvents applies request filters to IBKR-derived rows", async () => 
   );
 });
 
-test("listFlowEvents keeps realtime flow on IBKR by default when Polygon is configured", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
+test("listFlowEvents keeps realtime flow on IBKR by default when Massive is configured", async () => {
+  process.env["MASSIVE_API_KEY"] = "test";
   __setIbkrBridgeClientFactoryForTests(
     () =>
       ({
@@ -2948,16 +2947,16 @@ test("listFlowEvents keeps realtime flow on IBKR by default when Polygon is conf
       }) as unknown as IbkrBridgeClient,
   );
 
-  let polygonCalls = 0;
-  __setPolygonMarketDataClientFactoryForTests(
+  let massiveCalls = 0;
+  __setMassiveMarketDataClientFactoryForTests(
     (() =>
       ({
         getDerivedFlowEvents: async () => {
-          polygonCalls += 1;
-          return [polygonFlowEvent("SPY-POLYGON", 75_000)];
+          massiveCalls += 1;
+          return [massiveFlowEvent("SPY-MASSIVE", 75_000)];
         },
       })) as unknown as Parameters<
-        typeof __setPolygonMarketDataClientFactoryForTests
+        typeof __setMassiveMarketDataClientFactoryForTests
       >[0],
   );
 
@@ -2968,7 +2967,7 @@ test("listFlowEvents keeps realtime flow on IBKR by default when Polygon is conf
   });
   const parsed = ListFlowEventsResponse.parse(result);
 
-  assert.equal(polygonCalls, 0);
+  assert.equal(massiveCalls, 0);
   assert.equal(parsed.source.provider, "none");
   assert.equal(parsed.source.fallbackUsed, false);
   assert.equal(parsed.source.ibkrReason, "options_flow_no_expirations");
@@ -2976,7 +2975,7 @@ test("listFlowEvents keeps realtime flow on IBKR by default when Polygon is conf
 });
 
 test("listFlowEvents keeps nonblocking realtime flow on IBKR by default", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
+  process.env["MASSIVE_API_KEY"] = "test";
   const providerOrder: string[] = [];
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -2995,17 +2994,17 @@ test("listFlowEvents keeps nonblocking realtime flow on IBKR by default", async 
       }) as unknown as IbkrBridgeClient,
   );
 
-  let polygonCalls = 0;
-  __setPolygonMarketDataClientFactoryForTests(
+  let massiveCalls = 0;
+  __setMassiveMarketDataClientFactoryForTests(
     (() =>
       ({
         getDerivedFlowEvents: async () => {
-          providerOrder.push("polygon");
-          polygonCalls += 1;
-          return [polygonFlowEvent("SPY-POLYGON-NONBLOCKING", 75_000)];
+          providerOrder.push("massive");
+          massiveCalls += 1;
+          return [massiveFlowEvent("SPY-MASSIVE-NONBLOCKING", 75_000)];
         },
       })) as unknown as Parameters<
-        typeof __setPolygonMarketDataClientFactoryForTests
+        typeof __setMassiveMarketDataClientFactoryForTests
       >[0],
   );
 
@@ -3021,12 +3020,12 @@ test("listFlowEvents keeps nonblocking realtime flow on IBKR by default", async 
 
   await waitFor(() => providerOrder.includes("ibkr"));
 
-  assert.equal(polygonCalls, 0);
+  assert.equal(massiveCalls, 0);
   assert.deepEqual(providerOrder, ["ibkr"]);
 });
 
-test("listFlowEvents uses direct Polygon snapshot first for explicit time windows", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
+test("listFlowEvents uses direct Massive snapshot first for explicit time windows", async () => {
+  process.env["MASSIVE_API_KEY"] = "test";
   __setHistoricalFlowStoreDisabledForTests(true);
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -3055,8 +3054,8 @@ test("listFlowEvents uses direct Polygon snapshot first for explicit time window
   let requestedFrom: Date | undefined;
   let requestedTo: Date | undefined;
   let requestedSnapshotPageLimit: number | undefined;
-  let polygonCalls = 0;
-  __setPolygonMarketDataClientFactoryForTests(
+  let massiveCalls = 0;
+  __setMassiveMarketDataClientFactoryForTests(
     (() =>
       ({
         getHistoricalOptionFlowEvents: () => {
@@ -3068,14 +3067,14 @@ test("listFlowEvents uses direct Polygon snapshot first for explicit time window
           limit?: number;
           snapshotPageLimit?: number;
         }) => {
-          polygonCalls += 1;
+          massiveCalls += 1;
           requestedFrom = input.from;
           requestedTo = input.to;
           requestedSnapshotPageLimit = input.snapshotPageLimit;
-          return [polygonFlowEvent("SPY-HISTORY", 75_000)];
+          return [massiveFlowEvent("SPY-HISTORY", 75_000)];
         },
       })) as unknown as Parameters<
-        typeof __setPolygonMarketDataClientFactoryForTests
+        typeof __setMassiveMarketDataClientFactoryForTests
       >[0],
   );
 
@@ -3089,11 +3088,11 @@ test("listFlowEvents uses direct Polygon snapshot first for explicit time window
   });
   const parsed = ListFlowEventsResponse.parse(result);
 
-  assert.equal(polygonCalls, 1);
+  assert.equal(massiveCalls, 1);
   assert.equal(requestedFrom, undefined);
   assert.equal(requestedTo, undefined);
   assert.equal(requestedSnapshotPageLimit, 1);
-  assert.equal(parsed.source.provider, "polygon");
+  assert.equal(parsed.source.provider, "massive");
   assert.equal(parsed.source.ibkrReason, "options_flow_historical_direct");
   assert.deepEqual(
     parsed.events.map((event) => event.id),
@@ -3102,10 +3101,10 @@ test("listFlowEvents uses direct Polygon snapshot first for explicit time window
 });
 
 test("listFlowEvents bounds direct historical flow for nonblocking charts", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
+  process.env["MASSIVE_API_KEY"] = "test";
   __setHistoricalFlowStoreDisabledForTests(true);
   __setHistoricalFlowDirectFallbackTimeoutMsForTests(1);
-  let polygonCalls = 0;
+  let massiveCalls = 0;
   let requestedInput:
     | {
         contractLimit?: number;
@@ -3117,7 +3116,7 @@ test("listFlowEvents bounds direct historical flow for nonblocking charts", asyn
         signal?: AbortSignal;
       }
     | undefined;
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     (() =>
       ({
         getHistoricalOptionFlowEvents: (input: {
@@ -3129,12 +3128,12 @@ test("listFlowEvents bounds direct historical flow for nonblocking charts", asyn
           maxDte?: number | null;
           signal?: AbortSignal;
         }) => {
-          polygonCalls += 1;
+          massiveCalls += 1;
           requestedInput = input;
           return new Promise(() => {});
         },
       })) as unknown as Parameters<
-        typeof __setPolygonMarketDataClientFactoryForTests
+        typeof __setMassiveMarketDataClientFactoryForTests
       >[0],
   );
 
@@ -3147,7 +3146,7 @@ test("listFlowEvents bounds direct historical flow for nonblocking charts", asyn
   });
   const parsed = ListFlowEventsResponse.parse(result);
 
-  assert.equal(polygonCalls, 1);
+  assert.equal(massiveCalls, 1);
   assert.equal(requestedInput?.contractLimit, 40);
   assert.equal(requestedInput?.contractPageLimit, 1);
   assert.equal(requestedInput?.tradeConcurrency, 4);
@@ -3156,7 +3155,7 @@ test("listFlowEvents bounds direct historical flow for nonblocking charts", asyn
   assert.equal(requestedInput?.maxDte, 60);
   assert.equal(requestedInput?.signal?.aborted, true);
   assert.deepEqual(parsed.events, []);
-  assert.equal(parsed.source.provider, "polygon");
+  assert.equal(parsed.source.provider, "massive");
   assert.equal(
     parsed.source.ibkrReason,
     "options_flow_historical_provider_timeout",
@@ -3164,23 +3163,23 @@ test("listFlowEvents bounds direct historical flow for nonblocking charts", asyn
 });
 
 test("listFlowEvents single-flights bucketed nonblocking historical chart reads", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
+  process.env["MASSIVE_API_KEY"] = "test";
   __setHistoricalFlowStoreDisabledForTests(true);
-  let polygonCalls = 0;
+  let massiveCalls = 0;
   const resolveHistoricalReads: Array<
-    (events: ReturnType<typeof polygonFlowEvent>[]) => void
+    (events: ReturnType<typeof massiveFlowEvent>[]) => void
   > = [];
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     (() =>
       ({
         getHistoricalOptionFlowEvents: () => {
-          polygonCalls += 1;
-          return new Promise<ReturnType<typeof polygonFlowEvent>[]>((resolve) => {
+          massiveCalls += 1;
+          return new Promise<ReturnType<typeof massiveFlowEvent>[]>((resolve) => {
             resolveHistoricalReads.push(resolve);
           });
         },
       })) as unknown as Parameters<
-        typeof __setPolygonMarketDataClientFactoryForTests
+        typeof __setMassiveMarketDataClientFactoryForTests
       >[0],
   );
 
@@ -3195,7 +3194,7 @@ test("listFlowEvents single-flights bucketed nonblocking historical chart reads"
   const first = ListFlowEventsResponse.parse(await listFlowEvents(request));
   const second = ListFlowEventsResponse.parse(await listFlowEvents(request));
 
-  assert.equal(polygonCalls, 1);
+  assert.equal(massiveCalls, 1);
   assert.deepEqual(first.events, []);
   assert.equal(first.source.ibkrReason, "options_flow_historical_refreshing");
   assert.deepEqual(second.events, []);
@@ -3206,24 +3205,24 @@ test("listFlowEvents single-flights bucketed nonblocking historical chart reads"
 });
 
 test("listFlowEvents cools down bucketed historical provider timeouts by exact key", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
+  process.env["MASSIVE_API_KEY"] = "test";
   __setHistoricalFlowStoreDisabledForTests(true);
   __setHistoricalFlowDirectFallbackTimeoutMsForTests(1);
-  let polygonCalls = 0;
+  let massiveCalls = 0;
   const resolveHistoricalReads: Array<
-    (events: ReturnType<typeof polygonFlowEvent>[]) => void
+    (events: ReturnType<typeof massiveFlowEvent>[]) => void
   > = [];
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     (() =>
       ({
         getHistoricalOptionFlowEvents: () => {
-          polygonCalls += 1;
-          return new Promise<ReturnType<typeof polygonFlowEvent>[]>((resolve) => {
+          massiveCalls += 1;
+          return new Promise<ReturnType<typeof massiveFlowEvent>[]>((resolve) => {
             resolveHistoricalReads.push(resolve);
           });
         },
       })) as unknown as Parameters<
-        typeof __setPolygonMarketDataClientFactoryForTests
+        typeof __setMassiveMarketDataClientFactoryForTests
       >[0],
   );
 
@@ -3237,7 +3236,7 @@ test("listFlowEvents cools down bucketed historical provider timeouts by exact k
   };
   const first = ListFlowEventsResponse.parse(await listFlowEvents(request));
   assert.equal(first.source.ibkrReason, "options_flow_historical_refreshing");
-  assert.equal(polygonCalls, 1);
+  assert.equal(massiveCalls, 1);
 
   let cooled = first;
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -3252,7 +3251,7 @@ test("listFlowEvents cools down bucketed historical provider timeouts by exact k
     cooled.source.ibkrReason,
     "options_flow_historical_provider_timeout",
   );
-  assert.equal(polygonCalls, 1);
+  assert.equal(massiveCalls, 1);
 
   const differentWindow = ListFlowEventsResponse.parse(
     await listFlowEvents({
@@ -3264,25 +3263,25 @@ test("listFlowEvents cools down bucketed historical provider timeouts by exact k
     differentWindow.source.ibkrReason,
     "options_flow_historical_refreshing",
   );
-  assert.equal(polygonCalls, 2);
+  assert.equal(massiveCalls, 2);
 
   resolveHistoricalReads.forEach((resolve) => resolve([]));
   await wait(5);
 });
 
 test("listFlowEvents caches successful bucketed historical refresh after nonblocking primer", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
+  process.env["MASSIVE_API_KEY"] = "test";
   __setHistoricalFlowStoreDisabledForTests(true);
-  let polygonCalls = 0;
-  __setPolygonMarketDataClientFactoryForTests(
+  let massiveCalls = 0;
+  __setMassiveMarketDataClientFactoryForTests(
     (() =>
       ({
         getHistoricalOptionFlowEvents: async () => {
-          polygonCalls += 1;
-          return [polygonFlowEvent("SPY-CACHED-HISTORY", 75_000)];
+          massiveCalls += 1;
+          return [massiveFlowEvent("SPY-CACHED-HISTORY", 75_000)];
         },
       })) as unknown as Parameters<
-        typeof __setPolygonMarketDataClientFactoryForTests
+        typeof __setMassiveMarketDataClientFactoryForTests
       >[0],
   );
 
@@ -3306,7 +3305,7 @@ test("listFlowEvents caches successful bucketed historical refresh after nonbloc
     }
   }
 
-  assert.equal(polygonCalls, 1);
+  assert.equal(massiveCalls, 1);
   assert.deepEqual(
     cached.events.map((event) => event.id),
     ["SPY-CACHED-HISTORY"],
@@ -3315,7 +3314,7 @@ test("listFlowEvents caches successful bucketed historical refresh after nonbloc
 });
 
 test("listFlowEvents falls back to derived historical flow for nonblocking charts", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
+  process.env["MASSIVE_API_KEY"] = "test";
   __setHistoricalFlowStoreDisabledForTests(true);
   let requestedInput:
     | {
@@ -3330,7 +3329,7 @@ test("listFlowEvents falls back to derived historical flow for nonblocking chart
       tradeConcurrency?: number;
     }
     | undefined;
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     (() =>
       ({
         getHistoricalOptionFlowEvents: () => {
@@ -3351,10 +3350,10 @@ test("listFlowEvents falls back to derived historical flow for nonblocking chart
             return [];
           }
           requestedInput = input;
-          return [polygonFlowEvent("SPY-DERIVED-HISTORY", 75_000)];
+          return [massiveFlowEvent("SPY-DERIVED-HISTORY", 75_000)];
         },
       })) as unknown as Parameters<
-        typeof __setPolygonMarketDataClientFactoryForTests
+        typeof __setMassiveMarketDataClientFactoryForTests
       >[0],
   );
 
@@ -3382,12 +3381,12 @@ test("listFlowEvents falls back to derived historical flow for nonblocking chart
     parsed.events.map((event) => event.id),
     ["SPY-DERIVED-HISTORY"],
   );
-  assert.equal(parsed.source.provider, "polygon");
+  assert.equal(parsed.source.provider, "massive");
   assert.equal(parsed.source.ibkrReason, "options_flow_historical_direct");
 });
 
-test("listFlowEvents widens explicit Polygon fallback candidates before applying narrow filters", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
+test("listFlowEvents widens explicit Massive fallback candidates before applying narrow filters", async () => {
+  process.env["MASSIVE_API_KEY"] = "test";
   __setIbkrBridgeClientFactoryForTests(
     () =>
       ({
@@ -3396,20 +3395,20 @@ test("listFlowEvents widens explicit Polygon fallback candidates before applying
   );
 
   let requestedLimit = 0;
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     (() =>
       ({
         getDerivedFlowEvents: async (input: { limit?: number }) => {
           requestedLimit = input.limit ?? 0;
           return Array.from({ length: requestedLimit }, (_value, index) =>
-            polygonFlowEvent(
-              `SPY-POLYGON-${index}`,
+            massiveFlowEvent(
+              `SPY-MASSIVE-${index}`,
               index === 10 ? 75_000 : 5_000,
             ),
           );
         },
       })) as unknown as Parameters<
-        typeof __setPolygonMarketDataClientFactoryForTests
+        typeof __setMassiveMarketDataClientFactoryForTests
       >[0],
   );
 
@@ -3417,15 +3416,15 @@ test("listFlowEvents widens explicit Polygon fallback candidates before applying
     underlying: "SPY",
     limit: 2,
     minPremium: 50_000,
-    allowPolygonFallback: true,
+    allowMassiveFallback: true,
   });
   const parsed = ListFlowEventsResponse.parse(result);
 
   assert.ok(requestedLimit > 2);
-  assert.equal(parsed.source.provider, "polygon");
+  assert.equal(parsed.source.provider, "massive");
   assert.deepEqual(
     parsed.events.map((event) => event.id),
-    ["SPY-POLYGON-10"],
+    ["SPY-MASSIVE-10"],
   );
 });
 
@@ -3573,8 +3572,8 @@ test("listFlowEvents pins after-hours IBKR historical option rows to regular-ses
   assert.match(parsed.events[0]?.id ?? "", /1777060800000$/);
 });
 
-test("listFlowEvents does not reuse explicit Polygon fallback cache for IBKR-only requests", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
+test("listFlowEvents does not reuse explicit Massive fallback cache for IBKR-only requests", async () => {
+  process.env["MASSIVE_API_KEY"] = "test";
   __setIbkrBridgeClientFactoryForTests(
     () =>
       ({
@@ -3582,16 +3581,16 @@ test("listFlowEvents does not reuse explicit Polygon fallback cache for IBKR-onl
       }) as unknown as IbkrBridgeClient,
   );
 
-  let polygonCalls = 0;
-  __setPolygonMarketDataClientFactoryForTests(
+  let massiveCalls = 0;
+  __setMassiveMarketDataClientFactoryForTests(
     (() =>
       ({
         getDerivedFlowEvents: async () => {
-          polygonCalls += 1;
-          return [polygonFlowEvent("SPY-POLYGON-CACHED", 75_000)];
+          massiveCalls += 1;
+          return [massiveFlowEvent("SPY-MASSIVE-CACHED", 75_000)];
         },
       })) as unknown as Parameters<
-        typeof __setPolygonMarketDataClientFactoryForTests
+        typeof __setMassiveMarketDataClientFactoryForTests
       >[0],
   );
 
@@ -3600,7 +3599,7 @@ test("listFlowEvents does not reuse explicit Polygon fallback cache for IBKR-onl
       underlying: "SPY",
       limit: 2,
       minPremium: 50_000,
-      allowPolygonFallback: true,
+      allowMassiveFallback: true,
     }),
   );
   const ibkrOnly = ListFlowEventsResponse.parse(
@@ -3611,15 +3610,15 @@ test("listFlowEvents does not reuse explicit Polygon fallback cache for IBKR-onl
     }),
   );
 
-  assert.equal(polygonCalls, 1);
-  assert.equal(fallback.source.provider, "polygon");
+  assert.equal(massiveCalls, 1);
+  assert.equal(fallback.source.provider, "massive");
   assert.equal(ibkrOnly.source.provider, "none");
   assert.equal(ibkrOnly.source.fallbackUsed, false);
   assert.deepEqual(ibkrOnly.events, []);
 });
 
-test("listFlowEvents does not reuse explicit Polygon fallback scanner snapshots for IBKR-only requests", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
+test("listFlowEvents does not reuse explicit Massive fallback scanner snapshots for IBKR-only requests", async () => {
+  process.env["MASSIVE_API_KEY"] = "test";
   __setIbkrBridgeClientFactoryForTests(
     () =>
       ({
@@ -3627,16 +3626,16 @@ test("listFlowEvents does not reuse explicit Polygon fallback scanner snapshots 
       }) as unknown as IbkrBridgeClient,
   );
 
-  let polygonCalls = 0;
-  __setPolygonMarketDataClientFactoryForTests(
+  let massiveCalls = 0;
+  __setMassiveMarketDataClientFactoryForTests(
     (() =>
       ({
         getDerivedFlowEvents: async () => {
-          polygonCalls += 1;
-          return [polygonFlowEvent("SPY-POLYGON-SNAPSHOT", 75_000)];
+          massiveCalls += 1;
+          return [massiveFlowEvent("SPY-MASSIVE-SNAPSHOT", 75_000)];
         },
       })) as unknown as Parameters<
-        typeof __setPolygonMarketDataClientFactoryForTests
+        typeof __setMassiveMarketDataClientFactoryForTests
       >[0],
   );
 
@@ -3644,7 +3643,7 @@ test("listFlowEvents does not reuse explicit Polygon fallback scanner snapshots 
     await listFlowEvents({
       underlying: "SPY",
       limit: 2,
-      allowPolygonFallback: true,
+      allowMassiveFallback: true,
     }),
   );
   const ibkrOnly = ListFlowEventsResponse.parse(
@@ -3654,8 +3653,8 @@ test("listFlowEvents does not reuse explicit Polygon fallback scanner snapshots 
     }),
   );
 
-  assert.equal(polygonCalls, 1);
-  assert.equal(fallback.source.provider, "polygon");
+  assert.equal(massiveCalls, 1);
+  assert.equal(fallback.source.provider, "massive");
   assert.equal(ibkrOnly.source.provider, "none");
   assert.equal(ibkrOnly.source.fallbackUsed, false);
   assert.deepEqual(ibkrOnly.events, []);

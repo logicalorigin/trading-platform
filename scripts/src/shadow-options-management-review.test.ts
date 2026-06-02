@@ -87,3 +87,49 @@ test("management review prioritizes runner retention and re-entry from leak evid
     ),
   );
 });
+
+test("management review surfaces Greek recommendation outcome evidence", () => {
+  const recommendations = buildRecommendations({
+    opportunityRatio: 1.2,
+    sweepEvidence: [],
+    weakSymbols: [],
+    byExitReason: [],
+    byGreekManagement: [
+      {
+        bucket: "tighten",
+        exits: 12,
+        wins: 3,
+        winPct: 25,
+        pnl: -850,
+        avgPnl: -70.83,
+        missedToPostExitHigh: 1200,
+        reached25AfterExit: 2,
+        finalAboveExit: 1,
+      },
+      {
+        bucket: "loosen",
+        exits: 8,
+        wins: 6,
+        winPct: 75,
+        pnl: 1400,
+        avgPnl: 175,
+        missedToPostExitHigh: 9600,
+        reached25AfterExit: 6,
+        finalAboveExit: 5,
+      },
+    ],
+  });
+
+  assert.ok(
+    recommendations.some(
+      (recommendation) =>
+        recommendation.title === "Evaluate Greek tighten-only enforcement on paper",
+    ),
+  );
+  assert.ok(
+    recommendations.some(
+      (recommendation) =>
+        recommendation.title === "Keep Greek loosening in diagnostics until holdout evidence is stronger",
+    ),
+  );
+});

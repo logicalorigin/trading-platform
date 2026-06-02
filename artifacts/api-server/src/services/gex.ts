@@ -1,5 +1,5 @@
 import { HttpError, isHttpError } from "../lib/errors";
-import { getPolygonRuntimeConfig, type PolygonRuntimeConfig } from "../lib/runtime";
+import { getMassiveRuntimeConfig, type MassiveRuntimeConfig } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
 import type {
   MarketDataFreshness,
@@ -7,9 +7,9 @@ import type {
   QuoteSnapshot as IbkrQuoteSnapshot,
 } from "../providers/ibkr/client";
 import {
-  PolygonMarketDataClient,
+  MassiveMarketDataClient,
   type UniverseTicker,
-} from "../providers/polygon/market-data";
+} from "../providers/massive/market-data";
 import {
   batchOptionChains as platformBatchOptionChains,
   getOptionExpirationsWithDebug as platformGetOptionExpirationsWithDebug,
@@ -23,6 +23,14 @@ import {
   type EnqueueMarketDataJobInput,
   type LatestGexSnapshot,
 } from "./market-data-ingest";
+import {
+  buildGexProjection,
+  type GexProjectionDividendYieldInput,
+  type GexProjectionRatesInput,
+  type GexProjectionResponse,
+  type GexProjectionSourceInput,
+} from "./gex-projection";
+import { fetchTreasuryYieldCurveRates } from "./treasury-yield-curve";
 
 export type GexOptionRow = {
   strike: number;
@@ -88,8 +96,16 @@ export type GexResponse = {
   } | null;
   flowContextStatus: "ok" | "unavailable";
   source: {
-    provider: "ibkr" | "massive" | "polygon";
+    provider: "ibkr" | "massive";
     status: "ok" | "partial" | "unavailable";
+    expirationCoverage: {
+      requestedCount: number;
+      returnedCount: number;
+      loadedCount: number;
+      failedCount: number;
+      complete: boolean;
+      capped: boolean;
+    };
     optionCount: number;
     usableOptionCount: number;
     withGamma: number;
@@ -132,14 +148,14 @@ export type GexZeroGammaResponse = {
 };
 
 type GexMarketDataClient = Pick<
-  PolygonMarketDataClient,
+  MassiveMarketDataClient,
   | "getUniverseTickerByTicker"
   | "getBarsPage"
   | "getTickerMarketCap"
 >;
 
 type GexMarketDataClientFactory = (
-  config: PolygonRuntimeConfig,
+  config: MassiveRuntimeConfig,
 ) => GexMarketDataClient;
 
 type GexPlatformDataClient = {
@@ -165,10 +181,25 @@ const GEX_DASHBOARD_LOAD_TIMEOUT_MS = readPositiveIntegerEnv(
   "GEX_DASHBOARD_LOAD_TIMEOUT_MS",
   10_000,
 );
-const GEX_EXPIRATION_LIMIT = readPositiveIntegerEnv("GEX_EXPIRATION_LIMIT", 10);
 const GEX_SNAPSHOT_MAX_AGE_MS = readPositiveIntegerEnv(
   "GEX_SNAPSHOT_MAX_AGE_MS",
   60_000,
+);
+const GEX_CHART_PROJECTION_LIVE_MAX_EXPIRATIONS = readPositiveIntegerEnv(
+  "GEX_CHART_PROJECTION_MAX_EXPIRATIONS",
+  4,
+);
+const GEX_CHART_PROJECTION_SNAPSHOT_MAX_EXPIRATIONS = readPositiveIntegerEnv(
+  "GEX_CHART_PROJECTION_SNAPSHOT_MAX_EXPIRATIONS",
+  8,
+);
+const GEX_CHART_PROJECTION_STRIKES_AROUND_MONEY = readPositiveIntegerEnv(
+  "GEX_CHART_PROJECTION_STRIKES_AROUND_MONEY",
+  8,
+);
+const GEX_CHART_PROJECTION_RATES_TIMEOUT_MS = readPositiveIntegerEnv(
+  "GEX_CHART_PROJECTION_RATES_TIMEOUT_MS",
+  750,
 );
 
 let gexMarketDataClientFactory: GexMarketDataClientFactory | null = null;
@@ -178,6 +209,9 @@ let gexIngestFacadeForTests: {
   enqueueMarketDataJob?: typeof enqueueMarketDataJob;
   isConfigured?: typeof isMarketDataIngestConfigured;
 } | null = null;
+let gexProjectionRatesProviderForTests:
+  | ((input: { signal?: AbortSignal }) => Promise<GexProjectionRatesInput>)
+  | null = null;
 const gexDashboardCache = new Map<
   string,
   {
@@ -218,6 +252,12 @@ export function __setGexIngestFacadeForTests(
   gexDashboardCache.clear();
 }
 
+export function __setGexProjectionRatesProviderForTests(
+  provider: typeof gexProjectionRatesProviderForTests,
+): void {
+  gexProjectionRatesProviderForTests = provider;
+}
+
 export function __expireGexDashboardCacheForTests(underlying: string): void {
   const ticker = normalizeSymbol(underlying);
   const cached = ticker ? gexDashboardCache.get(ticker) : null;
@@ -254,6 +294,63 @@ function getGexIngestFacade(): {
     isConfigured:
       gexIngestFacadeForTests?.isConfigured ?? isMarketDataIngestConfigured,
   };
+}
+
+async function getGexProjectionRates(input: {
+  signal?: AbortSignal;
+}): Promise<GexProjectionRatesInput> {
+  if (gexProjectionRatesProviderForTests) {
+    return gexProjectionRatesProviderForTests(input);
+  }
+  return fetchTreasuryYieldCurveRates(input);
+}
+
+function unavailableChartGexProjectionRates(
+  message: string,
+): GexProjectionRatesInput {
+  return {
+    status: "unavailable",
+    source: "treasury_daily_par_yield_curve",
+    asOf: null,
+    points: [],
+    message,
+  };
+}
+
+async function getChartGexProjectionRates(input: {
+  signal?: AbortSignal;
+}): Promise<GexProjectionRatesInput> {
+  const ratesPromise = getGexProjectionRates(input).catch((error) =>
+    unavailableChartGexProjectionRates(
+      error instanceof Error
+        ? error.message
+        : "Chart GEX projection rates are unavailable.",
+    ),
+  );
+  const timeoutMs = GEX_CHART_PROJECTION_RATES_TIMEOUT_MS;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return ratesPromise;
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(
+        unavailableChartGexProjectionRates(
+          "Treasury yield curve did not respond inside the chart projection budget.",
+        ),
+      );
+    }, timeoutMs);
+
+    ratesPromise.then((rates) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(rates);
+    });
+  });
 }
 
 async function queueGexSnapshotRefresh(
@@ -302,7 +399,7 @@ function firstEnv(names: string[]): string | null {
   return null;
 }
 
-function getGexRuntimeConfig(): PolygonRuntimeConfig | null {
+function getGexRuntimeConfig(): MassiveRuntimeConfig | null {
   const massiveApiKey = firstEnv([
     "MASSIVE_API_KEY",
     "MASSIVE_MARKET_DATA_API_KEY",
@@ -316,12 +413,12 @@ function getGexRuntimeConfig(): PolygonRuntimeConfig | null {
     };
   }
 
-  return getPolygonRuntimeConfig();
+  return getMassiveRuntimeConfig();
 }
 
 function getOptionalGexMarketDataClient(): {
   client: GexMarketDataClient;
-  config: PolygonRuntimeConfig;
+  config: MassiveRuntimeConfig;
 } | null {
   const config = getGexRuntimeConfig();
   if (!config) {
@@ -329,7 +426,7 @@ function getOptionalGexMarketDataClient(): {
   }
 
   return {
-    client: gexMarketDataClientFactory?.(config) ?? new PolygonMarketDataClient(config),
+    client: gexMarketDataClientFactory?.(config) ?? new MassiveMarketDataClient(config),
     config,
   };
 }
@@ -696,14 +793,38 @@ function appendGexSourceMessage(
   return existing?.trim() ? `${existing} ${message}` : message;
 }
 
-function markGexDashboardStale(data: GexResponse, message: string): GexResponse {
+function ensureGexExpirationCoverage(data: GexResponse): GexResponse {
+  if (data.source.expirationCoverage) return data;
+  const loadedCount = new Set(
+    (data.options || [])
+      .map((option) => option.expirationDate)
+      .filter((expirationDate): expirationDate is string => Boolean(expirationDate)),
+  ).size;
   return {
     ...data,
-    isStale: true,
     source: {
       ...data.source,
+      expirationCoverage: {
+        requestedCount: loadedCount,
+        returnedCount: loadedCount,
+        loadedCount,
+        failedCount: 0,
+        complete: data.source.status === "ok",
+        capped: false,
+      },
+    },
+  };
+}
+
+function markGexDashboardStale(data: GexResponse, message: string): GexResponse {
+  const normalized = ensureGexExpirationCoverage(data);
+  return {
+    ...normalized,
+    isStale: true,
+    source: {
+      ...normalized.source,
       status: "partial",
-      message: appendGexSourceMessage(data.source.message, message),
+      message: appendGexSourceMessage(normalized.source.message, message),
     },
   };
 }
@@ -804,7 +925,6 @@ async function loadGexDashboardData(input: {
       })),
       platformClient.getOptionExpirationsWithDebug({
         underlying: ticker,
-        maxExpirations: GEX_EXPIRATION_LIMIT,
       }),
       referenceClient
         ? referenceClient.getUniverseTickerByTicker(ticker, input.signal).catch(() => null)
@@ -841,6 +961,26 @@ async function loadGexDashboardData(input: {
     strikeCoverage: "full",
     quoteHydration: "snapshot",
   });
+  const loadedExpirationCount = chainPayload.results.filter(
+    (result) => result.status === "loaded" && result.contracts.length > 0,
+  ).length;
+  const failedExpirationCount =
+    chainPayload.results.filter(
+      (result) => result.status !== "loaded" || result.contracts.length === 0,
+    ).length + Math.max(0, expirationDates.length - chainPayload.results.length);
+  const expirationCoverage = {
+    requestedCount:
+      expirationsPayload.debug?.requestedCount ?? expirationDates.length,
+    returnedCount: expirationsPayload.debug?.returnedCount ?? expirationDates.length,
+    loadedCount: loadedExpirationCount,
+    failedCount: failedExpirationCount,
+    complete:
+      expirationsPayload.debug?.complete === true &&
+      expirationsPayload.debug?.capped !== true &&
+      failedExpirationCount === 0 &&
+      loadedExpirationCount === expirationDates.length,
+    capped: expirationsPayload.debug?.capped === true,
+  };
   const chain = chainPayload.results.flatMap((result) => result.contracts);
   const mappedOptions = mapGexOptions(chain);
   const sourceProvider: GexResponse["source"]["provider"] = "ibkr";
@@ -890,17 +1030,14 @@ async function loadGexDashboardData(input: {
     .sort((left, right) => right.getTime() - left.getTime())[0];
   const staleAgeMs = newestDataAt ? now.getTime() - newestDataAt.getTime() : Infinity;
   const isStale = staleAgeMs > 15 * 60_000;
-  const batchHasFailures = chainPayload
-    ? chainPayload.results.some(
-        (result) => result.status !== "loaded" || result.contracts.length === 0,
-      )
-    : false;
   const partialSource =
     mappedOptions.usableOptionCount < mappedOptions.optionCount ||
-    batchHasFailures ||
+    !expirationCoverage.complete ||
+    expirationCoverage.capped ||
+    expirationCoverage.failedCount > 0 ||
     !quote;
   const partialMessage =
-    "GEX is computed from IBKR option-chain snapshots with live IBKR or Massive stock spot. Source is partial when an expiration batch fails, a live spot quote is missing, or contracts lack usable gamma/open interest.";
+    "GEX is computed from IBKR option-chain snapshots with live IBKR or Massive stock spot. Source is partial when expiration discovery is incomplete or capped, an expiration batch fails, a live spot quote is missing, or contracts lack usable gamma/open interest.";
   const flowBasisCounts = {
     quoteMatch: 0,
     tickTest: 0,
@@ -937,6 +1074,7 @@ async function loadGexDashboardData(input: {
     source: {
       provider: sourceProvider,
       status: partialSource ? "partial" : "ok",
+      expirationCoverage,
       optionCount: mappedOptions.optionCount,
       usableOptionCount: mappedOptions.usableOptionCount,
       withGamma: mappedOptions.withGamma,
@@ -988,11 +1126,12 @@ export async function getGexDashboardData(input: {
       GEX_SNAPSHOT_MAX_AGE_MS,
     );
     if (snapshot && !snapshot.stale) {
+      const payload = ensureGexExpirationCoverage(snapshot.payload);
       gexDashboardCache.set(ticker, {
         expiresAt: Date.now() + GEX_DASHBOARD_CACHE_TTL_MS,
-        data: snapshot.payload,
+        data: payload,
       });
-      return snapshot.payload;
+      return payload;
     }
     if (snapshot) {
       void queueGexSnapshotRefresh(ticker, "gex_snapshot_stale").catch(() => {});
@@ -1070,4 +1209,434 @@ export async function getGexZeroGammaData(input: {
       message: data.source.message,
     },
   };
+}
+
+function buildProjectionSource(data: GexResponse): GexProjectionSourceInput {
+  return {
+    provider: data.source.provider,
+    status: data.source.status,
+    expirationCoverage: data.source.expirationCoverage,
+    optionCount: data.source.optionCount,
+    usableOptionCount: data.source.usableOptionCount,
+    withGamma: data.source.withGamma,
+    withOpenInterest: data.source.withOpenInterest,
+    withImpliedVolatility: data.source.withImpliedVolatility,
+    flowStatus: data.source.flowStatus,
+    flowEventCount: data.source.flowEventCount,
+    classifiedFlowEventCount: data.source.classifiedFlowEventCount,
+    flowClassificationCoverage: data.source.flowClassificationCoverage,
+    flowClassificationConfidenceCounts:
+      data.source.flowClassificationConfidenceCounts,
+  };
+}
+
+function resolveGexProjectionDividendYield(
+  _data: GexResponse,
+): GexProjectionDividendYieldInput {
+  return {
+    status: "unavailable",
+    value: 0,
+    source: "unavailable",
+    message:
+      "No provider dividend-yield source is currently attached to GEX snapshots.",
+  };
+}
+
+function buildUnavailableGexProjection(input: {
+  ticker: string;
+  spot?: number | null;
+  asOf?: string | null;
+  message: string;
+}): GexProjectionResponse {
+  return buildGexProjection({
+    ticker: input.ticker,
+    spot: positiveOrNull(input.spot) ?? 0,
+    asOf: input.asOf || new Date().toISOString(),
+    options: [],
+    source: {
+      provider: "ibkr",
+      status: "unavailable",
+      expirationCoverage: {
+        requestedCount: 0,
+        returnedCount: 0,
+        loadedCount: 0,
+        failedCount: 0,
+        complete: false,
+        capped: false,
+      },
+      optionCount: 0,
+      usableOptionCount: 0,
+      withGamma: 0,
+      withOpenInterest: 0,
+      withImpliedVolatility: 0,
+      flowStatus: "unavailable",
+      flowEventCount: 0,
+      classifiedFlowEventCount: 0,
+      flowClassificationCoverage: 0,
+      flowClassificationConfidenceCounts: {
+        high: 0,
+        medium: 0,
+        low: 0,
+        none: 0,
+      },
+    },
+    rates: {
+      status: "unavailable",
+      source: "unavailable",
+      asOf: null,
+      points: [],
+      message: input.message,
+    },
+    dividendYield: {
+      status: "unavailable",
+      value: 0,
+      source: "unavailable",
+      message:
+        "No provider dividend-yield source is currently attached to chart GEX projections.",
+    },
+    flowContext: null,
+  });
+}
+
+const GEX_PROJECTION_EXPIRATION_UTC_HOUR = 20;
+
+function gexRowExpirationTimeMs(row: GexOptionRow): number | null {
+  if (
+    !Number.isInteger(row.expireYear) ||
+    !Number.isInteger(row.expireMonth) ||
+    !Number.isInteger(row.expireDay)
+  ) {
+    return null;
+  }
+  const time = Date.UTC(
+    row.expireYear,
+    row.expireMonth - 1,
+    row.expireDay,
+    GEX_PROJECTION_EXPIRATION_UTC_HOUR,
+    0,
+    0,
+    0,
+  );
+  return Number.isFinite(time) ? time : null;
+}
+
+function selectChartProjectionRowsFromSnapshot(
+  rows: GexOptionRow[],
+  spot: number,
+  nowMs: number,
+  maxExpirations = GEX_CHART_PROJECTION_SNAPSHOT_MAX_EXPIRATIONS,
+): GexOptionRow[] {
+  const rowsByExpiration = new Map<string, GexOptionRow[]>();
+  rows.forEach((row) => {
+    if (!row.expirationDate) {
+      return;
+    }
+    const expirationTimeMs = gexRowExpirationTimeMs(row);
+    if (expirationTimeMs != null && expirationTimeMs <= nowMs) {
+      return;
+    }
+    const current = rowsByExpiration.get(row.expirationDate) ?? [];
+    current.push(row);
+    rowsByExpiration.set(row.expirationDate, current);
+  });
+
+  const selectedExpirations = Array.from(rowsByExpiration.keys())
+    .sort((left, right) => left.localeCompare(right))
+    .slice(0, Math.max(1, maxExpirations));
+  const strikesPerExpiration =
+    GEX_CHART_PROJECTION_STRIKES_AROUND_MONEY * 2 + 1;
+
+  return selectedExpirations.flatMap((expirationDate) => {
+    const expirationRows = rowsByExpiration.get(expirationDate) ?? [];
+    const selectedStrikes = new Set(
+      Array.from(new Set(expirationRows.map((row) => row.strike)))
+        .filter((strike) => Number.isFinite(strike))
+        .sort(
+          (left, right) =>
+            Math.abs(left - spot) - Math.abs(right - spot) || left - right,
+        )
+        .slice(0, strikesPerExpiration),
+    );
+    return expirationRows.filter((row) => selectedStrikes.has(row.strike));
+  });
+}
+
+function summarizeChartProjectionRows(rows: GexOptionRow[]) {
+  return {
+    optionCount: rows.length,
+    usableOptionCount: rows.length,
+    withGamma: rows.filter((row) => finiteOrNull(row.gamma) != null).length,
+    withOpenInterest: rows.filter((row) => finiteOrNull(row.openInterest) != null)
+      .length,
+    withImpliedVolatility: rows.filter(
+      (row) => finiteOrNull(row.impliedVol) != null,
+    ).length,
+  };
+}
+
+async function buildChartGexProjectionFromLatestSnapshot(input: {
+  ticker: string;
+  rates: GexProjectionRatesInput;
+}): Promise<GexProjectionResponse | null> {
+  const facade = getGexIngestFacade();
+  const snapshot = await facade.getLatestGexSnapshot(
+    input.ticker,
+    GEX_SNAPSHOT_MAX_AGE_MS,
+  );
+  if (!snapshot?.payload?.options?.length) {
+    if (facade.isConfigured()) {
+      void queueGexSnapshotRefresh(input.ticker, "chart_gex_projection_empty").catch(
+        () => {},
+      );
+    }
+    return null;
+  }
+
+  const payload = ensureGexExpirationCoverage(snapshot.payload);
+  const spot = positiveOrNull(payload.spot);
+  if (spot == null) {
+    return null;
+  }
+
+  const selectedRows = selectChartProjectionRowsFromSnapshot(
+    payload.options,
+    spot,
+    Date.now(),
+    GEX_CHART_PROJECTION_SNAPSHOT_MAX_EXPIRATIONS,
+  );
+  if (!selectedRows.length) {
+    return null;
+  }
+
+  const expirationCount = new Set(
+    selectedRows.map((row) => row.expirationDate).filter(Boolean),
+  ).size;
+  const rowSummary = summarizeChartProjectionRows(selectedRows);
+  return buildGexProjection({
+    ticker: payload.ticker,
+    spot,
+    asOf: payload.timestamp,
+    options: selectedRows,
+    source: {
+      provider: payload.source.provider,
+      status:
+        snapshot.stale || payload.source.status === "unavailable"
+          ? "partial"
+          : payload.source.status,
+      expirationCoverage: {
+        requestedCount: expirationCount,
+        returnedCount: expirationCount,
+        loadedCount: expirationCount,
+        failedCount: 0,
+        complete: expirationCount > 0,
+        capped: false,
+      },
+      ...rowSummary,
+      flowStatus: payload.source.flowStatus,
+      flowEventCount: payload.source.flowEventCount,
+      classifiedFlowEventCount: payload.source.classifiedFlowEventCount,
+      flowClassificationCoverage: payload.source.flowClassificationCoverage,
+      flowClassificationConfidenceCounts:
+        payload.source.flowClassificationConfidenceCounts,
+    },
+    rates: input.rates,
+    dividendYield: resolveGexProjectionDividendYield(payload),
+    flowContext: payload.flowContext,
+  });
+}
+
+async function getChartGexProjectionData(input: {
+  underlying: string;
+  signal?: AbortSignal;
+}): Promise<GexProjectionResponse> {
+  const ticker = normalizeSymbol(input.underlying);
+  if (!ticker) {
+    throw new HttpError(400, "GEX ticker is required.", {
+      code: "gex_ticker_required",
+    });
+  }
+
+  const rates = await getChartGexProjectionRates({ signal: input.signal });
+  let snapshotProjectionAttempted = false;
+  const trySnapshotProjection = async () => {
+    if (snapshotProjectionAttempted || !shouldUsePersistedGexSnapshots()) {
+      return null;
+    }
+    snapshotProjectionAttempted = true;
+    return buildChartGexProjectionFromLatestSnapshot({ ticker, rates });
+  };
+
+  const snapshotProjection = await trySnapshotProjection();
+  if (snapshotProjection) {
+    return snapshotProjection;
+  }
+
+  try {
+    const platformClient = getGexPlatformDataClient();
+    const now = new Date();
+    const [quotePayload, expirationsPayload] = await Promise.all([
+      platformClient.getQuoteSnapshots({ symbols: ticker }).catch(() => ({
+        quotes: [],
+        transport: null,
+        delayed: false,
+        fallbackUsed: false,
+      })),
+      platformClient.getOptionExpirationsWithDebug({
+        underlying: ticker,
+        maxExpirations: GEX_CHART_PROJECTION_LIVE_MAX_EXPIRATIONS,
+        recordBridgeFailure: false,
+        signal: input.signal,
+      }),
+    ]);
+
+    const quoteRows = (quotePayload.quotes || []) as IbkrQuoteSnapshot[];
+    const quote =
+      quoteRows.find(
+        (snapshot) => snapshot.symbol === ticker && isLiveGexStockSpotQuote(snapshot),
+      ) ?? null;
+    const quoteSpot = positiveOrNull(quote?.price);
+    const expirationDates = expirationsPayload.expirations
+      .map((expiration) => expiration.expirationDate)
+      .filter(
+        (expirationDate): expirationDate is Date =>
+          expirationDate instanceof Date &&
+          !Number.isNaN(expirationDate.getTime()),
+      )
+      .slice(0, GEX_CHART_PROJECTION_LIVE_MAX_EXPIRATIONS);
+
+    if (!expirationDates.length) {
+      return (
+        (await buildChartGexProjectionFromLatestSnapshot({ ticker, rates })) ??
+        buildUnavailableGexProjection({
+          ticker,
+          spot: quoteSpot,
+          asOf: now.toISOString(),
+          message: "No option expirations are available for chart projection.",
+        })
+      );
+    }
+
+    const chainPayload = await platformClient.batchOptionChains({
+      underlying: ticker,
+      expirationDates,
+      strikeCoverage: "standard",
+      strikesAroundMoney: GEX_CHART_PROJECTION_STRIKES_AROUND_MONEY,
+      quoteHydration: "snapshot",
+      underlyingSpotPrice: quoteSpot,
+      recordBridgeFailure: false,
+      signal: input.signal,
+    });
+    const loadedExpirationCount = chainPayload.results.filter(
+      (result) => result.status === "loaded" && result.contracts.length > 0,
+    ).length;
+    const failedExpirationCount =
+      chainPayload.results.filter(
+        (result) => result.status !== "loaded" || result.contracts.length === 0,
+      ).length + Math.max(0, expirationDates.length - chainPayload.results.length);
+    const chain = chainPayload.results.flatMap((result) => result.contracts);
+    const mappedOptions = mapGexOptions(chain);
+    const spot =
+      quoteSpot ?? deriveSpotFromOptionChain(chain) ?? positiveOrNull(mappedOptions.rows[0]?.strike);
+
+    if (spot == null || spot <= 0 || mappedOptions.rows.length === 0) {
+      return (
+        (await buildChartGexProjectionFromLatestSnapshot({ ticker, rates })) ??
+        buildUnavailableGexProjection({
+          ticker,
+          spot,
+          asOf: now.toISOString(),
+          message:
+            "Near-expiration option data is unavailable for chart projection.",
+        })
+      );
+    }
+
+    const expirationCoverage = {
+      requestedCount: expirationDates.length,
+      returnedCount: expirationDates.length,
+      loadedCount: loadedExpirationCount,
+      failedCount: failedExpirationCount,
+      complete:
+        failedExpirationCount === 0 &&
+        loadedExpirationCount === expirationDates.length,
+      capped: false,
+    };
+    const partialSource =
+      mappedOptions.usableOptionCount < mappedOptions.optionCount ||
+      !expirationCoverage.complete ||
+      !quote;
+
+    return buildGexProjection({
+      ticker,
+      spot,
+      asOf: now.toISOString(),
+      options: mappedOptions.rows,
+      source: {
+        provider: "ibkr",
+        status: partialSource ? "partial" : "ok",
+        expirationCoverage,
+        optionCount: mappedOptions.optionCount,
+        usableOptionCount: mappedOptions.usableOptionCount,
+        withGamma: mappedOptions.withGamma,
+        withOpenInterest: mappedOptions.withOpenInterest,
+        withImpliedVolatility: mappedOptions.withImpliedVolatility,
+        flowStatus: "unavailable",
+        flowEventCount: 0,
+        classifiedFlowEventCount: 0,
+        flowClassificationCoverage: 0,
+        flowClassificationConfidenceCounts: {
+          high: 0,
+          medium: 0,
+          low: 0,
+          none: 0,
+        },
+      },
+      rates,
+      dividendYield: {
+        status: "unavailable",
+        value: 0,
+        source: "unavailable",
+        message:
+          "No provider dividend-yield source is currently attached to chart GEX projections.",
+      },
+      flowContext: null,
+    });
+  } catch (error) {
+    if (isHttpError(error) && error.statusCode === 400) {
+      throw error;
+    }
+    return (
+      (await trySnapshotProjection()) ??
+      buildUnavailableGexProjection({
+        ticker,
+        asOf: new Date().toISOString(),
+        message:
+          error instanceof Error
+            ? error.message
+            : "Chart GEX projection is unavailable.",
+      })
+    );
+  }
+}
+
+export async function getGexProjectionData(input: {
+  underlying: string;
+  signal?: AbortSignal;
+  scope?: "full" | "chart";
+}): Promise<GexProjectionResponse> {
+  if (input.scope === "chart") {
+    return getChartGexProjectionData(input);
+  }
+  const data = await getGexDashboardData(input);
+  const rates = await getGexProjectionRates({ signal: input.signal });
+  return buildGexProjection({
+    ticker: data.ticker,
+    spot: data.spot,
+    asOf: data.timestamp,
+    options: data.options,
+    source: buildProjectionSource(data),
+    rates,
+    dividendYield: resolveGexProjectionDividendYield(data),
+    flowContext: data.flowContext,
+  });
 }

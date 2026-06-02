@@ -33,3 +33,93 @@ test("computeSignalOptionsPositionStop keeps hard stop active until trail improv
   assert.equal(stop.trailHasTakenOver, false);
   assert.equal(stop.exitReason, "hard_stop");
 });
+
+test("computeSignalOptionsPositionStop reports Greek tightening diagnostics without enforcing exits", () => {
+  const profile = {
+    ...defaultSignalOptionsExecutionProfile,
+    exitPolicy: {
+      ...defaultSignalOptionsExecutionProfile.exitPolicy,
+      trailActivationPct: 100,
+      progressiveTrailEnabled: false,
+      progressiveTrailSteps: [],
+      wireGreekTrail: {
+        ...defaultSignalOptionsExecutionProfile.exitPolicy.wireGreekTrail,
+        enabled: false,
+        requireFreshGreeks: true,
+        greekMaxAgeMs: 15_000,
+        deltaTightenThreshold: -0.1,
+        thetaBurdenTightenPct: 8,
+      },
+    },
+  };
+
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice: 4,
+    peakPrice: 5,
+    markPrice: 4.8,
+    profile,
+    currentGreeks: {
+      delta: 0.45,
+      gamma: 0.02,
+      theta: -0.5,
+      updatedAt: new Date("2026-05-28T14:30:00.000Z"),
+    },
+    entryGreeks: { delta: 0.6 },
+    now: new Date("2026-05-28T14:30:05.000Z"),
+  });
+
+  assert.equal(stop.exitReason, null);
+  assert.equal(stop.wireTrail.enabled, false);
+  assert.equal(stop.greekManagement.available, true);
+  assert.equal(stop.greekManagement.enforcing, false);
+  assert.equal(stop.greekManagement.recommendation, "tighten");
+  assert.deepEqual(stop.greekManagement.reasons, [
+    "delta_decay",
+    "theta_burden",
+  ]);
+  assert.equal(stop.greekManagement.deltaImprovement, -0.15);
+  assert.equal(stop.greekManagement.thetaBurdenPct, 10.416667);
+});
+
+test("computeSignalOptionsPositionStop reports Greek support without loosening disabled exits", () => {
+  const profile = {
+    ...defaultSignalOptionsExecutionProfile,
+    exitPolicy: {
+      ...defaultSignalOptionsExecutionProfile.exitPolicy,
+      trailActivationPct: 100,
+      progressiveTrailEnabled: false,
+      progressiveTrailSteps: [],
+      wireGreekTrail: {
+        ...defaultSignalOptionsExecutionProfile.exitPolicy.wireGreekTrail,
+        enabled: false,
+        requireFreshGreeks: true,
+        greekMaxAgeMs: 15_000,
+        deltaLoosenThreshold: 0.05,
+        strongGammaMin: 0.05,
+      },
+    },
+  };
+
+  const stop = computeSignalOptionsPositionStop({
+    entryPrice: 4,
+    peakPrice: 5,
+    markPrice: 4.8,
+    profile,
+    currentGreeks: {
+      delta: 0.72,
+      gamma: 0.07,
+      theta: -0.05,
+      updatedAt: new Date("2026-05-28T14:30:00.000Z"),
+    },
+    entryGreeks: { delta: 0.6 },
+    now: new Date("2026-05-28T14:30:05.000Z"),
+  });
+
+  assert.equal(stop.exitReason, null);
+  assert.equal(stop.wireTrail.enabled, false);
+  assert.equal(stop.greekManagement.available, true);
+  assert.equal(stop.greekManagement.enforcing, false);
+  assert.equal(stop.greekManagement.recommendation, "loosen");
+  assert.deepEqual(stop.greekManagement.reasons, ["delta_gamma_support"]);
+  assert.equal(stop.greekManagement.deltaImprovement, 0.12);
+});

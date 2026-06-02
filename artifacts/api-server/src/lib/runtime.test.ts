@@ -20,6 +20,7 @@ import {
   getIbkrBridgeRuntimeConfig,
   getIbkrBridgeRuntimeOverride,
   getIbkrTwsRuntimeConfig,
+  getMassiveRuntimeConfig,
   getProviderConfiguration,
   onIbkrBridgeRuntimeChanged,
   setIbkrBridgeRuntimeOverride,
@@ -42,9 +43,6 @@ const ENV_KEYS = [
   "IBKR_BRIDGE_TOKEN",
   "IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE",
   "PYRUS_IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE",
-  "POLYGON_API_KEY",
-  "POLYGON_KEY",
-  "POLYGON_BASE_URL",
   "MASSIVE_API_KEY",
   "MASSIVE_MARKET_DATA_API_KEY",
   "MASSIVE_API_BASE_URL",
@@ -189,25 +187,21 @@ test("provider configuration reports IBKR only when bridge override is present",
   });
 });
 
-test("provider configuration distinguishes Massive stock data from legacy Polygon wiring", () => {
+test("provider configuration exposes Massive as the only market data provider", () => {
   withRuntimeEnv({ MASSIVE_API_KEY: "massive-test-key" }, () => {
-    assert.deepEqual(
-      {
-        polygon: getProviderConfiguration().polygon,
-        massive: getProviderConfiguration().massive,
-      },
-      { polygon: true, massive: true },
-    );
+    assert.equal(getProviderConfiguration().massive, true);
+    assert.deepEqual(getMassiveRuntimeConfig(), {
+      apiKey: "massive-test-key",
+      baseUrl: "https://api.massive.com",
+    });
   });
 
-  withRuntimeEnv({ POLYGON_API_KEY: "polygon-test-key" }, () => {
-    assert.deepEqual(
-      {
-        polygon: getProviderConfiguration().polygon,
-        massive: getProviderConfiguration().massive,
-      },
-      { polygon: true, massive: false },
-    );
+  withRuntimeEnv({ MASSIVE_MARKET_DATA_API_KEY: "massive-market-data-key" }, () => {
+    assert.equal(getProviderConfiguration().massive, true);
+    assert.deepEqual(getMassiveRuntimeConfig(), {
+      apiKey: "massive-market-data-key",
+      baseUrl: "https://api.massive.com",
+    });
   });
 });
 

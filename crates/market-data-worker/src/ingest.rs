@@ -6,7 +6,7 @@ use serde_json::Value;
 use sqlx::types::Uuid;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
-use crate::providers::polygon::{OptionChainSnapshot, StockSnapshot};
+use crate::providers::massive::{OptionChainSnapshot, StockSnapshot};
 
 pub struct ProviderRequestLogInput<'a> {
     pub provider: &'a str,
@@ -310,7 +310,7 @@ async fn ensure_option_contracts_tx(
     }
 
     let mut instrument_ids = Vec::with_capacity(snapshots.len());
-    let mut polygon_tickers = Vec::with_capacity(snapshots.len());
+    let mut massive_tickers = Vec::with_capacity(snapshots.len());
     let mut expiration_dates = Vec::with_capacity(snapshots.len());
     let mut strikes = Vec::with_capacity(snapshots.len());
     let mut rights = Vec::with_capacity(snapshots.len());
@@ -322,7 +322,7 @@ async fn ensure_option_contracts_tx(
                 .get(&snapshot.ticker)
                 .with_context(|| format!("missing option instrument for {}", snapshot.ticker))?,
         );
-        polygon_tickers.push(snapshot.ticker.as_str());
+        massive_tickers.push(snapshot.ticker.as_str());
         expiration_dates.push(parse_option_expiration(snapshot)?);
         strikes.push(snapshot.strike);
         rights.push(snapshot.right.as_str());
@@ -334,7 +334,7 @@ async fn ensure_option_contracts_tx(
         with input as (
           select
             option_instrument_id,
-            polygon_ticker,
+            massive_ticker,
             expiration_date,
             strike,
             contract_right,
@@ -348,7 +348,7 @@ async fn ensure_option_contracts_tx(
             $6::int4[]
           ) as input(
             option_instrument_id,
-            polygon_ticker,
+            massive_ticker,
             expiration_date,
             strike,
             contract_right,
@@ -358,7 +358,7 @@ async fn ensure_option_contracts_tx(
         insert into option_contracts (
           instrument_id,
           underlying_instrument_id,
-          polygon_ticker,
+          massive_ticker,
           provider_contract_id,
           expiration_date,
           strike,
@@ -371,7 +371,7 @@ async fn ensure_option_contracts_tx(
         select
           input.option_instrument_id,
           $7::uuid,
-          input.polygon_ticker,
+          input.massive_ticker,
           null,
           input.expiration_date,
           input.strike,
@@ -381,7 +381,7 @@ async fn ensure_option_contracts_tx(
           true,
           now()
         from input
-        on conflict (polygon_ticker) do update
+        on conflict (massive_ticker) do update
         set
           expiration_date = excluded.expiration_date,
           strike = excluded.strike,
@@ -390,11 +390,11 @@ async fn ensure_option_contracts_tx(
           shares_per_contract = excluded.shares_per_contract,
           is_active = true,
           updated_at = now()
-        returning id, polygon_ticker
+        returning id, massive_ticker
         "#,
     )
     .bind(&instrument_ids)
-    .bind(&polygon_tickers)
+    .bind(&massive_tickers)
     .bind(&expiration_dates)
     .bind(&strikes)
     .bind(&rights)
@@ -405,7 +405,7 @@ async fn ensure_option_contracts_tx(
 
     rows.into_iter()
         .map(|row| {
-            let ticker: String = row.try_get("polygon_ticker")?;
+            let ticker: String = row.try_get("massive_ticker")?;
             let id: Uuid = row.try_get("id")?;
             Ok((ticker, id))
         })

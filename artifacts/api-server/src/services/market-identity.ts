@@ -1,5 +1,5 @@
 import { normalizeSymbol } from "../lib/values";
-import type { UniverseMarket } from "../providers/polygon/market-data";
+import type { UniverseMarket } from "../providers/massive/market-data";
 
 type IdentityInput = {
   ticker?: string | null;

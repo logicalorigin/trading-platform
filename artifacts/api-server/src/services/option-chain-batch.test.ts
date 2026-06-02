@@ -8,7 +8,7 @@ import type {
   OptionChainContract,
   QuoteSnapshot,
 } from "../providers/ibkr/client";
-import type { PolygonMarketDataClient } from "../providers/polygon/market-data";
+import type { MassiveMarketDataClient } from "../providers/massive/market-data";
 import { __resetBridgeGovernorForTests } from "./bridge-governor";
 
 process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
@@ -21,7 +21,7 @@ const platformModule = await import("./platform");
 const {
   __platformBarsCacheTestInternals,
   __resetOptionChainCachesForTests,
-  __setPolygonMarketDataClientFactoryForTests,
+  __setMassiveMarketDataClientFactoryForTests,
   __setIbkrBridgeClientFactoryForTests,
   batchOptionChains,
   getBarsWithDebug,
@@ -46,8 +46,10 @@ const { __setMarketDataStoreDisabledForTests } = await import(
   "./market-data-store"
 );
 
-const originalPolygonApiKey = process.env["POLYGON_API_KEY"];
-const originalPolygonBaseUrl = process.env["POLYGON_BASE_URL"];
+const originalMassiveApiKey = process.env["MASSIVE_API_KEY"];
+const originalMassiveMarketDataApiKey =
+  process.env["MASSIVE_MARKET_DATA_API_KEY"];
+const originalMassiveApiBaseUrl = process.env["MASSIVE_API_BASE_URL"];
 const originalChartHydrationCursorEnabled =
   process.env["CHART_HYDRATION_CURSOR_ENABLED"];
 const originalHistoricalIdenticalCooldown =
@@ -171,13 +173,16 @@ function brokerBar(
 test.beforeEach(() => {
   __resetIbkrHistoricalAdmissionForTests();
   __setMarketDataStoreDisabledForTests(true);
+  delete process.env["MASSIVE_API_KEY"];
+  delete process.env["MASSIVE_MARKET_DATA_API_KEY"];
+  delete process.env["MASSIVE_API_BASE_URL"];
   process.env["IBKR_HISTORICAL_IDENTICAL_COOLDOWN_MS"] = "1";
   process.env["MASSIVE_STOCKS_RECENCY"] = "delayed";
 });
 
 test.afterEach(() => {
   __setIbkrBridgeClientFactoryForTests(null);
-  __setPolygonMarketDataClientFactoryForTests(null);
+  __setMassiveMarketDataClientFactoryForTests(null);
   __setBridgeOptionQuoteClientForTests(null);
   __setMarketDataStoreDisabledForTests(false);
   __resetBridgeOptionQuoteStreamForTests();
@@ -185,15 +190,21 @@ test.afterEach(() => {
   __resetIbkrHistoricalAdmissionForTests();
   __resetOptionChainCachesForTests();
   __resetBridgeGovernorForTests();
-  if (originalPolygonApiKey === undefined) {
-    delete process.env["POLYGON_API_KEY"];
+  if (originalMassiveApiKey === undefined) {
+    delete process.env["MASSIVE_API_KEY"];
   } else {
-    process.env["POLYGON_API_KEY"] = originalPolygonApiKey;
+    process.env["MASSIVE_API_KEY"] = originalMassiveApiKey;
   }
-  if (originalPolygonBaseUrl === undefined) {
-    delete process.env["POLYGON_BASE_URL"];
+  if (originalMassiveMarketDataApiKey === undefined) {
+    delete process.env["MASSIVE_MARKET_DATA_API_KEY"];
   } else {
-    process.env["POLYGON_BASE_URL"] = originalPolygonBaseUrl;
+    process.env["MASSIVE_MARKET_DATA_API_KEY"] =
+      originalMassiveMarketDataApiKey;
+  }
+  if (originalMassiveApiBaseUrl === undefined) {
+    delete process.env["MASSIVE_API_BASE_URL"];
+  } else {
+    process.env["MASSIVE_API_BASE_URL"] = originalMassiveApiBaseUrl;
   }
   if (originalChartHydrationCursorEnabled === undefined) {
     delete process.env["CHART_HYDRATION_CURSOR_ENABLED"];
@@ -289,15 +300,11 @@ test("getBarsWithDebug only creates option study fallback when explicitly reques
 });
 
 test("getBarsWithDebug does not clip spot broker history without a synthesis provider", async () => {
-  const previousPolygonApiKey = process.env["POLYGON_API_KEY"];
-  const previousPolygonKey = process.env["POLYGON_KEY"];
   const previousMassiveApiKey = process.env["MASSIVE_API_KEY"];
   const previousMassiveMarketDataApiKey =
     process.env["MASSIVE_MARKET_DATA_API_KEY"];
   const seenRequests: Array<{ limit?: number; from?: Date; to?: Date }> = [];
 
-  delete process.env["POLYGON_API_KEY"];
-  delete process.env["POLYGON_KEY"];
   delete process.env["MASSIVE_API_KEY"];
   delete process.env["MASSIVE_MARKET_DATA_API_KEY"];
 
@@ -358,16 +365,6 @@ test("getBarsWithDebug does not clip spot broker history without a synthesis pro
     assert.equal(result.bars.length, 120);
     assert.equal(result.historySource, "ibkr-history");
   } finally {
-    if (previousPolygonApiKey === undefined) {
-      delete process.env["POLYGON_API_KEY"];
-    } else {
-      process.env["POLYGON_API_KEY"] = previousPolygonApiKey;
-    }
-    if (previousPolygonKey === undefined) {
-      delete process.env["POLYGON_KEY"];
-    } else {
-      process.env["POLYGON_KEY"] = previousPolygonKey;
-    }
     if (previousMassiveApiKey === undefined) {
       delete process.env["MASSIVE_API_KEY"];
     } else {
@@ -448,10 +445,10 @@ test("getBarsWithDebug rolls derived 2m requests from broker-safe 1m history", a
 });
 
 test("getBarsWithDebug falls back to full spot broker history when synthesis underfills", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   const seenBrokerLimits: Array<number | undefined> = [];
-  let polygonCalls = 0;
+  let massiveCalls = 0;
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -494,11 +491,11 @@ test("getBarsWithDebug falls back to full spot broker history when synthesis und
         },
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getBarsPage: async () => {
-          polygonCalls += 1;
+          massiveCalls += 1;
           return {
             bars: [],
             nextUrl: null,
@@ -508,7 +505,7 @@ test("getBarsWithDebug falls back to full spot broker history when synthesis und
             requestedTo: null,
           };
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getBarsWithDebug({
@@ -519,7 +516,7 @@ test("getBarsWithDebug falls back to full spot broker history when synthesis und
     allowHistoricalSynthesis: true,
   }, { priority: 8 });
 
-  assert.equal(polygonCalls, 1);
+  assert.equal(massiveCalls, 1);
   assert.equal(seenBrokerLimits.at(-1), 120);
   assert.ok(
     seenBrokerLimits.length >= 2,
@@ -531,8 +528,8 @@ test("getBarsWithDebug falls back to full spot broker history when synthesis und
 });
 
 test("getBarsWithDebug does not use full broker recovery for background synthesis underfills", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   const seenBrokerLimits: Array<number | undefined> = [];
 
   __setIbkrBridgeClientFactoryForTests(
@@ -548,7 +545,7 @@ test("getBarsWithDebug does not use full broker recovery for background synthesi
         },
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getBarsPage: async () => ({
@@ -559,7 +556,7 @@ test("getBarsWithDebug does not use full broker recovery for background synthesi
           requestedFrom: null,
           requestedTo: null,
         }),
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getBarsWithDebug({
@@ -576,12 +573,12 @@ test("getBarsWithDebug does not use full broker recovery for background synthesi
 });
 
 test("getBarsWithDebug does not skip broker history solely because diagnostics report a stalled lane", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   const symbol = `STALLIBKR${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
   const now = Date.now();
   let brokerCalls = 0;
-  let polygonCalls = 0;
+  let massiveCalls = 0;
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -627,11 +624,11 @@ test("getBarsWithDebug does not skip broker history solely because diagnostics r
         },
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getBarsPage: async () => {
-          polygonCalls += 1;
+          massiveCalls += 1;
           return {
             bars: ["2026-05-11T22:15:00.000Z", "2026-05-11T22:30:00.000Z"].map(
               (timestamp, index) => ({
@@ -650,7 +647,7 @@ test("getBarsWithDebug does not skip broker history solely because diagnostics r
             requestedTo: null,
           };
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getBarsWithDebug({
@@ -663,17 +660,17 @@ test("getBarsWithDebug does not skip broker history solely because diagnostics r
   }, { priority: 8 });
 
   assert.ok(brokerCalls > 0);
-  assert.equal(polygonCalls, 0);
+  assert.equal(massiveCalls, 0);
   assert.equal(result.bars.length, 2);
   assert.equal(result.historySource, "ibkr-history");
   assert.equal(result.emptyReason, null);
 });
 
 test("getBarsWithDebug lets chart callers size the broker live-edge window", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.massive.com";
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   const seenBrokerLimits: Array<number | undefined> = [];
-  let polygonCalls = 0;
+  let massiveCalls = 0;
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -713,11 +710,11 @@ test("getBarsWithDebug lets chart callers size the broker live-edge window", asy
         },
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getBarsPage: async () => {
-          polygonCalls += 1;
+          massiveCalls += 1;
           return {
             bars: [],
             nextUrl: null,
@@ -727,7 +724,7 @@ test("getBarsWithDebug lets chart callers size the broker live-edge window", asy
             requestedTo: null,
           };
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const backgroundSymbol = `BKGDCHART${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
@@ -745,14 +742,14 @@ test("getBarsWithDebug lets chart callers size the broker live-edge window", asy
     0,
     "default synthesis path should not spend a broker history slot",
   );
-  assert.equal(polygonCalls, 1);
+  assert.equal(massiveCalls, 1);
   assert.ok(
     clipped.bars.length < 900,
     "background synthesis should not escalate to a full broker recovery",
   );
 
   seenBrokerLimits.length = 0;
-  polygonCalls = 0;
+  massiveCalls = 0;
   __resetOptionChainCachesForTests({ resetFlowScanner: false });
 
   const chartHydrated = await getBarsWithDebug({
@@ -765,17 +762,17 @@ test("getBarsWithDebug lets chart callers size the broker live-edge window", asy
   }, { priority: 8 });
 
   assert.equal(seenBrokerLimits[0], 900);
-  assert.equal(polygonCalls, 0);
+  assert.equal(massiveCalls, 0);
   assert.equal(chartHydrated.bars.length, 900);
   assert.equal(chartHydrated.historySource, "ibkr-history");
 });
 
 test("getBarsWithDebug waits long enough for broker live-edge backfill before synthesis", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.massive.com";
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   const symbol = `SLOWIBKR${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
   let brokerCalls = 0;
-  let polygonCalls = 0;
+  let massiveCalls = 0;
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -816,11 +813,11 @@ test("getBarsWithDebug waits long enough for broker live-edge backfill before sy
         },
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getBarsPage: async () => {
-          polygonCalls += 1;
+          massiveCalls += 1;
           return {
             bars: ["2026-05-11T22:15:00.000Z", "2026-05-11T22:30:00.000Z"].map(
               (timestamp, index) => ({
@@ -839,7 +836,7 @@ test("getBarsWithDebug waits long enough for broker live-edge backfill before sy
             requestedTo: null,
           };
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getBarsWithDebug({
@@ -852,7 +849,7 @@ test("getBarsWithDebug waits long enough for broker live-edge backfill before sy
   }, { priority: 8 });
 
   assert.ok(brokerCalls >= 1);
-  assert.equal(polygonCalls, 1);
+  assert.equal(massiveCalls, 1);
   assert.equal(result.bars.length, 4);
   assert.equal(result.historySource, "ibkr-history");
   assert.deepEqual(
@@ -862,8 +859,8 @@ test("getBarsWithDebug waits long enough for broker live-edge backfill before sy
 });
 
 test("getBarsWithDebug retries quick empty broker live-edge backfill before synthesis", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.massive.com";
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   const symbol = `EMPTYIBKR${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
   let primaryBrokerCalls = 0;
 
@@ -908,7 +905,7 @@ test("getBarsWithDebug retries quick empty broker live-edge backfill before synt
         },
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getBarsPage: async () => ({
@@ -928,7 +925,7 @@ test("getBarsWithDebug retries quick empty broker live-edge backfill before synt
           requestedFrom: null,
           requestedTo: null,
         }),
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getBarsWithDebug({
@@ -1090,8 +1087,8 @@ test("getBarsWithDebug falls back to IBEOS when OVERNIGHT returns regular histor
 });
 
 test("getBarsWithDebug keeps delayed synthesis out of the IBKR live edge", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.massive.com";
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   const symbol = "TSTLIVEEDGE";
   const stepMs = 15 * 60_000;
   const anchorMs = Math.floor(Date.now() / stepMs) * stepMs;
@@ -1145,7 +1142,7 @@ test("getBarsWithDebug keeps delayed synthesis out of the IBKR live edge", async
         getHistoricalBars: async () => ibkrBars,
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getBarsPage: async () => ({
@@ -1189,7 +1186,7 @@ test("getBarsWithDebug keeps delayed synthesis out of the IBKR live edge", async
           requestedFrom: new Date(oldestIbkrMs - stepMs),
           requestedTo: new Date(anchorMs + stepMs),
         }),
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getBarsWithDebug({
@@ -1351,12 +1348,12 @@ test("getBarsWithDebug only reuses synthesis-only bars for low-priority extended
   const originalNow = Date.now;
   let now = Date.parse("2026-05-01T20:00:00.000Z");
   let historyCalls = 0;
-  let polygonCalls = 0;
+  let massiveCalls = 0;
   const symbol = `STALESYNTH${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
 
   Date.now = () => now;
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.massive.com";
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   __setIbkrBridgeClientFactoryForTests(
     () =>
       ({
@@ -1370,19 +1367,19 @@ test("getBarsWithDebug only reuses synthesis-only bars for low-priority extended
         },
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getBarsPage: async () => {
-          polygonCalls += 1;
+          massiveCalls += 1;
           return {
             bars: [
               {
                 timestamp: new Date(now - 15 * 60_000),
-                open: 500 + polygonCalls,
-                high: 501 + polygonCalls,
-                low: 499 + polygonCalls,
-                close: 500 + polygonCalls,
+                open: 500 + massiveCalls,
+                high: 501 + massiveCalls,
+                low: 499 + massiveCalls,
+                close: 500 + massiveCalls,
                 volume: 100_000,
               },
             ],
@@ -1393,7 +1390,7 @@ test("getBarsWithDebug only reuses synthesis-only bars for low-priority extended
             requestedTo: new Date(now),
           };
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   try {
@@ -1426,14 +1423,14 @@ test("getBarsWithDebug only reuses synthesis-only bars for low-priority extended
     assert.equal(visible.debug.cacheStatus, "miss");
     assert.equal(visible.debug.payloadClass, "synthesis-only");
     assert.equal(historyCalls >= 1, true);
-    assert.equal(polygonCalls >= 2, true);
+    assert.equal(massiveCalls >= 2, true);
     assert.equal(second.bars[0]?.source, "massive-history");
   } finally {
     Date.now = originalNow;
   }
 });
 
-test("recent live-edge gaps force Polygon synthesis even when stored history meets count", () => {
+test("recent live-edge gaps force Massive synthesis even when stored history meets count", () => {
   const now = new Date("2026-05-15T16:20:00.000Z");
   const storedHistoricalBars = [
     {
@@ -1515,7 +1512,7 @@ test("signal-matrix Massive bars force gap-fill before 15-minute signal lag", ()
       __platformBarsCacheTestInternals.resolveRecentCoverageStaleToleranceMs({
         request,
         providerIdentity: "massive",
-        polygonConfig: { apiKey: "test", baseUrl: "https://api.massive.com" },
+        massiveConfig: { apiKey: "test", baseUrl: "https://api.massive.com" },
         options: { priority: 4, family: "signal-matrix" },
       });
   } finally {
@@ -1597,7 +1594,7 @@ test("bars cache is not self-invalidated by durable history persistence", () => 
   const source = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
   const persistenceBlock =
     source.match(
-      /if \(!options\.signal\?\.aborted && polygonBars\.length\) \{[\s\S]*?void persistMarketDataBars\(\{[\s\S]*?\}\);\s*\}/,
+      /if \(!options\.signal\?\.aborted && massiveBars\.length\) \{[\s\S]*?void persistMarketDataBars\(\{[\s\S]*?\}\);\s*\}/,
     )?.[0] ?? "";
 
   assert.doesNotMatch(source, /scheduleBarsCacheInvalidationAfterDurableWrite/);
@@ -2114,19 +2111,19 @@ test("getOptionChartBarsWithDebug uses a provided provider contract id before lo
   assert.equal(result.bars[0].close, 2.15);
 });
 
-test("getOptionChartBarsWithDebug prefers Polygon for stale option history windows before resolving IBKR contracts", async () => {
+test("getOptionChartBarsWithDebug prefers Massive for stale option history windows before resolving IBKR contracts", async () => {
   const expirationDate = new Date("2026-12-18T00:00:00.000Z");
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   let ibkrCalls = 0;
-  let polygonTicker: string | null = null;
+  let massiveTicker: string | null = null;
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
       ({
         getOptionChain: async () => {
           ibkrCalls += 1;
-          throw new Error("stale option history should use Polygon first");
+          throw new Error("stale option history should use Massive first");
         },
         getHistoricalBars: async () => {
           ibkrCalls += 1;
@@ -2134,11 +2131,11 @@ test("getOptionChartBarsWithDebug prefers Polygon for stale option history windo
         },
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getOptionAggregateBars: async (input: { optionTicker: string }) => {
-          polygonTicker = input.optionTicker;
+          massiveTicker = input.optionTicker;
           return [
             {
               timestamp: new Date("2026-04-27T20:00:00.000Z"),
@@ -2150,7 +2147,7 @@ test("getOptionChartBarsWithDebug prefers Polygon for stale option history windo
             },
           ];
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getOptionChartBarsWithDebug({
@@ -2166,10 +2163,10 @@ test("getOptionChartBarsWithDebug prefers Polygon for stale option history windo
   });
 
   assert.equal(ibkrCalls, 0);
-  assert.equal(polygonTicker, "O:SPY261218C00970000");
+  assert.equal(massiveTicker, "O:SPY261218C00970000");
   assert.equal(result.providerContractId, null);
   assert.equal(result.resolutionSource, "none");
-  assert.equal(result.dataSource, "polygon-option-aggregates");
+  assert.equal(result.dataSource, "massive-option-aggregates");
   assert.equal(result.debug.reason, "reference_option_history_preferred");
   assert.equal(result.bars.length, 1);
 });
@@ -2266,9 +2263,9 @@ test("getOptionChartBarsWithDebug preserves IBKR bars cache metadata", async () 
 test("getOptionChartBarsWithDebug leaves complete IBKR option history authoritative", async () => {
   const expirationDate = new Date("2026-12-18T00:00:00.000Z");
   const startMs = Date.parse("2026-04-27T19:58:00.000Z");
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
-  let polygonCalls = 0;
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
+  let massiveCalls = 0;
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -2285,14 +2282,14 @@ test("getOptionChartBarsWithDebug leaves complete IBKR option history authoritat
           })),
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getOptionAggregateBarsPage: async () => {
-          polygonCalls += 1;
-          throw new Error("Polygon should not be used for complete IBKR history");
+          massiveCalls += 1;
+          throw new Error("Massive should not be used for complete IBKR history");
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getOptionChartBarsWithDebug({
@@ -2306,7 +2303,7 @@ test("getOptionChartBarsWithDebug leaves complete IBKR option history authoritat
     outsideRth: false,
   });
 
-  assert.equal(polygonCalls, 0);
+  assert.equal(massiveCalls, 0);
   assert.equal(result.dataSource, "ibkr-history");
   assert.equal(result.historySource, "ibkr-history");
   assert.equal(result.gapFilled, false);
@@ -2317,14 +2314,14 @@ test("getOptionChartBarsWithDebug leaves complete IBKR option history authoritat
   );
 });
 
-test("getOptionChartBarsWithDebug fills partial IBKR option history from Polygon aggregates", async () => {
+test("getOptionChartBarsWithDebug fills partial IBKR option history from Massive aggregates", async () => {
   const expirationDate = new Date("2026-12-18T00:00:00.000Z");
   const firstTimestamp = new Date("2026-04-27T19:58:00.000Z");
   const fillTimestamp = new Date("2026-04-27T19:59:00.000Z");
   const lastTimestamp = new Date("2026-04-27T20:00:00.000Z");
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
-  let polygonTicker: string | null = null;
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
+  let massiveTicker: string | null = null;
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -2347,11 +2344,11 @@ test("getOptionChartBarsWithDebug fills partial IBKR option history from Polygon
         ],
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getOptionAggregateBarsPage: async (input: { optionTicker: string }) => {
-          polygonTicker = input.optionTicker;
+          massiveTicker = input.optionTicker;
           return {
             bars: [
               {
@@ -2371,14 +2368,14 @@ test("getOptionChartBarsWithDebug fills partial IBKR option history from Polygon
                 volume: 45,
               },
             ],
-            nextUrl: "https://api.polygon.io/v2/aggs/ticker/O:SPY261218C00970000/range/1/minute/1/2?cursor=mixed&apiKey=secret",
+            nextUrl: "https://api.massive.com/v2/aggs/ticker/O:SPY261218C00970000/range/1/minute/1/2?cursor=mixed&apiKey=secret",
             pageCount: 1,
             pageLimitReached: false,
             requestedFrom: new Date("2026-04-27T19:58:00.000Z"),
             requestedTo: new Date("2026-04-27T20:00:00.000Z"),
           };
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getOptionChartBarsWithDebug({
@@ -2392,7 +2389,7 @@ test("getOptionChartBarsWithDebug fills partial IBKR option history from Polygon
     outsideRth: false,
   });
 
-  assert.equal(polygonTicker, "O:SPY261218C00970000");
+  assert.equal(massiveTicker, "O:SPY261218C00970000");
   assert.equal(result.dataSource, "mixed-history");
   assert.equal(result.historySource, "mixed-option-history");
   assert.equal(result.gapFilled, true);
@@ -2410,7 +2407,7 @@ test("getOptionChartBarsWithDebug fills partial IBKR option history from Polygon
   assert.equal(result.bars[0].source, "ibkr-history");
   assert.equal(result.bars[0].close, 2.1);
   assert.equal(result.bars[0].volume, 15);
-  assert.equal(result.bars[1].source, "polygon-option-aggregates");
+  assert.equal(result.bars[1].source, "massive-option-aggregates");
   assert.equal(result.bars[1].close, 2.2);
   assert.equal(result.bars[1].volume, 45);
   assert.equal(result.bars[2].source, "ibkr-history");
@@ -2420,14 +2417,14 @@ test("getOptionChartBarsWithDebug fills partial IBKR option history from Polygon
   assert.equal(result.historyPage.providerNextUrl?.includes("cursor=mixed"), true);
 });
 
-test("getOptionChartBarsWithDebug enriches zero-volume IBKR option bars from Polygon aggregates", async () => {
+test("getOptionChartBarsWithDebug enriches zero-volume IBKR option bars from Massive aggregates", async () => {
   const expirationDate = new Date("2026-12-18T00:00:00.000Z");
   const firstTimestamp = new Date("2026-04-27T19:59:00.000Z");
   const secondTimestamp = new Date("2026-04-27T20:00:00.000Z");
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
-  let polygonTicker: string | null = null;
-  let polygonLimit: number | undefined;
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
+  let massiveTicker: string | null = null;
+  let massiveLimit: number | undefined;
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -2450,15 +2447,15 @@ test("getOptionChartBarsWithDebug enriches zero-volume IBKR option bars from Pol
         ],
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getOptionAggregateBarsPage: async (input: {
           optionTicker: string;
           limit?: number;
         }) => {
-          polygonTicker = input.optionTicker;
-          polygonLimit = input.limit;
+          massiveTicker = input.optionTicker;
+          massiveLimit = input.limit;
           return {
             bars: [
               {
@@ -2485,7 +2482,7 @@ test("getOptionChartBarsWithDebug enriches zero-volume IBKR option bars from Pol
             requestedTo: null,
           };
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getOptionChartBarsWithDebug({
@@ -2499,8 +2496,8 @@ test("getOptionChartBarsWithDebug enriches zero-volume IBKR option bars from Pol
     outsideRth: false,
   });
 
-  assert.equal(polygonTicker, "O:SPY261218C00971000");
-  assert.equal(polygonLimit, 2);
+  assert.equal(massiveTicker, "O:SPY261218C00971000");
+  assert.equal(massiveLimit, 2);
   assert.equal(result.dataSource, "ibkr-history");
   assert.equal(result.historySource, "ibkr-history");
   assert.equal(result.feedIssue, false);
@@ -2573,11 +2570,11 @@ test("getOptionChartBarsWithDebug rolls 2m option chart bars from 1m IBKR histor
   assert.equal(result.bars[1].close, 2.3);
 });
 
-test("getOptionChartBarsWithDebug keeps IBKR zero-volume bars when Polygon enrichment is unavailable", async () => {
+test("getOptionChartBarsWithDebug keeps IBKR zero-volume bars when Massive enrichment is unavailable", async () => {
   const expirationDate = new Date("2026-12-18T00:00:00.000Z");
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
-  let polygonCalls = 0;
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
+  let massiveCalls = 0;
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -2594,14 +2591,14 @@ test("getOptionChartBarsWithDebug keeps IBKR zero-volume bars when Polygon enric
         ],
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getOptionAggregateBarsPage: async () => {
-          polygonCalls += 1;
-          throw new Error("Polygon unavailable");
+          massiveCalls += 1;
+          throw new Error("Massive unavailable");
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getOptionChartBarsWithDebug({
@@ -2609,13 +2606,13 @@ test("getOptionChartBarsWithDebug keeps IBKR zero-volume bars when Polygon enric
     expirationDate,
     strike: 972,
     right: "call",
-    providerContractId: "event-conid-zero-volume-polygon-down",
+    providerContractId: "event-conid-zero-volume-massive-down",
     timeframe: "1m",
     limit: 5,
     outsideRth: false,
   });
 
-  assert.equal(polygonCalls, 1);
+  assert.equal(massiveCalls, 1);
   assert.equal(result.dataSource, "ibkr-history");
   assert.equal(result.feedIssue, false);
   assert.equal(result.emptyReason, null);
@@ -2625,13 +2622,13 @@ test("getOptionChartBarsWithDebug keeps IBKR zero-volume bars when Polygon enric
   assert.equal(result.bars[0].volume, 0);
 });
 
-test("getOptionChartBarsWithDebug falls back to Polygon option aggregates when IBKR history is empty", async () => {
+test("getOptionChartBarsWithDebug falls back to Massive option aggregates when IBKR history is empty", async () => {
   const expirationDate = new Date("2026-12-18T00:00:00.000Z");
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
-  let polygonTicker: string | null = null;
-  const polygonNextUrl =
-    "https://api.polygon.io/v2/aggs/ticker/O:SPY261218C00970000/range/1/minute/1/2?cursor=abc&apiKey=secret";
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
+  let massiveTicker: string | null = null;
+  const massiveNextUrl =
+    "https://api.massive.com/v2/aggs/ticker/O:SPY261218C00970000/range/1/minute/1/2?cursor=abc&apiKey=secret";
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -2656,11 +2653,11 @@ test("getOptionChartBarsWithDebug falls back to Polygon option aggregates when I
         getHistoricalBars: async () => [],
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getOptionAggregateBarsPage: async (input: { optionTicker: string }) => {
-          polygonTicker = input.optionTicker;
+          massiveTicker = input.optionTicker;
           return {
             bars: [
               {
@@ -2672,14 +2669,14 @@ test("getOptionChartBarsWithDebug falls back to Polygon option aggregates when I
                 volume: 42,
               },
             ],
-            nextUrl: polygonNextUrl,
+            nextUrl: massiveNextUrl,
             pageCount: 2,
             pageLimitReached: true,
             requestedFrom: new Date("2026-04-20T00:00:00.000Z"),
             requestedTo: new Date("2026-04-27T20:00:00.000Z"),
           };
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getOptionChartBarsWithDebug({
@@ -2693,19 +2690,19 @@ test("getOptionChartBarsWithDebug falls back to Polygon option aggregates when I
     outsideRth: false,
   });
 
-  assert.equal(polygonTicker, "O:SPY261218C00970000");
+  assert.equal(massiveTicker, "O:SPY261218C00970000");
   assert.equal(result.providerContractId, "event-conid");
   assert.equal(result.resolutionSource, "provided");
-  assert.equal(result.dataSource, "polygon-option-aggregates");
-  assert.equal(result.historySource, "polygon-option-aggregates");
+  assert.equal(result.dataSource, "massive-option-aggregates");
+  assert.equal(result.historySource, "massive-option-aggregates");
   assert.equal(result.feedIssue, false);
   assert.equal(result.emptyReason, null);
   assert.equal(result.bars.length, 1);
   assert.equal(result.bars[0].providerContractId, "event-conid");
-  assert.equal(result.bars[0].source, "polygon-option-aggregates");
+  assert.equal(result.bars[0].source, "massive-option-aggregates");
   assert.equal(result.bars[0].close, 1.25);
   assert.equal(result.bars[0].volume, 42);
-  assert.equal(result.historyPage.provider, "polygon-option-aggregates");
+  assert.equal(result.historyPage.provider, "massive-option-aggregates");
   assert.equal(result.historyPage.providerNextUrl?.includes("apiKey"), false);
   assert.equal(result.historyPage.providerNextUrl?.includes("cursor=abc"), true);
   assert.equal(result.historyPage.providerCursor, result.historyPage.providerNextUrl);
@@ -2713,13 +2710,13 @@ test("getOptionChartBarsWithDebug falls back to Polygon option aggregates when I
   assert.equal(result.historyPage.providerPageLimitReached, true);
 });
 
-test("getBarsWithDebug carries sanitized Polygon pagination metadata", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+test("getBarsWithDebug carries sanitized Massive pagination metadata", async () => {
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   process.env["CHART_HYDRATION_CURSOR_ENABLED"] = "1";
   const symbol = "TSTCUR1";
-  const polygonNextUrl =
-    `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/minute/1/2?cursor=xyz&apiKey=secret`;
+  const massiveNextUrl =
+    `https://api.massive.com/v2/aggs/ticker/${symbol}/range/1/minute/1/2?cursor=xyz&apiKey=secret`;
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -2731,7 +2728,7 @@ test("getBarsWithDebug carries sanitized Polygon pagination metadata", async () 
         getHistoricalBars: async () => [],
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getBarsPage: async () => ({
@@ -2745,13 +2742,13 @@ test("getBarsWithDebug carries sanitized Polygon pagination metadata", async () 
               volume: 1000,
             },
           ],
-          nextUrl: polygonNextUrl,
+          nextUrl: massiveNextUrl,
           pageCount: 3,
           pageLimitReached: true,
           requestedFrom: new Date("2026-04-20T00:00:00.000Z"),
           requestedTo: new Date("2026-04-27T20:00:00.000Z"),
         }),
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getBarsWithDebug({
@@ -2765,7 +2762,7 @@ test("getBarsWithDebug carries sanitized Polygon pagination metadata", async () 
 
   assert.equal(result.gapFilled, true);
   assert.equal(result.bars.length, 1);
-  assert.equal(result.historyPage.provider, "polygon-history");
+  assert.equal(result.historyPage.provider, "massive-history");
   assert.equal(result.historyPage.providerNextUrl?.includes("apiKey"), false);
   assert.equal(result.historyPage.providerNextUrl?.includes("cursor=xyz"), true);
   assert.equal(result.historyPage.providerCursor, result.historyPage.providerNextUrl);
@@ -2775,13 +2772,13 @@ test("getBarsWithDebug carries sanitized Polygon pagination metadata", async () 
   assert.equal(result.historyPage.historyCursor?.includes("apiKey"), false);
 });
 
-test("getBarsWithDebug uses opaque history cursors for Polygon continuation", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+test("getBarsWithDebug uses opaque history cursors for Massive continuation", async () => {
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   process.env["CHART_HYDRATION_CURSOR_ENABLED"] = "1";
   const symbol = "TSTCUR2";
-  const polygonNextUrl =
-    `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/minute/1/2?cursor=next&apiKey=secret`;
+  const massiveNextUrl =
+    `https://api.massive.com/v2/aggs/ticker/${symbol}/range/1/minute/1/2?cursor=next&apiKey=secret`;
   let cursorUrlSeen: string | null = null;
   let windowFetches = 0;
 
@@ -2795,7 +2792,7 @@ test("getBarsWithDebug uses opaque history cursors for Polygon continuation", as
         getHistoricalBars: async () => [],
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getBarsPage: async () => {
@@ -2811,7 +2808,7 @@ test("getBarsWithDebug uses opaque history cursors for Polygon continuation", as
                 volume: 900,
               },
             ],
-            nextUrl: polygonNextUrl,
+            nextUrl: massiveNextUrl,
             pageCount: 4,
             pageLimitReached: true,
             requestedFrom: new Date("2026-04-20T00:00:00.000Z"),
@@ -2838,7 +2835,7 @@ test("getBarsWithDebug uses opaque history cursors for Polygon continuation", as
             requestedTo: new Date("2026-04-27T20:00:00.000Z"),
           };
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const first = await getBarsWithDebug({
@@ -2864,18 +2861,18 @@ test("getBarsWithDebug uses opaque history cursors for Polygon continuation", as
   });
 
   assert.equal(windowFetches, 1);
-  assert.equal(cursorUrlSeen, polygonNextUrl);
+  assert.equal(cursorUrlSeen, massiveNextUrl);
   assert.equal(second.bars.some((bar) => bar.close === 521), true);
   assert.equal(second.historyPage.providerPageLimitReached, false);
 });
 
-test("getBarsWithDebug follows Polygon cursor continuation even when IBKR fills the requested count", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+test("getBarsWithDebug follows Massive cursor continuation even when IBKR fills the requested count", async () => {
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   process.env["CHART_HYDRATION_CURSOR_ENABLED"] = "1";
   const symbol = "TSTCUR3";
-  const polygonNextUrl =
-    `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/minute/1/2?cursor=countfull&apiKey=secret`;
+  const massiveNextUrl =
+    `https://api.massive.com/v2/aggs/ticker/${symbol}/range/1/minute/1/2?cursor=countfull&apiKey=secret`;
   let cursorUrlSeen: string | null = null;
   let windowFetches = 0;
   let brokerCalls = 0;
@@ -2903,7 +2900,7 @@ test("getBarsWithDebug follows Polygon cursor continuation even when IBKR fills 
         },
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getBarsPage: async () => {
@@ -2919,7 +2916,7 @@ test("getBarsWithDebug follows Polygon cursor continuation even when IBKR fills 
                 volume: 800,
               },
             ],
-            nextUrl: polygonNextUrl,
+            nextUrl: massiveNextUrl,
             pageCount: 2,
             pageLimitReached: true,
             requestedFrom: new Date("2026-04-27T19:45:00.000Z"),
@@ -2946,7 +2943,7 @@ test("getBarsWithDebug follows Polygon cursor continuation even when IBKR fills 
             requestedTo: new Date("2026-04-27T19:53:00.000Z"),
           };
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const first = await getBarsWithDebug(
@@ -2982,19 +2979,19 @@ test("getBarsWithDebug follows Polygon cursor continuation even when IBKR fills 
   const counters = __platformBarsCacheTestInternals.getBarsHydrationCounters();
   assert.equal(windowFetches, 1);
   assert.equal(brokerCalls >= 2, true);
-  assert.equal(cursorUrlSeen, polygonNextUrl);
+  assert.equal(cursorUrlSeen, massiveNextUrl);
   assert.equal(second.historyPage.providerPageLimitReached, false);
   assert.equal(counters.cursorContinuation >= 1, true);
   assert.equal(counters.chartBackfillCursorFetch >= 1, true);
 });
 
-test("getBarsWithDebug marks an empty Polygon cursor continuation as exhausted", async () => {
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+test("getBarsWithDebug marks an empty Massive cursor continuation as exhausted", async () => {
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   process.env["CHART_HYDRATION_CURSOR_ENABLED"] = "1";
   const symbol = "TSTCURX";
-  const polygonNextUrl =
-    `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/minute/1/2?cursor=empty&apiKey=secret`;
+  const massiveNextUrl =
+    `https://api.massive.com/v2/aggs/ticker/${symbol}/range/1/minute/1/2?cursor=empty&apiKey=secret`;
   let cursorUrlSeen: string | null = null;
   let windowFetches = 0;
 
@@ -3008,7 +3005,7 @@ test("getBarsWithDebug marks an empty Polygon cursor continuation as exhausted",
         getHistoricalBars: async () => [],
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getBarsPage: async () => {
@@ -3024,7 +3021,7 @@ test("getBarsWithDebug marks an empty Polygon cursor continuation as exhausted",
                 volume: 900,
               },
             ],
-            nextUrl: polygonNextUrl,
+            nextUrl: massiveNextUrl,
             pageCount: 4,
             pageLimitReached: true,
             requestedFrom: new Date("2026-04-20T00:00:00.000Z"),
@@ -3042,7 +3039,7 @@ test("getBarsWithDebug marks an empty Polygon cursor continuation as exhausted",
             requestedTo: new Date("2026-04-27T19:54:00.000Z"),
           };
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const first = await getBarsWithDebug({
@@ -3068,17 +3065,17 @@ test("getBarsWithDebug marks an empty Polygon cursor continuation as exhausted",
   });
 
   assert.equal(windowFetches, 1);
-  assert.equal(cursorUrlSeen, polygonNextUrl);
+  assert.equal(cursorUrlSeen, massiveNextUrl);
   assert.equal(second.bars.length, 0);
   assert.equal(second.historyPage.exhaustedBefore, true);
   assert.equal(second.historyPage.historyCursor, null);
 });
 
-test("getOptionChartBarsWithDebug can use Polygon option aggregates when IBKR contract lookup is backed off", async () => {
+test("getOptionChartBarsWithDebug can use Massive option aggregates when IBKR contract lookup is backed off", async () => {
   const expirationDate = new Date("2026-12-18T00:00:00.000Z");
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
-  let polygonTicker: string | null = null;
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
+  let massiveTicker: string | null = null;
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -3090,11 +3087,11 @@ test("getOptionChartBarsWithDebug can use Polygon option aggregates when IBKR co
         },
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getOptionAggregateBars: async (input: { optionTicker: string }) => {
-          polygonTicker = input.optionTicker;
+          massiveTicker = input.optionTicker;
           return [
             {
               timestamp: new Date("2026-04-27T20:00:00.000Z"),
@@ -3106,7 +3103,7 @@ test("getOptionChartBarsWithDebug can use Polygon option aggregates when IBKR co
             },
           ];
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getOptionChartBarsWithDebug({
@@ -3119,22 +3116,22 @@ test("getOptionChartBarsWithDebug can use Polygon option aggregates when IBKR co
     outsideRth: false,
   });
 
-  assert.equal(polygonTicker, "O:SPY261218C00970000");
+  assert.equal(massiveTicker, "O:SPY261218C00970000");
   assert.equal(result.providerContractId, null);
   assert.equal(result.resolutionSource, "none");
-  assert.equal(result.dataSource, "polygon-option-aggregates");
+  assert.equal(result.dataSource, "massive-option-aggregates");
   assert.equal(result.feedIssue, true);
   assert.equal(result.emptyReason, null);
   assert.equal(result.bars.length, 1);
 });
 
-test("getOptionChartBarsWithDebug uses opaque history cursors for Polygon option aggregates", async () => {
+test("getOptionChartBarsWithDebug uses opaque history cursors for Massive option aggregates", async () => {
   const expirationDate = new Date("2026-12-18T00:00:00.000Z");
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   process.env["CHART_HYDRATION_CURSOR_ENABLED"] = "1";
-  const polygonNextUrl =
-    "https://api.polygon.io/v2/aggs/ticker/O:SPY261218C00970000/range/1/minute/1/2?cursor=opt&apiKey=secret";
+  const massiveNextUrl =
+    "https://api.massive.com/v2/aggs/ticker/O:SPY261218C00970000/range/1/minute/1/2?cursor=opt&apiKey=secret";
   let cursorUrlSeen: string | null = null;
   let aggregateFetches = 0;
 
@@ -3161,7 +3158,7 @@ test("getOptionChartBarsWithDebug uses opaque history cursors for Polygon option
         getHistoricalBars: async () => [],
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getOptionAggregateBarsPage: async () => {
@@ -3177,7 +3174,7 @@ test("getOptionChartBarsWithDebug uses opaque history cursors for Polygon option
                 volume: 42,
               },
             ],
-            nextUrl: polygonNextUrl,
+            nextUrl: massiveNextUrl,
             pageCount: 4,
             pageLimitReached: true,
             requestedFrom: new Date("2026-04-20T00:00:00.000Z"),
@@ -3204,7 +3201,7 @@ test("getOptionChartBarsWithDebug uses opaque history cursors for Polygon option
             requestedTo: new Date("2026-04-27T20:00:00.000Z"),
           };
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const first = await getOptionChartBarsWithDebug({
@@ -3234,19 +3231,19 @@ test("getOptionChartBarsWithDebug uses opaque history cursors for Polygon option
   });
 
   assert.equal(aggregateFetches, 1);
-  assert.equal(cursorUrlSeen, polygonNextUrl);
+  assert.equal(cursorUrlSeen, massiveNextUrl);
   assert.equal(second.bars.length, 1);
   assert.equal(second.bars[0].close, 1.35);
   assert.equal(second.historyPage.providerPageLimitReached, false);
 });
 
-test("getOptionChartBarsWithDebug marks an empty Polygon option cursor as exhausted", async () => {
+test("getOptionChartBarsWithDebug marks an empty Massive option cursor as exhausted", async () => {
   const expirationDate = new Date("2026-12-18T00:00:00.000Z");
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
   process.env["CHART_HYDRATION_CURSOR_ENABLED"] = "1";
-  const polygonNextUrl =
-    "https://api.polygon.io/v2/aggs/ticker/O:SPY261218C00970000/range/1/minute/1/2?cursor=optempty&apiKey=secret";
+  const massiveNextUrl =
+    "https://api.massive.com/v2/aggs/ticker/O:SPY261218C00970000/range/1/minute/1/2?cursor=optempty&apiKey=secret";
   let cursorUrlSeen: string | null = null;
   let aggregateFetches = 0;
 
@@ -3273,7 +3270,7 @@ test("getOptionChartBarsWithDebug marks an empty Polygon option cursor as exhaus
         getHistoricalBars: async () => [],
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getOptionAggregateBarsPage: async () => {
@@ -3289,7 +3286,7 @@ test("getOptionChartBarsWithDebug marks an empty Polygon option cursor as exhaus
                 volume: 42,
               },
             ],
-            nextUrl: polygonNextUrl,
+            nextUrl: massiveNextUrl,
             pageCount: 4,
             pageLimitReached: true,
             requestedFrom: new Date("2026-04-20T00:00:00.000Z"),
@@ -3307,7 +3304,7 @@ test("getOptionChartBarsWithDebug marks an empty Polygon option cursor as exhaus
             requestedTo: new Date("2026-04-27T19:54:00.000Z"),
           };
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const first = await getOptionChartBarsWithDebug({
@@ -3337,17 +3334,17 @@ test("getOptionChartBarsWithDebug marks an empty Polygon option cursor as exhaus
   });
 
   assert.equal(aggregateFetches, 1);
-  assert.equal(cursorUrlSeen, polygonNextUrl);
+  assert.equal(cursorUrlSeen, massiveNextUrl);
   assert.equal(second.bars.length, 0);
   assert.equal(second.historyPage.exhaustedBefore, true);
   assert.equal(second.historyPage.historyCursor, null);
 });
 
-test("getOptionChartBarsWithDebug prefers the flow option ticker for Polygon fallback", async () => {
+test("getOptionChartBarsWithDebug prefers the flow option ticker for Massive fallback", async () => {
   const expirationDate = new Date("2026-12-18T00:00:00.000Z");
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
-  let polygonTicker: string | null = null;
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
+  let massiveTicker: string | null = null;
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -3359,11 +3356,11 @@ test("getOptionChartBarsWithDebug prefers the flow option ticker for Polygon fal
         },
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getOptionAggregateBars: async (input: { optionTicker: string }) => {
-          polygonTicker = input.optionTicker;
+          massiveTicker = input.optionTicker;
           return [
             {
               timestamp: new Date("2026-04-27T20:00:00.000Z"),
@@ -3375,7 +3372,7 @@ test("getOptionChartBarsWithDebug prefers the flow option ticker for Polygon fal
             },
           ];
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getOptionChartBarsWithDebug({
@@ -3389,20 +3386,20 @@ test("getOptionChartBarsWithDebug prefers the flow option ticker for Polygon fal
     outsideRth: false,
   });
 
-  assert.equal(polygonTicker, "O:BRK.B261218P00512500");
+  assert.equal(massiveTicker, "O:BRK.B261218P00512500");
   assert.equal(result.optionTicker, "O:BRK.B261218P00512500");
   assert.equal(result.providerContractId, null);
   assert.equal(result.resolutionSource, "none");
-  assert.equal(result.dataSource, "polygon-option-aggregates");
+  assert.equal(result.dataSource, "massive-option-aggregates");
   assert.equal(result.feedIssue, true);
   assert.equal(result.emptyReason, null);
   assert.equal(result.bars.length, 1);
 });
 
-test("getOptionChartBarsWithDebug returns no chart when both IBKR and Polygon have no option bars", async () => {
+test("getOptionChartBarsWithDebug returns no chart when both IBKR and Massive have no option bars", async () => {
   const expirationDate = new Date("2026-12-18T00:00:00.000Z");
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -3430,11 +3427,11 @@ test("getOptionChartBarsWithDebug returns no chart when both IBKR and Polygon ha
         },
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getOptionAggregateBars: async () => [],
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getOptionChartBarsWithDebug({
@@ -3457,10 +3454,10 @@ test("getOptionChartBarsWithDebug returns no chart when both IBKR and Polygon ha
   assert.equal(result.bars.length, 0);
 });
 
-test("getOptionChartBarsWithDebug marks IBKR feed issues when Polygon supplies fallback bars", async () => {
+test("getOptionChartBarsWithDebug marks IBKR feed issues when Massive supplies fallback bars", async () => {
   const expirationDate = new Date("2026-12-18T00:00:00.000Z");
-  process.env["POLYGON_API_KEY"] = "test";
-  process.env["POLYGON_BASE_URL"] = "https://api.polygon.io";
+  process.env["MASSIVE_API_KEY"] = "test";
+  process.env["MASSIVE_API_BASE_URL"] = "https://api.massive.com";
 
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -3487,7 +3484,7 @@ test("getOptionChartBarsWithDebug marks IBKR feed issues when Polygon supplies f
         },
       }) as unknown as IbkrBridgeClient,
   );
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getOptionAggregateBars: async () => [
@@ -3500,7 +3497,7 @@ test("getOptionChartBarsWithDebug marks IBKR feed issues when Polygon supplies f
             volume: 42,
           },
         ],
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
 
   const result = await getOptionChartBarsWithDebug({
@@ -3514,7 +3511,7 @@ test("getOptionChartBarsWithDebug marks IBKR feed issues when Polygon supplies f
     outsideRth: false,
   });
 
-  assert.equal(result.dataSource, "polygon-option-aggregates");
+  assert.equal(result.dataSource, "massive-option-aggregates");
   assert.equal(result.feedIssue, true);
   assert.equal(result.emptyReason, null);
   assert.equal(result.bars.length, 1);
@@ -3585,17 +3582,17 @@ test("option chain lookup forwards metadata quote hydration", async () => {
   assert.equal(seenQuoteHydration, "metadata");
 });
 
-test("metadata option-chain batches can skip delayed Polygon snapshot hydration", async () => {
-  process.env["POLYGON_API_KEY"] = "test-polygon-key";
-  let polygonChainCalls = 0;
-  __setPolygonMarketDataClientFactoryForTests(
+test("metadata option-chain batches can skip delayed Massive snapshot hydration", async () => {
+  process.env["MASSIVE_API_KEY"] = "test-massive-key";
+  let massiveChainCalls = 0;
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         getOptionChain: async () => {
-          polygonChainCalls += 1;
+          massiveChainCalls += 1;
           return [];
         },
-      }) as unknown as PolygonMarketDataClient,
+      }) as unknown as MassiveMarketDataClient,
   );
   __setIbkrBridgeClientFactoryForTests(
     () =>
@@ -3614,7 +3611,7 @@ test("metadata option-chain batches can skip delayed Polygon snapshot hydration"
     allowDelayedSnapshotHydration: false,
   });
 
-  assert.equal(polygonChainCalls, 0);
+  assert.equal(massiveChainCalls, 0);
   assert.equal(result.results[0]?.contracts.length, 1);
 });
 

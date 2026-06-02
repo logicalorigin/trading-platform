@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  PolygonMarketDataClient,
+  MassiveMarketDataClient,
   __resetMassiveApiDiagnosticsForTests,
   aggregateOptionPremiumDistributionSnapshots,
   getMassiveApiDiagnostics,
@@ -20,7 +20,7 @@ test("Massive stock aggregates are real-time by default", async () => {
   }) as typeof fetch;
 
   try {
-    const client = new PolygonMarketDataClient({
+    const client = new MassiveMarketDataClient({
       apiKey: "test",
       baseUrl: "https://api.massive.com",
     });
@@ -59,7 +59,7 @@ test("Massive stock aggregates honor delayed recency override", async () => {
   }) as typeof fetch;
 
   try {
-    const client = new PolygonMarketDataClient({
+    const client = new MassiveMarketDataClient({
       apiKey: "test",
       baseUrl: "https://api.massive.com",
     });
@@ -97,7 +97,7 @@ test("Massive stock aggregates support native 2-minute bars", async () => {
   }) as typeof fetch;
 
   try {
-    const client = new PolygonMarketDataClient({
+    const client = new MassiveMarketDataClient({
       apiKey: "test",
       baseUrl: "https://api.massive.com",
     });
@@ -132,7 +132,7 @@ test("Massive REST diagnostics record sanitized request metadata", async () => {
       apiKey: "super-secret-key",
       baseUrl: "https://api.massive.com",
     };
-    const client = new PolygonMarketDataClient(config);
+    const client = new MassiveMarketDataClient(config);
     await client.getBarsPage({
       symbol: "SPY",
       timeframe: "1m",
@@ -172,7 +172,7 @@ test("Massive reference ticker metadata uses explicit Massive provider identity"
     })) as typeof fetch;
 
   try {
-    const client = new PolygonMarketDataClient({
+    const client = new MassiveMarketDataClient({
       apiKey: "test",
       baseUrl: "https://api.massive.com",
     });
@@ -206,7 +206,7 @@ test("Massive reference ticker pages preserve Massive provider identity", async 
     })) as typeof fetch;
 
   try {
-    const client = new PolygonMarketDataClient({
+    const client = new MassiveMarketDataClient({
       apiKey: "test",
       baseUrl: "https://api.massive.com",
     });
@@ -256,9 +256,9 @@ test("option chain contracts include day change fields", async () => {
   }) as typeof fetch;
 
   try {
-    const client = new PolygonMarketDataClient({
+    const client = new MassiveMarketDataClient({
       apiKey: "test",
-      baseUrl: "https://polygon.test",
+      baseUrl: "https://massive.test",
     });
     const contracts = await client.getOptionChain({
       underlying: "SPY",
@@ -500,9 +500,9 @@ test("classifies historical flow events with tick-test side confidence", async (
   }) as typeof fetch;
 
   try {
-    const client = new PolygonMarketDataClient({
+    const client = new MassiveMarketDataClient({
       apiKey: "test",
-      baseUrl: "https://polygon.test",
+      baseUrl: "https://massive.test",
     });
     const result = await client.getHistoricalOptionFlowEvents({
       underlying: "SPY",
@@ -593,9 +593,9 @@ test("uses quote-match classification before tick-test fallback for derived hist
   }) as typeof fetch;
 
   try {
-    const client = new PolygonMarketDataClient({
+    const client = new MassiveMarketDataClient({
       apiKey: "test",
-      baseUrl: "https://polygon.test",
+      baseUrl: "https://massive.test",
     });
     const events = await client.getDerivedFlowEvents({
       underlying: "SPY",
@@ -846,9 +846,9 @@ test("anchors premium trade hydration to the option snapshot trading date", asyn
   }) as typeof fetch;
 
   try {
-    const client = new PolygonMarketDataClient({
+    const client = new MassiveMarketDataClient({
       apiKey: "test",
-      baseUrl: "https://polygon.test",
+      baseUrl: "https://massive.test",
     });
     const distribution = await client.getOptionPremiumDistribution({
       underlying: "SPY",
@@ -934,9 +934,9 @@ test("selects premium trade hydration contracts by cumulative premium target", a
   }) as typeof fetch;
 
   try {
-    const client = new PolygonMarketDataClient({
+    const client = new MassiveMarketDataClient({
       apiKey: "test",
-      baseUrl: "https://polygon.test",
+      baseUrl: "https://massive.test",
     });
     const distribution = await client.getOptionPremiumDistribution({
       underlying: "SPY",
@@ -1004,9 +1004,9 @@ test("uses a week lookback from the option snapshot trading date", async () => {
   }) as typeof fetch;
 
   try {
-    const client = new PolygonMarketDataClient({
+    const client = new MassiveMarketDataClient({
       apiKey: "test",
-      baseUrl: "https://polygon.test",
+      baseUrl: "https://massive.test",
     });
     const distribution = await client.getOptionPremiumDistribution({
       underlying: "SPY",

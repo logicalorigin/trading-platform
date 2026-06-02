@@ -11,11 +11,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 export type RuntimeMode = "paper" | "live";
-export type PolygonRuntimeConfig = {
+export type MassiveRuntimeConfig = {
   apiKey: string;
   baseUrl: string;
 };
-export type PolygonProviderIdentity = "polygon" | "massive";
+export type MassiveProviderIdentity = "massive";
 export type MassiveStocksRecency = "realtime" | "delayed";
 export type FmpRuntimeConfig = {
   apiKey: string;
@@ -75,15 +75,12 @@ export type IbkrBridgeRuntimeChangeEvent =
       override: null;
     };
 
-const POLYGON_API_KEY_ENV_NAMES = [
-  "POLYGON_API_KEY",
-  "POLYGON_KEY",
+const MASSIVE_API_KEY_ENV_NAMES = [
   "MASSIVE_API_KEY",
   "MASSIVE_MARKET_DATA_API_KEY",
 ];
 
-const POLYGON_BASE_URL_ENV_NAMES = [
-  "POLYGON_BASE_URL",
+const MASSIVE_API_BASE_URL_ENV_NAMES = [
   "MASSIVE_API_BASE_URL",
 ];
 
@@ -388,20 +385,6 @@ export function __setIbkrBridgeLegacyRuntimeOverrideFileForTests(
   ibkrBridgeLegacyRuntimeOverrideFileForTests = path;
 }
 
-function hasExplicitMassiveCredentials(): boolean {
-  return Boolean(
-    (process.env["MASSIVE_API_KEY"] && process.env["MASSIVE_API_KEY"]?.trim()) ||
-    (process.env["MASSIVE_MARKET_DATA_API_KEY"] && process.env["MASSIVE_MARKET_DATA_API_KEY"]?.trim()),
-  );
-}
-
-function hasExplicitPolygonCredentials(): boolean {
-  return Boolean(
-    (process.env["POLYGON_API_KEY"] && process.env["POLYGON_API_KEY"]?.trim()) ||
-    (process.env["POLYGON_KEY"] && process.env["POLYGON_KEY"]?.trim()),
-  );
-}
-
 function normalizeRuntimeMode(value: string | null): RuntimeMode | null {
   if (!value) {
     return null;
@@ -463,8 +446,8 @@ export function getRuntimeMode(): RuntimeMode {
   return process.env["TRADING_MODE"] === "live" ? "live" : "paper";
 }
 
-export function getPolygonRuntimeConfig(): PolygonRuntimeConfig | null {
-  const apiKey = getOptionalEnv(POLYGON_API_KEY_ENV_NAMES);
+export function getMassiveRuntimeConfig(): MassiveRuntimeConfig | null {
+  const apiKey = getOptionalEnv(MASSIVE_API_KEY_ENV_NAMES);
 
   if (!apiKey) {
     return null;
@@ -473,21 +456,18 @@ export function getPolygonRuntimeConfig(): PolygonRuntimeConfig | null {
   return {
     apiKey,
     baseUrl: stripTrailingSlash(
-      getOptionalEnv(POLYGON_BASE_URL_ENV_NAMES) ??
-        (hasExplicitMassiveCredentials() && !hasExplicitPolygonCredentials()
-          ? "https://api.massive.com"
-          : "https://api.polygon.io"),
+      getOptionalEnv(MASSIVE_API_BASE_URL_ENV_NAMES) ?? "https://api.massive.com",
     ),
   };
 }
 
-export function getPolygonProviderIdentity(
-  config: PolygonRuntimeConfig | null = getPolygonRuntimeConfig(),
-): PolygonProviderIdentity | null {
+export function getMassiveProviderIdentity(
+  config: MassiveRuntimeConfig | null = getMassiveRuntimeConfig(),
+): MassiveProviderIdentity | null {
   if (!config) {
     return null;
   }
-  return config.baseUrl.includes("massive.com") ? "massive" : "polygon";
+  return "massive";
 }
 
 export function getMassiveStocksRecency(): MassiveStocksRecency {
@@ -498,10 +478,10 @@ export function getMassiveStocksRecency(): MassiveStocksRecency {
 }
 
 export function isMassiveStocksRealtimeConfigured(
-  config: PolygonRuntimeConfig | null = getPolygonRuntimeConfig(),
+  config: MassiveRuntimeConfig | null = getMassiveRuntimeConfig(),
 ): boolean {
   return (
-    getPolygonProviderIdentity(config) === "massive" &&
+    getMassiveProviderIdentity(config) === "massive" &&
     getMassiveStocksRecency() === "realtime"
   );
 }
@@ -677,11 +657,9 @@ export function isLiveIbkrMarketDataMode(
 }
 
 export function getProviderConfiguration() {
-  const polygonConfig = getPolygonRuntimeConfig();
-  const polygonIdentity = getPolygonProviderIdentity(polygonConfig);
+  const massiveConfig = getMassiveRuntimeConfig();
   return {
-    polygon: Boolean(polygonConfig),
-    massive: polygonIdentity === "massive",
+    massive: Boolean(massiveConfig),
     research: Boolean(getFmpRuntimeConfig()),
     ibkr: Boolean(getIbkrBridgeRuntimeConfig()),
   } as const;

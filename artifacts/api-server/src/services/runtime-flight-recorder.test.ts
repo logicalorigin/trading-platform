@@ -23,6 +23,7 @@ import {
 } from "./request-metrics";
 import {
   __resetApiResourcePressureForTests,
+  resolveApiRssPressureThresholds,
   updateApiResourcePressure,
 } from "./resource-pressure";
 import type { DiagnosticEventPayload } from "./diagnostics";
@@ -111,13 +112,14 @@ test("imports persisted restart incidents into diagnostics once", async () => {
 
 test("writes API heartbeat and exposes recorder diagnostics", () => {
   const dir = useFreshRecorderDir();
+  const criticalRssMb = resolveApiRssPressureThresholds().critical + 1;
   recordApiRequest({
     method: "GET",
     path: "/api/healthz",
     statusCode: 200,
     durationMs: 42,
   });
-  updateApiResourcePressure({ rssMb: 1700 });
+  updateApiResourcePressure({ rssMb: criticalRssMb });
   appendRuntimeFlightRecorderEvent("api-test-event", { detail: "present" });
 
   const heartbeat = writeRuntimeFlightRecorderHeartbeat();

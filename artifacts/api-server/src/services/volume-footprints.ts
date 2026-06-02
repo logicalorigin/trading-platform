@@ -10,15 +10,15 @@ import {
   type FootprintSourceProvider,
 } from "@workspace/ibkr-contracts";
 import {
-  getPolygonProviderIdentity,
-  getPolygonRuntimeConfig,
+  getMassiveProviderIdentity,
+  getMassiveRuntimeConfig,
 } from "../lib/runtime";
 import { normalizeSymbol } from "../lib/values";
 import {
-  PolygonMarketDataClient,
+  MassiveMarketDataClient,
   type MarketQuoteTick,
   type MarketTradePrint,
-} from "../providers/polygon/market-data";
+} from "../providers/massive/market-data";
 
 export type FootprintTimeframe =
   | "5s"
@@ -443,7 +443,7 @@ export async function getVolumeFootprints(
     DEFAULT_IMBALANCE_PERCENT,
     10_000,
   );
-  const config = getPolygonRuntimeConfig();
+  const config = getMassiveRuntimeConfig();
   if (!config) {
     return emptyResponse({
       ...input,
@@ -458,8 +458,8 @@ export async function getVolumeFootprints(
   }
 
   const sourceProvider: FootprintSourceProvider =
-    getPolygonProviderIdentity(config) ?? "polygon";
-  const client = new PolygonMarketDataClient(config);
+    getMassiveProviderIdentity(config) ?? "massive";
+  const client = new MassiveMarketDataClient(config);
   let trades: MarketTradePrint[] = [];
   let quotes: MarketQuoteTick[] = [];
 

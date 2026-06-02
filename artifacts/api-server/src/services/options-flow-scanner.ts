@@ -132,7 +132,7 @@ type QueuedScan = {
   request: OptionsFlowScannerRequest;
 };
 
-const DEFAULT_MAX_CONCURRENCY = 2;
+const DEFAULT_MAX_CONCURRENCY = 8;
 const DEFAULT_SNAPSHOT_TTL_MS = 60_000;
 const DEFAULT_SNAPSHOT_STALE_TTL_MS = 5 * 60_000;
 

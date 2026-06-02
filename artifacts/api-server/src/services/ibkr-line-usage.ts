@@ -705,6 +705,7 @@ function buildLineAllocation(input: {
   ).optionsFlowScanner?.lineUtilization;
   const targetFillLines = readNumber(admission.budget.targetFillLines);
   const activeLineCount = readNumber(admission.activeLineCount);
+  const shadowAccount = admission.shadowAccount ?? null;
   const scannerSchedulableLineCap = readNumber(
     scannerLineUtilization?.schedulablePoolCap,
   );
@@ -757,6 +758,13 @@ function buildLineAllocation(input: {
       typeof portfolio?.policy === "string" ? portfolio.policy : null,
     pinnedLineCount: readNumber(portfolio?.pinned?.activeLineCount),
     priorityLineCount: readNumber(portfolio?.priority?.activeLineCount),
+    shadowAccountLineCount: readNumber(shadowAccount?.activeLineCount),
+    shadowAccountCacheFallbackLineCount: readNumber(
+      shadowAccount?.activeFallbackProviderLineCounts?.cache,
+    ),
+    shadowAccountMassiveFallbackLineCount: readNumber(
+      shadowAccount?.activeFallbackProviderLineCounts?.massive,
+    ),
     scannerRotatingLineCount: readNumber(
       portfolio?.scannerRotating?.activeLineCount,
     ),
@@ -789,6 +797,60 @@ function buildLineUtilizationAudit(input: {
   );
   const scannerActiveLineCount = readNumber(admission.flowScannerLineCount) ?? 0;
   const deepScanner = admission.optionsFlowScanner.deepScanner;
+  const scannerPlannedHorizonCount =
+    readNumber(admission.optionsFlowScanner.plannedHorizon?.symbolCount) ??
+    readNumber(admission.optionsFlowScanner.coverage?.activeTargetSize) ??
+    readNumber(admission.optionsFlowScanner.coverage?.selectedSymbols) ??
+    0;
+  const scannerSchedulablePoolCap = readNumber(
+    scannerUtilization.schedulablePoolCap,
+  );
+  const scannerSchedulableRemainingLineCount = readNumber(
+    input.allocation.scannerSchedulableRemainingLineCount,
+  );
+  const scannerEffectiveConcurrency = readNumber(
+    scannerUtilization.effectiveConcurrency,
+  );
+  const scannerEnabled = admission.optionsFlowScanner.enabled !== false;
+  const scannerStarted = admission.optionsFlowScanner.started !== false;
+  const scannerBlockedReason =
+    !scannerEnabled
+      ? "scanner-disabled"
+      : !scannerStarted
+        ? "scanner-not-started"
+        : admission.optionsFlowScanner.backgroundBlockedReason ?? null;
+  const scannerEligibleForSlack =
+    scannerEnabled &&
+    scannerStarted &&
+    scannerBlockedReason === null &&
+    scannerPlannedHorizonCount > 0 &&
+    (scannerEffectiveConcurrency ?? 0) > 0;
+  const idleLineCount = Math.max(0, idleToTargetLineCount ?? 0);
+  const bridgeEligibleRemainingLineCount =
+    bridgeRemainingLineCount === null
+      ? idleLineCount
+      : Math.min(idleLineCount, bridgeRemainingLineCount);
+  const scannerWantedLineCount = scannerEligibleForSlack
+    ? Math.max(
+        0,
+        Math.min(
+          scannerSchedulablePoolCap ?? admission.budget.targetFillLines,
+          readNumber(scannerUtilization.scannerLineBudget) ??
+            admission.budget.targetFillLines,
+        ),
+      )
+    : 0;
+  const idleButEligibleLineCount = scannerEligibleForSlack
+    ? Math.max(
+        0,
+        Math.min(
+          idleLineCount,
+          bridgeEligibleRemainingLineCount,
+          scannerSchedulableRemainingLineCount ?? idleLineCount,
+          Math.max(0, scannerWantedLineCount - scannerActiveLineCount),
+        ),
+      )
+    : 0;
   const scannerWorkActive =
     scannerActiveLineCount > 0 ||
     Boolean(deepScanner.draining) ||
@@ -807,7 +869,6 @@ function buildLineUtilizationAudit(input: {
     "normal";
   const scannerThrottledHighPressure =
     (Boolean(admission.optionsFlowScanner.scannerPressure?.throttled) ||
-      scannerPressureLevel === "high" ||
       scannerPressureLevel === "critical") &&
     Number(admission.optionsFlowScanner.lineUtilization?.effectiveConcurrency) <= 1 &&
     scannerWorkActive;
@@ -833,6 +894,10 @@ function buildLineUtilizationAudit(input: {
           ? "bridge-diagnostics-unavailable"
           : input.driftReconciliation.status !== "matched"
             ? "line-drift"
+          : idleButEligibleLineCount > 0 && scannerWorkActive
+            ? "scanner-filling-unused-capacity"
+          : idleButEligibleLineCount > 0
+            ? "scanner-idle-with-eligible-work"
           : scannerWaitingForLiveLines
             ? "scanner-waiting-for-live-lines"
           : scannerWorkActive
@@ -848,6 +913,7 @@ function buildLineUtilizationAudit(input: {
     bridgeActiveLineCount: input.bridgeActiveLineCount,
     bridgeLineBudget: input.bridgeLineBudget,
     bridgeRemainingLineCount,
+    idleButEligibleLineCount,
     admissionVsBridgeLineDelta,
     driftStatus: input.driftReconciliation.status,
     topLimitingReason,
@@ -855,11 +921,17 @@ function buildLineUtilizationAudit(input: {
       activeLineCount: scannerActiveLineCount,
       staticLineCap: admission.budget.flowScannerLineCap,
       effectiveLineCap: scannerUtilization.effectivePoolCap,
+      schedulablePoolCap: scannerSchedulablePoolCap,
+      schedulableRemainingLineCount: scannerSchedulableRemainingLineCount,
       configuredConcurrency: scannerUtilization.configuredConcurrency,
-      effectiveConcurrency: scannerUtilization.effectiveConcurrency,
+      effectiveConcurrency: scannerEffectiveConcurrency,
       scannerLineBudget: scannerUtilization.scannerLineBudget,
+      wantedLineCount: scannerWantedLineCount,
+      idleButEligibleLineCount,
+      plannedHorizonCount: scannerPlannedHorizonCount,
       maxDeepScanLines: scannerUtilization.maxDeepScanLines,
       unusedPoolLineCount: scannerUnusedPoolLineCount,
+      blockedReason: scannerBlockedReason,
       backgroundBlockedReason:
         admission.optionsFlowScanner.backgroundBlockedReason,
       scannerFillMode: admission.optionsFlowScanner.scannerFillMode,
@@ -996,6 +1068,7 @@ export async function getIbkrLineUsageSnapshot() {
     accountMonitor: buildAccountMonitorLineUsage({ admission, warmup }),
     ownerClasses: admission.ownerClasses,
     signalOptions: admission.signalOptions,
+    shadowAccount: admission.shadowAccount,
     drift: {
       admissionVsBridgeLineDelta:
         driftReconciliation.status === "unknown" || bridgeActiveLines === null

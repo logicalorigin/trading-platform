@@ -22,6 +22,16 @@ test("tuned signal-options preset captures the recovered h8 profile", () => {
     },
   });
   assert.deepEqual(tunedSignalOptionsExecutionProfilePatch, {
+    optionSelection: {
+      greekSelector: {
+        enabled: true,
+        mode: "all",
+        fallbackToLegacy: true,
+        maxCandidates: 24,
+        minScore: 0,
+        requireLiveGreeks: true,
+      },
+    },
     riskCaps: {
       maxOpenSymbols: 10,
       maxPremiumPerEntry: 1500,
@@ -129,6 +139,65 @@ test("signal-options profile normalization fills halt control defaults", () => {
   );
 });
 
+test("signal-options profile normalization allows five-frame MTF requirements", () => {
+  const profile = resolveSignalOptionsExecutionProfile({
+    signalOptions: {
+      entryGate: {
+        mtfAlignment: {
+          requiredCount: 5,
+        },
+      },
+    },
+  });
+  const cappedProfile = resolveSignalOptionsExecutionProfile({
+    signalOptions: {
+      entryGate: {
+        mtfAlignment: {
+          requiredCount: 9,
+        },
+      },
+    },
+  });
+
+  assert.equal(profile.entryGate.mtfAlignment.requiredCount, 5);
+  assert.equal(cappedProfile.entryGate.mtfAlignment.requiredCount, 5);
+});
+
+test("signal-options profile normalization resolves Greek selector settings", () => {
+  const defaultProfile = resolveSignalOptionsExecutionProfile({});
+
+  assert.deepEqual(defaultProfile.optionSelection.greekSelector, {
+    enabled: false,
+    mode: "off",
+    fallbackToLegacy: true,
+    maxCandidates: 24,
+    minScore: 0,
+    requireLiveGreeks: true,
+  });
+
+  const liveProfile = resolveSignalOptionsExecutionProfile({
+    optionSelection: {
+      greekSelector: {
+        enabled: true,
+        mode: "all",
+        fallbackToLegacy: false,
+        maxCandidates: 48,
+        minScore: 55,
+        requireLiveGreeks: false,
+      },
+    },
+  });
+
+  assert.deepEqual(liveProfile.optionSelection.greekSelector, {
+    enabled: true,
+    mode: "all",
+    fallbackToLegacy: false,
+    maxCandidates: 48,
+    minScore: 55,
+    requireLiveGreeks: false,
+  });
+});
+
 test("signal-options profile normalization sorts progressive trail steps", () => {
   const profile = resolveSignalOptionsExecutionProfile({
     exitPolicy: {
@@ -171,6 +240,32 @@ test("signal-options profile normalization resolves wire-greek trail settings", 
     { activationPct: 35, rung: "wire3" },
     { activationPct: 100, rung: "wire1" },
   ]);
+});
+
+test("signal-options profile normalization resolves greek position management settings", () => {
+  const defaultProfile = resolveSignalOptionsExecutionProfile({});
+  const diagnosticProfile = resolveSignalOptionsExecutionProfile({
+    exitPolicy: {
+      greekPositionManagement: {
+        enabled: true,
+      },
+      wireGreekTrail: {
+        enabled: false,
+      },
+    },
+  });
+  const legacyProfile = resolveSignalOptionsExecutionProfile({
+    greekPositionManagementEnabled: true,
+  });
+
+  assert.deepEqual(defaultProfile.exitPolicy.greekPositionManagement, {
+    enabled: false,
+  });
+  assert.deepEqual(diagnosticProfile.exitPolicy.greekPositionManagement, {
+    enabled: true,
+  });
+  assert.equal(diagnosticProfile.exitPolicy.wireGreekTrail.enabled, false);
+  assert.equal(legacyProfile.exitPolicy.greekPositionManagement.enabled, true);
 });
 
 test("signal-options profile normalization supports ordered strike slot lists", () => {

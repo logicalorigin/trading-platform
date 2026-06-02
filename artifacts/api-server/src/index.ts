@@ -25,6 +25,7 @@ import {
 } from "./services/platform";
 import { startTradeMonitorWorker } from "./services/trade-monitor-worker";
 import { startSignalOptionsWorker } from "./services/signal-options-worker";
+import { startSignalOptionsPositionTickManager } from "./services/signal-options-position-tick-manager";
 import { ensureDefaultSignalOptionsPaperDeployment } from "./services/signal-options-automation";
 import {
   getPythonComputeDiagnostics,
@@ -192,6 +193,7 @@ server.listen(port, () => {
     })
     .finally(() => {
       startSignalOptionsWorker();
+      startSignalOptionsPositionTickManager();
     });
   startDiagnosticsCollector(collectDiagnosticsInput);
   startRuntimeFlightRecorder();

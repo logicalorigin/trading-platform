@@ -47,7 +47,7 @@ $AutoLoginSettingsFile = Join-Path $AutoLoginDir 'auto-login.json'
 $AutoLoginCredentialFile = Join-Path $AutoLoginDir 'credential.json'
 $AutoLoginRuntimeRoot = Join-Path $StateDir 'ibc-runtime'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-05-27.launch-sequence-v24'
+$HelperVersion = '2026-06-01.launch-sequence-v26'
 $LoginHandoffAlgorithm = 'RSA-OAEP-256-CHUNKED'
 $script:BridgeBundleHash = ''
 $script:SensitiveValues = New-Object System.Collections.Generic.List[string]
@@ -413,6 +413,35 @@ function Test-DesktopAgentProcessRunning {
 
     Remove-Item $DesktopAgentPidFile -ErrorAction SilentlyContinue
     return $false
+}
+
+function Restart-DesktopAgentProcessWithCurrentHelper([string]$BaseUrl, [string]$Reason) {
+    if (-not $BaseUrl) {
+        return
+    }
+
+    $pidValue = Read-FirstLine -Path $DesktopAgentPidFile
+    if ($pidValue -and $pidValue -match '^\d+$') {
+        $pidNumber = [int]$pidValue
+        if ($pidNumber -ne $PID) {
+            try {
+                $process = Get-CimInstance Win32_Process -Filter "ProcessId = $pidNumber" -ErrorAction SilentlyContinue
+                if ($process -and $process.CommandLine -match '(pyrus|pyrus)-ibkr-helper\.ps1' -and $process.CommandLine -match '\s-Agent(\s|$)') {
+                    Write-Log "Restarting Pyrus IBKR desktop agent process $pidNumber with current helper. $Reason"
+                    Stop-Process -Id $pidNumber -Force -ErrorAction SilentlyContinue
+                }
+            } catch {
+                $process = Get-Process -Id $pidNumber -ErrorAction SilentlyContinue
+                if ($process -and @('powershell', 'pwsh') -contains ([string]$process.ProcessName).ToLowerInvariant()) {
+                    Write-Log "Restarting Pyrus IBKR desktop agent process $pidNumber with current helper. $Reason"
+                    Stop-Process -Id $pidNumber -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    }
+
+    Remove-Item $DesktopAgentPidFile -ErrorAction SilentlyContinue
+    Start-DesktopAgentProcess -BaseUrl $BaseUrl
 }
 
 function Start-DesktopAgentProcess([string]$BaseUrl) {
@@ -1615,8 +1644,30 @@ function Get-IBGatewayWindowCandidateScore($Window) {
     return $score
 }
 
-function Get-IBGatewayWindowCandidate {
-    $windows = @(Get-VisibleTopLevelWindows | Where-Object { Test-IBGatewayWindowCandidate $_ })
+function Test-IBGatewayCredentialWindowCandidate($Window) {
+    if (-not (Test-IBGatewayWindowCandidate $Window)) {
+        return $false
+    }
+
+    $title = ([string]$Window.Title).Trim()
+    if (-not $title) {
+        return $false
+    }
+    if ($title -match '(?i)\b(update|settings|configuration|warning|message)\b' -and $title -notmatch '(?i)\b(log\s*in|login|sign\s*in)\b') {
+        return $false
+    }
+
+    return $true
+}
+
+function Get-IBGatewayWindowCandidate([switch]$RequireCredentialWindow) {
+    $windows = @(Get-VisibleTopLevelWindows | Where-Object {
+        if ($RequireCredentialWindow) {
+            Test-IBGatewayCredentialWindowCandidate $_
+        } else {
+            Test-IBGatewayWindowCandidate $_
+        }
+    })
     if ($windows.Count -eq 0) {
         return $null
     }
@@ -1724,7 +1775,7 @@ function Wait-IBGatewayWindow([int]$TimeoutSeconds = 90, [switch]$AllowForegroun
     $lastProgressAt = [DateTime]::MinValue
     while ((Get-Date) -lt $deadline) {
         Assert-ActivationNotCanceled
-        $window = Get-IBGatewayWindowCandidate
+        $window = Get-IBGatewayWindowCandidate -RequireCredentialWindow
         if ($window) {
             Write-Log "Activating IB Gateway window handle=$($window.Handle) pid=$($window.ProcessId) process='$($window.ProcessName)' title='$($window.Title)'."
             if (Activate-IBGatewayWindowCandidate -Window $window) {
@@ -1738,7 +1789,11 @@ function Wait-IBGatewayWindow([int]$TimeoutSeconds = 90, [switch]$AllowForegroun
                 Write-Log "Activating IB Gateway window pid=$($process.Id) title='$($process.MainWindowTitle)'."
                 if ($shell.AppActivate([int]$process.Id)) {
                     Start-Sleep -Seconds 1
-                    return $shell
+                    $activatedCredentialWindow = Get-IBGatewayWindowCandidate -RequireCredentialWindow
+                    if ($activatedCredentialWindow) {
+                        return $shell
+                    }
+                    Write-Log "Activated Gateway process pid=$($process.Id), but a credential window is still not confirmed."
                 }
             } catch {
                 Write-Log "Could not activate IB Gateway window by PID $($process.Id): $($_.Exception.Message)"
@@ -1749,7 +1804,11 @@ function Wait-IBGatewayWindow([int]$TimeoutSeconds = 90, [switch]$AllowForegroun
             try {
                 if ($shell.AppActivate($title)) {
                     Start-Sleep -Seconds 1
-                    return $shell
+                    $activatedCredentialWindow = Get-IBGatewayWindowCandidate -RequireCredentialWindow
+                    if ($activatedCredentialWindow) {
+                        return $shell
+                    }
+                    Write-Log "Activated Gateway title '$title', but a credential window is still not confirmed."
                 }
             } catch {}
         }
@@ -1758,7 +1817,12 @@ function Wait-IBGatewayWindow([int]$TimeoutSeconds = 90, [switch]$AllowForegroun
             $lastProgressAt = Get-Date
             $runningGateway = Get-IBGatewayProcessSummary
             if ($runningGateway) {
-                Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_waiting' -Message "Waiting for the IB Gateway login window to become active ($runningGateway)."
+                $untitledWindow = Get-IBGatewayWindowCandidate
+                if ($untitledWindow -and -not ([string]$untitledWindow.Title).Trim()) {
+                    Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_waiting' -Message "Waiting for the IB Gateway login window title before typing credentials ($runningGateway)."
+                } else {
+                    Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_waiting' -Message "Waiting for the IB Gateway login window to become active ($runningGateway)."
+                }
             } else {
                 Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_waiting' -Message 'Waiting for the IB Gateway login window to become active.'
             }
@@ -1937,7 +2001,7 @@ function Invoke-IBGatewayCredentialTyping($Credential) {
         $windowWaitSeconds = 45
     }
     $shell = Wait-IBGatewayWindow -TimeoutSeconds $windowWaitSeconds -AllowForegroundFallback
-    $activeGatewayWindow = Get-IBGatewayWindowCandidate
+    $activeGatewayWindow = Get-IBGatewayWindowCandidate -RequireCredentialWindow
     if ($activeGatewayWindow) {
         [void](Activate-IBGatewayWindowCandidate -Window $activeGatewayWindow)
         Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_active' -Message "IB Gateway login window is active; typing one-time credentials."
@@ -2759,6 +2823,9 @@ try {
     $script:ApiBaseUrl = (Get-RequiredParam -Params $params -Name 'apiBaseUrl').TrimEnd('/')
     Save-DesktopAgentConfig -BaseUrl $script:ApiBaseUrl
     Invoke-HelperSelfUpdateIfNeeded -Params $params -RawLaunchUrl $rawLaunchUrl
+    if (-not (Test-TruthyParam $params['shutdown'])) {
+        Restart-DesktopAgentProcessWithCurrentHelper -BaseUrl $script:ApiBaseUrl -Reason 'Protocol launch is using the current helper version.'
+    }
     if (Test-TruthyParam $params['shutdown']) {
         Write-Log 'IBKR shutdown requested by Pyrus.'
         $shutdownJobId = [string]$params['jobId']

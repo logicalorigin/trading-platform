@@ -37,7 +37,7 @@ create table if not exists option_contracts (
   id uuid primary key default gen_random_uuid(),
   instrument_id uuid not null references instruments(id),
   underlying_instrument_id uuid not null references instruments(id),
-  polygon_ticker varchar(64) not null,
+  massive_ticker varchar(64) not null,
   provider_contract_id varchar(128),
   expiration_date date not null,
   strike numeric(18, 6) not null,
@@ -49,7 +49,7 @@ create table if not exists option_contracts (
   updated_at timestamp with time zone not null default now()
 );
 
-create unique index if not exists option_contracts_polygon_ticker_idx on option_contracts (polygon_ticker);
+create unique index if not exists option_contracts_massive_ticker_idx on option_contracts (massive_ticker);
 create unique index if not exists option_contracts_provider_contract_id_idx on option_contracts (provider_contract_id);
 create index if not exists option_contracts_underlying_idx on option_contracts (underlying_instrument_id);
 create index if not exists option_contracts_expiration_idx on option_contracts (expiration_date);
@@ -66,7 +66,7 @@ create table if not exists quote_cache (
   last_size integer,
   change numeric(18, 6),
   change_percent numeric(18, 6),
-  source varchar(32) not null default 'polygon',
+  source varchar(32) not null default 'massive',
   as_of timestamp with time zone not null,
   created_at timestamp with time zone not null default now(),
   updated_at timestamp with time zone not null default now()
@@ -87,7 +87,7 @@ create table if not exists bar_cache (
   low numeric(18, 6) not null,
   close numeric(18, 6) not null,
   volume numeric(20, 4) not null,
-  source varchar(32) not null default 'polygon',
+  source varchar(32) not null default 'massive',
   created_at timestamp with time zone not null default now(),
   updated_at timestamp with time zone not null default now()
 );
@@ -113,7 +113,7 @@ create table if not exists option_chain_snapshots (
   vega numeric(18, 6),
   open_interest integer,
   volume integer,
-  source text not null default 'polygon',
+  source text not null default 'massive',
   as_of timestamp with time zone not null,
   created_at timestamp with time zone not null default now(),
   updated_at timestamp with time zone not null default now()
@@ -122,6 +122,8 @@ create table if not exists option_chain_snapshots (
 create index if not exists option_chain_snapshots_underlying_idx on option_chain_snapshots (underlying_instrument_id);
 create index if not exists option_chain_snapshots_contract_idx on option_chain_snapshots (option_contract_id);
 create index if not exists option_chain_snapshots_as_of_idx on option_chain_snapshots (as_of);
+create index if not exists option_chain_snapshots_underlying_contract_as_of_idx
+  on option_chain_snapshots (underlying_instrument_id, option_contract_id, as_of desc);
 
 create table if not exists market_data_ingest_jobs (
   id uuid primary key default gen_random_uuid(),

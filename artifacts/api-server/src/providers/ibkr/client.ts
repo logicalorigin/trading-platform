@@ -2717,7 +2717,7 @@ export class IbkrClient {
     listingExchange: string;
   }> {
     // IBKR represents share-class tickers with a space (e.g. "BRK B"), while the
-    // rest of the platform uses Polygon's dotted style (e.g. "BRK.B"). Try the
+    // rest of the platform uses Massive's dotted style (e.g. "BRK.B"). Try the
     // dotted form first, then fall back to the space-separated form on miss.
     const variants = Array.from(
       new Set(
@@ -3237,7 +3237,7 @@ export class IbkrClient {
 
   /**
    * Public ticker search backed by IBKR's `/iserver/secdef/search`. Returns
-   * results in the same shape the platform service expects from Polygon's
+   * results in the same shape the platform service expects from Massive's
    * universe-search endpoint so it can be a drop-in primary source.
    */
   private extractIbkrExchangeHint(

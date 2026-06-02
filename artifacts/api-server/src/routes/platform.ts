@@ -84,7 +84,11 @@ import {
   updateWatchlist,
 } from "../services/platform";
 import type { FootprintSourcePreference } from "@workspace/ibkr-contracts";
-import { getGexDashboardData, getGexZeroGammaData } from "../services/gex";
+import {
+  getGexDashboardData,
+  getGexProjectionData,
+  getGexZeroGammaData,
+} from "../services/gex";
 import {
   fetchAccountSnapshotPayload,
   fetchExecutionSnapshotPayload,
@@ -95,6 +99,7 @@ import {
   fetchOrderSnapshotPayload,
   fetchPositionQuoteSnapshotPayload,
   fetchQuoteSnapshotPayload,
+  readOptionQuoteDemandSnapshotPayload,
   subscribeAccountSnapshots,
   subscribeExecutionSnapshots,
   subscribeMarketDepthSnapshots,
@@ -105,6 +110,7 @@ import {
   subscribePositionQuoteSnapshots,
   subscribeQuoteSnapshots,
 } from "../services/bridge-streams";
+import type { OptionQuoteSnapshotPayload } from "../services/bridge-option-quote-stream";
 import {
   fetchShadowAccountSnapshotPayload,
   subscribeShadowAccountSnapshots,
@@ -174,6 +180,7 @@ import {
 } from "../services/ibkr-bridge-runtime";
 
 const router: IRouter = Router();
+let nextOptionQuoteSseDemandId = 1;
 const stockAggregateStreamSessions = new Map<
   string,
   {
@@ -183,7 +190,7 @@ const stockAggregateStreamSessions = new Map<
 >();
 const LOGO_PROXY_ALLOWED_HOSTS = new Set([
   "s3-symbol-logo.tradingview.com",
-  "api.polygon.io",
+  "api.massive.com",
   "storage.googleapis.com",
   "financialmodelingprep.com",
   "images.financialmodelingprep.com",
@@ -1641,6 +1648,28 @@ router.get("/gex/:underlying", async (req, res) => {
   res.json(data);
 });
 
+router.get("/gex/:underlying/projection", async (req, res) => {
+  const view = String(req.query.view || "").trim().toLowerCase();
+  const projection = await getGexProjectionData({
+    underlying: req.params.underlying,
+    signal: createRequestAbortSignal(req, res),
+    scope: view === "chart" ? "chart" : "full",
+  });
+
+  if (view === "chart") {
+    res.json({
+      ticker: projection.ticker,
+      spot: projection.spot,
+      asOf: projection.asOf,
+      quality: projection.quality,
+      overlayPoints: projection.overlayPoints,
+    });
+    return;
+  }
+
+  res.json(projection);
+});
+
 router.get("/gex/:underlying/zero-gamma", async (req, res) => {
   res.json(
     await getGexZeroGammaData({
@@ -2263,29 +2292,56 @@ router.get("/streams/options/quotes", async (req, res) => {
       ? req.query.underlying.trim().toUpperCase()
       : null;
 
+  const owner = `platform-option-quotes-sse:${nextOptionQuoteSseDemandId++}`;
+
   await startSse(req, res, "option-quotes", async ({ writeEvent }) => {
-    await writeEvent(
-      "quotes",
-      await fetchOptionQuoteSnapshotPayload({
+    let active = true;
+    let ready = false;
+    const queuedPayloads: OptionQuoteSnapshotPayload[] = [];
+    const unsubscribe = subscribeOptionQuoteSnapshots(
+      {
         underlying,
         providerContractIds,
-      }),
+        owner,
+        intent: "visible-live",
+        fallbackProvider: "cache",
+      },
+      (payload) => {
+        if (!active) {
+          return;
+        }
+        if (!ready) {
+          queuedPayloads.push(payload);
+          return;
+        }
+        void writeEvent("quotes", payload);
+      },
     );
+
     await writeEvent("ready", {
       underlying,
       providerContractIds,
       source: "ibkr-bridge",
     });
+    ready = true;
 
-    return subscribeOptionQuoteSnapshots(
-      {
+    await writeEvent(
+      "quotes",
+      readOptionQuoteDemandSnapshotPayload({
         underlying,
         providerContractIds,
-      },
-      (payload) => {
-        writeEvent("quotes", payload);
-      },
+        owner,
+      }),
     );
+
+    queuedPayloads.forEach((payload) => {
+      void writeEvent("quotes", payload);
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   });
 });
 
@@ -2830,7 +2886,7 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
       type: "https://pyrus.local/problems/upstream",
       title: "Stock aggregate streaming is not configured.",
       status: 503,
-      detail: "Set IBKR bridge configuration or Polygon market-data credentials before using stock aggregate streams.",
+      detail: "Set IBKR bridge configuration or Massive market-data credentials before using stock aggregate streams.",
       code: "stock_aggregate_stream_unavailable",
     });
     return;
@@ -2859,7 +2915,7 @@ router.get("/streams/stocks/aggregates", async (req, res) => {
           : streamDiagnostics.provider;
       await writeEvent("ready", {
         symbols: nextSymbols,
-        delayed: streamSource === "polygon-delayed-websocket",
+        delayed: streamSource === "massive-delayed-websocket",
         source: streamSource,
       });
     };

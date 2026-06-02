@@ -293,7 +293,7 @@ export async function getBackendSettingsSnapshot() {
         description: "Masked provider readiness derived from backend runtime configuration.",
         type: "status",
         value: providers,
-        defaultValue: { polygon: false, massive: false, research: false, ibkr: false },
+        defaultValue: { massive: false, research: false, ibkr: false },
         source: "env",
         editable: false,
         requiresRestart: true,

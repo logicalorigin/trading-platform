@@ -1,5 +1,5 @@
 import { normalizeSymbol } from "../lib/values";
-import type { UniverseTicker } from "../providers/polygon/market-data";
+import type { UniverseTicker } from "../providers/massive/market-data";
 
 export const DEFAULT_SP500_CONSTITUENTS_URL =
   "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv";

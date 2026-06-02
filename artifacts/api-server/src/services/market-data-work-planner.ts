@@ -1,3 +1,7 @@
+import {
+  resolveUsEquityMarketStatus,
+  type UsEquityMarketStatus,
+} from "@workspace/market-calendar";
 import type {
   MarketDataIntent,
   MarketDataLease,
@@ -154,7 +158,7 @@ export type MarketDataWorkPlanLine = {
 
 export type MarketDataWorkPlanProviderJob = {
   owner: "rust-market-data-worker" | "market-data-provider";
-  provider: "massive/polygon";
+  provider: "massive";
   intent:
     | "persisted-forward-refresh"
     | "stock-aggregate-fallback"
@@ -181,7 +185,7 @@ export type MarketDataWorkPlanProviderJob = {
 export type MarketDataWorkPlanLifecycleAction = {
   state: "releasing" | "unexpected" | "stale" | "evicting";
   owner: string | null;
-  provider: "ibkr" | "massive/polygon";
+  provider: "ibkr" | "massive";
   lineCount: number;
   lineSample: string[];
   reason: string;
@@ -191,9 +195,21 @@ export type MarketDataWorkPlan = {
   schemaVersion: 1;
   generation: string;
   generatedAt: string;
+  marketSession: {
+    exchange: "XNYS";
+    sessionKey: UsEquityMarketStatus["session"]["key"];
+    sessionLabel: string;
+    regularTrading: boolean;
+    tradingDay: boolean;
+    earlyClose: boolean;
+    holidayName: string | null;
+    quietReason: "market_session_quiet" | null;
+    nextOpenAt: string | null;
+    nextCloseAt: string | null;
+  };
   providerPolicy: {
     ibkr: string[];
-    massivePolygon: string[];
+    massive: string[];
     rustWorker: string[];
   };
   summary: {
@@ -216,8 +232,8 @@ export type MarketDataWorkPlan = {
   };
   ibkrEquityLive: MarketDataWorkPlanLine[];
   ibkrOptionLive: MarketDataWorkPlanLine[];
-  polygonSnapshot: MarketDataWorkPlanProviderJob[];
-  polygonAggregateFallback: MarketDataWorkPlanProviderJob[];
+  massiveSnapshot: MarketDataWorkPlanProviderJob[];
+  massiveAggregateFallback: MarketDataWorkPlanProviderJob[];
   persistJobs: MarketDataWorkPlanProviderJob[];
   release: MarketDataWorkPlanLifecycleAction[];
   evict: MarketDataWorkPlanLifecycleAction[];
@@ -232,6 +248,11 @@ export type MarketDataWorkPlan = {
     state: string;
     limitingReason: string | null;
     marketDataMode: string | null;
+    marketSessionKey: UsEquityMarketStatus["session"]["key"] | null;
+    sessionEligible: boolean;
+    sessionBlockedReason: "market_session_quiet" | null;
+    requestedHorizonCount: number;
+    requestedHorizonSymbols: string[];
     plannedHorizonCount: number;
     plannedHorizonSymbols: string[];
     batchSize: number | null;
@@ -392,7 +413,7 @@ function buildPersistJobs(
     return [
       {
         owner: "rust-market-data-worker",
-        provider: "massive/polygon",
+        provider: "massive",
         intent: "diagnostics",
         kind: "market_data_ingest_jobs",
         status: "not_collected",
@@ -410,7 +431,7 @@ function buildPersistJobs(
     return [
       {
         owner: "rust-market-data-worker",
-        provider: "massive/polygon",
+        provider: "massive",
         intent: "diagnostics",
         kind: "market_data_ingest_jobs",
         status: ingest.providerConfigured ? "not_configured" : "not_configured",
@@ -434,7 +455,7 @@ function buildPersistJobs(
     }
     rows.push({
       owner: "rust-market-data-worker",
-      provider: "massive/polygon",
+      provider: "massive",
       intent: "persisted-forward-refresh",
       kind: "market_data_ingest_jobs",
       status,
@@ -453,7 +474,7 @@ function buildPersistJobs(
   if ((ingest.blockedGexJobCount ?? 0) > 0) {
     rows.push({
       owner: "rust-market-data-worker",
-      provider: "massive/polygon",
+      provider: "massive",
       intent: "persisted-forward-refresh",
       kind: "gex_snapshot",
       status: "blocked",
@@ -480,7 +501,7 @@ function buildPersistJobs(
   recentByKind.forEach((symbols, kind) => {
     rows.push({
       owner: "rust-market-data-worker",
-      provider: "massive/polygon",
+      provider: "massive",
       intent: "persisted-forward-refresh",
       kind,
       status: "completed_recent",
@@ -496,7 +517,7 @@ function buildPersistJobs(
   if (!rows.length) {
     rows.push({
       owner: "rust-market-data-worker",
-      provider: "massive/polygon",
+      provider: "massive",
       intent: "persisted-forward-refresh",
       kind: "market_data_ingest_jobs",
       status: "idle",
@@ -518,13 +539,13 @@ function buildAggregateFallbackJob(
     return [];
   }
   const provider = String(stockAggregates.activeProvider ?? stockAggregates.provider ?? "");
-  if (!provider || (!provider.includes("polygon") && !provider.includes("massive"))) {
+  if (!provider || !provider.includes("massive")) {
     return [];
   }
   return [
     {
       owner: "market-data-provider",
-      provider: "massive/polygon",
+      provider: "massive",
       intent: "stock-aggregate-fallback",
       kind: "stock_minute_aggregates",
       status: stockAggregates.quoteSubscriptionActive ? "active" : "idle",
@@ -533,7 +554,7 @@ function buildAggregateFallbackJob(
       symbolCount: readNumber(stockAggregates.unionSymbolCount) ?? 0,
       symbols: [],
       oldestAgeMs: null,
-      reason: "stock aggregate stream is using Massive/Polygon instead of IBKR-derived aggregates",
+      reason: "stock aggregate stream is using Massive instead of IBKR-derived aggregates",
     },
   ];
 }
@@ -587,7 +608,10 @@ function actionRowsFromDrift(
   return { release, staleApi };
 }
 
-function buildScannerPlan(scanner: ScannerDiagnostics | null | undefined) {
+function buildScannerPlan(
+  scanner: ScannerDiagnostics | null | undefined,
+  marketSession: MarketDataWorkPlan["marketSession"],
+) {
   const coverage = scanner?.coverage ?? null;
   const horizon = scanner?.plannedHorizon ?? null;
   const deep = scanner?.deepScanner ?? null;
@@ -606,26 +630,36 @@ function buildScannerPlan(scanner: ScannerDiagnostics | null | undefined) {
     readNumber(coverage?.activeTargetSize) ??
     readNumber(coverage?.selectedSymbols) ??
     horizonSymbols.length;
-  const state = scanner?.backgroundBlockedReason
-    ? "blocked"
-    : deep?.draining || (deep?.activeCount ?? 0) > 0
-      ? "active"
-      : (deep?.queuedCount ?? 0) > 0
-        ? "queued"
-        : "planned";
+  const sessionBlockedReason = flowScannerSessionBlockedReason(marketSession);
+  let state = "planned";
+  if (sessionBlockedReason) {
+    state = "session_quiet";
+  } else if (scanner?.backgroundBlockedReason) {
+    state = "blocked";
+  } else if (deep?.draining || (deep?.activeCount ?? 0) > 0) {
+    state = "active";
+  } else if ((deep?.queuedCount ?? 0) > 0) {
+    state = "queued";
+  }
   return {
     enabled: typeof scanner?.enabled === "boolean" ? scanner.enabled : null,
     started: typeof scanner?.started === "boolean" ? scanner.started : null,
     state,
     limitingReason:
+      sessionBlockedReason ??
       scanner?.limitingReason ??
       scanner?.backgroundBlockedReason ??
       deep?.lastSkippedReason ??
       coverage?.degradedReason ??
       null,
     marketDataMode: scanner?.marketDataMode ?? null,
-    plannedHorizonCount,
-    plannedHorizonSymbols: horizonSymbols,
+    marketSessionKey: marketSession.sessionKey,
+    sessionEligible: sessionBlockedReason === null,
+    sessionBlockedReason,
+    requestedHorizonCount: plannedHorizonCount,
+    requestedHorizonSymbols: horizonSymbols,
+    plannedHorizonCount: sessionBlockedReason ? 0 : plannedHorizonCount,
+    plannedHorizonSymbols: sessionBlockedReason ? [] : horizonSymbols,
     batchSize: readNumber(horizon?.batchSize) ?? readNumber(coverage?.batchSize),
     intervalMs: readNumber(horizon?.intervalMs) ?? readNumber(coverage?.intervalMs),
     estimatedCycleMs:
@@ -651,13 +685,6 @@ function buildMemoryAction(scanner: ScannerDiagnostics | null | undefined): Mark
       reason: "resource pressure is high enough to shed background scanner work",
     };
   }
-  if (scanner?.scannerPressure?.throttled || level === "high" || level === "watch") {
-    return {
-      level: String(level),
-      action: "throttle-scanner",
-      reason: "resource pressure should reduce background scanner concurrency",
-    };
-  }
   return {
     level: String(level),
     action: "normal",
@@ -673,16 +700,40 @@ function hashString(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
+function buildMarketSessionPlan(status: UsEquityMarketStatus): MarketDataWorkPlan["marketSession"] {
+  return {
+    exchange: "XNYS",
+    sessionKey: status.session.key,
+    sessionLabel: status.session.label,
+    regularTrading: status.session.key === "rth",
+    tradingDay: Boolean(status.calendarDay?.tradingDay),
+    earlyClose: Boolean(status.calendarDay?.earlyClose),
+    holidayName: status.calendarDay?.holiday ?? null,
+    quietReason: status.session.key === "rth" ? null : "market_session_quiet",
+    nextOpenAt: status.nextOpenAt ?? null,
+    nextCloseAt: status.nextCloseAt ?? null,
+  };
+}
+
+function flowScannerSessionBlockedReason(
+  marketSession: MarketDataWorkPlan["marketSession"],
+): "market_session_quiet" | null {
+  return marketSession.regularTrading ? null : "market_session_quiet";
+}
+
 export function buildMarketDataWorkPlan(
   input: BuildMarketDataWorkPlanInput,
 ): MarketDataWorkPlan {
   const generatedAt = input.generatedAt ?? new Date().toISOString();
+  const marketSession = buildMarketSessionPlan(
+    resolveUsEquityMarketStatus(new Date(generatedAt)),
+  );
   const leases = input.admission.leases ?? [];
   const ibkrEquityLive = linePlansForAsset(leases, "equity");
   const ibkrOptionLive = linePlansForAsset(leases, "option");
   const persistJobs = buildPersistJobs(input.ingest);
-  const polygonAggregateFallback = buildAggregateFallbackJob(input.stockAggregates);
-  const polygonSnapshot = persistJobs.filter(
+  const massiveAggregateFallback = buildAggregateFallbackJob(input.stockAggregates);
+  const massiveSnapshot = persistJobs.filter(
     (job) =>
       job.intent === "persisted-forward-refresh" &&
       job.status !== "idle" &&
@@ -690,19 +741,40 @@ export function buildMarketDataWorkPlan(
   );
   const { release, staleApi } = actionRowsFromDrift(input.drift);
   const memoryAction = buildMemoryAction(input.optionsFlowScanner ?? null);
-  const scanner = buildScannerPlan(input.optionsFlowScanner ?? null);
+  const scanner = buildScannerPlan(
+    input.optionsFlowScanner ?? null,
+    marketSession,
+  );
   const evict: MarketDataWorkPlanLifecycleAction[] = [...staleApi];
-  if (memoryAction.action !== "normal" && (input.admission.flowScannerLineCount ?? 0) > 0) {
+  const flowScannerLines = sample(
+    leases
+      .filter((lease) => lease.intent === "flow-scanner-live")
+      .flatMap((lease) => lease.lineIds),
+  );
+  const shouldEvictFlowScannerForSession =
+    flowScannerSessionBlockedReason(marketSession) !== null &&
+    (input.admission.flowScannerLineCount ?? 0) > 0;
+  if (shouldEvictFlowScannerForSession) {
     evict.push({
       state: "evicting",
       owner: "flow-scanner",
       provider: "ibkr",
       lineCount: input.admission.flowScannerLineCount ?? 0,
-      lineSample: sample(
-        leases
-          .filter((lease) => lease.intent === "flow-scanner-live")
-          .flatMap((lease) => lease.lineIds),
-      ),
+      lineSample: flowScannerLines,
+      reason: "NYSE is outside regular trading hours; flow scanner live option quotes are deferred",
+    });
+  }
+  if (
+    memoryAction.action !== "normal" &&
+    (input.admission.flowScannerLineCount ?? 0) > 0 &&
+    !shouldEvictFlowScannerForSession
+  ) {
+    evict.push({
+      state: "evicting",
+      owner: "flow-scanner",
+      provider: "ibkr",
+      lineCount: input.admission.flowScannerLineCount ?? 0,
+      lineSample: flowScannerLines,
       reason: memoryAction.reason,
     });
   }
@@ -719,6 +791,7 @@ export function buildMarketDataWorkPlan(
     leaseCount: input.admission.leaseCount,
     scannerState: scanner.state,
     scannerHorizon: scanner.plannedHorizonCount,
+    marketSession: marketSession.sessionKey,
     queueDepth: input.ingest?.queueDepth ?? null,
     driftStatus: input.drift?.status ?? null,
   });
@@ -727,12 +800,13 @@ export function buildMarketDataWorkPlan(
     schemaVersion: 1,
     generation: `market-data-work-plan-${hashString(signature)}`,
     generatedAt,
+    marketSession,
     providerPolicy: {
       ibkr: [
         "broker account, execution, visible live, automation live, and options-flow scanner lines",
         "live option quotes and Greeks needed by trading workflows",
       ],
-      massivePolygon: [
+      massive: [
         "stock snapshots, delayed/realtime aggregate fallback, historical research, and provider REST data",
         "option-chain and GEX source snapshots consumed by persisted ingest",
       ],
@@ -775,8 +849,8 @@ export function buildMarketDataWorkPlan(
     },
     ibkrEquityLive,
     ibkrOptionLive,
-    polygonSnapshot,
-    polygonAggregateFallback,
+    massiveSnapshot,
+    massiveAggregateFallback,
     persistJobs,
     release,
     evict,

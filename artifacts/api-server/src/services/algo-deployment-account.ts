@@ -19,8 +19,9 @@ export function isSignalOptionsShadowConfig(config: unknown): boolean {
 export function normalizeAlgoDeploymentProviderAccountId(input: {
   providerAccountId: string;
   config: unknown;
+  mode?: "paper" | "live";
 }): string {
-  return isSignalOptionsShadowConfig(input.config)
+  return input.mode !== "live" && isSignalOptionsShadowConfig(input.config)
     ? SHADOW_PROVIDER_ACCOUNT_ID
     : input.providerAccountId;
 }

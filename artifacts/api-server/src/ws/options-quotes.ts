@@ -2,7 +2,7 @@ import type { IncomingMessage, Server } from "node:http";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { logger } from "../lib/logger";
 import {
-  fetchOptionQuoteSnapshotPayload,
+  readOptionQuoteDemandSnapshotPayload,
   subscribeOptionQuoteSnapshots,
 } from "../services/bridge-streams";
 import type { MarketDataIntent } from "../services/market-data-admission";
@@ -335,36 +335,27 @@ export function attachOptionQuoteWebSocket(server: Server): void {
       });
       sendStatus();
 
-      fetchOptionQuoteSnapshotPayload({
+      const initialPayload = readOptionQuoteDemandSnapshotPayload({
         underlying,
         providerContractIds,
         owner,
-        intent,
         requiresGreeks,
-      })
-        .then((payload) => {
-          sendStatus({
-            providerMode: payload.debug?.providerMode ?? null,
-            liveMarketDataAvailable:
-              payload.debug?.liveMarketDataAvailable ?? null,
-            acceptedCount:
-              payload.debug?.acceptedCount ?? currentProviderContractIds.length,
-            rejectedCount: payload.debug?.rejectedCount ?? 0,
-            returnedCount: payload.debug?.returnedCount ?? payload.quotes.length,
-            missingProviderContractIds:
-              payload.debug?.missingProviderContractIds ?? [],
-          });
-          if (payload.quotes.length) {
-            enqueueQuotes(payload);
-          }
-        })
-        .catch((error) => {
-          logger.warn({ err: error }, "Initial option quote WebSocket snapshot failed");
-          sendJson(socket, {
-            type: "error",
-            error: errorMessage(error),
-          });
-        });
+      });
+      sendStatus({
+        providerMode: initialPayload.debug?.providerMode ?? null,
+        liveMarketDataAvailable:
+          initialPayload.debug?.liveMarketDataAvailable ?? null,
+        acceptedCount:
+          initialPayload.debug?.acceptedCount ?? currentProviderContractIds.length,
+        rejectedCount: initialPayload.debug?.rejectedCount ?? 0,
+        returnedCount:
+          initialPayload.debug?.returnedCount ?? initialPayload.quotes.length,
+        missingProviderContractIds:
+          initialPayload.debug?.missingProviderContractIds ?? [],
+      });
+      if (initialPayload.quotes.length) {
+        enqueueQuotes(initialPayload);
+      }
     });
 
     socket.on("close", cleanup);

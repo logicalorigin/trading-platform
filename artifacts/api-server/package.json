@@ -17,6 +17,7 @@
     "@workspace/backtest-core": "workspace:*",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
+    "@workspace/market-calendar": "workspace:*",
     "@workspace/pyrus-signals-core": "workspace:*",
     "cors": "catalog:",
     "drizzle-orm": "catalog:",

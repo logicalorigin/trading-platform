@@ -67,7 +67,7 @@ export const optionContractsTable = pgTable(
     underlyingInstrumentId: uuid("underlying_instrument_id")
       .notNull()
       .references(() => instrumentsTable.id),
-    polygonTicker: varchar("polygon_ticker", { length: 64 }).notNull(),
+    massiveTicker: varchar("massive_ticker", { length: 64 }).notNull(),
     providerContractId: varchar("provider_contract_id", { length: 128 }),
     expirationDate: date("expiration_date").notNull(),
     strike: numeric("strike", { precision: 18, scale: 6 }).notNull(),
@@ -78,7 +78,7 @@ export const optionContractsTable = pgTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex("option_contracts_polygon_ticker_idx").on(table.polygonTicker),
+    uniqueIndex("option_contracts_massive_ticker_idx").on(table.massiveTicker),
     uniqueIndex("option_contracts_provider_contract_id_idx").on(
       table.providerContractId,
     ),

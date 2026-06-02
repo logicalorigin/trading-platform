@@ -1,3 +1,5 @@
+import { resolveUsEquityMarketStatus } from "@workspace/market-calendar";
+
 export type IbkrRuntimeStreamState =
   | "offline"
   | "login_required"
@@ -10,72 +12,8 @@ export type IbkrRuntimeStreamState =
   | "reconnecting"
   | "reconnect_needed";
 
-const US_EQUITY_FULL_DAY_HOLIDAYS = new Set([
-  "2026-01-01",
-  "2026-01-19",
-  "2026-02-16",
-  "2026-04-03",
-  "2026-05-25",
-  "2026-06-19",
-  "2026-07-03",
-  "2026-09-07",
-  "2026-11-26",
-  "2026-12-25",
-  "2027-01-01",
-  "2027-01-18",
-  "2027-02-15",
-  "2027-03-26",
-  "2027-05-31",
-  "2027-06-18",
-  "2027-07-05",
-  "2027-09-06",
-  "2027-11-25",
-  "2027-12-24",
-  "2028-01-17",
-  "2028-02-21",
-  "2028-04-14",
-  "2028-05-29",
-  "2028-06-19",
-  "2028-07-04",
-  "2028-09-04",
-  "2028-11-23",
-  "2028-12-25",
-]);
-
-function usEquityDateKey(now: Date): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-  const year = parts.find((part) => part.type === "year")?.value ?? "";
-  const month = parts.find((part) => part.type === "month")?.value ?? "";
-  const day = parts.find((part) => part.type === "day")?.value ?? "";
-  return `${year}-${month}-${day}`;
-}
-
 export function isLikelyUsEquitySession(now = new Date()): boolean {
-  if (US_EQUITY_FULL_DAY_HOLIDAYS.has(usEquityDateKey(now))) {
-    return false;
-  }
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(now);
-  const weekday = parts.find((part) => part.type === "weekday")?.value ?? "";
-  if (weekday === "Sat" || weekday === "Sun") {
-    return false;
-  }
-  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
-  const minute = Number(
-    parts.find((part) => part.type === "minute")?.value ?? "0",
-  );
-  const minutes = hour * 60 + minute;
-  return minutes >= 9 * 60 + 25 && minutes <= 16 * 60 + 5;
+  return resolveUsEquityMarketStatus(now).session.key === "rth";
 }
 
 function streamStateDetail(

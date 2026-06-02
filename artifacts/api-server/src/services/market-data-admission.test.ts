@@ -559,6 +559,65 @@ test("signal options preview quote leases classify with signal option owners", (
   assert.equal(diagnostics.ownerClasses.summaries["signal-options"].activeLineCount, 1);
 });
 
+test("shadow account quote leases classify with shadow account owners and fallback mix", () => {
+  setEnv({
+    IBKR_MARKET_DATA_APP_MAX_LINES: "10",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "0",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "10",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "10",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "0",
+  });
+
+  admitMarketDataLeases({
+    owner: "shadow-position-visible:NVDA",
+    intent: "visible-live",
+    requests: [
+      {
+        assetClass: "option" as const,
+        providerContractId: "SHADOWOPT1",
+        underlying: "NVDA",
+      },
+    ],
+    fallbackProvider: "cache",
+  });
+  admitMarketDataLeases({
+    owner: "shadow-risk-greek:MSFT",
+    intent: "account-monitor-live",
+    requests: [
+      {
+        assetClass: "option" as const,
+        providerContractId: "SHADOWOPT2",
+        underlying: "MSFT",
+        requiresGreeks: true,
+      },
+    ],
+    fallbackProvider: "cache",
+  });
+
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+
+  assert.equal(diagnostics.shadowAccount.activeLineCount, 3);
+  assert.equal(diagnostics.shadowAccount.ownerCount, 2);
+  assert.equal(
+    diagnostics.ownerClasses.summaries["shadow-account"].activeLineCount,
+    3,
+  );
+  assert.equal(
+    diagnostics.shadowAccount.activeFallbackProviderLineCounts.cache,
+    3,
+  );
+  assert.equal(
+    diagnostics.shadowAccount.activeFallbackProviderLineCounts.massive,
+    0,
+  );
+  assert.equal(
+    diagnostics.ownerClasses.summaries.visible?.activeLineCount ?? 0,
+    0,
+  );
+});
+
 test("enforces the flow scanner live-line cap", () => {
   setEnv({
     IBKR_MARKET_DATA_APP_MAX_LINES: "100",

@@ -35,6 +35,7 @@ import {
 import {
   getApiResourcePressureSnapshot,
   normalizeApiResourcePressureLevel,
+  resolveApiRssPressureThresholds,
   updateApiResourcePressure,
   type ApiResourcePressureLevel,
 } from "./resource-pressure";
@@ -152,6 +153,12 @@ export type DiagnosticsLatestPayload = {
     level: "normal" | "watch" | "high" | "critical";
     trend: "steady" | "rising" | "recovering";
     browserMemoryMb: number | null;
+    apiRssMb: number | null;
+    apiRssThresholds: {
+      watch: number;
+      high: number;
+      critical: number;
+    };
     apiHeapUsedPercent: number | null;
     sourceQuality: string | null;
     dominantDrivers: Array<{
@@ -2438,6 +2445,7 @@ function buildResourcePressureMetrics(
   const clientPressure = asJsonRecord(latest?.memoryPressure);
   const resourceCaches = asJsonRecord(asJsonRecord(runtime["api"])["resourceCaches"]);
   const heapUsedPercent = numeric(api["heapUsedPercent"]);
+  const apiRssThresholds = resolveApiRssPressureThresholds();
   const heapLevel = pressureLevelFromRatio(
     heapUsedPercent === null ? null : heapUsedPercent / 100,
   );
@@ -2508,6 +2516,7 @@ function buildResourcePressureMetrics(
     heapUsedMb: api["heapUsedMb"],
     heapLimitMb: api["heapLimitMb"],
     rssMb: api["rssMb"],
+    apiRssThresholds,
     eventLoopP95Ms: api["eventLoopP95Ms"],
     browserMemoryMb,
     browser_memory_mb: browserMemoryMb,
@@ -3272,6 +3281,8 @@ export async function recordBrowserDiagnosticEvent(input: {
 function buildFooterMemoryPressureSummary(
   resourceMetrics: JsonRecord,
 ): DiagnosticsLatestPayload["footerMemoryPressure"] {
+  const fallbackRssThresholds = resolveApiRssPressureThresholds();
+  const resourceRssThresholds = asJsonRecord(resourceMetrics["apiRssThresholds"]);
   const dominantDrivers = sanitizeDominantDrivers(
     resourceMetrics["dominantDrivers"],
     { memoryOnly: true },
@@ -3290,6 +3301,13 @@ function buildFooterMemoryPressureSummary(
     trend: (textValue(resourceMetrics["clientPressureTrend"]) ??
       "steady") as "steady" | "rising" | "recovering",
     browserMemoryMb: numeric(resourceMetrics["browserMemoryMb"]),
+    apiRssMb: numeric(resourceMetrics["rssMb"]),
+    apiRssThresholds: {
+      watch: numeric(resourceRssThresholds["watch"]) ?? fallbackRssThresholds.watch,
+      high: numeric(resourceRssThresholds["high"]) ?? fallbackRssThresholds.high,
+      critical:
+        numeric(resourceRssThresholds["critical"]) ?? fallbackRssThresholds.critical,
+    },
     apiHeapUsedPercent: numeric(resourceMetrics["heapUsedPercent"]),
     sourceQuality: textValue(resourceMetrics["sourceQuality"]),
     dominantDrivers,

@@ -817,7 +817,7 @@ test("shadow option mark refresh resolves stored option tickers to IBKR ids", ()
   assert.ok(markBody);
   assert.match(markBody, /shadowOptionQuoteIdentifier\(contract\)/);
   assert.match(markBody, /resolveShadowIbkrOptionProviderIds/);
-  assert.doesNotMatch(markBody, /fetchShadowPolygonOptionQuote\(contract\)/);
+  assert.doesNotMatch(markBody, /fetchShadowMassiveOptionQuote\(contract\)/);
   assert.ok(refreshBody);
   assert.match(refreshBody, /fetchShadowOptionDayChangeQuotes\(optionPositions\)/);
   assert.doesNotMatch(refreshBody, /await resolveOptionMark\(contract\)/);
@@ -3000,9 +3000,11 @@ test("shadow default day-change quotes are requested only for rows needing fallb
   assert.match(fetchQuotesBody, /isPriorOptionExpiration\(contract\)/);
   assert.match(fetchQuotesBody, /shadowOptionProviderContractIdForContract\(contract\)/);
   assert.match(fetchQuotesBody, /resolveShadowIbkrOptionProviderIds/);
-  assert.match(fetchQuotesBody, /fetchOptionQuoteSnapshotPayload/);
-  assert.doesNotMatch(fetchQuotesBody, /PolygonMarketDataClient/);
-  assert.doesNotMatch(fetchQuotesBody, /polygon_option_quote/);
+  assert.match(fetchQuotesBody, /declareIbkrLiveDemand/);
+  assert.match(fetchQuotesBody, /readIbkrLiveDemandState/);
+  assert.doesNotMatch(fetchQuotesBody, /fetchOptionQuoteSnapshotPayload/);
+  assert.doesNotMatch(fetchQuotesBody, /MassiveMarketDataClient/);
+  assert.doesNotMatch(fetchQuotesBody, /massive_option_quote/);
   assert.match(fetchQuotesBody, /Promise\.allSettled/);
   assert.match(fetchQuotesBody, /SHADOW_DAY_CHANGE_QUOTE_TASK_MAX_WAIT_MS/);
 });
@@ -3021,6 +3023,9 @@ test("shadow positions include hydrated option quote payloads", () => {
   assert.match(positionsBody, /SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS/);
   assert.match(positionsBody, /SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS/);
   assert.match(positionsBody, /waitForShadowOptionDayChangeQuotes/);
+  assert.match(source, /const SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS = 750;/);
+  assert.match(source, /const SHADOW_UNDERLYING_QUOTE_MAX_WAIT_MS = 750;/);
+  assert.match(positionsBody, /\{ fetchMissingOptionQuotes: false \}/);
   assert.match(positionsBody, /Promise\.all/);
   assert.match(positionsBody, /fetchShadowOptionUnderlyingMarkets\(filtered\)/);
   assert.match(source, /getBoundedShadowUnderlyingQuoteSnapshots/);
@@ -3038,7 +3043,7 @@ test("shadow positions include hydrated option quote payloads", () => {
   assert.match(positionsBody, /underlyingMarket/);
   assert.match(positionsBody, /shadowUnderlyingMarketPayload/);
   assert.match(positionsBody, /optionPayload\(\s*asOptionContract\(position\.optionContract\),\s*responseProviderContractId,/);
-  assert.doesNotMatch(positionsBody, /polygon_option_quote/);
+  assert.doesNotMatch(positionsBody, /massive_option_quote/);
 });
 
 test("shadow automation event quotes preserve bid ask without repricing marks", () => {
@@ -3139,7 +3144,7 @@ test("shadow option greek estimates fill missing quote greeks", () => {
   assert.ok(estimate.vega > 0);
 });
 
-test("shadow equity quote hydration opts out of Polygon fallback", () => {
+test("shadow equity quote hydration opts out of Massive fallback", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const equityMarkBody = source.match(
     /async function resolveEquityMark\([\s\S]*?\nasync function resolveOptionMark/,
@@ -3154,8 +3159,12 @@ test("shadow equity quote hydration opts out of Polygon fallback", () => {
   assert.ok(equityMarkBody);
   assert.ok(underlyingBody);
   assert.ok(boundedUnderlyingBody);
-  assert.match(equityMarkBody, /allowPolygonFallback: false/);
-  assert.match(boundedUnderlyingBody, /allowPolygonFallback: false/);
+  assert.match(equityMarkBody, /allowMassiveFallback: false/);
+  assert.match(equityMarkBody, /admissionOwner: `shadow-equity-mark:\$\{normalized\}`/);
+  assert.match(equityMarkBody, /admissionFallbackProvider: "cache"/);
+  assert.match(boundedUnderlyingBody, /allowMassiveFallback: false/);
+  assert.match(boundedUnderlyingBody, /admissionOwner: `shadow-underlying-mark:\$\{symbols\}`/);
+  assert.match(boundedUnderlyingBody, /admissionFallbackProvider: "cache"/);
   assert.match(underlyingBody, /getBoundedShadowUnderlyingQuoteSnapshots/);
 });
 

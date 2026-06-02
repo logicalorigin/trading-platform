@@ -6,17 +6,17 @@ import { normalizeSymbol } from "../lib/values";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
 import { subscribeBridgeQuoteSnapshots } from "./bridge-quote-stream";
 import {
-  getCurrentPolygonStockMinuteAggregates,
-  getPolygonDelayedWebSocketDiagnostics,
-  isPolygonDelayedWebSocketConfigured,
-  subscribePolygonStockMinuteAggregates,
-  type PolygonDelayedStockAggregate,
-} from "./polygon-delayed-stream";
+  getCurrentMassiveStockMinuteAggregates,
+  getMassiveDelayedWebSocketDiagnostics,
+  isMassiveDelayedWebSocketConfigured,
+  subscribeMassiveStockMinuteAggregates,
+  type MassiveDelayedStockAggregate,
+} from "./massive-stock-aggregate-stream";
 
 export type StockMinuteAggregateSource =
   | "ibkr-websocket-derived"
   | "massive-websocket"
-  | "polygon-delayed-websocket";
+  | "massive-delayed-websocket";
 
 export type StockMinuteAggregateMessage = {
   eventType: string;
@@ -75,13 +75,15 @@ type SymbolAggregateStats = {
 
 const subscribers = new Map<number, Subscriber>();
 const accumulators = new Map<string, MinuteAccumulator>();
+const aggregateHistoryBySymbol = new Map<string, StockMinuteAggregateMessage[]>();
 const STREAM_RECONFIGURE_DEBOUNCE_MS = 150;
 const AGGREGATE_FANOUT_FLUSH_MS = 100;
 const AGGREGATE_STALE_HEARTBEAT_MS = 5_000;
+const AGGREGATE_HISTORY_RETENTION_MS = 4 * 60 * 60_000;
 
 let nextSubscriberId = 1;
 let quoteUnsubscribe: (() => void) | null = null;
-let polygonUnsubscribe: (() => void) | null = null;
+let massiveUnsubscribe: (() => void) | null = null;
 let quoteSubscriptionSignature = "";
 let activeStreamSource: StockMinuteAggregateSource | "none" = "none";
 let refreshTimer: NodeJS.Timeout | null = null;
@@ -170,6 +172,42 @@ function getMinuteWindow(timestamp: number) {
   };
 }
 
+function positiveInteger(value: unknown, fallback: number, min: number, max: number) {
+  const resolved = Number(value);
+  return Number.isFinite(resolved)
+    ? Math.min(max, Math.max(min, Math.round(resolved)))
+    : fallback;
+}
+
+function aggregateFanoutKey(message: StockMinuteAggregateMessage): string {
+  return `${message.symbol}:${message.startMs}`;
+}
+
+function recordAggregateHistory(message: StockMinuteAggregateMessage): void {
+  const symbol = normalizeSymbol(message.symbol);
+  if (!symbol) {
+    return;
+  }
+
+  const normalizedMessage = { ...message, symbol };
+  const existing = aggregateHistoryBySymbol.get(symbol) ?? [];
+  const next = [...existing];
+  const matchingIndex = next.findIndex((entry) => entry.startMs === message.startMs);
+  if (matchingIndex >= 0) {
+    next[matchingIndex] = normalizedMessage;
+  } else {
+    next.push(normalizedMessage);
+  }
+
+  const cutoffMs = message.startMs - AGGREGATE_HISTORY_RETENTION_MS;
+  aggregateHistoryBySymbol.set(
+    symbol,
+    next
+      .filter((entry) => entry.startMs >= cutoffMs)
+      .sort((left, right) => left.startMs - right.startMs),
+  );
+}
+
 function broadcastAggregate(message: StockMinuteAggregateMessage) {
   subscribers.forEach((subscriber) => {
     if (!subscriber.symbols.has(message.symbol)) {
@@ -192,7 +230,8 @@ function scheduleAggregateFanout(
   observedAt = Date.now(),
 ) {
   recordAggregateEvent(message.symbol, observedAt);
-  pendingFanoutBySymbol.set(message.symbol, message);
+  recordAggregateHistory(message);
+  pendingFanoutBySymbol.set(aggregateFanoutKey(message), message);
   if (fanoutTimer) {
     return;
   }
@@ -257,14 +296,41 @@ export function getCurrentStockMinuteAggregates(
   );
   const provider = getPreferredStockAggregateStreamSource();
 
-  if (provider === "polygon-delayed-websocket" || provider === "massive-websocket") {
-    return getCurrentPolygonStockMinuteAggregates(normalizedSymbols);
+  if (provider === "massive-delayed-websocket" || provider === "massive-websocket") {
+    return getCurrentMassiveStockMinuteAggregates(normalizedSymbols);
   }
 
   return normalizedSymbols.flatMap((symbol) => {
     const accumulator = accumulators.get(symbol);
     return accumulator ? [toAggregateMessage(symbol, accumulator)] : [];
   });
+}
+
+export function getRecentStockMinuteAggregateHistory(input: {
+  symbol: string;
+  sinceMs?: number;
+  untilMs?: number;
+  limit?: number;
+}): StockMinuteAggregateMessage[] {
+  const symbol = normalizeSymbol(input.symbol);
+  if (!symbol) {
+    return [];
+  }
+  const sinceMs =
+    typeof input.sinceMs === "number" && Number.isFinite(input.sinceMs)
+      ? input.sinceMs
+      : Number.NEGATIVE_INFINITY;
+  const untilMs =
+    typeof input.untilMs === "number" && Number.isFinite(input.untilMs)
+      ? input.untilMs
+      : Number.POSITIVE_INFINITY;
+  const limit = positiveInteger(input.limit, Number.MAX_SAFE_INTEGER, 1, Number.MAX_SAFE_INTEGER);
+
+  return (aggregateHistoryBySymbol.get(symbol) ?? [])
+    .filter((message) => message.startMs >= sinceMs && message.startMs <= untilMs)
+    .sort((left, right) => left.startMs - right.startMs)
+    .slice(-limit)
+    .map((message) => ({ ...message }));
 }
 
 function updateAccumulator(input: {
@@ -345,7 +411,7 @@ function handleQuoteSnapshot(
   });
 }
 
-function handlePolygonAggregate(message: PolygonDelayedStockAggregate): void {
+function handleMassiveAggregate(message: MassiveDelayedStockAggregate): void {
   scheduleAggregateFanout(message, Date.now());
 }
 
@@ -408,8 +474,8 @@ function refreshQuoteSubscription() {
 
   quoteUnsubscribe?.();
   quoteUnsubscribe = null;
-  polygonUnsubscribe?.();
-  polygonUnsubscribe = null;
+  massiveUnsubscribe?.();
+  massiveUnsubscribe = null;
   quoteSubscriptionSignature = nextSignature;
   activeStreamSource = !symbols.length ? "none" : provider;
 
@@ -418,11 +484,11 @@ function refreshQuoteSubscription() {
     return;
   }
 
-  if (provider === "polygon-delayed-websocket" || provider === "massive-websocket") {
+  if (provider === "massive-delayed-websocket" || provider === "massive-websocket") {
     clearHeartbeatTimer();
-    polygonUnsubscribe = subscribePolygonStockMinuteAggregates(
+    massiveUnsubscribe = subscribeMassiveStockMinuteAggregates(
       symbols,
-      handlePolygonAggregate,
+      handleMassiveAggregate,
     );
     return;
   }
@@ -451,28 +517,28 @@ export function getPreferredStockAggregateStreamSource():
   | "none" {
   return resolvePreferredStockAggregateStreamSource({
     ibkrConfigured: getProviderConfiguration().ibkr,
-    polygonDelayedConfigured: isPolygonDelayedWebSocketConfigured(),
+    massiveDelayedConfigured: isMassiveDelayedWebSocketConfigured(),
     massiveRealtimeConfigured: isMassiveStocksRealtimeConfigured(),
   });
 }
 
 export function resolvePreferredStockAggregateStreamSource({
   ibkrConfigured,
-  polygonDelayedConfigured,
+  massiveDelayedConfigured,
   massiveRealtimeConfigured = false,
 }: {
   ibkrConfigured: boolean;
-  polygonDelayedConfigured: boolean;
+  massiveDelayedConfigured: boolean;
   massiveRealtimeConfigured?: boolean;
 }): StockMinuteAggregateSource | "none" {
-  if (massiveRealtimeConfigured && polygonDelayedConfigured) {
+  if (massiveRealtimeConfigured && massiveDelayedConfigured) {
     return "massive-websocket";
   }
   if (ibkrConfigured) {
     return "ibkr-websocket-derived";
   }
-  if (polygonDelayedConfigured) {
-    return "polygon-delayed-websocket";
+  if (massiveDelayedConfigured) {
+    return "massive-delayed-websocket";
   }
   return "none";
 }
@@ -491,13 +557,18 @@ export function getStockAggregateStreamDiagnostics() {
     unionSymbolCount: desiredSymbols.length,
     accumulatorCount: accumulators.size,
     pendingFanoutCount: pendingFanoutBySymbol.size,
+    historySymbolCount: aggregateHistoryBySymbol.size,
+    historyAggregateCount: Array.from(aggregateHistoryBySymbol.values()).reduce(
+      (sum, entries) => sum + entries.length,
+      0,
+    ),
     eventCount: aggregateEventCount,
     gapCount: aggregateGapCount,
     maxGapMs: aggregateEventCount > 1 ? maxAggregateGapMs : null,
     lastAggregateAt: lastAggregateAt?.toISOString() ?? null,
     lastAggregateAgeMs,
     lastGapAt: lastAggregateGapAt?.toISOString() ?? null,
-    quoteSubscriptionActive: Boolean(quoteUnsubscribe ?? polygonUnsubscribe),
+    quoteSubscriptionActive: Boolean(quoteUnsubscribe ?? massiveUnsubscribe),
     quoteSubscriptionSignature,
     perSymbol: desiredSymbols.map((symbol) => {
       const stats = aggregateStatsBySymbol.get(symbol);
@@ -520,7 +591,7 @@ export function getStockAggregateStreamDiagnostics() {
         lastGapAt: stats?.lastGapAt?.toISOString() ?? null,
       };
     }),
-    polygonDelayedWebSocket: getPolygonDelayedWebSocketDiagnostics(),
+    massiveDelayedWebSocket: getMassiveDelayedWebSocketDiagnostics(),
   };
 }
 
@@ -583,6 +654,7 @@ export const __stockAggregateStreamTestInternals = {
   reset() {
     subscribers.clear();
     accumulators.clear();
+    aggregateHistoryBySymbol.clear();
     pendingFanoutBySymbol.clear();
     aggregateStatsBySymbol.clear();
     if (refreshTimer) {
@@ -596,7 +668,7 @@ export const __stockAggregateStreamTestInternals = {
     clearHeartbeatTimer();
     nextSubscriberId = 1;
     quoteUnsubscribe = null;
-    polygonUnsubscribe = null;
+    massiveUnsubscribe = null;
     quoteSubscriptionSignature = "";
     activeStreamSource = "none";
     aggregateEventCount = 0;

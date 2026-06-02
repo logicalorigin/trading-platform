@@ -1,5 +1,5 @@
 import { normalizeSymbol } from "../lib/values";
-import type { UniverseTicker } from "../providers/polygon/market-data";
+import type { UniverseTicker } from "../providers/massive/market-data";
 
 export const NASDAQ_LISTED_SYMBOL_DIRECTORY_URL =
   "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt";

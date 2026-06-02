@@ -27,6 +27,37 @@ import {
 } from "../services/route-admission";
 
 const router: IRouter = Router();
+const SIGNAL_OPTIONS_STATE_ROUTE_TIMEOUT_MS = 5_000;
+const SIGNAL_OPTIONS_COCKPIT_SUMMARY_ROUTE_TIMEOUT_MS = 5_000;
+const SIGNAL_OPTIONS_COCKPIT_FULL_ROUTE_TIMEOUT_MS = 9_000;
+
+function withSignalOptionsRouteTimeout<T>(
+  promise: Promise<T>,
+  input: {
+    timeoutMs: number;
+    code: string;
+    detail: string;
+  },
+): Promise<T> {
+  promise.catch(() => {});
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      reject(
+        new HttpError(504, "Signal Options route timed out.", {
+          code: input.code,
+          detail: input.detail,
+        }),
+      );
+    }, input.timeoutMs);
+    timeout.unref?.();
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  });
+}
 
 function writeSseEvent(
   res: Response,
@@ -137,11 +168,19 @@ router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, r
   const view = req.query.view === "full" ? "full" : "summary";
   res.json(
     withRouteAdmissionMetadata(
-      await listSignalOptionsAutomationState({
-        deploymentId: req.params.deploymentId,
-        cacheMode: admission.cacheOnly ? "cache-only" : "normal",
-        view,
-      }),
+      await withSignalOptionsRouteTimeout(
+        listSignalOptionsAutomationState({
+          deploymentId: req.params.deploymentId,
+          cacheMode: admission.cacheOnly ? "cache-only" : "normal",
+          view,
+        }),
+        {
+          timeoutMs: SIGNAL_OPTIONS_STATE_ROUTE_TIMEOUT_MS,
+          code: "signal_options_state_route_timeout",
+          detail:
+            "Signal Options state did not respond within the route budget.",
+        },
+      ),
       admission,
     ),
   );
@@ -150,13 +189,25 @@ router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, r
 router.get("/algo/deployments/:deploymentId/cockpit", async (req, res): Promise<void> => {
   const admission = getApiRouteAdmission(res);
   const view = req.query.view === "full" ? "full" : "summary";
+  const timeoutMs =
+    view === "full"
+      ? SIGNAL_OPTIONS_COCKPIT_FULL_ROUTE_TIMEOUT_MS
+      : SIGNAL_OPTIONS_COCKPIT_SUMMARY_ROUTE_TIMEOUT_MS;
   res.json(
     withRouteAdmissionMetadata(
-      await getAlgoDeploymentCockpit({
-        deploymentId: req.params.deploymentId,
-        cacheMode: admission.cacheOnly ? "cache-only" : "normal",
-        view,
-      }),
+      await withSignalOptionsRouteTimeout(
+        getAlgoDeploymentCockpit({
+          deploymentId: req.params.deploymentId,
+          cacheMode: admission.cacheOnly ? "cache-only" : "normal",
+          view,
+        }),
+        {
+          timeoutMs,
+          code: "signal_options_cockpit_route_timeout",
+          detail:
+            "Signal Options cockpit did not respond within the route budget.",
+        },
+      ),
       admission,
     ),
   );

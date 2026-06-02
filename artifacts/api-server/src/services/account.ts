@@ -138,7 +138,10 @@ import {
   flexConfigured,
   getFlexConfigs,
 } from "./account-flex-model";
-import { fetchOptionQuoteSnapshotPayload } from "./bridge-streams";
+import {
+  declareIbkrLiveDemand,
+  readIbkrLiveDemandState,
+} from "./ibkr-live-demand-coordinator";
 import type {
   BrokerAccountSnapshot,
   BrokerExecutionSnapshot,
@@ -150,6 +153,8 @@ import type {
 } from "../providers/ibkr/client";
 
 const COMBINED_ACCOUNT_ID = "combined";
+const ACCOUNT_MONITOR_OPTION_QUOTE_TTL_MS = 15_000;
+const ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS = 2_000;
 const FLEX_SEND_REQUEST_URL =
   "https://www.interactivebrokers.com/Universal/servlet/FlexStatementService.SendRequest";
 const FLEX_GET_STATEMENT_URL =
@@ -183,6 +188,12 @@ type AccountUniverse = {
   staleReason: string | null;
 };
 
+type ShortLivedAccountCacheEntry<T> = {
+  promise: Promise<T>;
+  expiresAt: number;
+  settled: boolean;
+};
+
 type AccountPositionTotalsInput = {
   accounts: BrokerAccountSnapshot[];
   rows: Array<{
@@ -204,6 +215,57 @@ const snapshotWriteTimestamps = new Map<string, number>();
 const snapshotProviderTimestamps = new Map<string, number>();
 const accountSnapshotPersistenceBackoff = createTransientPostgresBackoff();
 const accountSnapshotReadBackoff = createTransientPostgresBackoff();
+const liveAccountUniverseReadCache = new Map<
+  string,
+  ShortLivedAccountCacheEntry<AccountUniverse>
+>();
+const accountPositionsReadCache = new Map<
+  string,
+  ShortLivedAccountCacheEntry<BrokerPositionSnapshot[]>
+>();
+const positionMarketHydrationReadCache = new Map<
+  string,
+  ShortLivedAccountCacheEntry<Map<string, PositionMarketHydration>>
+>();
+
+function readShortLivedAccountCache<T>(
+  cache: Map<string, ShortLivedAccountCacheEntry<T>>,
+  key: string,
+  factory: () => Promise<T>,
+): Promise<T> {
+  const now = Date.now();
+  for (const [entryKey, entry] of cache.entries()) {
+    if (entry.settled && entry.expiresAt <= now) {
+      cache.delete(entryKey);
+    }
+  }
+
+  const cached = cache.get(key);
+  if (cached && (!cached.settled || cached.expiresAt > now)) {
+    return cached.promise;
+  }
+
+  const entry: ShortLivedAccountCacheEntry<T> = {
+    promise: Promise.resolve().then(factory),
+    expiresAt: Number.POSITIVE_INFINITY,
+    settled: false,
+  };
+  entry.promise = entry.promise.then(
+    (value) => {
+      entry.settled = true;
+      entry.expiresAt = Date.now() + ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS;
+      return value;
+    },
+    (error) => {
+      if (cache.get(key) === entry) {
+        cache.delete(key);
+      }
+      throw error;
+    },
+  );
+  cache.set(key, entry);
+  return entry.promise;
+}
 const accountPositionLotsReadBackoff = createTransientPostgresBackoff();
 const optionalAccountSchemaReadBackoff = createTransientPostgresBackoff();
 const optionGreekChainCache = new Map<string, OptionChainCacheEntry>();
@@ -821,7 +883,25 @@ async function getPersistedBackedAccounts(
   return persistedAccountRowsToSnapshots(rows);
 }
 
+function liveAccountUniverseCacheKey(accountId: string, mode: RuntimeMode): string {
+  return JSON.stringify({
+    accountId: accountId || COMBINED_ACCOUNT_ID,
+    mode,
+  });
+}
+
 async function getLiveAccountUniverse(
+  accountId: string,
+  mode: RuntimeMode,
+): Promise<AccountUniverse> {
+  return readShortLivedAccountCache(
+    liveAccountUniverseReadCache,
+    liveAccountUniverseCacheKey(accountId, mode),
+    () => readLiveAccountUniverseUncached(accountId, mode),
+  );
+}
+
+async function readLiveAccountUniverseUncached(
   accountId: string,
   mode: RuntimeMode,
 ): Promise<AccountUniverse> {
@@ -952,7 +1032,32 @@ async function getFlexBackedAccounts(
   }));
 }
 
+function accountPositionsCacheKey(
+  universe: AccountUniverse,
+  mode: RuntimeMode,
+): string {
+  return JSON.stringify({
+    accountIds: [...universe.accountIds].sort(),
+    isCombined: universe.isCombined,
+    latestSnapshotAt: universe.latestSnapshotAt?.toISOString() ?? null,
+    mode,
+    requestedAccountId: universe.requestedAccountId,
+    source: universe.source,
+  });
+}
+
 async function listPositionsForUniverse(
+  universe: AccountUniverse,
+  mode: RuntimeMode,
+): Promise<BrokerPositionSnapshot[]> {
+  return readShortLivedAccountCache(
+    accountPositionsReadCache,
+    accountPositionsCacheKey(universe, mode),
+    () => readPositionsForUniverseUncached(universe, mode),
+  );
+}
+
+async function readPositionsForUniverseUncached(
   universe: AccountUniverse,
   mode: RuntimeMode,
 ): Promise<BrokerPositionSnapshot[]> {
@@ -1042,7 +1147,7 @@ async function fetchEquityQuoteSnapshotsForPositions(
   if (symbols.length) {
     const payload = await getQuoteSnapshots({
       symbols: symbols.join(","),
-      allowPolygonFallback: false,
+      allowMassiveFallback: false,
     }).catch(() => ({
       quotes: [],
     }));
@@ -1071,25 +1176,34 @@ async function fetchOptionQuoteSnapshotsForPositions(
     return new Map();
   }
 
-  const quoteEntries = await Promise.all(
-    Array.from(idsByUnderlying.entries()).map(
-      async ([underlying, providerContractIds]) =>
-        fetchOptionQuoteSnapshotPayload({
+  const quoteEntries = Array.from(idsByUnderlying.entries()).map(
+    ([underlying, providerContractIds]) => {
+      const uniqueProviderContractIds = Array.from(new Set(providerContractIds));
+      const owner = `account-position-option-quotes:${underlying}`;
+      try {
+        declareIbkrLiveDemand({
+          owner,
           underlying,
-          providerContractIds: Array.from(new Set(providerContractIds)),
-          intent: "visible-live",
+          providerContractIds: uniqueProviderContractIds,
+          intent: "account-monitor-live",
           fallbackProvider: "cache",
           requiresGreeks: false,
-        })
-          .then((payload) => payload.quotes || [])
-          .catch((error) => {
-            logger.debug?.(
-              { err: error, underlying },
-              "Unable to fetch account position option quotes",
-            );
-            return [];
-          }),
-    ),
+          ttlMs: ACCOUNT_MONITOR_OPTION_QUOTE_TTL_MS,
+        });
+        return readIbkrLiveDemandState({
+          owner,
+          underlying,
+          providerContractIds: uniqueProviderContractIds,
+          requiresGreeks: false,
+        }).states.flatMap((state) => (state.quote ? [state.quote] : []));
+      } catch (error) {
+        logger.debug?.(
+          { err: error, underlying },
+          "Unable to read account position option quote demand",
+        );
+        return [];
+      }
+    },
   );
 
   return new Map(
@@ -1102,7 +1216,61 @@ async function fetchOptionQuoteSnapshotsForPositions(
   );
 }
 
+function positionMarketHydrationCacheKey(
+  positions: BrokerPositionSnapshot[],
+): string {
+  return positions
+    .map((position) =>
+      [
+        position.id,
+        position.accountId,
+        position.symbol,
+        position.assetClass,
+        position.quantity,
+        position.averagePrice,
+        position.marketPrice,
+        position.marketValue,
+        position.unrealizedPnl,
+        position.optionContract?.providerContractId ?? "",
+        position.optionContract?.underlying ?? "",
+        position.optionContract?.expirationDate?.toISOString?.() ?? "",
+        position.optionContract?.strike ?? "",
+        position.optionContract?.right ?? "",
+      ].join("|"),
+    )
+    .sort()
+    .join(";");
+}
+
 async function hydratePositionMarkets(
+  positions: BrokerPositionSnapshot[],
+  quotesBySymbol?: Map<string, QuoteSnapshot>,
+  optionQuotesByProviderContractId?: Map<string, QuoteSnapshot>,
+  openDatesByPositionId?: Map<
+    string,
+    {
+      openedAt: Date | null;
+      openedAtSource: BrokerPositionSnapshot["openedAtSource"] | null;
+    }
+  >,
+): Promise<Map<string, PositionMarketHydration>> {
+  if (!quotesBySymbol && !optionQuotesByProviderContractId && !openDatesByPositionId) {
+    return readShortLivedAccountCache(
+      positionMarketHydrationReadCache,
+      positionMarketHydrationCacheKey(positions),
+      () => hydratePositionMarketsUncached(positions),
+    );
+  }
+
+  return hydratePositionMarketsUncached(
+    positions,
+    quotesBySymbol,
+    optionQuotesByProviderContractId,
+    openDatesByPositionId,
+  );
+}
+
+async function hydratePositionMarketsUncached(
   positions: BrokerPositionSnapshot[],
   quotesBySymbol?: Map<string, QuoteSnapshot>,
   optionQuotesByProviderContractId?: Map<string, QuoteSnapshot>,
@@ -1443,7 +1611,7 @@ async function hydrateOptionUnderlyingPrices(
 
   const payload = await getQuoteSnapshots({
     symbols: symbols.join(","),
-    allowPolygonFallback: false,
+    allowMassiveFallback: false,
   }).catch(() => ({
     quotes: [],
   }));

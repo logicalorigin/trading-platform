@@ -12,7 +12,7 @@ import {
 import type {
   UniverseMarket,
   UniverseTicker,
-} from "../../artifacts/api-server/src/providers/polygon/market-data";
+} from "../../artifacts/api-server/src/providers/massive/market-data";
 
 type CliOptions = {
   nasdaqUrl?: string;

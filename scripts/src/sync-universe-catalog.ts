@@ -1,12 +1,12 @@
 import { eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { universeCatalogSyncStatesTable } from "@workspace/db/schema";
-import { getPolygonRuntimeConfig } from "../../artifacts/api-server/src/lib/runtime";
+import { getMassiveRuntimeConfig } from "../../artifacts/api-server/src/lib/runtime";
 import {
-  PolygonMarketDataClient,
+  MassiveMarketDataClient,
   type UniverseMarket,
   type UniverseTicker,
-} from "../../artifacts/api-server/src/providers/polygon/market-data";
+} from "../../artifacts/api-server/src/providers/massive/market-data";
 import { upsertUniverseCatalogRows } from "../../artifacts/api-server/src/services/platform";
 
 const DEFAULT_MARKETS: UniverseMarket[] = ["stocks", "etf", "otc"];
@@ -105,9 +105,9 @@ async function writeSyncState(input: {
 }
 
 async function main() {
-  const config = getPolygonRuntimeConfig();
+  const config = getMassiveRuntimeConfig();
   if (!config) {
-    throw new Error("Polygon runtime configuration is required to sync the universe catalog.");
+    throw new Error("Massive runtime configuration is required to sync the universe catalog.");
   }
 
   const pageLimit = Math.max(1, Math.min(Number(parseArg("limit") ?? "1000"), 1000));
@@ -116,7 +116,7 @@ async function main() {
   const resume = parseBooleanArg("resume", true);
   const reset = parseBooleanArg("reset", false);
   const markets = parseMarkets();
-  const client = new PolygonMarketDataClient(config);
+  const client = new MassiveMarketDataClient(config);
 
   for (const market of markets) {
     const scopeKey = buildScopeKey(market, activeOnly);

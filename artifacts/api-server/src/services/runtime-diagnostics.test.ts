@@ -21,6 +21,7 @@ const platformModule = await import("./platform");
 const bridgeQuoteStreamModule = await import("./bridge-quote-stream");
 const bridgeGovernorModule = await import("./bridge-governor");
 const storageHealthModule = await import("./storage-health");
+const marketDataIngestModule = await import("./market-data-ingest");
 const { clearIbkrBridgeRuntimeOverride, setIbkrBridgeRuntimeOverride } =
   runtimeModule;
 const {
@@ -41,16 +42,21 @@ const {
   __setStorageHealthProbeForTests,
   refreshStorageHealthSnapshot,
 } = storageHealthModule;
+const { __marketDataIngestInternalsForTests } = marketDataIngestModule;
 
 test.afterEach(() => {
   __setIbkrBridgeClientFactoryForTests(null);
   __setBridgeQuoteClientForTests(null);
+  __marketDataIngestInternalsForTests.__setMarketDataIngestDiagnosticsGetterForTests(
+    null,
+  );
   __resetBridgeQuoteStreamForTests();
   __resetBridgeGovernorForTests();
   __resetStorageHealthForTests();
   clearIbkrBridgeRuntimeOverride();
   delete process.env["RUNTIME_DIAGNOSTICS_BRIDGE_HEALTH_TIMEOUT_MS"];
   delete process.env["RUNTIME_DIAGNOSTICS_BRIDGE_HEALTH_STALE_CACHE_MS"];
+  delete process.env["RUNTIME_DIAGNOSTICS_MARKET_DATA_INGEST_TIMEOUT_MS"];
   delete process.env["IBKR_BRIDGE_HEALTH_FRESH_MS"];
   delete process.env["IBKR_BRIDGE_UNHEALTHY_CACHE_MS"];
   delete process.env["SESSION_BRIDGE_HEALTH_STALE_TIMEOUT_MS"];
@@ -70,7 +76,14 @@ test.after(() => {
 test("runtime stream state is market-aware", () => {
   const open = new Date("2026-04-28T14:30:00.000Z");
   const closed = new Date("2026-04-28T21:30:00.000Z");
+  const premarket = new Date("2026-04-28T12:30:00.000Z");
+  const afterHours = new Date("2026-04-28T20:30:00.000Z");
   const holiday = new Date("2026-05-25T15:00:00.000Z");
+  const goodFriday = new Date("2026-04-03T15:00:00.000Z");
+  const juneteenth = new Date("2026-06-19T15:00:00.000Z");
+  const earlyCloseAfterRth = new Date("2026-11-27T18:30:00.000Z");
+  const daylightSavingOpen = new Date("2026-07-01T13:30:00.000Z");
+  const standardTimeOpen = new Date("2026-12-01T14:30:00.000Z");
   const base = {
     configured: true,
     healthFresh: true,
@@ -177,6 +190,22 @@ test("runtime stream state is market-aware", () => {
     "market_session_quiet",
   );
   assert.equal(
+    __resolveIbkrRuntimeStrictReasonForTests({
+      ...base,
+      streamFresh: false,
+      now: premarket,
+    }),
+    "market_session_quiet",
+  );
+  assert.equal(
+    __resolveIbkrRuntimeStrictReasonForTests({
+      ...base,
+      streamFresh: false,
+      now: afterHours,
+    }),
+    "market_session_quiet",
+  );
+  assert.equal(
     __resolveIbkrRuntimeStreamStateForTests({
       ...base,
       streamFresh: false,
@@ -191,6 +220,46 @@ test("runtime stream state is market-aware", () => {
       now: holiday,
     }),
     "market_session_quiet",
+  );
+  assert.equal(
+    __resolveIbkrRuntimeStrictReasonForTests({
+      ...base,
+      streamFresh: false,
+      now: goodFriday,
+    }),
+    "market_session_quiet",
+  );
+  assert.equal(
+    __resolveIbkrRuntimeStrictReasonForTests({
+      ...base,
+      streamFresh: false,
+      now: juneteenth,
+    }),
+    "market_session_quiet",
+  );
+  assert.equal(
+    __resolveIbkrRuntimeStrictReasonForTests({
+      ...base,
+      streamFresh: false,
+      now: earlyCloseAfterRth,
+    }),
+    "market_session_quiet",
+  );
+  assert.equal(
+    __resolveIbkrRuntimeStrictReasonForTests({
+      ...base,
+      streamFresh: false,
+      now: daylightSavingOpen,
+    }),
+    "stream_not_fresh",
+  );
+  assert.equal(
+    __resolveIbkrRuntimeStrictReasonForTests({
+      ...base,
+      streamFresh: false,
+      now: standardTimeOpen,
+    }),
+    "stream_not_fresh",
   );
 });
 
@@ -286,24 +355,20 @@ test("runtime diagnostics are read-only and only inspect bridge health", async (
   assert.equal(typeof diagnostics.api.pythonCompute.status, "string");
   assert.equal(diagnostics.storage.source, "external-postgres");
   assert.equal(diagnostics.storage.status, "ok");
-  assert.equal(typeof diagnostics.providers.polygon.configured, "boolean");
+  assert.equal(typeof diagnostics.providers.massive.configured, "boolean");
   assert.ok(
-    ["ok", "degraded", "unconfigured", "unknown"].includes(
-      diagnostics.providers.polygon.status,
+    ["ok", "degraded", "unconfigured", "idle"].includes(
+      diagnostics.providers.massive.rest.status,
     ),
   );
 });
 
 test("runtime diagnostics expose Massive provider activity without secrets", async () => {
   const previousMassiveKey = process.env["MASSIVE_API_KEY"];
-  const previousPolygonKey = process.env["POLYGON_API_KEY"];
-  const previousPolygonBaseUrl = process.env["POLYGON_BASE_URL"];
   const previousMassiveBaseUrl = process.env["MASSIVE_API_BASE_URL"];
   const previousMassiveRecency = process.env["MASSIVE_STOCKS_RECENCY"];
 
   process.env["MASSIVE_API_KEY"] = "massive-secret";
-  delete process.env["POLYGON_API_KEY"];
-  delete process.env["POLYGON_BASE_URL"];
   delete process.env["MASSIVE_API_BASE_URL"];
   delete process.env["MASSIVE_STOCKS_RECENCY"];
 
@@ -326,16 +391,6 @@ test("runtime diagnostics expose Massive provider activity without secrets", asy
       delete process.env["MASSIVE_API_KEY"];
     } else {
       process.env["MASSIVE_API_KEY"] = previousMassiveKey;
-    }
-    if (previousPolygonKey === undefined) {
-      delete process.env["POLYGON_API_KEY"];
-    } else {
-      process.env["POLYGON_API_KEY"] = previousPolygonKey;
-    }
-    if (previousPolygonBaseUrl === undefined) {
-      delete process.env["POLYGON_BASE_URL"];
-    } else {
-      process.env["POLYGON_BASE_URL"] = previousPolygonBaseUrl;
     }
     if (previousMassiveBaseUrl === undefined) {
       delete process.env["MASSIVE_API_BASE_URL"];
@@ -710,6 +765,49 @@ test("runtime diagnostics timebox bridge health checks", async () => {
   assert.equal(diagnostics.ibkr.reachable, false);
   assert.equal(diagnostics.ibkr.healthErrorCode, "ibkr_bridge_health_timeout");
   assert.match(diagnostics.ibkr.healthErrorDetail ?? "", /5ms/);
+});
+
+test("runtime diagnostics timebox market data ingest diagnostics", async () => {
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          configured: true,
+          authenticated: true,
+          connected: true,
+          competing: false,
+          selectedAccountId: "DU1234567",
+          accounts: ["DU1234567"],
+          lastTickleAt: new Date(),
+          lastError: null,
+          lastRecoveryAttemptAt: null,
+          lastRecoveryError: null,
+          updatedAt: new Date(),
+          transport: "tws",
+          connectionTarget: "127.0.0.1:4001",
+          sessionMode: "live",
+          clientId: 101,
+          marketDataMode: "live",
+          liveMarketDataAvailable: true,
+        }),
+      }) as unknown as IbkrBridgeClient,
+  );
+  __marketDataIngestInternalsForTests.__setMarketDataIngestDiagnosticsGetterForTests(
+    () => new Promise<never>(() => {}),
+  );
+  process.env["RUNTIME_DIAGNOSTICS_MARKET_DATA_INGEST_TIMEOUT_MS"] = "5";
+
+  const startedAt = Date.now();
+  const diagnostics = await getRuntimeDiagnostics();
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.ok(elapsedMs < 250);
+  assert.equal(diagnostics.ibkr.streams.marketDataIngest.degraded, true);
+  assert.equal(
+    diagnostics.ibkr.streams.marketDataIngest.reason,
+    "market_data_ingest_diagnostics_timeout",
+  );
+  assert.equal(diagnostics.ibkr.streams.marketDataIngest.timeoutMs, 5);
 });
 
 test("runtime diagnostics serves stale cached bridge health without blocking", async () => {

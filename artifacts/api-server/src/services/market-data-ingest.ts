@@ -159,9 +159,7 @@ export function isMarketDataIngestDatabaseConfigured(): boolean {
 export function isMarketDataIngestProviderConfigured(): boolean {
   return Boolean(
     process.env["MASSIVE_API_KEY"] ||
-      process.env["MASSIVE_MARKET_DATA_API_KEY"] ||
-      process.env["POLYGON_API_KEY"] ||
-      process.env["POLYGON_KEY"],
+      process.env["MASSIVE_MARKET_DATA_API_KEY"],
   );
 }
 
@@ -326,7 +324,7 @@ export async function getLatestGexSnapshot(
   }
 }
 
-export async function getMarketDataIngestDiagnostics(): Promise<{
+export type MarketDataIngestDiagnostics = {
   configured: boolean;
   providerConfigured: boolean;
   queueDepth: Record<string, number>;
@@ -350,7 +348,20 @@ export async function getMarketDataIngestDiagnostics(): Promise<{
     symbol: string;
     updatedAt: Date;
   }>;
-}> {
+  degraded?: boolean;
+  reason?: string | null;
+  timeoutMs?: number | null;
+};
+
+let marketDataIngestDiagnosticsGetterForTests:
+  | (() => Promise<MarketDataIngestDiagnostics>)
+  | null = null;
+
+export async function getMarketDataIngestDiagnostics(): Promise<MarketDataIngestDiagnostics> {
+  if (marketDataIngestDiagnosticsGetterForTests) {
+    return marketDataIngestDiagnosticsGetterForTests();
+  }
+
   const dbModule = await loadDbModule();
   if (!dbModule) {
     return {
@@ -620,6 +631,11 @@ function mapBlockedGexDiagnosticsRows(
 }
 
 export const __marketDataIngestInternalsForTests = {
+  __setMarketDataIngestDiagnosticsGetterForTests: (
+    getter: (() => Promise<MarketDataIngestDiagnostics>) | null,
+  ) => {
+    marketDataIngestDiagnosticsGetterForTests = getter;
+  },
   numericDedupeBucket,
   mapBlockedGexDiagnosticsRows,
 };

@@ -19,6 +19,9 @@
       "path": "./lib/account-math"
     },
     {
+      "path": "./lib/market-calendar"
+    },
+    {
       "path": "./lib/ibkr-contracts"
     },
     {

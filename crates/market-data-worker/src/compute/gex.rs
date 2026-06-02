@@ -3,6 +3,41 @@ use chrono::{Datelike, Utc};
 use serde::Serialize;
 use serde_json::json;
 use sqlx::{PgPool, Row};
+use std::collections::BTreeSet;
+
+const LOAD_LATEST_OPTION_SNAPSHOTS_SQL: &str = r#"
+with latest_contract_snapshots as (
+  select distinct on (snap.option_contract_id)
+      snap.*
+  from option_chain_snapshots snap
+  join instruments underlying on underlying.id = snap.underlying_instrument_id
+  where underlying.symbol = $1
+    and snap.source in ('massive', 'massive')
+  order by snap.option_contract_id, snap.as_of desc, snap.updated_at desc, snap.id desc
+)
+select
+    snap.option_contract_id,
+    snap.bid::float8 as bid,
+    snap.ask::float8 as ask,
+    snap.mark::float8 as mark,
+    snap.implied_volatility::float8 as implied_volatility,
+    snap.delta::float8 as delta,
+    snap.gamma::float8 as gamma,
+    snap.open_interest::float8 as open_interest,
+    snap.volume::float8 as volume,
+    snap.source,
+    snap.as_of,
+    contract.massive_ticker,
+    contract.provider_contract_id,
+    contract.expiration_date::text as expiration_date,
+    contract.strike::float8 as strike,
+    contract."right"::text as right,
+    contract.multiplier,
+    contract.shares_per_contract
+from latest_contract_snapshots snap
+join option_contracts contract on contract.id = snap.option_contract_id
+order by contract.expiration_date asc, contract.strike asc
+"#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum OptionRight {
@@ -46,6 +81,16 @@ pub struct GexSummary {
     pub net_gex: f64,
     pub option_count: usize,
     pub usable_option_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GexExpirationCoverage {
+    requested_count: usize,
+    returned_count: usize,
+    loaded_count: usize,
+    failed_count: usize,
+    complete: bool,
+    capped: bool,
 }
 
 pub fn contract_gex(contract: &GexContract, spot: f64) -> Option<f64> {
@@ -195,44 +240,10 @@ async fn load_latest_spot(pool: &PgPool, symbol: &str) -> Result<SpotQuote> {
 }
 
 async fn load_latest_option_snapshots(pool: &PgPool, symbol: &str) -> Result<Vec<GexContract>> {
-    let rows = sqlx::query(
-        r#"
-        with latest_snapshot as (
-          select max(snap.as_of) as as_of
-          from option_chain_snapshots snap
-          join instruments underlying on underlying.id = snap.underlying_instrument_id
-          where underlying.symbol = $1
-        )
-        select
-            snap.option_contract_id,
-            snap.bid::float8 as bid,
-            snap.ask::float8 as ask,
-            snap.mark::float8 as mark,
-            snap.implied_volatility::float8 as implied_volatility,
-            snap.delta::float8 as delta,
-            snap.gamma::float8 as gamma,
-            snap.open_interest::float8 as open_interest,
-            snap.volume::float8 as volume,
-            snap.source,
-            snap.as_of,
-            contract.polygon_ticker,
-            contract.provider_contract_id,
-            contract.expiration_date::text as expiration_date,
-            contract.strike::float8 as strike,
-            contract."right"::text as right,
-            contract.multiplier,
-            contract.shares_per_contract
-        from option_chain_snapshots snap
-        join option_contracts contract on contract.id = snap.option_contract_id
-        join instruments underlying on underlying.id = snap.underlying_instrument_id
-        join latest_snapshot latest on latest.as_of = snap.as_of
-        where underlying.symbol = $1
-        order by contract.expiration_date asc, contract.strike asc
-        "#,
-    )
-    .bind(symbol)
-    .fetch_all(pool)
-    .await?;
+    let rows = sqlx::query(LOAD_LATEST_OPTION_SNAPSHOTS_SQL)
+        .bind(symbol)
+        .fetch_all(pool)
+        .await?;
 
     rows.into_iter()
         .map(|row| {
@@ -243,7 +254,7 @@ async fn load_latest_option_snapshots(pool: &PgPool, symbol: &str) -> Result<Vec
                 _ => return Err(anyhow!("unsupported option right {right_raw}")),
             };
             Ok(GexContract {
-                ticker: row.try_get("polygon_ticker")?,
+                ticker: row.try_get("massive_ticker")?,
                 underlying: symbol.to_string(),
                 provider_contract_id: row.try_get("provider_contract_id")?,
                 expiration_date: row.try_get("expiration_date")?,
@@ -265,6 +276,36 @@ async fn load_latest_option_snapshots(pool: &PgPool, symbol: &str) -> Result<Vec
         .collect()
 }
 
+fn build_expiration_coverage(
+    contracts: &[GexContract],
+    spot: f64,
+    source_status: &str,
+) -> GexExpirationCoverage {
+    let requested_expirations: BTreeSet<&str> = contracts
+        .iter()
+        .map(|contract| contract.expiration_date.trim())
+        .filter(|expiration_date| !expiration_date.is_empty())
+        .collect();
+    let loaded_expirations: BTreeSet<&str> = contracts
+        .iter()
+        .filter(|contract| contract_gex(contract, spot).is_some())
+        .map(|contract| contract.expiration_date.trim())
+        .filter(|expiration_date| !expiration_date.is_empty())
+        .collect();
+    let requested_count = requested_expirations.len();
+    let loaded_count = loaded_expirations.len();
+    let failed_count = requested_count.saturating_sub(loaded_count);
+
+    GexExpirationCoverage {
+        requested_count,
+        returned_count: requested_count,
+        loaded_count,
+        failed_count,
+        complete: source_status == "ok" && failed_count == 0,
+        capped: false,
+    }
+}
+
 fn build_gex_payload(
     summary: &GexSummary,
     contracts: &[GexContract],
@@ -274,6 +315,7 @@ fn build_gex_payload(
     source_message: Option<&str>,
 ) -> serde_json::Value {
     let provider = resolve_payload_provider(spot_quote, contracts);
+    let expiration_coverage = build_expiration_coverage(contracts, summary.spot, source_status);
     let chain_updated_at = contracts
         .iter()
         .filter_map(|contract| contract.updated_at)
@@ -356,6 +398,14 @@ fn build_gex_payload(
         "source": {
             "provider": provider,
             "status": source_status,
+            "expirationCoverage": {
+                "requestedCount": expiration_coverage.requested_count,
+                "returnedCount": expiration_coverage.returned_count,
+                "loadedCount": expiration_coverage.loaded_count,
+                "failedCount": expiration_coverage.failed_count,
+                "complete": expiration_coverage.complete,
+                "capped": expiration_coverage.capped
+            },
             "optionCount": summary.option_count,
             "usableOptionCount": summary.usable_option_count,
             "withGamma": with_gamma,
@@ -380,7 +430,7 @@ fn resolve_payload_provider(spot_quote: &SpotQuote, contracts: &[GexContract]) -
         .map(|contract| contract.source.as_str())
         .find(|source| !source.trim().is_empty());
     normalize_payload_provider(option_source.unwrap_or(spot_quote.source.as_str())).unwrap_or_else(
-        || normalize_payload_provider(&spot_quote.source).unwrap_or_else(|| "polygon".to_string()),
+        || normalize_payload_provider(&spot_quote.source).unwrap_or_else(|| "massive".to_string()),
     )
 }
 
@@ -392,8 +442,8 @@ fn normalize_payload_provider(source: &str) -> Option<String> {
     if normalized.contains("massive") {
         return Some("massive".to_string());
     }
-    if normalized.contains("polygon") {
-        return Some("polygon".to_string());
+    if normalized.contains("massive") {
+        return Some("massive".to_string());
     }
     if normalized.contains("ibkr") {
         return Some("ibkr".to_string());
@@ -504,17 +554,17 @@ mod tests {
         let spot_quote = SpotQuote {
             spot: 100.0,
             change: Some(1.25),
-            source: "polygon".into(),
+            source: "massive".into(),
             as_of: updated_at,
         };
         let contracts = vec![
             GexContract {
-                source: "polygon".into(),
+                source: "massive".into(),
                 updated_at: Some(updated_at),
                 ..contract(OptionRight::Call, Some(0.02), Some(10.0))
             },
             GexContract {
-                source: "polygon".into(),
+                source: "massive".into(),
                 implied_volatility: None,
                 updated_at: Some(updated_at),
                 ..contract(OptionRight::Put, None, Some(10.0))
@@ -530,10 +580,16 @@ mod tests {
             None,
         );
 
-        assert_eq!(payload["source"]["provider"], "polygon");
+        assert_eq!(payload["source"]["provider"], "massive");
         assert_eq!(payload["source"]["withGamma"], 1);
         assert_eq!(payload["source"]["withOpenInterest"], 2);
         assert_eq!(payload["source"]["withImpliedVolatility"], 1);
+        assert_eq!(payload["source"]["expirationCoverage"]["requestedCount"], 1);
+        assert_eq!(payload["source"]["expirationCoverage"]["returnedCount"], 1);
+        assert_eq!(payload["source"]["expirationCoverage"]["loadedCount"], 1);
+        assert_eq!(payload["source"]["expirationCoverage"]["failedCount"], 0);
+        assert_eq!(payload["source"]["expirationCoverage"]["complete"], false);
+        assert_eq!(payload["source"]["expirationCoverage"]["capped"], false);
         assert_eq!(
             payload["source"]["quoteUpdatedAt"],
             "2026-05-08T15:30:00+00:00"
@@ -570,5 +626,59 @@ mod tests {
         let payload = build_gex_payload(&summary, &contracts, &spot_quote, computed_at, "ok", None);
 
         assert_eq!(payload["source"]["provider"], "ibkr");
+    }
+
+    #[test]
+    fn latest_option_snapshot_query_selects_latest_row_per_contract() {
+        assert!(LOAD_LATEST_OPTION_SNAPSHOTS_SQL.contains("distinct on (snap.option_contract_id)"));
+        assert!(LOAD_LATEST_OPTION_SNAPSHOTS_SQL
+            .contains("order by snap.option_contract_id, snap.as_of desc"));
+        assert!(!LOAD_LATEST_OPTION_SNAPSHOTS_SQL.contains("max(snap.as_of)"));
+        assert!(!LOAD_LATEST_OPTION_SNAPSHOTS_SQL.contains("latest.as_of"));
+        assert!(LOAD_LATEST_OPTION_SNAPSHOTS_SQL.contains("snap.source in ('massive', 'massive')"));
+    }
+
+    #[test]
+    fn gex_payload_marks_expiration_coverage_partial_when_expiration_has_no_usable_contracts() {
+        let updated_at = chrono::DateTime::parse_from_rfc3339("2026-05-08T15:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let computed_at = chrono::DateTime::parse_from_rfc3339("2026-05-08T15:31:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let spot_quote = SpotQuote {
+            spot: 100.0,
+            change: None,
+            source: "massive".into(),
+            as_of: updated_at,
+        };
+        let contracts = vec![
+            GexContract {
+                expiration_date: "2026-05-15".into(),
+                updated_at: Some(updated_at),
+                ..contract(OptionRight::Call, Some(0.02), Some(10.0))
+            },
+            GexContract {
+                expiration_date: "2026-05-22".into(),
+                updated_at: Some(updated_at),
+                ..contract(OptionRight::Put, None, Some(10.0))
+            },
+        ];
+        let summary = summarize_gex("SPY", 100.0, &contracts);
+        let payload = build_gex_payload(
+            &summary,
+            &contracts,
+            &spot_quote,
+            computed_at,
+            "partial",
+            Some("GEX snapshot excludes contracts missing gamma or open interest."),
+        );
+
+        assert_eq!(payload["source"]["expirationCoverage"]["requestedCount"], 2);
+        assert_eq!(payload["source"]["expirationCoverage"]["returnedCount"], 2);
+        assert_eq!(payload["source"]["expirationCoverage"]["loadedCount"], 1);
+        assert_eq!(payload["source"]["expirationCoverage"]["failedCount"], 1);
+        assert_eq!(payload["source"]["expirationCoverage"]["complete"], false);
+        assert_eq!(payload["source"]["expirationCoverage"]["capped"], false);
     }
 }

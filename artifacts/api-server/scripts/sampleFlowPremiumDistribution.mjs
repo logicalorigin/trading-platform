@@ -2,8 +2,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getPolygonRuntimeConfig } from "../src/lib/runtime.ts";
-import { aggregateOptionPremiumDistributionSnapshots } from "../src/providers/polygon/market-data.ts";
+import { getMassiveRuntimeConfig } from "../src/lib/runtime.ts";
+import { aggregateOptionPremiumDistributionSnapshots } from "../src/providers/massive/market-data.ts";
 
 const DEFAULT_SYMBOLS = ["SPY", "QQQ", "NVDA", "AAPL", "TSLA", "IWM"];
 const SNAPSHOT_LIMIT = 250;
@@ -19,7 +19,7 @@ function parseArgs(argv) {
     tradeLimit: 250,
     contractLimit: 8,
     write: false,
-    output: join(repoRoot, "tmp", "polygon-premium-distribution-sample.json"),
+    output: join(repoRoot, "tmp", "massive-premium-distribution-sample.json"),
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -136,7 +136,7 @@ async function fetchJson(url) {
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     const error = new Error(
-      `Polygon request failed with HTTP ${response.status}: ${detail.slice(0, 180)}`,
+      `Massive request failed with HTTP ${response.status}: ${detail.slice(0, 180)}`,
     );
     error.statusCode = response.status;
     throw error;
@@ -436,7 +436,7 @@ async function probeOptionQuoteAccess(config, candidate, since) {
         message:
           error instanceof Error && error.message
             ? error.message
-            : "Option quotes are not available for this Polygon/Massive plan.",
+            : "Option quotes are not available for this Massive plan.",
       };
     }
     return {
@@ -664,10 +664,10 @@ async function main() {
     return;
   }
 
-  const config = getPolygonRuntimeConfig();
+  const config = getMassiveRuntimeConfig();
   if (!config) {
     console.error(
-      "Polygon/Massive market data is not configured. Set POLYGON_API_KEY, POLYGON_KEY, MASSIVE_API_KEY, or MASSIVE_MARKET_DATA_API_KEY.",
+      "Massive market data is not configured. Set MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY.",
     );
     process.exitCode = 1;
     return;
@@ -689,7 +689,7 @@ async function main() {
   if (options.write) {
     await mkdir(dirname(options.output), { recursive: true });
     await writeFile(options.output, text, "utf8");
-    console.log(`Wrote sanitized Polygon premium distribution sample: ${options.output}`);
+    console.log(`Wrote sanitized Massive premium distribution sample: ${options.output}`);
   } else {
     process.stdout.write(text);
   }

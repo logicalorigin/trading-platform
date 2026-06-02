@@ -7,6 +7,35 @@ import {
   getMassiveStockQuoteStreamDiagnostics,
 } from "./massive-stock-quote-stream";
 
+const ENV_KEYS = [
+  "MASSIVE_API_KEY",
+  "MASSIVE_MARKET_DATA_API_KEY",
+  "MASSIVE_STOCKS_RECENCY",
+] as const;
+
+function withMassiveRealtimeEnv(task: () => void): void {
+  const previous = new Map<string, string | undefined>();
+  for (const key of ENV_KEYS) {
+    previous.set(key, process.env[key]);
+  }
+  process.env["MASSIVE_API_KEY"] = "massive-test-key";
+  delete process.env["MASSIVE_MARKET_DATA_API_KEY"];
+  delete process.env["MASSIVE_STOCKS_RECENCY"];
+
+  try {
+    task();
+  } finally {
+    for (const key of ENV_KEYS) {
+      const value = previous.get(key);
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
 test.afterEach(() => {
   __massiveStockQuoteStreamInternalsForTests.reset();
 });
@@ -41,18 +70,20 @@ test("Massive stock quote stream maps quote and trade messages to live snapshots
 });
 
 test("Massive stock quote stream diagnostics expose WebSocket channels", () => {
-  const diagnostics = getMassiveStockQuoteStreamDiagnostics();
+  withMassiveRealtimeEnv(() => {
+    const diagnostics = getMassiveStockQuoteStreamDiagnostics();
 
-  assert.deepEqual(diagnostics.availableChannels, ["Q", "T"]);
-  assert.deepEqual(diagnostics.subscribedChannels, []);
-  assert.equal(diagnostics.providerIdentity, "massive");
-  assert.equal(diagnostics.mode, "real-time");
-  assert.equal(diagnostics.socketHost, "socket.massive.com");
+    assert.deepEqual(diagnostics.availableChannels, ["Q", "T"]);
+    assert.deepEqual(diagnostics.subscribedChannels, []);
+    assert.equal(diagnostics.providerIdentity, "massive");
+    assert.equal(diagnostics.mode, "real-time");
+    assert.equal(diagnostics.socketHost, "socket.massive.com");
+  });
 });
 
-test("Massive stock quote stream closes connecting sockets without unhandled errors", () => {
+test("shared Massive stock quote transport closes connecting sockets without unhandled errors", () => {
   const source = readFileSync(
-    new URL("./massive-stock-quote-stream.ts", import.meta.url),
+    new URL("./massive-stock-websocket.ts", import.meta.url),
     "utf8",
   );
 

@@ -8,6 +8,7 @@ import {
 } from "@workspace/backtest-core";
 import { resolvePyrusSignalsSignalSettings } from "@workspace/pyrus-signals-core";
 import {
+  SIGNAL_OPTIONS_CANDIDATE_EVENT,
   SIGNAL_OPTIONS_ENTRY_EVENT,
   SIGNAL_OPTIONS_EXIT_EVENT,
   SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT,
@@ -255,7 +256,11 @@ test("signal-options scans publish fresh signal state before heavy action work",
       scanBody.indexOf("refreshActivePosition"),
   );
   assert.match(scanBody, /rememberSignalOptionsActionCursor/);
-  assert.match(scanBody, /hasPendingSignalOptionsActionableState/);
+  assert.match(scanBody, /hasUnseenSignalOptionsActionableState/);
+  assert.ok(
+    scanBody.indexOf("const signalFirstActionScan") <
+      scanBody.indexOf("refreshActivePosition"),
+  );
   assert.match(scanBody, /createSignalOptionsSignalReserveBudget/);
   assert.match(scanBody, /withSignalOptionsActionItemTimeout/);
   assert.match(scanBody, /position_mark_timeout/);
@@ -334,6 +339,60 @@ test("signal-options detects pending actionable states after a worker cursor", (
   );
   assert.equal(
     hasPending({ states, universe: new Set(["IONQ"]), startIndex: 0 }),
+    false,
+  );
+});
+
+test("signal-options detects only unseen actionable states for signal-first work", () => {
+  const states = [
+    {
+      profileId: "profile-1",
+      symbol: "LMT",
+      timeframe: "5m",
+      currentSignalDirection: "sell",
+      currentSignalAt: "2026-06-01T19:20:00.000Z",
+      currentSignalPrice: 468.25,
+      barsSinceSignal: 0,
+      fresh: true,
+      status: "ok",
+    },
+    {
+      profileId: "profile-1",
+      symbol: "MSFT",
+      timeframe: "5m",
+      currentSignalDirection: "buy",
+      currentSignalAt: "2026-06-01T19:15:00.000Z",
+      currentSignalPrice: 430.5,
+      barsSinceSignal: 1,
+      fresh: true,
+      status: "ok",
+    },
+  ] as never;
+
+  const hasUnseen =
+    __signalOptionsAutomationInternalsForTests.hasUnseenSignalOptionsActionableState;
+
+  assert.equal(
+    hasUnseen({
+      states,
+      universe: new Set(["LMT", "MSFT"]),
+      seenSignals: new Set([
+        "profile-1:LMT:5m:sell:2026-06-01T19:20:00.000Z",
+      ]),
+      startIndex: 0,
+    }),
+    true,
+  );
+  assert.equal(
+    hasUnseen({
+      states,
+      universe: new Set(["LMT", "MSFT"]),
+      seenSignals: new Set([
+        "profile-1:LMT:5m:sell:2026-06-01T19:20:00.000Z",
+        "profile-1:MSFT:5m:buy:2026-06-01T19:15:00.000Z",
+      ]),
+      startIndex: 0,
+    }),
     false,
   );
 });
@@ -763,6 +822,8 @@ test("signal-options position marks declare live demand before reading quote sta
   assert.match(managePositionBody, /declareIbkrLiveDemand/);
   assert.match(managePositionBody, /readIbkrLiveDemandState/);
   assert.doesNotMatch(managePositionBody, /fetchBridgeOptionQuoteSnapshots/);
+  assert.doesNotMatch(managePositionBody, /chain_full/);
+  assert.doesNotMatch(managePositionBody, /strikeCoverage:\s*"full"/);
 });
 
 test("signal-options entry candidates select contracts before hydrating selected live quotes", () => {
@@ -787,18 +848,104 @@ test("signal-options entry candidates select contracts before hydrating selected
   assert.match(entryBody, /allowDelayedSnapshotHydration:\s*false/);
   assert.match(scanBody, /timeoutMs:\s*SIGNAL_OPTIONS_CANDIDATE_RESOLUTION_TIMEOUT_MS/);
   assert.match(entryBody, /greekSelectorRuntimeMode:[\s\S]*SHADOW_PROVIDER_ACCOUNT_ID/);
-  assert.match(entryBody, /liveQuoteDemand:\s*{/);
+  assert.match(entryBody, /liveQuoteDemand:\s*input\.executionBlocker/);
   assert.match(entryBody, /owner:\s*`signal-options-entry:/);
   assert.match(source, /SIGNAL_OPTIONS_CANDIDATE_RESOLUTION_TIMEOUT_MS = 9_000/);
   assert.match(source, /SIGNAL_OPTIONS_LIVE_QUOTE_DEMAND_TTL_MS = 120_000/);
+  assert.match(source, /SIGNAL_OPTIONS_SELECTED_LIVE_QUOTE_SETTLE_MS = 2_500/);
   assert.match(entryBody, /ttlMs:\s*SIGNAL_OPTIONS_LIVE_QUOTE_DEMAND_TTL_MS/);
   assert.match(resolverBody, /declareIbkrLiveDemand/);
   assert.match(resolverBody, /fetchBridgeOptionQuoteSnapshots/);
   assert.match(resolverBody, /releaseLeasesOnComplete:\s*false/);
+  assert.match(resolverBody, /while \(true\)/);
+  assert.match(resolverBody, /hydrationAttempts/);
+  assert.match(resolverBody, /snapshotDebug/);
+  assert.match(resolverBody, /signalOptionsSelectedLiveQuoteNeedsRetry/);
   assert.match(resolverBody, /const snapshotQuote =[\s\S]*snapshotPayload\.quotes\.find/);
   assert.match(resolverBody, /readIbkrLiveDemandState/);
   assert.match(resolverBody, /const quoteHydration =[\s\S]*input\.quoteHydration \?\? "snapshot"/);
+  assert.match(resolverBody, /strikeCoverage:\s*"standard"/);
+  assert.doesNotMatch(resolverBody, /strikeCoverage:\s*"full"/);
+  assert.doesNotMatch(resolverBody, /source:\s*"full"/);
+  assert.doesNotMatch(resolverBody, /strikesAroundMoney:\s*null/);
   assert.match(scanBody, /signalOptionsCandidateResolutionErrorReason\(error\)/);
+});
+
+test("signal-options liquidity skips preserve live quote demand diagnostics", () => {
+  const liveQuoteDemand = {
+    owner: "signal-options-entry:deployment:signal",
+    providerContractId: "twsopt:contract",
+    requiresGreeks: true,
+    states: [
+      {
+        providerContractId: "twsopt:contract",
+        status: "pending",
+        reason: "quote_pending",
+      },
+    ],
+  };
+
+  assert.deepEqual(
+    __signalOptionsAutomationInternalsForTests.signalOptionsLiveQuoteDemandDetailFromResolution(
+      { liveQuoteDemand, chainDebug: { totalMs: 42 } },
+    ),
+    { liveQuoteDemand },
+  );
+  assert.deepEqual(
+    __signalOptionsAutomationInternalsForTests.signalOptionsLiveQuoteDemandDetailFromResolution(
+      { chainDebug: { totalMs: 42 } },
+    ),
+    {},
+  );
+});
+
+test("signal-options selected live quote retry only waits on hydration misses", () => {
+  const needsRetry =
+    __signalOptionsAutomationInternalsForTests.signalOptionsSelectedLiveQuoteNeedsRetry;
+  const metadataOnly = {
+    ...quote(101, "call"),
+    bid: null,
+    ask: null,
+    mark: null,
+    quoteFreshness: "metadata",
+  };
+  const wideLive = {
+    ...quote(101, "call"),
+    bid: 1,
+    ask: 3,
+    mark: 2,
+    quoteFreshness: "live",
+  };
+  const healthyLive = quote(101, "call");
+
+  assert.equal(
+    needsRetry({
+      quote: metadataOnly,
+      orderPlan: buildSignalOptionsShadowOrderPlan(metadataOnly, profile),
+    }),
+    true,
+  );
+  assert.equal(
+    needsRetry({
+      quote: null,
+      orderPlan: null,
+    }),
+    true,
+  );
+  assert.equal(
+    needsRetry({
+      quote: wideLive,
+      orderPlan: buildSignalOptionsShadowOrderPlan(wideLive, profile),
+    }),
+    false,
+  );
+  assert.equal(
+    needsRetry({
+      quote: healthyLive,
+      orderPlan: buildSignalOptionsShadowOrderPlan(healthyLive, profile),
+    }),
+    false,
+  );
 });
 
 test("signal-options worker refreshes degraded monitor state before scanning", () => {
@@ -899,6 +1046,25 @@ test("signal-options worker refreshes degraded monitor state before scanning", (
     ),
     false,
   );
+});
+
+test("signal-options worker scan uses current stored monitor state before full refresh", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const loadBlock = source.match(
+    /async function loadSignalOptionsMonitorState\([\s\S]*?function candidateFromEvent/,
+  )?.[0] ?? "";
+  const storedIndex = loadBlock.indexOf("const stored = await getSignalMonitorStoredState");
+  const refreshIndex = loadBlock.indexOf("const fullRefresh = resolveSignalOptionsMonitorFullRefresh");
+
+  assert.ok(storedIndex >= 0);
+  assert.ok(refreshIndex >= 0);
+  assert.ok(storedIndex < refreshIndex);
+  assert.match(loadBlock, /shouldRefreshSignalOptionsMonitorState/);
+  assert.match(loadBlock, /reason:\s*"current"/);
+  assert.match(loadBlock, /source:\s*"stored_state"/);
 });
 
 test("signal-options scan timestamp keeps latest observed fresh signal", () => {
@@ -1039,7 +1205,7 @@ test("signal-options hard-pressure batch refresh reads full stored signal state"
     "utf8",
   );
   const workerRefreshBlock = source.match(
-    /const batch = resolveSignalOptionsMonitorBatch\([\s\S]*?return \{\n      \.\.\.stored,/,
+    /const batch = resolveSignalOptionsMonitorBatch\([\s\S]*?return \{\n      \.\.\.refreshedStored,/,
   )?.[0];
 
   assert.ok(workerRefreshBlock);
@@ -2508,6 +2674,24 @@ test("seen signal keys allow retries after transient option-chain skips", () => 
     Array.from(
       seenSignalKeys([
         {
+          eventType: SIGNAL_OPTIONS_CANDIDATE_EVENT,
+          payload: {
+            diagnosticSignalKey: signalKey,
+            candidate: {
+              id: "candidate-spy",
+              symbol: "SPY",
+              selectedContract: { ticker: "SPY260515P500" },
+            },
+          },
+        },
+      ] as never),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys([
+        {
           eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
           payload: {
             signalKey,
@@ -2690,6 +2874,79 @@ test("seen signal keys allow retries after transient option-chain skips", () => 
       ),
     ),
     [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            payload: {
+              signalKey,
+              reason: "greek_selector_no_candidates",
+              candidate: {
+                signal: {
+                  filterState: {
+                    mtfDirections: [-1, 1, 1],
+                  },
+                },
+              },
+            },
+          },
+        ] as never,
+        { forceRetryMarketData: true },
+      ),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            payload: {
+              signalKey,
+              reason: "mtf_not_aligned",
+              candidate: {
+                signal: {
+                  filterState: {
+                    mtfDirections: [1, 1, 1],
+                  },
+                },
+              },
+            },
+          },
+        ] as never,
+        { forceRetryMarketData: true },
+      ),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    Array.from(
+      seenSignalKeys(
+        [
+          {
+            eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+            payload: {
+              signalKey,
+              reason: "mtf_not_aligned",
+              candidate: {
+                signal: {
+                  filterState: {
+                    mtfSource: "signal_matrix",
+                    mtfDirections: [1, 1, 1, -1, -1],
+                  },
+                },
+              },
+            },
+          },
+        ] as never,
+        { forceRetryMarketData: true },
+      ),
+    ),
+    [signalKey],
   );
   assert.deepEqual(
     Array.from(
@@ -2947,6 +3204,20 @@ test("signal-options classifies option market-data backoff without hiding it as 
   assert.equal(expirationBackoff?.reason, "option_expiration_backoff");
   assert.equal(expirationBackoff?.source, "expiration");
   assert.equal(expirationBackoff?.backoffRemainingMs, 555);
+
+  const expirationUpstreamFailure = optionBackoffFromDebug({
+    debug: {
+      reason: "options_upstream_failure",
+    },
+    reason: "option_expiration_backoff",
+    source: "expiration",
+  });
+  assert.equal(expirationUpstreamFailure?.reason, "option_expiration_backoff");
+  assert.equal(expirationUpstreamFailure?.source, "expiration");
+  assert.equal(
+    expirationUpstreamFailure?.debugReason,
+    "options_upstream_failure",
+  );
 
   assert.equal(
     classifySignalOptionsSkipReason("option_chain_backoff"),
@@ -3534,6 +3805,213 @@ test("scan events override matching live signal previews without losing mappings
   assert.equal(merged.signal?.signalKey, preview.signal?.signalKey);
 });
 
+test("legacy upstream expiration failures read back as expiration backoff", () => {
+  const event = {
+    id: "event-upstream-expiration-failure",
+    deploymentId: "deployment-123456789",
+    symbol: "GLW",
+    eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+    occurredAt: new Date("2026-06-01T20:17:33.201Z"),
+    payload: {
+      reason: "no_expiration_in_dte_window",
+      candidate: {
+        id: "SIGOPT-deploy-GLW-buy-1780344300000",
+        deploymentId: "deployment-123456789",
+        symbol: "GLW",
+        direction: "buy",
+        optionRight: "call",
+        timeframe: "5m",
+        signalAt: "2026-06-01T20:05:00.000Z",
+        signalPrice: 173.78,
+      },
+      expirationsDebug: {
+        reason: "options_upstream_failure",
+        returnedCount: 0,
+        degraded: true,
+      },
+    },
+  } as never;
+
+  const candidate =
+    __signalOptionsAutomationInternalsForTests.candidateFromEvent(event);
+  const timeline =
+    __signalOptionsAutomationInternalsForTests.eventTimelineItem(event);
+
+  assert.equal(candidate?.reason, "option_expiration_backoff");
+  assert.equal(timeline.reason, "option_expiration_backoff");
+  assert.equal(
+    timeline.summary,
+    "GLW shadow candidate skipped: option_expiration_backoff",
+  );
+});
+
+test("skipped candidates do not inherit existing position contracts", () => {
+  const event = {
+    id: "event-after-hours-exit-blocked",
+    deploymentId: "deployment-123456789",
+    symbol: "HOOD",
+    eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+    occurredAt: new Date("2026-06-01T20:49:13.212Z"),
+    payload: {
+      reason: "after_hours_option_exit_blocked",
+      candidate: {
+        id: "SIGOPT-deploy-HOOD-sell-1780344300000",
+        deploymentId: "deployment-123456789",
+        symbol: "HOOD",
+        direction: "sell",
+        optionRight: "put",
+        timeframe: "5m",
+        signalAt: "2026-06-01T20:05:00.000Z",
+        signalPrice: 91.64,
+      },
+      position: {
+        id: "deployment-123456789:HOOD",
+        symbol: "HOOD",
+        direction: "buy",
+        signalAt: "2026-06-01T17:40:00.000Z",
+        selectedContract: {
+          ticker: "HOOD20260605C90",
+          strike: 90,
+          right: "call",
+          expirationDate: "2026-06-05",
+        },
+      },
+    },
+  } as never;
+
+  const candidate =
+    __signalOptionsAutomationInternalsForTests.candidateFromEvent(event);
+
+  assert.ok(candidate);
+  assert.equal(candidate.optionRight, "put");
+  assert.equal(candidate.reason, "after_hours_option_exit_blocked");
+  assert.deepEqual(candidate.selectedContract, {});
+});
+
+test("position-only mark events can still carry their position contract", () => {
+  const event = {
+    id: "event-position-mark",
+    deploymentId: "deployment-123456789",
+    symbol: "HOOD",
+    eventType: SIGNAL_OPTIONS_MARK_EVENT,
+    occurredAt: new Date("2026-06-01T19:41:49.896Z"),
+    payload: {
+      position: {
+        candidateId: "SIGOPT-deploy-HOOD-buy-1780335600000",
+        symbol: "HOOD",
+        direction: "buy",
+        signalAt: "2026-06-01T17:40:00.000Z",
+        selectedContract: {
+          ticker: "HOOD20260605C90",
+          strike: 90,
+          right: "call",
+          expirationDate: "2026-06-05",
+        },
+      },
+    },
+  } as never;
+
+  const candidate =
+    __signalOptionsAutomationInternalsForTests.candidateFromEvent(event);
+
+  assert.ok(candidate);
+  assert.deepEqual(candidate.selectedContract, {
+    ticker: "HOOD20260605C90",
+    strike: 90,
+    right: "call",
+    expirationDate: "2026-06-05",
+  });
+});
+
+test("candidate contract-selection events enrich cockpit candidates without terminal status", () => {
+  const signalAt = "2026-04-28T15:30:00.000Z";
+  const deployment = {
+    id: "deployment-123456789",
+    name: "Shadow Options",
+  } as never;
+  const preview =
+    __signalOptionsAutomationInternalsForTests.candidateFromSignalSnapshot({
+      deployment,
+      signal: {
+        profileId: "11111111-1111-1111-1111-111111111111",
+        signalKey: "profile:SPY:15m:buy:2026-04-28T15:30:00.000Z",
+        source: "pyrus-signals",
+        eventId: null,
+        symbol: "SPY",
+        timeframe: "15m",
+        direction: "buy",
+        signalAt,
+        signalPrice: 508.25,
+        latestBarAt: "2026-04-28T15:30:00.000Z",
+        barsSinceSignal: 0,
+        fresh: true,
+        actionEligible: true,
+        status: "ok",
+        filterState: null,
+      } as never,
+    });
+  assert.ok(preview);
+
+  const selected = __signalOptionsAutomationInternalsForTests.candidateFromEvent(
+    {
+      id: "event-contract-selected",
+      deploymentId: "deployment-123456789",
+      symbol: "SPY",
+      eventType: SIGNAL_OPTIONS_CANDIDATE_EVENT,
+      occurredAt: new Date("2026-04-28T15:30:02.000Z"),
+      payload: {
+        diagnosticSignalKey:
+          "profile:SPY:15m:buy:2026-04-28T15:30:00.000Z",
+        candidate: {
+          id: preview.id,
+          deploymentId: "deployment-123456789",
+          symbol: "SPY",
+          direction: "buy",
+          optionRight: "call",
+          timeframe: "15m",
+          signalAt,
+          signalPrice: 508.25,
+          selectedContract: {
+            ticker: "SPY260429C510",
+            strike: 510,
+            right: "call",
+          },
+          orderPlan: { quantity: 1, ok: true },
+        },
+        selectedContract: {
+          ticker: "SPY260429C510",
+          strike: 510,
+          right: "call",
+        },
+        orderPlan: { quantity: 1, ok: true },
+      },
+    } as never,
+  );
+  assert.ok(selected);
+
+  const merged =
+    __signalOptionsAutomationInternalsForTests.mergeSignalOptionsCandidate(
+      preview,
+      selected,
+    );
+  const action =
+    __signalOptionsAutomationInternalsForTests.deriveCandidateActionStatus({
+      candidate: merged,
+      events: [{ eventType: SIGNAL_OPTIONS_CANDIDATE_EVENT }] as never,
+    });
+
+  assert.equal(selected.status, "candidate");
+  assert.equal(merged.status, "candidate");
+  assert.deepEqual(merged.selectedContract, {
+    ticker: "SPY260429C510",
+    strike: 510,
+    right: "call",
+  });
+  assert.deepEqual(merged.orderPlan, { quantity: 1, ok: true });
+  assert.equal(action.actionStatus, "candidate");
+  assert.equal(action.syncStatus, "synced");
+});
+
 test("later shadow entries clear earlier skipped candidate blockers", () => {
   const signalAt = "2026-05-18T18:15:00.000Z";
   const baseEvent = {
@@ -3852,6 +4330,34 @@ test("signal-options entry gate requires MTF alignment and blocks inverse puts",
         },
       },
     });
+  const fiveFrameProfile = resolveSignalOptionsExecutionProfile({
+    signalOptions: {
+      entryGate: {
+        mtfAlignment: {
+          requiredCount: 4,
+        },
+        bearishRegime: {
+          minAdx: 25,
+        },
+      },
+    },
+  });
+  const threeOfFiveAlignedPut =
+    __signalOptionsAutomationInternalsForTests.evaluateSignalOptionsEntryGate({
+      candidate: buildCandidate("sell", {
+        adx: 28,
+        mtfDirections: [-1, -1, -1, 1, 1],
+      }),
+      profile: fiveFrameProfile,
+    });
+  const fourOfFiveAlignedPut =
+    __signalOptionsAutomationInternalsForTests.evaluateSignalOptionsEntryGate({
+      candidate: buildCandidate("sell", {
+        adx: 23,
+        mtfDirections: [-1, -1, -1, -1, 1],
+      }),
+      profile: fiveFrameProfile,
+    });
 
   assert.equal(bullishPut.ok, false);
   assert.equal(bullishPut.reason, "mtf_not_aligned");
@@ -3873,6 +4379,60 @@ test("signal-options entry gate requires MTF alignment and blocks inverse puts",
   assert.deepEqual(blockedInversePut.reasons, ["inverse_put_blocked"]);
   assert.equal(allowedInverseCall.ok, true);
   assert.equal(allEntryControlsOff.ok, true);
+  assert.equal(threeOfFiveAlignedPut.ok, false);
+  assert.equal(threeOfFiveAlignedPut.reason, "mtf_not_aligned");
+  assert.equal(threeOfFiveAlignedPut.requiredMtfCount, 4);
+  assert.equal(threeOfFiveAlignedPut.mtfMatches, 3);
+  assert.equal(fourOfFiveAlignedPut.ok, true);
+  assert.equal(fourOfFiveAlignedPut.requiredMtfCount, 4);
+  assert.equal(fourOfFiveAlignedPut.mtfMatches, 4);
+});
+
+test("signal-options candidates can replace legacy MTF with five-frame matrix trends", () => {
+  const candidate = {
+    symbol: "SPY",
+    signal: {
+      filterState: {
+        adx: 31,
+        mtfDirections: [1, 1, -1],
+      },
+    },
+  } as never;
+  const matrixBySymbol = new Map([
+    [
+      "SPY",
+      new Map([
+        ["1m", { status: "ok", indicatorSnapshot: { trendDirection: "bullish" } }],
+        ["2m", { status: "ok", indicatorSnapshot: { trendDirection: "bearish" } }],
+        ["5m", { status: "ok", currentSignalDirection: "buy" }],
+        ["15m", { status: "stale", indicatorSnapshot: { trendDirection: "bullish" } }],
+        ["1h", { status: "ok", indicatorSnapshot: { trendDirection: "bearish" } }],
+      ]),
+    ],
+  ]);
+
+  const enriched =
+    __signalOptionsAutomationInternalsForTests.enrichSignalOptionsCandidateWithMatrixMtf(
+      candidate,
+      matrixBySymbol,
+    ) as unknown as { signal: { filterState: Record<string, unknown> } };
+
+  assert.deepEqual(enriched.signal.filterState.mtfDirections, [
+    1,
+    -1,
+    1,
+    0,
+    -1,
+  ]);
+  assert.deepEqual(enriched.signal.filterState.mtfTimeframes, [
+    "1m",
+    "2m",
+    "5m",
+    "15m",
+    "1h",
+  ]);
+  assert.equal(enriched.signal.filterState.mtfSource, "signal_matrix");
+  assert.deepEqual(enriched.signal.filterState.legacyMtfDirections, [1, 1, -1]);
 });
 
 test("signal-options tuned exit profile uses the aggressive trail ladder", () => {
@@ -4247,11 +4807,40 @@ test("signal-options active position refresh blocks live mark hydration under pr
   assert.match(refreshBody, /positionMarksAllowed/);
   assert.match(refreshBody, /resource_pressure_position_marks_blocked/);
   assert.match(refreshBody, /if \(!livePositionMarksAllowed\)/);
-  assert.match(
-    refreshBody,
-    /if \(livePositionMarksAllowed && !markState\.resolution\?\.ok\)/,
+  assert.ok(
+    refreshBody.indexOf("const livePositionMarksAllowed") <
+      refreshBody.indexOf("if (!livePositionMarksAllowed)"),
   );
+  assert.ok(
+    refreshBody.indexOf("if (!livePositionMarksAllowed)") <
+      refreshBody.indexOf("declareIbkrLiveDemand"),
+  );
+  assert.match(refreshBody, /} else if \(providerContractId\) \{/);
+  assert.match(refreshBody, /strikesAroundMoney:\s*1/);
+  assert.match(refreshBody, /strikeCoverage:\s*"standard"/);
+  assert.doesNotMatch(refreshBody, /chain_full/);
+  assert.doesNotMatch(refreshBody, /strikeCoverage:\s*"full"/);
   assert.match(refreshBody, /isSignalOptionsShadowMarkFallbackExitEligible/);
+});
+
+test("signal-options active position refresh requests Greeks for position diagnostics without wire enforcement", () => {
+  const source = readFileSync(
+    new URL("./signal-options-automation.ts", import.meta.url),
+    "utf8",
+  );
+  const refreshBody = source.match(
+    /async function refreshActivePosition\([\s\S]*?\nasync function emitSkippedCandidate/,
+  )?.[0];
+
+  assert.ok(refreshBody);
+  assert.match(refreshBody, /const requiresGreekPositionMark\s*=/);
+  assert.match(refreshBody, /wireGreekTrail\.enabled\s*===\s*true/);
+  assert.match(refreshBody, /greekPositionManagement\.enabled\s*===\s*true/);
+  assert.match(refreshBody, /requiresGreeks:\s*requiresGreekPositionMark/);
+  assert.ok(
+    refreshBody.indexOf("const requiresGreekPositionMark") <
+      refreshBody.indexOf("declareIbkrLiveDemand"),
+  );
 });
 
 test("signal-options progressive trail ladder raises locked profit by peak gain", () => {
@@ -4794,6 +5383,50 @@ test("signal-options entry quality returns a normalized 0-100 score breakdown", 
   ]);
 });
 
+test("signal-options entry quality scores all five matrix MTF directions", () => {
+  const quality =
+    __signalOptionsAutomationInternalsForTests.classifySignalOptionsEntryQuality(
+      {
+        candidate: {
+          id: "cand-1",
+          symbol: "SPY",
+          direction: "buy",
+          optionRight: "call",
+          timeframe: "5m",
+          signalAt: "2026-05-21T14:30:00.000Z",
+          signalPrice: 500,
+          status: "candidate",
+          quote: { marketDataMode: "live" },
+          signal: {
+            fresh: true,
+            barsSinceSignal: 1,
+            freshWindowBars: 4,
+            filterState: {
+              mtfDirections: [1, 1, 1, -1, -1],
+              mtfTimeframes: ["1m", "2m", "5m", "15m", "1h"],
+              adx: 31,
+            },
+          },
+        },
+        orderPlan: {
+          premiumAtRisk: 250,
+          liquidity: { spreadPctOfMid: 12 },
+        },
+      },
+    );
+
+  assert.equal(quality.score, 85);
+  assert.equal((quality.components ?? {}).mtfAlignment, 15);
+  assert.deepEqual(quality.reasons.slice(0, 4), [
+    "mtf_partial_alignment",
+    "adx_confirmed",
+    "fresh_signal",
+    "strong_liquidity",
+  ]);
+  assert.equal(quality.mtfMatches, 3);
+  assert.deepEqual(quality.mtfDirections, [1, 1, 1, -1, -1]);
+});
+
 test("buildSignalOptionsShadowOrderPlan enforces liquidity and premium budget", () => {
   const liquid = quote(101, "call");
   const orderPlan = buildSignalOptionsShadowOrderPlan(liquid, profile);
@@ -5112,6 +5745,104 @@ test("cockpit snapshot helpers classify pipeline stages and attention items", ()
     ),
   );
   assert.ok(attention.some((item) => item.id === "shadow-candidate-2"));
+});
+
+test("cockpit treats market-closed readiness as waiting instead of critical", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const deployment = {
+    id: "deployment-market-closed",
+    name: "Signal Options Paper",
+    mode: "paper",
+    enabled: true,
+    providerAccountId: "DU123",
+    symbolUniverse: ["SPY", "QQQ"],
+    lastEvaluatedAt: now,
+    lastSignalAt: now,
+    lastError: null,
+    updatedAt: now,
+  } as never;
+  const readiness = {
+    ready: false,
+    reason: "market_session_quiet",
+    message: "The market session is closed for algorithm execution.",
+  } as never;
+
+  const stages =
+    __signalOptionsAutomationInternalsForTests.buildCockpitPipeline({
+      deployment,
+      readiness,
+      candidates: [],
+      activePositions: [],
+      risk: {},
+      events: [],
+      now,
+    });
+  const attention =
+    __signalOptionsAutomationInternalsForTests.buildCockpitAttention({
+      deployment,
+      readiness,
+      candidates: [],
+      activePositions: [],
+      risk: {},
+      events: [],
+    });
+  const readinessItem = attention.find((item) => item.id === "gateway-readiness");
+
+  assert.equal(stages.find((stage) => stage.id === "scan_universe")?.status, "attention");
+  assert.equal(readinessItem?.severity, "warning");
+  assert.equal(readinessItem?.summary, "Market session is closed.");
+  assert.equal(
+    readinessItem?.action,
+    "Signal-options scans will resume when the market session opens.",
+  );
+  assert.equal(attention.some((item) => item.severity === "critical"), false);
+});
+
+test("cockpit keeps broken gateway readiness critical", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const deployment = {
+    id: "deployment-gateway-down",
+    name: "Signal Options Paper",
+    mode: "paper",
+    enabled: true,
+    providerAccountId: "DU123",
+    symbolUniverse: ["SPY", "QQQ"],
+    lastEvaluatedAt: now,
+    lastSignalAt: now,
+    lastError: null,
+    updatedAt: now,
+  } as never;
+  const readiness = {
+    ready: false,
+    reason: "bridge_not_connected",
+    message: "IBKR bridge is not connected.",
+  } as never;
+
+  const stages =
+    __signalOptionsAutomationInternalsForTests.buildCockpitPipeline({
+      deployment,
+      readiness,
+      candidates: [],
+      activePositions: [],
+      risk: {},
+      events: [],
+      now,
+    });
+  const attention =
+    __signalOptionsAutomationInternalsForTests.buildCockpitAttention({
+      deployment,
+      readiness,
+      candidates: [],
+      activePositions: [],
+      risk: {},
+      events: [],
+    });
+  const readinessItem = attention.find((item) => item.id === "gateway-readiness");
+
+  assert.equal(stages.find((stage) => stage.id === "scan_universe")?.status, "blocked");
+  assert.equal(readinessItem?.severity, "critical");
+  assert.equal(readinessItem?.summary, "Market data readiness is blocking scans.");
+  assert.match(readinessItem?.action || "", /repair the IBKR bridge/);
 });
 
 test("cockpit scan stage exposes active scan age", () => {
@@ -5456,6 +6187,200 @@ test("cockpit contract stage reports deferred action work before contract select
       contractStage?.detail,
       "action work deferred before contract selection",
     );
+  } finally {
+    resetSignalOptionsWorkerSnapshotForTests();
+  }
+});
+
+test("cockpit contract stage reports pre-contract blockers instead of deferred work", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const deployment = {
+    id: "deployment-contract-preblocked",
+    name: "Signal Options Paper",
+    mode: "paper",
+    enabled: true,
+    providerAccountId: "DU123",
+    symbolUniverse: ["SPY", "RTX"],
+    lastEvaluatedAt: new Date("2026-04-28T17:55:00.000Z"),
+    lastSignalAt: null,
+    lastError: null,
+    updatedAt: now,
+  } as never;
+  const readiness = {
+    ready: false,
+    reason: "market_session_quiet",
+    message: "market closed",
+  } as never;
+  const candidates = [
+    {
+      id: "candidate-spy",
+      symbol: "SPY",
+      signalAt: "2026-04-28T17:50:00.000Z",
+      action: { type: "buy_call" },
+      selectedContract: null,
+      status: "skipped",
+      actionStatus: "blocked",
+      reason: "mtf_not_aligned",
+    },
+    {
+      id: "candidate-rtx",
+      symbol: "RTX",
+      signalAt: "2026-04-28T17:50:00.000Z",
+      action: { type: "buy_call" },
+      selectedContract: null,
+      status: "skipped",
+      actionStatus: "blocked",
+      reason: "market_session_quiet",
+    },
+  ] as never;
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: false,
+    deploymentCount: 1,
+    activeDeploymentCount: 0,
+    maintenance: signalOptionsEmptyWorkerMaintenanceSnapshot(),
+    deployments: [
+      {
+        deploymentId: "deployment-contract-preblocked",
+        lastCheckedAtMs: now.getTime(),
+        failedUntilMs: 0,
+        lastSuccessAt: new Date("2026-04-28T17:55:00.000Z").toISOString(),
+        lastError: null,
+        currentScanStartedAt: null,
+        currentScanAgeMs: null,
+        lastScanDurationMs: 10_000,
+        scanCount: 1,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 2,
+        lastFreshSignalCount: 2,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: "2026-04-28T17:50:00.000Z",
+        lastOldestSignalBarAt: "2026-04-28T17:50:00.000Z",
+        lastHeavyWorkDeferred: true,
+        lastActiveScanPhase: "action_scan",
+        lastResourcePressureLevel: "high",
+        lastCandidateCount: 2,
+        lastBlockedCandidateCount: 2,
+      },
+    ],
+  }));
+  try {
+    const stages =
+      __signalOptionsAutomationInternalsForTests.buildCockpitPipeline({
+        deployment,
+        readiness,
+        candidates,
+        activePositions: [],
+        risk: {},
+        events: [],
+        now,
+      });
+    const scanStage = stages.find((stage) => stage.id === "scan_universe");
+    const contractStage = stages.find(
+      (stage) => stage.id === "contract_selected",
+    );
+
+    assert.equal(
+      scanStage?.detail,
+      "fresh signals updated; 2 candidates blocked before contract selection",
+    );
+    assert.equal(contractStage?.status, "attention");
+    assert.equal(
+      contractStage?.detail,
+      "2 candidates blocked before contract selection",
+    );
+  } finally {
+    resetSignalOptionsWorkerSnapshotForTests();
+  }
+});
+
+test("cockpit scan stage does not claim pre-contract deferral after contracts resolve", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const deployment = {
+    id: "deployment-contract-partial-deferred",
+    name: "Signal Options Paper",
+    mode: "paper",
+    enabled: true,
+    providerAccountId: "DU123",
+    symbolUniverse: ["SPY", "QQQ"],
+    lastEvaluatedAt: new Date("2026-04-28T17:55:00.000Z"),
+    lastSignalAt: null,
+    lastError: null,
+    updatedAt: now,
+  } as never;
+  const readiness = {
+    ready: true,
+    reason: null,
+    message: "ready",
+  } as never;
+  const candidates = [
+    {
+      id: "candidate-qqq",
+      symbol: "QQQ",
+      signalAt: "2026-04-28T17:59:00.000Z",
+      action: { type: "buy_put" },
+      selectedContract: { providerContractId: "contract-qqq" },
+    },
+  ] as never;
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: false,
+    deploymentCount: 1,
+    activeDeploymentCount: 0,
+    maintenance: signalOptionsEmptyWorkerMaintenanceSnapshot(),
+    deployments: [
+      {
+        deploymentId: "deployment-contract-partial-deferred",
+        lastCheckedAtMs: now.getTime(),
+        failedUntilMs: 0,
+        lastSuccessAt: new Date("2026-04-28T17:55:00.000Z").toISOString(),
+        lastError: null,
+        currentScanStartedAt: null,
+        currentScanAgeMs: null,
+        lastScanDurationMs: 10_000,
+        scanCount: 1,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 1,
+        lastFreshSignalCount: 1,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: "2026-04-28T17:59:00.000Z",
+        lastOldestSignalBarAt: "2026-04-28T17:59:00.000Z",
+        lastHeavyWorkDeferred: true,
+        lastActiveScanPhase: "action_scan",
+        lastResourcePressureLevel: "watch",
+        lastCandidateCount: 1,
+        lastBlockedCandidateCount: 0,
+      },
+    ],
+  }));
+  try {
+    const stages =
+      __signalOptionsAutomationInternalsForTests.buildCockpitPipeline({
+        deployment,
+        readiness,
+        candidates,
+        activePositions: [],
+        risk: {},
+        events: [],
+        now,
+      });
+    const scanStage = stages.find((stage) => stage.id === "scan_universe");
+    const contractStage = stages.find(
+      (stage) => stage.id === "contract_selected",
+    );
+
+    assert.equal(
+      scanStage?.detail,
+      "fresh signals updated; 1 contract resolved; remaining action work deferred",
+    );
+    assert.equal(contractStage?.status, "healthy");
+    assert.equal(contractStage?.detail, "1 contracts resolved");
   } finally {
     resetSignalOptionsWorkerSnapshotForTests();
   }

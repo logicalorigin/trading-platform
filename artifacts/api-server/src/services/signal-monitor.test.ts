@@ -18,7 +18,9 @@ const {
 
 const baseDate = new Date("2026-04-24T14:30:00.000Z");
 
-function profile(patch: Partial<SignalMonitorProfileRow> = {}): SignalMonitorProfileRow {
+function profile(
+  patch: Partial<SignalMonitorProfileRow> = {},
+): SignalMonitorProfileRow {
   return {
     id: "profile-1",
     environment: "paper",
@@ -50,6 +52,23 @@ function bar(minute: string, open: number, close: number) {
   };
 }
 
+function minuteBars(count: number) {
+  const start = Date.parse("2026-04-24T13:00:00.000Z");
+  return Array.from({ length: count }, (_, index) => {
+    const open = 100 + index * 0.15;
+    const close = open + 0.08;
+    return {
+      timestamp: new Date(start + index * 60_000),
+      open,
+      high: close + 0.3,
+      low: open - 0.3,
+      close,
+      volume: 1_000 + index * 5,
+      partial: false,
+    };
+  });
+}
+
 test("stored signal monitor snapshots mark non-current states stale", () => {
   const state = {
     id: "state-1",
@@ -68,15 +87,19 @@ test("stored signal monitor snapshots mark non-current states stale", () => {
     lastError: null,
   } as never;
 
-  const snapshot =
-    __signalMonitorInternalsForTests.stateToResponseForSnapshot(state, {
+  const snapshot = __signalMonitorInternalsForTests.stateToResponseForSnapshot(
+    state,
+    {
       timeframe: "5m",
       evaluatedAt: new Date("2026-04-24T16:00:00.000Z"),
       markNonCurrentStale: true,
-    });
+    },
+  );
 
-  assert.equal(snapshot.currentSignalDirection, "buy");
-  assert.equal(snapshot.currentSignalPrice, 500);
+  assert.equal(snapshot.currentSignalDirection, null);
+  assert.equal(snapshot.currentSignalAt, null);
+  assert.equal(snapshot.currentSignalPrice, null);
+  assert.equal(snapshot.barsSinceSignal, null);
   assert.equal(snapshot.fresh, false);
   assert.equal(snapshot.status, "stale");
   assert.match(snapshot.lastError ?? "", /persisted state/);
@@ -127,11 +150,7 @@ test("2m signal matrix bars roll up completed 1m bars", () => {
 
 test("2m signal matrix bars skip incomplete source buckets", () => {
   const aggregated = aggregateCompletedMinuteBars(
-    [
-      bar("30", 100, 101),
-      bar("32", 103, 102),
-      bar("33", 102, 104),
-    ] as never,
+    [bar("30", 100, 101), bar("32", 103, 102), bar("33", 102, 104)] as never,
     "2m",
     new Date("2026-04-24T14:35:02.000Z"),
   );
@@ -173,6 +192,71 @@ test("15m signal matrix bars roll up completed 5m bars", () => {
         low: 99,
         close: 102,
         volume: 60,
+      },
+    ],
+  );
+});
+
+test("signal monitor live-edge bars roll up stock aggregate stream minutes", () => {
+  const start = Date.parse("2026-04-24T14:30:00.000Z");
+  const aggregates = Array.from({ length: 5 }, (_, index) => {
+    const open = 100 + index;
+    const close = open + 0.5;
+    const startMs = start + index * 60_000;
+    return {
+      eventType: "AM",
+      symbol: "SPY",
+      open,
+      high: close + 1,
+      low: open - 1,
+      close,
+      volume: 100 + index,
+      accumulatedVolume: null,
+      vwap: null,
+      sessionVwap: null,
+      officialOpen: null,
+      averageTradeSize: null,
+      startMs,
+      endMs: startMs + 59_999,
+      delayed: false,
+      source: "massive-websocket",
+    };
+  });
+
+  const bars =
+    __signalMonitorInternalsForTests.aggregateStockMinuteAggregatesForSignalMonitorBars(
+      {
+        aggregates: aggregates as never,
+        timeframe: "5m",
+        evaluatedAt: new Date("2026-04-24T14:35:02.000Z"),
+        limit: 10,
+      },
+    );
+
+  assert.equal(bars.length, 1);
+  assert.deepEqual(
+    bars.map((item) => ({
+      timestamp: item.timestamp,
+      open: item.open,
+      high: item.high,
+      low: item.low,
+      close: item.close,
+      volume: item.volume,
+      source: item.source,
+      delayed: item.delayed,
+      freshness: item.freshness,
+    })),
+    [
+      {
+        timestamp: new Date("2026-04-24T14:30:00.000Z"),
+        open: 100,
+        high: 105.5,
+        low: 99,
+        close: 104.5,
+        volume: 510,
+        source: "massive-websocket",
+        delayed: false,
+        freshness: "live",
       },
     ],
   );
@@ -238,8 +322,20 @@ test("signal monitor completed-bars cache key is stable for the same completed b
   assert.notEqual(keyA, keyIbkrOnly);
 });
 
+test("signal monitor matrix bars do not force a zero broker recent window", () => {
+  const resolveWindow =
+    __signalMonitorInternalsForTests.resolveSignalMonitorBrokerRecentWindowMinutes;
+
+  assert.equal(resolveWindow({ mode: "primary" }), null);
+  assert.equal(resolveWindow({ mode: "full-retry" }), 240);
+  assert.equal(resolveWindow({ mode: "live-edge" }), 240);
+});
+
 test("signal monitor matrix bars use the priority-aware bars lane", () => {
-  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
   const loadBlock = source.match(
     /export async function loadSignalMonitorCompletedBars[\s\S]*?export async function evaluateSignalMonitorSymbolFromCompletedBars/,
   )?.[0];
@@ -251,22 +347,48 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
   )?.[0];
 
   assert.match(source, /getBarsWithDebug/);
+  assert.match(
+    source,
+    /const SIGNAL_MONITOR_MATRIX_TIMEFRAMES:[\s\S]*\["1m",\s*"2m",\s*"5m",\s*"15m",\s*"1h"\]/,
+  );
   assert.match(source, /const SIGNAL_MONITOR_MATRIX_BARS_LIMIT = 240;/);
-  assert.match(source, /const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY = "native_timeframes";/);
+  assert.match(
+    source,
+    /const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY = "native_timeframes";/,
+  );
+  assert.match(
+    source,
+    /const SIGNAL_MONITOR_MATRIX_BAR_LOAD_TIMEOUT_MS = 2_500;/,
+  );
+  assert.match(
+    source,
+    /const SIGNAL_MONITOR_MATRIX_STREAM_KEEPALIVE_MS = 5 \* 60_000;/,
+  );
   assert.match(source, /const SIGNAL_MONITOR_BARS_PRIORITY = 8;/);
+  assert.match(source, /const SIGNAL_MONITOR_MATRIX_BARS_PRIORITY = 5;/);
   assert.match(source, /const SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY = 9;/);
   assert.match(source, /const SIGNAL_MONITOR_BARS_FAMILY = "signal-matrix";/);
   assert.match(
     loadBlock ?? "",
-    /mode === "live-edge"\s*\?\s*SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY\s*:\s*SIGNAL_MONITOR_BARS_PRIORITY/,
+    /mode === "live-edge"[\s\S]*input\.liveEdgePriority\s*\?\?\s*SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY[\s\S]*input\.priority\s*\?\?\s*SIGNAL_MONITOR_BARS_PRIORITY/,
   );
-  assert.match(loadBlock ?? "", /priority,\s*\n\s*family:\s*SIGNAL_MONITOR_BARS_FAMILY/);
+  assert.match(
+    loadBlock ?? "",
+    /priority,\s*\n\s*family:\s*SIGNAL_MONITOR_BARS_FAMILY/,
+  );
   assert.match(loadBlock ?? "", /family:\s*SIGNAL_MONITOR_BARS_FAMILY/);
+  assert.match(
+    loadBlock ?? "",
+    /resolveSignalMonitorBrokerRecentWindowMinutes/,
+  );
   assert.match(loadBlock ?? "", /readSignalMonitorCompletedBarsCache/);
   assert.match(loadBlock ?? "", /signalMonitorCompletedBarsInFlight/);
   assert.match(loadBlock ?? "", /shouldRetrySignalMonitorCompletedBars/);
   assert.match(loadBlock ?? "", /shouldAllowSignalMonitorBrokerLiveEdgeRetry/);
-  assert.match(loadBlock ?? "", /allowBrokerLiveEdgeRetry[\s\S]*fetchCompletedBars\("live-edge"\)/);
+  assert.match(
+    loadBlock ?? "",
+    /allowBrokerLiveEdgeRetry[\s\S]*fetchCompletedBars\("live-edge"\)/,
+  );
   assert.match(loadBlock ?? "", /const providerTimeframe = input\.timeframe;/);
   assert.match(loadBlock ?? "", /timeframe:\s*providerTimeframe/);
   assert.doesNotMatch(loadBlock ?? "", /buildFallbackPlan/);
@@ -274,18 +396,75 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
   assert.doesNotMatch(loadBlock ?? "", /providerTimeframe:\s*"5m"/);
   assert.doesNotMatch(loadBlock ?? "", /aggregateCompletedMinuteBars/);
   assert.doesNotMatch(loadBlock ?? "", /aggregateCompletedFiveMinuteBars/);
-  assert.doesNotMatch(fullEvaluationBlock ?? "", /SIGNAL_MONITOR_MATRIX_BARS_LIMIT/);
+  assert.doesNotMatch(
+    fullEvaluationBlock ?? "",
+    /SIGNAL_MONITOR_MATRIX_BARS_LIMIT/,
+  );
   assert.doesNotMatch(fullEvaluationBlock ?? "", /retryStale:\s*false/);
-  assert.match(matrixSymbolBlock ?? "", /limit:\s*SIGNAL_MONITOR_MATRIX_BARS_LIMIT/);
+  assert.match(
+    matrixSymbolBlock ?? "",
+    /limit:\s*SIGNAL_MONITOR_MATRIX_BARS_LIMIT/,
+  );
+  assert.match(
+    matrixSymbolBlock ?? "",
+    /withSignalMonitorMatrixBarLoadTimeout/,
+  );
+  assert.match(matrixSymbolBlock ?? "", /isSignalMonitorMatrixBarLoadTimeout/);
+  assert.match(
+    matrixSymbolBlock ?? "",
+    /evaluateSignalMonitorMatrixStateFromStreamBars/,
+  );
   assert.match(matrixSymbolBlock ?? "", /timeframe,/);
-  assert.doesNotMatch(matrixSymbolBlock ?? "", /SIGNAL_MONITOR_MATRIX_5M_SOURCE_LIMIT/);
-  assert.doesNotMatch(matrixSymbolBlock ?? "", /aggregateCompletedFiveMinuteBars/);
-  assert.doesNotMatch(matrixSymbolBlock ?? "", /retryStale:\s*false/);
-  assert.match(matrixSymbolBlock ?? "", /sourceRequestCount:\s*timeframes\.length/);
+  assert.match(matrixSymbolBlock ?? "", /retryStale:\s*false/);
+  assert.match(
+    matrixSymbolBlock ?? "",
+    /priority:\s*SIGNAL_MONITOR_MATRIX_BARS_PRIORITY/,
+  );
+  assert.doesNotMatch(
+    matrixSymbolBlock ?? "",
+    /SIGNAL_MONITOR_MATRIX_5M_SOURCE_LIMIT/,
+  );
+  assert.doesNotMatch(
+    matrixSymbolBlock ?? "",
+    /aggregateCompletedFiveMinuteBars/,
+  );
+  assert.match(
+    matrixSymbolBlock ?? "",
+    /sourceRequestCount:\s*timeframes\.length/,
+  );
+  assert.match(
+    source,
+    /primeSignalMonitorMatrixStockAggregateStream\(symbols\)/,
+  );
+  assert.match(source, /subscribeMutableStockMinuteAggregates/);
+  assert.match(source, /shouldCacheSignalMonitorMatrixEvaluationValue/);
+});
+
+test("signal monitor matrix timeout can fall back to stream-backed bars", () => {
+  const timeout = Object.assign(new Error("timed out"), {
+    code: "signal_monitor_matrix_bar_load_timeout",
+  });
+  const other = Object.assign(new Error("other"), {
+    code: "signal_monitor_other_error",
+  });
+
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorMatrixBarLoadTimeout(
+      timeout,
+    ),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorMatrixBarLoadTimeout(other),
+    false,
+  );
 });
 
 test("signal monitor evaluates the newest completed bar without an extra bar wait", () => {
-  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
   const symbolEvaluationBlock = source.match(
     /export async function evaluateSignalMonitorSymbolFromCompletedBars[\s\S]*?async function evaluateSignalMonitorSymbol/,
   )?.[0];
@@ -293,12 +472,18 @@ test("signal monitor evaluates the newest completed bar without an extra bar wai
     /export function evaluateSignalMonitorMatrixStateFromCompletedBars[\s\S]*?type SignalMonitorMatrixStateResult/,
   )?.[0];
 
-  assert.match(symbolEvaluationBlock ?? "", /includeProvisionalSignals:\s*true/);
+  assert.match(
+    symbolEvaluationBlock ?? "",
+    /includeProvisionalSignals:\s*true/,
+  );
   assert.doesNotMatch(
     symbolEvaluationBlock ?? "",
     /includeProvisionalSignals:\s*false/,
   );
-  assert.match(matrixEvaluationBlock ?? "", /includeProvisionalSignals:\s*true/);
+  assert.match(
+    matrixEvaluationBlock ?? "",
+    /includeProvisionalSignals:\s*true/,
+  );
   assert.doesNotMatch(
     matrixEvaluationBlock ?? "",
     /includeProvisionalSignals:\s*false/,
@@ -306,7 +491,10 @@ test("signal monitor evaluates the newest completed bar without an extra bar wai
 });
 
 test("signal monitor event responses normalize retired algo branding", () => {
-  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
   const eventResponseBlock = source.match(
     /function eventToResponse[\s\S]*?\n}\n\ntype SignalMonitorEventResponse/,
   )?.[0];
@@ -397,52 +585,61 @@ test("signal monitor completed-bars cache bypasses retryable delayed rows", () =
   };
 
   assert.equal(
-    __signalMonitorInternalsForTests.shouldBypassSignalMonitorCompletedBarsCache({
-      cached: {
-        bars: [delayedLatest] as never,
-        latestBarAt: delayedLatest.timestamp,
+    __signalMonitorInternalsForTests.shouldBypassSignalMonitorCompletedBarsCache(
+      {
+        cached: {
+          bars: [delayedLatest] as never,
+          latestBarAt: delayedLatest.timestamp,
+        },
+        timeframe: "5m",
+        evaluatedAt,
       },
-      timeframe: "5m",
-      evaluatedAt,
-    }),
+    ),
     true,
   );
   assert.equal(
-    __signalMonitorInternalsForTests.shouldBypassSignalMonitorCompletedBarsCache({
-      cached: {
-        bars: [delayedLatest] as never,
-        latestBarAt: delayedLatest.timestamp,
+    __signalMonitorInternalsForTests.shouldBypassSignalMonitorCompletedBarsCache(
+      {
+        cached: {
+          bars: [delayedLatest] as never,
+          latestBarAt: delayedLatest.timestamp,
+        },
+        timeframe: "5m",
+        evaluatedAt,
+        retryStale: false,
       },
-      timeframe: "5m",
-      evaluatedAt,
-      retryStale: false,
-    }),
+    ),
     false,
   );
   assert.equal(
-    __signalMonitorInternalsForTests.shouldBypassSignalMonitorCompletedBarsCache({
-      cached: {
-        bars: [liveLatest] as never,
-        latestBarAt: liveLatest.timestamp,
+    __signalMonitorInternalsForTests.shouldBypassSignalMonitorCompletedBarsCache(
+      {
+        cached: {
+          bars: [liveLatest] as never,
+          latestBarAt: liveLatest.timestamp,
+        },
+        timeframe: "5m",
+        evaluatedAt,
       },
-      timeframe: "5m",
-      evaluatedAt,
-    }),
+    ),
     false,
   );
 });
 
-test("signal monitor IBKR source policy rejects Polygon and Massive bars", () => {
+test("signal monitor IBKR source policy rejects live and delayed Massive bars", () => {
   const ibkr = { ...bar("30", 100, 101), source: "ibkr-history" };
-  const overnight = { ...bar("31", 101, 102), source: "ibkr-overnight-history" };
-  const polygon = {
+  const overnight = {
+    ...bar("31", 101, 102),
+    source: "ibkr-overnight-history",
+  };
+  const massive = {
     ...bar("32", 102, 103),
     delayed: false,
     freshness: "live",
     marketDataMode: "live",
-    source: "polygon-history",
+    source: "massive-history",
   };
-  const massive = {
+  const delayedMassive = {
     ...bar("33", 103, 104),
     delayed: true,
     freshness: "delayed",
@@ -459,7 +656,9 @@ test("signal monitor IBKR source policy rejects Polygon and Massive bars", () =>
     true,
   );
   assert.equal(
-    __signalMonitorInternalsForTests.isSignalMonitorIbkrBar(polygon as never),
+    __signalMonitorInternalsForTests.isSignalMonitorIbkrBar(
+      delayedMassive as never,
+    ),
     false,
   );
   assert.equal(
@@ -467,18 +666,22 @@ test("signal monitor IBKR source policy rejects Polygon and Massive bars", () =>
     false,
   );
   assert.equal(
-    __signalMonitorInternalsForTests.isSignalMonitorDelayedBar(polygon as never),
+    __signalMonitorInternalsForTests.isSignalMonitorDelayedBar(
+      massive as never,
+    ),
     false,
   );
   assert.equal(
-    __signalMonitorInternalsForTests.isSignalMonitorDelayedBar(massive as never),
+    __signalMonitorInternalsForTests.isSignalMonitorDelayedBar(
+      delayedMassive as never,
+    ),
     true,
   );
 
   assert.deepEqual(
     __signalMonitorInternalsForTests
       .filterSignalMonitorBarsForSourcePolicy(
-        [polygon, ibkr, massive, overnight] as never,
+        [massive, ibkr, delayedMassive, overnight] as never,
         "ibkr-only",
       )
       .map((item) => item.source),
@@ -518,12 +721,13 @@ test("intraday delayed matrix bars are degraded instead of fresh", () => {
   });
 
   assert.equal(intraday.status, "stale");
+  assert.equal(intraday.currentSignalDirection, null);
   assert.equal(intraday.fresh, false);
   assert.match(intraday.lastError || "", /delayed/);
   assert.equal(daily.status, "ok");
 });
 
-test("signal monitor matrix narrows historical work under API resource pressure", () => {
+test("signal monitor matrix preserves requested coverage while narrowing concurrency under API resource pressure", () => {
   const configured = profile({
     maxSymbols: 250,
     evaluationConcurrency: 10,
@@ -534,24 +738,39 @@ test("signal monitor matrix narrows historical work under API resource pressure"
   });
 
   assert.deepEqual(
-    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "normal"),
-    { pressure: "normal", maxSymbols: 24, concurrency: 4 },
+    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
+      configured,
+      "normal",
+    ),
+    { pressure: "normal", maxSymbols: 250, concurrency: 10 },
   );
   assert.deepEqual(
-    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "watch"),
-    { pressure: "watch", maxSymbols: 18, concurrency: 4 },
+    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
+      configured,
+      "watch",
+    ),
+    { pressure: "watch", maxSymbols: 250, concurrency: 8 },
   );
   assert.deepEqual(
-    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "high"),
-    { pressure: "high", maxSymbols: 12, concurrency: 2 },
+    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
+      configured,
+      "high",
+    ),
+    { pressure: "high", maxSymbols: 250, concurrency: 4 },
   );
   assert.deepEqual(
-    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(configured, "critical"),
-    { pressure: "critical", maxSymbols: 6, concurrency: 1 },
+    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
+      configured,
+      "critical",
+    ),
+    { pressure: "critical", maxSymbols: 250, concurrency: 1 },
   );
   assert.deepEqual(
-    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(lowProfile, "watch"),
-    { pressure: "watch", maxSymbols: 18, concurrency: 4 },
+    __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
+      lowProfile,
+      "watch",
+    ),
+    { pressure: "watch", maxSymbols: 6, concurrency: 1 },
   );
 });
 
@@ -568,11 +787,11 @@ test("signal monitor profile evaluations rotate through pressure-aware historica
     ),
     {
       pressure: "normal",
-      capped: true,
+      capped: false,
       profile: {
         ...configured,
-        maxSymbols: 60,
-        evaluationConcurrency: 2,
+        maxSymbols: 250,
+        evaluationConcurrency: 10,
       },
     },
   );
@@ -583,8 +802,8 @@ test("signal monitor profile evaluations rotate through pressure-aware historica
     ).profile,
     {
       ...configured,
-      maxSymbols: 40,
-      evaluationConcurrency: 1,
+      maxSymbols: 250,
+      evaluationConcurrency: 10,
     },
   );
   assert.deepEqual(
@@ -594,8 +813,8 @@ test("signal monitor profile evaluations rotate through pressure-aware historica
     ).profile,
     {
       ...configured,
-      maxSymbols: 20,
-      evaluationConcurrency: 1,
+      maxSymbols: 250,
+      evaluationConcurrency: 10,
     },
   );
   assert.deepEqual(
@@ -611,6 +830,16 @@ test("signal monitor profile evaluations rotate through pressure-aware historica
   );
 });
 
+test("signal monitor profile universe does not inherit the historical-bars lane cap", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(source, /resolveIbkrLaneSymbols\("historical-bars"/);
+  assert.doesNotMatch(source, /Historical Bars lane is dropping/);
+});
+
 test("explicit signal monitor symbol evaluations can bypass soft pressure caps", () => {
   const configured = profile({
     maxSymbols: 250,
@@ -618,19 +847,23 @@ test("explicit signal monitor symbol evaluations can bypass soft pressure caps",
   });
 
   const capped =
-    __signalMonitorInternalsForTests.resolveSignalMonitorProfileSymbolEvaluationSettings({
-      profile: configured,
-      maxSymbolsOverride: 90,
-      pressureLevel: "critical",
-    });
+    __signalMonitorInternalsForTests.resolveSignalMonitorProfileSymbolEvaluationSettings(
+      {
+        profile: configured,
+        maxSymbolsOverride: 90,
+        pressureLevel: "critical",
+      },
+    );
   const bypass =
-    __signalMonitorInternalsForTests.resolveSignalMonitorProfileSymbolEvaluationSettings({
-      profile: configured,
-      maxSymbolsOverride: 90,
-      pressureCapMode: "bypass-soft",
-      evaluationConcurrencyOverride: 6,
-      pressureLevel: "critical",
-    });
+    __signalMonitorInternalsForTests.resolveSignalMonitorProfileSymbolEvaluationSettings(
+      {
+        profile: configured,
+        maxSymbolsOverride: 90,
+        pressureCapMode: "bypass-soft",
+        evaluationConcurrencyOverride: 6,
+        pressureLevel: "critical",
+      },
+    );
 
   assert.equal(capped.profile.maxSymbols, 8);
   assert.equal(capped.profile.evaluationConcurrency, 1);
@@ -694,36 +927,75 @@ test("signal matrix state returns neutral unavailable rows without persisting", 
   assert.equal(state.currentSignalDirection, null);
   assert.equal(state.status, "unavailable");
   assert.equal(state.active, true);
+  assert.equal(state.indicatorSnapshot, null);
   assert.match(state.id, /profile-1:AAPL:2m/);
+});
+
+test("signal matrix state includes current indicator dashboard snapshot", () => {
+  const state = evaluateSignalMonitorMatrixStateFromCompletedBars({
+    profile: profile({
+      pyrusSignalsSettings: {
+        basisLength: 4,
+        atrLength: 4,
+        atrSmoothing: 2,
+        adxLength: 4,
+        volumeMaLength: 4,
+        mtf1: "1m",
+        mtf2: "5m",
+        mtf3: "1h",
+        requireMtf1: true,
+      },
+    }),
+    symbol: "SPY",
+    timeframe: "1m",
+    evaluatedAt: new Date("2026-04-24T14:35:00.000Z"),
+    completedBars: minuteBars(96) as never,
+  });
+
+  assert.equal(state.indicatorSnapshot?.trendDirection, "bullish");
+  assert.equal(typeof state.indicatorSnapshot?.trendAgeBars, "number");
+  assert.equal(state.indicatorSnapshot?.strength, "strong");
+  assert.deepEqual(
+    state.indicatorSnapshot?.mtf.map((entry) => entry.timeframe),
+    ["1m", "5m", "1h"],
+  );
+  assert.equal(state.indicatorSnapshot?.mtf[0]?.required, true);
+  assert.equal(typeof state.indicatorSnapshot?.mtf[0]?.pass, "boolean");
 });
 
 test("signal monitor all-watchlists scope evaluates the combined universe", () => {
   const result =
-    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({
-      profile: profile({
-        watchlistId: "core",
-        maxSymbols: 10,
-        pyrusSignalsSettings: {
-          __signalMonitorUniverseScope: "all_watchlists",
-        },
-      }),
-      watchlists: [
-        {
-          id: "core",
-          name: "Core",
-          isDefault: true,
-          updatedAt: baseDate,
-          items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
-        },
-        {
-          id: "research",
-          name: "Research",
-          isDefault: false,
-          updatedAt: baseDate,
-          items: [{ symbol: "PLTR" }, { symbol: "spy" }, { symbol: "IONQ" }] as never,
-        },
-      ],
-    });
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists(
+      {
+        profile: profile({
+          watchlistId: "core",
+          maxSymbols: 10,
+          pyrusSignalsSettings: {
+            __signalMonitorUniverseScope: "all_watchlists",
+          },
+        }),
+        watchlists: [
+          {
+            id: "core",
+            name: "Core",
+            isDefault: true,
+            updatedAt: baseDate,
+            items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
+          },
+          {
+            id: "research",
+            name: "Research",
+            isDefault: false,
+            updatedAt: baseDate,
+            items: [
+              { symbol: "PLTR" },
+              { symbol: "spy" },
+              { symbol: "IONQ" },
+            ] as never,
+          },
+        ],
+      },
+    );
 
   assert.deepEqual(result.symbols, ["SPY", "NVDA", "PLTR", "IONQ"]);
   assert.deepEqual(result.watchlistSymbols, ["SPY", "NVDA", "PLTR", "IONQ"]);
@@ -733,37 +1005,41 @@ test("signal monitor all-watchlists scope evaluates the combined universe", () =
 
 test("signal monitor state universe keeps all watchlist symbols outside max cap", () => {
   const result =
-    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({
-      profile: profile({
-        watchlistId: "core",
-        maxSymbols: 2,
-        pyrusSignalsSettings: {
-          __signalMonitorUniverseScope: "all_watchlists",
-        },
-      }),
-      watchlists: [
-        {
-          id: "core",
-          name: "Core",
-          isDefault: true,
-          updatedAt: baseDate,
-          items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
-        },
-        {
-          id: "research",
-          name: "Research",
-          isDefault: false,
-          updatedAt: baseDate,
-          items: [{ symbol: "AAPL" }, { symbol: "MSFT" }] as never,
-        },
-      ],
-    });
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists(
+      {
+        profile: profile({
+          watchlistId: "core",
+          maxSymbols: 2,
+          pyrusSignalsSettings: {
+            __signalMonitorUniverseScope: "all_watchlists",
+          },
+        }),
+        watchlists: [
+          {
+            id: "core",
+            name: "Core",
+            isDefault: true,
+            updatedAt: baseDate,
+            items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
+          },
+          {
+            id: "research",
+            name: "Research",
+            isDefault: false,
+            updatedAt: baseDate,
+            items: [{ symbol: "AAPL" }, { symbol: "MSFT" }] as never,
+          },
+        ],
+      },
+    );
 
   assert.deepEqual(result.symbols, ["SPY", "NVDA"]);
   assert.deepEqual(result.watchlistSymbols, ["SPY", "NVDA", "AAPL", "MSFT"]);
   assert.deepEqual(result.skippedSymbols, ["AAPL", "MSFT"]);
   assert.deepEqual(
-    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseSymbols(result),
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseSymbols(
+      result,
+    ),
     ["SPY", "NVDA", "AAPL", "MSFT"],
   );
   assert.equal(result.truncated, true);
@@ -771,65 +1047,69 @@ test("signal monitor state universe keeps all watchlist symbols outside max cap"
 
 test("signal monitor selected-watchlist scope stays on the configured watchlist", () => {
   const result =
-    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({
-      profile: profile({
-        watchlistId: "core",
-        maxSymbols: 10,
-        pyrusSignalsSettings: {
-          __signalMonitorUniverseScope: "selected_watchlist",
-        },
-      }),
-      watchlists: [
-        {
-          id: "core",
-          name: "Core",
-          isDefault: true,
-          updatedAt: baseDate,
-          items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
-        },
-        {
-          id: "research",
-          name: "Research",
-          isDefault: false,
-          updatedAt: baseDate,
-          items: [{ symbol: "PLTR" }, { symbol: "IONQ" }] as never,
-        },
-      ],
-    });
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists(
+      {
+        profile: profile({
+          watchlistId: "core",
+          maxSymbols: 10,
+          pyrusSignalsSettings: {
+            __signalMonitorUniverseScope: "selected_watchlist",
+          },
+        }),
+        watchlists: [
+          {
+            id: "core",
+            name: "Core",
+            isDefault: true,
+            updatedAt: baseDate,
+            items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
+          },
+          {
+            id: "research",
+            name: "Research",
+            isDefault: false,
+            updatedAt: baseDate,
+            items: [{ symbol: "PLTR" }, { symbol: "IONQ" }] as never,
+          },
+        ],
+      },
+    );
 
   assert.deepEqual(result.symbols, ["SPY", "NVDA"]);
 });
 
 test("signal monitor default scope stays on all watchlists", () => {
   const result =
-    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({
-      profile: profile({
-        watchlistId: "core",
-        maxSymbols: 6,
-      }),
-      watchlists: [
-        {
-          id: "core",
-          name: "Core",
-          isDefault: true,
-          updatedAt: baseDate,
-          items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists(
+      {
+        profile: profile({
+          watchlistId: "core",
+          maxSymbols: 6,
+        }),
+        watchlists: [
+          {
+            id: "core",
+            name: "Core",
+            isDefault: true,
+            updatedAt: baseDate,
+            items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
+          },
+          {
+            id: "research",
+            name: "Research",
+            isDefault: false,
+            updatedAt: baseDate,
+            items: [{ symbol: "PLTR" }, { symbol: "spy" }] as never,
+          },
+        ],
+        expansionUniverse: {
+          symbols: ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
+          fallbackUsed: false,
+          degradedReason: null,
+          rankedAt: baseDate,
         },
-        {
-          id: "research",
-          name: "Research",
-          isDefault: false,
-          updatedAt: baseDate,
-          items: [{ symbol: "PLTR" }, { symbol: "spy" }] as never,
-        },
-      ],
-      expansionUniverse: {
-        symbols: ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
-        fallbackUsed: false,
-        degradedReason: null,
-        rankedAt: baseDate,
       },
-    });
+    );
 
   assert.deepEqual(result.symbols, ["SPY", "NVDA", "PLTR"]);
   assert.deepEqual(result.skippedSymbols, []);
@@ -842,42 +1122,53 @@ test("signal monitor default scope stays on all watchlists", () => {
 
 test("signal monitor explicit expansion scope adds ranked universe symbols", () => {
   const result =
-    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({
-      profile: profile({
-        watchlistId: "core",
-        maxSymbols: 6,
-        pyrusSignalsSettings: {
-          __signalMonitorUniverseScope: "all_watchlists_plus_universe",
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists(
+      {
+        profile: profile({
+          watchlistId: "core",
+          maxSymbols: 6,
+          pyrusSignalsSettings: {
+            __signalMonitorUniverseScope: "all_watchlists_plus_universe",
+          },
+        }),
+        watchlists: [
+          {
+            id: "core",
+            name: "Core",
+            isDefault: true,
+            updatedAt: baseDate,
+            items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
+          },
+          {
+            id: "research",
+            name: "Research",
+            isDefault: false,
+            updatedAt: baseDate,
+            items: [{ symbol: "PLTR" }, { symbol: "spy" }] as never,
+          },
+        ],
+        expansionUniverse: {
+          symbols: ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
+          fallbackUsed: false,
+          degradedReason: null,
+          rankedAt: baseDate,
         },
-      }),
-      watchlists: [
-        {
-          id: "core",
-          name: "Core",
-          isDefault: true,
-          updatedAt: baseDate,
-          items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
-        },
-        {
-          id: "research",
-          name: "Research",
-          isDefault: false,
-          updatedAt: baseDate,
-          items: [{ symbol: "PLTR" }, { symbol: "spy" }] as never,
-        },
-      ],
-      expansionUniverse: {
-        symbols: ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"],
-        fallbackUsed: false,
-        degradedReason: null,
-        rankedAt: baseDate,
       },
-    });
+    );
 
-  assert.deepEqual(result.symbols, ["SPY", "NVDA", "PLTR", "AAPL", "MSFT", "TSLA"]);
+  assert.deepEqual(result.symbols, [
+    "SPY",
+    "NVDA",
+    "PLTR",
+    "AAPL",
+    "MSFT",
+    "TSLA",
+  ]);
   assert.deepEqual(result.skippedSymbols, ["AMD"]);
   assert.deepEqual(
-    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseSymbols(result),
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseSymbols(
+      result,
+    ),
     ["SPY", "NVDA", "PLTR", "AAPL", "MSFT", "TSLA", "AMD"],
   );
   assert.equal(result.universe.configuredMaxSymbols, 6);
@@ -889,30 +1180,35 @@ test("signal monitor explicit expansion scope adds ranked universe symbols", () 
 
 test("signal monitor marks built-in fallback universes as non-authoritative", () => {
   const result =
-    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists({
-      profile: profile({
-        maxSymbols: 10,
-        pyrusSignalsSettings: {
-          __signalMonitorUniverseScope: "all_watchlists",
-        },
-      }),
-      watchlists: [
-        {
-          id: "built-in-core",
-          name: "Core",
-          isDefault: true,
-          updatedAt: baseDate,
-          items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
-        },
-      ],
-    });
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists(
+      {
+        profile: profile({
+          maxSymbols: 10,
+          pyrusSignalsSettings: {
+            __signalMonitorUniverseScope: "all_watchlists",
+          },
+        }),
+        watchlists: [
+          {
+            id: "built-in-core",
+            name: "Core",
+            isDefault: true,
+            updatedAt: baseDate,
+            items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
+          },
+        ],
+      },
+    );
 
   assert.deepEqual(result.symbols, ["SPY", "NVDA"]);
   assert.equal(result.fallbackWatchlists, true);
 });
 
 test("signal monitor state hydration is scoped to the profile timeframe", () => {
-  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
   const start = source.indexOf("async function readSignalMonitorStateFresh");
   const end = source.indexOf("type SignalMonitorStateReadResult", start);
   assert.notEqual(start, -1);
@@ -995,9 +1291,17 @@ test("signal monitor lane recency rejects stale persisted fresh rows", () => {
 });
 
 test("signal monitor capped evaluation preserves skipped all-watchlist rows", () => {
-  const source = readFileSync(new URL("./signal-monitor.ts", import.meta.url), "utf8");
-  const start = source.indexOf("export async function evaluateSignalMonitorProfileUniverse");
-  const end = source.indexOf("function resolveSignalMonitorMatrixSymbols", start);
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf(
+    "export async function evaluateSignalMonitorProfileUniverse",
+  );
+  const end = source.indexOf(
+    "function resolveSignalMonitorMatrixSymbols",
+    start,
+  );
   assert.notEqual(start, -1);
   assert.notEqual(end, -1);
   const block = source.slice(start, end);
@@ -1018,26 +1322,72 @@ test("signal matrix cache serves stale data while a refresh is in flight", async
   let resolveRefresh: (value: unknown) => void = () => {};
   let calls = 0;
   __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
-  __signalMonitorInternalsForTests.seedSignalMonitorMatrixCache(key, staleValue, {
-    freshUntil: 1_000,
-    staleUntil: 20_000,
-  });
-
-  const result = await __signalMonitorInternalsForTests.withSignalMonitorMatrixEvaluationCache(
+  __signalMonitorInternalsForTests.seedSignalMonitorMatrixCache(
     key,
-    async () => {
-      calls += 1;
-      return await new Promise((resolve) => {
-        resolveRefresh = resolve;
-      });
+    staleValue,
+    {
+      freshUntil: 1_000,
+      staleUntil: 20_000,
     },
-    { nowMs: 2_000 },
   );
+
+  const result =
+    await __signalMonitorInternalsForTests.withSignalMonitorMatrixEvaluationCache(
+      key,
+      async () => {
+        calls += 1;
+        return await new Promise((resolve) => {
+          resolveRefresh = resolve;
+        });
+      },
+      { nowMs: 2_000 },
+    );
 
   assert.equal(result, staleValue);
   assert.equal(calls, 1);
   resolveRefresh({ states: [{ symbol: "QQQ" }], evaluatedAt: "new" });
   await new Promise((resolve) => setImmediate(resolve));
+  __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
+});
+
+test("signal matrix cache does not pin timeout error states", async () => {
+  const key = "signal-matrix:unit:timeout";
+  const timeoutValue = {
+    states: [
+      {
+        symbol: "TSLA",
+        timeframe: "5m",
+        status: "error",
+        lastError:
+          "Signal monitor matrix bar load timed out for TSLA 5m after 8000ms.",
+      },
+    ],
+    evaluatedAt: "new",
+  };
+
+  __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldCacheSignalMonitorMatrixEvaluationValue(
+      timeoutValue,
+    ),
+    false,
+  );
+
+  const result =
+    await __signalMonitorInternalsForTests.withSignalMonitorMatrixEvaluationCache(
+      key,
+      async () => timeoutValue,
+      { nowMs: 1_000 },
+    );
+
+  assert.equal(result, timeoutValue);
+  assert.equal(
+    __signalMonitorInternalsForTests.getDebouncedSignalMonitorMatrixCacheValue(
+      key,
+      1_100,
+    ),
+    null,
+  );
   __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
 });
 
@@ -1082,31 +1432,39 @@ test("signal matrix automatic request marker debounces reconnect duplicates only
 
 test("signal matrix follower startup and poll requests are cache-only", () => {
   assert.equal(
-    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly({
-      clientRole: "follower",
-      requestOrigin: "startup",
-    }),
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly(
+      {
+        clientRole: "follower",
+        requestOrigin: "startup",
+      },
+    ),
     true,
   );
   assert.equal(
-    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly({
-      clientRole: "follower",
-      requestOrigin: "poll",
-    }),
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly(
+      {
+        clientRole: "follower",
+        requestOrigin: "poll",
+      },
+    ),
     true,
   );
   assert.equal(
-    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly({
-      clientRole: "leader",
-      requestOrigin: "poll",
-    }),
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly(
+      {
+        clientRole: "leader",
+        requestOrigin: "poll",
+      },
+    ),
     false,
   );
   assert.equal(
-    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly({
-      clientRole: "manual",
-      requestOrigin: "manual",
-    }),
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly(
+      {
+        clientRole: "manual",
+        requestOrigin: "manual",
+      },
+    ),
     false,
   );
 });
@@ -1115,10 +1473,14 @@ test("signal matrix automatic debounce can reuse stale cache without refreshing"
   const key = "signal-matrix:paper:debounced-cache";
   const staleValue = { states: [{ symbol: "SPY" }], evaluatedAt: "old" };
   __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
-  __signalMonitorInternalsForTests.seedSignalMonitorMatrixCache(key, staleValue, {
-    freshUntil: 1_000,
-    staleUntil: 20_000,
-  });
+  __signalMonitorInternalsForTests.seedSignalMonitorMatrixCache(
+    key,
+    staleValue,
+    {
+      freshUntil: 1_000,
+      staleUntil: 20_000,
+    },
+  );
 
   assert.deepEqual(
     __signalMonitorInternalsForTests.getDebouncedSignalMonitorMatrixCacheValue(
@@ -1139,13 +1501,18 @@ test("signal matrix automatic debounce can reuse stale cache without refreshing"
 });
 
 test("signal matrix environment clear removes source-strategy cache and automatic markers", () => {
-  const key = "signal-matrix:native_timeframes:paper:profile:default:SPY:2m:1:normal:3:{}";
+  const key =
+    "signal-matrix:native_timeframes:paper:profile:default:SPY:2m:1:normal:3:{}";
   const staleValue = { states: [{ symbol: "SPY" }], evaluatedAt: "old" };
   __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
-  __signalMonitorInternalsForTests.seedSignalMonitorMatrixCache(key, staleValue, {
-    freshUntil: 1_000,
-    staleUntil: 20_000,
-  });
+  __signalMonitorInternalsForTests.seedSignalMonitorMatrixCache(
+    key,
+    staleValue,
+    {
+      freshUntil: 1_000,
+      staleUntil: 20_000,
+    },
+  );
   assert.deepEqual(
     __signalMonitorInternalsForTests.markAutomaticSignalMonitorMatrixRequest(
       key,
@@ -1162,7 +1529,9 @@ test("signal matrix environment clear removes source-strategy cache and automati
     { value: staleValue, cacheStatus: "stale" },
   );
 
-  __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache("paper");
+  __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache(
+    "paper",
+  );
 
   assert.equal(
     __signalMonitorInternalsForTests.getDebouncedSignalMonitorMatrixCacheValue(
@@ -1203,6 +1572,9 @@ test("signal monitor DB unavailable error is a visible retryable 503", () => {
   assert.equal(error.statusCode, 503);
   assert.equal(error.code, "signal_monitor_db_unavailable");
   assert.equal(error.expose, true);
-  assert.match(error.detail || "", /Retry after Postgres connectivity recovers/);
+  assert.match(
+    error.detail || "",
+    /Retry after Postgres connectivity recovers/,
+  );
   assert.equal((error as Error & { cause?: unknown }).cause, cause);
 });

@@ -1,5 +1,9 @@
 import { resolveSignalOptionsExecutionProfile } from "@workspace/backtest-core";
-import { pool, type AlgoDeployment } from "@workspace/db";
+import {
+  attachPostgresClientErrorHandler,
+  pool,
+  type AlgoDeployment,
+} from "@workspace/db";
 import { logger } from "../lib/logger";
 import {
   createTransientPostgresBackoff,
@@ -426,6 +430,23 @@ function shouldSkipDeploymentForResourcePressure(input: {
 
 async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
   const client = await pool.connect();
+  let clientError: Error | null = null;
+  const detachClientErrorHandler = attachPostgresClientErrorHandler(client, {
+    context: "signal-options-worker-advisory-lock",
+    onError: (error) => {
+      clientError = error;
+    },
+  });
+  const releaseClient = (releaseError?: unknown) => {
+    detachClientErrorHandler();
+    const error =
+      clientError ?? (releaseError instanceof Error ? releaseError : undefined);
+    if (error) {
+      client.release(error);
+      return;
+    }
+    client.release();
+  };
   let locked = false;
 
   try {
@@ -436,19 +457,23 @@ async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
     locked = result.rows[0]?.locked === true;
 
     if (!locked) {
-      client.release();
+      releaseClient();
       return null;
     }
 
     return async () => {
       try {
-        await client.query("select pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY]);
+        if (!clientError) {
+          await client.query("select pg_advisory_unlock($1)", [
+            ADVISORY_LOCK_KEY,
+          ]);
+        }
       } finally {
-        client.release();
+        releaseClient();
       }
     };
   } catch (error) {
-    client.release();
+    releaseClient(error);
     throw error;
   }
 }
@@ -669,6 +694,7 @@ export function createSignalOptionsWorker(
   let timer: ReturnType<typeof setTimeout> | null = null;
   let started = false;
   let tickRunning = false;
+  let wakeRequested = false;
 
   const runOnce = async () => {
     if (tickRunning) {
@@ -808,15 +834,22 @@ export function createSignalOptionsWorker(
     }
   };
 
-  const schedule = () => {
+  const schedule = (delayMs = wakeupMs) => {
     if (!started || timer) {
       return;
     }
 
     timer = dependencies.setTimer(() => {
       timer = null;
-      void runOnce().finally(schedule);
-    }, wakeupMs);
+      void runOnce().finally(scheduleAfterRun);
+    }, Math.max(0, delayMs));
+    timer.unref?.();
+  };
+
+  const scheduleAfterRun = () => {
+    const delayMs = wakeRequested ? 0 : wakeupMs;
+    wakeRequested = false;
+    schedule(delayMs);
   };
 
   return {
@@ -825,7 +858,7 @@ export function createSignalOptionsWorker(
         return;
       }
       started = true;
-      void runOnce().finally(schedule);
+      void runOnce().finally(scheduleAfterRun);
       dependencies.logger.info("Signal-options shadow worker started");
     },
     stop() {
@@ -834,6 +867,21 @@ export function createSignalOptionsWorker(
         dependencies.clearTimer(timer);
         timer = null;
       }
+    },
+    requestRunSoon() {
+      if (!started) {
+        return;
+      }
+      wakeRequested = true;
+      const requestedAtMs = dependencies.now().getTime();
+      deploymentRuntime.forEach((runtime) => {
+        runtime.nextScanDueAtMs = requestedAtMs;
+      });
+      if (timer) {
+        dependencies.clearTimer(timer);
+        timer = null;
+      }
+      schedule(0);
     },
     runOnce,
     getRuntimeSnapshot() {
@@ -930,5 +978,9 @@ export function startSignalOptionsWorker(): void {
 
 export function stopSignalOptionsWorker(): void {
   defaultWorker.stop();
+}
+
+export function requestSignalOptionsWorkerScanSoon(): void {
+  defaultWorker.requestRunSoon();
 }
 export { getSignalOptionsWorkerSnapshot };

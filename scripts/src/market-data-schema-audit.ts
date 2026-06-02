@@ -73,6 +73,7 @@ const TABLES: TableSpec[] = [
       "option_chain_snapshots_underlying_idx",
       "option_chain_snapshots_contract_idx",
       "option_chain_snapshots_as_of_idx",
+      "option_chain_snapshots_underlying_contract_as_of_idx",
     ],
   },
   {

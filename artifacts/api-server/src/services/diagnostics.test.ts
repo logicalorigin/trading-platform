@@ -640,6 +640,10 @@ test("diagnostics keep automation long-scan pressure out of footer memory pressu
   assert.equal(resourcePressure?.status, "ok");
   assert.equal(resourcePressure?.metrics.pressureLevel, "normal");
   assert.equal(resourcePressure?.metrics.apiPressureLevel, "normal");
+  assert.deepEqual(
+    resourcePressure?.metrics.apiRssThresholds,
+    resolveApiRssPressureThresholds(),
+  );
   assert.equal(apiResourcePressure?.scannerPressure?.level, "high");
   assert.equal(
     apiResourcePressure?.scannerPressure?.activeLongScanCount,
@@ -711,6 +715,11 @@ test("diagnostics keep API latency and cache pressure out of footer memory press
     true,
   );
   assert.equal(collected.footerMemoryPressure?.level, "normal");
+  assert.equal(collected.footerMemoryPressure?.apiRssMb, 512);
+  assert.deepEqual(
+    collected.footerMemoryPressure?.apiRssThresholds,
+    resolveApiRssPressureThresholds(),
+  );
   assert.deepEqual(collected.footerMemoryPressure?.dominantDrivers, []);
 });
 
@@ -1671,11 +1680,11 @@ test("diagnostics collect chart hydration metrics without leaking provider curso
           oldestLoadedAt: "2026-04-30T13:30:00.000Z",
           isPrependingOlder: true,
           hasExhaustedOlderHistory: false,
-          olderHistoryProvider: "polygon-history",
+          olderHistoryProvider: "massive-history",
           olderHistoryProviderCursor:
-            "https://api.polygon.io/v2/aggs/ticker/SPY?apiKey=secret",
+            "https://api.massive.com/v2/aggs/ticker/SPY?apiKey=secret",
           olderHistoryProviderNextUrl:
-            "https://api.polygon.io/v2/aggs/ticker/SPY?apiKey=secret",
+            "https://api.massive.com/v2/aggs/ticker/SPY?apiKey=secret",
           olderHistoryCursor: "opaque-history-cursor",
           olderHistoryProviderPageCount: 2,
           olderHistoryProviderPageLimitReached: true,

@@ -9,7 +9,7 @@ import { normalizeSymbol } from "../lib/values";
 import type {
   FlowEvent as ProviderFlowEvent,
   HistoricalOptionFlowEventsResult,
-} from "../providers/polygon/market-data";
+} from "../providers/massive/market-data";
 import {
   filterFlowEventsForRequest,
   flowSource,
@@ -48,7 +48,7 @@ type HistoricalFlowProviderClient = {
   }): Promise<ProviderFlowEvent[]>;
 };
 
-export type HistoricalFlowProviderName = "polygon" | "massive";
+export type HistoricalFlowProviderName = "massive";
 
 type HistoricalFlowSession = {
   marketDate: string;
@@ -228,7 +228,7 @@ const dateFromDbExpiration = (value: unknown): Date => {
 };
 
 const normalizeProviderName = (value: string): HistoricalFlowProviderName =>
-  value.toLowerCase().includes("massive") ? "massive" : "polygon";
+  "massive";
 
 const readNewYorkSessionParts = (date: Date): NewYorkSessionParts | null => {
   const parts = NEW_YORK_FLOW_SESSION_FORMATTER.formatToParts(date);
@@ -513,7 +513,7 @@ function storedRowToFlowEvent(
     ...raw,
     id: raw.id || row.providerEventKey || row.id,
     underlying: row.underlyingSymbol,
-    provider: "polygon" as const,
+    provider: "massive" as const,
     basis: "trade",
     optionTicker: row.optionTicker,
     providerContractId: row.providerContractId ?? raw.providerContractId ?? null,
@@ -1310,7 +1310,7 @@ export async function listHistoricalFlowEvents(input: {
   const from =
     input.from ?? new Date(to.getTime() - HISTORICAL_FLOW_DEFAULT_LOOKBACK_MS);
   const provider = normalizeProviderName(input.providerName);
-  const attemptedProviders = ["polygon" as const];
+  const attemptedProviders = ["massive" as const];
 
   if (
     !underlying ||
@@ -1440,7 +1440,7 @@ export async function listHistoricalFlowEvents(input: {
     return {
       events: filteredStoredEvents,
       source: flowSource({
-        provider: "polygon",
+        provider: "massive",
         status: "fallback",
         attemptedProviders,
         unusualThreshold: input.unusualThreshold ?? 1,
@@ -1489,7 +1489,7 @@ export async function listHistoricalFlowEvents(input: {
   return {
     events: filteredEvents,
     source: flowSource({
-      provider: "polygon",
+      provider: "massive",
       status: directRead.error
         ? "error"
         : filteredEvents.length

@@ -16,6 +16,8 @@ import {
   isMarketDataLeaseActive,
   releaseMarketDataLeases,
   subscribeMarketDataLeaseChanges,
+  type MarketDataFallbackProvider,
+  type MarketDataIntent,
 } from "./market-data-admission";
 import { runBridgeWork } from "./bridge-governor";
 import { isLikelyUsEquitySession } from "./platform-runtime-status";
@@ -221,7 +223,7 @@ function admitBridgeQuoteSubscriberLeases(subscriber: Subscriber): void {
       assetClass: "equity" as const,
       symbol,
     })),
-    fallbackProvider: "polygon",
+    fallbackProvider: "massive",
   });
 }
 
@@ -938,6 +940,12 @@ function shouldHydrateQuoteSnapshot(quote: QuoteWithSource | undefined): boolean
 
 export async function fetchBridgeQuoteSnapshots(
   symbols: string[],
+  options: {
+    owner?: string;
+    intent?: MarketDataIntent;
+    fallbackProvider?: MarketDataFallbackProvider;
+    ttlMs?: number;
+  } = {},
 ): Promise<QuoteSnapshotPayload> {
   const normalizedSymbols = normalizeSymbols(symbols);
   if (!normalizedSymbols.length) {
@@ -948,16 +956,21 @@ export async function fetchBridgeQuoteSnapshots(
       quotes: getCurrentBridgeQuoteSnapshots(normalizedSymbols),
     };
   }
-  const owner = `bridge-quote-snapshot:${nextSnapshotOwnerId++}`;
+  const owner =
+    typeof options.owner === "string" && options.owner.trim()
+      ? options.owner.trim()
+      : `bridge-quote-snapshot:${nextSnapshotOwnerId++}`;
+  const intent = options.intent ?? "visible-live";
+  const fallbackProvider = options.fallbackProvider ?? "massive";
   const admission = admitMarketDataLeases({
     owner,
-    intent: "visible-live",
+    intent,
     requests: normalizedSymbols.map((symbol) => ({
       assetClass: "equity" as const,
       symbol,
     })),
-    ttlMs: 10_000,
-    fallbackProvider: "polygon",
+    ttlMs: options.ttlMs ?? 10_000,
+    fallbackProvider,
   });
   const admittedSymbols = admission.admitted
     .map((lease) => lease.symbol)

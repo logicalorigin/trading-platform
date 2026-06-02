@@ -1,8 +1,10 @@
 import { eq } from "drizzle-orm";
 import {
+  attachPostgresClientErrorHandler,
   db,
   pool,
   signalMonitorProfilesTable,
+  type SignalMonitorSymbolState,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
 import {
@@ -14,6 +16,7 @@ import {
   listEnabledSignalMonitorProfiles,
   loadSignalMonitorCompletedBars,
   cappedSignalMonitorEvaluationProfile,
+  getSignalMonitorTimeframeMs,
   resolveSignalMonitorEvaluationBatch,
   resolveSignalMonitorProfileUniverse,
   resolveSignalMonitorTimeframe,
@@ -21,10 +24,18 @@ import {
   type SignalMonitorProfileRow,
   type SignalMonitorTimeframe,
 } from "./signal-monitor";
+import {
+  subscribeMutableStockMinuteAggregates,
+  type StockMinuteAggregateMessage,
+  type StockMinuteAggregateSubscription,
+} from "./stock-aggregate-stream";
+import { requestSignalOptionsWorkerScanSoon } from "./signal-options-worker";
 
 const WORKER_WAKEUP_MS = 5_000;
 const ADVISORY_LOCK_KEY = 1_930_514_021;
 const FAILED_KEY_RETRY_MS = 60_000;
+const STREAM_EVALUATION_SAFETY_MS = 2_000;
+const STREAM_EVALUATION_FLUSH_MS = 100;
 
 type ReleaseLock = () => Promise<void>;
 type WorkerLogger = Pick<typeof logger, "debug" | "info" | "warn">;
@@ -38,6 +49,7 @@ type WorkerDependencies = {
     typeof updateSignalMonitorProfileEvaluationMetadata;
   updateProfileLastError: (profileId: string, message: string | null) => Promise<void>;
   acquireTickLock: () => Promise<ReleaseLock | null>;
+  subscribeStockMinuteAggregates: typeof subscribeMutableStockMinuteAggregates;
   setTimer: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
   now: () => Date;
@@ -92,6 +104,10 @@ function evaluatedKey(input: {
   ].join(":");
 }
 
+function shouldRememberEvaluatedKey(state: SignalMonitorSymbolState): boolean {
+  return state.status === "ok" && Boolean(state.currentSignalAt);
+}
+
 async function updateProfileLastError(
   profileId: string,
   message: string | null,
@@ -107,6 +123,23 @@ async function updateProfileLastError(
 
 async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
   const client = await pool.connect();
+  let clientError: Error | null = null;
+  const detachClientErrorHandler = attachPostgresClientErrorHandler(client, {
+    context: "signal-monitor-worker-advisory-lock",
+    onError: (error) => {
+      clientError = error;
+    },
+  });
+  const releaseClient = (releaseError?: unknown) => {
+    detachClientErrorHandler();
+    const error =
+      clientError ?? (releaseError instanceof Error ? releaseError : undefined);
+    if (error) {
+      client.release(error);
+      return;
+    }
+    client.release();
+  };
   let locked = false;
 
   try {
@@ -117,19 +150,23 @@ async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
     locked = result.rows[0]?.locked === true;
 
     if (!locked) {
-      client.release();
+      releaseClient();
       return null;
     }
 
     return async () => {
       try {
-        await client.query("select pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY]);
+        if (!clientError) {
+          await client.query("select pg_advisory_unlock($1)", [
+            ADVISORY_LOCK_KEY,
+          ]);
+        }
       } finally {
-        client.release();
+        releaseClient();
       }
     };
   } catch (error) {
-    client.release();
+    releaseClient(error);
     throw error;
   }
 }
@@ -149,6 +186,8 @@ function defaultDependencies(
       updateSignalMonitorProfileEvaluationMetadata,
     updateProfileLastError: options.updateProfileLastError ?? updateProfileLastError,
     acquireTickLock: options.acquireTickLock ?? acquirePostgresAdvisoryLock,
+    subscribeStockMinuteAggregates:
+      options.subscribeStockMinuteAggregates ?? subscribeMutableStockMinuteAggregates,
     setTimer: options.setTimer ?? setTimeout,
     clearTimer: options.clearTimer ?? clearTimeout,
     now: options.now ?? (() => new Date()),
@@ -173,8 +212,9 @@ async function runProfile(input: {
   profile: SignalMonitorProfileRow;
   runtime: ProfileRuntime;
   dependencies: WorkerDependencies;
+  onUniverseResolved?: (profileId: string, symbols: string[]) => void;
 }) {
-  const { profile, runtime, dependencies } = input;
+  const { profile, runtime, dependencies, onUniverseResolved } = input;
   if (activeProfileIds.has(profile.id)) {
     dependencies.logger.debug?.(
       { profileId: profile.id },
@@ -193,6 +233,7 @@ async function runProfile(input: {
     const universe = await dependencies.resolveUniverse(evaluationProfile, {
       ensureWatchlist: false,
     });
+    onUniverseResolved?.(profile.id, universe.watchlistSymbols);
     const resolvedBatch = resolveSignalMonitorEvaluationBatch({
       sourceSymbols: universe.watchlistSymbols,
       maxSymbols: evaluationProfile.maxSymbols,
@@ -283,7 +324,7 @@ async function runProfile(input: {
           return;
         }
         runtime.failedKeys.delete(key);
-        if (state.status === "ok") {
+        if (shouldRememberEvaluatedKey(state)) {
           runtime.evaluatedKeys.add(key);
         }
       }
@@ -303,6 +344,136 @@ async function runProfile(input: {
   }
 }
 
+function completedStreamBarStart(input: {
+  message: StockMinuteAggregateMessage;
+  timeframe: SignalMonitorTimeframe;
+}): Date | null {
+  if (input.timeframe === "1d") {
+    return null;
+  }
+  const timeframeMs = getSignalMonitorTimeframeMs(input.timeframe);
+  const minuteStartMs = Math.floor(input.message.startMs / 60_000) * 60_000;
+  const minuteEndExclusiveMs = minuteStartMs + 60_000;
+  if (minuteEndExclusiveMs % timeframeMs !== 0) {
+    return null;
+  }
+  return new Date(minuteEndExclusiveMs - timeframeMs);
+}
+
+async function runStreamProfileSymbolUnlocked(input: {
+  profile: SignalMonitorProfileRow;
+  runtime: ProfileRuntime;
+  message: StockMinuteAggregateMessage;
+  dependencies: WorkerDependencies;
+  activeStreamEvaluationKeys: Set<string>;
+}) {
+  const { profile, runtime, message, dependencies, activeStreamEvaluationKeys } = input;
+  const evaluationSettings = cappedSignalMonitorEvaluationProfile(profile);
+  const evaluationProfile = evaluationSettings.profile;
+  const timeframe = resolveSignalMonitorTimeframe(evaluationProfile.timeframe);
+  const expectedLatestBarAt = completedStreamBarStart({ message, timeframe });
+  if (!expectedLatestBarAt) {
+    return;
+  }
+
+  const symbol = message.symbol;
+  const timeframeMs = getSignalMonitorTimeframeMs(timeframe);
+  const evaluatedAt = new Date(
+    Math.max(
+      dependencies.now().getTime(),
+      expectedLatestBarAt.getTime() + timeframeMs + STREAM_EVALUATION_SAFETY_MS,
+    ),
+  );
+  const expectedKey = evaluatedKey({
+    profileId: profile.id,
+    symbol,
+    timeframe,
+    latestBarAt: expectedLatestBarAt,
+  });
+  if (runtime.evaluatedKeys.has(expectedKey)) {
+    return;
+  }
+  const expectedRetryAfterMs = runtime.failedKeys.get(expectedKey) ?? 0;
+  if (expectedRetryAfterMs > evaluatedAt.getTime()) {
+    return;
+  }
+  if (activeStreamEvaluationKeys.has(expectedKey)) {
+    return;
+  }
+
+  activeStreamEvaluationKeys.add(expectedKey);
+  try {
+    const completedBars = await dependencies.loadCompletedBars({
+      symbol,
+      timeframe,
+      evaluatedAt,
+      retryStale: true,
+    });
+    if (
+      !completedBars.latestBarAt ||
+      completedBars.latestBarAt.getTime() < expectedLatestBarAt.getTime()
+    ) {
+      return;
+    }
+
+    const key = evaluatedKey({
+      profileId: profile.id,
+      symbol,
+      timeframe,
+      latestBarAt: completedBars.latestBarAt,
+    });
+    if (runtime.evaluatedKeys.has(key)) {
+      return;
+    }
+    const retryAfterMs = runtime.failedKeys.get(key) ?? 0;
+    if (retryAfterMs > evaluatedAt.getTime()) {
+      return;
+    }
+
+    const state = await dependencies.evaluateSymbolFromCompletedBars({
+      profile: evaluationProfile,
+      symbol,
+      timeframe,
+      mode: "incremental",
+      evaluatedAt,
+      completedBars: completedBars.bars,
+    });
+    await dependencies.updateProfileEvaluationMetadata({
+      profile: evaluationProfile,
+      evaluatedAt,
+      states: [state],
+    });
+    if (state.status === "error") {
+      runtime.failedKeys.set(key, evaluatedAt.getTime() + FAILED_KEY_RETRY_MS);
+      return;
+    }
+    runtime.failedKeys.delete(key);
+    if (shouldRememberEvaluatedKey(state)) {
+      runtime.evaluatedKeys.add(key);
+    }
+    if (
+      state.status === "ok" &&
+      state.fresh === true &&
+      state.currentSignalDirection &&
+      state.currentSignalAt
+    ) {
+      requestSignalOptionsWorkerScanSoon();
+    }
+  } catch (error) {
+    const messageText =
+      error instanceof Error && error.message
+        ? error.message
+        : "Signal monitor stream evaluation failed.";
+    await dependencies.updateProfileLastError(profile.id, messageText);
+    dependencies.logger.warn(
+      { err: error, profileId: profile.id, symbol },
+      "Signal monitor stream evaluation failed",
+    );
+  } finally {
+    activeStreamEvaluationKeys.delete(expectedKey);
+  }
+}
+
 export function createTradeMonitorWorker(
   options: TradeMonitorWorkerOptions = {},
 ) {
@@ -315,9 +486,180 @@ export function createTradeMonitorWorker(
     3_600_000,
   );
   const profileRuntime = new Map<string, ProfileRuntime>();
+  const profileSymbols = new Map<string, Set<string>>();
+  const latestProfilesById = new Map<string, SignalMonitorProfileRow>();
+  const activeStreamEvaluationKeys = new Set<string>();
+  const pendingStreamMessagesByProfile = new Map<
+    string,
+    Map<string, StockMinuteAggregateMessage>
+  >();
+  let streamSubscription: StockMinuteAggregateSubscription | null = null;
+  let streamSignature = "";
+  let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  let streamFlushRunning = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let started = false;
   let tickRunning = false;
+
+  const refreshStreamSubscription = () => {
+    const symbols = Array.from(
+      new Set(
+        Array.from(profileSymbols.values()).flatMap((profileSet) =>
+          Array.from(profileSet),
+        ),
+      ),
+    ).sort();
+    const signature = symbols.join(",");
+    if (!symbols.length) {
+      streamSubscription?.unsubscribe();
+      streamSubscription = null;
+      streamSignature = "";
+      return;
+    }
+    if (!streamSubscription) {
+      streamSubscription = dependencies.subscribeStockMinuteAggregates(
+        symbols,
+        (message) => {
+          handleStreamAggregate(message);
+        },
+      );
+      streamSignature = signature;
+      return;
+    }
+    if (signature !== streamSignature) {
+      streamSubscription.setSymbols(symbols);
+      streamSignature = signature;
+    }
+  };
+
+  const rememberProfileSymbols = (profileId: string, symbols: string[]) => {
+    profileSymbols.set(profileId, new Set(symbols));
+    refreshStreamSubscription();
+  };
+
+  const requeueStreamBatch = (
+    batch: Map<string, StockMinuteAggregateMessage[]>,
+  ) => {
+    batch.forEach((messages, profileId) => {
+      const pending =
+        pendingStreamMessagesByProfile.get(profileId) ?? new Map();
+      messages.forEach((message) => {
+        pending.set(message.symbol, message);
+      });
+      pendingStreamMessagesByProfile.set(profileId, pending);
+    });
+  };
+
+  const drainStreamBatch = () => {
+    const batch = new Map<string, StockMinuteAggregateMessage[]>();
+    pendingStreamMessagesByProfile.forEach((messages, profileId) => {
+      batch.set(profileId, Array.from(messages.values()));
+    });
+    pendingStreamMessagesByProfile.clear();
+    return batch;
+  };
+
+  const flushStreamEvaluations = async () => {
+    if (streamFlushRunning) {
+      return;
+    }
+    streamFlushRunning = true;
+    const batch = drainStreamBatch();
+    let releaseLock: ReleaseLock | null = null;
+
+    try {
+      if (!batch.size) {
+        return;
+      }
+
+      releaseLock = await dependencies.acquireTickLock();
+      if (!releaseLock) {
+        requeueStreamBatch(batch);
+        scheduleStreamFlush(500);
+        return;
+      }
+
+      for (const [profileId, messages] of batch.entries()) {
+        const profile = latestProfilesById.get(profileId);
+        const runtime = profileRuntime.get(profileId);
+        if (!profile || !runtime) {
+          continue;
+        }
+        const concurrency = positiveInteger(
+          profile.evaluationConcurrency,
+          2,
+          1,
+          10,
+        );
+        await runInBatches(messages, concurrency, (message) =>
+          runStreamProfileSymbolUnlocked({
+            profile,
+            runtime,
+            message,
+            dependencies,
+            activeStreamEvaluationKeys,
+          }),
+        );
+      }
+    } catch (error) {
+      requeueStreamBatch(batch);
+      dependencies.logger.warn(
+        { err: error },
+        "Signal monitor stream batch evaluation failed",
+      );
+      scheduleStreamFlush(1_000);
+    } finally {
+      if (releaseLock) {
+        try {
+          await releaseLock();
+        } catch (error) {
+          dependencies.logger.warn(
+            { err: error },
+            "Signal monitor stream advisory lock release failed",
+          );
+        }
+      }
+      streamFlushRunning = false;
+      if (pendingStreamMessagesByProfile.size > 0) {
+        scheduleStreamFlush(0);
+      }
+    }
+  };
+
+  const scheduleStreamFlush = (delayMs = STREAM_EVALUATION_FLUSH_MS) => {
+    if (streamFlushTimer || streamFlushRunning) {
+      return;
+    }
+    streamFlushTimer = dependencies.setTimer(() => {
+      streamFlushTimer = null;
+      void flushStreamEvaluations();
+    }, Math.max(0, delayMs));
+    streamFlushTimer.unref?.();
+  };
+
+  const handleStreamAggregate = (message: StockMinuteAggregateMessage) => {
+    const symbol = message.symbol;
+    const profileIds = Array.from(profileSymbols.entries())
+      .filter(([, symbols]) => symbols.has(symbol))
+      .map(([profileId]) => profileId);
+
+    for (const profileId of profileIds) {
+      const profile = latestProfilesById.get(profileId);
+      const runtime = profileRuntime.get(profileId);
+      if (!profile || !runtime) {
+        continue;
+      }
+      const timeframe = resolveSignalMonitorTimeframe(profile.timeframe);
+      if (!completedStreamBarStart({ message, timeframe })) {
+        continue;
+      }
+      const pending =
+        pendingStreamMessagesByProfile.get(profileId) ?? new Map();
+      pending.set(symbol, message);
+      pendingStreamMessagesByProfile.set(profileId, pending);
+    }
+    scheduleStreamFlush();
+  };
 
   const runOnce = async () => {
     if (tickRunning) {
@@ -342,12 +684,18 @@ export function createTradeMonitorWorker(
       const nowMs = now.getTime();
       const profiles = await dependencies.listProfiles();
       const enabledIds = new Set(profiles.map((profile) => profile.id));
+      latestProfilesById.clear();
+      profiles.forEach((profile) => {
+        latestProfilesById.set(profile.id, profile);
+      });
 
       Array.from(profileRuntime.keys()).forEach((profileId) => {
         if (!enabledIds.has(profileId)) {
           profileRuntime.delete(profileId);
+          profileSymbols.delete(profileId);
         }
       });
+      refreshStreamSubscription();
 
       for (const profile of profiles) {
         const signature = profileSignature(profile);
@@ -378,7 +726,12 @@ export function createTradeMonitorWorker(
         }
 
         runtime.lastCheckedAtMs = nowMs;
-        await runProfile({ profile, runtime, dependencies });
+        await runProfile({
+          profile,
+          runtime,
+          dependencies,
+          onUniverseResolved: rememberProfileSymbols,
+        });
       }
       transientDbBackoff.clear();
     } catch (error) {
@@ -436,6 +789,14 @@ export function createTradeMonitorWorker(
         dependencies.clearTimer(timer);
         timer = null;
       }
+      if (streamFlushTimer) {
+        dependencies.clearTimer(streamFlushTimer);
+        streamFlushTimer = null;
+      }
+      pendingStreamMessagesByProfile.clear();
+      streamSubscription?.unsubscribe();
+      streamSubscription = null;
+      streamSignature = "";
     },
     runOnce,
     getRuntimeSnapshot() {
@@ -444,6 +805,8 @@ export function createTradeMonitorWorker(
         tickRunning,
         profileCount: profileRuntime.size,
         activeProfileCount: activeProfileIds.size,
+        pendingStreamProfileCount: pendingStreamMessagesByProfile.size,
+        streamFlushRunning,
       };
     },
   };

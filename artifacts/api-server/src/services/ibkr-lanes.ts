@@ -177,7 +177,7 @@ const schedulerLimits: Record<
   (typeof schedulerKeys)[number],
   { min: number; max: number; unit?: string }
 > = {
-  concurrency: { min: 1, max: 4 },
+  concurrency: { min: 1, max: 8 },
   timeoutMs: { min: 500, max: 120_000, unit: "ms" },
   queueCap: { min: 1, max: 100 },
   backoffMs: { min: 1_000, max: 300_000, unit: "ms" },
@@ -210,11 +210,11 @@ const optionsFlowBounds: Partial<
   radarBatchSize: { min: 1, max: 250 },
   radarDeepCandidateCount: { min: 0, max: 24 },
   radarFallbackDeepCandidateCount: { min: 0, max: 24 },
-  radarDeepLineBudget: { min: 1, max: 150 },
+  radarDeepLineBudget: { min: 1, max: 500 },
   scannerBatchSize: { min: 1, max: 100 },
-  scannerConcurrency: { min: 1, max: 2 },
+  scannerConcurrency: { min: 1, max: 8 },
   scannerLimit: { min: 1, max: 500 },
-  scannerLineBudget: { min: 1, max: 150 },
+  scannerLineBudget: { min: 1, max: 500 },
   expirationScanCount: { min: 0, max: 20 },
 };
 

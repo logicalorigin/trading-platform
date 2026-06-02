@@ -70,5 +70,9 @@ export const pool = new Pool({
 attachPostgresPoolErrorHandler(pool);
 export const db = drizzle(pool, { schema });
 
+export {
+  attachPostgresClientErrorHandler,
+  attachPostgresPoolErrorHandler,
+} from "./pool-error-handler";
 export * from "./runtime";
 export * from "./schema";

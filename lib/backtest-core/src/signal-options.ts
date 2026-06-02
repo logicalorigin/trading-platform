@@ -32,6 +32,21 @@ export type SignalOptionsWireGreekTrailPolicy = {
   spreadWideningMultiplier: number;
 };
 
+export type SignalOptionsGreekPositionManagementPolicy = {
+  enabled: boolean;
+};
+
+export type SignalOptionsGreekSelectorMode = "off" | "shadow" | "live" | "all";
+
+export type SignalOptionsGreekSelectorPolicy = {
+  enabled: boolean;
+  mode: SignalOptionsGreekSelectorMode;
+  fallbackToLegacy: boolean;
+  maxCandidates: number;
+  minScore: number;
+  requireLiveGreeks: boolean;
+};
+
 export type SignalOptionsExecutionProfile = {
   version: "v1";
   mode: "shadow";
@@ -44,6 +59,7 @@ export type SignalOptionsExecutionProfile = {
     putStrikeSlots: SignalOptionsStrikeSlot[];
     callStrikeSlot: SignalOptionsStrikeSlot;
     putStrikeSlot: SignalOptionsStrikeSlot;
+    greekSelector: SignalOptionsGreekSelectorPolicy;
   };
   riskCaps: {
     maxPremiumPerEntry: number;
@@ -84,6 +100,7 @@ export type SignalOptionsExecutionProfile = {
     progressiveTrailEnabled: boolean;
     progressiveTrailSteps: SignalOptionsProgressiveTrailStep[];
     wireGreekTrail: SignalOptionsWireGreekTrailPolicy;
+    greekPositionManagement: SignalOptionsGreekPositionManagementPolicy;
     flipOnOppositeSignal: boolean;
     earlyExitBars: number;
     earlyExitLossPct: number;
@@ -158,6 +175,14 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       putStrikeSlots: [2],
       callStrikeSlot: 3,
       putStrikeSlot: 2,
+      greekSelector: {
+        enabled: false,
+        mode: "off",
+        fallbackToLegacy: true,
+        maxCandidates: 24,
+        minScore: 0,
+        requireLiveGreeks: true,
+      },
     },
     riskCaps: {
       maxPremiumPerEntry: 500,
@@ -221,6 +246,9 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
         strongGammaMin: 0.05,
         spreadWideningMultiplier: 1.5,
       },
+      greekPositionManagement: {
+        enabled: false,
+      },
       flipOnOppositeSignal: true,
       earlyExitBars: 0,
       earlyExitLossPct: 0,
@@ -273,6 +301,16 @@ export const aggressiveSignalOptionsProgressiveTrailSteps = [
 ] as const;
 
 export const tunedSignalOptionsExecutionProfilePatch = {
+  optionSelection: {
+    greekSelector: {
+      enabled: true,
+      mode: "all",
+      fallbackToLegacy: true,
+      maxCandidates: 24,
+      minScore: 0,
+      requireLiveGreeks: true,
+    },
+  },
   riskCaps: {
     maxOpenSymbols: 10,
     maxPremiumPerEntry: 1_500,
@@ -378,6 +416,59 @@ function chaseSteps(value: unknown, fallback: number[]) {
     .filter((step) => Number.isFinite(step))
     .map((step) => Math.min(1, Math.max(0, step)));
   return steps.length ? Array.from(new Set(steps)).sort((a, b) => a - b) : fallback;
+}
+
+const SIGNAL_OPTIONS_GREEK_SELECTOR_MODES: readonly SignalOptionsGreekSelectorMode[] =
+  ["off", "shadow", "live", "all"];
+
+function greekSelectorMode(
+  value: unknown,
+  fallback: SignalOptionsGreekSelectorMode,
+): SignalOptionsGreekSelectorMode {
+  const normalized = String(value || "").trim() as SignalOptionsGreekSelectorMode;
+  return SIGNAL_OPTIONS_GREEK_SELECTOR_MODES.includes(normalized)
+    ? normalized
+    : fallback;
+}
+
+function greekSelectorPolicy(
+  value: unknown,
+  root: Record<string, unknown>,
+  fallback: SignalOptionsGreekSelectorPolicy,
+): SignalOptionsGreekSelectorPolicy {
+  const source = asRecord(value);
+  const enabled = booleanValue(
+    source.enabled ?? root.greekSelectorEnabled,
+    fallback.enabled,
+  );
+  const mode = greekSelectorMode(
+    source.mode ?? root.greekSelectorMode,
+    fallback.mode,
+  );
+  return {
+    enabled,
+    mode: enabled ? mode : "off",
+    fallbackToLegacy: booleanValue(
+      source.fallbackToLegacy ?? root.greekSelectorFallbackToLegacy,
+      fallback.fallbackToLegacy,
+    ),
+    maxCandidates: finiteInteger(
+      source.maxCandidates ?? root.greekSelectorMaxCandidates,
+      fallback.maxCandidates,
+      1,
+      200,
+    ),
+    minScore: finiteNumber(
+      source.minScore ?? root.greekSelectorMinScore,
+      fallback.minScore,
+      0,
+      100,
+    ),
+    requireLiveGreeks: booleanValue(
+      source.requireLiveGreeks ?? root.greekSelectorRequireLiveGreeks,
+      fallback.requireLiveGreeks,
+    ),
+  };
 }
 
 function progressiveTrailSteps(
@@ -509,6 +600,23 @@ function wireGreekTrailPolicy(
   };
 }
 
+function greekPositionManagementPolicy(
+  value: unknown,
+  exitPolicy: Record<string, unknown>,
+  root: Record<string, unknown>,
+  fallback: SignalOptionsGreekPositionManagementPolicy,
+): SignalOptionsGreekPositionManagementPolicy {
+  const source = asRecord(value);
+  return {
+    enabled: booleanValue(
+      source.enabled ??
+        exitPolicy.greekPositionManagementEnabled ??
+        root.greekPositionManagementEnabled,
+      fallback.enabled,
+    ),
+  };
+}
+
 function symbolList(value: unknown, fallback: string[]) {
   if (!Array.isArray(value)) {
     return fallback;
@@ -592,6 +700,11 @@ export function resolveSignalOptionsExecutionProfile(
       putStrikeSlots,
       callStrikeSlot: callStrikeSlots[0] ?? defaults.optionSelection.callStrikeSlot,
       putStrikeSlot: putStrikeSlots[0] ?? defaults.optionSelection.putStrikeSlot,
+      greekSelector: greekSelectorPolicy(
+        optionSelection.greekSelector ?? root.greekSelector,
+        root,
+        defaults.optionSelection.greekSelector,
+      ),
     },
     riskCaps: {
       maxPremiumPerEntry: finiteNumber(
@@ -629,7 +742,7 @@ export function resolveSignalOptionsExecutionProfile(
           mtfAlignment.requiredCount ?? root.mtfAlignmentRequiredCount,
           defaults.entryGate.mtfAlignment.requiredCount,
           1,
-          3,
+          5,
         ),
       },
       blockedPutSymbols: symbolList(
@@ -738,6 +851,12 @@ export function resolveSignalOptionsExecutionProfile(
         exitPolicy.wireGreekTrail ?? root.wireGreekTrail,
         root,
         defaults.exitPolicy.wireGreekTrail,
+      ),
+      greekPositionManagement: greekPositionManagementPolicy(
+        exitPolicy.greekPositionManagement ?? root.greekPositionManagement,
+        exitPolicy,
+        root,
+        defaults.exitPolicy.greekPositionManagement,
       ),
       flipOnOppositeSignal: booleanValue(
         exitPolicy.flipOnOppositeSignal ?? root.flipOnOppositeSignal,

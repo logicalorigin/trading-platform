@@ -48,6 +48,8 @@ test("bridge runtime defaults reflect the line booster live quote allowance", ()
 test("market subscription lane has enough budget for watchlist prewarm batches", () => {
   const snapshot = getBridgeSchedulerConfigSnapshot()["market-subscriptions"];
 
+  assert.equal(snapshot.concurrency, 2);
+  assert.equal(snapshot.queueCap, 8);
   assert.equal(snapshot.timeoutMs, 30_000);
   assert.equal(snapshot.defaults.timeoutMs, 30_000);
 });
@@ -60,7 +62,11 @@ test("account and historical bridge lanes allow limited parallel reads", () => {
   assert.equal(snapshot.historical.concurrency, 2);
   assert.equal(snapshot.historical.defaults.concurrency, 2);
   assert.equal(snapshot.historical.backoffMs, 30_000);
+  assert.equal(snapshot["options-meta"].concurrency, 4);
+  assert.equal(snapshot["options-meta"].queueCap, 24);
   assert.equal(snapshot["options-meta"].backoffMs, 45_000);
+  assert.equal(snapshot["option-quotes"].concurrency, 8);
+  assert.equal(snapshot["option-quotes"].queueCap, 32);
   assert.equal(snapshot["option-quotes"].backoffMs, 30_000);
 });
 

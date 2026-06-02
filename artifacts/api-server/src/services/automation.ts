@@ -236,6 +236,7 @@ export async function createAlgoDeployment(input: CreateAlgoDeploymentInput) {
   const providerAccountId = normalizeAlgoDeploymentProviderAccountId({
     providerAccountId: input.providerAccountId,
     config,
+    mode: input.mode,
   });
 
   const [deployment] = await db
@@ -291,6 +292,7 @@ export async function setAlgoDeploymentEnabled(input: {
     ? normalizeAlgoDeploymentProviderAccountId({
         providerAccountId: existing.providerAccountId,
         config: existing.config,
+        mode: existing.mode,
       })
     : existing.providerAccountId;
 

@@ -23,6 +23,16 @@ test("algo strategy settings API patches deployment and signal monitor settings"
   assert.match(routeSource, /\/streams\/algo\/cockpit/);
   assert.match(routeSource, /fetchAlgoCockpitCriticalPayload/);
   assert.match(routeSource, /subscribeAlgoCockpitSnapshots/);
+  assert.match(routeSource, /SIGNAL_OPTIONS_STATE_ROUTE_TIMEOUT_MS = 5_000/);
+  assert.match(routeSource, /SIGNAL_OPTIONS_COCKPIT_SUMMARY_ROUTE_TIMEOUT_MS = 5_000/);
+  assert.match(routeSource, /SIGNAL_OPTIONS_COCKPIT_FULL_ROUTE_TIMEOUT_MS = 9_000/);
+  assert.match(
+    routeSource,
+    /view === "full"[\s\S]*\? SIGNAL_OPTIONS_COCKPIT_FULL_ROUTE_TIMEOUT_MS[\s\S]*: SIGNAL_OPTIONS_COCKPIT_SUMMARY_ROUTE_TIMEOUT_MS/,
+  );
+  assert.match(routeSource, /withSignalOptionsRouteTimeout/);
+  assert.match(routeSource, /signal_options_state_route_timeout/);
+  assert.match(routeSource, /signal_options_cockpit_route_timeout/);
   assert.match(routeSource, /req\.query\.view === "full" \? "full" : "summary"/);
   assert.match(routeSource, /req\.query\.includePayload === "true"/);
   assert.match(routeSource, /includePayload,/);

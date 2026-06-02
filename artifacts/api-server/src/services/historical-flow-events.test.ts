@@ -7,7 +7,7 @@ import {
   dedupeHistoricalFlowEventsForStore,
   resolveHistoricalFlowSamplePlan,
 } from "./historical-flow-events";
-import type { FlowEvent } from "../providers/polygon/market-data";
+import type { FlowEvent } from "../providers/massive/market-data";
 
 const source = readFileSync(
   fileURLToPath(new URL("./historical-flow-events.ts", import.meta.url)),
@@ -77,7 +77,7 @@ test("historical flow nonblocking direct fallback is explicitly bounded", () => 
 const makeFlowEvent = (overrides: Partial<FlowEvent> = {}): FlowEvent => ({
   id: "event-id",
   underlying: "SPY",
-  provider: "polygon",
+  provider: "massive",
   basis: "trade",
   optionTicker: "O:SPY260515C00500000",
   providerContractId: null,
@@ -141,7 +141,7 @@ test("historical flow store batches dedupe duplicate provider keys before compac
 test("historical flow compaction drops low-value events", () => {
   const compacted = compactHistoricalFlowEventsForStore({
     underlying: "SPY",
-    provider: "polygon",
+    provider: "massive",
     events: [
       makeFlowEvent({ id: "small", premium: 49_999, isUnusual: false }),
       makeFlowEvent({ id: "small-unusual", premium: 1_000, isUnusual: true }),
@@ -158,7 +158,7 @@ test("historical flow compaction drops low-value events", () => {
 test("historical flow compaction caps ordinary rows per minute bucket", () => {
   const compacted = compactHistoricalFlowEventsForStore({
     underlying: "SPY",
-    provider: "polygon",
+    provider: "massive",
     events: [60_000, 80_000, 70_000, 100_000, 90_000].map((premium, index) =>
       makeFlowEvent({
         id: `ordinary-${index}`,
@@ -178,7 +178,7 @@ test("historical flow compaction caps ordinary rows per minute bucket", () => {
 test("historical flow compaction preserves high-premium and unusual events above the storage floor", () => {
   const compacted = compactHistoricalFlowEventsForStore({
     underlying: "SPY",
-    provider: "polygon",
+    provider: "massive",
     events: [60_000, 70_000, 80_000, 90_000, 250_000, 55_000].map(
       (premium, index) =>
         makeFlowEvent({

@@ -28,9 +28,12 @@ import {
 import { subscribeMassiveStockQuoteSnapshots } from "./massive-stock-quote-stream";
 import {
   fetchBridgeOptionQuoteSnapshots,
-  subscribeBridgeOptionQuoteSnapshots,
   type OptionQuoteSnapshotPayload,
 } from "./bridge-option-quote-stream";
+import {
+  readIbkrLiveDemandState,
+  subscribeIbkrLiveDemand,
+} from "./ibkr-live-demand-coordinator";
 import type {
   MarketDataFallbackProvider,
   MarketDataIntent,
@@ -48,6 +51,7 @@ const ORDER_SNAPSHOT_STALE_MS = 120_000;
 const STREAM_RECONNECT_MIN_MS = 1_000;
 const STREAM_RECONNECT_MAX_MS = 30_000;
 const ACCOUNT_MONITOR_LEASE_TTL_MS = 15_000;
+let nextOptionQuoteDemandStreamId = 1;
 
 type Unsubscribe = () => void;
 type OrderSnapshotPayload = {
@@ -483,6 +487,47 @@ export async function fetchOptionQuoteSnapshotPayload(input: {
   return fetchBridgeOptionQuoteSnapshots(input);
 }
 
+export function readOptionQuoteDemandSnapshotPayload(input: {
+  underlying?: string | null;
+  providerContractIds: string[];
+  owner?: string | null;
+  requiresGreeks?: boolean;
+}): OptionQuoteSnapshotPayload {
+  const requestedAt = Date.now();
+  const state = readIbkrLiveDemandState(input);
+  const quotes = state.states.flatMap((item) =>
+    item.quote ? [{ ...item.quote, source: "ibkr" as const }] : [],
+  );
+  const missingStates = state.states.filter((item) => !item.quote);
+  const rejectedStates = state.states.filter((item) => item.status === "rejected");
+  const acceptedProviderContractIds = state.states
+    .filter((item) => item.status !== "rejected")
+    .map((item) => item.providerContractId);
+
+  return {
+    underlying: state.underlying,
+    quotes,
+    transport: quotes[0]?.transport ?? null,
+    delayed: quotes.some((quote) => quote.delayed),
+    fallbackUsed: false,
+    debug: {
+      totalMs: Math.max(0, Date.now() - requestedAt),
+      upstreamMs: null,
+      requestedCount: state.states.length,
+      acceptedCount: acceptedProviderContractIds.length,
+      rejectedCount: rejectedStates.length,
+      returnedCount: quotes.length,
+      bridgeChunks: 0,
+      providerMode: null,
+      liveMarketDataAvailable: null,
+      errorMessage: null,
+      blockedReason: missingStates[0]?.reason ?? null,
+      acceptedProviderContractIds,
+      missingProviderContractIds: missingStates.map((item) => item.providerContractId),
+    },
+  };
+}
+
 export async function fetchHistoricalBarSnapshotPayload(input: {
   symbol: string;
   timeframe: HistoryBarTimeframe;
@@ -722,7 +767,13 @@ export function subscribeOptionQuoteSnapshots(
   },
   onSnapshot: (payload: OptionQuoteSnapshotPayload) => void,
 ): Unsubscribe {
-  return subscribeBridgeOptionQuoteSnapshots(input, onSnapshot);
+  const owner =
+    input.owner?.trim() ||
+    `bridge-option-live-demand:${nextOptionQuoteDemandStreamId++}`;
+  return subscribeIbkrLiveDemand(
+    { ...input, owner, intent: input.intent ?? "visible-live" },
+    onSnapshot,
+  );
 }
 
 export function subscribeHistoricalBarSnapshots(

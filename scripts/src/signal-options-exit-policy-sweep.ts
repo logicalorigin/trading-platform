@@ -2,7 +2,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
-import { tunedSignalOptionsStrategySettings } from "@workspace/backtest-core";
+import {
+  aggressiveSignalOptionsProgressiveTrailSteps,
+  signalOptionsDefaultWireTrailRungs,
+  tunedSignalOptionsStrategySettings,
+} from "@workspace/backtest-core";
 import { pool } from "@workspace/db";
 import { runSignalOptionsShadowBackfill } from "../../artifacts/api-server/src/services/signal-options-automation";
 import { SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY } from "../../artifacts/api-server/src/services/signal-options-worker";
@@ -86,6 +90,23 @@ const WINNING_COMBO_EXIT_POLICY = {
 } as const;
 const EARLY_INVALIDATION_BAR_GRID = [2, 3, 4, 5, 6, 8, 10, 12] as const;
 const EARLY_INVALIDATION_LOSS_GRID = [12.5, 15, 17.5, 20, 22.5, 25, 30] as const;
+const WIRE_GREEK_TRAIL_POLICY_PATCH = {
+  enabled: true,
+  requireFreshGreeks: true,
+  greekMaxAgeMs: 15_000,
+  deltaSizingEnabled: false,
+  runnerPollIntervalSeconds: 20,
+  rungByProfit: [...signalOptionsDefaultWireTrailRungs],
+  deltaLoosenThreshold: 0.05,
+  deltaTightenThreshold: -0.1,
+  thetaBurdenTightenPct: 8,
+  strongGammaMin: 0.05,
+  spreadWideningMultiplier: 1.5,
+} as const;
+const WIRE_GREEK_TRAIL_DISABLED_POLICY_PATCH = {
+  ...WIRE_GREEK_TRAIL_POLICY_PATCH,
+  enabled: false,
+} as const;
 
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -462,6 +483,76 @@ export function buildProgressiveTrailVariants(): ExitPolicyVariant[] {
   ];
 }
 
+export function buildWireTrailVariants(): ExitPolicyVariant[] {
+  return [
+    {
+      id: "wire-trail-fixed-floor-early8-loss25",
+      description:
+        "Winning combo with wire/Greek structure exits, fixed premium trail, and looser early invalidation.",
+      profilePatch: withWinningComboPatch({
+        earlyExitBars: 8,
+        earlyExitLossPct: 25,
+        progressiveTrailEnabled: false,
+        progressiveTrailSteps: [],
+        wireGreekTrail: WIRE_GREEK_TRAIL_POLICY_PATCH,
+      }),
+    },
+    {
+      id: "wire-trail-aggressive-ladder",
+      description:
+        "Aggressive progressive trail plus wire/Greek structure exits with conservative Greek handling.",
+      profilePatch: withWinningComboPatch({
+        earlyExitBars: 6,
+        earlyExitLossPct: 20,
+        progressiveTrailEnabled: true,
+        progressiveTrailSteps: aggressiveSignalOptionsProgressiveTrailSteps,
+        wireGreekTrail: WIRE_GREEK_TRAIL_POLICY_PATCH,
+      }),
+    },
+    {
+      id: "wire-trail-aggressive-ladder-early8-loss25",
+      description:
+        "Recovered top aggressive ladder with wire/Greek structure exits and looser early invalidation.",
+      profilePatch: withWinningComboPatch({
+        earlyExitBars: 8,
+        earlyExitLossPct: 25,
+        progressiveTrailEnabled: true,
+        progressiveTrailSteps: aggressiveSignalOptionsProgressiveTrailSteps,
+        wireGreekTrail: WIRE_GREEK_TRAIL_POLICY_PATCH,
+      }),
+    },
+  ];
+}
+
+export function buildControlVariants(): ExitPolicyVariant[] {
+  return [
+    {
+      id: "control-fixed-floor-early8-loss25",
+      description:
+        "Winning combo with fixed premium trail, looser early invalidation, and wire trail explicitly disabled.",
+      profilePatch: withWinningComboPatch({
+        earlyExitBars: 8,
+        earlyExitLossPct: 25,
+        progressiveTrailEnabled: false,
+        progressiveTrailSteps: [],
+        wireGreekTrail: WIRE_GREEK_TRAIL_DISABLED_POLICY_PATCH,
+      }),
+    },
+    {
+      id: "control-aggressive-ladder-early8-loss25",
+      description:
+        "Recovered top aggressive ladder with looser early invalidation and wire trail explicitly disabled.",
+      profilePatch: withWinningComboPatch({
+        earlyExitBars: 8,
+        earlyExitLossPct: 25,
+        progressiveTrailEnabled: true,
+        progressiveTrailSteps: aggressiveSignalOptionsProgressiveTrailSteps,
+        wireGreekTrail: WIRE_GREEK_TRAIL_DISABLED_POLICY_PATCH,
+      }),
+    },
+  ];
+}
+
 export function buildPyrusSignalsSettingsPatch(config: Pick<SweepConfig, "timeHorizon">) {
   return {
     ...tunedSignalOptionsStrategySettings.pyrusSignalsSettings,
@@ -474,6 +565,8 @@ function buildVariantUniverse() {
     ...buildVariants(),
     ...buildEarlyInvalidationGridVariants(),
     ...buildProgressiveTrailVariants(),
+    ...buildWireTrailVariants(),
+    ...buildControlVariants(),
   ];
 }
 
@@ -511,6 +604,12 @@ function selectVariants(variants: ExitPolicyVariant[]): ExitPolicyVariant[] {
     }
     if (variant.id.startsWith("trail-ladder-")) {
       return selectedFamilies.has("trail-grid");
+    }
+    if (variant.id.startsWith("wire-trail-")) {
+      return selectedFamilies.has("wire-trail");
+    }
+    if (variant.id.startsWith("control-")) {
+      return selectedFamilies.has("control");
     }
     return selectedFamilies.has("core");
   });
@@ -854,9 +953,85 @@ function earlyInvalidationOutcomeStats(summary: JsonRecord | null) {
   };
 }
 
+function countByKey(record: Record<string, number>, value: unknown) {
+  if (typeof value !== "string" || !value.trim()) {
+    return;
+  }
+  record[value] = (record[value] ?? 0) + 1;
+}
+
+export function wireTrailOutcomeStats(summary: JsonRecord | null) {
+  const closedTrades = asArray(asRecord(summary)["closedTrades"]);
+  const baselineRungs: Record<string, number> = {};
+  const selectedRungs: Record<string, number> = {};
+  const greekFallbackReasons: Record<string, number> = {};
+  const greekAdjustmentReasons: Record<string, number> = {};
+  let snapshots = 0;
+  let enabled = 0;
+  let active = 0;
+  let structureBreaks = 0;
+  let structureBreakExits = 0;
+  let regimeFlipAgainstPosition = 0;
+  let greekFresh = 0;
+  let greekUnavailable = 0;
+  let deltaSizedGiveback = 0;
+
+  for (const trade of closedTrades) {
+    const record = asRecord(trade);
+    if (record["reason"] === "wire_structure_break") {
+      structureBreakExits += 1;
+    }
+    const wireTrail = asRecord(record["wireTrail"]);
+    if (!Object.keys(wireTrail).length) {
+      continue;
+    }
+
+    snapshots += 1;
+    if (wireTrail["enabled"] === true) enabled += 1;
+    if (wireTrail["active"] === true) active += 1;
+    if (wireTrail["structureBreak"] === true) structureBreaks += 1;
+    if (wireTrail["regimeFlipAgainstPosition"] === true) {
+      regimeFlipAgainstPosition += 1;
+    }
+    if (wireTrail["greekFresh"] === true) {
+      greekFresh += 1;
+    } else if (wireTrail["greekFresh"] === false) {
+      greekUnavailable += 1;
+    }
+    if (finiteNumber(wireTrail["deltaSizedGiveback"]) != null) {
+      deltaSizedGiveback += 1;
+    }
+    countByKey(baselineRungs, wireTrail["baselineRung"]);
+    countByKey(selectedRungs, wireTrail["selectedRung"]);
+    countByKey(greekFallbackReasons, wireTrail["greekFallbackReason"]);
+
+    const greekAdjustment = asRecord(wireTrail["greekAdjustment"]);
+    for (const reason of asArray(greekAdjustment["reasons"])) {
+      countByKey(greekAdjustmentReasons, reason);
+    }
+  }
+
+  return {
+    wireTrailSnapshots: snapshots,
+    wireTrailEnabled: enabled,
+    wireTrailActive: active,
+    wireStructureBreaks: structureBreaks,
+    wireStructureBreakExits: structureBreakExits,
+    wireRegimeFlipAgainstPosition: regimeFlipAgainstPosition,
+    wireGreekFresh: greekFresh,
+    wireGreekUnavailable: greekUnavailable,
+    wireDeltaSizedGiveback: deltaSizedGiveback,
+    wireBaselineRungs: baselineRungs,
+    wireSelectedRungs: selectedRungs,
+    wireGreekFallbackReasons: greekFallbackReasons,
+    wireGreekAdjustmentReasons: greekAdjustmentReasons,
+  };
+}
+
 function reportRows(results: readonly SweepResult[]) {
   return results.map((result) => {
     const earlyStats = earlyInvalidationOutcomeStats(result.summary);
+    const wireStats = wireTrailOutcomeStats(result.summary);
     return {
       variantId: result.variant.id,
       status: result.status,
@@ -878,6 +1053,23 @@ function reportRows(results: readonly SweepResult[]) {
       earlyFinalAboveExit: earlyStats.earlyFinalAboveExit,
       earlyFinalAboveEntry: earlyStats.earlyFinalAboveEntry,
       earlySparseOutcomeBars: earlyStats.earlySparseOutcomeBars,
+      wireTrailSnapshots: wireStats.wireTrailSnapshots,
+      wireTrailEnabled: wireStats.wireTrailEnabled,
+      wireTrailActive: wireStats.wireTrailActive,
+      wireStructureBreaks: wireStats.wireStructureBreaks,
+      wireStructureBreakExits: wireStats.wireStructureBreakExits,
+      wireRegimeFlipAgainstPosition: wireStats.wireRegimeFlipAgainstPosition,
+      wireGreekFresh: wireStats.wireGreekFresh,
+      wireGreekUnavailable: wireStats.wireGreekUnavailable,
+      wireDeltaSizedGiveback: wireStats.wireDeltaSizedGiveback,
+      wireBaselineRungs: JSON.stringify(wireStats.wireBaselineRungs),
+      wireSelectedRungs: JSON.stringify(wireStats.wireSelectedRungs),
+      wireGreekFallbackReasons: JSON.stringify(
+        wireStats.wireGreekFallbackReasons,
+      ),
+      wireGreekAdjustmentReasons: JSON.stringify(
+        wireStats.wireGreekAdjustmentReasons,
+      ),
       symbolsEvaluated: finiteNumber(result.summary?.["symbolsEvaluated"]) ?? "",
       signalsEvaluated: finiteNumber(result.summary?.["signalsEvaluated"]) ?? "",
       entriesOpened: finiteNumber(result.summary?.["entriesOpened"]) ?? "",
@@ -945,6 +1137,24 @@ async function writeReports(input: {
         earlyStats.earlyRecoveredEntry,
         earlyStats.earlyFinalAboveExit,
         `\`${JSON.stringify(result.summary?.["exitReasons"] ?? {})}\``,
+      ].join(" | ");
+    }),
+    "",
+    "| Variant | Wire Snapshots | Wire Active | Wire Breaks | Wire Exit | Greek Fresh | Greek Unavailable | Selected Rungs | Greek Fallbacks | Greek Adjustments |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |",
+    ...input.ranked.map((result) => {
+      const wireStats = wireTrailOutcomeStats(result.summary);
+      return [
+        result.variant.id,
+        wireStats.wireTrailSnapshots,
+        wireStats.wireTrailActive,
+        wireStats.wireStructureBreaks,
+        wireStats.wireStructureBreakExits,
+        wireStats.wireGreekFresh,
+        wireStats.wireGreekUnavailable,
+        `\`${JSON.stringify(wireStats.wireSelectedRungs)}\``,
+        `\`${JSON.stringify(wireStats.wireGreekFallbackReasons)}\``,
+        `\`${JSON.stringify(wireStats.wireGreekAdjustmentReasons)}\``,
       ].join(" | ");
     }),
     input.verification

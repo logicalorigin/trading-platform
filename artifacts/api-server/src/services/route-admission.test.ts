@@ -83,6 +83,20 @@ test("classifies broker-critical routes separately from analytics routes", () =>
   );
   assert.equal(
     classifyApiRoute({
+      method: "GET",
+      path: "/api/signal-monitor/state?environment=paper",
+    }),
+    "active-screen",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "POST",
+      path: "/api/signal-monitor/matrix",
+    }),
+    "active-screen",
+  );
+  assert.equal(
+    classifyApiRoute({
       method: "POST",
       path: "/api/algo/deployments/dep-1/signal-options/shadow-scan",
     }),
@@ -90,10 +104,10 @@ test("classifies broker-critical routes separately from analytics routes", () =>
   );
 });
 
-test("route admission degrades only deferred work under API pressure", () => {
+test("route admission allows all route classes until critical API pressure", () => {
   const execution = resolveApiRouteAdmission({
     routeClass: "critical-execution",
-    pressureLevel: "critical",
+    pressureLevel: "high",
     now: new Date("2026-05-28T19:00:00.000Z"),
   });
   const analytics = resolveApiRouteAdmission({
@@ -105,10 +119,10 @@ test("route admission degrades only deferred work under API pressure", () => {
   assert.equal(execution.cacheOnly, false);
   assert.equal(execution.degraded, false);
   assert.equal(execution.action, "allow");
-  assert.equal(analytics.cacheOnly, true);
-  assert.equal(analytics.degraded, true);
-  assert.equal(analytics.action, "cache-only");
-  assert.equal(analytics.reason, "api-resource-pressure-high");
+  assert.equal(analytics.cacheOnly, false);
+  assert.equal(analytics.degraded, false);
+  assert.equal(analytics.action, "allow");
+  assert.equal(analytics.reason, null);
 });
 
 test("automation-only scanner pressure does not shed manual shadow scans", () => {
@@ -150,6 +164,34 @@ test("route admission sheds safe browser QA fanout", () => {
   assert.equal(stream.qaMode, "safe");
   assert.equal(execution.action, "allow");
   assert.equal(execution.degraded, false);
+});
+
+test("route admission lets active Signals hydration run in safe browser QA", () => {
+  const signalState = resolveApiRouteAdmission({
+    routeClass: classifyApiRoute({
+      method: "GET",
+      path: "/api/signal-monitor/state?environment=paper",
+    }),
+    pressureLevel: "normal",
+    qaMode: "safe",
+    now: new Date("2026-05-28T19:00:00.000Z"),
+  });
+  const signalMatrix = resolveApiRouteAdmission({
+    routeClass: classifyApiRoute({
+      method: "POST",
+      path: "/api/signal-monitor/matrix",
+    }),
+    pressureLevel: "normal",
+    qaMode: "safe",
+    now: new Date("2026-05-28T19:00:00.000Z"),
+  });
+
+  assert.equal(signalState.action, "allow");
+  assert.equal(signalState.degraded, false);
+  assert.equal(signalState.qaMode, "safe");
+  assert.equal(signalMatrix.action, "allow");
+  assert.equal(signalMatrix.degraded, false);
+  assert.equal(signalMatrix.qaMode, "safe");
 });
 
 test("route admission sheds non-execution live data at critical pressure", () => {

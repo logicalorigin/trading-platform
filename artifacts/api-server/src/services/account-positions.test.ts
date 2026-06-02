@@ -5,7 +5,7 @@ import test from "node:test";
 process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
 process.env["DIAGNOSTICS_SUPPRESS_DB_WARNINGS"] = "1";
 
-test("account position quote hydration opts out of Polygon fallback", () => {
+test("account position quote hydration opts out of Massive fallback", () => {
   const source = readFileSync(new URL("./account.ts", import.meta.url), "utf8");
   const equityBody = source.match(
     /async function fetchEquityQuoteSnapshotsForPositions\([\s\S]*?\nasync function fetchOptionQuoteSnapshotsForPositions/,
@@ -20,12 +20,37 @@ test("account position quote hydration opts out of Polygon fallback", () => {
   assert.ok(equityBody);
   assert.ok(optionBody);
   assert.ok(underlyingBody);
-  assert.match(equityBody, /allowPolygonFallback: false/);
-  assert.match(optionBody, /intent: "visible-live"/);
-  assert.match(underlyingBody, /allowPolygonFallback: false/);
+  assert.match(equityBody, /allowMassiveFallback: false/);
+  assert.match(optionBody, /declareIbkrLiveDemand/);
+  assert.match(optionBody, /readIbkrLiveDemandState/);
+  assert.match(optionBody, /intent: "account-monitor-live"/);
+  assert.doesNotMatch(optionBody, /fetchOptionQuoteSnapshotPayload/);
+  assert.match(underlyingBody, /allowMassiveFallback: false/);
 });
 
-test("live quote and flow defaults require explicit Polygon opt-in", () => {
+test("account page live reads coalesce repeated critical fan-out work", () => {
+  const source = readFileSync(new URL("./account.ts", import.meta.url), "utf8");
+
+  assert.match(source, /ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS = 2_000/);
+  assert.match(source, /liveAccountUniverseReadCache/);
+  assert.match(source, /accountPositionsReadCache/);
+  assert.match(source, /positionMarketHydrationReadCache/);
+  assert.match(source, /readShortLivedAccountCache/);
+  assert.match(
+    source,
+    /function getLiveAccountUniverse[\s\S]*readLiveAccountUniverseUncached/,
+  );
+  assert.match(
+    source,
+    /function listPositionsForUniverse[\s\S]*readPositionsForUniverseUncached/,
+  );
+  assert.match(
+    source,
+    /function hydratePositionMarkets[\s\S]*positionMarketHydrationReadCache[\s\S]*hydratePositionMarketsUncached/,
+  );
+});
+
+test("live quote and flow defaults require explicit Massive opt-in", () => {
   const source = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
   const quoteSnapshotsBody = source.match(
     /export async function getQuoteSnapshots\([\s\S]*?\nexport async function getNews/,
@@ -41,15 +66,16 @@ test("live quote and flow defaults require explicit Polygon opt-in", () => {
   )?.[0];
 
   assert.ok(quoteSnapshotsBody);
-  assert.match(quoteSnapshotsBody, /input\.allowPolygonFallback === true/);
+  assert.match(quoteSnapshotsBody, /input\.allowMassiveFallback === true/);
   assert.ok(prewarmBody);
-  assert.doesNotMatch(prewarmBody, /fallbackProvider: "polygon"/);
+  assert.doesNotMatch(prewarmBody, /fallbackProvider: "massive"/);
   assert.match(prewarmBody, /fallbackProvider: "cache"/);
   assert.ok(flowUniverseBody);
-  assert.match(flowUniverseBody, /fetchBridgeQuoteSnapshots/);
-  assert.doesNotMatch(flowUniverseBody, /getPolygonClient\(\)\.getQuoteSnapshots/);
+  assert.match(flowUniverseBody, /getQuoteSnapshots\(\{/);
+  assert.doesNotMatch(flowUniverseBody, /allowMassiveFallback:\s*true/);
+  assert.doesNotMatch(flowUniverseBody, /getMassiveClient\(\)\.getQuoteSnapshots/);
   assert.ok(liveFlowBody);
-  assert.match(liveFlowBody, /input\.allowPolygonFallback === true/);
+  assert.match(liveFlowBody, /input\.allowMassiveFallback === true/);
 });
 
 test("account position internals remove closed broker rows", async () => {

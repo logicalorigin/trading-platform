@@ -3,7 +3,7 @@ import {
   nasdaqListedRecordToUniverseTicker,
   parseNasdaqListedDirectory,
 } from "../../artifacts/api-server/src/services/nasdaq-symbol-directory";
-import type { UniverseTicker } from "../../artifacts/api-server/src/providers/polygon/market-data";
+import type { UniverseTicker } from "../../artifacts/api-server/src/providers/massive/market-data";
 
 type CliOptions = {
   url?: string;

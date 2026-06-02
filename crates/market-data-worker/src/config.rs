@@ -105,10 +105,10 @@ fn read_market_data_provider_config() -> Option<MarketDataProviderConfig> {
             api_key,
         });
     }
-    first_env(&["POLYGON_API_KEY", "POLYGON_KEY"]).map(|api_key| MarketDataProviderConfig {
-        provider: "polygon".into(),
-        base_url: std::env::var("POLYGON_BASE_URL")
-            .unwrap_or_else(|_| "https://api.polygon.io".into())
+    first_env(&["MASSIVE_API_KEY", "MASSIVE_MARKET_DATA_API_KEY"]).map(|api_key| MarketDataProviderConfig {
+        provider: "massive".into(),
+        base_url: std::env::var("MASSIVE_API_BASE_URL")
+            .unwrap_or_else(|_| "https://api.massive.com".into())
             .trim_end_matches('/')
             .to_string(),
         api_key,

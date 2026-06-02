@@ -39,7 +39,7 @@ test("resource pressure escalates from API heap pressure", () => {
   assert.equal(updateApiResourcePressure({ apiHeapUsedPercent: 91 }).level, "critical");
 });
 
-test("high resource pressure keeps deployment scans running", () => {
+test("high resource pressure keeps signal-options work running", () => {
   updateApiResourcePressure({
     rssMb: resolveApiRssPressureThresholds().high + 1,
   });
@@ -49,7 +49,7 @@ test("high resource pressure keeps deployment scans running", () => {
   assert.equal(snapshot.level, "high");
   assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
   assert.equal(snapshot.caps.signalOptions.positionMarksAllowed, true);
-  assert.equal(snapshot.caps.signalOptions.watchlistPrewarmAllowed, false);
+  assert.equal(snapshot.caps.signalOptions.watchlistPrewarmAllowed, true);
   assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, false);
   assert.equal(snapshot.caps.signalOptions.maintenanceOnly, false);
   assert.equal("optionsFlow" in snapshot.caps, false);
@@ -91,17 +91,29 @@ test("automation long scans are scanner pressure, not global API pressure", () =
   assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
 });
 
-test("watch pressure records latency without pausing signal scans", () => {
+test("route latency pressure escalates without pausing signal scans", () => {
+  assert.equal(
+    updateApiResourcePressure({ dominantSlowRouteP95Ms: 1_200 }).level,
+    "watch",
+  );
+  __resetApiResourcePressureForTests();
+
   updateApiResourcePressure({ dominantSlowRouteP95Ms: 12_000 });
 
   const snapshot = getApiResourcePressureSnapshot();
 
-  assert.equal(snapshot.level, "watch");
+  assert.equal(snapshot.level, "high");
   assert.equal(snapshot.drivers[0]?.kind, "api-latency");
-  assert.equal(snapshot.drivers[0]?.level, "watch");
+  assert.equal(snapshot.drivers[0]?.level, "high");
   assert.equal("optionsFlow" in snapshot.caps, false);
   assert.equal(snapshot.caps.signalOptions.skipDeploymentScans, false);
   assert.equal(snapshot.caps.signalOptions.maintenanceOnly, false);
+
+  __resetApiResourcePressureForTests();
+  assert.equal(
+    updateApiResourcePressure({ dominantSlowRouteP95Ms: 70_000 }).level,
+    "critical",
+  );
 });
 
 test("critical RSS pressure records diagnostics without pausing signal scans", () => {

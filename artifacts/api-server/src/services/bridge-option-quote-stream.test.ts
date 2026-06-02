@@ -19,10 +19,12 @@ import {
   __resetBridgeGovernorForTests,
   isBridgeWorkBackedOff,
   runBridgeWork,
+  setBridgeGovernorOverrides,
 } from "./bridge-governor";
 import type { QuoteSnapshot } from "../providers/ibkr/client";
 import {
   __resetApiResourcePressureForTests,
+  resolveApiRssPressureThresholds,
   updateApiResourcePressure,
 } from "./resource-pressure";
 
@@ -43,6 +45,7 @@ const ENV_KEYS = [
 const originalEnv = Object.fromEntries(
   ENV_KEYS.map((key) => [key, process.env[key]]),
 );
+const REGULAR_SESSION_NOW = new Date("2026-04-28T14:30:00.000Z");
 
 function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>>): void {
   ENV_KEYS.forEach((key) => {
@@ -124,6 +127,10 @@ test.afterEach(() => {
   __resetMarketDataAdmissionForTests();
   __resetApiResourcePressureForTests();
   setEnv(originalEnv);
+});
+
+test.beforeEach(() => {
+  __setBridgeOptionQuoteStreamNowForTests(REGULAR_SESSION_NOW);
 });
 
 test("option quote stream shares one bridge stream for duplicate contract demand", async () => {
@@ -378,6 +385,49 @@ test("option quote snapshots do not admit leases or call bridge when runtime is 
   assert.equal(diagnostics.activeLineCount, 0);
 });
 
+test("flow scanner live option snapshots are blocked outside regular trading", async () => {
+  __setBridgeOptionQuoteStreamNowForTests(new Date("2026-11-27T18:30:00.000Z"));
+  let healthReads = 0;
+  let snapshotReads = 0;
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      healthReads += 1;
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots() {
+      snapshotReads += 1;
+      return [optionQuote("1001", 1.24)];
+    },
+    streamOptionQuoteSnapshots() {
+      throw new Error("stream should not open");
+    },
+  });
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["1001"],
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+  });
+
+  assert.equal(healthReads, 0);
+  assert.equal(snapshotReads, 0);
+  assert.equal(payload.quotes.length, 0);
+  assert.equal(payload.debug?.blockedReason, "market_session_quiet");
+  assert.equal(payload.debug?.errorCode, "ibkr_live_option_quote_blocked");
+  assert.match(payload.debug?.errorMessage ?? "", /regular trading is closed/i);
+  assert.equal(payload.debug?.acceptedCount, 0);
+  assert.equal(payload.debug?.rejectedCount, 1);
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.flowScannerLineCount, 0);
+  assert.equal(diagnostics.activeLineCount, 0);
+});
+
 test("option quote subscriptions do not admit leases or open streams while runtime is missing", async () => {
   let streamReads = 0;
   const payloads: Array<string | null | undefined> = [];
@@ -519,7 +569,7 @@ test("option quote snapshots expose custom admission results for background call
     providerContractIds: ["2002", "2001"],
     owner: "flow-scanner:SPY",
     intent: "flow-scanner-live",
-    fallbackProvider: "polygon",
+    fallbackProvider: "massive",
     requiresGreeks: false,
     ttlMs: 1_000,
   });
@@ -536,7 +586,267 @@ test("option quote snapshots expose custom admission results for background call
   assert.equal(diagnostics.activeLineCount, 0);
 });
 
+test("retained flow scanner snapshot leases open matching bridge streams", async () => {
+  const snapshotRequests: string[][] = [];
+  const streamRequests: string[][] = [];
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input) {
+      snapshotRequests.push(input.providerContractIds);
+      return input.providerContractIds.map((providerContractId, index) =>
+        optionQuote(providerContractId, index + 1),
+      );
+    },
+    streamOptionQuoteSnapshots(input) {
+      streamRequests.push(input.providerContractIds);
+      return () => {};
+    },
+  });
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["2202", "2201"],
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+    requiresGreeks: false,
+    ttlMs: 1_000,
+    releaseLeasesOnComplete: false,
+  });
+
+  await waitFor(
+    () => getBridgeOptionQuoteStreamDiagnostics().unionProviderContractIdCount === 2,
+  );
+  await waitFor(() => streamRequests.length === 1);
+  const streamDiagnostics = getBridgeOptionQuoteStreamDiagnostics();
+  const admissionDiagnostics = getMarketDataAdmissionDiagnostics();
+
+  assert.deepEqual(snapshotRequests, [["2201", "2202"]]);
+  assert.deepEqual(streamRequests, [["2201", "2202"]]);
+  assert.equal(payload.debug?.acceptedCount, 2);
+  assert.equal(streamDiagnostics.activeConsumerCount, 0);
+  assert.equal(streamDiagnostics.activeBridgeStreamCount, 1);
+  assert.deepEqual(streamDiagnostics.desiredProviderContractIds, ["2201", "2202"]);
+  assert.equal(admissionDiagnostics.flowScannerLineCount, 2);
+});
+
+test("retained flow scanner snapshot demand debounces stream reconfiguration after activation", async () => {
+  const streamRequests: string[][] = [];
+  let streamUnsubscribes = 0;
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input) {
+      return input.providerContractIds.map((providerContractId, index) =>
+        optionQuote(providerContractId, index + 1),
+      );
+    },
+    streamOptionQuoteSnapshots(input) {
+      streamRequests.push(input.providerContractIds);
+      return () => {
+        streamUnsubscribes += 1;
+      };
+    },
+  });
+
+  await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["2211"],
+    owner: "flow-scanner:SPY:first",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+    requiresGreeks: false,
+    ttlMs: 2_000,
+    releaseLeasesOnComplete: false,
+  });
+
+  await waitFor(() => streamRequests.length === 1);
+
+  await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["2212"],
+    owner: "flow-scanner:SPY:second",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+    requiresGreeks: false,
+    ttlMs: 2_000,
+    releaseLeasesOnComplete: false,
+  });
+
+  assert.deepEqual(streamRequests, [["2211"]]);
+  await waitFor(() => streamRequests.length === 2, 1_500);
+
+  assert.deepEqual(streamRequests, [["2211"], ["2211", "2212"]]);
+  assert.equal(streamUnsubscribes, 1);
+  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 2);
+});
+
+test("retained flow scanner snapshot leases open streams while hydration is in flight", async () => {
+  const snapshotRequests: string[][] = [];
+  const streamRequests: string[][] = [];
+  let resolveSnapshotRequest!: (quotes: QuoteSnapshot[]) => void;
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    getOptionQuoteSnapshots(input) {
+      snapshotRequests.push(input.providerContractIds);
+      return new Promise<QuoteSnapshot[]>((resolve) => {
+        resolveSnapshotRequest = resolve;
+      });
+    },
+    streamOptionQuoteSnapshots(input) {
+      streamRequests.push(input.providerContractIds);
+      return () => {};
+    },
+  });
+
+  const request = fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["2252", "2251"],
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+    requiresGreeks: false,
+    ttlMs: 1_000,
+    releaseLeasesOnComplete: false,
+  });
+
+  await waitFor(() => snapshotRequests.length === 1);
+  await waitFor(
+    () => getBridgeOptionQuoteStreamDiagnostics().unionProviderContractIdCount === 2,
+  );
+  await waitFor(() => streamRequests.length === 1);
+
+  assert.deepEqual(snapshotRequests, [["2251", "2252"]]);
+  assert.deepEqual(streamRequests, [["2251", "2252"]]);
+  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 2);
+
+  resolveSnapshotRequest([
+    optionQuote("2251", 1),
+    optionQuote("2252", 2),
+  ]);
+  const payload = await request;
+  assert.equal(payload.debug?.acceptedCount, 2);
+});
+
+test("retained flow scanner snapshot leases survive transient hydration errors", async () => {
+  const snapshotRequests: string[][] = [];
+  const streamRequests: string[][] = [];
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input) {
+      snapshotRequests.push(input.providerContractIds);
+      throw new HttpError(504, "IBKR bridge request to /options/quotes timed out.", {
+        code: "upstream_http_error",
+      });
+    },
+    streamOptionQuoteSnapshots(input) {
+      streamRequests.push(input.providerContractIds);
+      return () => {};
+    },
+  });
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["2261"],
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+    requiresGreeks: false,
+    ttlMs: 1_000,
+    releaseLeasesOnComplete: false,
+  });
+
+  await waitFor(
+    () => getBridgeOptionQuoteStreamDiagnostics().unionProviderContractIdCount === 1,
+  );
+  await waitFor(() => streamRequests.length === 1);
+  const streamDiagnostics = getBridgeOptionQuoteStreamDiagnostics();
+  const admissionDiagnostics = getMarketDataAdmissionDiagnostics();
+
+  assert.deepEqual(snapshotRequests, [["2261"]]);
+  assert.deepEqual(streamRequests, [["2261"]]);
+  assert.equal(payload.quotes.length, 0);
+  assert.match(payload.debug?.errorMessage || "", /timed out/i);
+  assert.equal(payload.debug?.acceptedCount, 1);
+  assert.equal(streamDiagnostics.activeBridgeStreamCount, 1);
+  assert.deepEqual(streamDiagnostics.desiredProviderContractIds, ["2261"]);
+  assert.equal(admissionDiagnostics.flowScannerLineCount, 1);
+  assert.equal(admissionDiagnostics.activeLineCount, 1);
+});
+
+test("retained flow scanner snapshot streams close when quote leases expire", async () => {
+  const streamRequests: string[][] = [];
+  let streamUnsubscribes = 0;
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input) {
+      return input.providerContractIds.map((providerContractId, index) =>
+        optionQuote(providerContractId, index + 1),
+      );
+    },
+    streamOptionQuoteSnapshots(input) {
+      streamRequests.push(input.providerContractIds);
+      return () => {
+        streamUnsubscribes += 1;
+      };
+    },
+  });
+
+  await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["2301"],
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+    requiresGreeks: false,
+    ttlMs: 20,
+    releaseLeasesOnComplete: false,
+  });
+
+  await waitFor(
+    () => getBridgeOptionQuoteStreamDiagnostics().activeBridgeStreamCount === 1,
+  );
+  await waitFor(
+    () => getBridgeOptionQuoteStreamDiagnostics().activeBridgeStreamCount === 0,
+  );
+
+  assert.deepEqual(streamRequests, [["2301"]]);
+  assert.equal(streamUnsubscribes, 1);
+  assert.equal(getBridgeOptionQuoteStreamDiagnostics().unionProviderContractIdCount, 0);
+  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 0);
+});
+
 test("flow scanner live option snapshots stay admitted under watch pressure", async () => {
+  __setBridgeOptionQuoteStreamNowForTests(REGULAR_SESSION_NOW);
   setEnv({
     IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP: "2",
   });
@@ -572,6 +882,79 @@ test("flow scanner live option snapshots stay admitted under watch pressure", as
   assert.equal(payload.debug?.blockedReason, null);
   assert.equal(payload.debug?.acceptedCount, 2);
   assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 0);
+});
+
+test("flow scanner live option snapshots stay admitted under soft RSS critical pressure", async () => {
+  __setBridgeOptionQuoteStreamNowForTests(REGULAR_SESSION_NOW);
+  setEnv({
+    IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP: "2",
+  });
+  updateApiResourcePressure({
+    rssMb: resolveApiRssPressureThresholds().critical + 1,
+  });
+  const bridgeRequests: string[][] = [];
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input) {
+      bridgeRequests.push(input.providerContractIds);
+      return [];
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["2201", "2202"],
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+  });
+
+  assert.deepEqual(bridgeRequests[0], ["2201", "2202"]);
+  assert.equal(payload.debug?.blockedReason, null);
+  assert.equal(payload.debug?.acceptedCount, 2);
+});
+
+test("flow scanner live option snapshots are blocked only under hard API pressure", async () => {
+  __setBridgeOptionQuoteStreamNowForTests(REGULAR_SESSION_NOW);
+  updateApiResourcePressure({ apiHeapUsedPercent: 91 });
+  const bridgeRequests: string[][] = [];
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input) {
+      bridgeRequests.push(input.providerContractIds);
+      return [];
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "SPY",
+    providerContractIds: ["2301", "2302"],
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+  });
+
+  assert.deepEqual(bridgeRequests, []);
+  assert.equal(payload.debug?.blockedReason, "resource_pressure");
+  assert.equal(payload.debug?.acceptedCount, 0);
 });
 
 test("option quote snapshot abort releases flow scanner leases immediately", async () => {
@@ -681,7 +1064,7 @@ test("option quote snapshots keep cached rejected contracts in the payload", asy
   assert.deepEqual(payload.debug?.missingProviderContractIds, []);
 });
 
-test("option quote snapshots ignore Polygon option tickers before bridge hydration", async () => {
+test("option quote snapshots ignore Massive option tickers before bridge hydration", async () => {
   const bridgeRequests: string[][] = [];
   const structuredProviderContractId = structuredOptionProviderContractId();
   __setBridgeOptionQuoteClientForTests({
@@ -731,7 +1114,7 @@ test("option quote snapshots ignore Polygon option tickers before bridge hydrati
   );
 });
 
-test("option quote stream subscriptions do not admit Polygon option tickers", async () => {
+test("option quote stream subscriptions do not admit Massive option tickers", async () => {
   const bridgeRequests: string[][] = [];
   __setBridgeOptionQuoteClientForTests({
     async getHealth() {
@@ -889,6 +1272,7 @@ test("flow scanner option quote snapshots are not blocked by option-chain govern
   setEnv({
     IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP: "2",
   });
+  setBridgeGovernorOverrides({ options: { failureThreshold: 1 } });
   await assert.rejects(
     runBridgeWork("options", async () => {
       throw new HttpError(504, "IBKR bridge request to /options/quotes timed out.", {
@@ -936,6 +1320,7 @@ test("flow scanner option quote snapshots are not blocked by option-chain govern
 });
 
 test("signal options automation quote snapshots are not blocked by option-chain governor backoff", async () => {
+  setBridgeGovernorOverrides({ options: { failureThreshold: 1 } });
   await assert.rejects(
     runBridgeWork("options", async () => {
       throw new HttpError(504, "IBKR bridge request to /options/quotes timed out.", {

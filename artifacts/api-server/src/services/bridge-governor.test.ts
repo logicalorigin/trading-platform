@@ -24,20 +24,22 @@ test.afterEach(() => {
   delete process.env["IBKR_BRIDGE_GOVERNOR_ORDERS_FAILURE_THRESHOLD"];
 });
 
-test("bridge governor keeps quote bootstrap work conservative by default", async () => {
+test("bridge governor lets quote hydration use scanner workers by default", async () => {
   const config = getBridgeGovernorConfigSnapshot().quotes;
 
-  assert.equal(config.concurrency, 1);
-  assert.equal(config.failureThreshold, 1);
+  assert.equal(config.concurrency, 8);
+  assert.equal(config.failureThreshold, 3);
   assert.equal(config.backoffMs, 30_000);
 
-  await assert.rejects(
-    runBridgeWork("quotes", async () => {
-      throw new HttpError(502, "quote bootstrap timeout", {
-        code: "upstream_request_failed",
-      });
-    }),
-  );
+  for (let index = 0; index < config.failureThreshold; index += 1) {
+    await assert.rejects(
+      runBridgeWork("quotes", async () => {
+        throw new HttpError(502, "quote bootstrap timeout", {
+          code: "upstream_request_failed",
+        });
+      }),
+    );
+  }
 
   assert.equal(isBridgeWorkBackedOff("quotes"), true);
 });
@@ -55,6 +57,8 @@ test("bridge governor backoffs cover long bridge request budgets", () => {
 
   assert.equal(snapshot.quotes.backoffMs, 30_000);
   assert.equal(snapshot.bars.backoffMs, 30_000);
+  assert.equal(snapshot.options.concurrency, 4);
+  assert.equal(snapshot.options.failureThreshold, 3);
   assert.equal(snapshot.options.backoffMs, 45_000);
 });
 

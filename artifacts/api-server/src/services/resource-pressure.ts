@@ -179,6 +179,8 @@ export function resolveApiRssHardBlockMb(
 
 function routeLatencyLevel(value: number | null): ApiResourcePressureLevel {
   if (value === null) return "normal";
+  if (value >= 30_000) return "critical";
+  if (value >= 5_000) return "high";
   return value >= 1_000 ? "watch" : "normal";
 }
 
@@ -226,7 +228,7 @@ export function getApiResourcePressureCaps(
           signalRefreshAllowed: true,
           actionScansAllowed: true,
           positionMarksAllowed: true,
-          watchlistPrewarmAllowed: false,
+          watchlistPrewarmAllowed: true,
         },
       };
     case "watch":

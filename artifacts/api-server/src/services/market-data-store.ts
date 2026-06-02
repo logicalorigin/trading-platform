@@ -19,7 +19,7 @@ import type {
   BrokerBarSnapshot,
   MarketDataFreshness,
 } from "../providers/ibkr/client";
-import type { UniverseMarket } from "../providers/polygon/market-data";
+import type { UniverseMarket } from "../providers/massive/market-data";
 
 export type MarketDataStoreTimeframe =
   | "1s"

@@ -4,7 +4,7 @@ import type { QuoteSnapshot } from "../providers/ibkr/client";
 import {
   __platformQuoteSnapshotTestInternals,
   __setIbkrBridgeClientFactoryForTests,
-  __setPolygonMarketDataClientFactoryForTests,
+  __setMassiveMarketDataClientFactoryForTests,
   getQuoteSnapshots,
 } from "./platform";
 import {
@@ -23,9 +23,9 @@ const MARKET_DATA_ENV_KEYS = [
   "MASSIVE_MARKET_DATA_API_KEY",
   "MASSIVE_API_BASE_URL",
   "MASSIVE_STOCKS_RECENCY",
-  "POLYGON_API_KEY",
-  "POLYGON_KEY",
-  "POLYGON_BASE_URL",
+  "MASSIVE_API_KEY",
+  "MASSIVE_MARKET_DATA_API_KEY",
+  "MASSIVE_API_BASE_URL",
 ] as const;
 const ORIGINAL_MARKET_DATA_ENV = new Map(
   MARKET_DATA_ENV_KEYS.map((key) => [key, process.env[key]] as const),
@@ -97,7 +97,7 @@ test.afterEach(() => {
   __resetBridgeQuoteStreamForTests();
   __setBridgeQuoteClientForTests(null);
   __setIbkrBridgeClientFactoryForTests(null);
-  __setPolygonMarketDataClientFactoryForTests(null);
+  __setMassiveMarketDataClientFactoryForTests(null);
   __resetMarketDataAdmissionForTests();
   __resetBridgeGovernorForTests();
   resetBridgeGovernorOverrides();
@@ -207,7 +207,7 @@ test("getQuoteSnapshots uses Massive first for real-time stock snapshots", async
 
   let massiveCalls = 0;
   let bridgeCalls = 0;
-  __setPolygonMarketDataClientFactoryForTests(
+  __setMassiveMarketDataClientFactoryForTests(
     () =>
       ({
         async getQuoteSnapshots(symbols: string[]) {

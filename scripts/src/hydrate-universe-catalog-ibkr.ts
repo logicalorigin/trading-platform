@@ -5,7 +5,7 @@ import {
   universeCatalogSyncStatesTable,
   universeSourceMembershipsTable,
 } from "@workspace/db/schema";
-import { type UniverseMarket } from "../../artifacts/api-server/src/providers/polygon/market-data";
+import { type UniverseMarket } from "../../artifacts/api-server/src/providers/massive/market-data";
 import { hydrateUniverseCatalogListingWithIbkr } from "../../artifacts/api-server/src/services/platform";
 import {
   loadWatchlistUniversePrioritySymbols,

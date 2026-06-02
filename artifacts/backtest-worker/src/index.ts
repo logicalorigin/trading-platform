@@ -288,7 +288,6 @@ function summarizeDatasetSource(bars: BacktestBar[]): string {
   const hasIbkr = [...sources].some((source) => source.includes("ibkr"));
   const hasMassive = [...sources].some(
     (source) =>
-      source.includes("polygon") ||
       source.includes("massive") ||
       source.includes("history"),
   );

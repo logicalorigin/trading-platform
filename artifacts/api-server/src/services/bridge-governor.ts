@@ -54,12 +54,12 @@ export const BRIDGE_GOVERNOR_DEFAULT_CONFIG: Record<
   BridgeWorkCategory,
   BridgeGovernorConfig
 > = {
-  quotes: { concurrency: 1, failureThreshold: 1, backoffMs: 30_000 },
+  quotes: { concurrency: 8, failureThreshold: 3, backoffMs: 30_000 },
   bars: { concurrency: 4, failureThreshold: 4, backoffMs: 30_000 },
   health: { concurrency: 1, failureThreshold: 2, backoffMs: 10_000 },
   account: { concurrency: 2, failureThreshold: 2, backoffMs: 15_000 },
   orders: { concurrency: 1, failureThreshold: 4, backoffMs: 2_000 },
-  options: { concurrency: 1, failureThreshold: 1, backoffMs: 45_000 },
+  options: { concurrency: 4, failureThreshold: 3, backoffMs: 45_000 },
 };
 
 const overrideConfig: Partial<

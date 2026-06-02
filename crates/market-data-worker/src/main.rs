@@ -25,7 +25,7 @@ use crate::ingest::{
     ProviderRequestLogInput,
 };
 use crate::jobs::{claim_next_job, complete_job, fail_job, heartbeat_job, IngestJob};
-use crate::providers::polygon::{
+use crate::providers::massive::{
     fetch_option_chain_snapshots, fetch_stock_snapshot, OptionChainFetchResult,
 };
 
@@ -119,7 +119,7 @@ async fn run_once(config: WorkerConfig, kind: &str, symbol: &str) -> Result<()> 
             let provider = config
                 .market_data_provider
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("MASSIVE_API_KEY or POLYGON_API_KEY must be set"))?;
+                .ok_or_else(|| anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_API_KEY must be set"))?;
             let client = reqwest::Client::new();
             let started_at = Instant::now();
             let snapshot = match fetch_stock_snapshot(&client, provider, symbol).await {
@@ -172,7 +172,7 @@ async fn run_once(config: WorkerConfig, kind: &str, symbol: &str) -> Result<()> 
             let provider = config
                 .market_data_provider
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("MASSIVE_API_KEY or POLYGON_API_KEY must be set"))?;
+                .ok_or_else(|| anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_API_KEY must be set"))?;
             let client = reqwest::Client::new();
             let started_at = Instant::now();
             let fetch = match fetch_option_chain_snapshots(
@@ -304,7 +304,7 @@ async fn process_job(pool: &sqlx::PgPool, config: &WorkerConfig, job: &IngestJob
             let provider = config
                 .market_data_provider
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("MASSIVE_API_KEY or POLYGON_API_KEY must be set"))?;
+                .ok_or_else(|| anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_API_KEY must be set"))?;
             let client = reqwest::Client::new();
             with_job_heartbeat(pool, config, job, async {
                 let started_at = Instant::now();
@@ -367,7 +367,7 @@ async fn process_job(pool: &sqlx::PgPool, config: &WorkerConfig, job: &IngestJob
             let provider = config
                 .market_data_provider
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("MASSIVE_API_KEY or POLYGON_API_KEY must be set"))?;
+                .ok_or_else(|| anyhow::anyhow!("MASSIVE_API_KEY or MASSIVE_API_KEY must be set"))?;
             let client = reqwest::Client::new();
             with_job_heartbeat(pool, config, job, async {
                 let started_at = Instant::now();
@@ -544,7 +544,7 @@ fn is_transient_job_error(error: &anyhow::Error) -> bool {
     !(message.contains("unsupported market-data job kind")
         || message.contains("unsupported once job kind")
         || message.contains("symbol is required")
-        || message.contains("MASSIVE_API_KEY or POLYGON_API_KEY must be set"))
+        || message.contains("MASSIVE_API_KEY or MASSIVE_API_KEY must be set"))
 }
 
 #[cfg(test)]
@@ -571,7 +571,7 @@ mod tests {
             snapshots: Vec::new(),
             page_count: 3,
             truncated: true,
-            metadata: crate::providers::polygon::ProviderRequestMetadata {
+            metadata: crate::providers::massive::ProviderRequestMetadata {
                 http_status: Some(200),
                 rate_limit_reset_at: None,
             },

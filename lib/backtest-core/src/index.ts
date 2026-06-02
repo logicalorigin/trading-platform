@@ -3,6 +3,8 @@ export * from "./engine";
 export * from "./options";
 export * from "./optimizer";
 export * from "./option-fills";
+export * from "./option-greek-selector";
+export * from "./signal-forward-returns";
 export * from "./signal-options";
 export * from "./strategies";
 export * from "./timeframes";

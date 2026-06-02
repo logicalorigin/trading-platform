@@ -29,16 +29,16 @@ directory to define separate Replit app runners.
     `SIGNAL_OPTIONS_EXIT_SWEEP_VARIANTS`, and
     `SIGNAL_OPTIONS_EXIT_SWEEP_SYMBOLS`.
 - `artifacts/api-server/scripts/sampleFlowPremiumDistribution.mjs` is a manual
-  Polygon sampling utility for inspecting premium-distribution aggregation.
-- `shadow:polygon-options-audit` reads the existing shadow option ledger rows,
-  checks their recorded trade/aggregate provenance against Polygon-compatible
+  Massive sampling utility for inspecting premium-distribution aggregation.
+- `shadow:massive-options-audit` reads the existing shadow option ledger rows,
+  checks their recorded trade/aggregate provenance against Massive
   historical options endpoints, and writes JSON/CSV/Markdown reports under
-  `scripts/reports/shadow-polygon-options-audit/`.
+  `scripts/reports/shadow-massive-options-audit/`.
   - Run:
-    `DATABASE_URL=postgres://... MASSIVE_API_KEY=... pnpm --filter @workspace/scripts run shadow:polygon-options-audit`
-  - Optional selectors: `SHADOW_POLYGON_AUDIT_ACCOUNT_ID`,
-    `SHADOW_POLYGON_AUDIT_CONCURRENCY`, `SHADOW_POLYGON_AUDIT_MAX_ROWS`, and
-    `SHADOW_POLYGON_AUDIT_REPORT_DIR`.
+    `DATABASE_URL=postgres://... MASSIVE_API_KEY=... pnpm --filter @workspace/scripts run shadow:massive-options-audit`
+  - Optional selectors: `SHADOW_MASSIVE_AUDIT_ACCOUNT_ID`,
+    `SHADOW_MASSIVE_AUDIT_CONCURRENCY`, `SHADOW_MASSIVE_AUDIT_MAX_ROWS`, and
+    `SHADOW_MASSIVE_AUDIT_REPORT_DIR`.
 - `shadow:management-review` reads the committed shadow option `automation`
   ledger, ranks management leaks by exit reason/symbol/signal quality, folds in
   prior dry sweep evidence when present, and writes Markdown/JSON/CSV reports

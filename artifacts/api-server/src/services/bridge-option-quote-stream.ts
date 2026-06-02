@@ -1,3 +1,4 @@
+import { resolveUsEquityMarketStatus } from "@workspace/market-calendar";
 import { normalizeSymbol } from "../lib/values";
 import { logger } from "../lib/logger";
 import {
@@ -23,9 +24,11 @@ import {
   subscribeMarketDataLeaseChanges,
   type MarketDataFallbackProvider,
   type MarketDataIntent,
+  type MarketDataLease,
 } from "./market-data-admission";
 import {
   getApiResourcePressureSnapshot,
+  isApiResourcePressureHardBlock,
   subscribeApiResourcePressureChanges,
 } from "./resource-pressure";
 
@@ -91,6 +94,15 @@ type Subscriber = {
   onSnapshot: (payload: OptionQuoteSnapshotPayload) => void;
 };
 
+type RetainedSnapshotDemand = {
+  owner: string;
+  intent: MarketDataIntent;
+  fallbackProvider: MarketDataFallbackProvider;
+  requiresGreeks: boolean;
+  underlying: string | null;
+  providerContractExpirations: Map<string, number>;
+};
+
 type BridgeOptionQuoteClient = {
   getHealth(): Promise<{
     transport?: string | null;
@@ -123,8 +135,10 @@ export type BridgeOptionQuoteSnapshotAdmissionOptions = {
 
 let bridgeClient: BridgeOptionQuoteClient = new IbkrBridgeClient();
 const subscribers = new Map<number, Subscriber>();
+const retainedSnapshotDemands = new Map<string, RetainedSnapshotDemand>();
 const quoteCacheByProviderContractId = new Map<string, QuoteSnapshot>();
 const STREAM_RECONFIGURE_DEBOUNCE_MS = 150;
+const FLOW_SCANNER_STREAM_RECONFIGURE_DEBOUNCE_MS = 750;
 const RECONNECT_DELAY_MIN_MS = 1_000;
 const RECONNECT_DELAY_MAX_MS = 30_000;
 const UNCONFIGURED_OPTION_STREAM_RETRY_MS = Math.max(
@@ -149,6 +163,7 @@ let streamSignature = "";
 let streamUnsubscribes: Array<() => void> = [];
 let refreshTimer: NodeJS.Timeout | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
+let retainedSnapshotDemandExpiryTimer: NodeJS.Timeout | null = null;
 let reconnectAttempt = 0;
 let eventCount = 0;
 let reconnectCount = 0;
@@ -331,10 +346,6 @@ type LiveOptionQuotePolicy = {
   errorMessage: string | null;
 };
 
-function isPressureBlockedFlowScannerLevel(level: string): boolean {
-  return level === "critical";
-}
-
 function isAutomationDisplayOrPositionMarkOwner(owner: string): boolean {
   const normalizedOwner = owner.toLowerCase();
   return (
@@ -353,8 +364,19 @@ function resolveLiveOptionQuotePolicy(input: {
   );
 
   if (input.intent === "flow-scanner-live") {
+    const marketStatus = resolveUsEquityMarketStatus(nowProvider());
+    if (marketStatus.session.key !== "rth") {
+      return {
+        providerContractIds: [],
+        blockedReason: "market_session_quiet",
+        errorCode: "ibkr_live_option_quote_blocked",
+        errorMessage:
+          "IBKR live option quote request blocked because NYSE regular trading is closed.",
+      };
+    }
+
     const pressure = getApiResourcePressureSnapshot();
-    if (isPressureBlockedFlowScannerLevel(pressure.level)) {
+    if (isApiResourcePressureHardBlock(pressure)) {
       return {
         providerContractIds: [],
         blockedReason: "resource_pressure",
@@ -432,25 +454,183 @@ function recordBlockedLiveOptionQuoteRequest(input: {
   });
 }
 
-function getDesiredProviderContractIds(): string[] {
-  return normalizeProviderContractIds(
-    Array.from(subscribers.values()).flatMap((subscriber) =>
-      Array.from(subscriber.providerContractIds).filter((providerContractId) =>
-        isMarketDataLeaseActive({
-          owner: subscriber.owner,
-          assetClass: "option",
-          providerContractId,
-        }),
+function clearRetainedSnapshotDemandExpiryTimer(): void {
+  if (!retainedSnapshotDemandExpiryTimer) {
+    return;
+  }
+  clearTimeout(retainedSnapshotDemandExpiryTimer);
+  retainedSnapshotDemandExpiryTimer = null;
+}
+
+function pruneRetainedSnapshotDemands(now = Date.now()): number | null {
+  let nextExpiresAt: number | null = null;
+  retainedSnapshotDemands.forEach((demand, key) => {
+    demand.providerContractExpirations.forEach((expiresAt, providerContractId) => {
+      if (expiresAt <= now) {
+        demand.providerContractExpirations.delete(providerContractId);
+        return;
+      }
+      nextExpiresAt =
+        nextExpiresAt === null ? expiresAt : Math.min(nextExpiresAt, expiresAt);
+    });
+    if (demand.providerContractExpirations.size === 0) {
+      retainedSnapshotDemands.delete(key);
+    }
+  });
+  return nextExpiresAt;
+}
+
+function scheduleRetainedSnapshotDemandExpiryTimer(): void {
+  clearRetainedSnapshotDemandExpiryTimer();
+  const now = Date.now();
+  const nextExpiresAt = pruneRetainedSnapshotDemands(now);
+  if (nextExpiresAt === null) {
+    return;
+  }
+
+  retainedSnapshotDemandExpiryTimer = setTimeout(() => {
+    retainedSnapshotDemandExpiryTimer = null;
+    pruneRetainedSnapshotDemands();
+    scheduleRefreshBridgeOptionQuoteStream(0);
+    scheduleRetainedSnapshotDemandExpiryTimer();
+  }, Math.max(0, nextExpiresAt - now + 1));
+  retainedSnapshotDemandExpiryTimer.unref?.();
+}
+
+function registerRetainedSnapshotDemand(input: {
+  owner: string;
+  intent: MarketDataIntent;
+  fallbackProvider: MarketDataFallbackProvider;
+  requiresGreeks: boolean;
+  underlying: string | null;
+  admittedLeases: MarketDataLease[];
+}): void {
+  if (input.admittedLeases.length === 0) {
+    return;
+  }
+
+  const demand =
+    retainedSnapshotDemands.get(input.owner) ??
+    {
+      owner: input.owner,
+      intent: input.intent,
+      fallbackProvider: input.fallbackProvider,
+      requiresGreeks: input.requiresGreeks,
+      underlying: input.underlying,
+      providerContractExpirations: new Map<string, number>(),
+    };
+  demand.intent = input.intent;
+  demand.fallbackProvider = input.fallbackProvider;
+  demand.requiresGreeks = input.requiresGreeks;
+  demand.underlying = input.underlying;
+
+  input.admittedLeases.forEach((lease) => {
+    const providerContractId = lease.providerContractId?.trim?.() || "";
+    const expiresAt = Date.parse(lease.expiresAt ?? "");
+    if (!providerContractId || !Number.isFinite(expiresAt)) {
+      return;
+    }
+    demand.providerContractExpirations.set(
+      providerContractId,
+      Math.max(
+        demand.providerContractExpirations.get(providerContractId) ?? 0,
+        expiresAt,
       ),
-    ),
+    );
+  });
+
+  if (demand.providerContractExpirations.size === 0) {
+    return;
+  }
+
+  retainedSnapshotDemands.set(input.owner, demand);
+  pruneRetainedSnapshotDemands();
+  const refreshDelayMs =
+    input.intent === "flow-scanner-live" && streamSignature
+      ? FLOW_SCANNER_STREAM_RECONFIGURE_DEBOUNCE_MS
+      : 0;
+  scheduleRefreshBridgeOptionQuoteStream(refreshDelayMs);
+  scheduleRetainedSnapshotDemandExpiryTimer();
+}
+
+function removeRetainedSnapshotDemandLeases(input: {
+  owner: string;
+  admittedLeases: MarketDataLease[];
+}): void {
+  if (input.admittedLeases.length === 0) {
+    return;
+  }
+  const demand = retainedSnapshotDemands.get(input.owner);
+  if (!demand) {
+    return;
+  }
+
+  input.admittedLeases.forEach((lease) => {
+    const providerContractId = lease.providerContractId?.trim?.() || "";
+    if (providerContractId) {
+      demand.providerContractExpirations.delete(providerContractId);
+    }
+  });
+  if (demand.providerContractExpirations.size === 0) {
+    retainedSnapshotDemands.delete(input.owner);
+  }
+  pruneRetainedSnapshotDemands();
+  scheduleRefreshBridgeOptionQuoteStream(0);
+  scheduleRetainedSnapshotDemandExpiryTimer();
+}
+
+function releaseRetainedSnapshotDemandLeases(reason: string): void {
+  const owners = Array.from(retainedSnapshotDemands.keys());
+  retainedSnapshotDemands.clear();
+  clearRetainedSnapshotDemandExpiryTimer();
+  owners.forEach((owner) => releaseMarketDataLeases(owner, reason));
+}
+
+function getRetainedSnapshotDemandValues(): RetainedSnapshotDemand[] {
+  pruneRetainedSnapshotDemands();
+  return Array.from(retainedSnapshotDemands.values());
+}
+
+function hasBridgeOptionQuoteDemand(): boolean {
+  return subscribers.size > 0 || getRetainedSnapshotDemandValues().length > 0;
+}
+
+function getDesiredProviderContractIds(): string[] {
+  const retainedDemandProviderContractIds = getRetainedSnapshotDemandValues().flatMap(
+    (demand) =>
+      Array.from(demand.providerContractExpirations.keys()).filter(
+        (providerContractId) =>
+          isMarketDataLeaseActive({
+            owner: demand.owner,
+            assetClass: "option",
+            providerContractId,
+          }),
+      ),
+  );
+  return normalizeProviderContractIds(
+    Array.from(subscribers.values())
+      .flatMap((subscriber) =>
+        Array.from(subscriber.providerContractIds).filter((providerContractId) =>
+          isMarketDataLeaseActive({
+            owner: subscriber.owner,
+            assetClass: "option",
+            providerContractId,
+          }),
+        ),
+      )
+      .concat(retainedDemandProviderContractIds),
   );
 }
 
 function getRequestedProviderContractIds(): string[] {
   return normalizeProviderContractIds(
-    Array.from(subscribers.values()).flatMap((subscriber) =>
-      Array.from(subscriber.providerContractIds),
-    ),
+    Array.from(subscribers.values())
+      .flatMap((subscriber) => Array.from(subscriber.providerContractIds))
+      .concat(
+        getRetainedSnapshotDemandValues().flatMap((demand) =>
+          Array.from(demand.providerContractExpirations.keys()),
+        ),
+      ),
   );
 }
 
@@ -754,8 +934,8 @@ function stopStream() {
 }
 
 function scheduleReconnect() {
-  if (reconnectTimer || subscribers.size === 0) {
-    if (subscribers.size === 0) {
+  if (reconnectTimer || !hasBridgeOptionQuoteDemand()) {
+    if (!hasBridgeOptionQuoteDemand()) {
       reconnectAttempt = 0;
     }
     return;
@@ -826,6 +1006,7 @@ function refreshBridgeOptionQuoteStream() {
     const requestedProviderContractIds = getRequestedProviderContractIds();
     stopStream();
     releaseBridgeOptionSubscriberLeases("runtime_unconfigured");
+    releaseRetainedSnapshotDemandLeases("runtime_unconfigured");
     reconnectAttempt = 0;
     if (!requestedProviderContractIds.length) {
       lastStreamStatus = null;
@@ -914,7 +1095,8 @@ subscribeMarketDataLeaseChanges((event) => {
   if (
     !Array.from(subscribers.values()).some(
       (subscriber) => subscriber.owner === event.owner,
-    )
+    ) &&
+    !retainedSnapshotDemands.has(event.owner)
   ) {
     return;
   }
@@ -922,7 +1104,7 @@ subscribeMarketDataLeaseChanges((event) => {
 });
 
 subscribeApiResourcePressureChanges(() => {
-  if (subscribers.size > 0) {
+  if (hasBridgeOptionQuoteDemand()) {
     scheduleRefreshBridgeOptionQuoteStream(0);
   }
 });
@@ -1047,7 +1229,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     ? { recordFailure: false }
     : undefined;
   const ttlMs = Math.max(1, Math.floor(input.ttlMs ?? 10_000));
-  const fallbackProvider = input.fallbackProvider ?? "polygon";
+  const fallbackProvider = input.fallbackProvider ?? "massive";
   const requiresGreeks = input.requiresGreeks ?? true;
   const releaseLeasesOnComplete = input.releaseLeasesOnComplete ?? true;
   if (!normalizedProviderContractIds.length) {
@@ -1078,6 +1260,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   if (!isBridgeRuntimeConfigured()) {
     stopStream();
     releaseBridgeOptionSubscriberLeases("runtime_unconfigured");
+    releaseRetainedSnapshotDemandLeases("runtime_unconfigured");
     return buildUnconfiguredOptionQuoteSnapshotPayload({
       underlying,
       requestedAt,
@@ -1148,6 +1331,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     replaceOwnerExisting: false,
   });
   const admittedLeaseIds = admission.admitted.map((lease) => lease.id);
+  let retainedDemandRegistered = false;
   let releasedAdmittedLeases = false;
   const releaseAdmittedLeases = (reason: string) => {
     if (releasedAdmittedLeases) {
@@ -1155,6 +1339,13 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     }
     releasedAdmittedLeases = true;
     releaseMarketDataLeaseIds(admittedLeaseIds, reason);
+    if (retainedDemandRegistered) {
+      removeRetainedSnapshotDemandLeases({
+        owner,
+        admittedLeases: admission.admitted,
+      });
+      retainedDemandRegistered = false;
+    }
   };
   const releaseOnAbort = () => releaseAdmittedLeases("snapshot_aborted");
   if (input.signal?.aborted) {
@@ -1167,6 +1358,17 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     .filter((providerContractId): providerContractId is string =>
       Boolean(providerContractId),
     );
+  if (!releaseLeasesOnComplete && admission.admitted.length > 0) {
+    registerRetainedSnapshotDemand({
+      owner,
+      intent,
+      fallbackProvider,
+      requiresGreeks,
+      underlying,
+      admittedLeases: admission.admitted,
+    });
+    retainedDemandRegistered = true;
+  }
   const bridgeChunks = chunkValues(
     admittedProviderContractIds,
     OPTION_QUOTE_BRIDGE_CHUNK_SIZE,
@@ -1192,7 +1394,11 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
 
   if (isBridgeWorkBackedOff(bridgeWorkCategory)) {
     input.signal?.removeEventListener("abort", releaseOnAbort);
-    releaseAdmittedLeases("snapshot_complete");
+    if (releaseLeasesOnComplete || input.signal?.aborted) {
+      releaseAdmittedLeases(
+        input.signal?.aborted ? "snapshot_aborted" : "snapshot_complete",
+      );
+    }
     return {
       ...cachedQuotes,
       debug: {
@@ -1275,11 +1481,22 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     lastErrorAt = nowProvider();
   } finally {
     input.signal?.removeEventListener("abort", releaseOnAbort);
-    if (releaseLeasesOnComplete || upstreamErrorMessage || input.signal?.aborted) {
+    if (releaseLeasesOnComplete || input.signal?.aborted) {
       releaseAdmittedLeases(
         input.signal?.aborted ? "snapshot_aborted" : "snapshot_complete",
       );
     }
+  }
+
+  if (!releasedAdmittedLeases && !retainedDemandRegistered) {
+    registerRetainedSnapshotDemand({
+      owner,
+      intent,
+      fallbackProvider,
+      requiresGreeks,
+      underlying,
+      admittedLeases: admission.admitted,
+    });
   }
 
   const payload = getPayloadForProviderContractIds(
@@ -1344,7 +1561,7 @@ export function subscribeBridgeOptionQuoteSnapshots(
     id: subscriberId,
     owner,
     intent: input.intent ?? "visible-live",
-    fallbackProvider: input.fallbackProvider ?? "polygon",
+    fallbackProvider: input.fallbackProvider ?? "massive",
     requiresGreeks: input.requiresGreeks ?? true,
     underlying,
     providerContractIds: new Set(normalizedProviderContractIds),
@@ -1463,10 +1680,15 @@ export function __resetBridgeOptionQuoteStreamForTests(): void {
   stopStream();
   clearRefreshTimer();
   clearReconnectTimer();
+  clearRetainedSnapshotDemandExpiryTimer();
   Array.from(subscribers.values()).forEach((subscriber) => {
     releaseMarketDataLeases(subscriber.owner, "test_reset");
   });
+  Array.from(retainedSnapshotDemands.keys()).forEach((owner) => {
+    releaseMarketDataLeases(owner, "test_reset");
+  });
   subscribers.clear();
+  retainedSnapshotDemands.clear();
   quoteCacheByProviderContractId.clear();
   nextSubscriberId = 1;
   nextSnapshotOwnerId = 1;

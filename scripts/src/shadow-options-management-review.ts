@@ -105,6 +105,7 @@ type ReviewOutput = {
   byMonth: AggregateRow[];
   byExitReason: AggregateRow[];
   byQuality: AggregateRow[];
+  byGreekManagement: AggregateRow[];
   topSymbols: SymbolRow[];
   weakSymbols: SymbolRow[];
   topLeaks: LeakRow[];
@@ -250,6 +251,47 @@ async function loadAggregate(config: Config, bucketSql: string): Promise<Aggrega
         and o.placed_at <= $3::timestamptz
       group by 1
       order by pnl desc
+    `,
+    [config.accountId, window.from, window.to],
+  );
+  return result.rows.map(normalizeAggregateRow);
+}
+
+async function loadGreekManagementAggregate(config: Config): Promise<AggregateRow[]> {
+  const window = sqlWindow(config);
+  const result = await pool.query(
+    `
+      with sells as (
+        select coalesce(
+                 nullif(o.payload #>> '{stop,greekManagement,recommendation}', ''),
+                 nullif(o.payload #>> '{position,lastStop,greekManagement,recommendation}', '')
+               ) as bucket,
+               f.realized_pnl,
+               f.price,
+               f.quantity,
+               o.payload
+        from shadow_orders o
+        join shadow_fills f on f.order_id = o.id
+        where o.account_id = $1
+          and o.source = 'automation'
+          and o.asset_class = 'option'
+          and o.side = 'sell'
+          and o.placed_at >= $2::timestamptz
+          and o.placed_at <= $3::timestamptz
+      )
+      select bucket,
+             count(*)::int as exits,
+             count(*) filter (where realized_pnl > 0)::int as wins,
+             (count(*) filter (where realized_pnl > 0)::numeric / nullif(count(*), 0) * 100)::numeric(18,1) as win_pct,
+             coalesce(sum(realized_pnl), 0)::numeric(18,2) as pnl,
+             avg(realized_pnl)::numeric(18,2) as avg_pnl,
+             coalesce(sum(greatest(((payload #>> '{postExitOutcome,highPrice}')::numeric - price) * quantity * 100, 0)), 0)::numeric(18,2) as missed_to_post_exit_high,
+             count(*) filter (where (payload #>> '{postExitOutcome,reachedTwentyFivePctGain}')::boolean is true)::int as reached_25_after_exit,
+             count(*) filter (where (payload #>> '{postExitOutcome,finalAboveExit}')::boolean is true)::int as final_above_exit
+      from sells
+      where bucket is not null
+      group by 1
+      order by exits desc, pnl desc
     `,
     [config.accountId, window.from, window.to],
   );
@@ -409,6 +451,7 @@ async function readSweepEvidence(config: Config): Promise<SweepEvidence[]> {
 
 export function buildRecommendations(input: {
   byExitReason: AggregateRow[];
+  byGreekManagement?: AggregateRow[];
   weakSymbols: SymbolRow[];
   sweepEvidence: SweepEvidence[];
   opportunityRatio: number | null;
@@ -419,7 +462,34 @@ export function buildRecommendations(input: {
   const early = byReason.get("early_invalidation");
   const overnight = byReason.get("overnight_risk_exit");
   const bestSweep = input.sweepEvidence[0];
+  const byGreek = new Map(
+    (input.byGreekManagement ?? []).map((row) => [row.bucket, row]),
+  );
+  const greekTighten = byGreek.get("tighten");
+  const greekLoosen = byGreek.get("loosen");
   const recommendations: Recommendation[] = [];
+
+  if (greekTighten && greekTighten.exits >= 5) {
+    recommendations.push({
+      lane: "exit_management",
+      priority: "medium",
+      title: "Evaluate Greek tighten-only enforcement on paper",
+      evidence: `Greek tighten diagnostics covered ${greekTighten.exits} exits with ${greekTighten.pnl.toFixed(2)} realized P&L, ${greekTighten.winPct ?? "n/a"}% wins, and ${greekTighten.missedToPostExitHigh.toFixed(2)} to post-exit highs.`,
+      nextTest:
+        "Run a paper-only counterfactual that tightens premium trailing behavior on delta decay or theta burden, while leaving Greek loosening disabled.",
+    });
+  }
+
+  if (greekLoosen && greekLoosen.exits >= 5) {
+    recommendations.push({
+      lane: "exit_management",
+      priority: "low",
+      title: "Keep Greek loosening in diagnostics until holdout evidence is stronger",
+      evidence: `Greek loosen diagnostics covered ${greekLoosen.exits} exits with ${greekLoosen.missedToPostExitHigh.toFixed(2)} to post-exit highs and ${greekLoosen.finalAboveExit}/${greekLoosen.exits} final-above-exit outcomes.`,
+      nextTest:
+        "Require a larger holdout and explicit no-loosen control before allowing Greek support to lower or defer exits.",
+    });
+  }
 
   if (runner && runner.missedToPostExitHigh > Math.max(runner.pnl * 2, 25_000)) {
     recommendations.push({
@@ -506,7 +576,7 @@ export function buildRecommendations(input: {
     evidence:
       "The April external audit found exact trade-source matches but aggregate-sourced sell exits had unresolved strict mismatches.",
     nextTest:
-      "For candidate production settings, rerun the Polygon-compatible audit and separate trade-sourced vs aggregate-sourced exit conclusions.",
+      "For candidate production settings, rerun the Massive audit and separate trade-sourced vs aggregate-sourced exit conclusions.",
   });
 
   return recommendations;
@@ -594,6 +664,20 @@ function buildMarkdown(output: ReviewOutput): string {
         `- **${item.priority.toUpperCase()} ${item.lane}: ${item.title}** ${item.evidence} Next test: ${item.nextTest}`,
     ),
     "",
+    "## Greek Management Diagnostics",
+    "",
+    markdownTable(output.byGreekManagement, [
+      { key: "bucket", label: "Recommendation" },
+      { key: "exits", label: "Exits" },
+      { key: "wins", label: "Wins" },
+      { key: "winPct", label: "Win %" },
+      { key: "pnl", label: "P&L" },
+      { key: "avgPnl", label: "Avg P&L" },
+      { key: "missedToPostExitHigh", label: "Missed To High" },
+      { key: "reached25AfterExit", label: "Reached +25% After Exit" },
+      { key: "finalAboveExit", label: "Final > Exit" },
+    ]),
+    "",
     "## Exit Reasons",
     "",
     markdownTable(output.byExitReason, [
@@ -665,7 +749,17 @@ function buildMarkdown(output: ReviewOutput): string {
 }
 
 async function buildReview(config: Config): Promise<ReviewOutput> {
-  const [ledger, byMonth, byExitReason, byQuality, topSymbols, weakSymbols, topLeaks, sweepEvidence] =
+  const [
+    ledger,
+    byMonth,
+    byExitReason,
+    byQuality,
+    byGreekManagement,
+    topSymbols,
+    weakSymbols,
+    topLeaks,
+    sweepEvidence,
+  ] =
     await Promise.all([
       loadLedgerSummary(config),
       loadAggregate(config, "to_char(date_trunc('month', f.occurred_at), 'YYYY-MM')"),
@@ -674,6 +768,7 @@ async function buildReview(config: Config): Promise<ReviewOutput> {
         config,
         "coalesce(o.payload #>> '{position,signalQuality,tier}', 'unknown') || ':' || coalesce(width_bucket((o.payload #>> '{position,signalQuality,score}')::numeric, 0, 100, 5)::text, 'unknown')",
       ),
+      loadGreekManagementAggregate(config),
       loadSymbols(config, "best"),
       loadSymbols(config, "worst"),
       loadTopLeaks(config),
@@ -689,6 +784,7 @@ async function buildReview(config: Config): Promise<ReviewOutput> {
     realizedExitPnl > 0 ? round(missedToPostExitHigh / realizedExitPnl, 2) : null;
   const recommendations = buildRecommendations({
     byExitReason,
+    byGreekManagement,
     weakSymbols,
     sweepEvidence,
     opportunityRatio: missedToRealizedRatio,
@@ -712,6 +808,7 @@ async function buildReview(config: Config): Promise<ReviewOutput> {
     byMonth,
     byExitReason,
     byQuality,
+    byGreekManagement,
     topSymbols,
     weakSymbols,
     topLeaks,

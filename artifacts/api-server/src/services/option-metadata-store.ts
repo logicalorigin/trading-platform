@@ -4,6 +4,7 @@ import {
   eq,
   gte,
   inArray,
+  like,
   lt,
   or,
 } from "drizzle-orm";
@@ -66,6 +67,13 @@ const OPTION_METADATA_QUERY_LIMIT = readPositiveIntegerEnv(
   "OPTION_METADATA_QUERY_LIMIT",
   5_000,
 );
+// Keep API-side metadata pruning scoped away from full-chain worker sources.
+const OPTION_METADATA_PRUNABLE_SOURCES = [
+  "ibkr",
+  "ibkr-metadata",
+  "ibkr-snapshot",
+] as const;
+const OPTION_METADATA_PRUNABLE_SIGNAL_OPTIONS_PREFIX = "signal-options:";
 
 function isDurableOptionMetadataEnvDisabled(): boolean {
   const value = process.env["OPTION_METADATA_DISABLED"]?.trim().toLowerCase();
@@ -146,7 +154,7 @@ function normalizeOptionTicker(value: unknown): string | null {
   return normalized.startsWith("O:") ? normalized : `O:${normalized}`;
 }
 
-function buildPolygonOptionTicker(input: {
+function buildMassiveOptionTicker(input: {
   ticker?: string | null;
   underlying: string;
   expirationDate: Date;
@@ -177,7 +185,7 @@ function buildPolygonOptionTicker(input: {
 
 function normalizeContractInput(contract: OptionChainContract): {
   underlying: string;
-  polygonTicker: string;
+  massiveTicker: string;
   expirationDate: Date;
   expirationKey: string;
   strike: number;
@@ -196,19 +204,19 @@ function normalizeContractInput(contract: OptionChainContract): {
   ) {
     return null;
   }
-  const polygonTicker = buildPolygonOptionTicker({
+  const massiveTicker = buildMassiveOptionTicker({
     ticker: contract.contract.ticker,
     underlying,
     expirationDate,
     strike,
     right: contract.contract.right,
   });
-  if (!polygonTicker) {
+  if (!massiveTicker) {
     return null;
   }
   return {
     underlying,
-    polygonTicker,
+    massiveTicker,
     expirationDate,
     expirationKey: dateKey(expirationDate),
     strike,
@@ -272,9 +280,9 @@ async function upsertOptionContract(
     name: normalized.underlying,
   });
   const optionInstrumentId = await ensureInstrument({
-    symbol: normalized.polygonTicker,
+    symbol: normalized.massiveTicker,
     assetClass: "option",
-    name: normalized.polygonTicker,
+    name: normalized.massiveTicker,
     underlyingSymbol: normalized.underlying,
   });
   if (!underlyingInstrumentId || !optionInstrumentId) {
@@ -285,10 +293,10 @@ async function upsertOptionContract(
     contract.contract.providerContractId?.trim?.() || null;
   const existingConditions = providerContractId
     ? or(
-        eq(optionContractsTable.polygonTicker, normalized.polygonTicker),
+        eq(optionContractsTable.massiveTicker, normalized.massiveTicker),
         eq(optionContractsTable.providerContractId, providerContractId),
       )
-    : eq(optionContractsTable.polygonTicker, normalized.polygonTicker);
+    : eq(optionContractsTable.massiveTicker, normalized.massiveTicker);
   const [existing] = await db
     .select({ id: optionContractsTable.id })
     .from(optionContractsTable)
@@ -301,7 +309,7 @@ async function upsertOptionContract(
       .set({
         instrumentId: optionInstrumentId,
         underlyingInstrumentId,
-        polygonTicker: normalized.polygonTicker,
+        massiveTicker: normalized.massiveTicker,
         providerContractId,
         expirationDate: normalized.expirationKey,
         strike: String(normalized.strike),
@@ -323,7 +331,7 @@ async function upsertOptionContract(
     .values({
       instrumentId: optionInstrumentId,
       underlyingInstrumentId,
-      polygonTicker: normalized.polygonTicker,
+      massiveTicker: normalized.massiveTicker,
       providerContractId,
       expirationDate: normalized.expirationKey,
       strike: String(normalized.strike),
@@ -358,9 +366,18 @@ function hasSnapshotFields(contract: OptionChainContract): boolean {
 
 async function pruneOldSnapshots(now = Date.now()): Promise<void> {
   const cutoff = new Date(now - OPTION_METADATA_SNAPSHOT_RETENTION_MS);
+  const prunableSourceFilter = or(
+    inArray(optionChainSnapshotsTable.source, [
+      ...OPTION_METADATA_PRUNABLE_SOURCES,
+    ]),
+    like(
+      optionChainSnapshotsTable.source,
+      `${OPTION_METADATA_PRUNABLE_SIGNAL_OPTIONS_PREFIX}%`,
+    ),
+  );
   const deleted = await db
     .delete(optionChainSnapshotsTable)
-    .where(lt(optionChainSnapshotsTable.asOf, cutoff))
+    .where(and(lt(optionChainSnapshotsTable.asOf, cutoff), prunableSourceFilter))
     .returning({ id: optionChainSnapshotsTable.id });
   counters.prunedRows += deleted.length;
 }
@@ -561,7 +578,7 @@ export async function loadDurableOptionChain(input: {
     const rows = await db
       .select({
         id: optionContractsTable.id,
-        polygonTicker: optionContractsTable.polygonTicker,
+        massiveTicker: optionContractsTable.massiveTicker,
         providerContractId: optionContractsTable.providerContractId,
         expirationDate: optionContractsTable.expirationDate,
         strike: optionContractsTable.strike,
@@ -700,7 +717,7 @@ export async function loadDurableOptionChain(input: {
       return [
         {
           contract: {
-            ticker: row.polygonTicker,
+            ticker: row.massiveTicker,
             underlying,
             expirationDate,
             strike: numberOrNull(row.strike) ?? 0,

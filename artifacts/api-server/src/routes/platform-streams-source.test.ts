@@ -48,3 +48,28 @@ test("position quote SSE uses the position-specific Massive-first stream", () =>
   assert.match(routeBlock, /fetchPositionQuoteSnapshotPayload\(symbols\)/);
   assert.doesNotMatch(routeBlock, /subscribeQuoteSnapshots\(symbols/);
 });
+
+test("option quote SSE subscribes before emitting cached demand state", () => {
+  const routeBlock = platformSource.match(
+    /router\.get\("\/streams\/options\/quotes",[\s\S]*?\n\}\);\n\nrouter\.get\("\/streams\/bars"/,
+  )?.[0];
+
+  assert.ok(routeBlock);
+  const subscribeIndex = routeBlock.indexOf(
+    "const unsubscribe = subscribeOptionQuoteSnapshots",
+  );
+  const readyIndex = routeBlock.indexOf('await writeEvent("ready"');
+  const demandSnapshotIndex = routeBlock.indexOf(
+    "readOptionQuoteDemandSnapshotPayload",
+  );
+  const blockingSnapshotIndex = routeBlock.indexOf(
+    'await writeEvent(\n      "quotes",\n      await fetchOptionQuoteSnapshotPayload',
+  );
+
+  assert.notEqual(subscribeIndex, -1);
+  assert.notEqual(readyIndex, -1);
+  assert.notEqual(demandSnapshotIndex, -1);
+  assert.equal(blockingSnapshotIndex, -1);
+  assert.ok(subscribeIndex < readyIndex);
+  assert.ok(readyIndex < demandSnapshotIndex);
+});

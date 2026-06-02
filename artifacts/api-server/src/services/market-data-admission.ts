@@ -10,11 +10,17 @@ export type MarketDataIntent =
   | "historical";
 
 export type MarketDataFallbackProvider =
-  | "polygon"
   | "massive"
   | "cache"
   | "ibkr"
   | "none";
+
+const MARKET_DATA_FALLBACK_PROVIDERS: MarketDataFallbackProvider[] = [
+  "massive",
+  "cache",
+  "ibkr",
+  "none",
+];
 
 export type MarketDataLineAssetClass = "equity" | "option";
 export type MarketDataLineRole =
@@ -36,6 +42,7 @@ export type MarketDataOwnerClass =
   | "visible"
   | "automation"
   | "signal-options"
+  | "shadow-account"
   | "flow-scanner"
   | "flow-scanner-benchmark"
   | "historical"
@@ -217,6 +224,7 @@ const OWNER_CLASS_LABELS: Record<MarketDataOwnerClass, string> = {
   visible: "Visible",
   automation: "Automation",
   "signal-options": "Signal automation",
+  "shadow-account": "Shadow account",
   "flow-scanner": "Flow scanner",
   "flow-scanner-benchmark": "Flow scanner benchmark",
   historical: "Historical",
@@ -280,6 +288,9 @@ function classifyMarketDataOwner(input: {
   const owner = input.owner.trim().toLowerCase();
   if (owner.startsWith("shadow-equity-forward")) {
     return "retired-shadow-equity-forward";
+  }
+  if (owner.startsWith("shadow-") || owner.startsWith("shadow:")) {
+    return "shadow-account";
   }
   if (owner.startsWith("flow-scanner-benchmark")) {
     return "flow-scanner-benchmark";
@@ -1050,6 +1061,33 @@ function emptyOwnerClassSummary(ownerClass: MarketDataOwnerClass) {
     recentFallbackCount: 0,
     recentCacheFallbackCount: 0,
     recentRejectedLineSample: [] as string[],
+    activeFallbackProviderLineCounts: Object.fromEntries(
+      MARKET_DATA_FALLBACK_PROVIDERS.map((provider) => [provider, 0]),
+    ) as Record<MarketDataFallbackProvider, number>,
+    activeFallbackProviderLeaseCounts: Object.fromEntries(
+      MARKET_DATA_FALLBACK_PROVIDERS.map((provider) => [provider, 0]),
+    ) as Record<MarketDataFallbackProvider, number>,
+  };
+}
+
+function emptyFallbackProviderLineSets(): Record<
+  MarketDataFallbackProvider,
+  Set<string>
+> {
+  return {
+    massive: new Set<string>(),
+    cache: new Set<string>(),
+    ibkr: new Set<string>(),
+    none: new Set<string>(),
+  };
+}
+
+function emptyFallbackProviderCounts(): Record<MarketDataFallbackProvider, number> {
+  return {
+    massive: 0,
+    cache: 0,
+    ibkr: 0,
+    none: 0,
   };
 }
 
@@ -1060,6 +1098,8 @@ function buildOwnerClassDiagnostics() {
       lineIds: Set<string>;
       owners: Set<string>;
       rejectedLineIds: Set<string>;
+      fallbackProviderLineIds: Record<MarketDataFallbackProvider, Set<string>>;
+      fallbackProviderLeaseCounts: Record<MarketDataFallbackProvider, number>;
     }
   >();
 
@@ -1073,6 +1113,8 @@ function buildOwnerClassDiagnostics() {
       lineIds: new Set<string>(),
       owners: new Set<string>(),
       rejectedLineIds: new Set<string>(),
+      fallbackProviderLineIds: emptyFallbackProviderLineSets(),
+      fallbackProviderLeaseCounts: emptyFallbackProviderCounts(),
     };
     groups.set(ownerClass, created);
     return created;
@@ -1082,7 +1124,11 @@ function buildOwnerClassDiagnostics() {
     const group = ensureGroup(lease.ownerClass);
     group.leaseCount += 1;
     group.owners.add(lease.owner);
-    lease.lineIds.forEach((lineId) => group.lineIds.add(lineId));
+    group.fallbackProviderLeaseCounts[lease.fallbackProvider] += 1;
+    lease.lineIds.forEach((lineId) => {
+      group.lineIds.add(lineId);
+      group.fallbackProviderLineIds[lease.fallbackProvider].add(lineId);
+    });
   });
 
   recentEvents.forEach((event) => {
@@ -1118,7 +1164,14 @@ function buildOwnerClassDiagnostics() {
 
   const summaries = Object.fromEntries(
     Array.from(groups.entries()).map(([ownerClass, group]) => {
-      const { lineIds, owners, rejectedLineIds, ...counts } = group;
+      const {
+        lineIds,
+        owners,
+        rejectedLineIds,
+        fallbackProviderLineIds,
+        fallbackProviderLeaseCounts,
+        ...counts
+      } = group;
       return [
         ownerClass,
         {
@@ -1129,6 +1182,13 @@ function buildOwnerClassDiagnostics() {
           activeOwnerSample: Array.from(owners).sort().slice(0, 20),
           activeLineSample: sampleDiagnosticLineIds(lineIds),
           recentRejectedLineSample: sampleDiagnosticLineIds(rejectedLineIds),
+          activeFallbackProviderLineCounts: Object.fromEntries(
+            MARKET_DATA_FALLBACK_PROVIDERS.map((provider) => [
+              provider,
+              fallbackProviderLineIds[provider].size,
+            ]),
+          ) as Record<MarketDataFallbackProvider, number>,
+          activeFallbackProviderLeaseCounts: { ...fallbackProviderLeaseCounts },
         },
       ];
     }),
@@ -1169,6 +1229,8 @@ function buildOwnerClassDiagnostics() {
     summaries,
     signalOptions:
       summaries["signal-options"] ?? emptyOwnerClassSummary("signal-options"),
+    shadowAccount:
+      summaries["shadow-account"] ?? emptyOwnerClassSummary("shadow-account"),
     unknownOwnerCount: unknownOwners.length,
     retiredOwnerCount: retiredOwners.length,
     warnings,
@@ -1811,7 +1873,7 @@ export function admitMarketDataLeases(input: {
   replaceOwnerExisting?: boolean;
 }): MarketDataAdmissionResult {
   expireMarketDataLeases();
-  const fallbackProvider = input.fallbackProvider ?? "polygon";
+  const fallbackProvider = input.fallbackProvider ?? "massive";
   const budget = getMarketDataAdmissionBudget();
   const pool = normalizeMarketDataPoolId(input.pool, INTENT_POOL[input.intent]);
   const ownerClass = classifyMarketDataOwner({
@@ -2251,6 +2313,7 @@ export function getMarketDataAdmissionDiagnostics() {
     accountMonitor,
     ownerClasses,
     signalOptions: ownerClasses.signalOptions,
+    shadowAccount: ownerClasses.shadowAccount,
     visibleLineCount: visibleLines.size,
     visibleRemainingLineCount: Math.max(
       0,

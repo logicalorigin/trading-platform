@@ -105,29 +105,6 @@ const routeAdmissionAction = (input: {
     }
   }
 
-  if (input.pressureLevel === "high") {
-    if (
-      input.routeClass === "stream" ||
-      input.routeClass === "decorative" ||
-      input.routeClass === "background-maintenance"
-    ) {
-      return {
-        action: "shed",
-        reason: "api-resource-pressure-high",
-        statusCode: input.routeClass === "decorative" ? 204 : 503,
-        retryAfterMs: 10_000,
-      };
-    }
-    if (input.routeClass === "deferred-analytics") {
-      return {
-        action: "cache-only",
-        reason: "api-resource-pressure-high",
-        statusCode: null,
-        retryAfterMs: null,
-      };
-    }
-  }
-
   return {
     action: "allow",
     reason: null,
@@ -201,10 +178,15 @@ export function classifyApiRoute(input: {
   }
 
   if (
+    path === "/signal-monitor/matrix" ||
+    path === "/signal-monitor/state"
+  ) {
+    return "active-screen";
+  }
+
+  if (
     path === "/diagnostics/latest" ||
     path.startsWith("/diagnostics/") ||
-    path === "/signal-monitor/matrix" ||
-    path === "/signal-monitor/state" ||
     path === "/bars" ||
     path.startsWith("/options/") ||
     path.startsWith("/flow/") ||

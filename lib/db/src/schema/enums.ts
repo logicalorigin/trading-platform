@@ -6,7 +6,7 @@ export const environmentModeEnum = pgEnum("environment_mode", [
 ]);
 export const brokerProviderEnum = pgEnum("broker_provider", ["ibkr"]);
 export const marketDataProviderEnum = pgEnum("market_data_provider", [
-  "polygon",
+  "massive",
 ]);
 export const universeMarketEnum = pgEnum("universe_market", [
   "stocks",

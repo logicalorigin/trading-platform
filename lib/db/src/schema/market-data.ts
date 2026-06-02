@@ -29,7 +29,7 @@ export const quoteCacheTable = pgTable(
     lastSize: integer("last_size"),
     change: numeric("change", { precision: 18, scale: 6 }),
     changePercent: numeric("change_percent", { precision: 18, scale: 6 }),
-    source: varchar("source", { length: 32 }).notNull().default("polygon"),
+    source: varchar("source", { length: 32 }).notNull().default("massive"),
     asOf: timestamp("as_of", { withTimezone: true }).notNull(),
     ...timestamps,
   },
@@ -55,7 +55,7 @@ export const barCacheTable = pgTable(
     low: numeric("low", { precision: 18, scale: 6 }).notNull(),
     close: numeric("close", { precision: 18, scale: 6 }).notNull(),
     volume: numeric("volume", { precision: 20, scale: 4 }).notNull(),
-    source: varchar("source", { length: 32 }).notNull().default("polygon"),
+    source: varchar("source", { length: 32 }).notNull().default("massive"),
     ...timestamps,
   },
   (table) => [
@@ -92,7 +92,7 @@ export const optionChainSnapshotsTable = pgTable(
     vega: numeric("vega", { precision: 18, scale: 6 }),
     openInterest: integer("open_interest"),
     volume: integer("volume"),
-    source: text("source").notNull().default("polygon"),
+    source: text("source").notNull().default("massive"),
     asOf: timestamp("as_of", { withTimezone: true }).notNull(),
     ...timestamps,
   },
@@ -100,6 +100,11 @@ export const optionChainSnapshotsTable = pgTable(
     index("option_chain_snapshots_underlying_idx").on(table.underlyingInstrumentId),
     index("option_chain_snapshots_contract_idx").on(table.optionContractId),
     index("option_chain_snapshots_as_of_idx").on(table.asOf),
+    index("option_chain_snapshots_underlying_contract_as_of_idx").on(
+      table.underlyingInstrumentId,
+      table.optionContractId,
+      table.asOf.desc(),
+    ),
   ],
 );
 

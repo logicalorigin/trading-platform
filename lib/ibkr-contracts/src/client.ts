@@ -34,7 +34,7 @@ export type UniverseMarket =
   | "fx"
   | "crypto"
   | "otc";
-export type MarketDataProvider = "ibkr" | "polygon" | "massive";
+export type MarketDataProvider = "ibkr" | "massive";
 export type MarketDataFreshness =
   | "live"
   | "delayed"
@@ -247,7 +247,7 @@ export type FootprintSourcePreference =
   | "massive_first"
   | "ibkr_first"
   | "massive_only";
-export type FootprintSourceProvider = "massive" | "polygon" | "ibkr" | "none";
+export type FootprintSourceProvider = "massive" | "ibkr" | "none";
 export type FootprintDisplayMode = "split" | "delta" | "total";
 export type FootprintSide = "buy" | "sell" | "unknown";
 export type FootprintClassificationMethod =

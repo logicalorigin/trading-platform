@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { UniverseTicker } from "../providers/polygon/market-data";
+import type { UniverseTicker } from "../providers/massive/market-data";
 import { __platformTickerSearchTestInternals } from "./platform";
 
 const buildIbkrTicker = (
@@ -119,10 +119,10 @@ test("ticker search returns primary catalog ticker prefixes without waiting for 
             name: "TopBuild Corp",
             market: "stocks",
             rootSymbol: "BLD",
-            providers: ["polygon"],
-            provider: "polygon",
+            providers: ["massive"],
+            provider: "massive",
             tradeProvider: null,
-            dataProviderPreference: "polygon",
+            dataProviderPreference: "massive",
             providerContractId: null,
           }),
           buildIbkrTicker({
@@ -136,10 +136,10 @@ test("ticker search returns primary catalog ticker prefixes without waiting for 
             name: "Cambria Global Real Estate ETF",
             market: "etf",
             rootSymbol: "BLDG",
-            providers: ["polygon"],
-            provider: "polygon",
+            providers: ["massive"],
+            provider: "massive",
             tradeProvider: null,
-            dataProviderPreference: "polygon",
+            dataProviderPreference: "massive",
             providerContractId: null,
           }),
         ],
@@ -173,10 +173,10 @@ test("ticker search does not use off-lane catalog prefixes for hinted markets", 
             name: "ESAB Corp",
             market: "stocks",
             rootSymbol: "ESAB",
-            providers: ["polygon"],
-            provider: "polygon",
+            providers: ["massive"],
+            provider: "massive",
             tradeProvider: null,
-            dataProviderPreference: "polygon",
+            dataProviderPreference: "massive",
             providerContractId: null,
           }),
         ],
