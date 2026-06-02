@@ -2147,6 +2147,7 @@ export const OperationsSignalRow = ({
       cell: desktopCells.gate,
       visibleWhen: gate.category !== "clear",
     },
+    { key: "matrix", label: "Matrix", cell: desktopCells.matrix },
     { key: "process", label: "Process", cell: desktopCells.process },
     {
       key: "sync",

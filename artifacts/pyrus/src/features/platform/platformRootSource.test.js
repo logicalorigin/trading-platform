@@ -2853,13 +2853,11 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
   assert.match(algoSource, /retryDynamicImport\(/);
   assert.match(algoSource, /label:\s*"AlgoLivePage"/);
   assert.match(algoSource, /const LazyAlgoLivePage = lazy\(loadAlgoLivePage\)/);
-  assert.doesNotMatch(algoSource, /void loadAlgoLivePage\(\)/);
   assert.match(algoSource, /const AlgoLiveLoading = \(\) =>/);
   assert.match(algoSource, /data-testid="algo-live-loading"/);
-  assert.match(algoSource, /const \[algoLivePageReady, setAlgoLivePageReady\] = useState\(false\)/);
   assert.match(algoSource, /const loadAlgoRightRail = \(\) =>/);
   assert.match(algoSource, /void loadAlgoRightRail\(\)\.catch\(\(\) => undefined\)/);
-  assert.match(algoSource, /loadAlgoLivePage\(\)[\s\S]*setAlgoLivePageReady\(true\)/);
+  assert.match(algoSource, /void loadAlgoLivePage\(\)\.catch\(\(\) => undefined\)/);
   assert.match(algoSource, /const algoLiveDataQueriesEnabled = Boolean\(isVisible\);/);
   assert.match(algoSource, /const algoSetupQueriesEnabled = Boolean\(isVisible\);/);
   assert.match(algoSource, /const algoCriticalQueriesEnabled = Boolean\(algoLiveDataQueriesEnabled\);/);

@@ -390,7 +390,6 @@ export const AlgoScreen = ({
   const [diagExpansion, setDiagExpansion] = useState({});
   const [selectedPipelineStageId, setSelectedPipelineStageId] = useState("all");
   const [selectedCandidateId, setSelectedCandidateId] = useState(null);
-  const [algoLivePageReady, setAlgoLivePageReady] = useState(false);
   const saveAllInFlightRef = useRef(false);
   const [saveAllPending, setSaveAllPending] = useState(false);
   const [algoRuntimeHelpers, setAlgoRuntimeHelpers] = useState(
@@ -410,25 +409,11 @@ export const AlgoScreen = ({
     null;
   useEffect(() => {
     if (!isVisible) {
-      setAlgoLivePageReady(false);
       return undefined;
     }
-    let cancelled = false;
     void loadAlgoRightRail().catch(() => undefined);
-    loadAlgoLivePage()
-      .then(() => {
-        if (!cancelled) {
-          setAlgoLivePageReady(true);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setAlgoLivePageReady(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
+    void loadAlgoLivePage().catch(() => undefined);
+    return undefined;
   }, [isVisible]);
   useEffect(() => {
     if (!isVisible || algoRuntimeHelpers !== DEFAULT_ALGO_RUNTIME_HELPERS) {
