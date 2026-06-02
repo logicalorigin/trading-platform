@@ -26,11 +26,14 @@ test("footer memory pressure compact label renders four horizontal consumption b
     apiRssThresholds: { watch: 2048, high: 3072, critical: 4096 },
     apiHeapUsedPercent: 38,
     activeWorkloadCount: 4,
+    queryCount: 80,
+    heavyQueryCount: 10,
     storeEntryCount: 64,
     pressureDrivers: [
       { kind: "browser-memory", level: "high", score: 69 },
       { kind: "api-rss", level: "normal", score: 1024 },
       { kind: "api-heap", level: "watch", score: 38 },
+      { kind: "query-cache", level: "watch", score: 80 },
       { kind: "workload", level: "normal", score: 4 },
       { kind: "runtime-stores", level: "watch", score: 64 },
     ],
@@ -40,9 +43,10 @@ test("footer memory pressure compact label renders four horizontal consumption b
   assert.match(html, /data-testid="footer-memory-pressure-mini-cluster"/);
   assert.match(html, /data-cluster-expanded="true"/);
   assert.match(html, /data-testid="footer-memory-pressure-mini-slot-browser"/);
-  assert.match(html, /data-testid="footer-memory-pressure-mini-slot-api-rss"/);
-  assert.match(html, /data-testid="footer-memory-pressure-mini-slot-api-heap"/);
+  assert.match(html, /data-testid="footer-memory-pressure-mini-slot-api"/);
+  assert.match(html, /data-testid="footer-memory-pressure-mini-slot-cache"/);
   assert.match(html, /data-testid="footer-memory-pressure-mini-slot-runtime"/);
+  assert.doesNotMatch(html, /data-testid="footer-memory-pressure-mini-slot-api-heap"/);
 
   assert.match(
     html,
@@ -50,11 +54,11 @@ test("footer memory pressure compact label renders four horizontal consumption b
   );
   assert.match(
     html,
-    /data-testid="footer-memory-pressure-mini-fill-api-rss" style="[^"]*width:25%/,
+    /data-testid="footer-memory-pressure-mini-fill-api" style="[^"]*width:38%/,
   );
   assert.match(
     html,
-    /data-testid="footer-memory-pressure-mini-fill-api-heap" style="[^"]*width:38%/,
+    /data-testid="footer-memory-pressure-mini-fill-cache" style="[^"]*width:33%/,
   );
   assert.match(
     html,
@@ -62,8 +66,8 @@ test("footer memory pressure compact label renders four horizontal consumption b
   );
 
   assert.match(html, /Browser 412M/);
-  assert.match(html, /RSS 1024M/);
-  assert.match(html, /Heap 38%/);
+  assert.match(html, /API 1024M/);
+  assert.match(html, /Cache 80/);
   assert.match(html, /Runtime 64/);
   assert.doesNotMatch(html, /height:69%/);
 });
@@ -78,12 +82,12 @@ test("footer memory pressure mini bars keep empty fallback slots", () => {
   });
 
   assert.match(html, /data-testid="footer-memory-pressure-mini-slot-browser"/);
-  assert.match(html, /data-testid="footer-memory-pressure-mini-slot-api-rss"/);
-  assert.match(html, /data-testid="footer-memory-pressure-mini-slot-api-heap"/);
+  assert.match(html, /data-testid="footer-memory-pressure-mini-slot-api"/);
+  assert.match(html, /data-testid="footer-memory-pressure-mini-slot-cache"/);
   assert.match(html, /data-testid="footer-memory-pressure-mini-slot-runtime"/);
   assert.match(html, /Browser --/);
-  assert.match(html, /RSS --/);
-  assert.match(html, /Heap --/);
+  assert.match(html, /API --/);
+  assert.match(html, /Cache --/);
   assert.match(html, /Runtime 0/);
   assert.equal(
     (html.match(/data-testid="footer-memory-pressure-mini-fill-[^"]+" style="[^"]*width:0%/g) || [])
@@ -125,16 +129,12 @@ test("footer memory pressure mini bars scale API RSS from backend thresholds", (
     ],
   });
 
-  assert.match(html, /RSS 1639M/);
+  assert.match(html, /API 1639M/);
   assert.match(
     html,
-    /data-testid="footer-memory-pressure-mini-fill-api-rss" style="[^"]*width:82%/,
+    /data-testid="footer-memory-pressure-mini-fill-api" style="[^"]*width:82%/,
   );
-  assert.match(
-    html,
-    /data-testid="footer-memory-pressure-mini-fill-api-heap" style="[^"]*width:22%/,
-  );
-  assert.doesNotMatch(html, /style="[^"]*width:100%[^"]*"[^>]*footer-memory-pressure-mini-fill-api-rss/);
+  assert.doesNotMatch(html, /style="[^"]*width:100%[^"]*"[^>]*footer-memory-pressure-mini-fill-api/);
 });
 
 test("footer memory pressure shows level instead of score percent", () => {
@@ -176,6 +176,7 @@ test("footer memory pressure mini bars keep metric labels visible", () => {
 
   assert.match(source, /import \{ AppTooltip \} from "@\/components\/ui\/tooltip"/);
   assert.match(source, /const MiniPressureBars = \(\{ signal, showLabels = true \}\) =>/);
+  assert.match(source, /MEMORY_PRESSURE_THRESHOLDS\.queryCache\.queryCount/);
   assert.match(source, /MEMORY_PRESSURE_THRESHOLDS\.runtimeStores\.storeEntryCount/);
   assert.match(source, /data-cluster-expanded="true"/);
   assert.doesNotMatch(source, /setHovered/);

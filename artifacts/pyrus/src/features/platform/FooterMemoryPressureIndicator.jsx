@@ -59,6 +59,13 @@ const PRESSURE_TOKEN_BY_LEVEL = {
   critical: "--ra-pressure-critical",
 };
 
+const PRESSURE_RANK = {
+  normal: 0,
+  watch: 1,
+  high: 2,
+  critical: 3,
+};
+
 const pressureTone = (level) =>
   `var(${PRESSURE_TOKEN_BY_LEVEL[level] || "--ra-text-secondary"})`;
 
@@ -106,6 +113,17 @@ const finiteNumber = (value) => {
   return Number.isFinite(number) ? number : null;
 };
 
+const normalizePressureLevel = (level) =>
+  PRESSURE_RANK[level] == null ? "normal" : level;
+
+const maxPressureLevel = (...levels) =>
+  levels.reduce((current, next) =>
+    PRESSURE_RANK[normalizePressureLevel(next)] >
+    PRESSURE_RANK[normalizePressureLevel(current)]
+      ? normalizePressureLevel(next)
+      : normalizePressureLevel(current),
+  "normal");
+
 const findMiniDriver = (drivers, kind) =>
   drivers.find((driver) => driver?.kind === kind) || null;
 
@@ -143,6 +161,33 @@ const levelFromThresholds = (value, thresholds, fallback = "normal") => {
     return "watch";
   }
   return "normal";
+};
+
+const buildApiMemoryLabel = (rssMb, heapPercent) => {
+  if (rssMb !== null) return `API ${formatMetric(rssMb, "M")}`;
+  if (heapPercent !== null) return `API ${formatMetric(heapPercent, "%")}`;
+  return "API --";
+};
+
+const buildApiMemoryDetail = (rssMb, heapPercent) => {
+  if (rssMb !== null && heapPercent !== null) {
+    return `API RSS ${formatMetric(rssMb, "M")} / heap ${formatMetric(heapPercent, "%")}`;
+  }
+  if (rssMb !== null) return `API RSS ${formatMetric(rssMb, "M")}`;
+  if (heapPercent !== null) return `API heap ${formatMetric(heapPercent, "%")}`;
+  return "API --";
+};
+
+const buildCacheLabel = (queryCount) =>
+  queryCount !== null ? `Cache ${formatMetric(queryCount)}` : "Cache --";
+
+const buildCacheDetail = (queryCount, heavyQueryCount) => {
+  if (queryCount === null && heavyQueryCount === null) return "Cache --";
+  const queryLabel =
+    queryCount !== null ? `${formatMetric(queryCount)} queries` : "-- queries";
+  const heavyLabel =
+    heavyQueryCount !== null ? `${formatMetric(heavyQueryCount)} heavy` : "-- heavy";
+  return `Cache ${queryLabel} / ${heavyLabel}`;
 };
 
 const browserThresholdsForSignal = (signal) => {
@@ -207,17 +252,40 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
   const browserDriver = findMiniDriver(drivers, "browser-memory") || fallbackMiniDriver;
   const apiRssDriver = findMiniDriver(drivers, "api-rss");
   const apiHeapDriver = findMiniDriver(drivers, "api-heap") || fallbackMiniDriver;
+  const queryCacheDriver =
+    findMiniDriver(drivers, "query-cache") || fallbackMiniDriver;
   const runtimeStoreDriver =
     findMiniDriver(drivers, "runtime-stores") || fallbackMiniDriver;
   const browserThresholds = browserThresholdsForSignal(signal);
   const apiRssThresholds = readApiRssThresholds(signal);
+  const queryCountThresholds = normalizeThresholds(
+    MEMORY_PRESSURE_THRESHOLDS.queryCache.queryCount,
+  );
+  const heavyQueryCountThresholds = normalizeThresholds(
+    MEMORY_PRESSURE_THRESHOLDS.queryCache.heavyQueryCount,
+  );
   const runtimeStoreThresholds = normalizeThresholds(
     MEMORY_PRESSURE_THRESHOLDS.runtimeStores.storeEntryCount,
   );
   const browserMemoryMb = finiteNumber(signal.browserMemoryMb);
   const apiRssMb = readApiRssMb(signal);
   const apiHeapUsedPercent = finiteNumber(signal.apiHeapUsedPercent);
+  const queryCount = finiteNumber(signal.queryCount);
+  const heavyQueryCount = finiteNumber(signal.heavyQueryCount);
   const storeEntryCount = finiteNumber(signal.storeEntryCount) ?? 0;
+  const apiRssLevel =
+    apiRssDriver?.level || levelFromThresholds(apiRssMb, apiRssThresholds);
+  const apiHeapLevel =
+    apiHeapDriver.level ||
+    levelFromThresholds(
+      apiHeapUsedPercent,
+      MEMORY_PRESSURE_THRESHOLDS.apiHeapUsedPercent,
+    );
+  const queryCountLevel = levelFromThresholds(queryCount, queryCountThresholds);
+  const heavyQueryCountLevel = levelFromThresholds(
+    heavyQueryCount,
+    heavyQueryCountThresholds,
+  );
   const bars = [
     {
       key: "browser",
@@ -229,30 +297,34 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
         browserThresholds,
         BROWSER_MEMORY_REFERENCE_MB,
       ),
+      label: `Browser ${formatMetric(browserMemoryMb, "M")}`,
       detail: `Browser ${formatMetric(browserMemoryMb, "M")}`,
     },
     {
-      key: "api-rss",
-      level:
-        apiRssDriver?.level ||
-        levelFromThresholds(apiRssMb, apiRssThresholds),
-      fillPercent: thresholdFillPercent(
-        apiRssMb,
-        apiRssThresholds,
-        DEFAULT_API_RSS_THRESHOLDS.critical,
+      key: "api",
+      level: maxPressureLevel(apiRssLevel, apiHeapLevel),
+      fillPercent: Math.max(
+        thresholdFillPercent(
+          apiRssMb,
+          apiRssThresholds,
+          DEFAULT_API_RSS_THRESHOLDS.critical,
+        ),
+        rawPercentFillPercent(apiHeapUsedPercent) ?? 0,
       ),
-      detail: `RSS ${formatMetric(apiRssMb, "M")}`,
+      label: buildApiMemoryLabel(apiRssMb, apiHeapUsedPercent),
+      detail: buildApiMemoryDetail(apiRssMb, apiHeapUsedPercent),
     },
     {
-      key: "api-heap",
+      key: "cache",
       level:
-        apiHeapDriver.level ||
-        levelFromThresholds(
-          apiHeapUsedPercent,
-          MEMORY_PRESSURE_THRESHOLDS.apiHeapUsedPercent,
-        ),
-      fillPercent: rawPercentFillPercent(apiHeapUsedPercent) ?? 0,
-      detail: `Heap ${formatMetric(apiHeapUsedPercent, "%")}`,
+        queryCacheDriver.level ||
+        maxPressureLevel(queryCountLevel, heavyQueryCountLevel),
+      fillPercent: Math.max(
+        thresholdFillPercent(queryCount, queryCountThresholds, 240),
+        thresholdFillPercent(heavyQueryCount, heavyQueryCountThresholds, 50),
+      ),
+      label: buildCacheLabel(queryCount),
+      detail: buildCacheDetail(queryCount, heavyQueryCount),
     },
     {
       key: "runtime",
@@ -260,6 +332,7 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
         runtimeStoreDriver.level ||
         levelFromThresholds(storeEntryCount, runtimeStoreThresholds),
       fillPercent: thresholdFillPercent(storeEntryCount, runtimeStoreThresholds, 180),
+      label: `Runtime ${formatMetric(storeEntryCount)}`,
       detail: `Runtime ${formatMetric(storeEntryCount)}`,
     },
   ];
@@ -307,7 +380,7 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
               />
             </span>
             <span className="ra-pressure-mini-label" style={miniLabelStyle(bar, showLabels)}>
-              {bar.detail}
+              {bar.label || bar.detail}
             </span>
           </span>
         </AppTooltip>
@@ -328,8 +401,8 @@ const buildTitle = (signal) => {
     `Memory pressure ${String(signal?.level || "normal").toUpperCase()}`,
     `Trend ${String(signal?.trend || "steady").toUpperCase()}`,
     `Browser ${formatMetric(signal?.browserMemoryMb, " MB")}`,
-    `API RSS ${formatMetric(readApiRssMb(signal), " MB")}`,
-    `API heap ${formatMetric(signal?.apiHeapUsedPercent, "%")}`,
+    buildApiMemoryDetail(readApiRssMb(signal), finiteNumber(signal?.apiHeapUsedPercent)),
+    buildCacheDetail(finiteNumber(signal?.queryCount), finiteNumber(signal?.heavyQueryCount)),
     `Runtime ${formatMetric(signal?.storeEntryCount)} entries`,
     drivers,
   ]
