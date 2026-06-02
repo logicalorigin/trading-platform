@@ -131,6 +131,10 @@ import {
   publishSignalMonitorSnapshot,
 } from "./signalMonitorStore";
 import {
+  readSignalMatrixSnapshotCache,
+  writeSignalMatrixSnapshotCache,
+} from "../signals/signalMatrixSnapshotCache.js";
+import {
   isSignalMonitorDegradedProfile,
   isSignalMonitorRuntimeFallbackProfile,
 } from "./signalMonitorStatusModel";
@@ -2845,10 +2849,15 @@ export default function PlatformApp() {
       },
     },
   });
-  const [signalMatrixSnapshot, setSignalMatrixSnapshot] = useState(() => ({
-    states: [],
-    timeframes: SIGNAL_MATRIX_TIMEFRAMES,
-  }));
+  const [signalMatrixSnapshot, setSignalMatrixSnapshot] = useState(() => {
+    const cachedSnapshot = readSignalMatrixSnapshotCache({
+      timeframes: SIGNAL_MATRIX_TIMEFRAMES,
+    });
+    return cachedSnapshot || {
+      states: [],
+      timeframes: SIGNAL_MATRIX_TIMEFRAMES,
+    };
+  });
   const [signalsScreenMatrixRequest, setSignalsScreenMatrixRequest] = useState(() => ({
     prioritySymbols: [],
     symbols: [],
@@ -2861,7 +2870,7 @@ export default function PlatformApp() {
   const signalMatrixLastPlanRef = useRef(null);
   const signalMatrixAutomaticRunCountRef = useRef(0);
   const signalMatrixUniverseRef = useRef([]);
-  const signalMatrixStatesRef = useRef([]);
+  const signalMatrixStatesRef = useRef(signalMatrixSnapshot.states || []);
   const signalMatrixQueuedEvaluationRef = useRef(false);
   const signalMatrixQueuedEvaluationDelayMsRef = useRef(null);
   const signalMatrixQueuedTimerRef = useRef(null);
@@ -3497,6 +3506,11 @@ export default function PlatformApp() {
   useEffect(() => {
     signalMatrixStatesRef.current = signalMatrixSnapshot.states;
   }, [signalMatrixSnapshot.states]);
+  useEffect(() => {
+    writeSignalMatrixSnapshotCache(signalMatrixSnapshot, {
+      timeframes: SIGNAL_MATRIX_TIMEFRAMES,
+    });
+  }, [signalMatrixSnapshot]);
   useEffect(() => {
     if (typeof window === "undefined") {
       return undefined;
