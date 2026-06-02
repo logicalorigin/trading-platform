@@ -7,6 +7,18 @@ const livePageSource = readFileSync(
   "utf8",
 );
 
+test("mobile algo settings drawer portals to the document body", () => {
+  assert.match(livePageSource, /import \{ createPortal \} from "react-dom";/);
+  assert.match(
+    livePageSource,
+    /algoIsPhone && settingsDrawerOpen && typeof document !== "undefined"/,
+  );
+  assert.match(
+    livePageSource,
+    /createPortal\(\([\s\S]*data-testid="algo-settings-drawer"[\s\S]*document\.body\)/,
+  );
+});
+
 test("safe QA mode disables algo header mutation controls", () => {
   assert.match(livePageSource, /const safeQaControlsPaused = Boolean\(safeQaMode\);/);
   assert.match(

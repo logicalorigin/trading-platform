@@ -499,7 +499,8 @@ async function openAlgo(
 test("visual review: desktop signal hero rows", async ({ page }) => {
   await openAlgo(page, 1440, 900);
 
-  await expect(page.getByTestId("algo-verdict-try")).toBeVisible();
+  const aaplRow = page.getByTestId("algo-signal-row-AAPL");
+  await expect(aaplRow.getByTestId("algo-verdict-try")).toBeVisible();
   await expect(page.getByTestId("algo-signal-dots").first()).toBeVisible();
   await expect(page.getByTestId("algo-signal-row-action-submit").first()).toBeVisible();
   await expect(page.getByTestId("algo-spread-gauge").first()).toBeVisible();
@@ -521,7 +522,7 @@ test("visual review: desktop signal hero rows", async ({ page }) => {
     const controls = node.querySelector('[data-testid="algo-controls-container"]');
     const halt = node.querySelector('[data-testid="algo-halt-strip"]');
     const settings = node.querySelector('[data-testid="algo-settings-container"]');
-    const quality = node.querySelector('[data-testid="algo-compact-group-qualityExits"]');
+    const quality = node.querySelector('[data-testid="algo-settings-section-qualityExits"]');
     const diagnostics = node.querySelector('[data-testid="algo-diagnostics-container"]');
     return {
       controlsContainHalt: Boolean(controls && halt && controls.contains(halt)),
@@ -548,11 +549,11 @@ test("visual review: desktop signal hero rows", async ({ page }) => {
     diagnosticsOverflow: "auto",
     controlsScrollable: true,
   });
-  await expect(rightRail.getByTestId("algo-compact-group-signal")).toBeVisible();
-  await expect(rightRail.getByTestId("algo-compact-group-quote")).toBeVisible();
-  await expect(rightRail.getByTestId("algo-compact-control-mtfPolicy")).toBeVisible();
-  await expect(rightRail.getByTestId("algo-compact-input-mtfPolicy")).toBeVisible();
-  await expect(rightRail.getByTestId("algo-compact-toggle-freshQuotePolicy")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-halt-group-signal")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-halt-group-quote")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-halt-control-mtfAlignment")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-halt-toggle-mtfAlignment")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-halt-toggle-freshQuoteRequired")).toBeVisible();
   await expect(rightRail.getByText("MAX OPEN SYMBOLS")).toHaveCount(0);
   await expect(rightRail.getByText("MAX CONTRACTS")).toHaveCount(0);
   await expect(rightRail.getByText("TIME HORIZON")).toHaveCount(0);
@@ -564,10 +565,10 @@ test("visual review: desktop signal hero rows", async ({ page }) => {
   const desktopHaltColumns = await rightRail
     .getByTestId("algo-halt-group-quote")
     .evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(" ").filter(Boolean).length);
-  expect(desktopHaltColumns).toBeGreaterThanOrEqual(4);
+  expect(desktopHaltColumns).toBe(2);
   await rightRail.getByTestId("algo-halt-input-dailyLoss").fill("1200");
   await rightRail.getByTestId("algo-halt-toggle-bidAskRequired").click();
-  await rightRail.getByTestId("algo-compact-input-mtfPolicy").fill("3");
+  await rightRail.getByTestId("algo-halt-toggle-mtfAlignment").click();
   await expect(rightRail.getByTestId("algo-save-bar")).toContainText("3 unsaved changes");
   await rightRail.screenshot({
     path: "/tmp/algo-right-rail-desktop.png",
@@ -576,7 +577,7 @@ test("visual review: desktop signal hero rows", async ({ page }) => {
   await rightRail.getByTestId("algo-controls-container").evaluate((node) => {
     node.scrollTop = node.scrollHeight;
   });
-  await expect(rightRail.getByTestId("algo-compact-group-qualityExits")).toBeVisible();
+  await expect(rightRail.getByTestId("algo-settings-section-qualityExits")).toBeVisible();
   await expect(rightRail.getByTestId("algo-diagnostics-container")).toBeVisible();
   const diagnosticsGap = await rightRail.evaluate((node) => {
     const controls = node.querySelector('[data-testid="algo-controls-container"]');
@@ -675,8 +676,8 @@ test("visual review: mobile signal hero rows", async ({ page }) => {
   await expect(drawer.getByTestId("algo-controls-container")).toBeVisible();
   await expect(drawer.getByTestId("algo-settings-container")).toBeVisible();
   await expect(drawer.getByTestId("algo-diagnostics-container")).toBeVisible();
-  await expect(drawer.getByTestId("algo-compact-group-signal")).toBeVisible();
-  await expect(drawer.getByTestId("algo-compact-toggle-minDtePolicy")).toBeVisible();
+  await expect(drawer.getByTestId("algo-halt-group-signal")).toBeVisible();
+  await expect(drawer.getByTestId("algo-halt-toggle-mtfAlignment")).toBeVisible();
   const mobileHaltColumns = await drawer
     .getByTestId("algo-halt-group-quote")
     .evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(" ").filter(Boolean).length);

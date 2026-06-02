@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Activity,
   Layers,
@@ -1242,76 +1243,78 @@ export const AlgoLivePage = ({
           </div>
         ) : null}
       </div>
-      {algoIsPhone && settingsDrawerOpen ? (
-        <div
-          data-testid="algo-settings-drawer"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Algo settings"
-          tabIndex={-1}
-          ref={settingsDrawerRef}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") setSettingsDrawerOpen(false);
-          }}
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 100,
-            display: "flex",
-            alignItems: "flex-end",
-            background: "rgba(0,0,0,0.48)",
-          }}
-          onClick={() => setSettingsDrawerOpen(false)}
-        >
-          <div
-            style={{
-              width: "100%",
-              height: "90vh",
-              background: CSS_COLOR.bg0,
-              borderTop: `1px solid ${CSS_COLOR.border}`,
-              boxShadow: "0 -18px 42px rgba(0,0,0,0.45)",
-              display: "flex",
-              flexDirection: "column",
-              minHeight: 0,
-            }}
-            onClick={(event) => event.stopPropagation()}
-          >
+      {algoIsPhone && settingsDrawerOpen && typeof document !== "undefined"
+        ? createPortal((
             <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                alignItems: "center",
-                padding: sp("6px 8px"),
-                borderBottom: `1px solid ${CSS_COLOR.border}`,
-                flex: "0 0 auto",
+              data-testid="algo-settings-drawer"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Algo settings"
+              tabIndex={-1}
+              ref={settingsDrawerRef}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setSettingsDrawerOpen(false);
               }}
+              style={{
+                position: "fixed",
+                inset: 0,
+                zIndex: 100,
+                display: "flex",
+                alignItems: "flex-end",
+                background: "rgba(0,0,0,0.48)",
+              }}
+              onClick={() => setSettingsDrawerOpen(false)}
             >
-              <button
-                type="button"
-                data-testid="algo-settings-drawer-close"
-                aria-label="Close algo settings"
-                title="Close settings"
-                onClick={() => setSettingsDrawerOpen(false)}
+              <div
                 style={{
-                  ...compactButtonStyle(),
-                  width: dim(30),
-                  minWidth: dim(30),
-                  height: dim(30),
-                  padding: 0,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
+                  width: "100%",
+                  height: "90vh",
+                  background: CSS_COLOR.bg0,
+                  borderTop: `1px solid ${CSS_COLOR.border}`,
+                  boxShadow: "0 -18px 42px rgba(0,0,0,0.45)",
+                  display: "flex",
+                  flexDirection: "column",
+                  minHeight: 0,
                 }}
+                onClick={(event) => event.stopPropagation()}
               >
-                <X size={15} strokeWidth={2} aria-hidden="true" />
-              </button>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    alignItems: "center",
+                    padding: sp("6px 8px"),
+                    borderBottom: `1px solid ${CSS_COLOR.border}`,
+                    flex: "0 0 auto",
+                  }}
+                >
+                  <button
+                    type="button"
+                    data-testid="algo-settings-drawer-close"
+                    aria-label="Close algo settings"
+                    title="Close settings"
+                    onClick={() => setSettingsDrawerOpen(false)}
+                    style={{
+                      ...compactButtonStyle(),
+                      width: dim(30),
+                      minWidth: dim(30),
+                      height: dim(30),
+                      padding: 0,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <X size={15} strokeWidth={2} aria-hidden="true" />
+                  </button>
+                </div>
+                <div style={{ flex: "1 1 auto", minHeight: 0 }}>
+                  {rightRail}
+                </div>
+              </div>
             </div>
-            <div style={{ flex: "1 1 auto", minHeight: 0 }}>
-              {rightRail}
-            </div>
-          </div>
-        </div>
-      ) : null}
+          ), document.body)
+        : null}
     </div>
   );
 };
