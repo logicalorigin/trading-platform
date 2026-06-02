@@ -19,7 +19,9 @@ The next trade-management improvement should be a dual-leg trailing stop:
 
 Phase 1 requires fresh greeks before enabling greek modulation. If greeks are missing or stale, the system must run in conservative fallback: structure leg plus fixed premium floor, no greek loosening.
 
-## Current state verified in code
+## 5-28 current state verified in code
+
+This section records the implementation baseline that informed the original 5-28 wire-trail plan. Later code may have advanced parts of the exit stack; the 5-31 research update below re-verified only the contract-selection path.
 
 - **Exit math is option-premium-only.** `computeSignalOptionsPositionStop` in `artifacts/api-server/src/services/signal-options-exit-policy.ts` currently computes `max(hardStop, max(entry * (1 + minLockedGain%), peak * (1 - giveback%)))`. It has no underlying price, wire, regime, or greek input.
 - **The live exit mark path can carry greeks, but does not require them today.** `SignalOptionsOptionQuote` includes `impliedVolatility`, `delta`, `gamma`, `theta`, and `vega`, but `refreshActivePosition` currently requests bridge position-mark snapshots with `requiresGreeks: false`. Greek modulation must not be considered live until this path sources fresh greeks.
@@ -28,6 +30,161 @@ Phase 1 requires fresh greeks before enabling greek modulation. If greeks are mi
 - **Wire math is frontend-owned today.** The frontend adapter derives `upperBand`, `lowerBand`, `trendLine`, and bull/bear wires from `basis`, `atrSmoothed`, `volatilityMultiplier`, `wireSpread`, and `regimeDirection`. `pyrus-signals-core` currently returns the ingredients, not the final wire arrays.
 - **Signal monitor state does not currently expose wire context.** The monitor computes Pyrus evaluations internally, but the persisted/current state only includes signal direction/time/price, latest bar time, freshness, and status. Exit code needs an explicit structural-context handoff.
 - **Historical greeks are not stored for signal-options replay.** Backtests can validate the structure leg and fixed premium floor, but greek modulation needs live/shadow validation unless a separate historical-greeks data effort is added.
+
+## 5-31 research update: Greek-expectancy contract selection
+
+This update extends the 5-27 entry-Greek thesis into a research-backed contract-selection framework. It is intentionally **research and strategy only** for this pass: no live, paper, or shadow selector behavior should change from this document update alone.
+
+The current selector still gives the algo a narrow search problem: choose the option right from the signal, search the configured DTE/strike-slot window, build an order plan, and take the first quote that passes premium/liquidity constraints. It captures `entryGreeks` when the selected quote has them, but it does not yet rank candidate contracts by expected value, IV richness, theta drag, or break-even distance.
+
+The next selector should answer a different question:
+
+```text
+Given this signal, expected move, and expected holding window,
+which available contract has the best net expectancy after
+delta/gamma participation, theta, vega/IV risk, and trading friction?
+```
+
+### Research takeaways
+
+- `delta` is the first filter for directional participation. For a bullish call or bearish put, the aligned delta should be large enough that the contract actually participates in the expected underlying move. Low-delta contracts can look cheap while requiring an outsized move just to overcome premium, theta, and spread.
+- `gamma` is useful when the signal expects acceleration over a short window. It should be rewarded only when the expected move can occur soon enough to beat theta and spread cost. High gamma plus a flat underlying is usually just expensive optionality.
+- `theta` should be measured against the planned holding window. A contract can be a good scalp candidate and a bad runner candidate at the same mark price if its daily theta burden is too high.
+- `vega` and IV matter because entry P&L can be right directionally and still lose if IV compresses. Elevated IV is not automatically bad, but it should require a stronger expected move, better delta, more DTE, or a specific reason to expect IV to hold or expand.
+- Spread and fill quality are part of expectancy, not just operational hygiene. A theoretically superior contract with a wide bid/ask can have worse realized expectancy than a slightly less convex but more liquid contract.
+
+### Candidate scoring model
+
+Use a per-contract score that projects the option's expected value over the signal horizon before applying caps/gates:
+
+```text
+aligned_delta = signal_direction * option_delta
+
+projected_option_edge_per_contract =
+  100 * (
+    aligned_delta * expected_underlying_move
+  + 0.5 * gamma * expected_underlying_move^2
+  + vega * expected_iv_change
+  - abs(theta) * expected_holding_days
+  )
+  - estimated_round_trip_spread_cost
+```
+
+Then normalize into a selector score:
+
+```text
+entry_greek_score =
+  directional_delta_fit
++ gamma_convexity_fit
++ expected_move_fit
++ liquidity_quality
+- theta_burden
+- spread_cost
+- IV_overpayment_penalty
+- break_even_penalty
+- stale_or_missing_greek_penalty
+```
+
+Important implementation notes for a future code pass:
+
+- Provider Greek units must be normalized before using the formula directly. In particular, confirm whether `vega` is reported per 1.00 volatility change or per 1 volatility point.
+- The formula should be used for ranking and diagnostics first, not as a hard truth model. It is a rough edge estimate that needs calibration against shadow/backtest outcomes.
+- Missing or stale Greeks should not fabricate confidence. In a future rollout, the selector should fall back to the existing strike-slot behavior or heavily penalize missing-Greek candidates until coverage is proven.
+
+### Strike and expiration framework
+
+Contract selection should choose a management profile at entry, because the same Greek mix is not optimal for every signal:
+
+- **Scalp:** shorter DTE is acceptable when the signal expects a fast move. Favor gamma and adequate delta, but cap theta burden and spread aggressively.
+- **Intraday trend:** favor balanced delta/gamma, enough DTE to survive normal chop, and theta burden that is reasonable for the expected session hold.
+- **Runner candidate:** favor stronger delta, lower theta burden, more DTE cushion, and tradable spreads. Do not overpay for maximum gamma if the intended hold may extend.
+- **Lottery:** allow only for exceptional signal quality, capped premium, and explicit acceptance that low-delta OTM options often have poor average expectancy after IV, theta, and spread.
+
+The strike decision should not be "more OTM is better because it is cheaper." A better rule is:
+
+```text
+Choose the strike whose break-even move plus expected decay/friction
+is comfortably inside the signal's modeled favorable move.
+```
+
+The expiration decision should not be "nearest expiration is always better." A better rule is:
+
+```text
+Choose the shortest expiration that gives enough gamma
+without making theta burden dominate the planned hold.
+```
+
+### Avoiding overpriced contracts
+
+For this app, "overpriced" should mean overpriced relative to the signal's expected move and holding period, not simply "high IV."
+
+Penalty conditions:
+
+- **IV versus realized volatility:** penalize contracts where implied volatility is materially above recent realized volatility unless there is a known catalyst or the signal model expects a move large enough to justify it.
+- **Implied move versus modeled move:** using the Rule of 16 approximation, high IV implies a larger expected daily move. If the option's implied move is much larger than the move our signal is forecasting, require stronger confirmation or reject the candidate.
+- **Break-even distance:** penalize when the required underlying move to overcome premium, theta, and spread exceeds the expected favorable move.
+- **Surface richness:** penalize strikes/expirations that are rich relative to nearby alternatives with similar delta/liquidity. This catches skew/smile cases where the exact strike being selected is expensive even if headline IV looks acceptable.
+- **Theta burden:** penalize when `abs(theta) / mark` consumes too much of the premium over the intended hold.
+- **Liquidity friction:** reject or heavily penalize wide spreads, stale quotes, crossed markets, very low bid, and thin contracts even when the theoretical Greek profile is attractive.
+
+Starting diagnostics:
+
+```text
+theta_burden_pct = abs(theta) / mark * 100
+spread_pct_of_mid = (ask - bid) / mid * 100
+break_even_move = (ask + expected_theta_decay + spread_cost) / max(abs(delta), min_delta_floor)
+iv_realized_premium = implied_volatility - realized_volatility_for_horizon
+```
+
+### Expected-move inputs from Pyrus
+
+The selector needs an expected underlying move and expected holding window. Good first inputs are already close to the app:
+
+- Pyrus wire distance from signal price to the next structural target or invalidation band.
+- ATR or recent realized volatility over the signal timeframe.
+- Signal confidence from MTF alignment, ADX/strength, volatility state, and trend age.
+- Historical outcome distribution for the same signal family and timeframe.
+- Time-of-day and session window, because a signal with 20 minutes left in the session should not pay the same theta/IV profile as a morning runner.
+
+Do not require a perfect model for V1. Start by logging all candidate inputs and comparing score deciles against realized shadow outcomes.
+
+### Data requirements and current gaps
+
+Available now or already represented in the quote/position path:
+
+- bid, ask, mark/last, quote freshness, open interest, volume;
+- `delta`, `gamma`, `theta`, `vega`, `impliedVolatility` when the provider returns them;
+- entry Greek snapshots on selected positions.
+
+Needed before the selector can be trusted:
+
+- candidate-level score payloads for every considered contract, not only the selected one;
+- a realized-volatility baseline for the relevant horizon;
+- IV rank/percentile or another symbol-local IV context;
+- term-structure/skew comparison across nearby expirations and strikes;
+- historical or shadow-captured candidate outcomes to prove that score rank predicts realized expectancy.
+
+Historical signal-options replay still lacks stored historical Greeks, so full historical proof is not available yet. The first evidence loop should be shadow/live capture: record the current selector's pick, the Greek-expectancy preferred pick, and the realized outcome of both where market data permits.
+
+### Rollout decision
+
+The selected rollout for this pass is **research doc only**. A future implementation should use this order:
+
+1. Add score computation and candidate payload logging without changing selection.
+2. Compare current selector versus Greek-expectancy rank in shadow reports.
+3. Promote to shadow selection only after score deciles show better expectancy without unacceptable drawdown or fill degradation.
+4. Consider live/paper behavior only after shadow selection beats the current selector on out-of-sample data.
+
+### Source notes
+
+- Options Industry Council, Greek and volatility education: `https://www.optionseducation.org/advancedconcepts/volatility-the-greeks`
+- Options Industry Council, Rule of 16 expected-move framing: `https://www.optionseducation.org/news/understanding-the-rule-of-16-in-plain-terms`
+- Fidelity, choosing expiration and matching options to horizon: `https://www.fidelity.com/viewpoints/active-investor/options-expiration-date`
+- Schwab, options volatility, skew, and Rule of 16: `https://www.schwab.com/learn/story/options-volatility-vix-skew-and-rule-16`
+- FINRA, options and Greeks overview: `https://www.finra.org/investors/investing/investment-products/options`
+- Goyal and Saretto, `Option Returns and Volatility Mispricing`: `https://papers.ssrn.com/sol3/papers.cfm?abstract_id=889947`
+- Choy, retail demand and expensive high-IV options: `https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1577942`
+- Options Industry Council, liquidity/open-interest FAQ: `https://www.optionseducation.org/referencelibrary/faq/general-information`
 
 ## Locked design decisions
 

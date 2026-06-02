@@ -524,7 +524,7 @@ Task 3 resolver contract
 - Human/product decision: implement Task 4D-4I as dormant, opt-in infrastructure now, without approving a provider upgrade, public UI selector, or default fill-behavior change.
 - Existing `/bars` source: `artifacts/api-server/src/routes/platform.ts#/bars` calls `getBarsWithDebug`. The generated `Bar` contract now allows optional `bid`, `ask`, `mid`, `quoteAsOf`, and `providerContractId`, but the current provider-backed option path does not populate historical quote records on the Massive Options Developer plan.
 - Existing worker path: `artifacts/backtest-worker/src/backtest-bars.ts` now normalizes, stores, and reloads optional quote fields when present. `artifacts/backtest-worker/src/option-bar-shape.test.ts` remains the guard that current provider bars stay quote-empty.
-- Option chart/reference source: `getOptionChartBarsWithDebug` can fetch Polygon/Massive option aggregates and can use IBKR midpoint history, but those are still bar-price series, not per-bar NBBO quote records.
+- Option chart/reference source: `getOptionChartBarsWithDebug` can fetch Massive option aggregates and can use IBKR midpoint history, but those are still bar-price series, not per-bar NBBO quote records.
 - Option quote snapshot cache: usable for live/current valuation and the explicit `allowStudyFallback` one-bar chart fallback only. It is not a historical quote replay source and must not be used to backfill historical fills.
 - Provider docs: Massive documents `/v3/quotes/{optionsTicker}` as historical option quotes with bid/ask prices, sizes, exchange identifiers, and timestamps, but the same plan table shows the endpoint is not included for Options Developer and is available at Options Advanced/business tiers. Massive options flat-file quotes are likewise not included for Options Developer. Sources: [Massive options quotes](https://massive.com/docs/rest/options/trades-quotes/quotes), [Massive options flat-file quotes](https://massive.com/docs/flat-files/options/quotes).
 - Broker docs: IBKR Client Portal historical bars support a `source` parameter with `Trades`, `Midpoint`, and `Bid_Ask`, but the current bridge returns `BrokerBarSnapshot` as OHLCV bars, not distinct bid/ask quote records. IBKR also documents historical-data limits for expired options and EOD option data, so it is not a sufficient default NBBO replay source for user-facing backtests. Source: [IBKR Client Portal historical market data](https://www.interactivebrokers.com/campus/ibkr-api-page/cpapi-v1/).
@@ -785,7 +785,7 @@ Task 3 resolver contract
 - [x] Warnings cover low trade count, too many parameter trials, no out-of-sample window, excessive drawdown duration, unstable Sharpe, and insufficient sample size for any advanced metric.
 - [x] Existing deflated/probabilistic Sharpe outputs remain intact and retain current field names.
 - [x] Warnings are additive: old/default backtest outputs remain valid when consumers ignore the new warning field.
-- [ ] UI can display warnings without new chart work, broker behavior, or automation coupling.
+- [x] UI can display warnings without new chart work, broker behavior, or automation coupling.
 
 **Verification:**
 
@@ -804,13 +804,13 @@ Task 3 resolver contract
 
 - [x] **5A. Warning contract:** add typed warning codes/severities and keep the result schema backward-compatible.
 - [x] **5B. Warning computation:** implement deterministic warning generation in `backtest-core` without changing existing metrics.
-- [ ] **5C. Warning presentation model:** map warnings into current backtest UI surfaces with missing-data-safe rendering.
-- [ ] **5D. Exposure decision:** before making warnings prominent in the UI, review wording and severity so users do not mistake diagnostics for trading advice.
+- [x] **5C. Warning presentation model:** map warnings into current backtest UI surfaces with missing-data-safe rendering.
+- [x] **5D. Exposure decision:** before making warnings prominent in the UI, review wording and severity so users do not mistake diagnostics for trading advice.
 
 ### Checkpoint: Backtest Core
 
 - [x] Conservative option fill mode is available as an internal/shared-core and worker quote-populated opt-in.
-- [ ] Backtest warnings surface clearly.
+- [x] Backtest warnings surface clearly.
 - [x] Current backtest defaults remain compatible.
 
 ### Phase 3: Market Calendar Correctness
@@ -821,14 +821,14 @@ Task 3 resolver contract
 
 **Acceptance criteria:**
 
-- [ ] Service returns session status, next open, next close, holidays, early closes, and timezone-aware RTH/pre/after classifications.
-- [ ] NYSE behavior matches current UI needs.
-- [ ] Current hand-coded holiday logic is either replaced or wrapped behind the new service.
+- [x] Service returns session status, next open, next close, holidays, early closes, and timezone-aware RTH/pre/after classifications.
+- [x] NYSE behavior matches current UI needs.
+- [x] Current hand-coded holiday logic is either replaced or wrapped behind the new service.
 
 **Verification:**
 
-- [ ] Tests cover DST, weekends, full holidays, early closes, Juneteenth, Good Friday, and invalid dates.
-- [ ] Existing chart session tests still pass or are updated intentionally.
+- [x] Tests cover DST, weekends, full holidays, early closes, Juneteenth, Good Friday, and invalid dates.
+- [x] Existing chart session tests still pass or are updated intentionally.
 
 **Dependencies:** Tasks 1-2
 
@@ -840,16 +840,18 @@ Task 3 resolver contract
 
 **Description:** Use the canonical market calendar in data prewarm, market-data admission, and trading readiness where session correctness matters.
 
+**Progress:** 2026-05-31 first slice added `@workspace/market-calendar` as the shared TS calendar package, moved chart session classification to that package, and wired API runtime stream readiness to the same NYSE calendar for RTH/holiday/early-close decisions. Second slice made the market-data work planner session-aware and blocked flow-scanner live option quote admission outside NYSE regular trading, including early-close after-hours windows. Browser QA passed with `?pyrusQa=safe`: market workspace loaded, chart parity lab showed session-window overlays, and Diagnostics -> Market Data exposed Work Planner.
+
 **Acceptance criteria:**
 
-- [ ] Market-data work planner avoids requesting impossible exchange windows.
-- [ ] UI session labels match backend readiness/session decisions.
-- [ ] Overnight/premarket/RTH/after-hours logic is consistent across frontend and backend.
+- [x] Market-data work planner avoids requesting impossible exchange windows.
+- [x] UI session labels match backend readiness/session decisions.
+- [x] Overnight/premarket/RTH/after-hours logic is consistent across frontend and backend.
 
 **Verification:**
 
-- [ ] Targeted API server tests for market-data work planning and chart session behavior.
-- [ ] Browser QA with `?pyrusQa=safe` on chart and platform session indicators.
+- [x] Targeted API server tests for market-data work planning and chart session behavior.
+- [x] Browser QA with `?pyrusQa=safe` on chart and platform session indicators.
 
 **Dependencies:** Task 6
 
@@ -859,9 +861,9 @@ Task 3 resolver contract
 
 ### Checkpoint: Calendar
 
-- [ ] Calendar tests cover holidays and early closes.
-- [ ] Frontend and backend session decisions agree.
-- [ ] No Replit startup config touched.
+- [x] Calendar tests cover holidays and early closes.
+- [x] Frontend and backend session decisions agree.
+- [x] No Replit startup config touched.
 
 ### Phase 4: Portfolio And Risk Analytics
 
@@ -916,7 +918,7 @@ Task 3 resolver contract
 
 **Description:** Add an account-facing view/model that displays options-native risk reviews from account premium exposure, Greek coverage, Greek scenario shocks, expiry buckets, and underlying option concentration without implying automatic execution.
 
-**Status:** Completed locally on 2026-05-30 as `riskRecommendations` on the account risk payload plus the desktop Portfolio Exposure `Option Risk Reviews` strip. This intentionally does not expose generic allocation/rebalance copy.
+**Status:** Completed locally on 2026-05-30 as `riskRecommendations` on the account risk payload plus the desktop Portfolio Exposure `Option Risk Reviews` strip. This intentionally does not expose generic allocation/rebalance copy. Browser QA passed on 2026-05-31 with `?pyrusQa=safe`: the Account screen showed `Option Risk Reviews`, premium exposure, worst shock, and advisory review items without broker action copy.
 
 **Acceptance criteria:**
 
@@ -927,7 +929,7 @@ Task 3 resolver contract
 **Verification:**
 
 - [x] Frontend unit tests for display model.
-- [ ] Browser QA with safe fixture data.
+- [x] Browser QA with safe fixture data.
 
 **Dependencies:** Task 9
 
@@ -937,9 +939,9 @@ Task 3 resolver contract
 
 ### Checkpoint: Portfolio Risk
 
-- [ ] Python compute tests pass.
-- [ ] Portfolio suggestions are advisory only.
-- [ ] No trading mutation path is introduced.
+- [x] Python compute tests pass.
+- [x] Portfolio suggestions are advisory only.
+- [x] No trading mutation path is introduced.
 
 ### Phase 5: Signal And Factor Evaluation
 

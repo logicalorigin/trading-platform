@@ -1,0 +1,140 @@
+# Live Session Handoff: GEX Projection Cone
+
+- Session ID: pending
+- Started: 2026-05-31 16:11 MDT
+- CWD: `/home/runner/workspace`
+- User request: implement the GEX-adjusted options-implied projection cone plan.
+- Current step: compact chart-mode GEX projection, persisted-snapshot first loading, and true-axis overlay rendering are implemented and validated; charts no longer fetch full GEX dashboard data just to draw the projection cone.
+- Active files: `artifacts/api-server/src/services/gex-projection.ts`, `artifacts/api-server/src/services/gex-projection.test.ts`, `artifacts/api-server/src/services/treasury-yield-curve.ts`, `artifacts/api-server/src/services/treasury-yield-curve.test.ts`, `artifacts/api-server/src/services/gex-projection-api.test.ts`, `artifacts/api-server/src/services/gex.ts`, `artifacts/api-server/src/routes/platform.ts`, `artifacts/api-server/scripts/runUnitTests.mjs`, `artifacts/pyrus/src/features/gex/useGexProjection.js`, `artifacts/pyrus/src/features/gex/useGexProjection.test.js`, `artifacts/pyrus/src/features/gex/gexProjectionChartWiring.test.js`, `artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx`, `artifacts/pyrus/src/features/charting/ResearchChartFrame.tsx`, `artifacts/pyrus/src/features/trade/TradeEquityPanel.jsx`, `artifacts/pyrus/src/features/market/MarketChartCell.jsx`, `artifacts/pyrus/scripts/runUnitTests.mjs`.
+- Constraint: repo has broad in-flight work; avoid staging or rewriting unrelated files, including the concurrent Signals page work.
+- Validation status:
+  - `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/gex-projection.test.ts src/services/treasury-yield-curve.test.ts src/services/gex-projection-api.test.ts` passed.
+  - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js` passed.
+  - `pnpm --filter @workspace/api-server run typecheck` passed.
+  - `pnpm --filter @workspace/pyrus run typecheck` passed.
+  - `git diff --check -- <touched files>` passed.
+  - Rechecked 2026-05-31 18:10 MDT:
+    - `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/gex-projection.test.ts src/services/treasury-yield-curve.test.ts src/services/gex-projection-api.test.ts` passed.
+    - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js` passed.
+    - `pnpm --filter @workspace/pyrus run typecheck` passed.
+    - `pnpm --filter @workspace/api-server run typecheck` passed.
+    - Live API probe `GET /api/gex/SPY/projection` returned projection data with overlay points.
+    - Browser probe with `?pyrusQa=safe` reached the Market screen but could not render the chart overlay because safe QA mode intentionally disables the Market chart grid and Trade live/historical chart path.
+  - Rechecked after frontend fallback patch:
+    - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js` passed.
+    - `pnpm --filter @workspace/pyrus run typecheck` passed.
+  - Browser QA:
+    - Safe QA mode could not verify the overlay because safe mode intentionally disables the full Market chart grid and Trade live/historical chart path.
+    - Non-safe Market proof with local API data confirmed `market-chart-0-surface-gex-projection-cone` rendered and `/api/gex/SPY/projection` returned 200.
+    - Trade initially fetched projection data but did not render the cone because the narrow/tablet Trade layout collapsed the equity spot chart to a 31px surface. Patched `TradeScreen.jsx` so the narrow Trade spot chart keeps a 320px minimum frame height.
+    - Final non-safe browser proof used synthetic 5m SPY bars plus the real local `/api/gex/SPY/projection` response because the live bars endpoint intermittently returned zero bars. It confirmed `market-chart-0-surface-gex-projection-cone` and `trade-equity-chart-surface-gex-projection-cone` rendered.
+    - Screenshots: `/tmp/pyrus-gex-projection-market-final.png`, `/tmp/pyrus-gex-projection-trade-final.png`.
+  - Future-axis display work in progress:
+    - `artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx` now reserves a GEX-aware future lane, extends the non-user-touched logical range toward future bars, renders lower time-axis expiration labels, and enforces a readable minimum projection width so compact/default viewport logic cannot squeeze the cone into the final few pixels.
+    - `artifacts/pyrus/src/features/gex/gexProjectionChartWiring.test.js` now guards the future-axis and future-lane wiring.
+    - Validation after this patch:
+      - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js` passed with 6 tests.
+      - `pnpm --filter @workspace/pyrus run typecheck` passed.
+      - `git diff --check -- artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx artifacts/pyrus/src/features/gex/gexProjectionChartWiring.test.js SESSION_HANDOFF_LIVE_2026-05-31_gex-projection-cone.md` passed.
+      - Clean non-safe local Playwright proof with mocked deterministic SPY bars/projection data passed on `http://127.0.0.1:18747/`: Market `market-chart-0-surface` rendered `data-chart-gex-projection-cone` and `data-chart-gex-projection-future-axis` with labels `Jun 1`, `Jun 8`, `Jun 17`, future lane width ~180px, no console/page errors. Trade `trade-equity-chart-surface` rendered the same overlay path with labels `Jun 1`, `Jun 17`, future lane width ~105px, no console/page errors.
+      - Screenshots: `/tmp/pyrus-gex-projection-market-future-axis-final.png`, `/tmp/pyrus-gex-projection-trade-future-axis-final.png`.
+  - Final frontend recheck before this follow-up:
+    - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js` passed with 6 tests.
+    - `pnpm --filter @workspace/pyrus run typecheck` passed.
+    - `git diff --check -- artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx artifacts/pyrus/src/features/gex/gexProjectionChartWiring.test.js artifacts/pyrus/src/screens/TradeScreen.jsx SESSION_HANDOFF_LIVE_2026-05-31_gex-projection-cone.md` passed.
+  - Premium/OI/liquidity audit:
+    - Fixed IV surface construction in `artifacts/api-server/src/services/gex-projection.ts` so strike IV is weighted by open interest, 25% volume participation, option mid-premium notional, and bid/ask spread quality instead of a simple per-strike median.
+    - Preserved GEX exposure definition as gamma * OI * multiplier * spot^2 * 1%; premium is used to weight IV reliability, not redefine gamma exposure.
+    - Fixed flat/tied GEX wall selection so call wall, put wall, and peak gamma strike choose the highest exposure nearest spot, and return null when that side has no exposure.
+    - Added regression coverage in `artifacts/api-server/src/services/gex-projection.test.ts` for low-premium/low-OI noisy IV not dominating a liquid surface.
+    - `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/gex-projection.test.ts src/services/treasury-yield-curve.test.ts src/services/gex-projection-api.test.ts` passed with 7 tests.
+    - `pnpm --filter @workspace/api-server run typecheck` passed.
+    - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js` passed with 6 tests.
+    - `pnpm --filter @workspace/pyrus run typecheck` passed.
+    - Scoped `git diff --check` passed.
+  - Live app/API recheck on 2026-06-01 UTC:
+    - Confirmed the app is running through the Pyrus artifact dev path on `http://127.0.0.1:18747/`; `/api/healthz` returned 200.
+    - Confirmed `/api/bars?symbol=SPY&timeframe=5m&limit=120` returned 120 bars with live Massive history.
+    - Confirmed `/api/gex/SPY/projection` returned 36 overlay points across 36 expirations. Quality/source are `partial` because expiration coverage reports `complete: false`, but 36/36 returned expirations loaded and `failedCount` is 0.
+    - Non-safe Playwright live proof rendered `market-chart-0-surface-gex-projection-cone` and `trade-equity-chart-surface-gex-projection-cone`, each with `data-chart-gex-projection-future-axis` and labels `Jun 1`, `Jun 10`.
+    - Screenshots: `/tmp/pyrus-gex-projection-market-live-recheck.png`, `/tmp/pyrus-gex-projection-trade-live-recheck.png`.
+    - No projection API failures, page errors, or projection-specific console errors. Trade still showed unrelated `/api/options/expirations` 503s because the Interactive Brokers bridge is not configured for option-chain background requests.
+  - Visual polish pass on 2026-06-01 UTC:
+    - Reviewed the live Market/Trade screenshots and found the original live `partial` cone looked too much like amber warning/session shading.
+    - Updated `artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx` so the projection cone remains in the forecast cyan family while `partial` quality is communicated by the dashed center path and amber future-axis/seam treatment.
+    - Added a subtle future-lane wash, lane seam, cone boundary strokes, and a center-line halo so the cone reads clearly against dense signal badges, session bands, and volume.
+    - Revalidated with `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js`, `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/charting/ResearchChartSurface.test.ts`, `pnpm --filter @workspace/pyrus run typecheck`, and scoped `git diff --check`.
+    - New screenshots: `/tmp/pyrus-gex-projection-market-visual-polish.png`, `/tmp/pyrus-gex-projection-trade-visual-polish-2.png`.
+  - Hidden-issue review on 2026-06-01 UTC:
+    - Re-read the projection overlay math/render path in `ResearchChartSurface.tsx` for layering, viewport bounds, color semantics, and failure behavior.
+    - Desktop and mobile Playwright probes confirmed the cone and future-axis render on Market and Trade without projection API failures or page errors.
+    - Mobile screenshots: `/tmp/pyrus-gex-projection-market-mobile-review.png`, `/tmp/pyrus-gex-projection-trade-mobile-review.png`.
+    - Re-ran `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js src/features/charting/ResearchChartSurface.test.ts`, `pnpm --filter @workspace/pyrus run typecheck`, and scoped `git diff --check`; all passed.
+  - Post-configuration Trade option-chain recheck on 2026-06-01 UTC:
+    - `/api/options/expirations?underlying=SPY` initially returned a transient 200 degraded empty response, then the live Trade browser pass loaded full expiration lists with no API failures or console errors.
+    - Browser-observed expiration counts: SPY 37, QQQ 34, NVDA 25; each was `complete: true` and `capped: false`.
+    - Direct retry after browser warmup confirmed cache hits with the same counts: SPY 37, QQQ 34, NVDA 25.
+    - Screenshot: `/tmp/pyrus-trade-options-configured-recheck.png`.
+  - True-axis follow-up on 2026-06-01 15:04 MDT / 2026-06-01T21:04:56Z:
+    - Updated `artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx` so GEX projection x coordinates are `lastBarX + logicalOffset * barSpacing`, where `logicalOffset` comes from the selected chart timeframe (`legend.timeframe`) and the projection expiration date. Unknown timeframes fall back to observed bar cadence.
+    - Removed the GEX-specific right-offset/minimum-lane compression; the chart now keeps the selected future-expansion preference and clips/pans distant expirations naturally.
+    - Added direct regression coverage in `ResearchChartSurface.test.ts` for 5m/15m/1h/1d logical offsets and observed-cadence fallback, and updated `gexProjectionChartWiring.test.js` to reject the old `index / visiblePoints.length` compression.
+    - Validation passed:
+      - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js src/features/charting/ResearchChartSurface.test.ts` passed with 88 tests.
+      - `pnpm --filter @workspace/pyrus run typecheck` passed.
+      - `git diff --check -- artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx artifacts/pyrus/src/features/charting/ResearchChartSurface.test.ts artifacts/pyrus/src/features/gex/gexProjectionChartWiring.test.js` passed.
+    - Browser QA: existing app on 18747 loaded without page/console errors but did not mount the cone because the active Trade spot chart had no hydrated bars. A fresh Vite server on 18748 with deterministic mocked bars/projection data confirmed Market and Trade cone paths render with future x coordinates to the right of the anchor. Screenshots: `/tmp/pyrus-gex-true-axis-nextday-probe.png`, `/tmp/pyrus-gex-true-axis-trade-probe.png`. Temporary 18748 server was stopped after QA.
+  - Lag audit/fix on 2026-06-01 15:28 MDT / 2026-06-01T21:28:06Z:
+    - Root cause: true-axis mapping can put far-dated intraday expirations tens of thousands of pixels offscreen. The SVG paths still included those huge x coordinates, which made chart repaint/sync work expensive even when the far points were clipped by the overlay layer.
+    - Updated `artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx` so rendered GEX SVG path coordinates are clamped to a viewport-sized overscan via `resolveGexProjectionSvgXBounds`, while the true logical x mapping and visible-axis tick filtering remain unchanged.
+    - Added regression coverage in `ResearchChartSurface.test.ts` for the overscan bounds.
+    - Validation passed:
+      - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js src/features/charting/ResearchChartSurface.test.ts` passed with 89 tests.
+      - `pnpm --filter @workspace/pyrus run typecheck` passed.
+      - `git diff --check -- artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx artifacts/pyrus/src/features/charting/ResearchChartSurface.test.ts artifacts/pyrus/src/features/gex/gexProjectionChartWiring.test.js` passed.
+      - Safe QA mode was checked first, but it intentionally suppresses the Market chart grid and disables Trade chart historical/GEX hydration, so it cannot render this overlay. A non-safe local Vite proof on 18749 with mocked bars/projection data rendered `market-chart-0-surface-gex-projection-cone`; the far-expiration path capped at `maxX=556` for a 236px plot width, within the expected `width + 320px` overscan cap (`expectedMaxX=564`). Screenshot: `/tmp/pyrus-gex-lag-guard-probe.png`. Temporary 18749 server was stopped after QA.
+  - Compact chart projection/render-load fix on 2026-06-01 16:03 MDT / 2026-06-01T22:03:41Z:
+    - User clarified the chart does not need to load all actual GEX data; it only needs the projected price behavior derived from GEX.
+    - Added chart scope to `getGexProjectionData` in `artifacts/api-server/src/services/gex.ts`: `/api/gex/:underlying/projection?view=chart` now uses a bounded workload of 4 expirations and 8 strikes around spot, skips the full dashboard path, and returns only `{ ticker, spot, asOf, quality, overlayPoints }`.
+    - Updated `artifacts/pyrus/src/features/gex/useGexProjection.js` to call the compact `view=chart` endpoint.
+    - Added GEX-aware chart autoscale in `ResearchChartSurface.tsx` via Lightweight Charts `autoscaleInfoProvider`, so visible projection bands expand the selected price axis instead of drawing off-pane.
+    - Fixed remaining x placement by using measured chart bar spacing for the GEX line geometry without the global 2px overlay minimum; other overlays keep their minimum spacing.
+    - Browser proof on the running local app (`http://127.0.0.1:18747/`) used mocked chart/projection APIs and confirmed `http://127.0.0.1:18747/api/gex/SPY/projection?view=chart`, 72 rendered bars, two future labels (`Jun 2`, `Jun 3`), x bounds `77..286.5` inside a 343.3px plot, y bounds `75.2..238.4` inside a 308px plot, and no page/console errors. Screenshot: `/tmp/pyrus-gex-projection-compact-proof.png`.
+    - Validation passed:
+      - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js src/features/charting/ResearchChartSurface.test.ts` passed with 91 tests.
+      - `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/gex-projection.test.ts src/services/treasury-yield-curve.test.ts src/services/gex-projection-api.test.ts` passed with 8 tests.
+      - `pnpm --filter @workspace/pyrus run typecheck` passed.
+      - `pnpm --filter @workspace/api-server run typecheck` passed.
+      - Scoped `git diff --check` passed for the touched GEX/chart files.
+  - Live compact endpoint/first-load follow-up on 2026-06-01 UTC:
+    - Root cause for "not seeing it": the new compact chart endpoint tried live lightweight option-chain sampling first; when that sample returned no usable contracts it returned `quality: unavailable` with zero `overlayPoints`, even though the latest persisted GEX snapshot could build the projection.
+    - Root cause for lag: when live option-chain sampling hung before fallback, the browser-facing `view=chart` endpoint could take ~48s. Charts only need the projection shape, so chart mode now prefers the latest persisted GEX snapshot first and only uses the lightweight live-chain path when no usable persisted snapshot is available.
+    - Added a chart-only Treasury rates latency budget (`GEX_CHART_PROJECTION_RATES_TIMEOUT_MS`, default 750ms) so an external rates lookup cannot stall chart paint; unavailable rates degrade projection quality but still allow overlay points.
+    - Tightened initial viewport behavior: 5m next-day expirations no longer auto-expand the first viewport hundreds of logical bars into the future, and future padding was reduced so charts first open anchored on the latest loaded candles. Nearer selected scales such as 15m still auto-fit nearby projections.
+    - Validation passed:
+      - `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/gex-projection.test.ts src/services/treasury-yield-curve.test.ts src/services/gex-projection-api.test.ts` passed with 9 tests.
+      - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js src/features/charting/ResearchChartSurface.test.ts` passed with 91 tests.
+      - `pnpm --filter @workspace/api-server run typecheck` passed.
+      - `pnpm --filter @workspace/pyrus run typecheck` passed.
+      - `pnpm --filter @workspace/api-server run build` passed and rebuilt `artifacts/api-server/dist/index.mjs`.
+      - Running app probe after rebuild: `GET http://127.0.0.1:18747/api/gex/SPY/projection?view=chart` returned 200 in 91ms with `quality.status: partial`, 4 overlay points, first expiration `2026-06-02`.
+- Follow-up completed on 2026-06-01 UTC:
+  - User reported the custom future-axis labels (`Jun 2`, etc.) looked like a new marker style and the 1h GEX estimate band only reached about June 5.
+  - Root cause: the custom labels were rendered as boxed/dashed marker pills, separate from the native time-axis treatment; chart mode also capped both persisted-snapshot and live fallback projection horizons at 4 expirations, which maps to roughly June 2-June 5 for daily SPY expirations after June 1.
+  - Backend fix: split the chart projection budgets. Live option-chain fallback still uses `GEX_CHART_PROJECTION_MAX_EXPIRATIONS` default 4, while persisted snapshots use new `GEX_CHART_PROJECTION_SNAPSHOT_MAX_EXPIRATIONS` default 8.
+  - Frontend fix: future expiration labels now render as plain native-axis-like muted text with a short muted tick; no label box, no label border, and no dashed vertical marker.
+  - Regression coverage added:
+    - API test proves chart scope can return 8 persisted-snapshot overlay points without calling live option-chain fallback.
+    - Pyrus wiring test guards against reintroducing boxed/dashed GEX axis-label styling.
+  - Validation passed:
+    - `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/gex-projection.test.ts src/services/treasury-yield-curve.test.ts src/services/gex-projection-api.test.ts` passed with 10 tests.
+    - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js src/features/charting/ResearchChartSurface.test.ts` passed with 91 tests.
+    - `pnpm --filter @workspace/pyrus run typecheck` passed.
+    - `pnpm --filter @workspace/api-server run build` passed and rebuilt `artifacts/api-server/dist/index.mjs`.
+    - Scoped `git diff --check` passed for the touched GEX/chart files.
+  - Runtime note:
+    - Existing local app supervisor was started before the rebuild; `GET http://127.0.0.1:18747/api/gex/SPY/projection?view=chart` still returned the old 4-point process response in 74ms. `pnpm --filter @workspace/pyrus run dev:replit --help` confirmed the startup guard refuses Codex-owned full-app supervisor launches; use the default Replit Run App entry to restart the API/web lifecycle and pick up the rebuilt API bundle.
+    - Post-Restart check: the Replit-owned supervisor restarted at 2026-06-01 17:13:52 UTC. `/api/healthz` returned 200 and `GET http://127.0.0.1:18747/api/gex/SPY/projection?view=chart` returned 200 in 438ms with 8 overlay points from `2026-06-02` through `2026-06-11`.
+  - Validation blocked:
+    - `pnpm --filter @workspace/api-server run typecheck` currently fails in unrelated dirty workspace code: `artifacts/api-server/src/services/signal-options-automation.test.ts:5299` reports `quality.components` is possibly undefined.
+- Next step: GEX projection cone work is validated with compact chart-mode data, persisted-snapshot first chart loading, true-axis future mapping, bounded offscreen SVG geometry, selected-axis price autoscale, first-open viewport protection, 8-expiration persisted chart horizon, and native-axis-like future labels. Distant intraday expirations still require normal pan/zoom/timeframe changes instead of being squeezed into the visible lane, painted at huge offscreen coordinates, forcing full GEX dashboard loads, or blocking chart startup on live option-chain hydration.
