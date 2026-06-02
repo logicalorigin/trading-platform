@@ -35,6 +35,8 @@ Regression coverage:
 
 The footer update remains part of this audit outcome: worker counts, poll counts, and stream counts are metadata only. The compact four-bar footer now shows `Browser`, combined `API`, `Cache`, and `Runtime`. API heap remains available in the popover details, but it no longer gets a separate compact bar next to API RSS.
 
+Browser pressure is now limit-aware when Chrome exposes `performance.memory.jsHeapSizeLimit`: fixed low browser thresholds no longer mark a browser heap around 600 MB as critical when the browser-reported heap ceiling is multiple GB.
+
 ## Remaining Ranked Suspects
 
 ### 1. Signal Options Automation Gates
