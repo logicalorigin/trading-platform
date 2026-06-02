@@ -86,6 +86,7 @@ import {
   getCurrentSignalDirection,
   isProblemSignalState,
   isSignalStateCurrent,
+  normalizeSignalStatus,
 } from "../features/signals/signalStateFreshness.js";
 
 const SIGNALS_EVENT_LIMIT = 250;
@@ -113,7 +114,9 @@ const SORT_OPTIONS = [
 const isHydratedSignalMatrixState = (state) =>
   Boolean(
     state &&
-      isSignalStateCurrent(state) &&
+      !["error", "unavailable", "unknown"].includes(
+        normalizeSignalStatus(state),
+      ) &&
       (state.latestBarAt || state.currentSignalAt),
   );
 const SIGNAL_TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "1h", "1d"];
@@ -2151,10 +2154,18 @@ export default function SignalsScreen({
     [],
   );
   const priorityHydrationSymbols = useMemo(
-    () =>
-      visibleHydrationSymbols.length
-        ? visibleHydrationSymbols
-        : filteredRows.map((row) => row.symbol).filter(Boolean),
+    () => {
+      const seen = new Set();
+      const symbols = [];
+      [...visibleHydrationSymbols, ...filteredRows.map((row) => row.symbol)]
+        .filter(Boolean)
+        .forEach((symbol) => {
+          if (seen.has(symbol)) return;
+          seen.add(symbol);
+          symbols.push(symbol);
+        });
+      return symbols;
+    },
     [filteredRows, visibleHydrationSymbols],
   );
   const matrixHydrationPlan = useMemo(

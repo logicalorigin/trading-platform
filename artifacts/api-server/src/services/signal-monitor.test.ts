@@ -4,6 +4,7 @@ import test from "node:test";
 import type { SignalMonitorProfileRow } from "./signal-monitor";
 import {
   __resetApiResourcePressureForTests,
+  resolveApiRssPressureThresholds,
   updateApiResourcePressure,
 } from "./resource-pressure";
 
@@ -107,6 +108,37 @@ test("stored signal monitor snapshots mark non-current states stale", () => {
   assert.equal(snapshot.fresh, false);
   assert.equal(snapshot.status, "stale");
   assert.match(snapshot.lastError ?? "", /persisted state/);
+});
+
+test("stored signal monitor matrix snapshots preserve the 2m timeframe", () => {
+  const state = {
+    id: "state-2m",
+    profileId: "profile-1",
+    symbol: "SPY",
+    timeframe: "2m",
+    currentSignalDirection: null,
+    currentSignalAt: null,
+    currentSignalPrice: null,
+    latestBarAt: new Date("2026-04-24T14:30:00.000Z"),
+    barsSinceSignal: null,
+    fresh: false,
+    status: "ok",
+    active: true,
+    lastEvaluatedAt: new Date("2026-04-24T14:31:00.000Z"),
+    lastError: null,
+  } as never;
+
+  const snapshot = __signalMonitorInternalsForTests.stateToResponseForSnapshot(
+    state,
+    {
+      timeframe: "2m",
+      evaluatedAt: new Date("2026-04-24T14:31:00.000Z"),
+      markNonCurrentStale: true,
+    },
+  );
+
+  assert.equal(snapshot.timeframe, "2m");
+  assert.equal(snapshot.status, "ok");
 });
 
 test("2m signal matrix bars roll up completed 1m bars", () => {
@@ -336,9 +368,85 @@ test("signal monitor matrix coverage excludes stale interval states", () => {
   assert.equal(value.coverage.missingSymbols, 1);
 });
 
-test("signal monitor matrix hydrates profile timeframe from current primary state", () => {
+test("signal monitor matrix persists only clean usable matrix cells", () => {
+  const cleanState = {
+    id: "matrix-GLD-2m",
+    profileId: "profile-1",
+    symbol: "GLD",
+    timeframe: "2m",
+    currentSignalDirection: null,
+    currentSignalAt: null,
+    currentSignalPrice: null,
+    latestBarAt: new Date("2026-06-02T01:20:00.000Z"),
+    barsSinceSignal: null,
+    fresh: false,
+    status: "ok",
+    active: true,
+    lastEvaluatedAt: new Date("2026-06-02T01:20:45.000Z"),
+    lastError: null,
+    indicatorSnapshot: null,
+  };
+
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldPersistSignalMonitorMatrixState(
+      cleanState as never,
+    ),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldPersistSignalMonitorMatrixState({
+      ...cleanState,
+      status: "error",
+      lastError: "Signal monitor matrix bar load timed out.",
+    } as never),
+    false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldPersistSignalMonitorMatrixState({
+      ...cleanState,
+      status: "ok",
+      lastError: "Latest signal monitor bar is delayed.",
+    } as never),
+    false,
+  );
+});
+
+test("automatic signal matrix requests can fast-return stored states", () => {
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromStoredStateFast(
+      {
+        clientRole: "leader",
+        requestOrigin: "startup",
+        states: [{ symbol: "SPY", timeframe: "5m" }],
+      },
+    ),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromStoredStateFast(
+      {
+        clientRole: "manual",
+        requestOrigin: "manual",
+        states: [{ symbol: "SPY", timeframe: "5m" }],
+      },
+    ),
+    false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromStoredStateFast(
+      {
+        clientRole: "leader",
+        requestOrigin: "startup",
+        states: [],
+      },
+    ),
+    false,
+  );
+});
+
+test("signal monitor matrix hydrates requested timeframe from current stored state", () => {
   const value =
-    __signalMonitorInternalsForTests.hydrateSignalMonitorMatrixStatesFromPrimaryStates(
+    __signalMonitorInternalsForTests.hydrateSignalMonitorMatrixStatesFromStoredStates(
       {
         states: [
           {
@@ -363,7 +471,7 @@ test("signal monitor matrix hydrates profile timeframe from current primary stat
       },
       {
         requestedSymbols: ["GLD"],
-        primaryStates: [
+        storedStates: [
           {
             id: "state-GLD-5m",
             profileId: "profile-1",
@@ -396,9 +504,9 @@ test("signal monitor matrix hydrates profile timeframe from current primary stat
   );
 });
 
-test("signal monitor matrix keeps newer current matrix state over primary hydration", () => {
+test("signal monitor matrix keeps newer current matrix state over stored hydration", () => {
   const value =
-    __signalMonitorInternalsForTests.hydrateSignalMonitorMatrixStatesFromPrimaryStates(
+    __signalMonitorInternalsForTests.hydrateSignalMonitorMatrixStatesFromStoredStates(
       {
         states: [
           {
@@ -423,7 +531,7 @@ test("signal monitor matrix keeps newer current matrix state over primary hydrat
       },
       {
         requestedSymbols: ["GLD"],
-        primaryStates: [
+        storedStates: [
           {
             id: "state-GLD-5m",
             profileId: "profile-1",
@@ -446,6 +554,42 @@ test("signal monitor matrix keeps newer current matrix state over primary hydrat
 
   assert.equal(value.states[0]?.id, "matrix-GLD-5m");
   assert.equal(value.states[0]?.currentSignalDirection, "buy");
+});
+
+test("signal monitor matrix renders clean stale stored cells while refresh is pending", () => {
+  const value =
+    __signalMonitorInternalsForTests.hydrateSignalMonitorMatrixStatesFromStoredStates(
+      {
+        states: [],
+        timeframes: ["5m"] as const,
+      },
+      {
+        requestedSymbols: ["GLD"],
+        storedStates: [
+          {
+            id: "state-GLD-5m",
+            profileId: "profile-1",
+            symbol: "GLD",
+            timeframe: "5m",
+            currentSignalDirection: null,
+            currentSignalAt: null,
+            currentSignalPrice: null,
+            latestBarAt: "2026-06-02T14:00:00.000Z",
+            barsSinceSignal: null,
+            fresh: false,
+            status: "stale",
+            active: true,
+            lastEvaluatedAt: "2026-06-02T14:01:00.000Z",
+            lastError: null,
+          },
+        ] as never,
+      },
+    );
+
+  assert.equal(value.states.length, 1);
+  assert.equal(value.states[0]?.symbol, "GLD");
+  assert.equal(value.states[0]?.timeframe, "5m");
+  assert.equal(value.states[0]?.status, "stale");
 });
 
 test("signal monitor bar queries are scoped to the latest completed boundary", () => {
@@ -628,7 +772,7 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
   assert.match(source, /shouldCacheSignalMonitorMatrixEvaluationValue/);
 });
 
-test("automatic signal matrix reads keep followers cache-only without foreground leader fast-return", () => {
+test("automatic signal matrix reads keep followers cache-only and leaders background-only", () => {
   const source = readFileSync(
     new URL("./signal-monitor.ts", import.meta.url),
     "utf8",
@@ -641,12 +785,27 @@ test("automatic signal matrix reads keep followers cache-only without foreground
     cacheOnlyStart,
   );
   const cacheOnlyBody = source.slice(cacheOnlyStart, cacheOnlyEnd);
-  const matrixCacheOnlyBranch = source.match(
-    /if \(shouldServeSignalMonitorMatrixFromCacheOnly\(input\)\) \{[\s\S]*?\n  const debouncedCached/,
+  const matrixStart = source.indexOf("export async function evaluateSignalMonitorMatrix");
+  const matrixEnd = source.indexOf("export async function getSignalMonitorProfile", matrixStart);
+  const matrixBlock = source.slice(matrixStart, matrixEnd);
+  const matrixCacheOnlyBranch = matrixBlock.match(
+    /if \(shouldServeSignalMonitorMatrixFromCacheOnly\(input\)\) \{[\s\S]*?\n  const cachedMatrix/,
   )?.[0];
+  const matrixAutomaticBranch = matrixBlock.match(
+    /if \(isAutomaticSignalMonitorMatrixRequest\(input\)\) \{[\s\S]*?\n  const response = await withSignalMonitorMatrixEvaluationCache/,
+  )?.[0];
+  const matrixAutomaticBranchBody =
+    matrixAutomaticBranch?.slice(
+      0,
+      matrixAutomaticBranch.indexOf(
+        "const response = await withSignalMonitorMatrixEvaluationCache",
+      ),
+    ) ?? "";
 
   assert.notEqual(cacheOnlyStart, -1);
   assert.notEqual(cacheOnlyEnd, -1);
+  assert.notEqual(matrixStart, -1);
+  assert.notEqual(matrixEnd, -1);
   assert.match(cacheOnlyBody, /input\.clientRole === "follower"/);
   assert.match(cacheOnlyBody, /input\.clientRole === "leader"/);
   assert.match(
@@ -662,12 +821,18 @@ test("automatic signal matrix reads keep followers cache-only without foreground
     new RegExp("shouldRefreshSignalMonitorMatrix" + "CacheInBackground"),
   );
   assert.ok(matrixCacheOnlyBranch);
-  assert.match(matrixCacheOnlyBranch, /getDebouncedSignalMonitorMatrixCacheValue/);
+  assert.match(matrixBlock, /getDebouncedSignalMonitorMatrixCacheValue/);
+  assert.match(matrixCacheOnlyBranch, /cacheOnlyCached/);
   assert.match(
-    matrixCacheOnlyBranch,
-    /hydrateSignalMonitorMatrixResponseFromStoredPrimaryStates/,
+    matrixBlock,
+    /hydrateSignalMonitorMatrixResponseFromStoredStates/,
   );
-  assert.match(matrixCacheOnlyBranch, /sourceRequestCount:\s*0/);
+  assert.match(matrixCacheOnlyBranch, /hydrateFromStoredStates/);
+  assert.ok(matrixAutomaticBranch);
+  assert.ok(matrixAutomaticBranchBody);
+  assert.match(matrixAutomaticBranchBody, /refreshMatrixInBackground\(\)/);
+  assert.match(matrixAutomaticBranchBody, /return withSignalMonitorMatrixMetadata/);
+  assert.match(matrixBlock, /sourceRequestCount:\s*0/);
   assert.doesNotMatch(
     matrixCacheOnlyBranch,
     /withSignalMonitorMatrixEvaluationCache/,
@@ -675,6 +840,48 @@ test("automatic signal matrix reads keep followers cache-only without foreground
   assert.doesNotMatch(
     matrixCacheOnlyBranch,
     /await withSignalMonitorMatrixEvaluationCache/,
+  );
+  assert.doesNotMatch(
+    matrixAutomaticBranchBody,
+    /const response = await withSignalMonitorMatrixEvaluationCache/,
+  );
+});
+
+test("automatic signal matrix reads return stored or empty rows before fresh refresh", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("export async function evaluateSignalMonitorMatrix");
+  const end = source.indexOf("export async function getSignalMonitorProfile", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const block = source.slice(start, end);
+  const automaticBranchIndex = block.indexOf(
+    "if (isAutomaticSignalMonitorMatrixRequest(input))",
+  );
+  const blockingRefreshIndex = block.indexOf(
+    "const response = await withSignalMonitorMatrixEvaluationCache",
+  );
+  const automaticBranch = block.slice(automaticBranchIndex, blockingRefreshIndex);
+  const buildFreshIndex = block.indexOf("const buildFreshMatrixResponse");
+  const primeIndex = block.indexOf(
+    "primeSignalMonitorMatrixStockAggregateStream(symbols);",
+  );
+
+  assert.match(block, /void persistSignalMonitorMatrixStatesBestEffort/);
+  assert.match(source, /function scheduleSignalMonitorMatrixBackgroundRefresh/);
+  assert.match(block, /scheduleSignalMonitorMatrixBackgroundRefresh\(\(\) => \{/);
+  assert.ok(automaticBranchIndex > -1);
+  assert.ok(blockingRefreshIndex > -1);
+  assert.ok(automaticBranchIndex < blockingRefreshIndex);
+  assert.ok(buildFreshIndex > -1);
+  assert.ok(primeIndex > buildFreshIndex);
+  assert.match(automaticBranch, /refreshMatrixInBackground\(\)/);
+  assert.match(automaticBranch, /return withSignalMonitorMatrixMetadata/);
+  assert.doesNotMatch(
+    automaticBranch,
+    /if \(\s*shouldServeSignalMonitorMatrixFromStoredStateFast/,
   );
 });
 
@@ -751,6 +958,7 @@ test("signal monitor event responses normalize retired algo branding", () => {
 
 test("intraday delayed signal bars force live-edge retry before stale age", () => {
   const evaluatedAt = new Date("2026-05-26T15:40:00.000Z");
+  const evaluatedAfterBoundary = new Date("2026-05-26T15:40:03.000Z");
   const delayedLatest = {
     timestamp: new Date("2026-05-26T15:35:00.000Z"),
     open: 100,
@@ -797,6 +1005,36 @@ test("intraday delayed signal bars force live-edge retry before stale age", () =
     }),
     false,
   );
+
+  const liveButBehindCompletedEdge = {
+    ...massiveLiveLatest,
+    timestamp: new Date("2026-05-26T15:30:00.000Z"),
+  };
+  assert.equal(
+    __signalMonitorInternalsForTests
+      .expectedLatestCompletedIntradayBarAt({
+        timeframe: "5m",
+        evaluatedAt: evaluatedAfterBoundary,
+      })
+      ?.toISOString(),
+    "2026-05-26T15:35:00.000Z",
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.isSignalMonitorMissingExpectedLiveEdge({
+      latestBarAt: liveButBehindCompletedEdge.timestamp,
+      timeframe: "5m",
+      evaluatedAt: evaluatedAfterBoundary,
+    }),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldRetrySignalMonitorCompletedBars({
+      completedBars: [liveButBehindCompletedEdge] as never,
+      timeframe: "5m",
+      evaluatedAt: evaluatedAfterBoundary,
+    }),
+    true,
+  );
 });
 
 test("signal monitor completed-bars cache bypasses retryable delayed rows", () => {
@@ -820,6 +1058,10 @@ test("signal monitor completed-bars cache bypasses retryable delayed rows", () =
     freshness: "live",
     marketDataMode: "live",
     source: "ibkr-history",
+  };
+  const liveButBehindCompletedEdge = {
+    ...liveLatest,
+    timestamp: new Date("2026-05-26T15:30:00.000Z"),
   };
 
   assert.equal(
@@ -861,6 +1103,41 @@ test("signal monitor completed-bars cache bypasses retryable delayed rows", () =
       },
     ),
     false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldBypassSignalMonitorCompletedBarsCache(
+      {
+        cached: {
+          bars: [liveButBehindCompletedEdge] as never,
+          latestBarAt: liveButBehindCompletedEdge.timestamp,
+        },
+        timeframe: "5m",
+        evaluatedAt: new Date("2026-05-26T15:40:03.000Z"),
+      },
+    ),
+    true,
+  );
+});
+
+test("signal monitor profile scans prime stock aggregate stream before symbol evaluation", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const universeBlock = source.match(
+    /export async function evaluateSignalMonitorProfileUniverse[\s\S]*?function resolveExplicitSignalMonitorSymbols/,
+  )?.[0];
+  const explicitSymbolsBlock = source.match(
+    /export async function evaluateSignalMonitorProfileSymbols[\s\S]*?function resolveSignalMonitorMatrixSymbols/,
+  )?.[0];
+
+  assert.match(
+    universeBlock ?? "",
+    /const symbols = resolvedBatch\.symbols;\s*primeSignalMonitorMatrixStockAggregateStream\(symbols\);[\s\S]*evaluateSymbolsInBatches/,
+  );
+  assert.match(
+    explicitSymbolsBlock ?? "",
+    /const resolved = resolveExplicitSignalMonitorSymbols[\s\S]*primeSignalMonitorMatrixStockAggregateStream\(resolved\.symbols\);[\s\S]*evaluateSymbolsInBatches/,
   );
 });
 
@@ -1010,6 +1287,27 @@ test("signal monitor matrix preserves requested coverage while narrowing concurr
     ),
     { pressure: "watch", maxSymbols: 6, concurrency: 1 },
   );
+});
+
+test("signal monitor pressure caps read the shared pressure snapshot without rewriting RSS", () => {
+  __resetApiResourcePressureForTests();
+  updateApiResourcePressure({
+    rssMb: resolveApiRssPressureThresholds().critical + 1,
+  });
+  try {
+    assert.equal(
+      __signalMonitorInternalsForTests.cappedSignalMatrixSettings(profile()).pressure,
+      "critical",
+    );
+    assert.equal(
+      __signalMonitorInternalsForTests.cappedSignalMonitorEvaluationProfile(
+        profile(),
+      ).pressure,
+      "critical",
+    );
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
 });
 
 test("explicit leader signal matrix requests bypass soft pressure concurrency", () => {
@@ -1525,6 +1823,35 @@ test("signal monitor state hydration is scoped to the profile timeframe", () => 
   assert.match(block, /isSignalMonitorStateCurrentForLane/);
 });
 
+test("signal monitor matrix stored hydration reads all requested timeframes", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf(
+    "async function readCurrentSignalMonitorMatrixStates",
+  );
+  const end = source.indexOf(
+    "async function hydrateSignalMonitorMatrixResponseFromStoredStates",
+    start,
+  );
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const block = source.slice(start, end);
+
+  assert.match(
+    block,
+    /inArray\(signalMonitorSymbolStatesTable\.symbol,\s*requestedSymbols\)/,
+  );
+  assert.match(
+    block,
+    /inArray\(signalMonitorSymbolStatesTable\.timeframe,\s*timeframes\)/,
+  );
+  assert.match(block, /isRenderableStoredSignalMonitorMatrixState/);
+  assert.doesNotMatch(block, /isSignalMonitorStateCurrentForLane/);
+  assert.doesNotMatch(block, /profileTimeframe/);
+});
+
 test("signal monitor state route opts into stale-fast cache metadata", () => {
   const routeSource = readFileSync(
     new URL("../routes/signal-monitor.ts", import.meta.url),
@@ -1587,7 +1914,7 @@ test("signal monitor lane recency rejects stale persisted fresh rows", () => {
   );
 });
 
-test("signal monitor capped evaluation preserves skipped all-watchlist rows", () => {
+test("signal monitor full evaluation preserves sibling matrix timeframe rows", () => {
   const source = readFileSync(
     new URL("./signal-monitor.ts", import.meta.url),
     "utf8",
@@ -1603,7 +1930,7 @@ test("signal monitor capped evaluation preserves skipped all-watchlist rows", ()
   assert.notEqual(end, -1);
   const block = source.slice(start, end);
 
-  assert.match(
+  assert.doesNotMatch(
     block,
     /ne\(signalMonitorSymbolStatesTable\.timeframe,\s*timeframe\)/,
   );

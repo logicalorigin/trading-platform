@@ -2091,6 +2091,48 @@ test("signals screen is registered as a first-class platform route", () => {
   assert.match(signalsScreenSource, /buildSignalsMatrixHydrationPlan/);
   assert.match(signalsScreenSource, /onRequestSignalMatrixHydration/);
   assert.match(signalsScreenSource, /prioritySymbols:\s*matrixHydrationPlan\.requestSymbols/);
+  const priorityHydrationStart = signalsScreenSource.indexOf(
+    "const priorityHydrationSymbols = useMemo",
+  );
+  const priorityHydrationEnd = signalsScreenSource.indexOf(
+    "const matrixHydrationPlan = useMemo",
+    priorityHydrationStart,
+  );
+  assert.notEqual(priorityHydrationStart, -1);
+  assert.notEqual(priorityHydrationEnd, -1);
+  const priorityHydrationBlock = signalsScreenSource.slice(
+    priorityHydrationStart,
+    priorityHydrationEnd,
+  );
+  assert.match(priorityHydrationBlock, /\.\.\.visibleHydrationSymbols/);
+  assert.match(
+    priorityHydrationBlock,
+    /filteredRows\.map\(\(row\) => row\.symbol\)/,
+  );
+  assert.match(priorityHydrationBlock, /seen\.has\(symbol\)/);
+  const matrixHydratedStart = signalsScreenSource.indexOf(
+    "const isHydratedSignalMatrixState =",
+  );
+  const matrixHydratedEnd = signalsScreenSource.indexOf(
+    "const SIGNAL_TIMEFRAME_OPTIONS",
+    matrixHydratedStart,
+  );
+  assert.notEqual(matrixHydratedStart, -1);
+  assert.notEqual(matrixHydratedEnd, -1);
+  const matrixHydratedBlock = signalsScreenSource.slice(
+    matrixHydratedStart,
+    matrixHydratedEnd,
+  );
+  assert.match(signalsScreenSource, /normalizeSignalStatus/);
+  assert.match(
+    matrixHydratedBlock,
+    /!\["error", "unavailable", "unknown"\]\.includes/,
+  );
+  assert.match(
+    matrixHydratedBlock,
+    /state\.latestBarAt \|\| state\.currentSignalAt/,
+  );
+  assert.doesNotMatch(matrixHydratedBlock, /isSignalStateCurrent\(state\)/);
   assert.match(appSource, /signalMatrixRotationCursorRef\.current = 0/);
   assert.match(appSource, /requestTaskLimit:\s*signalMatrixRequestTaskLimit/);
   assert.doesNotMatch(signalsScreenSource, /mergeSignalMatrixStates/);
