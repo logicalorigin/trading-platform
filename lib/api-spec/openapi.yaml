@@ -3,7 +3,7 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.2.0
-  description: Internal trading platform API for Polygon market data and IBKR execution.
+  description: Internal trading platform API for Massive market data and IBKR execution.
 servers:
   - url: /api
     description: Base API path
@@ -1736,7 +1736,7 @@ paths:
         - name: type
           in: query
           required: false
-          description: Optional Polygon ticker type filter.
+          description: Optional Massive ticker type filter.
           schema:
             type: string
         - name: active
@@ -1895,19 +1895,19 @@ paths:
         - name: allowHistoricalSynthesis
           in: query
           required: false
-          description: Allow Polygon/Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.
+          description: Allow Massive historical synthesis when IBKR history is incomplete. Defaults to enabled for broker-limited equity history unless explicitly false.
           schema:
             type: boolean
         - name: allowStudyFallback
           in: query
           required: false
-          description: Allow chart-only synthetic option quote fallback bars when broker and aggregate history are empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Polygon/Massive aggregate history remains valid for backtests.
+          description: Allow chart-only synthetic option quote fallback bars when broker and aggregate history are empty. Do not use synthetic quote fallback for backtests, signals, or order logic; Massive aggregate history remains valid for backtests.
           schema:
             type: boolean
         - name: brokerRecentWindowMinutes
           in: query
           required: false
-          description: Limit broker-sourced recent history to this many minutes before falling back to Massive/Polygon history.
+          description: Limit broker-sourced recent history to this many minutes before falling back to Massive history.
           schema:
             type: integer
             minimum: 0
@@ -2811,7 +2811,7 @@ paths:
     get:
       operationId: getFlowPremiumDistribution
       tags: [flow]
-      summary: Get Polygon-backed top options premium distribution widgets
+      summary: Get Massive-backed top options premium distribution widgets
       parameters:
         - name: limit
           in: query
@@ -2824,7 +2824,7 @@ paths:
         - name: candidateLimit
           in: query
           required: false
-          description: Number of high-volume stock candidates to score through Polygon options snapshots.
+          description: Number of high-volume stock candidates to score through Massive options snapshots.
           schema:
             type: integer
             minimum: 6
@@ -2923,14 +2923,14 @@ paths:
         - name: from
           in: query
           required: false
-          description: Earliest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.
+          description: Earliest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the IBKR snapshot scanner.
           schema:
             type: string
             format: date-time
         - name: to
           in: query
           required: false
-          description: Latest option flow trade timestamp to include. Supplying a time window hydrates Polygon historical trade prints instead of the IBKR snapshot scanner.
+          description: Latest option flow trade timestamp to include. Supplying a time window hydrates Massive historical trade prints instead of the IBKR snapshot scanner.
           schema:
             type: string
             format: date-time
@@ -4213,11 +4213,11 @@ components:
 
     MarketDataProvider:
       type: string
-      enum: [polygon, massive, ibkr]
+      enum: [massive, ibkr]
 
     FlowDataProvider:
       type: string
-      enum: [ibkr, polygon]
+      enum: [ibkr, massive]
 
     FlowEventBasis:
       type: string
@@ -4225,7 +4225,7 @@ components:
 
     FlowEventsSourceProvider:
       type: string
-      enum: [ibkr, polygon, none]
+      enum: [ibkr, massive, none]
 
     FlowEventsSourceStatus:
       type: string
@@ -4299,7 +4299,7 @@ components:
 
     SignalMonitorMatrixTimeframe:
       type: string
-      enum: [2m, 5m, 15m]
+      enum: [1m, 2m, 5m, 15m, 1h]
 
     FlowSentiment:
       type: string
@@ -4307,7 +4307,7 @@ components:
 
     QuoteSource:
       type: string
-      enum: [ibkr, polygon, massive]
+      enum: [ibkr, massive]
 
     BarDataSource:
       type: string
@@ -5002,14 +5002,14 @@ components:
         configured:
           type: object
           properties:
-            polygon:
+            massive:
               type: boolean
             ibkr:
               type: boolean
             research:
               type: boolean
           required:
-            - polygon
+            - massive
             - ibkr
             - research
         ibkrBridge:
@@ -7303,7 +7303,7 @@ components:
           enum: [available, unavailable, forbidden, unknown]
         source:
           type: string
-          enum: [polygon-options-snapshot]
+          enum: [massive-options-snapshot]
         confidence:
           type: string
           enum: [snapshot, partial]
@@ -7354,7 +7354,7 @@ components:
       properties:
         provider:
           type: string
-          enum: [polygon]
+          enum: [massive]
         label:
           type: string
         timeframe:
@@ -9344,15 +9344,40 @@ components:
         - low
         - none
 
+    GexExpirationCoverage:
+      type: object
+      properties:
+        requestedCount:
+          type: number
+        returnedCount:
+          type: number
+        loadedCount:
+          type: number
+        failedCount:
+          type: number
+        complete:
+          type: boolean
+        capped:
+          type: boolean
+      required:
+        - requestedCount
+        - returnedCount
+        - loadedCount
+        - failedCount
+        - complete
+        - capped
+
     GexSource:
       type: object
       properties:
         provider:
           type: string
-          enum: [ibkr, massive, polygon]
+          enum: [ibkr, massive]
         status:
           type: string
           enum: [ok, partial, unavailable]
+        expirationCoverage:
+          $ref: "#/components/schemas/GexExpirationCoverage"
         optionCount:
           type: number
         usableOptionCount:
@@ -9387,6 +9412,7 @@ components:
       required:
         - provider
         - status
+        - expirationCoverage
         - optionCount
         - usableOptionCount
         - withGamma
@@ -9839,7 +9865,7 @@ components:
 
     OptionChartBarsDataSource:
       type: string
-      enum: [ibkr-history, mixed-history, polygon-option-aggregates, none]
+      enum: [ibkr-history, mixed-history, massive-option-aggregates, none]
 
     OptionChartBarsResponse:
       allOf:
@@ -10000,7 +10026,7 @@ components:
       properties:
         sourceProvider:
           type: string
-          enum: [massive, polygon, ibkr, none]
+          enum: [massive, ibkr, none]
         sourcePreference:
           $ref: "#/components/schemas/FootprintSourcePreference"
         classificationMethod:
@@ -11103,6 +11129,76 @@ components:
         - lastEvaluatedAt
         - lastError
 
+    SignalMonitorIndicatorDirection:
+      type: string
+      enum: [bullish, bearish]
+
+    SignalMonitorTrendAgeBucket:
+      type: string
+      enum: [new, mature, old]
+
+    SignalMonitorIndicatorStrength:
+      type: string
+      enum: [strong, weak]
+
+    SignalMonitorIndicatorMtfSnapshot:
+      type: object
+      properties:
+        timeframe:
+          type: string
+        direction:
+          oneOf:
+            - $ref: "#/components/schemas/SignalMonitorIndicatorDirection"
+            - type: "null"
+        required:
+          type: boolean
+        pass:
+          type: boolean
+      required:
+        - timeframe
+        - direction
+        - required
+        - pass
+
+    SignalMonitorIndicatorSnapshot:
+      type: object
+      properties:
+        trendDirection:
+          oneOf:
+            - $ref: "#/components/schemas/SignalMonitorIndicatorDirection"
+            - type: "null"
+        trendAgeBars:
+          type: [integer, "null"]
+        trendAgeBucket:
+          oneOf:
+            - $ref: "#/components/schemas/SignalMonitorTrendAgeBucket"
+            - type: "null"
+        adx:
+          type: [number, "null"]
+        strength:
+          oneOf:
+            - $ref: "#/components/schemas/SignalMonitorIndicatorStrength"
+            - type: "null"
+        volatilityScore:
+          type: [number, "null"]
+        mtf:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalMonitorIndicatorMtfSnapshot"
+        filterState:
+          oneOf:
+            - $ref: "#/components/schemas/JsonObject"
+            - type: "null"
+      required:
+        - trendDirection
+        - trendAgeBars
+        - trendAgeBucket
+        - adx
+        - strength
+        - volatilityScore
+        - mtf
+        - filterState
+
     SignalMonitorMatrixState:
       type: object
       properties:
@@ -11139,6 +11235,10 @@ components:
           format: date-time
         lastError:
           type: [string, "null"]
+        indicatorSnapshot:
+          oneOf:
+            - $ref: "#/components/schemas/SignalMonitorIndicatorSnapshot"
+            - type: "null"
       required:
         - id
         - profileId
@@ -11154,6 +11254,7 @@ components:
         - active
         - lastEvaluatedAt
         - lastError
+        - indicatorSnapshot
 
     SignalMonitorEvent:
       type: object
