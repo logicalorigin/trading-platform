@@ -878,6 +878,8 @@ test("shared signal dots preserve watchlist behavior after extraction", () => {
   assert.match(watchlistSource, /buildSignalsRows/);
   assert.match(watchlistSource, /SIGNALS_ROW_STATUS/);
   assert.match(watchlistSource, /const signalsRowsBySymbol = useMemo/);
+  assert.match(watchlistSource, /states: signalStates/);
+  assert.match(watchlistSource, /matrixStates: signalMatrixStates/);
   assert.match(watchlistSource, /signalsRow=\{signalsRowsBySymbol\.get\(item\.sym\) \|\| null\}/);
   assert.match(watchlistSource, /const sparklineSignalDirection = signalsRow\?\.direction/);
   assert.match(watchlistSource, /SIGNALS_PAGE_ACTIVE_STATUSES\.has\(signalsRow\?\.status\)/);
