@@ -223,7 +223,7 @@ const buildSignalSparklinePointColors = ({
   signalEvents = EMPTY_SIGNAL_EVENTS,
 }) => {
   const points = extractSparklinePoints(data);
-  if (points.length < 2 || !points.some((point) => point.ms != null)) {
+  if (points.length < 2) {
     return null;
   }
 
@@ -256,17 +256,28 @@ const buildSignalSparklinePointColors = ({
     return null;
   }
   transitions.sort((left, right) => left.ms - right.ms || left.order - right.order);
+  const firstSignalColor = signalColorForDirection(transitions[0]?.direction);
+  const latestSignalColor = signalColorForDirection(transitions.at(-1)?.direction);
+  if (!points.some((point) => point.ms != null)) {
+    return latestSignalColor ? points.map(() => latestSignalColor) : null;
+  }
 
   let transitionIndex = -1;
   return points.map((point) => {
-    if (point.ms == null) return null;
+    if (point.ms == null) {
+      return transitionIndex >= 0
+        ? signalColorForDirection(transitions[transitionIndex]?.direction)
+        : firstSignalColor;
+    }
     while (
       transitionIndex + 1 < transitions.length &&
       transitions[transitionIndex + 1].ms <= point.ms
     ) {
       transitionIndex += 1;
     }
-    return signalColorForDirection(transitions[transitionIndex]?.direction);
+    return transitionIndex >= 0
+      ? signalColorForDirection(transitions[transitionIndex]?.direction)
+      : firstSignalColor;
   });
 };
 
