@@ -8,7 +8,7 @@ const diagnosticsSource = () =>
 test("diagnostics overview memory card uses memory signal instead of broad resource pressure", () => {
   const source = diagnosticsSource();
 
-  assert.match(source, /const memoryOverviewSeverity = /);
+  assert.match(source, /const memoryOverviewSeverity\s*=/);
   assert.match(
     source,
     /<MetricCard label="Memory" value=\{String\(footerSignal\.level \|\| "normal"\)\.toUpperCase\(\)\}/,
