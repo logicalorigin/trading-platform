@@ -29,7 +29,10 @@ export const OperationsPositionsTable = ({
     [accountRows, deploymentId],
   );
   const providerContractIds = useMemo(
-    () => Array.from(new Set(collectAlgoRuntimeProviderContractIds(positions, symbolIndex))),
+    () =>
+      Array.from(
+        new Set(collectAlgoRuntimeProviderContractIds(positions, symbolIndex)),
+      ),
     [positions, symbolIndex],
   );
   const quoteVersion = useStoredOptionQuoteSnapshotVersion(providerContractIds);
@@ -53,7 +56,8 @@ export const OperationsPositionsTable = ({
       accountPositionsQuery?.isError,
   );
   const useAccountPositionRows = Boolean(
-    scopedAccountRows.length || (accountPositionsSettled && runtimeRows.length === 0),
+    scopedAccountRows.length ||
+      (accountPositionsSettled && runtimeRows.length === 0),
   );
   const rows = useMemo(
     () => (useAccountPositionRows ? scopedAccountRows : runtimeRows),
@@ -67,7 +71,8 @@ export const OperationsPositionsTable = ({
     () => ({
       data: useAccountPositionRows
         ? {
-            ...(accountPositionsQuery?.data || buildAlgoAccountPositionsResponse([])),
+            ...(accountPositionsQuery?.data ||
+              buildAlgoAccountPositionsResponse([])),
             totals: response.totals,
             positions: rows,
           }
@@ -81,12 +86,7 @@ export const OperationsPositionsTable = ({
       error: useAccountPositionRows ? accountPositionsQuery?.error : null,
       refetch: accountPositionsQuery?.refetch || (() => undefined),
     }),
-    [
-      accountPositionsQuery,
-      response,
-      rows,
-      useAccountPositionRows,
-    ],
+    [accountPositionsQuery, response, rows, useAccountPositionRows],
   );
   const positionsSourceLabel = useAccountPositionRows
     ? "Shadow account positions + live option quotes"
