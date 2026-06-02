@@ -649,13 +649,7 @@ export const AlgoLivePage = ({
           ? `signal-options-preview:${focusedDeploymentId || "active"}:${group.underlying}`
           : `algo-operations:${group.underlying}`,
     }));
-    return limitAlgoOptionQuoteGroups(
-      groups,
-      Math.max(
-        ALGO_OPTION_QUOTE_CONTRACT_LIMIT,
-        countAlgoOptionQuoteGroupContracts(groups),
-      ),
-    );
+    return limitAlgoOptionQuoteGroups(groups, ALGO_OPTION_QUOTE_CONTRACT_LIMIT);
   }, [
     focusedDeploymentId,
     focusedLedgerPositions,

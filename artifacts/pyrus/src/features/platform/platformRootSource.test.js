@@ -370,6 +370,8 @@ test("mobile shell uses bottom navigation and separates watchlist activity surfa
   assert.match(shellSource, /collapsed=\{isTablet \|\| activitySidebarCollapsed\}/);
   assert.match(shellSource, /setMobileActivityOpen\(true\);[\s\S]*return;[\s\S]*setActivitySidebarCollapsed/);
   assert.match(shellSource, /<MobileWatchlistDrawer/);
+  assert.match(shellSource, /signalMonitorProfile=\{signalMonitorProfile\}/);
+  assert.match(shellSource, /signalMonitorEvents=\{signalMonitorEvents\}/);
   assert.doesNotMatch(shellSource, /MobileNavDrawer/);
   assert.equal(existsSync(retiredMobileNavDrawerPath), false);
   assert.match(shellSource, /data-viewport=/);
@@ -390,6 +392,8 @@ test("mobile shell uses bottom navigation and separates watchlist activity surfa
   assert.match(watchlistDrawerSource, /fullBleed/);
   assert.match(watchlistDrawerSource, /density="mobile-dense"/);
   assert.match(watchlistDrawerSource, /<WatchlistComponent/);
+  assert.match(watchlistDrawerSource, /signalProfile=\{signalMonitorProfile\}/);
+  assert.match(watchlistDrawerSource, /signalEvents=\{signalMonitorEvents\}/);
   assert.match(headerSource, /<BottomSheet/);
   assert.match(headerSource, /compactSettings=\{isPhone\}/);
   assert.match(headerSource, /ra-mobile-broadcast-stack/);
@@ -1835,6 +1839,8 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.match(source, /const EMPTY_SIGNAL_MONITOR_STATES = Object\.freeze\(\[\]\)/);
   assert.match(source, /signalMonitorStateQuery\.data\?\.states \|\| EMPTY_SIGNAL_MONITOR_STATES/);
   assert.match(source, /signalMonitorEventsQuery\.data\?\.events \|\| EMPTY_SIGNAL_MONITOR_EVENTS/);
+  assert.match(source, /signalMonitorProfile=\{signalMonitorProfile\}/);
+  assert.match(source, /signalMonitorEvents=\{signalMonitorEvents\}/);
   assert.match(source, /const signalMonitorStateUniverseSymbols =\s*Array\.isArray\(signalMonitorStateQuery\.data\?\.universeSymbols\)/);
   assert.match(source, /const signalMonitorDisplaySymbols = useMemo/);
   assert.match(source, /buildHeaderSignalContextSymbols/);

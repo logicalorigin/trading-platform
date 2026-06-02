@@ -152,6 +152,7 @@ const EMPTY_ALGO_EVENTS = Object.freeze([]);
 const EMPTY_SIGNAL_OPTIONS_CANDIDATES = Object.freeze([]);
 const EMPTY_SIGNAL_OPTIONS_SIGNALS = Object.freeze([]);
 const EMPTY_SIGNAL_OPTIONS_POSITIONS = Object.freeze([]);
+const retainPreviousData = (previousData) => previousData;
 
 const preferNonEmptySourceArray = (primary, fallback, emptyValue) => {
   const primaryArray = Array.isArray(primary) ? primary : null;
@@ -445,7 +446,7 @@ export const AlgoScreen = ({
       cancelled = true;
     };
   }, [algoRuntimeHelpers, isVisible]);
-  const algoLiveDataQueriesEnabled = Boolean(isVisible && algoLivePageReady);
+  const algoLiveDataQueriesEnabled = Boolean(isVisible);
   const algoCockpitStreamFreshness = useAlgoCockpitStream({
     deploymentId: focusedDeploymentId,
     mode: environment || "paper",
@@ -633,6 +634,7 @@ export const AlgoScreen = ({
         ...QUERY_DEFAULTS,
         enabled: Boolean(algoCriticalQueriesEnabled && focusedDeployment?.id),
         refetchInterval: algoRoutineRefetchInterval,
+        placeholderData: retainPreviousData,
         retry: false,
       },
     },
@@ -642,6 +644,7 @@ export const AlgoScreen = ({
       ...QUERY_DEFAULTS,
       enabled: Boolean(algoDerivedQueriesEnabled && focusedDeployment?.id),
       refetchInterval: algoDerivedRefetchInterval,
+      placeholderData: retainPreviousData,
       retry: false,
     },
   });
@@ -665,6 +668,7 @@ export const AlgoScreen = ({
         ...QUERY_DEFAULTS,
         enabled: Boolean(algoDerivedQueriesEnabled && focusedDeployment?.id),
         refetchInterval: algoDerivedRefetchInterval,
+        placeholderData: retainPreviousData,
         retry: false,
       },
     },
@@ -683,6 +687,7 @@ export const AlgoScreen = ({
           ? 30_000
           : QUERY_DEFAULTS.staleTime,
         refetchInterval: signalOptionsLedgerPositionsRefetchInterval,
+        placeholderData: retainPreviousData,
         retry: false,
       },
     },
@@ -752,12 +757,7 @@ export const AlgoScreen = ({
     signalOptionsState?.profile ||
     deploymentSignalOptionsProfile ||
     SIGNAL_OPTIONS_DEFAULT_PROFILE;
-  const controlBaselineReady = Boolean(
-    focusedDeployment &&
-      (signalOptionsState?.profile ||
-        deploymentSignalOptionsProfile ||
-        signalOptionsStateSettled),
-  );
+  const controlBaselineReady = Boolean(focusedDeployment);
   const signalOptionsCandidates = preferNonEmptySourceArray(
     cockpit?.candidates,
     signalOptionsState?.candidates,
