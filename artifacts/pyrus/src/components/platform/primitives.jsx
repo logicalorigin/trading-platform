@@ -23,29 +23,66 @@ const CSS_COLOR = Object.freeze({
 const cssColorMix = (color, percent) =>
   `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
+const readSparklineValue = (point) => {
+  if (typeof point === "number" && Number.isFinite(point)) {
+    return point;
+  }
+  if (typeof point?.close === "number" && Number.isFinite(point.close)) {
+    return point.close;
+  }
+  if (typeof point?.c === "number" && Number.isFinite(point.c)) {
+    return point.c;
+  }
+  if (typeof point?.v === "number" && Number.isFinite(point.v)) {
+    return point.v;
+  }
+  return null;
+};
+
+const readSparklineTimestampMs = (value) => {
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isFinite(time) ? time : null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? value : value * 1000;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric > 10_000_000_000 ? numeric : numeric * 1000;
+    }
+  }
+  return null;
+};
+
 /**
- * Normalize a sparkline data array into a list of finite numeric closes.
- * Accepts raw numbers, { close }, { c }, or { v } shapes — matches what
- * the various market/runtime stores emit.
+ * Normalize a sparkline data array into finite numeric closes plus optional
+ * timestamps. Accepts raw numbers, { close }, { c }, or { v } value shapes
+ * and { timestamp }, { time }, or { t } time shapes.
  */
-export const extractSparklineValues = (data = []) =>
+export const extractSparklinePoints = (data = []) =>
   (Array.isArray(data) ? data : [])
-    .map((point) => {
-      if (typeof point === "number" && Number.isFinite(point)) {
-        return point;
+    .map((point, index) => {
+      const value = readSparklineValue(point);
+      if (!Number.isFinite(value)) {
+        return null;
       }
-      if (typeof point?.close === "number" && Number.isFinite(point.close)) {
-        return point.close;
-      }
-      if (typeof point?.c === "number" && Number.isFinite(point.c)) {
-        return point.c;
-      }
-      if (typeof point?.v === "number" && Number.isFinite(point.v)) {
-        return point.v;
-      }
-      return null;
+      return {
+        index,
+        value,
+        ms:
+          typeof point === "object" && point != null
+            ? readSparklineTimestampMs(point.timestamp ?? point.time ?? point.t)
+            : null,
+      };
     })
-    .filter((value) => Number.isFinite(value));
+    .filter(Boolean);
+
+export const extractSparklineValues = (data = []) =>
+  extractSparklinePoints(data).map((point) => point.value);
 
 /**
  * MicroSparkline — green/red line + soft area fill + compact detail cues.
@@ -55,6 +92,7 @@ export const extractSparklineValues = (data = []) =>
  *   data       — array of points (any of the shapes extractSparklineValues handles)
  *   positive   — boolean override; null/undefined infers from first-vs-last value
  *   color      — optional stroke/fill tone override for non-P/L sparklines
+ *   pointColors — optional array of per-point stroke colors for segmented lines
  *   width/height — SVG viewBox size in dim() units before scaling
  *   style      — optional SVG style overrides for responsive sizing
  *
@@ -65,6 +103,7 @@ export const MicroSparkline = ({
   data = [],
   positive = null,
   color = null,
+  pointColors = null,
   width = 64,
   height = 24,
   style = null,
@@ -72,7 +111,8 @@ export const MicroSparkline = ({
   ariaLabel = null,
   ariaHidden,
 }) => {
-  const values = useMemo(() => extractSparklineValues(data), [data]);
+  const sparklinePoints = useMemo(() => extractSparklinePoints(data), [data]);
+  const values = sparklinePoints.map((point) => point.value);
   const uid = useId().replace(/:/g, "");
 
   if (values.length < 2) {
@@ -91,6 +131,10 @@ export const MicroSparkline = ({
   const resolvedPositive =
     typeof positive === "boolean" ? positive : inferredPositive;
   const lineColor = color || (resolvedPositive ? CSS_COLOR.green : CSS_COLOR.red);
+  const pointColorAt = (index) =>
+    Array.isArray(pointColors) && typeof pointColors[index] === "string"
+      ? pointColors[index]
+      : null;
   const toY = (value) => {
     if (range === 0) {
       return height / 2;
@@ -104,15 +148,32 @@ export const MicroSparkline = ({
     return {
       index,
       value,
+      ms: sparklinePoints[index]?.ms ?? null,
       x: Number(x.toFixed(2)),
       y: Number(y.toFixed(2)),
     };
   });
-  const points = plottedPoints.map(({ x, y }) => `${x},${y}`).join(" ");
+  const lineRuns = [];
+  for (let index = 1; index < plottedPoints.length; index += 1) {
+    const stroke =
+      pointColorAt(index) || pointColorAt(index - 1) || lineColor;
+    const previousPoint = plottedPoints[index - 1];
+    const currentPoint = plottedPoints[index];
+    const lastRun = lineRuns[lineRuns.length - 1];
+    if (lastRun?.stroke === stroke) {
+      lastRun.points.push(currentPoint);
+    } else {
+      lineRuns.push({
+        stroke,
+        points: [previousPoint, currentPoint],
+      });
+    }
+  }
   const areaPath = `M ${plottedPoints
     .map(({ x, y }, index) => `${index === 0 ? "" : "L "}${x},${y}`)
     .join(" ")} L ${width},${height} L 0,${height} Z`;
   const tailPoint = plottedPoints[plottedPoints.length - 1];
+  const tailColor = pointColorAt(tailPoint.index) || lineColor;
   const highIndex = values.indexOf(max);
   const lowIndex = values.indexOf(min);
   const extremeIndexes = new Set([lowIndex, highIndex]);
@@ -147,8 +208,8 @@ export const MicroSparkline = ({
     >
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={lineColor} stopOpacity="0.22" />
-          <stop offset="100%" stopColor={lineColor} stopOpacity="0" />
+          <stop offset="0%" stopColor={tailColor} stopOpacity="0.22" />
+          <stop offset="100%" stopColor={tailColor} stopOpacity="0" />
         </linearGradient>
         <filter id={glowId} x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur stdDeviation="1.2" result="blur" />
@@ -175,16 +236,19 @@ export const MicroSparkline = ({
         vectorEffect="non-scaling-stroke"
         shapeRendering="crispEdges"
       />
-      <polyline
-        className="ra-sparkline-line"
-        points={points}
-        fill="none"
-        stroke={lineColor}
-        strokeWidth="1.65"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-        vectorEffect="non-scaling-stroke"
-      />
+      {lineRuns.map((run, index) => (
+        <polyline
+          key={`${run.stroke}-${index}`}
+          className="ra-sparkline-line"
+          points={run.points.map(({ x, y }) => `${x},${y}`).join(" ")}
+          fill="none"
+          stroke={run.stroke}
+          strokeWidth="1.65"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+        />
+      ))}
       {detailPoints.map((point) => {
         return (
           <circle
@@ -193,7 +257,7 @@ export const MicroSparkline = ({
             cx={point.x}
             cy={point.y}
             r={extremeDotRadius}
-            fill={lineColor}
+            fill={pointColorAt(point.index) || lineColor}
             fillOpacity="0.88"
             stroke={CSS_COLOR.bg1}
             strokeWidth="0.45"
@@ -206,7 +270,7 @@ export const MicroSparkline = ({
         cx={tailPoint.x}
         cy={tailPoint.y}
         r={tailDotRadius}
-        fill={lineColor}
+        fill={tailColor}
         stroke={CSS_COLOR.bg1}
         strokeWidth="0.65"
         vectorEffect="non-scaling-stroke"

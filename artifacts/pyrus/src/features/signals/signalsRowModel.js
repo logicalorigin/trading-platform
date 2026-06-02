@@ -34,6 +34,21 @@ const DIRECTION_SORT_WEIGHT = Object.freeze({
   sell: 1,
 });
 
+const SIGNAL_MATRIX_TIMEFRAME_WEIGHTS = Object.freeze({
+  "1m": 10,
+  "2m": 12,
+  "5m": 28,
+  "15m": 25,
+  "1h": 25,
+});
+const SIGNAL_MATRIX_TOTAL_WEIGHT = SIGNALS_TABLE_TIMEFRAMES.reduce(
+  (sum, timeframe) => sum + (SIGNAL_MATRIX_TIMEFRAME_WEIGHTS[timeframe] || 0),
+  0,
+);
+const SIGNAL_MATRIX_LOWER_TIMEFRAMES = Object.freeze(["1m", "2m"]);
+const SIGNAL_MATRIX_HIGHER_TIMEFRAMES = Object.freeze(["15m", "1h"]);
+const SIGNAL_MATRIX_EXECUTION_TIMEFRAME = "5m";
+
 export const normalizeSignalsTicker = (value) =>
   String(value || "").trim().toUpperCase();
 
@@ -272,6 +287,315 @@ const resolveDashboardSummary = (snapshotEntry) => {
   };
 };
 
+const clampScore = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(100, Math.round(numeric)));
+};
+
+const uniqueReasonCodes = (reasonCodes) =>
+  Array.from(new Set(reasonCodes.filter(Boolean)));
+
+const hasComputedMatrixState = (state) =>
+  Boolean(
+    state &&
+      (state.latestBarAt ||
+        state.lastEvaluatedAt ||
+        state.currentSignalAt ||
+        state.lastError ||
+        state.status),
+  );
+
+const oppositeDirection = (direction) =>
+  direction === "buy" ? "sell" : direction === "sell" ? "buy" : null;
+
+const weightedDirection = (entries, direction) =>
+  entries
+    .filter((entry) => entry.direction === direction)
+    .reduce((sum, entry) => sum + entry.weight, 0);
+
+const entryForTimeframe = (entries, timeframe) =>
+  entries.find((entry) => entry.timeframe === timeframe) || null;
+
+const directionFromWeightedEntries = (entries, fallbackDirection = null) => {
+  const buyWeight = weightedDirection(entries, "buy");
+  const sellWeight = weightedDirection(entries, "sell");
+  if (buyWeight > sellWeight) return "buy";
+  if (sellWeight > buyWeight) return "sell";
+  return buyWeight || sellWeight ? fallbackDirection : null;
+};
+
+const buildSignalMatrixVerdictLabel = ({
+  direction,
+  tradeReadiness,
+  regime,
+}) => {
+  const readinessLabel = {
+    ready: "Ready",
+    watch: "Watch",
+    wait: "Wait",
+    avoid: "Avoid",
+  }[tradeReadiness] || "Wait";
+  if (!direction) return readinessLabel;
+  const directionLabel = direction === "buy" ? "Buy" : "Sell";
+  const regimeLabel = {
+    bull_trend: "trend",
+    bear_trend: "trend",
+    pullback: "pullback",
+    reversal_attempt: "reversal",
+    mixed: "mixed",
+    no_data: "pending",
+  }[regime] || "signal";
+  return `${readinessLabel} ${directionLabel} ${regimeLabel}`;
+};
+
+export const resolveSignalMatrixVerdict = ({
+  primaryState = null,
+  matrixStatesByTimeframe = {},
+  dashboardSummary = null,
+  profileTimeframe = null,
+} = {}) => {
+  const entries = SIGNALS_TABLE_TIMEFRAMES.map((timeframe) => {
+    const state = matrixStatesByTimeframe?.[timeframe] || null;
+    const direction = getCurrentSignalDirection(state) || null;
+    const current = isSignalStateCurrent(state);
+    const problem = isProblemSignalState(state);
+    return {
+      timeframe,
+      state,
+      direction,
+      current,
+      problem,
+      computed: hasComputedMatrixState(state),
+      fresh: isCurrentFreshSignalState(state),
+      weight: SIGNAL_MATRIX_TIMEFRAME_WEIGHTS[timeframe] || 0,
+    };
+  });
+  const reasonCodes = [];
+  const primaryDirection = getCurrentSignalDirection(primaryState) || null;
+  const currentComputedEntries = entries.filter(
+    (entry) => entry.current && entry.computed && !entry.problem,
+  );
+  const activeEntries = entries.filter(
+    (entry) => entry.current && entry.direction && !entry.problem,
+  );
+  const hasProblem = entries.some((entry) => entry.problem);
+  const activeWeight = activeEntries.reduce((sum, entry) => sum + entry.weight, 0);
+  const freshWeight = activeEntries
+    .filter((entry) => entry.fresh)
+    .reduce((sum, entry) => sum + entry.weight, 0);
+  const freshnessScore = clampScore(
+    SIGNAL_MATRIX_TOTAL_WEIGHT ? (freshWeight / SIGNAL_MATRIX_TOTAL_WEIGHT) * 100 : 0,
+  );
+
+  if (currentComputedEntries.length < 2 || activeEntries.length === 0) {
+    const verdict = {
+      direction: null,
+      regime: "no_data",
+      transition: "pending",
+      alignmentScore: 0,
+      freshnessScore,
+      readinessScore: 0,
+      tradeReadiness: "avoid",
+      riskPosture: "exit_watch",
+      reasonCodes: uniqueReasonCodes([
+        "insufficient_matrix_data",
+        hasProblem ? "matrix_problem" : null,
+      ]),
+    };
+    return {
+      ...verdict,
+      label: buildSignalMatrixVerdictLabel(verdict),
+      detail: "Signal matrix needs at least two current intervals before it can explain a bias.",
+    };
+  }
+
+  const buyWeight = weightedDirection(activeEntries, "buy");
+  const sellWeight = weightedDirection(activeEntries, "sell");
+  const executionEntry = entryForTimeframe(entries, SIGNAL_MATRIX_EXECUTION_TIMEFRAME);
+  const profileEntry = profileTimeframe
+    ? entryForTimeframe(entries, profileTimeframe)
+    : null;
+  const fallbackDirection =
+    executionEntry?.direction ||
+    profileEntry?.direction ||
+    primaryDirection ||
+    dashboardSummary?.signalDirection ||
+    null;
+  const direction = directionFromWeightedEntries(activeEntries, fallbackDirection);
+  const opposingDirection = oppositeDirection(direction);
+  const dominantWeight = direction === "buy" ? buyWeight : direction === "sell" ? sellWeight : 0;
+  const opposingWeight = opposingDirection
+    ? weightedDirection(activeEntries, opposingDirection)
+    : 0;
+  const alignmentScore = clampScore(
+    SIGNAL_MATRIX_TOTAL_WEIGHT
+      ? (dominantWeight / SIGNAL_MATRIX_TOTAL_WEIGHT) * 100
+      : 0,
+  );
+  const lowerEntries = activeEntries.filter((entry) =>
+    SIGNAL_MATRIX_LOWER_TIMEFRAMES.includes(entry.timeframe),
+  );
+  const higherEntries = activeEntries.filter((entry) =>
+    SIGNAL_MATRIX_HIGHER_TIMEFRAMES.includes(entry.timeframe),
+  );
+  const higherBias = directionFromWeightedEntries(higherEntries, null);
+  const lowerBias = directionFromWeightedEntries(lowerEntries, null);
+  const fiveMinuteAligned = Boolean(
+    direction && executionEntry?.direction === direction,
+  );
+  const profileAligned = Boolean(direction && profileEntry?.direction === direction);
+  const higherAlignedCount = higherEntries.filter(
+    (entry) => entry.direction === direction,
+  ).length;
+  const higherOpposingCount = higherEntries.filter(
+    (entry) => entry.direction === opposingDirection,
+  ).length;
+  const lowerAlignedCount = lowerEntries.filter(
+    (entry) => entry.direction === direction,
+  ).length;
+  const lowerOpposingCount = lowerEntries.filter(
+    (entry) => entry.direction === opposingDirection,
+  ).length;
+  const dashboardMtfBlocked = (dashboardSummary?.mtf || []).some(
+    (entry) => entry?.required && entry.pass === false,
+  );
+
+  let regime = "mixed";
+  if (!direction || buyWeight === sellWeight) {
+    regime = "mixed";
+  } else if (
+    higherBias &&
+    higherBias !== direction &&
+    fiveMinuteAligned &&
+    lowerAlignedCount > 0
+  ) {
+    regime = "reversal_attempt";
+  } else if (
+    higherBias === direction &&
+    fiveMinuteAligned &&
+    lowerOpposingCount > 0
+  ) {
+    regime = "pullback";
+  } else if (direction === "buy" && fiveMinuteAligned && higherAlignedCount > 0) {
+    regime = "bull_trend";
+  } else if (direction === "sell" && fiveMinuteAligned && higherAlignedCount > 0) {
+    regime = "bear_trend";
+  } else if (opposingWeight > 0 || higherOpposingCount > 0) {
+    regime = "mixed";
+  } else {
+    regime = direction === "buy" ? "bull_trend" : "bear_trend";
+  }
+
+  const confirmed = Boolean(
+    direction &&
+      regime !== "mixed" &&
+      regime !== "reversal_attempt" &&
+      opposingWeight === 0 &&
+      (activeEntries.length >= 4 || (fiveMinuteAligned && higherAlignedCount >= 2)),
+  );
+  let transition = "building";
+  if (regime === "mixed") {
+    transition = "conflicted";
+  } else if (confirmed) {
+    transition = "confirmed";
+  } else if (regime === "pullback") {
+    transition = "fading";
+  } else if (
+    higherBias === direction &&
+    (lowerBias === opposingDirection || lowerOpposingCount > 0)
+  ) {
+    transition = "fading";
+  }
+
+  if (confirmed) reasonCodes.push("matrix_confirmed");
+  if (fiveMinuteAligned || profileAligned) reasonCodes.push("execution_frame_aligned");
+  if (higherAlignedCount > 0) reasonCodes.push("higher_timeframe_aligned");
+  if (regime === "pullback" || (higherBias === direction && lowerOpposingCount > 0)) {
+    reasonCodes.push("lower_frame_pullback");
+  }
+  if (regime === "reversal_attempt") reasonCodes.push("reversal_attempt");
+  if (regime === "mixed" || buyWeight === sellWeight) reasonCodes.push("mixed_timeframes");
+  if (freshnessScore < 60) reasonCodes.push("freshness_weak");
+  if (dashboardMtfBlocked) reasonCodes.push("dashboard_mtf_block");
+  if (hasProblem) reasonCodes.push("matrix_problem");
+
+  const confirmationScore =
+    transition === "confirmed"
+      ? 100
+      : transition === "building"
+        ? 65
+        : transition === "fading"
+          ? 45
+          : 20;
+  const structuralPenalty =
+    (fiveMinuteAligned ? 0 : 10) +
+    (dashboardMtfBlocked ? 10 : 0) +
+    (hasProblem ? 15 : 0) +
+    (regime === "pullback" ? 15 : 0);
+  const readinessScore = clampScore(
+    alignmentScore * 0.5 +
+      freshnessScore * 0.25 +
+      confirmationScore * 0.25 -
+      structuralPenalty,
+  );
+
+  let tradeReadiness = "wait";
+  if (
+    regime === "mixed" ||
+    transition === "conflicted" ||
+    hasProblem ||
+    freshnessScore < 30
+  ) {
+    tradeReadiness = "avoid";
+  } else if (regime === "pullback" || transition === "fading") {
+    tradeReadiness = "wait";
+  } else if (
+    readinessScore >= 75 &&
+    (transition === "confirmed" || transition === "building") &&
+    fiveMinuteAligned &&
+    higherAlignedCount > 0
+  ) {
+    tradeReadiness = "ready";
+  } else if (readinessScore >= 50 && transition === "building") {
+    tradeReadiness = "watch";
+  }
+
+  let riskPosture = "normal";
+  if (tradeReadiness === "avoid" || transition === "conflicted") {
+    riskPosture = "exit_watch";
+  } else if (
+    regime === "pullback" ||
+    regime === "reversal_attempt" ||
+    transition === "fading" ||
+    higherOpposingCount > 0 ||
+    lowerOpposingCount > 0
+  ) {
+    riskPosture = "tighten";
+  }
+
+  const verdict = {
+    direction,
+    regime,
+    transition,
+    alignmentScore,
+    freshnessScore,
+    readinessScore,
+    tradeReadiness,
+    riskPosture,
+    reasonCodes: uniqueReasonCodes(reasonCodes),
+  };
+  return {
+    ...verdict,
+    label: buildSignalMatrixVerdictLabel(verdict),
+    detail: [
+      `${alignmentScore}% aligned`,
+      `${freshnessScore}% fresh`,
+      `${readinessScore}% ready`,
+    ].join(" · "),
+  };
+};
+
 const resolveMatrixStatus = (matrixStatesByTimeframe = {}) => {
   const states = Object.values(matrixStatesByTimeframe || {});
   const hasProblem = states.some(isProblemSignalState);
@@ -401,6 +725,12 @@ export const buildSignalsRows = ({
           profileTimeframe,
         }),
       );
+      const matrixVerdict = resolveSignalMatrixVerdict({
+        primaryState,
+        matrixStatesByTimeframe,
+        dashboardSummary,
+        profileTimeframe,
+      });
       const latestEvent = latestEventsBySymbol.get(symbol) || null;
       const direction = resolveDirection({
         primaryState,
@@ -440,6 +770,7 @@ export const buildSignalsRows = ({
         matrixStatesByTimeframe,
         stackSummary,
         dashboardSummary,
+        matrixVerdict,
         latestEvent,
         watchlistIds: membership.watchlistIds,
         watchlistLabels: membership.watchlistLabels,

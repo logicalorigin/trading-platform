@@ -882,10 +882,16 @@ test("shared signal dots preserve watchlist behavior after extraction", () => {
   assert.match(watchlistSource, /matrixStates: signalMatrixStates/);
   assert.match(watchlistSource, /signalsRow=\{signalsRowsBySymbol\.get\(item\.sym\) \|\| null\}/);
   assert.match(watchlistSource, /const sparklineSignalDirection = signalsRow\?\.direction/);
+  assert.match(watchlistSource, /buildSignalSparklinePointColors/);
+  assert.match(watchlistSource, /extractSparklinePoints/);
   assert.match(watchlistSource, /SIGNALS_PAGE_ACTIVE_STATUSES\.has\(signalsRow\?\.status\)/);
   assert.doesNotMatch(watchlistSource, /const sparklineSignalColor = hasSignal \? signalColor : null/);
   assert.equal(
-    (watchlistSource.match(/color=\{sparklineSignalColor\}/g) || []).length,
+    (watchlistSource.match(/color=\{sparklineColor\}/g) || []).length,
+    2,
+  );
+  assert.equal(
+    (watchlistSource.match(/pointColors=\{sparklinePointColors\}/g) || []).length,
     2,
   );
   assert.doesNotMatch(watchlistSource, /fallbackState=\{/);

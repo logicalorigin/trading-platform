@@ -11,7 +11,10 @@ import {
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import { SignalDots } from "../../components/platform/signal-language";
-import { MicroSparkline } from "../../components/platform/primitives.jsx";
+import {
+  MicroSparkline,
+  extractSparklinePoints,
+} from "../../components/platform/primitives.jsx";
 import {
   ELEVATION,
   FONT_WEIGHTS,
@@ -38,6 +41,7 @@ import { INDICES, MACRO_TICKERS, WATCHLIST } from "../market/marketReferenceData
 import {
   SIGNALS_ROW_STATUS,
   buildSignalsRows,
+  normalizeSignalsTicker,
 } from "../signals/signalsRowModel.js";
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
 import { useRuntimeTickerSnapshot, useRuntimeTickerSnapshots } from "./runtimeTickerStore";
@@ -165,6 +169,107 @@ const SIGNALS_PAGE_ACTIVE_STATUSES = new Set([
   SIGNALS_ROW_STATUS.activeStale,
 ]);
 
+const EMPTY_SIGNAL_EVENTS = Object.freeze([]);
+
+const signalColorForDirection = (direction) =>
+  direction === "buy" ? CSS_COLOR.blue : direction === "sell" ? CSS_COLOR.red : null;
+
+const timestampMs = (value) => {
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isFinite(time) ? time : null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? value : value * 1000;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric > 10_000_000_000 ? numeric : numeric * 1000;
+    }
+  }
+  return null;
+};
+
+const buildSignalEventsBySymbol = (events = []) => {
+  const bySymbol = new Map();
+  (Array.isArray(events) ? events : []).forEach((event, order) => {
+    const symbol = normalizeSignalsTicker(event?.symbol);
+    const direction = String(event?.direction || "").toLowerCase();
+    const ms = timestampMs(event?.signalAt || event?.emittedAt);
+    if (!symbol || !isWatchlistSignalDirection(direction) || ms == null) {
+      return;
+    }
+    const entries = bySymbol.get(symbol) || [];
+    entries.push({
+      direction,
+      ms,
+      timeframe: String(event?.timeframe || "").trim(),
+      order,
+    });
+    bySymbol.set(symbol, entries);
+  });
+  bySymbol.forEach((entries) => {
+    entries.sort((left, right) => left.ms - right.ms || left.order - right.order);
+  });
+  return bySymbol;
+};
+
+const buildSignalSparklinePointColors = ({
+  data,
+  row,
+  signalEvents = EMPTY_SIGNAL_EVENTS,
+}) => {
+  const points = extractSparklinePoints(data);
+  if (points.length < 2 || !points.some((point) => point.ms != null)) {
+    return null;
+  }
+
+  const profileTimeframe = String(row?.profileTimeframe || "").trim();
+  const transitions = signalEvents
+    .filter((event) => {
+      if (!profileTimeframe || !event.timeframe) return true;
+      return event.timeframe === profileTimeframe;
+    })
+    .map((event) => ({
+      direction: event.direction,
+      ms: event.ms,
+      order: event.order,
+    }));
+  const rowSignalDirection = row?.direction;
+  const rowSignalMs = timestampMs(row?.currentSignalAt);
+  if (
+    SIGNALS_PAGE_ACTIVE_STATUSES.has(row?.status) &&
+    isWatchlistSignalDirection(rowSignalDirection) &&
+    rowSignalMs != null
+  ) {
+    transitions.push({
+      direction: rowSignalDirection,
+      ms: rowSignalMs,
+      order: Number.MAX_SAFE_INTEGER,
+    });
+  }
+
+  if (!transitions.length) {
+    return null;
+  }
+  transitions.sort((left, right) => left.ms - right.ms || left.order - right.order);
+
+  let transitionIndex = -1;
+  return points.map((point) => {
+    if (point.ms == null) return null;
+    while (
+      transitionIndex + 1 < transitions.length &&
+      transitions[transitionIndex + 1].ms <= point.ms
+    ) {
+      transitionIndex += 1;
+    }
+    return signalColorForDirection(transitions[transitionIndex]?.direction);
+  });
+};
+
 const WatchlistRow = memo(
   ({
     item,
@@ -183,6 +288,7 @@ const WatchlistRow = memo(
     onSignalAction,
     signalStatesByTimeframe = {},
     signalsRow = null,
+    signalEvents = EMPTY_SIGNAL_EVENTS,
     busy = false,
     density = "default",
     selectionMode = false,
@@ -208,21 +314,19 @@ const WatchlistRow = memo(
     const sparklineSignalColor =
       SIGNALS_PAGE_ACTIVE_STATUSES.has(signalsRow?.status) &&
       isWatchlistSignalDirection(sparklineSignalDirection)
-        ? sparklineSignalDirection === "buy"
-          ? CSS_COLOR.blue
-          : CSS_COLOR.red
+        ? signalColorForDirection(sparklineSignalDirection)
         : null;
     const signalFresh = Boolean(bestSignalState?.fresh);
     const pctPositive = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
-	    const priceValue = isFiniteNumber(snapshot?.price)
-	      ? snapshot.price
-	      : signalState?.currentSignalPrice;
-	    const quotePriceForFlash = isFiniteNumber(snapshot?.price)
-	      ? snapshot.price
-	      : null;
-	    const priceFlashClassName = useValueFlash(quotePriceForFlash);
-	    const displayedPrice = priceValue;
-	    const displayName = item.name || snapshot?.name || fallback.name || item.sym;
+    const priceValue = isFiniteNumber(snapshot?.price)
+      ? snapshot.price
+      : signalState?.currentSignalPrice;
+    const quotePriceForFlash = isFiniteNumber(snapshot?.price)
+      ? snapshot.price
+      : null;
+    const priceFlashClassName = useValueFlash(quotePriceForFlash);
+    const displayedPrice = priceValue;
+    const displayName = item.name || snapshot?.name || fallback.name || item.sym;
     const identityItem = {
       ticker: item.sym,
       name: displayName,
@@ -245,6 +349,17 @@ const WatchlistRow = memo(
           : "transparent";
     const mobileDense = density === "mobile-dense";
     const sparklineData = resolveSparklineData(item.sym, snapshot, fallback, priceValue);
+    const sparklinePointColors = useMemo(
+      () =>
+        buildSignalSparklinePointColors({
+          data: sparklineData,
+          row: signalsRow,
+          signalEvents,
+        }),
+      [signalEvents, signalsRow, sparklineData],
+    );
+    const sparklineUsesSignalTimeline = Array.isArray(sparklinePointColors);
+    const sparklineColor = sparklineUsesSignalTimeline ? null : sparklineSignalColor;
     const handleRowClick = () => {
       if (selectionMode) {
         if (rowSelectable) {
@@ -477,7 +592,8 @@ const WatchlistRow = memo(
               <MicroSparkline
                 data={sparklineData}
                 positive={pctPositive}
-                color={sparklineSignalColor}
+                color={sparklineColor}
+                pointColors={sparklinePointColors}
                 width={TABLE_SPARKLINE_COMPACT_WIDTH}
                 height={TABLE_SPARKLINE_COMPACT_HEIGHT}
                 style={{ width: "100%", height: "100%" }}
@@ -639,7 +755,8 @@ const WatchlistRow = memo(
               <MicroSparkline
                 data={sparklineData}
                 positive={pctPositive}
-                color={sparklineSignalColor}
+                color={sparklineColor}
+                pointColors={sparklinePointColors}
                 width={TABLE_SPARKLINE_WIDTH}
                 height={TABLE_SPARKLINE_HEIGHT}
                 style={{ width: "100%", height: "100%" }}
@@ -724,6 +841,8 @@ export const Watchlist = ({
   selected,
   signalStates = [],
   signalMatrixStates = [],
+  signalProfile = null,
+  signalEvents = [],
   onSelect,
   onSelectWatchlist,
   onCreateWatchlist,
@@ -780,17 +899,22 @@ export const Watchlist = ({
   const signalsRowsBySymbol = useMemo(() => {
     const rows = buildSignalsRows({
       stateResponse: {
+        profile: signalProfile,
         states: signalStates,
         universeSymbols: itemSymbols,
         skippedSymbols: [],
         universe: null,
       },
       matrixStates: signalMatrixStates,
-      events: [],
+      events: signalEvents,
       watchlists,
     });
     return new Map(rows.map((row) => [row.symbol, row]));
-  }, [itemSymbols, signalMatrixStates, signalStates, watchlists]);
+  }, [itemSymbols, signalEvents, signalMatrixStates, signalProfile, signalStates, watchlists]);
+  const signalEventsBySymbol = useMemo(
+    () => buildSignalEventsBySymbol(signalEvents),
+    [signalEvents],
+  );
   const snapshotsBySymbol = useRuntimeTickerSnapshots(itemSymbols);
   const signalMatrixBySymbol = useMemo(
     () => buildSignalMatrixBySymbol(signalMatrixStates),
@@ -1654,6 +1778,7 @@ export const Watchlist = ({
               onSignalAction={onSignalAction}
               signalStatesByTimeframe={signalMatrixBySymbol[item.sym]}
               signalsRow={signalsRowsBySymbol.get(item.sym) || null}
+              signalEvents={signalEventsBySymbol.get(item.sym) || EMPTY_SIGNAL_EVENTS}
               busy={busy}
               density={density}
               selectionMode={selectionMode}
@@ -1973,6 +2098,8 @@ const WatchlistContainer = ({
   watchlistSymbols,
   signalStates = [],
   signalMatrixStates = [],
+  signalProfile = null,
+  signalEvents = [],
   ...rest
 }) => {
   const items = useMemo(() => {
@@ -1998,6 +2125,8 @@ const WatchlistContainer = ({
       items={items}
       signalStates={signalStates}
       signalMatrixStates={signalMatrixStates}
+      signalProfile={signalProfile}
+      signalEvents={signalEvents}
       {...rest}
     />
   );
