@@ -985,8 +985,6 @@ export default function DiagnosticsScreen({
     level:
       memoryPressureState?.level ||
       footerMemoryMetrics?.level ||
-      resourcePressureMetrics.clientPressureLevel ||
-      resourcePressureMetrics.pressureLevel ||
       "normal",
     trend:
       memoryPressureState?.trend ||
@@ -1011,15 +1009,19 @@ export default function DiagnosticsScreen({
         ? memoryPressureState.dominantDrivers
         : Array.isArray(footerMemoryMetrics?.dominantDrivers)
           ? footerMemoryMetrics.dominantDrivers
-          : Array.isArray(resourcePressureMetrics.dominantDrivers)
-            ? resourcePressureMetrics.dominantDrivers
-            : [],
+          : [],
     observedAt:
       memoryPressureState?.observedAt ||
       footerMemoryMetrics?.observedAt ||
       resourcePressureMetrics.browserObservedAt ||
       null,
   };
+  const memoryOverviewSeverity =
+    footerSignal.level === "critical"
+      ? "critical"
+      : footerSignal.level === "high" || footerSignal.level === "watch"
+        ? "warning"
+        : "info";
 
   const selectMetric = (subsystem, metricKey) => {
     setActiveTab("Events");
@@ -1269,7 +1271,7 @@ export default function DiagnosticsScreen({
             <MetricCard label="Market freshness" value={formatMs(marketDataMetrics.freshnessAgeMs ?? stream.lastEventAgeMs)} sub={`${formatCount(marketDataMetrics.activeConsumerCount ?? stream.activeConsumerCount)} consumers`} severity={marketDataSnapshot?.severity || (stream.streamGapCount > 0 ? "warning" : "info")} onClick={() => selectMetric("market-data", "market_data.freshness_age_ms")} />
             <MetricCard label="Chart hydration" value={formatMs(chartHydrationMetrics.prependP95Ms ?? chartStats.prependRequestMs?.p95)} sub={`${formatCount(chartHydrationMetrics.activeScopeCount ?? chartStats.activeScopeCount ?? chartStats.scopes.length)} scopes / ${formatCount(chartHydrationMetrics.cursorFallbackCount ?? 0)} fallbacks`} severity={chartHydrationSeverity} onClick={() => selectMetric("chart-hydration", "chart_hydration.prepend_p95_ms")} />
             <MetricCard label="Browser events" value={formatCount(browserMetrics.warningCount5m ?? 0)} sub={`${formatCount(browserMetrics.eventCount5m ?? 0)} events / 5m`} severity={browserSnapshot?.severity} onClick={() => selectMetric("browser", "browser.events")} />
-            <MetricCard label="Memory" value={String(resourcePressureMetrics.pressureLevel || "normal").toUpperCase()} sub={`heap ${formatPercent(resourcePressureMetrics.heapUsedPercent)} / browser ${formatMb(resourcePressureMetrics.browserMemoryMb)}`} severity={resourcePressureSnapshot?.severity || isolationSnapshot?.severity} onClick={() => setActiveTab("Memory")} />
+            <MetricCard label="Memory" value={String(footerSignal.level || "normal").toUpperCase()} sub={`heap ${formatPercent(footerSignal.apiHeapUsedPercent)} / browser ${formatMb(footerSignal.browserMemoryMb)}`} severity={memoryOverviewSeverity || isolationSnapshot?.severity} onClick={() => setActiveTab("Memory")} />
             <MetricCard label="Accounts" value={formatCount(accountMetrics.accountCount)} sub={`${formatCount(accountMetrics.positionCount)} positions`} severity={accountSnapshot?.severity} onClick={() => selectMetric("accounts", "orders.visibility_failures")} />
             <MetricCard label="Orders" value={formatCount(orderMetrics.orderCount)} sub={`${formatCount(orderMetrics.visibilityFailures)} failures`} severity={orderSnapshot?.severity} onClick={() => selectMetric("orders", "orders.visibility_failures")} />
             <MetricCard label="Storage" value={storageMetrics.reachable ? "reachable" : "offline"} sub={formatMs(storageMetrics.pingMs)} severity={storageSnapshot?.severity} onClick={() => selectMetric("storage", "storage.ping_ms")} />
