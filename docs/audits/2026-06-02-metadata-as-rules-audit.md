@@ -100,3 +100,5 @@ Passed:
 
 - `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/readiness.test.ts`
 - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/screens/DiagnosticsScreen.test.js src/features/platform/useMemoryPressureSignal.test.js src/features/platform/FooterMemoryPressureIndicator.test.js src/features/platform/memoryPressureModel.test.js`
+- `pnpm --filter @workspace/api-server run typecheck`
+- `pnpm --filter @workspace/pyrus run typecheck`

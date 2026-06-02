@@ -668,6 +668,8 @@ export const PlatformShell = ({
   activeWatchlist,
   watchlistSymbols,
   signalMonitorStates,
+  signalMonitorProfile,
+  signalMonitorEvents,
   signalMatrixStates,
   headerSignalMatrixStates,
   selectedSymbol,
@@ -1115,6 +1117,8 @@ export const PlatformShell = ({
       activeWatchlist={activeWatchlist}
       watchlistSymbols={watchlistSymbols}
       signalMonitorStates={signalMonitorStates}
+      signalMonitorProfile={signalMonitorProfile}
+      signalMonitorEvents={signalMonitorEvents}
       signalMatrixStates={signalMatrixStates}
       selectedSymbol={selectedSymbol}
       onSelectSymbol={onSelectSymbol}
@@ -1156,6 +1160,8 @@ export const PlatformShell = ({
               activeWatchlist={activeWatchlist}
               watchlistSymbols={watchlistSymbols}
               signalStates={signalMonitorStates}
+              signalProfile={signalMonitorProfile}
+              signalEvents={signalMonitorEvents}
               signalMatrixStates={signalMatrixStates}
               selected={selectedSymbol}
               onSelect={onSelectSymbol}

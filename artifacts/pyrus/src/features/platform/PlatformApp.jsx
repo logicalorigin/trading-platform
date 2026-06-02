@@ -4691,6 +4691,8 @@ export default function PlatformApp() {
             activeWatchlist={activeWatchlist}
             watchlistSymbols={watchlistSymbols}
             signalMonitorStates={signalMonitorStates}
+            signalMonitorProfile={signalMonitorProfile}
+            signalMonitorEvents={signalMonitorEvents}
             signalMatrixStates={signalMatrixSnapshot.states}
             headerSignalMatrixStates={headerBroadcastSignalMatrixStates}
             selectedSymbol={sym}

@@ -44,6 +44,8 @@ export const MobileWatchlistDrawer = ({
   activeWatchlist,
   watchlistSymbols,
   signalMonitorStates,
+  signalMonitorProfile,
+  signalMonitorEvents,
   signalMatrixStates,
   selectedSymbol,
   onSelectSymbol,
@@ -92,6 +94,8 @@ export const MobileWatchlistDrawer = ({
             activeWatchlist={activeWatchlist}
             watchlistSymbols={watchlistSymbols}
             signalStates={signalMonitorStates}
+            signalProfile={signalMonitorProfile}
+            signalEvents={signalMonitorEvents}
             signalMatrixStates={signalMatrixStates}
             selected={selectedSymbol}
             onSelect={handleSymbolSelect}

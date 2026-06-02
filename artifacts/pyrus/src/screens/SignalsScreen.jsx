@@ -142,6 +142,21 @@ const toneForTrend = (trendDirection) =>
       ? CSS_COLOR.red
       : CSS_COLOR.textDim;
 
+const toneForMatrixReadiness = (readiness) => {
+  switch (readiness) {
+    case "ready":
+      return CSS_COLOR.green;
+    case "watch":
+      return CSS_COLOR.blue;
+    case "wait":
+      return CSS_COLOR.amber;
+    case "avoid":
+      return CSS_COLOR.red;
+    default:
+      return CSS_COLOR.textDim;
+  }
+};
+
 const selectStyle = {
   minHeight: dim(30),
   border: `1px solid ${CSS_COLOR.border}`,
@@ -228,6 +243,9 @@ const formatEnumLabel = (value) =>
     .replace(/\s+/g, " ")
     .trim()
     .replace(/\b\w/g, (letter) => letter.toUpperCase()) || MISSING_VALUE;
+
+const formatScore = (value) =>
+  Number.isFinite(Number(value)) ? `${Math.round(Number(value))}%` : MISSING_VALUE;
 
 const formatFilterValue = (value) => {
   if (typeof value === "boolean") return value ? "pass" : "block";
@@ -622,6 +640,129 @@ function MtfCell({ row }) {
         {label}
       </span>
     </AppTooltip>
+  );
+}
+
+function MatrixVerdictCell({ row }) {
+  const verdict = row.matrixVerdict || {};
+  const tone = toneForMatrixReadiness(verdict.tradeReadiness);
+  const reasons = Array.isArray(verdict.reasonCodes) ? verdict.reasonCodes : [];
+  const content = [
+    verdict.label || "Matrix pending",
+    verdict.detail,
+    reasons.length ? reasons.map(formatEnumLabel).join(" · ") : null,
+  ].filter(Boolean).join(" · ");
+  return (
+    <AppTooltip content={content || "Signal matrix verdict unavailable"}>
+      <span
+        style={{
+          display: "grid",
+          gap: sp(1),
+          minWidth: 0,
+          color: tone,
+          lineHeight: 1.1,
+        }}
+      >
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(5),
+            minWidth: 0,
+            fontSize: textSize("captionStrong"),
+            fontWeight: FONT_WEIGHTS.label,
+            textTransform: "uppercase",
+          }}
+        >
+          <ScanLine size={13} strokeWidth={2} aria-hidden="true" />
+          <span style={cellTextStyle}>
+            {formatEnumLabel(verdict.tradeReadiness)}
+          </span>
+          <span style={{ color: CSS_COLOR.textDim }}>
+            {formatScore(verdict.readinessScore)}
+          </span>
+        </span>
+        <span
+          style={{
+            ...cellTextStyle,
+            color: CSS_COLOR.textMuted,
+            fontSize: fs(10),
+            fontWeight: FONT_WEIGHTS.medium,
+          }}
+        >
+          {formatEnumLabel(verdict.regime)}
+        </span>
+      </span>
+    </AppTooltip>
+  );
+}
+
+function MatrixVerdictSummary({ row }) {
+  const verdict = row.matrixVerdict || {};
+  const tone = toneForMatrixReadiness(verdict.tradeReadiness);
+  const reasons = Array.isArray(verdict.reasonCodes) ? verdict.reasonCodes : [];
+
+  return (
+    <div style={{ display: "grid", gap: sp(8), minWidth: 0 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(8) }}>
+        <SignalDenseFact
+          variant="tile"
+          label="Verdict"
+          value={verdict.label || "Matrix pending"}
+          tone={tone}
+        />
+        <SignalDenseFact
+          variant="tile"
+          label="Risk"
+          value={formatEnumLabel(verdict.riskPosture)}
+          tone={verdict.riskPosture === "normal" ? CSS_COLOR.green : tone}
+        />
+        <SignalDenseFact
+          variant="tile"
+          label="Align"
+          value={formatScore(verdict.alignmentScore)}
+          tone={tone}
+        />
+        <SignalDenseFact
+          variant="tile"
+          label="Fresh"
+          value={formatScore(verdict.freshnessScore)}
+          tone={verdict.freshnessScore >= 60 ? CSS_COLOR.green : CSS_COLOR.amber}
+        />
+      </div>
+      {reasons.length ? (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: sp(5),
+            minWidth: 0,
+          }}
+        >
+          {reasons.slice(0, 5).map((reason) => (
+            <span
+              key={reason}
+              style={{
+                minHeight: dim(20),
+                display: "inline-flex",
+                alignItems: "center",
+                padding: sp("0 7px"),
+                border: `1px solid ${cssColorMix(tone, 38)}`,
+                borderRadius: dim(RADII.pill),
+                background: cssColorMix(tone, 9),
+                color: CSS_COLOR.textSec,
+                fontSize: fs(10),
+                fontWeight: FONT_WEIGHTS.label,
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {formatEnumLabel(reason)}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1210,6 +1351,7 @@ function SignalThesisRail({ row }) {
           </span>
           <span>{row.coverageReason}</span>
         </div>
+        <MatrixVerdictSummary row={row} />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(8) }}>
           <SignalDenseFact
             variant="tile"
@@ -2173,6 +2315,12 @@ export default function SignalsScreen({
         header: "Stack",
         meta: { width: phone ? "64px" : "82px" },
         cell: ({ row }) => <StackCell row={row.original} />,
+      },
+      {
+        id: "verdict",
+        header: "Verdict",
+        meta: { width: phone ? "86px" : "112px" },
+        cell: ({ row }) => <MatrixVerdictCell row={row.original} />,
       },
       ...SIGNALS_TABLE_TIMEFRAMES.map((timeframe) => ({
         id: `tf-${timeframe}`,

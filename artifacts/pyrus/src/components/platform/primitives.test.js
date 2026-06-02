@@ -5,7 +5,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MicroSparkline, RadialStrokeGauge } from "./primitives.jsx";
+import {
+  MicroSparkline,
+  RadialStrokeGauge,
+  extractSparklinePoints,
+} from "./primitives.jsx";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const readPrimitivesSource = () =>
@@ -215,18 +219,30 @@ test("Icon primitive defaults size + strokeWidth per context", () => {
   assert.match(slice[0], /size=\{size \?\? defaults\.size\}/);
 });
 
-test("extractSparklineValues handles raw numbers + close/c/v shapes", () => {
+test("extractSparklinePoints handles value and timestamp shapes", () => {
   // Centralized normalizer for sparkline data — Watchlist + KPI Strip
   // were keeping their own copies; this test pins the shape support
   // matrix so a future change can't silently regress one consumer.
   const source = readPrimitivesSource();
+  const points = extractSparklinePoints([
+    { timestamp: "2026-06-01T14:30:00.000Z", close: 100 },
+    { time: 1_780_000_000, c: 101 },
+    { t: 1_780_000_060_000, v: 102 },
+    103,
+  ]);
 
+  assert.deepEqual(points.map((point) => point.value), [100, 101, 102, 103]);
+  assert.equal(points[0].ms, Date.parse("2026-06-01T14:30:00.000Z"));
+  assert.equal(points[1].ms, 1_780_000_000_000);
+  assert.equal(points[2].ms, 1_780_000_060_000);
+  assert.equal(points[3].ms, null);
+  assert.match(source, /export const extractSparklinePoints = /);
   assert.match(source, /export const extractSparklineValues = /);
   assert.match(source, /typeof point === "number"/);
   assert.match(source, /point\?\.close/);
   assert.match(source, /point\?\.c\b/);
   assert.match(source, /point\?\.v\b/);
-  assert.match(source, /\.filter\(\(value\) => Number\.isFinite\(value\)\)/);
+  assert.match(source, /point\.timestamp \?\? point\.time \?\? point\.t/);
 });
 
 test("MicroSparkline + RowSparkValue are exported and composable", () => {
@@ -253,6 +269,32 @@ test("MicroSparkline + RowSparkValue are exported and composable", () => {
   );
   assert.ok(rowSlice, "RowSparkValue declaration not found");
   assert.match(rowSlice[0], /\{sparklineData \? \(/);
+});
+
+test("MicroSparkline renders signal-colored line segments", () => {
+  const html = renderToStaticMarkup(
+    createElement(MicroSparkline, {
+      data: [
+        { timestamp: "2026-06-01T14:30:00.000Z", close: 100 },
+        { timestamp: "2026-06-01T14:35:00.000Z", close: 99 },
+        { timestamp: "2026-06-01T14:40:00.000Z", close: 101 },
+        { timestamp: "2026-06-01T14:45:00.000Z", close: 102 },
+      ],
+      pointColors: [
+        "var(--ra-red-500)",
+        "var(--ra-red-500)",
+        "var(--ra-blue-500)",
+        "var(--ra-blue-500)",
+      ],
+      positive: true,
+      ariaHidden: true,
+    }),
+  );
+
+  assert.equal((html.match(/class="ra-sparkline-line"/g) || []).length, 2);
+  assert.match(html, /stroke="var\(--ra-red-500\)"/);
+  assert.match(html, /stroke="var\(--ra-blue-500\)"/);
+  assert.match(html, /fill="var\(--ra-blue-500\)"/);
 });
 
 test("RadialStrokeGauge renders clamped segmented ticks with accessible center labels", () => {
