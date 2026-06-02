@@ -2,25 +2,21 @@ import {
   SIGNALS_TABLE_TIMEFRAMES,
   normalizeSignalsTicker,
 } from "./signalsRowModel.js";
+import {
+  isSignalStateCurrent,
+} from "./signalStateFreshness.js";
 
 export const SIGNALS_MATRIX_HYDRATION_CHUNK_SIZE = null;
 export const SIGNALS_MATRIX_HYDRATION_PRIORITY_CHUNK_SIZE = null;
 
 const stateTimeframe = (state) => String(state?.timeframe || "").trim();
 
-const hasComputedMatrixState = (state) =>
+const hasHydratedMatrixState = (state) =>
   Boolean(
     state &&
       stateTimeframe(state) &&
-      (
-        state.latestBarAt ||
-        state.lastEvaluatedAt ||
-        state.currentSignalAt ||
-        state.lastError ||
-        ["error", "unavailable", "unknown"].includes(
-          String(state.status || "").toLowerCase(),
-        )
-      ),
+      isSignalStateCurrent(state) &&
+      (state.latestBarAt || state.currentSignalAt),
   );
 
 const uniqueSymbols = (symbols = []) => {
@@ -40,10 +36,21 @@ const buildComputedTimeframesBySymbol = (states = []) => {
   (Array.isArray(states) ? states : []).forEach((state) => {
     const symbol = normalizeSignalsTicker(state?.symbol);
     const timeframe = stateTimeframe(state);
-    if (!symbol || !timeframe || !hasComputedMatrixState(state)) return;
+    if (!symbol || !timeframe || !hasHydratedMatrixState(state)) return;
     const current = bySymbol.get(symbol) ?? new Set();
     current.add(timeframe);
     bySymbol.set(symbol, current);
+  });
+  return bySymbol;
+};
+
+const indexCellsBySymbol = (cells) => {
+  const bySymbol = {};
+  cells.forEach(({ symbol, timeframe }) => {
+    if (!bySymbol[symbol]) {
+      bySymbol[symbol] = [];
+    }
+    bySymbol[symbol].push(timeframe);
   });
   return bySymbol;
 };
@@ -53,6 +60,24 @@ const normalizeRequestLimit = (value) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return null;
   return Math.max(1, Math.floor(numeric));
+};
+
+const selectRequestCellsForSymbols = ({
+  symbols,
+  missingCellsBySymbol,
+  limit,
+}) => {
+  const selectedCells = [];
+  const selectedSymbols = new Set();
+  symbols.forEach((symbol) => {
+    if (selectedSymbols.has(symbol)) return;
+    if (limit != null && selectedSymbols.size >= limit) return;
+    const cells = missingCellsBySymbol.get(symbol) || [];
+    if (!cells.length) return;
+    selectedSymbols.add(symbol);
+    selectedCells.push(...cells);
+  });
+  return selectedCells;
 };
 
 export function buildSignalsMatrixHydrationPlan({
@@ -84,16 +109,36 @@ export function buildSignalsMatrixHydrationPlan({
   const computedBySymbol = buildComputedTimeframesBySymbol(currentStates);
   const hydratedSymbols = [];
   const missingSymbols = [];
+  const hydratedCells = [];
+  const missingCells = [];
+  const hydratedTimeframesBySymbol = {};
+  const missingCellsBySymbol = new Map();
 
   normalizedSymbols.forEach((symbol) => {
     const computedTimeframes = computedBySymbol.get(symbol);
-    if (
-      computedTimeframes &&
-      matrixTimeframes.every((timeframe) => computedTimeframes.has(timeframe))
-    ) {
+    const symbolHydratedCells = [];
+    const symbolMissingCells = [];
+    matrixTimeframes.forEach((timeframe) => {
+      const cell = { symbol, timeframe };
+      if (computedTimeframes?.has(timeframe)) {
+        symbolHydratedCells.push(cell);
+        hydratedCells.push(cell);
+        return;
+      }
+      symbolMissingCells.push(cell);
+      missingCells.push(cell);
+    });
+
+    if (symbolHydratedCells.length) {
+      hydratedTimeframesBySymbol[symbol] = symbolHydratedCells.map(
+        (cell) => cell.timeframe,
+      );
+    }
+    if (!symbolMissingCells.length) {
       hydratedSymbols.push(symbol);
       return;
     }
+    missingCellsBySymbol.set(symbol, symbolMissingCells);
     missingSymbols.push(symbol);
   });
 
@@ -113,18 +158,36 @@ export function buildSignalsMatrixHydrationPlan({
   const requestLimit = priorityMissingSymbols.length
     ? (normalizedPriorityChunkSize ?? missingSymbols.length)
     : (normalizedChunkSize ?? missingSymbols.length);
+  const requestSourceSymbols = priorityMissingSymbols.length
+    ? priorityMissingSymbols
+    : backgroundMissingSymbols;
+  const requestCells = selectRequestCellsForSymbols({
+    symbols: requestSourceSymbols,
+    missingCellsBySymbol,
+    limit: requestLimit,
+  });
+  const requestSymbols = uniqueSymbols(requestCells.map((cell) => cell.symbol));
+  const requestTimeframes = [
+    ...new Set(requestCells.map((cell) => cell.timeframe)),
+  ];
 
   return {
     symbols: normalizedSymbols,
     timeframes: matrixTimeframes,
+    requestTimeframes,
     chunkSize: normalizedChunkSize,
     priorityChunkSize: normalizedPriorityChunkSize,
     hydratedSymbols,
     missingSymbols,
+    hydratedCells,
+    missingCells,
+    requestCells,
+    hydratedCellCount: hydratedCells.length,
+    missingCellCount: missingCells.length,
+    totalCellCount: normalizedSymbols.length * matrixTimeframes.length,
+    hydratedTimeframesBySymbol,
+    missingTimeframesBySymbol: indexCellsBySymbol(missingCells),
     priorityMissingSymbols,
-    requestSymbols: [
-      ...priorityMissingSymbols,
-      ...backgroundMissingSymbols,
-    ].slice(0, requestLimit),
+    requestSymbols,
   };
 }

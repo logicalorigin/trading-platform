@@ -201,6 +201,7 @@ const BOOT_INFRA_TASK_IDS = [
   "workspace-route-chunk",
   "first-screen",
 ];
+const SIGNAL_MONITOR_EVENT_HISTORY_LIMIT = 500;
 
 const resolveInitialPlatformScreen = (screenId) => {
   const normalizedScreen = screenId === "unusual" ? "flow" : screenId || "market";
@@ -655,12 +656,20 @@ export default function PlatformApp() {
     [],
   );
   const [screen, setScreen] = useState(initialScreen);
+  const signalMatrixRequestActive = screen === "signals" || screen === "algo";
   const signalsScreenSafeWorkVisible = Boolean(
     safeQaMode && pageVisible && workspaceLeader && screen === "signals",
   );
-  const signalMonitorWorkVisible = Boolean(
-    platformWorkVisible || signalsScreenSafeWorkVisible,
+  const signalMatrixForegroundWorkVisible = Boolean(
+    pageVisible && signalMatrixRequestActive,
   );
+  const signalMonitorWorkVisible = Boolean(
+    platformWorkVisible ||
+      signalsScreenSafeWorkVisible ||
+      signalMatrixForegroundWorkVisible,
+  );
+  const signalMatrixRequestClientRole =
+    workspaceLeader || signalMatrixForegroundWorkVisible ? "leader" : "follower";
   const [mountedScreens, setMountedScreens] = useState(() =>
     buildMountedScreenState(initialScreen),
   );
@@ -1176,6 +1185,10 @@ export default function PlatformApp() {
     () => buildPlatformPressureCaps(signalMatrixPressureLevel),
     [signalMatrixPressureLevel],
   );
+  const activeSignalMatrixPressureLevel =
+    signalMatrixRequestActive && signalMatrixPressureLevel !== "critical"
+      ? "normal"
+      : signalMatrixPressureLevel;
   const memoryBlocksOperationalPreload = memoryPressureLevel === "critical";
   const memoryAllowsBackgroundWarmup = Boolean(
     memoryPressureObserved &&
@@ -1914,7 +1927,7 @@ export default function PlatformApp() {
       queryClient.invalidateQueries({
         queryKey: getListSignalMonitorEventsQueryKey({
           environment: signalMonitorEnvironment,
-          limit: 100,
+          limit: SIGNAL_MONITOR_EVENT_HISTORY_LIMIT,
         }),
       });
     }, 5_000);
@@ -2550,7 +2563,10 @@ export default function PlatformApp() {
     [signalMonitorEnvironment],
   );
   const signalMonitorEventsParams = useMemo(
-    () => ({ environment: signalMonitorEnvironment, limit: 100 }),
+    () => ({
+      environment: signalMonitorEnvironment,
+      limit: SIGNAL_MONITOR_EVENT_HISTORY_LIMIT,
+    }),
     [signalMonitorEnvironment],
   );
   const signalMonitorProfileQuery = useGetSignalMonitorProfile(
@@ -2653,16 +2669,23 @@ export default function PlatformApp() {
     signalWorkFastScreen
       ? signalMonitorDisplayPollMs
       : Math.max(signalMonitorPollMs, 60_000),
-    platformPressureCaps.signalDisplayPollMinMs || 0,
+    signalMatrixPressureCaps.signalDisplayPollMinMs || 0,
+  );
+  const signalMonitorForegroundReady = Boolean(
+    signalMatrixRequestActive && pageVisible,
+  );
+  const signalMonitorProfileAllowsDisplay = Boolean(
+    signalMonitorProfile?.enabled ||
+      (signalMonitorForegroundReady &&
+        !signalMonitorProfileQuery.isFetched &&
+        !signalMonitorProfileQuery.isError),
   );
   const signalMonitorDisplayReady = Boolean(
-    signalMonitorWorkVisible && firstScreenReady && signalMonitorProfile?.enabled,
+    signalMonitorWorkVisible &&
+      (firstScreenReady || signalMonitorForegroundReady) &&
+      signalMonitorProfileAllowsDisplay,
   );
-  const signalMonitorEventsReady = Boolean(
-    signalMonitorDisplayReady &&
-      backgroundResumeReady.screen === screen &&
-      backgroundResumeReady.signalDisplay,
-  );
+  const signalMonitorEventsReady = signalMonitorDisplayReady;
   const signalMonitorStateQuery = useGetSignalMonitorState(
     signalMonitorParams,
     {
@@ -2791,7 +2814,7 @@ export default function PlatformApp() {
         queryClient.invalidateQueries({
           queryKey: getListSignalMonitorEventsQueryKey({
             environment: profile.environment,
-            limit: 100,
+            limit: SIGNAL_MONITOR_EVENT_HISTORY_LIMIT,
           }),
         });
       },
@@ -2816,7 +2839,7 @@ export default function PlatformApp() {
         queryClient.invalidateQueries({
           queryKey: getListSignalMonitorEventsQueryKey({
             environment: data.profile.environment,
-            limit: 100,
+            limit: SIGNAL_MONITOR_EVENT_HISTORY_LIMIT,
           }),
         });
       },
@@ -2952,7 +2975,6 @@ export default function PlatformApp() {
     () => signalsScreenMatrixTimeframes.join(","),
     [signalsScreenMatrixTimeframes],
   );
-  const signalMatrixRequestActive = screen === "signals" || screen === "algo";
   const handleRequestSignalMatrixHydration = useCallback((request = {}) => {
     const payload = request || {};
     const normalizedSymbols = normalizeSignalMatrixRequestSymbols(
@@ -2970,9 +2992,12 @@ export default function PlatformApp() {
     );
     if (payload.force && normalizedSymbols.length) {
       const symbolSet = new Set(normalizedSymbols);
+      const timeframeSet = new Set(normalizedTimeframes);
       setSignalMatrixSnapshot((current) => {
         const nextStates = current.states.filter(
-          (state) => !symbolSet.has(normalizeTickerSymbol(state?.symbol)),
+          (state) =>
+            !symbolSet.has(normalizeTickerSymbol(state?.symbol)) ||
+            !timeframeSet.has(String(state?.timeframe || "").trim()),
         );
         signalMatrixStatesRef.current = nextStates;
         return {
@@ -3222,6 +3247,11 @@ export default function PlatformApp() {
   );
   const signalMatrixForegroundReady =
     signalMatrixRequestActive || signalMatrixBackgroundReady;
+  const signalMatrixStartupProtectionActive =
+    startupProtectionActive && !signalMatrixRequestActive;
+  const signalMatrixActiveScreenRowsReady = Boolean(
+    screen !== "signals" || signalsScreenMatrixPrioritySymbols.length,
+  );
   useEffect(() => {
     const mountedScreenIds = Object.keys(mountedScreens).filter(
       (screenId) => mountedScreens[screenId],
@@ -3348,6 +3378,7 @@ export default function PlatformApp() {
   const signalMatrixPriorityReady = Boolean(
     pageVisible &&
       signalMatrixForegroundReady &&
+      signalMatrixActiveScreenRowsReady &&
       signalMatrixUniverseSymbols.length &&
       signalMonitorDisplayReady &&
       signalMatrixPrioritySymbols.length,
@@ -3358,22 +3389,27 @@ export default function PlatformApp() {
   );
   const signalMatrixActiveScreenRequestSymbolLimit = useMemo(
     () =>
-      resolveSignalMatrixActiveScreenRequestSymbolLimit(signalMatrixPressureLevel),
-    [signalMatrixPressureLevel],
+      resolveSignalMatrixActiveScreenRequestSymbolLimit(
+        activeSignalMatrixPressureLevel,
+      ),
+    [activeSignalMatrixPressureLevel],
   );
   const signalMatrixActiveScreenRequestTaskLimit = useMemo(
-    () => resolveSignalMatrixActiveScreenRequestTaskLimit(signalMatrixPressureLevel),
-    [signalMatrixPressureLevel],
+    () =>
+      resolveSignalMatrixActiveScreenRequestTaskLimit(
+        activeSignalMatrixPressureLevel,
+      ),
+    [activeSignalMatrixPressureLevel],
   );
   const signalMatrixRequestTaskLimit = useMemo(() => {
-    if (!signalMatrixRequestActive || !signalsScreenMatrixSymbols.length) {
+    if (!signalMatrixRequestActive || !signalMatrixUniverseSymbols.length) {
       return null;
     }
     return signalMatrixActiveScreenRequestTaskLimit;
   }, [
     signalMatrixActiveScreenRequestTaskLimit,
     signalMatrixRequestActive,
-    signalsScreenMatrixSymbols.length,
+    signalMatrixUniverseSymbols.length,
   ]);
   const signalMatrixRequestSymbolLimit = useMemo(() => {
     if (screen !== "signals") {
@@ -3415,8 +3451,9 @@ export default function PlatformApp() {
     [signalMatrixPressureLevel],
   );
   const signalMatrixRuntimeReady = Boolean(
-    signalMonitorWorkVisible &&
-      !startupProtectionActive &&
+      signalMonitorWorkVisible &&
+      !signalMatrixStartupProtectionActive &&
+      signalMatrixActiveScreenRowsReady &&
       signalMatrixUniverseSymbols.length &&
       signalMonitorDisplayReady &&
       (signalMatrixPriorityReady || signalMatrixBackgroundReady),
@@ -3480,7 +3517,7 @@ export default function PlatformApp() {
   const signalHydrationBootstrapActive = Boolean(
     signalMonitorWorkVisible &&
       firstScreenReady &&
-      !startupProtectionActive &&
+      !signalMatrixStartupProtectionActive &&
       (
         signalMonitorProfileBootstrapPending ||
         !signalMonitorStateBootstrapComplete ||
@@ -3529,7 +3566,7 @@ export default function PlatformApp() {
       pollMs: signalMatrixPollMs,
       runtimeReady:
         signalMonitorWorkVisible &&
-        !startupProtectionActive &&
+        !signalMatrixStartupProtectionActive &&
         signalMatrixUniverseSymbols.length > 0 &&
         signalMonitorDisplayReady &&
         (signalMatrixPriorityReady || signalMatrixBackgroundReady),
@@ -3542,6 +3579,15 @@ export default function PlatformApp() {
       activeScreenRequestTaskLimit: signalMatrixActiveScreenRequestTaskLimit,
       requestSymbolLimit: signalMatrixRequestSymbolLimit,
       requestTaskLimit: signalMatrixRequestTaskLimit,
+      selectedTimeframe: lastPlan?.coverage?.selectedTimeframe ?? null,
+      baseRequestSymbolLimit:
+        lastPlan?.coverage?.baseRequestSymbolLimit ?? null,
+      timeframeSymbolLimit:
+        lastPlan?.coverage?.timeframeSymbolLimit ?? null,
+      effectiveRequestSymbolLimit:
+        lastPlan?.coverage?.effectiveRequestSymbolLimit ??
+        lastPlan?.coverage?.requestSymbolLimit ??
+        signalMatrixRequestSymbolLimit,
       requestTimeframes: signalMatrixRequestTimeframes,
       busyQueueDelayMs: signalMatrixBusyQueueDelayMs,
       catchupDelayMs: signalMatrixCatchupDelayMs,
@@ -3621,12 +3667,12 @@ export default function PlatformApp() {
     signalMatrixBootstrapSymbols,
     signalMatrixSuggestedSignalSymbols,
     signalMatrixSnapshot,
+    signalMatrixStartupProtectionActive,
     signalMatrixSymbolsKey,
     signalMatrixUniverseSymbols,
     signalMonitorDisplayReady,
     signalMonitorProfileBootstrapPending,
     signalMonitorStateBootstrapComplete,
-    startupProtectionActive,
   ]);
   const scheduleSignalMatrixEvaluation = useCallback((delayMs = 0) => {
     const resolvedDelayMs = Math.max(0, Number(delayMs) || 0);
@@ -3680,13 +3726,19 @@ export default function PlatformApp() {
           !profileDisabled &&
             signalMatrixCatchupDelayMs != null &&
           signalsScreenMatrixSymbols.length > 0 &&
-            (lastPlan?.coverage?.missingSymbols || 0) >
-              (lastPlan?.requestSymbols?.length || 0),
+            (lastPlan?.coverage?.missingTaskCount ??
+              lastPlan?.coverage?.missingSymbols ??
+              0) >
+              (lastPlan?.coverage?.requestTaskCount ??
+                lastPlan?.requestSymbols?.length ??
+                0),
         );
         const progressiveMatrixCatchupPending = Boolean(
           !profileDisabled &&
             signalMatrixCatchupDelayMs != null &&
-            (lastPlan?.coverage?.pendingSymbols || 0) > 0 &&
+            (lastPlan?.coverage?.pendingTaskCount ??
+              lastPlan?.coverage?.pendingSymbols ??
+              0) > 0 &&
             (lastPlan?.requestSymbols?.length || 0) > 0,
         );
         const responseStateCount = Array.isArray(data?.states)
@@ -3781,7 +3833,7 @@ export default function PlatformApp() {
   const runSignalMatrixEvaluation = useCallback((options = {}) => {
     if (
       !signalMonitorWorkVisible ||
-      startupProtectionActive ||
+      signalMatrixStartupProtectionActive ||
       !signalMatrixUniverseSymbols.length ||
       !signalMonitorDisplayReady ||
       !(signalMatrixPriorityReady || signalMatrixBackgroundReady)
@@ -3817,11 +3869,15 @@ export default function PlatformApp() {
         liveMemoryPressureSignal?.level || signalMatrixPressureLevel,
       server: liveMemoryPressureSignal?.server || memoryPressureSignal?.server,
     });
+    const liveActiveSignalMatrixPressureLevel =
+      signalMatrixRequestActive && liveSignalMatrixPressureLevel !== "critical"
+        ? "normal"
+        : liveSignalMatrixPressureLevel;
     const liveSignalMatrixRequestTaskLimit =
       signalMatrixRequestTaskLimit == null
         ? null
         : resolveSignalMatrixActiveScreenRequestTaskLimit(
-            liveSignalMatrixPressureLevel,
+            liveActiveSignalMatrixPressureLevel,
           );
     if (!claimSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current, nowMs)) {
       scheduleSignalMatrixEvaluation(
@@ -3839,9 +3895,9 @@ export default function PlatformApp() {
       prioritySymbols: signalMatrixPrioritySymbols,
       currentStates: signalMatrixStatesRef.current,
       timeframes: signalMatrixRequestTimeframes,
-      pressureLevel: liveSignalMatrixPressureLevel,
+      pressureLevel: liveActiveSignalMatrixPressureLevel,
       backgroundReady: signalMatrixBackgroundReady,
-      startupProtectionActive,
+      startupProtectionActive: signalMatrixStartupProtectionActive,
       cursor: signalMatrixRotationCursorRef.current,
       pollMs: signalMatrixPollMs,
       nowMs,
@@ -3865,7 +3921,7 @@ export default function PlatformApp() {
         watchlistId: null,
         symbols: plan.requestSymbols,
         timeframes: plan.timeframes,
-        clientRole: workspaceLeader ? "leader" : "follower",
+        clientRole: signalMatrixRequestClientRole,
         requestOrigin,
       },
     });
@@ -3892,9 +3948,10 @@ export default function PlatformApp() {
     signalMatrixSymbolsKey,
     signalMatrixUniverseSymbols,
     signalMonitorDisplayReady,
+    signalMatrixRequestActive,
+    signalMatrixRequestClientRole,
+    signalMatrixStartupProtectionActive,
     screen,
-    startupProtectionActive,
-    workspaceLeader,
   ]);
   useEffect(() => {
     signalMatrixRunRef.current = runSignalMatrixEvaluation;
@@ -4536,8 +4593,13 @@ export default function PlatformApp() {
       gatewayTradingBlockReason={effectiveGatewayTradingBlockReason}
       watchlistSymbols={watchlistSymbols}
       runtimeWatchlistSymbols={runtimeWatchlistSymbols}
+      signalMonitorEnvironment={signalMonitorEnvironment}
       signalMonitorSymbols={signalMonitorSymbols}
       signalMonitorDisplaySymbols={signalMonitorDisplaySymbols}
+      signalMonitorEvents={signalMonitorEvents}
+      signalMonitorEventsLoaded={Boolean(
+        signalMonitorEventsQuery.data || signalMonitorEventsQuery.isFetched,
+      )}
       signalMatrixStates={signalMatrixSnapshot.states}
       marketScreenActive={marketScreenActive}
       flowScreenActive={flowScreenActive}
@@ -4613,7 +4675,11 @@ export default function PlatformApp() {
     session,
     sidebarCollapsed,
     signalMatrixSnapshot.states,
+    signalMonitorEnvironment,
     signalMonitorDisplaySymbols,
+    signalMonitorEvents,
+    signalMonitorEventsQuery.data,
+    signalMonitorEventsQuery.isFetched,
     signalMonitorSymbols,
     stockAggregateStreamingEnabled,
     sym,

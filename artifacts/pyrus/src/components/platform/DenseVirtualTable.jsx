@@ -5,6 +5,12 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import {
+  ColumnHeaderCell,
+  SortableColumnHeaderCell,
+  TableHeaderDndContext,
+} from "./InteractiveColumnHeader.jsx";
+import { reorderColumnOrder } from "./tableColumnInteractions.js";
 
 const defaultGetRowId = (row, index) => String(row?.id ?? index);
 const defaultGetCellProps = () => ({});
@@ -26,6 +32,7 @@ const buildCellStyle = (align) => ({
 });
 
 export function DenseVirtualTable({
+  columnOrder,
   columns,
   data,
   emptyState = null,
@@ -35,7 +42,10 @@ export function DenseVirtualTable({
   getRowProps = defaultGetRowProps,
   headerStyle,
   isRowExpanded = defaultIsRowExpanded,
+  lockedColumnIds = [],
   minWidth,
+  onColumnOrderChange,
+  onSortChange,
   onVisibleRowsChange,
   overscan = 12,
   renderRowDetail = null,
@@ -46,6 +56,7 @@ export function DenseVirtualTable({
   scrollAlign = "center",
   scrollKey,
   scrollToIndex = null,
+  sortState = null,
   style,
 }) {
   const table = useReactTable({
@@ -58,6 +69,44 @@ export function DenseVirtualTable({
   const gridTemplateColumns = useMemo(
     () => columns.map((column) => column.meta?.width || "minmax(0, 1fr)").join(" "),
     [columns],
+  );
+  const headerColumnIds = useMemo(
+    () => columns.map((column) => column.id).filter(Boolean),
+    [columns],
+  );
+  const lockedColumnSet = useMemo(() => {
+    const next = new Set((lockedColumnIds || []).map((columnId) => String(columnId)));
+    columns.forEach((column) => {
+      if (column.meta?.reorderLocked) next.add(String(column.id));
+    });
+    return next;
+  }, [columns, lockedColumnIds]);
+  const reorderable = Boolean(onColumnOrderChange && headerColumnIds.length > 1);
+  const sortStateId = sortState?.id ?? sortState?.key ?? null;
+  const sortDirection = sortState?.direction ?? sortState?.dir ?? null;
+  const handleColumnReorder = useCallback(
+    (activeColumnId, overColumnId) => {
+      const nextOrder = reorderColumnOrder(
+        columnOrder || headerColumnIds,
+        activeColumnId,
+        overColumnId,
+        {
+          fallbackColumnIds: headerColumnIds,
+          lockedColumnIds: Array.from(lockedColumnSet),
+          validColumnIds: headerColumnIds,
+        },
+      );
+      onColumnOrderChange?.(nextOrder, {
+        activeColumnId,
+        overColumnId,
+      });
+    },
+    [
+      columnOrder,
+      headerColumnIds,
+      lockedColumnSet,
+      onColumnOrderChange,
+    ],
   );
   const virtualRows = useMemo(() => {
     const nextRows = [];
@@ -108,11 +157,11 @@ export function DenseVirtualTable({
     return nextIndex >= 0 ? nextIndex : null;
   }, [scrollToIndex, virtualRows]);
   const handleVisibleRangeChange = useCallback(
-    ({ virtualItems }) => {
+    ({ visibleVirtualItems, virtualItems }) => {
       if (!onVisibleRowsChange) return;
       const seenRowIds = new Set();
       const visibleRows = [];
-      virtualItems.forEach((virtualRow) => {
+      (visibleVirtualItems || virtualItems).forEach((virtualRow) => {
         const item = virtualRows[virtualRow.index];
         const original = item?.row?.original;
         if (!original || seenRowIds.has(item.row.id)) {
@@ -153,29 +202,62 @@ export function DenseVirtualTable({
         ...style,
       }}
     >
-      {table.getHeaderGroups().map((headerGroup) => (
-        <div
-          key={headerGroup.id}
-          data-testid="dense-virtual-table-header"
-          style={{
-            display: "grid",
-            gridTemplateColumns,
-            flexShrink: 0,
-            ...headerStyle,
-          }}
-        >
-          {headerGroup.headers.map((header) => (
-            <div
-              key={header.id}
-              style={buildCellStyle(header.column.columnDef.meta?.align)}
-            >
-              {header.isPlaceholder
+      {table.getHeaderGroups().map((headerGroup) => {
+        const headerRow = (
+          <div
+            key={headerGroup.id}
+            data-testid="dense-virtual-table-header"
+            style={{
+              display: "grid",
+              gridTemplateColumns,
+              flexShrink: 0,
+              ...headerStyle,
+            }}
+          >
+            {headerGroup.headers.map((header) => {
+              const meta = header.column.columnDef.meta || {};
+              const sortKey = meta.sortKey || header.column.id;
+              const sortable = Boolean(onSortChange && meta.sortable && sortKey);
+              const activeSort = sortable && sortStateId === sortKey;
+              const HeaderCell = reorderable ? SortableColumnHeaderCell : ColumnHeaderCell;
+              const renderedHeader = header.isPlaceholder
                 ? null
-                : flexRender(header.column.columnDef.header, header.getContext())}
-            </div>
-          ))}
-        </div>
-      ))}
+                : flexRender(header.column.columnDef.header, header.getContext());
+
+              return (
+                <HeaderCell
+                  key={header.id}
+                  id={header.column.id}
+                  active={activeSort}
+                  align={meta.align}
+                  label={meta.label || header.column.id}
+                  onSort={sortable ? () => onSortChange(sortKey, header.column.id) : undefined}
+                  reorderable={reorderable && !lockedColumnSet.has(String(header.column.id))}
+                  sortDirection={activeSort ? sortDirection : null}
+                  sortable={sortable}
+                  sortTitle={meta.sortTitle}
+                  style={buildCellStyle(meta.align)}
+                  testId={meta.headerTestId}
+                  title={meta.title}
+                >
+                  {renderedHeader}
+                </HeaderCell>
+              );
+            })}
+          </div>
+        );
+
+        if (!reorderable) return headerRow;
+        return (
+          <TableHeaderDndContext
+            key={headerGroup.id}
+            columnIds={headerColumnIds}
+            onReorder={handleColumnReorder}
+          >
+            {headerRow}
+          </TableHeaderDndContext>
+        );
+      })}
 
       {rows.length ? (
         <div
@@ -322,14 +404,27 @@ export function useDenseVirtualRows({
 
   useEffect(() => {
     if (!onVisibleRangeChange) return;
+    const scrollElement = scrollRef.current;
+    const viewportStart = Math.max(0, (scrollElement?.scrollTop ?? 0) - rowHeight);
+    const viewportEnd =
+      (scrollElement?.scrollTop ?? 0) +
+      (scrollElement?.clientHeight || Number.POSITIVE_INFINITY) +
+      rowHeight;
+    const visibleVirtualItems = virtualItems.filter((virtualItem) => {
+      const itemStart = virtualItem.start ?? 0;
+      const itemEnd =
+        virtualItem.end ?? itemStart + (virtualItem.size ?? rowHeight);
+      return itemEnd > viewportStart && itemStart < viewportEnd;
+    });
     onVisibleRangeChange({
       endIndex: virtualItems.length
         ? virtualItems[virtualItems.length - 1].index + 1
         : 0,
       startIndex: virtualItems[0]?.index ?? 0,
+      visibleVirtualItems,
       virtualItems,
     });
-  }, [onVisibleRangeChange, virtualItemSignature]);
+  }, [onVisibleRangeChange, rowHeight, virtualItemSignature]);
 
   useEffect(() => {
     if (

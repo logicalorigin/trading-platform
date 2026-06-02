@@ -1,3 +1,5 @@
+import { isSignalStateCurrent } from "../signals/signalStateFreshness.js";
+
 const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze([
   "1m",
   "2m",
@@ -21,7 +23,7 @@ const ACTIVE_SCREEN_REQUEST_SYMBOL_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 250,
   watch: 250,
   high: 250,
-  critical: 8,
+  critical: 6,
 });
 const BUSY_QUEUE_DELAY_MS_BY_PRESSURE = Object.freeze({
   normal: 0,
@@ -42,9 +44,6 @@ const SIGNAL_MATRIX_TIMEFRAME_MS = Object.freeze({
   "15m": 15 * 60_000,
   "1h": 60 * 60_000,
 });
-const TERMINAL_MATRIX_RETRY_MIN_MS = 5 * 60_000;
-const TERMINAL_MATRIX_STATUSES = new Set(["error", "unavailable", "unknown"]);
-
 const normalizeSymbol = (symbol) => symbol?.trim?.().toUpperCase?.() || "";
 
 const normalizePressureLevel = (pressureLevel) =>
@@ -87,6 +86,13 @@ const uniqueSymbols = (symbols = []) => {
 const applySymbolLimit = (symbols, limit) =>
   limit == null ? symbols : symbols.slice(0, limit);
 
+const normalizeRequestLimit = (value) => {
+  if (value == null) return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.max(1, Math.floor(numeric));
+};
+
 export function buildSignalMatrixSymbolSets({
   selectedSymbol = null,
   visibleWatchlistSymbols = [],
@@ -123,7 +129,7 @@ export function buildSignalMatrixSymbolSets({
   const resolvedWideLimit = signalsScreenActive ? null : wideLimit;
   const resolvedNarrowLimit = signalsScreenActive ? null : narrowLimit;
   const priorityBaseSymbols = signalsScreenActive
-    ? [...selected, ...visibleWatchlist, ...signalsScreenPriority]
+    ? [...signalsScreenPriority, ...selected, ...visibleWatchlist]
     : [
         ...selected,
         ...visibleWatchlist,
@@ -179,13 +185,7 @@ const normalizeTimeframes = (timeframes = DEFAULT_SIGNAL_MATRIX_TIMEFRAMES) => {
   return unique.length ? unique : [...DEFAULT_SIGNAL_MATRIX_TIMEFRAMES];
 };
 
-const requestSymbolLimitFor = (taskLimit, timeframes) =>
-  Math.max(
-    1,
-    Math.floor(
-      Math.max(1, taskLimit) / Math.max(1, timeframes.length),
-    ),
-  );
+const cellKey = (cell) => `${cell.symbol}:${cell.timeframe}`;
 
 const buildHydrationMap = (states = []) => {
   const bySymbol = new Map();
@@ -204,32 +204,15 @@ const buildHydrationMap = (states = []) => {
 };
 
 const isHydratedState = (state) =>
-  Boolean(state) &&
-  (Boolean(
-    state.latestBarAt && (state.status === "ok" || state.status === "stale"),
-  ) ||
-    Boolean(
-      TERMINAL_MATRIX_STATUSES.has(String(state.status || "").toLowerCase()) &&
-        (state.lastEvaluatedAt || state.lastError),
-    ));
+  Boolean(
+    state &&
+      isSignalStateCurrent(state) &&
+      (state.latestBarAt || state.currentSignalAt),
+  );
 
 const stateNeedsRefresh = (state, timeframe, nowMs, pollMs) => {
   if (!isHydratedState(state)) {
     return true;
-  }
-  if (TERMINAL_MATRIX_STATUSES.has(String(state?.status || "").toLowerCase())) {
-    if (!Number.isFinite(nowMs)) {
-      return false;
-    }
-    const lastEvaluatedMs = Date.parse(state?.lastEvaluatedAt || "");
-    if (!Number.isFinite(lastEvaluatedMs)) {
-      return true;
-    }
-    const retryAfterMs = Math.max(
-      TERMINAL_MATRIX_RETRY_MIN_MS,
-      Number.isFinite(pollMs) && pollMs > 0 ? pollMs * 5 : 0,
-    );
-    return nowMs - lastEvaluatedMs > retryAfterMs;
   }
   if (!Number.isFinite(nowMs)) {
     return false;
@@ -252,14 +235,14 @@ const stateNeedsRefresh = (state, timeframe, nowMs, pollMs) => {
   return nowMs - refreshAnchorMs > staleAfterMs;
 };
 
-const symbolNeedsHydration = (
+const missingTimeframesForSymbol = (
   symbol,
   hydrationMap,
   timeframes,
   options = {},
 ) => {
   const byTimeframe = hydrationMap.get(symbol) || {};
-  return timeframes.some((timeframe) =>
+  return timeframes.filter((timeframe) =>
     stateNeedsRefresh(
       byTimeframe[timeframe],
       timeframe,
@@ -284,6 +267,44 @@ const rotateSymbols = (symbols, cursor, count) => {
     nextCursor: (start + selected.length) % symbols.length,
   };
 };
+
+const buildMissingTimeframesBySymbol = ({
+  symbols,
+  hydrationMap,
+  timeframes,
+  nowMs,
+  pollMs,
+}) => {
+  const bySymbol = new Map();
+  symbols.forEach((symbol) => {
+    const missingTimeframes = missingTimeframesForSymbol(
+      symbol,
+      hydrationMap,
+      timeframes,
+      { nowMs, pollMs },
+    );
+    if (missingTimeframes.length) {
+      bySymbol.set(symbol, missingTimeframes);
+    }
+  });
+  return bySymbol;
+};
+
+const missingCellsForSymbols = (symbols, missingTimeframesBySymbol) =>
+  symbols.flatMap((symbol) =>
+    (missingTimeframesBySymbol.get(symbol) || []).map((timeframe) => ({
+      symbol,
+      timeframe,
+    })),
+  );
+
+const buildRequestCells = (symbols, timeframes) =>
+  symbols.flatMap((symbol) =>
+    timeframes.map((timeframe) => ({
+      symbol,
+      timeframe,
+    })),
+  );
 
 export function buildSignalMatrixRequestPlan({
   symbols = [],
@@ -310,76 +331,93 @@ export function buildSignalMatrixRequestPlan({
   const normalizedPressureLevel = normalizePressureLevel(pressureLevel);
   const pressureRequestTaskLimit =
     REQUEST_TASK_LIMIT_BY_PRESSURE[normalizedPressureLevel];
-  const explicitRequestTaskLimit =
-    requestTaskLimit != null && Number.isFinite(Number(requestTaskLimit))
-      ? Math.max(1, Math.floor(Number(requestTaskLimit)))
-      : null;
+  const explicitRequestTaskLimit = normalizeRequestLimit(requestTaskLimit);
   const resolvedRequestTaskLimit =
     explicitRequestTaskLimit ?? pressureRequestTaskLimit;
-  const pressureRequestLimit = requestSymbolLimitFor(
-    resolvedRequestTaskLimit,
-    matrixTimeframes,
+  const explicitRequestLimit = normalizeRequestLimit(requestSymbolLimit);
+  const taskBoundSymbolLimit = Math.max(
+    1,
+    Math.floor(resolvedRequestTaskLimit / matrixTimeframes.length),
   );
-  const explicitRequestLimit =
-    requestSymbolLimit != null && Number.isFinite(Number(requestSymbolLimit))
-      ? Math.max(1, Math.floor(Number(requestSymbolLimit)))
-      : null;
-  const requestLimit =
-    explicitRequestLimit == null
-      ? pressureRequestLimit
-      : Math.min(pressureRequestLimit, explicitRequestLimit);
+  const baseRequestLimit = Math.min(
+    explicitRequestLimit ?? taskBoundSymbolLimit,
+    taskBoundSymbolLimit,
+  );
   const normalizedNowMs = Number.isFinite(nowMs) ? nowMs : null;
+  const missingTimeframesBySymbol = buildMissingTimeframesBySymbol({
+    symbols: universe,
+    hydrationMap,
+    timeframes: matrixTimeframes,
+    nowMs: normalizedNowMs,
+    pollMs,
+  });
   const needsHydration = (symbol) =>
-    symbolNeedsHydration(symbol, hydrationMap, matrixTimeframes, {
-      nowMs: normalizedNowMs,
-      pollMs,
-    });
+    Boolean(missingTimeframesBySymbol.get(symbol)?.length);
   const missingSymbols = universe.filter(needsHydration);
+  const missingCells = missingCellsForSymbols(
+    missingSymbols,
+    missingTimeframesBySymbol,
+  );
   const priorityCandidates = startupProtected
     ? []
     : orderedPriority.filter(needsHydration);
-  const priorityRotation = rotateSymbols(
-    priorityCandidates,
-    cursor,
-    requestLimit,
-  );
-  const priorityBatch = priorityRotation.symbols;
-  const prioritySet = new Set(priorityBatch);
+  const priorityCandidateSet = new Set(priorityCandidates);
   const backgroundUniverse = universe.filter(
-    (symbol) => !prioritySet.has(symbol),
+    (symbol) => !priorityCandidateSet.has(symbol),
   );
   const missingBackgroundUniverse = backgroundUniverse.filter(needsHydration);
-  const backgroundLimit = Math.max(0, requestLimit - priorityBatch.length);
   const backgroundAllowed =
     !startupProtected &&
     Boolean(backgroundReady) &&
     normalizedPressureLevel !== "critical";
+  const prioritySelection = rotateSymbols(
+    priorityCandidates,
+    cursor,
+    baseRequestLimit,
+  );
+  const priorityBatch = prioritySelection.symbols;
+  const prioritySet = new Set(priorityBatch);
+  const backgroundCandidates = missingBackgroundUniverse.filter(
+    (symbol) => !prioritySet.has(symbol),
+  );
+  const backgroundLimit = Math.max(0, baseRequestLimit - priorityBatch.length);
   const background = backgroundAllowed
-    ? rotateSymbols(missingBackgroundUniverse, cursor, backgroundLimit)
+    ? rotateSymbols(backgroundCandidates, cursor, backgroundLimit)
     : { symbols: [], nextCursor: cursor || 0 };
   const nextCursor =
-    priorityCandidates.length > requestLimit
-      ? priorityRotation.nextCursor
+    priorityCandidates.length > priorityBatch.length
+      ? prioritySelection.nextCursor
       : background.nextCursor;
   const requestSymbols = uniqueSymbols([
     ...priorityBatch,
     ...background.symbols,
   ]);
-  const requestedTaskCount = missingSymbols.length * matrixTimeframes.length;
-  const queuedSymbols = Math.max(
-    0,
-    missingSymbols.length - requestSymbols.length,
-  );
-  const queuedTaskCount = queuedSymbols * matrixTimeframes.length;
+  const requestTimeframes = requestSymbols.length ? matrixTimeframes : [];
+  const requestCells = buildRequestCells(requestSymbols, requestTimeframes);
+  const selectedCellKeys = new Set(requestCells.map(cellKey));
+  const requestedTaskCount = missingCells.length;
+  const queuedTaskCount = missingCells.filter(
+    (cell) => !selectedCellKeys.has(cellKey(cell)),
+  ).length;
+  const queuedSymbols = missingSymbols.filter((symbol) =>
+    (missingTimeframesBySymbol.get(symbol) || []).some(
+      (timeframe) => !selectedCellKeys.has(`${symbol}:${timeframe}`),
+    ),
+  ).length;
+  const totalTaskCount = universe.length * matrixTimeframes.length;
+  const hydratedTaskCount = Math.max(0, totalTaskCount - requestedTaskCount);
 
   return {
     requestSymbols,
     prioritySymbols: priorityBatch,
     backgroundSymbols: background.symbols,
-    timeframes: matrixTimeframes,
+    timeframes: requestTimeframes,
+    matrixTimeframes,
+    requestCells,
+    missingCells,
     nextCursor,
     backgroundReady: backgroundAllowed,
-    backgroundPaused: !backgroundAllowed || backgroundLimit <= 0,
+    backgroundPaused: !backgroundAllowed || background.symbols.length === 0,
     startupProtectionActive: startupProtected,
     pressureLevel: normalizedPressureLevel,
     coverage: {
@@ -387,19 +425,29 @@ export function buildSignalMatrixRequestPlan({
       prioritySymbols: priorityBatch.length,
       backgroundSymbols: background.symbols.length,
       requestSymbols: requestSymbols.length,
-      requestSymbolLimit: requestLimit,
+      selectedTimeframe:
+        requestTimeframes.length === 1 ? requestTimeframes[0] : null,
+      selectedTimeframes: requestTimeframes,
+      baseRequestSymbolLimit: baseRequestLimit,
+      timeframeSymbolLimit: null,
+      effectiveRequestSymbolLimit: baseRequestLimit,
+      requestSymbolLimit: baseRequestLimit,
       requestTaskLimit: resolvedRequestTaskLimit,
-      requestTaskCount: requestSymbols.length * matrixTimeframes.length,
+      requestTaskCount: requestCells.length,
       requestedTaskCount,
       queuedTaskCount,
-      timeframes: matrixTimeframes.length,
+      timeframes: requestTimeframes.length,
+      matrixTimeframes: matrixTimeframes.length,
+      hydratedTaskCount,
+      missingTaskCount: requestedTaskCount,
+      pendingTaskCount: queuedTaskCount,
       hydratedSymbols: Math.max(0, universe.length - missingSymbols.length),
       missingSymbols: missingSymbols.length,
       pendingSymbols: queuedSymbols,
       startupProtectionActive: startupProtected,
       estimatedFullCycleMs:
-        pollMs > 0 && missingSymbols.length > 0 && requestSymbols.length > 0
-          ? Math.ceil(missingSymbols.length / requestSymbols.length) * pollMs
+        pollMs > 0 && requestedTaskCount > 0 && requestCells.length > 0
+          ? Math.ceil(requestedTaskCount / requestCells.length) * pollMs
           : null,
     },
   };

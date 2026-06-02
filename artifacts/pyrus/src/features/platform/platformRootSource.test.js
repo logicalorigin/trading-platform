@@ -786,7 +786,13 @@ test("Algo monitor is frame-owned and replaces the activity sidebar feed", () =>
   assert.match(algoMonitorSource, /useGetSignalOptionsAutomationState/);
   assert.match(algoMonitorSource, /useGetSignalOptionsPerformance/);
   assert.match(algoMonitorSource, /buildSignalMatrixBySymbol\(signalMatrixStates\)/);
-  assert.match(
+  assert.match(algoMonitorSource, /ALGO_MONITOR_CRITICAL_FALLBACK_DELAY_MS = 1_000/);
+  assert.match(algoMonitorSource, /ALGO_MONITOR_DERIVED_FALLBACK_DELAY_MS = 6_000/);
+  assert.match(algoMonitorSource, /const criticalRestFallbackEnabled = Boolean/);
+  assert.match(algoMonitorSource, /const derivedRestFallbackEnabled = Boolean/);
+  assert.match(algoMonitorSource, /enabled:\s*criticalRestFallbackEnabled/);
+  assert.match(algoMonitorSource, /enabled:\s*derivedRestFallbackEnabled/);
+  assert.doesNotMatch(
     algoMonitorSource,
     /enabled:\s*Boolean\(queryEnabled && deploymentId && streamFreshness\.algoFullFresh\)/,
   );
@@ -1638,6 +1644,8 @@ test("Broad scanner owns Flow across the visible app after startup", () => {
   assert.match(headerSource, /const broadScanSnapshotVisible = Boolean/);
   assert.match(headerSource, /flowScanStale/);
   assert.match(headerSource, /flowScanPaused/);
+  assert.doesNotMatch(headerSource, /"FLOW PAUSED"/);
+  assert.match(headerSource, /"FLOW IDLE"/);
   assert.match(headerSource, /providerSummaryHasMarketSessionQuiet/);
   assert.match(headerSource, /!flowSessionQuiet/);
   assert.doesNotMatch(headerSource, /broadScanEnabled\s*\?\s*"loading"/);
@@ -1811,7 +1819,7 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
     /const signalMonitorDisplayReady = Boolean\([\s\S]*?\n  \);/,
   )?.[0];
   const eventsReadyBlock = source.match(
-    /const signalMonitorEventsReady = Boolean\([\s\S]*?\n  \);/,
+    /const signalMonitorEventsReady = [^\n]+;/,
   )?.[0];
   const matrixReadyBlock = source.match(
     /const signalMatrixRuntimeReady = Boolean\([\s\S]*?\n  \);/,
@@ -1823,16 +1831,24 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
     new URL("./PlatformScreenRouter.jsx", import.meta.url),
     "utf8",
   );
+  const signalsScreenSource = readFileSync(
+    new URL("../../screens/SignalsScreen.jsx", import.meta.url),
+    "utf8",
+  );
 
   assert.match(source, /SIGNAL_MONITOR_DISPLAY_POLL_MS\s*=\s*15_000/);
   assert.match(source, /const signalMonitorDisplayPollMs = Math\.min\(/);
   assert.match(source, /const signalMonitorRuntimePollMs = Math\.max/);
   assert.match(source, /SIGNAL_MATRIX_TIMEFRAMES\s*=\s*\["1m", "2m", "5m", "15m", "1h"\]/);
   assert.doesNotMatch(source, /SIGNAL_MATRIX_AUTOMATIC_TIMEFRAMES/);
+  assert.match(source, /const signalMonitorForegroundReady = Boolean/);
+  assert.match(source, /signalMatrixRequestActive && pageVisible/);
   assert.match(source, /const signalMonitorDisplayReady = Boolean/);
-  assert.match(displayReadyBlock ?? "", /firstScreenReady/);
+  assert.match(displayReadyBlock ?? "", /firstScreenReady \|\| signalMonitorForegroundReady/);
   assert.doesNotMatch(displayReadyBlock ?? "", /backgroundResumeReady/);
-  assert.match(eventsReadyBlock ?? "", /backgroundResumeReady\.signalDisplay/);
+  assert.match(source, /const SIGNAL_MONITOR_EVENT_HISTORY_LIMIT = 500/);
+  assert.match(eventsReadyBlock ?? "", /signalMonitorDisplayReady/);
+  assert.doesNotMatch(eventsReadyBlock ?? "", /backgroundResumeReady/);
   assert.match(source, /buildSignalMatrixRequestPlan/);
   assert.match(source, /const normalizeSignalMatrixRequestTimeframes =/);
   assert.match(source, /signalMatrixStatesEqual/);
@@ -1841,6 +1857,13 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.match(source, /signalMonitorEventsQuery\.data\?\.events \|\| EMPTY_SIGNAL_MONITOR_EVENTS/);
   assert.match(source, /signalMonitorProfile=\{signalMonitorProfile\}/);
   assert.match(source, /signalMonitorEvents=\{signalMonitorEvents\}/);
+  assert.match(source, /signalMonitorEventsLoaded=\{Boolean\(/);
+  assert.match(routerSource, /signalMonitorEvents=\{signalMonitorEvents\}/);
+  assert.match(routerSource, /signalMonitorEventsLoaded=\{signalMonitorEventsLoaded\}/);
+  assert.match(signalsScreenSource, /signalMonitorEvents = \[\]/);
+  assert.match(signalsScreenSource, /const eventsQueryEnabled = Boolean\(active && !hasProvidedSignalMonitorEvents\)/);
+  assert.match(signalsScreenSource, /enabled:\s*eventsQueryEnabled/);
+  assert.match(signalsScreenSource, /providedSignalMonitorEvents\.slice\(0, SIGNALS_EVENT_LIMIT\)/);
   assert.match(source, /const signalMonitorStateUniverseSymbols =\s*Array\.isArray\(signalMonitorStateQuery\.data\?\.universeSymbols\)/);
   assert.match(source, /const signalMonitorDisplaySymbols = useMemo/);
   assert.match(source, /buildHeaderSignalContextSymbols/);
@@ -1851,12 +1874,17 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   );
   assert.match(source, /useWorkspaceLeadership/);
   assert.match(source, /const platformWorkVisible = Boolean\(pageVisible && workspaceLeader && !safeQaMode\)/);
+  assert.match(source, /const signalMatrixRequestActive = screen === "signals" \|\| screen === "algo"/);
   assert.match(source, /const signalsScreenSafeWorkVisible = Boolean/);
   assert.match(source, /safeQaMode && pageVisible && workspaceLeader && screen === "signals"/);
+  assert.match(source, /const signalMatrixForegroundWorkVisible = Boolean/);
+  assert.match(source, /pageVisible && signalMatrixRequestActive/);
   assert.match(source, /const signalMonitorWorkVisible = Boolean/);
-  assert.match(source, /platformWorkVisible \|\| signalsScreenSafeWorkVisible/);
+  assert.match(source, /platformWorkVisible \|\|[\s\S]*signalsScreenSafeWorkVisible/);
+  assert.match(source, /signalsScreenSafeWorkVisible \|\|\s*signalMatrixForegroundWorkVisible/);
+  assert.match(source, /const signalMatrixRequestClientRole =\s*workspaceLeader \|\| signalMatrixForegroundWorkVisible \? "leader" : "follower"/);
+  assert.match(source, /clientRole:\s*signalMatrixRequestClientRole/);
   assert.match(source, /signalMatrixUniverseSymbols/);
-  assert.match(source, /const signalMatrixRequestActive = screen === "signals" \|\| screen === "algo"/);
   assert.match(source, /if \(signalMatrixRequestActive\) \{\s*return;\s*\}/);
   assert.match(matrixSymbolSetsBlock ?? "", /buildSignalMatrixSymbolSets/);
   assert.match(matrixSymbolSetsBlock ?? "", /visibleWatchlistSymbols:\s*visibleWatchlistMarketDataSymbols/);
@@ -1874,9 +1902,15 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.match(source, /server\?\.effectivePressureLevel/);
   assert.match(source, /getMemoryPressureSnapshot\(\)/);
   assert.match(source, /liveSignalMatrixPressureLevel/);
+  assert.match(source, /const activeSignalMatrixPressureLevel =\s*signalMatrixRequestActive && signalMatrixPressureLevel !== "critical"\s*\? "normal"\s*:\s*signalMatrixPressureLevel/);
+  assert.match(source, /const liveActiveSignalMatrixPressureLevel =\s*signalMatrixRequestActive && liveSignalMatrixPressureLevel !== "critical"\s*\? "normal"\s*:\s*liveSignalMatrixPressureLevel/);
   assert.match(source, /liveSignalMatrixRequestTaskLimit/);
-  assert.match(source, /resolveSignalMatrixActiveScreenRequestTaskLimit\(\s*liveSignalMatrixPressureLevel/);
+  assert.match(source, /resolveSignalMatrixActiveScreenRequestTaskLimit\(\s*liveActiveSignalMatrixPressureLevel/);
+  assert.match(source, /if \(!signalMatrixRequestActive \|\| !signalMatrixUniverseSymbols\.length\) \{/);
+  assert.doesNotMatch(source, /ACTIVE_SIGNAL_MATRIX_TIMEFRAME_SYMBOL_LIMITS/);
+  assert.doesNotMatch(source, /timeframeSymbolLimits:/);
   assert.match(source, /const signalMatrixPressureCaps = useMemo/);
+  assert.match(source, /signalMatrixPressureCaps\.signalDisplayPollMinMs/);
   assert.match(source, /signalMatrixPressureCaps\.signalMatrixPollMinMs/);
   assert.match(source, /pressureLevel:\s*signalMatrixPressureLevel/);
   assert.match(source, /resolveSignalMatrixActiveScreenRequestSymbolLimit/);
@@ -1887,6 +1921,10 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.match(source, /activeScreenRequestTaskLimit:\s*signalMatrixActiveScreenRequestTaskLimit/);
   assert.match(source, /requestSymbolLimit:\s*signalMatrixRequestSymbolLimit/);
   assert.match(source, /requestTaskLimit:\s*signalMatrixRequestTaskLimit/);
+  assert.match(source, /selectedTimeframe:\s*lastPlan\?\.coverage\?\.selectedTimeframe/);
+  assert.match(source, /baseRequestSymbolLimit:\s*[\s\S]*lastPlan\?\.coverage\?\.baseRequestSymbolLimit/);
+  assert.match(source, /timeframeSymbolLimit:\s*[\s\S]*lastPlan\?\.coverage\?\.timeframeSymbolLimit/);
+  assert.match(source, /effectiveRequestSymbolLimit:\s*[\s\S]*lastPlan\?\.coverage\?\.effectiveRequestSymbolLimit/);
   assert.match(source, /requestTimeframes:\s*signalMatrixRequestTimeframes/);
   assert.match(source, /busyQueueDelayMs:\s*signalMatrixBusyQueueDelayMs/);
   assert.match(source, /catchupDelayMs:\s*signalMatrixCatchupDelayMs/);
@@ -1899,6 +1937,7 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.match(source, /const signalMatrixSuggestedSignalSymbols =\s*signalMatrixSymbolSets\.suggestedSignalSymbols/);
   assert.match(source, /signalMatrixBackgroundReady/);
   assert.match(source, /const signalMatrixForegroundReady =\s*signalMatrixRequestActive \|\| signalMatrixBackgroundReady/);
+  assert.match(source, /const signalMatrixStartupProtectionActive =\s*startupProtectionActive && !signalMatrixRequestActive/);
   assert.match(source, /const signalMatrixPriorityReady = Boolean/);
   assert.match(source, /signalMatrixForegroundReady &&/);
   assert.match(source, /const signalMatrixRuntimeReady = Boolean/);
@@ -1917,6 +1956,7 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.match(source, /signalMatrixEvaluationStartedAtRef\.current = Date\.now\(\)/);
   assert.match(source, /signalMatrixRunRef\.current\?\.\(\)/);
   assert.match(source, /bootstrapActive:\s*signalHydrationBootstrapActive/);
+  assert.match(source, /startupProtectionActive:\s*signalMatrixStartupProtectionActive/);
   assert.ok(
     source.indexOf("const signalHydrationBootstrapActive = Boolean") <
       source.indexOf("window.__PYRUS_SIGNAL_MATRIX_SNAPSHOT__ = snapshot"),
@@ -1928,7 +1968,7 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   );
   assert.match(matrixReadyBlock ?? "", /signalMonitorDisplayReady/);
   assert.match(matrixReadyBlock ?? "", /signalMonitorWorkVisible/);
-  assert.match(matrixReadyBlock ?? "", /!startupProtectionActive/);
+  assert.match(matrixReadyBlock ?? "", /!signalMatrixStartupProtectionActive/);
   assert.match(matrixReadyBlock ?? "", /signalMatrixPriorityReady \|\| signalMatrixBackgroundReady/);
   assert.match(matrixReadyBlock ?? "", /signalMatrixBackgroundReady/);
   assert.doesNotMatch(matrixReadyBlock ?? "", /screenWarmupPhase === "ready"/);
@@ -1981,7 +2021,7 @@ test("platform signal monitor uses paper profile for all header-lane signal quer
   );
   assert.match(
     source,
-    /getListSignalMonitorEventsQueryKey\(\{\s*environment:\s*signalMonitorEnvironment,\s*limit:\s*100,/,
+    /getListSignalMonitorEventsQueryKey\(\{\s*environment:\s*signalMonitorEnvironment,\s*limit:\s*SIGNAL_MONITOR_EVENT_HISTORY_LIMIT,/,
   );
   assert.match(
     source,
@@ -2560,12 +2600,42 @@ test("market data subscription provider does not fetch quote snapshots while hid
     /const quotesQuery = useGetQuoteSnapshots\([\s\S]*?\n  \);/,
   )?.[0];
 
-  assert.match(quotesQuery ?? "", /enabled:\s*Boolean\(pageVisible && quoteSymbols\.length > 0\)/);
+  assert.match(source, /const streamCoveredQuoteSymbols = useMemo/);
+  assert.match(source, /const restQuoteSymbols = useMemo/);
+  assert.match(source, /const restQuoteSymbolsKey = useMemo/);
+  assert.match(quotesQuery ?? "", /\{ symbols: restQuoteSymbolsKey \}/);
+  assert.match(quotesQuery ?? "", /enabled:\s*Boolean\(pageVisible && restQuoteSymbolsKey\)/);
+  assert.doesNotMatch(quotesQuery ?? "", /quoteSymbols\.length > 0/);
   assert.match(source, /applyRuntimeQuoteSnapshots/);
   assert.match(source, /onQuotes:\s*handleStreamQuotes/);
   assert.match(source, /usePositionMarketDataSymbols/);
   assert.match(source, /usePositionQuoteSnapshotStream/);
   assert.match(source, /positionQuoteStreamRuntimeActive/);
+});
+
+test("trade quote runtime only fetches REST snapshots as stream fallback", () => {
+  const source = readFileSync(
+    new URL("../../screens/TradeScreen.jsx", import.meta.url),
+    "utf8",
+  );
+  const quotesQuery = source.match(
+    /const quoteQuery = useGetQuoteSnapshots\([\s\S]*?\n  \);/,
+  )?.[0];
+  const quoteStream = source.match(
+    /useIbkrQuoteSnapshotStream\(\{[\s\S]*?\n  \}\);/,
+  )?.[0];
+
+  assert.match(source, /useRuntimeTickerSnapshots/);
+  assert.match(source, /const TRADE_QUOTE_STREAM_FALLBACK_DELAY_MS = 2_000/);
+  assert.match(source, /const runtimeSnapshotsBySymbol = useRuntimeTickerSnapshots\(runtimeSymbols\)/);
+  assert.match(source, /const streamQuoteRuntimeActive = Boolean/);
+  assert.match(source, /const streamRuntimeQuotesReady = useMemo/);
+  assert.match(source, /const restQuoteSymbols = useMemo/);
+  assert.match(source, /hasUsableTradeQuoteSnapshot\(runtimeSnapshotsBySymbol\[symbol\]\)/);
+  assert.match(quotesQuery ?? "", /\{ symbols: restQuoteSymbolsKey \}/);
+  assert.match(quotesQuery ?? "", /enabled:\s*Boolean\(enabled && restQuoteSymbolsKey\)/);
+  assert.match(quoteStream ?? "", /enabled:\s*streamQuoteRuntimeActive/);
+  assert.doesNotMatch(quotesQuery ?? "", /symbolsParam/);
 });
 
 test("market sparklines render the reduced high-detail point budget", () => {
@@ -2594,6 +2664,10 @@ test("market sparklines render the reduced high-detail point budget", () => {
   assert.match(configSource, /export const TABLE_SPARKLINE_COMPACT_HEIGHT = 12;/);
   assert.match(configSource, /export const buildDetailedFallbackSparklineData = /);
   assert.match(source, /SPARKLINE_RENDER_POINT_LIMIT/);
+  assert.match(source, /getStoredBrokerMinuteAggregates/);
+  assert.match(source, /const aggregateSparklineBarsBySymbol = useMemo/);
+  assert.match(source, /const historySparklineSymbols = useMemo/);
+  assert.match(source, /const sparklineBarsBySymbol = useMemo/);
   assert.match(watchlistSource, /buildDetailedFallbackSparklineData/);
   assert.match(watchlistSource, /width=\{TABLE_SPARKLINE_WIDTH\}/);
   assert.match(watchlistSource, /height=\{TABLE_SPARKLINE_HEIGHT\}/);
@@ -2662,7 +2736,12 @@ test("operational pages mount visible shells without artificial route delays", (
   assert.match(flowSource, /const shouldRenderDeferredPanels = showDeferredPanels/);
   assert.match(flowSource, /enabled:\s*Boolean\(isVisible\)/);
   assert.match(flowSource, /refetchInterval:\s*isVisible && !livePaused \? 60_000 : false/);
-  assert.match(flowSource, /isVisible && !livePaused \? FLOW_PREMIUM_WIDGET_REFRESH_MS : false/);
+  assert.match(flowSource, /const premiumDistributionQueryEnabled = Boolean/);
+  assert.match(flowSource, /enabled:\s*premiumDistributionQueryEnabled/);
+  assert.match(
+    flowSource,
+    /premiumDistributionQueryEnabled && !livePaused\s*\?\s*FLOW_PREMIUM_WIDGET_REFRESH_MS\s*:\s*false/,
+  );
   assert.match(tradeSource, /const TradeScreenInner =/);
   assert.doesNotMatch(tradeSource, /TradeActivationFallback/);
   assert.doesNotMatch(tradeSource, /data-testid="trade-screen-activation-shell"/);
@@ -2674,6 +2753,7 @@ test("operational pages mount visible shells without artificial route delays", (
   assert.match(tradeSource, /analysisVisible:\s*Boolean\(visibleInteractive\)/);
   assert.doesNotMatch(accountSource, /const ACCOUNT_ACTIVATION_DELAY_MS = 90/);
   assert.match(accountSource, /const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 1_000/);
+  assert.match(accountSource, /const ACCOUNT_INACTIVE_PREWARM_FALLBACK_DELAY_MS = 5_000/);
   assert.match(accountSource, /const AccountScreenInner =/);
   assert.doesNotMatch(accountSource, /data-testid="account-screen-activation-shell"/);
   assert.doesNotMatch(accountSource, /data-testid="account-screen-suspended"/);
@@ -2686,8 +2766,27 @@ test("operational pages mount visible shells without artificial route delays", (
   assert.match(accountSource, /enabled: ordersPanelQueriesEnabled/);
   assert.match(accountSource, /enabled: Boolean\(!shadowMode && supportPanelQueriesEnabled\)/);
   assert.match(accountSource, /enabled: secondaryAccountQueriesEnabled/);
+  assert.match(accountSource, /const inactiveAccountPageStreamEnabled = Boolean/);
+  assert.match(accountSource, /const inactiveAccountPageStreamFreshness = useAccountPageSnapshotStream/);
+  assert.match(accountSource, /inactiveAccountPrewarmFallbackReady/);
+  assert.match(accountSource, /const accountActivePrefetchEnabled = Boolean/);
+  assert.match(accountSource, /if \(!accountActivePrefetchEnabled\) \{/);
+  assert.match(accountSource, /!accountPageStreamFreshness\.accountCriticalFresh/);
   assert.match(algoSource, /const ALGO_CRITICAL_FALLBACK_DELAY_MS = 1_000/);
-  assert.match(algoSource, /criticalReady: algoCriticalReady/);
+  assert.match(algoSource, /criticalReady: Boolean\(isVisible\)/);
+  assert.match(
+    algoSource,
+    /backgroundAllowed: Boolean\(isVisible && !safeQaMode && algoDerivedReady\)/,
+  );
+  assert.match(algoSource, /const algoBackgroundQueriesEnabled = Boolean/);
+  assert.match(
+    algoSource,
+    /enabled: Boolean\(\s*algoBackgroundQueriesEnabled && focusedDeployment\?\.id,\s*\)/,
+  );
+  assert.doesNotMatch(
+    algoSource,
+    /algoCriticalQueriesEnabled && focusedDeployment\?\.id && !safeQaMode/,
+  );
   assert.match(algoSource, /markRouteDataTiming\("algo", stage, detail\)/);
   assert.match(researchSource, /criticalReady: Boolean\(isVisible\)/);
   assert.doesNotMatch(researchSource, /const criticalReady = Boolean\(isVisible && researchMetaReady\)/);

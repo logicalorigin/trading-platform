@@ -43,10 +43,12 @@ import {
 } from "./platform";
 import { notifyAlgoCockpitChanged } from "./algo-cockpit-events";
 import {
+  getApiResourcePressureSnapshot,
   updateApiResourcePressure,
   type ApiResourcePressureLevel,
 } from "./resource-pressure";
 import {
+  getCurrentStockMinuteAggregates,
   getRecentStockMinuteAggregateHistory,
   subscribeMutableStockMinuteAggregates,
   type StockMinuteAggregateSubscription,
@@ -125,8 +127,8 @@ const SIGNAL_MONITOR_COMPLETED_BARS_CACHE_MAX_ENTRIES = 512;
 const SIGNAL_MONITOR_STALE_RETRY_BROKER_WINDOW_MINUTES = 240;
 const SIGNAL_MONITOR_STALE_RETRY_BARS = 64;
 const SIGNAL_MONITOR_MATRIX_BARS_LIMIT = 240;
-const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY = "native_timeframes";
-const SIGNAL_MONITOR_MATRIX_BAR_LOAD_TIMEOUT_MS = 2_500;
+const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY = "native_timeframes_live_retry";
+const SIGNAL_MONITOR_MATRIX_BAR_LOAD_TIMEOUT_MS = 6_000;
 const SIGNAL_MONITOR_MATRIX_STREAM_KEEPALIVE_MS = 5 * 60_000;
 const DEFAULT_SIGNAL_MONITOR_BAR_SOURCE_POLICY: SignalMonitorBarSourcePolicy =
   "mixed";
@@ -303,6 +305,37 @@ function cappedSignalMatrixSettings(
     maxSymbols: Math.min(configuredMaxSymbols, caps.maxSymbols),
     concurrency: Math.min(configuredConcurrency, caps.concurrency),
   };
+}
+
+function shouldBypassSoftSignalMonitorMatrixPressure(input: {
+  clientRole?: SignalMonitorMatrixClientRole;
+  requestOrigin?: SignalMonitorMatrixRequestOrigin;
+  symbols?: string[];
+}) {
+  return (
+    input.clientRole === "leader" &&
+    (input.requestOrigin === "startup" || input.requestOrigin === "poll") &&
+    Array.isArray(input.symbols) &&
+    input.symbols.length > 0
+  );
+}
+
+function resolveSignalMonitorMatrixConcurrency(input: {
+  matrixSettings: ReturnType<typeof cappedSignalMatrixSettings>;
+  request: {
+    clientRole?: SignalMonitorMatrixClientRole;
+    requestOrigin?: SignalMonitorMatrixRequestOrigin;
+    symbols?: string[];
+  };
+  symbolCount: number;
+}) {
+  if (
+    input.matrixSettings.pressure !== "critical" &&
+    shouldBypassSoftSignalMonitorMatrixPressure(input.request)
+  ) {
+    return Math.max(input.matrixSettings.concurrency, input.symbolCount);
+  }
+  return input.matrixSettings.concurrency;
 }
 
 function signalMonitorMatrixTimeoutError(input: {
@@ -773,8 +806,11 @@ function shouldServeSignalMonitorMatrixFromCacheOnly(input: {
   requestOrigin?: SignalMonitorMatrixRequestOrigin;
 }) {
   return (
-    input.clientRole === "follower" &&
-    (input.requestOrigin === "startup" || input.requestOrigin === "poll")
+    (input.clientRole === "follower" &&
+      (input.requestOrigin === "startup" || input.requestOrigin === "poll")) ||
+    (input.clientRole === "leader" &&
+      (input.requestOrigin === "startup" || input.requestOrigin === "poll") &&
+      getApiResourcePressureSnapshot().level === "critical")
   );
 }
 
@@ -1717,6 +1753,34 @@ function aggregateStockMinuteAggregatesForSignalMonitorBars(input: {
   });
 }
 
+function mergeSignalMonitorStockMinuteAggregates(
+  aggregates: StockMinuteAggregateMessage[],
+  limit = Number.MAX_SAFE_INTEGER,
+): StockMinuteAggregateMessage[] {
+  const byMinute = new Map<string, StockMinuteAggregateMessage>();
+  aggregates.forEach((aggregate) => {
+    const symbol = normalizeSymbol(aggregate?.symbol);
+    const startMs = Number(aggregate?.startMs);
+    if (!symbol || !Number.isFinite(startMs)) {
+      return;
+    }
+    byMinute.set(`${symbol}:${startMs}`, {
+      ...aggregate,
+      symbol,
+      startMs,
+    });
+  });
+  const normalizedLimit = positiveInteger(
+    limit,
+    Number.MAX_SAFE_INTEGER,
+    1,
+    Number.MAX_SAFE_INTEGER,
+  );
+  return Array.from(byMinute.values())
+    .sort((left, right) => left.startMs - right.startMs)
+    .slice(-normalizedLimit);
+}
+
 function loadSignalMonitorStreamCompletedBars(input: {
   symbol: string;
   timeframe: SignalMonitorMatrixTimeframe;
@@ -1739,12 +1803,22 @@ function loadSignalMonitorStreamCompletedBars(input: {
   const sinceMs =
     input.evaluatedAt.getTime() -
     Math.min(4 * 60 * 60_000, historyLimit * TIMEFRAME_MS["1m"]);
-  const aggregates = getRecentStockMinuteAggregateHistory({
+  const untilMs = input.evaluatedAt.getTime();
+  const historyAggregates = getRecentStockMinuteAggregateHistory({
     symbol: input.symbol,
     sinceMs,
-    untilMs: input.evaluatedAt.getTime(),
+    untilMs,
     limit: historyLimit,
   });
+  const currentAggregates = getCurrentStockMinuteAggregates([input.symbol])
+    .filter((aggregate) => {
+      const startMs = Number(aggregate?.startMs);
+      return Number.isFinite(startMs) && startMs >= sinceMs && startMs <= untilMs;
+    });
+  const aggregates = mergeSignalMonitorStockMinuteAggregates(
+    [...historyAggregates, ...currentAggregates],
+    historyLimit,
+  );
 
   return aggregateStockMinuteAggregatesForSignalMonitorBars({
     aggregates,
@@ -3421,7 +3495,6 @@ async function evaluateSignalMonitorMatrixSymbol(input: {
             timeframe,
             evaluatedAt: input.evaluatedAt,
             limit: SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
-            retryStale: false,
             priority: SIGNAL_MONITOR_MATRIX_BARS_PRIORITY,
           }),
           {
@@ -3474,6 +3547,156 @@ async function evaluateSignalMonitorMatrixSymbol(input: {
   };
 }
 
+function isHydratedSignalMonitorMatrixStateForCoverage(
+  state: unknown,
+  timeframes: readonly SignalMonitorMatrixTimeframe[],
+): state is {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+} {
+  if (!state || typeof state !== "object") {
+    return false;
+  }
+  const record = state as {
+    active?: unknown;
+    currentSignalAt?: unknown;
+    latestBarAt?: unknown;
+    status?: unknown;
+    symbol?: unknown;
+    timeframe?: unknown;
+  };
+  const symbol = normalizeSymbol(record.symbol as string);
+  const timeframe = String(record.timeframe || "") as SignalMonitorMatrixTimeframe;
+  const status = String(record.status || "ok").trim().toLowerCase();
+  const latestBarAt = dateOrNull(record.latestBarAt);
+  const currentSignalAt = dateOrNull(record.currentSignalAt);
+  return Boolean(
+    symbol &&
+      timeframes.includes(timeframe) &&
+      record.active !== false &&
+      status === "ok" &&
+      (latestBarAt || currentSignalAt),
+  );
+}
+
+function signalMonitorMatrixStateActivityMs(state: {
+  currentSignalAt?: unknown;
+  lastEvaluatedAt?: unknown;
+  latestBarAt?: unknown;
+} | null | undefined): number {
+  return Math.max(
+    dateOrNull(state?.currentSignalAt)?.getTime() ?? 0,
+    dateOrNull(state?.lastEvaluatedAt)?.getTime() ?? 0,
+    dateOrNull(state?.latestBarAt)?.getTime() ?? 0,
+  );
+}
+
+function isUsableSignalMonitorMatrixState(state: unknown): boolean {
+  return isHydratedSignalMonitorMatrixStateForCoverage(
+    state,
+    SIGNAL_MONITOR_MATRIX_TIMEFRAMES,
+  );
+}
+
+function primarySignalStateToMatrixState(
+  state: ReturnType<typeof stateToResponseForSnapshot>,
+): SignalMonitorMatrixStateResult {
+  const direction =
+    state.currentSignalDirection === "buy" || state.currentSignalDirection === "sell"
+      ? state.currentSignalDirection
+      : null;
+  return {
+    id: state.id,
+    profileId: state.profileId,
+    symbol: state.symbol,
+    timeframe: state.timeframe,
+    currentSignalDirection: direction,
+    currentSignalAt: state.currentSignalAt,
+    currentSignalPrice: state.currentSignalPrice,
+    latestBarAt: state.latestBarAt,
+    barsSinceSignal: state.barsSinceSignal,
+    fresh: state.fresh,
+    status: state.status,
+    active: state.active,
+    lastEvaluatedAt:
+      dateOrNull(state.lastEvaluatedAt) ??
+      dateOrNull(state.latestBarAt) ??
+      new Date(0),
+    lastError: state.lastError,
+    indicatorSnapshot: null,
+  } as SignalMonitorMatrixStateResult;
+}
+
+function hydrateSignalMonitorMatrixStatesFromPrimaryStates<
+  T extends {
+    states: SignalMonitorMatrixStateResult[];
+    timeframes: SignalMonitorMatrixTimeframe[];
+  },
+>(
+  value: T,
+  input: {
+    primaryStates: ReturnType<typeof stateToResponseForSnapshot>[];
+    requestedSymbols: string[];
+  },
+): T {
+  const requestedSymbols = new Set(
+    input.requestedSymbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
+  );
+  const stateByKey = new Map<string, SignalMonitorMatrixStateResult>();
+  value.states.forEach((state) => {
+    const symbol = normalizeSymbol(state.symbol);
+    const timeframe = String(state.timeframe || "") as SignalMonitorMatrixTimeframe;
+    if (!symbol || !timeframe) {
+      return;
+    }
+    stateByKey.set(`${symbol}:${timeframe}`, state);
+  });
+
+  input.primaryStates.forEach((primaryState) => {
+    const symbol = normalizeSymbol(primaryState.symbol);
+    const timeframe = String(
+      primaryState.timeframe || "",
+    ) as SignalMonitorMatrixTimeframe;
+    if (
+      !symbol ||
+      !requestedSymbols.has(symbol) ||
+      !value.timeframes.includes(timeframe) ||
+      !isUsableSignalMonitorMatrixState(primaryState)
+    ) {
+      return;
+    }
+    const key = `${symbol}:${timeframe}`;
+    const current = stateByKey.get(key) ?? null;
+    if (
+      isUsableSignalMonitorMatrixState(current) &&
+      signalMonitorMatrixStateActivityMs(current) >=
+        signalMonitorMatrixStateActivityMs(primaryState)
+    ) {
+      return;
+    }
+    stateByKey.set(key, primarySignalStateToMatrixState(primaryState));
+  });
+
+  const hydratedStates = Array.from(stateByKey.values());
+  if (hydratedStates.length === value.states.length) {
+    let unchanged = true;
+    for (let index = 0; index < hydratedStates.length; index += 1) {
+      if (hydratedStates[index] !== value.states[index]) {
+        unchanged = false;
+        break;
+      }
+    }
+    if (unchanged) {
+      return value;
+    }
+  }
+
+  return {
+    ...value,
+    states: hydratedStates,
+  };
+}
+
 function withSignalMonitorMatrixMetadata<
   T extends {
     states: unknown[];
@@ -3507,7 +3730,7 @@ function withSignalMonitorMatrixMetadata<
   ).filter(Boolean);
   const stateBySymbol = new Map<string, Set<SignalMonitorMatrixTimeframe>>();
   value.states.forEach((state) => {
-    if (!state || typeof state !== "object") {
+    if (!isHydratedSignalMonitorMatrixStateForCoverage(state, value.timeframes)) {
       return;
     }
     const symbol = normalizeSymbol(
@@ -3516,10 +3739,7 @@ function withSignalMonitorMatrixMetadata<
     const timeframe = String(
       (state as { timeframe?: unknown }).timeframe || "",
     ) as SignalMonitorMatrixTimeframe;
-    const latestBarAt = dateOrNull(
-      (state as { latestBarAt?: unknown }).latestBarAt,
-    );
-    if (!symbol || !value.timeframes.includes(timeframe) || !latestBarAt) {
+    if (!symbol || !value.timeframes.includes(timeframe)) {
       return;
     }
     const set =
@@ -3595,6 +3815,87 @@ function signalMonitorMatrixDisabled(input: {
   return !input.profile.enabled
     ? disabledSignalMonitorMatrixResponse(input)
     : null;
+}
+
+async function readCurrentSignalMonitorPrimaryMatrixStates(input: {
+  profile: DbSignalMonitorProfile;
+  requestedSymbols: string[];
+  timeframes: SignalMonitorMatrixTimeframe[];
+  evaluatedAt: Date;
+}): Promise<ReturnType<typeof stateToResponseForSnapshot>[]> {
+  const profileTimeframe = resolveSignalMonitorTimeframe(input.profile.timeframe);
+  if (!input.timeframes.includes(profileTimeframe)) {
+    return [];
+  }
+  const requestedSymbols = new Set(
+    input.requestedSymbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
+  );
+  if (!requestedSymbols.size) {
+    return [];
+  }
+  const states = await db
+    .select()
+    .from(signalMonitorSymbolStatesTable)
+    .where(
+      and(
+        eq(signalMonitorSymbolStatesTable.profileId, input.profile.id),
+        eq(signalMonitorSymbolStatesTable.timeframe, profileTimeframe),
+        eq(signalMonitorSymbolStatesTable.active, true),
+      ),
+    );
+
+  return states
+    .filter((state) => {
+      const symbol = normalizeSymbol(state.symbol);
+      return (
+        requestedSymbols.has(symbol) &&
+        isSignalMonitorStateCurrentForLane({
+          state,
+          timeframe: profileTimeframe,
+          evaluatedAt: input.evaluatedAt,
+        })
+      );
+    })
+    .map((state) =>
+      stateToResponseForSnapshot(state, {
+        timeframe: profileTimeframe,
+        evaluatedAt: input.evaluatedAt,
+        markNonCurrentStale: true,
+      }),
+    );
+}
+
+async function hydrateSignalMonitorMatrixResponseFromStoredPrimaryStates<
+  T extends {
+    states: SignalMonitorMatrixStateResult[];
+    timeframes: SignalMonitorMatrixTimeframe[];
+  },
+>(
+  value: T,
+  input: {
+    profile: DbSignalMonitorProfile;
+    requestedSymbols: string[];
+    evaluatedAt: Date;
+  },
+): Promise<T> {
+  try {
+    const primaryStates = await readCurrentSignalMonitorPrimaryMatrixStates({
+      profile: input.profile,
+      requestedSymbols: input.requestedSymbols,
+      timeframes: value.timeframes,
+      evaluatedAt: input.evaluatedAt,
+    });
+    return hydrateSignalMonitorMatrixStatesFromPrimaryStates(value, {
+      primaryStates,
+      requestedSymbols: input.requestedSymbols,
+    });
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      warnSignalMonitorDbUnavailable(error);
+      return value;
+    }
+    throw error;
+  }
 }
 
 async function evaluateSignalMonitorRuntimeSymbol(input: {
@@ -3887,6 +4188,11 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
     return disabledResponse;
   }
   primeSignalMonitorMatrixStockAggregateStream(symbols);
+  const concurrency = resolveSignalMonitorMatrixConcurrency({
+    matrixSettings,
+    request: input,
+    symbolCount: symbols.length,
+  });
   let cacheStatus: SignalMonitorMatrixCacheStatus = "miss";
   const cacheKey = [
     "runtime-signal",
@@ -3897,7 +4203,7 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
     input.watchlistId ?? "default",
     [...symbols].sort().join(","),
     timeframes.join(","),
-    matrixSettings.concurrency,
+    concurrency,
     matrixSettings.pressure,
     profile.freshWindowBars,
     JSON.stringify(asRecord(profile.pyrusSignalsSettings)),
@@ -3915,36 +4221,9 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
     skippedSymbols: string[];
     sourceRequestCount: number;
   };
-  const cacheOnlyCached = shouldServeSignalMonitorMatrixFromCacheOnly(input)
-    ? getRuntimeSignalMonitorEvaluationCacheValue<MatrixRuntimeResponse>(
-        cacheKey,
-      )
-    : null;
-  if (shouldServeSignalMonitorMatrixFromCacheOnly(input)) {
-    const response = cacheOnlyCached?.value ?? {
-      profile: profileToResponse(profile),
-      states: [],
-      evaluatedAt: new Date(),
-      timeframes,
-      truncated,
-      skippedSymbols,
-      sourceRequestCount: 0,
-    };
-    return withSignalMonitorMatrixMetadata(response, {
-      cacheStatus: cacheOnlyCached?.cacheStatus ?? "miss",
-      requestedSymbols: symbols,
-      totalSymbols: symbols.length + skippedSymbols.length,
-      taskCount: symbols.length * timeframes.length,
-      startedAt,
-      automaticRequest,
-    });
-  }
-
-  const response = await withRuntimeSignalMonitorEvaluationCache(
-    cacheKey,
-    async () => {
+  const buildFreshRuntimeMatrixResponse =
+    async (): Promise<MatrixRuntimeResponse> => {
       const evaluatedAt = new Date();
-      const concurrency = matrixSettings.concurrency;
       const states: SignalMonitorMatrixStateResult[] = [];
       let sourceRequestCount = 0;
 
@@ -3975,7 +4254,35 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
         skippedSymbols,
         sourceRequestCount,
       };
-    },
+    };
+  const cacheOnlyCached = shouldServeSignalMonitorMatrixFromCacheOnly(input)
+    ? getRuntimeSignalMonitorEvaluationCacheValue<MatrixRuntimeResponse>(
+        cacheKey,
+      )
+    : null;
+  if (shouldServeSignalMonitorMatrixFromCacheOnly(input)) {
+    const response = cacheOnlyCached?.value ?? {
+      profile: profileToResponse(profile),
+      states: [],
+      evaluatedAt: new Date(),
+      timeframes,
+      truncated,
+      skippedSymbols,
+      sourceRequestCount: 0,
+    };
+    return withSignalMonitorMatrixMetadata(response, {
+      cacheStatus: cacheOnlyCached?.cacheStatus ?? "miss",
+      requestedSymbols: symbols,
+      totalSymbols: symbols.length + skippedSymbols.length,
+      taskCount: symbols.length * timeframes.length,
+      startedAt,
+      automaticRequest,
+    });
+  }
+
+  const response = await withRuntimeSignalMonitorEvaluationCache(
+    cacheKey,
+    buildFreshRuntimeMatrixResponse,
     {
       onCacheStatus: (status) => {
         cacheStatus = status;
@@ -4036,7 +4343,11 @@ export async function evaluateSignalMonitorMatrix(input: {
     });
   const timeframes = parseSignalMatrixTimeframes(input.timeframes);
   const evaluatedAt = new Date();
-  const concurrency = matrixSettings.concurrency;
+  const concurrency = resolveSignalMonitorMatrixConcurrency({
+    matrixSettings,
+    request: input,
+    symbolCount: symbols.length,
+  });
   const startedAt = Date.now();
   const disabledResponse = signalMonitorMatrixDisabled({
     profile,
@@ -4074,6 +4385,38 @@ export async function evaluateSignalMonitorMatrix(input: {
     skippedSymbols: string[];
     sourceRequestCount: number;
   };
+  const buildFreshMatrixResponse = async (): Promise<MatrixResponse> => {
+    const states: SignalMonitorMatrixStateResult[] = [];
+    let sourceRequestCount = 0;
+
+    for (let index = 0; index < symbols.length; index += concurrency) {
+      const batch = symbols.slice(index, index + concurrency);
+      const batchResults = await Promise.all(
+        batch.map((symbol) =>
+          evaluateSignalMonitorMatrixSymbol({
+            profile,
+            symbol,
+            timeframes,
+            evaluatedAt,
+          }),
+        ),
+      );
+      batchResults.forEach((result) => {
+        states.push(...result.states);
+        sourceRequestCount += result.sourceRequestCount;
+      });
+    }
+
+    return {
+      profile: profileToResponse(profile),
+      states,
+      evaluatedAt,
+      timeframes,
+      truncated,
+      skippedSymbols,
+      sourceRequestCount,
+    };
+  };
   const cacheOnlyCached = shouldServeSignalMonitorMatrixFromCacheOnly(input)
     ? getDebouncedSignalMonitorMatrixCacheValue<MatrixResponse>(cacheKey)
     : null;
@@ -4087,7 +4430,13 @@ export async function evaluateSignalMonitorMatrix(input: {
       skippedSymbols,
       sourceRequestCount: 0,
     };
-    return withSignalMonitorMatrixMetadata(response, {
+    const hydratedResponse =
+      await hydrateSignalMonitorMatrixResponseFromStoredPrimaryStates(response, {
+        profile,
+        requestedSymbols: symbols,
+        evaluatedAt,
+      });
+    return withSignalMonitorMatrixMetadata(hydratedResponse, {
       cacheStatus: cacheOnlyCached?.cacheStatus ?? "miss",
       requestedSymbols: symbols,
       totalSymbols: symbols.length + skippedSymbols.length,
@@ -4104,38 +4453,7 @@ export async function evaluateSignalMonitorMatrix(input: {
     debouncedCached?.value ??
     (await withSignalMonitorMatrixEvaluationCache(
       cacheKey,
-      async () => {
-        const states: SignalMonitorMatrixStateResult[] = [];
-        let sourceRequestCount = 0;
-
-        for (let index = 0; index < symbols.length; index += concurrency) {
-          const batch = symbols.slice(index, index + concurrency);
-          const batchResults = await Promise.all(
-            batch.map((symbol) =>
-              evaluateSignalMonitorMatrixSymbol({
-                profile,
-                symbol,
-                timeframes,
-                evaluatedAt,
-              }),
-            ),
-          );
-          batchResults.forEach((result) => {
-            states.push(...result.states);
-            sourceRequestCount += result.sourceRequestCount;
-          });
-        }
-
-        return {
-          profile: profileToResponse(profile),
-          states,
-          evaluatedAt,
-          timeframes,
-          truncated,
-          skippedSymbols,
-          sourceRequestCount,
-        };
-      },
+      buildFreshMatrixResponse,
       {
         onCacheStatus: (status) => {
           cacheStatus = status;
@@ -4145,7 +4463,13 @@ export async function evaluateSignalMonitorMatrix(input: {
   if (debouncedCached) {
     cacheStatus = debouncedCached.cacheStatus;
   }
-  return withSignalMonitorMatrixMetadata(response, {
+  const hydratedResponse =
+    await hydrateSignalMonitorMatrixResponseFromStoredPrimaryStates(response, {
+      profile,
+      requestedSymbols: symbols,
+      evaluatedAt,
+    });
+  return withSignalMonitorMatrixMetadata(hydratedResponse, {
     cacheStatus,
     requestedSymbols: symbols,
     totalSymbols: symbols.length + skippedSymbols.length,
@@ -4290,11 +4614,15 @@ export const __signalMonitorInternalsForTests = {
   resolveSignalMonitorProfileSymbolEvaluationSettings,
   cappedSignalMonitorEvaluationProfile,
   cappedSignalMatrixSettings,
+  resolveSignalMonitorMatrixConcurrency,
+  shouldBypassSoftSignalMonitorMatrixPressure,
   buildSignalMonitorCompletedBarsCacheKey,
   filterSignalMonitorBarsForSourcePolicy,
   isSignalMonitorIbkrBar,
   isSignalMonitorDelayedBar,
   aggregateStockMinuteAggregatesForSignalMonitorBars,
+  mergeSignalMonitorStockMinuteAggregates,
+  hydrateSignalMonitorMatrixStatesFromPrimaryStates,
   loadSignalMonitorStreamCompletedBars,
   isSignalMonitorMatrixBarLoadTimeout,
   evaluateSignalMonitorMatrixStateFromStreamBars,
@@ -4305,6 +4633,7 @@ export const __signalMonitorInternalsForTests = {
   shouldRetrySignalMonitorCompletedBars,
   clearSignalMonitorMatrixEvaluationCache,
   withSignalMonitorMatrixEvaluationCache,
+  withSignalMonitorMatrixMetadata,
   markAutomaticSignalMonitorMatrixRequest,
   shouldServeSignalMonitorMatrixFromCacheOnly,
   getDebouncedSignalMonitorMatrixCacheValue,

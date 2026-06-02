@@ -28,6 +28,11 @@ import {
 } from "lucide-react";
 import { DenseVirtualTable } from "../components/platform/DenseVirtualTable.jsx";
 import {
+  normalizeColumnOrder,
+  orderColumnsById,
+  reorderColumnOrder,
+} from "../components/platform/tableColumnInteractions.js";
+import {
   Badge,
   Card,
   DataUnavailableState,
@@ -63,7 +68,9 @@ import {
   formatQuotePrice,
   formatRelativeTimeShort,
 } from "../lib/formatters";
+import { formatAppTime } from "../lib/timeZone";
 import { useViewport } from "../lib/responsive";
+import { _initialState, persistState } from "../lib/workspaceState";
 import {
   SIGNALS_ROW_STATUS,
   SIGNALS_TABLE_TIMEFRAMES,
@@ -75,7 +82,11 @@ import {
 import {
   buildSignalsMatrixHydrationPlan,
 } from "../features/signals/signalsMatrixHydration.js";
-import { getCurrentSignalDirection } from "../features/signals/signalStateFreshness.js";
+import {
+  getCurrentSignalDirection,
+  isProblemSignalState,
+  isSignalStateCurrent,
+} from "../features/signals/signalStateFreshness.js";
 
 const SIGNALS_EVENT_LIMIT = 250;
 const SIGNAL_STATUS_FILTERS = [
@@ -98,7 +109,38 @@ const SORT_OPTIONS = [
   { value: "bars", label: "Bars" },
   { value: "symbol", label: "Symbol" },
 ];
+
+const isHydratedSignalMatrixState = (state) =>
+  Boolean(
+    state &&
+      isSignalStateCurrent(state) &&
+      (state.latestBarAt || state.currentSignalAt),
+  );
 const SIGNAL_TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "1h", "1d"];
+const SIGNALS_COLUMN_IDS = [
+  "symbol",
+  "signal",
+  "stack",
+  "verdict",
+  ...SIGNALS_TABLE_TIMEFRAMES.map((timeframe) => `tf-${timeframe}`),
+  "trend",
+  "strength",
+  "age",
+  "vol",
+  "mtf",
+  "bars",
+  "price",
+  "latest",
+  "coverage",
+  "action",
+];
+const SIGNALS_LOCKED_COLUMN_IDS = ["symbol", "action"];
+const SIGNALS_SORT_KEYS_BY_COLUMN_ID = {
+  bars: "bars",
+  latest: "latest",
+  signal: "priority",
+  symbol: "symbol",
+};
 const SIGNAL_DRILLDOWN_CHART_LIMIT = 160;
 const SIGNAL_DRILLDOWN_CHART_TIMEFRAMES = new Set([
   "1m",
@@ -206,6 +248,13 @@ const cellTextStyle = {
 };
 
 const formatTime = (value) => (value ? formatRelativeTimeShort(value) : MISSING_VALUE);
+
+const formatClockTime = (value) => (value ? formatAppTime(value) : MISSING_VALUE);
+
+const formatSince = (value) => {
+  const relative = formatTime(value);
+  return relative !== MISSING_VALUE ? `${relative} since` : MISSING_VALUE;
+};
 
 const formatBars = (value) =>
   Number.isFinite(Number(value)) ? `${Number(value)} bars` : MISSING_VALUE;
@@ -537,12 +586,22 @@ function CoverageCell({ row }) {
 }
 
 function CompactIntervalCell({ timeframe, state }) {
-  const direction = getCurrentSignalDirection(state);
-  const tone = toneForDirection(direction);
-  const Icon = direction === "sell" ? ArrowDown : direction === "buy" ? ArrowUp : Clock3;
-  const content = state
+  const hydrated = isHydratedSignalMatrixState(state);
+  const problem = isProblemSignalState(state);
+  const direction = hydrated ? getCurrentSignalDirection(state) : "";
+  const tone = problem ? CSS_COLOR.red : toneForDirection(direction);
+  const Icon = problem
+    ? AlertTriangle
+    : direction === "sell"
+      ? ArrowDown
+      : direction === "buy"
+        ? ArrowUp
+        : Clock3;
+  const content = hydrated
     ? `${timeframe} ${direction || "none"} · ${formatBars(state.barsSinceSignal)} · ${formatTime(state.currentSignalAt || state.lastEvaluatedAt)}`
-    : `${timeframe} not hydrated`;
+    : state?.lastError
+      ? `${timeframe} ${state.status || "error"} · ${state.lastError}`
+      : `${timeframe} not hydrated`;
   return (
     <AppTooltip content={content}>
       <span
@@ -561,11 +620,15 @@ function CompactIntervalCell({ timeframe, state }) {
         <span
           style={{
             ...cellTextStyle,
-            color: state?.fresh ? tone : CSS_COLOR.textDim,
+            color: hydrated && state?.fresh
+              ? tone
+              : problem
+                ? tone
+                : CSS_COLOR.textDim,
             fontSize: textSize("captionStrong"),
           }}
         >
-          {state ? formatCompactBars(state.barsSinceSignal) : MISSING_VALUE}
+          {hydrated ? formatCompactBars(state.barsSinceSignal) : problem ? "Err" : MISSING_VALUE}
         </span>
       </span>
     </AppTooltip>
@@ -1132,6 +1195,12 @@ function SignalContextChart({ row, barsQuery, timeframe }) {
     ? (delta / firstBar.close) * 100
     : null;
   const deltaTone = Number(delta) > 0 ? CSS_COLOR.green : Number(delta) < 0 ? CSS_COLOR.red : CSS_COLOR.textDim;
+  const signalClockTime = formatClockTime(row.currentSignalAt);
+  const signalSince = formatSince(row.currentSignalAt);
+  const signalMarkerLabel = [
+    String(row.direction || "signal").toUpperCase(),
+    signalClockTime !== MISSING_VALUE ? signalClockTime : null,
+  ].filter(Boolean).join(" ");
   const chartState = barsQuery.isLoading
     ? "Loading bars"
     : barsQuery.isError
@@ -1150,10 +1219,12 @@ function SignalContextChart({ row, barsQuery, timeframe }) {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))",
           gap: sp(6),
         }}
       >
+        <SignalDenseFact variant="tile" label="Signal Time" value={signalClockTime} tone={directionTone} />
+        <SignalDenseFact variant="tile" label="Since" value={signalSince} tone={directionTone} />
         <SignalDenseFact variant="tile" label="Last" value={formatCompactPrice(lastBar?.close)} />
         <SignalDenseFact variant="tile" label="Window" value={formatPercent(deltaPct)} tone={deltaTone} />
         <SignalDenseFact variant="tile" label="Source" value={formatEnumLabel(barsQuery.data?.historySource)} />
@@ -1289,7 +1360,18 @@ function SignalContextChart({ row, barsQuery, timeframe }) {
                 fontSize="11"
                 fontWeight="700"
               >
-                {String(row.direction || "signal").toUpperCase()}
+                <tspan x={Math.min(chartWidth - padRight - 78, signalX + 8)}>
+                  {signalMarkerLabel}
+                </tspan>
+                <tspan
+                  x={Math.min(chartWidth - padRight - 78, signalX + 8)}
+                  dy="13"
+                  fill={CSS_COLOR.textMuted}
+                  fontSize="10"
+                  fontWeight="600"
+                >
+                  {signalSince}
+                </tspan>
               </text>
             </g>
           ) : null}
@@ -1889,6 +1971,8 @@ export default function SignalsScreen({
   watchlists = [],
   defaultWatchlist = null,
   signalMonitorSymbols = [],
+  signalMonitorEvents = [],
+  signalMonitorEventsLoaded = false,
   signalMatrixStates = [],
   isVisible = true,
   onReadinessChange,
@@ -1910,6 +1994,10 @@ export default function SignalsScreen({
   const [statusFilter, setStatusFilter] = useState("all");
   const [directionFilter, setDirectionFilter] = useState("all");
   const [sortKey, setSortKey] = useState("priority");
+  const [sortDirection, setSortDirection] = useState("asc");
+  const [columnOrder, setColumnOrder] = useState(() =>
+    normalizeColumnOrder(_initialState.signalsColumnOrder, SIGNALS_COLUMN_IDS),
+  );
   const [selectedSymbol, setSelectedSymbol] = useState("");
   const [expandedSymbol, setExpandedSymbol] = useState("");
   const [refreshing, setRefreshing] = useState(false);
@@ -1927,6 +2015,14 @@ export default function SignalsScreen({
     () => ({ environment, limit: SIGNALS_EVENT_LIMIT }),
     [environment],
   );
+  const providedSignalMonitorEvents = useMemo(
+    () => (Array.isArray(signalMonitorEvents) ? signalMonitorEvents : []),
+    [signalMonitorEvents],
+  );
+  const hasProvidedSignalMonitorEvents = Boolean(
+    signalMonitorEventsLoaded || providedSignalMonitorEvents.length,
+  );
+  const eventsQueryEnabled = Boolean(active && !hasProvidedSignalMonitorEvents);
   const profileQuery = useGetSignalMonitorProfile(signalMonitorParams, {
     query: {
       enabled: active,
@@ -1944,9 +2040,9 @@ export default function SignalsScreen({
   });
   const eventsQuery = useListSignalMonitorEvents(signalMonitorEventsParams, {
     query: {
-      enabled: active,
+      enabled: eventsQueryEnabled,
       staleTime: 10_000,
-      refetchInterval: active ? 15_000 : false,
+      refetchInterval: eventsQueryEnabled ? 15_000 : false,
       retry: false,
     },
   });
@@ -1991,10 +2087,19 @@ export default function SignalsScreen({
       buildSignalsRows({
         stateResponse,
         matrixStates: signalMatrixStates,
-        events: eventsQuery.data?.events || [],
+        events: hasProvidedSignalMonitorEvents
+          ? providedSignalMonitorEvents.slice(0, SIGNALS_EVENT_LIMIT)
+          : eventsQuery.data?.events || [],
         watchlists,
       }),
-    [eventsQuery.data?.events, signalMatrixStates, stateResponse, watchlists],
+    [
+      eventsQuery.data?.events,
+      hasProvidedSignalMonitorEvents,
+      providedSignalMonitorEvents,
+      signalMatrixStates,
+      stateResponse,
+      watchlists,
+    ],
   );
   const filteredRows = useMemo(
     () =>
@@ -2004,9 +2109,46 @@ export default function SignalsScreen({
           status: statusFilter,
           direction: directionFilter,
         }),
-        { sortKey },
+        { sortKey, direction: sortDirection },
       ),
-    [directionFilter, query, rows, sortKey, statusFilter],
+    [directionFilter, query, rows, sortDirection, sortKey, statusFilter],
+  );
+  useEffect(() => {
+    persistState({
+      signalsColumnOrder: normalizeColumnOrder(columnOrder, SIGNALS_COLUMN_IDS),
+    });
+  }, [columnOrder]);
+  const handleSignalsSortChange = useCallback(
+    (nextSortKey) => {
+      setSortKey((currentSortKey) => {
+        if (currentSortKey === nextSortKey) {
+          setSortDirection((currentDirection) =>
+            currentDirection === "asc" ? "desc" : "asc",
+          );
+          return currentSortKey;
+        }
+        setSortDirection("asc");
+        return nextSortKey;
+      });
+    },
+    [],
+  );
+  const handleSignalsColumnOrderChange = useCallback(
+    (_nextColumnIds, meta = {}) => {
+      setColumnOrder((current) =>
+        reorderColumnOrder(
+          current,
+          meta.activeColumnId,
+          meta.overColumnId,
+          {
+            fallbackColumnIds: SIGNALS_COLUMN_IDS,
+            lockedColumnIds: SIGNALS_LOCKED_COLUMN_IDS,
+            validColumnIds: SIGNALS_COLUMN_IDS,
+          },
+        ),
+      );
+    },
+    [],
   );
   const priorityHydrationSymbols = useMemo(
     () =>
@@ -2020,15 +2162,28 @@ export default function SignalsScreen({
       buildSignalsMatrixHydrationPlan({
         symbols: signalsHydrationUniverseSymbols,
         prioritySymbols: priorityHydrationSymbols,
-        currentStates: signalMatrixStates,
+        currentStates: [
+          ...signalMatrixStates,
+          ...(stateResponse?.states || []),
+        ],
         timeframes: SIGNALS_TABLE_TIMEFRAMES,
       }),
-    [priorityHydrationSymbols, signalMatrixStates, signalsHydrationUniverseSymbols],
+    [
+      priorityHydrationSymbols,
+      signalMatrixStates,
+      signalsHydrationUniverseSymbols,
+      stateResponse?.states,
+    ],
   );
   const matrixHydrationRequestKey = useMemo(
-    () => matrixHydrationPlan.missingSymbols.join(","),
-    [matrixHydrationPlan.missingSymbols],
+    () =>
+      matrixHydrationPlan.requestCells
+        .map((cell) => `${cell.symbol}:${cell.timeframe}`)
+        .join(","),
+    [matrixHydrationPlan.requestCells],
   );
+  const matrixHydrationRequestTimeframes =
+    matrixHydrationPlan.timeframes;
   const summary = useMemo(() => summarizeSignalsRows(rows), [rows]);
   const selectedRow = useMemo(
     () =>
@@ -2060,8 +2215,9 @@ export default function SignalsScreen({
   useEffect(() => {
     if (
       !active ||
+      !visibleHydrationSymbols.length ||
       !matrixHydrationPlan.symbols.length ||
-      !matrixHydrationPlan.missingSymbols.length
+      !matrixHydrationPlan.missingCellCount
     ) {
       return;
     }
@@ -2070,18 +2226,23 @@ export default function SignalsScreen({
       symbols: matrixHydrationPlan.symbols,
       prioritySymbols: matrixHydrationPlan.requestSymbols,
       missingSymbols: matrixHydrationPlan.missingSymbols,
+      missingTimeframesBySymbol: matrixHydrationPlan.missingTimeframesBySymbol,
       requestSymbols: matrixHydrationPlan.requestSymbols,
-      timeframes: matrixHydrationPlan.timeframes,
+      requestCells: matrixHydrationPlan.requestCells,
+      timeframes: matrixHydrationRequestTimeframes,
       reason: "signals-screen",
     });
   }, [
     active,
-    matrixHydrationPlan.missingSymbols.length,
+    visibleHydrationSymbols.length,
+    matrixHydrationPlan.missingCellCount,
     matrixHydrationPlan.missingSymbols,
+    matrixHydrationPlan.missingTimeframesBySymbol,
+    matrixHydrationPlan.requestCells,
     matrixHydrationPlan.requestSymbols,
     matrixHydrationPlan.symbols.length,
     matrixHydrationPlan.symbols,
-    matrixHydrationPlan.timeframes,
+    matrixHydrationRequestTimeframes,
     matrixHydrationRequestKey,
     onRequestSignalMatrixHydration,
   ]);
@@ -2136,8 +2297,10 @@ export default function SignalsScreen({
       symbols: matrixHydrationPlan.symbols,
       prioritySymbols: matrixHydrationPlan.requestSymbols,
       missingSymbols: matrixHydrationPlan.missingSymbols,
+      missingTimeframesBySymbol: matrixHydrationPlan.missingTimeframesBySymbol,
       requestSymbols: matrixHydrationPlan.requestSymbols,
-      timeframes: matrixHydrationPlan.timeframes,
+      requestCells: matrixHydrationPlan.requestCells,
+      timeframes: matrixHydrationRequestTimeframes,
       reason: "signals-refresh",
       force: true,
     });
@@ -2149,9 +2312,11 @@ export default function SignalsScreen({
   }, [
     eventsQuery,
     matrixHydrationPlan.missingSymbols,
+    matrixHydrationPlan.missingTimeframesBySymbol,
+    matrixHydrationPlan.requestCells,
     matrixHydrationPlan.requestSymbols,
     matrixHydrationPlan.symbols,
-    matrixHydrationPlan.timeframes,
+    matrixHydrationRequestTimeframes,
     onRequestSignalMatrixHydration,
     profileQuery,
     stateQuery,
@@ -2208,7 +2373,7 @@ export default function SignalsScreen({
     }
   }, [onApplyPyrusSignalsSettings, settingsDraft]);
 
-  const columns = useMemo(
+  const baseColumns = useMemo(
     () => [
       {
         id: "symbol",
@@ -2450,8 +2615,26 @@ export default function SignalsScreen({
           </AppTooltip>
         ),
       },
-    ].filter(Boolean),
+    ].filter(Boolean).map((column) => {
+      const columnSortKey = SIGNALS_SORT_KEYS_BY_COLUMN_ID[column.id];
+      const label = typeof column.header === "string" ? column.header : column.id;
+      return {
+        ...column,
+        meta: {
+          ...column.meta,
+          label,
+          reorderLocked: SIGNALS_LOCKED_COLUMN_IDS.includes(column.id),
+          sortable: Boolean(columnSortKey),
+          sortKey: columnSortKey,
+          sortTitle: columnSortKey ? `Sort by ${label}` : undefined,
+        },
+      };
+    }),
     [expandedSymbol, handleRowSelect, onJumpToTrade, phone],
+  );
+  const columns = useMemo(
+    () => orderColumnsById(baseColumns, columnOrder),
+    [baseColumns, columnOrder],
   );
 
   const loading = stateQuery.isLoading || profileQuery.isLoading;
@@ -2475,9 +2658,9 @@ export default function SignalsScreen({
       : stateQuery.data?.cacheStatus === "stale"
         ? CSS_COLOR.amber
         : CSS_COLOR.textDim;
-  const matrixHydrationTotal = matrixHydrationPlan.symbols.length;
-  const matrixHydrationHydrated = matrixHydrationPlan.hydratedSymbols.length;
-  const matrixHydrationMissing = matrixHydrationPlan.missingSymbols.length;
+  const matrixHydrationTotal = matrixHydrationPlan.totalCellCount;
+  const matrixHydrationHydrated = matrixHydrationPlan.hydratedCellCount;
+  const matrixHydrationMissing = matrixHydrationPlan.missingCellCount;
   const matrixHydrationTone =
     matrixHydrationTotal > 0 && matrixHydrationMissing === 0
       ? CSS_COLOR.green
@@ -2678,7 +2861,7 @@ export default function SignalsScreen({
             label="Sort"
             value={sortKey}
             options={SORT_OPTIONS}
-            onChange={setSortKey}
+            onChange={handleSignalsSortChange}
           />
           <FieldSelect
             label="Timeframe"
@@ -2819,13 +3002,17 @@ export default function SignalsScreen({
             />
           ) : (
             <DenseVirtualTable
+              columnOrder={columns.map((column) => column.id)}
               columns={columns}
               data={filteredRows}
               getRowId={(row) => row.id}
+              lockedColumnIds={SIGNALS_LOCKED_COLUMN_IDS}
               rowHeight={phone ? 46 : 42}
               rowDetailHeight={phone ? 820 : compact ? 720 : 650}
               rowDetailTestId="signals-table-row-drilldown"
               minWidth={minTableWidth}
+              onColumnOrderChange={handleSignalsColumnOrderChange}
+              onSortChange={handleSignalsSortChange}
               onVisibleRowsChange={handleVisibleRowsChange}
               isRowExpanded={(row) => row.symbol === expandedSymbol}
               renderRowDetail={(row) => (
@@ -2845,6 +3032,7 @@ export default function SignalsScreen({
                 },
               })}
               rowTestId="signals-table-row"
+              sortState={{ id: sortKey, direction: sortDirection }}
               headerStyle={{
                 minWidth: minTableWidth,
                 minHeight: dim(34),
@@ -2875,7 +3063,10 @@ export default function SignalsScreen({
                   "aria-expanded": expandedRow ? "true" : "false",
                   "aria-selected": activeRow ? "true" : "false",
                   "data-matrix-hydrated-count": SIGNALS_TABLE_TIMEFRAMES.filter(
-                    (timeframe) => row.matrixStatesByTimeframe?.[timeframe],
+                    (timeframe) =>
+                      isHydratedSignalMatrixState(
+                        row.matrixStatesByTimeframe?.[timeframe],
+                      ),
                   ).length,
                   "data-symbol": row.symbol,
                   style: {
