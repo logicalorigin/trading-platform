@@ -80,12 +80,12 @@ test("chart hydration stats derives scope counts and sanitizes cursor URLs", () 
     olderHistoryNextBeforeAt: "2026-04-30T13:29:59.999Z",
     emptyOlderHistoryWindowCount: 0,
     olderHistoryPageCount: 1,
-    olderHistoryProvider: "polygon-history",
+    olderHistoryProvider: "massive-history",
     olderHistoryExhaustionReason: null,
     olderHistoryProviderCursor:
-      "https://api.polygon.io/v2/aggs/ticker/SPY?apiKey=secret",
+      "https://api.massive.com/v2/aggs/ticker/SPY?apiKey=secret",
     olderHistoryProviderNextUrl:
-      "https://api.polygon.io/v2/aggs/ticker/SPY?apiKey=secret",
+      "https://api.massive.com/v2/aggs/ticker/SPY?apiKey=secret",
     olderHistoryProviderPageCount: 2,
     olderHistoryProviderPageLimitReached: true,
     olderHistoryCursor: "opaque-history-cursor",

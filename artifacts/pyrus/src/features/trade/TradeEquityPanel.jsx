@@ -80,6 +80,7 @@ import {
 import { useSignalMonitorStateForSymbol } from "../platform/signalMonitorStore";
 import { resolveSignalFrameState } from "../platform/signalFrameState";
 import { useTradeFlowSnapshot } from "../platform/tradeFlowStore";
+import { useGexProjectionConeOverlay } from "../gex/useGexProjection.js";
 import {
   filterFlowEventsForChartDisplay,
   useFlowTapeFilterState,
@@ -123,6 +124,7 @@ export const TradeEquityPanel = ({
   frameStyle,
   crosshairSyncGroupId = null,
   crosshairSyncInstanceId = null,
+  gexProjectionEnabled = true,
 }) => {
   const queryClient = useQueryClient();
   const effectiveChartHydrationRole =
@@ -171,6 +173,9 @@ export const TradeEquityPanel = ({
     () => (showSignalFrameBorder ? resolveSignalFrameState(signalState, T) : null),
     [showSignalFrameBorder, signalState],
   );
+  const gexProjection = useGexProjectionConeOverlay(ticker, {
+    enabled: Boolean(gexProjectionEnabled && ticker && historicalDataEnabled),
+  });
   const hasAnchoredTickerSearch =
     typeof onSearchOpenChange === "function" && searchContent != null;
   const { studies: availableStudies, indicatorRegistry } =
@@ -1013,6 +1018,7 @@ export const TradeEquityPanel = ({
           selectedStudies: selectedIndicators,
         }}
         referenceLines={referenceLines}
+        gexProjectionCone={gexProjection.overlay}
         drawings={drawings}
         drawMode={drawMode}
         onAddDrawing={addDrawing}

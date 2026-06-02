@@ -29,7 +29,7 @@ const PRESSURE_CAPS = {
     broadFlowRuntimeEnabled: true,
     broadFlowScannerConfig: {},
     signalMatrixWideSymbolLimit: 250,
-    signalMatrixNarrowSymbolLimit: 48,
+    signalMatrixNarrowSymbolLimit: 250,
     signalDisplayPollMinMs: 0,
     signalMatrixPollMinMs: 0,
     sparklineEnabled: true,
@@ -37,54 +37,36 @@ const PRESSURE_CAPS = {
     prioritySparklineSymbolLimit: null,
   },
   watch: {
-    broadMarketSymbolLimit: 48,
-    broadFlowSymbolLimit: 160,
+    broadMarketSymbolLimit: null,
+    broadFlowSymbolLimit: null,
     broadFlowRuntimeEnabled: true,
-    broadFlowScannerConfig: {
-      maxSymbols: 160,
-      batchSize: 20,
-      intervalMs: 30_000,
-      concurrency: 4,
-      limit: 20,
-    },
-    signalMatrixWideSymbolLimit: 96,
-    signalMatrixNarrowSymbolLimit: 32,
-    signalDisplayPollMinMs: 60_000,
-    signalMatrixPollMinMs: 60_000,
+    broadFlowScannerConfig: {},
+    signalMatrixWideSymbolLimit: 250,
+    signalMatrixNarrowSymbolLimit: 250,
+    signalDisplayPollMinMs: 0,
+    signalMatrixPollMinMs: 0,
     sparklineEnabled: true,
-    sparklineConcurrency: 2,
+    sparklineConcurrency: 4,
     prioritySparklineSymbolLimit: null,
   },
   high: {
-    broadMarketSymbolLimit: 16,
-    broadFlowSymbolLimit: 48,
+    broadMarketSymbolLimit: null,
+    broadFlowSymbolLimit: null,
     broadFlowRuntimeEnabled: true,
-    broadFlowScannerConfig: {
-      maxSymbols: 48,
-      batchSize: 8,
-      intervalMs: 60_000,
-      concurrency: 2,
-      limit: 8,
-    },
-    signalMatrixWideSymbolLimit: 32,
-    signalMatrixNarrowSymbolLimit: 16,
-    signalDisplayPollMinMs: 120_000,
-    signalMatrixPollMinMs: 120_000,
+    broadFlowScannerConfig: {},
+    signalMatrixWideSymbolLimit: 250,
+    signalMatrixNarrowSymbolLimit: 250,
+    signalDisplayPollMinMs: 0,
+    signalMatrixPollMinMs: 0,
     sparklineEnabled: true,
-    sparklineConcurrency: 1,
-    prioritySparklineSymbolLimit: 8,
+    sparklineConcurrency: 4,
+    prioritySparklineSymbolLimit: null,
   },
   critical: {
     broadMarketSymbolLimit: 0,
-    broadFlowSymbolLimit: 1,
+    broadFlowSymbolLimit: null,
     broadFlowRuntimeEnabled: true,
-    broadFlowScannerConfig: {
-      maxSymbols: 1,
-      batchSize: 1,
-      intervalMs: 120_000,
-      concurrency: 1,
-      limit: 1,
-    },
+    broadFlowScannerConfig: {},
     signalMatrixWideSymbolLimit: 8,
     signalMatrixNarrowSymbolLimit: 8,
     signalDisplayPollMinMs: 120_000,
@@ -101,8 +83,6 @@ export const buildPlatformPressureCaps = (level) => ({
 
 const memoryHydrationPressureState = (memoryPressureLevel) => {
   if (memoryPressureLevel === "critical") return "stalled";
-  if (memoryPressureLevel === "high") return "backoff";
-  if (memoryPressureLevel === "watch") return "degraded";
   return "normal";
 };
 
@@ -138,7 +118,8 @@ export const buildPlatformWorkSchedule = ({
     Boolean(memoryPressure.observedAt || memoryPressure.measurement);
   const memoryAllowsForeground = memoryPressureLevel !== "critical";
   const memoryAllowsBackground =
-    memoryPressureObserved && memoryPressureLevel === "normal";
+    memoryPressureObserved &&
+    memoryPressureLevel !== "critical";
   const ibkrReady = Boolean(brokerConfigured && brokerAuthenticated);
   const foregroundIbkr = Boolean(
     visible &&
@@ -177,7 +158,7 @@ export const buildPlatformWorkSchedule = ({
     market &&
       screenWarmupPhase === "ready" &&
       activeBackgroundReady &&
-      memoryPressureLevel === "normal" &&
+      memoryPressureLevel !== "critical" &&
       ibkrWorkPressure === WORK_PRESSURE_STATE.normal,
   );
   const broadFlowAllowed = Boolean(
@@ -190,9 +171,7 @@ export const buildPlatformWorkSchedule = ({
   );
   const backgroundHistoryReady = screenWarmupPhase === "ready" && !startupProtected;
   const pressureBlocksBackgroundAccountRealtime =
-    startupProtected ||
-    memoryPressureLevel === "high" ||
-    memoryPressureLevel === "critical";
+    startupProtected || memoryPressureLevel === "critical";
   const foregroundAccountRealtime = Boolean(
     account || trade || tradingEnabled,
   );

@@ -196,7 +196,7 @@ async function mockMarketApi(
         SPY: [
           flowEvent("SPY", {
             id: "SPY-confirmed-history",
-            provider: "polygon",
+            provider: "massive",
             basis: "trade",
             sourceBasis: "confirmed_trade",
             occurredAt: chartBarIso(24),
@@ -214,7 +214,7 @@ async function mockMarketApi(
         SPY: [
           flowEvent("SPY", {
             id: "SPY-confirmed-call",
-            provider: "polygon",
+            provider: "massive",
             sourceBasis: "confirmed_trade",
             occurredAt: chartBarIso(44),
             premium: 350_000,
@@ -226,7 +226,7 @@ async function mockMarketApi(
           }),
           flowEvent("SPY", {
             id: "SPY-confirmed-put",
-            provider: "polygon",
+            provider: "massive",
             basis: "trade",
             sourceBasis: "confirmed_trade",
             occurredAt: chartBarIso(52),
@@ -239,7 +239,7 @@ async function mockMarketApi(
           }),
           flowEvent("SPY", {
             id: "SPY-confirmed-neutral",
-            provider: "polygon",
+            provider: "massive",
             basis: "trade",
             sourceBasis: "confirmed_trade",
             occurredAt: chartBarIso(56),
@@ -263,7 +263,7 @@ async function mockMarketApi(
         QQQ: [
           flowEvent("QQQ", {
             id: "QQQ-confirmed-put",
-            provider: "polygon",
+            provider: "massive",
             basis: "trade",
             sourceBasis: "confirmed_trade",
             occurredAt: chartBarIso(48),
@@ -395,7 +395,7 @@ test("Market chart flow markers expose semantic tones", async ({ page }) => {
   const spyTooltip = page.getByTestId("market-chart-0-surface-flow-tooltip");
   await expect(spyTooltip).toBeVisible();
   await expect(spyTooltip).toHaveAttribute("data-chart-flow-tooltip-compact", "true");
-  await expect(spyTooltip).toContainText("POLYGON");
+  await expect(spyTooltip).toContainText("MASSIVE");
   await expect(spyTooltip).toContainText("Prem");
   const tooltipBox = await spyTooltip.boundingBox();
   const surfaceBox = await page.getByTestId("market-chart-0-surface").boundingBox();
@@ -519,13 +519,13 @@ test("Market chart grid premium-flow strips and flow-volume overlays render with
   await expect(page.getByTestId("market-chart-0")).toBeVisible();
   await expect(
     page.getByRole("status", {
-      name: /SPY options premium flow (Scanning|IBKR snapshot live|POLYGON SNAPSHOT)/i,
+      name: /SPY options premium flow (Scanning|IBKR snapshot live|MASSIVE SNAPSHOT)/i,
     }),
   ).toBeVisible();
 
   await expect(
     page.getByRole("status", {
-      name: /SPY options premium flow (IBKR snapshot live|POLYGON SNAPSHOT)/i,
+      name: /SPY options premium flow (IBKR snapshot live|MASSIVE SNAPSHOT)/i,
     }),
   ).toBeVisible({ timeout: 30_000 });
   await expect(strips.nth(0)).toHaveAttribute("data-flow-source-provider", "IBKR");
@@ -545,7 +545,7 @@ test("Market chart grid premium-flow strips and flow-volume overlays render with
   ).toHaveAttribute("data-chart-event-symbol", "SPY");
   await expect(
     page.getByTestId("market-chart-0-surface-chart-event").first(),
-  ).toHaveAttribute("data-chart-event-source", "polygon");
+  ).toHaveAttribute("data-chart-event-source", "massive");
   await expect(
     page.getByTestId("market-chart-0-surface-chart-event").first(),
   ).toHaveAttribute("data-chart-flow-marker-tone", "bullish");

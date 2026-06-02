@@ -4,6 +4,8 @@ import test from "node:test";
 
 const screenSource = () =>
   readFileSync(new URL("../../screens/GexScreen.jsx", import.meta.url), "utf8");
+const heatmapSource = () =>
+  readFileSync(new URL("./gexHeatmapModel.js", import.meta.url), "utf8");
 
 test("GEX screen hydrates from the dedicated IBKR-backed GEX API", () => {
   const source = screenSource();
@@ -29,8 +31,10 @@ test("GEX screen no longer stitches data through Trade option-chain or scanner p
 
 test("GEX heatmap uses the same contract GEX convention as KPI charts", () => {
   const source = screenSource();
+  const heatmap = heatmapSource();
 
-  assert.match(source, /contractGex\(row,\s*spot\)/);
+  assert.match(source, /buildGexHeatmapModel\(rows,\s*spot\)/);
+  assert.match(heatmap, /contractGex\(row,\s*spot\)/);
   assert.doesNotMatch(source, /row\.gamma \* row\.openInterest/);
 });
 
@@ -52,19 +56,38 @@ test("GEX screen has phone filter sheet and expiration chips", () => {
   assert.match(source, /data-layout=\{isPhone \? "phone"/);
   assert.match(source, /dataTestId="gex-mobile-filter-trigger"/);
   assert.match(source, /data-testid="gex-mobile-expiration-chips"/);
+  assert.match(source, /data-testid="gex-mobile-expiration-more"/);
   assert.match(source, /testId="gex-mobile-filter-sheet"/);
   assert.match(source, /responsiveFlags\(gexRootSize\.width\)/);
 });
 
-test("GEX strike profile table uses client-side pagination", () => {
+test("GEX screen surfaces source coverage and complete expiration labels", () => {
   const source = screenSource();
 
-  assert.match(source, /GEX_HEATMAP_PAGE_SIZE = 40/);
-  assert.match(source, /paginateRows\(model\.strikes,\s*page,\s*GEX_HEATMAP_PAGE_SIZE\)/);
-  assert.match(source, /paginatedStrikes\.pageRows/);
-  assert.match(source, /dataTestId="gex-heatmap-pagination"/);
-  assert.match(source, /GEX_PROFILE_PAGE_SIZE = 40/);
-  assert.match(source, /paginateRows\(profile,\s*page,\s*GEX_PROFILE_PAGE_SIZE\)/);
-  assert.match(source, /paginatedProfile\.pageRows\.map/);
-  assert.match(source, /dataTestId="gex-profile-pagination"/);
+  assert.match(source, /data-testid="gex-source-coverage-banner"/);
+  assert.match(source, /data-testid="gex-source-last-updated"/);
+  assert.match(source, /expirationCoverage\?\.complete === true/);
+  assert.match(source, /"All expirations"/);
+  assert.match(source, /"All loaded expirations"/);
+});
+
+test("GEX heatmap and strike profile table match InsiderFinance table semantics", () => {
+  const source = screenSource();
+  const heatmap = heatmapSource();
+
+  assert.match(source, /\.sort\(\(left,\s*right\)\s*=>\s*right - left\)/);
+  assert.match(source, /const visibleStrikes = expanded \? displayStrikes : focusedStrikes/);
+  assert.match(source, /hasGexHeatmapCellValue\(/);
+  assert.match(source, /const valueLabel = hasValue \? formatHeatmapCellValue\(value\) : ""/);
+  assert.match(source, /background: hasValue \? cellColor\(value\) : CSS_COLOR\.bg0/);
+  assert.doesNotMatch(source, /getGexHeatmapRowColorValue/);
+  assert.match(heatmap, /marketDayDistanceFromExpirationKey/);
+  assert.match(heatmap, /cellStatsMap/);
+  assert.match(source, /Strike Profile/);
+  assert.match(source, /Put Γ/);
+  assert.match(source, /Call Γ/);
+  assert.match(source, /Total OI/);
+  assert.match(source, /Spot \{fmtPercent\(\(row\.strike - spot\) \/ spot\)\}/);
+  assert.doesNotMatch(source, /gex-heatmap-pagination/);
+  assert.doesNotMatch(source, /gex-profile-pagination/);
 });

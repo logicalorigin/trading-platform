@@ -371,7 +371,7 @@ async function mockShellApi(
           historical: "ibkr",
           research: "fmp",
         },
-        configured: { polygon: false, ibkr: ibkrReady, research: false },
+        configured: { massive: false, ibkr: ibkrReady, research: false },
         ibkrBridge,
         timestamp: new Date(mockNow).toISOString(),
       };
@@ -520,7 +520,7 @@ async function mockShellApi(
         settings: [],
         summary: {
           pendingRestartCount: 0,
-          providers: { polygon: false, research: false, ibkr: false },
+          providers: { massive: false, research: false, ibkr: false },
           tradingMode: "paper",
           diagnosticsStatus: "ok",
           diagnosticsSeverity: "info",
@@ -611,7 +611,7 @@ async function mockShellApi(
       runtimeDiagnosticsRequests.push(Object.fromEntries(url.searchParams.entries()));
       body = {
         providers: {
-          polygon: {
+          massive: {
             configured: false,
             status: "unconfigured",
             baseUrl: null,
@@ -1406,9 +1406,11 @@ test("platform pages render page-by-page and keep primary controls interactive",
 
   await openScreen(page, "Algo", "algo");
   await expect(page.getByTestId("algo-screen")).toBeVisible();
-  await expect(page.getByTestId("algo-status-bar")).toBeVisible();
   await expect(page.getByTestId("algo-live-content")).toBeVisible();
-  await expect(page.getByText("No promoted draft strategies").first()).toBeVisible();
+  await expect(page.getByTestId("algo-operations-header")).toBeVisible();
+  await expect(page.getByText("Signal-Options Deployment Unavailable").first()).toBeVisible();
+  await expect(page.getByText("No promoted draft strategies")).toHaveCount(0);
+  await expect(page.getByText("Setup Shadow Deployment")).toHaveCount(0);
 
   await openScreen(page, "Backtest", "backtest");
   await expect(page.getByTestId("backtest-workspace")).toBeVisible();
@@ -1450,10 +1452,12 @@ test("algo setup keeps loading copy until deployment inputs settle", async ({
   await expect(page.getByTestId("algo-setup-loading")).toBeVisible({
     timeout: 6_000,
   });
-  await expect(page.getByText("No promoted draft strategies").first()).toBeHidden();
-  await expect(page.getByText("No promoted draft strategies").first()).toBeVisible({
+  await expect(page.getByText("Loading algo deployments and signal-options state").first()).toBeVisible();
+  await expect(page.getByText("No promoted draft strategies")).toHaveCount(0);
+  await expect(page.getByText("Signal-Options Deployment Unavailable").first()).toBeVisible({
     timeout: 8_000,
   });
+  await expect(page.getByText("Setup Shadow Deployment")).toHaveCount(0);
 
   expect(runtimeIssues).toEqual([]);
 });

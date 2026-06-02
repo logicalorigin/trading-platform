@@ -61,12 +61,12 @@ import {
   signalOptionsActionLabel,
 } from "./algoHelpers";
 
-export const SIGNAL_TABLE_ROW_HEIGHT = 34;
-export const SIGNAL_TABLE_HEADER_HEIGHT = 24;
+export const SIGNAL_TABLE_ROW_HEIGHT = 32;
+export const SIGNAL_TABLE_HEADER_HEIGHT = 22;
 
 const SIGNAL_ICON_SIZE = 12;
-const SIGNAL_TABLE_CELL_PADDING = "1px 4px";
-const SIGNAL_TABLE_ACTION_CELL_PADDING = "1px 2px";
+const SIGNAL_TABLE_CELL_PADDING = "0 3px";
+const SIGNAL_TABLE_ACTION_CELL_PADDING = "0 1px";
 const SIGNAL_TABLE_BORDER = () => `1px solid ${CSS_COLOR.borderLight}`;
 
 const columnTrack = (column) => {
@@ -88,7 +88,7 @@ export const SIGNAL_TABLE_COLUMNS = [
     key: "signal",
     label: "Signal",
     toggleLabel: "Signal",
-    track: "minmax(170px, 1.35fr)",
+    track: "minmax(158px, 1.25fr)",
     sortKey: "symbol",
     title: "Sort by symbol",
   },
@@ -96,7 +96,7 @@ export const SIGNAL_TABLE_COLUMNS = [
     key: "since",
     label: "Age",
     toggleLabel: "Signal age",
-    track: "92px",
+    track: "76px",
     sortKey: "bars",
     title: "Sort by bars since signal",
   },
@@ -104,7 +104,7 @@ export const SIGNAL_TABLE_COLUMNS = [
     key: "move",
     label: "Move",
     toggleLabel: "Move since signal",
-    track: "88px",
+    track: "64px",
     sortKey: "move",
     title: "Sort by move since signal",
   },
@@ -112,19 +112,25 @@ export const SIGNAL_TABLE_COLUMNS = [
     key: "action",
     label: "Plan",
     toggleLabel: "Action plan",
-    track: "minmax(120px, 0.95fr)",
+    track: "minmax(84px, 0.58fr)",
+  },
+  {
+    key: "gate",
+    label: "Gate",
+    toggleLabel: "Decision gate",
+    track: "minmax(96px, 0.76fr)",
   },
   {
     key: "contract",
     label: "Contract",
     toggleLabel: "Selected contract",
-    track: "minmax(132px, 0.95fr)",
+    track: "minmax(118px, 0.9fr)",
   },
   {
     key: "quote",
     label: "Quote",
     toggleLabel: "Option quote",
-    track: "minmax(112px, 0.82fr)",
+    track: "minmax(98px, 0.72fr)",
     sortKey: "quoteAge",
     title: "Sort by quote freshness",
   },
@@ -132,7 +138,7 @@ export const SIGNAL_TABLE_COLUMNS = [
     key: "spread",
     label: "Spread",
     toggleLabel: "Bid ask spread",
-    track: "92px",
+    track: "82px",
     sortKey: "spread",
     title: "Sort by spread width",
   },
@@ -140,37 +146,37 @@ export const SIGNAL_TABLE_COLUMNS = [
     key: "greeks",
     label: "Greeks",
     toggleLabel: "Quote greeks",
-    track: "minmax(112px, 0.82fr)",
+    track: "minmax(98px, 0.72fr)",
   },
   {
-    key: "gate",
-    label: "Gate",
-    toggleLabel: "Decision gate",
-    track: "minmax(112px, 0.84fr)",
+    key: "process",
+    label: "Process",
+    toggleLabel: "Audit progression",
+    track: "minmax(124px, 0.9fr)",
   },
   {
     key: "sync",
     label: "Sync",
     toggleLabel: "Order sync",
-    track: "minmax(104px, 0.78fr)",
+    track: "minmax(92px, 0.7fr)",
   },
   {
     key: "score",
-    label: "Quality",
+    label: "Score",
     toggleLabel: "Actionability quality",
-    track: "84px",
+    track: "74px",
     sortKey: "score",
     title: "Sort by decision score",
   },
   {
     key: "decision",
-    label: "Decision",
+    label: "Latest",
     toggleLabel: "Decision",
-    track: "minmax(126px, 1fr)",
+    track: "minmax(116px, 0.9fr)",
     sortKey: "latest",
     title: "Sort by latest decision activity",
   },
-  { key: "rowAction", label: "Act", toggleLabel: "Row action", width: 48 },
+  { key: "rowAction", label: "Act", toggleLabel: "Row action", width: 42 },
 ];
 
 export const DEFAULT_SIGNAL_COLUMN_ORDER = SIGNAL_TABLE_COLUMNS.map(
@@ -182,11 +188,11 @@ export const DEFAULT_SIGNAL_VISIBLE_COLUMNS = [
   "since",
   "move",
   "action",
+  "gate",
   "contract",
   "quote",
   "spread",
   "greeks",
-  "gate",
   "score",
   "decision",
   "rowAction",
@@ -378,25 +384,51 @@ const scoreTierLabel = (tier) => {
 
 const missingDisplay = (main, detail = MISSING_VALUE) => ({ main, detail });
 
+const hasBlockerDisplay = (blocker) => hasDisplayValue(blocker);
+
+const candidateActionStatusValue = (candidate) =>
+  String(candidate?.actionStatus || candidate?.status || "")
+    .trim()
+    .toLowerCase();
+
+const isCandidateContractSelectionPending = (candidate) =>
+  candidateActionStatusValue(candidate) === "candidate";
+
 const missingContractDisplay = (candidate, blocker) => {
-  if (!candidate || blocker !== MISSING_VALUE) {
+  if (!candidate) {
     return missingDisplay(MISSING_VALUE, MISSING_VALUE);
   }
-  const actionStatus = candidate?.actionStatus || candidate?.status;
-  if (actionStatus) {
+  if (hasBlockerDisplay(blocker)) return missingDisplay("Not selected", blocker);
+  if (isCandidateContractSelectionPending(candidate)) {
     return missingDisplay("Selecting", MISSING_VALUE);
   }
-  return missingDisplay("Selecting", MISSING_VALUE);
+  return missingDisplay(MISSING_VALUE, MISSING_VALUE);
 };
 
 const missingQuoteDisplay = ({ blocker, selectedContractId }) => {
-  if (selectedContractId && blocker === MISSING_VALUE) {
+  if (hasBlockerDisplay(blocker)) return missingDisplay("Not requested", blocker);
+  if (selectedContractId) {
     return missingDisplay("Quote pending", MISSING_VALUE);
   }
   return missingDisplay(MISSING_VALUE, MISSING_VALUE);
 };
 
-const missingGreeksDisplay = () => missingDisplay(MISSING_VALUE, MISSING_VALUE);
+const missingGreeksDisplay = ({ blocker, selectedContractId } = {}) => {
+  if (hasBlockerDisplay(blocker)) return missingDisplay("Not tested", blocker);
+  if (selectedContractId) {
+    return missingDisplay("Greeks pending", MISSING_VALUE);
+  }
+  return missingDisplay(MISSING_VALUE, MISSING_VALUE);
+};
+
+const missingSpreadDisplay = ({ blocker, hasQuote, selectedContractId } = {}) => {
+  if (hasBlockerDisplay(blocker)) return missingDisplay("Not priced", blocker);
+  if (selectedContractId && !hasQuote) {
+    return missingDisplay("Quote pending", MISSING_VALUE);
+  }
+  if (selectedContractId) return missingDisplay("Spread pending", MISSING_VALUE);
+  return missingDisplay(MISSING_VALUE, MISSING_VALUE);
+};
 
 const statusPillMeta = (signal, candidate, blocker) => {
   if (blocker !== MISSING_VALUE) {
@@ -429,7 +461,7 @@ const statusPillMeta = (signal, candidate, blocker) => {
     return { label: "Unavailable", tone: CSS_COLOR.textDim, Icon: MinusCircle };
   }
   if (signal?.fresh === false) {
-    return { label: "Stale", tone: CSS_COLOR.amber, Icon: Clock };
+    return { label: "Aged", tone: CSS_COLOR.amber, Icon: Clock };
   }
   return { label: "Awaiting scan", tone: CSS_COLOR.cyan, Icon: Radar };
 };
@@ -671,6 +703,19 @@ const signalSinceDisplay = (signal, signalAge, bars) => {
   };
 };
 
+const actionIntentTokens = (label) =>
+  String(label || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+const actionIntentTokenTone = (token) => {
+  const normalized = String(token || "").toUpperCase();
+  if (normalized === "BUY" || normalized === "CALL") return CSS_COLOR.green;
+  if (normalized === "SELL" || normalized === "PUT") return CSS_COLOR.red;
+  return CSS_COLOR.textDim;
+};
+
 const actionPlanDisplay = (signal, candidate) => {
   const action = signalActionLabel(signal, candidate?.action);
   if (!candidate) {
@@ -688,8 +733,8 @@ const actionPlanDisplay = (signal, candidate) => {
     premium !== MISSING_VALUE ? `${premium} risk` : null,
   ].filter(Boolean);
   return {
-    main: detail.length ? detail.join(" · ") : action,
-    detail: detail.length ? action : MISSING_VALUE,
+    main: action,
+    detail: detail.length ? detail.join(" · ") : MISSING_VALUE,
   };
 };
 
@@ -790,6 +835,74 @@ const DataCell = ({
               {detailExtra}
             </span>
           ) : null}
+        </span>
+      ) : null}
+    </span>
+  );
+};
+
+const PlanCell = ({ plan, titleValue, motionState = null }) => {
+  const detail = hasDisplayValue(plan?.detail) ? plan.detail : MISSING_VALUE;
+  const intentTokens = actionIntentTokens(plan?.main);
+  return (
+    <span
+      className={signalCellClassName(motionState)}
+      data-testid="algo-signal-plan-cell"
+      title={[titleValue, plan?.main, detail].filter(hasDisplayValue).join(" · ")}
+      style={{
+        display: "grid",
+        gap: 0,
+        minWidth: 0,
+        overflow: "hidden",
+        lineHeight: 1.08,
+      }}
+    >
+      <span
+        data-testid="algo-signal-plan-intent"
+        style={{
+          display: "inline-flex",
+          alignItems: "baseline",
+          gap: sp(3),
+          minWidth: 0,
+          overflow: "hidden",
+          whiteSpace: "nowrap",
+          fontWeight: FONT_WEIGHTS.medium,
+          lineHeight: 1.05,
+        }}
+      >
+        {intentTokens.length
+          ? intentTokens.map((token, index) => (
+              <span
+                key={`${token}-${index}`}
+                data-plan-token={token.toUpperCase()}
+                data-testid={`algo-signal-plan-token-${token.toUpperCase()}`}
+                style={{
+                  color: actionIntentTokenTone(token),
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {token}
+              </span>
+            ))
+          : MISSING_VALUE}
+      </span>
+      {hasDisplayValue(detail) ? (
+        <span
+          data-testid="algo-signal-plan-detail"
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            color: CSS_COLOR.textMuted,
+            fontSize: textSize("caption"),
+            lineHeight: 1.08,
+          }}
+        >
+          {detail}
         </span>
       ) : null}
     </span>
@@ -1063,6 +1176,159 @@ const DecisionCell = ({
   );
 };
 
+const PROCESS_STAGE_META = {
+  signal: { label: "Signal", tone: CSS_COLOR.textSec, Icon: Radar },
+  candidate: { label: "Candidate", tone: CSS_COLOR.cyan, Icon: Radar },
+  eligible: { label: "Eligible", tone: CSS_COLOR.green, Icon: CheckCircle2 },
+  submitted: { label: "Submitted", tone: CSS_COLOR.green, Icon: Send },
+  filled: { label: "Filled", tone: CSS_COLOR.green, Icon: CheckCircle2 },
+  managed: { label: "Managed", tone: CSS_COLOR.cyan, Icon: CheckCircle2 },
+  closed: { label: "Closed", tone: CSS_COLOR.textSec, Icon: CheckCircle2 },
+  blocked: { label: "Blocked", tone: CSS_COLOR.red, Icon: Ban },
+  event: { label: "Event", tone: CSS_COLOR.textMuted, Icon: Clock },
+};
+
+const processStageMeta = (stage) => {
+  const id = String(stage?.id || "event");
+  return PROCESS_STAGE_META[id] || {
+    label: stage?.label || "Event",
+    tone: CSS_COLOR.textMuted,
+    Icon: Clock,
+  };
+};
+
+const ProcessTrailCell = ({ progression, scanActive = false }) => {
+  const eventCount = Number(progression?.eventCount || 0);
+  if (!eventCount) {
+    return (
+      <DataCell
+        value={scanActive ? "Listening" : MISSING_VALUE}
+        detail={scanActive ? "Audit trail pending" : MISSING_VALUE}
+        tone={scanActive ? CSS_COLOR.cyan : CSS_COLOR.textDim}
+        motionState={scanActive ? "evaluating" : null}
+      />
+    );
+  }
+
+  const latestStage = progression?.latestStage || progression?.latest?.stage;
+  const latestMeta = processStageMeta(latestStage);
+  const LatestIcon = latestMeta.Icon;
+  const stageIds = Array.isArray(progression?.stageIds)
+    ? progression.stageIds.slice(-5)
+    : [];
+  const latestAge = progression?.latestOccurredAt
+    ? formatRelativeTimeShort(new Date(progression.latestOccurredAt))
+    : "";
+  const detail = compactJoin([
+    `${eventCount} event${eventCount === 1 ? "" : "s"}`,
+    latestAge,
+    progression?.detail,
+  ]);
+  const title = (progression?.events || [])
+    .slice(-6)
+    .map((row) =>
+      compactJoin([
+        row?.stage?.label,
+        row?.summary,
+        row?.detailText,
+        row?.occurredAt,
+      ]),
+    )
+    .filter((value) => value !== MISSING_VALUE)
+    .join("\n");
+
+  return (
+    <span
+      data-testid="algo-signal-process-cell"
+      className={signalCellClassName(
+        latestStage?.id === "blocked"
+          ? "blocked"
+          : latestStage?.id === "submitted" ||
+              latestStage?.id === "filled" ||
+              latestStage?.id === "managed" ||
+              latestStage?.id === "closed"
+            ? "ready"
+            : scanActive
+              ? "evaluating"
+              : null,
+      )}
+      title={title || detail}
+      style={{
+        display: "grid",
+        gap: sp(2),
+        minWidth: 0,
+        overflow: "hidden",
+        lineHeight: 1.12,
+      }}
+    >
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(4),
+          minWidth: 0,
+          overflow: "hidden",
+          color: latestMeta.tone,
+          whiteSpace: "nowrap",
+        }}
+      >
+        <LatestIcon size={SIGNAL_ICON_SIZE} strokeWidth={1.8} aria-hidden="true" />
+        <span
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            fontWeight: FONT_WEIGHTS.medium,
+          }}
+        >
+          {latestMeta.label}
+        </span>
+        {stageIds.length ? (
+          <span
+            aria-hidden="true"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(2),
+              flex: "0 0 auto",
+            }}
+          >
+            {stageIds.map((stageId) => {
+              const markerMeta = processStageMeta({ id: stageId });
+              return (
+                <span
+                  key={stageId}
+                  title={markerMeta.label}
+                  style={{
+                    width: dim(5),
+                    height: dim(5),
+                    borderRadius: dim(RADII.pill),
+                    background: markerMeta.tone,
+                    opacity: stageId === latestStage?.id ? 1 : 0.5,
+                  }}
+                />
+              );
+            })}
+          </span>
+        ) : null}
+      </span>
+      <span
+        style={{
+          color: CSS_COLOR.textMuted,
+          fontSize: textSize("caption"),
+          lineHeight: 1.12,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {detail}
+      </span>
+    </span>
+  );
+};
+
 const resolveRowAction = ({ candidate, blocker, signalRecord, verdict }) => {
   if (signalRecord?.status === "unavailable" || !candidate) return null;
   if (blocker !== MISSING_VALUE) return null;
@@ -1125,6 +1391,40 @@ const RowActionButton = ({ action, onAction }) => {
   );
 };
 
+const CompactSignalMetric = ({ label, wide = false, children }) => (
+  <span
+    role="cell"
+    style={{
+      display: "grid",
+      gap: sp(2),
+      gridColumn: wide ? "1 / -1" : undefined,
+      minWidth: 0,
+      padding: sp("5px 6px"),
+      borderRadius: dim(RADII.sm),
+      border: `1px solid ${CSS_COLOR.borderLight}`,
+      background: CSS_COLOR.bg2,
+      overflow: "hidden",
+    }}
+  >
+    <span
+      style={{
+        color: CSS_COLOR.textMuted,
+        fontSize: fs(9),
+        fontWeight: FONT_WEIGHTS.medium,
+        lineHeight: 1,
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        textTransform: "uppercase",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </span>
+    <span style={{ minWidth: 0, overflow: "hidden" }}>{children}</span>
+  </span>
+);
+
 export const OperationsSignalTableHeader = ({
   columns = DEFAULT_SIGNAL_VISIBLE_COLUMNS,
   sortKey = "newest",
@@ -1169,7 +1469,16 @@ export const OperationsSignalTableHeader = ({
         : "none";
       const content = (
         <>
-          <span>{column.label}</span>
+          <span
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {column.label}
+          </span>
           {sort ? (
             <ChevronDown
               size={11}
@@ -1257,6 +1566,7 @@ export const OperationsSignalTableHeader = ({
 export const OperationsSignalRow = ({
   signal,
   candidate,
+  auditProgression = null,
   tfMatrix = null,
   tickerSnapshot = null,
   scoreBreakdown: providedScoreBreakdown = null,
@@ -1264,6 +1574,7 @@ export const OperationsSignalRow = ({
   columns = DEFAULT_SIGNAL_VISIBLE_COLUMNS,
   scanActive = false,
   alt = false,
+  compact = false,
 }) => {
   const signalRecord = asRecord(signal);
   const contractPreview = asRecord(signalRecord.contractPreview);
@@ -1386,8 +1697,6 @@ export const OperationsSignalRow = ({
   });
   const rowAction = resolveRowAction({ candidate, blocker, signalRecord, verdict });
   const quoteAge = formatQuoteAge(effectiveQuote?.ageMs ?? effectiveQuote?.cacheAgeMs);
-  const actionValue = actionPlan.main;
-  const actionDetail = actionPlan.detail;
   const executionTitle = compactJoin([
     quote.main,
     quote.detail,
@@ -1415,7 +1724,12 @@ export const OperationsSignalRow = ({
   };
   const visibleColumns = resolveSignalVisibleColumnObjects(columns);
   const hasMoveColumn = visibleColumns.some((column) => column.key === "move");
-  const spreadWidth = formatSpreadWidth(spreadGauge.widthPct);
+  const rawSpreadWidth = formatSpreadWidth(spreadGauge.widthPct);
+  const spread =
+    rawSpreadWidth !== MISSING_VALUE
+      ? missingDisplay(rawSpreadWidth, MISSING_VALUE)
+      : missingSpreadDisplay({ blocker, hasQuote, selectedContractId });
+  const spreadWidth = spread.main;
   const quoteTone = contractIsPreview ? CSS_COLOR.textDim : quoteState.tone;
   const spreadTone = contractIsPreview
     ? CSS_COLOR.textDim
@@ -1430,8 +1744,13 @@ export const OperationsSignalRow = ({
     hasDisplayValue(rawGreeks.main) && !contractIsPreview
       ? CSS_COLOR.textSec
       : CSS_COLOR.textDim;
-  const quoteDetail = quoteAge !== MISSING_VALUE ? `age ${quoteAge}` : MISSING_VALUE;
-  const spreadDetail = quoteDetail;
+  const quoteDetail = quoteAge !== MISSING_VALUE ? `age ${quoteAge}` : quote.detail;
+  const spreadDetail =
+    quoteAge !== MISSING_VALUE
+      ? `age ${quoteAge}`
+      : spread.detail !== MISSING_VALUE
+        ? spread.detail
+        : quote.detail;
   const scoreValue = formatScore(actionabilityScore);
   const scoreDetail = compactJoin([
     scoreTierLabel(scoreBreakdown?.tier),
@@ -1475,14 +1794,18 @@ export const OperationsSignalRow = ({
   });
   const scoreFlashClassName = useValueFlash(actionabilityScore);
   const awaitingScan = /awaiting scan/i.test(statusMeta.label);
+  const candidateContractSelectionPending =
+    isCandidateContractSelectionPending(candidate);
   const quoteEvaluating =
     !contractIsPreview &&
     scanActive &&
+    candidateContractSelectionPending &&
     Boolean(candidate) &&
     blocker === MISSING_VALUE &&
     !hasQuote;
   const contractEvaluating =
     scanActive &&
+    candidateContractSelectionPending &&
     Boolean(candidate) &&
     blocker === MISSING_VALUE &&
     !hasDisplayValue(rawContract.main);
@@ -1490,11 +1813,13 @@ export const OperationsSignalRow = ({
     quoteEvaluating ||
     (!contractIsPreview &&
       scanActive &&
+      candidateContractSelectionPending &&
       hasQuote &&
       !Number.isFinite(Number(spreadGauge.widthPct)));
   const greeksEvaluating =
     !contractIsPreview &&
     scanActive &&
+    candidateContractSelectionPending &&
     Boolean(selectedContractId) &&
     !hasDisplayValue(rawGreeks.main);
   const scoreEvaluating = scanActive && !Number.isFinite(actionabilityScore);
@@ -1568,18 +1893,8 @@ export const OperationsSignalRow = ({
       />
     ),
     action: (
-      <DataCell
-        value={actionValue}
-        detail={actionDetail}
-        tone={
-          blocker !== MISSING_VALUE
-            ? CSS_COLOR.textDim
-            : signalState.freshness === "FRESH"
-            ? CSS_COLOR.green
-            : signalState.freshness === "STALE"
-              ? CSS_COLOR.amber
-              : CSS_COLOR.textDim
-        }
+      <PlanCell
+        plan={actionPlan}
         titleValue={compactJoin([
           actionPlan.main,
           actionPlan.detail,
@@ -1672,6 +1987,12 @@ export const OperationsSignalRow = ({
         motionState={gateMotionState}
       />
     ),
+    process: (
+      <ProcessTrailCell
+        progression={auditProgression}
+        scanActive={scanActive}
+      />
+    ),
     sync: (
       <DataCell
         value={sync.label}
@@ -1719,6 +2040,138 @@ export const OperationsSignalRow = ({
       </span>
     ),
   };
+  const visibleColumnKeys = new Set(visibleColumns.map((column) => column.key));
+  const compactMetricItems = [
+    { key: "since", label: "Age", cell: desktopCells.since },
+    { key: "move", label: "Move", cell: desktopCells.move },
+    { key: "action", label: "Plan", cell: desktopCells.action },
+    { key: "score", label: "Score", cell: desktopCells.score },
+    { key: "contract", label: "Contract", cell: desktopCells.contract },
+    { key: "quote", label: "Quote", cell: desktopCells.quote },
+    { key: "spread", label: "Spread", cell: desktopCells.spread },
+    { key: "greeks", label: "Greeks", cell: desktopCells.greeks },
+    {
+      key: "gate",
+      label: "Gate",
+      cell: desktopCells.gate,
+      visibleWhen: gate.category !== "clear",
+    },
+    { key: "process", label: "Process", cell: desktopCells.process },
+    {
+      key: "sync",
+      label: "Sync",
+      cell: desktopCells.sync,
+      visibleWhen: sync.label === "Mismatch" || sync.label === "Event only",
+    },
+  ].filter(
+    (item) => visibleColumnKeys.has(item.key) && item.visibleWhen !== false,
+  );
+  if (compact) {
+    return (
+      <div
+        data-testid={`algo-signal-row-${signalRecord.symbol}`}
+        role="row"
+        className={rowClassName}
+        style={{
+          "--ra-motion-accent": direction.tone,
+          borderBottom: `1px solid ${CSS_COLOR.border}`,
+          minWidth: 0,
+        }}
+      >
+        <div
+          style={{
+            display: "grid",
+            gap: sp(6),
+            minWidth: 0,
+            padding: sp("7px 6px 8px"),
+            boxSizing: "border-box",
+            fontFamily: T.sans,
+            fontSize: fs(11),
+            color: CSS_COLOR.text,
+            lineHeight: 1.12,
+            boxShadow: `inset 2px 0 0 ${direction.tone}`,
+            background: freshAndHot
+              ? `linear-gradient(90deg, ${cssColorAlpha(verdict.tone, "12")} 0%, transparent 70%)`
+              : "transparent",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: sp(6),
+              minWidth: 0,
+            }}
+          >
+            <span
+              role="cell"
+              style={{
+                flex: "1 1 auto",
+                minWidth: 0,
+                overflow: "hidden",
+              }}
+            >
+              {desktopCells.signal}
+            </span>
+            <span
+              role="cell"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flex: "0 0 auto",
+                minWidth: dim(32),
+              }}
+            >
+              {desktopCells.rowAction}
+            </span>
+          </div>
+
+          {compactMetricItems.length ? (
+            <div
+              data-testid="algo-signal-compact-metrics"
+              data-algo-pocket-grid="two"
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: sp(4),
+                minWidth: 0,
+              }}
+            >
+              {compactMetricItems.map((item, index) => (
+                <CompactSignalMetric
+                  key={item.key}
+                  label={item.label}
+                  wide={
+                    item.key === "gate" ||
+                    item.key === "process" ||
+                    item.key === "sync" ||
+                    (compactMetricItems.length % 2 === 1 &&
+                      index === compactMetricItems.length - 1)
+                  }
+                >
+                  {item.cell}
+                </CompactSignalMetric>
+              ))}
+            </div>
+          ) : null}
+
+          <span
+            role="cell"
+            data-testid="algo-signal-compact-decision"
+            style={{
+              display: "grid",
+              minWidth: 0,
+              paddingTop: sp(5),
+              borderTop: `1px solid ${CSS_COLOR.borderLight}`,
+            }}
+          >
+            {desktopCells.decision}
+          </span>
+        </div>
+      </div>
+    );
+  }
   return (
     <div
       data-testid={`algo-signal-row-${signalRecord.symbol}`}

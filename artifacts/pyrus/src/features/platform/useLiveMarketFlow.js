@@ -685,14 +685,14 @@ export const useLiveMarketFlow = (
     if (scanState.isPending || (scanState.isFetching && scanState.cycle === 0)) {
       label = "Loading flow";
       color = CSS_COLOR.accent;
-    } else if (providerSet.has("ibkr") && providerSet.has("polygon")) {
+    } else if (providerSet.has("ibkr") && providerSet.has("massive")) {
       label = "Mixed sources";
       color = CSS_COLOR.amber;
     } else if (providerSet.has("ibkr")) {
       label = "IBKR snapshot live";
       color = CSS_COLOR.accent;
-    } else if (providerSet.has("polygon")) {
-      label = "Polygon trade fallback";
+    } else if (providerSet.has("massive")) {
+      label = "Massive trade fallback";
       color = CSS_COLOR.cyan;
     } else if (failures.length || erroredSource) {
       label = "Flow source error";

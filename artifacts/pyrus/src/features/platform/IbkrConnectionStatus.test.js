@@ -1603,10 +1603,10 @@ test("buildHeaderIbkrPopoverModel exposes provider and line usage summaries", ()
     },
     runtimeDiagnostics: {
       providers: {
-        polygon: {
+        massive: {
           configured: true,
           status: "ok",
-          baseUrl: "https://api.polygon.io",
+          baseUrl: "https://api.massive.com",
           lastSuccessAt: new Date().toISOString(),
           lastFailureAt: null,
           lastError: null,
@@ -1666,7 +1666,7 @@ test("buildHeaderIbkrPopoverModel exposes provider and line usage summaries", ()
     model.providerRows.map((row) => [row.label, row.value]),
     [
       ["IBKR", "Ready"],
-      ["Polygon", "OK"],
+      ["Massive", "OK"],
     ],
   );
   assert.equal(model.lineUsage.summary, "77 of 200");
@@ -1674,7 +1674,7 @@ test("buildHeaderIbkrPopoverModel exposes provider and line usage summaries", ()
   assert.equal(model.compactLineUsage.cap, 200);
   assert.equal(model.compactLineUsage.free, 123);
   assert.equal(model.compactLineUsage.percent, 38.5);
-  assert.equal(findPopoverDetailRow(model, "Polygon").value.startsWith("OK · last "), true);
+  assert.equal(findPopoverDetailRow(model, "Massive").value.startsWith("OK · last "), true);
   assert.deepEqual(
     model.lineUsage.rows
       .filter((row) =>
@@ -1706,7 +1706,7 @@ test("buildHeaderIbkrPopoverModel surfaces Massive REST and WebSocket details", 
     },
     runtimeDiagnostics: {
       providers: {
-        polygon: {
+        massive: {
           configured: true,
           status: "ok",
           baseUrl: "https://api.massive.com",
@@ -1809,7 +1809,7 @@ test("buildHeaderIbkrPopoverModel keeps Massive visible when runtime provider di
           unionSymbolCount: 37,
           eventCount: 420,
           lastAggregateAgeMs: 250,
-          polygonDelayedWebSocket: {
+          massiveDelayedWebSocket: {
             configured: true,
             providerIdentity: "massive",
             mode: "real-time",
@@ -1840,7 +1840,7 @@ test("buildHeaderIbkrPopoverModel keeps Massive visible when runtime provider di
   assert.ok(model.detailGroups.find((group) => group.title === "Massive"));
 });
 
-test("buildHeaderIbkrPopoverModel does not invent Polygon while provider diagnostics load", () => {
+test("buildHeaderIbkrPopoverModel does not invent Massive while provider diagnostics load", () => {
   const model = buildHeaderIbkrPopoverModel({
     connection: {
       configured: true,

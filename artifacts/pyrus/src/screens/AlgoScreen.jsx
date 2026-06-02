@@ -1,7 +1,4 @@
-import {
-  useMutation,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Suspense,
   lazy,
@@ -69,7 +66,6 @@ import {
   signalFreshnessLabel,
   signalOptionsActionColor,
   signalOptionsActionLabel,
-  signalOptionsApi,
 } from "./algo/algoHelpers";
 import { normalizeLegacyAlgoBrandText } from "./algo/algoBranding.js";
 import { useServerSyncedDraft } from "./algo/useServerSyncedDraft";
@@ -82,15 +78,10 @@ import {
   bridgeRuntimeMessage,
   bridgeRuntimeTone,
 } from "../features/platform/bridgeRuntimeModel";
-import {
-  IBKR_BRIDGE_LAUNCH_COOLDOWN_MS,
-  closeIbkrProtocolLauncher,
-  navigateIbkrProtocolLauncher,
-  openIbkrProtocolLauncher,
-  shouldUseRemoteIbkrLaunchBrowser,
-} from "../features/platform/ibkrBridgeSession";
+import { requestIbkrReconnect } from "../features/platform/ibkrBridgeSession";
 import { QUERY_DEFAULTS } from "../features/platform/queryDefaults";
 import { useToast } from "../features/platform/platformContexts.jsx";
+import { describeUserFacingRuntimeError } from "../features/platform/userFacingRuntimeError.js";
 import {
   formatEnumLabel,
   formatOptionContractLabel,
@@ -120,11 +111,6 @@ import {
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import { retryDynamicImport } from "../lib/dynamicImport";
 
-const LazyAlgoStatusBar = lazy(() =>
-  import("./algo/AlgoStatusBar.jsx").then((module) => ({
-    default: module.AlgoStatusBar,
-  })),
-);
 let algoRightRailImport = null;
 const loadAlgoRightRail = () => {
   if (!algoRightRailImport) {
@@ -140,11 +126,6 @@ const loadAlgoRightRail = () => {
   return algoRightRailImport;
 };
 const LazyAlgoRightRail = lazy(loadAlgoRightRail);
-const LazyAlgoAuditPanel = lazy(() =>
-  import("./algo/AlgoAuditPanel").then((module) => ({
-    default: module.AlgoAuditPanel,
-  })),
-);
 let algoLivePageImport = null;
 const loadAlgoLivePage = () => {
   if (!algoLivePageImport) {
@@ -350,6 +331,8 @@ export const AlgoScreen = ({
   selectedAccountId = null,
   signalMatrixStates = [],
   isVisible = false,
+  safeQaMode = false,
+  onRequestSignalMatrixHydration,
   onJumpToTradeCandidate,
   onReadinessChange,
 }) => {
@@ -406,9 +389,6 @@ export const AlgoScreen = ({
   const [diagExpansion, setDiagExpansion] = useState({});
   const [selectedPipelineStageId, setSelectedPipelineStageId] = useState("all");
   const [selectedCandidateId, setSelectedCandidateId] = useState(null);
-  const [bridgeLauncherError, setBridgeLauncherError] = useState(null);
-  const [bridgeLaunchClock, setBridgeLaunchClock] = useState(() => Date.now());
-  const [bridgeLaunchInFlightUntil, setBridgeLaunchInFlightUntil] = useState(0);
   const [algoLivePageReady, setAlgoLivePageReady] = useState(false);
   const saveAllInFlightRef = useRef(false);
   const [saveAllPending, setSaveAllPending] = useState(false);
@@ -416,7 +396,6 @@ export const AlgoScreen = ({
     DEFAULT_ALGO_RUNTIME_HELPERS,
   );
   const brokerConfigured = Boolean(session?.configured?.ibkr);
-  const brokerAuthenticated = Boolean(session?.ibkrBridge?.authenticated);
   const gatewayReady = isGatewayReadyForAlgo(session);
   const bridgeTone = bridgeRuntimeTone(session);
   const activeAccount =
@@ -671,7 +650,9 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: Boolean(algoCriticalQueriesEnabled && focusedDeployment?.id),
+        enabled: Boolean(
+          algoCriticalQueriesEnabled && focusedDeployment?.id && !safeQaMode,
+        ),
         refetchInterval: algoRoutineRefetchInterval,
         retry: false,
       },
@@ -1144,85 +1125,7 @@ export const AlgoScreen = ({
     }
   };
 
-  const startGatewayBridgeMutation = useMutation({
-    mutationFn: ({ useRemoteDesktopLaunch }) =>
-      signalOptionsApi(
-        useRemoteDesktopLaunch
-          ? "/api/ibkr/remote-launch"
-          : "/api/ibkr/bridge/launcher",
-        useRemoteDesktopLaunch
-          ? {
-              method: "POST",
-              body: JSON.stringify({ autoLogin: false }),
-            }
-          : undefined,
-      ),
-    onSuccess: (payload, variables) => {
-      setBridgeLauncherError(null);
-      const launched = variables.useRemoteDesktopLaunch
-        ? Boolean(payload.remoteLaunch?.jobId)
-        : navigateIbkrProtocolLauncher(
-            variables.protocolLauncher,
-            payload.launchUrl,
-          );
-      if (launched) {
-        setBridgeLaunchInFlightUntil(
-          Date.now() + IBKR_BRIDGE_LAUNCH_COOLDOWN_MS,
-        );
-      }
-      if (!launched) {
-        setBridgeLauncherError(
-          variables.useRemoteDesktopLaunch
-            ? "No paired Windows desktop accepted the IBKR bridge launch request."
-            : "Could not open the PYRUS IBKR PowerShell launcher from this browser.",
-        );
-      }
-      toast.push({
-        kind: "success",
-        title: launched
-          ? variables.useRemoteDesktopLaunch
-            ? "Bridge launch sent"
-            : "Bridge launcher opened"
-          : "Bridge launcher ready",
-        body: launched && variables.useRemoteDesktopLaunch
-          ? "The paired Windows desktop should start the PYRUS IBKR helper."
-          : launched
-          ? "Your browser should ask to open the PYRUS IBKR PowerShell launcher."
-          : "The one-click IBKR bridge handler did not open.",
-      });
-    },
-    onError: (error, variables) => {
-      closeIbkrProtocolLauncher(variables?.protocolLauncher);
-      setBridgeLauncherError(error?.message || "Gateway bridge launch failed.");
-      toast.push({
-        kind: "error",
-        title: "Bridge launcher failed",
-        body: error?.message || "The IB Gateway bridge launcher could not start.",
-      });
-    },
-  });
-  useEffect(() => {
-    if (
-      !isVisible ||
-      brokerAuthenticated ||
-      bridgeLaunchInFlightUntil <= bridgeLaunchClock
-    ) {
-      return undefined;
-    }
-    const timer = window.setInterval(() => setBridgeLaunchClock(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [bridgeLaunchClock, bridgeLaunchInFlightUntil, brokerAuthenticated, isVisible]);
-  useEffect(() => {
-    if (brokerAuthenticated && bridgeLaunchInFlightUntil > 0) {
-      setBridgeLaunchInFlightUntil(0);
-    }
-  }, [bridgeLaunchInFlightUntil, brokerAuthenticated]);
-  const bridgeLaunchInFlight = Boolean(
-    !brokerAuthenticated && bridgeLaunchInFlightUntil > bridgeLaunchClock,
-  );
-  const gatewayBridgeLaunching = Boolean(
-    startGatewayBridgeMutation.isPending || bridgeLaunchInFlight,
-  );
+  const gatewayBridgeLaunching = false;
 
   const runShadowScanMutation = useRunSignalOptionsShadowScan({
     mutation: {
@@ -1234,7 +1137,7 @@ export const AlgoScreen = ({
         ) {
           toast.push({
             kind: "info",
-            title: "Shadow scan already running",
+            title: "Signal-options scan already running",
             body: "The active signal-options scan will finish before another one starts.",
           });
           return;
@@ -1242,15 +1145,21 @@ export const AlgoScreen = ({
         setSelectedCandidateId(state?.candidates?.[0]?.id || null);
         toast.push({
           kind: "success",
-          title: "Shadow scan complete",
+          title: "Signal-options scan complete",
           body: `${state?.candidates?.length || 0} signal-option candidates in the queue.`,
         });
       },
       onError: (error) => {
+        const errorCopy = describeUserFacingRuntimeError(error, {
+          title: "Signal-options scan failed",
+          detail: "The signal-options scan could not finish.",
+          rateLimitedTitle: "Signal-options scan delayed",
+          safeQaTitle: "Signal-options scan paused",
+        });
         toast.push({
           kind: "error",
-          title: "Shadow scan failed",
-          body: error?.message || "The signal-options scan could not finish.",
+          title: errorCopy.title,
+          body: errorCopy.detail,
         });
       },
     },
@@ -1428,20 +1337,26 @@ export const AlgoScreen = ({
       toast.push({
         kind: "warn",
         title: "IBKR data not configured",
-        body: "Configure the IB Gateway bridge before starting Shadow automation.",
+        body: "Configure the IB Gateway bridge before starting signal-options automation.",
       });
       return;
     }
     if (gatewayBridgeLaunching) {
       return;
     }
-    const useRemoteDesktopLaunch = shouldUseRemoteIbkrLaunchBrowser();
-    const protocolLauncher = useRemoteDesktopLaunch
-      ? null
-      : openIbkrProtocolLauncher();
-    startGatewayBridgeMutation.mutate({
-      protocolLauncher,
-      useRemoteDesktopLaunch,
+    const opened = requestIbkrReconnect();
+    if (!opened) {
+      toast.push({
+        kind: "error",
+        title: "IB Gateway controls unavailable",
+        body: "Open the IB Gateway status control in the header to launch with credentials.",
+      });
+      return;
+    }
+    toast.push({
+      kind: "info",
+      title: "IB Gateway controls opened",
+      body: "Use the secure credential form to launch Gateway and attach data.",
     });
   };
 
@@ -1449,8 +1364,8 @@ export const AlgoScreen = ({
     if (!selectedDraft) {
       toast.push({
         kind: "warn",
-        title: "No promoted strategy",
-        body: "Promote a completed backtest run before creating a deployment.",
+        title: "No strategy draft",
+        body: "Select a strategy draft before creating a custom signal-options deployment.",
       });
       return;
     }
@@ -1459,7 +1374,7 @@ export const AlgoScreen = ({
       toast.push({
         kind: "warn",
         title: "IBKR data not configured",
-        body: "Market-data connectivity must be configured before creating a Shadow deployment.",
+        body: "Market-data connectivity must be configured before creating a signal-options paper deployment.",
       });
       return;
     }
@@ -1468,7 +1383,7 @@ export const AlgoScreen = ({
       toast.push({
         kind: "warn",
         title: "Data bridge required",
-        body: "Start the IB Gateway bridge before creating a Shadow signal deployment.",
+        body: "Start the IB Gateway bridge before creating a signal-options paper deployment.",
       });
       return;
     }
@@ -1509,7 +1424,7 @@ export const AlgoScreen = ({
       toast.push({
         kind: "warn",
         title: "Data bridge required",
-        body: "Start the IB Gateway bridge before enabling a Shadow signal deployment.",
+        body: "Start the IB Gateway bridge before enabling a signal-options paper deployment.",
       });
       return;
     }
@@ -1532,11 +1447,7 @@ export const AlgoScreen = ({
       return;
     }
     if (!gatewayReady) {
-      toast.push({
-        kind: "warn",
-        title: "Data bridge required",
-        body: "Start the IB Gateway bridge before running a Shadow signal-options scan.",
-      });
+      handleStartGatewayBridge();
       return;
     }
     runShadowScanMutation.mutate({ deploymentId: focusedDeployment.id });
@@ -1948,62 +1859,9 @@ export const AlgoScreen = ({
               {gatewayBridgeLaunching ? "PREPARING..." : "START DATA"}
             </button>
           </div>
-          {bridgeLauncherError && (
-            <div
-              style={{
-                gridColumn: "1 / -1",
-                width: "100%",
-                fontSize: textSize("body"),
-                color: bridgeLauncherError ? CSS_COLOR.red : CSS_COLOR.textDim,
-                fontFamily: T.sans,
-                lineHeight: 1.45,
-                wordBreak: "break-word",
-              }}
-            >
-              {bridgeLauncherError}
-            </div>
-          )}
         </div>
       )}
 
-      <Suspense fallback={null}>
-        <LazyAlgoStatusBar
-          focusedDeployment={focusedDeployment}
-          deployments={deployments}
-          onSelectDeployment={setFocusedDeploymentId}
-          gatewayReady={gatewayReady}
-          gatewayBridgeLaunching={gatewayBridgeLaunching}
-          environment={environment}
-          bridgeTone={bridgeTone}
-          accountId={activeAccountId}
-          lastEvalMsAgo={
-            focusedDeployment?.lastEvaluatedAt
-              ? Date.now() -
-                new Date(focusedDeployment.lastEvaluatedAt).getTime()
-              : null
-          }
-          lastEvalLabel={formatRelativeTimeShort(
-            focusedDeployment?.lastEvaluatedAt,
-          )}
-          lastSignalLabel={formatRelativeTimeShort(
-            focusedDeployment?.lastSignalAt,
-          )}
-          onRefresh={() => refreshAlgoQueries()}
-          onToggleEnable={() =>
-            focusedDeployment && handleToggleDeployment(focusedDeployment)
-          }
-          onRunScan={handleRunShadowScan}
-          refreshPending={
-            deploymentsQuery.isFetching || cockpitQuery.isFetching
-          }
-          togglePending={
-            enableDeploymentMutation.isPending ||
-            pauseDeploymentMutation.isPending
-          }
-          scanPending={runShadowScanMutation.isPending}
-          narrow={algoIsNarrow}
-        />
-      </Suspense>
       <div
         data-testid="algo-live-content"
         className="ra-panel-enter"
@@ -2030,7 +1888,6 @@ export const AlgoScreen = ({
           cockpitKpis={cockpitKpis}
           cockpitRisk={cockpit?.risk}
           cockpitGeneratedAt={cockpit?.generatedAt}
-          latestEvent={latestEvent}
           refreshPending={deploymentsQuery.isFetching || cockpitQuery.isFetching}
           cockpitSignalFreshness={cockpitSignalFreshness}
           cockpitTradePath={cockpitTradePath}
@@ -2045,18 +1902,23 @@ export const AlgoScreen = ({
           visibleSignalRows={visibleSignalRows}
           signalOptionsCandidates={signalOptionsCandidates}
           signalMatrixStates={signalMatrixStates}
+          onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
           selectedCandidate={selectedCandidate}
           signalOptionsProfile={signalOptionsProfile}
           onOpenCandidateInTrade={handleOpenCandidateInTrade}
+          safeQaMode={safeQaMode}
           signalOptionsPositions={signalOptionsPositions}
           signalOptionsLedgerPositionsQuery={signalOptionsLedgerPositionsQuery}
           symbolIndex={symbolIndex}
           events={events}
           userPreferences={userPreferences}
-          signalMonitorProfile={signalMonitorProfile}
           strategySettingsDraft={strategySettingsDraft}
           activitySummary={activitySummary}
           focusedDeployment={focusedDeployment}
+          onSelectDeployment={setFocusedDeploymentId}
+          accountId={activeAccountId}
+          environment={environment}
+          bridgeTone={bridgeTone}
           handleToggleDeployment={handleToggleDeployment}
           handleRunShadowScan={handleRunShadowScan}
           enableDeploymentMutation={enableDeploymentMutation}
@@ -2065,16 +1927,6 @@ export const AlgoScreen = ({
           algoIsPhone={algoIsPhone}
           algoIsNarrow={algoIsNarrow}
           algoLayoutWidth={algoRootSize.width}
-          auditPanel={
-            <Suspense fallback={null}>
-              <LazyAlgoAuditPanel
-                events={events}
-                focusedDeployment={focusedDeployment}
-                userPreferences={userPreferences}
-                algoIsPhone={algoIsPhone}
-              />
-            </Suspense>
-          }
           rightRail={
             <Suspense fallback={<AlgoRightRailLoading />}>
               <LazyAlgoRightRail

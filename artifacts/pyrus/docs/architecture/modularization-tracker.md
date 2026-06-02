@@ -171,7 +171,7 @@ This replan is based on current workspace files only. No separate untracked tran
 - Updated `src/app/App.tsx` to lazy-load `PlatformApp.jsx` instead of the legacy root file.
 - Updated root-source regression tests to inspect `PlatformApp.jsx`.
 - Moved watchlist identity payload construction into `src/features/platform/watchlistModel.js`, removing the hidden undefined helper conflict from the app root and deleting duplicate dead helpers from market chart modules.
-- Added spot chart hydration hardening in the backend: if Polygon/Massive synthesis is configured but underfills or fails, `/api/bars` now falls back to a full broker history request instead of returning only the recent broker slice.
+- Added spot chart hydration hardening in the backend: if Massive synthesis is configured but underfills or fails, `/api/bars` now falls back to a full broker history request instead of returning only the recent broker slice.
 - Added backend coverage for both no-synthesis and underfilled-synthesis spot history paths.
 - Current status: complete.
 

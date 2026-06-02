@@ -92,14 +92,14 @@ test("position display preserves zero option bid ask without zeroing mark", () =
   assert.equal(display.quote.mid, null);
 });
 
-test("position display drops stale Polygon quote source labels from account rows", () => {
+test("position display drops stale Massive quote source labels from account rows", () => {
   const display = buildPositionDisplayModel({
     mark: 2.75,
     optionQuote: {
       bid: 2.7,
       ask: 2.8,
       mark: 2.75,
-      source: "polygon_option_quote",
+      source: "massive_option_quote",
     },
   });
 

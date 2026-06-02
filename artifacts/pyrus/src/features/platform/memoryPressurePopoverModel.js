@@ -29,21 +29,6 @@ const PRESSURE_THRESHOLD_ROWS = [
     thresholds: MEMORY_PRESSURE_THRESHOLDS.apiHeapUsedPercent,
   },
   {
-    group: "Workload",
-    label: "Active work",
-    thresholds: MEMORY_PRESSURE_THRESHOLDS.workload.activeWorkloadCount,
-  },
-  {
-    group: "Workload",
-    label: "Polls",
-    thresholds: MEMORY_PRESSURE_THRESHOLDS.workload.pollCount,
-  },
-  {
-    group: "Workload",
-    label: "Streams",
-    thresholds: MEMORY_PRESSURE_THRESHOLDS.workload.streamCount,
-  },
-  {
     group: "Charts",
     label: "Hydration scopes",
     thresholds: MEMORY_PRESSURE_THRESHOLDS.chartHydration.chartScopeCount,
@@ -69,6 +54,12 @@ const PRESSURE_THRESHOLD_ROWS = [
     thresholds: MEMORY_PRESSURE_THRESHOLDS.runtimeStores.storeEntryCount,
   },
 ];
+
+const MEMORY_REASON_DRIVER_KINDS = new Set([
+  "api-heap",
+  "api-rss",
+  "browser-memory",
+]);
 
 const numeric = (value) => {
   if (value == null || value === "") return null;
@@ -189,7 +180,10 @@ export const buildMemoryPressurePopoverModel = (
     signal?.server?.heapUsedPercent ??
     apiMetrics?.heapUsedPercent;
   const driverRows = buildDriverRows(signal);
-  const criticalDriver = driverRows.find((driver) => driver.level === "critical");
+  const criticalDriver = driverRows.find(
+    (driver) =>
+      driver.level === "critical" && MEMORY_REASON_DRIVER_KINDS.has(driver.kind),
+  );
 
   return {
     level: signal?.level || "normal",

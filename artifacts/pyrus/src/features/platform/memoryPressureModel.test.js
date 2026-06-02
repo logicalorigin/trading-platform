@@ -57,7 +57,7 @@ test("memory pressure model escalates on direct browser memory growth", () => {
   );
 });
 
-test("memory pressure model keeps elevated state until recovery is clear", () => {
+test("memory pressure model stays normal after direct memory recovery", () => {
   const result = buildMemoryPressureState(
     {
       browserMemoryMb: 178,
@@ -78,8 +78,8 @@ test("memory pressure model keeps elevated state until recovery is clear", () =>
     },
   );
 
-  assert.equal(result.level, "watch");
-  assert.equal(isPressureLevelAtLeast(result.level, "watch"), true);
+  assert.equal(result.level, "normal");
+  assert.equal(isPressureLevelAtLeast(result.level, "watch"), false);
 });
 
 test("memory pressure model releases stale critical state when current drivers are not critical", () => {
@@ -103,7 +103,7 @@ test("memory pressure model releases stale critical state when current drivers a
     },
   );
 
-  assert.equal(result.level, "high");
+  assert.equal(result.level, "normal");
   assert.equal(
     result.dominantDrivers.some((driver) => driver.level === "critical"),
     false,
@@ -131,6 +131,40 @@ test("memory pressure model does not mark normal poll fanout as critical", () =>
       ?.metrics.find((metric) => metric.key === "pollCount")?.level,
     "normal",
   );
+});
+
+test("memory pressure model treats active worker count as metadata only", () => {
+  const result = buildMemoryPressureState({
+    browserMemoryMb: 40,
+    browserSource: "performance.memory",
+    apiHeapUsedPercent: 30,
+    activeWorkloadCount: 50,
+    pollCount: 30,
+    streamCount: 15,
+    chartScopeCount: 2,
+    prependScopeCount: 0,
+    queryCount: 8,
+    heavyQueryCount: 0,
+    storeEntryCount: 12,
+  });
+
+  const workloadDriver = result.pressureDrivers.find(
+    (driver) => driver.kind === "workload",
+  );
+
+  assert.equal(result.level, "normal");
+  assert.equal(result.score, 0);
+  assert.equal(workloadDriver?.level, "normal");
+  assert.equal(
+    workloadDriver?.metrics.find((metric) => metric.key === "activeWorkloadCount")
+      ?.value,
+    50,
+  );
+  assert.equal(
+    workloadDriver?.metrics.find((metric) => metric.key === "pollCount")?.level,
+    "normal",
+  );
+  assert.deepEqual(result.dominantDrivers, []);
 });
 
 test("memory pressure thresholds are exported for detail views", () => {
@@ -182,9 +216,60 @@ test("memory pressure model returns full driver threshold breakdown", () => {
       ?.metrics.find((metric) => metric.key === "heavyQueryCount")?.level,
     "critical",
   );
-  assert.ok(
-    result.dominantDrivers.some((driver) => driver.kind === "runtime-stores"),
+  assert.equal(
+    result.dominantDrivers.some(
+      (driver) => driver.kind === "query-cache" || driver.kind === "runtime-stores",
+    ),
+    false,
   );
+});
+
+test("memory pressure model keeps non-memory workload pressure out of footer level", () => {
+  const result = buildMemoryPressureState({
+    browserMemoryMb: 40,
+    browserSource: "performance.memory",
+    apiHeapUsedPercent: 30,
+    activeWorkloadCount: 25,
+    pollCount: 15,
+    streamCount: 8,
+    chartScopeCount: 50,
+    prependScopeCount: 5,
+    queryCount: 300,
+    heavyQueryCount: 60,
+    storeEntryCount: 220,
+  });
+
+  assert.equal(result.level, "normal");
+  assert.equal(result.score, 0);
+  assert.deepEqual(result.dominantDrivers, []);
+  assert.equal(
+    result.pressureDrivers.find((driver) => driver.kind === "workload")?.level,
+    "normal",
+  );
+  assert.equal(
+    result.pressureDrivers.find((driver) => driver.kind === "query-cache")?.level,
+    "critical",
+  );
+});
+
+test("memory pressure popover ignores non-memory critical drivers as critical reason", () => {
+  const pressure = buildMemoryPressureState({
+    browserMemoryMb: 40,
+    browserSource: "performance.memory",
+    apiHeapUsedPercent: 30,
+    activeWorkloadCount: 25,
+    pollCount: 15,
+    streamCount: 8,
+    chartScopeCount: 50,
+    prependScopeCount: 5,
+    queryCount: 300,
+    heavyQueryCount: 60,
+    storeEntryCount: 220,
+  });
+  const model = buildMemoryPressurePopoverModel(pressure);
+
+  assert.equal(model.level, "normal");
+  assert.equal(model.criticalReason, null);
 });
 
 test("memory pressure popover model includes diagnostics backed RAM details", () => {

@@ -22,6 +22,7 @@ const state = (symbol, patch = {}) => ({
   active: patch.active ?? true,
   lastEvaluatedAt: patch.lastEvaluatedAt ?? "2026-05-31T14:31:00.000Z",
   lastError: patch.lastError ?? null,
+  indicatorSnapshot: patch.indicatorSnapshot ?? null,
 });
 
 const event = (symbol, patch = {}) => ({
@@ -66,11 +67,116 @@ test("signals rows preserve universe symbols without stored state", () => {
     }),
   });
 
-  assert.deepEqual(rows.map((row) => row.symbol), ["SPY", "MSFT", "AAPL"]);
+  assert.deepEqual(rows.map((row) => row.symbol), ["SPY", "AAPL", "MSFT"]);
   assert.equal(rows[0].status, SIGNALS_ROW_STATUS.activeFresh);
-  assert.equal(rows[1].status, SIGNALS_ROW_STATUS.skipped);
-  assert.equal(rows[1].coverageReason, "Outside current monitor scan cap");
   assert.equal(rows[2].status, SIGNALS_ROW_STATUS.pending);
+  assert.equal(
+    rows[2].coverageReason,
+    "Waiting for market-data signal computation",
+  );
+  assert.equal(rows[1].status, SIGNALS_ROW_STATUS.pending);
+});
+
+test("signals rows do not let scan queue metadata override stored state", () => {
+  const rows = buildSignalsRows({
+    stateResponse: response({
+      universeSymbols: ["SPY", "MSFT"],
+      skippedSymbols: ["MSFT"],
+      states: [
+        state("MSFT", {
+          currentSignalDirection: "sell",
+          currentSignalAt: "2026-05-31T14:20:00.000Z",
+          barsSinceSignal: 3,
+          fresh: false,
+        }),
+      ],
+    }),
+  });
+
+  assert.equal(rows[0].symbol, "MSFT");
+  assert.equal(rows[0].status, SIGNALS_ROW_STATUS.activeStale);
+  assert.equal(
+    rows[0].coverageReason,
+    "Stored primary state present; interval matrix hydrates from market bars",
+  );
+});
+
+test("signals rows use market-data matrix state when primary scan state is queued", () => {
+  const rows = buildSignalsRows({
+    stateResponse: response({
+      universeSymbols: ["MSFT"],
+      skippedSymbols: ["MSFT"],
+      states: [],
+    }),
+    matrixStates: [
+      state("MSFT", {
+        timeframe: "1m",
+        currentSignalDirection: "buy",
+        currentSignalAt: "2026-05-31T14:28:00.000Z",
+        fresh: true,
+        barsSinceSignal: 0,
+      }),
+      state("MSFT", { timeframe: "2m" }),
+      state("MSFT", { timeframe: "5m" }),
+      state("MSFT", { timeframe: "15m" }),
+      state("MSFT", { timeframe: "1h" }),
+    ],
+  });
+
+  assert.equal(rows[0].status, SIGNALS_ROW_STATUS.activeFresh);
+  assert.equal(rows[0].statusLabel, "Fresh signal");
+  assert.equal(rows[0].direction, "buy");
+  assert.equal(rows[0].fresh, true);
+  assert.equal(rows[0].skipped, true);
+  assert.equal(
+    rows[0].coverageReason,
+    "Computed from market bars; primary monitor scan pending",
+  );
+});
+
+test("signals rows do not promote stale matrix states into active signals", () => {
+  const rows = buildSignalsRows({
+    stateResponse: response({
+      universeSymbols: ["SPY"],
+      states: [],
+    }),
+    matrixStates: [
+      state("SPY", {
+        timeframe: "1m",
+        status: "stale",
+        currentSignalDirection: "sell",
+        currentSignalAt: "2026-05-29T20:00:00.000Z",
+        latestBarAt: "2026-05-29T20:01:00.000Z",
+        lastEvaluatedAt: "2026-06-01T00:40:00.000Z",
+      }),
+      state("SPY", {
+        timeframe: "2m",
+        status: "stale",
+        currentSignalDirection: "buy",
+        currentSignalAt: "2026-05-29T20:00:00.000Z",
+        latestBarAt: "2026-05-29T20:00:00.000Z",
+        lastEvaluatedAt: "2026-06-01T00:40:00.000Z",
+      }),
+    ],
+  });
+
+  assert.equal(rows[0].direction, null);
+  assert.equal(rows[0].status, SIGNALS_ROW_STATUS.pending);
+  assert.equal(rows[0].fresh, false);
+  assert.deepEqual(rows[0].activeTimeframes, []);
+  assert.deepEqual(rows[0].stackSummary, {
+    direction: null,
+    buyCount: 0,
+    sellCount: 0,
+    activeCount: 0,
+    freshCount: 0,
+    totalCount: 5,
+    label: "0/5",
+  });
+  assert.equal(
+    rows[0].coverageReason,
+    "Waiting for current market bars",
+  );
 });
 
 test("signals rows merge matrix states by timeframe", () => {
@@ -101,6 +207,71 @@ test("signals rows merge matrix states by timeframe", () => {
   assert.deepEqual(rows[0].freshTimeframes, ["5m"]);
 });
 
+test("signals rows attach watchlist labels from item and legacy symbol lists", () => {
+  const rows = buildSignalsRows({
+    stateResponse: response({
+      universeSymbols: ["SPY", "QQQ"],
+    }),
+    watchlists: [
+      { id: "core", name: "Core", symbols: ["spy"] },
+      { id: "growth", name: "Growth", items: [{ symbol: "QQQ" }] },
+    ],
+  });
+
+  const bySymbol = Object.fromEntries(rows.map((row) => [row.symbol, row]));
+  assert.deepEqual(bySymbol.SPY.watchlistLabels, ["Core"]);
+  assert.deepEqual(bySymbol.QQQ.watchlistLabels, ["Growth"]);
+});
+
+test("signals rows summarize five interval stack and indicator dashboard", () => {
+  const dashboard = {
+    trendDirection: "bullish",
+    trendAgeBars: 12,
+    trendAgeBucket: "new",
+    adx: 31.4,
+    strength: "strong",
+    volatilityScore: 7,
+    mtf: [
+      { timeframe: "1h", direction: "bullish", required: true, pass: true },
+      { timeframe: "4h", direction: "bearish", required: false, pass: true },
+      { timeframe: "D", direction: "bullish", required: false, pass: true },
+    ],
+    filterState: { adxPass: true },
+  };
+  const rows = buildSignalsRows({
+    stateResponse: response({
+      profile: { timeframe: "15m" },
+      universeSymbols: ["SPY"],
+    }),
+    matrixStates: [
+      state("SPY", { timeframe: "1m", currentSignalDirection: "buy", fresh: true }),
+      state("SPY", { timeframe: "2m", currentSignalDirection: "buy", fresh: true }),
+      state("SPY", { timeframe: "5m", currentSignalDirection: "sell" }),
+      state("SPY", {
+        timeframe: "15m",
+        currentSignalDirection: "buy",
+        indicatorSnapshot: dashboard,
+      }),
+      state("SPY", { timeframe: "1h" }),
+    ],
+  });
+
+  assert.deepEqual(rows[0].stackSummary, {
+    direction: "buy",
+    buyCount: 3,
+    sellCount: 1,
+    activeCount: 4,
+    freshCount: 2,
+    totalCount: 5,
+    label: "3/5",
+  });
+  assert.equal(rows[0].dashboardSummary.timeframe, "15m");
+  assert.equal(rows[0].dashboardSummary.signalDirection, "buy");
+  assert.equal(rows[0].dashboardSummary.strength, "strong");
+  assert.equal(rows[0].dashboardSummary.volatilityScore, 7);
+  assert.equal(rows[0].dashboardSummary.mtf.length, 3);
+});
+
 test("signals rows attach the latest event per symbol", () => {
   const rows = buildSignalsRows({
     stateResponse: response({ universeSymbols: ["PLTR"] }),
@@ -111,8 +282,9 @@ test("signals rows attach the latest event per symbol", () => {
   });
 
   assert.equal(rows[0].latestEvent.direction, "sell");
-  assert.equal(rows[0].direction, "sell");
-  assert.equal(rows[0].currentSignalPrice, 101);
+  assert.equal(rows[0].direction, null);
+  assert.equal(rows[0].currentSignalPrice, null);
+  assert.equal(rows[0].status, SIGNALS_ROW_STATUS.pending);
 });
 
 test("signals row summary and filters use normalized row metadata", () => {
@@ -149,8 +321,8 @@ test("signals row summary and filters use normalized row metadata", () => {
     buy: 1,
     sell: 1,
     problem: 1,
-    skipped: 1,
-    pending: 0,
+    skipped: 0,
+    pending: 1,
   });
   assert.deepEqual(
     filterSignalsRows(rows, { status: SIGNALS_ROW_STATUS.problem }).map((row) => row.symbol),

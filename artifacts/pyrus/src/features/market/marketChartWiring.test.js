@@ -58,7 +58,7 @@ test("Market chart flow markers use all-flow live and historical contracts", () 
   assert.doesNotMatch(
     historicalQueriesBlock,
     /enabled:\s*Boolean\(chartFlowEnabled && request\.symbol\)/,
-    "historical Polygon/Massive flow must not wait on the IBKR live scanner gate",
+    "historical Massive flow must not wait on the IBKR live scanner gate",
   );
   assert.match(source, /historicalBucketSeconds/);
   assert.match(source, /getChartEventLookbackWindow/);

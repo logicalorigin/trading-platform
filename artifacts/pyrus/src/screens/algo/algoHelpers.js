@@ -518,7 +518,7 @@ export const resolveSignalAge = (signal, { freshWindowBars, now } = {}) => {
       elapsed !== MISSING_VALUE
         ? `${elapsed} since signal`
         : record.fresh === false
-          ? "stale signal"
+          ? "aged signal"
           : MISSING_VALUE,
   };
 };
@@ -559,6 +559,20 @@ const scoreReasonLabel = (reason) =>
     .replace(/^Mtf\b/, "MTF")
     .replace(/\bAdx\b/, "ADX");
 
+const mtfFrameCount = (mtfDirections) => Math.max(1, mtfDirections.length);
+
+const mtfAlignmentScore = (mtfDirections, mtfMatches) =>
+  mtfDirections.length ? (mtfMatches / mtfFrameCount(mtfDirections)) * 25 : 8;
+
+const mtfAlignmentReason = (mtfDirections, mtfMatches) => {
+  if (!mtfDirections.length) return null;
+  if (mtfMatches === mtfDirections.length) return "mtf_full_alignment";
+  if (mtfMatches >= Math.ceil(mtfDirections.length / 2)) {
+    return "mtf_partial_alignment";
+  }
+  return null;
+};
+
 export const resolveSignalScoreBreakdown = ({
   signal,
   candidate,
@@ -589,7 +603,7 @@ export const resolveSignalScoreBreakdown = ({
   const direction = String(candidateRecord.direction || signalRecord.direction || "buy").toLowerCase();
   const directionSign = direction === "sell" ? -1 : 1;
   const mtfDirections = Array.isArray(filterState.mtfDirections)
-    ? filterState.mtfDirections.map(Number).filter(Number.isFinite).slice(0, 3)
+    ? filterState.mtfDirections.map(Number).filter(Number.isFinite)
     : [];
   const mtfMatches = mtfDirections.filter((item) => item === directionSign).length;
   const adx = finiteNumberOrNull(filterState.adx);
@@ -621,9 +635,7 @@ export const resolveSignalScoreBreakdown = ({
     quoteRecord.marketDataMode,
     orderLiquidity.marketDataMode,
   );
-  const mtfAlignment = mtfDirections.length
-    ? (mtfMatches / Math.min(3, Math.max(1, mtfDirections.length))) * 25
-    : 8;
+  const mtfAlignment = mtfAlignmentScore(mtfDirections, mtfMatches);
   const freshness = (signalAge.freshnessPct / 100) * 20;
   const trendStrength = adx == null ? 7.5 : clampMetric(adx / 25, 0, 1) * 15;
   const liquidityScore =
@@ -640,7 +652,7 @@ export const resolveSignalScoreBreakdown = ({
   const score =
     mtfAlignment + freshness + trendStrength + liquidityScore + riskFit + dataQuality;
   const reasons = [
-    mtfMatches >= 3 ? "mtf_full_alignment" : mtfMatches >= 2 ? "mtf_partial_alignment" : null,
+    mtfAlignmentReason(mtfDirections, mtfMatches),
     signalAge.freshnessPct >= 67 ? "fresh_signal" : signalAge.freshnessPct <= 20 ? "aging_signal" : null,
     adx != null && adx >= 25 ? "adx_confirmed" : null,
     liquidityTier === "strong" ? "strong_liquidity" : liquidityTier === "weak" ? "weak_liquidity" : null,
@@ -1298,6 +1310,21 @@ const firstText = (...values) => {
   return "";
 };
 
+const quoteStateDisplay = (record) => {
+  const state = firstText(
+    record.quoteFreshness,
+    record.freshness,
+    record.status,
+    record.marketDataMode,
+  );
+  const reason = firstText(record.reason, record.blockedReason, record.errorMessage);
+  if (!state && !reason) return null;
+  return {
+    main: state ? formatEnumLabel(state) : "Unavailable",
+    detail: reason ? formatEnumLabel(reason) : MISSING_VALUE,
+  };
+};
+
 const formatOptionalMoney = (value, digits = 2) =>
   value === null || value === undefined || value === ""
     ? MISSING_VALUE
@@ -1397,6 +1424,10 @@ export const formatQuoteSummary = (quote, liquidity) => {
         : last != null
           ? `last ${formatOptionalMoney(last, 2)}`
           : MISSING_VALUE;
+  const stateDisplay = quoteStateDisplay(quoteRecord);
+  if (main === MISSING_VALUE && stateDisplay) {
+    return stateDisplay;
+  }
   const priceDetail = [
     mid != null ? `mid ${formatOptionalMoney(mid, 2)}` : null,
     mark != null ? `mark ${formatOptionalMoney(mark, 2)}` : null,
@@ -1452,6 +1483,18 @@ export const formatQuoteGreeksSummary = (quote) => {
     theta !== MISSING_VALUE ? `th ${theta}` : null,
     vega !== MISSING_VALUE ? `v ${vega}` : null,
   ].filter(Boolean);
+  if (!main.length) {
+    const stateDisplay = quoteStateDisplay(record);
+    if (stateDisplay) {
+      return {
+        main: firstText(record.reason).includes("greek")
+          ? formatEnumLabel(record.reason)
+          : "Greeks pending",
+        detail: stateDisplay.detail,
+        full: MISSING_VALUE,
+      };
+    }
+  }
   return {
     main: main.length ? main.join(" / ") : MISSING_VALUE,
     detail: detail.length ? detail.join(" / ") : MISSING_VALUE,

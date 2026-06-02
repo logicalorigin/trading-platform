@@ -212,7 +212,7 @@ async function mockPlatformApi(page: Page) {
           historical: "ibkr",
           research: "fmp",
         },
-        configured: { polygon: false, ibkr: false, research: false },
+        configured: { massive: false, ibkr: false, research: false },
         ibkrBridge: null,
         timestamp: new Date().toISOString(),
       };

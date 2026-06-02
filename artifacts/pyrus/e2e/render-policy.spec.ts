@@ -122,7 +122,7 @@ async function installRenderPolicyMockApi(page: Page) {
         brokerProvider: "ibkr",
         marketDataProvider: "ibkr",
         marketDataProviders: { live: "ibkr", historical: "ibkr", research: "mock" },
-        configured: { polygon: false, ibkr: false, research: false },
+        configured: { massive: false, ibkr: false, research: false },
         ibkrBridge: null,
         timestamp: nowIso(),
       };

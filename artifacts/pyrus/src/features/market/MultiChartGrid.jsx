@@ -122,7 +122,7 @@ const MARKET_CHART_FLOW_HISTORY_TRANSIENT_REASONS = new Set([
 ]);
 
 const MARKET_CHART_FLOW_PENDING_SOURCE = {
-  provider: "polygon",
+  provider: "massive",
   status: "empty",
   ibkrStatus: "empty",
   ibkrReason: "options_flow_historical_refreshing",

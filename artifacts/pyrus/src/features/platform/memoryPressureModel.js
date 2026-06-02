@@ -13,9 +13,9 @@ export const MEMORY_PRESSURE_THRESHOLDS = {
   },
   apiHeapUsedPercent: { watch: 70, high: 78, critical: 85 },
   workload: {
-    activeWorkloadCount: { watch: 10, high: 14, critical: 20 },
-    pollCount: { watch: 8, high: 12, critical: null },
-    streamCount: { watch: 3, high: 5, critical: 8 },
+    activeWorkloadCount: { watch: null, high: null, critical: null },
+    pollCount: { watch: null, high: null, critical: null },
+    streamCount: { watch: null, high: null, critical: null },
   },
   chartHydration: {
     chartScopeCount: { watch: 18, high: 30, critical: null },
@@ -35,11 +35,13 @@ const BROWSER_THRESHOLDS_MB = MEMORY_PRESSURE_THRESHOLDS.browserMemoryMb;
 const DRIVER_WEIGHTS = {
   "browser-memory": 48,
   "api-heap": 24,
-  workload: 12,
-  "chart-hydration": 8,
-  "query-cache": 5,
-  "runtime-stores": 3,
+  workload: 0,
+  "chart-hydration": 0,
+  "query-cache": 0,
+  "runtime-stores": 0,
 };
+
+const MEMORY_LEVEL_DRIVER_KINDS = new Set(["browser-memory", "api-heap"]);
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -360,20 +362,20 @@ export const buildMemoryPressureState = (
     }),
   ];
 
-  const dominantDrivers = resolveDominantDrivers(pressureDrivers);
+  const memoryLevelDrivers = pressureDrivers.filter((driver) =>
+    MEMORY_LEVEL_DRIVER_KINDS.has(driver.kind),
+  );
+  const dominantDrivers = resolveDominantDrivers(memoryLevelDrivers);
   const rawScore =
     scoreFromLevel(browserLevel, DRIVER_WEIGHTS["browser-memory"]) +
-    scoreFromLevel(apiLevel, DRIVER_WEIGHTS["api-heap"]) +
-    scoreFromLevel(workloadLevel, DRIVER_WEIGHTS.workload) +
-    scoreFromLevel(chartLevel, DRIVER_WEIGHTS["chart-hydration"]) +
-    scoreFromLevel(queryLevel, DRIVER_WEIGHTS["query-cache"]) +
-    scoreFromLevel(storeLevel, DRIVER_WEIGHTS["runtime-stores"]);
+    scoreFromLevel(apiLevel, DRIVER_WEIGHTS["api-heap"]);
   const score = round(clamp(rawScore, 0, 100));
-  const baseLevel = resolveScoreLevel(score, pressureDrivers);
+  const baseLevel = resolveScoreLevel(score, memoryLevelDrivers);
   let level = baseLevel;
   const previousLevel = normalizeLevel(previousState?.level);
   const previousScore = Number(previousState?.score);
   if (
+    score > 0 &&
     levelAtLeast(previousLevel, "watch") &&
     !levelAtLeast(baseLevel, previousLevel)
   ) {

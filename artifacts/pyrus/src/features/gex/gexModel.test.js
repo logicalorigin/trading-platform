@@ -145,6 +145,16 @@ test("expiry aggregation and max pain use normalized option rows", () => {
   assert.equal(maxPainStrike(rows), 95);
 });
 
+test("expiry aggregation uses New York market day instead of UTC date rollover", () => {
+  const { rows } = normalizeGexOptionChain([
+    quote({ right: "call", strike: 100, expirationDate: "2026-06-01" }),
+  ]);
+  const expiryRows = gexByExpiry(rows, 100, new Date("2026-06-01T01:00:00Z"));
+
+  assert.equal(expiryRows[0].label, "Jun 1");
+  assert.equal(expiryRows[0].sublabel, "1d");
+});
+
 test("gamma price profile uses provider IV and does not estimate missing IV", () => {
   const { rows } = normalizeGexOptionChain([
     quote({ right: "call", strike: 100, impliedVolatility: 0.2 }),

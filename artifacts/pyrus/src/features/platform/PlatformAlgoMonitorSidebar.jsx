@@ -392,7 +392,7 @@ const signalActionStatusMeta = (signal, candidate, blocker) => {
     };
   }
   if (signal?.fresh === false) {
-    return { label: "Stale", tone: CSS_COLOR.amber, Icon: Clock };
+    return { label: "Aged", tone: CSS_COLOR.amber, Icon: Clock };
   }
   return { label: "Awaiting scan", tone: CSS_COLOR.cyan, Icon: Radar };
 };
@@ -1171,9 +1171,9 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
 
       {!queryEnabled ? (
         <DataUnavailableState
-          title="Preparing algo monitor"
-          detail="Starting the frame-owned algo data stream."
-          minHeight={160}
+          title="Algo monitor idle"
+          detail="Open Algo Monitor when you need deployment, signal, or position context."
+          minHeight={96}
         />
       ) : loading ? (
         <DataUnavailableState

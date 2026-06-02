@@ -9,6 +9,8 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 const defaultGetRowId = (row, index) => String(row?.id ?? index);
 const defaultGetCellProps = () => ({});
 const defaultGetRowProps = () => ({});
+const defaultGetRowDetailProps = () => ({});
+const defaultIsRowExpanded = () => false;
 
 const mergeClassName = (...values) => values.filter(Boolean).join(" ");
 
@@ -29,11 +31,16 @@ export function DenseVirtualTable({
   emptyState = null,
   getCellProps = defaultGetCellProps,
   getRowId = defaultGetRowId,
+  getRowDetailProps = defaultGetRowDetailProps,
   getRowProps = defaultGetRowProps,
   headerStyle,
+  isRowExpanded = defaultIsRowExpanded,
   minWidth,
   onVisibleRowsChange,
   overscan = 12,
+  renderRowDetail = null,
+  rowDetailHeight = 320,
+  rowDetailTestId,
   rowHeight = 34,
   rowTestId,
   scrollAlign = "center",
@@ -52,30 +59,88 @@ export function DenseVirtualTable({
     () => columns.map((column) => column.meta?.width || "minmax(0, 1fr)").join(" "),
     [columns],
   );
+  const virtualRows = useMemo(() => {
+    const nextRows = [];
+    rows.forEach((row, rowIndex) => {
+      nextRows.push({
+        key: row.id,
+        row,
+        rowIndex,
+        size: rowHeight,
+        type: "row",
+      });
+      if (!renderRowDetail || !isRowExpanded(row.original, rowIndex, row)) {
+        return;
+      }
+      const detailSize =
+        typeof rowDetailHeight === "function"
+          ? rowDetailHeight(row.original, rowIndex, row)
+          : rowDetailHeight;
+      nextRows.push({
+        key: `${row.id}:detail`,
+        row,
+        rowIndex,
+        size: Number.isFinite(Number(detailSize))
+          ? Math.max(1, Number(detailSize))
+          : rowHeight,
+        type: "detail",
+      });
+    });
+    return nextRows;
+  }, [
+    isRowExpanded,
+    renderRowDetail,
+    rowDetailHeight,
+    rowHeight,
+    rows,
+  ]);
+  const estimateItemSize = useCallback(
+    (index) => virtualRows[index]?.size ?? rowHeight,
+    [rowHeight, virtualRows],
+  );
+  const scrollToVirtualIndex = useMemo(() => {
+    if (!Number.isInteger(scrollToIndex) || scrollToIndex < 0) {
+      return null;
+    }
+    const nextIndex = virtualRows.findIndex(
+      (item) => item.type === "row" && item.rowIndex === scrollToIndex,
+    );
+    return nextIndex >= 0 ? nextIndex : null;
+  }, [scrollToIndex, virtualRows]);
   const handleVisibleRangeChange = useCallback(
     ({ virtualItems }) => {
       if (!onVisibleRowsChange) return;
+      const seenRowIds = new Set();
+      const visibleRows = [];
+      virtualItems.forEach((virtualRow) => {
+        const item = virtualRows[virtualRow.index];
+        const original = item?.row?.original;
+        if (!original || seenRowIds.has(item.row.id)) {
+          return;
+        }
+        seenRowIds.add(item.row.id);
+        visibleRows.push(original);
+      });
       onVisibleRowsChange(
-        virtualItems
-          .map((virtualRow) => rows[virtualRow.index]?.original)
-          .filter(Boolean),
+        visibleRows,
         { virtualItems },
       );
     },
-    [onVisibleRowsChange, rows],
+    [onVisibleRowsChange, virtualRows],
   );
   const {
     scrollRef,
     totalSize,
     virtualItems,
   } = useDenseVirtualRows({
-    count: rows.length,
+    count: virtualRows.length,
+    estimateSize: estimateItemSize,
     onVisibleRangeChange: handleVisibleRangeChange,
     overscan,
     rowHeight,
     scrollAlign,
     scrollKey,
-    scrollToIndex,
+    scrollToIndex: scrollToVirtualIndex,
   });
 
   return (
@@ -126,13 +191,47 @@ export function DenseVirtualTable({
             }}
           >
             {virtualItems.map((virtualRow) => {
-              const row = rows[virtualRow.index];
-              const rowProps = getRowProps(row.original, virtualRow.index, row) || {};
+              const virtualItem = virtualRows[virtualRow.index];
+              if (!virtualItem) return null;
+              const row = virtualItem.row;
+
+              if (virtualItem.type === "detail") {
+                const detailProps =
+                  getRowDetailProps(row.original, virtualItem.rowIndex, row) || {};
+                const {
+                  className: detailClassName,
+                  style: detailStyle,
+                  ...restDetailProps
+                } = detailProps;
+
+                return (
+                  <div
+                    key={virtualItem.key}
+                    data-index={virtualRow.index}
+                    data-testid={rowDetailTestId}
+                    className={mergeClassName(detailClassName)}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      height: `${virtualRow.size}px`,
+                      transform: `translateY(${virtualRow.start}px)`,
+                      ...detailStyle,
+                    }}
+                    {...restDetailProps}
+                  >
+                    {renderRowDetail(row.original, virtualItem.rowIndex, row)}
+                  </div>
+                );
+              }
+
+              const rowProps = getRowProps(row.original, virtualItem.rowIndex, row) || {};
               const { className, style: rowStyle, ...restRowProps } = rowProps;
 
               return (
                 <div
-                  key={row.id}
+                  key={virtualItem.key}
                   data-index={virtualRow.index}
                   data-testid={rowTestId}
                   className={mergeClassName(className)}
@@ -151,7 +250,12 @@ export function DenseVirtualTable({
                 >
                   {row.getVisibleCells().map((cell) => {
                     const cellProps =
-                      getCellProps(cell.column.id, row.original, virtualRow.index, cell) || {};
+                      getCellProps(
+                        cell.column.id,
+                        row.original,
+                        virtualItem.rowIndex,
+                        cell,
+                      ) || {};
                     const {
                       className: cellClassName,
                       style: cellStyle,
@@ -186,6 +290,7 @@ export function DenseVirtualTable({
 
 export function useDenseVirtualRows({
   count,
+  estimateSize,
   onVisibleRangeChange,
   overscan = 12,
   rowHeight = 34,
@@ -195,12 +300,21 @@ export function useDenseVirtualRows({
 }) {
   const scrollRef = useRef(null);
   const lastScrollRequestRef = useRef(null);
+  const estimateItemSize = useCallback(
+    (index) => estimateSize?.(index) ?? rowHeight,
+    [estimateSize, rowHeight],
+  );
   const rowVirtualizer = useVirtualizer({
     count,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => rowHeight,
+    estimateSize: estimateItemSize,
     overscan,
   });
+
+  useEffect(() => {
+    rowVirtualizer.measure();
+  }, [count, estimateItemSize, rowVirtualizer]);
+
   const virtualItems = rowVirtualizer.getVirtualItems();
   const virtualItemSignature = virtualItems
     .map((virtualRow) => `${virtualRow.index}:${virtualRow.start}:${virtualRow.size}`)

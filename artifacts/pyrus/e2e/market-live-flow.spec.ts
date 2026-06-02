@@ -56,7 +56,7 @@ test.describe("live Market unusual-flow validation", () => {
     "Set PYRUS_LIVE_MARKET_FLOW=1 to run read-only live IBKR flow validation.",
   );
 
-  test("Market charts request IBKR unusual flow without Polygon fallback", async ({
+  test("Market charts request IBKR unusual flow without Massive fallback", async ({
     page,
     request,
   }) => {
@@ -111,9 +111,9 @@ test.describe("live Market unusual-flow validation", () => {
       );
     });
     const fallbackResponses = chartFlowResponses.filter(
-      ({ body }) => body?.source?.provider === "polygon" || body?.source?.fallbackUsed,
+      ({ body }) => body?.source?.provider === "massive" || body?.source?.fallbackUsed,
     );
-    expect(fallbackResponses, "Market chart flow must not use Polygon fallback").toEqual([]);
+    expect(fallbackResponses, "Market chart flow must not use Massive fallback").toEqual([]);
     expect(
       chartFlowResponses.some(({ body }) => body?.source?.provider === "ibkr"),
       "at least one chart flow response should be sourced from IBKR",

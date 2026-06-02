@@ -95,9 +95,15 @@ import {
   toEndOfDayIso,
   toStartOfDayIso,
 } from "./backtestingDateRanges";
+import {
+  buildBacktestValidationWarningItems,
+  type BacktestValidationWarningItem,
+  type BacktestValidationWarningSeverity,
+} from "./backtestValidationWarnings";
 import { deriveSweepDimensions } from "./sweepDimensions";
 import { useRuntimeWorkloadFlag } from "../platform/workloadStats";
 import { useToast } from "../platform/platformContexts.jsx";
+import { describeUserFacingRuntimeError } from "../platform/userFacingRuntimeError.js";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import {
   formatAppDateTimeForPreferences,
@@ -264,6 +270,7 @@ type ValidationMetricsView = {
   trialCount?: number | null;
   oosWindowCount?: number | null;
   warnings?: string[] | null;
+  warningDetails?: unknown;
 };
 
 type DataQualityMetricsView = {
@@ -306,11 +313,12 @@ function asStringArray(value: unknown): string[] {
 }
 
 function safeErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return "Unexpected request failure.";
+  return describeUserFacingRuntimeError(error, {
+    title: "Backtest unavailable",
+    detail: "The backtest request could not finish.",
+    rateLimitedTitle: "Backtest request delayed",
+    safeQaTitle: "Backtest data paused",
+  }).detail;
 }
 
 function formatCurrency(value: number | null | undefined): string {
@@ -975,6 +983,36 @@ function cardStyle(theme: ThemeTokens, scale: ScaleHelpers): CSSProperties {
     borderRadius: scale.dim(6),
     padding: scale.sp("8px 10px"),
   };
+}
+
+function validationWarningColor(
+  theme: ThemeTokens,
+  severity: BacktestValidationWarningSeverity,
+): string {
+  if (severity === "critical") {
+    return theme.red;
+  }
+
+  if (severity === "warning") {
+    return theme.amber;
+  }
+
+  return theme.cyan;
+}
+
+function validationWarningAccentColor(
+  theme: ThemeTokens,
+  warnings: BacktestValidationWarningItem[],
+): string {
+  if (warnings.some((warning) => warning.severity === "critical")) {
+    return theme.red;
+  }
+
+  if (warnings.some((warning) => warning.severity === "warning")) {
+    return theme.amber;
+  }
+
+  return theme.cyan;
 }
 
 function fieldLabelStyle(
@@ -2307,13 +2345,18 @@ export function BacktestWorkspace({
   const dataQualityMetrics = asDataQualityMetrics(headlineMetrics?.dataQuality);
   const benchmarkMetrics = asBenchmarkMetrics(headlineMetrics?.benchmarks);
   const runWarnings = asStringArray(runDetail?.run.warnings);
-  const validationWarnings = asStringArray(validationMetrics?.warnings);
-  const trustWarnings = useMemo(
+  const validationWarningItems = useMemo(
     () =>
-      [...runWarnings, ...validationWarnings].filter(
-        (warning, index, allWarnings) => allWarnings.indexOf(warning) === index,
-      ),
-    [runWarnings, validationWarnings],
+      buildBacktestValidationWarningItems({
+        runWarnings,
+        validation: validationMetrics,
+      }),
+    [runWarnings, validationMetrics],
+  );
+  const visibleValidationWarningItems = validationWarningItems.slice(0, 5);
+  const hiddenValidationWarningCount = Math.max(
+    validationWarningItems.length - visibleValidationWarningItems.length,
+    0,
   );
 
   useEffect(() => {
@@ -4030,37 +4073,147 @@ export function BacktestWorkspace({
               </div>
             </div>
 
-            {trustWarnings.length > 0 ? (
+            {validationWarningItems.length > 0 ? (
               <div
+                data-testid="backtest-validation-warnings"
                 style={{
                   ...cardStyle(theme, scale),
                   background: theme.bg0,
-                  borderColor: theme.amber,
+                  borderColor: validationWarningAccentColor(
+                    theme,
+                    validationWarningItems,
+                  ),
                 }}
               >
                 <div
                   style={{
-                    fontSize: scale.fs(10),
-                    fontWeight: 400,
-                    color: theme.amber,
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: scale.sp(8),
                     marginBottom: scale.sp(8),
                   }}
                 >
-                  Promotion Caveats
+                  <div
+                    style={{
+                      fontSize: scale.fs(10),
+                      fontWeight: 400,
+                      color: validationWarningAccentColor(
+                        theme,
+                        validationWarningItems,
+                      ),
+                    }}
+                  >
+                    Validation Warnings
+                  </div>
+                  <div
+                    style={{
+                      border: `1px solid ${theme.border}`,
+                      borderRadius: scale.dim(999),
+                      color: theme.textDim,
+                      fontFamily: theme.mono,
+                      fontSize: scale.fs(8),
+                      padding: scale.sp("2px 6px"),
+                    }}
+                  >
+                    {validationWarningItems.length}
+                  </div>
                 </div>
-                <div style={{ display: "grid", gap: scale.sp(6) }}>
-                  {trustWarnings.slice(0, 5).map((warning) => (
+                <div style={{ display: "grid", gap: scale.sp(8) }}>
+                  {visibleValidationWarningItems.map((warning) => {
+                    const warningColor = validationWarningColor(
+                      theme,
+                      warning.severity,
+                    );
+
+                    return (
+                      <div
+                        key={warning.id}
+                        style={{
+                          display: "grid",
+                          gap: scale.sp(5),
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            gap: scale.sp(6),
+                          }}
+                        >
+                          <span
+                            style={{
+                              border: `1px solid ${cssColorAlpha(warningColor, 0.45)}`,
+                              borderRadius: scale.dim(999),
+                              background: cssColorAlpha(warningColor, 0.12),
+                              color: warningColor,
+                              fontSize: scale.fs(8),
+                              fontFamily: theme.mono,
+                              padding: scale.sp("2px 6px"),
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            {warning.severityLabel}
+                          </span>
+                          <span
+                            style={{
+                              color: theme.textDim,
+                              fontSize: scale.fs(8),
+                              fontFamily: theme.mono,
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            {warning.scopeLabel}
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            fontSize: scale.fs(9),
+                            color: theme.textSec,
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          {warning.message}
+                        </div>
+                        {warning.evidence.length > 0 ? (
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: scale.sp(5),
+                            }}
+                          >
+                            {warning.evidence.map((evidence) => (
+                              <span
+                                key={`${warning.id}:${evidence}`}
+                                style={{
+                                  border: `1px solid ${theme.borderLight}`,
+                                  borderRadius: scale.dim(999),
+                                  color: theme.textDim,
+                                  fontFamily: theme.mono,
+                                  fontSize: scale.fs(8),
+                                  padding: scale.sp("2px 6px"),
+                                }}
+                              >
+                                {evidence}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  {hiddenValidationWarningCount > 0 ? (
                     <div
-                      key={warning}
                       style={{
+                        color: theme.textDim,
                         fontSize: scale.fs(9),
-                        color: theme.textSec,
-                        lineHeight: 1.4,
                       }}
                     >
-                      {warning}
+                      +{hiddenValidationWarningCount} more warnings
                     </div>
-                  ))}
+                  ) : null}
                 </div>
               </div>
             ) : null}

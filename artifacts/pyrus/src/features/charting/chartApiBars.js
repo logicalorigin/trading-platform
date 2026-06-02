@@ -114,13 +114,13 @@ export const describeBrokerChartSource = (source) => {
     return baseLabel ? `${baseLabel} ROLL` : "ROLL";
   }
   if (source === "ibkr-websocket-derived") return "WS";
-  if (source === "polygon-delayed-websocket") return "DELAYED WS";
+  if (source === "massive-delayed-websocket") return "DELAYED WS";
   if (source === "ibkr-stock-quote-derived") return "LIVE";
   if (source === "ibkr-option-quote-derived") return "LIVE";
   if (source === "ibkr+massive-gap-fill") return "IBKR + GAP";
   if (source === "ibkr-history") return "IBKR";
   if (source === "mixed-option-history") return "IBKR + POLY";
-  if (source === "polygon-option-aggregates") return "POLY";
+  if (source === "massive-option-aggregates") return "POLY";
   return source ? "REST" : "";
 };
 
@@ -201,12 +201,12 @@ export const resolveBrokerChartSourceState = ({
     freshness === "delayed" ||
     marketDataMode === "delayed" ||
     source.includes("delayed") ||
-    source.includes("polygon");
+    source.includes("massive");
   const isFallback =
     statusText === "fallback" ||
     source.includes("massive") ||
     source.includes("gap-fill") ||
-    source.includes("polygon");
+    source.includes("massive");
   const isStale =
     freshness === "stale" ||
     marketDataMode === "stale" ||
@@ -367,11 +367,11 @@ export const resolveOptionChartSourceState = ({
         freshness,
       };
     }
-    if (feedIssue && dataSource === "polygon-option-aggregates") {
+    if (feedIssue && dataSource === "massive-option-aggregates") {
       return {
         ...sourceState,
-        label: "IBKR feed issue · Polygon history",
-        sourceLabel: "Polygon history",
+        label: "IBKR feed issue · Massive history",
+        sourceLabel: "Massive history",
         tone: "warn",
         freshness,
       };
@@ -380,19 +380,19 @@ export const resolveOptionChartSourceState = ({
       return {
         ...sourceState,
         state: "historical",
-        label: "IBKR + Polygon history",
+        label: "IBKR + Massive history",
         shortLabel: "MIXED",
-        sourceLabel: "IBKR + Polygon history",
+        sourceLabel: "IBKR + Massive history",
         tone: "neutral",
         freshness,
         isRealtime: false,
       };
     }
-    if (dataSource === "polygon-option-aggregates") {
+    if (dataSource === "massive-option-aggregates") {
       return {
         ...sourceState,
-        label: "Polygon history",
-        sourceLabel: "Polygon history",
+        label: "Massive history",
+        sourceLabel: "Massive history",
         tone: "neutral",
         freshness,
       };

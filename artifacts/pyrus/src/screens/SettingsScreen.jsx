@@ -118,7 +118,7 @@ const SETTINGS_TABS = [
     id: "Data & Broker",
     label: "Data & Broker",
     description: "Providers, runtime, IBKR",
-    keywords: "provider research ibkr broker lanes runtime polygon data",
+    keywords: "provider research ibkr broker lanes runtime massive data",
   },
   {
     id: "System",
@@ -243,9 +243,9 @@ const safeRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
 const resolveStockDataProvider = (providers) => {
-  const configured = Boolean(providers?.polygon || providers?.massive);
-  const label = providers?.massive ? "Massive" : "Polygon";
-  const code = providers?.massive ? "M" : providers?.polygon ? "P" : "-";
+  const configured = Boolean(providers?.massive);
+  const label = configured ? "Massive" : "Massive";
+  const code = configured ? "M" : "-";
   return { configured, label, code };
 };
 
@@ -1376,6 +1376,7 @@ function IbkrLineUsagePanel({ runtimeControl }) {
   const optionsFlowScanner = safeRecord(admission.optionsFlowScanner);
   const scannerCoverage = safeRecord(optionsFlowScanner.coverage);
   const signalOptions = lineUsage.signalOptions || {};
+  const shadowAccount = lineUsage.shadowAccount || {};
   const automation = lineUsage.pools.automation || {};
   const pressure = lineUsage.pressure || {};
   const lineUtilizationLevel = pressure.utilizationLevel || pressure.state || "unknown";
@@ -1538,6 +1539,12 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             label="Algo quote health"
             value={signalOptions.detail || MISSING_VALUE}
             tone={Number(signalOptions.rejectedCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
+          />
+          <StateRow label="Shadow account lines" value={formatCount(shadowAccount.used)} />
+          <StateRow
+            label="Shadow data fallback"
+            value={shadowAccount.detail || MISSING_VALUE}
+            tone={Number(shadowAccount.rejectedCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec}
           />
           <StateRow label="Scanner available lines" value={formatCount(flowScanner.effectiveCap)} />
           <StateRow

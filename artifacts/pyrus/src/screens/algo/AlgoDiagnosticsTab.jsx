@@ -129,7 +129,7 @@ export const AlgoDiagnosticsTab = ({
       >
         {[
           ["Fresh", cockpitSignalFreshness.fresh ?? 0, CSS_COLOR.green],
-          ["Stale", cockpitSignalFreshness.notFresh ?? 0, CSS_COLOR.amber],
+          ["Aged", cockpitSignalFreshness.notFresh ?? 0, CSS_COLOR.amber],
           ["Blocked", cockpitTradePath.blockedCandidates ?? 0, CSS_COLOR.red],
           ["Filled", cockpitTradePath.shadowFilledCandidates ?? 0, CSS_COLOR.green],
           ["Marks", cockpitTradePath.markEvents ?? 0, CSS_COLOR.cyan],
@@ -155,7 +155,7 @@ export const AlgoDiagnosticsTab = ({
                 style={{
                   color: isAlarm
                     ? color
-                    : Number(value) > 0 && label !== "Stale"
+                    : Number(value) > 0 && label !== "Aged"
                       ? color
                       : CSS_COLOR.text,
                   fontFamily: T.data,

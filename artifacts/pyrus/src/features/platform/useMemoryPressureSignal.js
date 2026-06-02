@@ -19,7 +19,7 @@ import { getRuntimeTickerStoreEntryCount } from "./runtimeTickerStore";
 import { usePageVisible } from "./usePageVisible";
 import { getTradeFlowStoreEntryCount } from "./tradeFlowStore";
 import { getTradeOptionChainStoreEntryCount } from "./tradeOptionChainStore";
-import { getRuntimeWorkloadStats } from "./workloadStats";
+import { useRuntimeWorkloadStats } from "./workloadStats";
 
 const SAMPLE_INTERVALS_MS = {
   normal: 15_000,
@@ -35,6 +35,11 @@ const SERVER_INTERVALS_MS = {
   critical: 15_000,
 };
 
+const API_PRESSURE_EVENT = "pyrus:api-pressure";
+const API_PRESSURE_HEADER_HOLD_MS = 15_000;
+const DIAGNOSTICS_STREAM_URL = "/api/diagnostics/stream";
+const SERVER_PRESSURE_LEVELS = new Set(["normal", "watch", "high", "critical"]);
+
 const jitterMs = (baseMs) => {
   const variance = Math.round(baseMs * 0.12);
   const delta = Math.round((Math.random() * variance * 2) - variance);
@@ -47,6 +52,9 @@ const readResourceSnapshot = (payload) =>
 
 const normalizeServerPressureLevel = (summary) =>
   summary?.pressureLevel || summary?.level || null;
+
+const normalizePressureHeaderLevel = (level) =>
+  SERVER_PRESSURE_LEVELS.has(level) ? level : null;
 
 const serverPressureDrivers = (summary) => {
   if (Array.isArray(summary?.pressureDrivers)) {
@@ -62,11 +70,6 @@ const MEMORY_PRESSURE_DRIVER_KINDS = new Set([
   "api-heap",
   "api-rss",
   "browser-memory",
-  "chart-hydration",
-  "client-pressure",
-  "query-cache",
-  "runtime-stores",
-  "workload",
 ]);
 
 const isMemoryPressureDriver = (driver) =>
@@ -141,6 +144,15 @@ export const mergeMemoryPressureServerSummary = ({
       resourceMetrics.apiHeapUsedPercent ??
       resourceMetrics.heapUsedPercent ??
       null,
+    apiRssMb:
+      footerMemoryPressure.apiRssMb ??
+      resourceMetrics.rssMb ??
+      resourceMetrics.apiResourcePressure?.inputs?.rssMb ??
+      null,
+    apiRssThresholds:
+      footerMemoryPressure.apiRssThresholds ??
+      resourceMetrics.apiRssThresholds ??
+      null,
     browserMemoryMb:
       footerMemoryPressure.browserMemoryMb ?? resourceMetrics.browserMemoryMb ?? null,
     sourceQuality:
@@ -175,7 +187,12 @@ export const mergeMemoryPressureRuntimeState = (clientState, serverSummary) => {
       clientState?.browserMemoryMb ?? serverSummary.browserMemoryMb ?? null,
     apiHeapUsedPercent:
       clientState?.apiHeapUsedPercent ?? serverSummary.apiHeapUsedPercent ?? null,
-    apiRssMb: serverSummary.rssMb ?? serverSummary.apiResourcePressure?.inputs?.rssMb ?? null,
+    apiRssMb:
+      serverSummary.apiRssMb ??
+      serverSummary.rssMb ??
+      serverSummary.apiResourcePressure?.inputs?.rssMb ??
+      null,
+    apiRssThresholds: serverSummary.apiRssThresholds ?? clientState?.apiRssThresholds ?? null,
     apiP95LatencyMs:
       serverSummary.eventLoopP95Ms ??
       serverSummary.apiResourcePressure?.inputs?.apiP95LatencyMs ??
@@ -191,8 +208,61 @@ export const mergeMemoryPressureRuntimeState = (clientState, serverSummary) => {
   };
 };
 
+export const buildResponseHeaderPressureSummary = (detail = {}, current = null) => {
+  const pressureLevel = normalizePressureHeaderLevel(detail.pressureLevel);
+  if (!pressureLevel) {
+    return current;
+  }
+  const currentLevel = normalizePressureHeaderLevel(current?.level);
+  const currentEffectiveLevel = normalizePressureHeaderLevel(
+    current?.effectivePressureLevel || current?.apiPressureLevel || current?.pressureLevel,
+  );
+  const observedAt = detail.observedAt || new Date().toISOString();
+  const observedAtMs = Date.parse(observedAt);
+  const currentObservedAtMs = Date.parse(current?.observedAt || "");
+  const holdCurrentEffectiveLevel =
+    currentEffectiveLevel &&
+    Number.isFinite(observedAtMs) &&
+    Number.isFinite(currentObservedAtMs) &&
+    observedAtMs - currentObservedAtMs <= API_PRESSURE_HEADER_HOLD_MS &&
+    isPressureLevelAtLeast(currentEffectiveLevel, pressureLevel);
+  const effectivePressureLevel = holdCurrentEffectiveLevel
+    ? currentEffectiveLevel
+    : pressureLevel;
+
+  return {
+    ...(current || {}),
+    level:
+      currentLevel && isPressureLevelAtLeast(currentLevel, effectivePressureLevel)
+        ? currentLevel
+        : effectivePressureLevel,
+    pressureLevel: effectivePressureLevel,
+    apiPressureLevel: effectivePressureLevel,
+    effectivePressureLevel,
+    lastHeaderPressureLevel: pressureLevel,
+    sourceQuality: "response-header",
+    admissionAction: detail.admissionAction || current?.admissionAction || null,
+    admissionReason: detail.admissionReason || current?.admissionReason || null,
+    lastHeaderStatus:
+      Number.isFinite(Number(detail.status))
+        ? Number(detail.status)
+        : current?.lastHeaderStatus ?? null,
+    lastHeaderMethod: detail.method || current?.lastHeaderMethod || null,
+    lastHeaderUrl: detail.url || current?.lastHeaderUrl || null,
+    observedAt,
+  };
+};
+
 const readLatestDiagnosticsSnapshot = (signal) =>
   getLatestDiagnostics(signal ? { signal } : undefined);
+
+export const buildMemoryPressureServerSummaryFromDiagnostics = (payload) => {
+  const resourceSnapshot = readResourceSnapshot(payload);
+  return mergeMemoryPressureServerSummary({
+    footerMemoryPressure: payload?.footerMemoryPressure || null,
+    resourceMetrics: resourceSnapshot?.metrics || null,
+  });
+};
 
 const readQueryDiagnostics = () => {
   try {
@@ -215,9 +285,130 @@ const prefersReducedMotion = () =>
 export const useMemoryPressureMonitor = () => {
   const pageVisible = usePageVisible();
   const safeQaMode = isPyrusSafeQaMode();
+  const workloadStats = useRuntimeWorkloadStats(pageVisible);
   const historyRef = useRef([]);
   const latestRef = useRef(getMemoryPressureSnapshot());
   const nextServerRefreshAtRef = useRef(0);
+  const workloadStatsRef = useRef(workloadStats);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const handleApiPressure = (event) => {
+      const current = getMemoryPressureSnapshot();
+      const serverSummary = buildResponseHeaderPressureSummary(
+        event?.detail,
+        current.server || null,
+      );
+      if (!serverSummary || serverSummary === current.server) {
+        return;
+      }
+      const snapshot = {
+        ...current,
+        server: serverSummary,
+        observedAt: current.observedAt || serverSummary.observedAt,
+      };
+      latestRef.current = snapshot;
+      setMemoryPressureSnapshot(snapshot);
+    };
+
+    window.addEventListener(API_PRESSURE_EVENT, handleApiPressure);
+    return () => window.removeEventListener(API_PRESSURE_EVENT, handleApiPressure);
+  }, []);
+
+  useEffect(() => {
+    workloadStatsRef.current = workloadStats;
+    if (!pageVisible || typeof window === "undefined") {
+      return;
+    }
+
+    const current = getMemoryPressureSnapshot();
+    const kindCounts = workloadStats.kindCounts || {};
+    const next = buildMemoryPressureState(
+      {
+        observedAt: new Date().toISOString(),
+        browserMemoryMb: current.browserMemoryMb,
+        browserSource: current.browserSource,
+        sourceQuality: current.sourceQuality,
+        apiHeapUsedPercent: current.apiHeapUsedPercent,
+        activeWorkloadCount: workloadStats.activeCount,
+        pollCount: kindCounts.poll || 0,
+        streamCount: kindCounts.stream || 0,
+        chartScopeCount: current.chartScopeCount,
+        prependScopeCount: current.prependScopeCount,
+        queryCount: current.queryCount,
+        heavyQueryCount: current.heavyQueryCount,
+        storeEntryCount: current.storeEntryCount,
+      },
+      {
+        previousState: current,
+        history: historyRef.current,
+      },
+    );
+    const mergedNext = mergeMemoryPressureRuntimeState(next, current.server);
+    const snapshot = {
+      ...mergedNext,
+      reducedMotionEnabled: prefersReducedMotion(),
+      measurement: current.measurement,
+      server: current.server,
+    };
+    latestRef.current = snapshot;
+    setMemoryPressureSnapshot(snapshot);
+  }, [pageVisible, workloadStats]);
+
+  useEffect(() => {
+    if (
+      !pageVisible ||
+      safeQaMode ||
+      typeof window === "undefined" ||
+      typeof window.EventSource === "undefined"
+    ) {
+      return undefined;
+    }
+
+    let closed = false;
+    const applyDiagnosticsPayload = (payload) => {
+      if (closed) return;
+      const serverSummary = buildMemoryPressureServerSummaryFromDiagnostics(payload);
+      if (!serverSummary) return;
+
+      const current = getMemoryPressureSnapshot();
+      const merged = mergeMemoryPressureRuntimeState(current, serverSummary);
+      const snapshot = {
+        ...merged,
+        reducedMotionEnabled: prefersReducedMotion(),
+        measurement: current.measurement,
+        server: serverSummary,
+        observedAt: current.observedAt || serverSummary.observedAt || new Date().toISOString(),
+      };
+      latestRef.current = snapshot;
+      setMemoryPressureSnapshot(snapshot);
+    };
+
+    const parseAndApply = (event, readPayload) => {
+      try {
+        const payload = JSON.parse(event.data);
+        applyDiagnosticsPayload(readPayload(payload));
+      } catch {
+        // EventSource will deliver the next valid snapshot or reconnect.
+      }
+    };
+
+    const source = new window.EventSource(DIAGNOSTICS_STREAM_URL);
+    source.addEventListener("ready", (event) => {
+      parseAndApply(event, (payload) => payload?.latest);
+    });
+    source.addEventListener("snapshot", (event) => {
+      parseAndApply(event, (payload) => payload);
+    });
+
+    return () => {
+      closed = true;
+      source.close();
+    };
+  }, [pageVisible, safeQaMode]);
 
   useEffect(() => {
     if (!pageVisible || typeof window === "undefined") {
@@ -226,6 +417,10 @@ export const useMemoryPressureMonitor = () => {
 
     let cancelled = false;
     let timeoutId = null;
+    const streamDiagnosticsAvailable =
+      !safeQaMode &&
+      typeof window !== "undefined" &&
+      typeof window.EventSource !== "undefined";
 
     const sample = async () => {
       const measurement = await readBrowserMemoryMeasurement();
@@ -236,24 +431,21 @@ export const useMemoryPressureMonitor = () => {
       let serverSummary = latestRef.current.server || null;
       const now = Date.now();
       const currentLevel = latestRef.current.level || "normal";
-      if (!safeQaMode && now >= nextServerRefreshAtRef.current) {
+      if (!streamDiagnosticsAvailable && !safeQaMode && now >= nextServerRefreshAtRef.current) {
         nextServerRefreshAtRef.current =
           now + jitterMs(SERVER_INTERVALS_MS[currentLevel] || SERVER_INTERVALS_MS.normal);
         try {
           const diagnosticsPayload = await readLatestDiagnosticsSnapshot();
           if (!cancelled) {
-            const resourceSnapshot = readResourceSnapshot(diagnosticsPayload);
-            serverSummary = mergeMemoryPressureServerSummary({
-              footerMemoryPressure: diagnosticsPayload?.footerMemoryPressure || null,
-              resourceMetrics: resourceSnapshot?.metrics || null,
-            });
+            serverSummary =
+              buildMemoryPressureServerSummaryFromDiagnostics(diagnosticsPayload);
           }
         } catch {}
       }
 
       const queryDiagnostics = readQueryDiagnostics();
-      const workloadStats = getRuntimeWorkloadStats();
-      const kindCounts = workloadStats.kindCounts || {};
+      const currentWorkloadStats = workloadStatsRef.current;
+      const kindCounts = currentWorkloadStats.kindCounts || {};
       const chartStats = getChartHydrationStatsSnapshot();
       const browserMemoryMb =
         Number.isFinite(Number(measurement.memory?.bytes))
@@ -276,7 +468,7 @@ export const useMemoryPressureMonitor = () => {
           browserSource: measurement.memory?.source,
           sourceQuality: measurement.memory?.confidence,
           apiHeapUsedPercent: serverSummary?.apiHeapUsedPercent ?? serverSummary?.heapUsedPercent,
-          activeWorkloadCount: workloadStats.activeCount,
+          activeWorkloadCount: currentWorkloadStats.activeCount,
           pollCount: kindCounts.poll || 0,
           streamCount: kindCounts.stream || 0,
           chartScopeCount: chartStats.activeScopeCount ?? 0,

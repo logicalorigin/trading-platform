@@ -1,4 +1,4 @@
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
+import { marketDayDistanceFromExpirationKey } from "./gexDate.js";
 
 export const GEX_DEFAULT_EXPIRATION_LIMIT = 10;
 export const GEX_CHAIN_QUERY_DEFAULTS = Object.freeze({
@@ -327,17 +327,12 @@ export const aggregateMetrics = (rows = [], spot) => {
 };
 
 const expirationDayDistance = (option, now = new Date()) => {
-  const todayUtc = Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-  );
-  const expirationUtc = Date.UTC(
-    option.expireYear,
-    option.expireMonth - 1,
-    option.expireDay,
-  );
-  return Math.round((expirationUtc - todayUtc) / MS_PER_DAY);
+  const expirationKey =
+    option.expirationDate ||
+    `${String(option.expireYear).padStart(4, "0")}-${String(
+      option.expireMonth,
+    ).padStart(2, "0")}-${String(option.expireDay).padStart(2, "0")}`;
+  return marketDayDistanceFromExpirationKey(expirationKey, now) ?? 0;
 };
 
 export const expConcentration = (rows = [], spot, now = new Date()) => {

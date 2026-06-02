@@ -13,6 +13,7 @@ import {
   type ChartDisplayType,
   type ChartViewportSnapshot,
   type ChartLegendMetadata,
+  type GexProjectionConeOverlay,
   type MobileChartInteractionMode,
   type ChartSurfaceControls,
   type OverlayContent,
@@ -295,6 +296,7 @@ type ResearchChartFrameProps = {
   hideCrosshair?: boolean;
   drawings?: ResearchDrawing[];
   referenceLines?: ReferenceLine[];
+  gexProjectionCone?: GexProjectionConeOverlay | null;
   chartEvents?: ChartEvent[];
   chartFlowDiagnostics?: FlowChartEventConversion | null;
   latestQuotePrice?: number | null;
@@ -353,6 +355,7 @@ export const ResearchChartFrame = ({
   hideCrosshair = false,
   drawings = EMPTY_DRAWINGS,
   referenceLines = EMPTY_REFERENCE_LINES,
+  gexProjectionCone = null,
   chartEvents = EMPTY_CHART_EVENTS,
   chartFlowDiagnostics = null,
   latestQuotePrice = null,
@@ -470,6 +473,7 @@ export const ResearchChartFrame = ({
             bottomOverlayHeight={resolvedSurfaceBottomOverlayHeight}
             drawings={drawings}
             referenceLines={referenceLines}
+            gexProjectionCone={gexProjectionCone}
             chartEvents={chartEvents}
             chartFlowDiagnostics={chartFlowDiagnostics}
             latestQuotePrice={latestQuotePrice}
@@ -1300,7 +1304,7 @@ export const ResearchChartWidgetHeader = ({
     sourceLabel:
       activeBar?.source === "ibkr-websocket-derived"
         ? "WS"
-        : activeBar?.source === "polygon-delayed-websocket"
+        : activeBar?.source === "massive-delayed-websocket"
           ? "DELAYED WS"
         : activeBar?.source === "ibkr+massive-gap-fill"
           ? "IBKR + GAP"

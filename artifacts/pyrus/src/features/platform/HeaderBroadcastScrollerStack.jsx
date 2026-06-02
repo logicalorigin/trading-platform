@@ -91,6 +91,7 @@ import {
 import { useSignalMonitorSnapshot } from "./signalMonitorStore";
 import { IbkrStatusWave } from "./IbkrConnectionStatus";
 import { canonicalizeStreamState, streamStateTokenVar } from "./streamSemantics";
+import { getCurrentSignalDirection } from "../signals/signalStateFreshness.js";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 
@@ -302,10 +303,7 @@ const colorWithAlpha = (color, alpha) =>
   cssColorMix(color, Math.round(alpha * 100));
 
 const normalizeSignalIntervalDirection = (state) => {
-  const direction = String(
-    state?.currentSignalDirection || state?.direction || "",
-  ).toLowerCase();
-  return direction === "buy" || direction === "sell" ? direction : "";
+  return getCurrentSignalDirection(state);
 };
 
 const resolveHeaderSignalTimeframe = (value) => {
@@ -316,8 +314,8 @@ const resolveHeaderSignalTimeframe = (value) => {
 const HEADER_SIGNAL_CONTEXT_SLANT = 8;
 const HEADER_SIGNAL_CONTEXT_VIEWBOX = "0 0 48 32";
 
-const getHeaderSignalContextShapePoints = (timeframe) =>
-  timeframe === "15m" ? "8,0 48,0 48,32 0,32" : "8,0 48,0 40,32 0,32";
+const getHeaderSignalContextShapePoints = (isLast) =>
+  isLast ? "8,0 48,0 48,32 0,32" : "8,0 48,0 40,32 0,32";
 
 const HeaderSignalContextDivider = () => (
   <svg
@@ -351,8 +349,8 @@ const HeaderSignalContextDivider = () => (
   </svg>
 );
 
-const HeaderSignalPelletChrome = ({ fill, selected, timeframe }) => {
-  const points = getHeaderSignalContextShapePoints(timeframe);
+const HeaderSignalPelletChrome = ({ fill, selected, isLast }) => {
+  const points = getHeaderSignalContextShapePoints(isLast);
 
   return (
     <svg
@@ -407,6 +405,7 @@ const HeaderSignalIntervalContext = ({
     }}
   >
     {WATCHLIST_SIGNAL_TIMEFRAMES.map((timeframe, index) => {
+      const isLast = index === WATCHLIST_SIGNAL_TIMEFRAMES.length - 1;
       const state = statesByTimeframe?.[timeframe];
       const direction = normalizeSignalIntervalDirection(state);
       const hasDirection = Boolean(direction);
@@ -419,7 +418,7 @@ const HeaderSignalIntervalContext = ({
       const label = pending
         ? `${timeframe} pending`
         : hasDirection
-          ? `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "stale"} - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
+          ? `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "aged"} - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
           : `${timeframe} no signal - ${status}`;
       const pelletFill = hasDirection
         ? colorWithAlpha(color, fresh ? 0.24 : 0.18)
@@ -466,7 +465,7 @@ const HeaderSignalIntervalContext = ({
             <HeaderSignalPelletChrome
               fill={pelletFill}
               selected={selected}
-              timeframe={timeframe}
+              isLast={isLast}
             />
             {index > 0 ? <HeaderSignalContextDivider /> : null}
             <span style={{ position: "relative", zIndex: 5 }}>{timeframe}</span>
@@ -1234,8 +1233,8 @@ const HeaderBroadcastLane = ({
     [scrollDistancePx, speedPreset],
   );
   const laneGridColumns = [
-    compactSettings ? `${dim(28)}px` : "56px",
-    statusGlyph ? `${dim(compactSettings ? 24 : 26)}px` : null,
+    compactSettings ? `${dim(44)}px` : "56px",
+    statusGlyph ? `${dim(compactSettings ? 32 : 26)}px` : null,
     "minmax(0, 1fr)",
   ]
     .filter(Boolean)
@@ -1292,7 +1291,7 @@ const HeaderBroadcastLane = ({
       style={{
         width: "100%",
         height: "100%",
-        minHeight: 0,
+        minHeight: compactSettings ? dim(44) : 0,
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
@@ -1319,7 +1318,7 @@ const HeaderBroadcastLane = ({
         display: "grid",
         gridTemplateColumns: laneGridColumns,
         alignItems: "center",
-        minHeight: dim(compactSettings ? 22 : 20),
+        minHeight: dim(compactSettings ? 44 : 20),
         minWidth: 0,
         border: compactSettings ? `1px solid ${CSS_COLOR.border}` : undefined,
         borderRadius: compactSettings ? dim(RADII.sm) : undefined,
@@ -1330,6 +1329,7 @@ const HeaderBroadcastLane = ({
       <div
         style={{
           height: "100%",
+          minHeight: compactSettings ? dim(44) : undefined,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -1344,6 +1344,7 @@ const HeaderBroadcastLane = ({
           data-header-lane-status-glyph
           style={{
             height: "100%",
+            minHeight: compactSettings ? dim(44) : undefined,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -2199,7 +2200,7 @@ export const HeaderBroadcastScrollerStack = memo(({
       style={{
         width: "100%",
         height: "100%",
-        minHeight: 0,
+        minHeight: isPhone ? dim(44) : 0,
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",

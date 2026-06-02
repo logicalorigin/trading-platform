@@ -46,6 +46,7 @@ export const PlatformScreenRouter = ({
   watchlistSymbols,
   runtimeWatchlistSymbols,
   signalMonitorSymbols,
+  signalMonitorDisplaySymbols,
   signalMatrixStates,
   marketScreenActive,
   flowScreenActive,
@@ -67,6 +68,8 @@ export const PlatformScreenRouter = ({
   onChangeMonitorWatchlist,
   onChangeMonitorFreshWindowBars,
   onChangeMonitorMaxSymbols,
+  onApplyPyrusSignalsSettings,
+  onRequestSignalMatrixHydration,
   onJumpToTradeFromSignals,
   onJumpToTradeFromFlow,
   onJumpToTradeFromAccount,
@@ -134,7 +137,11 @@ export const PlatformScreenRouter = ({
           environment={environment}
           watchlists={watchlists}
           defaultWatchlist={defaultWatchlist}
-          signalMonitorSymbols={signalMonitorSymbols}
+          signalMonitorSymbols={
+            signalMonitorDisplaySymbols?.length
+              ? signalMonitorDisplaySymbols
+              : signalMonitorSymbols
+          }
           signalMatrixStates={signalMatrixStates}
           isVisible={signalsDataActive}
           onSelectSymbol={onSelectSymbol}
@@ -145,6 +152,8 @@ export const PlatformScreenRouter = ({
           onChangeMonitorWatchlist={onChangeMonitorWatchlist}
           onChangeMonitorFreshWindowBars={onChangeMonitorFreshWindowBars}
           onChangeMonitorMaxSymbols={onChangeMonitorMaxSymbols}
+          onApplyPyrusSignalsSettings={onApplyPyrusSignalsSettings}
+          onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
           onReadinessChange={buildReadinessHandler("signals")}
         />
       );
@@ -220,6 +229,8 @@ export const PlatformScreenRouter = ({
           selectedAccountId={primaryAccountId}
           signalMatrixStates={signalMatrixStates}
           isVisible={algoDataActive}
+          safeQaMode={safeQaMode}
+          onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
           onJumpToTradeCandidate={onJumpToTradeFromSignalOptionsCandidate}
           onReadinessChange={buildReadinessHandler("algo")}
         />

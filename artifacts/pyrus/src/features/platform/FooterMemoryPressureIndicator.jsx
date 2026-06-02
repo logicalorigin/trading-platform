@@ -8,7 +8,7 @@ import {
 import { AppTooltip } from "@/components/ui/tooltip";
 import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
-  isPressureLevelAtLeast,
+  MEMORY_PRESSURE_THRESHOLDS,
 } from "./memoryPressureModel";
 import { buildMemoryPressurePopoverModel } from "./memoryPressurePopoverModel.js";
 import { useMemoryPressurePreferences } from "./memoryPressurePreferences";
@@ -88,56 +88,102 @@ export const memoryPressureFillPercent = (signal) => {
   return FALLBACK_SCORE_BY_LEVEL[signal?.level] ?? FALLBACK_SCORE_BY_LEVEL.normal;
 };
 
-const CLUSTER_BAR_HEIGHT = 14;
-const CLUSTER_BAR_WIDTH = 3;
-const CLUSTER_BAR_GAP = 3;
-const CLUSTER_LABEL_GAP = 6;
-const CLUSTER_PADDING_X = 4;
+const CLUSTER_BAR_HEIGHT = 4;
+const CLUSTER_BAR_WIDTH = 54;
+const CLUSTER_BAR_GAP = 6;
+const CLUSTER_LABEL_GAP = 2;
+const CLUSTER_PADDING_X = 2;
 const BROWSER_MEMORY_REFERENCE_MB = 600;
+const DEFAULT_API_RSS_THRESHOLDS = { watch: 2048, high: 3072, critical: 4096 };
 
-const fallbackMiniDriver = { level: "normal", score: 0 };
-
-const barFillPercent = (driver) => {
-  const score = Number(driver?.score);
-  if (Number.isFinite(score)) {
-    return Math.round(clamp(score, 0, 100));
-  }
-  return FALLBACK_SCORE_BY_LEVEL[driver?.level] ?? 0;
-};
-
-const rawMetricFillPercent = (value, maxValue) =>
-  Number.isFinite(value) ? Math.round(clamp((value / maxValue) * 100, 0, 100)) : null;
+const fallbackMiniDriver = { level: null, score: 0 };
 
 const rawPercentFillPercent = (value) =>
   Number.isFinite(value) ? Math.round(clamp(value, 0, 100)) : null;
 
+const finiteNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
 const findMiniDriver = (drivers, kind) =>
   drivers.find((driver) => driver?.kind === kind) || null;
 
+const normalizeThresholds = (thresholds, fallback = {}) => ({
+  watch: finiteNumber(thresholds?.watch) ?? fallback.watch ?? null,
+  high: finiteNumber(thresholds?.high) ?? fallback.high ?? null,
+  critical: finiteNumber(thresholds?.critical) ?? fallback.critical ?? null,
+});
+
+const maxThresholdValue = (thresholds, fallbackMax) =>
+  finiteNumber(thresholds?.critical) ??
+  finiteNumber(thresholds?.high) ??
+  finiteNumber(thresholds?.watch) ??
+  fallbackMax;
+
+const thresholdFillPercent = (value, thresholds, fallbackMax) => {
+  const numericValue = finiteNumber(value);
+  const maxValue = maxThresholdValue(thresholds, fallbackMax);
+  if (numericValue === null || !Number.isFinite(maxValue) || maxValue <= 0) {
+    return 0;
+  }
+  return Math.round(clamp((numericValue / maxValue) * 100, 0, 100));
+};
+
+const levelFromThresholds = (value, thresholds, fallback = "normal") => {
+  const numericValue = finiteNumber(value);
+  if (numericValue === null) return fallback;
+  if (Number.isFinite(thresholds?.critical) && numericValue >= thresholds.critical) {
+    return "critical";
+  }
+  if (Number.isFinite(thresholds?.high) && numericValue >= thresholds.high) {
+    return "high";
+  }
+  if (Number.isFinite(thresholds?.watch) && numericValue >= thresholds.watch) {
+    return "watch";
+  }
+  return "normal";
+};
+
+const browserThresholdsForSignal = (signal) => {
+  const source = signal?.browserSource || signal?.measurement?.memory?.source;
+  return normalizeThresholds(
+    MEMORY_PRESSURE_THRESHOLDS.browserMemoryMb[source] ||
+      MEMORY_PRESSURE_THRESHOLDS.browserMemoryMb.heuristic,
+  );
+};
+
+const readApiRssMb = (signal) =>
+  finiteNumber(signal?.apiRssMb) ?? finiteNumber(signal?.server?.rssMb);
+
+const readApiRssThresholds = (signal) =>
+  normalizeThresholds(
+    signal?.apiRssThresholds ?? signal?.server?.apiRssThresholds,
+    DEFAULT_API_RSS_THRESHOLDS,
+  );
+
 const miniTrackStyle = () => ({
   position: "relative",
-  display: "inline-block",
-  width: dim(CLUSTER_BAR_WIDTH),
+  display: "block",
+  width: "100%",
+  minWidth: dim(CLUSTER_BAR_WIDTH),
   height: dim(CLUSTER_BAR_HEIGHT),
-  borderRadius: dim(RADII.xs),
+  borderRadius: dim(RADII.pill),
   background: `${cssColorMix(CSS_COLOR.textMuted, 12)}`,
   overflow: "hidden",
-  flexShrink: 0,
 });
 
 const miniFillStyle = (bar) => ({
   position: "absolute",
-  left: 0,
-  right: 0,
-  bottom: 0,
-  height: `${bar.fillPercent}%`,
-  minHeight: bar.fillPercent > 0 ? 1 : 0,
+  inset: 0,
+  width: `${bar.fillPercent}%`,
+  minWidth: bar.fillPercent > 0 ? dim(2) : 0,
   background: pressureTone(bar.level),
   opacity: 0.92,
-  transition: "height 180ms ease, opacity 180ms ease",
+  transition: "width 180ms ease, opacity 180ms ease",
 });
 
-const miniLabelStyle = (bar) => ({
+const miniLabelStyle = (bar, showLabels) => ({
   color: pressureTone(bar.level),
   fontSize: textSize("caption"),
   fontFamily: T.sans,
@@ -145,9 +191,12 @@ const miniLabelStyle = (bar) => ({
   fontVariantNumeric: "tabular-nums",
   letterSpacing: 0,
   whiteSpace: "nowrap",
+  maxWidth: showLabels ? undefined : 0,
+  opacity: showLabels ? 1 : 0,
+  overflow: "hidden",
 });
 
-const MiniPressureBars = ({ signal }) => {
+const MiniPressureBars = ({ signal, showLabels = true }) => {
   if (!signal) {
     return null;
   }
@@ -157,43 +206,61 @@ const MiniPressureBars = ({ signal }) => {
     : [];
   const browserDriver = findMiniDriver(drivers, "browser-memory") || fallbackMiniDriver;
   const apiRssDriver = findMiniDriver(drivers, "api-rss");
-  const apiHeapDriver = findMiniDriver(drivers, "api-heap");
-  const apiDriver = apiRssDriver || apiHeapDriver || fallbackMiniDriver;
-  const workloadDriver = findMiniDriver(drivers, "workload") || fallbackMiniDriver;
-  const browserFill =
-    rawMetricFillPercent(signal.browserMemoryMb, BROWSER_MEMORY_REFERENCE_MB) ??
-    barFillPercent(browserDriver);
-  const apiRssMb = Number.isFinite(Number(signal.apiRssMb))
-    ? Number(signal.apiRssMb)
-    : Number.isFinite(Number(signal.server?.rssMb))
-      ? Number(signal.server.rssMb)
-      : null;
-  const apiFill =
-    apiRssDriver
-      ? (rawMetricFillPercent(apiRssMb, 2_000) ?? barFillPercent(apiDriver))
-      : (rawPercentFillPercent(signal.apiHeapUsedPercent) ?? barFillPercent(apiDriver));
-  const workloadFill = barFillPercent(workloadDriver);
-  const apiDetail = apiRssDriver
-    ? `API RSS ${formatMetric(apiRssMb, "M")}`
-    : `API ${formatMetric(signal.apiHeapUsedPercent, "%")}`;
+  const apiHeapDriver = findMiniDriver(drivers, "api-heap") || fallbackMiniDriver;
+  const runtimeStoreDriver =
+    findMiniDriver(drivers, "runtime-stores") || fallbackMiniDriver;
+  const browserThresholds = browserThresholdsForSignal(signal);
+  const apiRssThresholds = readApiRssThresholds(signal);
+  const runtimeStoreThresholds = normalizeThresholds(
+    MEMORY_PRESSURE_THRESHOLDS.runtimeStores.storeEntryCount,
+  );
+  const browserMemoryMb = finiteNumber(signal.browserMemoryMb);
+  const apiRssMb = readApiRssMb(signal);
+  const apiHeapUsedPercent = finiteNumber(signal.apiHeapUsedPercent);
+  const storeEntryCount = finiteNumber(signal.storeEntryCount) ?? 0;
   const bars = [
     {
       key: "browser",
-      level: browserDriver.level || "normal",
-      fillPercent: browserFill,
-      detail: `Browser ${formatMetric(signal.browserMemoryMb, "M")}`,
+      level:
+        browserDriver.level ||
+        levelFromThresholds(browserMemoryMb, browserThresholds),
+      fillPercent: thresholdFillPercent(
+        browserMemoryMb,
+        browserThresholds,
+        BROWSER_MEMORY_REFERENCE_MB,
+      ),
+      detail: `Browser ${formatMetric(browserMemoryMb, "M")}`,
     },
     {
-      key: "api",
-      level: apiDriver.level || "normal",
-      fillPercent: apiFill,
-      detail: apiDetail,
+      key: "api-rss",
+      level:
+        apiRssDriver?.level ||
+        levelFromThresholds(apiRssMb, apiRssThresholds),
+      fillPercent: thresholdFillPercent(
+        apiRssMb,
+        apiRssThresholds,
+        DEFAULT_API_RSS_THRESHOLDS.critical,
+      ),
+      detail: `RSS ${formatMetric(apiRssMb, "M")}`,
     },
     {
-      key: "workload",
-      level: workloadDriver.level || "normal",
-      fillPercent: workloadFill,
-      detail: `Workload ${signal.activeWorkloadCount ?? 0}`,
+      key: "api-heap",
+      level:
+        apiHeapDriver.level ||
+        levelFromThresholds(
+          apiHeapUsedPercent,
+          MEMORY_PRESSURE_THRESHOLDS.apiHeapUsedPercent,
+        ),
+      fillPercent: rawPercentFillPercent(apiHeapUsedPercent) ?? 0,
+      detail: `Heap ${formatMetric(apiHeapUsedPercent, "%")}`,
+    },
+    {
+      key: "runtime",
+      level:
+        runtimeStoreDriver.level ||
+        levelFromThresholds(storeEntryCount, runtimeStoreThresholds),
+      fillPercent: thresholdFillPercent(storeEntryCount, runtimeStoreThresholds, 180),
+      detail: `Runtime ${formatMetric(storeEntryCount)}`,
     },
   ];
 
@@ -211,9 +278,9 @@ const MiniPressureBars = ({ signal }) => {
         marginLeft: sp(2),
         borderRadius: dim(RADII.sm),
         minWidth: dim(
-          CLUSTER_BAR_WIDTH * 3 + CLUSTER_BAR_GAP * 2 + CLUSTER_PADDING_X * 2,
+          CLUSTER_BAR_WIDTH * 4 + CLUSTER_BAR_GAP * 3 + CLUSTER_PADDING_X * 2,
         ),
-        height: dim(CLUSTER_BAR_HEIGHT + 4),
+        height: dim(18),
         alignSelf: "center",
         overflow: "hidden",
         whiteSpace: "nowrap",
@@ -225,10 +292,12 @@ const MiniPressureBars = ({ signal }) => {
             className="ra-pressure-mini-slot"
             data-testid={`footer-memory-pressure-mini-slot-${bar.key}`}
             style={{
-              display: "inline-flex",
-              alignItems: "center",
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1fr)",
               gap: dim(CLUSTER_LABEL_GAP),
               height: "100%",
+              minWidth: dim(CLUSTER_BAR_WIDTH),
+              maxWidth: dim(78),
             }}
           >
             <span aria-hidden="true" style={miniTrackStyle(bar)}>
@@ -237,7 +306,7 @@ const MiniPressureBars = ({ signal }) => {
                 style={miniFillStyle(bar)}
               />
             </span>
-            <span className="ra-pressure-mini-label" style={miniLabelStyle(bar)}>
+            <span className="ra-pressure-mini-label" style={miniLabelStyle(bar, showLabels)}>
               {bar.detail}
             </span>
           </span>
@@ -259,7 +328,9 @@ const buildTitle = (signal) => {
     `Memory pressure ${String(signal?.level || "normal").toUpperCase()}`,
     `Trend ${String(signal?.trend || "steady").toUpperCase()}`,
     `Browser ${formatMetric(signal?.browserMemoryMb, " MB")}`,
-    `API ${formatMetric(signal?.apiHeapUsedPercent, "%")}`,
+    `API RSS ${formatMetric(readApiRssMb(signal), " MB")}`,
+    `API heap ${formatMetric(signal?.apiHeapUsedPercent, "%")}`,
+    `Runtime ${formatMetric(signal?.storeEntryCount)} entries`,
     drivers,
   ]
     .filter(Boolean)
@@ -425,17 +496,11 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
   const [diagnosticsStatus, setDiagnosticsStatus] = useState("idle");
   const level = signal?.level || "normal";
   const tone = pressureTone(level);
-  const fillPercent = memoryPressureFillPercent(signal);
   const title = buildTitle(signal);
   const model = useMemo(
     () => buildMemoryPressurePopoverModel(signal, diagnosticsPayload),
     [diagnosticsPayload, signal],
   );
-  const shouldAnimate =
-    preferences.animationEnabled &&
-    !signal?.reducedMotionEnabled &&
-    isPressureLevelAtLeast(level, preferences.alertThreshold);
-
   useEffect(() => {
     if (!open || typeof window === "undefined") {
       if (!open) {
@@ -490,7 +555,7 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
             fontFamily: T.sans,
             cursor: "pointer",
             flexShrink: 1,
-            maxWidth: "min(58vw, 430px)",
+            maxWidth: "min(70vw, 560px)",
           }}
         >
           <span
@@ -506,32 +571,6 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
             Memory
           </span>
           <span
-            aria-hidden="true"
-            style={{
-              position: "relative",
-              display: "inline-block",
-              width: dim(64),
-              height: dim(6),
-              borderRadius: dim(RADII.pill),
-              background: `${cssColorMix(CSS_COLOR.textMuted, 12)}`,
-              overflow: "hidden",
-              flexShrink: 0,
-            }}
-          >
-            <span
-              style={{
-                position: "absolute",
-                inset: 0,
-                width: `${fillPercent}%`,
-                minWidth: fillPercent > 0 ? dim(3) : 0,
-                background: tone,
-                opacity: shouldAnimate ? 0.72 : 0.92,
-                boxShadow: shouldAnimate ? `0 0 8px ${tone}` : "none",
-                transition: "width 180ms ease, opacity 180ms ease",
-              }}
-            />
-          </span>
-          <span
             style={{
               color: tone,
               fontSize: textSize("body"),
@@ -543,7 +582,7 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
           >
             {level}
           </span>
-          {preferences.showCompactLabel ? <MiniPressureBars signal={signal} /> : null}
+          <MiniPressureBars signal={signal} showLabels={preferences.showCompactLabel} />
         </button>
       </PopoverTrigger>
       <PopoverContent

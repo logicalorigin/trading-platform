@@ -84,14 +84,14 @@ const getFlowOptionChartEmptyCopy = ({ emptyReason, requestFailed, feedIssue }) 
     return {
       title: "No option trades in this window",
       detail:
-        "IBKR and Polygon returned no bars for this contract and timeframe.",
+        "IBKR and Massive returned no bars for this contract and timeframe.",
     };
   }
-  if (emptyReason === "polygon-not-configured") {
+  if (emptyReason === "massive-not-configured") {
     return {
       title: "Option aggregate feed unavailable",
       detail:
-        "IBKR did not return chart bars and the Polygon/Massive fallback is not configured.",
+        "IBKR did not return chart bars and the Massive fallback is not configured.",
     };
   }
   if (

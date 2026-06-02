@@ -3,6 +3,22 @@ import {
   useMemo,
   useState,
 } from "react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useQuery } from "@tanstack/react-query";
 import {
   getBars as getBarsRequest,
@@ -15,6 +31,7 @@ import {
   Ban,
   CheckCircle2,
   Columns3,
+  GripVertical,
   Inbox,
   List,
   MinusCircle,
@@ -37,6 +54,7 @@ import { formatRelativeTimeShort } from "../../lib/formatters";
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
 import { useStoredOptionQuoteSnapshotVersion } from "../../features/platform/live-streams";
+import { IbkrStatusWave } from "../../features/platform/IbkrConnectionStatus";
 import {
   BARS_QUERY_DEFAULTS,
   BARS_REQUEST_PRIORITY,
@@ -50,6 +68,7 @@ import {
 } from "../../features/platform/runtimeTickerStore";
 import { SPARKLINE_RENDER_POINT_LIMIT } from "../../features/platform/sparklineConfig";
 import { buildSignalMatrixBySymbol } from "../../features/platform/watchlistModel";
+import { buildSignalsMatrixHydrationPlan } from "../../features/signals/signalsMatrixHydration.js";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
   asRecord,
@@ -58,6 +77,10 @@ import {
   resolveSignalMove,
   resolveSignalScoreBreakdown,
 } from "./algoHelpers";
+import {
+  buildSignalAuditProgressions,
+  signalAuditRowKey,
+} from "./algoAuditModel";
 import {
   ALWAYS_VISIBLE_SIGNAL_COLUMN_IDS,
   DEFAULT_SIGNAL_COLUMN_ORDER,
@@ -81,7 +104,67 @@ const SIGNALS_PAGE_SIZE = 30;
 const SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
 const SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT = 120;
 const SIGNAL_TABLE_SPARKLINE_CONCURRENCY = 4;
-const SIGNAL_COLUMN_VISIBILITY_VERSION = 2;
+const SIGNAL_COLUMN_VISIBILITY_VERSION = 6;
+const PRIOR_DEFAULT_SIGNAL_COLUMN_ORDER = [
+  "signal",
+  "since",
+  "move",
+  "action",
+  "contract",
+  "quote",
+  "spread",
+  "greeks",
+  "gate",
+  "process",
+  "sync",
+  "score",
+  "decision",
+  "rowAction",
+];
+const PRIOR_GATE_FIRST_SIGNAL_COLUMN_ORDER = [
+  "signal",
+  "since",
+  "move",
+  "gate",
+  "action",
+  "contract",
+  "quote",
+  "spread",
+  "greeks",
+  "process",
+  "sync",
+  "score",
+  "decision",
+  "rowAction",
+];
+const PRIOR_COMPACT_SIGNAL_COLUMN_ORDER = [
+  "signal",
+  "since",
+  "move",
+  "action",
+  "contract",
+  "quote",
+  "spread",
+  "greeks",
+  "gate",
+  "score",
+  "decision",
+  "rowAction",
+];
+const PRIOR_GATE_FIRST_COMPACT_SIGNAL_COLUMN_ORDER = [
+  "signal",
+  "since",
+  "move",
+  "gate",
+  "action",
+  "contract",
+  "quote",
+  "spread",
+  "greeks",
+  "score",
+  "decision",
+  "rowAction",
+];
 const LEGACY_DEFAULT_SIGNAL_VISIBLE_COLUMNS = [
   "signal",
   "since",
@@ -92,7 +175,23 @@ const LEGACY_DEFAULT_SIGNAL_VISIBLE_COLUMNS = [
   "spread",
   "greeks",
   "gate",
+  "process",
   "sync",
+  "score",
+  "decision",
+  "rowAction",
+];
+const PREVIOUS_DEFAULT_SIGNAL_VISIBLE_COLUMNS = [
+  "signal",
+  "since",
+  "move",
+  "action",
+  "contract",
+  "quote",
+  "spread",
+  "greeks",
+  "gate",
+  "process",
   "score",
   "decision",
   "rowAction",
@@ -106,13 +205,24 @@ const SORT_LABELS = {
   quoteAge: "Quote",
   spread: "Spread",
   score: "Score",
-  latest: "Decision",
+  latest: "Latest",
 };
 
 const SORT_DIRECTION_LABELS = {
   asc: "ascending",
   desc: "descending",
 };
+
+const COMPACT_SORT_OPTIONS = [
+  { value: "newest:desc", label: "Newest" },
+  { value: "bars:asc", label: "Freshest" },
+  { value: "score:desc", label: "Score" },
+  { value: "move:desc", label: "Move" },
+  { value: "quoteAge:asc", label: "Quote" },
+  { value: "spread:asc", label: "Spread" },
+  { value: "latest:desc", label: "Latest" },
+  { value: "symbol:asc", label: "Symbol" },
+];
 
 const DEFAULT_SORT_DIRECTIONS = {
   newest: "desc",
@@ -185,6 +295,27 @@ const formatCompactStatusValue = (value) =>
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
+const pressureLevelBlocksActionWork = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "critical";
+};
+
+const resolveSignalScanWave = (freshness) => {
+  if (freshness?.scanRunning) {
+    return { status: "healthy", wave: "fast", color: CSS_COLOR.green };
+  }
+  if (freshness?.pressureLevel) {
+    return { status: "capacity-limited", wave: "slow", color: CSS_COLOR.amber };
+  }
+  if (freshness?.staleScan) {
+    return { status: "stale", wave: "flat", color: CSS_COLOR.amber };
+  }
+  if (freshness?.latestScanAt || freshness?.latestBarAt || freshness?.latestSignalAt) {
+    return { status: "quiet", wave: "slow", color: CSS_COLOR.cyan };
+  }
+  return { status: "offline", wave: "flat", color: CSS_COLOR.textMuted };
+};
+
 const latestTimelineMs = (candidate) => {
   const timeline = Array.isArray(candidate?.timeline) ? candidate.timeline : [];
   return timeline.reduce(
@@ -202,6 +333,7 @@ const rowActivityTimestampMs = (row) =>
     timestampMs(row.candidate?.signalAt),
     timestampMs(row.candidate?.updatedAt),
     latestTimelineMs(row.candidate),
+    timestampMs(row.auditProgression?.latestOccurredAt),
   );
 
 const scoreSortValue = (scoreBreakdown) => {
@@ -304,16 +436,48 @@ const sameColumnSet = (columns, expected) => {
   return source.size === target.size && expected.every((columnId) => source.has(columnId));
 };
 
+const sameColumnOrder = (columns, expected) =>
+  Array.isArray(columns) &&
+  columns.length === expected.length &&
+  expected.every((columnId, index) => columns[index] === columnId);
+
+const resolveInitialSignalColumnOrder = () => {
+  const hasStoredOrder = Array.isArray(_initialState.algoSignalColumnOrder);
+  const storedOrder = hasStoredOrder
+    ? _initialState.algoSignalColumnOrder.filter((columnId) =>
+        DEFAULT_SIGNAL_COLUMN_ORDER.includes(columnId),
+      )
+    : [];
+  const normalized = normalizeSignalColumnOrder(_initialState.algoSignalColumnOrder);
+  if (_initialState.algoSignalColumnVisibilityVersion === SIGNAL_COLUMN_VISIBILITY_VERSION) {
+    return normalized;
+  }
+  if (!hasStoredOrder) return DEFAULT_SIGNAL_COLUMN_ORDER;
+  if (
+    sameColumnOrder(storedOrder, PRIOR_DEFAULT_SIGNAL_COLUMN_ORDER) ||
+    sameColumnOrder(storedOrder, PRIOR_GATE_FIRST_SIGNAL_COLUMN_ORDER) ||
+    sameColumnOrder(storedOrder, PRIOR_COMPACT_SIGNAL_COLUMN_ORDER) ||
+    sameColumnOrder(storedOrder, PRIOR_GATE_FIRST_COMPACT_SIGNAL_COLUMN_ORDER)
+  ) {
+    return DEFAULT_SIGNAL_COLUMN_ORDER;
+  }
+  return normalized;
+};
+
 const resolveInitialSignalVisibleColumns = () => {
+  const hasStoredColumns = Array.isArray(_initialState.algoSignalVisibleColumns);
   const normalized = normalizeSignalVisibleColumns(_initialState.algoSignalVisibleColumns);
   if (_initialState.algoSignalColumnVisibilityVersion === SIGNAL_COLUMN_VISIBILITY_VERSION) {
     return normalized;
   }
+  if (!hasStoredColumns) {
+    return DEFAULT_SIGNAL_VISIBLE_COLUMNS;
+  }
   if (
-    Array.isArray(_initialState.algoSignalVisibleColumns) &&
-    sameColumnSet(normalized, LEGACY_DEFAULT_SIGNAL_VISIBLE_COLUMNS)
+    sameColumnSet(normalized, LEGACY_DEFAULT_SIGNAL_VISIBLE_COLUMNS) ||
+    sameColumnSet(normalized, PREVIOUS_DEFAULT_SIGNAL_VISIBLE_COLUMNS)
   ) {
-    return normalized.filter((columnId) => columnId !== "sync");
+    return DEFAULT_SIGNAL_VISIBLE_COLUMNS;
   }
   return normalized;
 };
@@ -352,10 +516,58 @@ const rowSearchText = (row) => {
     candidate.source,
     signal.timeframe,
     candidate.timeframe,
+    row.auditProgression?.searchText,
   ]
     .map(normalizeSearchText)
     .filter(Boolean)
     .join(" ");
+};
+
+const rowMatrixSymbols = (rows = []) => {
+  const seen = new Set();
+  const symbols = [];
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const symbol = String(asRecord(asRecord(row).signal).symbol || "")
+      .trim()
+      .toUpperCase();
+    if (!symbol || seen.has(symbol)) return;
+    seen.add(symbol);
+    symbols.push(symbol);
+  });
+  return symbols;
+};
+
+export const buildAlgoSignalMatrixHydrationRequest = ({
+  rows = [],
+  pageRows = [],
+  currentStates = [],
+  timeframes,
+} = {}) => {
+  const symbols = rowMatrixSymbols(rows);
+  if (!symbols.length) return null;
+
+  const matrixHydrationPlan = buildSignalsMatrixHydrationPlan({
+    symbols,
+    prioritySymbols: rowMatrixSymbols(pageRows),
+    currentStates,
+    timeframes,
+  });
+
+  if (
+    !matrixHydrationPlan.symbols.length ||
+    !matrixHydrationPlan.missingSymbols.length
+  ) {
+    return null;
+  }
+
+  return {
+    symbols: matrixHydrationPlan.symbols,
+    prioritySymbols: matrixHydrationPlan.requestSymbols,
+    missingSymbols: matrixHydrationPlan.missingSymbols,
+    requestSymbols: matrixHydrationPlan.requestSymbols,
+    timeframes: matrixHydrationPlan.timeframes,
+    reason: "algo-signal-table",
+  };
 };
 
 export const sortRows = (
@@ -479,16 +691,143 @@ const iconOnlyButtonStyle = (disabled = false) => ({
   opacity: disabled ? 0.45 : 1,
 });
 
+const SortableSignalColumnRow = ({
+  checked,
+  column,
+  columnId,
+  index,
+  locked,
+  onMove,
+  onToggle,
+  totalCount,
+}) => {
+  const {
+    attributes,
+    isDragging,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+  } = useSortable({ id: columnId });
+
+  return (
+    <div
+      ref={setNodeRef}
+      data-testid={`algo-signal-column-row-${columnId}`}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "auto minmax(0, 1fr) auto auto",
+        alignItems: "center",
+        gap: sp(4),
+        padding: sp("5px 6px"),
+        border: `1px solid ${checked ? CSS_COLOR.borderLight : CSS_COLOR.border}`,
+        background: checked ? CSS_COLOR.bg1 : CSS_COLOR.bg0,
+        boxShadow: isDragging ? `0 12px 28px ${cssColorMix(CSS_COLOR.bg0, 58)}` : "none",
+        opacity: isDragging ? 0.78 : 1,
+        position: "relative",
+        transform: CSS.Transform.toString(transform),
+        transition,
+        zIndex: isDragging ? 2 : "auto",
+      }}
+    >
+      <button
+        ref={setActivatorNodeRef}
+        type="button"
+        aria-label={`Drag ${column.label} column`}
+        title="Drag to reorder"
+        data-testid={`algo-signal-column-drag-${columnId}`}
+        style={{
+          ...iconOnlyButtonStyle(false),
+          width: dim(22),
+          cursor: isDragging ? "grabbing" : "grab",
+          touchAction: "none",
+        }}
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical size={13} strokeWidth={1.9} aria-hidden="true" />
+      </button>
+      <label
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(6),
+          minWidth: 0,
+          color: checked ? CSS_COLOR.text : CSS_COLOR.textDim,
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
+          cursor: locked ? "default" : "pointer",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={locked}
+          onChange={() => onToggle(columnId)}
+        />
+        <span
+          title={column.toggleLabel || column.label}
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {column.toggleLabel || column.label}
+        </span>
+      </label>
+      <button
+        type="button"
+        disabled={index === 0}
+        aria-label={`Move ${column.label} column up`}
+        title="Move up"
+        onClick={() => onMove(columnId, -1)}
+        style={iconOnlyButtonStyle(index === 0)}
+      >
+        <ArrowUp size={13} strokeWidth={1.9} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        disabled={index === totalCount - 1}
+        aria-label={`Move ${column.label} column down`}
+        title="Move down"
+        onClick={() => onMove(columnId, 1)}
+        style={iconOnlyButtonStyle(index === totalCount - 1)}
+      >
+        <ArrowDown size={13} strokeWidth={1.9} aria-hidden="true" />
+      </button>
+    </div>
+  );
+};
+
 const OperationsSignalColumnDrawer = ({
   columnOrder,
   visibleColumnIds,
   onClose,
   onMove,
+  onReorder,
   onReset,
   onToggle,
 }) => {
   const visibleSet = new Set(visibleColumnIds);
   const lockedSet = new Set(ALWAYS_VISIBLE_SIGNAL_COLUMN_IDS);
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 4 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+  const handleDragEnd = ({ active, over }) => {
+    const activeId = String(active?.id || "");
+    const overId = String(over?.id || "");
+    if (!activeId || !overId || activeId === overId) return;
+    onReorder(activeId, overId);
+  };
+
   return (
     <div
       id="algo-signal-column-drawer"
@@ -546,80 +885,35 @@ const OperationsSignalColumnDrawer = ({
         </button>
       </div>
 
-      <div style={{ display: "grid", gap: sp(4) }}>
-        {columnOrder.map((columnId, index) => {
-          const column = SIGNAL_COLUMN_BY_KEY.get(columnId);
-          if (!column) return null;
-          const checked = visibleSet.has(columnId);
-          const locked = lockedSet.has(columnId);
-          return (
-            <div
-              key={columnId}
-              data-testid={`algo-signal-column-row-${columnId}`}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(0, 1fr) auto auto",
-                alignItems: "center",
-                gap: sp(4),
-                padding: sp("5px 6px"),
-                border: `1px solid ${checked ? CSS_COLOR.borderLight : CSS_COLOR.border}`,
-                background: checked ? CSS_COLOR.bg1 : CSS_COLOR.bg0,
-              }}
-            >
-              <label
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: sp(6),
-                  minWidth: 0,
-                  color: checked ? CSS_COLOR.text : CSS_COLOR.textDim,
-                  fontFamily: T.sans,
-                  fontSize: textSize("caption"),
-                  cursor: locked ? "default" : "pointer",
-                }}
-              >
-                <input
-                  type="checkbox"
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext items={columnOrder} strategy={verticalListSortingStrategy}>
+          <div data-testid="algo-signal-column-sortable-list" style={{ display: "grid", gap: sp(4) }}>
+            {columnOrder.map((columnId, index) => {
+              const column = SIGNAL_COLUMN_BY_KEY.get(columnId);
+              if (!column) return null;
+              const checked = visibleSet.has(columnId);
+              const locked = lockedSet.has(columnId);
+              return (
+                <SortableSignalColumnRow
+                  key={columnId}
                   checked={checked}
-                  disabled={locked}
-                  onChange={() => onToggle(columnId)}
+                  column={column}
+                  columnId={columnId}
+                  index={index}
+                  locked={locked}
+                  onMove={onMove}
+                  onToggle={onToggle}
+                  totalCount={columnOrder.length}
                 />
-                <span
-                  title={column.toggleLabel || column.label}
-                  style={{
-                    minWidth: 0,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {column.toggleLabel || column.label}
-                </span>
-              </label>
-              <button
-                type="button"
-                disabled={index === 0}
-                aria-label={`Move ${column.label} column up`}
-                title="Move up"
-                onClick={() => onMove(columnId, -1)}
-                style={iconOnlyButtonStyle(index === 0)}
-              >
-                <ArrowUp size={13} strokeWidth={1.9} aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                disabled={index === columnOrder.length - 1}
-                aria-label={`Move ${column.label} column down`}
-                title="Move down"
-                onClick={() => onMove(columnId, 1)}
-                style={iconOnlyButtonStyle(index === columnOrder.length - 1)}
-              >
-                <ArrowDown size={13} strokeWidth={1.9} aria-hidden="true" />
-              </button>
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
+        </SortableContext>
+      </DndContext>
 
       <button
         type="button"
@@ -639,8 +933,11 @@ export const OperationsSignalTable = ({
   signalMatrixStates = [],
   cockpitGeneratedAt = null,
   cockpitStageItems = [],
+  events = [],
   algoIsPhone,
   algoIsNarrow = false,
+  safeQaMode = false,
+  onRequestSignalMatrixHydration = null,
   onOpenCandidateInTrade,
 }) => {
   const [filter, setFilter] = useState("all");
@@ -652,7 +949,7 @@ export const OperationsSignalTable = ({
   const [page, setPage] = useState(0);
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [columnOrder, setColumnOrder] = useState(() =>
-    normalizeSignalColumnOrder(_initialState.algoSignalColumnOrder),
+    resolveInitialSignalColumnOrder(),
   );
   const [visibleColumnIds, setVisibleColumnIds] = useState(() =>
     resolveInitialSignalVisibleColumns(),
@@ -697,16 +994,25 @@ export const OperationsSignalTable = ({
     const augmented = (signals || []).map((signal) => {
       const candidate = findSignalOptionsCandidateForSignal(candidates, signal);
       return {
+        auditKey: signalAuditRowKey(signal, candidate),
         signal,
         candidate,
         classification: classifySignal(signal, candidate),
         scoreBreakdown: resolveSignalScoreBreakdown({ signal, candidate }),
       };
     });
+    const auditProgressions = buildSignalAuditProgressions({
+      events,
+      rows: augmented,
+    });
+    const withProgression = augmented.map((row) => ({
+      ...row,
+      auditProgression: auditProgressions.get(row.auditKey) || null,
+    }));
     const filteredByStatus =
       filter === "all"
-        ? augmented
-        : augmented.filter((row) => row.classification === filter);
+        ? withProgression
+        : withProgression.filter((row) => row.classification === filter);
     const normalizedQuery = normalizeSearchText(searchQuery);
     const filtered = normalizedQuery
       ? filteredByStatus.filter((row) => rowSearchText(row).includes(normalizedQuery))
@@ -714,6 +1020,7 @@ export const OperationsSignalTable = ({
     return sortRows(filtered, sortKey, null, sortDirection);
   }, [
     candidates,
+    events,
     filter,
     searchQuery,
     signals,
@@ -725,6 +1032,19 @@ export const OperationsSignalTable = ({
     [page, rows],
   );
   const pageRows = paginatedRows.pageRows;
+  const signalMatrixHydrationRequest = useMemo(
+    () =>
+      buildAlgoSignalMatrixHydrationRequest({
+        rows,
+        pageRows,
+        currentStates: signalMatrixStates,
+      }),
+    [pageRows, rows, signalMatrixStates],
+  );
+  useEffect(() => {
+    if (!signalMatrixHydrationRequest) return;
+    onRequestSignalMatrixHydration?.(signalMatrixHydrationRequest);
+  }, [onRequestSignalMatrixHydration, signalMatrixHydrationRequest]);
   const rowSymbols = useMemo(
     () =>
       pageRows
@@ -737,7 +1057,7 @@ export const OperationsSignalTable = ({
     { symbols: rowSymbolsKey },
     {
       query: {
-        enabled: Boolean(rowSymbolsKey),
+        enabled: Boolean(rowSymbolsKey && !safeQaMode),
         staleTime: 30_000,
         retry: false,
       },
@@ -776,7 +1096,7 @@ export const OperationsSignalTable = ({
       );
     },
     ...BARS_QUERY_DEFAULTS,
-    enabled: Boolean(rowSymbolsKey),
+    enabled: Boolean(rowSymbolsKey && !safeQaMode),
     retry: false,
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
@@ -830,7 +1150,14 @@ export const OperationsSignalTable = ({
     const scanStage = (cockpitStageItems || []).find(
       (stage) => asRecord(stage).id === "scan_universe",
     );
+    const contractStage = (cockpitStageItems || []).find(
+      (stage) => asRecord(stage).id === "contract_selected",
+    );
     const scanStageRecord = asRecord(scanStage);
+    const contractStageRecord = asRecord(contractStage);
+    const contractStageCount = Number(contractStageRecord.count);
+    const contractSelectionResolved =
+      Number.isFinite(contractStageCount) && contractStageCount > 0;
     const latestBarMs = timestampMs(scanStageRecord.latestSignalBarAt);
     const latestScanMs =
       timestampMs(scanStageRecord.lastSignalScanAt) ||
@@ -856,6 +1183,14 @@ export const OperationsSignalTable = ({
       scanStageRecord.resourcePressureLevel.trim()
         ? scanStageRecord.resourcePressureLevel.trim()
         : null;
+    const pressurePaused = scanStageRecord.pressurePaused === true;
+    const pressureBlocksWork =
+      pressurePaused ||
+      (scanStageRecord.heavyWorkDeferred === true &&
+        pressureLevelBlocksActionWork(pressureLevel));
+    const heavyWorkDeferred =
+      scanStageRecord.heavyWorkDeferred === true &&
+      (!contractSelectionResolved || pressureBlocksWork);
     return {
       latestSignalAt: latestSignalMs ? new Date(latestSignalMs).toISOString() : null,
       latestBarAt: latestBarMs ? new Date(latestBarMs).toISOString() : null,
@@ -863,8 +1198,8 @@ export const OperationsSignalTable = ({
       scanRunning: scanStageRecord.status === "running",
       scanPhase: activePhase,
       sourcePolicy,
-      heavyWorkDeferred: scanStageRecord.heavyWorkDeferred === true,
-      pressureLevel,
+      heavyWorkDeferred,
+      pressureLevel: pressureBlocksWork ? pressureLevel : null,
       staleScan:
         Boolean(latestScanMs) &&
         scanStageRecord.status !== "running" &&
@@ -894,13 +1229,13 @@ export const OperationsSignalTable = ({
     freshness.sourcePolicy
       ? formatCompactStatusValue(freshness.sourcePolicy)
       : "Source --",
-    freshness.heavyWorkDeferred ? "Heavy deferred" : null,
+    freshness.pressureLevel ? "Action scan queued" : null,
   ];
   const staleScanBanner =
-    freshness.heavyWorkDeferred || freshness.staleScan
+    freshness.pressureLevel || freshness.staleScan
       ? [
-          freshness.heavyWorkDeferred
-            ? "Fresh signal state is current; heavy action work is deferred."
+          freshness.pressureLevel
+            ? "Signal action scan is queued by resource pressure."
             : "Signal scan freshness is outside the expected window.",
           freshness.latestScanAt
             ? `Last scan ${formatRelativeTimeShort(freshness.latestScanAt)}.`
@@ -917,12 +1252,26 @@ export const OperationsSignalTable = ({
       : null;
   const activeFilter = FILTER_OPTIONS.find((option) => option.id === filter) || FILTER_OPTIONS[0];
   const compactTools = algoIsPhone || algoIsNarrow;
+  const signalTableCompact = Boolean(algoIsPhone);
   const freshnessLine = freshnessItems.filter(Boolean).join(" · ");
   const statusLine = `${activeFilter.label} ${rows.length} of ${counts.all} signals · ${freshnessLine}`;
   const mobileStatusLine = `${activeFilter.label} ${rows.length}/${counts.all} · ${freshnessLine}`;
+  const signalScanWave = resolveSignalScanWave(freshness);
   const sortSummary = `Sorted by ${SORT_LABELS[sortKey] || "Newest"} ${
     SORT_DIRECTION_LABELS[sortDirection] || "descending"
   } · ${rows.length} rows`;
+  const compactSortValue = `${sortKey}:${sortDirection}`;
+  const compactSortOptions = COMPACT_SORT_OPTIONS.some(
+    (option) => option.value === compactSortValue,
+  )
+    ? COMPACT_SORT_OPTIONS
+    : [
+        {
+          value: compactSortValue,
+          label: SORT_LABELS[sortKey] || "Current",
+        },
+        ...COMPACT_SORT_OPTIONS,
+      ];
   const handleSortChange = (nextSortKey) => {
     setSortState((current) => ({
       key: nextSortKey,
@@ -931,6 +1280,11 @@ export const OperationsSignalTable = ({
           ? toggleSortDirection(current.direction)
           : defaultSortDirection(nextSortKey),
     }));
+  };
+  const handleCompactSortChange = (value) => {
+    const [nextSortKey, nextDirection] = String(value || "").split(":");
+    if (!nextSortKey || !nextDirection) return;
+    setSortState({ key: nextSortKey, direction: nextDirection });
   };
   const toggleColumn = (columnId) => {
     if (ALWAYS_VISIBLE_SIGNAL_COLUMN_IDS.includes(columnId)) return;
@@ -954,6 +1308,15 @@ export const OperationsSignalTable = ({
       const [moved] = next.splice(index, 1);
       next.splice(targetIndex, 0, moved);
       return next;
+    });
+  };
+  const reorderColumn = (activeColumnId, overColumnId) => {
+    setColumnOrder((current) => {
+      const next = normalizeSignalColumnOrder(current);
+      const activeIndex = next.indexOf(activeColumnId);
+      const overIndex = next.indexOf(overColumnId);
+      if (activeIndex < 0 || overIndex < 0 || activeIndex === overIndex) return next;
+      return arrayMove(next, activeIndex, overIndex);
     });
   };
   const resetColumns = () => {
@@ -1013,16 +1376,36 @@ export const OperationsSignalTable = ({
               .join(" · ")}
             style={{
               color: CSS_COLOR.text,
+              display: "flex",
+              alignItems: "center",
+              gap: sp(4),
               fontFamily: T.sans,
               fontSize: fs(algoIsPhone ? 10 : 12),
               fontWeight: 600,
               lineHeight: 1.1,
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
+              minWidth: 0,
             }}
           >
-            {algoIsPhone ? `Signals · ${mobileStatusLine}` : `Signals to Actions · ${statusLine}`}
+            <IbkrStatusWave
+              status={signalScanWave.status}
+              wave={signalScanWave.wave}
+              color={signalScanWave.color}
+              width={algoIsPhone ? 22 : 28}
+              height={12}
+              decorative={false}
+              ariaLabel="Signal scan activity"
+              dataTestId="algo-signal-scan-wave"
+            />
+            <span
+              style={{
+                minWidth: 0,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {algoIsPhone ? `Signals · ${mobileStatusLine}` : `Signals to Actions · ${statusLine}`}
+            </span>
           </span>
         </div>
         <div
@@ -1030,7 +1413,7 @@ export const OperationsSignalTable = ({
             display: "flex",
             gap: sp(algoIsPhone ? 4 : 6),
             alignItems: "center",
-            flexWrap: "nowrap",
+            flexWrap: algoIsPhone ? "wrap" : "nowrap",
             color: CSS_COLOR.textDim,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
@@ -1042,7 +1425,7 @@ export const OperationsSignalTable = ({
               display: "inline-flex",
               alignItems: "center",
               gap: sp(4),
-              flex: "1 1 220px",
+              flex: algoIsPhone ? "1 1 100%" : "1 1 220px",
               minWidth: compactTools ? 0 : dim(180),
               maxWidth: compactTools ? "100%" : dim(280),
               height: dim(algoIsPhone ? 24 : 26),
@@ -1078,7 +1461,8 @@ export const OperationsSignalTable = ({
               onChange={(event) => setFilter(event.target.value)}
               style={{
                 height: dim(algoIsPhone ? 24 : 26),
-                maxWidth: dim(algoIsPhone ? 104 : 132),
+                flex: algoIsPhone ? "1 1 calc(50% - 4px)" : "0 0 auto",
+                maxWidth: algoIsPhone ? "none" : dim(132),
                 borderRadius: dim(RADII.sm),
                 border: `1px solid ${CSS_COLOR.border}`,
                 background: CSS_COLOR.bg2,
@@ -1133,6 +1517,30 @@ export const OperationsSignalTable = ({
               );
             })
           )}
+          {algoIsPhone ? (
+            <select
+              aria-label="Sort signals"
+              value={compactSortValue}
+              onChange={(event) => handleCompactSortChange(event.target.value)}
+              style={{
+                height: dim(24),
+                flex: "1 1 calc(50% - 4px)",
+                maxWidth: "none",
+                borderRadius: dim(RADII.sm),
+                border: `1px solid ${CSS_COLOR.border}`,
+                background: CSS_COLOR.bg2,
+                color: CSS_COLOR.text,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+              }}
+            >
+              {compactSortOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          ) : null}
           {!algoIsPhone ? (
             <button
               type="button"
@@ -1203,6 +1611,7 @@ export const OperationsSignalTable = ({
             visibleColumnIds={visibleColumnIds}
             onClose={() => setColumnsOpen(false)}
             onMove={moveColumn}
+            onReorder={reorderColumn}
             onReset={resetColumns}
             onToggle={toggleColumn}
           />
@@ -1214,19 +1623,31 @@ export const OperationsSignalTable = ({
         className="ra-dense-table-scroll"
         style={{
           overflowX: "auto",
-          overflowY: "hidden",
+          overflowY: signalTableCompact ? "visible" : "auto",
+          maxHeight: signalTableCompact ? "none" : 520,
           minWidth: 0,
         }}
       >
-        <div style={{ minWidth: tableMinWidth }}>
-          <OperationsSignalTableHeader
-            columns={visibleColumns}
-            sortKey={sortKey}
-            sortDirection={sortDirection}
-            onSortChange={handleSortChange}
-          />
+        <div
+          data-testid="algo-signal-table-rail"
+          style={{ minWidth: signalTableCompact ? 0 : tableMinWidth }}
+        >
+          {!signalTableCompact ? (
+            <OperationsSignalTableHeader
+              columns={visibleColumns}
+              sortKey={sortKey}
+              sortDirection={sortDirection}
+              onSortChange={handleSortChange}
+            />
+          ) : null}
 
-          <div style={{ maxHeight: 520, overflowY: "auto", minWidth: 0 }}>
+          <div
+            data-testid="algo-signal-table-body"
+            style={{
+              minWidth: 0,
+              overflow: "visible",
+            }}
+          >
             {rows.length === 0 ? (
               <div style={{ padding: sp(6) }}>
                 <DataUnavailableState
@@ -1250,13 +1671,14 @@ export const OperationsSignalTable = ({
                 />
               </div>
             ) : (
-              pageRows.map(({ signal, candidate, scoreBreakdown }, rowIndex) => {
+              pageRows.map(({ signal, candidate, scoreBreakdown, auditProgression }, rowIndex) => {
                 const symbol = asRecord(signal).symbol;
                 return (
                   <OperationsSignalRow
                     key={asRecord(signal).signalKey || symbol}
                     signal={signal}
                     candidate={candidate}
+                    auditProgression={auditProgression}
                     scoreBreakdown={scoreBreakdown}
                     tfMatrix={signalMatrixBySymbol?.[String(symbol || "").toUpperCase()] || null}
                     tickerSnapshot={
@@ -1264,6 +1686,7 @@ export const OperationsSignalTable = ({
                     }
                     alt={rowIndex % 2 === 1}
                     columns={visibleColumns}
+                    compact={signalTableCompact}
                     scanActive={freshness.scanRunning}
                     onRowAction={handleRowAction}
                   />

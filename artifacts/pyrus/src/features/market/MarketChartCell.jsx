@@ -380,6 +380,7 @@ export const MarketChartCell = ({
               workspaceChart={{ timeframe }}
               onWorkspaceChartChange={handleWorkspaceChartChange}
               referenceLines={gexReferenceLines}
+              gexProjectionEnabled={Boolean(isActive || fullFrame)}
               crosshairSyncGroupId={crosshairSyncGroupId}
               crosshairSyncInstanceId={crosshairSyncInstanceId}
             />

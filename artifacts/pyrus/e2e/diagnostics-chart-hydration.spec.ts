@@ -45,7 +45,7 @@ function buildDiagnosticsLatest() {
           isPrependingOlder: true,
           hasExhaustedOlderHistory: false,
           olderHistoryPageCount: 1,
-          olderHistoryProvider: "polygon-history",
+          olderHistoryProvider: "massive-history",
           olderHistoryProviderPageCount: 2,
           olderHistoryProviderPageLimitReached: true,
           hasProviderCursor: true,
@@ -119,7 +119,7 @@ async function mockDiagnosticsApi(page: Page) {
         environment: "paper",
         brokerProvider: "ibkr",
         marketDataProvider: "ibkr",
-        configured: { polygon: false, ibkr: false, research: false },
+        configured: { massive: false, ibkr: false, research: false },
         ibkrBridge: null,
         timestamp: now,
       };

@@ -134,7 +134,7 @@ function makeFlowEvents(
     optionTicker: `${symbol}${putFlow ? "P" : "C"}${index}`,
     providerContractId:
       options.invalidFirstProviderContractId && index === 0
-        ? `${symbol}-polygon-fallback`
+        ? `${symbol}-massive-fallback`
         : options.missingFirstProviderContractId && index === 0
         ? null
         : mockConid(symbol, index + 1),
@@ -197,7 +197,7 @@ function makePremiumWidget(symbol: string, index: number) {
     sideBasis: "quote_match",
     quoteAccess: "available",
     tradeAccess: "available",
-    source: "polygon-options-snapshot",
+    source: "massive-options-snapshot",
     confidence: index < 4 ? "snapshot" : "partial",
     delayed: false,
     pageCount: 1,
@@ -287,10 +287,10 @@ async function mockFlowApi(
           asOf: new Date().toISOString(),
           timeframe,
           source: {
-            provider: "polygon",
-            label: "Polygon premium snapshots",
+            provider: "massive",
+            label: "Massive premium snapshots",
             timeframe,
-            providerHost: "api.polygon.io",
+            providerHost: "api.massive.com",
             sideBasis: "quote_match",
             quoteAccess: "available",
             tradeAccess: "available",

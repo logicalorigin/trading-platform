@@ -114,6 +114,18 @@ const ACTIVITY_SIDEBAR_WIDTH_DEFAULT = 220;
 const ACTIVITY_SIDEBAR_WIDTH_MIN = 196;
 const ACTIVITY_SIDEBAR_WIDTH_MAX = 320;
 
+const screenHeadingStyle = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0, 0, 0, 0)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
+
 const clampWatchlistSidebarWidth = (value) =>
   Math.min(
     WATCHLIST_SIDEBAR_WIDTH_MAX,
@@ -159,8 +171,9 @@ const BloombergLiveDock = lazyWithRetry(
  * media-query and html[data-pyrus-reduced-motion="on"] overrides in
  * index.css — the animation becomes a no-op when motion is reduced.
  */
-const ScreenTransitionHost = ({ screenId, active, children }) => {
+const ScreenTransitionHost = ({ screenId, screenLabel, active, children }) => {
   const [activationToken, setActivationToken] = useState(0);
+  const screenHeadingId = `platform-screen-title-${screenId}`;
   useEffect(() => {
     if (!active) return;
     setActivationToken((current) => (current + 1) % 2);
@@ -169,6 +182,7 @@ const ScreenTransitionHost = ({ screenId, active, children }) => {
     <div
       data-testid={`screen-host-${screenId}`}
       aria-hidden={!active}
+      aria-labelledby={active ? screenHeadingId : undefined}
       className={[
         "ra-screen-enter",
         activationToken === 1 ? "ra-screen-enter-alt" : null,
@@ -184,6 +198,11 @@ const ScreenTransitionHost = ({ screenId, active, children }) => {
         flexDirection: "column",
       }}
     >
+      {active ? (
+        <h1 id={screenHeadingId} style={screenHeadingStyle}>
+          {screenLabel || screenId}
+        </h1>
+      ) : null}
       {children}
     </div>
   );
@@ -270,7 +289,7 @@ const PlatformScreenStack = memo(({
         flexDirection: "column",
       }}
     >
-      {SCREENS.map(({ id }) => {
+      {SCREENS.map(({ id, label }) => {
         const active = activeScreen === id;
         const shouldRender =
           mountedScreens[id] &&
@@ -281,6 +300,7 @@ const PlatformScreenStack = memo(({
           <ScreenTransitionHost
             key={id}
             screenId={id}
+            screenLabel={label}
             active={active}
           >
             <Suspense fallback={<ScreenLoadingFallback screenId={id} />}>
@@ -698,7 +718,8 @@ export const PlatformShell = ({
   onChangeSignalMonitorMaxSymbols,
 }) => {
   const viewport = useViewport();
-  const { isPhone, isNarrow } = viewport.flags;
+  const { isPhone, isTablet, isNarrow } = viewport.flags;
+  const auxiliaryDrawerViewport = isPhone || isTablet;
   const headerWidth = viewport.width || 0;
   const [headerRef, headerSize] = useElementSize();
   const headerEffectiveWidth = headerSize.width || headerWidth;
@@ -785,8 +806,8 @@ export const PlatformShell = ({
     frameAuxiliaryDataEnabled &&
       (
         activeScreen === "algo" ||
-        (!isPhone && !activitySidebarCollapsed) ||
-        (isPhone && (mobileActivityOpen || mobilePulseOpen)) ||
+        (!auxiliaryDrawerViewport && !activitySidebarCollapsed) ||
+        (auxiliaryDrawerViewport && (mobileActivityOpen || mobilePulseOpen)) ||
         notificationsOpen
       ),
   );
@@ -909,11 +930,15 @@ export const PlatformShell = ({
   );
 
   useEffect(() => {
-    if (!isPhone) {
+    if (!auxiliaryDrawerViewport) {
       mobileAutoCollapseRef.current = false;
       setMobileMoreOpen(false);
       setMobileActivityOpen(false);
       setMobileWatchlistOpen(false);
+      return;
+    }
+    if (!isPhone) {
+      mobileAutoCollapseRef.current = false;
       return;
     }
 
@@ -922,7 +947,7 @@ export const PlatformShell = ({
     if (!sidebarCollapsed) {
       setSidebarCollapsed(true);
     }
-  }, [isPhone, setSidebarCollapsed, sidebarCollapsed]);
+  }, [auxiliaryDrawerViewport, isPhone, setSidebarCollapsed, sidebarCollapsed]);
   const mobileSidebarWidth = Math.max(
     280,
     Math.min(viewport.width ? viewport.width - 28 : 320, 340),
@@ -1037,7 +1062,7 @@ export const PlatformShell = ({
     />
 
     <MobileActivitySheet
-      open={isPhone && mobileActivityOpen}
+      open={auxiliaryDrawerViewport && mobileActivityOpen}
       onClose={() => setMobileActivityOpen(false)}
       environment={environment}
       dataEnabled={algoFrameRuntimeEnabled}
@@ -1188,10 +1213,16 @@ export const PlatformShell = ({
           side="right"
           label="algo monitor sidebar"
           testId="platform-activity-sidebar"
-          collapsed={activitySidebarCollapsed}
-          width={activitySidebarCollapsed ? 40 : resolvedActivitySidebarWidth}
+          collapsed={isTablet || activitySidebarCollapsed}
+          width={isTablet || activitySidebarCollapsed ? 40 : resolvedActivitySidebarWidth}
           resizing={activityResizing}
-          onExpand={() => setActivitySidebarCollapsed?.(false)}
+          onExpand={() => {
+            if (isTablet) {
+              setMobileActivityOpen(true);
+              return;
+            }
+            setActivitySidebarCollapsed?.(false);
+          }}
           onResizeStart={handleActivityResizeStart}
           ExpandIcon={PanelRightOpen}
         >

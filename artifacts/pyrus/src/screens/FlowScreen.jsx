@@ -2344,7 +2344,7 @@ const FlowOverviewPanel = ({
   const ibkrLoginRequired =
     Boolean(session?.configured?.ibkr) &&
     !session?.ibkrBridge?.authenticated &&
-    !providerSummary.providers.includes("polygon");
+    !providerSummary.providers.includes("massive");
   const flowDisplayLabel =
     !hasLiveFlow && ibkrLoginRequired
       ? "IBKR login required"
@@ -2389,7 +2389,7 @@ const FlowOverviewPanel = ({
             : providerSummary?.coverage?.coverageHealth === "lagging"
               ? "Broad scanner coverage is behind the active-session target."
             : providerSummary.fallbackUsed
-              ? "IBKR returned no active snapshot flow and the Polygon trade fallback was empty."
+              ? "IBKR returned no active snapshot flow and the Massive trade fallback was empty."
               : providerSummaryHasTransientFlowState(providerSummary)
                 ? "The scanner is rotating through the broad universe; the latest transient bridge response did not produce a completed flow snapshot."
                 : flowScannerCoverageActive

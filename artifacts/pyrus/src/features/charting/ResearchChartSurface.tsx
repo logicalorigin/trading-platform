@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type MutableRefObject,
   type MouseEvent,
   type PointerEvent,
   type ReactNode,
@@ -30,6 +31,8 @@ import {
   PriceScaleMode,
 } from "lightweight-charts";
 import type {
+  AutoscaleInfo,
+  AutoscaleInfoProvider,
   DeepPartial,
   IChartApi,
   IPriceLine,
@@ -98,6 +101,7 @@ import {
   resolvePreferenceTimeZone,
   type UserPreferences,
 } from "../preferences/userPreferenceModel";
+import { getChartTimeframeDefinition } from "./timeframes";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import { TYPE_CSS_VAR, TYPE_PX } from "../../lib/typography";
 // @ts-expect-error JSX module imported into TypeScript context
@@ -523,6 +527,24 @@ export type ChartLegendMetadata = {
   selectedStudies?: string[];
 };
 
+export type GexProjectionConePoint = {
+  expirationDate: string;
+  lower2: number;
+  lower1: number;
+  center: number;
+  upper1: number;
+  upper2: number;
+  qualityStatus?: "ok" | "partial" | "unavailable" | string;
+};
+
+export type GexProjectionConeOverlay = {
+  ticker: string;
+  spot: number;
+  asOf: string | null;
+  qualityStatus: "ok" | "partial" | "unavailable" | string;
+  points: GexProjectionConePoint[];
+};
+
 const CHART_SCALE_PREFS_STORAGE_PREFIX = "pyrus:chart-scale-prefs:";
 const LEGACY_CHART_SCALE_PREFS_STORAGE_PREFIX = "pyrus:chart-scale-prefs:";
 
@@ -609,6 +631,33 @@ type PositionRiskLineOverlay = {
   labelFill: string;
   labelBorder: string;
   labelBorderWidth: number;
+};
+
+type GexProjectionConeSvgOverlay = {
+  id: string;
+  title: string;
+  outerPath: string;
+  innerPath: string;
+  centerPath: string;
+  axisTicks: Array<{
+    x: number;
+    label: string;
+    expirationDate: string;
+    qualityStatus: string;
+  }>;
+  futureLaneX: number;
+  futureLaneWidth: number;
+  futureLaneFill: string;
+  futureLaneStroke: string;
+  outerFill: string;
+  outerStroke: string;
+  innerFill: string;
+  innerStroke: string;
+  centerHaloStroke: string;
+  centerStroke: string;
+  axisStroke: string;
+  axisLabelFill: string;
+  qualityStatus: string;
 };
 
 type TradeMarkerTarget = {
@@ -1424,6 +1473,7 @@ type ResearchChartSurfaceProps = {
     lineWidth?: number;
     axisLabelVisible?: boolean;
   }>;
+  gexProjectionCone?: GexProjectionConeOverlay | null;
   chartEvents?: ChartEvent[];
   chartFlowDiagnostics?: FlowChartEventConversion | null;
   positionOverlays?: ChartPositionOverlays | null;
@@ -2437,6 +2487,567 @@ const withAlpha = (color: string, alpha: string): string =>
 const withCanvasAlpha = (color: string, alpha: string): string =>
   resolveCanvasAlphaColor(color, alpha, color);
 
+const buildSvgPath = (
+  points: Array<{ x: number; y: number }>,
+  xBounds?: { minX: number; maxX: number } | null,
+): string =>
+  points
+    .map((point, index) => {
+      const x = xBounds
+        ? clampProjectionCoordinate(point.x, xBounds.minX, xBounds.maxX)
+        : point.x;
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${point.y.toFixed(1)}`;
+    })
+    .join(" ");
+
+const clampProjectionCoordinate = (
+  value: number,
+  min: number,
+  max: number,
+): number => Math.max(min, Math.min(max, value));
+
+const GEX_PROJECTION_RENDER_OVERSCAN_MIN_PX = 320;
+
+export const resolveGexProjectionSvgXBounds = (
+  viewportWidth: number,
+): { minX: number; maxX: number } => {
+  const normalizedViewport =
+    isFiniteNumber(viewportWidth) && viewportWidth > 0 ? viewportWidth : 0;
+  const overscan = Math.max(
+    GEX_PROJECTION_RENDER_OVERSCAN_MIN_PX,
+    normalizedViewport,
+  );
+  return {
+    minX: -overscan,
+    maxX: normalizedViewport + overscan,
+  };
+};
+
+const GEX_PROJECTION_AXIS_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  timeZone: "UTC",
+});
+const GEX_PROJECTION_VISIBLE_POINT_LIMIT = 8;
+const GEX_PROJECTION_EXPIRATION_UTC_HOUR = 20;
+const GEX_PROJECTION_AUTO_FIT_MAX_LOGICAL_BARS = 240;
+const GEX_PROJECTION_AUTO_FIT_PADDING_BARS = 32;
+
+const formatGexProjectionAxisLabel = (expirationDate: string): string => {
+  const normalized = String(expirationDate || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return normalized || "exp";
+  }
+  const date = new Date(`${normalized}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime())
+    ? normalized
+    : GEX_PROJECTION_AXIS_DATE_FORMATTER.format(date);
+};
+
+const parseGexProjectionExpirationTimeSeconds = (
+  expirationDate: string,
+): number | null => {
+  const normalized = String(expirationDate || "").slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(normalized);
+  if (match) {
+    return Math.floor(
+      Date.UTC(
+        Number(match[1]),
+        Number(match[2]) - 1,
+        Number(match[3]),
+        GEX_PROJECTION_EXPIRATION_UTC_HOUR,
+        0,
+        0,
+        0,
+      ) / 1000,
+    );
+  }
+
+  const parsed = Date.parse(String(expirationDate || ""));
+  return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
+};
+
+const resolveObservedBarStepSeconds = (
+  bars: ChartModel["chartBars"],
+): number | null => {
+  const sample = bars.slice(-80);
+  const diffs: number[] = [];
+
+  for (let index = 1; index < sample.length; index += 1) {
+    const left = sample[index - 1]?.time;
+    const right = sample[index]?.time;
+    if (isFiniteNumber(left) && isFiniteNumber(right) && right > left) {
+      diffs.push(right - left);
+    }
+  }
+
+  if (!diffs.length) {
+    return null;
+  }
+
+  diffs.sort((left, right) => left - right);
+  return diffs[Math.floor(diffs.length / 2)] ?? null;
+};
+
+export const resolveGexProjectionLogicalOffset = ({
+  expirationDate,
+  lastBarTime,
+  timeframe,
+  observedStepSeconds = null,
+}: {
+  expirationDate: string;
+  lastBarTime: number;
+  timeframe?: string | null;
+  observedStepSeconds?: number | null;
+}): number | null => {
+  const expirationTime = parseGexProjectionExpirationTimeSeconds(expirationDate);
+  if (
+    expirationTime == null ||
+    !isFiniteNumber(lastBarTime) ||
+    expirationTime <= lastBarTime
+  ) {
+    return null;
+  }
+
+  const timeframeStepSeconds =
+    (getChartTimeframeDefinition(timeframe)?.stepMs ?? 0) / 1000;
+  const stepSeconds =
+    timeframeStepSeconds > 0
+      ? timeframeStepSeconds
+      : isFiniteNumber(observedStepSeconds) && observedStepSeconds > 0
+        ? observedStepSeconds
+        : null;
+  if (!stepSeconds) {
+    return null;
+  }
+
+  return Math.max(1, (expirationTime - lastBarTime) / stepSeconds);
+};
+
+export const resolveGexProjectionAutoFitLogicalOffset = ({
+  points,
+  lastBarTime,
+  timeframe,
+  observedStepSeconds = null,
+  maxOffset = GEX_PROJECTION_AUTO_FIT_MAX_LOGICAL_BARS,
+}: {
+  points: GexProjectionConePoint[] | null | undefined;
+  lastBarTime: number;
+  timeframe?: string | null;
+  observedStepSeconds?: number | null;
+  maxOffset?: number;
+}): number => {
+  if (!Array.isArray(points) || !points.length || !isFiniteNumber(lastBarTime)) {
+    return 0;
+  }
+  const normalizedMaxOffset =
+    isFiniteNumber(maxOffset) && maxOffset > 0 ? maxOffset : 0;
+  if (normalizedMaxOffset <= 0) {
+    return 0;
+  }
+
+  const offsets = points
+    .map((point) =>
+      resolveGexProjectionLogicalOffset({
+        expirationDate: point.expirationDate,
+        lastBarTime,
+        timeframe,
+        observedStepSeconds,
+      }),
+    )
+    .filter((offset): offset is number => offset != null && offset > 0)
+    .sort((left, right) => left - right);
+  const nearestOffset = offsets[0] ?? null;
+  if (nearestOffset == null || nearestOffset > normalizedMaxOffset) {
+    return 0;
+  }
+  return Math.ceil(nearestOffset);
+};
+
+const buildGexProjectionFallbackPriceCoordinate = ({
+  model,
+  overlay,
+  viewportHeight,
+}: {
+  model: ChartModel;
+  overlay: GexProjectionConeOverlay;
+  viewportHeight: number;
+}) => {
+  const prices = [
+    overlay.spot,
+    ...model.chartBars.flatMap((bar) => [bar.h, bar.l, bar.c]),
+    ...overlay.points.flatMap((point) => [
+      point.lower2,
+      point.lower1,
+      point.center,
+      point.upper1,
+      point.upper2,
+    ]),
+  ].filter(isFiniteNumber);
+  if (prices.length < 2) {
+    return null;
+  }
+  const minPrice = Math.min(...prices);
+  const maxPrice = Math.max(...prices);
+  const span = maxPrice - minPrice;
+  if (!isFiniteNumber(span) || span <= 0) {
+    return null;
+  }
+  const top = viewportHeight * 0.08;
+  const bottom = viewportHeight * 0.92;
+  const drawableHeight = bottom - top;
+  return (price: number) =>
+    bottom - ((price - minPrice) / span) * drawableHeight;
+};
+
+type GexProjectionPriceRange = {
+  minValue: number;
+  maxValue: number;
+};
+
+const GEX_PROJECTION_AUTOSCALE_MARGIN_PX = 18;
+
+export const resolveGexProjectionAutoscalePriceRange = ({
+  overlay,
+  chartBars,
+  timeframe,
+  observedStepSeconds = null,
+  visibleLogicalRange = null,
+}: {
+  overlay: GexProjectionConeOverlay | null | undefined;
+  chartBars: ChartModel["chartBars"];
+  timeframe?: string | null;
+  observedStepSeconds?: number | null;
+  visibleLogicalRange?: VisibleLogicalRange | null;
+}): GexProjectionPriceRange | null => {
+  if (
+    !overlay ||
+    !Array.isArray(overlay.points) ||
+    !overlay.points.length ||
+    !Array.isArray(chartBars) ||
+    !chartBars.length
+  ) {
+    return null;
+  }
+
+  const lastBar = chartBars[chartBars.length - 1];
+  if (!lastBar || !isFiniteNumber(lastBar.time)) {
+    return null;
+  }
+
+  const normalizedVisibleRange =
+    resolveViewportVisibleLogicalRange(visibleLogicalRange);
+  const visibleFrom = normalizedVisibleRange
+    ? Math.min(normalizedVisibleRange.from, normalizedVisibleRange.to)
+    : null;
+  const visibleTo = normalizedVisibleRange
+    ? Math.max(normalizedVisibleRange.from, normalizedVisibleRange.to)
+    : null;
+  const lastLogicalIndex = Math.max(0, chartBars.length - 1);
+  const prices: number[] = [];
+
+  for (const point of overlay.points.slice(0, GEX_PROJECTION_VISIBLE_POINT_LIMIT)) {
+    const logicalOffset = resolveGexProjectionLogicalOffset({
+      expirationDate: point.expirationDate,
+      lastBarTime: lastBar.time,
+      timeframe,
+      observedStepSeconds,
+    });
+    if (logicalOffset == null) {
+      continue;
+    }
+
+    const projectionLogicalIndex = lastLogicalIndex + logicalOffset;
+    if (
+      visibleFrom != null &&
+      visibleTo != null &&
+      (projectionLogicalIndex < visibleFrom || projectionLogicalIndex > visibleTo)
+    ) {
+      continue;
+    }
+
+    prices.push(
+      point.lower2,
+      point.lower1,
+      point.center,
+      point.upper1,
+      point.upper2,
+    );
+  }
+
+  if (
+    visibleFrom != null &&
+    visibleTo != null &&
+    lastLogicalIndex >= visibleFrom &&
+    lastLogicalIndex <= visibleTo
+  ) {
+    prices.push(overlay.spot);
+  }
+
+  const finitePrices = prices.filter(isFiniteNumber);
+  if (finitePrices.length < 2) {
+    return null;
+  }
+
+  let minValue = Math.min(...finitePrices);
+  let maxValue = Math.max(...finitePrices);
+  if (!isFiniteNumber(minValue) || !isFiniteNumber(maxValue)) {
+    return null;
+  }
+  if (minValue === maxValue) {
+    const expansion = Math.max(Math.abs(minValue) * 0.0025, 0.01);
+    minValue -= expansion;
+    maxValue += expansion;
+  }
+
+  return { minValue, maxValue };
+};
+
+type GexProjectionAutoscaleContext = {
+  overlay: GexProjectionConeOverlay | null | undefined;
+  chartBars: ChartModel["chartBars"];
+  timeframe?: string | null;
+  observedStepSeconds?: number | null;
+};
+
+const mergeGexProjectionAutoscaleInfo = (
+  baseInfo: AutoscaleInfo | null,
+  projectionRange: GexProjectionPriceRange | null,
+): AutoscaleInfo | null => {
+  if (!projectionRange) {
+    return baseInfo;
+  }
+
+  const baseRange = baseInfo?.priceRange;
+  const priceRange = baseRange
+    ? {
+        minValue: Math.min(baseRange.minValue, projectionRange.minValue),
+        maxValue: Math.max(baseRange.maxValue, projectionRange.maxValue),
+      }
+    : projectionRange;
+
+  return {
+    ...baseInfo,
+    priceRange,
+    margins: baseInfo?.margins ?? {
+      above: GEX_PROJECTION_AUTOSCALE_MARGIN_PX,
+      below: GEX_PROJECTION_AUTOSCALE_MARGIN_PX,
+    },
+  };
+};
+
+const buildGexProjectionAutoscaleInfoProvider = ({
+  chartRef,
+  contextRef,
+}: {
+  chartRef: MutableRefObject<ChartApi | null>;
+  contextRef: MutableRefObject<GexProjectionAutoscaleContext>;
+}): AutoscaleInfoProvider => {
+  return (baseImplementation) => {
+    const baseInfo = baseImplementation();
+    const context = contextRef.current;
+    const visibleLogicalRange =
+      chartRef.current?.timeScale?.().getVisibleLogicalRange?.() ?? null;
+    const projectionRange = resolveGexProjectionAutoscalePriceRange({
+      overlay: context.overlay,
+      chartBars: context.chartBars,
+      timeframe: context.timeframe,
+      observedStepSeconds: context.observedStepSeconds,
+      visibleLogicalRange,
+    });
+    return mergeGexProjectionAutoscaleInfo(baseInfo, projectionRange);
+  };
+};
+
+const buildGexProjectionConeSvgOverlay = ({
+  chart,
+  series,
+  model,
+  overlay,
+  theme,
+  chartTimeframe,
+  viewportWidth,
+  viewportHeight,
+  dataTestId,
+}: {
+  chart: ChartApi;
+  series: ChartSeriesApi;
+  model: ChartModel;
+  overlay: GexProjectionConeOverlay | null | undefined;
+  theme: ResearchChartTheme;
+  chartTimeframe?: string | null;
+  viewportWidth: number;
+  viewportHeight: number;
+  dataTestId?: string;
+}): GexProjectionConeSvgOverlay | null => {
+  if (
+    !overlay ||
+    !Array.isArray(overlay.points) ||
+    !overlay.points.length ||
+    !isFiniteNumber(overlay.spot) ||
+    overlay.spot <= 0 ||
+    !model.chartBars.length ||
+    viewportWidth <= 64 ||
+    viewportHeight <= 64
+  ) {
+    return null;
+  }
+
+  const fallbackPriceToCoordinate = buildGexProjectionFallbackPriceCoordinate({
+    model,
+    overlay,
+    viewportHeight,
+  });
+  const resolvePriceCoordinate = (price: number) => {
+    const coordinate = series.priceToCoordinate(price);
+    if (isFiniteNumber(coordinate)) {
+      return coordinate;
+    }
+    return fallbackPriceToCoordinate?.(price) ?? null;
+  };
+  const lastBar = model.chartBars[model.chartBars.length - 1];
+  const lastX =
+    chart.timeScale().timeToCoordinate(lastBar.time) ??
+    Math.max(20, viewportWidth * 0.55);
+  const anchorY =
+    resolvePriceCoordinate(overlay.spot) ??
+    resolvePriceCoordinate(lastBar.c) ??
+    viewportHeight / 2;
+  if (!isFiniteNumber(lastX) || !isFiniteNumber(anchorY)) {
+    return null;
+  }
+
+  const visiblePoints = overlay.points
+    .filter((point) =>
+      [
+        point.lower2,
+        point.lower1,
+        point.center,
+        point.upper1,
+        point.upper2,
+      ].every(isFiniteNumber),
+    )
+    .slice(0, GEX_PROJECTION_VISIBLE_POINT_LIMIT);
+  if (!visiblePoints.length) {
+    return null;
+  }
+
+  const barSpacing = resolveBarSpacing(chart, model, 0.25);
+  const observedStepSeconds = resolveObservedBarStepSeconds(model.chartBars);
+  const resolveY = (price: number) => {
+    const coordinate = resolvePriceCoordinate(price);
+    return isFiniteNumber(coordinate)
+      ? clampProjectionCoordinate(
+          coordinate,
+          -viewportHeight * 0.5,
+          viewportHeight * 1.5,
+        )
+      : null;
+  };
+  const anchor = { x: lastX, y: anchorY };
+  const projected = visiblePoints
+    .map((point) => {
+      const logicalOffset = resolveGexProjectionLogicalOffset({
+        expirationDate: point.expirationDate,
+        lastBarTime: lastBar.time,
+        timeframe: chartTimeframe,
+        observedStepSeconds,
+      });
+      const x =
+        logicalOffset != null ? lastX + logicalOffset * barSpacing : null;
+      const lower2 = resolveY(point.lower2);
+      const lower1 = resolveY(point.lower1);
+      const center = resolveY(point.center);
+      const upper1 = resolveY(point.upper1);
+      const upper2 = resolveY(point.upper2);
+      if (
+        lower2 == null ||
+        lower1 == null ||
+        center == null ||
+        upper1 == null ||
+        upper2 == null ||
+        !isFiniteNumber(x)
+      ) {
+        return null;
+      }
+      return {
+        x,
+        expirationDate: point.expirationDate,
+        qualityStatus: point.qualityStatus || overlay.qualityStatus,
+        lower2,
+        lower1,
+        center,
+        upper1,
+        upper2,
+      };
+    })
+    .filter((point): point is NonNullable<typeof point> => point != null);
+  if (!projected.length) {
+    return null;
+  }
+
+  const outerUpper = [anchor, ...projected.map((point) => ({ x: point.x, y: point.upper2 }))];
+  const outerLower = projected
+    .slice()
+    .reverse()
+    .map((point) => ({ x: point.x, y: point.lower2 }));
+  const innerUpper = [anchor, ...projected.map((point) => ({ x: point.x, y: point.upper1 }))];
+  const innerLower = projected
+    .slice()
+    .reverse()
+    .map((point) => ({ x: point.x, y: point.lower1 }));
+  const center = [anchor, ...projected.map((point) => ({ x: point.x, y: point.center }))];
+  const minimumTickSpacing = viewportWidth < 520 ? 86 : 64;
+  const visibleAxisPoints = projected.filter(
+    (point) => point.x >= 0 && point.x <= viewportWidth,
+  );
+  const axisTicks = visibleAxisPoints
+    .reduce<typeof visibleAxisPoints>((ticks, point, index) => {
+      const previousTick = ticks[ticks.length - 1];
+      const isLastPoint = index === visibleAxisPoints.length - 1;
+      if (!previousTick || point.x - previousTick.x >= minimumTickSpacing) {
+        ticks.push(point);
+        return ticks;
+      }
+      if (isLastPoint) {
+        ticks[ticks.length - 1] = point;
+      }
+      return ticks;
+    }, [])
+    .map((point) => ({
+      x: point.x,
+      label: formatGexProjectionAxisLabel(point.expirationDate),
+      expirationDate: point.expirationDate,
+      qualityStatus: point.qualityStatus,
+    }));
+  const forecastTone = theme.cyan || theme.blue || theme.accent || theme.text;
+  const qualityTone =
+    overlay.qualityStatus === "ok" ? forecastTone : theme.amber || forecastTone;
+  const svgXBounds = resolveGexProjectionSvgXBounds(viewportWidth);
+
+  return {
+    id: `${dataTestId || "chart"}-gex-projection-cone`,
+    title: `${overlay.ticker} GEX projection cone`,
+    outerPath: `${buildSvgPath(outerUpper, svgXBounds)} L ${buildSvgPath(outerLower, svgXBounds).replace(/^M /, "")} Z`,
+    innerPath: `${buildSvgPath(innerUpper, svgXBounds)} L ${buildSvgPath(innerLower, svgXBounds).replace(/^M /, "")} Z`,
+    centerPath: buildSvgPath(center, svgXBounds),
+    axisTicks,
+    futureLaneX: lastX,
+    futureLaneWidth: Math.max(0, viewportWidth - lastX),
+    futureLaneFill: withAlpha(forecastTone, overlay.qualityStatus === "ok" ? "07" : "06"),
+    futureLaneStroke: withAlpha(qualityTone, overlay.qualityStatus === "ok" ? "70" : "88"),
+    outerFill: withAlpha(forecastTone, overlay.qualityStatus === "ok" ? "18" : "15"),
+    outerStroke: withAlpha(forecastTone, overlay.qualityStatus === "ok" ? "70" : "5c"),
+    innerFill: withAlpha(forecastTone, overlay.qualityStatus === "ok" ? "34" : "2b"),
+    innerStroke: withAlpha(forecastTone, overlay.qualityStatus === "ok" ? "80" : "68"),
+    centerHaloStroke: withAlpha(theme.bg2, "d8"),
+    centerStroke: withAlpha(forecastTone, "f2"),
+    axisStroke: withAlpha(theme.textMuted, "58"),
+    axisLabelFill: withAlpha(theme.textMuted, "e0"),
+    qualityStatus: overlay.qualityStatus,
+  };
+};
+
 const resolveChartTheme = (theme: ResearchChartTheme): ResearchChartTheme => ({
   ...theme,
   bg2: resolveCanvasColor(theme.bg2, THEMES.dark.bg2),
@@ -2485,6 +3096,52 @@ export const resolvePreferenceRightOffset = (
     ? Math.max(0, Math.min(MAX_CHART_FUTURE_EXPANSION_BARS, Number(bars)))
     : 0;
   return compact ? Math.min(4, normalized) : normalized;
+};
+
+const resolveGexProjectionVisibleLogicalRange = ({
+  visibleRange,
+  projectionOffset,
+  barCount,
+  enabled,
+}: {
+  visibleRange: VisibleLogicalRange | null | undefined;
+  projectionOffset: number;
+  barCount: number;
+  enabled: boolean;
+}): VisibleLogicalRange | null => {
+  const normalized = resolveViewportVisibleLogicalRange(visibleRange);
+  if (
+    !normalized ||
+    !enabled ||
+    !isFiniteNumber(projectionOffset) ||
+    !isFiniteNumber(barCount) ||
+    barCount <= 0 ||
+    !isVisibleRangeNearRealtime({ visibleRange: normalized, barCount })
+  ) {
+    return normalized;
+  }
+
+  const normalizedProjectionOffset = Math.max(
+    0,
+    Math.min(
+      GEX_PROJECTION_AUTO_FIT_MAX_LOGICAL_BARS,
+      Math.round(projectionOffset),
+    ),
+  );
+  if (normalizedProjectionOffset <= 0) {
+    return normalized;
+  }
+
+  const lastLogicalIndex = Math.max(0, Math.floor(barCount) - 1);
+  return {
+    from: normalized.from,
+    to: Math.max(
+      normalized.to,
+      lastLogicalIndex +
+        normalizedProjectionOffset +
+        GEX_PROJECTION_AUTO_FIT_PADDING_BARS,
+    ),
+  };
 };
 
 const chartTimeToDate = (value: unknown): Date | null => {
@@ -2907,7 +3564,7 @@ const formatLegendSourceLabel = (
   if (source === "ibkr-websocket-derived") {
     return "STREAM";
   }
-  if (source === "polygon-delayed-websocket") {
+  if (source === "massive-delayed-websocket") {
     return "DELAYED STREAM";
   }
   if (source === "ibkr+massive-gap-fill") {
@@ -3669,7 +4326,11 @@ const estimateMonoTextWidth = (
   horizontalPadding: number,
 ): number => text.length * fontSize * 0.68 + horizontalPadding * 2 + 2;
 
-const resolveBarSpacing = (chart: ChartApi, model: ChartModel): number => {
+const resolveBarSpacing = (
+  chart: ChartApi,
+  model: ChartModel,
+  minimumSpacing = 2,
+): number => {
   const sample = model.chartBars.slice(-40);
   const diffs: number[] = [];
 
@@ -3686,7 +4347,7 @@ const resolveBarSpacing = (chart: ChartApi, model: ChartModel): number => {
   }
 
   return Math.max(
-    2,
+    minimumSpacing,
     diffs.reduce((sum, value) => sum + value, 0) / diffs.length,
   );
 };
@@ -5509,6 +6170,7 @@ const ResearchChartSurfaceComponent = ({
   defaultScaleMode = "linear",
   drawings = EMPTY_DRAWINGS,
   referenceLines = EMPTY_REFERENCE_LINES,
+  gexProjectionCone = null,
   chartEvents = EMPTY_CHART_EVENTS,
   chartFlowDiagnostics = null,
   positionOverlays = EMPTY_CHART_POSITION_OVERLAYS,
@@ -5550,6 +6212,21 @@ const ResearchChartSurfaceComponent = ({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<ChartApi | null>(null);
+  const gexProjectionAutoscaleContextRef =
+    useRef<GexProjectionAutoscaleContext>({
+      overlay: null,
+      chartBars: [],
+      timeframe: null,
+      observedStepSeconds: null,
+    });
+  const gexProjectionAutoscaleInfoProvider = useMemo(
+    () =>
+      buildGexProjectionAutoscaleInfoProvider({
+        chartRef,
+        contextRef: gexProjectionAutoscaleContextRef,
+      }),
+    [],
+  );
   const surfaceDiagnosticsRef = useRef({
     chartInstanceCreates: 0,
     chartInstanceDisposes: 0,
@@ -5656,6 +6333,16 @@ const ResearchChartSurfaceComponent = ({
   }
   const initialChartPreferences = initialChartPreferencesRef.current;
   const deferredModel = useDeferredValue(model);
+  const chartObservedBarStepSeconds = useMemo(
+    () => resolveObservedBarStepSeconds(model.chartBars),
+    [model.chartBars],
+  );
+  gexProjectionAutoscaleContextRef.current = {
+    overlay: gexProjectionCone,
+    chartBars: model.chartBars,
+    timeframe: legend?.timeframe || footprintContext?.timeframe || null,
+    observedStepSeconds: chartObservedBarStepSeconds,
+  };
   const extendedSessionWindows = useMemo(
     () =>
       userPreferences.chart.extendedHours
@@ -5880,14 +6567,58 @@ const ResearchChartSurfaceComponent = ({
   const [positionRiskLineOverlays, setPositionRiskLineOverlays] = useState<
     PositionRiskLineOverlay[]
   >([]);
+  const [gexProjectionConeSvgOverlay, setGexProjectionConeSvgOverlay] =
+    useState<GexProjectionConeSvgOverlay | null>(null);
   const [zoneOverlays, setZoneOverlays] = useState<OverlayShape[]>([]);
   const [verticalDrawingOverlays, setVerticalDrawingOverlays] = useState<
     OverlayShape[]
   >([]);
-  const chartTimeScaleRightOffset = resolvePreferenceRightOffset(
+  const baseChartTimeScaleRightOffset = resolvePreferenceRightOffset(
     userPreferences.chart.futureExpansionBars,
     compact,
   );
+  const chartTimeScaleRightOffset = baseChartTimeScaleRightOffset;
+  const chartGexProjectionAutoFitLogicalOffset = useMemo(() => {
+    const lastBar = model.chartBars[model.chartBars.length - 1];
+    if (!lastBar || !gexProjectionCone?.points?.length) {
+      return 0;
+    }
+    return resolveGexProjectionAutoFitLogicalOffset({
+      points: gexProjectionCone.points,
+      lastBarTime: lastBar.time,
+      timeframe: legend?.timeframe || footprintContext?.timeframe || null,
+      observedStepSeconds: chartObservedBarStepSeconds,
+    });
+  }, [
+    chartObservedBarStepSeconds,
+    footprintContext?.timeframe,
+    gexProjectionCone?.points,
+    legend?.timeframe,
+    model.chartBars,
+  ]);
+  const gexProjectionAutoscaleSignature = useMemo(() => {
+    if (!gexProjectionCone?.points?.length) {
+      return "";
+    }
+    return [
+      gexProjectionCone.ticker,
+      gexProjectionCone.spot,
+      gexProjectionCone.qualityStatus,
+      ...gexProjectionCone.points
+        .slice(0, GEX_PROJECTION_VISIBLE_POINT_LIMIT)
+        .map((point) =>
+          [
+            point.expirationDate,
+            point.lower2,
+            point.lower1,
+            point.center,
+            point.upper1,
+            point.upper2,
+            point.qualityStatus,
+          ].join(":"),
+        ),
+    ].join("|");
+  }, [gexProjectionCone]);
   const visibleChartEvents = resolveVisibleChartEvents({
     chartEvents,
     showExecutionMarkers: userPreferences.trading.showExecutionMarkers,
@@ -7153,7 +7884,22 @@ const ResearchChartSurfaceComponent = ({
         options.respectRecentUserRange === false || !recentLocalUserViewport
           ? null
           : normalizeVisibleLogicalRange(lastUserVisibleRangeRef.current);
-      const visibleRange = recentUserRange || requestedRange;
+      const projectionRangeEnabled = Boolean(
+        !recentUserRange &&
+          gexProjectionCone?.points?.length &&
+          !viewportUserTouchedRef.current &&
+          !viewportUserTouched &&
+          !(
+            effectiveViewportSnapshot?.identityKey === rangeIdentityKeyRef.current &&
+            effectiveViewportSnapshot.userTouched
+          ),
+      );
+      const visibleRange = resolveGexProjectionVisibleLogicalRange({
+        visibleRange: recentUserRange || requestedRange,
+        projectionOffset: chartGexProjectionAutoFitLogicalOffset,
+        barCount: model.chartBars.length,
+        enabled: projectionRangeEnabled,
+      });
       if (!chartRef.current || !visibleRange) {
         return null;
       }
@@ -7167,8 +7913,97 @@ const ResearchChartSurfaceComponent = ({
         source: "programmatic",
       });
     },
-    [markProgrammaticViewportIntent, publishVisibleLogicalRange],
+    [
+      chartGexProjectionAutoFitLogicalOffset,
+      effectiveViewportSnapshot?.identityKey,
+      effectiveViewportSnapshot?.userTouched,
+      gexProjectionCone?.points?.length,
+      markProgrammaticViewportIntent,
+      model.chartBars.length,
+      publishVisibleLogicalRange,
+      viewportUserTouched,
+    ],
   );
+
+  useLayoutEffect(() => {
+    if (
+      !chartRef.current ||
+      !hasChartBars ||
+      !gexProjectionCone?.points?.length ||
+      chartGexProjectionAutoFitLogicalOffset <= 0
+    ) {
+      return;
+    }
+
+    const userViewportTouched = Boolean(
+      viewportUserTouchedRef.current ||
+        viewportUserTouched ||
+        externalViewportUserTouched ||
+        (effectiveViewportSnapshot?.identityKey === rangeIdentityKeyRef.current &&
+          effectiveViewportSnapshot.userTouched),
+    );
+    if (userViewportTouched) {
+      return;
+    }
+
+    const currentRange = resolveViewportVisibleLogicalRange(
+      chartRef.current.timeScale().getVisibleLogicalRange?.() ||
+        visibleLogicalRangeRef.current,
+    );
+    const projectedRange = resolveGexProjectionVisibleLogicalRange({
+      visibleRange: currentRange,
+      projectionOffset: chartGexProjectionAutoFitLogicalOffset,
+      barCount: model.chartBars.length,
+      enabled: true,
+    });
+    if (
+      !projectedRange ||
+      visibleLogicalRangesClose(projectedRange, currentRange)
+    ) {
+      return;
+    }
+
+    setProgrammaticVisibleLogicalRange(projectedRange, {
+      markProgrammaticIntent: true,
+      respectRecentUserRange: false,
+    });
+  }, [
+    chartGexProjectionAutoFitLogicalOffset,
+    effectiveViewportSnapshot?.identityKey,
+    effectiveViewportSnapshot?.userTouched,
+    externalViewportUserTouched,
+    gexProjectionCone?.points?.length,
+    hasChartBars,
+    model.chartBars.length,
+    setProgrammaticVisibleLogicalRange,
+    viewportUserTouched,
+  ]);
+
+  useLayoutEffect(() => {
+    if (
+      !chartRef.current ||
+      !hasChartBars ||
+      !autoScale ||
+      !showRightPriceScale ||
+      !gexProjectionAutoscaleSignature ||
+      chartGexProjectionAutoFitLogicalOffset <= 0
+    ) {
+      return;
+    }
+
+    try {
+      chartRef.current.priceScale("right", 0).setAutoScale?.(true);
+    } catch (error) {
+      console.warn("[pyrus] GEX projection autoscale update skipped", error);
+    }
+    setOverlayRevision((value) => value + 1);
+  }, [
+    autoScale,
+    chartGexProjectionAutoFitLogicalOffset,
+    gexProjectionAutoscaleSignature,
+    hasChartBars,
+    showRightPriceScale,
+  ]);
 
   useEffect(() => {
     if (
@@ -7481,6 +8316,8 @@ const ResearchChartSurfaceComponent = ({
           baseline: baselineSeriesRef.current,
         } satisfies Record<BaseSeriesType, ChartSeriesApi | null>
       )[baseSeriesType] || candleSeriesRef.current;
+    // The GEX cone depends on priceToCoordinate; rebuild overlays after active series swaps.
+    setOverlayRevision((value) => value + 1);
   }, [baseSeriesType]);
 
   useEffect(() => {
@@ -7554,6 +8391,7 @@ const ResearchChartSurfaceComponent = ({
         wickUpColor: chartTheme.green,
         wickDownColor: chartTheme.red,
         borderVisible: false,
+        autoscaleInfoProvider: gexProjectionAutoscaleInfoProvider,
         priceLineVisible: true,
         lastValueVisible: true,
       });
@@ -7562,6 +8400,7 @@ const ResearchChartSurfaceComponent = ({
         downColor: chartTheme.red,
         thinBars: false,
         openVisible: true,
+        autoscaleInfoProvider: gexProjectionAutoscaleInfoProvider,
         priceLineVisible: true,
         lastValueVisible: true,
         visible: false,
@@ -7569,6 +8408,7 @@ const ResearchChartSurfaceComponent = ({
       const lineSeries = chart.addSeries(LineSeries, {
         color: chartTheme.accent || chartTheme.text,
         lineWidth: 1,
+        autoscaleInfoProvider: gexProjectionAutoscaleInfoProvider,
         priceLineVisible: true,
         lastValueVisible: true,
         crosshairMarkerVisible: false,
@@ -7579,6 +8419,7 @@ const ResearchChartSurfaceComponent = ({
         topColor: withCanvasAlpha(chartTheme.accent || chartTheme.text, "1e"),
         bottomColor: withCanvasAlpha(chartTheme.accent || chartTheme.text, "02"),
         lineWidth: 1,
+        autoscaleInfoProvider: gexProjectionAutoscaleInfoProvider,
         priceLineVisible: true,
         lastValueVisible: true,
         crosshairMarkerVisible: false,
@@ -7593,6 +8434,7 @@ const ResearchChartSurfaceComponent = ({
         bottomFillColor1: withCanvasAlpha(chartTheme.red, "04"),
         bottomFillColor2: withCanvasAlpha(chartTheme.red, "1e"),
         lineWidth: 1,
+        autoscaleInfoProvider: gexProjectionAutoscaleInfoProvider,
         priceLineVisible: true,
         lastValueVisible: true,
         crosshairMarkerVisible: false,
@@ -7628,6 +8470,8 @@ const ResearchChartSurfaceComponent = ({
       baselineSeriesRef.current = baselineSeries;
       volumeSeriesRef.current = volumeSeries;
       activePriceSeriesRef.current = candleSeries;
+      // The GEX cone depends on priceToCoordinate; rebuild overlays after series attach.
+      setOverlayRevision((value) => value + 1);
 
       handleVisibleRangeChange = (range: VisibleLogicalRange | null) => {
         const normalizedRange = normalizeVisibleLogicalRange(range);
@@ -7941,6 +8785,7 @@ const ResearchChartSurfaceComponent = ({
     chartInteractionConfig.mode,
     enableInteractions,
     drawMode,
+    gexProjectionAutoscaleInfoProvider,
     hasChartBars,
     hideTimeScale,
     hideCrosshair,
@@ -8303,12 +9148,14 @@ const ResearchChartSurfaceComponent = ({
 
     candleSeries.applyOptions({
       visible: baseSeriesType === "candles",
+      autoscaleInfoProvider: gexProjectionAutoscaleInfoProvider,
       priceFormat,
       priceLineVisible: effectivePriceLineVisibility,
       lastValueVisible: effectivePriceLineVisibility,
     });
     barSeries.applyOptions({
       visible: baseSeriesType === "bars",
+      autoscaleInfoProvider: gexProjectionAutoscaleInfoProvider,
       priceFormat,
       priceLineVisible: effectivePriceLineVisibility,
       lastValueVisible: effectivePriceLineVisibility,
@@ -8316,6 +9163,7 @@ const ResearchChartSurfaceComponent = ({
     lineSeries.applyOptions({
       visible: baseSeriesType === "line",
       color: accent,
+      autoscaleInfoProvider: gexProjectionAutoscaleInfoProvider,
       priceFormat,
       priceLineVisible: effectivePriceLineVisibility,
       lastValueVisible: effectivePriceLineVisibility,
@@ -8325,6 +9173,7 @@ const ResearchChartSurfaceComponent = ({
       lineColor: accent,
       topColor: withCanvasAlpha(accent, "1e"),
       bottomColor: withCanvasAlpha(accent, "02"),
+      autoscaleInfoProvider: gexProjectionAutoscaleInfoProvider,
       priceFormat,
       priceLineVisible: effectivePriceLineVisibility,
       lastValueVisible: effectivePriceLineVisibility,
@@ -8338,21 +9187,26 @@ const ResearchChartSurfaceComponent = ({
       bottomLineColor: chartTheme.red,
       bottomFillColor1: withCanvasAlpha(chartTheme.red, "08"),
       bottomFillColor2: withCanvasAlpha(chartTheme.red, "2f"),
+      autoscaleInfoProvider: gexProjectionAutoscaleInfoProvider,
       priceFormat,
       priceLineVisible: effectivePriceLineVisibility,
       lastValueVisible: effectivePriceLineVisibility,
     });
     volumeSeries.applyOptions({ visible: showVolume });
-    chartRef.current.priceScale("right", 0).applyOptions({
-      autoScale,
-      invertScale,
-      visible: showRightPriceScale,
-      borderVisible: false,
-      ticksVisible: false,
-      minimumWidth: compact ? 34 : 50,
-      textColor: chartTheme.textMuted,
-      mode: resolvePriceScaleModeOption(scaleMode),
-    });
+    try {
+      chartRef.current.priceScale("right", 0).applyOptions({
+        autoScale,
+        invertScale,
+        visible: showRightPriceScale,
+        borderVisible: false,
+        ticksVisible: false,
+        minimumWidth: compact ? 34 : 50,
+        textColor: chartTheme.textMuted,
+        mode: resolvePriceScaleModeOption(scaleMode),
+      });
+    } catch (error) {
+      console.warn("[pyrus] chart price scale update skipped", error);
+    }
     chartRef.current.applyOptions({
       layout: {
         background: { type: ColorType.Solid, color: chartTheme.bg2 },
@@ -8429,9 +9283,12 @@ const ResearchChartSurfaceComponent = ({
           baseline: baselineSeries,
         } satisfies Record<BaseSeriesType, ChartSeriesApi>
       )[baseSeriesType] || candleSeries;
+    // The GEX cone depends on priceToCoordinate; rebuild overlays after active series swaps.
+    setOverlayRevision((value) => value + 1);
   }, [
     baseSeriesType,
     autoScale,
+    gexProjectionAutoscaleInfoProvider,
     invertScale,
     scaleMode,
     showVolume,
@@ -8806,6 +9663,7 @@ const ResearchChartSurfaceComponent = ({
       !containerRef.current
     ) {
       syncOverlayState(setWindowOverlays, []);
+      setGexProjectionConeSvgOverlay(null);
       setPositionBubbleOverlays([]);
       setPositionOffPaneOverlays([]);
       syncPositionRiskLineOverlaysState([]);
@@ -8846,6 +9704,19 @@ const ResearchChartSurfaceComponent = ({
         viewportHeight,
         extendedSessionWindows,
       ),
+    );
+    setGexProjectionConeSvgOverlay(
+      buildGexProjectionConeSvgOverlay({
+        chart: chartRef.current,
+        series: activePriceSeriesRef.current,
+        model: deferredModel,
+        overlay: gexProjectionCone,
+        theme,
+        chartTimeframe: legend?.timeframe || footprintContext?.timeframe || null,
+        viewportWidth,
+        viewportHeight,
+        dataTestId,
+      }),
     );
     setPositionBubbleOverlays(
       positionOverlaysEnabled
@@ -8995,10 +9866,14 @@ const ResearchChartSurfaceComponent = ({
     );
   }, [
     baseSeriesType,
+    dataTestId,
     drawings,
     flowChartVolumeBuckets,
     flowChartEventPlacements,
     flowChartModel,
+    footprintContext?.timeframe,
+    gexProjectionCone,
+    legend?.timeframe,
     deferredModel.chartBars,
     deferredModel.activeTradeSelectionId,
     deferredModel.indicatorEvents,
@@ -10122,6 +10997,7 @@ const ResearchChartSurfaceComponent = ({
     chartRef.current,
     plotSize.height,
   );
+  const chartTimeScaleHeight = Math.max(0, plotSize.height - drawablePlotHeight);
   const footprintCellOverlays = useMemo(
     () => {
       const chart = chartRef.current;
@@ -10862,6 +11738,7 @@ const ResearchChartSurfaceComponent = ({
             </div>
           ) : null}
           {windowOverlays.length ||
+          gexProjectionConeSvgOverlay ||
           positionBubbleOverlays.length ||
           positionOffPaneOverlays.length ||
           positionRiskLineOverlays.length ||
@@ -10887,12 +11764,144 @@ const ResearchChartSurfaceComponent = ({
                 top: chartInsetTop,
                 left: chartInsetLeft,
                 width: drawablePlotWidth || "100%",
-                height: drawablePlotHeight || "100%",
+                height: plotSize.height || drawablePlotHeight || "100%",
                 pointerEvents: "none",
                 overflow: "hidden",
                 zIndex: 5,
               }}
             >
+              {gexProjectionConeSvgOverlay ? (
+                <svg
+                  aria-label={gexProjectionConeSvgOverlay.title}
+                  data-testid={
+                    dataTestId ? `${dataTestId}-gex-projection-cone` : undefined
+                  }
+                  data-chart-gex-projection-cone=""
+                  data-chart-gex-projection-quality={
+                    gexProjectionConeSvgOverlay.qualityStatus
+                  }
+                  role="img"
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: "100%",
+                    height: "100%",
+                    overflow: "visible",
+                  }}
+                >
+                  <rect
+                    x={gexProjectionConeSvgOverlay.futureLaneX}
+                    y={0}
+                    width={gexProjectionConeSvgOverlay.futureLaneWidth}
+                    height={Math.max(0, drawablePlotHeight || 0)}
+                    fill={gexProjectionConeSvgOverlay.futureLaneFill}
+                    stroke="none"
+                  />
+                  <line
+                    x1={gexProjectionConeSvgOverlay.futureLaneX}
+                    x2={gexProjectionConeSvgOverlay.futureLaneX}
+                    y1={0}
+                    y2={Math.max(0, drawablePlotHeight || 0)}
+                    stroke={gexProjectionConeSvgOverlay.futureLaneStroke}
+                    strokeWidth={1}
+                    strokeDasharray="3 4"
+                  />
+                  <path
+                    d={gexProjectionConeSvgOverlay.outerPath}
+                    fill={gexProjectionConeSvgOverlay.outerFill}
+                    stroke={gexProjectionConeSvgOverlay.outerStroke}
+                    strokeWidth={0.75}
+                  />
+                  <path
+                    d={gexProjectionConeSvgOverlay.innerPath}
+                    fill={gexProjectionConeSvgOverlay.innerFill}
+                    stroke={gexProjectionConeSvgOverlay.innerStroke}
+                    strokeWidth={0.9}
+                  />
+                  <path
+                    d={gexProjectionConeSvgOverlay.centerPath}
+                    fill="none"
+                    stroke={gexProjectionConeSvgOverlay.centerHaloStroke}
+                    strokeWidth={4.2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d={gexProjectionConeSvgOverlay.centerPath}
+                    fill="none"
+                    stroke={gexProjectionConeSvgOverlay.centerStroke}
+                    strokeWidth={1.8}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeDasharray={
+                      gexProjectionConeSvgOverlay.qualityStatus === "ok"
+                        ? undefined
+                        : "4 4"
+                    }
+                  />
+                  {gexProjectionConeSvgOverlay.axisTicks.length &&
+                  chartTimeScaleHeight >= 12 ? (
+                    <g data-chart-gex-projection-future-axis="">
+                      {gexProjectionConeSvgOverlay.axisTicks.map((tick) => {
+                        const labelFontSize = compact
+                          ? TYPE_PX.label
+                          : TYPE_PX.bodyStrong;
+                        const labelWidth = Math.max(
+                          32,
+                          tick.label.length * labelFontSize * 0.68,
+                        );
+                        const axisTop = Math.max(0, drawablePlotHeight || 0);
+                        const textX = clampProjectionCoordinate(
+                          tick.x,
+                          labelWidth / 2 + 2,
+                          Math.max(
+                            labelWidth / 2 + 2,
+                            (drawablePlotWidth || 0) - labelWidth / 2 - 2,
+                          ),
+                        );
+                        const textY =
+                          axisTop +
+                          clampProjectionCoordinate(
+                            (chartTimeScaleHeight + labelFontSize) / 2 - 2,
+                            labelFontSize,
+                            Math.max(labelFontSize, chartTimeScaleHeight - 2),
+                          );
+                        return (
+                          <g
+                            key={tick.expirationDate}
+                            data-chart-gex-projection-expiration={
+                              tick.expirationDate
+                            }
+                          >
+                            <line
+                              x1={tick.x}
+                              x2={tick.x}
+                              y1={axisTop + 1}
+                              y2={
+                                axisTop +
+                                Math.min(5, Math.max(0, chartTimeScaleHeight - 2))
+                              }
+                              stroke={gexProjectionConeSvgOverlay.axisStroke}
+                              strokeWidth={0.75}
+                            />
+                            <text
+                              x={textX}
+                              y={textY}
+                              textAnchor="middle"
+                              fill={gexProjectionConeSvgOverlay.axisLabelFill}
+                              fontFamily={theme.mono}
+                              fontSize={labelFontSize}
+                              letterSpacing={0}
+                            >
+                              {tick.label}
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </g>
+                  ) : null}
+                </svg>
+              ) : null}
               {footprintCellOverlays.map((overlay) => {
                 const color =
                   overlay.tone === "buy"

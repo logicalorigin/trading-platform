@@ -8,6 +8,7 @@ export const AUDIT_STAGE_CHIPS = [
   { id: "eligible", label: "Eligible", matches: (type) => /eligible/.test(type) },
   { id: "submitted", label: "Submitted", matches: (type) => /submit|order|entry/.test(type) && !/skipped|blocked/.test(type) },
   { id: "filled", label: "Filled", matches: (type) => /fill|filled/.test(type) },
+  { id: "managed", label: "Managed", matches: (type) => /mark|managed|position/.test(type) && !/skipped|blocked|failed|unavailable/.test(type) },
   { id: "closed", label: "Closed", matches: (type) => /closed|exit/.test(type) },
   { id: "blocked", label: "Blocked", matches: (type) => /blocked|skipped|gateway/.test(type) },
   { id: "config", label: "Config", matches: (type) => /strategy_settings|profile|enabled|paused|deployment/.test(type) },
@@ -43,6 +44,18 @@ const firstText = (...values) => {
     if (text) return text;
   }
   return "";
+};
+
+const normalizeAuditKeyText = (value) => String(value || "").trim().toUpperCase();
+
+const addAuditKey = (keys, type, value) => {
+  const text = normalizeAuditKeyText(value);
+  if (text) keys.add(`${type}:${text}`);
+};
+
+const timestampMs = (value) => {
+  const parsed = Date.parse(value || "");
+  return Number.isFinite(parsed) ? parsed : 0;
 };
 
 const normalizeRight = (value) => {
@@ -130,6 +143,7 @@ export const normalizeAuditEvent = (event) => {
   const readiness = asRecord(payload.readiness);
   const position = asRecord(payload.position);
   const candidate = asRecord(payload.candidate);
+  const candidateSignal = asRecord(candidate.signal);
   const orderPlan = asRecord(payload.orderPlan || candidate.orderPlan);
   const liquidity = asRecord(payload.liquidity || orderPlan.liquidity);
   const markResolution = asRecord(payload.markResolution);
@@ -137,6 +151,18 @@ export const normalizeAuditEvent = (event) => {
   const contract = normalizeAuditContract(payload);
   const quote = normalizeAuditQuote(payload);
   const stage = resolveAuditStage(event?.eventType);
+  const candidateId = firstText(
+    payload.candidateId,
+    candidate.id,
+    position.candidateId,
+    orderPlan.candidateId,
+  );
+  const signalKey = firstText(
+    payload.signalKey,
+    candidate.signalKey,
+    candidateSignal.signalKey,
+    position.signalKey,
+  );
   const reason = firstText(
     payload.reason,
     orderPlan.reason,
@@ -174,6 +200,7 @@ export const normalizeAuditEvent = (event) => {
   return {
     id: event?.id,
     account: firstText(event?.providerAccountId, payload.providerAccountId),
+    candidateId,
     contract,
     count,
     detailText,
@@ -186,6 +213,7 @@ export const normalizeAuditEvent = (event) => {
     quote,
     reason,
     searchText,
+    signalKey,
     source,
     stage,
     stopPrice,
@@ -198,6 +226,157 @@ export const normalizeAuditEvent = (event) => {
       runMode: firstText(metadata.runMode),
     },
   };
+};
+
+const auditContractKeys = (contract) => {
+  const record = asRecord(contract);
+  const keys = new Set();
+  addAuditKey(keys, "contract", record.providerContractId || record.conid);
+  addAuditKey(keys, "contract", record.ticker || record.optionTicker || record.localSymbol);
+  return keys;
+};
+
+const signalAuditMatchKeys = (signal, candidate) => {
+  const signalRecord = asRecord(signal);
+  const candidateRecord = asRecord(candidate);
+  const candidateSignal = asRecord(candidateRecord.signal);
+  const contractPreview = asRecord(signalRecord.contractPreview);
+  const previewContract = asRecord(contractPreview.selectedContract);
+  const selectedContract = asRecord(candidateRecord.selectedContract);
+  const keys = new Set();
+  addAuditKey(keys, "signal", signalRecord.signalKey);
+  addAuditKey(keys, "signal", candidateRecord.signalKey);
+  addAuditKey(keys, "signal", candidateSignal.signalKey);
+  addAuditKey(keys, "candidate", candidateRecord.id);
+  addAuditKey(keys, "candidate", signalRecord.signalKey);
+  auditContractKeys(previewContract).forEach((key) => keys.add(key));
+  auditContractKeys(selectedContract).forEach((key) => keys.add(key));
+
+  const symbol = firstText(
+    signalRecord.symbol,
+    candidateRecord.symbol,
+    candidateSignal.symbol,
+  ).toUpperCase();
+  const timeframe = firstText(
+    signalRecord.timeframe,
+    candidateRecord.timeframe,
+    candidateSignal.timeframe,
+  ).toUpperCase();
+  const direction = firstText(
+    signalRecord.direction,
+    candidateRecord.direction,
+    candidateSignal.direction,
+  ).toUpperCase();
+  if (symbol) {
+    addAuditKey(keys, "symbol", symbol);
+    addAuditKey(keys, "signal-row", [symbol, timeframe, direction].filter(Boolean).join("|"));
+  }
+  return keys;
+};
+
+const auditEventMatchKeys = (row) => {
+  const payload = asRecord(row?.payload);
+  const candidate = asRecord(payload.candidate);
+  const position = asRecord(payload.position);
+  const strongKeys = new Set();
+  const fallbackKeys = new Set();
+  addAuditKey(strongKeys, "signal", row?.signalKey);
+  addAuditKey(strongKeys, "candidate", row?.candidateId);
+  addAuditKey(strongKeys, "candidate", candidate.id);
+  addAuditKey(strongKeys, "candidate", position.candidateId);
+  auditContractKeys(row?.contract).forEach((key) => strongKeys.add(key));
+  addAuditKey(fallbackKeys, "symbol", row?.symbol);
+  return strongKeys.size ? strongKeys : fallbackKeys;
+};
+
+export const signalAuditRowKey = (signal, candidate) => {
+  const signalRecord = asRecord(signal);
+  const candidateRecord = asRecord(candidate);
+  const candidateSignal = asRecord(candidateRecord.signal);
+  const symbol = firstText(
+    signalRecord.symbol,
+    candidateRecord.symbol,
+    candidateSignal.symbol,
+  ).toUpperCase();
+  const timeframe = firstText(
+    signalRecord.timeframe,
+    candidateRecord.timeframe,
+    candidateSignal.timeframe,
+  ).toUpperCase();
+  const direction = firstText(
+    signalRecord.direction,
+    candidateRecord.direction,
+    candidateSignal.direction,
+  ).toUpperCase();
+  return firstText(
+    signalRecord.signalKey,
+    candidateRecord.signalKey,
+    candidateSignal.signalKey,
+    candidateRecord.id,
+    [symbol, timeframe, direction].filter(Boolean).join("|"),
+  );
+};
+
+const summarizeSignalAuditProgression = (rows) => {
+  const events = [...rows]
+    .filter((row) => row?.stage?.id !== "config")
+    .sort((left, right) => timestampMs(left.occurredAt) - timestampMs(right.occurredAt));
+  const stageIds = [];
+  events.forEach((row) => {
+    const id = row?.stage?.id;
+    if (!id || id === "event" || stageIds.includes(id)) return;
+    stageIds.push(id);
+  });
+  const latest = events[events.length - 1] || null;
+  const latestStage = latest?.stage || null;
+  const detail = firstText(latest?.detailText, latest?.reason, latest?.summary);
+  return {
+    detail,
+    eventCount: events.length,
+    events,
+    latest,
+    latestOccurredAt: latest?.occurredAt || "",
+    latestStage,
+    searchText: events.map((row) => row.searchText).join(" "),
+    stageIds,
+  };
+};
+
+export const buildSignalAuditProgressions = ({ events = [], rows = [] } = {}) => {
+  const rowEntries = rows.map((row, index) => {
+    const key = firstText(row?.auditKey, signalAuditRowKey(row?.signal, row?.candidate), `row:${index}`);
+    return {
+      key,
+      matchKeys: signalAuditMatchKeys(row?.signal, row?.candidate),
+    };
+  });
+  const keyToRowKey = new Map();
+  rowEntries.forEach((entry) => {
+    entry.matchKeys.forEach((matchKey) => {
+      if (!keyToRowKey.has(matchKey)) keyToRowKey.set(matchKey, entry.key);
+    });
+  });
+  const buckets = new Map(rowEntries.map((entry) => [entry.key, []]));
+
+  (Array.isArray(events) ? events : [])
+    .map(normalizeAuditEvent)
+    .forEach((row) => {
+      const matchKeys = auditEventMatchKeys(row);
+      let rowKey = null;
+      for (const matchKey of matchKeys) {
+        rowKey = keyToRowKey.get(matchKey);
+        if (rowKey) break;
+      }
+      if (!rowKey || !buckets.has(rowKey)) return;
+      buckets.get(rowKey).push(row);
+    });
+
+  const progressions = new Map();
+  buckets.forEach((bucket, key) => {
+    if (!bucket.length) return;
+    progressions.set(key, summarizeSignalAuditProgression(bucket));
+  });
+  return progressions;
 };
 
 export const auditRowMatchesQuery = (row, query) => {

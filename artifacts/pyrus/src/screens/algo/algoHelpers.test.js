@@ -755,6 +755,38 @@ test("algo signal enrichment derives counters scoring gates and sync", () => {
   );
 });
 
+test("algo signal fallback score uses all five matrix MTF directions", () => {
+  const score = resolveSignalScoreBreakdown({
+    signal: {
+      symbol: "SPY",
+      direction: "buy",
+      barsSinceSignal: 1,
+      freshWindowBars: 4,
+      fresh: true,
+      filterState: {
+        mtfDirections: [1, 1, 1, -1, -1],
+        mtfTimeframes: ["1m", "2m", "5m", "15m", "1h"],
+        adx: 31,
+      },
+    },
+    candidate: {
+      direction: "buy",
+      status: "candidate",
+      orderPlan: {
+        premiumAtRisk: 240,
+        liquidity: { spreadPctOfMid: 12 },
+      },
+      quote: { marketDataMode: "live" },
+    },
+  });
+
+  assert.equal(score.score, 85);
+  assert.equal(score.components.mtfAlignment, 15);
+  assert.deepEqual(score.raw.mtfDirections, [1, 1, 1, -1, -1]);
+  assert.equal(score.raw.mtfMatches, 3);
+  assert.equal(score.reasons[0], "mtf_partial_alignment");
+});
+
 test("signal quality score overrides raw signal score", () => {
   const score = resolveSignalScoreBreakdown({
     signal: {
@@ -903,6 +935,40 @@ test("algo contract helpers degrade cleanly for missing fields and selection fal
     {
       main: "selected slot 4 · preferred 3",
       detail: "fallback used · 2 attempts · No Contract For Strike Slot",
+    },
+  );
+});
+
+test("algo quote helpers surface pending and unavailable demand states", () => {
+  assert.deepEqual(
+    formatQuoteSummary(
+      { freshness: "pending", reason: "awaiting_quote" },
+      {},
+    ),
+    {
+      main: "Pending",
+      detail: "Awaiting Quote",
+    },
+  );
+  assert.deepEqual(
+    formatQuoteSummary(
+      { freshness: "unavailable", reason: "ibkr_bridge_not_configured" },
+      {},
+    ),
+    {
+      main: "Unavailable",
+      detail: "Ibkr Bridge Not Configured",
+    },
+  );
+  assert.deepEqual(
+    formatQuoteGreeksSummary({
+      freshness: "pending",
+      reason: "awaiting_greeks",
+    }),
+    {
+      main: "Awaiting Greeks",
+      detail: "Awaiting Greeks",
+      full: "—",
     },
   );
 });
@@ -1281,7 +1347,7 @@ test("algo account position merge keeps shadow ledger membership authoritative",
 test("algo profile UI exposes and saves expanded strategy and exit fields", () => {
   const settingPaths = new Set(allSettingFields.map((field) => field.path));
   const sectionItemPaths = (item) =>
-    item.kind === "contractSelect" || item.kind === "exitTrack"
+    Array.isArray(item.fieldPaths)
       ? item.fieldPaths
       : [item.path];
   const renderedSettingPaths = SETTINGS_SECTIONS.flatMap((section) =>
@@ -1340,6 +1406,11 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
   ].forEach((path) => {
     assert.ok(settingPaths.has(path), `${path} should be editable in settings`);
   });
+  assert.match(
+    settingsFieldsSource,
+    /path:\s*"entryGate\.mtfAlignment\.requiredCount"[\s\S]*?max:\s*5/,
+  );
+  assert.match(settingsRegionSource, /field\.unit === "matches"\) return "of 5"/);
   assert.deepEqual(
     COMPACT_HALT_SETTING_PAIRS.map((pair) => [
       pair.controlId,
@@ -1371,6 +1442,27 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
   assert.deepEqual(
     SETTINGS_SECTIONS.map((section) => section.id),
     ["signal", "risk", "gates", "contract", "fills", "exits", "qualityExits"],
+  );
+  assert.ok(
+    SETTINGS_SECTIONS.every((section) => Array.isArray(section.summary)),
+    "each settings section should expose summary metadata",
+  );
+  assert.deepEqual(
+    SETTINGS_SECTIONS.find((section) => section.id === "contract")?.summary.map(
+      (item) => item.kind,
+    ),
+    ["dteWindow", "strikeSlots", "strikeSlots"],
+  );
+  assert.deepEqual(
+    SETTINGS_SECTIONS.find((section) => section.id === "gates")?.summary.map(
+      (item) => item.path || item.kind,
+    ),
+    [
+      "entryGate.mtfAlignment.enabled",
+      "entryGate.mtfAlignment.requiredCount",
+      "entryGate.bearishRegime.enabled",
+      "entryGate.bearishRegime.minAdx",
+    ],
   );
   assert.equal(
     renderedSettingPaths.length,
@@ -1429,11 +1521,31 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
   assert.match(settingsFieldsSource, /highQualityOvernightMinGainPct/);
   assert.match(settingsFieldsSource, /overnightExitEnabled/);
   assert.match(settingsFieldsSource, /SETTINGS_SECTIONS/);
+  assert.match(settingsFieldsSource, /summary:\s*\[/);
+  assert.match(settingsFieldsSource, /kind: "field"/);
+  assert.match(settingsFieldsSource, /kind: "dteWindow"/);
+  assert.match(settingsFieldsSource, /kind: "strikeSlots"/);
   assert.match(settingsFieldsSource, /kind: "contractSelect"/);
   assert.match(settingsFieldsSource, /kind: "exitTrack"/);
+  assert.match(settingsFieldsSource, /kind: "exitProgressiveTrail"/);
+  assert.match(settingsFieldsSource, /kind: "exitWireTrail"/);
+  assert.match(settingsFieldsSource, /kind: "exitTimingRules"/);
   assert.match(settingsRegionSource, /SETTINGS_SECTIONS\.map/);
+  assert.match(settingsRegionSource, /SectionSummaryStrip/);
+  assert.match(settingsRegionSource, /buildSectionSummaryItem/);
+  assert.match(settingsRegionSource, /summaryItemDirty/);
+  assert.match(settingsRegionSource, /data-testid=\{`algo-settings-section-summary-\$\{section\.id\}`\}/);
+  assert.match(settingsRegionSource, /data-algo-pocket-grid="two"/);
   assert.match(settingsRegionSource, /ContractSelectionCell/);
   assert.match(settingsRegionSource, /ExitLadderTrack/);
+  assert.match(settingsRegionSource, /ProgressiveTrailCell/);
+  assert.match(settingsRegionSource, /WireTrailCell/);
+  assert.match(settingsRegionSource, /ExitTimingRulesCell/);
+  assert.match(settingsRegionSource, /testId="algo-exit-progressive-trail"/);
+  assert.match(settingsRegionSource, /data-testid="algo-progressive-trail-preview"/);
+  assert.match(settingsRegionSource, /testId="algo-exit-wire-trail"/);
+  assert.match(settingsRegionSource, /data-testid="algo-wire-trail-rung-preview"/);
+  assert.match(settingsRegionSource, /testId="algo-exit-timing-rules"/);
   assert.match(settingsRegionSource, /className="algo-settings-grid"/);
   assert.match(settingsRegionSource, /openSections/);
   assert.match(settingsRegionSource, /setOpenSections/);
@@ -1445,6 +1557,7 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
   );
   assert.match(sectionHeaderSource, /aria-expanded=\{open\}/);
   assert.match(sectionHeaderSource, /aria-controls=\{controlsId\}/);
+  assert.match(sectionHeaderSource, /ChevronRight/);
   const coreSections = new Set(["risk", "contract", "exits"]);
   for (const section of SETTINGS_SECTIONS) {
     assert.equal(
@@ -1562,6 +1675,19 @@ test("algo operations views surface contract quote and greeks fields", () => {
   assert.match(livePageSource, /signalOptionsLedgerPositionsQuery/);
   assert.match(livePageSource, /ledgerPositions: focusedLedgerPositions/);
   assert.match(livePageSource, /signals: visibleSignalRows/);
+  assert.match(livePageSource, /const hasClosedRecord = recordTradeCount > 0/);
+  assert.match(livePageSource, /value: hasClosedRecord \? `\$\{wins\}W \/ \$\{losses\}L` : "No exits"/);
+  assert.match(livePageSource, /: "no closed trades"/);
+  assert.match(livePageSource, /hasClosedRecord && Number\.isFinite\(profitFactor\)/);
+  assert.match(livePageSource, /Pyrus Signal-Options/);
+  assert.match(livePageSource, /showClearState=\{false\}/);
+  assert.match(livePageSource, /showEmptyState=\{false\}/);
+  assert.match(livePageSource, /grouped/);
+  assert.doesNotMatch(livePageSource, /Pyrus Signals Shadow/);
+  assert.doesNotMatch(livePageSource, /label:\s*"Scan"/);
+  assert.doesNotMatch(livePageSource, /label:\s*"Event"/);
+  assert.doesNotMatch(livePageSource, /label:\s*"Signals"/);
+  assert.doesNotMatch(livePageSource, /label:\s*"Flow"/);
   assert.match(livePageSource, /source === "preview" \? "preview" : "primary"/);
   assert.match(livePageSource, /signal-options-preview:\$\{focusedDeploymentId \|\| "active"\}:\$\{group\.underlying\}/);
   assert.match(livePageSource, /owner=\{group\.owner\}/);
@@ -1595,20 +1721,24 @@ test("algo setup shows a loading state before true empty deployment data", () =>
   assert.match(screenSource, /setupDataSettled=\{algoSetupDataSettled\}/);
   assert.match(livePageSource, /setupDataSettled = true/);
   assert.match(livePageSource, /data-testid="algo-setup-loading"/);
-  assert.match(livePageSource, /Loading promoted drafts and shadow deployments/);
+  assert.match(livePageSource, /Loading Signal Operations/);
+  assert.match(livePageSource, /Loading algo deployments and signal-options state/);
+  assert.match(livePageSource, /Signal-Options Deployment Unavailable/);
+  assert.match(livePageSource, /CREATE SIGNAL-OPTIONS DEPLOYMENT/);
+  assert.doesNotMatch(livePageSource, /Setup Shadow Deployment/);
+  assert.doesNotMatch(livePageSource, /Shadow deployments paper-trade/);
+  assert.doesNotMatch(livePageSource, /Loading promoted drafts and shadow deployments/);
+  assert.doesNotMatch(livePageSource, /No promoted draft strategies/);
+  assert.doesNotMatch(livePageSource, /CREATE SHADOW DEPLOYMENT/);
   assert.ok(
-    livePageSource.indexOf("!setupDataSettled") <
-      livePageSource.indexOf("No promoted draft strategies"),
+    livePageSource.indexOf("!setupDataSettled ?") <
+      livePageSource.indexOf("Restart the API"),
   );
 });
 
 test("algo screen auto-runs an initial scan and labels sync separately", () => {
   const screenSource = readFileSync(
     new URL("../AlgoScreen.jsx", import.meta.url),
-    "utf8",
-  );
-  const statusBarSource = readFileSync(
-    new URL("./AlgoStatusBar.jsx", import.meta.url),
     "utf8",
   );
   const livePageSource = readFileSync(
@@ -1637,12 +1767,17 @@ test("algo screen auto-runs an initial scan and labels sync separately", () => {
   );
   assert.match(screenSource, /runShadowScanMutation\.mutate\(\{ deploymentId \}\)/);
   assert.match(screenSource, /state\?\.status === "already_running"/);
-  assert.match(screenSource, /Shadow scan already running/);
-  assert.match(statusBarSource, /pendingLabel="Syncing\.\.\."/);
-  assert.doesNotMatch(statusBarSource, /pendingLabel="Refreshing\.\.\."/);
+  assert.match(screenSource, /Signal-options scan already running/);
+  assert.doesNotMatch(screenSource, /Shadow scan already running/);
+  assert.doesNotMatch(screenSource, /Shadow scan complete/);
+  assert.doesNotMatch(screenSource, /Shadow scan failed/);
+  assert.doesNotMatch(screenSource, /LazyAlgoStatusBar/);
+  assert.doesNotMatch(screenSource, /data-testid="algo-status-bar"/);
+  assert.match(livePageSource, /data-testid="algo-operations-deployment-select"/);
+  assert.doesNotMatch(livePageSource, /watchlistId/);
   assert.match(livePageSource, /scanMutationPending/);
-  assert.match(livePageSource, /\? "scanning"/);
-  assert.match(livePageSource, /\? "syncing data"/);
+  assert.match(livePageSource, /\? "scan running"/);
+  assert.match(livePageSource, /\? "syncing state"/);
   assert.doesNotMatch(livePageSource, /\? "refreshing"/);
 });
 
@@ -1655,6 +1790,10 @@ test("algo display surfaces normalize retired Ray branding", () => {
     new URL("./AlgoStatusBar.jsx", import.meta.url),
     "utf8",
   );
+  const livePageSource = readFileSync(
+    new URL("./AlgoLivePage.jsx", import.meta.url),
+    "utf8",
+  );
   const auditSource = readFileSync(
     new URL("./AlgoAuditPanel.jsx", import.meta.url),
     "utf8",
@@ -1664,7 +1803,13 @@ test("algo display surfaces normalize retired Ray branding", () => {
     "utf8",
   );
 
-  [haltSource, statusBarSource, auditSource, platformSidebarSource].forEach(
+  [
+    haltSource,
+    statusBarSource,
+    auditSource,
+    platformSidebarSource,
+    livePageSource,
+  ].forEach(
     (source) => {
       assert.match(source, /normalizeLegacyAlgoBrandText/);
       assert.doesNotMatch(source, /RAY\s*·/);

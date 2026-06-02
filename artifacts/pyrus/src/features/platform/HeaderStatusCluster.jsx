@@ -2220,7 +2220,6 @@ export const HeaderStatusCluster = ({
   const autoLoginActionDisabled = Boolean(
     gatewayConnectedForBridge ||
       bridgeLauncherBusy ||
-      desktopReconnectUpgradeRequired ||
       (!autoLoginPrimaryCancelsLaunch && !autoLoginCredentialsReady) ||
       (!bridgeLaunchCancelable && bridgeLaunchInFlight),
   );
@@ -2233,7 +2232,7 @@ export const HeaderStatusCluster = ({
       : bridgeLaunchInFlight
       ? "Launching"
       : desktopReconnectUpgradeRequired
-        ? "Update desktop helper"
+        ? "Launch and update helper"
       : desktopReconnectReady
         ? "Reconnect on desktop"
       : gatewayReconnectNeeded

@@ -96,7 +96,7 @@ const STREAM_PRIORITY_ISSUES = new Set([
   "stream-gaps",
 ]);
 
-const POLYGON_STATUS_META = {
+const MASSIVE_STATUS_META = {
   ok: { label: "OK", tone: CSS_COLOR.green },
   degraded: { label: "Degraded", tone: CSS_COLOR.amber },
   unconfigured: { label: "Not configured", tone: CSS_COLOR.textDim },
@@ -106,9 +106,7 @@ const POLYGON_STATUS_META = {
 const resolveStockProviderLabel = (provider) => {
   const identity = String(provider?.provider || provider?.identity || "").toLowerCase();
   const baseUrl = String(provider?.baseUrl || "").toLowerCase();
-  return identity === "massive" || baseUrl.includes("massive.com")
-    ? "Massive"
-    : "Polygon";
+  return identity === "massive" || baseUrl.includes("massive.com") ? "Massive" : "Massive";
 };
 
 const getProviderStatusIconKey = (status) => {
@@ -176,7 +174,9 @@ const buildMassiveProviderDetail = (massive, fallback) => {
   if (massive.websocket?.channelSummary && massive.websocket.channelSummary !== MISSING_VALUE) {
     return `WS ${massive.websocket.channelSummary}`;
   }
-  return massive.baseUrlHost || fallback;
+  return fallback && fallback !== MISSING_VALUE
+    ? fallback
+    : massive.baseUrlHost || fallback;
 };
 
 const buildMassiveProviderSummary = (massive) => {
@@ -407,36 +407,24 @@ const buildProviderRows = ({
   runtimeDiagnostics,
   lineUsageSnapshot,
 }) => {
-  const polygon = runtimeDiagnostics?.providers?.polygon;
   const massive = normalizeMassiveRuntimeDiagnostics(
     runtimeDiagnostics,
     lineUsageSnapshot,
   );
   const hasMassiveProvider =
     massive.configured || massive.providerIdentity === "massive";
-  const hasPolygonProvider = Boolean(
-    polygon?.configured ||
-      polygon?.status ||
-      polygon?.baseUrl ||
-      polygon?.provider ||
-      polygon?.identity,
-  );
-  const stockProviderLabel = hasMassiveProvider
-    ? "Massive"
-    : hasPolygonProvider
-      ? resolveStockProviderLabel(polygon)
-      : null;
-  const polygonMeta =
-    POLYGON_STATUS_META[polygon?.status] || POLYGON_STATUS_META.unknown;
-  const polygonFreshness =
-    formatHeaderTimeAgo(polygon?.lastSuccessAt) ||
-    formatHeaderTimeAgo(polygon?.lastFailureAt);
-  const polygonDetail =
-    polygon?.lastError && polygon?.status === "degraded"
-      ? polygon.lastError
-      : polygonFreshness
-        ? `last ${polygonFreshness}`
-        : polygon?.baseUrl || MISSING_VALUE;
+  const stockProviderLabel = hasMassiveProvider ? "Massive" : null;
+  const massiveMeta =
+    MASSIVE_STATUS_META[massive?.status] || MASSIVE_STATUS_META.unknown;
+  const massiveFreshness =
+    formatHeaderTimeAgo(massive?.lastSuccessAt) ||
+    formatHeaderTimeAgo(massive?.lastFailureAt);
+  const massiveDetail =
+    massive?.lastError && massive?.status === "degraded"
+      ? massive.lastError
+      : massiveFreshness
+        ? `last ${massiveFreshness}`
+        : massive?.baseUrl || MISSING_VALUE;
 
   const rows = [
     {
@@ -454,17 +442,17 @@ const buildProviderRows = ({
   rows.push(
     {
       label: stockProviderLabel,
-      value: stockProviderLabel === "Massive" ? massive.label : polygonMeta.label,
+      value: stockProviderLabel === "Massive" ? massive.label : massiveMeta.label,
       detail:
         stockProviderLabel === "Massive"
-          ? buildMassiveProviderDetail(massive, polygonDetail)
-          : polygonDetail,
-      tone: stockProviderLabel === "Massive" ? massive.tone : polygonMeta.tone,
+          ? buildMassiveProviderDetail(massive, massiveDetail)
+          : massiveDetail,
+      tone: stockProviderLabel === "Massive" ? massive.tone : massiveMeta.tone,
       iconKey: stockProviderLabel === "Massive" ? "network" : null,
       statusIconKey:
         stockProviderLabel === "Massive"
           ? getProviderStatusIconKey(massive.status)
-          : getProviderStatusIconKey(polygon?.status),
+          : getProviderStatusIconKey(massive?.status),
       host:
         stockProviderLabel === "Massive"
           ? massive.baseUrlHost
@@ -476,7 +464,7 @@ const buildProviderRows = ({
       wrap:
         stockProviderLabel === "Massive"
           ? massive.status === "degraded"
-          : polygon?.status === "degraded",
+          : massive?.status === "degraded",
     },
   );
 

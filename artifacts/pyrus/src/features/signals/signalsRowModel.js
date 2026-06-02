@@ -1,4 +1,14 @@
-export const SIGNALS_TABLE_TIMEFRAMES = Object.freeze(["2m", "5m", "15m"]);
+import {
+  getCurrentSignalDirection,
+  hasCurrentSignalDirection,
+  isCurrentFreshSignalState,
+  isProblemSignalState,
+  isSignalStateCurrent,
+  isStaleSignalState,
+  normalizeSignalStatus,
+} from "./signalStateFreshness.js";
+
+export const SIGNALS_TABLE_TIMEFRAMES = Object.freeze(["1m", "2m", "5m", "15m", "1h"]);
 
 export const SIGNALS_ROW_STATUS = Object.freeze({
   activeFresh: "active-fresh",
@@ -9,7 +19,6 @@ export const SIGNALS_ROW_STATUS = Object.freeze({
   neutral: "neutral",
 });
 
-const PROBLEM_STATUSES = new Set(["error", "unavailable"]);
 const STALE_STATUSES = new Set(["stale"]);
 const STATUS_SORT_WEIGHT = Object.freeze({
   [SIGNALS_ROW_STATUS.activeFresh]: 0,
@@ -65,8 +74,15 @@ const buildWatchlistMembership = (watchlists = []) => {
   (Array.isArray(watchlists) ? watchlists : []).forEach((watchlist) => {
     const listName = watchlist?.name || watchlist?.label || watchlist?.id || "Watchlist";
     const listId = watchlist?.id || listName;
-    (Array.isArray(watchlist?.items) ? watchlist.items : []).forEach((item) => {
-      const symbol = normalizeSignalsTicker(item?.sym || item?.symbol || item?.ticker);
+    const sourceItems = Array.isArray(watchlist?.items) && watchlist.items.length
+      ? watchlist.items
+      : Array.isArray(watchlist?.symbols)
+        ? watchlist.symbols
+        : [];
+    sourceItems.forEach((item) => {
+      const symbol = normalizeSignalsTicker(
+        typeof item === "string" ? item : item?.sym || item?.symbol || item?.ticker,
+      );
       if (!symbol) return;
       const entry = bySymbol.get(symbol) || {
         watchlistIds: [],
@@ -147,37 +163,157 @@ const buildTrackedSymbols = ({
   return symbols;
 };
 
-const resolveDirection = ({ primaryState, latestEvent, matrixStatesByTimeframe }) => {
-  const primaryDirection = String(primaryState?.currentSignalDirection || "").toLowerCase();
-  if (primaryDirection === "buy" || primaryDirection === "sell") {
+const resolveDirection = ({ primaryState, matrixStatesByTimeframe }) => {
+  const primaryDirection = getCurrentSignalDirection(primaryState);
+  if (primaryDirection) {
     return primaryDirection;
-  }
-  const eventDirection = String(latestEvent?.direction || "").toLowerCase();
-  if (eventDirection === "buy" || eventDirection === "sell") {
-    return eventDirection;
   }
   const matrixDirection = SIGNALS_TABLE_TIMEFRAMES
     .map((timeframe) =>
-      String(matrixStatesByTimeframe?.[timeframe]?.currentSignalDirection || "").toLowerCase(),
+      getCurrentSignalDirection(matrixStatesByTimeframe?.[timeframe]),
     )
-    .find((direction) => direction === "buy" || direction === "sell");
+    .find(Boolean);
   return matrixDirection || null;
 };
 
-const resolveRowStatus = ({ primaryState, skipped, direction }) => {
-  const status = String(primaryState?.status || "").toLowerCase();
-  const hasProblem = Boolean(primaryState?.lastError || PROBLEM_STATUSES.has(status));
+const normalizeIndicatorDirection = (value) => {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized === "bullish") return "buy";
+  if (normalized === "bearish") return "sell";
+  return null;
+};
 
-  if (hasProblem) {
+const resolveDashboardSnapshot = ({ matrixStatesByTimeframe, profileTimeframe }) => {
+  const preferredTimeframes = [
+    profileTimeframe,
+    "15m",
+    "5m",
+    ...SIGNALS_TABLE_TIMEFRAMES,
+  ].filter(Boolean);
+  const seen = new Set();
+  for (const timeframe of preferredTimeframes) {
+    if (seen.has(timeframe)) continue;
+    seen.add(timeframe);
+    const state = matrixStatesByTimeframe?.[timeframe];
+    if (!isSignalStateCurrent(state)) continue;
+    const snapshot = state?.indicatorSnapshot;
+    if (snapshot) return { timeframe, snapshot };
+  }
+  return { timeframe: null, snapshot: null };
+};
+
+const resolveStackSummary = (matrixStatesByTimeframe = {}) => {
+  const states = SIGNALS_TABLE_TIMEFRAMES.map((timeframe) => ({
+    timeframe,
+    state: matrixStatesByTimeframe[timeframe] || null,
+  }));
+  const buyCount = states.filter(
+    ({ state }) => getCurrentSignalDirection(state) === "buy",
+  ).length;
+  const sellCount = states.filter(
+    ({ state }) => getCurrentSignalDirection(state) === "sell",
+  ).length;
+  const freshCount = states.filter(({ state }) =>
+    isCurrentFreshSignalState(state),
+  ).length;
+  const activeCount = buyCount + sellCount;
+  const direction =
+    buyCount > sellCount
+      ? "buy"
+      : sellCount > buyCount
+        ? "sell"
+        : activeCount
+          ? "mixed"
+          : null;
+  return {
+    direction,
+    buyCount,
+    sellCount,
+    activeCount,
+    freshCount,
+    totalCount: SIGNALS_TABLE_TIMEFRAMES.length,
+    label: activeCount
+      ? `${Math.max(buyCount, sellCount)}/${SIGNALS_TABLE_TIMEFRAMES.length}`
+      : "0/5",
+  };
+};
+
+const resolveDashboardSummary = (snapshotEntry) => {
+  const snapshot = snapshotEntry?.snapshot || null;
+  if (!snapshot) {
+    return {
+      timeframe: null,
+      trendDirection: null,
+      signalDirection: null,
+      trendAgeBars: null,
+      trendAgeBucket: null,
+      strength: null,
+      adx: null,
+      volatilityScore: null,
+      mtf: [],
+      filterState: null,
+    };
+  }
+  return {
+    timeframe: snapshotEntry.timeframe || null,
+    trendDirection: snapshot.trendDirection || null,
+    signalDirection: normalizeIndicatorDirection(snapshot.trendDirection),
+    trendAgeBars: Number.isFinite(Number(snapshot.trendAgeBars))
+      ? Number(snapshot.trendAgeBars)
+      : null,
+    trendAgeBucket: snapshot.trendAgeBucket || null,
+    strength: snapshot.strength || null,
+    adx: Number.isFinite(Number(snapshot.adx)) ? Number(snapshot.adx) : null,
+    volatilityScore: Number.isFinite(Number(snapshot.volatilityScore))
+      ? Number(snapshot.volatilityScore)
+      : null,
+    mtf: Array.isArray(snapshot.mtf) ? snapshot.mtf : [],
+    filterState: snapshot.filterState || null,
+  };
+};
+
+const resolveMatrixStatus = (matrixStatesByTimeframe = {}) => {
+  const states = Object.values(matrixStatesByTimeframe || {});
+  const hasProblem = states.some(isProblemSignalState);
+  const hasStale = states.some(isStaleSignalState);
+  const hasFresh = states.some(isCurrentFreshSignalState);
+  const hasComputed = states.some((state) =>
+    Boolean(
+      state?.latestBarAt ||
+        state?.lastEvaluatedAt ||
+        state?.currentSignalAt ||
+        state?.lastError,
+    ),
+  );
+  const hasCurrentComputed = states.some((state) =>
+    Boolean(
+      isSignalStateCurrent(state) && (state?.latestBarAt || state?.lastEvaluatedAt),
+    ),
+  );
+
+  return { hasProblem, hasStale, hasFresh, hasComputed, hasCurrentComputed };
+};
+
+const resolveRowStatus = ({
+  primaryState,
+  matrixStatus,
+  direction,
+}) => {
+  const status = normalizeSignalStatus(primaryState);
+  const hasProblem = isProblemSignalState(primaryState);
+
+  if (hasProblem || (!primaryState && matrixStatus?.hasProblem)) {
     return SIGNALS_ROW_STATUS.problem;
   }
-  if (skipped) {
-    return SIGNALS_ROW_STATUS.skipped;
-  }
   if (!primaryState) {
+    if (direction) {
+      return matrixStatus?.hasFresh
+        ? SIGNALS_ROW_STATUS.activeFresh
+        : SIGNALS_ROW_STATUS.activeStale;
+    }
     return SIGNALS_ROW_STATUS.pending;
   }
-  if (direction && (status === "ok" || STALE_STATUSES.has(status))) {
+  if (direction && isSignalStateCurrent(primaryState)) {
     return primaryState.fresh
       ? SIGNALS_ROW_STATUS.activeFresh
       : SIGNALS_ROW_STATUS.activeStale;
@@ -193,26 +329,39 @@ const statusLabelFor = (status) => {
     case SIGNALS_ROW_STATUS.activeFresh:
       return "Fresh signal";
     case SIGNALS_ROW_STATUS.activeStale:
-      return "Stale signal";
+      return "Aged signal";
     case SIGNALS_ROW_STATUS.problem:
       return "Needs attention";
     case SIGNALS_ROW_STATUS.skipped:
-      return "Skipped";
+      return "Scan pending";
     case SIGNALS_ROW_STATUS.pending:
-      return "Awaiting scan";
+      return "Computing";
     default:
       return "No signal";
   }
 };
 
-const coverageReasonFor = ({ rowStatus, primaryState, skipped }) => {
+const coverageReasonFor = ({
+  rowStatus,
+  primaryState,
+  skipped,
+  matrixStatus,
+}) => {
   if (primaryState?.lastError) return primaryState.lastError;
   if (rowStatus === SIGNALS_ROW_STATUS.problem) {
-    return primaryState?.status === "stale" ? "State is stale" : "State unavailable";
+    return primaryState?.status === "stale" ? "Waiting for current monitor state" : "Signal computation unavailable";
   }
-  if (skipped) return "Outside current monitor scan cap";
-  if (!primaryState) return "Tracked but no state has been stored yet";
-  return "Covered by signal monitor";
+  if (matrixStatus?.hasStale && !matrixStatus?.hasCurrentComputed) {
+    return "Waiting for current market bars";
+  }
+  if (!primaryState && matrixStatus?.hasComputed) {
+    return "Computed from market bars; primary monitor scan pending";
+  }
+  if (primaryState && skipped) {
+    return "Stored primary state present; interval matrix hydrates from market bars";
+  }
+  if (!primaryState) return "Waiting for market-data signal computation";
+  return "Primary state stored; intervals hydrate from market bars";
 };
 
 export const buildSignalsRows = ({
@@ -243,23 +392,34 @@ export const buildSignalsRows = ({
     trackedSymbols.map((symbol, index) => {
       const primaryState = primaryStatesBySymbol.get(symbol) || null;
       const matrixStatesByTimeframe = matrixStatesBySymbol.get(symbol) || {};
+      const matrixStatus = resolveMatrixStatus(matrixStatesByTimeframe);
+      const profileTimeframe = stateResponse?.profile?.timeframe || primaryState?.timeframe || null;
+      const stackSummary = resolveStackSummary(matrixStatesByTimeframe);
+      const dashboardSummary = resolveDashboardSummary(
+        resolveDashboardSnapshot({
+          matrixStatesByTimeframe,
+          profileTimeframe,
+        }),
+      );
       const latestEvent = latestEventsBySymbol.get(symbol) || null;
       const direction = resolveDirection({
         primaryState,
-        latestEvent,
         matrixStatesByTimeframe,
       });
+      const currentPrimaryState = isSignalStateCurrent(primaryState)
+        ? primaryState
+        : null;
+      const currentMatrixSignalState = Object.values(matrixStatesByTimeframe)
+        .filter(hasCurrentSignalDirection)
+        .reduce((latest, state) => preferLatestState(latest, state), null);
       const skipped = skippedSymbols.has(symbol);
-      const rowStatus = resolveRowStatus({ primaryState, skipped, direction });
+      const rowStatus = resolveRowStatus({ primaryState, matrixStatus, direction });
       const activeTimeframes = SIGNALS_TABLE_TIMEFRAMES.filter((timeframe) => {
         const matrixState = matrixStatesByTimeframe[timeframe];
-        const matrixDirection = String(
-          matrixState?.currentSignalDirection || "",
-        ).toLowerCase();
-        return matrixDirection === "buy" || matrixDirection === "sell";
+        return hasCurrentSignalDirection(matrixState);
       });
       const freshTimeframes = activeTimeframes.filter(
-        (timeframe) => matrixStatesByTimeframe[timeframe]?.fresh,
+        (timeframe) => isCurrentFreshSignalState(matrixStatesByTimeframe[timeframe]),
       );
       const activityMs = Math.max(
         stateActivityMs(primaryState),
@@ -275,9 +435,11 @@ export const buildSignalsRows = ({
         id: `signal-${symbol}`,
         symbol,
         universeRank: index + 1,
-        profileTimeframe: stateResponse?.profile?.timeframe || primaryState?.timeframe || null,
+        profileTimeframe,
         primaryState,
         matrixStatesByTimeframe,
+        stackSummary,
+        dashboardSummary,
         latestEvent,
         watchlistIds: membership.watchlistIds,
         watchlistLabels: membership.watchlistLabels,
@@ -285,27 +447,57 @@ export const buildSignalsRows = ({
         status: rowStatus,
         statusLabel: statusLabelFor(rowStatus),
         statusWeight: STATUS_SORT_WEIGHT[rowStatus] ?? 99,
-        coverageReason: coverageReasonFor({ rowStatus, primaryState, skipped }),
+        coverageReason: coverageReasonFor({
+          rowStatus,
+          primaryState,
+          skipped,
+          matrixStatus,
+        }),
         skipped,
         pending: rowStatus === SIGNALS_ROW_STATUS.pending,
         problem: rowStatus === SIGNALS_ROW_STATUS.problem,
-        fresh: Boolean(primaryState?.fresh),
+        fresh: Boolean(isCurrentFreshSignalState(primaryState) || matrixStatus.hasFresh),
         active: Boolean(primaryState?.active),
         activeTimeframes,
         freshTimeframes,
         activeTimeframeCount: activeTimeframes.length,
         freshTimeframeCount: freshTimeframes.length,
-        barsSinceSignal: Number.isFinite(Number(primaryState?.barsSinceSignal))
-          ? Number(primaryState.barsSinceSignal)
-          : null,
-        currentSignalAt: primaryState?.currentSignalAt || latestEvent?.signalAt || null,
+        barsSinceSignal: Number.isFinite(Number(currentPrimaryState?.barsSinceSignal))
+          ? Number(currentPrimaryState.barsSinceSignal)
+          : Number.isFinite(Number(currentMatrixSignalState?.barsSinceSignal))
+            ? Number(currentMatrixSignalState.barsSinceSignal)
+            : null,
+        currentSignalAt:
+          currentPrimaryState?.currentSignalAt ||
+          currentMatrixSignalState?.currentSignalAt ||
+          null,
         currentSignalPrice:
-          typeof primaryState?.currentSignalPrice === "number"
-            ? primaryState.currentSignalPrice
-            : latestEvent?.signalPrice ?? latestEvent?.close ?? null,
-        latestBarAt: primaryState?.latestBarAt || null,
-        lastEvaluatedAt: primaryState?.lastEvaluatedAt || null,
-        lastError: primaryState?.lastError || null,
+          typeof currentPrimaryState?.currentSignalPrice === "number"
+            ? currentPrimaryState.currentSignalPrice
+            : typeof currentMatrixSignalState?.currentSignalPrice === "number"
+              ? currentMatrixSignalState.currentSignalPrice
+              : null,
+        latestBarAt:
+          primaryState?.latestBarAt ||
+          Object.values(matrixStatesByTimeframe)
+            .map((state) => state?.latestBarAt)
+            .filter(Boolean)
+            .sort()
+            .at(-1) ||
+          null,
+        lastEvaluatedAt:
+          primaryState?.lastEvaluatedAt ||
+          Object.values(matrixStatesByTimeframe)
+            .map((state) => state?.lastEvaluatedAt)
+            .filter(Boolean)
+            .sort()
+            .at(-1) ||
+          null,
+        lastError:
+          primaryState?.lastError ||
+          Object.values(matrixStatesByTimeframe).find((state) => state?.lastError)
+            ?.lastError ||
+          null,
         activityMs,
       };
     }),
@@ -387,7 +579,7 @@ export const summarizeSignalsRows = (rows = []) => {
     if (row.direction === "buy") summary.buy += 1;
     if (row.direction === "sell") summary.sell += 1;
     if (row.problem) summary.problem += 1;
-    if (row.skipped) summary.skipped += 1;
+    if (row.status === SIGNALS_ROW_STATUS.skipped) summary.skipped += 1;
     if (row.pending) summary.pending += 1;
   });
   return summary;

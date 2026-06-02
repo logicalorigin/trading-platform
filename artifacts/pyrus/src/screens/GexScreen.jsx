@@ -32,7 +32,6 @@ import {
   buildIntradaySnapshots,
   computeSignals,
   computeSqueeze,
-  contractGex,
   expConcentration,
   gammaPriceProfile,
   gexByExpiry,
@@ -42,8 +41,16 @@ import {
   oiByStrike,
   resolveSqueezeNarrative,
 } from "../features/gex/gexModel.js";
+import {
+  buildGexHeatmapCellTitle,
+  buildGexHeatmapModel,
+  formatHeatmapCellValue,
+  formatHeatmapStrikeLabel,
+  getGexHeatmapCellStats,
+  getGexHeatmapCellValue,
+  hasGexHeatmapCellValue,
+} from "../features/gex/gexHeatmapModel.js";
 import { Card, DataUnavailableState } from "../components/platform/primitives.jsx";
-import { PaginationFooter, paginateRows } from "../components/platform/TablePagination.jsx";
 import { InfoTooltipIcon } from "../components/platform/InfoTooltipIcon.jsx";
 import { getGexGlossaryEntry } from "../features/gex/gexGlossary.js";
 import { HeatmapColorLegend } from "../features/gex/HeatmapColorLegend.jsx";
@@ -68,9 +75,6 @@ import {
 } from "../lib/uiTokens.jsx";
 import { Button } from "../components/ui/Button.jsx";
 
-const GEX_HEATMAP_PAGE_SIZE = 40;
-const GEX_PROFILE_PAGE_SIZE = 40;
-
 const fetchGexData = async ({ ticker, signal }) => {
   return getGexDashboardRequest(encodeURIComponent(ticker), { signal });
 };
@@ -79,7 +83,7 @@ const fmtCurrency = (value) => {
   if (!isFiniteNumber(value)) return "—";
   const abs = Math.abs(value);
   const sign = value < 0 ? "-" : "";
-  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(1)}B`;
   if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
   if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`;
   return `${sign}$${abs.toFixed(2)}`;
@@ -100,6 +104,53 @@ const fmtPercent = (value, digits = 1) =>
 
 const pct = (numerator, denominator) =>
   denominator > 0 ? numerator / denominator : 0;
+
+const parseTimestampMs = (value) => {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+};
+
+const fmtTimestamp = (value) => {
+  const ms = parseTimestampMs(value);
+  if (ms == null) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(new Date(ms));
+};
+
+const resolveSourceUpdatedAt = (source) => {
+  const candidates = [source?.quoteUpdatedAt, source?.chainUpdatedAt]
+    .map((value) => ({ value, ms: parseTimestampMs(value) }))
+    .filter((entry) => entry.ms != null)
+    .sort((left, right) => right.ms - left.ms);
+  return candidates[0]?.value || null;
+};
+
+const buildSourceCoverageWarnings = ({ data, sourceCoverageRatio }) => {
+  const source = data?.source || null;
+  const expirationCoverage = source?.expirationCoverage || null;
+  const warnings = [];
+
+  if (data?.isStale) warnings.push("Stale snapshot");
+  if (source?.status === "partial") warnings.push("Partial source");
+  if (expirationCoverage?.capped) warnings.push("Expiration list capped");
+  if (expirationCoverage && !expirationCoverage.complete) {
+    warnings.push("Expiration coverage incomplete");
+  }
+  if ((expirationCoverage?.failedCount || 0) > 0) {
+    warnings.push(`${expirationCoverage.failedCount} expiration batch failed`);
+  }
+  if (source?.optionCount > 0 && sourceCoverageRatio < 0.5) {
+    warnings.push("Low contract coverage");
+  }
+
+  return Array.from(new Set(warnings));
+};
 
 const rgba = (color, alpha) => cssColorMix(color, alpha * 100);
 
@@ -281,6 +332,58 @@ const TickerMetaSummary = ({ data }) => {
         label="Year Range"
         value={`${fmtPrice(profile.yearLow)} - ${fmtPrice(profile.yearHigh)}`}
       />
+    </div>
+  );
+};
+
+const SourceCoverageBanner = ({ data, warnings, lastUpdatedLabel }) => {
+  if (!warnings.length) return null;
+  const coverage = data?.source?.expirationCoverage || null;
+  const source = data?.source || {};
+  const loaded =
+    coverage && Number.isFinite(Number(coverage.loadedCount))
+      ? `${coverage.loadedCount}/${coverage.returnedCount} expirations loaded`
+      : `${source.usableOptionCount || 0}/${source.optionCount || 0} contracts usable`;
+
+  return (
+    <div
+      data-testid="gex-source-coverage-banner"
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: sp(8),
+        padding: sp("9px 10px"),
+        border: `1px solid ${cssColorMix(CSS_COLOR.amber, 32)}`,
+        background: cssColorMix(CSS_COLOR.amber, 7),
+        color: CSS_COLOR.text,
+        minWidth: 0,
+      }}
+    >
+      <AlertTriangle
+        size={16}
+        color={CSS_COLOR.amber}
+        style={{ flex: "0 0 auto", marginTop: dim(1) }}
+      />
+      <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
+        <div
+          style={{
+            color: CSS_COLOR.text,
+            fontSize: textSize("bodyStrong"),
+            fontWeight: FONT_WEIGHTS.emphasis,
+          }}
+        >
+          Source coverage
+        </div>
+        <div
+          style={{
+            color: CSS_COLOR.textSec,
+            fontSize: textSize("caption"),
+            lineHeight: 1.35,
+          }}
+        >
+          {warnings.join(" · ")} · {loaded} · Updated {lastUpdatedLabel}
+        </div>
+      </div>
     </div>
   );
 };
@@ -664,59 +767,26 @@ const OiChart = ({ rows, spot }) => {
 
 const HeatmapCard = ({ rows, spot }) => {
   const [expanded, setExpanded] = useState(false);
-  const [page, setPage] = useState(0);
-  const model = useMemo(() => {
-    const expirationMap = new Map();
-    const cellMap = new Map();
-    rows.forEach((row) => {
-      const key = row.expirationDate;
-      if (!key) return;
-      if (!expirationMap.has(key)) {
-        expirationMap.set(key, {
-          key,
-          label: key.slice(5),
-        });
-      }
-      const strikeMap = cellMap.get(row.strike) || new Map();
-      strikeMap.set(key, (strikeMap.get(key) || 0) + contractGex(row, spot));
-      cellMap.set(row.strike, strikeMap);
-    });
-    let maxAbs = 0;
-    cellMap.forEach((strikeMap) => {
-      strikeMap.forEach((value) => {
-        maxAbs = Math.max(maxAbs, Math.abs(value));
-      });
-    });
-    return {
-      expirations: Array.from(expirationMap.values()).sort((left, right) =>
-        left.key.localeCompare(right.key),
-      ),
-      strikes: Array.from(cellMap.keys()).sort((left, right) => left - right),
-      cellMap,
-      maxAbs,
-    };
-  }, [rows, spot]);
+  const model = useMemo(() => buildGexHeatmapModel(rows, spot), [rows, spot]);
+  const displayStrikes = useMemo(
+    () => [...model.strikes].sort((left, right) => right - left),
+    [model.strikes],
+  );
   const focusedStrikes = useMemo(() => {
-    const spotIndex = model.strikes.findIndex((strike) => strike >= spot);
-    const centerIndex = spotIndex === -1 ? model.strikes.length - 1 : spotIndex;
+    const spotIndex = displayStrikes.findIndex((strike) => strike <= spot);
+    const centerIndex = spotIndex === -1 ? displayStrikes.length - 1 : spotIndex;
     const start = Math.max(0, centerIndex - 8);
-    return model.strikes.slice(start, start + 17);
-  }, [model.strikes, spot]);
-  const paginatedStrikes = paginateRows(model.strikes, page, GEX_HEATMAP_PAGE_SIZE);
-  const visibleStrikes = expanded ? paginatedStrikes.pageRows : focusedStrikes;
-
-  useEffect(() => {
-    setPage(0);
-  }, [expanded, model.strikes, spot]);
-  useEffect(() => {
-    if (paginatedStrikes.safePage !== page) {
-      setPage(paginatedStrikes.safePage);
-    }
-  }, [page, paginatedStrikes.safePage]);
+    return displayStrikes.slice(start, start + 17);
+  }, [displayStrikes, spot]);
+  const visibleStrikes = expanded ? displayStrikes : focusedStrikes;
+  const visibleStrikeCount = visibleStrikes.length;
 
   const cellColor = (value) => {
     if (!value || !model.maxAbs) return CSS_COLOR.bg0;
-    const alpha = Math.min(0.85, Math.max(0.08, Math.abs(value) / model.maxAbs));
+    const alpha = Math.min(
+      0.85,
+      Math.max(0.08, Math.abs(value) / model.maxAbs),
+    );
     return value > 0
       ? rgba(CSS_COLOR.green, alpha)
       : rgba(CSS_COLOR.red, alpha);
@@ -731,38 +801,63 @@ const HeatmapCard = ({ rows, spot }) => {
         </span>
       }
       right={
-        <button
-          type="button"
-          onClick={() => setExpanded((value) => !value)}
+        <div
           style={{
-            ...fieldStyle,
-            height: dim(26),
-            padding: sp("0 8px"),
-            cursor: "pointer",
-            color: CSS_COLOR.textSec,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(10),
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
           }}
         >
-          {expanded ? "Collapse" : `Expand (${model.strikes.length} strikes)`}
-        </button>
+          <HeatmapColorLegend compact />
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            style={{
+              ...fieldStyle,
+              height: dim(26),
+              padding: sp("0 8px"),
+              cursor: "pointer",
+              color: CSS_COLOR.textSec,
+            }}
+          >
+            {expanded ? "Collapse" : `Expand (${displayStrikes.length} strikes)`}
+          </button>
+        </div>
       }
       minHeight={280}
     >
-      <div style={{ display: "grid", gap: sp(4) }}>
-        <div style={{ overflow: "auto", maxHeight: expanded ? dim(440) : dim(260) }}>
+      <div style={{ display: "grid", gap: sp(6) }}>
+        <div
+          style={{
+            overflow: "auto",
+            maxHeight: expanded ? dim(560) : dim(264),
+            border: `1px solid ${CSS_COLOR.border}`,
+            background: CSS_COLOR.bg0,
+          }}
+        >
           <table
             style={{
               width: "100%",
-              borderCollapse: "collapse",
+              minWidth: dim(Math.max(520, 92 + model.expirations.length * 74)),
+              borderCollapse: "separate",
+              borderSpacing: 0,
               fontFamily: T.sans,
               fontSize: textSize("caption"),
             }}
           >
             <thead>
               <tr>
-                <th style={heatmapHeaderStyle}>Strike</th>
+                <th style={{ ...heatmapHeaderStyle, ...heatmapStickyColumnStyle }}>
+                  Strike
+                </th>
                 {model.expirations.map((expiration) => (
                   <th key={expiration.key} style={heatmapHeaderStyle}>
-                    {expiration.label}
+                    <span style={heatmapExpirationHeaderStyle}>
+                      <span>{expiration.dateLabel || expiration.label}</span>
+                      <span style={heatmapExpirationDteStyle}>{expiration.dteLabel}</span>
+                    </span>
                   </th>
                 ))}
               </tr>
@@ -773,28 +868,62 @@ const HeatmapCard = ({ rows, spot }) => {
                   <td
                     style={{
                       ...heatmapHeaderStyle,
+                      ...heatmapStickyColumnStyle,
+                      fontVariantNumeric: "tabular-nums",
+                      textAlign: "right",
                       color: Math.abs(strike - spot) < 0.5 ? CSS_COLOR.cyan : CSS_COLOR.textSec,
                     }}
                   >
-                    ${strike}
+                    {formatHeatmapStrikeLabel(strike)}
                   </td>
                   {model.expirations.map((expiration) => {
-                    const value = model.cellMap.get(strike)?.get(expiration.key) || 0;
+                    const hasValue = hasGexHeatmapCellValue(
+                      model,
+                      strike,
+                      expiration.key,
+                    );
+                    const value = getGexHeatmapCellValue(
+                      model,
+                      strike,
+                      expiration.key,
+                    );
+                    const stats = getGexHeatmapCellStats(
+                      model,
+                      strike,
+                      expiration.key,
+                    );
+                    const valueLabel = hasValue ? formatHeatmapCellValue(value) : "";
                     return (
                       <td
                         key={expiration.key}
-                        title={`${strike} ${expiration.key} ${fmtCurrency(value)}`}
+                        title={
+                          hasValue
+                            ? buildGexHeatmapCellTitle({
+                                strike,
+                                expiration,
+                                value,
+                                valueLabel,
+                                stats,
+                              })
+                            : undefined
+                        }
                         style={{
-                          padding: sp("5px 6px"),
+                          minWidth: dim(74),
+                          padding: sp("6px 7px"),
                           textAlign: "center",
                           borderBottom: `1px solid ${CSS_COLOR.border}`,
-                          background: cellColor(value),
-                          color: Math.abs(value) > model.maxAbs * 0.5 ? CSS_COLOR.text : CSS_COLOR.textSec,
+                          borderRight: `1px solid ${cssColorMix(CSS_COLOR.border, 55)}`,
+                          background: hasValue ? cellColor(value) : CSS_COLOR.bg0,
+                          color:
+                            hasValue &&
+                            Math.abs(value) > model.maxAbs * 0.5
+                              ? CSS_COLOR.text
+                              : CSS_COLOR.textSec,
+                          fontVariantNumeric: "tabular-nums",
+                          whiteSpace: "nowrap",
                         }}
                       >
-                        {Math.abs(value) > model.maxAbs * 0.04
-                          ? `${(value / 1e3).toFixed(0)}K`
-                          : ""}
+                        {valueLabel}
                       </td>
                     );
                   })}
@@ -803,30 +932,76 @@ const HeatmapCard = ({ rows, spot }) => {
             </tbody>
           </table>
         </div>
-        {expanded ? (
-          <PaginationFooter
-            dataTestId="gex-heatmap-pagination"
-            label="Strikes"
-            onPageChange={setPage}
-            page={paginatedStrikes.safePage}
-            pageCount={paginatedStrikes.pageCount}
-            pageSize={GEX_HEATMAP_PAGE_SIZE}
-            total={paginatedStrikes.total}
-          />
+        {!expanded && displayStrikes.length > visibleStrikeCount ? (
+          <div style={heatmapFootnoteStyle}>
+            <span>
+              Showing {visibleStrikeCount} of {displayStrikes.length} strikes around spot
+            </span>
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              style={heatmapInlineButtonStyle}
+            >
+              view all
+            </button>
+          </div>
         ) : null}
       </div>
-      <HeatmapColorLegend />
     </ChartShell>
   );
 };
 
 const heatmapHeaderStyle = {
-  padding: sp("5px 6px"),
+  minWidth: dim(74),
+  padding: sp("6px 7px"),
   textAlign: "center",
   color: CSS_COLOR.textDim,
   background: CSS_COLOR.bg1,
   borderBottom: `1px solid ${CSS_COLOR.border}`,
+  borderRight: `1px solid ${cssColorMix(CSS_COLOR.border, 55)}`,
   whiteSpace: "nowrap",
+  fontWeight: FONT_WEIGHTS.label,
+  position: "sticky",
+  top: 0,
+  zIndex: 2,
+};
+
+const heatmapStickyColumnStyle = {
+  minWidth: dim(92),
+  left: 0,
+  zIndex: 3,
+  borderRight: `1px solid ${CSS_COLOR.border}`,
+};
+
+const heatmapExpirationHeaderStyle = {
+  display: "inline-grid",
+  gap: sp(1),
+  justifyItems: "center",
+  lineHeight: 1.05,
+};
+
+const heatmapExpirationDteStyle = {
+  color: CSS_COLOR.textMuted,
+  fontSize: textSize("micro"),
+  fontWeight: FONT_WEIGHTS.regular,
+};
+
+const heatmapFootnoteStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: sp(4),
+  color: CSS_COLOR.textDim,
+  fontSize: textSize("caption"),
+};
+
+const heatmapInlineButtonStyle = {
+  background: "transparent",
+  border: "none",
+  color: CSS_COLOR.accent,
+  cursor: "pointer",
+  font: "inherit",
+  padding: 0,
 };
 
 const signalGlossaryKey = (kind) => {
@@ -1091,58 +1266,163 @@ const SqueezeCard = ({ squeeze, source }) => {
   );
 };
 
-const ProfileTable = ({ profile }) => {
-  const [page, setPage] = useState(0);
-  const paginatedProfile = paginateRows(profile, page, GEX_PROFILE_PAGE_SIZE);
+const SORTABLE_PROFILE_COLUMNS = [
+  { key: "strike", label: "Strike" },
+  { key: "netGex", label: "Net GEX" },
+  { key: "callGex", label: "Call GEX" },
+  { key: "putGex", label: "Put GEX" },
+  { key: "callOi", label: "Call OI" },
+  { key: "putOi", label: "Put OI" },
+  { key: "totalOi", label: "Total OI" },
+];
 
-  useEffect(() => {
-    setPage(0);
-  }, [profile]);
-  useEffect(() => {
-    if (paginatedProfile.safePage !== page) {
-      setPage(paginatedProfile.safePage);
-    }
-  }, [page, paginatedProfile.safePage]);
+const profileSortIndicator = (columnKey, sort) => {
+  if (columnKey !== sort.key) return "⇅";
+  return sort.direction === "asc" ? "↑" : "↓";
+};
+
+const ProfileGammaBarCell = ({ value, maxAbs, color, align = "left" }) => {
+  const magnitude = Math.abs(value || 0);
+  const width = maxAbs > 0 ? Math.max(4, Math.min(100, (magnitude / maxAbs) * 100)) : 0;
+  return (
+    <td style={{ ...tableCellStyle, minWidth: dim(86) }}>
+      <div
+        title={formatHeatmapCellValue(value)}
+        style={{
+          height: dim(8),
+          width: "100%",
+          background: CSS_COLOR.bg0,
+          border: `1px solid ${cssColorMix(CSS_COLOR.border, 55)}`,
+          display: "flex",
+          justifyContent: align === "right" ? "flex-end" : "flex-start",
+        }}
+      >
+        {width > 0 ? (
+          <span
+            style={{
+              display: "block",
+              width: `${width}%`,
+              background: cssColorMix(color, 68),
+            }}
+          />
+        ) : null}
+      </div>
+    </td>
+  );
+};
+
+const ProfileTable = ({ profile, spot }) => {
+  const [sort, setSort] = useState({ key: "strike", direction: "desc" });
+  const maxCallGex = profile.reduce(
+    (max, row) => Math.max(max, Math.abs(row.callGex || 0)),
+    0,
+  );
+  const maxPutGex = profile.reduce(
+    (max, row) => Math.max(max, Math.abs(row.putGex || 0)),
+    0,
+  );
+  const rows = useMemo(() => {
+    const withTotals = profile.map((row) => ({
+      ...row,
+      totalOi: row.callOi + row.putOi,
+    }));
+    return withTotals.sort((left, right) => {
+      const leftValue = left[sort.key] ?? 0;
+      const rightValue = right[sort.key] ?? 0;
+      const direction = sort.direction === "asc" ? 1 : -1;
+      if (leftValue === rightValue) return right.strike - left.strike;
+      return leftValue > rightValue ? direction : -direction;
+    });
+  }, [profile, sort]);
+  const toggleSort = (key) => {
+    setSort((current) =>
+      current.key === key
+        ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
+        : { key, direction: key === "strike" ? "desc" : "desc" },
+    );
+  };
 
   return (
-    <ChartShell title="Strike Profile Table">
+    <ChartShell title="Strike Profile">
       <div style={{ display: "grid", gap: sp(4) }}>
-        <div style={{ maxHeight: dim(320), overflow: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: textSize("caption") }}>
+        <div style={{ maxHeight: dim(440), overflow: "auto", border: `1px solid ${CSS_COLOR.border}` }}>
+          <table
+            style={{
+              width: "100%",
+              minWidth: dim(760),
+              borderCollapse: "separate",
+              borderSpacing: 0,
+              fontSize: textSize("caption"),
+            }}
+          >
             <thead>
               <tr>
-                {["Strike", "Net GEX", "Call GEX", "Put GEX", "Call OI", "Put OI"].map((heading) => (
-                  <th key={heading} style={tableHeaderStyle}>
-                    {heading}
+                {SORTABLE_PROFILE_COLUMNS.slice(0, 1).map((column) => (
+                  <th key={column.key} style={{ ...tableHeaderStyle, textAlign: "left" }}>
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(column.key)}
+                      style={{ ...profileHeaderButtonStyle, justifyContent: "flex-start" }}
+                    >
+                      {column.label} {profileSortIndicator(column.key, sort)}
+                    </button>
+                  </th>
+                ))}
+                <th style={tableHeaderStyle}>Put Γ</th>
+                <th style={tableHeaderStyle}>Call Γ</th>
+                {SORTABLE_PROFILE_COLUMNS.slice(1).map((column) => (
+                  <th key={column.key} style={tableHeaderStyle}>
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(column.key)}
+                      style={profileHeaderButtonStyle}
+                    >
+                      {column.label} {profileSortIndicator(column.key, sort)}
+                    </button>
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {paginatedProfile.pageRows.map((row) => (
+              {rows.map((row) => (
                 <tr key={row.strike}>
-                  <td style={tableCellStyle}>${row.strike}</td>
-                  <td style={{ ...tableCellStyle, color: row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red }}>
+                  <td style={{ ...tableCellStyle, textAlign: "left", color: CSS_COLOR.text }}>
+                    <div style={{ fontVariantNumeric: "tabular-nums" }}>
+                      {fmtPrice(row.strike)}
+                    </div>
+                    <div style={profileStrikeDeltaStyle}>
+                      Spot {fmtPercent((row.strike - spot) / spot)}
+                    </div>
+                  </td>
+                  <ProfileGammaBarCell
+                    value={row.putGex}
+                    maxAbs={maxPutGex}
+                    color={CSS_COLOR.red}
+                    align="right"
+                  />
+                  <ProfileGammaBarCell
+                    value={row.callGex}
+                    maxAbs={maxCallGex}
+                    color={CSS_COLOR.green}
+                  />
+                  <td
+                    style={{
+                      ...tableCellStyle,
+                      color: row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
+                    }}
+                  >
                     {fmtCurrency(row.netGex)}
                   </td>
                   <td style={{ ...tableCellStyle, color: CSS_COLOR.green }}>{fmtCurrency(row.callGex)}</td>
                   <td style={{ ...tableCellStyle, color: CSS_COLOR.red }}>{fmtCurrency(row.putGex)}</td>
                   <td style={tableCellStyle}>{fmtNumber(row.callOi)}</td>
                   <td style={tableCellStyle}>{fmtNumber(row.putOi)}</td>
+                  <td style={tableCellStyle}>{fmtNumber(row.totalOi)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <PaginationFooter
-          dataTestId="gex-profile-pagination"
-          label="Rows"
-          onPageChange={setPage}
-          page={paginatedProfile.safePage}
-          pageCount={paginatedProfile.pageCount}
-          pageSize={GEX_PROFILE_PAGE_SIZE}
-          total={paginatedProfile.total}
-        />
       </div>
     </ChartShell>
   );
@@ -1152,17 +1432,47 @@ const tableHeaderStyle = {
   padding: sp("5px 7px"),
   color: CSS_COLOR.textDim,
   borderBottom: `1px solid ${CSS_COLOR.border}`,
+  borderRight: `1px solid ${cssColorMix(CSS_COLOR.border, 55)}`,
+  background: CSS_COLOR.bg1,
   textAlign: "right",
   fontFamily: T.sans,
   fontWeight: FONT_WEIGHTS.emphasis,
+  position: "sticky",
+  top: 0,
+  zIndex: 1,
+  whiteSpace: "nowrap",
 };
 
 const tableCellStyle = {
   padding: sp("5px 7px"),
   color: CSS_COLOR.textSec,
   borderBottom: `1px solid ${CSS_COLOR.border}`,
+  borderRight: `1px solid ${cssColorMix(CSS_COLOR.border, 45)}`,
   textAlign: "right",
   fontFamily: T.sans,
+  fontVariantNumeric: "tabular-nums",
+  whiteSpace: "nowrap",
+};
+
+const profileHeaderButtonStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "flex-end",
+  gap: sp(3),
+  width: "100%",
+  padding: 0,
+  border: 0,
+  background: "transparent",
+  color: "inherit",
+  font: "inherit",
+  cursor: "pointer",
+};
+
+const profileStrikeDeltaStyle = {
+  marginTop: sp(1),
+  color: CSS_COLOR.textDim,
+  fontSize: textSize("micro"),
+  lineHeight: 1.1,
 };
 
 export default function GexScreen({
@@ -1321,17 +1631,47 @@ export default function GexScreen({
     Math.min(coverage.withGamma, coverage.withOpenInterest),
     coverage.usable,
   );
+  const sourceCoverageRatio = pct(
+    gexData?.source?.usableOptionCount ?? coverage.usable,
+    gexData?.source?.optionCount ?? coverage.total,
+  );
+  const sourceLastUpdatedAt = resolveSourceUpdatedAt(gexData?.source);
+  const sourceLastUpdatedLabel = fmtTimestamp(sourceLastUpdatedAt);
+  const sourceCoverageWarnings = useMemo(
+    () =>
+      buildSourceCoverageWarnings({
+        data: gexData,
+        sourceCoverageRatio,
+      }),
+    [gexData, sourceCoverageRatio],
+  );
   const providerIvCount = filteredRows.filter(
     (row) => isFiniteNumber(row.impliedVol) && row.impliedVol > 0,
   ).length;
   const dataReady = Boolean(metrics && spot != null && filteredRows.length);
   const expirationOptions = useMemo(
     () => [
-      { value: "all", label: "All loaded expirations" },
+      {
+        value: "all",
+        label:
+          gexData?.source?.expirationCoverage?.complete === true &&
+          (gexData.source.expirationCoverage.failedCount || 0) === 0 &&
+          gexData.source.expirationCoverage.capped !== true
+            ? "All expirations"
+            : "All loaded expirations",
+      },
       ...expirationDates.map((date) => ({ value: date, label: date })),
     ],
-    [expirationDates],
+    [expirationDates, gexData?.source?.expirationCoverage],
   );
+  const visibleMobileExpirationOptions = expirationOptions.slice(0, 9);
+  const hiddenMobileExpirationCount = Math.max(
+    0,
+    expirationOptions.length - visibleMobileExpirationOptions.length,
+  );
+  const hiddenMobileExpirationSelected =
+    hiddenMobileExpirationCount > 0 &&
+    !visibleMobileExpirationOptions.some((option) => option.value === expirationFilter);
   const tickerSearchControl = (
     <div
       style={{
@@ -1461,7 +1801,7 @@ export default function GexScreen({
                 paddingBottom: sp(1),
               }}
             >
-              {expirationOptions.slice(0, 9).map((option) => {
+              {visibleMobileExpirationOptions.map((option) => {
                 const active = option.value === expirationFilter;
                 return (
                   <button
@@ -1485,6 +1825,31 @@ export default function GexScreen({
                   </button>
                 );
               })}
+              {hiddenMobileExpirationCount > 0 ? (
+                <button
+                  type="button"
+                  data-testid="gex-mobile-expiration-more"
+                  onClick={() => setMobileFiltersOpen(true)}
+                  style={{
+                    flex: "0 0 auto",
+                    minHeight: dim(36),
+                    padding: sp("0 10px"),
+                    border: `1px solid ${
+                      hiddenMobileExpirationSelected ? CSS_COLOR.accent : CSS_COLOR.border
+                    }`,
+                    borderRadius: dim(RADII.xs),
+                    background: hiddenMobileExpirationSelected
+                      ? `${cssColorMix(CSS_COLOR.accent, 9)}`
+                      : CSS_COLOR.bg1,
+                    color: hiddenMobileExpirationSelected ? CSS_COLOR.text : CSS_COLOR.textSec,
+                    fontFamily: T.sans,
+                    fontSize: textSize("caption"),
+                    cursor: "pointer",
+                  }}
+                >
+                  +{hiddenMobileExpirationCount} more
+                </button>
+              ) : null}
             </div>
             <BottomSheet
               open={mobileFiltersOpen}
@@ -1589,8 +1954,20 @@ export default function GexScreen({
             <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}>
               Provider IV {providerIvCount}/{filteredRows.length} · GEX uses provider gamma
             </div>
+            <div
+              data-testid="gex-source-last-updated"
+              style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption") }}
+            >
+              Updated {sourceLastUpdatedLabel}
+            </div>
           </div>
         </Card>
+
+        <SourceCoverageBanner
+          data={gexData}
+          warnings={sourceCoverageWarnings}
+          lastUpdatedLabel={sourceLastUpdatedLabel}
+        />
 
         {chainError ? (
           <DataUnavailableState
@@ -1686,6 +2063,38 @@ export default function GexScreen({
               />
             ) : null}
 
+            {view === "table" ? (
+              <ProfileTable profile={metrics.profile} spot={spot} />
+            ) : null}
+
+            {view === "graph" ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${dim(360)}px), 1fr))`,
+                  gap: sp(10),
+                  alignItems: "start",
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <StrikeProfileChart
+                    profile={metrics.profile}
+                    spot={spot}
+                    series={series}
+                    callWall={metrics.callWall}
+                    putWall={metrics.putWall}
+                  />
+                </div>
+                <div style={{ display: "grid", gap: sp(10), minWidth: 0 }}>
+                  <IntradayCard snapshots={snapshots} />
+                  <SignalsCard signals={signals} />
+                  <SqueezeCard squeeze={squeeze} source={gexData?.source} />
+                </div>
+              </div>
+            ) : null}
+
+            <HeatmapCard rows={filteredRows} spot={spot} />
+
             <div
               style={{
                 display: "grid",
@@ -1695,18 +2104,6 @@ export default function GexScreen({
               }}
             >
               <div style={{ display: "grid", gap: sp(10), minWidth: 0 }}>
-                {view === "graph" ? (
-                  <StrikeProfileChart
-                    profile={metrics.profile}
-                    spot={spot}
-                    series={series}
-                    callWall={metrics.callWall}
-                    putWall={metrics.putWall}
-                  />
-                ) : (
-                  <ProfileTable profile={metrics.profile} />
-                )}
-                <HeatmapCard rows={filteredRows} spot={spot} />
                 <div
                   style={{
                     display: "grid",
@@ -1724,11 +2121,13 @@ export default function GexScreen({
                 <SectionHeading title="Open Interest Analysis" />
                 <OiChart rows={filteredRows} spot={spot} />
               </div>
-              <div style={{ display: "grid", gap: sp(10), minWidth: 0 }}>
-                <IntradayCard snapshots={snapshots} />
-                <SignalsCard signals={signals} />
-                <SqueezeCard squeeze={squeeze} source={gexData?.source} />
-              </div>
+              {view === "table" ? (
+                <div style={{ display: "grid", gap: sp(10), minWidth: 0 }}>
+                  <IntradayCard snapshots={snapshots} />
+                  <SignalsCard signals={signals} />
+                  <SqueezeCard squeeze={squeeze} source={gexData?.source} />
+                </div>
+              ) : null}
             </div>
           </>
         )}

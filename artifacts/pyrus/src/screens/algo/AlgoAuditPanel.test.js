@@ -4,8 +4,10 @@ import test from "node:test";
 import {
   AUDIT_PAGE_SIZE,
   auditRowMatchesQuery,
+  buildSignalAuditProgressions,
   buildAuditSummary,
   normalizeAuditEvent,
+  signalAuditRowKey,
 } from "./algoAuditModel.js";
 
 const source = readFileSync(new URL("./AlgoAuditPanel.jsx", import.meta.url), "utf8");
@@ -29,6 +31,83 @@ test("algo audit panel exposes dense table columns and larger event history", ()
   assert.match(source, /Search symbol, reason, contract/);
   assert.match(algoScreenSource, /limit:\s*100/);
   assert.match(algoScreenSource, /algoIsPhone=\{algoIsPhone\}/);
+});
+
+test("algo audit model groups execution progression onto signal table rows", () => {
+  const signal = {
+    signalKey: "sig-AMZN-5m-buy",
+    symbol: "AMZN",
+    timeframe: "5m",
+    direction: "buy",
+  };
+  const candidate = {
+    id: "candidate-AMZN-call",
+    signalKey: "sig-AMZN-5m-buy",
+    symbol: "AMZN",
+    selectedContract: {
+      providerContractId: "twsopt:123456",
+      expirationDate: "2026-06-19",
+      strike: 150,
+      right: "call",
+    },
+  };
+  const auditKey = signalAuditRowKey(signal, candidate);
+  const progressions = buildSignalAuditProgressions({
+    rows: [{ auditKey, signal, candidate }],
+    events: [
+      {
+        id: "evt-unrelated",
+        symbol: "MSFT",
+        eventType: "signal_options_shadow_entry",
+        occurredAt: "2026-05-22T15:02:00.000Z",
+        payload: { signalKey: "sig-MSFT-5m-buy" },
+      },
+      {
+        id: "evt-same-symbol-different-key",
+        symbol: "AMZN",
+        eventType: "signal_options_shadow_entry",
+        occurredAt: "2026-05-22T15:03:00.000Z",
+        payload: { signalKey: "sig-AMZN-15m-buy" },
+      },
+      {
+        id: "evt-entry",
+        symbol: "AMZN",
+        eventType: "signal_options_shadow_entry",
+        occurredAt: "2026-05-22T15:01:00.000Z",
+        payload: {
+          candidateId: "candidate-AMZN-call",
+          selectedContract: { providerContractId: "twsopt:123456" },
+        },
+      },
+      {
+        id: "evt-mark",
+        symbol: "AMZN",
+        eventType: "signal_options_shadow_mark",
+        occurredAt: "2026-05-22T15:02:00.000Z",
+        payload: {
+          position: {
+            candidateId: "candidate-AMZN-call",
+            selectedContract: { providerContractId: "twsopt:123456" },
+          },
+          markResolution: { source: "live_option_quote" },
+        },
+      },
+      {
+        id: "evt-candidate",
+        symbol: "AMZN",
+        eventType: "signal_options_candidate_created",
+        occurredAt: "2026-05-22T15:00:00.000Z",
+        payload: { signalKey: "sig-AMZN-5m-buy" },
+      },
+    ],
+  });
+  const progression = progressions.get(auditKey);
+
+  assert.equal(progression.eventCount, 3);
+  assert.deepEqual(progression.stageIds, ["candidate", "submitted", "managed"]);
+  assert.equal(progression.latestStage.id, "managed");
+  assert.equal(progression.latest.id, "evt-mark");
+  assert.match(progression.searchText, /TWSOPT:123456/);
 });
 
 test("algo audit model extracts trade context from entry payloads", () => {

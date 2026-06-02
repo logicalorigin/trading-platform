@@ -25,6 +25,10 @@ import {
   resolveDashboardStripAnchorStyle,
   resolveDashboardStripTier,
   resolveEffectiveChartViewportSnapshot,
+  resolveGexProjectionAutoscalePriceRange,
+  resolveGexProjectionAutoFitLogicalOffset,
+  resolveGexProjectionLogicalOffset,
+  resolveGexProjectionSvgXBounds,
   resolveMobileChartInteractionConfig,
   resolveSeriesTailUpdateResetReason,
   resolveVisibleRangeChangeSource,
@@ -1256,6 +1260,157 @@ test("ResearchChartSurface detects whether the visible range is near realtime", 
     }),
     false,
   );
+});
+
+test("ResearchChartSurface maps GEX projection expirations to selected chart scale", () => {
+  const lastBarTime = Math.floor(Date.UTC(2026, 5, 1, 20, 0, 0, 0) / 1000);
+
+  assert.equal(
+    resolveGexProjectionLogicalOffset({
+      expirationDate: "2026-06-02",
+      lastBarTime,
+      timeframe: "5m",
+    }),
+    288,
+  );
+  assert.equal(
+    resolveGexProjectionLogicalOffset({
+      expirationDate: "2026-06-02",
+      lastBarTime,
+      timeframe: "15m",
+    }),
+    96,
+  );
+  assert.equal(
+    resolveGexProjectionLogicalOffset({
+      expirationDate: "2026-06-02",
+      lastBarTime,
+      timeframe: "1h",
+    }),
+    24,
+  );
+  assert.equal(
+    resolveGexProjectionLogicalOffset({
+      expirationDate: "2026-06-02",
+      lastBarTime,
+      timeframe: "1d",
+    }),
+    1,
+  );
+});
+
+test("ResearchChartSurface falls back to observed bar cadence for GEX projection scale", () => {
+  const lastBarTime = Math.floor(Date.UTC(2026, 5, 1, 19, 0, 0, 0) / 1000);
+
+  assert.equal(
+    resolveGexProjectionLogicalOffset({
+      expirationDate: "2026-06-01",
+      lastBarTime,
+      timeframe: "custom",
+      observedStepSeconds: 600,
+    }),
+    6,
+  );
+  assert.equal(
+    resolveGexProjectionLogicalOffset({
+      expirationDate: "2026-05-29",
+      lastBarTime,
+      timeframe: "5m",
+    }),
+    null,
+  );
+});
+
+test("ResearchChartSurface auto-fits near GEX projections without pulling in distant expirations", () => {
+  const lastBarTime = Math.floor(Date.UTC(2026, 5, 1, 20, 0, 0, 0) / 1000);
+  const basePoint = {
+    lower2: 90,
+    lower1: 95,
+    center: 100,
+    upper1: 105,
+    upper2: 110,
+    qualityStatus: "ok",
+  };
+
+  assert.equal(
+    resolveGexProjectionAutoFitLogicalOffset({
+      points: [{ ...basePoint, expirationDate: "2026-06-02" }],
+      lastBarTime,
+      timeframe: "15m",
+    }),
+    96,
+  );
+  assert.equal(
+    resolveGexProjectionAutoFitLogicalOffset({
+      points: [{ ...basePoint, expirationDate: "2026-06-02" }],
+      lastBarTime,
+      timeframe: "5m",
+    }),
+    0,
+  );
+  assert.equal(
+    resolveGexProjectionAutoFitLogicalOffset({
+      points: [{ ...basePoint, expirationDate: "2026-06-17" }],
+      lastBarTime,
+      timeframe: "5m",
+    }),
+    0,
+  );
+});
+
+test("ResearchChartSurface includes visible GEX projection bands in autoscale range", () => {
+  const lastBarTime = Math.floor(Date.UTC(2026, 5, 1, 20, 0, 0, 0) / 1000);
+  const chartBars = [
+    { time: lastBarTime - 300, o: 100, h: 101, l: 99, c: 100, v: 1000 },
+    { time: lastBarTime, o: 100, h: 101, l: 99, c: 100, v: 1000 },
+  ];
+  const overlay = {
+    ticker: "SPY",
+    spot: 100,
+    asOf: "2026-06-01T20:00:00.000Z",
+    qualityStatus: "ok",
+    points: [
+      {
+        expirationDate: "2026-06-02",
+        lower2: 90,
+        lower1: 95,
+        center: 100,
+        upper1: 105,
+        upper2: 110,
+        qualityStatus: "ok",
+      },
+    ],
+  };
+
+  assert.deepEqual(
+    resolveGexProjectionAutoscalePriceRange({
+      overlay,
+      chartBars,
+      timeframe: "5m",
+      visibleLogicalRange: { from: 250, to: 310 },
+    }),
+    { minValue: 90, maxValue: 110 },
+  );
+  assert.equal(
+    resolveGexProjectionAutoscalePriceRange({
+      overlay,
+      chartBars,
+      timeframe: "5m",
+      visibleLogicalRange: { from: 0, to: 60 },
+    }),
+    null,
+  );
+});
+
+test("ResearchChartSurface bounds offscreen GEX projection SVG geometry", () => {
+  assert.deepEqual(resolveGexProjectionSvgXBounds(800), {
+    minX: -800,
+    maxX: 1600,
+  });
+  assert.deepEqual(resolveGexProjectionSvgXBounds(200), {
+    minX: -320,
+    maxX: 520,
+  });
 });
 
 test("ResearchChartSurface normalizes visible range publish state", () => {

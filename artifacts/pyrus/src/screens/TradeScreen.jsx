@@ -748,14 +748,14 @@ const getOptionChartEmptyCopy = ({ emptyReason, requestFailed, feedIssue }) => {
     return {
       title: "No option trades in this window",
       detail:
-        "IBKR and Polygon returned no bars for this contract and timeframe.",
+        "IBKR and Massive returned no bars for this contract and timeframe.",
     };
   }
-  if (emptyReason === "polygon-not-configured") {
+  if (emptyReason === "massive-not-configured") {
     return {
       title: "Option aggregate feed unavailable",
       detail:
-        "IBKR did not return chart bars and the Polygon/Massive fallback is not configured.",
+        "IBKR did not return chart bars and the Massive fallback is not configured.",
     };
   }
   if (
@@ -2186,7 +2186,7 @@ const TRADE_FLOW_MIN_HISTORY_BUCKET_SECONDS = 60;
 const TRADE_FLOW_MAX_HISTORY_BUCKET_SECONDS = 3600;
 const EMPTY_VISIBLE_OPTION_CHAIN_ROWS = Object.freeze([]);
 const TRADE_FLOW_PENDING_SOURCE = {
-  provider: "polygon",
+  provider: "massive",
   status: "empty",
   ibkrStatus: "empty",
   ibkrReason: "options_flow_historical_refreshing",
@@ -4048,6 +4048,10 @@ const TradeScreenInner = ({
     minHeight: 0,
     minWidth: 0,
   };
+  const tradeNarrowChartFrameStyle = {
+    minHeight: dim(320),
+    minWidth: 0,
+  };
 
   const equityPanel = (
     <MemoTradeEquityPanel
@@ -4074,7 +4078,13 @@ const TradeScreenInner = ({
       signalMonitorProfile={signalMonitorProfile}
       crosshairSyncGroupId={tradeCrosshairSync ? "trade" : null}
       crosshairSyncInstanceId={tradeCrosshairSync ? "trade-equity" : null}
-      frameStyle={tradeIsPhone ? tradeMobileChartFrameStyle : undefined}
+      frameStyle={
+        tradeIsPhone
+          ? tradeMobileChartFrameStyle
+          : tradeIsNarrow
+            ? tradeNarrowChartFrameStyle
+            : undefined
+      }
     />
   );
   const equityTimeframeForOptionSync =

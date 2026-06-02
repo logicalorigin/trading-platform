@@ -1,3 +1,4 @@
+import { ChevronRight } from "lucide-react";
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
@@ -7,26 +8,16 @@ import {
 } from "../../lib/uiTokens.jsx";
 
 const HeaderChevron = ({ open }) => (
-  <svg
-    width="9"
-    height="9"
-    viewBox="0 0 10 10"
+  <ChevronRight
+    size={11}
+    strokeWidth={1.8}
     aria-hidden="true"
     style={{
       flex: "0 0 auto",
       transform: open ? "rotate(90deg)" : "rotate(0deg)",
       transition: "transform 140ms ease",
     }}
-  >
-    <path
-      d="M3 1.5L7 5L3 8.5"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </svg>
+  />
 );
 
 const labelStyle = {
@@ -42,6 +33,8 @@ const helperStyle = {
   color: CSS_COLOR.textMuted,
   fontFamily: T.sans,
   fontSize: textSize("micro"),
+  overflow: "hidden",
+  textOverflow: "ellipsis",
   whiteSpace: "nowrap",
 };
 

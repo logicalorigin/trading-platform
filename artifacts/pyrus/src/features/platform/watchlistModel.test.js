@@ -151,7 +151,7 @@ test("buildWatchlistRows appends monitored-only symbols without duplicating acti
   );
 });
 
-test("sortWatchlistRows ranks fresh signals, stale signals, and quote fields", () => {
+test("sortWatchlistRows ranks fresh signals, aged signals, and quote fields", () => {
   const rows = buildWatchlistRows({
     activeWatchlist: { symbols: ["SPY", "QQQ", "NVDA"] },
   });
@@ -186,16 +186,20 @@ test("sortWatchlistRows ranks fresh signals, stale signals, and quote fields", (
 });
 
 test("watchlist signal matrix groups timeframe dots by symbol", () => {
-  assert.deepEqual(WATCHLIST_SIGNAL_TIMEFRAMES, ["2m", "5m", "15m"]);
+  assert.deepEqual(WATCHLIST_SIGNAL_TIMEFRAMES, ["1m", "2m", "5m", "15m", "1h"]);
   const matrix = buildSignalMatrixBySymbol([
+    { symbol: "SPY", timeframe: "1m", currentSignalDirection: "sell", fresh: false },
     { symbol: "spy", timeframe: "2m", currentSignalDirection: "buy", fresh: true },
     { symbol: "SPY", timeframe: "5m", currentSignalDirection: "sell", fresh: false },
     { symbol: "QQQ", timeframe: "1h", currentSignalDirection: "buy", fresh: true },
+    { symbol: "IWM", timeframe: "1d", currentSignalDirection: "buy", fresh: true },
   ]);
 
+  assert.equal(matrix.SPY["1m"].currentSignalDirection, "sell");
   assert.equal(matrix.SPY["2m"].currentSignalDirection, "buy");
   assert.equal(matrix.SPY["5m"].currentSignalDirection, "sell");
-  assert.equal(matrix.QQQ, undefined);
+  assert.equal(matrix.QQQ["1h"].currentSignalDirection, "buy");
+  assert.equal(matrix.IWM, undefined);
 });
 
 test("signal sort ignores legacy monitor state when matrix is missing", () => {
@@ -228,5 +232,42 @@ test("signal sort ignores legacy monitor state when matrix is missing", () => {
   assert.deepEqual(
     sorted.map((row) => row.sym),
     ["QQQ", "SPY", "NVDA"],
+  );
+});
+
+test("signal sort ignores stale matrix directions", () => {
+  const rows = buildWatchlistRows({
+    activeWatchlist: { symbols: ["SPY", "QQQ"] },
+  });
+  const signalMatrixBySymbol = buildSignalMatrixBySymbol([
+    {
+      symbol: "SPY",
+      timeframe: "1m",
+      status: "stale",
+      currentSignalDirection: "buy",
+      fresh: false,
+      barsSinceSignal: 1,
+    },
+    {
+      symbol: "QQQ",
+      timeframe: "5m",
+      status: "ok",
+      currentSignalDirection: "sell",
+      fresh: false,
+      barsSinceSignal: 8,
+    },
+  ]);
+
+  assert.equal(getBestWatchlistSignalState(signalMatrixBySymbol.SPY), null);
+  assert.equal(
+    getBestWatchlistSignalState(signalMatrixBySymbol.QQQ).currentSignalDirection,
+    "sell",
+  );
+  assert.deepEqual(
+    sortWatchlistRows(rows, {
+      mode: WATCHLIST_SORT_MODE.SIGNAL,
+      signalMatrixBySymbol,
+    }).map((row) => row.sym),
+    ["QQQ", "SPY"],
   );
 });

@@ -36,6 +36,9 @@ import {
   sanitizeChartHydrationStatsForDiagnostics,
 } from "../charting/chartHydrationStats";
 import {
+  resolvePyrusSignalsRuntimeSettings,
+} from "../charting/pyrusSignalsPineAdapter";
+import {
   getBrokerStockAggregateDebugStats,
   setBrokerStockAggregateStreamPaused,
 } from "../charting/useMassiveStockAggregateStream";
@@ -63,6 +66,7 @@ import {
 } from "./workloadStats";
 import { useWorkspaceLeadership } from "./workspaceLeadership.js";
 import { useMemoryPressureMonitor } from "./useMemoryPressureSignal";
+import { getMemoryPressureSnapshot } from "./memoryPressureStore";
 import { PlatformShell } from "./PlatformShell.jsx";
 import { PlatformProviders } from "./PlatformProviders.jsx";
 import { PlatformRuntimeLayer } from "./PlatformRuntimeLayer.jsx";
@@ -86,6 +90,10 @@ import {
   buildSignalMatrixRequestPlan,
   buildSignalMatrixSymbolSets,
   mergeSignalMatrixStates,
+  resolveSignalMatrixActiveScreenRequestTaskLimit,
+  resolveSignalMatrixActiveScreenRequestSymbolLimit,
+  resolveSignalMatrixBusyQueueDelayMs,
+  resolveSignalMatrixCatchupDelayMs,
   signalMatrixStatesEqual,
 } from "./signalMatrixScheduler.js";
 import {
@@ -156,7 +164,6 @@ import {
   persistState,
 } from "../../lib/workspaceState";
 import { preloadDynamicImport } from "../../lib/dynamicImport";
-import { getMemoryPressureSnapshot } from "./memoryPressureStore";
 import { captureToast } from "./notificationStore.js";
 import { normalizeToastKind } from "./toastModel.js";
 import {
@@ -240,7 +247,8 @@ input[type=range]{accent-color:var(--ra-color-accent)}
 
 const WATCHLISTS_QUERY_KEY = ["/api/watchlists"];
 const SIGNAL_MONITOR_DISPLAY_POLL_MS = 15_000;
-const SIGNAL_MATRIX_TIMEFRAMES = ["2m", "5m", "15m"];
+const SIGNAL_MATRIX_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h"];
+const SIGNAL_MATRIX_TIMEFRAME_SET = new Set(SIGNAL_MATRIX_TIMEFRAMES);
 const PRIORITY_SCREEN_MODULE_PRELOAD_ORDER = ["account"];
 const PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS = 500;
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS = 20_000;
@@ -257,14 +265,111 @@ const SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS = 6_000;
 const SIGNAL_MATRIX_CATCHUP_COOLDOWN_MS = 30_000;
 const SIGNAL_MATRIX_PARTIAL_CACHE_CATCHUP_DELAY_MS = 10_000;
 const SIGNAL_MATRIX_TRUNCATED_CATCHUP_DELAY_MS = 5_000;
-const SIGNAL_MATRIX_REQUEST_TIMEOUT_MS = 90_000;
-const SIGNAL_MATRIX_REQUEST_WATCHDOG_GRACE_MS = 5_000;
+const SIGNAL_MATRIX_REQUEST_TIMEOUT_MS = 12_000;
+const SIGNAL_MATRIX_REQUEST_WATCHDOG_GRACE_MS = 3_000;
+const SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS = 1_000;
+const SIGNAL_MATRIX_GLOBAL_REQUEST_COORDINATOR_KEY =
+  "__PYRUS_SIGNAL_MATRIX_REQUEST_COORDINATOR__";
 const INITIAL_MARKET_DATA_WATCHLIST_LIMIT = 8;
 const OPEN_POSITION_MARKET_DATA_LIMIT = 16;
 const RECENT_SIGNAL_QUOTE_PIN_LIMIT = 4;
 const RECENT_SIGNAL_QUOTE_PIN_MS = 30 * 60_000;
 const SCREEN_SHELL_WARM_MOUNT_IDLE_DELAY_MS = 2_000;
 const SCREEN_SHELL_WARM_MOUNT_IDLE_STAGGER_MS = 700;
+
+const asRecord = (value) =>
+  value && typeof value === "object" && !Array.isArray(value) ? value : {};
+
+const normalizeSignalMatrixRequestSymbols = (symbols = []) => {
+  const seen = new Set();
+  const result = [];
+  (Array.isArray(symbols) ? symbols : []).forEach((symbol) => {
+    const normalized = normalizeTickerSymbol(symbol);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    result.push(normalized);
+  });
+  return result;
+};
+
+const normalizeSignalMatrixRequestTimeframes = (
+  timeframes = [],
+  fallback = SIGNAL_MATRIX_TIMEFRAMES,
+) => {
+  const seen = new Set();
+  const result = [];
+  (Array.isArray(timeframes) ? timeframes : []).forEach((timeframe) => {
+    const normalized = String(timeframe || "").trim();
+    if (
+      !normalized ||
+      !SIGNAL_MATRIX_TIMEFRAME_SET.has(normalized) ||
+      seen.has(normalized)
+    ) {
+      return;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  });
+  return result.length ? result : [...fallback];
+};
+
+const signalMatrixSymbolListsEqual = (left = [], right = []) =>
+  left.length === right.length &&
+  left.every((symbol, index) => symbol === right[index]);
+
+const buildSignalMonitorPyrusSettingsPatch = (currentSettings, draftSettings) => {
+  const current = asRecord(currentSettings);
+  const resolved = resolvePyrusSignalsRuntimeSettings(draftSettings || {});
+  return {
+    ...current,
+    ...resolved,
+    marketStructure: {
+      ...asRecord(current.marketStructure),
+      timeHorizon: resolved.timeHorizon,
+      bosConfirmation: resolved.bosConfirmation,
+      chochAtrBuffer: resolved.chochAtrBuffer,
+      chochBodyExpansionAtr: resolved.chochBodyExpansionAtr,
+      chochVolumeGate: resolved.chochVolumeGate,
+    },
+    bands: {
+      ...asRecord(current.bands),
+      basisLength: resolved.basisLength,
+      atrLength: resolved.atrLength,
+      atrSmoothing: resolved.atrSmoothing,
+      volatilityMultiplier: resolved.volatilityMultiplier,
+    },
+    confirmation: {
+      ...asRecord(current.confirmation),
+      adxLength: resolved.adxLength,
+      volumeMaLength: resolved.volumeMaLength,
+      mtf1: resolved.mtf1,
+      mtf2: resolved.mtf2,
+      mtf3: resolved.mtf3,
+      requireMtf1: resolved.requireMtf1,
+      requireMtf2: resolved.requireMtf2,
+      requireMtf3: resolved.requireMtf3,
+      signalFiltersEnabled: resolved.signalFiltersEnabled,
+      requireAdx: resolved.requireAdx,
+      adxMin: resolved.adxMin,
+      requireVolScoreRange: resolved.requireVolScoreRange,
+      volScoreMin: resolved.volScoreMin,
+      volScoreMax: resolved.volScoreMax,
+      restrictToSelectedSessions: resolved.restrictToSelectedSessions,
+      sessions: resolved.sessions,
+    },
+    risk: {
+      ...asRecord(current.risk),
+      signalOffsetAtr: resolved.signalOffsetAtr,
+      tp1Rr: resolved.tp1Rr,
+      tp2Rr: resolved.tp2Rr,
+      tp3Rr: resolved.tp3Rr,
+    },
+    appearance: {
+      ...asRecord(current.appearance),
+      waitForBarClose: resolved.waitForBarClose,
+    },
+  };
+};
 const PLATFORM_PRESSURE_LEVELS = new Set([
   "normal",
   "watch",
@@ -287,6 +392,60 @@ const resolveSignalMatrixPressureLevel = ({ memoryPressureLevel, server }) => {
     normalizePlatformPressureLevel(server?.pressureLevel) ||
     appLevel
   );
+};
+
+const signalMatrixModuleRequestCoordinator = {
+  owner: null,
+  startedAt: 0,
+};
+
+const getSignalMatrixRequestCoordinator = () => {
+  if (typeof window === "undefined") {
+    return signalMatrixModuleRequestCoordinator;
+  }
+  const existing = window[SIGNAL_MATRIX_GLOBAL_REQUEST_COORDINATOR_KEY];
+  if (existing && typeof existing === "object") {
+    return existing;
+  }
+  const coordinator = { owner: null, startedAt: 0 };
+  window[SIGNAL_MATRIX_GLOBAL_REQUEST_COORDINATOR_KEY] = coordinator;
+  return coordinator;
+};
+
+const clearStaleSignalMatrixRequestLease = (nowMs = Date.now()) => {
+  const coordinator = getSignalMatrixRequestCoordinator();
+  if (
+    coordinator.owner &&
+    nowMs - (coordinator.startedAt || 0) >
+      SIGNAL_MATRIX_REQUEST_TIMEOUT_MS + SIGNAL_MATRIX_REQUEST_WATCHDOG_GRACE_MS
+  ) {
+    coordinator.owner = null;
+    coordinator.startedAt = 0;
+  }
+  return coordinator;
+};
+
+const hasActiveSignalMatrixRequestLease = (nowMs = Date.now()) => {
+  const coordinator = clearStaleSignalMatrixRequestLease(nowMs);
+  return Boolean(coordinator.owner);
+};
+
+const claimSignalMatrixRequestLease = (owner, nowMs = Date.now()) => {
+  const coordinator = clearStaleSignalMatrixRequestLease(nowMs);
+  if (coordinator.owner && coordinator.owner !== owner) {
+    return false;
+  }
+  coordinator.owner = owner;
+  coordinator.startedAt = nowMs;
+  return true;
+};
+
+const releaseSignalMatrixRequestLease = (owner) => {
+  const coordinator = getSignalMatrixRequestCoordinator();
+  if (coordinator.owner === owner) {
+    coordinator.owner = null;
+    coordinator.startedAt = 0;
+  }
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -492,6 +651,12 @@ export default function PlatformApp() {
     [],
   );
   const [screen, setScreen] = useState(initialScreen);
+  const signalsScreenSafeWorkVisible = Boolean(
+    safeQaMode && pageVisible && workspaceLeader && screen === "signals",
+  );
+  const signalMonitorWorkVisible = Boolean(
+    platformWorkVisible || signalsScreenSafeWorkVisible,
+  );
   const [mountedScreens, setMountedScreens] = useState(() =>
     buildMountedScreenState(initialScreen),
   );
@@ -718,7 +883,7 @@ export default function PlatformApp() {
       return undefined;
     }
 
-    if (!firstScreenReady || !platformWorkVisible) {
+    if (!firstScreenReady || !signalMonitorWorkVisible) {
       setStartupProtectionActive(true);
       return undefined;
     }
@@ -729,7 +894,7 @@ export default function PlatformApp() {
       STARTUP_PROTECTION_COOLDOWN_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [firstScreenReady, platformWorkVisible]);
+  }, [firstScreenReady, signalMonitorWorkVisible]);
 
   useEffect(() => {
     setBackgroundResumeReady({ ...EMPTY_BACKGROUND_RESUME_READY, screen });
@@ -1009,7 +1174,8 @@ export default function PlatformApp() {
   );
   const memoryBlocksOperationalPreload = memoryPressureLevel === "critical";
   const memoryAllowsBackgroundWarmup = Boolean(
-    memoryPressureObserved && memoryPressureSignal?.level === "normal",
+    memoryPressureObserved &&
+      memoryPressureLevel !== "critical",
   );
   const memoryAllowsIdlePrefetch = Boolean(
     firstScreenReady &&
@@ -2388,7 +2554,7 @@ export default function PlatformApp() {
     {
       query: {
         staleTime: 60_000,
-        refetchInterval: platformWorkVisible ? 60_000 : false,
+        refetchInterval: signalMonitorWorkVisible ? 60_000 : false,
         retry: false,
       },
     },
@@ -2455,7 +2621,7 @@ export default function PlatformApp() {
   }, [workSchedule.hydrationPressure]);
   useRuntimeWorkloadFlag(
     "signal-monitor:profile",
-    Boolean(platformWorkVisible),
+    Boolean(signalMonitorWorkVisible),
     {
       kind: "poll",
       label: "Signal profile",
@@ -2486,7 +2652,7 @@ export default function PlatformApp() {
     platformPressureCaps.signalDisplayPollMinMs || 0,
   );
   const signalMonitorDisplayReady = Boolean(
-    platformWorkVisible && firstScreenReady && signalMonitorProfile?.enabled,
+    signalMonitorWorkVisible && firstScreenReady && signalMonitorProfile?.enabled,
   );
   const signalMonitorEventsReady = Boolean(
     signalMonitorDisplayReady &&
@@ -2683,6 +2849,12 @@ export default function PlatformApp() {
     states: [],
     timeframes: SIGNAL_MATRIX_TIMEFRAMES,
   }));
+  const [signalsScreenMatrixRequest, setSignalsScreenMatrixRequest] = useState(() => ({
+    prioritySymbols: [],
+    symbols: [],
+    timeframes: SIGNAL_MATRIX_TIMEFRAMES,
+    revision: 0,
+  }));
   const signalMatrixEvaluationInFlightRef = useRef(false);
   const signalMatrixEvaluationStartedAtRef = useRef(0);
   const signalMatrixRotationCursorRef = useRef(0);
@@ -2695,10 +2867,20 @@ export default function PlatformApp() {
   const signalMatrixQueuedTimerRef = useRef(null);
   const signalMatrixRunRef = useRef(null);
   const signalMatrixLastCatchupQueuedAtRef = useRef(0);
+  const signalMatrixRequestOwnerRef = useRef(null);
+  if (!signalMatrixRequestOwnerRef.current) {
+    signalMatrixRequestOwnerRef.current = `platform-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}`;
+  }
   const signalMonitorStates =
     signalMonitorStateQuery.data?.states || EMPTY_SIGNAL_MONITOR_STATES;
   const signalMonitorEvents =
     signalMonitorEventsQuery.data?.events || EMPTY_SIGNAL_MONITOR_EVENTS;
+  const signalMonitorStateUniverseSymbols =
+    Array.isArray(signalMonitorStateQuery.data?.universeSymbols)
+      ? signalMonitorStateQuery.data.universeSymbols
+      : [];
   const headerSignalContextSymbols = useMemo(
     () =>
       buildHeaderSignalContextSymbols({
@@ -2721,6 +2903,115 @@ export default function PlatformApp() {
       ],
     [headerSignalContextSymbols, signalMonitorStates],
   );
+  const signalMonitorDisplaySymbols = useMemo(
+    () =>
+      [
+        ...new Set(
+          [
+            ...signalMonitorStateUniverseSymbols.map((symbol) =>
+              normalizeTickerSymbol(symbol),
+            ),
+            ...headerSignalContextSymbols,
+            ...signalMonitorStates.map((state) =>
+              normalizeTickerSymbol(state?.symbol),
+            ),
+          ].filter(Boolean),
+        ),
+      ],
+    [
+      headerSignalContextSymbols,
+      signalMonitorStateUniverseSymbols,
+      signalMonitorStates,
+    ],
+  );
+  const signalsScreenMatrixSymbols = signalsScreenMatrixRequest.symbols;
+  const signalsScreenMatrixPrioritySymbols =
+    signalsScreenMatrixRequest.prioritySymbols?.length
+      ? signalsScreenMatrixRequest.prioritySymbols
+      : signalsScreenMatrixSymbols;
+  const signalsScreenMatrixSymbolsKey = useMemo(
+    () => signalsScreenMatrixSymbols.join(","),
+    [signalsScreenMatrixSymbols],
+  );
+  const signalsScreenMatrixPrioritySymbolsKey = useMemo(
+    () => signalsScreenMatrixPrioritySymbols.join(","),
+    [signalsScreenMatrixPrioritySymbols],
+  );
+  const signalsScreenMatrixTimeframes =
+    signalsScreenMatrixRequest.timeframes || SIGNAL_MATRIX_TIMEFRAMES;
+  const signalsScreenMatrixTimeframesKey = useMemo(
+    () => signalsScreenMatrixTimeframes.join(","),
+    [signalsScreenMatrixTimeframes],
+  );
+  const signalMatrixRequestActive = screen === "signals" || screen === "algo";
+  const handleRequestSignalMatrixHydration = useCallback((request = {}) => {
+    const payload = request || {};
+    const normalizedSymbols = normalizeSignalMatrixRequestSymbols(
+      payload.symbols?.length ? payload.symbols : payload.missingSymbols,
+    );
+    const normalizedPrioritySymbols = normalizeSignalMatrixRequestSymbols(
+      payload.prioritySymbols?.length
+        ? payload.prioritySymbols
+        : payload.requestSymbols?.length
+          ? payload.requestSymbols
+          : payload.missingSymbols,
+    );
+    const normalizedTimeframes = normalizeSignalMatrixRequestTimeframes(
+      payload.timeframes,
+    );
+    if (payload.force && normalizedSymbols.length) {
+      const symbolSet = new Set(normalizedSymbols);
+      setSignalMatrixSnapshot((current) => {
+        const nextStates = current.states.filter(
+          (state) => !symbolSet.has(normalizeTickerSymbol(state?.symbol)),
+        );
+        signalMatrixStatesRef.current = nextStates;
+        return {
+          ...current,
+          states: nextStates,
+        };
+      });
+    }
+    setSignalsScreenMatrixRequest((current) => {
+      const sameSymbols = signalMatrixSymbolListsEqual(
+        current.symbols,
+        normalizedSymbols,
+      );
+      const samePrioritySymbols = signalMatrixSymbolListsEqual(
+        current.prioritySymbols || [],
+        normalizedPrioritySymbols,
+      );
+      const sameTimeframes = signalMatrixSymbolListsEqual(
+        current.timeframes || [],
+        normalizedTimeframes,
+      );
+      if (sameSymbols && samePrioritySymbols && sameTimeframes && !payload.force) {
+        return current;
+      }
+      signalMatrixRotationCursorRef.current = 0;
+      return {
+        prioritySymbols: normalizedPrioritySymbols,
+        symbols: normalizedSymbols,
+        timeframes: normalizedTimeframes,
+        revision: current.revision + 1,
+      };
+    });
+  }, []);
+  useEffect(() => {
+    if (signalMatrixRequestActive) {
+      return;
+    }
+    setSignalsScreenMatrixRequest((current) =>
+      current.symbols.length
+        ? {
+            prioritySymbols: [],
+            symbols: [],
+            timeframes: SIGNAL_MATRIX_TIMEFRAMES,
+            revision: current.revision + 1,
+          }
+        : current,
+    );
+  }, [screen, signalMatrixRequestActive]);
   const recentSignalMarketDataSymbols = useMemo(
     () => resolveRecentSignalMarketDataSymbols(signalMonitorStates),
     [signalMonitorStates],
@@ -2873,8 +3164,13 @@ export default function PlatformApp() {
       buildSignalMatrixSymbolSets({
         selectedSymbol: sym,
         visibleWatchlistSymbols: visibleWatchlistMarketDataSymbols,
+        signalsScreenSymbols:
+          signalMatrixRequestActive ? signalsScreenMatrixSymbols : [],
+        signalsScreenPrioritySymbols:
+          signalMatrixRequestActive ? signalsScreenMatrixPrioritySymbols : [],
         openPositionSymbols: openPositionMarketDataSymbols,
         signalMonitorSymbols,
+        signalMonitorUniverseSymbols: signalMonitorDisplaySymbols,
         watchlistSymbols,
         wideLimit: signalMatrixPressureCaps.signalMatrixWideSymbolLimit,
         narrowLimit: signalMatrixPressureCaps.signalMatrixNarrowSymbolLimit,
@@ -2883,7 +3179,14 @@ export default function PlatformApp() {
       openPositionMarketDataSymbols,
       signalMatrixPressureCaps.signalMatrixWideSymbolLimit,
       signalMatrixPressureCaps.signalMatrixNarrowSymbolLimit,
+      signalsScreenMatrixSymbols,
+      signalsScreenMatrixSymbolsKey,
+      signalsScreenMatrixPrioritySymbols,
+      signalsScreenMatrixPrioritySymbolsKey,
+      signalMatrixRequestActive,
+      signalMonitorDisplaySymbols,
       signalMonitorSymbols,
+      screen,
       sym,
       visibleWatchlistMarketDataSymbols,
       watchlistSymbols,
@@ -2908,6 +3211,8 @@ export default function PlatformApp() {
       screenWarmupPhase === "ready" &&
       !startupProtectionActive,
   );
+  const signalMatrixForegroundReady =
+    signalMatrixRequestActive || signalMatrixBackgroundReady;
   useEffect(() => {
     const mountedScreenIds = Object.keys(mountedScreens).filter(
       (screenId) => mountedScreens[screenId],
@@ -3033,6 +3338,7 @@ export default function PlatformApp() {
   ]);
   const signalMatrixPriorityReady = Boolean(
     pageVisible &&
+      signalMatrixForegroundReady &&
       signalMatrixUniverseSymbols.length &&
       signalMonitorDisplayReady &&
       signalMatrixPrioritySymbols.length,
@@ -3041,8 +3347,66 @@ export default function PlatformApp() {
     signalMonitorPollMs,
     signalMatrixPressureCaps.signalMatrixPollMinMs || 0,
   );
+  const signalMatrixActiveScreenRequestSymbolLimit = useMemo(
+    () =>
+      resolveSignalMatrixActiveScreenRequestSymbolLimit(signalMatrixPressureLevel),
+    [signalMatrixPressureLevel],
+  );
+  const signalMatrixActiveScreenRequestTaskLimit = useMemo(
+    () => resolveSignalMatrixActiveScreenRequestTaskLimit(signalMatrixPressureLevel),
+    [signalMatrixPressureLevel],
+  );
+  const signalMatrixRequestTaskLimit = useMemo(() => {
+    if (!signalMatrixRequestActive || !signalsScreenMatrixSymbols.length) {
+      return null;
+    }
+    return signalMatrixActiveScreenRequestTaskLimit;
+  }, [
+    signalMatrixActiveScreenRequestTaskLimit,
+    signalMatrixRequestActive,
+    signalsScreenMatrixSymbols.length,
+  ]);
+  const signalMatrixRequestSymbolLimit = useMemo(() => {
+    if (screen !== "signals") {
+      return null;
+    }
+    if (!signalsScreenMatrixPrioritySymbols.length) {
+      return signalMatrixActiveScreenRequestSymbolLimit;
+    }
+    return Math.min(
+      signalMatrixActiveScreenRequestSymbolLimit,
+      signalsScreenMatrixPrioritySymbols.length,
+    );
+  }, [
+    screen,
+    signalMatrixActiveScreenRequestSymbolLimit,
+    signalsScreenMatrixPrioritySymbols.length,
+  ]);
+  const signalMatrixRequestTimeframes = useMemo(() => {
+    if (signalMatrixRequestActive && signalsScreenMatrixSymbols.length) {
+      return signalsScreenMatrixTimeframes;
+    }
+    return SIGNAL_MATRIX_TIMEFRAMES;
+  }, [
+    signalMatrixRequestActive,
+    signalsScreenMatrixSymbols.length,
+    signalsScreenMatrixTimeframes,
+    signalsScreenMatrixTimeframesKey,
+  ]);
+  const signalMatrixRequestTimeframesKey = useMemo(
+    () => signalMatrixRequestTimeframes.join(","),
+    [signalMatrixRequestTimeframes],
+  );
+  const signalMatrixBusyQueueDelayMs = useMemo(
+    () => resolveSignalMatrixBusyQueueDelayMs(signalMatrixPressureLevel),
+    [signalMatrixPressureLevel],
+  );
+  const signalMatrixCatchupDelayMs = useMemo(
+    () => resolveSignalMatrixCatchupDelayMs(signalMatrixPressureLevel),
+    [signalMatrixPressureLevel],
+  );
   const signalMatrixRuntimeReady = Boolean(
-    platformWorkVisible &&
+    signalMonitorWorkVisible &&
       !startupProtectionActive &&
       signalMatrixUniverseSymbols.length &&
       signalMonitorDisplayReady &&
@@ -3076,22 +3440,27 @@ export default function PlatformApp() {
           .filter(Boolean),
       );
       return signalMatrixBootstrapSymbols.every((symbol) =>
-        SIGNAL_MATRIX_TIMEFRAMES.every((timeframe) =>
+        signalMatrixRequestTimeframes.every((timeframe) =>
           stateKeys.has(`${symbol}:${timeframe}`),
         ),
       );
     },
-    [signalMatrixBootstrapSymbols, signalMatrixSnapshot.states],
+    [
+      signalMatrixBootstrapSymbols,
+      signalMatrixRequestTimeframes,
+      signalMatrixRequestTimeframesKey,
+      signalMatrixSnapshot.states,
+    ],
   );
   const signalMonitorProfileBootstrapPending = Boolean(
-    platformWorkVisible &&
+    signalMonitorWorkVisible &&
       firstScreenReady &&
       !signalMonitorProfileQuery.data &&
       !signalMonitorProfileQuery.isFetched &&
       !signalMonitorProfileQuery.isError,
   );
   const signalMonitorStateBootstrapComplete = Boolean(
-    !platformWorkVisible ||
+    !signalMonitorWorkVisible ||
       !firstScreenReady ||
       signalMonitorProfileQuery.isError ||
       (signalMonitorProfileQuery.isFetched && !signalMonitorProfile?.enabled) ||
@@ -3100,7 +3469,7 @@ export default function PlatformApp() {
       signalMonitorStateQuery.isError,
   );
   const signalHydrationBootstrapActive = Boolean(
-    platformWorkVisible &&
+    signalMonitorWorkVisible &&
       firstScreenReady &&
       !startupProtectionActive &&
       (
@@ -3145,7 +3514,7 @@ export default function PlatformApp() {
         null,
       pollMs: signalMatrixPollMs,
       runtimeReady:
-        platformWorkVisible &&
+        signalMonitorWorkVisible &&
         !startupProtectionActive &&
         signalMatrixUniverseSymbols.length > 0 &&
         signalMonitorDisplayReady &&
@@ -3155,12 +3524,27 @@ export default function PlatformApp() {
       bootstrapComplete: signalMatrixBootstrapComplete,
       profileBootstrapPending: signalMonitorProfileBootstrapPending,
       stateBootstrapComplete: signalMonitorStateBootstrapComplete,
+      activeScreenRequestSymbolLimit: signalMatrixActiveScreenRequestSymbolLimit,
+      activeScreenRequestTaskLimit: signalMatrixActiveScreenRequestTaskLimit,
+      requestSymbolLimit: signalMatrixRequestSymbolLimit,
+      requestTaskLimit: signalMatrixRequestTaskLimit,
+      requestTimeframes: signalMatrixRequestTimeframes,
+      busyQueueDelayMs: signalMatrixBusyQueueDelayMs,
+      catchupDelayMs: signalMatrixCatchupDelayMs,
       requestTimeoutMs: SIGNAL_MATRIX_REQUEST_TIMEOUT_MS,
       inFlight: signalMatrixEvaluationInFlightRef.current,
       inFlightAgeMs:
         signalMatrixEvaluationInFlightRef.current &&
         signalMatrixEvaluationStartedAtRef.current
           ? Math.max(0, Date.now() - signalMatrixEvaluationStartedAtRef.current)
+          : 0,
+      globalInFlight: hasActiveSignalMatrixRequestLease(Date.now()),
+      globalInFlightAgeMs:
+        getSignalMatrixRequestCoordinator().startedAt > 0
+          ? Math.max(
+              0,
+              Date.now() - getSignalMatrixRequestCoordinator().startedAt,
+            )
           : 0,
       queued: signalMatrixQueuedEvaluationRef.current,
       universeSymbols: signalMatrixUniverseSymbols,
@@ -3185,6 +3569,7 @@ export default function PlatformApp() {
             requestSymbols: lastPlan.requestSymbols,
             prioritySymbols: lastPlan.prioritySymbols,
             backgroundSymbols: lastPlan.backgroundSymbols,
+            timeframes: lastPlan.timeframes,
             nextCursor: lastPlan.nextCursor,
             coverage: lastPlan.coverage,
           }
@@ -3202,8 +3587,16 @@ export default function PlatformApp() {
     memoryPressureSignal?.server?.apiPressureLevel,
     memoryPressureSignal?.server?.effectivePressureLevel,
     memoryPressureSignal?.server?.pressureLevel,
-    platformWorkVisible,
+    signalMonitorWorkVisible,
     signalMatrixBackgroundReady,
+    signalMatrixActiveScreenRequestSymbolLimit,
+    signalMatrixActiveScreenRequestTaskLimit,
+    signalMatrixRequestSymbolLimit,
+    signalMatrixRequestTaskLimit,
+    signalMatrixRequestTimeframes,
+    signalMatrixRequestTimeframesKey,
+    signalMatrixBusyQueueDelayMs,
+    signalMatrixCatchupDelayMs,
     signalMatrixPollMs,
     signalMatrixPressureLevel,
     signalMatrixPriorityReady,
@@ -3221,6 +3614,20 @@ export default function PlatformApp() {
     signalMonitorStateBootstrapComplete,
     startupProtectionActive,
   ]);
+  const scheduleSignalMatrixEvaluation = useCallback((delayMs = 0) => {
+    const resolvedDelayMs = Math.max(0, Number(delayMs) || 0);
+    signalMatrixQueuedEvaluationRef.current = true;
+    signalMatrixQueuedEvaluationDelayMsRef.current = resolvedDelayMs;
+    if (signalMatrixQueuedTimerRef.current != null) {
+      window.clearTimeout(signalMatrixQueuedTimerRef.current);
+    }
+    signalMatrixQueuedTimerRef.current = window.setTimeout(() => {
+      signalMatrixQueuedTimerRef.current = null;
+      signalMatrixQueuedEvaluationRef.current = false;
+      signalMatrixQueuedEvaluationDelayMsRef.current = null;
+      signalMatrixRunRef.current?.({ queueIfBusy: true });
+    }, resolvedDelayMs);
+  }, []);
   const evaluateSignalMonitorMatrixMutation = useEvaluateSignalMonitorMatrix({
     mutation: {
       onSuccess: (data) => {
@@ -3228,15 +3635,62 @@ export default function PlatformApp() {
         const skippedSymbols = Array.isArray(data?.skippedSymbols)
           ? data.skippedSymbols
           : [];
+        const profileDisabled = data?.profile?.enabled === false;
+        if (profileDisabled) {
+          signalMatrixQueuedEvaluationRef.current = false;
+          signalMatrixQueuedEvaluationDelayMsRef.current = null;
+          signalMatrixRotationCursorRef.current = 0;
+          signalMatrixLastCatchupQueuedAtRef.current = 0;
+          if (signalMatrixQueuedTimerRef.current != null) {
+            window.clearTimeout(signalMatrixQueuedTimerRef.current);
+            signalMatrixQueuedTimerRef.current = null;
+          }
+        }
         const expectedStateCount =
           (lastPlan?.requestSymbols?.length || 0) *
-          SIGNAL_MATRIX_TIMEFRAMES.length;
+          (lastPlan?.timeframes?.length || SIGNAL_MATRIX_TIMEFRAMES.length);
+        const responseTaskCount = Number(data?.coverage?.taskCount);
+        const expectedResponseStateCount =
+          Number.isFinite(responseTaskCount) && responseTaskCount > 0
+            ? responseTaskCount
+            : expectedStateCount;
+        const responseRequestedSymbols = Number(data?.coverage?.requestedSymbols);
         const partialStatePayload =
-          expectedStateCount > 0 &&
+          !profileDisabled &&
+          expectedResponseStateCount > 0 &&
+          (!Number.isFinite(responseRequestedSymbols) ||
+            responseRequestedSymbols > 0) &&
           (Array.isArray(data?.states) ? data.states.length : 0) <
-            expectedStateCount;
+            expectedResponseStateCount;
+        const activeSignalsCatchupPending = Boolean(
+          !profileDisabled &&
+            signalMatrixCatchupDelayMs != null &&
+          signalsScreenMatrixSymbols.length > 0 &&
+            (lastPlan?.coverage?.missingSymbols || 0) >
+              (lastPlan?.requestSymbols?.length || 0),
+        );
+        const progressiveMatrixCatchupPending = Boolean(
+          !profileDisabled &&
+            signalMatrixCatchupDelayMs != null &&
+            (lastPlan?.coverage?.pendingSymbols || 0) > 0 &&
+            (lastPlan?.requestSymbols?.length || 0) > 0,
+        );
+        const responseStateCount = Array.isArray(data?.states)
+          ? data.states.length
+          : 0;
+        if (
+          progressiveMatrixCatchupPending &&
+          responseStateCount > 0 &&
+          !partialStatePayload
+        ) {
+          signalMatrixRotationCursorRef.current = 0;
+        }
 
-        if (data?.truncated || skippedSymbols.length || partialStatePayload) {
+        if (
+          !profileDisabled &&
+          signalMatrixCatchupDelayMs != null &&
+          (data?.truncated || skippedSymbols.length || partialStatePayload)
+        ) {
           signalMatrixRotationCursorRef.current = 0;
           const nowMs = Date.now();
           if (
@@ -3247,9 +3701,23 @@ export default function PlatformApp() {
             signalMatrixQueuedEvaluationRef.current = true;
             signalMatrixQueuedEvaluationDelayMsRef.current =
               data?.truncated || skippedSymbols.length
-                ? SIGNAL_MATRIX_TRUNCATED_CATCHUP_DELAY_MS
-                : SIGNAL_MATRIX_PARTIAL_CACHE_CATCHUP_DELAY_MS;
+                ? Math.max(
+                    SIGNAL_MATRIX_TRUNCATED_CATCHUP_DELAY_MS,
+                    signalMatrixCatchupDelayMs ?? 0,
+                  )
+                : Math.max(
+                    SIGNAL_MATRIX_PARTIAL_CACHE_CATCHUP_DELAY_MS,
+                    signalMatrixCatchupDelayMs ?? 0,
+                  );
           }
+        } else if (activeSignalsCatchupPending) {
+          signalMatrixQueuedEvaluationRef.current = true;
+          signalMatrixQueuedEvaluationDelayMsRef.current =
+            signalMatrixCatchupDelayMs;
+        } else if (progressiveMatrixCatchupPending) {
+          signalMatrixQueuedEvaluationRef.current = true;
+          signalMatrixQueuedEvaluationDelayMsRef.current =
+            signalMatrixCatchupDelayMs;
         }
 
         setSignalMatrixSnapshot((current) => {
@@ -3279,6 +3747,7 @@ export default function PlatformApp() {
         });
       },
       onSettled: () => {
+        releaseSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current);
         signalMatrixEvaluationInFlightRef.current = false;
         signalMatrixEvaluationStartedAtRef.current = 0;
         if (!signalMatrixQueuedEvaluationRef.current) {
@@ -3288,13 +3757,7 @@ export default function PlatformApp() {
         signalMatrixQueuedEvaluationRef.current = false;
         const delayMs = signalMatrixQueuedEvaluationDelayMsRef.current ?? 0;
         signalMatrixQueuedEvaluationDelayMsRef.current = null;
-        if (signalMatrixQueuedTimerRef.current != null) {
-          window.clearTimeout(signalMatrixQueuedTimerRef.current);
-        }
-        signalMatrixQueuedTimerRef.current = window.setTimeout(() => {
-          signalMatrixQueuedTimerRef.current = null;
-          signalMatrixRunRef.current?.();
-        }, delayMs);
+        scheduleSignalMatrixEvaluation(delayMs);
       },
     },
     request: {
@@ -3303,7 +3766,7 @@ export default function PlatformApp() {
   });
   const runSignalMatrixEvaluation = useCallback((options = {}) => {
     if (
-      !platformWorkVisible ||
+      !signalMonitorWorkVisible ||
       startupProtectionActive ||
       !signalMatrixUniverseSymbols.length ||
       !signalMonitorDisplayReady ||
@@ -3311,26 +3774,68 @@ export default function PlatformApp() {
     ) {
       return;
     }
+    const nowMs = Date.now();
     if (signalMatrixEvaluationInFlightRef.current) {
       if (options.queueIfBusy) {
         signalMatrixQueuedEvaluationRef.current = true;
-        signalMatrixQueuedEvaluationDelayMsRef.current = 0;
+        signalMatrixQueuedEvaluationDelayMsRef.current = Math.max(
+          signalMatrixQueuedEvaluationDelayMsRef.current ?? 0,
+          signalMatrixBusyQueueDelayMs,
+        );
       }
+      return;
+    }
+    const globalRequestInFlight = hasActiveSignalMatrixRequestLease(nowMs);
+    if (globalRequestInFlight) {
+      scheduleSignalMatrixEvaluation(
+        options.queueIfBusy
+          ? Math.max(
+              signalMatrixBusyQueueDelayMs,
+              SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS,
+            )
+          : SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS,
+        );
+      return;
+    }
+    const liveMemoryPressureSignal = getMemoryPressureSnapshot();
+    const liveSignalMatrixPressureLevel = resolveSignalMatrixPressureLevel({
+      memoryPressureLevel:
+        liveMemoryPressureSignal?.level || signalMatrixPressureLevel,
+      server: liveMemoryPressureSignal?.server || memoryPressureSignal?.server,
+    });
+    const liveSignalMatrixRequestTaskLimit =
+      signalMatrixRequestTaskLimit == null
+        ? null
+        : resolveSignalMatrixActiveScreenRequestTaskLimit(
+            liveSignalMatrixPressureLevel,
+          );
+    if (!claimSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current, nowMs)) {
+      scheduleSignalMatrixEvaluation(
+        options.queueIfBusy
+          ? Math.max(
+              signalMatrixBusyQueueDelayMs,
+              SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS,
+            )
+          : SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS,
+      );
       return;
     }
     const plan = buildSignalMatrixRequestPlan({
       symbols: signalMatrixUniverseSymbols,
       prioritySymbols: signalMatrixPrioritySymbols,
       currentStates: signalMatrixStatesRef.current,
-      timeframes: SIGNAL_MATRIX_TIMEFRAMES,
-      pressureLevel: signalMatrixPressureLevel,
+      timeframes: signalMatrixRequestTimeframes,
+      pressureLevel: liveSignalMatrixPressureLevel,
       backgroundReady: signalMatrixBackgroundReady,
       startupProtectionActive,
       cursor: signalMatrixRotationCursorRef.current,
       pollMs: signalMatrixPollMs,
-      nowMs: Date.now(),
+      nowMs,
+      requestSymbolLimit: signalMatrixRequestSymbolLimit,
+      requestTaskLimit: liveSignalMatrixRequestTaskLimit,
     });
     if (!plan.requestSymbols.length) {
+      releaseSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current);
       return;
     }
     signalMatrixRotationCursorRef.current = plan.nextCursor;
@@ -3345,7 +3850,7 @@ export default function PlatformApp() {
         environment: signalMonitorEnvironment,
         watchlistId: null,
         symbols: plan.requestSymbols,
-        timeframes: SIGNAL_MATRIX_TIMEFRAMES,
+        timeframes: plan.timeframes,
         clientRole: workspaceLeader ? "leader" : "follower",
         requestOrigin,
       },
@@ -3353,7 +3858,17 @@ export default function PlatformApp() {
   }, [
     evaluateSignalMonitorMatrixMutation.mutate,
     signalMatrixPressureLevel,
-    platformWorkVisible,
+    signalMatrixRequestSymbolLimit,
+    signalMatrixRequestTaskLimit,
+    signalMatrixRequestTimeframes,
+    signalMatrixRequestTimeframesKey,
+    signalMatrixBusyQueueDelayMs,
+    signalMatrixCatchupDelayMs,
+    scheduleSignalMatrixEvaluation,
+    memoryPressureSignal?.server?.apiPressureLevel,
+    memoryPressureSignal?.server?.effectivePressureLevel,
+    memoryPressureSignal?.server?.pressureLevel,
+    signalMonitorWorkVisible,
     signalMonitorEnvironment,
     signalMatrixBackgroundReady,
     signalMatrixPrioritySymbols,
@@ -3363,12 +3878,24 @@ export default function PlatformApp() {
     signalMatrixSymbolsKey,
     signalMatrixUniverseSymbols,
     signalMonitorDisplayReady,
+    screen,
     startupProtectionActive,
     workspaceLeader,
   ]);
   useEffect(() => {
     signalMatrixRunRef.current = runSignalMatrixEvaluation;
   }, [runSignalMatrixEvaluation]);
+  useEffect(() => {
+    if (!signalMatrixRuntimeReady || !signalsScreenMatrixSymbols.length) {
+      return;
+    }
+    signalMatrixRunRef.current?.({ queueIfBusy: true });
+  }, [
+    signalMatrixRuntimeReady,
+    signalsScreenMatrixRequest.revision,
+    signalsScreenMatrixSymbols.length,
+    signalsScreenMatrixSymbolsKey,
+  ]);
   useEffect(
     () => () => {
       if (signalMatrixQueuedTimerRef.current != null) {
@@ -3395,6 +3922,7 @@ export default function PlatformApp() {
 
       signalMatrixEvaluationInFlightRef.current = false;
       signalMatrixEvaluationStartedAtRef.current = 0;
+      releaseSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current);
       signalMatrixQueuedEvaluationRef.current = false;
       signalMatrixQueuedEvaluationDelayMsRef.current = null;
       signalMatrixRunRef.current?.();
@@ -3804,6 +4332,39 @@ export default function PlatformApp() {
     pushToast,
     updateSignalMonitorProfileMutation,
   ]);
+  const handleApplySignalMonitorPyrusSettings = useCallback((nextSettings) => {
+    const pyrusSignalsSettings = buildSignalMonitorPyrusSettingsPatch(
+      signalMonitorProfile?.pyrusSignalsSettings,
+      nextSettings,
+    );
+    return updateSignalMonitorProfileMutation.mutateAsync(
+      {
+        data: {
+          environment: signalMonitorEnvironment,
+          pyrusSignalsSettings,
+        },
+      },
+      {
+        onSuccess: (profile) => {
+          pushToast({
+            title: "Signal settings applied",
+            body: "Pyrus indicator controls saved; running a fresh scan.",
+            kind: "success",
+          });
+          if (profile?.enabled) {
+            runSignalMonitorEvaluation("incremental");
+            signalMatrixRunRef.current?.({ queueIfBusy: true });
+          }
+        },
+      },
+    );
+  }, [
+    runSignalMonitorEvaluation,
+    signalMonitorEnvironment,
+    signalMonitorProfile?.pyrusSignalsSettings,
+    pushToast,
+    updateSignalMonitorProfileMutation,
+  ]);
   const handleRunSignalMonitorNow = useCallback(() => {
     runSignalMonitorEvaluation("incremental", { notify: true });
   }, [runSignalMonitorEvaluation]);
@@ -3962,6 +4523,7 @@ export default function PlatformApp() {
       watchlistSymbols={watchlistSymbols}
       runtimeWatchlistSymbols={runtimeWatchlistSymbols}
       signalMonitorSymbols={signalMonitorSymbols}
+      signalMonitorDisplaySymbols={signalMonitorDisplaySymbols}
       signalMatrixStates={signalMatrixSnapshot.states}
       marketScreenActive={marketScreenActive}
       flowScreenActive={flowScreenActive}
@@ -3983,6 +4545,8 @@ export default function PlatformApp() {
       onChangeMonitorWatchlist={handleChangeSignalMonitorWatchlist}
       onChangeMonitorFreshWindowBars={handleChangeSignalMonitorFreshWindowBars}
       onChangeMonitorMaxSymbols={handleChangeSignalMonitorMaxSymbols}
+      onApplyPyrusSignalsSettings={handleApplySignalMonitorPyrusSettings}
+      onRequestSignalMatrixHydration={handleRequestSignalMatrixHydration}
       onJumpToTradeFromSignals={handleJumpToTradeFromResearch}
       onJumpToTradeFromFlow={handleJumpToTradeFromFlow}
       onJumpToTradeFromAccount={handleAccountJumpToTrade}
@@ -4017,7 +4581,9 @@ export default function PlatformApp() {
     handleJumpToTradeFromFlow,
     handleJumpToTradeFromResearch,
     handleJumpToTradeFromSignalOptionsCandidate,
+    handleApplySignalMonitorPyrusSettings,
     handleRunSignalMonitorNow,
+    handleRequestSignalMatrixHydration,
     handleScreenReadiness,
     handleSelectSymbol,
     handleSignalAction,
@@ -4033,6 +4599,7 @@ export default function PlatformApp() {
     session,
     sidebarCollapsed,
     signalMatrixSnapshot.states,
+    signalMonitorDisplaySymbols,
     signalMonitorSymbols,
     stockAggregateStreamingEnabled,
     sym,

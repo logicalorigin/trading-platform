@@ -54,8 +54,10 @@ export const OperationsTransitionsStrip = ({
   transitions = [],
   maxInline = 5,
   embedded = false,
+  showEmptyState = true,
 }) => {
   const visible = transitions.slice(0, maxInline);
+  if (!visible.length && !showEmptyState) return null;
   return (
     <div
       data-testid="algo-operations-transitions-strip"

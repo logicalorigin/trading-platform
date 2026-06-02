@@ -50,7 +50,7 @@ const ActionButton = ({ Icon, label, detail, onClick, testId }) => (
     data-testid={testId}
     onClick={onClick}
     style={{
-      minHeight: dim(42),
+      minHeight: dim(44),
       display: "grid",
       gridTemplateColumns: `${dim(22)}px minmax(0, 1fr)`,
       alignItems: "center",
@@ -214,7 +214,7 @@ export const MobileMoreSheet = ({
                 aria-current={active ? "page" : undefined}
                 onClick={() => handleScreenSelect(screen.id)}
                 style={{
-                  minHeight: dim(42),
+                  minHeight: dim(44),
                   display: "flex",
                   alignItems: "center",
                   gap: sp(7),

@@ -1638,7 +1638,19 @@ export function TickerSearchLab() {
   const [selectedTicker, setSelectedTicker] = useState("SPY");
   const [selectedRow, setSelectedRow] = useState(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [compact, setCompact] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 680 : false,
+  );
   const popularTickers = ["SPY", "QQQ", "IWM", "AAPL", "NVDA", "MSFT", "TSLA", "AMD"];
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const media = window.matchMedia("(max-width: 680px)");
+    const syncCompact = () => setCompact(media.matches);
+    syncCompact();
+    media.addEventListener?.("change", syncCompact);
+    return () => media.removeEventListener?.("change", syncCompact);
+  }, []);
 
   return (
     <div
@@ -1648,15 +1660,15 @@ export function TickerSearchLab() {
         color: CSS_COLOR.text,
         fontFamily: T.sans,
         display: "flex",
-        alignItems: "center",
+        alignItems: compact ? "stretch" : "center",
         justifyContent: "center",
-        padding: sp(24),
+        padding: sp(compact ? 12 : 24),
       }}
     >
       <style>{FONT_CSS}</style>
       <div
         style={{
-          width: dim(640),
+          width: compact ? "100%" : "min(860px, calc(100vw - 48px))",
           minHeight: dim(280),
           position: "relative",
           background: CSS_COLOR.bg1,
@@ -1697,6 +1709,7 @@ export function TickerSearchLab() {
         <div
           style={{
             display: "flex",
+            flexDirection: compact ? "column" : "row",
             alignItems: "center",
             justifyContent: "space-between",
             gap: sp(12),
@@ -1754,6 +1767,8 @@ export function TickerSearchLab() {
               cursor: "pointer",
               textTransform: "uppercase",
               letterSpacing: "0.04em",
+              alignSelf: compact ? "stretch" : "center",
+              minHeight: dim(44),
             }}
           >
             Search Symbol
@@ -1765,7 +1780,7 @@ export function TickerSearchLab() {
             fontSize: fs(10),
             color: CSS_COLOR.textDim,
             lineHeight: 1.5,
-            maxWidth: dim(460),
+            maxWidth: compact ? "100%" : dim(560),
           }}
         >
           Search by ticker or company name. Enter selects the top live row; click selects any

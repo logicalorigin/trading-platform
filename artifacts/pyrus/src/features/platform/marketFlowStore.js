@@ -2,6 +2,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import { PYRUS_STORAGE_KEY } from "../../lib/uiTokens";
 import {
   DEFAULT_FLOW_SCANNER_CONFIG,
+  FLOW_SCANNER_CONFIG_VERSION,
   normalizeFlowScannerConfig,
 } from "./marketFlowScannerConfig.js";
 import { providerSummaryHasTransientFlowState } from "./flowSourceState.js";
@@ -74,6 +75,12 @@ let flowScannerControlVersion = 0;
 const DEFAULT_FLOW_SCANNER_ENABLED = true;
 const MANUAL_FLOW_SCANNER_OWNER = "manual";
 
+const buildPersistedFlowScannerConfigPayload = (current, config) => ({
+  ...current,
+  flowScannerConfig: normalizeFlowScannerConfig(config),
+  flowScannerConfigVersion: FLOW_SCANNER_CONFIG_VERSION,
+});
+
 const readPersistedFlowScannerConfig = () => {
   try {
     if (typeof window === "undefined" || !window.localStorage) {
@@ -81,9 +88,30 @@ const readPersistedFlowScannerConfig = () => {
     }
     const raw = window.localStorage.getItem(PYRUS_STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
-    return normalizeFlowScannerConfig(
+    const hasPersistedConfig = Boolean(parsed.flowScannerConfig);
+    const storedVersion = Number(parsed.flowScannerConfigVersion);
+    const isLegacyConfig =
+      hasPersistedConfig &&
+      (!Number.isFinite(storedVersion) ||
+        storedVersion < FLOW_SCANNER_CONFIG_VERSION);
+    const config = normalizeFlowScannerConfig(
       parsed.flowScannerConfig || DEFAULT_FLOW_SCANNER_CONFIG,
     );
+    if (
+      isLegacyConfig &&
+      config.concurrency < DEFAULT_FLOW_SCANNER_CONFIG.concurrency
+    ) {
+      const migrated = normalizeFlowScannerConfig({
+        ...config,
+        concurrency: DEFAULT_FLOW_SCANNER_CONFIG.concurrency,
+      });
+      window.localStorage.setItem(
+        PYRUS_STORAGE_KEY,
+        JSON.stringify(buildPersistedFlowScannerConfigPayload(parsed, migrated)),
+      );
+      return migrated;
+    }
+    return config;
   } catch (_error) {
     return normalizeFlowScannerConfig(DEFAULT_FLOW_SCANNER_CONFIG);
   }
@@ -97,10 +125,7 @@ const persistFlowScannerConfig = (config) => {
     );
     window.localStorage.setItem(
       PYRUS_STORAGE_KEY,
-      JSON.stringify({
-        ...current,
-        flowScannerConfig: normalizeFlowScannerConfig(config),
-      }),
+      JSON.stringify(buildPersistedFlowScannerConfigPayload(current, config)),
     );
   } catch (_error) {}
 };
@@ -331,12 +356,14 @@ export const resetMarketFlowStoreForTests = () => {
   storeEntries.clear();
 };
 
-export const resetFlowScannerControlForTests = () => {
+export const resetFlowScannerControlForTests = ({ readPersisted = false } = {}) => {
   flowScannerOwnerLeases.clear();
   flowScannerControlState = {
     enabled: DEFAULT_FLOW_SCANNER_ENABLED,
     ownerActive: false,
-    config: normalizeFlowScannerConfig(DEFAULT_FLOW_SCANNER_CONFIG),
+    config: readPersisted
+      ? readPersistedFlowScannerConfig()
+      : normalizeFlowScannerConfig(DEFAULT_FLOW_SCANNER_CONFIG),
   };
   notifyFlowScannerControlListeners();
 };

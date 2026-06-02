@@ -272,7 +272,7 @@ test("flowEventsToChartEvents trusts classified side over neutral sentiment", ()
   assert.equal(events[3].metadata.biasBasis, "side");
 });
 
-test("flowEventsToChartEvents reads raw Polygon/Massive trade timestamps", () => {
+test("flowEventsToChartEvents reads raw Massive trade timestamps", () => {
   const events = flowEventsToChartEvents(
     [
       {
@@ -282,7 +282,7 @@ test("flowEventsToChartEvents reads raw Polygon/Massive trade timestamps", () =>
         premium: 125_000,
         sip_timestamp: 1_777_647_120_000_000_000,
         side: "BUY",
-        provider: "polygon",
+        provider: "massive",
       },
     ],
     "SPY",
@@ -290,7 +290,7 @@ test("flowEventsToChartEvents reads raw Polygon/Massive trade timestamps", () =>
 
   assert.equal(events.length, 1);
   assert.equal(events[0].time, "2026-05-01T14:52:00.000Z");
-  assert.equal(events[0].source, "polygon");
+  assert.equal(events[0].source, "massive");
   assert.equal(events[0].bias, "bullish");
   assert.equal(events[0].metadata.timeBasis, "trade_reported");
   assert.equal(events[0].metadata.chartTimeSourceField, "sip_timestamp");
@@ -308,7 +308,7 @@ test("flowEventsToChartEvents uses provider trade time before update and observe
         occurredAt: "2026-05-01T19:58:00.000Z",
         updatedAt: "2026-05-01T19:59:00.000Z",
         side: "BUY",
-        provider: "polygon",
+        provider: "massive",
       },
     ],
     "SPY",
@@ -375,7 +375,7 @@ test("flowEventsToChartEvents combines separate trade date and time in New York 
         tradeDate: "2026-05-01",
         tradeTime: "09:52:15",
         side: "BUY",
-        provider: "polygon",
+        provider: "massive",
       },
     ],
     "SPY",
@@ -564,7 +564,7 @@ test("mergeFlowEventFeeds keeps distinct trade rows without ids", () => {
     [
       {
         ticker: "SPY",
-        provider: "polygon",
+        provider: "massive",
         basis: "trade",
         optionTicker: "SPY260515C00500000",
         cp: "C",
@@ -578,7 +578,7 @@ test("mergeFlowEventFeeds keeps distinct trade rows without ids", () => {
       },
       {
         ticker: "SPY",
-        provider: "polygon",
+        provider: "massive",
         basis: "trade",
         optionTicker: "SPY260515C00500000",
         cp: "C",
@@ -602,7 +602,7 @@ test("mergeFlowEventFeeds dedupes the same confirmed trade with different ids", 
       {
         id: "live-print",
         ticker: "SPY",
-        provider: "polygon",
+        provider: "massive",
         basis: "trade",
         sourceBasis: "confirmed_trade",
         optionTicker: "SPY260515C00500000",
@@ -620,7 +620,7 @@ test("mergeFlowEventFeeds dedupes the same confirmed trade with different ids", 
       {
         id: "history-print",
         ticker: "SPY",
-        provider: "polygon",
+        provider: "massive",
         basis: "trade",
         sourceBasis: "confirmed_trade",
         optionTicker: "SPY260515C00500000",
@@ -646,7 +646,7 @@ test("mergeFlowEventFeeds keeps confirmed trades and snapshot activity separate 
       {
         id: "provider-reused-id",
         ticker: "SPY",
-        provider: "polygon",
+        provider: "massive",
         basis: "trade",
         sourceBasis: "confirmed_trade",
         optionTicker: "SPY260515C00500000",
@@ -693,7 +693,7 @@ test("mergeFlowEventFeeds keeps confirmed source-basis rows separate from snapsh
       {
         id: "provider-reused-stale-id",
         ticker: "SPY",
-        provider: "polygon",
+        provider: "massive",
         basis: "snapshot",
         sourceBasis: "confirmed_trade",
         optionTicker: "SPY260515C00500000",

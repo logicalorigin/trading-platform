@@ -24,6 +24,18 @@ const recordOrEmpty = (value) =>
 
 const arrayOrEmpty = (value) => (Array.isArray(value) ? value : []);
 
+const hostFromUrl = (value) => {
+  const text = String(value || "").trim();
+  if (!text) {
+    return null;
+  }
+  try {
+    return new URL(text).host || null;
+  } catch {
+    return null;
+  }
+};
+
 const formatRuntimeDuration = (durationMs) => {
   const ms = Number(durationMs);
   if (!Number.isFinite(ms) || ms <= 0) {
@@ -160,7 +172,7 @@ const formatMassiveRestRequestSummary = (request) => {
 
 const fallbackMassiveWebSocketFromLineUsage = (lineUsageSnapshot) => {
   const stockAggregates = recordOrEmpty(lineUsageSnapshot?.streams?.stockAggregates);
-  const delayedWebSocket = recordOrEmpty(stockAggregates.polygonDelayedWebSocket);
+  const delayedWebSocket = recordOrEmpty(stockAggregates.massiveDelayedWebSocket);
   const providerIdentity = String(
     delayedWebSocket.providerIdentity ||
       stockAggregates.provider ||
@@ -240,7 +252,13 @@ export const normalizeMassiveRuntimeDiagnostics = (
   lineUsageSnapshot = null,
 ) => {
   const massive = recordOrEmpty(runtimeDiagnostics?.providers?.massive);
-  const rest = recordOrEmpty(massive.rest);
+  const rest = {
+    status: massive.status,
+    lastSuccessAt: massive.lastSuccessAt,
+    lastFailureAt: massive.lastFailureAt,
+    lastError: massive.lastError,
+    ...recordOrEmpty(massive.rest),
+  };
   const fallbackWebSocket = fallbackMassiveWebSocketFromLineUsage(lineUsageSnapshot);
   const websocket = {
     ...fallbackWebSocket,
@@ -272,7 +290,10 @@ export const normalizeMassiveRuntimeDiagnostics = (
   return {
     configured: massive.configured === true || fallbackConfigured,
     providerIdentity: massive.providerIdentity || (fallbackConfigured ? "massive" : null),
-    baseUrlHost: massive.baseUrlHost || null,
+    baseUrlHost: massive.baseUrlHost || hostFromUrl(massive.baseUrl),
+    lastSuccessAt: rest.lastSuccessAt || null,
+    lastFailureAt: rest.lastFailureAt || null,
+    lastError: rest.lastError || null,
     stocksRealtimeConfigured:
       massive.stocksRealtimeConfigured === true ||
       (fallbackConfigured && websocket.mode === "real-time"),
@@ -284,7 +305,9 @@ export const normalizeMassiveRuntimeDiagnostics = (
       label: providerStatusLabel(restStatus),
       tone: providerStatusTone(restStatus),
       lastRequest: Object.keys(lastRequest).length ? lastRequest : null,
-      lastRequestSummary: formatMassiveRestRequestSummary(lastRequest),
+      lastRequestSummary: Object.keys(lastRequest).length
+        ? formatMassiveRestRequestSummary(lastRequest)
+        : MISSING_VALUE,
       lastRequestAt: lastRequest.observedAt || null,
       lastDurationMs: lastRestDurationMs,
       recentRequests: arrayOrEmpty(rest.recentRequests),
@@ -702,6 +725,24 @@ const normalizeLineAllocation = (admission, lineUsageSnapshot = null) => {
       allocation.scannerRotatingLineCount,
       admission?.portfolio?.scannerRotating?.activeLineCount,
     ),
+    shadowAccountLineCount: firstFiniteNumber(
+      allocation.shadowAccountLineCount,
+      admission?.shadowAccount?.activeLineCount,
+      admission?.ownerClasses?.shadowAccount?.activeLineCount,
+      admission?.ownerClasses?.summaries?.["shadow-account"]?.activeLineCount,
+    ),
+    shadowAccountCacheFallbackLineCount: firstFiniteNumber(
+      allocation.shadowAccountCacheFallbackLineCount,
+      admission?.shadowAccount?.activeFallbackProviderLineCounts?.cache,
+      admission?.ownerClasses?.shadowAccount?.activeFallbackProviderLineCounts?.cache,
+      admission?.ownerClasses?.summaries?.["shadow-account"]?.activeFallbackProviderLineCounts?.cache,
+    ),
+    shadowAccountMassiveFallbackLineCount: firstFiniteNumber(
+      allocation.shadowAccountMassiveFallbackLineCount,
+      admission?.shadowAccount?.activeFallbackProviderLineCounts?.massive,
+      admission?.ownerClasses?.shadowAccount?.activeFallbackProviderLineCounts?.massive,
+      admission?.ownerClasses?.summaries?.["shadow-account"]?.activeFallbackProviderLineCounts?.massive,
+    ),
     rotatingReclaimableLineCount: firstFiniteNumber(
       allocation.rotatingReclaimableLineCount,
       admission?.portfolio?.rotatingReclaimableLineCount,
@@ -825,6 +866,64 @@ const normalizeSignalOptionsLineUsage = (admission, lineUsageSnapshot = null) =>
   };
 };
 
+const normalizeShadowAccountLineUsage = (admission, lineUsageSnapshot = null) => {
+  const shadowAccount =
+    (lineUsageSnapshot?.shadowAccount &&
+    typeof lineUsageSnapshot.shadowAccount === "object"
+      ? lineUsageSnapshot.shadowAccount
+      : null) ||
+    (admission?.shadowAccount && typeof admission.shadowAccount === "object"
+      ? admission.shadowAccount
+      : null) ||
+    (admission?.ownerClasses?.shadowAccount &&
+    typeof admission.ownerClasses.shadowAccount === "object"
+      ? admission.ownerClasses.shadowAccount
+      : null) ||
+    (admission?.ownerClasses?.summaries?.["shadow-account"] &&
+    typeof admission.ownerClasses.summaries["shadow-account"] === "object"
+      ? admission.ownerClasses.summaries["shadow-account"]
+      : {});
+  const providerLineCounts =
+    shadowAccount.activeFallbackProviderLineCounts &&
+    typeof shadowAccount.activeFallbackProviderLineCounts === "object"
+      ? shadowAccount.activeFallbackProviderLineCounts
+      : {};
+  const used = firstFiniteNumber(shadowAccount.activeLineCount, 0);
+  const cacheFallbackLineCount = firstFiniteNumber(providerLineCounts.cache, 0);
+  const massiveFallbackLineCount = firstFiniteNumber(providerLineCounts.massive, 0);
+  const rejectedCount = firstFiniteNumber(shadowAccount.recentRejectedCount, 0);
+  const detail =
+    rejectedCount > 0
+      ? `${formatRuntimeCount(rejectedCount)} recent rejected`
+      : cacheFallbackLineCount > 0
+        ? `${formatRuntimeCount(cacheFallbackLineCount)} cache fallback`
+        : massiveFallbackLineCount > 0
+          ? `${formatRuntimeCount(massiveFallbackLineCount)} Massive fallback`
+          : used > 0
+            ? "IBKR live"
+            : "idle";
+  const streamState =
+    rejectedCount > 0 ? "capacity-limited" : used > 0 ? "healthy" : "no-subscribers";
+
+  return {
+    ...shadowAccount,
+    used,
+    activeLineCount: used,
+    cacheFallbackLineCount,
+    massiveFallbackLineCount,
+    leaseCount: firstFiniteNumber(shadowAccount.leaseCount, 0),
+    ownerCount: firstFiniteNumber(shadowAccount.ownerCount, 0),
+    requestedLineCount: firstFiniteNumber(
+      shadowAccount.recentRequestedLineCount,
+      used,
+    ),
+    rejectedCount,
+    detail,
+    streamState,
+    tone: streamStateTokenVar(streamState),
+  };
+};
+
 export const isOptionsFlowScannerRuntimeActive = (admission) => {
   const scanner = admission?.optionsFlowScanner;
   if (!scanner || typeof scanner !== "object") {
@@ -917,6 +1016,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
     const warmup = normalizeWarmupCoverage(lineUsageSnapshot);
     const allocation = normalizeLineAllocation(null, lineUsageSnapshot);
     const signalOptions = normalizeSignalOptionsLineUsage(null, lineUsageSnapshot);
+    const shadowAccount = normalizeShadowAccountLineUsage(null, lineUsageSnapshot);
     return {
       schemaVersion: RUNTIME_CONTROL_SCHEMA_VERSION,
       available: false,
@@ -937,6 +1037,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
       },
       flowScanner: { used: null, cap: null, free: null },
       signalOptions,
+      shadowAccount,
       total: { used: null, cap: null, free: null },
       bridge,
       drift,
@@ -957,6 +1058,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
   const warmup = normalizeWarmupCoverage(lineUsageSnapshot);
   const allocation = normalizeLineAllocation(admission, lineUsageSnapshot);
   const signalOptions = normalizeSignalOptionsLineUsage(admission, lineUsageSnapshot);
+  const shadowAccount = normalizeShadowAccountLineUsage(admission, lineUsageSnapshot);
   const pools = {};
   const rows = POOL_ORDER.map(([id, fallbackLabel]) => {
     const pool = poolUsage[id] || {};
@@ -1121,6 +1223,7 @@ export const normalizeAdmissionDiagnostics = (admission, lineUsageSnapshot = nul
     accountMonitor: pools["account-monitor"],
     flowScanner: pools["flow-scanner"],
     signalOptions,
+    shadowAccount,
     total,
     bridge,
     drift,

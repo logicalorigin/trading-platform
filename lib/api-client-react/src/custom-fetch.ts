@@ -806,6 +806,7 @@ async function executeFetch<T = unknown>(input: {
         method: input.method,
         headers: input.headers,
       });
+      dispatchApiPressureHeaderEvent(response, input.requestInfo);
 
       if (!response.ok) {
         if (
@@ -841,6 +842,40 @@ async function executeFetch<T = unknown>(input: {
       timed.cleanup();
     }
   }
+}
+
+function dispatchApiPressureHeaderEvent(
+  response: Response,
+  requestInfo: { method: string; url: string },
+): void {
+  if (
+    typeof window === "undefined" ||
+    typeof window.dispatchEvent !== "function" ||
+    typeof CustomEvent === "undefined"
+  ) {
+    return;
+  }
+
+  const pressureLevel = response.headers.get("x-pyrus-pressure-level");
+  const admissionAction = response.headers.get("x-pyrus-admission-action");
+  const admissionReason = response.headers.get("x-pyrus-admission-reason");
+  if (!pressureLevel && !admissionAction && !admissionReason) {
+    return;
+  }
+
+  window.dispatchEvent(
+    new CustomEvent("pyrus:api-pressure", {
+      detail: {
+        pressureLevel,
+        admissionAction,
+        admissionReason,
+        status: response.status,
+        method: requestInfo.method,
+        url: requestInfo.url,
+        observedAt: new Date().toISOString(),
+      },
+    }),
+  );
 }
 
 export function resetCustomFetchDedupeForTests(): void {

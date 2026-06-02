@@ -1,3 +1,8 @@
+import {
+  hasCurrentSignalDirection,
+  isCurrentFreshSignalState,
+} from "../signals/signalStateFreshness.js";
+
 export const WATCHLIST_ROW_SOURCE = Object.freeze({
   WATCHLIST: "watchlist",
   MONITOR: "monitor",
@@ -11,12 +16,11 @@ export const WATCHLIST_SORT_MODE = Object.freeze({
   ALPHA: "alpha",
 });
 
-export const WATCHLIST_SIGNAL_TIMEFRAMES = Object.freeze(["2m", "5m", "15m"]);
+export const WATCHLIST_SIGNAL_TIMEFRAMES = Object.freeze(["1m", "2m", "5m", "15m", "1h"]);
 
 export const normalizeWatchlistSymbol = (value) =>
   value?.trim?.().toUpperCase?.() || "";
 
-const isSignalDirection = (value) => value === "buy" || value === "sell";
 const normalizeSignalTimeframe = (value) =>
   WATCHLIST_SIGNAL_TIMEFRAMES.includes(String(value || "").trim())
     ? String(value || "").trim()
@@ -71,10 +75,10 @@ const normalizeIdentityFields = (item) => ({
 });
 
 export const getSignalSortBucket = (state) => {
-  if (!state || !isSignalDirection(state.currentSignalDirection)) {
+  if (!state || !hasCurrentSignalDirection(state)) {
     return 2;
   }
-  return state.fresh ? 0 : 1;
+  return isCurrentFreshSignalState(state) ? 0 : 1;
 };
 
 export const buildSignalMatrixBySymbol = (states = []) => {
@@ -94,8 +98,8 @@ export const buildSignalMatrixBySymbol = (states = []) => {
 export const getBestWatchlistSignalState = (statesByTimeframe = {}) => {
   const matrixStates = WATCHLIST_SIGNAL_TIMEFRAMES.map(
     (timeframe) => statesByTimeframe?.[timeframe],
-  ).filter((state) => isSignalDirection(state?.currentSignalDirection));
-  const freshState = matrixStates.find((state) => state?.fresh);
+  ).filter(hasCurrentSignalDirection);
+  const freshState = matrixStates.find(isCurrentFreshSignalState);
   if (freshState) return freshState;
   const sorted = [...matrixStates].sort((left, right) => {
     const leftBars = Number.isFinite(left?.barsSinceSignal) ? left.barsSinceSignal : Infinity;

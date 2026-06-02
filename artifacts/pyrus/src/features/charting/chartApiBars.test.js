@@ -169,7 +169,7 @@ test("resolveBrokerChartSourceState warns when an intraday stock chart is stuck 
 test("resolveBrokerChartSourceState identifies delayed fallback feeds", () => {
   const state = resolveBrokerChartSourceState({
     latestBar: {
-      source: "polygon-delayed-websocket",
+      source: "massive-delayed-websocket",
       freshness: "delayed",
       marketDataMode: "delayed",
       delayed: true,
@@ -228,7 +228,7 @@ test("resolveOptionChartSourceState exposes stale cached option history", () => 
   assert.equal(state.freshness, "stale");
 });
 
-test("resolveOptionChartSourceState labels mixed IBKR and Polygon option history", () => {
+test("resolveOptionChartSourceState labels mixed IBKR and Massive option history", () => {
   const state = resolveOptionChartSourceState({
     identityReady: true,
     latestBar: {
@@ -243,10 +243,10 @@ test("resolveOptionChartSourceState labels mixed IBKR and Polygon option history
     responseFreshness: "live",
   });
 
-  assert.equal(state.label, "IBKR + Polygon history");
+  assert.equal(state.label, "IBKR + Massive history");
   assert.equal(state.state, "historical");
   assert.equal(state.shortLabel, "MIXED");
-  assert.equal(state.sourceLabel, "IBKR + Polygon history");
+  assert.equal(state.sourceLabel, "IBKR + Massive history");
   assert.equal(state.tone, "neutral");
   assert.equal(state.freshness, "live");
   assert.equal(state.isRealtime, false);

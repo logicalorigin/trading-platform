@@ -358,8 +358,16 @@ export const ChartParityLab = () => {
   const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
   const requestedScenario = params.get("scenario");
   const requestedLayout = params.get("layout");
+  const initialViewportLayout: LayoutMode =
+    typeof window !== "undefined" && window.innerWidth < 900 ? "narrow" : "desktop";
   const [scenarioId, setScenarioId] = useState(requestedScenario || "core");
-  const [layout, setLayout] = useState<LayoutMode>(requestedLayout === "narrow" ? "narrow" : "desktop");
+  const [layout, setLayout] = useState<LayoutMode>(
+    requestedLayout === "narrow"
+      ? "narrow"
+      : requestedLayout === "desktop"
+        ? "desktop"
+        : initialViewportLayout,
+  );
   const [pyrusSignalsSettings, setPyrusSignalsSettings] = useState(() => ({
     ...DEFAULT_PYRUS_SIGNALS_SETTINGS,
   }));
@@ -439,7 +447,7 @@ export const ChartParityLab = () => {
         background: THEME.bg0,
         color: THEME.text,
         fontFamily: THEME.sans,
-        padding: 20,
+        padding: layout === "desktop" ? 20 : 12,
       }}
     >
       <div style={{ maxWidth: shellWidth, margin: "0 auto", display: "flex", flexDirection: "column", gap: 12 }}>

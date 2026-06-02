@@ -6,7 +6,7 @@ test("mapFlowEventToUi does not default unknown option right to puts", () => {
   const mapped = mapFlowEventToUi({
     id: "unknown-right",
     underlying: "SPY",
-    provider: "polygon",
+    provider: "massive",
     basis: "trade",
     occurredAt: "2026-05-06T14:30:00.000Z",
     expirationDate: "2026-05-08",

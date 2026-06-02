@@ -1,4 +1,5 @@
 import { WATCHLIST_SIGNAL_TIMEFRAMES } from "./watchlistModel.js";
+import { getCurrentSignalDirection } from "../signals/signalStateFreshness.js";
 
 export const HEADER_SIGNAL_MAX_ITEMS = 24;
 export const HEADER_UNUSUAL_MAX_ITEMS = 28;
@@ -123,7 +124,7 @@ export const buildHeaderSignalTapeItems = (
 
   (snapshot?.states || []).forEach((state) => {
     const symbol = normalizeSymbol(state?.symbol);
-    const direction = normalizeDirection(state?.currentSignalDirection);
+    const direction = getCurrentSignalDirection(state);
     if (!symbol || !direction || state?.active === false) return;
 
     const timeframe = state?.timeframe || "";

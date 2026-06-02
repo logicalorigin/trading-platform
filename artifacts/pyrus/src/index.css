@@ -1466,14 +1466,19 @@ html[data-pyrus-reduced-motion="on"] .ra-segmented-indicator {
 }
 
 .ra-pressure-mini-cluster {
-  max-width: 240px;
+  max-width: 360px;
   transition: max-width var(--ra-motion-standard) var(--ra-motion-ease);
 }
 
+.ra-pressure-mini-slot {
+  min-width: 0;
+}
+
 .ra-pressure-mini-label {
-  max-width: 80px;
+  max-width: 72px;
   opacity: 1;
   overflow: hidden;
+  text-overflow: ellipsis;
   transition:
     opacity var(--ra-motion-fast) var(--ra-motion-ease),
     max-width var(--ra-motion-standard) var(--ra-motion-ease);
@@ -1481,6 +1486,7 @@ html[data-pyrus-reduced-motion="on"] .ra-segmented-indicator {
 
 @media (prefers-reduced-motion: reduce) {
   .ra-pressure-mini-cluster,
+  .ra-pressure-mini-slot,
   .ra-pressure-mini-label {
     transition: opacity var(--ra-motion-fast) var(--ra-motion-ease);
   }
@@ -1488,6 +1494,8 @@ html[data-pyrus-reduced-motion="on"] .ra-segmented-indicator {
 
 html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-cluster,
 html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-cluster,
+html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-slot,
+html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-slot,
 html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-label,
 html[data-pyrus-reduced-motion="on"] .ra-pressure-mini-label {
   transition: opacity var(--ra-motion-fast) var(--ra-motion-ease);

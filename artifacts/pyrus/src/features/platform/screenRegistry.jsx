@@ -13,6 +13,12 @@ export const ScreenLoadingFallback = ({ screenId, error = null }) => (
 );
 
 const SCREEN_ROUTE_SHELLS = {
+  market: {
+    title: "Market",
+    eyebrow: "Market workspace",
+    detail: "Loading quote context, chart frame, and market activity.",
+    lanes: ["Chart", "Activity", "Market context"],
+  },
   account: {
     title: "Account",
     eyebrow: "Portfolio workspace",
@@ -42,6 +48,36 @@ const SCREEN_ROUTE_SHELLS = {
     eyebrow: "Chart workspace",
     detail: "Loading the active spot chart before secondary panels.",
     lanes: ["Spot chart", "Option chain", "Ticket"],
+  },
+  research: {
+    title: "Research",
+    eyebrow: "Research workspace",
+    detail: "Loading market research, earnings context, and news panels.",
+    lanes: ["Research stream", "Earnings", "News"],
+  },
+  algo: {
+    title: "Algo",
+    eyebrow: "Automation cockpit",
+    detail: "Loading deployment controls, signal candidates, and operations state.",
+    lanes: ["Deployments", "Signal candidates", "Operations"],
+  },
+  backtest: {
+    title: "Backtest",
+    eyebrow: "Strategy lab",
+    detail: "Loading draft strategies, validation tools, and backtest results.",
+    lanes: ["Drafts", "Validation", "Results"],
+  },
+  diagnostics: {
+    title: "Diagnostics",
+    eyebrow: "System diagnostics",
+    detail: "Loading runtime health, API traces, and debugging controls.",
+    lanes: ["Runtime", "API traces", "Controls"],
+  },
+  settings: {
+    title: "Settings",
+    eyebrow: "Workspace settings",
+    detail: "Loading preferences, layout controls, and account configuration.",
+    lanes: ["Preferences", "Layout", "Connections"],
   },
 };
 
@@ -95,7 +131,9 @@ const ScreenRouteShell = ({ screenId, error = null }) => {
           >
             {shell.eyebrow}
           </div>
-          <h1
+          <div
+            role="heading"
+            aria-level={2}
             style={{
               margin: "3px 0 0",
               color: "var(--ra-text-primary)",
@@ -106,7 +144,7 @@ const ScreenRouteShell = ({ screenId, error = null }) => {
             }}
           >
             {shell.title}
-          </h1>
+          </div>
         </div>
         <span
           style={{

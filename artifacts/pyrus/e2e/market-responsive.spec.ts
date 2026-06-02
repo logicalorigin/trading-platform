@@ -248,7 +248,7 @@ async function mockMarketApi(
           historical: "ibkr",
           research: "fmp",
         },
-        configured: { polygon: false, ibkr: Boolean(options.ibkrStreaming), research: false },
+        configured: { massive: false, ibkr: Boolean(options.ibkrStreaming), research: false },
         ibkrBridge: options.ibkrStreaming
           ? {
               authenticated: true,
@@ -396,9 +396,9 @@ async function openMarket(
           ticker,
           tf: "15m",
           market: "stocks",
-          provider: index % 2 === 0 ? "ibkr" : "polygon",
+          provider: index % 2 === 0 ? "ibkr" : "massive",
           tradeProvider: "ibkr",
-          dataProviderPreference: "polygon",
+          dataProviderPreference: "massive",
           providerContractId: String(320_000_000 + index),
           studies: ["ema21", "vwap", "pyrusSignals"],
         })),
@@ -745,7 +745,7 @@ test("Market chart grid drag-pans inactive plots without selecting or snapping t
     "data-chart-range-identity",
   );
   expect(inactiveIdentity).not.toContain("320000001");
-  expect(inactiveIdentity).not.toContain("polygon");
+  expect(inactiveIdentity).not.toContain("massive");
   await expect(inactiveSurface).toHaveAttribute(
     "data-chart-viewport-user-touched",
     "false",

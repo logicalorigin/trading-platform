@@ -4,10 +4,17 @@ import {
   buildSignalMatrixRequestPlan,
   buildSignalMatrixSymbolSets,
   mergeSignalMatrixStates,
+  resolveSignalMatrixActiveScreenRequestTaskLimit,
+  resolveSignalMatrixActiveScreenRequestSymbolLimit,
+  resolveSignalMatrixBusyQueueDelayMs,
+  resolveSignalMatrixCatchupDelayMs,
   signalMatrixStatesEqual,
 } from "./signalMatrixScheduler.js";
 
-const hydratedStates = (symbols, timeframes = ["2m", "5m", "15m"]) =>
+const hydratedStates = (
+  symbols,
+  timeframes = ["1m", "2m", "5m", "15m", "1h"],
+) =>
   symbols.flatMap((symbol) =>
     timeframes.map((timeframe) => ({
       symbol,
@@ -66,6 +73,59 @@ test("signal matrix symbol sets prioritize suggested signal rows before open-pos
   assert.deepEqual(sets.universeSymbols.slice(0, 12), sets.prioritySymbols);
 });
 
+test("signal matrix symbol sets hydrate display-only signal rows as background universe", () => {
+  const sets = buildSignalMatrixSymbolSets({
+    selectedSymbol: "SPY",
+    visibleWatchlistSymbols: ["SPY"],
+    signalMonitorSymbols: ["NVDA"],
+    signalMonitorUniverseSymbols: ["NVDA", "PLTR", "IONQ", "RKLB"],
+    watchlistSymbols: ["SPY"],
+    wideLimit: 8,
+    narrowLimit: 3,
+  });
+
+  assert.deepEqual(sets.suggestedSignalSymbols, ["NVDA"]);
+  assert.deepEqual(sets.prioritySymbols, ["SPY", "NVDA"]);
+  assert.deepEqual(sets.universeSymbols, [
+    "SPY",
+    "NVDA",
+    "PLTR",
+    "IONQ",
+    "RKLB",
+  ]);
+});
+
+test("signal matrix symbol sets prioritize signal bubbles and active Signals table rows", () => {
+  const sets = buildSignalMatrixSymbolSets({
+    selectedSymbol: "SPY",
+    visibleWatchlistSymbols: ["SPY"],
+    signalsScreenSymbols: ["PLTR", "IONQ", "RKLB", "SOFI", "HOOD", "COIN"],
+    signalsScreenPrioritySymbols: ["HOOD", "PLTR"],
+    signalMonitorUniverseSymbols: [
+      "PLTR",
+      "IONQ",
+      "RKLB",
+      "SOFI",
+      "HOOD",
+      "COIN",
+    ],
+    watchlistSymbols: ["SPY"],
+    wideLimit: 8,
+    narrowLimit: 4,
+  });
+
+  assert.deepEqual(sets.prioritySymbols, ["SPY", "HOOD", "PLTR"]);
+  assert.deepEqual(sets.universeSymbols, [
+    "SPY",
+    "PLTR",
+    "IONQ",
+    "RKLB",
+    "SOFI",
+    "HOOD",
+    "COIN",
+  ]);
+});
+
 test("signal matrix scheduler sends missing priority symbols first", () => {
   const plan = buildSignalMatrixRequestPlan({
     symbols: [
@@ -90,114 +150,86 @@ test("signal matrix scheduler sends missing priority symbols first", () => {
   assert.deepEqual(plan.backgroundSymbols, [
     "AAPL",
     "MSFT",
-    "TSLA",
-    "AMD",
-    "META",
-    "IWM",
-    "DIA",
   ]);
   assert.equal(plan.coverage.totalSymbols, 10);
-  assert.equal(plan.coverage.requestSymbols, 10);
-  assert.equal(plan.coverage.requestSymbolLimit, 24);
+  assert.equal(plan.coverage.requestSymbols, 5);
+  assert.equal(plan.coverage.requestSymbolLimit, 5);
+  assert.equal(plan.coverage.requestTaskLimit, 25);
+  assert.equal(plan.coverage.requestTaskCount, 25);
+  assert.equal(plan.coverage.requestedTaskCount, 50);
+  assert.equal(plan.coverage.pendingSymbols, 5);
+  assert.equal(plan.coverage.queuedTaskCount, 25);
   assert.equal(plan.coverage.hydratedSymbols, 0);
   assert.equal(plan.coverage.missingSymbols, 10);
   assert.equal(plan.backgroundPaused, false);
 });
 
-test("signal matrix scheduler hydrates watch pressure batches to the server cap", () => {
+test("signal matrix scheduler chunks full automatic coverage under watch pressure", () => {
+  const symbols = [
+    "SPY",
+    "QQQ",
+    "AAPL",
+    "NVDA",
+    "MSFT",
+    "TSLA",
+    "AMD",
+    "META",
+    "IWM",
+    "DIA",
+    "PLTR",
+    "COIN",
+    "HOOD",
+    "RBLX",
+    "RKLB",
+    "SMCI",
+    "VXX",
+    "VIXY",
+    "AVGO",
+    "AMZN",
+  ];
   const plan = buildSignalMatrixRequestPlan({
-    symbols: [
-      "SPY",
-      "QQQ",
-      "AAPL",
-      "NVDA",
-      "MSFT",
-      "TSLA",
-      "AMD",
-      "META",
-      "IWM",
-      "DIA",
-      "PLTR",
-      "COIN",
-      "HOOD",
-      "RBLX",
-      "RKLB",
-      "SMCI",
-      "VXX",
-      "VIXY",
-      "AVGO",
-      "AMZN",
-    ],
-    prioritySymbols: [
-      "SPY",
-      "QQQ",
-      "AAPL",
-      "NVDA",
-      "MSFT",
-      "TSLA",
-      "AMD",
-      "META",
-      "IWM",
-      "DIA",
-      "PLTR",
-      "COIN",
-      "HOOD",
-      "RBLX",
-      "RKLB",
-      "SMCI",
-      "VXX",
-      "VIXY",
-      "AVGO",
-      "AMZN",
-    ],
+    symbols,
+    prioritySymbols: symbols,
     pressureLevel: "watch",
     backgroundReady: true,
     pollMs: 60_000,
   });
 
-  assert.deepEqual(plan.prioritySymbols, [
-    "SPY",
-    "QQQ",
-    "AAPL",
-    "NVDA",
-    "MSFT",
-    "TSLA",
-    "AMD",
-    "META",
-    "IWM",
-    "DIA",
-    "PLTR",
-    "COIN",
-    "HOOD",
-    "RBLX",
-    "RKLB",
-    "SMCI",
-    "VXX",
-    "VIXY",
-  ]);
-  assert.deepEqual(plan.requestSymbols, [
-    "SPY",
-    "QQQ",
-    "AAPL",
-    "NVDA",
-    "MSFT",
-    "TSLA",
-    "AMD",
-    "META",
-    "IWM",
-    "DIA",
-    "PLTR",
-    "COIN",
-    "HOOD",
-    "RBLX",
-    "RKLB",
-    "SMCI",
-    "VXX",
-    "VIXY",
-  ]);
-  assert.equal(plan.coverage.requestSymbols, 18);
-  assert.equal(plan.coverage.requestSymbolLimit, 18);
-  assert.equal(plan.coverage.estimatedFullCycleMs, 120_000);
+  assert.deepEqual(plan.timeframes, ["1m", "2m", "5m", "15m", "1h"]);
+  assert.deepEqual(plan.prioritySymbols, symbols.slice(0, 5));
+  assert.deepEqual(plan.requestSymbols, symbols.slice(0, 5));
+  assert.equal(plan.coverage.requestSymbols, 5);
+  assert.equal(plan.coverage.requestSymbolLimit, 5);
+  assert.equal(plan.coverage.requestTaskLimit, 25);
+  assert.equal(plan.coverage.requestTaskCount, 25);
+  assert.equal(plan.coverage.requestedTaskCount, 100);
+  assert.equal(plan.coverage.pendingSymbols, 15);
+  assert.equal(plan.coverage.queuedTaskCount, 75);
+  assert.equal(plan.coverage.estimatedFullCycleMs, 240_000);
+});
+
+test("signal matrix scheduler keeps all five timeframes while chunking large coverage", () => {
+  const symbols = Array.from(
+    { length: 90 },
+    (_value, index) => `SYM${index + 1}`,
+  );
+  const plan = buildSignalMatrixRequestPlan({
+    symbols,
+    prioritySymbols: symbols,
+    backgroundReady: true,
+    pollMs: 60_000,
+  });
+
+  assert.deepEqual(plan.timeframes, ["1m", "2m", "5m", "15m", "1h"]);
+  assert.deepEqual(plan.requestSymbols, symbols.slice(0, 5));
+  assert.equal(plan.coverage.timeframes, 5);
+  assert.equal(plan.coverage.requestTaskLimit, 25);
+  assert.equal(plan.coverage.requestTaskCount, 25);
+  assert.equal(plan.coverage.requestedTaskCount, 450);
+  assert.equal(plan.coverage.pendingSymbols, 85);
+  assert.equal(plan.coverage.queuedTaskCount, 425);
+  assert.equal(plan.coverage.hydratedSymbols, 0);
+  assert.equal(plan.coverage.missingSymbols, 90);
 });
 
 test("signal matrix scheduler skips hydrated priority rows and fills missing background rows", () => {
@@ -224,18 +256,14 @@ test("signal matrix scheduler skips hydrated priority rows and fills missing bac
       "QQQ",
       "IWM",
     ],
-    prioritySymbols: [
-      "SPY",
-      "NVDA",
-      "DIA",
-    ],
+    prioritySymbols: ["SPY", "NVDA", "DIA"],
     currentStates: hydratedStates(["SPY", "NVDA", "DIA"]),
     backgroundReady: true,
     cursor: 0,
     pollMs: 60_000,
   });
 
-  assert.equal(plan.requestSymbols.length, 17);
+  assert.equal(plan.requestSymbols.length, 5);
   assert.deepEqual(plan.prioritySymbols, []);
   assert.deepEqual(plan.backgroundSymbols, [
     "AAPL",
@@ -243,22 +271,13 @@ test("signal matrix scheduler skips hydrated priority rows and fills missing bac
     "TSLA",
     "TQQQ",
     "SQQQ",
-    "PLTR",
-    "COIN",
-    "HOOD",
-    "RBLX",
-    "RKLB",
-    "SMCI",
-    "VXX",
-    "VIXY",
-    "AMD",
-    "AVGO",
-    "QQQ",
-    "IWM",
   ]);
   assert.equal(plan.coverage.hydratedSymbols, 3);
   assert.equal(plan.coverage.missingSymbols, 17);
-  assert.equal(plan.coverage.estimatedFullCycleMs, 60_000);
+  assert.equal(plan.coverage.pendingSymbols, 12);
+  assert.equal(plan.coverage.requestTaskCount, 25);
+  assert.equal(plan.coverage.requestedTaskCount, 85);
+  assert.equal(plan.coverage.estimatedFullCycleMs, 240_000);
   assert.equal(plan.backgroundPaused, false);
 });
 
@@ -266,9 +285,14 @@ test("signal matrix scheduler rotates stale priority symbols instead of starving
   const plan = buildSignalMatrixRequestPlan({
     symbols: ["SPY", "NVDA", "DIA", "AAPL", "MSFT", "TSLA"],
     prioritySymbols: ["SPY", "NVDA", "DIA", "AAPL", "MSFT", "TSLA"],
-    currentStates: hydratedStates(
-      ["SPY", "NVDA", "DIA", "AAPL", "MSFT", "TSLA"],
-    ).map((state) => ({
+    currentStates: hydratedStates([
+      "SPY",
+      "NVDA",
+      "DIA",
+      "AAPL",
+      "MSFT",
+      "TSLA",
+    ]).map((state) => ({
       ...state,
       latestBarAt: "2026-05-28T20:00:00.000Z",
       lastEvaluatedAt: "2026-05-28T20:00:00.000Z",
@@ -279,23 +303,9 @@ test("signal matrix scheduler rotates stale priority symbols instead of starving
     nowMs: Date.parse("2026-05-28T20:05:00.000Z"),
   });
 
-  assert.deepEqual(plan.prioritySymbols, [
-    "AAPL",
-    "MSFT",
-    "TSLA",
-    "SPY",
-    "NVDA",
-    "DIA",
-  ]);
-  assert.deepEqual(plan.requestSymbols, [
-    "AAPL",
-    "MSFT",
-    "TSLA",
-    "SPY",
-    "NVDA",
-    "DIA",
-  ]);
-  assert.equal(plan.nextCursor, 3);
+  assert.deepEqual(plan.prioritySymbols, ["AAPL", "MSFT", "TSLA", "SPY", "NVDA"]);
+  assert.deepEqual(plan.requestSymbols, ["AAPL", "MSFT", "TSLA", "SPY", "NVDA"]);
+  assert.equal(plan.nextCursor, 2);
 });
 
 test("signal matrix scheduler uses recent evaluation time to avoid requeueing hydrated after-hours rows", () => {
@@ -321,23 +331,69 @@ test("signal matrix scheduler uses recent evaluation time to avoid requeueing hy
   assert.equal(plan.coverage.missingSymbols, 1);
 });
 
+test("signal matrix scheduler treats terminal unavailable cells as evaluated", () => {
+  const terminalStates = ["1m", "2m", "5m", "15m", "1h"].map((timeframe) => ({
+    symbol: "AMD",
+    timeframe,
+    status: "unavailable",
+    latestBarAt: null,
+    lastEvaluatedAt: "2026-05-28T20:05:00.000Z",
+    lastError: "No broker history bars were available for this symbol.",
+  }));
+  const plan = buildSignalMatrixRequestPlan({
+    symbols: ["AMD"],
+    prioritySymbols: ["AMD"],
+    currentStates: terminalStates,
+    backgroundReady: true,
+    pollMs: 60_000,
+    nowMs: Date.parse("2026-05-28T20:05:30.000Z"),
+  });
+
+  assert.deepEqual(plan.requestSymbols, []);
+  assert.equal(plan.coverage.hydratedSymbols, 1);
+  assert.equal(plan.coverage.missingSymbols, 0);
+});
+
+test("signal matrix scheduler retries old terminal unavailable cells", () => {
+  const terminalStates = ["1m", "2m", "5m", "15m", "1h"].map((timeframe) => ({
+    symbol: "AMD",
+    timeframe,
+    status: "unavailable",
+    latestBarAt: null,
+    lastEvaluatedAt: "2026-05-28T20:05:00.000Z",
+    lastError: "No broker history bars were available for this symbol.",
+  }));
+  const plan = buildSignalMatrixRequestPlan({
+    symbols: ["AMD"],
+    prioritySymbols: ["AMD"],
+    currentStates: terminalStates,
+    backgroundReady: true,
+    pollMs: 60_000,
+    nowMs: Date.parse("2026-05-28T20:12:00.000Z"),
+  });
+
+  assert.deepEqual(plan.requestSymbols, ["AMD"]);
+  assert.equal(plan.coverage.hydratedSymbols, 0);
+  assert.equal(plan.coverage.missingSymbols, 1);
+});
+
 test("signal matrix scheduler rehydrates stale Massive-backed signal bubbles", () => {
   const plan = buildSignalMatrixRequestPlan({
     symbols: ["SPY", "NVDA", "DIA", "AAPL"],
     prioritySymbols: ["NVDA", "SPY"],
     currentStates: [
-      ...hydratedStates(["SPY"], ["2m", "5m", "15m"]).map((state) => ({
+      ...hydratedStates(["SPY"]).map((state) => ({
         ...state,
         latestBarAt: "2026-05-28T20:10:00.000Z",
       })),
-      ...hydratedStates(["NVDA"], ["2m", "5m", "15m"]).map((state) => ({
+      ...hydratedStates(["NVDA"]).map((state) => ({
         ...state,
         latestBarAt:
           state.timeframe === "2m"
             ? "2026-05-28T20:08:00.000Z"
             : "2026-05-28T20:15:00.000Z",
       })),
-      ...hydratedStates(["DIA"], ["2m", "5m", "15m"]).map((state) => ({
+      ...hydratedStates(["DIA"]).map((state) => ({
         ...state,
         latestBarAt: "2026-05-28T20:15:00.000Z",
       })),
@@ -372,13 +428,13 @@ test("signal matrix scheduler keeps bounded background rotation under critical p
     backgroundReady: true,
   });
 
-  assert.deepEqual(plan.prioritySymbols, ["SPY", "QQQ", "AAPL", "NVDA", "MSFT"]);
+  assert.deepEqual(plan.prioritySymbols, ["SPY", "QQQ"]);
   assert.deepEqual(plan.backgroundSymbols, []);
-  assert.deepEqual(plan.requestSymbols, ["SPY", "QQQ", "AAPL", "NVDA", "MSFT"]);
+  assert.deepEqual(plan.requestSymbols, ["SPY", "QQQ"]);
   assert.equal(plan.backgroundPaused, true);
 });
 
-test("signal matrix scheduler defers background-only work under high pressure", () => {
+test("signal matrix scheduler keeps background hydration under high pressure", () => {
   const plan = buildSignalMatrixRequestPlan({
     symbols: ["SPY", "QQQ", "AAPL", "NVDA", "MSFT"],
     prioritySymbols: ["SPY", "QQQ"],
@@ -389,10 +445,10 @@ test("signal matrix scheduler defers background-only work under high pressure", 
   });
 
   assert.deepEqual(plan.prioritySymbols, []);
-  assert.deepEqual(plan.backgroundSymbols, []);
-  assert.deepEqual(plan.requestSymbols, []);
-  assert.equal(plan.backgroundReady, false);
-  assert.equal(plan.backgroundPaused, true);
+  assert.deepEqual(plan.backgroundSymbols, ["AAPL", "NVDA", "MSFT"]);
+  assert.deepEqual(plan.requestSymbols, ["AAPL", "NVDA", "MSFT"]);
+  assert.equal(plan.backgroundReady, true);
+  assert.equal(plan.backgroundPaused, false);
   assert.equal(plan.coverage.missingSymbols, 3);
 });
 
@@ -427,6 +483,175 @@ test("signal matrix scheduler still hydrates priority symbols before background 
   assert.deepEqual(plan.prioritySymbols, ["QQQ"]);
   assert.equal(plan.backgroundSymbols.length, 0);
   assert.equal(plan.backgroundPaused, true);
+});
+
+test("signal matrix scheduler treats active Signals table rows as foreground hydration", () => {
+  const symbols = [
+    "PLTR",
+    "MSFT",
+    "NVDA",
+    "IONQ",
+    "TSLA",
+    "META",
+    "AMZN",
+    "GOOGL",
+    "AMD",
+    "AVGO",
+    "QQQ",
+    "SPY",
+    "SMH",
+    "AAPL",
+    "SOFI",
+    "HOOD",
+    "COIN",
+    "RKLB",
+  ];
+  const plan = buildSignalMatrixRequestPlan({
+    symbols,
+    prioritySymbols: symbols,
+    backgroundReady: false,
+    cursor: 0,
+    pollMs: 60_000,
+  });
+
+  assert.deepEqual(plan.prioritySymbols, symbols.slice(0, 5));
+  assert.deepEqual(plan.requestSymbols, symbols.slice(0, 5));
+  assert.deepEqual(plan.backgroundSymbols, []);
+  assert.equal(plan.backgroundPaused, true);
+  assert.equal(plan.coverage.missingSymbols, symbols.length);
+  assert.equal(plan.coverage.requestSymbolLimit, 5);
+  assert.equal(plan.coverage.requestTaskLimit, 25);
+  assert.equal(plan.coverage.requestTaskCount, 25);
+  assert.equal(plan.coverage.requestedTaskCount, 90);
+  assert.equal(plan.coverage.pendingSymbols, 13);
+  assert.equal(plan.coverage.queuedTaskCount, 65);
+  assert.equal(plan.coverage.estimatedFullCycleMs, 240_000);
+});
+
+test("signal matrix scheduler honors explicit Signals screen chunks when background is ready", () => {
+  const symbols = Array.from(
+    { length: 90 },
+    (_value, index) => `SIG${index + 1}`,
+  );
+  const prioritySymbols = symbols.slice(0, 12);
+  const plan = buildSignalMatrixRequestPlan({
+    symbols,
+    prioritySymbols,
+    backgroundReady: true,
+    cursor: 0,
+    pollMs: 60_000,
+    requestSymbolLimit: prioritySymbols.length,
+  });
+
+  assert.deepEqual(plan.prioritySymbols, prioritySymbols.slice(0, 5));
+  assert.deepEqual(plan.requestSymbols, prioritySymbols.slice(0, 5));
+  assert.deepEqual(plan.backgroundSymbols, []);
+  assert.equal(plan.backgroundPaused, true);
+  assert.equal(plan.coverage.requestSymbolLimit, 5);
+  assert.equal(plan.coverage.requestTaskCount, 25);
+  assert.equal(plan.coverage.requestedTaskCount, 450);
+  assert.equal(plan.coverage.pendingSymbols, 85);
+  assert.equal(plan.coverage.queuedTaskCount, 425);
+  assert.equal(plan.coverage.missingSymbols, symbols.length);
+});
+
+test("signal matrix active screen limits stay full until critical pressure", () => {
+  assert.equal(
+    resolveSignalMatrixActiveScreenRequestSymbolLimit("normal"),
+    250,
+  );
+  assert.equal(resolveSignalMatrixActiveScreenRequestSymbolLimit("watch"), 250);
+  assert.equal(resolveSignalMatrixActiveScreenRequestSymbolLimit("high"), 250);
+  assert.equal(
+    resolveSignalMatrixActiveScreenRequestSymbolLimit("critical"),
+    8,
+  );
+  assert.equal(resolveSignalMatrixActiveScreenRequestSymbolLimit("bogus"), 250);
+});
+
+test("signal matrix active screen task limits hydrate a full STA page under normal pressure", () => {
+  const symbols = Array.from(
+    { length: 30 },
+    (_value, index) => `STA${index + 1}`,
+  );
+  const plan = buildSignalMatrixRequestPlan({
+    symbols,
+    prioritySymbols: symbols,
+    backgroundReady: false,
+    cursor: 0,
+    pollMs: 60_000,
+    requestTaskLimit:
+      resolveSignalMatrixActiveScreenRequestTaskLimit("normal"),
+  });
+
+  assert.deepEqual(plan.requestSymbols, symbols);
+  assert.equal(plan.coverage.requestSymbolLimit, 30);
+  assert.equal(plan.coverage.requestTaskLimit, 150);
+  assert.equal(plan.coverage.requestTaskCount, 150);
+  assert.equal(plan.coverage.requestedTaskCount, 150);
+  assert.equal(plan.coverage.pendingSymbols, 0);
+  assert.equal(plan.coverage.queuedTaskCount, 0);
+});
+
+test("signal matrix active screen task limits still constrain critical pressure", () => {
+  const symbols = ["SPY", "QQQ", "IWM", "DIA", "NVDA", "TSLA", "AAPL", "MSFT"];
+  const plan = buildSignalMatrixRequestPlan({
+    symbols,
+    prioritySymbols: symbols,
+    backgroundReady: false,
+    cursor: 0,
+    pollMs: 60_000,
+    pressureLevel: "critical",
+    requestTaskLimit:
+      resolveSignalMatrixActiveScreenRequestTaskLimit("critical"),
+  });
+
+  assert.deepEqual(plan.requestSymbols, ["SPY", "QQQ"]);
+  assert.equal(plan.coverage.requestSymbolLimit, 2);
+  assert.equal(plan.coverage.requestTaskLimit, 10);
+  assert.equal(plan.coverage.requestTaskCount, 10);
+  assert.equal(plan.coverage.pendingSymbols, 6);
+});
+
+test("signal matrix catchup and busy queue delays back off under pressure", () => {
+  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("normal"), 150);
+  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("watch"), 150);
+  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("high"), 60);
+  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("critical"), 10);
+  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("bogus"), 150);
+
+  assert.equal(resolveSignalMatrixBusyQueueDelayMs("normal"), 0);
+  assert.equal(resolveSignalMatrixBusyQueueDelayMs("watch"), 2_500);
+  assert.equal(resolveSignalMatrixBusyQueueDelayMs("high"), 15_000);
+  assert.equal(resolveSignalMatrixBusyQueueDelayMs("critical"), 60_000);
+
+  assert.equal(resolveSignalMatrixCatchupDelayMs("normal"), 1_500);
+  assert.equal(resolveSignalMatrixCatchupDelayMs("watch"), 5_000);
+  assert.equal(resolveSignalMatrixCatchupDelayMs("high"), 15_000);
+  assert.equal(resolveSignalMatrixCatchupDelayMs("critical"), null);
+});
+
+test("signal matrix request plan chunks critical active pressure before API admission", () => {
+  const symbols = ["SPY", "QQQ", "IWM", "DIA", "NVDA", "TSLA", "AAPL", "MSFT"];
+  const plan = buildSignalMatrixRequestPlan({
+    symbols,
+    prioritySymbols: symbols,
+    backgroundReady: false,
+    cursor: 0,
+    pollMs: 60_000,
+    pressureLevel: "critical",
+    requestSymbolLimit:
+      resolveSignalMatrixActiveScreenRequestSymbolLimit("critical"),
+  });
+
+  assert.deepEqual(plan.requestSymbols, ["SPY", "QQQ"]);
+  assert.equal(plan.coverage.requestSymbolLimit, 2);
+  assert.equal(plan.coverage.requestTaskLimit, 10);
+  assert.equal(plan.coverage.requestTaskCount, 10);
+  assert.equal(plan.coverage.requestedTaskCount, 40);
+  assert.equal(plan.coverage.pendingSymbols, 6);
+  assert.equal(plan.coverage.queuedTaskCount, 30);
+  assert.equal(plan.coverage.estimatedFullCycleMs, 240_000);
 });
 
 test("signal matrix merge updates touched states without dropping untouched symbols", () => {
@@ -507,10 +732,11 @@ test("signal matrix merge keeps other timeframes when one timeframe refreshes", 
   });
 
   assert.equal(merged.length, 3);
-  assert.deepEqual(
-    merged.map((state) => state.timeframe).sort(),
-    ["15m", "2m", "5m"],
-  );
+  assert.deepEqual(merged.map((state) => state.timeframe).sort(), [
+    "15m",
+    "2m",
+    "5m",
+  ]);
   assert.equal(
     merged.find((state) => state.timeframe === "5m").currentSignalDirection,
     "buy",

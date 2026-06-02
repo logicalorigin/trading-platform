@@ -16,7 +16,12 @@ import {
   resetMarketFlowStoreForTests,
   setFlowScannerControlState,
 } from "./marketFlowStore.js";
-import { FLOW_SCANNER_MODE } from "./marketFlowScannerConfig.js";
+import {
+  DEFAULT_FLOW_SCANNER_CONFIG,
+  FLOW_SCANNER_CONFIG_VERSION,
+  FLOW_SCANNER_MODE,
+} from "./marketFlowScannerConfig.js";
+import { PYRUS_STORAGE_KEY } from "../../lib/uiTokens.jsx";
 
 const buildLiveSnapshot = (symbol) => ({
   ...EMPTY_MARKET_FLOW_SNAPSHOT,
@@ -39,6 +44,16 @@ const buildEmptySnapshotWithSource = (symbol, source) => ({
     },
   },
 });
+
+const createMemoryStorage = () => {
+  const entries = new Map();
+  return {
+    getItem: (key) => (entries.has(key) ? entries.get(key) : null),
+    setItem: (key, value) => entries.set(key, String(value)),
+    removeItem: (key) => entries.delete(key),
+    clear: () => entries.clear(),
+  };
+};
 
 test("marketFlowStore does not allocate entries for missing snapshot reads", () => {
   resetMarketFlowStoreForTests();
@@ -224,6 +239,50 @@ test("flow scanner control state normalizes and shares scanner settings", () => 
   assert.equal(state.config.mode, FLOW_SCANNER_MODE.market);
   assert.equal(state.config.maxSymbols, 2000);
   assert.equal(state.config.batchSize, 250);
+});
+
+test("flow scanner control migrates legacy persisted concurrency caps", () => {
+  const previousWindow = globalThis.window;
+  const localStorage = createMemoryStorage();
+  globalThis.window = { localStorage };
+
+  try {
+    localStorage.setItem(
+      PYRUS_STORAGE_KEY,
+      JSON.stringify({
+        flowScannerConfig: {
+          ...DEFAULT_FLOW_SCANNER_CONFIG,
+          concurrency: 2,
+        },
+      }),
+    );
+
+    resetFlowScannerControlForTests({ readPersisted: true });
+
+    const state = getFlowScannerControlState();
+    const persisted = JSON.parse(localStorage.getItem(PYRUS_STORAGE_KEY));
+    assert.equal(state.config.concurrency, DEFAULT_FLOW_SCANNER_CONFIG.concurrency);
+    assert.equal(
+      persisted.flowScannerConfig.concurrency,
+      DEFAULT_FLOW_SCANNER_CONFIG.concurrency,
+    );
+    assert.equal(
+      persisted.flowScannerConfigVersion,
+      FLOW_SCANNER_CONFIG_VERSION,
+    );
+
+    setFlowScannerControlState({ config: { concurrency: 2 } });
+    const current = JSON.parse(localStorage.getItem(PYRUS_STORAGE_KEY));
+    assert.equal(current.flowScannerConfig.concurrency, 2);
+    assert.equal(current.flowScannerConfigVersion, FLOW_SCANNER_CONFIG_VERSION);
+  } finally {
+    if (previousWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = previousWindow;
+    }
+    resetFlowScannerControlForTests();
+  }
 });
 
 test("flow scanner owner leases prevent stale cleanup from disabling an active owner", () => {

@@ -98,6 +98,27 @@ test("buildHeaderSignalTapeItems merges active state and recent events", () => {
   assert.equal(items[0].fresh, true);
 });
 
+test("buildHeaderSignalTapeItems ignores stale current-state directions", () => {
+  const items = buildHeaderSignalTapeItems(
+    {
+      states: [
+        {
+          id: "stale-spy-state",
+          symbol: "SPY",
+          timeframe: "5m",
+          status: "stale",
+          currentSignalDirection: "buy",
+          currentSignalAt: "2026-04-27T15:55:00Z",
+          active: true,
+        },
+      ],
+    },
+    { nowMs: Date.parse("2026-04-27T16:00:00Z") },
+  );
+
+  assert.deepEqual(items, []);
+});
+
 test("buildHeaderSignalTapeItems sorts newest signal first", () => {
   const items = buildHeaderSignalTapeItems(
     {
@@ -178,7 +199,7 @@ test("buildHeaderSignalTapeItems attaches interval context to 5m signal pills", 
   );
 
   assert.equal(items.length, 1);
-  assert.deepEqual(items[0].intervalTimeframes, ["2m", "5m", "15m"]);
+  assert.deepEqual(items[0].intervalTimeframes, ["1m", "2m", "5m", "15m", "1h"]);
   assert.equal(items[0].intervalStates["2m"].currentSignalDirection, "sell");
   assert.equal(items[0].intervalStates["5m"].currentSignalDirection, "buy");
   assert.equal(items[0].intervalStates["5m"].barsSinceSignal, 0);

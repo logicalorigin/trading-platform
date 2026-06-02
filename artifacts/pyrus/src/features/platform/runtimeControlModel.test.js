@@ -767,6 +767,57 @@ test("normalizes signal option quote usage separately from flow scanner demand",
   assert.equal(normalized.signalOptions.streamState, "capacity-limited");
 });
 
+test("normalizes shadow account quote usage separately from visible demand", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 4,
+    budget: {
+      maxLines: 200,
+      visibleLineCap: 200,
+    },
+    shadowAccount: {
+      activeLineCount: 2,
+      leaseCount: 2,
+      ownerCount: 2,
+      recentRequestedLineCount: 2,
+      recentRejectedCount: 0,
+      activeFallbackProviderLineCounts: {
+        cache: 2,
+        massive: 0,
+      },
+    },
+    ownerClasses: {
+      summaries: {
+        "shadow-account": {
+          activeLineCount: 2,
+        },
+      },
+    },
+    allocation: {
+      shadowAccountLineCount: 2,
+      shadowAccountCacheFallbackLineCount: 2,
+      shadowAccountMassiveFallbackLineCount: 0,
+    },
+    poolUsage: {
+      visible: {
+        id: "visible",
+        activeLineCount: 4,
+        maxLines: 200,
+        effectiveMaxLines: 200,
+        remainingLineCount: 196,
+      },
+    },
+  });
+
+  assert.equal(normalized.pools.visible.used, 4);
+  assert.equal(normalized.shadowAccount.used, 2);
+  assert.equal(normalized.shadowAccount.cacheFallbackLineCount, 2);
+  assert.equal(normalized.shadowAccount.massiveFallbackLineCount, 0);
+  assert.equal(normalized.shadowAccount.detail, "2 cache fallback");
+  assert.equal(normalized.shadowAccount.streamState, "healthy");
+  assert.equal(normalized.allocation.shadowAccountLineCount, 2);
+  assert.equal(normalized.allocation.shadowAccountCacheFallbackLineCount, 2);
+});
+
 test("drops obsolete convenience allocation fields from normalized rows", () => {
   const normalized = normalizeAdmissionDiagnostics({
     activeLineCount: 84,

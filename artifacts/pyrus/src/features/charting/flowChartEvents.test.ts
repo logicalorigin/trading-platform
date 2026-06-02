@@ -386,7 +386,7 @@ test("buildFlowChartBuckets dedupes live and historical copies before totaling",
       flowEvent({
         id: "live-print",
         metadata: {
-          provider: "polygon",
+          provider: "massive",
           basis: "trade",
           sourceBasis: "confirmed_trade",
           optionTicker: "AAPL260515C00200000",
@@ -403,7 +403,7 @@ test("buildFlowChartBuckets dedupes live and historical copies before totaling",
       flowEvent({
         id: "history-print",
         metadata: {
-          provider: "polygon",
+          provider: "massive",
           basis: "trade",
           sourceBasis: "confirmed_trade",
           optionTicker: "AAPL260515C00200000",
@@ -433,7 +433,7 @@ test("buildFlowChartBuckets keeps confirmed prints and snapshot activity separat
     flowEvent({
       id: "same-candle-confirmed",
       metadata: {
-        provider: "polygon",
+        provider: "massive",
         basis: "trade",
         sourceBasis: "confirmed_trade",
         optionTicker: "SPY260515C00500000",

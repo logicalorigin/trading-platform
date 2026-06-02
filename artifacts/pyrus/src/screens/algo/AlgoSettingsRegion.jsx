@@ -35,6 +35,7 @@ import {
   SETTINGS_SECTIONS,
   countDirtyFieldsBySection,
   formatSettingValue,
+  getSettingFieldByPath,
   getPathValue,
   isNumericSettingType,
 } from "./algoSettingsFields";
@@ -131,7 +132,7 @@ const compactUnitLabel = (field) => {
   if (field.unit === "seconds") return "sec";
   if (field.unit === "bars") return "bars";
   if (field.unit === "days") return "d";
-  if (field.unit === "matches") return "of 3";
+  if (field.unit === "matches") return "of 5";
   return field.unit;
 };
 
@@ -1456,6 +1457,15 @@ export const ExitLadderTrack = ({
       dirty: dirtyFieldKeys.has(fieldKey(field)),
     };
   });
+  const markerByKey = Object.fromEntries(
+    markers.map((marker) => [marker.key, marker]),
+  );
+  const trackDirty = markers.some((marker) => marker.dirty);
+  const trackStatus = [
+    `stop ${formatPctLabel(markerByKey["hard-stop"]?.positionValue)}`,
+    `trail ${formatPctLabel(markerByKey["trail-activation"]?.positionValue)}`,
+    `lock ${formatPctLabel(markerByKey["min-locked"]?.positionValue)}`,
+  ].join(" / ");
   const lossMin = Math.min(
     ...markers
       .filter((marker) => marker.side === "loss")
@@ -1522,11 +1532,54 @@ export const ExitLadderTrack = ({
     <div
       className="algo-cell--full"
       data-testid="algo-exit-track"
+      role="group"
+      aria-label="Primary stop track"
       style={{
+        display: "grid",
+        gap: sp(7),
         minWidth: 0,
-        padding: sp("10px 0 4px"),
+        padding: sp("8px 9px 9px"),
+        border: `1px solid ${
+          trackDirty ? cssColorMix(CSS_COLOR.accent, 34) : CSS_COLOR.borderLight
+        }`,
+        borderRadius: dim(RADII.sm),
+        background: trackDirty ? cssColorMix(CSS_COLOR.accent, 5) : CSS_COLOR.bg1,
       }}
     >
+      <span
+        style={{
+          display: "grid",
+          gap: sp(2),
+          minWidth: 0,
+        }}
+      >
+        <span
+          style={{
+            color: CSS_COLOR.textMuted,
+            fontFamily: T.sans,
+            fontSize: textSize("micro"),
+            fontWeight: FONT_WEIGHTS.label,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+          }}
+        >
+          Primary Stop Track
+        </span>
+        <span
+          className="tnum"
+          style={{
+            color: CSS_COLOR.textSec,
+            fontFamily: T.data,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.emphasis,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {trackStatus}
+        </span>
+      </span>
       <div
         style={{
           position: "relative",
@@ -1765,6 +1818,455 @@ const ExpandedLimitsSection = ({
   </section>
 );
 
+const fieldMapForItem = (item) =>
+  Object.fromEntries((item.fields || []).map((field) => [field.path, field]));
+
+const formatExitPct = (value) => {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? `${numericValue.toFixed(0)}%` : "-";
+};
+
+const formatExitBars = (value) => {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? `${Math.round(numericValue)}b` : "-";
+};
+
+const wireRungLabel = (rung) =>
+  ({
+    wire3: "W3",
+    wire2: "W2",
+    wire1: "W1",
+    trendLine: "TL",
+  })[rung] || String(rung || "-");
+
+const ExitGroupShell = ({
+  testId,
+  title,
+  status,
+  statusTone = CSS_COLOR.textSec,
+  action,
+  children,
+}) => (
+  <div
+    className="algo-cell--full"
+    data-testid={testId}
+    role="group"
+    aria-label={title}
+    style={{
+      display: "grid",
+      gap: sp(7),
+      minWidth: 0,
+      padding: sp("8px 9px 9px"),
+      border: `1px solid ${CSS_COLOR.borderLight}`,
+      borderRadius: dim(RADII.sm),
+      background: CSS_COLOR.bg1,
+    }}
+  >
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) auto",
+        alignItems: "center",
+        gap: sp(6),
+        minWidth: 0,
+      }}
+    >
+      <span
+        style={{
+          display: "grid",
+          gap: sp(2),
+          minWidth: 0,
+        }}
+      >
+        <span
+          style={{
+            color: CSS_COLOR.textMuted,
+            fontFamily: T.sans,
+            fontSize: textSize("micro"),
+            fontWeight: FONT_WEIGHTS.label,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+          }}
+        >
+          {title}
+        </span>
+        <span
+          className="tnum"
+          style={{
+            color: statusTone,
+            fontFamily: T.data,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.emphasis,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {status}
+        </span>
+      </span>
+      {action}
+    </div>
+    {children}
+  </div>
+);
+
+const ExitHeaderToggle = ({
+  field,
+  profileDraft,
+  disabled,
+  dirtyFieldKeys,
+  patchProfileDraftPath,
+}) => {
+  const checked = Boolean(getPathValue(profileDraft, field.path));
+  const dirty = dirtyFieldKeys.has(fieldKey(field));
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: sp(4),
+      }}
+    >
+      {dirty ? (
+        <span
+          role="status"
+          aria-label={`${field.label} unsaved`}
+          style={{
+            width: dim(5),
+            height: dim(5),
+            borderRadius: dim(RADII.pill),
+            background: CSS_COLOR.accent,
+          }}
+        />
+      ) : null}
+      <CompactSwitch
+        checked={checked}
+        disabled={disabled}
+        ariaLabel={field.label}
+        testId={`algo-exit-toggle-${field.path}`}
+        onChange={(nextValue) => patchProfileDraftPath(field.path, nextValue)}
+      />
+    </span>
+  );
+};
+
+const ExitFieldGrid = ({
+  fields,
+  profileDraft,
+  profileBaseline,
+  patchProfileDraftPath,
+  disabled,
+  dirtyFieldKeys,
+  impact,
+}) => (
+  <div className="algo-settings-grid">
+    {fields.filter(Boolean).map((field) => (
+      <CompactSettingCell
+        key={`${field.slice}.${field.path}`}
+        item={field}
+        profileDraft={profileDraft}
+        profileBaseline={profileBaseline}
+        strategySettingsDraft={null}
+        strategyBaseline={null}
+        patchProfileDraftPath={patchProfileDraftPath}
+        patchStrategySettingsPath={() => {}}
+        disabled={disabled}
+        dirtyFieldKeys={dirtyFieldKeys}
+        impact={impact}
+      />
+    ))}
+  </div>
+);
+
+const ProgressiveTrailPreview = ({ steps }) => {
+  const visibleSteps = Array.isArray(steps) ? steps.slice(0, 4) : [];
+  if (!visibleSteps.length) {
+    return (
+      <div
+        data-testid="algo-progressive-trail-preview"
+        style={{
+          color: CSS_COLOR.textDim,
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
+        }}
+      >
+        No progressive steps
+      </div>
+    );
+  }
+  return (
+    <div
+      data-testid="algo-progressive-trail-preview"
+      data-algo-pocket-grid="two"
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(78px, 1fr))",
+        gap: sp(3),
+        minWidth: 0,
+      }}
+    >
+      {visibleSteps.map((step, index) => (
+        <span
+          key={`${step.activationPct}-${index}`}
+          title={`Activation ${formatExitPct(step.activationPct)}, lock ${formatExitPct(step.minLockedGainPct)}, giveback ${formatExitPct(step.givebackPct)}`}
+          style={{
+            minWidth: 0,
+            display: "grid",
+            gap: sp(1),
+            padding: sp("4px 5px"),
+            border: `1px solid ${CSS_COLOR.borderLight}`,
+            borderRadius: dim(RADII.xs),
+            background: cssColorMix(CSS_COLOR.green, 7),
+          }}
+        >
+          <span
+            className="tnum"
+            style={{
+              color: CSS_COLOR.green,
+              fontFamily: T.data,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.emphasis,
+              lineHeight: 1,
+            }}
+          >
+            {formatExitPct(step.activationPct)}
+          </span>
+          <span
+            className="tnum"
+            style={{
+              color: CSS_COLOR.textMuted,
+              fontFamily: T.data,
+              fontSize: textSize("micro"),
+              lineHeight: 1.15,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            L {formatExitPct(step.minLockedGainPct)} / G {formatExitPct(step.givebackPct)}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+};
+
+const ProgressiveTrailCell = ({
+  item,
+  profileDraft,
+  profileBaseline,
+  patchProfileDraftPath,
+  disabled,
+  dirtyFieldKeys,
+  impact,
+}) => {
+  const fieldByPath = fieldMapForItem(item);
+  const enabledField = fieldByPath["exitPolicy.progressiveTrailEnabled"];
+  const baseGivebackField = fieldByPath["exitPolicy.trailGivebackPct"];
+  const stepsField = fieldByPath["exitPolicy.progressiveTrailSteps"];
+  const enabled = Boolean(getPathValue(profileDraft, enabledField.path));
+  const steps = getPathValue(profileDraft, stepsField.path);
+  const stepCount = Array.isArray(steps) ? steps.length : 0;
+  return (
+    <ExitGroupShell
+      testId="algo-exit-progressive-trail"
+      title="Progressive Trail"
+      status={enabled ? `${stepCount} step${stepCount === 1 ? "" : "s"}` : "OFF"}
+      statusTone={enabled ? CSS_COLOR.green : CSS_COLOR.textMuted}
+      action={
+        <ExitHeaderToggle
+          field={enabledField}
+          profileDraft={profileDraft}
+          disabled={disabled}
+          dirtyFieldKeys={dirtyFieldKeys}
+          patchProfileDraftPath={patchProfileDraftPath}
+        />
+      }
+    >
+      <ProgressiveTrailPreview steps={steps} />
+      <ExitFieldGrid
+        fields={[baseGivebackField, stepsField]}
+        profileDraft={profileDraft}
+        profileBaseline={profileBaseline}
+        patchProfileDraftPath={patchProfileDraftPath}
+        disabled={disabled}
+        dirtyFieldKeys={dirtyFieldKeys}
+        impact={impact}
+      />
+    </ExitGroupShell>
+  );
+};
+
+const WireTrailPreview = ({ rungs }) => {
+  const visibleRungs = Array.isArray(rungs) ? rungs.slice(0, 5) : [];
+  if (!visibleRungs.length) {
+    return (
+      <div
+        data-testid="algo-wire-trail-rung-preview"
+        style={{
+          color: CSS_COLOR.textDim,
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
+        }}
+      >
+        No wire rungs
+      </div>
+    );
+  }
+  return (
+    <div
+      data-testid="algo-wire-trail-rung-preview"
+      data-algo-pocket-grid="two"
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(62px, 1fr))",
+        gap: sp(3),
+        minWidth: 0,
+      }}
+    >
+      {visibleRungs.map((rung, index) => (
+        <span
+          key={`${rung.activationPct}-${rung.rung}-${index}`}
+          title={`${formatExitPct(rung.activationPct)} ${wireRungLabel(rung.rung)}`}
+          style={{
+            minWidth: 0,
+            display: "grid",
+            gap: sp(1),
+            padding: sp("4px 5px"),
+            border: `1px solid ${CSS_COLOR.borderLight}`,
+            borderRadius: dim(RADII.xs),
+            background: cssColorMix(CSS_COLOR.cyan, 7),
+          }}
+        >
+          <span
+            className="tnum"
+            style={{
+              color: CSS_COLOR.cyan,
+              fontFamily: T.data,
+              fontSize: textSize("caption"),
+              fontWeight: FONT_WEIGHTS.emphasis,
+              lineHeight: 1,
+            }}
+          >
+            {formatExitPct(rung.activationPct)}
+          </span>
+          <span
+            style={{
+              color: CSS_COLOR.textMuted,
+              fontFamily: T.sans,
+              fontSize: textSize("micro"),
+              fontWeight: FONT_WEIGHTS.label,
+              lineHeight: 1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              textTransform: "uppercase",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {wireRungLabel(rung.rung)}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+};
+
+const WireTrailCell = ({
+  item,
+  profileDraft,
+  profileBaseline,
+  patchProfileDraftPath,
+  disabled,
+  dirtyFieldKeys,
+  impact,
+}) => {
+  const fieldByPath = fieldMapForItem(item);
+  const enabledField = fieldByPath["exitPolicy.wireGreekTrail.enabled"];
+  const rungsField = fieldByPath["exitPolicy.wireGreekTrail.rungByProfit"];
+  const enabled = Boolean(getPathValue(profileDraft, enabledField.path));
+  const rungs = getPathValue(profileDraft, rungsField.path);
+  const rungCount = Array.isArray(rungs) ? rungs.length : 0;
+  const fields = item.fields.filter((field) => field.path !== enabledField.path);
+  return (
+    <ExitGroupShell
+      testId="algo-exit-wire-trail"
+      title="Wire Trail"
+      status={enabled ? `${rungCount} rung${rungCount === 1 ? "" : "s"}` : "OFF"}
+      statusTone={enabled ? CSS_COLOR.cyan : CSS_COLOR.textMuted}
+      action={
+        <ExitHeaderToggle
+          field={enabledField}
+          profileDraft={profileDraft}
+          disabled={disabled}
+          dirtyFieldKeys={dirtyFieldKeys}
+          patchProfileDraftPath={patchProfileDraftPath}
+        />
+      }
+    >
+      <WireTrailPreview rungs={rungs} />
+      <ExitFieldGrid
+        fields={fields}
+        profileDraft={profileDraft}
+        profileBaseline={profileBaseline}
+        patchProfileDraftPath={patchProfileDraftPath}
+        disabled={disabled}
+        dirtyFieldKeys={dirtyFieldKeys}
+        impact={impact}
+      />
+    </ExitGroupShell>
+  );
+};
+
+const ExitTimingRulesCell = ({
+  item,
+  profileDraft,
+  profileBaseline,
+  patchProfileDraftPath,
+  disabled,
+  dirtyFieldKeys,
+  impact,
+}) => {
+  const fieldByPath = fieldMapForItem(item);
+  const earlyBars = getPathValue(profileDraft, "exitPolicy.earlyExitBars");
+  const overnightEnabled = Boolean(
+    getPathValue(profileDraft, "exitPolicy.overnightExitEnabled"),
+  );
+  const overnightMin = getPathValue(profileDraft, "exitPolicy.overnightMinGainPct");
+  const flipEnabled = Boolean(
+    getPathValue(profileDraft, "exitPolicy.flipOnOppositeSignal"),
+  );
+  const timingSummary = [
+    `early ${formatExitBars(earlyBars)}`,
+    flipEnabled ? "flip on" : "flip off",
+    overnightEnabled ? `ON ${formatExitPct(overnightMin)}` : "overnight off",
+  ].join(" / ");
+  return (
+    <ExitGroupShell
+      testId="algo-exit-timing-rules"
+      title="Timing & Session"
+      status={timingSummary}
+      statusTone={CSS_COLOR.textSec}
+    >
+      <ExitFieldGrid
+        fields={[
+          fieldByPath["exitPolicy.earlyExitBars"],
+          fieldByPath["exitPolicy.flipOnOppositeSignal"],
+          fieldByPath["exitPolicy.overnightExitEnabled"],
+          fieldByPath["exitPolicy.overnightMinGainPct"],
+          fieldByPath["exitPolicy.overnightRunnerGivebackPct"],
+        ]}
+        profileDraft={profileDraft}
+        profileBaseline={profileBaseline}
+        patchProfileDraftPath={patchProfileDraftPath}
+        disabled={disabled}
+        dirtyFieldKeys={dirtyFieldKeys}
+        impact={impact}
+      />
+    </ExitGroupShell>
+  );
+};
+
 const renderSectionItem = ({
   item,
   profileDraft,
@@ -1802,6 +2304,48 @@ const renderSectionItem = ({
       />
     );
   }
+  if (item.kind === "exitProgressiveTrail") {
+    return (
+      <ProgressiveTrailCell
+        key={item.id}
+        item={item}
+        profileDraft={profileDraft}
+        profileBaseline={profileBaseline}
+        patchProfileDraftPath={patchProfileDraftPath}
+        disabled={disabled}
+        dirtyFieldKeys={dirtyFieldKeys}
+        impact={impact}
+      />
+    );
+  }
+  if (item.kind === "exitWireTrail") {
+    return (
+      <WireTrailCell
+        key={item.id}
+        item={item}
+        profileDraft={profileDraft}
+        profileBaseline={profileBaseline}
+        patchProfileDraftPath={patchProfileDraftPath}
+        disabled={disabled}
+        dirtyFieldKeys={dirtyFieldKeys}
+        impact={impact}
+      />
+    );
+  }
+  if (item.kind === "exitTimingRules") {
+    return (
+      <ExitTimingRulesCell
+        key={item.id}
+        item={item}
+        profileDraft={profileDraft}
+        profileBaseline={profileBaseline}
+        patchProfileDraftPath={patchProfileDraftPath}
+        disabled={disabled}
+        dirtyFieldKeys={dirtyFieldKeys}
+        impact={impact}
+      />
+    );
+  }
   return (
     <CompactSettingCell
       key={`${item.slice}.${item.path}`}
@@ -1821,7 +2365,7 @@ const renderSectionItem = ({
 
 const sectionDirtyCount = (section, dirtyFieldKeys) =>
   section.fields.reduce((count, item) => {
-    if (item.kind === "contractSelect" || item.kind === "exitTrack") {
+    if (Array.isArray(item.fields)) {
       return (
         count +
         item.fields.reduce(
@@ -1836,6 +2380,231 @@ const sectionDirtyCount = (section, dirtyFieldKeys) =>
     }
     return count + (dirtyFieldKeys.has(fieldKey(item)) ? 1 : 0);
   }, 0);
+
+const formatSummaryNumber = (value) => {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return String(value ?? "-");
+  if (Number.isInteger(numericValue)) return numericValue.toLocaleString();
+  return Number(numericValue.toFixed(2)).toLocaleString();
+};
+
+const summaryRootForField = ({ field, profileDraft, strategySettingsDraft }) =>
+  field?.slice === "profile" ? profileDraft : strategySettingsDraft;
+
+const summaryValueForPath = ({ path, profileDraft, strategySettingsDraft }) => {
+  const field = getSettingFieldByPath(path);
+  if (!field) return undefined;
+  return getPathValue(
+    summaryRootForField({ field, profileDraft, strategySettingsDraft }),
+    field.path,
+  );
+};
+
+const summaryItemPaths = (item) => {
+  if (item.kind === "field") return [item.path].filter(Boolean);
+  if (item.kind === "dteWindow") return item.paths || [];
+  if (item.kind === "strikeSlots") {
+    return [item.slotsPath, item.primaryPath].filter(Boolean);
+  }
+  return [];
+};
+
+const summaryItemDirty = (item, dirtyFieldKeys) =>
+  summaryItemPaths(item).some((path) => {
+    const field = getSettingFieldByPath(path);
+    return field ? dirtyFieldKeys.has(fieldKey(field)) : false;
+  });
+
+const formatSummaryFieldValue = (field, value, item) => {
+  if (item.format === "ofMax") {
+    const max = Number(field.max);
+    return `${formatSummaryNumber(value)}/${Number.isFinite(max) ? max : "?"}`;
+  }
+  if (field.type === "boolean") return value ? "ON" : "OFF";
+  if (field.type === "select") return formatSettingValue(field, value);
+  if (field.format === "money" || field.unit === "USD") {
+    return formatMoney(value, 0);
+  }
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return formatSettingValue(field, value);
+  if (field.unit === "seconds" || field.unit === "sec") {
+    return `${formatSummaryNumber(numericValue)}s`;
+  }
+  if (field.unit === "bars") return `${formatSummaryNumber(numericValue)}b`;
+  if (field.unit === "days") return `${formatSummaryNumber(numericValue)}d`;
+  if (
+    field.unit === "% of mid" ||
+    field.unit === "%" ||
+    field.unit === "% from entry" ||
+    field.unit === "% gain"
+  ) {
+    return `${formatSummaryNumber(numericValue)}%`;
+  }
+  if (field.unit === "x ATR") return `${formatSummaryNumber(numericValue)} ATR`;
+  if (field.unit === "x avg") return `${formatSummaryNumber(numericValue)} avg`;
+  return formatSettingValue(field, value);
+};
+
+const buildSectionSummaryItem = ({
+  item,
+  profileDraft,
+  strategySettingsDraft,
+  dirtyFieldKeys,
+}) => {
+  if (item.kind === "field") {
+    const field = getSettingFieldByPath(item.path);
+    if (!field) return null;
+    const value = summaryValueForPath({
+      path: item.path,
+      profileDraft,
+      strategySettingsDraft,
+    });
+    return {
+      id: item.path,
+      label: item.label,
+      value: formatSummaryFieldValue(field, value, item),
+      dirty: summaryItemDirty(item, dirtyFieldKeys),
+    };
+  }
+  if (item.kind === "dteWindow") {
+    const minValue = summaryValueForPath({
+      path: "optionSelection.minDte",
+      profileDraft,
+      strategySettingsDraft,
+    });
+    const targetValue = summaryValueForPath({
+      path: "optionSelection.targetDte",
+      profileDraft,
+      strategySettingsDraft,
+    });
+    const maxValue = summaryValueForPath({
+      path: "optionSelection.maxDte",
+      profileDraft,
+      strategySettingsDraft,
+    });
+    const zeroDte = Boolean(
+      summaryValueForPath({
+        path: "optionSelection.allowZeroDte",
+        profileDraft,
+        strategySettingsDraft,
+      }),
+    );
+    const dte = normalizeDteValues({ minValue, targetValue, maxValue });
+    return {
+      id: item.kind,
+      label: item.label,
+      value: `${dte.min}-${dte.max}d / ${dte.target}d${zeroDte ? " / 0DTE" : ""}`,
+      dirty: summaryItemDirty(item, dirtyFieldKeys),
+    };
+  }
+  if (item.kind === "strikeSlots") {
+    const slots = normalizeSignalOptionsStrikeSlots(
+      getPathValue(profileDraft, item.slotsPath),
+      getPathValue(profileDraft, item.primaryPath),
+    );
+    const isCall = item.side === "call";
+    return {
+      id: `${item.kind}-${item.side}`,
+      label: item.label,
+      value: slots
+        .map((slot) => {
+          const meta = strikeSlotMeta(slot);
+          return isCall ? meta.callLabel : meta.putLabel;
+        })
+        .join(" / "),
+      dirty: summaryItemDirty(item, dirtyFieldKeys),
+      tone: isCall ? CSS_COLOR.green : CSS_COLOR.red,
+    };
+  }
+  return null;
+};
+
+const SectionSummaryStrip = ({
+  section,
+  profileDraft,
+  strategySettingsDraft,
+  dirtyFieldKeys,
+}) => {
+  const items = (section.summary || [])
+    .map((item) =>
+      buildSectionSummaryItem({
+        item,
+        profileDraft,
+        strategySettingsDraft,
+        dirtyFieldKeys,
+      }),
+    )
+    .filter(Boolean);
+  if (!items.length) return null;
+
+  return (
+    <div
+      data-testid={`algo-settings-section-summary-${section.id}`}
+      data-algo-pocket-grid="two"
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))",
+        gap: sp(3),
+        minWidth: 0,
+        marginBottom: sp(5),
+      }}
+    >
+      {items.map((item) => {
+        const tone = item.dirty ? CSS_COLOR.accent : item.tone || CSS_COLOR.textSec;
+        return (
+          <span
+            key={item.id}
+            title={`${item.label}: ${item.value}`}
+            style={{
+              minWidth: 0,
+              display: "grid",
+              gap: sp(1),
+              padding: sp("4px 5px"),
+              border: `1px solid ${
+                item.dirty ? cssColorMix(CSS_COLOR.accent, 38) : CSS_COLOR.borderLight
+              }`,
+              borderRadius: dim(RADII.xs),
+              background: item.dirty
+                ? cssColorMix(CSS_COLOR.accent, 6)
+                : CSS_COLOR.bg1,
+            }}
+          >
+            <span
+              style={{
+                color: CSS_COLOR.textMuted,
+                fontFamily: T.sans,
+                fontSize: textSize("micro"),
+                fontWeight: FONT_WEIGHTS.label,
+                lineHeight: 1,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {item.label}
+            </span>
+            <span
+              className="tnum"
+              style={{
+                color: tone,
+                fontFamily: T.data,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.emphasis,
+                lineHeight: 1.15,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {item.value}
+            </span>
+          </span>
+        );
+      })}
+    </div>
+  );
+};
 
 export const AlgoSettingsRegion = ({
   cockpit,
@@ -1910,6 +2679,12 @@ export const AlgoSettingsRegion = ({
               onToggle={() =>
                 setOpenSections((prev) => ({ ...prev, [section.id]: !open }))
               }
+            />
+            <SectionSummaryStrip
+              section={section}
+              profileDraft={profileDraft}
+              strategySettingsDraft={strategySettingsDraft}
+              dirtyFieldKeys={dirtyFieldKeys}
             />
             {open ? (
               <div id={bodyId} className="algo-settings-grid">

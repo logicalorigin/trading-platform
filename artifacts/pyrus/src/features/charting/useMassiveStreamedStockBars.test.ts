@@ -583,10 +583,10 @@ test("older bars payload preserves server history metadata", () => {
     newestBarAt: "2026-04-29T20:00:00.000Z",
     returnedCount: 1,
     nextBefore: "2026-04-29T13:29:59.999Z",
-    provider: "polygon-history",
+    provider: "massive-history",
     exhaustedBefore: false,
-    providerCursor: "https://api.polygon.io/v2/aggs/ticker/SPY/range/1/minute/1/2",
-    providerNextUrl: "https://api.polygon.io/v2/aggs/ticker/SPY/range/1/minute/1/2",
+    providerCursor: "https://api.massive.com/v2/aggs/ticker/SPY/range/1/minute/1/2",
+    providerNextUrl: "https://api.massive.com/v2/aggs/ticker/SPY/range/1/minute/1/2",
     providerPageCount: 2,
     providerPageLimitReached: true,
     historyCursor: "opaque-history-cursor",
@@ -599,7 +599,7 @@ test("older bars payload preserves server history metadata", () => {
 
   assert.equal(normalized.bars.length, 1);
   assert.equal(normalized.historyPage?.nextBefore, historyPage.nextBefore);
-  assert.equal(normalized.historyPage?.provider, "polygon-history");
+  assert.equal(normalized.historyPage?.provider, "massive-history");
   assert.equal(normalized.historyPage?.providerCursor, historyPage.providerCursor);
   assert.equal(normalized.historyPage?.providerPageCount, 2);
   assert.equal(normalized.historyPage?.providerPageLimitReached, true);
@@ -654,9 +654,9 @@ test("chart bars payload helpers normalize API envelopes for latest and older fe
     {
       bars: [bar],
       historyPage: {
-        provider: "polygon-history",
+        provider: "massive-history",
         providerCursor:
-          "https://api.polygon.io/v2/aggs/ticker/SPY/range/1/minute/1/2",
+          "https://api.massive.com/v2/aggs/ticker/SPY/range/1/minute/1/2",
         providerPageCount: 2,
         providerPageLimitReached: true,
         historyCursor: "opaque-history-cursor",

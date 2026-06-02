@@ -932,7 +932,7 @@ export const MarketActivityPanel = ({
     flowProviderSummary?.sourcesBySymbol || {},
   )[0];
   const flowSourceProvider =
-    flowProviders.includes("polygon") && flowProviders.includes("ibkr")
+    flowProviders.includes("massive") && flowProviders.includes("ibkr")
       ? "mixed"
       : flowProviders[0] || firstSymbolSource?.provider || "";
   const normalizedFlowSourceProvider =

@@ -7,6 +7,8 @@ const INITIAL_STATE = {
   sourceQuality: "low",
   browserMemoryMb: null,
   browserSource: "heuristic",
+  apiRssMb: null,
+  apiRssThresholds: null,
   apiHeapUsedPercent: null,
   activeWorkloadCount: 0,
   pollCount: 0,

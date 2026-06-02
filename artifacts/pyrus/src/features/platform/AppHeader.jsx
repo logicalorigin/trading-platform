@@ -210,9 +210,9 @@ const MobileIconButton = ({ Icon, label, onClick, testId, active = false }) => (
       aria-label={label}
       aria-pressed={active}
       style={{
-        width: dim(32),
-        minWidth: dim(32),
-        height: dim(32),
+        width: dim(44),
+        minWidth: dim(44),
+        height: dim(44),
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",

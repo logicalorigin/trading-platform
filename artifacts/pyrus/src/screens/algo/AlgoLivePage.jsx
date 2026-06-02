@@ -7,14 +7,12 @@ import {
 } from "react";
 import {
   Activity,
-  Clock,
   Layers,
   Pause,
   Play,
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
-  Wallet,
   X,
 } from "lucide-react";
 import {
@@ -29,7 +27,7 @@ import {
 import { formatEnumLabel, formatRelativeTimeShort } from "../../lib/formatters";
 import { SectionHeader } from "../../components/ui/SectionHeader.jsx";
 import { OperationsAttentionStrip } from "./OperationsAttentionStrip";
-import { OperationsStatusOrb } from "./OperationsStatusOrb";
+import { resolveOperationsStatus } from "./OperationsStatusOrb";
 import { OperationsTransitionsStrip } from "./OperationsTransitionsStrip";
 import {
   asRecord,
@@ -46,6 +44,12 @@ import { filterAccountPositionRowsForDeployment } from "./algoAccountPositions";
 import { buildAttentionStream } from "../algoCockpitDiagnosticsModel";
 import { useIbkrOptionQuoteStream } from "../../features/platform/live-streams";
 import { lazyWithRetry } from "../../lib/dynamicImport";
+import { normalizeLegacyAlgoBrandText } from "./algoBranding.js";
+import { IbkrStatusWave } from "../../features/platform/IbkrConnectionStatus";
+import {
+  canonicalizeStreamState,
+  streamStateTokenVar,
+} from "../../features/platform/streamSemantics";
 
 const LazyOperationsPositionsTable = lazyWithRetry(
   () => import("./OperationsPositionsTable").then((module) => ({
@@ -90,147 +94,274 @@ const EmptyOperationsState = ({
   setSymbolUniverseInput,
   handleCreateDeployment,
   createDeploymentMutation,
-}) => (
-  <div
-    style={{
-      minHeight: "60vh",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      minWidth: 0,
-      padding: sp("12px 0"),
-    }}
-  >
+}) => {
+  const title = !setupDataSettled
+    ? "Loading Signal Operations"
+    : candidateDrafts.length
+      ? "Create Signal-Options Deployment"
+      : "Signal-Options Deployment Unavailable";
+  const summary = !setupDataSettled
+    ? "Fetching algo deployments and signal-options automation state."
+    : candidateDrafts.length
+      ? "Create a paper deployment from an available strategy draft."
+      : "No signal-options deployments are available yet. The default paper deployment should be seeded at startup.";
+
+  return (
     <div
       style={{
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.md),
-        background: CSS_COLOR.bg1,
-        padding: sp("14px 16px"),
+        minHeight: "60vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
         minWidth: 0,
-        width: "min(100%, 460px)",
+        padding: sp("12px 0"),
       }}
     >
-      <SectionHeader title="Setup Shadow Deployment" />
       <div
         style={{
-          color: CSS_COLOR.textDim,
-          fontFamily: T.sans,
-          fontSize: textSize("caption"),
-          lineHeight: 1.45,
-          marginBottom: sp(8),
+          border: `1px solid ${CSS_COLOR.border}`,
+          borderRadius: dim(RADII.md),
+          background: CSS_COLOR.bg1,
+          padding: sp("14px 16px"),
+          minWidth: 0,
+          width: "min(100%, 460px)",
         }}
       >
-        Shadow deployments paper-trade a promoted backtest strategy in real time.
+        <SectionHeader title={title} />
+        <div
+          style={{
+            color: CSS_COLOR.textDim,
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            lineHeight: 1.45,
+            marginBottom: sp(8),
+          }}
+        >
+          {summary}
+        </div>
+        {!setupDataSettled ? (
+          <div
+            data-testid="algo-setup-loading"
+            style={{
+              border: `1px dashed ${CSS_COLOR.border}`,
+              borderRadius: dim(RADII.sm),
+              color: CSS_COLOR.textDim,
+              fontFamily: T.sans,
+              fontSize: fs(10),
+              lineHeight: 1.45,
+              padding: sp("14px 10px"),
+            }}
+          >
+            Loading algo deployments and signal-options state...
+          </div>
+        ) : candidateDrafts.length ? (
+          <div style={{ display: "grid", gap: sp(7) }}>
+            <select
+              value={selectedDraft?.id || ""}
+              onChange={(event) => setSelectedDraftId(event.target.value)}
+              style={{
+                width: "100%",
+                background: CSS_COLOR.bg1,
+                border: "none",
+                borderRadius: dim(RADII.md),
+                padding: sp("8px 10px"),
+                color: CSS_COLOR.text,
+                fontSize: fs(10),
+                fontFamily: T.sans,
+                outline: "none",
+              }}
+            >
+              {candidateDrafts.map((draft) => (
+                <option key={draft.id} value={draft.id}>
+                  {draft.name} · {draft.mode} · {draft.symbolUniverse.length} syms
+                </option>
+              ))}
+            </select>
+            <input
+              value={deploymentName}
+              onChange={(event) => setDeploymentName(event.target.value)}
+              placeholder="Deployment name"
+              style={{
+                width: "100%",
+                background: CSS_COLOR.bg1,
+                border: "none",
+                borderRadius: dim(RADII.md),
+                padding: sp("8px 10px"),
+                color: CSS_COLOR.text,
+                fontSize: fs(10),
+                fontFamily: T.sans,
+                outline: "none",
+              }}
+            />
+            <input
+              value={symbolUniverseInput}
+              onChange={(event) => setSymbolUniverseInput(event.target.value)}
+              placeholder="SPY, QQQ, NVDA"
+              style={{
+                width: "100%",
+                background: CSS_COLOR.bg1,
+                border: "none",
+                borderRadius: dim(RADII.md),
+                padding: sp("8px 10px"),
+                color: CSS_COLOR.text,
+                fontSize: fs(10),
+                fontFamily: T.sans,
+                outline: "none",
+              }}
+            />
+            <button
+              type="button"
+              onClick={handleCreateDeployment}
+              disabled={createDeploymentMutation.isPending}
+              style={{
+                ...compactButtonStyle({
+                  fill: true,
+                  disabled: createDeploymentMutation.isPending,
+                }),
+                border: "none",
+                background: CSS_COLOR.accent,
+                color: CSS_COLOR.onAccent,
+              }}
+            >
+              {createDeploymentMutation.isPending
+                ? "CREATING..."
+                : "CREATE SIGNAL-OPTIONS DEPLOYMENT"}
+            </button>
+          </div>
+        ) : (
+          <div
+            style={{
+              border: `1px dashed ${CSS_COLOR.border}`,
+              borderRadius: dim(RADII.sm),
+              color: CSS_COLOR.textDim,
+              fontFamily: T.sans,
+              fontSize: fs(10),
+              lineHeight: 1.45,
+              padding: sp("14px 10px"),
+            }}
+          >
+            Restart the API or check the default signal-options seed if this stays
+            empty.
+          </div>
+        )}
       </div>
-      {!setupDataSettled ? (
-        <div
-          data-testid="algo-setup-loading"
-          style={{
-            border: `1px dashed ${CSS_COLOR.border}`,
-            borderRadius: dim(RADII.sm),
-            color: CSS_COLOR.textDim,
-            fontFamily: T.sans,
-            fontSize: fs(10),
-            lineHeight: 1.45,
-            padding: sp("14px 10px"),
-          }}
-        >
-          Loading promoted drafts and shadow deployments...
-        </div>
-      ) : candidateDrafts.length ? (
-        <div style={{ display: "grid", gap: sp(7) }}>
-          <select
-            value={selectedDraft?.id || ""}
-            onChange={(event) => setSelectedDraftId(event.target.value)}
-            style={{
-              width: "100%",
-              background: CSS_COLOR.bg1,
-              border: "none",
-              borderRadius: dim(RADII.md),
-              padding: sp("8px 10px"),
-              color: CSS_COLOR.text,
-              fontSize: fs(10),
-              fontFamily: T.sans,
-              outline: "none",
-            }}
-          >
-            {candidateDrafts.map((draft) => (
-              <option key={draft.id} value={draft.id}>
-                {draft.name} · {draft.mode} · {draft.symbolUniverse.length} syms
-              </option>
-            ))}
-          </select>
-          <input
-            value={deploymentName}
-            onChange={(event) => setDeploymentName(event.target.value)}
-            placeholder="Deployment name"
-            style={{
-              width: "100%",
-              background: CSS_COLOR.bg1,
-              border: "none",
-              borderRadius: dim(RADII.md),
-              padding: sp("8px 10px"),
-              color: CSS_COLOR.text,
-              fontSize: fs(10),
-              fontFamily: T.sans,
-              outline: "none",
-            }}
-          />
-          <input
-            value={symbolUniverseInput}
-            onChange={(event) => setSymbolUniverseInput(event.target.value)}
-            placeholder="SPY, QQQ, NVDA"
-            style={{
-              width: "100%",
-              background: CSS_COLOR.bg1,
-              border: "none",
-              borderRadius: dim(RADII.md),
-              padding: sp("8px 10px"),
-              color: CSS_COLOR.text,
-              fontSize: fs(10),
-              fontFamily: T.sans,
-              outline: "none",
-            }}
-          />
-          <button
-            type="button"
-            onClick={handleCreateDeployment}
-            disabled={createDeploymentMutation.isPending}
-            style={{
-              ...compactButtonStyle({
-                fill: true,
-                disabled: createDeploymentMutation.isPending,
-              }),
-              border: "none",
-              background: CSS_COLOR.accent,
-              color: CSS_COLOR.onAccent,
-            }}
-          >
-            {createDeploymentMutation.isPending
-              ? "CREATING..."
-              : "CREATE SHADOW DEPLOYMENT"}
-          </button>
-        </div>
-      ) : (
-        <div
-          style={{
-            border: `1px dashed ${CSS_COLOR.border}`,
-            borderRadius: dim(RADII.sm),
-            color: CSS_COLOR.textDim,
-            fontFamily: T.sans,
-            fontSize: fs(10),
-            lineHeight: 1.45,
-            padding: sp("14px 10px"),
-          }}
-        >
-          No promoted draft strategies are available yet. Promote a completed
-          backtest run first, then return here to create a Shadow signal deployment.
-        </div>
-      )}
     </div>
-  </div>
-);
+  );
+};
+
+const compactDeploymentName = (deployment) => {
+  const normalized = normalizeLegacyAlgoBrandText(deployment?.name || "");
+  let compact = normalized
+    .replace(/^Pyrus Signal-Options\s*/i, "")
+    .replace(/^Pyrus Signals Options\s*/i, "")
+    .replace(/^Pyrus Signals\s*/i, "")
+    .trim();
+  const mode = String(deployment?.mode || "").toUpperCase();
+  if (mode === "PAPER" && !/^paper$/i.test(compact)) {
+    compact = compact.replace(/\s+Paper$/i, "").trim();
+  }
+  if (mode === "LIVE" && !/^live$/i.test(compact)) {
+    compact = compact.replace(/\s+Live$/i, "").trim();
+  }
+  return compact || normalized || "Deployment";
+};
+
+const headerChipStyle = ({ color = CSS_COLOR.textMuted, active = false } = {}) => ({
+  display: "inline-flex",
+  alignItems: "center",
+  minHeight: dim(20),
+  padding: sp("2px 6px"),
+  border: `1px solid ${active ? color : CSS_COLOR.border}`,
+  borderRadius: dim(RADII.pill),
+  background: active ? `color-mix(in srgb, ${color} 18%, transparent)` : CSS_COLOR.bg1,
+  color,
+  fontFamily: T.sans,
+  fontSize: textSize("caption"),
+  fontWeight: 600,
+  letterSpacing: "0.03em",
+  lineHeight: 1,
+  textTransform: "uppercase",
+  whiteSpace: "nowrap",
+});
+
+const headerActionButtonStyle = ({ color, disabled = false, divided = false } = {}) => ({
+  ...compactButtonStyle({ disabled }),
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minWidth: dim(32),
+  minHeight: dim(30),
+  padding: sp("6px 8px"),
+  border: "none",
+  borderLeft: divided ? `1px solid ${CSS_COLOR.border}` : "none",
+  borderRadius: 0,
+  background: "transparent",
+  color: disabled ? CSS_COLOR.textMuted : color,
+});
+
+const resolveAttentionSeverity = (attentionItems = []) => {
+  if (!attentionItems?.length) return null;
+  if (attentionItems.some((item) => item?.severity === "critical")) return "critical";
+  if (attentionItems.some((item) => item?.severity === "warning")) return "warning";
+  return "info";
+};
+
+const resolveHeaderScanWaveMotion = (status) => {
+  const state = canonicalizeStreamState(status, "no-subscribers");
+  if (state === "healthy") return "fast";
+  if (state === "checking" || state === "capacity-limited" || state === "reconnecting") {
+    return "slow";
+  }
+  return "flat";
+};
+
+const resolveHeaderScanWave = ({
+  scanRunning = false,
+  refreshPending = false,
+  deploymentEnabled = false,
+  gatewayReady = false,
+  attentionSeverity = null,
+} = {}) => {
+  const operationsStatus = resolveOperationsStatus({
+    gatewayReady,
+    scanOn: deploymentEnabled,
+    deploymentEnabled,
+    attentionSeverity,
+  });
+  const status =
+    operationsStatus === "critical"
+      ? "offline"
+      : scanRunning
+        ? "healthy"
+        : refreshPending
+          ? "checking"
+          : operationsStatus === "healthy"
+            ? "healthy"
+          : operationsStatus === "attention"
+            ? "capacity-limited"
+            : "no-subscribers";
+  const state = canonicalizeStreamState(status, "no-subscribers");
+  const badgeLabel =
+    state === "healthy"
+      ? scanRunning
+        ? "scanning"
+        : "running"
+      : state === "checking"
+        ? "syncing"
+        : state === "capacity-limited"
+          ? "attention"
+          : state === "offline"
+            ? "critical"
+            : "paused";
+  return {
+    status: state,
+    wave: resolveHeaderScanWaveMotion(state),
+    color: streamStateTokenVar(state),
+    label: `Signal-options ${badgeLabel}`,
+    badgeLabel,
+    active: state !== "no-subscribers",
+  };
+};
 
 const buildAlgoOptionQuoteGroups = ({
   candidates = [],
@@ -339,7 +470,11 @@ const activitySegmentColor = (tone) => {
 };
 
 const ActivitySummaryInline = ({ activitySummary }) => {
-  if (!activitySummary?.segments?.length) return null;
+  const segments = activitySummary?.segments || [];
+  const hasMeaningfulSegment = segments.some(
+    (segment) => segment.kind !== "prefix" && segment.kind !== "noop",
+  );
+  if (!hasMeaningfulSegment) return null;
   return (
     <div
       data-testid="algo-activity-summary"
@@ -357,7 +492,7 @@ const ActivitySummaryInline = ({ activitySummary }) => {
         minWidth: 0,
       }}
     >
-      {activitySummary.segments.map((segment, index) => (
+      {segments.map((segment, index) => (
         <span
           key={`${segment.kind}-${index}`}
           style={{
@@ -393,7 +528,6 @@ export const AlgoLivePage = ({
   cockpitKpis,
   cockpitRisk,
   cockpitGeneratedAt,
-  latestEvent,
   refreshPending,
   cockpitSignalFreshness,
   cockpitTradePath,
@@ -412,9 +546,11 @@ export const AlgoLivePage = ({
   visibleSignalRows,
   signalOptionsCandidates,
   signalMatrixStates = [],
+  onRequestSignalMatrixHydration = null,
   selectedCandidate,
   signalOptionsProfile,
   onOpenCandidateInTrade,
+  safeQaMode = false,
   // Positions
   signalOptionsPositions,
   signalOptionsLedgerPositionsQuery,
@@ -423,12 +559,15 @@ export const AlgoLivePage = ({
   events,
   userPreferences,
   // Signal monitor (promoted header controls)
-  signalMonitorProfile,
   strategySettingsDraft,
   // Smart summary
   activitySummary,
   // Pause / Scan-now (existing mutations + handlers)
   focusedDeployment,
+  onSelectDeployment,
+  accountId,
+  environment,
+  bridgeTone,
   handleToggleDeployment,
   handleRunShadowScan,
   enableDeploymentMutation,
@@ -439,7 +578,6 @@ export const AlgoLivePage = ({
   algoIsNarrow,
   algoLayoutWidth = 0,
   // Slots
-  auditPanel,
   rightRail,
 }) => {
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
@@ -554,10 +692,10 @@ export const AlgoLivePage = ({
     gatewayReady,
     gatewayBlocks: cockpitTradePath.gatewayBlocks,
   });
+  const attentionSeverity = resolveAttentionSeverity(attentionStream);
   const realizedToday = Number(cockpitKpis?.dailyRealizedPnl ?? 0);
   const unrealized = Number(cockpitKpis?.openUnrealizedPnl ?? 0);
   const riskRecord = asRecord(cockpitRisk);
-  const blockedCandidates = Number(cockpitKpis?.blockedCandidates ?? 0);
   const openPremiumValue = Number(
     riskRecord.openPremium ?? cockpitKpis?.openPremium ?? 0,
   );
@@ -571,89 +709,123 @@ export const AlgoLivePage = ({
       ? Math.abs(openPremiumValue) / maxOpenPremium
       : null;
   const DeploymentToggleIcon = focusedDeployment?.enabled ? Pause : Play;
-  const deploymentToggleLabel = focusedDeployment?.enabled ? "PAUSE" : "RESUME";
+  const deploymentToggleLabel = focusedDeployment?.enabled ? "Pause" : "Resume";
   const scanMutationPending = Boolean(runShadowScanMutation?.isPending);
-  const scanButtonLabel = scanMutationPending ? "SCANNING..." : "SCAN NOW";
-  const hasActivitySummary = Boolean(activitySummary?.segments?.length);
+  const scanButtonLabel = scanMutationPending ? "Scanning" : "Scan";
+  const headerScanWave = resolveHeaderScanWave({
+    scanRunning: scanMutationPending,
+    refreshPending,
+    deploymentEnabled: Boolean(focusedDeployment?.enabled),
+    gatewayReady,
+    attentionSeverity,
+  });
+  const deploymentMode = String(
+    focusedDeployment?.mode || environment || "",
+  ).toUpperCase();
+  const symbolCount = focusedDeployment?.symbolUniverse?.length ?? 0;
+  const accountLabel =
+    accountId || focusedDeployment?.providerAccountId || null;
+  const headerStatusItems = [
+    deploymentMode
+      ? { label: deploymentMode, color: CSS_COLOR.textSec, active: false }
+      : null,
+    {
+      label: gatewayReady ? "data on" : "data blocked",
+      color: gatewayReady ? CSS_COLOR.green : CSS_COLOR.amber,
+      active: !gatewayReady,
+    },
+    bridgeTone?.label && bridgeTone.color !== CSS_COLOR.green
+      ? { label: bridgeTone.label, color: bridgeTone.color, active: true }
+      : null,
+  ].filter(Boolean);
+  const hasActivitySummary = Boolean(
+    activitySummary?.segments?.some(
+      (segment) => segment.kind !== "prefix" && segment.kind !== "noop",
+    ),
+  );
   const denseOperationsLayout = algoIsPhone || algoIsNarrow;
   const algoIsPocketWidth =
     Number.isFinite(Number(algoLayoutWidth)) && Number(algoLayoutWidth) > 0
       ? Number(algoLayoutWidth) < 520
       : false;
-  const candidatesCount = Number(
-    cockpitKpis?.candidates ?? signalOptionsCandidates.length,
-  );
-  const freshSignals = Number(cockpitSignalFreshness?.fresh ?? 0);
-  const totalSignals =
-    freshSignals + Number(cockpitSignalFreshness?.notFresh ?? 0);
-  const freshSignalsPct =
-    totalSignals > 0 ? formatPct((freshSignals / totalSignals) * 100, 0) : null;
   const openPositions = Number(
     cockpitKpis?.openPositions ?? signalOptionsPositions?.length ?? 0,
   );
-  const pendingCandidates = Number(
-    cockpitTradePath?.pendingCandidates ??
-      signalOptionsCandidates?.filter(
-        (candidate) =>
-          candidate?.actionStatus === "candidate" ||
-          candidate?.status === "candidate",
-      ).length ??
-      0,
-  );
-  const wins = Number(signalOptionsPerformanceSummary?.wins ?? 0);
-  const losses = Number(signalOptionsPerformanceSummary?.losses ?? 0);
+  const rawWins = Number(signalOptionsPerformanceSummary?.wins ?? 0);
+  const rawLosses = Number(signalOptionsPerformanceSummary?.losses ?? 0);
+  const closedTradeCount = Number(signalOptionsPerformanceSummary?.closedTrades ?? 0);
   const winRate = Number(signalOptionsPerformanceSummary?.winRatePercent);
+  const inferredRecord =
+    Number.isFinite(closedTradeCount) &&
+    closedTradeCount > 0 &&
+    rawWins + rawLosses <= 0 &&
+    Number.isFinite(winRate);
+  const wins = inferredRecord
+    ? Math.round((closedTradeCount * winRate) / 100)
+    : rawWins;
+  const losses = inferredRecord
+    ? Math.max(0, closedTradeCount - wins)
+    : rawLosses;
+  const recordTradeCount = Math.max(
+    Number.isFinite(closedTradeCount) ? closedTradeCount : 0,
+    (Number.isFinite(wins) ? wins : 0) + (Number.isFinite(losses) ? losses : 0),
+  );
+  const hasClosedRecord = recordTradeCount > 0;
   const profitFactor = Number(signalOptionsPerformanceSummary?.profitFactor);
-  const recordDetail = [
-    Number.isFinite(winRate) ? `${formatPct(winRate, 0)} win` : null,
-    Number.isFinite(profitFactor) ? `PF ${profitFactor.toFixed(2)}` : null,
-  ].filter(Boolean).join(" · ");
+  const recordDetail = hasClosedRecord
+    ? [
+        Number.isFinite(winRate) ? `${formatPct(winRate, 0)} win` : null,
+        Number.isFinite(profitFactor) ? `PF ${profitFactor.toFixed(2)}` : null,
+      ].filter(Boolean).join(" · ")
+    : "no closed trades";
+  const openSymbols = Number(
+    riskRecord.openSymbols ?? cockpitKpis?.openSymbols ?? 0,
+  );
+  const maxOpenSymbols =
+    riskRecord.maxOpenSymbols ?? cockpitKpis?.maxOpenSymbols ?? "?";
+  const scanStatusLabel = scanMutationPending
+    ? "scan running"
+    : refreshPending
+      ? "syncing state"
+      : focusedDeployment?.lastEvaluatedAt
+        ? `scan ${formatRelativeTimeShort(focusedDeployment.lastEvaluatedAt)}`
+        : cockpitGeneratedAt
+          ? `state ${formatRelativeTimeShort(cockpitGeneratedAt)}`
+          : "scan waiting";
+  const headerMetaItems = [
+    accountLabel ? `acct ${accountLabel}` : null,
+    symbolCount ? `${symbolCount} sym` : null,
+    `tf ${strategySettingsDraft?.signalTimeframe || "5m"}`,
+    `h${strategySettingsDraft?.timeHorizon ?? 8}`,
+    strategySettingsDraft?.bosConfirmation || "wicks",
+    scanStatusLabel,
+  ].filter(Boolean);
+  const hasAttentionItems = attentionStream.length > 0;
+  const hasRecentTransitions = Boolean(transitions?.length);
+  const showCompactStatusRow =
+    hasActivitySummary || hasAttentionItems || hasRecentTransitions;
   const overviewMetrics = [
     {
-      label: "Scan",
-      value: scanMutationPending
-        ? "scanning"
-        : refreshPending
-          ? "syncing data"
-          : cockpitGeneratedAt
-            ? formatRelativeTimeShort(cockpitGeneratedAt)
-            : "waiting",
-      detail: focusedDeployment?.lastEvaluatedAt
-        ? `scan ${formatRelativeTimeShort(focusedDeployment.lastEvaluatedAt)}`
-        : "no scan yet",
-      color: scanMutationPending || refreshPending
-        ? CSS_COLOR.amber
-        : CSS_COLOR.textSec,
-      icon: Clock,
-      severity: scanMutationPending || refreshPending ? "warning" : "neutral",
-    },
-    {
-      label: "Event",
-      value: latestEvent ? formatEnumLabel(latestEvent.eventType) : "none",
-      detail: latestEvent
-        ? formatRelativeTimeShort(latestEvent.occurredAt)
-        : "no execution events",
-      color: latestEvent ? CSS_COLOR.cyan : CSS_COLOR.textDim,
+      label: "P&L",
+      value: `R ${formatMoney(realizedToday, 0)} / U ${formatMoney(unrealized, 0)}`,
+      detail: `open premium ${formatMoney(openPremiumValue, 0)}`,
+      color: realizedToday + unrealized > 0 ? CSS_COLOR.green : realizedToday + unrealized < 0 ? CSS_COLOR.red : CSS_COLOR.text,
       icon: Activity,
       severity: "neutral",
     },
     {
-      label: "Signals",
-      value: `${freshSignals} / ${totalSignals}`,
-      detail: freshSignalsPct ? `${freshSignalsPct} fresh` : "no scan yet",
-      color: freshSignals > 0 ? CSS_COLOR.green : CSS_COLOR.textSec,
+      label: "Exposure",
+      value: `${openPositions.toLocaleString()} open`,
+      detail: `${openSymbols}/${maxOpenSymbols} symbols`,
+      color:
+        openPremiumUsage != null && openPremiumUsage >= 0.7
+          ? CSS_COLOR.amber
+          : CSS_COLOR.textSec,
       icon: Layers,
-      severity: "neutral",
-    },
-    {
-      label: "Flow",
-      value: `${candidatesCount.toLocaleString()} candidates`,
-      detail: `${blockedCandidates.toLocaleString()} blocked${
-        pendingCandidates > 0 ? ` · ${pendingCandidates.toLocaleString()} pending` : ""
-      }`,
-      color: blockedCandidates > 0 ? CSS_COLOR.amber : CSS_COLOR.green,
-      icon: Layers,
-      severity: blockedCandidates > 0 ? "warning" : "neutral",
+      severity:
+        openPremiumUsage != null && openPremiumUsage >= 0.7
+          ? "warning"
+          : "neutral",
     },
     {
       label: "Risk",
@@ -664,32 +836,10 @@ export const AlgoLivePage = ({
       severity: riskRecord.dailyHaltActive ? "critical" : "neutral",
     },
     {
-      label: "Exposure",
-      value: formatMoney(openPremiumValue, 0),
-      detail: `${riskRecord.openSymbols ?? cockpitKpis?.openSymbols ?? 0}/${riskRecord.maxOpenSymbols ?? cockpitKpis?.maxOpenSymbols ?? "?"} symbols`,
-      color:
-        openPremiumUsage != null && openPremiumUsage >= 0.7
-          ? CSS_COLOR.amber
-          : CSS_COLOR.textSec,
-      icon: Wallet,
-      severity:
-        openPremiumUsage != null && openPremiumUsage >= 0.7
-          ? "warning"
-          : "neutral",
-    },
-    {
-      label: "P&L",
-      value: `R ${formatMoney(realizedToday, 0)} / U ${formatMoney(unrealized, 0)}`,
-      detail: `${openPositions.toLocaleString()} open`,
-      color: realizedToday + unrealized > 0 ? CSS_COLOR.green : realizedToday + unrealized < 0 ? CSS_COLOR.red : CSS_COLOR.text,
-      icon: Wallet,
-      severity: "neutral",
-    },
-    {
       label: "Record",
-      value: `${wins}W / ${losses}L`,
+      value: hasClosedRecord ? `${wins}W / ${losses}L` : "No exits",
       detail: recordDetail || "session",
-      color: Number.isFinite(profitFactor) && profitFactor >= 1 ? CSS_COLOR.green : CSS_COLOR.textSec,
+      color: hasClosedRecord && Number.isFinite(profitFactor) && profitFactor >= 1 ? CSS_COLOR.green : CSS_COLOR.textSec,
       icon: ShieldCheck,
       severity: "neutral",
     },
@@ -764,10 +914,10 @@ export const AlgoLivePage = ({
               top: 0,
               zIndex: 2,
               display: "flex",
-              alignItems: "center",
+              alignItems: "flex-start",
               justifyContent: "space-between",
-              gap: sp(algoIsPhone ? 5 : 8),
-              padding: algoIsPhone ? sp("4px 6px") : sp("6px 10px"),
+              gap: sp(algoIsPhone ? 6 : 10),
+              padding: algoIsPhone ? sp("6px 6px") : sp("8px 10px"),
               background: CSS_COLOR.bg0,
               borderBottom: `1px solid ${CSS_COLOR.border}`,
               flexWrap: "wrap",
@@ -775,29 +925,121 @@ export const AlgoLivePage = ({
           >
             <div
               style={{
-                display: "flex",
-                alignItems: "baseline",
-                gap: sp(8),
-                flexWrap: "wrap",
+                display: "grid",
+                gap: sp(2),
+                minWidth: 0,
+                flex: "1 1 260px",
               }}
             >
-              <span
+              <div
                 style={{
-                  color: CSS_COLOR.text,
-                  fontFamily: T.sans,
-                  fontSize: fs(algoIsPhone ? 11 : 13),
-                  fontWeight: 600,
-                  letterSpacing: "0.01em",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: sp(6),
+                  flexWrap: "wrap",
+                  minWidth: 0,
                 }}
               >
-                Pyrus Signals Shadow
-              </span>
-              <OperationsStatusOrb
-                gatewayReady={gatewayReady}
-                scanOn={Boolean(focusedDeployment?.enabled)}
-                deploymentEnabled={focusedDeployment?.enabled}
-                attentionItems={attentionStream}
-              />
+                <span
+                  style={{
+                    color: CSS_COLOR.text,
+                    fontFamily: T.sans,
+                    fontSize: fs(algoIsPhone ? 11 : 13),
+                    fontWeight: 600,
+                    letterSpacing: "0.01em",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Pyrus Signal-Options
+                </span>
+                <span
+                  role="status"
+                  aria-label={headerScanWave.label}
+                  data-testid="algo-operations-header-wave-badge"
+                  style={{
+                    ...headerChipStyle({
+                      color: headerScanWave.color,
+                      active: headerScanWave.active,
+                    }),
+                    gap: sp(4),
+                    padding: sp("2px 7px 2px 5px"),
+                  }}
+                >
+                  <IbkrStatusWave
+                    status={headerScanWave.status}
+                    wave={headerScanWave.wave}
+                    color={headerScanWave.color}
+                    width={algoIsPhone ? 22 : 24}
+                    height={12}
+                    decorative
+                    dataTestId="algo-operations-header-wave"
+                  />
+                  <span>{headerScanWave.badgeLabel}</span>
+                </span>
+                {deployments.length ? (
+                  <select
+                    data-testid="algo-operations-deployment-select"
+                    value={focusedDeployment?.id || ""}
+                    onChange={(event) => onSelectDeployment?.(event.target.value)}
+                    aria-label="Signal-options deployment"
+                    style={{
+                      minHeight: dim(26),
+                      maxWidth: dim(algoIsPhone ? 220 : 260),
+                      minWidth: 0,
+                      padding: sp("4px 24px 4px 8px"),
+                      border: `1px solid ${CSS_COLOR.border}`,
+                      borderRadius: dim(RADII.xs),
+                      background: CSS_COLOR.bg1,
+                      color: CSS_COLOR.text,
+                      fontFamily: T.sans,
+                      fontSize: textSize("caption"),
+                      fontWeight: 600,
+                      outline: "none",
+                    }}
+                  >
+                    {deployments.map((deployment) => (
+                      <option key={deployment.id} value={deployment.id}>
+                        {compactDeploymentName(deployment)}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+                {!algoIsPhone
+                  ? headerStatusItems.map((item) => (
+                      <span
+                        key={item.label}
+                        style={headerChipStyle({
+                          color: item.color,
+                          active: item.active,
+                        })}
+                      >
+                        {item.label}
+                      </span>
+                    ))
+                  : null}
+              </div>
+              <div
+                data-testid="algo-operations-header-meta"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: sp(5),
+                  rowGap: sp(2),
+                  flexWrap: "wrap",
+                  minWidth: 0,
+                  color: CSS_COLOR.textDim,
+                  fontFamily: T.sans,
+                  fontSize: textSize("caption"),
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                }}
+              >
+                {headerMetaItems.map((item) => (
+                  <span key={item}>{item}</span>
+                ))}
+              </div>
             </div>
             <div
               data-testid="algo-operations-header-monitor"
@@ -808,114 +1050,63 @@ export const AlgoLivePage = ({
                 flexWrap: "wrap",
               }}
             >
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: sp(2),
-                  color: CSS_COLOR.textDim,
-                  fontFamily: T.sans,
-                  fontSize: textSize("caption"),
-                  letterSpacing: "0.04em",
-                  textTransform: "uppercase",
-                }}
-              >
-                tf {strategySettingsDraft?.signalTimeframe || "5m"} · h
-                {strategySettingsDraft?.timeHorizon ?? 8} ·{" "}
-                {strategySettingsDraft?.bosConfirmation || "wicks"}
-              </span>
-              {!algoIsPhone && signalMonitorProfile?.watchlistId ? (
-                <span
+              {focusedDeployment ? (
+                <div
+                  role="group"
+                  aria-label="Signal-options scan controls"
+                  data-testid="algo-operations-header-actions"
                   style={{
-                    color: CSS_COLOR.textMuted,
-                    fontFamily: T.sans,
-                    fontSize: textSize("caption"),
-                    letterSpacing: "0.04em",
-                    textTransform: "uppercase",
-                    maxWidth: dim(120),
+                    display: "inline-flex",
+                    alignItems: "center",
                     overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+                    border: `1px solid ${CSS_COLOR.border}`,
+                    borderRadius: dim(RADII.pill),
+                    background: CSS_COLOR.bg1,
                   }}
                 >
-                  wl {signalMonitorProfile.watchlistId}
-                </span>
-              ) : null}
-              {focusedDeployment ? (
-                <span
-                  aria-hidden="true"
-                  style={{
-                    width: 1,
-                    height: dim(18),
-                    background: CSS_COLOR.border,
-                    marginInline: sp(1),
-                  }}
-                />
-              ) : null}
-              {focusedDeployment ? (
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleToggleDeployment?.(focusedDeployment)
-                  }
-                  disabled={
-                    enableDeploymentMutation?.isPending ||
-                    pauseDeploymentMutation?.isPending
-                  }
-                  aria-label={focusedDeployment.enabled ? "Pause" : "Resume"}
-                  title={focusedDeployment.enabled ? "Pause" : "Resume"}
-                  style={{
-                    ...compactButtonStyle({
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleToggleDeployment?.(focusedDeployment)
+                    }
+                    disabled={
+                      enableDeploymentMutation?.isPending ||
+                      pauseDeploymentMutation?.isPending
+                    }
+                    aria-label={deploymentToggleLabel}
+                    title={deploymentToggleLabel}
+                    style={headerActionButtonStyle({
+                      color: focusedDeployment.enabled ? CSS_COLOR.amber : CSS_COLOR.green,
                       disabled:
                         enableDeploymentMutation?.isPending ||
                         pauseDeploymentMutation?.isPending,
-                    }),
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: sp(3),
-                    border: `1px solid ${
-                      focusedDeployment.enabled ? CSS_COLOR.amber : CSS_COLOR.green
-                    }`,
-                    background: "transparent",
-                    color: focusedDeployment.enabled ? CSS_COLOR.amber : CSS_COLOR.green,
-                  }}
-                >
-                  <DeploymentToggleIcon
-                    size={HEADER_ICON_SIZE}
-                    strokeWidth={2}
-                    aria-hidden="true"
-                  />
-                  {deploymentToggleLabel}
-                </button>
-              ) : null}
-              {focusedDeployment ? (
-                <button
-                  type="button"
-                  onClick={handleRunShadowScan}
-                  disabled={runShadowScanMutation?.isPending}
-                  aria-label="Scan now"
-                  title="Scan now"
-                  style={{
-                    ...compactButtonStyle({
+                    })}
+                  >
+                    <DeploymentToggleIcon
+                      size={HEADER_ICON_SIZE}
+                      strokeWidth={2}
+                      aria-hidden="true"
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRunShadowScan}
+                    disabled={runShadowScanMutation?.isPending}
+                    aria-label={scanMutationPending ? scanButtonLabel : "Scan now"}
+                    title={scanMutationPending ? scanButtonLabel : "Scan now"}
+                    style={headerActionButtonStyle({
+                      color: CSS_COLOR.accent,
                       disabled: runShadowScanMutation?.isPending,
-                    }),
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: sp(3),
-                    border: `1px solid ${CSS_COLOR.accent}`,
-                    background: "transparent",
-                    color: CSS_COLOR.accent,
-                  }}
-                >
-                  <RefreshCw
-                    size={HEADER_ICON_SIZE}
-                    strokeWidth={2}
-                    aria-hidden="true"
-                  />
-                  {scanButtonLabel}
-                </button>
+                      divided: true,
+                    })}
+                  >
+                    <RefreshCw
+                      size={HEADER_ICON_SIZE}
+                      strokeWidth={2}
+                      aria-hidden="true"
+                    />
+                  </button>
+                </div>
               ) : null}
             </div>
           </div>
@@ -924,8 +1115,8 @@ export const AlgoLivePage = ({
             data-testid="algo-operations-overview"
             style={{
               display: "grid",
-              gap: sp(algoIsPhone ? 4 : 7),
-              padding: sp(algoIsPhone ? "5px" : denseOperationsLayout ? "7px" : "8px"),
+              gap: sp(algoIsPhone ? 3 : 5),
+              padding: sp(algoIsPhone ? "5px" : denseOperationsLayout ? "6px" : "7px"),
               border: `1px solid ${CSS_COLOR.border}`,
               borderRadius: dim(RADII.sm),
               background: CSS_COLOR.bg1,
@@ -940,8 +1131,8 @@ export const AlgoLivePage = ({
                 gridTemplateColumns: algoIsPocketWidth
                   ? "repeat(2, minmax(0, 1fr))"
                   : denseOperationsLayout
-                    ? "repeat(auto-fit, minmax(132px, 1fr))"
-                    : "repeat(auto-fit, minmax(150px, 1fr))",
+                    ? "repeat(auto-fit, minmax(140px, 1fr))"
+                    : "repeat(auto-fit, minmax(160px, 1fr))",
                 gap: sp(4),
                 minWidth: 0,
               }}
@@ -965,41 +1156,46 @@ export const AlgoLivePage = ({
               onSelectStage={(id) => setSelectedPipelineStageId(id)}
               pocket={algoIsPocketWidth}
               dense={denseOperationsLayout}
+              grouped
             />
 
-            <div
-              data-testid="algo-operations-compact-status-row"
-              data-algo-pocket-grid={algoIsPocketWidth ? "two" : undefined}
-              style={{
-                display: "grid",
-                gridTemplateColumns: algoIsPocketWidth
-                  ? "minmax(0, 1fr)"
-                  : denseOperationsLayout
-                    ? "repeat(auto-fit, minmax(160px, 1fr))"
-                    : hasActivitySummary
-                      ? "minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr)"
-                      : "minmax(0, 1fr) minmax(0, 1fr)",
-                gap: sp(6),
-                alignItems: "center",
-                minWidth: 0,
-                paddingTop: sp(2),
-                borderTop: `1px solid ${CSS_COLOR.border}`,
-              }}
-            >
-              {hasActivitySummary ? (
-                <ActivitySummaryInline activitySummary={activitySummary} />
-              ) : null}
-              <OperationsAttentionStrip
-                items={attentionStream}
-                maxInline={algoIsPhone ? 2 : 3}
-                embedded
-              />
-              <OperationsTransitionsStrip
-                transitions={transitions || []}
-                maxInline={algoIsPhone ? 2 : 3}
-                embedded
-              />
-            </div>
+            {showCompactStatusRow ? (
+              <div
+                data-testid="algo-operations-compact-status-row"
+                data-algo-pocket-grid={algoIsPocketWidth ? "two" : undefined}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: algoIsPocketWidth
+                    ? "minmax(0, 1fr)"
+                    : denseOperationsLayout
+                      ? "repeat(auto-fit, minmax(160px, 1fr))"
+                      : hasActivitySummary
+                        ? "minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr)"
+                        : "repeat(auto-fit, minmax(180px, 1fr))",
+                  gap: sp(6),
+                  alignItems: "center",
+                  minWidth: 0,
+                  paddingTop: sp(2),
+                  borderTop: `1px solid ${CSS_COLOR.border}`,
+                }}
+              >
+                {hasActivitySummary ? (
+                  <ActivitySummaryInline activitySummary={activitySummary} />
+                ) : null}
+                <OperationsAttentionStrip
+                  items={attentionStream}
+                  maxInline={algoIsPhone ? 2 : 3}
+                  embedded
+                  showClearState={false}
+                />
+                <OperationsTransitionsStrip
+                  transitions={transitions || []}
+                  maxInline={algoIsPhone ? 2 : 3}
+                  embedded
+                  showEmptyState={false}
+                />
+              </div>
+            ) : null}
           </section>
 
           <Suspense fallback={<AlgoDeferredBlock label="Loading signal table..." />}>
@@ -1007,10 +1203,13 @@ export const AlgoLivePage = ({
               signals={visibleSignalRows}
               candidates={signalOptionsCandidates}
               signalMatrixStates={signalMatrixStates}
+              onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
               cockpitGeneratedAt={cockpitGeneratedAt}
               cockpitStageItems={cockpitStageItems}
+              events={events}
               algoIsPhone={algoIsPhone}
               algoIsNarrow={algoIsNarrow}
+              safeQaMode={safeQaMode}
               onOpenCandidateInTrade={onOpenCandidateInTrade}
             />
           </Suspense>
@@ -1025,8 +1224,6 @@ export const AlgoLivePage = ({
               algoIsPhone={algoIsPhone}
             />
           </Suspense>
-
-          {auditPanel}
         </div>
 
         {!algoIsPhone ? (

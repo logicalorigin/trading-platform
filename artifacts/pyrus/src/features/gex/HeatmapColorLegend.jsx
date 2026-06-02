@@ -39,34 +39,36 @@ const GradientStrip = ({ from, via, to }) => (
   />
 );
 
-export const HeatmapColorLegend = () => (
+export const HeatmapColorLegend = ({ compact = false }) => (
   <div
     data-testid="gex-heatmap-color-legend"
     style={{
       display: "flex",
       flexWrap: "wrap",
       alignItems: "center",
-      gap: sp(8),
-      padding: sp("4px 8px"),
-      borderTop: `1px dashed ${CSS_COLOR.border}`,
+      gap: compact ? sp(6) : sp(8),
+      padding: compact ? 0 : sp("4px 8px"),
+      borderTop: compact ? "none" : `1px dashed ${CSS_COLOR.border}`,
     }}
   >
     <Swatch color={CSS_COLOR.red} label="Put-heavy" />
-    <Swatch color={CSS_COLOR.bg2} label="Neutral" />
+    {compact ? null : <Swatch color={CSS_COLOR.bg2} label="Neutral" />}
     <Swatch color={CSS_COLOR.green} label="Call-heavy" />
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(3),
-        color: CSS_COLOR.textDim,
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
-      }}
-    >
-      Magnitude
-      <GradientStrip from={`${cssColorMix(CSS_COLOR.red, 20)}`} via={CSS_COLOR.bg2} to={`${cssColorMix(CSS_COLOR.green, 80)}`} />
-    </span>
+    {compact ? null : (
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(3),
+          color: CSS_COLOR.textDim,
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
+        }}
+      >
+        Magnitude
+        <GradientStrip from={`${cssColorMix(CSS_COLOR.red, 20)}`} via={CSS_COLOR.bg2} to={`${cssColorMix(CSS_COLOR.green, 80)}`} />
+      </span>
+    )}
   </div>
 );
 

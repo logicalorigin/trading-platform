@@ -27,9 +27,11 @@ export const OperationsAttentionStrip = ({
   items = [],
   maxInline = 3,
   embedded = false,
+  showClearState = true,
 }) => {
   const visible = items.slice(0, maxInline);
   const overflow = Math.max(0, items.length - maxInline);
+  if (!visible.length && !showClearState) return null;
 
   return (
     <div

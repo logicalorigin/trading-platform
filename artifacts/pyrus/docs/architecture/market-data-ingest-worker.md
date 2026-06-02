@@ -6,7 +6,7 @@ Market-data ingestion and internal market-data calculations are Rust-first in v1
 
 - The Rust worker owns queue draining, provider snapshot hydration, option-chain snapshot persistence, retention dry-runs/execution, and persisted GEX snapshot calculation.
 - The TypeScript API owns HTTP request handling, persisted GEX snapshot reads, and enqueueing refresh jobs.
-- Python is not part of the app-owned v1 ingestion or calculation runtime. The workspace may include `python3` for unrelated scripts or tooling, but no Python service currently powers market-data ingestion or GEX calculation.
+- Python is not part of the app-owned v1 ingestion or GEX table hydration runtime. The workspace Python compute service is reserved for optional batch/scenario analytics; no Python service currently powers market-data ingestion or persisted GEX calculation.
 
 ## Supported Jobs
 
@@ -20,7 +20,18 @@ Historical bars, option-flow events, flow summaries, and backfills are reserved 
 
 ## GEX Calculation
 
-The persisted GEX path reads the latest stock quote from `quote_cache` and the latest option-chain snapshot per contract from `option_chain_snapshots`.
+The persisted GEX path reads the latest stock quote from `quote_cache` and the latest full-chain provider option snapshot per contract from `option_chain_snapshots`.
+GEX compute intentionally limits option rows to worker-owned full-chain providers (`massive`/`massive`) so partial API-side IBKR metadata probes cannot collapse the expiration universe.
+The API durable option metadata cache may also write to `option_chain_snapshots`, but its 24-hour pruning is scoped to API metadata sources and must not delete worker full-chain snapshots; worker retention remains controlled by `MARKET_DATA_OPTION_CHAIN_RETENTION_DAYS`.
+
+```text
+GEX page
+  -> /api/gex/{symbol}
+      -> fresh gex_snapshots.payload
+      -> stale payload + queued stock/option/gex refresh
+      -> pending refresh when no persisted snapshot exists
+      -> live fan-out fallback when DB-first mode is disabled or unconfigured
+```
 
 The contract exposure formula is:
 
@@ -29,6 +40,8 @@ sign * gamma * open_interest * multiplier * spot^2 * 0.01
 ```
 
 Calls use positive sign and puts use negative sign. The `0.01` factor expresses exposure for a 1% underlying move. Contracts missing gamma or open interest are excluded from the net exposure and make the source status partial. Zero gamma or zero open interest are valid inputs and contribute zero exposure.
+
+Persisted GEX payloads include `source.expirationCoverage` so the API and GEX page can tell whether all represented expirations loaded usable contracts. The worker marks persisted coverage as uncapped because upstream expiration-discovery cap metadata is not tracked in the persisted worker path yet.
 
 ## Operational Notes
 

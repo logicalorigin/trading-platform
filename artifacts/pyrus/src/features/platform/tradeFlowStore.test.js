@@ -92,7 +92,7 @@ test("tradeFlowStore publishes per-ticker snapshots without letting hydrating em
       { id: "spy-live", ticker: "SPY", premium: 100_000 },
       { id: "nvda-live", underlying: "NVDA", premium: 200_000 },
     ],
-    source: { provider: "polygon", status: "fallback" },
+    source: { provider: "massive", status: "fallback" },
     includeEmpty: true,
   });
   publishTradeFlowSnapshotsByTicker({
@@ -100,7 +100,7 @@ test("tradeFlowStore publishes per-ticker snapshots without letting hydrating em
     events: [],
     status: "loading",
     source: {
-      provider: "polygon",
+      provider: "massive",
       status: "empty",
       ibkrStatus: "empty",
       ibkrReason: "options_flow_historical_refreshing",

@@ -31,7 +31,7 @@ const firstText = (...values) => {
 const normalizeQuoteSource = (value, fallback) => {
   const source = firstText(value);
   if (!source) return fallback ?? null;
-  return /polygon|massive/i.test(source) ? fallback ?? "unknown" : source;
+  return /massive|massive/i.test(source) ? fallback ?? "unknown" : source;
 };
 
 const buildQuote = (quote, fallbackMark, source) => {

@@ -79,7 +79,7 @@ export const mapFlowEventToUi = (event, preferences) => {
       ? event.confidence
       : event.basis === "trade"
         ? "confirmed_trade"
-        : event.provider === "polygon"
+        : event.provider === "massive"
           ? "fallback_estimate"
           : "snapshot_activity");
   const confidence = event.confidence || sourceBasis;

@@ -189,7 +189,7 @@ export const FlowDistributionScannerPanel = ({
   const detail = query?.isError
     ? "Premium distribution is unavailable."
     : query?.data?.source?.errorMessage ||
-      "Polygon premium snapshots have not produced ranked symbols yet.";
+      "Massive premium snapshots have not produced ranked symbols yet.";
   const narrow = useViewportBelow(RAIL_BREAKPOINT_PX);
 
   const totalWidgetSlots = Math.max(

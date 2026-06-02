@@ -84,7 +84,7 @@ async function mockMarketHydrationApi(
           historical: "ibkr",
           research: "fmp",
         },
-        configured: { polygon: false, ibkr: true, research: false },
+        configured: { massive: false, ibkr: true, research: false },
         ibkrBridge: {
           configured: true,
           authenticated: true,

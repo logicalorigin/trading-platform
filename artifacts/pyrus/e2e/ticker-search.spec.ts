@@ -100,7 +100,7 @@ async function mockTickerSearchApi(page: import("@playwright/test").Page) {
               name: "BitFuFu Inc. Class A Ordinary Shares",
               market: "stocks",
               active: true,
-              providers: ["polygon"],
+              providers: ["massive"],
               tradeProvider: null,
               providerContractId: null,
               exchangeDisplay: "NASDAQ",

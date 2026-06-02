@@ -9,6 +9,7 @@ import {
   fs,
   sp,
 } from "../../../lib/uiTokens.jsx";
+import { getCurrentSignalDirection } from "../../../features/signals/signalStateFreshness.js";
 import { SIGNAL_TIMEFRAMES } from "./thresholds.js";
 
 const CSS_COLOR = {
@@ -38,13 +39,13 @@ export const SignalDots = ({
       display: "inline-flex",
       alignItems: "center",
       gap: sp(3),
-      minWidth: dim(34),
+      minWidth: dim(52),
       ...style,
     }}
   >
     {timeframes.map((timeframe) => {
       const state = statesByTimeframe?.[timeframe];
-      const direction = String(state?.currentSignalDirection || "").toLowerCase();
+      const direction = getCurrentSignalDirection(state);
       const hasDirection = isSignalDirection(direction);
       const pending = !state;
       const color =
@@ -58,7 +59,7 @@ export const SignalDots = ({
       const label = pending
         ? `${timeframe} pending`
         : hasDirection
-          ? `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "stale"} - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
+          ? `${timeframe} ${direction.toUpperCase()} ${fresh ? "fresh" : "aged"} - ${state?.barsSinceSignal ?? MISSING_VALUE} bars`
           : `${timeframe} no signal - ${status}`;
       const dotStyle = {
         display: "inline-flex",

@@ -190,7 +190,17 @@ const matrixStates = [
   lastEvaluatedAt: nowIso,
 }));
 
-async function installMockApi(page: Page) {
+type MockApiOptions = {
+  cockpitPipelineStages?: unknown[];
+  candidates?: typeof candidates;
+  signals?: typeof signalRows;
+};
+
+async function installMockApi(page: Page, options: MockApiOptions = {}) {
+  const routeCandidates = options.candidates ?? candidates;
+  const routeSignals = options.signals ?? signalRows;
+  const cockpitPipelineStages = options.cockpitPipelineStages ?? [];
+
   await page.addInitScript(() => {
     class MockEventSource extends EventTarget {
       static CONNECTING = 0;
@@ -235,7 +245,7 @@ async function installMockApi(page: Page) {
         environment: "paper",
         brokerProvider: "ibkr",
         marketDataProvider: "ibkr",
-        configured: { polygon: false, ibkr: true, research: false },
+        configured: { massive: false, ibkr: true, research: false },
         ibkrBridge: {
           connected: true,
           authenticated: true,
@@ -318,8 +328,8 @@ async function installMockApi(page: Page) {
     } else if (url.pathname === `/api/algo/deployments/${deploymentId}/signal-options/state`) {
       body = {
         profile: null,
-        signals: signalRows,
-        candidates,
+        signals: routeSignals,
+        candidates: routeCandidates,
         activePositions: [],
         updatedAt: nowIso,
       };
@@ -328,15 +338,17 @@ async function installMockApi(page: Page) {
         deploymentId,
         evaluatedAt: nowIso,
         generatedAt: nowIso,
-        signals: signalRows,
-        candidates,
+        signals: routeSignals,
+        candidates: routeCandidates,
         activePositions: [],
         kpis: {
           todayPnl: 124.5,
           dailyRealizedPnl: 80,
           openUnrealizedPnl: 44.5,
-          candidates: 3,
-          blockedCandidates: 1,
+          candidates: routeCandidates.length,
+          blockedCandidates: routeCandidates.filter(
+            (candidate) => candidate.actionStatus === "blocked",
+          ).length,
           shadowFilledCandidates: 0,
           openPositions: 0,
           openSymbols: 0,
@@ -346,7 +358,7 @@ async function installMockApi(page: Page) {
         },
         readiness: { ready: true, message: "Ready" },
         fleet: { totalDeployments: 1, enabledDeployments: 1 },
-        pipelineStages: [],
+        pipelineStages: cockpitPipelineStages,
         attentionItems: [],
       };
     } else if (url.pathname === `/api/algo/deployments/${deploymentId}/signal-options/performance`) {
@@ -407,7 +419,7 @@ async function installMockApi(page: Page) {
         settings: [],
         summary: {
           pendingRestartCount: 0,
-          providers: { polygon: false, research: false, ibkr: true },
+          providers: { massive: false, research: false, ibkr: true },
           tradingMode: "paper",
           diagnosticsStatus: "ok",
           diagnosticsSeverity: "info",
@@ -452,9 +464,14 @@ async function installMockApi(page: Page) {
   });
 }
 
-async function openAlgo(page: Page, width: number, height: number) {
+async function openAlgo(
+  page: Page,
+  width: number,
+  height: number,
+  options: MockApiOptions = {},
+) {
   await page.setViewportSize({ width, height });
-  await installMockApi(page);
+  await installMockApi(page, options);
   await page.addInitScript(() => {
     window.localStorage.clear();
     window.sessionStorage.clear();
@@ -579,6 +596,68 @@ test("visual review: desktop signal hero rows", async ({ page }) => {
     path: "/tmp/algo-signal-row-desktop.png",
     animations: "disabled",
   });
+});
+
+test("signal table status suppresses heavy deferred once contracts exist", async ({ page }) => {
+  await openAlgo(page, 1440, 900, {
+    cockpitPipelineStages: [
+      {
+        id: "scan_universe",
+        status: "blocked",
+        count: 90,
+        latestSignalBarAt: nowIso,
+        lastSignalScanAt: nowIso,
+        heavyWorkDeferred: true,
+        resourcePressureLevel: "high",
+        detail: "fresh signals updated; 1 contract resolved; remaining action work deferred",
+      },
+      {
+        id: "contract_selected",
+        status: "healthy",
+        count: 1,
+        detail: "1 contract resolved",
+      },
+    ],
+  });
+
+  const table = page.getByTestId("algo-operations-signal-table");
+  await expect(table).toContainText("fresh signals updated; 1 contract resolved");
+  await expect(table).not.toContainText("Heavy deferred");
+});
+
+test("signal table status shows pre-contract blockers instead of deferred work", async ({ page }) => {
+  await openAlgo(page, 1440, 900, {
+    candidates: candidates.map((candidate, index) => ({
+      ...candidate,
+      action: candidate.action || "buy_call",
+      actionStatus: "blocked",
+      status: "skipped",
+      selectedContract: {},
+      reason: index === 0 ? "mtf_not_aligned" : "market_session_quiet",
+    })),
+    cockpitPipelineStages: [
+      {
+        id: "scan_universe",
+        status: "blocked",
+        count: 90,
+        latestSignalBarAt: nowIso,
+        lastSignalScanAt: nowIso,
+        heavyWorkDeferred: true,
+        resourcePressureLevel: "high",
+        detail: "fresh signals updated; 3 candidates blocked before contract selection",
+      },
+      {
+        id: "contract_selected",
+        status: "attention",
+        count: 0,
+        detail: "3 candidates blocked before contract selection",
+      },
+    ],
+  });
+
+  const table = page.getByTestId("algo-operations-signal-table");
+  await expect(table).toContainText("3 candidates blocked before contract selection");
+  await expect(table).not.toContainText("action work deferred before contract selection");
 });
 
 test("visual review: mobile signal hero rows", async ({ page }) => {

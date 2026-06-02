@@ -137,8 +137,8 @@ export const BottomSheet = ({
               aria-label={`Close ${title}`}
               onClick={onClose}
               style={{
-                width: dim(32),
-                height: dim(32),
+                width: dim(44),
+                height: dim(44),
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",

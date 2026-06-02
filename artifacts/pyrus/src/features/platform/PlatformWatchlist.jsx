@@ -35,6 +35,10 @@ import {
   useValueFlash,
 } from "../../lib/motion.jsx";
 import { INDICES, MACRO_TICKERS, WATCHLIST } from "../market/marketReferenceData";
+import {
+  SIGNALS_ROW_STATUS,
+  buildSignalsRows,
+} from "../signals/signalsRowModel.js";
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
 import { useRuntimeTickerSnapshot, useRuntimeTickerSnapshots } from "./runtimeTickerStore";
 import { MarketIdentityMark } from "./marketIdentity";
@@ -156,6 +160,11 @@ const WATCHLIST_DIRECTION_SORTS = new Set([
 const isWatchlistSignalDirection = (value) =>
   value === "buy" || value === "sell";
 
+const SIGNALS_PAGE_ACTIVE_STATUSES = new Set([
+  SIGNALS_ROW_STATUS.activeFresh,
+  SIGNALS_ROW_STATUS.activeStale,
+]);
+
 const WatchlistRow = memo(
   ({
     item,
@@ -173,6 +182,7 @@ const WatchlistRow = memo(
     onToggleSelection,
     onSignalAction,
     signalStatesByTimeframe = {},
+    signalsRow = null,
     busy = false,
     density = "default",
     selectionMode = false,
@@ -194,6 +204,14 @@ const WatchlistRow = memo(
       bestSignalState?.status !== "error" &&
       bestSignalState?.status !== "unavailable";
     const signalColor = signalDirection === "buy" ? CSS_COLOR.blue : CSS_COLOR.red;
+    const sparklineSignalDirection = signalsRow?.direction;
+    const sparklineSignalColor =
+      SIGNALS_PAGE_ACTIVE_STATUSES.has(signalsRow?.status) &&
+      isWatchlistSignalDirection(sparklineSignalDirection)
+        ? sparklineSignalDirection === "buy"
+          ? CSS_COLOR.blue
+          : CSS_COLOR.red
+        : null;
     const signalFresh = Boolean(bestSignalState?.fresh);
     const pctPositive = isFiniteNumber(snapshot?.pct) ? snapshot.pct >= 0 : null;
 	    const priceValue = isFiniteNumber(snapshot?.price)
@@ -357,7 +375,7 @@ const WatchlistRow = memo(
         <SignalDots
           statesByTimeframe={signalStatesByTimeframe}
           onSelect={(state) => onSignalAction?.(item.sym, state)}
-          style={{ minWidth: dim(34), gap: sp(3) }}
+          style={{ minWidth: dim(52), gap: sp(3) }}
         />
         {renderSignalPill()}
       </span>
@@ -459,6 +477,7 @@ const WatchlistRow = memo(
               <MicroSparkline
                 data={sparklineData}
                 positive={pctPositive}
+                color={sparklineSignalColor}
                 width={TABLE_SPARKLINE_COMPACT_WIDTH}
                 height={TABLE_SPARKLINE_COMPACT_HEIGHT}
                 style={{ width: "100%", height: "100%" }}
@@ -620,6 +639,7 @@ const WatchlistRow = memo(
               <MicroSparkline
                 data={sparklineData}
                 positive={pctPositive}
+                color={sparklineSignalColor}
                 width={TABLE_SPARKLINE_WIDTH}
                 height={TABLE_SPARKLINE_HEIGHT}
                 style={{ width: "100%", height: "100%" }}
@@ -757,6 +777,20 @@ export const Watchlist = ({
     () => items.map((item) => item.sym).filter(Boolean),
     [items],
   );
+  const signalsRowsBySymbol = useMemo(() => {
+    const rows = buildSignalsRows({
+      stateResponse: {
+        states: signalStates,
+        universeSymbols: itemSymbols,
+        skippedSymbols: [],
+        universe: null,
+      },
+      matrixStates: signalMatrixStates,
+      events: [],
+      watchlists,
+    });
+    return new Map(rows.map((row) => [row.symbol, row]));
+  }, [itemSymbols, signalMatrixStates, signalStates, watchlists]);
   const snapshotsBySymbol = useRuntimeTickerSnapshots(itemSymbols);
   const signalMatrixBySymbol = useMemo(
     () => buildSignalMatrixBySymbol(signalMatrixStates),
@@ -1619,6 +1653,7 @@ export const Watchlist = ({
               onToggleSelection={toggleItemSelection}
               onSignalAction={onSignalAction}
               signalStatesByTimeframe={signalMatrixBySymbol[item.sym]}
+              signalsRow={signalsRowsBySymbol.get(item.sym) || null}
               busy={busy}
               density={density}
               selectionMode={selectionMode}

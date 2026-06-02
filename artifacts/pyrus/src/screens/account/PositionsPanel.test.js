@@ -664,7 +664,7 @@ test("positions panel live quote overlay replaces stale provider source labels",
           bid: 1,
           ask: 1.2,
           mark: 1.1,
-          source: "polygon_option_quote",
+          source: "massive_option_quote",
         },
       },
       {
