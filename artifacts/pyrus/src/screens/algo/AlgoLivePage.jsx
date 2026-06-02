@@ -700,6 +700,21 @@ export const AlgoLivePage = ({
   const deploymentToggleLabel = focusedDeployment?.enabled ? "Pause" : "Resume";
   const scanMutationPending = Boolean(runShadowScanMutation?.isPending);
   const scanButtonLabel = scanMutationPending ? "Scanning" : "Scan";
+  const safeQaControlsPaused = Boolean(safeQaMode);
+  const deploymentToggleDisabled =
+    safeQaControlsPaused ||
+    enableDeploymentMutation?.isPending ||
+    pauseDeploymentMutation?.isPending;
+  const scanButtonDisabled =
+    safeQaControlsPaused || runShadowScanMutation?.isPending;
+  const deploymentToggleActionLabel = safeQaControlsPaused
+    ? "Deployment controls paused in safe QA"
+    : deploymentToggleLabel;
+  const scanButtonActionLabel = safeQaControlsPaused
+    ? "Signal-options scan paused in safe QA"
+    : scanMutationPending
+      ? scanButtonLabel
+      : "Scan now";
   const headerScanWave = resolveHeaderScanWave({
     scanRunning: scanMutationPending,
     refreshPending,
@@ -1057,17 +1072,12 @@ export const AlgoLivePage = ({
                     onClick={() =>
                       handleToggleDeployment?.(focusedDeployment)
                     }
-                    disabled={
-                      enableDeploymentMutation?.isPending ||
-                      pauseDeploymentMutation?.isPending
-                    }
-                    aria-label={deploymentToggleLabel}
-                    title={deploymentToggleLabel}
+                    disabled={deploymentToggleDisabled}
+                    aria-label={deploymentToggleActionLabel}
+                    title={deploymentToggleActionLabel}
                     style={headerActionButtonStyle({
                       color: focusedDeployment.enabled ? CSS_COLOR.amber : CSS_COLOR.green,
-                      disabled:
-                        enableDeploymentMutation?.isPending ||
-                        pauseDeploymentMutation?.isPending,
+                      disabled: deploymentToggleDisabled,
                     })}
                   >
                     <DeploymentToggleIcon
@@ -1079,12 +1089,12 @@ export const AlgoLivePage = ({
                   <button
                     type="button"
                     onClick={handleRunShadowScan}
-                    disabled={runShadowScanMutation?.isPending}
-                    aria-label={scanMutationPending ? scanButtonLabel : "Scan now"}
-                    title={scanMutationPending ? scanButtonLabel : "Scan now"}
+                    disabled={scanButtonDisabled}
+                    aria-label={scanButtonActionLabel}
+                    title={scanButtonActionLabel}
                     style={headerActionButtonStyle({
                       color: CSS_COLOR.accent,
-                      disabled: runShadowScanMutation?.isPending,
+                      disabled: scanButtonDisabled,
                       divided: true,
                     })}
                   >
