@@ -2860,7 +2860,7 @@ test("hidden-mounted Algo and Backtest queries require visible screen ownership"
   assert.match(algoSource, /const loadAlgoRightRail = \(\) =>/);
   assert.match(algoSource, /void loadAlgoRightRail\(\)\.catch\(\(\) => undefined\)/);
   assert.match(algoSource, /loadAlgoLivePage\(\)[\s\S]*setAlgoLivePageReady\(true\)/);
-  assert.match(algoSource, /const algoLiveDataQueriesEnabled = Boolean\(isVisible && algoLivePageReady\);/);
+  assert.match(algoSource, /const algoLiveDataQueriesEnabled = Boolean\(isVisible\);/);
   assert.match(algoSource, /const algoSetupQueriesEnabled = Boolean\(isVisible\);/);
   assert.match(algoSource, /const algoCriticalQueriesEnabled = Boolean\(algoLiveDataQueriesEnabled\);/);
   assert.match(

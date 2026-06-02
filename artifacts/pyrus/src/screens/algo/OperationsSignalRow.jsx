@@ -25,6 +25,7 @@ import { formatRelativeTimeShort } from "../../lib/formatters";
 import {
   MicroSparkline,
 } from "../../components/platform/primitives.jsx";
+import { resolveSignalMatrixVerdict } from "../../features/signals/signalsRowModel.js";
 import { getStoredOptionQuoteSnapshot } from "../../features/platform/live-streams";
 import { useValueFlash } from "../../lib/motion.jsx";
 import {
@@ -121,6 +122,12 @@ export const SIGNAL_TABLE_COLUMNS = [
     track: "minmax(96px, 0.76fr)",
   },
   {
+    key: "matrix",
+    label: "Matrix",
+    toggleLabel: "Signal matrix verdict",
+    track: "minmax(98px, 0.72fr)",
+  },
+  {
     key: "contract",
     label: "Contract",
     toggleLabel: "Selected contract",
@@ -189,6 +196,7 @@ export const DEFAULT_SIGNAL_VISIBLE_COLUMNS = [
   "move",
   "action",
   "gate",
+  "matrix",
   "contract",
   "quote",
   "spread",
@@ -380,6 +388,32 @@ const scoreTierLabel = (tier) => {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+};
+
+const matrixScoreLabel = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? `${Math.round(numeric)}%` : MISSING_VALUE;
+};
+
+const matrixReadinessTone = (readiness) => {
+  switch (readiness) {
+    case "ready":
+      return CSS_COLOR.green;
+    case "watch":
+      return CSS_COLOR.blue;
+    case "wait":
+      return CSS_COLOR.amber;
+    case "avoid":
+      return CSS_COLOR.red;
+    default:
+      return CSS_COLOR.textDim;
+  }
+};
+
+const matrixMotionState = (readiness) => {
+  if (readiness === "ready") return "ready";
+  if (readiness === "avoid") return "blocked";
+  return null;
 };
 
 const missingDisplay = (main, detail = MISSING_VALUE) => ({ main, detail });
@@ -686,6 +720,40 @@ const signalDisplay = (signal) => {
     ].filter(Boolean).join(" · ") || MISSING_VALUE,
     direction,
     freshness,
+  };
+};
+
+const signalPrimaryStateForMatrix = (signal) => ({
+  symbol: signal?.symbol,
+  timeframe: signal?.timeframe,
+  currentSignalDirection: signal?.currentSignalDirection || signal?.direction,
+  currentSignalAt: signal?.currentSignalAt || signal?.signalAt,
+  currentSignalPrice: signal?.currentSignalPrice ?? signal?.price ?? null,
+  latestBarAt: signal?.latestBarAt || signal?.signalAt || null,
+  barsSinceSignal: signal?.barsSinceSignal,
+  fresh: signal?.fresh,
+  status: signal?.status || "ok",
+  active: signal?.active ?? true,
+  lastEvaluatedAt: signal?.lastEvaluatedAt || signal?.signalAt || null,
+});
+
+const matrixVerdictDisplay = (verdict) => {
+  const reasons = Array.isArray(verdict?.reasonCodes) ? verdict.reasonCodes : [];
+  const main = scoreTierLabel(verdict?.tradeReadiness);
+  const detail = compactJoin([
+    scoreTierLabel(verdict?.regime),
+    matrixScoreLabel(verdict?.readinessScore),
+  ]);
+  return {
+    main,
+    detail,
+    tone: matrixReadinessTone(verdict?.tradeReadiness),
+    title: compactJoin([
+      verdict?.label,
+      verdict?.detail,
+      reasons.length ? reasons.map(scoreTierLabel).join(" · ") : null,
+    ]),
+    motionState: matrixMotionState(verdict?.tradeReadiness),
   };
 };
 
@@ -1601,6 +1669,12 @@ export const OperationsSignalRow = ({
   const effectiveLiquidity = candidate?.liquidity ?? previewLiquidity;
   const signalState = signalDisplay(signalRecord);
   const direction = signalState.direction;
+  const matrixVerdict = resolveSignalMatrixVerdict({
+    primaryState: signalPrimaryStateForMatrix(signalRecord),
+    matrixStatesByTimeframe: tfMatrix || {},
+    profileTimeframe: signalRecord.timeframe || "5m",
+  });
+  const matrixDisplay = matrixVerdictDisplay(matrixVerdict);
   const candidateBlocker = candidateBlockerLabel(candidate);
   const signalBlocker = signalActionBlockerLabel(signalRecord);
   const blocker =
@@ -1985,6 +2059,23 @@ export const OperationsSignalRow = ({
         tone={gate.tone}
         titleValue={compactJoin([gate.label, gate.detail, blocker])}
         motionState={gateMotionState}
+      />
+    ),
+    matrix: (
+      <DataCell
+        value={matrixDisplay.main}
+        detail={matrixDisplay.detail}
+        tone={matrixDisplay.tone}
+        titleValue={matrixDisplay.title}
+        motionState={matrixDisplay.motionState}
+        icon={
+          <Radar
+            size={SIGNAL_ICON_SIZE}
+            strokeWidth={1.8}
+            aria-hidden="true"
+            style={{ color: matrixDisplay.tone }}
+          />
+        }
       />
     ),
     process: (

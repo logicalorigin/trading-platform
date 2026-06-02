@@ -1657,7 +1657,12 @@ test("algo operations views surface contract quote and greeks fields", () => {
   assert.match(positionsSource, /Shadow account positions \+ live option quotes/);
   assert.match(positionsSource, /Runtime positions \+ live option quotes/);
   assert.match(positionsSource, /filterAccountPositionRowsForDeployment/);
-  assert.match(positionsSource, /hasAccountPositionsQuery\s*\?\s*scopedAccountRows\s*:\s*runtimeRows/);
+  assert.match(positionsSource, /accountPositionsSettled/);
+  assert.match(positionsSource, /useAccountPositionRows/);
+  assert.match(
+    positionsSource,
+    /useAccountPositionRows \? scopedAccountRows : runtimeRows/,
+  );
   assert.doesNotMatch(positionsSource, /mergeAlgoRuntimeAndAccountPositionRows/);
   assert.match(positionsSource, /liveOptionQuotesEnabled=\{true\}/);
   assert.match(positionsSource, /streamLiveOptionQuotes=\{true\}/);
@@ -1690,6 +1695,7 @@ test("algo operations views surface contract quote and greeks fields", () => {
   assert.doesNotMatch(livePageSource, /label:\s*"Flow"/);
   assert.match(livePageSource, /source === "preview" \? "preview" : "primary"/);
   assert.match(livePageSource, /signal-options-preview:\$\{focusedDeploymentId \|\| "active"\}:\$\{group\.underlying\}/);
+  assert.match(livePageSource, /limitAlgoOptionQuoteGroups\(groups, ALGO_OPTION_QUOTE_CONTRACT_LIMIT\)/);
   assert.match(livePageSource, /owner=\{group\.owner\}/);
   assert.match(livePageSource, /requiresGreeks=\{group\.requiresGreeks\}/);
   assert.match(drillSource, /contractSelection/);
