@@ -418,12 +418,6 @@ const buildAlgoOptionQuoteGroups = ({
 const ALGO_OPTION_QUOTE_CANDIDATE_LIMIT = 12;
 const ALGO_OPTION_QUOTE_CONTRACT_LIMIT = 16;
 
-const countAlgoOptionQuoteGroupContracts = (groups) =>
-  (groups || []).reduce(
-    (total, group) => total + (group.providerContractIds || []).length,
-    0,
-  );
-
 const limitAlgoOptionQuoteGroups = (
   groups,
   contractLimit = ALGO_OPTION_QUOTE_CONTRACT_LIMIT,

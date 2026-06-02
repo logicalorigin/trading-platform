@@ -20,7 +20,6 @@ export const OperationsPositionsTable = ({
   algoIsPhone,
 }) => {
   const accountRows = accountPositionsQuery?.data?.positions || [];
-  const hasAccountPositionsQuery = Boolean(accountPositionsQuery);
   const scopedAccountRows = useMemo(
     () =>
       filterAccountPositionRowsForDeployment({
@@ -46,50 +45,52 @@ export const OperationsPositionsTable = ({
       symbolIndex,
       liveQuoteByContractId,
     });
-  }, [
-    positions,
-    providerContractIds,
-    quoteVersion,
-    symbolIndex,
-  ]);
+  }, [positions, providerContractIds, quoteVersion, symbolIndex]);
+  const accountPositionsSettled = Boolean(
+    accountPositionsQuery?.data ||
+      accountPositionsQuery?.isFetched ||
+      accountPositionsQuery?.isSuccess ||
+      accountPositionsQuery?.isError,
+  );
+  const useAccountPositionRows = Boolean(
+    scopedAccountRows.length || (accountPositionsSettled && runtimeRows.length === 0),
+  );
   const rows = useMemo(
-    () =>
-      hasAccountPositionsQuery
-        ? scopedAccountRows
-        : runtimeRows,
-    [hasAccountPositionsQuery, runtimeRows, scopedAccountRows],
+    () => (useAccountPositionRows ? scopedAccountRows : runtimeRows),
+    [runtimeRows, scopedAccountRows, useAccountPositionRows],
   );
   const response = useMemo(
     () => buildAlgoAccountPositionsResponse(rows),
     [rows],
   );
   const query = useMemo(
-    () =>
-      hasAccountPositionsQuery
+    () => ({
+      data: useAccountPositionRows
         ? {
-            data: {
-              ...(accountPositionsQuery.data ||
-                buildAlgoAccountPositionsResponse([])),
-              totals: response.totals,
-              positions: rows,
-            },
-            isLoading: accountPositionsQuery.isLoading,
-            error: accountPositionsQuery.error,
-            refetch: accountPositionsQuery.refetch,
+            ...(accountPositionsQuery?.data || buildAlgoAccountPositionsResponse([])),
+            totals: response.totals,
+            positions: rows,
           }
-        : {
-            data: response,
-            isLoading: Boolean(accountPositionsQuery?.isLoading),
-            error: accountPositionsQuery?.error || null,
-            refetch: accountPositionsQuery?.refetch || (() => undefined),
-          },
+        : response,
+      isLoading: Boolean(
+        useAccountPositionRows && accountPositionsQuery?.isLoading && !rows.length,
+      ),
+      isPending: Boolean(
+        useAccountPositionRows && accountPositionsQuery?.isPending && !rows.length,
+      ),
+      error: useAccountPositionRows ? accountPositionsQuery?.error : null,
+      refetch: accountPositionsQuery?.refetch || (() => undefined),
+    }),
     [
       accountPositionsQuery,
-      hasAccountPositionsQuery,
       response,
       rows,
+      useAccountPositionRows,
     ],
   );
+  const positionsSourceLabel = useAccountPositionRows
+    ? "Shadow account positions + live option quotes"
+    : "Runtime positions + live option quotes";
 
   return (
     <div data-testid="algo-operations-positions-table">
@@ -101,11 +102,7 @@ export const OperationsPositionsTable = ({
         sourceFilter="all"
         onJumpToChart={(symbol) => setAlgoFocus(symbol, "position")}
         onPositionSelect={(row) => setAlgoFocus(row?.symbol, "position")}
-        rightRail={
-          hasAccountPositionsQuery
-            ? "Shadow account positions + live option quotes"
-            : "Runtime positions + live option quotes"
-        }
+        rightRail={positionsSourceLabel}
         emptyBody="Open shadow option positions will appear here once an entry signal fills."
         showFilters={false}
         isPhone={algoIsPhone}
