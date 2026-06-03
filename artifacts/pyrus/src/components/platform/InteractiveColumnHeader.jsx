@@ -1,0 +1,285 @@
+import { forwardRef } from "react";
+import { ChevronDown, GripVertical } from "lucide-react";
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+  sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable";
+import {
+  CSS_COLOR,
+  FONT_WEIGHTS,
+  RADII,
+  T,
+  dim,
+  sp,
+} from "../../lib/uiTokens.jsx";
+
+export const sortDirectionToAria = (direction) =>
+  direction === "asc"
+    ? "ascending"
+    : direction === "desc"
+      ? "descending"
+      : "none";
+
+const justifyForAlign = (align) =>
+  align === "right" ? "flex-end" : align === "center" ? "center" : "flex-start";
+
+export function TableHeaderDndContext({ children, columnIds, onReorder }) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 4 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+  const handleDragEnd = ({ active, over }) => {
+    const activeId = String(active?.id || "");
+    const overId = String(over?.id || "");
+    if (!activeId || !overId || activeId === overId) return;
+    onReorder?.(activeId, overId);
+  };
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragEnd={handleDragEnd}
+    >
+      <SortableContext
+        items={columnIds || []}
+        strategy={horizontalListSortingStrategy}
+      >
+        {children}
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+export const ColumnHeaderCell = forwardRef(function ColumnHeaderCell({
+  active = false,
+  align = "left",
+  as: Element = "div",
+  children,
+  className,
+  dragAttributes,
+  dragHandleRef,
+  dragLabel,
+  dragListeners,
+  dragTitle = "Drag to reorder column",
+  iconSize = 12,
+  id,
+  label,
+  onSort,
+  reorderable = false,
+  role = "columnheader",
+  scope,
+  sortDirection = "desc",
+  sortable = false,
+  sortTitle,
+  style,
+  testId,
+  title,
+}, ref) {
+  const labelNode = children ?? label;
+  const labelText = String(label || id || "column");
+  const ariaSort = sortable
+    ? sortDirectionToAria(active ? sortDirection : null)
+    : undefined;
+  const sortColor = active ? CSS_COLOR.text : CSS_COLOR.textMuted;
+  const tableCellElement = Element === "th" || Element === "td";
+  const content = (
+    <>
+      <span
+        style={{
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {labelNode}
+      </span>
+      {sortable ? (
+        <ChevronDown
+          size={iconSize}
+          strokeWidth={1.8}
+          aria-hidden="true"
+          style={{
+            color: active ? CSS_COLOR.accent : CSS_COLOR.textMuted,
+            flex: "0 0 auto",
+            opacity: active ? 1 : 0.58,
+            transform:
+              active && sortDirection === "asc" ? "rotate(180deg)" : "none",
+          }}
+        />
+      ) : null}
+    </>
+  );
+
+  return (
+    <Element
+      ref={ref}
+      className={className}
+      data-testid={testId}
+      role={role}
+      scope={scope}
+      title={title}
+      aria-sort={ariaSort}
+      style={{
+        minWidth: 0,
+        display: tableCellElement ? undefined : "flex",
+        alignItems: tableCellElement ? undefined : "center",
+        justifyContent: tableCellElement ? undefined : justifyForAlign(align),
+        gap: tableCellElement ? undefined : sp(3),
+        overflow: "hidden",
+        whiteSpace: "nowrap",
+        textAlign: align,
+        boxSizing: "border-box",
+        ...style,
+      }}
+    >
+      <span
+        style={{
+          minWidth: 0,
+          width: "100%",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: justifyForAlign(align),
+          gap: sp(3),
+          overflow: "hidden",
+        }}
+      >
+        {reorderable ? (
+          <button
+            ref={dragHandleRef}
+            type="button"
+            aria-label={dragLabel || `Drag ${labelText} column`}
+            title={dragTitle}
+            data-testid={`column-drag-${id}`}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flex: "0 0 auto",
+              width: dim(18),
+              height: dim(18),
+              border: `1px solid ${CSS_COLOR.border}`,
+              borderRadius: dim(RADII.xs),
+              background: "transparent",
+              color: CSS_COLOR.textMuted,
+              cursor: "grab",
+              padding: 0,
+              touchAction: "none",
+            }}
+            onClick={(event) => event.stopPropagation()}
+            {...dragAttributes}
+            {...dragListeners}
+          >
+            <GripVertical size={12} strokeWidth={1.9} aria-hidden="true" />
+          </button>
+        ) : null}
+        {sortable ? (
+          <button
+            type="button"
+            aria-pressed={active}
+            aria-label={`${sortTitle || `Sort by ${labelText}`}; ${
+              active ? `currently ${ariaSort}` : "not sorted"
+            }`}
+            title={sortTitle || `Sort by ${labelText}`}
+            onClick={onSort}
+            style={{
+              minWidth: 0,
+              width: "100%",
+              height: "100%",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: justifyForAlign(align),
+              gap: sp(3),
+              border: 0,
+              background: "transparent",
+              color: sortColor,
+              cursor: "pointer",
+              fontFamily: T.sans,
+              fontSize: "inherit",
+              fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
+              letterSpacing: "inherit",
+              lineHeight: "inherit",
+              padding: 0,
+              textAlign: align,
+              textDecoration: active ? `underline ${CSS_COLOR.accent}` : "none",
+              textUnderlineOffset: dim(3),
+              textTransform: "inherit",
+            }}
+          >
+            {content}
+          </button>
+        ) : (
+          <span
+            style={{
+              minWidth: 0,
+              width: "100%",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: justifyForAlign(align),
+              gap: sp(3),
+              color: active ? CSS_COLOR.text : "inherit",
+              fontFamily: "inherit",
+              fontSize: "inherit",
+              overflow: "hidden",
+            }}
+          >
+            {content}
+          </span>
+        )}
+      </span>
+    </Element>
+  );
+});
+
+export function SortableColumnHeaderCell({
+  id,
+  reorderable = true,
+  style,
+  ...props
+}) {
+  const {
+    attributes,
+    isDragging,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+  } = useSortable({ id, disabled: !reorderable });
+
+  return (
+    <ColumnHeaderCell
+      id={id}
+      reorderable={reorderable}
+      dragAttributes={attributes}
+      dragHandleRef={setActivatorNodeRef}
+      dragListeners={listeners}
+      style={{
+        opacity: isDragging ? 0.72 : 1,
+        position: isDragging ? "relative" : undefined,
+        transform: CSS.Transform.toString(transform),
+        transition,
+        zIndex: isDragging ? 4 : undefined,
+        ...style,
+      }}
+      ref={setNodeRef}
+      {...props}
+    />
+  );
+}

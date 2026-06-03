@@ -51,6 +51,15 @@ import {
   hasGexHeatmapCellValue,
 } from "../features/gex/gexHeatmapModel.js";
 import { Card, DataUnavailableState } from "../components/platform/primitives.jsx";
+import {
+  SortableColumnHeaderCell,
+  TableHeaderDndContext,
+} from "../components/platform/InteractiveColumnHeader.jsx";
+import {
+  normalizeColumnOrder,
+  orderColumnsById,
+  reorderColumnOrder,
+} from "../components/platform/tableColumnInteractions.js";
 import { InfoTooltipIcon } from "../components/platform/InfoTooltipIcon.jsx";
 import { FailurePointTooltip } from "../components/platform/FailurePointTooltip.jsx";
 import { getGexGlossaryEntry } from "../features/gex/gexGlossary.js";
@@ -76,6 +85,7 @@ import {
   textSize,
 } from "../lib/uiTokens.jsx";
 import { Button } from "../components/ui/Button.jsx";
+import { _initialState, persistState } from "../lib/workspaceState";
 
 const fetchGexData = async ({ ticker, signal }) => {
   return getGexDashboardRequest(encodeURIComponent(ticker), { signal });
@@ -1299,11 +1309,13 @@ const SORTABLE_PROFILE_COLUMNS = [
   { key: "putOi", label: "Put OI" },
   { key: "totalOi", label: "Total OI" },
 ];
-
-const profileSortIndicator = (columnKey, sort) => {
-  if (columnKey !== sort.key) return "⇅";
-  return sort.direction === "asc" ? "↑" : "↓";
-};
+const PROFILE_COLUMNS = [
+  SORTABLE_PROFILE_COLUMNS[0],
+  { key: "putGammaBar", label: "Put Γ" },
+  { key: "callGammaBar", label: "Call Γ" },
+  ...SORTABLE_PROFILE_COLUMNS.slice(1),
+];
+const PROFILE_COLUMN_IDS = PROFILE_COLUMNS.map((column) => column.key);
 
 const ProfileGammaBarCell = ({ value, maxAbs, color, align = "left" }) => {
   const magnitude = Math.abs(value || 0);
@@ -1337,6 +1349,13 @@ const ProfileGammaBarCell = ({ value, maxAbs, color, align = "left" }) => {
 
 const ProfileTable = ({ profile, spot }) => {
   const [sort, setSort] = useState({ key: "strike", direction: "desc" });
+  const [columnOrder, setColumnOrder] = useState(() =>
+    normalizeColumnOrder(_initialState.gexProfileColumnOrder, PROFILE_COLUMN_IDS),
+  );
+  const columns = useMemo(
+    () => orderColumnsById(PROFILE_COLUMNS, columnOrder, (column) => column.key),
+    [columnOrder],
+  );
   const maxCallGex = profile.reduce(
     (max, row) => Math.max(max, Math.abs(row.callGex || 0)),
     0,
@@ -1365,6 +1384,94 @@ const ProfileTable = ({ profile, spot }) => {
         : { key, direction: key === "strike" ? "desc" : "desc" },
     );
   };
+  useEffect(() => {
+    persistState({
+      gexProfileColumnOrder: normalizeColumnOrder(columnOrder, PROFILE_COLUMN_IDS),
+    });
+  }, [columnOrder]);
+  const reorderProfileColumn = (activeColumnId, overColumnId) => {
+    setColumnOrder((current) =>
+      reorderColumnOrder(
+        current,
+        activeColumnId,
+        overColumnId,
+        {
+          fallbackColumnIds: PROFILE_COLUMN_IDS,
+          validColumnIds: PROFILE_COLUMN_IDS,
+        },
+      ),
+    );
+  };
+  const renderProfileCell = (column, row) => {
+    if (column.key === "strike") {
+      return (
+        <td
+          key={column.key}
+          style={{ ...tableCellStyle, textAlign: "left", color: CSS_COLOR.text }}
+        >
+          <div style={{ fontVariantNumeric: "tabular-nums" }}>
+            {fmtPrice(row.strike)}
+          </div>
+          <div style={profileStrikeDeltaStyle}>
+            Spot {fmtPercent((row.strike - spot) / spot)}
+          </div>
+        </td>
+      );
+    }
+    if (column.key === "putGammaBar") {
+      return (
+        <ProfileGammaBarCell
+          key={column.key}
+          value={row.putGex}
+          maxAbs={maxPutGex}
+          color={CSS_COLOR.red}
+          align="right"
+        />
+      );
+    }
+    if (column.key === "callGammaBar") {
+      return (
+        <ProfileGammaBarCell
+          key={column.key}
+          value={row.callGex}
+          maxAbs={maxCallGex}
+          color={CSS_COLOR.green}
+        />
+      );
+    }
+    if (column.key === "netGex") {
+      return (
+        <td
+          key={column.key}
+          style={{
+            ...tableCellStyle,
+            color: row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
+          }}
+        >
+          {fmtCurrency(row.netGex)}
+        </td>
+      );
+    }
+    if (column.key === "callGex") {
+      return (
+        <td key={column.key} style={{ ...tableCellStyle, color: CSS_COLOR.green }}>
+          {fmtCurrency(row.callGex)}
+        </td>
+      );
+    }
+    if (column.key === "putGex") {
+      return (
+        <td key={column.key} style={{ ...tableCellStyle, color: CSS_COLOR.red }}>
+          {fmtCurrency(row.putGex)}
+        </td>
+      );
+    }
+    return (
+      <td key={column.key} style={tableCellStyle}>
+        {fmtNumber(row[column.key])}
+      </td>
+    );
+  };
 
   return (
     <ChartShell title="Strike Profile">
@@ -1380,68 +1487,42 @@ const ProfileTable = ({ profile, spot }) => {
             }}
           >
             <thead>
-              <tr>
-                {SORTABLE_PROFILE_COLUMNS.slice(0, 1).map((column) => (
-                  <th key={column.key} style={{ ...tableHeaderStyle, textAlign: "left" }}>
-                    <button
-                      type="button"
-                      onClick={() => toggleSort(column.key)}
-                      style={{ ...profileHeaderButtonStyle, justifyContent: "flex-start" }}
-                    >
-                      {column.label} {profileSortIndicator(column.key, sort)}
-                    </button>
-                  </th>
-                ))}
-                <th style={tableHeaderStyle}>Put Γ</th>
-                <th style={tableHeaderStyle}>Call Γ</th>
-                {SORTABLE_PROFILE_COLUMNS.slice(1).map((column) => (
-                  <th key={column.key} style={tableHeaderStyle}>
-                    <button
-                      type="button"
-                      onClick={() => toggleSort(column.key)}
-                      style={profileHeaderButtonStyle}
-                    >
-                      {column.label} {profileSortIndicator(column.key, sort)}
-                    </button>
-                  </th>
-                ))}
-              </tr>
+              <TableHeaderDndContext
+                columnIds={columns.map((column) => column.key)}
+                onReorder={reorderProfileColumn}
+              >
+                <tr>
+                  {columns.map((column) => {
+                    const sortable = SORTABLE_PROFILE_COLUMNS.some(
+                      (item) => item.key === column.key,
+                    );
+                    return (
+                      <SortableColumnHeaderCell
+                        key={column.key}
+                        as="th"
+                        id={column.key}
+                        scope="col"
+                        active={sort.key === column.key}
+                        align={column.key === "strike" ? "left" : "right"}
+                        label={column.label}
+                        onSort={sortable ? () => toggleSort(column.key) : undefined}
+                        sortDirection={sort.key === column.key ? sort.direction : null}
+                        sortable={sortable}
+                        sortTitle={`Sort by ${column.label}`}
+                        style={{
+                          ...tableHeaderStyle,
+                          textAlign: column.key === "strike" ? "left" : "right",
+                        }}
+                      />
+                    );
+                  })}
+                </tr>
+              </TableHeaderDndContext>
             </thead>
             <tbody>
               {rows.map((row) => (
                 <tr key={row.strike}>
-                  <td style={{ ...tableCellStyle, textAlign: "left", color: CSS_COLOR.text }}>
-                    <div style={{ fontVariantNumeric: "tabular-nums" }}>
-                      {fmtPrice(row.strike)}
-                    </div>
-                    <div style={profileStrikeDeltaStyle}>
-                      Spot {fmtPercent((row.strike - spot) / spot)}
-                    </div>
-                  </td>
-                  <ProfileGammaBarCell
-                    value={row.putGex}
-                    maxAbs={maxPutGex}
-                    color={CSS_COLOR.red}
-                    align="right"
-                  />
-                  <ProfileGammaBarCell
-                    value={row.callGex}
-                    maxAbs={maxCallGex}
-                    color={CSS_COLOR.green}
-                  />
-                  <td
-                    style={{
-                      ...tableCellStyle,
-                      color: row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
-                    }}
-                  >
-                    {fmtCurrency(row.netGex)}
-                  </td>
-                  <td style={{ ...tableCellStyle, color: CSS_COLOR.green }}>{fmtCurrency(row.callGex)}</td>
-                  <td style={{ ...tableCellStyle, color: CSS_COLOR.red }}>{fmtCurrency(row.putGex)}</td>
-                  <td style={tableCellStyle}>{fmtNumber(row.callOi)}</td>
-                  <td style={tableCellStyle}>{fmtNumber(row.putOi)}</td>
-                  <td style={tableCellStyle}>{fmtNumber(row.totalOi)}</td>
+                  {columns.map((column) => renderProfileCell(column, row))}
                 </tr>
               ))}
             </tbody>
@@ -1476,20 +1557,6 @@ const tableCellStyle = {
   fontFamily: T.sans,
   fontVariantNumeric: "tabular-nums",
   whiteSpace: "nowrap",
-};
-
-const profileHeaderButtonStyle = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "flex-end",
-  gap: sp(3),
-  width: "100%",
-  padding: 0,
-  border: 0,
-  background: "transparent",
-  color: "inherit",
-  font: "inherit",
-  cursor: "pointer",
 };
 
 const profileStrikeDeltaStyle = {
