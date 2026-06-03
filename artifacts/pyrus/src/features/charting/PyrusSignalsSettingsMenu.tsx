@@ -543,7 +543,7 @@ export function PyrusSignalsSettingsMenu({
       detail: "fill between main line and wire 1",
     },
     {
-      label: "HH / LH / HL / LL swing markers",
+      label: "Major HH / LH / HL / LL swing markers",
       color: "#86837D",
       detail: "badge markers • tiny labels",
     },
@@ -710,7 +710,7 @@ export function PyrusSignalsSettingsMenu({
                 <div style={twoColumnInlineStyle}>
                   <InlineCheckbox theme={theme} label="Show BOS" checked={settings.showBos} onChange={() => toggle("showBos")} />
                   <InlineCheckbox theme={theme} label="Show CHOCH" checked={settings.showChoch} onChange={() => toggle("showChoch")} />
-                  <InlineCheckbox theme={theme} label="Show Swing Labels" checked={settings.showSwings} onChange={() => toggle("showSwings")} />
+                  <InlineCheckbox theme={theme} label="Show Major Swing Labels" checked={settings.showSwings} onChange={() => toggle("showSwings")} />
                 </div>
               </Row>
             </Section>
@@ -1265,11 +1265,11 @@ export function PyrusSignalsSettingsMenu({
               <Row theme={theme} label="Show Wireframe Bands">
                 <input type="checkbox" checked={settings.showWires} onChange={() => toggle("showWires")} style={checkboxStyle(theme)} />
               </Row>
-              <Row theme={theme} label="Show BOS / CHOCH / Swing Labels">
+              <Row theme={theme} label="Show BOS / CHOCH / Major Swing Labels">
                 <div style={threeColumnStyle}>
                   <InlineCheckbox theme={theme} label="BOS" checked={settings.showBos} onChange={() => toggle("showBos")} />
                   <InlineCheckbox theme={theme} label="CHOCH" checked={settings.showChoch} onChange={() => toggle("showChoch")} />
-                  <InlineCheckbox theme={theme} label="Swings" checked={settings.showSwings} onChange={() => toggle("showSwings")} />
+                  <InlineCheckbox theme={theme} label="Major Swings" checked={settings.showSwings} onChange={() => toggle("showSwings")} />
                 </div>
               </Row>
               <Row theme={theme} label="Show Trend Reversal Signals">

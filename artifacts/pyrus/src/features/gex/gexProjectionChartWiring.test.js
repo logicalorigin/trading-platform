@@ -63,6 +63,8 @@ test("Research chart frame forwards the GEX projection cone to the chart surface
   assert.doesNotMatch(surfaceSource, /axisLabelBg/);
   assert.doesNotMatch(surfaceSource, /strokeDasharray="2 3"/);
   assert.match(surfaceSource, /buildGexProjectionConeSvgOverlay/);
+  assert.match(surfaceSource, /centerDots/);
+  assert.match(surfaceSource, /data-chart-gex-projection-center-dot/);
   assert.match(surfaceSource, /buildGexProjectionFallbackPriceCoordinate/);
   assert.match(surfaceSource, /fallbackPriceToCoordinate/);
   assert.match(surfaceSource, /The GEX cone depends on priceToCoordinate/);

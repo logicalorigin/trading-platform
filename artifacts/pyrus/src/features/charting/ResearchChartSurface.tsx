@@ -639,6 +639,14 @@ type GexProjectionConeSvgOverlay = {
   outerPath: string;
   innerPath: string;
   centerPath: string;
+  centerDots: Array<{
+    x: number;
+    y: number;
+    price: number;
+    label: string;
+    expirationDate: string;
+    qualityStatus: string;
+  }>;
   axisTicks: Array<{
     x: number;
     label: string;
@@ -2532,6 +2540,8 @@ const GEX_PROJECTION_VISIBLE_POINT_LIMIT = 8;
 const GEX_PROJECTION_EXPIRATION_UTC_HOUR = 20;
 const GEX_PROJECTION_AUTO_FIT_MAX_LOGICAL_BARS = 240;
 const GEX_PROJECTION_AUTO_FIT_PADDING_BARS = 32;
+const GEX_PROJECTION_DISPLAY_MIN_LOGICAL_OFFSET = 32;
+const GEX_PROJECTION_DISPLAY_MAX_LOGICAL_OFFSET = 160;
 
 const formatGexProjectionAxisLabel = (expirationDate: string): string => {
   const normalized = String(expirationDate || "").slice(0, 10);
@@ -2646,22 +2656,104 @@ export const resolveGexProjectionAutoFitLogicalOffset = ({
     return 0;
   }
 
-  const offsets = points
-    .map((point) =>
-      resolveGexProjectionLogicalOffset({
-        expirationDate: point.expirationDate,
-        lastBarTime,
-        timeframe,
-        observedStepSeconds,
-      }),
-    )
-    .filter((offset): offset is number => offset != null && offset > 0)
-    .sort((left, right) => left - right);
+  const offsets = resolveGexProjectionDisplayLogicalOffsets({
+    points,
+    lastBarTime,
+    timeframe,
+    observedStepSeconds,
+    maxOffset: normalizedMaxOffset,
+  }).map((point) => point.logicalOffset);
   const nearestOffset = offsets[0] ?? null;
   if (nearestOffset == null || nearestOffset > normalizedMaxOffset) {
     return 0;
   }
   return Math.ceil(nearestOffset);
+};
+
+export type GexProjectionDisplayLogicalOffset = {
+  expirationDate: string;
+  logicalOffset: number;
+  sourceLogicalOffset: number;
+};
+
+export const resolveGexProjectionDisplayLogicalOffsets = ({
+  points,
+  lastBarTime,
+  timeframe,
+  observedStepSeconds = null,
+  maxOffset = GEX_PROJECTION_AUTO_FIT_MAX_LOGICAL_BARS,
+}: {
+  points: GexProjectionConePoint[] | null | undefined;
+  lastBarTime: number;
+  timeframe?: string | null;
+  observedStepSeconds?: number | null;
+  maxOffset?: number;
+}): GexProjectionDisplayLogicalOffset[] => {
+  if (!Array.isArray(points) || !points.length || !isFiniteNumber(lastBarTime)) {
+    return [];
+  }
+
+  const normalizedMaxOffset =
+    isFiniteNumber(maxOffset) && maxOffset > 0 ? maxOffset : 0;
+  if (normalizedMaxOffset <= 0) {
+    return [];
+  }
+
+  const sourceOffsets = points
+    .slice(0, GEX_PROJECTION_VISIBLE_POINT_LIMIT)
+    .map((point) => {
+      const sourceLogicalOffset = resolveGexProjectionLogicalOffset({
+        expirationDate: point.expirationDate,
+        lastBarTime,
+        timeframe,
+        observedStepSeconds,
+      });
+      return sourceLogicalOffset != null && sourceLogicalOffset > 0
+        ? {
+            expirationDate: point.expirationDate,
+            sourceLogicalOffset,
+          }
+        : null;
+    })
+    .filter((point): point is NonNullable<typeof point> => point != null)
+    .sort((left, right) => left.sourceLogicalOffset - right.sourceLogicalOffset);
+
+  if (!sourceOffsets.length) {
+    return [];
+  }
+
+  const maxDisplayOffset = Math.max(
+    GEX_PROJECTION_DISPLAY_MIN_LOGICAL_OFFSET,
+    Math.min(
+      GEX_PROJECTION_DISPLAY_MAX_LOGICAL_OFFSET,
+      normalizedMaxOffset - GEX_PROJECTION_AUTO_FIT_PADDING_BARS,
+    ),
+  );
+  const shouldCompress = sourceOffsets.some(
+    (point) => point.sourceLogicalOffset > maxDisplayOffset,
+  );
+
+  if (!shouldCompress) {
+    return sourceOffsets.map((point) => ({
+      ...point,
+      logicalOffset: Math.ceil(point.sourceLogicalOffset),
+    }));
+  }
+
+  const span = Math.max(
+    0,
+    maxDisplayOffset - GEX_PROJECTION_DISPLAY_MIN_LOGICAL_OFFSET,
+  );
+  return sourceOffsets.map((point, index) => {
+    const ratio =
+      sourceOffsets.length === 1 ? 0.5 : index / (sourceOffsets.length - 1);
+    return {
+      ...point,
+      logicalOffset: Math.round(
+        GEX_PROJECTION_DISPLAY_MIN_LOGICAL_OFFSET + span * ratio,
+      ),
+    };
+  });
 };
 
 const buildGexProjectionFallbackPriceCoordinate = ({
@@ -2746,13 +2838,17 @@ export const resolveGexProjectionAutoscalePriceRange = ({
   const lastLogicalIndex = Math.max(0, chartBars.length - 1);
   const prices: number[] = [];
 
-  for (const point of overlay.points.slice(0, GEX_PROJECTION_VISIBLE_POINT_LIMIT)) {
-    const logicalOffset = resolveGexProjectionLogicalOffset({
-      expirationDate: point.expirationDate,
+  const displayOffsetByExpiration = new Map(
+    resolveGexProjectionDisplayLogicalOffsets({
+      points: overlay.points,
       lastBarTime: lastBar.time,
       timeframe,
       observedStepSeconds,
-    });
+    }).map((point) => [point.expirationDate, point.logicalOffset] as const),
+  );
+
+  for (const point of overlay.points.slice(0, GEX_PROJECTION_VISIBLE_POINT_LIMIT)) {
+    const logicalOffset = displayOffsetByExpiration.get(point.expirationDate);
     if (logicalOffset == null) {
       continue;
     }
@@ -2934,6 +3030,14 @@ const buildGexProjectionConeSvgOverlay = ({
 
   const barSpacing = resolveBarSpacing(chart, model, 0.25);
   const observedStepSeconds = resolveObservedBarStepSeconds(model.chartBars);
+  const displayOffsetByExpiration = new Map(
+    resolveGexProjectionDisplayLogicalOffsets({
+      points: visiblePoints,
+      lastBarTime: lastBar.time,
+      timeframe: chartTimeframe,
+      observedStepSeconds,
+    }).map((point) => [point.expirationDate, point.logicalOffset] as const),
+  );
   const resolveY = (price: number) => {
     const coordinate = resolvePriceCoordinate(price);
     return isFiniteNumber(coordinate)
@@ -2947,12 +3051,7 @@ const buildGexProjectionConeSvgOverlay = ({
   const anchor = { x: lastX, y: anchorY };
   const projected = visiblePoints
     .map((point) => {
-      const logicalOffset = resolveGexProjectionLogicalOffset({
-        expirationDate: point.expirationDate,
-        lastBarTime: lastBar.time,
-        timeframe: chartTimeframe,
-        observedStepSeconds,
-      });
+      const logicalOffset = displayOffsetByExpiration.get(point.expirationDate);
       const x =
         logicalOffset != null ? lastX + logicalOffset * barSpacing : null;
       const lower2 = resolveY(point.lower2);
@@ -3031,6 +3130,17 @@ const buildGexProjectionConeSvgOverlay = ({
     outerPath: `${buildSvgPath(outerUpper, svgXBounds)} L ${buildSvgPath(outerLower, svgXBounds).replace(/^M /, "")} Z`,
     innerPath: `${buildSvgPath(innerUpper, svgXBounds)} L ${buildSvgPath(innerLower, svgXBounds).replace(/^M /, "")} Z`,
     centerPath: buildSvgPath(center, svgXBounds),
+    centerDots: projected.map((point) => ({
+      x: point.x,
+      y: point.center,
+      price:
+        visiblePoints.find(
+          (candidate) => candidate.expirationDate === point.expirationDate,
+        )?.center ?? Number.NaN,
+      label: formatGexProjectionAxisLabel(point.expirationDate),
+      expirationDate: point.expirationDate,
+      qualityStatus: point.qualityStatus,
+    })),
     axisTicks,
     futureLaneX: lastX,
     futureLaneWidth: Math.max(0, viewportWidth - lastX),
@@ -11853,6 +11963,41 @@ const ResearchChartSurfaceComponent = ({
                         : "4 4"
                     }
                   />
+                  {gexProjectionConeSvgOverlay.centerDots.length ? (
+                    <g data-chart-gex-projection-center-dots="">
+                      {gexProjectionConeSvgOverlay.centerDots.map((dot) => (
+                        <g
+                          key={`${dot.expirationDate}:${dot.x}:${dot.y}`}
+                          data-chart-gex-projection-center-dot=""
+                          data-chart-gex-projection-expiration={
+                            dot.expirationDate
+                          }
+                          data-chart-gex-projection-center-price={
+                            isFiniteNumber(dot.price)
+                              ? String(dot.price)
+                              : undefined
+                          }
+                          data-chart-gex-projection-quality={dot.qualityStatus}
+                        >
+                          <title>{`${dot.label} expected price ${formatChartPriceAxisValue(dot.price)}`}</title>
+                          <circle
+                            cx={dot.x}
+                            cy={dot.y}
+                            r={compact ? 4.2 : 4.8}
+                            fill={gexProjectionConeSvgOverlay.centerHaloStroke}
+                          />
+                          <circle
+                            cx={dot.x}
+                            cy={dot.y}
+                            r={compact ? 2.4 : 2.9}
+                            fill={gexProjectionConeSvgOverlay.centerStroke}
+                            stroke={gexProjectionConeSvgOverlay.centerHaloStroke}
+                            strokeWidth={1}
+                          />
+                        </g>
+                      ))}
+                    </g>
+                  ) : null}
                   {gexProjectionConeSvgOverlay.axisTicks.length &&
                   chartTimeScaleHeight >= 12 ? (
                     <g data-chart-gex-projection-future-axis="">

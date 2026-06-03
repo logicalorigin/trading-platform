@@ -117,6 +117,46 @@ const buildGapBars = (): ChartBar[] => {
   );
 };
 
+const buildMicroSwingBars = (): ChartBar[] => {
+  const lows = [
+    99.9, 99.7, 99.4, 99.05, 99.35, 99.55, 99.25, 99.6, 99.2, 99.5, 99.05,
+    99.4, 98.0, 98.8, 99.3, 99.75, 100.15, 100.45, 100.9, 101.2,
+  ];
+  const highs = [
+    100.2, 100.55, 100.95, 101.35, 101.0, 100.75, 101.18, 100.7, 101.15,
+    100.68, 101.22, 100.72, 102.3, 101.82, 101.45, 101.1, 100.8, 100.5,
+    100.2, 99.95,
+  ];
+
+  return highs.map((high, index) =>
+    toChartBar(
+      index,
+      Number(((high + lows[index]) / 2).toFixed(2)),
+      {
+        h: high,
+        l: lows[index],
+        o: Number(((high + lows[index]) / 2 - 0.03).toFixed(2)),
+        v: 20_000 + index,
+      },
+    ),
+  );
+};
+
+const buildLongMajorSwingBars = (): ChartBar[] => {
+  const pattern = [100, 105, 112, 105, 100, 95, 88, 95];
+
+  return Array.from({ length: 420 }, (_, index) => {
+    const cycle = Math.floor(index / pattern.length);
+    const close = pattern[index % pattern.length] + cycle * 4;
+
+    return toChartBar(index, close, {
+      h: close + 0.3,
+      l: close - 0.3,
+      v: 30_000 + index,
+    });
+  });
+};
+
 const timeframeSeconds = (timeframe: string): number =>
   ({
     "1m": 60,
@@ -883,6 +923,47 @@ test("Pyrus Signals swing labels honor the Pine swing toggle independently from 
   );
   assert.ok(
     withoutSwings.events?.some((event) => event.eventType === "bull_break"),
+  );
+});
+
+test("Pyrus Signals swing labels suppress micro-pivot churn while keeping major swings", () => {
+  const output = computePyrusSignals(buildMicroSwingBars(), {
+    ...TEST_SETTINGS,
+    timeHorizon: 2,
+    atrLength: 3,
+    atrSmoothing: 3,
+    showStructure: true,
+    showBos: true,
+    showChoch: true,
+    showSwings: true,
+  });
+  const swingLabels =
+    output.events?.filter((event) => event.eventType === "swing_label") ?? [];
+  const labels = swingLabels.map((event) => event.label);
+
+  assert.deepEqual(labels, ["HH", "LL"]);
+});
+
+test("Pyrus Signals swing labels keep only the most recent major swing badges", () => {
+  const output = computePyrusSignals(buildLongMajorSwingBars(), {
+    ...TEST_SETTINGS,
+    timeHorizon: 2,
+    atrLength: 3,
+    atrSmoothing: 3,
+    showStructure: true,
+    showBos: true,
+    showChoch: true,
+    showSwings: true,
+  });
+  const swingLabels =
+    output.events?.filter((event) => event.eventType === "swing_label") ?? [];
+
+  assert.equal(swingLabels.length, 80);
+  assert.ok(
+    swingLabels.every(
+      (event) =>
+        typeof event.barIndex === "number" && event.barIndex >= 90,
+    ),
   );
 });
 

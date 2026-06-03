@@ -27,6 +27,7 @@ import {
   resolveEffectiveChartViewportSnapshot,
   resolveGexProjectionAutoscalePriceRange,
   resolveGexProjectionAutoFitLogicalOffset,
+  resolveGexProjectionDisplayLogicalOffsets,
   resolveGexProjectionLogicalOffset,
   resolveGexProjectionSvgXBounds,
   resolveMobileChartInteractionConfig,
@@ -1360,7 +1361,7 @@ test("ResearchChartSurface auto-fits near GEX projections without pulling in dis
       lastBarTime,
       timeframe: "5m",
     }),
-    0,
+    96,
   );
   assert.equal(
     resolveGexProjectionAutoFitLogicalOffset({
@@ -1368,7 +1369,50 @@ test("ResearchChartSurface auto-fits near GEX projections without pulling in dis
       lastBarTime,
       timeframe: "5m",
     }),
-    0,
+    96,
+  );
+});
+
+test("ResearchChartSurface compresses GEX projection expirations into a visible future lane", () => {
+  const lastBarTime = Math.floor(Date.UTC(2026, 5, 1, 20, 0, 0, 0) / 1000);
+  const basePoint = {
+    lower2: 90,
+    lower1: 95,
+    center: 100,
+    upper1: 105,
+    upper2: 110,
+    qualityStatus: "ok",
+  };
+
+  assert.deepEqual(
+    resolveGexProjectionDisplayLogicalOffsets({
+      points: [{ ...basePoint, expirationDate: "2026-06-02" }],
+      lastBarTime,
+      timeframe: "5m",
+    }).map(({ expirationDate, logicalOffset }) => ({
+      expirationDate,
+      logicalOffset,
+    })),
+    [{ expirationDate: "2026-06-02", logicalOffset: 96 }],
+  );
+  assert.deepEqual(
+    resolveGexProjectionDisplayLogicalOffsets({
+      points: [
+        { ...basePoint, expirationDate: "2026-06-02" },
+        { ...basePoint, expirationDate: "2026-06-05" },
+        { ...basePoint, expirationDate: "2026-06-19" },
+      ],
+      lastBarTime,
+      timeframe: "5m",
+    }).map(({ expirationDate, logicalOffset }) => ({
+      expirationDate,
+      logicalOffset,
+    })),
+    [
+      { expirationDate: "2026-06-02", logicalOffset: 32 },
+      { expirationDate: "2026-06-05", logicalOffset: 96 },
+      { expirationDate: "2026-06-19", logicalOffset: 160 },
+    ],
   );
 });
 
@@ -1401,7 +1445,7 @@ test("ResearchChartSurface includes visible GEX projection bands in autoscale ra
       overlay,
       chartBars,
       timeframe: "5m",
-      visibleLogicalRange: { from: 250, to: 310 },
+      visibleLogicalRange: { from: 90, to: 130 },
     }),
     { minValue: 90, maxValue: 110 },
   );

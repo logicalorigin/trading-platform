@@ -258,6 +258,9 @@ const REACTION_COLOR = "#EBCB9C";
 const STOP_LOSS_COLOR = "#EA5E5B";
 const TAKE_PROFIT_COLOR = "#4FB286";
 const TREND_REVERSAL_LINE_STYLE = "dashed";
+const PYRUS_SIGNALS_SWING_LABEL_MIN_ATR_MULTIPLIER = 0.35;
+const PYRUS_SIGNALS_SWING_LABEL_MIN_PRICE_MOVE_PERCENT = 0.001;
+const PYRUS_SIGNALS_SWING_LABEL_MAX_VISIBLE = 80;
 const TP_SL_LINE_STYLE = "dashed";
 export const PYRUS_SIGNALS_TIME_HORIZON_OPTIONS = [2, 4, 6, 8, 10, 15, 20] as const;
 export const PYRUS_SIGNALS_LINE_STYLE_OPTIONS: ReadonlyArray<PyrusSignalsLineStyle> = [
@@ -1617,6 +1620,47 @@ const hasHardBarTimeGap = (
   return chartBars[index].time - chartBars[index - 1].time > medianInterval * 2;
 };
 
+const resolveMajorSwingLabelMinMove = (
+  atrRaw: number[],
+  pivotIndex: number,
+  pivotPrice: number,
+): number => {
+  const pivotAtr = atrRaw[pivotIndex] ?? Number.NaN;
+  if (Number.isFinite(pivotAtr) && pivotAtr > 0) {
+    return pivotAtr * PYRUS_SIGNALS_SWING_LABEL_MIN_ATR_MULTIPLIER;
+  }
+
+  if (Number.isFinite(pivotPrice)) {
+    return Math.max(
+      Math.abs(pivotPrice) * PYRUS_SIGNALS_SWING_LABEL_MIN_PRICE_MOVE_PERCENT,
+      Number.EPSILON,
+    );
+  }
+
+  return Number.POSITIVE_INFINITY;
+};
+
+const shouldRenderMajorSwingLabel = ({
+  atrRaw,
+  pivotIndex,
+  pivotPrice,
+  previousSwingPrice,
+}: {
+  atrRaw: number[];
+  pivotIndex: number;
+  pivotPrice: number;
+  previousSwingPrice: number;
+}): boolean => {
+  if (!Number.isFinite(previousSwingPrice) || !Number.isFinite(pivotPrice)) {
+    return false;
+  }
+
+  return (
+    Math.abs(pivotPrice - previousSwingPrice) >=
+    resolveMajorSwingLabelMinMove(atrRaw, pivotIndex, pivotPrice)
+  );
+};
+
 const buildMarker = (
   id: string,
   bar: ChartBar,
@@ -2954,6 +2998,7 @@ export function createPyrusSignalsPineRuntimeAdapter(
 
       const markers: ChartMarker[] = [];
       const events: IndicatorEvent[] = [];
+      const swingLabelEventIds: string[] = [];
       const fillZones: IndicatorZone[] = [];
       const zones: IndicatorZone[] = [];
       const barStyleByIndex = new Array<ChartBarStyle | null>(
@@ -2988,6 +3033,27 @@ export function createPyrusSignalsPineRuntimeAdapter(
       let activeTpSlOverlay: ActiveTpSlOverlay | null = null;
       let lastFlipBarIndex = 0;
       let previousActiveRegimeDirection: number | null = null;
+
+      const pushSwingLabelEvent = (event: IndicatorEvent) => {
+        events.push(event);
+        swingLabelEventIds.push(event.id);
+
+        if (swingLabelEventIds.length <= PYRUS_SIGNALS_SWING_LABEL_MAX_VISIBLE) {
+          return;
+        }
+
+        const oldestId = swingLabelEventIds.shift();
+        if (!oldestId) {
+          return;
+        }
+
+        const oldestEventIndex = events.findIndex(
+          (candidate) => candidate.id === oldestId,
+        );
+        if (oldestEventIndex >= 0) {
+          events.splice(oldestEventIndex, 1);
+        }
+      };
 
       const passesChochFilters = (
         index: number,
@@ -3092,13 +3158,22 @@ export function createPyrusSignalsPineRuntimeAdapter(
             breakableHighBarIndex = pivotIndex;
 
             const bar = chartBars[pivotIndex];
-            if (bar && showSwings) {
+            if (
+              bar &&
+              showSwings &&
+              shouldRenderMajorSwingLabel({
+                atrRaw,
+                pivotIndex,
+                pivotPrice: resolvedPivotHigh,
+                previousSwingPrice: previousSwingHigh,
+              })
+            ) {
               const label =
                 Number.isFinite(previousSwingHigh) &&
                 resolvedPivotHigh > previousSwingHigh
                   ? "HH"
                   : "LH";
-              events.push(
+              pushSwingLabelEvent(
                 buildEvent(
                   `${script.scriptKey}-swing-high-${pivotIndex}`,
                   bar,
@@ -3131,13 +3206,22 @@ export function createPyrusSignalsPineRuntimeAdapter(
             breakableLowBarIndex = pivotIndex;
 
             const bar = chartBars[pivotIndex];
-            if (bar && showSwings) {
+            if (
+              bar &&
+              showSwings &&
+              shouldRenderMajorSwingLabel({
+                atrRaw,
+                pivotIndex,
+                pivotPrice: resolvedPivotLow,
+                previousSwingPrice: previousSwingLow,
+              })
+            ) {
               const label =
                 Number.isFinite(previousSwingLow) &&
                 resolvedPivotLow > previousSwingLow
                   ? "HL"
                   : "LL";
-              events.push(
+              pushSwingLabelEvent(
                 buildEvent(
                   `${script.scriptKey}-swing-low-${pivotIndex}`,
                   bar,
