@@ -138,6 +138,8 @@ export type OvernightSpotSignalScanResult = {
   }>;
 };
 
+export type OvernightSpotWorkerDeployment = OvernightSpotDeployment;
+
 type RunOvernightSpotSignalScanInput = {
   deploymentId: string;
   forceEvaluate?: boolean;
@@ -252,6 +254,31 @@ function eventId(event: Record<string, unknown> | null | undefined) {
     return null;
   }
   return String(event.id);
+}
+
+export function deploymentHasOvernightSpotProfile(
+  deployment: OvernightSpotDeployment,
+) {
+  const profile = resolveOvernightSpotProfile({
+    config: deployment.config,
+    providerAccountId: deployment.providerAccountId,
+  });
+  return profile.enabled && profile.executionMode !== "disabled";
+}
+
+function shouldSkipExistingClientOrderEvent(input: {
+  existing: Record<string, unknown>;
+  runActions: boolean;
+}) {
+  if (!input.runActions) {
+    return true;
+  }
+  const eventType = asString(input.existing.eventType) ?? "";
+  return (
+    eventType.startsWith("overnight_spot_shadow_") ||
+    eventType.startsWith("overnight_spot_live_") ||
+    eventType === OVERNIGHT_SPOT_FAILED_EVENT
+  );
 }
 
 async function insertEvent(
@@ -457,8 +484,12 @@ export async function runOvernightSpotSignalScan(
       state.currentSignalDirection === "buy" ||
       state.currentSignalDirection === "sell",
   );
+  const actionStates =
+    runActions && profile.requireActionableSignal
+      ? states.filter((state) => state.status === "ok" && state.fresh === true)
+      : states;
   const symbols = Array.from(
-    new Set(states.map((state) => normalizeSymbol(state.symbol).toUpperCase())),
+    new Set(actionStates.map((state) => normalizeSymbol(state.symbol).toUpperCase())),
   );
   const [quotes, positionQuantities] = await Promise.all([
     dependencies.loadQuotes(symbols),
@@ -471,7 +502,7 @@ export async function runOvernightSpotSignalScan(
 
   const results: OvernightSpotSignalScanResult["results"] = [];
 
-  for (const state of states) {
+  for (const state of actionStates) {
     const signal = signalStateToSignal(state);
     const clientOrderId = trackClientOrderId({
       deploymentId: deployment.id,
@@ -481,7 +512,13 @@ export async function runOvernightSpotSignalScan(
       deploymentId: deployment.id,
       clientOrderId,
     });
-    if (existing) {
+    if (
+      existing &&
+      shouldSkipExistingClientOrderEvent({
+        existing,
+        runActions,
+      })
+    ) {
       results.push({
         symbol: signal.symbol,
         clientOrderId,
@@ -539,7 +576,7 @@ export async function runOvernightSpotSignalScan(
     deploymentId: deployment.id,
     executionMode: profile.executionMode,
     runActions,
-    candidateCount: states.length,
+    candidateCount: actionStates.length,
     trackedCount: results.filter((result) =>
       ["tracked", "blocked", "executed", "failed"].includes(result.status),
     ).length,
@@ -553,6 +590,15 @@ export async function runOvernightSpotSignalScan(
 
 async function loadDeployment(deploymentId: string) {
   return getAlgoDeploymentForExecution({ deploymentId });
+}
+
+export async function listEnabledOvernightSpotDeployments() {
+  const deployments = await db
+    .select()
+    .from(algoDeploymentsTable)
+    .where(eq(algoDeploymentsTable.enabled, true))
+    .orderBy(desc(algoDeploymentsTable.updatedAt));
+  return deployments.filter(deploymentHasOvernightSpotProfile);
 }
 
 async function loadSignalStates(input: {
