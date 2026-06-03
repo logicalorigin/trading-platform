@@ -139,10 +139,26 @@ const SIGNALS_COLUMN_IDS = [
 ];
 const SIGNALS_LOCKED_COLUMN_IDS = ["symbol", "action"];
 const SIGNALS_SORT_KEYS_BY_COLUMN_ID = {
+  action: "symbol",
+  age: "age",
   bars: "bars",
+  coverage: "coverage",
   latest: "latest",
-  signal: "priority",
+  mtf: "mtf",
+  price: "price",
+  signal: "signal",
+  stack: "stack",
+  strength: "strength",
   symbol: "symbol",
+  ...Object.fromEntries(
+    SIGNALS_TABLE_TIMEFRAMES.map((timeframe) => [
+      `tf-${timeframe}`,
+      `tf-${timeframe}`,
+    ]),
+  ),
+  trend: "trend",
+  verdict: "verdict",
+  vol: "vol",
 };
 const SIGNAL_DRILLDOWN_CHART_LIMIT = 160;
 const SIGNAL_DRILLDOWN_CHART_TIMEFRAMES = new Set([
@@ -593,6 +609,9 @@ function CompactIntervalCell({ timeframe, state }) {
   const problem = isProblemSignalState(state);
   const direction = hydrated ? getCurrentSignalDirection(state) : "";
   const tone = problem ? CSS_COLOR.red : toneForDirection(direction);
+  const intervalAge = hydrated
+    ? formatTime(state.currentSignalAt || state.latestBarAt || state.lastEvaluatedAt)
+    : MISSING_VALUE;
   const Icon = problem
     ? AlertTriangle
     : direction === "sell"
@@ -601,7 +620,7 @@ function CompactIntervalCell({ timeframe, state }) {
         ? ArrowUp
         : Clock3;
   const content = hydrated
-    ? `${timeframe} ${direction || "none"} · ${formatBars(state.barsSinceSignal)} · ${formatTime(state.currentSignalAt || state.lastEvaluatedAt)}`
+    ? `${timeframe} ${direction || "none"} · ${formatBars(state.barsSinceSignal)} · ${intervalAge}`
     : state?.lastError
       ? `${timeframe} ${state.status || "error"} · ${state.lastError}`
       : `${timeframe} not hydrated`;
@@ -622,16 +641,36 @@ function CompactIntervalCell({ timeframe, state }) {
         <Icon size={13} strokeWidth={2} aria-hidden="true" />
         <span
           style={{
-            ...cellTextStyle,
-            color: hydrated && state?.fresh
-              ? tone
-              : problem
-                ? tone
-                : CSS_COLOR.textDim,
-            fontSize: textSize("captionStrong"),
+            minWidth: 0,
+            display: "grid",
+            justifyItems: "end",
+            gap: 0,
+            lineHeight: 1.02,
           }}
         >
-          {hydrated ? formatCompactBars(state.barsSinceSignal) : problem ? "Err" : MISSING_VALUE}
+          <span
+            style={{
+              ...cellTextStyle,
+              color: hydrated && state?.fresh
+                ? tone
+                : problem
+                  ? tone
+                  : CSS_COLOR.textDim,
+              fontSize: textSize("captionStrong"),
+            }}
+          >
+            {hydrated ? formatCompactBars(state.barsSinceSignal) : problem ? "Err" : MISSING_VALUE}
+          </span>
+          <span
+            data-testid={`signals-${timeframe}-age`}
+            style={{
+              ...cellTextStyle,
+              color: CSS_COLOR.textDim,
+              fontSize: fs(9),
+            }}
+          >
+            {hydrated ? intervalAge : ""}
+          </span>
         </span>
       </span>
     </AppTooltip>
@@ -661,7 +700,9 @@ function StackCell({ row }) {
         }}
       >
         {stack.direction === "mixed" ? "Mix" : stack.direction || "None"}
-        <span style={{ color: CSS_COLOR.textDim }}>{stack.label || "0/5"}</span>
+        <span style={{ color: CSS_COLOR.textDim }}>
+          {stack.label || `0/${SIGNALS_TABLE_TIMEFRAMES.length}`}
+        </span>
       </span>
     </AppTooltip>
   );
@@ -2501,7 +2542,7 @@ export default function SignalsScreen({
       ...SIGNALS_TABLE_TIMEFRAMES.map((timeframe) => ({
         id: `tf-${timeframe}`,
         header: timeframe,
-        meta: { width: phone ? "54px" : "66px", align: "right" },
+        meta: { width: phone ? "60px" : "76px", align: "right" },
         cell: ({ row }) => (
           <CompactIntervalCell
             timeframe={timeframe}
