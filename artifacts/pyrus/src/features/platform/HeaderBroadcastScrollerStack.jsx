@@ -212,6 +212,7 @@ const HeaderBroadcastSegment = ({
         gap: sp(compact ? 5 : 6),
         height: dim(compact ? 19 : 24),
         minHeight: dim(compact ? 19 : 24),
+        minWidth: 0,
         maxWidth: dim(maxWidth ?? (compact ? 180 : 300)),
         padding: sp(compact ? "0px 7px" : "0px 10px"),
         boxSizing: "border-box",
@@ -239,6 +240,24 @@ const HeaderBroadcastSegment = ({
     segment
   );
 };
+
+const headerPillTextStyle = ({
+  color = CSS_COLOR.textSec,
+  maxWidth = null,
+  shrink = true,
+  weight = FONT_WEIGHTS.medium,
+} = {}) => ({
+  color,
+  minWidth: 0,
+  maxWidth: maxWidth == null ? undefined : dim(maxWidth),
+  flexShrink: shrink ? 1 : 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontFamily: T.sans,
+  fontWeight: weight,
+  fontVariantNumeric: "tabular-nums",
+});
 
 const headerSignalIntervalStateEqual = (left, right) =>
   left?.currentSignalDirection === right?.currentSignalDirection &&
@@ -302,14 +321,17 @@ const HeaderSignalTapeItem = memo(function HeaderSignalTapeItem({
         strokeWidth={2.4}
         color={tone}
         aria-hidden="true"
+        style={{ flexShrink: 0 }}
       />
-      <span style={{ color: CSS_COLOR.text }}>{item.symbol}</span>
+      <span style={headerPillTextStyle({ color: CSS_COLOR.text, maxWidth: compact ? 62 : 78 })}>
+        {item.symbol}
+      </span>
       {priceLabel ? (
-        <span style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
+        <span style={headerPillTextStyle({ color: CSS_COLOR.textSec, maxWidth: compact ? 48 : 58, shrink: false })}>
           {priceLabel}
         </span>
       ) : null}
-      <span style={{ color: CSS_COLOR.textMuted, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
+      <span style={headerPillTextStyle({ color: CSS_COLOR.textMuted, maxWidth: compact ? 34 : 42, shrink: false })}>
         {formatRelativeTimeShort(item.time)}
       </span>
       <HeaderSignalIntervalContext
@@ -419,6 +441,9 @@ const HeaderSignalIntervalContext = ({
       alignItems: "stretch",
       alignSelf: "stretch",
       height: "100%",
+      minWidth: 0,
+      maxWidth: dim(compact ? 174 : 220),
+      flexShrink: 1,
       gap: 0,
       marginRight: compact ? "-12px" : "-14px",
       overflow: "hidden",
@@ -529,18 +554,25 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = fal
         strokeWidth={2.4}
         color={tone}
         aria-hidden="true"
+        style={{ flexShrink: 0 }}
       />
-      <span style={{ color: CSS_COLOR.text }}>{item.symbol}</span>
+      <span style={headerPillTextStyle({ color: CSS_COLOR.text, maxWidth: compact ? 58 : 72 })}>
+        {item.symbol}
+      </span>
       {contractLabel ? (
-        <span style={{ color: tone, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>{contractLabel}</span>
+        <span style={headerPillTextStyle({ color: tone, maxWidth: compact ? 96 : 126 })}>
+          {contractLabel}
+        </span>
       ) : null}
-      <span style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
+      <span style={headerPillTextStyle({ color: CSS_COLOR.textSec, maxWidth: compact ? 56 : 68, shrink: false })}>
         {fmtCompactCurrency(item.premium)}
       </span>
       {scoreLabel ? (
-        <span style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontVariantNumeric: "tabular-nums", fontWeight: FONT_WEIGHTS.medium }}>{scoreLabel}</span>
+        <span style={headerPillTextStyle({ color: CSS_COLOR.amber, maxWidth: compact ? 34 : 42, shrink: false })}>
+          {scoreLabel}
+        </span>
       ) : null}
-      <span style={{ color: CSS_COLOR.textMuted, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
+      <span style={headerPillTextStyle({ color: CSS_COLOR.textMuted, maxWidth: compact ? 34 : 42, shrink: false })}>
         {item.ageLabel || formatRelativeTimeShort(item.time)}
       </span>
     </HeaderBroadcastSegment>
@@ -614,6 +646,7 @@ const HeaderAlgoContextIcon = ({ context, compact = false }) => {
   const Icon = ALGO_CONTEXT_ICONS[context.iconKind] || Info;
   const hasValue = Boolean(context.valueLabel);
   const isContract = context.kind === "contract";
+  const contextMaxWidth = isContract ? (compact ? 92 : 116) : (compact ? 62 : 84);
   const label = context.valueLabel
     ? `${context.label} ${context.valueLabel}`
     : context.label;
@@ -625,7 +658,9 @@ const HeaderAlgoContextIcon = ({ context, compact = false }) => {
       style={{
         display: "inline-flex",
         alignItems: "center",
-        flexShrink: 0,
+        minWidth: 0,
+        maxWidth: dim(contextMaxWidth),
+        flexShrink: isContract || hasValue ? 1 : 0,
         gap: hasValue ? sp(2) : 0,
         color: tone,
         fontFamily: T.sans,
@@ -648,6 +683,7 @@ const HeaderAlgoContextIcon = ({ context, compact = false }) => {
             overflow: "hidden",
             textOverflow: "ellipsis",
             minWidth: 0,
+            maxWidth: dim(contextMaxWidth - (isContract ? 16 : 14)),
             whiteSpace: "nowrap",
           }}
         >
@@ -687,22 +723,21 @@ const HeaderAlgoTapeItem = ({ item, duplicate = false, onClick, compact = false 
         strokeWidth={2.4}
         color={tone}
         aria-hidden="true"
+        style={{ flexShrink: 0 }}
       />
       <span
-        style={{
+        style={headerPillTextStyle({
           color: tone,
-          fontWeight: FONT_WEIGHTS.medium,
-          whiteSpace: "nowrap",
-        }}
+          maxWidth: compact ? 78 : 104,
+        })}
       >
         {item.actionLabel}
       </span>
       <span
-        style={{
+        style={headerPillTextStyle({
           color: CSS_COLOR.text,
-          fontWeight: FONT_WEIGHTS.medium,
-          whiteSpace: "nowrap",
-        }}
+          maxWidth: compact ? 58 : 72,
+        })}
       >
         {item.symbol}
       </span>
@@ -714,12 +749,11 @@ const HeaderAlgoTapeItem = ({ item, duplicate = false, onClick, compact = false 
         />
       ))}
       <span
-        style={{
+        style={headerPillTextStyle({
           color: CSS_COLOR.textMuted,
-          fontFamily: T.sans,
-          fontVariantNumeric: "tabular-nums",
-          whiteSpace: "nowrap",
-        }}
+          maxWidth: compact ? 34 : 42,
+          shrink: false,
+        })}
       >
         {timeLabel}
       </span>
