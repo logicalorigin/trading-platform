@@ -7,17 +7,27 @@ import {
 import { __resetBridgeGovernorForTests, runBridgeWork } from "./bridge-governor";
 import {
   __resetBridgeOrderReadSuppressionForTests,
+  getBridgeOrderReadSuppression,
   markBridgeOrderReadsSuppressed,
 } from "./bridge-order-read-state";
 
 process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
 process.env["DIAGNOSTICS_SUPPRESS_DB_WARNINGS"] = "1";
 
+const originalOrderReadSuppressionProbeMs =
+  process.env["IBKR_ORDER_READ_SUPPRESSION_PROBE_MS"];
+
 test.afterEach(() => {
   __setIbkrBridgeClientFactoryForTests(null);
   __resetBridgeGovernorForTests();
   __resetBridgeOrderReadSuppressionForTests();
   delete process.env["IBKR_ORDER_READ_TIMEOUT_MS"];
+  if (originalOrderReadSuppressionProbeMs === undefined) {
+    delete process.env["IBKR_ORDER_READ_SUPPRESSION_PROBE_MS"];
+  } else {
+    process.env["IBKR_ORDER_READ_SUPPRESSION_PROBE_MS"] =
+      originalOrderReadSuppressionProbeMs;
+  }
 });
 
 test("listOrdersWithResilience skips known bad legacy bridge order endpoint", async () => {
@@ -62,6 +72,76 @@ test("listOrdersWithResilience returns degraded metadata when bridge order read 
   assert.equal(result.stale, false);
   assert.equal(result.debug?.code, "orders_timeout");
   assert.ok(Date.now() - startedAt < 500);
+});
+
+test("listOrdersWithResilience marks timeout suppression and later probes it clear", async () => {
+  process.env["IBKR_ORDER_READ_TIMEOUT_MS"] = "5";
+  let readCount = 0;
+  let hangReads = true;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        listOrdersWithMeta: async () => {
+          readCount += 1;
+          if (hangReads) {
+            return new Promise(() => {});
+          }
+          return {
+            orders: [{ id: "order-1", symbol: "AAPL" }],
+          };
+        },
+      }) as never,
+  );
+
+  const first = await listOrdersWithResilience({ accountId: "U1", mode: "live" });
+  const suppression = getBridgeOrderReadSuppression();
+  hangReads = false;
+  const second = await listOrdersWithResilience({ accountId: "U1", mode: "live" });
+  process.env["IBKR_ORDER_READ_SUPPRESSION_PROBE_MS"] = "1";
+  await new Promise((resolve) => setTimeout(resolve, 2));
+  const third = await listOrdersWithResilience({ accountId: "U1", mode: "live" });
+
+  assert.equal(readCount, 2);
+  assert.equal(first.reason, "orders_timeout");
+  assert.equal(suppression?.reason, "orders_timeout");
+  assert.equal(second.reason, "orders_timeout");
+  assert.equal(second.stale, true);
+  assert.equal(third.degraded, undefined);
+  assert.equal(third.orders.length, 1);
+  assert.equal(getBridgeOrderReadSuppression(), null);
+});
+
+test("listOrdersWithResilience probes timeout suppression and clears it on success", async () => {
+  process.env["IBKR_ORDER_READ_SUPPRESSION_PROBE_MS"] = "1";
+  markBridgeOrderReadsSuppressed({
+    reason: "orders_timeout",
+    message: "Open-orders snapshots are paused after a timeout.",
+    ttlMs: 60_000,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 2));
+
+  let readCount = 0;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        listOrdersWithMeta: async () => {
+          readCount += 1;
+          return {
+            orders: [{ id: "order-1", symbol: "AAPL" }],
+          };
+        },
+      }) as never,
+  );
+
+  const result = await listOrdersWithResilience({ accountId: "U1", mode: "live" });
+  const second = await listOrdersWithResilience({ accountId: "U1", mode: "live" });
+
+  assert.equal(readCount, 2);
+  assert.equal(result.degraded, undefined);
+  assert.equal(result.orders.length, 1);
+  assert.equal(getBridgeOrderReadSuppression(), null);
+  assert.equal(second.degraded, undefined);
+  assert.equal(second.orders.length, 1);
 });
 
 test("listOrdersWithResilience preserves bridge order degradation metadata", async () => {
