@@ -153,20 +153,11 @@ export const buildPlatformWorkSchedule = ({
   const historyScreen = market || flow || trade || account;
   const pressureCaps = buildPlatformPressureCaps(memoryPressureLevel);
   const activeBackgroundReady = Boolean(activeScreenBackgroundAllowed);
-  const mobileBroadFlowAllowed = !mobileViewport || flow;
-  const passiveMarketDiscoveryAllowed = Boolean(
-    market &&
-      screenWarmupPhase === "ready" &&
-      activeBackgroundReady &&
-      memoryPressureLevel !== "critical" &&
-      ibkrWorkPressure === WORK_PRESSURE_STATE.normal,
-  );
   const broadFlowAllowed = Boolean(
     sessionReady &&
       visible &&
+      firstScreenReady &&
       !startupProtected &&
-      mobileBroadFlowAllowed &&
-      (flow || passiveMarketDiscoveryAllowed) &&
       pressureCaps.broadFlowRuntimeEnabled,
   );
   const backgroundHistoryReady = screenWarmupPhase === "ready" && !startupProtected;

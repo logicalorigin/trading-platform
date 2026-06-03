@@ -27,7 +27,10 @@ import {
   lineUsageTone,
 } from "../platform/runtimeControlModel.js";
 import { useRuntimeControlSnapshot } from "../platform/useRuntimeControlSnapshot.js";
-import { buildRecentScannerSymbols } from "./flowScannerStatusModel.js";
+import {
+  buildRecentScannerSymbols,
+  resolveFlowScannerStatusDisplay,
+} from "./flowScannerStatusModel.js";
 import { AppTooltip } from "@/components/ui/tooltip";
 
 const SPARKLINE_HISTORY = 24;
@@ -279,14 +282,15 @@ export const FlowScannerStatusPanel = ({
   const scannerRuntimeActive = Boolean(
     ownerActive || runtimeControl.flowScanner?.active,
   );
+  const statusDisplay = resolveFlowScannerStatusDisplay({
+    enabled,
+    degraded: scanDegraded,
+    runtimeActive: scannerRuntimeActive,
+    loading: runtimeControl.loading,
+    error: Boolean(runtimeControl.error),
+  });
   const statusTone = scanDegraded ? flowQuality?.color || CSS_COLOR.red : toggleTone;
-  const statusLabel = enabled
-    ? scanDegraded
-      ? "Degraded"
-      : scannerRuntimeActive
-      ? "Scanning"
-      : "Idle"
-    : "Off";
+  const statusLabel = statusDisplay.label;
   const linesTone = lineUsageTone(scannerUsed, scannerCap);
   const coverageRatio =
     Number.isFinite(scannedCoverageSymbols) &&

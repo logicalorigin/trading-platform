@@ -1,8 +1,9 @@
 import { WATCHLIST_SIGNAL_TIMEFRAMES } from "./watchlistModel.js";
 import { getCurrentSignalDirection } from "../signals/signalStateFreshness.js";
+import { FLOW_SCANNER_AGGREGATE_EVENT_LIMIT } from "./marketFlowScannerConfig.js";
 
 export const HEADER_SIGNAL_MAX_ITEMS = 24;
-export const HEADER_UNUSUAL_MAX_ITEMS = 28;
+export const HEADER_UNUSUAL_MAX_ITEMS = FLOW_SCANNER_AGGREGATE_EVENT_LIMIT;
 export const HEADER_ALGO_MAX_ITEMS = 20;
 export const HEADER_ALGO_CONTEXT_ICON_MAX = 4;
 export const HEADER_SIGNAL_CONTEXT_SYMBOL_LIMIT = HEADER_SIGNAL_MAX_ITEMS;

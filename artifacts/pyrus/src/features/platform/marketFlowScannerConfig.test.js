@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   DEFAULT_FLOW_SCANNER_CONFIG,
+  FLOW_SCANNER_AGGREGATE_EVENT_LIMIT,
   FLOW_SCANNER_CONFIG_LIMITS,
   FLOW_SCANNER_MODE,
   FLOW_SCANNER_SCOPE,
@@ -21,6 +22,8 @@ test("default flow scanner covers 500 symbols inside five minutes", () => {
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.batchSize, UNUSUAL_SCANNER_BATCH_SIZE);
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.intervalMs, UNUSUAL_SCANNER_INTERVAL_MS);
   assert.equal(DEFAULT_FLOW_SCANNER_CONFIG.concurrency, 8);
+  assert.equal(FLOW_SCANNER_AGGREGATE_EVENT_LIMIT, 100);
+  assert.ok(DEFAULT_FLOW_SCANNER_CONFIG.limit * 4 >= FLOW_SCANNER_AGGREGATE_EVENT_LIMIT);
   assert.ok(
     Math.ceil(
       DEFAULT_FLOW_SCANNER_CONFIG.maxSymbols / DEFAULT_FLOW_SCANNER_CONFIG.batchSize,

@@ -385,6 +385,128 @@ test("scanner line exhaustion renders as a line budget state", () => {
   assert.equal(normalized.flowScanner.detail, "paused: no scanner lines available");
 });
 
+test("scanner session quiet renders as a data-line detail", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 12,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 40,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      sessionBlockReason: "market-session-quiet",
+      coverage: {
+        cycleScannedSymbols: 30,
+        activeTargetSize: 94,
+        lastScanAgeMs: 12_000,
+      },
+      deepScanner: {
+        lastRunAt: "2026-06-02T20:30:00.000Z",
+        snapshotCount: 0,
+      },
+    },
+  });
+
+  assert.equal(
+    normalized.flowScanner.detail,
+    "market session quiet; 30 of 94 covered, last 12s ago",
+  );
+});
+
+test("scanner session quiet reads radar coverage from live diagnostics", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 12,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 40,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      sessionBlockReason: "market-session-quiet",
+      lastScanAgeMs: 4_500,
+      radar: {
+        scannedSymbols: 60,
+        selectedSymbols: 94,
+      },
+      deepScanner: {
+        lastRunAt: "2026-06-02T20:30:00.000Z",
+        snapshotCount: 0,
+      },
+    },
+  });
+
+  assert.equal(
+    normalized.flowScanner.detail,
+    "market session quiet; 60 of 94 covered, last 5s ago",
+  );
+});
+
+test("active scanner rotation renders coverage as a data-line detail", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 12,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 40,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      lastScanAgeMs: 12_300,
+      coverage: {
+        cycleScannedSymbols: 60,
+        activeTargetSize: 94,
+      },
+      deepScanner: {
+        lastRunAt: "2026-06-02T20:30:00.000Z",
+        snapshotCount: 0,
+      },
+    },
+  });
+
+  assert.equal(
+    normalized.flowScanner.detail,
+    "rotating; 60 of 94 covered, last 13s ago",
+  );
+});
+
+test("radar quote batch fallback does not hide current scanner coverage", () => {
+  const normalized = normalizeAdmissionDiagnostics({
+    activeLineCount: 12,
+    flowScannerLineCount: 0,
+    budget: {
+      maxLines: 200,
+      flowScannerLineCap: 40,
+    },
+    optionsFlowScanner: {
+      enabled: true,
+      started: true,
+      lastScanAgeMs: 32_000,
+      coverage: {
+        cycleScannedSymbols: 94,
+        activeTargetSize: 746,
+        degradedReason: "radar-quote-batch-fallback",
+      },
+      radar: {
+        degradedReason: "radar-quote-batch-fallback",
+      },
+      deepScanner: {
+        lastRunAt: "2026-06-02T20:52:26.513Z",
+        snapshotCount: 0,
+      },
+    },
+  });
+
+  assert.equal(
+    normalized.flowScanner.detail,
+    "rotating; 94 of 746 covered, last 32s ago",
+  );
+});
+
 test("reports queued flow scanner work ahead of background pauses", () => {
   const normalized = normalizeAdmissionDiagnostics({
     activeLineCount: 80,
@@ -982,6 +1104,50 @@ test("recognizes backend flow scanner diagnostics as active", () => {
       },
     }),
     false,
+  );
+});
+
+test("recognizes flow scanner line leases as backend activity", () => {
+  const snapshot = buildRuntimeControlSnapshot({
+    lineUsageSnapshot: {
+      admission: {
+        activeLineCount: 50,
+        budget: { maxLines: 200, flowScannerLineCap: 80 },
+        poolUsage: {
+          "flow-scanner": {
+            id: "flow-scanner",
+            activeLineCount: 48,
+            maxLines: 80,
+            effectiveMaxLines: 80,
+          },
+        },
+      },
+    },
+    flowScannerControl: {
+      enabled: true,
+      ownerActive: false,
+      config: { intervalMs: 15_000, mode: "all_watchlists_plus_universe" },
+    },
+  });
+
+  assert.equal(snapshot.flowScanner.ownerActive, false);
+  assert.equal(snapshot.flowScanner.backendActive, true);
+  assert.equal(snapshot.flowScanner.active, true);
+  assert.equal(snapshot.flowScanner.lineUsage.used, 48);
+});
+
+test("recognizes planned scanner horizon as backend activity", () => {
+  assert.equal(
+    isOptionsFlowScannerRuntimeActive({
+      flowScannerLineCount: 0,
+      optionsFlowScanner: {
+        enabled: true,
+        started: true,
+        plannedHorizon: { symbolCount: 733 },
+        deepScanner: { queuedCount: 0, activeCount: 0 },
+      },
+    }),
+    true,
   );
 });
 

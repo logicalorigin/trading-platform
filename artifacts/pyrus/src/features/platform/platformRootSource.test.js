@@ -283,6 +283,7 @@ test("flow scanner uses backend aggregate flow for broad scans", () => {
 
   assert.ok(requestBlock, "flow scanner request block must be present");
   assert.match(source, /listAggregateFlowEventsRequest/);
+  assert.match(source, /FLOW_SCANNER_AGGREGATE_EVENT_LIMIT/);
   assert.match(source, /const usesBackendBroadScanner = flowScannerModeUsesMarketUniverse/);
   assert.match(source, /const shouldUseClientSymbolScanner = !usesBackendBroadScanner/);
   assert.match(source, /!shouldUseClientSymbolScanner/);
@@ -294,6 +295,13 @@ test("flow scanner uses backend aggregate flow for broad scans", () => {
   assert.match(source, /FLOW_SCANNER_MARKET_UNIVERSE_SYMBOLS/);
   assert.match(source, /blocking\s*===\s*false[\s\S]*usesBackendBroadScanner/);
   assert.match(source, /marketSymbols:\s*marketSymbolsForScanner/);
+  assert.match(source, /FLOW_VISIBLE_REQUEST_HEADERS/);
+  assert.match(source, /"x-pyrus-request-family":\s*"flow-scanner-visible"/);
+  assert.match(source, /"x-pyrus-fetch-priority":\s*"8"/);
+  assert.match(source, /getFlowUniverseRequest\(flowVisibleRequestOptions/);
+  assert.match(source, /limit:\s*Math\.max\(effectiveLimit \* 4,\s*FLOW_SCANNER_AGGREGATE_EVENT_LIMIT\)/);
+  assert.match(source, /listAggregateFlowEventsRequest\([\s\S]*flowVisibleRequestOptions/);
+  assert.match(source, /listFlowEventsRequest\([\s\S]*flowVisibleRequestOptions/);
 });
 
 test("header flow scanner lane applies the shared Flow tape filters", () => {
@@ -306,10 +314,17 @@ test("header flow scanner lane applies the shared Flow tape filters", () => {
   assert.doesNotMatch(source, /useMarketFlowSnapshot\(symbols/);
   assert.doesNotMatch(source, /header-flow-scan-mode/);
   assert.match(source, /useMarketFlowSnapshotForStoreKey\(\s*BROAD_MARKET_FLOW_STORE_KEY/);
+  assert.match(source, /listAggregateFlowEventsRequest/);
+  assert.match(source, /HEADER_FLOW_VISIBLE_REQUEST_HEADERS/);
+  assert.match(source, /"x-pyrus-request-family":\s*"flow-scanner-visible"/);
+  assert.match(source, /const headerAggregateFlowQuery = useQuery/);
+  assert.match(source, /enabled:\s*Boolean\([\s\S]*!broadFlowSnapshot\.flowEvents\?\.length/);
+  assert.match(source, /const headerAggregateFlowEvents = useMemo/);
   assert.match(source, /useFlowTapeFilterState\(\{[\s\S]*subscribe:\s*enabled/);
   assert.match(source, /const buildHeaderFlowTapeFilters = \(filters\) => \(\{/);
   assert.match(source, /symbol:\s*null/);
   assert.match(source, /rawUnusualEvents/);
+  assert.match(source, /headerAggregateFlowEvents/);
   assert.match(source, /filterFlowTapeEvents\(rawUnusualEvents,\s*headerFlowTapeFilters\)/);
   assert.match(source, /flowTapeFiltersAreActive\(headerFlowTapeFilters\)/);
   assert.match(source, /FLOW FILTERED/);
@@ -1582,7 +1597,7 @@ test("shared flow hydrates visible flow while broad scanner stays broad and nonb
   assert.doesNotMatch(broadRuntime, /activeSymbols/);
   assert.match(broadRuntime, /FLOW_SCANNER_MODE\.allWatchlistsPlusUniverse/);
   assert.doesNotMatch(broadRuntime, /setFlowScannerControlState/);
-  assert.match(
+  assert.doesNotMatch(
     broadRuntime,
     /if \(!runtimeActive\) \{\s*clearMarketFlowSnapshot\(BROAD_MARKET_FLOW_STORE_KEY\)/,
   );
@@ -1629,6 +1644,9 @@ test("Broad scanner owns Flow across the visible app after startup", () => {
     schedulerSource,
     /pressureCaps\.broadFlowRuntimeEnabled/,
   );
+  assert.match(schedulerSource, /firstScreenReady/);
+  assert.doesNotMatch(schedulerSource, /\(flow \|\| passiveMarketDiscoveryAllowed\)/);
+  assert.doesNotMatch(schedulerSource, /mobileBroadFlowAllowed/);
   assert.match(schedulerSource, /sharedFlowRuntime:\s*false/);
   assert.match(schedulerSource, /broadFlowRuntime:\s*broadFlowAllowed/);
   assert.doesNotMatch(source, /backgroundResumeReady\.broadFlow/);
@@ -1637,13 +1655,23 @@ test("Broad scanner owns Flow across the visible app after startup", () => {
   assert.doesNotMatch(source, /flowScanRuntimeEnabled/);
   assert.doesNotMatch(shellSource, /flowScanRuntimeEnabled/);
   assert.doesNotMatch(headerSource, /flowScanRuntimeEnabled/);
-  assert.doesNotMatch(headerSource, /broadScanRuntimeActive/);
+  assert.match(headerSource, /useRuntimeControlSnapshot/);
+  assert.match(headerSource, /listAggregateFlowEventsRequest/);
+  assert.match(headerSource, /headerAggregateFlowEvents/);
+  assert.match(headerSource, /runtimeDiagnosticsEnabled:\s*false/);
+  assert.match(headerSource, /lineUsageStreamEnabled:\s*false/);
+  assert.match(headerSource, /const broadScanRuntimeActive = Boolean/);
   assert.match(headerSource, /const broadScanSnapshotActive = broadScanEnabled && broadScanOwnerActive/);
   assert.match(headerSource, /providerSummaryHasFlowState/);
   assert.match(headerSource, /broadScanSnapshotHasProviderState/);
   assert.match(headerSource, /const broadScanSnapshotVisible = Boolean/);
+  assert.match(headerSource, /broadScanRuntimeActive \|\|[\s\S]*flowCoverage\.isFetching/);
   assert.match(headerSource, /flowScanStale/);
   assert.match(headerSource, /flowScanPaused/);
+  assert.match(
+    headerSource,
+    /const flowScanPaused = Boolean\([\s\S]*!broadScanRuntimeActive[\s\S]*!broadScanSnapshotVisible/,
+  );
   assert.doesNotMatch(headerSource, /"FLOW PAUSED"/);
   assert.match(headerSource, /"FLOW IDLE"/);
   assert.match(headerSource, /providerSummaryHasMarketSessionQuiet/);
@@ -2546,7 +2574,7 @@ test("platform background work waits for active screen readiness", () => {
   assert.match(appSource, /\(backgroundDataWarmupEnabled \|\| isPhone\)/);
   assert.match(
     appSource,
-    /activeScreenBackgroundAllowed:\s*activeScreenBackgroundDataAllowed,\s*\n\s*startupProtectionActive,\s*\n\s*ibkrWorkPressure/,
+    /activeScreenBackgroundAllowed,\s*\n\s*startupProtectionActive,\s*\n\s*ibkrWorkPressure/,
   );
   assert.match(appSource, /mobileViewport:\s*isPhone/);
   assert.match(positionAlertsQueryBlock, /activeScreenBackgroundAllowed/);

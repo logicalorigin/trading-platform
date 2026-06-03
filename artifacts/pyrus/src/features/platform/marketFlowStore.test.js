@@ -201,6 +201,106 @@ test("marketFlowStore preserves flow events while market session is quiet", () =
   );
 });
 
+test("marketFlowStore hydrates the last broad flow snapshot after a reload", () => {
+  const previousWindow = globalThis.window;
+  const localStorage = createMemoryStorage();
+  globalThis.window = { localStorage };
+
+  try {
+    resetMarketFlowStoreForTests();
+    publishMarketFlowSnapshot(BROAD_MARKET_FLOW_STORE_KEY, buildLiveSnapshot("SPY"));
+
+    resetMarketFlowStoreForTests();
+    const snapshot = getMarketFlowSnapshotForStoreKey(BROAD_MARKET_FLOW_STORE_KEY);
+
+    assert.equal(snapshot.hasLiveFlow, true);
+    assert.equal(snapshot.flowStatus, "live");
+    assert.equal(snapshot.staleFlowEvents, true);
+    assert.equal(snapshot.flowEvents.length, 1);
+    assert.equal(snapshot.flowEvents[0].underlying, "SPY");
+    assert.equal(getMarketFlowStoreEntryCount(), 1);
+  } finally {
+    resetMarketFlowStoreForTests();
+    if (previousWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = previousWindow;
+    }
+  }
+});
+
+test("marketFlowStore replays persisted broad flow when session quiet arrives first", () => {
+  const previousWindow = globalThis.window;
+  const localStorage = createMemoryStorage();
+  globalThis.window = { localStorage };
+
+  try {
+    resetMarketFlowStoreForTests();
+    publishMarketFlowSnapshot(BROAD_MARKET_FLOW_STORE_KEY, buildLiveSnapshot("SPY"));
+
+    resetMarketFlowStoreForTests();
+    publishMarketFlowSnapshot(
+      BROAD_MARKET_FLOW_STORE_KEY,
+      buildEmptySnapshotWithSource("SPY", {
+        provider: "ibkr",
+        status: "empty",
+        ibkrStatus: "empty",
+        ibkrReason: "options_flow_scanner_market_session_quiet",
+      }),
+    );
+
+    const snapshot = getMarketFlowSnapshotForStoreKey(BROAD_MARKET_FLOW_STORE_KEY);
+    assert.equal(snapshot.hasLiveFlow, true);
+    assert.equal(snapshot.flowStatus, "live");
+    assert.equal(snapshot.staleFlowEvents, true);
+    assert.equal(snapshot.flowEvents.length, 1);
+    assert.equal(snapshot.flowEvents[0].underlying, "SPY");
+    assert.equal(
+      snapshot.providerSummary.sourcesBySymbol.SPY.ibkrReason,
+      "options_flow_scanner_market_session_quiet",
+    );
+  } finally {
+    resetMarketFlowStoreForTests();
+    if (previousWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = previousWindow;
+    }
+  }
+});
+
+test("marketFlowStore clears persisted broad flow on confirmed loaded empty", () => {
+  const previousWindow = globalThis.window;
+  const localStorage = createMemoryStorage();
+  globalThis.window = { localStorage };
+
+  try {
+    resetMarketFlowStoreForTests();
+    publishMarketFlowSnapshot(BROAD_MARKET_FLOW_STORE_KEY, buildLiveSnapshot("SPY"));
+    publishMarketFlowSnapshot(
+      BROAD_MARKET_FLOW_STORE_KEY,
+      buildEmptySnapshotWithSource("SPY", {
+        provider: "ibkr",
+        status: "empty",
+        ibkrStatus: "loaded",
+        ibkrReason: "options_flow_no_volume_candidates",
+      }),
+    );
+
+    resetMarketFlowStoreForTests();
+    const snapshot = getMarketFlowSnapshotForStoreKey(BROAD_MARKET_FLOW_STORE_KEY);
+    assert.equal(snapshot, EMPTY_MARKET_FLOW_SNAPSHOT);
+    assert.equal(getMarketFlowStoreEntryCount(), 0);
+  } finally {
+    resetMarketFlowStoreForTests();
+    if (previousWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = previousWindow;
+    }
+  }
+});
+
 test("marketFlowStore replaces existing flow events on confirmed loaded empty", () => {
   resetMarketFlowStoreForTests();
 

@@ -11,6 +11,11 @@ const POOL_ORDER = [
   ["flow-scanner", "Flow Scanner"],
 ];
 
+const NON_BLOCKING_FLOW_SCANNER_RADAR_REASONS = new Set([
+  "radar-quote-batch-fallback",
+  "radar-quote-batch-fallback-empty",
+]);
+
 const firstFiniteNumber = (...values) => {
   for (const value of values) {
     const number = Number(value);
@@ -105,6 +110,39 @@ const formatFlowScannerCoverageDetail = (coverage) => {
   }
   const age = formatRuntimeDuration(coverage.lastScanAgeMs);
   return `${Math.round(scanned)} of ${Math.round(total)} covered${age ? `, last ${age} ago` : ""}`;
+};
+
+const resolveFlowScannerCoverage = (scanner) => {
+  if (!scanner || typeof scanner !== "object") {
+    return null;
+  }
+  const coverage = recordOrEmpty(scanner.coverage);
+  const radar = recordOrEmpty(scanner.radar);
+  const plannedHorizon = recordOrEmpty(scanner.plannedHorizon);
+  return {
+    coverageHealth:
+      coverage.coverageHealth || scanner.coverageHealth || radar.coverageHealth || null,
+    cycleScannedSymbols: firstFiniteNumber(
+      coverage.cycleScannedSymbols,
+      coverage.scannedSymbols,
+      radar.cycleScannedSymbols,
+      radar.scannedSymbols,
+    ),
+    activeTargetSize: firstFiniteNumber(
+      coverage.activeTargetSize,
+      coverage.selectedSymbols,
+      coverage.targetSize,
+      coverage.totalSymbols,
+      radar.selectedSymbols,
+      scanner.radarSelectedSymbols,
+      plannedHorizon.symbolCount,
+    ),
+    lastScanAgeMs: firstFiniteNumber(
+      coverage.lastScanAgeMs,
+      radar.lastScanAgeMs,
+      scanner.lastScanAgeMs,
+    ),
+  };
 };
 
 const formatScannerSymbolList = (symbols) => {
@@ -352,6 +390,7 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
   }
   const marketDataMode = String(scanner.marketDataMode || "").toLowerCase();
   const phase = scanner.activeScanPhase || scanner.deepScanner?.lastScanPhase;
+  const scannerCoverage = resolveFlowScannerCoverage(scanner);
   if (marketDataMode === "frozen") {
     return "paused: market data frozen";
   }
@@ -375,10 +414,16 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
       Number.isFinite(snapshotCount) && snapshotCount > 0
         ? formatFlowSnapshotCount(snapshotCount)
         : null;
+    const radarDegradedReason =
+      scanner.radarDegradedReason ||
+      scanner.radar?.degradedReason ||
+      scanner.coverage?.degradedReason;
     const blockedReason =
       scanner.backgroundBlockedReason ||
-      scanner.radarDegradedReason ||
-      scanner.radar?.degradedReason;
+      scanner.sessionBlockReason ||
+      (NON_BLOCKING_FLOW_SCANNER_RADAR_REASONS.has(radarDegradedReason)
+        ? null
+        : radarDegradedReason);
     if (blockedReason === "live-warmup") {
       const remaining = formatRuntimeDuration(scanner.backgroundHoldRemainingMs);
       return `warming live data${remaining ? ` (${remaining})` : ""}; foreground scans allowed`;
@@ -396,7 +441,7 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
       return "degraded: resource pressure";
     }
     if (blockedReason === "market-session-quiet") {
-      const coverageDetail = formatFlowScannerCoverageDetail(scanner.coverage);
+      const coverageDetail = formatFlowScannerCoverageDetail(scannerCoverage);
       return coverageDetail
         ? `market session quiet; ${coverageDetail}`
         : snapshotDetail
@@ -419,8 +464,8 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
     if (failedSymbols) {
       return `last scan failed: ${failedSymbols}`;
     }
-    if (scanner.coverage?.coverageHealth === "lagging") {
-      const coverageDetail = formatFlowScannerCoverageDetail(scanner.coverage);
+    const coverageDetail = formatFlowScannerCoverageDetail(scannerCoverage);
+    if (scannerCoverage?.coverageHealth === "lagging") {
       return coverageDetail
         ? `coverage lagging: ${coverageDetail}`
         : "coverage lagging";
@@ -431,6 +476,9 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
     if (scanner.deepScanner?.lastRunAt || scanner.lastBatch?.length) {
       if (scanner.delayedMarketData) {
         return `degraded: delayed options data; ${phase || "seed"} rotation`;
+      }
+      if (coverageDetail) {
+        return `rotating; ${coverageDetail}`;
       }
       return "rotating; awaiting next batch";
     }
@@ -925,6 +973,15 @@ const normalizeShadowAccountLineUsage = (admission, lineUsageSnapshot = null) =>
 };
 
 export const isOptionsFlowScannerRuntimeActive = (admission) => {
+  const flowScannerLineCount = firstFiniteNumber(
+    admission?.poolUsage?.["flow-scanner"]?.activeLineCount,
+    admission?.flowScannerLineCount,
+    admission?.flowScannerActivity?.scannerActiveLineCount,
+  );
+  if (flowScannerLineCount > 0) {
+    return true;
+  }
+
   const scanner = admission?.optionsFlowScanner;
   if (!scanner || typeof scanner !== "object") {
     return false;
@@ -933,12 +990,36 @@ export const isOptionsFlowScannerRuntimeActive = (admission) => {
     return false;
   }
 
+  const plannedHorizonCount = firstFiniteNumber(
+    scanner.plannedHorizon?.symbolCount,
+    scanner.coverage?.activeTargetSize,
+    scanner.coverage?.selectedSymbols,
+  );
+  const scannedCoverageCount = firstFiniteNumber(
+    scanner.coverage?.cycleScannedSymbols,
+    scanner.coverage?.scannedSymbols,
+    scanner.radar?.scannedSymbols,
+  );
+  const activeScanPhase = String(
+    scanner.activeScanPhase ||
+      scanner.scannerPhase ||
+      scanner.coverage?.scannerPhase ||
+      "",
+  ).trim();
+
   return Boolean(
-    scanner.started ||
+    plannedHorizonCount > 0 ||
+      scannedCoverageCount > 0 ||
+      activeScanPhase ||
+      scanner.started ||
       scanner.scannerAlwaysOn ||
       scanner.deepScanner?.draining ||
+      scanner.deepScanner?.activeCount > 0 ||
       scanner.deepScanner?.queuedCount > 0 ||
+      scanner.deepScanner?.drainingCount > 0 ||
       scanner.deepScanner?.lastRunAt ||
+      scanner.radar?.currentBatch?.length ||
+      scanner.coverage?.currentBatch?.length ||
       scanner.lastBatch?.length,
   );
 };

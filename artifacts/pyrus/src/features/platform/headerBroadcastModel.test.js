@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   HEADER_BROADCAST_SCROLL_MIN_SECONDS,
   HEADER_BROADCAST_SPEED_PRESETS,
+  HEADER_UNUSUAL_MAX_ITEMS,
   buildHeaderAlgoTapeItems,
   buildHeaderSignalContextSymbols,
   buildHeaderSignalTapeItems,
@@ -340,6 +341,22 @@ test("buildHeaderUnusualTapeItems ranks scanner-selected flow events", () => {
     ["SPY", "QQQ", "NVDA"],
   );
   assert.equal(items[1].right, "P");
+});
+
+test("buildHeaderUnusualTapeItems keeps the latest 100 scanner events", () => {
+  const events = Array.from({ length: 120 }, (_, index) => ({
+    id: `flow-${index}`,
+    ticker: index % 2 === 0 ? "SPY" : "QQQ",
+    premium: 50_000 + index,
+    occurredAt: new Date(Date.parse("2026-04-27T14:00:00Z") + index * 1000).toISOString(),
+  }));
+
+  const items = buildHeaderUnusualTapeItems(events);
+
+  assert.equal(HEADER_UNUSUAL_MAX_ITEMS, 100);
+  assert.equal(items.length, 100);
+  assert.equal(items[0].key, "flow-119");
+  assert.equal(items.at(-1)?.key, "flow-20");
 });
 
 test("buildHeaderUnusualTapeItems drops radar fallback activity labels", () => {

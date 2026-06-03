@@ -67,6 +67,10 @@ export const EMPTY_MARKET_FLOW_SNAPSHOT = Object.freeze({
 
 export const MARKET_FLOW_STORE_ENTRY_CAP = 8;
 export const BROAD_MARKET_FLOW_STORE_KEY = "__broad_market_flow__";
+const MARKET_FLOW_LAST_SNAPSHOT_STORAGE_KEY = `${PYRUS_STORAGE_KEY}:market-flow:last-broad`;
+const MARKET_FLOW_LAST_SNAPSHOT_SCHEMA_VERSION = 1;
+const MARKET_FLOW_LAST_SNAPSHOT_MAX_AGE_MS = 72 * 60 * 60 * 1_000;
+const MARKET_FLOW_LAST_SNAPSHOT_EVENT_LIMIT = 200;
 
 const storeEntries = new Map();
 const flowScannerControlListeners = new Set();
@@ -237,6 +241,129 @@ export const buildMarketFlowStoreKey = (symbols = []) =>
 
 const normalizeStoreKey = (storeKey) => storeKey || "__empty__";
 
+const getLocalStorage = () =>
+  typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
+
+const limitedArray = (value, limit = MARKET_FLOW_LAST_SNAPSHOT_EVENT_LIMIT) =>
+  Array.isArray(value) ? value.slice(0, limit) : [];
+
+const sanitizeFlowProviderSummaryForStorage = (providerSummary) => {
+  const summary =
+    providerSummary && typeof providerSummary === "object"
+      ? providerSummary
+      : EMPTY_PROVIDER_SUMMARY;
+  const coverage =
+    summary.coverage && typeof summary.coverage === "object"
+      ? summary.coverage
+      : EMPTY_PROVIDER_SUMMARY.coverage;
+  return {
+    ...summary,
+    sourcesBySymbol: { ...(summary.sourcesBySymbol || {}) },
+    failures: limitedArray(summary.failures, 20),
+    providers: limitedArray(summary.providers, 10),
+    coverage: {
+      ...coverage,
+      currentBatch: limitedArray(coverage.currentBatch, 30),
+      lastScannedAt: {},
+    },
+  };
+};
+
+const sanitizeMarketFlowSnapshotForStorage = (snapshot) => ({
+  ...snapshot,
+  hasLiveFlow: true,
+  flowStatus: "live",
+  providerSummary: sanitizeFlowProviderSummaryForStorage(snapshot.providerSummary),
+  flowEvents: limitedArray(snapshot.flowEvents),
+  flowTide: limitedArray(snapshot.flowTide, 80),
+  tickerFlow: limitedArray(snapshot.tickerFlow, 80),
+  flowClock: limitedArray(snapshot.flowClock, 80),
+  sectorFlow: limitedArray(snapshot.sectorFlow, 80),
+  dteBuckets: limitedArray(snapshot.dteBuckets, 80),
+  marketOrderFlow: snapshot.marketOrderFlow || EMPTY_MARKET_FLOW_SNAPSHOT.marketOrderFlow,
+  putCall: snapshot.putCall || EMPTY_MARKET_FLOW_SNAPSHOT.putCall,
+});
+
+const isBroadMarketFlowStoreKey = (storeKey) =>
+  normalizeStoreKey(storeKey) === BROAD_MARKET_FLOW_STORE_KEY;
+
+const persistLastBroadMarketFlowSnapshot = (snapshot) => {
+  if (!hasSnapshotFlowEvents(snapshot)) {
+    return;
+  }
+  const storage = getLocalStorage();
+  if (!storage) {
+    return;
+  }
+  try {
+    storage.setItem(
+      MARKET_FLOW_LAST_SNAPSHOT_STORAGE_KEY,
+      JSON.stringify({
+        schemaVersion: MARKET_FLOW_LAST_SNAPSHOT_SCHEMA_VERSION,
+        cachedAt: Date.now(),
+        snapshot: sanitizeMarketFlowSnapshotForStorage(snapshot),
+      }),
+    );
+  } catch (_error) {}
+};
+
+const removeLastBroadMarketFlowSnapshot = () => {
+  const storage = getLocalStorage();
+  if (!storage) {
+    return;
+  }
+  try {
+    storage.removeItem(MARKET_FLOW_LAST_SNAPSHOT_STORAGE_KEY);
+  } catch (_error) {}
+};
+
+const shouldRetainLastBroadMarketFlowSnapshot = (snapshot) =>
+  Boolean(
+    hasSnapshotFlowEvents(snapshot) ||
+      snapshot?.flowStatus === "loading" ||
+      snapshot?.flowStatus === "offline" ||
+      providerSummaryHasTransientFlowState(snapshot?.providerSummary),
+  );
+
+const readLastBroadMarketFlowSnapshot = (nowMs = Date.now()) => {
+  const storage = getLocalStorage();
+  if (!storage) {
+    return null;
+  }
+  try {
+    const raw = storage.getItem(MARKET_FLOW_LAST_SNAPSHOT_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    const cachedAt = Number(parsed?.cachedAt);
+    const snapshot = parsed?.snapshot;
+    if (
+      parsed?.schemaVersion !== MARKET_FLOW_LAST_SNAPSHOT_SCHEMA_VERSION ||
+      !Number.isFinite(cachedAt) ||
+      nowMs - cachedAt > MARKET_FLOW_LAST_SNAPSHOT_MAX_AGE_MS ||
+      !hasSnapshotFlowEvents(snapshot)
+    ) {
+      storage.removeItem(MARKET_FLOW_LAST_SNAPSHOT_STORAGE_KEY);
+      return null;
+    }
+    return {
+      ...EMPTY_MARKET_FLOW_SNAPSHOT,
+      ...snapshot,
+      hasLiveFlow: true,
+      flowStatus: "live",
+      providerSummary: {
+        ...EMPTY_PROVIDER_SUMMARY,
+        ...(snapshot.providerSummary || {}),
+      },
+      staleFlowEvents: true,
+    };
+  } catch (_error) {
+    storage.removeItem(MARKET_FLOW_LAST_SNAPSHOT_STORAGE_KEY);
+    return null;
+  }
+};
+
 const evictOldestUnusedMarketFlowEntry = (protectedKey = null) => {
   if (storeEntries.size <= MARKET_FLOW_STORE_ENTRY_CAP) return;
   for (const [key, value] of storeEntries) {
@@ -263,7 +390,10 @@ const ensureEntry = (storeKey) => {
   if (!storeEntries.has(normalizedKey)) {
     storeEntries.set(normalizedKey, {
       version: 0,
-      snapshot: EMPTY_MARKET_FLOW_SNAPSHOT,
+      snapshot:
+        normalizedKey === BROAD_MARKET_FLOW_STORE_KEY
+          ? readLastBroadMarketFlowSnapshot() || EMPTY_MARKET_FLOW_SNAPSHOT
+          : EMPTY_MARKET_FLOW_SNAPSHOT,
       listeners: new Set(),
     });
     evictOldestUnusedMarketFlowEntry(normalizedKey);
@@ -311,6 +441,13 @@ export const publishMarketFlowSnapshot = (storeKey, snapshot) => {
   entry.snapshot = shouldPreserveMarketFlowSnapshot(entry.snapshot, nextSnapshot)
     ? preserveMarketFlowSnapshotEvents(entry.snapshot, nextSnapshot)
     : nextSnapshot;
+  if (isBroadMarketFlowStoreKey(storeKey)) {
+    if (hasSnapshotFlowEvents(entry.snapshot)) {
+      persistLastBroadMarketFlowSnapshot(entry.snapshot);
+    } else if (!shouldRetainLastBroadMarketFlowSnapshot(entry.snapshot)) {
+      removeLastBroadMarketFlowSnapshot();
+    }
+  }
   entry.version += 1;
   entry.listeners.forEach((listener) => listener());
 };
@@ -343,9 +480,26 @@ const subscribeToMarketFlowSnapshot = (storeKey, listener) => {
 const getMarketFlowSnapshotVersion = (storeKey) =>
   storeEntries.get(normalizeStoreKey(storeKey))?.version ?? 0;
 
-const getMarketFlowSnapshot = (storeKey) =>
-  storeEntries.get(normalizeStoreKey(storeKey))?.snapshot ||
-  EMPTY_MARKET_FLOW_SNAPSHOT;
+const getMarketFlowSnapshot = (storeKey) => {
+  const normalizedKey = normalizeStoreKey(storeKey);
+  const entry = storeEntries.get(normalizedKey);
+  if (entry) {
+    return entry.snapshot;
+  }
+  if (normalizedKey === BROAD_MARKET_FLOW_STORE_KEY) {
+    const persisted = readLastBroadMarketFlowSnapshot();
+    if (persisted) {
+      storeEntries.set(normalizedKey, {
+        version: 0,
+        snapshot: persisted,
+        listeners: new Set(),
+      });
+      evictOldestUnusedMarketFlowEntry(normalizedKey);
+      return persisted;
+    }
+  }
+  return EMPTY_MARKET_FLOW_SNAPSHOT;
+};
 
 export const getMarketFlowStoreEntryCount = () => storeEntries.size;
 

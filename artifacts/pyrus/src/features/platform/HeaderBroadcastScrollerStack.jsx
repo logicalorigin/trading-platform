@@ -28,6 +28,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { listAggregateFlowEvents as listAggregateFlowEventsRequest } from "@workspace/api-client-react";
 import { BottomSheet } from "../../components/platform/BottomSheet.jsx";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { useViewport } from "../../lib/responsive";
@@ -73,6 +75,7 @@ import {
   useFlowScannerControlState,
   useMarketFlowSnapshotForStoreKey,
 } from "./marketFlowStore";
+import { useRuntimeControlSnapshot } from "./useRuntimeControlSnapshot";
 import {
   providerSummaryHasMarketSessionQuiet,
   providerSummaryHasVisibleFlowDegradation,
@@ -84,10 +87,13 @@ import {
 import { WATCHLIST_SIGNAL_TIMEFRAMES } from "./watchlistModel.js";
 import {
   FLOW_SCANNER_CONFIG_LIMITS,
+  FLOW_SCANNER_AGGREGATE_EVENT_LIMIT,
   FLOW_SCANNER_MODE,
   FLOW_SCANNER_SCOPE,
+  filterFlowScannerEvents,
   normalizeFlowScannerConfig,
 } from "./marketFlowScannerConfig";
+import { mapFlowEventToUi } from "../flow/flowEventMapper";
 import { useSignalMonitorSnapshot } from "./signalMonitorStore";
 import { IbkrStatusWave } from "./IbkrConnectionStatus";
 import { canonicalizeStreamState, streamStateTokenVar } from "./streamSemantics";
@@ -133,6 +139,22 @@ const CSS_COLOR = Object.freeze({
 
 const cssColorMix = (color, percent) =>
   `color-mix(in srgb, ${color} ${percent}%, transparent)`;
+
+const HEADER_FLOW_VISIBLE_REQUEST_HEADERS = Object.freeze({
+  "x-pyrus-request-family": "flow-scanner-visible",
+  "x-pyrus-fetch-priority": "8",
+});
+
+const headerFlowVisibleRequestOptions = (options = {}) => ({
+  ...options,
+  headers: (() => {
+    const headers = new Headers(HEADER_FLOW_VISIBLE_REQUEST_HEADERS);
+    new Headers(options.headers || {}).forEach((value, key) => {
+      headers.set(key, value);
+    });
+    return headers;
+  })(),
+});
 
 const fmtCompactCurrency = (value) => {
   if (value == null || Number.isNaN(value)) return MISSING_VALUE;
@@ -1471,7 +1493,72 @@ export const HeaderBroadcastScrollerStack = memo(({
   );
   const broadScanEnabled = Boolean(flowScannerControl.enabled);
   const broadScanOwnerActive = Boolean(flowScannerControl.ownerActive);
+  const flowRuntimeControl = useRuntimeControlSnapshot({
+    enabled: Boolean(enabled && broadScanEnabled),
+    runtimeDiagnosticsEnabled: false,
+    lineUsageEnabled: Boolean(enabled && broadScanEnabled),
+    lineUsageStreamEnabled: false,
+    lineUsagePollInterval: 5_000,
+  });
+  const broadScanRuntimeActive = Boolean(
+    broadScanOwnerActive || flowRuntimeControl.flowScanner?.active,
+  );
+  const flowRuntimeLoading = Boolean(flowRuntimeControl.loading);
+  const flowRuntimeErrored = Boolean(flowRuntimeControl.error);
   const flowScannerConfig = flowScannerControl.config;
+  const headerAggregateFlowQuery = useQuery({
+    queryKey: [
+      "/api/flow/events/aggregate",
+      "header-visible",
+      FLOW_SCANNER_AGGREGATE_EVENT_LIMIT,
+      flowScannerConfig.scope,
+      flowScannerConfig.unusualThreshold,
+      flowScannerConfig.minPremium,
+      flowScannerConfig.maxDte,
+    ],
+    queryFn: ({ signal }) =>
+      listAggregateFlowEventsRequest({
+        limit: FLOW_SCANNER_AGGREGATE_EVENT_LIMIT,
+        scope: flowScannerConfig.scope,
+        unusualThreshold: flowScannerConfig.unusualThreshold,
+        minPremium:
+          Number.isFinite(flowScannerConfig.minPremium) &&
+          flowScannerConfig.minPremium > 0
+            ? flowScannerConfig.minPremium
+            : undefined,
+        maxDte:
+          Number.isFinite(flowScannerConfig.maxDte) &&
+          flowScannerConfig.maxDte !== null
+            ? flowScannerConfig.maxDte
+            : undefined,
+      }, headerFlowVisibleRequestOptions({ signal })),
+    enabled: Boolean(
+      enabled &&
+        broadScanEnabled &&
+        !broadFlowSnapshot.flowEvents?.length &&
+        !broadFlowSnapshot.staleFlowEvents,
+    ),
+    staleTime: 2_500,
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const headerAggregateFlowEvents = useMemo(() => {
+    const events = headerAggregateFlowQuery.data?.events || [];
+    if (!events.length) return [];
+    return filterFlowScannerEvents(
+      events
+        .map((event) => mapFlowEventToUi(event, {}))
+        .sort((left, right) => {
+          const leftTime = Date.parse(left.occurredAt || left.time || "");
+          const rightTime = Date.parse(right.occurredAt || right.time || "");
+          const normalizedLeft = Number.isFinite(leftTime) ? leftTime : 0;
+          const normalizedRight = Number.isFinite(rightTime) ? rightTime : 0;
+          return normalizedRight - normalizedLeft;
+        }),
+      flowScannerConfig,
+    );
+  }, [flowScannerConfig, headerAggregateFlowQuery.data?.events]);
   const flowTapeFilters = useFlowTapeFilterState({
     subscribe: enabled,
   });
@@ -1613,9 +1700,15 @@ export const HeaderBroadcastScrollerStack = memo(({
   const rawUnusualEvents = useMemo(
     () =>
       broadScanSnapshotVisible
-        ? broadFlowSnapshot.flowEvents || []
-        : [],
-    [broadFlowSnapshot.flowEvents, broadScanSnapshotVisible],
+        ? broadFlowSnapshot.flowEvents?.length
+          ? broadFlowSnapshot.flowEvents
+          : headerAggregateFlowEvents
+        : headerAggregateFlowEvents,
+    [
+      broadFlowSnapshot.flowEvents,
+      broadScanSnapshotVisible,
+      headerAggregateFlowEvents,
+    ],
   );
   const unusualEvents = useMemo(
     () =>
@@ -1707,7 +1800,8 @@ export const HeaderBroadcastScrollerStack = memo(({
   const flowScanCoverageActive = Boolean(
     broadScanEnabled &&
       !flowSessionQuiet &&
-      (flowCoverage.isFetching ||
+      (broadScanRuntimeActive ||
+        flowCoverage.isFetching ||
         flowCoverage.isRotating ||
         (Array.isArray(flowCoverage.currentBatch) && flowCoverage.currentBatch.length > 0) ||
         Number(flowCoverage.cycleScannedSymbols || flowCoverage.scannedSymbols || 0) > 0 ||
@@ -1720,29 +1814,37 @@ export const HeaderBroadcastScrollerStack = memo(({
         ) > 0),
   );
   const flowScanStale = Boolean(
-    broadScanEnabled && !broadScanOwnerActive && broadScanSnapshotHasEvents,
+    broadScanEnabled && !broadScanRuntimeActive && broadScanSnapshotHasEvents,
   );
   const flowScanPaused = Boolean(
-    broadScanEnabled && !broadScanOwnerActive && !broadScanSnapshotVisible,
+    broadScanEnabled &&
+      !broadScanRuntimeActive &&
+      !broadScanSnapshotVisible &&
+      !flowRuntimeLoading,
   );
-  const flowScanHasError = Boolean(broadScanOwnerActive && flowHasError);
+  const flowScanHasError = Boolean(
+    (broadScanOwnerActive && flowHasError) ||
+      (broadScanEnabled && !broadScanRuntimeActive && flowRuntimeErrored),
+  );
   const flowScanDegraded = Boolean(
-    broadScanOwnerActive && !flowScanHasError && flowDegraded,
+    broadScanRuntimeActive && !flowScanHasError && flowDegraded,
   );
   const flowScanBusy = Boolean(
-    broadScanOwnerActive &&
+    (broadScanRuntimeActive || flowRuntimeLoading) &&
       !flowScanHasError &&
       !flowScanDegraded &&
       !flowSessionQuiet &&
-      (flowStatus === "loading" || flowProviderSummary?.coverage?.isFetching),
+      (flowRuntimeLoading ||
+        flowStatus === "loading" ||
+        flowProviderSummary?.coverage?.isFetching),
   );
   const unusualEmptyLabel =
-    flowHasError
+    flowScanHasError || flowHasError
       ? "FLOW OFFLINE"
-      : flowDegraded
+      : flowScanDegraded || flowDegraded
         ? "FLOW DEGRADED"
         : flowScanPaused
-          ? "FLOW PAUSED"
+          ? "FLOW IDLE"
           : flowStatus === "loading"
             ? "SYNCING"
             : flowScanCoverageActive
@@ -1769,8 +1871,8 @@ export const HeaderBroadcastScrollerStack = memo(({
     : flowScanStale
       ? CSS_COLOR.amber
       : flowScanPaused
-        ? CSS_COLOR.amber
-      : broadScanSnapshotActive
+        ? CSS_COLOR.textMuted
+      : broadScanRuntimeActive
         ? CSS_COLOR.green
         : broadScanEnabled
           ? CSS_COLOR.textMuted
@@ -1788,8 +1890,8 @@ export const HeaderBroadcastScrollerStack = memo(({
     : flowScanStale
       ? "STALE"
       : flowScanPaused
-        ? "PAUSED"
-      : broadScanSnapshotActive
+        ? "IDLE"
+      : broadScanRuntimeActive
         ? "SCAN ON"
         : broadScanEnabled
           ? "SCAN IDLE"
@@ -1833,13 +1935,13 @@ export const HeaderBroadcastScrollerStack = memo(({
         : "SCAN OFF";
   const flowWaveStatus = flowScanHasError
     ? "offline"
-    : flowScanDegraded || flowSessionQuietWithRetainedEvents || flowScanStale || flowScanPaused
+    : flowScanDegraded || flowSessionQuietWithRetainedEvents || flowScanStale
       ? "stale"
     : flowScanBusy
       ? "checking"
     : flowSessionQuiet
       ? "market-closed"
-    : broadScanSnapshotActive
+    : broadScanRuntimeActive
       ? "healthy"
       : "no-subscribers";
   const signalUniverseLabel =
@@ -2005,7 +2107,7 @@ export const HeaderBroadcastScrollerStack = memo(({
             testId="header-unusual-settings-broad-toggle"
             tone={flowScanTone}
           >
-            {broadScanEnabled ? (broadScanSnapshotActive ? "On" : "Idle") : "Off"}
+            {broadScanEnabled ? (broadScanRuntimeActive ? "On" : "Idle") : "Off"}
           </HeaderLaneToggleButton>
         </HeaderLanePairRow>
         <HeaderLanePairRow>

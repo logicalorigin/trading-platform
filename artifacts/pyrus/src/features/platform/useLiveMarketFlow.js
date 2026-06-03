@@ -8,6 +8,7 @@ import {
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import { useRuntimeWorkloadFlag } from "./workloadStats";
 import {
+  FLOW_SCANNER_AGGREGATE_EVENT_LIMIT,
   FLOW_SCANNER_MODE,
   FLOW_SCANNER_MARKET_UNIVERSE_SYMBOLS,
   FLOW_SCANNER_SCOPE,
@@ -37,6 +38,10 @@ import {
 
 const FLOW_SCANNER_UNIVERSE_QUERY_KEY = ["/api/flow/universe"];
 const FLOW_SCANNER_AGGREGATE_QUERY_KEY = ["/api/flow/events/aggregate"];
+const FLOW_VISIBLE_REQUEST_HEADERS = Object.freeze({
+  "x-pyrus-request-family": "flow-scanner-visible",
+  "x-pyrus-fetch-priority": "8",
+});
 const EMPTY_FLOW_ANALYTICS = Object.freeze({
   flowTide: Object.freeze([]),
   tickerFlow: Object.freeze([]),
@@ -105,8 +110,19 @@ const normalizeScannedAtMap = (value = {}) => {
   );
 };
 
-const fetchFlowScannerUniverse = async () => {
-  const payload = await getFlowUniverseRequest();
+const flowVisibleRequestOptions = (options = {}) => ({
+  ...options,
+  headers: (() => {
+    const headers = new Headers(FLOW_VISIBLE_REQUEST_HEADERS);
+    new Headers(options.headers || {}).forEach((value, key) => {
+      headers.set(key, value);
+    });
+    return headers;
+  })(),
+});
+
+const fetchFlowScannerUniverse = async (options = {}) => {
+  const payload = await getFlowUniverseRequest(flowVisibleRequestOptions(options));
   return {
     symbols: normalizeFlowUniverseSymbols(payload?.symbols),
     coverage: payload?.coverage || null,
@@ -120,6 +136,7 @@ const fetchAggregateFlowEvents = async ({
   lineBudget,
   minPremium,
   maxDte,
+  signal,
 }) => {
   return listAggregateFlowEventsRequest({
     limit,
@@ -128,7 +145,7 @@ const fetchAggregateFlowEvents = async ({
     lineBudget,
     minPremium,
     maxDte,
-  });
+  }, flowVisibleRequestOptions({ signal }));
 };
 
 const RADAR_ACTIVITY_OPTION_TICKER_RE = /\b(CALL|PUT|OPTION)\s+ACTIVITY\b/i;
@@ -211,7 +228,7 @@ export const useLiveMarketFlow = (
   const shouldLoadMarketUniverse = enabled && usesBackendBroadScanner;
   const marketUniverseQuery = useQuery({
     queryKey: FLOW_SCANNER_UNIVERSE_QUERY_KEY,
-    queryFn: fetchFlowScannerUniverse,
+    queryFn: ({ signal }) => fetchFlowScannerUniverse({ signal }),
     enabled: shouldLoadMarketUniverse,
     staleTime: 60_000,
     refetchInterval: shouldLoadMarketUniverse ? 60_000 : false,
@@ -309,14 +326,15 @@ export const useLiveMarketFlow = (
       effectiveMaxDte ?? null,
       shouldPrioritizeRuntimeSignals,
     ],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       fetchAggregateFlowEvents({
-        limit: Math.max(effectiveLimit * 4, effectiveLimit),
+        limit: Math.max(effectiveLimit * 4, FLOW_SCANNER_AGGREGATE_EVENT_LIMIT),
         scope: effectiveScannerConfig.scope,
         unusualThreshold: normalizedThreshold,
         lineBudget: effectiveLineBudget,
         minPremium: effectiveMinPremium,
         maxDte: effectiveMaxDte,
+        signal,
       }),
     enabled: shouldLoadMarketUniverse,
     staleTime: 2_500,
@@ -479,7 +497,7 @@ export const useLiveMarketFlow = (
                 : {}),
               blocking,
               queueRefresh: blocking,
-            });
+            }, flowVisibleRequestOptions());
             if (!cancelled) {
               commitSymbolResult(symbol, { status: "fulfilled", value }, Date.now());
             }

@@ -118,12 +118,6 @@ export const BroadFlowScannerRuntime = memo(({
 
   useEffect(() => {
     if (!runtimeActive) {
-      clearMarketFlowSnapshot(BROAD_MARKET_FLOW_STORE_KEY);
-    }
-  }, [runtimeActive]);
-
-  useEffect(() => {
-    if (!runtimeActive) {
       return undefined;
     }
     return acquireFlowScannerOwner(ownerTokenRef.current);

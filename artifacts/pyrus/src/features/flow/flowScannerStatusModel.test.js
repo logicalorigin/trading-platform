@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   buildRecentScannerSymbols,
   resolveFlowScannerProgress,
+  resolveFlowScannerStatusDisplay,
   resolveFlowScannerSourceLabel,
 } from "./flowScannerStatusModel.js";
 
@@ -73,6 +74,28 @@ test("resolveFlowScannerProgress reports selected shortfall and clear queue", ()
   assert.equal(progress.selectedDetail, "selected 2/8");
   assert.equal(progress.queueLabel, "queue clear");
   assert.equal(progress.progressText, "Active Watchlist Source · All flow · 2/2 scanned · queue clear · limit 12");
+});
+
+test("resolveFlowScannerStatusDisplay does not call backend scanner work idle", () => {
+  assert.deepEqual(
+    resolveFlowScannerStatusDisplay({
+      enabled: true,
+      runtimeActive: true,
+      loading: false,
+    }),
+    { label: "Scanning", state: "scanning", active: true },
+  );
+});
+
+test("resolveFlowScannerStatusDisplay treats first runtime load as syncing", () => {
+  assert.deepEqual(
+    resolveFlowScannerStatusDisplay({
+      enabled: true,
+      runtimeActive: false,
+      loading: true,
+    }),
+    { label: "Syncing", state: "syncing", active: true },
+  );
 });
 
 test("buildRecentScannerSymbols excludes active batch and sorts newest first", () => {
