@@ -200,9 +200,15 @@ function mergeHeaders(...sources: Array<HeadersInit | undefined>): Headers {
   return headers;
 }
 
-function headersFingerprint(headers: Headers): string {
+function headersFingerprint(
+  headers: Headers,
+  ignoredHeaderNames: ReadonlySet<string> = new Set(),
+): string {
   const entries: Array<[string, string]> = [];
   headers.forEach((value, key) => {
+    if (ignoredHeaderNames.has(key)) {
+      return;
+    }
     entries.push([key, value]);
   });
   entries.sort((left, right) => left[0].localeCompare(right[0]));
@@ -215,7 +221,6 @@ function readHeavyGetPriorityHeader(headers: Headers): number | null {
     return null;
   }
 
-  headers.delete(HEAVY_GET_PRIORITY_HEADER);
   const priority = Number(raw);
   return Number.isFinite(priority) ? priority : null;
 }
@@ -254,7 +259,7 @@ function buildHeavyGetKey(input: {
     method: input.method,
     url: normalizedUrl.normalized,
     responseType: input.responseType ?? "auto",
-    headers: headersFingerprint(input.headers),
+    headers: headersFingerprint(input.headers, new Set([HEAVY_GET_PRIORITY_HEADER])),
     request: requestInitFingerprint(input.requestInput, input.init),
   });
 }
@@ -342,6 +347,14 @@ function shouldRetryTransientApiGet(input: {
     return false;
   }
   if (!TRANSIENT_API_GET_STATUS_CODES.has(input.response.status)) {
+    return false;
+  }
+  if (
+    input.response.headers
+      .get("x-pyrus-admission-action")
+      ?.trim()
+      .toLowerCase() === "shed"
+  ) {
     return false;
   }
 
@@ -929,6 +942,11 @@ export async function customFetch<T = unknown>(
   }
 
   const explicitHeavyPriority = readHeavyGetPriorityHeader(headers);
+  const defaultHeavyPriority = getHeavyGetPriority(input, method);
+  const heavyRequestPriority = explicitHeavyPriority ?? defaultHeavyPriority;
+  if (heavyRequestPriority !== 0) {
+    headers.set(HEAVY_GET_PRIORITY_HEADER, String(heavyRequestPriority));
+  }
   const requestInfo = { method, url: resolveUrl(input) };
   const timeoutMs =
     timeoutOption === undefined
@@ -961,8 +979,7 @@ export async function customFetch<T = unknown>(
       const detachCallerAbort = shouldDetachCallerAbort(input, method);
       const { signal: _callerSignal, ...initWithoutSignal } = init;
       const upstreamInit = detachCallerAbort ? initWithoutSignal : init;
-      const priority =
-        explicitHeavyPriority ?? getHeavyGetPriority(input, method);
+      const priority = heavyRequestPriority;
       const sharedRequest = runQueuedHeavyRequest(() =>
         executeFetch<T>({
           requestInput: input,
