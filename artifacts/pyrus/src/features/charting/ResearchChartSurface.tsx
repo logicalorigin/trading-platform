@@ -4941,17 +4941,31 @@ const buildPositionRiskLineOverlays = ({
       })
       .filter((point): point is { x: number; y: number } => point != null);
 
-    if (coordinates.length < 2) {
+    if (!coordinates.length) {
       return [];
     }
 
-    const path = buildStepPath(coordinates);
+    const pathCoordinates =
+      coordinates.length >= 2
+        ? coordinates
+        : [
+            {
+              x: Math.max(0, coordinates[0].x - 32),
+              y: coordinates[0].y,
+            },
+            {
+              x: Math.max(coordinates[0].x + 32, viewportWidth - 4),
+              y: coordinates[0].y,
+            },
+          ];
+
+    const path = buildStepPath(pathCoordinates);
     if (!path) {
       return [];
     }
 
     const visualStyle = resolvePositionRiskLineVisualStyle(line, theme);
-    const latest = coordinates[coordinates.length - 1];
+    const latest = pathCoordinates[pathCoordinates.length - 1];
     const label = `${line.label} ${formatPositionRiskLinePrice(line.currentPrice)}`;
     const labelWidth = Math.max(
       visualStyle.labelHeight === 20 ? 48 : 42,

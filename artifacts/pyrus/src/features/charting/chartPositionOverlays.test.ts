@@ -458,6 +458,102 @@ test("buildChartPositionOverlays creates algo stop loss and take profit paths", 
   );
 });
 
+test("buildChartPositionOverlays creates real account risk paths from open orders", () => {
+  const overlays = buildChartPositionOverlays({
+    chartContext: { surfaceKind: "spot", symbol: "AAPL" },
+    chartBars: riskChartBars,
+    chartBarRanges: riskChartBarRanges,
+    positions: [
+      {
+        id: "real-aapl",
+        accountId: "DU123",
+        symbol: "AAPL",
+        assetClass: "equity",
+        quantity: 10,
+        averageCost: 10,
+        mark: 13,
+        openedAt: "2023-11-14T22:13:40.000Z",
+        openOrders: [
+          {
+            id: "protective-stop",
+            side: "sell",
+            type: "stop",
+            stopPrice: 8.5,
+          },
+          {
+            id: "profit-target",
+            side: "sell",
+            type: "limit",
+            limitPrice: 16,
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    overlays.riskLinePaths.map((line) => [line.kind, line.label, line.currentPrice]),
+    [
+      ["stopLoss", "SL", 8.5],
+      ["takeProfit", "TP", 16],
+    ],
+  );
+});
+
+test("buildChartPositionOverlays reads raw shadow last stop and wire trail payloads", () => {
+  const overlays = buildChartPositionOverlays({
+    chartContext: { surfaceKind: "option", symbol: "GLD", optionContract: {
+      underlying: "GLD",
+      expirationDate: "2026-06-19",
+      strike: 200,
+      right: "call",
+      providerContractId: "gld-call",
+    } },
+    chartBars: riskChartBars,
+    chartBarRanges: riskChartBarRanges,
+    positions: [
+      {
+        id: "shadow-raw-stop",
+        accountId: "shadow",
+        symbol: "GLD",
+        assetClass: "option",
+        quantity: 1,
+        averageCost: 10,
+        mark: 13,
+        openedAt: "2023-11-14T22:13:40.000Z",
+        optionContract: {
+          underlying: "GLD",
+          expirationDate: "2026-06-19",
+          strike: 200,
+          right: "call",
+          providerContractId: "gld-call",
+        },
+        lastStop: {
+          hardStopPrice: 7,
+          stopPrice: 11.2,
+          trailActive: true,
+          trailStopPrice: 11.2,
+          trailHasTakenOver: true,
+          trailActivationPrice: 12,
+          givebackPct: 20,
+        },
+        lastWireTrail: {
+          trailStopPrice: 11.2,
+          trailHasTakenOver: true,
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    overlays.riskLinePaths.map((line) => [line.kind, line.label, line.currentPrice]),
+    [
+      ["hardStop", "HSL", 7],
+      ["trailingStop", "TRL", 11.2],
+    ],
+  );
+});
+
 test("buildChartPositionOverlays keeps hard stops separate from active trails", () => {
   const overlays = buildChartPositionOverlays({
     chartContext: { surfaceKind: "option", symbol: "GLD", optionContract: {

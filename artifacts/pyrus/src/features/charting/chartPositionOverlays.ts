@@ -35,6 +35,17 @@ export type ChartPositionRiskOverlay = {
   peakPrice?: number | string | null;
 };
 
+export type ChartPositionOpenOrder = {
+  id?: string | null;
+  side?: string | null;
+  type?: string | null;
+  limitPrice?: number | string | null;
+  stopPrice?: number | string | null;
+  price?: number | string | null;
+  auxPrice?: number | string | null;
+  updatedAt?: string | Date | null;
+};
+
 export type ChartPositionOverlayContext = {
   surfaceKind: ChartPositionSurfaceKind;
   symbol: string;
@@ -60,6 +71,9 @@ export type ChartPosition = {
   openedAt?: string | Date | null;
   riskOverlay?: ChartPositionRiskOverlay | null;
   automationContext?: Record<string, unknown> | null;
+  lastStop?: Record<string, unknown> | null;
+  lastWireTrail?: Record<string, unknown> | null;
+  openOrders?: ChartPositionOpenOrder[] | null;
 };
 
 export type ChartExecution = {
@@ -469,6 +483,145 @@ const trailingStopIsMoreProtective = ({
     : trailStopPrice > hardStopPrice;
 };
 
+const stopPriceLooksLikeTrailingStop = ({
+  direction,
+  entryPrice,
+  stopPrice,
+}: {
+  direction: ChartPositionDirection;
+  entryPrice: number | null;
+  stopPrice: number | null;
+}): boolean => {
+  if (entryPrice == null || stopPrice == null) return false;
+  return direction === "short" ? stopPrice < entryPrice : stopPrice > entryPrice;
+};
+
+const normalizeOrderSide = (value: unknown): "buy" | "sell" | "" => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "buy" || normalized === "bought") return "buy";
+  if (normalized === "sell" || normalized === "sold") return "sell";
+  return "";
+};
+
+const normalizeOrderType = (value: unknown): string =>
+  String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+
+const orderClosesPositionDirection = (
+  order: ChartPositionOpenOrder,
+  direction: ChartPositionDirection,
+): boolean => {
+  const side = normalizeOrderSide(order.side);
+  if (!side) return true;
+  return direction === "short" ? side === "buy" : side === "sell";
+};
+
+const selectRiskOrderPrice = ({
+  current,
+  candidate,
+  direction,
+  kind,
+}: {
+  current: number | null;
+  candidate: number | null;
+  direction: ChartPositionDirection;
+  kind: "stop" | "target";
+}): number | null => {
+  if (candidate == null) return current;
+  if (current == null) return candidate;
+  if (kind === "target") {
+    return direction === "short"
+      ? Math.max(current, candidate)
+      : Math.min(current, candidate);
+  }
+  return direction === "short"
+    ? Math.min(current, candidate)
+    : Math.max(current, candidate);
+};
+
+const resolveOpenOrderRiskOverlay = (
+  orders: ChartPositionOpenOrder[] | null | undefined,
+  direction: ChartPositionDirection,
+): {
+  hardStopPrice: number | null;
+  stopPrice: number | null;
+  trailStopPrice: number | null;
+  takeProfitPrice: number | null;
+  trailActive: boolean;
+  activeStopKind: "hard_stop" | "trailing_stop" | null;
+} => {
+  let hardStopPrice: number | null = null;
+  let stopPrice: number | null = null;
+  let trailStopPrice: number | null = null;
+  let takeProfitPrice: number | null = null;
+
+  (Array.isArray(orders) ? orders : []).forEach((order) => {
+    if (!orderClosesPositionDirection(order, direction)) {
+      return;
+    }
+    const type = normalizeOrderType(order.type);
+    const isTrailing =
+      type === "trail" ||
+      type === "trailing" ||
+      type === "trailing_stop" ||
+      type === "trail_stop";
+    const isStop =
+      isTrailing ||
+      type === "stop" ||
+      type === "stp" ||
+      type === "stop_limit" ||
+      type === "stp_lmt";
+    const isLimit = type === "limit" || type === "lmt";
+
+    if (isStop) {
+      const price = firstFiniteNumber(
+        order.stopPrice,
+        order.auxPrice,
+        type === "stop" || type === "stp" ? order.price : null,
+      );
+      if (isTrailing) {
+        trailStopPrice = selectRiskOrderPrice({
+          current: trailStopPrice,
+          candidate: price,
+          direction,
+          kind: "stop",
+        });
+      } else {
+        hardStopPrice = selectRiskOrderPrice({
+          current: hardStopPrice,
+          candidate: price,
+          direction,
+          kind: "stop",
+        });
+      }
+      stopPrice = selectRiskOrderPrice({
+        current: stopPrice,
+        candidate: price,
+        direction,
+        kind: "stop",
+      });
+      return;
+    }
+
+    if (isLimit) {
+      takeProfitPrice = selectRiskOrderPrice({
+        current: takeProfitPrice,
+        candidate: firstFiniteNumber(order.limitPrice, order.price),
+        direction,
+        kind: "target",
+      });
+    }
+  });
+
+  return {
+    hardStopPrice,
+    stopPrice,
+    trailStopPrice,
+    takeProfitPrice,
+    trailActive: trailStopPrice != null,
+    activeStopKind: trailStopPrice != null ? "trailing_stop" : hardStopPrice != null ? "hard_stop" : null,
+  };
+};
+
 const resolveRiskOverlay = (
   position: ChartPosition,
   averagePrice: number,
@@ -476,30 +629,45 @@ const resolveRiskOverlay = (
 ): ResolvedRiskOverlay | null => {
   const explicit = readRecord(position.riskOverlay);
   const automation = readRecord(position.automationContext);
-  const management = firstRecord(
+  const lastStop = readRecord(position.lastStop);
+  const wireTrail = firstRecord(position.lastWireTrail, lastStop.wireTrail);
+  const management = {
+    ...firstRecord(lastStop.tradeManagement, lastStop.management, lastStop.greekManagement),
+    ...firstRecord(wireTrail.tradeManagement, wireTrail.management, wireTrail.stop),
+    ...firstRecord(
     automation.tradeManagement,
     automation.management,
     automation.stop,
-  );
+    ),
+  };
+  const openOrderRisk = resolveOpenOrderRiskOverlay(position.openOrders, direction);
   const entryPrice = firstFiniteNumber(
     explicit.entryPrice,
     automation.entryPrice,
+    lastStop.entryPrice,
     averagePrice,
   );
   const stopPrice = firstFiniteNumber(
     explicit.stopPrice,
     management.stopPrice,
     automation.stopPrice,
+    lastStop.stopPrice,
+    lastStop.activeStopPrice,
+    wireTrail.stopPrice,
+    openOrderRisk.stopPrice,
   );
   const explicitActiveStopPrice = firstFiniteNumber(
     explicit.activeStopPrice,
     management.activeStopPrice,
     automation.activeStopPrice,
+    lastStop.activeStopPrice,
   );
   const explicitActiveStopKind = readActiveStopKind(
     explicit.activeStopKind ??
       management.activeStopKind ??
-      automation.activeStopKind,
+      automation.activeStopKind ??
+      lastStop.activeStopKind ??
+      openOrderRisk.activeStopKind,
   );
   const takeProfitPrice = firstFiniteNumber(
     explicit.takeProfitPrice,
@@ -512,22 +680,35 @@ const resolveRiskOverlay = (
     automation.takeProfitPrice,
     automation.profitTargetPrice,
     automation.targetPrice,
+    lastStop.takeProfitPrice,
+    lastStop.profitTargetPrice,
+    lastStop.targetPrice,
+    openOrderRisk.takeProfitPrice,
   );
   const explicitTrailStopPrice = firstFiniteNumber(
     explicit.trailStopPrice,
     management.trailStopPrice,
+    lastStop.trailStopPrice,
+    wireTrail.trailStopPrice,
+    openOrderRisk.trailStopPrice,
   );
   const trailActive =
     readBoolean(explicit.trailActive) === true ||
     readBoolean(management.trailActive) === true ||
+    readBoolean(lastStop.trailActive) === true ||
+    readBoolean(wireTrail.trailActive) === true ||
+    openOrderRisk.trailActive ||
     explicitTrailStopPrice != null ||
-    (entryPrice != null && stopPrice != null && stopPrice > entryPrice);
+    stopPriceLooksLikeTrailingStop({ direction, entryPrice, stopPrice });
   const hardStopPrice = firstFiniteNumber(
     explicit.hardStopPrice,
     explicit.stopLossPrice,
     management.hardStopPrice,
     automation.stopLossPrice,
     management.stopLossPrice,
+    lastStop.hardStopPrice,
+    lastStop.stopLossPrice,
+    openOrderRisk.hardStopPrice,
     position.stopLoss,
     trailActive ? null : stopPrice,
   );
@@ -539,6 +720,8 @@ const resolveRiskOverlay = (
     readBoolean(explicit.trailHasTakenOver) === true ||
     readBoolean(management.trailHasTakenOver) === true ||
     readBoolean(automation.trailHasTakenOver) === true ||
+    readBoolean(lastStop.trailHasTakenOver) === true ||
+    readBoolean(wireTrail.trailHasTakenOver) === true ||
     explicitActiveStopKind === "trailing_stop";
   const trailHasTakenOver =
     explicitActiveStopKind === "hard_stop"
@@ -589,27 +772,37 @@ const resolveRiskOverlay = (
       explicit.trailActivationPrice,
       management.trailActivationPrice,
       automation.trailActivationPrice,
+      lastStop.trailActivationPrice,
+      wireTrail.trailActivationPrice,
     ),
     trailActivationPct: firstFiniteNumber(
       explicit.trailActivationPct,
       management.trailActivationPct,
       automation.trailActivationPct,
+      lastStop.trailActivationPct,
+      wireTrail.trailActivationPct,
     ),
     givebackPct: firstFiniteNumber(
       explicit.givebackPct,
       management.givebackPct,
       automation.givebackPct,
+      lastStop.givebackPct,
+      wireTrail.givebackPct,
     ),
     minLockedGainPct: firstFiniteNumber(
       explicit.minLockedGainPct,
       management.minLockedGainPct,
       automation.minLockedGainPct,
+      lastStop.minLockedGainPct,
+      wireTrail.minLockedGainPct,
       0,
     ),
     peakPrice: firstFiniteNumber(
       explicit.peakPrice,
       automation.peakPrice,
       management.peakPrice,
+      lastStop.peakPrice,
+      wireTrail.peakPrice,
     ),
   };
 };

@@ -9,6 +9,7 @@ import { useUserPreferences } from "../preferences/useUserPreferences";
 import { useAccountSelection } from "../platform/platformContexts.jsx";
 import { useAccountSection } from "../platform/useAccountSection.js";
 import { useStoredOptionQuoteSnapshot } from "../platform/live-streams";
+import { useRuntimeTickerSnapshot } from "../platform/runtimeTickerStore";
 import { listBrokerExecutionsRequest } from "../trade/tradeBrokerRequests.js";
 import type { ChartModel } from "./types";
 import {
@@ -153,6 +154,10 @@ export const useChartPositionOverlays = ({
     refetchInterval: false,
     retry: false,
   });
+  const runtimeQuote = useRuntimeTickerSnapshot(!isOption ? symbol : null, null);
+  const runtimeMark = finiteNumber(
+    runtimeQuote?.price ?? runtimeQuote?.last ?? runtimeQuote?.mark,
+  );
 
   const quoteQuery = useGetQuoteSnapshots(
     { symbols: symbol || "__none__" },
@@ -162,7 +167,7 @@ export const useChartPositionOverlays = ({
           "/api/quotes/snapshot",
           { symbols: symbol || "__none__" },
         ],
-        enabled: Boolean(enabled && !isOption && symbol),
+        enabled: Boolean(enabled && !isOption && symbol && runtimeMark == null),
         staleTime: 60_000,
         refetchInterval: false,
         retry: false,
@@ -177,11 +182,14 @@ export const useChartPositionOverlays = ({
     if (isOption) {
       return finiteNumber(optionQuote?.price);
     }
+    if (runtimeMark != null) {
+      return runtimeMark;
+    }
     const quote = quoteQuery.data?.quotes?.find(
       (item) => normalizeSymbol(item.symbol) === symbol,
     );
     return finiteNumber(quote?.price);
-  }, [isOption, optionQuote?.price, quoteQuery.data, symbol]);
+  }, [isOption, optionQuote?.price, quoteQuery.data, runtimeMark, symbol]);
 
   return useMemo(() => {
     if (!enabled || !chartContext) {

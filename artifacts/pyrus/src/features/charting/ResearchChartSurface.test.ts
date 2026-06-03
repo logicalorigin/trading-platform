@@ -201,6 +201,16 @@ test("ResearchChartSurface emphasizes active position risk lines", () => {
   assert.match(source, /height: overlay\.labelHeight/);
 });
 
+test("ResearchChartSurface renders one-point position risk lines", () => {
+  const source = readResearchChartSurfaceSource();
+
+  assert.match(source, /if \(!coordinates\.length\) \{/);
+  assert.match(source, /const pathCoordinates =/);
+  assert.match(source, /coordinates\.length >= 2/);
+  assert.match(source, /viewportWidth - 4/);
+  assert.doesNotMatch(source, /if \(coordinates\.length < 2\) \{/);
+});
+
 test("useChartPositionOverlays reads account positions for risk overlays", () => {
   const source = readSource("./useChartPositionOverlays.ts");
 
@@ -208,6 +218,10 @@ test("useChartPositionOverlays reads account positions for risk overlays", () =>
   assert.match(source, /getGetAccountPositionsQueryKey/);
   assert.match(source, /resolveChartPositionOverlayAccountRequest/);
   assert.match(source, /useAccountSection/);
+  assert.match(source, /useRuntimeTickerSnapshot/);
+  assert.match(source, /const runtimeMark = finiteNumber/);
+  assert.match(source, /enabled:\s*Boolean\(enabled && !isOption && symbol && runtimeMark == null\)/);
+  assert.match(source, /if \(runtimeMark != null\) \{/);
   assert.doesNotMatch(source, /useListPositions/);
 });
 
