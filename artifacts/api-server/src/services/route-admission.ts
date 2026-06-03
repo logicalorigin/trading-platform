@@ -7,6 +7,7 @@ import {
 export type ApiRouteClass =
   | "critical-execution"
   | "critical-position"
+  | "automation-control"
   | "active-screen"
   | "live-data"
   | "stream"
@@ -16,6 +17,19 @@ export type ApiRouteClass =
 
 export type ApiRouteAdmissionAction = "allow" | "cache-only" | "shed";
 export type ApiRouteQaMode = "safe" | null;
+export type ApiRouteRequestContext = {
+  requestFamily?: string | null;
+  fetchPriority?: number | null;
+  requestOrigin?: string | null;
+  clientRole?: string | null;
+};
+
+type NormalizedApiRouteRequestContext = {
+  requestFamily: string;
+  fetchPriority: number | null;
+  requestOrigin: string;
+  clientRole: string;
+};
 
 export type ApiRouteAdmission = {
   routeClass: ApiRouteClass;
@@ -62,6 +76,76 @@ const normalizePath = (path: string) => {
 const normalizeQaMode = (value: unknown): ApiRouteQaMode =>
   String(value || "").trim().toLowerCase() === "safe" ? "safe" : null;
 
+const normalizeRouteContextValue = (value: unknown): string => {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized ? normalized.slice(0, 64) : "";
+};
+
+const normalizeFetchPriority = (value: unknown): number | null => {
+  if (value == null || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const activeRequestFamilies = new Set([
+  "chart-visible",
+  "flow-visible",
+  "flow-scanner-visible",
+  "flow-tape-visible",
+  "option-chart-visible",
+  "signal-matrix",
+]);
+const chartRequestFamilies = new Set([
+  "chart-bars",
+  "option-chart-bars",
+]);
+const deferredRequestFamilies = new Set([
+  "chart-backfill",
+  "chart-flow",
+  "background",
+  "analytics",
+  "scanner",
+]);
+
+function normalizeRouteRequestContext(
+  input: ApiRouteRequestContext = {},
+): NormalizedApiRouteRequestContext {
+  return {
+    requestFamily: normalizeRouteContextValue(input.requestFamily),
+    fetchPriority: normalizeFetchPriority(input.fetchPriority),
+    requestOrigin: normalizeRouteContextValue(input.requestOrigin),
+    clientRole: normalizeRouteContextValue(input.clientRole),
+  };
+}
+
+function isVisibleRouteRequestContext(
+  input: ApiRouteRequestContext = {},
+): boolean {
+  const context = normalizeRouteRequestContext(input);
+  if (activeRequestFamilies.has(context.requestFamily)) {
+    return true;
+  }
+  if (
+    chartRequestFamilies.has(context.requestFamily) &&
+    (context.fetchPriority ?? 0) >= 6
+  ) {
+    return true;
+  }
+  return (context.fetchPriority ?? 0) >= 8;
+}
+
+function isDeferredRouteRequestContext(
+  input: ApiRouteRequestContext = {},
+): boolean {
+  const context = normalizeRouteRequestContext(input);
+  if (deferredRequestFamilies.has(context.requestFamily)) {
+    return true;
+  }
+  return (context.fetchPriority ?? 0) < 0;
+}
+
 const routeAdmissionAction = (input: {
   routeClass: ApiRouteClass;
   pressureLevel: ApiResourcePressureLevel;
@@ -88,8 +172,24 @@ const routeAdmissionAction = (input: {
     };
   }
 
+  if (input.pressureLevel === "high") {
+    if (
+      input.routeClass === "decorative" ||
+      input.routeClass === "deferred-analytics" ||
+      input.routeClass === "background-maintenance"
+    ) {
+      return {
+        action: "shed",
+        reason: "api-resource-pressure-high",
+        statusCode: input.routeClass === "decorative" ? 204 : 429,
+        retryAfterMs: 15_000,
+      };
+    }
+  }
+
   if (input.pressureLevel === "critical") {
     if (
+      input.routeClass === "automation-control" ||
       input.routeClass === "live-data" ||
       input.routeClass === "stream" ||
       input.routeClass === "decorative" ||
@@ -116,12 +216,26 @@ const routeAdmissionAction = (input: {
 export function classifyApiRoute(input: {
   method?: string | null;
   path?: string | null;
+  requestFamily?: string | null;
+  fetchPriority?: number | null;
+  requestOrigin?: string | null;
+  clientRole?: string | null;
 }): ApiRouteClass {
   const method = String(input.method || "GET").toUpperCase();
   const rawPath = String(input.path || "/");
   const path = normalizePath(rawPath);
   const query = queryParamsForPath(rawPath);
   const mode = String(query.get("mode") || query.get("environment") || "").toLowerCase();
+  const routeContext = normalizeRouteRequestContext({
+    requestFamily:
+      input.requestFamily ??
+      query.get("requestFamily") ??
+      query.get("family"),
+    fetchPriority:
+      input.fetchPriority ?? normalizeFetchPriority(query.get("fetchPriority")),
+    requestOrigin: input.requestOrigin ?? query.get("requestOrigin"),
+    clientRole: input.clientRole ?? query.get("clientRole"),
+  });
 
   if (
     path === "/orders/submit" ||
@@ -171,7 +285,13 @@ export function classifyApiRoute(input: {
   }
 
   if (
-    /^\/algo\/deployments\/[^/]+\/signal-options\/shadow-(scan|backfill)$/.test(path) ||
+    /^\/algo\/deployments\/[^/]+\/signal-options\/shadow-scan$/.test(path)
+  ) {
+    return "automation-control";
+  }
+
+  if (
+    /^\/algo\/deployments\/[^/]+\/signal-options\/shadow-backfill$/.test(path) ||
     path.includes("/watchlist-backtest/")
   ) {
     return "background-maintenance";
@@ -179,13 +299,30 @@ export function classifyApiRoute(input: {
 
   if (
     path === "/signal-monitor/matrix" ||
-    path === "/signal-monitor/state"
+    path === "/signal-monitor/state" ||
+    path === "/diagnostics/latest"
   ) {
     return "active-screen";
   }
 
   if (
-    path === "/diagnostics/latest" ||
+    path === "/bars" ||
+    path === "/options/chart-bars" ||
+    path === "/options/chains" ||
+    path === "/flow/events" ||
+    path === "/flow/events/aggregate" ||
+    path === "/flow/premium-distribution" ||
+    path === "/flow/universe"
+  ) {
+    if (isVisibleRouteRequestContext(routeContext)) {
+      return "active-screen";
+    }
+    if (isDeferredRouteRequestContext(routeContext)) {
+      return "deferred-analytics";
+    }
+  }
+
+  if (
     path.startsWith("/diagnostics/") ||
     path === "/bars" ||
     path.startsWith("/options/") ||
@@ -245,6 +382,34 @@ function readRequestQaMode(req: Request): ApiRouteQaMode {
   );
 }
 
+function readRequestContext(req: Request): ApiRouteRequestContext {
+  return {
+    requestFamily:
+      req.get("x-pyrus-request-family") ??
+      (typeof req.query["requestFamily"] === "string"
+        ? req.query["requestFamily"]
+        : typeof req.query["family"] === "string"
+          ? req.query["family"]
+          : null),
+    fetchPriority: normalizeFetchPriority(
+      req.get("x-pyrus-fetch-priority") ??
+        (typeof req.query["fetchPriority"] === "string"
+          ? req.query["fetchPriority"]
+          : null),
+    ),
+    requestOrigin:
+      req.get("x-pyrus-request-origin") ??
+      (typeof req.query["requestOrigin"] === "string"
+        ? req.query["requestOrigin"]
+        : null),
+    clientRole:
+      req.get("x-pyrus-client-role") ??
+      (typeof req.query["clientRole"] === "string"
+        ? req.query["clientRole"]
+        : null),
+  };
+}
+
 export function apiRouteAdmissionMiddleware(
   req: Request,
   res: Response,
@@ -256,6 +421,7 @@ export function apiRouteAdmissionMiddleware(
     routeClass: classifyApiRoute({
       method: req.method,
       path: req.originalUrl || req.url || req.path,
+      ...readRequestContext(req),
     }),
     pressureLevel: pressure.level,
     qaMode,
