@@ -326,6 +326,7 @@ export const SignalMonitorMatrixTimeframe = {
   '5m': '5m',
   '15m': '15m',
   '1h': '1h',
+  '1d': '1d',
 } as const;
 
 export type FlowSentiment = typeof FlowSentiment[keyof typeof FlowSentiment];
@@ -4357,10 +4358,17 @@ export const EvaluateSignalMonitorMatrixRequestRequestOrigin = {
   test: 'test',
 } as const;
 
+export interface EvaluateSignalMonitorMatrixCellRequest {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+}
+
 export interface EvaluateSignalMonitorMatrixRequest {
   environment?: EnvironmentMode;
   /** @nullable */
   watchlistId?: string | null;
+  /** Exact signal-matrix cells to evaluate. When non-empty, cells are authoritative over symbols/timeframes. */
+  cells?: EvaluateSignalMonitorMatrixCellRequest[];
   symbols?: string[];
   timeframes?: SignalMonitorMatrixTimeframe[];
   clientRole?: EvaluateSignalMonitorMatrixRequestClientRole;
@@ -4526,6 +4534,7 @@ export type SignalMonitorMatrixResponseCoverageSourceStrategy = typeof SignalMon
 
 export const SignalMonitorMatrixResponseCoverageSourceStrategy = {
   native_timeframes: 'native_timeframes',
+  native_timeframes_live_retry: 'native_timeframes_live_retry',
 } as const;
 
 export type SignalMonitorMatrixResponseCoverageCacheStatus = typeof SignalMonitorMatrixResponseCoverageCacheStatus[keyof typeof SignalMonitorMatrixResponseCoverageCacheStatus];

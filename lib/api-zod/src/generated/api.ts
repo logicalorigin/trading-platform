@@ -4310,8 +4310,12 @@ export const EvaluateSignalMonitorResponse = zod.object({
 export const EvaluateSignalMonitorMatrixBody = zod.object({
   "environment": zod.enum(['paper', 'live']).optional(),
   "watchlistId": zod.string().nullish(),
+  "cells": zod.array(zod.object({
+  "symbol": zod.string(),
+  "timeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d'])
+})).optional().describe('Exact signal-matrix cells to evaluate. When non-empty, cells are authoritative over symbols\/timeframes.'),
   "symbols": zod.array(zod.string()).optional(),
-  "timeframes": zod.array(zod.enum(['1m', '2m', '5m', '15m', '1h'])).optional(),
+  "timeframes": zod.array(zod.enum(['1m', '2m', '5m', '15m', '1h', '1d'])).optional(),
   "clientRole": zod.enum(['leader', 'follower', 'manual', 'test']).optional(),
   "requestOrigin": zod.enum(['startup', 'poll', 'manual', 'test']).optional()
 })
@@ -4337,7 +4341,7 @@ export const EvaluateSignalMonitorMatrixResponse = zod.object({
   "id": zod.string(),
   "profileId": zod.string(),
   "symbol": zod.string(),
-  "timeframe": zod.enum(['1m', '2m', '5m', '15m', '1h']),
+  "timeframe": zod.enum(['1m', '2m', '5m', '15m', '1h', '1d']),
   "currentSignalDirection": zod.union([zod.enum(['buy', 'sell']),zod.null()]),
   "currentSignalAt": zod.coerce.date().nullable(),
   "currentSignalPrice": zod.number().nullable(),
@@ -4365,7 +4369,7 @@ export const EvaluateSignalMonitorMatrixResponse = zod.object({
 }),zod.null()])
 })),
   "evaluatedAt": zod.coerce.date(),
-  "timeframes": zod.array(zod.enum(['1m', '2m', '5m', '15m', '1h'])),
+  "timeframes": zod.array(zod.enum(['1m', '2m', '5m', '15m', '1h', '1d'])),
   "truncated": zod.boolean(),
   "skippedSymbols": zod.array(zod.string()),
   "cacheStatus": zod.enum(['hit', 'stale', 'inflight', 'miss']).optional(),
@@ -4377,7 +4381,7 @@ export const EvaluateSignalMonitorMatrixResponse = zod.object({
   "totalSymbols": zod.number(),
   "timeframes": zod.number(),
   "taskCount": zod.number(),
-  "sourceStrategy": zod.enum(['native_timeframes']).optional(),
+  "sourceStrategy": zod.enum(['native_timeframes', 'native_timeframes_live_retry']).optional(),
   "sourceRequestCount": zod.number().optional(),
   "hydratedSymbols": zod.number().optional(),
   "missingSymbols": zod.number().optional(),

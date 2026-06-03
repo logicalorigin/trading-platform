@@ -49,6 +49,7 @@ import {
 import {
   getCurrentStockMinuteAggregates,
   getRecentStockMinuteAggregateHistory,
+  isStockAggregateStreamingAvailable,
   subscribeMutableStockMinuteAggregates,
   type StockMinuteAggregateSubscription,
   type StockMinuteAggregateMessage,
@@ -61,6 +62,10 @@ type SignalMonitorStatus = "ok" | "stale" | "unavailable" | "error" | "unknown";
 type SignalMonitorMatrixCacheStatus = "hit" | "stale" | "inflight" | "miss";
 type SignalMonitorMatrixClientRole = "leader" | "follower" | "manual" | "test";
 type SignalMonitorMatrixRequestOrigin = "startup" | "poll" | "manual" | "test";
+type SignalMonitorMatrixCellRequest = {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+};
 type SignalMonitorBarSourcePolicy = "mixed" | "ibkr-only";
 type SignalMonitorProfileSymbolEvaluationPressureCapMode =
   | "capped"
@@ -105,7 +110,7 @@ const SIGNAL_MONITOR_TIMEFRAMES: readonly SignalMonitorTimeframe[] = [
   "1d",
 ];
 const SIGNAL_MONITOR_MATRIX_TIMEFRAMES: readonly SignalMonitorMatrixTimeframe[] =
-  ["1m", "2m", "5m", "15m", "1h"];
+  ["1m", "2m", "5m", "15m", "1h", "1d"];
 const DEFAULT_SIGNAL_MONITOR_TIMEFRAME: SignalMonitorTimeframe = "15m";
 const SIGNAL_MONITOR_DB_UNAVAILABLE_MESSAGE =
   "Postgres is unavailable; signal monitor data is temporarily degraded.";
@@ -161,6 +166,25 @@ const SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS: Record<
   },
   critical: { maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT, concurrency: 1 },
 };
+const SIGNAL_MONITOR_AUTOMATIC_MATRIX_PRESSURE_CAPS: Record<
+  ApiResourcePressureLevel,
+  { maxSymbols: number; concurrency: number }
+> = {
+  normal: { maxSymbols: 32, concurrency: 2 },
+  watch: { maxSymbols: 16, concurrency: 2 },
+  high: { maxSymbols: 8, concurrency: 1 },
+  critical: { maxSymbols: 8, concurrency: 1 },
+};
+const SIGNAL_MONITOR_MATRIX_SOFT_BYPASS_MAX_SYMBOLS = 12;
+const SIGNAL_MONITOR_MATRIX_EXACT_CELL_CAPS: Record<
+  ApiResourcePressureLevel,
+  number
+> = {
+  normal: 150,
+  watch: 150,
+  high: 20,
+  critical: 10,
+};
 const SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,
   { maxSymbols: number; concurrency: number }
@@ -192,7 +216,6 @@ const TIMEFRAME_MS: Record<SignalMonitorMatrixTimeframe, number> = {
   "1h": 60 * 60_000,
   "1d": 24 * 60 * 60_000,
 };
-const COMPLETED_BAR_SAFETY_MS = 2_000;
 const MARKET_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",
   year: "numeric",
@@ -273,13 +296,91 @@ function parseSignalMatrixTimeframes(
     : [...SIGNAL_MONITOR_MATRIX_TIMEFRAMES];
 }
 
+function normalizeSignalMonitorMatrixCells(
+  value: unknown,
+): SignalMonitorMatrixCellRequest[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const cells = new Map<string, SignalMonitorMatrixCellRequest>();
+  value.forEach((item) => {
+    const record = asRecord(item);
+    const symbol = normalizeSymbol(record["symbol"] as string).toUpperCase();
+    const timeframe = String(
+      record["timeframe"] || "",
+    ).trim() as SignalMonitorMatrixTimeframe;
+    if (!symbol || !SIGNAL_MONITOR_MATRIX_TIMEFRAMES.includes(timeframe)) {
+      return;
+    }
+    cells.set(`${symbol}:${timeframe}`, { symbol, timeframe });
+  });
+  return Array.from(cells.values()).sort((left, right) =>
+    left.symbol === right.symbol
+      ? SIGNAL_MONITOR_MATRIX_TIMEFRAMES.indexOf(left.timeframe) -
+        SIGNAL_MONITOR_MATRIX_TIMEFRAMES.indexOf(right.timeframe)
+      : left.symbol.localeCompare(right.symbol),
+  );
+}
+
+function signalMonitorMatrixCellsBySymbol(
+  cells: readonly SignalMonitorMatrixCellRequest[],
+): Map<string, SignalMonitorMatrixTimeframe[]> {
+  const bySymbol = new Map<string, SignalMonitorMatrixTimeframe[]>();
+  cells.forEach((cell) => {
+    const timeframes = bySymbol.get(cell.symbol) ?? [];
+    timeframes.push(cell.timeframe);
+    bySymbol.set(cell.symbol, timeframes);
+  });
+  return bySymbol;
+}
+
+function signalMonitorMatrixCellKeys(
+  cells: readonly SignalMonitorMatrixCellRequest[],
+): Set<string> {
+  return new Set(cells.map((cell) => `${cell.symbol}:${cell.timeframe}`));
+}
+
+function resolveSignalMonitorMatrixExactCells(input: {
+  cells?: SignalMonitorMatrixCellRequest[];
+  allowedSymbols: string[];
+  pressure: ApiResourcePressureLevel;
+}) {
+  const normalizedCells = normalizeSignalMonitorMatrixCells(input.cells);
+  if (!normalizedCells.length) {
+    return {
+      exact: false,
+      cells: [] as SignalMonitorMatrixCellRequest[],
+      timeframes: null as SignalMonitorMatrixTimeframe[] | null,
+      cacheKeyPart: null as string | null,
+    };
+  }
+  const allowedSymbols = new Set(input.allowedSymbols);
+  const cells = normalizedCells.filter((cell) => allowedSymbols.has(cell.symbol));
+  const cap = SIGNAL_MONITOR_MATRIX_EXACT_CELL_CAPS[input.pressure];
+  if (cells.length > cap) {
+    throw new HttpError(400, "Signal monitor matrix exact-cell request is too large.", {
+      code: "signal_monitor_matrix_cells_limit_exceeded",
+      detail: `At ${input.pressure} pressure, request at most ${cap} matrix cells.`,
+      data: { pressure: input.pressure, requestedCells: cells.length, maxCells: cap },
+    });
+  }
+  const timeframes = Array.from(new Set(cells.map((cell) => cell.timeframe)));
+  const cacheKeyPart = cells
+    .map((cell) => `${cell.symbol}:${cell.timeframe}`)
+    .join(",");
+  return { exact: true, cells, timeframes, cacheKeyPart };
+}
+
 function cappedSignalMatrixSettings(
   profile: SignalMonitorProfileRow,
   pressureLevel?: ApiResourcePressureLevel,
+  options: { automatic?: boolean } = {},
 ) {
   const resourcePressureLevel =
     pressureLevel ?? getApiResourcePressureSnapshot().level;
-  const caps = SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS[resourcePressureLevel];
+  const caps = options.automatic
+    ? SIGNAL_MONITOR_AUTOMATIC_MATRIX_PRESSURE_CAPS[resourcePressureLevel]
+    : SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS[resourcePressureLevel];
   const configuredMaxSymbols = positiveInteger(
     profile.maxSymbols,
     DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
@@ -303,12 +404,13 @@ function shouldBypassSoftSignalMonitorMatrixPressure(input: {
   clientRole?: SignalMonitorMatrixClientRole;
   requestOrigin?: SignalMonitorMatrixRequestOrigin;
   symbols?: string[];
+  cells?: SignalMonitorMatrixCellRequest[];
 }) {
   return (
     input.clientRole === "leader" &&
     (input.requestOrigin === "startup" || input.requestOrigin === "poll") &&
-    Array.isArray(input.symbols) &&
-    input.symbols.length > 0
+    ((Array.isArray(input.symbols) && input.symbols.length > 0) ||
+      (Array.isArray(input.cells) && input.cells.length > 0))
   );
 }
 
@@ -318,12 +420,14 @@ function resolveSignalMonitorMatrixConcurrency(input: {
     clientRole?: SignalMonitorMatrixClientRole;
     requestOrigin?: SignalMonitorMatrixRequestOrigin;
     symbols?: string[];
+    cells?: SignalMonitorMatrixCellRequest[];
   };
   symbolCount: number;
 }) {
   if (
     input.matrixSettings.pressure !== "critical" &&
-    shouldBypassSoftSignalMonitorMatrixPressure(input.request)
+    shouldBypassSoftSignalMonitorMatrixPressure(input.request) &&
+    input.symbolCount <= SIGNAL_MONITOR_MATRIX_SOFT_BYPASS_MAX_SYMBOLS
   ) {
     return Math.max(input.matrixSettings.concurrency, input.symbolCount);
   }
@@ -468,6 +572,18 @@ function dateOrNull(value: unknown): Date | null {
     return Number.isNaN(date.getTime()) ? null : date;
   }
   return null;
+}
+
+function signalMonitorBarAnchorAt(
+  bar: SignalMonitorBarSnapshot | undefined,
+): Date | null {
+  return dateOrNull(bar?.timestamp);
+}
+
+function signalMonitorBarClosedAt(
+  bar: SignalMonitorBarSnapshot | undefined,
+): Date | null {
+  return dateOrNull(bar?.dataUpdatedAt) ?? signalMonitorBarAnchorAt(bar);
 }
 
 function profileToResponse(profile: DbSignalMonitorProfile) {
@@ -797,12 +913,13 @@ function shouldServeSignalMonitorMatrixFromCacheOnly(input: {
   clientRole?: SignalMonitorMatrixClientRole;
   requestOrigin?: SignalMonitorMatrixRequestOrigin;
 }) {
+  const pressureLevel = getApiResourcePressureSnapshot().level;
   return (
     (input.clientRole === "follower" &&
       (input.requestOrigin === "startup" || input.requestOrigin === "poll")) ||
     (input.clientRole === "leader" &&
       (input.requestOrigin === "startup" || input.requestOrigin === "poll") &&
-      getApiResourcePressureSnapshot().level === "critical")
+      (pressureLevel === "high" || pressureLevel === "critical"))
   );
 }
 
@@ -1508,6 +1625,7 @@ function dailyBarDateKey(value: Date): string {
 
 export function isSignalMonitorBarComplete(input: {
   timestamp: Date;
+  dataUpdatedAt?: Date | null;
   timeframe: SignalMonitorMatrixTimeframe;
   evaluatedAt: Date;
 }): boolean {
@@ -1515,12 +1633,8 @@ export function isSignalMonitorBarComplete(input: {
     return dailyBarDateKey(input.timestamp) < marketDateKey(input.evaluatedAt);
   }
 
-  return (
-    input.timestamp.getTime() +
-      TIMEFRAME_MS[input.timeframe] +
-      COMPLETED_BAR_SAFETY_MS <=
-    input.evaluatedAt.getTime()
-  );
+  const completedAt = input.dataUpdatedAt ?? input.timestamp;
+  return completedAt.getTime() <= input.evaluatedAt.getTime();
 }
 
 export function signalMonitorCompletedBarsQueryTo(input: {
@@ -1536,9 +1650,7 @@ export function signalMonitorCompletedBarsQueryTo(input: {
 
   const timeframeMs = TIMEFRAME_MS[input.timeframe];
   const completedBoundaryMs =
-    Math.floor(
-      (input.evaluatedAt.getTime() - COMPLETED_BAR_SAFETY_MS) / timeframeMs,
-    ) * timeframeMs;
+    Math.floor(input.evaluatedAt.getTime() / timeframeMs) * timeframeMs;
   return new Date(Math.max(0, completedBoundaryMs));
 }
 
@@ -1553,8 +1665,14 @@ function filterCompletedBars(
     }
 
     const timestamp = dateOrNull(bar.timestamp);
+    const dataUpdatedAt = dateOrNull(bar.dataUpdatedAt);
     return timestamp
-      ? isSignalMonitorBarComplete({ timestamp, timeframe, evaluatedAt })
+      ? isSignalMonitorBarComplete({
+          timestamp,
+          dataUpdatedAt,
+          timeframe,
+          evaluatedAt,
+        })
       : false;
   });
 }
@@ -1625,6 +1743,7 @@ function aggregateStockMinuteBarsForTimeframe(input: {
   timeframe: SignalMonitorMatrixTimeframe;
   evaluatedAt: Date;
   limit: number;
+  includeProvisional?: boolean;
 }): SignalMonitorBarSnapshot[] {
   if (input.timeframe === "1d") {
     return [];
@@ -1634,8 +1753,48 @@ function aggregateStockMinuteBarsForTimeframe(input: {
     "1m",
     input.evaluatedAt,
   );
+  const provisionalMinuteBars = input.includeProvisional
+    ? input.bars.filter((bar) => {
+        const timestamp = dateOrNull(bar.timestamp);
+        if (!timestamp || timestamp.getTime() > input.evaluatedAt.getTime()) {
+          return false;
+        }
+        return !completedMinuteBars.some((completed) => {
+          const completedAt = dateOrNull(completed.timestamp);
+          return completedAt?.getTime() === timestamp.getTime();
+        });
+      })
+    : [];
+  const minuteBars = [...completedMinuteBars, ...provisionalMinuteBars].sort(
+    (left, right) => {
+      const leftTime = dateOrNull(left.timestamp)?.getTime() ?? 0;
+      const rightTime = dateOrNull(right.timestamp)?.getTime() ?? 0;
+      return leftTime - rightTime;
+    },
+  );
   if (input.timeframe === "1m") {
-    return completedMinuteBars.slice(-input.limit);
+    return minuteBars
+      .map((bar) => {
+        const timestamp = dateOrNull(bar.timestamp);
+        if (!timestamp) {
+          return bar;
+        }
+        const completed = isSignalMonitorBarComplete({
+          timestamp,
+          dataUpdatedAt: dateOrNull(bar.dataUpdatedAt),
+          timeframe: "1m",
+          evaluatedAt: input.evaluatedAt,
+        });
+        return completed
+          ? bar
+          : {
+              ...bar,
+              partial: true,
+              dataUpdatedAt: input.evaluatedAt,
+              ageMs: 0,
+            };
+      })
+      .slice(-input.limit);
   }
 
   const timeframeMs = TIMEFRAME_MS[input.timeframe];
@@ -1645,7 +1804,7 @@ function aggregateStockMinuteBarsForTimeframe(input: {
   }
 
   const grouped = new Map<number, SignalMonitorBarSnapshot[]>();
-  completedMinuteBars.forEach((bar) => {
+  minuteBars.forEach((bar) => {
     const timestamp = dateOrNull(bar.timestamp);
     if (!timestamp) {
       return;
@@ -1670,7 +1829,16 @@ function aggregateStockMinuteBarsForTimeframe(input: {
           .filter((time): time is number => typeof time === "number")
           .map((time) => Math.floor(time / TIMEFRAME_MS["1m"])),
       );
-      if (childBuckets.size < requiredChildBars) {
+      const bucketEndMs = bucket + timeframeMs;
+      const bucketStarted = bucket <= input.evaluatedAt.getTime();
+      const bucketComplete = bucketEndMs <= input.evaluatedAt.getTime();
+      const provisional = Boolean(
+        input.includeProvisional &&
+        bucketStarted &&
+        !bucketComplete &&
+        childBuckets.size > 0,
+      );
+      if (childBuckets.size < requiredChildBars && !provisional) {
         return null;
       }
 
@@ -1695,11 +1863,17 @@ function aggregateStockMinuteBarsForTimeframe(input: {
         return null;
       }
 
-      const dataUpdatedAt =
+      const rawDataUpdatedAt =
         sorted
           .map((bar) => dateOrNull(bar.dataUpdatedAt))
           .filter((value): value is Date => Boolean(value))
           .sort((left, right) => right.getTime() - left.getTime())[0] ?? null;
+      const dataUpdatedAt =
+        provisional && rawDataUpdatedAt
+          ? new Date(
+              Math.min(rawDataUpdatedAt.getTime(), input.evaluatedAt.getTime()),
+            )
+          : rawDataUpdatedAt;
       const delayed = sorted.some((bar) => isSignalMonitorDelayedBar(bar));
 
       return {
@@ -1713,7 +1887,7 @@ function aggregateStockMinuteBarsForTimeframe(input: {
           const volume = Number(bar.volume);
           return sum + (Number.isFinite(volume) ? volume : 0);
         }, 0),
-        partial: false,
+        partial: provisional,
         delayed,
         freshness: delayed ? "delayed" : "live",
         marketDataMode: delayed ? "delayed" : "live",
@@ -1725,10 +1899,15 @@ function aggregateStockMinuteBarsForTimeframe(input: {
     })
     .filter((bar): bar is SignalMonitorBarSnapshot => {
       if (!bar) return false;
+      if (bar.partial === true && input.includeProvisional) {
+        return true;
+      }
       const timestamp = dateOrNull(bar.timestamp);
+      const dataUpdatedAt = dateOrNull(bar.dataUpdatedAt);
       return timestamp
         ? isSignalMonitorBarComplete({
             timestamp,
+            dataUpdatedAt,
             timeframe: input.timeframe,
             evaluatedAt: input.evaluatedAt,
           })
@@ -1742,6 +1921,7 @@ function aggregateStockMinuteAggregatesForSignalMonitorBars(input: {
   timeframe: SignalMonitorMatrixTimeframe;
   evaluatedAt: Date;
   limit: number;
+  includeProvisional?: boolean;
 }): SignalMonitorBarSnapshot[] {
   const minuteBars = input.aggregates
     .map((aggregate) =>
@@ -1754,6 +1934,7 @@ function aggregateStockMinuteAggregatesForSignalMonitorBars(input: {
     timeframe: input.timeframe,
     evaluatedAt: input.evaluatedAt,
     limit: input.limit,
+    includeProvisional: input.includeProvisional,
   });
 }
 
@@ -1790,6 +1971,7 @@ function loadSignalMonitorStreamCompletedBars(input: {
   timeframe: SignalMonitorMatrixTimeframe;
   evaluatedAt: Date;
   limit: number;
+  includeProvisional?: boolean;
 }): SignalMonitorBarSnapshot[] {
   if (input.timeframe === "1d") {
     return [];
@@ -1829,6 +2011,7 @@ function loadSignalMonitorStreamCompletedBars(input: {
     timeframe: input.timeframe,
     evaluatedAt: input.evaluatedAt,
     limit: input.limit,
+    includeProvisional: input.includeProvisional,
   });
 }
 
@@ -1935,9 +2118,11 @@ export function aggregateCompletedMinuteBars(
     .filter((bar): bar is SignalMonitorBarSnapshot => {
       if (!bar) return false;
       const timestamp = dateOrNull(bar.timestamp);
+      const dataUpdatedAt = dateOrNull(bar.dataUpdatedAt);
       return timestamp
         ? isSignalMonitorBarComplete({
             timestamp,
+            dataUpdatedAt,
             timeframe: "2m",
             evaluatedAt,
           })
@@ -2023,9 +2208,11 @@ export function aggregateCompletedFiveMinuteBars(
     .filter((bar): bar is SignalMonitorBarSnapshot => {
       if (!bar) return false;
       const timestamp = dateOrNull(bar.timestamp);
+      const dataUpdatedAt = dateOrNull(bar.dataUpdatedAt);
       return timestamp
         ? isSignalMonitorBarComplete({
             timestamp,
+            dataUpdatedAt,
             timeframe: "15m",
             evaluatedAt,
           })
@@ -2033,13 +2220,21 @@ export function aggregateCompletedFiveMinuteBars(
     });
 }
 
-function barsToPyrusSignalsBars(
+type SignalMonitorPyrusBarEntry = {
+  chartBar: PyrusSignalsBar;
+  sourceBar: SignalMonitorBarSnapshot;
+  anchorAt: Date;
+  closedAt: Date;
+};
+
+function barsToPyrusSignalsBarEntries(
   inputBars: Awaited<ReturnType<typeof getBars>>["bars"],
 ) {
   return inputBars
-    .map((bar): PyrusSignalsBar | null => {
-      const timestamp = dateOrNull(bar.timestamp);
-      if (!timestamp) {
+    .map((bar): SignalMonitorPyrusBarEntry | null => {
+      const anchorAt = signalMonitorBarAnchorAt(bar);
+      const closedAt = signalMonitorBarClosedAt(bar);
+      if (!anchorAt || !closedAt) {
         return null;
       }
       const open = Number(bar.open);
@@ -2052,17 +2247,28 @@ function barsToPyrusSignalsBars(
       }
 
       return {
-        time: Math.floor(timestamp.getTime() / 1000),
-        ts: timestamp.toISOString(),
-        o: open,
-        h: high,
-        l: low,
-        c: close,
-        v: Number.isFinite(volume) ? volume : 0,
+        chartBar: {
+          time: Math.floor(anchorAt.getTime() / 1000),
+          ts: anchorAt.toISOString(),
+          o: open,
+          h: high,
+          l: low,
+          c: close,
+          v: Number.isFinite(volume) ? volume : 0,
+        },
+        sourceBar: bar,
+        anchorAt,
+        closedAt,
       };
     })
-    .filter((bar): bar is PyrusSignalsBar => Boolean(bar))
-    .sort((left, right) => left.time - right.time);
+    .filter((entry): entry is SignalMonitorPyrusBarEntry => Boolean(entry))
+    .sort((left, right) => left.chartBar.time - right.chartBar.time);
+}
+
+function barsToPyrusSignalsBars(
+  inputBars: Awaited<ReturnType<typeof getBars>>["bars"],
+) {
+  return barsToPyrusSignalsBarEntries(inputBars).map((entry) => entry.chartBar);
 }
 
 type SignalMonitorIndicatorDirection = "bullish" | "bearish";
@@ -2309,7 +2515,7 @@ function shouldRetrySignalMonitorCompletedBars(input: {
   evaluatedAt: Date;
 }) {
   const latestBar = input.completedBars.at(-1);
-  const latestBarAt = latestBar ? dateOrNull(latestBar.timestamp) : null;
+  const latestBarAt = signalMonitorBarClosedAt(latestBar);
   if (!latestBarAt) {
     return true;
   }
@@ -2367,7 +2573,10 @@ async function insertSignalEvent(input: {
   symbol: string;
   timeframe: SignalMonitorTimeframe;
   signal: PyrusSignalsSignalEvent;
+  signalAt: Date;
+  signalBarAt: Date;
   latestBarAt: Date;
+  latestBarAnchorAt: Date;
 }) {
   const direction = directionFromSignal(input.signal);
   const eventKey = [
@@ -2387,14 +2596,16 @@ async function insertSignalEvent(input: {
       symbol: input.symbol,
       timeframe: input.timeframe,
       direction,
-      signalAt: new Date(input.signal.time * 1000),
+      signalAt: input.signalAt,
       signalPrice: numericStringOrNull(input.signal.price),
       close: numericStringOrNull(input.signal.close),
       source: "pyrus-signals",
       payload: {
         signalId: input.signal.id,
         barIndex: input.signal.barIndex,
+        signalBarAt: input.signalBarAt.toISOString(),
         latestBarAt: input.latestBarAt.toISOString(),
+        latestBarAnchorAt: input.latestBarAnchorAt.toISOString(),
         filterState: input.signal.filterState,
       },
     })
@@ -2413,7 +2624,10 @@ async function insertSignalEventBestEffort(input: {
   symbol: string;
   timeframe: SignalMonitorTimeframe;
   signal: PyrusSignalsSignalEvent;
+  signalAt: Date;
+  signalBarAt: Date;
   latestBarAt: Date;
+  latestBarAnchorAt: Date;
 }) {
   try {
     await insertSignalEvent(input);
@@ -2604,9 +2818,7 @@ function expectedLatestCompletedIntradayBarAt(input: {
     timeframe: input.timeframe,
     evaluatedAt: input.evaluatedAt,
   });
-  return new Date(
-    Math.max(0, queryTo.getTime() - TIMEFRAME_MS[input.timeframe]),
-  );
+  return queryTo;
 }
 
 function isSignalMonitorMissingExpectedLiveEdge(input: {
@@ -2630,12 +2842,38 @@ export async function loadSignalMonitorCompletedBars(input: {
   barSourcePolicy?: SignalMonitorBarSourcePolicy;
   priority?: number;
   liveEdgePriority?: number;
+  includeProvisionalLiveEdge?: boolean;
   signal?: AbortSignal;
 }): Promise<SignalMonitorCompletedBarsSnapshot> {
   throwIfSignalMonitorAborted(input.signal);
   const barSourcePolicy =
     input.barSourcePolicy ?? DEFAULT_SIGNAL_MONITOR_BAR_SOURCE_POLICY;
   const completedLimit = input.limit ?? PYRUS_SIGNALS_SIGNAL_WARMUP_BARS;
+  if (input.includeProvisionalLiveEdge && input.timeframe !== "1d") {
+    const base = await loadSignalMonitorCompletedBars({
+      ...input,
+      includeProvisionalLiveEdge: false,
+    });
+    throwIfSignalMonitorAborted(input.signal);
+    const streamBars = filterSignalMonitorBarsForSourcePolicy(
+      loadSignalMonitorStreamCompletedBars({
+        symbol: input.symbol,
+        timeframe: input.timeframe,
+        evaluatedAt: input.evaluatedAt,
+        limit: Math.min(completedLimit, SIGNAL_MONITOR_STALE_RETRY_BARS),
+        includeProvisional: true,
+      }),
+      barSourcePolicy,
+    );
+    if (!streamBars.length) {
+      return base;
+    }
+    const bars = mergeCompletedBars(base.bars, streamBars, completedLimit);
+    return {
+      bars,
+      latestBarAt: signalMonitorBarClosedAt(bars.at(-1)),
+    };
+  }
   const providerTimeframe = input.timeframe;
   const providerLimit = completedLimit;
   const liveEdgeLimit = Math.min(
@@ -2669,14 +2907,6 @@ export async function loadSignalMonitorCompletedBars(input: {
     }
     signalMonitorCompletedBarsCache.delete(cacheKey);
   }
-  const inFlight = signalMonitorCompletedBarsInFlight.get(cacheKey);
-  if (inFlight) {
-    signalMonitorCompletedBarsCounters.inFlightJoin += 1;
-    const snapshot = await inFlight;
-    throwIfSignalMonitorAborted(input.signal);
-    return cloneCompletedBarsSnapshot(snapshot);
-  }
-  signalMonitorCompletedBarsCounters.miss += 1;
   const fetchBars = (mode: "primary" | "full-retry" | "live-edge") => {
     const priority =
       mode === "live-edge"
@@ -2758,6 +2988,75 @@ export async function loadSignalMonitorCompletedBars(input: {
       input.evaluatedAt,
     );
   };
+  const readPreviousCacheWithLiveEdge = () => {
+    if (
+      input.retryStale === false ||
+      input.timeframe === "1d" ||
+      !isStockAggregateStreamingAvailable()
+    ) {
+      return null;
+    }
+    const streamCompletedBars = filterSignalMonitorBarsForSourcePolicy(
+      loadSignalMonitorStreamCompletedBars({
+        symbol: input.symbol,
+        timeframe: input.timeframe,
+        evaluatedAt: input.evaluatedAt,
+        limit: liveEdgeLimit,
+      }),
+      barSourcePolicy,
+    );
+    if (!streamCompletedBars.length) {
+      return null;
+    }
+
+    const timeframeMs = TIMEFRAME_MS[input.timeframe];
+    for (let offset = 1; offset <= 2; offset += 1) {
+      const previousQueryTo = new Date(queryTo.getTime() - timeframeMs * offset);
+      const previousCacheKey = buildSignalMonitorCompletedBarsCacheKey({
+        symbol: input.symbol,
+        timeframe: input.timeframe,
+        providerTimeframe,
+        providerLimit,
+        completedLimit,
+        queryTo: previousQueryTo,
+        barSourcePolicy,
+      });
+      const previous = readSignalMonitorCompletedBarsCache(previousCacheKey);
+      if (!previous?.bars.length) {
+        continue;
+      }
+      const previousLatestAt = previous.latestBarAt
+        ? dateOrNull(previous.latestBarAt)
+        : null;
+      const mergedBars = mergeCompletedBars(
+        previous.bars,
+        streamCompletedBars,
+        completedLimit,
+      );
+      const latestBar = mergedBars.at(-1);
+      const latestBarAt = signalMonitorBarClosedAt(latestBar);
+      if (
+        !latestBarAt ||
+        (previousLatestAt &&
+          latestBarAt.getTime() <= previousLatestAt.getTime()) ||
+        shouldRetrySignalMonitorCompletedBars({
+          completedBars: mergedBars,
+          timeframe: input.timeframe,
+          evaluatedAt: input.evaluatedAt,
+        })
+      ) {
+        continue;
+      }
+      const snapshot = {
+        bars: mergedBars,
+        latestBarAt,
+      };
+      writeSignalMonitorCompletedBarsCache(cacheKey, snapshot);
+      return snapshot;
+    }
+
+    return null;
+  };
   const fetchCompletedBars = async (
     mode: "primary" | "full-retry" | "live-edge",
   ) => {
@@ -2766,6 +3065,19 @@ export async function loadSignalMonitorCompletedBars(input: {
     throwIfSignalMonitorAborted(input.signal);
     return result;
   };
+
+  const liveEdgeCached = readPreviousCacheWithLiveEdge();
+  if (liveEdgeCached) {
+    return cloneCompletedBarsSnapshot(liveEdgeCached);
+  }
+  const inFlight = signalMonitorCompletedBarsInFlight.get(cacheKey);
+  if (inFlight) {
+    signalMonitorCompletedBarsCounters.inFlightJoin += 1;
+    const snapshot = await inFlight;
+    throwIfSignalMonitorAborted(input.signal);
+    return cloneCompletedBarsSnapshot(snapshot);
+  }
+  signalMonitorCompletedBarsCounters.miss += 1;
 
   const request = (async () => {
     completedBars = await fetchCompletedBars("primary");
@@ -2812,7 +3124,7 @@ export async function loadSignalMonitorCompletedBars(input: {
     latestBar = completedBars.at(-1);
     const snapshot = {
       bars: completedBars,
-      latestBarAt: latestBar ? dateOrNull(latestBar.timestamp) : null,
+      latestBarAt: signalMonitorBarClosedAt(latestBar),
     };
     writeSignalMonitorCompletedBarsCache(cacheKey, snapshot);
     return snapshot;
@@ -2834,10 +3146,12 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
   completedBars: SignalMonitorBarSnapshot[];
 }) {
   try {
-    const chartBars = barsToPyrusSignalsBars(input.completedBars);
+    const chartBarEntries = barsToPyrusSignalsBarEntries(input.completedBars);
+    const chartBars = chartBarEntries.map((entry) => entry.chartBar);
     const latestBar = chartBars.at(-1);
+    const latestBarEntry = chartBarEntries.at(-1);
 
-    if (!latestBar) {
+    if (!latestBar || !latestBarEntry) {
       return upsertSymbolState({
         profileId: input.profile.id,
         symbol: input.symbol,
@@ -2863,8 +3177,9 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
       includeProvisionalSignals: true,
     });
     const signal = evaluation.signalEvents.at(-1) ?? null;
-    const latestBarAt = new Date(latestBar.time * 1000);
-    const latestSourceBar = input.completedBars.at(-1);
+    const latestBarAt = latestBarEntry.closedAt;
+    const latestBarAnchorAt = latestBarEntry.anchorAt;
+    const latestSourceBar = latestBarEntry.sourceBar;
     const delayedLatestBar = isSignalMonitorDelayedLatestBar({
       latestBar: latestSourceBar,
       timeframe: input.timeframe,
@@ -2898,15 +3213,20 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
 
     const barsSinceSignal = Math.max(0, chartBars.length - 1 - signal.barIndex);
     const fresh = barsSinceSignal <= input.profile.freshWindowBars && !stale;
-    const signalAt = new Date(signal.time * 1000);
+    const signalBarEntry = chartBarEntries[signal.barIndex] ?? null;
+    const signalBarAt = signalBarEntry?.anchorAt ?? new Date(signal.time * 1000);
+    const signalAt = signalBarEntry?.closedAt ?? signalBarAt;
 
-    if (input.mode === "incremental" && fresh) {
+    if (input.mode === "incremental" && fresh && barsSinceSignal === 0) {
       await insertSignalEventBestEffort({
         profile: input.profile,
         symbol: input.symbol,
         timeframe: input.timeframe,
         signal,
+        signalAt,
+        signalBarAt,
         latestBarAt,
+        latestBarAnchorAt,
       });
     }
 
@@ -3010,10 +3330,12 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
     lastError: null as string | null,
     indicatorSnapshot: null as SignalMonitorIndicatorSnapshot | null,
   };
-  const chartBars = barsToPyrusSignalsBars(input.completedBars);
+  const chartBarEntries = barsToPyrusSignalsBarEntries(input.completedBars);
+  const chartBars = chartBarEntries.map((entry) => entry.chartBar);
   const latestBar = chartBars.at(-1);
+  const latestBarEntry = chartBarEntries.at(-1);
 
-  if (!latestBar) {
+  if (!latestBar || !latestBarEntry) {
     return {
       ...base,
       currentSignalDirection: null,
@@ -3042,8 +3364,8 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
     settings,
     signal,
   });
-  const latestBarAt = new Date(latestBar.time * 1000);
-  const latestSourceBar = input.completedBars.at(-1);
+  const latestBarAt = latestBarEntry.closedAt;
+  const latestSourceBar = latestBarEntry.sourceBar;
   const delayedLatestBar = isSignalMonitorDelayedLatestBar({
     latestBar: latestSourceBar,
     timeframe: input.timeframe,
@@ -3074,6 +3396,9 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
   }
 
   const barsSinceSignal = Math.max(0, chartBars.length - 1 - signal.barIndex);
+  const signalBarEntry = chartBarEntries[signal.barIndex] ?? null;
+  const signalBarAt = signalBarEntry?.anchorAt ?? new Date(signal.time * 1000);
+  const signalAt = signalBarEntry?.closedAt ?? signalBarAt;
   if (stale) {
     return {
       ...base,
@@ -3092,7 +3417,7 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
   return {
     ...base,
     currentSignalDirection: directionFromSignal(signal),
-    currentSignalAt: new Date(signal.time * 1000),
+    currentSignalAt: signalAt,
     currentSignalPrice: signal.price,
     latestBarAt,
     barsSinceSignal,
@@ -3781,19 +4106,25 @@ function hydrateSignalMonitorMatrixStatesFromStoredStates<
   input: {
     storedStates: ReturnType<typeof stateToResponseForSnapshot>[];
     requestedSymbols: string[];
+    requestedCells?: SignalMonitorMatrixCellRequest[];
   },
 ): T {
   const requestedSymbols = new Set(
     input.requestedSymbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean),
   );
+  const requestedCellKeys =
+    input.requestedCells && input.requestedCells.length
+      ? signalMonitorMatrixCellKeys(input.requestedCells)
+      : null;
   const stateByKey = new Map<string, SignalMonitorMatrixStateResult>();
   value.states.forEach((state) => {
     const symbol = normalizeSymbol(state.symbol);
     const timeframe = String(state.timeframe || "") as SignalMonitorMatrixTimeframe;
-    if (!symbol || !timeframe) {
+    const key = `${symbol}:${timeframe}`;
+    if (!symbol || !timeframe || (requestedCellKeys && !requestedCellKeys.has(key))) {
       return;
     }
-    stateByKey.set(`${symbol}:${timeframe}`, state);
+    stateByKey.set(key, state);
   });
 
   input.storedStates.forEach((storedState) => {
@@ -3801,15 +4132,16 @@ function hydrateSignalMonitorMatrixStatesFromStoredStates<
     const timeframe = String(
       storedState.timeframe || "",
     ) as SignalMonitorMatrixTimeframe;
+    const key = `${symbol}:${timeframe}`;
     if (
       !symbol ||
       !requestedSymbols.has(symbol) ||
       !value.timeframes.includes(timeframe) ||
+      (requestedCellKeys && !requestedCellKeys.has(key)) ||
       !isRenderableStoredSignalMonitorMatrixState(storedState, value.timeframes)
     ) {
       return;
     }
-    const key = `${symbol}:${timeframe}`;
     const current = stateByKey.get(key) ?? null;
     if (
       isUsableSignalMonitorMatrixState(current) &&
@@ -3854,6 +4186,7 @@ function withSignalMonitorMatrixMetadata<
   input: {
     cacheStatus: SignalMonitorMatrixCacheStatus;
     requestedSymbols: string[];
+    requestedCells?: SignalMonitorMatrixCellRequest[];
     totalSymbols: number;
     taskCount: number;
     startedAt: number;
@@ -3872,6 +4205,10 @@ function withSignalMonitorMatrixMetadata<
   const requestedSymbols = Array.from(
     new Set(input.requestedSymbols.map((symbol) => normalizeSymbol(symbol))),
   ).filter(Boolean);
+  const requestedCellKeys =
+    input.requestedCells && input.requestedCells.length
+      ? signalMonitorMatrixCellKeys(input.requestedCells)
+      : null;
   const stateBySymbol = new Map<string, Set<SignalMonitorMatrixTimeframe>>();
   value.states.forEach((state) => {
     if (!isHydratedSignalMonitorMatrixStateForCoverage(state, value.timeframes)) {
@@ -3883,7 +4220,12 @@ function withSignalMonitorMatrixMetadata<
     const timeframe = String(
       (state as { timeframe?: unknown }).timeframe || "",
     ) as SignalMonitorMatrixTimeframe;
-    if (!symbol || !value.timeframes.includes(timeframe)) {
+    const key = `${symbol}:${timeframe}`;
+    if (
+      !symbol ||
+      !value.timeframes.includes(timeframe) ||
+      (requestedCellKeys && !requestedCellKeys.has(key))
+    ) {
       return;
     }
     const set =
@@ -3893,9 +4235,13 @@ function withSignalMonitorMatrixMetadata<
   });
   const hydratedSymbols = requestedSymbols.filter((symbol) => {
     const hydratedTimeframes = stateBySymbol.get(symbol);
-    return value.timeframes.every((timeframe) =>
-      hydratedTimeframes?.has(timeframe),
-    );
+    const requiredTimeframes =
+      input.requestedCells && input.requestedCells.length
+        ? input.requestedCells
+            .filter((cell) => cell.symbol === symbol)
+            .map((cell) => cell.timeframe)
+        : value.timeframes;
+    return requiredTimeframes.every((timeframe) => hydratedTimeframes?.has(timeframe));
   }).length;
 
   return {
@@ -4036,6 +4382,7 @@ async function hydrateSignalMonitorMatrixResponseFromStoredStates<
   input: {
     profile: DbSignalMonitorProfile;
     requestedSymbols: string[];
+    requestedCells?: SignalMonitorMatrixCellRequest[];
     evaluatedAt: Date;
   },
 ): Promise<T> {
@@ -4049,6 +4396,7 @@ async function hydrateSignalMonitorMatrixResponseFromStoredStates<
     return hydrateSignalMonitorMatrixStatesFromStoredStates(value, {
       storedStates,
       requestedSymbols: input.requestedSymbols,
+      requestedCells: input.requestedCells,
     });
   } catch (error) {
     if (isTransientPostgresError(error)) {
@@ -4314,6 +4662,7 @@ async function evaluateSignalMonitorRuntimeProfileUniverse(input: {
 async function evaluateSignalMonitorMatrixRuntime(input: {
   environment: RuntimeMode;
   watchlistId?: string | null;
+  cells?: SignalMonitorMatrixCellRequest[];
   symbols?: string[];
   timeframes?: string[];
   clientRole?: SignalMonitorMatrixClientRole;
@@ -4330,15 +4679,31 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
     });
   }
 
-  const matrixSettings = cappedSignalMatrixSettings(profile);
+  const automaticMatrixRequest = isAutomaticSignalMonitorMatrixRequest(input);
+  const matrixSettings = cappedSignalMatrixSettings(profile, undefined, {
+    automatic: automaticMatrixRequest,
+  });
+  const requestedExactCells = normalizeSignalMonitorMatrixCells(input.cells);
   const { symbols, skippedSymbols, truncated } =
     resolveSignalMonitorMatrixSymbols({
       watchlists,
       watchlistId: input.watchlistId ?? null,
-      symbols: input.symbols,
+      symbols: requestedExactCells.length
+        ? requestedExactCells.map((cell) => cell.symbol)
+        : input.symbols,
       maxSymbols: matrixSettings.maxSymbols,
     });
-  const timeframes = parseSignalMatrixTimeframes(input.timeframes);
+  const exactCells = resolveSignalMonitorMatrixExactCells({
+    cells: requestedExactCells,
+    allowedSymbols: symbols,
+    pressure: matrixSettings.pressure,
+  });
+  const timeframes = exactCells.exact
+    ? exactCells.timeframes ?? []
+    : parseSignalMatrixTimeframes(input.timeframes);
+  const cellsBySymbol = exactCells.exact
+    ? signalMonitorMatrixCellsBySymbol(exactCells.cells)
+    : null;
   const startedAt = Date.now();
   const disabledResponse = signalMonitorMatrixDisabled({
     profile,
@@ -4362,8 +4727,8 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
     SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY,
     profile.id,
     input.watchlistId ?? "default",
-    [...symbols].sort().join(","),
-    timeframes.join(","),
+    exactCells.cacheKeyPart ?? [...symbols].sort().join(","),
+    exactCells.cacheKeyPart ? "cells" : timeframes.join(","),
     concurrency,
     matrixSettings.pressure,
     profile.freshWindowBars,
@@ -4391,14 +4756,21 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
       for (let index = 0; index < symbols.length; index += concurrency) {
         const batch = symbols.slice(index, index + concurrency);
         const batchResults = await Promise.all(
-          batch.map((symbol) =>
-            evaluateSignalMonitorMatrixSymbol({
+          batch.map((symbol) => {
+            const requestedTimeframes = cellsBySymbol?.get(symbol) ?? timeframes;
+            if (!requestedTimeframes.length) {
+              return Promise.resolve({
+                states: [] as SignalMonitorMatrixStateResult[],
+                sourceRequestCount: 0,
+              });
+            }
+            return evaluateSignalMonitorMatrixSymbol({
               profile,
               symbol,
-              timeframes,
+              timeframes: requestedTimeframes,
               evaluatedAt,
-            }),
-          ),
+            });
+          }),
         );
         batchResults.forEach((result) => {
           states.push(...result.states);
@@ -4434,8 +4806,9 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
     return withSignalMonitorMatrixMetadata(response, {
       cacheStatus: cacheOnlyCached?.cacheStatus ?? "miss",
       requestedSymbols: symbols,
+      requestedCells: exactCells.exact ? exactCells.cells : undefined,
       totalSymbols: symbols.length + skippedSymbols.length,
-      taskCount: symbols.length * timeframes.length,
+      taskCount: exactCells.exact ? exactCells.cells.length : symbols.length * timeframes.length,
       startedAt,
       automaticRequest,
     });
@@ -4453,8 +4826,9 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
   return withSignalMonitorMatrixMetadata(response, {
     cacheStatus,
     requestedSymbols: symbols,
+    requestedCells: exactCells.exact ? exactCells.cells : undefined,
     totalSymbols: symbols.length + skippedSymbols.length,
-    taskCount: symbols.length * timeframes.length,
+    taskCount: exactCells.exact ? exactCells.cells.length : symbols.length * timeframes.length,
     startedAt,
     automaticRequest,
   });
@@ -4463,6 +4837,7 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
 export async function evaluateSignalMonitorMatrix(input: {
   environment?: RuntimeMode;
   watchlistId?: string | null;
+  cells?: SignalMonitorMatrixCellRequest[];
   symbols?: string[];
   timeframes?: string[];
   clientRole?: SignalMonitorMatrixClientRole;
@@ -4494,15 +4869,31 @@ export async function evaluateSignalMonitorMatrix(input: {
     throw error;
   }
 
-  const matrixSettings = cappedSignalMatrixSettings(profile);
+  const automaticMatrixRequest = isAutomaticSignalMonitorMatrixRequest(input);
+  const matrixSettings = cappedSignalMatrixSettings(profile, undefined, {
+    automatic: automaticMatrixRequest,
+  });
+  const requestedExactCells = normalizeSignalMonitorMatrixCells(input.cells);
   const { symbols, skippedSymbols, truncated } =
     resolveSignalMonitorMatrixSymbols({
       watchlists,
       watchlistId: input.watchlistId ?? null,
-      symbols: input.symbols,
+      symbols: requestedExactCells.length
+        ? requestedExactCells.map((cell) => cell.symbol)
+        : input.symbols,
       maxSymbols: matrixSettings.maxSymbols,
     });
-  const timeframes = parseSignalMatrixTimeframes(input.timeframes);
+  const exactCells = resolveSignalMonitorMatrixExactCells({
+    cells: requestedExactCells,
+    allowedSymbols: symbols,
+    pressure: matrixSettings.pressure,
+  });
+  const timeframes = exactCells.exact
+    ? exactCells.timeframes ?? []
+    : parseSignalMatrixTimeframes(input.timeframes);
+  const cellsBySymbol = exactCells.exact
+    ? signalMonitorMatrixCellsBySymbol(exactCells.cells)
+    : null;
   const evaluatedAt = new Date();
   const concurrency = resolveSignalMonitorMatrixConcurrency({
     matrixSettings,
@@ -4525,8 +4916,8 @@ export async function evaluateSignalMonitorMatrix(input: {
     environment,
     profile.id,
     input.watchlistId ?? "default",
-    [...symbols].sort().join(","),
-    timeframes.join(","),
+    exactCells.cacheKeyPart ?? [...symbols].sort().join(","),
+    exactCells.cacheKeyPart ? "cells" : timeframes.join(","),
     concurrency,
     matrixSettings.pressure,
     profile.freshWindowBars,
@@ -4553,14 +4944,21 @@ export async function evaluateSignalMonitorMatrix(input: {
     for (let index = 0; index < symbols.length; index += concurrency) {
       const batch = symbols.slice(index, index + concurrency);
       const batchResults = await Promise.all(
-        batch.map((symbol) =>
-          evaluateSignalMonitorMatrixSymbol({
+        batch.map((symbol) => {
+          const requestedTimeframes = cellsBySymbol?.get(symbol) ?? timeframes;
+          if (!requestedTimeframes.length) {
+            return Promise.resolve({
+              states: [] as SignalMonitorMatrixStateResult[],
+              sourceRequestCount: 0,
+            });
+          }
+          return evaluateSignalMonitorMatrixSymbol({
             profile,
             symbol,
-            timeframes,
+            timeframes: requestedTimeframes,
             evaluatedAt,
-          }),
-        ),
+          });
+        }),
       );
       batchResults.forEach((result) => {
         states.push(...result.states);
@@ -4597,6 +4995,7 @@ export async function evaluateSignalMonitorMatrix(input: {
     hydrateSignalMonitorMatrixResponseFromStoredStates(response, {
       profile,
       requestedSymbols: symbols,
+      requestedCells: exactCells.exact ? exactCells.cells : undefined,
       evaluatedAt,
     });
   const refreshMatrixInBackground = () => {
@@ -4624,8 +5023,11 @@ export async function evaluateSignalMonitorMatrix(input: {
         cacheOnlyCached?.cacheStatus ??
         (hydratedResponse.states.length ? "hit" : "miss"),
       requestedSymbols: symbols,
+      requestedCells: exactCells.exact ? exactCells.cells : undefined,
       totalSymbols: symbols.length + skippedSymbols.length,
-      taskCount: symbols.length * timeframes.length,
+      taskCount: exactCells.exact
+        ? exactCells.cells.length
+        : symbols.length * timeframes.length,
       startedAt,
       automaticRequest,
     });
@@ -4641,8 +5043,11 @@ export async function evaluateSignalMonitorMatrix(input: {
     return withSignalMonitorMatrixMetadata(hydratedResponse, {
       cacheStatus: cachedMatrix.cacheStatus,
       requestedSymbols: symbols,
+      requestedCells: exactCells.exact ? exactCells.cells : undefined,
       totalSymbols: symbols.length + skippedSymbols.length,
-      taskCount: symbols.length * timeframes.length,
+      taskCount: exactCells.exact
+        ? exactCells.cells.length
+        : symbols.length * timeframes.length,
       startedAt,
       automaticRequest,
     });
@@ -4659,8 +5064,11 @@ export async function evaluateSignalMonitorMatrix(input: {
         ? "stale"
         : "miss",
       requestedSymbols: symbols,
+      requestedCells: exactCells.exact ? exactCells.cells : undefined,
       totalSymbols: symbols.length + skippedSymbols.length,
-      taskCount: symbols.length * timeframes.length,
+      taskCount: exactCells.exact
+        ? exactCells.cells.length
+        : symbols.length * timeframes.length,
       startedAt,
       automaticRequest,
     });
@@ -4679,8 +5087,11 @@ export async function evaluateSignalMonitorMatrix(input: {
   return withSignalMonitorMatrixMetadata(hydratedResponse, {
     cacheStatus,
     requestedSymbols: symbols,
+    requestedCells: exactCells.exact ? exactCells.cells : undefined,
     totalSymbols: symbols.length + skippedSymbols.length,
-    taskCount: symbols.length * timeframes.length,
+    taskCount: exactCells.exact
+      ? exactCells.cells.length
+      : symbols.length * timeframes.length,
     startedAt,
     automaticRequest,
   });
@@ -4821,6 +5232,8 @@ export const __signalMonitorInternalsForTests = {
   resolveSignalMonitorProfileSymbolEvaluationSettings,
   cappedSignalMonitorEvaluationProfile,
   cappedSignalMatrixSettings,
+  normalizeSignalMonitorMatrixCells,
+  resolveSignalMonitorMatrixExactCells,
   resolveSignalMonitorMatrixConcurrency,
   shouldBypassSoftSignalMonitorMatrixPressure,
   buildSignalMonitorCompletedBarsCacheKey,

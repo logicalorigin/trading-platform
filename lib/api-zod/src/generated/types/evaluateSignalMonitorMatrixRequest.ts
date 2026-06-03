@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { EnvironmentMode } from './environmentMode';
+import type { EvaluateSignalMonitorMatrixCellRequest } from './evaluateSignalMonitorMatrixCellRequest';
 import type { EvaluateSignalMonitorMatrixRequestClientRole } from './evaluateSignalMonitorMatrixRequestClientRole';
 import type { EvaluateSignalMonitorMatrixRequestRequestOrigin } from './evaluateSignalMonitorMatrixRequestRequestOrigin';
 import type { SignalMonitorMatrixTimeframe } from './signalMonitorMatrixTimeframe';
@@ -14,6 +15,8 @@ export interface EvaluateSignalMonitorMatrixRequest {
   environment?: EnvironmentMode;
   /** @nullable */
   watchlistId?: string | null;
+  /** Exact signal-matrix cells to evaluate. When non-empty, cells are authoritative over symbols/timeframes. */
+  cells?: EvaluateSignalMonitorMatrixCellRequest[];
   symbols?: string[];
   timeframes?: SignalMonitorMatrixTimeframe[];
   clientRole?: EvaluateSignalMonitorMatrixRequestClientRole;

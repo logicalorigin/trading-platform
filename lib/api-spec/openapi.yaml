@@ -4299,7 +4299,7 @@ components:
 
     SignalMonitorMatrixTimeframe:
       type: string
-      enum: [1m, 2m, 5m, 15m, 1h]
+      enum: [1m, 2m, 5m, 15m, 1h, 1d]
 
     FlowSentiment:
       type: string
@@ -11062,6 +11062,11 @@ components:
           $ref: "#/components/schemas/EnvironmentMode"
         watchlistId:
           type: [string, "null"]
+        cells:
+          type: array
+          description: Exact signal-matrix cells to evaluate. When non-empty, cells are authoritative over symbols/timeframes.
+          items:
+            $ref: "#/components/schemas/EvaluateSignalMonitorMatrixCellRequest"
         symbols:
           type: array
           items:
@@ -11076,6 +11081,17 @@ components:
         requestOrigin:
           type: string
           enum: [startup, poll, manual, test]
+
+    EvaluateSignalMonitorMatrixCellRequest:
+      type: object
+      properties:
+        symbol:
+          type: string
+        timeframe:
+          $ref: "#/components/schemas/SignalMonitorMatrixTimeframe"
+      required:
+        - symbol
+        - timeframe
 
     SignalMonitorSymbolState:
       type: object
@@ -11388,7 +11404,7 @@ components:
               type: integer
             sourceStrategy:
               type: string
-              enum: [native_timeframes]
+              enum: [native_timeframes, native_timeframes_live_retry]
             sourceRequestCount:
               type: integer
             hydratedSymbols:

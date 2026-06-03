@@ -193,6 +193,7 @@ export * from './enableAlgoDeploymentParams';
 export * from './enableAlgoDeploymentView';
 export * from './ensureDefaultSignalOptionsPaperDeploymentBody';
 export * from './environmentMode';
+export * from './evaluateSignalMonitorMatrixCellRequest';
 export * from './evaluateSignalMonitorMatrixRequest';
 export * from './evaluateSignalMonitorMatrixRequestClientRole';
 export * from './evaluateSignalMonitorMatrixRequestRequestOrigin';

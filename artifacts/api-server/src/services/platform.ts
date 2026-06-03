@@ -4250,6 +4250,7 @@ type GetQuoteSnapshotsInput = {
   admissionOwner?: string;
   admissionIntent?: MarketDataIntent;
   admissionFallbackProvider?: MarketDataFallbackProvider;
+  ttlMs?: number;
 };
 
 type QuoteSnapshotsServiceResponse = {
@@ -4380,6 +4381,7 @@ async function getQuoteSnapshotsUncached(input: {
   admissionOwner?: string;
   admissionIntent?: MarketDataIntent;
   admissionFallbackProvider?: MarketDataFallbackProvider;
+  ttlMs?: number;
 }): Promise<QuoteSnapshotsServiceResponse> {
   const symbols = input.symbolsList;
   if (!symbols.length) {
@@ -4448,6 +4450,7 @@ async function getQuoteSnapshotsUncached(input: {
         fallbackProvider:
           input.admissionFallbackProvider ??
           (input.allowMassiveFallback === true ? "massive" : "cache"),
+        ttlMs: input.ttlMs,
       }),
       quoteSnapshotBridgeFetchTimeoutMs(),
       () =>
@@ -4556,6 +4559,7 @@ export async function getQuoteSnapshots(
     admissionOwner: input.admissionOwner,
     admissionIntent: input.admissionIntent,
     admissionFallbackProvider: input.admissionFallbackProvider,
+    ttlMs: input.ttlMs,
   })
     .then((value) => {
       const cachedAt = Date.now();

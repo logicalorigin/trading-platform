@@ -63,6 +63,9 @@ export type OptionsFlowScannerRunResult = {
 
 export type OptionsFlowScannerDiagnostics = {
   queuedCount: number;
+  queuedSymbols: string[];
+  drainingCount: number;
+  drainingSymbols: string[];
   draining: boolean;
   activeCount: number;
   activeSymbols: string[];
@@ -407,6 +410,7 @@ export function createOptionsFlowScanner<TEvent>(
 
   const snapshots = new Map<string, StoredSnapshot<TEvent>>();
   const queued = new Map<string, QueuedScan>();
+  const drainingSymbols = new Set<string>();
   const activeSymbols = new Set<string>();
   let drainPromise: Promise<OptionsFlowScannerRunResult> | null = null;
   let drainStartedAt: Date | null = null;
@@ -680,6 +684,10 @@ export function createOptionsFlowScanner<TEvent>(
     if (!drainStartedAt) {
       drainStartedAt = new Date(now());
     }
+    const batch = Array.from(queued.values());
+    queued.clear();
+    const batchSymbols = new Set(batch.map((item) => item.symbol));
+    batchSymbols.forEach((symbol) => drainingSymbols.add(symbol));
     const result: OptionsFlowScannerRunResult = {
       scannedSymbols: [],
       skippedSymbols: [],
@@ -691,8 +699,6 @@ export function createOptionsFlowScanner<TEvent>(
     };
 
     try {
-      const batch = Array.from(queued.values());
-      queued.clear();
       const grouped = new Map<string, QueuedScan[]>();
       for (const item of batch) {
         const groupKey = [
@@ -724,6 +730,7 @@ export function createOptionsFlowScanner<TEvent>(
 
       return result;
     } finally {
+      batchSymbols.forEach((symbol) => drainingSymbols.delete(symbol));
       drainPromise = null;
       if (queued.size > 0) {
         drainPromise = drainQueue();
@@ -859,7 +866,11 @@ export function createOptionsFlowScanner<TEvent>(
 
       const configuredBatchSize =
         typeof input.batchSize === "function" ? input.batchSize() : input.batchSize;
-      const size = Math.max(1, Math.min(configuredBatchSize, symbols.length));
+      const normalizedBatchSize = Math.floor(configuredBatchSize);
+      if (!Number.isFinite(normalizedBatchSize) || normalizedBatchSize <= 0) {
+        return [];
+      }
+      const size = Math.max(1, Math.min(normalizedBatchSize, symbols.length));
       const start = rotationOffset % symbols.length;
       const batch: string[] = [];
       for (let index = 0; index < size; index += 1) {
@@ -903,6 +914,7 @@ export function createOptionsFlowScanner<TEvent>(
     stop();
     snapshots.clear();
     queued.clear();
+    drainingSymbols.clear();
     activeSymbols.clear();
     drainPromise = null;
     drainStartedAt = null;
@@ -936,6 +948,11 @@ export function createOptionsFlowScanner<TEvent>(
     );
     return {
       queuedCount: queued.size,
+      queuedSymbols: Array.from(queued.values())
+        .map((entry) => entry.symbol)
+        .sort(),
+      drainingCount: drainingSymbols.size,
+      drainingSymbols: Array.from(drainingSymbols).sort(),
       draining: Boolean(drainPromise),
       activeCount: activeSymbols.size,
       activeSymbols: Array.from(activeSymbols).sort(),
