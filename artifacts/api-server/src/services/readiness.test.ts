@@ -100,6 +100,41 @@ test("readiness treats degraded diagnostics metadata as advisory", () => {
   assert.ok(payload.degradedReasons.includes("browser_warning"));
 });
 
+test("readiness treats diagnostics down as app degradation, not liveness failure", () => {
+  const payload = buildApiReadinessPayload({
+    diagnostics: baseDiagnostics({
+      status: "down",
+      severity: "critical",
+      summary: "Diagnostics collector stale",
+      events: [
+        {
+          id: "diagnostics-down",
+          incidentKey: "diagnostics:down",
+          subsystem: "api",
+          category: "diagnostics",
+          code: "diagnostics_down",
+          severity: "critical",
+          status: "open",
+          message: "Diagnostics collector stale",
+          firstSeenAt: "2026-05-28T19:00:00.000Z",
+          lastSeenAt: "2026-05-28T19:00:00.000Z",
+          eventCount: 1,
+          dimensions: {},
+          raw: {},
+        },
+      ],
+    }),
+    pressure: updateApiResourcePressure({ rssMb: 128, apiHeapUsedPercent: 20 }),
+    now: new Date("2026-05-28T19:00:00.000Z"),
+  });
+
+  assert.equal(payload.liveness.status, "ok");
+  assert.equal(payload.appReadiness.status, "degraded");
+  assert.equal(payload.appReadiness.reason, "diagnostics_down");
+  assert.equal(payload.brokerTradingReadiness.ready, true);
+  assert.equal(payload.manualTradingBlockedReason, null);
+});
+
 test("readiness blocks manual trading only for broker readiness failures", () => {
   const diagnostics = baseDiagnostics({
     snapshots: [

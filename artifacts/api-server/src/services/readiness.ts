@@ -131,13 +131,19 @@ function buildAppReadiness(input: {
     };
   }
 
-  if (input.pressure.level === "critical" || input.diagnostics.status === "down") {
+  if (input.pressure.level === "critical") {
     return {
       status: "not_ready",
-      reason:
-        input.pressure.level === "critical"
-          ? "api_resource_pressure_critical"
-          : "diagnostics_down",
+      reason: "api_resource_pressure_critical",
+      diagnosticsStatus: input.diagnostics.status,
+      diagnosticsSeverity: input.diagnostics.severity,
+    };
+  }
+
+  if (input.diagnostics.status === "down") {
+    return {
+      status: "degraded",
+      reason: "diagnostics_down",
       diagnosticsStatus: input.diagnostics.status,
       diagnosticsSeverity: input.diagnostics.severity,
     };
