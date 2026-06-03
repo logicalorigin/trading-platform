@@ -1,11 +1,14 @@
 import {
   PYRUS_SIGNALS_BOS_CONFIRMATION_OPTIONS,
+  SIGNAL_OPTIONS_MTF_PRESETS,
+  SIGNAL_OPTIONS_MTF_TIMEFRAMES,
   SIGNAL_OPTIONS_STRIKE_SLOT_OPTIONS,
   STRATEGY_SIGNAL_TIMEFRAMES,
   formatChaseSteps,
   formatMoney,
   formatProgressiveTrailSteps,
   formatWireTrailRungs,
+  signalOptionsMtfPresetDefaults,
 } from "./algoHelpers";
 
 export const getPathValue = (source, path) =>
@@ -32,7 +35,10 @@ export const isNumericSettingType = (type) => NUMERIC_SETTING_TYPES.has(type);
 
 export const formatSettingValue = (field, value) => {
   if (field.type === "boolean") return value ? "ON" : "OFF";
-  if (field.type === "select") return optionLabel(field.options, value);
+  if (field.type === "select" || field.type === "segmented")
+    return optionLabel(field.options, value);
+  if (field.type === "timeframeChips")
+    return Array.isArray(value) && value.length ? value.join(", ") : "none";
   if (field.format === "money") return formatMoney(value);
   if (field.format === "chaseSteps") return formatChaseSteps(value);
   if (field.format === "progressiveTrailSteps")
@@ -40,6 +46,15 @@ export const formatSettingValue = (field, value) => {
   if (field.format === "wireTrailRungs") return formatWireTrailRungs(value);
   if (value == null || value === "") return "blank";
   return String(value);
+};
+
+const mtfPresetPatch = (value) => {
+  const preset = signalOptionsMtfPresetDefaults(value);
+  return {
+    "entryGate.mtfAlignment.preset": preset.value,
+    "entryGate.mtfAlignment.timeframes": [...preset.timeframes],
+    "entryGate.mtfAlignment.requiredCount": preset.requiredCount,
+  };
 };
 
 const SETTING_FIELD_SECTIONS = [
@@ -172,8 +187,26 @@ const SETTING_FIELD_SECTIONS = [
         type: "number",
         step: 1,
         min: 1,
-        max: 5,
+        max: 6,
         unit: "matches",
+      },
+      {
+        slice: "profile",
+        path: "entryGate.mtfAlignment.preset",
+        label: "MTF PRESET",
+        type: "select",
+        options: SIGNAL_OPTIONS_MTF_PRESETS,
+        patchFromValue: mtfPresetPatch,
+      },
+      {
+        slice: "profile",
+        path: "entryGate.mtfAlignment.timeframes",
+        label: "MTF TIMEFRAMES",
+        type: "timeframeChips",
+        options: SIGNAL_OPTIONS_MTF_TIMEFRAMES,
+        relatedPresetPath: "entryGate.mtfAlignment.preset",
+        requiredCountPath: "entryGate.mtfAlignment.requiredCount",
+        fullWidth: true,
       },
       {
         slice: "profile",
@@ -712,12 +745,19 @@ export const SETTINGS_SECTIONS = [
         label: "Count",
         format: "ofMax",
       },
+      { kind: "field", path: "entryGate.mtfAlignment.preset", label: "Preset" },
+      { kind: "field", path: "entryGate.mtfAlignment.timeframes", label: "Frames" },
       { kind: "field", path: "entryGate.bearishRegime.enabled", label: "Bear" },
       { kind: "field", path: "entryGate.bearishRegime.minAdx", label: "ADX" },
     ],
     fields: [
       field("entryGate.mtfAlignment.enabled", { compactLabel: "MTF Gate" }),
       field("entryGate.mtfAlignment.requiredCount", { compactLabel: "MTF Count" }),
+      field("entryGate.mtfAlignment.preset", { compactLabel: "MTF Preset" }),
+      field("entryGate.mtfAlignment.timeframes", {
+        compactLabel: "MTF Frames",
+        compactWide: true,
+      }),
       field("entryGate.bearishRegime.minAdx", { compactLabel: "Bear ADX" }),
       field("entryGate.bearishRegime.enabled", { compactLabel: "Bear Gate" }),
       field("entryGate.bearishRegime.rejectFullyBullishMtf", {

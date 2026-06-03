@@ -27,6 +27,43 @@ export const SIGNAL_OPTIONS_DEFAULT_WIRE_TRAIL_RUNGS = [
   { activationPct: 200, rung: "trendLine" },
 ];
 
+export const SIGNAL_OPTIONS_MTF_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"];
+
+export const SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h"];
+
+export const SIGNAL_OPTIONS_MTF_PRESETS = [
+  {
+    value: "custom",
+    label: "Custom",
+    timeframes: SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES,
+    requiredCount: 2,
+  },
+  {
+    value: "scalp",
+    label: "Scalp",
+    timeframes: ["1m", "2m", "5m"],
+    requiredCount: 2,
+  },
+  {
+    value: "balanced",
+    label: "Balanced",
+    timeframes: ["5m", "15m", "1h"],
+    requiredCount: 2,
+  },
+  {
+    value: "higher_timeframe",
+    label: "Higher TF",
+    timeframes: ["15m", "1h", "1d"],
+    requiredCount: 2,
+  },
+  {
+    value: "six_frame",
+    label: "Six",
+    timeframes: SIGNAL_OPTIONS_MTF_TIMEFRAMES,
+    requiredCount: 3,
+  },
+];
+
 export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
   version: "v1",
   mode: "shadow",
@@ -56,6 +93,8 @@ export const SIGNAL_OPTIONS_DEFAULT_PROFILE = {
     mtfAlignment: {
       enabled: true,
       requiredCount: 2,
+      timeframes: SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES,
+      preset: "custom",
     },
     blockedPutSymbols: [
       "SQQQ",
@@ -200,6 +239,35 @@ export const normalizeSignalOptionsProfileStrikeSlots = (profile) => {
   return profile;
 };
 
+export const normalizeSignalOptionsMtfTimeframes = (
+  value,
+  fallback = SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES,
+) => {
+  const available = new Set(SIGNAL_OPTIONS_MTF_TIMEFRAMES);
+  const source = Array.isArray(value) ? value : [];
+  const timeframes = [];
+  for (const item of source) {
+    const timeframe = String(item || "").trim();
+    if (available.has(timeframe) && !timeframes.includes(timeframe)) {
+      timeframes.push(timeframe);
+    }
+  }
+  return timeframes.length
+    ? timeframes
+    : [...(Array.isArray(fallback) && fallback.length ? fallback : SIGNAL_OPTIONS_DEFAULT_MTF_TIMEFRAMES)];
+};
+
+export const normalizeSignalOptionsMtfPreset = (value) => {
+  const preset = String(value || "").trim();
+  return SIGNAL_OPTIONS_MTF_PRESETS.some((item) => item.value === preset)
+    ? preset
+    : "custom";
+};
+
+export const signalOptionsMtfPresetDefaults = (value) =>
+  SIGNAL_OPTIONS_MTF_PRESETS.find((item) => item.value === value) ??
+  SIGNAL_OPTIONS_MTF_PRESETS[0];
+
 export const STRATEGY_SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
 export const PYRUS_SIGNALS_BOS_CONFIRMATION_OPTIONS = ["close", "wicks"];
 
@@ -281,6 +349,73 @@ export const asRecord = (value) =>
 
 const normalizeMatchKey = (value) => String(value || "").trim();
 const normalizeMatchToken = (value) => normalizeMatchKey(value).toUpperCase();
+
+const signalRowExactKey = (signal, fallbackId) => {
+  const signalRecord = asRecord(signal);
+  const signalKey = normalizeMatchKey(signalRecord.signalKey);
+  if (signalKey) return `key:${signalKey}`;
+  const identityParts = [
+    normalizeMatchToken(signalRecord.symbol),
+    normalizeMatchToken(signalRecord.timeframe),
+    normalizeMatchToken(signalRecord.direction),
+    normalizeMatchKey(signalRecord.signalAt),
+  ];
+  const identityKey = identityParts.join("|");
+  return identityParts[0] && identityParts[3]
+    ? identityKey
+    : `${identityKey}|${fallbackId ? normalizeMatchKey(fallbackId) : ""}`;
+};
+
+const signalRowFamilyKey = (signal) => {
+  const signalRecord = asRecord(signal);
+  const identityParts = [
+    normalizeMatchToken(signalRecord.symbol),
+    normalizeMatchToken(signalRecord.timeframe),
+    normalizeMatchToken(signalRecord.direction),
+  ];
+  return identityParts.every(Boolean) ? identityParts.join("|") : "";
+};
+
+export const buildVisibleSignalRows = ({ signals, candidates } = {}) => {
+  const rows = [];
+  const seen = new Set();
+  const visibleSignalFamilies = new Set();
+  const signalList = Array.isArray(signals) ? signals : [];
+  const candidateList = Array.isArray(candidates) ? candidates : [];
+
+  const addRow = (signal, fallbackId = null) => {
+    const signalRecord = asRecord(signal);
+    const key = signalRowExactKey(signalRecord, fallbackId);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    rows.push(signalRecord);
+    return true;
+  };
+
+  signalList.forEach((signal) => {
+    if (addRow(signal)) {
+      const familyKey = signalRowFamilyKey(signal);
+      if (familyKey) visibleSignalFamilies.add(familyKey);
+    }
+  });
+
+  candidateList.forEach((candidate) => {
+    const candidateRecord = asRecord(candidate);
+    const candidateSignal = {
+      ...asRecord(candidateRecord.signal),
+      symbol: candidateRecord.symbol,
+      timeframe: candidateRecord.timeframe,
+      direction: candidateRecord.direction,
+      signalAt: candidateRecord.signalAt,
+      signalPrice: candidateRecord.signalPrice,
+    };
+    const familyKey = signalRowFamilyKey(candidateSignal);
+    if (familyKey && visibleSignalFamilies.has(familyKey)) return;
+    addRow(candidateSignal, candidateRecord.id);
+  });
+
+  return rows;
+};
 
 export const findSignalOptionsCandidateForSignal = (candidates, signal) => {
   const signalRecord = asRecord(signal);
@@ -892,6 +1027,22 @@ export const mergeSignalOptionsProfile = (source) => {
       ...asRecord(rawProfile.infrastructureHaltControls),
     },
   });
+
+  const mtfAlignment = asRecord(asRecord(profile.entryGate).mtfAlignment);
+  const mtfTimeframes = normalizeSignalOptionsMtfTimeframes(
+    mtfAlignment.timeframes,
+    SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate.mtfAlignment.timeframes,
+  );
+  profile.entryGate.mtfAlignment = {
+    ...SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate.mtfAlignment,
+    ...mtfAlignment,
+    timeframes: mtfTimeframes,
+    preset: normalizeSignalOptionsMtfPreset(mtfAlignment.preset),
+    requiredCount: Math.min(
+      mtfTimeframes.length,
+      Math.max(1, Math.round(numberFrom(mtfAlignment.requiredCount, 2))),
+    ),
+  };
 
   if (parameters.executionMode === "signal_options") {
     profile.optionSelection.minDte = numberFrom(

@@ -1200,6 +1200,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   fallbackProvider?: MarketDataFallbackProvider;
   requiresGreeks?: boolean;
   releaseLeasesOnComplete?: boolean;
+  releaseLeasesOnAbort?: boolean;
   signal?: AbortSignal;
 }): Promise<OptionQuoteSnapshotPayload> {
   const requestedAt = Date.now();
@@ -1232,6 +1233,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   const fallbackProvider = input.fallbackProvider ?? "massive";
   const requiresGreeks = input.requiresGreeks ?? true;
   const releaseLeasesOnComplete = input.releaseLeasesOnComplete ?? true;
+  const releaseLeasesOnAbort = input.releaseLeasesOnAbort ?? true;
   if (!normalizedProviderContractIds.length) {
     return {
       underlying,
@@ -1347,7 +1349,11 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
       retainedDemandRegistered = false;
     }
   };
-  const releaseOnAbort = () => releaseAdmittedLeases("snapshot_aborted");
+  const releaseOnAbort = () => {
+    if (releaseLeasesOnAbort) {
+      releaseAdmittedLeases("snapshot_aborted");
+    }
+  };
   if (input.signal?.aborted) {
     releaseOnAbort();
     throw abortReason(input.signal);
@@ -1394,7 +1400,10 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
 
   if (isBridgeWorkBackedOff(bridgeWorkCategory)) {
     input.signal?.removeEventListener("abort", releaseOnAbort);
-    if (releaseLeasesOnComplete || input.signal?.aborted) {
+    if (
+      releaseLeasesOnComplete ||
+      (input.signal?.aborted && releaseLeasesOnAbort)
+    ) {
       releaseAdmittedLeases(
         input.signal?.aborted ? "snapshot_aborted" : "snapshot_complete",
       );
@@ -1481,7 +1490,10 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     lastErrorAt = nowProvider();
   } finally {
     input.signal?.removeEventListener("abort", releaseOnAbort);
-    if (releaseLeasesOnComplete || input.signal?.aborted) {
+    if (
+      releaseLeasesOnComplete ||
+      (input.signal?.aborted && releaseLeasesOnAbort)
+    ) {
       releaseAdmittedLeases(
         input.signal?.aborted ? "snapshot_aborted" : "snapshot_complete",
       );

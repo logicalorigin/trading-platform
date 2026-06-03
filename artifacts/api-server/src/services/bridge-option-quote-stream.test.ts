@@ -1008,6 +1008,59 @@ test("option quote snapshot abort releases flow scanner leases immediately", asy
   assert.equal(getMarketDataAdmissionDiagnostics().activeLineCount, 0);
 });
 
+test("option quote snapshot abort can retain flow scanner leases", async () => {
+  setEnv({
+    IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP: "1",
+  });
+  const controller = new AbortController();
+  const providerContractId = structuredOptionProviderContractId();
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input) {
+      assert.equal(input.signal, controller.signal);
+      return new Promise<QuoteSnapshot[]>((_resolve, reject) => {
+        input.signal?.addEventListener(
+          "abort",
+          () =>
+            reject(input.signal?.reason ?? new Error("snapshot aborted")),
+          { once: true },
+        );
+      });
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const request = fetchBridgeOptionQuoteSnapshots({
+    underlying: "META",
+    providerContractIds: [providerContractId],
+    owner: "flow-scanner:META",
+    intent: "flow-scanner-live",
+    fallbackProvider: "none",
+    requiresGreeks: false,
+    releaseLeasesOnComplete: false,
+    releaseLeasesOnAbort: false,
+    signal: controller.signal,
+  });
+
+  await waitFor(
+    () => getMarketDataAdmissionDiagnostics().flowScannerLineCount === 1,
+  );
+  controller.abort(new Error("scanner timeout"));
+  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 1);
+
+  const payload = await request;
+  assert.match(payload.debug?.errorMessage ?? "", /scanner timeout/i);
+  assert.equal(getMarketDataAdmissionDiagnostics().activeLineCount, 1);
+});
+
 test("option quote snapshots keep cached rejected contracts in the payload", async () => {
   setEnv({
     IBKR_MARKET_DATA_APP_MAX_LINES: "10",

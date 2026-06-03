@@ -443,6 +443,44 @@ test("signal-options worker reschedules active position monitoring inside the ma
   assert.equal(worker.getRuntimeSnapshot().deployments[0]?.scanCount, 2);
 });
 
+test("signal-options worker returns to normal polling when action work is deferred before marks", async () => {
+  let now = new Date("2026-04-28T14:00:00.000Z");
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async () => ({
+      summary: {
+        signalCount: 1,
+        freshSignalCount: 1,
+        staleSignalCount: 0,
+        unavailableSignalCount: 0,
+        latestSignalBarAt: "2026-04-28T13:59:00.000Z",
+        oldestSignalBarAt: "2026-04-28T13:59:00.000Z",
+        candidateCount: 0,
+        blockedCandidateCount: 0,
+        activePositionCount: 3,
+        heavyWorkDeferred: true,
+        activeScanPhase: "deferred",
+      },
+    }),
+    runMaintenance: emptyMaintenance,
+    acquireTickLock: async () => async () => {},
+    now: () => now,
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+
+  const runtime = worker.getRuntimeSnapshot().deployments[0];
+  assert.equal(runtime?.lastActivePositionCount, 3);
+  assert.equal(runtime?.lastHeavyWorkDeferred, true);
+  assert.equal(runtime?.lastActiveScanPhase, "deferred");
+  assert.equal(runtime?.nextScanDueAt, "2026-04-28T14:01:00.000Z");
+
+  now = new Date("2026-04-28T14:00:06.000Z");
+  await worker.runOnce();
+  assert.equal(worker.getRuntimeSnapshot().deployments[0]?.scanCount, 1);
+});
+
 test("signal-options worker anchors poll interval to scan completion", async () => {
   let scanCalls = 0;
   let now = new Date("2026-04-28T14:00:00.000Z");
@@ -532,6 +570,156 @@ test("signal-options worker wake request bypasses the next poll interval", async
   worker.stop();
 });
 
+test("signal-options worker wakes when a signal monitor event is created", async () => {
+  let scanCalls = 0;
+  let now = new Date("2026-04-28T14:00:00.000Z");
+  let cockpitListener: ((change: {
+    reason: string;
+    mode?: "paper" | "live" | null;
+    at: Date;
+  }) => void) | null = null;
+  let cockpitUnsubscribed = false;
+  const timers: Array<() => void> = [];
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async () => {
+      scanCalls += 1;
+    },
+    runMaintenance: emptyMaintenance,
+    acquireTickLock: async () => async () => {},
+    now: () => now,
+    logger: createNoopLogger(),
+    setTimer: (callback) => {
+      timers.push(callback);
+      return callback as unknown as ReturnType<typeof setTimeout>;
+    },
+    clearTimer: (timer) => {
+      const index = timers.indexOf(timer as unknown as () => void);
+      if (index >= 0) {
+        timers.splice(index, 1);
+      }
+    },
+    subscribeCockpitChanges: (listener) => {
+      cockpitListener = listener;
+      return () => {
+        cockpitUnsubscribed = true;
+        cockpitListener = null;
+      };
+    },
+  });
+
+  worker.start();
+  for (let index = 0; index < 10; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (!worker.getRuntimeSnapshot().tickRunning && timers.length > 0) {
+      break;
+    }
+  }
+  assert.equal(scanCalls, 1);
+  assert.ok(cockpitListener);
+
+  now = new Date("2026-04-28T14:00:12.000Z");
+  const notifyCockpitChanged = cockpitListener as (change: {
+    reason: string;
+    mode: "paper" | "live";
+    at: Date;
+  }) => void;
+  notifyCockpitChanged({
+    reason: "signal_monitor_event_created",
+    mode: "paper",
+    at: now,
+  });
+  const immediate = timers.shift();
+  assert.ok(immediate);
+  immediate();
+  for (let index = 0; index < 10; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (scanCalls >= 2 && !worker.getRuntimeSnapshot().tickRunning) {
+      break;
+    }
+  }
+
+  assert.equal(scanCalls, 2);
+  assert.equal(
+    worker.getRuntimeSnapshot().deployments[0]?.lastSuccessAt,
+    "2026-04-28T14:00:12.000Z",
+  );
+  worker.stop();
+  assert.equal(cockpitUnsubscribed, true);
+});
+
+test("signal-options worker ignores signal monitor events created during an active tick", async () => {
+  let scanCalls = 0;
+  let now = new Date("2026-04-28T14:00:00.000Z");
+  let releaseScan = () => {};
+  let scanReleaseReady = false;
+  let cockpitListener: ((change: {
+    reason: string;
+    mode?: "paper" | "live" | null;
+    at: Date;
+  }) => void) | null = null;
+  const timers: Array<{ callback: () => void; delayMs: number }> = [];
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [deployment()],
+    scanDeployment: async () => {
+      scanCalls += 1;
+      cockpitListener?.({
+        reason: "signal_monitor_event_created",
+        mode: "paper",
+        at: now,
+      });
+      await new Promise<void>((resolve) => {
+        releaseScan = resolve;
+        scanReleaseReady = true;
+      });
+    },
+    runMaintenance: emptyMaintenance,
+    acquireTickLock: async () => async () => {},
+    now: () => now,
+    logger: createNoopLogger(),
+    setTimer: (callback, delayMs) => {
+      timers.push({ callback, delayMs });
+      return callback as unknown as ReturnType<typeof setTimeout>;
+    },
+    clearTimer: (timer) => {
+      const index = timers.findIndex(
+        (entry) => entry.callback === (timer as unknown as () => void),
+      );
+      if (index >= 0) {
+        timers.splice(index, 1);
+      }
+    },
+    subscribeCockpitChanges: (listener) => {
+      cockpitListener = listener;
+      return () => {
+        cockpitListener = null;
+      };
+    },
+  });
+
+  worker.start();
+  for (let index = 0; index < 10; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (scanCalls === 1 && worker.getRuntimeSnapshot().tickRunning) {
+      break;
+    }
+  }
+  assert.equal(scanCalls, 1);
+  assert.equal(timers.some((entry) => entry.delayMs === 0), false);
+  assert.equal(scanReleaseReady, true);
+  releaseScan();
+  for (let index = 0; index < 10; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (!worker.getRuntimeSnapshot().tickRunning && timers.length > 0) {
+      break;
+    }
+  }
+
+  assert.equal(scanCalls, 1);
+  assert.equal(timers[0]?.delayMs, 5_000);
+  worker.stop();
+});
+
 test("signal-options worker resumes deferred action work on the next wakeup", async () => {
   let scanCalls = 0;
   let now = new Date("2026-04-28T14:00:00.000Z");
@@ -577,8 +765,9 @@ test("signal-options worker resumes deferred action work on the next wakeup", as
   assert.equal(scanCalls, 2);
   assert.equal(runtime?.lastHeavyWorkDeferred, false);
   assert.equal(runtime?.nextScanDueAt, "2026-04-28T14:01:05.000Z");
-  assert.equal(actionBudgets[0]?.["actionWorkBudgetMs"], 60_000);
-  assert.equal(actionBudgets[0]?.["actionWorkItemLimit"], 24);
+  assert.equal(actionBudgets[0]?.["actionWorkBudgetMs"], 5_000);
+  assert.equal(actionBudgets[0]?.["actionWorkItemLimit"], 1);
+  assert.equal(actionBudgets[0]?.["preferStoredMonitorState"], true);
 });
 
 test("signal-options worker records signal freshness from successful scans", async () => {

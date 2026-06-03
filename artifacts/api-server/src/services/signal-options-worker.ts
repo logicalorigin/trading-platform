@@ -22,13 +22,14 @@ import {
   getApiResourcePressureSnapshot,
   type ApiResourcePressureSnapshot,
 } from "./resource-pressure";
+import { subscribeAlgoCockpitChanges } from "./algo-cockpit-events";
 
 const WORKER_WAKEUP_MS = 5_000;
 export const SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY = 1_930_514_022;
 const ADVISORY_LOCK_KEY = SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY;
 const FAILED_DEPLOYMENT_RETRY_MS = 60_000;
-const SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 60_000;
-const SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 24;
+const SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 5_000;
+const SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 1;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS = 120_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MIN_MS = 1_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MAX_MS = 3_600_000;
@@ -50,6 +51,7 @@ type WorkerDependencies = {
   scanDeployment: (input: {
     deploymentId: string;
     forceEvaluate: boolean;
+    preferStoredMonitorState?: boolean;
     source: "worker";
     actionWorkBudgetMs: number;
     actionWorkItemLimit: number;
@@ -63,6 +65,7 @@ type WorkerDependencies = {
   now: () => Date;
   logger: WorkerLogger;
   scanTimeoutMs: number | null;
+  subscribeCockpitChanges: typeof subscribeAlgoCockpitChanges;
 };
 
 export type SignalOptionsWorkerOptions = Partial<WorkerDependencies> & {
@@ -494,6 +497,8 @@ function defaultDependencies(
     now: options.now ?? (() => new Date()),
     logger: options.logger ?? logger,
     scanTimeoutMs: resolveWorkerScanTimeoutMs(options.scanTimeoutMs),
+    subscribeCockpitChanges:
+      options.subscribeCockpitChanges ?? subscribeAlgoCockpitChanges,
   };
 }
 
@@ -506,6 +511,7 @@ async function runDeploymentScanWithTimeout(input: {
   const scanPromise = dependencies.scanDeployment({
     deploymentId: deployment.id,
     forceEvaluate: false,
+    preferStoredMonitorState: true,
     source: "worker",
     actionWorkBudgetMs: SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS,
     actionWorkItemLimit: SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT,
@@ -642,8 +648,10 @@ async function runDeployment(input: {
     const scanEndedAtMs = dependencies.now().getTime();
     runtime.lastScanDurationMs = Math.max(0, scanEndedAtMs - scanStartedAtMs);
     runtime.lastCheckedAtMs = scanEndedAtMs;
+    const deferFastPositionPoll =
+      runtime.lastHeavyWorkDeferred && runtime.lastActiveScanPhase === "deferred";
     const nextIntervalMs =
-      runtime.lastActivePositionCount > 0
+      runtime.lastActivePositionCount > 0 && !deferFastPositionPoll
         ? Math.min(runtime.pollIntervalMs, SIGNAL_OPTIONS_ACTIVE_POSITION_POLL_MS)
         : runtime.pollIntervalMs;
     runtime.nextScanDueAtMs = resumeActionWorkNextTick
@@ -695,6 +703,7 @@ export function createSignalOptionsWorker(
   let started = false;
   let tickRunning = false;
   let wakeRequested = false;
+  let cockpitUnsubscribe: (() => void) | null = null;
 
   const runOnce = async () => {
     if (tickRunning) {
@@ -852,37 +861,46 @@ export function createSignalOptionsWorker(
     schedule(delayMs);
   };
 
+  const requestRunSoon = () => {
+    if (!started) {
+      return;
+    }
+    wakeRequested = true;
+    const requestedAtMs = dependencies.now().getTime();
+    deploymentRuntime.forEach((runtime) => {
+      runtime.nextScanDueAtMs = requestedAtMs;
+    });
+    if (timer) {
+      dependencies.clearTimer(timer);
+      timer = null;
+    }
+    schedule(0);
+  };
+
   return {
     start() {
       if (started) {
         return;
       }
       started = true;
+      cockpitUnsubscribe = dependencies.subscribeCockpitChanges((change) => {
+        if (change.reason === "signal_monitor_event_created" && !tickRunning) {
+          requestRunSoon();
+        }
+      });
       void runOnce().finally(scheduleAfterRun);
       dependencies.logger.info("Signal-options shadow worker started");
     },
     stop() {
       started = false;
+      cockpitUnsubscribe?.();
+      cockpitUnsubscribe = null;
       if (timer) {
         dependencies.clearTimer(timer);
         timer = null;
       }
     },
-    requestRunSoon() {
-      if (!started) {
-        return;
-      }
-      wakeRequested = true;
-      const requestedAtMs = dependencies.now().getTime();
-      deploymentRuntime.forEach((runtime) => {
-        runtime.nextScanDueAtMs = requestedAtMs;
-      });
-      if (timer) {
-        dependencies.clearTimer(timer);
-        timer = null;
-      }
-      schedule(0);
-    },
+    requestRunSoon,
     runOnce,
     getRuntimeSnapshot() {
       const snapshotNowMs = dependencies.now().getTime();

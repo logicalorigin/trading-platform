@@ -132,7 +132,7 @@ const compactUnitLabel = (field) => {
   if (field.unit === "seconds") return "sec";
   if (field.unit === "bars") return "bars";
   if (field.unit === "days") return "d";
-  if (field.unit === "matches") return "of 5";
+  if (field.unit === "matches") return "of 6";
   return field.unit;
 };
 
@@ -304,9 +304,20 @@ export const CompactFieldInput = ({
   ariaLabel,
   testId,
   onPatch,
+  draftRoot,
 }) => {
   const numeric = numericField(field);
   const inputStyle = compactInputStyle({ invalid, disabled, numeric });
+  const patchFieldValue = (nextValue) => {
+    const coerced = field.coerce ? field.coerce(nextValue) : nextValue;
+    if (typeof field.patchFromValue === "function") {
+      Object.entries(field.patchFromValue(coerced) || {}).forEach(
+        ([path, value]) => onPatch(path, value),
+      );
+      return;
+    }
+    onPatch(field.path, coerced);
+  };
   if (field.type === "select") {
     return (
       <select
@@ -315,12 +326,7 @@ export const CompactFieldInput = ({
         disabled={disabled}
         aria-label={ariaLabel}
         data-testid={testId}
-        onChange={(event) =>
-          onPatch(
-            field.path,
-            field.coerce ? field.coerce(event.target.value) : event.target.value,
-          )
-        }
+        onChange={(event) => patchFieldValue(event.target.value)}
         style={inputStyle}
       >
         {(field.options || []).map((option) => {
@@ -333,6 +339,67 @@ export const CompactFieldInput = ({
           );
         })}
       </select>
+    );
+  }
+  if (field.type === "timeframeChips") {
+    const selected = Array.isArray(value) ? value.map(String) : [];
+    const toggleTimeframe = (timeframe) => {
+      const next = selected.includes(timeframe)
+        ? selected.filter((item) => item !== timeframe)
+        : [...selected, timeframe];
+      const nextTimeframes = next.length ? next : [timeframe];
+      onPatch(field.path, nextTimeframes);
+      if (field.relatedPresetPath) {
+        onPatch(field.relatedPresetPath, "custom");
+      }
+      if (field.requiredCountPath) {
+        const requiredCount = Number(getPathValue(draftRoot, field.requiredCountPath));
+        if (Number.isFinite(requiredCount) && requiredCount > nextTimeframes.length) {
+          onPatch(field.requiredCountPath, nextTimeframes.length);
+        }
+      }
+    };
+    return (
+      <span
+        data-testid={testId}
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: sp(2),
+          width: "100%",
+          minWidth: 0,
+        }}
+      >
+        {(field.options || []).map((timeframe) => {
+          const selectedFrame = selected.includes(timeframe);
+          return (
+            <button
+              key={timeframe}
+              type="button"
+              disabled={disabled}
+              aria-pressed={selectedFrame}
+              aria-label={`${selectedFrame ? "Remove" : "Add"} ${timeframe} MTF frame`}
+              onClick={() => toggleTimeframe(timeframe)}
+              style={{
+                height: dim(24),
+                minWidth: dim(34),
+                border: `1px solid ${selectedFrame ? CSS_COLOR.accent : CSS_COLOR.border}`,
+                borderRadius: dim(RADII.xs),
+                background: selectedFrame
+                  ? cssColorMix(CSS_COLOR.accent, 16)
+                  : CSS_COLOR.bg1,
+                color: selectedFrame ? CSS_COLOR.text : CSS_COLOR.textSec,
+                fontFamily: T.data,
+                fontSize: textSize("caption"),
+                cursor: disabled ? "not-allowed" : "pointer",
+                padding: sp("0 6px"),
+              }}
+            >
+              {timeframe}
+            </button>
+          );
+        })}
+      </span>
     );
   }
   if (field.type === "text") {
@@ -381,9 +448,7 @@ export const CompactFieldInput = ({
         <SegmentedControl
           options={field.options || []}
           value={value}
-          onChange={(next) =>
-            onPatch(field.path, field.coerce ? field.coerce(next) : next)
-          }
+          onChange={patchFieldValue}
           ariaLabel={ariaLabel}
           radioGroup
           buttonTestId={(option) =>
@@ -539,6 +604,7 @@ export const CompactSettingCell = ({
             ariaLabel={field.label}
             testId={`algo-compact-input-${field.path}`}
             onPatch={onPatch}
+            draftRoot={draftRoot}
           />
           {unitLabel ? (
             <span

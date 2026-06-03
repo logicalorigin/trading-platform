@@ -11,6 +11,7 @@ import {
   SIGNAL_OPTIONS_DEFAULT_WIRE_TRAIL_RUNGS,
   SIGNAL_OPTIONS_DEFAULT_PROFILE,
   SIGNAL_OPTIONS_HALT_CONTROL_GROUPS,
+  buildVisibleSignalRows,
   candidateBlockerLabel,
   candidateLatestActivityLabel,
   deriveWireTrailControlSummary,
@@ -151,6 +152,12 @@ test("algo profile defaults match the tuned h8 signal-options profile", () => {
     SIGNAL_OPTIONS_DEFAULT_PROFILE.riskCaps.maxPremiumPerEntry,
     1500,
   );
+  assert.deepEqual(SIGNAL_OPTIONS_DEFAULT_PROFILE.entryGate.mtfAlignment, {
+    enabled: true,
+    requiredCount: 2,
+    timeframes: ["1m", "2m", "5m", "15m", "1h"],
+    preset: "custom",
+  });
   assert.deepEqual(
     {
       hardStopPct: SIGNAL_OPTIONS_DEFAULT_PROFILE.exitPolicy.hardStopPct,
@@ -218,6 +225,28 @@ test("algo profile defaults match the tuned h8 signal-options profile", () => {
     SIGNAL_OPTIONS_DEFAULT_PROFILE.positionHaltControls.positionMarkFeedHaltEnabled,
     true,
   );
+});
+
+test("profile merge normalizes signal-options MTF frame selection", () => {
+  const profile = mergeSignalOptionsProfile({
+    signalOptions: {
+      entryGate: {
+        mtfAlignment: {
+          enabled: true,
+          requiredCount: 9,
+          timeframes: ["5m", "1h", "1d", "1h", "4h"],
+          preset: "higher_timeframe",
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(profile.entryGate.mtfAlignment, {
+    enabled: true,
+    requiredCount: 3,
+    timeframes: ["5m", "1h", "1d"],
+    preset: "higher_timeframe",
+  });
 });
 
 test("strategy settings resolve expanded Pyrus Signals settings from profile first", () => {
@@ -856,6 +885,48 @@ test("signal rows match candidates by key and signal identity fallback", () => {
   );
 });
 
+test("visible signal rows prefer live signal rows over same-family candidate fallbacks", () => {
+  const rows = buildVisibleSignalRows({
+    signals: [
+      {
+        symbol: "TLT",
+        timeframe: "5m",
+        direction: "sell",
+        signalAt: "2026-06-02T22:15:00.000Z",
+        signalKey: "profile:TLT:5m:sell:2026-06-02T22:15:00.000Z",
+      },
+    ],
+    candidates: [
+      {
+        id: "SIGOPT-TLT-sell-1780438800000",
+        symbol: "TLT",
+        timeframe: "5m",
+        direction: "sell",
+        signalAt: "2026-06-02T22:20:00.000Z",
+        signal: {
+          source: "pyrus-signals",
+          signalKey: "profile:TLT:5m:sell:2026-06-02T22:20:00.000Z",
+        },
+      },
+      {
+        id: "SIGOPT-TLT-buy-1780438800000",
+        symbol: "TLT",
+        timeframe: "5m",
+        direction: "buy",
+        signalAt: "2026-06-02T22:20:00.000Z",
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    rows.map((row) => [row.symbol, row.direction, row.signalAt]),
+    [
+      ["TLT", "sell", "2026-06-02T22:15:00.000Z"],
+      ["TLT", "buy", "2026-06-02T22:20:00.000Z"],
+    ],
+  );
+});
+
 test("algo contract and quote helpers expose contract identity and live quote detail", () => {
   const now = new Date("2026-05-19T14:30:00Z");
   const contract = {
@@ -1385,6 +1456,8 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
   [
     "entryGate.mtfAlignment.enabled",
     "entryGate.mtfAlignment.requiredCount",
+    "entryGate.mtfAlignment.preset",
+    "entryGate.mtfAlignment.timeframes",
     "exitPolicy.tightenAtFiveXGivebackPct",
     "exitPolicy.tightenAtTenXGivebackPct",
     "exitPolicy.progressiveTrailEnabled",
@@ -1408,9 +1481,9 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
   });
   assert.match(
     settingsFieldsSource,
-    /path:\s*"entryGate\.mtfAlignment\.requiredCount"[\s\S]*?max:\s*5/,
+    /path:\s*"entryGate\.mtfAlignment\.requiredCount"[\s\S]*?max:\s*6/,
   );
-  assert.match(settingsRegionSource, /field\.unit === "matches"\) return "of 5"/);
+  assert.match(settingsRegionSource, /field\.unit === "matches"\) return "of 6"/);
   assert.deepEqual(
     COMPACT_HALT_SETTING_PAIRS.map((pair) => [
       pair.controlId,
@@ -1460,6 +1533,8 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
     [
       "entryGate.mtfAlignment.enabled",
       "entryGate.mtfAlignment.requiredCount",
+      "entryGate.mtfAlignment.preset",
+      "entryGate.mtfAlignment.timeframes",
       "entryGate.bearishRegime.enabled",
       "entryGate.bearishRegime.minAdx",
     ],
@@ -1478,6 +1553,8 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
     "signalTimeframe",
     "entryGate.mtfAlignment.enabled",
     "entryGate.mtfAlignment.requiredCount",
+    "entryGate.mtfAlignment.preset",
+    "entryGate.mtfAlignment.timeframes",
     "liquidityGate.requireFreshQuote",
     "fillPolicy.ttlSeconds",
     "optionSelection.allowZeroDte",
@@ -1512,6 +1589,8 @@ test("algo profile UI exposes and saves expanded strategy and exit fields", () =
   );
   assert.match(settingsFieldsSource, /BOS CONFIRMATION/);
   assert.match(settingsFieldsSource, /MTF REQUIRED COUNT/);
+  assert.match(settingsFieldsSource, /MTF TIMEFRAMES/);
+  assert.match(settingsRegionSource, /field\.type === "timeframeChips"/);
   assert.match(settingsFieldsSource, /CHOCH ATR BUFFER/);
   assert.match(settingsFieldsSource, /5X GIVEBACK %/);
   assert.match(settingsFieldsSource, /10X GIVEBACK %/);
