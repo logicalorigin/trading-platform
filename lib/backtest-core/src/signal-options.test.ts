@@ -163,6 +163,37 @@ test("signal-options profile normalization allows five-frame MTF requirements", 
   assert.equal(cappedProfile.entryGate.mtfAlignment.requiredCount, 5);
 });
 
+test("signal-options profile normalization resolves MTF timeframe selection", () => {
+  const customProfile = resolveSignalOptionsExecutionProfile({
+    signalOptions: {
+      entryGate: {
+        mtfAlignment: {
+          preset: "higher_timeframe",
+          timeframes: ["5m", "1h", "1d", "1h", "4h", "30m"],
+          requiredCount: 9,
+        },
+      },
+    },
+  });
+  const legacyProfile = resolveSignalOptionsExecutionProfile({});
+
+  assert.deepEqual(customProfile.entryGate.mtfAlignment.timeframes, [
+    "5m",
+    "1h",
+    "1d",
+  ]);
+  assert.equal(customProfile.entryGate.mtfAlignment.requiredCount, 3);
+  assert.equal(customProfile.entryGate.mtfAlignment.preset, "higher_timeframe");
+  assert.deepEqual(legacyProfile.entryGate.mtfAlignment.timeframes, [
+    "1m",
+    "2m",
+    "5m",
+    "15m",
+    "1h",
+  ]);
+  assert.equal(legacyProfile.entryGate.mtfAlignment.preset, "custom");
+});
+
 test("signal-options profile normalization resolves Greek selector settings", () => {
   const defaultProfile = resolveSignalOptionsExecutionProfile({});
 

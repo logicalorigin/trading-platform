@@ -37,6 +37,13 @@ export type SignalOptionsGreekPositionManagementPolicy = {
 };
 
 export type SignalOptionsGreekSelectorMode = "off" | "shadow" | "live" | "all";
+export type SignalOptionsMtfTimeframe = "1m" | "2m" | "5m" | "15m" | "1h" | "1d";
+export type SignalOptionsMtfPreset =
+  | "custom"
+  | "scalp"
+  | "balanced"
+  | "higher_timeframe"
+  | "six_frame";
 
 export type SignalOptionsGreekSelectorPolicy = {
   enabled: boolean;
@@ -71,6 +78,8 @@ export type SignalOptionsExecutionProfile = {
     mtfAlignment: {
       enabled: boolean;
       requiredCount: number;
+      timeframes: SignalOptionsMtfTimeframe[];
+      preset: SignalOptionsMtfPreset;
     };
     blockedPutSymbols: string[];
     bearishRegime: {
@@ -162,6 +171,31 @@ export const signalOptionsDefaultWireTrailRungs = [
   { activationPct: 200, rung: "trendLine" },
 ] as const satisfies readonly SignalOptionsWireTrailStep[];
 
+export const signalOptionsAvailableMtfTimeframes = [
+  "1m",
+  "2m",
+  "5m",
+  "15m",
+  "1h",
+  "1d",
+] as const satisfies readonly SignalOptionsMtfTimeframe[];
+
+export const signalOptionsDefaultMtfTimeframes = [
+  "1m",
+  "2m",
+  "5m",
+  "15m",
+  "1h",
+] as const satisfies readonly SignalOptionsMtfTimeframe[];
+
+export const signalOptionsMtfPresets = [
+  "custom",
+  "scalp",
+  "balanced",
+  "higher_timeframe",
+  "six_frame",
+] as const satisfies readonly SignalOptionsMtfPreset[];
+
 export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile =
   {
     version: "v1",
@@ -194,6 +228,8 @@ export const defaultSignalOptionsExecutionProfile: SignalOptionsExecutionProfile
       mtfAlignment: {
         enabled: true,
         requiredCount: 2,
+        timeframes: [...signalOptionsDefaultMtfTimeframes],
+        preset: "custom",
       },
       blockedPutSymbols: [
         "SQQQ",
@@ -365,6 +401,29 @@ function finiteInteger(value: unknown, fallback: number, min: number, max: numbe
 
 function booleanValue(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function signalOptionsMtfTimeframes(
+  value: unknown,
+  fallback: readonly SignalOptionsMtfTimeframe[],
+): SignalOptionsMtfTimeframe[] {
+  const allowed = new Set<SignalOptionsMtfTimeframe>(
+    signalOptionsAvailableMtfTimeframes,
+  );
+  const source = Array.isArray(value) ? value : [];
+  const timeframes: SignalOptionsMtfTimeframe[] = [];
+  for (const item of source) {
+    const timeframe = String(item || "").trim() as SignalOptionsMtfTimeframe;
+    if (allowed.has(timeframe) && !timeframes.includes(timeframe)) {
+      timeframes.push(timeframe);
+    }
+  }
+  return timeframes.length ? timeframes : [...fallback];
+}
+
+function signalOptionsMtfPreset(value: unknown): SignalOptionsMtfPreset {
+  const preset = String(value || "").trim() as SignalOptionsMtfPreset;
+  return signalOptionsMtfPresets.includes(preset) ? preset : "custom";
 }
 
 function strikeSlot(
@@ -646,6 +705,10 @@ export function resolveSignalOptionsExecutionProfile(
   const riskCaps = asRecord(root.riskCaps);
   const entryGate = asRecord(root.entryGate);
   const mtfAlignment = asRecord(entryGate.mtfAlignment ?? root.mtfAlignment);
+  const mtfTimeframes = signalOptionsMtfTimeframes(
+    mtfAlignment.timeframes ?? root.mtfTimeframes,
+    defaults.entryGate.mtfAlignment.timeframes,
+  );
   const bearishRegime = asRecord(
     entryGate.bearishRegime ?? root.bearishRegime,
   );
@@ -742,7 +805,11 @@ export function resolveSignalOptionsExecutionProfile(
           mtfAlignment.requiredCount ?? root.mtfAlignmentRequiredCount,
           defaults.entryGate.mtfAlignment.requiredCount,
           1,
-          5,
+          mtfTimeframes.length,
+        ),
+        timeframes: mtfTimeframes,
+        preset: signalOptionsMtfPreset(
+          mtfAlignment.preset ?? root.mtfAlignmentPreset,
         ),
       },
       blockedPutSymbols: symbolList(
