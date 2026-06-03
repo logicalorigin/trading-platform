@@ -16,6 +16,42 @@ import {
 } from "../services/user-preferences";
 
 const router: IRouter = Router();
+const IBKR_LINE_USAGE_ROUTE_CACHE_TTL_MS = 2_000;
+
+type IbkrLineUsageRouteSnapshot = Awaited<
+  ReturnType<typeof getIbkrLineUsageSnapshot>
+>;
+
+let ibkrLineUsageRouteCache: {
+  snapshot: IbkrLineUsageRouteSnapshot;
+  expiresAt: number;
+} | null = null;
+let ibkrLineUsageRouteInFlight: Promise<IbkrLineUsageRouteSnapshot> | null = null;
+
+async function getCachedIbkrLineUsageSnapshot(): Promise<IbkrLineUsageRouteSnapshot> {
+  const now = Date.now();
+  if (ibkrLineUsageRouteCache && ibkrLineUsageRouteCache.expiresAt > now) {
+    return ibkrLineUsageRouteCache.snapshot;
+  }
+  if (ibkrLineUsageRouteInFlight) {
+    return ibkrLineUsageRouteInFlight;
+  }
+  const request = getIbkrLineUsageSnapshot()
+    .then((snapshot) => {
+      ibkrLineUsageRouteCache = {
+        snapshot,
+        expiresAt: Date.now() + IBKR_LINE_USAGE_ROUTE_CACHE_TTL_MS,
+      };
+      return snapshot;
+    })
+    .finally(() => {
+      if (ibkrLineUsageRouteInFlight === request) {
+        ibkrLineUsageRouteInFlight = null;
+      }
+    });
+  ibkrLineUsageRouteInFlight = request;
+  return request;
+}
 
 router.get("/settings/backend", async (_req, res) => {
   res.json(await getBackendSettingsSnapshot());
@@ -50,7 +86,7 @@ router.put("/settings/ibkr-lanes", async (req, res) => {
 });
 
 router.get("/settings/ibkr-line-usage", async (_req, res) => {
-  res.json(await getIbkrLineUsageSnapshot());
+  res.json(await getCachedIbkrLineUsageSnapshot());
 });
 
 function writeSseEvent(res: Response, event: string, data: unknown): void {
@@ -67,12 +103,14 @@ async function startIbkrLineUsageSse(req: Request, res: Response): Promise<void>
   });
 
   let closed = false;
+  let writeInFlight = false;
   const writeSnapshot = async () => {
-    if (closed) {
+    if (closed || writeInFlight) {
       return;
     }
+    writeInFlight = true;
     try {
-      writeSseEvent(res, "ibkr-line-usage", await getIbkrLineUsageSnapshot());
+      writeSseEvent(res, "ibkr-line-usage", await getCachedIbkrLineUsageSnapshot());
     } catch (error) {
       writeSseEvent(res, "error", {
         message:
@@ -80,6 +118,8 @@ async function startIbkrLineUsageSse(req: Request, res: Response): Promise<void>
             ? error.message
             : "IBKR line usage stream failed.",
       });
+    } finally {
+      writeInFlight = false;
     }
   };
 
