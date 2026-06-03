@@ -176,6 +176,8 @@ test("footer memory pressure mini bars keep metric labels visible", () => {
   const css = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
 
   assert.match(source, /import \{ AppTooltip \} from "@\/components\/ui\/tooltip"/);
+  assert.match(source, /FailurePointContent/);
+  assert.match(source, /buildMemoryPressureFailurePoint/);
   assert.match(source, /const MiniPressureBars = \(\{ signal, showLabels = true \}\) =>/);
   assert.match(source, /MEMORY_PRESSURE_THRESHOLDS\.queryCache\.queryCount/);
   assert.match(source, /MEMORY_PRESSURE_THRESHOLDS\.runtimeStores\.storeEntryCount/);
@@ -183,7 +185,7 @@ test("footer memory pressure mini bars keep metric labels visible", () => {
   assert.doesNotMatch(source, /setHovered/);
   assert.doesNotMatch(source, /forceExpanded/);
   assert.match(source, /<MiniPressureBars signal=\{signal\} showLabels=\{preferences\.showCompactLabel\} \/>/);
-  assert.match(source, /<AppTooltip key=\{bar\.key\} content=\{bar\.detail\}>/);
+  assert.match(source, /content=\{<FailurePointContent point=\{failurePoint\} compact \/>/);
   assert.doesNotMatch(source, /width: dim\(64\)/);
 
   assert.match(css, /\.ra-pressure-mini-cluster \{[\s\S]*?max-width: 360px/);

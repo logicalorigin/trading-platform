@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -35,11 +36,23 @@ const findPopoverDetailRow = (model, label) =>
     .flatMap((group) => group.rows)
     .find((row) => row.label === label);
 
+const ibkrSource = () =>
+  readFileSync(new URL("./IbkrConnectionStatus.jsx", import.meta.url), "utf8");
+
 test("formatIbkrPingMs formats millisecond and second values", () => {
   assert.equal(formatIbkrPingMs(null), "--");
   assert.equal(formatIbkrPingMs(42.4), "42ms");
   assert.equal(formatIbkrPingMs(1_250), "1.3s");
   assert.equal(formatIbkrPingMs(12_500), "13s");
+});
+
+test("IBKR connection lane uses structured failure-point tooltip content", () => {
+  const source = ibkrSource();
+
+  assert.match(source, /FailurePointContent/);
+  assert.match(source, /buildIbkrConnectionFailurePoint/);
+  assert.match(source, /const proof = resolveConnectionProof\(connection\)/);
+  assert.match(source, /content=\{<FailurePointContent point=\{failurePoint\} compact \/>/);
 });
 
 test("getIbkrConnectionTone maps configured connection states", () => {

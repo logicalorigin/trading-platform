@@ -6,6 +6,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { FailurePointContent } from "../../components/platform/FailurePointTooltip.jsx";
 import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   MEMORY_PRESSURE_THRESHOLDS,
@@ -13,6 +14,7 @@ import {
 } from "./memoryPressureModel";
 import { buildMemoryPressurePopoverModel } from "./memoryPressurePopoverModel.js";
 import { useMemoryPressurePreferences } from "./memoryPressurePreferences";
+import { buildMemoryPressureFailurePoint } from "./failurePointModel.js";
 
 const CSS_COLOR = Object.freeze({
   bg0: "var(--ra-surface-0)",
@@ -384,32 +386,46 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
         whiteSpace: "nowrap",
       }}
     >
-      {bars.map((bar) => (
-        <AppTooltip key={bar.key} content={bar.detail}>
-          <span
-            className="ra-pressure-mini-slot"
-            data-testid={`footer-memory-pressure-mini-slot-${bar.key}`}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "minmax(0, 1fr)",
-              gap: dim(CLUSTER_LABEL_GAP),
-              height: "100%",
-              minWidth: dim(CLUSTER_BAR_WIDTH),
-              maxWidth: dim(78),
-            }}
+      {bars.map((bar) => {
+        const failurePoint = buildMemoryPressureFailurePoint({
+          signal,
+          driver: {
+            kind: bar.key,
+            label: bar.label,
+            level: bar.level,
+            detail: bar.detail,
+          },
+        });
+        return (
+          <AppTooltip
+            key={bar.key}
+            content={<FailurePointContent point={failurePoint} compact />}
           >
-            <span aria-hidden="true" style={miniTrackStyle(bar)}>
-              <span
-                data-testid={`footer-memory-pressure-mini-fill-${bar.key}`}
-                style={miniFillStyle(bar)}
-              />
+            <span
+              className="ra-pressure-mini-slot"
+              data-testid={`footer-memory-pressure-mini-slot-${bar.key}`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr)",
+                gap: dim(CLUSTER_LABEL_GAP),
+                height: "100%",
+                minWidth: dim(CLUSTER_BAR_WIDTH),
+                maxWidth: dim(78),
+              }}
+            >
+              <span aria-hidden="true" style={miniTrackStyle(bar)}>
+                <span
+                  data-testid={`footer-memory-pressure-mini-fill-${bar.key}`}
+                  style={miniFillStyle(bar)}
+                />
+              </span>
+              <span className="ra-pressure-mini-label" style={miniLabelStyle(bar, showLabels)}>
+                {bar.label || bar.detail}
+              </span>
             </span>
-            <span className="ra-pressure-mini-label" style={miniLabelStyle(bar, showLabels)}>
-              {bar.label || bar.detail}
-            </span>
-          </span>
-        </AppTooltip>
-      ))}
+          </AppTooltip>
+        );
+      })}
     </span>
   );
 };

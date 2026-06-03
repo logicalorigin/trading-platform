@@ -4,6 +4,11 @@ import {
 } from "lucide-react";
 import { CSS_COLOR, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { formatEnumLabel } from "../../lib/formatters";
+import {
+  FailurePointInlineIcon,
+  FailurePointTooltip,
+} from "../../components/platform/FailurePointTooltip.jsx";
+import { buildDiagRowFailurePoint } from "../../features/platform/failurePointModel.js";
 
 const totalCount = (rows) => {
   if (!Array.isArray(rows)) return 0;
@@ -24,6 +29,9 @@ export const DiagPanel = ({
 }) => {
   const aggregate = totalCount(rows);
   const showExpanded = expanded;
+  const panelFailurePoint = !healthy
+    ? buildDiagRowFailurePoint({ panelTitle: title, label: title, count: aggregate, color })
+    : null;
 
   if (!showExpanded) {
     return (
@@ -58,6 +66,9 @@ export const DiagPanel = ({
         >
           {healthy ? "ok" : aggregate}
         </span>
+        {panelFailurePoint ? (
+          <FailurePointInlineIcon point={panelFailurePoint} side="top" size={11} />
+        ) : null}
       </button>
     );
   }
@@ -83,6 +94,9 @@ export const DiagPanel = ({
       <ChevronDown size={11} />
       <span style={{ flex: 1 }}>{String(title).toUpperCase()}</span>
       {!healthy ? <span style={{ color }}>{aggregate}</span> : null}
+      {panelFailurePoint ? (
+        <FailurePointInlineIcon point={panelFailurePoint} side="top" size={11} />
+      ) : null}
     </>
   );
 
@@ -112,43 +126,61 @@ export const DiagPanel = ({
       )}
       {rows && rows.length ? (
         <div style={{ display: "grid", gap: sp(5), minWidth: 0 }}>
-          {rows.map(([label, count]) => (
-            <div
-              key={label}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(0, 1fr) auto",
-                gap: sp(7),
-                alignItems: "center",
-                minWidth: 0,
-              }}
-            >
-              <span
+          {rows.map(([label, count]) => {
+            const rowFailurePoint =
+              Number(count) > 0
+                ? buildDiagRowFailurePoint({ panelTitle: title, label, count, color })
+                : null;
+            const row = (
+              <div
                 style={{
-                  color: CSS_COLOR.textSec,
-                  fontFamily: T.sans,
-                  fontSize: textSize("body"),
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr) auto",
+                  gap: sp(7),
+                  alignItems: "center",
+                  minWidth: 0,
                 }}
               >
-                {formatEnumLabel(label)}
-              </span>
-              <span
-                className="tnum"
-                style={{
-                  color:
-                    Number(count) > 0 && !healthy ? color : CSS_COLOR.text,
-                  fontFamily: T.data,
-                  fontSize: textSize("body"),
-                  textAlign: "right",
-                }}
+                <span
+                  style={{
+                    color: CSS_COLOR.textSec,
+                    fontFamily: T.sans,
+                    fontSize: textSize("body"),
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {formatEnumLabel(label)}
+                </span>
+                <span
+                  className="tnum"
+                  style={{
+                    color:
+                      Number(count) > 0 && !healthy ? color : CSS_COLOR.text,
+                    fontFamily: T.data,
+                    fontSize: textSize("body"),
+                    textAlign: "right",
+                  }}
+                >
+                  {count}
+                </span>
+              </div>
+            );
+            return rowFailurePoint ? (
+              <FailurePointTooltip
+                key={label}
+                point={rowFailurePoint}
+                side="top"
+                align="start"
+                compact
               >
-                {count}
-              </span>
-            </div>
-          ))}
+                {row}
+              </FailurePointTooltip>
+            ) : (
+              <div key={label}>{row}</div>
+            );
+          })}
         </div>
       ) : (
         <div

@@ -52,6 +52,7 @@ import {
 } from "../features/gex/gexHeatmapModel.js";
 import { Card, DataUnavailableState } from "../components/platform/primitives.jsx";
 import { InfoTooltipIcon } from "../components/platform/InfoTooltipIcon.jsx";
+import { FailurePointTooltip } from "../components/platform/FailurePointTooltip.jsx";
 import { getGexGlossaryEntry } from "../features/gex/gexGlossary.js";
 import { HeatmapColorLegend } from "../features/gex/HeatmapColorLegend.jsx";
 import {
@@ -59,6 +60,7 @@ import {
   GEX_DASHBOARD_QUERY_STALE_MS,
 } from "../features/gex/useGexZeroGamma.js";
 import { MeasuredChartFrame } from "../features/charting/MeasuredChartFrame.jsx";
+import { buildFailurePoint } from "../features/platform/failurePointModel.js";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import {
@@ -344,47 +346,69 @@ const SourceCoverageBanner = ({ data, warnings, lastUpdatedLabel }) => {
     coverage && Number.isFinite(Number(coverage.loadedCount))
       ? `${coverage.loadedCount}/${coverage.returnedCount} expirations loaded`
       : `${source.usableOptionCount || 0}/${source.optionCount || 0} contracts usable`;
+  const failurePoint = buildFailurePoint({
+    severity: "warning",
+    title: "GEX source coverage",
+    summary: warnings.join(" · "),
+    source: "gex",
+    reason: warnings[0],
+    metrics: [
+      ["Loaded", loaded],
+      ["Updated", lastUpdatedLabel],
+    ],
+    topCauses: warnings,
+    nextAction:
+      "Inspect source coverage before relying on the current GEX heatmap or strike table.",
+  });
 
   return (
-    <div
-      data-testid="gex-source-coverage-banner"
-      style={{
-        display: "flex",
-        alignItems: "flex-start",
-        gap: sp(8),
-        padding: sp("9px 10px"),
-        border: `1px solid ${cssColorMix(CSS_COLOR.amber, 32)}`,
-        background: cssColorMix(CSS_COLOR.amber, 7),
-        color: CSS_COLOR.text,
-        minWidth: 0,
-      }}
+    <FailurePointTooltip
+      point={failurePoint}
+      side="bottom"
+      align="start"
+      compact
     >
-      <AlertTriangle
-        size={16}
-        color={CSS_COLOR.amber}
-        style={{ flex: "0 0 auto", marginTop: dim(1) }}
-      />
-      <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
-        <div
-          style={{
-            color: CSS_COLOR.text,
-            fontSize: textSize("bodyStrong"),
-            fontWeight: FONT_WEIGHTS.emphasis,
-          }}
-        >
-          Source coverage
-        </div>
-        <div
-          style={{
-            color: CSS_COLOR.textSec,
-            fontSize: textSize("caption"),
-            lineHeight: 1.35,
-          }}
-        >
-          {warnings.join(" · ")} · {loaded} · Updated {lastUpdatedLabel}
+      <div
+        data-testid="gex-source-coverage-banner"
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: sp(8),
+          padding: sp("9px 10px"),
+          border: `1px solid ${cssColorMix(CSS_COLOR.amber, 32)}`,
+          background: cssColorMix(CSS_COLOR.amber, 7),
+          color: CSS_COLOR.text,
+          cursor: "help",
+          minWidth: 0,
+        }}
+      >
+        <AlertTriangle
+          size={16}
+          color={CSS_COLOR.amber}
+          style={{ flex: "0 0 auto", marginTop: dim(1) }}
+        />
+        <div style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
+          <div
+            style={{
+              color: CSS_COLOR.text,
+              fontSize: textSize("bodyStrong"),
+              fontWeight: FONT_WEIGHTS.emphasis,
+            }}
+          >
+            Source coverage
+          </div>
+          <div
+            style={{
+              color: CSS_COLOR.textSec,
+              fontSize: textSize("caption"),
+              lineHeight: 1.35,
+            }}
+          >
+            {warnings.join(" · ")} · {loaded} · Updated {lastUpdatedLabel}
+          </div>
         </div>
       </div>
-    </div>
+    </FailurePointTooltip>
   );
 };
 

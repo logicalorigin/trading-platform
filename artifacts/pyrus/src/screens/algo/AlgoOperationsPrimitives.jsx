@@ -1,5 +1,13 @@
 import React from "react";
 import { CSS_COLOR, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import {
+  FailurePointInlineIcon,
+  FailurePointTooltip,
+} from "../../components/platform/FailurePointTooltip.jsx";
+import {
+  buildAlgoMetricFailurePoint,
+  buildPipelineStageFailurePoint,
+} from "../../features/platform/failurePointModel.js";
 
 const overviewSeverityBackground = (severity) => {
   if (severity === "critical") return CSS_COLOR.redBg;
@@ -21,9 +29,21 @@ export const AlgoOverviewMetric = ({
       : severity === "warning"
         ? CSS_COLOR.amber
         : tone || CSS_COLOR.textSec;
-  return (
+  const failurePoint =
+    severity === "critical" || severity === "warning"
+      ? buildAlgoMetricFailurePoint({
+          label,
+          value,
+          detail,
+          severity,
+          nextAction:
+            severity === "critical"
+              ? "Inspect the Algo risk and audit panels before enabling new scans."
+              : "Review this metric against the current Signal Options profile.",
+        })
+      : null;
+  const metricBody = (
     <div
-      title={`${label}: ${value}${detail ? ` · ${detail}` : ""}`}
       style={{
         display: "grid",
         gridTemplateColumns: Icon
@@ -93,6 +113,13 @@ export const AlgoOverviewMetric = ({
         ) : null}
       </div>
     </div>
+  );
+  return failurePoint ? (
+    <FailurePointTooltip point={failurePoint} side="top" align="start">
+      {metricBody}
+    </FailurePointTooltip>
+  ) : (
+    metricBody
   );
 };
 
@@ -249,18 +276,22 @@ export const AlgoPipelineOverview = ({
           stage.status === "blocked" ||
           stage.status === "attention" ||
           stage.status === "stale";
+        const failurePoint = alarmStatus
+          ? buildPipelineStageFailurePoint({ stage, leak })
+          : null;
         return (
           <button
             key={stage.id}
             type="button"
             onClick={() => onSelectStage?.(stage.selectStageId || stage.id)}
             data-testid={`algo-pipeline-stage-${stage.id}`}
-            title={`${stage.label}: ${countLabel}${stage.detail ? ` · ${stage.detail}` : ""}${leak ? ` · ${leak} to next` : ""}`}
             style={{
               display: "grid",
               gridTemplateColumns: grouped
                 ? "minmax(0, 1fr)"
-                : "minmax(0, 1fr) auto",
+                : failurePoint
+                  ? "minmax(0, 1fr) auto auto"
+                  : "minmax(0, 1fr) auto",
               alignItems: "center",
               gap: sp(grouped ? 1 : 4),
               minWidth: 0,
@@ -320,6 +351,14 @@ export const AlgoPipelineOverview = ({
                   >
                     {countLabel}
                   </span>
+                  {failurePoint ? (
+                    <FailurePointInlineIcon
+                      point={failurePoint}
+                      side="top"
+                      align="center"
+                      size={11}
+                    />
+                  ) : null}
                 </span>
                 <span
                   style={{
@@ -365,6 +404,14 @@ export const AlgoPipelineOverview = ({
                 >
                   {countLabel}
                 </span>
+                {failurePoint ? (
+                  <FailurePointInlineIcon
+                    point={failurePoint}
+                    side="top"
+                    align="center"
+                    size={11}
+                  />
+                ) : null}
               </>
             )}
           </button>

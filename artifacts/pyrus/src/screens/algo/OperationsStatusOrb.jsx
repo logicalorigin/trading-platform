@@ -13,6 +13,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "../../components/ui/popover";
+import { FailurePointPopoverBody } from "../../components/platform/FailurePointTooltip.jsx";
+import { buildAlgoStatusFailurePoint } from "../../features/platform/failurePointModel.js";
 
 const STATUS_TONE = {
   healthy: CSS_COLOR.green,
@@ -67,6 +69,7 @@ export const OperationsStatusOrb = ({
   scanOn,
   deploymentEnabled,
   attentionItems = [],
+  cockpitTradePath,
 }) => {
   const attentionSeverity = useMemo(() => {
     if (!attentionItems?.length) return null;
@@ -83,6 +86,18 @@ export const OperationsStatusOrb = ({
   });
   const tone = STATUS_TONE[status];
   const shouldPulse = status === "healthy" || status === "scanning";
+  const failurePoint = useMemo(
+    () =>
+      buildAlgoStatusFailurePoint({
+        status,
+        gatewayReady,
+        scanOn,
+        deploymentEnabled,
+        attentionItems,
+        cockpitTradePath,
+      }),
+    [attentionItems, cockpitTradePath, deploymentEnabled, gatewayReady, scanOn, status],
+  );
 
   return (
     <Popover>
@@ -173,9 +188,20 @@ export const OperationsStatusOrb = ({
                 ? CSS_COLOR.red
                 : attentionSeverity === "warning"
                   ? CSS_COLOR.amber
-                  : CSS_COLOR.green
+              : CSS_COLOR.green
             }
           />
+          {failurePoint?.severity !== "info" ? (
+            <div
+              style={{
+                borderTop: `1px solid ${CSS_COLOR.border}`,
+                marginTop: sp(7),
+                paddingTop: sp(8),
+              }}
+            >
+              <FailurePointPopoverBody point={failurePoint} compact />
+            </div>
+          ) : null}
         </div>
       </PopoverContent>
     </Popover>

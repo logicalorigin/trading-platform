@@ -57,6 +57,10 @@ import {
 } from "../lib/uiTokens.jsx";
 import { Button } from "../components/ui/Button.jsx";
 import { MicroSparkline, SeverityRail, SurfacePanel } from "../components/platform/primitives.jsx";
+import {
+  FailurePointInlineIcon,
+  FailurePointTooltip,
+} from "../components/platform/FailurePointTooltip.jsx";
 import { formatAppDateTime } from "../lib/timeZone";
 import {
   joinMotionClasses,
@@ -66,6 +70,11 @@ import {
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { DiagnosticThresholdSettingsPanel } from "./settings/DiagnosticThresholdSettingsPanel";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
+import {
+  buildFailurePointFromDiagnosticEvent,
+  buildFailurePointFromDiagnosticsSnapshot,
+  buildMemoryPressureFailurePoint,
+} from "../features/platform/failurePointModel.js";
 
 const DIAGNOSTIC_ALERT_PREF_EVENT = "pyrus:diagnostic-alert-preferences-updated";
 const LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT =
@@ -149,6 +158,17 @@ const formatCount = (value) =>
 
 const formatMb = (value) =>
   Number.isFinite(value) ? `${Math.round(value).toLocaleString()} MB` : MISSING_VALUE;
+
+const formatMbWithLimit = (value, limit) => {
+  const formattedValue = formatMb(value);
+  const formattedLimit = formatMb(limit);
+  if (formattedValue === MISSING_VALUE && formattedLimit === MISSING_VALUE) {
+    return MISSING_VALUE;
+  }
+  if (formattedLimit === MISSING_VALUE) return formattedValue;
+  if (formattedValue === MISSING_VALUE) return `limit ${formattedLimit}`;
+  return `${formattedValue} / ${formattedLimit} limit`;
+};
 
 const formatPercent = (value) =>
   Number.isFinite(value) ? `${Math.round(value)}%` : MISSING_VALUE;
@@ -344,38 +364,64 @@ const StateRow = ({ label, value, tone = CSS_COLOR.textSec, onClick }) => (
   </button>
 );
 
-const MetricCard = ({ label, value, sub, severity = "info", onClick }) => (
-  <button
-    type="button"
-    className={onClick ? "ra-interactive" : undefined}
-    onClick={onClick}
-    style={{
-      ...motionVars({ accent: severityTone(severity) }),
-      border: `1px solid ${severityBorder(severity)}`,
-      borderRadius: dim(RADII.sm),
-      background: CSS_COLOR.bg1,
-      padding: sp("7px 8px"),
-      display: "flex",
-      flexDirection: "column",
-      gap: sp(4),
-      flex: "1 0 auto",
-      minWidth: dim(140),
-      alignSelf: "start",
-      cursor: onClick ? "pointer" : "default",
-      textAlign: "left",
-    }}
-  >
-    <span style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption"), fontFamily: T.sans }}>
-      {label}
-    </span>
+const MetricCard = ({ label, value, sub, severity = "info", onClick, failurePoint }) => {
+  const showFailurePoint = failurePoint && failurePoint.severity !== "info";
+  const valueNode = (
     <span style={{ color: severityTone(severity), fontSize: fs(17), fontWeight: FONT_WEIGHTS.regular }}>
       {value ?? MISSING_VALUE}
     </span>
-    <span style={{ color: CSS_COLOR.textSec, fontSize: textSize("caption"), fontFamily: T.sans }}>
-      {sub || MISSING_VALUE}
-    </span>
-  </button>
-);
+  );
+  return (
+    <button
+      type="button"
+      className={onClick ? "ra-interactive" : undefined}
+      onClick={onClick}
+      style={{
+        ...motionVars({ accent: severityTone(severity) }),
+        border: `1px solid ${severityBorder(severity)}`,
+        borderRadius: dim(RADII.sm),
+        background: CSS_COLOR.bg1,
+        padding: sp("7px 8px"),
+        display: "flex",
+        flexDirection: "column",
+        gap: sp(4),
+        flex: "1 0 auto",
+        minWidth: dim(140),
+        alignSelf: "start",
+        cursor: onClick ? "pointer" : "default",
+        textAlign: "left",
+      }}
+    >
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: sp(6),
+          minWidth: 0,
+          color: CSS_COLOR.textDim,
+          fontSize: textSize("caption"),
+          fontFamily: T.sans,
+        }}
+      >
+        <span>{label}</span>
+        {showFailurePoint ? (
+          <FailurePointInlineIcon point={failurePoint} side="bottom" size={12} />
+        ) : null}
+      </span>
+      {showFailurePoint ? (
+        <FailurePointTooltip point={failurePoint} side="bottom" align="start" compact>
+          {valueNode}
+        </FailurePointTooltip>
+      ) : (
+        valueNode
+      )}
+      <span style={{ color: CSS_COLOR.textSec, fontSize: textSize("caption"), fontFamily: T.sans }}>
+        {sub || MISSING_VALUE}
+      </span>
+    </button>
+  );
+};
 
 const Sparkline = ({ points, metricKey, subsystem }) => {
   const data = points
@@ -424,53 +470,58 @@ const Sparkline = ({ points, metricKey, subsystem }) => {
 const EventList = ({ events, onSelect }) => (
   <div style={{ display: "flex", flexDirection: "column", gap: sp(8) }}>
     {events.length ? (
-      events.map((event, index) => (
-        <button
-          key={event.id || event.incidentKey}
-          type="button"
-          className={joinMotionClasses("ra-row-enter", "ra-interactive")}
-          onClick={() => onSelect(event)}
-          style={{
-            ...motionRowStyle(index, 16, 160),
-            ...motionVars({ accent: severityTone(event.severity) }),
-            border: `1px solid ${CSS_COLOR.borderLight}`,
-            background: alertToneBackground(event.severity),
-            borderRadius: dim(RADII.xs),
-            padding: sp("5px 6px"),
-            display: "grid",
-            gridTemplateColumns: `auto ${dim(74)}px minmax(0, 1fr) ${dim(60)}px`,
-            gap: sp(6),
-            alignItems: "center",
-            textAlign: "left",
-            cursor: "pointer",
-            transition: "background 0.12s ease, border-color 0.12s ease",
-          }}
-          onMouseEnter={(pointerEvent) => {
-            pointerEvent.currentTarget.style.background = alertToneHoverBackground(event.severity);
-            pointerEvent.currentTarget.style.borderColor = severityBorder(event.severity);
-          }}
-          onMouseLeave={(pointerEvent) => {
-            pointerEvent.currentTarget.style.background = alertToneBackground(event.severity);
-            pointerEvent.currentTarget.style.borderColor = CSS_COLOR.borderLight;
-          }}
-        >
-          <SeverityRail tone={severityTone(event.severity)} />
-          <span style={alertChipStyle(event.severity, 74)}>
-            {event.severity.toUpperCase()}
-          </span>
-          <span style={{ minWidth: 0 }}>
-            <div style={{ color: CSS_COLOR.text, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "normal", overflowWrap: "anywhere" }}>
-              {event.message}
-            </div>
-            <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption"), fontFamily: T.sans }}>
-              {event.subsystem} / {event.category} / {event.code || "no-code"}
-            </div>
-          </span>
-          <span style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, textAlign: "right" }}>
-            x{event.eventCount}
-          </span>
-        </button>
-      ))
+      events.map((event, index) => {
+        const failurePoint = buildFailurePointFromDiagnosticEvent(event);
+        return (
+          <button
+            key={event.id || event.incidentKey}
+            type="button"
+            className={joinMotionClasses("ra-row-enter", "ra-interactive")}
+            onClick={() => onSelect(event)}
+            style={{
+              ...motionRowStyle(index, 16, 160),
+              ...motionVars({ accent: severityTone(event.severity) }),
+              border: `1px solid ${CSS_COLOR.borderLight}`,
+              background: alertToneBackground(event.severity),
+              borderRadius: dim(RADII.xs),
+              padding: sp("5px 6px"),
+              display: "grid",
+              gridTemplateColumns: `auto ${dim(74)}px minmax(0, 1fr) ${dim(60)}px`,
+              gap: sp(6),
+              alignItems: "center",
+              textAlign: "left",
+              cursor: "pointer",
+              transition: "background 0.12s ease, border-color 0.12s ease",
+            }}
+            onMouseEnter={(pointerEvent) => {
+              pointerEvent.currentTarget.style.background = alertToneHoverBackground(event.severity);
+              pointerEvent.currentTarget.style.borderColor = severityBorder(event.severity);
+            }}
+            onMouseLeave={(pointerEvent) => {
+              pointerEvent.currentTarget.style.background = alertToneBackground(event.severity);
+              pointerEvent.currentTarget.style.borderColor = CSS_COLOR.borderLight;
+            }}
+          >
+            <SeverityRail tone={severityTone(event.severity)} />
+            <FailurePointTooltip point={failurePoint} side="right" align="start" compact>
+              <span style={alertChipStyle(event.severity, 74)}>
+                {event.severity.toUpperCase()}
+              </span>
+            </FailurePointTooltip>
+            <span style={{ minWidth: 0 }}>
+              <div style={{ color: CSS_COLOR.text, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "normal", overflowWrap: "anywhere" }}>
+                {event.message}
+              </div>
+              <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("caption"), fontFamily: T.sans }}>
+                {event.subsystem} / {event.category} / {event.code || "no-code"}
+              </div>
+            </span>
+            <span style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, textAlign: "right" }}>
+              x{event.eventCount}
+            </span>
+          </button>
+        );
+      })
     ) : (
       <div style={{ color: CSS_COLOR.textDim, fontSize: fs(10), fontFamily: T.sans }}>
         No diagnostic events in this window.
@@ -479,54 +530,58 @@ const EventList = ({ events, onSelect }) => (
   </div>
 );
 
-const LocalAlertRow = ({ alert, onSelect, onDismiss }) => (
-  <div
-    className={joinMotionClasses("ra-row-enter", "ra-focus-rail")}
-    style={{
-      ...motionVars({ accent: severityTone(alert.severity) }),
-      display: "grid",
-      gridTemplateColumns: "auto minmax(0, 1fr) auto",
-      gap: sp(6),
-      alignItems: "center",
-      border: `1px solid ${CSS_COLOR.borderLight}`,
-      background: alertToneBackground(alert.severity),
-      borderRadius: dim(RADII.xs),
-      padding: sp("5px 6px"),
-    }}
-  >
-    <SeverityRail tone={severityTone(alert.severity)} />
-    <button
-      type="button"
-      onClick={() => onSelect(alert)}
+const LocalAlertRow = ({ alert, onSelect, onDismiss }) => {
+  const failurePoint = buildFailurePointFromDiagnosticEvent(alert);
+  return (
+    <div
+      className={joinMotionClasses("ra-row-enter", "ra-focus-rail")}
       style={{
-        border: 0,
-        background: "transparent",
-        color: CSS_COLOR.text,
+        ...motionVars({ accent: severityTone(alert.severity) }),
         display: "grid",
-        gridTemplateColumns: `${dim(74)}px minmax(0, 1fr) ${dim(48)}px`,
+        gridTemplateColumns: "auto minmax(0, 1fr) auto",
         gap: sp(6),
         alignItems: "center",
-        minWidth: 0,
-        padding: 0,
-        textAlign: "left",
-        cursor: "pointer",
+        border: `1px solid ${CSS_COLOR.borderLight}`,
+        background: alertToneBackground(alert.severity),
+        borderRadius: dim(RADII.xs),
+        padding: sp("5px 6px"),
       }}
     >
-      <span style={alertChipStyle(alert.severity, 74)}>
-        {alert.severity.toUpperCase()}
-      </span>
-      <span style={{ minWidth: 0 }}>
-        <div style={{ color: CSS_COLOR.text, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "normal", overflowWrap: "anywhere" }}>
-          {alert.message}
-        </div>
-        <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {alert.subsystem || "diagnostics"} / {alert.category || alert.kind} / {alert.code || alert.incidentKey}
-        </div>
-      </span>
-      <span style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, textAlign: "right" }}>
-        x{alert.repeatCount}
-      </span>
-    </button>
+      <SeverityRail tone={severityTone(alert.severity)} />
+      <button
+        type="button"
+        onClick={() => onSelect(alert)}
+        style={{
+          border: 0,
+          background: "transparent",
+          color: CSS_COLOR.text,
+          display: "grid",
+          gridTemplateColumns: `${dim(74)}px minmax(0, 1fr) ${dim(48)}px`,
+          gap: sp(6),
+          alignItems: "center",
+          minWidth: 0,
+          padding: 0,
+          textAlign: "left",
+          cursor: "pointer",
+        }}
+      >
+        <FailurePointTooltip point={failurePoint} side="right" align="start" compact>
+          <span style={alertChipStyle(alert.severity, 74)}>
+            {alert.severity.toUpperCase()}
+          </span>
+        </FailurePointTooltip>
+        <span style={{ minWidth: 0 }}>
+          <div style={{ color: CSS_COLOR.text, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "normal", overflowWrap: "anywhere" }}>
+            {alert.message}
+          </div>
+          <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {alert.subsystem || "diagnostics"} / {alert.category || alert.kind} / {alert.code || alert.incidentKey}
+          </div>
+        </span>
+        <span style={{ color: CSS_COLOR.textSec, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, textAlign: "right" }}>
+          x{alert.repeatCount}
+        </span>
+      </button>
     <div style={{ display: "flex", alignItems: "center", gap: sp(6) }}>
       <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.medium, whiteSpace: "nowrap" }}>
         {formatAgo(alert.lastSeenAt)}
@@ -535,8 +590,9 @@ const LocalAlertRow = ({ alert, onSelect, onDismiss }) => (
         Dismiss
       </button>
     </div>
-  </div>
-);
+    </div>
+  );
+};
 
 function GatewayPanel({ latest, latencyStats, onMetric }) {
   const snapshot = snapshotBySubsystem(latest, "ibkr");
@@ -1000,6 +1056,10 @@ export default function DiagnosticsScreen({
       memoryPressureState?.browserMemoryMb ??
       footerMemoryMetrics?.browserMemoryMb ??
       resourcePressureMetrics.browserMemoryMb,
+    browserMemoryLimitMb:
+      memoryPressureState?.browserMemoryLimitMb ??
+      footerMemoryMetrics?.browserMemoryLimitMb ??
+      resourcePressureMetrics.browserMemoryLimitMb,
     apiHeapUsedPercent:
       memoryPressureState?.apiHeapUsedPercent ??
       footerMemoryMetrics?.apiHeapUsedPercent ??
@@ -1266,15 +1326,15 @@ export default function DiagnosticsScreen({
       {activeTab === "Overview" && (
         <>
           <div className="ra-hide-scrollbar" style={{ display: "flex", flexWrap: "nowrap", overflowX: "auto", gap: sp(8), margin: sp("10px 0"), minWidth: 0 }}>
-            <MetricCard label="API p95" value={formatMs(apiMetrics.p95LatencyMs)} sub={`${formatCount(apiMetrics.requestCount5m)} req / 5m`} severity={apiSnapshot?.severity} onClick={() => selectMetric("api", "api.p95_latency_ms")} />
-            <MetricCard label="IBKR heartbeat" value={formatMs(ibkrMetrics.heartbeatAgeMs)} sub={ibkrMetrics.connected ? "connected" : "disconnected"} severity={ibkrSnapshot?.severity} onClick={() => selectMetric("ibkr", "ibkr.heartbeat_age_ms")} />
-            <MetricCard label="Market freshness" value={formatMs(marketDataMetrics.freshnessAgeMs ?? stream.lastEventAgeMs)} sub={`${formatCount(marketDataMetrics.activeConsumerCount ?? stream.activeConsumerCount)} consumers`} severity={marketDataSnapshot?.severity || (stream.streamGapCount > 0 ? "warning" : "info")} onClick={() => selectMetric("market-data", "market_data.freshness_age_ms")} />
-            <MetricCard label="Chart hydration" value={formatMs(chartHydrationMetrics.prependP95Ms ?? chartStats.prependRequestMs?.p95)} sub={`${formatCount(chartHydrationMetrics.activeScopeCount ?? chartStats.activeScopeCount ?? chartStats.scopes.length)} scopes / ${formatCount(chartHydrationMetrics.cursorFallbackCount ?? 0)} fallbacks`} severity={chartHydrationSeverity} onClick={() => selectMetric("chart-hydration", "chart_hydration.prepend_p95_ms")} />
-            <MetricCard label="Browser events" value={formatCount(browserMetrics.warningCount5m ?? 0)} sub={`${formatCount(browserMetrics.eventCount5m ?? 0)} events / 5m`} severity={browserSnapshot?.severity} onClick={() => selectMetric("browser", "browser.events")} />
-            <MetricCard label="Memory" value={String(footerSignal.level || "normal").toUpperCase()} sub={`heap ${formatPercent(footerSignal.apiHeapUsedPercent)} / browser ${formatMb(footerSignal.browserMemoryMb)}`} severity={memoryOverviewSeverity} onClick={() => setActiveTab("Memory")} />
-            <MetricCard label="Accounts" value={formatCount(accountMetrics.accountCount)} sub={`${formatCount(accountMetrics.positionCount)} positions`} severity={accountSnapshot?.severity} onClick={() => selectMetric("accounts", "orders.visibility_failures")} />
-            <MetricCard label="Orders" value={formatCount(orderMetrics.orderCount)} sub={`${formatCount(orderMetrics.visibilityFailures)} failures`} severity={orderSnapshot?.severity} onClick={() => selectMetric("orders", "orders.visibility_failures")} />
-            <MetricCard label="Storage" value={storageMetrics.reachable ? "reachable" : "offline"} sub={formatMs(storageMetrics.pingMs)} severity={storageSnapshot?.severity} onClick={() => selectMetric("storage", "storage.ping_ms")} />
+            <MetricCard label="API p95" value={formatMs(apiMetrics.p95LatencyMs)} sub={`${formatCount(apiMetrics.requestCount5m)} req / 5m`} severity={apiSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(apiSnapshot)} onClick={() => selectMetric("api", "api.p95_latency_ms")} />
+            <MetricCard label="IBKR heartbeat" value={formatMs(ibkrMetrics.heartbeatAgeMs)} sub={ibkrMetrics.connected ? "connected" : "disconnected"} severity={ibkrSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(ibkrSnapshot)} onClick={() => selectMetric("ibkr", "ibkr.heartbeat_age_ms")} />
+            <MetricCard label="Market freshness" value={formatMs(marketDataMetrics.freshnessAgeMs ?? stream.lastEventAgeMs)} sub={`${formatCount(marketDataMetrics.activeConsumerCount ?? stream.activeConsumerCount)} consumers`} severity={marketDataSnapshot?.severity || (stream.streamGapCount > 0 ? "warning" : "info")} failurePoint={buildFailurePointFromDiagnosticsSnapshot(marketDataSnapshot)} onClick={() => selectMetric("market-data", "market_data.freshness_age_ms")} />
+            <MetricCard label="Chart hydration" value={formatMs(chartHydrationMetrics.prependP95Ms ?? chartStats.prependRequestMs?.p95)} sub={`${formatCount(chartHydrationMetrics.activeScopeCount ?? chartStats.activeScopeCount ?? chartStats.scopes.length)} scopes / ${formatCount(chartHydrationMetrics.cursorFallbackCount ?? 0)} fallbacks`} severity={chartHydrationSeverity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(chartHydrationSnapshot)} onClick={() => selectMetric("chart-hydration", "chart_hydration.prepend_p95_ms")} />
+            <MetricCard label="Browser events" value={formatCount(browserMetrics.warningCount5m ?? 0)} sub={`${formatCount(browserMetrics.eventCount5m ?? 0)} events / 5m`} severity={browserSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(browserSnapshot)} onClick={() => selectMetric("browser", "browser.events")} />
+            <MetricCard label="Memory" value={String(footerSignal.level || "normal").toUpperCase()} sub={`heap ${formatPercent(footerSignal.apiHeapUsedPercent)} / browser ${formatMbWithLimit(footerSignal.browserMemoryMb, footerSignal.browserMemoryLimitMb)}`} severity={memoryOverviewSeverity} failurePoint={buildMemoryPressureFailurePoint({ signal: footerSignal })} onClick={() => setActiveTab("Memory")} />
+            <MetricCard label="Accounts" value={formatCount(accountMetrics.accountCount)} sub={`${formatCount(accountMetrics.positionCount)} positions`} severity={accountSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(accountSnapshot)} onClick={() => selectMetric("accounts", "orders.visibility_failures")} />
+            <MetricCard label="Orders" value={formatCount(orderMetrics.orderCount)} sub={`${formatCount(orderMetrics.visibilityFailures)} failures`} severity={orderSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(orderSnapshot)} onClick={() => selectMetric("orders", "orders.visibility_failures")} />
+            <MetricCard label="Storage" value={storageMetrics.reachable ? "reachable" : "offline"} sub={formatMs(storageMetrics.pingMs)} severity={storageSnapshot?.severity} failurePoint={buildFailurePointFromDiagnosticsSnapshot(storageSnapshot)} onClick={() => selectMetric("storage", "storage.ping_ms")} />
           </div>
           <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(280)}px, 1fr))`, gap: sp(10), alignItems: "start" }}>
             <Panel title="API Latency Trend">
@@ -1619,6 +1679,7 @@ export default function DiagnosticsScreen({
           <Panel title="Footer Pressure Signal">
             <StateRow label="Source quality" value={footerSignal.sourceQuality} />
             <StateRow label="Browser estimate" value={formatMb(footerSignal.browserMemoryMb)} />
+            <StateRow label="Browser limit" value={formatMb(footerSignal.browserMemoryLimitMb)} />
             <StateRow label="API heap" value={formatPercent(footerSignal.apiHeapUsedPercent)} />
             <StateRow label="Observed" value={footerSignal.observedAt ? formatAgo(footerSignal.observedAt) : MISSING_VALUE} />
             <JsonBlock value={footerSignal.dominantDrivers} />
@@ -1632,6 +1693,8 @@ export default function DiagnosticsScreen({
           </Panel>
           <Panel title="Browser Memory">
             <StateRow label="Estimate" value={formatMb(resourcePressureMetrics.browserMemoryMb)} onClick={() => selectMetric("resource-pressure", "resource_pressure.browser_memory_mb")} />
+            <StateRow label="Limit" value={formatMb(resourcePressureMetrics.browserMemoryLimitMb)} />
+            <StateRow label="Limit pressure" value={formatPercent(resourcePressureMetrics.browserMemoryLimitPercent)} onClick={() => selectMetric("resource-pressure", "resource_pressure.browser_memory_limit_percent")} />
             <StateRow label="Confidence" value={resourcePressureMetrics.sourceQuality || resourcePressureMetrics.browserMemoryConfidence} />
             <StateRow label="Source" value={resourcePressureMetrics.browserMemorySource} />
             <StateRow label="Observed" value={resourcePressureMetrics.browserObservedAt ? formatAgo(resourcePressureMetrics.browserObservedAt) : MISSING_VALUE} />

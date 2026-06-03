@@ -22,3 +22,17 @@ test("diagnostics overview memory card uses memory signal instead of broad resou
     /footerMemoryMetrics\?\.level \|\|\s*resourcePressureMetrics\.clientPressureLevel \|\|\s*resourcePressureMetrics\.pressureLevel/,
   );
 });
+
+test("diagnostics failure points are wired to overview cards and event rows", () => {
+  const source = diagnosticsSource();
+
+  assert.match(source, /FailurePointTooltip/);
+  assert.match(source, /FailurePointInlineIcon/);
+  assert.match(source, /buildFailurePointFromDiagnosticsSnapshot/);
+  assert.match(source, /buildFailurePointFromDiagnosticEvent/);
+  assert.match(source, /buildMemoryPressureFailurePoint/);
+  assert.match(source, /failurePoint=\{buildFailurePointFromDiagnosticsSnapshot\(apiSnapshot\)\}/);
+  assert.match(source, /failurePoint=\{buildMemoryPressureFailurePoint\(\{ signal: footerSignal \}\)\}/);
+  assert.match(source, /const failurePoint = buildFailurePointFromDiagnosticEvent\(event\)/);
+  assert.match(source, /const failurePoint = buildFailurePointFromDiagnosticEvent\(alert\)/);
+});

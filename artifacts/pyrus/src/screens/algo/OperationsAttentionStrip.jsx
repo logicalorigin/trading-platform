@@ -10,6 +10,8 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
+import { FailurePointTooltip } from "../../components/platform/FailurePointTooltip.jsx";
+import { buildFailurePointFromAlgoAttentionItem } from "../../features/platform/failurePointModel.js";
 
 const SEVERITY_GLYPH = {
   critical: "⚠",
@@ -21,6 +23,30 @@ const severityColor = (severity) => {
   if (severity === "critical") return CSS_COLOR.red;
   if (severity === "warning") return CSS_COLOR.amber;
   return CSS_COLOR.cyan;
+};
+
+const cleanAttentionText = (value) => String(value || "").trim();
+
+const formatAttentionStage = (value) =>
+  cleanAttentionText(value)
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const attentionInlineText = (item) => {
+  const symbol = cleanAttentionText(item?.symbol);
+  const stage = formatAttentionStage(item?.stage || item?.kindLabel);
+  const detail = cleanAttentionText(
+    item?.detail || item?.summary || item?.description || item?.action,
+  );
+  const title = cleanAttentionText(item?.title);
+  const reason = [stage && stage !== "Attention" ? stage : "", detail]
+    .filter(Boolean)
+    .join(" - ");
+  if (symbol) {
+    return reason ? `${symbol} - ${reason}` : symbol;
+  }
+  return reason || title || "Attention";
 };
 
 export const OperationsAttentionStrip = ({
@@ -80,11 +106,10 @@ export const OperationsAttentionStrip = ({
         visible.map((item) => {
           const tone = severityColor(item.severity);
           const glyph = SEVERITY_GLYPH[item.severity] || "•";
-          const symbol = item.symbol ? `${item.symbol} ` : "";
-          const detail = item.detail || item.description || item.title || "";
-          return (
+          const inlineText = attentionInlineText(item);
+          const failurePoint = buildFailurePointFromAlgoAttentionItem(item);
+          const itemNode = (
             <span
-              key={`${item.id || item.title || symbol}${detail}`}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -105,10 +130,20 @@ export const OperationsAttentionStrip = ({
                   maxWidth: embedded ? "100%" : "320px",
                 }}
               >
-                {symbol}
-                {detail}
+                {inlineText}
               </span>
             </span>
+          );
+          return (
+            <FailurePointTooltip
+              key={`${item.id || item.title || inlineText}`}
+              point={failurePoint}
+              side="top"
+              align="start"
+              compact
+            >
+              {itemNode}
+            </FailurePointTooltip>
           );
         })
       )}

@@ -1,4 +1,6 @@
 import { CSS_COLOR, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
+import { FailurePointTooltip } from "../../components/platform/FailurePointTooltip.jsx";
+import { buildFailurePointFromAlgoAttentionItem } from "../../features/platform/failurePointModel.js";
 
 const severityWeight = (severity) => {
   if (severity === "critical") return 0;
@@ -51,9 +53,9 @@ export const AttentionList = ({ items, emptyMessage }) => {
     >
       {ranked.map((item, index) => {
         const tone = severityColor(item?.severity);
-        return (
+        const failurePoint = buildFailurePointFromAlgoAttentionItem(item);
+        const row = (
           <div
-            key={item?.id || `${item?.kind || "item"}-${index}`}
             style={{
               display: "grid",
               gridTemplateColumns: `${dim(14)}px minmax(0, 1fr)`,
@@ -126,6 +128,17 @@ export const AttentionList = ({ items, emptyMessage }) => {
               ) : null}
             </div>
           </div>
+        );
+        return (
+          <FailurePointTooltip
+            key={item?.id || `${item?.kind || "item"}-${index}`}
+            point={failurePoint}
+            side="left"
+            align="start"
+            compact
+          >
+            {row}
+          </FailurePointTooltip>
         );
       })}
     </div>

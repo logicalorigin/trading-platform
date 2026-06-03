@@ -27,6 +27,7 @@ import {
 } from "../../lib/uiTokens.jsx";
 import { formatEnumLabel, formatRelativeTimeShort } from "../../lib/formatters";
 import { SectionHeader } from "../../components/ui/SectionHeader.jsx";
+import { FailurePointTooltip } from "../../components/platform/FailurePointTooltip.jsx";
 import { OperationsAttentionStrip } from "./OperationsAttentionStrip";
 import { resolveOperationsStatus } from "./OperationsStatusOrb";
 import { OperationsTransitionsStrip } from "./OperationsTransitionsStrip";
@@ -51,6 +52,7 @@ import {
   canonicalizeStreamState,
   streamStateTokenVar,
 } from "../../features/platform/streamSemantics";
+import { buildAlgoStatusFailurePoint } from "../../features/platform/failurePointModel.js";
 
 const LazyOperationsPositionsTable = lazyWithRetry(
   () => import("./OperationsPositionsTable").then((module) => ({
@@ -716,6 +718,20 @@ export const AlgoLivePage = ({
     : scanMutationPending
       ? scanButtonLabel
       : "Scan now";
+  const operationsStatus = resolveOperationsStatus({
+    gatewayReady,
+    scanOn: Boolean(focusedDeployment?.enabled),
+    deploymentEnabled: Boolean(focusedDeployment?.enabled),
+    attentionSeverity,
+  });
+  const algoHeaderFailurePoint = buildAlgoStatusFailurePoint({
+    status: operationsStatus,
+    gatewayReady,
+    scanOn: Boolean(focusedDeployment?.enabled),
+    deploymentEnabled: Boolean(focusedDeployment?.enabled),
+    attentionItems: attentionStream,
+    cockpitTradePath,
+  });
   const headerScanWave = resolveHeaderScanWave({
     scanRunning: scanMutationPending,
     refreshPending,
@@ -958,30 +974,41 @@ export const AlgoLivePage = ({
                 >
                   Pyrus Signal-Options
                 </span>
-                <span
-                  role="status"
-                  aria-label={headerScanWave.label}
-                  data-testid="algo-operations-header-wave-badge"
-                  style={{
-                    ...headerChipStyle({
-                      color: headerScanWave.color,
-                      active: headerScanWave.active,
-                    }),
-                    gap: sp(4),
-                    padding: sp("2px 7px 2px 5px"),
-                  }}
+                <FailurePointTooltip
+                  point={algoHeaderFailurePoint}
+                  disabled={algoHeaderFailurePoint?.severity === "info"}
+                  side="bottom"
+                  align="start"
                 >
-                  <IbkrStatusWave
-                    status={headerScanWave.status}
-                    wave={headerScanWave.wave}
-                    color={headerScanWave.color}
-                    width={algoIsPhone ? 22 : 24}
-                    height={12}
-                    decorative
-                    dataTestId="algo-operations-header-wave"
-                  />
-                  <span>{headerScanWave.badgeLabel}</span>
-                </span>
+                  <span
+                    role="status"
+                    aria-label={headerScanWave.label}
+                    data-testid="algo-operations-header-wave-badge"
+                    style={{
+                      ...headerChipStyle({
+                        color: headerScanWave.color,
+                        active: headerScanWave.active,
+                      }),
+                      gap: sp(4),
+                      padding: sp("2px 7px 2px 5px"),
+                      cursor:
+                        algoHeaderFailurePoint?.severity === "info"
+                          ? "default"
+                          : "help",
+                    }}
+                  >
+                    <IbkrStatusWave
+                      status={headerScanWave.status}
+                      wave={headerScanWave.wave}
+                      color={headerScanWave.color}
+                      width={algoIsPhone ? 22 : 24}
+                      height={12}
+                      decorative
+                      dataTestId="algo-operations-header-wave"
+                    />
+                    <span>{headerScanWave.badgeLabel}</span>
+                  </span>
+                </FailurePointTooltip>
                 {deployments.length ? (
                   <select
                     data-testid="algo-operations-deployment-select"

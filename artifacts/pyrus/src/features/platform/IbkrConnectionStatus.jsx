@@ -16,6 +16,8 @@ import {
   streamStateTokenVar,
 } from "./streamSemantics";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { FailurePointContent } from "../../components/platform/FailurePointTooltip.jsx";
+import { buildIbkrConnectionFailurePoint } from "./failurePointModel.js";
 
 const EMPTY_ACCOUNTS = [];
 
@@ -1332,13 +1334,20 @@ export const IbkrConnectionLane = ({
 }) => {
   const tone = getIbkrConnectionTone(connection);
   const health = resolveIbkrGatewayHealth({ connection });
+  const proof = resolveConnectionProof(connection);
+  const failurePoint = buildIbkrConnectionFailurePoint({
+    label,
+    connection,
+    proof,
+    tone,
+  });
   const showReconnectAction = Boolean(
     onReconnect && shouldShowIbkrReconnectAction(health),
   );
   const Icon = tone.Icon;
 
   return (
-    <AppTooltip content={buildIbkrGatewayTitle({ label, connection, tone })}><div
+    <AppTooltip content={<FailurePointContent point={failurePoint} compact />}><div
       style={{
         display: "inline-flex",
         alignItems: "center",
