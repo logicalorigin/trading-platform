@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertControlPlaneCleanupAllowed,
   parseScribeArtifactDocuments,
   selectScribeArtifactCleanup,
 } from "./replit-scribe-artifacts";
@@ -65,5 +66,41 @@ test("scribe artifact cleanup keeps newest live PYRUS iframe and selects stale l
       ["shape:artifact:legacy", "stale-live-artifact"],
       ["shape:artifact:pyrus-old", "duplicate-primary-artifact"],
     ],
+  );
+});
+
+test("scribe artifact cleanup requires explicit control-plane maintenance approval", () => {
+  assert.doesNotThrow(() =>
+    assertControlPlaneCleanupAllowed({
+      backupAndClean: false,
+      confirmControlPlaneCleanup: false,
+      env: {},
+    }),
+  );
+
+  assert.throws(
+    () =>
+      assertControlPlaneCleanupAllowed({
+        backupAndClean: true,
+        confirmControlPlaneCleanup: false,
+        env: { PYRUS_ALLOW_REPLIT_CONTROL_PLANE_CLEANUP: "1" },
+      }),
+    /explicit startup maintenance window/,
+  );
+  assert.throws(
+    () =>
+      assertControlPlaneCleanupAllowed({
+        backupAndClean: true,
+        confirmControlPlaneCleanup: true,
+        env: {},
+      }),
+    /PYRUS_ALLOW_REPLIT_CONTROL_PLANE_CLEANUP=1/,
+  );
+  assert.doesNotThrow(() =>
+    assertControlPlaneCleanupAllowed({
+      backupAndClean: true,
+      confirmControlPlaneCleanup: true,
+      env: { PYRUS_ALLOW_REPLIT_CONTROL_PLANE_CLEANUP: "1" },
+    }),
   );
 });

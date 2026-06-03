@@ -88,9 +88,11 @@ directory to define separate Replit app runners.
 - `replit:scribe:artifacts` audits Replit Scribe artifact iframe state from
   `.local/state/scribe/scribe.db`. The default run is read-only and reports live
   artifact iframes plus duplicate/stale cleanup candidates. Use
-  `pnpm run replit:scribe:artifacts -- --backup-and-clean` only for an
-  intentional local Scribe cleanup; it copies the DB to a timestamped backup
-  before deleting selected artifact rows and writing tombstones.
+  `PYRUS_ALLOW_REPLIT_CONTROL_PLANE_CLEANUP=1 pnpm run replit:scribe:artifacts -- --backup-and-clean --confirm-control-plane-cleanup`
+  only for an explicit control-plane maintenance window; it copies the DB to a
+  timestamped backup before deleting selected artifact rows and writing
+  tombstones. The extra env var and confirmation flag exist because artifact
+  cleanup may trigger Replit artifact/env reconciliation.
 
 ## IBKR Utilities
 

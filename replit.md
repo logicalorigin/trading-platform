@@ -285,8 +285,10 @@ Replit workspace restoration can leave multiple live artifact iframe records in
 Scribe state. Audit them with `pnpm run replit:scribe:artifacts`; the default
 mode is read-only. If duplicate PYRUS or stale non-PYRUS live artifact cards are
 not removable through the UI, run
-`pnpm run replit:scribe:artifacts -- --backup-and-clean` for a backup-first
-local cleanup of only the audited artifact rows.
+`PYRUS_ALLOW_REPLIT_CONTROL_PLANE_CLEANUP=1 pnpm run replit:scribe:artifacts -- --backup-and-clean --confirm-control-plane-cleanup`
+only inside an explicit startup maintenance window. That cleanup is backup-first
+and local to audited Scribe artifact rows, but it still changes artifact state
+and must be treated as Replit control-plane maintenance.
 
 Inside Replit, Playwright must attach to the existing app unless explicitly
 overridden. `artifacts/pyrus/playwright.config.ts` disables its `webServer`
@@ -427,17 +429,35 @@ service restart left a node behind" case) still get reaped normally.
 To intentionally restart the live API or web service, use the workflow
 restart action, not `pnpm dev` from a shell.
 
-## Agent guardrail: files that trigger a full workspace reload
+## Agent guardrail: files and control-plane actions that trigger app bounces
 
 Replit's workspace daemon watches a small set of platform-config files. Any save to one of them re-evaluates modules, ports, env, and the artifact stack — which kills open shells/terminals, re-mounts the IDE preview, and SIGKILLs the workspace-local Postgres process (visible in `.local/postgres/log/pg.log` as repeated "database system was not properly shut down; automatic recovery in progress" pairs minutes apart). PG WAL recovery on next start is fine and fast, but the shell/IDE disconnect destroys the user's working state.
 
+The `2026-06-03T18:32Z-18:50Z` restart investigation also found a host-side
+control-plane failure mode: repeated set/delete Replit env vars or
+create/update/remove Replit artifacts rewrote `/run/replit/env/latest.json` and
+`/run/replit/toolchain.json`, then caused same-container supervisor bounces of
+the PYRUS API/Vite stack. Do not treat those as normal setup or cleanup work.
+
 **Do not edit these from any agent (Codex, main agent, task agent) during routine work or test cycles unless the user explicitly asked for a config change:**
 
-- `.replit` — modules, ports, `[userenv.*]`, `[agent]`, `[deployment]`. Adding/removing an env var here reloads the workspace; use `setEnvVars` / `deleteEnvVars` instead when possible because those persist without a reload. Development database configuration should use a single `DATABASE_URL` value.
-- `artifacts/*/.replit-artifact/artifact.toml` — the artifact controller reconciles on save, which in `PNPM_WORKSPACE` stack mode (`[agent] stack = "PNPM_WORKSPACE"` in `.replit`) cascades into a full app re-bring-up. Use the artifact skills to update artifact metadata; never hand-edit these.
+- `.replit` — modules, ports, `[userenv.*]`, `[agent]`, `[deployment]`. Adding/removing an env var here reloads the workspace. Development database configuration should use a single `DATABASE_URL` value.
+- Replit control-plane env writes — set/delete Replit env vars only inside an explicit startup maintenance window. They can rewrite env/toolchain runtime files and re-bring-up the PNPM_WORKSPACE artifact stack.
+- Replit control-plane artifact writes — create/update/remove Replit artifacts only inside an explicit startup maintenance window. The artifact controller reconciles on save/change, which in `PNPM_WORKSPACE` stack mode (`[agent] stack = "PNPM_WORKSPACE"` in `.replit`) cascades into a full app re-bring-up.
+- `artifacts/*/.replit-artifact/artifact.toml` — the artifact controller reconciles on save, which in `PNPM_WORKSPACE` stack mode cascades into a full app re-bring-up. Never hand-edit these outside a startup maintenance window.
 - `replit.nix` — same daemon, same reload.
 
-Evidence (audited 2026-05-11): of the last three commits touching `.replit`, two were a paired add+revert of a `run = [...]` line (`3ee9483` → `eeeb0f2`) that did not need to land at all, and one (`af93d82`) added a single env var that should have used `setEnvVars`. Each of those saves caused one full workspace reload.
+Evidence (audited 2026-05-11): of the last three commits touching `.replit`,
+two were a paired add+revert of a `run = [...]` line (`3ee9483` -> `eeeb0f2`)
+that did not need to land at all, and one (`af93d82`) added a single env var
+that should have been scheduled as startup maintenance rather than committed
+during routine work. Each of those saves caused one full workspace reload.
+
+Evidence (audited 2026-06-03): repeated env/toolchain rewrites at `18:32:54`,
+`18:34:31`, `18:35:11`, `18:39:16`, `18:48:09`, and `18:50:21` were followed
+within about one second by same-container supervisor replacement. No watched
+startup file was edited in that window, which points to host-side env/artifact
+control-plane reconciliation rather than code or config-file saves.
 
 **Test pattern that does NOT cause a reload:**
 

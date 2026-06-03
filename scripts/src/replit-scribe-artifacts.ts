@@ -35,6 +35,9 @@ const repoRoot = path.resolve(
 
 const DEFAULT_DB_PATH = path.join(repoRoot, ".local/state/scribe/scribe.db");
 const DEFAULT_PRIMARY_ARTIFACT_ID = "artifacts/pyrus";
+export const CONTROL_PLANE_CLEANUP_ENV =
+  "PYRUS_ALLOW_REPLIT_CONTROL_PLANE_CLEANUP";
+const CONTROL_PLANE_CLEANUP_CONFIRM_FLAG = "--confirm-control-plane-cleanup";
 
 const parseState = (state: string | Buffer) => {
   const text = Buffer.isBuffer(state) ? state.toString("utf8") : state;
@@ -240,6 +243,7 @@ const parseArgs = (argv: string[]) => {
     dbPath: DEFAULT_DB_PATH,
     primaryArtifactId: DEFAULT_PRIMARY_ARTIFACT_ID,
     backupAndClean: false,
+    confirmControlPlaneCleanup: false,
     json: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -252,11 +256,13 @@ const parseArgs = (argv: string[]) => {
       options.primaryArtifactId = argv[++index] || DEFAULT_PRIMARY_ARTIFACT_ID;
     } else if (arg === "--backup-and-clean") {
       options.backupAndClean = true;
+    } else if (arg === CONTROL_PLANE_CLEANUP_CONFIRM_FLAG) {
+      options.confirmControlPlaneCleanup = true;
     } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--help" || arg === "-h") {
       console.log(
-        "Usage: pnpm --filter @workspace/scripts run replit:scribe:artifacts -- [--db PATH] [--json] [--backup-and-clean]",
+        `Usage: pnpm --filter @workspace/scripts run replit:scribe:artifacts -- [--db PATH] [--json] [--backup-and-clean ${CONTROL_PLANE_CLEANUP_CONFIRM_FLAG}]`,
       );
       process.exit(0);
     } else {
@@ -266,8 +272,27 @@ const parseArgs = (argv: string[]) => {
   return options;
 };
 
+export function assertControlPlaneCleanupAllowed(options: {
+  backupAndClean: boolean;
+  confirmControlPlaneCleanup: boolean;
+  env?: NodeJS.ProcessEnv;
+}) {
+  if (!options.backupAndClean) return;
+  const env = options.env ?? process.env;
+  const envAllowed = env[CONTROL_PLANE_CLEANUP_ENV] === "1";
+  if (options.confirmControlPlaneCleanup && envAllowed) return;
+
+  throw new Error(
+    [
+      "Refusing Scribe artifact cleanup: deleting artifact rows may trigger Replit artifact/env reconciliation and bounce the PYRUS app supervisor.",
+      `Run read-only audit first, then set ${CONTROL_PLANE_CLEANUP_ENV}=1 and pass ${CONTROL_PLANE_CLEANUP_CONFIRM_FLAG} only during an explicit startup maintenance window.`,
+    ].join(" "),
+  );
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
+  assertControlPlaneCleanupAllowed(options);
   if (!existsSync(options.dbPath)) {
     throw new Error(`Scribe DB not found: ${options.dbPath}`);
   }

@@ -260,6 +260,16 @@ check(
   "replit.md must document the dev:replit artifact runner, Replit-owned restart marker, bounded duplicate-start no-op policy, controlled handoff restart path, and duplicate-check-only smoke-test marker.",
 );
 check(
+  replitDocs.includes("set/delete Replit env vars") &&
+    replitDocs.includes("create/update/remove Replit artifacts") &&
+    replitDocs.includes("env/toolchain") &&
+    replitDocs.includes("same-container supervisor") &&
+    !replitDocs.includes(
+      "use `setEnvVars` / `deleteEnvVars` instead when possible because those persist without a reload",
+    ),
+  "replit.md must document that host-side Replit env/artifact control-plane actions can rewrite env/toolchain state and bounce the same-container supervisor.",
+);
+check(
   replitDocs.includes("scripts/run-validation-command.mjs") &&
     replitDocs.includes("/tmp/pyrus/pyrus-dev-supervisor-8080.lock") &&
     replitDocs.includes(".pyrus-runtime/validation/commands.jsonl") &&
@@ -282,6 +292,13 @@ check(
     scriptsReadme.includes("PYRUS_ALLOW_HOT_VALIDATION=1") &&
     scriptsReadme.includes(".pyrus-runtime/validation/commands.jsonl"),
   "scripts/README.md must document the Replit-owned restart marker, bounded duplicate-start no-op policy, controlled handoff restart path, explicit force-restart marker, duplicate-check-only smoke-test marker, and guarded validation ledger.",
+);
+check(
+  scriptsReadme.includes("PYRUS_ALLOW_REPLIT_CONTROL_PLANE_CLEANUP=1") &&
+    scriptsReadme.includes("--confirm-control-plane-cleanup") &&
+    scriptsReadme.includes("control-plane maintenance window") &&
+    scriptsReadme.includes("artifact/env reconciliation"),
+  "scripts/README.md must document the explicit control-plane maintenance opt-in required for Scribe artifact cleanup.",
 );
 
 const pyrusRunner = read("artifacts/pyrus/scripts/runDevApp.mjs");
@@ -347,6 +364,23 @@ check(
   rootScripts["replit:scribe:artifacts"] ===
     "pnpm --filter @workspace/scripts run replit:scribe:artifacts",
   "package.json must keep the guarded Scribe artifact audit/cleanup script entry.",
+);
+
+const agentsDoc = read("AGENTS.md");
+check(
+  agentsDoc.includes("set/delete Replit environment variables") &&
+    agentsDoc.includes("create/update/remove Replit artifacts") &&
+    agentsDoc.includes("control-plane actions") &&
+    agentsDoc.includes("explicit startup maintenance window"),
+  "AGENTS.md must forbid Replit env/artifact control-plane actions during routine work and require an explicit startup maintenance window.",
+);
+
+const replitScribeArtifacts = read("scripts/src/replit-scribe-artifacts.ts");
+check(
+  replitScribeArtifacts.includes("PYRUS_ALLOW_REPLIT_CONTROL_PLANE_CLEANUP") &&
+    replitScribeArtifacts.includes("--confirm-control-plane-cleanup") &&
+    replitScribeArtifacts.includes("may trigger Replit artifact/env reconciliation"),
+  "replit-scribe-artifacts.ts must require explicit control-plane maintenance opt-in before backup-and-clean cleanup.",
 );
 
 const configProtector = read("scripts/protect-replit-config.mjs");
