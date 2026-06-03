@@ -22,6 +22,17 @@ const quoteStreamsSource = readFileSync(
   "utf8",
 );
 
+const currentNewYorkDateKey = () => {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const part = (type) => parts.find((item) => item.type === type)?.value;
+  return `${part("year")}-${part("month")}-${part("day")}`;
+};
+
 test("positions panel does not key nested order rows directly by broker order id", () => {
   assert.match(source, /positionOpenOrderKey/);
   assert.match(source, /positionSourceAttributionKey/);
@@ -217,7 +228,7 @@ test("position table defaults keep quote, greeks, sparkline, and signal context 
   assert.match(source, /const denseCellPadding/);
   assert.match(source, /sp\("1px 2px"\)/);
   assert.match(source, /textAlign: denseVisualAlign\(column\.align\)/);
-  assert.match(source, /textAlign: align === "right" \? "center" : align/);
+  assert.match(source, /textAlign: denseVisualAlign\(align\)/);
   assert.doesNotMatch(source, /sp\("2px 3px 2px 2px"\)/);
   assert.doesNotMatch(source, /sp\("2px 3px"\)/);
   assert.match(source, /const denseTableColumnStyle/);
@@ -336,7 +347,7 @@ test("positions automation metrics distinguish stop distance and breached stops"
 
 test("positions panel overlays live option quotes onto displayed rows and totals", () => {
   assert.match(quoteStreamsSource, /useIbkrOptionQuoteStream/);
-  assert.match(quoteStreamsSource, /intent: "visible-live"/);
+  assert.match(quoteStreamsSource, /intent: "account-monitor-live"/);
   assert.match(source, /useStoredOptionQuoteSnapshotVersion/);
   assert.match(source, /getStoredOptionQuoteSnapshot/);
   assert.match(source, /applyLiveOptionQuoteToRow/);
@@ -392,7 +403,7 @@ test("positions panel renders compact underlying sparklines inside position rows
   assert.match(source, /import \{ Button \} from "\.\.\/\.\.\/components\/ui\/Button\.jsx"/);
   assert.match(source, /useRuntimeTickerSnapshots\(positionSparklineSymbols\)/);
   assert.match(source, /const positionUnderlyingSymbols = useMemo/);
-  assert.match(source, /useRegisterPositionMarketDataSymbols\(\s*`positions:\$\{surfaceId\}`,\s*positionUnderlyingSymbols,\s*\)/);
+  assert.match(source, /useRegisterPositionMarketDataSymbols\(\s*`positions:\$\{surfaceId\}`,\s*positionUnderlyingSymbols,\s*liveOptionQuotesEnabled,\s*\)/);
   assert.match(source, /useRuntimeTickerSnapshots\(positionUnderlyingSymbols\)/);
   assert.match(source, /denseColumnSortValue\(a, sort\.id, underlyingSnapshotsBySymbol\)/);
   assert.match(source, /const resolvePositionSparklineSymbol/);
@@ -572,7 +583,7 @@ test("positions panel live quote overlay preserves zero option bid with usable a
 });
 
 test("positions panel live quote overlay uses entry basis for same-day options", () => {
-  const openedAt = new Date().toISOString().slice(0, 10);
+  const openedAt = currentNewYorkDateKey();
   const patched =
     __positionsPanelInternalsForTests.applyLiveOptionQuoteToRow(
       {

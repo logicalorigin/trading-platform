@@ -77,9 +77,19 @@ import {
   TextField,
   ThresholdHistogram,
 } from "../../components/platform/primitives.jsx";
+import {
+  SortableColumnHeaderCell,
+  TableHeaderDndContext,
+} from "../../components/platform/InteractiveColumnHeader.jsx";
+import {
+  normalizeColumnOrder,
+  orderColumnsById,
+  reorderColumnOrder,
+} from "../../components/platform/tableColumnInteractions.js";
 import { Button } from "../../components/ui/Button.jsx";
 import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
 import { LifecycleTimeline, TradePriceChart } from "./tradingAnalysis/TradeForensics";
+import { _initialState, persistState } from "../../lib/workspaceState";
 
 const VIEW_OPTIONS = [
   { value: "patterns", label: "Patterns" },
@@ -119,16 +129,21 @@ const SIDE_OPTIONS = [
 ];
 
 const TABLE_COLUMNS = [
-  { key: "symbol", label: "Symbol" },
-  { key: "side", label: "Side" },
-  { key: "source", label: "Source" },
-  { key: "entryExit", label: "Entry -> Exit" },
-  { key: "quantity", label: "Qty" },
-  { key: "hold", label: "Hold" },
-  { key: "commissions", label: "Comms" },
-  { key: "realizedPnl", label: "Net P&L" },
-  { key: "percent", label: "%" },
+  { key: "symbol", label: "Symbol", track: "minmax(130px, 1.2fr)" },
+  { key: "side", label: "Side", track: "minmax(56px, 0.55fr)" },
+  { key: "source", label: "Source", track: "minmax(118px, 1fr)" },
+  { key: "entryExit", label: "Entry -> Exit", track: "minmax(150px, 1.15fr)" },
+  { key: "quantity", label: "Qty", track: "minmax(58px, 0.5fr)" },
+  { key: "hold", label: "Hold", track: "minmax(60px, 0.55fr)" },
+  { key: "commissions", label: "Comms", track: "minmax(78px, 0.7fr)" },
+  { key: "realizedPnl", label: "Net P&L", track: "minmax(90px, 0.8fr)" },
+  { key: "percent", label: "%", track: "minmax(58px, 0.45fr)" },
 ];
+const TABLE_COLUMN_IDS = TABLE_COLUMNS.map((column) => column.key);
+const TRADE_TABLE_ACTION_TRACK = "26px";
+
+const tradeTableGridTemplate = (columns) =>
+  [...columns.map((column) => column.track), TRADE_TABLE_ACTION_TRACK].join(" ");
 
 const PAGE_SIZE = 25;
 const SYMBOL_PAGE_SIZE = 8;
@@ -1148,6 +1163,7 @@ const formatHold = (minutes) =>
 
 const TradeRow = ({
   trade,
+  columns = TABLE_COLUMNS,
   expanded,
   onToggle,
   currency,
@@ -1159,7 +1175,62 @@ const TradeRow = ({
   const tradeId = getAccountTradeId(trade);
   const rowGrid = isPhone
     ? "minmax(0, 1fr) minmax(70px, auto) 26px"
-    : "minmax(130px, 1.2fr) minmax(56px, 0.55fr) minmax(118px, 1fr) minmax(150px, 1.15fr) minmax(58px, 0.5fr) minmax(60px, 0.55fr) minmax(78px, 0.7fr) minmax(90px, 0.8fr) minmax(58px, 0.45fr) 26px";
+    : tradeTableGridTemplate(columns);
+  const renderDesktopCell = (columnKey) => {
+    if (columnKey === "symbol") {
+      return (
+        <div style={{ minWidth: 0 }}>
+          <MarketIdentityInline
+            item={{ ticker: trade.symbol, market: marketForAssetClass(trade.assetClass) }}
+            size={14}
+            showMark={false}
+            showChips={!isPhone}
+            style={{ maxWidth: dim(150) }}
+          />
+        </div>
+      );
+    }
+    if (columnKey === "side") return <div>{trade.side || "—"}</div>;
+    if (columnKey === "source") {
+      return (
+        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {trade.strategyLabel || trade.sourceType || trade.source || "—"}
+        </div>
+      );
+    }
+    if (columnKey === "entryExit") {
+      return (
+        <div style={{ color: CSS_COLOR.textDim }}>
+          {formatAppDate(trade.openDate)} {"->"} {formatAppDate(trade.closeDate)}
+        </div>
+      );
+    }
+    if (columnKey === "quantity") {
+      return <div style={{ fontFamily: T.data }}>{formatNumber(trade.quantity, 2)}</div>;
+    }
+    if (columnKey === "hold") {
+      return <div style={{ fontFamily: T.data }}>{formatHold(trade.holdDurationMinutes)}</div>;
+    }
+    if (columnKey === "commissions") {
+      return (
+        <div style={{ fontFamily: T.data }}>
+          {formatAccountMoney(trade.commissions, currency, true, maskValues)}
+        </div>
+      );
+    }
+    if (columnKey === "percent") {
+      return (
+        <div style={{ fontFamily: T.data }}>
+          {formatAccountPercent(trade.realizedPnlPercent, 1, maskValues)}
+        </div>
+      );
+    }
+    return (
+      <div style={{ color: toneForValue(trade.realizedPnl), fontFamily: T.data }}>
+        {formatAccountMoney(trade.realizedPnl, trade.currency || currency, true, maskValues)}
+      </div>
+    );
+  };
   const row = (
     <div
       style={{
@@ -1175,45 +1246,30 @@ const TradeRow = ({
         fontSize: textSize("caption"),
       }}
     >
-      <div style={{ minWidth: 0 }}>
-        <MarketIdentityInline
-          item={{ ticker: trade.symbol, market: marketForAssetClass(trade.assetClass) }}
-          size={14}
-          showMark={false}
-          showChips={!isPhone}
-          style={{ maxWidth: dim(isPhone ? 140 : 150) }}
-        />
-        {isPhone ? (
+      {isPhone ? (
+        <div style={{ minWidth: 0 }}>
+          <MarketIdentityInline
+            item={{ ticker: trade.symbol, market: marketForAssetClass(trade.assetClass) }}
+            size={14}
+            showMark={false}
+            showChips={false}
+            style={{ maxWidth: dim(140) }}
+          />
           <div style={{ color: CSS_COLOR.textDim, fontSize: textSize("label") }}>
             {trade.side || "—"} · {formatHold(trade.holdDurationMinutes)}
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
       {isPhone ? (
         <div style={{ color: toneForValue(trade.realizedPnl), fontFamily: T.data, textAlign: "right" }}>
           {formatAccountMoney(trade.realizedPnl, trade.currency || currency, true, maskValues)}
         </div>
       ) : (
-        <>
-          <div>{trade.side || "—"}</div>
-          <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {trade.strategyLabel || trade.sourceType || trade.source || "—"}
+        columns.map((column) => (
+          <div key={column.key} style={{ minWidth: 0 }}>
+            {renderDesktopCell(column.key)}
           </div>
-          <div style={{ color: CSS_COLOR.textDim }}>
-            {formatAppDate(trade.openDate)} {"->"} {formatAppDate(trade.closeDate)}
-          </div>
-          <div style={{ fontFamily: T.data }}>{formatNumber(trade.quantity, 2)}</div>
-          <div style={{ fontFamily: T.data }}>{formatHold(trade.holdDurationMinutes)}</div>
-          <div style={{ fontFamily: T.data }}>
-            {formatAccountMoney(trade.commissions, currency, true, maskValues)}
-          </div>
-          <div style={{ color: toneForValue(trade.realizedPnl), fontFamily: T.data }}>
-            {formatAccountMoney(trade.realizedPnl, trade.currency || currency, true, maskValues)}
-          </div>
-          <div style={{ fontFamily: T.data }}>
-            {formatAccountPercent(trade.realizedPnlPercent, 1, maskValues)}
-          </div>
-        </>
+        ))
       )}
       <Icon as={expanded ? ChevronDown : ChevronRight} context="inline" aria-hidden="true" />
     </div>
@@ -1445,7 +1501,17 @@ const TradesView = ({
   isPhone,
 }) => {
   const [sort, setSort] = useState({ key: "entryExit", direction: "desc" });
+  const [columnOrder, setColumnOrder] = useState(() =>
+    normalizeColumnOrder(
+      _initialState.tradingAnalysisTradeColumnOrder,
+      TABLE_COLUMN_IDS,
+    ),
+  );
   const [page, setPage] = useState(0);
+  const orderedColumns = useMemo(
+    () => orderColumnsById(TABLE_COLUMNS, columnOrder, (column) => column.key),
+    [columnOrder],
+  );
   const sortedRows = useMemo(() => sortTrades(trades, sort), [sort, trades]);
   const pageCount = Math.max(1, Math.ceil(sortedRows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
@@ -1458,6 +1524,28 @@ const TradesView = ({
   useEffect(() => {
     setPage(0);
   }, [trades]);
+  useEffect(() => {
+    persistState({
+      tradingAnalysisTradeColumnOrder: normalizeColumnOrder(
+        columnOrder,
+        TABLE_COLUMN_IDS,
+      ),
+    });
+  }, [columnOrder]);
+
+  const reorderTradeColumn = (activeColumnId, overColumnId) => {
+    setColumnOrder((current) =>
+      reorderColumnOrder(
+        current,
+        activeColumnId,
+        overColumnId,
+        {
+          fallbackColumnIds: TABLE_COLUMN_IDS,
+          validColumnIds: TABLE_COLUMN_IDS,
+        },
+      ),
+    );
+  };
 
   const toggleSort = (key) => {
     setSort((current) =>
@@ -1504,7 +1592,7 @@ const TradesView = ({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(130px, 1.2fr) minmax(56px, 0.55fr) minmax(118px, 1fr) minmax(150px, 1.15fr) minmax(58px, 0.5fr) minmax(60px, 0.55fr) minmax(78px, 0.7fr) minmax(90px, 0.8fr) minmax(58px, 0.45fr) 26px",
+            gridTemplateColumns: tradeTableGridTemplate(orderedColumns),
             gap: sp(4),
             padding: sp("6px 10px"),
             position: "sticky",
@@ -1519,28 +1607,28 @@ const TradesView = ({
             letterSpacing: 0,
           }}
         >
-          {TABLE_COLUMNS.map((column) => (
-            <button
-              key={column.key}
-              type="button"
-              className="ra-interactive"
-              onClick={() => toggleSort(column.key)}
-              style={{
-                border: "none",
-                background: "transparent",
-                color: sort.key === column.key ? CSS_COLOR.text : CSS_COLOR.textDim,
-                textAlign: "left",
-                padding: 0,
-                cursor: "pointer",
-                font: "inherit",
-                textTransform: "inherit",
-                letterSpacing: 0,
-              }}
-            >
-              {column.label}
-              {sort.key === column.key ? (sort.direction === "asc" ? " ↑" : " ↓") : ""}
-            </button>
-          ))}
+          <TableHeaderDndContext
+            columnIds={orderedColumns.map((column) => column.key)}
+            onReorder={reorderTradeColumn}
+          >
+            {orderedColumns.map((column) => (
+              <SortableColumnHeaderCell
+                key={column.key}
+                as="div"
+                id={column.key}
+                active={sort.key === column.key}
+                label={column.label}
+                onSort={() => toggleSort(column.key)}
+                sortDirection={sort.key === column.key ? sort.direction : null}
+                sortable
+                sortTitle={`Sort by ${column.label}`}
+                style={{
+                  color: sort.key === column.key ? CSS_COLOR.text : CSS_COLOR.textDim,
+                  padding: 0,
+                }}
+              />
+            ))}
+          </TableHeaderDndContext>
           <span />
         </div>
       ) : null}
@@ -1552,6 +1640,7 @@ const TradesView = ({
             <TradeRow
               key={tradeId}
               trade={trade}
+              columns={orderedColumns}
               expanded={expanded}
               onToggle={() => onTradeSelect?.(expanded ? "" : tradeId)}
               currency={currency}

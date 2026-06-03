@@ -60,6 +60,15 @@ import {
   toneForValue,
 } from "./accountUtils";
 import { MicroSparkline } from "../../components/platform/primitives.jsx";
+import {
+  SortableColumnHeaderCell,
+  TableHeaderDndContext,
+} from "../../components/platform/InteractiveColumnHeader.jsx";
+import {
+  normalizeColumnOrder,
+  orderColumnsById,
+  reorderColumnOrder,
+} from "../../components/platform/tableColumnInteractions.js";
 import { Button } from "../../components/ui/Button.jsx";
 import { PaginationFooter, paginateRows } from "../../components/platform/TablePagination.jsx";
 import { getOpenPositionRows } from "../../features/account/accountPositionRows.js";
@@ -74,8 +83,10 @@ import {
   TRADE_MANAGEMENT_STATUS,
 } from "../../features/account/positionTradeManagement.js";
 import {
+  POSITION_TABLE_SURFACE_ALGO,
   POSITION_TABLE_SURFACE_ACCOUNT,
   getPositionTableColumns,
+  positionTableColumnIdsForSurface,
 } from "../../features/account/positionTableColumns.js";
 import { PositionRowActionMenu } from "../../features/account/PositionRowActionMenu.jsx";
 import { useRegisterPositionMarketDataSymbols } from "../../features/platform/positionMarketDataStore";
@@ -91,6 +102,7 @@ import {
 import { normalizeTickerSymbol } from "../../features/platform/tickerIdentity";
 import { buildPositionsAtDateInspectorState } from "./positionsAtDateInspectorModel.js";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { _initialState, persistState } from "../../lib/workspaceState";
 
 const ASSET_FILTERS = [
   { value: "all", label: "All" },
@@ -108,6 +120,12 @@ const SOURCE_FILTERS = [
 ];
 
 const POSITIONS_PAGE_SIZE = 50;
+const POSITION_LOCKED_COLUMN_IDS = ["symbol", "actions"];
+
+const positionColumnOrderStateKey = (surfaceId) =>
+  surfaceId === POSITION_TABLE_SURFACE_ALGO
+    ? "algoPositionColumnOrder"
+    : "accountPositionColumnOrder";
 
 const sourceTone = (sourceType) =>
   sourceType === "automation"
@@ -147,39 +165,6 @@ const positionSourceAttributionKey = (rowId, source, index) =>
     .map(compactKeyPart)
     .filter(Boolean)
     .join(":");
-
-const headerCellStyle = (active) => ({
-  ...tableCellStyle,
-  ...tableHeaderStyle,
-  color: active ? CSS_COLOR.accent : CSS_COLOR.textSec,
-});
-
-const SortButton = ({ id, label, sort, setSort, align = "right" }) => (
-  <button
-    type="button"
-    onClick={() =>
-      setSort((current) => {
-        if (current.id !== id) return { id, dir: "desc" };
-        if (current.dir === "desc") return { id, dir: "asc" };
-        return { id: null, dir: null };
-      })
-    }
-    style={{
-      border: "none",
-      background: "transparent",
-      color: "inherit",
-      font: "inherit",
-      cursor: "pointer",
-      textTransform: "inherit",
-      letterSpacing: "inherit",
-      width: "100%",
-      textAlign: align === "right" ? "center" : align,
-      padding: 0,
-    }}
-  >
-    {label} {sort.id === id ? (sort.dir === "desc" ? "▼" : "▲") : ""}
-  </button>
-);
 
 const lotColumns = ["Account", "Qty", "Avg Cost", "Market Value", "Unrealized"];
 
@@ -2976,10 +2961,23 @@ export const PositionsPanel = ({
   surfaceId = POSITION_TABLE_SURFACE_ACCOUNT,
 }) => {
   const [sort, setSort] = useState({ id: "exposure", dir: "desc" });
+  const [columnOrder, setColumnOrder] = useState(() =>
+    normalizeColumnOrder(
+      _initialState[positionColumnOrderStateKey(surfaceId)],
+      positionTableColumnIdsForSurface(surfaceId),
+    ),
+  );
   const [expandedRows, setExpandedRows] = useState(() => new Set());
   const [page, setPage] = useState(0);
   const [symbolSearch, setSymbolSearch] = useState("");
-  const visibleColumns = useMemo(() => getPositionTableColumns(surfaceId), [surfaceId]);
+  const defaultPositionColumnIds = useMemo(
+    () => positionTableColumnIdsForSurface(surfaceId),
+    [surfaceId],
+  );
+  const visibleColumns = useMemo(
+    () => orderColumnsById(getPositionTableColumns(surfaceId), columnOrder),
+    [columnOrder, surfaceId],
+  );
   const sourceFilteredRows = useMemo(
     () =>
       getOpenPositionRows(query.data?.positions || []).filter((row) =>
@@ -3065,6 +3063,32 @@ export const PositionsPanel = ({
       setPage(paginatedPositions.safePage);
     }
   }, [page, paginatedPositions.safePage]);
+  useEffect(() => {
+    persistState({
+      [positionColumnOrderStateKey(surfaceId)]: normalizeColumnOrder(
+        columnOrder,
+        defaultPositionColumnIds,
+      ),
+    });
+  }, [columnOrder, defaultPositionColumnIds, surfaceId]);
+
+  const reorderPositionColumn = useCallback(
+    (activeColumnId, overColumnId) => {
+      setColumnOrder((current) =>
+        reorderColumnOrder(
+          current,
+          activeColumnId,
+          overColumnId,
+          {
+            fallbackColumnIds: defaultPositionColumnIds,
+            lockedColumnIds: POSITION_LOCKED_COLUMN_IDS,
+            validColumnIds: defaultPositionColumnIds,
+          },
+        ),
+      );
+    },
+    [defaultPositionColumnIds],
+  );
 
   const handlePositionToggle = useCallback(
     (row) => {
@@ -3144,44 +3168,56 @@ export const PositionsPanel = ({
           className="ra-hide-scrollbar ra-dense-table-scroll"
           style={{ overflowX: "auto" }}
         >
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "separate",
-              borderSpacing: 0,
-              minWidth: denseTableMinWidth(visibleColumns),
-              tableLayout: "auto",
-            }}
+          <TableHeaderDndContext
+            columnIds={visibleColumns.map((column) => column.id)}
+            onReorder={reorderPositionColumn}
           >
-            <colgroup>
-              {visibleColumns.map((column) => (
-                <col key={column.id} style={denseTableColumnStyle(column)} />
-              ))}
-            </colgroup>
-            <thead>
-              <tr>
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "separate",
+                borderSpacing: 0,
+                minWidth: denseTableMinWidth(visibleColumns),
+                tableLayout: "auto",
+              }}
+            >
+              <colgroup>
                 {visibleColumns.map((column) => (
-                  <th
-                    key={column.id}
-                    title={column.title}
-                    style={denseHeaderCellStyle(column, sort.id === column.id)}
-                  >
-                    {column.sortable ? (
-                      <SortButton
-                        id={column.id}
-                        label={column.shortLabel || column.label}
-                        sort={sort}
-                        setSort={setSort}
-                        align={column.align}
-                      />
-                    ) : (
-                      column.shortLabel || column.label
-                    )}
-                  </th>
+                  <col key={column.id} style={denseTableColumnStyle(column)} />
                 ))}
-              </tr>
-            </thead>
-            <tbody>
+              </colgroup>
+              <thead>
+                <tr>
+                  {visibleColumns.map((column) => (
+                    <SortableColumnHeaderCell
+                      key={column.id}
+                      as="th"
+                      id={column.id}
+                      scope="col"
+                      active={sort.id === column.id}
+                      align={denseVisualAlign(column.align)}
+                      label={column.shortLabel || column.label}
+                      onSort={
+                        column.sortable
+                          ? () =>
+                              setSort((current) => {
+                                if (current.id !== column.id) return { id: column.id, dir: "desc" };
+                                if (current.dir === "desc") return { id: column.id, dir: "asc" };
+                                return { id: null, dir: null };
+                              })
+                          : undefined
+                      }
+                      reorderable={!POSITION_LOCKED_COLUMN_IDS.includes(column.id)}
+                      sortDirection={sort.id === column.id ? sort.dir : null}
+                      sortable={column.sortable}
+                      sortTitle={`Sort by ${column.label}`}
+                      style={denseHeaderCellStyle(column, sort.id === column.id)}
+                      title={column.title}
+                    />
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
               {pageRows.map((row, rowIndex) => {
                 const expanded = expandedRows.has(row.id) && hasExpandablePositionDetails(row);
                 const management = tradeManagementForRow(row);
@@ -3486,6 +3522,7 @@ export const PositionsPanel = ({
               />
             </tfoot>
           </table>
+          </TableHeaderDndContext>
         </div>
 	      )}
       <PaginationFooter
