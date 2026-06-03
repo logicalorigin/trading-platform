@@ -21,6 +21,14 @@ test("account position quote hydration opts out of Massive fallback", () => {
   assert.ok(optionBody);
   assert.ok(underlyingBody);
   assert.match(equityBody, /allowMassiveFallback: false/);
+  assert.match(equityBody, /admitMarketDataLeases/);
+  assert.match(equityBody, /const admissionOwner = `account-position-equity-quotes:\$\{accountKey\}`/);
+  assert.match(equityBody, /owner: admissionOwner/);
+  assert.match(equityBody, /requests: symbols\.map/);
+  assert.match(equityBody, /admissionOwner,/);
+  assert.match(equityBody, /admissionIntent: "account-monitor-live"/);
+  assert.match(equityBody, /admissionFallbackProvider: "cache"/);
+  assert.match(equityBody, /ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS/);
   assert.match(optionBody, /declareIbkrLiveDemand/);
   assert.match(optionBody, /readIbkrLiveDemandState/);
   assert.match(optionBody, /intent: "account-monitor-live"/);

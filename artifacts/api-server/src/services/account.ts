@@ -142,6 +142,7 @@ import {
   declareIbkrLiveDemand,
   readIbkrLiveDemandState,
 } from "./ibkr-live-demand-coordinator";
+import { admitMarketDataLeases } from "./market-data-admission";
 import type {
   BrokerAccountSnapshot,
   BrokerExecutionSnapshot,
@@ -153,8 +154,11 @@ import type {
 } from "../providers/ibkr/client";
 
 const COMBINED_ACCOUNT_ID = "combined";
+const ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS = 15_000;
 const ACCOUNT_MONITOR_OPTION_QUOTE_TTL_MS = 15_000;
 const ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS = 2_000;
+const ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS = 5_000;
+const ACCOUNT_ROUTE_DERIVED_RESPONSE_CACHE_TTL_MS = 15_000;
 const FLEX_SEND_REQUEST_URL =
   "https://www.interactivebrokers.com/Universal/servlet/FlexStatementService.SendRequest";
 const FLEX_GET_STATEMENT_URL =
@@ -227,11 +231,16 @@ const positionMarketHydrationReadCache = new Map<
   string,
   ShortLivedAccountCacheEntry<Map<string, PositionMarketHydration>>
 >();
+const accountRouteResponseCache = new Map<
+  string,
+  ShortLivedAccountCacheEntry<unknown>
+>();
 
 function readShortLivedAccountCache<T>(
   cache: Map<string, ShortLivedAccountCacheEntry<T>>,
   key: string,
   factory: () => Promise<T>,
+  ttlMs = ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS,
 ): Promise<T> {
   const now = Date.now();
   for (const [entryKey, entry] of cache.entries()) {
@@ -253,7 +262,7 @@ function readShortLivedAccountCache<T>(
   entry.promise = entry.promise.then(
     (value) => {
       entry.settled = true;
-      entry.expiresAt = Date.now() + ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS;
+      entry.expiresAt = Date.now() + ttlMs;
       return value;
     },
     (error) => {
@@ -265,6 +274,34 @@ function readShortLivedAccountCache<T>(
   );
   cache.set(key, entry);
   return entry.promise;
+}
+
+function stableAccountReadCacheKey(
+  route: string,
+  input: Record<string, unknown>,
+): string {
+  return JSON.stringify({
+    route,
+    ...Object.fromEntries(
+      Object.entries(input).sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
+    ),
+  });
+}
+
+function readAccountRouteResponseCache<T>(
+  route: string,
+  input: Record<string, unknown>,
+  factory: () => Promise<T>,
+  ttlMs: number,
+): Promise<T> {
+  return readShortLivedAccountCache(
+    accountRouteResponseCache as Map<string, ShortLivedAccountCacheEntry<T>>,
+    stableAccountReadCacheKey(route, input),
+    factory,
+    ttlMs,
+  );
 }
 const accountPositionLotsReadBackoff = createTransientPostgresBackoff();
 const optionalAccountSchemaReadBackoff = createTransientPostgresBackoff();
@@ -1145,9 +1182,31 @@ async function fetchEquityQuoteSnapshotsForPositions(
   let quotesBySymbol = new Map<string, QuoteSnapshot>();
 
   if (symbols.length) {
+    const accountKey = Array.from(
+      new Set(
+        positions
+          .map((position) => String(position.accountId || "").trim())
+          .filter(Boolean),
+      ),
+    ).sort().join("+") || "mixed";
+    const admissionOwner = `account-position-equity-quotes:${accountKey}`;
+    admitMarketDataLeases({
+      owner: admissionOwner,
+      intent: "account-monitor-live",
+      requests: symbols.map((symbol) => ({
+        assetClass: "equity" as const,
+        symbol,
+      })),
+      ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
+      fallbackProvider: "cache",
+    });
     const payload = await getQuoteSnapshots({
       symbols: symbols.join(","),
       allowMassiveFallback: false,
+      admissionOwner,
+      admissionIntent: "account-monitor-live",
+      admissionFallbackProvider: "cache",
+      ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
     }).catch(() => ({
       quotes: [],
     }));
@@ -2787,6 +2846,24 @@ export async function getAccountSummary(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
+  return readAccountRouteResponseCache(
+    "summary",
+    {
+      accountId: input.accountId,
+      mode,
+      source: input.source ?? null,
+    },
+    () => getAccountSummaryUncached({ ...input, mode }),
+    ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS,
+  );
+}
+
+async function getAccountSummaryUncached(input: {
+  accountId: string;
+  mode: RuntimeMode;
+  source?: string | null;
+}) {
+  const mode = input.mode;
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const positions = await listPositionsForUniverse(universe, mode);
   const marketHydration = await hydratePositionMarkets(positions);
@@ -3056,6 +3133,31 @@ export async function getAccountEquityHistory(input: {
 
   const mode = input.mode ?? getRuntimeMode();
   const range = normalizeAccountRange(input.range);
+  return readAccountRouteResponseCache(
+    "equity-history",
+    {
+      accountId: input.accountId,
+      benchmark: input.benchmark || null,
+      mode,
+      range,
+      source: input.source ?? null,
+    },
+    () => getAccountEquityHistoryUncached({ ...input, mode, range }),
+    input.benchmark
+      ? ACCOUNT_ROUTE_DERIVED_RESPONSE_CACHE_TTL_MS
+      : ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS,
+  );
+}
+
+async function getAccountEquityHistoryUncached(input: {
+  accountId: string;
+  range: AccountRange;
+  benchmark?: string | null;
+  mode: RuntimeMode;
+  source?: string | null;
+}) {
+  const mode = input.mode;
+  const range = input.range;
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const start = accountRangeStart(range);
   const flexConditions = [inArray(flexNavHistoryTable.providerAccountId, universe.accountIds)];
@@ -3367,6 +3469,24 @@ export async function getAccountAllocation(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
+  return readAccountRouteResponseCache(
+    "allocation",
+    {
+      accountId: input.accountId,
+      mode,
+      source: input.source ?? null,
+    },
+    () => getAccountAllocationUncached({ ...input, mode }),
+    ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS,
+  );
+}
+
+async function getAccountAllocationUncached(input: {
+  accountId: string;
+  mode: RuntimeMode;
+  source?: string | null;
+}) {
+  const mode = input.mode;
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const positions = await listPositionsForUniverse(universe, mode);
   const marketHydration = await hydratePositionMarkets(positions);
@@ -3496,6 +3616,26 @@ export async function getAccountPositions(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
+  return readAccountRouteResponseCache(
+    "positions",
+    {
+      accountId: input.accountId,
+      assetClass: input.assetClass ?? null,
+      mode,
+      source: input.source ?? null,
+    },
+    () => getAccountPositionsUncached({ ...input, mode }),
+    ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS,
+  );
+}
+
+async function getAccountPositionsUncached(input: {
+  accountId: string;
+  assetClass?: string | null;
+  mode: RuntimeMode;
+  source?: string | null;
+}) {
+  const mode = input.mode;
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const positionsPromise = listPositionsForUniverse(universe, mode);
   const [
@@ -4696,6 +4836,24 @@ export async function getAccountRisk(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
+  return readAccountRouteResponseCache(
+    "risk",
+    {
+      accountId: input.accountId,
+      mode,
+      source: input.source ?? null,
+    },
+    () => getAccountRiskUncached({ ...input, mode }),
+    ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS,
+  );
+}
+
+async function getAccountRiskUncached(input: {
+  accountId: string;
+  mode: RuntimeMode;
+  source?: string | null;
+}) {
+  const mode = input.mode;
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const [positions, closedTrades] = await Promise.all([
     listPositionsForUniverse(universe, mode),
@@ -4946,6 +5104,28 @@ export async function getAccountCashActivity(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
+  return readAccountRouteResponseCache(
+    "cash-activity",
+    {
+      accountId: input.accountId,
+      from: input.from ? input.from.toISOString() : null,
+      mode,
+      source: input.source ?? null,
+      to: input.to ? input.to.toISOString() : null,
+    },
+    () => getAccountCashActivityUncached({ ...input, mode }),
+    ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS,
+  );
+}
+
+async function getAccountCashActivityUncached(input: {
+  accountId: string;
+  from?: Date | null;
+  to?: Date | null;
+  mode: RuntimeMode;
+  source?: string | null;
+}) {
+  const mode = input.mode;
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const conditions = [
     inArray(flexCashActivityTable.providerAccountId, universe.accountIds),
