@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import express, { type Express, type Request, type Response } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
@@ -230,6 +231,36 @@ const bridgeCorsOrigins = (process.env["IBKR_BRIDGE_CORS_ORIGINS"] ?? "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
+const asyncSidecarProxyBaseUrl =
+  process.env["PYRUS_IBKR_SIDECAR_PROXY_URL"]?.trim() ||
+  process.env["IBKR_ASYNC_SIDECAR_PROXY_URL"]?.trim() ||
+  "http://127.0.0.1:18769";
+const asyncSidecarProxyTimeoutMs = Number.parseInt(
+  process.env["PYRUS_IBKR_SIDECAR_PROXY_TIMEOUT_MS"] ??
+    process.env["IBKR_ASYNC_SIDECAR_PROXY_TIMEOUT_MS"] ??
+    "5000",
+  10,
+);
+const asyncSidecarStdoutLogPath =
+  process.env["PYRUS_IBKR_SIDECAR_STDOUT_LOG"]?.trim() || "";
+const asyncSidecarStderrLogPath =
+  process.env["PYRUS_IBKR_SIDECAR_STDERR_LOG"]?.trim() || "";
+
+function readLocalLogTail(path: string, maxChars = 4000): string | null {
+  if (!path) {
+    return null;
+  }
+
+  try {
+    const text = readFileSync(path, "utf8").trim();
+    if (!text) {
+      return null;
+    }
+    return text.length > maxChars ? text.slice(-maxChars) : text;
+  } catch {
+    return null;
+  }
+}
 
 app.use((req, _res, next) => {
   (req as { _startTime?: number })._startTime = Date.now();
@@ -332,6 +363,78 @@ app.get("/session", async (_req, res) => {
 
 app.get("/diagnostics/lanes", async (_req, res) => {
   res.json(await ibkrBridgeService.getLaneDiagnostics());
+});
+
+async function proxyAsyncSidecarJson(
+  req: Request,
+  res: Response,
+  path: string,
+): Promise<void> {
+  const controller = new AbortController();
+  const timeout =
+    Number.isFinite(asyncSidecarProxyTimeoutMs) && asyncSidecarProxyTimeoutMs > 0
+      ? setTimeout(() => controller.abort(), asyncSidecarProxyTimeoutMs)
+      : null;
+  timeout?.unref?.();
+
+  try {
+    const url = new URL(path, asyncSidecarProxyBaseUrl);
+    const response = await fetch(url, {
+      method: req.method,
+      headers: {
+        Accept: "application/json",
+        ...(req.method === "GET" ? {} : { "Content-Type": "application/json" }),
+      },
+      body: req.method === "GET" ? undefined : JSON.stringify(req.body ?? {}),
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    const contentType = response.headers.get("content-type");
+    if (contentType) {
+      res.setHeader("Content-Type", contentType);
+    } else {
+      res.type("application/json");
+    }
+    res.status(response.status).send(text);
+  } catch (error) {
+    const stdoutTail = readLocalLogTail(asyncSidecarStdoutLogPath);
+    const stderrTail = readLocalLogTail(asyncSidecarStderrLogPath);
+    res.status(502).json({
+      title: "IBKR async sidecar proxy failed",
+      status: 502,
+      code: "ibkr_async_sidecar_proxy_failed",
+      detail:
+        error instanceof Error && error.message
+          ? error.message
+          : "The local async sidecar could not be reached.",
+      diagnostics: {
+        proxyBaseUrl: asyncSidecarProxyBaseUrl,
+        timeoutMs: asyncSidecarProxyTimeoutMs,
+        stdoutTail,
+        stderrTail,
+      },
+    });
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+app.get("/async-sidecar/health", async (req, res) => {
+  await proxyAsyncSidecarJson(req, res, "/health");
+});
+
+app.get("/async-sidecar/market-data/generation", async (req, res) => {
+  await proxyAsyncSidecarJson(req, res, "/market-data/generation");
+});
+
+app.post("/async-sidecar/market-data/generation", async (req, res) => {
+  await proxyAsyncSidecarJson(req, res, "/market-data/generation");
+});
+
+app.post("/market-data/generation", async (req, res) => {
+  res.json(await ibkrBridgeService.applyMarketDataGeneration(req.body ?? {}));
 });
 
 app.put("/diagnostics/lanes", async (req, res) => {

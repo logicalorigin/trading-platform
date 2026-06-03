@@ -33,7 +33,14 @@ await rm(bundlePath, { force: true });
 
 const tar = spawnSync(
   "tar",
-  ["-czf", bundlePath, "artifacts/ibkr-bridge/dist"],
+  [
+    "-czf",
+    bundlePath,
+    "artifacts/ibkr-bridge/dist",
+    "python/ibkr_sidecar/pyproject.toml",
+    "python/ibkr_sidecar/uv.lock",
+    "python/ibkr_sidecar/src",
+  ],
   {
     cwd: rootDir,
     stdio: "inherit",

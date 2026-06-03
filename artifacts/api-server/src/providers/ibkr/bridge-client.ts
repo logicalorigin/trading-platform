@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
+import type {
+  IbkrMarketDataDesiredGeneration,
+  IbkrMarketDataGenerationStatus,
+} from "@workspace/ibkr-contracts";
 import { HttpError } from "../../lib/errors";
 import { withSearchParams, type QueryValue } from "../../lib/http";
 import { logger } from "../../lib/logger";
@@ -86,6 +90,7 @@ export type BridgeLaneDiagnosticsSnapshot = {
   schedulerConfig?: unknown;
   limits?: unknown;
   subscriptions?: unknown;
+  marketDataGeneration?: IbkrMarketDataGenerationStatus;
   pressure?: string;
   updatedAt?: Date | string;
 };
@@ -816,6 +821,21 @@ export class IbkrBridgeClient {
       },
       body: JSON.stringify(input),
     });
+  }
+
+  async applyMarketDataGeneration(
+    input: IbkrMarketDataDesiredGeneration,
+  ): Promise<IbkrMarketDataGenerationStatus> {
+    return this.request<IbkrMarketDataGenerationStatus>(
+      "/market-data/generation",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+      },
+    );
   }
 
   async getSession(): Promise<SessionStatusSnapshot | null> {

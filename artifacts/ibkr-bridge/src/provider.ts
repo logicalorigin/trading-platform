@@ -19,6 +19,8 @@ import type {
   SessionStatusSnapshot,
   IbkrTransport,
   IbkrMarketDataMode,
+  IbkrMarketDataDesiredGeneration,
+  IbkrMarketDataGenerationStatus,
 } from "@workspace/ibkr-contracts";
 
 export type BridgeHealth = {
@@ -120,6 +122,7 @@ export type BridgeLaneDiagnostics = {
   schedulerConfig: unknown;
   limits: unknown;
   subscriptions: unknown;
+  marketDataGeneration?: IbkrMarketDataGenerationStatus;
   pressure: string;
   updatedAt: Date;
 };
@@ -135,6 +138,12 @@ export interface IbkrBridgeProvider {
   tickle(): Promise<void>;
   getHealth(): Promise<BridgeHealth>;
   getLaneDiagnostics?(): BridgeLaneDiagnostics | Promise<BridgeLaneDiagnostics>;
+  getMarketDataGenerationStatus?():
+    | IbkrMarketDataGenerationStatus
+    | Promise<IbkrMarketDataGenerationStatus>;
+  applyMarketDataGeneration?(
+    generation: IbkrMarketDataDesiredGeneration,
+  ): IbkrMarketDataGenerationStatus | Promise<IbkrMarketDataGenerationStatus>;
   applyLaneSettings?(
     input: BridgeLaneSettingsInput,
   ): BridgeLaneDiagnostics | Promise<BridgeLaneDiagnostics>;

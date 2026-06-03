@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 import {
   getIbkrBridgeProviderRuntimeConfig,
   getIbkrTwsRuntimeConfig,
+  type IbkrMarketDataDesiredGeneration,
 } from "@workspace/ibkr-contracts";
 import type {
   BrokerBarSnapshot,
@@ -290,6 +291,17 @@ export class IbkrBridgeService {
     }
 
     return provider.getLaneDiagnostics();
+  }
+
+  async applyMarketDataGeneration(
+    generation: IbkrMarketDataDesiredGeneration,
+  ) {
+    const provider = this.ensureProvider();
+    if (!provider.applyMarketDataGeneration) {
+      throw new Error("IBKR bridge market-data generation apply is not supported.");
+    }
+
+    return provider.applyMarketDataGeneration(generation);
   }
 
   async updateLaneSettings(input: BridgeLaneSettingsInput) {

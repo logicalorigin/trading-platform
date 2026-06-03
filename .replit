@@ -33,6 +33,9 @@ externalPort = 3000
 
 [userenv]
 
+[userenv.development]
+IBKR_ASYNC_SIDECAR_ROUTING_ENABLED = "true"
+
 [userenv.shared]
 IBKR_TRANSPORT = "tws"
 PYTHONPATH = "/home/runner/.codex/skills/.python-deps"

@@ -22,7 +22,8 @@ param(
     [string]$RepoDir = (Join-Path $env:USERPROFILE 'pyrus-trading-platform'),
     [string]$RepoUrl = 'https://github.com/logicalorigin/trading-platform.git',
     [string]$Branch = 'main',
-    [int]$BridgePort = 3002
+    [int]$BridgePort = 3002,
+    [int]$SidecarPort = 18769
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,6 +31,7 @@ $StateDir = Join-Path $env:LOCALAPPDATA 'Pyrus\ibkr-bridge'
 $PreviousStateDir = Join-Path $env:LOCALAPPDATA ('Ray' + 'Algo\ibkr-bridge')
 $LogDir = Join-Path $StateDir 'logs'
 $BridgePidFile = Join-Path $StateDir 'bridge.pid'
+$SidecarPidFile = Join-Path $StateDir 'sidecar.pid'
 $CloudflaredPidFile = Join-Path $StateDir 'cloudflared.pid'
 $TunnelUrlFile = Join-Path $StateDir 'tunnel-url.txt'
 $BridgeTokenFile = Join-Path $StateDir 'bridge-token.txt'
@@ -47,7 +49,7 @@ $AutoLoginSettingsFile = Join-Path $AutoLoginDir 'auto-login.json'
 $AutoLoginCredentialFile = Join-Path $AutoLoginDir 'credential.json'
 $AutoLoginRuntimeRoot = Join-Path $StateDir 'ibc-runtime'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-06-01.launch-sequence-v26'
+$HelperVersion = '2026-06-02.ib-async-sidecar-v5'
 $LoginHandoffAlgorithm = 'RSA-OAEP-256-CHUNKED'
 $script:BridgeBundleHash = ''
 $script:SensitiveValues = New-Object System.Collections.Generic.List[string]
@@ -601,6 +603,91 @@ function Ensure-Pnpm {
     if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
         throw 'pnpm could not be installed. Open a new PowerShell window and retry the bridge launch.'
     }
+}
+
+function Get-LocalSidecarBaseUrl {
+    return "http://127.0.0.1:$SidecarPort"
+}
+
+function Test-AsyncSidecarReady {
+    try {
+        $health = Invoke-RestMethod -Method Get -Uri "$(Get-LocalSidecarBaseUrl)/health" -TimeoutSec 3
+        return ($health -and $health.ok -eq $true)
+    } catch {
+        return $false
+    }
+}
+
+function Ensure-LocalAsyncSidecar {
+    $sidecarProject = Join-Path $RepoDir 'python\ibkr_sidecar'
+    $sidecarPyproject = Join-Path $sidecarProject 'pyproject.toml'
+    if (-not (Test-Path $sidecarPyproject)) {
+        Write-Log "Python IBKR async sidecar project was not found at $sidecarProject; bridge will continue without sidecar proxy backing."
+        Send-BridgeProgress -Status 'starting_bridge' -Step 'sidecar_missing' -Message 'Python IBKR async sidecar was not bundled on this desktop bridge runtime.'
+        return $false
+    }
+
+    if (Test-AsyncSidecarReady) {
+        Write-Log "Python IBKR async sidecar is already ready on $(Get-LocalSidecarBaseUrl)."
+        return $true
+    }
+
+    try {
+        Ensure-Command -Command uv -WingetId astral-sh.uv -DisplayName 'uv Python package manager'
+    } catch {
+        Write-Log "Python IBKR async sidecar startup skipped because uv is unavailable: $($_.Exception.Message)"
+        Send-BridgeProgress -Status 'starting_bridge' -Step 'sidecar_uv_unavailable' -Message (Truncate-Message "Python IBKR async sidecar startup skipped because uv is unavailable. $($_.Exception.Message)")
+        return $false
+    }
+
+    $out = Join-Path $LogDir 'sidecar.out.log'
+    $err = Join-Path $LogDir 'sidecar.err.log'
+    Stop-ProcessFromPidFile -PidFile $SidecarPidFile -AllowedProcessNames @('uv', 'python', 'python3', 'py')
+    Stop-SidecarPortProcess
+    Remove-Item $out, $err -ErrorAction SilentlyContinue
+
+    $env:PYRUS_IBKR_SIDECAR_HOST = '127.0.0.1'
+    $env:PYRUS_IBKR_SIDECAR_PORT = [string]$SidecarPort
+    $env:PYRUS_IBKR_SIDECAR_IB_HOST = '127.0.0.1'
+    $env:PYRUS_IBKR_SIDECAR_IB_PORT = '4001'
+    $env:PYRUS_IBKR_SIDECAR_CLIENT_ID = '201'
+    $env:PYRUS_IBKR_SIDECAR_MARKET_DATA_TYPE = '1'
+    $env:PYRUS_IBKR_SIDECAR_READONLY = 'true'
+    $env:PYRUS_IBKR_SIDECAR_LOG_LEVEL = 'info'
+
+    Send-BridgeProgress -Status 'starting_bridge' -Step 'starting_sidecar' -Message 'Starting the Python IBKR async market-data sidecar.'
+    try {
+        $process = Start-Process uv `
+            -WorkingDirectory $RepoDir `
+            -ArgumentList @('run', '--project', $sidecarProject, '--python', '3.11', 'python', '-m', 'pyrus_ibkr_sidecar.service') `
+            -RedirectStandardOutput $out `
+            -RedirectStandardError $err `
+            -PassThru
+        Set-Content -Path $SidecarPidFile -Value $process.Id
+    } catch {
+        Write-Log "Python IBKR async sidecar failed to start: $($_.Exception.Message)"
+        Send-BridgeProgress -Status 'starting_bridge' -Step 'sidecar_start_failed' -Message (Truncate-Message "Python IBKR async sidecar failed to start. $($_.Exception.Message)")
+        return $false
+    }
+
+    $deadline = (Get-Date).AddSeconds(90)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-AsyncSidecarReady) {
+            Send-BridgeProgress -Status 'starting_bridge' -Step 'sidecar_ready' -Message 'Python IBKR async market-data sidecar is ready.'
+            return $true
+        }
+        if ($process.HasExited) {
+            $detail = Get-BridgeAttemptDetail -OutPath $out -ErrPath $err -HealthResult $null
+            Write-Log "Python IBKR async sidecar exited before becoming ready. $detail"
+            Send-BridgeProgress -Status 'starting_bridge' -Step 'sidecar_exited' -Message (Truncate-Message "Python IBKR async sidecar exited before becoming ready. $detail")
+            return $false
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    Write-Log 'Python IBKR async sidecar did not become ready before timeout.'
+    Send-BridgeProgress -Status 'starting_bridge' -Step 'sidecar_timeout' -Message 'Python IBKR async sidecar did not become ready before timeout.'
+    return $false
 }
 
 function Read-FirstLine([string]$Path) {
@@ -2488,6 +2575,47 @@ function Stop-BridgePortProcess {
     }
 }
 
+function Stop-SidecarPortProcess {
+    try {
+        if (-not (Test-TcpPort -HostName '127.0.0.1' -Port $SidecarPort)) {
+            Write-Log "Sidecar port $SidecarPort is free; stale port cleanup skipped."
+            return
+        }
+
+        Write-Log "Sidecar port $SidecarPort is listening; checking for a stale Python sidecar owner."
+        $netstat = & "$env:SystemRoot\System32\netstat.exe" -ano -p tcp 2>$null
+        $owners = New-Object System.Collections.Generic.HashSet[int]
+        foreach ($line in $netstat) {
+            if ($line -notmatch "LISTENING\s+(\d+)\s*$") {
+                continue
+            }
+            $ownerPid = [int]$Matches[1]
+
+            if ($line -notmatch "(\s|^)(127\.0\.0\.1|0\.0\.0\.0|\[::1\]|\[::\]):$SidecarPort\s+") {
+                continue
+            }
+
+            [void]$owners.Add($ownerPid)
+        }
+
+        foreach ($owner in $owners) {
+            $process = Get-Process -Id $owner -ErrorAction SilentlyContinue
+            if (-not $process) {
+                continue
+            }
+
+            if ($process.ProcessName -match '^(uv|python|python3|py)$') {
+                Write-Log "Stopping stale Python sidecar process $owner on port $SidecarPort."
+                Stop-Process -Id $owner -Force
+            } else {
+                Write-Log "Port $SidecarPort is owned by $($process.ProcessName) pid $owner; leaving it running."
+            }
+        }
+    } catch {
+        Write-Log "Sidecar port cleanup skipped: $($_.Exception.Message)"
+    }
+}
+
 function Stop-StaleBridgeNodeProcesses {
     try {
         $repoPattern = [regex]::Escape($RepoDir)
@@ -2518,6 +2646,8 @@ function Stop-StaleBridgeNodeProcesses {
 function Stop-BridgeLaunchChildProcesses {
     Stop-ProcessFromPidFile -PidFile $CloudflaredPidFile -AllowedProcessNames @('cloudflared')
     Stop-ProcessFromPidFile -PidFile $BridgePidFile -AllowedProcessNames @('node', 'nodejs')
+    Stop-ProcessFromPidFile -PidFile $SidecarPidFile -AllowedProcessNames @('uv', 'python', 'python3', 'py')
+    Stop-SidecarPortProcess
     Stop-BridgePortProcess
     Stop-StaleBridgeNodeProcesses
 }
@@ -2531,6 +2661,18 @@ function Stop-IBKRDesktopBridgeAndGateway {
 
 function Ensure-LocalBridge {
     $localBaseUrl = "http://127.0.0.1:$BridgePort"
+    $helperSelfUpdatedThisRun = ($env:PYRUS_IBKR_HELPER_SELF_UPDATE -eq $HelperVersion)
+    if ($script:BridgeBundleChanged -eq $true -or $helperSelfUpdatedThisRun) {
+        Write-Log 'Restarting the Python IBKR async sidecar to use the updated bridge bundle.'
+        if ($script:BridgeBundleChanged -eq $true) {
+            Send-BridgeProgress -Status 'starting_bridge' -Step 'sidecar_restart_for_bundle' -Message 'Restarting the Python IBKR async sidecar to use the updated bridge bundle.'
+        } else {
+            Send-BridgeProgress -Status 'starting_bridge' -Step 'sidecar_restart_for_helper' -Message 'Restarting the Python IBKR async sidecar after helper update.'
+        }
+        Stop-ProcessFromPidFile -PidFile $SidecarPidFile -AllowedProcessNames @('uv', 'python', 'python3', 'py')
+        Stop-SidecarPortProcess
+    }
+    Ensure-LocalAsyncSidecar | Out-Null
     $localHealth = Get-BridgeHealthResult -BaseUrl $localBaseUrl
     if ($localHealth.Healthy -eq $true) {
         $expectedBuild = [string]$script:BridgeBundleHash
@@ -2577,6 +2719,9 @@ function Ensure-LocalBridge {
         $env:IBKR_BRIDGE_TOKEN = $script:BridgeToken
         $env:IBKR_BRIDGE_PREWARM_SYMBOLS = ''
         $env:IBKR_BRIDGE_RUNTIME_BUILD = [string]$script:BridgeBundleHash
+        $env:PYRUS_IBKR_SIDECAR_PROXY_URL = "$(Get-LocalSidecarBaseUrl)"
+        $env:PYRUS_IBKR_SIDECAR_STDOUT_LOG = (Join-Path $LogDir 'sidecar.out.log')
+        $env:PYRUS_IBKR_SIDECAR_STDERR_LOG = (Join-Path $LogDir 'sidecar.err.log')
 
         $process = Start-Process node `
             -WorkingDirectory $RepoDir `

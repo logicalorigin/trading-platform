@@ -29,6 +29,7 @@ import {
   compact,
   firstDefined,
   HttpError,
+  buildIbkrMarketDataLineKey,
   isLiveIbkrMarketDataMode,
   normalizeSymbol,
   resolveIbkrMarketDataMode,
@@ -43,8 +44,11 @@ import {
   type CancelOrderSnapshot,
   type HistoryBarTimeframe,
   type HistoryDataSource,
+  type IbkrMarketDataDesiredGeneration,
   type IbkrMarketDataMode,
   type IbkrTwsRuntimeConfig,
+  type IbkrMarketDataGenerationLineStatus,
+  type IbkrMarketDataGenerationStatus,
   type IbkrNewsArticle,
   type IbkrUniverseTicker,
   type OptionChainContract,
@@ -1985,6 +1989,8 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
   private lastAggregateSourceEventAt: Date | null = null;
   private quoteEventCount = 0;
   private optionQuoteEventCount = 0;
+  private appliedMarketDataGeneration: IbkrMarketDataDesiredGeneration | null =
+    null;
   private readonly optionMetaInFlight = new Map<string, Promise<unknown>>();
 
   private setMarketDataType(marketDataType: 1 | 2 | 3 | 4): void {
@@ -4318,9 +4324,134 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       schedulerConfig: getBridgeSchedulerConfigSnapshot(),
       limits: getBridgeRuntimeLimitSnapshot(),
       subscriptions: this.getSubscriptionDiagnostics(),
+      marketDataGeneration: this.getMarketDataGenerationStatus(),
       pressure: getBridgePressureState(),
       updatedAt: new Date(),
     };
+  }
+
+  getMarketDataGenerationStatus(): IbkrMarketDataGenerationStatus {
+    const updatedAt = new Date().toISOString();
+    const lines: IbkrMarketDataGenerationLineStatus[] = [];
+    const desiredLinesByKey = new Map(
+      (this.appliedMarketDataGeneration?.desiredLines ?? []).map((line) => [
+        line.lineKey,
+        line,
+      ]),
+    );
+    this.quoteSubscriptions.forEach((subscription) => {
+      const lineKey = buildIbkrMarketDataLineKey({
+        assetClass: subscription.assetClass,
+        symbol: subscription.symbol,
+        providerContractId: subscription.providerContractId,
+      });
+      if (!lineKey) {
+        return;
+      }
+      const quote = this.quotesByProviderContractId.get(
+        subscription.providerContractId,
+      );
+      lines.push({
+        lineKey,
+        assetClass: subscription.assetClass,
+        state: this.appliedMarketDataGeneration && !desiredLinesByKey.has(lineKey)
+          ? "unexpected"
+          : "live",
+        contract: {
+          symbol: subscription.symbol,
+          providerContractId:
+            subscription.assetClass === "option"
+              ? subscription.providerContractId
+              : null,
+        },
+        owners: desiredLinesByKey.get(lineKey)?.owners ?? [],
+        subscribedAt: null,
+        lastTickAt: quote?.updatedAt?.toISOString() ?? null,
+        releaseRequestedAt: null,
+        error: null,
+      });
+    });
+    desiredLinesByKey.forEach((desiredLine, lineKey) => {
+      if (lines.some((line) => line.lineKey === lineKey)) {
+        return;
+      }
+      lines.push({
+        lineKey,
+        assetClass: desiredLine.assetClass,
+        state: "desired",
+        contract: desiredLine.contract,
+        owners: desiredLine.owners,
+        subscribedAt: null,
+        lastTickAt: null,
+        releaseRequestedAt: null,
+        error: null,
+      });
+    });
+    lines.sort((left, right) => left.lineKey.localeCompare(right.lineKey));
+    const liveEquityLineCount = lines.filter(
+      (line) => line.assetClass === "equity" && line.state === "live",
+    ).length;
+    const liveOptionLineCount = lines.filter(
+      (line) => line.assetClass === "option" && line.state === "live",
+    ).length;
+
+    return {
+      schemaVersion: 1,
+      mode: this.appliedMarketDataGeneration ? "executor" : "observer",
+      source: "tws-bridge",
+      generationId: this.appliedMarketDataGeneration?.generationId ?? null,
+      appliedGenerationId: this.appliedMarketDataGeneration?.generationId ?? null,
+      updatedAt,
+      lines,
+      summary: {
+        liveLineCount: lines.filter((line) => line.state === "live").length,
+        liveEquityLineCount,
+        liveOptionLineCount,
+        subscribingLineCount: 0,
+        releasingLineCount: 0,
+        failedLineCount: 0,
+        unexpectedLineCount: lines.filter((line) => line.state === "unexpected")
+          .length,
+      },
+      throttle: {
+        throttled: false,
+        queueDepth: null,
+        maxRequests: null,
+        requestsIntervalSec: null,
+        lastThrottleStartAt: null,
+        lastThrottleEndAt: null,
+      },
+    };
+  }
+
+  applyMarketDataGeneration(
+    generation: IbkrMarketDataDesiredGeneration,
+  ): IbkrMarketDataGenerationStatus {
+    this.appliedMarketDataGeneration = generation;
+    const desiredSymbols = new Set<string>();
+    const desiredProviderContractIds = new Set<string>();
+
+    generation.desiredLines.forEach((line) => {
+      if (line.assetClass === "equity" && line.contract.symbol) {
+        const symbol = normalizeSymbol(line.contract.symbol);
+        if (symbol) {
+          desiredSymbols.add(symbol);
+        }
+      } else if (
+        line.assetClass === "option" &&
+        line.contract.providerContractId
+      ) {
+        const providerContractId = line.contract.providerContractId.trim();
+        if (providerContractId) {
+          desiredProviderContractIds.add(providerContractId);
+        }
+      }
+    });
+    this.trimUnusedQuoteSubscriptions(
+      desiredSymbols,
+      desiredProviderContractIds,
+    );
+    return this.getMarketDataGenerationStatus();
   }
 
   applyLaneSettings(input: BridgeLaneSettingsInput): BridgeLaneDiagnostics {

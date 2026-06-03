@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type {
+  IbkrMarketDataDesiredGeneration,
+  IbkrMarketDataGenerationStatus,
+} from "@workspace/ibkr-contracts";
 import {
   admitMarketDataLeases,
   __resetMarketDataAdmissionForTests,
 } from "./market-data-admission";
 import {
   getIbkrLineUsageSnapshot,
+  runIbkrLineUsageGenerationCoordinatorOnce,
   __resetIbkrLineUsageForTests,
+  __setIbkrLineUsageAsyncSidecarClientFactoryForTests,
   __setIbkrLineUsageBridgeClientFactoryForTests,
 } from "./ibkr-line-usage";
 import {
@@ -16,17 +22,104 @@ import {
 } from "./resource-pressure";
 
 const originalTimeoutMs = process.env["IBKR_LINE_USAGE_BRIDGE_TIMEOUT_MS"];
+const originalRoutingEnabled =
+  process.env["IBKR_ASYNC_SIDECAR_ROUTING_ENABLED"];
+const originalGenerationApplyEnabled =
+  process.env["IBKR_MARKET_DATA_GENERATION_APPLY_ENABLED"];
+const originalGenerationApplyTimeoutMs =
+  process.env["IBKR_MARKET_DATA_GENERATION_APPLY_TIMEOUT_MS"];
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
+
+function buildLiveSidecarGenerationStatus(
+  generation: IbkrMarketDataDesiredGeneration,
+): IbkrMarketDataGenerationStatus {
+  const lines = generation.desiredLines.map((line) => ({
+    lineKey: line.lineKey,
+    assetClass: line.assetClass,
+    state: "live" as const,
+    contract: line.contract,
+    owners: line.owners,
+    subscribedAt: null,
+    lastTickAt: null,
+    releaseRequestedAt: null,
+    error: null,
+  }));
+  return {
+    schemaVersion: 1,
+    mode: "executor",
+    source: "ib-async-sidecar",
+    generationId: generation.generationId,
+    appliedGenerationId: generation.generationId,
+    updatedAt: "2026-06-02T02:45:00.000Z",
+    lines,
+    summary: {
+      liveLineCount: lines.length,
+      liveEquityLineCount: lines.filter((line) => line.assetClass === "equity")
+        .length,
+      liveOptionLineCount: lines.filter((line) => line.assetClass === "option")
+        .length,
+      subscribingLineCount: 0,
+      releasingLineCount: 0,
+      failedLineCount: 0,
+      unexpectedLineCount: 0,
+    },
+    throttle: {
+      throttled: false,
+      queueDepth: null,
+      maxRequests: null,
+      requestsIntervalSec: null,
+      lastThrottleStartAt: null,
+      lastThrottleEndAt: null,
+    },
+  };
+}
+
+function structuredOptionProviderContractId(index: number): string {
+  return `twsopt:${Buffer.from(
+    JSON.stringify({
+      v: 1,
+      u: "SPY",
+      e: "20260619",
+      s: 400 + index,
+      r: index % 2 === 0 ? "C" : "P",
+      x: "SMART",
+      tc: "SPY",
+      m: 100,
+    }),
+    "utf8",
+  ).toString("base64url")}`;
+}
+
+const flushAsyncWork = () => new Promise((resolve) => setImmediate(resolve));
+const settleApplyTimeout = async () => {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await flushAsyncWork();
+  await flushAsyncWork();
+};
 
 test.afterEach(() => {
+  __setIbkrLineUsageAsyncSidecarClientFactoryForTests(null);
   __setIbkrLineUsageBridgeClientFactoryForTests(null);
   __resetIbkrLineUsageForTests();
   __resetMarketDataAdmissionForTests();
   __resetApiResourcePressureForTests();
-  if (originalTimeoutMs === undefined) {
-    delete process.env["IBKR_LINE_USAGE_BRIDGE_TIMEOUT_MS"];
-  } else {
-    process.env["IBKR_LINE_USAGE_BRIDGE_TIMEOUT_MS"] = originalTimeoutMs;
-  }
+  restoreEnv("IBKR_LINE_USAGE_BRIDGE_TIMEOUT_MS", originalTimeoutMs);
+  restoreEnv("IBKR_ASYNC_SIDECAR_ROUTING_ENABLED", originalRoutingEnabled);
+  restoreEnv(
+    "IBKR_MARKET_DATA_GENERATION_APPLY_ENABLED",
+    originalGenerationApplyEnabled,
+  );
+  restoreEnv(
+    "IBKR_MARKET_DATA_GENERATION_APPLY_TIMEOUT_MS",
+    originalGenerationApplyTimeoutMs,
+  );
 });
 
 test("getIbkrLineUsageSnapshot reports visible prewarm demand without filler", async () => {
@@ -70,6 +163,7 @@ test("getIbkrLineUsageSnapshot reports visible prewarm demand without filler", a
 });
 
 test("getIbkrLineUsageSnapshot reports active scanner drift instead of throttling on soft RSS pressure", async () => {
+  process.env["IBKR_ASYNC_SIDECAR_ROUTING_ENABLED"] = "false";
   const watchlistSymbols = Array.from({ length: 90 }, (_, index) => `WL${index}`);
   __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
     getLaneDiagnostics: async () => ({
@@ -99,7 +193,7 @@ test("getIbkrLineUsageSnapshot reports active scanner drift instead of throttlin
     requests: Array.from({ length: 40 }, (_, index) => ({
       assetClass: "option" as const,
       symbol: "SPY",
-      providerContractId: `twsopt:scanner-${index}`,
+      providerContractId: structuredOptionProviderContractId(index),
     })),
     fallbackProvider: "none",
   });
@@ -129,6 +223,14 @@ test("getIbkrLineUsageSnapshot reports active scanner drift instead of throttlin
   assert.equal(snapshot.drift.reconciliation.snapshotOnlyApiLineCount, 0);
   assert.equal(snapshot.drift.reconciliation.apiOnlyLineCount, 40);
   assert.equal(snapshot.marketDataWorkPlan.summary.ibkrOptionLineCount, 40);
+  assert.equal(snapshot.sidecar.diagnosticsOnly, true);
+  assert.equal(snapshot.sidecar.routingEnabled, false);
+  assert.equal(snapshot.sidecar.desiredGeneration.summary.desiredLineCount, 130);
+  assert.equal(
+    snapshot.sidecar.desiredGeneration.summary.desiredOptionLineCount,
+    40,
+  );
+  assert.equal(snapshot.sidecar.comparison.status, "unknown");
 });
 
 test("getIbkrLineUsageSnapshot does not report scanner pressure for automation-only pressure", async () => {
@@ -543,6 +645,474 @@ test("getIbkrLineUsageSnapshot classifies API and bridge line drift", async () =
         line.state === "planned",
     ),
   );
+});
+
+test("getIbkrLineUsageSnapshot does not apply desired generation on read", async () => {
+  process.env["IBKR_ASYNC_SIDECAR_ROUTING_ENABLED"] = "true";
+  let sidecarApplyCount = 0;
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: async () => ({
+      subscriptions: {
+        activeQuoteSubscriptions: 0,
+        marketDataLineBudget: 190,
+        activeEquitySymbols: [],
+        activeOptionProviderContractIds: [],
+      },
+    }),
+  }));
+  __setIbkrLineUsageAsyncSidecarClientFactoryForTests(() => ({
+    applyMarketDataGeneration: async (
+      generation: IbkrMarketDataDesiredGeneration,
+    ) => {
+      sidecarApplyCount += 1;
+      return buildLiveSidecarGenerationStatus(generation);
+    },
+  }));
+  admitMarketDataLeases({
+    owner: "line-usage-equity",
+    intent: "visible-live",
+    requests: [{ assetClass: "equity", symbol: "AAPL" }],
+    fallbackProvider: "cache",
+  });
+
+  const snapshot = await getIbkrLineUsageSnapshot();
+  await flushAsyncWork();
+
+  assert.equal(sidecarApplyCount, 0);
+  assert.equal(snapshot.sidecar.applyEnabled, true);
+  assert.equal(snapshot.sidecar.applyTarget, "ib-async-sidecar");
+  assert.equal(snapshot.sidecar.applyPending, false);
+  assert.equal(snapshot.sidecar.applyError, null);
+  assert.equal(
+    snapshot.sidecar.applyGenerationId,
+    snapshot.sidecar.desiredGeneration.generationId,
+  );
+  assert.equal(snapshot.sidecar.bridgeGenerationStatus, null);
+});
+
+test("line-usage generation coordinator applies desired generation to release bridge-only lines", async () => {
+  process.env["IBKR_ASYNC_SIDECAR_ROUTING_ENABLED"] = "false";
+  let appliedLineKeys: string[] = [];
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: async () => ({
+      subscriptions: {
+        activeQuoteSubscriptions: 2,
+        marketDataLineBudget: 190,
+        activeEquitySymbols: ["AAPL", "MSFT"],
+        activeOptionProviderContractIds: [],
+      },
+    }),
+    applyMarketDataGeneration: async (
+      generation: IbkrMarketDataDesiredGeneration,
+    ) => {
+      appliedLineKeys = generation.desiredLines.map((line) => line.lineKey);
+      return {
+        schemaVersion: 1,
+        mode: "executor",
+        source: "tws-bridge",
+        generationId: generation.generationId,
+        appliedGenerationId: generation.generationId,
+        updatedAt: "2026-06-02T01:00:00.000Z",
+        lines: [
+          {
+            lineKey: "equity:AAPL",
+            assetClass: "equity",
+            state: "live",
+            contract: { symbol: "AAPL", providerContractId: null },
+            owners: generation.desiredLines[0]?.owners ?? [],
+            subscribedAt: null,
+            lastTickAt: null,
+            releaseRequestedAt: null,
+            error: null,
+          },
+        ],
+        summary: {
+          liveLineCount: 1,
+          liveEquityLineCount: 1,
+          liveOptionLineCount: 0,
+          subscribingLineCount: 0,
+          releasingLineCount: 0,
+          failedLineCount: 0,
+          unexpectedLineCount: 0,
+        },
+        throttle: {
+          throttled: false,
+          queueDepth: null,
+          maxRequests: null,
+          requestsIntervalSec: null,
+          lastThrottleStartAt: null,
+          lastThrottleEndAt: null,
+        },
+      };
+    },
+  }));
+  admitMarketDataLeases({
+    owner: "line-usage-equity",
+    intent: "visible-live",
+    requests: [{ assetClass: "equity", symbol: "AAPL" }],
+    fallbackProvider: "cache",
+  });
+
+  const firstSnapshot = await runIbkrLineUsageGenerationCoordinatorOnce();
+  await flushAsyncWork();
+  const snapshot = await getIbkrLineUsageSnapshot();
+
+  assert.deepEqual(appliedLineKeys, ["equity:AAPL"]);
+  assert.equal(firstSnapshot.sidecar.applyPending, true);
+  assert.equal(snapshot.bridge.activeLineCount, 1);
+  assert.equal(snapshot.lineUtilizationAudit.bridgeActiveLineCount, 1);
+  assert.equal(snapshot.drift.reconciliation.status, "matched");
+  assert.equal(snapshot.drift.reconciliation.bridgeOnlyLineCount, 0);
+  assert.equal(snapshot.sidecar.applyEnabled, true);
+  assert.equal(snapshot.sidecar.applyError, null);
+  assert.equal(snapshot.sidecar.applyPending, false);
+  assert.equal(snapshot.sidecar.bridgeGenerationStatus?.summary.liveLineCount, 1);
+  assert.equal(snapshot.sidecar.comparison.status, "matched");
+});
+
+test("line-usage generation coordinator routes desired generation to Python sidecar when enabled", async () => {
+  process.env["IBKR_ASYNC_SIDECAR_ROUTING_ENABLED"] = "true";
+  let bridgeApplyCount = 0;
+  const sidecarGenerations: IbkrMarketDataDesiredGeneration[] = [];
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: async () => ({
+      subscriptions: {
+        activeQuoteSubscriptions: 1,
+        marketDataLineBudget: 190,
+        activeEquitySymbols: ["MSFT"],
+        activeOptionProviderContractIds: [],
+      },
+    }),
+    applyMarketDataGeneration: async () => {
+      bridgeApplyCount += 1;
+      throw new Error("bridge generation apply should not run");
+    },
+  }));
+  __setIbkrLineUsageAsyncSidecarClientFactoryForTests(() => ({
+    applyMarketDataGeneration: async (
+      generation: IbkrMarketDataDesiredGeneration,
+    ) => {
+      sidecarGenerations.push(generation);
+      return buildLiveSidecarGenerationStatus(generation);
+    },
+  }));
+  admitMarketDataLeases({
+    owner: "line-usage-equity",
+    intent: "visible-live",
+    requests: [{ assetClass: "equity", symbol: "AAPL" }],
+    fallbackProvider: "cache",
+  });
+
+  const firstSnapshot = await runIbkrLineUsageGenerationCoordinatorOnce();
+  await flushAsyncWork();
+  const snapshot = await getIbkrLineUsageSnapshot();
+
+  assert.equal(bridgeApplyCount, 0);
+  assert.equal(sidecarGenerations.length, 1);
+  assert.deepEqual(
+    sidecarGenerations[0]?.desiredLines.map((line) => line.lineKey),
+    ["equity:AAPL"],
+  );
+  assert.equal(firstSnapshot.sidecar.applyPending, true);
+  assert.equal(snapshot.sidecar.diagnosticsOnly, false);
+  assert.equal(snapshot.sidecar.routingEnabled, true);
+  assert.equal(snapshot.sidecar.applyEnabled, true);
+  assert.equal(snapshot.sidecar.applyTarget, "ib-async-sidecar");
+  assert.equal(snapshot.sidecar.applyError, null);
+  assert.equal(snapshot.sidecar.applyPending, false);
+  assert.equal(snapshot.sidecar.bridgeGenerationStatus?.source, "ib-async-sidecar");
+  assert.equal(snapshot.sidecar.bridgeGenerationStatus?.summary.liveLineCount, 1);
+  assert.equal(snapshot.sidecar.comparison.status, "matched");
+});
+
+test("line-usage generation coordinator does not stack sidecar applies when desired generation changes", async () => {
+  process.env["IBKR_ASYNC_SIDECAR_ROUTING_ENABLED"] = "true";
+  const sidecarGenerations: IbkrMarketDataDesiredGeneration[] = [];
+  let resolveFirstApply:
+    | ((status: IbkrMarketDataGenerationStatus) => void)
+    | null = null;
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: async () => ({
+      subscriptions: {
+        activeQuoteSubscriptions: 0,
+        marketDataLineBudget: 190,
+        activeEquitySymbols: [],
+        activeOptionProviderContractIds: [],
+      },
+    }),
+  }));
+  __setIbkrLineUsageAsyncSidecarClientFactoryForTests(() => ({
+    applyMarketDataGeneration: async (
+      generation: IbkrMarketDataDesiredGeneration,
+    ) => {
+      sidecarGenerations.push(generation);
+      return new Promise<IbkrMarketDataGenerationStatus>((resolve) => {
+        if (!resolveFirstApply) {
+          resolveFirstApply = resolve;
+        }
+      });
+    },
+  }));
+  admitMarketDataLeases({
+    owner: "line-usage-aapl",
+    intent: "visible-live",
+    requests: [{ assetClass: "equity", symbol: "AAPL" }],
+    fallbackProvider: "cache",
+  });
+
+  const firstSnapshot = await runIbkrLineUsageGenerationCoordinatorOnce();
+  admitMarketDataLeases({
+    owner: "line-usage-msft",
+    intent: "visible-live",
+    requests: [{ assetClass: "equity", symbol: "MSFT" }],
+    fallbackProvider: "cache",
+  });
+  const secondSnapshot = await runIbkrLineUsageGenerationCoordinatorOnce();
+
+  assert.equal(sidecarGenerations.length, 1);
+  assert.equal(firstSnapshot.sidecar.applyPending, true);
+  assert.equal(secondSnapshot.sidecar.applyPending, true);
+  assert.equal(
+    secondSnapshot.sidecar.applyGenerationId,
+    firstSnapshot.sidecar.applyGenerationId,
+  );
+  const firstApplyResolver = resolveFirstApply as
+    | ((status: IbkrMarketDataGenerationStatus) => void)
+    | null;
+  assert.ok(firstApplyResolver);
+  firstApplyResolver(buildLiveSidecarGenerationStatus(sidecarGenerations[0]!));
+  await flushAsyncWork();
+  await flushAsyncWork();
+});
+
+test("line-usage generation coordinator times out a hung sidecar apply", async () => {
+  process.env["IBKR_ASYNC_SIDECAR_ROUTING_ENABLED"] = "true";
+  process.env["IBKR_MARKET_DATA_GENERATION_APPLY_TIMEOUT_MS"] = "5";
+  let sidecarApplyCount = 0;
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: async () => ({
+      subscriptions: {
+        activeQuoteSubscriptions: 0,
+        marketDataLineBudget: 190,
+        activeEquitySymbols: [],
+        activeOptionProviderContractIds: [],
+      },
+    }),
+  }));
+  __setIbkrLineUsageAsyncSidecarClientFactoryForTests(() => ({
+    applyMarketDataGeneration: async () => {
+      sidecarApplyCount += 1;
+      return new Promise<IbkrMarketDataGenerationStatus>(() => {});
+    },
+  }));
+  admitMarketDataLeases({
+    owner: "line-usage-aapl",
+    intent: "visible-live",
+    requests: [{ assetClass: "equity", symbol: "AAPL" }],
+    fallbackProvider: "cache",
+  });
+
+  const firstSnapshot = await runIbkrLineUsageGenerationCoordinatorOnce();
+  await settleApplyTimeout();
+  const secondSnapshot = await runIbkrLineUsageGenerationCoordinatorOnce();
+
+  assert.equal(sidecarApplyCount, 1);
+  assert.equal(firstSnapshot.sidecar.applyPending, true);
+  assert.equal(secondSnapshot.sidecar.applyPending, false);
+  assert.match(
+    secondSnapshot.sidecar.applyError ?? "",
+    /timed out after 5ms/,
+  );
+});
+
+test("line-usage generation coordinator compares bridge generation when sidecar apply fails", async () => {
+  process.env["IBKR_ASYNC_SIDECAR_ROUTING_ENABLED"] = "true";
+  let sidecarApplyCount = 0;
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: async () => ({
+      subscriptions: {
+        activeQuoteSubscriptions: 1,
+        marketDataLineBudget: 190,
+        activeEquitySymbols: ["AAPL"],
+        activeOptionProviderContractIds: [],
+      },
+      marketDataGeneration: {
+        schemaVersion: 1,
+        mode: "executor",
+        source: "tws-bridge",
+        generationId: "bridge-existing",
+        appliedGenerationId: "bridge-existing",
+        updatedAt: "2026-06-02T02:45:00.000Z",
+        lines: [
+          {
+            lineKey: "equity:AAPL",
+            assetClass: "equity",
+            state: "live",
+            contract: { symbol: "AAPL", providerContractId: null },
+            owners: [
+              {
+                owner: "line-usage-aapl",
+                ownerClass: null,
+                intent: "visible-live",
+                pool: null,
+                priority: null,
+              },
+            ],
+            subscribedAt: null,
+            lastTickAt: null,
+            releaseRequestedAt: null,
+            error: null,
+          },
+        ],
+        summary: {
+          liveLineCount: 1,
+          liveEquityLineCount: 1,
+          liveOptionLineCount: 0,
+          subscribingLineCount: 0,
+          releasingLineCount: 0,
+          failedLineCount: 0,
+          unexpectedLineCount: 0,
+        },
+        throttle: {
+          throttled: false,
+          queueDepth: null,
+          maxRequests: null,
+          requestsIntervalSec: null,
+          lastThrottleStartAt: null,
+          lastThrottleEndAt: null,
+        },
+      },
+    }),
+  }));
+  __setIbkrLineUsageAsyncSidecarClientFactoryForTests(() => ({
+    applyMarketDataGeneration: async () => {
+      sidecarApplyCount += 1;
+      throw new Error("sidecar offline");
+    },
+  }));
+  admitMarketDataLeases({
+    owner: "line-usage-aapl",
+    intent: "visible-live",
+    requests: [{ assetClass: "equity", symbol: "AAPL" }],
+    fallbackProvider: "cache",
+  });
+
+  const firstSnapshot = await runIbkrLineUsageGenerationCoordinatorOnce();
+  await flushAsyncWork();
+  const secondSnapshot = await getIbkrLineUsageSnapshot();
+
+  assert.equal(sidecarApplyCount, 1);
+  assert.equal(firstSnapshot.sidecar.applyPending, true);
+  assert.equal(secondSnapshot.sidecar.applyPending, false);
+  assert.match(secondSnapshot.sidecar.applyError ?? "", /sidecar offline/);
+  assert.equal(
+    secondSnapshot.sidecar.bridgeGenerationStatus?.summary.liveLineCount,
+    1,
+  );
+  assert.equal(secondSnapshot.sidecar.comparison.status, "matched");
+});
+
+test("line-usage generation coordinator backs off failed sidecar applies across generation churn", async () => {
+  process.env["IBKR_ASYNC_SIDECAR_ROUTING_ENABLED"] = "true";
+  process.env["IBKR_MARKET_DATA_GENERATION_APPLY_TIMEOUT_MS"] = "5";
+  let sidecarApplyCount = 0;
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: async () => ({
+      subscriptions: {
+        activeQuoteSubscriptions: 0,
+        marketDataLineBudget: 190,
+        activeEquitySymbols: [],
+        activeOptionProviderContractIds: [],
+      },
+    }),
+  }));
+  __setIbkrLineUsageAsyncSidecarClientFactoryForTests(() => ({
+    applyMarketDataGeneration: async () => {
+      sidecarApplyCount += 1;
+      return new Promise<IbkrMarketDataGenerationStatus>(() => {});
+    },
+  }));
+  admitMarketDataLeases({
+    owner: "line-usage-aapl",
+    intent: "visible-live",
+    requests: [{ assetClass: "equity", symbol: "AAPL" }],
+    fallbackProvider: "cache",
+  });
+
+  const firstSnapshot = await runIbkrLineUsageGenerationCoordinatorOnce();
+  await settleApplyTimeout();
+  const timedOutSnapshot = await getIbkrLineUsageSnapshot();
+  admitMarketDataLeases({
+    owner: "line-usage-msft",
+    intent: "visible-live",
+    requests: [{ assetClass: "equity", symbol: "MSFT" }],
+    fallbackProvider: "cache",
+  });
+  const secondSnapshot = await getIbkrLineUsageSnapshot();
+
+  assert.equal(sidecarApplyCount, 1);
+  assert.equal(firstSnapshot.sidecar.applyPending, true);
+  assert.equal(timedOutSnapshot.sidecar.applyPending, false);
+  assert.match(
+    timedOutSnapshot.sidecar.applyError ?? "",
+    /timed out after 5ms/,
+  );
+  assert.equal(secondSnapshot.sidecar.applyPending, false);
+  assert.equal(
+    secondSnapshot.sidecar.applyGenerationId,
+    firstSnapshot.sidecar.applyGenerationId,
+  );
+  assert.match(
+    secondSnapshot.sidecar.applyError ?? "",
+    /timed out after 5ms/,
+  );
+});
+
+test("line-usage generation coordinator does not fall back to bridge when Python sidecar apply fails", async () => {
+  process.env["IBKR_ASYNC_SIDECAR_ROUTING_ENABLED"] = "true";
+  let bridgeApplyCount = 0;
+  let sidecarApplyCount = 0;
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: async () => ({
+      subscriptions: {
+        activeQuoteSubscriptions: 0,
+        marketDataLineBudget: 190,
+        activeEquitySymbols: [],
+        activeOptionProviderContractIds: [],
+      },
+    }),
+    applyMarketDataGeneration: async () => {
+      bridgeApplyCount += 1;
+      throw new Error("bridge generation apply should not run");
+    },
+  }));
+  __setIbkrLineUsageAsyncSidecarClientFactoryForTests(() => ({
+    applyMarketDataGeneration: async () => {
+      sidecarApplyCount += 1;
+      throw new Error("sidecar offline");
+    },
+  }));
+  admitMarketDataLeases({
+    owner: "line-usage-equity",
+    intent: "visible-live",
+    requests: [{ assetClass: "equity", symbol: "AAPL" }],
+    fallbackProvider: "cache",
+  });
+
+  const firstSnapshot = await runIbkrLineUsageGenerationCoordinatorOnce();
+  await flushAsyncWork();
+  const snapshot = await getIbkrLineUsageSnapshot();
+
+  assert.equal(sidecarApplyCount, 1);
+  assert.equal(bridgeApplyCount, 0);
+  assert.equal(firstSnapshot.sidecar.applyPending, true);
+  assert.equal(snapshot.sidecar.diagnosticsOnly, false);
+  assert.equal(snapshot.sidecar.routingEnabled, true);
+  assert.equal(snapshot.sidecar.applyTarget, "ib-async-sidecar");
+  assert.match(snapshot.sidecar.applyError ?? "", /sidecar offline/);
+  assert.equal(snapshot.sidecar.applyPending, false);
+  assert.equal(snapshot.sidecar.bridgeGenerationStatus, null);
+  assert.equal(snapshot.sidecar.comparison.status, "unknown");
 });
 
 test("getIbkrLineUsageSnapshot reports account and visible bridge warm-up coverage", async () => {

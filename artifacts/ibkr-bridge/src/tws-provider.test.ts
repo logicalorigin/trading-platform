@@ -155,6 +155,202 @@ test("quote prewarm groups merge instead of replacing each other", async () => {
   assert.equal(trimCalls, 4);
 });
 
+test("market data generation status reports current live quote subscriptions", () => {
+  const provider = new TwsIbkrBridgeProvider({
+    host: "127.0.0.1",
+    port: 4002,
+    clientId: 101,
+    defaultAccountId: "U1",
+    mode: "paper",
+    marketDataType: MarketDataType.REALTIME,
+  });
+  const internals = provider as unknown as {
+    quoteSubscriptions: Map<
+      string,
+      {
+        assetClass: "equity" | "option";
+        symbol: string;
+        providerContractId: string;
+        stop(): void;
+      }
+    >;
+  };
+
+  internals.quoteSubscriptions.set("101", {
+    assetClass: "equity",
+    symbol: "AAPL",
+    providerContractId: "101",
+    stop() {},
+  });
+  internals.quoteSubscriptions.set("twsopt:test-contract", {
+    assetClass: "option",
+    symbol: "SPY",
+    providerContractId: "twsopt:test-contract",
+    stop() {},
+  });
+
+  const status = provider.getMarketDataGenerationStatus();
+
+  assert.equal(status.schemaVersion, 1);
+  assert.equal(status.mode, "observer");
+  assert.equal(status.summary.liveLineCount, 2);
+  assert.equal(status.summary.liveEquityLineCount, 1);
+  assert.equal(status.summary.liveOptionLineCount, 1);
+  assert.deepEqual(
+    status.lines.map((line) => line.lineKey),
+    ["equity:AAPL", "option:twsopt:test-contract"],
+  );
+});
+
+test("market data generation status flags active lines outside an empty applied generation", () => {
+  const provider = new TwsIbkrBridgeProvider({
+    host: "127.0.0.1",
+    port: 4002,
+    clientId: 101,
+    defaultAccountId: "U1",
+    mode: "paper",
+    marketDataType: MarketDataType.REALTIME,
+  });
+  const internals = provider as unknown as {
+    appliedMarketDataGeneration: {
+      schemaVersion: 1;
+      generationId: string;
+      source: "api-market-data-work-planner";
+      generatedAt: string;
+      desiredLines: [];
+      summary: {
+        desiredLineCount: 0;
+        desiredEquityLineCount: 0;
+        desiredOptionLineCount: 0;
+        ownerCount: 0;
+      };
+    };
+    quoteSubscriptions: Map<
+      string,
+      {
+        assetClass: "equity" | "option";
+        symbol: string;
+        providerContractId: string;
+        stop(): void;
+      }
+    >;
+  };
+
+  internals.appliedMarketDataGeneration = {
+    schemaVersion: 1,
+    generationId: "empty-generation",
+    source: "api-market-data-work-planner",
+    generatedAt: "2026-06-02T15:00:00.000Z",
+    desiredLines: [],
+    summary: {
+      desiredLineCount: 0,
+      desiredEquityLineCount: 0,
+      desiredOptionLineCount: 0,
+      ownerCount: 0,
+    },
+  };
+  internals.quoteSubscriptions.set("101", {
+    assetClass: "equity",
+    symbol: "AAPL",
+    providerContractId: "101",
+    stop() {},
+  });
+
+  const status = provider.getMarketDataGenerationStatus();
+
+  assert.equal(status.mode, "executor");
+  assert.equal(status.summary.unexpectedLineCount, 1);
+  assert.equal(status.lines[0]?.lineKey, "equity:AAPL");
+  assert.equal(status.lines[0]?.state, "unexpected");
+});
+
+test("market data generation apply releases bridge-only quote subscriptions", () => {
+  const provider = new TwsIbkrBridgeProvider({
+    host: "127.0.0.1",
+    port: 4002,
+    clientId: 101,
+    defaultAccountId: "U1",
+    mode: "paper",
+    marketDataType: MarketDataType.REALTIME,
+  });
+  const internals = provider as unknown as {
+    quoteSubscriptions: Map<
+      string,
+      {
+        assetClass: "equity" | "option";
+        symbol: string;
+        providerContractId: string;
+        stop(): void;
+      }
+    >;
+  };
+  let stoppedEquity = 0;
+  let stoppedOption = 0;
+
+  internals.quoteSubscriptions.set("101", {
+    assetClass: "equity",
+    symbol: "AAPL",
+    providerContractId: "101",
+    stop() {
+      stoppedEquity += 1;
+    },
+  });
+  internals.quoteSubscriptions.set("twsopt:keep", {
+    assetClass: "option",
+    symbol: "SPY250606C00500000",
+    providerContractId: "twsopt:keep",
+    stop() {
+      stoppedOption += 1;
+    },
+  });
+
+  const status = provider.applyMarketDataGeneration({
+    schemaVersion: 1,
+    generationId: "api-generation-test",
+    source: "api-market-data-work-planner",
+    generatedAt: "2026-06-02T01:00:00.000Z",
+    desiredLines: [
+      {
+        lineKey: "option:twsopt:keep",
+        assetClass: "option",
+        contract: {
+          symbol: "SPY",
+          providerContractId: "twsopt:keep",
+        },
+        intent: "account-monitor-live",
+        owners: [
+          {
+            owner: "shadow-position-day-change:mixed",
+            ownerClass: "shadow-account",
+            intent: "account-monitor-live",
+            pool: "account-monitor",
+            priority: 90,
+          },
+        ],
+        priority: 90,
+        reason: "test",
+      },
+    ],
+    summary: {
+      desiredLineCount: 1,
+      desiredEquityLineCount: 0,
+      desiredOptionLineCount: 1,
+      ownerCount: 1,
+    },
+  });
+
+  assert.equal(stoppedEquity, 1);
+  assert.equal(stoppedOption, 0);
+  assert.deepEqual(
+    Array.from(internals.quoteSubscriptions.keys()),
+    ["twsopt:keep"],
+  );
+  assert.equal(status.mode, "executor");
+  assert.equal(status.generationId, "api-generation-test");
+  assert.equal(status.summary.liveLineCount, 1);
+  assert.equal(status.lines[0]?.owners[0]?.owner, "shadow-position-day-change:mixed");
+});
+
 test("option quote snapshots trim temporary subscriptions after request", async () => {
   const provider = new TwsIbkrBridgeProvider({
     host: "127.0.0.1",
