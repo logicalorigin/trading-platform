@@ -8,13 +8,13 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  Bot,
   ChartCandlestick,
   Eye,
   EyeOff,
   Gauge,
   LineChart,
   Moon,
-  RadioTower,
   Search as SearchIcon,
   Settings as SettingsIcon,
   Sun,
@@ -42,7 +42,7 @@ const SCREEN_ICONS = {
   trade: ChartCandlestick,
   account: WalletCards,
   research: SearchIcon,
-  algo: RadioTower,
+  algo: Bot,
   backtest: ChartCandlestick,
   diagnostics: Gauge,
   settings: SettingsIcon,

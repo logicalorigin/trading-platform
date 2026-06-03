@@ -5,7 +5,6 @@ import {
   CircleCheck,
   CircleOff,
   PlugZap,
-  RadioTower,
 } from "lucide-react";
 import { FONT_WEIGHTS, RADII, T, cssColorAlpha, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 import { ActionButton } from "../../components/ui/ActionButton.jsx";
@@ -327,7 +326,7 @@ export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
         "Gateway is connected; the stock quote stream will start when a live panel requests it",
       color: tokenColor,
       background: tokenBackground,
-      Icon: RadioTower,
+      Icon: Activity,
       wave: "slow",
       badge: STREAM_STATE_LABEL[state],
     };
@@ -344,7 +343,7 @@ export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
       detail: "Gateway is ready; the equity market session is closed",
       color: tokenColor,
       background: tokenBackground,
-      Icon: RadioTower,
+      Icon: CircleOff,
       wave: "slow",
       badge: STREAM_STATE_LABEL[state],
     };
@@ -397,7 +396,7 @@ export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
         detail: "Gateway is authenticated; stream is quiet for an unspecified reason",
         color: tokenColor,
         background: tokenBackground,
-        Icon: RadioTower,
+        Icon: Activity,
         wave: "slow",
         badge: STREAM_STATE_LABEL[state],
       };
@@ -694,7 +693,7 @@ export const getIbkrConnectionTone = (connection) => {
   return {
     label: "ready",
     color: CSS_COLOR.textDim,
-    Icon: RadioTower,
+    Icon: PlugZap,
     wave: "flat",
   };
 };

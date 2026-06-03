@@ -6,11 +6,11 @@ import {
 } from "react";
 import {
   Bell,
+  Bot,
   Briefcase,
   ChevronDown,
   ChevronUp,
   ClipboardList,
-  RadioTower,
   Shield,
   TrendingDown,
   TrendingUp,
@@ -401,7 +401,7 @@ const PortfolioPulseZoneInner = ({
                 pulseToken={flowPulse}
               />
               <PulseChip
-                icon={RadioTower}
+                icon={Bot}
                 value={algoEventsCount > 0 ? String(algoEventsCount) : "0"}
                 tone={algoTone}
                 accent={algoTone}
@@ -445,7 +445,7 @@ const PortfolioPulseZoneInner = ({
             pulseToken={flowPulse}
           />
           <PulseChip
-            icon={RadioTower}
+            icon={Bot}
             value={algoEventsCount > 0 ? String(algoEventsCount) : "0"}
             tone={algoTone}
             accent={algoTone}

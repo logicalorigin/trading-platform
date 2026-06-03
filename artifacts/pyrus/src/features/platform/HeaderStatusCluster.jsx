@@ -13,7 +13,6 @@ import {
   MonitorUp,
   Network,
   Power,
-  RadioTower,
   RefreshCw,
   SendHorizontal,
   ShieldCheck,
@@ -463,7 +462,7 @@ const HEADER_IBKR_ICON_COMPONENTS = {
   activity: Activity,
   alert: AlertTriangle,
   gauge: Gauge,
-  radioTower: RadioTower,
+  gateway: MonitorUp,
   shieldCheck: ShieldCheck,
 };
 
@@ -1208,7 +1207,7 @@ const HEADER_PROVIDER_ICONS = Object.freeze({
   rest: Database,
   timer: Timer,
   unplug: Unplug,
-  websocket: RadioTower,
+  websocket: Network,
   wifi: Wifi,
 });
 
@@ -1879,7 +1878,7 @@ const HeaderIbkrOperationStepper = ({ model }) => {
           const warned = step.status === "warning";
           const failed = step.status === "error" || step.status === "canceled";
           const current = step.status === "current";
-          const StepIcon = IBKR_OPERATION_STEP_ICONS[step.icon] || RadioTower;
+          const StepIcon = IBKR_OPERATION_STEP_ICONS[step.icon] || Activity;
           const StatusIcon = complete
             ? Check
             : failed

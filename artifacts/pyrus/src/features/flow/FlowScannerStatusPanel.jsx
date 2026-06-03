@@ -7,7 +7,7 @@ import {
   Activity,
   AlertTriangle,
   Power,
-  RadioTower,
+  RefreshCw,
 } from "lucide-react";
 import {
   CSS_COLOR,
@@ -205,7 +205,7 @@ const TickerChip = ({ symbol, label, tone, title }) => (
 const StatusIcon = ({ enabled, scanning, degraded, color }) => {
   let Icon = Power;
   if (degraded) Icon = AlertTriangle;
-  else if (enabled && scanning) Icon = RadioTower;
+  else if (enabled && scanning) Icon = RefreshCw;
   else if (enabled) Icon = Activity;
   return <Icon size={dim(14)} strokeWidth={2.2} color={color} />;
 };

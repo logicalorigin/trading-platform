@@ -12,6 +12,7 @@ import {
 } from "react";
 import {
   Activity,
+  Bot,
   ChartCandlestick,
   Ellipsis,
   Gauge,
@@ -21,7 +22,6 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  RadioTower,
   ScanLine,
   Search,
   Settings as SettingsIcon,
@@ -145,7 +145,7 @@ const MOBILE_NAV_ICONS = {
   account: WalletCards,
   gex: Activity,
   research: Search,
-  algo: RadioTower,
+  algo: Bot,
   backtest: ChartCandlestick,
   diagnostics: Gauge,
   settings: SettingsIcon,

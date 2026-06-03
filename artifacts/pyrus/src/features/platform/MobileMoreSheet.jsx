@@ -1,10 +1,10 @@
 import {
   Activity,
+  Bot,
   ChartCandlestick,
   FlaskConical,
   Gauge,
   List,
-  RadioTower,
   Search,
   Settings,
   SlidersHorizontal,
@@ -38,7 +38,7 @@ const SECONDARY_SCREEN_IDS = new Set([
 const SCREEN_ICON_COMPONENTS = {
   gex: Activity,
   research: Search,
-  algo: RadioTower,
+  algo: Bot,
   backtest: ChartCandlestick,
   diagnostics: Gauge,
   settings: Settings,
@@ -290,7 +290,7 @@ export const MobileMoreSheet = ({
             testId="mobile-more-watchlist"
           />
           <ActionButton
-            Icon={RadioTower}
+            Icon={Bot}
             label="Algo Monitor"
             detail="Deployments, P&L, positions"
             onClick={() => handleAction(onOpenActivity)}

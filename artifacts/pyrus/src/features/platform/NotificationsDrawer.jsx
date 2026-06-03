@@ -4,7 +4,7 @@ import {
   useMemo,
 } from "react";
 import { createPortal } from "react-dom";
-import { Bell, Info, RadioTower, Sparkles, X } from "lucide-react";
+import { Bell, Bot, Info, Sparkles, X } from "lucide-react";
 import {
   CSS_COLOR,
   ELEVATION,
@@ -28,7 +28,7 @@ const KIND_ICONS = {
   success: Sparkles,
   warn: Bell,
   error: Bell,
-  algo: RadioTower,
+  algo: Bot,
 };
 
 const KIND_TONES = {
@@ -309,7 +309,7 @@ const NotificationsDrawerInner = ({
               return (
                 <NotificationRow
                   key={event?.id || `algo-${index}-${timestamp}`}
-                  icon={RadioTower}
+                  icon={Bot}
                   tone={CSS_COLOR.accent}
                   title={title}
                   body={event?.message || event?.reason || ""}

@@ -18,7 +18,6 @@ import {
   LogIn,
   LogOut,
   MinusCircle,
-  RadioTower,
   Settings,
   ShieldX,
   SkipForward,
@@ -594,7 +593,7 @@ const ALGO_EVENT_ICONS = {
   blocked: ShieldX,
   mark: Activity,
   config: SlidersHorizontal,
-  deploy: RadioTower,
+  deploy: Bot,
   algo: Bot,
 };
 
@@ -613,7 +612,7 @@ const ALGO_CONTEXT_ICONS = {
   partial_fill: CircleEllipsis,
   mark: Activity,
   config: SlidersHorizontal,
-  deploy: RadioTower,
+  deploy: Bot,
   money: CircleDollarSign,
   reason: AlertTriangle,
 };

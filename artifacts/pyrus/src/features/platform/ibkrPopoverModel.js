@@ -802,7 +802,7 @@ export const buildHeaderIbkrPopoverModel = ({
             : brokerServerConnected === false
               ? CSS_COLOR.amber
               : CSS_COLOR.textDim,
-      iconKey: "radioTower",
+      iconKey: "gateway",
     },
     {
       label: "Auth",

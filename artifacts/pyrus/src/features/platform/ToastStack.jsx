@@ -1,8 +1,8 @@
 import {
   Activity,
+  Bot,
   CheckCircle2,
   CircleAlert,
-  RadioTower,
   XCircle,
 } from "lucide-react";
 import React from "react";
@@ -48,7 +48,7 @@ export const resolveToastVisuals = (kind) => {
     return { kind: normalizedKind, color: CSS_COLOR.amber, Icon: CircleAlert };
   }
   if (normalizedKind === "algo") {
-    return { kind: normalizedKind, color: CSS_COLOR.accent, Icon: RadioTower };
+    return { kind: normalizedKind, color: CSS_COLOR.accent, Icon: Bot };
   }
   return { kind: normalizedKind, color: CSS_COLOR.accent, Icon: Activity };
 };

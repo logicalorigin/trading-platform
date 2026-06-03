@@ -136,6 +136,34 @@ test("IBKR header and footer line usage subscribe to the shared line-usage strea
   assert.match(headerRuntimeBlock, /lineUsageStreamEnabled:\s*true/);
 });
 
+test("IBKR connection header avoids radar-style glyphs", () => {
+  const headerStatusSource = readFileSync(
+    new URL("./HeaderStatusCluster.jsx", import.meta.url),
+    "utf8",
+  );
+  const ibkrPopoverSource = readFileSync(
+    new URL("./ibkrPopoverModel.js", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(headerStatusSource, /\bRadioTower\b/);
+  assert.doesNotMatch(headerStatusSource, /\bradioTower\b/);
+  assert.doesNotMatch(ibkrPopoverSource, /iconKey:\s*"radioTower"/);
+  assert.match(headerStatusSource, /gateway:\s*MonitorUp/);
+  assert.match(headerStatusSource, /websocket:\s*Network/);
+  assert.match(headerStatusSource, /IBKR_OPERATION_STEP_ICONS\[step\.icon\]\s*\|\|\s*Activity/);
+  assert.match(ibkrPopoverSource, /iconKey:\s*"gateway"/);
+});
+
+test("active Pyrus UI source does not import radar-style RadioTower icons", () => {
+  const sourceHits = collectSourceFiles(pyrusSrcRoot)
+    .filter((filePath) => !isTestSourceFile(filePath))
+    .filter((filePath) => /\bRadioTower\b/.test(readFileSync(filePath, "utf8")))
+    .map((filePath) => relative(repoRoot.pathname, filePath));
+
+  assert.deepEqual(sourceHits, []);
+});
+
 test("retained screen lazy ticker search exports resolve to components", async () => {
   const tickerSearch = await import("./tickerSearch/TickerSearch.jsx");
 

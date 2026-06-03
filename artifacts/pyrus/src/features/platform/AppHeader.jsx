@@ -7,11 +7,11 @@ import {
 import {
   Activity,
   Bell,
+  Bot,
   ChartCandlestick,
   Gauge,
   LineChart,
   List,
-  RadioTower,
   Search,
   Settings as SettingsIcon,
   TrendingUp,
@@ -135,7 +135,7 @@ const MOBILE_NAV_ICONS = {
   account: WalletCards,
   gex: Activity,
   research: Search,
-  algo: RadioTower,
+  algo: Bot,
   backtest: ChartCandlestick,
   diagnostics: Gauge,
   settings: SettingsIcon,
@@ -524,7 +524,7 @@ const AppHeaderInner = ({
                   active={Boolean(mobilePulseOpen)}
                 />
                 <MobileIconButton
-                  Icon={RadioTower}
+                  Icon={Bot}
                   label="Open algo monitor"
                   testId="mobile-activity-trigger"
                   onClick={() => setMobileActivityOpen(true)}
