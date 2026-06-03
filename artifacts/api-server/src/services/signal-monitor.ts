@@ -2581,6 +2581,31 @@ function directionFromSignal(
   return signal.eventType === "buy_signal" ? "buy" : "sell";
 }
 
+function isSignalMonitorUuidLike(value: string | null | undefined): boolean {
+  return Boolean(
+    value &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        value,
+      ),
+  );
+}
+
+function buildSignalMonitorEventKey(input: {
+  profileId: string;
+  symbol: string;
+  timeframe: SignalMonitorTimeframe | SignalMonitorMatrixTimeframe;
+  direction: SignalMonitorDirection;
+  signalBarAt: Date;
+}) {
+  return [
+    input.profileId,
+    normalizeSymbol(input.symbol).toUpperCase(),
+    input.timeframe,
+    input.direction,
+    Math.floor(input.signalBarAt.getTime() / 1000),
+  ].join(":");
+}
+
 async function insertSignalEvent(input: {
   profile: DbSignalMonitorProfile;
   symbol: string;
@@ -2592,13 +2617,13 @@ async function insertSignalEvent(input: {
   latestBarAnchorAt: Date;
 }) {
   const direction = directionFromSignal(input.signal);
-  const eventKey = [
-    input.profile.id,
-    input.symbol,
-    input.timeframe,
+  const eventKey = buildSignalMonitorEventKey({
+    profileId: input.profile.id,
+    symbol: input.symbol,
+    timeframe: input.timeframe,
     direction,
-    input.signal.time,
-  ].join(":");
+    signalBarAt: input.signalBarAt,
+  });
 
   const inserted = await db
     .insert(signalMonitorEventsTable)
@@ -2671,12 +2696,13 @@ async function upsertSymbolState(input: {
   evaluatedAt: Date;
   lastError?: string | null;
 }) {
+  const currentSignalAt = await resolveStoredSignalMonitorSignalAt(input);
   const values = {
     profileId: input.profileId,
     symbol: input.symbol,
     timeframe: input.timeframe,
     currentSignalDirection: input.direction,
-    currentSignalAt: input.signalAt,
+    currentSignalAt,
     currentSignalPrice: numericStringOrNull(input.signalPrice),
     latestBarAt: input.latestBarAt,
     barsSinceSignal: input.barsSinceSignal,
@@ -2702,6 +2728,38 @@ async function upsertSymbolState(input: {
     .returning();
 
   return state;
+}
+
+async function resolveStoredSignalMonitorSignalAt(input: {
+  profileId: string;
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  direction: SignalMonitorDirection | null;
+  signalAt: Date | null;
+}): Promise<Date | null> {
+  if (
+    !input.direction ||
+    !input.signalAt ||
+    !isSignalMonitorUuidLike(input.profileId)
+  ) {
+    return input.signalAt;
+  }
+
+  const eventKey = buildSignalMonitorEventKey({
+    profileId: input.profileId,
+    symbol: input.symbol,
+    timeframe: input.timeframe,
+    direction: input.direction,
+    signalBarAt: input.signalAt,
+  });
+
+  const [event] = await db
+    .select({ signalAt: signalMonitorEventsTable.signalAt })
+    .from(signalMonitorEventsTable)
+    .where(eq(signalMonitorEventsTable.eventKey, eventKey))
+    .limit(1);
+
+  return event?.signalAt ?? input.signalAt;
 }
 
 export async function getLatestCompletedSignalMonitorBarAt(input: {
@@ -3652,6 +3710,11 @@ export async function updateSignalMonitorProfileEvaluationMetadata(input: {
     })
     .where(eq(signalMonitorProfilesTable.id, input.profile.id))
     .returning();
+
+  notifyAlgoCockpitChanged({
+    mode: input.profile.environment,
+    reason: "signal_monitor_state_refreshed",
+  });
 
   return updatedProfile ?? input.profile;
 }
@@ -5359,6 +5422,7 @@ export const __signalMonitorInternalsForTests = {
   shouldServeSignalMonitorMatrixFromStoredStateFast,
   getDebouncedSignalMonitorMatrixCacheValue,
   shouldCacheSignalMonitorMatrixEvaluationValue,
+  buildSignalMonitorEventKey,
   getRuntimeSignalMonitorEvaluationCacheValue,
   disabledSignalMonitorMatrixResponse,
   getSignalMonitorCompletedBarsCacheDiagnostics() {

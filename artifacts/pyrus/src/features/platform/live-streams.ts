@@ -4622,7 +4622,6 @@ export const useIbkrOptionQuoteStream = ({
     if (
       !enabled ||
       !pageVisible ||
-      !normalizedUnderlying ||
       normalizedProviderContractIds.length === 0 ||
       typeof window === "undefined"
     ) {

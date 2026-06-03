@@ -159,7 +159,7 @@ test("IBKR bridge launcher returns only the one-click protocol contract", () => 
   assert.equal(launcher.activationId, launchParams.get("activationId"));
   assert.equal(
     launcher.helperVersion,
-    "2026-06-02.ib-async-sidecar-v5",
+    "2026-06-03.ib-async-sidecar-v6",
   );
   assert.equal(launcher.autoLoginSupported, true);
   assert.equal(launcher.autoLoginConfigured, null);
@@ -593,7 +593,7 @@ test("IBKR remote desktop shutdown gives outdated helpers a self-update launch U
   assert.equal(claimed.shutdown, true);
   assert.match(claimed.launchUrl, /^pyrus-ibkr:\/\/launch\?/);
   assert.match(claimed.launchUrl, /shutdown=1/);
-  assert.match(claimed.launchUrl, /helperVersion=2026-06-02\.ib-async-sidecar-v5/);
+  assert.match(claimed.launchUrl, /helperVersion=2026-06-03\.ib-async-sidecar-v6/);
   assert.match(claimed.launchUrl, /jobId=/);
   assert.match(claimed.launchUrl, /completionToken=/);
 });
@@ -633,7 +633,7 @@ test("IBKR remote desktop launch bootstraps outdated helpers before switching to
   }
   assert.equal(claimed.launchUrl, remoteLaunch.autoLoginLaunchUrl);
   assert.match(claimed.launchUrl, /^pyrus-ibkr:\/\/launch\?/);
-  assert.match(claimed.launchUrl, /helperVersion=2026-06-02\.ib-async-sidecar-v5/);
+  assert.match(claimed.launchUrl, /helperVersion=2026-06-03\.ib-async-sidecar-v6/);
   assert.match(claimed.launchUrl, /helperUrl=https%3A%2F%2Fpyrus\.example\.com%2Fapi%2Fibkr%2Fbridge%2Fhelper\.ps1/);
 });
 
@@ -701,7 +701,8 @@ test("IBKR Windows helper restarts stale Gateway sessions instead of cycling bri
     "utf8",
   );
 
-  assert.match(source, /\$HelperVersion = '2026-06-02\.ib-async-sidecar-v5'/);
+  assert.match(source, /\$HelperVersion = '2026-06-03\.ib-async-sidecar-v6'/);
+  assert.match(source, /\$env:PYRUS_IBKR_SIDECAR_PROXY_TIMEOUT_MS = '30000'/);
   assert.match(source, /pyrus-ibkr-helper\.ps1/);
   assert.match(source, /function Invoke-BridgeGatewayReconnectIfNeeded/);
   assert.match(source, /waiting_bridge_gateway_api/);

@@ -822,6 +822,11 @@ test("line-usage generation coordinator routes desired generation to Python side
   assert.equal(snapshot.sidecar.applyPending, false);
   assert.equal(snapshot.sidecar.bridgeGenerationStatus?.source, "ib-async-sidecar");
   assert.equal(snapshot.sidecar.bridgeGenerationStatus?.summary.liveLineCount, 1);
+  assert.equal(snapshot.bridge.activeLineCount, 1);
+  assert.equal(snapshot.lineUtilizationAudit.bridgeActiveLineCount, 1);
+  assert.equal(snapshot.drift.reconciliation.status, "matched");
+  assert.equal(snapshot.drift.reconciliation.apiOnlyLineCount, 0);
+  assert.equal(snapshot.drift.reconciliation.bridgeOnlyLineCount, 0);
   assert.equal(snapshot.sidecar.comparison.status, "matched");
 });
 

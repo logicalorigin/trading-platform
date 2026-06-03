@@ -322,6 +322,7 @@ const ACCOUNT_SWITCH_PREFETCH_OPTIONS = {
 };
 const ACCOUNT_SWITCH_KEEP_WARM_MS = 60_000;
 const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 1_000;
+const SHADOW_ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 4_000;
 const ACCOUNT_LIVE_FALLBACK_DELAY_MS = 5_000;
 const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 6_000;
 const ACCOUNT_INACTIVE_PREWARM_FALLBACK_DELAY_MS = 5_000;
@@ -953,7 +954,10 @@ const AccountScreenInner = ({
         ),
         getGetAccountPositionsQueryOptions(
           target.accountId,
-          positionsParams,
+          {
+            ...positionsParams,
+            liveQuotes: target.accountId === "shadow" ? false : undefined,
+          },
           ACCOUNT_SWITCH_PREFETCH_OPTIONS,
         ),
         getGetAccountOrdersQueryOptions(
@@ -1010,6 +1014,9 @@ const AccountScreenInner = ({
   const [accountLiveFallbackReady, setAccountLiveFallbackReady] = useState(false);
   const [accountDerivedFallbackReady, setAccountDerivedFallbackReady] = useState(false);
   const accountTimingStagesRef = useRef(new Set());
+  const accountCriticalFallbackDelayMs = shadowMode
+    ? SHADOW_ACCOUNT_CRITICAL_FALLBACK_DELAY_MS
+    : ACCOUNT_CRITICAL_FALLBACK_DELAY_MS;
   useEffect(() => {
     if (!isVisible) {
       accountTimingStagesRef.current = new Set();
@@ -1026,11 +1033,12 @@ const AccountScreenInner = ({
     }
     const timer = window.setTimeout(() => {
       setAccountCriticalFallbackReady(true);
-    }, ACCOUNT_CRITICAL_FALLBACK_DELAY_MS);
+    }, accountCriticalFallbackDelayMs);
     return () => window.clearTimeout(timer);
   }, [
     accountPageStreamEnabled,
     accountPageStreamFreshness.accountCriticalFresh,
+    accountCriticalFallbackDelayMs,
     accountSectionPending,
   ]);
   useEffect(() => {
@@ -1417,6 +1425,7 @@ const AccountScreenInner = ({
     {
       ...accountDataParams,
       assetClass: assetFilter === "all" ? undefined : assetFilter,
+      liveQuotes: shadowMode ? false : undefined,
     },
     {
       query: {

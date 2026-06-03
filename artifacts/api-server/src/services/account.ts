@@ -1351,53 +1351,48 @@ async function fetchEquityQuoteSnapshotsForPositions(
 async function fetchOptionQuoteSnapshotsForPositions(
   positions: BrokerPositionSnapshot[],
 ): Promise<Map<string, QuoteSnapshot>> {
-  const idsByUnderlying = positions.reduce((map, position) => {
+  const providerContractIds = positions.flatMap((position) => {
     const providerContractId = position.optionContract?.providerContractId?.trim();
-    const underlying = normalizeSymbol(position.optionContract?.underlying ?? "");
-    if (!providerContractId || !underlying) {
-      return map;
-    }
-    map.set(underlying, [...(map.get(underlying) ?? []), providerContractId]);
-    return map;
-  }, new Map<string, string[]>());
+    return providerContractId ? [providerContractId] : [];
+  });
+  const uniqueProviderContractIds = Array.from(new Set(providerContractIds));
 
-  if (!idsByUnderlying.size) {
+  if (!uniqueProviderContractIds.length) {
     return new Map();
   }
 
-  const quoteEntries = Array.from(idsByUnderlying.entries()).map(
-    ([underlying, providerContractIds]) => {
-      const uniqueProviderContractIds = Array.from(new Set(providerContractIds));
-      const owner = `account-position-option-quotes:${underlying}`;
-      try {
-        declareIbkrLiveDemand({
-          owner,
-          underlying,
-          providerContractIds: uniqueProviderContractIds,
-          intent: "account-monitor-live",
-          fallbackProvider: "cache",
-          requiresGreeks: false,
-          ttlMs: ACCOUNT_MONITOR_OPTION_QUOTE_TTL_MS,
-        });
-        return readIbkrLiveDemandState({
-          owner,
-          underlying,
-          providerContractIds: uniqueProviderContractIds,
-          requiresGreeks: false,
-        }).states.flatMap((state) => (state.quote ? [state.quote] : []));
-      } catch (error) {
-        logger.debug?.(
-          { err: error, underlying },
-          "Unable to read account position option quote demand",
-        );
-        return [];
-      }
-    },
-  );
+  const accountKey = Array.from(
+    new Set(
+      positions
+        .map((position) => String(position.accountId || "").trim())
+        .filter(Boolean),
+    ),
+  ).sort().join("+") || "mixed";
+  const owner = `account-position-option-quotes:${accountKey}`;
+  let quoteEntries: QuoteSnapshot[] = [];
+  try {
+    declareIbkrLiveDemand({
+      owner,
+      providerContractIds: uniqueProviderContractIds,
+      intent: "account-monitor-live",
+      fallbackProvider: "cache",
+      requiresGreeks: false,
+      ttlMs: ACCOUNT_MONITOR_OPTION_QUOTE_TTL_MS,
+    });
+    quoteEntries = readIbkrLiveDemandState({
+      owner,
+      providerContractIds: uniqueProviderContractIds,
+      requiresGreeks: false,
+    }).states.flatMap((state) => (state.quote ? [state.quote] : []));
+  } catch (error) {
+    logger.debug?.(
+      { err: error, accountKey },
+      "Unable to read account position option quote demand",
+    );
+  }
 
   return new Map(
     quoteEntries
-      .flat()
       .flatMap((quote) => {
         const providerContractId = String(quote.providerContractId ?? "").trim();
         return providerContractId ? [[providerContractId, quote] as const] : [];

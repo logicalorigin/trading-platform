@@ -116,6 +116,26 @@ test("safe QA mode disables platform live and diagnostics side effects", () => {
   assert.match(performanceSource, /topStages:\s*topRouteDataTimings/);
 });
 
+test("IBKR header and footer line usage subscribe to the shared line-usage stream", () => {
+  const appSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
+  const headerStatusSource = readFileSync(
+    new URL("./HeaderStatusCluster.jsx", import.meta.url),
+    "utf8",
+  );
+
+  const footerRuntimeBlock = appSource.match(
+    /const footerApiSourceRuntime = useRuntimeControlSnapshot\([\s\S]*?\n  \}\);/,
+  )?.[0];
+  const headerRuntimeBlock = headerStatusSource.match(
+    /const runtimeControl = useRuntimeControlSnapshot\([\s\S]*?\n  \}\);/,
+  )?.[0];
+
+  assert.ok(footerRuntimeBlock);
+  assert.ok(headerRuntimeBlock);
+  assert.match(footerRuntimeBlock, /lineUsageStreamEnabled:\s*true/);
+  assert.match(headerRuntimeBlock, /lineUsageStreamEnabled:\s*true/);
+});
+
 test("retained screen lazy ticker search exports resolve to components", async () => {
   const tickerSearch = await import("./tickerSearch/TickerSearch.jsx");
 

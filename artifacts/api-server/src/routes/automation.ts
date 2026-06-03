@@ -28,7 +28,8 @@ import {
 } from "../services/route-admission";
 
 const router: IRouter = Router();
-const SIGNAL_OPTIONS_STATE_ROUTE_TIMEOUT_MS = 5_000;
+const SIGNAL_OPTIONS_STATE_SUMMARY_ROUTE_TIMEOUT_MS = 7_000;
+const SIGNAL_OPTIONS_STATE_FULL_ROUTE_TIMEOUT_MS = 9_000;
 const SIGNAL_OPTIONS_COCKPIT_SUMMARY_ROUTE_TIMEOUT_MS = 5_000;
 const SIGNAL_OPTIONS_COCKPIT_FULL_ROUTE_TIMEOUT_MS = 9_000;
 const SIGNAL_OPTIONS_SHADOW_SCAN_ROUTE_TIMEOUT_MS = 45_000;
@@ -219,6 +220,10 @@ router.patch("/algo/deployments/:deploymentId/strategy-settings", async (req, re
 router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, res): Promise<void> => {
   const admission = getApiRouteAdmission(res);
   const view = req.query.view === "full" ? "full" : "summary";
+  const timeoutMs =
+    view === "full"
+      ? SIGNAL_OPTIONS_STATE_FULL_ROUTE_TIMEOUT_MS
+      : SIGNAL_OPTIONS_STATE_SUMMARY_ROUTE_TIMEOUT_MS;
   res.json(
     withRouteAdmissionMetadata(
       await withSignalOptionsRouteTimeout(
@@ -229,7 +234,7 @@ router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, r
           refreshSignalsFromMonitorState: true,
         }),
         {
-          timeoutMs: SIGNAL_OPTIONS_STATE_ROUTE_TIMEOUT_MS,
+          timeoutMs,
           code: "signal_options_state_route_timeout",
           detail:
             "Signal Options state did not respond within the route budget.",

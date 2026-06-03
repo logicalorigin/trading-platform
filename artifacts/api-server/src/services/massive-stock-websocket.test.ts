@@ -193,3 +193,58 @@ test("Massive stock WebSocket diagnostics capture provider status and close code
     }
   });
 });
+
+test("Massive stock WebSocket diagnostics report freshness per requested channel", () => {
+  withMassiveRealtimeEnv(() => {
+    FakeWebSocket.instances = [];
+    __massiveStockWebSocketInternalsForTests.reset();
+    __massiveStockWebSocketInternalsForTests.setWebSocketFactory(
+      (url) => new FakeWebSocket(url) as never,
+    );
+    const unsubscribeAggregates = subscribeMassiveStockWebSocket({
+      channels: ["AM"],
+      symbols: ["SPY"],
+      onMessage: () => {},
+    });
+    const unsubscribeQuotes = subscribeMassiveStockWebSocket({
+      channels: ["Q", "T"],
+      symbols: ["SPY"],
+      onMessage: () => {},
+    });
+    __massiveStockWebSocketInternalsForTests.refreshNow();
+
+    try {
+      const socket = FakeWebSocket.instances[0]!;
+      socket.open();
+      socket.serverMessage([{ ev: "status", status: "auth_success" }]);
+      assert.equal(getMassiveStockWebSocketDiagnostics(["AM"]).lastMessageAt, null);
+
+      socket.serverMessage([
+        { ev: "Q", sym: "SPY", bp: 99.9, ap: 100.1 },
+        { ev: "T", sym: "SPY", p: 100 },
+      ]);
+
+      const aggregateDiagnosticsBeforeAm =
+        getMassiveStockWebSocketDiagnostics(["AM"]);
+      const quoteDiagnostics = getMassiveStockWebSocketDiagnostics(["Q", "T"]);
+      assert.equal(aggregateDiagnosticsBeforeAm.eventCount, 0);
+      assert.equal(aggregateDiagnosticsBeforeAm.lastMessageAt, null);
+      assert.equal(aggregateDiagnosticsBeforeAm.lastMessageAgeMs, null);
+      assert.equal(quoteDiagnostics.eventCount, 2);
+      assert.notEqual(quoteDiagnostics.lastMessageAt, null);
+      assert.notEqual(quoteDiagnostics.lastSocketMessageAt, null);
+
+      socket.serverMessage([{ ev: "AM", sym: "SPY", c: 100 }]);
+
+      const aggregateDiagnosticsAfterAm =
+        getMassiveStockWebSocketDiagnostics(["AM"]);
+      assert.equal(aggregateDiagnosticsAfterAm.eventCount, 1);
+      assert.notEqual(aggregateDiagnosticsAfterAm.lastMessageAt, null);
+      assert.notEqual(aggregateDiagnosticsAfterAm.lastMessageAgeMs, null);
+    } finally {
+      unsubscribeQuotes();
+      unsubscribeAggregates();
+      __massiveStockWebSocketInternalsForTests.reset();
+    }
+  });
+});

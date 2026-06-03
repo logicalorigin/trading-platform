@@ -22,10 +22,7 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
-import {
-  FooterApiSourcePressureIndicator,
-  FooterMemoryPressureIndicator,
-} from "./FooterMemoryPressureIndicator.jsx";
+import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { SCREENS } from "./screenRegistry.jsx";
 
 const SECONDARY_SCREEN_IDS = new Set([
@@ -327,8 +324,10 @@ export const MobileMoreSheet = ({
               overflow: "hidden",
             }}
           >
-            <FooterApiSourcePressureIndicator runtimeControl={apiSourcePressureSnapshot} />
-            <FooterMemoryPressureIndicator signal={memoryPressureSignal} />
+            <FooterMemoryPressureIndicator
+              signal={memoryPressureSignal}
+              runtimeControl={apiSourcePressureSnapshot}
+            />
           </span>
           <FlaskConical
             size={14}

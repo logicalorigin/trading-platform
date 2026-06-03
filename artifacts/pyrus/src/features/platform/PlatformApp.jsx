@@ -647,9 +647,9 @@ export default function PlatformApp() {
   const footerApiSourceRuntime = useRuntimeControlSnapshot({
     enabled: platformWorkVisible,
     runtimeDiagnosticsQueryKey: "footer-api-sources",
-    runtimeDiagnosticsRefetchInterval: 15_000,
-    lineUsageStreamEnabled: false,
-    lineUsagePollInterval: 15_000,
+    runtimeDiagnosticsRefetchInterval: 3_000,
+    lineUsageStreamEnabled: true,
+    lineUsagePollInterval: 2_000,
     memoryPressure: memoryPressureSignal,
   });
   const userPreferences = useUserPreferences();

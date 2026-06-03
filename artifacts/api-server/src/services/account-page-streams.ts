@@ -12,13 +12,21 @@ import {
   getFlexHealth,
 } from "./account";
 import type { AccountRange } from "./account-ranges";
-import { isShadowAccountId } from "./shadow-account";
+import {
+  getShadowAccountAllocationFromPositions,
+  getShadowAccountRisk,
+  getShadowAccountSummaryFromPositions,
+  isShadowAccountId,
+} from "./shadow-account";
 import { subscribeShadowAccountChanges } from "./shadow-account-events";
 import { invalidateShadowAccountSnapshotBaseCache } from "./shadow-account-streams";
 
 type Unsubscribe = () => void;
 type OrderTab = "working" | "history";
 type BenchmarkSymbol = "SPY" | "QQQ" | "DIA";
+type ShadowRiskInput = NonNullable<Parameters<typeof getShadowAccountRisk>[0]>;
+type ShadowClosedTradesInput = NonNullable<ShadowRiskInput["closedTrades"]>;
+type AccountOrdersPayload = Awaited<ReturnType<typeof getAccountOrders>>;
 
 export const ACCOUNT_PAGE_STREAM_INTERVAL_MS = 1_000;
 export const ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS = 30_000;
@@ -283,6 +291,38 @@ function normalizeInput(input: AccountPageSnapshotInput): Required<AccountPageSn
   };
 }
 
+function deferredShadowClosedTrades(accountId: string): ShadowClosedTradesInput {
+  return {
+    accountId,
+    currency: "USD",
+    degraded: false,
+    reason: null,
+    trades: [],
+    summary: {
+      count: 0,
+      winners: 0,
+      losers: 0,
+      realizedPnl: 0,
+      commissions: 0,
+    },
+    updatedAt: new Date(),
+  };
+}
+
+function deferredShadowOrders(accountId: string, tab: OrderTab): AccountOrdersPayload {
+  return {
+    accountId,
+    tab,
+    currency: "USD",
+    degraded: false,
+    reason: "Shadow orders deferred until live account-page refresh.",
+    stale: true,
+    debug: null,
+    orders: [],
+    updatedAt: new Date(),
+  };
+}
+
 function cacheKeyForInput(input: AccountPageSnapshotInput): string {
   const normalized = normalizeInput(input);
   return stableStringify({
@@ -377,9 +417,13 @@ export async function fetchAccountPageLivePayload(
         accountId: normalized.accountId,
         mode: normalized.mode,
       };
-      const [critical, intradayEquity] = await Promise.all([
+      const isShadow = isShadowAccountId(normalized.accountId);
+      const [critical, intradayEquity, shadowOrders] = await Promise.all([
         fetchAccountPageCriticalPayload(normalized),
         getAccountEquityHistory({ ...common, range: "1D" }),
+        isShadow
+          ? getAccountOrders({ ...common, tab: normalized.orderTab })
+          : Promise.resolve(null),
       ]);
 
       const value: AccountPageLivePayload = {
@@ -393,7 +437,7 @@ export async function fetchAccountPageLivePayload(
         intradayEquity,
         allocation: critical.allocation,
         positions: critical.positions,
-        orders: critical.orders,
+        orders: shadowOrders ?? critical.orders,
         risk: critical.risk,
       };
       if (version === accountPageSnapshotCacheVersion) {
@@ -450,22 +494,51 @@ export async function fetchAccountPageCriticalPayload(
         accountId: normalized.accountId,
         mode: normalized.mode,
       };
-      const [
-        summary,
-        allocation,
-        positions,
-        orders,
-        risk,
-      ] = await Promise.all([
-        getAccountSummary(common),
-        getAccountAllocation(common),
-        getAccountPositions({
+      const isShadow = isShadowAccountId(normalized.accountId);
+      let summary: AccountPageCriticalPayload["summary"];
+      let allocation: AccountPageCriticalPayload["allocation"];
+      let positions: AccountPageCriticalPayload["positions"];
+      let orders: AccountPageCriticalPayload["orders"];
+      let risk: AccountPageCriticalPayload["risk"];
+
+      if (isShadow) {
+        const shadowPositions = await getAccountPositions({
           ...common,
           assetClass: normalized.assetClass,
-        }),
-        getAccountOrders({ ...common, tab: normalized.orderTab }),
-        getAccountRisk(common),
-      ]);
+          liveQuotes: false,
+        });
+        positions = shadowPositions;
+        orders = deferredShadowOrders(normalized.accountId, normalized.orderTab);
+        [summary, allocation, risk] = await Promise.all([
+          getShadowAccountSummaryFromPositions({
+            positionsResponse:
+              shadowPositions as NonNullable<ShadowRiskInput["positionsResponse"]>,
+          }),
+          Promise.resolve(
+            getShadowAccountAllocationFromPositions({
+              positionsResponse:
+                shadowPositions as NonNullable<ShadowRiskInput["positionsResponse"]>,
+            }),
+          ),
+          getShadowAccountRisk({
+            positionsResponse:
+              shadowPositions as NonNullable<ShadowRiskInput["positionsResponse"]>,
+            closedTrades: deferredShadowClosedTrades(normalized.accountId),
+            detail: "fast",
+          }),
+        ]);
+      } else {
+        [summary, allocation, positions, orders] = await Promise.all([
+          getAccountSummary(common),
+          getAccountAllocation(common),
+          getAccountPositions({
+            ...common,
+            assetClass: normalized.assetClass,
+          }),
+          getAccountOrders({ ...common, tab: normalized.orderTab }),
+        ]);
+        risk = await getAccountRisk(common);
+      }
 
       const value: AccountPageCriticalPayload = {
         stream: "account-page-critical",

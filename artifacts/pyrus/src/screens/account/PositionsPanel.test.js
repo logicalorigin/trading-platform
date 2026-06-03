@@ -348,6 +348,8 @@ test("positions automation metrics distinguish stop distance and breached stops"
 test("positions panel overlays live option quotes onto displayed rows and totals", () => {
   assert.match(quoteStreamsSource, /useIbkrOptionQuoteStream/);
   assert.match(quoteStreamsSource, /intent: "account-monitor-live"/);
+  assert.match(quoteStreamsSource, /owner: "account-position-option-quotes:ui"/);
+  assert.doesNotMatch(quoteStreamsSource, /account-positions:\$\{underlying\}/);
   assert.match(source, /useStoredOptionQuoteSnapshotVersion/);
   assert.match(source, /getStoredOptionQuoteSnapshot/);
   assert.match(source, /applyLiveOptionQuoteToRow/);
@@ -653,7 +655,7 @@ test("positions panel starts live streams from hydrated option quote conids", ()
 
   assert.deepEqual(groups, [
     {
-      underlying: "HOOD",
+      underlying: null,
       providerContractIds: ["123456789"],
     },
   ]);

@@ -189,10 +189,17 @@ test("account page owns one account-monitor option quote stream for positions su
   assert.match(positionsSource, /streamLiveOptionQuotes = true/);
   assert.match(positionsSource, /useRegisterPositionMarketDataSymbols\(\s*`positions:\$\{surfaceId\}`,\s*positionUnderlyingSymbols,\s*liveOptionQuotesEnabled,\s*\)/);
   assert.match(quoteStreamsSource, /intent: "account-monitor-live"/);
+  assert.match(quoteStreamsSource, /owner: "account-position-option-quotes:ui"/);
+  assert.doesNotMatch(quoteStreamsSource, /account-positions:\$\{underlying\}/);
+  assert.match(quoteStreamsSource, /underlying: null/);
+  assert.doesNotMatch(quoteStreamsSource, /groups\.set\(underlying/);
+  assert.doesNotMatch(quoteStreamsSource, /enabled && underlying/);
+  assert.doesNotMatch(quoteStreamsSource, /key=\{group\.underlying\}/);
 });
 
 test("option quote REST fallback preserves websocket owner and intent", () => {
   const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
+  const hookBody = source.slice(source.indexOf("export const useIbkrOptionQuoteStream"));
   const fallbackCall = source.match(
     /getOptionQuoteSnapshots\(\{[\s\S]*?providerContractIds: fallbackProviderContractIds,[\s\S]*?\}\)/,
   )?.[0] ?? "";
@@ -200,6 +207,8 @@ test("option quote REST fallback preserves websocket owner and intent", () => {
   assert.match(fallbackCall, /owner: normalizedOwner \|\| undefined/);
   assert.match(fallbackCall, /intent,/);
   assert.match(fallbackCall, /requiresGreeks,/);
+  assert.doesNotMatch(hookBody, /!normalizedUnderlying/);
+  assert.match(hookBody, /normalizedProviderContractIds\.length === 0/);
 });
 
 test("account critical queries stay mounted after page readiness", () => {

@@ -98,6 +98,20 @@ test("classifies broker-critical routes separately from analytics routes", () =>
   assert.equal(
     classifyApiRoute({
       method: "GET",
+      path: "/api/diagnostics/runtime",
+    }),
+    "active-screen",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "POST",
+      path: "/api/diagnostics/client-metrics",
+    }),
+    "active-screen",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
       path: "/api/diagnostics/thresholds",
     }),
     "active-screen",
@@ -126,6 +140,24 @@ test("classifies broker-critical routes separately from analytics routes", () =>
       fetchPriority: 6,
     }),
     "active-screen",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/api/options/expirations?underlying=SPY",
+      requestFamily: "option-chart-visible",
+      fetchPriority: 8,
+    }),
+    "active-screen",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/api/options/expirations?underlying=SPY",
+      requestFamily: "options-backfill",
+      fetchPriority: -1,
+    }),
+    "deferred-analytics",
   );
   assert.equal(
     classifyApiRoute({
@@ -283,6 +315,36 @@ test("route admission lets visible flow distribution reads survive high API pres
   assert.equal(backgroundFlow.routeClass, "deferred-analytics");
   assert.equal(backgroundFlow.action, "shed");
   assert.equal(backgroundFlow.statusCode, 429);
+});
+
+test("route admission lets visible option expirations survive high API pressure", () => {
+  const visibleExpirations = resolveApiRouteAdmission({
+    routeClass: classifyApiRoute({
+      method: "GET",
+      path: "/api/options/expirations?underlying=SPY",
+      requestFamily: "option-chart-visible",
+      fetchPriority: 8,
+    }),
+    pressureLevel: "high",
+    now: new Date("2026-06-03T15:00:00.000Z"),
+  });
+  const backgroundExpirations = resolveApiRouteAdmission({
+    routeClass: classifyApiRoute({
+      method: "GET",
+      path: "/api/options/expirations?underlying=SPY",
+      requestFamily: "options-backfill",
+      fetchPriority: -1,
+    }),
+    pressureLevel: "high",
+    now: new Date("2026-06-03T15:00:00.000Z"),
+  });
+
+  assert.equal(visibleExpirations.routeClass, "active-screen");
+  assert.equal(visibleExpirations.action, "allow");
+  assert.equal(visibleExpirations.reason, null);
+  assert.equal(backgroundExpirations.routeClass, "deferred-analytics");
+  assert.equal(backgroundExpirations.action, "shed");
+  assert.equal(backgroundExpirations.statusCode, 429);
 });
 
 test("route admission sheds deferred work at high API pressure", () => {
@@ -489,6 +551,14 @@ test("route admission keeps cached latest diagnostics available at critical pres
     pressureLevel: "critical",
     now: new Date("2026-05-28T19:00:00.000Z"),
   });
+  const runtimeDiagnostics = resolveApiRouteAdmission({
+    routeClass: classifyApiRoute({
+      method: "GET",
+      path: "/api/diagnostics/runtime",
+    }),
+    pressureLevel: "critical",
+    now: new Date("2026-05-28T19:00:00.000Z"),
+  });
   const diagnosticsHistory = resolveApiRouteAdmission({
     routeClass: classifyApiRoute({
       method: "GET",
@@ -500,6 +570,8 @@ test("route admission keeps cached latest diagnostics available at critical pres
 
   assert.equal(latestDiagnostics.action, "allow");
   assert.equal(latestDiagnostics.degraded, false);
+  assert.equal(runtimeDiagnostics.action, "allow");
+  assert.equal(runtimeDiagnostics.degraded, false);
   assert.equal(diagnosticsHistory.action, "shed");
   assert.equal(diagnosticsHistory.statusCode, 503);
 });

@@ -398,6 +398,10 @@ test("options flow runtime defaults use the reserved flow scanner lane", () => {
       5 * 60_000,
   );
   assert.equal(resolveOptionsFlowScannerEffectiveConcurrency(config), 8);
+  const diagnostics = getOptionsFlowScannerDiagnostics();
+  assert.equal(diagnostics.seedLineBudget, 25);
+  assert.equal(diagnostics.expandedLineBudget, 25);
+  assert.equal(diagnostics.lineUtilization.effectiveDeepLineBudget, 25);
   assert.equal(
     resolveOptionsFlowScannerEffectiveConcurrency({
       ...config,
@@ -418,7 +422,7 @@ test("options flow runtime defaults use the reserved flow scanner lane", () => {
   assert.equal(getOptionsFlowRuntimeConfig().scannerConcurrency, 8);
 });
 
-test("default options flow symbol scans use one ticker line and one expiration", async () => {
+test("default options flow symbol scans use a pool-aware ticker line budget and one expiration", async () => {
   const expirations = [
     new Date("2026-05-01T00:00:00.000Z"),
     new Date("2026-05-15T00:00:00.000Z"),
@@ -487,11 +491,11 @@ test("default options flow symbol scans use one ticker line and one expiration",
   );
 
   assert.deepEqual(requestedExpirations, ["2026-05-01"]);
-  assert.equal(requestedProviderContractIds.length, 1);
-  assert.equal(parsed.source.scannerLineBudget, 1);
+  assert.equal(requestedProviderContractIds.length, 3);
+  assert.equal(parsed.source.scannerLineBudget, 25);
   assert.equal(parsed.source.scannerExpirationScanCount, 1);
   assert.equal(parsed.source.ibkrCandidateExpirationCount, 1);
-  assert.equal(parsed.source.ibkrLiveCandidateCount, 1);
+  assert.equal(parsed.source.ibkrLiveCandidateCount, 3);
 });
 
 test("automation-only high pressure does not throttle the flow scanner", () => {
@@ -866,7 +870,7 @@ test("options flow radar fallback fills available scanner slots when activity is
   );
   assert.equal(
     getOptionsFlowScannerDiagnostics().lineUtilization.effectiveDeepLineBudget,
-    1,
+    40,
   );
 });
 
@@ -1878,6 +1882,23 @@ test("options flow scanner does not retain transient empty error snapshots", asy
 
 test("listFlowEvents serves backend scanner snapshots before on-demand derivation", async () => {
   let chainCalls = 0;
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input: { providerContractIds?: string[] }) {
+      return (input.providerContractIds ?? []).map((providerContractId) =>
+        optionQuote(providerContractId, { volume: 250 }),
+      );
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
   __setIbkrBridgeClientFactoryForTests(
     () =>
       ({

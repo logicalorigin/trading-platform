@@ -176,6 +176,10 @@ test("IBKR bridge remote launch detection covers Replit preview browsers", () =>
     assert.equal(isReplitPreviewIbkrLaunchBrowser(), true);
     assert.equal(isWindowsIbkrLaunchBrowser(), false);
     assert.equal(shouldUseRemoteIbkrLaunchBrowser(), true);
+    assert.equal(
+      shouldUseRemoteIbkrLaunchBrowser({ desktopAgentOnline: false }),
+      true,
+    );
 
     globalThis.window = {
       document: { referrer: "https://replit.com/@owner/pyrus" },
@@ -210,13 +214,17 @@ test("IBKR bridge remote launch detection uses the desktop agent from non-Window
     assert.equal(isReplitPreviewIbkrLaunchBrowser(), false);
     assert.equal(isWindowsIbkrLaunchBrowser(), false);
     assert.equal(shouldUseRemoteIbkrLaunchBrowser(), true);
+    assert.equal(
+      shouldUseRemoteIbkrLaunchBrowser({ desktopAgentOnline: false }),
+      true,
+    );
   } finally {
     restoreNavigator();
     globalThis.window = originalWindow;
   }
 });
 
-test("IBKR bridge remote launch detection uses the desktop agent from Windows browsers", () => {
+test("IBKR bridge remote launch detection uses local protocol from Windows until the desktop agent is online", () => {
   const originalWindow = globalThis.window;
   const restoreNavigator = replaceNavigator({
     platform: "Win32",
@@ -233,7 +241,15 @@ test("IBKR bridge remote launch detection uses the desktop agent from Windows br
     assert.equal(isMobileIbkrLaunchBrowser(), false);
     assert.equal(isReplitPreviewIbkrLaunchBrowser(), true);
     assert.equal(isWindowsIbkrLaunchBrowser(), true);
-    assert.equal(shouldUseRemoteIbkrLaunchBrowser(), true);
+    assert.equal(shouldUseRemoteIbkrLaunchBrowser(), false);
+    assert.equal(
+      shouldUseRemoteIbkrLaunchBrowser({ desktopAgentOnline: false }),
+      false,
+    );
+    assert.equal(
+      shouldUseRemoteIbkrLaunchBrowser({ desktopAgentOnline: true }),
+      true,
+    );
   } finally {
     restoreNavigator();
     globalThis.window = originalWindow;

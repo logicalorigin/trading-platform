@@ -221,10 +221,15 @@ test("default paper signal-options startup uses full signal monitor coverage", (
   assert.match(source, /const streamFirstMonitorAvailable/);
   assert.match(
     source,
+    /input\.source === "worker"[\s\S]*input\.preferStoredMonitorState === true[\s\S]*streamFirstMonitorAvailable/,
+  );
+  assert.match(
+    source,
     /input\.source !== "worker"[\s\S]*streamFirstMonitorAvailable \|\| input\.preferStoredMonitorState === true/,
   );
   assert.match(source, /resolveSignalOptionsMonitorBatch/);
   assert.match(source, /"manual_lightweight"/);
+  assert.match(source, /function signalOptionsStoredMonitorBatch/);
   assert.match(source, /source:\s*"stored_state"/);
   assert.match(
     source,
@@ -363,8 +368,8 @@ test("manual signal-options scan action work can be explicitly bounded", () => {
   assert.equal(unboundedManual.itemLimit, null);
   assert.equal(boundedManual.deadlineMs, 3_500);
   assert.equal(boundedManual.itemLimit, 3);
-  assert.equal(workerDefault.deadlineMs, 6_000);
-  assert.equal(workerDefault.itemLimit, 1);
+  assert.equal(workerDefault.deadlineMs, 61_000);
+  assert.equal(workerDefault.itemLimit, 4);
 });
 
 test("signal-options profile update returns persisted controls without rebuilding state", () => {
@@ -619,6 +624,10 @@ test("signal-options dashboard endpoints share a cached state snapshot", () => {
     source.match(
       /async function withFreshSignalOptionsStateSignals[\s\S]*?\nexport async function listSignalOptionsAutomationState/,
     )?.[0] ?? "";
+  const fastSummarySnapshotBlock =
+    source.match(
+      /function signalOptionsCachedSummarySnapshot[\s\S]*?\nasync function buildSignalOptionsFastSummaryState/,
+    )?.[0] ?? "";
   const fastSummaryStateBlock =
     source.match(
       /async function buildSignalOptionsFastSummaryState[\s\S]*?\nexport async function listSignalOptionsAutomationState/,
@@ -649,8 +658,14 @@ test("signal-options dashboard endpoints share a cached state snapshot", () => {
     /const SIGNAL_OPTIONS_PERFORMANCE_CACHE_STALE_TTL_MS = 300_000/,
   );
   assert.match(source, /const SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS = 15_000/);
+  assert.match(
+    source,
+    /const SIGNAL_OPTIONS_SUMMARY_EXPIRED_CACHE_GRACE_MS = 10 \* 60_000/,
+  );
   assert.match(source, /refreshSignalsFromMonitorState\?: boolean/);
   assert.match(source, /preferStoredMonitorState\?: boolean/);
+  assert.match(source, /staleFast\?: boolean/);
+  assert.match(source, /includeEventMetadata\?: boolean/);
   assert.match(
     freshSignalsBlock,
     /input\.cacheMode === "cache-only"[\s\S]*input\.refreshSignalsFromMonitorState !== true[\s\S]*return snapshot\.state/,
@@ -698,10 +713,42 @@ test("signal-options dashboard endpoints share a cached state snapshot", () => {
     )?.[0] ?? "",
     /SIGNAL_OPTIONS_STATE_EVENT_LIMIT/,
   );
-  assert.match(fastSummaryStateBlock, /buildSignalOptionsColdDashboardSnapshot/);
-  assert.match(fastSummaryStateBlock, /reason:\s*"signal_options_state_summary_fast_signal_state"/);
-  assert.match(fastSummaryStateBlock, /refreshSignalsFromMonitorState:\s*true/);
-  assert.match(fastSummaryStateBlock, /preferStoredMonitorState:\s*true/);
+  assert.doesNotMatch(fastSummarySnapshotBlock, /withSignalOptionsStateSignalRefreshTimeout/);
+  assert.match(fastSummarySnapshotBlock, /signalOptionsSummaryDashboardCache\.get\(input\.deploymentId\)/);
+  assert.match(fastSummarySnapshotBlock, /withSignalOptionsCacheMetadata\(cached\.state/);
+  assert.match(fastSummarySnapshotBlock, /signal_options_state_summary_expired_cache_refreshing/);
+  assert.match(fastSummarySnapshotBlock, /signalOptionsExpiredSummaryCacheStillUseful/);
+  assert.match(fastSummarySnapshotBlock, /const staleFallback = signalOptionsCachedSummarySnapshot/);
+  assert.match(fastSummarySnapshotBlock, /input\.cacheMode === "cache-only"[\s\S]*return staleFallback/);
+  assert.match(fastSummarySnapshotBlock, /reason:\s*"signal_options_state_summary_stale_timeout_fallback"/);
+  assert.match(fastSummarySnapshotBlock, /staleFallback/);
+  assert.match(source, /const signalOptionsFastSummaryInFlight = new Map/);
+  assert.match(fastSummarySnapshotBlock, /readSignalOptionsDashboardInFlight\(\s*signalOptionsFastSummaryInFlight/);
+  assert.match(fastSummarySnapshotBlock, /signalOptionsFastSummaryInFlight\.set\(input\.deploymentId/);
+  assert.doesNotMatch(fastSummarySnapshotBlock, /readSignalOptionsDashboardInFlight\(\s*signalOptionsSummaryDashboardInFlight/);
+  assert.match(fastSummarySnapshotBlock, /signalOptionsSummaryDashboardCache\.set\(deployment\.id, snapshot\)/);
+  assert.match(fastSummarySnapshotBlock, /withSignalOptionsDashboardSnapshotBudget\(work/);
+  assert.doesNotMatch(fastSummarySnapshotBlock, /signalOptionsDashboardCache\.get\(input\.deploymentId\)/);
+  assert.doesNotMatch(fastSummarySnapshotBlock, /fullCached/);
+  assert.doesNotMatch(fastSummarySnapshotBlock, /fullCached\.state\.signals/);
+  assert.match(fastSummarySnapshotBlock, /reason:\s*"signal_options_state_summary_fast_signal_state"/);
+  assert.match(fastSummarySnapshotBlock, /reason:\s*"signal_options_state_summary_fast_timeout_fallback"/);
+  assert.match(fastSummarySnapshotBlock, /reason:\s*"signal_options_state_summary_fast_cache_only_fallback"/);
+  assert.match(fastSummarySnapshotBlock, /preferStoredMonitorState:\s*true/);
+  assert.doesNotMatch(fastSummarySnapshotBlock, /staleFast:\s*true/);
+  assert.match(fastSummarySnapshotBlock, /includeEventMetadata:\s*false/);
+  assert.match(
+    fastSummarySnapshotBlock,
+    /Signal Options fast summary returned without stored signal state/,
+  );
+  assert.match(source, /async function listSignalOptionsStoredSignalStatesFast/);
+  assert.match(source, /signalMonitorSymbolStatesTable/);
+  assert.match(source, /buildSignalOptionsSignalMonitorEventKey/);
+  assert.match(source, /signalMonitorEventsTable\.eventKey/);
+  assert.match(source, /eventSignalAtByKey/);
+  assert.match(source, /signalOptionsStoredStateCurrentForLane/);
+  assert.match(fastSummarySnapshotBlock, /buildSignalOptionsEmptyRisk\(profile\)/);
+  assert.match(fastSummaryStateBlock, /buildSignalOptionsFastSummarySnapshot\(input\)\)\.state/);
   assert.match(
     stateEndpoint ?? "",
     /\(input\.view \?\? "summary"\) !== "full"[\s\S]*buildSignalOptionsFastSummaryState\(input\)/,
@@ -710,9 +757,16 @@ test("signal-options dashboard endpoints share a cached state snapshot", () => {
     stateEndpoint ?? "",
     /getSignalOptionsDashboardSnapshot\(input\)/,
   );
+  assert.match(cockpitEndpoint ?? "", /buildSignalOptionsFastSummarySnapshot/);
   assert.match(cockpitEndpoint ?? "", /getSignalOptionsDashboardSnapshot/);
   assert.match(cockpitGetter ?? "", /signalOptionsCockpitInFlight/);
   assert.match(cockpitGetter ?? "", /signalOptionsCockpitSummaryInFlight/);
+  assert.match(
+    cockpitGetter ?? "",
+    /allowStale:\s*view === "full" \|\| input\.cacheMode === "cache-only"/,
+  );
+  assert.match(cockpitGetter ?? "", /const staleCached/);
+  assert.match(cockpitGetter ?? "", /withSignalOptionsDashboardBuildTimeoutFallback/);
   assert.match(
     cockpitGetter ?? "",
     /const inFlight = readSignalOptionsDashboardInFlight/,
@@ -1619,15 +1673,18 @@ test("signal-options worker scan uses current stored monitor state before full r
     /async function loadSignalOptionsMonitorState\([\s\S]*?function candidateFromEvent/,
   )?.[0] ?? "";
   const storedIndex = loadBlock.indexOf("const stored = await getSignalMonitorStoredState");
+  const workerStreamPrimaryIndex = loadBlock.indexOf('input.source === "worker"');
   const streamPrimaryIndex = loadBlock.indexOf('"stream_live_primary"');
   const manualLightweightIndex = loadBlock.indexOf('"manual_lightweight"');
   const refreshIndex = loadBlock.indexOf("const fullRefresh = resolveSignalOptionsMonitorFullRefresh");
 
   assert.ok(storedIndex >= 0);
+  assert.ok(workerStreamPrimaryIndex >= 0);
   assert.ok(streamPrimaryIndex >= 0);
   assert.ok(manualLightweightIndex >= 0);
   assert.ok(refreshIndex >= 0);
   assert.ok(storedIndex < refreshIndex);
+  assert.ok(workerStreamPrimaryIndex < refreshIndex);
   assert.ok(streamPrimaryIndex < refreshIndex);
   assert.ok(manualLightweightIndex < refreshIndex);
   assert.match(loadBlock, /shouldRefreshSignalOptionsMonitorState/);
@@ -1635,6 +1692,49 @@ test("signal-options worker scan uses current stored monitor state before full r
   assert.match(loadBlock, /streamFirstMonitorAvailable/);
   assert.match(loadBlock, /preferStoredMonitorState/);
   assert.match(loadBlock, /source:\s*"stored_state"/);
+});
+
+test("signal-options worker does not batch monitor refreshes while high-pressure caps allow signal refresh", () => {
+  const shouldBatch =
+    __signalOptionsAutomationInternalsForTests.shouldBatchSignalOptionsWorkerMonitorRefresh;
+
+  __resetApiResourcePressureForTests();
+  try {
+    assert.equal(
+      shouldBatch({
+        source: "worker",
+        pressure: updateApiResourcePressure({ rssMb: 128 }),
+      }),
+      false,
+    );
+    assert.equal(
+      shouldBatch({
+        source: "manual",
+        pressure: updateApiResourcePressure({
+          rssMb: resolveApiRssPressureThresholds().high,
+        }),
+      }),
+      false,
+    );
+    assert.equal(
+      shouldBatch({
+        source: "worker",
+        pressure: updateApiResourcePressure({
+          rssMb: resolveApiRssPressureThresholds().high,
+        }),
+      }),
+      false,
+    );
+    assert.equal(
+      shouldBatch({
+        source: "worker",
+        pressure: updateApiResourcePressure({ apiHeapUsedPercent: 91 }),
+      }),
+      true,
+    );
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
 });
 
 test("signal-options scan timestamp keeps latest observed fresh signal", () => {

@@ -8,10 +8,7 @@ import {
 import { AppTooltip } from "@/components/ui/tooltip";
 import { FailurePointContent } from "../../components/platform/FailurePointTooltip.jsx";
 import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
-import {
-  MEMORY_PRESSURE_THRESHOLDS,
-  resolveBrowserMemoryThresholds,
-} from "./memoryPressureModel";
+import { MEMORY_PRESSURE_THRESHOLDS } from "./memoryPressureModel";
 import { buildMemoryPressurePopoverModel } from "./memoryPressurePopoverModel.js";
 import { useMemoryPressurePreferences } from "./memoryPressurePreferences";
 import { buildMemoryPressureFailurePoint } from "./failurePointModel.js";
@@ -103,7 +100,6 @@ const CLUSTER_BAR_WIDTH = 54;
 const CLUSTER_BAR_GAP = 6;
 const CLUSTER_LABEL_GAP = 2;
 const CLUSTER_PADDING_X = 2;
-const BROWSER_MEMORY_REFERENCE_MB = 600;
 
 const fallbackMiniDriver = { level: null, score: 0 };
 
@@ -192,14 +188,6 @@ const buildBrowserMemoryDetail = (memoryMb, limitMb) => {
   return `Browser limit ${formatMetric(limitMb, "M")}`;
 };
 
-const browserThresholdsForSignal = (signal) => {
-  const source = signal?.browserSource || signal?.measurement?.memory?.source;
-  return normalizeThresholds(resolveBrowserMemoryThresholds({
-    source,
-    limitMb: readBrowserMemoryLimitMb(signal),
-  }));
-};
-
 const readBrowserMemoryLimitMb = (signal) =>
   finiteNumber(signal?.browserMemoryLimitMb) ??
   (Number.isFinite(Number(signal?.measurement?.memory?.jsHeapSizeLimit))
@@ -259,6 +247,57 @@ const firstSourceNumber = (...values) => {
 
 const formatSourceCount = (value) =>
   Number.isFinite(value) ? Math.round(value).toLocaleString() : "--";
+
+const timestampMs = (value) => {
+  const timestamp = value ? Date.parse(String(value)) : Number.NaN;
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
+
+const formatCompactDuration = (durationMs) => {
+  if (durationMs == null || durationMs === "") return null;
+  const ms = Number(durationMs);
+  if (ms === null) return null;
+  if (!Number.isFinite(ms)) return null;
+  if (ms < 1_000) return "now";
+  if (ms < 60_000) return `${Math.round(ms / 1_000)}s`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  return `${Math.round(ms / 3_600_000)}h`;
+};
+
+const formatCompactAge = (durationMs) => {
+  const duration = formatCompactDuration(durationMs);
+  return duration ? `${duration} ago` : null;
+};
+
+const resolveLiveAgeMs = ({ lastMessageAt, lastMessageAgeMs, observedAt, nowMs }) => {
+  const now = sourceNumber(nowMs);
+  const messageTimestamp = timestampMs(lastMessageAt);
+  if (now !== null && messageTimestamp !== null) {
+    return Math.max(0, now - messageTimestamp);
+  }
+  const baseAge = sourceNumber(lastMessageAgeMs);
+  if (baseAge === null) {
+    return null;
+  }
+  const observedTimestamp = timestampMs(observedAt);
+  if (now !== null && observedTimestamp !== null) {
+    return Math.max(0, baseAge + now - observedTimestamp);
+  }
+  return baseAge;
+};
+
+const streamAgeLevel = (ageMs, fallback = "normal") => {
+  if (!Number.isFinite(ageMs)) return fallback;
+  if (ageMs >= 60_000) return "high";
+  if (ageMs >= 15_000) return "watch";
+  return fallback;
+};
+
+const streamAgeFillPercent = (ageMs, fallbackPercent) => {
+  const ms = sourceNumber(ageMs);
+  if (ms === null) return fallbackPercent;
+  return Math.round(clamp((ms / 60_000) * 100, 4, 100));
+};
 
 const sourceLevelFromLineUsage = ({ used, cap, free, limited }) => {
   if (!Number.isFinite(used) || !Number.isFinite(cap) || cap <= 0) {
@@ -379,27 +418,94 @@ const firstUsefulText = (...values) => {
   return null;
 };
 
-const buildMassiveSourcePressureBar = (runtimeControl) => {
+const buildMassiveFeedSummary = (feed, fallbackObservedAt, nowMs) => {
+  const ageMs = resolveLiveAgeMs({
+    lastMessageAt: feed?.lastMessageAt,
+    lastMessageAgeMs: feed?.lastMessageAgeMs,
+    observedAt: feed?.observedAt || fallbackObservedAt,
+    nowMs,
+  });
+  const age = formatCompactAge(ageMs);
+  const symbols = Number.isFinite(feed?.subscribedSymbolCount)
+    ? `${formatSourceCount(feed.subscribedSymbolCount)} sym`
+    : null;
+  const events = Number.isFinite(feed?.eventCount)
+    ? `${formatSourceCount(feed.eventCount)} ev`
+    : null;
+  const channels = Array.isArray(feed?.subscribedChannels) && feed.subscribedChannels.length
+    ? feed.subscribedChannels.join(",")
+    : Array.isArray(feed?.availableChannels) && feed.availableChannels.length
+      ? `${feed.availableChannels.join(",")} idle`
+      : null;
+  return [
+    feed?.label || "Massive feed",
+    channels,
+    symbols,
+    events,
+    age,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+};
+
+const buildMassiveSourcePressureBar = (runtimeControl, nowMs) => {
   const massive = runtimeControl?.massive || {};
   const rest = massive.rest || {};
   const websocket = massive.websocket || {};
+  const feeds = Array.isArray(websocket.feeds) ? websocket.feeds : [];
   const configured = Boolean(
     massive.configured ||
       massive.providerIdentity === "massive" ||
       rest.status ||
       websocket.status,
   );
+  const lastMessageAgeMs = resolveLiveAgeMs({
+    lastMessageAt: websocket.lastMessageAt,
+    lastMessageAgeMs: websocket.lastMessageAgeMs,
+    observedAt: websocket.observedAt || massive.observedAt,
+    nowMs,
+  });
   const rawStatus =
     normalizeProviderStatus(rest.status) === "degraded" ||
     normalizeProviderStatus(websocket.status) === "degraded"
       ? "degraded"
       : massive.status || rest.status || websocket.status || null;
-  const level = providerStatusLevel(rawStatus, configured);
+  const level = maxPressureLevel(
+    providerStatusLevel(rawStatus, configured),
+    streamAgeLevel(lastMessageAgeMs),
+  );
   const statusLabel =
     configured || rawStatus ? providerStatusLabel(massive.label || rawStatus) : "--";
   const issue = firstUsefulText(massive.lastError, rest.lastError, websocket.lastError);
+  const age = formatCompactAge(lastMessageAgeMs);
+  const mode = websocket.mode || (massive.stocksRealtimeConfigured ? "real-time" : null);
+  const feedSummaries = feeds
+    .filter(
+      (feed) =>
+        feed?.configured &&
+        (feed.connected ||
+          Number(feed.subscribedSymbolCount) > 0 ||
+          Number(feed.activeConsumerCount) > 0 ||
+          Number(feed.eventCount) > 0),
+    )
+    .map((feed) => buildMassiveFeedSummary(feed, websocket.observedAt || massive.observedAt, nowMs));
   const activity = firstUsefulText(
-    websocket.channelSummary,
+    feedSummaries.join(" / "),
+    [
+      mode ? `WS ${mode}` : null,
+      websocket.channelSummary && websocket.channelSummary !== MISSING_VALUE
+        ? websocket.channelSummary
+        : null,
+      Number.isFinite(websocket.subscribedSymbolCount)
+        ? `${formatSourceCount(websocket.subscribedSymbolCount)} symbols`
+        : null,
+      Number.isFinite(websocket.eventCount)
+        ? `${formatSourceCount(websocket.eventCount)} events`
+        : null,
+      age ? `last ${age}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
     Number.isFinite(websocket.subscribedSymbolCount)
       ? `${formatSourceCount(websocket.subscribedSymbolCount)} symbols`
       : null,
@@ -409,20 +515,105 @@ const buildMassiveSourcePressureBar = (runtimeControl) => {
     .filter(Boolean)
     .join(" · ");
   const fillPercent =
-    level === "high" ? 88 : level === "watch" ? 42 : statusLabel === "OK" ? 18 : 0;
+    level === "high"
+      ? 88
+      : level === "watch"
+        ? Math.max(42, streamAgeFillPercent(lastMessageAgeMs, 42))
+        : streamAgeFillPercent(lastMessageAgeMs, statusLabel === "OK" ? 18 : 0);
+  const compactAge = formatCompactDuration(lastMessageAgeMs);
+  const compactStatus = issue
+    ? statusLabel
+    : Number.isFinite(websocket.subscribedSymbolCount)
+      ? `${formatSourceCount(websocket.subscribedSymbolCount)}${
+          compactAge ? ` · ${compactAge}` : ""
+        }`
+      : compactAge || statusLabel;
 
   return {
     key: "massive",
     level,
     fillPercent,
-    label: `Massive ${statusLabel}`,
+    label: `Massive ${compactStatus}`,
     detail: detail || "Massive --",
   };
 };
 
-export const buildApiSourcePressureBars = (runtimeControl) => [
+export const buildApiSourcePressureBars = (runtimeControl, nowMs) => [
   buildIbkrSourcePressureBar(runtimeControl),
-  buildMassiveSourcePressureBar(runtimeControl),
+  buildMassiveSourcePressureBar(runtimeControl, nowMs),
+];
+
+const buildCachePressureBar = (signal) => {
+  const drivers = Array.isArray(signal?.pressureDrivers)
+    ? signal.pressureDrivers
+    : [];
+  const queryCacheDriver =
+    findMiniDriver(drivers, "query-cache") || fallbackMiniDriver;
+  const queryCountThresholds = normalizeThresholds(
+    MEMORY_PRESSURE_THRESHOLDS.queryCache.queryCount,
+  );
+  const heavyQueryCountThresholds = normalizeThresholds(
+    MEMORY_PRESSURE_THRESHOLDS.queryCache.heavyQueryCount,
+  );
+  const queryCount = finiteNumber(signal?.queryCount);
+  const heavyQueryCount = finiteNumber(signal?.heavyQueryCount);
+  const queryCountLevel = levelFromThresholds(queryCount, queryCountThresholds);
+  const heavyQueryCountLevel = levelFromThresholds(
+    heavyQueryCount,
+    heavyQueryCountThresholds,
+  );
+  const level = maxPressureLevel(
+    queryCacheDriver.level,
+    queryCountLevel,
+    heavyQueryCountLevel,
+  );
+
+  return {
+    key: "cache",
+    driverKind: "query-cache",
+    level,
+    fillPercent: Math.max(
+      thresholdFillPercent(queryCount, queryCountThresholds, 240),
+      thresholdFillPercent(heavyQueryCount, heavyQueryCountThresholds, 50),
+    ),
+    label: buildCacheLabel(queryCount),
+    detail: buildCacheDetail(queryCount, heavyQueryCount),
+  };
+};
+
+const buildAppRuntimePressureBar = (signal) => {
+  const drivers = Array.isArray(signal?.pressureDrivers)
+    ? signal.pressureDrivers
+    : [];
+  const runtimeStoreDriver =
+    findMiniDriver(drivers, "runtime-stores") || fallbackMiniDriver;
+  const runtimeStoreThresholds = normalizeThresholds(
+    MEMORY_PRESSURE_THRESHOLDS.runtimeStores.storeEntryCount,
+  );
+  const storeEntryCount = finiteNumber(signal?.storeEntryCount) ?? 0;
+  const level = maxPressureLevel(
+    runtimeStoreDriver.level,
+    levelFromThresholds(storeEntryCount, runtimeStoreThresholds),
+  );
+
+  return {
+    key: "app",
+    driverKind: "runtime-stores",
+    level,
+    fillPercent: thresholdFillPercent(
+      storeEntryCount,
+      runtimeStoreThresholds,
+      180,
+    ),
+    label: `App ${formatMetric(storeEntryCount)}`,
+    detail: `Runtime ${formatMetric(storeEntryCount)} entries`,
+  };
+};
+
+export const buildFooterPressureBars = ({ signal, runtimeControl, nowMs } = {}) => [
+  ...buildApiSourcePressureBars(runtimeControl, nowMs),
+  buildCachePressureBar(signal),
+  buildAppRuntimePressureBar(signal),
 ];
 
 const ApiSourcePressureTooltip = ({ bar }) => (
@@ -449,169 +640,10 @@ const ApiSourcePressureTooltip = ({ bar }) => (
   </div>
 );
 
-export const FooterApiSourcePressureIndicator = ({ runtimeControl }) => {
-  const { preferences } = useMemoryPressurePreferences();
-  const bars = useMemo(
-    () => buildApiSourcePressureBars(runtimeControl),
-    [runtimeControl],
-  );
-  const level = maxPressureLevel(...bars.map((bar) => bar.level));
-  const title = bars.map((bar) => bar.detail).join(" | ");
-
-  return (
-    <span
-      data-testid="footer-api-source-pressure-cluster"
-      role="group"
-      aria-label={`API source pressure. ${title}`}
-      title={title}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: dim(CLUSTER_BAR_GAP),
-        minWidth: 0,
-        maxWidth: "min(44vw, 280px)",
-        padding: sp("4px 8px"),
-        borderRadius: dim(RADII.pill),
-        border: `1px solid ${pressureBorder(level)}`,
-        background: pressureBackground(level),
-        overflow: "hidden",
-        whiteSpace: "nowrap",
-        flexShrink: 1,
-      }}
-    >
-      <span
-        style={{
-          color: CSS_COLOR.textMuted,
-          fontSize: textSize("caption"),
-          fontFamily: T.sans,
-          fontWeight: FONT_WEIGHTS.medium,
-          letterSpacing: "0.04em",
-          textTransform: "uppercase",
-          whiteSpace: "nowrap",
-        }}
-      >
-        API
-      </span>
-      <span
-        className="ra-pressure-mini-cluster"
-        data-cluster-expanded="true"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: dim(CLUSTER_BAR_GAP),
-          minWidth: dim(CLUSTER_BAR_WIDTH * 2 + CLUSTER_BAR_GAP),
-          height: dim(18),
-          overflow: "hidden",
-        }}
-      >
-        {bars.map((bar) => (
-          <AppTooltip key={bar.key} content={<ApiSourcePressureTooltip bar={bar} />}>
-            <span
-              className="ra-pressure-mini-slot"
-              data-testid={`footer-api-source-pressure-slot-${bar.key}`}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(0, 1fr)",
-                gap: dim(CLUSTER_LABEL_GAP),
-                height: "100%",
-                minWidth: dim(CLUSTER_BAR_WIDTH),
-                maxWidth: dim(86),
-              }}
-            >
-              <span aria-hidden="true" style={miniTrackStyle(bar)}>
-                <span
-                  data-testid={`footer-api-source-pressure-fill-${bar.key}`}
-                  style={miniFillStyle(bar)}
-                />
-              </span>
-              <span
-                className="ra-pressure-mini-label"
-                style={miniLabelStyle(bar, preferences.showCompactLabel)}
-              >
-                {bar.label}
-              </span>
-            </span>
-          </AppTooltip>
-        ))}
-      </span>
-    </span>
-  );
-};
-
-const MiniPressureBars = ({ signal, showLabels = true }) => {
-  if (!signal) {
+const MiniPressureBars = ({ bars = [], signal, showLabels = true }) => {
+  if (!bars.length) {
     return null;
   }
-
-  const drivers = Array.isArray(signal.pressureDrivers)
-    ? signal.pressureDrivers
-    : [];
-  const browserDriver = findMiniDriver(drivers, "browser-memory") || fallbackMiniDriver;
-  const queryCacheDriver =
-    findMiniDriver(drivers, "query-cache") || fallbackMiniDriver;
-  const runtimeStoreDriver =
-    findMiniDriver(drivers, "runtime-stores") || fallbackMiniDriver;
-  const browserThresholds = browserThresholdsForSignal(signal);
-  const queryCountThresholds = normalizeThresholds(
-    MEMORY_PRESSURE_THRESHOLDS.queryCache.queryCount,
-  );
-  const heavyQueryCountThresholds = normalizeThresholds(
-    MEMORY_PRESSURE_THRESHOLDS.queryCache.heavyQueryCount,
-  );
-  const runtimeStoreThresholds = normalizeThresholds(
-    MEMORY_PRESSURE_THRESHOLDS.runtimeStores.storeEntryCount,
-  );
-  const browserMemoryMb = finiteNumber(signal.browserMemoryMb);
-  const browserMemoryLimitMb = readBrowserMemoryLimitMb(signal);
-  const queryCount = finiteNumber(signal.queryCount);
-  const heavyQueryCount = finiteNumber(signal.heavyQueryCount);
-  const storeEntryCount = finiteNumber(signal.storeEntryCount) ?? 0;
-  const browserLevel = maxPressureLevel(
-    browserDriver.level,
-    levelFromThresholds(browserMemoryMb, browserThresholds),
-  );
-  const queryCountLevel = levelFromThresholds(queryCount, queryCountThresholds);
-  const heavyQueryCountLevel = levelFromThresholds(
-    heavyQueryCount,
-    heavyQueryCountThresholds,
-  );
-  const cacheLevel = maxPressureLevel(
-    queryCacheDriver.level,
-    queryCountLevel,
-    heavyQueryCountLevel,
-  );
-  const bars = [
-    {
-      key: "browser",
-      level: browserLevel,
-      fillPercent: thresholdFillPercent(
-        browserMemoryMb,
-        browserThresholds,
-        BROWSER_MEMORY_REFERENCE_MB,
-      ),
-      label: `Browser ${formatMetric(browserMemoryMb, "M")}`,
-      detail: buildBrowserMemoryDetail(browserMemoryMb, browserMemoryLimitMb),
-    },
-    {
-      key: "cache",
-      level: cacheLevel,
-      fillPercent: Math.max(
-        thresholdFillPercent(queryCount, queryCountThresholds, 240),
-        thresholdFillPercent(heavyQueryCount, heavyQueryCountThresholds, 50),
-      ),
-      label: buildCacheLabel(queryCount),
-      detail: buildCacheDetail(queryCount, heavyQueryCount),
-    },
-    {
-      key: "runtime",
-      level:
-        runtimeStoreDriver.level ||
-        levelFromThresholds(storeEntryCount, runtimeStoreThresholds),
-      fillPercent: thresholdFillPercent(storeEntryCount, runtimeStoreThresholds, 180),
-      label: `Runtime ${formatMetric(storeEntryCount)}`,
-      detail: `Runtime ${formatMetric(storeEntryCount)}`,
-    },
-  ];
 
   return (
     <span
@@ -638,23 +670,30 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
       }}
     >
       {bars.map((bar) => {
+        const isApiSource = bar.key === "ibkr" || bar.key === "massive";
         const failurePoint = buildMemoryPressureFailurePoint({
           signal,
           driver: {
-            kind: bar.key,
+            kind: bar.driverKind || bar.key,
             label: bar.label,
             level: bar.level,
             detail: bar.detail,
           },
         });
+        const tooltipContent = isApiSource ? (
+          <ApiSourcePressureTooltip bar={bar} />
+        ) : (
+          <FailurePointContent point={failurePoint} compact />
+        );
         return (
-          <AppTooltip
-            key={bar.key}
-            content={<FailurePointContent point={failurePoint} compact />}
-          >
+          <AppTooltip key={bar.key} content={tooltipContent}>
             <span
               className="ra-pressure-mini-slot"
-              data-testid={`footer-memory-pressure-mini-slot-${bar.key}`}
+              data-testid={
+                isApiSource
+                  ? `footer-api-source-pressure-slot-${bar.key}`
+                  : `footer-memory-pressure-mini-slot-${bar.key}`
+              }
               style={{
                 display: "grid",
                 gridTemplateColumns: "minmax(0, 1fr)",
@@ -666,7 +705,11 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
             >
               <span aria-hidden="true" style={miniTrackStyle(bar)}>
                 <span
-                  data-testid={`footer-memory-pressure-mini-fill-${bar.key}`}
+                  data-testid={
+                    isApiSource
+                      ? `footer-api-source-pressure-fill-${bar.key}`
+                      : `footer-memory-pressure-mini-fill-${bar.key}`
+                  }
                   style={miniFillStyle(bar)}
                 />
               </span>
@@ -857,14 +900,35 @@ const diagnosticsStatusLabel = (status) => {
   return "Opens with latest diagnostics";
 };
 
-export const FooterMemoryPressureIndicator = ({ signal }) => {
+const useFooterPressureClock = () => {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const interval = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  return nowMs;
+};
+
+export const FooterMemoryPressureIndicator = ({ signal, runtimeControl = null }) => {
   const { preferences } = useMemoryPressurePreferences();
   const [open, setOpen] = useState(false);
   const [diagnosticsPayload, setDiagnosticsPayload] = useState(null);
   const [diagnosticsStatus, setDiagnosticsStatus] = useState("idle");
-  const level = signal?.level || "normal";
-  const tone = pressureTone(level);
-  const title = buildTitle(signal);
+  const nowMs = useFooterPressureClock();
+  const bars = useMemo(
+    () => buildFooterPressureBars({ signal, runtimeControl, nowMs }),
+    [nowMs, runtimeControl, signal],
+  );
+  const level = maxPressureLevel(...bars.map((bar) => bar.level));
+  const compactTitle = bars.map((bar) => bar.detail).filter(Boolean).join(" | ");
+  const title = [compactTitle, buildTitle(signal)].filter(Boolean).join(" | ");
   const model = useMemo(
     () => buildMemoryPressurePopoverModel(signal, diagnosticsPayload),
     [diagnosticsPayload, signal],
@@ -923,34 +987,14 @@ export const FooterMemoryPressureIndicator = ({ signal }) => {
             fontFamily: T.sans,
             cursor: "pointer",
             flexShrink: 1,
-            maxWidth: "min(70vw, 560px)",
+            maxWidth: "min(72vw, 360px)",
           }}
         >
-          <span
-            style={{
-              color: CSS_COLOR.textMuted,
-              fontSize: textSize("caption"),
-              fontWeight: FONT_WEIGHTS.medium,
-              letterSpacing: "0.04em",
-              textTransform: "uppercase",
-              whiteSpace: "nowrap",
-            }}
-          >
-            Memory
-          </span>
-          <span
-            style={{
-              color: tone,
-              fontSize: textSize("body"),
-              fontWeight: FONT_WEIGHTS.medium,
-              fontVariantNumeric: "tabular-nums",
-              textTransform: "uppercase",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {level}
-          </span>
-          <MiniPressureBars signal={signal} showLabels={preferences.showCompactLabel} />
+          <MiniPressureBars
+            bars={bars}
+            signal={signal}
+            showLabels={preferences.showCompactLabel}
+          />
         </button>
       </PopoverTrigger>
       <PopoverContent

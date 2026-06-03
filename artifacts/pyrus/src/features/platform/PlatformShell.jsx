@@ -58,10 +58,7 @@ import {
   preloadScreenModule,
 } from "./screenRegistry.jsx";
 import { useElementSize, useViewport } from "../../lib/responsive";
-import {
-  FooterApiSourcePressureIndicator,
-  FooterMemoryPressureIndicator,
-} from "./FooterMemoryPressureIndicator.jsx";
+import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { lazyWithRetry } from "../../lib/dynamicImport";
 import {
@@ -1338,8 +1335,10 @@ export const PlatformShell = ({
           >
             v0.1.0
           </span>
-          <FooterApiSourcePressureIndicator runtimeControl={apiSourcePressureSnapshot} />
-          <FooterMemoryPressureIndicator signal={memoryPressureSignal} />
+          <FooterMemoryPressureIndicator
+            signal={memoryPressureSignal}
+            runtimeControl={apiSourcePressureSnapshot}
+          />
         </span>
       </div>
     )}

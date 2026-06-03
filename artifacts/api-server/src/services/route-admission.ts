@@ -309,6 +309,8 @@ export function classifyApiRoute(input: {
     path === "/signal-monitor/matrix" ||
     path === "/signal-monitor/state" ||
     path === "/diagnostics/latest" ||
+    path === "/diagnostics/runtime" ||
+    path === "/diagnostics/client-metrics" ||
     (method === "GET" && path === "/diagnostics/thresholds")
   ) {
     return "active-screen";
@@ -318,6 +320,7 @@ export function classifyApiRoute(input: {
     path === "/bars" ||
     path === "/options/chart-bars" ||
     path === "/options/chains" ||
+    path === "/options/expirations" ||
     path === "/flow/events" ||
     path === "/flow/events/aggregate" ||
     path === "/flow/premium-distribution" ||

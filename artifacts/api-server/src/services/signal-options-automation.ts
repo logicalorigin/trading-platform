@@ -30,6 +30,8 @@ import {
   db,
   executionEventsTable,
   signalMonitorEventsTable,
+  signalMonitorProfilesTable,
+  signalMonitorSymbolStatesTable,
   shadowFillsTable,
   shadowOrdersTable,
   shadowPositionMarksTable,
@@ -37,7 +39,7 @@ import {
   type AlgoDeployment,
   type ExecutionEvent,
 } from "@workspace/db";
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull } from "drizzle-orm";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { normalizeSymbol } from "../lib/values";
@@ -181,8 +183,8 @@ const DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 6;
 const SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY = 6;
 const DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_MONITOR_BATCH_SIZE = 12;
-const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 5_000;
-const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 1;
+const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 60_000;
+const DEFAULT_SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 4;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_SIGNAL_RESERVE_BUDGET_MS = 5_000;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_SIGNAL_RESERVE_ITEM_LIMIT = 1;
 const SIGNAL_OPTIONS_MATRIX_MTF_TIMEFRAMES = [
@@ -227,6 +229,7 @@ const SIGNAL_OPTIONS_DASHBOARD_CACHE_TTL_MS = 2_000;
 const SIGNAL_OPTIONS_DASHBOARD_CACHE_STALE_TTL_MS = 60_000;
 const SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS = 15_000;
 const SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS = 120_000;
+const SIGNAL_OPTIONS_SUMMARY_EXPIRED_CACHE_GRACE_MS = 10 * 60_000;
 const SIGNAL_OPTIONS_PERFORMANCE_CACHE_TTL_MS = 30_000;
 const SIGNAL_OPTIONS_PERFORMANCE_CACHE_STALE_TTL_MS = 300_000;
 const SIGNAL_OPTIONS_DASHBOARD_SUMMARY_BUILD_TIMEOUT_MS = 4_800;
@@ -442,6 +445,7 @@ type SignalMonitorState = {
   barsSinceSignal?: number | null;
   fresh: boolean;
   status?: string | null;
+  lastEvaluatedAt?: Date | string | null;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -2235,7 +2239,11 @@ async function readSignalMonitorEventMetadata(input: {
 
 async function listSignalOptionsSignalSnapshots(
   deployment: AlgoDeployment,
-  options: { preferStoredMonitorState?: boolean } = {},
+  options: {
+    preferStoredMonitorState?: boolean;
+    staleFast?: boolean;
+    includeEventMetadata?: boolean;
+  } = {},
 ) {
   const universe = new Set(
     deployment.symbolUniverse
@@ -2243,31 +2251,34 @@ async function listSignalOptionsSignalSnapshots(
       .filter(Boolean),
   );
   const signalState = await (options.preferStoredMonitorState
-    ? getSignalMonitorStoredState({
-        environment: deployment.mode,
-        markNonCurrentStale: true,
-      })
+    ? listSignalOptionsStoredSignalStatesFast({ deployment, universe })
     : getSignalMonitorState({
         environment: deployment.mode,
-      })
+        staleFast: options.staleFast === true,
+      }).then((state) => ({
+        states: Array.isArray(state.states)
+          ? (state.states as SignalMonitorState[])
+          : [],
+        freshWindowBars: optionalFiniteNumber(
+          asRecord(state.profile).freshWindowBars,
+        ),
+      }))
   ).catch((error) => {
     logger.warn?.(
       { err: error, deploymentId: deployment.id },
       "Failed to read signal monitor state for signal-options cockpit",
     );
-    return null;
+    return {
+      states: [] as SignalMonitorState[],
+      freshWindowBars: null as number | null,
+    };
   });
-  const states = Array.isArray(signalState?.states)
-    ? (signalState.states as SignalMonitorState[])
-    : [];
-  const filteredStates = states.filter((state) => {
+  const filteredStates = signalState.states.filter((state) => {
     const symbol = normalizeSymbol(state.symbol).toUpperCase();
     return symbol && (universe.size === 0 || universe.has(symbol));
   });
   const visibleStates = filteredStates.filter(isSignalOptionsVisibleSignalState);
-  const freshWindowBars = optionalFiniteNumber(
-    asRecord(signalState?.profile).freshWindowBars,
-  );
+  const freshWindowBars = signalState.freshWindowBars;
 
   const snapshots = await Promise.all(
     visibleStates.map(async (state) => {
@@ -2276,7 +2287,7 @@ async function listSignalOptionsSignalSnapshots(
         signalAt && state.currentSignalDirection
           ? buildSignalKey(state, signalAt)
           : null;
-      const metadata = signalAt
+      const metadata = signalAt && options.includeEventMetadata !== false
         ? await readSignalMonitorEventMetadata({ state, signalAt }).catch(
             () => null,
           )
@@ -4411,6 +4422,179 @@ function normalizeSignalOptionsMonitorUniverseSymbols(universe: Set<string>) {
   );
 }
 
+function signalOptionsStoredStateCurrentForLane(input: {
+  state: Pick<SignalMonitorState, "latestBarAt" | "lastEvaluatedAt" | "status">;
+  timeframe: SignalMonitorTimeframe;
+  evaluatedAt: Date;
+}) {
+  if (String(input.state.status ?? "ok").toLowerCase() !== "ok") {
+    return false;
+  }
+  const latestBarAt = dateOrNull(input.state.latestBarAt);
+  const lastEvaluatedAt = dateOrNull(input.state.lastEvaluatedAt);
+  if (!latestBarAt || !lastEvaluatedAt) {
+    return false;
+  }
+
+  const timeframeMs = getSignalMonitorTimeframeMs(input.timeframe);
+  const staleMinimumWindowMs =
+    input.timeframe === "1d" ? 4 * getSignalMonitorTimeframeMs("1d") : 15 * 60_000;
+  const staleWindowMs = Math.max(timeframeMs * 4, staleMinimumWindowMs);
+  if (input.evaluatedAt.getTime() - latestBarAt.getTime() > staleWindowMs) {
+    return false;
+  }
+
+  const evaluationMinimumWindowMs =
+    input.timeframe === "1d" ? 4 * getSignalMonitorTimeframeMs("1d") : 30 * 60_000;
+  const evaluationWindowMs = Math.max(timeframeMs * 6, evaluationMinimumWindowMs);
+  return (
+    input.evaluatedAt.getTime() - lastEvaluatedAt.getTime() <=
+    evaluationWindowMs
+  );
+}
+
+function signalOptionsDirectionOrNull(value: unknown): SignalDirection | null {
+  return value === "buy" || value === "sell" ? value : null;
+}
+
+function buildSignalOptionsSignalMonitorEventKey(input: {
+  profileId: string;
+  symbol: string;
+  timeframe: string;
+  direction: SignalDirection;
+  signalBarAt: Date;
+}) {
+  return [
+    input.profileId,
+    normalizeSymbol(input.symbol).toUpperCase(),
+    input.timeframe,
+    input.direction,
+    Math.floor(input.signalBarAt.getTime() / 1000),
+  ].join(":");
+}
+
+async function listSignalOptionsStoredSignalStatesFast(input: {
+  deployment: AlgoDeployment;
+  universe: Set<string>;
+}) {
+  const [profile] = await db
+    .select()
+    .from(signalMonitorProfilesTable)
+    .where(eq(signalMonitorProfilesTable.environment, input.deployment.mode))
+    .limit(1);
+  if (!profile) {
+    return {
+      states: [] as SignalMonitorState[],
+      freshWindowBars: null as number | null,
+    };
+  }
+
+  const timeframe = resolveSignalMonitorTimeframe(profile.timeframe);
+  const universeSymbols = normalizeSignalOptionsMonitorUniverseSymbols(input.universe);
+  const conditions = [
+    eq(signalMonitorSymbolStatesTable.profileId, profile.id),
+    eq(signalMonitorSymbolStatesTable.timeframe, timeframe),
+    eq(signalMonitorSymbolStatesTable.active, true),
+    eq(signalMonitorSymbolStatesTable.fresh, true),
+    eq(signalMonitorSymbolStatesTable.status, "ok"),
+    isNotNull(signalMonitorSymbolStatesTable.currentSignalAt),
+    isNotNull(signalMonitorSymbolStatesTable.currentSignalDirection),
+  ];
+  if (universeSymbols.length > 0) {
+    conditions.push(inArray(signalMonitorSymbolStatesTable.symbol, universeSymbols));
+  }
+
+  const evaluatedAt = new Date();
+  const rows = await db
+    .select()
+    .from(signalMonitorSymbolStatesTable)
+    .where(and(...conditions))
+    .orderBy(
+      desc(signalMonitorSymbolStatesTable.currentSignalAt),
+      desc(signalMonitorSymbolStatesTable.latestBarAt),
+    )
+    .limit(500);
+  const eventKeys = Array.from(
+    new Set(
+      rows
+        .map((row) => {
+          const direction = signalOptionsDirectionOrNull(
+            row.currentSignalDirection,
+          );
+          const signalAt = dateOrNull(row.currentSignalAt);
+          return direction && signalAt
+            ? buildSignalOptionsSignalMonitorEventKey({
+                profileId: row.profileId,
+                symbol: row.symbol,
+                timeframe,
+                direction,
+                signalBarAt: signalAt,
+              })
+            : null;
+        })
+        .filter((key): key is string => Boolean(key)),
+    ),
+  );
+  const eventSignalAtByKey = new Map<string, Date>();
+  if (eventKeys.length > 0) {
+    const eventRows = await db
+      .select({
+        eventKey: signalMonitorEventsTable.eventKey,
+        signalAt: signalMonitorEventsTable.signalAt,
+      })
+      .from(signalMonitorEventsTable)
+      .where(inArray(signalMonitorEventsTable.eventKey, eventKeys));
+    for (const event of eventRows) {
+      eventSignalAtByKey.set(event.eventKey, event.signalAt);
+    }
+  }
+  const states = rows
+    .map((row): SignalMonitorState | null => {
+      const direction = signalOptionsDirectionOrNull(row.currentSignalDirection);
+      if (!direction) {
+        return null;
+      }
+      const stateSignalAt = dateOrNull(row.currentSignalAt);
+      const eventKey = stateSignalAt
+        ? buildSignalOptionsSignalMonitorEventKey({
+            profileId: row.profileId,
+            symbol: row.symbol,
+            timeframe,
+            direction,
+            signalBarAt: stateSignalAt,
+          })
+        : null;
+      const state: SignalMonitorState = {
+        profileId: row.profileId,
+        symbol: row.symbol,
+        timeframe,
+        currentSignalDirection: direction,
+        currentSignalAt:
+          (eventKey ? eventSignalAtByKey.get(eventKey) : null) ??
+          row.currentSignalAt,
+        currentSignalPrice: optionalFiniteNumber(row.currentSignalPrice),
+        latestBarAt: row.latestBarAt,
+        barsSinceSignal: row.barsSinceSignal,
+        fresh: row.fresh === true,
+        status: row.status,
+        lastEvaluatedAt: row.lastEvaluatedAt,
+      };
+      return signalOptionsStoredStateCurrentForLane({
+        state,
+        timeframe,
+        evaluatedAt,
+      })
+        ? state
+        : null;
+    })
+    .filter((state): state is SignalMonitorState => state !== null);
+
+  return {
+    states,
+    freshWindowBars: optionalFiniteNumber(profile.freshWindowBars),
+  };
+}
+
 function resolveSignalOptionsMonitorFullRefresh(input: {
   universe: Set<string>;
 }) {
@@ -4497,6 +4681,17 @@ function resolveSignalOptionsWorkerMonitorBatchCapacity(
   );
 }
 
+function shouldBatchSignalOptionsWorkerMonitorRefresh(input: {
+  source?: "manual" | "worker";
+  pressure: ReturnType<typeof getApiResourcePressureSnapshot>;
+}): boolean {
+  return (
+    input.source === "worker" &&
+    (isApiResourcePressureHardBlock(input.pressure) ||
+      input.pressure.caps.signalOptions.signalRefreshAllowed === false)
+  );
+}
+
 function shouldRefreshSignalOptionsMonitorState(input: {
   evaluated: unknown;
   universe: Set<string>;
@@ -4572,6 +4767,26 @@ function shouldRefreshSignalOptionsMonitorState(input: {
   );
 }
 
+function signalOptionsStoredMonitorBatch(input: {
+  symbols: string[];
+  profile: SignalMonitorProfileRow;
+  forced: boolean;
+  reason: string;
+}) {
+  return {
+    symbols: [] as string[],
+    universeCount: input.symbols.length,
+    batchSize: 0,
+    startIndex: null,
+    nextIndex: null,
+    capacity: resolveSignalOptionsWorkerMonitorBatchCapacity(input.profile),
+    fullUniverse: false,
+    forced: input.forced,
+    source: "stored_state",
+    reason: input.reason,
+  };
+}
+
 async function loadSignalOptionsMonitorState(input: {
   deployment: AlgoDeployment;
   universe: Set<string>;
@@ -4587,9 +4802,13 @@ async function loadSignalOptionsMonitorState(input: {
       environment: input.deployment.mode,
       ensureWatchlist: true,
     });
-    const hardPressureBlock = isApiResourcePressureHardBlock(
-      getApiResourcePressureSnapshot(),
-    );
+    const pressure = getApiResourcePressureSnapshot();
+    const hardPressureBlock = isApiResourcePressureHardBlock(pressure);
+    const shouldBatchWorkerRefresh =
+      shouldBatchSignalOptionsWorkerMonitorRefresh({
+        source: input.source,
+        pressure,
+      });
     if (
       input.source === "worker" &&
       input.readinessReason === SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON
@@ -4604,18 +4823,12 @@ async function loadSignalOptionsMonitorState(input: {
       throwIfSignalOptionsScanAborted(input.signal);
       return {
         ...evaluated,
-        signalOptionsBatch: {
-          symbols: [] as string[],
-          universeCount: symbols.length,
-          batchSize: 0,
-          startIndex: null,
-          nextIndex: null,
-          capacity: resolveSignalOptionsWorkerMonitorBatchCapacity(profile),
-          fullUniverse: false,
+        signalOptionsBatch: signalOptionsStoredMonitorBatch({
+          symbols,
+          profile,
           forced: input.forceEvaluate === true,
-          source: "stored_state",
           reason: SIGNAL_OPTIONS_MARKET_SESSION_QUIET_REASON,
-        },
+        }),
       };
     }
     const symbols = normalizeSignalOptionsMonitorUniverseSymbols(
@@ -4652,28 +4865,38 @@ async function loadSignalOptionsMonitorState(input: {
       isStockAggregateStreamingAvailable();
     if (
       input.forceEvaluate !== true &&
+      input.source === "worker" &&
+      input.preferStoredMonitorState === true &&
+      streamFirstMonitorAvailable
+    ) {
+      return {
+        ...stored,
+        signalOptionsBatch: signalOptionsStoredMonitorBatch({
+          symbols,
+          profile,
+          forced: false,
+          reason: "stream_live_primary",
+        }),
+      };
+    }
+    if (
+      input.forceEvaluate !== true &&
       input.source !== "worker" &&
       (streamFirstMonitorAvailable || input.preferStoredMonitorState === true)
     ) {
       return {
         ...stored,
-        signalOptionsBatch: {
-          symbols: [] as string[],
-          universeCount: symbols.length,
-          batchSize: 0,
-          startIndex: null,
-          nextIndex: null,
-          capacity: resolveSignalOptionsWorkerMonitorBatchCapacity(profile),
-          fullUniverse: false,
+        signalOptionsBatch: signalOptionsStoredMonitorBatch({
+          symbols,
+          profile,
           forced: false,
-          source: "stored_state",
           reason: streamFirstMonitorAvailable
             ? "stream_live_primary"
             : "manual_lightweight",
-        },
+        }),
       };
     }
-    if (!hardPressureBlock) {
+    if (!hardPressureBlock && !shouldBatchWorkerRefresh) {
       const fullRefresh = resolveSignalOptionsMonitorFullRefresh({
         universe: input.universe,
       });
@@ -8809,6 +9032,10 @@ const signalOptionsSummaryDashboardInFlight = new Map<
   string,
   SignalOptionsDashboardInFlight<SignalOptionsDashboardSnapshot>
 >();
+const signalOptionsFastSummaryInFlight = new Map<
+  string,
+  SignalOptionsDashboardInFlight<SignalOptionsDashboardSnapshot>
+>();
 const signalOptionsContractPreviewBackoff = new Map<string, number>();
 const signalOptionsCockpitCache = new Map<
   string,
@@ -8853,6 +9080,7 @@ export function invalidateSignalOptionsDashboardCaches(deploymentId?: string) {
     signalOptionsSummaryDashboardCache.clear();
     signalOptionsDashboardInFlight.clear();
     signalOptionsSummaryDashboardInFlight.clear();
+    signalOptionsFastSummaryInFlight.clear();
     signalOptionsCockpitCache.clear();
     signalOptionsCockpitSummaryCache.clear();
     signalOptionsCockpitInFlight.clear();
@@ -8865,6 +9093,7 @@ export function invalidateSignalOptionsDashboardCaches(deploymentId?: string) {
   signalOptionsSummaryDashboardCache.delete(deploymentId);
   signalOptionsDashboardInFlight.delete(deploymentId);
   signalOptionsSummaryDashboardInFlight.delete(deploymentId);
+  signalOptionsFastSummaryInFlight.delete(deploymentId);
   signalOptionsCockpitCache.delete(deploymentId);
   signalOptionsCockpitSummaryCache.delete(deploymentId);
   signalOptionsCockpitInFlight.delete(deploymentId);
@@ -8902,6 +9131,9 @@ function readSignalOptionsCachedPayload<T>(
   cache: Map<string, SignalOptionsCachedPayload<T>>,
   deploymentId: string,
   cacheMode: SignalOptionsDashboardCacheMode,
+  options: {
+    allowStale?: boolean;
+  } = {},
 ): T | null {
   const now = Date.now();
   const cached = cache.get(deploymentId);
@@ -8915,6 +9147,9 @@ function readSignalOptionsCachedPayload<T>(
     });
   }
   if (cached.staleExpiresAt > now) {
+    if (options.allowStale === false && cacheMode !== "cache-only") {
+      return null;
+    }
     return withSignalOptionsCacheMetadata(cached.value, {
       cachedAt: cached.cachedAt,
       cacheStatus: "stale",
@@ -8986,6 +9221,28 @@ function withSignalOptionsDashboardBuildTimeout<T>(
   });
 }
 
+async function withSignalOptionsDashboardBuildTimeoutFallback<T>(
+  promise: Promise<T>,
+  input: {
+    timeoutMs: number;
+    view: SignalOptionsDashboardView;
+    staleFallback?: T | null;
+  },
+): Promise<T> {
+  try {
+    return await withSignalOptionsDashboardBuildTimeout(promise, input);
+  } catch (error) {
+    if (
+      input.staleFallback &&
+      error instanceof HttpError &&
+      error.code === "signal_options_dashboard_build_timeout"
+    ) {
+      return input.staleFallback;
+    }
+    throw error;
+  }
+}
+
 function withSignalOptionsStateSignalRefreshTimeout<T>(
   promise: Promise<T>,
 ): Promise<T> {
@@ -9031,19 +9288,7 @@ async function buildSignalOptionsColdDashboardSnapshot(input: {
         events: [],
       }),
       activePositions: [],
-      risk: {
-        openSymbols: 0,
-        maxOpenSymbols: profile.riskCaps.maxOpenSymbols,
-        openPremium: 0,
-        maxPremiumPerEntry: profile.riskCaps.maxPremiumPerEntry,
-        maxContracts: profile.riskCaps.maxContracts,
-        maxDailyLoss: profile.riskCaps.maxDailyLoss,
-        dailyRealizedPnl: 0,
-        openUnrealizedPnl: 0,
-        dailyPnl: 0,
-        dailyLossBreached: false,
-        dailyHaltActive: false,
-      },
+      risk: buildSignalOptionsEmptyRisk(profile),
       events: [],
     },
     {
@@ -9071,6 +9316,7 @@ async function withSignalOptionsDashboardSnapshotBudget(
     timeoutMs: number;
     view: SignalOptionsDashboardView;
     reason: string;
+    staleFallback?: SignalOptionsDashboardSnapshot | null;
   },
 ): Promise<SignalOptionsDashboardSnapshot> {
   try {
@@ -9087,9 +9333,15 @@ async function withSignalOptionsDashboardSnapshotBudget(
         deploymentId: input.deploymentId,
         view: input.view,
         timeoutMs: input.timeoutMs,
+        staleFallback: Boolean(input.staleFallback),
       },
-      "Serving cold Signal Options dashboard snapshot while background build continues",
+      input.staleFallback
+        ? "Serving stale Signal Options dashboard snapshot while background build continues"
+        : "Serving cold Signal Options dashboard snapshot while background build continues",
     );
+    if (input.staleFallback) {
+      return input.staleFallback;
+    }
     return buildSignalOptionsColdDashboardSnapshot(input);
   }
 }
@@ -9149,6 +9401,22 @@ function writeSignalOptionsSummarySnapshotFromFullSnapshot(
     );
   }
   return summarySnapshot;
+}
+
+function buildSignalOptionsEmptyRisk(profile: SignalOptionsExecutionProfile) {
+  return {
+    openSymbols: 0,
+    maxOpenSymbols: profile.riskCaps.maxOpenSymbols,
+    openPremium: 0,
+    maxPremiumPerEntry: profile.riskCaps.maxPremiumPerEntry,
+    maxContracts: profile.riskCaps.maxContracts,
+    maxDailyLoss: profile.riskCaps.maxDailyLoss,
+    dailyRealizedPnl: 0,
+    openUnrealizedPnl: 0,
+    dailyPnl: 0,
+    dailyLossBreached: false,
+    dailyHaltActive: false,
+  };
 }
 
 async function getSignalOptionsFullDashboardSnapshot(input: {
@@ -9367,6 +9635,7 @@ async function withFreshSignalOptionsStateSignals(
     view?: SignalOptionsDashboardView;
     refreshSignalsFromMonitorState?: boolean;
     preferStoredMonitorState?: boolean;
+    includeEventMetadata?: boolean;
   },
 ): Promise<SignalOptionsDashboardSnapshot["state"]> {
   if (
@@ -9383,6 +9652,7 @@ async function withFreshSignalOptionsStateSignals(
           snapshot.deployment,
           {
             preferStoredMonitorState: input.preferStoredMonitorState === true,
+            includeEventMetadata: input.includeEventMetadata !== false,
           },
         );
         return input.view === "full"
@@ -9410,22 +9680,172 @@ async function withFreshSignalOptionsStateSignals(
   }
 }
 
+function signalOptionsCachedSummarySnapshot(
+  cached: SignalOptionsDashboardSnapshot,
+  input: {
+    now: number;
+    expired?: boolean;
+  },
+): SignalOptionsDashboardSnapshot {
+  return {
+    ...cached,
+    state: withSignalOptionsCacheMetadata(cached.state, {
+      cachedAt: cached.cachedAt,
+      cacheStatus: cached.expiresAt > input.now ? "hit" : "stale",
+      reason: input.expired
+        ? "signal_options_state_summary_expired_cache_refreshing"
+        : undefined,
+    }),
+  };
+}
+
+function signalOptionsExpiredSummaryCacheStillUseful(
+  cached: SignalOptionsDashboardSnapshot,
+  now: number,
+) {
+  const cachedAtMs = Date.parse(cached.cachedAt);
+  return (
+    Number.isFinite(cachedAtMs) &&
+    now - cachedAtMs <= SIGNAL_OPTIONS_SUMMARY_EXPIRED_CACHE_GRACE_MS
+  );
+}
+
+function startSignalOptionsFastSummaryRefresh(input: {
+  deploymentId: string;
+  cacheMode?: SignalOptionsDashboardCacheMode;
+  refreshSignalsFromMonitorState?: boolean;
+}): Promise<SignalOptionsDashboardSnapshot> {
+  const inFlight = readSignalOptionsDashboardInFlight(
+    signalOptionsFastSummaryInFlight,
+    input.deploymentId,
+    SIGNAL_OPTIONS_DASHBOARD_IN_FLIGHT_MAX_AGE_MS,
+  );
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const work = (async () => {
+    const deployment = await getDeploymentOrThrow(input.deploymentId);
+    const profile = resolveDeploymentProfile(deployment);
+    const signalSnapshots = await listSignalOptionsSignalSnapshots(deployment, {
+      preferStoredMonitorState: true,
+      includeEventMetadata: false,
+    }).catch((error) => {
+      logger.warn?.(
+        { err: error, deploymentId: deployment.id },
+        "Signal Options fast summary returned without stored signal state",
+      );
+      return [] as Awaited<ReturnType<typeof listSignalOptionsSignalSnapshots>>;
+    });
+    const refreshedAt = Date.now();
+    const cachedAt = new Date(refreshedAt).toISOString();
+    const state = withSignalOptionsCacheMetadata(
+      {
+        deployment: deploymentToResponse(deployment),
+        profile,
+        mode: "shadow" as const,
+        signals: signalSnapshots.map((signal) => ({
+          ...signal,
+          contractPreview: null,
+        })),
+        candidates: [],
+        dataQuality: buildSignalOptionsDataQualityReport({
+          candidates: [],
+          events: [],
+        }),
+        activePositions: [],
+        risk: buildSignalOptionsEmptyRisk(profile),
+        events: [],
+      },
+      {
+        cachedAt,
+        cacheStatus: "stale",
+        reason: "signal_options_state_summary_fast_signal_state",
+      },
+    );
+    const snapshot = {
+      deployment,
+      profile,
+      events: [],
+      state,
+      cachedAt,
+      expiresAt: refreshedAt + SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS,
+      staleExpiresAt: refreshedAt + SIGNAL_OPTIONS_SUMMARY_CACHE_STALE_TTL_MS,
+    };
+    signalOptionsSummaryDashboardCache.set(deployment.id, snapshot);
+    if (deployment.id !== input.deploymentId) {
+      signalOptionsSummaryDashboardCache.set(input.deploymentId, snapshot);
+    }
+    return snapshot;
+  })();
+  work.catch(() => {}).finally(() => {
+    signalOptionsFastSummaryInFlight.delete(input.deploymentId);
+  });
+
+  signalOptionsFastSummaryInFlight.set(input.deploymentId, {
+    promise: work,
+    startedAt: Date.now(),
+  });
+  return work;
+}
+
+async function buildSignalOptionsFastSummarySnapshot(input: {
+  deploymentId: string;
+  cacheMode?: SignalOptionsDashboardCacheMode;
+  refreshSignalsFromMonitorState?: boolean;
+}): Promise<SignalOptionsDashboardSnapshot> {
+  const now = Date.now();
+  const cached = signalOptionsSummaryDashboardCache.get(input.deploymentId);
+  if (cached && cached.expiresAt > now) {
+    return signalOptionsCachedSummarySnapshot(cached, { now });
+  }
+
+  const cachedStale = Boolean(cached && cached.staleExpiresAt > now);
+  const cachedExpiredButUseful =
+    cached !== undefined &&
+    !cachedStale &&
+    signalOptionsExpiredSummaryCacheStillUseful(cached, now);
+  if (cached && (cachedStale || cachedExpiredButUseful)) {
+    const staleFallback = signalOptionsCachedSummarySnapshot(cached, {
+      now,
+      expired: Boolean(cachedExpiredButUseful),
+    });
+    if (input.cacheMode === "cache-only") {
+      return staleFallback;
+    }
+    const work = startSignalOptionsFastSummaryRefresh(input);
+    return withSignalOptionsDashboardSnapshotBudget(work, {
+      deploymentId: input.deploymentId,
+      timeoutMs: SIGNAL_OPTIONS_DASHBOARD_SUMMARY_BUILD_TIMEOUT_MS,
+      view: "summary",
+      reason: "signal_options_state_summary_stale_timeout_fallback",
+      staleFallback,
+    });
+  }
+
+  if (input.cacheMode === "cache-only") {
+    return buildSignalOptionsColdDashboardSnapshot({
+      deploymentId: input.deploymentId,
+      view: "summary",
+      reason: "signal_options_state_summary_fast_cache_only_fallback",
+    });
+  }
+
+  const work = startSignalOptionsFastSummaryRefresh(input);
+  return withSignalOptionsDashboardSnapshotBudget(work, {
+    deploymentId: input.deploymentId,
+    timeoutMs: SIGNAL_OPTIONS_DASHBOARD_SUMMARY_BUILD_TIMEOUT_MS,
+    view: "summary",
+    reason: "signal_options_state_summary_fast_timeout_fallback",
+  });
+}
+
 async function buildSignalOptionsFastSummaryState(input: {
   deploymentId: string;
   cacheMode?: SignalOptionsDashboardCacheMode;
   refreshSignalsFromMonitorState?: boolean;
 }) {
-  const snapshot = await buildSignalOptionsColdDashboardSnapshot({
-    deploymentId: input.deploymentId,
-    view: "summary",
-    reason: "signal_options_state_summary_fast_signal_state",
-  });
-  return withFreshSignalOptionsStateSignals(snapshot, {
-    cacheMode: input.cacheMode,
-    view: "summary",
-    refreshSignalsFromMonitorState: true,
-    preferStoredMonitorState: true,
-  });
+  return (await buildSignalOptionsFastSummarySnapshot(input)).state;
 }
 
 export async function listSignalOptionsAutomationState(input: {
@@ -9445,10 +9865,16 @@ async function buildAlgoDeploymentCockpitPayload(input: {
   deploymentId: string;
   view?: SignalOptionsDashboardView;
 }) {
-  const snapshot = await getSignalOptionsDashboardSnapshot({
-    deploymentId: input.deploymentId,
-    view: input.view,
-  });
+  const view = input.view ?? "summary";
+  const snapshot =
+    view === "full"
+      ? await getSignalOptionsDashboardSnapshot({
+          deploymentId: input.deploymentId,
+          view,
+        })
+      : await buildSignalOptionsFastSummarySnapshot({
+          deploymentId: input.deploymentId,
+        });
   const { deployment, profile, events, state } = snapshot;
   const [readiness, fleetRows] = await Promise.all([
     getAlgoGatewayReadiness(),
@@ -9570,22 +9996,35 @@ export async function getAlgoDeploymentCockpit(input: {
     cockpitCache,
     input.deploymentId,
     input.cacheMode ?? "normal",
+    {
+      allowStale: view === "full" || input.cacheMode === "cache-only",
+    },
   );
   if (cached) {
     return cached;
   }
+  const staleCached =
+    view === "summary"
+      ? readSignalOptionsCachedPayload(
+          cockpitCache,
+          input.deploymentId,
+          input.cacheMode ?? "normal",
+          { allowStale: true },
+        )
+      : null;
   const inFlight = readSignalOptionsDashboardInFlight(
     cockpitInFlight,
     input.deploymentId,
     SIGNAL_OPTIONS_DASHBOARD_IN_FLIGHT_MAX_AGE_MS,
   );
   if (inFlight) {
-    return withSignalOptionsDashboardBuildTimeout(inFlight, {
+    return withSignalOptionsDashboardBuildTimeoutFallback(inFlight, {
       timeoutMs:
         view === "full"
           ? SIGNAL_OPTIONS_DASHBOARD_FULL_BUILD_TIMEOUT_MS
           : SIGNAL_OPTIONS_DASHBOARD_SUMMARY_BUILD_TIMEOUT_MS,
       view,
+      staleFallback: staleCached,
     });
   }
   if (input.cacheMode === "cache-only") {
@@ -9637,12 +10076,13 @@ export async function getAlgoDeploymentCockpit(input: {
     promise: work,
     startedAt: Date.now(),
   });
-  return withSignalOptionsDashboardBuildTimeout(work, {
+  return withSignalOptionsDashboardBuildTimeoutFallback(work, {
     timeoutMs:
       view === "full"
         ? SIGNAL_OPTIONS_DASHBOARD_FULL_BUILD_TIMEOUT_MS
         : SIGNAL_OPTIONS_DASHBOARD_SUMMARY_BUILD_TIMEOUT_MS,
     view,
+    staleFallback: staleCached,
   });
 }
 
@@ -16091,6 +16531,7 @@ export const __signalOptionsAutomationInternalsForTests = {
   resolveSignalOptionsMonitorBatch,
   resolveSignalOptionsWorkerMonitorBatchCapacity,
   resolveSignalOptionsMonitorFullRefresh,
+  shouldBatchSignalOptionsWorkerMonitorRefresh,
   shouldRefreshSignalOptionsMonitorState,
   hasPendingSignalOptionsActionableState,
   hasUnseenSignalOptionsActionableState,

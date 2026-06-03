@@ -13,7 +13,10 @@ import {
   listSignalOptionsAutomationState,
 } from "./signal-options-automation";
 import { getSignalMonitorProfile } from "./signal-monitor";
-import { getApiResourcePressureSnapshot } from "./resource-pressure";
+import {
+  getApiResourcePressureSnapshot,
+  isApiResourcePressureHardBlock,
+} from "./resource-pressure";
 
 type Unsubscribe = () => void;
 
@@ -53,8 +56,15 @@ const normalizeMode = (mode: RuntimeMode | undefined): RuntimeMode =>
 const normalizeEventLimit = (limit: number | undefined): number =>
   Math.min(Math.max(Math.floor(limit ?? 20), 1), 100);
 
-export function shouldUseCriticalOnlyAlgoCockpitPayload(level: unknown): boolean {
-  return level === "high" || level === "critical";
+export function shouldUseCriticalOnlyAlgoCockpitPayload(pressure: unknown): boolean {
+  if (pressure && typeof pressure === "object" && !Array.isArray(pressure)) {
+    const snapshot = pressure as ReturnType<typeof getApiResourcePressureSnapshot>;
+    return (
+      isApiResourcePressureHardBlock(snapshot) ||
+      snapshot.caps.signalOptions.signalRefreshAllowed === false
+    );
+  }
+  return pressure === "critical";
 }
 
 async function resolveAlgoCockpitTarget(input: AlgoCockpitStreamInput = {}) {
@@ -134,7 +144,7 @@ export async function fetchAlgoCockpitStreamPayload(
 ): Promise<AlgoCockpitStreamPayload> {
   if (
     shouldUseCriticalOnlyAlgoCockpitPayload(
-      getApiResourcePressureSnapshot().level,
+      getApiResourcePressureSnapshot(),
     )
   ) {
     return fetchAlgoCockpitCriticalPayload(input, stream);

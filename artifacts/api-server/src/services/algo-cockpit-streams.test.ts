@@ -6,6 +6,11 @@ import {
   subscribeAlgoCockpitSnapshots,
   type AlgoCockpitStreamPayload,
 } from "./algo-cockpit-streams";
+import {
+  __resetApiResourcePressureForTests,
+  resolveApiRssPressureThresholds,
+  updateApiResourcePressure,
+} from "./resource-pressure";
 
 function payload(label: string): AlgoCockpitStreamPayload {
   return {
@@ -26,11 +31,31 @@ function payload(label: string): AlgoCockpitStreamPayload {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-test("algo cockpit stream sheds full derived payloads under API pressure", () => {
+test("algo cockpit stream keeps full derived payloads under high pressure when caps allow signals", () => {
   assert.equal(shouldUseCriticalOnlyAlgoCockpitPayload("normal"), false);
   assert.equal(shouldUseCriticalOnlyAlgoCockpitPayload("watch"), false);
-  assert.equal(shouldUseCriticalOnlyAlgoCockpitPayload("high"), true);
+  assert.equal(shouldUseCriticalOnlyAlgoCockpitPayload("high"), false);
   assert.equal(shouldUseCriticalOnlyAlgoCockpitPayload("critical"), true);
+
+  __resetApiResourcePressureForTests();
+  try {
+    assert.equal(
+      shouldUseCriticalOnlyAlgoCockpitPayload(
+        updateApiResourcePressure({
+          rssMb: resolveApiRssPressureThresholds().high,
+        }),
+      ),
+      false,
+    );
+    assert.equal(
+      shouldUseCriticalOnlyAlgoCockpitPayload(
+        updateApiResourcePressure({ apiHeapUsedPercent: 91 }),
+      ),
+      true,
+    );
+  } finally {
+    __resetApiResourcePressureForTests();
+  }
 });
 
 test("algo cockpit stream uses lean first-paint payloads", () => {

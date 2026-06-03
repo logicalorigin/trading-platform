@@ -1,11 +1,11 @@
 import { logger } from "../lib/logger";
 import {
-  getShadowAccountAllocation,
+  getShadowAccountAllocationFromPositions,
   getShadowAccountClosedTrades,
   getShadowAccountOrders,
   getShadowAccountPositions,
   getShadowAccountRisk,
-  getShadowAccountSummary,
+  getShadowAccountSummaryFromPositions,
 } from "./shadow-account";
 import { subscribeShadowAccountChanges } from "./shadow-account-events";
 
@@ -14,11 +14,11 @@ const SHADOW_ACCOUNT_SNAPSHOT_TTL_MS = 2_000;
 export const SHADOW_ACCOUNT_STREAM_INTERVAL_MS = 2_000;
 
 type ShadowAccountSnapshotBase = {
-  summary: Awaited<ReturnType<typeof getShadowAccountSummary>>;
+  summary: Awaited<ReturnType<typeof getShadowAccountSummaryFromPositions>>;
   positions: Awaited<ReturnType<typeof getShadowAccountPositions>>;
   workingOrders: Awaited<ReturnType<typeof getShadowAccountOrders>>;
   historyOrders: Awaited<ReturnType<typeof getShadowAccountOrders>>;
-  allocation: Awaited<ReturnType<typeof getShadowAccountAllocation>>;
+  allocation: Awaited<ReturnType<typeof getShadowAccountAllocationFromPositions>>;
   risk: Awaited<ReturnType<typeof getShadowAccountRisk>>;
   updatedAt: string;
 };
@@ -149,11 +149,11 @@ function createPollingStream<T>({
 }
 
 export async function fetchShadowAccountSnapshotPayload(): Promise<{
-  summary: Awaited<ReturnType<typeof getShadowAccountSummary>>;
+  summary: Awaited<ReturnType<typeof getShadowAccountSummaryFromPositions>>;
   positions: Awaited<ReturnType<typeof getShadowAccountPositions>>;
   workingOrders: Awaited<ReturnType<typeof getShadowAccountOrders>>;
   historyOrders: Awaited<ReturnType<typeof getShadowAccountOrders>>;
-  allocation: Awaited<ReturnType<typeof getShadowAccountAllocation>>;
+  allocation: Awaited<ReturnType<typeof getShadowAccountAllocationFromPositions>>;
   risk: Awaited<ReturnType<typeof getShadowAccountRisk>>;
   updatedAt: string;
 }> {
@@ -174,19 +174,24 @@ export async function fetchShadowAccountSnapshotBase(): Promise<ShadowAccountSna
 
   const version = shadowAccountSnapshotBaseVersion;
   const request = (async () => {
-    const [summary, positions, workingOrders, historyOrders, allocation, closedTrades] =
+    const [positions, workingOrders, historyOrders, closedTrades] =
       await Promise.all([
-        getShadowAccountSummary(),
         getShadowAccountPositions({ liveQuotes: false }),
         getShadowAccountOrders({ tab: "working" }),
         getShadowAccountOrders({ tab: "history" }),
-        getShadowAccountAllocation(),
         getShadowAccountClosedTrades({}),
       ]);
-    const risk = await getShadowAccountRisk({
-      positionsResponse: positions,
-      closedTrades,
-    });
+    const [summary, allocation, risk] = await Promise.all([
+      getShadowAccountSummaryFromPositions({ positionsResponse: positions }),
+      Promise.resolve(
+        getShadowAccountAllocationFromPositions({ positionsResponse: positions }),
+      ),
+      getShadowAccountRisk({
+        positionsResponse: positions,
+        closedTrades,
+        detail: "fast",
+      }),
+    ]);
     const updatedAt = latestIsoTimestamp(
       summary.updatedAt,
       positions.updatedAt,

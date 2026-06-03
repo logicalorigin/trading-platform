@@ -24,6 +24,51 @@ const {
 
 const baseDate = new Date("2026-04-24T14:30:00.000Z");
 
+test("signal monitor profile evaluations notify stored state refreshes", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const metadataBlock =
+    source.match(
+      /export async function updateSignalMonitorProfileEvaluationMetadata[\s\S]*?\n}\n\nexport async function evaluateSignalMonitorProfileUniverse/,
+    )?.[0] ?? "";
+
+  assert.match(metadataBlock, /notifyAlgoCockpitChanged/);
+  assert.match(metadataBlock, /reason:\s*"signal_monitor_state_refreshed"/);
+});
+
+test("signal monitor stored state preserves precise event signal time", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const eventKey = __signalMonitorInternalsForTests.buildSignalMonitorEventKey({
+    profileId: "a5721cf5-16e1-4221-81d1-f2064e997d98",
+    symbol: "mu",
+    timeframe: "5m",
+    direction: "buy",
+    signalBarAt: new Date("2026-06-03T18:05:00.000Z"),
+  });
+  const upsertBlock =
+    source.match(
+      /async function upsertSymbolState[\s\S]*?\n}\n\nasync function resolveStoredSignalMonitorSignalAt/,
+    )?.[0] ?? "";
+  const resolverBlock =
+    source.match(
+      /async function resolveStoredSignalMonitorSignalAt[\s\S]*?\n}\n\nexport async function getLatestCompletedSignalMonitorBarAt/,
+    )?.[0] ?? "";
+
+  assert.equal(
+    eventKey,
+    "a5721cf5-16e1-4221-81d1-f2064e997d98:MU:5m:buy:1780509900",
+  );
+  assert.match(upsertBlock, /const currentSignalAt = await resolveStoredSignalMonitorSignalAt\(input\)/);
+  assert.match(upsertBlock, /currentSignalAt,/);
+  assert.match(resolverBlock, /signalMonitorEventsTable\.eventKey/);
+  assert.match(resolverBlock, /return event\?\.signalAt \?\? input\.signalAt/);
+});
+
 function profile(
   patch: Partial<SignalMonitorProfileRow> = {},
 ): SignalMonitorProfileRow {

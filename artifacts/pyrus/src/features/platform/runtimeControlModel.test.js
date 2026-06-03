@@ -1264,6 +1264,7 @@ test("builds runtime control snapshot with root line usage governor", () => {
 test("builds runtime control snapshot with Massive diagnostics", () => {
   const snapshot = buildRuntimeControlSnapshot({
     runtimeDiagnostics: {
+      timestamp: "2026-06-03T16:00:01.000Z",
       providers: {
         massive: {
           configured: true,
@@ -1289,7 +1290,20 @@ test("builds runtime control snapshot with Massive diagnostics", () => {
             subscribedSymbolCount: 12,
             activeConsumerCount: 2,
             eventCount: 30,
+            lastMessageAt: "2026-06-03T16:00:00.000Z",
             lastMessageAgeMs: 500,
+            feeds: [
+              {
+                id: "stock-quotes",
+                label: "Stock quotes/trades",
+                configured: true,
+                subscribedSymbolCount: 12,
+                activeConsumerCount: 2,
+                eventCount: 30,
+                lastMessageAt: "2026-06-03T16:00:00.000Z",
+                lastMessageAgeMs: 500,
+              },
+            ],
           },
         },
       },
@@ -1301,6 +1315,10 @@ test("builds runtime control snapshot with Massive diagnostics", () => {
   assert.equal(snapshot.massive.rest.lastRequestSummary, "bars SPY 1 minute · 2 rows");
   assert.equal(snapshot.massive.websocket.channelSummary, "AM, Q, T");
   assert.equal(snapshot.massive.websocket.subscribedSymbolCount, 12);
+  assert.equal(snapshot.massive.websocket.lastMessageAt, "2026-06-03T16:00:00.000Z");
+  assert.equal(snapshot.massive.websocket.observedAt, "2026-06-03T16:00:01.000Z");
+  assert.equal(snapshot.massive.websocket.feeds[0].eventCount, 30);
+  assert.equal(snapshot.massive.websocket.feeds[0].lastMessageAt, "2026-06-03T16:00:00.000Z");
 });
 
 test("exposes active flow scanner when backend scanner is running", () => {

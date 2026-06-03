@@ -57,6 +57,18 @@ const formatRuntimeQuantity = (count, singular, plural = `${singular}s`) => {
   return `${rounded} ${rounded === 1 ? singular : plural}`;
 };
 
+const firstUsefulTimestamp = (...values) => {
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (!text) continue;
+    const timestamp = Date.parse(text);
+    if (Number.isFinite(timestamp)) {
+      return new Date(timestamp).toISOString();
+    }
+  }
+  return null;
+};
+
 const formatScannerReason = (reason) => {
   if (!reason) {
     return null;
@@ -237,17 +249,21 @@ const fallbackMassiveWebSocketFromLineUsage = (lineUsageSnapshot) => {
     activeChannels: subscribedChannels,
     availableChannels,
     subscribedSymbolCount: firstFiniteNumber(
-      delayedWebSocket.subscribedSymbolCount,
       stockAggregates.unionSymbolCount,
+      delayedWebSocket.subscribedSymbolCount,
     ),
     activeConsumerCount: firstFiniteNumber(
-      delayedWebSocket.activeConsumerCount,
       stockAggregates.activeConsumerCount,
+      delayedWebSocket.activeConsumerCount,
     ),
-    eventCount: firstFiniteNumber(delayedWebSocket.eventCount, stockAggregates.eventCount),
+    eventCount: firstFiniteNumber(stockAggregates.eventCount, delayedWebSocket.eventCount),
+    lastMessageAt: firstUsefulTimestamp(
+      stockAggregates.lastAggregateAt,
+      delayedWebSocket.lastMessageAt,
+    ),
     lastMessageAgeMs: firstFiniteNumber(
-      delayedWebSocket.lastMessageAgeMs,
       stockAggregates.lastAggregateAgeMs,
+      delayedWebSocket.lastMessageAgeMs,
     ),
     reconnectCount: firstFiniteNumber(delayedWebSocket.reconnectCount, 0),
     lastError: delayedWebSocket.lastError || stockAggregates.lastError || null,
@@ -262,21 +278,28 @@ const fallbackMassiveWebSocketFromLineUsage = (lineUsageSnapshot) => {
         availableChannels,
         subscribedChannels,
         subscribedSymbolCount: firstFiniteNumber(
-          delayedWebSocket.subscribedSymbolCount,
           stockAggregates.unionSymbolCount,
+          delayedWebSocket.subscribedSymbolCount,
         ),
         subscriptionCount: firstFiniteNumber(delayedWebSocket.subscriptionCount),
         activeConsumerCount: firstFiniteNumber(
-          delayedWebSocket.activeConsumerCount,
           stockAggregates.activeConsumerCount,
+          delayedWebSocket.activeConsumerCount,
         ),
         connected,
         authState: delayedWebSocket.authState || null,
-        eventCount: firstFiniteNumber(delayedWebSocket.eventCount, stockAggregates.eventCount),
-        lastMessageAgeMs: firstFiniteNumber(
-          delayedWebSocket.lastMessageAgeMs,
-          stockAggregates.lastAggregateAgeMs,
+        eventCount: firstFiniteNumber(stockAggregates.eventCount, delayedWebSocket.eventCount),
+        lastMessageAt: firstUsefulTimestamp(
+          stockAggregates.lastAggregateAt,
+          delayedWebSocket.lastMessageAt,
         ),
+        lastMessageAgeMs: firstFiniteNumber(
+          stockAggregates.lastAggregateAgeMs,
+          delayedWebSocket.lastMessageAgeMs,
+        ),
+        rawWebSocketEventCount: firstFiniteNumber(delayedWebSocket.eventCount),
+        rawWebSocketLastMessageAt: firstUsefulTimestamp(delayedWebSocket.lastMessageAt),
+        rawWebSocketLastMessageAgeMs: firstFiniteNumber(delayedWebSocket.lastMessageAgeMs),
         reconnectCount: firstFiniteNumber(delayedWebSocket.reconnectCount, 0),
         lastError: delayedWebSocket.lastError || null,
         lastErrorAt: delayedWebSocket.lastErrorAt || null,
@@ -290,6 +313,10 @@ export const normalizeMassiveRuntimeDiagnostics = (
   lineUsageSnapshot = null,
 ) => {
   const massive = recordOrEmpty(runtimeDiagnostics?.providers?.massive);
+  const observedAt = firstUsefulTimestamp(
+    runtimeDiagnostics?.timestamp,
+    lineUsageSnapshot?.updatedAt,
+  );
   const rest = {
     status: massive.status,
     lastSuccessAt: massive.lastSuccessAt,
@@ -369,11 +396,25 @@ export const normalizeMassiveRuntimeDiagnostics = (
       subscribedSymbolCount,
       activeConsumerCount: firstFiniteNumber(websocket.activeConsumerCount),
       eventCount: firstFiniteNumber(websocket.eventCount),
+      lastMessageAt: firstUsefulTimestamp(websocket.lastMessageAt),
       lastMessageAgeMs: firstFiniteNumber(websocket.lastMessageAgeMs),
+      observedAt,
       reconnectCount: firstFiniteNumber(websocket.reconnectCount),
       lastError: websocket.lastError || null,
-      feeds: arrayOrEmpty(websocket.feeds),
+      feeds: arrayOrEmpty(websocket.feeds).map((feed) => {
+        const record = recordOrEmpty(feed);
+        return {
+          ...record,
+          subscribedSymbolCount: firstFiniteNumber(record.subscribedSymbolCount),
+          activeConsumerCount: firstFiniteNumber(record.activeConsumerCount),
+          eventCount: firstFiniteNumber(record.eventCount),
+          lastMessageAt: firstUsefulTimestamp(record.lastMessageAt),
+          lastMessageAgeMs: firstFiniteNumber(record.lastMessageAgeMs),
+          reconnectCount: firstFiniteNumber(record.reconnectCount),
+        };
+      }),
     },
+    observedAt,
   };
 };
 

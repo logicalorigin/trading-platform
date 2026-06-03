@@ -65,6 +65,7 @@ import {
   clearIbkrBridgeSessionValues,
   closeIbkrProtocolLauncher,
   invalidateIbkrRuntimeQueries,
+  isWindowsIbkrLaunchBrowser,
   navigateIbkrProtocolLauncher,
   openIbkrProtocolLauncher,
   readIbkrBridgeSessionValue,
@@ -250,6 +251,16 @@ const waitForIbkrDesktopJob = async ({ jobId, statusToken }) => {
 
   throw new Error("Timed out waiting for the Windows desktop to stop IB Gateway.");
 };
+
+const isIbkrRemoteDesktopUnavailableError = (error) =>
+  error?.status === 409 && error?.code === "ibkr_remote_desktop_unavailable";
+
+const isTerminalIbkrLaunchError = (error) =>
+  error?.status === 404 ||
+  error?.code === "ibkr_bridge_activation_not_found" ||
+  error?.code === "ibkr_bridge_activation_superseded" ||
+  error?.code === "ibkr_bridge_activation_canceled" ||
+  error?.code === "ibkr_desktop_job_not_found";
 
 const ET_CLOCK_PARTS_FORMATTER = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",
@@ -2080,7 +2091,7 @@ export const HeaderStatusCluster = ({
     runtimeDiagnosticsQueryKey: "ibkr-popover",
     runtimeDiagnosticsRefetchInterval: bridgePopoverOpen ? 5_000 : 15_000,
     lineUsageEnabled: gatewayDiagnosticsEnabled,
-    lineUsageStreamEnabled: false,
+    lineUsageStreamEnabled: true,
     lineUsagePollInterval: bridgePopoverOpen ? 2_000 : 10_000,
   });
   useRuntimeWorkloadFlag(
@@ -2216,7 +2227,11 @@ export const HeaderStatusCluster = ({
   const autoLoginPrimaryCancelsLaunch = Boolean(
     bridgeLaunchCancelable && !bridgeCredentialResumeAvailable,
   );
-  const remoteDesktopLaunchBrowser = shouldUseRemoteIbkrLaunchBrowser();
+  const desktopAgentOnlineForLaunch =
+    ibkrRuntimeState?.desktopAgentOnline === true;
+  const remoteDesktopLaunchBrowser = shouldUseRemoteIbkrLaunchBrowser({
+    desktopAgentOnline: desktopAgentOnlineForLaunch,
+  });
   const autoLoginActionDisabled = Boolean(
     gatewayConnectedForBridge ||
       bridgeLauncherBusy ||
@@ -2667,50 +2682,69 @@ export const HeaderStatusCluster = ({
       return;
     }
 
-    const useRemoteDesktopLaunch = shouldUseRemoteIbkrLaunchBrowser();
-    const protocolLauncher = useRemoteDesktopLaunch ? null : openIbkrProtocolLauncher();
+    const initialUseRemoteDesktopLaunch = shouldUseRemoteIbkrLaunchBrowser({
+      desktopAgentOnline: desktopAgentOnlineForLaunch,
+    });
+    let protocolLauncher = initialUseRemoteDesktopLaunch
+      ? null
+      : openIbkrProtocolLauncher();
     setBridgeActivationStatus(null);
     setBridgePopoverOpen(true);
     setBridgeLauncherBusy(true);
     setBridgeLauncherError(null);
     setBridgeLauncherNotice(
-      useRemoteDesktopLaunch
+      initialUseRemoteDesktopLaunch
         ? "Sending the IBKR launch request to the paired Windows desktop."
         : "Preparing the Windows helper secure credential handoff.",
     );
 
     try {
-      const payload = await platformJsonRequest(
-        useRemoteDesktopLaunch ? "/api/ibkr/remote-launch" : "/api/ibkr/bridge/launcher",
-        {
-          method: useRemoteDesktopLaunch ? "POST" : "GET",
-          body: useRemoteDesktopLaunch ? { autoLogin: true } : undefined,
-          timeoutMs: 0,
-        },
-      );
-      const selectedLaunchUrl = payload.autoLoginLaunchUrl || payload.launchUrl;
-      setBridgeActivationId(payload.activationId || null);
-      setBridgeManagementToken(payload.managementToken || null);
-      setBridgeLaunchUrl(selectedLaunchUrl || null);
-      writeIbkrBridgeSessionValue(
-        IBKR_BRIDGE_SESSION_KEYS.activationId,
-        payload.activationId,
-      );
-      writeIbkrBridgeSessionValue(
-        IBKR_BRIDGE_SESSION_KEYS.managementToken,
-        payload.managementToken,
-      );
-      writeIbkrBridgeSessionValue(
-        IBKR_BRIDGE_SESSION_KEYS.launchUrl,
-        selectedLaunchUrl,
-      );
-      const launched = useRemoteDesktopLaunch
-        ? Boolean(payload.remoteLaunch?.jobId)
-        : navigateIbkrProtocolLauncher(
-            protocolLauncher,
-            selectedLaunchUrl,
+      const launchIbkrBridge = async (useRemoteDesktopLaunch) => {
+        if (!useRemoteDesktopLaunch && !protocolLauncher) {
+          protocolLauncher = openIbkrProtocolLauncher();
+        }
+
+        const payload = await platformJsonRequest(
+          useRemoteDesktopLaunch
+            ? "/api/ibkr/remote-launch"
+            : "/api/ibkr/bridge/launcher",
+          {
+            method: useRemoteDesktopLaunch ? "POST" : "GET",
+            body: useRemoteDesktopLaunch ? { autoLogin: true } : undefined,
+            timeoutMs: 0,
+          },
+        );
+        const selectedLaunchUrl = payload.autoLoginLaunchUrl || payload.launchUrl;
+        setBridgeActivationId(payload.activationId || null);
+        setBridgeManagementToken(payload.managementToken || null);
+        setBridgeLaunchUrl(selectedLaunchUrl || null);
+        writeIbkrBridgeSessionValue(
+          IBKR_BRIDGE_SESSION_KEYS.activationId,
+          payload.activationId,
+        );
+        writeIbkrBridgeSessionValue(
+          IBKR_BRIDGE_SESSION_KEYS.managementToken,
+          payload.managementToken,
+        );
+        writeIbkrBridgeSessionValue(
+          IBKR_BRIDGE_SESSION_KEYS.launchUrl,
+          selectedLaunchUrl,
+        );
+        const launched = useRemoteDesktopLaunch
+          ? Boolean(payload.remoteLaunch?.jobId)
+          : navigateIbkrProtocolLauncher(
+              protocolLauncher,
+              selectedLaunchUrl,
+            );
+        if (!launched) {
+          clearBridgeLaunchSessionState();
+          throw new Error(
+            useRemoteDesktopLaunch
+              ? "No paired Windows desktop accepted the IBKR launch request."
+              : "Could not open the PYRUS IBKR PowerShell launcher from this browser.",
           );
-      if (launched) {
+        }
+
         setBridgeActivationActive(true);
         const inFlightUntil = Date.now() + IBKR_BRIDGE_CREDENTIAL_LAUNCH_WINDOW_MS;
         setBridgeLaunchInFlightUntil(inFlightUntil);
@@ -2723,18 +2757,31 @@ export const HeaderStatusCluster = ({
             ? "Waiting for the Windows desktop helper to request encrypted credentials."
             : "Waiting for the Windows helper to request encrypted credentials.",
         );
-      } else {
-        setBridgeLauncherError(
-          useRemoteDesktopLaunch
-            ? "No paired Windows desktop accepted the IBKR launch request."
-            : "Could not open the PYRUS IBKR PowerShell launcher from this browser.",
-        );
-        return;
+        return { payload, useRemoteDesktopLaunch };
+      };
+
+      let launchResult;
+      try {
+        launchResult = await launchIbkrBridge(initialUseRemoteDesktopLaunch);
+      } catch (error) {
+        if (
+          initialUseRemoteDesktopLaunch &&
+          isIbkrRemoteDesktopUnavailableError(error) &&
+          isWindowsIbkrLaunchBrowser()
+        ) {
+          clearBridgeLaunchSessionState();
+          setBridgeLauncherNotice(
+            "No paired desktop agent is online. Opening the Windows helper directly.",
+          );
+          launchResult = await launchIbkrBridge(false);
+        } else {
+          throw error;
+        }
       }
 
       await deliverIbkrLoginCredentials({
-        activationId: payload.activationId,
-        managementToken: payload.managementToken,
+        activationId: launchResult.payload.activationId,
+        managementToken: launchResult.payload.managementToken,
         username,
         password,
       });
@@ -2748,6 +2795,17 @@ export const HeaderStatusCluster = ({
       ) {
         setBridgeLauncherNotice("IB Gateway launch canceled.");
         setBridgeLauncherError(null);
+        clearBridgeLaunchSessionState();
+        return;
+      }
+      if (
+        isIbkrRemoteDesktopUnavailableError(error) ||
+        isTerminalIbkrLaunchError(error)
+      ) {
+        setBridgeLauncherNotice(null);
+        setBridgeLauncherError(
+          error instanceof Error ? error.message : "IBKR bridge launch failed.",
+        );
         clearBridgeLaunchSessionState();
         return;
       }
@@ -2766,6 +2824,7 @@ export const HeaderStatusCluster = ({
     bridgeManagementToken,
     clearBridgeLaunchSessionState,
     deliverIbkrLoginCredentials,
+    desktopAgentOnlineForLaunch,
   ]);
 
   const handleCancelBridgeLaunch = useCallback(async () => {

@@ -235,10 +235,11 @@ const asyncSidecarProxyBaseUrl =
   process.env["PYRUS_IBKR_SIDECAR_PROXY_URL"]?.trim() ||
   process.env["IBKR_ASYNC_SIDECAR_PROXY_URL"]?.trim() ||
   "http://127.0.0.1:18769";
+export const DEFAULT_ASYNC_SIDECAR_PROXY_TIMEOUT_MS = 30_000;
 const asyncSidecarProxyTimeoutMs = Number.parseInt(
   process.env["PYRUS_IBKR_SIDECAR_PROXY_TIMEOUT_MS"] ??
     process.env["IBKR_ASYNC_SIDECAR_PROXY_TIMEOUT_MS"] ??
-    "5000",
+    String(DEFAULT_ASYNC_SIDECAR_PROXY_TIMEOUT_MS),
   10,
 );
 const asyncSidecarStdoutLogPath =

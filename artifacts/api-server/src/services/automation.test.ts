@@ -26,12 +26,17 @@ test("algo strategy settings API patches deployment and signal monitor settings"
   assert.match(routeSource, /\/streams\/algo\/cockpit/);
   assert.match(routeSource, /fetchAlgoCockpitCriticalPayload/);
   assert.match(routeSource, /subscribeAlgoCockpitSnapshots/);
-  assert.match(routeSource, /SIGNAL_OPTIONS_STATE_ROUTE_TIMEOUT_MS = 5_000/);
+  assert.match(routeSource, /SIGNAL_OPTIONS_STATE_SUMMARY_ROUTE_TIMEOUT_MS = 7_000/);
+  assert.match(routeSource, /SIGNAL_OPTIONS_STATE_FULL_ROUTE_TIMEOUT_MS = 9_000/);
   assert.match(routeSource, /SIGNAL_OPTIONS_COCKPIT_SUMMARY_ROUTE_TIMEOUT_MS = 5_000/);
   assert.match(routeSource, /SIGNAL_OPTIONS_COCKPIT_FULL_ROUTE_TIMEOUT_MS = 9_000/);
   assert.match(routeSource, /SIGNAL_OPTIONS_SHADOW_SCAN_ROUTE_TIMEOUT_MS = 45_000/);
   assert.match(routeSource, /SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_BUDGET_MS = 15_000/);
   assert.match(routeSource, /SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_ITEM_LIMIT = 4/);
+  assert.match(
+    routeSource,
+    /view === "full"[\s\S]*\? SIGNAL_OPTIONS_STATE_FULL_ROUTE_TIMEOUT_MS[\s\S]*: SIGNAL_OPTIONS_STATE_SUMMARY_ROUTE_TIMEOUT_MS/,
+  );
   assert.match(
     routeSource,
     /view === "full"[\s\S]*\? SIGNAL_OPTIONS_COCKPIT_FULL_ROUTE_TIMEOUT_MS[\s\S]*: SIGNAL_OPTIONS_COCKPIT_SUMMARY_ROUTE_TIMEOUT_MS/,

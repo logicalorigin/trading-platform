@@ -49,7 +49,7 @@ $AutoLoginSettingsFile = Join-Path $AutoLoginDir 'auto-login.json'
 $AutoLoginCredentialFile = Join-Path $AutoLoginDir 'credential.json'
 $AutoLoginRuntimeRoot = Join-Path $StateDir 'ibc-runtime'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-06-02.ib-async-sidecar-v5'
+$HelperVersion = '2026-06-03.ib-async-sidecar-v6'
 $LoginHandoffAlgorithm = 'RSA-OAEP-256-CHUNKED'
 $script:BridgeBundleHash = ''
 $script:SensitiveValues = New-Object System.Collections.Generic.List[string]
@@ -2720,6 +2720,7 @@ function Ensure-LocalBridge {
         $env:IBKR_BRIDGE_PREWARM_SYMBOLS = ''
         $env:IBKR_BRIDGE_RUNTIME_BUILD = [string]$script:BridgeBundleHash
         $env:PYRUS_IBKR_SIDECAR_PROXY_URL = "$(Get-LocalSidecarBaseUrl)"
+        $env:PYRUS_IBKR_SIDECAR_PROXY_TIMEOUT_MS = '30000'
         $env:PYRUS_IBKR_SIDECAR_STDOUT_LOG = (Join-Path $LogDir 'sidecar.out.log')
         $env:PYRUS_IBKR_SIDECAR_STDERR_LOG = (Join-Path $LogDir 'sidecar.err.log')
 

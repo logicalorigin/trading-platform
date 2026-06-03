@@ -129,12 +129,21 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /staleTime:\s*90_000/);
   assert.match(source, /const ACCOUNT_SWITCH_KEEP_WARM_MS = 60_000/);
   assert.match(source, /const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 1_000/);
+  assert.match(source, /const SHADOW_ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 4_000/);
   assert.match(source, /const ACCOUNT_LIVE_FALLBACK_DELAY_MS = 5_000/);
   assert.match(source, /const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 6_000/);
   assert.match(source, /const ACCOUNT_INACTIVE_PREWARM_FALLBACK_DELAY_MS = 5_000/);
+  assert.match(
+    source,
+    /const accountCriticalFallbackDelayMs = shadowMode[\s\S]*SHADOW_ACCOUNT_CRITICAL_FALLBACK_DELAY_MS[\s\S]*ACCOUNT_CRITICAL_FALLBACK_DELAY_MS/,
+  );
   assert.match(source, /const prefetchAccountSectionLiveQueries = useCallback/);
   assert.match(source, /getGetAccountSummaryQueryOptions/);
   assert.match(source, /getGetAccountPositionsQueryOptions/);
+  assert.match(
+    source,
+    /getGetAccountPositionsQueryOptions\(\s*target\.accountId,[\s\S]*liveQuotes: target\.accountId === "shadow" \? false : undefined/,
+  );
   assert.match(source, /getGetAccountOrdersQueryOptions/);
   assert.match(source, /getGetAccountEquityHistoryQueryOptions/);
   assert.match(source, /const inactiveAccountSection = shadowMode \? "real" : "shadow"/);
@@ -154,6 +163,10 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /useGetAccountSummary\(accountRequestId,[\s\S]*placeholderData:\s*retainPreviousData/);
   assert.match(source, /useGetAccountAllocation\(accountRequestId,[\s\S]*placeholderData:\s*retainPreviousData/);
   assert.match(source, /useGetAccountPositions\([\s\S]*placeholderData:\s*retainPreviousData/);
+  assert.match(
+    source,
+    /useGetAccountPositions\([\s\S]*liveQuotes: shadowMode \? false : undefined[\s\S]*placeholderData:\s*retainPreviousData/,
+  );
   assert.match(source, /useGetAccountClosedTrades\(accountRequestId,[\s\S]*placeholderData:\s*retainPreviousData/);
   assert.match(source, /useGetAccountOrders\([\s\S]*placeholderData:\s*retainPreviousData/);
   assert.match(source, /useGetAccountRisk\(accountRequestId,[\s\S]*placeholderData:\s*retainPreviousData/);

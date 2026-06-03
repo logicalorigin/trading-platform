@@ -39,6 +39,10 @@ const REFRESH_DEBOUNCE_MS = 150;
 const subscribers = new Map<number, Subscriber>();
 const activeSubscriptionParams = new Set<string>();
 const eventCountByChannel = new Map<MassiveStockWebSocketChannel, number>();
+const lastDataMessageAtByChannel = new Map<
+  MassiveStockWebSocketChannel,
+  Date
+>();
 
 let nextSubscriberId = 1;
 let socket: WebSocketLike | null = null;
@@ -53,7 +57,7 @@ let authState: "idle" | "authenticating" | "authenticated" | "failed" =
 let lastError: string | null = null;
 let lastErrorAt: Date | null = null;
 let lastOpenAt: Date | null = null;
-let lastMessageAt: Date | null = null;
+let lastSocketMessageAt: Date | null = null;
 let lastProviderStatus: string | null = null;
 let lastProviderMessage: string | null = null;
 let lastProviderStatusAt: Date | null = null;
@@ -293,7 +297,7 @@ function handleProviderStatus(record: Record<string, unknown>): boolean {
   return true;
 }
 
-function dispatchDataMessage(message: unknown): void {
+function dispatchDataMessage(message: unknown, receivedAt: Date): void {
   const record = asRecord(message);
   if (!record) {
     return;
@@ -308,6 +312,7 @@ function dispatchDataMessage(message: unknown): void {
   }
 
   eventCountByChannel.set(channel, (eventCountByChannel.get(channel) ?? 0) + 1);
+  lastDataMessageAtByChannel.set(channel, receivedAt);
   for (const subscriber of subscribers.values()) {
     if (subscriber.channels.has(channel) && subscriber.symbols.has(symbol)) {
       subscriber.onMessage(record);
@@ -316,7 +321,8 @@ function dispatchDataMessage(message: unknown): void {
 }
 
 function handleRawMessage(raw: unknown): void {
-  lastMessageAt = new Date();
+  const receivedAt = new Date();
+  lastSocketMessageAt = receivedAt;
   let messages: unknown[];
   try {
     const parsed = JSON.parse(rawMessageToString(raw));
@@ -331,7 +337,7 @@ function handleRawMessage(raw: unknown): void {
     if (record && handleProviderStatus(record)) {
       continue;
     }
-    dispatchDataMessage(message);
+    dispatchDataMessage(message, receivedAt);
   }
 }
 
@@ -464,6 +470,12 @@ export function getMassiveStockWebSocketDiagnostics(
     (total, channel) => total + (eventCountByChannel.get(channel) ?? 0),
     0,
   );
+  const lastDataMessageTimes = Array.from(channelFilter)
+    .map((channel) => lastDataMessageAtByChannel.get(channel)?.getTime())
+    .filter((value): value is number => Number.isFinite(value));
+  const lastDataMessageTime = lastDataMessageTimes.length
+    ? Math.max(...lastDataMessageTimes)
+    : null;
 
   return {
     configured: isMassiveStockWebSocketConfigured(),
@@ -482,9 +494,16 @@ export function getMassiveStockWebSocketDiagnostics(
     reconnectCount,
     eventCount,
     lastOpenAt: lastOpenAt?.toISOString() ?? null,
-    lastMessageAt: lastMessageAt?.toISOString() ?? null,
-    lastMessageAgeMs: lastMessageAt
-      ? Math.max(0, now - lastMessageAt.getTime())
+    lastMessageAt:
+      lastDataMessageTime !== null
+        ? new Date(lastDataMessageTime).toISOString()
+        : null,
+    lastMessageAgeMs: lastDataMessageTime !== null
+      ? Math.max(0, now - lastDataMessageTime)
+      : null,
+    lastSocketMessageAt: lastSocketMessageAt?.toISOString() ?? null,
+    lastSocketMessageAgeMs: lastSocketMessageAt
+      ? Math.max(0, now - lastSocketMessageAt.getTime())
       : null,
     lastProviderStatus,
     lastProviderMessage,
@@ -504,6 +523,7 @@ function resetMassiveStockWebSocketForTests(): void {
   subscribers.clear();
   activeSubscriptionParams.clear();
   eventCountByChannel.clear();
+  lastDataMessageAtByChannel.clear();
   nextSubscriberId = 1;
   reconnectAttempt = 0;
   reconnectCount = 0;
@@ -511,7 +531,7 @@ function resetMassiveStockWebSocketForTests(): void {
   lastError = null;
   lastErrorAt = null;
   lastOpenAt = null;
-  lastMessageAt = null;
+  lastSocketMessageAt = null;
   lastProviderStatus = null;
   lastProviderMessage = null;
   lastProviderStatusAt = null;

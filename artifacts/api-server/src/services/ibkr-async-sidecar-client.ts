@@ -14,7 +14,7 @@ export type IbkrAsyncSidecarMarketDataClient = {
 
 const DEFAULT_SIDECAR_HOST = "127.0.0.1";
 const DEFAULT_SIDECAR_PORT = 18_769;
-const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const BRIDGE_PROXY_BASE_PATH = "/async-sidecar/";
 const VALID_LINE_STATES = new Set([
   "desired",

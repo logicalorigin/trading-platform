@@ -69,7 +69,7 @@ const BRIDGE_LANE_USAGE_CACHE_MS = 2_000;
 const DEFAULT_BRIDGE_LANE_USAGE_TIMEOUT_MS = 1_500;
 const PERSISTENT_BRIDGE_ONLY_OBSERVATION_COUNT = 2;
 const PERSISTENT_BRIDGE_ONLY_GRACE_MS = 10_000;
-const DEFAULT_MARKET_DATA_GENERATION_APPLY_TIMEOUT_MS = 5_000;
+const DEFAULT_MARKET_DATA_GENERATION_APPLY_TIMEOUT_MS = 30_000;
 const MARKET_DATA_GENERATION_FAILED_APPLY_BACKOFF_MS = 30_000;
 const DEFAULT_LINE_USAGE_GENERATION_COORDINATOR_INTERVAL_MS = 2_000;
 type PersistentLineObservation = {
@@ -340,13 +340,15 @@ function buildSubscriptionsFromGenerationStatus(input: {
   status: IbkrMarketDataGenerationStatus;
   fallback: Record<string, unknown>;
 }): Record<string, unknown> {
-  const liveLines = input.status.lines.filter((line) => line.state === "live");
-  const activeEquitySymbols = liveLines
+  const activeLines = input.status.lines.filter(
+    (line) => line.state === "live" || line.state === "subscribing",
+  );
+  const activeEquitySymbols = activeLines
     .filter((line) => line.assetClass === "equity" && line.contract.symbol)
     .map((line) => normalizeSymbol(line.contract.symbol ?? ""))
     .filter(Boolean)
     .sort();
-  const activeOptionProviderContractIds = liveLines
+  const activeOptionProviderContractIds = activeLines
     .filter(
       (line) =>
         line.assetClass === "option" && line.contract.providerContractId,
@@ -357,7 +359,7 @@ function buildSubscriptionsFromGenerationStatus(input: {
 
   return {
     ...input.fallback,
-    activeQuoteSubscriptions: liveLines.length,
+    activeQuoteSubscriptions: activeLines.length,
     activeEquitySubscriptions: activeEquitySymbols.length,
     activeOptionSubscriptions: activeOptionProviderContractIds.length,
     activeEquitySymbols,
@@ -1506,19 +1508,21 @@ async function buildIbkrLineUsageSnapshot(options: {
     generationApply.status ??
     bridge.value?.marketDataGeneration ??
     null;
-  if (
-    bridge.value &&
-    generationApply.target === "tws-bridge" &&
-    generationApply.status
-  ) {
+  if (bridgeGenerationStatus) {
     subscriptions = buildSubscriptionsFromGenerationStatus({
-      status: generationApply.status,
+      status: bridgeGenerationStatus,
       fallback: subscriptions,
     });
-    bridge.value.marketDataGeneration = generationApply.status;
-    bridge.value.subscriptions = subscriptions;
     bridgeActiveLines = readNumber(subscriptions.activeQuoteSubscriptions);
     bridgeLineBudget = readNumber(subscriptions.marketDataLineBudget);
+    if (
+      bridge.value &&
+      generationApply.target === "tws-bridge" &&
+      generationApply.status
+    ) {
+      bridge.value.marketDataGeneration = generationApply.status;
+      bridge.value.subscriptions = subscriptions;
+    }
   }
   const warmup = buildWarmupCoverage({
     admission,

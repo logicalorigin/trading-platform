@@ -2764,11 +2764,28 @@ function buildMassiveWebSocketDiagnostics(input: {
   const providerIdentity = getMassiveProviderIdentity(input.config);
   const configured = providerIdentity === "massive";
   const quote = input.streams.massiveStockQuotes;
-  const aggregate = input.streams.stockAggregates.massiveDelayedWebSocket;
+  const stockAggregates = input.streams.stockAggregates;
+  const aggregate = stockAggregates.massiveDelayedWebSocket;
   const aggregateIsMassive =
     aggregate.providerIdentity === "massive" ||
-    input.streams.stockAggregates.provider === "massive-websocket" ||
-    input.streams.stockAggregates.activeProvider === "massive-websocket";
+    stockAggregates.provider === "massive-websocket" ||
+    stockAggregates.activeProvider === "massive-websocket";
+  const aggregateStreamConfigured = Boolean(
+    aggregate.configured ||
+      stockAggregates.provider === "massive-websocket" ||
+      stockAggregates.activeProvider === "massive-websocket" ||
+      stockAggregates.provider === "massive-delayed-websocket" ||
+      stockAggregates.activeProvider === "massive-delayed-websocket",
+  );
+  const aggregateStreamEventCount =
+    toFiniteNumber(stockAggregates.eventCount) ??
+    (aggregateIsMassive ? (toFiniteNumber(aggregate.eventCount) ?? 0) : 0);
+  const aggregateStreamLastMessageAgeMs =
+    toFiniteNumber(stockAggregates.lastAggregateAgeMs) ??
+    (aggregateIsMassive ? toFiniteNumber(aggregate.lastMessageAgeMs) : null);
+  const aggregateStreamLastMessageAt =
+    stockAggregates.lastAggregateAt ??
+    (aggregateIsMassive ? (aggregate.lastMessageAt ?? null) : null);
   const feeds = [
     {
       id: "stock-quotes",
@@ -2785,6 +2802,9 @@ function buildMassiveWebSocketDiagnostics(input: {
       authState: quote.authState ?? "idle",
       eventCount: toFiniteNumber(quote.eventCount) ?? 0,
       lastMessageAgeMs: toFiniteNumber(quote.lastMessageAgeMs),
+      lastMessageAt: quote.lastMessageAt ?? null,
+      lastSocketMessageAgeMs: toFiniteNumber(quote.lastSocketMessageAgeMs),
+      lastSocketMessageAt: quote.lastSocketMessageAt ?? null,
       reconnectCount: toFiniteNumber(quote.reconnectCount) ?? 0,
       lastProviderStatus: quote.lastProviderStatus ?? null,
       lastProviderMessage: quote.lastProviderMessage ?? null,
@@ -2798,8 +2818,9 @@ function buildMassiveWebSocketDiagnostics(input: {
     {
       id: "stock-aggregates",
       label: "Stock minute aggregates",
-      configured: Boolean(aggregate.configured && aggregateIsMassive),
+      configured: aggregateStreamConfigured,
       mode: aggregate.mode ?? (configured ? "delayed" : null),
+      streamProvider: stockAggregates.activeProvider ?? stockAggregates.provider,
       socketHost: aggregateIsMassive ? aggregate.socketHost : null,
       availableChannels: aggregateIsMassive
         ? asStringArray(aggregate.availableChannels)
@@ -2808,21 +2829,37 @@ function buildMassiveWebSocketDiagnostics(input: {
         ? asStringArray(aggregate.subscribedChannels)
         : [],
       subscribedSymbolCount: aggregateIsMassive
-        ? (toFiniteNumber(aggregate.subscribedSymbolCount) ?? 0)
+        ? (toFiniteNumber(stockAggregates.unionSymbolCount) ??
+          toFiniteNumber(aggregate.subscribedSymbolCount) ??
+          0)
         : 0,
       subscriptionCount: aggregateIsMassive
         ? (toFiniteNumber(aggregate.subscriptionCount) ?? 0)
         : 0,
       activeConsumerCount: aggregateIsMassive
-        ? (toFiniteNumber(aggregate.activeConsumerCount) ?? 0)
+        ? (toFiniteNumber(stockAggregates.activeConsumerCount) ??
+          toFiniteNumber(aggregate.activeConsumerCount) ??
+          0)
         : 0,
       connected: Boolean(aggregateIsMassive && aggregate.connected),
       authState: aggregate.authState ?? "idle",
-      eventCount: aggregateIsMassive
+      eventCount: aggregateStreamEventCount,
+      lastMessageAgeMs: aggregateStreamLastMessageAgeMs,
+      lastMessageAt: aggregateStreamLastMessageAt,
+      rawWebSocketEventCount: aggregateIsMassive
         ? (toFiniteNumber(aggregate.eventCount) ?? 0)
         : 0,
-      lastMessageAgeMs: aggregateIsMassive
+      rawWebSocketLastMessageAgeMs: aggregateIsMassive
         ? toFiniteNumber(aggregate.lastMessageAgeMs)
+        : null,
+      rawWebSocketLastMessageAt: aggregateIsMassive
+        ? (aggregate.lastMessageAt ?? null)
+        : null,
+      lastSocketMessageAgeMs: aggregateIsMassive
+        ? toFiniteNumber(aggregate.lastSocketMessageAgeMs)
+        : null,
+      lastSocketMessageAt: aggregateIsMassive
+        ? (aggregate.lastSocketMessageAt ?? null)
         : null,
       reconnectCount: aggregateIsMassive
         ? (toFiniteNumber(aggregate.reconnectCount) ?? 0)
@@ -2858,6 +2895,21 @@ function buildMassiveWebSocketDiagnostics(input: {
   const lastMessageAges = feeds
     .map((feed) => feed.lastMessageAgeMs)
     .filter((value): value is number => Number.isFinite(value));
+  const lastMessageTimes = feeds
+    .map((feed) =>
+      feed.lastMessageAt ? Date.parse(String(feed.lastMessageAt)) : Number.NaN,
+    )
+    .filter(Number.isFinite);
+  const lastSocketMessageAges = feeds
+    .map((feed) => feed.lastSocketMessageAgeMs)
+    .filter((value): value is number => Number.isFinite(value));
+  const lastSocketMessageTimes = feeds
+    .map((feed) =>
+      feed.lastSocketMessageAt
+        ? Date.parse(String(feed.lastSocketMessageAt))
+        : Number.NaN,
+    )
+    .filter(Number.isFinite);
   const lastProviderStatusFeed = feeds.find(
     (feed) => feed.configured && feed.lastProviderStatus,
   );
@@ -2901,6 +2953,15 @@ function buildMassiveWebSocketDiagnostics(input: {
     eventCount: feeds.reduce((total, feed) => total + feed.eventCount, 0),
     lastMessageAgeMs: lastMessageAges.length
       ? Math.min(...lastMessageAges)
+      : null,
+    lastMessageAt: lastMessageTimes.length
+      ? new Date(Math.max(...lastMessageTimes)).toISOString()
+      : null,
+    lastSocketMessageAgeMs: lastSocketMessageAges.length
+      ? Math.min(...lastSocketMessageAges)
+      : null,
+    lastSocketMessageAt: lastSocketMessageTimes.length
+      ? new Date(Math.max(...lastSocketMessageTimes)).toISOString()
       : null,
     reconnectCount: Math.max(0, ...feeds.map((feed) => feed.reconnectCount)),
     lastProviderStatus: lastProviderStatusFeed?.lastProviderStatus ?? null,
@@ -10723,7 +10784,7 @@ const OPTIONS_FLOW_SCANNER_DEFAULT_LINE_BUDGET = 200;
 const OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET = 100;
 const OPTIONS_FLOW_SCANNER_PER_TICKER_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_PER_TICKER_LINE_BUDGET",
-  1,
+  OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET,
 );
 const OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET",
@@ -10949,7 +11010,10 @@ function resolveOptionsFlowScannerTickerLineBudget(input: {
           input.config,
           input.phaseLineCap,
         )
-      : Math.max(1, Math.floor(input.config.scannerLineBudget || 1));
+      : resolveOptionsFlowScannerPerScanLineBudget(
+          input.config,
+          input.config.scannerLineBudget,
+        );
   return Math.max(
     1,
     Math.min(

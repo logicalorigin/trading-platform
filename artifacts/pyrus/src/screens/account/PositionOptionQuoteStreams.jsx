@@ -1,22 +1,11 @@
 import { useIbkrOptionQuoteStream } from "../../features/platform/live-streams";
 
-const isInternalOptionIdentifier = (value) =>
-  /^twsopt:/i.test(String(value ?? "").trim());
-
 const isOpraOptionTicker = (value) =>
   /^O:/i.test(String(value ?? "").trim());
 
 const normalizedProviderContractId = (value) => {
   const text = String(value || "").trim();
   return text && !isOpraOptionTicker(text) ? text : "";
-};
-
-const firstDisplayText = (...values) => {
-  for (const value of values) {
-    const text = String(value ?? "").trim();
-    if (text && !isInternalOptionIdentifier(text)) return text;
-  }
-  return "";
 };
 
 const optionProviderContractId = (contract) =>
@@ -27,23 +16,21 @@ const rowOptionProviderContractId = (row) =>
   normalizedProviderContractId(row?.optionQuote?.providerContractId);
 
 export const buildPositionOptionQuoteGroups = (rows) => {
-  const groups = new Map();
+  const providerContractIds = new Set();
   rows.forEach((row) => {
-    const contract = row?.optionContract;
     const providerContractId = rowOptionProviderContractId(row);
-    const underlying = firstDisplayText(
-      contract?.underlying,
-      row?.underlyingMarket?.symbol,
-      row?.symbol,
-    ).toUpperCase();
-    if (!providerContractId || !underlying) return;
-    if (!groups.has(underlying)) groups.set(underlying, new Set());
-    groups.get(underlying).add(providerContractId);
+    if (!providerContractId) return;
+    providerContractIds.add(providerContractId);
   });
-  return Array.from(groups, ([underlying, ids]) => ({
-    underlying,
-    providerContractIds: Array.from(ids),
-  }));
+  const ids = Array.from(providerContractIds);
+  return ids.length
+    ? [
+        {
+          underlying: null,
+          providerContractIds: ids,
+        },
+      ]
+    : [];
 };
 
 const PositionOptionQuoteStreamGroup = ({
@@ -54,8 +41,8 @@ const PositionOptionQuoteStreamGroup = ({
   useIbkrOptionQuoteStream({
     underlying,
     providerContractIds,
-    enabled: Boolean(enabled && underlying && providerContractIds.length),
-    owner: `account-positions:${underlying}`,
+    enabled: Boolean(enabled && providerContractIds.length),
+    owner: "account-position-option-quotes:ui",
     intent: "account-monitor-live",
     requiresGreeks: true,
   });
@@ -66,7 +53,7 @@ export const PositionOptionQuoteStreams = ({ groups = [], enabled = true }) => (
   <>
     {groups.map((group) => (
       <PositionOptionQuoteStreamGroup
-        key={group.underlying}
+        key={group.underlying || "account-position-option-quotes"}
         underlying={group.underlying}
         providerContractIds={group.providerContractIds}
         enabled={enabled}

@@ -5,15 +5,26 @@ import {
   type AlgoDeployment,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
+import { normalizeSymbol } from "../lib/values";
 import {
   createTransientPostgresBackoff,
   isTransientPostgresError,
 } from "../lib/transient-db-error";
 import {
+  evaluateSignalMonitorProfileSymbols,
+  getSignalMonitorProfileRow,
+} from "./signal-monitor";
+import {
   listEnabledSignalOptionsDeployments,
   runSignalOptionsShadowScan,
 } from "./signal-options-automation";
 import { runShadowOptionMaintenance } from "./shadow-account";
+import {
+  isStockAggregateStreamingAvailable,
+  subscribeMutableStockMinuteAggregates,
+  type StockMinuteAggregateMessage,
+  type StockMinuteAggregateSubscription,
+} from "./stock-aggregate-stream";
 import {
   getSignalOptionsWorkerSnapshot,
   registerSignalOptionsWorkerSnapshotGetter,
@@ -28,13 +39,16 @@ const WORKER_WAKEUP_MS = 5_000;
 export const SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY = 1_930_514_022;
 const ADVISORY_LOCK_KEY = SIGNAL_OPTIONS_WORKER_ADVISORY_LOCK_KEY;
 const FAILED_DEPLOYMENT_RETRY_MS = 60_000;
-const SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 5_000;
-const SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 1;
+const SIGNAL_OPTIONS_WORKER_ACTION_BUDGET_MS = 60_000;
+const SIGNAL_OPTIONS_WORKER_ACTION_ITEM_LIMIT = 4;
 const DEFAULT_SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MS = 120_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MIN_MS = 1_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MAX_MS = 3_600_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_REASON = "worker_scan_timeout";
 const SIGNAL_OPTIONS_ACTIVE_POSITION_POLL_MS = 5_000;
+const SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_DEBOUNCE_MS = 250;
+const SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_MIN_INTERVAL_MS = 2_000;
+const SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_MAX_BATCH = 24;
 
 type ReleaseLock = () => Promise<void>;
 type WorkerLogger = Pick<typeof logger, "debug" | "info" | "warn">;
@@ -66,6 +80,13 @@ type WorkerDependencies = {
   logger: WorkerLogger;
   scanTimeoutMs: number | null;
   subscribeCockpitChanges: typeof subscribeAlgoCockpitChanges;
+  isAggregateStreamingAvailable: () => boolean;
+  subscribeAggregates: typeof subscribeMutableStockMinuteAggregates;
+  evaluateStreamSignalSymbols: (input: {
+    mode: AlgoDeployment["mode"];
+    symbols: string[];
+    signal?: AbortSignal;
+  }) => Promise<unknown>;
 };
 
 export type SignalOptionsWorkerOptions = Partial<WorkerDependencies> & {
@@ -431,6 +452,34 @@ function shouldSkipDeploymentForResourcePressure(input: {
   return profile.infrastructureHaltControls.resourcePressureScanBlockEnabled !== false;
 }
 
+async function evaluateSignalOptionsStreamSignalSymbols(input: {
+  mode: AlgoDeployment["mode"];
+  symbols: string[];
+  signal?: AbortSignal;
+}) {
+  const symbols = Array.from(
+    new Set(input.symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+  );
+  if (!symbols.length) {
+    return null;
+  }
+  const profile = await getSignalMonitorProfileRow({
+    environment: input.mode,
+    ensureWatchlist: true,
+  });
+
+  return evaluateSignalMonitorProfileSymbols({
+    profile,
+    mode: "incremental",
+    symbols,
+    maxSymbolsOverride: symbols.length,
+    pressureCapMode: "bypass-soft",
+    evaluationConcurrencyOverride: Math.min(6, symbols.length),
+    barSourcePolicy: "mixed",
+    signal: input.signal,
+  });
+}
+
 async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
   const client = await pool.connect();
   let clientError: Error | null = null;
@@ -513,6 +562,13 @@ function defaultDependencies(
     scanTimeoutMs: resolveWorkerScanTimeoutMs(options.scanTimeoutMs),
     subscribeCockpitChanges:
       options.subscribeCockpitChanges ?? subscribeAlgoCockpitChanges,
+    isAggregateStreamingAvailable:
+      options.isAggregateStreamingAvailable ?? isStockAggregateStreamingAvailable,
+    subscribeAggregates:
+      options.subscribeAggregates ?? subscribeMutableStockMinuteAggregates,
+    evaluateStreamSignalSymbols:
+      options.evaluateStreamSignalSymbols ??
+      evaluateSignalOptionsStreamSignalSymbols,
   };
 }
 
@@ -716,8 +772,21 @@ export function createSignalOptionsWorker(
   let timer: ReturnType<typeof setTimeout> | null = null;
   let started = false;
   let tickRunning = false;
-  let wakeRequested = false;
+  let postTickWakeRequestedAtMs: number | null = null;
   let cockpitUnsubscribe: (() => void) | null = null;
+  let streamSubscription: StockMinuteAggregateSubscription | null = null;
+  let streamEvaluationTimer: ReturnType<typeof setTimeout> | null = null;
+  let streamEvaluationRunning = false;
+  const streamSignalSymbols = new Set<string>();
+  const streamSignalModes = new Set<AlgoDeployment["mode"]>();
+  const pendingStreamSignalEvaluations = new Set<string>();
+  const lastStreamSignalEvaluatedAtMs = new Map<string, number>();
+
+  const forceDeploymentsDue = (requestedAtMs: number) => {
+    deploymentRuntime.forEach((runtime) => {
+      runtime.nextScanDueAtMs = requestedAtMs;
+    });
+  };
 
   const runOnce = async () => {
     if (tickRunning) {
@@ -741,6 +810,7 @@ export function createSignalOptionsWorker(
       const now = dependencies.now();
       const nowMs = now.getTime();
       const deployments = await dependencies.listDeployments();
+      syncStreamSignalEvaluator(deployments);
       const enabledIds = new Set(deployments.map((deployment) => deployment.id));
 
       try {
@@ -870,25 +940,189 @@ export function createSignalOptionsWorker(
   };
 
   const scheduleAfterRun = () => {
-    const delayMs = wakeRequested ? 0 : wakeupMs;
-    wakeRequested = false;
-    schedule(delayMs);
+    const wakeAtMs = postTickWakeRequestedAtMs;
+    postTickWakeRequestedAtMs = null;
+    if (wakeAtMs !== null) {
+      forceDeploymentsDue(wakeAtMs);
+      schedule(0);
+      return;
+    }
+    schedule(wakeupMs);
   };
 
   const requestRunSoon = () => {
     if (!started) {
       return;
     }
-    wakeRequested = true;
     const requestedAtMs = dependencies.now().getTime();
-    deploymentRuntime.forEach((runtime) => {
-      runtime.nextScanDueAtMs = requestedAtMs;
-    });
+    if (tickRunning) {
+      postTickWakeRequestedAtMs = requestedAtMs;
+      return;
+    }
+    forceDeploymentsDue(requestedAtMs);
     if (timer) {
       dependencies.clearTimer(timer);
       timer = null;
     }
     schedule(0);
+  };
+
+  const streamEvaluationKey = (
+    mode: AlgoDeployment["mode"],
+    symbol: string,
+  ) => `${mode}:${symbol}`;
+
+  const streamEvaluationParts = (key: string) => {
+    const separator = key.indexOf(":");
+    return {
+      mode: key.slice(0, separator) as AlgoDeployment["mode"],
+      symbol: key.slice(separator + 1),
+    };
+  };
+
+  const scheduleStreamSignalEvaluation = (
+    delayMs = SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_DEBOUNCE_MS,
+  ) => {
+    if (!started || streamEvaluationTimer) {
+      return;
+    }
+    streamEvaluationTimer = dependencies.setTimer(() => {
+      streamEvaluationTimer = null;
+      void drainStreamSignalEvaluations();
+    }, Math.max(0, delayMs));
+    streamEvaluationTimer.unref?.();
+  };
+
+  const queueStreamSignalEvaluation = (message: StockMinuteAggregateMessage) => {
+    const symbol = normalizeSymbol(message.symbol);
+    if (!symbol || !streamSignalSymbols.has(symbol)) {
+      return;
+    }
+    streamSignalModes.forEach((mode) => {
+      pendingStreamSignalEvaluations.add(streamEvaluationKey(mode, symbol));
+    });
+    scheduleStreamSignalEvaluation();
+  };
+
+  const drainStreamSignalEvaluations = async () => {
+    if (streamEvaluationRunning || !started) {
+      scheduleStreamSignalEvaluation();
+      return;
+    }
+    streamEvaluationRunning = true;
+    let nextDelayMs: number | null = null;
+    const nowMs = dependencies.now().getTime();
+    const dueKeys: string[] = [];
+
+    try {
+      for (const key of pendingStreamSignalEvaluations) {
+        const lastEvaluatedAtMs = lastStreamSignalEvaluatedAtMs.get(key) ?? 0;
+        const waitMs =
+          lastEvaluatedAtMs +
+          SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_MIN_INTERVAL_MS -
+          nowMs;
+        if (waitMs > 0) {
+          nextDelayMs =
+            nextDelayMs === null ? waitMs : Math.min(nextDelayMs, waitMs);
+          continue;
+        }
+        dueKeys.push(key);
+        if (dueKeys.length >= SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_MAX_BATCH) {
+          break;
+        }
+      }
+
+      if (!dueKeys.length) {
+        return;
+      }
+
+      dueKeys.forEach((key) => {
+        pendingStreamSignalEvaluations.delete(key);
+      });
+
+      const symbolsByMode = new Map<AlgoDeployment["mode"], string[]>();
+      dueKeys.forEach((key) => {
+        const { mode, symbol } = streamEvaluationParts(key);
+        if (!symbol) return;
+        const symbols = symbolsByMode.get(mode) ?? [];
+        symbols.push(symbol);
+        symbolsByMode.set(mode, symbols);
+      });
+
+      await Promise.all(
+        Array.from(symbolsByMode.entries()).map(([mode, symbols]) =>
+          dependencies.evaluateStreamSignalSymbols({
+            mode,
+            symbols,
+          }),
+        ),
+      );
+      const completedAtMs = dependencies.now().getTime();
+      dueKeys.forEach((key) => {
+        lastStreamSignalEvaluatedAtMs.set(key, completedAtMs);
+      });
+    } catch (error) {
+      dependencies.logger.warn(
+        { err: error },
+        "Signal-options stream signal evaluation failed",
+      );
+    } finally {
+      streamEvaluationRunning = false;
+      if (pendingStreamSignalEvaluations.size > 0) {
+        scheduleStreamSignalEvaluation(
+          nextDelayMs ??
+            SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_DEBOUNCE_MS,
+        );
+      }
+    }
+  };
+
+  const clearStreamSignalEvaluator = () => {
+    streamSubscription?.unsubscribe();
+    streamSubscription = null;
+    streamSignalSymbols.clear();
+    streamSignalModes.clear();
+    pendingStreamSignalEvaluations.clear();
+    if (streamEvaluationTimer) {
+      dependencies.clearTimer(streamEvaluationTimer);
+      streamEvaluationTimer = null;
+    }
+  };
+
+  const syncStreamSignalEvaluator = (deployments: AlgoDeployment[]) => {
+    if (!started || !dependencies.isAggregateStreamingAvailable()) {
+      clearStreamSignalEvaluator();
+      return;
+    }
+
+    const nextSymbols = Array.from(
+      new Set(
+        deployments.flatMap((deployment) =>
+          deployment.symbolUniverse.map((symbol) => normalizeSymbol(symbol)),
+        ),
+      ),
+    ).filter(Boolean);
+    const nextModes = new Set(
+      deployments.map((deployment) => deployment.mode),
+    );
+    if (!nextSymbols.length || nextModes.size === 0) {
+      clearStreamSignalEvaluator();
+      return;
+    }
+
+    streamSignalSymbols.clear();
+    nextSymbols.forEach((symbol) => streamSignalSymbols.add(symbol));
+    streamSignalModes.clear();
+    nextModes.forEach((mode) => streamSignalModes.add(mode));
+
+    if (streamSubscription) {
+      streamSubscription.setSymbols(nextSymbols);
+      return;
+    }
+    streamSubscription = dependencies.subscribeAggregates(
+      nextSymbols,
+      queueStreamSignalEvaluation,
+    );
   };
 
   return {
@@ -898,7 +1132,11 @@ export function createSignalOptionsWorker(
       }
       started = true;
       cockpitUnsubscribe = dependencies.subscribeCockpitChanges((change) => {
-        if (change.reason === "signal_monitor_event_created" && !tickRunning) {
+        if (change.reason === "signal_monitor_event_created") {
+          requestRunSoon();
+          return;
+        }
+        if (change.reason === "signal_monitor_state_refreshed" && !tickRunning) {
           requestRunSoon();
         }
       });
@@ -909,6 +1147,7 @@ export function createSignalOptionsWorker(
       started = false;
       cockpitUnsubscribe?.();
       cockpitUnsubscribe = null;
+      clearStreamSignalEvaluator();
       if (timer) {
         dependencies.clearTimer(timer);
         timer = null;

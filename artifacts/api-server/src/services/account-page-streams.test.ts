@@ -45,3 +45,51 @@ test("account page stream records write timing and benchmark cache sources", () 
   assert.match(routeSource, /recordAccountPageStreamWrite\("critical", streamStartedAt\)/);
   assert.match(routeSource, /recordAccountPageStreamWrite\("derived", writeStartedAt\)/);
 });
+
+test("shadow account page critical payload uses cached positions and fast risk", () => {
+  const source = readFileSync(new URL("./account-page-streams.ts", import.meta.url), "utf8");
+  const criticalBody = source.match(
+    /export async function fetchAccountPageCriticalPayload\([\s\S]*?\nasync function fetchAccountPageBenchmarkEquityHistory/,
+  )?.[0];
+
+  assert.ok(criticalBody);
+  assert.match(criticalBody, /const isShadow = isShadowAccountId\(normalized\.accountId\);/);
+  assert.match(criticalBody, /if \(isShadow\) \{/);
+  assert.match(criticalBody, /liveQuotes: false/);
+  assert.match(source, /function deferredShadowClosedTrades\(accountId: string\)/);
+  assert.match(source, /function deferredShadowOrders\(accountId: string, tab: OrderTab\)/);
+  assert.doesNotMatch(
+    criticalBody.match(/if \(isShadow\) \{[\s\S]*?\n      \} else \{/)?.[0] ?? "",
+    /getAccountClosedTrades\(common\)/,
+  );
+  assert.doesNotMatch(
+    criticalBody.match(/if \(isShadow\) \{[\s\S]*?\n      \} else \{/)?.[0] ?? "",
+    /getAccountOrders\(/,
+  );
+  assert.match(criticalBody, /getShadowAccountSummaryFromPositions\(\{/);
+  assert.match(criticalBody, /getShadowAccountAllocationFromPositions\(\{/);
+  assert.doesNotMatch(
+    criticalBody.match(/if \(isShadow\) \{[\s\S]*?\n      \} else \{/)?.[0] ?? "",
+    /getAccountSummary\(common\)|getAccountAllocation\(common\)/,
+  );
+  assert.match(
+    criticalBody,
+    /getShadowAccountRisk\(\{\s*positionsResponse:[\s\S]*shadowPositions as NonNullable<ShadowRiskInput\["positionsResponse"\]>/,
+  );
+  assert.match(criticalBody, /closedTrades: deferredShadowClosedTrades\(normalized\.accountId\)/);
+  assert.match(criticalBody, /detail: "fast"/);
+  assert.match(criticalBody, /orders = deferredShadowOrders\(normalized\.accountId, normalized\.orderTab\)/);
+  assert.match(criticalBody, /risk = await getAccountRisk\(common\)/);
+});
+
+test("shadow account page live payload refreshes deferred orders after critical", () => {
+  const source = readFileSync(new URL("./account-page-streams.ts", import.meta.url), "utf8");
+  const liveBody = source.match(
+    /export async function fetchAccountPageLivePayload\([\s\S]*?\nexport async function fetchAccountPageCriticalPayload/,
+  )?.[0];
+
+  assert.ok(liveBody);
+  assert.match(liveBody, /const isShadow = isShadowAccountId\(normalized\.accountId\);/);
+  assert.match(liveBody, /isShadow\s*\?\s*getAccountOrders\(\{ \.\.\.common, tab: normalized\.orderTab \}\)/);
+  assert.match(liveBody, /orders: shadowOrders \?\? critical\.orders/);
+});

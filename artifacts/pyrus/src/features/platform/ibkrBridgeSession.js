@@ -138,13 +138,20 @@ export const isWindowsIbkrLaunchBrowser = () => {
   );
 };
 
-export const shouldUseRemoteIbkrLaunchBrowser = () => {
+export const shouldUseRemoteIbkrLaunchBrowser = ({
+  desktopAgentOnline = false,
+} = {}) => {
   if (typeof navigator === "undefined") {
     return false;
   }
 
-  // Launch requests must run on the paired Gateway desktop, even when the
-  // browser itself is on another Windows computer.
+  // A Windows browser can launch the registered local protocol directly when
+  // no paired desktop helper is online yet. Non-Windows browsers still need the
+  // paired desktop agent to perform the Windows-side launch.
+  if (isWindowsIbkrLaunchBrowser() && !desktopAgentOnline) {
+    return false;
+  }
+
   return true;
 };
 

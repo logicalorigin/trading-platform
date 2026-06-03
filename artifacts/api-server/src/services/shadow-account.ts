@@ -14,7 +14,10 @@ import {
   resolveSignalOptionsExecutionProfile,
   type SignalOptionsExecutionProfile,
 } from "@workspace/backtest-core";
-import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
+import {
+  calculateTransferAdjustedReturnSeries,
+  externalTransferAmount,
+} from "@workspace/account-math";
 import {
   algoDeploymentsTable,
   backtestRunPointsTable,
@@ -84,7 +87,10 @@ import {
   sumNullableValues,
   type PositionGreekSnapshot,
 } from "./account-risk-model";
-import { resolveAccountGreekScenarios } from "./account-greek-scenarios";
+import {
+  resolveAccountGreekScenarios,
+  type AccountGreekScenarios,
+} from "./account-greek-scenarios";
 import { buildAccountRiskRecommendations } from "./account-risk-recommendations";
 
 export const SHADOW_ACCOUNT_ID = "shadow";
@@ -160,6 +166,7 @@ const SHADOW_GREEK_QUOTE_TASK_MAX_WAIT_MS = Math.max(
   SHADOW_GREEK_QUOTE_MAX_WAIT_MS - 250,
 );
 const SHADOW_UNDERLYING_QUOTE_MAX_WAIT_MS = 750;
+const SHADOW_EQUITY_POSITION_QUOTE_MAX_WAIT_MS = 750;
 const SHADOW_ACCOUNT_DB_FALLBACK_REASON =
   "Shadow account database is unavailable; using runtime-only shadow account fallback.";
 const STRUCTURED_OPTION_PROVIDER_CONTRACT_ID_PREFIX = "twsopt:";
@@ -984,6 +991,24 @@ async function repairSignalOptionsAutomationMirrorsForRead(
   });
 
   return shadowAutomationMirrorRepairInFlight;
+}
+
+function kickSignalOptionsAutomationMirrorRepairForRead(
+  source: ShadowSourceScope | null,
+) {
+  if (!shouldRepairSignalOptionsAutomationMirrors(source)) {
+    return;
+  }
+  void repairSignalOptionsAutomationMirrorsForRead(source).catch((error) => {
+    if (isTransientPostgresError(error)) {
+      markShadowAccountDbUnavailable(error);
+      return;
+    }
+    logger.debug?.(
+      { err: error, source },
+      "Signal-options Shadow account mirror repair failed in background",
+    );
+  });
 }
 
 function shadowDateWindowUtc(value: string | Date): {
@@ -2293,6 +2318,43 @@ async function readOpenShadowPositions(): Promise<ShadowPositionRow[]> {
     .orderBy(desc(shadowPositionsTable.updatedAt));
 }
 
+async function readOpenShadowPositionsForKeys(
+  positionKeys: Iterable<string>,
+): Promise<ShadowPositionRow[]> {
+  const keys = Array.from(
+    new Set(
+      Array.from(positionKeys)
+        .map((key) => String(key || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  if (!keys.length) {
+    return [];
+  }
+
+  const chunks: string[][] = [];
+  for (let index = 0; index < keys.length; index += 500) {
+    chunks.push(keys.slice(index, index + 500));
+  }
+  const rows = await Promise.all(
+    chunks.map((chunk) =>
+      db
+        .select()
+        .from(shadowPositionsTable)
+        .where(
+          and(
+            eq(shadowPositionsTable.accountId, SHADOW_ACCOUNT_ID),
+            eq(shadowPositionsTable.status, "open"),
+            inArray(shadowPositionsTable.positionKey, chunk),
+          ),
+        ),
+    ),
+  );
+  return rows
+    .flat()
+    .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
+}
+
 async function readOpenLiveShadowPositions(): Promise<ShadowPositionRow[]> {
   const { fills, ordersById } = await readShadowFillsWithOrders();
   const liveOrders = fills
@@ -2337,13 +2399,13 @@ async function readOpenShadowPositionsForSource(
   if (!source) {
     return readOpenDefaultShadowLedgerAnalyticsPositions();
   }
-  const { fills, ordersById } = await readShadowFillsWithOrders();
+  const { fills, ordersById } = await readShadowFillsWithOrdersForSource(source);
   const sourceOrders = fills
     .filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
     .map((fill) => ordersById.get(fill.orderId));
   const sourcePositionKeys = shadowPositionKeysForOrders(sourceOrders);
   const sourceOrdersByPositionKey = shadowOrdersByPositionKey(sourceOrders);
-  return (await readOpenShadowPositions()).filter(
+  return (await readOpenShadowPositionsForKeys(sourcePositionKeys)).filter(
     (position) =>
       sourcePositionKeys.has(position.positionKey) &&
       positionMatchesShadowSource(position, source) &&
@@ -2385,6 +2447,69 @@ async function readShadowFillsWithOrders() {
   return {
     fills,
     ordersById: await readShadowOrdersByFillOrderId(fills),
+  };
+}
+
+async function readShadowFillsForOrderIds(
+  orderIds: string[],
+): Promise<ShadowFillRow[]> {
+  const uniqueOrderIds = Array.from(new Set(orderIds.filter(Boolean)));
+  if (!uniqueOrderIds.length) {
+    return [];
+  }
+  const chunks: string[][] = [];
+  for (let index = 0; index < uniqueOrderIds.length; index += 500) {
+    chunks.push(uniqueOrderIds.slice(index, index + 500));
+  }
+  const rows = await Promise.all(
+    chunks.map((chunk) =>
+      db
+        .select()
+        .from(shadowFillsTable)
+        .where(
+          and(
+            eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
+            inArray(shadowFillsTable.orderId, chunk),
+          ),
+        ),
+    ),
+  );
+  return rows.flat();
+}
+
+async function readShadowOrdersForSource(
+  source: ShadowSourceScope,
+): Promise<ShadowOrderRow[]> {
+  if (source !== "automation") {
+    const { ordersById } = await readShadowFillsWithOrders();
+    return Array.from(ordersById.values()).filter((order) =>
+      shadowOrderMatchesSource(order, source),
+    );
+  }
+
+  const orders = await db
+    .select()
+    .from(shadowOrdersTable)
+    .where(
+      and(
+        eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID),
+        eq(shadowOrdersTable.source, "automation"),
+      ),
+    );
+  return orders.filter((order) => shadowOrderMatchesSource(order, source));
+}
+
+async function readShadowFillsWithOrdersForSource(
+  source: ShadowSourceScope | null,
+) {
+  if (!source) {
+    return readShadowFillsWithOrders();
+  }
+  const orders = await readShadowOrdersForSource(source);
+  const orderIds = orders.map((order) => order.id);
+  return {
+    fills: await readShadowFillsForOrderIds(orderIds),
+    ordersById: new Map(orders.map((order) => [order.id, order])),
   };
 }
 
@@ -2646,7 +2771,9 @@ async function computeShadowTotalsForSource(
   } = {},
 ): Promise<ShadowTotals> {
   const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
-  const { fills, ordersById } = await readShadowFillsWithOrders();
+  const { fills, ordersById } = source
+    ? await readShadowFillsWithOrdersForSource(source as ShadowSourceScope)
+    : await readShadowFillsWithOrders();
   const selectedFills = source
     ? fills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
     : fills.filter((fill) =>
@@ -2655,7 +2782,10 @@ async function computeShadowTotalsForSource(
   const selectedOrders = selectedFills.map((fill) => ordersById.get(fill.orderId));
   const selectedPositionKeys = shadowPositionKeysForOrders(selectedOrders);
   const selectedOrdersByPositionKey = shadowOrdersByPositionKey(selectedOrders);
-  const positions = (await readOpenShadowPositions()).filter((position) =>
+  const positionCandidates = source
+    ? await readOpenShadowPositionsForKeys(selectedPositionKeys)
+    : await readOpenShadowPositions();
+  const positions = positionCandidates.filter((position) =>
     selectedPositionKeys.has(position.positionKey) &&
       (source
         ? positionMatchesShadowSource(position, source)
@@ -2672,6 +2802,7 @@ async function computeShadowTotalsForSource(
     positions,
   });
   const historicalSignalOptionsOpenPositions =
+    source !== "automation" &&
     positions.length > 0 &&
     (await Promise.all(
       positions.map(async (position) => {
@@ -3110,6 +3241,7 @@ async function fetchShadowOptionUnderlyingMarkets(
 
 async function fetchShadowEquityPositionQuotes(
   positions: ShadowPositionRow[],
+  options: { owner?: string | null } = {},
 ): Promise<Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>> {
   const symbols = Array.from(
     new Set(
@@ -3128,14 +3260,18 @@ async function fetchShadowEquityPositionQuotes(
     return new Map();
   }
 
-  const payload = await getQuoteSnapshots({
-    symbols: symbols.join(","),
-    allowMassiveFallback: true,
-    admissionOwner: `shadow-equity-position-quotes:${symbols.join(",")}`,
-    admissionIntent: "visible-live",
-    admissionFallbackProvider: "massive",
-    ttlMs: 15_000,
-  }).catch(() => ({ quotes: [] }));
+  const emptyPayload = { quotes: [] };
+  const payload = await Promise.race([
+    getQuoteSnapshots({
+      symbols: symbols.join(","),
+      allowMassiveFallback: true,
+      admissionOwner: options.owner ?? "shadow-equity-position-quotes:positions",
+      admissionIntent: "visible-live",
+      admissionFallbackProvider: "massive",
+      ttlMs: 15_000,
+    }).catch(() => emptyPayload),
+    sleep(SHADOW_EQUITY_POSITION_QUOTE_MAX_WAIT_MS).then(() => emptyPayload),
+  ]);
 
   const quoteList = Array.isArray(payload.quotes)
     ? (payload.quotes as Array<Partial<QuoteSnapshot> | Record<string, unknown>>)
@@ -4479,6 +4615,34 @@ function buildShadowPositionDayChange(input: {
   };
 }
 
+function shadowPositionDayChangeBaselineMarketValue(input: {
+  baselineMarkMarketValue: number | null;
+  openedAt: Date;
+  dayStart: Date;
+  averageCost: number;
+  quantity: number;
+  multiplier: number;
+}): number | null {
+  const entryCostBasis =
+    Number.isFinite(input.averageCost) &&
+    Number.isFinite(input.quantity) &&
+    Number.isFinite(input.multiplier)
+      ? input.averageCost * input.quantity * input.multiplier
+      : null;
+  if (
+    input.baselineMarkMarketValue !== null &&
+    input.baselineMarkMarketValue !== 0
+  ) {
+    return input.baselineMarkMarketValue;
+  }
+  if (entryCostBasis !== null && entryCostBasis !== 0) {
+    return entryCostBasis;
+  }
+  return input.openedAt.getTime() >= input.dayStart.getTime()
+    ? entryCostBasis
+    : input.baselineMarkMarketValue;
+}
+
 function shadowDayChangeDayStart(marketDate: string): Date {
   return zonedDateTimeToUtc({
     marketDate: previousWeekdayOrSame(marketDate),
@@ -4875,7 +5039,7 @@ async function fetchShadowOptionDayChangeQuotes(
   const quoteTasks: Array<() => Promise<void>> = [];
   if (allProviderContractIds.length) {
     quoteTasks.push(async () => {
-      const owner = `${options.ownerPrefix ?? "shadow-position-day-change"}:${quoteUnderlying ?? "mixed"}`;
+      const owner = options.ownerPrefix ?? "shadow-position:ledger:day-change";
       declareIbkrLiveDemand({
         underlying: quoteUnderlying ?? undefined,
         providerContractIds: allProviderContractIds,
@@ -5017,11 +5181,14 @@ function shadowPositionNeedsDayChangeQuote(input: {
     (mark) => mark.asOf.getTime() <= dayStart.getTime(),
   );
   const openedAt = position.openedAt ?? currentAsOf;
-  const baselineMarketValue =
-    toNumber(baselineMark?.marketValue) ??
-    (openedAt.getTime() >= dayStart.getTime()
-      ? averageCost * quantity * multiplier
-      : null);
+  const baselineMarketValue = shadowPositionDayChangeBaselineMarketValue({
+    baselineMarkMarketValue: toNumber(baselineMark?.marketValue),
+    openedAt,
+    dayStart,
+    averageCost,
+    quantity,
+    multiplier,
+  });
   const baselineDayChange = buildShadowPositionDayChange({
     currentMarketValue,
     baselineMarketValue,
@@ -5136,11 +5303,14 @@ async function readShadowPositionDayChanges(
       (mark) => mark.asOf.getTime() <= dayStart.getTime(),
     );
     const openedAt = position.openedAt ?? currentAsOf;
-    const baselineMarketValue =
-      toNumber(baselineMark?.marketValue) ??
-      (openedAt.getTime() >= dayStart.getTime()
-        ? averageCost * quantity * multiplier
-        : null);
+    const baselineMarketValue = shadowPositionDayChangeBaselineMarketValue({
+      baselineMarkMarketValue: toNumber(baselineMark?.marketValue),
+      openedAt,
+      dayStart,
+      averageCost,
+      quantity,
+      multiplier,
+    });
     const baselineDayChange = buildShadowPositionDayChange({
       currentMarketValue,
       baselineMarketValue,
@@ -5192,12 +5362,119 @@ function metric(
   };
 }
 
+type ShadowAccountSummaryReturnMetrics = {
+  dayPnl: number | null;
+  dayPnlField: string;
+  dayPnlCapitalBase: number | null;
+};
+
+function calculateLatestShadowMarketDayPnlFromHistory(
+  points: ShadowAccountEquityPoint[],
+): {
+  value: number;
+  capitalBase: number | null;
+  marketDate: string;
+} | null {
+  const sorted = points
+    .map((point) => {
+      const timestamp =
+        point.timestamp instanceof Date
+          ? point.timestamp
+          : new Date(point.timestamp);
+      const netLiquidation = Number(point.netLiquidation);
+      return {
+        ...point,
+        timestamp,
+        netLiquidation,
+        marketDate: marketDateKey(timestamp),
+      };
+    })
+    .filter(
+      (
+        point,
+      ): point is ShadowAccountEquityPoint & {
+        timestamp: Date;
+        netLiquidation: number;
+        marketDate: string;
+      } =>
+        !Number.isNaN(point.timestamp.getTime()) &&
+        Number.isFinite(point.netLiquidation) &&
+        Boolean(point.marketDate),
+    )
+    .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
+  const latest = sorted[sorted.length - 1];
+  if (!latest) {
+    return null;
+  }
+  const dayPoints = sorted.filter((point) => point.marketDate === latest.marketDate);
+  const first = dayPoints[0];
+  const last = dayPoints[dayPoints.length - 1];
+  if (!first || !last || first.timestamp.getTime() === last.timestamp.getTime()) {
+    return null;
+  }
+  const transfersAfterFirst = dayPoints.reduce(
+    (sum, point) =>
+      point.timestamp.getTime() > first.timestamp.getTime()
+        ? sum + externalTransferAmount(point)
+        : sum,
+    0,
+  );
+  const value = last.netLiquidation - first.netLiquidation - transfersAfterFirst;
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  return {
+    value,
+    capitalBase:
+      Number.isFinite(first.netLiquidation) && first.netLiquidation !== 0
+        ? Math.abs(first.netLiquidation)
+        : null,
+    marketDate: latest.marketDate,
+  };
+}
+
+async function resolveShadowAccountSummaryReturnMetrics(input: {
+  source?: string | null;
+}): Promise<ShadowAccountSummaryReturnMetrics> {
+  try {
+    const history = await getShadowAccountEquityHistory({
+      range: "1D",
+      source: input.source,
+    });
+    const dayPnl = calculateLatestShadowMarketDayPnlFromHistory(history.points);
+    return {
+      dayPnl: dayPnl?.value ?? null,
+      dayPnlField: dayPnl
+        ? `EquityHistoryMarketDayPnl:${dayPnl.marketDate}`
+        : "EquityHistoryMarketDayPnl",
+      dayPnlCapitalBase: dayPnl?.capitalBase ?? null,
+    };
+  } catch (error) {
+    logger.debug?.(
+      { err: error, source: input.source ?? null },
+      "Shadow account summary equity-history P&L unavailable",
+    );
+    return {
+      dayPnl: null,
+      dayPnlField: "EquityHistoryMarketDayPnl",
+      dayPnlCapitalBase: null,
+    };
+  }
+}
+
 function buildShadowAccountSummaryResponse(input: {
   totals: ShadowTotals;
-  dayPnl: number;
+  returnMetrics?: ShadowAccountSummaryReturnMetrics;
   degraded?: boolean;
 }) {
-  const { totals, dayPnl } = input;
+  const { totals } = input;
+  const dayPnl = input.returnMetrics?.dayPnl ?? null;
+  const dayPnlPercentDenominator =
+    input.returnMetrics?.dayPnlCapitalBase &&
+    input.returnMetrics.dayPnlCapitalBase !== 0
+      ? Math.abs(input.returnMetrics.dayPnlCapitalBase)
+      : Math.abs(totals.netLiquidation);
   const totalPnl = totals.netLiquidation - totals.startingBalance;
   return {
     accountId: SHADOW_ACCOUNT_ID,
@@ -5237,11 +5514,18 @@ function buildShadowAccountSummaryResponse(input: {
       marginUsed: metric(0, SHADOW_CURRENCY, "MarginUsed", totals.updatedAt),
       maintenanceMargin: metric(0, SHADOW_CURRENCY, "MaintenanceMargin", totals.updatedAt),
       maintenanceMarginCushionPercent: metric(null, null, "CashAccount", totals.updatedAt),
-      dayPnl: metric(dayPnl, SHADOW_CURRENCY, "DailyMarkChange", totals.updatedAt),
+      dayPnl: metric(
+        dayPnl,
+        SHADOW_CURRENCY,
+        input.returnMetrics?.dayPnlField ?? "EquityHistoryMarketDayPnl",
+        totals.updatedAt,
+      ),
       dayPnlPercent: metric(
-        totals.netLiquidation ? (dayPnl / totals.netLiquidation) * 100 : null,
+        dayPnlPercentDenominator && dayPnl !== null
+          ? (dayPnl / dayPnlPercentDenominator) * 100
+          : null,
         null,
-        "DailyMarkChange/NetLiquidation",
+        "EquityHistoryMarketDayPnl/MarketDayCapitalBase",
         totals.updatedAt,
       ),
       totalPnl: metric(totalPnl, SHADOW_CURRENCY, "ChangeInNAV", totals.updatedAt),
@@ -5269,33 +5553,22 @@ function buildShadowAccountSummaryResponse(input: {
 
 export async function getShadowAccountSummary(input: { source?: string | null } = {}) {
   const source = normalizeShadowSourceScope(input.source);
+  kickSignalOptionsAutomationMirrorRepairForRead(source);
   return withShadowReadCache(`summary:${shadowSourceCacheKey(source)}`, async () => {
   try {
     const totals = source
       ? await computeShadowTotalsForSource(source)
       : await ensureFreshShadowState(true);
     const degraded = isShadowAccountDbBackoffActive();
-    const positions = degraded
-      ? []
-      : await readOpenShadowPositionsForSourceCached(source);
-    const dayChanges = degraded
-      ? new Map<string, ShadowPositionDayChange>()
-      : await readShadowPositionDayChanges(
-          positions,
-          new Date(),
-          readCachedShadowOptionQuotes(positions),
-        );
-    const dayPnl = Array.from(dayChanges.values()).reduce(
-      (sum, value) => sum + (value.dayChange ?? 0),
-      0,
-    );
-    return buildShadowAccountSummaryResponse({ totals, dayPnl, degraded });
+    const returnMetrics = degraded
+      ? undefined
+      : await resolveShadowAccountSummaryReturnMetrics({ source });
+    return buildShadowAccountSummaryResponse({ totals, returnMetrics, degraded });
   } catch (error) {
     if (isTransientPostgresError(error)) {
       markShadowAccountDbUnavailable(error);
       return buildShadowAccountSummaryResponse({
         totals: buildFallbackShadowTotals(),
-        dayPnl: 0,
         degraded: true,
       });
     }
@@ -5339,6 +5612,11 @@ function shadowBenchmarkBarsCacheKey(input: {
     input.to.toISOString(),
     input.limit,
   ].join(":");
+}
+
+function normalizeShadowBenchmarkSymbol(raw: string | null | undefined) {
+  const symbol = typeof raw === "string" ? normalizeSymbol(raw).toUpperCase() : "";
+  return symbol || null;
 }
 
 async function waitForShadowBenchmarkBars(
@@ -5533,22 +5811,33 @@ function nearlyEqualMoney(left: number, right: number) {
   return Math.abs(left - right) <= SHADOW_LEDGER_SNAPSHOT_TOLERANCE;
 }
 
-function liveShadowLedgerTotalsAt(input: {
+function buildLiveShadowLedgerTotalsCursor(input: {
   account: Pick<ShadowAccountRow, "startingBalance">;
   fills: ShadowFillRow[];
-  asOf: Date;
 }) {
   const startingBalance = toNumber(input.account.startingBalance) ?? SHADOW_STARTING_BALANCE;
-  return input.fills
-    .filter((fill) => fill.occurredAt.getTime() <= input.asOf.getTime())
-    .reduce(
-      (totals, fill) => ({
-        cash: totals.cash + (toNumber(fill.cashDelta) ?? 0),
-        realizedPnl: totals.realizedPnl + (toNumber(fill.realizedPnl) ?? 0),
-        fees: totals.fees + (toNumber(fill.fees) ?? 0),
-      }),
-      { cash: startingBalance, realizedPnl: 0, fees: 0 },
-    );
+  const fills = input.fills
+    .map((fill) => ({
+      occurredAtMs: fill.occurredAt.getTime(),
+      cashDelta: toNumber(fill.cashDelta) ?? 0,
+      realizedPnl: toNumber(fill.realizedPnl) ?? 0,
+      fees: toNumber(fill.fees) ?? 0,
+    }))
+    .sort((left, right) => left.occurredAtMs - right.occurredAtMs);
+  const totals = { cash: startingBalance, realizedPnl: 0, fees: 0 };
+  let cursor = 0;
+
+  return (asOf: Date) => {
+    const asOfMs = asOf.getTime();
+    while (cursor < fills.length && fills[cursor]!.occurredAtMs <= asOfMs) {
+      const fill = fills[cursor]!;
+      totals.cash += fill.cashDelta;
+      totals.realizedPnl += fill.realizedPnl;
+      totals.fees += fill.fees;
+      cursor += 1;
+    }
+    return { ...totals };
+  };
 }
 
 function filterShadowEquityHistoryRowsToLiveLedger<
@@ -5563,18 +5852,23 @@ function filterShadowEquityHistoryRowsToLiveLedger<
     fills: ShadowFillRow[];
   },
 ) {
-  return rows.filter((row) => {
-    const expected = liveShadowLedgerTotalsAt({
-      account: input.account,
-      fills: input.fills,
-      asOf: row.asOf,
-    });
-    return (
+  const totalsAt = buildLiveShadowLedgerTotalsCursor(input);
+  const keep = new Set<number>();
+  rows
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => left.row.asOf.getTime() - right.row.asOf.getTime())
+    .forEach(({ row, index }) => {
+      const expected = totalsAt(row.asOf);
+      if (
       nearlyEqualMoney(toNumber(row.cash) ?? 0, expected.cash) &&
       nearlyEqualMoney(toNumber(row.realizedPnl) ?? 0, expected.realizedPnl) &&
       nearlyEqualMoney(toNumber(row.fees) ?? 0, expected.fees)
-    );
-  });
+      ) {
+        keep.add(index);
+      }
+    });
+
+  return rows.filter((_, index) => keep.has(index));
 }
 
 type ShadowEquityHistoryLedgerRow = Pick<
@@ -5761,7 +6055,7 @@ function buildFallbackShadowAccountEquityHistory(input: {
   range: AccountRange;
   benchmark?: string | null;
   now?: Date;
-}) {
+}): ShadowAccountEquityHistory {
   const now = input.now ?? new Date();
   return {
     accountId: SHADOW_ACCOUNT_ID,
@@ -5806,20 +6100,167 @@ function buildFallbackShadowAccountEquityHistory(input: {
   };
 }
 
+type ShadowAccountEquityPoint = {
+  timestamp: Date;
+  netLiquidation: number;
+  currency: string;
+  source: string;
+  deposits: number;
+  withdrawals: number;
+  dividends: number;
+  fees: number;
+  returnPercent: number;
+  benchmarkPercent: number | null;
+};
+
+type ShadowAccountEquityEvent = {
+  id?: string;
+  timestamp: Date | string;
+  type: string;
+  amount: number;
+  currency: string;
+  source: string;
+  symbol?: string;
+  side?: string;
+  quantity?: number;
+  price?: number;
+  fees?: number;
+  realizedPnl?: number;
+  sourceType?: string;
+  strategyLabel?: string | null;
+  candidateId?: string | null;
+};
+
+type ShadowAccountEquityHistory = {
+  accountId: typeof SHADOW_ACCOUNT_ID;
+  range: AccountRange;
+  currency: string;
+  flexConfigured: boolean;
+  lastFlexRefreshAt: Date | null;
+  benchmark: string | null;
+  asOf: Date | null;
+  latestSnapshotAt: Date | null;
+  isStale: boolean;
+  staleReason: string | null;
+  degraded?: boolean;
+  stale?: boolean;
+  reason?: string | null;
+  terminalPointSource: string;
+  liveTerminalIncluded: boolean;
+  sourceScope: string;
+  selectedSnapshotSource: string | null;
+  points: ShadowAccountEquityPoint[];
+  events: ShadowAccountEquityEvent[];
+};
+
+function shadowReusableEquityHistoryRange(range: AccountRange): AccountRange | null {
+  return range === "1M" || range === "3M" || range === "6M" || range === "YTD"
+    ? "1Y"
+    : null;
+}
+
+function shadowEquityEventTimestampMs(event: ShadowAccountEquityEvent) {
+  const timestamp =
+    event.timestamp instanceof Date ? event.timestamp : new Date(event.timestamp);
+  const time = timestamp.getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function sliceShadowAccountEquityHistoryToRange(
+  base: ShadowAccountEquityHistory,
+  range: AccountRange,
+  now = new Date(),
+): ShadowAccountEquityHistory {
+  const start = accountRangeStart(range, now);
+  if (!start) {
+    return { ...base, range };
+  }
+
+  const startMs = start.getTime();
+  const points = base.points.filter(
+    (point) => point.timestamp.getTime() >= startMs,
+  );
+  const adjustedReturns = calculateTransferAdjustedReturnSeries(points);
+  const rebasedPoints = points.map((point, index) => ({
+    ...point,
+    returnPercent: adjustedReturns[index]?.returnPercent ?? 0,
+    benchmarkPercent: null,
+  }));
+  const lastPoint = rebasedPoints[rebasedPoints.length - 1] ?? null;
+  const endMs = lastPoint?.timestamp.getTime() ?? Number.POSITIVE_INFINITY;
+  const events = base.events.filter((event) => {
+    if (event.type === "deposit") {
+      return true;
+    }
+    const eventMs = shadowEquityEventTimestampMs(event);
+    return eventMs != null && eventMs >= startMs && eventMs <= endMs;
+  });
+
+  return {
+    ...base,
+    range,
+    benchmark: null,
+    asOf: lastPoint?.timestamp ?? null,
+    points: rebasedPoints,
+    events,
+  };
+}
+
 export async function getShadowAccountEquityHistory(input: {
   range?: AccountRange;
   benchmark?: string | null;
   source?: string | null;
-}) {
+}): Promise<ShadowAccountEquityHistory> {
   const range = normalizeAccountRange(input.range);
   const source = normalizeShadowSourceScope(input.source);
+  const benchmark = normalizeShadowBenchmarkSymbol(input.benchmark);
+  if (benchmark) {
+    return withShadowReadCache(
+      `equity-history:${range}:${benchmark}:${shadowSourceCacheKey(source)}`,
+      async () => {
+        const base = await getShadowAccountEquityHistory({
+          range,
+          source,
+        });
+        const benchmarkPercents = await resolveShadowBenchmarkPercents({
+          benchmark,
+          range,
+          start: accountRangeStart(range),
+          points: base.points,
+        });
+        return {
+          ...base,
+          benchmark,
+          points: base.points.map((point, index) => ({
+            ...point,
+            benchmarkPercent: benchmarkPercents[index] ?? null,
+          })),
+          events: base.events.filter((event) => event.type === "deposit"),
+        };
+      },
+    );
+  }
+  const reusableBaseRange = shadowReusableEquityHistoryRange(range);
+  if (reusableBaseRange) {
+    return withShadowReadCache(
+      `equity-history:${range}::${shadowSourceCacheKey(source)}`,
+      async () =>
+        sliceShadowAccountEquityHistoryToRange(
+          await getShadowAccountEquityHistory({
+            range: reusableBaseRange,
+            source,
+          }),
+          range,
+        ),
+    );
+  }
   return withShadowReadCache(
-    `equity-history:${range}:${input.benchmark || ""}:${shadowSourceCacheKey(source)}`,
+    `equity-history:${range}::${shadowSourceCacheKey(source)}`,
     async () => {
   if (isShadowAccountDbBackoffActive()) {
     return buildFallbackShadowAccountEquityHistory({
       range,
-      benchmark: input.benchmark,
+      benchmark: null,
     });
   }
   try {
@@ -5943,15 +6384,13 @@ export async function getShadowAccountEquityHistory(input: {
   ).sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
   const adjustedReturns = calculateTransferAdjustedReturnSeries(seedPoints);
   const lastPoint = seedPoints[seedPoints.length - 1] ?? null;
-  const tradeEvents = input.benchmark
-    ? []
-    : await getShadowTradeEquityEvents({
+  const tradeEvents = await getShadowTradeEquityEvents({
         start,
         end: lastPoint?.timestamp ?? new Date(),
         sources: source ? [source] : undefined,
       });
   const benchmarkPercents = await resolveShadowBenchmarkPercents({
-    benchmark: input.benchmark,
+    benchmark: null,
     range,
     start,
     points: seedPoints,
@@ -5962,8 +6401,8 @@ export async function getShadowAccountEquityHistory(input: {
     range,
     currency: SHADOW_CURRENCY,
     flexConfigured: true,
-    lastFlexRefreshAt: null,
-    benchmark: input.benchmark || null,
+	    lastFlexRefreshAt: null,
+    benchmark: null,
     asOf: lastPoint?.timestamp ?? null,
     latestSnapshotAt: latestCompactedAt,
     isStale: false,
@@ -5995,11 +6434,11 @@ export async function getShadowAccountEquityHistory(input: {
   };
   } catch (error) {
     if (isTransientPostgresError(error)) {
-      markShadowAccountDbUnavailable(error);
-      return buildFallbackShadowAccountEquityHistory({
-        range,
-        benchmark: input.benchmark,
-      });
+	      markShadowAccountDbUnavailable(error);
+	      return buildFallbackShadowAccountEquityHistory({
+	        range,
+	        benchmark: null,
+	      });
     }
 	    throw error;
 	  }
@@ -6050,19 +6489,7 @@ function buildShadowAccountAllocationResponse(input: {
 
 export async function getShadowAccountAllocation(input: { source?: string | null } = {}) {
   const source = normalizeShadowSourceScope(input.source);
-  try {
-    await repairSignalOptionsAutomationMirrorsForRead(source);
-  } catch (error) {
-    if (isTransientPostgresError(error)) {
-      markShadowAccountDbUnavailable(error);
-      return buildShadowAccountAllocationResponse({
-        totals: buildFallbackShadowTotals(),
-        positions: [],
-        degraded: true,
-      });
-    }
-    throw error;
-  }
+  kickSignalOptionsAutomationMirrorRepairForRead(source);
   return withShadowReadCache(`allocation:${shadowSourceCacheKey(source)}`, async () => {
   try {
     const totals = source
@@ -6138,27 +6565,20 @@ export async function getShadowAccountPositions(input: {
       includeLiveQuotes ? "live-quotes" : "cached-quotes"
     }`,
     async () => {
-      try {
-        await repairSignalOptionsAutomationMirrorsForRead(source);
-      } catch (error) {
-        if (isTransientPostgresError(error)) {
-          markShadowAccountDbUnavailable(error);
-          return buildEmptyShadowAccountPositionsResponse({
-            totals: buildFallbackShadowTotals(),
-            degraded: true,
-          });
-        }
-        throw error;
-      }
+      kickSignalOptionsAutomationMirrorRepairForRead(source);
   try {
   const totals = source ? await computeShadowTotalsForSource(source) : await ensureFreshShadowState(true);
   clearShadowAccountDbBackoff();
-  const orders = await db
-    .select()
-    .from(shadowOrdersTable)
-    .where(eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID))
-    .orderBy(desc(shadowOrdersTable.placedAt))
-    .limit(1000);
+  const orders = source
+    ? (await readShadowOrdersForSource(source))
+        .sort((left, right) => right.placedAt.getTime() - left.placedAt.getTime())
+        .slice(0, 1000)
+    : await db
+        .select()
+        .from(shadowOrdersTable)
+        .where(eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID))
+        .orderBy(desc(shadowOrdersTable.placedAt))
+        .limit(1000);
   const positions = await readOpenShadowPositionsForSourceCached(source);
   const filtered =
     assetClassFilter && assetClassFilter !== "all"
@@ -6178,13 +6598,20 @@ export async function getShadowAccountPositions(input: {
       position.assetClass === "option" &&
       Boolean(asOptionContract(position.optionContract)),
   );
-  const equityQuoteBySymbolPromise = fetchShadowEquityPositionQuotes(filtered);
+  const positionQuoteOwnerPrefix = `shadow-position:${shadowSourceCacheKey(source)}`;
+  const equityQuoteBySymbolPromise = includeLiveQuotes
+    ? fetchShadowEquityPositionQuotes(filtered, {
+        owner: `${positionQuoteOwnerPrefix}:equity`,
+      })
+    : Promise.resolve(
+        new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>(),
+      );
   const [liveOptionQuotes, underlyingMarkets] = hasOptionPositions && includeLiveQuotes
     ? await Promise.all([
         waitForShadowOptionDayChangeQuotes(
           fetchShadowOptionDayChangeQuotes(filtered, {
             intent: "visible-live",
-            ownerPrefix: "shadow-position-visible",
+            ownerPrefix: `${positionQuoteOwnerPrefix}:option-visible`,
             taskMaxWaitMs: SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS,
           }).catch(() => new Map()),
           SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS,
@@ -6475,6 +6902,175 @@ export async function getShadowAccountPositions(input: {
     },
     { allowStale: shadowReadCacheValueHasRows },
   );
+}
+
+function dateFromShadowPositionResponse(value: unknown): Date {
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const parsed = new Date(value);
+    if (Number.isFinite(parsed.getTime())) {
+      return parsed;
+    }
+  }
+  return new Date();
+}
+
+async function shadowStartingBalanceForFastSummary(): Promise<number> {
+  try {
+    const account = await readShadowAccount();
+    return toNumber(account?.startingBalance) ?? SHADOW_STARTING_BALANCE;
+  } catch (error) {
+    logger.debug?.(
+      { err: error },
+      "Shadow account starting balance unavailable for fast summary",
+    );
+    return SHADOW_STARTING_BALANCE;
+  }
+}
+
+function shadowTotalsFromPositionsResponse(input: {
+  positionsResponse: Awaited<ReturnType<typeof getShadowAccountPositions>>;
+  startingBalance: number;
+}): ShadowTotals {
+  const totals = input.positionsResponse.totals;
+  const marketValue =
+    toNumber(totals.netExposure) ??
+    toNumber(totals.grossLong) ??
+    input.positionsResponse.positions.reduce(
+      (sum, position) => sum + (toNumber(position.marketValue) ?? 0),
+      0,
+    );
+  const cash = toNumber(totals.cash) ?? 0;
+  const netLiquidation = toNumber(totals.netLiquidation) ?? cash + marketValue;
+  const unrealizedPnl =
+    toNumber(totals.unrealizedPnl) ??
+    input.positionsResponse.positions.reduce(
+      (sum, position) => sum + (toNumber(position.unrealizedPnl) ?? 0),
+      0,
+    );
+  const realizedPnl = netLiquidation - input.startingBalance - unrealizedPnl;
+  return {
+    cash,
+    startingBalance: input.startingBalance,
+    realizedPnl,
+    unrealizedPnl,
+    fees: 0,
+    marketValue,
+    netLiquidation,
+    updatedAt: dateFromShadowPositionResponse(input.positionsResponse.updatedAt),
+  };
+}
+
+function readFreshCachedShadowEquityHistoryReturnMetrics(input: {
+  source?: string | null;
+}): ShadowAccountSummaryReturnMetrics | undefined {
+  const source = normalizeShadowSourceScope(input.source);
+  const cacheKey = `equity-history:1D::${shadowSourceCacheKey(source)}`;
+  const cached = shadowReadCache.get(cacheKey);
+  if (!cached || cached.expiresAt <= Date.now()) {
+    return undefined;
+  }
+  const history = cached.value as Partial<ShadowAccountEquityHistory>;
+  if (!Array.isArray(history.points)) {
+    return undefined;
+  }
+  const dayPnl = calculateLatestShadowMarketDayPnlFromHistory(history.points);
+  return {
+    dayPnl: dayPnl?.value ?? null,
+    dayPnlField: dayPnl
+      ? `EquityHistoryMarketDayPnl:${dayPnl.marketDate}`
+      : "EquityHistoryMarketDayPnl",
+    dayPnlCapitalBase: dayPnl?.capitalBase ?? null,
+  };
+}
+
+export async function getShadowAccountSummaryFromPositions(input: {
+  positionsResponse: Awaited<ReturnType<typeof getShadowAccountPositions>>;
+  source?: string | null;
+}) {
+  const startingBalance = await shadowStartingBalanceForFastSummary();
+  return buildShadowAccountSummaryResponse({
+    totals: shadowTotalsFromPositionsResponse({
+      positionsResponse: input.positionsResponse,
+      startingBalance,
+    }),
+    returnMetrics: readFreshCachedShadowEquityHistoryReturnMetrics({
+      source: input.source,
+    }),
+    degraded: Boolean(input.positionsResponse.degraded),
+  });
+}
+
+function shadowResponseAssetClassLabel(value: unknown): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) {
+    return "Other";
+  }
+  if (raw.toLowerCase() === "stock" || raw.toLowerCase() === "stocks") {
+    return "Stocks";
+  }
+  if (raw.toLowerCase() === "option" || raw.toLowerCase() === "options") {
+    return "Options";
+  }
+  return raw;
+}
+
+export function getShadowAccountAllocationFromPositions(input: {
+  positionsResponse: Awaited<ReturnType<typeof getShadowAccountPositions>>;
+}) {
+  const { positionsResponse } = input;
+  const totals = positionsResponse.totals;
+  const cash = toNumber(totals.cash) ?? 0;
+  const netLiquidation =
+    toNumber(totals.netLiquidation) ??
+    cash + (toNumber(totals.netExposure) ?? toNumber(totals.grossLong) ?? 0);
+  const marketValue =
+    toNumber(totals.netExposure) ??
+    toNumber(totals.grossLong) ??
+    positionsResponse.positions.reduce(
+      (sum, position) => sum + (toNumber(position.marketValue) ?? 0),
+      0,
+    );
+  const assetBuckets = new Map<string, number>();
+  const sectorBuckets = new Map<string, number>();
+  positionsResponse.positions.forEach((position) => {
+    const value = toNumber(position.marketValue) ?? 0;
+    const assetClass = shadowResponseAssetClassLabel(position.assetClass);
+    const sector =
+      typeof position.sector === "string" && position.sector.trim()
+        ? position.sector.trim()
+        : "Shadow Holdings";
+    assetBuckets.set(assetClass, (assetBuckets.get(assetClass) ?? 0) + value);
+    sectorBuckets.set(sector, (sectorBuckets.get(sector) ?? 0) + value);
+  });
+  assetBuckets.set("Cash", (assetBuckets.get("Cash") ?? 0) + cash);
+
+  const bucketRows = (buckets: Map<string, number>) =>
+    Array.from(buckets.entries())
+      .map(([label, value]) => ({
+        label,
+        value,
+        weightPercent: weightPercent(value, netLiquidation),
+        source: label === "Cash" ? "SHADOW_CASH" : "SHADOW_LEDGER",
+      }))
+      .sort((left, right) => Math.abs(right.value) - Math.abs(left.value));
+
+  return {
+    accountId: SHADOW_ACCOUNT_ID,
+    currency: SHADOW_CURRENCY,
+    degraded: Boolean(positionsResponse.degraded),
+    reason: positionsResponse.degraded ? positionsResponse.reason : null,
+    assetClass: bucketRows(assetBuckets),
+    sector: bucketRows(sectorBuckets),
+    exposure: {
+      grossLong: marketValue,
+      grossShort: 0,
+      netExposure: marketValue,
+    },
+    updatedAt: dateFromShadowPositionResponse(positionsResponse.updatedAt),
+  };
 }
 
 export async function getShadowAccountPositionsAtDate(input: {
@@ -7669,17 +8265,23 @@ export async function getShadowAccountRisk(input: {
   totals?: Awaited<ReturnType<typeof ensureFreshShadowState>>;
   positionsResponse?: Awaited<ReturnType<typeof getShadowAccountPositions>>;
   closedTrades?: Awaited<ReturnType<typeof getShadowAccountClosedTrades>>;
+  detail?: "full" | "fast";
 } = {}) {
   const source = normalizeShadowSourceScope(input.source);
+  const detail = input.detail === "fast" ? "fast" : "full";
   const hasInjectedInputs = Boolean(
     input.totals || input.positionsResponse || input.closedTrades,
   );
   if (!hasInjectedInputs) {
-    return withShadowReadCache(`risk:${shadowSourceCacheKey(source)}`, () =>
-      buildShadowAccountRisk({ source }),
+    const cacheKey =
+      detail === "fast"
+        ? `risk:${shadowSourceCacheKey(source)}:fast`
+        : `risk:${shadowSourceCacheKey(source)}`;
+    return withShadowReadCache(cacheKey, () =>
+      buildShadowAccountRisk({ source, detail }),
     );
   }
-  return buildShadowAccountRisk({ ...input, source });
+  return buildShadowAccountRisk({ ...input, source, detail });
 }
 
 async function buildShadowAccountRisk(input: {
@@ -7687,16 +8289,23 @@ async function buildShadowAccountRisk(input: {
   totals?: Awaited<ReturnType<typeof ensureFreshShadowState>>;
   positionsResponse?: Awaited<ReturnType<typeof getShadowAccountPositions>>;
   closedTrades?: Awaited<ReturnType<typeof getShadowAccountClosedTrades>>;
+  detail?: "full" | "fast";
 }) {
   const source = input.source ?? null;
-  const totals =
-    input.totals ??
-    (source
-      ? await computeShadowTotalsForSource(source)
-      : await ensureFreshShadowState(true));
+  const fastDetail = input.detail === "fast";
   const positionsResponse =
     input.positionsResponse ??
     (await getShadowAccountPositions({ source, liveQuotes: false }));
+  const totals =
+    input.totals ??
+    (input.positionsResponse
+      ? shadowTotalsFromPositionsResponse({
+          positionsResponse: input.positionsResponse,
+          startingBalance: await shadowStartingBalanceForFastSummary(),
+        })
+      : source
+        ? await computeShadowTotalsForSource(source)
+        : await ensureFreshShadowState(true));
   const closedTrades =
     input.closedTrades ?? (await getShadowAccountClosedTrades({ source }));
   const degraded = Boolean(
@@ -7734,7 +8343,7 @@ async function buildShadowAccountRisk(input: {
       !underlyingPrices.has(underlying)
     );
   });
-  if (missingUnderlyingPrice) {
+  if (missingUnderlyingPrice && !fastDetail) {
     for (const [symbol, price] of await hydrateShadowOptionUnderlyingPrices(
       notionalPositions,
     )) {
@@ -7744,15 +8353,17 @@ async function buildShadowAccountRisk(input: {
   const cachedGreekQuoteByProviderContractId = readCachedShadowOptionGreekQuotes(
     positionsResponse.positions,
   );
-  const liveGreekQuoteByProviderContractId = await fetchShadowOptionDayChangeQuotes(
-    positionsResponse.positions,
-    {
-      intent: "account-monitor-live",
-      ownerPrefix: "shadow-risk-greek",
-      taskMaxWaitMs: SHADOW_GREEK_QUOTE_TASK_MAX_WAIT_MS,
-      requiresGreeks: true,
-    },
-  ).catch(() => new Map());
+  const liveGreekQuoteByProviderContractId = fastDetail
+    ? new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>()
+    : await fetchShadowOptionDayChangeQuotes(
+        positionsResponse.positions,
+        {
+          intent: "account-monitor-live",
+          ownerPrefix: "shadow-risk-greek",
+          taskMaxWaitMs: SHADOW_GREEK_QUOTE_TASK_MAX_WAIT_MS,
+          requiresGreeks: true,
+        },
+      ).catch(() => new Map());
   const greekQuoteByProviderContractId = mergeShadowGreekQuoteMaps(
     cachedGreekQuoteByProviderContractId,
     liveGreekQuoteByProviderContractId,
@@ -7768,11 +8379,13 @@ async function buildShadowAccountRisk(input: {
     greekByPositionId,
     underlyingPrices,
   });
-  const greekScenarios = await resolveAccountGreekScenarios({
-    positions: notionalPositions,
-    greekByPositionId,
-    underlyingPrices,
-  });
+  const greekScenarios = fastDetail
+    ? buildDeferredShadowGreekScenarios()
+    : await resolveAccountGreekScenarios({
+        positions: notionalPositions,
+        greekByPositionId,
+        underlyingPrices,
+      });
   const totalOptionPositions = positionsResponse.positions.filter(
     (position) => position.assetClass === "Options",
   ).length;
@@ -7898,6 +8511,24 @@ async function buildShadowAccountRisk(input: {
     riskRecommendations,
     expiryConcentration,
     updatedAt: totals.updatedAt,
+  };
+}
+
+function buildDeferredShadowGreekScenarios(): AccountGreekScenarios {
+  return {
+    enabled: false,
+    status: "disabled",
+    source: "python_compute",
+    warning: "Deferred during the account-page critical read.",
+    coverage: null,
+    result: null,
+    pythonJob: {
+      jobId: null,
+      jobType: "greek_scenario_matrix",
+      durationMs: null,
+      warnings: [],
+      error: null,
+    },
   };
 }
 
@@ -10972,12 +11603,16 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   filterShadowEquityHistoryRowsToLiveLedger,
   buildDefaultShadowEquityHistoryRows,
   compactShadowEquityHistoryRows,
+  shadowReusableEquityHistoryRange,
+  sliceShadowAccountEquityHistoryToRange,
   shadowEquityHistoryBucketSizeMs,
   bucketShadowEquityHistoryRows,
   selectLatestShadowPositionMarksByPositionId,
   buildShadowPositionDayChange,
+  shadowPositionDayChangeBaselineMarketValue,
   shadowPositionDayChangeDayStart,
   buildShadowPositionDayChangeFromQuote,
+  calculateLatestShadowMarketDayPnlFromHistory,
   shadowQuoteMarkPrice,
   buildShadowOptionPricingPolicy,
   computeSignalOptionsShadowMarkExitDecision,

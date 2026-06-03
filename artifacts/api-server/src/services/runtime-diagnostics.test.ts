@@ -385,6 +385,9 @@ test("runtime diagnostics expose Massive provider activity without secrets", asy
     assert.ok(massive.websocket.availableChannels.includes("AM"));
     assert.ok(massive.websocket.availableChannels.includes("Q"));
     assert.ok(massive.websocket.availableChannels.includes("T"));
+    assert.equal("lastMessageAt" in massive.websocket, true);
+    assert.ok(Array.isArray(massive.websocket.feeds));
+    assert.equal("lastMessageAt" in massive.websocket.feeds[0], true);
     assert.doesNotMatch(JSON.stringify(massive), /massive-secret|apiKey/);
   } finally {
     if (previousMassiveKey === undefined) {

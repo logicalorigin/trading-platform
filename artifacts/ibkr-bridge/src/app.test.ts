@@ -2,7 +2,10 @@ import { EventEmitter } from "node:events";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Request, Response } from "express";
-import { createRequestAbortSignal } from "./app";
+import {
+  DEFAULT_ASYNC_SIDECAR_PROXY_TIMEOUT_MS,
+  createRequestAbortSignal,
+} from "./app";
 
 function mockRequest(input: { aborted?: boolean } = {}): Request {
   const req = new EventEmitter() as EventEmitter & { aborted: boolean };
@@ -43,4 +46,8 @@ test("request abort signal aborts immediately for already aborted requests", () 
   );
 
   assert.equal(signal.aborted, true);
+});
+
+test("async sidecar proxy default timeout covers scanner generation apply batches", () => {
+  assert.equal(DEFAULT_ASYNC_SIDECAR_PROXY_TIMEOUT_MS, 30_000);
 });

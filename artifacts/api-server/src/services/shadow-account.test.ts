@@ -474,6 +474,14 @@ test("shadow account snapshot invalidation clears stale in-flight base reads", (
   );
   assert.match(source, /const request = \(async \(\) => \{/);
   assert.match(source, /getShadowAccountPositions\(\{\s*liveQuotes: false,?\s*\}\)/);
+  assert.match(source, /getShadowAccountSummaryFromPositions\(\{\s*positionsResponse: positions\s*\}\)/);
+  assert.match(source, /getShadowAccountAllocationFromPositions\(\{\s*positionsResponse: positions\s*\}\)/);
+  assert.doesNotMatch(source, /getShadowAccountSummary\(\)/);
+  assert.doesNotMatch(source, /getShadowAccountAllocation\(\)/);
+  assert.match(
+    source,
+    /getShadowAccountRisk\(\{\s*positionsResponse: positions,\s*closedTrades,\s*detail: "fast",\s*\}\)/,
+  );
   assert.match(
     source,
     /if \(shadowAccountSnapshotBaseInFlight === request\) \{\s*shadowAccountSnapshotBaseInFlight = null;/,
@@ -558,6 +566,129 @@ test("shadow benchmark overlays are bounded for responsive equity history", () =
   assert.match(source, /const SHADOW_BENCHMARK_BARS_MAX_WAIT_MS = 750;/);
   assert.match(source, /async function waitForShadowBenchmarkBars/);
   assert.match(source, /return \(await waitForShadowBenchmarkBars\(request\)\) \?\? cached\?\.bars \?\? null;/);
+});
+
+test("shadow benchmark equity history overlays reuse the base ledger history", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+
+  assert.match(source, /const benchmark = normalizeShadowBenchmarkSymbol\(input\.benchmark\);/);
+  assert.match(
+    source,
+    /if \(benchmark\) \{[\s\S]*getShadowAccountEquityHistory\(\{\s*range,\s*source,\s*\}\)[\s\S]*points: base\.points\.map/,
+  );
+});
+
+test("shadow medium range equity history reuses and rebases one-year base history", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+
+  assert.match(source, /function shadowReusableEquityHistoryRange/);
+  assert.match(
+    source,
+    /const reusableBaseRange = shadowReusableEquityHistoryRange\(range\);[\s\S]*getShadowAccountEquityHistory\(\{\s*range: reusableBaseRange,\s*source,\s*\}\)/,
+  );
+
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  assert.equal(internals.shadowReusableEquityHistoryRange("1D"), null);
+  assert.equal(internals.shadowReusableEquityHistoryRange("1W"), null);
+  assert.equal(internals.shadowReusableEquityHistoryRange("1M"), "1Y");
+  assert.equal(internals.shadowReusableEquityHistoryRange("6M"), "1Y");
+  assert.equal(internals.shadowReusableEquityHistoryRange("YTD"), "1Y");
+
+  const sliced = internals.sliceShadowAccountEquityHistoryToRange(
+    {
+      accountId: "shadow",
+      range: "1Y",
+      currency: "USD",
+      flexConfigured: true,
+      lastFlexRefreshAt: null,
+      benchmark: null,
+      asOf: new Date("2026-06-10T14:30:00.000Z"),
+      latestSnapshotAt: new Date("2026-06-10T14:30:00.000Z"),
+      isStale: false,
+      staleReason: null,
+      terminalPointSource: "shadow_ledger",
+      liveTerminalIncluded: false,
+      sourceScope: "ledger",
+      selectedSnapshotSource: null,
+      points: [
+        {
+          timestamp: new Date("2026-02-01T14:30:00.000Z"),
+          netLiquidation: 100,
+          currency: "USD",
+          source: "SHADOW_LEDGER",
+          deposits: 0,
+          withdrawals: 0,
+          dividends: 0,
+          fees: 0,
+          returnPercent: 0,
+          benchmarkPercent: null,
+        },
+        {
+          timestamp: new Date("2026-05-01T14:30:00.000Z"),
+          netLiquidation: 120,
+          currency: "USD",
+          source: "SHADOW_LEDGER",
+          deposits: 0,
+          withdrawals: 0,
+          dividends: 0,
+          fees: 0,
+          returnPercent: 20,
+          benchmarkPercent: null,
+        },
+        {
+          timestamp: new Date("2026-06-10T14:30:00.000Z"),
+          netLiquidation: 132,
+          currency: "USD",
+          source: "SHADOW_LEDGER",
+          deposits: 0,
+          withdrawals: 0,
+          dividends: 0,
+          fees: 0,
+          returnPercent: 32,
+          benchmarkPercent: null,
+        },
+      ],
+      events: [
+        {
+          timestamp: new Date("2026-02-01T14:30:00.000Z"),
+          type: "deposit",
+          amount: 100,
+          currency: "USD",
+          source: "SHADOW_LEDGER",
+        },
+        {
+          timestamp: "2026-02-02T14:30:00.000Z",
+          type: "trade_buy",
+          amount: -10,
+          currency: "USD",
+          source: "manual",
+        },
+        {
+          timestamp: "2026-05-02T14:30:00.000Z",
+          type: "trade_sell",
+          amount: 10,
+          currency: "USD",
+          source: "manual",
+        },
+      ],
+    } as any,
+    "3M",
+    new Date("2026-06-15T14:30:00.000Z"),
+  );
+
+  assert.equal(sliced.range, "3M");
+  assert.deepEqual(
+    sliced.points.map((point) => point.timestamp.toISOString()),
+    ["2026-05-01T14:30:00.000Z", "2026-06-10T14:30:00.000Z"],
+  );
+  assert.deepEqual(
+    sliced.points.map((point) => point.returnPercent),
+    [0, 10],
+  );
+  assert.deepEqual(
+    sliced.events.map((event) => event.type),
+    ["deposit", "trade_sell"],
+  );
 });
 
 test("computeShadowOrderFees applies IBKR Pro Fixed option fees", () => {
@@ -775,6 +906,54 @@ test("buildShadowPositionDayChange uses daily baseline instead of total unrealiz
   assert.equal(Number(changed.dayChangePercent?.toFixed(6)), 2.074689);
 });
 
+test("same-day shadow position day change ignores pre-entry zero baseline mark", () => {
+  const baselineHelper =
+    __shadowWatchlistBacktestInternalsForTests.shadowPositionDayChangeBaselineMarketValue;
+  const dayStart = new Date("2026-06-03T04:00:00.000Z");
+
+  const baseline = baselineHelper({
+    baselineMarkMarketValue: 0,
+    openedAt: new Date("2026-06-03T13:45:00.000Z"),
+    dayStart,
+    averageCost: 453.187692,
+    quantity: 13,
+    multiplier: 1,
+  });
+  const changed =
+    __shadowWatchlistBacktestInternalsForTests.buildShadowPositionDayChange({
+      currentMarketValue: 5369.39,
+      baselineMarketValue: baseline,
+    });
+
+  assert.equal(Number(baseline?.toFixed(6)), 5891.439996);
+  assert.equal(Number(changed.dayChange?.toFixed(6)), -522.049996);
+  assert.notEqual(Number(changed.dayChange?.toFixed(2)), 5369.39);
+});
+
+test("overnight shadow position day change ignores impossible zero baseline mark", () => {
+  const baselineHelper =
+    __shadowWatchlistBacktestInternalsForTests.shadowPositionDayChangeBaselineMarketValue;
+  const dayStart = new Date("2026-06-03T04:00:00.000Z");
+
+  const baseline = baselineHelper({
+    baselineMarkMarketValue: 0,
+    openedAt: new Date("2026-06-03T03:07:36.649Z"),
+    dayStart,
+    averageCost: 453.187692,
+    quantity: 13,
+    multiplier: 1,
+  });
+  const changed =
+    __shadowWatchlistBacktestInternalsForTests.buildShadowPositionDayChange({
+      currentMarketValue: 5379.6262,
+      baselineMarketValue: baseline,
+    });
+
+  assert.equal(Number(baseline?.toFixed(6)), 5891.439996);
+  assert.equal(Number(changed.dayChange?.toFixed(6)), -511.813796);
+  assert.notEqual(Number(changed.dayChange?.toFixed(2)), 5379.63);
+});
+
 test("shadow replay position day changes stay anchored to the current day", () => {
   const helper =
     __shadowWatchlistBacktestInternalsForTests.shadowPositionDayChangeDayStart;
@@ -977,6 +1156,18 @@ test("selectLatestShadowPositionMarksByPositionId keeps one newest mark per posi
   assert.equal(selected.get("pos-b")?.marketValue, "200");
 });
 
+test("shadow account summary day pnl uses equity history instead of position day-change totals", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const summaryBody = source.match(
+    /export async function getShadowAccountSummary\([\s\S]*?\nfunction isWatchlistBacktestRunSnapshotSource/,
+  )?.[0];
+
+  assert.ok(summaryBody);
+  assert.match(summaryBody, /resolveShadowAccountSummaryReturnMetrics/);
+  assert.match(source, /EquityHistoryMarketDayPnl/);
+  assert.doesNotMatch(summaryBody, /readShadowPositionDayChanges/);
+});
+
 test("shadow balance snapshots are timestamped from fills and marks", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
 
@@ -1026,7 +1217,7 @@ test("source-scoped shadow positions require matching source keys and source pre
   assert.match(source, /positionMatchesShadowSource\(position, source\)/);
 });
 
-test("shadow account positions repair live signal-options mirrors inside cached read", () => {
+test("shadow account automation reads kick signal-options mirror repair without blocking", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const summaryBody = source.match(
     /export async function getShadowAccountSummary\([\s\S]*?\nexport async function getShadowAccountAllocation/,
@@ -1039,18 +1230,27 @@ test("shadow account positions repair live signal-options mirrors inside cached 
   )?.[0];
 
   assert.match(source, /async function repairSignalOptionsAutomationMirrorsForRead/);
+  assert.match(source, /function kickSignalOptionsAutomationMirrorRepairForRead/);
+  assert.match(source, /void repairSignalOptionsAutomationMirrorsForRead\(source\)/);
   assert.match(source, /const SHADOW_AUTOMATION_MIRROR_REPAIR_TTL_MS = 60_000;/);
   assert.match(source, /SIGNAL_OPTIONS_SHADOW_ENTRY_EVENT/);
   assert.match(source, /SIGNAL_OPTIONS_SHADOW_EXIT_EVENT/);
   assert.match(source, /recordShadowAutomationEvent\(event,\s*\{\s*source: "automation",\s*\}\)/);
-  assert.match(source, /await repairSignalOptionsAutomationMirrorsForRead\(source\);/);
+  assert.doesNotMatch(source, /await repairSignalOptionsAutomationMirrorsForRead\(source\);/);
   assert.ok(summaryBody);
-  assert.doesNotMatch(summaryBody, /repairSignalOptionsAutomationMirrorsForRead/);
+  assert.match(summaryBody, /kickSignalOptionsAutomationMirrorRepairForRead\(source\);/);
   assert.ok(positionsBody);
   assert.ok(
     positionsBody.indexOf("return withShadowReadCache(") <
-      positionsBody.indexOf("await repairSignalOptionsAutomationMirrorsForRead(source);"),
+      positionsBody.indexOf("kickSignalOptionsAutomationMirrorRepairForRead(source);"),
   );
+  assert.match(source, /async function readShadowFillsWithOrdersForSource/);
+  assert.match(source, /async function readShadowOrdersForSource/);
+  assert.match(source, /async function readOpenShadowPositionsForKeys/);
+  assert.match(source, /eq\(shadowOrdersTable\.source,\s*"automation"\)/);
+  assert.match(source, /readShadowFillsForOrderIds\(orderIds\)/);
+  assert.match(source, /readOpenShadowPositionsForKeys\(sourcePositionKeys\)/);
+  assert.match(source, /readOpenShadowPositionsForKeys\(selectedPositionKeys\)/);
   assert.match(
     positionsBody,
     /const totals = source \? await computeShadowTotalsForSource\(source\) : await ensureFreshShadowState\(true\);/,
@@ -3124,6 +3324,9 @@ test("shadow default day-change quotes are requested only for rows needing fallb
   assert.match(fetchQuotesBody, /resolveShadowIbkrOptionProviderIds/);
   assert.match(fetchQuotesBody, /declareIbkrLiveDemand/);
   assert.match(fetchQuotesBody, /readIbkrLiveDemandState/);
+  assert.match(fetchQuotesBody, /const owner = options\.ownerPrefix \?\? "shadow-position:ledger:day-change"/);
+  assert.doesNotMatch(fetchQuotesBody, /shadow-position-day-change/);
+  assert.doesNotMatch(fetchQuotesBody, /ownerPrefix \?\? "shadow-position:ledger:day-change"}:\$\{quoteUnderlying/);
   assert.doesNotMatch(fetchQuotesBody, /fetchOptionQuoteSnapshotPayload/);
   assert.doesNotMatch(fetchQuotesBody, /MassiveMarketDataClient/);
   assert.doesNotMatch(fetchQuotesBody, /massive_option_quote/);
@@ -3141,12 +3344,19 @@ test("shadow positions include hydrated option quote payloads", () => {
   assert.match(positionsBody, /optionQuoteByProviderContractId/);
   assert.match(positionsBody, /fetchShadowOptionDayChangeQuotes\(filtered,\s*\{/);
   assert.match(positionsBody, /intent: "visible-live"/);
-  assert.match(positionsBody, /ownerPrefix: "shadow-position-visible"/);
+  assert.match(positionsBody, /const positionQuoteOwnerPrefix = `shadow-position:\$\{shadowSourceCacheKey\(source\)\}`/);
+  assert.match(positionsBody, /ownerPrefix: `\$\{positionQuoteOwnerPrefix\}:option-visible`/);
+  assert.doesNotMatch(positionsBody, /shadow-position-visible/);
   assert.match(positionsBody, /SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS/);
   assert.match(positionsBody, /SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS/);
   assert.match(positionsBody, /waitForShadowOptionDayChangeQuotes/);
   assert.match(source, /const SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS = 750;/);
   assert.match(source, /const SHADOW_UNDERLYING_QUOTE_MAX_WAIT_MS = 750;/);
+  assert.match(source, /const SHADOW_EQUITY_POSITION_QUOTE_MAX_WAIT_MS = 750;/);
+  assert.match(
+    positionsBody,
+    /const equityQuoteBySymbolPromise = includeLiveQuotes[\s\S]*fetchShadowEquityPositionQuotes\(filtered,\s*\{[\s\S]*owner: `\$\{positionQuoteOwnerPrefix\}:equity`,[\s\S]*Promise\.resolve/,
+  );
   assert.match(positionsBody, /\{ fetchMissingOptionQuotes: false \}/);
   assert.match(positionsBody, /Promise\.all/);
   assert.match(positionsBody, /fetchShadowOptionUnderlyingMarkets\(filtered\)/);
@@ -3199,7 +3409,40 @@ test("shadow risk reuses projected underlying markets before quote fallback", ()
   assert.match(riskBody, /shadowUnderlyingPricesFromPositionRows\(positionsResponse\.positions\)/);
   assert.match(riskBody, /missingUnderlyingPrice/);
   assert.match(riskBody, /hydrateShadowOptionUnderlyingPrices/);
-  assert.match(source, /withShadowReadCache\(`risk:\$\{shadowSourceCacheKey\(source\)\}`/);
+  assert.match(source, /: `risk:\$\{shadowSourceCacheKey\(source\)\}`/);
+});
+
+test("shadow fast risk skips live greek hydration for account-page critical reads", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const getRiskBody = source.match(
+    /export async function getShadowAccountRisk\([\s\S]*?\nasync function buildShadowAccountRisk/,
+  )?.[0];
+  const riskBody = source.match(
+    /async function buildShadowAccountRisk\([\s\S]*?\nfunction shadowGreekSnapshotsFromPositionRows/,
+  )?.[0];
+
+  assert.ok(getRiskBody);
+  assert.match(getRiskBody, /detail\?: "full" \| "fast"/);
+  assert.match(getRiskBody, /input\.detail === "fast" \? "fast" : "full"/);
+  assert.match(getRiskBody, /`risk:\$\{shadowSourceCacheKey\(source\)\}:fast`/);
+  assert.ok(riskBody);
+  assert.match(riskBody, /const fastDetail = input\.detail === "fast";/);
+  assert.match(riskBody, /missingUnderlyingPrice && !fastDetail/);
+  assert.match(riskBody, /const liveGreekQuoteByProviderContractId = fastDetail/);
+  assert.match(riskBody, /const greekScenarios = fastDetail/);
+  assert.match(riskBody, /buildDeferredShadowGreekScenarios/);
+});
+
+test("shadow risk reuses injected position totals for account-page critical reads", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const riskBody = source.match(
+    /async function buildShadowAccountRisk\([\s\S]*?\nfunction shadowGreekSnapshotsFromPositionRows/,
+  )?.[0];
+
+  assert.ok(riskBody);
+  assert.match(riskBody, /input\.positionsResponse\s*\?\s*shadowTotalsFromPositionsResponse\(\{/);
+  assert.match(riskBody, /positionsResponse: input\.positionsResponse/);
+  assert.match(riskBody, /startingBalance: await shadowStartingBalanceForFastSummary\(\)/);
 });
 
 test("shadow cash activity uses stale read cache protection", () => {
@@ -3231,6 +3474,7 @@ test("shadow risk exposes python greek scenario coverage", () => {
   assert.match(riskBody, /mergeShadowGreekQuoteMaps/);
   assert.match(riskBody, /requiresGreeks: true/);
   assert.match(riskBody, /ownerPrefix: "shadow-risk-greek"/);
+  assert.doesNotMatch(riskBody, /shadow-risk-greek:\$\{quoteUnderlying/);
   assert.match(riskBody, /SHADOW_GREEK_QUOTE_TASK_MAX_WAIT_MS/);
   assert.match(riskBody, /resolveAccountGreekScenarios\(\{/);
   assert.match(riskBody, /greekScenarios,/);
@@ -3309,9 +3553,11 @@ test("shadow quote hydration routes spot display quotes to Massive and option ma
   assert.match(equityPositionQuoteBody, /allowMassiveFallback: true/);
   assert.match(
     equityPositionQuoteBody,
-    /admissionOwner: `shadow-equity-position-quotes:\$\{symbols\.join\(","\)\}`/,
+    /admissionOwner: options\.owner \?\? "shadow-equity-position-quotes:positions"/,
   );
   assert.match(equityPositionQuoteBody, /admissionFallbackProvider: "massive"/);
+  assert.match(equityPositionQuoteBody, /Promise\.race/);
+  assert.match(equityPositionQuoteBody, /SHADOW_EQUITY_POSITION_QUOTE_MAX_WAIT_MS/);
   assert.match(positionsBody, /shadowQuoteText\(rawEquityQuote,\s*"source"\) === "massive"/);
   assert.match(positionsBody, /optionQuoteSnapshot \? "option_quote" : equityQuote \? "massive"/);
   assert.match(positionsBody, /sameDayPosition && hasFiniteValuationMark/);
@@ -3360,6 +3606,63 @@ test("shadow equity history drops snapshots that do not reconcile to live fills"
   assert.deepEqual(
     filtered.map((entry) => entry.source),
     ["initial", "automation_mark"],
+  );
+});
+
+test("shadow equity history reconciles ledger rows with one forward fill cursor", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+
+  assert.match(source, /function buildLiveShadowLedgerTotalsCursor/);
+  assert.doesNotMatch(
+    source,
+    /rows\.filter\(\(row\) => \{[\s\S]*liveShadowLedgerTotalsAt/,
+  );
+
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const account = { startingBalance: "1000" };
+  const row = (
+    asOf: string,
+    cash: number,
+    realizedPnl: number,
+    fees: number,
+  ) => ({
+    source: "automation_mark",
+    asOf: new Date(asOf),
+    createdAt: new Date(asOf),
+    cash: String(cash),
+    realizedPnl: String(realizedPnl),
+    fees: String(fees),
+  });
+  const fill = (
+    occurredAt: string,
+    cashDelta: number,
+    realizedPnl: number,
+    fees: number,
+  ) => ({
+    occurredAt: new Date(occurredAt),
+    cashDelta: String(cashDelta),
+    realizedPnl: String(realizedPnl),
+    fees: String(fees),
+  });
+
+  const selected = internals.filterShadowEquityHistoryRowsToLiveLedger(
+    [
+      row("2026-05-01T10:06:00.000Z", 950, 10, 3),
+      row("2026-05-01T10:04:00.000Z", 900, 0, 1),
+      row("2026-05-01T10:07:00.000Z", 999, 0, 0),
+    ] as any,
+    {
+      account: account as any,
+      fills: [
+        fill("2026-05-01T10:05:00.000Z", 50, 10, 2),
+        fill("2026-05-01T10:00:00.000Z", -100, 0, 1),
+      ] as any,
+    },
+  );
+
+  assert.deepEqual(
+    selected.map((entry) => entry.asOf.toISOString()),
+    ["2026-05-01T10:06:00.000Z", "2026-05-01T10:04:00.000Z"],
   );
 });
 

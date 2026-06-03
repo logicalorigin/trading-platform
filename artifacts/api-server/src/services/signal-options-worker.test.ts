@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AlgoDeployment } from "@workspace/db";
 import { createSignalOptionsWorker } from "./signal-options-worker";
+import type { StockMinuteAggregateMessage } from "./stock-aggregate-stream";
 import {
   __resetApiResourcePressureForTests,
   getApiResourcePressureSnapshot,
@@ -115,6 +116,84 @@ test("signal-options worker start is idempotent and stop clears scheduled wakeup
 
   assert.equal(listCalls, 1);
   assert.equal(clearCalls, 1);
+});
+
+test("signal-options worker evaluates changed stream symbols from Massive aggregates", async () => {
+  const timers: Array<() => void> = [];
+  const aggregateHandlers: Array<
+    (message: StockMinuteAggregateMessage) => void
+  > = [];
+  const subscribedSymbols: string[][] = [];
+  const evaluated: Array<{ mode: AlgoDeployment["mode"]; symbols: string[] }> = [];
+  const worker = createSignalOptionsWorker({
+    listDeployments: async () => [
+      deployment({ symbolUniverse: ["CLSK", "RKLB"] }),
+    ],
+    scanDeployment: async () => {},
+    runMaintenance: emptyMaintenance,
+    acquireTickLock: async () => async () => {},
+    setTimer: ((callback: () => void) => {
+      timers.push(callback);
+      return callback;
+    }) as never,
+    clearTimer: ((timer: () => void) => {
+      const index = timers.indexOf(timer);
+      if (index >= 0) timers.splice(index, 1);
+    }) as never,
+    isAggregateStreamingAvailable: () => true,
+    subscribeAggregates: (symbols, onAggregate) => {
+      subscribedSymbols.push(symbols);
+      aggregateHandlers.push(onAggregate);
+      return {
+        setSymbols(nextSymbols: string[]) {
+          subscribedSymbols.push(nextSymbols);
+        },
+        unsubscribe() {
+          aggregateHandlers.length = 0;
+        },
+      };
+    },
+    evaluateStreamSignalSymbols: async (input) => {
+      evaluated.push({ mode: input.mode, symbols: input.symbols });
+    },
+    logger: createNoopLogger(),
+  });
+
+  worker.start();
+  for (let index = 0; index < 10; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (!worker.getRuntimeSnapshot().tickRunning && aggregateHandlers[0]) break;
+  }
+
+  assert.deepEqual(subscribedSymbols[0]?.sort(), ["CLSK", "RKLB"]);
+  const handleAggregate = aggregateHandlers[0];
+  assert.ok(handleAggregate);
+  handleAggregate({
+    eventType: "minute_aggregate",
+    symbol: "CLSK",
+    open: 1,
+    high: 1,
+    low: 1,
+    close: 1,
+    volume: 1,
+    accumulatedVolume: null,
+    vwap: null,
+    sessionVwap: null,
+    officialOpen: null,
+    averageTradeSize: null,
+    startMs: Date.parse("2026-06-03T18:25:00.000Z"),
+    endMs: Date.parse("2026-06-03T18:25:59.999Z"),
+    delayed: false,
+    source: "massive-websocket",
+  });
+
+  const streamTimer = timers.at(-1);
+  assert.ok(streamTimer);
+  streamTimer();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(evaluated, [{ mode: "paper", symbols: ["CLSK"] }]);
+  worker.stop();
 });
 
 test("signal-options worker skips a tick when advisory lock is unavailable", async () => {
@@ -572,7 +651,7 @@ test("signal-options worker wake request bypasses the next poll interval", async
   worker.stop();
 });
 
-test("signal-options worker wakes when a signal monitor event is created", async () => {
+test("signal-options worker wakes when signal monitor state changes", async () => {
   let scanCalls = 0;
   let now = new Date("2026-04-28T14:00:00.000Z");
   let cockpitListener: ((change: {
@@ -646,11 +725,33 @@ test("signal-options worker wakes when a signal monitor event is created", async
     worker.getRuntimeSnapshot().deployments[0]?.lastSuccessAt,
     "2026-04-28T14:00:12.000Z",
   );
+
+  now = new Date("2026-04-28T14:00:20.000Z");
+  notifyCockpitChanged({
+    reason: "signal_monitor_state_refreshed",
+    mode: "paper",
+    at: now,
+  });
+  const stateRefreshImmediate = timers.shift();
+  assert.ok(stateRefreshImmediate);
+  stateRefreshImmediate();
+  for (let index = 0; index < 10; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (scanCalls >= 3 && !worker.getRuntimeSnapshot().tickRunning) {
+      break;
+    }
+  }
+
+  assert.equal(scanCalls, 3);
+  assert.equal(
+    worker.getRuntimeSnapshot().deployments[0]?.lastSuccessAt,
+    "2026-04-28T14:00:20.000Z",
+  );
   worker.stop();
   assert.equal(cockpitUnsubscribed, true);
 });
 
-test("signal-options worker ignores signal monitor events created during an active tick", async () => {
+test("signal-options worker queues signal monitor events created during an active tick", async () => {
   let scanCalls = 0;
   let now = new Date("2026-04-28T14:00:00.000Z");
   let releaseScan = () => {};
@@ -665,15 +766,17 @@ test("signal-options worker ignores signal monitor events created during an acti
     listDeployments: async () => [deployment()],
     scanDeployment: async () => {
       scanCalls += 1;
-      cockpitListener?.({
-        reason: "signal_monitor_event_created",
-        mode: "paper",
-        at: now,
-      });
-      await new Promise<void>((resolve) => {
-        releaseScan = resolve;
-        scanReleaseReady = true;
-      });
+      if (scanCalls === 1) {
+        cockpitListener?.({
+          reason: "signal_monitor_event_created",
+          mode: "paper",
+          at: now,
+        });
+        await new Promise<void>((resolve) => {
+          releaseScan = resolve;
+          scanReleaseReady = true;
+        });
+      }
     },
     runMaintenance: emptyMaintenance,
     acquireTickLock: async () => async () => {},
@@ -712,13 +815,31 @@ test("signal-options worker ignores signal monitor events created during an acti
   releaseScan();
   for (let index = 0; index < 10; index += 1) {
     await new Promise((resolve) => setImmediate(resolve));
-    if (!worker.getRuntimeSnapshot().tickRunning && timers.length > 0) {
+    if (
+      !worker.getRuntimeSnapshot().tickRunning &&
+      timers.some((entry) => entry.delayMs === 0)
+    ) {
       break;
     }
   }
 
   assert.equal(scanCalls, 1);
-  assert.equal(timers[0]?.delayMs, 5_000);
+  assert.equal(timers[0]?.delayMs, 0);
+  now = new Date("2026-04-28T14:00:01.000Z");
+  const immediate = timers.shift();
+  assert.ok(immediate);
+  immediate.callback();
+  for (let index = 0; index < 10; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (scanCalls >= 2 && !worker.getRuntimeSnapshot().tickRunning) {
+      break;
+    }
+  }
+  assert.equal(scanCalls, 2);
+  assert.equal(
+    worker.getRuntimeSnapshot().deployments[0]?.lastSuccessAt,
+    "2026-04-28T14:00:01.000Z",
+  );
   worker.stop();
 });
 
@@ -767,8 +888,8 @@ test("signal-options worker resumes deferred action work on the next wakeup", as
   assert.equal(scanCalls, 2);
   assert.equal(runtime?.lastHeavyWorkDeferred, false);
   assert.equal(runtime?.nextScanDueAt, "2026-04-28T14:01:05.000Z");
-  assert.equal(actionBudgets[0]?.["actionWorkBudgetMs"], 5_000);
-  assert.equal(actionBudgets[0]?.["actionWorkItemLimit"], 1);
+  assert.equal(actionBudgets[0]?.["actionWorkBudgetMs"], 60_000);
+  assert.equal(actionBudgets[0]?.["actionWorkItemLimit"], 4);
   assert.equal(actionBudgets[0]?.["preferStoredMonitorState"], true);
 });
 

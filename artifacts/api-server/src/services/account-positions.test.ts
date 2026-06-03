@@ -31,7 +31,10 @@ test("account position quote hydration uses Massive for equities and IBKR for op
   assert.match(equityBody, /ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS/);
   assert.match(optionBody, /declareIbkrLiveDemand/);
   assert.match(optionBody, /readIbkrLiveDemandState/);
+  assert.match(optionBody, /const owner = `account-position-option-quotes:\$\{accountKey\}`/);
+  assert.match(optionBody, /providerContractIds: uniqueProviderContractIds/);
   assert.match(optionBody, /intent: "account-monitor-live"/);
+  assert.doesNotMatch(optionBody, /account-position-option-quotes:\$\{underlying\}/);
   assert.doesNotMatch(optionBody, /fetchOptionQuoteSnapshotPayload/);
   assert.match(underlyingBody, /allowMassiveFallback: false/);
 });
