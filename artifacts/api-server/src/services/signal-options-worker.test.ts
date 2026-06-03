@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { AlgoDeployment } from "@workspace/db";
 import { createSignalOptionsWorker } from "./signal-options-worker";
@@ -194,6 +195,21 @@ test("signal-options worker evaluates changed stream symbols from Massive aggreg
 
   assert.deepEqual(evaluated, [{ mode: "paper", symbols: ["CLSK"] }]);
   worker.stop();
+});
+
+test("signal-options stream signal evaluator uses provisional live-edge bars", () => {
+  const source = readFileSync(
+    new URL("./signal-options-worker.ts", import.meta.url),
+    "utf8",
+  );
+  const streamEvaluatorBlock =
+    source.match(
+      /async function evaluateSignalOptionsStreamSignalSymbols[\s\S]*?async function acquirePostgresAdvisoryLock/,
+    )?.[0] ?? "";
+
+  assert.match(streamEvaluatorBlock, /barSourcePolicy: "mixed"/);
+  assert.match(streamEvaluatorBlock, /includeProvisionalLiveEdge: true/);
+  assert.match(streamEvaluatorBlock, /allowHistoricalFallback: false/);
 });
 
 test("signal-options worker skips a tick when advisory lock is unavailable", async () => {

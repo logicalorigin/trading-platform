@@ -60,6 +60,7 @@ import {
   numberFrom,
   parseChaseSteps,
   resolveStrategySignalSettings,
+  resolveStableStaActionSnapshot,
   shadowLinkSummary,
   signalActionLabel,
   signalBarsSinceLabel,
@@ -395,6 +396,8 @@ export const AlgoScreen = ({
   environment,
   accounts = [],
   selectedAccountId = null,
+  signalMonitorEvents = [],
+  signalMonitorEventsLoaded = false,
   signalMatrixStates = [],
   isVisible = false,
   safeQaMode = false,
@@ -608,6 +611,9 @@ export const AlgoScreen = ({
   const algoBackgroundQueriesEnabled = Boolean(
     algoDerivedQueriesEnabled && !safeQaMode,
   );
+  const algoVisibleRowHydrationQueriesEnabled = Boolean(
+    algoLiveDataQueriesEnabled && !safeQaMode,
+  );
   const algoPostCriticalQueriesEnabled = Boolean(
     algoLiveDataQueriesEnabled &&
       algoDerivedFallbackReady &&
@@ -779,6 +785,7 @@ export const AlgoScreen = ({
     transitionsStoreRef.current = buildTransitionsBufferStore();
   }
   const prevCockpitSignalsRef = useRef(null);
+  const previousStaActionSnapshotRef = useRef(null);
   const [recentTransitions, setRecentTransitions] = useState([]);
   const [transitionsNow, setTransitionsNow] = useState(() => Date.now());
   const prevActivitySnapshotRef = useRef(null);
@@ -811,21 +818,34 @@ export const AlgoScreen = ({
     deploymentSignalOptionsProfile ||
     SIGNAL_OPTIONS_DEFAULT_PROFILE;
   const controlBaselineReady = Boolean(focusedDeployment);
-  const signalOptionsCandidates = preferNonEmptySourceArray(
-    cockpit?.candidates,
-    signalOptionsState?.candidates,
-    EMPTY_SIGNAL_OPTIONS_CANDIDATES,
+  const staActionSnapshot = useMemo(
+    () =>
+      resolveStableStaActionSnapshot({
+        cockpit,
+        signalOptionsState,
+        previousSnapshot: previousStaActionSnapshotRef.current,
+        cockpitFailed: cockpitQuery.isError,
+        signalOptionsStateFailed: signalOptionsStateQuery.isError,
+      }),
+    [
+      cockpit,
+      cockpitQuery.isError,
+      signalOptionsState,
+      signalOptionsStateQuery.isError,
+    ],
   );
-  const signalOptionsSignals = preferNonEmptySourceArray(
-    cockpit?.signals,
-    signalOptionsState?.signals,
-    EMPTY_SIGNAL_OPTIONS_SIGNALS,
-  );
-  const signalOptionsPositions = preferNonEmptySourceArray(
-    cockpit?.activePositions,
-    signalOptionsState?.activePositions,
-    EMPTY_SIGNAL_OPTIONS_POSITIONS,
-  );
+  useEffect(() => {
+    if (staActionSnapshot.cacheable) {
+      previousStaActionSnapshotRef.current = staActionSnapshot;
+    }
+  }, [staActionSnapshot]);
+  const signalOptionsCandidates =
+    staActionSnapshot.candidates || EMPTY_SIGNAL_OPTIONS_CANDIDATES;
+  const signalOptionsSignals =
+    staActionSnapshot.signals || EMPTY_SIGNAL_OPTIONS_SIGNALS;
+  const signalOptionsPositions =
+    staActionSnapshot.activePositions || EMPTY_SIGNAL_OPTIONS_POSITIONS;
+  const signalOptionsSourceHealth = staActionSnapshot.sourceHealth || null;
   const cockpitFleet = cockpit?.fleet || null;
   const cockpitReadiness = cockpit?.readiness || null;
   const cockpitKpis = asRecord(cockpit?.kpis);
@@ -1755,8 +1775,16 @@ export const AlgoScreen = ({
       buildVisibleSignalRows({
         signals: signalOptionsSignals,
         candidates: signalOptionsCandidates,
+        signalEvents: signalMonitorEventsLoaded ? signalMonitorEvents : [],
+        universeSymbols: focusedDeployment?.symbolUniverse || [],
       }),
-    [signalOptionsCandidates, signalOptionsSignals],
+    [
+      focusedDeployment?.symbolUniverse,
+      signalMonitorEvents,
+      signalMonitorEventsLoaded,
+      signalOptionsCandidates,
+      signalOptionsSignals,
+    ],
   );
   const signalTableScanFallback = useMemo(() => {
     const pollIntervalSeconds = Number(signalMonitorProfile?.pollIntervalSeconds);
@@ -2001,6 +2029,7 @@ export const AlgoScreen = ({
           transitions={visibleTransitions}
           visibleSignalRows={visibleSignalRows}
           signalOptionsCandidates={signalOptionsCandidates}
+          signalOptionsSourceHealth={signalOptionsSourceHealth}
           signalMatrixStates={signalMatrixStates}
           onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
           selectedCandidate={selectedCandidate}
@@ -2008,6 +2037,7 @@ export const AlgoScreen = ({
           onOpenCandidateInTrade={handleOpenCandidateInTrade}
           safeQaMode={safeQaMode}
           backgroundQueriesEnabled={algoBackgroundQueriesEnabled}
+          rowHydrationQueriesEnabled={algoVisibleRowHydrationQueriesEnabled}
           signalOptionsPositions={signalOptionsPositions}
           signalOptionsLedgerPositionsQuery={signalOptionsLedgerPositionsQuery}
           symbolIndex={symbolIndex}

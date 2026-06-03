@@ -4361,8 +4361,8 @@ export const EvaluateSignalMonitorMatrixBody = zod.object({
 })).optional().describe('Exact signal-matrix cells to evaluate. When non-empty, cells are authoritative over symbols\/timeframes.'),
   "symbols": zod.array(zod.string()).optional(),
   "timeframes": zod.array(zod.enum(['1m', '2m', '5m', '15m', '1h', '1d'])).optional(),
-  "clientRole": zod.enum(['leader', 'follower', 'manual', 'test']).optional(),
-  "requestOrigin": zod.enum(['startup', 'poll', 'manual', 'test']).optional()
+  "clientRole": zod.enum(['leader', 'follower', 'manual', 'test', 'algo-sta']).optional(),
+  "requestOrigin": zod.enum(['startup', 'poll', 'manual', 'test', 'sta-visible-page']).optional()
 })
 
 export const EvaluateSignalMonitorMatrixResponse = zod.object({
@@ -4507,14 +4507,17 @@ export const GetSignalMonitorStateResponse = zod.object({
 /**
  * @summary List Pyrus Signals signal monitor events
  */
-export const listSignalMonitorEventsQueryLimitMax = 500;
+export const listSignalMonitorEventsQueryLimitMax = 1000;
 
 
 
 export const ListSignalMonitorEventsQueryParams = zod.object({
   "environment": zod.enum(['paper', 'live']).optional(),
   "symbol": zod.coerce.string().optional(),
-  "limit": zod.coerce.number().min(1).max(listSignalMonitorEventsQueryLimitMax).optional()
+  "limit": zod.coerce.number().min(1).max(listSignalMonitorEventsQueryLimitMax).optional().describe('Page size for this response. Follow nextCursor while hasMore is true to retrieve the full matching history; this is not a total history cap.'),
+  "from": zod.coerce.string().optional().describe('Include events with signalAt at or after this ISO timestamp.'),
+  "to": zod.coerce.string().optional().describe('Include events with signalAt at or before this ISO timestamp.'),
+  "cursor": zod.coerce.string().optional().describe('Opaque cursor from the previous response.')
 })
 
 export const ListSignalMonitorEventsResponse = zod.object({
@@ -4531,7 +4534,9 @@ export const ListSignalMonitorEventsResponse = zod.object({
   "emittedAt": zod.coerce.date(),
   "source": zod.string(),
   "payload": zod.record(zod.string(), zod.unknown())
-}))
+})),
+  "nextCursor": zod.string().nullable().describe('Opaque cursor for the next page, or null when the page is complete.'),
+  "hasMore": zod.boolean().describe('True when another page is available for the same filter set.')
 })
 
 

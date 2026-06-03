@@ -11,6 +11,7 @@ import {
   SIGNAL_OPTIONS_DEFAULT_WIRE_TRAIL_RUNGS,
   SIGNAL_OPTIONS_DEFAULT_PROFILE,
   SIGNAL_OPTIONS_HALT_CONTROL_GROUPS,
+  buildStaSignalHistoryRows,
   buildVisibleSignalRows,
   candidateBlockerLabel,
   candidateLatestActivityLabel,
@@ -37,6 +38,7 @@ import {
   resolveSignalAge,
   resolveSignalMove,
   resolveSignalScoreBreakdown,
+  resolveStableStaActionSnapshot,
   resolveStrategySignalSettings,
   signalActionBlockerLabel,
   signalOptionsHaltControlsChanged,
@@ -72,12 +74,16 @@ test("AlgoScreen keeps startup fallback collections stable before queries resolv
   assert.match(source, /const EMPTY_SIGNAL_OPTIONS_POSITIONS = Object\.freeze\(\[\]\)/);
   assert.match(source, /const sourceArrayLatestTimestampMs = \(items\) =>/);
   assert.match(source, /const latestIsoFromRows = \(items, fields\) =>/);
-  assert.match(source, /const preferNonEmptySourceArray = \(primary, fallback, emptyValue\) =>/);
-  assert.match(source, /if \(fallbackLatestMs > primaryLatestMs\) return fallbackArray/);
-  assert.match(source, /fallbackArray\.length > primaryArray\.length/);
-  assert.match(source, /if \(fallbackArray\?\.length\) return fallbackArray/);
-  assert.match(source, /cockpit\?\.candidates,\s*signalOptionsState\?\.candidates/);
-  assert.match(source, /cockpit\?\.signals,\s*signalOptionsState\?\.signals/);
+  assert.match(source, /previousStaActionSnapshotRef = useRef\(null\)/);
+  assert.match(source, /resolveStableStaActionSnapshot\(\{/);
+  assert.match(source, /previousSnapshot: previousStaActionSnapshotRef\.current/);
+  assert.match(source, /cockpitFailed: cockpitQuery\.isError/);
+  assert.match(source, /signalOptionsStateFailed: signalOptionsStateQuery\.isError/);
+  assert.match(source, /signalMonitorEvents = \[\]/);
+  assert.match(source, /signalMonitorEventsLoaded = false/);
+  assert.match(source, /signalEvents: signalMonitorEventsLoaded \? signalMonitorEvents : \[\]/);
+  assert.match(source, /universeSymbols: focusedDeployment\?\.symbolUniverse \|\| \[\]/);
+  assert.match(source, /if \(staActionSnapshot\.cacheable\)/);
   assert.match(source, /const signalTableScanFallback = useMemo/);
   assert.match(source, /lastSignalScanAt: latestIsoFromRows\(visibleSignalRows,\s*\[\s*"lastEvaluatedAt",\s*"updatedAt"/);
   assert.match(source, /latestSignalBarAt: latestIsoFromRows\(visibleSignalRows,\s*\["latestBarAt"\]\)/);
@@ -933,6 +939,265 @@ test("visible signal rows prefer live signal rows over same-family candidate fal
       ["TLT", "sell", "2026-06-02T22:15:00.000Z"],
       ["TLT", "buy", "2026-06-02T22:20:00.000Z"],
     ],
+  );
+});
+
+test("visible signal rows include same-day signal-monitor history without duplicating live action rows", () => {
+  const rows = buildVisibleSignalRows({
+    signals: [
+      {
+        profileId: "profile-1",
+        symbol: "SPY",
+        timeframe: "5m",
+        direction: "buy",
+        signalAt: "2026-06-03T14:35:12.000Z",
+        signalKey: "profile-1:SPY:5m:buy:2026-06-03T14:35:12.000Z",
+        actionEligible: true,
+        fresh: true,
+      },
+    ],
+    candidates: [
+      {
+        id: "candidate-spy",
+        symbol: "SPY",
+        timeframe: "5m",
+        direction: "buy",
+        signalAt: "2026-06-03T14:35:12.000Z",
+      },
+    ],
+    signalEvents: [
+      {
+        id: "event-spy-duplicate",
+        profileId: "profile-1",
+        symbol: "SPY",
+        timeframe: "5m",
+        direction: "buy",
+        signalAt: "2026-06-03T14:35:12.000Z",
+        signalPrice: 542.1,
+        source: "pyrus-signals",
+        payload: { latestBarAt: "2026-06-03T14:35:00.000Z" },
+      },
+      {
+        id: "event-glw-history",
+        profileId: "profile-1",
+        symbol: "GLW",
+        timeframe: "5m",
+        direction: "sell",
+        signalAt: "2026-06-03T13:05:44.000Z",
+        signalPrice: 49.4,
+        source: "pyrus-signals",
+        payload: {
+          filterState: { adx: 28 },
+          signalBarAt: "2026-06-03T13:05:00.000Z",
+        },
+      },
+      {
+        id: "event-msft-previous-day",
+        profileId: "profile-1",
+        symbol: "MSFT",
+        timeframe: "5m",
+        direction: "buy",
+        signalAt: "2026-06-02T20:55:00.000Z",
+        signalPrice: 477.2,
+        source: "pyrus-signals",
+        payload: {},
+      },
+    ],
+    universeSymbols: ["SPY", "GLW", "MSFT"],
+    now: "2026-06-03T18:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    rows.map((row) => [
+      row.symbol,
+      row.direction,
+      row.signalAt,
+      row.sourceType,
+      row.actionEligible,
+    ]),
+    [
+      ["SPY", "buy", "2026-06-03T14:35:12.000Z", undefined, true],
+      [
+        "GLW",
+        "sell",
+        "2026-06-03T13:05:44.000Z",
+        "signal_monitor_event",
+        false,
+      ],
+    ],
+  );
+  assert.equal(rows[1].signalKey, "profile-1:GLW:5m:sell:2026-06-03T13:05:44.000Z");
+  assert.equal(rows[1].filterState.adx, 28);
+});
+
+test("current candidate fallback overlays matching signal-monitor history rows", () => {
+  const rows = buildVisibleSignalRows({
+    signals: [],
+    candidates: [
+      {
+        id: "candidate-glw",
+        symbol: "GLW",
+        timeframe: "5m",
+        direction: "sell",
+        signalAt: "2026-06-03T15:00:30.000Z",
+        signalPrice: 49.8,
+      },
+    ],
+    signalEvents: [
+      {
+        id: "event-glw-current",
+        profileId: "profile-1",
+        symbol: "GLW",
+        timeframe: "5m",
+        direction: "sell",
+        signalAt: "2026-06-03T15:00:30.000Z",
+        signalPrice: 49.8,
+        source: "pyrus-signals",
+        payload: {},
+      },
+      {
+        id: "event-glw-older",
+        profileId: "profile-1",
+        symbol: "GLW",
+        timeframe: "5m",
+        direction: "sell",
+        signalAt: "2026-06-03T13:00:00.000Z",
+        signalPrice: 49.1,
+        source: "pyrus-signals",
+        payload: {},
+      },
+    ],
+    universeSymbols: ["GLW"],
+    now: "2026-06-03T18:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    rows.map((row) => [row.symbol, row.signalAt, row.sourceType]),
+    [
+      ["GLW", "2026-06-03T15:00:30.000Z", undefined],
+      ["GLW", "2026-06-03T13:00:00.000Z", "signal_monitor_event"],
+    ],
+  );
+});
+
+test("STA signal history uses the New York market date near UTC midnight", () => {
+  const rows = buildStaSignalHistoryRows({
+    signalEvents: [
+      {
+        id: "late-et",
+        profileId: "profile-1",
+        symbol: "QQQ",
+        timeframe: "5m",
+        direction: "buy",
+        signalAt: "2026-06-04T02:15:00.000Z",
+        source: "pyrus-signals",
+        payload: {},
+      },
+      {
+        id: "next-et",
+        profileId: "profile-1",
+        symbol: "QQQ",
+        timeframe: "5m",
+        direction: "sell",
+        signalAt: "2026-06-04T04:15:00.000Z",
+        source: "pyrus-signals",
+        payload: {},
+      },
+    ],
+    now: "2026-06-04T03:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    rows.map((row) => [row.eventId, row.signalAt]),
+    [["late-et", "2026-06-04T02:15:00.000Z"]],
+  );
+});
+
+test("STA action snapshot keeps last successful rows when the action source is failing", () => {
+  const previous = resolveStableStaActionSnapshot({
+    cockpit: {
+      generatedAt: "2026-06-03T20:27:00.000Z",
+      signals: [
+        {
+          symbol: "SPY",
+          timeframe: "5m",
+          direction: "buy",
+          signalAt: "2026-06-03T20:26:00.000Z",
+        },
+        {
+          symbol: "GLW",
+          timeframe: "5m",
+          direction: "sell",
+          signalAt: "2026-06-03T20:25:00.000Z",
+        },
+      ],
+      candidates: [{ id: "spy-candidate", symbol: "SPY" }],
+      activePositions: [{ id: "spy-position", symbol: "SPY" }],
+    },
+    signalOptionsState: null,
+  });
+
+  const stable = resolveStableStaActionSnapshot({
+    cockpit: null,
+    signalOptionsState: {
+      updatedAt: "2026-06-03T20:28:00.000Z",
+      signals: [
+        {
+          symbol: "GLW",
+          timeframe: "5m",
+          direction: "sell",
+          signalAt: "2026-06-03T20:25:00.000Z",
+        },
+      ],
+      candidates: [{ id: "glw-candidate", symbol: "GLW" }],
+      activePositions: [],
+    },
+    previousSnapshot: previous,
+    cockpitFailed: true,
+  });
+
+  assert.equal(previous.cacheable, true);
+  assert.equal(stable.cacheable, false);
+  assert.equal(stable.sourceHealth.stale, true);
+  assert.equal(stable.sourceHealth.degraded, true);
+  assert.deepEqual(stable.sourceHealth.failedSources, ["cockpit"]);
+  assert.deepEqual(
+    stable.signals.map((signal) => signal.symbol),
+    ["SPY", "GLW"],
+  );
+  assert.deepEqual(stable.candidates.map((candidate) => candidate.id), [
+    "spy-candidate",
+  ]);
+});
+
+test("STA action snapshot accepts row removals after a healthy action-source update", () => {
+  const previous = resolveStableStaActionSnapshot({
+    cockpit: {
+      generatedAt: "2026-06-03T20:27:00.000Z",
+      signals: [
+        { symbol: "SPY", timeframe: "5m", direction: "buy" },
+        { symbol: "GLW", timeframe: "5m", direction: "sell" },
+      ],
+      candidates: [{ id: "spy-candidate", symbol: "SPY" }],
+      activePositions: [],
+    },
+  });
+
+  const updated = resolveStableStaActionSnapshot({
+    cockpit: {
+      generatedAt: "2026-06-03T20:29:00.000Z",
+      signals: [{ symbol: "GLW", timeframe: "5m", direction: "sell" }],
+      candidates: [{ id: "glw-candidate", symbol: "GLW" }],
+      activePositions: [],
+    },
+    previousSnapshot: previous,
+  });
+
+  assert.equal(updated.cacheable, true);
+  assert.equal(updated.sourceHealth.stale, false);
+  assert.deepEqual(
+    updated.signals.map((signal) => signal.symbol),
+    ["GLW"],
   );
 });
 

@@ -30,6 +30,7 @@ import {
   ArrowUp,
   Ban,
   CheckCircle2,
+  Clock,
   Columns3,
   GripVertical,
   Inbox,
@@ -96,6 +97,8 @@ import {
 
 const FILTER_OPTIONS = [
   { id: "all", label: "All", icon: List, tone: CSS_COLOR.accent },
+  { id: "current", label: "Current", icon: RotateCcw, tone: CSS_COLOR.cyan },
+  { id: "history", label: "History", icon: Clock, tone: CSS_COLOR.amber },
   { id: "ready", label: "Ready", icon: CheckCircle2, tone: CSS_COLOR.green },
   { id: "blocked", label: "Blocked", icon: Ban, tone: CSS_COLOR.red },
   { id: "unavailable", label: "Unavailable", icon: MinusCircle, tone: CSS_COLOR.textDim },
@@ -105,6 +108,14 @@ const SIGNALS_PAGE_SIZE = 20;
 const SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
 const SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT = 120;
 const SIGNAL_TABLE_SPARKLINE_CONCURRENCY = 4;
+const SIGNAL_TABLE_QUOTE_REQUEST_OPTIONS = buildBarsRequestOptions(
+  BARS_REQUEST_PRIORITY.active,
+  "algo-signal-table",
+);
+const SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS = buildBarsRequestOptions(
+  BARS_REQUEST_PRIORITY.active,
+  "algo-signal-sparkline",
+);
 const SIGNAL_COLUMN_VISIBILITY_VERSION = 8;
 const PRIOR_DEFAULT_SIGNAL_COLUMN_ORDER = [
   "signal",
@@ -509,6 +520,16 @@ export const classifySignal = (signal, candidate) => {
   return "ready";
 };
 
+export const isHistoricalSignalRow = (row) =>
+  String(asRecord(asRecord(row).signal).sourceType || "") === "signal_monitor_event";
+
+export const signalTableFilterMatches = (row, filter) => {
+  if (filter === "all") return true;
+  if (filter === "current") return !isHistoricalSignalRow(row);
+  if (filter === "history") return isHistoricalSignalRow(row);
+  return row.classification === filter;
+};
+
 const normalizeSearchText = (value) => String(value || "").trim().toUpperCase();
 
 const rowSearchText = (row) => {
@@ -577,6 +598,8 @@ export const buildAlgoSignalMatrixHydrationRequest = ({
     missingSymbols: matrixHydrationPlan.missingSymbols,
     requestSymbols: matrixHydrationPlan.requestSymbols,
     timeframes: matrixHydrationPlan.timeframes,
+    clientRole: "algo-sta",
+    requestOrigin: "sta-visible-page",
     reason: "algo-signal-table",
   };
 };
@@ -941,6 +964,7 @@ const OperationsSignalColumnDrawer = ({
 export const OperationsSignalTable = ({
   signals = [],
   candidates = [],
+  signalOptionsSourceHealth = null,
   signalMatrixStates = [],
   cockpitGeneratedAt = null,
   cockpitStageItems = [],
@@ -949,6 +973,7 @@ export const OperationsSignalTable = ({
   algoIsNarrow = false,
   safeQaMode = false,
   backgroundQueriesEnabled = false,
+  rowHydrationQueriesEnabled = false,
   onRequestSignalMatrixHydration = null,
   onOpenCandidateInTrade,
 }) => {
@@ -1021,10 +1046,9 @@ export const OperationsSignalTable = ({
       ...row,
       auditProgression: auditProgressions.get(row.auditKey) || null,
     }));
-    const filteredByStatus =
-      filter === "all"
-        ? withProgression
-        : withProgression.filter((row) => row.classification === filter);
+    const filteredByStatus = withProgression.filter((row) =>
+      signalTableFilterMatches(row, filter),
+    );
     const normalizedQuery = normalizeSearchText(searchQuery);
     const filtered = normalizedQuery
       ? filteredByStatus.filter((row) => rowSearchText(row).includes(normalizedQuery))
@@ -1101,14 +1125,18 @@ export const OperationsSignalTable = ({
     () => rowSparklineSymbols.join(","),
     [rowSparklineSymbols],
   );
+  const signalRowHydrationQueriesEnabled = Boolean(
+    (rowHydrationQueriesEnabled || backgroundQueriesEnabled) && !safeQaMode,
+  );
   const rowQuotesQuery = useGetQuoteSnapshots(
     { symbols: rowQuoteSymbolsKey },
     {
       query: {
-        enabled: Boolean(backgroundQueriesEnabled && rowQuoteSymbolsKey && !safeQaMode),
+        enabled: Boolean(signalRowHydrationQueriesEnabled && rowQuoteSymbolsKey),
         staleTime: 30_000,
         retry: false,
       },
+      request: SIGNAL_TABLE_QUOTE_REQUEST_OPTIONS,
     },
   );
   const rowSparklineQuery = useQuery({
@@ -1127,10 +1155,7 @@ export const OperationsSignalTable = ({
               outsideRth: true,
               source: "trades",
             },
-            buildBarsRequestOptions(
-              BARS_REQUEST_PRIORITY.background,
-              "algo-signal-sparkline",
-            ),
+            SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS,
           ),
       );
 
@@ -1144,7 +1169,7 @@ export const OperationsSignalTable = ({
       );
     },
     ...BARS_QUERY_DEFAULTS,
-    enabled: Boolean(backgroundQueriesEnabled && rowSparklineSymbolsKey && !safeQaMode),
+    enabled: Boolean(signalRowHydrationQueriesEnabled && rowSparklineSymbolsKey),
     retry: false,
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
@@ -1179,13 +1204,18 @@ export const OperationsSignalTable = ({
   const counts = useMemo(() => {
     const augmented = (signals || []).map((signal) => {
       const candidate = findSignalOptionsCandidateForSignal(candidates, signal);
-      return classifySignal(signal, candidate);
+      return {
+        signal,
+        classification: classifySignal(signal, candidate),
+      };
     });
     return {
       all: augmented.length,
-      ready: augmented.filter((value) => value === "ready").length,
-      blocked: augmented.filter((value) => value === "blocked").length,
-      unavailable: augmented.filter((value) => value === "unavailable").length,
+      current: augmented.filter((row) => !isHistoricalSignalRow(row)).length,
+      history: augmented.filter((row) => isHistoricalSignalRow(row)).length,
+      ready: augmented.filter((row) => row.classification === "ready").length,
+      blocked: augmented.filter((row) => row.classification === "blocked").length,
+      unavailable: augmented.filter((row) => row.classification === "unavailable").length,
     };
   }, [candidates, signals]);
 
@@ -1259,6 +1289,13 @@ export const OperationsSignalTable = ({
     };
   }, [cockpitGeneratedAt, cockpitStageItems, signals]);
 
+  const sourceHealth = asRecord(signalOptionsSourceHealth);
+  const sourceHealthLabel =
+    sourceHealth.degraded || sourceHealth.stale
+      ? "Action source cached"
+      : sourceHealth.source && sourceHealth.source !== "empty"
+        ? `Action ${formatCompactStatusValue(sourceHealth.source)}`
+        : null;
   const freshnessItems = [
     freshness.latestSignalAt
       ? `Signal ${formatRelativeTimeShort(freshness.latestSignalAt)}`
@@ -1276,6 +1313,7 @@ export const OperationsSignalTable = ({
     freshness.sourcePolicy
       ? formatCompactStatusValue(freshness.sourcePolicy)
       : "Source --",
+    sourceHealthLabel,
     freshness.pressureLevel ? "Action scan queued" : null,
   ];
   const staleScanBanner =
@@ -1292,6 +1330,19 @@ export const OperationsSignalTable = ({
             : null,
           freshness.pressureLevel
             ? `Pressure ${formatCompactStatusValue(freshness.pressureLevel)}.`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : null;
+  const sourceHealthBanner =
+    sourceHealth.degraded || sourceHealth.stale
+      ? [
+          "STA action source is using the last successful snapshot.",
+          Array.isArray(sourceHealth.failedSources) && sourceHealth.failedSources.length
+            ? `Failed source ${sourceHealth.failedSources
+                .map(formatCompactStatusValue)
+                .join(", ")}.`
             : null,
         ]
           .filter(Boolean)
@@ -1623,7 +1674,7 @@ export const OperationsSignalTable = ({
             </span>
           ) : null}
         </div>
-        {staleScanBanner ? (
+        {staleScanBanner || sourceHealthBanner ? (
           <div
             role="status"
             style={{
@@ -1655,7 +1706,7 @@ export const OperationsSignalTable = ({
                 whiteSpace: algoIsPhone ? "normal" : "nowrap",
               }}
             >
-              {staleScanBanner}
+              {[staleScanBanner, sourceHealthBanner].filter(Boolean).join(" ")}
             </span>
           </div>
         ) : null}

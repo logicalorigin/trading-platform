@@ -205,6 +205,10 @@ test("default paper signal-options startup uses full signal monitor coverage", (
     source,
     /evaluationConcurrencyOverride:\s*SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY/,
   );
+  assert.match(
+    source,
+    /allowHistoricalFallback:\s*streamFirstMonitorAvailable \? false : undefined/,
+  );
   assert.match(source, /signal:\s*input\.signal/);
   assert.match(
     source,
@@ -250,6 +254,14 @@ test("signal-options scans request Massive-primary signal monitor bars", () => {
   assert.match(
     monitorStateBlock ?? "",
     /evaluateSignalMonitorProfileSymbols\(\{[\s\S]*barSourcePolicy:\s*SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY/,
+  );
+  assert.match(
+    monitorStateBlock ?? "",
+    /evaluateSignalMonitorProfileSymbols\(\{[\s\S]*includeProvisionalLiveEdge:\s*true/,
+  );
+  assert.match(
+    monitorStateBlock ?? "",
+    /evaluateSignalMonitorProfileSymbols\(\{[\s\S]*allowHistoricalFallback:\s*streamFirstMonitorAvailable \? false : undefined/,
   );
   assert.match(
     monitorStateBlock ?? "",
@@ -716,11 +728,24 @@ test("signal-options dashboard endpoints share a cached state snapshot", () => {
   assert.doesNotMatch(fastSummarySnapshotBlock, /withSignalOptionsStateSignalRefreshTimeout/);
   assert.match(fastSummarySnapshotBlock, /signalOptionsSummaryDashboardCache\.get\(input\.deploymentId\)/);
   assert.match(fastSummarySnapshotBlock, /withSignalOptionsCacheMetadata\(cached\.state/);
+  assert.match(fastSummarySnapshotBlock, /const shouldRefreshStoredSignals/);
+  assert.match(
+    fastSummarySnapshotBlock,
+    /cached && cached\.expiresAt > now[\s\S]*if \(!shouldRefreshStoredSignals\)[\s\S]*return cachedFallback[\s\S]*startSignalOptionsFastSummaryRefresh\(input\)/,
+  );
   assert.match(fastSummarySnapshotBlock, /signal_options_state_summary_expired_cache_refreshing/);
   assert.match(fastSummarySnapshotBlock, /signalOptionsExpiredSummaryCacheStillUseful/);
   assert.match(fastSummarySnapshotBlock, /const staleFallback = signalOptionsCachedSummarySnapshot/);
+  assert.match(
+    fastSummarySnapshotBlock,
+    /if \(shouldRefreshStoredSignals\)[\s\S]*startSignalOptionsFastSummaryRefresh\(input\)[\s\S]*staleFallback/,
+  );
   assert.match(fastSummarySnapshotBlock, /input\.cacheMode === "cache-only"[\s\S]*return staleFallback/);
   assert.match(fastSummarySnapshotBlock, /reason:\s*"signal_options_state_summary_stale_timeout_fallback"/);
+  assert.match(
+    fastSummarySnapshotBlock,
+    /reason:\s*"signal_options_state_summary_fast_signal_state_timeout_fallback"/,
+  );
   assert.match(fastSummarySnapshotBlock, /staleFallback/);
   assert.match(source, /const signalOptionsFastSummaryInFlight = new Map/);
   assert.match(fastSummarySnapshotBlock, /readSignalOptionsDashboardInFlight\(\s*signalOptionsFastSummaryInFlight/);
@@ -733,17 +758,27 @@ test("signal-options dashboard endpoints share a cached state snapshot", () => {
   assert.doesNotMatch(fastSummarySnapshotBlock, /fullCached\.state\.signals/);
   assert.match(fastSummarySnapshotBlock, /reason:\s*"signal_options_state_summary_fast_signal_state"/);
   assert.match(fastSummarySnapshotBlock, /reason:\s*"signal_options_state_summary_fast_timeout_fallback"/);
+  assert.match(fastSummarySnapshotBlock, /reason:\s*"signal_options_state_summary_fast_cache_only_signal_state_timeout"/);
   assert.match(fastSummarySnapshotBlock, /reason:\s*"signal_options_state_summary_fast_cache_only_fallback"/);
   assert.match(fastSummarySnapshotBlock, /preferStoredMonitorState:\s*true/);
   assert.doesNotMatch(fastSummarySnapshotBlock, /staleFast:\s*true/);
   assert.match(fastSummarySnapshotBlock, /includeEventMetadata:\s*false/);
   assert.match(
     fastSummarySnapshotBlock,
+    /buildSignalOptionsCandidateShellsFromSignals\(\{[\s\S]*signals: signalSnapshots/,
+  );
+  assert.doesNotMatch(
+    fastSummarySnapshotBlock,
+    /signals: signalSnapshots\.map\(\(signal\) => \(\{[\s\S]*candidates:\s*\[\]/,
+  );
+  assert.match(
+    fastSummarySnapshotBlock,
     /Signal Options fast summary returned without stored signal state/,
   );
   assert.match(source, /async function listSignalOptionsStoredSignalStatesFast/);
   assert.match(source, /signalMonitorSymbolStatesTable/);
-  assert.match(source, /buildSignalOptionsSignalMonitorEventKey/);
+  assert.doesNotMatch(source, /function buildSignalOptionsSignalMonitorEventKey/);
+  assert.match(source, /resolveSignalMonitorEventLookupKeys/);
   assert.match(source, /signalMonitorEventsTable\.eventKey/);
   assert.match(source, /eventSignalAtByKey/);
   assert.match(source, /signalOptionsStoredStateCurrentForLane/);
@@ -1589,7 +1624,7 @@ test("signal-options worker refreshes degraded monitor state before scanning", (
               symbol: "SPY",
               status: "ok",
               fresh: true,
-              latestBarAt: "2026-05-14T13:55:00.000Z",
+              latestBarAt: "2026-05-14T14:00:00.000Z",
             },
           ],
         },
@@ -1609,7 +1644,7 @@ test("signal-options worker refreshes degraded monitor state before scanning", (
               symbol: "SPY",
               status: "ok",
               fresh: true,
-              latestBarAt: "2026-05-14T13:50:00.000Z",
+              latestBarAt: "2026-05-14T13:55:00.000Z",
             },
           ],
         },
@@ -4361,6 +4396,7 @@ test("fresh signal snapshots create potential shadow action candidates", () => {
   assert.equal(buyCandidate.optionRight, "call");
   assert.equal(buyCandidate.action?.optionAction, "buy_call");
   assert.equal(buyCandidate.action?.executionMode, "shadow");
+  assert.equal(buyCandidate.contractSelectionStatus, "pending");
   assert.equal(buyCandidate.selectedContract, null);
   assert.equal(buyCandidate.reason, null);
   assert.ok(sellCandidate);
@@ -4369,7 +4405,58 @@ test("fresh signal snapshots create potential shadow action candidates", () => {
   assert.equal(staleCandidate, null);
   assert.ok(stillFreshCandidate);
   assert.equal(stillFreshCandidate.symbol, "SPY");
+  assert.equal(stillFreshCandidate.contractSelectionStatus, "pending");
   assert.equal(stillFreshCandidate.reason, null);
+});
+
+test("skipped contract-resolution events expose blocked contract-selection status", () => {
+  const signalAt = "2026-04-28T15:30:00.000Z";
+  const candidate =
+    __signalOptionsAutomationInternalsForTests.candidateFromEvent({
+      id: "event-skip-contract",
+      deploymentId: "deployment-123456789",
+      symbol: "SPY",
+      eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+      occurredAt: new Date("2026-04-28T15:30:02.000Z"),
+      payload: {
+        reason: "greek_selector_no_candidates",
+        signalKey: "profile:SPY:15m:buy:2026-04-28T15:30:00.000Z",
+        signal: {
+          symbol: "SPY",
+          timeframe: "15m",
+          direction: "buy",
+          signalAt,
+        },
+        action: {
+          optionAction: "buy_call",
+        },
+        candidate: {
+          id: "deployment-123456789:SPY:buy:2026-04-28T15:30:00.000Z",
+          deploymentId: "deployment-123456789",
+          symbol: "SPY",
+          direction: "buy",
+          optionRight: "call",
+          timeframe: "15m",
+          signalAt,
+          status: "candidate",
+        },
+        selectedExpiration: {
+          expirationDate: "2026-05-01",
+          dte: 3,
+        },
+        contractSelection: {
+          greekSelection: {
+            fallbackReason: "greek_selector_no_candidates",
+          },
+        },
+        chainAttempts: [{ contractCount: 0 }],
+      },
+    } as never);
+
+  assert.ok(candidate);
+  assert.equal(candidate.status, "skipped");
+  assert.equal(candidate.reason, "greek_selector_no_candidates");
+  assert.equal(candidate.contractSelectionStatus, "blocked");
 });
 
 test("fresh-but-aged signal snapshots can carry read-only contract previews", () => {
@@ -4972,6 +5059,7 @@ test("candidate contract-selection events enrich cockpit candidates without term
     } as never,
   );
   assert.ok(selected);
+  assert.equal(selected.contractSelectionStatus, "selected");
 
   const merged =
     __signalOptionsAutomationInternalsForTests.mergeSignalOptionsCandidate(
@@ -4986,6 +5074,7 @@ test("candidate contract-selection events enrich cockpit candidates without term
 
   assert.equal(selected.status, "candidate");
   assert.equal(merged.status, "candidate");
+  assert.equal(merged.contractSelectionStatus, "selected");
   assert.deepEqual(merged.selectedContract, {
     ticker: "SPY260429C510",
     strike: 510,

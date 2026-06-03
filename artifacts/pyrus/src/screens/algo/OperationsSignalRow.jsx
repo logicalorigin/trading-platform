@@ -5,7 +5,7 @@ import {
   CheckCircle2,
   Clock,
   MinusCircle,
-  Radar,
+  ScanLine,
   Send,
 } from "lucide-react";
 import {
@@ -346,6 +346,11 @@ const liquidityMeta = (candidate) => {
 const hasDisplayValue = (value) =>
   value != null && String(value).trim() && value !== MISSING_VALUE;
 
+const contractSelectionStatusValue = (candidate) =>
+  String(asRecord(candidate).contractSelectionStatus || "")
+    .trim()
+    .toLowerCase();
+
 const compactJoin = (parts) => {
   const values = parts.filter(hasDisplayValue);
   return values.length ? values.join(" · ") : MISSING_VALUE;
@@ -478,16 +483,36 @@ const resolveSelectionStageDisplay = ({
   const status = String(
     candidateRecord.actionStatus || candidateRecord.status || "",
   ).toLowerCase();
+  const contractSelectionStatus = contractSelectionStatusValue(candidateRecord);
   const liveDemand = diagnosticLiveDemandSummary(candidateRecord.liveQuoteDemand);
   const reason = String(candidateRecord.reason || "").trim();
+  const contractSelectionReason = String(
+    candidateRecord.contractSelectionReason || reason || "",
+  ).trim();
 
   if (!Object.keys(candidateRecord).length) {
     return {
       main: "Queued",
       detail: "action candidate pending",
       tone: CSS_COLOR.cyan,
-      Icon: Radar,
+      Icon: ScanLine,
       motionState: "evaluating",
+    };
+  }
+
+  if (contractSelectionStatus === "deferred") {
+    return {
+      main: "Action deferred",
+      detail: firstDisplayLabel(
+        contractSelectionReason,
+        "contract_selection_deferred",
+      ),
+      tone: CSS_COLOR.amber,
+      Icon: Clock,
+      motionState: "wait",
+      contractMain: "Deferred",
+      contractDetail: firstDisplayLabel(contractSelectionReason),
+      quoteMain: "Not requested",
     };
   }
 
@@ -495,6 +520,21 @@ const resolveSelectionStageDisplay = ({
     return {
       main: "Blocked",
       detail: blocker !== MISSING_VALUE ? blocker : firstDisplayLabel(reason),
+      tone: CSS_COLOR.red,
+      Icon: Ban,
+      motionState: "blocked",
+      contractMain: "Not selected",
+      quoteMain: "Not requested",
+    };
+  }
+
+  if (contractSelectionStatus === "blocked") {
+    return {
+      main: "Blocked",
+      detail: firstDisplayLabel(
+        contractSelectionReason,
+        "contract_selection_blocked",
+      ),
       tone: CSS_COLOR.red,
       Icon: Ban,
       motionState: "blocked",
@@ -593,18 +633,18 @@ const resolveSelectionStageDisplay = ({
           ? `${contractCount} contracts checked`
           : "expiration selected",
       tone: CSS_COLOR.cyan,
-      Icon: Radar,
+      Icon: ScanLine,
       motionState: "evaluating",
       contractMain: "Resolving chain",
     };
   }
 
-  if (status === "candidate") {
+  if (contractSelectionStatus === "pending" || status === "candidate") {
     return {
       main: "Resolving contract",
       detail: "expiration and chain pending",
       tone: CSS_COLOR.cyan,
-      Icon: Radar,
+      Icon: ScanLine,
       motionState: "evaluating",
       contractMain: "Resolving",
       contractDetail: "expiration and chain pending",
@@ -625,7 +665,7 @@ const resolveSelectionStageDisplay = ({
     main: "Queued",
     detail: "action candidate pending",
     tone: CSS_COLOR.cyan,
-    Icon: Radar,
+    Icon: ScanLine,
     motionState: "evaluating",
   };
 };
@@ -744,6 +784,26 @@ const statusPillMeta = (signal, candidate, blocker) => {
     return { label: blocker, tone: CSS_COLOR.red, Icon: Ban };
   }
   const actionStatus = candidate?.actionStatus || candidate?.status;
+  const contractSelectionStatus = contractSelectionStatusValue(candidate);
+  if (contractSelectionStatus === "blocked") {
+    return {
+      label: firstDisplayLabel(
+        candidate?.contractSelectionReason || candidate?.reason,
+        "Contract blocked",
+      ),
+      tone: CSS_COLOR.red,
+      Icon: Ban,
+    };
+  }
+  if (contractSelectionStatus === "deferred") {
+    return { label: "Action deferred", tone: CSS_COLOR.amber, Icon: Clock };
+  }
+  if (
+    contractSelectionStatus === "pending" &&
+    (!actionStatus || String(actionStatus).toLowerCase() === "candidate")
+  ) {
+    return { label: "Contract pending", tone: CSS_COLOR.cyan, Icon: ScanLine };
+  }
   if (actionStatus) {
     const label = signalOptionsActionLabel(actionStatus);
     const normalized = String(actionStatus).toLowerCase();
@@ -763,8 +823,11 @@ const statusPillMeta = (signal, candidate, blocker) => {
     return {
       label,
       tone: signalOptionsActionColor(actionStatus) || CSS_COLOR.textDim,
-      Icon: Radar,
+      Icon: ScanLine,
     };
+  }
+  if (signal?.actionEligible === true) {
+    return { label: "Candidate missing", tone: CSS_COLOR.red, Icon: AlertTriangle };
   }
   if (signal?.status === "unavailable") {
     return { label: "Unavailable", tone: CSS_COLOR.textDim, Icon: MinusCircle };
@@ -772,7 +835,7 @@ const statusPillMeta = (signal, candidate, blocker) => {
   if (signal?.fresh === false) {
     return { label: "Aged", tone: CSS_COLOR.amber, Icon: Clock };
   }
-  return { label: "Awaiting scan", tone: CSS_COLOR.cyan, Icon: Radar };
+  return { label: "Awaiting scan", tone: CSS_COLOR.cyan, Icon: ScanLine };
 };
 
 const compactPillLabel = (label) => {
@@ -888,7 +951,13 @@ const DECISION_DETAIL_META = {
   other: { tone: CSS_COLOR.textDim, label: "Other" },
 };
 
-const resolveDecisionDetailMeta = ({ candidate, gate, blocker, statusMeta }) => {
+const resolveDecisionDetailMeta = ({
+  signal,
+  candidate,
+  gate,
+  blocker,
+  statusMeta,
+}) => {
   if (blocker !== MISSING_VALUE) {
     const base = DECISION_DETAIL_META[gate.category] || DECISION_DETAIL_META.other;
     return {
@@ -898,6 +967,13 @@ const resolveDecisionDetailMeta = ({ candidate, gate, blocker, statusMeta }) => 
     };
   }
   if (!candidate) {
+    if (signal?.actionEligible === true) {
+      return {
+        tone: CSS_COLOR.red,
+        shortLabel: "Candidate missing",
+        fullLabel: "Fresh actionable signal has no Signal Options candidate",
+      };
+    }
     return {
       tone: CSS_COLOR.cyan,
       shortLabel: "Monitor only",
@@ -1636,8 +1712,8 @@ const DecisionCell = ({
 };
 
 const PROCESS_STAGE_META = {
-  signal: { label: "Signal", tone: CSS_COLOR.textSec, Icon: Radar },
-  candidate: { label: "Candidate", tone: CSS_COLOR.cyan, Icon: Radar },
+  signal: { label: "Signal", tone: CSS_COLOR.textSec, Icon: ScanLine },
+  candidate: { label: "Candidate", tone: CSS_COLOR.cyan, Icon: ScanLine },
   eligible: { label: "Eligible", tone: CSS_COLOR.green, Icon: CheckCircle2 },
   submitted: { label: "Submitted", tone: CSS_COLOR.green, Icon: Send },
   filled: { label: "Filled", tone: CSS_COLOR.green, Icon: CheckCircle2 },
@@ -2205,6 +2281,7 @@ export const OperationsSignalRow = ({
     greeks.full,
   ]);
   const decisionDetailMeta = resolveDecisionDetailMeta({
+    signal: signalRecord,
     candidate,
     gate,
     blocker,
@@ -2510,7 +2587,7 @@ export const OperationsSignalRow = ({
         titleValue={matrixDisplay.title}
         motionState={matrixDisplay.motionState}
         icon={
-          <Radar
+          <ScanLine
             size={SIGNAL_ICON_SIZE}
             strokeWidth={1.8}
             aria-hidden="true"

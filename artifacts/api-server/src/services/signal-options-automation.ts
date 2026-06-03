@@ -61,6 +61,7 @@ import {
   signalMonitorCompletedBarsQueryTo,
   resolveSignalMonitorTimeframe,
   resolveSignalMonitorProfileUniverse,
+  resolveSignalMonitorEventLookupKeys,
   updateSignalMonitorProfile,
   withSignalMonitorUniverseScope,
   type SignalMonitorProfileRow,
@@ -270,6 +271,12 @@ type SignalOptionsRuntimeStatus =
   | "skipped"
   | "manual_override";
 
+type SignalOptionsContractSelectionStatus =
+  | "pending"
+  | "selected"
+  | "blocked"
+  | "deferred";
+
 type SignalOptionsActionStatus =
   | "candidate"
   | "blocked"
@@ -400,6 +407,9 @@ type SignalOptionsCandidate = {
   expirationsDebug?: Record<string, unknown> | null;
   optionMarketDataBackoff?: Record<string, unknown> | null;
   liveQuoteDemand?: Record<string, unknown> | null;
+  contractSelectionStatus?: SignalOptionsContractSelectionStatus;
+  contractSelectionReason?: string | null;
+  contractSelectionDetail?: Record<string, unknown> | null;
   reason?: string | null;
   actionStatus?: SignalOptionsActionStatus;
   syncStatus?: SignalOptionsSyncStatus;
@@ -597,6 +607,49 @@ function expirationDateKey(value: unknown): string | null {
 
 function compactString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function signalOptionsHasSelectedContract(value: unknown): boolean {
+  return Object.keys(asRecord(value)).length > 0;
+}
+
+function resolveSignalOptionsContractSelectionStatus(input: {
+  status?: SignalOptionsRuntimeStatus | null;
+  selectedContract?: unknown;
+  reason?: unknown;
+  optionMarketDataBackoff?: unknown;
+  liveQuoteDemand?: unknown;
+  heavyWorkDeferred?: boolean;
+  fallback?: SignalOptionsContractSelectionStatus | null;
+}): SignalOptionsContractSelectionStatus {
+  if (signalOptionsHasSelectedContract(input.selectedContract)) {
+    return "selected";
+  }
+
+  if (input.status === "open" || input.status === "closed") {
+    return "selected";
+  }
+
+  if (input.status === "skipped" || compactString(input.reason)) {
+    return "blocked";
+  }
+
+  const liveDemandStatus = compactString(asRecord(input.liveQuoteDemand).status);
+  if (
+    liveDemandStatus &&
+    ["rejected", "unavailable"].includes(liveDemandStatus.toLowerCase())
+  ) {
+    return "blocked";
+  }
+
+  if (
+    input.heavyWorkDeferred === true ||
+    Object.keys(asRecord(input.optionMarketDataBackoff)).length > 0
+  ) {
+    return "deferred";
+  }
+
+  return input.fallback ?? "pending";
 }
 
 function signalOptionsCandidateResolutionErrorReason(error: unknown) {
@@ -4255,7 +4308,7 @@ function buildCandidateFromSignal(input: {
     source?: string | null;
     filterState?: unknown;
   } | null;
-}) {
+}): SignalOptionsCandidate {
   const direction = input.state.currentSignalDirection ?? "buy";
   const symbol = normalizeSymbol(input.state.symbol).toUpperCase();
   const signal = buildSignalOptionsSignalSnapshot({
@@ -4284,6 +4337,7 @@ function buildCandidateFromSignal(input: {
     signalAt: input.signalAt,
     signalPrice: optionalFiniteNumber(input.state.currentSignalPrice),
     status: "candidate" as const,
+    contractSelectionStatus: "pending",
     signal,
     action,
   };
@@ -4329,6 +4383,7 @@ function candidateFromSignalSnapshot(input: {
     quote: null,
     orderPlan: null,
     liquidity: null,
+    contractSelectionStatus: "pending",
     reason: null,
     signal,
     action,
@@ -4370,10 +4425,58 @@ function previewCandidateFromSignalSnapshot(input: {
     quote: null,
     orderPlan: null,
     liquidity: null,
+    contractSelectionStatus: signal.actionBlocker ? "blocked" : "pending",
+    contractSelectionReason: signal.actionBlocker ?? null,
     reason: signal.actionBlocker ?? null,
     signal,
     action,
   };
+}
+
+function signalOptionsCandidateShellContractSelectionStatus(
+  deploymentId: string,
+): SignalOptionsContractSelectionStatus {
+  const scanState = signalOptionsActiveScanState(deploymentId);
+  if (scanState.heavyWorkDeferred) {
+    return "deferred";
+  }
+  const workerState = signalOptionsWorkerDeploymentState(deploymentId);
+  return workerState.lastHeavyWorkDeferred ? "deferred" : "pending";
+}
+
+function buildSignalOptionsCandidateShellsFromSignals(input: {
+  deployment: AlgoDeployment;
+  signals: SignalOptionsSignalSnapshot[];
+  contractSelectionStatus?: SignalOptionsContractSelectionStatus;
+  contractSelectionReason?: string | null;
+  contractSelectionDetail?: Record<string, unknown> | null;
+}): SignalOptionsCandidate[] {
+  const candidates: SignalOptionsCandidate[] = [];
+  for (const signal of input.signals) {
+    const candidate = candidateFromSignalSnapshot({
+      deployment: input.deployment,
+      signal,
+    });
+    if (!candidate) {
+      continue;
+    }
+    candidates.push({
+      ...candidate,
+      contractSelectionStatus:
+        input.contractSelectionStatus ??
+        candidate.contractSelectionStatus ??
+        "pending",
+      contractSelectionReason:
+        input.contractSelectionReason ??
+        candidate.contractSelectionReason ??
+        null,
+      contractSelectionDetail:
+        input.contractSelectionDetail ??
+        candidate.contractSelectionDetail ??
+        null,
+    });
+  }
+  return candidates;
 }
 
 function signalMonitorPollIntervalMs(profile: Record<string, unknown>) {
@@ -4397,10 +4500,9 @@ function expectedLatestSignalOptionsMonitorBarAt(input: {
   if (timeframe === "1d") {
     return null;
   }
-  const timeframeMs = getSignalMonitorTimeframeMs(timeframe);
   return signalMonitorCompletedBarsQueryTo({
     timeframe,
-    evaluatedAt: new Date(Math.max(0, input.now.getTime() - timeframeMs)),
+    evaluatedAt: input.now,
   });
 }
 
@@ -4457,22 +4559,6 @@ function signalOptionsDirectionOrNull(value: unknown): SignalDirection | null {
   return value === "buy" || value === "sell" ? value : null;
 }
 
-function buildSignalOptionsSignalMonitorEventKey(input: {
-  profileId: string;
-  symbol: string;
-  timeframe: string;
-  direction: SignalDirection;
-  signalBarAt: Date;
-}) {
-  return [
-    input.profileId,
-    normalizeSymbol(input.symbol).toUpperCase(),
-    input.timeframe,
-    input.direction,
-    Math.floor(input.signalBarAt.getTime() / 1000),
-  ].join(":");
-}
-
 async function listSignalOptionsStoredSignalStatesFast(input: {
   deployment: AlgoDeployment;
   universe: Set<string>;
@@ -4517,22 +4603,21 @@ async function listSignalOptionsStoredSignalStatesFast(input: {
   const eventKeys = Array.from(
     new Set(
       rows
-        .map((row) => {
+        .flatMap((row) => {
           const direction = signalOptionsDirectionOrNull(
             row.currentSignalDirection,
           );
           const signalAt = dateOrNull(row.currentSignalAt);
           return direction && signalAt
-            ? buildSignalOptionsSignalMonitorEventKey({
+            ? resolveSignalMonitorEventLookupKeys({
                 profileId: row.profileId,
                 symbol: row.symbol,
                 timeframe,
                 direction,
-                signalBarAt: signalAt,
+                signalAt,
               })
-            : null;
+            : [];
         })
-        .filter((key): key is string => Boolean(key)),
     ),
   );
   const eventSignalAtByKey = new Map<string, Date>();
@@ -4555,23 +4640,26 @@ async function listSignalOptionsStoredSignalStatesFast(input: {
         return null;
       }
       const stateSignalAt = dateOrNull(row.currentSignalAt);
-      const eventKey = stateSignalAt
-        ? buildSignalOptionsSignalMonitorEventKey({
+      const eventLookupKeys = stateSignalAt
+        ? resolveSignalMonitorEventLookupKeys({
             profileId: row.profileId,
             symbol: row.symbol,
             timeframe,
             direction,
-            signalBarAt: stateSignalAt,
+            signalAt: stateSignalAt,
           })
-        : null;
+        : [];
+      const restoredSignalAt =
+        eventLookupKeys
+          .map((eventKey) => eventSignalAtByKey.get(eventKey))
+          .find((signalAt): signalAt is Date => Boolean(signalAt)) ??
+        row.currentSignalAt;
       const state: SignalMonitorState = {
         profileId: row.profileId,
         symbol: row.symbol,
         timeframe,
         currentSignalDirection: direction,
-        currentSignalAt:
-          (eventKey ? eventSignalAtByKey.get(eventKey) : null) ??
-          row.currentSignalAt,
+        currentSignalAt: restoredSignalAt,
         currentSignalPrice: optionalFiniteNumber(row.currentSignalPrice),
         latestBarAt: row.latestBarAt,
         barsSinceSignal: row.barsSinceSignal,
@@ -4909,6 +4997,8 @@ async function loadSignalOptionsMonitorState(input: {
         evaluationConcurrencyOverride:
           SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY,
         barSourcePolicy: SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY,
+        includeProvisionalLiveEdge: true,
+        allowHistoricalFallback: streamFirstMonitorAvailable ? false : undefined,
         signal: input.signal,
       });
 
@@ -4936,6 +5026,8 @@ async function loadSignalOptionsMonitorState(input: {
       mode: "incremental",
       symbols: batch.symbols,
       barSourcePolicy: SIGNAL_OPTIONS_MONITOR_BAR_SOURCE_POLICY,
+      includeProvisionalLiveEdge: true,
+      allowHistoricalFallback: streamFirstMonitorAvailable ? false : undefined,
       signal: input.signal,
     });
     const refreshedStored = await getSignalMonitorStoredState({
@@ -5082,6 +5174,16 @@ function candidateFromEvent(
             ? "open"
             : "candidate";
   const reason = signalOptionsReadModelReason(payload);
+  const selectedContract = Object.keys(payloadSelectedContract).length
+    ? payloadSelectedContract
+    : Object.keys(candidateSelectedContract).length
+      ? candidateSelectedContract
+      : !hasCandidatePayload && Object.keys(positionSelectedContract).length
+        ? positionSelectedContract
+        : {};
+  const contractSelectionDetail = asRecord(
+    payload.detail ?? payload.contractSelectionDetail,
+  );
   return normalizeLegacyAlgoBranding({
     id: String(candidateId || event.id),
     deploymentId:
@@ -5103,13 +5205,7 @@ function candidateFromEvent(
       new Date(0).toISOString(),
     signalPrice: finiteNumber(candidate.signalPrice ?? position.signalPrice),
     status,
-    selectedContract: Object.keys(payloadSelectedContract).length
-      ? payloadSelectedContract
-      : Object.keys(candidateSelectedContract).length
-        ? candidateSelectedContract
-        : !hasCandidatePayload && Object.keys(positionSelectedContract).length
-          ? positionSelectedContract
-          : {},
+    selectedContract,
     quote: asRecord(payload.quote),
     orderPlan: Object.keys(asRecord(payload.orderPlan)).length
       ? asRecord(payload.orderPlan)
@@ -5131,6 +5227,18 @@ function candidateFromEvent(
       : null,
     liveQuoteDemand: Object.keys(liveQuoteDemand).length
       ? liveQuoteDemand
+      : null,
+    contractSelectionStatus: resolveSignalOptionsContractSelectionStatus({
+      status,
+      selectedContract,
+      reason,
+      optionMarketDataBackoff,
+      liveQuoteDemand,
+    }),
+    contractSelectionReason:
+      status === "skipped" ? reason : compactString(payload.contractSelectionReason),
+    contractSelectionDetail: Object.keys(contractSelectionDetail).length
+      ? contractSelectionDetail
       : null,
     reason:
       status === "skipped"
@@ -5162,13 +5270,50 @@ function mergeSignalOptionsCandidate(
         ? existing.reason
         : (candidate.reason ?? existing?.reason ?? null)
       : null;
+  const selectedContract = signalOptionsHasSelectedContract(
+    candidate.selectedContract,
+  )
+    ? candidate.selectedContract
+    : (existing?.selectedContract ?? null);
+  const optionMarketDataBackoff = Object.keys(
+    asRecord(candidate.optionMarketDataBackoff),
+  ).length
+    ? candidate.optionMarketDataBackoff
+    : (existing?.optionMarketDataBackoff ?? null);
+  const liveQuoteDemand = Object.keys(asRecord(candidate.liveQuoteDemand)).length
+    ? candidate.liveQuoteDemand
+    : (existing?.liveQuoteDemand ?? null);
+  const contractSelectionStatus = resolveSignalOptionsContractSelectionStatus({
+    status,
+    selectedContract,
+    reason,
+    optionMarketDataBackoff,
+    liveQuoteDemand,
+    fallback:
+      candidate.contractSelectionStatus ??
+      existing?.contractSelectionStatus ??
+      "pending",
+  });
+  const contractSelectionReason =
+    contractSelectionStatus === "blocked" ||
+    contractSelectionStatus === "deferred"
+      ? candidate.contractSelectionReason ??
+        existing?.contractSelectionReason ??
+        reason ??
+        null
+      : (candidate.contractSelectionReason ??
+        existing?.contractSelectionReason ??
+        null);
+  const contractSelectionDetail = Object.keys(
+    asRecord(candidate.contractSelectionDetail),
+  ).length
+    ? candidate.contractSelectionDetail
+    : (existing?.contractSelectionDetail ?? null);
   return {
     ...(existing ?? {}),
     ...candidate,
     status,
-    selectedContract: Object.keys(asRecord(candidate.selectedContract)).length
-      ? candidate.selectedContract
-      : (existing?.selectedContract ?? null),
+    selectedContract,
     quote: Object.keys(asRecord(candidate.quote)).length
       ? candidate.quote
       : (existing?.quote ?? null),
@@ -5198,9 +5343,10 @@ function mergeSignalOptionsCandidate(
     ).length
       ? candidate.optionMarketDataBackoff
       : (existing?.optionMarketDataBackoff ?? null),
-    liveQuoteDemand: Object.keys(asRecord(candidate.liveQuoteDemand)).length
-      ? candidate.liveQuoteDemand
-      : (existing?.liveQuoteDemand ?? null),
+    liveQuoteDemand,
+    contractSelectionStatus,
+    contractSelectionReason,
+    contractSelectionDetail,
     reason,
     signalQuality: candidate.signalQuality ?? existing?.signalQuality ?? null,
     signal: Object.keys(asRecord(candidate.signal)).length
@@ -8877,14 +9023,14 @@ async function buildStatePayload(input: {
   const candidateEvents = new Map<string, ExecutionEvent[]>();
   const candidatesById = new Map<string, SignalOptionsCandidate>();
 
-  for (const signal of signals) {
-    const candidate = candidateFromSignalSnapshot({
-      deployment: input.deployment,
-      signal,
-    });
-    if (candidate) {
-      candidatesById.set(candidate.id, candidate);
-    }
+  for (const candidate of buildSignalOptionsCandidateShellsFromSignals({
+    deployment: input.deployment,
+    signals,
+    contractSelectionStatus: signalOptionsCandidateShellContractSelectionStatus(
+      input.deployment.id,
+    ),
+  })) {
+    candidatesById.set(candidate.id, candidate);
   }
 
   for (const event of [...activeSignalEvents].sort(
@@ -9003,6 +9149,29 @@ type SignalOptionsDashboardSnapshot = {
   expiresAt: number;
   staleExpiresAt: number;
 };
+
+type SignalOptionsDashboardCandidate =
+  SignalOptionsDashboardSnapshot["state"]["candidates"][number];
+
+function signalOptionsCandidateToDashboardCandidate(
+  candidate: SignalOptionsCandidate,
+): SignalOptionsDashboardCandidate {
+  const derived = deriveCandidateActionStatus({
+    candidate,
+    events: [],
+    shadowLink: candidate.shadowLink ?? undefined,
+  });
+  return normalizeLegacyAlgoBranding({
+    ...candidate,
+    actionStatus: candidate.actionStatus ?? derived.actionStatus,
+    syncStatus: candidate.syncStatus ?? derived.syncStatus,
+    shadowLink: candidate.shadowLink ?? null,
+    signalQuality: candidate.signalQuality ?? null,
+    timeline: Array.isArray(candidate.timeline)
+      ? (candidate.timeline as SignalOptionsDashboardCandidate["timeline"])
+      : [],
+  });
+}
 
 type SignalOptionsCachedPayload<T> = {
   value: T;
@@ -9667,9 +9836,35 @@ async function withFreshSignalOptionsStateSignals(
             }));
       })(),
     );
+    const candidatesById = new Map<string, SignalOptionsCandidate>();
+    for (const candidate of buildSignalOptionsCandidateShellsFromSignals({
+      deployment: snapshot.deployment,
+      signals,
+      contractSelectionStatus: signalOptionsCandidateShellContractSelectionStatus(
+        snapshot.deployment.id,
+      ),
+    })) {
+      candidatesById.set(candidate.id, candidate);
+    }
+    for (const existingCandidate of snapshot.state.candidates) {
+      const candidate = existingCandidate as SignalOptionsCandidate;
+      const existing = candidatesById.get(candidate.id);
+      candidatesById.set(
+        candidate.id,
+        mergeSignalOptionsCandidate(existing, candidate),
+      );
+    }
+    const candidates = [...candidatesById.values()].map(
+      signalOptionsCandidateToDashboardCandidate,
+    );
     return {
       ...snapshot.state,
       signals,
+      candidates,
+      dataQuality: buildSignalOptionsDataQualityReport({
+        candidates,
+        events: snapshot.events,
+      }),
     };
   } catch (error) {
     logger.warn(
@@ -9739,18 +9934,26 @@ function startSignalOptionsFastSummaryRefresh(input: {
     });
     const refreshedAt = Date.now();
     const cachedAt = new Date(refreshedAt).toISOString();
+    const signals = signalSnapshots.map((signal) => ({
+      ...signal,
+      contractPreview: null,
+    }));
+    const candidates = buildSignalOptionsCandidateShellsFromSignals({
+      deployment,
+      signals: signalSnapshots,
+      contractSelectionStatus: signalOptionsCandidateShellContractSelectionStatus(
+        deployment.id,
+      ),
+    }).map(signalOptionsCandidateToDashboardCandidate);
     const state = withSignalOptionsCacheMetadata(
       {
         deployment: deploymentToResponse(deployment),
         profile,
         mode: "shadow" as const,
-        signals: signalSnapshots.map((signal) => ({
-          ...signal,
-          contractPreview: null,
-        })),
-        candidates: [],
+        signals,
+        candidates,
         dataQuality: buildSignalOptionsDataQualityReport({
-          candidates: [],
+          candidates,
           events: [],
         }),
         activePositions: [],
@@ -9795,9 +9998,22 @@ async function buildSignalOptionsFastSummarySnapshot(input: {
   refreshSignalsFromMonitorState?: boolean;
 }): Promise<SignalOptionsDashboardSnapshot> {
   const now = Date.now();
+  const shouldRefreshStoredSignals =
+    input.refreshSignalsFromMonitorState === true;
   const cached = signalOptionsSummaryDashboardCache.get(input.deploymentId);
   if (cached && cached.expiresAt > now) {
-    return signalOptionsCachedSummarySnapshot(cached, { now });
+    const cachedFallback = signalOptionsCachedSummarySnapshot(cached, { now });
+    if (!shouldRefreshStoredSignals) {
+      return cachedFallback;
+    }
+    const work = startSignalOptionsFastSummaryRefresh(input);
+    return withSignalOptionsDashboardSnapshotBudget(work, {
+      deploymentId: input.deploymentId,
+      timeoutMs: SIGNAL_OPTIONS_DASHBOARD_SUMMARY_BUILD_TIMEOUT_MS,
+      view: "summary",
+      reason: "signal_options_state_summary_fast_signal_state_timeout_fallback",
+      staleFallback: cachedFallback,
+    });
   }
 
   const cachedStale = Boolean(cached && cached.staleExpiresAt > now);
@@ -9810,6 +10026,16 @@ async function buildSignalOptionsFastSummarySnapshot(input: {
       now,
       expired: Boolean(cachedExpiredButUseful),
     });
+    if (shouldRefreshStoredSignals) {
+      const work = startSignalOptionsFastSummaryRefresh(input);
+      return withSignalOptionsDashboardSnapshotBudget(work, {
+        deploymentId: input.deploymentId,
+        timeoutMs: SIGNAL_OPTIONS_DASHBOARD_SUMMARY_BUILD_TIMEOUT_MS,
+        view: "summary",
+        reason: "signal_options_state_summary_fast_signal_state_timeout_fallback",
+        staleFallback,
+      });
+    }
     if (input.cacheMode === "cache-only") {
       return staleFallback;
     }
@@ -9824,6 +10050,15 @@ async function buildSignalOptionsFastSummarySnapshot(input: {
   }
 
   if (input.cacheMode === "cache-only") {
+    if (shouldRefreshStoredSignals) {
+      const work = startSignalOptionsFastSummaryRefresh(input);
+      return withSignalOptionsDashboardSnapshotBudget(work, {
+        deploymentId: input.deploymentId,
+        timeoutMs: SIGNAL_OPTIONS_DASHBOARD_SUMMARY_BUILD_TIMEOUT_MS,
+        view: "summary",
+        reason: "signal_options_state_summary_fast_cache_only_signal_state_timeout",
+      });
+    }
     return buildSignalOptionsColdDashboardSnapshot({
       deploymentId: input.deploymentId,
       view: "summary",
@@ -16468,6 +16703,7 @@ export async function updateSignalOptionsExecutionProfile(input: {
 export const __signalOptionsAutomationInternalsForTests = {
   buildCandidateFromSignal,
   candidateFromSignalSnapshot,
+  buildSignalOptionsCandidateShellsFromSignals,
   previewCandidateFromSignalSnapshot,
   buildCockpitAttention,
   buildCockpitDiagnostics,

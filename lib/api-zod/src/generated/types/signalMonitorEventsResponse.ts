@@ -9,4 +9,11 @@ import type { SignalMonitorEvent } from './signalMonitorEvent';
 
 export interface SignalMonitorEventsResponse {
   events: SignalMonitorEvent[];
+  /**
+   * Opaque cursor for the next page, or null when the page is complete.
+   * @nullable
+   */
+  nextCursor: string | null;
+  /** True when another page is available for the same filter set. */
+  hasMore: boolean;
 }

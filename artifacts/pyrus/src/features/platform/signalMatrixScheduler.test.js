@@ -4,6 +4,8 @@ import {
   buildSignalMatrixRequestPlan,
   buildSignalMatrixSymbolSets,
   mergeSignalMatrixStates,
+  resolveSignalMatrixStaVisiblePageExactCellLimit,
+  resolveSignalMatrixStaVisiblePageRequestTaskLimit,
   resolveSignalMatrixActiveScreenRequestTaskLimit,
   resolveSignalMatrixActiveScreenRequestSymbolLimit,
   resolveSignalMatrixBusyQueueDelayMs,
@@ -396,6 +398,79 @@ test("signal matrix scheduler treats recently evaluated stale after-hours cells 
   assert.equal(plan.coverage.missingSymbols, 1);
 });
 
+test("signal matrix scheduler refreshes hydrated intraday cells right after candle close", () => {
+  const plan = buildSignalMatrixRequestPlan({
+    symbols: ["SPY"],
+    prioritySymbols: ["SPY"],
+    currentStates: [
+      {
+        symbol: "SPY",
+        timeframe: "1m",
+        status: "ok",
+        latestBarAt: "2026-06-03T14:30:00.000Z",
+        lastEvaluatedAt: "2026-06-03T14:30:05.000Z",
+      },
+    ],
+    timeframes: ["1m"],
+    backgroundReady: true,
+    pollMs: 15_000,
+    nowMs: Date.parse("2026-06-03T14:31:06.000Z"),
+  });
+
+  assert.deepEqual(plan.requestSymbols, ["SPY"]);
+  assert.deepEqual(plan.timeframes, ["1m"]);
+  assert.deepEqual(plan.requestCells, [{ symbol: "SPY", timeframe: "1m" }]);
+  assert.equal(plan.coverage.missingSymbols, 1);
+});
+
+test("signal matrix scheduler does not requeue before the next candle-close grace window", () => {
+  const plan = buildSignalMatrixRequestPlan({
+    symbols: ["SPY"],
+    prioritySymbols: ["SPY"],
+    currentStates: [
+      {
+        symbol: "SPY",
+        timeframe: "1m",
+        status: "ok",
+        latestBarAt: "2026-06-03T14:30:00.000Z",
+        lastEvaluatedAt: "2026-06-03T14:30:05.000Z",
+      },
+    ],
+    timeframes: ["1m"],
+    backgroundReady: true,
+    pollMs: 15_000,
+    nowMs: Date.parse("2026-06-03T14:31:03.000Z"),
+  });
+
+  assert.deepEqual(plan.requestSymbols, []);
+  assert.equal(plan.coverage.hydratedSymbols, 1);
+  assert.equal(plan.coverage.missingSymbols, 0);
+});
+
+test("signal matrix scheduler refreshes five-minute cells at the five-minute close", () => {
+  const plan = buildSignalMatrixRequestPlan({
+    symbols: ["UUUU"],
+    prioritySymbols: ["UUUU"],
+    currentStates: [
+      {
+        symbol: "UUUU",
+        timeframe: "5m",
+        status: "ok",
+        latestBarAt: "2026-06-03T14:30:00.000Z",
+        lastEvaluatedAt: "2026-06-03T14:30:05.000Z",
+      },
+    ],
+    timeframes: ["5m"],
+    backgroundReady: true,
+    pollMs: 15_000,
+    nowMs: Date.parse("2026-06-03T14:35:06.000Z"),
+  });
+
+  assert.deepEqual(plan.requestSymbols, ["UUUU"]);
+  assert.deepEqual(plan.timeframes, ["5m"]);
+  assert.deepEqual(plan.requestCells, [{ symbol: "UUUU", timeframe: "5m" }]);
+});
+
 test("signal matrix scheduler treats recently unavailable cells as settled", () => {
   const terminalStates = MATRIX_TIMEFRAMES.map((timeframe) => ({
     symbol: "AMD",
@@ -693,10 +768,33 @@ test("signal matrix active screen task limits still constrain critical pressure"
   assert.equal(plan.coverage.pendingTaskCount, 38);
 });
 
+test("signal matrix scheduler hydrates a full STA visible page under high pressure", () => {
+  const symbols = Array.from({ length: 20 }, (_value, index) => `STA${index + 1}`);
+  const plan = buildSignalMatrixRequestPlan({
+    symbols,
+    prioritySymbols: symbols,
+    backgroundReady: false,
+    cursor: 0,
+    pollMs: 60_000,
+    pressureLevel: "high",
+    requestExactCellLimit: resolveSignalMatrixStaVisiblePageExactCellLimit("high"),
+    requestTaskLimit: resolveSignalMatrixStaVisiblePageRequestTaskLimit("high"),
+  });
+
+  assert.deepEqual(plan.requestSymbols, symbols);
+  assert.deepEqual(plan.timeframes, MATRIX_TIMEFRAMES);
+  assert.equal(plan.coverage.exactCellLimit, 120);
+  assert.equal(plan.coverage.requestSymbolLimit, 20);
+  assert.equal(plan.coverage.requestTaskLimit, 120);
+  assert.equal(plan.coverage.requestTaskCount, 120);
+  assert.equal(plan.coverage.pendingSymbols, 0);
+  assert.equal(plan.coverage.pendingTaskCount, 0);
+});
+
 test("signal matrix catchup and busy queue delays back off under pressure", () => {
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("normal"), 150);
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("watch"), 150);
-  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("high"), 20);
+  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("high"), 60);
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("critical"), 10);
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("bogus"), 150);
 
@@ -719,7 +817,7 @@ test("signal matrix request plans stay inside API exact-cell pressure caps", () 
   const cases = [
     ["normal", 150],
     ["watch", 150],
-    ["high", 20],
+    ["high", 60],
     ["critical", 10],
   ];
 

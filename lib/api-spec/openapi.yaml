@@ -3191,10 +3191,29 @@ paths:
         - name: limit
           in: query
           required: false
+          description: Page size for this response. Follow nextCursor while hasMore is true to retrieve the full matching history; this is not a total history cap.
           schema:
             type: integer
             minimum: 1
-            maximum: 500
+            maximum: 1000
+        - name: from
+          in: query
+          required: false
+          description: Include events with signalAt at or after this ISO timestamp.
+          schema:
+            type: string
+        - name: to
+          in: query
+          required: false
+          description: Include events with signalAt at or before this ISO timestamp.
+          schema:
+            type: string
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque cursor from the previous response.
+          schema:
+            type: string
       responses:
         "200":
           description: Signal monitor events
@@ -11244,10 +11263,10 @@ components:
             $ref: "#/components/schemas/SignalMonitorMatrixTimeframe"
         clientRole:
           type: string
-          enum: [leader, follower, manual, test]
+          enum: [leader, follower, manual, test, algo-sta]
         requestOrigin:
           type: string
-          enum: [startup, poll, manual, test]
+          enum: [startup, poll, manual, test, sta-visible-page]
 
     EvaluateSignalMonitorMatrixCellRequest:
       type: object
@@ -11619,8 +11638,16 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SignalMonitorEvent"
+        nextCursor:
+          type: [string, "null"]
+          description: Opaque cursor for the next page, or null when the page is complete.
+        hasMore:
+          type: boolean
+          description: True when another page is available for the same filter set.
       required:
         - events
+        - nextCursor
+        - hasMore
 
     PineScriptStatus:
       type: string

@@ -14,4 +14,5 @@ export const EvaluateSignalMonitorMatrixRequestClientRole = {
   follower: 'follower',
   manual: 'manual',
   test: 'test',
+  'algo-sta': 'algo-sta',
 } as const;

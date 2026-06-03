@@ -347,13 +347,170 @@ export const SIGNAL_OPTIONS_REASON_CATEGORIES = {
 export const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
+const EMPTY_STA_ACTION_ITEMS = Object.freeze([]);
+
 const normalizeMatchKey = (value) => String(value || "").trim();
 const normalizeMatchToken = (value) => normalizeMatchKey(value).toUpperCase();
+
+const staSourceArray = (value) =>
+  Array.isArray(value) ? value : EMPTY_STA_ACTION_ITEMS;
+
+const staSourceTimestampMs = (item) => {
+  const record = asRecord(item);
+  return Math.max(
+    Date.parse(record.updatedAt || "") || 0,
+    Date.parse(record.createdAt || "") || 0,
+    Date.parse(record.generatedAt || "") || 0,
+    Date.parse(record.evaluatedAt || "") || 0,
+    Date.parse(record.signalAt || "") || 0,
+    Date.parse(record.currentSignalAt || "") || 0,
+    Date.parse(record.lastEvaluatedAt || "") || 0,
+    Date.parse(record.latestBarAt || "") || 0,
+  );
+};
+
+const staSourceLatestTimestampMs = (source, arrays) =>
+  Math.max(
+    staSourceTimestampMs(source),
+    ...arrays.flatMap((items) => items.map(staSourceTimestampMs)),
+  );
+
+const buildStaActionSourceSnapshot = (sourceName, source) => {
+  const record = asRecord(source);
+  const signals = staSourceArray(record.signals);
+  const candidates = staSourceArray(record.candidates);
+  const activePositions = staSourceArray(record.activePositions);
+  const rowCount = signals.length + candidates.length + activePositions.length;
+  return {
+    source: sourceName,
+    signals,
+    candidates,
+    activePositions,
+    rowCount,
+    latestMs: staSourceLatestTimestampMs(record, [
+      signals,
+      candidates,
+      activePositions,
+    ]),
+    hasRows: rowCount > 0,
+  };
+};
+
+const chooseStaActionSourceSnapshot = (snapshots) =>
+  snapshots
+    .filter((snapshot) => snapshot.hasRows)
+    .sort(
+      (left, right) =>
+        right.latestMs - left.latestMs ||
+        right.rowCount - left.rowCount ||
+        (left.source === "cockpit" ? -1 : 1),
+    )[0] || null;
+
+const staActionSourceHealth = ({
+  source,
+  stale = false,
+  degraded = false,
+  failedSources = [],
+  previousSource = null,
+  currentSource = null,
+} = {}) => ({
+  source,
+  stale: Boolean(stale),
+  degraded: Boolean(degraded),
+  failedSources,
+  previousSource,
+  currentSource,
+});
+
+export const resolveStableStaActionSnapshot = ({
+  cockpit = null,
+  signalOptionsState = null,
+  previousSnapshot = null,
+  cockpitFailed = false,
+  signalOptionsStateFailed = false,
+} = {}) => {
+  const cockpitSnapshot = buildStaActionSourceSnapshot("cockpit", cockpit);
+  const stateSnapshot = buildStaActionSourceSnapshot("state", signalOptionsState);
+  const currentSnapshot = chooseStaActionSourceSnapshot([
+    cockpitSnapshot,
+    stateSnapshot,
+  ]);
+  const failedSources = [
+    cockpitFailed ? "cockpit" : null,
+    signalOptionsStateFailed ? "state" : null,
+  ].filter(Boolean);
+  const previous = asRecord(previousSnapshot);
+  const previousRowCount =
+    staSourceArray(previous.signals).length +
+    staSourceArray(previous.candidates).length +
+    staSourceArray(previous.activePositions).length;
+  const previousSource = String(previous.source || "");
+  const hasPrevious = previousRowCount > 0;
+  const currentRowCount = currentSnapshot?.rowCount || 0;
+  const previousSourceFailed = failedSources.includes(previousSource);
+  const actionSourceDegraded = Boolean(
+    failedSources.length &&
+      hasPrevious &&
+      (!currentSnapshot || currentRowCount < previousRowCount || previousSourceFailed),
+  );
+
+  if (actionSourceDegraded) {
+    return {
+      source: previousSource || "cached",
+      signals: staSourceArray(previous.signals),
+      candidates: staSourceArray(previous.candidates),
+      activePositions: staSourceArray(previous.activePositions),
+      cacheable: false,
+      sourceHealth: staActionSourceHealth({
+        source: previousSource || "cached",
+        stale: true,
+        degraded: true,
+        failedSources,
+        previousSource: previousSource || null,
+        currentSource: currentSnapshot?.source || null,
+      }),
+    };
+  }
+
+  if (currentSnapshot) {
+    return {
+      source: currentSnapshot.source,
+      signals: currentSnapshot.signals,
+      candidates: currentSnapshot.candidates,
+      activePositions: currentSnapshot.activePositions,
+      cacheable: true,
+      sourceHealth: staActionSourceHealth({
+        source: currentSnapshot.source,
+        failedSources,
+      }),
+    };
+  }
+
+  return {
+    source: "empty",
+    signals: EMPTY_STA_ACTION_ITEMS,
+    candidates: EMPTY_STA_ACTION_ITEMS,
+    activePositions: EMPTY_STA_ACTION_ITEMS,
+    cacheable: !failedSources.length,
+    sourceHealth: staActionSourceHealth({
+      source: "empty",
+      stale: Boolean(failedSources.length && hasPrevious),
+      degraded: Boolean(failedSources.length),
+      failedSources,
+      previousSource: previousSource || null,
+    }),
+  };
+};
 
 const signalRowExactKey = (signal, fallbackId) => {
   const signalRecord = asRecord(signal);
   const signalKey = normalizeMatchKey(signalRecord.signalKey);
   if (signalKey) return `key:${signalKey}`;
+  return signalRowIdentityKey(signalRecord, fallbackId);
+};
+
+const signalRowIdentityKey = (signal, fallbackId) => {
+  const signalRecord = asRecord(signal);
   const identityParts = [
     normalizeMatchToken(signalRecord.symbol),
     normalizeMatchToken(signalRecord.timeframe),
@@ -366,6 +523,12 @@ const signalRowExactKey = (signal, fallbackId) => {
     : `${identityKey}|${fallbackId ? normalizeMatchKey(fallbackId) : ""}`;
 };
 
+const signalRowDedupeKeys = (signal, fallbackId) => {
+  const exactKey = signalRowExactKey(signal, fallbackId);
+  const identityKey = signalRowIdentityKey(signal, fallbackId);
+  return [...new Set([exactKey, identityKey].filter(Boolean))];
+};
+
 const signalRowFamilyKey = (signal) => {
   const signalRecord = asRecord(signal);
   const identityParts = [
@@ -376,18 +539,149 @@ const signalRowFamilyKey = (signal) => {
   return identityParts.every(Boolean) ? identityParts.join("|") : "";
 };
 
-export const buildVisibleSignalRows = ({ signals, candidates } = {}) => {
+const STA_SIGNAL_HISTORY_TIME_ZONE = "America/New_York";
+
+const staSignalHistoryDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: STA_SIGNAL_HISTORY_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+const staFiniteNumberOrNull = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const staIsoStringOrNull = (value) => {
+  if (!value) return null;
+  const text = String(value).trim();
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? text : null;
+};
+
+const staMarketDateKey = (value) => {
+  const parsed = value instanceof Date ? value : new Date(value || Date.now());
+  if (Number.isNaN(parsed.getTime())) return "";
+  try {
+    const parts = Object.fromEntries(
+      staSignalHistoryDateFormatter
+        .formatToParts(parsed)
+        .map((part) => [part.type, part.value]),
+    );
+    return [parts.year, parts.month, parts.day].filter(Boolean).join("-");
+  } catch {
+    return parsed.toISOString().slice(0, 10);
+  }
+};
+
+const signalMonitorEventSignalKey = (event, signalAt) => {
+  const eventRecord = asRecord(event);
+  const profileId = normalizeMatchKey(eventRecord.profileId);
+  const symbol = normalizeMatchToken(eventRecord.symbol);
+  const timeframe = normalizeMatchKey(eventRecord.timeframe);
+  const direction = normalizeMatchKey(eventRecord.direction);
+  if (!profileId || !symbol || !timeframe || !direction || !signalAt) {
+    return null;
+  }
+  return [profileId, symbol, timeframe, direction, signalAt].join(":");
+};
+
+export const buildStaSignalHistoryRows = ({
+  signalEvents,
+  universeSymbols,
+  now = Date.now(),
+} = {}) => {
+  const historyDayKey = staMarketDateKey(now);
+  if (!historyDayKey) return [];
+  const universe = new Set(
+    (Array.isArray(universeSymbols) ? universeSymbols : [])
+      .map((symbol) => normalizeMatchToken(symbol))
+      .filter(Boolean),
+  );
+
+  return (Array.isArray(signalEvents) ? signalEvents : [])
+    .map((event) => {
+      const eventRecord = asRecord(event);
+      const signalAt = staIsoStringOrNull(eventRecord.signalAt);
+      const symbol = normalizeMatchToken(eventRecord.symbol);
+      if (!signalAt || !symbol || staMarketDateKey(signalAt) !== historyDayKey) {
+        return null;
+      }
+      if (universe.size && !universe.has(symbol)) {
+        return null;
+      }
+
+      const payload = asRecord(eventRecord.payload);
+      const filterState = asRecord(payload.filterState);
+      const signalPrice =
+        staFiniteNumberOrNull(eventRecord.signalPrice) ??
+        staFiniteNumberOrNull(eventRecord.close);
+      const latestBarAt =
+        staIsoStringOrNull(payload.latestBarAt) ??
+        staIsoStringOrNull(payload.signalBarAt) ??
+        staIsoStringOrNull(payload.latestBarAnchorAt) ??
+        staIsoStringOrNull(eventRecord.emittedAt) ??
+        signalAt;
+      const eventId = normalizeMatchKey(eventRecord.id);
+
+      return {
+        profileId: normalizeMatchKey(eventRecord.profileId) || null,
+        signalKey:
+          signalMonitorEventSignalKey(eventRecord, signalAt) ||
+          (eventId ? `event:${eventId}` : null),
+        source: normalizeMatchKey(eventRecord.source) || "pyrus-signals",
+        sourceType: "signal_monitor_event",
+        eventId: eventId || null,
+        symbol,
+        timeframe: normalizeMatchKey(eventRecord.timeframe) || "5m",
+        direction: normalizeMatchKey(eventRecord.direction) || null,
+        signalAt,
+        currentSignalAt: signalAt,
+        signalPrice,
+        currentSignalPrice: signalPrice,
+        close: staFiniteNumberOrNull(eventRecord.close),
+        latestBarAt,
+        barsSinceSignal: null,
+        fresh: false,
+        actionEligible: false,
+        actionBlocker: "historical_signal",
+        status: "history",
+        filterState: Object.keys(filterState).length ? filterState : null,
+        emittedAt: staIsoStringOrNull(eventRecord.emittedAt),
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.signalAt || "") || 0;
+      const rightTime = Date.parse(right.signalAt || "") || 0;
+      return rightTime - leftTime;
+    });
+};
+
+export const buildVisibleSignalRows = ({
+  signals,
+  candidates,
+  signalEvents,
+  universeSymbols,
+  now,
+} = {}) => {
   const rows = [];
   const seen = new Set();
   const visibleSignalFamilies = new Set();
   const signalList = Array.isArray(signals) ? signals : [];
   const candidateList = Array.isArray(candidates) ? candidates : [];
+  const historySignals = buildStaSignalHistoryRows({
+    signalEvents,
+    universeSymbols,
+    now,
+  });
 
   const addRow = (signal, fallbackId = null) => {
     const signalRecord = asRecord(signal);
-    const key = signalRowExactKey(signalRecord, fallbackId);
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
+    const keys = signalRowDedupeKeys(signalRecord, fallbackId);
+    if (!keys.length || keys.some((key) => seen.has(key))) return false;
+    keys.forEach((key) => seen.add(key));
     rows.push(signalRecord);
     return true;
   };
@@ -412,6 +706,10 @@ export const buildVisibleSignalRows = ({ signals, candidates } = {}) => {
     const familyKey = signalRowFamilyKey(candidateSignal);
     if (familyKey && visibleSignalFamilies.has(familyKey)) return;
     addRow(candidateSignal, candidateRecord.id);
+  });
+
+  historySignals.forEach((signal) => {
+    addRow(signal);
   });
 
   return rows;

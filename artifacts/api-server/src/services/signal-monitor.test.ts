@@ -64,9 +64,195 @@ test("signal monitor stored state preserves precise event signal time", () => {
     "a5721cf5-16e1-4221-81d1-f2064e997d98:MU:5m:buy:1780509900",
   );
   assert.match(upsertBlock, /const currentSignalAt = await resolveStoredSignalMonitorSignalAt\(input\)/);
+  assert.match(upsertBlock, /signalBarAt\?: Date \| null/);
   assert.match(upsertBlock, /currentSignalAt,/);
   assert.match(resolverBlock, /signalMonitorEventsTable\.eventKey/);
-  assert.match(resolverBlock, /return event\?\.signalAt \?\? input\.signalAt/);
+  assert.match(resolverBlock, /resolveSignalMonitorEventLookupKeys/);
+  assert.match(resolverBlock, /inArray\(signalMonitorEventsTable\.eventKey, eventKeys\)/);
+  assert.match(resolverBlock, /eventSignalAtByKey/);
+});
+
+test("signal monitor event lookup keys prefer the signal bar anchor before a completed 5m close", () => {
+  const profileId = "a5721cf5-16e1-4221-81d1-f2064e997d98";
+  const signalAt = new Date("2026-06-03T22:55:00.000Z");
+  const signalBarAt = new Date("2026-06-03T22:50:00.000Z");
+  const anchorKey = __signalMonitorInternalsForTests.buildSignalMonitorEventKey({
+    profileId,
+    symbol: "lunr",
+    timeframe: "5m",
+    direction: "sell",
+    signalBarAt,
+  });
+  const closeKey = __signalMonitorInternalsForTests.buildSignalMonitorEventKey({
+    profileId,
+    symbol: "lunr",
+    timeframe: "5m",
+    direction: "sell",
+    signalBarAt: signalAt,
+  });
+
+  const explicitKeys =
+    __signalMonitorInternalsForTests.resolveSignalMonitorEventLookupKeys({
+      profileId,
+      symbol: "lunr",
+      timeframe: "5m",
+      direction: "sell",
+      signalAt,
+      signalBarAt,
+    });
+  const inferredKeys =
+    __signalMonitorInternalsForTests.resolveSignalMonitorEventLookupKeys({
+      profileId,
+      symbol: "lunr",
+      timeframe: "5m",
+      direction: "sell",
+      signalAt,
+    });
+
+  assert.equal(explicitKeys[0], anchorKey);
+  assert.equal(inferredKeys[0], anchorKey);
+  assert.notEqual(explicitKeys[0], closeKey);
+  assert.equal(explicitKeys.includes(closeKey), true);
+  assert.equal(new Set(inferredKeys).size, inferredKeys.length);
+});
+
+function signalMonitorEventFixture(input: {
+  id: string;
+  symbol: string;
+  signalAt: string;
+  direction?: "buy" | "sell";
+}) {
+  return {
+    id: input.id,
+    profileId: "profile-1",
+    environment: "paper",
+    symbol: input.symbol,
+    timeframe: "5m",
+    direction: input.direction ?? "buy",
+    signalAt: new Date(input.signalAt),
+    signalPrice: null,
+    close: null,
+    emittedAt: new Date(input.signalAt),
+    source: "test",
+    payload: {},
+  };
+}
+
+test("signal monitor event history pages beyond the first response without duplicates", () => {
+  const events = [
+    signalMonitorEventFixture({
+      id: "older",
+      symbol: "TSLA",
+      signalAt: "2026-06-03T15:58:00.000Z",
+    }),
+    signalMonitorEventFixture({
+      id: "same-a",
+      symbol: "AAPL",
+      signalAt: "2026-06-03T15:59:00.000Z",
+    }),
+    signalMonitorEventFixture({
+      id: "same-b",
+      symbol: "AAPL",
+      signalAt: "2026-06-03T15:59:00.000Z",
+    }),
+    signalMonitorEventFixture({
+      id: "newer",
+      symbol: "MSFT",
+      signalAt: "2026-06-03T16:00:00.000Z",
+    }),
+  ];
+
+  const firstPage =
+    __signalMonitorInternalsForTests.filterSignalMonitorEventResponses(
+      events as never,
+      {
+        limit: 2,
+      },
+    );
+  const secondPage =
+    __signalMonitorInternalsForTests.filterSignalMonitorEventResponses(
+      events as never,
+      {
+        limit: 2,
+        cursor: firstPage.nextCursor ?? undefined,
+      },
+    );
+
+  assert.deepEqual(
+    firstPage.events.map((event) => event.id),
+    ["newer", "same-b"],
+  );
+  assert.equal(firstPage.hasMore, true);
+  assert.equal(typeof firstPage.nextCursor, "string");
+  assert.deepEqual(
+    secondPage.events.map((event) => event.id),
+    ["same-a", "older"],
+  );
+  assert.equal(secondPage.hasMore, false);
+  assert.equal(secondPage.nextCursor, null);
+});
+
+test("signal monitor event history filters by symbol and signalAt window", () => {
+  const events = [
+    signalMonitorEventFixture({
+      id: "before",
+      symbol: "AAPL",
+      signalAt: "2026-06-03T14:59:59.000Z",
+    }),
+    signalMonitorEventFixture({
+      id: "inside-aapl",
+      symbol: "AAPL",
+      signalAt: "2026-06-03T15:15:00.000Z",
+    }),
+    signalMonitorEventFixture({
+      id: "inside-msft",
+      symbol: "MSFT",
+      signalAt: "2026-06-03T15:20:00.000Z",
+    }),
+    signalMonitorEventFixture({
+      id: "after",
+      symbol: "AAPL",
+      signalAt: "2026-06-03T15:30:01.000Z",
+    }),
+  ];
+
+  const page =
+    __signalMonitorInternalsForTests.filterSignalMonitorEventResponses(
+      events as never,
+      {
+        symbol: "aapl",
+        from: "2026-06-03T15:00:00.000Z",
+        to: "2026-06-03T15:30:00.000Z",
+        limit: 10,
+      },
+    );
+
+  assert.deepEqual(
+    page.events.map((event) => event.id),
+    ["inside-aapl"],
+  );
+  assert.equal(page.hasMore, false);
+});
+
+test("signal monitor event API is cursor paginated instead of capped at 500 total rows", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("export async function listSignalMonitorEvents");
+  const block = source.slice(start);
+
+  assert.match(source, /SIGNAL_MONITOR_EVENTS_MAX_PAGE_SIZE = 1_000/);
+  assert.match(source, /SIGNAL_MONITOR_RUNTIME_EVENT_RETENTION = 20_000/);
+  assert.match(block, /gte\(signalMonitorEventsTable\.signalAt,\s*from\)/);
+  assert.match(block, /lte\(signalMonitorEventsTable\.signalAt,\s*to\)/);
+  assert.match(block, /lt\(signalMonitorEventsTable\.signalAt,\s*cursor\.signalAt\)/);
+  assert.match(block, /lt\(signalMonitorEventsTable\.id,\s*cursor\.id\)/);
+  assert.match(block, /\.orderBy\(desc\(signalMonitorEventsTable\.signalAt\),\s*desc\(signalMonitorEventsTable\.id\)\)/);
+  assert.match(block, /\.limit\(limit \+ 1\)/);
+  assert.match(block, /nextCursor/);
+  assert.match(block, /hasMore/);
+  assert.doesNotMatch(block, /positiveInteger\(input\.limit,\s*100,\s*1,\s*500\)/);
 });
 
 function profile(
@@ -319,6 +505,7 @@ test("signal monitor live-edge bars roll up stock aggregate stream minutes", () 
   assert.deepEqual(
     bars.map((item) => ({
       timestamp: item.timestamp,
+      dataUpdatedAt: item.dataUpdatedAt,
       open: item.open,
       high: item.high,
       low: item.low,
@@ -331,6 +518,7 @@ test("signal monitor live-edge bars roll up stock aggregate stream minutes", () 
     [
       {
         timestamp: new Date("2026-04-24T14:30:00.000Z"),
+        dataUpdatedAt: new Date("2026-04-24T14:35:00.000Z"),
         open: 100,
         high: 105.5,
         low: 99,
@@ -341,6 +529,44 @@ test("signal monitor live-edge bars roll up stock aggregate stream minutes", () 
         freshness: "live",
       },
     ],
+  );
+});
+
+test("signal monitor stream minute bars close on exact candle boundaries", () => {
+  const startMs = Date.parse("2026-04-24T14:34:00.000Z");
+  const bars =
+    __signalMonitorInternalsForTests.aggregateStockMinuteAggregatesForSignalMonitorBars(
+      {
+        aggregates: [
+          {
+            eventType: "AM",
+            symbol: "SPY",
+            open: 100,
+            high: 101,
+            low: 99,
+            close: 100.5,
+            volume: 100,
+            accumulatedVolume: null,
+            vwap: null,
+            sessionVwap: null,
+            officialOpen: null,
+            averageTradeSize: null,
+            startMs,
+            endMs: startMs + 59_999,
+            delayed: false,
+            source: "massive-websocket",
+          },
+        ] as never,
+        timeframe: "1m",
+        evaluatedAt: new Date("2026-04-24T14:35:00.000Z"),
+        limit: 10,
+      },
+    );
+
+  assert.equal(bars.length, 1);
+  assert.equal(
+    bars[0]?.dataUpdatedAt?.toISOString(),
+    "2026-04-24T14:35:00.000Z",
   );
 });
 
@@ -551,6 +777,100 @@ test("signal monitor matrix exact cells canonicalize and enforce pressure caps",
   );
 });
 
+test("signal monitor matrix exact cells allow protected high-pressure foreground exceptions", () => {
+  const staCells = Array.from({ length: 120 }, (_value, index) => ({
+    symbol: `STA${String(index + 1).padStart(3, "0")}`,
+    timeframe: "1m" as const,
+  }));
+  const allowedSymbols = staCells.map((cell) => cell.symbol);
+
+  const resolved =
+    __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
+      cells: staCells,
+      allowedSymbols,
+      pressure: "high",
+      clientRole: "algo-sta",
+      requestOrigin: "sta-visible-page",
+    });
+
+  assert.equal(resolved.exact, true);
+  assert.equal(resolved.cells.length, 120);
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly({
+      cells: staCells,
+      clientRole: "algo-sta",
+      requestOrigin: "sta-visible-page",
+    }),
+    false,
+  );
+  assert.throws(
+    () =>
+      __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
+        cells: [...staCells, { symbol: "STA121", timeframe: "1m" as const }],
+        allowedSymbols: [...allowedSymbols, "STA121"],
+        pressure: "high",
+        clientRole: "algo-sta",
+        requestOrigin: "sta-visible-page",
+      }),
+    (error) =>
+      typeof error === "object" &&
+      error !== null &&
+      "statusCode" in error &&
+      (error as { statusCode?: number }).statusCode === 400,
+  );
+
+  const leaderCells = Array.from({ length: 60 }, (_value, index) => ({
+    symbol: `LEAD${String(index + 1).padStart(3, "0")}`,
+    timeframe: "1m" as const,
+  }));
+  const leaderSymbols = leaderCells.map((cell) => cell.symbol);
+  const leaderResolved =
+    __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
+      cells: leaderCells,
+      allowedSymbols: leaderSymbols,
+      pressure: "high",
+      clientRole: "leader",
+      requestOrigin: "poll",
+    });
+
+  assert.equal(leaderResolved.exact, true);
+  assert.equal(leaderResolved.cells.length, 60);
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldAwaitSignalMonitorMatrixExactCellRefresh(
+      {
+        exactCells: true,
+        pressure: "high",
+        clientRole: "leader",
+        requestOrigin: "poll",
+      },
+    ),
+    true,
+  );
+  assert.throws(
+    () =>
+      __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
+        cells: [...leaderCells, { symbol: "LEAD061", timeframe: "1m" as const }],
+        allowedSymbols: [...leaderSymbols, "LEAD061"],
+        pressure: "high",
+        clientRole: "leader",
+        requestOrigin: "poll",
+      }),
+    (error) =>
+      typeof error === "object" &&
+      error !== null &&
+      "statusCode" in error &&
+      (error as { statusCode?: number }).statusCode === 400,
+  );
+});
+
+test("api problem responses expose HttpError data for matrix cap retry", () => {
+  const source = readFileSync(new URL("../app.ts", import.meta.url), "utf8");
+
+  assert.match(source, /error\.expose && error\.data !== undefined/);
+  assert.match(source, /problem\.data = error\.data/);
+  assert.match(source, /application\/problem\+json/);
+});
+
 test("signal monitor matrix exact cells narrow coverage metadata", () => {
   const value =
     __signalMonitorInternalsForTests.withSignalMonitorMatrixMetadata(
@@ -618,6 +938,34 @@ test("signal monitor matrix persists clean usable current and stale matrix cells
   assert.equal(
     __signalMonitorInternalsForTests.shouldPersistSignalMonitorMatrixState(
       cleanState as never,
+    ),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldPersistSignalMonitorMatrixState(
+      {
+        ...cleanState,
+        timeframe: "5m",
+        status: "stale",
+        currentSignalDirection: null,
+        currentSignalAt: null,
+        currentSignalPrice: null,
+      } as never,
+      { profileTimeframe: "5m" },
+    ),
+    false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldPersistSignalMonitorMatrixState(
+      {
+        ...cleanState,
+        timeframe: "2m",
+        status: "stale",
+        currentSignalDirection: null,
+        currentSignalAt: null,
+        currentSignalPrice: null,
+      } as never,
+      { profileTimeframe: "5m" },
     ),
     true,
   );
@@ -1107,6 +1455,7 @@ test("automatic signal matrix reads keep followers cache-only and incomplete exa
   assert.notEqual(matrixEnd, -1);
   assert.match(cacheOnlyBody, /input\.clientRole === "follower"/);
   assert.match(cacheOnlyBody, /input\.clientRole === "leader"/);
+  assert.match(cacheOnlyBody, /isForegroundExactCellLeaderSignalMonitorMatrixRequest/);
   assert.match(
     cacheOnlyBody,
     /pressureLevel === "high" \|\| pressureLevel === "critical"/,
@@ -1130,9 +1479,9 @@ test("automatic signal matrix reads keep followers cache-only and incomplete exa
   assert.ok(matrixAutomaticStart > -1);
   assert.ok(matrixFinalRefreshStart > matrixAutomaticStart);
   assert.ok(matrixAutomaticBranchBody);
-  assert.match(matrixAutomaticBranchBody, /exactCells\.exact/);
-  assert.match(matrixAutomaticBranchBody, /matrixSettings\.pressure === "normal"/);
-  assert.match(matrixAutomaticBranchBody, /matrixSettings\.pressure === "watch"/);
+  assert.match(matrixAutomaticBranchBody, /shouldAwaitSignalMonitorMatrixExactCellRefresh/);
+  assert.doesNotMatch(matrixAutomaticBranchBody, /matrixSettings\.pressure === "normal"/);
+  assert.doesNotMatch(matrixAutomaticBranchBody, /matrixSettings\.pressure === "watch"/);
   assert.match(matrixAutomaticBranchBody, /hasCompleteSignalMonitorMatrixCoverage/);
   assert.match(matrixAutomaticBranchBody, /await withSignalMonitorMatrixEvaluationCache/);
   assert.match(matrixAutomaticBranchBody, /refreshMatrixInBackground\(\)/);
@@ -1181,12 +1530,42 @@ test("automatic signal matrix reads fast-return complete stored rows before back
   assert.match(automaticBranch, /refreshMatrixInBackground\(\)/);
   assert.match(automaticBranch, /return withSignalMonitorMatrixMetadata/);
   assert.match(automaticBranch, /hasCompleteSignalMonitorMatrixCoverage/);
-  assert.match(automaticBranch, /exactCells\.exact/);
-  assert.match(automaticBranch, /matrixSettings\.pressure === "normal"/);
-  assert.match(automaticBranch, /matrixSettings\.pressure === "watch"/);
+  assert.match(automaticBranch, /shouldAwaitSignalMonitorMatrixExactCellRefresh/);
+  assert.doesNotMatch(automaticBranch, /matrixSettings\.pressure === "normal"/);
+  assert.doesNotMatch(automaticBranch, /matrixSettings\.pressure === "watch"/);
   assert.doesNotMatch(
     automaticBranch,
     /if \(\s*shouldServeSignalMonitorMatrixFromStoredStateFast/,
+  );
+});
+
+test("signal monitor matrix evaluations use live-edge no-REST bars and preserve stored rows", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const matrixSymbolBlock =
+    source.match(
+      /async function evaluateSignalMonitorMatrixSymbol[\s\S]*?function isHydratedSignalMonitorMatrixStateForCoverage/,
+    )?.[0] ?? "";
+  const matrixBlock =
+    source.match(
+      /export async function evaluateSignalMonitorMatrix[\s\S]*?export async function getSignalMonitorProfile/,
+    )?.[0] ?? "";
+
+  assert.match(matrixSymbolBlock, /includeProvisionalLiveEdge\?: boolean/);
+  assert.match(matrixSymbolBlock, /allowHistoricalFallback\?: boolean/);
+  assert.match(
+    matrixSymbolBlock,
+    /loadSignalMonitorCompletedBars\(\{[\s\S]*includeProvisionalLiveEdge: input\.includeProvisionalLiveEdge[\s\S]*allowHistoricalFallback: input\.allowHistoricalFallback/,
+  );
+  assert.match(
+    matrixSymbolBlock,
+    /isSignalMonitorLiveEdgeHistoryUnavailableError\(error\)[\s\S]*return null/,
+  );
+  assert.match(
+    matrixBlock,
+    /evaluateSignalMonitorMatrixSymbol\(\{[\s\S]*includeProvisionalLiveEdge: true[\s\S]*allowHistoricalFallback: false/,
   );
 });
 
@@ -1533,6 +1912,96 @@ test("signal monitor profile scans prime stock aggregate stream before symbol ev
   assert.match(
     explicitSymbolsBlock ?? "",
     /const resolved = resolveExplicitSignalMonitorSymbols[\s\S]*primeSignalMonitorMatrixStockAggregateStream\(resolved\.symbols\);[\s\S]*evaluateSymbolsInBatches/,
+  );
+});
+
+test("explicit profile symbol scans can request provisional live-edge bars", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const symbolBlock =
+    source.match(
+      /export async function evaluateSignalMonitorSymbol[\s\S]*?export function evaluateSignalMonitorMatrixStateFromCompletedBars/,
+    )?.[0] ?? "";
+  const batchBlock =
+    source.match(
+      /async function evaluateSymbolsInBatches[\s\S]*?export async function listEnabledSignalMonitorProfiles/,
+    )?.[0] ?? "";
+  const explicitSymbolsBlock =
+    source.match(
+      /export async function evaluateSignalMonitorProfileSymbols[\s\S]*?function resolveSignalMonitorMatrixSymbols/,
+    )?.[0] ?? "";
+
+  assert.match(symbolBlock, /includeProvisionalLiveEdge\?: boolean/);
+  assert.match(symbolBlock, /allowHistoricalFallback\?: boolean/);
+  assert.match(
+    symbolBlock,
+    /loadSignalMonitorCompletedBars\(\{[\s\S]*includeProvisionalLiveEdge: input\.includeProvisionalLiveEdge[\s\S]*allowHistoricalFallback: input\.allowHistoricalFallback/,
+  );
+  assert.match(batchBlock, /includeProvisionalLiveEdge\?: boolean/);
+  assert.match(batchBlock, /allowHistoricalFallback\?: boolean/);
+  assert.match(
+    batchBlock,
+    /evaluateSignalMonitorSymbol\(\{[\s\S]*includeProvisionalLiveEdge: input\.includeProvisionalLiveEdge[\s\S]*allowHistoricalFallback: input\.allowHistoricalFallback/,
+  );
+  assert.match(explicitSymbolsBlock, /includeProvisionalLiveEdge\?: boolean/);
+  assert.match(explicitSymbolsBlock, /allowHistoricalFallback\?: boolean/);
+  assert.match(
+    explicitSymbolsBlock,
+    /evaluateSymbolsInBatches\(\{[\s\S]*includeProvisionalLiveEdge: input\.includeProvisionalLiveEdge[\s\S]*allowHistoricalFallback: input\.allowHistoricalFallback/,
+  );
+});
+
+test("provisional live-edge bar loads try cached history before REST hydration", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const loadBlock =
+    source.match(
+      /export async function loadSignalMonitorCompletedBars[\s\S]*?export async function evaluateSignalMonitorSymbolFromCompletedBars/,
+    )?.[0] ?? "";
+  const provisionalStart = loadBlock.indexOf(
+    "if (input.includeProvisionalLiveEdge && input.timeframe !== \"1d\")",
+  );
+  const cacheLookup = loadBlock.indexOf(
+    "readSignalMonitorCompletedBarsCache",
+    provisionalStart,
+  );
+  const recursiveBaseLoad = loadBlock.indexOf(
+    "const base = await loadSignalMonitorCompletedBars",
+    provisionalStart,
+  );
+  const noRestFallback = loadBlock.indexOf(
+    "if (input.allowHistoricalFallback === false)",
+    provisionalStart,
+  );
+
+  assert.ok(provisionalStart >= 0);
+  assert.ok(cacheLookup > provisionalStart);
+  assert.ok(noRestFallback > cacheLookup);
+  assert.ok(recursiveBaseLoad > provisionalStart);
+  assert.ok(noRestFallback < recursiveBaseLoad);
+  assert.ok(cacheLookup < recursiveBaseLoad);
+});
+
+test("live-edge no-REST mode preserves stored state when cached history is not warm", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const symbolBlock =
+    source.match(
+      /export async function evaluateSignalMonitorSymbol[\s\S]*?export function evaluateSignalMonitorMatrixStateFromCompletedBars/,
+    )?.[0] ?? "";
+
+  assert.match(source, /class SignalMonitorLiveEdgeHistoryUnavailableError/);
+  assert.match(source, /function isSignalMonitorLiveEdgeHistoryUnavailableError/);
+  assert.match(source, /async function readStoredSignalMonitorSymbolState/);
+  assert.match(
+    symbolBlock,
+    /isSignalMonitorLiveEdgeHistoryUnavailableError\(error\)[\s\S]*readStoredSignalMonitorSymbolState[\s\S]*if \(currentState\)[\s\S]*return currentState/,
   );
 });
 

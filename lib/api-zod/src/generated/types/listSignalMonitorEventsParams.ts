@@ -11,8 +11,21 @@ export type ListSignalMonitorEventsParams = {
 environment?: EnvironmentMode;
 symbol?: string;
 /**
+ * Page size for this response. Follow nextCursor while hasMore is true to retrieve the full matching history; this is not a total history cap.
  * @minimum 1
- * @maximum 500
+ * @maximum 1000
  */
 limit?: number;
+/**
+ * Include events with signalAt at or after this ISO timestamp.
+ */
+from?: string;
+/**
+ * Include events with signalAt at or before this ISO timestamp.
+ */
+to?: string;
+/**
+ * Opaque cursor from the previous response.
+ */
+cursor?: string;
 };

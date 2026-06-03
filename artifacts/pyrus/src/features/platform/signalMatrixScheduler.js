@@ -11,7 +11,13 @@ const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze([
 const SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 150,
   watch: 150,
-  high: 20,
+  high: 60,
+  critical: 10,
+});
+const STA_VISIBLE_PAGE_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
+  normal: 150,
+  watch: 150,
+  high: 120,
   critical: 10,
 });
 const REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
@@ -23,7 +29,13 @@ const REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
 const ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 150,
   watch: 150,
-  high: 20,
+  high: 60,
+  critical: 10,
+});
+const STA_VISIBLE_PAGE_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
+  normal: 150,
+  watch: 150,
+  high: 120,
   critical: 10,
 });
 const ACTIVE_SCREEN_REQUEST_SYMBOL_LIMIT_BY_PRESSURE = Object.freeze({
@@ -52,6 +64,9 @@ const SIGNAL_MATRIX_TIMEFRAME_MS = Object.freeze({
   "1h": 60 * 60_000,
   "1d": 24 * 60 * 60_000,
 });
+const SIGNAL_MATRIX_CANDLE_REFRESH_GRACE_MS = 5_000;
+const SIGNAL_MATRIX_CANDLE_REFRESH_MAX_GRACE_MS = 15_000;
+const SIGNAL_MATRIX_RETRY_COOLDOWN_FALLBACK_MS = 15_000;
 const NON_HYDRATED_MATRIX_STATUSES = new Set([
   "error",
   "unknown",
@@ -82,6 +97,21 @@ export const resolveSignalMatrixActiveScreenRequestTaskLimit = (
   return Math.min(
     ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE[normalizedPressureLevel],
     SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE[normalizedPressureLevel],
+  );
+};
+
+export const resolveSignalMatrixStaVisiblePageExactCellLimit = (pressureLevel) =>
+  STA_VISIBLE_PAGE_EXACT_CELL_LIMIT_BY_PRESSURE[
+    normalizePressureLevel(pressureLevel)
+  ];
+
+export const resolveSignalMatrixStaVisiblePageRequestTaskLimit = (
+  pressureLevel,
+) => {
+  const normalizedPressureLevel = normalizePressureLevel(pressureLevel);
+  return Math.min(
+    STA_VISIBLE_PAGE_REQUEST_TASK_LIMIT_BY_PRESSURE[normalizedPressureLevel],
+    STA_VISIBLE_PAGE_EXACT_CELL_LIMIT_BY_PRESSURE[normalizedPressureLevel],
   );
 };
 
@@ -249,6 +279,17 @@ const isRecentlySettledUnavailableState = (state, timeframe, nowMs, pollMs) => {
   return nowMs - lastEvaluatedMs <= retryAfterMs;
 };
 
+const resolveCandleRefreshGraceMs = (pollMs) => {
+  const pollGraceMs =
+    Number.isFinite(pollMs) && pollMs > 0
+      ? Math.ceil(pollMs / 3)
+      : SIGNAL_MATRIX_CANDLE_REFRESH_GRACE_MS;
+  return Math.max(
+    SIGNAL_MATRIX_CANDLE_REFRESH_GRACE_MS,
+    Math.min(pollGraceMs, SIGNAL_MATRIX_CANDLE_REFRESH_MAX_GRACE_MS),
+  );
+};
+
 const stateNeedsRefresh = (state, timeframe, nowMs, pollMs) => {
   if (isRecentlySettledUnavailableState(state, timeframe, nowMs, pollMs)) {
     return false;
@@ -263,18 +304,24 @@ const stateNeedsRefresh = (state, timeframe, nowMs, pollMs) => {
   if (!Number.isFinite(latestBarMs)) {
     return true;
   }
-  const lastEvaluatedMs = Date.parse(state?.lastEvaluatedAt || "");
-  const refreshAnchorMs = Math.max(
-    latestBarMs,
-    Number.isFinite(lastEvaluatedMs) ? lastEvaluatedMs : 0,
-  );
   const timeframeMs = SIGNAL_MATRIX_TIMEFRAME_MS[timeframe] || 5 * 60_000;
-  const staleAfterMs = Math.max(
-    timeframeMs * 2,
-    Number.isFinite(pollMs) && pollMs > 0 ? pollMs * 2 : 0,
-    60_000,
+  const nextExpectedBarMs = latestBarMs + timeframeMs;
+  const lastEvaluatedMs = Date.parse(state?.lastEvaluatedAt || "");
+  const graceMs = resolveCandleRefreshGraceMs(pollMs);
+  const retryCooldownMs = Math.max(
+    Number.isFinite(pollMs) && pollMs > 0
+      ? pollMs
+      : SIGNAL_MATRIX_RETRY_COOLDOWN_FALLBACK_MS,
+    graceMs,
   );
-  return nowMs - refreshAnchorMs > staleAfterMs;
+  if (
+    Number.isFinite(lastEvaluatedMs) &&
+    lastEvaluatedMs >= nextExpectedBarMs &&
+    nowMs - lastEvaluatedMs < retryCooldownMs
+  ) {
+    return false;
+  }
+  return nowMs >= nextExpectedBarMs + graceMs;
 };
 
 const missingTimeframesForSymbol = (
@@ -385,6 +432,7 @@ export function buildSignalMatrixRequestPlan({
   nowMs = null,
   requestSymbolLimit = null,
   requestTaskLimit = null,
+  requestExactCellLimit = null,
 } = {}) {
   const universe = uniqueSymbols(symbols);
   const startupProtected = Boolean(startupProtectionActive);
@@ -395,8 +443,15 @@ export function buildSignalMatrixRequestPlan({
     universeSet.has(symbol),
   );
   const normalizedPressureLevel = normalizePressureLevel(pressureLevel);
-  const pressureExactCellLimit =
-    SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE[normalizedPressureLevel];
+  const explicitExactCellLimit = normalizeRequestLimit(requestExactCellLimit);
+  const pressureExactCellLimit = Math.min(
+    explicitExactCellLimit ??
+      SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE[normalizedPressureLevel],
+    Math.max(
+      SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE.normal,
+      STA_VISIBLE_PAGE_EXACT_CELL_LIMIT_BY_PRESSURE.normal,
+    ),
+  );
   const pressureRequestTaskLimit = Math.min(
     REQUEST_TASK_LIMIT_BY_PRESSURE[normalizedPressureLevel],
     pressureExactCellLimit,

@@ -49,9 +49,14 @@ test("algo strategy settings API patches deployment and signal monitor settings"
   assert.match(routeSource, /req\.query\.view === "full" \? "full" : "summary"/);
   assert.match(routeSource, /function readOptionalBoolean/);
   assert.match(routeSource, /function signalOptionsAdmissionCacheMode/);
+  assert.match(routeSource, /function signalOptionsRequestCacheMode/);
   assert.match(
     routeSource,
     /return admission\.cacheOnly \? "cache-only" : undefined/,
+  );
+  assert.match(
+    routeSource,
+    /value === "cache-only"[\s\S]*\? "cache-only"[\s\S]*: signalOptionsAdmissionCacheMode\(admission\)/,
   );
   assert.doesNotMatch(routeSource, /admission\.cacheOnly \? "cache-only" : "normal"/);
   assert.match(routeSource, /req\.query\.includePayload === "true"/);

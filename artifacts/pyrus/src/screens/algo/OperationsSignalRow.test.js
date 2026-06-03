@@ -14,6 +14,8 @@ import { formatAppTime } from "../../lib/timeZone";
 import {
   buildAlgoSignalMatrixHydrationRequest,
   classifySignal,
+  isHistoricalSignalRow,
+  signalTableFilterMatches,
   sortRows,
 } from "./OperationsSignalTable.jsx";
 import { buildAlgoPipelinePhases } from "./AlgoOperationsPrimitives.jsx";
@@ -77,6 +79,8 @@ test("algo signal table requests matrix hydration for visible STA rows", () => {
     missingSymbols: ["ASML"],
     requestSymbols: ["ASML"],
     timeframes: ["1m", "2m", "5m", "15m", "1h", "1d"],
+    clientRole: "algo-sta",
+    requestOrigin: "sta-visible-page",
     reason: "algo-signal-table",
   });
 });
@@ -394,6 +398,30 @@ test("signal table classifies only unblocked candidates as ready", () => {
   assert.equal(classifySignal({ symbol: "TSLA", status: "unavailable" }, null), "unavailable");
 });
 
+test("signal table source filters distinguish current rows from signal history", () => {
+  const currentRow = {
+    signal: { symbol: "SPY", sourceType: "signal_options" },
+    classification: "ready",
+  };
+  const historyRow = {
+    signal: { symbol: "GLW", sourceType: "signal_monitor_event" },
+    classification: "blocked",
+  };
+  const tableSource = readSource("./OperationsSignalTable.jsx");
+
+  assert.equal(isHistoricalSignalRow(currentRow), false);
+  assert.equal(isHistoricalSignalRow(historyRow), true);
+  assert.equal(signalTableFilterMatches(currentRow, "current"), true);
+  assert.equal(signalTableFilterMatches(historyRow, "current"), false);
+  assert.equal(signalTableFilterMatches(currentRow, "history"), false);
+  assert.equal(signalTableFilterMatches(historyRow, "history"), true);
+  assert.equal(signalTableFilterMatches(historyRow, "blocked"), true);
+  assert.match(tableSource, /{ id: "current", label: "Current"/);
+  assert.match(tableSource, /{ id: "history", label: "History"/);
+  assert.match(tableSource, /current: augmented\.filter\(\(row\) => !isHistoricalSignalRow\(row\)\)\.length/);
+  assert.match(tableSource, /history: augmented\.filter\(\(row\) => isHistoricalSignalRow\(row\)\)\.length/);
+});
+
 test("signal row spread display treats missing quote data as empty", () => {
   assert.equal(formatSpreadWidth(null), "—");
   assert.equal(formatSpreadWidth(undefined), "—");
@@ -566,6 +594,74 @@ test("signal row labels STA option columns when blocked before contract selectio
   assert.match(html, /Not tested/);
   assert.match(html, /Greek Selector No Candidates/);
   assert.doesNotMatch(html, />Selecting</);
+});
+
+test("signal row labels pending contract-selection shells instead of awaiting scan", () => {
+  const previousReact = globalThis.React;
+  globalThis.React = React;
+  let html = "";
+  try {
+    html = renderToStaticMarkup(
+      React.createElement(OperationsSignalRow, {
+        signal: {
+          symbol: "SPY",
+          direction: "buy",
+          signalAt: "2026-06-01T21:25:00.000Z",
+          actionEligible: true,
+          fresh: true,
+        },
+        candidate: {
+          symbol: "SPY",
+          direction: "buy",
+          status: "candidate",
+          contractSelectionStatus: "pending",
+          selectedContract: null,
+          quote: null,
+          liquidity: null,
+        },
+        columns: ["process", "decision", "contract", "quote"],
+        scanActive: false,
+      }),
+    );
+  } finally {
+    globalThis.React = previousReact;
+  }
+
+  const text = visibleText(html);
+  assert.match(text, /Contract pending/);
+  assert.match(text, /Resolving contract/);
+  assert.match(text, /expiration and chain pending/i);
+  assert.doesNotMatch(text, /Monitor only/);
+  assert.doesNotMatch(text, /Awaiting scan/);
+});
+
+test("signal row treats actionable signals without candidates as missing candidates", () => {
+  const previousReact = globalThis.React;
+  globalThis.React = React;
+  let html = "";
+  try {
+    html = renderToStaticMarkup(
+      React.createElement(OperationsSignalRow, {
+        signal: {
+          symbol: "QQQ",
+          direction: "buy",
+          signalAt: "2026-06-01T21:25:00.000Z",
+          actionEligible: true,
+          fresh: true,
+        },
+        candidate: null,
+        columns: ["decision"],
+        scanActive: false,
+      }),
+    );
+  } finally {
+    globalThis.React = previousReact;
+  }
+
+  const text = visibleText(html);
+  assert.match(text, /Candidate missing/);
+  assert.doesNotMatch(text, /Monitor only/);
+  assert.doesNotMatch(text, /Awaiting scan/);
 });
 
 test("signal row surfaces live quote demand instead of generic Selecting", () => {
@@ -1110,6 +1206,8 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /signalMatrixStates = \[\]/);
   assert.match(tableSource, /onRequestSignalMatrixHydration/);
   assert.match(tableSource, /buildAlgoSignalMatrixHydrationRequest/);
+  assert.match(tableSource, /clientRole: "algo-sta"/);
+  assert.match(tableSource, /requestOrigin: "sta-visible-page"/);
   assert.match(tableSource, /reason: "algo-signal-table"/);
   assert.match(tableSource, /events = \[\]/);
   assert.match(tableSource, /buildSignalAuditProgressions/);
@@ -1153,15 +1251,22 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /const signalTableCompact = false/);
   assert.match(tableSource, /safeQaMode = false/);
   assert.match(tableSource, /backgroundQueriesEnabled = false/);
+  assert.match(tableSource, /rowHydrationQueriesEnabled = false/);
+  assert.match(tableSource, /const SIGNAL_TABLE_QUOTE_REQUEST_OPTIONS = buildBarsRequestOptions\(/);
+  assert.match(tableSource, /BARS_REQUEST_PRIORITY\.active,\s*"algo-signal-table"/);
+  assert.match(tableSource, /const SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS = buildBarsRequestOptions\(/);
+  assert.match(tableSource, /BARS_REQUEST_PRIORITY\.active,\s*"algo-signal-sparkline"/);
   assert.match(tableSource, /const rowQuoteSymbols = useMemo/);
   assert.match(tableSource, /const rowSparklineSymbols = useMemo/);
   assert.match(tableSource, /hasUsableQuoteSnapshot\(tickerSnapshotsBySymbol\?\.\[symbol\]\)/);
   assert.match(tableSource, /hasUsableSparklineData\(tickerSnapshotsBySymbol\?\.\[symbol\]\)/);
   assert.match(tableSource, /hasUsableSparklineData\(pageSignalBySymbol\?\.\[symbol\]\)/);
+  assert.match(tableSource, /const signalRowHydrationQueriesEnabled = Boolean\(/);
   assert.match(
     tableSource,
-    /enabled: Boolean\(backgroundQueriesEnabled && rowQuoteSymbolsKey && !safeQaMode\)/,
+    /enabled: Boolean\(signalRowHydrationQueriesEnabled && rowQuoteSymbolsKey\)/,
   );
+  assert.match(tableSource, /request: SIGNAL_TABLE_QUOTE_REQUEST_OPTIONS/);
   assert.match(tableSource, /placeholder=\{algoIsPhone \? "Search" : "Symbol or strategy"\}/);
   assert.match(tableSource, /padding: algoIsPhone \? sp\("4px 6px"\) : sp\("6px 10px"\)/);
   assert.doesNotMatch(tableSource, /<span>Sort<\/span>/);
@@ -1212,9 +1317,10 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /queryKey: \["algo-signal-row-sparklines", rowSparklineSymbolsKey\]/);
   assert.match(
     tableSource,
-    /enabled: Boolean\(backgroundQueriesEnabled && rowSparklineSymbolsKey && !safeQaMode\)/,
+    /enabled: Boolean\(signalRowHydrationQueriesEnabled && rowSparklineSymbolsKey\)/,
   );
   assert.match(tableSource, /getBarsRequest\(/);
+  assert.match(tableSource, /SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS/);
   assert.match(tableSource, /SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m"/);
   assert.match(tableSource, /SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT = 120/);
   assert.match(tableSource, /thinBarsForSignalSparkline/);

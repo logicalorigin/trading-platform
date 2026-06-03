@@ -41,6 +41,15 @@ function signalOptionsAdmissionCacheMode(admission: ReturnType<typeof getApiRout
   return admission.cacheOnly ? "cache-only" : undefined;
 }
 
+function signalOptionsRequestCacheMode(
+  value: unknown,
+  admission: ReturnType<typeof getApiRouteAdmission>,
+) {
+  return value === "cache-only"
+    ? "cache-only"
+    : signalOptionsAdmissionCacheMode(admission);
+}
+
 function withSignalOptionsRouteTimeout<T>(
   promise: Promise<T>,
   input: {
@@ -229,7 +238,7 @@ router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, r
       await withSignalOptionsRouteTimeout(
         listSignalOptionsAutomationState({
           deploymentId: req.params.deploymentId,
-          cacheMode: signalOptionsAdmissionCacheMode(admission),
+          cacheMode: signalOptionsRequestCacheMode(req.query.cacheMode, admission),
           view,
           refreshSignalsFromMonitorState: true,
         }),
@@ -257,7 +266,7 @@ router.get("/algo/deployments/:deploymentId/cockpit", async (req, res): Promise<
       await withSignalOptionsRouteTimeout(
         getAlgoDeploymentCockpit({
           deploymentId: req.params.deploymentId,
-          cacheMode: signalOptionsAdmissionCacheMode(admission),
+          cacheMode: signalOptionsRequestCacheMode(req.query.cacheMode, admission),
           view,
         }),
         {
@@ -278,7 +287,7 @@ router.get("/algo/deployments/:deploymentId/signal-options/performance", async (
     withRouteAdmissionMetadata(
       await getSignalOptionsPerformance({
         deploymentId: req.params.deploymentId,
-        cacheMode: signalOptionsAdmissionCacheMode(admission),
+        cacheMode: signalOptionsRequestCacheMode(req.query.cacheMode, admission),
       }),
       admission,
     ),

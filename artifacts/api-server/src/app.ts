@@ -148,13 +148,25 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
       logger.error({ err: error }, "Request failed");
     }
 
-    res.status(error.statusCode).type("application/problem+json").json({
+    const problem: {
+      type: string;
+      title: string;
+      status: number;
+      detail?: string;
+      code?: string;
+      data?: unknown;
+    } = {
       type: "https://pyrus.local/problems/upstream",
       title: error.message,
       status: error.statusCode,
       detail: error.detail,
       code: error.code,
-    });
+    };
+    if (error.expose && error.data !== undefined) {
+      problem.data = error.data;
+    }
+
+    res.status(error.statusCode).type("application/problem+json").json(problem);
     return;
   }
 

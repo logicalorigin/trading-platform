@@ -5,7 +5,7 @@ import {
   useCallback,
   useMemo,
 } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isPyrusSafeQaMode } from "../../app/qa-mode";
 import LogoLoader from "../../components/LogoLoader";
 import {
@@ -17,11 +17,11 @@ import {
   getListAlgoDeploymentsQueryOptions,
   getListBacktestDraftStrategiesQueryOptions,
   getListSignalMonitorEventsQueryKey,
+  listSignalMonitorEvents,
   useEvaluateSignalMonitor,
   useEvaluateSignalMonitorMatrix,
   useGetSignalMonitorProfile,
   useGetSignalMonitorState,
-  useListSignalMonitorEvents,
   useGetSession,
   useListAccounts,
   useListPositions,
@@ -95,6 +95,9 @@ import {
   resolveSignalMatrixActiveScreenRequestSymbolLimit,
   resolveSignalMatrixBusyQueueDelayMs,
   resolveSignalMatrixCatchupDelayMs,
+  resolveSignalMatrixExactCellLimit,
+  resolveSignalMatrixStaVisiblePageExactCellLimit,
+  resolveSignalMatrixStaVisiblePageRequestTaskLimit,
   signalMatrixStatesEqual,
 } from "./signalMatrixScheduler.js";
 import {
@@ -202,7 +205,52 @@ const BOOT_INFRA_TASK_IDS = [
   "workspace-route-chunk",
   "first-screen",
 ];
-const SIGNAL_MONITOR_EVENT_HISTORY_LIMIT = 500;
+const SIGNAL_MONITOR_EVENT_PAGE_SIZE = 1_000;
+const SIGNAL_MONITOR_EVENT_LOOKBACK_MS = 36 * 60 * 60 * 1000;
+const SIGNAL_MONITOR_EVENT_LOOKAHEAD_MS = 5 * 60 * 1000;
+
+const buildSignalMonitorEventWindow = (nowMs = Date.now()) => ({
+  from: new Date(nowMs - SIGNAL_MONITOR_EVENT_LOOKBACK_MS).toISOString(),
+  to: new Date(nowMs + SIGNAL_MONITOR_EVENT_LOOKAHEAD_MS).toISOString(),
+});
+
+const fetchAllSignalMonitorEventPages = async (params, options = {}) => {
+  const events = [];
+  const seenCursors = new Set();
+  let cursor = null;
+  let lastPage = null;
+
+  do {
+    const page = await listSignalMonitorEvents(
+      {
+        ...params,
+        ...buildSignalMonitorEventWindow(),
+        ...(cursor ? { cursor } : {}),
+      },
+      options,
+    );
+    lastPage = page;
+    events.push(...(page.events || []));
+    if (!page.hasMore || !page.nextCursor) {
+      return {
+        events,
+        nextCursor: null,
+        hasMore: false,
+      };
+    }
+    if (seenCursors.has(page.nextCursor)) {
+      throw new Error("Signal monitor event history cursor repeated.");
+    }
+    seenCursors.add(page.nextCursor);
+    cursor = page.nextCursor;
+  } while (!options.signal?.aborted);
+
+  return {
+    events,
+    nextCursor: lastPage?.nextCursor ?? null,
+    hasMore: Boolean(lastPage?.hasMore),
+  };
+};
 
 const resolveInitialPlatformScreen = (screenId) => {
   const normalizedScreen = screenId === "unusual" ? "flow" : screenId || "market";
@@ -274,6 +322,7 @@ const SIGNAL_MATRIX_TRUNCATED_CATCHUP_DELAY_MS = 5_000;
 const SIGNAL_MATRIX_REQUEST_TIMEOUT_MS = 30_000;
 const SIGNAL_MATRIX_REQUEST_WATCHDOG_GRACE_MS = 3_000;
 const SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS = 1_000;
+const SIGNAL_MATRIX_EXACT_CELL_LIMIT_RETRY_TTL_MS = 60_000;
 const SIGNAL_MATRIX_GLOBAL_REQUEST_COORDINATOR_KEY =
   "__PYRUS_SIGNAL_MATRIX_REQUEST_COORDINATOR__";
 const INITIAL_MARKET_DATA_WATCHLIST_LIMIT = 8;
@@ -398,6 +447,26 @@ const resolveSignalMatrixPressureLevel = ({ memoryPressureLevel, server }) => {
     normalizePlatformPressureLevel(server?.pressureLevel) ||
     appLevel
   );
+};
+
+const getSignalMatrixExactCellLimitRejection = (error) => {
+  const payload = error?.data || error?.payload || null;
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  if (payload.code !== "signal_monitor_matrix_cells_limit_exceeded") {
+    return null;
+  }
+  const data = asRecord(payload.data);
+  const maxCells = Number(data.maxCells);
+  if (!Number.isFinite(maxCells) || maxCells <= 0) {
+    return null;
+  }
+  return {
+    maxCells: Math.floor(maxCells),
+    pressure: normalizePlatformPressureLevel(data.pressure) || null,
+    requestedCells: Number(data.requestedCells) || null,
+  };
 };
 
 const signalMatrixModuleRequestCoordinator = {
@@ -1195,6 +1264,16 @@ export default function PlatformApp() {
     [signalMatrixPressureLevel],
   );
   const activeSignalMatrixPressureLevel = signalMatrixPressureLevel;
+  const signalMatrixServerPressureObserved = Boolean(
+    memoryPressureSignal?.server?.effectivePressureLevel ||
+      memoryPressureSignal?.server?.apiPressureLevel ||
+      memoryPressureSignal?.server?.pressureLevel,
+  );
+  const activeSignalMatrixAdmissionPressureLevel =
+    signalMatrixServerPressureObserved ||
+    activeSignalMatrixPressureLevel === "critical"
+      ? activeSignalMatrixPressureLevel
+      : "normal";
   const memoryBlocksOperationalPreload = memoryPressureLevel === "critical";
   const memoryAllowsBackgroundWarmup = Boolean(
     memoryPressureObserved &&
@@ -1931,10 +2010,7 @@ export default function PlatformApp() {
       queryClient.invalidateQueries({ queryKey: ["/api/flow/events"] });
       queryClient.invalidateQueries({ queryKey: ["trade-market-depth"] });
       queryClient.invalidateQueries({
-        queryKey: getListSignalMonitorEventsQueryKey({
-          environment: signalMonitorEnvironment,
-          limit: SIGNAL_MONITOR_EVENT_HISTORY_LIMIT,
-        }),
+        queryKey: getListSignalMonitorEventsQueryKey(),
       });
     }, 5_000);
     queueInvalidation(2_500, () => {
@@ -2571,7 +2647,7 @@ export default function PlatformApp() {
   const signalMonitorEventsParams = useMemo(
     () => ({
       environment: signalMonitorEnvironment,
-      limit: SIGNAL_MONITOR_EVENT_HISTORY_LIMIT,
+      limit: SIGNAL_MONITOR_EVENT_PAGE_SIZE,
     }),
     [signalMonitorEnvironment],
   );
@@ -2705,19 +2781,18 @@ export default function PlatformApp() {
       },
     },
   );
-  const signalMonitorEventsQuery = useListSignalMonitorEvents(
-    signalMonitorEventsParams,
-    {
-      query: {
-        enabled: signalMonitorEventsReady,
-        staleTime: 15_000,
-        refetchInterval: signalMonitorEventsReady
-          ? signalMonitorRuntimePollMs
-          : false,
-        retry: false,
-      },
-    },
-  );
+  const signalMonitorEventsQuery = useQuery({
+    queryKey: getListSignalMonitorEventsQueryKey(signalMonitorEventsParams),
+    queryFn: ({ signal }) =>
+      fetchAllSignalMonitorEventPages(signalMonitorEventsParams, { signal }),
+    enabled: signalMonitorEventsReady,
+    staleTime: 15_000,
+    refetchInterval: signalMonitorEventsReady
+      ? signalMonitorRuntimePollMs
+      : false,
+    retry: false,
+    placeholderData: (previousData) => previousData,
+  });
   useEffect(() => {
     const stateProfile = signalMonitorStateQuery.data?.profile;
     if (!stateProfile?.environment || signalMonitorProfileQuery.data) {
@@ -2834,10 +2909,7 @@ export default function PlatformApp() {
           }),
         });
         queryClient.invalidateQueries({
-          queryKey: getListSignalMonitorEventsQueryKey({
-            environment: profile.environment,
-            limit: SIGNAL_MONITOR_EVENT_HISTORY_LIMIT,
-          }),
+          queryKey: getListSignalMonitorEventsQueryKey(),
         });
       },
       onError: (error) => {
@@ -2859,10 +2931,7 @@ export default function PlatformApp() {
           data,
         );
         queryClient.invalidateQueries({
-          queryKey: getListSignalMonitorEventsQueryKey({
-            environment: data.profile.environment,
-            limit: SIGNAL_MONITOR_EVENT_HISTORY_LIMIT,
-          }),
+          queryKey: getListSignalMonitorEventsQueryKey(),
         });
       },
       onError: (error) => {
@@ -2904,7 +2973,9 @@ export default function PlatformApp() {
     };
   });
   const [signalsScreenMatrixRequest, setSignalsScreenMatrixRequest] = useState(() => ({
+    clientRole: null,
     prioritySymbols: [],
+    requestOrigin: null,
     symbols: [],
     timeframes: SIGNAL_MATRIX_TIMEFRAMES,
     revision: 0,
@@ -2922,6 +2993,7 @@ export default function PlatformApp() {
   const signalMatrixRunRef = useRef(null);
   const signalMatrixLastCatchupQueuedAtRef = useRef(0);
   const signalMatrixRequestOwnerRef = useRef(null);
+  const signalMatrixRejectedExactCellLimitRef = useRef(null);
   if (!signalMatrixRequestOwnerRef.current) {
     signalMatrixRequestOwnerRef.current = `platform-${Date.now()}-${Math.random()
       .toString(36)
@@ -2993,6 +3065,15 @@ export default function PlatformApp() {
   );
   const signalsScreenMatrixTimeframes =
     signalsScreenMatrixRequest.timeframes || SIGNAL_MATRIX_TIMEFRAMES;
+  const signalsScreenMatrixClientRole =
+    signalsScreenMatrixRequest.clientRole || null;
+  const signalsScreenMatrixRequestOrigin =
+    signalsScreenMatrixRequest.requestOrigin || null;
+  const signalMatrixStaVisibleRequestActive = Boolean(
+    signalsScreenMatrixClientRole === "algo-sta" &&
+      signalsScreenMatrixRequestOrigin === "sta-visible-page" &&
+      signalsScreenMatrixSymbols.length,
+  );
   const signalsScreenMatrixTimeframesKey = useMemo(
     () => signalsScreenMatrixTimeframes.join(","),
     [signalsScreenMatrixTimeframes],
@@ -3012,6 +3093,10 @@ export default function PlatformApp() {
     const normalizedTimeframes = normalizeSignalMatrixRequestTimeframes(
       payload.timeframes,
     );
+    const normalizedClientRole =
+      payload.clientRole === "algo-sta" ? "algo-sta" : null;
+    const normalizedRequestOrigin =
+      payload.requestOrigin === "sta-visible-page" ? "sta-visible-page" : null;
     if (payload.force && normalizedSymbols.length) {
       const symbolSet = new Set(normalizedSymbols);
       const timeframeSet = new Set(normalizedTimeframes);
@@ -3041,12 +3126,23 @@ export default function PlatformApp() {
         current.timeframes || [],
         normalizedTimeframes,
       );
-      if (sameSymbols && samePrioritySymbols && sameTimeframes && !payload.force) {
+      const sameMetadata =
+        (current.clientRole || null) === normalizedClientRole &&
+        (current.requestOrigin || null) === normalizedRequestOrigin;
+      if (
+        sameSymbols &&
+        samePrioritySymbols &&
+        sameTimeframes &&
+        sameMetadata &&
+        !payload.force
+      ) {
         return current;
       }
       signalMatrixRotationCursorRef.current = 0;
       return {
+        clientRole: normalizedClientRole,
         prioritySymbols: normalizedPrioritySymbols,
+        requestOrigin: normalizedRequestOrigin,
         symbols: normalizedSymbols,
         timeframes: normalizedTimeframes,
         revision: current.revision + 1,
@@ -3060,7 +3156,9 @@ export default function PlatformApp() {
     setSignalsScreenMatrixRequest((current) =>
       current.symbols.length
         ? {
+            clientRole: null,
             prioritySymbols: [],
+            requestOrigin: null,
             symbols: [],
             timeframes: SIGNAL_MATRIX_TIMEFRAMES,
             revision: current.revision + 1,
@@ -3419,6 +3517,24 @@ export default function PlatformApp() {
   const signalMatrixActiveScreenRequestTaskLimit = useMemo(
     () =>
       resolveSignalMatrixActiveScreenRequestTaskLimit(
+        activeSignalMatrixAdmissionPressureLevel,
+      ),
+    [activeSignalMatrixAdmissionPressureLevel],
+  );
+  const signalMatrixActiveScreenExactCellLimit = useMemo(
+    () => resolveSignalMatrixExactCellLimit(activeSignalMatrixAdmissionPressureLevel),
+    [activeSignalMatrixAdmissionPressureLevel],
+  );
+  const signalMatrixStaVisiblePageRequestTaskLimit = useMemo(
+    () =>
+      resolveSignalMatrixStaVisiblePageRequestTaskLimit(
+        activeSignalMatrixPressureLevel,
+      ),
+    [activeSignalMatrixPressureLevel],
+  );
+  const signalMatrixStaVisiblePageExactCellLimit = useMemo(
+    () =>
+      resolveSignalMatrixStaVisiblePageExactCellLimit(
         activeSignalMatrixPressureLevel,
       ),
     [activeSignalMatrixPressureLevel],
@@ -3427,10 +3543,30 @@ export default function PlatformApp() {
     if (!signalMatrixRequestActive || !signalMatrixUniverseSymbols.length) {
       return null;
     }
+    if (signalMatrixStaVisibleRequestActive) {
+      return signalMatrixStaVisiblePageRequestTaskLimit;
+    }
     return signalMatrixActiveScreenRequestTaskLimit;
   }, [
     signalMatrixActiveScreenRequestTaskLimit,
     signalMatrixRequestActive,
+    signalMatrixStaVisiblePageRequestTaskLimit,
+    signalMatrixStaVisibleRequestActive,
+    signalMatrixUniverseSymbols.length,
+  ]);
+  const signalMatrixRequestExactCellLimit = useMemo(() => {
+    if (!signalMatrixRequestActive || !signalMatrixUniverseSymbols.length) {
+      return null;
+    }
+    if (signalMatrixStaVisibleRequestActive) {
+      return signalMatrixStaVisiblePageExactCellLimit;
+    }
+    return signalMatrixActiveScreenExactCellLimit;
+  }, [
+    signalMatrixActiveScreenExactCellLimit,
+    signalMatrixRequestActive,
+    signalMatrixStaVisiblePageExactCellLimit,
+    signalMatrixStaVisibleRequestActive,
     signalMatrixUniverseSymbols.length,
   ]);
   const signalMatrixRequestSymbolLimit = useMemo(() => {
@@ -3710,10 +3846,11 @@ export default function PlatformApp() {
       signalMatrixRunRef.current?.({ queueIfBusy: true });
     }, resolvedDelayMs);
   }, []);
-  const evaluateSignalMonitorMatrixMutation = useEvaluateSignalMonitorMatrix({
-    mutation: {
-      onSuccess: (data) => {
-        const lastPlan = signalMatrixLastPlanRef.current;
+	  const evaluateSignalMonitorMatrixMutation = useEvaluateSignalMonitorMatrix({
+	    mutation: {
+	      onSuccess: (data) => {
+	        signalMatrixRejectedExactCellLimitRef.current = null;
+	        const lastPlan = signalMatrixLastPlanRef.current;
         const skippedSymbols = Array.isArray(data?.skippedSymbols)
           ? data.skippedSymbols
           : [];
@@ -3832,9 +3969,21 @@ export default function PlatformApp() {
               backgroundPaused: Boolean(lastPlan?.backgroundPaused),
             },
           };
-        });
-      },
-      onSettled: () => {
+	        });
+	      },
+	      onError: (error) => {
+	        const rejection = getSignalMatrixExactCellLimitRejection(error);
+	        if (!rejection) {
+	          return;
+	        }
+	        signalMatrixRejectedExactCellLimitRef.current = {
+	          ...rejection,
+	          observedAt: Date.now(),
+	        };
+	        signalMatrixQueuedEvaluationRef.current = true;
+	        signalMatrixQueuedEvaluationDelayMsRef.current = 0;
+	      },
+	      onSettled: () => {
         releaseSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current);
         signalMatrixEvaluationInFlightRef.current = false;
         signalMatrixEvaluationStartedAtRef.current = 0;
@@ -3891,13 +4040,66 @@ export default function PlatformApp() {
         liveMemoryPressureSignal?.level || signalMatrixPressureLevel,
       server: liveMemoryPressureSignal?.server || memoryPressureSignal?.server,
     });
-    const liveActiveSignalMatrixPressureLevel = liveSignalMatrixPressureLevel;
-    const liveSignalMatrixRequestTaskLimit =
-      signalMatrixRequestTaskLimit == null
-        ? null
-        : resolveSignalMatrixActiveScreenRequestTaskLimit(
-            liveActiveSignalMatrixPressureLevel,
-          );
+    const liveSignalMatrixServerPressureObserved = Boolean(
+      liveMemoryPressureSignal?.server?.effectivePressureLevel ||
+        liveMemoryPressureSignal?.server?.apiPressureLevel ||
+        liveMemoryPressureSignal?.server?.pressureLevel ||
+        memoryPressureSignal?.server?.effectivePressureLevel ||
+        memoryPressureSignal?.server?.apiPressureLevel ||
+        memoryPressureSignal?.server?.pressureLevel,
+    );
+	    const liveActiveSignalMatrixPressureLevel =
+	      liveSignalMatrixServerPressureObserved ||
+	      liveSignalMatrixPressureLevel === "critical"
+	        ? liveSignalMatrixPressureLevel
+	        : "normal";
+	    const rejectedExactCellLimit =
+	      signalMatrixRejectedExactCellLimitRef.current &&
+	      nowMs - signalMatrixRejectedExactCellLimitRef.current.observedAt <=
+	        SIGNAL_MATRIX_EXACT_CELL_LIMIT_RETRY_TTL_MS
+	        ? signalMatrixRejectedExactCellLimitRef.current.maxCells
+	        : null;
+	    if (
+	      signalMatrixRejectedExactCellLimitRef.current &&
+	      rejectedExactCellLimit == null
+	    ) {
+	      signalMatrixRejectedExactCellLimitRef.current = null;
+	    }
+	    const baseLiveSignalMatrixRequestExactCellLimit =
+	      signalMatrixRequestExactCellLimit == null
+	        ? null
+	        : signalMatrixStaVisibleRequestActive
+	          ? resolveSignalMatrixStaVisiblePageExactCellLimit(
+	              liveActiveSignalMatrixPressureLevel,
+	            )
+	          : resolveSignalMatrixExactCellLimit(liveActiveSignalMatrixPressureLevel);
+	    const liveSignalMatrixRequestExactCellLimit =
+	      baseLiveSignalMatrixRequestExactCellLimit == null
+	        ? null
+	        : rejectedExactCellLimit == null
+	          ? baseLiveSignalMatrixRequestExactCellLimit
+	          : Math.min(
+	              baseLiveSignalMatrixRequestExactCellLimit,
+	              rejectedExactCellLimit,
+	            );
+	    const baseLiveSignalMatrixRequestTaskLimit =
+	      signalMatrixRequestTaskLimit == null
+	        ? null
+	        : signalMatrixStaVisibleRequestActive
+	          ? resolveSignalMatrixStaVisiblePageRequestTaskLimit(
+	              liveActiveSignalMatrixPressureLevel,
+	            )
+	          : resolveSignalMatrixActiveScreenRequestTaskLimit(
+	              liveActiveSignalMatrixPressureLevel,
+	            );
+	    const liveSignalMatrixRequestTaskLimit =
+	      baseLiveSignalMatrixRequestTaskLimit == null ||
+	      liveSignalMatrixRequestExactCellLimit == null
+	        ? baseLiveSignalMatrixRequestTaskLimit
+	        : Math.min(
+	            baseLiveSignalMatrixRequestTaskLimit,
+	            liveSignalMatrixRequestExactCellLimit,
+	          );
     if (!claimSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current, nowMs)) {
       scheduleSignalMatrixEvaluation(
         options.queueIfBusy
@@ -3922,6 +4124,7 @@ export default function PlatformApp() {
       nowMs,
       requestSymbolLimit: signalMatrixRequestSymbolLimit,
       requestTaskLimit: liveSignalMatrixRequestTaskLimit,
+      requestExactCellLimit: liveSignalMatrixRequestExactCellLimit,
     });
     if (!plan.requestSymbols.length) {
       releaseSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current);
@@ -3931,7 +4134,7 @@ export default function PlatformApp() {
     signalMatrixLastPlanRef.current = plan;
     signalMatrixEvaluationInFlightRef.current = true;
     signalMatrixEvaluationStartedAtRef.current = Date.now();
-    const requestOrigin =
+    const automaticRequestOrigin =
       signalMatrixAutomaticRunCountRef.current === 0 ? "startup" : "poll";
     signalMatrixAutomaticRunCountRef.current += 1;
     evaluateSignalMonitorMatrixMutation.mutate({
@@ -3941,8 +4144,9 @@ export default function PlatformApp() {
         cells: plan.requestCells,
         symbols: plan.requestSymbols,
         timeframes: plan.timeframes,
-        clientRole: signalMatrixRequestClientRole,
-        requestOrigin,
+        clientRole: signalsScreenMatrixClientRole || signalMatrixRequestClientRole,
+        requestOrigin:
+          signalsScreenMatrixRequestOrigin || automaticRequestOrigin,
       },
     });
   }, [
@@ -3950,6 +4154,7 @@ export default function PlatformApp() {
     signalMatrixPressureLevel,
     signalMatrixRequestSymbolLimit,
     signalMatrixRequestTaskLimit,
+    signalMatrixRequestExactCellLimit,
     signalMatrixRequestTimeframes,
     signalMatrixRequestTimeframesKey,
     signalMatrixBusyQueueDelayMs,
@@ -3971,6 +4176,9 @@ export default function PlatformApp() {
     signalMatrixRequestActive,
     signalMatrixRequestClientRole,
     signalMatrixStartupProtectionActive,
+    signalMatrixStaVisibleRequestActive,
+    signalsScreenMatrixClientRole,
+    signalsScreenMatrixRequestOrigin,
     screen,
   ]);
   useEffect(() => {

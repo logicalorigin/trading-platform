@@ -476,6 +476,8 @@ async function evaluateSignalOptionsStreamSignalSymbols(input: {
     pressureCapMode: "bypass-soft",
     evaluationConcurrencyOverride: Math.min(6, symbols.length),
     barSourcePolicy: "mixed",
+    includeProvisionalLiveEdge: true,
+    allowHistoricalFallback: false,
     signal: input.signal,
   });
 }

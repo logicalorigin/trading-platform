@@ -17,6 +17,7 @@
     "test:e2e": "playwright test",
     "test:e2e:replit": "node ./scripts/runPlaywrightInReplit.mjs",
     "test:e2e:waterfall:prod": "node ./scripts/runAppWaterfallAuditProd.mjs",
+    "qa:sta-history": "node ./scripts/qaStaSignalHistory.mjs",
     "smoke:render": "node ./scripts/smokeRenderLoading.mjs",
     "test:e2e:warmup:prod": "node ./scripts/runWarmupPolicyProd.mjs",
     "test:e2e:list": "playwright test --list"

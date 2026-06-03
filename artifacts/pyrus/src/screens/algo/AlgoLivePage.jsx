@@ -515,6 +515,7 @@ export const AlgoLivePage = ({
   // Signals
   visibleSignalRows,
   signalOptionsCandidates,
+  signalOptionsSourceHealth,
   signalMatrixStates = [],
   onRequestSignalMatrixHydration = null,
   selectedCandidate,
@@ -522,6 +523,7 @@ export const AlgoLivePage = ({
   onOpenCandidateInTrade,
   safeQaMode = false,
   backgroundQueriesEnabled = false,
+  rowHydrationQueriesEnabled = false,
   // Positions
   signalOptionsPositions,
   signalOptionsLedgerPositionsQuery,
@@ -1228,6 +1230,7 @@ export const AlgoLivePage = ({
           <OperationsSignalTable
             signals={visibleSignalRows}
             candidates={signalOptionsCandidates}
+            signalOptionsSourceHealth={signalOptionsSourceHealth}
             signalMatrixStates={signalMatrixStates}
             onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
             cockpitGeneratedAt={cockpitGeneratedAt}
@@ -1237,6 +1240,7 @@ export const AlgoLivePage = ({
             algoIsNarrow={algoIsNarrow}
             safeQaMode={safeQaMode}
             backgroundQueriesEnabled={backgroundQueriesEnabled}
+            rowHydrationQueriesEnabled={rowHydrationQueriesEnabled}
             onOpenCandidateInTrade={onOpenCandidateInTrade}
           />
 

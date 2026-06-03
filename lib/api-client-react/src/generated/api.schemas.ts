@@ -4425,6 +4425,7 @@ export const EvaluateSignalMonitorMatrixRequestClientRole = {
   follower: 'follower',
   manual: 'manual',
   test: 'test',
+  'algo-sta': 'algo-sta',
 } as const;
 
 export type EvaluateSignalMonitorMatrixRequestRequestOrigin = typeof EvaluateSignalMonitorMatrixRequestRequestOrigin[keyof typeof EvaluateSignalMonitorMatrixRequestRequestOrigin];
@@ -4435,6 +4436,7 @@ export const EvaluateSignalMonitorMatrixRequestRequestOrigin = {
   poll: 'poll',
   manual: 'manual',
   test: 'test',
+  'sta-visible-page': 'sta-visible-page',
 } as const;
 
 export interface EvaluateSignalMonitorMatrixCellRequest {
@@ -4661,6 +4663,13 @@ export interface SignalMonitorMatrixResponse {
 
 export interface SignalMonitorEventsResponse {
   events: SignalMonitorEvent[];
+  /**
+   * Opaque cursor for the next page, or null when the page is complete.
+   * @nullable
+   */
+  nextCursor: string | null;
+  /** True when another page is available for the same filter set. */
+  hasMore: boolean;
 }
 
 export type PineScriptStatus = typeof PineScriptStatus[keyof typeof PineScriptStatus];
@@ -6237,10 +6246,23 @@ export type ListSignalMonitorEventsParams = {
 environment?: EnvironmentMode;
 symbol?: string;
 /**
+ * Page size for this response. Follow nextCursor while hasMore is true to retrieve the full matching history; this is not a total history cap.
  * @minimum 1
- * @maximum 500
+ * @maximum 1000
  */
 limit?: number;
+/**
+ * Include events with signalAt at or after this ISO timestamp.
+ */
+from?: string;
+/**
+ * Include events with signalAt at or before this ISO timestamp.
+ */
+to?: string;
+/**
+ * Opaque cursor from the previous response.
+ */
+cursor?: string;
 };
 
 export type GetResearchFundamentalsParams = {
