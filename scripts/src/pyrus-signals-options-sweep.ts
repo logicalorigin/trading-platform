@@ -10,8 +10,10 @@ type JsonRecord = Record<string, unknown>;
 
 export type SweepVariant = {
   id: string;
-  stage: "A" | "B";
+  stage: "A" | "B" | "MTF";
   pyrusSignalsSettingsPatch: JsonRecord;
+  profilePatch?: JsonRecord;
+  winnerEligible?: boolean;
 };
 
 export type SweepMetrics = {
@@ -55,6 +57,7 @@ type SweepConfig = {
   replayWinner: boolean;
   lockWaitMs: number;
   reportDir: string;
+  mtfSweep: boolean;
 };
 
 const STAGE_A_TIME_HORIZONS = [4, 6, 8, 10, 12, 16, 20] as const;
@@ -63,6 +66,8 @@ const CHOCH_ATR_BUFFERS = [0, 0.25, 0.5] as const;
 const BODY_EXPANSIONS = [0, 0.5] as const;
 const VOLUME_GATES = [0, 1.0] as const;
 const MIN_CLOSED_TRADES = 20;
+const DEFAULT_MTF_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h"] as const;
+const ALL_MTF_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"] as const;
 
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -105,12 +110,25 @@ function readSweepConfig(): SweepConfig {
     "PYRUS_SIGNALS_SWEEP_SMOKE",
     false,
   );
-  const start =
+  const mtfSweep =
+    readBooleanEnv("PYRUS_SIGNALS_SWEEP_MTF", false) ||
+    readBooleanEnv("SIGNAL_OPTIONS_MTF_SWEEP", false);
+  const explicitStart =
     process.env["PYRUS_SIGNALS_SWEEP_START"] ??
+    process.env["SIGNAL_OPTIONS_SWEEP_START"];
+  const explicitEnd =
+    process.env["PYRUS_SIGNALS_SWEEP_END"] ??
+    process.env["SIGNAL_OPTIONS_SWEEP_END"];
+  if (mtfSweep && (!explicitStart || !explicitEnd)) {
+    throw new Error(
+      "MTF sweeps require PYRUS_SIGNALS_SWEEP_START and PYRUS_SIGNALS_SWEEP_END so the two-day window is explicit.",
+    );
+  }
+  const start =
+    explicitStart ??
     (smoke ? "2026-05-04" : "2026-04-01");
   const end =
-    process.env["PYRUS_SIGNALS_SWEEP_END"] ??
-    process.env["SIGNAL_OPTIONS_SWEEP_END"] ??
+    explicitEnd ??
     (smoke ? "2026-05-05" : undefined);
   const reportRoot =
     process.env["PYRUS_SIGNALS_SWEEP_REPORT_DIR"] ??
@@ -128,13 +146,14 @@ function readSweepConfig(): SweepConfig {
       !smoke &&
       readBooleanEnv(
         "PYRUS_SIGNALS_SWEEP_REPLAY_WINNER",
-        readBooleanEnv("PYRUS_SIGNALS_SWEEP_REPLAY_WINNER", true),
+        readBooleanEnv("SIGNAL_OPTIONS_SWEEP_REPLAY_WINNER", !mtfSweep),
       ),
     lockWaitMs: readIntegerEnv(
       "PYRUS_SIGNALS_SWEEP_LOCK_WAIT_MS",
       readIntegerEnv("PYRUS_SIGNALS_SWEEP_LOCK_WAIT_MS", 0),
     ),
     reportDir: path.resolve(process.cwd(), reportRoot),
+    mtfSweep,
   };
 }
 
@@ -177,6 +196,158 @@ export function buildStageBVariants(timeHorizons: readonly number[]): SweepVaria
     }
   }
   return variants;
+}
+
+function mtfProfilePatch(input: {
+  enabled?: boolean;
+  timeframes: readonly string[];
+  requiredCount: number;
+  preset?: string;
+}): JsonRecord {
+  return {
+    entryGate: {
+      mtfAlignment: {
+        enabled: input.enabled ?? true,
+        requiredCount: input.requiredCount,
+        timeframes: [...input.timeframes],
+        preset: input.preset ?? "custom",
+      },
+    },
+  };
+}
+
+export function buildMtfEntryGateVariants(): SweepVariant[] {
+  return [
+    {
+      id: "diagnostic-no-mtf",
+      stage: "MTF",
+      pyrusSignalsSettingsPatch: {},
+      profilePatch: mtfProfilePatch({
+        enabled: false,
+        timeframes: DEFAULT_MTF_TIMEFRAMES,
+        requiredCount: 1,
+      }),
+      winnerEligible: false,
+    },
+    {
+      id: "baseline-live-five-q1",
+      stage: "MTF",
+      pyrusSignalsSettingsPatch: {},
+      profilePatch: mtfProfilePatch({
+        timeframes: DEFAULT_MTF_TIMEFRAMES,
+        requiredCount: 1,
+      }),
+    },
+    {
+      id: "baseline-default-five-q2",
+      stage: "MTF",
+      pyrusSignalsSettingsPatch: {},
+      profilePatch: mtfProfilePatch({
+        timeframes: DEFAULT_MTF_TIMEFRAMES,
+        requiredCount: 2,
+      }),
+    },
+    {
+      id: "scalp-q2",
+      stage: "MTF",
+      pyrusSignalsSettingsPatch: {},
+      profilePatch: mtfProfilePatch({
+        timeframes: ["1m", "2m", "5m"],
+        requiredCount: 2,
+        preset: "scalp",
+      }),
+    },
+    {
+      id: "intraday-q2",
+      stage: "MTF",
+      pyrusSignalsSettingsPatch: {},
+      profilePatch: mtfProfilePatch({
+        timeframes: ["5m", "15m", "1h"],
+        requiredCount: 2,
+        preset: "balanced",
+      }),
+    },
+    {
+      id: "mixed-fast-hour-q2",
+      stage: "MTF",
+      pyrusSignalsSettingsPatch: {},
+      profilePatch: mtfProfilePatch({
+        timeframes: ["1m", "5m", "1h"],
+        requiredCount: 2,
+        preset: "balanced",
+      }),
+    },
+    {
+      id: "balanced-six-q2",
+      stage: "MTF",
+      pyrusSignalsSettingsPatch: {},
+      profilePatch: mtfProfilePatch({
+        timeframes: ALL_MTF_TIMEFRAMES,
+        requiredCount: 2,
+        preset: "six_frame",
+      }),
+    },
+    {
+      id: "balanced-six-q3",
+      stage: "MTF",
+      pyrusSignalsSettingsPatch: {},
+      profilePatch: mtfProfilePatch({
+        timeframes: ALL_MTF_TIMEFRAMES,
+        requiredCount: 3,
+        preset: "six_frame",
+      }),
+    },
+    {
+      id: "higher-confirm-q2",
+      stage: "MTF",
+      pyrusSignalsSettingsPatch: {},
+      profilePatch: mtfProfilePatch({
+        timeframes: ["15m", "1h", "1d"],
+        requiredCount: 2,
+        preset: "higher_timeframe",
+      }),
+    },
+    {
+      id: "higher-confirm-q3",
+      stage: "MTF",
+      pyrusSignalsSettingsPatch: {},
+      profilePatch: mtfProfilePatch({
+        timeframes: ["15m", "1h", "1d"],
+        requiredCount: 3,
+        preset: "higher_timeframe",
+      }),
+    },
+    {
+      id: "swing-q2",
+      stage: "MTF",
+      pyrusSignalsSettingsPatch: {},
+      profilePatch: mtfProfilePatch({
+        timeframes: ["5m", "15m", "1h", "1d"],
+        requiredCount: 2,
+        preset: "higher_timeframe",
+      }),
+    },
+    {
+      id: "fast-plus-daily-q2",
+      stage: "MTF",
+      pyrusSignalsSettingsPatch: {},
+      profilePatch: mtfProfilePatch({
+        timeframes: ["1m", "5m", "1d"],
+        requiredCount: 2,
+        preset: "balanced",
+      }),
+    },
+    {
+      id: "hour-daily-q2",
+      stage: "MTF",
+      pyrusSignalsSettingsPatch: {},
+      profilePatch: mtfProfilePatch({
+        timeframes: ["1h", "1d"],
+        requiredCount: 2,
+        preset: "higher_timeframe",
+      }),
+    },
+  ];
 }
 
 export function computeMaxRealizedDrawdown(closedTrades: readonly unknown[]): number {
@@ -262,6 +433,7 @@ export function rankSweepResults(
     .filter(
       (result) =>
         result.status === "succeeded" &&
+        result.variant.winnerEligible !== false &&
         result.metrics.closedTrades >= minClosedTrades,
     )
     .map((result) => ({ ...result, eligible: true, ineligibleReason: null }))
@@ -370,6 +542,7 @@ async function runVariant(input: {
       forceDeploymentUniverse: true,
       signalTimeframe: input.config.signalTimeframe,
       pyrusSignalsSettingsPatch: input.variant.pyrusSignalsSettingsPatch,
+      profilePatch: input.variant.profilePatch,
     });
     const finished = new Date();
     const metrics = computeSweepMetrics(result);
@@ -424,7 +597,8 @@ function reportRows(results: readonly SweepResult[]) {
     status: result.status,
     eligible: result.eligible,
     ineligibleReason: result.ineligibleReason ?? "",
-    patch: JSON.stringify(result.variant.pyrusSignalsSettingsPatch),
+    pyrusSignalsPatch: JSON.stringify(result.variant.pyrusSignalsSettingsPatch),
+    profilePatch: JSON.stringify(result.variant.profilePatch ?? {}),
     realizedPnl: result.metrics.realizedPnl,
     winRate: result.metrics.winRate,
     profitFactor: result.metrics.profitFactor,
@@ -494,13 +668,14 @@ async function writeReports(input: {
       ? `- Winner: ${winner.variant.id} score ${winner.metrics.riskAdjustedScore}`
       : "- Winner: none",
     "",
-    "| Rank | Variant | Patch | PnL | Score | Trades | PF | Max DD | Open |",
-    "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Rank | Variant | Pyrus Patch | Profile Patch | PnL | Score | Trades | PF | Max DD | Open |",
+    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ...input.ranked.slice(0, 20).map((result, index) =>
       [
         index + 1,
         result.variant.id,
         `\`${JSON.stringify(result.variant.pyrusSignalsSettingsPatch)}\``,
+        `\`${JSON.stringify(result.variant.profilePatch ?? {})}\``,
         result.metrics.realizedPnl.toFixed(2),
         result.metrics.riskAdjustedScore.toFixed(6),
         result.metrics.closedTrades,
@@ -577,6 +752,9 @@ async function main() {
   try {
     const deployment = await readSignalOptionsDeployment();
     const stageA = config.smoke ? buildStageAVariants().slice(0, 2) : buildStageAVariants();
+    const mtfVariants = config.smoke
+      ? buildMtfEntryGateVariants().slice(0, 3)
+      : buildMtfEntryGateVariants();
     const results: SweepResult[] = [];
     console.log(JSON.stringify({
       deployment: {
@@ -585,16 +763,18 @@ async function main() {
         symbolCount: deployment.symbolUniverse.length,
       },
       config,
-      stageAVariants: stageA.length,
+      stageAVariants: config.mtfSweep ? 0 : stageA.length,
+      mtfVariants: config.mtfSweep ? mtfVariants.length : 0,
     }));
 
-    for (const variant of stageA) {
+    const initialVariants = config.mtfSweep ? mtfVariants : stageA;
+    for (const variant of initialVariants) {
       console.log(`dry-run ${variant.id}`);
       results.push(await runVariant({ deployment, variant, config, commit: false, replay: false }));
     }
 
     let ranked = rankSweepResults(results);
-    if (!config.smoke) {
+    if (!config.smoke && !config.mtfSweep) {
       const topHorizons = ranked
         .filter((result) => result.variant.stage === "A")
         .slice(0, 2)

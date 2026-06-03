@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildMtfEntryGateVariants,
   buildStageAVariants,
   buildStageBVariants,
   computeMaxRealizedDrawdown,
@@ -57,6 +58,50 @@ test("Pyrus Signals signal-options sweep grid builds 55 dry variants", () => {
   assert.equal(stageA.length + stageB.length, 55);
 });
 
+test("MTF entry-gate sweep variants freeze signal settings and cover curated frame quorums", () => {
+  const variants = buildMtfEntryGateVariants();
+  const diagnostic = variants.find((item) => item.id === "diagnostic-no-mtf");
+  const balanced = variants.find((item) => item.id === "balanced-six-q3");
+
+  assert.equal(variants.length, 13);
+  assert.deepEqual(variants.map((item) => item.pyrusSignalsSettingsPatch), [
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+  ]);
+  assert.equal(diagnostic?.winnerEligible, false);
+  assert.deepEqual(diagnostic?.profilePatch, {
+    entryGate: {
+      mtfAlignment: {
+        enabled: false,
+        requiredCount: 1,
+        timeframes: ["1m", "2m", "5m", "15m", "1h"],
+        preset: "custom",
+      },
+    },
+  });
+  assert.deepEqual(balanced?.profilePatch, {
+    entryGate: {
+      mtfAlignment: {
+        enabled: true,
+        requiredCount: 3,
+        timeframes: ["1m", "2m", "5m", "15m", "1h", "1d"],
+        preset: "six_frame",
+      },
+    },
+  });
+});
+
 test("sweep metrics compute daily realized drawdown and profit factor", () => {
   const closedTrades = [
     { closedAt: "2026-05-01T15:00:00.000Z", pnl: 1000 },
@@ -87,6 +132,16 @@ test("sweep ranking filters ineligible runs and applies primary ordering", () =>
   const ranked = rankSweepResults([
     result("failed", { riskAdjustedScore: 100, closedTrades: 25 }, "failed"),
     result("too-few-trades", { riskAdjustedScore: 100, closedTrades: 19 }),
+    {
+      ...result("diagnostic-no-mtf", {
+        riskAdjustedScore: 200,
+        closedTrades: 100,
+      }),
+      variant: {
+        ...variant("diagnostic-no-mtf"),
+        winnerEligible: false,
+      },
+    },
     result("lower-score", {
       realizedPnl: 1200,
       riskAdjustedScore: 1.2,
