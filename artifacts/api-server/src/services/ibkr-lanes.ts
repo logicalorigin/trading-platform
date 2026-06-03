@@ -727,8 +727,15 @@ async function buildLaneMemberships(
 function buildNodes(
   bridge: BridgeLaneDiagnosticsSnapshot | null,
   bridgeError: string | null,
+  memberships: LaneMembership[] = [],
 ): IbkrLaneArchitectureSnapshot["layers"] {
   const flowCoverage = getOptionsFlowUniverseCoverage();
+  const flowScannerMembership = memberships.find(
+    (membership) => membership.laneId === "flow-scanner",
+  );
+  const flowScannerSummary = flowScannerMembership
+    ? `${flowScannerMembership.admittedSymbols.length} of ${flowScannerMembership.desiredSymbols.length} symbols admitted; ${flowScannerMembership.activeCount ?? 0} active IBKR lines.`
+    : "Rotates symbols through option chain and quote hydration.";
   const bridgePressure = bridge?.pressure ?? "unknown";
   const bridgeStatus =
     bridgePressure === "normal" ||
@@ -764,7 +771,7 @@ function buildNodes(
           label: "Options Flow Scanner",
           layer: "platform",
           status: "normal",
-          summary: "Rotates symbols through option chain and quote hydration.",
+          summary: flowScannerSummary,
         },
       ],
     },
@@ -974,7 +981,7 @@ export async function getIbkrLaneArchitecture(): Promise<IbkrLaneArchitectureSna
       enabled: true,
       path: overrideFile,
     },
-    layers: buildNodes(bridge, bridgeError),
+    layers: buildNodes(bridge, bridgeError, memberships),
     edges: [
       { from: "flow-universe", to: "flow-scanner", label: "symbol batches" },
       { from: "flow-scanner", to: "api-governor", label: "governed requests" },
