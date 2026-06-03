@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, lt } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lt } from "drizzle-orm";
 import {
   db,
   flowEventHydrationSessionsTable,
@@ -773,6 +773,49 @@ async function loadStoredHistoricalFlowEvents(input: {
     return rows.map(storedRowToFlowEvent);
   } catch (error) {
     disableHistoricalFlowStoreAfterError(error, "loadStoredHistoricalFlowEvents");
+    return [];
+  }
+}
+
+export async function listRecentStoredHistoricalFlowEvents(input: {
+  providerName: string;
+  limit: number;
+  filters: FlowEventsFilters;
+  unusualThreshold?: number;
+  candidateLimit?: number;
+}): Promise<ProviderFlowEvent[]> {
+  if (isHistoricalFlowStoreDisabled()) {
+    return [];
+  }
+
+  const provider = normalizeProviderName(input.providerName);
+  const limit = Math.max(1, Math.min(input.limit, 1_000));
+  const candidateLimit = Math.max(
+    limit,
+    Math.min(
+      HISTORICAL_FLOW_WINDOW_ROW_LIMIT,
+      Math.max(input.candidateLimit ?? 0, limit * 10),
+    ),
+  );
+
+  try {
+    const rows = await db
+      .select()
+      .from(flowEventsTable)
+      .where(eq(flowEventsTable.provider, provider))
+      .orderBy(desc(flowEventsTable.occurredAt))
+      .limit(candidateLimit);
+    return filterFlowEventsForRequest(
+      rows.map(storedRowToFlowEvent),
+      input.filters,
+      input.unusualThreshold,
+      limit,
+    ) as ProviderFlowEvent[];
+  } catch (error) {
+    disableHistoricalFlowStoreAfterError(
+      error,
+      "listRecentStoredHistoricalFlowEvents",
+    );
     return [];
   }
 }

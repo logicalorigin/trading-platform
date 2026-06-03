@@ -160,6 +160,7 @@ import {
 import { buildMarketDataWorkPlan } from "./market-data-work-planner";
 import {
   listHistoricalFlowEvents,
+  listRecentStoredHistoricalFlowEvents,
   normalizeHistoricalFlowSampleBucketSeconds,
   __resetHistoricalFlowEventsForTests,
   __setHistoricalFlowDirectFallbackTimeoutMsForTests,
@@ -11795,6 +11796,18 @@ function flowEventAggregateIdentity(event: unknown): string {
     .join("|");
 }
 
+function dedupeAggregateFlowEvents(events: unknown[]): unknown[] {
+  const seenEvents = new Set<string>();
+  return events.filter((event) => {
+    const identity = flowEventAggregateIdentity(event);
+    if (!identity || seenEvents.has(identity)) {
+      return false;
+    }
+    seenEvents.add(identity);
+    return true;
+  });
+}
+
 function compareAggregateFlowEvents(left: unknown, right: unknown): number {
   const leftRecord =
     left && typeof left === "object" ? (left as Record<string, unknown>) : {};
@@ -11825,6 +11838,29 @@ function compareAggregateFlowEvents(left: unknown, right: unknown): number {
   return (
     flowEventDateMs(rightRecord.occurredAt ?? rightRecord.updatedAt) -
     flowEventDateMs(leftRecord.occurredAt ?? leftRecord.updatedAt)
+  );
+}
+
+function compareAggregateFlowEventsByRecency(
+  left: unknown,
+  right: unknown,
+): number {
+  const leftRecord =
+    left && typeof left === "object" ? (left as Record<string, unknown>) : {};
+  const rightRecord =
+    right && typeof right === "object"
+      ? (right as Record<string, unknown>)
+      : {};
+
+  const occurredAt =
+    flowEventDateMs(rightRecord.occurredAt ?? rightRecord.updatedAt) -
+    flowEventDateMs(leftRecord.occurredAt ?? leftRecord.updatedAt);
+  if (occurredAt !== 0) {
+    return occurredAt;
+  }
+
+  return (
+    flowEventNumber(rightRecord.premium) - flowEventNumber(leftRecord.premium)
   );
 }
 
@@ -12012,46 +12048,67 @@ export async function listAggregateFlowEvents(
         });
     }
   }
-  const seenEvents = new Set<string>();
-  const events = snapshots
-    .flatMap((snapshot) => snapshot.events)
-    .filter((event) => {
-      const identity = flowEventAggregateIdentity(event);
-      if (!identity || seenEvents.has(identity)) {
-        return false;
-      }
-      seenEvents.add(identity);
-      return true;
-    })
+  const snapshotEvents = dedupeAggregateFlowEvents(
+    snapshots.flatMap((snapshot) => snapshot.events),
+  )
     .sort(compareAggregateFlowEvents);
+
+  const storedEvents = await listRecentStoredHistoricalFlowEvents({
+    providerName: getMarketDataConnectionName(),
+    limit,
+    filters,
+    unusualThreshold,
+    candidateLimit: Math.max(limit * 10, 250),
+  });
   const filteredEvents = filterFlowEventsForRequest(
-    events,
+    dedupeAggregateFlowEvents([...snapshotEvents, ...storedEvents]).sort(
+      compareAggregateFlowEventsByRecency,
+    ),
     filters,
     unusualThreshold,
     limit,
   );
+  const hasStoredEvents = storedEvents.length > 0;
+  const hasSnapshotEvents = filteredEvents.some((event) => {
+    const provider =
+      event && typeof event === "object"
+        ? (event as Record<string, unknown>).provider
+        : null;
+    return provider === "ibkr";
+  });
   const freshSnapshots = snapshots.filter(
     (snapshot) => snapshot.freshness === "fresh",
   ).length;
   const staleSnapshots = snapshots.length - freshSnapshots;
   const sourceStatus = filteredEvents.length
-    ? freshSnapshots > 0
+    ? hasSnapshotEvents && freshSnapshots > 0
       ? "live"
       : "fallback"
     : "empty";
+  const sourceProvider = hasSnapshotEvents
+    ? "ibkr"
+    : filteredEvents.length && hasStoredEvents
+      ? "massive"
+      : "none";
+  const attemptedProviders: FlowDataProvider[] = ["ibkr", "massive"];
 
   return {
     events: filteredEvents,
     source: flowSource({
-      provider: filteredEvents.length ? "ibkr" : "none",
+      provider: sourceProvider,
       status: sourceStatus,
-      fallbackUsed: staleSnapshots > 0 || Boolean(scannerCoverage.fallbackUsed),
-      attemptedProviders: ["ibkr"],
+      fallbackUsed:
+        hasStoredEvents ||
+        staleSnapshots > 0 ||
+        Boolean(scannerCoverage.fallbackUsed),
+      attemptedProviders,
       unusualThreshold: unusualThreshold ?? 1,
-      ibkrStatus: filteredEvents.length ? "loaded" : "empty",
+      ibkrStatus: hasSnapshotEvents ? "loaded" : "empty",
       ibkrReason:
         filteredEvents.length > 0
-          ? scannerCoverage.degradedReason
+          ? hasSnapshotEvents
+            ? scannerCoverage.degradedReason
+            : "options_flow_historical_store"
           : queuedSeedRefresh
             ? "options_flow_scanner_queued"
             : aggregateSeedBlockReason

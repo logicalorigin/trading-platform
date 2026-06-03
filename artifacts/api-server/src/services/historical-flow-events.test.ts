@@ -59,6 +59,20 @@ test("historical flow nonblocking store reads have a bounded response budget", (
   assert.match(source, /historical flow store read timed out/);
 });
 
+test("historical aggregate flow can read the latest durable rows directly", () => {
+  const recentListFunction = source.match(
+    /export async function listRecentStoredHistoricalFlowEvents[\s\S]*?\n}\n\nasync function persistHistoricalFlowEvents/,
+  )?.[0];
+
+  assert.ok(recentListFunction);
+  assert.match(recentListFunction, /from\(flowEventsTable\)/);
+  assert.match(recentListFunction, /eq\(flowEventsTable\.provider, provider\)/);
+  assert.match(recentListFunction, /orderBy\(desc\(flowEventsTable\.occurredAt\)\)/);
+  assert.match(recentListFunction, /filterFlowEventsForRequest/);
+  assert.match(recentListFunction, /Math\.max\(input\.candidateLimit \?\? 0, limit \* 10\)/);
+  assert.match(recentListFunction, /listRecentStoredHistoricalFlowEvents/);
+});
+
 test("historical flow nonblocking direct fallback is explicitly bounded", () => {
   assert.match(source, /HISTORICAL_FLOW_DIRECT_FALLBACK_CONTRACT_LIMIT = 40/);
   assert.match(source, /HISTORICAL_FLOW_DIRECT_FALLBACK_SNAPSHOT_PAGE_LIMIT = 1/);

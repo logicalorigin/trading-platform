@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { ListFlowEventsResponse } from "@workspace/api-zod";
 import type { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 import type {
@@ -61,6 +63,11 @@ function clearMassiveEnv(): void {
 
 clearMassiveEnv();
 
+const platformSource = readFileSync(
+  fileURLToPath(new URL("./platform.ts", import.meta.url)),
+  "utf8",
+);
+
 const platformModule = await import("./platform");
 
 const {
@@ -94,6 +101,7 @@ const {
 const {
   __resetBridgeOptionQuoteStreamForTests,
   __setBridgeOptionQuoteClientForTests,
+  __setBridgeOptionQuoteStreamNowForTests,
 } = await import("./bridge-option-quote-stream");
 const {
   __resetApiResourcePressureForTests,
@@ -301,10 +309,14 @@ function massiveFlowEvent(id: string, premium: number) {
 }
 
 test.beforeEach(() => {
+  __setBridgeOptionQuoteStreamNowForTests(
+    new Date("2026-06-02T15:00:00.000Z"),
+  );
   setOptionsFlowRuntimeOverrides({
     scannerSessionGuardEnabled: false,
     universeMode: "watchlist",
   });
+  __setHistoricalFlowStoreDisabledForTests(true);
   __setBridgeOptionQuoteClientForTests({
     async getHealth() {
       return {
@@ -1792,6 +1804,26 @@ test("listAggregateFlowEvents reuses default scanner snapshots with request thre
   assert.equal(result.source.ibkrStatus, "loaded");
 });
 
+test("listAggregateFlowEvents backfills the flow lane from recent durable flow rows", () => {
+  const start = platformSource.indexOf(
+    "export async function listAggregateFlowEvents",
+  );
+  const end = platformSource.indexOf(
+    "export async function getFlowPremiumDistribution",
+    start,
+  );
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const aggregateSource = platformSource.slice(start, end);
+
+  assert.match(aggregateSource, /listRecentStoredHistoricalFlowEvents/);
+  assert.match(aggregateSource, /dedupeAggregateFlowEvents\(\[\.\.\.snapshotEvents, \.\.\.storedEvents\]\)/);
+  assert.match(aggregateSource, /compareAggregateFlowEventsByRecency/);
+  assert.match(aggregateSource, /provider: sourceProvider/);
+  assert.match(aggregateSource, /"options_flow_historical_store"/);
+  assert.match(aggregateSource, /\["ibkr", "massive"\]/);
+});
+
 test("listAggregateFlowEvents backfills underfilled aggregate scanner snapshots", async () => {
   const chainCalls: string[] = [];
   let activityCalls = 0;
@@ -1828,6 +1860,7 @@ test("listAggregateFlowEvents backfills underfilled aggregate scanner snapshots"
     fallbackPromoteCount: 0,
   });
   __resetOptionChainCachesForTests({ resetFlowScanner: false });
+  __setHistoricalFlowStoreDisabledForTests(true);
   chainCalls.length = 0;
 
   const first = ListFlowEventsResponse.parse(
