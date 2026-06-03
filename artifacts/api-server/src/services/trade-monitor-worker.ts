@@ -25,6 +25,7 @@ import {
   type SignalMonitorTimeframe,
 } from "./signal-monitor";
 import {
+  isStockAggregateStreamingAvailable,
   subscribeMutableStockMinuteAggregates,
   type StockMinuteAggregateMessage,
   type StockMinuteAggregateSubscription,
@@ -34,7 +35,6 @@ import { requestSignalOptionsWorkerScanSoon } from "./signal-options-worker";
 const WORKER_WAKEUP_MS = 5_000;
 const ADVISORY_LOCK_KEY = 1_930_514_021;
 const FAILED_KEY_RETRY_MS = 60_000;
-const STREAM_EVALUATION_SAFETY_MS = 2_000;
 const STREAM_EVALUATION_FLUSH_MS = 100;
 
 type ReleaseLock = () => Promise<void>;
@@ -48,6 +48,7 @@ type WorkerDependencies = {
   updateProfileEvaluationMetadata:
     typeof updateSignalMonitorProfileEvaluationMetadata;
   updateProfileLastError: (profileId: string, message: string | null) => Promise<void>;
+  isStockAggregateStreamingAvailable: () => boolean;
   acquireTickLock: () => Promise<ReleaseLock | null>;
   subscribeStockMinuteAggregates: typeof subscribeMutableStockMinuteAggregates;
   setTimer: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
@@ -185,6 +186,11 @@ function defaultDependencies(
       options.updateProfileEvaluationMetadata ??
       updateSignalMonitorProfileEvaluationMetadata,
     updateProfileLastError: options.updateProfileLastError ?? updateProfileLastError,
+    isStockAggregateStreamingAvailable:
+      options.isStockAggregateStreamingAvailable ??
+      (() =>
+        process.env["SIGNAL_MONITOR_STREAM_FIRST_WORKER"] !== "0" &&
+        isStockAggregateStreamingAvailable()),
     acquireTickLock: options.acquireTickLock ?? acquirePostgresAdvisoryLock,
     subscribeStockMinuteAggregates:
       options.subscribeStockMinuteAggregates ?? subscribeMutableStockMinuteAggregates,
@@ -240,6 +246,13 @@ async function runProfile(input: {
       cursor: runtime.evaluationCursor,
     });
     runtime.evaluationCursor = resolvedBatch.nextCursor;
+    if (dependencies.isStockAggregateStreamingAvailable()) {
+      if (profile.lastError) {
+        await dependencies.updateProfileLastError(profile.id, null);
+      }
+      return;
+    }
+
     const concurrency = positiveInteger(
       evaluationProfile.evaluationConcurrency,
       2,
@@ -344,7 +357,7 @@ async function runProfile(input: {
   }
 }
 
-function completedStreamBarStart(input: {
+function streamSignalBarStart(input: {
   message: StockMinuteAggregateMessage;
   timeframe: SignalMonitorTimeframe;
 }): Date | null {
@@ -353,11 +366,7 @@ function completedStreamBarStart(input: {
   }
   const timeframeMs = getSignalMonitorTimeframeMs(input.timeframe);
   const minuteStartMs = Math.floor(input.message.startMs / 60_000) * 60_000;
-  const minuteEndExclusiveMs = minuteStartMs + 60_000;
-  if (minuteEndExclusiveMs % timeframeMs !== 0) {
-    return null;
-  }
-  return new Date(minuteEndExclusiveMs - timeframeMs);
+  return new Date(Math.floor(minuteStartMs / timeframeMs) * timeframeMs);
 }
 
 async function runStreamProfileSymbolUnlocked(input: {
@@ -367,32 +376,29 @@ async function runStreamProfileSymbolUnlocked(input: {
   dependencies: WorkerDependencies;
   activeStreamEvaluationKeys: Set<string>;
 }) {
-  const { profile, runtime, message, dependencies, activeStreamEvaluationKeys } = input;
+  const {
+    profile,
+    runtime,
+    message,
+    dependencies,
+    activeStreamEvaluationKeys,
+  } = input;
   const evaluationSettings = cappedSignalMonitorEvaluationProfile(profile);
   const evaluationProfile = evaluationSettings.profile;
   const timeframe = resolveSignalMonitorTimeframe(evaluationProfile.timeframe);
-  const expectedLatestBarAt = completedStreamBarStart({ message, timeframe });
+  const expectedLatestBarAt = streamSignalBarStart({ message, timeframe });
   if (!expectedLatestBarAt) {
     return;
   }
 
   const symbol = message.symbol;
-  const timeframeMs = getSignalMonitorTimeframeMs(timeframe);
-  const evaluatedAt = new Date(
-    Math.max(
-      dependencies.now().getTime(),
-      expectedLatestBarAt.getTime() + timeframeMs + STREAM_EVALUATION_SAFETY_MS,
-    ),
-  );
+  const evaluatedAt = dependencies.now();
   const expectedKey = evaluatedKey({
     profileId: profile.id,
     symbol,
     timeframe,
-    latestBarAt: expectedLatestBarAt,
+    latestBarAt: new Date(message.startMs),
   });
-  if (runtime.evaluatedKeys.has(expectedKey)) {
-    return;
-  }
   const expectedRetryAfterMs = runtime.failedKeys.get(expectedKey) ?? 0;
   if (expectedRetryAfterMs > evaluatedAt.getTime()) {
     return;
@@ -408,6 +414,7 @@ async function runStreamProfileSymbolUnlocked(input: {
       timeframe,
       evaluatedAt,
       retryStale: true,
+      includeProvisionalLiveEdge: true,
     });
     if (
       !completedBars.latestBarAt ||
@@ -650,7 +657,7 @@ export function createTradeMonitorWorker(
         continue;
       }
       const timeframe = resolveSignalMonitorTimeframe(profile.timeframe);
-      if (!completedStreamBarStart({ message, timeframe })) {
+      if (!streamSignalBarStart({ message, timeframe })) {
         continue;
       }
       const pending =

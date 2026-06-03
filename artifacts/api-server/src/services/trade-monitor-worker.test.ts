@@ -4,6 +4,7 @@ import type { SignalMonitorSymbolState } from "@workspace/db";
 import type { SignalMonitorProfileRow } from "./signal-monitor";
 
 process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
+process.env["SIGNAL_MONITOR_STREAM_FIRST_WORKER"] = "0";
 
 const workerModule = await import("./trade-monitor-worker");
 const signalMonitorModule = await import("./signal-monitor");
@@ -111,16 +112,18 @@ test("signal monitor completed-bar rules exclude active bars", () => {
   assert.equal(
     isSignalMonitorBarComplete({
       timestamp: new Date("2026-04-24T14:30:00.000Z"),
+      dataUpdatedAt: new Date("2026-04-24T14:31:00.000Z"),
       timeframe: "1m",
-      evaluatedAt: new Date("2026-04-24T14:31:01.999Z"),
+      evaluatedAt: new Date("2026-04-24T14:30:59.999Z"),
     }),
     false,
   );
   assert.equal(
     isSignalMonitorBarComplete({
       timestamp: new Date("2026-04-24T14:30:00.000Z"),
+      dataUpdatedAt: new Date("2026-04-24T14:31:00.000Z"),
       timeframe: "1m",
-      evaluatedAt: new Date("2026-04-24T14:31:02.000Z"),
+      evaluatedAt: new Date("2026-04-24T14:31:00.000Z"),
     }),
     true,
   );
@@ -374,6 +377,59 @@ test("trade monitor worker rechecks unchanged no-signal bars after the poll inte
   assert.equal(evaluateCalls, 2);
 });
 
+test("trade monitor worker does not run REST-backed profile polls while stock streaming is available", async () => {
+  let loadCalls = 0;
+  let evaluateCalls = 0;
+  let subscribedSymbols: string[] = [];
+  const worker = createTradeMonitorWorker({
+    listProfiles: async () => [profile({ pollIntervalSeconds: 15 })],
+    resolveUniverse: async (inputProfile) => ({
+      profile: inputProfile,
+      symbols: ["AAPL", "MSFT"],
+      watchlistSymbols: ["AAPL", "MSFT"],
+      skippedSymbols: [],
+      truncated: false,
+      universe: signalMonitorTestUniverse(inputProfile, ["AAPL", "MSFT"]),
+    }),
+    loadCompletedBars: async () => {
+      loadCalls += 1;
+      return {
+        bars: [],
+        latestBarAt: new Date("2026-04-24T14:30:00.000Z"),
+      };
+    },
+    evaluateSymbolFromCompletedBars: async (input: { symbol: string }) => {
+      evaluateCalls += 1;
+      return symbolState({ symbol: input.symbol });
+    },
+    updateProfileEvaluationMetadata: async (input: {
+      profile: SignalMonitorProfileRow;
+    }) => input.profile,
+    updateProfileLastError: async () => {},
+    isStockAggregateStreamingAvailable: () => true,
+    acquireTickLock: async () => async () => {},
+    subscribeStockMinuteAggregates: (symbols) => {
+      subscribedSymbols = symbols;
+      return {
+        setSymbols(nextSymbols: string[]) {
+          subscribedSymbols = nextSymbols;
+        },
+        unsubscribe() {
+          subscribedSymbols = [];
+        },
+      };
+    },
+    now: () => new Date("2026-04-24T14:33:00.000Z"),
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+
+  assert.deepEqual(subscribedSymbols, ["AAPL", "MSFT"]);
+  assert.equal(loadCalls, 0);
+  assert.equal(evaluateCalls, 0);
+});
+
 test("trade monitor worker evaluates a streamed aggregate without waiting for the next poll", async () => {
   let evaluateCalls = 0;
   let currentLatestBarAt = new Date("2026-04-24T14:30:00.000Z");
@@ -436,6 +492,74 @@ test("trade monitor worker evaluates a streamed aggregate without waiting for th
 
   await worker.runOnce();
   assert.equal(evaluateCalls, 2);
+});
+
+test("trade monitor worker evaluates 5m streamed aggregates before the 5m bar closes", async () => {
+  let evaluateCalls = 0;
+  let currentLatestBarAt = new Date("2026-04-24T14:30:00.000Z");
+  let now = new Date("2026-04-24T14:31:30.000Z");
+  let streamCallback: ((message: any) => void) | null = null;
+  const loadInputs: Array<{
+    timeframe?: string;
+    includeProvisionalLiveEdge?: boolean;
+  }> = [];
+  const worker = createTradeMonitorWorker({
+    listProfiles: async () => [
+      profile({ timeframe: "5m", pollIntervalSeconds: 3600 }),
+    ],
+    resolveUniverse: async (inputProfile) => ({
+      profile: inputProfile,
+      symbols: ["AAPL"],
+      watchlistSymbols: ["AAPL"],
+      skippedSymbols: [],
+      truncated: false,
+      universe: signalMonitorTestUniverse(inputProfile, ["AAPL"]),
+    }),
+    loadCompletedBars: async (input) => {
+      loadInputs.push(input);
+      return {
+        bars: [],
+        latestBarAt: currentLatestBarAt,
+      };
+    },
+    evaluateSymbolFromCompletedBars: async (input: { symbol: string }) => {
+      evaluateCalls += 1;
+      return symbolState({
+        symbol: input.symbol,
+        timeframe: "5m",
+        latestBarAt: currentLatestBarAt,
+      });
+    },
+    updateProfileEvaluationMetadata: async (input: {
+      profile: SignalMonitorProfileRow;
+    }) => input.profile,
+    updateProfileLastError: async () => {},
+    acquireTickLock: async () => async () => {},
+    subscribeStockMinuteAggregates: (_symbols, onAggregate) => {
+      streamCallback = onAggregate;
+      return {
+        setSymbols() {},
+        unsubscribe() {},
+      };
+    },
+    now: () => now,
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+  assert.equal(evaluateCalls, 1);
+  assert.ok(streamCallback);
+
+  currentLatestBarAt = new Date("2026-04-24T14:31:30.000Z");
+  now = new Date("2026-04-24T14:31:31.000Z");
+  (streamCallback as (message: any) => void)(
+    streamAggregate("AAPL", "2026-04-24T14:31:00.000Z"),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
+  assert.equal(evaluateCalls, 2);
+  assert.equal(loadInputs.at(-1)?.timeframe, "5m");
+  assert.equal(loadInputs.at(-1)?.includeProvisionalLiveEdge, true);
 });
 
 test("trade monitor worker batches simultaneous streamed aggregates behind one lock", async () => {
