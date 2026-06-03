@@ -91,7 +91,7 @@ test("automation long scans are scanner pressure, not global API pressure", () =
   assert.equal(snapshot.caps.signalOptions.actionScansAllowed, true);
 });
 
-test("route latency pressure escalates without pausing signal scans", () => {
+test("route latency pressure is capped below critical", () => {
   assert.equal(
     updateApiResourcePressure({ dominantSlowRouteP95Ms: 1_200 }).level,
     "watch",
@@ -112,7 +112,7 @@ test("route latency pressure escalates without pausing signal scans", () => {
   __resetApiResourcePressureForTests();
   assert.equal(
     updateApiResourcePressure({ dominantSlowRouteP95Ms: 70_000 }).level,
-    "critical",
+    "high",
   );
 });
 

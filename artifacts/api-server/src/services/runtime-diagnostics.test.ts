@@ -677,6 +677,7 @@ test("runtime diagnostics ignore request-scoped bridge health errors while conne
     "Error validating request.-'bO' : cause - Snapshot market data subscription is not applicable to generic ticks",
     "Can't find EId with tickerId:904",
     "Lane timed out after 2000ms. | IBKR bridge lane control lane timed out after 2000ms.",
+    "Lane is backed off. | IBKR bridge lane control lane is backed off.",
     "Historical Market Data Service error message:HMDS query returned no data: AGGA@OVERNIGHT Trades",
     "Requested market data is not subscribed. Check API status by selecting the Account menu then under Management choose Market Data Subscription Manager and/or availability of delayed data.",
   ];

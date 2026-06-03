@@ -57,6 +57,10 @@ export function isRequestScopedBridgeHealthError(value: unknown): boolean {
     (message.includes("can't find eid") && message.includes("tickerid")) ||
     message.includes("ibkr_bridge_lane_timeout") ||
     message.includes("lane timed out after") ||
+    message.includes("ibkr_bridge_lane_backoff") ||
+    message.includes("lane is backed off") ||
+    message.includes("lane control lane is backed off") ||
+    (message.includes("bridge") && message.includes("work is backed off")) ||
     (message.includes("historical market data service") &&
       message.includes("query returned no data")) ||
     message.includes("hmds query returned no data") ||

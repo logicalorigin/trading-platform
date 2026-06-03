@@ -179,7 +179,9 @@ export function resolveApiRssHardBlockMb(
 
 function routeLatencyLevel(value: number | null): ApiResourcePressureLevel {
   if (value === null) return "normal";
-  if (value >= 30_000) return "critical";
+  // Latency can be caused by one slow background/deferred route while the API
+  // is still healthy enough to serve active screens and diagnostics. Treat it
+  // as load-shedding pressure, not as a hard critical condition.
   if (value >= 5_000) return "high";
   return value >= 1_000 ? "watch" : "normal";
 }
