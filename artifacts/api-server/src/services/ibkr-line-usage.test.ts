@@ -192,7 +192,7 @@ test("getIbkrLineUsageSnapshot reports active scanner drift instead of throttlin
     intent: "flow-scanner-live",
     requests: Array.from({ length: 40 }, (_, index) => ({
       assetClass: "option" as const,
-      symbol: "SPY",
+      symbol: `SCAN${index}`,
       providerContractId: structuredOptionProviderContractId(index),
     })),
     fallbackProvider: "none",
@@ -287,9 +287,9 @@ test("getIbkrLineUsageSnapshot includes scanner option leases in bridge drift", 
   admitMarketDataLeases({
     owner: "flow-scanner:SPY",
     intent: "flow-scanner-live",
-    requests: ["one", "two"].map((suffix) => ({
+    requests: ["one", "two"].map((suffix, index) => ({
       assetClass: "option" as const,
-      symbol: "SPY",
+      symbol: index === 0 ? "SPY" : "QQQ",
       providerContractId: `twsopt:scanner-${suffix}`,
     })),
     fallbackProvider: "none",

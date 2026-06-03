@@ -375,6 +375,16 @@ export type MassiveApiDiagnosticsStatus =
 
 export type MassiveRestActivityStatus = "success" | "error";
 
+export type MassiveRestFailureKind =
+  | "auth"
+  | "entitlement"
+  | "rate_limit"
+  | "not_found"
+  | "invalid_request"
+  | "network"
+  | "upstream"
+  | "unknown";
+
 export type MassiveRestEndpointFamily =
   | "stock_aggregates"
   | "stock_snapshots"
@@ -411,6 +421,8 @@ export type MassiveRestActivity = {
   durationMs: number;
   status: MassiveRestActivityStatus;
   httpStatus: number | null;
+  errorKind: MassiveRestFailureKind | null;
+  diagnosticHint: string | null;
   error: string | null;
 };
 
@@ -492,8 +504,11 @@ function safeDateOrRaw(value: string | null): string | null {
     return null;
   }
   const numeric = Number(value);
-  if (Number.isFinite(numeric) && numeric > 946684800000) {
-    return new Date(numeric).toISOString();
+  if (Number.isFinite(numeric) && Math.abs(numeric) >= 1_000_000_000) {
+    const date = toDate(value);
+    if (date) {
+      return date.toISOString();
+    }
   }
   return value;
 }
@@ -507,6 +522,69 @@ function countCsvValues(value: string | null): number | null {
     .map((entry) => entry.trim())
     .filter(Boolean).length;
   return count || null;
+}
+
+function readProviderHttpStatus(error: unknown): number | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+  const statusCode = (error as { statusCode?: unknown }).statusCode;
+  if (typeof statusCode === "number") {
+    return statusCode;
+  }
+  const status = (error as { status?: unknown }).status;
+  if (typeof status === "number") {
+    return status;
+  }
+  const responseStatus = (error as { response?: { status?: unknown } }).response
+    ?.status;
+  return typeof responseStatus === "number" ? responseStatus : null;
+}
+
+function readProviderErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && code.trim() ? code : null;
+}
+
+function classifyMassiveRestFailure(error: unknown): MassiveRestFailureKind {
+  const status = readProviderHttpStatus(error);
+  if (status === 401) return "auth";
+  if (status === 403) return "entitlement";
+  if (status === 429) return "rate_limit";
+  if (status === 404) return "not_found";
+  if (status === 400 || status === 422) return "invalid_request";
+  if (status !== null && status >= 500) {
+    return readProviderErrorCode(error) === "upstream_request_failed"
+      ? "network"
+      : "upstream";
+  }
+  return "unknown";
+}
+
+function massiveRestDiagnosticHint(
+  kind: MassiveRestFailureKind | null,
+): string | null {
+  switch (kind) {
+    case "auth":
+      return "Check MASSIVE_API_KEY or MASSIVE_MARKET_DATA_API_KEY and confirm the key is valid.";
+    case "entitlement":
+      return "Check Massive plan entitlement for this endpoint; snapshots, trades, quotes, Greeks, and real-time data unlock on different plans.";
+    case "rate_limit":
+      return "Massive Basic plans are rate limited; batch snapshot requests, cache reference data, serialize loops, or upgrade before increasing request pressure.";
+    case "not_found":
+      return "Check endpoint path and ticker format, including X:, C:, I:, or O: prefixes for non-equity assets.";
+    case "invalid_request":
+      return "Check required parameters, ISO option expiration dates, from/to ordering, sort, and limit values.";
+    case "network":
+      return "The Massive upstream request could not be reached; retry after connectivity or proxy recovery.";
+    case "upstream":
+      return "Massive returned a transient upstream error; retry with backoff and keep the last good data visible.";
+    default:
+      return null;
+  }
 }
 
 function getPayloadResultCount(payload: unknown): number | null {
@@ -628,13 +706,8 @@ function buildMassiveRestActivity(input: {
   const tickerCount = countCsvValues(url.searchParams.get("tickers"));
   const now = new Date();
   const errorMessage = input.error ? truncateProviderError(providerErrorMessage(input.error)) : null;
-  const httpStatus =
-    input.error &&
-    typeof input.error === "object" &&
-    "status" in input.error &&
-    typeof (input.error as { status?: unknown }).status === "number"
-      ? (input.error as { status: number }).status
-      : null;
+  const httpStatus = input.error ? readProviderHttpStatus(input.error) : null;
+  const errorKind = input.error ? classifyMassiveRestFailure(input.error) : null;
 
   return {
     id: massiveRestDiagnosticsState.nextId++,
@@ -662,6 +735,8 @@ function buildMassiveRestActivity(input: {
     durationMs: Math.max(0, Math.round(Date.now() - input.startedAt)),
     status: input.status,
     httpStatus,
+    errorKind,
+    diagnosticHint: massiveRestDiagnosticHint(errorKind),
     error: errorMessage,
   };
 }

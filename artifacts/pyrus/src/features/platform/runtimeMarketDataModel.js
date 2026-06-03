@@ -33,6 +33,17 @@ const buildSparklineFromHistoricalBars = (bars, fallback) => {
   }));
 };
 
+const hasUsableSparklineBars = (bars) =>
+  Array.isArray(bars) && bars.length >= 2;
+
+const buildRuntimeSparklinePatch = (bars, fallbackSpark) =>
+  hasUsableSparklineBars(bars)
+    ? {
+        spark: buildSparklineFromHistoricalBars(bars, fallbackSpark),
+        sparkBars: bars,
+      }
+    : {};
+
 const computeTrailingReturnPercent = (currentPrice, baselinePrice) => {
   if (
     typeof currentPrice !== "number" ||
@@ -197,11 +208,15 @@ export const syncRuntimeMarketData = (
       watchlistNameBySymbol[normalized],
     );
     const quote = quoteBySymbol[normalized];
-    const spark = buildSparklineFromHistoricalBars(
-      sparklineBarsBySymbol[normalized],
-      base.spark,
-    );
     const tradeInfo = ensureTradeTickerInfo(normalized, base.name);
+    const incomingSparkBars = sparklineBarsBySymbol[normalized];
+    const spark = buildSparklineFromHistoricalBars(
+      incomingSparkBars,
+      tradeInfo.spark || base.spark,
+    );
+    const sparkBars = hasUsableSparklineBars(incomingSparkBars)
+      ? incomingSparkBars
+      : (tradeInfo.sparkBars || base.sparkBars || []);
     const prevClose = quote?.prevClose ?? tradeInfo.prevClose ?? null;
     const price = quote?.price ?? tradeInfo.price ?? null;
     const chg =
@@ -225,8 +240,7 @@ export const syncRuntimeMarketData = (
         price,
         chg,
         pct,
-        spark,
-        sparkBars: sparklineBarsBySymbol[normalized] || [],
+        ...buildRuntimeSparklinePatch(incomingSparkBars, tradeInfo.spark),
       }).changed
     ) {
       changedSymbols.add(normalized);
@@ -251,7 +265,7 @@ export const syncRuntimeMarketData = (
       prevClose,
       volume,
       updatedAt,
-      sparkBars: sparklineBarsBySymbol[normalized] || [],
+      sparkBars,
     };
   });
 
@@ -262,18 +276,14 @@ export const syncRuntimeMarketData = (
       symbol,
       watchlistNameBySymbol,
     );
-    const runtimeSparkBars = sparklineBarsBySymbol[symbol] || [];
+    const runtimeSparkBars = sparklineBarsBySymbol[symbol];
 
     const currentTradeInfo = ensureTradeTickerInfo(symbol, fallbackName);
     if (
       applyRuntimeTickerInfoPatch(symbol, fallbackName, {
         name: fallbackName,
         ...buildRuntimeQuotePatch(quote, currentTradeInfo),
-        spark: buildSparklineFromHistoricalBars(
-          runtimeSparkBars,
-          currentTradeInfo.spark,
-        ),
-        sparkBars: runtimeSparkBars,
+        ...buildRuntimeSparklinePatch(runtimeSparkBars, currentTradeInfo.spark),
       }).changed
     ) {
       changedSymbols.add(symbol);
@@ -305,7 +315,9 @@ export const syncRuntimeMarketData = (
   });
 
   INDICES.forEach((item) => {
-    const quote = quoteBySymbol[item.sym.toUpperCase()];
+    const normalized = item.sym.toUpperCase();
+    const quote = quoteBySymbol[normalized];
+    const incomingSparkBars = sparklineBarsBySymbol[normalized];
     const prevClose = quote?.prevClose ?? item.prevClose ?? null;
     item.prevClose = quote?.prevClose ?? item.prevClose ?? null;
     item.price = quote?.price ?? item.price ?? null;
@@ -319,11 +331,10 @@ export const syncRuntimeMarketData = (
       prevClose !== 0
         ? ((item.price - prevClose) / prevClose) * 100
         : quote?.changePercent ?? null;
-    item.spark = buildSparklineFromHistoricalBars(
-      sparklineBarsBySymbol[item.sym.toUpperCase()],
-      item.spark,
-    );
-    item.sparkBars = sparklineBarsBySymbol[item.sym.toUpperCase()] || [];
+    item.spark = buildSparklineFromHistoricalBars(incomingSparkBars, item.spark);
+    item.sparkBars = hasUsableSparklineBars(incomingSparkBars)
+      ? incomingSparkBars
+      : (item.sparkBars || []);
     if (
       applyRuntimeTickerInfoPatch(item.sym, item.name || item.sym, {
         name: item.name || item.sym,
@@ -331,16 +342,20 @@ export const syncRuntimeMarketData = (
         chg: item.chg,
         pct: item.pct,
         prevClose: item.prevClose ?? TRADE_TICKER_INFO[item.sym]?.prevClose ?? null,
-        spark: item.spark,
-        sparkBars: item.sparkBars,
+        ...buildRuntimeSparklinePatch(
+          incomingSparkBars,
+          TRADE_TICKER_INFO[item.sym]?.spark ?? item.spark,
+        ),
       }).changed
     ) {
-      changedSymbols.add(item.sym.toUpperCase());
+      changedSymbols.add(normalized);
     }
   });
 
   MACRO_TICKERS.forEach((item) => {
-    const quote = quoteBySymbol[item.sym.toUpperCase()];
+    const normalized = item.sym.toUpperCase();
+    const quote = quoteBySymbol[normalized];
+    const incomingSparkBars = sparklineBarsBySymbol[normalized];
     const prevClose = quote?.prevClose ?? item.prevClose ?? null;
     item.prevClose = quote?.prevClose ?? item.prevClose ?? null;
     item.price = quote?.price ?? item.price ?? null;
@@ -354,11 +369,10 @@ export const syncRuntimeMarketData = (
       prevClose !== 0
         ? ((item.price - prevClose) / prevClose) * 100
         : quote?.changePercent ?? null;
-    item.spark = buildSparklineFromHistoricalBars(
-      sparklineBarsBySymbol[item.sym.toUpperCase()],
-      item.spark,
-    );
-    item.sparkBars = sparklineBarsBySymbol[item.sym.toUpperCase()] || [];
+    item.spark = buildSparklineFromHistoricalBars(incomingSparkBars, item.spark);
+    item.sparkBars = hasUsableSparklineBars(incomingSparkBars)
+      ? incomingSparkBars
+      : (item.sparkBars || []);
     if (
       applyRuntimeTickerInfoPatch(
         item.sym,
@@ -370,12 +384,14 @@ export const syncRuntimeMarketData = (
           pct: item.pct,
           prevClose:
             item.prevClose ?? TRADE_TICKER_INFO[item.sym]?.prevClose ?? null,
-          spark: item.spark,
-          sparkBars: item.sparkBars,
+          ...buildRuntimeSparklinePatch(
+            incomingSparkBars,
+            TRADE_TICKER_INFO[item.sym]?.spark ?? item.spark,
+          ),
         },
       ).changed
     ) {
-      changedSymbols.add(item.sym.toUpperCase());
+      changedSymbols.add(normalized);
     }
   });
 

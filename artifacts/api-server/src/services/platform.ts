@@ -96,11 +96,6 @@ import {
   type OptionsFlowScannerScanPhase,
 } from "./options-flow-scanner";
 import {
-  createOptionsFlowRadarScanner,
-  type OptionsFlowRadarCoverage,
-  type OptionsFlowRadarObservation,
-} from "./options-flow-radar-scanner";
-import {
   deferredFlowEventsResult as buildDeferredFlowEventsResult,
   filterFlowEventsForRequest,
   flowEventMatchesFilters,
@@ -1988,14 +1983,6 @@ const OPTIONS_FLOW_AGGREGATE_MIN_SNAPSHOT_SYMBOLS = readPositiveIntegerEnv(
 const OPTIONS_FLOW_AGGREGATE_SEED_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_AGGREGATE_SEED_BATCH_SIZE",
   Math.min(2, OPTIONS_FLOW_AGGREGATE_MIN_SNAPSHOT_SYMBOLS),
-);
-const OPTIONS_FLOW_RADAR_OBSERVATION_TTL_MS = readPositiveIntegerEnv(
-  "OPTIONS_FLOW_RADAR_OBSERVATION_TTL_MS",
-  10 * 60_000,
-);
-const OPTIONS_FLOW_RADAR_FETCH_FAILURE_BACKOFF_MS = readPositiveIntegerEnv(
-  "OPTIONS_FLOW_RADAR_FETCH_FAILURE_BACKOFF_MS",
-  30_000,
 );
 const OPTIONS_FLOW_COVERAGE_ACTIVE_TARGET_MS = readPositiveIntegerEnv(
   "OPTIONS_FLOW_COVERAGE_ACTIVE_TARGET_MS",
@@ -4756,46 +4743,6 @@ function getMassiveRealtimeSocketQuoteSnapshots(symbols: string[]): Array<
   });
 }
 
-function quoteHasDayChangeContext(
-  quote: (QuoteSnapshot & { source: StockQuoteSnapshotSource }) | undefined,
-): boolean {
-  if (!quote) {
-    return false;
-  }
-  const change = Number(quote.change);
-  const prevClose = Number(quote.prevClose);
-  return (
-    (Number.isFinite(change) && change !== 0) ||
-    (Number.isFinite(prevClose) && prevClose > 0)
-  );
-}
-
-function mergeMassiveRealtimeQuoteWithRestDayChange(
-  realtimeQuote: QuoteSnapshot & { source: StockQuoteSnapshotSource },
-  restQuote: QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> },
-): QuoteSnapshot & { source: StockQuoteSnapshotSource } {
-  return {
-    ...restQuote,
-    price: realtimeQuote.price,
-    last: realtimeQuote.last ?? realtimeQuote.price,
-    mark: realtimeQuote.mark,
-    bid: realtimeQuote.bid,
-    ask: realtimeQuote.ask,
-    bidSize: realtimeQuote.bidSize,
-    askSize: realtimeQuote.askSize,
-    updatedAt: realtimeQuote.updatedAt,
-    dataUpdatedAt: realtimeQuote.dataUpdatedAt,
-    transport: realtimeQuote.transport,
-    delayed: realtimeQuote.delayed,
-    freshness: realtimeQuote.freshness,
-    marketDataMode: realtimeQuote.marketDataMode,
-    ageMs: realtimeQuote.ageMs,
-    cacheAgeMs: realtimeQuote.cacheAgeMs,
-    latency: realtimeQuote.latency,
-    source: "massive",
-  };
-}
-
 type GetQuoteSnapshotsInput = {
   symbols: string;
   allowMassiveFallback?: boolean;
@@ -4953,51 +4900,7 @@ async function getQuoteSnapshotsUncached(input: {
     input.tradingSession !== "overnight" &&
     isMassiveStocksRealtimeConfigured(massiveConfig);
   if (useMassiveRealtimePrimary) {
-    const quotesBySymbol = new Map<
-      string,
-      QuoteSnapshot & { source: StockQuoteSnapshotSource }
-    >();
-    getMassiveRealtimeSocketQuoteSnapshots(symbols).forEach((quote) => {
-      quotesBySymbol.set(normalizeSymbol(quote.symbol), quote);
-    });
-    const symbolsNeedingMassiveDetails = symbols.filter(
-      (symbol) => !quoteHasDayChangeContext(quotesBySymbol.get(symbol)),
-    );
-    let massiveQuotes: Array<
-      QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }
-    > = [];
-    if (symbolsNeedingMassiveDetails.length > 0) {
-      try {
-        massiveQuotes = (
-          await withTimeout(
-            getMassiveClient().getQuoteSnapshots(symbolsNeedingMassiveDetails),
-            quoteSnapshotMassiveFallbackTimeoutMs(),
-            () =>
-              new Error(
-                `Quote snapshot Massive stock fetch timed out after ${quoteSnapshotMassiveFallbackTimeoutMs()}ms.`,
-              ),
-          )
-        ).map(massiveQuoteToBrokerQuote);
-      } catch {
-        massiveQuotes = [];
-      }
-    }
-    massiveQuotes.forEach((quote) => {
-      const symbol = normalizeSymbol(quote.symbol);
-      const realtimeQuote = quotesBySymbol.get(symbol);
-      if (realtimeQuote) {
-        quotesBySymbol.set(
-          symbol,
-          mergeMassiveRealtimeQuoteWithRestDayChange(realtimeQuote, quote),
-        );
-      } else {
-        quotesBySymbol.set(symbol, quote);
-      }
-    });
-    const quotes = symbols.flatMap((symbol) => {
-      const quote = quotesBySymbol.get(symbol);
-      return quote ? [quote] : [];
-    });
+    const quotes = getMassiveRealtimeSocketQuoteSnapshots(symbols);
 
     return {
       quotes,
@@ -10508,6 +10411,10 @@ type IbkrOptionChainInput = {
 type IbkrOptionChainContracts = Awaited<
   ReturnType<IbkrBridgeClient["getOptionChain"]>
 >;
+type FlowScannerContract = IbkrOptionChainContracts[number] & {
+  flowOccurredAt?: Date | null;
+};
+type FlowScannerContracts = FlowScannerContract[];
 type IbkrOptionExpirationsInput = {
   underlying: string;
   maxExpirations?: number;
@@ -10764,35 +10671,15 @@ const OPTIONS_FLOW_SCANNER_SESSION_GUARD_ENABLED = readBooleanEnv(
   "OPTIONS_FLOW_SCANNER_SESSION_GUARD_ENABLED",
   true,
 );
-const OPTIONS_FLOW_RADAR_ENABLED = readBooleanEnv(
-  "OPTIONS_FLOW_RADAR_ENABLED",
-  true,
-);
-const OPTIONS_FLOW_RADAR_BATCH_SIZE = readPositiveIntegerEnv(
-  "OPTIONS_FLOW_RADAR_BATCH_SIZE",
-  30,
-);
-const OPTIONS_FLOW_RADAR_DEEP_CANDIDATES = readPositiveIntegerEnv(
-  "OPTIONS_FLOW_RADAR_DEEP_CANDIDATES",
-  8,
-);
-const OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES = readNonNegativeIntegerEnv(
-  "OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES",
-  1,
-);
 const OPTIONS_FLOW_SCANNER_DEFAULT_LINE_BUDGET = 200;
-const OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET = 100;
+const OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET = 1;
 const OPTIONS_FLOW_SCANNER_PER_TICKER_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_PER_TICKER_LINE_BUDGET",
   OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET,
 );
-const OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET = readPositiveIntegerEnv(
-  "OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET",
-  OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET,
-);
 const OPTIONS_FLOW_SCANNER_BATCH_SIZE = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_BATCH_SIZE",
-  8,
+  OPTIONS_FLOW_SCANNER_DEFAULT_LINE_BUDGET,
 );
 const OPTIONS_FLOW_SCANNER_MAX_CONCURRENCY = 8;
 const OPTIONS_FLOW_SCANNER_CONCURRENCY = Math.min(
@@ -10849,11 +10736,6 @@ export type OptionsFlowRuntimeConfig = {
   universeMinDollarVolume: number;
   scannerAlwaysOn: boolean;
   scannerSessionGuardEnabled: boolean;
-  radarEnabled: boolean;
-  radarBatchSize: number;
-  radarDeepCandidateCount: number;
-  radarFallbackDeepCandidateCount: number;
-  radarDeepLineBudget: number;
   scannerBatchSize: number;
   scannerConcurrency: number;
   scannerLimit: number;
@@ -10882,11 +10764,6 @@ const OPTIONS_FLOW_DEFAULT_CONFIG: OptionsFlowRuntimeConfig = {
   universeMinDollarVolume: OPTIONS_FLOW_UNIVERSE_MIN_DOLLAR_VOLUME,
   scannerAlwaysOn: OPTIONS_FLOW_SCANNER_ALWAYS_ON,
   scannerSessionGuardEnabled: OPTIONS_FLOW_SCANNER_SESSION_GUARD_ENABLED,
-  radarEnabled: OPTIONS_FLOW_RADAR_ENABLED,
-  radarBatchSize: OPTIONS_FLOW_RADAR_BATCH_SIZE,
-  radarDeepCandidateCount: OPTIONS_FLOW_RADAR_DEEP_CANDIDATES,
-  radarFallbackDeepCandidateCount: OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES,
-  radarDeepLineBudget: OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET,
   scannerBatchSize: OPTIONS_FLOW_SCANNER_BATCH_SIZE,
   scannerConcurrency: OPTIONS_FLOW_SCANNER_CONCURRENCY,
   scannerLimit: OPTIONS_FLOW_SCANNER_LIMIT,
@@ -10950,6 +10827,25 @@ export function resolveOptionsFlowScannerEffectiveConcurrency(
   return flowScannerLineCap <= 0 || pressureAdjustedConcurrency <= 0
     ? 0
     : Math.max(1, Math.min(pressureAdjustedConcurrency, flowScannerLineCap));
+}
+
+function resolveOptionsFlowScannerTickerSlotCapacity(
+  config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
+): number {
+  if (resolveOptionsFlowScannerEffectiveConcurrency(config) <= 0) {
+    return 0;
+  }
+  const schedulableLineCap = Math.max(
+    0,
+    Math.floor(getOptionsFlowScannerSchedulableLineCap()),
+  );
+  return Math.max(
+    0,
+    Math.min(
+      Math.max(0, Math.floor(config.scannerLineBudget || 0)),
+      schedulableLineCap,
+    ),
+  );
 }
 
 function resolveOptionsFlowScannerPerScanLineBudget(
@@ -11071,12 +10967,7 @@ function buildOptionsFlowExpandedScannerRequest(
 ): OptionsFlowScannerRequest {
   const lineBudget = resolveOptionsFlowScannerTickerLineBudget({
     config,
-    phaseLineCap: Math.min(
-      config.radarEnabled
-        ? config.radarDeepLineBudget
-        : OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET,
-      OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET,
-    ),
+    phaseLineCap: OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET,
   });
   return {
     limit: Math.min(config.scannerLimit, lineBudget),
@@ -11289,90 +11180,7 @@ function updateFlowUniverseRuntimePlanningConfig(
   });
 }
 
-const optionsFlowRadarObservationCache = new Map<
-  string,
-  OptionsFlowRadarObservation
->();
 const optionsFlowExpandedSymbolsThisCycle = new Set<string>();
-let optionsFlowRadarQuoteBackoffUntil = 0;
-let optionsFlowRadarQuoteLastError: string | null = null;
-
-type OptionsFlowRadarQuoteFetchResult = {
-  quotes: QuoteSnapshot[];
-  degradedReason: string | null;
-  failedSymbolCount: number;
-  backoffUntil: number | null;
-};
-
-function getOptionsFlowRadarQuoteBackoffReason(
-  now = Date.now(),
-): string | null {
-  return optionsFlowRadarQuoteBackoffUntil > now
-    ? "radar-quotes-backoff"
-    : null;
-}
-
-function clearOptionsFlowRadarQuoteFailure(): void {
-  optionsFlowRadarQuoteBackoffUntil = 0;
-  optionsFlowRadarQuoteLastError = null;
-}
-
-function recordOptionsFlowRadarQuoteFailure(
-  error: unknown,
-  now = Date.now(),
-): void {
-  optionsFlowRadarQuoteLastError =
-    error instanceof Error && error.message ? error.message : String(error);
-  optionsFlowRadarQuoteBackoffUntil =
-    now + OPTIONS_FLOW_RADAR_FETCH_FAILURE_BACKOFF_MS;
-}
-
-function radarObservationTimeMs(
-  observation: OptionsFlowRadarObservation,
-): number | null {
-  const time =
-    observation.scannedAt instanceof Date
-      ? observation.scannedAt.getTime()
-      : new Date(observation.scannedAt).getTime();
-  return Number.isFinite(time) ? time : null;
-}
-
-function pruneOptionsFlowRadarObservationCache(now = Date.now()): void {
-  for (const [symbol, observation] of optionsFlowRadarObservationCache) {
-    const scannedAtMs = radarObservationTimeMs(observation);
-    if (
-      scannedAtMs === null ||
-      now - scannedAtMs > OPTIONS_FLOW_RADAR_OBSERVATION_TTL_MS
-    ) {
-      optionsFlowRadarObservationCache.delete(symbol);
-    }
-  }
-}
-
-function recordOptionsFlowRadarObservations(
-  observations: readonly OptionsFlowRadarObservation[],
-): void {
-  pruneOptionsFlowRadarObservationCache();
-  observations.forEach((observation) => {
-    const symbol = normalizeSymbol(observation.symbol);
-    const scannedAtMs = radarObservationTimeMs(observation);
-    if (
-      !symbol ||
-      scannedAtMs === null ||
-      !observation.hasOptionActivityTicks
-    ) {
-      return;
-    }
-    if ((observation.optionVolume ?? 0) <= 0 && observation.score <= 0) {
-      return;
-    }
-    optionsFlowRadarObservationCache.set(symbol, {
-      ...observation,
-      symbol,
-      scannedAt: new Date(scannedAtMs),
-    });
-  });
-}
 
 const optionsFlowScanner = createOptionsFlowScanner<unknown>({
   normalizeSymbol,
@@ -11483,7 +11291,7 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
 function resolveOptionsFlowScannerDeepQueueLimit(
   config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
 ): number {
-  return Math.max(0, resolveOptionsFlowScannerEffectiveConcurrency(config));
+  return Math.max(0, resolveOptionsFlowScannerTickerSlotCapacity(config));
 }
 
 function getOptionsFlowScannerDeepQueueState(
@@ -11538,167 +11346,6 @@ function selectOptionsFlowScannerPromotableSymbols(
     }
   }
   return selected;
-}
-
-const optionsFlowRadarScanner = createOptionsFlowRadarScanner({
-  normalizeSymbol,
-  shouldSkip: async () =>
-    enforceOptionsFlowScannerPressureControls() ??
-    getOptionsFlowRadarQuoteBackoffReason() ??
-    getOptionsFlowScannerBackgroundBlockReason() ??
-    (await refreshOptionsFlowSessionBlockReason()),
-  fetchBatch: async (symbols) => {
-    const quoteResult = await fetchOptionsFlowRadarQuotes(symbols);
-    return {
-      quotes: quoteResult.quotes,
-      source: {
-        provider: "ibkr",
-        status: quoteResult.degradedReason
-          ? "degraded"
-          : quoteResult.quotes.length
-            ? "live"
-            : "empty",
-        errorMessage: quoteResult.degradedReason,
-      },
-    };
-  },
-  onBatch: (symbols) => {
-    flowUniverseManager.noteBatch(symbols);
-  },
-  onObservations: (observations) => {
-    recordOptionsFlowRadarObservations(observations);
-  },
-  onPromotions: async (symbols) => {
-    if (enforceOptionsFlowScannerPressureControls()) {
-      return;
-    }
-    if (getOptionsFlowScannerBackgroundBlockReason()) {
-      return;
-    }
-    const config = getOptionsFlowRuntimeConfig();
-    const promotableSymbols = selectOptionsFlowScannerPromotableSymbols(
-      symbols,
-      config,
-    );
-    if (!promotableSymbols.length) {
-      return;
-    }
-    const expandedRequest = buildOptionsFlowExpandedScannerRequest(config);
-    const deepLineBudget = Math.max(1, expandedRequest.lineBudget ?? 1);
-    syncOptionsFlowScannerEffectiveConcurrency(config);
-    await optionsFlowScanner.requestScan(promotableSymbols, {
-      ...expandedRequest,
-      limit: Math.min(config.scannerLimit, deepLineBudget),
-      lineBudget: deepLineBudget,
-    });
-  },
-  onError: (error, context) => {
-    logger.warn({ err: error, ...context }, "Options flow radar scanner error");
-  },
-});
-
-async function fetchOptionsFlowRadarQuotes(
-  symbols: readonly string[],
-): Promise<OptionsFlowRadarQuoteFetchResult> {
-  const normalizedSymbols = Array.from(
-    new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
-  );
-  const backoffReason = getOptionsFlowRadarQuoteBackoffReason();
-  if (backoffReason) {
-    return {
-      quotes: [],
-      degradedReason: backoffReason,
-      failedSymbolCount: normalizedSymbols.length,
-      backoffUntil: optionsFlowRadarQuoteBackoffUntil,
-    };
-  }
-  if (!normalizedSymbols.length) {
-    return {
-      quotes: [],
-      degradedReason: null,
-      failedSymbolCount: 0,
-      backoffUntil: null,
-    };
-  }
-
-  try {
-    const quotes = await runBridgeWork(
-      "quotes",
-      () => getIbkrClient().getOptionActivitySnapshots([...normalizedSymbols]),
-      { bypassBackoff: true, recordFailure: false },
-    );
-    clearOptionsFlowRadarQuoteFailure();
-    return {
-      quotes,
-      degradedReason: null,
-      failedSymbolCount: 0,
-      backoffUntil: null,
-    };
-  } catch (error) {
-    logger.warn(
-      { err: error, symbolCount: normalizedSymbols.length },
-      "Options flow radar batch quote hydration failed; retrying per symbol",
-    );
-  }
-
-  const quoteConcurrency = Math.max(
-    1,
-    getBridgeGovernorConfigSnapshot().quotes.concurrency,
-  );
-  let failedSymbolCount = 0;
-  const results = await mapWithConcurrency(
-    normalizedSymbols,
-    quoteConcurrency,
-    async (symbol) => {
-      try {
-        return await runBridgeWork(
-          "quotes",
-          () => getIbkrClient().getOptionActivitySnapshots([symbol]),
-          { bypassBackoff: true, recordFailure: false },
-        );
-      } catch (error) {
-        failedSymbolCount += 1;
-        logger.debug(
-          { err: error, symbol },
-          "Options flow radar symbol quote hydration failed",
-        );
-        return [];
-      }
-    },
-  );
-
-  const quotes = results.flat();
-  if (failedSymbolCount >= normalizedSymbols.length && !quotes.length) {
-    recordOptionsFlowRadarQuoteFailure(
-      new Error("Options flow radar quote hydration failed for every symbol."),
-    );
-    return {
-      quotes,
-      degradedReason: "radar-quotes-unavailable",
-      failedSymbolCount,
-      backoffUntil: optionsFlowRadarQuoteBackoffUntil,
-    };
-  }
-
-  if (quotes.length) {
-    clearOptionsFlowRadarQuoteFailure();
-  }
-
-  return {
-    quotes,
-    degradedReason:
-      failedSymbolCount > 0
-        ? "radar-quote-batch-fallback"
-        : "radar-quote-batch-fallback-empty",
-    failedSymbolCount,
-    backoffUntil: null,
-  };
-}
-
-export async function __fetchOptionsFlowRadarQuotesForTests(
-  symbols: readonly string[],
-): Promise<QuoteSnapshot[]> {
-  return (await fetchOptionsFlowRadarQuotes(symbols)).quotes;
 }
 
 let optionsFlowScannerStarted = false;
@@ -11804,27 +11451,28 @@ export function getOptionsFlowLaneSourceSymbols(): {
   const candidateBuiltInSymbols = getFlowScannerPinnedSymbols();
   const candidateWatchlistSymbols = latestWatchlistLaneSymbols;
   const candidatePrioritySymbols = collectFlowScannerPriorityLeaseSymbols();
-  const runtimePrioritySymbols = Array.from(
-    optionsFlowRadarObservationCache.keys(),
-  );
   const schedulableLineCap = getOptionsFlowScannerSchedulableLineCap();
+  const tickerSlotCapacity = resolveOptionsFlowScannerTickerSlotCapacity(config);
   const directScannerLineBudget = resolveOptionsFlowScannerPerScanLineBudget(
     config,
     OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET,
   );
-  const plannerBatchSize = config.radarEnabled
-    ? config.radarBatchSize
-    : config.scannerBatchSize;
-  const plannerPerScanLineBudget = config.radarEnabled
-    ? 1
-    : directScannerLineBudget;
-  const plannerEffectiveConcurrency = config.radarEnabled
-    ? Math.max(0, Math.min(config.radarBatchSize, schedulableLineCap))
-    : resolveOptionsFlowScannerEffectiveConcurrency(config);
+  const plannerBatchSize = Math.max(
+    0,
+    Math.min(
+      config.scannerBatchSize,
+      tickerSlotCapacity,
+    ),
+  );
+  const plannerPerScanLineBudget = directScannerLineBudget;
+  const plannerEffectiveConcurrency = Math.max(
+    resolveOptionsFlowScannerEffectiveConcurrency(config),
+    tickerSlotCapacity > 0 ? 1 : 0,
+  );
   const plannerPlan = flowUniversePlanner.getPlan({
     prioritySymbolGroups: {
       account: candidatePrioritySymbols,
-      runtime: runtimePrioritySymbols,
+      runtime: [],
       watchlists: candidateWatchlistSymbols,
       "built-in": candidateBuiltInSymbols,
     },
@@ -12022,17 +11670,6 @@ export function getOptionsFlowDeepScannerIntervalMs(
   });
 }
 
-export function getOptionsFlowRadarIntervalMs(
-  config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
-  now = new Date(),
-): number {
-  return getFlowScannerIntervalMs({
-    baseIntervalMs: config.scannerIntervalMs,
-    alwaysOn: config.scannerAlwaysOn,
-    now,
-  });
-}
-
 function estimateOptionsFlowScannerCycleMs(input: {
   activeTargetSize: number;
   batchSize: number;
@@ -12090,104 +11727,39 @@ export function startOptionsFlowScanner(): void {
 
   const effectiveScannerConcurrency =
     syncOptionsFlowScannerEffectiveConcurrency(config);
-  const resolveRadarIntervalMs = () => getOptionsFlowRadarIntervalMs();
   const resolveDeepIntervalMs = () => getOptionsFlowDeepScannerIntervalMs();
-  const resolveRadarPromotionCapacity = () => {
-    const runtimeConfig = getOptionsFlowRuntimeConfig();
-    syncMarketDataAdmissionRuntimeDefaults(runtimeConfig);
-    const lineBudget = resolveOptionsFlowScannerTickerLineBudget({
-      config: runtimeConfig,
-      phaseLineCap: runtimeConfig.radarDeepLineBudget,
-    });
-    const schedulableLines = getOptionsFlowScannerSchedulableLineCap();
-    const effectiveConcurrency =
-      resolveOptionsFlowScannerEffectiveConcurrency(runtimeConfig);
-    const queueState = getOptionsFlowScannerDeepQueueState(runtimeConfig);
-    return schedulableLines <= 0 ||
-      effectiveConcurrency <= 0 ||
-      queueState.available <= 0
-      ? 0
-      : Math.max(
-          1,
-          Math.min(
-            effectiveConcurrency,
-            queueState.available,
-            Math.floor(schedulableLines / lineBudget),
-          ),
-        );
-  };
-  if (config.radarEnabled) {
-    optionsFlowRadarScanner.startRotation({
-      symbols: resolveScannerSymbols,
-      intervalMs: resolveRadarIntervalMs,
-      batchSize: () =>
-        Math.max(
-          0,
-          Math.floor(getOptionsFlowRuntimeConfig().radarBatchSize || 0),
+  optionsFlowScanner.startRotation({
+    symbols: () =>
+      enforceOptionsFlowScannerPressureControls() ||
+      getOptionsFlowScannerBackgroundBlockReason()
+        ? []
+        : resolveScannerSymbols(),
+    request: () => {
+      const runtimeConfig = getOptionsFlowRuntimeConfig();
+      syncMarketDataAdmissionRuntimeDefaults(runtimeConfig);
+      return buildOptionsFlowSeedScannerRequest(runtimeConfig);
+    },
+    intervalMs: resolveDeepIntervalMs,
+    batchSize: () => {
+      const runtimeConfig = getOptionsFlowRuntimeConfig();
+      syncOptionsFlowScannerEffectiveConcurrency(runtimeConfig);
+      const queueState = getOptionsFlowScannerDeepQueueState(runtimeConfig);
+      return Math.max(
+        0,
+        Math.min(
+          Math.floor(runtimeConfig.scannerBatchSize || 0),
+          queueState.available,
         ),
-      promoteCount: () => {
-        const runtimeConfig = getOptionsFlowRuntimeConfig();
-        return Math.max(
-          0,
-          Math.min(
-            runtimeConfig.radarDeepCandidateCount,
-            resolveRadarPromotionCapacity(),
-          ),
-        );
-      },
-      fallbackPromoteCount: () =>
-        (() => {
-          const runtimeConfig = getOptionsFlowRuntimeConfig();
-          const configuredFallback = Math.max(
-            0,
-            Math.floor(runtimeConfig.radarFallbackDeepCandidateCount || 0),
-          );
-          const capacity = resolveRadarPromotionCapacity();
-          if (configuredFallback <= 0 || capacity <= 0) {
-            return 0;
-          }
-          return Math.min(Math.max(configuredFallback, capacity), capacity);
-        })(),
-    });
-  } else {
-    optionsFlowScanner.startRotation({
-      symbols: () =>
-        enforceOptionsFlowScannerPressureControls() ||
-        getOptionsFlowScannerBackgroundBlockReason()
-          ? []
-          : resolveScannerSymbols(),
-      request: () => {
-        const runtimeConfig = getOptionsFlowRuntimeConfig();
-        syncMarketDataAdmissionRuntimeDefaults(runtimeConfig);
-        return buildOptionsFlowSeedScannerRequest(runtimeConfig);
-      },
-      intervalMs: resolveDeepIntervalMs,
-      batchSize: () => {
-        const runtimeConfig = getOptionsFlowRuntimeConfig();
-        syncOptionsFlowScannerEffectiveConcurrency(runtimeConfig);
-        const queueState = getOptionsFlowScannerDeepQueueState(runtimeConfig);
-        return Math.max(
-          0,
-          Math.min(
-            Math.floor(runtimeConfig.scannerBatchSize || 0),
-            queueState.available,
-          ),
-        );
-      },
-      onCycle: () => {
-        optionsFlowExpandedSymbolsThisCycle.clear();
-      },
-    });
-  }
+      );
+    },
+    onCycle: () => {
+      optionsFlowExpandedSymbolsThisCycle.clear();
+    },
+  });
   optionsFlowScannerStarted = true;
   logger.info(
     {
       symbols: initialSymbols.length,
-      radarEnabled: config.radarEnabled,
-      radarBatchSize: config.radarBatchSize,
-      radarDeepCandidateCount: config.radarDeepCandidateCount,
-      radarFallbackDeepCandidateCount: config.radarFallbackDeepCandidateCount,
-      radarDeepLineBudget: config.radarDeepLineBudget,
       batchSize: config.scannerBatchSize,
       concurrency: config.scannerConcurrency,
       effectiveConcurrency: effectiveScannerConcurrency,
@@ -12204,7 +11776,6 @@ export function startOptionsFlowScanner(): void {
 
 export function stopOptionsFlowScanner(): void {
   stopMassiveStockUniverseStreams();
-  optionsFlowRadarScanner.stop();
   optionsFlowScanner.stop();
   optionsFlowScannerStarted = false;
 }
@@ -12305,12 +11876,7 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
     concurrency: resolveOptionsFlowScannerEffectiveConcurrency(config),
     estimatedCycleMs,
   };
-  const radarCoverage: OptionsFlowRadarCoverage =
-    optionsFlowRadarScanner.getCoverage();
   const backgroundBlockedReason = getOptionsFlowScannerBackgroundBlockReason();
-  const radarPhaseActive = Boolean(
-    radarCoverage.currentBatch.length || radarCoverage.lastScanAt,
-  );
   const deepPhaseActive = Boolean(
     deepScanner.activeSymbols.length ||
       deepScanner.draining ||
@@ -12320,11 +11886,9 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
   const scannerPhase =
     backgroundBlockedReason !== null
       ? "blocked"
-      : radarPhaseActive
-        ? "radar"
-        : deepPhaseActive
-          ? "deep"
-          : "idle";
+      : deepPhaseActive
+        ? "deep"
+        : "idle";
   const marketSessionQuiet = backgroundBlockedReason === "market-session-quiet";
   const resolveCoverageHealth = (cycleMs: number | null) => {
     if (marketSessionQuiet) return "quiet";
@@ -12344,84 +11908,15 @@ export function getOptionsFlowUniverseCoverage(): FlowUniverseCoverage {
       ? Math.max(0, Date.now() - (time as number))
       : null;
   };
-  if (!radarCoverage.enabled && !radarCoverage.lastScanAt) {
-    return {
-      ...baseCoverage,
-      radarCurrentBatch: [],
-      deepActiveSymbols: deepScanner.activeSymbols,
-      deepLastBatch: deepScanner.lastBatch,
-      scannerPhase,
-      coverageHealth: resolveCoverageHealth(baseCoverage.estimatedCycleMs),
-      marketSessionQuiet,
-      lastScanAgeMs: lastScanAgeMs(baseCoverage.lastScanAt),
-      coverageTargetMs: OPTIONS_FLOW_COVERAGE_ACTIVE_TARGET_MS,
-      radarLastError: radarCoverage.lastError,
-      radarFailureCount: radarCoverage.failureCount,
-    };
-  }
-  const activeTargetSize = Math.max(
-    baseCoverage.activeTargetSize,
-    baseCoverage.selectedSymbols,
-    radarCoverage.selectedSymbols,
-  );
-  const selectedShortfall = Math.max(
-    0,
-    baseCoverage.targetSize - activeTargetSize,
-  );
-  const cycleScannedSymbols = Math.max(
-    baseCoverage.cycleScannedSymbols,
-    baseCoverage.scannedSymbols,
-    radarCoverage.scannedSymbols,
-  );
-  const radarActive = radarCoverage.enabled;
   return {
     ...baseCoverage,
-    activeTargetSize,
-    selectedSymbols: activeTargetSize,
-    selectedShortfall,
-    scannedSymbols: cycleScannedSymbols,
-    cycleScannedSymbols,
-    batchSize: radarActive ? radarCoverage.batchSize : baseCoverage.batchSize,
-    intervalMs: radarActive
-      ? radarCoverage.intervalMs
-      : baseCoverage.intervalMs,
-    estimatedCycleMs:
-      radarActive && radarCoverage.estimatedCycleMs !== null
-        ? radarCoverage.estimatedCycleMs
-        : baseCoverage.estimatedCycleMs,
-    currentBatch: radarCoverage.currentBatch.length
-      ? radarCoverage.currentBatch
-      : baseCoverage.currentBatch,
-    radarCurrentBatch: radarCoverage.currentBatch,
     deepActiveSymbols: deepScanner.activeSymbols,
     deepLastBatch: deepScanner.lastBatch,
     scannerPhase,
-    lastScanAt: radarCoverage.lastScanAt ?? baseCoverage.lastScanAt,
-    lastScanAgeMs: lastScanAgeMs(
-      radarCoverage.lastScanAt ?? baseCoverage.lastScanAt,
-    ),
-    degradedReason:
-      radarCoverage.degradedReason ??
-      baseCoverage.degradedReason ??
-      (selectedShortfall > 0
-        ? `Universe fill short: ${activeTargetSize}/${baseCoverage.targetSize}`
-        : null),
-    coverageHealth: resolveCoverageHealth(
-      radarActive && radarCoverage.estimatedCycleMs !== null
-        ? radarCoverage.estimatedCycleMs
-        : baseCoverage.estimatedCycleMs,
-    ),
+    lastScanAgeMs: lastScanAgeMs(baseCoverage.lastScanAt),
+    coverageHealth: resolveCoverageHealth(baseCoverage.estimatedCycleMs),
     marketSessionQuiet,
     coverageTargetMs: OPTIONS_FLOW_COVERAGE_ACTIVE_TARGET_MS,
-    radarSelectedSymbols: radarCoverage.selectedSymbols,
-    radarEstimatedCycleMs: radarCoverage.estimatedCycleMs,
-    radarBatchSize: radarCoverage.batchSize,
-    radarIntervalMs: radarCoverage.intervalMs,
-    radarLastError: radarCoverage.lastError ?? optionsFlowRadarQuoteLastError,
-    radarLastFailedAt: radarCoverage.lastFailedAt,
-    radarFailureCount: radarCoverage.failureCount,
-    radarLastRunDurationMs: radarCoverage.lastRunDurationMs,
-    promotedSymbols: radarCoverage.promotedSymbols,
   };
 }
 
@@ -12717,9 +12212,6 @@ export async function listAggregateFlowEvents(
   const currentBatchSymbols = (scannerCoverage.currentBatch ?? [])
     .map((symbol) => normalizeSymbol(String(symbol || "")))
     .filter(Boolean);
-  const promotedSymbols = (scannerCoverage.promotedSymbols ?? [])
-    .map((symbol) => normalizeSymbol(String(symbol || "")))
-    .filter(Boolean);
   if (
     snapshots.length === 0 ||
     (currentBatchSymbols.length > 0 &&
@@ -12727,7 +12219,7 @@ export async function listAggregateFlowEvents(
   ) {
     const diagnostics = optionsFlowScanner.getDiagnostics();
     const seedSymbols = selectAggregateFlowSeedSymbols({
-      prioritySymbols: promotedSymbols,
+      prioritySymbols: [],
       laneSymbols: getOptionsFlowScannerLaneResolution().admittedSymbols,
       fallbackSymbols: currentBatchSymbols,
       snapshotSymbols,
@@ -13378,9 +12870,9 @@ export function getOptionsFlowScannerDiagnostics() {
     ? 0
     : resolveOptionsFlowScannerEffectiveConcurrency(config);
   const deepScanner = optionsFlowScanner.getDiagnostics();
-  const radar = optionsFlowRadarScanner.getCoverage();
   const coverage = getOptionsFlowUniverseCoverage();
   const admissionBudget = getMarketDataAdmissionBudget();
+  const admissionDiagnostics = getMarketDataAdmissionDiagnostics();
   const effectiveFlowScannerLineCap = getMarketDataPoolEffectiveLineCap(
     "flow-scanner",
     admissionBudget,
@@ -13391,6 +12883,20 @@ export function getOptionsFlowScannerDiagnostics() {
     config.scannerLineBudget,
     schedulableFlowScannerLineCap,
   );
+  const eligibleOptionableTickerCount = Math.max(
+    0,
+    coverage.activeTargetSize ?? coverage.selectedSymbols ?? 0,
+  );
+  const targetActiveTickerSlots = Math.max(
+    0,
+    Math.min(scannerTargetLineBudget, eligibleOptionableTickerCount),
+  );
+  const activeTickerSlotCount =
+    admissionDiagnostics.flowScannerTickerSlots.activeTickerSlotCount;
+  const tickerSlotShortfall = Math.max(
+    0,
+    targetActiveTickerSlots - activeTickerSlotCount,
+  );
   const seedLineBudget = resolveOptionsFlowScannerTickerLineBudget({
     config,
     phaseLineCap: OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET,
@@ -13398,10 +12904,6 @@ export function getOptionsFlowScannerDiagnostics() {
   const expandedLineBudget = resolveOptionsFlowScannerTickerLineBudget({
     config,
     phaseLineCap: OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET,
-  });
-  const radarDeepLineBudget = resolveOptionsFlowScannerTickerLineBudget({
-    config,
-    phaseLineCap: config.radarDeepLineBudget,
   });
   const maxDeepScanLines =
     effectiveConcurrency <= 0
@@ -13426,6 +12928,23 @@ export function getOptionsFlowScannerDiagnostics() {
     marketDataMode === "delayed" ||
     marketDataMode === "frozen" ||
     marketDataMode === "delayed_frozen";
+  const shortfallReason =
+    tickerSlotShortfall <= 0
+      ? null
+      : backgroundBlockedReason
+        ? backgroundBlockedReason
+        : lastSkippedReason
+          ? lastSkippedReason
+          : effectiveFlowScannerLineCap <= 0 ||
+              schedulableFlowScannerLineCap <= 0
+            ? "protected-app-demand"
+            : eligibleOptionableTickerCount <= activeTickerSlotCount
+              ? "insufficient-eligible-tickers"
+              : deepQueueBacklog > 0 || deepScanner.draining || deepScanner.activeCount > 0
+                ? "metadata-workers-filling-slots"
+                : coverage.degradedReason
+                  ? "optionability-filtering"
+                  : "scanner-awaiting-next-cycle";
   return {
     enabled: config.scannerEnabled,
     started: optionsFlowScannerStarted,
@@ -13436,8 +12955,7 @@ export function getOptionsFlowScannerDiagnostics() {
       caps: resourcePressure.caps,
     },
     scannerPressure,
-    radarEnabled: config.radarEnabled,
-    scannerMode: config.radarEnabled ? "radar-promoted" : "direct-rotation",
+    scannerMode: "direct-rotation",
     scannerFillMode,
     limitingReason,
     activeScanPhase: deepScanner.lastScanPhase,
@@ -13449,8 +12967,6 @@ export function getOptionsFlowScannerDiagnostics() {
     snapshotTtlMs: FLOW_EVENTS_CACHE_TTL_MS,
     snapshotStaleTtlMs: OPTIONS_FLOW_SCANNER_SNAPSHOT_STALE_TTL_MS,
     aggregateMinSnapshotSymbols: OPTIONS_FLOW_AGGREGATE_MIN_SNAPSHOT_SYMBOLS,
-    radarObservationTtlMs: OPTIONS_FLOW_RADAR_OBSERVATION_TTL_MS,
-    radarObservationCount: optionsFlowRadarObservationCache.size,
     optionabilityVerifier: getFlowUniverseOptionabilityVerifierDiagnostics(),
     coverage,
     plannedHorizon: {
@@ -13460,7 +12976,7 @@ export function getOptionsFlowScannerDiagnostics() {
         ? coverage.currentBatch
         : deepScanner.lastBatch.length
           ? deepScanner.lastBatch
-          : radar.promotedSymbols,
+          : [],
       batchSize: coverage.batchSize,
       intervalMs: coverage.intervalMs,
       estimatedCycleMs: coverage.estimatedCycleMs,
@@ -13478,6 +12994,15 @@ export function getOptionsFlowScannerDiagnostics() {
       poolCap: admissionBudget.flowScannerLineCap,
       effectivePoolCap: effectiveFlowScannerLineCap,
       schedulablePoolCap: schedulableFlowScannerLineCap,
+      targetActiveTickerSlots,
+      activeTickerSlotCount,
+      eligibleOptionableTickerCount,
+      perTickerLiveContractLimit:
+        admissionDiagnostics.flowScannerTickerSlots.perTickerLiveContractLimit,
+      tickerSlotShortfall,
+      shortfallReason,
+      duplicateActiveUnderlyingCount:
+        admissionDiagnostics.flowScannerTickerSlots.duplicateActiveUnderlyingCount,
       configuredConcurrency: config.scannerConcurrency,
       effectiveConcurrency,
       deepQueueLimit,
@@ -13487,8 +13012,7 @@ export function getOptionsFlowScannerDiagnostics() {
       scannerTargetLineBudget,
       seedLineBudget,
       expandedLineBudget,
-      radarDeepLineBudget: config.radarDeepLineBudget,
-      effectiveDeepLineBudget: radarDeepLineBudget,
+      effectiveDeepLineBudget: expandedLineBudget,
       maxDeepScanLines,
       unusedPoolLines: Math.max(
         0,
@@ -13496,13 +13020,8 @@ export function getOptionsFlowScannerDiagnostics() {
       ),
     },
     deepScanner: diagnosticDeepScanner,
-    radar,
     lastSkippedReason,
-    radarDegradedReason: radar.degradedReason || null,
-    lastBatch: deepScanner.lastBatch.length
-      ? deepScanner.lastBatch
-      : radar.currentBatch,
-    promotedSymbols: radar.promotedSymbols,
+    lastBatch: deepScanner.lastBatch,
   };
 }
 
@@ -13531,17 +13050,6 @@ export async function __runOptionsFlowScannerOnceForTests(
     expirationScanCount: input.expirationScanCount,
     strikeCoverage: input.strikeCoverage,
   });
-}
-
-export async function __runOptionsFlowRadarScannerOnceForTests(
-  symbols: readonly string[],
-  input: {
-    batchSize?: number;
-    promoteCount?: number;
-    fallbackPromoteCount?: number;
-  } = {},
-) {
-  return optionsFlowRadarScanner.runOnce(symbols, input);
 }
 
 export function __setOptionsFlowSessionBlockReasonForTests(
@@ -13631,11 +13139,8 @@ export function __resetOptionChainCachesForTests(input?: {
   liveWarmupBackgroundHoldUntil = 0;
   optionsFlowSessionBlockReason = null;
   optionsFlowSessionBlockCheckedAt = 0;
-  clearOptionsFlowRadarQuoteFailure();
   __resetHistoricalFlowEventsForTests();
   if (input?.resetFlowScanner !== false) {
-    optionsFlowRadarScanner.reset();
-    optionsFlowRadarObservationCache.clear();
     optionsFlowScanner.reset();
     optionsFlowScannerStarted = false;
     flowUniverseManager.reset();
@@ -16916,19 +16421,17 @@ function selectFlowScannerLiveCandidateContracts(
 function selectFlowScannerHistoricalCandidateContracts(
   contracts: IbkrOptionChainContracts,
   lineBudget: number,
-  rotationKey?: string | null,
 ): IbkrOptionChainContracts {
-  return selectFlowScannerLiveCandidateContracts(
-    contracts,
+  return contracts.slice(
+    0,
     Math.max(1, Math.min(lineBudget, OPTIONS_FLOW_HISTORICAL_CANDIDATE_LIMIT)),
-    rotationKey,
   );
 }
 
 function mergeFlowScannerHydratedContracts(
   baseContracts: IbkrOptionChainContracts,
-  hydratedContracts: IbkrOptionChainContracts,
-): IbkrOptionChainContracts {
+  hydratedContracts: FlowScannerContracts,
+): FlowScannerContracts {
   const hydratedByProviderContractId = new Map(
     hydratedContracts
       .map(
@@ -16941,7 +16444,7 @@ function mergeFlowScannerHydratedContracts(
       .filter(([providerContractId]) => Boolean(providerContractId)),
   );
 
-  return baseContracts.map((contract) => {
+  return baseContracts.map((contract): FlowScannerContract => {
     const providerContractId =
       contract.contract.providerContractId?.trim?.() ?? "";
     return hydratedByProviderContractId.get(providerContractId) ?? contract;
@@ -16982,7 +16485,7 @@ function normalizeContractMarketDataMode(
 function applyHistoricalBarsToFlowScannerContract(
   candidate: IbkrOptionChainContracts[number],
   barsResult: GetBarsResultWithDebug | null,
-): IbkrOptionChainContracts[number] {
+): FlowScannerContract {
   const bars = barsResult?.bars ?? [];
   const latestBar = getLatestBar(bars);
   if (!latestBar) {
@@ -17016,6 +16519,7 @@ function applyHistoricalBarsToFlowScannerContract(
     updatedAt: dataUpdatedAt ?? candidate.updatedAt,
     quoteUpdatedAt: dataUpdatedAt ?? candidate.quoteUpdatedAt,
     dataUpdatedAt: dataUpdatedAt ?? candidate.dataUpdatedAt,
+    flowOccurredAt: dataUpdatedAt ?? null,
     quoteFreshness:
       latestBar.freshness ?? barsResult?.freshness ?? candidate.quoteFreshness,
     marketDataMode,
@@ -17024,7 +16528,7 @@ function applyHistoricalBarsToFlowScannerContract(
 }
 
 type FlowScannerHistoricalHydration = {
-  contracts: IbkrOptionChainContracts;
+  contracts: FlowScannerContracts;
   requestedCount: number;
   returnedCount: number;
   missingCount: number;
@@ -17121,9 +16625,9 @@ async function hydrateFlowScannerContractsFromHistoricalBars(input: {
 }
 
 function applyLiveQuoteToFlowScannerContract(
-  candidate: IbkrOptionChainContracts[number],
+  candidate: FlowScannerContract,
   quote: QuoteSnapshot | null,
-): IbkrOptionChainContracts[number] {
+): FlowScannerContract {
   if (!quote) {
     return candidate;
   }
@@ -17161,11 +16665,11 @@ function applyLiveQuoteToFlowScannerContract(
 
 async function hydrateFlowScannerContractsFromLiveQuotes(input: {
   underlying: string;
-  candidates: IbkrOptionChainContracts;
+  candidates: FlowScannerContracts;
   owner: string;
   signal?: AbortSignal;
 }): Promise<{
-  contracts: IbkrOptionChainContracts;
+  contracts: FlowScannerContracts;
   requestedCount: number;
   acceptedCount: number;
   rejectedCount: number;
@@ -17206,6 +16710,7 @@ async function hydrateFlowScannerContractsFromLiveQuotes(input: {
     fallbackProvider: "none",
     requiresGreeks: false,
     releaseLeasesOnComplete: false,
+    releaseLeasesOnAbort: false,
     signal: input.signal,
   }).catch((error) => ({
     underlying: input.underlying,
@@ -17976,7 +17481,7 @@ async function listFlowEventsUncached(input: {
   // Derive IBKR flow from option-chain snapshots. These are not consolidated
   // time-and-sales events, so callers receive `basis: "snapshot"` and the UI
   // labels them as active/unusual contracts rather than verified sweeps.
-  let contracts: IbkrOptionChainContracts = [];
+  let contracts: FlowScannerContracts = [];
   const attemptedProviders: FlowDataProvider[] = [];
   let ibkrError: string | null = null;
   let ibkrReason: string | null = null;
@@ -18087,11 +17592,12 @@ async function listFlowEventsUncached(input: {
       ibkrLiveCandidateCount = liveCandidateContracts.length;
       const historicalCandidateContracts =
         selectFlowScannerHistoricalCandidateContracts(
-          metadataContracts,
+          liveCandidateContracts,
           lineBudget,
-          input.underlying,
         );
-      const shouldHydrateHistoricalBars = scanPhase === "manual";
+      const shouldHydrateHistoricalBars = true;
+      const shouldReportHistoricalHydration =
+        shouldHydrateHistoricalBars && scanPhase === "manual";
       const historicalHydration = shouldHydrateHistoricalBars
         ? await hydrateFlowScannerContractsFromHistoricalBars({
             underlying: input.underlying,
@@ -18120,7 +17626,7 @@ async function listFlowEventsUncached(input: {
         liveHydration.admissionBridgeMismatchCount;
       ibkrMarketDataMode =
         liveHydration.marketDataMode ?? historicalHydration.marketDataMode;
-      if (shouldHydrateHistoricalBars && historicalHydration.firstError) {
+      if (shouldReportHistoricalHydration && historicalHydration.firstError) {
         ibkrError ??= historicalHydration.firstError;
         ibkrReason ??= "options_flow_historical_hydration_degraded";
       }
@@ -18144,7 +17650,7 @@ async function listFlowEventsUncached(input: {
         ibkrReason ??= "options_flow_quote_hydration_empty";
       }
       if (
-        shouldHydrateHistoricalBars &&
+        shouldReportHistoricalHydration &&
         historicalHydration.requestedCount > 0 &&
         historicalHydration.returnedCount === 0 &&
         liveHydration.returnedCount === 0 &&
@@ -18274,8 +17780,17 @@ async function listFlowEventsUncached(input: {
     // Rank by mark-based premium (mark × volume × multiplier) so the
     // ordering is stable even when `last` is stale or zero. The display
     // `price` still prefers the last field when available.
+    const historicalOccurredAt =
+      c.flowOccurredAt instanceof Date &&
+      !Number.isNaN(c.flowOccurredAt.getTime())
+        ? c.flowOccurredAt
+        : null;
     const occurredAt = coerceIbkrSnapshotFlowOccurredAt(
-      c.dataUpdatedAt ?? c.quoteUpdatedAt ?? c.updatedAt ?? new Date(),
+      historicalOccurredAt ??
+        c.dataUpdatedAt ??
+        c.quoteUpdatedAt ??
+        c.updatedAt ??
+        new Date(),
     );
     return {
       id: `${c.contract.ticker}-${occurredAt.getTime()}`,
@@ -18677,9 +18192,8 @@ export async function benchmarkOptionsFlowScannerTickerPass(input: {
       const quoteStartedAt = Date.now();
       const historicalCandidateContracts =
         selectFlowScannerHistoricalCandidateContracts(
-          metadataContracts,
+          liveCandidateContracts,
           lineBudget,
-          underlying,
         );
       const historicalHydration =
         await hydrateFlowScannerContractsFromHistoricalBars({

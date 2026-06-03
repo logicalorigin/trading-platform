@@ -115,3 +115,43 @@ test("runtime market sync publishes fetched sparkline bars outside quote batch",
   ]);
   assert.equal(snapshot.sparkBars.length, 2);
 });
+
+test("runtime market sync preserves existing sparkline bars when quote batches omit bars", () => {
+  const symbol = uniqueSymbol("SPARKKEEP");
+  const sparkBars = [
+    { timestamp: "2026-06-01T15:10:00.000Z", close: 300, volume: 30 },
+    { timestamp: "2026-06-01T15:11:00.000Z", close: 302, volume: 36 },
+  ];
+  ensureTradeTickerInfo(symbol, symbol);
+  applyRuntimeTickerInfoPatch(symbol, symbol, {
+    spark: [
+      { i: 0, v: 300, timestamp: "2026-06-01T15:10:00.000Z" },
+      { i: 1, v: 302, timestamp: "2026-06-01T15:11:00.000Z" },
+    ],
+    sparkBars,
+  });
+
+  syncRuntimeMarketData(
+    [symbol],
+    [{ symbol, name: "Spark Keep Corp" }],
+    [
+      {
+        symbol,
+        price: 306,
+        prevClose: 300,
+        updatedAt: "2026-06-01T15:12:00.000Z",
+        dataUpdatedAt: "2026-06-01T15:12:00.000Z",
+      },
+    ],
+    { sparklineBarsBySymbol: {} },
+  );
+  const snapshot = getRuntimeTickerSnapshot(symbol);
+
+  assert.equal(snapshot.price, 306);
+  assert.equal(snapshot.sparkBars.length, 2);
+  assert.deepEqual(snapshot.sparkBars, sparkBars);
+  assert.deepEqual(snapshot.spark, [
+    { i: 0, v: 300, timestamp: "2026-06-01T15:10:00.000Z" },
+    { i: 1, v: 302, timestamp: "2026-06-01T15:11:00.000Z" },
+  ]);
+});

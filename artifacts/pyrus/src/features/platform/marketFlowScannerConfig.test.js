@@ -14,6 +14,7 @@ import {
   filterFlowScannerEvents,
   normalizeFlowScannerConfig,
   runFlowScannerBatch,
+  sortFlowScannerEventsByRecency,
 } from "./marketFlowScannerConfig.js";
 
 test("default flow scanner covers 500 symbols inside five minutes", () => {
@@ -175,6 +176,58 @@ test("filterFlowScannerEvents applies custom unusual thresholds locally", () => 
       unusualThreshold: 2,
     }).map((event) => event.id),
     ["custom-unusual"],
+  );
+});
+
+test("sortFlowScannerEventsByRecency keeps scanner display chronological", () => {
+  const events = [
+    {
+      id: "nvda-older-high-score",
+      ticker: "NVDA",
+      occurredAt: "2026-06-03T15:00:00.000Z",
+      unusualScore: 12,
+      premium: 900_000,
+    },
+    {
+      id: "nvda-newest",
+      ticker: "NVDA",
+      occurredAt: "2026-06-03T15:04:00.000Z",
+      unusualScore: 2,
+      premium: 50_000,
+    },
+    {
+      id: "aapl-middle",
+      ticker: "AAPL",
+      occurredAt: "2026-06-03T15:03:00.000Z",
+      unusualScore: 8,
+      premium: 500_000,
+    },
+    {
+      id: "spy-same-time-higher-score",
+      ticker: "SPY",
+      occurredAt: "2026-06-03T15:03:00.000Z",
+      unusualScore: 10,
+      premium: 25_000,
+    },
+  ];
+
+  assert.deepEqual(
+    sortFlowScannerEventsByRecency(events).map((event) => event.id),
+    [
+      "nvda-newest",
+      "spy-same-time-higher-score",
+      "aapl-middle",
+      "nvda-older-high-score",
+    ],
+  );
+  assert.deepEqual(
+    events.map((event) => event.id),
+    [
+      "nvda-older-high-score",
+      "nvda-newest",
+      "aapl-middle",
+      "spy-same-time-higher-score",
+    ],
   );
 });
 

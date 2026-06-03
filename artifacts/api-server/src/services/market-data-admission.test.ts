@@ -29,6 +29,14 @@ const originalEnv = Object.fromEntries(
   ENV_KEYS.map((key) => [key, process.env[key]]),
 );
 
+function flowScannerOptionRequest(index: number) {
+  return {
+    assetClass: "option" as const,
+    providerContractId: `FLOW${index}`,
+    underlying: `FLOW${index}`,
+  };
+}
+
 function setEnv(
   values: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>>,
 ): void {
@@ -99,11 +107,9 @@ test("scanner fills the bridge budget by default", () => {
   const scanner = admitMarketDataLeases({
     owner: "flow-scanner:rotation",
     intent: "flow-scanner-live",
-    requests: Array.from({ length: 205 }, (_, index) => ({
-      assetClass: "option" as const,
-      providerContractId: `FLOW${index}`,
-      underlying: "SPY",
-    })),
+    requests: Array.from({ length: 205 }, (_, index) =>
+      flowScannerOptionRequest(index),
+    ),
   });
   assert.equal(scanner.admitted.length, 200);
   assert.equal(scanner.rejected.length, 5);
@@ -111,6 +117,54 @@ test("scanner fills the bridge budget by default", () => {
   const diagnostics = getMarketDataAdmissionDiagnostics();
   assert.equal(diagnostics.activeLineCount, 200);
   assert.equal(diagnostics.flowScannerLineCount, 200);
+});
+
+test("flow scanner keeps at most one active option lease per underlying", () => {
+  setEnv({});
+
+  const first = admitMarketDataLeases({
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    replaceOwnerExisting: false,
+    requests: [
+      {
+        assetClass: "option",
+        providerContractId: "SPY-2026-05-15-500-C",
+        underlying: "SPY",
+      },
+    ],
+  });
+  const second = admitMarketDataLeases({
+    owner: "flow-scanner:SPY",
+    intent: "flow-scanner-live",
+    replaceOwnerExisting: false,
+    requests: [
+      {
+        assetClass: "option",
+        providerContractId: "SPY-2026-05-15-505-C",
+        underlying: "SPY",
+      },
+    ],
+  });
+
+  assert.equal(first.admitted.length, 1);
+  assert.equal(second.admitted.length, 1);
+  assert.equal(second.demoted.length, 1);
+
+  const leases = getMarketDataLeasesSnapshot().filter(
+    (lease) => lease.intent === "flow-scanner-live",
+  );
+  assert.equal(leases.length, 1);
+  assert.equal(leases[0]?.symbol, "SPY");
+  assert.equal(leases[0]?.providerContractId, "SPY-2026-05-15-505-C");
+
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  assert.equal(diagnostics.flowScannerLineCount, 1);
+  assert.equal(diagnostics.flowScannerTickerSlots.activeTickerSlotCount, 1);
+  assert.equal(
+    diagnostics.flowScannerTickerSlots.duplicateActiveUnderlyingCount,
+    0,
+  );
 });
 
 test("market data diagnostics do not expire ttl leases as a side effect", async () => {
@@ -163,11 +217,9 @@ test("default visible option reserve leaves the remaining budget for scanner wor
   const scanner = admitMarketDataLeases({
     owner: "flow-scanner:rotation",
     intent: "flow-scanner-live",
-    requests: Array.from({ length: 160 }, (_, index) => ({
-      assetClass: "option" as const,
-      providerContractId: `FLOW${index}`,
-      underlying: "SPY",
-    })),
+    requests: Array.from({ length: 160 }, (_, index) =>
+      flowScannerOptionRequest(index),
+    ),
   });
 
   assert.equal(visible.admitted.length, 22);
@@ -188,11 +240,9 @@ test("visible option quotes can reclaim scanner lines when the UI needs its full
   const scanner = admitMarketDataLeases({
     owner: "flow-scanner:rotation",
     intent: "flow-scanner-live",
-    requests: Array.from({ length: 160 }, (_, index) => ({
-      assetClass: "option" as const,
-      providerContractId: `FLOW${index}`,
-      underlying: "SPY",
-    })),
+    requests: Array.from({ length: 160 }, (_, index) =>
+      flowScannerOptionRequest(index),
+    ),
   });
   const visible = admitMarketDataLeases({
     owner: "trade-option-visible:SPY",
@@ -299,11 +349,9 @@ test("runtime scanner cap shrink demotes scanner live quote leases", () => {
   const scanner = admitMarketDataLeases({
     owner: "flow-scanner:rotation",
     intent: "flow-scanner-live",
-    requests: Array.from({ length: 80 }, (_, index) => ({
-      assetClass: "option" as const,
-      providerContractId: `FLOW${index}`,
-      underlying: "SPY",
-    })),
+    requests: Array.from({ length: 80 }, (_, index) =>
+      flowScannerOptionRequest(index),
+    ),
   });
   assert.equal(scanner.admitted.length, 40);
   assert.equal(scanner.rejected.length, 40);
@@ -628,11 +676,9 @@ test("enforces the flow scanner live-line cap", () => {
   const result = admitMarketDataLeases({
     owner: "flow-scanner",
     intent: "flow-scanner-live",
-    requests: Array.from({ length: 11 }, (_, index) => ({
-      assetClass: "option" as const,
-      providerContractId: `OPT${index}`,
-      underlying: "SPY",
-    })),
+    requests: Array.from({ length: 11 }, (_, index) =>
+      flowScannerOptionRequest(index),
+    ),
   });
 
   assert.equal(result.admitted.length, 10);
@@ -651,11 +697,9 @@ test("same-owner refresh revalidates strict pool caps instead of preserving over
     IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
     IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "5",
   });
-  const requests = Array.from({ length: 5 }, (_, index) => ({
-    assetClass: "option" as const,
-    providerContractId: `OPT${index}`,
-    underlying: "SPY",
-  }));
+  const requests = Array.from({ length: 5 }, (_, index) =>
+    flowScannerOptionRequest(index),
+  );
 
   assert.equal(
     admitMarketDataLeases({
@@ -704,7 +748,7 @@ test("flow scanner rotates older same-priority scanner owners when its pool is f
     requests: Array.from({ length: 3 }, (_, index) => ({
       assetClass: "option" as const,
       providerContractId: `AAA${index}`,
-      underlying: "AAA",
+      underlying: `AAA${index}`,
     })),
   });
 
@@ -714,7 +758,7 @@ test("flow scanner rotates older same-priority scanner owners when its pool is f
     requests: Array.from({ length: 2 }, (_, index) => ({
       assetClass: "option" as const,
       providerContractId: `BBB${index}`,
-      underlying: "BBB",
+      underlying: `BBB${index}`,
     })),
   });
 
@@ -787,11 +831,9 @@ test("protected demand shrinks scanner headroom below the global budget", () => 
   const scanner = admitMarketDataLeases({
     owner: "flow-scanner:rotation",
     intent: "flow-scanner-live",
-    requests: Array.from({ length: 80 }, (_, index) => ({
-      assetClass: "option" as const,
-      providerContractId: `FLOW${index}`,
-      underlying: "SPY",
-    })),
+    requests: Array.from({ length: 80 }, (_, index) =>
+      flowScannerOptionRequest(index),
+    ),
   });
   assert.equal(scanner.admitted.length, 80);
 
@@ -878,7 +920,7 @@ test("signal option quote leases stay in the Algo & Execution bundle and reclaim
     requests: Array.from({ length: 5 }, (_, index) => ({
       assetClass: "option" as const,
       providerContractId: `BG${index}`,
-      underlying: "SPY",
+      underlying: `BG${index}`,
     })),
   });
 
@@ -1034,11 +1076,9 @@ test("keeps scanner headroom fixed when visible demand reaches its own cap", () 
   const result = admitMarketDataLeases({
     owner: "flow-scanner",
     intent: "flow-scanner-live",
-    requests: Array.from({ length: 10 }, (_, index) => ({
-      assetClass: "option" as const,
-      providerContractId: `OPT${index}`,
-      underlying: "SPY",
-    })),
+    requests: Array.from({ length: 10 }, (_, index) =>
+      flowScannerOptionRequest(index),
+    ),
   });
 
   assert.equal(result.admitted.length, 10);
@@ -1120,7 +1160,7 @@ test("flow scanner leases use their pool while preserving visible prewarm lines"
     requests: Array.from({ length: 10 }, (_, index) => ({
       assetClass: "option" as const,
       providerContractId: `SPYOPT${index}`,
-      underlying: "SPY",
+      underlying: `SPY${index}`,
     })),
   });
 
@@ -1205,11 +1245,9 @@ test("active visible requests do not reclaim lines from scanner leases under pre
   admitMarketDataLeases({
     owner: "flow-scanner",
     intent: "flow-scanner-live",
-    requests: Array.from({ length: 5 }, (_, index) => ({
-      assetClass: "option" as const,
-      providerContractId: `OPT${index}`,
-      underlying: "SPY",
-    })),
+    requests: Array.from({ length: 5 }, (_, index) =>
+      flowScannerOptionRequest(index),
+    ),
   });
 
   const result = admitMarketDataLeases({

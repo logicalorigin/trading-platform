@@ -157,6 +157,47 @@ test("Massive REST diagnostics record sanitized request metadata", async () => {
   }
 });
 
+test("Massive REST diagnostics classify provider HTTP failures", async () => {
+  const originalFetch = globalThis.fetch;
+  __resetMassiveApiDiagnosticsForTests();
+  globalThis.fetch = (async () =>
+    Response.json(
+      { message: "not entitled to options snapshots" },
+      { status: 403 },
+    )) as typeof fetch;
+
+  try {
+    const config = {
+      apiKey: "super-secret-key",
+      baseUrl: "https://api.massive.com",
+    };
+    const client = new MassiveMarketDataClient(config);
+
+    await assert.rejects(
+      client.getOptionChain({
+        underlying: "SPY",
+        expirationDate: new Date("2026-05-22T00:00:00.000Z"),
+        maxPages: 1,
+      }),
+      /403/,
+    );
+
+    const diagnostics = getMassiveApiDiagnostics(config);
+    assert.equal(diagnostics.rest.status, "degraded");
+    assert.equal(diagnostics.rest.lastRequest?.endpointFamily, "option_chain");
+    assert.equal(diagnostics.rest.lastRequest?.httpStatus, 403);
+    assert.equal(diagnostics.rest.lastRequest?.errorKind, "entitlement");
+    assert.match(
+      diagnostics.rest.lastRequest?.diagnosticHint ?? "",
+      /plan entitlement/i,
+    );
+    assert.doesNotMatch(JSON.stringify(diagnostics), /super-secret-key|apiKey/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    __resetMassiveApiDiagnosticsForTests();
+  }
+});
+
 test("Massive reference ticker metadata uses explicit Massive provider identity", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () =>

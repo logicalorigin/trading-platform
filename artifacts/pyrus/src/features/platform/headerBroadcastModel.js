@@ -234,15 +234,15 @@ const getFlowEventRight = (event) => {
   return right;
 };
 
-const RADAR_ACTIVITY_OPTION_TICKER_RE = /\b(CALL|PUT|OPTION)\s+ACTIVITY\b/i;
+const SYNTHETIC_ACTIVITY_OPTION_TICKER_RE = /\b(CALL|PUT|OPTION)\s+ACTIVITY\b/i;
 
-const isRadarActivityFallbackEvent = (event) => {
+const isSyntheticActivityFallbackEvent = (event) => {
   const basis = String(event?.sourceBasis || event?.confidence || "")
     .trim()
     .toLowerCase();
   if (basis !== "fallback_estimate") return false;
   if (event?.providerContractId) return false;
-  return RADAR_ACTIVITY_OPTION_TICKER_RE.test(String(event?.optionTicker || ""));
+  return SYNTHETIC_ACTIVITY_OPTION_TICKER_RE.test(String(event?.optionTicker || ""));
 };
 
 export const buildHeaderUnusualTapeItems = (
@@ -252,7 +252,7 @@ export const buildHeaderUnusualTapeItems = (
   const itemsByKey = new Map();
 
   (events || []).forEach((event) => {
-    if (isRadarActivityFallbackEvent(event)) return;
+    if (isSyntheticActivityFallbackEvent(event)) return;
     const symbol = getFlowEventSymbol(event);
     if (!symbol) return;
 

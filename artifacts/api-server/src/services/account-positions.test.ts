@@ -124,7 +124,7 @@ test("live quote and flow defaults require explicit Massive opt-in", () => {
     /function scheduleIbkrWatchlistPrewarm\([\s\S]*?\nfunction scheduleIbkrWatchlistPrewarmFromDb/,
   )?.[0];
   const flowUniverseBody = source.match(
-    /const flowUniverseManager = createFlowUniverseManager\([\s\S]*?\nconst optionsFlowRadarObservationCache/,
+    /const flowUniverseManager = createFlowUniverseManager\([\s\S]*?\nconst optionsFlowExpandedSymbolsThisCycle/,
   )?.[0];
   const liveFlowBody = source.match(
     /async function listFlowEventsUncached\([\s\S]*?\ntype FlowScannerBenchmarkLineUsage/,

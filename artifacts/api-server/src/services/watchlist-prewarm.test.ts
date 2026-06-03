@@ -138,7 +138,7 @@ test("lane architecture controls do not clamp scanner capacity below runtime def
 
   assert.match(lanesSource, /scannerConcurrency:\s*\{\s*min:\s*1,\s*max:\s*8\s*\}/);
   assert.match(lanesSource, /scannerLineBudget:\s*\{\s*min:\s*1,\s*max:\s*500\s*\}/);
-  assert.match(lanesSource, /radarDeepLineBudget:\s*\{\s*min:\s*1,\s*max:\s*500\s*\}/);
+  assert.match(lanesSource, /expirationScanCount:\s*\{\s*min:\s*0,\s*max:\s*20\s*\}/);
 });
 
 test("watchlist prewarm orders all watchlist symbols before lane extras", () => {

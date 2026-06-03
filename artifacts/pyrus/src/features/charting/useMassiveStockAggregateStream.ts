@@ -16,7 +16,7 @@ export type BrokerStockAggregateMessage = {
   startMs: number;
   endMs: number;
   delayed: boolean;
-  source: "ibkr-websocket-derived" | "massive-delayed-websocket";
+  source: "ibkr-websocket-derived" | "massive-websocket" | "massive-delayed-websocket";
   latency?: {
     bridgeReceivedAt?: string | null;
     bridgeEmittedAt?: string | null;

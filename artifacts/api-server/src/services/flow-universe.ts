@@ -34,25 +34,15 @@ export type FlowUniverseCoverage = {
   concurrency?: number;
   estimatedCycleMs?: number | null;
   currentBatch: string[];
-  radarCurrentBatch?: string[];
   deepActiveSymbols?: string[];
   deepLastBatch?: string[];
-  scannerPhase?: "radar" | "deep" | "idle" | "blocked";
+  scannerPhase?: "deep" | "idle" | "blocked";
   coverageHealth?: "healthy" | "lagging" | "quiet" | "blocked";
   marketSessionQuiet?: boolean;
   lastScanAgeMs?: number | null;
   coverageTargetMs?: number;
   lastScanAt: Date | null;
   degradedReason: string | null;
-  radarSelectedSymbols?: number;
-  radarEstimatedCycleMs?: number | null;
-  radarBatchSize?: number;
-  radarIntervalMs?: number;
-  radarLastError?: string | null;
-  radarLastFailedAt?: Date | null;
-  radarFailureCount?: number;
-  radarLastRunDurationMs?: number | null;
-  promotedSymbols?: string[];
   planner?: Record<string, unknown>;
 };
 

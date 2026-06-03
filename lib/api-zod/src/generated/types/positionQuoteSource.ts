@@ -11,6 +11,7 @@ export type PositionQuoteSource = typeof PositionQuoteSource[keyof typeof Positi
 
 export const PositionQuoteSource = {
   bridge_quote: 'bridge_quote',
+  massive: 'massive',
   option_quote: 'option_quote',
   position_mark: 'position_mark',
   shadow_ledger: 'shadow_ledger',

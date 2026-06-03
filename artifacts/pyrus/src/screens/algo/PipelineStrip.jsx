@@ -2,7 +2,7 @@ import {
   CheckCircle2,
   CircleDashed,
   Filter,
-  Radar,
+  ScanLine,
   ShieldCheck,
   SlidersHorizontal,
   Target,
@@ -19,8 +19,8 @@ const stageColor = (status) => {
 };
 
 const STAGE_ICONS = {
-  scan: Radar,
-  signal: Radar,
+  scan: ScanLine,
+  signal: ScanLine,
   gate: ShieldCheck,
   contract: Filter,
   chain: Filter,

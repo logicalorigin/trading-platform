@@ -11,11 +11,6 @@ const POOL_ORDER = [
   ["flow-scanner", "Flow Scanner"],
 ];
 
-const NON_BLOCKING_FLOW_SCANNER_RADAR_REASONS = new Set([
-  "radar-quote-batch-fallback",
-  "radar-quote-batch-fallback-empty",
-]);
-
 const firstFiniteNumber = (...values) => {
   for (const value of values) {
     const number = Number(value);
@@ -129,29 +124,23 @@ const resolveFlowScannerCoverage = (scanner) => {
     return null;
   }
   const coverage = recordOrEmpty(scanner.coverage);
-  const radar = recordOrEmpty(scanner.radar);
   const plannedHorizon = recordOrEmpty(scanner.plannedHorizon);
   return {
     coverageHealth:
-      coverage.coverageHealth || scanner.coverageHealth || radar.coverageHealth || null,
+      coverage.coverageHealth || scanner.coverageHealth || null,
     cycleScannedSymbols: firstFiniteNumber(
       coverage.cycleScannedSymbols,
       coverage.scannedSymbols,
-      radar.cycleScannedSymbols,
-      radar.scannedSymbols,
     ),
     activeTargetSize: firstFiniteNumber(
       coverage.activeTargetSize,
       coverage.selectedSymbols,
       coverage.targetSize,
       coverage.totalSymbols,
-      radar.selectedSymbols,
-      scanner.radarSelectedSymbols,
       plannedHorizon.symbolCount,
     ),
     lastScanAgeMs: firstFiniteNumber(
       coverage.lastScanAgeMs,
-      radar.lastScanAgeMs,
       scanner.lastScanAgeMs,
     ),
   };
@@ -216,8 +205,17 @@ const formatMassiveRestRequestSummary = (request) => {
   const symbol = request.symbol ? ` ${request.symbol}` : "";
   const timeframe = request.timeframe ? ` ${request.timeframe}` : "";
   const resultCount = firstFiniteNumber(request.resultCount);
-  const rows = Number.isFinite(resultCount) ? ` · ${Math.round(resultCount)} rows` : "";
-  return `${purpose}${symbol}${timeframe}${rows}`.trim();
+  const httpStatus = firstFiniteNumber(request.httpStatus);
+  const failureKind = String(request.errorKind || "")
+    .replace(/[-_]+/g, " ")
+    .trim();
+  const outcome =
+    request.status === "error"
+      ? ` · ${failureKind || "failed"}${Number.isFinite(httpStatus) ? ` (${Math.round(httpStatus)})` : ""}`
+      : Number.isFinite(resultCount)
+        ? ` · ${Math.round(resultCount)} rows`
+        : "";
+  return `${purpose}${symbol}${timeframe}${outcome}`.trim();
 };
 
 const fallbackMassiveWebSocketFromLineUsage = (lineUsageSnapshot) => {
@@ -351,6 +349,7 @@ export const normalizeMassiveRuntimeDiagnostics = (
   const subscribedSymbolCount = firstFiniteNumber(websocket.subscribedSymbolCount);
   const lastRequest = recordOrEmpty(rest.lastRequest);
   const lastRestDurationMs = firstFiniteNumber(lastRequest.durationMs);
+  const lastRestHttpStatus = firstFiniteNumber(lastRequest.httpStatus);
 
   return {
     configured: massive.configured === true || fallbackConfigured,
@@ -375,6 +374,9 @@ export const normalizeMassiveRuntimeDiagnostics = (
         : MISSING_VALUE,
       lastRequestAt: lastRequest.observedAt || null,
       lastDurationMs: lastRestDurationMs,
+      lastHttpStatus: lastRestHttpStatus,
+      lastErrorKind: lastRequest.errorKind || null,
+      lastDiagnosticHint: lastRequest.diagnosticHint || null,
       recentRequests: arrayOrEmpty(rest.recentRequests),
       lastSuccessAt: rest.lastSuccessAt || null,
       lastFailureAt: rest.lastFailureAt || null,
@@ -455,16 +457,10 @@ const formatFlowScannerRuntimeDetail = (admission, used) => {
       Number.isFinite(snapshotCount) && snapshotCount > 0
         ? formatFlowSnapshotCount(snapshotCount)
         : null;
-    const radarDegradedReason =
-      scanner.radarDegradedReason ||
-      scanner.radar?.degradedReason ||
-      scanner.coverage?.degradedReason;
     const blockedReason =
       scanner.backgroundBlockedReason ||
       scanner.sessionBlockReason ||
-      (NON_BLOCKING_FLOW_SCANNER_RADAR_REASONS.has(radarDegradedReason)
-        ? null
-        : radarDegradedReason);
+      scanner.coverage?.degradedReason;
     if (blockedReason === "live-warmup") {
       const remaining = formatRuntimeDuration(scanner.backgroundHoldRemainingMs);
       return `warming live data${remaining ? ` (${remaining})` : ""}; foreground scans allowed`;
@@ -1039,7 +1035,6 @@ export const isOptionsFlowScannerRuntimeActive = (admission) => {
   const scannedCoverageCount = firstFiniteNumber(
     scanner.coverage?.cycleScannedSymbols,
     scanner.coverage?.scannedSymbols,
-    scanner.radar?.scannedSymbols,
   );
   const activeScanPhase = String(
     scanner.activeScanPhase ||
@@ -1059,7 +1054,6 @@ export const isOptionsFlowScannerRuntimeActive = (admission) => {
       scanner.deepScanner?.queuedCount > 0 ||
       scanner.deepScanner?.drainingCount > 0 ||
       scanner.deepScanner?.lastRunAt ||
-      scanner.radar?.currentBatch?.length ||
       scanner.coverage?.currentBatch?.length ||
       scanner.lastBatch?.length,
   );

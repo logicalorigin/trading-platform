@@ -1043,6 +1043,51 @@ function buildFlowScannerActivityDiagnostics() {
   };
 }
 
+function buildFlowScannerTickerSlotDiagnostics() {
+  const byUnderlying = new Map<string, MarketDataLease[]>();
+  activeLeaseValues().forEach((lease) => {
+    if (
+      lease.intent !== "flow-scanner-live" ||
+      lease.pool !== "flow-scanner" ||
+      lease.assetClass !== "option"
+    ) {
+      return;
+    }
+    const underlying = normalizeSymbol(lease.symbol ?? "");
+    if (!underlying) {
+      return;
+    }
+    const group = byUnderlying.get(underlying) ?? [];
+    group.push(lease);
+    byUnderlying.set(underlying, group);
+  });
+  const duplicateUnderlyings = Array.from(byUnderlying.entries())
+    .filter(([, leasesForUnderlying]) => leasesForUnderlying.length > 1)
+    .map(([underlying, leasesForUnderlying]) => ({
+      underlying,
+      leaseCount: leasesForUnderlying.length,
+      providerContractIds: leasesForUnderlying
+        .map((lease) => lease.providerContractId)
+        .filter((value): value is string => Boolean(value))
+        .sort()
+        .slice(0, MARKET_DATA_DIAGNOSTIC_SAMPLE_LIMIT),
+    }))
+    .sort((left, right) => left.underlying.localeCompare(right.underlying));
+
+  return {
+    perTickerLiveContractLimit: 1,
+    activeTickerSlotCount: byUnderlying.size,
+    activeUnderlyingSample: Array.from(byUnderlying.keys())
+      .sort()
+      .slice(0, MARKET_DATA_DIAGNOSTIC_SAMPLE_LIMIT),
+    duplicateActiveUnderlyingCount: duplicateUnderlyings.length,
+    duplicateActiveUnderlyings: duplicateUnderlyings.slice(
+      0,
+      MARKET_DATA_DIAGNOSTIC_SAMPLE_LIMIT,
+    ),
+  };
+}
+
 function emptyOwnerClassSummary(ownerClass: MarketDataOwnerClass) {
   return {
     id: ownerClass,
@@ -1680,6 +1725,33 @@ function rotateFlowScannerLeasesForRequest(input: {
   return rotated;
 }
 
+function releaseFlowScannerUnderlyingConflicts(input: {
+  symbol: string | null;
+}): MarketDataLease[] {
+  const symbol = normalizeSymbol(input.symbol ?? "");
+  if (!symbol) {
+    return [];
+  }
+  const rotated: MarketDataLease[] = [];
+  Array.from(leases.values())
+    .filter(
+      (lease) =>
+        lease.intent === "flow-scanner-live" &&
+        lease.pool === "flow-scanner" &&
+        lease.assetClass === "option" &&
+        normalizeSymbol(lease.symbol ?? "") === symbol,
+    )
+    .sort(
+      (left, right) =>
+        Date.parse(left.acquiredAt) - Date.parse(right.acquiredAt),
+    )
+    .forEach((lease) => {
+      releaseLease(lease, "demoted", "flow_scanner_underlying_rotated");
+      rotated.push(lease);
+    });
+  return rotated;
+}
+
 function buildFlowScannerDynamicLineCap(
   budget = getMarketDataAdmissionBudget(),
 ) {
@@ -1957,6 +2029,14 @@ export function admitMarketDataLeases(input: {
       return;
     }
 
+    if (pool === "flow-scanner" && normalized.assetClass === "option") {
+      demoted.push(
+        ...releaseFlowScannerUnderlyingConflicts({
+          symbol: normalized.symbol,
+        }),
+      );
+    }
+
     let currentLines = activeLineIds();
     const newLineIds = normalized.lineIds.filter((id) => !currentLines.has(id));
     let neededLineCount = newLineIds.length;
@@ -2203,6 +2283,7 @@ export function getMarketDataAdmissionDiagnostics() {
   const lineOwnership = buildLineOwnershipDiagnostics();
   const portfolio = buildPortfolioDiagnostics();
   const flowScannerActivity = buildFlowScannerActivityDiagnostics();
+  const flowScannerTickerSlots = buildFlowScannerTickerSlotDiagnostics();
   const equityRoleDiagnostics = activeEquityLineRoleDiagnostics();
   const uniqueLines = activeLineIds();
   const equityLines = Array.from(uniqueLines).filter((id) =>
@@ -2326,6 +2407,7 @@ export function getMarketDataAdmissionDiagnostics() {
       flowScannerLines.size - flowScannerChargedLines.size,
     ),
     flowScannerActivity,
+    flowScannerTickerSlots,
     flowScannerRemainingLineCount: Math.max(
       0,
       getMarketDataPoolEffectiveLineCap("flow-scanner", budget) -

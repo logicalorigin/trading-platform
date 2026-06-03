@@ -415,7 +415,7 @@ test("scanner session quiet renders as a data-line detail", () => {
   );
 });
 
-test("scanner session quiet reads radar coverage from live diagnostics", () => {
+test("scanner session quiet reads coverage from live diagnostics", () => {
   const normalized = normalizeAdmissionDiagnostics({
     activeLineCount: 12,
     flowScannerLineCount: 0,
@@ -428,7 +428,7 @@ test("scanner session quiet reads radar coverage from live diagnostics", () => {
       started: true,
       sessionBlockReason: "market-session-quiet",
       lastScanAgeMs: 4_500,
-      radar: {
+      coverage: {
         scannedSymbols: 60,
         selectedSymbols: 94,
       },
@@ -471,39 +471,6 @@ test("active scanner rotation renders coverage as a data-line detail", () => {
   assert.equal(
     normalized.flowScanner.detail,
     "rotating; 60 of 94 covered, last 13s ago",
-  );
-});
-
-test("radar quote batch fallback does not hide current scanner coverage", () => {
-  const normalized = normalizeAdmissionDiagnostics({
-    activeLineCount: 12,
-    flowScannerLineCount: 0,
-    budget: {
-      maxLines: 200,
-      flowScannerLineCap: 40,
-    },
-    optionsFlowScanner: {
-      enabled: true,
-      started: true,
-      lastScanAgeMs: 32_000,
-      coverage: {
-        cycleScannedSymbols: 94,
-        activeTargetSize: 746,
-        degradedReason: "radar-quote-batch-fallback",
-      },
-      radar: {
-        degradedReason: "radar-quote-batch-fallback",
-      },
-      deepScanner: {
-        lastRunAt: "2026-06-02T20:52:26.513Z",
-        snapshotCount: 0,
-      },
-    },
-  });
-
-  assert.equal(
-    normalized.flowScanner.detail,
-    "rotating; 94 of 746 covered, last 32s ago",
   );
 });
 
@@ -602,7 +569,7 @@ test("reports flow scanner background pauses ahead of cached snapshots", () => {
   assert.equal(normalized.flowScanner.detail, "degraded: resource pressure");
 });
 
-test("reports quiet market radar state ahead of cached snapshots", () => {
+test("reports quiet market scanner state ahead of cached snapshots", () => {
   const normalized = normalizeAdmissionDiagnostics({
     activeLineCount: 80,
     flowScannerLineCount: 0,
@@ -613,7 +580,7 @@ test("reports quiet market radar state ahead of cached snapshots", () => {
     optionsFlowScanner: {
       enabled: true,
       started: true,
-      radarDegradedReason: "market-session-quiet",
+      sessionBlockReason: "market-session-quiet",
       coverage: {
         coverageHealth: "quiet",
         cycleScannedSymbols: 120,
@@ -1319,6 +1286,45 @@ test("builds runtime control snapshot with Massive diagnostics", () => {
   assert.equal(snapshot.massive.websocket.observedAt, "2026-06-03T16:00:01.000Z");
   assert.equal(snapshot.massive.websocket.feeds[0].eventCount, 30);
   assert.equal(snapshot.massive.websocket.feeds[0].lastMessageAt, "2026-06-03T16:00:00.000Z");
+});
+
+test("builds runtime control snapshot with Massive REST failure category", () => {
+  const snapshot = buildRuntimeControlSnapshot({
+    runtimeDiagnostics: {
+      timestamp: "2026-06-03T16:00:01.000Z",
+      providers: {
+        massive: {
+          configured: true,
+          providerIdentity: "massive",
+          baseUrlHost: "api.massive.com",
+          rest: {
+            status: "degraded",
+            lastRequest: {
+              status: "error",
+              purpose: "option chain snapshot",
+              symbol: "SPY",
+              httpStatus: 403,
+              errorKind: "entitlement",
+              diagnosticHint: "Check Massive plan entitlement for this endpoint.",
+              durationMs: 58,
+            },
+            recentRequests: [],
+          },
+          websocket: {
+            status: "idle",
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(
+    snapshot.massive.rest.lastRequestSummary,
+    "option chain snapshot SPY · entitlement (403)",
+  );
+  assert.equal(snapshot.massive.rest.lastHttpStatus, 403);
+  assert.equal(snapshot.massive.rest.lastErrorKind, "entitlement");
+  assert.match(snapshot.massive.rest.lastDiagnosticHint, /plan entitlement/i);
 });
 
 test("exposes active flow scanner when backend scanner is running", () => {

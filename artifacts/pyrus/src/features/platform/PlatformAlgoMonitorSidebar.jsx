@@ -13,7 +13,7 @@ import {
   CheckCircle2,
   Clock,
   ExternalLink,
-  Radar,
+  ScanLine,
   ShieldAlert,
   ShieldCheck,
   Wallet,
@@ -391,13 +391,13 @@ const signalActionStatusMeta = (signal, candidate, blocker) => {
     return {
       label,
       tone: signalOptionsActionColor(actionStatus) || CSS_COLOR.textDim,
-      Icon: Radar,
+      Icon: ScanLine,
     };
   }
   if (signal?.fresh === false) {
     return { label: "Aged", tone: CSS_COLOR.amber, Icon: Clock };
   }
-  return { label: "Awaiting scan", tone: CSS_COLOR.cyan, Icon: Radar };
+  return { label: "Awaiting scan", tone: CSS_COLOR.cyan, Icon: ScanLine };
 };
 
 const compactStatusLabel = (label) => {

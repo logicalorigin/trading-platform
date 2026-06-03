@@ -214,6 +214,23 @@ test("flow universe planner does not multiply per-scan line budget by concurrenc
   assert.equal(result.diagnostics.limitingReason, "line-budget");
 });
 
+test("flow universe planner treats one-line ticker slots as broad scanner capacity", () => {
+  const result = plan({
+    candidates: Array.from({ length: 200 }, (_unused, index) =>
+      candidate(`SLOT${index}`, { sourceIds: ["other_listed"] }),
+    ),
+    targetSize: 200,
+    batchSize: 200,
+    lineBudget: 200,
+    perScanLineBudget: 1,
+    effectiveConcurrency: 8,
+  });
+
+  assert.equal(result.nextScanBatch.length, 200);
+  assert.equal(result.diagnostics.allowedSymbols, 200);
+  assert.equal(result.diagnostics.limitingReason, "none");
+});
+
 test("flow universe planner returns no batch when scanner has no effective budget", () => {
   const result = plan({
     candidates: [candidate("AAPL", { sourceIds: ["sp500"] })],

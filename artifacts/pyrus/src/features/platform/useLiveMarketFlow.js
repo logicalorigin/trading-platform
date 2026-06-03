@@ -18,6 +18,7 @@ import {
   flowScannerModeUsesMarketUniverse,
   normalizeFlowScannerConfig,
   runFlowScannerBatch,
+  sortFlowScannerEventsByRecency,
 } from "./marketFlowScannerConfig";
 import { mapFlowEventToUi } from "../flow/flowEventMapper";
 import {
@@ -148,15 +149,15 @@ const fetchAggregateFlowEvents = async ({
   }, flowVisibleRequestOptions({ signal }));
 };
 
-const RADAR_ACTIVITY_OPTION_TICKER_RE = /\b(CALL|PUT|OPTION)\s+ACTIVITY\b/i;
+const SYNTHETIC_ACTIVITY_OPTION_TICKER_RE = /\b(CALL|PUT|OPTION)\s+ACTIVITY\b/i;
 
-const isRadarActivityFallbackEvent = (event) => {
+const isSyntheticActivityFallbackEvent = (event) => {
   const basis = String(event?.sourceBasis || event?.confidence || "")
     .trim()
     .toLowerCase();
   if (basis !== "fallback_estimate") return false;
   if (event?.providerContractId) return false;
-  return RADAR_ACTIVITY_OPTION_TICKER_RE.test(String(event?.optionTicker || ""));
+  return SYNTHETIC_ACTIVITY_OPTION_TICKER_RE.test(String(event?.optionTicker || ""));
 };
 
 let liveMarketFlowInstanceCounter = 0;
@@ -591,7 +592,7 @@ export const useLiveMarketFlow = (
   const aggregatedEvents = useMemo(() => {
     const seen = new Set();
     return responses.flatMap((response) => response.events || []).filter((event) => {
-      if (isRadarActivityFallbackEvent(event)) {
+      if (isSyntheticActivityFallbackEvent(event)) {
         return false;
       }
       const key =
@@ -616,26 +617,11 @@ export const useLiveMarketFlow = (
 
   const flowEvents = useMemo(() => {
     if (!aggregatedEvents.length) return [];
-    return filterFlowScannerEvents(
-      aggregatedEvents
-        .map((event) => mapFlowEventToUi(event, userPreferences))
-        .sort((left, right) => {
-          // Float volume-vs-OI "unusual" events to the top so the notifications
-          // feed and unusual-options panel surface them ahead of routine high-
-          // premium events, then fall back to premium for ranking within bands.
-          if (left.isUnusual !== right.isUnusual) {
-            return left.isUnusual ? -1 : 1;
-          }
-          if (
-            left.isUnusual &&
-            right.isUnusual &&
-            left.unusualScore !== right.unusualScore
-          ) {
-            return right.unusualScore - left.unusualScore;
-          }
-          return right.premium - left.premium;
-        }),
-      effectiveScannerConfig,
+    return sortFlowScannerEventsByRecency(
+      filterFlowScannerEvents(
+        aggregatedEvents.map((event) => mapFlowEventToUi(event, userPreferences)),
+        effectiveScannerConfig,
+      ),
     );
   }, [aggregatedEvents, effectiveScannerConfig, userPreferences]);
   const hasLiveFlow = flowEvents.length > 0;

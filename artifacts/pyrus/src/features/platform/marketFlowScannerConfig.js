@@ -118,6 +118,34 @@ const normalizeOptionalNumber = (value, { min, max }) => {
   return Math.min(max, Math.max(min, Math.round(parsed)));
 };
 
+const parseFlowScannerEventTimeMs = (value) => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isFinite(time) ? time : 0;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+    const time = Date.parse(value);
+    return Number.isFinite(time) ? time : 0;
+  }
+  return 0;
+};
+
+const flowScannerEventNumber = (event, key) => {
+  const value = Number(event?.[key]);
+  return Number.isFinite(value) ? value : 0;
+};
+
+const flowScannerEventTimeMs = (event) =>
+  parseFlowScannerEventTimeMs(
+    event?.occurredAt ?? event?.updatedAt ?? event?.timestamp ?? event?.time,
+  );
+
+const flowScannerEventSymbol = (event) =>
+  normalizeSymbol(event?.ticker || event?.underlying || event?.symbol);
+
 export const normalizeFlowScannerMode = (mode) => {
   const rawMode = String(mode || "").trim();
   const aliasedMode = FLOW_SCANNER_LEGACY_MODE_ALIASES[rawMode] || rawMode;
@@ -266,6 +294,26 @@ export const filterFlowScannerEvents = (
     return true;
   });
 };
+
+export const sortFlowScannerEventsByRecency = (events = []) =>
+  [...(events || [])].sort((left, right) => {
+    const timeDelta = flowScannerEventTimeMs(right) - flowScannerEventTimeMs(left);
+    if (timeDelta !== 0) return timeDelta;
+
+    const scoreDelta =
+      flowScannerEventNumber(right, "unusualScore") -
+      flowScannerEventNumber(left, "unusualScore");
+    if (scoreDelta !== 0) return scoreDelta;
+
+    const premiumDelta =
+      flowScannerEventNumber(right, "premium") -
+      flowScannerEventNumber(left, "premium");
+    if (premiumDelta !== 0) return premiumDelta;
+
+    return flowScannerEventSymbol(left).localeCompare(
+      flowScannerEventSymbol(right),
+    );
+  });
 
 export const runFlowScannerBatch = async (
   items = [],

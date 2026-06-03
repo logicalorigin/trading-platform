@@ -207,11 +207,7 @@ const optionsFlowBounds: Partial<
   universeRefreshMs: { min: 60_000, max: 3_600_000, unit: "ms" },
   universeMinPrice: { min: 0.01, max: 1_000 },
   universeMinDollarVolume: { min: 0, max: 1_000_000_000 },
-  radarBatchSize: { min: 1, max: 250 },
-  radarDeepCandidateCount: { min: 0, max: 24 },
-  radarFallbackDeepCandidateCount: { min: 0, max: 24 },
-  radarDeepLineBudget: { min: 1, max: 500 },
-  scannerBatchSize: { min: 1, max: 100 },
+  scannerBatchSize: { min: 1, max: 500 },
   scannerConcurrency: { min: 1, max: 8 },
   scannerLimit: { min: 1, max: 500 },
   scannerLineBudget: { min: 1, max: 500 },
@@ -816,11 +812,7 @@ function normalizeFlowOverride(
   key: keyof OptionsFlowRuntimeConfig,
   value: unknown,
 ): OptionsFlowRuntimeConfig[keyof OptionsFlowRuntimeConfig] {
-  if (
-    key === "scannerEnabled" ||
-    key === "scannerAlwaysOn" ||
-    key === "radarEnabled"
-  ) {
+  if (key === "scannerEnabled" || key === "scannerAlwaysOn") {
     return readBoolean(value);
   }
   if (key === "universeMode") {

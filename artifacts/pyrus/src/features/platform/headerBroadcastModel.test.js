@@ -379,10 +379,10 @@ test("buildHeaderUnusualTapeItems keeps the latest 100 scanner events", () => {
   assert.equal(items.at(-1)?.key, "flow-20");
 });
 
-test("buildHeaderUnusualTapeItems drops radar fallback activity labels", () => {
+test("buildHeaderUnusualTapeItems drops synthetic fallback activity labels", () => {
   const items = buildHeaderUnusualTapeItems([
     {
-      id: "radar-spy",
+      id: "synthetic-spy",
       underlying: "SPY",
       optionTicker: "SPY CALL ACTIVITY",
       providerContractId: null,
