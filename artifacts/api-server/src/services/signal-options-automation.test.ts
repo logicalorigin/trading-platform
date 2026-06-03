@@ -116,6 +116,23 @@ function greekPricedQuote(
   };
 }
 
+function contractToComparablePayload(quote: SignalOptionsOptionQuote) {
+  return {
+    ...quote.contract,
+    expirationDate:
+      quote.contract?.expirationDate instanceof Date
+        ? quote.contract.expirationDate.toISOString().slice(0, 10)
+        : quote.contract?.expirationDate,
+  };
+}
+
+function quoteToComparablePayload(quote: SignalOptionsOptionQuote) {
+  return {
+    ...quote,
+    contract: contractToComparablePayload(quote),
+  };
+}
+
 function signalOptionsEmptyWorkerMaintenanceSnapshot() {
   return {
     runCount: 0,
@@ -897,6 +914,249 @@ test("signal-options liquidity skips preserve live quote demand diagnostics", ()
     ),
     {},
   );
+});
+
+test("signal-options decision snapshots are bounded and skip metadata-only contracts", () => {
+  const selectedQuote = greekPricedQuote(100, "call", 1.1, 1.2, {
+    delta: 0.51,
+    gamma: 0.04,
+    theta: -0.09,
+    vega: 0.13,
+    impliedVolatility: 0.68,
+  });
+  const metadataOnly = {
+    ...quote(101, "call"),
+    bid: null,
+    ask: null,
+    last: null,
+    mark: null,
+    quoteFreshness: "metadata",
+  };
+  const greekCandidate = greekPricedQuote(102, "call", 0.8, 0.9, {
+    delta: 0.44,
+    gamma: 0.05,
+    theta: -0.08,
+    vega: 0.12,
+    impliedVolatility: 0.62,
+  });
+  const legacyCandidate = pricedQuote(103, "call", 0.7, 0.8);
+  const overflowCandidates = Array.from({ length: 20 }, (_, index) =>
+    pricedQuote(104 + index, "call", 0.5, 0.6),
+  );
+  const contracts =
+    __signalOptionsAutomationInternalsForTests.signalOptionsDecisionSnapshotContracts({
+      selectedQuote,
+      contractSelectionPayload: {
+        greekSelection: {
+          topCandidates: [
+            {
+              selectedContract: contractToComparablePayload(greekCandidate),
+              quote: quoteToComparablePayload(greekCandidate),
+            },
+            {
+              selectedContract: contractToComparablePayload(metadataOnly),
+              quote: quoteToComparablePayload(metadataOnly),
+            },
+          ],
+          attempts: overflowCandidates.map((candidate) => ({
+            selectedContract: contractToComparablePayload(candidate),
+            quote: quoteToComparablePayload(candidate),
+          })),
+        },
+        attempts: [
+          {
+            selectedContract: contractToComparablePayload(legacyCandidate),
+            quote: quoteToComparablePayload(legacyCandidate),
+          },
+        ],
+      },
+    });
+
+  assert.equal(contracts.length, 12);
+  assert.equal(contracts[0]?.contract.providerContractId, "call-100");
+  assert.equal(
+    contracts.some(
+      (contract) => contract.contract.providerContractId === "call-101",
+    ),
+    false,
+  );
+  assert.equal(
+    contracts.some(
+      (contract) => contract.contract.providerContractId === "call-102",
+    ),
+    true,
+  );
+  assert.equal(
+    contracts.some(
+      (contract) => contract.contract.providerContractId === "call-103",
+    ),
+    true,
+  );
+});
+
+test("signal-options data quality report aggregates acquisition and Greek health", () => {
+  const eventAt = new Date("2026-06-02T16:00:00.000Z");
+  const report =
+    __signalOptionsAutomationInternalsForTests.buildSignalOptionsDataQualityReport({
+      candidates: [
+        {
+          id: "candidate-live",
+          symbol: "AMD",
+          status: "candidate",
+          contractSelection: {
+            selectedBy: "greek",
+            greekSelection: {
+              selectedBy: "greek",
+              candidateCount: 5,
+              rejectedCount: 1,
+            },
+          },
+          liveQuoteDemand: {
+            status: "live",
+            reason: null,
+            providerContractId: "twsopt:amd",
+            requestedProviderContractIds: ["twsopt:amd"],
+          },
+        },
+        {
+          id: "candidate-pending",
+          symbol: "TSM",
+          status: "skipped",
+          reason: "missing_bid_ask",
+          contractSelection: {
+            selectedBy: "fallback_legacy",
+            greekSelection: {
+              selectedBy: "fallback_legacy",
+              candidateCount: 2,
+              rejectedCount: 2,
+              fallbackReason: "greek_selector_liquidity_failed",
+            },
+          },
+          chainDebug: { reason: "options_upstream_failure" },
+          optionMarketDataBackoff: {
+            reason: "option_chain_backoff",
+            source: "chain",
+          },
+          liveQuoteDemand: {
+            status: "pending",
+            reason: "awaiting_greeks",
+            providerContractIds: ["twsopt:tsm-1", "twsopt:tsm-2"],
+            states: [
+              {
+                providerContractId: "twsopt:tsm-1",
+                status: "pending",
+                reason: "awaiting_greeks",
+              },
+              {
+                providerContractId: "twsopt:tsm-2",
+                status: "rejected",
+                reason: "not_admitted",
+              },
+            ],
+          },
+        },
+      ] as never,
+      events: [
+        {
+          id: "skip-expiration",
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          occurredAt: eventAt,
+          payload: {
+            reason: "option_expiration_backoff",
+            expirationsDebug: { reason: "options_upstream_failure" },
+            optionMarketDataBackoff: {
+              reason: "option_expiration_backoff",
+              source: "expiration",
+            },
+            decisionSnapshot: {
+              attemptedCount: 3,
+              submittedCount: 2,
+              skippedNoUsableFields: 1,
+            },
+          },
+        },
+      ] as never,
+    });
+
+  assert.equal(report.candidateCount, 2);
+  assert.equal(report.reasons.option_expiration_backoff, 1);
+  assert.equal(report.reasons.missing_bid_ask, 1);
+  assert.equal(report.stages.expiration, 1);
+  assert.equal(report.stages.chain, 1);
+  assert.equal(report.stages.quote, 1);
+  assert.equal(report.stages.greeks, 1);
+  assert.equal(report.stages.liquidity, 1);
+  assert.equal(report.greekSelection.selectedBy.greek, 1);
+  assert.equal(report.greekSelection.selectedBy.fallback_legacy, 1);
+  assert.equal(
+    report.greekSelection.fallbackReasons.greek_selector_liquidity_failed,
+    1,
+  );
+  assert.equal(report.liveDemand.statuses.live, 1);
+  assert.equal(report.liveDemand.statuses.pending, 2);
+  assert.equal(report.liveDemand.statuses.rejected, 1);
+  assert.equal(report.liveDemand.reasons.awaiting_greeks, 2);
+  assert.equal(report.snapshotPersistence.attemptedCount, 3);
+  assert.equal(report.snapshotPersistence.submittedCount, 2);
+  assert.equal(report.snapshotPersistence.skippedNoUsableFields, 1);
+});
+
+test("signal-options data quality report does not double count event-backed candidates", () => {
+  const eventAt = new Date("2026-06-02T16:00:00.000Z");
+  const report =
+    __signalOptionsAutomationInternalsForTests.buildSignalOptionsDataQualityReport({
+      candidates: [
+        {
+          id: "candidate-duplicate",
+          symbol: "AMD",
+          status: "skipped",
+          reason: "missing_bid_ask",
+          contractSelection: {
+            greekSelection: {
+              selectedBy: "fallback_legacy",
+              fallbackReason: "greek_selector_liquidity_failed",
+            },
+          },
+          liveQuoteDemand: {
+            status: "pending",
+            reason: "awaiting_greeks",
+          },
+        },
+      ] as never,
+      events: [
+        {
+          id: "skip-duplicate",
+          eventType: SIGNAL_OPTIONS_SKIPPED_EVENT,
+          occurredAt: eventAt,
+          payload: {
+            reason: "missing_bid_ask",
+            candidate: {
+              id: "candidate-duplicate",
+            },
+            contractSelection: {
+              greekSelection: {
+                selectedBy: "fallback_legacy",
+                fallbackReason: "greek_selector_liquidity_failed",
+              },
+            },
+            liveQuoteDemand: {
+              status: "pending",
+              reason: "awaiting_greeks",
+            },
+          },
+        },
+      ] as never,
+    });
+
+  assert.equal(report.reasons.missing_bid_ask, 1);
+  assert.equal(report.stages.quote, 1);
+  assert.equal(report.greekSelection.selectedBy.fallback_legacy, 1);
+  assert.equal(
+    report.greekSelection.fallbackReasons.greek_selector_liquidity_failed,
+    1,
+  );
+  assert.equal(report.liveDemand.statuses.pending, 1);
+  assert.equal(report.liveDemand.reasons.awaiting_greeks, 1);
 });
 
 test("signal-options selected live quote retry only waits on hydration misses", () => {

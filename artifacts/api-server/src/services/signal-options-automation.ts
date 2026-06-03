@@ -123,6 +123,9 @@ export const SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT =
 export const SIGNAL_OPTIONS_MANUAL_DEVIATION_EVENT =
   "signal_options_manual_deviation";
 
+const SIGNAL_OPTIONS_DECISION_SNAPSHOT_SOURCE_PREFIX =
+  "signal-options:decision";
+const SIGNAL_OPTIONS_DECISION_SNAPSHOT_MAX_CONTRACTS = 12;
 const activeScanDeploymentIds = new Set<string>();
 const activeScanStartedAtByDeploymentId = new Map<string, Date>();
 const signalOptionsMonitorBatchCursors = new Map<
@@ -372,6 +375,13 @@ type SignalOptionsCandidate = {
   quote?: Record<string, unknown> | null;
   orderPlan?: Record<string, unknown> | null;
   liquidity?: Record<string, unknown> | null;
+  selectedExpiration?: Record<string, unknown> | null;
+  contractSelection?: Record<string, unknown> | null;
+  chainDebug?: Record<string, unknown> | null;
+  chainAttempts?: Array<Record<string, unknown>>;
+  expirationsDebug?: Record<string, unknown> | null;
+  optionMarketDataBackoff?: Record<string, unknown> | null;
+  liveQuoteDemand?: Record<string, unknown> | null;
   reason?: string | null;
   actionStatus?: SignalOptionsActionStatus;
   syncStatus?: SignalOptionsSyncStatus;
@@ -1037,6 +1047,513 @@ async function persistSignalOptionsQuoteSnapshot(input: {
       dateOrNull(input.quote.updatedAt) ??
       new Date(),
   });
+}
+
+function signalOptionsQuoteHasDecisionSnapshotFields(
+  quote: SignalOptionsOptionQuote | null,
+) {
+  if (!quote) {
+    return false;
+  }
+  return [
+    quote.bid,
+    quote.ask,
+    quote.last,
+    quote.mark,
+    quote.impliedVolatility,
+    quote.delta,
+    quote.gamma,
+    quote.theta,
+    quote.vega,
+  ].some((value) => finiteNumber(value) != null);
+}
+
+function signalOptionsQuoteFromDecisionPayload(
+  value: unknown,
+): SignalOptionsOptionQuote | null {
+  const record = asRecord(value);
+  const quote = Object.keys(asRecord(record.quote)).length
+    ? asRecord(record.quote)
+    : record;
+  const contract = Object.keys(asRecord(record.selectedContract)).length
+    ? asRecord(record.selectedContract)
+    : asRecord(quote.contract);
+  if (!Object.keys(contract).length) {
+    return null;
+  }
+  return {
+    contract: {
+      ticker: compactString(contract.ticker) ?? undefined,
+      underlying: compactString(contract.underlying) ?? undefined,
+      expirationDate: contract.expirationDate as string | Date | undefined,
+      strike: finiteNumber(contract.strike) ?? undefined,
+      right: contract.right === "put" ? "put" : "call",
+      multiplier: finiteNumber(contract.multiplier) ?? 100,
+      sharesPerContract: finiteNumber(contract.sharesPerContract) ?? 100,
+      providerContractId: compactString(contract.providerContractId),
+    },
+    bid: finiteNumber(quote.bid),
+    ask: finiteNumber(quote.ask),
+    last: finiteNumber(quote.last),
+    mark: finiteNumber(quote.mark),
+    impliedVolatility: finiteNumber(quote.impliedVolatility),
+    delta: finiteNumber(quote.delta),
+    gamma: finiteNumber(quote.gamma),
+    theta: finiteNumber(quote.theta),
+    vega: finiteNumber(quote.vega),
+    openInterest: finiteNumber(quote.openInterest),
+    volume: finiteNumber(quote.volume),
+    quoteFreshness: compactString(quote.quoteFreshness),
+    marketDataMode: compactString(quote.marketDataMode),
+    updatedAt: (quote.updatedAt as string | Date | null | undefined) ?? null,
+    quoteUpdatedAt:
+      (quote.quoteUpdatedAt as string | Date | null | undefined) ?? null,
+    dataUpdatedAt:
+      (quote.dataUpdatedAt as string | Date | null | undefined) ?? null,
+    ageMs: finiteNumber(quote.ageMs),
+  };
+}
+
+function signalOptionsDecisionSnapshotKey(contract: OptionChainContract) {
+  return (
+    compactString(contract.contract.providerContractId) ??
+    optionContractKey(contract.contract) ??
+    [
+      contract.contract.underlying,
+      expirationDateKey(contract.contract.expirationDate),
+      contract.contract.strike,
+      contract.contract.right,
+    ].join(":")
+  );
+}
+
+function buildSignalOptionsDecisionSnapshotBatch(input: {
+  selectedQuote?: SignalOptionsOptionQuote | null;
+  contractSelectionPayload?: Record<string, unknown> | null;
+  maxContracts?: number;
+}) {
+  const maxContracts = Math.max(
+    1,
+    Math.floor(
+      input.maxContracts ?? SIGNAL_OPTIONS_DECISION_SNAPSHOT_MAX_CONTRACTS,
+    ),
+  );
+  const contracts: OptionChainContract[] = [];
+  const seen = new Set<string>();
+  let attemptedCount = 0;
+  let skippedNoUsableFields = 0;
+
+  const appendQuote = (
+    quote: SignalOptionsOptionQuote | null,
+    contractOverride?: Record<string, unknown> | null,
+  ) => {
+    if (!quote) {
+      return;
+    }
+    attemptedCount += 1;
+    if (!signalOptionsQuoteHasDecisionSnapshotFields(quote)) {
+      skippedNoUsableFields += 1;
+      return;
+    }
+    const contract = quoteToOptionChainContract({
+      contract: contractOverride ?? contractToPayload(quote),
+      quote,
+    });
+    if (!contract) {
+      skippedNoUsableFields += 1;
+      return;
+    }
+    const key = signalOptionsDecisionSnapshotKey(contract);
+    if (seen.has(key) || contracts.length >= maxContracts) {
+      return;
+    }
+    seen.add(key);
+    contracts.push(contract);
+  };
+
+  if (input.selectedQuote) {
+    appendQuote(input.selectedQuote, contractToPayload(input.selectedQuote));
+  }
+
+  const contractSelection = asRecord(input.contractSelectionPayload);
+  const greekSelection = asRecord(contractSelection.greekSelection);
+  const appendEntries = (entries: unknown[]) => {
+    for (const entry of entries) {
+      const quote = signalOptionsQuoteFromDecisionPayload(entry);
+      appendQuote(quote, asRecord(asRecord(entry).selectedContract));
+    }
+  };
+  appendEntries(asArray(greekSelection.topCandidates));
+  appendEntries(asArray(contractSelection.attempts));
+  appendEntries(asArray(greekSelection.attempts));
+
+  return {
+    contracts,
+    attemptedCount,
+    submittedCount: contracts.length,
+    skippedNoUsableFields,
+  };
+}
+
+function signalOptionsDecisionSnapshotContracts(input: {
+  selectedQuote?: SignalOptionsOptionQuote | null;
+  contractSelectionPayload?: Record<string, unknown> | null;
+  maxContracts?: number;
+}) {
+  return buildSignalOptionsDecisionSnapshotBatch(input).contracts;
+}
+
+async function recordSignalOptionsDecisionSnapshots(input: {
+  deployment: AlgoDeployment;
+  candidate: SignalOptionsCandidate;
+  selectedQuote?: SignalOptionsOptionQuote | null;
+  contractSelectionPayload?: Record<string, unknown> | null;
+}) {
+  const batch = buildSignalOptionsDecisionSnapshotBatch({
+    selectedQuote: input.selectedQuote,
+    contractSelectionPayload: input.contractSelectionPayload,
+  });
+  const source = `${SIGNAL_OPTIONS_DECISION_SNAPSHOT_SOURCE_PREFIX}:${input.deployment.id}`;
+  const providerContractIds = Array.from(
+    new Set(
+      batch.contracts
+        .map((contract) => compactString(contract.contract.providerContractId))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+  const detail = {
+    source,
+    attemptedCount: batch.attemptedCount,
+    submittedCount: batch.submittedCount,
+    skippedNoUsableFields: batch.skippedNoUsableFields,
+    providerContractIdCount: providerContractIds.length,
+    providerContractIds: providerContractIds.slice(
+      0,
+      SIGNAL_OPTIONS_DECISION_SNAPSHOT_MAX_CONTRACTS,
+    ),
+  };
+  if (!batch.contracts.length) {
+    return detail;
+  }
+  const asOf =
+    batch.contracts
+      .map((contract) => contract.updatedAt)
+      .filter((date): date is Date => date instanceof Date)
+      .sort((left, right) => right.getTime() - left.getTime())[0] ??
+    new Date();
+  try {
+    await persistDurableOptionChain({
+      contracts: batch.contracts,
+      source,
+      asOf,
+    });
+    return detail;
+  } catch (error) {
+    logger.debug?.(
+      {
+        err: error,
+        deploymentId: input.deployment.id,
+        candidateId: input.candidate.id,
+      },
+      "Signal-options decision snapshot persistence skipped",
+    );
+    return {
+      ...detail,
+      writeFailed: true,
+    };
+  }
+}
+
+function signalOptionsDataQualityStageFromReason(
+  reason: unknown,
+): string | null {
+  const normalized = compactString(reason)?.toLowerCase() ?? "";
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.includes("expiration")) {
+    return "expiration";
+  }
+  if (normalized.includes("chain") || normalized.includes("upstream")) {
+    return "chain";
+  }
+  if (
+    normalized.includes("liquidity") ||
+    normalized.includes("spread_too_wide")
+  ) {
+    return "liquidity";
+  }
+  if (
+    normalized.includes("greek") ||
+    normalized.includes("delta") ||
+    normalized.includes("gamma") ||
+    normalized.includes("theta") ||
+    normalized.includes("vega")
+  ) {
+    return "greeks";
+  }
+  if (
+    normalized.includes("quote") ||
+    normalized.includes("bid") ||
+    normalized.includes("ask") ||
+    normalized.includes("mark")
+  ) {
+    return "quote";
+  }
+  return null;
+}
+
+function incrementSignalOptionsDataQualityStage(
+  counter: Record<string, number>,
+  stage: unknown,
+) {
+  incrementDiagnosticCounter(counter, stage);
+}
+
+function recordSignalOptionsDataQualityBackoff(input: {
+  stages: Record<string, number>;
+  value: unknown;
+}) {
+  const backoff = asRecord(input.value);
+  if (!Object.keys(backoff).length) {
+    return;
+  }
+  incrementSignalOptionsDataQualityStage(
+    input.stages,
+    compactString(backoff.source) ??
+      signalOptionsDataQualityStageFromReason(backoff.reason),
+  );
+}
+
+function recordSignalOptionsLiveDemandDataQuality(input: {
+  liveDemand: {
+    statuses: Record<string, number>;
+    reasons: Record<string, number>;
+  };
+  stages: Record<string, number>;
+  value: unknown;
+}) {
+  const demand = asRecord(input.value);
+  if (!Object.keys(demand).length) {
+    return;
+  }
+  const recordDemandState = (state: unknown, countStage: boolean) => {
+    const stateRecord = asRecord(state);
+    incrementDiagnosticCounter(input.liveDemand.statuses, stateRecord.status);
+    incrementDiagnosticCounter(input.liveDemand.reasons, stateRecord.reason);
+    if (countStage) {
+      incrementSignalOptionsDataQualityStage(
+        input.stages,
+        signalOptionsDataQualityStageFromReason(stateRecord.reason),
+      );
+    }
+  };
+  recordDemandState(demand, true);
+  for (const state of asArray(demand.states)) {
+    recordDemandState(state, false);
+  }
+}
+
+function recordSignalOptionsGreekSelectionDataQuality(input: {
+  greekSelection: {
+    selectedBy: Record<string, number>;
+    fallbackReasons: Record<string, number>;
+    candidateCount: number;
+    rejectedCount: number;
+  };
+  stages: Record<string, number>;
+  value: unknown;
+}) {
+  const selection = asRecord(input.value);
+  if (!Object.keys(selection).length) {
+    return;
+  }
+  incrementDiagnosticCounter(
+    input.greekSelection.selectedBy,
+    selection.selectedBy,
+  );
+  incrementDiagnosticCounter(
+    input.greekSelection.fallbackReasons,
+    selection.fallbackReason,
+  );
+  input.greekSelection.candidateCount +=
+    finiteNumber(selection.candidateCount) ?? 0;
+  input.greekSelection.rejectedCount +=
+    finiteNumber(selection.rejectedCount) ?? 0;
+  incrementSignalOptionsDataQualityStage(
+    input.stages,
+    signalOptionsDataQualityStageFromReason(selection.fallbackReason),
+  );
+}
+
+function recordSignalOptionsDecisionSnapshotDataQuality(input: {
+  snapshotPersistence: {
+    attemptedCount: number;
+    submittedCount: number;
+    skippedNoUsableFields: number;
+    writeFailedCount: number;
+  };
+  value: unknown;
+}) {
+  const snapshot = asRecord(input.value);
+  if (!Object.keys(snapshot).length) {
+    return;
+  }
+  input.snapshotPersistence.attemptedCount +=
+    finiteNumber(snapshot.attemptedCount) ?? 0;
+  input.snapshotPersistence.submittedCount +=
+    finiteNumber(snapshot.submittedCount) ?? 0;
+  input.snapshotPersistence.skippedNoUsableFields +=
+    finiteNumber(snapshot.skippedNoUsableFields) ?? 0;
+  if (snapshot.writeFailed === true) {
+    input.snapshotPersistence.writeFailedCount += 1;
+  }
+}
+
+function signalOptionsDataQualityEventCandidateId(event: ExecutionEvent) {
+  const payload = asRecord(event.payload);
+  const candidate = asRecord(
+    Object.keys(asRecord(payload.candidate)).length
+      ? payload.candidate
+      : payload.automationCandidate,
+  );
+  const position = asRecord(payload.position);
+  return (
+    compactString(candidate.id) ??
+    compactString(payload.candidateId) ??
+    compactString(position.candidateId)
+  );
+}
+
+function buildSignalOptionsDataQualityReport(input: {
+  candidates?: Array<Partial<SignalOptionsCandidate> & Record<string, unknown>>;
+  events?: ExecutionEvent[];
+}) {
+  const reasons: Record<string, number> = {};
+  const stages: Record<string, number> = {};
+  const greekSelection = {
+    selectedBy: {} as Record<string, number>,
+    fallbackReasons: {} as Record<string, number>,
+    candidateCount: 0,
+    rejectedCount: 0,
+  };
+  const liveDemand = {
+    statuses: {} as Record<string, number>,
+    reasons: {} as Record<string, number>,
+  };
+  const snapshotPersistence = {
+    attemptedCount: 0,
+    submittedCount: 0,
+    skippedNoUsableFields: 0,
+    writeFailedCount: 0,
+  };
+  const eventCandidateIds = new Set(
+    (input.events ?? [])
+      .map((event) => signalOptionsDataQualityEventCandidateId(event))
+      .filter((candidateId): candidateId is string => Boolean(candidateId)),
+  );
+
+  const recordCandidate = (
+    candidate: Record<string, unknown>,
+    includeDiagnostics: boolean,
+  ) => {
+    if (!includeDiagnostics) {
+      return;
+    }
+    const reason = candidate.reason;
+    incrementDiagnosticCounter(reasons, reason);
+    incrementSignalOptionsDataQualityStage(
+      stages,
+      signalOptionsDataQualityStageFromReason(reason),
+    );
+    const optionMarketDataBackoff = asRecord(candidate.optionMarketDataBackoff);
+    recordSignalOptionsDataQualityBackoff({
+      stages,
+      value: optionMarketDataBackoff,
+    });
+    if (!Object.keys(optionMarketDataBackoff).length) {
+      incrementSignalOptionsDataQualityStage(
+        stages,
+        signalOptionsDataQualityStageFromReason(
+          asRecord(candidate.chainDebug).reason,
+        ),
+      );
+    }
+    const contractSelection = asRecord(candidate.contractSelection);
+    recordSignalOptionsGreekSelectionDataQuality({
+      greekSelection,
+      stages,
+      value: contractSelection.greekSelection,
+    });
+    recordSignalOptionsLiveDemandDataQuality({
+      liveDemand,
+      stages,
+      value: candidate.liveQuoteDemand,
+    });
+  };
+
+  for (const candidate of input.candidates ?? []) {
+    recordCandidate(
+      candidate,
+      !eventCandidateIds.has(compactString(candidate.id) ?? ""),
+    );
+  }
+
+  for (const event of input.events ?? []) {
+    const payload = asRecord(event.payload);
+    const reason = payload.reason;
+    const optionMarketDataBackoff = asRecord(payload.optionMarketDataBackoff);
+    incrementDiagnosticCounter(reasons, reason);
+    if (!Object.keys(optionMarketDataBackoff).length) {
+      incrementSignalOptionsDataQualityStage(
+        stages,
+        signalOptionsDataQualityStageFromReason(reason),
+      );
+    }
+    recordSignalOptionsDataQualityBackoff({
+      stages,
+      value: optionMarketDataBackoff,
+    });
+    if (!Object.keys(optionMarketDataBackoff).length) {
+      incrementSignalOptionsDataQualityStage(
+        stages,
+        signalOptionsDataQualityStageFromReason(
+          asRecord(payload.chainDebug).reason,
+        ),
+      );
+    }
+    recordSignalOptionsGreekSelectionDataQuality({
+      greekSelection,
+      stages,
+      value: asRecord(payload.contractSelection).greekSelection,
+    });
+    recordSignalOptionsLiveDemandDataQuality({
+      liveDemand,
+      stages,
+      value: payload.liveQuoteDemand,
+    });
+    recordSignalOptionsDecisionSnapshotDataQuality({
+      snapshotPersistence,
+      value: payload.decisionSnapshot,
+    });
+  }
+
+  return {
+    candidateCount: input.candidates?.length ?? 0,
+    reasons: sortedDiagnosticCounter(reasons),
+    stages: sortedDiagnosticCounter(stages),
+    greekSelection: {
+      selectedBy: sortedDiagnosticCounter(greekSelection.selectedBy),
+      fallbackReasons: sortedDiagnosticCounter(greekSelection.fallbackReasons),
+      candidateCount: greekSelection.candidateCount,
+      rejectedCount: greekSelection.rejectedCount,
+    },
+    liveDemand: {
+      statuses: sortedDiagnosticCounter(liveDemand.statuses),
+      reasons: sortedDiagnosticCounter(liveDemand.reasons),
+    },
+    snapshotPersistence,
+  };
 }
 
 function findSignalOptionsQuoteForContract(input: {
@@ -4082,6 +4599,17 @@ function candidateFromEvent(
   const signalQuality = asRecord(
     candidate.signalQuality ?? position.signalQuality,
   );
+  const selectedExpiration = asRecord(payload.selectedExpiration);
+  const contractSelection = asRecord(payload.contractSelection);
+  const chainDebug = asRecord(payload.chainDebug);
+  const expirationsDebug = asRecord(payload.expirationsDebug);
+  const optionMarketDataBackoff = asRecord(payload.optionMarketDataBackoff);
+  const liveQuoteDemand = asRecord(payload.liveQuoteDemand);
+  const chainAttempts = Array.isArray(payload.chainAttempts)
+    ? payload.chainAttempts
+        .map((attempt) => asRecord(attempt))
+        .filter((attempt) => Object.keys(attempt).length > 0)
+    : [];
   const candidateId =
     compactString(candidate.id) ??
     compactString(payload.candidateId) ??
@@ -4137,6 +4665,23 @@ function candidateFromEvent(
       ? asRecord(payload.orderPlan)
       : asRecord(candidate.orderPlan),
     liquidity: asRecord(payload.liquidity),
+    selectedExpiration: Object.keys(selectedExpiration).length
+      ? selectedExpiration
+      : null,
+    contractSelection: Object.keys(contractSelection).length
+      ? contractSelection
+      : null,
+    chainDebug: Object.keys(chainDebug).length ? chainDebug : null,
+    chainAttempts,
+    expirationsDebug: Object.keys(expirationsDebug).length
+      ? expirationsDebug
+      : null,
+    optionMarketDataBackoff: Object.keys(optionMarketDataBackoff).length
+      ? optionMarketDataBackoff
+      : null,
+    liveQuoteDemand: Object.keys(liveQuoteDemand).length
+      ? liveQuoteDemand
+      : null,
     reason:
       status === "skipped"
         ? reason
@@ -4159,6 +4704,14 @@ function mergeSignalOptionsCandidate(
     existing.status !== "candidate"
       ? existing.status
       : candidate.status;
+  const reason =
+    status === "skipped"
+      ? candidate.reason === "candidate_resolution_timeout" &&
+        existing?.reason &&
+        existing.reason !== "candidate_resolution_timeout"
+        ? existing.reason
+        : (candidate.reason ?? existing?.reason ?? null)
+      : null;
   return {
     ...(existing ?? {}),
     ...candidate,
@@ -4175,10 +4728,30 @@ function mergeSignalOptionsCandidate(
     liquidity: Object.keys(asRecord(candidate.liquidity)).length
       ? candidate.liquidity
       : (existing?.liquidity ?? null),
-    reason:
-      status === "skipped"
-        ? (candidate.reason ?? existing?.reason ?? null)
-        : null,
+    selectedExpiration: Object.keys(asRecord(candidate.selectedExpiration)).length
+      ? candidate.selectedExpiration
+      : (existing?.selectedExpiration ?? null),
+    contractSelection: Object.keys(asRecord(candidate.contractSelection)).length
+      ? candidate.contractSelection
+      : (existing?.contractSelection ?? null),
+    chainDebug: Object.keys(asRecord(candidate.chainDebug)).length
+      ? candidate.chainDebug
+      : (existing?.chainDebug ?? null),
+    chainAttempts: candidate.chainAttempts?.length
+      ? candidate.chainAttempts
+      : (existing?.chainAttempts ?? []),
+    expirationsDebug: Object.keys(asRecord(candidate.expirationsDebug)).length
+      ? candidate.expirationsDebug
+      : (existing?.expirationsDebug ?? null),
+    optionMarketDataBackoff: Object.keys(
+      asRecord(candidate.optionMarketDataBackoff),
+    ).length
+      ? candidate.optionMarketDataBackoff
+      : (existing?.optionMarketDataBackoff ?? null),
+    liveQuoteDemand: Object.keys(asRecord(candidate.liveQuoteDemand)).length
+      ? candidate.liveQuoteDemand
+      : (existing?.liveQuoteDemand ?? null),
+    reason,
     signalQuality: candidate.signalQuality ?? existing?.signalQuality ?? null,
     signal: Object.keys(asRecord(candidate.signal)).length
       ? candidate.signal
@@ -7586,6 +8159,10 @@ async function buildStatePayload(input: {
   const dailyPnl = dailyRealizedPnl + openUnrealizedPnl;
   const dailyLossBreached =
     dailyPnl <= -Math.abs(input.profile.riskCaps.maxDailyLoss);
+  const dataQuality = buildSignalOptionsDataQualityReport({
+    candidates,
+    events: signalEvents,
+  });
 
   return {
     deployment: deploymentToResponse(input.deployment),
@@ -7593,6 +8170,7 @@ async function buildStatePayload(input: {
     mode: "shadow",
     signals,
     candidates,
+    dataQuality,
     activePositions,
     risk: {
       openSymbols: activePositions.length,
@@ -8844,6 +9422,7 @@ async function emitCandidateContractSelected(input: {
   contractSelection: Record<string, unknown> | null;
   chainDebug: Record<string, unknown> | null;
   chainAttempts: SignalOptionsChainAttempt[];
+  liveQuoteDemand?: Record<string, unknown> | null;
 }) {
   if (candidateContractSelectionEventExists(input)) {
     return;
@@ -8873,6 +9452,7 @@ async function emitCandidateContractSelected(input: {
       contractSelection: input.contractSelection,
       chainDebug: input.chainDebug,
       chainAttempts: input.chainAttempts,
+      liveQuoteDemand: input.liveQuoteDemand ?? null,
     },
   });
 }
@@ -9566,13 +10146,22 @@ async function processEntryCandidate(input: {
   }
 
   const selectedQuote = contractResolution.selectedQuote;
+  const decisionSnapshot = await recordSignalOptionsDecisionSnapshots({
+    deployment: input.deployment,
+    candidate: input.candidate,
+    selectedQuote,
+    contractSelectionPayload: contractResolution.contractSelectionPayload,
+  });
   if (!selectedQuote) {
     await emitSkippedCandidate({
       deployment: input.deployment,
       candidate: input.candidate,
       signalKey: input.signalKey,
       reason: contractResolution.reason ?? "no_contract_for_strike_slot",
-      detail: contractResolution.detail,
+      detail: {
+        ...asRecord(contractResolution.detail),
+        decisionSnapshot,
+      },
     });
     return false;
   }
@@ -9612,6 +10201,7 @@ async function processEntryCandidate(input: {
         ...signalOptionsLiveQuoteDemandDetailFromResolution(
           contractResolution.detail,
         ),
+        decisionSnapshot,
       },
     });
     return false;
@@ -9633,6 +10223,7 @@ async function processEntryCandidate(input: {
         selectedExpiration: selectedExpirationPayload,
         chainDebug,
         chainAttempts,
+        decisionSnapshot,
       },
     });
     return false;
@@ -9654,6 +10245,7 @@ async function processEntryCandidate(input: {
         selectedExpiration: selectedExpirationPayload,
         chainDebug,
         chainAttempts,
+        decisionSnapshot,
       },
     });
     return false;
@@ -9672,6 +10264,7 @@ async function processEntryCandidate(input: {
         selectedContract,
         quote,
         orderPlan,
+        decisionSnapshot,
       },
     });
     return false;
@@ -9745,6 +10338,7 @@ async function processEntryCandidate(input: {
       position,
       chainDebug,
       contractSelection: contractSelectionPayload,
+      decisionSnapshot,
     },
   });
 
@@ -14220,6 +14814,8 @@ export const __signalOptionsAutomationInternalsForTests = {
   signalOptionsStrikesAroundMoney,
   signalOptionsLiveQuoteDemandDetailFromResolution,
   signalOptionsSelectedLiveQuoteNeedsRetry,
+  signalOptionsDecisionSnapshotContracts,
+  buildSignalOptionsDataQualityReport,
   shouldRecordActivePositionMark,
   shouldRecordActivePositionMarkForScan,
   SIGNAL_OPTIONS_OPTION_MARK_TIMEFRAME,
