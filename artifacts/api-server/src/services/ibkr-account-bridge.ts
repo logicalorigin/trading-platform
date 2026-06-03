@@ -43,6 +43,24 @@ function executionsFreshTtlMs(): number {
   return readPositiveIntegerEnv("IBKR_ACCOUNT_EXECUTION_CACHE_TTL_MS", 10_000);
 }
 
+function executionsInitialWaitMs(): number {
+  return readPositiveIntegerEnv("IBKR_ACCOUNT_EXECUTION_INITIAL_WAIT_MS", 1_500);
+}
+
+function normalizeInitialWaitMs(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return Math.max(0, Math.floor(value));
+}
+
+function waitForFallback<T>(ms: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve(fallback), ms);
+    timeout.unref?.();
+  });
+}
+
 function cacheAgeMs(entry: CacheEntry<unknown>): number {
   return Math.max(0, Date.now() - entry.cachedAt);
 }
@@ -69,6 +87,7 @@ async function runCachedAccountRead<T extends unknown[]>({
   freshTtlMs,
   staleTtlMs,
   label,
+  initialWaitMs,
   work,
 }: {
   cache: Map<string, CacheEntry<T>>;
@@ -77,24 +96,33 @@ async function runCachedAccountRead<T extends unknown[]>({
   freshTtlMs: number;
   staleTtlMs: number;
   label: string;
+  initialWaitMs?: number | null;
   work: () => Promise<T>;
 }): Promise<T> {
   const cached = cache.get(key);
   if (cached && isFresh(cached, freshTtlMs)) {
     return cached.payload;
   }
+  const staleCached =
+    cached && isUsableStale(cached, staleTtlMs) ? cached : null;
+  const normalizedInitialWaitMs = normalizeInitialWaitMs(initialWaitMs);
 
   const pending = inflight.get(key);
   if (pending) {
+    if (staleCached) {
+      return staleCached.payload;
+    }
+    if (normalizedInitialWaitMs !== null) {
+      return Promise.race([
+        pending,
+        waitForFallback(normalizedInitialWaitMs, [] as unknown as T),
+      ]);
+    }
     return pending;
   }
 
-  if (
-    isBridgeWorkBackedOff("account") &&
-    cached &&
-    isUsableStale(cached, staleTtlMs)
-  ) {
-    return cached.payload;
+  if (isBridgeWorkBackedOff("account") && staleCached) {
+    return staleCached.payload;
   }
 
   const health = await getBridgeHealthForSession().catch(() => null);
@@ -106,8 +134,8 @@ async function runCachedAccountRead<T extends unknown[]>({
       health.accountsLoaded,
   );
   if (!accountBridgeReady) {
-    if (cached && isUsableStale(cached, staleTtlMs)) {
-      return cached.payload;
+    if (staleCached) {
+      return staleCached.payload;
     }
     logger.debug(
       {
@@ -151,6 +179,21 @@ async function runCachedAccountRead<T extends unknown[]>({
     });
 
   inflight.set(key, promise);
+  if (staleCached) {
+    promise.catch((error) => {
+      logger.warn(
+        { err: error, label, key, cacheAgeMs: cacheAgeMs(staleCached) },
+        "Background IBKR account bridge refresh failed after serving stale cache",
+      );
+    });
+    return staleCached.payload;
+  }
+  if (normalizedInitialWaitMs !== null) {
+    return Promise.race([
+      promise,
+      waitForFallback(normalizedInitialWaitMs, [] as unknown as T),
+    ]);
+  }
   return promise;
 }
 
@@ -211,6 +254,7 @@ export function listIbkrExecutions(input: {
     freshTtlMs: executionsFreshTtlMs(),
     staleTtlMs: accountStaleTtlMs(),
     label: "executions",
+    initialWaitMs: executionsInitialWaitMs(),
     work: () => bridgeClient.listExecutions(input),
   });
 }
