@@ -541,7 +541,7 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = fal
         <span style={{ color: CSS_COLOR.amber, fontFamily: T.sans, fontVariantNumeric: "tabular-nums", fontWeight: FONT_WEIGHTS.medium }}>{scoreLabel}</span>
       ) : null}
       <span style={{ color: CSS_COLOR.textMuted, fontFamily: T.sans, fontVariantNumeric: "tabular-nums" }}>
-        {formatRelativeTimeShort(item.time)}
+        {item.ageLabel || formatRelativeTimeShort(item.time)}
       </span>
     </HeaderBroadcastSegment>
   );

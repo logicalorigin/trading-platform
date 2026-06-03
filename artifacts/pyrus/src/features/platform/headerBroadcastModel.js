@@ -1,6 +1,7 @@
 import { WATCHLIST_SIGNAL_TIMEFRAMES } from "./watchlistModel.js";
 import { getCurrentSignalDirection } from "../signals/signalStateFreshness.js";
 import { FLOW_SCANNER_AGGREGATE_EVENT_LIMIT } from "./marketFlowScannerConfig.js";
+import { formatFlowTradeAge } from "./flowTapeModel.js";
 
 export const HEADER_SIGNAL_MAX_ITEMS = 24;
 export const HEADER_UNUSUAL_MAX_ITEMS = FLOW_SCANNER_AGGREGATE_EVENT_LIMIT;
@@ -246,7 +247,7 @@ const isRadarActivityFallbackEvent = (event) => {
 
 export const buildHeaderUnusualTapeItems = (
   events = [],
-  { maxItems = HEADER_UNUSUAL_MAX_ITEMS } = {},
+  { maxItems = HEADER_UNUSUAL_MAX_ITEMS, nowMs = Date.now() } = {},
 ) => {
   const itemsByKey = new Map();
 
@@ -291,6 +292,7 @@ export const buildHeaderUnusualTapeItems = (
         score: Number.isFinite(score) ? score : 0,
         time,
         timeMs,
+        ageLabel: formatFlowTradeAge(time, nowMs),
         raw: event,
       });
     }

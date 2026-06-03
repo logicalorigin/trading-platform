@@ -343,6 +343,26 @@ test("buildHeaderUnusualTapeItems ranks scanner-selected flow events", () => {
   assert.equal(items[1].right, "P");
 });
 
+test("buildHeaderUnusualTapeItems includes compact event age labels", () => {
+  const items = buildHeaderUnusualTapeItems(
+    [
+      {
+        id: "spy-flow-age",
+        ticker: "SPY",
+        premium: 220_000,
+        occurredAt: "2026-04-27T15:54:00Z",
+        cp: "C",
+      },
+    ],
+    {
+      nowMs: Date.parse("2026-04-27T16:00:00Z"),
+    },
+  );
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].ageLabel, "6m");
+});
+
 test("buildHeaderUnusualTapeItems keeps the latest 100 scanner events", () => {
   const events = Array.from({ length: 120 }, (_, index) => ({
     id: `flow-${index}`,
