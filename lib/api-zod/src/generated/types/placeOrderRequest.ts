@@ -15,6 +15,7 @@ import type { OrderSide } from './orderSide';
 import type { OrderType } from './orderType';
 import type { PlaceOrderRequestSource } from './placeOrderRequestSource';
 import type { TimeInForce } from './timeInForce';
+import type { TradingSession } from './tradingSession';
 
 export interface PlaceOrderRequest {
   accountId: string;
@@ -31,6 +32,8 @@ export interface PlaceOrderRequest {
   optionContract: OptionContract | null;
   positionEffect?: OptionOrderPositionEffect;
   strategyIntent?: OptionOrderStrategyIntent;
+  tradingSession?: TradingSession;
+  includeOvernight?: boolean | null;
   source?: PlaceOrderRequestSource;
   sourceEventId?: string | null;
   clientOrderId?: string | null;

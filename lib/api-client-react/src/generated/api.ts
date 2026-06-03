@@ -152,6 +152,8 @@ import type {
   Order,
   OrderPreview,
   OrdersResponse,
+  OvernightSpotSignalScanRequest,
+  OvernightSpotSignalScanResult,
   PauseAlgoDeploymentParams,
   PineScriptRecord,
   PineScriptsResponse,
@@ -10587,6 +10589,78 @@ export const useRunSignalOptionsShadowScan = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getRunSignalOptionsShadowScanMutationOptions(options));
+    }
+
+/**
+ * @summary Track or execute overnight spot signals for an algo deployment
+ */
+export const getRunOvernightSpotSignalScanUrl = (deploymentId: string,) => {
+
+
+
+
+  return `/api/algo/deployments/${deploymentId}/overnight-spot/scan`
+}
+
+export const runOvernightSpotSignalScan = async (deploymentId: string,
+    overnightSpotSignalScanRequest?: OvernightSpotSignalScanRequest, options?: RequestInit): Promise<OvernightSpotSignalScanResult> => {
+
+  return customFetch<OvernightSpotSignalScanResult>(getRunOvernightSpotSignalScanUrl(deploymentId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      overnightSpotSignalScanRequest,)
+  }
+);}
+
+
+
+
+export const getRunOvernightSpotSignalScanMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runOvernightSpotSignalScan>>, TError,{deploymentId: string;data: BodyType<OvernightSpotSignalScanRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof runOvernightSpotSignalScan>>, TError,{deploymentId: string;data: BodyType<OvernightSpotSignalScanRequest>}, TContext> => {
+
+const mutationKey = ['runOvernightSpotSignalScan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runOvernightSpotSignalScan>>, {deploymentId: string;data: BodyType<OvernightSpotSignalScanRequest>}> = (props) => {
+          const {deploymentId,data} = props ?? {};
+
+          return  runOvernightSpotSignalScan(deploymentId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RunOvernightSpotSignalScanMutationResult = NonNullable<Awaited<ReturnType<typeof runOvernightSpotSignalScan>>>
+    export type RunOvernightSpotSignalScanMutationBody = BodyType<OvernightSpotSignalScanRequest>
+    export type RunOvernightSpotSignalScanMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Track or execute overnight spot signals for an algo deployment
+ */
+export const useRunOvernightSpotSignalScan = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runOvernightSpotSignalScan>>, TError,{deploymentId: string;data: BodyType<OvernightSpotSignalScanRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof runOvernightSpotSignalScan>>,
+        TError,
+        {deploymentId: string;data: BodyType<OvernightSpotSignalScanRequest>},
+        TContext
+      > => {
+      return useMutation(getRunOvernightSpotSignalScanMutationOptions(options));
     }
 
 /**

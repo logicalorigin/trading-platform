@@ -3568,6 +3568,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/SignalOptionsAutomationState"
 
+  /algo/deployments/{deploymentId}/overnight-spot/scan:
+    post:
+      operationId: runOvernightSpotSignalScan
+      tags: [automation]
+      summary: Track or execute overnight spot signals for an algo deployment
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OvernightSpotSignalScanRequest"
+      responses:
+        "200":
+          description: Overnight spot signal scan result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OvernightSpotSignalScanResult"
+
   /algo/deployments/{deploymentId}/signal-options/backfill:
     post:
       operationId: runSignalOptionsShadowBackfill
@@ -4270,6 +4295,10 @@ components:
     TimeInForce:
       type: string
       enum: [day, gtc, ioc, fok]
+
+    TradingSession:
+      type: string
+      enum: [default, regular, extended, overnight, overnight_plus_day]
 
     OrderStatus:
       type: string
@@ -6886,6 +6915,22 @@ components:
           oneOf:
             - $ref: "#/components/schemas/OptionContract"
             - type: "null"
+        tradingSession:
+          oneOf:
+            - $ref: "#/components/schemas/TradingSession"
+            - type: "null"
+        resolvedExchange:
+          type: string
+          nullable: true
+        primaryExchange:
+          type: string
+          nullable: true
+        includeOvernight:
+          type: boolean
+          nullable: true
+        routingReason:
+          type: string
+          nullable: true
       required:
         - id
         - accountId
@@ -6939,6 +6984,11 @@ components:
           $ref: "#/components/schemas/OptionOrderPositionEffect"
         strategyIntent:
           $ref: "#/components/schemas/OptionOrderStrategyIntent"
+        tradingSession:
+          $ref: "#/components/schemas/TradingSession"
+        includeOvernight:
+          type: boolean
+          nullable: true
         source:
           type: string
           enum: [manual, automation]
@@ -6980,6 +7030,22 @@ components:
           oneOf:
             - $ref: "#/components/schemas/OptionContract"
             - type: "null"
+        tradingSession:
+          oneOf:
+            - $ref: "#/components/schemas/TradingSession"
+            - type: "null"
+        resolvedExchange:
+          type: string
+          nullable: true
+        primaryExchange:
+          type: string
+          nullable: true
+        includeOvernight:
+          type: boolean
+          nullable: true
+        routingReason:
+          type: string
+          nullable: true
       required:
         - accountId
         - mode
@@ -10273,6 +10339,88 @@ components:
       required:
         - deployment
         - profile
+
+    OvernightSpotExecutionMode:
+      type: string
+      enum: [disabled, shadow, live]
+
+    OvernightSpotSignalScanRequest:
+      type: object
+      properties:
+        forceEvaluate:
+          type: boolean
+        refreshSignals:
+          type: boolean
+        runActions:
+          type: boolean
+        execute:
+          type: boolean
+        recordSignals:
+          type: boolean
+        trackSignals:
+          type: boolean
+
+    OvernightSpotSignalScanResultItem:
+      type: object
+      properties:
+        symbol:
+          type: string
+        clientOrderId:
+          type: string
+        status:
+          type: string
+          enum: [tracked, blocked, skipped, executed, failed]
+        eventType:
+          type: [string, "null"]
+        eventId:
+          type: [string, "null"]
+        blockerCodes:
+          type: array
+          items:
+            type: string
+        reason:
+          type: [string, "null"]
+      required:
+        - symbol
+        - clientOrderId
+        - status
+
+    OvernightSpotSignalScanResult:
+      type: object
+      properties:
+        deploymentId:
+          type: string
+        executionMode:
+          $ref: "#/components/schemas/OvernightSpotExecutionMode"
+        runActions:
+          type: boolean
+        candidateCount:
+          type: integer
+        trackedCount:
+          type: integer
+        blockedCount:
+          type: integer
+        skippedCount:
+          type: integer
+        executedCount:
+          type: integer
+        failedCount:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/OvernightSpotSignalScanResultItem"
+      required:
+        - deploymentId
+        - executionMode
+        - runActions
+        - candidateCount
+        - trackedCount
+        - blockedCount
+        - skippedCount
+        - executedCount
+        - failedCount
+        - results
 
     SignalOptionsExecutionProfile:
       type: object

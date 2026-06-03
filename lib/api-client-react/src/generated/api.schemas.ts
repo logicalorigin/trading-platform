@@ -260,6 +260,17 @@ export const TimeInForce = {
   fok: 'fok',
 } as const;
 
+export type TradingSession = typeof TradingSession[keyof typeof TradingSession];
+
+
+export const TradingSession = {
+  default: 'default',
+  regular: 'regular',
+  extended: 'extended',
+  overnight: 'overnight',
+  overnight_plus_day: 'overnight_plus_day',
+} as const;
+
 export type OrderStatus = typeof OrderStatus[keyof typeof OrderStatus];
 
 
@@ -1835,6 +1846,11 @@ export interface Order {
   placedAt: string;
   updatedAt: string;
   optionContract: OptionContract | null;
+  tradingSession?: TradingSession | null;
+  resolvedExchange?: string | null;
+  primaryExchange?: string | null;
+  includeOvernight?: boolean | null;
+  routingReason?: string | null;
 }
 
 export type PlaceOrderRequestSource = typeof PlaceOrderRequestSource[keyof typeof PlaceOrderRequestSource];
@@ -1860,6 +1876,8 @@ export interface PlaceOrderRequest {
   optionContract: OptionContract | null;
   positionEffect?: OptionOrderPositionEffect;
   strategyIntent?: OptionOrderStrategyIntent;
+  tradingSession?: TradingSession;
+  includeOvernight?: boolean | null;
   source?: PlaceOrderRequestSource;
   sourceEventId?: string | null;
   clientOrderId?: string | null;
@@ -1874,6 +1892,11 @@ export interface OrderPreview {
   resolvedContractId: number;
   orderPayload: JsonObject;
   optionContract: OptionContract | null;
+  tradingSession?: TradingSession | null;
+  resolvedExchange?: string | null;
+  primaryExchange?: string | null;
+  includeOvernight?: boolean | null;
+  routingReason?: string | null;
 }
 
 export interface SubmitIbkrOrdersRequest {
@@ -3900,6 +3923,61 @@ export interface SignalOptionsExecutionProfile {
 export interface UpdateSignalOptionsExecutionProfileResponse {
   deployment: AlgoDeployment;
   profile: SignalOptionsExecutionProfile;
+}
+
+export type OvernightSpotExecutionMode = typeof OvernightSpotExecutionMode[keyof typeof OvernightSpotExecutionMode];
+
+
+export const OvernightSpotExecutionMode = {
+  disabled: 'disabled',
+  shadow: 'shadow',
+  live: 'live',
+} as const;
+
+export interface OvernightSpotSignalScanRequest {
+  forceEvaluate?: boolean;
+  refreshSignals?: boolean;
+  runActions?: boolean;
+  execute?: boolean;
+  recordSignals?: boolean;
+  trackSignals?: boolean;
+}
+
+export type OvernightSpotSignalScanResultItemStatus = typeof OvernightSpotSignalScanResultItemStatus[keyof typeof OvernightSpotSignalScanResultItemStatus];
+
+
+export const OvernightSpotSignalScanResultItemStatus = {
+  tracked: 'tracked',
+  blocked: 'blocked',
+  skipped: 'skipped',
+  executed: 'executed',
+  failed: 'failed',
+} as const;
+
+export interface OvernightSpotSignalScanResultItem {
+  symbol: string;
+  clientOrderId: string;
+  status: OvernightSpotSignalScanResultItemStatus;
+  /** @nullable */
+  eventType?: string | null;
+  /** @nullable */
+  eventId?: string | null;
+  blockerCodes?: string[];
+  /** @nullable */
+  reason?: string | null;
+}
+
+export interface OvernightSpotSignalScanResult {
+  deploymentId: string;
+  executionMode: OvernightSpotExecutionMode;
+  runActions: boolean;
+  candidateCount: number;
+  trackedCount: number;
+  blockedCount: number;
+  skippedCount: number;
+  executedCount: number;
+  failedCount: number;
+  results: OvernightSpotSignalScanResultItem[];
 }
 
 export type SignalOptionsAutomationStateMode = typeof SignalOptionsAutomationStateMode[keyof typeof SignalOptionsAutomationStateMode];

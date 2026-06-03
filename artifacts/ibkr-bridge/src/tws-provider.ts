@@ -59,6 +59,7 @@ import {
   type ResolvedIbkrContract,
   type RuntimeMode,
   type SessionStatusSnapshot,
+  type TradingSession,
 } from "@workspace/ibkr-contracts";
 import { logger } from "./logger";
 import type {
@@ -606,6 +607,29 @@ function normalizeHistoricalDataExchange(value: unknown): string | null {
     return null;
   }
   return exchange === "OVERNIGHT" || exchange === "IBEOS" ? exchange : null;
+}
+
+function normalizeTradingSession(value: unknown): TradingSession {
+  const session = asString(value)?.trim().toLowerCase();
+  return session === "regular" ||
+    session === "extended" ||
+    session === "overnight" ||
+    session === "overnight_plus_day"
+    ? session
+    : "default";
+}
+
+function isOvernightTradingSession(session: TradingSession): boolean {
+  return session === "overnight" || session === "overnight_plus_day";
+}
+
+function contractPrimaryExchange(contract: Contract): string | null {
+  const primaryExchange =
+    asString(contract.primaryExch) ??
+    asString((contract as Record<string, unknown>).primaryExchange) ??
+    null;
+  const normalized = primaryExchange?.trim().toUpperCase() ?? "";
+  return normalized || null;
 }
 
 function scoreStockContractDetail(
@@ -4058,10 +4082,33 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     optionContract: BrokerPositionSnapshot["optionContract"];
     order: Order;
     resolvedContractId: number;
+    tradingSession: TradingSession;
+    resolvedExchange: string | null;
+    primaryExchange: string | null;
+    includeOvernight: boolean | null;
+    routingReason: string | null;
   }> {
     const accountId = await this.requireAccountId(input.accountId);
+    const tradingSession = normalizeTradingSession(input.tradingSession);
+    if (
+      input.includeOvernight != null &&
+      input.includeOvernight !== isOvernightTradingSession(tradingSession)
+    ) {
+      throw new HttpError(
+        400,
+        "includeOvernight must match an overnight trading session.",
+        {
+          code: "ibkr_include_overnight_session_conflict",
+        },
+      );
+    }
 
     if (input.assetClass === "option") {
+      if (isOvernightTradingSession(tradingSession)) {
+        throw new HttpError(400, "Overnight structured orders support stocks and ETFs only.", {
+          code: "ibkr_overnight_asset_class_unsupported",
+        });
+      }
       if (!input.optionContract) {
         throw new HttpError(400, "Option order is missing contract metadata.", {
           code: "ibkr_option_order_missing_contract",
@@ -4104,25 +4151,64 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         optionContract: resolvedOption.optionContract,
         order: this.toTwsOrder(input, accountId),
         resolvedContractId,
+        tradingSession,
+        resolvedExchange: "SMART",
+        primaryExchange: null,
+        includeOvernight: false,
+        routingReason: null,
       };
     }
 
+    if (isOvernightTradingSession(tradingSession) && input.type !== "limit") {
+      throw new HttpError(400, "Overnight structured stock orders must be limit orders.", {
+        code: "ibkr_overnight_limit_order_required",
+      });
+    }
+
     const resolvedStock = await this.resolveStockContract(input.symbol);
+    const primaryExchange = contractPrimaryExchange(resolvedStock.contract);
+    if (isOvernightTradingSession(tradingSession) && !primaryExchange) {
+      throw new HttpError(
+        400,
+        "Overnight stock routing requires the resolved contract primary exchange.",
+        {
+          code: "ibkr_overnight_primary_exchange_required",
+        },
+      );
+    }
+    const resolvedExchange =
+      tradingSession === "overnight" ? "OVERNIGHT" : "SMART";
+    const includeOvernight = isOvernightTradingSession(tradingSession);
     return {
       accountId,
       contract: {
         ...resolvedStock.contract,
         conId: resolvedStock.resolved.conid,
-        exchange: "SMART",
+        exchange: resolvedExchange,
+        ...(primaryExchange ? { primaryExch: primaryExchange } : {}),
       },
       optionContract: null,
-      order: this.toTwsOrder(input, accountId),
+      order: this.toTwsOrder(input, accountId, { includeOvernight }),
       resolvedContractId: resolvedStock.resolved.conid,
+      tradingSession,
+      resolvedExchange,
+      primaryExchange,
+      includeOvernight,
+      routingReason:
+        tradingSession === "overnight"
+          ? "ibkr_overnight_direct"
+          : tradingSession === "overnight_plus_day"
+            ? "ibkr_overnight_plus_day"
+            : null,
     };
   }
 
-  private toTwsOrder(input: PlaceOrderInput, accountId: string): Order {
-    const order: Order = {
+  private toTwsOrder(
+    input: PlaceOrderInput,
+    accountId: string,
+    options: { includeOvernight?: boolean | null } = {},
+  ): Order {
+    const order: Order & Record<string, unknown> = {
       account: accountId,
       action: input.side === "sell" ? OrderAction.SELL : OrderAction.BUY,
       totalQuantity: input.quantity,
@@ -4144,6 +4230,10 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
               : TwsOrderType.MKT,
       transmit: true,
     };
+
+    if (options.includeOvernight === true) {
+      order.includeOvernight = true;
+    }
 
     if (input.type === "limit" || input.type === "stop_limit") {
       order.lmtPrice = input.limitPrice ?? undefined;
@@ -5674,6 +5764,11 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         structured.order,
       ),
       optionContract: structured.optionContract,
+      tradingSession: structured.tradingSession,
+      resolvedExchange: structured.resolvedExchange,
+      primaryExchange: structured.primaryExchange,
+      includeOvernight: structured.includeOvernight,
+      routingReason: structured.routingReason,
     };
   }
 
@@ -5717,6 +5812,11 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       placedAt,
       updatedAt: placedAt,
       optionContract: structured.optionContract,
+      tradingSession: structured.tradingSession,
+      resolvedExchange: structured.resolvedExchange,
+      primaryExchange: structured.primaryExchange,
+      includeOvernight: structured.includeOvernight,
+      routingReason: structured.routingReason,
     };
   }
 

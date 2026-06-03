@@ -12,6 +12,7 @@ import type { OrderSide } from './orderSide';
 import type { OrderStatus } from './orderStatus';
 import type { OrderType } from './orderType';
 import type { TimeInForce } from './timeInForce';
+import type { TradingSession } from './tradingSession';
 
 export interface Order {
   id: string;
@@ -31,4 +32,9 @@ export interface Order {
   placedAt: Date;
   updatedAt: Date;
   optionContract: OptionContract | null;
+  tradingSession?: TradingSession | null;
+  resolvedExchange?: string | null;
+  primaryExchange?: string | null;
+  includeOvernight?: boolean | null;
+  routingReason?: string | null;
 }

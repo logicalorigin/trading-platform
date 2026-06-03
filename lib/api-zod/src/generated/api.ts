@@ -1316,7 +1316,12 @@ export const GetAccountPositionsResponse = zod.object({
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
   "providerContractId": zod.string().nullish()
-}),zod.null()])
+}),zod.null()]),
+  "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
+  "resolvedExchange": zod.string().nullish(),
+  "primaryExchange": zod.string().nullish(),
+  "includeOvernight": zod.boolean().nullish(),
+  "routingReason": zod.string().nullish()
 })),
   "stopLoss": zod.number().nullish().describe('Active stop-loss price for display and trade-management UI, when available.'),
   "takeProfit": zod.number().nullish().describe('Active explicit take-profit price for display and trade-management UI, when available.'),
@@ -1453,7 +1458,12 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
   "providerContractId": zod.string().nullish()
-}),zod.null()])
+}),zod.null()]),
+  "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
+  "resolvedExchange": zod.string().nullish(),
+  "primaryExchange": zod.string().nullish(),
+  "includeOvernight": zod.boolean().nullish(),
+  "routingReason": zod.string().nullish()
 })),
   "stopLoss": zod.number().nullish().describe('Active stop-loss price for display and trade-management UI, when available.'),
   "takeProfit": zod.number().nullish().describe('Active explicit take-profit price for display and trade-management UI, when available.'),
@@ -2017,7 +2027,12 @@ export const ListOrdersResponse = zod.object({
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
   "providerContractId": zod.string().nullish()
-}),zod.null()])
+}),zod.null()]),
+  "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
+  "resolvedExchange": zod.string().nullish(),
+  "primaryExchange": zod.string().nullish(),
+  "includeOvernight": zod.boolean().nullish(),
+  "routingReason": zod.string().nullish()
 })),
   "degraded": zod.boolean().optional(),
   "reason": zod.string().optional(),
@@ -2057,6 +2072,8 @@ export const PlaceOrderBody = zod.object({
 }),zod.null()]),
   "positionEffect": zod.enum(['open', 'close']).optional(),
   "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
+  "tradingSession": zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']).optional(),
+  "includeOvernight": zod.boolean().nullish(),
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
@@ -2091,6 +2108,8 @@ export const PreviewOrderBody = zod.object({
 }),zod.null()]),
   "positionEffect": zod.enum(['open', 'close']).optional(),
   "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
+  "tradingSession": zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']).optional(),
+  "includeOvernight": zod.boolean().nullish(),
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
@@ -2113,7 +2132,12 @@ export const PreviewOrderResponse = zod.object({
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
   "providerContractId": zod.string().nullish()
-}),zod.null()])
+}),zod.null()]),
+  "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
+  "resolvedExchange": zod.string().nullish(),
+  "primaryExchange": zod.string().nullish(),
+  "includeOvernight": zod.boolean().nullish(),
+  "routingReason": zod.string().nullish()
 })
 
 
@@ -2144,6 +2168,8 @@ export const PreviewShadowOrderBody = zod.object({
 }),zod.null()]),
   "positionEffect": zod.enum(['open', 'close']).optional(),
   "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
+  "tradingSession": zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']).optional(),
+  "includeOvernight": zod.boolean().nullish(),
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
@@ -2166,7 +2192,12 @@ export const PreviewShadowOrderResponse = zod.object({
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
   "providerContractId": zod.string().nullish()
-}),zod.null()])
+}),zod.null()]),
+  "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
+  "resolvedExchange": zod.string().nullish(),
+  "primaryExchange": zod.string().nullish(),
+  "includeOvernight": zod.boolean().nullish(),
+  "routingReason": zod.string().nullish()
 })
 
 
@@ -2197,6 +2228,8 @@ export const PlaceShadowOrderBody = zod.object({
 }),zod.null()]),
   "positionEffect": zod.enum(['open', 'close']).optional(),
   "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
+  "tradingSession": zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']).optional(),
+  "includeOvernight": zod.boolean().nullish(),
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
@@ -2231,6 +2264,8 @@ export const SubmitOrdersBody = zod.union([zod.object({
 }),zod.null()]),
   "positionEffect": zod.enum(['open', 'close']).optional(),
   "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
+  "tradingSession": zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']).optional(),
+  "includeOvernight": zod.boolean().nullish(),
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
@@ -2263,6 +2298,8 @@ export const SubmitOrdersBody = zod.union([zod.object({
 }),zod.null()]),
   "positionEffect": zod.enum(['open', 'close']).optional(),
   "strategyIntent": zod.enum(['long_option', 'sell_to_close', 'covered_call', 'uncovered_short_call']).optional(),
+  "tradingSession": zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']).optional(),
+  "includeOvernight": zod.boolean().nullish(),
   "source": zod.enum(['manual', 'automation']).optional(),
   "sourceEventId": zod.string().nullish(),
   "clientOrderId": zod.string().nullish(),
@@ -2312,7 +2349,12 @@ export const ReplaceOrderResponse = zod.object({
   "multiplier": zod.number(),
   "sharesPerContract": zod.number(),
   "providerContractId": zod.string().nullish()
-}),zod.null()])
+}),zod.null()]),
+  "tradingSession": zod.union([zod.enum(['default', 'regular', 'extended', 'overnight', 'overnight_plus_day']),zod.null()]).optional(),
+  "resolvedExchange": zod.string().nullish(),
+  "primaryExchange": zod.string().nullish(),
+  "includeOvernight": zod.boolean().nullish(),
+  "routingReason": zod.string().nullish()
 })
 
 
@@ -5156,6 +5198,44 @@ export const RunSignalOptionsShadowScanResponse = zod.object({
   "occurredAt": zod.coerce.date(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Track or execute overnight spot signals for an algo deployment
+ */
+export const RunOvernightSpotSignalScanParams = zod.object({
+  "deploymentId": zod.coerce.string()
+})
+
+export const RunOvernightSpotSignalScanBody = zod.object({
+  "forceEvaluate": zod.boolean().optional(),
+  "refreshSignals": zod.boolean().optional(),
+  "runActions": zod.boolean().optional(),
+  "execute": zod.boolean().optional(),
+  "recordSignals": zod.boolean().optional(),
+  "trackSignals": zod.boolean().optional()
+})
+
+export const RunOvernightSpotSignalScanResponse = zod.object({
+  "deploymentId": zod.string(),
+  "executionMode": zod.enum(['disabled', 'shadow', 'live']),
+  "runActions": zod.boolean(),
+  "candidateCount": zod.number(),
+  "trackedCount": zod.number(),
+  "blockedCount": zod.number(),
+  "skippedCount": zod.number(),
+  "executedCount": zod.number(),
+  "failedCount": zod.number(),
+  "results": zod.array(zod.object({
+  "symbol": zod.string(),
+  "clientOrderId": zod.string(),
+  "status": zod.enum(['tracked', 'blocked', 'skipped', 'executed', 'failed']),
+  "eventType": zod.string().nullish(),
+  "eventId": zod.string().nullish(),
+  "blockerCodes": zod.array(zod.string()).optional(),
+  "reason": zod.string().nullish()
 }))
 })
 

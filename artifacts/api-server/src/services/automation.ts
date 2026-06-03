@@ -87,6 +87,12 @@ async function getDeploymentOrThrow(deploymentId: string) {
   return deployment;
 }
 
+export async function getAlgoDeploymentForExecution(input: {
+  deploymentId: string;
+}) {
+  return getDeploymentOrThrow(input.deploymentId);
+}
+
 function readTimeHorizon(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {

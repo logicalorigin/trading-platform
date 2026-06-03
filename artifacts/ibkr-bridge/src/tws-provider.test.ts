@@ -846,6 +846,227 @@ test("raw TWS order batches assign contiguous ids and parent links", async () =>
   assert.equal("parentOrderIndex" in (placed[1]?.order ?? {}), false);
 });
 
+test("TWS overnight equity previews route to the OVERNIGHT exchange", async () => {
+  const provider = new TwsIbkrBridgeProvider({
+    host: "127.0.0.1",
+    port: 4002,
+    clientId: 101,
+    defaultAccountId: "U1",
+    mode: "paper",
+    marketDataType: MarketDataType.REALTIME,
+  });
+  const internals = provider as unknown as {
+    refreshSession(): Promise<null>;
+    requireAccountId(accountId?: string | null): Promise<string>;
+    resolveStockContract(symbol: string): Promise<{
+      resolved: {
+        conid: number;
+        symbol: string;
+        secType: string;
+        listingExchange: string;
+        providerContractId: string;
+      };
+      contract: Record<string, unknown>;
+      cachedAt: number;
+    }>;
+  };
+
+  internals.refreshSession = async () => null;
+  internals.requireAccountId = async () => "U1";
+  internals.resolveStockContract = async () => ({
+    resolved: {
+      conid: 265598,
+      symbol: "AAPL",
+      secType: "STK",
+      listingExchange: "NASDAQ",
+      providerContractId: "265598",
+    },
+    contract: {
+      conId: 265598,
+      symbol: "AAPL",
+      secType: SecType.STK,
+      exchange: "SMART",
+      primaryExch: "NASDAQ",
+      currency: "USD",
+    },
+    cachedAt: Date.now(),
+  });
+
+  const preview = await provider.previewOrder({
+    accountId: "U1",
+    mode: "paper",
+    symbol: "AAPL",
+    assetClass: "equity",
+    side: "buy",
+    type: "limit",
+    quantity: 1,
+    limitPrice: 190.12,
+    stopPrice: null,
+    timeInForce: "day",
+    optionContract: null,
+    tradingSession: "overnight",
+  });
+  const payload = preview.orderPayload as {
+    contract: Record<string, unknown>;
+    order: Record<string, unknown>;
+  };
+
+  assert.equal(preview.tradingSession, "overnight");
+  assert.equal(preview.resolvedExchange, "OVERNIGHT");
+  assert.equal(preview.primaryExchange, "NASDAQ");
+  assert.equal(preview.includeOvernight, true);
+  assert.equal(preview.routingReason, "ibkr_overnight_direct");
+  assert.equal(payload.contract.exchange, "OVERNIGHT");
+  assert.equal(payload.contract.primaryExch, "NASDAQ");
+  assert.equal(payload.order.includeOvernight, true);
+  assert.equal(payload.order.orderType, "LMT");
+});
+
+test("TWS overnight plus day previews use SMART with includeOvernight", async () => {
+  const provider = new TwsIbkrBridgeProvider({
+    host: "127.0.0.1",
+    port: 4002,
+    clientId: 101,
+    defaultAccountId: "U1",
+    mode: "paper",
+    marketDataType: MarketDataType.REALTIME,
+  });
+  const internals = provider as unknown as {
+    refreshSession(): Promise<null>;
+    requireAccountId(accountId?: string | null): Promise<string>;
+    resolveStockContract(symbol: string): Promise<{
+      resolved: {
+        conid: number;
+        symbol: string;
+        secType: string;
+        listingExchange: string;
+        providerContractId: string;
+      };
+      contract: Record<string, unknown>;
+      cachedAt: number;
+    }>;
+  };
+
+  internals.refreshSession = async () => null;
+  internals.requireAccountId = async () => "U1";
+  internals.resolveStockContract = async () => ({
+    resolved: {
+      conid: 756733,
+      symbol: "SPY",
+      secType: "STK",
+      listingExchange: "ARCA",
+      providerContractId: "756733",
+    },
+    contract: {
+      conId: 756733,
+      symbol: "SPY",
+      secType: SecType.STK,
+      exchange: "SMART",
+      primaryExch: "ARCA",
+      currency: "USD",
+    },
+    cachedAt: Date.now(),
+  });
+
+  const preview = await provider.previewOrder({
+    accountId: "U1",
+    mode: "paper",
+    symbol: "SPY",
+    assetClass: "equity",
+    side: "buy",
+    type: "limit",
+    quantity: 1,
+    limitPrice: 570.5,
+    stopPrice: null,
+    timeInForce: "day",
+    optionContract: null,
+    tradingSession: "overnight_plus_day",
+  });
+  const payload = preview.orderPayload as {
+    contract: Record<string, unknown>;
+    order: Record<string, unknown>;
+  };
+
+  assert.equal(preview.tradingSession, "overnight_plus_day");
+  assert.equal(preview.resolvedExchange, "SMART");
+  assert.equal(preview.includeOvernight, true);
+  assert.equal(preview.routingReason, "ibkr_overnight_plus_day");
+  assert.equal(payload.contract.exchange, "SMART");
+  assert.equal(payload.contract.primaryExch, "ARCA");
+  assert.equal(payload.order.includeOvernight, true);
+});
+
+test("TWS overnight structured orders reject options and non-limit stock orders", async () => {
+  const provider = new TwsIbkrBridgeProvider({
+    host: "127.0.0.1",
+    port: 4002,
+    clientId: 101,
+    defaultAccountId: "U1",
+    mode: "paper",
+    marketDataType: MarketDataType.REALTIME,
+  });
+  const internals = provider as unknown as {
+    refreshSession(): Promise<null>;
+    requireAccountId(accountId?: string | null): Promise<string>;
+  };
+
+  internals.refreshSession = async () => null;
+  internals.requireAccountId = async () => "U1";
+
+  await assert.rejects(
+    () =>
+      provider.previewOrder({
+        accountId: "U1",
+        mode: "paper",
+        symbol: "AAPL",
+        assetClass: "option",
+        side: "buy",
+        type: "limit",
+        quantity: 1,
+        limitPrice: 1.1,
+        stopPrice: null,
+        timeInForce: "day",
+        optionContract: {
+          ticker: "AAPL260620C00190000",
+          underlying: "AAPL",
+          expirationDate: new Date("2026-06-20T00:00:00.000Z"),
+          strike: 190,
+          right: "call",
+          multiplier: 100,
+          sharesPerContract: 100,
+          providerContractId: "100",
+        },
+        tradingSession: "overnight",
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ibkr_overnight_asset_class_unsupported",
+  );
+
+  await assert.rejects(
+    () =>
+      provider.previewOrder({
+        accountId: "U1",
+        mode: "paper",
+        symbol: "AAPL",
+        assetClass: "equity",
+        side: "buy",
+        type: "market",
+        quantity: 1,
+        limitPrice: null,
+        stopPrice: null,
+        timeInForce: "day",
+        optionContract: null,
+        tradingSession: "overnight",
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ibkr_overnight_limit_order_required",
+  );
+});
+
 test("single TWS equity orders use placeOrder with an allocated order id", async () => {
   const provider = new TwsIbkrBridgeProvider({
     host: "127.0.0.1",

@@ -21,6 +21,7 @@ import {
   runSignalOptionsShadowScan,
   updateSignalOptionsExecutionProfile,
 } from "../services/signal-options-automation";
+import { runOvernightSpotSignalScan } from "../services/overnight-spot-execution";
 import {
   getApiRouteAdmission,
   withRouteAdmissionMetadata,
@@ -30,6 +31,7 @@ const router: IRouter = Router();
 const SIGNAL_OPTIONS_STATE_ROUTE_TIMEOUT_MS = 5_000;
 const SIGNAL_OPTIONS_COCKPIT_SUMMARY_ROUTE_TIMEOUT_MS = 5_000;
 const SIGNAL_OPTIONS_COCKPIT_FULL_ROUTE_TIMEOUT_MS = 9_000;
+const OVERNIGHT_SPOT_SCAN_ROUTE_TIMEOUT_MS = 30_000;
 
 function withSignalOptionsRouteTimeout<T>(
   promise: Promise<T>,
@@ -88,6 +90,20 @@ function readRequiredMode(value: unknown): "paper" | "live" {
     code: "invalid_request",
     detail: "mode must be either 'paper' or 'live'.",
   });
+}
+
+function readOptionalBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+
+  return undefined;
 }
 
 router.get("/algo/deployments", async (req, res): Promise<void> => {
@@ -233,6 +249,42 @@ router.post("/algo/deployments/:deploymentId/signal-options/shadow-scan", async 
       forceEvaluate: true,
       source: "manual",
     }),
+  );
+});
+
+router.post("/algo/deployments/:deploymentId/overnight-spot/scan", async (req, res): Promise<void> => {
+  const body =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? req.body
+      : {};
+  const forceEvaluate =
+    readOptionalBoolean(body.forceEvaluate) ??
+    readOptionalBoolean(body.refreshSignals) ??
+    false;
+  const runActions =
+    readOptionalBoolean(body.runActions) ??
+    readOptionalBoolean(body.execute) ??
+    false;
+  const recordSignals =
+    readOptionalBoolean(body.recordSignals) ??
+    readOptionalBoolean(body.trackSignals) ??
+    true;
+
+  res.json(
+    await withSignalOptionsRouteTimeout(
+      runOvernightSpotSignalScan({
+        deploymentId: req.params.deploymentId,
+        forceEvaluate,
+        runActions,
+        recordSignals,
+      }),
+      {
+        timeoutMs: OVERNIGHT_SPOT_SCAN_ROUTE_TIMEOUT_MS,
+        code: "overnight_spot_scan_route_timeout",
+        detail:
+          "Overnight spot scan did not finish within the route budget.",
+      },
+    ),
   );
 });
 

@@ -9,6 +9,7 @@ import type { AssetClass } from './assetClass';
 import type { EnvironmentMode } from './environmentMode';
 import type { JsonObject } from './jsonObject';
 import type { OptionContract } from './optionContract';
+import type { TradingSession } from './tradingSession';
 
 export interface OrderPreview {
   accountId: string;
@@ -18,4 +19,9 @@ export interface OrderPreview {
   resolvedContractId: number;
   orderPayload: JsonObject;
   optionContract: OptionContract | null;
+  tradingSession?: TradingSession | null;
+  resolvedExchange?: string | null;
+  primaryExchange?: string | null;
+  includeOvernight?: boolean | null;
+  routingReason?: string | null;
 }

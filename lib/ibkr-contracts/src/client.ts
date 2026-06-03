@@ -24,6 +24,12 @@ export type OrderStatus =
   | "expired";
 export type OrderType = "market" | "limit" | "stop" | "stop_limit";
 export type TimeInForce = "day" | "gtc" | "ioc" | "fok";
+export type TradingSession =
+  | "default"
+  | "regular"
+  | "extended"
+  | "overnight"
+  | "overnight_plus_day";
 export type HistoryBarTimeframe = "5s" | "1m" | "5m" | "15m" | "1h" | "1d";
 export type HistoryDataSource = "trades" | "midpoint" | "bid_ask";
 export type UniverseMarket =
@@ -157,6 +163,11 @@ export type BrokerOrderSnapshot = {
   placedAt: Date;
   updatedAt: Date;
   optionContract: BrokerPositionSnapshot["optionContract"];
+  tradingSession?: TradingSession | null;
+  resolvedExchange?: string | null;
+  primaryExchange?: string | null;
+  includeOvernight?: boolean | null;
+  routingReason?: string | null;
 };
 
 export type PlaceOrderInput = {
@@ -174,6 +185,8 @@ export type PlaceOrderInput = {
   optionContract: OptionContractSnapshot | null;
   positionEffect?: OptionOrderPositionEffect;
   strategyIntent?: OptionOrderStrategyIntent;
+  tradingSession?: TradingSession;
+  includeOvernight?: boolean | null;
 };
 
 export type QuoteSnapshot = {
@@ -430,6 +443,11 @@ export type OrderPreviewSnapshot = {
   resolvedContractId: number;
   orderPayload: Record<string, unknown>;
   optionContract: BrokerPositionSnapshot["optionContract"];
+  tradingSession?: TradingSession | null;
+  resolvedExchange?: string | null;
+  primaryExchange?: string | null;
+  includeOvernight?: boolean | null;
+  routingReason?: string | null;
 };
 
 export type CancelOrderSnapshot = {
