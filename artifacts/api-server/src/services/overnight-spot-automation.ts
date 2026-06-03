@@ -37,6 +37,7 @@ export type OvernightSpotBlockCode =
   | "overnight_spot_quote_invalid"
   | "overnight_spot_spread_too_wide"
   | "overnight_spot_short_disabled"
+  | "overnight_spot_same_direction_position_open"
   | "overnight_spot_exit_position_required"
   | "overnight_spot_quantity_required"
   | "overnight_spot_quantity_cap_exceeded"
@@ -732,6 +733,18 @@ export function planOvernightSpotOrder(input: PlanInput): OvernightSpotPlanResul
         "overnight_spot_short_disabled",
         "The overnight spot exit quantity would exceed the long position.",
         { quantity, existingPositionQuantity: existingQuantity },
+      );
+    }
+  }
+
+  if (profile.longOnly && input.signal.side === "buy" && stage === "entry") {
+    const existingQuantity = asNumber(input.existingPositionQuantity) ?? 0;
+    if (existingQuantity > 0) {
+      addBlocker(
+        blockers,
+        "overnight_spot_same_direction_position_open",
+        "A long position is already open for this overnight spot entry.",
+        { existingPositionQuantity: existingQuantity },
       );
     }
   }

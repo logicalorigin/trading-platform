@@ -125,6 +125,7 @@ export type PositionOpenedAtSource =
 
 export type PositionQuoteSource =
   | "bridge_quote"
+  | "massive"
   | "option_quote"
   | "position_mark"
   | "shadow_ledger"

@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import test, { afterEach } from "node:test";
 import {
+  __setGexChartProjectionChainWaitMsForTests,
+  __setGexChartProjectionQuoteWaitMsForTests,
+  __setGexChartProjectionSnapshotWaitMsForTests,
   __setGexIngestFacadeForTests,
   __setGexPlatformDataClientFactoryForTests,
   __setGexProjectionRatesProviderForTests,
   getGexProjectionData,
   type GexResponse,
 } from "./gex";
+import { OPTION_EXPIRATION_PUBLIC_FOREGROUND_WAIT_MS } from "./platform";
 
 function option(strike: number, cp: "C" | "P", expirationDate = "2026-06-19") {
   const expirationParts = expirationDate.split("-").map((part) => Number(part));
@@ -122,6 +126,12 @@ function futureExpirationKey(daysFromNow: number): string {
   return futureExpiration(daysFromNow).toISOString().slice(0, 10);
 }
 
+function releaseMaybe(release: (() => void) | null): void {
+  if (release) {
+    release();
+  }
+}
+
 function chainContract(
   expirationDate: Date,
   strike: number,
@@ -157,6 +167,9 @@ function chainContract(
 }
 
 afterEach(() => {
+  __setGexChartProjectionChainWaitMsForTests(null);
+  __setGexChartProjectionQuoteWaitMsForTests(null);
+  __setGexChartProjectionSnapshotWaitMsForTests(null);
   __setGexIngestFacadeForTests(null);
   __setGexPlatformDataClientFactoryForTests(null);
   __setGexProjectionRatesProviderForTests(null);
@@ -291,6 +304,12 @@ test("getGexProjectionData chart scope uses a compact projection workload", asyn
   });
 
   assert.equal(expirationsRequest?.maxExpirations, 4);
+  assert.equal(typeof expirationsRequest?.foregroundWaitMs, "number");
+  assert.equal(
+    expirationsRequest.foregroundWaitMs <=
+      OPTION_EXPIRATION_PUBLIC_FOREGROUND_WAIT_MS,
+    true,
+  );
   assert.equal(batchRequest?.strikeCoverage, "standard");
   assert.equal(batchRequest?.strikesAroundMoney, 8);
   assert.equal(batchRequest?.expirationDates.length, 4);
@@ -298,6 +317,434 @@ test("getGexProjectionData chart scope uses a compact projection workload", asyn
   assert.equal(projection.overlayPoints.length, 4);
   assert.equal(projection.source.expirationCoverage?.complete, true);
   assert.equal(projection.source.expirationCoverage?.capped, false);
+});
+
+test("getGexProjectionData chart scope returns quickly when compact chains exceed budget", async () => {
+  __setGexChartProjectionChainWaitMsForTests(10);
+  const expirationDate = futureExpiration(7);
+  let batchRequestCount = 0;
+  let chainSignalAborted = false;
+  let releaseChain: (() => void) | null = null;
+  const chainReleased = new Promise<void>((resolve) => {
+    releaseChain = resolve;
+  });
+
+  __setGexIngestFacadeForTests({
+    isConfigured: () => false,
+  });
+  __setGexPlatformDataClientFactoryForTests(() => ({
+    getQuoteSnapshots: async () => ({
+      quotes: [
+        {
+          symbol: "SPY",
+          price: 100,
+          dataUpdatedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          freshness: "live",
+          marketDataMode: "live",
+          delayed: false,
+        },
+      ],
+      transport: "tws",
+      delayed: false,
+      fallbackUsed: false,
+    }),
+    getOptionExpirationsWithDebug: async () => ({
+      underlying: "SPY",
+      expirations: [{ expirationDate }],
+      debug: {
+        cacheStatus: "hit",
+        totalMs: 1,
+        upstreamMs: null,
+        requestedCount: 1,
+        returnedCount: 1,
+        complete: true,
+        capped: false,
+      },
+    }),
+    batchOptionChains: async (request: { signal?: AbortSignal }) => {
+      batchRequestCount += 1;
+      chainSignalAborted = Boolean(request.signal?.aborted);
+      request.signal?.addEventListener(
+        "abort",
+        () => {
+          chainSignalAborted = true;
+        },
+        { once: true },
+      );
+      await chainReleased;
+      return {
+        underlying: "SPY",
+        results: [],
+        debug: {
+          cacheStatus: "miss",
+          totalMs: 1,
+          upstreamMs: 1,
+          requestedCount: 1,
+          returnedCount: 0,
+        },
+      };
+    },
+  }) as any);
+  __setGexProjectionRatesProviderForTests(async () => ({
+    status: "ok",
+    source: "treasury_daily_par_yield_curve",
+    asOf: new Date().toISOString().slice(0, 10),
+    points: [
+      { tenorYears: 1 / 12, rate: 0.052 },
+      { tenorYears: 1, rate: 0.047 },
+    ],
+  }));
+
+  const startedAt = Date.now();
+  try {
+    const projection = await getGexProjectionData({
+      underlying: "spy",
+      scope: "chart",
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.equal(batchRequestCount, 1);
+    assert.equal(elapsedMs < 500, true);
+    assert.equal(chainSignalAborted, true);
+    assert.equal(projection.expirations.length, 0);
+    assert.equal(projection.overlayPoints.length, 0);
+    assert.match(
+      projection.rates.message || "",
+      /Compact option-chain data did not respond/,
+    );
+  } finally {
+    releaseMaybe(releaseChain);
+  }
+});
+
+test("getGexProjectionData chart scope bounds slow snapshot fallback after empty compact chains", async () => {
+  __setGexChartProjectionSnapshotWaitMsForTests(10);
+  const expirationDate = futureExpiration(7);
+  let snapshotRequestCount = 0;
+  let releaseSnapshot: (() => void) | null = null;
+  const snapshotReleased = new Promise<void>((resolve) => {
+    releaseSnapshot = resolve;
+  });
+
+  __setGexIngestFacadeForTests({
+    isConfigured: () => true,
+    enqueueMarketDataJob: async (input) => ({
+      queued: true,
+      dedupeKey: input.kind,
+    }),
+    getLatestGexSnapshot: async () => {
+      snapshotRequestCount += 1;
+      await snapshotReleased;
+      return null;
+    },
+  });
+  __setGexPlatformDataClientFactoryForTests(() => ({
+    getQuoteSnapshots: async () => ({
+      quotes: [
+        {
+          symbol: "SPY",
+          price: 100,
+          dataUpdatedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          freshness: "live",
+          marketDataMode: "live",
+          delayed: false,
+        },
+      ],
+      transport: "tws",
+      delayed: false,
+      fallbackUsed: false,
+    }),
+    getOptionExpirationsWithDebug: async () => ({
+      underlying: "SPY",
+      expirations: [{ expirationDate }],
+      debug: {
+        cacheStatus: "hit",
+        totalMs: 1,
+        upstreamMs: null,
+        requestedCount: 1,
+        returnedCount: 1,
+        complete: true,
+        capped: false,
+      },
+    }),
+    batchOptionChains: async () => ({
+      underlying: "SPY",
+      results: [
+        {
+          expirationDate,
+          status: "failed",
+          contracts: [],
+          error: "empty chain",
+          debug: {
+            cacheStatus: "hit",
+            totalMs: 1,
+            upstreamMs: null,
+            degraded: true,
+            reason: "options_successful_empty",
+          },
+        },
+      ],
+      debug: {
+        cacheStatus: "hit",
+        totalMs: 1,
+        upstreamMs: null,
+        requestedCount: 1,
+        returnedCount: 0,
+      },
+    }),
+  }) as any);
+  __setGexProjectionRatesProviderForTests(async () => ({
+    status: "ok",
+    source: "treasury_daily_par_yield_curve",
+    asOf: new Date().toISOString().slice(0, 10),
+    points: [
+      { tenorYears: 1 / 12, rate: 0.052 },
+      { tenorYears: 1, rate: 0.047 },
+    ],
+  }));
+
+  const startedAt = Date.now();
+  try {
+    const projection = await getGexProjectionData({
+      underlying: "spy",
+      scope: "chart",
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.equal(snapshotRequestCount, 1);
+    assert.equal(elapsedMs < 600, true);
+    assert.equal(projection.expirations.length, 0);
+    assert.equal(projection.overlayPoints.length, 0);
+    assert.match(
+      projection.rates.message || "",
+      /Near-expiration option data is unavailable/,
+    );
+  } finally {
+    releaseMaybe(releaseSnapshot);
+  }
+});
+
+test("getGexProjectionData chart scope tolerates a cold persisted snapshot read", async () => {
+  const expirationDate = futureExpirationKey(7);
+  let platformRequestCount = 0;
+
+  __setGexIngestFacadeForTests({
+    isConfigured: () => true,
+    enqueueMarketDataJob: async () => ({ queued: true, dedupeKey: "gex" }),
+    getLatestGexSnapshot: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 4_500));
+      return {
+        payload: dashboardPayload({ expirationDates: [expirationDate] }),
+        computedAt: new Date("2026-05-31T15:30:00.000Z"),
+        ageMs: 1_000,
+        stale: false,
+      };
+    },
+  });
+  __setGexPlatformDataClientFactoryForTests(() => ({
+    getQuoteSnapshots: async () => {
+      platformRequestCount += 1;
+      throw new Error("chart projection should wait for persisted GEX first");
+    },
+    getOptionExpirationsWithDebug: async () => {
+      platformRequestCount += 1;
+      throw new Error("chart projection should wait for persisted GEX first");
+    },
+    batchOptionChains: async () => {
+      platformRequestCount += 1;
+      throw new Error("chart projection should wait for persisted GEX first");
+    },
+  }) as any);
+  __setGexProjectionRatesProviderForTests(async () => ({
+    status: "ok",
+    source: "treasury_daily_par_yield_curve",
+    asOf: new Date().toISOString().slice(0, 10),
+    points: [
+      { tenorYears: 1 / 12, rate: 0.052 },
+      { tenorYears: 1, rate: 0.047 },
+    ],
+  }));
+
+  const projection = await getGexProjectionData({
+    underlying: "spy",
+    scope: "chart",
+  });
+
+  assert.equal(platformRequestCount, 0);
+  assert.equal(projection.expirations.length, 1);
+  assert.equal(projection.overlayPoints.length, 1);
+});
+
+test("getGexProjectionData chart scope prefers compact persisted snapshots", async () => {
+  const expirationDate = futureExpirationKey(7);
+  let compactSnapshotRequest:
+    | {
+        symbol: string;
+        maxAgeMs: number;
+        maxExpirations: number;
+        strikesAroundMoney: number;
+      }
+    | null = null;
+  let fullSnapshotRequestCount = 0;
+
+  __setGexIngestFacadeForTests({
+    isConfigured: () => true,
+    enqueueMarketDataJob: async () => ({ queued: true, dedupeKey: "gex" }),
+    getLatestChartGexSnapshot: async (symbol, maxAgeMs, options) => {
+      compactSnapshotRequest = {
+        symbol,
+        maxAgeMs,
+        maxExpirations: options.maxExpirations,
+        strikesAroundMoney: options.strikesAroundMoney,
+      };
+      return {
+        payload: dashboardPayload({ expirationDates: [expirationDate] }),
+        computedAt: new Date("2026-05-31T15:30:00.000Z"),
+        ageMs: 1_000,
+        stale: false,
+      };
+    },
+    getLatestGexSnapshot: async () => {
+      fullSnapshotRequestCount += 1;
+      throw new Error("chart projection should not read the full GEX snapshot");
+    },
+  });
+  __setGexPlatformDataClientFactoryForTests(() => ({
+    getQuoteSnapshots: async () => {
+      throw new Error("chart projection should use compact GEX first");
+    },
+    getOptionExpirationsWithDebug: async () => {
+      throw new Error("chart projection should use compact GEX first");
+    },
+    batchOptionChains: async () => {
+      throw new Error("chart projection should use compact GEX first");
+    },
+  }) as any);
+  __setGexProjectionRatesProviderForTests(async () => ({
+    status: "ok",
+    source: "treasury_daily_par_yield_curve",
+    asOf: new Date().toISOString().slice(0, 10),
+    points: [
+      { tenorYears: 1 / 12, rate: 0.052 },
+      { tenorYears: 1, rate: 0.047 },
+    ],
+  }));
+
+  const projection = await getGexProjectionData({
+    underlying: "spy",
+    scope: "chart",
+  });
+
+  assert.deepEqual(compactSnapshotRequest, {
+    symbol: "SPY",
+    maxAgeMs: 60_000,
+    maxExpirations: 8,
+    strikesAroundMoney: 8,
+  });
+  assert.equal(fullSnapshotRequestCount, 0);
+  assert.equal(projection.expirations.length, 1);
+  assert.equal(projection.overlayPoints.length, 1);
+});
+
+test("getGexProjectionData chart scope skips compact chains when quote exceeds budget", async () => {
+  __setGexChartProjectionQuoteWaitMsForTests(10);
+  const expirationDate = futureExpiration(7);
+  let quoteRequestCount = 0;
+  let expirationsRequestCount = 0;
+  let batchRequestCount = 0;
+  let releaseQuote: (() => void) | null = null;
+  const quoteReleased = new Promise<void>((resolve) => {
+    releaseQuote = resolve;
+  });
+
+  __setGexIngestFacadeForTests({
+    isConfigured: () => false,
+  });
+  __setGexPlatformDataClientFactoryForTests(() => ({
+    getQuoteSnapshots: async () => {
+      quoteRequestCount += 1;
+      await quoteReleased;
+      return {
+        quotes: [
+          {
+            symbol: "SPY",
+            price: 100,
+            dataUpdatedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            freshness: "live",
+            marketDataMode: "live",
+            delayed: false,
+          },
+        ],
+        transport: "tws",
+        delayed: false,
+        fallbackUsed: false,
+      };
+    },
+    getOptionExpirationsWithDebug: async () => {
+      expirationsRequestCount += 1;
+      return {
+        underlying: "SPY",
+        expirations: [{ expirationDate }],
+        debug: {
+          cacheStatus: "hit",
+          totalMs: 1,
+          upstreamMs: null,
+          requestedCount: 1,
+          returnedCount: 1,
+          complete: true,
+          capped: false,
+        },
+      };
+    },
+    batchOptionChains: async () => {
+      batchRequestCount += 1;
+      return {
+        underlying: "SPY",
+        results: [],
+        debug: {
+          cacheStatus: "miss",
+          totalMs: 1,
+          upstreamMs: 1,
+          requestedCount: 1,
+          returnedCount: 0,
+        },
+      };
+    },
+  }) as any);
+  __setGexProjectionRatesProviderForTests(async () => ({
+    status: "ok",
+    source: "treasury_daily_par_yield_curve",
+    asOf: new Date().toISOString().slice(0, 10),
+    points: [
+      { tenorYears: 1 / 12, rate: 0.052 },
+      { tenorYears: 1, rate: 0.047 },
+    ],
+  }));
+
+  const startedAt = Date.now();
+  try {
+    const projection = await getGexProjectionData({
+      underlying: "spy",
+      scope: "chart",
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.equal(quoteRequestCount, 1);
+    assert.equal(expirationsRequestCount, 1);
+    assert.equal(batchRequestCount, 0);
+    assert.equal(elapsedMs < 500, true);
+    assert.equal(projection.expirations.length, 0);
+    assert.equal(projection.overlayPoints.length, 0);
+    assert.match(
+      projection.rates.message || "",
+      /live quote did not respond inside the chart projection budget/i,
+    );
+  } finally {
+    releaseMaybe(releaseQuote);
+  }
 });
 
 test("getGexProjectionData chart scope keeps a wider persisted snapshot horizon", async () => {

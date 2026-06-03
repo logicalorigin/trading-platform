@@ -934,7 +934,7 @@ test("normalizes shadow account quote usage separately from visible demand", () 
   assert.equal(normalized.shadowAccount.used, 2);
   assert.equal(normalized.shadowAccount.cacheFallbackLineCount, 2);
   assert.equal(normalized.shadowAccount.massiveFallbackLineCount, 0);
-  assert.equal(normalized.shadowAccount.detail, "2 cache fallback");
+  assert.equal(normalized.shadowAccount.detail, "IBKR live · 2 cache fallback policy");
   assert.equal(normalized.shadowAccount.streamState, "healthy");
   assert.equal(normalized.allocation.shadowAccountLineCount, 2);
   assert.equal(normalized.allocation.shadowAccountCacheFallbackLineCount, 2);

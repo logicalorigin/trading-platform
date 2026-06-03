@@ -238,7 +238,9 @@ test("signal-options worker keeps deployment scans rotating under high pressure"
 test("signal-options worker keeps deployment scans rotating under critical RSS pressure", async () => {
   let maintenanceCalls = 0;
   let scanCalls = 0;
-  updateApiResourcePressure({ rssMb: 1_650 });
+  updateApiResourcePressure({
+    rssMb: resolveApiRssPressureThresholds().critical + 1,
+  });
   try {
     const worker = createSignalOptionsWorker({
       listDeployments: async () => [deployment()],

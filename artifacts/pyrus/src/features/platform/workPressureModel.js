@@ -22,28 +22,6 @@ export const resolveIbkrWorkPressure = (bridge = null) => {
     return WORK_PRESSURE_STATE.normal;
   }
 
-  const errorText = normalizeText(
-    [bridge?.lastError, bridge?.strictReason, bridge?.streamStateReason]
-      .filter(Boolean)
-      .join(" "),
-  );
-
-  if (
-    errorText.includes("stalled") ||
-    errorText.includes("timed out") ||
-    errorText.includes("queue full")
-  ) {
-    return WORK_PRESSURE_STATE.stalled;
-  }
-
-  if (
-    errorText.includes("backed off") ||
-    errorText.includes("backoff") ||
-    errorText.includes("lane queue")
-  ) {
-    return WORK_PRESSURE_STATE.backoff;
-  }
-
   const lanePressures = schedulerLanePressures(bridge);
   if (lanePressures.some((pressure) => pressure === WORK_PRESSURE_STATE.stalled)) {
     return WORK_PRESSURE_STATE.stalled;
@@ -53,6 +31,36 @@ export const resolveIbkrWorkPressure = (bridge = null) => {
   }
   if (lanePressures.some((pressure) => pressure === WORK_PRESSURE_STATE.degraded)) {
     return WORK_PRESSURE_STATE.degraded;
+  }
+
+  const bridgeStrictReady = Boolean(
+    bridge?.authenticated &&
+      bridge?.strictReady === true &&
+      bridge?.healthFresh !== false &&
+      bridge?.streamFresh !== false,
+  );
+  const errorText = normalizeText(
+    [bridge?.lastError, bridge?.strictReason, bridge?.streamStateReason]
+      .filter(Boolean)
+      .join(" "),
+  );
+
+  if (!bridgeStrictReady) {
+    if (
+      errorText.includes("stalled") ||
+      errorText.includes("timed out") ||
+      errorText.includes("queue full")
+    ) {
+      return WORK_PRESSURE_STATE.stalled;
+    }
+
+    if (
+      errorText.includes("backed off") ||
+      errorText.includes("backoff") ||
+      errorText.includes("lane queue")
+    ) {
+      return WORK_PRESSURE_STATE.backoff;
+    }
   }
 
   if (

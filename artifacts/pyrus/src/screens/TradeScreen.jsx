@@ -17,6 +17,7 @@ import {
 import {
   batchOptionChains as batchOptionChainsRequest,
   getOptionChain as getOptionChainRequest,
+  listAggregateFlowEvents as listAggregateFlowEventsRequest,
   listFlowEvents as listFlowEventsRequest,
   useGetSignalMonitorProfile,
   useGetOptionExpirations,
@@ -107,9 +108,12 @@ import { useChartTimeframeFavorites } from "../features/charting/useChartTimefra
 import {
   ensureTradeTickerInfo,
   publishRuntimeTickerSnapshot,
+  useRuntimeTickerSnapshots,
 } from "../features/platform/runtimeTickerStore";
 import {
   HEAVY_PAYLOAD_GC_MS,
+  BARS_REQUEST_PRIORITY,
+  buildBarsRequestOptions,
   QUERY_DEFAULTS,
 } from "../features/platform/queryDefaults";
 import {
@@ -528,6 +532,26 @@ const normalizeTradeWorkspaces = ({ recentTickers = [], contracts = {}, stored =
 
 export const normalizeTradeTickerSymbol = (value) =>
   String(value ?? "").trim().toUpperCase();
+
+const finiteTradeQuoteNumber = (value) => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const hasUsableTradeQuoteSnapshot = (snapshot) =>
+  finiteTradeQuoteNumber(
+    snapshot?.price ??
+      snapshot?.last ??
+      snapshot?.mark ??
+      snapshot?.bid ??
+      snapshot?.ask,
+  ) != null;
 
 export const buildTrackedTradeTickers = ({
   recentTickers = [],
@@ -2106,6 +2130,11 @@ const TRADE_PHONE_PANELS = [
   { id: "ticket", label: "Ticket" },
   { id: "positions", label: "Positions" },
 ];
+const TRADE_QUOTE_STREAM_FALLBACK_DELAY_MS = 2_000;
+const TRADE_VISIBLE_QUOTE_REQUEST_OPTIONS = buildBarsRequestOptions(
+  BARS_REQUEST_PRIORITY.active,
+  "trade-visible",
+);
 
 const TradeQuoteRuntime = ({
   ticker,
@@ -2117,7 +2146,48 @@ const TradeQuoteRuntime = ({
     const source = Array.isArray(symbols) ? symbols : [ticker];
     return [...new Set(source.map(normalizeTradeTickerSymbol).filter(Boolean))];
   }, [symbols, ticker]);
-  const symbolsParam = runtimeSymbols.join(",");
+  const runtimeSymbolsKey = runtimeSymbols.join(",");
+  const runtimeSnapshotsBySymbol = useRuntimeTickerSnapshots(runtimeSymbols);
+  const streamQuoteRuntimeActive = Boolean(
+    stockAggregateStreamingEnabled && runtimeSymbols.length && enabled,
+  );
+  const streamRuntimeQuotesReady = useMemo(
+    () =>
+      runtimeSymbols.length > 0 &&
+      runtimeSymbols.every((symbol) =>
+        hasUsableTradeQuoteSnapshot(runtimeSnapshotsBySymbol[symbol]),
+      ),
+    [runtimeSnapshotsBySymbol, runtimeSymbols],
+  );
+  const [streamQuoteFallbackReady, setStreamQuoteFallbackReady] = useState(false);
+  useEffect(() => {
+    if (!streamQuoteRuntimeActive || streamRuntimeQuotesReady) {
+      setStreamQuoteFallbackReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setStreamQuoteFallbackReady(true);
+    }, TRADE_QUOTE_STREAM_FALLBACK_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [streamQuoteRuntimeActive, streamRuntimeQuotesReady, runtimeSymbolsKey]);
+  const restQuoteSymbols = useMemo(() => {
+    if (!enabled) {
+      return [];
+    }
+    return runtimeSymbols.filter((symbol) => {
+      if (hasUsableTradeQuoteSnapshot(runtimeSnapshotsBySymbol[symbol])) {
+        return false;
+      }
+      return !streamQuoteRuntimeActive || streamQuoteFallbackReady;
+    });
+  }, [
+    enabled,
+    runtimeSnapshotsBySymbol,
+    runtimeSymbols,
+    streamQuoteFallbackReady,
+    streamQuoteRuntimeActive,
+  ]);
+  const restQuoteSymbolsKey = restQuoteSymbols.join(",");
   const publishQuoteSnapshots = useCallback((quotes = []) => {
     quotes.forEach((quote) => {
       const quoteTicker = normalizeTradeTickerSymbol(quote?.symbol);
@@ -2149,19 +2219,20 @@ const TradeQuoteRuntime = ({
   }, []);
 
   const quoteQuery = useGetQuoteSnapshots(
-    { symbols: symbolsParam },
+    { symbols: restQuoteSymbolsKey },
     {
       query: {
-        enabled: Boolean(enabled && symbolsParam),
+        enabled: Boolean(enabled && restQuoteSymbolsKey),
         staleTime: 60_000,
         retry: false,
       },
+      request: TRADE_VISIBLE_QUOTE_REQUEST_OPTIONS,
     },
   );
 
   useIbkrQuoteSnapshotStream({
     symbols: runtimeSymbols,
-    enabled: Boolean(stockAggregateStreamingEnabled && runtimeSymbols.length && enabled),
+    enabled: streamQuoteRuntimeActive,
     onQuotes: publishQuoteSnapshots,
   });
 
@@ -2177,7 +2248,7 @@ const TradeQuoteRuntime = ({
   return null;
 };
 
-const TRADE_FLOW_LIVE_LIMIT = 80;
+const TRADE_FLOW_AGGREGATE_LIMIT = 200;
 const TRADE_FLOW_HISTORY_LIMIT = 1000;
 const TRADE_FLOW_REFRESH_MS = 5_000;
 const TRADE_FLOW_HISTORY_REFRESH_MS = 15_000;
@@ -2249,14 +2320,18 @@ const TradeFlowRuntime = ({
   });
 
   const tickerFlowQuery = useQuery({
-    queryKey: ["trade-flow", ticker],
+    queryKey: ["trade-flow-aggregate", TRADE_FLOW_AGGREGATE_LIMIT],
     queryFn: () =>
-      listFlowEventsRequest({
-        underlying: ticker,
-        limit: TRADE_FLOW_LIVE_LIMIT,
-        blocking: false,
-        queueRefresh: true,
-    }),
+      listAggregateFlowEventsRequest(
+        {
+          limit: TRADE_FLOW_AGGREGATE_LIMIT,
+          scope: "all",
+        },
+        buildBarsRequestOptions(
+          BARS_REQUEST_PRIORITY.active,
+          "chart-flow",
+        ),
+      ),
     enabled: flowEnabled,
     staleTime: tradeFlowRefreshMs,
     refetchInterval: flowEnabled ? tradeFlowRefreshMs : false,
@@ -2272,14 +2347,20 @@ const TradeFlowRuntime = ({
       historicalBucketSeconds,
     ],
     queryFn: () =>
-      listFlowEventsRequest({
-        underlying: ticker,
-        limit: TRADE_FLOW_HISTORY_LIMIT,
-        from: historicalFlowWindow.from,
-        to: historicalFlowWindow.to,
-        historicalBucketSeconds,
-        blocking: false,
-    }),
+      listFlowEventsRequest(
+        {
+          underlying: ticker,
+          limit: TRADE_FLOW_HISTORY_LIMIT,
+          from: historicalFlowWindow.from,
+          to: historicalFlowWindow.to,
+          historicalBucketSeconds,
+          blocking: false,
+        },
+        buildBarsRequestOptions(
+          BARS_REQUEST_PRIORITY.active,
+          "chart-flow",
+        ),
+      ),
     enabled: flowEnabled,
     staleTime: tradeFlowHistoryRefreshMs,
     refetchInterval: flowEnabled
@@ -2333,9 +2414,10 @@ const TradeFlowRuntime = ({
     if (historicalFlowEventsRef.current.key !== historicalKey) {
       historicalFlowEventsRef.current = { key: historicalKey, events: [] };
     }
-    const liveEvents =
-      tickerFlowQuery.data?.events?.map((event) => mapFlowEventToUi(event)) ||
-      [];
+    const liveEvents = filterFlowEventsForSymbol(
+      tickerFlowQuery.data?.events || [],
+      ticker,
+    ).map((event) => mapFlowEventToUi(event));
     const incomingHistoricalEvents =
       historicalFlowQuery.data?.events?.map((event) => mapFlowEventToUi(event)) ||
       [];
@@ -3427,6 +3509,9 @@ const TradeScreenInner = ({
   const tradeLiveStreamsEnabled = Boolean(
     tradeRuntimeActivity.visibleInteractive && !safeQaMode,
   );
+  const tradePrimaryChartDataEnabled = Boolean(
+    tradeRuntimeActivity.primaryVisible && !safeQaMode,
+  );
   const tradeExecutionWorkEnabled = Boolean(
     tradeRuntimeActivity.executionWarm && !safeQaMode,
   );
@@ -4057,7 +4142,7 @@ const TradeScreenInner = ({
     <MemoTradeEquityPanel
       ticker={activeTicker}
       flowEvents={activeTickerChartFlowEvents}
-      historicalDataEnabled={tradeLiveStreamsEnabled}
+      historicalDataEnabled={tradePrimaryChartDataEnabled}
       stockAggregateStreamingEnabled={tradeBrokerStreamingEnabled}
       onOpenSearch={openEquitySearch}
       searchOpen={tradeTickerSearchAnchor === "equity"}

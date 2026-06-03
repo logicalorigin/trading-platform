@@ -943,13 +943,13 @@ const normalizeShadowAccountLineUsage = (admission, lineUsageSnapshot = null) =>
   const detail =
     rejectedCount > 0
       ? `${formatRuntimeCount(rejectedCount)} recent rejected`
-      : cacheFallbackLineCount > 0
-        ? `${formatRuntimeCount(cacheFallbackLineCount)} cache fallback`
-        : massiveFallbackLineCount > 0
-          ? `${formatRuntimeCount(massiveFallbackLineCount)} Massive fallback`
-          : used > 0
-            ? "IBKR live"
-            : "idle";
+      : used > 0
+        ? cacheFallbackLineCount > 0
+          ? `IBKR live · ${formatRuntimeCount(cacheFallbackLineCount)} cache fallback policy`
+          : massiveFallbackLineCount > 0
+            ? `IBKR live · ${formatRuntimeCount(massiveFallbackLineCount)} Massive fallback policy`
+            : "IBKR live"
+        : "idle";
   const streamState =
     rejectedCount > 0 ? "capacity-limited" : used > 0 ? "healthy" : "no-subscribers";
 

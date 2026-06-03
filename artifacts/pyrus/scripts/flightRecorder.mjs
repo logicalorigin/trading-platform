@@ -2,6 +2,7 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  statSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -25,6 +26,19 @@ const SAFE_ENV_NAMES = [
   "PYRUS_REPLIT_RUN",
   "REPLIT_MODE",
 ];
+const SAFE_REPLIT_ENV_NAMES = [
+  "REPLIT_CLUSTER",
+  "REPLIT_CONTAINER",
+  "REPLIT_PID1_VERSION",
+  "REPLIT_SESSION",
+  "REPL_IN_MICROVM",
+];
+const REPLIT_RUNTIME_FILES = {
+  envLatest: "/run/replit/env/latest.json",
+  envLast: "/run/replit/env/last.json",
+  pid1Flags: "/run/replit/pid1/flags.json",
+  toolchain: "/run/replit/toolchain.json",
+};
 
 function nowIso() {
   return new Date().toISOString();
@@ -76,6 +90,11 @@ function safeNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function unixSecondsToIso(value) {
+  const parsed = safeNumber(value);
+  return parsed === null ? null : new Date(parsed * 1000).toISOString();
+}
+
 function round(value, places = 1) {
   if (!Number.isFinite(value)) return null;
   const scale = 10 ** places;
@@ -88,6 +107,72 @@ function readText(filePath) {
   } catch {
     return null;
   }
+}
+
+function readFileSnapshot(filePath) {
+  try {
+    if (!existsSync(filePath)) {
+      return { exists: false };
+    }
+    const { mtimeMs, size } = statSync(filePath);
+    return {
+      exists: true,
+      size,
+      mtimeMs: round(mtimeMs, 0),
+      mtimeIso: Number.isFinite(mtimeMs) ? new Date(mtimeMs).toISOString() : null,
+    };
+  } catch {
+    return { exists: false };
+  }
+}
+
+function decodeJwtPayload(token) {
+  if (typeof token !== "string") return null;
+  const payload = token.split(".")[1];
+  if (!payload) return null;
+  try {
+    const normalized = payload.replaceAll("-", "+").replaceAll("_", "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    return JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function readReplitDbTokenClaims(env = process.env) {
+  if (!env.REPLIT_DB_URL) return null;
+  try {
+    const url = new URL(env.REPLIT_DB_URL);
+    const token = url.pathname.split("/").filter(Boolean).at(-1);
+    const claims = decodeJwtPayload(token);
+    if (!claims || typeof claims !== "object") return null;
+    return {
+      issuedAt: unixSecondsToIso(claims.iat),
+      expiresAt: unixSecondsToIso(claims.exp),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function readReplitRuntimeSnapshot(env = process.env) {
+  const safeEnv = {};
+  for (const name of SAFE_REPLIT_ENV_NAMES) {
+    if (Object.prototype.hasOwnProperty.call(env, name) && !SECRET_ENV_PATTERN.test(name)) {
+      safeEnv[name] = env[name] ?? null;
+    }
+  }
+
+  return {
+    env: safeEnv,
+    dbToken: readReplitDbTokenClaims(env),
+    runtimeFiles: Object.fromEntries(
+      Object.entries(REPLIT_RUNTIME_FILES).map(([name, filePath]) => [
+        name,
+        readFileSnapshot(filePath),
+      ]),
+    ),
+  };
 }
 
 export function resolveFlightRecorderDir(repoRoot, env = process.env) {
@@ -267,7 +352,12 @@ function incidentSeverity(classification, contributingReasons) {
   return "info";
 }
 
-export function classifyPreviousRun(previous, events = [], currentBoot = readContainerBoot()) {
+export function classifyPreviousRun(
+  previous,
+  events = [],
+  currentBoot = readContainerBoot(),
+  currentReplit = readReplitRuntimeSnapshot(),
+) {
   if (!previous || typeof previous !== "object") {
     return {
       classification: "none",
@@ -335,6 +425,12 @@ export function classifyPreviousRun(previous, events = [], currentBoot = readCon
       `previous-boot:${previous.boot.bootId}`,
       `current-boot:${currentBoot.bootId}`,
     ];
+    if (currentReplit.dbToken?.issuedAt) {
+      evidence.push(`replit-db-token-issued:${currentReplit.dbToken.issuedAt}`);
+    }
+    if (currentReplit.runtimeFiles?.pid1Flags?.mtimeIso) {
+      evidence.push(`replit-pid1-flags-mtime:${currentReplit.runtimeFiles.pid1Flags.mtimeIso}`);
+    }
   } else if (pressure.length > 0) {
     classification = "suspected-resource-pressure";
     confidence = "medium";
@@ -366,6 +462,8 @@ export function classifyPreviousRun(previous, events = [], currentBoot = readCon
     evidence,
     previousUpdatedAt: previous.updatedAt ?? previous.time ?? null,
     previousBoot: previous.boot ?? null,
+    previousReplit: previous.replit ?? null,
+    currentReplit,
     lastEvent,
   };
 }
@@ -437,6 +535,7 @@ export function createFlightRecorder(options) {
         updatedAt,
         boot: readContainerBoot(),
         env: sanitizeEnv(env),
+        replit: readReplitRuntimeSnapshot(env),
         lastEvent,
         ...partial,
       };
@@ -489,7 +588,12 @@ export function createFlightRecorder(options) {
   function classifyAndPersistPreviousRun() {
     try {
       const previous = readPreviousCurrent();
-      const incident = classifyPreviousRun(previous, recentEvents(previous), readContainerBoot());
+      const incident = classifyPreviousRun(
+        previous,
+        recentEvents(previous),
+        readContainerBoot(),
+        readReplitRuntimeSnapshot(env),
+      );
       appendEvent("previous-run-classified", { incident });
       if (incident.shouldPersist) {
         const persisted = {

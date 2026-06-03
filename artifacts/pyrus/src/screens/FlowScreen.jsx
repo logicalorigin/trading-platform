@@ -166,6 +166,13 @@ const getDisplayableFlowError = (providerSummary) => {
   }
   return message;
 };
+const FLOW_VISIBLE_REQUEST_HEADERS = Object.freeze({
+  "x-pyrus-request-family": "flow-scanner-visible",
+  "x-pyrus-fetch-priority": "8",
+});
+const FLOW_VISIBLE_REQUEST_OPTIONS = Object.freeze({
+  headers: FLOW_VISIBLE_REQUEST_HEADERS,
+});
 const FLOW_PREMIUM_WIDGET_COUNT = 16;
 const FLOW_PREMIUM_WIDGET_REFRESH_MS = 30_000;
 const FLOW_PREMIUM_TIMEFRAME_OPTIONS = [
@@ -1967,22 +1974,6 @@ const FlowOverviewPanel = ({
       },
     },
   );
-  const premiumDistributionQuery = useGetFlowPremiumDistribution(
-    {
-      limit: FLOW_PREMIUM_WIDGET_COUNT,
-      timeframe: premiumDistributionTimeframe,
-      coverageMode: premiumDistributionCoverageMode,
-    },
-    {
-      query: {
-        enabled: Boolean(isVisible),
-        staleTime: 15_000,
-        refetchInterval:
-          isVisible && !livePaused ? FLOW_PREMIUM_WIDGET_REFRESH_MS : false,
-        retry: false,
-      },
-    },
-  );
   const flowScannerDistributionWidgets = useMemo(
     () =>
       buildFlowScannerDistributionWidgets({
@@ -2001,7 +1992,40 @@ const FlowOverviewPanel = ({
       }),
     [flowScannerDistributionWidgets, premiumDistributionTimeframe, providerSummary],
   );
+  const premiumDistributionQueryEnabled = Boolean(
+    isVisible && !flowScannerDistributionWidgets.length,
+  );
+  const premiumDistributionQuery = useGetFlowPremiumDistribution(
+    {
+      limit: FLOW_PREMIUM_WIDGET_COUNT,
+      timeframe: premiumDistributionTimeframe,
+      coverageMode: premiumDistributionCoverageMode,
+    },
+    {
+      query: {
+        enabled: premiumDistributionQueryEnabled,
+        staleTime: 15_000,
+        refetchInterval:
+          premiumDistributionQueryEnabled && !livePaused
+            ? FLOW_PREMIUM_WIDGET_REFRESH_MS
+            : false,
+        retry: false,
+      },
+      request: FLOW_VISIBLE_REQUEST_OPTIONS,
+    },
+  );
   const premiumDistributionPanelQuery = useMemo(() => {
+    if (flowScannerDistributionWidgets.length && !premiumDistributionQueryEnabled) {
+      return {
+        ...premiumDistributionQuery,
+        data: flowScannerDistributionData,
+        isError: false,
+        isLoading: false,
+        isPending: false,
+        error: null,
+      };
+    }
+
     const premiumWidgets = premiumDistributionQuery.data?.widgets || [];
     if (premiumWidgets.length || !flowScannerDistributionWidgets.length) {
       return premiumDistributionQuery;
@@ -2019,6 +2043,7 @@ const FlowOverviewPanel = ({
     flowScannerDistributionData,
     flowScannerDistributionWidgets.length,
     premiumDistributionQuery,
+    premiumDistributionQueryEnabled,
   ]);
   const premiumDistributionSourceMeta = useMemo(() => {
     const data = premiumDistributionPanelQuery.data;
@@ -2776,6 +2801,13 @@ const FlowOverviewPanel = ({
     });
     setActiveScanId(null);
   };
+  const handleFlowTapeColumnOrderChange = useCallback((nextColumnIds) => {
+    const nextOptionalOrder = nextColumnIds.filter((columnId) =>
+      FLOW_COLUMN_BY_ID.has(columnId),
+    );
+    setColumnOrder(normalizeFlowColumnOrder(nextOptionalOrder));
+    setActiveScanId(null);
+  }, []);
 
   const resetColumns = () => {
     setColumnOrder(DEFAULT_FLOW_COLUMN_ORDER);
@@ -3399,61 +3431,24 @@ const FlowOverviewPanel = ({
     };
   };
 
-  const getTapeHeaderCellStyle = (column) => {
-    const active = normalizeFlowSortBy(column.id) === sortBy;
-    const sortable = FLOW_SORTABLE_COLUMNS.has(column.id);
-    return {
-      ...getTapeCellStyle(column.id),
-      gap: sp(3),
-      padding: 0,
-      border: "none",
-      background: "transparent",
-      color: active ? CSS_COLOR.text : CSS_COLOR.textMuted,
-      cursor: sortable ? "pointer" : "default",
-      font: "inherit",
-      fontWeight: FONT_WEIGHTS.regular,
-      letterSpacing: "0.04em",
-    };
-  };
-
   const flowTapeTableColumns = useMemo(
     () =>
       tapeColumns.map((column) => ({
         id: column.id,
-        header: () => {
-          const activeSort = normalizeFlowSortBy(column.id) === sortBy;
-          const sortable = FLOW_SORTABLE_COLUMNS.has(column.id);
-          return (
-            <button
-              type="button"
-              data-testid={`flow-tape-header-${column.id}`}
-              disabled={!sortable}
-              aria-sort={
-                activeSort
-                  ? sortDir === "asc"
-                    ? "ascending"
-                    : "descending"
-                  : "none"
-              }
-              onClick={() => applyFlowSort(column.id)}
-              style={getTapeHeaderCellStyle(column)}
-            >
-              <span>{column.label}</span>
-              {activeSort ? (
-                <span aria-hidden="true">
-                  {sortDir === "asc" ? "▲" : "▼"}
-                </span>
-              ) : null}
-            </button>
-          );
-        },
+        header: column.label,
         cell: ({ row }) => renderTapeCell(column.id, row.original),
         meta: {
           align: getTapeCellAlignment(column.id),
+          headerTestId: `flow-tape-header-${column.id}`,
+          label: column.label,
+          reorderLocked: !FLOW_COLUMN_BY_ID.has(column.id),
+          sortable: FLOW_SORTABLE_COLUMNS.has(column.id),
+          sortKey: normalizeFlowSortBy(column.id),
+          sortTitle: `Sort by ${column.label}`,
           width: column.width,
         },
       })),
-    [sortBy, sortDir, tapeColumns],
+    [tapeColumns],
   );
 
   const getFlowTapeRowProps = useCallback(
@@ -4907,6 +4902,7 @@ const FlowOverviewPanel = ({
                   ) : (
                     <>
                       <DenseVirtualTable
+                        columnOrder={tapeColumns.map((column) => column.id)}
                         columns={flowTapeTableColumns}
                         data={isFlowLoadingShell ? [] : visibleFlowRows}
                         emptyState={
@@ -4981,9 +4977,12 @@ const FlowOverviewPanel = ({
                           fontFamily: T.sans,
                         }}
                         minWidth={tapeTableMinWidth}
+                        onColumnOrderChange={handleFlowTapeColumnOrderChange}
+                        onSortChange={applyFlowSort}
                         overscan={18}
                         rowHeight={denseRows ? 34 : 42}
                         rowTestId="flow-tape-row"
+                        sortState={{ id: sortBy, direction: sortDir }}
                       />
 
                       {!isFlowLoadingShell && filtered.length > rowsPerPage ? (

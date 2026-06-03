@@ -81,7 +81,7 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /orderTab:\s*effectiveOrderTab/);
   assert.match(source, /useGetAccountSummary\(accountRequestId,\s*accountDataParams/);
   assert.match(source, /tab:\s*effectiveOrderTab/);
-  assert.match(source, /summary: displaySummaryData/);
+  assert.match(source, /summary=\{displaySummaryData\}/);
   assert.match(source, /buildAccountAnalysisQueryParams\(\{/);
   assert.match(source, /filters: tradeFilters/);
   assert.match(source, /buildPerformanceCalendarParams\(accountDataParams\)/);
@@ -131,6 +131,7 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 1_000/);
   assert.match(source, /const ACCOUNT_LIVE_FALLBACK_DELAY_MS = 5_000/);
   assert.match(source, /const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 6_000/);
+  assert.match(source, /const ACCOUNT_INACTIVE_PREWARM_FALLBACK_DELAY_MS = 5_000/);
   assert.match(source, /const prefetchAccountSectionLiveQueries = useCallback/);
   assert.match(source, /getGetAccountSummaryQueryOptions/);
   assert.match(source, /getGetAccountPositionsQueryOptions/);
@@ -138,11 +139,17 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /getGetAccountEquityHistoryQueryOptions/);
   assert.match(source, /const inactiveAccountSection = shadowMode \? "real" : "shadow"/);
   assert.match(source, /const inactiveAccountPageRequest = useMemo/);
+  assert.match(source, /const inactiveAccountPageStreamEnabled = Boolean/);
+  assert.match(source, /const inactiveAccountPageStreamFreshness = useAccountPageSnapshotStream/);
+  assert.match(source, /inactiveAccountPrewarmFallbackReady/);
   assert.match(source, /const inactiveAccountPrewarmEnabled = Boolean/);
-  assert.match(source, /isVisible && accountQueriesEnabled && accountCriticalReady/);
+  assert.match(source, /!inactiveAccountPageStreamFreshness\.accountCriticalFresh/);
+  assert.match(source, /const accountActivePrefetchEnabled = Boolean/);
+  assert.match(source, /\(accountCriticalFallbackReady &&[\s\S]*!accountPageStreamFreshness\.accountCriticalFresh\)/);
   assert.match(source, /prefetchAccountSectionLiveQueries\(inactiveAccountSection\)/);
   assert.match(source, /window\.setInterval\(\(\) => \{[\s\S]*prefetchAccountSectionLiveQueries\(inactiveAccountSection\);[\s\S]*ACCOUNT_SWITCH_KEEP_WARM_MS/);
   assert.doesNotMatch(immediateSwitchPrefetchBlock, /requestIdleCallback/);
+  assert.match(source, /if \(!accountActivePrefetchEnabled\) \{/);
   assert.match(source, /prefetchAccountSectionLiveQueries\(accountSection\)/);
   assert.match(source, /useGetAccountSummary\(accountRequestId,[\s\S]*placeholderData:\s*retainPreviousData/);
   assert.match(source, /useGetAccountAllocation\(accountRequestId,[\s\S]*placeholderData:\s*retainPreviousData/);

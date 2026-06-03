@@ -21,10 +21,15 @@ import {
   normalizeLaneSymbolList,
 } from "./settings/ibkrLaneUiModel";
 import {
+  IbkrLaneArchitecturePanel,
+} from "./settings/IbkrLaneArchitecturePanel";
+import {
+  DiagnosticThresholdSettingsPanel,
+} from "./settings/DiagnosticThresholdSettingsPanel";
+import {
   readLocalAlertPreferences,
   writeLocalAlertPreferences,
 } from "./diagnostics/localAlerts";
-import { IbkrLaneArchitecturePanel } from "./settings/IbkrLaneArchitecturePanel";
 import { buildPyrusRuntimeFingerprint } from "../app/runtimeDiagnostics";
 import {
   DEFAULT_FLOW_SCANNER_CONFIG,
@@ -66,7 +71,7 @@ import {
   formatPreferenceTimeZoneLabel,
 } from "../features/preferences/userPreferenceModel";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
-import { DiagnosticThresholdSettingsPanel } from "./settings/DiagnosticThresholdSettingsPanel";
+import { markRouteDataTiming } from "../features/platform/performanceMetrics";
 import { ACCOUNT_RANGES } from "./account/accountRanges";
 import {
   CSS_COLOR,
@@ -650,7 +655,7 @@ function SettingCard({ setting, draftValue, onDraftChange }) {
   );
 }
 
-function useBackendSettings() {
+function useBackendSettings({ enabled = true } = {}) {
   const toast = useToast();
   const [snapshot, setSnapshot] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -678,8 +683,9 @@ function useBackendSettings() {
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     load();
-  }, [load]);
+  }, [enabled, load]);
 
   const setDraft = useCallback((key, value) => {
     setDrafts((current) => ({ ...current, [key]: value }));
@@ -744,7 +750,7 @@ function useBackendSettings() {
   };
 }
 
-function useWatchlists() {
+function useWatchlists({ enabled = true } = {}) {
   const [watchlists, setWatchlists] = useState([]);
   const [error, setError] = useState(null);
   const load = useCallback(() => {
@@ -764,13 +770,14 @@ function useWatchlists() {
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     load();
-  }, [load]);
+  }, [enabled, load]);
 
   return { watchlists, error, reload: load };
 }
 
-function useSignalMonitorSettings() {
+function useSignalMonitorSettings({ enabled = true } = {}) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState(null);
@@ -786,18 +793,21 @@ function useSignalMonitorSettings() {
   );
   const profileQuery = useGetSignalMonitorProfile(signalMonitorParams, {
     query: {
+      enabled,
       staleTime: 15_000,
       retry: false,
     },
   });
   const stateQuery = useGetSignalMonitorState(signalMonitorParams, {
     query: {
+      enabled,
       staleTime: 15_000,
       retry: false,
     },
   });
   const eventsQuery = useListSignalMonitorEvents(signalMonitorEventsParams, {
     query: {
+      enabled,
       staleTime: 15_000,
       retry: false,
     },
@@ -831,6 +841,7 @@ function useSignalMonitorSettings() {
   );
 
   const load = useCallback(() => {
+    if (!enabled) return Promise.resolve();
     setLocalError(null);
     return Promise.all([
       profileQuery.refetch(),
@@ -845,7 +856,7 @@ function useSignalMonitorSettings() {
       .catch((err) => {
         setLocalError(describeError(err, "Signal monitor settings are unavailable."));
       });
-  }, [describeError, eventsQuery, profileQuery, stateQuery]);
+  }, [describeError, enabled, eventsQuery, profileQuery, stateQuery]);
 
   const patchDraft = useCallback((patch) => {
     setDraft((current) => ({ ...(current || {}), ...patch }));
@@ -1003,7 +1014,7 @@ function useSignalMonitorSettings() {
   };
 }
 
-function useResearchStatus() {
+function useResearchStatus({ enabled = true } = {}) {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
   const load = useCallback(() => {
@@ -1019,8 +1030,9 @@ function useResearchStatus() {
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     load();
-  }, [load]);
+  }, [enabled, load]);
 
   return { status, error, reload: load };
 }
@@ -1179,7 +1191,7 @@ function useDiagnosticAlertPreferences() {
   return { preferences, patch, snooze, clearDismissals, reset };
 }
 
-function useIbkrLaneSettings() {
+function useIbkrLaneSettings({ enabled = true } = {}) {
   const toast = useToast();
   const [snapshot, setSnapshot] = useState(null);
   const [drafts, setDrafts] = useState({});
@@ -1204,8 +1216,9 @@ function useIbkrLaneSettings() {
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     load();
-  }, [load]);
+  }, [enabled, load]);
 
   const applyPolicyPatch = useCallback((patch) => {
     setPolicyDrafts((current) => {
@@ -1540,11 +1553,22 @@ function IbkrLineUsagePanel({ runtimeControl }) {
             value={signalOptions.detail || MISSING_VALUE}
             tone={Number(signalOptions.rejectedCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
           />
-          <StateRow label="Shadow account lines" value={formatCount(shadowAccount.used)} />
           <StateRow
-            label="Shadow data fallback"
+            label="Account IBKR lines"
+            value={`${formatCount(accountMonitor.used)} active · ${formatCount(accountMonitor.needed ?? accountMonitor.used)} needed`}
+          />
+          <StateRow
+            label="Shadow IBKR lines"
+            value={`${formatCount(shadowAccount.used)} active · ${formatCount(shadowAccount.requestedLineCount ?? shadowAccount.used)} requested`}
+          />
+          <StateRow
+            label="Shadow fallback policy"
             value={shadowAccount.detail || MISSING_VALUE}
             tone={Number(shadowAccount.rejectedCount) > 0 ? CSS_COLOR.amber : CSS_COLOR.textSec}
+          />
+          <StateRow
+            label="Shadow demand owners"
+            value={`${formatCount(shadowAccount.ownerCount)} owners · ${formatCount(shadowAccount.leaseCount)} leases`}
           />
           <StateRow label="Scanner available lines" value={formatCount(flowScanner.effectiveCap)} />
           <StateRow
@@ -2736,8 +2760,8 @@ function FlowScannerSettingsPanel() {
   );
 }
 
-function SignalMonitorSettingsPanel({ watchlists }) {
-  const monitor = useSignalMonitorSettings();
+function SignalMonitorSettingsPanel({ enabled, watchlists }) {
+  const monitor = useSignalMonitorSettings({ enabled });
   const draft = monitor.draft;
   const states = monitor.state?.states || [];
   const liveProfile = monitor.state?.profile || monitor.profile || null;
@@ -2895,8 +2919,8 @@ function SettingsStatusStrip({ summary, dirtyCount, compact = false }) {
   );
 }
 
-function ResearchProviderPanel({ backendSnapshot }) {
-  const research = useResearchStatus();
+function ResearchProviderPanel({ backendSnapshot, enabled }) {
+  const research = useResearchStatus({ enabled });
   const providers = safeRecord(backendSnapshot?.summary?.providers);
   const stockDataProvider = resolveStockDataProvider(providers);
   return (
@@ -3068,6 +3092,7 @@ function FooterMemorySignalSettingsPanel() {
           <StateRow label="Trend" value={String(memoryPressure.trend || "steady").toUpperCase()} />
           <StateRow label="Source" value={memoryPressure.browserSource || MISSING_VALUE} />
           <StateRow label="Browser estimate" value={Number.isFinite(memoryPressure.browserMemoryMb) ? formatBytes(memoryPressure.browserMemoryMb * 1024 * 1024) : MISSING_VALUE} />
+          <StateRow label="Browser limit" value={Number.isFinite(memoryPressure.browserMemoryLimitMb) ? formatBytes(memoryPressure.browserMemoryLimitMb * 1024 * 1024) : MISSING_VALUE} />
         </div>
 
         <div style={{ display: "grid", gap: sp(6) }}>
@@ -3157,23 +3182,42 @@ export default function SettingsScreen({
       : "minmax(190px, 230px) minmax(0, 1fr)";
   const [activeTab, setActiveTab] = useState(SETTINGS_TABS[0].id);
   const [settingsSearch, setSettingsSearch] = useState("");
+  const settingsVisible = Boolean(isVisible);
+  const dataBrokerTabActive = settingsVisible && activeTab === "Data & Broker";
+  const automationTabActive = settingsVisible && activeTab === "Automation & Alerts";
+  const systemTabActive = settingsVisible && activeTab === "System";
+  const backendSettingsEnabled = dataBrokerTabActive || systemTabActive;
   useEffect(() => {
     onReadinessChange?.({
-      criticalReady: Boolean(isVisible),
-      derivedReady: Boolean(isVisible),
-      backgroundAllowed: Boolean(isVisible),
+      criticalReady: settingsVisible,
+      derivedReady: settingsVisible,
+      backgroundAllowed: settingsVisible,
     });
-  }, [isVisible, onReadinessChange]);
-  const backend = useBackendSettings();
+  }, [onReadinessChange, settingsVisible]);
+  const settingsTimingStagesRef = useRef(new Set());
+  useEffect(() => {
+    if (!settingsVisible) {
+      settingsTimingStagesRef.current = new Set();
+      return;
+    }
+    if (settingsTimingStagesRef.current.has("interactive-ready")) return;
+    settingsTimingStagesRef.current.add("interactive-ready");
+    markRouteDataTiming("settings", "interactive-ready", {
+      tab: activeTab,
+      source: "local-shell",
+    });
+  }, [activeTab, settingsVisible]);
+  const backend = useBackendSettings({ enabled: backendSettingsEnabled });
   const userPreferences = useUserPreferences();
-  const ibkr = useIbkrLaneSettings();
+  const ibkr = useIbkrLaneSettings({ enabled: dataBrokerTabActive });
   const runtimeControl = useRuntimeControlSnapshot({
-    enabled: Boolean(isVisible && activeTab === "Data & Broker"),
+    enabled: dataBrokerTabActive,
     runtimeDiagnosticsEnabled: false,
-    lineUsageEnabled: Boolean(isVisible && activeTab === "Data & Broker"),
+    lineUsageEnabled: dataBrokerTabActive,
     lineUsageStreamEnabled: true,
+    lineUsageDetail: "full",
   });
-  const { watchlists } = useWatchlists();
+  const { watchlists } = useWatchlists({ enabled: automationTabActive });
   const settings = backend.snapshot?.settings || [];
   const settingsByGroup = useMemo(() => {
     const groups = new Map();
@@ -3394,7 +3438,10 @@ export default function SettingsScreen({
 
           {activeTab === "Automation & Alerts" && (
             <>
-              <SignalMonitorSettingsPanel watchlists={watchlists} />
+              <SignalMonitorSettingsPanel
+                enabled={automationTabActive}
+                watchlists={watchlists}
+              />
               <FlowScannerSettingsPanel />
               <NotificationPreferencePanel userPreferences={userPreferences} />
               <DiagnosticAlertPreferencesPanel />
@@ -3403,7 +3450,10 @@ export default function SettingsScreen({
 
           {activeTab === "Data & Broker" && (
             <>
-              <ResearchProviderPanel backendSnapshot={backend.snapshot} />
+              <ResearchProviderPanel
+                backendSnapshot={backend.snapshot}
+                enabled={dataBrokerTabActive}
+              />
               <Panel title="Runtime Settings">{renderSettingGrid("runtime")}</Panel>
               <IbkrBridgeOverridePanel
                 active={Boolean(summary.bridgeOverrideActive)}

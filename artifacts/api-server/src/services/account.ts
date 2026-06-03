@@ -24,7 +24,10 @@ import {
   pool,
   tickerReferenceCacheTable,
 } from "@workspace/db";
-import { calculateTransferAdjustedReturnSummary } from "@workspace/account-math";
+import {
+  calculateTransferAdjustedReturnSummary,
+  externalTransferAmount,
+} from "@workspace/account-math";
 import { HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import {
@@ -180,6 +183,14 @@ type AccountMetric = {
   field: string;
   updatedAt: Date | null;
 };
+
+const ACCOUNT_MARKET_TIME_ZONE = "America/New_York";
+const accountMarketDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: ACCOUNT_MARKET_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 
 type AccountUniverse = {
   requestedAccountId: string;
@@ -362,6 +373,93 @@ function metric(
   };
 }
 
+function accountMarketDateKey(value: Date | string | null | undefined): string | null {
+  const date = value instanceof Date ? value : value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return accountMarketDateFormatter.format(date);
+}
+
+function calculateLatestMarketDayPnlFromHistory(
+  points: Array<{
+    timestamp: Date | string;
+    netLiquidation: number;
+    deposits?: number | null;
+    withdrawals?: number | null;
+    source?: string | null;
+  }>,
+): {
+  value: number;
+  capitalBase: number | null;
+  marketDate: string;
+  source: AccountMetric["source"];
+} | null {
+  const sorted = points
+    .map((point) => {
+      const timestamp =
+        point.timestamp instanceof Date
+          ? point.timestamp
+          : new Date(point.timestamp);
+      const netLiquidation = Number(point.netLiquidation);
+      return {
+        ...point,
+        timestamp,
+        netLiquidation,
+        marketDate: accountMarketDateKey(timestamp),
+      };
+    })
+    .filter(
+      (
+        point,
+      ): point is {
+        timestamp: Date;
+        netLiquidation: number;
+        deposits?: number | null;
+        withdrawals?: number | null;
+        source?: string | null;
+        marketDate: string;
+      } =>
+        !Number.isNaN(point.timestamp.getTime()) &&
+        Number.isFinite(point.netLiquidation) &&
+        Boolean(point.marketDate),
+    )
+    .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
+  const latest = sorted[sorted.length - 1];
+  if (!latest) {
+    return null;
+  }
+  const dayPoints = sorted.filter((point) => point.marketDate === latest.marketDate);
+  const first = dayPoints[0];
+  const last = dayPoints[dayPoints.length - 1];
+  if (!first || !last || first.timestamp.getTime() === last.timestamp.getTime()) {
+    return null;
+  }
+  const transfersAfterFirst = dayPoints.reduce(
+    (sum, point) =>
+      point.timestamp.getTime() > first.timestamp.getTime()
+        ? sum + externalTransferAmount(point)
+        : sum,
+    0,
+  );
+  const value = last.netLiquidation - first.netLiquidation - transfersAfterFirst;
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  return {
+    value,
+    capitalBase:
+      Number.isFinite(first.netLiquidation) && first.netLiquidation !== 0
+        ? Math.abs(first.netLiquidation)
+        : null,
+    marketDate: latest.marketDate,
+    source:
+      last.source === "FLEX" || last.source === "LOCAL_LEDGER"
+        ? last.source
+        : "LOCAL_LEDGER",
+  };
+}
+
 async function resolveAccountSummaryReturnMetrics(input: {
   accountId: string;
   mode: RuntimeMode;
@@ -390,16 +488,48 @@ async function resolveAccountSummaryReturnMetrics(input: {
       return null;
     }
   };
+  const readRange = async (range: AccountRange) => {
+    try {
+      return await getAccountEquityHistory({
+        accountId: input.accountId,
+        range,
+        mode: input.mode,
+        source: input.source,
+      });
+    } catch (error) {
+      logger.debug?.(
+        { err: error, accountId: input.accountId, range },
+        "Account summary equity history unavailable",
+      );
+      return null;
+    }
+  };
 
-  const [allTime, intraday] = await Promise.all([
+  const [allTime, intradayHistory] = await Promise.all([
     summarizeRange("ALL"),
-    summarizeRange("1D"),
+    readRange("1D"),
   ]);
+  const intraday = intradayHistory
+    ? calculateTransferAdjustedReturnSummary(
+        intradayHistory.points.map((point) => ({
+          netLiquidation: point.netLiquidation,
+          deposits: point.deposits,
+          withdrawals: point.withdrawals,
+        })),
+      )
+    : null;
+  const dayPnl = intradayHistory
+    ? calculateLatestMarketDayPnlFromHistory(intradayHistory.points)
+    : null;
 
   return {
     totalPnl: allTime?.cumulativePnl ?? null,
     totalPnlPercent: allTime?.returnPercent ?? null,
+    dayPnl: dayPnl?.value ?? null,
+    dayPnlSource: dayPnl?.source ?? "LOCAL_LEDGER",
+    dayPnlField: dayPnl ? `EquityHistoryMarketDayPnl:${dayPnl.marketDate}` : "EquityHistoryMarketDayPnl",
     dayPnlPercentDenominator: intraday?.capitalBase ?? null,
+    dayPnlCapitalBase: dayPnl?.capitalBase ?? null,
   };
 }
 
@@ -1198,14 +1328,14 @@ async function fetchEquityQuoteSnapshotsForPositions(
         symbol,
       })),
       ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
-      fallbackProvider: "cache",
+      fallbackProvider: "massive",
     });
     const payload = await getQuoteSnapshots({
       symbols: symbols.join(","),
-      allowMassiveFallback: false,
+      allowMassiveFallback: true,
       admissionOwner,
       admissionIntent: "account-monitor-live",
-      admissionFallbackProvider: "cache",
+      admissionFallbackProvider: "massive",
       ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
     }).catch(() => ({
       quotes: [],
@@ -1630,7 +1760,11 @@ function quoteForPosition(
   const enriched = buildPositionQuoteFromSnapshot(
     snapshot,
     mark,
-    position.optionContract ? "option_quote" : "bridge_quote",
+    position.optionContract
+      ? "option_quote"
+      : snapshot && (snapshot as QuoteSnapshot & { source?: string }).source === "massive"
+        ? "massive"
+        : "bridge_quote",
   );
   return choosePositionQuote(position.quote, enriched);
 }
@@ -2872,18 +3006,17 @@ async function getAccountSummaryUncached(input: {
   const nav = sumAccounts(universe.accounts, "netLiquidation") ?? 0;
   const marginSnapshot = buildAccountMarginSnapshot(universe.accounts);
 
-  const dayPnl = positions.reduce(
-    (sum, position) => sum + (marketHydration.get(position.id)?.dayChange ?? 0),
-    0,
-  );
   const returnMetrics = await resolveAccountSummaryReturnMetrics({
     accountId: input.accountId,
     mode,
     source: input.source,
   });
   const dayPnlPercentDenominator =
-    returnMetrics.dayPnlPercentDenominator && returnMetrics.dayPnlPercentDenominator !== 0
-      ? Math.abs(returnMetrics.dayPnlPercentDenominator)
+    returnMetrics.dayPnlCapitalBase && returnMetrics.dayPnlCapitalBase !== 0
+      ? Math.abs(returnMetrics.dayPnlCapitalBase)
+      : returnMetrics.dayPnlPercentDenominator &&
+          returnMetrics.dayPnlPercentDenominator !== 0
+        ? Math.abs(returnMetrics.dayPnlPercentDenominator)
       : Math.abs(nav);
 
   const accountTypes = Array.from(
@@ -2979,12 +3112,20 @@ async function getAccountSummaryUncached(input: {
         "Cushion",
         updatedAt,
       ),
-      dayPnl: metric(dayPnl, currency, "IBKR_POSITIONS", "QuoteChange", updatedAt),
+      dayPnl: metric(
+        returnMetrics.dayPnl,
+        currency,
+        returnMetrics.dayPnlSource,
+        returnMetrics.dayPnlField,
+        updatedAt,
+      ),
       dayPnlPercent: metric(
-        dayPnlPercentDenominator ? (dayPnl / dayPnlPercentDenominator) * 100 : null,
+        dayPnlPercentDenominator && returnMetrics.dayPnl !== null
+          ? (returnMetrics.dayPnl / dayPnlPercentDenominator) * 100
+          : null,
         null,
-        "IBKR_POSITIONS",
-        "QuoteChange/TransferAdjustedCapitalBase",
+        returnMetrics.dayPnlSource,
+        "EquityHistoryMarketDayPnl/MarketDayCapitalBase",
         updatedAt,
       ),
       totalPnl: metric(
@@ -3607,11 +3748,13 @@ export async function getAccountPositions(input: {
   assetClass?: string | null;
   mode?: RuntimeMode;
   source?: string | null;
+  liveQuotes?: boolean;
 }) {
   if (isShadowAccountId(input.accountId)) {
     return getShadowAccountPositions({
       assetClass: input.assetClass,
       source: input.source,
+      liveQuotes: input.liveQuotes,
     });
   }
 
@@ -3870,7 +4013,15 @@ async function getAccountPositionsUncached(input: {
             ? optionQuoteSnapshots.get(row.optionContract.providerContractId)
             : equityQuoteSnapshots.get(normalizeSymbol(row.marketDataSymbol || row.symbol)),
           row.averageWeight > 0 ? row.markAccumulator / row.averageWeight : 0,
-          row.optionContract ? "option_quote" : "bridge_quote",
+          row.optionContract
+            ? "option_quote"
+            : (
+                equityQuoteSnapshots.get(
+                  normalizeSymbol(row.marketDataSymbol || row.symbol),
+                ) as (QuoteSnapshot & { source?: string }) | undefined
+              )?.source === "massive"
+              ? "massive"
+              : "bridge_quote",
         ),
       }))
     : filteredPositions.map((position) => {
@@ -5424,6 +5575,7 @@ export const __accountTradeAnnotationInternalsForTests = {
 };
 
 export const __accountOverviewInternalsForTests = {
+  calculateLatestMarketDayPnlFromHistory,
   buildTradeOutcomeBuckets,
   normalizeTradeOutcomeBucketCount,
   overviewMatchesRequest,

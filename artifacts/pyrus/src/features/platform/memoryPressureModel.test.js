@@ -321,6 +321,7 @@ test("memory pressure popover ignores non-memory critical drivers as critical re
 test("memory pressure popover model includes diagnostics backed RAM details", () => {
   const pressure = buildMemoryPressureState({
     browserMemoryMb: 96,
+    browserMemoryLimitMb: 512,
     browserSource: "performance.memory",
     sourceQuality: "medium",
     apiHeapUsedPercent: 72.5,
@@ -374,6 +375,10 @@ test("memory pressure popover model includes diagnostics backed RAM details", ()
     "64 MB",
   );
   assert.equal(
+    model.browserRows.find((row) => row.label === "Reported limit")?.value,
+    "512 MB",
+  );
+  assert.equal(
     model.apiRows.find((row) => row.label === "Heap used")?.value,
     "128.3 MB",
   );
@@ -383,6 +388,13 @@ test("memory pressure popover model includes diagnostics backed RAM details", ()
       (row) =>
         row.label === "performance.memory" &&
         row.summary.includes("critical 2500 MB"),
+    ),
+  );
+  assert.ok(
+    model.thresholdRows.some(
+      (row) =>
+        row.label === "Limit ratio" &&
+        row.summary.includes("critical 90%"),
     ),
   );
   assert.ok(model.driverRows.some((row) => row.kind === "api-heap"));

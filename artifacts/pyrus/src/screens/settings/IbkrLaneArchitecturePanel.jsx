@@ -463,16 +463,24 @@ function LaneMembershipCard({
 }) {
   const { lane, preview, mergedPolicy, defaultPolicy, warnings, changed } = laneState;
   const editable = isEditableLane(lane.laneId);
+  const desiredCount = preview.desiredSymbols.length;
+  const admittedCount = preview.admittedSymbols.length;
   const active = Number.isFinite(lane.activeCount) ? lane.activeCount : preview.admittedSymbols.length;
   const queued = Number.isFinite(lane.queuedCount) ? lane.queuedCount : 0;
   const cap = Math.max(1, preview.maxSymbols || lane.maxSymbols || 1);
-  const usage = Math.min(1, active / cap);
+  const usage = Math.min(1, admittedCount / cap);
   const hasCapacityDrops = preview.droppedSymbols.some((entry) => entry.reason === "capacity");
+  const activeLabel =
+    lane.laneId === "flow-scanner" ||
+    lane.laneId === "equity-live-quotes" ||
+    lane.laneId === "option-live-quotes"
+      ? "LIVE LINES"
+      : "ACTIVE";
   const tone = !preview.enabled
     ? CSS_COLOR.textDim
     : warnings.some((warning) => warning.severity === "warning") || hasCapacityDrops
       ? CSS_COLOR.amber
-      : laneStatusTone(active >= cap ? "degraded" : "normal");
+      : laneStatusTone(admittedCount >= cap ? "degraded" : "normal");
 
   return (
     <div
@@ -494,7 +502,7 @@ function LaneMembershipCard({
             {isSystemLane(lane.laneId) && <span style={laneChip(CSS_COLOR.textDim)}>protected</span>}
           </div>
           <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body") }}>
-            {preview.admittedSymbols.length}/{preview.desiredSymbols.length} admitted
+            {admittedCount}/{desiredCount} admitted
             {preview.droppedSymbols.length ? ` / ${preview.droppedSymbols.length} dropped` : ""}
             {queued ? ` / ${queued} queued` : ""}
           </div>
@@ -525,8 +533,9 @@ function LaneMembershipCard({
         <div style={{ height: "100%", width: `${Math.round(usage * 100)}%`, background: tone }} />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: sp(7) }}>
-        <LaneMiniMetric label="ACTIVE" value={formatCount(active)} tone={active >= cap ? CSS_COLOR.amber : CSS_COLOR.textSec} />
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(86)}px, 1fr))`, gap: sp(7) }}>
+        <LaneMiniMetric label={activeLabel} value={formatCount(active)} tone={active > 0 ? CSS_COLOR.green : CSS_COLOR.textSec} />
+        <LaneMiniMetric label="ADMITTED" value={`${formatCount(admittedCount)}/${formatCount(desiredCount)}`} tone={admittedCount ? CSS_COLOR.green : CSS_COLOR.textSec} />
         <LaneMiniMetric label="LIMIT" value={formatCount(cap)} />
         <LaneMiniMetric label="DROPPED" value={formatCount(preview.droppedSymbols.length)} tone={preview.droppedSymbols.length ? CSS_COLOR.amber : CSS_COLOR.green} />
         <LaneMiniMetric label="QUEUED" value={formatCount(queued)} tone={queued ? CSS_COLOR.amber : CSS_COLOR.textSec} />

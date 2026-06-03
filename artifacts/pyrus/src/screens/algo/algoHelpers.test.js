@@ -70,11 +70,20 @@ test("AlgoScreen keeps startup fallback collections stable before queries resolv
   assert.match(source, /const EMPTY_SIGNAL_OPTIONS_CANDIDATES = Object\.freeze\(\[\]\)/);
   assert.match(source, /const EMPTY_SIGNAL_OPTIONS_SIGNALS = Object\.freeze\(\[\]\)/);
   assert.match(source, /const EMPTY_SIGNAL_OPTIONS_POSITIONS = Object\.freeze\(\[\]\)/);
+  assert.match(source, /const sourceArrayLatestTimestampMs = \(items\) =>/);
+  assert.match(source, /const latestIsoFromRows = \(items, fields\) =>/);
   assert.match(source, /const preferNonEmptySourceArray = \(primary, fallback, emptyValue\) =>/);
-  assert.match(source, /if \(primaryArray\?\.length\) return primaryArray/);
+  assert.match(source, /if \(fallbackLatestMs > primaryLatestMs\) return fallbackArray/);
+  assert.match(source, /fallbackArray\.length > primaryArray\.length/);
   assert.match(source, /if \(fallbackArray\?\.length\) return fallbackArray/);
   assert.match(source, /cockpit\?\.candidates,\s*signalOptionsState\?\.candidates/);
   assert.match(source, /cockpit\?\.signals,\s*signalOptionsState\?\.signals/);
+  assert.match(source, /const signalTableScanFallback = useMemo/);
+  assert.match(source, /lastSignalScanAt: latestIsoFromRows\(visibleSignalRows,\s*\[\s*"lastEvaluatedAt",\s*"updatedAt"/);
+  assert.match(source, /latestSignalBarAt: latestIsoFromRows\(visibleSignalRows,\s*\["latestBarAt"\]\)/);
+  assert.match(source, /latestAt:\s*signalTableScanFallback\.lastSignalScanAt \|\|\s*focusedDeployment\?\.lastEvaluatedAt/);
+  assert.match(source, /lastSignalScanAt: signalTableScanFallback\.lastSignalScanAt/);
+  assert.match(source, /detail:[\s\S]*signal stream cache current/);
   assert.match(
     source,
     /setSelectedCandidateId\(\(current\) => \(current === null \? current : null\)\)/,
@@ -1733,8 +1742,9 @@ test("algo operations views surface contract quote and greeks fields", () => {
   assert.match(positionsSource, /PositionsPanel/);
   assert.match(positionsSource, /buildAlgoAccountPositionRows/);
   assert.match(positionsSource, /accountPositionsQuery/);
-  assert.match(positionsSource, /Shadow account positions \+ live option quotes/);
-  assert.match(positionsSource, /Runtime positions \+ live option quotes/);
+  assert.match(positionsSource, /Shadow algo positions/);
+  assert.match(positionsSource, /Runtime algo positions/);
+  assert.match(positionsSource, /assetFilter="all"/);
   assert.match(positionsSource, /filterAccountPositionRowsForDeployment/);
   assert.match(positionsSource, /accountPositionsSettled/);
   assert.match(positionsSource, /useAccountPositionRows/);
@@ -1755,7 +1765,9 @@ test("algo operations views surface contract quote and greeks fields", () => {
   assert.match(accountPositionsSource, /data-testid="account-positions-table-scroll"/);
   assert.doesNotMatch(accountPositionsSource, /data-testid="account-position-context-strip"/);
   assert.match(screenSource, /useGetAccountPositions/);
-  assert.match(screenSource, /assetClass:\s*"Options"/);
+  assert.match(screenSource, /assetClass:\s*"all"/);
+  assert.match(screenSource, /source:\s*"automation"/);
+  assert.match(screenSource, /liveQuotes:\s*false/);
   assert.match(livePageSource, /signalOptionsLedgerPositionsQuery/);
   assert.match(livePageSource, /ledgerPositions: focusedLedgerPositions/);
   assert.match(livePageSource, /signals: visibleSignalRows/);
@@ -1783,7 +1795,7 @@ test("algo operations views surface contract quote and greeks fields", () => {
   assert.match(livePageSource, /automation-live/);
 });
 
-test("algo setup shows a loading state before true empty deployment data", () => {
+test("algo setup does not hide operations shell before true empty deployment data", () => {
   const livePageSource = readFileSync(
     new URL("./AlgoLivePage.jsx", import.meta.url),
     "utf8",
@@ -1805,6 +1817,9 @@ test("algo setup shows a loading state before true empty deployment data", () =>
   assert.doesNotMatch(setupSettledBlock, /algoCockpitStreamFreshness/);
   assert.match(screenSource, /setupDataSettled=\{algoSetupDataSettled\}/);
   assert.match(livePageSource, /setupDataSettled = true/);
+  assert.match(livePageSource, /const showEmptyOperationsState = Boolean\(setupDataSettled && !deployments\.length\)/);
+  assert.match(livePageSource, /if \(showEmptyOperationsState\) \{/);
+  assert.doesNotMatch(livePageSource, /if \(!deployments\.length\) \{/);
   assert.match(livePageSource, /data-testid="algo-setup-loading"/);
   assert.match(livePageSource, /Loading Signal Operations/);
   assert.match(livePageSource, /Loading algo deployments and signal-options state/);
@@ -1846,13 +1861,19 @@ test("algo screen auto-runs an initial scan and labels sync separately", () => {
     screenSource,
     /autoInitialScanDeploymentIdsRef\.current\.has\(deploymentId\)/,
   );
+  assert.match(screenSource, /algoExecutionScanRunning/);
   assert.match(
     screenSource,
     /autoInitialScanDeploymentIdsRef\.current\.add\(deploymentId\)/,
   );
-  assert.match(screenSource, /runShadowScanMutation\.mutate\(\{ deploymentId \}\)/);
+  assert.match(
+    screenSource,
+    /runShadowScanMutation\.mutate\(\{ deploymentId, requestSource: "auto" \}\)/,
+  );
+  assert.match(screenSource, /variables\?\.requestSource === "auto"/);
   assert.match(screenSource, /state\?\.status === "already_running"/);
-  assert.match(screenSource, /Signal-options scan already running/);
+  assert.match(screenSource, /Algo & Execution scan already running/);
+  assert.match(screenSource, /The active options strategy scan will finish/);
   assert.doesNotMatch(screenSource, /Shadow scan already running/);
   assert.doesNotMatch(screenSource, /Shadow scan complete/);
   assert.doesNotMatch(screenSource, /Shadow scan failed/);
@@ -1861,6 +1882,7 @@ test("algo screen auto-runs an initial scan and labels sync separately", () => {
   assert.match(livePageSource, /data-testid="algo-operations-deployment-select"/);
   assert.doesNotMatch(livePageSource, /watchlistId/);
   assert.match(livePageSource, /scanMutationPending/);
+  assert.match(livePageSource, /scanOperationRunning/);
   assert.match(livePageSource, /\? "scan running"/);
   assert.match(livePageSource, /\? "syncing state"/);
   assert.doesNotMatch(livePageSource, /\? "refreshing"/);

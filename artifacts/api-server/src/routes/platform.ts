@@ -58,6 +58,7 @@ import {
   getNews,
   getOptionChainWithDebug,
   getOptionExpirationsWithDebug,
+  OPTION_EXPIRATION_PUBLIC_FOREGROUND_WAIT_MS,
   getOptionChartBarsWithDebug,
   resolveOptionContractWithDebug,
   getQuoteSnapshots,
@@ -1319,6 +1320,12 @@ router.get("/accounts/:accountId/positions", async (req, res) => {
         typeof req.query.assetClass === "string" ? req.query.assetClass : null,
       mode,
       source: readOptionalString(req.query.source, 80),
+      liveQuotes:
+        req.query.liveQuotes === "false"
+          ? false
+          : req.query.liveQuotes === "true"
+            ? true
+            : undefined,
     }),
   );
 });
@@ -1688,6 +1695,7 @@ router.post("/options/quotes", async (req, res) => {
       owner: body.owner ?? undefined,
       intent: body.intent ?? undefined,
       requiresGreeks: body.requiresGreeks ?? undefined,
+      signal: createRequestAbortSignal(req, res),
     }),
   );
 
@@ -1844,7 +1852,10 @@ router.get("/options/expirations", async (req, res) => {
   const query = GetOptionExpirationsQueryParams.parse(
     req.query as Record<string, unknown>,
   );
-  const raw = await getOptionExpirationsWithDebug(query);
+  const raw = await getOptionExpirationsWithDebug({
+    ...query,
+    foregroundWaitMs: OPTION_EXPIRATION_PUBLIC_FOREGROUND_WAIT_MS,
+  });
   setRequestDebugHeaders(res, raw.debug);
   const data = GetOptionExpirationsResponse.parse(raw);
 

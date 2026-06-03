@@ -278,6 +278,114 @@ test("shadow read cache serves marked stale data when refresh exceeds budget", a
   internals.invalidateShadowFreshStateCache();
 });
 
+test("shadow read cache can refuse stale empty position responses", async () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const allowStaleWithRows = (value: unknown) => {
+    const positions =
+      value && typeof value === "object"
+        ? (value as { positions?: unknown }).positions
+        : null;
+    return Array.isArray(positions) ? positions.length > 0 : true;
+  };
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: 0,
+    staleTtlMs: 60_000,
+    staleWaitMs: 5,
+  });
+
+  await internals.withShadowReadCache(
+    "unit-empty-position-cache",
+    async () => ({ positions: [] }),
+    { allowStale: allowStaleWithRows },
+  );
+
+  const freshResolver: {
+    current?: (value: { positions: Array<{ symbol: string }> }) => void;
+  } = {};
+  const pending = internals.withShadowReadCache(
+    "unit-empty-position-cache",
+    async () =>
+      new Promise<{ positions: Array<{ symbol: string }> }>((resolve) => {
+        freshResolver.current = resolve;
+      }),
+    { allowStale: allowStaleWithRows },
+  );
+
+  const early = await Promise.race([
+    pending.then(() => "settled"),
+    new Promise<"pending">((resolve) => {
+      const timeout = setTimeout(() => resolve("pending"), 20);
+      timeout.unref?.();
+    }),
+  ]);
+  assert.equal(early, "pending");
+  const completeFresh = freshResolver.current;
+  if (!completeFresh) {
+    throw new Error("Expected stale-cache test resolver to be registered");
+  }
+  completeFresh({ positions: [{ symbol: "COHR" }] });
+
+  assert.deepEqual(await pending, { positions: [{ symbol: "COHR" }] });
+
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: null,
+    staleTtlMs: null,
+    staleWaitMs: null,
+  });
+  internals.invalidateShadowFreshStateCache();
+});
+
+test("shadow read cache preserves non-empty positions when refresh returns empty", async () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const allowStaleWithRows = (value: unknown) => {
+    const positions =
+      value && typeof value === "object"
+        ? (value as { positions?: unknown }).positions
+        : null;
+    return Array.isArray(positions) ? positions.length > 0 : true;
+  };
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: 0,
+    staleTtlMs: 60_000,
+    staleWaitMs: 5,
+  });
+
+  await internals.withShadowReadCache(
+    "unit-non-empty-position-cache",
+    async () => ({
+      positions: [{ symbol: "COHR" }],
+      degraded: false,
+      reason: null,
+    }),
+    { allowStale: allowStaleWithRows },
+  );
+
+  const stale = await internals.withShadowReadCache(
+    "unit-non-empty-position-cache",
+    async () => ({
+      positions: [],
+      degraded: true,
+      reason: "transient_empty_positions",
+    }),
+    { allowStale: allowStaleWithRows },
+  );
+  const staleRecord = stale as typeof stale & { stale?: boolean };
+
+  assert.deepEqual(staleRecord.positions, [{ symbol: "COHR" }]);
+  assert.equal(staleRecord.degraded, true);
+  assert.equal(staleRecord.stale, true);
+  assert.equal(staleRecord.reason, "shadow_read_stale_cache");
+
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: null,
+    staleTtlMs: null,
+    staleWaitMs: null,
+  });
+  internals.invalidateShadowFreshStateCache();
+});
+
 test("shadow fresh-state refresh remains in-flight until settled", async () => {
   const internals = __shadowWatchlistBacktestInternalsForTests;
   const totals = {
@@ -942,6 +1050,20 @@ test("shadow account positions repair live signal-options mirrors inside cached 
   assert.ok(
     positionsBody.indexOf("return withShadowReadCache(") <
       positionsBody.indexOf("await repairSignalOptionsAutomationMirrorsForRead(source);"),
+  );
+  assert.match(
+    positionsBody,
+    /const totals = source \? await computeShadowTotalsForSource\(source\) : await ensureFreshShadowState\(true\);/,
+  );
+  assert.match(positionsBody, /clearShadowAccountDbBackoff\(\);/);
+  assert.match(positionsBody, /\{ allowStale: shadowReadCacheValueHasRows \}/);
+  assert.doesNotMatch(
+    positionsBody,
+    /source \? \{ allowStale: shadowReadCacheValueHasRows \} : undefined/,
+  );
+  assert.doesNotMatch(
+    positionsBody,
+    /isShadowAccountDbBackoffActive\(\)[\s\S]*buildEmptyShadowAccountPositionsResponse/,
   );
   assert.ok(riskBody);
   assert.match(riskBody, /getShadowAccountPositions\(\{\s*source,\s*liveQuotes: false,?\s*\}\)/);
@@ -3080,6 +3202,20 @@ test("shadow risk reuses projected underlying markets before quote fallback", ()
   assert.match(source, /withShadowReadCache\(`risk:\$\{shadowSourceCacheKey\(source\)\}`/);
 });
 
+test("shadow cash activity uses stale read cache protection", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const cashActivityBody = source.match(
+    /export async function getShadowAccountCashActivity\([\s\S]*?\nfunction timeZoneParts/,
+  )?.[0];
+
+  assert.ok(cashActivityBody);
+  assert.match(
+    cashActivityBody,
+    /return withShadowReadCache\(`cash-activity:\$\{shadowSourceCacheKey\(source\)\}`/,
+  );
+  assert.match(cashActivityBody, /computeShadowTotals\(\)/);
+});
+
 test("shadow risk exposes python greek scenario coverage", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const riskBody = source.match(
@@ -3144,10 +3280,16 @@ test("shadow option greek estimates fill missing quote greeks", () => {
   assert.ok(estimate.vega > 0);
 });
 
-test("shadow equity quote hydration opts out of Massive fallback", () => {
+test("shadow quote hydration routes spot display quotes to Massive and option marks to IBKR", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const equityMarkBody = source.match(
     /async function resolveEquityMark\([\s\S]*?\nasync function resolveOptionMark/,
+  )?.[0];
+  const equityPositionQuoteBody = source.match(
+    /async function fetchShadowEquityPositionQuotes\([\s\S]*?\nfunction shadowUnderlyingMarketPayload/,
+  )?.[0];
+  const positionsBody = source.match(
+    /export async function getShadowAccountPositions\([\s\S]*?\nexport async function getShadowAccountPositionsAtDate/,
   )?.[0];
   const underlyingBody = source.match(
     /async function hydrateShadowOptionUnderlyingPrices\([\s\S]*?\nfunction buildShadowExpiryConcentration/,
@@ -3157,11 +3299,22 @@ test("shadow equity quote hydration opts out of Massive fallback", () => {
   )?.[0];
 
   assert.ok(equityMarkBody);
+  assert.ok(equityPositionQuoteBody);
+  assert.ok(positionsBody);
   assert.ok(underlyingBody);
   assert.ok(boundedUnderlyingBody);
   assert.match(equityMarkBody, /allowMassiveFallback: false/);
   assert.match(equityMarkBody, /admissionOwner: `shadow-equity-mark:\$\{normalized\}`/);
   assert.match(equityMarkBody, /admissionFallbackProvider: "cache"/);
+  assert.match(equityPositionQuoteBody, /allowMassiveFallback: true/);
+  assert.match(
+    equityPositionQuoteBody,
+    /admissionOwner: `shadow-equity-position-quotes:\$\{symbols\.join\(","\)\}`/,
+  );
+  assert.match(equityPositionQuoteBody, /admissionFallbackProvider: "massive"/);
+  assert.match(positionsBody, /shadowQuoteText\(rawEquityQuote,\s*"source"\) === "massive"/);
+  assert.match(positionsBody, /optionQuoteSnapshot \? "option_quote" : equityQuote \? "massive"/);
+  assert.match(positionsBody, /sameDayPosition && hasFiniteValuationMark/);
   assert.match(boundedUnderlyingBody, /allowMassiveFallback: false/);
   assert.match(boundedUnderlyingBody, /admissionOwner: `shadow-underlying-mark:\$\{symbols\}`/);
   assert.match(boundedUnderlyingBody, /admissionFallbackProvider: "cache"/);

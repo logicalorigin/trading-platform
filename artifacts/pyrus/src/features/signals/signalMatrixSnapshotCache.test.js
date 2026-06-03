@@ -34,8 +34,12 @@ test("signal matrix snapshot cache round-trips sanitized recent states", () => {
   assert.equal(
     writeSignalMatrixSnapshotCache(
       {
-        states: [state(), state({ symbol: "qqq", timeframe: "1h", currentSignalDirection: "sell" })],
-        timeframes: ["1m", "5m", "1h"],
+        states: [
+          state(),
+          state({ symbol: "qqq", timeframe: "1h", currentSignalDirection: "sell" }),
+          state({ symbol: "dia", timeframe: "1d", currentSignalDirection: "buy" }),
+        ],
+        timeframes: ["1m", "5m", "1h", "1d"],
         evaluatedAt: "2026-06-01T21:26:00.000Z",
       },
       { storage, nowMs: 1000 },
@@ -46,10 +50,10 @@ test("signal matrix snapshot cache round-trips sanitized recent states", () => {
   const snapshot = readSignalMatrixSnapshotCache({ storage, nowMs: 1000 });
   assert.equal(snapshot.cacheStatus, "warm-start");
   assert.equal(snapshot.evaluatedAt, "2026-06-01T21:26:00.000Z");
-  assert.deepEqual(snapshot.timeframes, ["1m", "5m", "1h"]);
+  assert.deepEqual(snapshot.timeframes, ["1m", "5m", "1h", "1d"]);
   assert.deepEqual(
     snapshot.states.map((entry) => `${entry.symbol}:${entry.timeframe}:${entry.currentSignalDirection}`),
-    ["QQQ:1h:sell", "SPY:5m:buy"],
+    ["DIA:1d:buy", "QQQ:1h:sell", "SPY:5m:buy"],
   );
 });
 

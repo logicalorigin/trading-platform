@@ -31,7 +31,14 @@ const router: IRouter = Router();
 const SIGNAL_OPTIONS_STATE_ROUTE_TIMEOUT_MS = 5_000;
 const SIGNAL_OPTIONS_COCKPIT_SUMMARY_ROUTE_TIMEOUT_MS = 5_000;
 const SIGNAL_OPTIONS_COCKPIT_FULL_ROUTE_TIMEOUT_MS = 9_000;
+const SIGNAL_OPTIONS_SHADOW_SCAN_ROUTE_TIMEOUT_MS = 45_000;
+const SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_BUDGET_MS = 15_000;
+const SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_ITEM_LIMIT = 4;
 const OVERNIGHT_SPOT_SCAN_ROUTE_TIMEOUT_MS = 30_000;
+
+function signalOptionsAdmissionCacheMode(admission: ReturnType<typeof getApiRouteAdmission>) {
+  return admission.cacheOnly ? "cache-only" : undefined;
+}
 
 function withSignalOptionsRouteTimeout<T>(
   promise: Promise<T>,
@@ -55,6 +62,36 @@ function withSignalOptionsRouteTimeout<T>(
     timeout.unref?.();
   });
   return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  });
+}
+
+function withAbortableSignalOptionsRouteTimeout<T>(
+  task: (signal: AbortSignal) => Promise<T>,
+  input: {
+    timeoutMs: number;
+    code: string;
+    detail: string;
+  },
+): Promise<T> {
+  const controller = new AbortController();
+  const taskPromise = Promise.resolve().then(() => task(controller.signal));
+  taskPromise.catch(() => {});
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      const error = new HttpError(504, "Signal Options route timed out.", {
+        code: input.code,
+        detail: input.detail,
+      });
+      controller.abort(error);
+      reject(error);
+    }, input.timeoutMs);
+    timeout.unref?.();
+  });
+  return Promise.race([taskPromise, timeoutPromise]).finally(() => {
     if (timeout) {
       clearTimeout(timeout);
     }
@@ -187,8 +224,9 @@ router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, r
       await withSignalOptionsRouteTimeout(
         listSignalOptionsAutomationState({
           deploymentId: req.params.deploymentId,
-          cacheMode: admission.cacheOnly ? "cache-only" : "normal",
+          cacheMode: signalOptionsAdmissionCacheMode(admission),
           view,
+          refreshSignalsFromMonitorState: true,
         }),
         {
           timeoutMs: SIGNAL_OPTIONS_STATE_ROUTE_TIMEOUT_MS,
@@ -214,7 +252,7 @@ router.get("/algo/deployments/:deploymentId/cockpit", async (req, res): Promise<
       await withSignalOptionsRouteTimeout(
         getAlgoDeploymentCockpit({
           deploymentId: req.params.deploymentId,
-          cacheMode: admission.cacheOnly ? "cache-only" : "normal",
+          cacheMode: signalOptionsAdmissionCacheMode(admission),
           view,
         }),
         {
@@ -235,7 +273,7 @@ router.get("/algo/deployments/:deploymentId/signal-options/performance", async (
     withRouteAdmissionMetadata(
       await getSignalOptionsPerformance({
         deploymentId: req.params.deploymentId,
-        cacheMode: admission.cacheOnly ? "cache-only" : "normal",
+        cacheMode: signalOptionsAdmissionCacheMode(admission),
       }),
       admission,
     ),
@@ -243,12 +281,40 @@ router.get("/algo/deployments/:deploymentId/signal-options/performance", async (
 });
 
 router.post("/algo/deployments/:deploymentId/signal-options/shadow-scan", async (req, res): Promise<void> => {
+  const body =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? req.body
+      : {};
+  const forceEvaluate =
+    readOptionalBoolean(body.forceEvaluate) ??
+    readOptionalBoolean(body.refreshSignals) ??
+    false;
+  const runActions =
+    readOptionalBoolean(body.runActions) ??
+    readOptionalBoolean(body.actionScan) ??
+    false;
+
   res.json(
-    await runSignalOptionsShadowScan({
-      deploymentId: req.params.deploymentId,
-      forceEvaluate: true,
-      source: "manual",
-    }),
+    await withAbortableSignalOptionsRouteTimeout(
+      (signal) =>
+        runSignalOptionsShadowScan({
+          deploymentId: req.params.deploymentId,
+          forceEvaluate,
+          preferStoredMonitorState: forceEvaluate !== true,
+          responseMode: "summary",
+          skipActionWork: runActions !== true,
+          source: "manual",
+          actionWorkBudgetMs: SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_BUDGET_MS,
+          actionWorkItemLimit: SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_ITEM_LIMIT,
+          signal,
+        }),
+      {
+        timeoutMs: SIGNAL_OPTIONS_SHADOW_SCAN_ROUTE_TIMEOUT_MS,
+        code: "signal_options_shadow_scan_route_timeout",
+        detail:
+          "Signal Options shadow scan did not finish within the route budget.",
+      },
+    ),
   );
 });
 
@@ -271,13 +337,14 @@ router.post("/algo/deployments/:deploymentId/overnight-spot/scan", async (req, r
     true;
 
   res.json(
-    await withSignalOptionsRouteTimeout(
-      runOvernightSpotSignalScan({
-        deploymentId: req.params.deploymentId,
-        forceEvaluate,
-        runActions,
-        recordSignals,
-      }),
+    await withAbortableSignalOptionsRouteTimeout(
+      () =>
+        runOvernightSpotSignalScan({
+          deploymentId: req.params.deploymentId,
+          forceEvaluate,
+          runActions,
+          recordSignals,
+        }),
       {
         timeoutMs: OVERNIGHT_SPOT_SCAN_ROUTE_TIMEOUT_MS,
         code: "overnight_spot_scan_route_timeout",

@@ -8,7 +8,14 @@ import {
   normalizeSignalStatus,
 } from "./signalStateFreshness.js";
 
-export const SIGNALS_TABLE_TIMEFRAMES = Object.freeze(["1m", "2m", "5m", "15m", "1h"]);
+export const SIGNALS_TABLE_TIMEFRAMES = Object.freeze([
+  "1m",
+  "2m",
+  "5m",
+  "15m",
+  "1h",
+  "1d",
+]);
 
 export const SIGNALS_ROW_STATUS = Object.freeze({
   activeFresh: "active-fresh",
@@ -35,18 +42,19 @@ const DIRECTION_SORT_WEIGHT = Object.freeze({
 });
 
 const SIGNAL_MATRIX_TIMEFRAME_WEIGHTS = Object.freeze({
-  "1m": 10,
-  "2m": 12,
-  "5m": 28,
-  "15m": 25,
-  "1h": 25,
+  "1m": 8,
+  "2m": 10,
+  "5m": 25,
+  "15m": 22,
+  "1h": 20,
+  "1d": 15,
 });
 const SIGNAL_MATRIX_TOTAL_WEIGHT = SIGNALS_TABLE_TIMEFRAMES.reduce(
   (sum, timeframe) => sum + (SIGNAL_MATRIX_TIMEFRAME_WEIGHTS[timeframe] || 0),
   0,
 );
 const SIGNAL_MATRIX_LOWER_TIMEFRAMES = Object.freeze(["1m", "2m"]);
-const SIGNAL_MATRIX_HIGHER_TIMEFRAMES = Object.freeze(["15m", "1h"]);
+const SIGNAL_MATRIX_HIGHER_TIMEFRAMES = Object.freeze(["15m", "1h", "1d"]);
 const SIGNAL_MATRIX_EXECUTION_TIMEFRAME = "5m";
 
 export const normalizeSignalsTicker = (value) =>
@@ -68,6 +76,47 @@ const stateActivityMs = (state) =>
     timestampMs(state?.lastEvaluatedAt),
     timestampMs(state?.latestBarAt),
   );
+
+const finiteNumberOrNull = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
+const compareText = (left, right, multiplier) =>
+  multiplier * String(left || "").localeCompare(String(right || ""));
+
+const compareNumberAsc = (left, right, multiplier) => {
+  const leftNumber = finiteNumberOrNull(left);
+  const rightNumber = finiteNumberOrNull(right);
+  if (leftNumber == null && rightNumber == null) return 0;
+  if (leftNumber == null) return 1;
+  if (rightNumber == null) return -1;
+  return multiplier * (leftNumber - rightNumber);
+};
+
+const compareNumberDesc = (left, right, multiplier) => {
+  const leftNumber = finiteNumberOrNull(left);
+  const rightNumber = finiteNumberOrNull(right);
+  if (leftNumber == null && rightNumber == null) return 0;
+  if (leftNumber == null) return 1;
+  if (rightNumber == null) return -1;
+  return multiplier * (rightNumber - leftNumber);
+};
+
+const strengthSortValue = (value) => {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized === "strong") return 3;
+  if (normalized === "moderate") return 2;
+  if (normalized === "weak") return 1;
+  return null;
+};
+
+const mtfPassCount = (row) =>
+  (Array.isArray(row?.dashboardSummary?.mtf) ? row.dashboardSummary.mtf : [])
+    .filter((entry) => entry?.pass === true).length;
+
+const matrixSortState = (row, timeframe) =>
+  row?.matrixStatesByTimeframe?.[timeframe] || null;
 
 const eventActivityMs = (event) =>
   Math.max(timestampMs(event?.emittedAt), timestampMs(event?.signalAt));
@@ -157,6 +206,7 @@ const addSymbolOnce = (symbols, seen, value) => {
 
 const buildTrackedSymbols = ({
   universeSymbols,
+  skippedSymbols,
   states,
   matrixStates,
   events,
@@ -164,6 +214,9 @@ const buildTrackedSymbols = ({
   const seen = new Set();
   const symbols = [];
   (Array.isArray(universeSymbols) ? universeSymbols : []).forEach((symbol) =>
+    addSymbolOnce(symbols, seen, symbol),
+  );
+  (Array.isArray(skippedSymbols) ? skippedSymbols : []).forEach((symbol) =>
     addSymbolOnce(symbols, seen, symbol),
   );
   (Array.isArray(states) ? states : []).forEach((state) =>
@@ -249,7 +302,7 @@ const resolveStackSummary = (matrixStatesByTimeframe = {}) => {
     totalCount: SIGNALS_TABLE_TIMEFRAMES.length,
     label: activeCount
       ? `${Math.max(buyCount, sellCount)}/${SIGNALS_TABLE_TIMEFRAMES.length}`
-      : "0/5",
+      : `0/${SIGNALS_TABLE_TIMEFRAMES.length}`,
   };
 };
 
@@ -299,12 +352,39 @@ const uniqueReasonCodes = (reasonCodes) =>
 const hasComputedMatrixState = (state) =>
   Boolean(
     state &&
-      (state.latestBarAt ||
-        state.lastEvaluatedAt ||
-        state.currentSignalAt ||
-        state.lastError ||
-        state.status),
+      isSignalStateCurrent(state) &&
+      (state.latestBarAt || state.currentSignalAt),
   );
+
+const preferPrimaryMatrixFallback = (currentState, primaryState) => {
+  const primaryComputed = hasComputedMatrixState(primaryState);
+  if (!primaryComputed) return currentState || null;
+  const currentComputed = hasComputedMatrixState(currentState);
+  if (!currentComputed) return primaryState;
+  return stateActivityMs(primaryState) > stateActivityMs(currentState)
+    ? primaryState
+    : currentState;
+};
+
+export const hydrateSignalMatrixProfileTimeframe = ({
+  matrixStatesByTimeframe,
+  primaryState,
+  profileTimeframe,
+}) => {
+  const timeframe = String(primaryState?.timeframe || profileTimeframe || "").trim();
+  if (!SIGNALS_TABLE_TIMEFRAMES.includes(timeframe)) {
+    return matrixStatesByTimeframe || {};
+  }
+  const currentState = matrixStatesByTimeframe?.[timeframe] || null;
+  const nextState = preferPrimaryMatrixFallback(currentState, primaryState);
+  if (nextState === currentState) {
+    return matrixStatesByTimeframe || {};
+  }
+  return {
+    ...(matrixStatesByTimeframe || {}),
+    [timeframe]: nextState,
+  };
+};
 
 const oppositeDirection = (direction) =>
   direction === "buy" ? "sell" : direction === "sell" ? "buy" : null;
@@ -355,8 +435,13 @@ export const resolveSignalMatrixVerdict = ({
   dashboardSummary = null,
   profileTimeframe = null,
 } = {}) => {
+  const hydratedMatrixStatesByTimeframe = hydrateSignalMatrixProfileTimeframe({
+    matrixStatesByTimeframe,
+    primaryState,
+    profileTimeframe,
+  });
   const entries = SIGNALS_TABLE_TIMEFRAMES.map((timeframe) => {
-    const state = matrixStatesByTimeframe?.[timeframe] || null;
+    const state = hydratedMatrixStatesByTimeframe?.[timeframe] || null;
     const direction = getCurrentSignalDirection(state) || null;
     const current = isSignalStateCurrent(state);
     const problem = isProblemSignalState(state);
@@ -603,15 +688,12 @@ const resolveMatrixStatus = (matrixStatesByTimeframe = {}) => {
   const hasFresh = states.some(isCurrentFreshSignalState);
   const hasComputed = states.some((state) =>
     Boolean(
-      state?.latestBarAt ||
-        state?.lastEvaluatedAt ||
-        state?.currentSignalAt ||
-        state?.lastError,
+      isSignalStateCurrent(state) && (state?.latestBarAt || state?.currentSignalAt),
     ),
   );
   const hasCurrentComputed = states.some((state) =>
     Boolean(
-      isSignalStateCurrent(state) && (state?.latestBarAt || state?.lastEvaluatedAt),
+      isSignalStateCurrent(state) && (state?.latestBarAt || state?.currentSignalAt),
     ),
   );
 
@@ -622,6 +704,7 @@ const resolveRowStatus = ({
   primaryState,
   matrixStatus,
   direction,
+  skipped,
 }) => {
   const status = normalizeSignalStatus(primaryState);
   const hasProblem = isProblemSignalState(primaryState);
@@ -634,6 +717,9 @@ const resolveRowStatus = ({
       return matrixStatus?.hasFresh
         ? SIGNALS_ROW_STATUS.activeFresh
         : SIGNALS_ROW_STATUS.activeStale;
+    }
+    if (skipped) {
+      return SIGNALS_ROW_STATUS.skipped;
     }
     return SIGNALS_ROW_STATUS.pending;
   }
@@ -681,6 +767,9 @@ const coverageReasonFor = ({
   if (!primaryState && matrixStatus?.hasComputed) {
     return "Computed from market bars; primary monitor scan pending";
   }
+  if (!primaryState && skipped) {
+    return "Primary monitor scan pending";
+  }
   if (primaryState && skipped) {
     return "Stored primary state present; interval matrix hydrates from market bars";
   }
@@ -707,6 +796,7 @@ export const buildSignalsRows = ({
   const watchlistMembership = buildWatchlistMembership(watchlists);
   const trackedSymbols = buildTrackedSymbols({
     universeSymbols,
+    skippedSymbols: stateResponse?.skippedSymbols,
     states,
     matrixStates,
     events,
@@ -715,9 +805,13 @@ export const buildSignalsRows = ({
   return sortSignalsRows(
     trackedSymbols.map((symbol, index) => {
       const primaryState = primaryStatesBySymbol.get(symbol) || null;
-      const matrixStatesByTimeframe = matrixStatesBySymbol.get(symbol) || {};
-      const matrixStatus = resolveMatrixStatus(matrixStatesByTimeframe);
       const profileTimeframe = stateResponse?.profile?.timeframe || primaryState?.timeframe || null;
+      const matrixStatesByTimeframe = hydrateSignalMatrixProfileTimeframe({
+        matrixStatesByTimeframe: matrixStatesBySymbol.get(symbol) || {},
+        primaryState,
+        profileTimeframe,
+      });
+      const matrixStatus = resolveMatrixStatus(matrixStatesByTimeframe);
       const stackSummary = resolveStackSummary(matrixStatesByTimeframe);
       const dashboardSummary = resolveDashboardSummary(
         resolveDashboardSnapshot({
@@ -743,7 +837,12 @@ export const buildSignalsRows = ({
         .filter(hasCurrentSignalDirection)
         .reduce((latest, state) => preferLatestState(latest, state), null);
       const skipped = skippedSymbols.has(symbol);
-      const rowStatus = resolveRowStatus({ primaryState, matrixStatus, direction });
+      const rowStatus = resolveRowStatus({
+        primaryState,
+        matrixStatus,
+        direction,
+        skipped,
+      });
       const activeTimeframes = SIGNALS_TABLE_TIMEFRAMES.filter((timeframe) => {
         const matrixState = matrixStatesByTimeframe[timeframe];
         return hasCurrentSignalDirection(matrixState);
@@ -841,19 +940,7 @@ export const sortSignalsRows = (
 ) => {
   const multiplier = direction === "desc" ? -1 : 1;
   const sorted = [...(Array.isArray(rows) ? rows : [])];
-  sorted.sort((left, right) => {
-    if (sortKey === "symbol") {
-      return multiplier * left.symbol.localeCompare(right.symbol);
-    }
-    if (sortKey === "bars") {
-      const leftBars = left.barsSinceSignal ?? Number.POSITIVE_INFINITY;
-      const rightBars = right.barsSinceSignal ?? Number.POSITIVE_INFINITY;
-      return multiplier * (leftBars - rightBars || left.symbol.localeCompare(right.symbol));
-    }
-    if (sortKey === "latest") {
-      return multiplier * ((right.activityMs || 0) - (left.activityMs || 0));
-    }
-
+  const fallbackCompare = (left, right) => {
     const statusDelta = (left.statusWeight ?? 99) - (right.statusWeight ?? 99);
     if (statusDelta) return statusDelta;
     const directionDelta =
@@ -867,6 +954,134 @@ export const sortSignalsRows = (
         (right.universeRank ?? Number.POSITIVE_INFINITY) ||
       left.symbol.localeCompare(right.symbol)
     );
+  };
+  sorted.sort((left, right) => {
+    if (sortKey === "symbol") {
+      return multiplier * left.symbol.localeCompare(right.symbol);
+    }
+    if (sortKey === "signal" || sortKey === "priority") {
+      return fallbackCompare(left, right);
+    }
+    if (sortKey === "stack") {
+      return (
+        compareNumberDesc(
+          left.stackSummary?.activeCount,
+          right.stackSummary?.activeCount,
+          multiplier,
+        ) ||
+        compareNumberDesc(
+          left.stackSummary?.freshCount,
+          right.stackSummary?.freshCount,
+          multiplier,
+        ) ||
+        fallbackCompare(left, right)
+      );
+    }
+    if (sortKey === "verdict") {
+      return (
+        compareNumberDesc(
+          left.matrixVerdict?.readinessScore,
+          right.matrixVerdict?.readinessScore,
+          multiplier,
+        ) ||
+        compareText(left.matrixVerdict?.regime, right.matrixVerdict?.regime, multiplier) ||
+        fallbackCompare(left, right)
+      );
+    }
+    if (String(sortKey || "").startsWith("tf-")) {
+      const timeframe = String(sortKey).slice(3);
+      const leftState = matrixSortState(left, timeframe);
+      const rightState = matrixSortState(right, timeframe);
+      const leftComputed = hasComputedMatrixState(leftState) ? 1 : 0;
+      const rightComputed = hasComputedMatrixState(rightState) ? 1 : 0;
+      const computedDelta = rightComputed - leftComputed;
+      return (
+        computedDelta ||
+        compareNumberDesc(
+          stateActivityMs(leftState),
+          stateActivityMs(rightState),
+          multiplier,
+        ) ||
+        compareNumberAsc(
+          leftState?.barsSinceSignal,
+          rightState?.barsSinceSignal,
+          multiplier,
+        ) ||
+        compareText(
+          getCurrentSignalDirection(leftState),
+          getCurrentSignalDirection(rightState),
+          multiplier,
+        ) ||
+        fallbackCompare(left, right)
+      );
+    }
+    if (sortKey === "trend") {
+      return (
+        compareText(
+          left.dashboardSummary?.trendDirection,
+          right.dashboardSummary?.trendDirection,
+          multiplier,
+        ) || fallbackCompare(left, right)
+      );
+    }
+    if (sortKey === "strength") {
+      return (
+        compareNumberDesc(
+          strengthSortValue(left.dashboardSummary?.strength),
+          strengthSortValue(right.dashboardSummary?.strength),
+          multiplier,
+        ) || fallbackCompare(left, right)
+      );
+    }
+    if (sortKey === "age") {
+      return (
+        compareNumberAsc(
+          left.dashboardSummary?.trendAgeBars,
+          right.dashboardSummary?.trendAgeBars,
+          multiplier,
+        ) || fallbackCompare(left, right)
+      );
+    }
+    if (sortKey === "vol") {
+      return (
+        compareNumberDesc(
+          left.dashboardSummary?.volatilityScore,
+          right.dashboardSummary?.volatilityScore,
+          multiplier,
+        ) || fallbackCompare(left, right)
+      );
+    }
+    if (sortKey === "mtf") {
+      return (
+        compareNumberDesc(mtfPassCount(left), mtfPassCount(right), multiplier) ||
+        fallbackCompare(left, right)
+      );
+    }
+    if (sortKey === "bars") {
+      return (
+        compareNumberAsc(left.barsSinceSignal, right.barsSinceSignal, multiplier) ||
+        fallbackCompare(left, right)
+      );
+    }
+    if (sortKey === "price") {
+      return (
+        compareNumberAsc(
+          left.currentSignalPrice,
+          right.currentSignalPrice,
+          multiplier,
+        ) || fallbackCompare(left, right)
+      );
+    }
+    if (sortKey === "latest") {
+      return multiplier * ((right.activityMs || 0) - (left.activityMs || 0));
+    }
+    if (sortKey === "coverage") {
+      return (
+        compareText(left.coverageReason, right.coverageReason, multiplier) ||
+        fallbackCompare(left, right)
+      );
+    }
+    return fallbackCompare(left, right);
   });
   return sorted;
 };

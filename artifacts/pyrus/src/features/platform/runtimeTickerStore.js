@@ -323,7 +323,13 @@ const areSparkPointsEqual = (left, right) => {
   for (let index = 0; index < leftPoints.length; index += 1) {
     const current = leftPoints[index];
     const next = rightPoints[index];
-    if (!current || !next || current.i !== next.i || current.v !== next.v) {
+    if (
+      !current ||
+      !next ||
+      current.i !== next.i ||
+      current.v !== next.v ||
+      resolveRuntimeBarTimeMs(current) !== resolveRuntimeBarTimeMs(next)
+    ) {
       return false;
     }
   }

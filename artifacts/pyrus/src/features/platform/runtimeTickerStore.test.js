@@ -74,6 +74,27 @@ test("runtime ticker store accepts newer quote patches", () => {
   assert.equal(result.tradeInfo.updatedAt, "2026-05-21T14:30:03.000Z");
 });
 
+test("runtime ticker store treats sparkline timestamps as data changes", () => {
+  const symbol = uniqueSymbol("SPARKTIME");
+  ensureTradeTickerInfo(symbol, symbol);
+
+  applyRuntimeTickerInfoPatch(symbol, symbol, {
+    spark: [{ i: 0, v: 100 }, { i: 1, v: 101 }],
+  });
+  const result = applyRuntimeTickerInfoPatch(symbol, symbol, {
+    spark: [
+      { i: 0, v: 100, timestamp: "2026-06-01T14:30:00.000Z" },
+      { i: 1, v: 101, timestamp: "2026-06-01T14:31:00.000Z" },
+    ],
+  });
+
+  assert.equal(result.changed, true);
+  assert.deepEqual(result.tradeInfo.spark, [
+    { i: 0, v: 100, timestamp: "2026-06-01T14:30:00.000Z" },
+    { i: 1, v: 101, timestamp: "2026-06-01T14:31:00.000Z" },
+  ]);
+});
+
 test("runtime ticker store prefers dataUpdatedAt over wrapper updatedAt", () => {
   const symbol = uniqueSymbol("DATA");
   ensureTradeTickerInfo(symbol, symbol);

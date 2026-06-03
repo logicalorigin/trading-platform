@@ -155,6 +155,24 @@ test("Market chart grid uses one-column phone density", () => {
   assert.match(source, /const renderedSlotEntries = phoneGrid/);
 });
 
+test("Market chart grid keeps desktop 1x1 default height viewport-fit", () => {
+  const source = readLocalSource("./MultiChartGrid.jsx");
+
+  assert.match(source, /const MARKET_CHART_SOLO_DEFAULT_HEIGHT = 560;/);
+  assert.match(source, /const MARKET_CHART_SOLO_LEGACY_DEFAULT_HEIGHT = 720;/);
+  assert.match(source, /"1x1": MARKET_CHART_SOLO_DEFAULT_HEIGHT,/);
+  assert.match(
+    source,
+    /migrateMarketGridTrackSessionDefaults\(readMarketGridTrackSession\(\)\)/,
+  );
+  assert.match(
+    source,
+    /Math\.abs\(soloRowHeights\[0\] - MARKET_CHART_SOLO_LEGACY_DEFAULT_HEIGHT\) >= 1/,
+  );
+  assert.match(source, /rowHeights: \[MARKET_CHART_SOLO_DEFAULT_HEIGHT\]/);
+  assert.doesNotMatch(source, /"1x1": 720,\s*\n\s*"2x2": 410/);
+});
+
 test("Market chart grid staggers candle hydration without hiding chart frames", () => {
   const gridSource = readLocalSource("./MultiChartGrid.jsx");
   const cellSource = readLocalSource("./MarketChartCell.jsx");

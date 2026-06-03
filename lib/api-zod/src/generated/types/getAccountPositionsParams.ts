@@ -9,5 +9,13 @@ import type { EnvironmentMode } from './environmentMode';
 
 export type GetAccountPositionsParams = {
 assetClass?: string;
+/**
+ * Optional source scope for shadow ledger positions, such as `automation`.
+ */
+source?: string;
+/**
+ * Set to `false` to skip blocking live option quote hydration for shadow positions.
+ */
+liveQuotes?: boolean;
 mode?: EnvironmentMode;
 };

@@ -287,6 +287,7 @@ export * from './getOptionChainParams';
 export * from './getOptionChartBarsParams';
 export * from './getOptionExpirationsParams';
 export * from './getQuoteSnapshotsParams';
+export * from './getQuoteSnapshotsTradingSession';
 export * from './getResearchEarningsCalendarParams';
 export * from './getResearchFinancialsParams';
 export * from './getResearchFundamentalsParams';

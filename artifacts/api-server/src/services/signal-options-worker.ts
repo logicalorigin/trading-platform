@@ -434,6 +434,7 @@ function shouldSkipDeploymentForResourcePressure(input: {
 async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
   const client = await pool.connect();
   let clientError: Error | null = null;
+  let transactionOpen = false;
   const detachClientErrorHandler = attachPostgresClientErrorHandler(client, {
     context: "signal-options-worker-advisory-lock",
     onError: (error) => {
@@ -453,29 +454,42 @@ async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
   let locked = false;
 
   try {
+    await client.query("begin");
+    transactionOpen = true;
     const result = await client.query<{ locked: boolean }>(
-      "select pg_try_advisory_lock($1) as locked",
+      "select pg_try_advisory_xact_lock($1) as locked",
       [ADVISORY_LOCK_KEY],
     );
     locked = result.rows[0]?.locked === true;
 
     if (!locked) {
+      await client.query("rollback");
+      transactionOpen = false;
       releaseClient();
       return null;
     }
 
     return async () => {
+      let releaseError: unknown;
       try {
-        if (!clientError) {
-          await client.query("select pg_advisory_unlock($1)", [
-            ADVISORY_LOCK_KEY,
-          ]);
+        if (!clientError && transactionOpen) {
+          await client.query("commit");
+          transactionOpen = false;
         }
+      } catch (error) {
+        releaseError = error;
       } finally {
-        releaseClient();
+        if (transactionOpen) {
+          await client.query("rollback").catch(() => {});
+          transactionOpen = false;
+        }
+        releaseClient(releaseError);
       }
     };
   } catch (error) {
+    if (transactionOpen) {
+      await client.query("rollback").catch(() => {});
+    }
     releaseClient(error);
     throw error;
   }

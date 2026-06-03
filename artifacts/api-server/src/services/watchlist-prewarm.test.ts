@@ -334,6 +334,34 @@ test("watchlist prewarm reruns when scanner lease churn hits an in-flight pass",
   assert.match(prewarmBody, /after-pending/);
 });
 
+test("watchlist GET reads use a cached snapshot and throttled prewarm", () => {
+  const platformSource = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
+  const listBody = platformSource.match(
+    /export async function listWatchlists\(\) \{[\s\S]*?\nexport async function createWatchlist/,
+  )?.[0];
+
+  assert.match(platformSource, /const WATCHLIST_LIST_CACHE_TTL_MS = 5_000;/);
+  assert.match(platformSource, /const WATCHLIST_LIST_STALE_TTL_MS = 60_000;/);
+  assert.match(
+    platformSource,
+    /const WATCHLIST_LIST_PREWARM_THROTTLE_MS = 15_000;/,
+  );
+  assert.match(
+    platformSource,
+    /function scheduleIbkrWatchlistPrewarmFromListRead\(/,
+  );
+  assert.match(
+    platformSource,
+    /signature === lastListWatchlistPrewarmSignature[\s\S]*WATCHLIST_LIST_PREWARM_THROTTLE_MS/,
+  );
+  assert.ok(listBody);
+  assert.match(listBody, /watchlistListCache\.freshUntil > nowMs/);
+  assert.match(listBody, /watchlistListInFlight/);
+  assert.match(listBody, /watchlistListCache\.staleUntil > nowMs/);
+  assert.match(listBody, /cacheWatchlistSnapshot\(result\)/);
+  assert.match(listBody, /scheduleIbkrWatchlistPrewarmFromListRead/);
+});
+
 test("transient gateway readiness misses do not clear watchlist prewarm leases", () => {
   const platformSource = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
   const prewarmBody = platformSource.match(

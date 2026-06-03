@@ -12,6 +12,7 @@ import {
   subscribeMassiveStockMinuteAggregates,
   type MassiveDelayedStockAggregate,
 } from "./massive-stock-aggregate-stream";
+import { subscribeMassiveStockQuoteSnapshots } from "./massive-stock-quote-stream";
 
 export type StockMinuteAggregateSource =
   | "ibkr-websocket-derived"
@@ -50,6 +51,9 @@ export type StockMinuteAggregateSubscription = {
 type BridgeQuoteSnapshotPayload = Parameters<
   Parameters<typeof subscribeBridgeQuoteSnapshots>[1]
 >[0];
+type MassiveQuoteSnapshotPayload = Parameters<
+  Parameters<typeof subscribeMassiveStockQuoteSnapshots>[1]
+>[0];
 
 type MinuteAccumulator = {
   startMs: number;
@@ -61,6 +65,7 @@ type MinuteAccumulator = {
   volume: number;
   accumulatedVolume: number | null;
   lastObservedDayVolume: number | null;
+  source: StockMinuteAggregateSource;
   latency?: QuoteSnapshot["latency"];
 };
 
@@ -84,6 +89,7 @@ const AGGREGATE_HISTORY_RETENTION_MS = 4 * 60 * 60_000;
 let nextSubscriberId = 1;
 let quoteUnsubscribe: (() => void) | null = null;
 let massiveUnsubscribe: (() => void) | null = null;
+let massiveQuoteUnsubscribe: (() => void) | null = null;
 let quoteSubscriptionSignature = "";
 let activeStreamSource: StockMinuteAggregateSource | "none" = "none";
 let refreshTimer: NodeJS.Timeout | null = null;
@@ -257,7 +263,7 @@ function toAggregateMessage(symbol: string, accumulator: MinuteAccumulator): Sto
     startMs: accumulator.startMs,
     endMs: accumulator.endMs,
     delayed: false,
-    source: "ibkr-websocket-derived",
+    source: accumulator.source,
     latency: accumulator.latency,
   };
 }
@@ -283,6 +289,7 @@ function carryForwardAccumulator(
     volume: 0,
     accumulatedVolume: accumulator.accumulatedVolume,
     lastObservedDayVolume: accumulator.lastObservedDayVolume,
+    source: accumulator.source,
   };
   accumulators.set(symbol, nextAccumulator);
   return nextAccumulator;
@@ -297,7 +304,20 @@ export function getCurrentStockMinuteAggregates(
   const provider = getPreferredStockAggregateStreamSource();
 
   if (provider === "massive-delayed-websocket" || provider === "massive-websocket") {
-    return getCurrentMassiveStockMinuteAggregates(normalizedSymbols);
+    const bySymbolAndMinute = new Map<string, StockMinuteAggregateMessage>();
+    getCurrentMassiveStockMinuteAggregates(normalizedSymbols).forEach((message) => {
+      bySymbolAndMinute.set(`${message.symbol}:${message.startMs}`, message);
+    });
+    normalizedSymbols.forEach((symbol) => {
+      const accumulator = accumulators.get(symbol);
+      if (accumulator?.source === "massive-websocket") {
+        const message = toAggregateMessage(symbol, accumulator);
+        bySymbolAndMinute.set(`${message.symbol}:${message.startMs}`, message);
+      }
+    });
+    return Array.from(bySymbolAndMinute.values()).sort(
+      (left, right) => left.startMs - right.startMs,
+    );
   }
 
   return normalizedSymbols.flatMap((symbol) => {
@@ -338,6 +358,7 @@ function updateAccumulator(input: {
   price: number;
   dayVolume: number | null;
   observedAt: number;
+  source?: StockMinuteAggregateSource;
   latency?: QuoteSnapshot["latency"];
 }) {
   const { startMs, endMs } = getMinuteWindow(input.observedAt);
@@ -361,6 +382,7 @@ function updateAccumulator(input: {
       volume: Math.max(0, nextVolumeIncrement),
       accumulatedVolume: input.dayVolume,
       lastObservedDayVolume: input.dayVolume,
+      source: input.source ?? "ibkr-websocket-derived",
       latency: input.latency,
     };
     accumulators.set(input.symbol, nextAccumulator);
@@ -379,6 +401,7 @@ function updateAccumulator(input: {
     volume: existing.volume + Math.max(0, nextVolumeIncrement),
     accumulatedVolume: input.dayVolume,
     lastObservedDayVolume: input.dayVolume,
+    source: input.source ?? existing.source,
     latency: input.latency,
   };
   accumulators.set(input.symbol, nextAccumulator);
@@ -406,6 +429,31 @@ function handleQuoteSnapshot(
       price,
       dayVolume: quote.volume ?? null,
       observedAt,
+      source: "ibkr-websocket-derived",
+      latency: quote.latency,
+    });
+  });
+}
+
+function handleMassiveQuoteSnapshot(
+  payload: MassiveQuoteSnapshotPayload,
+  observedAt = Date.now(),
+) {
+  payload.quotes.forEach((quote) => {
+    const symbol = normalizeSymbol(quote.symbol);
+    recordQuoteEvent(symbol, observedAt);
+    const price =
+      quote.price > 0 ? quote.price : quote.bid > 0 ? quote.bid : quote.ask;
+    if (!price || !Number.isFinite(price)) {
+      return;
+    }
+
+    updateAccumulator({
+      symbol,
+      price,
+      dayVolume: quote.volume ?? null,
+      observedAt,
+      source: "massive-websocket",
       latency: quote.latency,
     });
   });
@@ -433,12 +481,19 @@ function clearHeartbeatTimer() {
 }
 
 function emitAggregateHeartbeats(now = Date.now()): void {
-  if (getPreferredStockAggregateStreamSource() !== "ibkr-websocket-derived") {
+  const provider = getPreferredStockAggregateStreamSource();
+  if (provider !== "ibkr-websocket-derived" && provider !== "massive-websocket") {
     return;
   }
   getDesiredSymbols().forEach((symbol) => {
     const accumulator = accumulators.get(symbol);
     const stats = aggregateStatsBySymbol.get(symbol);
+    if (
+      provider === "massive-websocket" &&
+      accumulator?.source !== "massive-websocket"
+    ) {
+      return;
+    }
     if (!accumulator || !stats?.lastAggregateAt) {
       return;
     }
@@ -476,6 +531,8 @@ function refreshQuoteSubscription() {
   quoteUnsubscribe = null;
   massiveUnsubscribe?.();
   massiveUnsubscribe = null;
+  massiveQuoteUnsubscribe?.();
+  massiveQuoteUnsubscribe = null;
   quoteSubscriptionSignature = nextSignature;
   activeStreamSource = !symbols.length ? "none" : provider;
 
@@ -490,6 +547,13 @@ function refreshQuoteSubscription() {
       symbols,
       handleMassiveAggregate,
     );
+    if (provider === "massive-websocket") {
+      massiveQuoteUnsubscribe = subscribeMassiveStockQuoteSnapshots(
+        symbols,
+        handleMassiveQuoteSnapshot,
+      );
+      ensureHeartbeatTimer();
+    }
     return;
   }
 
@@ -595,6 +659,39 @@ export function getStockAggregateStreamDiagnostics() {
   };
 }
 
+export function hasRecentStockAggregateSourceActivity(input: {
+  symbols: string[];
+  now?: Date;
+  maxAgeMs: number;
+}): boolean {
+  const maxAgeMs = Number(input.maxAgeMs);
+  if (!Number.isFinite(maxAgeMs) || maxAgeMs < 0) {
+    return false;
+  }
+  const nowMs = input.now?.getTime() ?? Date.now();
+  if (!Number.isFinite(nowMs)) {
+    return false;
+  }
+  const provider = getPreferredStockAggregateStreamSource();
+  if (provider === "none") {
+    return false;
+  }
+  const sourceTimeKey =
+    provider === "massive-delayed-websocket"
+      ? "lastAggregateAt"
+      : "lastQuoteAt";
+  return Array.from(
+    new Set(input.symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
+  ).some((symbol) => {
+    const stats = aggregateStatsBySymbol.get(symbol);
+    const sourceTime = stats?.[sourceTimeKey];
+    if (!sourceTime) {
+      return false;
+    }
+    return nowMs - sourceTime.getTime() <= maxAgeMs;
+  });
+}
+
 export function subscribeStockMinuteAggregates(
   symbols: string[],
   onAggregate: (message: StockMinuteAggregateMessage) => void,
@@ -649,6 +746,7 @@ export function subscribeMutableStockMinuteAggregates(
 
 export const __stockAggregateStreamTestInternals = {
   handleQuoteSnapshot,
+  handleMassiveQuoteSnapshot,
   emitAggregateHeartbeats,
   flushAggregateFanout,
   reset() {
@@ -669,6 +767,7 @@ export const __stockAggregateStreamTestInternals = {
     nextSubscriberId = 1;
     quoteUnsubscribe = null;
     massiveUnsubscribe = null;
+    massiveQuoteUnsubscribe = null;
     quoteSubscriptionSignature = "";
     activeStreamSource = "none";
     aggregateEventCount = 0;

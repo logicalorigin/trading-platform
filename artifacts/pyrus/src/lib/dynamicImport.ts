@@ -115,11 +115,11 @@ export function preloadDynamicImport<T>(
   loader: () => Promise<T>,
   options: DynamicImportOptions = {},
 ) {
-  void retryDynamicImport(loader, {
+  return retryDynamicImport(loader, {
     ...options,
     retries: options.retries ?? 1,
     reloadOnFailure: false,
-  }).catch(() => {});
+  }).catch(() => undefined);
 }
 
 export function lazyWithRetry<T extends ComponentType<any>>(

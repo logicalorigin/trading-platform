@@ -44,6 +44,7 @@ import {
   refreshStorageHealthSnapshot,
 } from "./storage-health";
 import { getRuntimeFlightRecorderDiagnostics } from "./runtime-flight-recorder";
+import { classifyApiRoute } from "./route-admission";
 
 const SIGNAL_OPTIONS_EVENT_PREFIX = "signal_options_";
 const SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT =
@@ -126,6 +127,14 @@ type DiagnosticEventInput = {
 
 export type DiagnosticEventStatus = "open" | "resolved";
 
+type DiagnosticThresholdOverrideRow = {
+  metricKey: string;
+  warning: number | null;
+  critical: number | null;
+  enabled: boolean;
+  audible: boolean;
+};
+
 type DiagnosticsStreamMessage =
   | { type: "snapshot"; payload: DiagnosticsLatestPayload }
   | { type: "event"; payload: DiagnosticEventPayload }
@@ -153,6 +162,7 @@ export type DiagnosticsLatestPayload = {
     level: "normal" | "watch" | "high" | "critical";
     trend: "steady" | "rising" | "recovering";
     browserMemoryMb: number | null;
+    browserMemoryLimitMb: number | null;
     apiRssMb: number | null;
     apiRssThresholds: {
       watch: number;
@@ -198,12 +208,14 @@ const DEFAULT_COLLECTION_INTERVAL_MS = 15_000;
 const REQUEST_WINDOW_MS = 5 * 60 * 1000;
 const API_LATENCY_ALERT_MIN_SAMPLES = 20;
 const SLOW_API_ROUTE_MS = 1_000;
+const API_ROUTE_PRESSURE_MIN_SLOW_COUNT = 3;
 const MAX_MEMORY_SNAPSHOTS = 2_000;
 const MAX_MEMORY_EVENTS = 500;
 const DIAGNOSTIC_HISTORY_DEFAULT_LIMIT = 500;
 const DIAGNOSTIC_HISTORY_MAX_LIMIT = 2_500;
 const DIAGNOSTIC_EVENTS_DEFAULT_LIMIT = 200;
 const DIAGNOSTIC_EVENTS_MAX_LIMIT = 1_000;
+const DIAGNOSTIC_THRESHOLD_OVERRIDES_CACHE_TTL_MS = 30_000;
 const DIAGNOSTIC_LIMIT_CAPS: Record<
   ApiResourcePressureLevel,
   {
@@ -241,6 +253,18 @@ const DIAGNOSTIC_LIMIT_CAPS: Record<
 const MAX_RECENT_EVENTS = 50;
 const CLIENT_METRIC_RETENTION_MS = 10 * 60 * 1000;
 const CLIENT_METRIC_MAX_SAMPLES = 500;
+const BROWSER_MEMORY_LIMIT_PRESSURE = Object.freeze({
+  watch: 60,
+  high: 75,
+  critical: 90,
+});
+const BROWSER_MEMORY_MB_FALLBACK_PRESSURE = Object.freeze({
+  watch: 1_000,
+  high: 1_500,
+  critical: 2_500,
+});
+const API_LATENCY_WARNING_MS = 1_000;
+const API_LATENCY_CRITICAL_MS = 10_000;
 const ACTIONABLE_ISOLATION_REPORT_TYPES = new Set(["coep", "coop"]);
 const ACTIONABLE_ISOLATION_BODY_TYPES = new Set(["coep", "coop", "corp"]);
 const DIAGNOSTIC_RAW_MAX_DEPTH = 4;
@@ -274,8 +298,8 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     label: "API p95 latency",
     subsystem: "api",
     unit: "ms",
-    warning: 1_000,
-    critical: 3_000,
+    warning: API_LATENCY_WARNING_MS,
+    critical: API_LATENCY_CRITICAL_MS,
     enabled: true,
     audible: true,
     description: "Recent API request p95 latency once enough samples exist.",
@@ -315,14 +339,15 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
   },
   {
     metricKey: "api.heap_used_mb",
-    label: "API heap used",
+    label: "API heap used (display only)",
     subsystem: "api",
     unit: "mb",
     warning: 750,
     critical: 1_000,
-    enabled: true,
+    enabled: false,
     audible: false,
-    description: "Node heap used by the API process.",
+    description:
+      "Node heap used by the API process. Severity uses resource_pressure.heap_used_percent instead.",
   },
   {
     metricKey: "resource_pressure.heap_used_percent",
@@ -340,11 +365,23 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     label: "Browser memory estimate",
     subsystem: "resource-pressure",
     unit: "mb",
-    warning: 1_500,
-    critical: 2_500,
+    warning: BROWSER_MEMORY_MB_FALLBACK_PRESSURE.high,
+    critical: BROWSER_MEMORY_MB_FALLBACK_PRESSURE.critical,
+    enabled: false,
+    audible: false,
+    description:
+      "Latest browser memory estimate from client diagnostics. Limit-aware browser pressure uses browser_memory_limit_percent when available.",
+  },
+  {
+    metricKey: "resource_pressure.browser_memory_limit_percent",
+    label: "Browser heap pressure",
+    subsystem: "resource-pressure",
+    unit: "percent",
+    warning: BROWSER_MEMORY_LIMIT_PRESSURE.watch,
+    critical: BROWSER_MEMORY_LIMIT_PRESSURE.critical,
     enabled: true,
     audible: false,
-    description: "Latest browser memory estimate from client diagnostics.",
+    description: "Browser heap usage as a percentage of the browser-reported heap limit.",
   },
   {
     metricKey: "isolation.report_count_5m",
@@ -562,6 +599,34 @@ function pressureLevelFromRatio(value: number | null): ResourcePressureLevel {
   if (value >= 0.9) return "critical";
   if (value >= 0.8) return "high";
   if (value >= 0.7) return "watch";
+  return "normal";
+}
+
+function browserMemoryPressureLevel(input: {
+  memoryMb: number | null;
+  limitMb: number | null;
+}): ResourcePressureLevel {
+  if (
+    input.memoryMb !== null &&
+    input.limitMb !== null &&
+    input.limitMb > 0
+  ) {
+    const percent = (input.memoryMb / input.limitMb) * 100;
+    if (percent >= BROWSER_MEMORY_LIMIT_PRESSURE.critical) return "critical";
+    if (percent >= BROWSER_MEMORY_LIMIT_PRESSURE.high) return "high";
+    if (percent >= BROWSER_MEMORY_LIMIT_PRESSURE.watch) return "watch";
+    return "normal";
+  }
+  if (input.memoryMb === null) return "normal";
+  if (input.memoryMb >= BROWSER_MEMORY_MB_FALLBACK_PRESSURE.critical) {
+    return "critical";
+  }
+  if (input.memoryMb >= BROWSER_MEMORY_MB_FALLBACK_PRESSURE.high) {
+    return "high";
+  }
+  if (input.memoryMb >= BROWSER_MEMORY_MB_FALLBACK_PRESSURE.watch) {
+    return "watch";
+  }
   return "normal";
 }
 
@@ -810,6 +875,20 @@ function broadcast(message: DiagnosticsStreamMessage): void {
   });
 }
 
+function normalizeApiRequestMetricPath(path: string): string {
+  const withoutQuery = path.split("?")[0] || "/";
+  return withoutQuery.startsWith("/api/")
+    ? withoutQuery.slice(4)
+    : withoutQuery === "/api"
+      ? "/"
+      : withoutQuery;
+}
+
+function isLongLivedApiRequestMetric(sample: ApiRequestSample): boolean {
+  const path = normalizeApiRequestMetricPath(sample.path);
+  return path.startsWith("/streams/") || path.endsWith("/stream");
+}
+
 function buildApiRouteStats(samples: ApiRequestSample[]): JsonRecord[] {
   const byPath = new Map<
     string,
@@ -844,6 +923,10 @@ function buildApiRouteStats(samples: ApiRequestSample[]): JsonRecord[] {
         value.durations.length > 0 ? Math.max(...value.durations) : null;
       return {
         path,
+        routeClass: classifyApiRoute({
+          method: "GET",
+          path,
+        }),
         requestCount5m: value.count,
         errorCount5m: value.errors,
         p95LatencyMs,
@@ -917,7 +1000,10 @@ function buildApiErrorRouteStats(samples: ApiRequestSample[]): JsonRecord[] {
 
 function buildApiMetrics(runtime: JsonRecord): JsonRecord {
   const samples = getRecentRequestSamples();
-  const durations = samples.map((sample) => sample.durationMs);
+  const latencySamples = samples.filter(
+    (sample) => !isLongLivedApiRequestMetric(sample),
+  );
+  const durations = latencySamples.map((sample) => sample.durationMs);
   const errors = samples.filter((sample) => sample.statusCode >= 500).length;
   const warnings = samples.filter(
     (sample) => sample.statusCode >= 400 && sample.statusCode < 500,
@@ -935,15 +1021,24 @@ function buildApiMetrics(runtime: JsonRecord): JsonRecord {
   const p50LatencyMs = percentile(durations, 50);
   const p95LatencyMs = percentile(durations, 95);
   const p99LatencyMs = percentile(durations, 99);
-  const latencyAlertReady = samples.length >= API_LATENCY_ALERT_MIN_SAMPLES;
-  const slowRoutes = buildApiRouteStats(samples);
+  const latencyAlertReady =
+    latencySamples.length >= API_LATENCY_ALERT_MIN_SAMPLES;
+  const slowRoutes = buildApiRouteStats(latencySamples);
   const errorRoutes = buildApiErrorRouteStats(samples);
   const dominantSlowRoute = slowRoutes.find(
     (route) => (numeric(route["p95LatencyMs"]) ?? 0) >= SLOW_API_ROUTE_MS,
   );
+  const dominantSlowRoutePressure = slowRoutes.find(
+    (route) =>
+      route["routeClass"] !== "decorative" &&
+      (numeric(route["p95LatencyMs"]) ?? 0) >= SLOW_API_ROUTE_MS &&
+      (numeric(route["slowCount5m"]) ?? 0) >= API_ROUTE_PRESSURE_MIN_SLOW_COUNT,
+  );
   const dominantErrorRoute = errorRoutes[0] ?? null;
   return {
     requestCount5m: samples.length,
+    latencySampleCount5m: latencySamples.length,
+    longLivedRequestCount5m: samples.length - latencySamples.length,
     errorCount5m: errors,
     warningCount5m: warnings,
     p50LatencyMs,
@@ -952,13 +1047,18 @@ function buildApiMetrics(runtime: JsonRecord): JsonRecord {
     rawP95LatencyMs: p95LatencyMs,
     latencyAlertMinSamples: API_LATENCY_ALERT_MIN_SAMPLES,
     p99LatencyMs,
-    slowRouteCount5m: samples.filter(
+    slowRouteCount5m: latencySamples.filter(
       (sample) => sample.durationMs >= SLOW_API_ROUTE_MS,
     ).length,
     slowRoutes,
     errorRoutes,
     dominantSlowRoute: dominantSlowRoute?.["path"] ?? null,
     dominantSlowRouteP95Ms: dominantSlowRoute?.["p95LatencyMs"] ?? null,
+    dominantSlowRoutePressureP95Ms:
+      dominantSlowRoutePressure?.["p95LatencyMs"] ?? null,
+    dominantSlowRoutePressureSlowCount5m:
+      dominantSlowRoutePressure?.["slowCount5m"] ?? null,
+    routePressureMinSlowCount5m: API_ROUTE_PRESSURE_MIN_SLOW_COUNT,
     dominantErrorRoute: dominantErrorRoute?.["path"] ?? null,
     dominantErrorRouteCount: dominantErrorRoute?.["errorCount5m"] ?? null,
     uptimeMs: numeric(apiRuntime["uptimeMs"]),
@@ -978,12 +1078,16 @@ function buildApiMetrics(runtime: JsonRecord): JsonRecord {
 function classifyApiSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   const p95 = numeric(metrics["p95LatencyMs"]) ?? 0;
   const errors = numeric(metrics["errorCount5m"]) ?? 0;
-  const requestCount = numeric(metrics["requestCount5m"]) ?? 0;
-  const latencyAlertReady = requestCount >= API_LATENCY_ALERT_MIN_SAMPLES;
-  if ((latencyAlertReady && p95 >= 3_000) || errors >= 3) {
+  const latencySampleCount =
+    numeric(metrics["latencySampleCount5m"]) ??
+    numeric(metrics["requestCount5m"]) ??
+    0;
+  const latencyAlertReady =
+    latencySampleCount >= API_LATENCY_ALERT_MIN_SAMPLES;
+  if ((latencyAlertReady && p95 >= API_LATENCY_CRITICAL_MS) || errors >= 3) {
     return "critical";
   }
-  if ((latencyAlertReady && p95 >= 1_000) || errors > 0) {
+  if ((latencyAlertReady && p95 >= API_LATENCY_WARNING_MS) || errors > 0) {
     return "warning";
   }
   return "info";
@@ -1959,6 +2063,17 @@ async function buildAutomationMetrics(): Promise<{
   ).length;
   const activeMaxScanAgeMs =
     activeScanAges.length > 0 ? Math.max(...activeScanAges) : null;
+  const timedOutDeploymentCount = deployments.filter((deployment) => {
+    const record = asJsonRecord(deployment);
+    return (
+      record["timedOut"] === true ||
+      record["lastScanOutcome"] === "timed_out" ||
+      record["lastScanOutcome"] === "timed_out_unsettled"
+    );
+  }).length;
+  const unsettledAfterTimeoutCount = deployments.filter(
+    (deployment) => asJsonRecord(deployment)["unsettledAfterTimeout"] === true,
+  ).length;
   const pressurePausedDeployments = deployments.filter((deployment) => {
     const record = asJsonRecord(deployment);
     return record["pressurePaused"] === true;
@@ -2125,6 +2240,8 @@ async function buildAutomationMetrics(): Promise<{
       inactiveStaleScanCount,
       activeLongScanCount,
       activeMaxScanAgeMs,
+      timedOutDeploymentCount,
+      unsettledAfterTimeoutCount,
       pressurePausedDeploymentCount: pressurePausedDeployments.length,
       pressurePausedMaxAgeMs,
       skippedScanCount,
@@ -2198,6 +2315,10 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
     numeric(metrics["legacyEquityForwardEnabledCount"]) ?? 0;
   const latestScanAgeMs = numeric(metrics["latestScanAgeMs"]);
   const activeMaxScanAgeMs = numeric(metrics["activeMaxScanAgeMs"]);
+  const timedOutDeploymentCount =
+    numeric(metrics["timedOutDeploymentCount"]) ?? 0;
+  const unsettledAfterTimeoutCount =
+    numeric(metrics["unsettledAfterTimeoutCount"]) ?? 0;
   const gatewayBlockedCount = numeric(metrics["gatewayBlockedCount"]) ?? 0;
   const failureCount = numeric(metrics["failureCount"]) ?? 0;
   const staleScanCount = numeric(metrics["staleScanCount"]) ?? 0;
@@ -2223,13 +2344,13 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   if (
     gatewayBlockedCount >= 3 ||
     failureCount >= 3 ||
+    timedOutDeploymentCount > 0 ||
+    unsettledAfterTimeoutCount > 0 ||
     (pressurePausedDeploymentCount === 0 &&
+      activeLongScanCount === 0 &&
       enabledDeployments > 0 &&
       latestScanAgeMs !== null &&
-      latestScanAgeMs >= SIGNAL_OPTIONS_SCAN_STALE_CRITICAL_MS) ||
-    (enabledDeployments > 0 &&
-      activeMaxScanAgeMs !== null &&
-      activeMaxScanAgeMs >= SIGNAL_OPTIONS_SCAN_STALE_CRITICAL_MS)
+      latestScanAgeMs >= SIGNAL_OPTIONS_SCAN_STALE_CRITICAL_MS)
   ) {
     return "critical";
   }
@@ -2455,12 +2576,20 @@ function buildResourcePressureMetrics(
       : numeric(browserMemory["usedJsHeapSize"]) !== null
         ? mb(numeric(browserMemory["usedJsHeapSize"])!)
         : null;
-  const browserLevel =
-    browserMemoryMb !== null && browserMemoryMb >= 2_500
-      ? "critical"
-      : browserMemoryMb !== null && browserMemoryMb >= 1_500
-        ? "watch"
-        : "normal";
+  const browserMemoryLimitMb =
+    numeric(browserMemory["jsHeapSizeLimit"]) !== null
+      ? mb(numeric(browserMemory["jsHeapSizeLimit"])!)
+      : null;
+  const browserMemoryLimitPercent =
+    browserMemoryMb !== null &&
+    browserMemoryLimitMb !== null &&
+    browserMemoryLimitMb > 0
+      ? Math.round((browserMemoryMb / browserMemoryLimitMb) * 1000) / 10
+      : null;
+  const browserLevel = browserMemoryPressureLevel({
+    memoryMb: browserMemoryMb,
+    limitMb: browserMemoryLimitMb,
+  });
   const clientLevel = toResourcePressureLevel(clientPressure["level"]);
   const cacheLevels = Object.values(resourceCaches).map((entry) => {
     const record = asJsonRecord(entry);
@@ -2483,7 +2612,7 @@ function buildResourcePressureMetrics(
     rssMb: numeric(api["rssMb"]),
     apiHeapUsedPercent: heapUsedPercent,
     apiP95LatencyMs: numeric(api["rawP95LatencyMs"]),
-    dominantSlowRouteP95Ms: numeric(api["dominantSlowRouteP95Ms"]),
+    dominantSlowRouteP95Ms: numeric(api["dominantSlowRoutePressureP95Ms"]),
     clientLevel: clientLevel
       ? normalizeApiResourcePressureLevel(clientLevel)
       : null,
@@ -2494,8 +2623,24 @@ function buildResourcePressureMetrics(
   });
   const apiPressureLevel = resourcePressure.level;
   const level = maxPressureLevel([apiPressureLevel, baseLevel]);
+  const browserMemoryDriver =
+    browserLevel !== "normal"
+      ? [
+          {
+            kind: "browser-memory",
+            label: "Browser memory",
+            level: browserLevel,
+            detail:
+              browserMemoryLimitMb !== null
+                ? `${browserMemoryMb} MB / ${browserMemoryLimitMb} MB limit`
+                : `${browserMemoryMb} MB`,
+            score: browserMemoryLimitPercent ?? browserMemoryMb,
+          },
+        ]
+      : [];
   const dominantDrivers = [
     ...sanitizeDominantDrivers(clientPressure["dominantDrivers"]),
+    ...browserMemoryDriver,
     ...resourcePressure.drivers.map((entry) => ({
       kind: entry.kind,
       label: entry.label,
@@ -2520,6 +2665,10 @@ function buildResourcePressureMetrics(
     eventLoopP95Ms: api["eventLoopP95Ms"],
     browserMemoryMb,
     browser_memory_mb: browserMemoryMb,
+    browserMemoryLimitMb,
+    browser_memory_limit_mb: browserMemoryLimitMb,
+    browserMemoryLimitPercent,
+    browser_memory_limit_percent: browserMemoryLimitPercent,
     browserMemoryConfidence: browserMemory["confidence"] ?? null,
     browserMemorySource: browserMemory["source"] ?? null,
     sourceQuality:
@@ -3178,14 +3327,33 @@ function aggregateHistory(
     });
 }
 
-async function loadThresholdOverrides(): Promise<
+let diagnosticThresholdOverrideRowsLoader: () => Promise<
+  DiagnosticThresholdOverrideRow[]
+> = async () =>
+  await db
+    .select({
+      metricKey: diagnosticThresholdOverridesTable.metricKey,
+      warning: diagnosticThresholdOverridesTable.warning,
+      critical: diagnosticThresholdOverridesTable.critical,
+      enabled: diagnosticThresholdOverridesTable.enabled,
+      audible: diagnosticThresholdOverridesTable.audible,
+    })
+    .from(diagnosticThresholdOverridesTable);
+let diagnosticThresholdOverridesCache: {
+  expiresAt: number;
+  value: Map<string, Partial<DiagnosticThreshold>>;
+} | null = null;
+let diagnosticThresholdOverridesInFlight: Promise<
   Map<string, Partial<DiagnosticThreshold>>
-> {
-  const rows = await safeDb(
-    "load diagnostic threshold overrides",
-    () => db.select().from(diagnosticThresholdOverridesTable),
-    [],
-  );
+> | null = null;
+
+function invalidateDiagnosticThresholdOverridesCache(): void {
+  diagnosticThresholdOverridesCache = null;
+}
+
+function mapThresholdOverrideRows(
+  rows: DiagnosticThresholdOverrideRow[],
+): Map<string, Partial<DiagnosticThreshold>> {
   return new Map(
     rows.map((row) => [
       row.metricKey,
@@ -3197,6 +3365,52 @@ async function loadThresholdOverrides(): Promise<
       },
     ]),
   );
+}
+
+async function readThresholdOverridesFromStore(): Promise<
+  Map<string, Partial<DiagnosticThreshold>>
+> {
+  const rows = await safeDb(
+    "load diagnostic threshold overrides",
+    diagnosticThresholdOverrideRowsLoader,
+    [],
+  );
+  return mapThresholdOverrideRows(rows);
+}
+
+async function loadThresholdOverrides({
+  forceRefresh = false,
+}: {
+  forceRefresh?: boolean;
+} = {}): Promise<Map<string, Partial<DiagnosticThreshold>>> {
+  const now = Date.now();
+  if (
+    !forceRefresh &&
+    diagnosticThresholdOverridesCache &&
+    diagnosticThresholdOverridesCache.expiresAt > now
+  ) {
+    return diagnosticThresholdOverridesCache.value;
+  }
+
+  if (!forceRefresh && diagnosticThresholdOverridesInFlight) {
+    return diagnosticThresholdOverridesInFlight;
+  }
+
+  const request = readThresholdOverridesFromStore()
+    .then((value) => {
+      diagnosticThresholdOverridesCache = {
+        value,
+        expiresAt: Date.now() + DIAGNOSTIC_THRESHOLD_OVERRIDES_CACHE_TTL_MS,
+      };
+      return value;
+    })
+    .finally(() => {
+      if (diagnosticThresholdOverridesInFlight === request) {
+        diagnosticThresholdOverridesInFlight = null;
+      }
+    });
+  diagnosticThresholdOverridesInFlight = request;
+  return request;
 }
 
 async function evaluateThresholds(
@@ -3301,6 +3515,7 @@ function buildFooterMemoryPressureSummary(
     trend: (textValue(resourceMetrics["clientPressureTrend"]) ??
       "steady") as "steady" | "rising" | "recovering",
     browserMemoryMb: numeric(resourceMetrics["browserMemoryMb"]),
+    browserMemoryLimitMb: numeric(resourceMetrics["browserMemoryLimitMb"]),
     apiRssMb: numeric(resourceMetrics["rssMb"]),
     apiRssThresholds: {
       watch: numeric(resourceRssThresholds["watch"]) ?? fallbackRssThresholds.watch,
@@ -3950,6 +4165,7 @@ export async function collectDiagnosticSnapshot(
   trimMemorySnapshots();
   await Promise.all(snapshots.map((snapshot) => persistSnapshot(snapshot)));
   const suppressedThresholdMetricKeys = new Set<string>();
+  suppressedThresholdMetricKeys.add("api.heap_used_mb");
   if (staleTunnelRootCauseIncidentKey) {
     suppressedThresholdMetricKeys.add("automation.latest_scan_age_ms");
     suppressedThresholdMetricKeys.add("automation.gateway_blocked_count");
@@ -3957,6 +4173,9 @@ export async function collectDiagnosticSnapshot(
   }
   if ((numeric(automation.metrics["pressurePausedDeploymentCount"]) ?? 0) > 0) {
     suppressedThresholdMetricKeys.add("automation.latest_scan_age_ms");
+  }
+  if (numeric(resourceMetrics["browserMemoryLimitMb"]) !== null) {
+    suppressedThresholdMetricKeys.add("resource_pressure.browser_memory_mb");
   }
   const activeThresholdKeys = await evaluateThresholds(
     snapshots,
@@ -4010,8 +4229,12 @@ export async function collectDiagnosticSnapshot(
   return latestPayload;
 }
 
-export async function getDiagnosticThresholds(): Promise<DiagnosticThreshold[]> {
-  const overrides = await loadThresholdOverrides();
+export async function getDiagnosticThresholds({
+  forceRefresh = false,
+}: {
+  forceRefresh?: boolean;
+} = {}): Promise<DiagnosticThreshold[]> {
+  const overrides = await loadThresholdOverrides({ forceRefresh });
   return DEFAULT_THRESHOLDS.map((threshold) => ({
     ...threshold,
     ...(overrides.get(threshold.metricKey) ?? {}),
@@ -4027,6 +4250,7 @@ export async function updateDiagnosticThresholds(
     audible?: boolean;
   }>,
 ): Promise<DiagnosticThreshold[]> {
+  invalidateDiagnosticThresholdOverridesCache();
   const knownKeys = new Set(DEFAULT_THRESHOLDS.map((threshold) => threshold.metricKey));
   for (const override of overrides) {
     if (!knownKeys.has(override.metricKey)) {
@@ -4066,7 +4290,27 @@ export async function updateDiagnosticThresholds(
       undefined,
     );
   }
-  return getDiagnosticThresholds();
+  invalidateDiagnosticThresholdOverridesCache();
+  return getDiagnosticThresholds({ forceRefresh: true });
+}
+
+export function __setDiagnosticThresholdOverrideRowsLoaderForTests(
+  loader: () => Promise<DiagnosticThresholdOverrideRow[]>,
+): () => void {
+  const previous = diagnosticThresholdOverrideRowsLoader;
+  diagnosticThresholdOverrideRowsLoader = loader;
+  invalidateDiagnosticThresholdOverridesCache();
+  diagnosticThresholdOverridesInFlight = null;
+  return () => {
+    diagnosticThresholdOverrideRowsLoader = previous;
+    invalidateDiagnosticThresholdOverridesCache();
+    diagnosticThresholdOverridesInFlight = null;
+  };
+}
+
+export function __resetDiagnosticThresholdOverridesCacheForTests(): void {
+  invalidateDiagnosticThresholdOverridesCache();
+  diagnosticThresholdOverridesInFlight = null;
 }
 
 export async function listDiagnosticHistory(input: {

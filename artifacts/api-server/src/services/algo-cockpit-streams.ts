@@ -100,6 +100,14 @@ export async function fetchAlgoCockpitCriticalPayload(
       ? listSignalOptionsAutomationState({
           deploymentId: target.deploymentId,
           view: "summary",
+          cacheMode: "cache-only",
+          refreshSignalsFromMonitorState: true,
+        }).catch((error) => {
+          logger.warn(
+            { err: error, deploymentId: target.deploymentId },
+            "Signal-options critical cockpit stream state cache unavailable",
+          );
+          return null;
         })
       : Promise.resolve(null),
   ]);

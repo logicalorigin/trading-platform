@@ -52,6 +52,7 @@ import DeferredRender from "../components/platform/DeferredRender";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { responsiveFlags, useElementSize, useViewport } from "../lib/responsive";
+import { retryDynamicImport } from "../lib/dynamicImport";
 import {
   CSS_COLOR,
   cssColorMix,
@@ -97,37 +98,129 @@ import {
 } from "./account/accountSafeQaFixtures.js";
 import { useAccountSection } from "../features/platform/useAccountSection.js";
 
-const LazyTodaySnapshotPanel = lazy(() => import("./account/TodaySnapshotPanel"));
-const LazyAccountHeroBlock = lazy(() =>
-  import("./account/AccountHeroBlock").then((module) => ({
-    default: module.AccountHeroBlock,
-  })),
-);
-const LazyAccountReturnsPanel = lazy(() =>
-  import("./account/AccountReturnsPanel").then((module) => ({
-    default: module.AccountReturnsPanel,
-  })),
-);
-const LazyPortfolioExposurePanel = lazy(() =>
-  import("./account/PortfolioExposurePanel"),
-);
-const LazyEquityCurvePanel = lazy(() => import("./account/EquityCurvePanel"));
-const LazyPositionsPanel = lazy(() => import("./account/PositionsPanel"));
+const loadTodaySnapshotPanel = () =>
+  retryDynamicImport(
+    () => import("./account/TodaySnapshotPanel"),
+    { label: "TodaySnapshotPanel" },
+  );
+let accountHeroBlockImport = null;
+const loadAccountHeroBlock = () => {
+  if (!accountHeroBlockImport) {
+    accountHeroBlockImport = retryDynamicImport(
+      () =>
+        import("./account/AccountHeroBlock").then((module) => ({
+          default: module.AccountHeroBlock,
+        })),
+      { label: "AccountHeroBlock" },
+    ).catch((error) => {
+      accountHeroBlockImport = null;
+      throw error;
+    });
+  }
+  return accountHeroBlockImport;
+};
+let accountReturnsPanelImport = null;
+const loadAccountReturnsPanel = () => {
+  if (!accountReturnsPanelImport) {
+    accountReturnsPanelImport = retryDynamicImport(
+      () =>
+        import("./account/AccountReturnsPanel").then((module) => ({
+          default: module.AccountReturnsPanel,
+        })),
+      { label: "AccountReturnsPanel" },
+    ).catch((error) => {
+      accountReturnsPanelImport = null;
+      throw error;
+    });
+  }
+  return accountReturnsPanelImport;
+};
+let portfolioExposurePanelImport = null;
+const loadPortfolioExposurePanel = () => {
+  if (!portfolioExposurePanelImport) {
+    portfolioExposurePanelImport = retryDynamicImport(
+      () => import("./account/PortfolioExposurePanel"),
+      { label: "PortfolioExposurePanel" },
+    ).catch((error) => {
+      portfolioExposurePanelImport = null;
+      throw error;
+    });
+  }
+  return portfolioExposurePanelImport;
+};
+let equityCurvePanelImport = null;
+const loadEquityCurvePanel = () => {
+  if (!equityCurvePanelImport) {
+    equityCurvePanelImport = retryDynamicImport(
+      () => import("./account/EquityCurvePanel"),
+      { label: "EquityCurvePanel" },
+    ).catch((error) => {
+      equityCurvePanelImport = null;
+      throw error;
+    });
+  }
+  return equityCurvePanelImport;
+};
+let positionsPanelImport = null;
+const loadPositionsPanel = () => {
+  if (!positionsPanelImport) {
+    positionsPanelImport = retryDynamicImport(
+      () => import("./account/PositionsPanel"),
+      { label: "PositionsPanel" },
+    ).catch((error) => {
+      positionsPanelImport = null;
+      throw error;
+    });
+  }
+  return positionsPanelImport;
+};
+
+const LazyTodaySnapshotPanel = lazy(loadTodaySnapshotPanel);
+const LazyAccountHeroBlock = lazy(loadAccountHeroBlock);
+const LazyAccountReturnsPanel = lazy(loadAccountReturnsPanel);
+const LazyPortfolioExposurePanel = lazy(loadPortfolioExposurePanel);
+const LazyEquityCurvePanel = lazy(loadEquityCurvePanel);
+const LazyPositionsPanel = lazy(loadPositionsPanel);
 const LazyPositionsAtDateInspector = lazy(() =>
-  import("./account/PositionsPanel").then((module) => ({
+  loadPositionsPanel().then((module) => ({
     default: module.PositionsAtDateInspector,
   })),
 );
+export const preloadScreenModules = () =>
+  Promise.allSettled([
+    loadAccountHeroBlock(),
+    loadAccountReturnsPanel(),
+    loadPortfolioExposurePanel(),
+    loadEquityCurvePanel(),
+    loadPositionsPanel(),
+  ]);
 const LazyTradingAnalysisWorkbench = lazy(() =>
-  import("./account/TradingAnalysisWorkbench"),
+  retryDynamicImport(
+    () => import("./account/TradingAnalysisWorkbench"),
+    { label: "TradingAnalysisWorkbench" },
+  ),
 );
 const LazyOrdersPanel = lazy(() =>
-  import("./account/TradesOrdersPanel").then((module) => ({
-    default: module.OrdersPanel,
-  })),
+  retryDynamicImport(
+    () =>
+      import("./account/TradesOrdersPanel").then((module) => ({
+        default: module.OrdersPanel,
+      })),
+    { label: "TradesOrdersPanel" },
+  ),
 );
-const LazyCashFundingPanel = lazy(() => import("./account/CashFundingPanel"));
-const LazySetupHealthPanel = lazy(() => import("./account/SetupHealthPanel"));
+const LazyCashFundingPanel = lazy(() =>
+  retryDynamicImport(
+    () => import("./account/CashFundingPanel"),
+    { label: "CashFundingPanel" },
+  ),
+);
+const LazySetupHealthPanel = lazy(() =>
+  retryDynamicImport(
+    () => import("./account/SetupHealthPanel"),
+    { label: "SetupHealthPanel" },
+  ),
+);
 
 const AccountPanelSuspenseFallback = ({
   detail = "Preparing account data.",
@@ -231,6 +324,7 @@ const ACCOUNT_SWITCH_KEEP_WARM_MS = 60_000;
 const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 1_000;
 const ACCOUNT_LIVE_FALLBACK_DELAY_MS = 5_000;
 const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 6_000;
+const ACCOUNT_INACTIVE_PREWARM_FALLBACK_DELAY_MS = 5_000;
 
 const DEFAULT_EQUITY_BENCHMARK_VISIBILITY = {
   SPY: true,
@@ -985,10 +1079,12 @@ const AccountScreenInner = ({
       accountPageStreamFreshness.accountDerivedFresh ||
       accountDerivedFallbackReady,
   );
-  const inactiveAccountPrewarmEnabled = Boolean(
-    isVisible && accountQueriesEnabled && accountCriticalReady,
+  const inactiveAccountPageStreamEnabled = Boolean(
+    accountPageStreamEnabled &&
+      accountPageStreamFreshness.accountCriticalFresh &&
+      inactiveAccountPageRequest,
   );
-  useAccountPageSnapshotStream({
+  const inactiveAccountPageStreamFreshness = useAccountPageSnapshotStream({
     accountId: inactiveAccountPageRequest?.accountId,
     mode: inactiveAccountPageRequest?.mode || modeParams.mode,
     range,
@@ -1003,20 +1099,40 @@ const AccountScreenInner = ({
       holdDuration: closedTradeParams.holdDuration,
     },
     performanceCalendarFrom: performanceCalendarParams.from,
-    enabled: Boolean(
-      accountPageStreamEnabled &&
-        accountPageStreamFreshness.accountCriticalFresh &&
-        inactiveAccountPageRequest,
-    ),
+    enabled: inactiveAccountPageStreamEnabled,
   });
+  const [inactiveAccountPrewarmFallbackReady, setInactiveAccountPrewarmFallbackReady] =
+    useState(false);
+  useEffect(() => {
+    if (
+      !inactiveAccountPageStreamEnabled ||
+      inactiveAccountPageStreamFreshness.accountCriticalFresh
+    ) {
+      setInactiveAccountPrewarmFallbackReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setInactiveAccountPrewarmFallbackReady(true);
+    }, ACCOUNT_INACTIVE_PREWARM_FALLBACK_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    inactiveAccountPageStreamEnabled,
+    inactiveAccountPageStreamFreshness.accountCriticalFresh,
+  ]);
+  const inactiveAccountPrewarmEnabled = Boolean(
+    isVisible &&
+      accountQueriesEnabled &&
+      accountCriticalReady &&
+      (!inactiveAccountPageStreamEnabled || inactiveAccountPrewarmFallbackReady) &&
+      !inactiveAccountPageStreamFreshness.accountCriticalFresh,
+  );
   useEffect(() => {
     onReadinessChange?.({
-      criticalReady: Boolean(isVisible && accountCriticalReady),
+      criticalReady: Boolean(isVisible),
       derivedReady: Boolean(isVisible && accountDerivedReady),
       backgroundAllowed: Boolean(isVisible && !safeQaMode && accountDerivedReady),
     });
   }, [
-    accountCriticalReady,
     accountDerivedReady,
     isVisible,
     onReadinessChange,
@@ -1741,12 +1857,22 @@ const AccountScreenInner = ({
       });
     } catch {}
   };
+  const accountActivePrefetchEnabled = Boolean(
+    accountQueriesEnabled &&
+      (!accountPageStreamEnabled ||
+        (accountCriticalFallbackReady &&
+          !accountPageStreamFreshness.accountCriticalFresh)),
+  );
   useEffect(() => {
-    if (!accountQueriesEnabled) {
+    if (!accountActivePrefetchEnabled) {
       return;
     }
     prefetchAccountSectionLiveQueries(accountSection);
-  }, [accountQueriesEnabled, accountSection, prefetchAccountSectionLiveQueries]);
+  }, [
+    accountActivePrefetchEnabled,
+    accountSection,
+    prefetchAccountSectionLiveQueries,
+  ]);
 
   return (
     <div

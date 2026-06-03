@@ -55,9 +55,9 @@ test("account phone layouts keep the dense horizontal table path", () => {
 });
 
 test("position tables use the compact brokerage density treatment", () => {
-  assert.match(positionsSource, /const POSITION_TABLE_ROW_HEIGHT = 38/);
-  assert.match(positionsSource, /const POSITION_TABLE_HEADER_HEIGHT = 28/);
-  assert.match(positionsSource, /padding:\s*sp\("3px 6px"\)/);
+  assert.match(positionsSource, /const POSITION_TABLE_ROW_HEIGHT = 34/);
+  assert.match(positionsSource, /const POSITION_TABLE_HEADER_HEIGHT = 24/);
+  assert.match(positionsSource, /padding:\s*sp\("2px 4px"\)/);
   assert.match(positionsSource, /textTransform:\s*"none"/);
   assert.match(positionsSource, /compactPositionHeaderStyle/);
   assert.match(positionsSource, /compactPositionCellStyle/);

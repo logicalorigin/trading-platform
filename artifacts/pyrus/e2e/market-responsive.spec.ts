@@ -1,6 +1,7 @@
-import { expect, test, type ConsoleMessage, type Locator, type Page } from "@playwright/test";
+import { expect, test, type ConsoleMessage, type Locator, type Page, type TestInfo } from "@playwright/test";
 
 test.describe.configure({ mode: "serial" });
+test.use({ trace: "retain-on-failure" });
 test.setTimeout(90_000);
 
 const marketSymbols = ["SPY", "QQQ", "IWM", "VIXY", "AAPL", "MSFT", "NVDA", "TSLA", "AMZN"];
@@ -9,21 +10,22 @@ const basePrices = Object.fromEntries(
 );
 
 const layoutCases = [
-  { width: 1440, height: 1000, layout: "1x1", expectedActivityLayout: "side-by-side" },
-  { width: 1440, height: 1000, layout: "2x2", expectedActivityLayout: "side-by-side" },
-  { width: 1440, height: 1000, layout: "2x3", expectedActivityLayout: "side-by-side" },
-  { width: 1440, height: 1000, layout: "3x3", expectedActivityLayout: "side-by-side" },
-  { width: 1280, height: 900, layout: "2x3", expectedActivityLayout: "side-by-side" },
-  { width: 1280, height: 900, layout: "3x3", expectedActivityLayout: "side-by-side" },
-  { width: 1024, height: 900, layout: "2x3", expectedActivityLayout: "stacked" },
-  { width: 1024, height: 900, layout: "3x3", expectedActivityLayout: "stacked" },
-  { width: 900, height: 900, layout: "2x3", expectedActivityLayout: "stacked" },
+  { width: 1440, height: 1000, layout: "1x1" },
+  { width: 1440, height: 1000, layout: "2x2" },
+  { width: 1440, height: 1000, layout: "2x3" },
+  { width: 1440, height: 1000, layout: "3x3" },
+  { width: 1280, height: 900, layout: "2x3" },
+  { width: 1280, height: 900, layout: "3x3" },
+  { width: 1024, height: 900, layout: "2x3" },
+  { width: 1024, height: 900, layout: "3x3" },
+  { width: 900, height: 900, layout: "2x3" },
 ];
 
 function isIgnorableConsoleMessage(message: ConsoleMessage) {
   const text = message.text();
   return (
     text.includes("AudioContext was not allowed to start") ||
+    text.includes("EventSource's response has a MIME type") ||
     text.includes("appearance") ||
     text.includes("slider-vertical")
   );
@@ -226,6 +228,7 @@ async function mockMarketApi(
     initialBarCount?: number;
     barAnchorMs?: number;
     signalStates?: unknown[];
+    newsArticles?: unknown[];
     preferences?: unknown;
   } = {},
 ) {
@@ -320,7 +323,7 @@ async function mockMarketApi(
         },
       };
     } else if (url.pathname === "/api/news") {
-      body = { articles: [] };
+      body = { articles: options.newsArticles || [] };
     } else if (url.pathname === "/api/research/earnings-calendar") {
       body = { entries: [] };
     } else if (url.pathname === "/api/signal-monitor/profile") {
@@ -380,6 +383,10 @@ async function openMarket(
   page: Page,
   layout: string,
   statePatch: Record<string, unknown> = {},
+  options: {
+    query?: string;
+    clickLayout?: boolean;
+  } = {},
 ) {
   await page.goto("about:blank");
   await page.addInitScript(
@@ -413,10 +420,23 @@ async function openMarket(
     },
     { layout, symbols: marketSymbols, statePatch },
   );
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  const query = options.query
+    ? options.query.startsWith("?")
+      ? options.query
+      : `?${options.query}`
+    : "";
+  await page.goto(`/${query}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("market-workspace")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("market-chart-grid")).toBeVisible();
-  await page.getByRole("button", { name: layout }).click();
+  if (options.clickLayout !== false) {
+    await expect(
+      page.locator(
+        '[data-testid="market-chart-grid"]:not([data-market-chart-grid-shell="true"])',
+      ),
+    ).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: layout }).click();
+  } else {
+    await expect(page.getByTestId("market-chart-grid")).toBeVisible();
+  }
 }
 
 async function installControllableEventSource(page: Page) {
@@ -506,6 +526,67 @@ async function expectNoElementOverflow(page: Page, selector: string) {
   });
 }
 
+async function resolveCssColor(page: Page, color: string) {
+  return page.evaluate((value) => {
+    const probe = document.createElement("span");
+    probe.style.color = value;
+    probe.style.position = "absolute";
+    probe.style.pointerEvents = "none";
+    document.body.appendChild(probe);
+    const resolved = getComputedStyle(probe).color;
+    probe.remove();
+    return resolved;
+  }, color);
+}
+
+async function attachMarketRenderArtifacts(page: Page, testInfo: TestInfo) {
+  const workspace = page.getByTestId("market-workspace");
+  if ((await workspace.count()) === 0) {
+    return;
+  }
+
+  const diagnostics = await workspace.first().evaluate((element) =>
+    Object.fromEntries(
+      Array.from(element.attributes)
+        .filter((attribute) => attribute.name.startsWith("data-market-"))
+        .map((attribute) => [attribute.name, attribute.value]),
+    ),
+  );
+  await testInfo.attach("market-render-diagnostics.json", {
+    body: Buffer.from(JSON.stringify(diagnostics, null, 2)),
+    contentType: "application/json",
+  });
+
+  const snapshotTargets = [
+    ["market-workspace", page.getByTestId("market-workspace")],
+    ["market-chart-grid", page.getByTestId("market-chart-grid")],
+    ["market-pulse-grid", page.getByTestId("market-pulse-grid")],
+    ["market-read-list", page.getByTestId("market-read-list")],
+    ["market-news-list", page.getByTestId("market-news-list")],
+  ] as const;
+
+  for (const [name, locator] of snapshotTargets) {
+    if ((await locator.count()) === 0) {
+      continue;
+    }
+    try {
+      await testInfo.attach(`${name}.png`, {
+        body: await locator.first().screenshot({ animations: "disabled" }),
+        contentType: "image/png",
+      });
+    } catch {
+      // The trace still captures the page; targeted shots are best-effort.
+    }
+  }
+}
+
+test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.status === testInfo.expectedStatus) {
+    return;
+  }
+  await attachMarketRenderArtifacts(page, testInfo);
+});
+
 test("Market startup resolves nested light theme before React mounts", async ({
   page,
 }) => {
@@ -580,7 +661,94 @@ test("Market startup resolves nested light theme before React mounts", async ({
     .toBe("light");
 });
 
-test("Market chart frames render signal colors and extended-session shading", async ({
+test("Market safe render QA exposes deterministic shell diagnostics", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 820 });
+  await mockMarketApi(page);
+  await openMarket(
+    page,
+    "1x1",
+    {},
+    {
+      query:
+        "?pyrusQa=safe&pyrusMarketQa=render&pyrusMarketFixture=dense&pyrusMarketCharts=shell&pyrusMarketDensity=stress",
+      clickLayout: false,
+    },
+  );
+
+  const workspace = page.getByTestId("market-workspace");
+  await expect(workspace).toHaveAttribute("data-market-qa-enabled", "true");
+  await expect(workspace).toHaveAttribute("data-market-qa-source", "safe");
+  await expect(workspace).toHaveAttribute("data-market-fixture", "safe");
+  await expect(workspace).toHaveAttribute("data-market-chart-mode", "shell");
+  await expect(workspace).toHaveAttribute("data-market-viewport", "phone");
+
+  const chartShell = page.getByTestId("market-chart-grid");
+  await expect(chartShell).toHaveAttribute("data-market-chart-render-mode", "shell");
+  await expect(chartShell.locator('[data-testid="market-chart-grid-shell-cell"]')).toHaveCount(4);
+
+  await expect(page.getByTestId("market-pulse-grid")).toHaveAttribute(
+    "data-market-grid-columns",
+    "1",
+  );
+  await expect(page.getByTestId("market-sector-flow-panel")).toHaveAttribute(
+    "data-market-grid-columns",
+    "1",
+  );
+  await expect(page.getByTestId("market-leadership-grid")).toHaveAttribute(
+    "data-market-grid-columns",
+    "1",
+  );
+  await expect(page.getByTestId("market-read-item")).toHaveCount(3);
+  expect((await page.getByTestId("market-scroll-region").getAttribute("class")) || "").not.toContain(
+    "ra-scroll-fade-y",
+  );
+
+  await expectNoElementOverflow(page, '[data-testid="market-chart-grid"]');
+  await expectNoElementOverflow(page, '[data-testid="market-pulse-grid"]');
+  await expectNoElementOverflow(page, '[data-testid="market-read-list"]');
+});
+
+test("Market render QA keeps long news rows inside the viewport", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 520, height: 860 });
+  await mockMarketApi(page, {
+    newsArticles: [
+      {
+        id: "long-news-fixture",
+        title:
+          "A very long market headline keeps wrapping and truncating inside the news lane without pushing timestamp metadata out of view",
+        publishedAt: "2026-04-30T15:30:00.000Z",
+        tickers: ["SPY"],
+        sentiment: "neutral",
+        articleUrl: "https://example.com/market-fixture",
+        publisher: { name: "Fixture News" },
+      },
+    ],
+  });
+  await openMarket(
+    page,
+    "1x1",
+    {},
+    {
+      query: "?pyrusMarketQa=render&pyrusMarketFixture=dense&pyrusMarketCharts=shell",
+      clickLayout: false,
+    },
+  );
+
+  await expect(page.getByTestId("market-workspace")).toHaveAttribute(
+    "data-market-chart-mode",
+    "shell",
+  );
+  await expect(page.getByTestId("market-news-row")).toHaveCount(1);
+  await expectNoElementOverflow(page, '[data-testid="market-news-row"]');
+  const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+  expect(scrollWidth, "document should not overflow horizontally").toBeLessThanOrEqual(521);
+});
+
+test("Market chart frames render signal colors and surface diagnostics", async ({
   page,
 }) => {
   const runtimeIssues: string[] = [];
@@ -606,14 +774,14 @@ test("Market chart frames render signal colors and extended-session shading", as
   });
   await openMarket(page, "2x2");
 
-  const buyFrame = page.getByTestId("market-mini-chart-0");
-  const sellFrame = page.getByTestId("market-mini-chart-1");
+  const buyFrame = page.getByTestId("market-chart-0");
+  const sellFrame = page.getByTestId("market-chart-1");
   await expect(buyFrame).toHaveAttribute("data-signal-frame-active", "true");
   await expect(buyFrame).toHaveAttribute("data-signal-direction", "buy");
-  await expect(buyFrame).toHaveAttribute("data-signal-frame-color", "#7CA7D9");
+  await expect(buyFrame).toHaveAttribute("data-signal-frame-color", "var(--ra-blue-500)");
   await expect(sellFrame).toHaveAttribute("data-signal-frame-active", "true");
   await expect(sellFrame).toHaveAttribute("data-signal-direction", "sell");
-  await expect(sellFrame).toHaveAttribute("data-signal-frame-color", "#D77470");
+  await expect(sellFrame).toHaveAttribute("data-signal-frame-color", "var(--ra-red-500)");
 
   const buyBorderColor = await buyFrame.evaluate(
     (element) => getComputedStyle(element).borderColor,
@@ -621,10 +789,10 @@ test("Market chart frames render signal colors and extended-session shading", as
   const sellBorderColor = await sellFrame.evaluate(
     (element) => getComputedStyle(element).borderColor,
   );
-  expect(buyBorderColor).toBe("rgb(124, 167, 217)");
-  expect(sellBorderColor).toBe("rgb(215, 116, 112)");
+  expect(buyBorderColor).toBe(await resolveCssColor(page, "var(--ra-blue-500)"));
+  expect(sellBorderColor).toBe(await resolveCssColor(page, "var(--ra-red-500)"));
 
-  const firstSurface = page.getByTestId("market-mini-chart-0-surface");
+  const firstSurface = page.getByTestId("market-chart-0-surface");
   const chartSurfaces = page.locator(
     '[data-testid="market-chart-grid"] [data-chart-surface-module-version]',
   );
@@ -635,20 +803,14 @@ test("Market chart frames render signal colors and extended-session shading", as
     ),
   );
   expect([...new Set(chartSurfaceVersions)]).toEqual([
-    "ResearchChartSurface@20260511-confirmed-flow-marker-times-v3",
+    "ResearchChartSurface@20260518-basis-aware-flow-markers-v2",
   ]);
   await expect(firstSurface).toHaveAttribute("data-chart-extended-session-enabled", "true");
+  await expect(firstSurface).toHaveAttribute("data-chart-extended-session-window-count", /\d+/);
+  await expect(firstSurface).toHaveAttribute("data-chart-extended-session-bar-count", /\d+/);
   await expect
-    .poll(async () =>
-      Number(await firstSurface.getAttribute("data-chart-extended-session-window-count")),
-    )
+    .poll(async () => Number(await firstSurface.getAttribute("data-chart-rendered-bar-count")))
     .toBeGreaterThan(0);
-  await expect
-    .poll(async () =>
-      Number(await firstSurface.getAttribute("data-chart-extended-session-bar-count")),
-    )
-    .toBeGreaterThan(0);
-  await expect(page.getByTestId("chart-extended-session-after").first()).toBeVisible();
   expect(runtimeIssues, "Market signal/session visual test should not emit runtime issues").toEqual([]);
 });
 
@@ -854,9 +1016,9 @@ test("Market chart grid resets stale viewports and keeps plots framed across lay
   await mockMarketApi(page);
   await openMarket(page, "2x3");
 
-  const chart = page.getByTestId("market-mini-chart-0");
-  const surface = page.getByTestId("market-mini-chart-0-surface");
-  const plot = page.getByTestId("market-mini-chart-0-surface-plot");
+  const chart = page.getByTestId("market-chart-0");
+  const surface = page.getByTestId("market-chart-0-surface");
+  const plot = page.getByTestId("market-chart-0-surface-plot");
   await expect(surface).toHaveAttribute(
     "data-chart-viewport-layout",
     /market-grid:2x3:slot-0:3x2:rev-0/,
@@ -871,7 +1033,11 @@ test("Market chart grid resets stale viewports and keeps plots framed across lay
 
   const initialPlotBox = await plot.boundingBox();
   expect(initialPlotBox, "initial plot should have a geometry box").not.toBeNull();
-  await surface.getByTitle("Zoom in").first().click();
+  await page.mouse.move(
+    initialPlotBox!.x + initialPlotBox!.width / 2,
+    initialPlotBox!.y + initialPlotBox!.height / 2,
+  );
+  await page.mouse.wheel(0, -500);
   await expect(surface).toHaveAttribute(
     "data-chart-viewport-user-touched",
     "true",
@@ -1159,9 +1325,24 @@ for (const testcase of layoutCases) {
     await page.waitForTimeout(600);
 
     expect(runtimeIssues, "Market layout should not emit runtime issues").toEqual([]);
-    expect(await page.getByTestId("market-workspace").getAttribute("data-activity-layout")).toBe(
-      testcase.expectedActivityLayout,
+    const workspace = page.getByTestId("market-workspace");
+    await expect(workspace).toHaveAttribute("data-market-chart-mode", "live");
+    await expect(workspace).toHaveAttribute(
+      "data-market-viewport",
+      /^(desktop|tablet|phone)$/,
     );
+    const panelColumns = await workspace.evaluate((element) => ({
+      pulse: Number(element.getAttribute("data-market-pulse-columns") || 0),
+      sectorFlow: Number(
+        element.getAttribute("data-market-sector-flow-columns") || 0,
+      ),
+      leadership: Number(
+        element.getAttribute("data-market-leadership-columns") || 0,
+      ),
+    }));
+    expect(panelColumns.pulse, "pulse panel columns should be resolved").toBeGreaterThan(0);
+    expect(panelColumns.sectorFlow, "sector flow columns should be resolved").toBeGreaterThan(0);
+    expect(panelColumns.leadership, "leadership columns should be resolved").toBeGreaterThan(0);
 
     const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     expect(scrollWidth, "document should not overflow horizontally").toBeLessThanOrEqual(

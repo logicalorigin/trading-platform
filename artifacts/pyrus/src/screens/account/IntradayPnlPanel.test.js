@@ -48,3 +48,28 @@ test("intraday panel derives P&L from equity history points", () => {
     ],
   );
 });
+
+test("intraday panel baselines on the latest market day, not the rolling 24h start", () => {
+  assert.deepEqual(
+    buildIntradaySeries({
+      points: [
+        {
+          timestamp: "2026-05-13T19:55:00.000Z",
+          netLiquidation: 50_000,
+        },
+        {
+          timestamp: "2026-05-14T13:30:00.000Z",
+          netLiquidation: 49_000,
+        },
+        {
+          timestamp: "2026-05-14T15:00:00.000Z",
+          netLiquidation: 49_125,
+        },
+      ],
+    }),
+    [
+      { timestampMs: Date.parse("2026-05-14T13:30:00.000Z"), pnl: 0 },
+      { timestampMs: Date.parse("2026-05-14T15:00:00.000Z"), pnl: 125 },
+    ],
+  );
+});

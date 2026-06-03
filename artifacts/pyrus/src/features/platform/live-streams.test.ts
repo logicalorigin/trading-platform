@@ -118,10 +118,12 @@ test("account page stream is owned by the visible account screen", () => {
   );
   assert.match(accountScreenSource, /isVisible && accountQueriesEnabled/);
   assert.match(accountScreenSource, /accountId:\s*inactiveAccountPageRequest\?\.accountId/);
+  assert.match(accountScreenSource, /const inactiveAccountPageStreamEnabled = Boolean/);
   assert.match(
     accountScreenSource,
-    /enabled:\s*Boolean\([\s\S]*accountPageStreamEnabled &&[\s\S]*accountPageStreamFreshness\.accountCriticalFresh &&[\s\S]*inactiveAccountPageRequest/,
+    /accountPageStreamEnabled &&[\s\S]*accountPageStreamFreshness\.accountCriticalFresh &&[\s\S]*inactiveAccountPageRequest/,
   );
+  assert.match(accountScreenSource, /enabled:\s*inactiveAccountPageStreamEnabled/);
   assert.match(accountScreenSource, /accountPageStreamFresh:\s*accountPageStreamFreshness\.accountCriticalFresh/);
   assert.match(accountScreenSource, /const criticalAccountQueriesEnabled = Boolean/);
   assert.match(accountScreenSource, /const liveAccountQueriesEnabled = Boolean/);

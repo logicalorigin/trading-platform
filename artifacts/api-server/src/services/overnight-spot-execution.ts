@@ -3,6 +3,7 @@ import {
   algoDeploymentsTable,
   db,
   executionEventsTable,
+  shadowOrdersTable,
   shadowPositionsTable,
   signalMonitorSymbolStatesTable,
   type AlgoDeployment,
@@ -37,6 +38,7 @@ import {
 const OVERNIGHT_SPOT_TRACKED_EVENT = "overnight_spot_signal_tracked";
 const OVERNIGHT_SPOT_BLOCKED_EVENT = "overnight_spot_signal_blocked";
 const OVERNIGHT_SPOT_FAILED_EVENT = "overnight_spot_order_failed";
+const OVERNIGHT_SPOT_QUOTE_BATCH_SIZE = 3;
 
 type OvernightSpotDeployment = Pick<
   AlgoDeployment,
@@ -100,7 +102,10 @@ export type OvernightSpotExecutionDependencies = {
     input: OvernightSpotExecutionEventInput,
   ) => Promise<Record<string, unknown>>;
   placeShadowOrder: (
-    order: OvernightSpotOrderRequest & { sourceEventId?: string | null },
+    order: OvernightSpotOrderRequest & {
+      requestedFillPrice?: number | null;
+      sourceEventId?: string | null;
+    },
   ) => Promise<Record<string, unknown>>;
   placeLiveOrder: (
     order: OvernightSpotOrderRequest,
@@ -183,7 +188,30 @@ function resolveSignalTimeframe(
   );
 }
 
-function signalStateToSignal(state: OvernightSpotSignalState): OvernightSpotSignal {
+function isSignalStateActionableForOvernightSpot(input: {
+  state: OvernightSpotSignalState;
+  profile: OvernightSpotProfile;
+  now: Date;
+}) {
+  const side = input.state.currentSignalDirection;
+  if (side !== "buy" && side !== "sell") {
+    return false;
+  }
+  if (input.state.status !== "ok") {
+    return false;
+  }
+  const signalAt = dateOrNull(input.state.currentSignalAt);
+  if (!signalAt) {
+    return false;
+  }
+  const signalAgeMs = Math.max(0, input.now.getTime() - signalAt.getTime());
+  return signalAgeMs <= input.profile.maxSignalAgeMs;
+}
+
+function signalStateToSignal(
+  state: OvernightSpotSignalState,
+  options: { actionable?: boolean } = {},
+): OvernightSpotSignal {
   const side = state.currentSignalDirection;
   if (side !== "buy" && side !== "sell") {
     throw new Error("Cannot build overnight spot signal without a direction.");
@@ -203,7 +231,8 @@ function signalStateToSignal(state: OvernightSpotSignalState): OvernightSpotSign
       signalAt?.getTime() ?? "unknown",
     ].join(":"),
     signalAt,
-    actionable: state.status === "ok" && state.fresh === true,
+    actionable:
+      options.actionable ?? (state.status === "ok" && state.fresh === true),
     referencePrice: asNumber(state.currentSignalPrice),
     source: "automation",
     metadata: {
@@ -254,6 +283,20 @@ function eventId(event: Record<string, unknown> | null | undefined) {
     return null;
   }
   return String(event.id);
+}
+
+function overnightSpotShadowFillPrice(plan: OvernightSpotPlanReady): number | null {
+  const quote = plan.order.payload.quote;
+  const record = asRecord(quote) ?? {};
+  const sidePrice =
+    plan.order.side === "buy"
+      ? asNumber(record.ask)
+      : asNumber(record.bid);
+  if (sidePrice !== null && sidePrice > 0) {
+    return sidePrice;
+  }
+  const mid = asNumber(record.mid);
+  return mid !== null && mid > 0 ? mid : null;
 }
 
 export function deploymentHasOvernightSpotProfile(
@@ -348,30 +391,53 @@ async function handleReadyPlan(input: {
   }
 
   if (input.plan.profile.executionMode === "shadow") {
-    const draft = buildOvernightSpotExecutionEventDraft(input.plan, {
-      deploymentId: input.deployment.id,
-      occurredAt: input.now,
-    });
-    const event = await insertEvent(input.deps, {
-      deployment: input.deployment,
-      eventType: draft.eventType,
-      summary: draft.summary,
-      symbol: draft.symbol,
-      payload: {
-        ...draft.payload,
-        clientOrderId: input.plan.clientOrderId,
-      },
-      occurredAt: draft.occurredAt,
-    });
-    await input.deps.placeShadowOrder({
-      ...input.plan.order,
-      sourceEventId: typeof event.id === "string" ? event.id : String(event.id ?? ""),
-    });
-    return {
-      status: "executed" as const,
-      eventType: draft.eventType,
-      eventId: eventId(event),
-    };
+    let event: Record<string, unknown> | null = null;
+    try {
+      const draft = buildOvernightSpotExecutionEventDraft(input.plan, {
+        deploymentId: input.deployment.id,
+        occurredAt: input.now,
+      });
+      event = await insertEvent(input.deps, {
+        deployment: input.deployment,
+        eventType: draft.eventType,
+        summary: draft.summary,
+        symbol: draft.symbol,
+        payload: {
+          ...draft.payload,
+          clientOrderId: input.plan.clientOrderId,
+        },
+        occurredAt: draft.occurredAt,
+      });
+      await input.deps.placeShadowOrder({
+        ...input.plan.order,
+        requestedFillPrice: overnightSpotShadowFillPrice(input.plan),
+        sourceEventId:
+          typeof event.id === "string" ? event.id : String(event.id ?? ""),
+      });
+      return {
+        status: "executed" as const,
+        eventType: draft.eventType,
+        eventId: eventId(event),
+      };
+    } catch (error) {
+      const failed = await insertEvent(input.deps, {
+        deployment: input.deployment,
+        eventType: OVERNIGHT_SPOT_FAILED_EVENT,
+        summary: `${input.plan.order.symbol} overnight spot shadow order failed`,
+        symbol: input.plan.order.symbol,
+        payload: {
+          ...payload,
+          sourceEventId: eventId(event),
+          error: error instanceof Error ? error.message : String(error),
+        },
+        occurredAt: new Date(Math.max(input.now.getTime(), Date.now())),
+      });
+      return {
+        status: "failed" as const,
+        eventType: OVERNIGHT_SPOT_FAILED_EVENT,
+        eventId: eventId(failed),
+      };
+    }
   }
 
   try {
@@ -486,7 +552,9 @@ export async function runOvernightSpotSignalScan(
   );
   const actionStates =
     runActions && profile.requireActionableSignal
-      ? states.filter((state) => state.status === "ok" && state.fresh === true)
+      ? states.filter((state) =>
+          isSignalStateActionableForOvernightSpot({ state, profile, now }),
+        )
       : states;
   const symbols = Array.from(
     new Set(actionStates.map((state) => normalizeSymbol(state.symbol).toUpperCase())),
@@ -503,7 +571,9 @@ export async function runOvernightSpotSignalScan(
   const results: OvernightSpotSignalScanResult["results"] = [];
 
   for (const state of actionStates) {
-    const signal = signalStateToSignal(state);
+    const signal = signalStateToSignal(state, {
+      actionable: isSignalStateActionableForOvernightSpot({ state, profile, now }),
+    });
     const clientOrderId = trackClientOrderId({
       deploymentId: deployment.id,
       signal,
@@ -649,18 +719,21 @@ async function loadQuotes(symbols: string[]) {
   if (!symbols.length) {
     return new Map<string, OvernightSpotQuote | null>();
   }
-  const response = await getQuoteSnapshots({
-    symbols: symbols.join(","),
-    allowMassiveFallback: false,
-    admissionOwner: "overnight-spot-automation",
-    admissionIntent: "automation-live",
-  });
-  return new Map(
-    response.quotes.map((quote) => [
-      normalizeSymbol(quote.symbol).toUpperCase(),
-      quote,
-    ]),
-  );
+  const quotes = new Map<string, OvernightSpotQuote | null>();
+  for (let index = 0; index < symbols.length; index += OVERNIGHT_SPOT_QUOTE_BATCH_SIZE) {
+    const batch = symbols.slice(index, index + OVERNIGHT_SPOT_QUOTE_BATCH_SIZE);
+    const response = await getQuoteSnapshots({
+      symbols: batch.join(","),
+      allowMassiveFallback: false,
+      admissionOwner: "overnight-spot-automation",
+      admissionIntent: "automation-live",
+      tradingSession: "overnight",
+    });
+    response.quotes.forEach((quote) => {
+      quotes.set(normalizeSymbol(quote.symbol).toUpperCase(), quote);
+    });
+  }
+  return quotes;
 }
 
 async function loadPositionQuantities(input: {
@@ -744,10 +817,24 @@ async function findExistingEventByClientOrderId(input: {
     .where(eq(executionEventsTable.deploymentId, input.deploymentId))
     .orderBy(desc(executionEventsTable.occurredAt))
     .limit(1_000);
-  return (
-    rows.find((row) => payloadClientOrderId(row.payload) === input.clientOrderId) ??
-    null
-  );
+  for (const row of rows) {
+    if (payloadClientOrderId(row.payload) !== input.clientOrderId) {
+      continue;
+    }
+    const eventType = asString(row.eventType) ?? "";
+    if (eventType.startsWith("overnight_spot_shadow_")) {
+      const orders = await db
+        .select({ id: shadowOrdersTable.id })
+        .from(shadowOrdersTable)
+        .where(eq(shadowOrdersTable.clientOrderId, input.clientOrderId))
+        .limit(1);
+      if (!orders[0]) {
+        continue;
+      }
+    }
+    return row;
+  }
+  return null;
 }
 
 async function insertExecutionEvent(input: OvernightSpotExecutionEventInput) {
@@ -790,6 +877,8 @@ export const defaultOvernightSpotExecutionDependencies: OvernightSpotExecutionDe
 
 export const __overnightSpotExecutionInternalsForTests = {
   signalStateToSignal,
+  isSignalStateActionableForOvernightSpot,
+  loadQuotes,
   resolveSignalTimeframe,
   payloadClientOrderId,
 };

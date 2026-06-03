@@ -27,6 +27,19 @@ const hasGatewayConnectionProof = (bridge) =>
       (bridge?.bridgeReachable === true || bridge?.socketConnected === true),
   );
 
+export const hasGatewayLiveDataProof = (bridge) => {
+  const streamState = bridge?.streamState;
+  return Boolean(
+    bridge?.connected === true &&
+      bridge?.authenticated === true &&
+      bridge?.accountsLoaded !== false &&
+      bridge?.configuredLiveMarketDataMode !== false &&
+      bridge?.brokerServerConnected !== false &&
+      (bridge?.strictReady === true ||
+        (bridge?.streamFresh === true && streamState === "live")),
+  );
+};
+
 const isGatewayDisconnectReason = (value) =>
   GATEWAY_DISCONNECT_REASONS.has(String(value || ""));
 
@@ -80,7 +93,8 @@ export const bridgeRuntimeTone = (session) => {
   }
   if (
     bridge?.healthFresh === false &&
-    (bridge?.connected || bridge?.authenticated || bridge?.bridgeReachable)
+    (bridge?.connected || bridge?.authenticated || bridge?.bridgeReachable) &&
+    !hasGatewayLiveDataProof(bridge)
   ) {
     return { label: "health pending", color: CSS_COLOR.amber };
   }
@@ -178,7 +192,11 @@ export const bridgeRuntimeMessage = (session) => {
     const target = bridge?.connectionTarget ? ` at ${bridge.connectionTarget}` : "";
     return `Gateway API socket is open${target}, but Gateway is disconnected from IBKR servers. Reconnect Gateway to IBKR.`;
   }
-  if (bridge?.healthFresh === false && streamState !== "reconnect_needed") {
+  if (
+    bridge?.healthFresh === false &&
+    streamState !== "reconnect_needed" &&
+    !hasGatewayLiveDataProof(bridge)
+  ) {
     return "IB Gateway health is pending; waiting for the next successful check.";
   }
 

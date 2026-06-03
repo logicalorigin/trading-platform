@@ -2329,7 +2329,7 @@ textarea:disabled:not([data-ra-keep-opacity]) {
   }
 
   [data-trade-layout="phone"] [data-testid="trade-order-ticket"] [style*="grid-template-columns"],
-  [data-testid="algo-screen"][data-layout="phone"] [style*="grid-template-columns"],
+  [data-testid="algo-screen"][data-layout="phone"] [style*="grid-template-columns"]:not(.ra-dense-table-scroll):not(.ra-dense-table-scroll *):not([data-algo-pocket-grid]),
   [data-testid="settings-screen"][data-layout="phone"] [style*="grid-template-columns"],
   [data-testid="diagnostics-screen"][data-layout="phone"] [style*="grid-template-columns"],
   [data-testid="backtest-workspace"][data-layout="phone"] [style*="grid-template-columns"] {
@@ -2338,6 +2338,24 @@ textarea:disabled:not([data-ra-keep-opacity]) {
 
   [data-testid="algo-screen"][data-layout="phone"] [data-algo-pocket-grid="two"] {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  [data-testid="algo-screen"][data-layout="phone"] [data-algo-pocket-grid="metrics"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 2px !important;
+  }
+
+  [data-testid="algo-screen"][data-layout="phone"] [data-algo-pocket-grid="pipeline"] {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)) !important;
+    gap: 2px !important;
+  }
+
+  [data-testid="algo-screen"][data-layout="phone"] [data-testid="algo-signal-compact-primary"] {
+    grid-template-columns: minmax(118px, 1fr) 48px 52px 46px 32px !important;
+  }
+
+  [data-testid="algo-screen"][data-layout="phone"] [data-testid="algo-signal-compact-metrics"][data-algo-pocket-grid="dense"] {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
   }
 
   [data-testid="account-screen"] {

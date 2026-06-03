@@ -190,8 +190,8 @@ export function buildPositionMarketHydration(
   const quantity = Number(position.quantity);
   const averagePrice = Number(position.averagePrice);
   const multiplier = positionMultiplier(position);
-  const quoteChange = Number(quote?.change);
-  const quotePrevClose = Number(quote?.prevClose);
+  const quoteChange = finiteNumberOrNull(quote?.change);
+  const quotePrevClose = finiteNumberOrNull(quote?.prevClose);
   const quoteMark = quoteMarkOrNull(
     quote,
     canHydratePositionFromEquityQuote(position),
@@ -236,15 +236,18 @@ export function buildPositionMarketHydration(
     Number.isFinite(quantity) &&
     Number.isFinite(multiplier)
   ) {
-    if (Number.isFinite(quoteChange)) {
+    if (
+      quoteChange !== null &&
+      (quoteChange !== 0 || quotePrevClose !== null)
+    ) {
       quoteDayChange = quoteChange * quantity * multiplier;
-    } else if (Number.isFinite(quotePrevClose) && Number.isFinite(mark)) {
+    } else if (quotePrevClose !== null && Number.isFinite(mark)) {
       quoteDayChange = (mark - quotePrevClose) * quantity * multiplier;
     }
   }
   const dayChange = sameDayPosition ? unrealizedPnl : quoteDayChange;
   const previousValue =
-    Number.isFinite(quotePrevClose) &&
+    quotePrevClose !== null &&
     Number.isFinite(quantity) &&
     Number.isFinite(multiplier)
       ? quotePrevClose * quantity * multiplier
@@ -272,6 +275,9 @@ function positiveNumberOrNull(value: unknown): number | null {
 }
 
 function finiteNumberOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 }

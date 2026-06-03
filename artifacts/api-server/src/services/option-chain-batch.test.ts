@@ -64,6 +64,39 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function releaseMaybe(release: (() => void) | null): void {
+  if (release) {
+    release();
+  }
+}
+
+test("getBarsWithDebug keeps expanded cache and query-scope dedupe guards", () => {
+  const source = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
+  const barsBlock =
+    source.match(
+      /const BARS_CACHE_TTL_MS[\s\S]*?function withBarsDebug/,
+    )?.[0] ?? "";
+  const getBarsBlock =
+    source.match(
+      /export async function getBarsWithDebug[\s\S]*?\nfunction refreshBarsCache/,
+    )?.[0] ?? "";
+
+  assert.match(source, /const BARS_CACHE_MAX_ENTRIES = 1_024/);
+  assert.match(barsBlock, /function buildBarsScopeKey/);
+  assert.match(barsBlock, /function findReusableCachedBarsEntry/);
+  assert.match(barsBlock, /function findReusableBarsInFlight/);
+  assert.match(
+    getBarsBlock,
+    /const reusableCached = findReusableCachedBarsEntry/,
+  );
+  assert.match(
+    getBarsBlock,
+    /const reusableStale = findReusableCachedBarsEntry/,
+  );
+  assert.match(getBarsBlock, /const reusableInFlight = findReusableBarsInFlight/);
+  assert.match(getBarsBlock, /refreshBarsCache\(key, sanitizedInput/);
+});
+
 test("option chart bars tag IBKR historical requests with a visible family", () => {
   const source = readFileSync(new URL("./platform.ts", import.meta.url), "utf8");
   const optionChartBarsBody =
@@ -1747,6 +1780,109 @@ test("option expiration lookup does not cache empty Gateway responses", async ()
   assert.equal(dateOnly(loaded.expirations[0].expirationDate), "2099-05-08");
 });
 
+test("option expiration lookup backs off failed uncached keys", async () => {
+  let calls = 0;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionExpirations: async () => {
+          calls += 1;
+          throw new HttpError(504, "IBKR bridge option metadata timed out.", {
+            code: "ibkr_bridge_request_timeout",
+          });
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const failed = await getOptionExpirationsWithDebug({ underlying: "RKLB" });
+  const backedOff = await getOptionExpirationsWithDebug({ underlying: "RKLB" });
+
+  assert.equal(calls, 1);
+  assert.deepEqual(failed.expirations, []);
+  assert.equal(failed.debug.reason, "options_upstream_failure");
+  assert.deepEqual(backedOff.expirations, []);
+  assert.equal(backedOff.debug.reason, "options_backoff");
+  assert.equal((backedOff.debug.backoffRemainingMs ?? 0) > 0, true);
+});
+
+test("option expiration lookup bypass ignores failed uncached key backoff", async () => {
+  let calls = 0;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionExpirations: async () => {
+          calls += 1;
+          if (calls === 1) {
+            throw new HttpError(504, "IBKR bridge option metadata timed out.", {
+              code: "ibkr_bridge_request_timeout",
+            });
+          }
+          return [new Date("2099-05-08T00:00:00.000Z")];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const failed = await getOptionExpirationsWithDebug({
+    underlying: "STA",
+    bypassBridgeBackoff: true,
+  });
+  const retried = await getOptionExpirationsWithDebug({
+    underlying: "STA",
+    bypassBridgeBackoff: true,
+  });
+
+  assert.equal(calls, 2);
+  assert.deepEqual(failed.expirations, []);
+  assert.equal(failed.debug.reason, "options_upstream_failure");
+  assert.equal(dateOnly(retried.expirations[0].expirationDate), "2099-05-08");
+  assert.notEqual(retried.debug.reason, "options_backoff");
+});
+
+test("option expiration foreground budget returns degraded data while refresh warms cache", async () => {
+  let calls = 0;
+  let releaseRefresh: (() => void) | null = null;
+  const refreshReleased = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionExpirations: async () => {
+          calls += 1;
+          await refreshReleased;
+          return [new Date("2099-05-08T00:00:00.000Z")];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const startedAt = Date.now();
+  const deferred = await getOptionExpirationsWithDebug({
+    underlying: "SPY",
+    foregroundWaitMs: 10,
+  });
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(elapsedMs < 100, true);
+  assert.deepEqual(deferred.expirations, []);
+  assert.equal(deferred.debug.degraded, true);
+  assert.equal(deferred.debug.stale, true);
+  assert.equal(deferred.debug.reason, "option_expirations_refresh_deferred");
+  assert.equal(calls, 1);
+
+  releaseMaybe(releaseRefresh);
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await wait(10);
+    const warmed = await getOptionExpirationsWithDebug({ underlying: "SPY" });
+    if (warmed.expirations[0]?.expirationDate) {
+      assert.equal(dateOnly(warmed.expirations[0].expirationDate), "2099-05-08");
+      assert.equal(warmed.debug.cacheStatus, "hit");
+      assert.equal(calls, 1);
+      return;
+    }
+  }
+  assert.fail("option expiration cache did not warm after background refresh");
+});
+
 test("option expiration lookup forwards explicit caps without capping all-expiration discovery", async () => {
   const seenMaxExpirations: Array<number | undefined> = [];
   __setIbkrBridgeClientFactoryForTests(
@@ -1780,6 +1916,88 @@ test("option expiration lookup forwards explicit caps without capping all-expira
   assert.equal(capped.debug.capped, true);
   assert.equal(capped.debug.requestedCount, 1);
   assert.equal(capped.debug.returnedCount, 1);
+});
+
+test("option chain lookup backs off failed uncached keys", async () => {
+  let calls = 0;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionChain: async () => {
+          calls += 1;
+          throw new HttpError(504, "IBKR bridge option chain timed out.", {
+            code: "ibkr_bridge_request_timeout",
+          });
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const request = {
+    underlying: "GEV",
+    expirationDate: new Date("2026-06-05T00:00:00.000Z"),
+    contractType: "call" as const,
+    strikesAroundMoney: 3,
+    strikeCoverage: "standard" as const,
+    quoteHydration: "metadata" as const,
+  };
+  const failed = await getOptionChainWithDebug(request);
+  const backedOff = await getOptionChainWithDebug(request);
+
+  assert.equal(calls, 1);
+  assert.deepEqual(failed.contracts, []);
+  assert.equal(failed.debug.reason, "options_upstream_failure");
+  assert.deepEqual(backedOff.contracts, []);
+  assert.equal(backedOff.debug.reason, "options_backoff");
+  assert.equal((backedOff.debug.backoffRemainingMs ?? 0) > 0, true);
+});
+
+test("option chain lookup bypass ignores failed uncached key backoff", async () => {
+  let calls = 0;
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getOptionChain: async () => {
+          calls += 1;
+          if (calls === 1) {
+            throw new HttpError(504, "IBKR bridge option chain timed out.", {
+              code: "ibkr_bridge_request_timeout",
+            });
+          }
+          return [
+            {
+              contract: {
+                underlying: "STA",
+                expirationDate: new Date("2026-06-05T00:00:00.000Z"),
+                strike: 100,
+                right: "call",
+                providerContractId: "sta-call-100",
+              },
+              bid: 1,
+              ask: 1.1,
+              mark: 1.05,
+            },
+          ];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const request = {
+    underlying: "STA",
+    expirationDate: new Date("2026-06-05T00:00:00.000Z"),
+    contractType: "call" as const,
+    strikesAroundMoney: 3,
+    strikeCoverage: "standard" as const,
+    quoteHydration: "metadata" as const,
+    bypassBridgeBackoff: true,
+  };
+  const failed = await getOptionChainWithDebug(request);
+  const retried = await getOptionChainWithDebug(request);
+
+  assert.equal(calls, 2);
+  assert.deepEqual(failed.contracts, []);
+  assert.equal(failed.debug.reason, "options_upstream_failure");
+  assert.equal(retried.contracts.length, 1);
+  assert.notEqual(retried.debug.reason, "options_backoff");
 });
 
 test("uncapped option expiration discovery does not trust partial durable metadata", () => {

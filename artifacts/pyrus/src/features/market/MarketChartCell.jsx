@@ -187,7 +187,11 @@ export const MarketChartCell = ({
   );
   const [pendingTickerSelection, setPendingTickerSelection] = useState(null);
   const pendingPointerRef = useRef(null);
+  const pendingMouseRef = useRef(null);
   const suppressNextClickRef = useRef(false);
+  const suppressNextClickTimerRef = useRef(null);
+  const pointerWindowCleanupRef = useRef(null);
+  const mouseWindowCleanupRef = useRef(null);
   const searchOpen = Boolean(tickerSearchOpen);
   const setSearchOpen = useCallback(
     (open) => onTickerSearchOpenChange?.(Boolean(open)),
@@ -217,6 +221,54 @@ export const MarketChartCell = ({
     setPendingTickerSelection(null);
   }, [onChangeTicker, pendingTickerSelection, rememberTicker, setSearchOpen]);
 
+  const clearFrameClickSuppression = useCallback(() => {
+    suppressNextClickRef.current = false;
+    if (
+      typeof window !== "undefined" &&
+      suppressNextClickTimerRef.current != null
+    ) {
+      window.clearTimeout(suppressNextClickTimerRef.current);
+    }
+    suppressNextClickTimerRef.current = null;
+  }, []);
+
+  const armFrameClickSuppression = useCallback(() => {
+    suppressNextClickRef.current = true;
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (suppressNextClickTimerRef.current != null) {
+      window.clearTimeout(suppressNextClickTimerRef.current);
+    }
+    suppressNextClickTimerRef.current = window.setTimeout(() => {
+      suppressNextClickRef.current = false;
+      suppressNextClickTimerRef.current = null;
+    }, 250);
+  }, []);
+
+  const cleanupFramePointerWindowListeners = useCallback(() => {
+    pointerWindowCleanupRef.current?.();
+    pointerWindowCleanupRef.current = null;
+  }, []);
+
+  const cleanupFrameMouseWindowListeners = useCallback(() => {
+    mouseWindowCleanupRef.current?.();
+    mouseWindowCleanupRef.current = null;
+  }, []);
+
+  useEffect(
+    () => () => {
+      clearFrameClickSuppression();
+      cleanupFramePointerWindowListeners();
+      cleanupFrameMouseWindowListeners();
+    },
+    [
+      cleanupFrameMouseWindowListeners,
+      cleanupFramePointerWindowListeners,
+      clearFrameClickSuppression,
+    ],
+  );
+
   const handleFramePointerDown = useCallback((event) => {
     if (event.button != null && event.button !== 0) {
       return;
@@ -224,12 +276,68 @@ export const MarketChartCell = ({
     if (isMarketChartShellControlTarget(event.target)) {
       return;
     }
-    pendingPointerRef.current = {
+    cleanupFramePointerWindowListeners();
+    const pending = {
       pointerId: event.pointerId,
       x: event.clientX,
       y: event.clientY,
+      startedOnPlot: isMarketChartPlotTarget(event.target),
     };
-  }, []);
+    pendingPointerRef.current = pending;
+    if (typeof window === "undefined") {
+      return;
+    }
+    const pointerId = event.pointerId;
+    const handleWindowPointerMove = (moveEvent) => {
+      const current = pendingPointerRef.current;
+      if (!current || current.pointerId !== pointerId) {
+        return;
+      }
+      const distance = Math.hypot(
+        moveEvent.clientX - current.x,
+        moveEvent.clientY - current.y,
+      );
+      if (distance > MARKET_CHART_CLICK_MOVE_TOLERANCE) {
+        current.dragged = true;
+        armFrameClickSuppression();
+      }
+    };
+    const handleWindowPointerEnd = (endEvent) => {
+      const current = pendingPointerRef.current;
+      if (current?.pointerId === pointerId) {
+        const distance = Math.hypot(
+          endEvent.clientX - current.x,
+          endEvent.clientY - current.y,
+        );
+        if (current.dragged || distance > MARKET_CHART_CLICK_MOVE_TOLERANCE) {
+          armFrameClickSuppression();
+        } else if (
+          !isActive &&
+          typeof onFocus === "function" &&
+          !isMarketChartShellControlTarget(endEvent.target)
+        ) {
+          armFrameClickSuppression();
+          onFocus(ticker);
+        }
+      }
+      pendingPointerRef.current = null;
+      cleanupFramePointerWindowListeners();
+    };
+    window.addEventListener("pointermove", handleWindowPointerMove, true);
+    window.addEventListener("pointerup", handleWindowPointerEnd, true);
+    window.addEventListener("pointercancel", handleWindowPointerEnd, true);
+    pointerWindowCleanupRef.current = () => {
+      window.removeEventListener("pointermove", handleWindowPointerMove, true);
+      window.removeEventListener("pointerup", handleWindowPointerEnd, true);
+      window.removeEventListener("pointercancel", handleWindowPointerEnd, true);
+    };
+  }, [
+    armFrameClickSuppression,
+    cleanupFramePointerWindowListeners,
+    isActive,
+    onFocus,
+    ticker,
+  ]);
   const handleFramePointerMove = useCallback((event) => {
     const pending = pendingPointerRef.current;
     if (!pending || pending.pointerId !== event.pointerId) {
@@ -237,9 +345,9 @@ export const MarketChartCell = ({
     }
     const distance = Math.hypot(event.clientX - pending.x, event.clientY - pending.y);
     if (distance > MARKET_CHART_CLICK_MOVE_TOLERANCE) {
-      suppressNextClickRef.current = true;
+      armFrameClickSuppression();
     }
-  }, []);
+  }, [armFrameClickSuppression]);
   const handleFramePointerUp = useCallback((event) => {
     const pending = pendingPointerRef.current;
     if (!pending || pending.pointerId !== event.pointerId) {
@@ -247,25 +355,121 @@ export const MarketChartCell = ({
     }
     const distance = Math.hypot(event.clientX - pending.x, event.clientY - pending.y);
     if (distance > MARKET_CHART_CLICK_MOVE_TOLERANCE) {
-      suppressNextClickRef.current = true;
+      armFrameClickSuppression();
     } else if (
       !isActive &&
       typeof onFocus === "function" &&
+      !pending.startedOnPlot &&
       !isMarketChartShellControlTarget(event.target)
     ) {
-      suppressNextClickRef.current = true;
+      armFrameClickSuppression();
       onFocus(ticker);
     }
     pendingPointerRef.current = null;
-  }, [isActive, onFocus, ticker]);
+    cleanupFramePointerWindowListeners();
+  }, [
+    armFrameClickSuppression,
+    cleanupFramePointerWindowListeners,
+    isActive,
+    onFocus,
+    ticker,
+  ]);
   const handleFramePointerCancel = useCallback(() => {
     pendingPointerRef.current = null;
-    suppressNextClickRef.current = true;
-  }, []);
+    cleanupFramePointerWindowListeners();
+    armFrameClickSuppression();
+  }, [armFrameClickSuppression, cleanupFramePointerWindowListeners]);
+  const handleFrameMouseDown = useCallback((event) => {
+    if (event.button != null && event.button !== 0) {
+      return;
+    }
+    if (isMarketChartShellControlTarget(event.target)) {
+      return;
+    }
+    cleanupFrameMouseWindowListeners();
+    const pending = {
+      x: event.clientX,
+      y: event.clientY,
+      startedOnPlot: isMarketChartPlotTarget(event.target),
+    };
+    pendingMouseRef.current = pending;
+    if (typeof window === "undefined") {
+      return;
+    }
+    const handleWindowMouseMove = (moveEvent) => {
+      const current = pendingMouseRef.current;
+      if (!current) {
+        return;
+      }
+      const distance = Math.hypot(
+        moveEvent.clientX - current.x,
+        moveEvent.clientY - current.y,
+      );
+      if (distance > MARKET_CHART_CLICK_MOVE_TOLERANCE) {
+        current.dragged = true;
+        armFrameClickSuppression();
+      }
+    };
+    const handleWindowMouseEnd = (endEvent) => {
+      const current = pendingMouseRef.current;
+      if (current) {
+        const distance = Math.hypot(
+          endEvent.clientX - current.x,
+          endEvent.clientY - current.y,
+        );
+        if (current.dragged || distance > MARKET_CHART_CLICK_MOVE_TOLERANCE) {
+          armFrameClickSuppression();
+        } else if (
+          !isActive &&
+          typeof onFocus === "function" &&
+          !isMarketChartShellControlTarget(endEvent.target)
+        ) {
+          armFrameClickSuppression();
+          onFocus(ticker);
+        }
+      }
+      pendingMouseRef.current = null;
+      cleanupFrameMouseWindowListeners();
+    };
+    window.addEventListener("mousemove", handleWindowMouseMove, true);
+    window.addEventListener("mouseup", handleWindowMouseEnd, true);
+    mouseWindowCleanupRef.current = () => {
+      window.removeEventListener("mousemove", handleWindowMouseMove, true);
+      window.removeEventListener("mouseup", handleWindowMouseEnd, true);
+    };
+  }, [
+    armFrameClickSuppression,
+    cleanupFrameMouseWindowListeners,
+    isActive,
+    onFocus,
+    ticker,
+  ]);
+  const handleFrameMouseMove = useCallback((event) => {
+    const pending = pendingMouseRef.current;
+    if (!pending) {
+      return;
+    }
+    const distance = Math.hypot(event.clientX - pending.x, event.clientY - pending.y);
+    if (distance > MARKET_CHART_CLICK_MOVE_TOLERANCE) {
+      armFrameClickSuppression();
+    }
+  }, [armFrameClickSuppression]);
+  const handleFrameMouseUp = useCallback((event) => {
+    const pending = pendingMouseRef.current;
+    if (!pending) {
+      return;
+    }
+    const distance = Math.hypot(event.clientX - pending.x, event.clientY - pending.y);
+    if (distance > MARKET_CHART_CLICK_MOVE_TOLERANCE) {
+      armFrameClickSuppression();
+    }
+    pendingMouseRef.current = null;
+    cleanupFrameMouseWindowListeners();
+  }, [armFrameClickSuppression, cleanupFrameMouseWindowListeners]);
   const handleFrameClick = useCallback(
     (event) => {
       if (suppressNextClickRef.current) {
-        suppressNextClickRef.current = false;
+        clearFrameClickSuppression();
         return;
       }
       if (isActive || typeof onFocus !== "function") {
@@ -276,7 +480,7 @@ export const MarketChartCell = ({
       }
       onFocus(ticker);
     },
-    [isActive, onFocus, ticker],
+    [clearFrameClickSuppression, isActive, onFocus, ticker],
   );
   const handleDoubleClick = useCallback(
     (event) => {
@@ -304,6 +508,9 @@ export const MarketChartCell = ({
       onPointerMoveCapture={handleFramePointerMove}
       onPointerUpCapture={handleFramePointerUp}
       onPointerCancelCapture={handleFramePointerCancel}
+      onMouseDownCapture={handleFrameMouseDown}
+      onMouseMoveCapture={handleFrameMouseMove}
+      onMouseUpCapture={handleFrameMouseUp}
       onClick={handleFrameClick}
       onDoubleClick={handleDoubleClick}
       style={{

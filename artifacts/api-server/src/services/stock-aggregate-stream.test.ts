@@ -9,9 +9,11 @@ import {
 } from "../lib/runtime";
 import {
   __stockAggregateStreamTestInternals,
+  getCurrentStockMinuteAggregates,
   getPreferredStockAggregateStreamSource,
   getRecentStockMinuteAggregateHistory,
   getStockAggregateStreamDiagnostics,
+  hasRecentStockAggregateSourceActivity,
   resolvePreferredStockAggregateStreamSource,
   subscribeStockMinuteAggregates,
 } from "./stock-aggregate-stream";
@@ -78,7 +80,7 @@ test("stock aggregate stream source resolver prefers IBKR over delayed Massive",
   );
 });
 
-test("stock aggregate stream source resolver prefers Massive real-time over IBKR", () => {
+test("stock aggregate stream source resolver keeps Massive real-time primary over IBKR", () => {
   assert.equal(
     resolvePreferredStockAggregateStreamSource({
       ibkrConfigured: true,
@@ -132,7 +134,7 @@ test("configured IBKR bridge wins when Massive is delayed", () => {
   );
 });
 
-test("Massive real-time stock aggregates win even when IBKR is configured", () => {
+test("Massive real-time stock aggregates remain primary with IBKR runtime bridge", () => {
   withAggregateRuntimeEnv(
     {
       MASSIVE_API_KEY: "massive-test-key",
@@ -145,7 +147,10 @@ test("Massive real-time stock aggregates win even when IBKR is configured", () =
         apiToken: "runtime-token",
       });
 
-      assert.equal(getPreferredStockAggregateStreamSource(), "massive-websocket");
+      assert.equal(
+        getPreferredStockAggregateStreamSource(),
+        "massive-websocket",
+      );
     },
   );
 });
@@ -344,4 +349,109 @@ test("stock aggregate stream emits flat carry-forward aggregates while quotes ar
       __stockAggregateStreamTestInternals.reset();
     }
   });
+});
+
+test("stock aggregate source activity ignores carry-forward heartbeats for quote-derived streams", () => {
+  withAggregateRuntimeEnv({}, () => {
+    setIbkrBridgeRuntimeOverride({
+      baseUrl: "https://runtime-bridge.example.com",
+      apiToken: "runtime-token",
+    });
+    __stockAggregateStreamTestInternals.reset();
+    const unsubscribe = subscribeStockMinuteAggregates(["SPY"], () => {});
+
+    try {
+      __stockAggregateStreamTestInternals.handleQuoteSnapshot(
+        {
+          quotes: [
+            {
+              symbol: "SPY",
+              price: 100,
+              bid: 0,
+              ask: 0,
+              volume: 1_000,
+            } as any,
+          ],
+        },
+        0,
+      );
+      assert.equal(
+        hasRecentStockAggregateSourceActivity({
+          symbols: ["spy"],
+          now: new Date(30_000),
+          maxAgeMs: 60_000,
+        }),
+        true,
+      );
+
+      __stockAggregateStreamTestInternals.emitAggregateHeartbeats(120_000);
+      __stockAggregateStreamTestInternals.flushAggregateFanout();
+      assert.equal(
+        hasRecentStockAggregateSourceActivity({
+          symbols: ["SPY"],
+          now: new Date(120_000),
+          maxAgeMs: 60_000,
+        }),
+        false,
+      );
+    } finally {
+      unsubscribe();
+      __stockAggregateStreamTestInternals.reset();
+    }
+  });
+});
+
+test("Massive real-time quote ticks synthesize stock aggregate bars", () => {
+  withAggregateRuntimeEnv(
+    {
+      MASSIVE_API_KEY: "massive-test-key",
+    },
+    () => {
+      __stockAggregateStreamTestInternals.reset();
+      const messages: unknown[] = [];
+      const unsubscribe = subscribeStockMinuteAggregates(["PWR"], (message) => {
+        messages.push(message);
+      });
+
+      try {
+        __stockAggregateStreamTestInternals.handleMassiveQuoteSnapshot(
+          {
+            quotes: [
+              {
+                symbol: "PWR",
+                price: 700,
+                bid: 699.5,
+                ask: 700.5,
+                volume: null,
+              } as any,
+            ],
+          },
+          0,
+        );
+        __stockAggregateStreamTestInternals.flushAggregateFanout();
+
+        assert.equal(messages.length, 1);
+        assert.equal((messages[0] as any).symbol, "PWR");
+        assert.equal((messages[0] as any).source, "massive-websocket");
+        assert.equal((messages[0] as any).startMs, 0);
+        assert.equal((messages[0] as any).close, 700);
+        assert.equal(
+          getCurrentStockMinuteAggregates(["pwr"])[0]?.source,
+          "massive-websocket",
+        );
+
+        __stockAggregateStreamTestInternals.emitAggregateHeartbeats(61_000);
+        __stockAggregateStreamTestInternals.flushAggregateFanout();
+
+        assert.equal(messages.length, 2);
+        assert.equal((messages[1] as any).source, "massive-websocket");
+        assert.equal((messages[1] as any).startMs, 60_000);
+        assert.equal((messages[1] as any).close, 700);
+        assert.equal((messages[1] as any).volume, 0);
+      } finally {
+        unsubscribe();
+        __stockAggregateStreamTestInternals.reset();
+      }
+    },
+  );
 });

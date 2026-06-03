@@ -14,8 +14,10 @@ import {
   listIbkrPositions,
 } from "./ibkr-account-bridge";
 import {
+  clearBridgeOrderReadSuppression,
   getBridgeOrderReadSuppression,
   markBridgeOrderReadsSuppressed,
+  shouldProbeBridgeOrderReadSuppression,
 } from "./bridge-order-read-state";
 import type {
   HistoryBarTimeframe,
@@ -185,10 +187,6 @@ function marketDataRequestFromInstrument(input: {
       providerContractId,
       requiresGreeks: !options.massiveStocksRealtime,
     };
-  }
-
-  if (options.massiveStocksRealtime) {
-    return null;
   }
 
   return symbol ? { assetClass: "equity", symbol } : null;
@@ -483,6 +481,7 @@ export async function fetchOptionQuoteSnapshotPayload(input: {
   ttlMs?: number;
   fallbackProvider?: MarketDataFallbackProvider;
   requiresGreeks?: boolean;
+  signal?: AbortSignal;
 }): Promise<OptionQuoteSnapshotPayload> {
   return fetchBridgeOptionQuoteSnapshots(input);
 }
@@ -582,7 +581,7 @@ export async function fetchOrderSnapshotPayload(input: {
   const cached = orderSnapshotCache.get(cacheKey);
   const suppression = getBridgeOrderReadSuppression();
 
-  if (suppression) {
+  if (suppression && !shouldProbeBridgeOrderReadSuppression(suppression)) {
     return cached && Date.now() - cached.cachedAt <= ORDER_SNAPSHOT_STALE_MS
       ? cached.payload
       : { orders: [] };
@@ -617,6 +616,7 @@ export async function fetchOrderSnapshotPayload(input: {
       ).orders,
     }));
     orderSnapshotCache.set(cacheKey, { payload, cachedAt: Date.now() });
+    clearBridgeOrderReadSuppression("orders_timeout");
     updateAccountMonitorOrders({
       mode: input.mode,
       accountId: input.accountId,
@@ -715,6 +715,10 @@ export function subscribeQuoteSnapshots(
   const normalizedSymbols = Array.from(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
+
+  if (isMassiveStocksRealtimeConfigured()) {
+    return subscribeMassiveStockQuoteSnapshots(normalizedSymbols, onSnapshot);
+  }
 
   return subscribeBridgeQuoteSnapshots(normalizedSymbols, onSnapshot);
 }

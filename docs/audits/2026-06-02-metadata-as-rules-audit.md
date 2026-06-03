@@ -35,7 +35,7 @@ Regression coverage:
 
 The footer update remains part of this audit outcome: worker counts, poll counts, and stream counts are metadata only. The compact four-bar footer now shows `Browser`, combined `API`, `Cache`, and `Runtime`. API heap remains available in the popover details, but it no longer gets a separate compact bar next to API RSS.
 
-Browser pressure is now limit-aware when Chrome exposes `performance.memory.jsHeapSizeLimit`: fixed low browser thresholds no longer mark a browser heap around 600 MB as critical when the browser-reported heap ceiling is multiple GB.
+Browser pressure is now limit-aware when Chrome exposes `performance.memory.jsHeapSizeLimit`: fixed low browser thresholds no longer mark a browser heap around 600 MB as critical when the browser-reported heap ceiling is multiple GB. API diagnostics now emits `browserMemoryLimitMb` and `browserMemoryLimitPercent`, suppresses the stale static `browser_memory_mb` threshold when a real limit is available, and the Diagnostics/Settings surfaces show the browser limit next to the estimate.
 
 ## Remaining Ranked Suspects
 
@@ -101,6 +101,7 @@ Recommended next step: keep compact projection tests focused on persisted-first 
 Passed:
 
 - `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/readiness.test.ts`
+- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/diagnostics.test.ts`
 - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/screens/DiagnosticsScreen.test.js src/features/platform/useMemoryPressureSignal.test.js src/features/platform/FooterMemoryPressureIndicator.test.js src/features/platform/memoryPressureModel.test.js`
 - `pnpm --filter @workspace/api-server run typecheck`
 - `pnpm --filter @workspace/pyrus run typecheck`

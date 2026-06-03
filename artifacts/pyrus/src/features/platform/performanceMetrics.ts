@@ -4,6 +4,7 @@ import { isPyrusSafeQaMode } from "../../app/qa-mode";
 
 const API_TIMING_EVENT = "pyrus:api-request-timing";
 export const SCREEN_READY_EVENT = "pyrus:screen-ready";
+export const ROUTE_DATA_TIMING_EVENT = "pyrus:route-data-timing";
 const REPORT_INTERVAL_MS = 30_000;
 const MAX_API_TIMINGS = 160;
 const MAX_SCREEN_TIMINGS = 80;
@@ -161,6 +162,31 @@ const topScreenTimings = (samples: ScreenTimingSample[]) => {
     .slice(0, 8);
 };
 
+const topRouteDataTimings = (samples: RouteDataTimingSample[]) => {
+  const byStage = new Map<string, RouteDataTimingSample[]>();
+  samples.forEach((sample) => {
+    const key = `${sample.screenId}:${sample.stage}`;
+    const current = byStage.get(key) ?? [];
+    current.push(sample);
+    byStage.set(key, current);
+  });
+
+  return Array.from(byStage.entries())
+    .map(([key, stageSamples]) => {
+      const [screenId = "", stage = ""] = key.split(":");
+      return {
+        screenId,
+        stage,
+        ...summarizeTimings(stageSamples, SLOW_SCREEN_READY_MS),
+        lastObservedMs: Math.round(
+          stageSamples[stageSamples.length - 1]?.durationMs ?? 0,
+        ),
+      };
+    })
+    .sort((left, right) => (right.p95Ms ?? 0) - (left.p95Ms ?? 0))
+    .slice(0, 8);
+};
+
 const handleApiTiming = (event: Event) => {
   const detail = asRecord((event as CustomEvent).detail);
   const path = asString(detail.path);
@@ -309,20 +335,22 @@ export const markRouteDataTiming = (
       source: "active",
     };
   const observedAt = nowMs();
-  pushBounded(
-    metrics.routeDataTimings,
-    {
-      screenId,
-      stage,
-      source: started.source,
-      durationMs: Math.max(0, Math.round(observedAt - started.startedAt)),
-      startedAtMs: Math.round(started.startedAt),
-      observedAtMs: Math.round(observedAt),
-      observedAt: nowIso(),
-      detail: asRecord(detail),
-    },
-    MAX_ROUTE_DATA_TIMINGS,
-  );
+  const sample: RouteDataTimingSample = {
+    screenId,
+    stage,
+    source: started.source,
+    durationMs: Math.max(0, Math.round(observedAt - started.startedAt)),
+    startedAtMs: Math.round(started.startedAt),
+    observedAtMs: Math.round(observedAt),
+    observedAt: nowIso(),
+    detail: asRecord(detail),
+  };
+  pushBounded(metrics.routeDataTimings, sample, MAX_ROUTE_DATA_TIMINGS);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent(ROUTE_DATA_TIMING_EVENT, { detail: sample }),
+    );
+  }
 };
 
 export const hasPyrusFirstScreenReady = () => metrics.firstScreenReadyAt > 0;
@@ -336,6 +364,10 @@ export const buildPyrusPerformanceMetricsPayload = (reason = "interval") => {
   );
   const screenSummary = summarizeTimings(
     metrics.screenTimings,
+    SLOW_SCREEN_READY_MS,
+  );
+  const routeDataSummary = summarizeTimings(
+    metrics.routeDataTimings,
     SLOW_SCREEN_READY_MS,
   );
   const longTaskSummary = summarizeTimings(metrics.longTasks, 50);
@@ -359,6 +391,11 @@ export const buildPyrusPerformanceMetricsPayload = (reason = "interval") => {
     longTasks: {
       ...longTaskSummary,
       recent: metrics.longTasks.slice(-12),
+    },
+    routeDataTimings: {
+      ...routeDataSummary,
+      topStages: topRouteDataTimings(metrics.routeDataTimings),
+      recent: metrics.routeDataTimings.slice(-12),
     },
     apiTimings: {
       ...apiSummary,

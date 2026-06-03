@@ -192,6 +192,36 @@ test("fetchBridgeQuoteSnapshots hydrates missing symbols through the shared brid
   );
 });
 
+test("fetchBridgeQuoteSnapshots retains explicit account-monitor owners until TTL", async () => {
+  __setBridgeQuoteClientForTests({
+    async getQuoteSnapshots(symbols) {
+      return symbols.map((symbol, index) =>
+        quote(symbol, 100 + index, "2026-04-28T14:30:00.000Z"),
+      );
+    },
+    streamQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  await fetchBridgeQuoteSnapshots(["FCEL", "FRMI"], {
+    owner: "account-position-equity-quotes:U1",
+    intent: "account-monitor-live",
+    fallbackProvider: "cache",
+    ttlMs: 15_000,
+  });
+
+  const diagnostics = getMarketDataAdmissionDiagnostics();
+  const accountMonitorOwnerClass =
+    diagnostics.ownerClasses.summaries["account-monitor"];
+  assert.equal(diagnostics.accountMonitorLineCount, 2);
+  assert.equal(accountMonitorOwnerClass?.activeLineCount, 2);
+  assert.deepEqual(
+    accountMonitorOwnerClass?.activeOwnerSample,
+    ["account-position-equity-quotes:U1"],
+  );
+});
+
 test("fetchBridgeQuoteSnapshots skips bridge client when runtime is not configured", async () => {
   let snapshotCalls = 0;
   __setBridgeQuoteClientForTests({

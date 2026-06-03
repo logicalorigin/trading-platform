@@ -3,15 +3,15 @@
 ## Session Metadata
 
 - Session ID: `019e84ed-e068-7de2-ad5e-d900df7d26c1`
-- Saved At (MT): `2026-06-01 18:16:02 MDT`
-- Saved At (UTC): `2026-06-02T00:16:02.906Z`
-- Summary: 2026-06-01 18:16:02 MDT | 019e84ed-e068-7de2-ad5e-d900df7d26c1 | our forward-looking price projection on charts based on GEX data should use the same axis design styling and scali…
+- Saved At (MT): `2026-06-01 18:39:04 MDT`
+- Saved At (UTC): `2026-06-02T00:39:04.597Z`
+- Summary: 2026-06-01 18:39:04 MDT | 019e84ed-e068-7de2-ad5e-d900df7d26c1 | our forward-looking price projection on charts based on GEX data should use the same axis design styling and scali…
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
 - Rollout Path: `/home/runner/.codex/sessions/2026/06/01/rollout-2026-06-01T14-44-02-019e84ed-e068-7de2-ad5e-d900df7d26c1.jsonl`
 - Branch: `main`
-- HEAD: `9256e61f4dd65a1c6c6f327f4b54de77aed2adbf`
-- Latest Commit: `docs: add metadata-as-rules audit`
+- HEAD: `9489d72ed09be58488b39845883b8033a3bd8e7a`
+- Latest Commit: `docs: refresh signal matrix and memory handoffs`
 - Latest Commit Session ID: `unknown`
 - Title: our forward-looking price projection on charts based on GEX data should use the same axis design styling and scaling as…
 - Model: `gpt-5.5`
@@ -26,7 +26,10 @@ our forward-looking price projection on charts based on GEX data should use the 
 
 - `SESSION_HANDOFF_2026-06-01_75218067-d9b9-4264-8b7a-3243c1a06ca1.md`
 - `SESSION_HANDOFF_2026-06-01_019e8583-e862-7bb1-8560-5db3658c7345.md`
+- `SESSION_HANDOFF_2026-06-01_019e856f-e49f-7fb0-941e-fd5c610c8e35.md`
 - `SESSION_HANDOFF_2026-06-01_019e856e-bffa-7833-b2b7-da4c35f1f4ed.md`
+- `SESSION_HANDOFF_2026-06-01_019e856e-09fe-7de1-b9bc-28878b14c985.md`
+- `SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md`
 - `SESSION_HANDOFF_2026-06-01_019e84aa-d2bd-7103-91a9-a73c9fcfb9c1.md`
 - `SESSION_HANDOFF_2026-06-01_019e84aa-c1d5-79e1-adba-5a743d03c8cc.md`
 - `SESSION_HANDOFF_2026-06-01_019e84aa-83ed-7462-8cd5-1c29cc47fbd7.md`
@@ -150,29 +153,59 @@ our forward-looking price projection on charts based on GEX data should use the 
 
 ## High-Signal Changed Files
 
-- `artifacts/api-server/src/services/readiness.test.ts`
-- `artifacts/pyrus/src/components/platform/primitives.jsx`
-- `artifacts/pyrus/src/features/signals/signalsRowModel.js`
-- `lib/api-zod/src/generated/api.ts`
+- `SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md`
+- `SESSION_HANDOFF_CURRENT.md`
+- `SESSION_HANDOFF_MASTER.md`
+- `artifacts/api-server/src/services/diagnostics.test.ts`
+- `artifacts/api-server/src/services/diagnostics.ts`
+- `artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx`
+- `artifacts/pyrus/src/features/platform/memoryPressureClient.js`
+- `artifacts/pyrus/src/features/platform/memoryPressureModel.test.js`
+- `artifacts/pyrus/src/features/platform/memoryPressurePopoverModel.js`
+- `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js`
+- `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js`
+- `artifacts/pyrus/src/screens/DiagnosticsScreen.jsx`
+- `artifacts/pyrus/src/screens/SettingsScreen.jsx`
+- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`
 
 ## Repo State Snapshot
 
 ```text
-## main...origin/main [ahead 4]
- M artifacts/api-server/src/services/readiness.test.ts
- M artifacts/pyrus/src/components/platform/primitives.jsx
- M artifacts/pyrus/src/features/signals/signalsRowModel.js
- M lib/api-zod/src/generated/api.ts
+## main...origin/main
+ M SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md
+ M SESSION_HANDOFF_CURRENT.md
+ M SESSION_HANDOFF_MASTER.md
+ M artifacts/api-server/src/services/diagnostics.test.ts
+ M artifacts/api-server/src/services/diagnostics.ts
+ M artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx
+ M artifacts/pyrus/src/features/platform/memoryPressureClient.js
+ M artifacts/pyrus/src/features/platform/memoryPressureModel.test.js
+ M artifacts/pyrus/src/features/platform/memoryPressurePopoverModel.js
+ M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js
+ M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js
+ M artifacts/pyrus/src/screens/DiagnosticsScreen.jsx
+ M artifacts/pyrus/src/screens/SettingsScreen.jsx
+ M artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js
 ```
 
 ## Diff Summary
 
 ```text
- .../api-server/src/services/readiness.test.ts      |   3 +-
- .../pyrus/src/components/platform/primitives.jsx   | 132 +++++---
- .../pyrus/src/features/signals/signalsRowModel.js  | 331 +++++++++++++++++++++
- lib/api-zod/src/generated/api.ts                   |   2 +
- 4 files changed, 433 insertions(+), 35 deletions(-)
+ ...6-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md |  42 +++++++--
+ SESSION_HANDOFF_CURRENT.md                         |  27 +++---
+ SESSION_HANDOFF_MASTER.md                          |   2 +-
+ .../api-server/src/services/diagnostics.test.ts    |  67 ++++++++++++++
+ artifacts/api-server/src/services/diagnostics.ts   | 101 +++++++++++++++++++--
+ .../src/features/platform/PlatformWatchlist.jsx    |  94 ++++++++++++++++---
+ .../src/features/platform/memoryPressureClient.js  |   1 +
+ .../features/platform/memoryPressureModel.test.js  |  12 +++
+ .../platform/memoryPressurePopoverModel.js         |  11 ++-
+ .../features/platform/useMemoryPressureSignal.js   |   4 +
+ .../platform/useMemoryPressureSignal.test.js       |   7 ++
+ artifacts/pyrus/src/screens/DiagnosticsScreen.jsx  |  20 +++-
+ artifacts/pyrus/src/screens/SettingsScreen.jsx     |   1 +
+ .../src/screens/algo/OperationsSignalRow.test.js   |  20 +++-
+ 14 files changed, 361 insertions(+), 48 deletions(-)
 ```
 
 ## Validations Detected In Transcript
@@ -181,13 +214,23 @@ our forward-looking price projection on charts based on GEX data should use the 
 
 ## What Changed This Session
 
-- Replace this section with the concrete product and code changes completed in the session.
+- Implemented and validated true-axis GEX projection rendering: future projection x coordinates map from the selected chart timeframe instead of being compressed into a custom visible lane.
+- Kept charts anchored to the latest loaded candles on first open; distant intraday expirations now require normal pan/zoom/timeframe changes instead of forcing the initial viewport far into the future.
+- Moved chart overlay loading to the compact `view=chart` projection endpoint with persisted-snapshot-first behavior, bounded live fallback, and 8 persisted expirations by default.
+- Added selected-axis autoscale support and bounded offscreen SVG geometry so far-dated points do not create huge hidden paths or lag the chart.
+- Restyled future expiration labels to match the native axis treatment instead of using boxed/dashed custom marker styling.
 
 ## Current Status
 
-- Replace this section with current validation status, blockers, and any known runtime gaps.
+- Closed out on 2026-06-02 UTC.
+- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/gex-projection.test.ts src/services/treasury-yield-curve.test.ts src/services/gex-projection-api.test.ts` passed with 10 tests.
+- `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js src/features/charting/ResearchChartSurface.test.ts` passed with 91 tests.
+- `pnpm --filter @workspace/api-server run typecheck` passed.
+- `pnpm --filter @workspace/pyrus run typecheck` passed.
+- `GET http://127.0.0.1:18747/api/gex/SPY/projection?view=chart` returned 200 with 8 overlay points from `2026-06-02` through `2026-06-11`; warm retries completed in about 255-366ms.
+- No remaining GEX projection-cone blocker is known. The current dirty `artifacts/pyrus/src/screens/GexScreen.jsx` change is a separate strike-profile column-order/table interaction change.
 
 ## Next Recommended Steps
 
-1. Replace this item with the highest-priority next step.
-2. Replace this item with the next validation or bring-up step.
+1. Treat this GEX projection-cone slice as complete.
+2. Keep any GEX strike-profile/table column-order work separate from the projection-cone handoff.

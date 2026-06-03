@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -8,6 +9,8 @@ import {
   spreadGaugeTone,
 } from "../../components/platform/signal-language/SpreadGauge.jsx";
 import { resolveSignalVerdict } from "../../components/platform/signal-language/VerdictGlyph.jsx";
+import { TooltipProvider } from "../../components/ui/TooltipProvider";
+import { formatAppTime } from "../../lib/timeZone";
 import {
   buildAlgoSignalMatrixHydrationRequest,
   classifySignal,
@@ -42,6 +45,15 @@ const matrixState = (symbol, timeframe) => ({
   status: "ok",
 });
 
+const escapeRegExp = (value) =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const visibleText = (html) =>
+  String(html)
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
 test("algo signal table requests matrix hydration for visible STA rows", () => {
   const rows = [
     { signal: { symbol: "USO" } },
@@ -54,7 +66,7 @@ test("algo signal table requests matrix hydration for visible STA rows", () => {
   const request = buildAlgoSignalMatrixHydrationRequest({
     rows,
     pageRows,
-    currentStates: ["1m", "2m", "5m", "15m", "1h"].map((timeframe) =>
+    currentStates: ["1m", "2m", "5m", "15m", "1h", "1d"].map((timeframe) =>
       matrixState("USO", timeframe),
     ),
   });
@@ -64,7 +76,7 @@ test("algo signal table requests matrix hydration for visible STA rows", () => {
     prioritySymbols: ["ASML"],
     missingSymbols: ["ASML"],
     requestSymbols: ["ASML"],
-    timeframes: ["1m", "2m", "5m", "15m", "1h"],
+    timeframes: ["1m", "2m", "5m", "15m", "1h", "1d"],
     reason: "algo-signal-table",
   });
 });
@@ -75,7 +87,7 @@ test("algo signal table skips matrix hydration when rows are already hydrated", 
     { signal: { symbol: "ASML" } },
   ];
   const currentStates = ["USO", "ASML"].flatMap((symbol) =>
-    ["1m", "2m", "5m", "15m", "1h"].map((timeframe) =>
+    ["1m", "2m", "5m", "15m", "1h", "1d"].map((timeframe) =>
       matrixState(symbol, timeframe),
     ),
   );
@@ -145,73 +157,82 @@ test("algo pipeline overview groups redundant stage counts into phases", () => {
 test("algo live page upper area suppresses empty duplicate status strips", () => {
   const previousReact = globalThis.React;
   globalThis.React = React;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   let html = "";
   try {
     html = renderToStaticMarkup(
-      React.createElement(AlgoLivePage, {
-        deployments: [{ id: "dep-1", enabled: true, name: "Paper" }],
-        candidateDrafts: [],
-        cockpitKpis: {
-          dailyRealizedPnl: 0,
-          openUnrealizedPnl: 0,
-          openPositions: 0,
-          openPremium: 0,
-          dailyLossRemaining: 1000,
-          openSymbols: 0,
-          maxOpenSymbols: 10,
-        },
-        cockpitRisk: { dailyHaltActive: false, openSymbols: 0, maxOpenSymbols: 10 },
-        cockpitTradePath: { gatewayBlocks: [] },
-        cockpitStageItems: [
-          { id: "scan_universe", status: "healthy", count: 90 },
-          { id: "signal_detected", status: "healthy", count: 7 },
-          { id: "action_mapped", status: "healthy", count: 7 },
-          { id: "contract_selected", status: "attention", count: 0 },
-          { id: "liquidity_risk_gate", status: "healthy", count: 0 },
-          { id: "order_shadow", status: "healthy", count: 0 },
-          { id: "position_managed", status: "healthy", count: 0 },
-          { id: "exit_close", status: "healthy", count: 0 },
-        ],
-        selectedStage: null,
-        setSelectedPipelineStageId: () => {},
-        cockpitAttentionItems: [],
-        signalOptionsRuleAdherence: [],
-        gatewayReady: true,
-        transitions: [],
-        visibleSignalRows: [],
-        signalOptionsCandidates: [],
-        selectedCandidate: null,
-        signalOptionsPositions: [],
-        signalOptionsLedgerPositionsQuery: { data: { positions: [] } },
-        symbolIndex: {},
-        events: [],
-        strategySettingsDraft: {
-          signalTimeframe: "5m",
-          timeHorizon: 8,
-          bosConfirmation: "wicks",
-        },
-        signalOptionsPerformanceSummary: { closedTrades: 0 },
-        activitySummary: {
-          segments: [
-            { kind: "prefix", tone: "muted", text: "Since 14:43:" },
-            { kind: "noop", tone: "dim", text: "no change" },
+      React.createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        React.createElement(AlgoLivePage, {
+          deployments: [{ id: "dep-1", enabled: true, name: "Paper" }],
+          candidateDrafts: [],
+          cockpitKpis: {
+            dailyRealizedPnl: 0,
+            openUnrealizedPnl: 0,
+            openPositions: 0,
+            openPremium: 0,
+            dailyLossRemaining: 1000,
+            openSymbols: 0,
+            maxOpenSymbols: 10,
+          },
+          cockpitRisk: { dailyHaltActive: false, openSymbols: 0, maxOpenSymbols: 10 },
+          cockpitTradePath: { gatewayBlocks: [] },
+          cockpitStageItems: [
+            { id: "scan_universe", status: "healthy", count: 90 },
+            { id: "signal_detected", status: "healthy", count: 7 },
+            { id: "action_mapped", status: "healthy", count: 7 },
+            { id: "contract_selected", status: "attention", count: 0 },
+            { id: "liquidity_risk_gate", status: "healthy", count: 0 },
+            { id: "order_shadow", status: "healthy", count: 0 },
+            { id: "position_managed", status: "healthy", count: 0 },
+            { id: "exit_close", status: "healthy", count: 0 },
           ],
-        },
-        focusedDeployment: { id: "dep-1", enabled: true },
-        handleToggleDeployment: () => {},
-        handleRunShadowScan: () => {},
-        enableDeploymentMutation: {},
-        pauseDeploymentMutation: {},
-        runShadowScanMutation: {},
-        algoIsPhone: false,
-        algoIsNarrow: false,
-        algoLayoutWidth: 960,
-        rightRail: null,
-      }),
+          selectedStage: null,
+          setSelectedPipelineStageId: () => {},
+          cockpitAttentionItems: [],
+          signalOptionsRuleAdherence: [],
+          gatewayReady: true,
+          transitions: [],
+          visibleSignalRows: [],
+          signalOptionsCandidates: [],
+          selectedCandidate: null,
+          signalOptionsPositions: [],
+          signalOptionsLedgerPositionsQuery: { data: { positions: [] } },
+          symbolIndex: {},
+          events: [],
+          strategySettingsDraft: {
+            signalTimeframe: "5m",
+            timeHorizon: 8,
+            bosConfirmation: "wicks",
+          },
+          signalOptionsPerformanceSummary: { closedTrades: 0 },
+          activitySummary: {
+            segments: [
+              { kind: "prefix", tone: "muted", text: "Since 14:43:" },
+              { kind: "noop", tone: "dim", text: "no change" },
+            ],
+          },
+          focusedDeployment: { id: "dep-1", enabled: true },
+          handleToggleDeployment: () => {},
+          handleRunShadowScan: () => {},
+          enableDeploymentMutation: {},
+          pauseDeploymentMutation: {},
+          runShadowScanMutation: {},
+          algoIsPhone: false,
+          algoIsNarrow: false,
+          algoLayoutWidth: 960,
+          rightRail: null,
+        }),
+      ),
     );
   } finally {
+    queryClient.clear();
     globalThis.React = previousReact;
   }
+  const upperHtml = html.split('data-testid="algo-operations-signal-table"')[0] || html;
 
   assert.match(html, /Pyrus Signal-Options/);
   assert.match(html, /data-testid="algo-operations-header-wave-badge"/);
@@ -226,15 +247,15 @@ test("algo live page upper area suppresses empty duplicate status strips", () =>
   assert.match(html, /Signal Cycle/);
   assert.match(html, /90 symbols -&gt; 7 signals/);
   assert.match(html, /Entry Path/);
-  assert.doesNotMatch(html, /Pyrus Signals Shadow/);
+  assert.doesNotMatch(upperHtml, /Pyrus Signals Shadow/);
   assert.match(html, /aria-label="Scan now"/);
-  assert.doesNotMatch(html, />Event</);
-  assert.doesNotMatch(html, />Signals</);
-  assert.doesNotMatch(html, />Flow</);
-  assert.doesNotMatch(html, /Since 14:43/);
-  assert.doesNotMatch(html, /no change/);
-  assert.doesNotMatch(html, /Last 60s/);
-  assert.doesNotMatch(html, /Awaiting next scan/);
+  assert.doesNotMatch(upperHtml, />Event</);
+  assert.doesNotMatch(upperHtml, />Signals</);
+  assert.doesNotMatch(upperHtml, />Flow</);
+  assert.doesNotMatch(upperHtml, /Since 14:43/);
+  assert.doesNotMatch(upperHtml, /no change/);
+  assert.doesNotMatch(upperHtml, /Last 60s/);
+  assert.doesNotMatch(upperHtml, /Awaiting next scan/);
 });
 
 test("signal table sorting honors column key and direction", () => {
@@ -381,6 +402,132 @@ test("signal row spread display treats missing quote data as empty", () => {
   assert.equal(formatSpreadWidth(0.0123), "1.2%");
 });
 
+test("signal row dot strip renders the STA matrix timeframe list including 1d", () => {
+  const previousReact = globalThis.React;
+  globalThis.React = React;
+  const timeframes = ["1m", "2m", "5m", "15m", "1h", "1d"];
+  const tfMatrix = Object.fromEntries(
+    timeframes.map((timeframe, index) => [
+      timeframe,
+      {
+        symbol: "AAPL",
+        timeframe,
+        currentSignalDirection: "buy",
+        fresh: true,
+        barsSinceSignal: index,
+        status: "ok",
+      },
+    ]),
+  );
+  let html = "";
+  try {
+    html = renderToStaticMarkup(
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(OperationsSignalRow, {
+          signal: {
+            symbol: "AAPL",
+            direction: "buy",
+            signalAt: "2026-06-01T21:25:00.000Z",
+            actionEligible: true,
+            fresh: true,
+          },
+          candidate: { symbol: "AAPL", direction: "buy" },
+          columns: ["signal"],
+          tfMatrix,
+          timeframes,
+        }),
+      ),
+    );
+  } finally {
+    globalThis.React = previousReact;
+  }
+
+  assert.match(html, /data-testid="algo-signal-dots"/);
+  assert.match(html, /data-testid="watchlist-signal-dot-1d"/);
+  assert.match(html, /data-timeframe="1d"/);
+  assert.match(html, /1d BUY fresh - 5 bars/);
+});
+
+test("signal row Age column renders the signal clock time only", () => {
+  const previousReact = globalThis.React;
+  globalThis.React = React;
+  const signalAt = "2026-06-01T21:25:00.000Z";
+  let html = "";
+  try {
+    html = renderToStaticMarkup(
+      React.createElement(OperationsSignalRow, {
+        signal: {
+          symbol: "AAPL",
+          direction: "buy",
+          timeframe: "5m",
+          signalAt,
+          actionEligible: true,
+          fresh: true,
+          barsSinceSignal: 3,
+        },
+        candidate: { symbol: "AAPL", direction: "buy" },
+        columns: ["since"],
+      }),
+    );
+  } finally {
+    globalThis.React = previousReact;
+  }
+
+  const text = visibleText(html);
+  const expectedTime = formatAppTime(signalAt);
+  assert.match(text, new RegExp(escapeRegExp(expectedTime)));
+  assert.doesNotMatch(text, /\bsince\b/i);
+  assert.doesNotMatch(text, /\b5m\b/);
+  assert.doesNotMatch(text, /\b3\/8\b/);
+  assert.doesNotMatch(text, /\b3 bars\b/i);
+});
+
+test("signal row renders an accessible Trade button in the Signal cell for selected contracts", () => {
+  const previousReact = globalThis.React;
+  globalThis.React = React;
+  let html = "";
+  try {
+    html = renderToStaticMarkup(
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(OperationsSignalRow, {
+          signal: {
+            symbol: "AAPL",
+            direction: "buy",
+            timeframe: "5m",
+            signalAt: "2026-06-01T21:25:00.000Z",
+            actionEligible: true,
+            fresh: true,
+            barsSinceSignal: 0,
+          },
+          candidate: {
+            symbol: "AAPL",
+            direction: "buy",
+            actionStatus: "ready",
+            selectedContract: {
+              providerContractId: "123456",
+              expirationDate: "2026-06-05T00:00:00.000Z",
+              strike: 200,
+              right: "call",
+              multiplier: 100,
+            },
+          },
+          columns: ["signal"],
+        }),
+      ),
+    );
+  } finally {
+    globalThis.React = previousReact;
+  }
+
+  assert.match(html, /data-testid="algo-signal-open-trade"/);
+  assert.match(html, /aria-label="Open AAPL contract in Trade"/);
+  assert.match(html, /title="Open AAPL contract in Trade"/);
+});
+
 test("signal row labels STA option columns when blocked before contract selection", () => {
   const previousReact = globalThis.React;
   globalThis.React = React;
@@ -419,6 +566,120 @@ test("signal row labels STA option columns when blocked before contract selectio
   assert.match(html, /Not tested/);
   assert.match(html, /Greek Selector No Candidates/);
   assert.doesNotMatch(html, />Selecting</);
+});
+
+test("signal row surfaces live quote demand instead of generic Selecting", () => {
+  const previousReact = globalThis.React;
+  globalThis.React = React;
+  let html = "";
+  try {
+    html = renderToStaticMarkup(
+      React.createElement(OperationsSignalRow, {
+        signal: {
+          symbol: "PWR",
+          direction: "buy",
+          signalAt: "2026-06-01T21:25:00.000Z",
+          actionEligible: true,
+          fresh: true,
+        },
+        candidate: {
+          symbol: "PWR",
+          direction: "buy",
+          status: "candidate",
+          actionStatus: "candidate",
+          selectedContract: {
+            providerContractId: "998877",
+            expirationDate: "2026-06-05T00:00:00.000Z",
+            strike: 400,
+            right: "call",
+            multiplier: 100,
+          },
+          quote: null,
+          liquidity: null,
+          liveQuoteDemand: {
+            owner: "signal-options-entry:dep-1:PWR",
+            providerContractId: "998877",
+            status: "pending",
+            reason: "awaiting_quote",
+            hydrationAttempts: 3,
+            hydrationWaitMs: 4200,
+            cacheAgeMs: 12000,
+            requestedProviderContractIds: ["998877"],
+          },
+        },
+        columns: ["process", "contract", "quote", "greeks"],
+        scanActive: false,
+      }),
+    );
+  } finally {
+    globalThis.React = previousReact;
+  }
+
+  assert.match(html, /Waiting quote/);
+  assert.match(html, /Awaiting Quote/);
+  assert.match(html, /3 attempts/);
+  assert.match(html, /4\.2s wait/);
+  assert.match(html, /Quote pending/);
+  assert.match(html, /Greeks pending/);
+  assert.doesNotMatch(html, />Selecting</);
+});
+
+test("signal row renders quote greeks as a 2x2 grid inside the STA cell", () => {
+  const previousReact = globalThis.React;
+  globalThis.React = React;
+  let html = "";
+  try {
+    html = renderToStaticMarkup(
+      React.createElement(OperationsSignalRow, {
+        signal: {
+          symbol: "AMD",
+          direction: "buy",
+          signalAt: "2026-06-01T21:25:00.000Z",
+          actionEligible: true,
+          fresh: true,
+        },
+        candidate: {
+          symbol: "AMD",
+          direction: "buy",
+          actionStatus: "ready",
+          selectedContract: {
+            providerContractId: "123456",
+            expirationDate: "2026-06-05T00:00:00.000Z",
+            strike: 170,
+            right: "call",
+            multiplier: 100,
+          },
+          quote: {
+            bid: 2.1,
+            ask: 2.2,
+            mid: 2.15,
+            delta: 0.42,
+            gamma: 0.0136,
+            theta: -0.0412,
+            vega: 0.1876,
+          },
+          liquidity: { spreadPctOfMid: 4.6 },
+        },
+        columns: ["greeks"],
+        scanActive: false,
+      }),
+    );
+  } finally {
+    globalThis.React = previousReact;
+  }
+
+  assert.match(html, /data-testid="algo-signal-greeks-grid"/);
+  assert.match(html, /data-algo-greeks-grid="2x2"/);
+  assert.match(html, /border-right:1px solid var\(--ra-border-light\)/);
+  assert.match(html, /border-bottom:1px solid var\(--ra-border-light\)/);
+  assert.match(html, /data-testid="algo-signal-greek-delta"/);
+  assert.match(html, /data-testid="algo-signal-greek-gamma"/);
+  assert.match(html, /data-testid="algo-signal-greek-theta"/);
+  assert.match(html, /data-testid="algo-signal-greek-vega"/);
+  assert.match(html, /Delta 0\.42/);
+  assert.match(html, /Gamma 0\.014/);
+  assert.match(html, /Theta -0\.041/);
+  assert.match(html, /Vega 0\.188/);
 });
 
 test("signal row plan cell leads with token-colored contract intent", () => {
@@ -491,7 +752,7 @@ test("signal row renders advisory signal matrix verdict column", () => {
           actionStatus: "ready",
         },
         tfMatrix: Object.fromEntries(
-          ["1m", "2m", "5m", "15m", "1h"].map((timeframe) => [
+          ["1m", "2m", "5m", "15m", "1h", "1d"].map((timeframe) => [
             timeframe,
             {
               symbol: "MSFT",
@@ -518,6 +779,135 @@ test("signal row renders advisory signal matrix verdict column", () => {
   assert.match(html, /Bull Trend/);
   assert.match(html, /100%/);
   assert.match(html, /Ready Buy trend/);
+});
+
+test("signal row uses primary signal state when the matrix is missing the profile timeframe", () => {
+  const previousReact = globalThis.React;
+  globalThis.React = React;
+  let html = "";
+  try {
+    html = renderToStaticMarkup(
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(OperationsSignalRow, {
+          signal: {
+            symbol: "MSFT",
+            direction: "buy",
+            timeframe: "5m",
+            signalAt: "2026-06-01T21:25:00.000Z",
+            actionEligible: true,
+            fresh: true,
+            barsSinceSignal: 0,
+          },
+          candidate: {
+            symbol: "MSFT",
+            direction: "buy",
+            actionStatus: "ready",
+          },
+          tfMatrix: Object.fromEntries(
+            ["1m", "2m", "15m", "1h", "1d"].map((timeframe) => [
+              timeframe,
+              {
+                symbol: "MSFT",
+                timeframe,
+                currentSignalDirection: "buy",
+                currentSignalAt: "2026-06-01T21:25:00.000Z",
+                latestBarAt: "2026-06-01T21:25:00.000Z",
+                lastEvaluatedAt: "2026-06-01T21:26:00.000Z",
+                barsSinceSignal: 0,
+                fresh: true,
+                status: "ok",
+              },
+            ]),
+          ),
+          columns: ["signal", "matrix"],
+          scanActive: false,
+        }),
+      ),
+    );
+  } finally {
+    globalThis.React = previousReact;
+  }
+
+  assert.match(html, /Ready/);
+  assert.match(html, /100%/);
+  assert.match(html, /Ready Buy trend/);
+  assert.match(html, /data-timeframe="5m"/);
+  assert.match(html, /5m BUY fresh/);
+});
+
+test("signal row renders phone STA rows in mobile-dense format", () => {
+  const previousReact = globalThis.React;
+  globalThis.React = React;
+  let html = "";
+  try {
+    html = renderToStaticMarkup(
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(OperationsSignalRow, {
+          signal: {
+            symbol: "MSFT",
+            direction: "buy",
+            timeframe: "5m",
+            signalAt: "2026-06-01T21:25:00.000Z",
+            signalPrice: 421.2,
+            actionEligible: true,
+            fresh: true,
+            barsSinceSignal: 1,
+          },
+          candidate: {
+            symbol: "MSFT",
+            direction: "buy",
+            actionStatus: "ready",
+            action: { optionAction: "buy_call" },
+            selectedContract: {
+              symbol: "MSFT",
+              right: "C",
+              strike: 425,
+              expiry: "20260605",
+            },
+            quote: { bid: 2.1, ask: 2.2, mid: 2.15, ageMs: 900 },
+            liquidity: { spreadPctOfMid: 4.6 },
+            orderPlan: {
+              quantity: 1,
+              entryLimitPrice: 2.15,
+              premiumAtRisk: 215,
+            },
+          },
+          columns: [
+            "signal",
+            "since",
+            "move",
+            "action",
+            "contract",
+            "quote",
+            "spread",
+            "matrix",
+            "score",
+            "decision",
+            "rowAction",
+          ],
+          compact: true,
+          scanActive: false,
+        }),
+      ),
+    );
+  } finally {
+    globalThis.React = previousReact;
+  }
+
+  assert.match(html, /data-algo-density="mobile-dense"/);
+  assert.match(html, /data-testid="algo-signal-compact-primary"/);
+  assert.match(html, /data-testid="algo-signal-compact-metrics"/);
+  assert.match(html, /data-algo-pocket-grid="dense"/);
+  assert.match(html, /data-testid="algo-signal-compact-decision"/);
+  assert.doesNotMatch(html, /data-algo-pocket-grid="two"/);
+  assert(html.indexOf(">Age<") < html.indexOf(">Move<"));
+  assert(html.indexOf(">Move<") < html.indexOf(">Score<"));
+  assert(html.indexOf(">Plan<") < html.indexOf(">Contract<"));
+  assert(html.indexOf(">Contract<") < html.indexOf(">Quote<"));
 });
 
 test("signal row presents dense customizable signal action columns", () => {
@@ -547,12 +937,14 @@ test("signal row presents dense customizable signal action columns", () => {
     "quote",
     "spread",
     "greeks",
+    "process",
+    "sync",
     "score",
     "decision",
     "rowAction",
   ]);
-  assert(!DEFAULT_SIGNAL_VISIBLE_COLUMNS.includes("process"));
-  assert(!DEFAULT_SIGNAL_VISIBLE_COLUMNS.includes("sync"));
+  assert(DEFAULT_SIGNAL_VISIBLE_COLUMNS.includes("process"));
+  assert(DEFAULT_SIGNAL_VISIBLE_COLUMNS.includes("sync"));
   assert.deepEqual(
     normalizeSignalColumnOrder(["score", "signal", "score", "unknown"]).slice(0, 2),
     ["score", "signal"],
@@ -604,12 +996,20 @@ test("signal row presents dense customizable signal action columns", () => {
   assert.match(rowSource, /const CompactSignalMetric/);
   assert.match(rowSource, /compact = false/);
   assert.match(rowSource, /if \(compact\)/);
+  assert.match(rowSource, /data-algo-density="mobile-dense"/);
+  assert.match(rowSource, /data-testid="algo-signal-compact-primary"/);
   assert.match(rowSource, /data-testid="algo-signal-compact-metrics"/);
-  assert.match(rowSource, /data-algo-pocket-grid="two"/);
-  assert.match(rowSource, /data-testid="algo-signal-compact-decision"/);
-  assert.match(rowSource, /key: "process"[\s\S]*?toggleLabel: "Audit progression"/);
+  assert.match(rowSource, /data-algo-pocket-grid="dense"/);
+  assert.doesNotMatch(rowSource, /data-algo-pocket-grid="two"/);
+  assert.match(rowSource, /testId: "algo-signal-compact-decision"/);
+  assert.match(rowSource, /key: "process"[\s\S]*?label: "Stage"/);
+  assert.match(rowSource, /key: "process"[\s\S]*?toggleLabel: "Selection stage"/);
   assert.match(rowSource, /const ProcessTrailCell/);
   assert.match(rowSource, /data-testid="algo-signal-process-cell"/);
+  assert.match(rowSource, /resolveSelectionStageDisplay/);
+  assert.match(rowSource, /diagnosticLiveDemandSummary/);
+  assert.match(rowSource, /Waiting quote/);
+  assert.match(rowSource, /Resolving contract/);
   assert.match(rowSource, /auditProgression = null/);
   assert.match(rowSource, /signalSinceDisplay/);
   assert.doesNotMatch(rowSource, /ScoreBar/);
@@ -658,6 +1058,8 @@ test("signal row presents dense customizable signal action columns", () => {
   assert.doesNotMatch(rowSource, /ConfluenceChip/);
   assert.match(rowSource, /VerdictGlyph/);
   assert.match(rowSource, /RowActionButton/);
+  assert.match(rowSource, /SignalTradeButton/);
+  assert.match(rowSource, /actionId: "openTrade"/);
   assert.match(rowSource, /SpreadGauge/);
   assert.match(rowSource, /components\/platform\/signal-language/);
   assert.match(rowSource, /ra-signal-row-glow/);
@@ -691,6 +1093,9 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   const tableSource = readSource("./OperationsSignalTable.jsx");
   const rowSource = readSource("./OperationsSignalRow.jsx");
   const livePageSource = readSource("./AlgoLivePage.jsx");
+  const primitivesSource = readSource("./AlgoOperationsPrimitives.jsx");
+  const attentionStripSource = readSource("./OperationsAttentionStrip.jsx");
+  const diagPanelSource = readSource("./DiagPanel.jsx");
   const algoScreenSource = readSource("../AlgoScreen.jsx");
   const routerSource = readFileSync(
     new URL("../../features/platform/PlatformScreenRouter.jsx", import.meta.url),
@@ -729,6 +1134,9 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(livePageSource, /return "flat"/);
   assert.match(livePageSource, /dataTestId="algo-operations-header-wave"/);
   assert.match(livePageSource, /data-testid="algo-operations-header-wave-badge"/);
+  assert.match(livePageSource, /FailurePointTooltip/);
+  assert.match(livePageSource, /buildAlgoStatusFailurePoint/);
+  assert.match(livePageSource, /algoHeaderFailurePoint/);
   assert.match(livePageSource, /badgeLabel/);
   assert.match(livePageSource, /label: `Signal-options \$\{badgeLabel\}`/);
   assert.doesNotMatch(livePageSource, /<OperationsStatusOrb/);
@@ -742,30 +1150,49 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /COMPACT_SORT_OPTIONS/);
   assert.match(tableSource, /aria-label="Sort signals"/);
   assert.match(tableSource, /handleCompactSortChange/);
-  assert.match(tableSource, /const signalTableCompact = Boolean\(algoIsPhone\)/);
+  assert.match(tableSource, /const signalTableCompact = false/);
   assert.match(tableSource, /safeQaMode = false/);
-  assert.match(tableSource, /enabled: Boolean\(rowSymbolsKey && !safeQaMode\)/);
+  assert.match(tableSource, /backgroundQueriesEnabled = false/);
+  assert.match(tableSource, /const rowQuoteSymbols = useMemo/);
+  assert.match(tableSource, /const rowSparklineSymbols = useMemo/);
+  assert.match(tableSource, /hasUsableQuoteSnapshot\(tickerSnapshotsBySymbol\?\.\[symbol\]\)/);
+  assert.match(tableSource, /hasUsableSparklineData\(tickerSnapshotsBySymbol\?\.\[symbol\]\)/);
+  assert.match(tableSource, /hasUsableSparklineData\(pageSignalBySymbol\?\.\[symbol\]\)/);
+  assert.match(
+    tableSource,
+    /enabled: Boolean\(backgroundQueriesEnabled && rowQuoteSymbolsKey && !safeQaMode\)/,
+  );
   assert.match(tableSource, /placeholder=\{algoIsPhone \? "Search" : "Symbol or strategy"\}/);
   assert.match(tableSource, /padding: algoIsPhone \? sp\("4px 6px"\) : sp\("6px 10px"\)/);
   assert.doesNotMatch(tableSource, /<span>Sort<\/span>/);
   assert.match(rowSource, /key: "signal"[\s\S]*?sortKey: "symbol"/);
   assert.match(rowSource, /key: "since"[\s\S]*?sortKey: "bars"/);
   assert.match(rowSource, /key: "move"[\s\S]*?sortKey: "move"/);
-  assert.match(rowSource, /key: "process"[\s\S]*?label: "Process"/);
+  assert.match(rowSource, /key: "process"[\s\S]*?label: "Stage"/);
   assert.match(rowSource, /key: "quote"[\s\S]*?sortKey: "quoteAge"/);
   assert.match(rowSource, /key: "spread"[\s\S]*?sortKey: "spread"/);
   assert.match(rowSource, /key: "score"[\s\S]*?sortKey: "score"/);
   assert.match(rowSource, /key: "decision"[\s\S]*?sortKey: "latest"/);
-  assert.match(rowSource, /aria-sort=\{sort \? ariaSort : undefined\}/);
-  assert.match(rowSource, /aria-pressed=\{active\}/);
-  assert.match(rowSource, /currently \$\{ariaSort\}/);
+  assert.match(rowSource, /TableHeaderDndContext/);
+  assert.match(rowSource, /SortableColumnHeaderCell/);
+  assert.match(rowSource, /ColumnHeaderCell/);
+  assert.match(rowSource, /onColumnReorder/);
   assert.match(rowSource, /onSortChange\?\.\(sort\.sortKey\)/);
-  assert.match(rowSource, /sortDirection === "asc" \? "rotate\(180deg\)" : "none"/);
-  assert.match(rowSource, /ChevronDown/);
+  assert.match(primitivesSource, /FailurePointTooltip/);
+  assert.match(primitivesSource, /buildAlgoMetricFailurePoint/);
+  assert.match(primitivesSource, /buildPipelineStageFailurePoint/);
+  assert.match(attentionStripSource, /buildFailurePointFromAlgoAttentionItem/);
+  assert.match(diagPanelSource, /buildDiagRowFailurePoint/);
+  assert.match(rowSource, /reorderable=\{Boolean\(onColumnReorder\) && column\.key !== "rowAction"\}/);
+  assert.match(tableSource, /onColumnReorder=\{reorderColumn\}/);
+  assert.match(tableSource, /actionId === "openTrade"/);
+  assert.match(tableSource, /onOpenCandidateInTrade\(candidate\)/);
   assert.match(tableSource, /Scan running/);
   assert.match(tableSource, /Bar \$\{formatRelativeTimeShort\(freshness\.latestBarAt\)\}/);
   assert.match(tableSource, /formatCompactStatusValue\(freshness\.sourcePolicy\)/);
   assert.match(tableSource, /pressureLevelBlocksActionWork/);
+  assert.match(tableSource, /normalized === "critical"/);
+  assert.doesNotMatch(tableSource, /normalized === "high" \|\| normalized === "critical"/);
   assert.match(tableSource, /pressureBlocksWork \? pressureLevel : null/);
   assert.match(tableSource, /Signal action scan is queued by resource pressure\./);
   assert.match(tableSource, /Action scan queued/);
@@ -779,17 +1206,25 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /auditProgression=\{auditProgression\}/);
   assert.match(tableSource, /scanActive=\{freshness\.scanRunning\}/);
   assert.doesNotMatch(tableSource, /scanIndex=\{index\}/);
-  assert.match(tableSource, /buildSignalMatrixBySymbol\(signalMatrixStates\)/);
+  assert.match(tableSource, /buildSignalMatrixBySymbol\(signalMatrixStates, SIGNALS_TABLE_TIMEFRAMES\)/);
   assert.match(tableSource, /useGetQuoteSnapshots\(/);
   assert.match(tableSource, /applyRuntimeQuoteSnapshots\(rowQuotesQuery\.data\?\.quotes \|\| \[\]\)/);
-  assert.match(tableSource, /queryKey: \["algo-signal-row-sparklines", rowSymbolsKey\]/);
+  assert.match(tableSource, /queryKey: \["algo-signal-row-sparklines", rowSparklineSymbolsKey\]/);
+  assert.match(
+    tableSource,
+    /enabled: Boolean\(backgroundQueriesEnabled && rowSparklineSymbolsKey && !safeQaMode\)/,
+  );
   assert.match(tableSource, /getBarsRequest\(/);
   assert.match(tableSource, /SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m"/);
   assert.match(tableSource, /SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT = 120/);
   assert.match(tableSource, /thinBarsForSignalSparkline/);
   assert.match(tableSource, /publishRuntimeTickerSnapshot\(symbol, symbol, \{ sparkBars \}\)/);
   assert.match(tableSource, /useRuntimeTickerSnapshots\(rowSymbols\)/);
-  assert.match(tableSource, /SIGNALS_PAGE_SIZE = 30/);
+  assert.match(tableSource, /SIGNALS_PAGE_SIZE = 20/);
+  assert.match(algoScreenSource, /const visibleSignalRows = useMemo/);
+  assert.match(algoScreenSource, /buildVisibleSignalRows\(\{/);
+  assert.match(algoScreenSource, /signals: signalOptionsSignals/);
+  assert.match(algoScreenSource, /candidates: signalOptionsCandidates/);
   assert.match(tableSource, /dataTestId="algo-signals-pagination"/);
   assert.match(tableSource, /pageRows\.map/);
   assert.match(tableSource, /tfMatrix=\{signalMatrixBySymbol/);
@@ -817,7 +1252,7 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /onReorder=\{reorderColumn\}/);
   assert.match(tableSource, /algoSignalColumnOrder/);
   assert.match(tableSource, /algoSignalVisibleColumns/);
-  assert.match(tableSource, /SIGNAL_COLUMN_VISIBILITY_VERSION = 7/);
+  assert.match(tableSource, /SIGNAL_COLUMN_VISIBILITY_VERSION = 8/);
   assert.match(tableSource, /LEGACY_DEFAULT_SIGNAL_VISIBLE_COLUMNS/);
   assert.match(tableSource, /PREVIOUS_DEFAULT_SIGNAL_VISIBLE_COLUMNS/);
   assert.match(tableSource, /PRIOR_GATE_FIRST_SIGNAL_COLUMN_ORDER/);
@@ -829,6 +1264,13 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /Columns3/);
   assert.match(tableSource, /data-testid="algo-signal-table-scroll"/);
   assert.match(tableSource, /className="ra-dense-table-scroll"/);
+  assert.match(tableSource, /border: algoIsPhone \? 0 : `1px solid \$\{CSS_COLOR\.border\}`/);
+  assert.match(tableSource, /borderRadius: algoIsPhone \? 0 : dim\(RADII\.md\)/);
+  assert.match(rowSource, /import \{ formatAppTime \} from "\.\.\/\.\.\/lib\/timeZone"/);
+  assert.match(rowSource, /const signalChartTitle = \(signalRecord\) => \{/);
+  assert.match(rowSource, /Signal \$\{formatAppTime\(signalTimestamp\)\}/);
+  assert.match(rowSource, /\$\{formatRelativeTimeShort\(signalTimestamp\)\} since/);
+  assert.match(rowSource, /data-testid="algo-signal-hero-sparkline"[\s\S]*role="img"[\s\S]*title=\{signalChartTitle\(signalRecord\) \|\| undefined\}/);
   assert.match(
     tableSource,
     /data-testid="algo-signal-table-scroll"[\s\S]*?overflowX: "auto"/,
@@ -863,6 +1305,15 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
     cssSource,
     /\[data-testid="algo-screen"\]\[data-layout="phone"\] \[style\*="min-width"\]:not\(\.ra-dense-table-scroll\):not\(\.ra-dense-table-scroll \*\)/,
   );
+  assert.match(
+    cssSource,
+    /\[data-testid="algo-screen"\]\[data-layout="phone"\] \[style\*="grid-template-columns"\]:not\(\.ra-dense-table-scroll\):not\(\.ra-dense-table-scroll \*\):not\(\[data-algo-pocket-grid\]\)/,
+  );
+  assert.match(
+    cssSource,
+    /\[data-testid="algo-screen"\]\[data-layout="phone"\] \[data-testid="algo-signal-compact-primary"\]/,
+  );
+  assert.match(cssSource, /data-algo-pocket-grid="dense"/);
   assert.doesNotMatch(tableSource, /overflowX: "hidden"/);
   assert.doesNotMatch(tableSource, /a\.signal\.score/);
   assert.doesNotMatch(algoScreenSource, /visibleSignalRows[\s\S]*?\.slice\(0,\s*algoIsPhone \? 8 : 20\)/);
@@ -875,22 +1326,29 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(livePageSource, /events=\{events\}/);
   assert.match(livePageSource, /safeQaMode = false/);
   assert.match(livePageSource, /safeQaMode=\{safeQaMode\}/);
+  assert.match(livePageSource, /data-testid="algo-operations-overview"/);
+  assert.match(livePageSource, /data-algo-pocket-grid=\{algoIsPhone \? "metrics"/);
+  assert.match(livePageSource, /dense=\{algoIsPhone\}/);
+  assert.match(livePageSource, /pocket=\{algoIsPhone \|\| algoIsPocketWidth\}/);
   assert.doesNotMatch(livePageSource, /auditPanel/);
   assert.doesNotMatch(algoScreenSource, /LazyAlgoAuditPanel/);
   assert.doesNotMatch(algoScreenSource, /auditPanel=\{/);
   assert.doesNotMatch(livePageSource, /LazyOperationsSignalDrill/);
   assert.doesNotMatch(livePageSource, /OperationsSignalDrill/);
-  assert.match(livePageSource, /data-testid="algo-settings-drawer-open"[\s\S]*?fill: false/);
+  assert.match(livePageSource, /Settings as SettingsIcon/);
+  assert.match(livePageSource, /data-testid="algo-settings-drawer-open"[\s\S]*?aria-label="Open algo settings"/);
   assert.match(livePageSource, /padding: algoIsPhone \? sp\("6px 6px"\) : sp\("8px 10px"\)/);
   assert.match(livePageSource, /fontSize: fs\(algoIsPhone \? 11 : 13\)/);
+  assert.match(cssSource, /data-algo-pocket-grid="metrics"/);
+  assert.match(cssSource, /data-algo-pocket-grid="pipeline"/);
   assert.match(algoScreenSource, /signalMatrixStates = \[\]/);
   assert.match(algoScreenSource, /signalMatrixStates=\{signalMatrixStates\}/);
   assert.match(algoScreenSource, /onRequestSignalMatrixHydration/);
-  assert.match(algoScreenSource, /safeQaMode = false/);
-  assert.match(
-    algoScreenSource,
-    /enabled: Boolean\(\s*algoCriticalQueriesEnabled && focusedDeployment\?\.id && !safeQaMode,\s*\)/,
-  );
+	  assert.match(algoScreenSource, /safeQaMode = false/);
+	  assert.match(
+	    algoScreenSource,
+	    /enabled: Boolean\(\s*algoBackgroundQueriesEnabled && focusedDeployment\?\.id,\s*\)/,
+	  );
   assert.match(routerSource, /<MemoAlgoScreen[\s\S]*safeQaMode=\{safeQaMode\}/);
   assert.match(routerSource, /<MemoAlgoScreen[\s\S]*onRequestSignalMatrixHydration=\{onRequestSignalMatrixHydration\}/);
   assert.match(algoScreenSource, /padding: sp\(algoIsPhone \? "6px 6px 14px" : "16px 24px 20px"\)/);
@@ -923,6 +1381,7 @@ test("shared signal dots preserve watchlist behavior after extraction", () => {
   assert.match(signalDotsSource, /const state = statesByTimeframe\?\.\[timeframe\]/);
   assert.doesNotMatch(signalDotsSource, /fallbackState/);
   assert.match(rowSource, /testId="algo-signal-dots"/);
+  assert.match(rowSource, /timeframes=\{timeframes\}/);
   assert.doesNotMatch(rowSource, /fallbackState=\{/);
   assert.match(compatibilitySource, /signal-language\/SignalDots/);
   assert.doesNotMatch(watchlistSource, /const WatchlistSignalDots/);
@@ -930,21 +1389,31 @@ test("shared signal dots preserve watchlist behavior after extraction", () => {
   assert.match(watchlistSource, /<SignalDots/);
   assert.match(watchlistSource, /buildSignalsRows/);
   assert.match(watchlistSource, /SIGNALS_ROW_STATUS/);
+  assert.match(watchlistSource, /useSignalMonitorSnapshot/);
   assert.match(watchlistSource, /const signalsRowsBySymbol = useMemo/);
-  assert.match(watchlistSource, /profile: signalProfile/);
-  assert.match(watchlistSource, /states: signalStates/);
+  assert.match(watchlistSource, /const effectiveSignalProfile =/);
+  assert.match(watchlistSource, /const effectiveSignalStates =/);
+  assert.match(watchlistSource, /const effectiveSignalEvents =/);
+  assert.match(watchlistSource, /profile: effectiveSignalProfile/);
+  assert.match(watchlistSource, /states: effectiveSignalStates/);
   assert.match(watchlistSource, /matrixStates: signalMatrixStates/);
-  assert.match(watchlistSource, /events: signalEvents/);
+  assert.match(watchlistSource, /events: effectiveSignalEvents/);
   assert.match(watchlistSource, /const signalEventsBySymbol = useMemo/);
   assert.match(watchlistSource, /signalsRow=\{signalsRowsBySymbol\.get\(item\.sym\) \|\| null\}/);
   assert.match(watchlistSource, /signalEvents=\{signalEventsBySymbol\.get\(item\.sym\) \|\| EMPTY_SIGNAL_EVENTS\}/);
-  assert.match(watchlistSource, /const sparklineSignalDirection = signalsRow\?\.direction/);
+  assert.match(watchlistSource, /const sparklineRow = useMemo/);
+  assert.match(watchlistSource, /signalState\?\.currentSignalDirection/);
+  assert.match(watchlistSource, /SIGNALS_ROW_STATUS\.activeStale/);
+  assert.match(watchlistSource, /const sparklineSignalDirection = sparklineRow\?\.direction/);
   assert.match(watchlistSource, /buildSignalSparklinePointColors/);
   assert.match(watchlistSource, /extractSparklinePoints/);
   assert.match(watchlistSource, /const firstSignalColor = signalColorForDirection\(transitions\[0\]\?\.direction\)/);
   assert.match(watchlistSource, /const latestSignalColor = signalColorForDirection\(transitions\.at\(-1\)\?\.direction\)/);
-  assert.match(watchlistSource, /return latestSignalColor \? points\.map\(\(\) => latestSignalColor\) : null/);
-  assert.match(watchlistSource, /SIGNALS_PAGE_ACTIVE_STATUSES\.has\(signalsRow\?\.status\)/);
+  assert.match(watchlistSource, /return latestSignalColor\s*\?\s*sparklinePoints\.map\(\(\) => latestSignalColor\)\s*:\s*null/);
+  assert.match(watchlistSource, /SIGNALS_PAGE_ACTIVE_STATUSES\.has\(sparklineRow\?\.status\)/);
+  assert.match(watchlistSource, /data-sparkline-signal-mode=\{sparklineSignalMode\}/);
+  assert.match(watchlistSource, /data-sparkline-signal-events=\{signalEvents\.length\}/);
+  assert.match(watchlistSource, /data-sparkline-signal-direction=\{sparklineSignalDirection \|\| undefined\}/);
   assert.doesNotMatch(watchlistSource, /const sparklineSignalColor = hasSignal \? signalColor : null/);
   assert.equal(
     (watchlistSource.match(/color=\{sparklineColor\}/g) || []).length,

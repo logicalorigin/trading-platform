@@ -1,4 +1,11 @@
-const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze(["1m", "2m", "5m", "15m", "1h"]);
+const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze([
+  "1m",
+  "2m",
+  "5m",
+  "15m",
+  "1h",
+  "1d",
+]);
 const DEFAULT_MAX_STATES = 750;
 
 export const SIGNAL_MATRIX_SNAPSHOT_CACHE_KEY = "pyrus:signal-matrix-snapshot:v1";

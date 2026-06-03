@@ -45,8 +45,11 @@ export const PlatformScreenRouter = ({
   gatewayTradingMessage,
   watchlistSymbols,
   runtimeWatchlistSymbols,
+  signalMonitorEnvironment,
   signalMonitorSymbols,
   signalMonitorDisplaySymbols,
+  signalMonitorEvents,
+  signalMonitorEventsLoaded,
   signalMatrixStates,
   marketScreenActive,
   flowScreenActive,
@@ -134,7 +137,7 @@ export const PlatformScreenRouter = ({
     case "signals":
       return (
         <MemoSignalsScreen
-          environment={environment}
+          environment={signalMonitorEnvironment || environment}
           watchlists={watchlists}
           defaultWatchlist={defaultWatchlist}
           signalMonitorSymbols={
@@ -143,6 +146,8 @@ export const PlatformScreenRouter = ({
               : signalMonitorSymbols
           }
           signalMatrixStates={signalMatrixStates}
+          signalMonitorEvents={signalMonitorEvents}
+          signalMonitorEventsLoaded={signalMonitorEventsLoaded}
           isVisible={signalsDataActive}
           onSelectSymbol={onSelectSymbol}
           onJumpToTrade={onJumpToTradeFromSignals}

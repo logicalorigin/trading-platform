@@ -3,15 +3,15 @@
 ## Session Metadata
 
 - Session ID: `019e84aa-d2bd-7103-91a9-a73c9fcfb9c1`
-- Saved At (MT): `2026-06-01 18:16:03 MDT`
-- Saved At (UTC): `2026-06-02T00:16:03.004Z`
-- Summary: 2026-06-01 18:16:03 MDT | 019e84aa-d2bd-7103-91a9-a73c9fcfb9c1 | why isnt the STA table properly selecting contracts?
+- Saved At (MT): `2026-06-01 18:39:04 MDT`
+- Saved At (UTC): `2026-06-02T00:39:04.695Z`
+- Summary: 2026-06-01 18:39:04 MDT | 019e84aa-d2bd-7103-91a9-a73c9fcfb9c1 | why isnt the STA table properly selecting contracts?
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
 - Rollout Path: `/home/runner/.codex/sessions/2026/06/01/rollout-2026-06-01T13-30-48-019e84aa-d2bd-7103-91a9-a73c9fcfb9c1.jsonl`
 - Branch: `main`
-- HEAD: `9256e61f4dd65a1c6c6f327f4b54de77aed2adbf`
-- Latest Commit: `docs: add metadata-as-rules audit`
+- HEAD: `9489d72ed09be58488b39845883b8033a3bd8e7a`
+- Latest Commit: `docs: refresh signal matrix and memory handoffs`
 - Latest Commit Session ID: `unknown`
 - Title: why isnt the STA table properly selecting contracts?
 - Model: `gpt-5.4`
@@ -26,7 +26,10 @@ why isnt the STA table properly selecting contracts?
 
 - `SESSION_HANDOFF_2026-06-01_75218067-d9b9-4264-8b7a-3243c1a06ca1.md`
 - `SESSION_HANDOFF_2026-06-01_019e8583-e862-7bb1-8560-5db3658c7345.md`
+- `SESSION_HANDOFF_2026-06-01_019e856f-e49f-7fb0-941e-fd5c610c8e35.md`
 - `SESSION_HANDOFF_2026-06-01_019e856e-bffa-7833-b2b7-da4c35f1f4ed.md`
+- `SESSION_HANDOFF_2026-06-01_019e856e-09fe-7de1-b9bc-28878b14c985.md`
+- `SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md`
 - `SESSION_HANDOFF_2026-06-01_019e84ed-e068-7de2-ad5e-d900df7d26c1.md`
 - `SESSION_HANDOFF_2026-06-01_019e84aa-c1d5-79e1-adba-5a743d03c8cc.md`
 - `SESSION_HANDOFF_2026-06-01_019e84aa-83ed-7462-8cd5-1c29cc47fbd7.md`
@@ -150,29 +153,59 @@ why isnt the STA table properly selecting contracts?
 
 ## High-Signal Changed Files
 
-- `artifacts/api-server/src/services/readiness.test.ts`
-- `artifacts/pyrus/src/components/platform/primitives.jsx`
-- `artifacts/pyrus/src/features/signals/signalsRowModel.js`
-- `lib/api-zod/src/generated/api.ts`
+- `SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md`
+- `SESSION_HANDOFF_CURRENT.md`
+- `SESSION_HANDOFF_MASTER.md`
+- `artifacts/api-server/src/services/diagnostics.test.ts`
+- `artifacts/api-server/src/services/diagnostics.ts`
+- `artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx`
+- `artifacts/pyrus/src/features/platform/memoryPressureClient.js`
+- `artifacts/pyrus/src/features/platform/memoryPressureModel.test.js`
+- `artifacts/pyrus/src/features/platform/memoryPressurePopoverModel.js`
+- `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js`
+- `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js`
+- `artifacts/pyrus/src/screens/DiagnosticsScreen.jsx`
+- `artifacts/pyrus/src/screens/SettingsScreen.jsx`
+- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`
 
 ## Repo State Snapshot
 
 ```text
-## main...origin/main [ahead 4]
- M artifacts/api-server/src/services/readiness.test.ts
- M artifacts/pyrus/src/components/platform/primitives.jsx
- M artifacts/pyrus/src/features/signals/signalsRowModel.js
- M lib/api-zod/src/generated/api.ts
+## main...origin/main
+ M SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md
+ M SESSION_HANDOFF_CURRENT.md
+ M SESSION_HANDOFF_MASTER.md
+ M artifacts/api-server/src/services/diagnostics.test.ts
+ M artifacts/api-server/src/services/diagnostics.ts
+ M artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx
+ M artifacts/pyrus/src/features/platform/memoryPressureClient.js
+ M artifacts/pyrus/src/features/platform/memoryPressureModel.test.js
+ M artifacts/pyrus/src/features/platform/memoryPressurePopoverModel.js
+ M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js
+ M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js
+ M artifacts/pyrus/src/screens/DiagnosticsScreen.jsx
+ M artifacts/pyrus/src/screens/SettingsScreen.jsx
+ M artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js
 ```
 
 ## Diff Summary
 
 ```text
- .../api-server/src/services/readiness.test.ts      |   3 +-
- .../pyrus/src/components/platform/primitives.jsx   | 132 +++++---
- .../pyrus/src/features/signals/signalsRowModel.js  | 331 +++++++++++++++++++++
- lib/api-zod/src/generated/api.ts                   |   2 +
- 4 files changed, 433 insertions(+), 35 deletions(-)
+ ...6-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md |  42 +++++++--
+ SESSION_HANDOFF_CURRENT.md                         |  27 +++---
+ SESSION_HANDOFF_MASTER.md                          |   2 +-
+ .../api-server/src/services/diagnostics.test.ts    |  67 ++++++++++++++
+ artifacts/api-server/src/services/diagnostics.ts   | 101 +++++++++++++++++++--
+ .../src/features/platform/PlatformWatchlist.jsx    |  94 ++++++++++++++++---
+ .../src/features/platform/memoryPressureClient.js  |   1 +
+ .../features/platform/memoryPressureModel.test.js  |  12 +++
+ .../platform/memoryPressurePopoverModel.js         |  11 ++-
+ .../features/platform/useMemoryPressureSignal.js   |   4 +
+ .../platform/useMemoryPressureSignal.test.js       |   7 ++
+ artifacts/pyrus/src/screens/DiagnosticsScreen.jsx  |  20 +++-
+ artifacts/pyrus/src/screens/SettingsScreen.jsx     |   1 +
+ .../src/screens/algo/OperationsSignalRow.test.js   |  20 +++-
+ 14 files changed, 361 insertions(+), 48 deletions(-)
 ```
 
 ## Validations Detected In Transcript

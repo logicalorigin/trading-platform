@@ -194,11 +194,11 @@ test("default paper signal-options startup uses full signal monitor coverage", (
   assert.match(source, /getSignalMonitorStoredState/);
   assert.match(source, /withSignalMonitorUniverseScope/);
   assert.match(source, /isStockAggregateStreamingAvailable/);
+  assert.match(source, /const monitorStateNeedsRefresh = shouldRefreshSignalOptionsMonitorState/);
   assert.match(
     source,
     /resolveSignalOptionsMonitorFullRefresh\(\{[\s\S]*universe: input\.universe/,
   );
-  assert.doesNotMatch(monitorBody, /input\.source !== "worker"/);
   assert.match(source, /maxSymbolsOverride:\s*fullRefresh\.symbols\.length/);
   assert.match(source, /pressureCapMode:\s*"bypass-soft"/);
   assert.match(
@@ -221,8 +221,9 @@ test("default paper signal-options startup uses full signal monitor coverage", (
   assert.match(source, /const streamFirstMonitorAvailable/);
   assert.match(
     source,
-    /streamFirstMonitorAvailable \|\| input\.preferStoredMonitorState === true/,
+    /input\.source !== "worker"[\s\S]*streamFirstMonitorAvailable \|\| input\.preferStoredMonitorState === true/,
   );
+  assert.match(source, /resolveSignalOptionsMonitorBatch/);
   assert.match(source, /"manual_lightweight"/);
   assert.match(source, /source:\s*"stored_state"/);
   assert.match(
@@ -526,14 +527,16 @@ test("signal-options action scan prioritizes newest actionable signals", () => {
   );
 });
 
-test("signal-options defers heavy action work under RSS-only API pressure", () => {
+test("signal-options keeps heavy action work enabled under high RSS pressure when caps allow it", () => {
   updateApiResourcePressure({ rssMb: resolveApiRssPressureThresholds().high });
   try {
     const decision =
       __signalOptionsAutomationInternalsForTests.shouldDeferSignalOptionsHeavyWork();
 
     assert.equal(decision.pressure.level, "high");
-    assert.equal(decision.defer, true);
+    assert.equal(decision.pressure.caps.signalOptions.actionScansAllowed, true);
+    assert.equal(decision.pressure.caps.signalOptions.positionMarksAllowed, true);
+    assert.equal(decision.defer, false);
   } finally {
     __resetApiResourcePressureForTests();
   }
@@ -616,6 +619,10 @@ test("signal-options dashboard endpoints share a cached state snapshot", () => {
     source.match(
       /async function withFreshSignalOptionsStateSignals[\s\S]*?\nexport async function listSignalOptionsAutomationState/,
     )?.[0] ?? "";
+  const fastSummaryStateBlock =
+    source.match(
+      /async function buildSignalOptionsFastSummaryState[\s\S]*?\nexport async function listSignalOptionsAutomationState/,
+    )?.[0] ?? "";
 
   assert.match(source, /const signalOptionsDashboardCache = new Map/);
   assert.match(source, /const signalOptionsSummaryDashboardCache = new Map/);
@@ -643,13 +650,14 @@ test("signal-options dashboard endpoints share a cached state snapshot", () => {
   );
   assert.match(source, /const SIGNAL_OPTIONS_SUMMARY_CACHE_TTL_MS = 15_000/);
   assert.match(source, /refreshSignalsFromMonitorState\?: boolean/);
+  assert.match(source, /preferStoredMonitorState\?: boolean/);
   assert.match(
     freshSignalsBlock,
     /input\.cacheMode === "cache-only"[\s\S]*input\.refreshSignalsFromMonitorState !== true[\s\S]*return snapshot\.state/,
   );
   assert.match(
     freshSignalsBlock,
-    /withSignalOptionsStateSignalRefreshTimeout[\s\S]*listSignalOptionsSignalSnapshots[\s\S]*return snapshot\.state/,
+    /withSignalOptionsStateSignalRefreshTimeout[\s\S]*listSignalOptionsSignalSnapshots[\s\S]*preferStoredMonitorState: input\.preferStoredMonitorState === true[\s\S]*return snapshot\.state/,
   );
   assert.match(
     source,
@@ -689,6 +697,14 @@ test("signal-options dashboard endpoints share a cached state snapshot", () => {
       /async function getSignalOptionsSummaryDashboardSnapshot[\s\S]*?\nasync function getSignalOptionsDashboardSnapshot/,
     )?.[0] ?? "",
     /SIGNAL_OPTIONS_STATE_EVENT_LIMIT/,
+  );
+  assert.match(fastSummaryStateBlock, /buildSignalOptionsColdDashboardSnapshot/);
+  assert.match(fastSummaryStateBlock, /reason:\s*"signal_options_state_summary_fast_signal_state"/);
+  assert.match(fastSummaryStateBlock, /refreshSignalsFromMonitorState:\s*true/);
+  assert.match(fastSummaryStateBlock, /preferStoredMonitorState:\s*true/);
+  assert.match(
+    stateEndpoint ?? "",
+    /\(input\.view \?\? "summary"\) !== "full"[\s\S]*buildSignalOptionsFastSummaryState\(input\)/,
   );
   assert.match(
     stateEndpoint ?? "",
@@ -7264,6 +7280,8 @@ test("cockpit contract stage reports pre-contract blockers instead of deferred w
       scanStage?.detail,
       "fresh signals updated; 2 candidates blocked before contract selection",
     );
+    assert.equal(scanStage?.resourcePressureLevel, null);
+    assert.equal(scanStage?.lastResourcePressureLevel, "high");
     assert.equal(contractStage?.status, "attention");
     assert.equal(
       contractStage?.detail,

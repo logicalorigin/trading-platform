@@ -22,7 +22,10 @@ import {
   sp,
   textSize,
 } from "../../lib/uiTokens.jsx";
-import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
+import {
+  FooterApiSourcePressureIndicator,
+  FooterMemoryPressureIndicator,
+} from "./FooterMemoryPressureIndicator.jsx";
 import { SCREENS } from "./screenRegistry.jsx";
 
 const SECONDARY_SCREEN_IDS = new Set([
@@ -161,6 +164,7 @@ export const MobileMoreSheet = ({
   selectedSymbol,
   session,
   memoryPressureSignal,
+  apiSourcePressureSnapshot,
 }) => {
   const secondaryScreens = SCREENS.filter((screen) =>
     SECONDARY_SCREEN_IDS.has(screen.id),
@@ -314,7 +318,18 @@ export const MobileMoreSheet = ({
             paddingTop: sp(2),
           }}
         >
-          <FooterMemoryPressureIndicator signal={memoryPressureSignal} />
+          <span
+            style={{
+              display: "inline-flex",
+              minWidth: 0,
+              alignItems: "center",
+              gap: sp(6),
+              overflow: "hidden",
+            }}
+          >
+            <FooterApiSourcePressureIndicator runtimeControl={apiSourcePressureSnapshot} />
+            <FooterMemoryPressureIndicator signal={memoryPressureSignal} />
+          </span>
           <FlaskConical
             size={14}
             strokeWidth={2}

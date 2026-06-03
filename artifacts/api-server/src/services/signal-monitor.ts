@@ -132,7 +132,7 @@ const SIGNAL_MONITOR_STALE_RETRY_BROKER_WINDOW_MINUTES = 240;
 const SIGNAL_MONITOR_STALE_RETRY_BARS = 64;
 const SIGNAL_MONITOR_MATRIX_BARS_LIMIT = 240;
 const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY = "native_timeframes_live_retry";
-const SIGNAL_MONITOR_MATRIX_BAR_LOAD_TIMEOUT_MS = 6_000;
+const SIGNAL_MONITOR_MATRIX_BAR_LOAD_TIMEOUT_MS = 12_000;
 const SIGNAL_MONITOR_MATRIX_STREAM_KEEPALIVE_MS = 5 * 60_000;
 const DEFAULT_SIGNAL_MONITOR_BAR_SOURCE_POLICY: SignalMonitorBarSourcePolicy =
   "mixed";
@@ -425,7 +425,8 @@ function resolveSignalMonitorMatrixConcurrency(input: {
   symbolCount: number;
 }) {
   if (
-    input.matrixSettings.pressure !== "critical" &&
+    (input.matrixSettings.pressure === "normal" ||
+      input.matrixSettings.pressure === "watch") &&
     shouldBypassSoftSignalMonitorMatrixPressure(input.request) &&
     input.symbolCount <= SIGNAL_MONITOR_MATRIX_SOFT_BYPASS_MAX_SYMBOLS
   ) {
@@ -912,13 +913,21 @@ function isAutomaticSignalMonitorMatrixRequest(input: {
 function shouldServeSignalMonitorMatrixFromCacheOnly(input: {
   clientRole?: SignalMonitorMatrixClientRole;
   requestOrigin?: SignalMonitorMatrixRequestOrigin;
+  cells?: SignalMonitorMatrixCellRequest[];
 }) {
   const pressureLevel = getApiResourcePressureSnapshot().level;
+  const foregroundExactCellLeader = Boolean(
+    input.clientRole === "leader" &&
+      (input.requestOrigin === "startup" || input.requestOrigin === "poll") &&
+      Array.isArray(input.cells) &&
+      input.cells.length > 0,
+  );
   return (
     (input.clientRole === "follower" &&
       (input.requestOrigin === "startup" || input.requestOrigin === "poll")) ||
     (input.clientRole === "leader" &&
       (input.requestOrigin === "startup" || input.requestOrigin === "poll") &&
+      !foregroundExactCellLeader &&
       (pressureLevel === "high" || pressureLevel === "critical"))
   );
 }
@@ -983,7 +992,11 @@ function shouldCacheSignalMonitorMatrixEvaluationValue(
       return false;
     }
     const record = state as { status?: unknown; lastError?: unknown };
-    return record.status === "error" || typeof record.lastError === "string";
+    const status = String(record.status || "ok").trim().toLowerCase();
+    return (
+      status === "error" ||
+      (typeof record.lastError === "string" && status !== "unavailable")
+    );
   });
 }
 
@@ -3442,11 +3455,12 @@ function shouldPersistSignalMonitorMatrixState(
 ): boolean {
   const symbol = normalizeSymbol(state.symbol);
   const timeframe = String(state.timeframe || "") as SignalMonitorMatrixTimeframe;
+  const status = String(state.status || "ok").trim().toLowerCase();
   return Boolean(
     symbol &&
       SIGNAL_MONITOR_MATRIX_TIMEFRAMES.includes(timeframe) &&
       state.active !== false &&
-      state.status === "ok" &&
+      (status === "ok" || status === "stale") &&
       !state.lastError &&
       (dateOrNull(state.latestBarAt) || dateOrNull(state.currentSignalAt)),
   );
@@ -3471,9 +3485,14 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
       const batch = states.slice(index, index + concurrency);
       await Promise.all(
         batch.map((state) => {
+          const status =
+            String(state.status || "ok").trim().toLowerCase() === "stale"
+              ? "stale"
+              : "ok";
           const direction =
-            state.currentSignalDirection === "buy" ||
-            state.currentSignalDirection === "sell"
+            status === "ok" &&
+            (state.currentSignalDirection === "buy" ||
+              state.currentSignalDirection === "sell")
               ? state.currentSignalDirection
               : null;
           const signalAt = direction ? dateOrNull(state.currentSignalAt) : null;
@@ -3488,8 +3507,8 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
               : null,
             latestBarAt: dateOrNull(state.latestBarAt),
             barsSinceSignal: matrixBarsSinceSignalOrNull(state.barsSinceSignal),
-            fresh: Boolean(state.fresh),
-            status: "ok",
+            fresh: status === "ok" && Boolean(state.fresh),
+            status,
             evaluatedAt: dateOrNull(state.lastEvaluatedAt) ?? input.evaluatedAt,
             lastError: null,
           });
@@ -4000,6 +4019,8 @@ function isHydratedSignalMonitorMatrixStateForCoverage(
   const record = state as {
     active?: unknown;
     currentSignalAt?: unknown;
+    lastError?: unknown;
+    lastEvaluatedAt?: unknown;
     latestBarAt?: unknown;
     status?: unknown;
     symbol?: unknown;
@@ -4010,12 +4031,16 @@ function isHydratedSignalMonitorMatrixStateForCoverage(
   const status = String(record.status || "ok").trim().toLowerCase();
   const latestBarAt = dateOrNull(record.latestBarAt);
   const currentSignalAt = dateOrNull(record.currentSignalAt);
+  const lastEvaluatedAt = dateOrNull(record.lastEvaluatedAt);
   return Boolean(
     symbol &&
       timeframes.includes(timeframe) &&
       record.active !== false &&
-      status === "ok" &&
-      (latestBarAt || currentSignalAt),
+      (((status === "ok" || status === "stale") &&
+        (latestBarAt || currentSignalAt)) ||
+        (status === "unavailable" &&
+          lastEvaluatedAt &&
+          typeof record.lastError === "string")),
   );
 }
 
@@ -4065,6 +4090,46 @@ function isRenderableStoredSignalMonitorMatrixState(
       !record.lastError &&
       (dateOrNull(record.latestBarAt) || dateOrNull(record.currentSignalAt)),
   );
+}
+
+function hasCompleteSignalMonitorMatrixCoverage(input: {
+  states: unknown[];
+  timeframes: readonly SignalMonitorMatrixTimeframe[];
+  requestedSymbols: string[];
+  requestedCells?: SignalMonitorMatrixCellRequest[];
+}): boolean {
+  const requestedCellKeys =
+    input.requestedCells && input.requestedCells.length
+      ? signalMonitorMatrixCellKeys(input.requestedCells)
+      : new Set(
+          input.requestedSymbols.flatMap((rawSymbol) => {
+            const symbol = normalizeSymbol(rawSymbol);
+            return symbol
+              ? input.timeframes.map((timeframe) => `${symbol}:${timeframe}`)
+              : [];
+          }),
+        );
+  if (!requestedCellKeys.size) {
+    return true;
+  }
+
+  const hydratedCellKeys = new Set<string>();
+  input.states.forEach((state) => {
+    if (!isHydratedSignalMonitorMatrixStateForCoverage(state, input.timeframes)) {
+      return;
+    }
+    const record = state as { symbol?: unknown; timeframe?: unknown };
+    const symbol = normalizeSymbol(record.symbol as string);
+    const timeframe = String(
+      record.timeframe || "",
+    ) as SignalMonitorMatrixTimeframe;
+    const key = `${symbol}:${timeframe}`;
+    if (requestedCellKeys.has(key)) {
+      hydratedCellKeys.add(key);
+    }
+  });
+
+  return Array.from(requestedCellKeys).every((key) => hydratedCellKeys.has(key));
 }
 
 function storedSignalStateToMatrixState(
@@ -5055,6 +5120,37 @@ export async function evaluateSignalMonitorMatrix(input: {
 
   if (isAutomaticSignalMonitorMatrixRequest(input)) {
     const storedResponse = await hydrateFromStoredStates(buildEmptyMatrixResponse());
+    if (
+      exactCells.exact &&
+      (matrixSettings.pressure === "normal" ||
+        matrixSettings.pressure === "watch") &&
+      !hasCompleteSignalMonitorMatrixCoverage({
+        states: storedResponse.states,
+        timeframes,
+        requestedSymbols: symbols,
+        requestedCells: exactCells.cells,
+      })
+    ) {
+      const response = await withSignalMonitorMatrixEvaluationCache(
+        cacheKey,
+        buildFreshMatrixResponse,
+        {
+          onCacheStatus: (status) => {
+            cacheStatus = status;
+          },
+        },
+      );
+      const hydratedResponse = await hydrateFromStoredStates(response);
+      return withSignalMonitorMatrixMetadata(hydratedResponse, {
+        cacheStatus,
+        requestedSymbols: symbols,
+        requestedCells: exactCells.cells,
+        totalSymbols: symbols.length + skippedSymbols.length,
+        taskCount: exactCells.cells.length,
+        startedAt,
+        automaticRequest,
+      });
+    }
     refreshMatrixInBackground();
     return withSignalMonitorMatrixMetadata(storedResponse, {
       cacheStatus: shouldServeSignalMonitorMatrixFromStoredStateFast({
@@ -5243,6 +5339,7 @@ export const __signalMonitorInternalsForTests = {
   aggregateStockMinuteAggregatesForSignalMonitorBars,
   mergeSignalMonitorStockMinuteAggregates,
   hydrateSignalMonitorMatrixStatesFromStoredStates,
+  hasCompleteSignalMonitorMatrixCoverage,
   shouldPersistSignalMonitorMatrixState,
   loadSignalMonitorStreamCompletedBars,
   isSignalMonitorMatrixBarLoadTimeout,

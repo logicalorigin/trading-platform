@@ -44,6 +44,8 @@ test("algo cockpit stream uses lean first-paint payloads", () => {
 
   assert.match(criticalPayload, /const criticalEventLimit = Math\.min\(target\.eventLimit, 20\)/);
   assert.match(criticalPayload, /view:\s*"summary"/);
+  assert.match(criticalPayload, /cacheMode:\s*"cache-only"/);
+  assert.match(criticalPayload, /refreshSignalsFromMonitorState:\s*true/);
   assert.doesNotMatch(criticalPayload, /getAlgoDeploymentCockpit/);
   assert.match(source, /getAlgoDeploymentCockpit\(\{[\s\S]*view:\s*"summary"/);
   assert.match(

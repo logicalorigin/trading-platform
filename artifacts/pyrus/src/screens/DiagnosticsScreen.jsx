@@ -75,6 +75,7 @@ import {
   buildFailurePointFromDiagnosticsSnapshot,
   buildMemoryPressureFailurePoint,
 } from "../features/platform/failurePointModel.js";
+import { isPyrusSafeQaMode } from "../app/qa-mode";
 
 const DIAGNOSTIC_ALERT_PREF_EVENT = "pyrus:diagnostic-alert-preferences-updated";
 const LEGACY_DIAGNOSTIC_ALERT_PREF_EVENT =
@@ -292,10 +293,16 @@ function snapshotBySubsystem(latest, subsystem) {
 }
 
 function postClientEvent(input) {
+  if (isPyrusSafeQaMode()) {
+    return;
+  }
   recordClientDiagnosticEvent(input).catch(() => {});
 }
 
 function postClientMetrics(input) {
+  if (isPyrusSafeQaMode()) {
+    return;
+  }
   fetch("/api/diagnostics/client-metrics", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -693,13 +700,48 @@ export default function DiagnosticsScreen({
     responsiveFlags(diagnosticsRootSize.width);
   const { preferences: userPreferences } = useUserPreferences();
   const notificationPreferences = userPreferences.notifications;
-  const { state, metrics, history } = useOptionHydrationDiagnostics(isVisible);
-  const chartStats = useChartHydrationStats(isVisible);
-  const latencyStats = useIbkrLatencyStats(isVisible);
-  const workloadStats = useRuntimeWorkloadStats(isVisible);
-  const memoryPressureState = useMemoryPressureSnapshot(true);
-  const hydrationCoordinatorStats = useHydrationCoordinatorStats(isVisible);
   const [activeTab, setActiveTab] = useState("Overview");
+  const diagnosticsVisible = Boolean(isVisible);
+  const overviewTabActive = diagnosticsVisible && activeTab === "Overview";
+  const ibkrTabActive = diagnosticsVisible && activeTab === "IBKR";
+  const marketDataTabActive = diagnosticsVisible && activeTab === "Market Data";
+  const apiTabActive = diagnosticsVisible && activeTab === "API";
+  const browserTabActive = diagnosticsVisible && activeTab === "Browser";
+  const memoryTabActive = diagnosticsVisible && activeTab === "Memory";
+  const ordersAccountsTabActive =
+    diagnosticsVisible && activeTab === "Orders/Accounts";
+  const eventsTabActive = diagnosticsVisible && activeTab === "Events";
+  const optionHydrationDiagnosticsActive =
+    overviewTabActive || marketDataTabActive;
+  const chartDiagnosticsActive =
+    overviewTabActive || marketDataTabActive || browserTabActive;
+  const ibkrDiagnosticsActive = overviewTabActive || ibkrTabActive;
+  const workloadDiagnosticsActive =
+    overviewTabActive || apiTabActive || browserTabActive;
+  const memoryDiagnosticsActive =
+    overviewTabActive || browserTabActive || memoryTabActive;
+  const hydrationCoordinatorDiagnosticsActive =
+    overviewTabActive || marketDataTabActive;
+  const runtimeDiagnosticsActive =
+    overviewTabActive ||
+    ibkrTabActive ||
+    marketDataTabActive ||
+    apiTabActive ||
+    browserTabActive ||
+    memoryTabActive ||
+    ordersAccountsTabActive;
+  const browserMetricsCollectionActive =
+    overviewTabActive || browserTabActive || memoryTabActive;
+  const { state, metrics, history } = useOptionHydrationDiagnostics(
+    optionHydrationDiagnosticsActive,
+  );
+  const chartStats = useChartHydrationStats(chartDiagnosticsActive);
+  const latencyStats = useIbkrLatencyStats(ibkrDiagnosticsActive);
+  const workloadStats = useRuntimeWorkloadStats(workloadDiagnosticsActive);
+  const memoryPressureState = useMemoryPressureSnapshot(memoryDiagnosticsActive);
+  const hydrationCoordinatorStats = useHydrationCoordinatorStats(
+    hydrationCoordinatorDiagnosticsActive,
+  );
   const [windowMinutes, setWindowMinutes] = useState(60);
   const [latest, setLatest] = useState(null);
   const [historyData, setHistoryData] = useState({ points: [], snapshots: [] });
@@ -714,11 +756,11 @@ export default function DiagnosticsScreen({
   const diagnosticsOpenLoggedRef = useRef(false);
   useEffect(() => {
     onReadinessChange?.({
-      criticalReady: Boolean(isVisible),
-      derivedReady: Boolean(isVisible),
-      backgroundAllowed: Boolean(isVisible),
+      criticalReady: diagnosticsVisible,
+      derivedReady: diagnosticsVisible,
+      backgroundAllowed: diagnosticsVisible,
     });
-  }, [isVisible, onReadinessChange]);
+  }, [diagnosticsVisible, onReadinessChange]);
   const browserMetricsInputRef = useRef({
     workloadStats,
     hydrationCoordinatorStats,
@@ -847,14 +889,14 @@ export default function DiagnosticsScreen({
   }, [timeWindow.from, timeWindow.to]);
 
   useEffect(() => {
-    if (!isVisible) {
+    if (!eventsTabActive) {
       return undefined;
     }
 
     loadHistoryAndEvents();
     const interval = window.setInterval(loadHistoryAndEvents, 60_000);
     return () => window.clearInterval(interval);
-  }, [isVisible, loadHistoryAndEvents]);
+  }, [eventsTabActive, loadHistoryAndEvents]);
 
   useEffect(() => {
     if (!isVisible) {
@@ -877,7 +919,7 @@ export default function DiagnosticsScreen({
   }, [isVisible]);
 
   useEffect(() => {
-    if (!isVisible) {
+    if (!browserMetricsCollectionActive) {
       return undefined;
     }
 
@@ -895,7 +937,7 @@ export default function DiagnosticsScreen({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [isVisible]);
+  }, [browserMetricsCollectionActive]);
 
   useEffect(() => {
     if (!isVisible) {
@@ -951,14 +993,14 @@ export default function DiagnosticsScreen({
   }, [isVisible, syncLocalAlertsFromSnapshot, updateLocalAlerts]);
 
   useEffect(() => {
-    if (!isVisible || !selectedEvent) {
+    if (!eventsTabActive || !selectedEvent) {
       setEventDetail(null);
       return;
     }
     getDiagnosticEventDetail(selectedEvent.id || selectedEvent.incidentKey)
       .then((payload) => setEventDetail(payload))
       .catch(() => setEventDetail(null));
-  }, [isVisible, selectedEvent]);
+  }, [eventsTabActive, selectedEvent]);
 
   const overviewSnapshots = latest?.snapshots || [];
   const topSeverity = latest?.severity || "info";
@@ -1011,7 +1053,7 @@ export default function DiagnosticsScreen({
   const stream = latencyStats?.stream || {};
   const runtimeIbkr = safeRecord(ibkrSnapshot?.raw);
   const runtimeControl = useRuntimeControlSnapshot({
-    enabled: isVisible,
+    enabled: runtimeDiagnosticsActive,
     runtimeDiagnostics: runtimeIbkr ? { ibkr: runtimeIbkr } : null,
     runtimeDiagnosticsEnabled: false,
     lineUsageEnabled: true,

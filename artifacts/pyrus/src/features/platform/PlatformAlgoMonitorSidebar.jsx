@@ -6,7 +6,7 @@ import {
   useListAlgoDeployments,
   useListExecutionEvents,
 } from "@workspace/api-client-react";
-import React, { memo, useMemo } from "react";
+import React, { memo, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Ban,
@@ -69,6 +69,9 @@ const QUERY_DEFAULTS = {
   refetchOnWindowFocus: false,
   staleTime: 15_000,
 };
+
+const ALGO_MONITOR_CRITICAL_FALLBACK_DELAY_MS = 1_000;
+const ALGO_MONITOR_DERIVED_FALLBACK_DELAY_MS = 6_000;
 
 const ALGO_MONITOR_PIPELINE_LABEL_OVERRIDES = {
   scan_universe: "Universe",
@@ -950,24 +953,52 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     enabled: Boolean(queryEnabled && deploymentId && !externalStreamFreshness),
   });
   const streamFreshness = externalStreamFreshness || ownStreamFreshness;
+  const [criticalFallbackReady, setCriticalFallbackReady] = useState(false);
+  const [derivedFallbackReady, setDerivedFallbackReady] = useState(false);
+  useEffect(() => {
+    if (!queryEnabled || streamFreshness.algoCriticalFresh) {
+      setCriticalFallbackReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setCriticalFallbackReady(true);
+    }, ALGO_MONITOR_CRITICAL_FALLBACK_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [queryEnabled, streamFreshness.algoCriticalFresh]);
+  useEffect(() => {
+    if (!queryEnabled || streamFreshness.algoFullFresh) {
+      setDerivedFallbackReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setDerivedFallbackReady(true);
+    }, ALGO_MONITOR_DERIVED_FALLBACK_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [queryEnabled, streamFreshness.algoFullFresh]);
+  const criticalRestFallbackEnabled = Boolean(
+    queryEnabled && deploymentId && criticalFallbackReady && !streamFreshness.algoCriticalFresh,
+  );
+  const derivedRestFallbackEnabled = Boolean(
+    queryEnabled && deploymentId && derivedFallbackReady && !streamFreshness.algoFullFresh,
+  );
   const cockpitQuery = useGetAlgoDeploymentCockpit(deploymentId, {
     query: {
       ...QUERY_DEFAULTS,
-      enabled: Boolean(queryEnabled && deploymentId),
-      refetchInterval: queryEnabled && !streamFreshness.algoFullFresh ? 30_000 : false,
+      enabled: derivedRestFallbackEnabled,
+      refetchInterval: derivedRestFallbackEnabled ? 30_000 : false,
     },
   });
   const automationStateQuery = useGetSignalOptionsAutomationState(deploymentId, {
     query: {
       ...QUERY_DEFAULTS,
-      enabled: Boolean(queryEnabled && deploymentId),
-      refetchInterval: queryEnabled && !streamFreshness.algoCriticalFresh ? 30_000 : false,
+      enabled: criticalRestFallbackEnabled,
+      refetchInterval: criticalRestFallbackEnabled ? 30_000 : false,
     },
   });
   const performanceQuery = useGetSignalOptionsPerformance(deploymentId, {
     query: {
       ...QUERY_DEFAULTS,
-      enabled: Boolean(queryEnabled && deploymentId && streamFreshness.algoFullFresh),
+      enabled: derivedRestFallbackEnabled,
       refetchInterval: false,
     },
   });
@@ -976,8 +1007,8 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: Boolean(queryEnabled && deploymentId),
-        refetchInterval: queryEnabled && !streamFreshness.algoCriticalFresh ? 30_000 : false,
+        enabled: criticalRestFallbackEnabled,
+        refetchInterval: criticalRestFallbackEnabled ? 30_000 : false,
       },
     },
   );

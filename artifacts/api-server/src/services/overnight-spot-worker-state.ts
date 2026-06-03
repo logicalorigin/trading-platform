@@ -18,6 +18,8 @@ export type OvernightSpotWorkerSnapshot = {
     lastBlockedCount: number;
     lastSkippedCount: number;
     lastFailedCount: number;
+    timedOut?: boolean;
+    unsettledAfterTimeout?: boolean;
     nextScanDueAt: string | null;
     nextScanDueInMs: number | null;
   }>;

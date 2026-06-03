@@ -137,4 +137,12 @@
     - Post-Restart check: the Replit-owned supervisor restarted at 2026-06-01 17:13:52 UTC. `/api/healthz` returned 200 and `GET http://127.0.0.1:18747/api/gex/SPY/projection?view=chart` returned 200 in 438ms with 8 overlay points from `2026-06-02` through `2026-06-11`.
   - Validation blocked:
     - `pnpm --filter @workspace/api-server run typecheck` currently fails in unrelated dirty workspace code: `artifacts/api-server/src/services/signal-options-automation.test.ts:5299` reports `quality.components` is possibly undefined.
-- Next step: GEX projection cone work is validated with compact chart-mode data, persisted-snapshot first chart loading, true-axis future mapping, bounded offscreen SVG geometry, selected-axis price autoscale, first-open viewport protection, 8-expiration persisted chart horizon, and native-axis-like future labels. Distant intraday expirations still require normal pan/zoom/timeframe changes instead of being squeezed into the visible lane, painted at huge offscreen coordinates, forcing full GEX dashboard loads, or blocking chart startup on live option-chain hydration.
+  - Closeout recheck on 2026-06-02 UTC:
+    - The prior unrelated API typecheck blocker is gone; `pnpm --filter @workspace/api-server run typecheck` passed.
+    - Re-ran scoped GEX API validation: `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/gex-projection.test.ts src/services/treasury-yield-curve.test.ts src/services/gex-projection-api.test.ts` passed with 10 tests.
+    - Re-ran scoped Pyrus projection/chart validation: `pnpm --dir artifacts/pyrus exec node --import tsx --test src/features/gex/useGexProjection.test.js src/features/gex/gexProjectionChartWiring.test.js src/features/charting/ResearchChartSurface.test.ts` passed with 91 tests.
+    - `pnpm --filter @workspace/pyrus run typecheck` passed.
+    - Scoped `git diff --check` passed for the GEX projection/chart files plus the local GEX screen file.
+    - Running app probe: `GET http://127.0.0.1:18747/api/gex/SPY/projection?view=chart` returned 200 with 8 overlay points from `2026-06-02` through `2026-06-11`; warm retries completed in about 255-366ms.
+    - The only currently tracked dirty GEX file is `artifacts/pyrus/src/screens/GexScreen.jsx`, which is a separate strike-profile column-order change, not projection-cone work.
+- Next step: No remaining GEX projection-cone work from this handoff. Keep any GEX strike-profile/table column-order follow-up separate from the completed projection-cone slice.

@@ -1,8 +1,8 @@
 import {
   AlertTriangle,
+  ArrowUpRight,
   Ban,
   CheckCircle2,
-  ChevronDown,
   Clock,
   MinusCircle,
   Radar,
@@ -22,10 +22,14 @@ import {
   textSize,
 } from "../../lib/uiTokens.jsx";
 import { formatRelativeTimeShort } from "../../lib/formatters";
+import { formatAppTime } from "../../lib/timeZone";
 import {
   MicroSparkline,
 } from "../../components/platform/primitives.jsx";
-import { resolveSignalMatrixVerdict } from "../../features/signals/signalsRowModel.js";
+import {
+  hydrateSignalMatrixProfileTimeframe,
+  resolveSignalMatrixVerdict,
+} from "../../features/signals/signalsRowModel.js";
 import { getStoredOptionQuoteSnapshot } from "../../features/platform/live-streams";
 import { useValueFlash } from "../../lib/motion.jsx";
 import {
@@ -40,6 +44,11 @@ import {
   resolveSpreadWidthFraction,
   spreadGaugeTone,
 } from "../../components/platform/signal-language";
+import {
+  ColumnHeaderCell,
+  SortableColumnHeaderCell,
+  TableHeaderDndContext,
+} from "../../components/platform/InteractiveColumnHeader.jsx";
 import {
   asRecord,
   candidateBlockerLabel,
@@ -157,9 +166,9 @@ export const SIGNAL_TABLE_COLUMNS = [
   },
   {
     key: "process",
-    label: "Process",
-    toggleLabel: "Audit progression",
-    track: "minmax(124px, 0.9fr)",
+    label: "Stage",
+    toggleLabel: "Selection stage",
+    track: "minmax(136px, 0.9fr)",
   },
   {
     key: "sync",
@@ -201,6 +210,8 @@ export const DEFAULT_SIGNAL_VISIBLE_COLUMNS = [
   "quote",
   "spread",
   "greeks",
+  "process",
+  "sync",
   "score",
   "decision",
   "rowAction",
@@ -350,9 +361,24 @@ const compactQuoteText = (value) => {
     .replace(/\bspr\s+/gi, "");
 };
 
-const compactGreeksText = (value) => {
-  if (!hasDisplayValue(value)) return MISSING_VALUE;
-  return String(value).replace(/\s+\/\s+/g, "/");
+const formatGreekGridNumber = (value, digits) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(digits) : MISSING_VALUE;
+};
+
+const GREEK_GRID_ITEM_DEFS = [
+  { key: "delta", label: "D", title: "Delta", digits: 2 },
+  { key: "gamma", label: "G", title: "Gamma", digits: 3 },
+  { key: "theta", label: "Th", title: "Theta", digits: 3 },
+  { key: "vega", label: "V", title: "Vega", digits: 3 },
+];
+
+const greekGridItems = (quote) => {
+  const record = asRecord(quote);
+  return GREEK_GRID_ITEM_DEFS.map((item) => ({
+    ...item,
+    value: formatGreekGridNumber(record[item.key], item.digits),
+  }));
 };
 
 const formatQuoteAge = (ageMs) => {
@@ -362,6 +388,246 @@ const formatQuoteAge = (ageMs) => {
   if (numeric < 60_000) return `${(numeric / 1_000).toFixed(1)}s`;
   if (numeric < 3_600_000) return `${(numeric / 60_000).toFixed(1)}m`;
   return `${(numeric / 3_600_000).toFixed(1)}h`;
+};
+
+const formatDiagnosticLabel = (value) => {
+  const normalized = String(value || "").trim();
+  if (!normalized) return MISSING_VALUE;
+  return normalized
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    .replace(/\bIbkr\b/g, "IBKR")
+    .replace(/\bDte\b/g, "DTE")
+    .replace(/\bMtf\b/g, "MTF");
+};
+
+const firstDisplayLabel = (...values) => {
+  for (const value of values) {
+    const label = formatDiagnosticLabel(value);
+    if (label !== MISSING_VALUE) return label;
+  }
+  return MISSING_VALUE;
+};
+
+const arrayLength = (value) => (Array.isArray(value) ? value.length : 0);
+
+const diagnosticContractCount = (candidate) => {
+  const contractSelection = asRecord(candidate?.contractSelection);
+  const chainDebug = asRecord(candidate?.chainDebug);
+  const attempts = Array.isArray(candidate?.chainAttempts)
+    ? candidate.chainAttempts
+    : [];
+  const attemptCounts = attempts.map((attempt) =>
+    Number(asRecord(attempt).contractCount),
+  );
+  const count = [
+    Number(contractSelection.candidateCount),
+    Number(chainDebug.contractCount),
+    ...attemptCounts,
+  ].find((value) => Number.isFinite(value));
+  return Number.isFinite(count) ? Math.max(0, count) : null;
+};
+
+const diagnosticLiveDemandSummary = (liveQuoteDemand) => {
+  const demand = asRecord(liveQuoteDemand);
+  if (!Object.keys(demand).length) return null;
+  const states = Array.isArray(demand.states) ? demand.states.map(asRecord) : [];
+  const firstPending =
+    states.find((state) => String(state.status || "").toLowerCase() === "pending") ||
+    states[0] ||
+    {};
+  const status = String(demand.status || firstPending.status || "").toLowerCase();
+  const reason = String(demand.reason || firstPending.reason || "").trim();
+  const hydrationAttempts = Number(demand.hydrationAttempts);
+  const hydrationWaitMs = Number(demand.hydrationWaitMs);
+  const cacheAgeMs = Number(demand.cacheAgeMs ?? firstPending.cacheAgeMs);
+  const requestedCount =
+    arrayLength(demand.requestedProviderContractIds) ||
+    arrayLength(demand.providerContractIds) ||
+    states.length ||
+    (demand.providerContractId ? 1 : 0);
+  const detail = compactJoin([
+    firstDisplayLabel(reason),
+    Number.isFinite(hydrationAttempts) ? `${hydrationAttempts} attempts` : null,
+    Number.isFinite(hydrationWaitMs) ? `${formatQuoteAge(hydrationWaitMs)} wait` : null,
+    Number.isFinite(cacheAgeMs) ? `${formatQuoteAge(cacheAgeMs)} cache` : null,
+    requestedCount > 1 ? `${requestedCount} contracts` : null,
+  ]);
+  return {
+    status,
+    reason,
+    detail,
+    title: compactJoin([
+      `live demand ${status || MISSING_VALUE}`,
+      firstDisplayLabel(reason),
+      detail,
+      demand.owner,
+    ]),
+  };
+};
+
+const resolveSelectionStageDisplay = ({
+  candidate,
+  blocker,
+  hasSelectedContract,
+  selectedContractId,
+  hasQuote,
+  contractIsPreview,
+}) => {
+  const candidateRecord = asRecord(candidate);
+  const status = String(
+    candidateRecord.actionStatus || candidateRecord.status || "",
+  ).toLowerCase();
+  const liveDemand = diagnosticLiveDemandSummary(candidateRecord.liveQuoteDemand);
+  const reason = String(candidateRecord.reason || "").trim();
+
+  if (!Object.keys(candidateRecord).length) {
+    return {
+      main: "Queued",
+      detail: "action candidate pending",
+      tone: CSS_COLOR.cyan,
+      Icon: Radar,
+      motionState: "evaluating",
+    };
+  }
+
+  if (hasBlockerDisplay(blocker) || status === "skipped") {
+    return {
+      main: "Blocked",
+      detail: blocker !== MISSING_VALUE ? blocker : firstDisplayLabel(reason),
+      tone: CSS_COLOR.red,
+      Icon: Ban,
+      motionState: "blocked",
+      contractMain: "Not selected",
+      quoteMain: "Not requested",
+    };
+  }
+
+  if (contractIsPreview) {
+    return {
+      main: "Preview",
+      detail: "policy-only contract preview",
+      tone: CSS_COLOR.textDim,
+      Icon: Clock,
+      motionState: null,
+    };
+  }
+
+  if (liveDemand?.status === "pending") {
+    const awaitingGreeks = /greek/i.test(liveDemand.reason);
+    return {
+      main: awaitingGreeks ? "Waiting greeks" : "Waiting quote",
+      detail: liveDemand.detail,
+      title: liveDemand.title,
+      tone: CSS_COLOR.amber,
+      Icon: Clock,
+      motionState: "evaluating",
+      quoteMain: awaitingGreeks ? "Greeks pending" : "Quote pending",
+      quoteDetail: liveDemand.detail,
+    };
+  }
+
+  if (liveDemand && ["rejected", "unavailable", "stale"].includes(liveDemand.status)) {
+    return {
+      main: firstDisplayLabel(liveDemand.status),
+      detail: liveDemand.detail,
+      title: liveDemand.title,
+      tone: liveDemand.status === "stale" ? CSS_COLOR.amber : CSS_COLOR.red,
+      Icon: AlertTriangle,
+      motionState: liveDemand.status === "stale" ? "wait" : "blocked",
+      quoteMain: firstDisplayLabel(liveDemand.status),
+      quoteDetail: liveDemand.detail,
+    };
+  }
+
+  if (hasSelectedContract && !hasQuote && selectedContractId) {
+    return {
+      main: "Contract selected",
+      detail: "waiting live quote",
+      tone: CSS_COLOR.amber,
+      Icon: Clock,
+      motionState: "evaluating",
+      quoteMain: "Quote pending",
+      quoteDetail: "live quote not received",
+    };
+  }
+
+  if (hasSelectedContract && hasQuote) {
+    return {
+      main: "Priced",
+      detail: "contract and quote ready",
+      tone: CSS_COLOR.green,
+      Icon: CheckCircle2,
+      motionState: "ready",
+    };
+  }
+
+  const contractCount = diagnosticContractCount(candidateRecord);
+  if (contractCount != null && contractCount <= 0) {
+    return {
+      main: "Chain empty",
+      detail: firstDisplayLabel(reason || "no_contract_for_strike_slot"),
+      tone: CSS_COLOR.amber,
+      Icon: AlertTriangle,
+      motionState: "blocked",
+      contractMain: "No contract",
+    };
+  }
+
+  if (candidateRecord.optionMarketDataBackoff) {
+    return {
+      main: "Backoff",
+      detail: firstDisplayLabel(asRecord(candidateRecord.optionMarketDataBackoff).reason),
+      tone: CSS_COLOR.amber,
+      Icon: Clock,
+      motionState: "wait",
+      contractMain: "Backoff",
+    };
+  }
+
+  if (candidateRecord.selectedExpiration || candidateRecord.expirationsDebug) {
+    return {
+      main: "Resolving chain",
+      detail:
+        contractCount != null
+          ? `${contractCount} contracts checked`
+          : "expiration selected",
+      tone: CSS_COLOR.cyan,
+      Icon: Radar,
+      motionState: "evaluating",
+      contractMain: "Resolving chain",
+    };
+  }
+
+  if (status === "candidate") {
+    return {
+      main: "Resolving contract",
+      detail: "expiration and chain pending",
+      tone: CSS_COLOR.cyan,
+      Icon: Radar,
+      motionState: "evaluating",
+      contractMain: "Resolving",
+      contractDetail: "expiration and chain pending",
+    };
+  }
+
+  if (status && status !== "candidate") {
+    return {
+      main: firstDisplayLabel(status),
+      detail: firstDisplayLabel(reason),
+      tone: CSS_COLOR.textSec,
+      Icon: Clock,
+      motionState: null,
+    };
+  }
+
+  return {
+    main: "Queued",
+    detail: "action candidate pending",
+    tone: CSS_COLOR.cyan,
+    Icon: Radar,
+    motionState: "evaluating",
+  };
 };
 
 export const formatSpreadWidth = (widthPct) => {
@@ -428,19 +694,28 @@ const candidateActionStatusValue = (candidate) =>
 const isCandidateContractSelectionPending = (candidate) =>
   candidateActionStatusValue(candidate) === "candidate";
 
-const missingContractDisplay = (candidate, blocker) => {
+const missingContractDisplay = (candidate, blocker, selectionStage) => {
   if (!candidate) {
     return missingDisplay(MISSING_VALUE, MISSING_VALUE);
   }
   if (hasBlockerDisplay(blocker)) return missingDisplay("Not selected", blocker);
   if (isCandidateContractSelectionPending(candidate)) {
-    return missingDisplay("Selecting", MISSING_VALUE);
+    return missingDisplay(
+      selectionStage?.contractMain || selectionStage?.main || "Resolving",
+      selectionStage?.contractDetail || selectionStage?.detail || MISSING_VALUE,
+    );
   }
   return missingDisplay(MISSING_VALUE, MISSING_VALUE);
 };
 
-const missingQuoteDisplay = ({ blocker, selectedContractId }) => {
+const missingQuoteDisplay = ({ blocker, selectedContractId, selectionStage }) => {
   if (hasBlockerDisplay(blocker)) return missingDisplay("Not requested", blocker);
+  if (hasDisplayValue(selectionStage?.quoteMain)) {
+    return missingDisplay(
+      selectionStage.quoteMain,
+      selectionStage.quoteDetail || selectionStage.detail || MISSING_VALUE,
+    );
+  }
   if (selectedContractId) {
     return missingDisplay("Quote pending", MISSING_VALUE);
   }
@@ -758,16 +1033,20 @@ const matrixVerdictDisplay = (verdict) => {
 };
 
 const signalSinceDisplay = (signal, signalAge, bars) => {
-  const elapsed = formatRelativeTimeShort(signal?.signalAt ?? signal?.currentSignalAt);
-  const barLabel =
-    signalAge?.label && signalAge.label !== MISSING_VALUE
-      ? signalAge.label
-      : bars !== MISSING_VALUE
-        ? `${bars} bars`
-        : null;
+  const signalTimestamp = signal?.signalAt ?? signal?.currentSignalAt;
+  const signalTime = formatAppTime(signalTimestamp, {}, MISSING_VALUE);
   return {
-    main: compactJoin([barLabel, signal?.timeframe]),
-    detail: elapsed !== MISSING_VALUE ? `${elapsed} since` : MISSING_VALUE,
+    main: signalTime,
+    detail: MISSING_VALUE,
+    title: compactJoin([
+      signalTimestamp ? `Signal ${signalTime}` : null,
+      signalTimestamp,
+      signalAge?.label && signalAge.label !== MISSING_VALUE
+        ? signalAge.label
+        : bars !== MISSING_VALUE
+          ? `${bars} bars`
+          : null,
+    ]),
   };
 };
 
@@ -909,6 +1188,101 @@ const DataCell = ({
   );
 };
 
+const GreeksGridCell = ({
+  quote,
+  fallback,
+  tone = CSS_COLOR.textSec,
+  titleValue,
+  motionState = null,
+}) => {
+  const items = greekGridItems(quote);
+  const hasGreekValues = items.some((item) => hasDisplayValue(item.value));
+  if (!hasGreekValues) {
+    return (
+      <DataCell
+        value={fallback?.main}
+        detail={fallback?.detail}
+        tone={tone}
+        titleValue={titleValue}
+        motionState={motionState}
+      />
+    );
+  }
+
+  return (
+    <span
+      className={signalCellClassName(motionState)}
+      data-algo-greeks-grid="2x2"
+      data-testid="algo-signal-greeks-grid"
+      title={titleValue}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        gridTemplateRows: "repeat(2, minmax(0, 1fr))",
+        alignItems: "stretch",
+        columnGap: 0,
+        rowGap: 0,
+        minWidth: 0,
+        width: "100%",
+        height: "100%",
+        color: tone,
+        overflow: "hidden",
+        lineHeight: 1,
+      }}
+    >
+      {items.map((item, index) => {
+        const leftColumn = index % 2 === 0;
+        const topRow = index < 2;
+        return (
+          <span
+            key={item.key}
+            data-testid={`algo-signal-greek-${item.key}`}
+            title={`${item.title} ${item.value}`}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "max-content minmax(0, 1fr)",
+              alignItems: "center",
+              gap: sp(2),
+              minWidth: 0,
+              padding: sp("1px 3px"),
+              borderRight: leftColumn ? `1px solid ${CSS_COLOR.borderLight}` : undefined,
+              borderBottom: topRow ? `1px solid ${CSS_COLOR.borderLight}` : undefined,
+              boxSizing: "border-box",
+              overflow: "hidden",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                color: CSS_COLOR.textMuted,
+                fontSize: fs(8),
+                fontWeight: FONT_WEIGHTS.medium,
+                lineHeight: 1,
+              }}
+            >
+              {item.label}
+            </span>
+            <span
+              aria-label={`${item.title} ${item.value}`}
+              style={{
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                fontSize: fs(9),
+                fontVariantNumeric: "tabular-nums",
+                lineHeight: 1,
+              }}
+            >
+              {item.value}
+            </span>
+          </span>
+        );
+      })}
+    </span>
+  );
+};
+
 const PlanCell = ({ plan, titleValue, motionState = null }) => {
   const detail = hasDisplayValue(plan?.detail) ? plan.detail : MISSING_VALUE;
   const intentTokens = actionIntentTokens(plan?.main);
@@ -977,16 +1351,28 @@ const PlanCell = ({ plan, titleValue, motionState = null }) => {
   );
 };
 
+const signalChartTitle = (signalRecord) => {
+  const signalTimestamp = signalRecord?.signalAt || signalRecord?.currentSignalAt;
+  return [
+    signalTimestamp ? `Signal ${formatAppTime(signalTimestamp)}` : null,
+    signalTimestamp ? `${formatRelativeTimeShort(signalTimestamp)} since` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+};
+
 const SignalHeroCell = ({
   signalRecord,
   candidate,
   direction,
   tfMatrix,
+  timeframes,
   freshnessRatio,
   price,
   priceFlashClassName,
   sparklineData,
   signalMove,
+  tradeButton = null,
   showSignalMove = true,
 }) => (
   <span
@@ -1054,6 +1440,7 @@ const SignalHeroCell = ({
         >
           {direction.label}
         </span>
+        {tradeButton}
       </span>
       <span
         style={{
@@ -1071,6 +1458,7 @@ const SignalHeroCell = ({
         <SignalDots
           testId="algo-signal-dots"
           statesByTimeframe={tfMatrix}
+          timeframes={timeframes}
           style={{ minWidth: dim(36), gap: sp(4) }}
         />
         <span
@@ -1087,6 +1475,9 @@ const SignalHeroCell = ({
         {sparklineData.length >= 2 ? (
           <span
             data-testid="algo-signal-hero-sparkline"
+            role="img"
+            title={signalChartTitle(signalRecord) || undefined}
+            aria-label={signalChartTitle(signalRecord) || undefined}
             style={{
               width: dim(40),
               height: dim(14),
@@ -1265,22 +1656,35 @@ const processStageMeta = (stage) => {
   };
 };
 
-const ProcessTrailCell = ({ progression, scanActive = false }) => {
+const ProcessTrailCell = ({
+  progression,
+  scanActive = false,
+  selectionStage = null,
+}) => {
   const eventCount = Number(progression?.eventCount || 0);
   if (!eventCount) {
     return (
       <DataCell
-        value={scanActive ? "Listening" : MISSING_VALUE}
-        detail={scanActive ? "Audit trail pending" : MISSING_VALUE}
-        tone={scanActive ? CSS_COLOR.cyan : CSS_COLOR.textDim}
-        motionState={scanActive ? "evaluating" : null}
+        value={selectionStage?.main || (scanActive ? "Listening" : MISSING_VALUE)}
+        detail={
+          selectionStage?.detail ||
+          (scanActive ? "audit trail pending" : MISSING_VALUE)
+        }
+        tone={
+          selectionStage?.tone ||
+          (scanActive ? CSS_COLOR.cyan : CSS_COLOR.textDim)
+        }
+        titleValue={selectionStage?.title}
+        motionState={
+          selectionStage?.motionState || (scanActive ? "evaluating" : null)
+        }
       />
     );
   }
 
   const latestStage = progression?.latestStage || progression?.latest?.stage;
   const latestMeta = processStageMeta(latestStage);
-  const LatestIcon = latestMeta.Icon;
+  const LatestIcon = selectionStage?.Icon || latestMeta.Icon;
   const stageIds = Array.isArray(progression?.stageIds)
     ? progression.stageIds.slice(-5)
     : [];
@@ -1288,6 +1692,7 @@ const ProcessTrailCell = ({ progression, scanActive = false }) => {
     ? formatRelativeTimeShort(new Date(progression.latestOccurredAt))
     : "";
   const detail = compactJoin([
+    selectionStage?.detail,
     `${eventCount} event${eventCount === 1 ? "" : "s"}`,
     latestAge,
     progression?.detail,
@@ -1309,7 +1714,8 @@ const ProcessTrailCell = ({ progression, scanActive = false }) => {
     <span
       data-testid="algo-signal-process-cell"
       className={signalCellClassName(
-        latestStage?.id === "blocked"
+        selectionStage?.motionState ||
+          (latestStage?.id === "blocked"
           ? "blocked"
           : latestStage?.id === "submitted" ||
               latestStage?.id === "filled" ||
@@ -1318,9 +1724,9 @@ const ProcessTrailCell = ({ progression, scanActive = false }) => {
             ? "ready"
             : scanActive
               ? "evaluating"
-              : null,
+              : null),
       )}
-      title={title || detail}
+      title={compactJoin([selectionStage?.title, title || detail])}
       style={{
         display: "grid",
         gap: sp(2),
@@ -1336,7 +1742,7 @@ const ProcessTrailCell = ({ progression, scanActive = false }) => {
           gap: sp(4),
           minWidth: 0,
           overflow: "hidden",
-          color: latestMeta.tone,
+          color: selectionStage?.tone || latestMeta.tone,
           whiteSpace: "nowrap",
         }}
       >
@@ -1349,7 +1755,7 @@ const ProcessTrailCell = ({ progression, scanActive = false }) => {
             fontWeight: FONT_WEIGHTS.medium,
           }}
         >
-          {latestMeta.label}
+          {selectionStage?.main || latestMeta.label}
         </span>
         {stageIds.length ? (
           <span
@@ -1459,25 +1865,67 @@ const RowActionButton = ({ action, onAction }) => {
   );
 };
 
-const CompactSignalMetric = ({ label, wide = false, children }) => (
+const SignalTradeButton = ({ symbol, onOpen }) => {
+  if (!onOpen) return null;
+  const label = `Open ${symbol || "selected"} contract in Trade`;
+  return (
+    <button
+      type="button"
+      data-testid="algo-signal-open-trade"
+      title={label}
+      aria-label={label}
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen();
+      }}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+      }}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: dim(20),
+        height: dim(20),
+        minWidth: dim(20),
+        borderRadius: dim(RADII.sm),
+        border: `1px solid ${cssColorAlpha(CSS_COLOR.accent, "44")}`,
+        background: cssColorAlpha(CSS_COLOR.accent, "16"),
+        color: CSS_COLOR.accent,
+        cursor: "pointer",
+        flex: "0 0 auto",
+      }}
+    >
+      <ArrowUpRight size={12} strokeWidth={1.9} aria-hidden="true" />
+    </button>
+  );
+};
+
+const CompactSignalMetric = ({
+  label,
+  testId,
+  wide = false,
+  topBorder = true,
+  children,
+}) => (
   <span
+    data-testid={testId}
     role="cell"
     style={{
       display: "grid",
-      gap: sp(2),
+      gap: sp(1),
       gridColumn: wide ? "1 / -1" : undefined,
       minWidth: 0,
-      padding: sp("5px 6px"),
-      borderRadius: dim(RADII.sm),
-      border: `1px solid ${CSS_COLOR.borderLight}`,
-      background: CSS_COLOR.bg2,
+      padding: sp("3px 5px"),
+      borderTop: topBorder ? `1px solid ${CSS_COLOR.borderLight}` : undefined,
+      borderRight: `1px solid ${CSS_COLOR.borderLight}`,
       overflow: "hidden",
     }}
   >
     <span
       style={{
         color: CSS_COLOR.textMuted,
-        fontSize: fs(9),
+        fontSize: fs(8),
         fontWeight: FONT_WEIGHTS.medium,
         lineHeight: 1,
         minWidth: 0,
@@ -1497,10 +1945,11 @@ export const OperationsSignalTableHeader = ({
   columns = DEFAULT_SIGNAL_VISIBLE_COLUMNS,
   sortKey = "newest",
   sortDirection = "desc",
+  onColumnReorder,
   onSortChange,
 }) => {
   const visibleColumns = resolveSignalVisibleColumnObjects(columns);
-  return (
+  const headerRow = (
     <div
       role="row"
       style={{
@@ -1523,111 +1972,51 @@ export const OperationsSignalTableHeader = ({
       }}
     >
       {visibleColumns.map((column) => {
-      const sort = column.sortKey
-        ? {
-            sortKey: column.sortKey,
-            title: column.title || `Sort by ${column.label}`,
-          }
-        : null;
-      const active = sort?.sortKey === sortKey;
-      const ariaSort = active
-        ? sortDirection === "asc"
-          ? "ascending"
-          : "descending"
-        : "none";
-      const content = (
-        <>
-          <span
-            style={{
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {column.label}
-          </span>
-          {sort ? (
-            <ChevronDown
-              size={11}
-              strokeWidth={1.8}
-              aria-hidden="true"
-              style={{
-                color: active ? CSS_COLOR.accent : CSS_COLOR.textMuted,
-                transform: active && sortDirection === "asc" ? "rotate(180deg)" : "none",
-              }}
-            />
-          ) : null}
-        </>
-      );
+        const sort = column.sortKey
+          ? {
+              sortKey: column.sortKey,
+              title: column.title || `Sort by ${column.label}`,
+            }
+          : null;
+        const active = sort?.sortKey === sortKey;
+        const HeaderCell = onColumnReorder
+          ? SortableColumnHeaderCell
+          : ColumnHeaderCell;
 
-      return (
-        <span
-          key={column.key}
-          role="columnheader"
-          aria-sort={sort ? ariaSort : undefined}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: sp(4),
-            height: "100%",
-            padding: sp(
-              column.key === "rowAction"
-                ? SIGNAL_TABLE_ACTION_CELL_PADDING
-                : SIGNAL_TABLE_CELL_PADDING,
-            ),
-            borderRight: SIGNAL_TABLE_BORDER(),
-            boxSizing: "border-box",
-            minWidth: 0,
-          }}
-        >
-          {sort ? (
-            <button
-              type="button"
-              onClick={() => onSortChange?.(sort.sortKey)}
-              aria-pressed={active}
-              aria-label={`${sort.title}; ${
-                active ? `currently ${ariaSort}` : "not sorted"
-              }`}
-              title={sort.title}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: sp(4),
-                minWidth: 0,
-                height: "100%",
-                padding: 0,
-                border: 0,
-                background: "transparent",
-                color: active ? CSS_COLOR.text : CSS_COLOR.textMuted,
-                fontFamily: T.sans,
-                fontSize: textSize("caption"),
-                fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
-                letterSpacing: 0,
-                textTransform: "none",
-                cursor: "pointer",
-                textDecoration: active ? `underline ${cssColorMix(CSS_COLOR.accent, 40)}` : "none",
-                textUnderlineOffset: dim(3),
-              }}
-            >
-              {content}
-            </button>
-          ) : (
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "baseline",
-                gap: sp(4),
-                minWidth: 0,
-              }}
-            >
-              {content}
-            </span>
-          )}
-        </span>
-      );
+        return (
+          <HeaderCell
+            key={column.key}
+            as="span"
+            id={column.key}
+            active={active}
+            label={column.label}
+            onSort={sort ? () => onSortChange?.(sort.sortKey) : undefined}
+            reorderable={Boolean(onColumnReorder) && column.key !== "rowAction"}
+            sortDirection={sortDirection}
+            sortable={Boolean(sort)}
+            sortTitle={sort?.title}
+            style={{
+              height: "100%",
+              padding: sp(
+                column.key === "rowAction"
+                  ? SIGNAL_TABLE_ACTION_CELL_PADDING
+                  : SIGNAL_TABLE_CELL_PADDING,
+              ),
+              borderRight: SIGNAL_TABLE_BORDER(),
+            }}
+          />
+        );
       })}
     </div>
+  );
+  if (!onColumnReorder) return headerRow;
+  return (
+    <TableHeaderDndContext
+      columnIds={visibleColumns.map((column) => column.key)}
+      onReorder={onColumnReorder}
+    >
+      {headerRow}
+    </TableHeaderDndContext>
   );
 };
 
@@ -1636,6 +2025,7 @@ export const OperationsSignalRow = ({
   candidate,
   auditProgression = null,
   tfMatrix = null,
+  timeframes = undefined,
   tickerSnapshot = null,
   scoreBreakdown: providedScoreBreakdown = null,
   onRowAction,
@@ -1656,6 +2046,14 @@ export const OperationsSignalRow = ({
       ? previewContract
       : candidate?.selectedContract;
   const contractIsPreview = !hasCandidateContract && hasPreviewContract;
+  const tradeCandidate = hasCandidateContract || hasPreviewContract
+    ? {
+        ...(contractIsPreview ? contractPreview : asRecord(candidate)),
+        ...(candidate && typeof candidate === "object" ? candidate : {}),
+        symbol: candidate?.symbol || contractPreview.symbol || signalRecord.symbol,
+        selectedContract: effectiveSelectedContract,
+      }
+    : null;
   const selectedContractId = optionProviderContractId(effectiveSelectedContract);
   const liveQuote = getStoredOptionQuoteSnapshot(selectedContractId);
   const previewQuote = contractIsPreview ? asRecord(contractPreview.quote) : null;
@@ -1669,9 +2067,15 @@ export const OperationsSignalRow = ({
   const effectiveLiquidity = candidate?.liquidity ?? previewLiquidity;
   const signalState = signalDisplay(signalRecord);
   const direction = signalState.direction;
-  const matrixVerdict = resolveSignalMatrixVerdict({
-    primaryState: signalPrimaryStateForMatrix(signalRecord),
+  const primaryMatrixState = signalPrimaryStateForMatrix(signalRecord);
+  const resolvedTfMatrix = hydrateSignalMatrixProfileTimeframe({
     matrixStatesByTimeframe: tfMatrix || {},
+    primaryState: primaryMatrixState,
+    profileTimeframe: signalRecord.timeframe || "5m",
+  });
+  const matrixVerdict = resolveSignalMatrixVerdict({
+    primaryState: primaryMatrixState,
+    matrixStatesByTimeframe: resolvedTfMatrix,
     profileTimeframe: signalRecord.timeframe || "5m",
   });
   const matrixDisplay = matrixVerdictDisplay(matrixVerdict);
@@ -1680,6 +2084,14 @@ export const OperationsSignalRow = ({
   const blocker =
     candidateBlocker !== MISSING_VALUE ? candidateBlocker : signalBlocker;
   const rawContract = formatContractDetail(effectiveSelectedContract);
+  const selectionStage = resolveSelectionStageDisplay({
+    candidate,
+    blocker,
+    hasSelectedContract: hasDisplayValue(rawContract.main) && !contractIsPreview,
+    selectedContractId,
+    hasQuote: false,
+    contractIsPreview,
+  });
   const contract = hasDisplayValue(rawContract.main)
     ? {
         ...rawContract,
@@ -1687,13 +2099,26 @@ export const OperationsSignalRow = ({
           ? compactJoin(["Preview", rawContract.detail])
           : rawContract.detail,
       }
-    : missingContractDisplay(candidate, blocker);
+    : missingContractDisplay(candidate, blocker, selectionStage);
   const actionPlan = actionPlanDisplay(signalRecord, candidate);
   const rawQuote = formatQuoteSummary(effectiveQuote, effectiveLiquidity);
   const hasQuote = hasDisplayValue(rawQuote.main);
+  const liveSelectionStage = resolveSelectionStageDisplay({
+    candidate,
+    blocker,
+    hasSelectedContract: hasDisplayValue(rawContract.main) && !contractIsPreview,
+    selectedContractId,
+    hasQuote,
+    contractIsPreview,
+  });
   const quote = hasQuote
     ? rawQuote
-    : missingQuoteDisplay({ candidate, blocker, selectedContractId });
+    : missingQuoteDisplay({
+        candidate,
+        blocker,
+        selectedContractId,
+        selectionStage: liveSelectionStage,
+      });
   const quoteState = liquidityMeta(
     contractIsPreview
       ? {
@@ -1796,6 +2221,15 @@ export const OperationsSignalRow = ({
   const handleRowAction = (actionId) => {
     onRowAction?.({ actionId, signal: signalRecord, candidate });
   };
+  const handleOpenTrade = tradeCandidate
+    ? () => {
+        onRowAction?.({
+          actionId: "openTrade",
+          signal: signalRecord,
+          candidate: tradeCandidate,
+        });
+      }
+    : null;
   const visibleColumns = resolveSignalVisibleColumnObjects(columns);
   const hasMoveColumn = visibleColumns.some((column) => column.key === "move");
   const rawSpreadWidth = formatSpreadWidth(spreadGauge.widthPct);
@@ -1870,15 +2304,16 @@ export const OperationsSignalRow = ({
   const awaitingScan = /awaiting scan/i.test(statusMeta.label);
   const candidateContractSelectionPending =
     isCandidateContractSelectionPending(candidate);
+  const selectionEvaluating = liveSelectionStage?.motionState === "evaluating";
   const quoteEvaluating =
     !contractIsPreview &&
-    scanActive &&
+    (scanActive || selectionEvaluating) &&
     candidateContractSelectionPending &&
     Boolean(candidate) &&
     blocker === MISSING_VALUE &&
     !hasQuote;
   const contractEvaluating =
-    scanActive &&
+    (scanActive || selectionEvaluating) &&
     candidateContractSelectionPending &&
     Boolean(candidate) &&
     blocker === MISSING_VALUE &&
@@ -1886,13 +2321,13 @@ export const OperationsSignalRow = ({
   const spreadEvaluating =
     quoteEvaluating ||
     (!contractIsPreview &&
-      scanActive &&
+      (scanActive || selectionEvaluating) &&
       candidateContractSelectionPending &&
       hasQuote &&
       !Number.isFinite(Number(spreadGauge.widthPct)));
   const greeksEvaluating =
     !contractIsPreview &&
-    scanActive &&
+    (scanActive || selectionEvaluating) &&
     candidateContractSelectionPending &&
     Boolean(selectedContractId) &&
     !hasDisplayValue(rawGreeks.main);
@@ -1926,12 +2361,19 @@ export const OperationsSignalRow = ({
         signalRecord={signalRecord}
         candidate={candidate}
         direction={direction}
-        tfMatrix={tfMatrix}
+        tfMatrix={resolvedTfMatrix}
+        timeframes={timeframes}
         freshnessRatio={freshnessRatio}
         price={underlyingPrice}
         priceFlashClassName={priceFlashClassName}
         sparklineData={sparklineData}
         signalMove={signalMove}
+        tradeButton={
+          <SignalTradeButton
+            symbol={signalRecord.symbol}
+            onOpen={handleOpenTrade}
+          />
+        }
         showSignalMove={!hasMoveColumn}
       />
     ),
@@ -1941,8 +2383,7 @@ export const OperationsSignalRow = ({
         detail={since.detail}
         tone={signalAgeTone}
         titleValue={compactJoin([
-          since.main !== MISSING_VALUE ? `${since.main} since signal` : null,
-          since.detail,
+          since.title,
           signalRecord.signalAt,
         ])}
         className={ageFlashClassName}
@@ -2038,9 +2479,9 @@ export const OperationsSignalRow = ({
       />
     ),
     greeks: (
-      <DataCell
-        value={compactGreeksText(greeks.main)}
-        detail={compactGreeksText(greeks.detail)}
+      <GreeksGridCell
+        quote={effectiveQuote}
+        fallback={greeks}
         tone={greeksTone}
         titleValue={compactJoin([greeks.main, greeks.detail, greeks.full])}
         motionState={
@@ -2082,6 +2523,7 @@ export const OperationsSignalRow = ({
       <ProcessTrailCell
         progression={auditProgression}
         scanActive={scanActive}
+        selectionStage={liveSelectionStage}
       />
     ),
     sync: (
@@ -2132,15 +2574,22 @@ export const OperationsSignalRow = ({
     ),
   };
   const visibleColumnKeys = new Set(visibleColumns.map((column) => column.key));
-  const compactMetricItems = [
+  const compactLeadMetricItems = [
     { key: "since", label: "Age", cell: desktopCells.since },
     { key: "move", label: "Move", cell: desktopCells.move },
-    { key: "action", label: "Plan", cell: desktopCells.action },
     { key: "score", label: "Score", cell: desktopCells.score },
+  ].filter((item) => visibleColumnKeys.has(item.key));
+  const compactDetailMetricItems = [
+    { key: "action", label: "Plan", cell: desktopCells.action },
     { key: "contract", label: "Contract", cell: desktopCells.contract },
     { key: "quote", label: "Quote", cell: desktopCells.quote },
     { key: "spread", label: "Spread", cell: desktopCells.spread },
-    { key: "greeks", label: "Greeks", cell: desktopCells.greeks },
+    {
+      key: "decision",
+      label: "Latest",
+      cell: desktopCells.decision,
+      testId: "algo-signal-compact-decision",
+    },
     {
       key: "gate",
       label: "Gate",
@@ -2148,13 +2597,6 @@ export const OperationsSignalRow = ({
       visibleWhen: gate.category !== "clear",
     },
     { key: "matrix", label: "Matrix", cell: desktopCells.matrix },
-    { key: "process", label: "Process", cell: desktopCells.process },
-    {
-      key: "sync",
-      label: "Sync",
-      cell: desktopCells.sync,
-      visibleWhen: sync.label === "Mismatch" || sync.label === "Event only",
-    },
   ].filter(
     (item) => visibleColumnKeys.has(item.key) && item.visibleWhen !== false,
   );
@@ -2171,11 +2613,12 @@ export const OperationsSignalRow = ({
         }}
       >
         <div
+          data-algo-density="mobile-dense"
           style={{
             display: "grid",
-            gap: sp(6),
+            gap: 0,
             minWidth: 0,
-            padding: sp("7px 6px 8px"),
+            padding: 0,
             boxSizing: "border-box",
             fontFamily: T.sans,
             fontSize: fs(11),
@@ -2188,58 +2631,65 @@ export const OperationsSignalRow = ({
           }}
         >
           <div
+            data-testid="algo-signal-compact-primary"
             style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: sp(6),
+              display: "grid",
+              gridTemplateColumns: "minmax(118px, 1fr) 48px 52px 46px 32px",
+              alignItems: "stretch",
               minWidth: 0,
+              minHeight: dim(36),
             }}
           >
             <span
               role="cell"
               style={{
-                flex: "1 1 auto",
                 minWidth: 0,
+                padding: sp("4px 5px 3px"),
+                borderRight: `1px solid ${CSS_COLOR.borderLight}`,
                 overflow: "hidden",
               }}
             >
               {desktopCells.signal}
             </span>
+            {compactLeadMetricItems.map((item) => (
+              <CompactSignalMetric key={item.key} label={item.label} topBorder={false}>
+                {item.cell}
+              </CompactSignalMetric>
+            ))}
             <span
               role="cell"
               style={{
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                flex: "0 0 auto",
-                minWidth: dim(32),
+                minWidth: 0,
+                padding: sp("3px 2px"),
               }}
             >
               {desktopCells.rowAction}
             </span>
           </div>
 
-          {compactMetricItems.length ? (
+          {compactDetailMetricItems.length ? (
             <div
               data-testid="algo-signal-compact-metrics"
-              data-algo-pocket-grid="two"
+              data-algo-pocket-grid="dense"
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                gap: sp(4),
+                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                gap: 0,
                 minWidth: 0,
               }}
             >
-              {compactMetricItems.map((item, index) => (
+              {compactDetailMetricItems.map((item, index) => (
                 <CompactSignalMetric
                   key={item.key}
                   label={item.label}
+                  testId={item.testId}
                   wide={
                     item.key === "gate" ||
-                    item.key === "process" ||
-                    item.key === "sync" ||
-                    (compactMetricItems.length % 2 === 1 &&
-                      index === compactMetricItems.length - 1)
+                    (compactDetailMetricItems.length % 4 === 1 &&
+                      index === compactDetailMetricItems.length - 1)
                   }
                 >
                   {item.cell}
@@ -2247,19 +2697,6 @@ export const OperationsSignalRow = ({
               ))}
             </div>
           ) : null}
-
-          <span
-            role="cell"
-            data-testid="algo-signal-compact-decision"
-            style={{
-              display: "grid",
-              minWidth: 0,
-              paddingTop: sp(5),
-              borderTop: `1px solid ${CSS_COLOR.borderLight}`,
-            }}
-          >
-            {desktopCells.decision}
-          </span>
         </div>
       </div>
     );

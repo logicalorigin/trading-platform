@@ -155,6 +155,10 @@ export const mergeMemoryPressureServerSummary = ({
       null,
     browserMemoryMb:
       footerMemoryPressure.browserMemoryMb ?? resourceMetrics.browserMemoryMb ?? null,
+    browserMemoryLimitMb:
+      footerMemoryPressure.browserMemoryLimitMb ??
+      resourceMetrics.browserMemoryLimitMb ??
+      null,
     sourceQuality:
       footerMemoryPressure.sourceQuality ?? resourceMetrics.sourceQuality ?? null,
     pressureDrivers,

@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import LogoLoader from "../components/LogoLoader";
-import { lazyWithRetry } from "../lib/dynamicImport";
+import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import {
   completeBootProgressTask,
@@ -35,7 +35,11 @@ const loadAppContent = () => {
 };
 
 if (typeof window !== "undefined") {
-  void loadAppContent();
+  preloadDynamicImport(loadAppContent, {
+    label: "AppContent",
+    retries: 4,
+    retryDelayMs: 500,
+  });
 }
 
 const AppContent = lazyWithRetry(async () => {

@@ -8,12 +8,15 @@ import {
   resolveSignalMatrixActiveScreenRequestSymbolLimit,
   resolveSignalMatrixBusyQueueDelayMs,
   resolveSignalMatrixCatchupDelayMs,
+  resolveSignalMatrixExactCellLimit,
   signalMatrixStatesEqual,
 } from "./signalMatrixScheduler.js";
 
+const MATRIX_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"];
+
 const hydratedStates = (
   symbols,
-  timeframes = ["1m", "2m", "5m", "15m", "1h"],
+  timeframes = MATRIX_TIMEFRAMES,
 ) =>
   symbols.flatMap((symbol) =>
     timeframes.map((timeframe) => ({
@@ -148,17 +151,17 @@ test("signal matrix scheduler sends missing priority symbols first", () => {
   assert.deepEqual(plan.prioritySymbols, ["NVDA", "SPY", "QQQ"]);
   assert.deepEqual(plan.requestSymbols.slice(0, 3), ["NVDA", "SPY", "QQQ"]);
   assert.deepEqual(plan.backgroundSymbols, ["AAPL", "MSFT"]);
-  assert.deepEqual(plan.timeframes, ["1m", "2m", "5m", "15m", "1h"]);
+  assert.deepEqual(plan.timeframes, MATRIX_TIMEFRAMES);
   assert.equal(plan.coverage.totalSymbols, 10);
   assert.equal(plan.coverage.requestSymbols, 5);
   assert.equal(plan.coverage.requestSymbolLimit, 5);
-  assert.equal(plan.coverage.requestTaskLimit, 25);
-  assert.equal(plan.coverage.requestTaskCount, 25);
-  assert.equal(plan.coverage.requestedTaskCount, 50);
+  assert.equal(plan.coverage.requestTaskLimit, 30);
+  assert.equal(plan.coverage.requestTaskCount, 30);
+  assert.equal(plan.coverage.requestedTaskCount, 60);
   assert.equal(plan.coverage.pendingSymbols, 5);
-  assert.equal(plan.coverage.queuedTaskCount, 25);
-  assert.equal(plan.coverage.missingTaskCount, 50);
-  assert.equal(plan.coverage.pendingTaskCount, 25);
+  assert.equal(plan.coverage.queuedTaskCount, 30);
+  assert.equal(plan.coverage.missingTaskCount, 60);
+  assert.equal(plan.coverage.pendingTaskCount, 30);
   assert.equal(plan.coverage.hydratedSymbols, 0);
   assert.equal(plan.coverage.missingSymbols, 10);
   assert.equal(plan.backgroundPaused, false);
@@ -195,17 +198,17 @@ test("signal matrix scheduler chunks full automatic coverage under watch pressur
     pollMs: 60_000,
   });
 
-  assert.deepEqual(plan.timeframes, ["1m", "2m", "5m", "15m", "1h"]);
+  assert.deepEqual(plan.timeframes, MATRIX_TIMEFRAMES);
   assert.deepEqual(plan.prioritySymbols, symbols.slice(0, 5));
   assert.deepEqual(plan.requestSymbols, symbols.slice(0, 5));
   assert.equal(plan.coverage.requestSymbols, 5);
   assert.equal(plan.coverage.requestSymbolLimit, 5);
-  assert.equal(plan.coverage.requestTaskLimit, 25);
-  assert.equal(plan.coverage.requestTaskCount, 25);
-  assert.equal(plan.coverage.requestedTaskCount, 100);
+  assert.equal(plan.coverage.requestTaskLimit, 30);
+  assert.equal(plan.coverage.requestTaskCount, 30);
+  assert.equal(plan.coverage.requestedTaskCount, 120);
   assert.equal(plan.coverage.pendingSymbols, 15);
-  assert.equal(plan.coverage.queuedTaskCount, 75);
-  assert.equal(plan.coverage.pendingTaskCount, 75);
+  assert.equal(plan.coverage.queuedTaskCount, 90);
+  assert.equal(plan.coverage.pendingTaskCount, 90);
   assert.equal(plan.coverage.estimatedFullCycleMs, 240_000);
 });
 
@@ -221,17 +224,17 @@ test("signal matrix scheduler hydrates complete row batches while chunking large
     pollMs: 60_000,
   });
 
-  assert.deepEqual(plan.timeframes, ["1m", "2m", "5m", "15m", "1h"]);
-  assert.deepEqual(plan.matrixTimeframes, ["1m", "2m", "5m", "15m", "1h"]);
+  assert.deepEqual(plan.timeframes, MATRIX_TIMEFRAMES);
+  assert.deepEqual(plan.matrixTimeframes, MATRIX_TIMEFRAMES);
   assert.deepEqual(plan.requestSymbols, symbols.slice(0, 5));
-  assert.equal(plan.coverage.timeframes, 5);
-  assert.equal(plan.coverage.matrixTimeframes, 5);
-  assert.equal(plan.coverage.requestTaskLimit, 25);
-  assert.equal(plan.coverage.requestTaskCount, 25);
-  assert.equal(plan.coverage.requestedTaskCount, 450);
+  assert.equal(plan.coverage.timeframes, 6);
+  assert.equal(plan.coverage.matrixTimeframes, 6);
+  assert.equal(plan.coverage.requestTaskLimit, 30);
+  assert.equal(plan.coverage.requestTaskCount, 30);
+  assert.equal(plan.coverage.requestedTaskCount, 540);
   assert.equal(plan.coverage.pendingSymbols, 85);
-  assert.equal(plan.coverage.queuedTaskCount, 425);
-  assert.equal(plan.coverage.pendingTaskCount, 425);
+  assert.equal(plan.coverage.queuedTaskCount, 510);
+  assert.equal(plan.coverage.pendingTaskCount, 510);
   assert.equal(plan.coverage.hydratedSymbols, 0);
   assert.equal(plan.coverage.missingSymbols, 90);
 });
@@ -279,10 +282,10 @@ test("signal matrix scheduler skips hydrated priority rows and fills missing bac
   assert.equal(plan.coverage.hydratedSymbols, 3);
   assert.equal(plan.coverage.missingSymbols, 17);
   assert.equal(plan.coverage.pendingSymbols, 12);
-  assert.equal(plan.coverage.requestTaskCount, 25);
-  assert.equal(plan.coverage.requestedTaskCount, 85);
-  assert.equal(plan.coverage.queuedTaskCount, 60);
-  assert.equal(plan.coverage.pendingTaskCount, 60);
+  assert.equal(plan.coverage.requestTaskCount, 30);
+  assert.equal(plan.coverage.requestedTaskCount, 102);
+  assert.equal(plan.coverage.queuedTaskCount, 72);
+  assert.equal(plan.coverage.pendingTaskCount, 72);
   assert.equal(plan.coverage.estimatedFullCycleMs, 240_000);
   assert.equal(plan.backgroundPaused, false);
 });
@@ -309,10 +312,41 @@ test("signal matrix scheduler rotates stale priority symbols instead of starving
     nowMs: Date.parse("2026-05-28T20:05:00.000Z"),
   });
 
-  assert.deepEqual(plan.prioritySymbols, ["AAPL", "MSFT", "TSLA", "SPY", "NVDA"]);
-  assert.deepEqual(plan.requestSymbols, ["AAPL", "MSFT", "TSLA", "SPY", "NVDA"]);
-  assert.deepEqual(plan.timeframes, ["1m", "2m", "5m", "15m", "1h"]);
-  assert.equal(plan.nextCursor, 2);
+  assert.deepEqual(plan.prioritySymbols, [
+    "AAPL",
+    "MSFT",
+    "TSLA",
+    "SPY",
+    "NVDA",
+    "DIA",
+  ]);
+  assert.deepEqual(plan.requestSymbols, [
+    "AAPL",
+    "MSFT",
+    "TSLA",
+    "SPY",
+    "NVDA",
+    "DIA",
+  ]);
+  assert.deepEqual(plan.timeframes, ["1m", "2m"]);
+  assert.deepEqual(
+    plan.requestCells.map((cell) => `${cell.symbol}:${cell.timeframe}`),
+    [
+      "AAPL:1m",
+      "AAPL:2m",
+      "MSFT:1m",
+      "MSFT:2m",
+      "TSLA:1m",
+      "TSLA:2m",
+      "SPY:1m",
+      "SPY:2m",
+      "NVDA:1m",
+      "NVDA:2m",
+      "DIA:1m",
+      "DIA:2m",
+    ],
+  );
+  assert.equal(plan.nextCursor, 3);
 });
 
 test("signal matrix scheduler uses recent evaluation time to avoid requeueing hydrated after-hours rows", () => {
@@ -338,8 +372,32 @@ test("signal matrix scheduler uses recent evaluation time to avoid requeueing hy
   assert.equal(plan.coverage.missingSymbols, 1);
 });
 
-test("signal matrix scheduler keeps terminal unavailable cells missing for active retry", () => {
-  const terminalStates = ["1m", "2m", "5m", "15m", "1h"].map((timeframe) => ({
+test("signal matrix scheduler treats recently evaluated stale after-hours cells as hydrated", () => {
+  const plan = buildSignalMatrixRequestPlan({
+    symbols: ["SPY", "AAPL"],
+    prioritySymbols: ["SPY", "AAPL"],
+    currentStates: [
+      ...hydratedStates(["SPY"]).map((state) => ({
+        ...state,
+        status: "stale",
+        latestBarAt: "2026-05-28T20:00:00.000Z",
+        lastEvaluatedAt: "2026-05-28T20:04:30.000Z",
+      })),
+    ],
+    backgroundReady: true,
+    cursor: 0,
+    pollMs: 60_000,
+    nowMs: Date.parse("2026-05-28T20:05:00.000Z"),
+  });
+
+  assert.deepEqual(plan.prioritySymbols, ["AAPL"]);
+  assert.deepEqual(plan.requestSymbols, ["AAPL"]);
+  assert.equal(plan.coverage.hydratedSymbols, 1);
+  assert.equal(plan.coverage.missingSymbols, 1);
+});
+
+test("signal matrix scheduler treats recently unavailable cells as settled", () => {
+  const terminalStates = MATRIX_TIMEFRAMES.map((timeframe) => ({
     symbol: "AMD",
     timeframe,
     status: "unavailable",
@@ -356,13 +414,13 @@ test("signal matrix scheduler keeps terminal unavailable cells missing for activ
     nowMs: Date.parse("2026-05-28T20:05:30.000Z"),
   });
 
-  assert.deepEqual(plan.requestSymbols, ["AMD"]);
-  assert.equal(plan.coverage.hydratedSymbols, 0);
-  assert.equal(plan.coverage.missingSymbols, 1);
+  assert.deepEqual(plan.requestSymbols, []);
+  assert.equal(plan.coverage.hydratedSymbols, 1);
+  assert.equal(plan.coverage.missingSymbols, 0);
 });
 
 test("signal matrix scheduler retries old terminal unavailable cells", () => {
-  const terminalStates = ["1m", "2m", "5m", "15m", "1h"].map((timeframe) => ({
+  const terminalStates = MATRIX_TIMEFRAMES.map((timeframe) => ({
     symbol: "AMD",
     timeframe,
     status: "unavailable",
@@ -439,7 +497,7 @@ test("signal matrix scheduler keeps bounded background rotation under critical p
   assert.deepEqual(plan.prioritySymbols, ["SPY", "QQQ"]);
   assert.deepEqual(plan.backgroundSymbols, []);
   assert.deepEqual(plan.requestSymbols, ["SPY", "QQQ"]);
-  assert.deepEqual(plan.timeframes, ["1m", "2m", "5m", "15m", "1h"]);
+  assert.deepEqual(plan.timeframes, MATRIX_TIMEFRAMES);
   assert.equal(plan.backgroundPaused, true);
 });
 
@@ -527,14 +585,14 @@ test("signal matrix scheduler treats active Signals table rows as foreground hyd
 
   assert.deepEqual(plan.prioritySymbols, symbols);
   assert.deepEqual(plan.requestSymbols, symbols);
-  assert.deepEqual(plan.timeframes, ["1m", "2m", "5m", "15m", "1h"]);
+  assert.deepEqual(plan.timeframes, MATRIX_TIMEFRAMES);
   assert.deepEqual(plan.backgroundSymbols, []);
   assert.equal(plan.backgroundPaused, true);
   assert.equal(plan.coverage.missingSymbols, symbols.length);
-  assert.equal(plan.coverage.requestSymbolLimit, 30);
+  assert.equal(plan.coverage.requestSymbolLimit, 25);
   assert.equal(plan.coverage.requestTaskLimit, 150);
-  assert.equal(plan.coverage.requestTaskCount, 90);
-  assert.equal(plan.coverage.requestedTaskCount, 90);
+  assert.equal(plan.coverage.requestTaskCount, 108);
+  assert.equal(plan.coverage.requestedTaskCount, 108);
   assert.equal(plan.coverage.pendingSymbols, 0);
   assert.equal(plan.coverage.queuedTaskCount, 0);
   assert.equal(plan.coverage.pendingTaskCount, 0);
@@ -560,16 +618,16 @@ test("signal matrix scheduler caps explicit Signals screen chunks when backgroun
 
   assert.deepEqual(plan.prioritySymbols, prioritySymbols);
   assert.deepEqual(plan.requestSymbols, prioritySymbols);
-  assert.deepEqual(plan.timeframes, ["1m", "2m", "5m", "15m", "1h"]);
+  assert.deepEqual(plan.timeframes, MATRIX_TIMEFRAMES);
   assert.deepEqual(plan.backgroundSymbols, []);
   assert.equal(plan.backgroundPaused, true);
   assert.equal(plan.coverage.requestSymbolLimit, 12);
   assert.equal(plan.coverage.requestTaskLimit, 150);
-  assert.equal(plan.coverage.requestTaskCount, 60);
-  assert.equal(plan.coverage.requestedTaskCount, 450);
+  assert.equal(plan.coverage.requestTaskCount, 72);
+  assert.equal(plan.coverage.requestedTaskCount, 540);
   assert.equal(plan.coverage.pendingSymbols, 78);
-  assert.equal(plan.coverage.queuedTaskCount, 390);
-  assert.equal(plan.coverage.pendingTaskCount, 390);
+  assert.equal(plan.coverage.queuedTaskCount, 468);
+  assert.equal(plan.coverage.pendingTaskCount, 468);
   assert.equal(plan.coverage.missingSymbols, symbols.length);
 });
 
@@ -602,15 +660,15 @@ test("signal matrix active screen task limits cover STA page hydration under nor
       resolveSignalMatrixActiveScreenRequestTaskLimit("normal"),
   });
 
-  assert.deepEqual(plan.requestSymbols, symbols);
-  assert.deepEqual(plan.timeframes, ["1m", "2m", "5m", "15m", "1h"]);
-  assert.equal(plan.coverage.requestSymbolLimit, 30);
+  assert.deepEqual(plan.requestSymbols, symbols.slice(0, 25));
+  assert.deepEqual(plan.timeframes, MATRIX_TIMEFRAMES);
+  assert.equal(plan.coverage.requestSymbolLimit, 25);
   assert.equal(plan.coverage.requestTaskLimit, 150);
   assert.equal(plan.coverage.requestTaskCount, 150);
-  assert.equal(plan.coverage.requestedTaskCount, 150);
-  assert.equal(plan.coverage.pendingSymbols, 0);
-  assert.equal(plan.coverage.queuedTaskCount, 0);
-  assert.equal(plan.coverage.pendingTaskCount, 0);
+  assert.equal(plan.coverage.requestedTaskCount, 180);
+  assert.equal(plan.coverage.pendingSymbols, 5);
+  assert.equal(plan.coverage.queuedTaskCount, 30);
+  assert.equal(plan.coverage.pendingTaskCount, 30);
 });
 
 test("signal matrix active screen task limits still constrain critical pressure", () => {
@@ -627,18 +685,18 @@ test("signal matrix active screen task limits still constrain critical pressure"
   });
 
   assert.deepEqual(plan.requestSymbols, symbols.slice(0, 2));
-  assert.deepEqual(plan.timeframes, ["1m", "2m", "5m", "15m", "1h"]);
-  assert.equal(plan.coverage.requestSymbolLimit, 2);
+  assert.deepEqual(plan.timeframes, MATRIX_TIMEFRAMES);
+  assert.equal(plan.coverage.requestSymbolLimit, 1);
   assert.equal(plan.coverage.requestTaskLimit, 10);
   assert.equal(plan.coverage.requestTaskCount, 10);
-  assert.equal(plan.coverage.pendingSymbols, 6);
-  assert.equal(plan.coverage.pendingTaskCount, 30);
+  assert.equal(plan.coverage.pendingSymbols, 7);
+  assert.equal(plan.coverage.pendingTaskCount, 38);
 });
 
 test("signal matrix catchup and busy queue delays back off under pressure", () => {
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("normal"), 150);
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("watch"), 150);
-  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("high"), 60);
+  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("high"), 20);
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("critical"), 10);
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("bogus"), 150);
 
@@ -651,6 +709,36 @@ test("signal matrix catchup and busy queue delays back off under pressure", () =
   assert.equal(resolveSignalMatrixCatchupDelayMs("watch"), 5_000);
   assert.equal(resolveSignalMatrixCatchupDelayMs("high"), 15_000);
   assert.equal(resolveSignalMatrixCatchupDelayMs("critical"), null);
+});
+
+test("signal matrix request plans stay inside API exact-cell pressure caps", () => {
+  const symbols = Array.from(
+    { length: 40 },
+    (_value, index) => `CAP${index + 1}`,
+  );
+  const cases = [
+    ["normal", 150],
+    ["watch", 150],
+    ["high", 20],
+    ["critical", 10],
+  ];
+
+  cases.forEach(([pressureLevel, exactCellLimit]) => {
+    const plan = buildSignalMatrixRequestPlan({
+      symbols,
+      prioritySymbols: symbols,
+      backgroundReady: false,
+      pressureLevel,
+      requestTaskLimit: 999,
+    });
+
+    assert.equal(resolveSignalMatrixExactCellLimit(pressureLevel), exactCellLimit);
+    assert.equal(plan.coverage.exactCellLimit, exactCellLimit);
+    assert.equal(plan.coverage.requestTaskLimit, exactCellLimit);
+    assert.equal(plan.coverage.requestTaskCount, exactCellLimit);
+    assert.equal(plan.requestCells.length <= exactCellLimit, true);
+  });
+  assert.equal(resolveSignalMatrixExactCellLimit("bogus"), 150);
 });
 
 test("signal matrix request plan chunks critical active pressure before API admission", () => {
@@ -667,15 +755,15 @@ test("signal matrix request plan chunks critical active pressure before API admi
   });
 
   assert.deepEqual(plan.requestSymbols, symbols.slice(0, 2));
-  assert.deepEqual(plan.timeframes, ["1m", "2m", "5m", "15m", "1h"]);
-  assert.equal(plan.coverage.requestSymbolLimit, 2);
+  assert.deepEqual(plan.timeframes, MATRIX_TIMEFRAMES);
+  assert.equal(plan.coverage.requestSymbolLimit, 1);
   assert.equal(plan.coverage.requestTaskLimit, 10);
   assert.equal(plan.coverage.requestTaskCount, 10);
-  assert.equal(plan.coverage.requestedTaskCount, 40);
-  assert.equal(plan.coverage.pendingSymbols, 6);
-  assert.equal(plan.coverage.queuedTaskCount, 30);
-  assert.equal(plan.coverage.pendingTaskCount, 30);
-  assert.equal(plan.coverage.estimatedFullCycleMs, 240_000);
+  assert.equal(plan.coverage.requestedTaskCount, 48);
+  assert.equal(plan.coverage.pendingSymbols, 7);
+  assert.equal(plan.coverage.queuedTaskCount, 38);
+  assert.equal(plan.coverage.pendingTaskCount, 38);
+  assert.equal(plan.coverage.estimatedFullCycleMs, 300_000);
 });
 
 test("signal matrix merge updates touched states without dropping untouched symbols", () => {

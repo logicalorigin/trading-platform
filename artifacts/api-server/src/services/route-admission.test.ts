@@ -98,6 +98,13 @@ test("classifies broker-critical routes separately from analytics routes", () =>
   assert.equal(
     classifyApiRoute({
       method: "GET",
+      path: "/api/diagnostics/thresholds",
+    }),
+    "active-screen",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
       path: "/api/diagnostics/history",
     }),
     "deferred-analytics",
@@ -174,6 +181,22 @@ test("classifies broker-critical routes separately from analytics routes", () =>
   );
   assert.equal(
     classifyApiRoute({
+      method: "GET",
+      path: "/api/quotes/snapshot?symbols=SPY",
+    }),
+    "live-data",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "GET",
+      path: "/api/quotes/snapshot?symbols=SPY",
+      requestFamily: "trade-visible",
+      fetchPriority: 8,
+    }),
+    "active-screen",
+  );
+  assert.equal(
+    classifyApiRoute({
       method: "POST",
       path: "/api/signal-monitor/matrix",
     }),
@@ -183,6 +206,13 @@ test("classifies broker-critical routes separately from analytics routes", () =>
     classifyApiRoute({
       method: "POST",
       path: "/api/algo/deployments/dep-1/signal-options/shadow-scan",
+    }),
+    "automation-control",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "POST",
+      path: "/api/algo/deployments/dep-1/overnight-spot/scan",
     }),
     "automation-control",
   );
@@ -278,18 +308,23 @@ test("route admission sheds deferred work at high API pressure", () => {
 });
 
 test("route admission lets manual shadow scans reach scanner pressure gates at high API pressure", () => {
-  const admission = resolveApiRouteAdmission({
-    routeClass: classifyApiRoute({
-      method: "POST",
-      path: "/api/algo/deployments/dep-1/signal-options/shadow-scan",
-    }),
-    pressureLevel: "high",
-    now: new Date("2026-05-28T19:00:00.000Z"),
-  });
+  for (const path of [
+    "/api/algo/deployments/dep-1/signal-options/shadow-scan",
+    "/api/algo/deployments/dep-1/overnight-spot/scan",
+  ]) {
+    const admission = resolveApiRouteAdmission({
+      routeClass: classifyApiRoute({
+        method: "POST",
+        path,
+      }),
+      pressureLevel: "high",
+      now: new Date("2026-05-28T19:00:00.000Z"),
+    });
 
-  assert.equal(admission.routeClass, "automation-control");
-  assert.equal(admission.action, "allow");
-  assert.equal(admission.reason, null);
+    assert.equal(admission.routeClass, "automation-control");
+    assert.equal(admission.action, "allow");
+    assert.equal(admission.reason, null);
+  }
 });
 
 test("automation-only scanner pressure does not shed manual shadow scans", () => {
@@ -359,6 +394,64 @@ test("route admission lets active Signals hydration run in safe browser QA", () 
   assert.equal(signalMatrix.action, "allow");
   assert.equal(signalMatrix.degraded, false);
   assert.equal(signalMatrix.qaMode, "safe");
+});
+
+test("route admission lets visible diagnostic threshold reads run in safe browser QA", () => {
+  const thresholds = resolveApiRouteAdmission({
+    routeClass: classifyApiRoute({
+      method: "GET",
+      path: "/api/diagnostics/thresholds",
+    }),
+    pressureLevel: "normal",
+    qaMode: "safe",
+    now: new Date("2026-06-03T00:00:00.000Z"),
+  });
+  const history = resolveApiRouteAdmission({
+    routeClass: classifyApiRoute({
+      method: "GET",
+      path: "/api/diagnostics/history",
+    }),
+    pressureLevel: "normal",
+    qaMode: "safe",
+    now: new Date("2026-06-03T00:00:00.000Z"),
+  });
+
+  assert.equal(thresholds.routeClass, "active-screen");
+  assert.equal(thresholds.action, "allow");
+  assert.equal(thresholds.qaMode, "safe");
+  assert.equal(history.routeClass, "deferred-analytics");
+  assert.equal(history.action, "shed");
+  assert.equal(history.reason, "qa-safe-mode-shed");
+});
+
+test("route admission lets visible Trade quote fallback reads run in safe browser QA", () => {
+  const visibleQuote = resolveApiRouteAdmission({
+    routeClass: classifyApiRoute({
+      method: "GET",
+      path: "/api/quotes/snapshot?symbols=SPY",
+      requestFamily: "trade-visible",
+      fetchPriority: 8,
+    }),
+    pressureLevel: "normal",
+    qaMode: "safe",
+    now: new Date("2026-06-03T00:00:00.000Z"),
+  });
+  const backgroundQuote = resolveApiRouteAdmission({
+    routeClass: classifyApiRoute({
+      method: "GET",
+      path: "/api/quotes/snapshot?symbols=SPY",
+    }),
+    pressureLevel: "normal",
+    qaMode: "safe",
+    now: new Date("2026-06-03T00:00:00.000Z"),
+  });
+
+  assert.equal(visibleQuote.routeClass, "active-screen");
+  assert.equal(visibleQuote.action, "allow");
+  assert.equal(visibleQuote.qaMode, "safe");
+  assert.equal(backgroundQuote.routeClass, "live-data");
+  assert.equal(backgroundQuote.action, "shed");
+  assert.equal(backgroundQuote.reason, "qa-safe-mode-shed");
 });
 
 test("route admission sheds non-execution live data at critical pressure", () => {

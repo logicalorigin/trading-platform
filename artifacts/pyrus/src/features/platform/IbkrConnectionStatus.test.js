@@ -19,7 +19,11 @@ import {
   resolveIbkrGatewayHealth,
   shouldShowIbkrReconnectAction,
 } from "./IbkrConnectionStatus.jsx";
-import { bridgeRuntimeMessage, bridgeRuntimeTone } from "./bridgeRuntimeModel.js";
+import {
+  bridgeRuntimeMessage,
+  bridgeRuntimeTone,
+  hasGatewayLiveDataProof,
+} from "./bridgeRuntimeModel.js";
 import { buildHeaderIbkrPopoverModel } from "./ibkrPopoverModel.js";
 import { streamStateTokenVar } from "./streamSemantics";
 import { TooltipProvider } from "../../components/ui/tooltip";
@@ -478,6 +482,33 @@ test("bridgeRuntimeTone keeps Gateway live when only the quote stream is cycling
 
   assert.equal(tone.label, "live");
   assert.equal(tone.color, CSS_COLOR.green);
+});
+
+test("bridge runtime treats live stream proof as ready while health is refreshing", () => {
+  const session = {
+    configured: { ibkr: true },
+    ibkrBridge: {
+      connected: true,
+      authenticated: true,
+      healthFresh: false,
+      bridgeReachable: true,
+      socketConnected: true,
+      accountsLoaded: true,
+      configuredLiveMarketDataMode: true,
+      liveMarketDataAvailable: true,
+      streamFresh: true,
+      streamState: "live",
+      streamStateReason: "fresh_stream_event_health_stale",
+      strictReady: true,
+    },
+  };
+
+  assert.equal(hasGatewayLiveDataProof(session.ibkrBridge), true);
+  const tone = bridgeRuntimeTone(session);
+  assert.notEqual(tone.label, "health pending");
+  assert.notEqual(tone.color, CSS_COLOR.amber);
+  assert.notEqual(tone.color, CSS_COLOR.red);
+  assert.match(bridgeRuntimeMessage(session), /live stream is active/);
 });
 
 test("getIbkrStreamStateMeta keeps quiet reasons visually distinct", () => {

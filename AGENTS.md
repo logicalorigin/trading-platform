@@ -10,6 +10,7 @@
 - For PYRUS browser QA, open the app with `?pyrusQa=safe`, wait on explicit readiness selectors instead of `networkidle`, avoid raw generated click targets like `@e*`, and get explicit approval before live full-app navigation.
 - If you touch `.replit`, `artifacts/*/.replit-artifact/artifact.toml`, artifact `dev` scripts, database startup config, or `scripts/reap-dev-port.mjs`, run `pnpm run audit:replit-startup` before handing off.
 - Do not remove `scripts/check-replit-startup-guards.mjs` from `audit:guards` or root `typecheck`; it is the regression guard for the Replit workflow and artifact startup rules.
+- When a request has ambiguous product/UI semantics, especially wording like "share", "separate", "combine", "source", "pressure", or "footer", stop after repo inspection and ask a clarifying question before editing. Do not guess layout intent from implementation details alone; flatten ambiguity first, then implement.
 
 ## Skill routing
 

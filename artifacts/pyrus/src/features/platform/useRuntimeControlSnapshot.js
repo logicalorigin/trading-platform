@@ -6,8 +6,15 @@ import { useFlowScannerControlState } from "./marketFlowStore";
 import { platformJsonRequest } from "./platformJsonRequest";
 import { buildRuntimeControlSnapshot } from "./runtimeControlModel.js";
 
-const readLineUsageSnapshot = () =>
-  platformJsonRequest("/api/settings/ibkr-line-usage");
+const normalizeLineUsageDetail = (value) =>
+  value === "full" ? "full" : "compact";
+
+const readLineUsageSnapshot = (detail = "compact") =>
+  platformJsonRequest(
+    `/api/settings/ibkr-line-usage?detail=${encodeURIComponent(
+      normalizeLineUsageDetail(detail),
+    )}`,
+  );
 
 const readRuntimeDiagnosticsSnapshot = (signal) =>
   getRuntimeDiagnostics(signal ? { signal } : undefined);
@@ -22,6 +29,7 @@ export const useRuntimeControlSnapshot = ({
   lineUsageEnabled = true,
   lineUsageStreamEnabled = true,
   lineUsagePollInterval = 2_000,
+  lineUsageDetail = "compact",
   workloadStats = null,
   hydrationStats = null,
   memoryPressure = null,
@@ -52,7 +60,7 @@ export const useRuntimeControlSnapshot = ({
     if (lineUsageRequestRef.current) {
       return lineUsageRequestRef.current;
     }
-    const request = readLineUsageSnapshot()
+    const request = readLineUsageSnapshot(lineUsageDetail)
       .then((payload) => {
         setStreamedLineUsage(payload);
         setLineUsageError(null);
@@ -69,7 +77,7 @@ export const useRuntimeControlSnapshot = ({
       });
     lineUsageRequestRef.current = request;
     return request;
-  }, [active, lineUsageEnabled]);
+  }, [active, lineUsageDetail, lineUsageEnabled]);
 
   useEffect(() => {
     setStreamedLineUsage(lineUsageSnapshot ?? null);
@@ -99,7 +107,11 @@ export const useRuntimeControlSnapshot = ({
       };
     }
 
-    const source = new window.EventSource("/api/settings/ibkr-line-usage/stream");
+    const source = new window.EventSource(
+      `/api/settings/ibkr-line-usage/stream?detail=${encodeURIComponent(
+        normalizeLineUsageDetail(lineUsageDetail),
+      )}`,
+    );
     source.addEventListener("ibkr-line-usage", (event) => {
       try {
         setStreamedLineUsage(JSON.parse(event.data));
@@ -115,6 +127,7 @@ export const useRuntimeControlSnapshot = ({
   }, [
     active,
     lineUsageEnabled,
+    lineUsageDetail,
     lineUsagePollInterval,
     lineUsageStreamEnabled,
     lineUsageSnapshot,

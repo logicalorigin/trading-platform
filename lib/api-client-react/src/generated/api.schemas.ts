@@ -1789,6 +1789,7 @@ export type PositionQuoteSource = typeof PositionQuoteSource[keyof typeof Positi
 
 export const PositionQuoteSource = {
   bridge_quote: 'bridge_quote',
+  massive: 'massive',
   option_quote: 'option_quote',
   position_mark: 'position_mark',
   shadow_ledger: 'shadow_ledger',
@@ -5594,6 +5595,14 @@ mode?: EnvironmentMode;
 
 export type GetAccountPositionsParams = {
 assetClass?: string;
+/**
+ * Optional source scope for shadow ledger positions, such as `automation`.
+ */
+source?: string;
+/**
+ * Set to `false` to skip blocking live option quote hydration for shadow positions.
+ */
+liveQuotes?: boolean;
 mode?: EnvironmentMode;
 };
 
@@ -5661,7 +5670,18 @@ export type GetQuoteSnapshotsParams = {
  * Comma-separated ticker symbols.
  */
 symbols: string;
+/**
+ * Optional trading session override for quote routing. Use `overnight` to force IBKR overnight-capable quote snapshots.
+ */
+tradingSession?: GetQuoteSnapshotsTradingSession;
 };
+
+export type GetQuoteSnapshotsTradingSession = typeof GetQuoteSnapshotsTradingSession[keyof typeof GetQuoteSnapshotsTradingSession];
+
+
+export const GetQuoteSnapshotsTradingSession = {
+  overnight: 'overnight',
+} as const;
 
 export type GetNewsParams = {
 /**

@@ -1053,6 +1053,18 @@ paths:
           required: false
           schema:
             type: string
+        - name: source
+          in: query
+          required: false
+          description: Optional source scope for shadow ledger positions, such as `automation`.
+          schema:
+            type: string
+        - name: liveQuotes
+          in: query
+          required: false
+          description: Set to `false` to skip blocking live option quote hydration for shadow positions.
+          schema:
+            type: boolean
         - name: mode
           in: query
           required: false
@@ -1631,6 +1643,13 @@ paths:
           description: Comma-separated ticker symbols.
           schema:
             type: string
+        - name: tradingSession
+          in: query
+          required: false
+          description: Optional trading session override for quote routing. Use `overnight` to force IBKR overnight-capable quote snapshots.
+          schema:
+            type: string
+            enum: [overnight]
       responses:
         "200":
           description: Latest quotes
@@ -6813,7 +6832,7 @@ components:
 
     PositionQuoteSource:
       type: string
-      enum: [bridge_quote, option_quote, position_mark, shadow_ledger, unknown]
+      enum: [bridge_quote, massive, option_quote, position_mark, shadow_ledger, unknown]
 
     PositionQuote:
       type: object

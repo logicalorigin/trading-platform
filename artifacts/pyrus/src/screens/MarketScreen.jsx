@@ -61,7 +61,12 @@ import {
 import { MarketIdentityInline } from "../features/platform/marketIdentity";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
-import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
+import { lazyWithRetry, retryDynamicImport } from "../lib/dynamicImport";
+import {
+  buildMarketRenderDiagnostics,
+  resolveMarketPanelColumns,
+  resolveMarketRenderQaConfig,
+} from "../features/market/marketRenderQa";
 
 
 const MARKET_PANEL_RETRY_DELAYS_MS = [750, 1_500, 3_000, 5_000, 8_000];
@@ -75,17 +80,34 @@ const loadMultiChartGridModule = () =>
   }));
 
 let marketChartModulesPreloadStarted = false;
+let marketChartModulesPreloadPromise = null;
 
 export const preloadMarketChartModules = () => {
-  if (marketChartModulesPreloadStarted) {
-    return;
+  if (marketChartModulesPreloadPromise) {
+    return marketChartModulesPreloadPromise;
   }
   marketChartModulesPreloadStarted = true;
-  preloadDynamicImport(loadMultiChartGridModule, { label: "MultiChartGrid" });
-  void loadRawMultiChartGridModule()
-    .then((module) => module.preloadMarketChartRuntime?.())
-    .catch(() => {});
+  marketChartModulesPreloadPromise = Promise.allSettled([
+    retryDynamicImport(loadMultiChartGridModule, {
+      label: "MultiChartGrid",
+      reloadOnFailure: false,
+    }),
+    retryDynamicImport(loadRawMultiChartGridModule, {
+      label: "MultiChartGridRuntime",
+      reloadOnFailure: false,
+    }).then((module) =>
+      module.preloadMarketChartRuntime?.(),
+    ),
+  ]).then((results) => {
+    if (results.some((result) => result.status === "rejected")) {
+      marketChartModulesPreloadPromise = null;
+    }
+    return undefined;
+  });
+  return marketChartModulesPreloadPromise;
 };
+
+export const preloadScreenModules = preloadMarketChartModules;
 
 const LazyMultiChartGrid = lazyWithRetry(
   loadMultiChartGridModule,
@@ -105,11 +127,17 @@ const buildMarketChartFallbackSymbols = (symbols = []) => {
   return Array.from(new Set([...requestedSymbols, ...fallbackSymbols])).slice(0, 4);
 };
 
-const MarketChartGridFallback = ({ symbols = [], isPhone = false }) => {
+const MarketChartGridFallback = ({
+  symbols = [],
+  isPhone = false,
+  mode = "loading",
+}) => {
   const fallbackSymbols = buildMarketChartFallbackSymbols(symbols);
   return (
     <Card
-      data-testid="market-chart-grid-shell"
+      data-testid="market-chart-grid"
+      data-market-chart-render-mode={mode}
+      data-market-chart-grid-shell="true"
       style={{
         minHeight: dim(340),
         display: "grid",
@@ -381,7 +409,41 @@ const MarketScreenInner = ({
   const putCallBullish = isFiniteNumber(putCall.total) ? putCall.total <= 1 : null;
   const upPct = isFiniteNumber(breadth.advancePct) ? breadth.advancePct : 0;
   const downPct = breadth.total ? 100 - upPct : 0;
-  const marketLayoutFlags = responsiveFlags(marketWorkspaceWidth || viewportSize.width);
+  const marketWidthForLayout = marketWorkspaceWidth || viewportSize.width;
+  const marketLayoutFlags = responsiveFlags(marketWidthForLayout);
+  const marketQaConfig = useMemo(
+    () =>
+      resolveMarketRenderQaConfig({
+        safeQaMode,
+        search: typeof window === "undefined" ? "" : window.location.search,
+      }),
+    [safeQaMode],
+  );
+  const marketChartRenderMode =
+    isVisible && marketQaConfig.chartMode !== "shell" ? "live" : "shell";
+  const marketPulseColumns = resolveMarketPanelColumns(marketWidthForLayout, {
+    desktop: 4,
+    tablet: 2,
+    phone: 1,
+  });
+  const sectorFlowColumns = resolveMarketPanelColumns(marketWidthForLayout, {
+    desktop: 2,
+    tablet: 2,
+    phone: 1,
+    phoneMax: 760,
+  });
+  const leadershipColumns = resolveMarketPanelColumns(marketWidthForLayout, {
+    desktop: 2,
+    tablet: 2,
+    phone: 1,
+    phoneMax: 760,
+  });
+  const breadthStatColumns = resolveMarketPanelColumns(marketWidthForLayout, {
+    desktop: 2,
+    tablet: 2,
+    phone: 1,
+    phoneMax: 520,
+  });
   const chartFlowUnusualThreshold =
     Number.isFinite(unusualThreshold) && unusualThreshold > 0 && unusualThreshold !== 1
       ? unusualThreshold
@@ -457,10 +519,10 @@ const MarketScreenInner = ({
           ? "loading"
       : "empty"
     : "research off";
-  const marketDetailGridTemplate =
-    marketWorkspaceWidth > 0 && marketWorkspaceWidth < dim(1180)
-      ? "repeat(2, minmax(0, 1fr))"
-      : "repeat(4, minmax(0, 1fr))";
+  const marketDetailGridTemplate = `repeat(${marketPulseColumns}, minmax(0, 1fr))`;
+  const sectorFlowGridTemplate = `repeat(${sectorFlowColumns}, minmax(0, 1fr))`;
+  const leadershipGridTemplate = `repeat(${leadershipColumns}, minmax(0, 1fr))`;
+  const breadthStatGridTemplate = `repeat(${breadthStatColumns}, minmax(0, 1fr))`;
   const marketMovers = (() => {
     const rows = [
       ...SECTORS.map((item) => ({ ...item, group: "Sector ETF" })),
@@ -522,10 +584,62 @@ const MarketScreenInner = ({
       tone: !strongestSectorFlow ? CSS_COLOR.textDim : strongestSectorFlow.net >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
     },
   ];
+  const marketRenderDiagnostics = buildMarketRenderDiagnostics({
+    qaConfig: marketQaConfig,
+    chartMode: marketChartRenderMode,
+    workspaceWidth: marketWidthForLayout,
+    pulseColumns: marketPulseColumns,
+    sectorFlowColumns,
+    leadershipColumns,
+    dataCounts: {
+      news: newsItems.length,
+      sectorFlow: sectorFlow.length,
+      leaders: marketMovers.leaders.length,
+      laggards: marketMovers.laggards.length,
+    },
+  });
+  const marketReadItems = [
+    {
+      tone: marketPulseItems[0].tone,
+      text: (
+        <>
+          Breadth is {breadth.total ? `${breadth.advancers}/${breadth.total}` : "unavailable"} with{" "}
+          {isFiniteNumber(breadth.positive5dPct)
+            ? `${breadth.positive5dPct.toFixed(0)}%`
+            : MISSING_VALUE}{" "}
+          positive over five sessions.
+        </>
+      ),
+    },
+    {
+      tone: marketPulseItems[1].tone,
+      text: (
+        <>
+          Put/call is {isFiniteNumber(putCall.total) ? putCall.total.toFixed(2) : MISSING_VALUE};{" "}
+          {putCallBullish == null
+            ? "skew unavailable"
+            : putCallBullish
+              ? "risk appetite is firmer"
+              : "protection demand is elevated"}.
+        </>
+      ),
+    },
+    {
+      tone: marketPulseItems[2].tone,
+      text: (
+        <>
+          Vol/rates proxies: {volatilityProxy?.sym || MISSING_VALUE} {formatSignedPercent(volatilityProxy?.pct)}, rates led by{" "}
+          {ratesSummary.leader?.sym || MISSING_VALUE}.
+        </>
+      ),
+    },
+  ];
 
   return (
     <div
       className="ra-panel-enter"
+      data-testid="market-render-root"
+      {...marketRenderDiagnostics}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -535,7 +649,7 @@ const MarketScreenInner = ({
       }}
     >
       <div
-        className="ra-scroll-fade-y"
+        data-testid="market-scroll-region"
         style={{
           flex: 1,
           overflowY: "auto",
@@ -550,6 +664,7 @@ const MarketScreenInner = ({
         <div
           ref={marketWorkspaceRef}
           data-testid="market-workspace"
+          {...marketRenderDiagnostics}
           style={{
             display: "grid",
             gridTemplateColumns: "minmax(0, 1fr)",
@@ -557,7 +672,7 @@ const MarketScreenInner = ({
             alignItems: "start",
           }}
         >
-          {isVisible && !safeQaMode ? (
+          {marketChartRenderMode === "live" ? (
             <PlatformErrorBoundary
               label="Market chart grid"
               resetKeys={[marketChartResetKey]}
@@ -583,6 +698,7 @@ const MarketScreenInner = ({
                   <MarketChartGridFallback
                     symbols={symbols}
                     isPhone={marketLayoutFlags.isPhone}
+                    mode="loading"
                   />
                 }
               >
@@ -604,7 +720,11 @@ const MarketScreenInner = ({
               </Suspense>
             </PlatformErrorBoundary>
           ) : (
-            <div style={{ minHeight: dim(340) }} />
+            <MarketChartGridFallback
+              symbols={symbols}
+              isPhone={marketLayoutFlags.isPhone}
+              mode={isVisible ? "shell" : "hidden"}
+            />
           )}
         </div>
 
@@ -627,6 +747,8 @@ const MarketScreenInner = ({
               <span>breadth · skew · vol · flow</span>
             </div>
             <div
+              data-testid="market-pulse-grid"
+              data-market-grid-columns={String(marketPulseColumns)}
               style={{
                 display: "grid",
                 gridTemplateColumns: marketDetailGridTemplate,
@@ -664,7 +786,12 @@ const MarketScreenInner = ({
               ))}
             </div>
 
-            <Card className="ra-panel-enter" style={{ padding: sp("8px 10px") }}>
+            <Card
+              className="ra-panel-enter"
+              data-testid="market-sector-flow-panel"
+              data-market-grid-columns={String(sectorFlowColumns)}
+              style={{ padding: sp("8px 10px") }}
+            >
               <CardTitle
                 right={
                   <span
@@ -687,7 +814,15 @@ const MarketScreenInner = ({
                     ...sectorFlow.map((sector) => Math.abs(sector.calls - sector.puts)),
                   );
                   return (
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: sp(6) }}>
+                    <div
+                      data-testid="market-sector-flow-grid"
+                      data-market-grid-columns={String(sectorFlowColumns)}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: sectorFlowGridTemplate,
+                        gap: sp(6),
+                      }}
+                    >
                       {[...sectorFlow]
                         .map((sector) => ({ ...sector, net: sector.calls - sector.puts }))
                         .sort((left, right) => Math.abs(right.net) - Math.abs(left.net))
@@ -756,9 +891,22 @@ const MarketScreenInner = ({
               )}
             </Card>
 
-            <Card className="ra-panel-enter" style={{ padding: sp("8px 10px") }}>
+            <Card
+              className="ra-panel-enter"
+              data-testid="market-leadership-panel"
+              data-market-grid-columns={String(leadershipColumns)}
+              style={{ padding: sp("8px 10px") }}
+            >
               <CardTitle>Leadership / Weakness</CardTitle>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(8) }}>
+              <div
+                data-testid="market-leadership-grid"
+                data-market-grid-columns={String(leadershipColumns)}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: leadershipGridTemplate,
+                  gap: sp(8),
+                }}
+              >
                 {[
                   ["Leaders", marketMovers.leaders, CSS_COLOR.green],
                   ["Laggards", marketMovers.laggards, CSS_COLOR.red],
@@ -870,7 +1018,17 @@ const MarketScreenInner = ({
                 {breadth.total ? breadth.decliners : MISSING_VALUE}
               </span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(3), fontFamily: T.sans, fontSize: textSize("body") }}>
+            <div
+              data-testid="market-breadth-stats-grid"
+              data-market-grid-columns={String(breadthStatColumns)}
+              style={{
+                display: "grid",
+                gridTemplateColumns: breadthStatGridTemplate,
+                gap: sp(3),
+                fontFamily: T.sans,
+                fontSize: textSize("body"),
+              }}
+            >
               {[
                 ["5D+", isFiniteNumber(breadth.positive5dPct) ? `${breadth.positive5dPct.toFixed(0)}%` : MISSING_VALUE],
                 ["Sectors+", breadth.sectorCoverage ? `${breadth.positiveSectors}/${breadth.sectorCoverage}` : MISSING_VALUE],
@@ -896,21 +1054,36 @@ const MarketScreenInner = ({
               Market Read
             </CardTitle>
             <div
+              data-testid="market-read-list"
+              role="list"
               style={{
+                display: "grid",
+                gap: sp(4),
                 fontSize: fs(10),
                 fontFamily: T.sans,
                 color: CSS_COLOR.textSec,
                 lineHeight: 1.45,
               }}
             >
-              <span style={{ color: marketPulseItems[0].tone }}>▸</span>{" "}
-              Breadth is {breadth.total ? `${breadth.advancers}/${breadth.total}` : "unavailable"} with{" "}
-              {isFiniteNumber(breadth.positive5dPct) ? `${breadth.positive5dPct.toFixed(0)}%` : MISSING_VALUE} positive over five sessions.{"\n"}
-              <span style={{ color: marketPulseItems[1].tone }}>▸</span>{" "}
-              Put/call is {isFiniteNumber(putCall.total) ? putCall.total.toFixed(2) : MISSING_VALUE};{" "}
-              {putCallBullish == null ? "skew unavailable" : putCallBullish ? "risk appetite is firmer" : "protection demand is elevated"}.{"\n"}
-              <span style={{ color: marketPulseItems[2].tone }}>▸</span>{" "}
-              Vol/rates proxies: {volatilityProxy?.sym || MISSING_VALUE} {formatSignedPercent(volatilityProxy?.pct)}, rates led by {ratesSummary.leader?.sym || MISSING_VALUE}.
+              {marketReadItems.map((item, index) => (
+                <div
+                  key={index}
+                  data-testid="market-read-item"
+                  role="listitem"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: `${dim(10)}px minmax(0, 1fr)`,
+                    gap: sp(4),
+                    alignItems: "start",
+                    minWidth: 0,
+                  }}
+                >
+                  <span aria-hidden="true" style={{ color: item.tone }}>
+                    ▸
+                  </span>
+                  <span style={{ minWidth: 0 }}>{item.text}</span>
+                </div>
+              ))}
             </div>
           </Card>
         </div>
@@ -946,9 +1119,11 @@ const MarketScreenInner = ({
               News
             </CardTitle>
             {newsItems.length ? (
-              newsItems.map((item, index) => (
+              <div data-testid="market-news-list" style={{ display: "grid" }}>
+                {newsItems.map((item, index) => (
                 <AppTooltip key={item.id} content={item.publisher || undefined}><div
                   key={item.id}
+                  data-testid="market-news-row"
                   className={joinMotionClasses(
                     "ra-row-enter",
                     item.articleUrl && "ra-interactive",
@@ -959,6 +1134,7 @@ const MarketScreenInner = ({
                     gap: sp(5),
                     padding: sp("3px 0"),
                     alignItems: "flex-start",
+                    minWidth: 0,
                     borderBottom:
                       index < newsItems.length - 1
                         ? `1px solid ${cssColorMix(CSS_COLOR.border, 2)}`
@@ -1000,10 +1176,13 @@ const MarketScreenInner = ({
                   <span
                     style={{
                       flex: 1,
+                      minWidth: 0,
                       fontSize: fs(10),
                       color: CSS_COLOR.textSec,
                       fontFamily: T.sans,
                       lineHeight: 1.4,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
                     }}
                   >
                     {item.text}
@@ -1019,7 +1198,8 @@ const MarketScreenInner = ({
                     {item.time}
                   </span>
                 </div></AppTooltip>
-              ))
+                ))}
+              </div>
             ) : (
               <DataUnavailableState
                 title="No live news feed"

@@ -431,6 +431,13 @@ export default defineConfig({
         ws: true,
       },
     },
+    watch: {
+      ignored: [
+        "**/dist/**",
+        "**/playwright-report/**",
+        "**/test-results/**",
+      ],
+    },
     fs: {
       strict: true,
       deny: ["**/.*"],

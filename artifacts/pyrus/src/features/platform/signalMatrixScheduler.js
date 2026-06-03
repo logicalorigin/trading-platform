@@ -1,4 +1,4 @@
-import { isSignalStateCurrent } from "../signals/signalStateFreshness.js";
+import { normalizeSignalStatus } from "../signals/signalStateFreshness.js";
 
 const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze([
   "1m",
@@ -6,17 +6,24 @@ const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze([
   "5m",
   "15m",
   "1h",
+  "1d",
 ]);
+const SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
+  normal: 150,
+  watch: 150,
+  high: 20,
+  critical: 10,
+});
 const REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 25,
-  watch: 25,
+  normal: 30,
+  watch: 30,
   high: 20,
   critical: 10,
 });
 const ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 150,
   watch: 150,
-  high: 60,
+  high: 20,
   critical: 10,
 });
 const ACTIVE_SCREEN_REQUEST_SYMBOL_LIMIT_BY_PRESSURE = Object.freeze({
@@ -43,13 +50,23 @@ const SIGNAL_MATRIX_TIMEFRAME_MS = Object.freeze({
   "5m": 5 * 60_000,
   "15m": 15 * 60_000,
   "1h": 60 * 60_000,
+  "1d": 24 * 60 * 60_000,
 });
+const NON_HYDRATED_MATRIX_STATUSES = new Set([
+  "error",
+  "unknown",
+]);
 const normalizeSymbol = (symbol) => symbol?.trim?.().toUpperCase?.() || "";
 
 const normalizePressureLevel = (pressureLevel) =>
-  Object.hasOwn(REQUEST_TASK_LIMIT_BY_PRESSURE, pressureLevel)
+  Object.hasOwn(SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE, pressureLevel)
     ? pressureLevel
     : "normal";
+
+export const resolveSignalMatrixExactCellLimit = (pressureLevel) =>
+  SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE[
+    normalizePressureLevel(pressureLevel)
+  ];
 
 export const resolveSignalMatrixActiveScreenRequestSymbolLimit = (
   pressureLevel,
@@ -60,10 +77,13 @@ export const resolveSignalMatrixActiveScreenRequestSymbolLimit = (
 
 export const resolveSignalMatrixActiveScreenRequestTaskLimit = (
   pressureLevel,
-) =>
-  ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE[
-    normalizePressureLevel(pressureLevel)
-  ];
+) => {
+  const normalizedPressureLevel = normalizePressureLevel(pressureLevel);
+  return Math.min(
+    ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE[normalizedPressureLevel],
+    SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE[normalizedPressureLevel],
+  );
+};
 
 export const resolveSignalMatrixBusyQueueDelayMs = (pressureLevel) =>
   BUSY_QUEUE_DELAY_MS_BY_PRESSURE[normalizePressureLevel(pressureLevel)];
@@ -206,11 +226,33 @@ const buildHydrationMap = (states = []) => {
 const isHydratedState = (state) =>
   Boolean(
     state &&
-      isSignalStateCurrent(state) &&
-      (state.latestBarAt || state.currentSignalAt),
+      state.active !== false &&
+      !NON_HYDRATED_MATRIX_STATUSES.has(normalizeSignalStatus(state)) &&
+      (state.latestBarAt ||
+        state.currentSignalAt ||
+        (normalizeSignalStatus(state) === "unavailable" &&
+          (state.lastEvaluatedAt || state.lastError))),
   );
 
+const isRecentlySettledUnavailableState = (state, timeframe, nowMs, pollMs) => {
+  if (!state || normalizeSignalStatus(state) !== "unavailable") {
+    return false;
+  }
+  const lastEvaluatedMs = Date.parse(state?.lastEvaluatedAt || "");
+  if (!Number.isFinite(nowMs) || !Number.isFinite(lastEvaluatedMs)) {
+    return Boolean(state.lastError);
+  }
+  const retryAfterMs = Math.max(
+    Number.isFinite(pollMs) && pollMs > 0 ? pollMs * 2 : 0,
+    5 * 60_000,
+  );
+  return nowMs - lastEvaluatedMs <= retryAfterMs;
+};
+
 const stateNeedsRefresh = (state, timeframe, nowMs, pollMs) => {
+  if (isRecentlySettledUnavailableState(state, timeframe, nowMs, pollMs)) {
+    return false;
+  }
   if (!isHydratedState(state)) {
     return true;
   }
@@ -252,22 +294,6 @@ const missingTimeframesForSymbol = (
   );
 };
 
-const rotateSymbols = (symbols, cursor, count) => {
-  if (!symbols.length || count <= 0) {
-    return { symbols: [], nextCursor: cursor || 0 };
-  }
-
-  const start = Math.max(0, cursor || 0) % symbols.length;
-  const selected = [];
-  for (let index = 0; index < Math.min(count, symbols.length); index += 1) {
-    selected.push(symbols[(start + index) % symbols.length]);
-  }
-  return {
-    symbols: selected,
-    nextCursor: (start + selected.length) % symbols.length,
-  };
-};
-
 const buildMissingTimeframesBySymbol = ({
   symbols,
   hydrationMap,
@@ -298,13 +324,53 @@ const missingCellsForSymbols = (symbols, missingTimeframesBySymbol) =>
     })),
   );
 
-const buildRequestCells = (symbols, timeframes) =>
-  symbols.flatMap((symbol) =>
-    timeframes.map((timeframe) => ({
-      symbol,
-      timeframe,
-    })),
-  );
+const selectMissingCellsForRotatedSymbols = ({
+  symbols,
+  cursor = 0,
+  missingTimeframesBySymbol,
+  cellLimit,
+  symbolLimit,
+}) => {
+  if (!symbols.length || cellLimit <= 0 || symbolLimit <= 0) {
+    return { symbols: [], cells: [], nextCursor: cursor || 0 };
+  }
+
+  const start = Math.max(0, cursor || 0) % symbols.length;
+  const selectedSymbols = [];
+  const cells = [];
+  let inspected = 0;
+
+  while (
+    inspected < symbols.length &&
+    cells.length < cellLimit &&
+    selectedSymbols.length < symbolLimit
+  ) {
+    const symbol = symbols[(start + inspected) % symbols.length];
+    inspected += 1;
+    const missingTimeframes = missingTimeframesBySymbol.get(symbol) || [];
+    if (!missingTimeframes.length) {
+      continue;
+    }
+
+    let selectedForSymbol = false;
+    for (const timeframe of missingTimeframes) {
+      if (cells.length >= cellLimit) {
+        break;
+      }
+      cells.push({ symbol, timeframe });
+      selectedForSymbol = true;
+    }
+    if (selectedForSymbol) {
+      selectedSymbols.push(symbol);
+    }
+  }
+
+  return {
+    symbols: selectedSymbols,
+    cells,
+    nextCursor: (start + inspected) % symbols.length,
+  };
+};
 
 export function buildSignalMatrixRequestPlan({
   symbols = [],
@@ -329,11 +395,17 @@ export function buildSignalMatrixRequestPlan({
     universeSet.has(symbol),
   );
   const normalizedPressureLevel = normalizePressureLevel(pressureLevel);
-  const pressureRequestTaskLimit =
-    REQUEST_TASK_LIMIT_BY_PRESSURE[normalizedPressureLevel];
+  const pressureExactCellLimit =
+    SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE[normalizedPressureLevel];
+  const pressureRequestTaskLimit = Math.min(
+    REQUEST_TASK_LIMIT_BY_PRESSURE[normalizedPressureLevel],
+    pressureExactCellLimit,
+  );
   const explicitRequestTaskLimit = normalizeRequestLimit(requestTaskLimit);
-  const resolvedRequestTaskLimit =
-    explicitRequestTaskLimit ?? pressureRequestTaskLimit;
+  const resolvedRequestTaskLimit = Math.min(
+    explicitRequestTaskLimit ?? pressureRequestTaskLimit,
+    pressureExactCellLimit,
+  );
   const explicitRequestLimit = normalizeRequestLimit(requestSymbolLimit);
   const taskBoundSymbolLimit = Math.max(
     1,
@@ -343,6 +415,7 @@ export function buildSignalMatrixRequestPlan({
     explicitRequestLimit ?? taskBoundSymbolLimit,
     taskBoundSymbolLimit,
   );
+  const selectionSymbolLimit = explicitRequestLimit ?? universe.length;
   const normalizedNowMs = Number.isFinite(nowMs) ? nowMs : null;
   const missingTimeframesBySymbol = buildMissingTimeframesBySymbol({
     symbols: universe,
@@ -370,30 +443,44 @@ export function buildSignalMatrixRequestPlan({
     !startupProtected &&
     Boolean(backgroundReady) &&
     normalizedPressureLevel !== "critical";
-  const prioritySelection = rotateSymbols(
-    priorityCandidates,
+  const prioritySelection = selectMissingCellsForRotatedSymbols({
+    symbols: priorityCandidates,
     cursor,
-    baseRequestLimit,
-  );
+    missingTimeframesBySymbol,
+    cellLimit: resolvedRequestTaskLimit,
+    symbolLimit: selectionSymbolLimit,
+  });
   const priorityBatch = prioritySelection.symbols;
   const prioritySet = new Set(priorityBatch);
   const backgroundCandidates = missingBackgroundUniverse.filter(
     (symbol) => !prioritySet.has(symbol),
   );
-  const backgroundLimit = Math.max(0, baseRequestLimit - priorityBatch.length);
+  const backgroundTaskLimit = Math.max(
+    0,
+    resolvedRequestTaskLimit - prioritySelection.cells.length,
+  );
+  const backgroundLimit = Math.max(0, selectionSymbolLimit - priorityBatch.length);
   const background = backgroundAllowed
-    ? rotateSymbols(backgroundCandidates, cursor, backgroundLimit)
-    : { symbols: [], nextCursor: cursor || 0 };
+    ? selectMissingCellsForRotatedSymbols({
+        symbols: backgroundCandidates,
+        cursor,
+        missingTimeframesBySymbol,
+        cellLimit: backgroundTaskLimit,
+        symbolLimit: backgroundLimit,
+      })
+    : { symbols: [], cells: [], nextCursor: cursor || 0 };
   const nextCursor =
     priorityCandidates.length > priorityBatch.length
       ? prioritySelection.nextCursor
       : background.nextCursor;
-  const requestSymbols = uniqueSymbols([
-    ...priorityBatch,
-    ...background.symbols,
-  ]);
-  const requestTimeframes = requestSymbols.length ? matrixTimeframes : [];
-  const requestCells = buildRequestCells(requestSymbols, requestTimeframes);
+  const requestCells = [...prioritySelection.cells, ...background.cells];
+  const requestSymbols = uniqueSymbols(requestCells.map((cell) => cell.symbol));
+  const requestedTimeframeSet = new Set(
+    requestCells.map((cell) => cell.timeframe),
+  );
+  const requestTimeframes = requestCells.length
+    ? matrixTimeframes.filter((timeframe) => requestedTimeframeSet.has(timeframe))
+    : [];
   const selectedCellKeys = new Set(requestCells.map(cellKey));
   const requestedTaskCount = missingCells.length;
   const queuedTaskCount = missingCells.filter(
@@ -432,6 +519,7 @@ export function buildSignalMatrixRequestPlan({
       timeframeSymbolLimit: null,
       effectiveRequestSymbolLimit: baseRequestLimit,
       requestSymbolLimit: baseRequestLimit,
+      exactCellLimit: pressureExactCellLimit,
       requestTaskLimit: resolvedRequestTaskLimit,
       requestTaskCount: requestCells.length,
       requestedTaskCount,

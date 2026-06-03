@@ -165,6 +165,10 @@ test("visible chart bars do not force full broker-history recovery", () => {
   );
   assert.match(
     fetchBrokerHistoryBlock,
+    /fullBrokerRecovery \|\| !brokerHistoryMayBeRecentLimited/,
+  );
+  assert.match(
+    fetchBrokerHistoryBlock,
     /fullBrokerRecovery &&\s*\n\s*bars\.length === 0/,
   );
   assert.match(

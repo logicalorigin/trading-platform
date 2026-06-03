@@ -266,7 +266,12 @@ export const applyAccountDailyPnlOverride = (
         ? isoCalendarDay(fallbackDay)
         : "";
   const totalDayPnl = finiteNumber(dailyPnl?.totalDayPnl) ?? finiteNumber(dailyPnl?.value);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(marketDate) || totalDayPnl == null) {
+  const source = String(dailyPnl?.source ?? "").trim().toUpperCase();
+  if (
+    source === "IBKR_POSITIONS" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(marketDate) ||
+    totalDayPnl == null
+  ) {
     return days;
   }
   const realizedDayPnl = finiteNumber(dailyPnl?.realizedDayPnl);

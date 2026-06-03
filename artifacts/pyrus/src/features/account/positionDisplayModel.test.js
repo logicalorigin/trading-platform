@@ -106,6 +106,20 @@ test("position display drops stale Massive quote source labels from account rows
   assert.equal(display.quote.source, "option_quote");
 });
 
+test("position display preserves Massive source labels for equity quotes", () => {
+  const display = buildPositionDisplayModel({
+    mark: 10,
+    quote: {
+      bid: 9.95,
+      ask: 10.05,
+      mark: 10,
+      source: "massive",
+    },
+  });
+
+  assert.equal(display.quote.source, "massive");
+});
+
 test("position display prefers live option bid ask over backend snapshot", () => {
   const display = buildPositionDisplayModel(
     {

@@ -347,8 +347,11 @@ export class IbkrBridgeService {
     return this.ensureProvider().listExecutions(input);
   }
 
-  getQuoteSnapshots(symbols: string[]): Promise<QuoteSnapshot[]> {
-    return this.ensureProvider().getQuoteSnapshots(symbols);
+  getQuoteSnapshots(
+    symbols: string[],
+    options?: { tradingSession?: "overnight" | null },
+  ): Promise<QuoteSnapshot[]> {
+    return this.ensureProvider().getQuoteSnapshots(symbols, options);
   }
 
   getOptionActivitySnapshots(symbols: string[]): Promise<QuoteSnapshot[]> {

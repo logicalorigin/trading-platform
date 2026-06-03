@@ -36,6 +36,7 @@ test("memory pressure server summary can be built from streamed diagnostics snap
       apiRssMb: 1450,
       apiRssThresholds: { watch: 2048, high: 3072, critical: 4096 },
       browserMemoryMb: 88,
+      browserMemoryLimitMb: 4096,
       dominantDrivers: [],
     },
     snapshots: [
@@ -63,6 +64,7 @@ test("memory pressure server summary can be built from streamed diagnostics snap
   assert.equal(result.level, "normal");
   assert.equal(result.apiRssMb, 1450);
   assert.equal(result.apiHeapUsedPercent, 18.2);
+  assert.equal(result.browserMemoryLimitMb, 4096);
   assert.deepEqual(result.apiRssThresholds, {
     watch: 2048,
     high: 3072,
@@ -79,12 +81,14 @@ test("memory pressure monitor honors stricter resource-pressure diagnostics", ()
       apiRssMb: 2603.6,
       apiRssThresholds: { watch: 2048, high: 3072, critical: 4096 },
       browserMemoryMb: 123,
+      browserMemoryLimitMb: 4096,
       dominantDrivers: [],
     },
     resourceMetrics: {
       pressureLevel: "critical",
       heapUsedPercent: 20.5,
       rssMb: 2603.6,
+      browserMemoryLimitMb: 4096,
       dominantDrivers: [
         {
           kind: "api-rss",
@@ -106,6 +110,7 @@ test("memory pressure monitor honors stricter resource-pressure diagnostics", ()
     critical: 4096,
   });
   assert.equal(result.browserMemoryMb, 123);
+  assert.equal(result.browserMemoryLimitMb, 4096);
   assert.equal(result.dominantDrivers[0].kind, "api-rss");
 });
 
@@ -183,6 +188,7 @@ test("memory pressure runtime state surfaces API RSS drivers in footer state", (
     {
       level: "normal",
       browserMemoryMb: 120,
+      browserMemoryLimitMb: 4096,
       apiHeapUsedPercent: 22,
       sourceQuality: "low",
       pressureDrivers: [
@@ -217,6 +223,7 @@ test("memory pressure runtime state surfaces API RSS drivers in footer state", (
     critical: 2000,
   });
   assert.equal(result.sourceQuality, "medium");
+  assert.equal(result.browserMemoryLimitMb, 4096);
   assert.equal(result.pressureDrivers[0].kind, "api-rss");
   assert.equal(result.dominantDrivers[0].kind, "api-rss");
 });

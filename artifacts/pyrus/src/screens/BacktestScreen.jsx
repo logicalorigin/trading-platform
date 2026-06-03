@@ -10,17 +10,34 @@ import {
   fs,
   sp,
 } from "../lib/uiTokens";
+import { retryDynamicImport } from "../lib/dynamicImport";
+
+let backtestingPanelsImport = null;
+const loadBacktestingPanels = () => {
+  if (!backtestingPanelsImport) {
+    backtestingPanelsImport = retryDynamicImport(
+      () => import("../features/backtesting/BacktestingPanels"),
+      { label: "BacktestingPanels" },
+    ).catch((error) => {
+      backtestingPanelsImport = null;
+      throw error;
+    });
+  }
+  return backtestingPanelsImport;
+};
 
 const LazyAlgoDraftStrategiesPanel = lazy(() =>
-  import("../features/backtesting/BacktestingPanels").then((module) => ({
+  loadBacktestingPanels().then((module) => ({
     default: module.AlgoDraftStrategiesPanel,
   })),
 );
 const LazyBacktestWorkspace = lazy(() =>
-  import("../features/backtesting/BacktestingPanels").then((module) => ({
+  loadBacktestingPanels().then((module) => ({
     default: module.BacktestWorkspace,
   })),
 );
+
+export const preloadScreenModules = () => loadBacktestingPanels();
 
 const BacktestWorkspaceFallback = () => (
   <div

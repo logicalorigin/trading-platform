@@ -21,10 +21,16 @@ export const WATCHLIST_SIGNAL_TIMEFRAMES = Object.freeze(["1m", "2m", "5m", "15m
 export const normalizeWatchlistSymbol = (value) =>
   value?.trim?.().toUpperCase?.() || "";
 
-const normalizeSignalTimeframe = (value) =>
-  WATCHLIST_SIGNAL_TIMEFRAMES.includes(String(value || "").trim())
-    ? String(value || "").trim()
+const normalizeSignalTimeframe = (value, timeframes = WATCHLIST_SIGNAL_TIMEFRAMES) => {
+  const allowedTimeframes =
+    Array.isArray(timeframes) && timeframes.length
+      ? timeframes
+      : WATCHLIST_SIGNAL_TIMEFRAMES;
+  const normalized = String(value || "").trim();
+  return allowedTimeframes.includes(normalized)
+    ? normalized
     : "";
+};
 
 const WATCHLIST_IDENTITY_EMPTY_FIELDS = Object.freeze({
   market: null,
@@ -81,11 +87,14 @@ export const getSignalSortBucket = (state) => {
   return isCurrentFreshSignalState(state) ? 0 : 1;
 };
 
-export const buildSignalMatrixBySymbol = (states = []) => {
+export const buildSignalMatrixBySymbol = (
+  states = [],
+  timeframes = WATCHLIST_SIGNAL_TIMEFRAMES,
+) => {
   const bySymbol = {};
   (states || []).forEach((state) => {
     const symbol = normalizeWatchlistSymbol(state?.symbol);
-    const timeframe = normalizeSignalTimeframe(state?.timeframe);
+    const timeframe = normalizeSignalTimeframe(state?.timeframe, timeframes);
     if (!symbol || !timeframe) return;
     bySymbol[symbol] = {
       ...(bySymbol[symbol] || {}),

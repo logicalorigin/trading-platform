@@ -204,17 +204,12 @@ export const TradeEquityPanel = ({
     const nextWorkspaceTimeframe = normalizeChartTimeframe(
       workspaceChart?.timeframe,
     );
-    if (!nextWorkspaceTimeframe) {
+    if (!nextWorkspaceTimeframe || nextWorkspaceTimeframe === tf) {
       return;
     }
-    setTf((currentTimeframe) => {
-      if (nextWorkspaceTimeframe === currentTimeframe) {
-        return currentTimeframe;
-      }
-      setIntervalChangeRevision((revision) => revision + 1);
-      return nextWorkspaceTimeframe;
-    });
-  }, [ticker, workspaceChart?.timeframe]);
+    setTf(nextWorkspaceTimeframe);
+    setIntervalChangeRevision((revision) => revision + 1);
+  }, [tf, ticker, workspaceChart?.timeframe]);
   const indicatorSettings = useMemo(
     () => buildPyrusSignalsIndicatorSettings(pyrusSignalsSettings),
     [pyrusSignalsSettings],
@@ -243,18 +238,15 @@ export const TradeEquityPanel = ({
     }
     const previousAlgoTimeframe = lastAlgoSignalTimeframeRef.current;
     lastAlgoSignalTimeframeRef.current = nextAlgoTimeframe;
-    setTf((currentTimeframe) => {
-      const shouldSync =
-        currentTimeframe === "5m" ||
-        (previousAlgoTimeframe && currentTimeframe === previousAlgoTimeframe);
-      if (!shouldSync || currentTimeframe === nextAlgoTimeframe) {
-        return currentTimeframe;
-      }
-      setIntervalChangeRevision((revision) => revision + 1);
-      onWorkspaceChartChange?.({ timeframe: nextAlgoTimeframe });
-      return nextAlgoTimeframe;
-    });
-  }, [onWorkspaceChartChange, signalMonitorProfile?.timeframe]);
+    const shouldSync =
+      tf === "5m" || (previousAlgoTimeframe && tf === previousAlgoTimeframe);
+    if (!shouldSync || tf === nextAlgoTimeframe) {
+      return;
+    }
+    setTf(nextAlgoTimeframe);
+    setIntervalChangeRevision((revision) => revision + 1);
+    onWorkspaceChartChange?.({ timeframe: nextAlgoTimeframe });
+  }, [onWorkspaceChartChange, signalMonitorProfile?.timeframe, tf]);
   const prewarmedFavoriteTimeframesRef = useRef(null);
   const { drawings, addDrawing, clearDrawings, undo, redo, canUndo, canRedo } =
     useDrawingHistory();

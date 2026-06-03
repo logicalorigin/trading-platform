@@ -23,12 +23,25 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function hasLiveStreamReadinessProof(ibkr: Record<string, unknown>): boolean {
+  const streamState = typeof ibkr.streamState === "string" ? ibkr.streamState : "";
+  return Boolean(
+    ibkr.connected === true &&
+      ibkr.authenticated === true &&
+      ibkr.accountsLoaded === true &&
+      ibkr.configuredLiveMarketDataMode === true &&
+      (ibkr.strictReady === true ||
+        (ibkr.streamFresh === true && streamState === "live")),
+  );
+}
+
 export function resolveAlgoGatewayReadiness(
   ibkrDiagnostics: unknown,
 ): AlgoGatewayReadiness {
   const ibkr = asRecord(ibkrDiagnostics);
   const configured = ibkr.configured === true;
   const healthFresh = ibkr.healthFresh === true;
+  const liveStreamReady = hasLiveStreamReadinessProof(ibkr);
   const connected = ibkr.connected === true;
   const authenticated = ibkr.authenticated === true;
   const accountsLoaded = ibkr.accountsLoaded === true;
@@ -44,7 +57,7 @@ export function resolveAlgoGatewayReadiness(
     };
   }
 
-  if (!healthFresh) {
+  if (!healthFresh && !liveStreamReady) {
     return {
       ready: false,
       reason: "bridge_health_unavailable",

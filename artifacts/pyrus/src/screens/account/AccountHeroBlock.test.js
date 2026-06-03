@@ -67,7 +67,22 @@ test("hero carries the full former performance metric set", () => {
 });
 
 test("account screen wires returns model into the hero", () => {
+  assert.match(accountScreenSource, /import \{ retryDynamicImport \} from "\.\.\/lib\/dynamicImport"/);
   assert.match(accountScreenSource, /const LazyAccountHeroBlock = lazy/);
+  assert.match(accountScreenSource, /retryDynamicImport\([\s\S]*label: "AccountHeroBlock"/);
+  for (const label of [
+    "TodaySnapshotPanel",
+    "AccountReturnsPanel",
+    "PortfolioExposurePanel",
+    "EquityCurvePanel",
+    "PositionsPanel",
+    "TradingAnalysisWorkbench",
+    "TradesOrdersPanel",
+    "CashFundingPanel",
+    "SetupHealthPanel",
+  ]) {
+    assert.match(accountScreenSource, new RegExp(`label:\\s*"${label}"`));
+  }
   assert.doesNotMatch(
     accountScreenSource,
     /import AccountHeroBlock from "\.\/account\/AccountHeroBlock"/,

@@ -462,6 +462,8 @@ test("app boot and screen routing use the React loader after the static shell", 
   assert.doesNotMatch(appSource, /PYRUS_WORDMARK_DARK_SRC/);
   assert.doesNotMatch(appSource, /PYRUS_WORDMARK_LIGHT_SRC/);
   assert.match(appSource, /const AppContent = lazyWithRetry\(async \(\) => \{/);
+  assert.match(appSource, /preloadDynamicImport\(loadAppContent/);
+  assert.match(appSource, /label:\s*"AppContent"/);
   assert.match(appSource, /import\("\.\/AppContent"\)/);
   assert.match(appSource, /startBootProgressTask\("app-content-chunk"\)/);
   assert.match(appSource, /completeBootProgressTask\("app-content-chunk"\)/);
@@ -515,10 +517,10 @@ test("app boot and screen routing use the React loader after the static shell", 
   assert.match(researchSource, /const ResearchWorkspaceFallback = \(\) =>/);
   assert.match(researchSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
   assert.match(researchSource, /<Suspense fallback=\{<ResearchWorkspaceFallback \/>\}>/);
-  assert.match(researchSource, /testId="research-workspace-loading"/);
+  assert.match(researchSource, /data-testid="research-workspace-loading"/);
   assert.doesNotMatch(researchSource, /data-testid=.*loading.*shell/);
 
-  assert.match(marketSource, /data-testid="market-chart-grid-shell"/);
+  assert.match(marketSource, /data-market-chart-grid-shell="true"/);
   assert.match(marketSource, /data-testid="market-chart-grid-shell-cell"/);
   assert.doesNotMatch(marketSource, /market-chart-grid-loader/);
   assert.doesNotMatch(marketSource, /testId="market-activity-loader"/);

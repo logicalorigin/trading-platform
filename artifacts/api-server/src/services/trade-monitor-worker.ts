@@ -25,6 +25,7 @@ import {
   type SignalMonitorTimeframe,
 } from "./signal-monitor";
 import {
+  hasRecentStockAggregateSourceActivity,
   isStockAggregateStreamingAvailable,
   subscribeMutableStockMinuteAggregates,
   type StockMinuteAggregateMessage,
@@ -49,6 +50,11 @@ type WorkerDependencies = {
     typeof updateSignalMonitorProfileEvaluationMetadata;
   updateProfileLastError: (profileId: string, message: string | null) => Promise<void>;
   isStockAggregateStreamingAvailable: () => boolean;
+  hasRecentStockAggregateSourceActivity: (input: {
+    symbols: string[];
+    now: Date;
+    maxAgeMs: number;
+  }) => boolean;
   acquireTickLock: () => Promise<ReleaseLock | null>;
   subscribeStockMinuteAggregates: typeof subscribeMutableStockMinuteAggregates;
   setTimer: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
@@ -105,6 +111,19 @@ function evaluatedKey(input: {
   ].join(":");
 }
 
+function streamFreshnessWindowMs(input: {
+  profile: SignalMonitorProfileRow;
+  timeframe: SignalMonitorTimeframe;
+}): number {
+  const pollIntervalMs =
+    positiveInteger(input.profile.pollIntervalSeconds, 60, 15, 3600) * 1000;
+  return Math.max(
+    60_000,
+    pollIntervalMs * 2,
+    getSignalMonitorTimeframeMs(input.timeframe) * 2,
+  );
+}
+
 function shouldRememberEvaluatedKey(state: SignalMonitorSymbolState): boolean {
   return state.status === "ok" && Boolean(state.currentSignalAt);
 }
@@ -125,6 +144,7 @@ async function updateProfileLastError(
 async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
   const client = await pool.connect();
   let clientError: Error | null = null;
+  let transactionOpen = false;
   const detachClientErrorHandler = attachPostgresClientErrorHandler(client, {
     context: "signal-monitor-worker-advisory-lock",
     onError: (error) => {
@@ -144,29 +164,42 @@ async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
   let locked = false;
 
   try {
+    await client.query("begin");
+    transactionOpen = true;
     const result = await client.query<{ locked: boolean }>(
-      "select pg_try_advisory_lock($1) as locked",
+      "select pg_try_advisory_xact_lock($1) as locked",
       [ADVISORY_LOCK_KEY],
     );
     locked = result.rows[0]?.locked === true;
 
     if (!locked) {
+      await client.query("rollback");
+      transactionOpen = false;
       releaseClient();
       return null;
     }
 
     return async () => {
+      let releaseError: unknown;
       try {
-        if (!clientError) {
-          await client.query("select pg_advisory_unlock($1)", [
-            ADVISORY_LOCK_KEY,
-          ]);
+        if (!clientError && transactionOpen) {
+          await client.query("commit");
+          transactionOpen = false;
         }
+      } catch (error) {
+        releaseError = error;
       } finally {
-        releaseClient();
+        if (transactionOpen) {
+          await client.query("rollback").catch(() => {});
+          transactionOpen = false;
+        }
+        releaseClient(releaseError);
       }
     };
   } catch (error) {
+    if (transactionOpen) {
+      await client.query("rollback").catch(() => {});
+    }
     releaseClient(error);
     throw error;
   }
@@ -191,6 +224,9 @@ function defaultDependencies(
       (() =>
         process.env["SIGNAL_MONITOR_STREAM_FIRST_WORKER"] !== "0" &&
         isStockAggregateStreamingAvailable()),
+    hasRecentStockAggregateSourceActivity:
+      options.hasRecentStockAggregateSourceActivity ??
+      ((input) => hasRecentStockAggregateSourceActivity(input)),
     acquireTickLock: options.acquireTickLock ?? acquirePostgresAdvisoryLock,
     subscribeStockMinuteAggregates:
       options.subscribeStockMinuteAggregates ?? subscribeMutableStockMinuteAggregates,
@@ -246,11 +282,28 @@ async function runProfile(input: {
       cursor: runtime.evaluationCursor,
     });
     runtime.evaluationCursor = resolvedBatch.nextCursor;
-    if (dependencies.isStockAggregateStreamingAvailable()) {
+    const streamingAvailable = dependencies.isStockAggregateStreamingAvailable();
+    const streamFresh = streamingAvailable
+      ? dependencies.hasRecentStockAggregateSourceActivity({
+          symbols: universe.watchlistSymbols,
+          now: evaluatedAt,
+          maxAgeMs: streamFreshnessWindowMs({
+            profile: evaluationProfile,
+            timeframe,
+          }),
+        })
+      : false;
+    if (streamFresh) {
       if (profile.lastError) {
         await dependencies.updateProfileLastError(profile.id, null);
       }
       return;
+    }
+    if (streamingAvailable) {
+      dependencies.logger.debug?.(
+        { profileId: profile.id, timeframe },
+        "Signal monitor stream is configured but source activity is stale; running history fallback",
+      );
     }
 
     const concurrency = positiveInteger(

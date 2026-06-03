@@ -156,6 +156,7 @@ const OPTION_QUOTE_BRIDGE_CHUNK_SIZE = Math.max(
 );
 const FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP_ENV =
   "IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP";
+const DEFAULT_LIVE_OPTION_QUOTE_SNAPSHOT_TIMEOUT_MS = 2_500;
 
 let nextSubscriberId = 1;
 let nextSnapshotOwnerId = 1;
@@ -285,6 +286,53 @@ function delayMs(ms: number, signal?: AbortSignal): Promise<void> {
     timeout.unref?.();
     signal?.addEventListener("abort", abort, { once: true });
   });
+}
+
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const value = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function liveOptionQuoteSnapshotTimeoutMs(): number {
+  return readPositiveIntegerEnv(
+    "IBKR_LIVE_OPTION_QUOTE_SNAPSHOT_TIMEOUT_MS",
+    DEFAULT_LIVE_OPTION_QUOTE_SNAPSHOT_TIMEOUT_MS,
+  );
+}
+
+function timeoutSignal(input: {
+  signal?: AbortSignal;
+  timeoutMs: number;
+  message: string;
+}): { signal?: AbortSignal; cleanup(): void } {
+  const timeoutMs = Math.max(0, Math.floor(input.timeoutMs));
+  if (timeoutMs <= 0) {
+    return { signal: input.signal, cleanup: () => {} };
+  }
+
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const abortFromInput = () => controller.abort(abortReason(input.signal));
+  if (input.signal?.aborted) {
+    abortFromInput();
+  } else {
+    input.signal?.addEventListener("abort", abortFromInput, { once: true });
+    timeout = setTimeout(() => {
+      controller.abort(new Error(input.message));
+    }, timeoutMs);
+    timeout.unref?.();
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      input.signal?.removeEventListener("abort", abortFromInput);
+    },
+  };
 }
 
 function readTimestampMs(value: unknown): number | null {
@@ -1433,6 +1481,15 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
 
   const upstreamStartedAt = Date.now();
   let upstreamErrorMessage: string | null = null;
+  const snapshotTimeoutMs = liveOptionQuoteSnapshotTimeoutMs();
+  const upstreamTimeout =
+    isSignalOptionsLiveQuoteIntent && hydrateProviderContractIds.length > 0
+      ? timeoutSignal({
+          signal: input.signal,
+          timeoutMs: snapshotTimeoutMs,
+          message: `IBKR live option quote snapshot timed out after ${snapshotTimeoutMs}ms.`,
+        })
+      : { signal: input.signal, cleanup: () => {} };
   try {
     if (hydrateProviderContractIds.length > 0) {
       const freshQuotes = (
@@ -1445,9 +1502,9 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
               bridgeClient.getOptionQuoteSnapshots({
                 underlying,
                 providerContractIds,
-                signal: input.signal,
+                signal: upstreamTimeout.signal,
               }),
-              { ...(bridgeWorkOptions ?? {}), signal: input.signal },
+              { ...(bridgeWorkOptions ?? {}), signal: upstreamTimeout.signal },
             ),
           ),
         )
@@ -1474,9 +1531,9 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
                   bridgeClient.getOptionQuoteSnapshots({
                     underlying,
                     providerContractIds,
-                    signal: input.signal,
+                    signal: upstreamTimeout.signal,
                   }),
-                { ...(bridgeWorkOptions ?? {}), signal: input.signal },
+                { ...(bridgeWorkOptions ?? {}), signal: upstreamTimeout.signal },
               ),
             ),
           )
@@ -1489,6 +1546,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     lastError = upstreamErrorMessage;
     lastErrorAt = nowProvider();
   } finally {
+    upstreamTimeout.cleanup();
     input.signal?.removeEventListener("abort", releaseOnAbort);
     if (
       releaseLeasesOnComplete ||

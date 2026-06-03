@@ -172,7 +172,10 @@ export interface IbkrBridgeProvider {
     symbol?: string;
     providerContractId?: string | null;
   }): Promise<BrokerExecutionSnapshot[]>;
-  getQuoteSnapshots(symbols: string[]): Promise<QuoteSnapshot[]>;
+  getQuoteSnapshots(
+    symbols: string[],
+    options?: { tradingSession?: "overnight" | null },
+  ): Promise<QuoteSnapshot[]>;
   getOptionActivitySnapshots?(symbols: string[]): Promise<QuoteSnapshot[]>;
   getHistoricalBars(input: {
     symbol: string;

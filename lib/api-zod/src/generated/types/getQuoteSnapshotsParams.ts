@@ -5,10 +5,15 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { GetQuoteSnapshotsTradingSession } from './getQuoteSnapshotsTradingSession';
 
 export type GetQuoteSnapshotsParams = {
 /**
  * Comma-separated ticker symbols.
  */
 symbols: string;
+/**
+ * Optional trading session override for quote routing. Use `overnight` to force IBKR overnight-capable quote snapshots.
+ */
+tradingSession?: GetQuoteSnapshotsTradingSession;
 };

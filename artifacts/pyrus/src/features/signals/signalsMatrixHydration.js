@@ -3,20 +3,28 @@ import {
   normalizeSignalsTicker,
 } from "./signalsRowModel.js";
 import {
-  isSignalStateCurrent,
+  normalizeSignalStatus,
 } from "./signalStateFreshness.js";
 
 export const SIGNALS_MATRIX_HYDRATION_CHUNK_SIZE = null;
 export const SIGNALS_MATRIX_HYDRATION_PRIORITY_CHUNK_SIZE = null;
 
 const stateTimeframe = (state) => String(state?.timeframe || "").trim();
+const NON_HYDRATED_MATRIX_STATUSES = new Set([
+  "error",
+  "unknown",
+]);
 
 const hasHydratedMatrixState = (state) =>
   Boolean(
     state &&
       stateTimeframe(state) &&
-      isSignalStateCurrent(state) &&
-      (state.latestBarAt || state.currentSignalAt),
+      state.active !== false &&
+      !NON_HYDRATED_MATRIX_STATUSES.has(normalizeSignalStatus(state)) &&
+      (state.latestBarAt ||
+        state.currentSignalAt ||
+        (normalizeSignalStatus(state) === "unavailable" &&
+          (state.lastEvaluatedAt || state.lastError))),
   );
 
 const uniqueSymbols = (symbols = []) => {

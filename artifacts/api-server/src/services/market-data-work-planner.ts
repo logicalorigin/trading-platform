@@ -31,6 +31,7 @@ type ScannerDiagnostics = {
   } | null;
   deepScanner?: {
     queuedCount?: number | null;
+    drainingCount?: number | null;
     activeCount?: number | null;
     activeSymbols?: string[];
     draining?: boolean | null;
@@ -641,6 +642,16 @@ function buildScannerPlan(
   } else if ((deep?.queuedCount ?? 0) > 0) {
     state = "queued";
   }
+  const activeDeepScanCount = readNumber(deep?.activeCount) ?? 0;
+  const explicitQueuedDeepScanCount = readNumber(deep?.queuedCount) ?? 0;
+  const drainingDeepScanCount =
+    readNumber(deep?.drainingCount) ?? (deep?.draining ? activeDeepScanCount : 0);
+  const pendingDrainingDeepScanCount = Math.max(
+    0,
+    drainingDeepScanCount - activeDeepScanCount,
+  );
+  const queuedDeepScanCount =
+    explicitQueuedDeepScanCount + pendingDrainingDeepScanCount;
   return {
     enabled: typeof scanner?.enabled === "boolean" ? scanner.enabled : null,
     started: typeof scanner?.started === "boolean" ? scanner.started : null,
@@ -668,8 +679,9 @@ function buildScannerPlan(
     coverageHealth: horizon?.coverageHealth ?? coverage?.coverageHealth ?? null,
     effectiveConcurrency: readNumber(lineUtilization?.effectiveConcurrency),
     maxDeepScanLines: readNumber(lineUtilization?.maxDeepScanLines),
-    activeDeepScanCount: readNumber(deep?.activeCount),
-    queuedDeepScanCount: readNumber(deep?.queuedCount),
+    activeDeepScanCount,
+    queuedDeepScanCount,
+    scheduledDeepScanCount: activeDeepScanCount + queuedDeepScanCount,
   };
 }
 

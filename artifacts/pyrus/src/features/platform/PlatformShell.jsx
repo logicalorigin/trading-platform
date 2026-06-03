@@ -58,7 +58,10 @@ import {
   preloadScreenModule,
 } from "./screenRegistry.jsx";
 import { useElementSize, useViewport } from "../../lib/responsive";
-import { FooterMemoryPressureIndicator } from "./FooterMemoryPressureIndicator.jsx";
+import {
+  FooterApiSourcePressureIndicator,
+  FooterMemoryPressureIndicator,
+} from "./FooterMemoryPressureIndicator.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { lazyWithRetry } from "../../lib/dynamicImport";
 import {
@@ -665,6 +668,7 @@ export const PlatformShell = ({
   HeaderBroadcastScrollerStackComponent,
   WatchlistComponent,
   memoryPressureSignal,
+  apiSourcePressureSnapshot,
   activeWatchlist,
   watchlistSymbols,
   signalMonitorStates,
@@ -1061,6 +1065,7 @@ export const PlatformShell = ({
       selectedSymbol={selectedSymbol}
       session={session}
       memoryPressureSignal={memoryPressureSignal}
+      apiSourcePressureSnapshot={apiSourcePressureSnapshot}
     />
 
     <MobileActivitySheet
@@ -1333,6 +1338,7 @@ export const PlatformShell = ({
           >
             v0.1.0
           </span>
+          <FooterApiSourcePressureIndicator runtimeControl={apiSourcePressureSnapshot} />
           <FooterMemoryPressureIndicator signal={memoryPressureSignal} />
         </span>
       </div>

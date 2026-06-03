@@ -219,6 +219,22 @@ fires at request start, before status/duration are known).
 The PYRUS dev supervisor pins API dev logging to warn-level by starting the
 API child with `LOG_LEVEL=warn pnpm --filter @workspace/api-server run dev`.
 
+## Restart/Terminal Drop Diagnosis
+
+Start restart investigations with:
+
+```
+pnpm run diagnose:agent-restarts
+```
+
+This command is observe-only. It correlates PYRUS flight-recorder incidents,
+Replit runtime file mtimes, workflow log tails, and surviving Codex session/log
+records so agent-side activity near a restart is visible. It reports risk
+categories for workflow/restart actions, raw browser or Playwright probes, live
+API/DB probes, policy/escalation attempts, and resource-heavy commands. If the
+host-side Replit trigger is not recorded inside the guest, the report must say
+so plainly instead of guessing.
+
 To temporarily restore verbose per-request logging while debugging, drop
 that env override in `artifacts/pyrus/scripts/runDevApp.mjs` and restart the
 PYRUS web workflow. Production is unaffected: it runs raw JSON pino without

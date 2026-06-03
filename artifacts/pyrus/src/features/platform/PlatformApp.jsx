@@ -66,6 +66,7 @@ import {
 } from "./workloadStats";
 import { useWorkspaceLeadership } from "./workspaceLeadership.js";
 import { useMemoryPressureMonitor } from "./useMemoryPressureSignal";
+import { useRuntimeControlSnapshot } from "./useRuntimeControlSnapshot";
 import { getMemoryPressureSnapshot } from "./memoryPressureStore";
 import { PlatformShell } from "./PlatformShell.jsx";
 import { PlatformProviders } from "./PlatformProviders.jsx";
@@ -252,7 +253,7 @@ input[type=range]{accent-color:var(--ra-color-accent)}
 
 const WATCHLISTS_QUERY_KEY = ["/api/watchlists"];
 const SIGNAL_MONITOR_DISPLAY_POLL_MS = 15_000;
-const SIGNAL_MATRIX_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h"];
+const SIGNAL_MATRIX_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"];
 const SIGNAL_MATRIX_TIMEFRAME_SET = new Set(SIGNAL_MATRIX_TIMEFRAMES);
 const PRIORITY_SCREEN_MODULE_PRELOAD_ORDER = ["account"];
 const PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS = 500;
@@ -270,7 +271,7 @@ const SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS = 6_000;
 const SIGNAL_MATRIX_CATCHUP_COOLDOWN_MS = 30_000;
 const SIGNAL_MATRIX_PARTIAL_CACHE_CATCHUP_DELAY_MS = 10_000;
 const SIGNAL_MATRIX_TRUNCATED_CATCHUP_DELAY_MS = 5_000;
-const SIGNAL_MATRIX_REQUEST_TIMEOUT_MS = 12_000;
+const SIGNAL_MATRIX_REQUEST_TIMEOUT_MS = 30_000;
 const SIGNAL_MATRIX_REQUEST_WATCHDOG_GRACE_MS = 3_000;
 const SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS = 1_000;
 const SIGNAL_MATRIX_GLOBAL_REQUEST_COORDINATOR_KEY =
@@ -643,6 +644,14 @@ export default function PlatformApp() {
   const viewport = useViewport();
   const isPhone = viewport.flags.isPhone;
   const memoryPressureSignal = useMemoryPressureMonitor();
+  const footerApiSourceRuntime = useRuntimeControlSnapshot({
+    enabled: platformWorkVisible,
+    runtimeDiagnosticsQueryKey: "footer-api-sources",
+    runtimeDiagnosticsRefetchInterval: 15_000,
+    lineUsageStreamEnabled: false,
+    lineUsagePollInterval: 15_000,
+    memoryPressure: memoryPressureSignal,
+  });
   const userPreferences = useUserPreferences();
   const startupRefreshQueuedRef = useRef(false);
   const initialScreenRef = useRef(resolveInitialPlatformScreen(_initialState.screen));
@@ -1185,10 +1194,7 @@ export default function PlatformApp() {
     () => buildPlatformPressureCaps(signalMatrixPressureLevel),
     [signalMatrixPressureLevel],
   );
-  const activeSignalMatrixPressureLevel =
-    signalMatrixRequestActive && signalMatrixPressureLevel !== "critical"
-      ? "normal"
-      : signalMatrixPressureLevel;
+  const activeSignalMatrixPressureLevel = signalMatrixPressureLevel;
   const memoryBlocksOperationalPreload = memoryPressureLevel === "critical";
   const memoryAllowsBackgroundWarmup = Boolean(
     memoryPressureObserved &&
@@ -2713,6 +2719,22 @@ export default function PlatformApp() {
     },
   );
   useEffect(() => {
+    const stateProfile = signalMonitorStateQuery.data?.profile;
+    if (!stateProfile?.environment || signalMonitorProfileQuery.data) {
+      return;
+    }
+    queryClient.setQueryData(
+      getGetSignalMonitorProfileQueryKey({
+        environment: stateProfile.environment,
+      }),
+      stateProfile,
+    );
+  }, [
+    queryClient,
+    signalMonitorProfileQuery.data,
+    signalMonitorStateQuery.data?.profile,
+  ]);
+  useEffect(() => {
     if (
       !signalMonitorProfileQuery.data &&
       !signalMonitorProfileQuery.isFetched &&
@@ -3869,10 +3891,7 @@ export default function PlatformApp() {
         liveMemoryPressureSignal?.level || signalMatrixPressureLevel,
       server: liveMemoryPressureSignal?.server || memoryPressureSignal?.server,
     });
-    const liveActiveSignalMatrixPressureLevel =
-      signalMatrixRequestActive && liveSignalMatrixPressureLevel !== "critical"
-        ? "normal"
-        : liveSignalMatrixPressureLevel;
+    const liveActiveSignalMatrixPressureLevel = liveSignalMatrixPressureLevel;
     const liveSignalMatrixRequestTaskLimit =
       signalMatrixRequestTaskLimit == null
         ? null
@@ -3919,6 +3938,7 @@ export default function PlatformApp() {
       data: {
         environment: signalMonitorEnvironment,
         watchlistId: null,
+        cells: plan.requestCells,
         symbols: plan.requestSymbols,
         timeframes: plan.timeframes,
         clientRole: signalMatrixRequestClientRole,
@@ -4768,6 +4788,7 @@ export default function PlatformApp() {
             HeaderBroadcastScrollerStackComponent={HeaderBroadcastScrollerStack}
             WatchlistComponent={MemoWatchlistContainer}
             memoryPressureSignal={memoryPressureSignal}
+            apiSourcePressureSnapshot={footerApiSourceRuntime.snapshot}
             activeWatchlist={activeWatchlist}
             watchlistSymbols={watchlistSymbols}
             signalMonitorStates={signalMonitorStates}

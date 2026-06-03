@@ -78,6 +78,13 @@ directory to define separate Replit app runners.
   `.pyrus-runtime/validation/commands.jsonl`, and holds a single-validation lock.
   Use targeted package tests during live app work; set
   `PYRUS_ALLOW_HOT_VALIDATION=1` only for an intentional maintenance window.
+- `diagnose-agent-restarts.mjs` is observe-only restart attribution. It
+  correlates `.pyrus-runtime/flight-recorder` incidents with surviving Codex
+  session JSONL, Codex SQLite logs, Replit runtime file mtimes, and workflow log
+  tails. It reports risky nearby activity categories such as workflow, browser,
+  live API, policy, and resource risks, but it does not block commands or prove
+  host-side Replit button/API provenance when that evidence is unavailable
+  inside the guest.
 - `replit:scribe:artifacts` audits Replit Scribe artifact iframe state from
   `.local/state/scribe/scribe.db`. The default run is read-only and reports live
   artifact iframes plus duplicate/stale cleanup candidates. Use

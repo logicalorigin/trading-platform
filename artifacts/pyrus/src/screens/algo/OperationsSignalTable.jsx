@@ -69,6 +69,7 @@ import {
 import { SPARKLINE_RENDER_POINT_LIMIT } from "../../features/platform/sparklineConfig";
 import { buildSignalMatrixBySymbol } from "../../features/platform/watchlistModel";
 import { buildSignalsMatrixHydrationPlan } from "../../features/signals/signalsMatrixHydration.js";
+import { SIGNALS_TABLE_TIMEFRAMES } from "../../features/signals/signalsRowModel.js";
 import { _initialState, persistState } from "../../lib/workspaceState";
 import {
   asRecord,
@@ -100,11 +101,11 @@ const FILTER_OPTIONS = [
   { id: "unavailable", label: "Unavailable", icon: MinusCircle, tone: CSS_COLOR.textDim },
 ];
 
-const SIGNALS_PAGE_SIZE = 30;
+const SIGNALS_PAGE_SIZE = 20;
 const SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
 const SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT = 120;
 const SIGNAL_TABLE_SPARKLINE_CONCURRENCY = 4;
-const SIGNAL_COLUMN_VISIBILITY_VERSION = 7;
+const SIGNAL_COLUMN_VISIBILITY_VERSION = 8;
 const PRIOR_DEFAULT_SIGNAL_COLUMN_ORDER = [
   "signal",
   "since",
@@ -282,6 +283,16 @@ const thinBarsForSignalSparkline = (bars) => {
     );
     return validBars[sourceIndex];
   });
+};
+
+const hasUsableSparklineData = (value) =>
+  Array.isArray(value?.sparkBars) && value.sparkBars.length >= 2 ||
+  Array.isArray(value?.spark) && value.spark.length >= 2 ||
+  Array.isArray(value?.bars) && value.bars.length >= 2;
+
+const hasUsableQuoteSnapshot = (value) => {
+  const price = Number(value?.price ?? value?.last ?? value?.mark);
+  return Number.isFinite(price);
 };
 
 const timestampMs = (value) => {
@@ -937,6 +948,7 @@ export const OperationsSignalTable = ({
   algoIsPhone,
   algoIsNarrow = false,
   safeQaMode = false,
+  backgroundQueriesEnabled = false,
   onRequestSignalMatrixHydration = null,
   onOpenCandidateInTrade,
 }) => {
@@ -987,7 +999,7 @@ export const OperationsSignalTable = ({
   );
   useStoredOptionQuoteSnapshotVersion(providerContractIds);
   const signalMatrixBySymbol = useMemo(
-    () => buildSignalMatrixBySymbol(signalMatrixStates),
+    () => buildSignalMatrixBySymbol(signalMatrixStates, SIGNALS_TABLE_TIMEFRAMES),
     [signalMatrixStates],
   );
   const rows = useMemo(() => {
@@ -1038,6 +1050,7 @@ export const OperationsSignalTable = ({
         rows,
         pageRows,
         currentStates: signalMatrixStates,
+        timeframes: SIGNALS_TABLE_TIMEFRAMES,
       }),
     [pageRows, rows, signalMatrixStates],
   );
@@ -1053,20 +1066,55 @@ export const OperationsSignalTable = ({
     [pageRows],
   );
   const rowSymbolsKey = useMemo(() => rowSymbols.join(","), [rowSymbols]);
+  const tickerSnapshotsBySymbol = useRuntimeTickerSnapshots(rowSymbols);
+  const pageSignalBySymbol = useMemo(
+    () =>
+      Object.fromEntries(
+        pageRows
+          .map(({ signal }) => {
+            const signalRecord = asRecord(signal);
+            const symbol = String(signalRecord.symbol || "").toUpperCase();
+            return symbol ? [symbol, signalRecord] : null;
+          })
+          .filter(Boolean),
+      ),
+    [pageRows],
+  );
+  const rowQuoteSymbols = useMemo(
+    () =>
+      rowSymbols.filter(
+        (symbol) => !hasUsableQuoteSnapshot(tickerSnapshotsBySymbol?.[symbol]),
+      ),
+    [rowSymbols, tickerSnapshotsBySymbol],
+  );
+  const rowQuoteSymbolsKey = useMemo(() => rowQuoteSymbols.join(","), [rowQuoteSymbols]);
+  const rowSparklineSymbols = useMemo(
+    () =>
+      rowSymbols.filter(
+        (symbol) =>
+          !hasUsableSparklineData(tickerSnapshotsBySymbol?.[symbol]) &&
+          !hasUsableSparklineData(pageSignalBySymbol?.[symbol]),
+      ),
+    [pageSignalBySymbol, rowSymbols, tickerSnapshotsBySymbol],
+  );
+  const rowSparklineSymbolsKey = useMemo(
+    () => rowSparklineSymbols.join(","),
+    [rowSparklineSymbols],
+  );
   const rowQuotesQuery = useGetQuoteSnapshots(
-    { symbols: rowSymbolsKey },
+    { symbols: rowQuoteSymbolsKey },
     {
       query: {
-        enabled: Boolean(rowSymbolsKey && !safeQaMode),
+        enabled: Boolean(backgroundQueriesEnabled && rowQuoteSymbolsKey && !safeQaMode),
         staleTime: 30_000,
         retry: false,
       },
     },
   );
   const rowSparklineQuery = useQuery({
-    queryKey: ["algo-signal-row-sparklines", rowSymbolsKey],
+    queryKey: ["algo-signal-row-sparklines", rowSparklineSymbolsKey],
     queryFn: async () => {
-      const symbols = rowSymbols;
+      const symbols = rowSparklineSymbols;
       const results = await settleWithConcurrency(
         symbols,
         SIGNAL_TABLE_SPARKLINE_CONCURRENCY,
@@ -1096,11 +1144,10 @@ export const OperationsSignalTable = ({
       );
     },
     ...BARS_QUERY_DEFAULTS,
-    enabled: Boolean(rowSymbolsKey && !safeQaMode),
+    enabled: Boolean(backgroundQueriesEnabled && rowSparklineSymbolsKey && !safeQaMode),
     retry: false,
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
-  const tickerSnapshotsBySymbol = useRuntimeTickerSnapshots(rowSymbols);
   useEffect(() => {
     applyRuntimeQuoteSnapshots(rowQuotesQuery.data?.quotes || []);
   }, [rowQuotesQuery.dataUpdatedAt, rowQuotesQuery.data]);
@@ -1252,7 +1299,7 @@ export const OperationsSignalTable = ({
       : null;
   const activeFilter = FILTER_OPTIONS.find((option) => option.id === filter) || FILTER_OPTIONS[0];
   const compactTools = algoIsPhone || algoIsNarrow;
-  const signalTableCompact = Boolean(algoIsPhone);
+  const signalTableCompact = false;
   const freshnessLine = freshnessItems.filter(Boolean).join(" · ");
   const statusLine = `${activeFilter.label} ${rows.length} of ${counts.all} signals · ${freshnessLine}`;
   const mobileStatusLine = `${activeFilter.label} ${rows.length}/${counts.all} · ${freshnessLine}`;
@@ -1311,6 +1358,7 @@ export const OperationsSignalTable = ({
     });
   };
   const reorderColumn = (activeColumnId, overColumnId) => {
+    if (activeColumnId === "rowAction" || overColumnId === "rowAction") return;
     setColumnOrder((current) => {
       const next = normalizeSignalColumnOrder(current);
       const activeIndex = next.indexOf(activeColumnId);
@@ -1324,7 +1372,11 @@ export const OperationsSignalTable = ({
     setVisibleColumnIds(DEFAULT_SIGNAL_VISIBLE_COLUMNS);
   };
   const handleRowAction = ({ actionId, candidate }) => {
-    if (actionId === "submit" && candidate && onOpenCandidateInTrade) {
+    if (
+      (actionId === "submit" || actionId === "openTrade") &&
+      candidate &&
+      onOpenCandidateInTrade
+    ) {
       onOpenCandidateInTrade(candidate);
     }
   };
@@ -1334,8 +1386,10 @@ export const OperationsSignalTable = ({
       data-testid="algo-operations-signal-table"
       style={{
         background: CSS_COLOR.bg1,
-        border: `1px solid ${CSS_COLOR.border}`,
-        borderRadius: dim(RADII.md),
+        border: algoIsPhone ? 0 : `1px solid ${CSS_COLOR.border}`,
+        borderTop: algoIsPhone ? `1px solid ${CSS_COLOR.border}` : undefined,
+        borderBottom: algoIsPhone ? `1px solid ${CSS_COLOR.border}` : undefined,
+        borderRadius: algoIsPhone ? 0 : dim(RADII.md),
         overflow: "hidden",
         minWidth: 0,
       }}
@@ -1637,6 +1691,7 @@ export const OperationsSignalTable = ({
               columns={visibleColumns}
               sortKey={sortKey}
               sortDirection={sortDirection}
+              onColumnReorder={reorderColumn}
               onSortChange={handleSortChange}
             />
           ) : null}
@@ -1681,6 +1736,7 @@ export const OperationsSignalTable = ({
                     auditProgression={auditProgression}
                     scoreBreakdown={scoreBreakdown}
                     tfMatrix={signalMatrixBySymbol?.[String(symbol || "").toUpperCase()] || null}
+                    timeframes={SIGNALS_TABLE_TIMEFRAMES}
                     tickerSnapshot={
                       tickerSnapshotsBySymbol?.[String(symbol || "").toUpperCase()] || null
                     }

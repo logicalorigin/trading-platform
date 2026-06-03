@@ -377,7 +377,7 @@ test("trade monitor worker rechecks unchanged no-signal bars after the poll inte
   assert.equal(evaluateCalls, 2);
 });
 
-test("trade monitor worker does not run REST-backed profile polls while stock streaming is available", async () => {
+test("trade monitor worker does not run REST-backed profile polls while stock streaming source activity is fresh", async () => {
   let loadCalls = 0;
   let evaluateCalls = 0;
   let subscribedSymbols: string[] = [];
@@ -407,6 +407,7 @@ test("trade monitor worker does not run REST-backed profile polls while stock st
     }) => input.profile,
     updateProfileLastError: async () => {},
     isStockAggregateStreamingAvailable: () => true,
+    hasRecentStockAggregateSourceActivity: () => true,
     acquireTickLock: async () => async () => {},
     subscribeStockMinuteAggregates: (symbols) => {
       subscribedSymbols = symbols;
@@ -428,6 +429,60 @@ test("trade monitor worker does not run REST-backed profile polls while stock st
   assert.deepEqual(subscribedSymbols, ["AAPL", "MSFT"]);
   assert.equal(loadCalls, 0);
   assert.equal(evaluateCalls, 0);
+});
+
+test("trade monitor worker falls back to history when stock streaming source activity is stale", async () => {
+  let loadCalls = 0;
+  let evaluateCalls = 0;
+  let subscribedSymbols: string[] = [];
+  const worker = createTradeMonitorWorker({
+    listProfiles: async () => [profile({ pollIntervalSeconds: 15 })],
+    resolveUniverse: async (inputProfile) => ({
+      profile: inputProfile,
+      symbols: ["AAPL", "MSFT"],
+      watchlistSymbols: ["AAPL", "MSFT"],
+      skippedSymbols: [],
+      truncated: false,
+      universe: signalMonitorTestUniverse(inputProfile, ["AAPL", "MSFT"]),
+    }),
+    loadCompletedBars: async () => {
+      loadCalls += 1;
+      return {
+        bars: [],
+        latestBarAt: new Date("2026-04-24T14:30:00.000Z"),
+      };
+    },
+    evaluateSymbolFromCompletedBars: async (input: { symbol: string }) => {
+      evaluateCalls += 1;
+      return symbolState({ symbol: input.symbol });
+    },
+    updateProfileEvaluationMetadata: async (input: {
+      profile: SignalMonitorProfileRow;
+    }) => input.profile,
+    updateProfileLastError: async () => {},
+    isStockAggregateStreamingAvailable: () => true,
+    hasRecentStockAggregateSourceActivity: () => false,
+    acquireTickLock: async () => async () => {},
+    subscribeStockMinuteAggregates: (symbols) => {
+      subscribedSymbols = symbols;
+      return {
+        setSymbols(nextSymbols: string[]) {
+          subscribedSymbols = nextSymbols;
+        },
+        unsubscribe() {
+          subscribedSymbols = [];
+        },
+      };
+    },
+    now: () => new Date("2026-04-24T14:33:00.000Z"),
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+
+  assert.deepEqual(subscribedSymbols, ["AAPL", "MSFT"]);
+  assert.equal(loadCalls, 2);
+  assert.equal(evaluateCalls, 2);
 });
 
 test("trade monitor worker evaluates a streamed aggregate without waiting for the next poll", async () => {

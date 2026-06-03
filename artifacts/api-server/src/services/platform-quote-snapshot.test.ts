@@ -7,6 +7,8 @@ import {
   __setMassiveMarketDataClientFactoryForTests,
   getQuoteSnapshots,
 } from "./platform";
+import { __massiveStockQuoteStreamInternalsForTests } from "./massive-stock-quote-stream";
+import { __stockAggregateStreamTestInternals } from "./stock-aggregate-stream";
 import {
   __resetBridgeQuoteStreamForTests,
   __setBridgeQuoteClientForTests,
@@ -98,6 +100,8 @@ test.afterEach(() => {
   __setBridgeQuoteClientForTests(null);
   __setIbkrBridgeClientFactoryForTests(null);
   __setMassiveMarketDataClientFactoryForTests(null);
+  __massiveStockQuoteStreamInternalsForTests.reset();
+  __stockAggregateStreamTestInternals.reset();
   __resetMarketDataAdmissionForTests();
   __resetBridgeGovernorForTests();
   resetBridgeGovernorOverrides();
@@ -253,6 +257,184 @@ test("getQuoteSnapshots uses Massive first for real-time stock snapshots", async
       [
         ["SPY", "massive", "live"],
         ["QQQ", "massive", "live"],
+      ],
+    );
+  } finally {
+    delete process.env["MASSIVE_API_KEY"];
+  }
+});
+
+test("getQuoteSnapshots preserves Massive quote socket prices when REST returns empty", async () => {
+  process.env["MASSIVE_API_KEY"] = "massive-test-key";
+
+  let massiveCalls = 0;
+  __massiveStockQuoteStreamInternalsForTests.handleWebSocketMessage({
+    ev: "T",
+    sym: "SPY",
+    p: 512.25,
+    s: 100,
+    t: Date.parse("2026-05-27T20:30:00.000Z"),
+  });
+  __setMassiveMarketDataClientFactoryForTests(
+    () =>
+      ({
+        async getQuoteSnapshots() {
+          massiveCalls += 1;
+          return [];
+        },
+      }) as never,
+  );
+
+  try {
+    const payload = await getQuoteSnapshots({ symbols: "SPY,QQQ" });
+
+    assert.equal(massiveCalls, 1);
+    assert.deepEqual(
+      payload.quotes.map((item) => [item.symbol, item.source, item.price]),
+      [["SPY", "massive", 512.25]],
+    );
+  } finally {
+    delete process.env["MASSIVE_API_KEY"];
+  }
+});
+
+test("getQuoteSnapshots merges Massive REST day-change fields into socket prices", async () => {
+  process.env["MASSIVE_API_KEY"] = "massive-test-key";
+
+  let massiveCalls = 0;
+  __massiveStockQuoteStreamInternalsForTests.handleWebSocketMessage({
+    ev: "T",
+    sym: "SPY",
+    p: 512.25,
+    s: 100,
+    t: Date.parse("2026-05-27T20:30:00.000Z"),
+  });
+  __setMassiveMarketDataClientFactoryForTests(
+    () =>
+      ({
+        async getQuoteSnapshots(symbols: string[]) {
+          massiveCalls += 1;
+          return symbols.map((symbol) => ({
+            symbol,
+            price: 511,
+            bid: 510.9,
+            ask: 511.1,
+            bidSize: 10,
+            askSize: 12,
+            change: -1.5,
+            changePercent: -0.292,
+            open: 513,
+            high: 514,
+            low: 510,
+            prevClose: 513.5,
+            volume: 2_000,
+            updatedAt: new Date("2026-05-27T20:29:00.000Z"),
+          }));
+        },
+      }) as never,
+  );
+
+  try {
+    const payload = await getQuoteSnapshots({ symbols: "SPY" });
+    const [snapshot] = payload.quotes;
+
+    assert.equal(massiveCalls, 1);
+    assert.equal(snapshot?.source, "massive");
+    assert.equal(snapshot?.price, 512.25);
+    assert.equal(snapshot?.change, -1.5);
+    assert.equal(snapshot?.prevClose, 513.5);
+  } finally {
+    delete process.env["MASSIVE_API_KEY"];
+  }
+});
+
+test("getQuoteSnapshots seeds Massive snapshots from aggregate socket cache", async () => {
+  process.env["MASSIVE_API_KEY"] = "massive-test-key";
+
+  __stockAggregateStreamTestInternals.handleMassiveQuoteSnapshot(
+    {
+      quotes: [
+        {
+          symbol: "PWR",
+          price: 700,
+          bid: 699.5,
+          ask: 700.5,
+          volume: null,
+        } as any,
+      ],
+    },
+    Date.parse("2026-05-27T20:30:00.000Z"),
+  );
+  __setMassiveMarketDataClientFactoryForTests(
+    () =>
+      ({
+        async getQuoteSnapshots() {
+          return [];
+        },
+      }) as never,
+  );
+
+  try {
+    const payload = await getQuoteSnapshots({ symbols: "PWR" });
+
+    assert.deepEqual(
+      payload.quotes.map((item) => [item.symbol, item.source, item.price]),
+      [["PWR", "massive", 700]],
+    );
+  } finally {
+    delete process.env["MASSIVE_API_KEY"];
+  }
+});
+
+test("getQuoteSnapshots uses IBKR bridge for overnight stock snapshots", async () => {
+  process.env["MASSIVE_API_KEY"] = "massive-test-key";
+
+  let massiveCalls = 0;
+  let bridgeCalls = 0;
+  const tradingSessions: Array<"overnight" | null | undefined> = [];
+  __setMassiveMarketDataClientFactoryForTests(
+    () =>
+      ({
+        async getQuoteSnapshots() {
+          massiveCalls += 1;
+          return [];
+        },
+      }) as never,
+  );
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => bridgeHealth(),
+      }) as never,
+  );
+  __setBridgeQuoteClientForTests({
+    async getQuoteSnapshots(symbols, options) {
+      bridgeCalls += 1;
+      tradingSessions.push(options?.tradingSession);
+      return symbols.map((symbol, index) =>
+        quote(symbol, 600 + index, "2026-06-03T02:30:00.000Z"),
+      );
+    },
+    streamQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  try {
+    const payload = await getQuoteSnapshots({
+      symbols: "CEG,UUUU",
+      allowMassiveFallback: false,
+      tradingSession: "overnight",
+    });
+
+    assert.equal(massiveCalls, 0);
+    assert.equal(bridgeCalls, 1);
+    assert.deepEqual(tradingSessions, ["overnight"]);
+    assert.deepEqual(
+      payload.quotes.map((item) => [item.symbol, item.source, item.freshness]),
+      [
+        ["CEG", "ibkr", "live"],
+        ["UUUU", "ibkr", "live"],
       ],
     );
   } finally {

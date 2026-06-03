@@ -114,10 +114,13 @@ const SORT_OPTIONS = [
 const isHydratedSignalMatrixState = (state) =>
   Boolean(
     state &&
-      !["error", "unavailable", "unknown"].includes(
+      !["error", "unknown"].includes(
         normalizeSignalStatus(state),
       ) &&
-      (state.latestBarAt || state.currentSignalAt),
+      (state.latestBarAt ||
+        state.currentSignalAt ||
+        (normalizeSignalStatus(state) === "unavailable" &&
+          (state.lastEvaluatedAt || state.lastError))),
   );
 const SIGNAL_TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "1h", "1d"];
 const SIGNALS_COLUMN_IDS = [
@@ -139,7 +142,6 @@ const SIGNALS_COLUMN_IDS = [
 ];
 const SIGNALS_LOCKED_COLUMN_IDS = ["symbol", "action"];
 const SIGNALS_SORT_KEYS_BY_COLUMN_ID = {
-  action: "symbol",
   age: "age",
   bars: "bars",
   coverage: "coverage",
@@ -607,7 +609,7 @@ function CoverageCell({ row }) {
 function CompactIntervalCell({ timeframe, state }) {
   const hydrated = isHydratedSignalMatrixState(state);
   const problem = isProblemSignalState(state);
-  const direction = hydrated ? getCurrentSignalDirection(state) : "";
+  const direction = hydrated && !problem ? getCurrentSignalDirection(state) : "";
   const tone = problem ? CSS_COLOR.red : toneForDirection(direction);
   const intervalAge = hydrated
     ? formatTime(state.currentSignalAt || state.latestBarAt || state.lastEvaluatedAt)
@@ -619,10 +621,10 @@ function CompactIntervalCell({ timeframe, state }) {
       : direction === "buy"
         ? ArrowUp
         : Clock3;
-  const content = hydrated
-    ? `${timeframe} ${direction || "none"} · ${formatBars(state.barsSinceSignal)} · ${intervalAge}`
-    : state?.lastError
-      ? `${timeframe} ${state.status || "error"} · ${state.lastError}`
+  const content = problem
+    ? `${timeframe} ${state.status || "error"} · ${state.lastError}`
+    : hydrated
+      ? `${timeframe} ${direction || "none"} · ${formatBars(state.barsSinceSignal)} · ${intervalAge}`
       : `${timeframe} not hydrated`;
   return (
     <AppTooltip content={content}>
@@ -659,7 +661,7 @@ function CompactIntervalCell({ timeframe, state }) {
               fontSize: textSize("captionStrong"),
             }}
           >
-            {hydrated ? formatCompactBars(state.barsSinceSignal) : problem ? "Err" : MISSING_VALUE}
+            {problem ? "Err" : hydrated ? formatCompactBars(state.barsSinceSignal) : MISSING_VALUE}
           </span>
           <span
             data-testid={`signals-${timeframe}-age`}

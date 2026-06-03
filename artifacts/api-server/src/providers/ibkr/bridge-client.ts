@@ -950,7 +950,10 @@ export class IbkrBridgeClient {
 
   async getQuoteSnapshots(
     symbols: string[],
-    options: { signal?: AbortSignal } = {},
+    options: {
+      signal?: AbortSignal;
+      tradingSession?: "overnight" | null;
+    } = {},
   ): Promise<QuoteSnapshot[]> {
     const bridgeSymbols = normalizeBridgeStockSymbols(symbols);
     const payload = await this.request<{
@@ -960,7 +963,12 @@ export class IbkrBridgeClient {
     }>(
       "/quotes/snapshot",
       { signal: options.signal },
-      { symbols: bridgeSymbols.join(",") },
+      {
+        symbols: bridgeSymbols.join(","),
+        ...(options.tradingSession === "overnight"
+          ? { tradingSession: "overnight", includeOvernight: "true" }
+          : {}),
+      },
     );
     return payload.quotes.map(hydrateQuote);
   }

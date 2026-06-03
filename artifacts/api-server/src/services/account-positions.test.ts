@@ -5,7 +5,7 @@ import test from "node:test";
 process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
 process.env["DIAGNOSTICS_SUPPRESS_DB_WARNINGS"] = "1";
 
-test("account position quote hydration opts out of Massive fallback", () => {
+test("account position quote hydration uses Massive for equities and IBKR for options", () => {
   const source = readFileSync(new URL("./account.ts", import.meta.url), "utf8");
   const equityBody = source.match(
     /async function fetchEquityQuoteSnapshotsForPositions\([\s\S]*?\nasync function fetchOptionQuoteSnapshotsForPositions/,
@@ -20,20 +20,55 @@ test("account position quote hydration opts out of Massive fallback", () => {
   assert.ok(equityBody);
   assert.ok(optionBody);
   assert.ok(underlyingBody);
-  assert.match(equityBody, /allowMassiveFallback: false/);
+  assert.match(equityBody, /allowMassiveFallback: true/);
   assert.match(equityBody, /admitMarketDataLeases/);
   assert.match(equityBody, /const admissionOwner = `account-position-equity-quotes:\$\{accountKey\}`/);
   assert.match(equityBody, /owner: admissionOwner/);
   assert.match(equityBody, /requests: symbols\.map/);
   assert.match(equityBody, /admissionOwner,/);
   assert.match(equityBody, /admissionIntent: "account-monitor-live"/);
-  assert.match(equityBody, /admissionFallbackProvider: "cache"/);
+  assert.match(equityBody, /admissionFallbackProvider: "massive"/);
   assert.match(equityBody, /ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS/);
   assert.match(optionBody, /declareIbkrLiveDemand/);
   assert.match(optionBody, /readIbkrLiveDemandState/);
   assert.match(optionBody, /intent: "account-monitor-live"/);
   assert.doesNotMatch(optionBody, /fetchOptionQuoteSnapshotPayload/);
   assert.match(underlyingBody, /allowMassiveFallback: false/);
+});
+
+test("account summary day P&L uses latest market-day NAV history", async () => {
+  const { __accountOverviewInternalsForTests } = await import("./account");
+  const result =
+    __accountOverviewInternalsForTests.calculateLatestMarketDayPnlFromHistory([
+      {
+        timestamp: new Date("2026-05-26T19:55:00.000Z"),
+        netLiquidation: 50_000,
+        source: "LOCAL_LEDGER",
+      },
+      {
+        timestamp: new Date("2026-05-27T13:30:00.000Z"),
+        netLiquidation: 49_000,
+        source: "LOCAL_LEDGER",
+      },
+      {
+        timestamp: new Date("2026-05-27T15:00:00.000Z"),
+        netLiquidation: 72_725,
+        deposits: 23_600,
+        source: "LOCAL_LEDGER",
+      },
+      {
+        timestamp: new Date("2026-05-27T20:00:00.000Z"),
+        netLiquidation: 72_850,
+        source: "IBKR_ACCOUNT_SUMMARY",
+      },
+    ]);
+
+  assert.deepEqual(result, {
+    value: 250,
+    capitalBase: 49_000,
+    marketDate: "2026-05-27",
+    source: "LOCAL_LEDGER",
+  });
 });
 
 test("account page live reads coalesce repeated critical fan-out work", () => {
@@ -56,6 +91,25 @@ test("account page live reads coalesce repeated critical fan-out work", () => {
     source,
     /function hydratePositionMarkets[\s\S]*positionMarketHydrationReadCache[\s\S]*hydratePositionMarketsUncached/,
   );
+});
+
+test("shadow account positions route forwards automation scope and live quote opt-out", () => {
+  const routeSource = readFileSync(new URL("../routes/platform.ts", import.meta.url), "utf8");
+  const accountSource = readFileSync(new URL("./account.ts", import.meta.url), "utf8");
+  const routeBody = routeSource.match(
+    /router\.get\("\/accounts\/:accountId\/positions"[\s\S]*?\n\}\);/,
+  )?.[0];
+  const accountBody = accountSource.match(
+    /export async function getAccountPositions\([\s\S]*?\n  const mode = input\.mode \?\? getRuntimeMode\(\);/,
+  )?.[0];
+
+  assert.ok(routeBody);
+  assert.match(routeBody, /source: readOptionalString\(req\.query\.source, 80\)/);
+  assert.match(routeBody, /req\.query\.liveQuotes === "false"\s*\?\s*false/);
+  assert.match(routeBody, /req\.query\.liveQuotes === "true"\s*\?\s*true/);
+  assert.ok(accountBody);
+  assert.match(accountBody, /liveQuotes\?: boolean/);
+  assert.match(accountBody, /getShadowAccountPositions\(\{\s*assetClass: input\.assetClass,\s*source: input\.source,\s*liveQuotes: input\.liveQuotes,/);
 });
 
 test("live quote and flow defaults require explicit Massive opt-in", () => {
@@ -195,6 +249,61 @@ test("account position hydration derives mark, day P&L, and unrealized P&L from 
   assert.equal(Number(hydrated.dayChangePercent?.toFixed(6)), 2.882483);
   assert.equal(Number(hydrated.unrealizedPnl.toFixed(2)), 43.45);
   assert.equal(hydrated.source, "QUOTE_SNAPSHOT");
+});
+
+test("account position hydration does not report false flat day P&L without previous close", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const hydrated =
+    __accountPositionInternalsForTests.buildPositionMarketHydration(
+      {
+        id: "U1:AGG",
+        accountId: "U1",
+        symbol: "AGG",
+        assetClass: "equity",
+        quantity: 10,
+        averagePrice: 20,
+        marketPrice: 20,
+        marketValue: 200,
+        unrealizedPnl: 0,
+        unrealizedPnlPercent: 0,
+        optionContract: null,
+      },
+      {
+        symbol: "AGG",
+        price: 21,
+        bid: 21,
+        ask: 21,
+        bidSize: 0,
+        askSize: 0,
+        change: 0,
+        changePercent: 0,
+        open: 20.5,
+        high: 21,
+        low: 20,
+        prevClose: null,
+        volume: 1_000,
+        openInterest: null,
+        impliedVolatility: null,
+        delta: null,
+        gamma: null,
+        theta: null,
+        vega: null,
+        providerContractId: "agg",
+        delayed: false,
+        freshness: "live",
+        marketDataMode: "live",
+        dataUpdatedAt: new Date("2026-05-27T19:00:00.000Z"),
+        ageMs: null,
+        cacheAgeMs: 0,
+        latency: null,
+        transport: "tws",
+        updatedAt: new Date("2026-05-27T19:00:00.000Z"),
+      },
+    );
+
+  assert.equal(hydrated.dayChange, null);
+  assert.equal(hydrated.dayChangePercent, null);
+  assert.equal(Number(hydrated.unrealizedPnl.toFixed(2)), 10);
 });
 
 test("same-day account position hydration uses entry cost basis for day P&L", async () => {

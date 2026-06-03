@@ -22,6 +22,7 @@ export const AlgoOverviewMetric = ({
   tone,
   icon: Icon,
   severity,
+  dense = false,
 }) => {
   const iconTone =
     severity === "critical"
@@ -50,17 +51,17 @@ export const AlgoOverviewMetric = ({
           ? `${dim(16)}px minmax(0, 1fr)`
           : "minmax(0, 1fr)",
         alignItems: "center",
-        gap: sp(4),
+        gap: sp(dense ? 3 : 4),
         minWidth: 0,
-        minHeight: dim(34),
-        padding: sp("4px 6px"),
+        minHeight: dim(dense ? 30 : 34),
+        padding: sp(dense ? "3px 5px" : "4px 6px"),
         borderRadius: dim(RADII.xs),
         background: overviewSeverityBackground(severity),
       }}
     >
       {Icon ? (
         <Icon
-          size={14}
+          size={dense ? 13 : 14}
           strokeWidth={1.8}
           aria-hidden="true"
           style={{ color: iconTone }}
@@ -86,7 +87,7 @@ export const AlgoOverviewMetric = ({
           style={{
             color: tone || CSS_COLOR.text,
             fontFamily: T.sans,
-            fontSize: fs(11),
+            fontSize: fs(dense ? 10 : 11),
             fontWeight: 600,
             lineHeight: 1.08,
             overflow: "hidden",
@@ -246,10 +247,11 @@ export const AlgoPipelineOverview = ({
   return (
     <div
       data-testid="algo-operations-pipeline-strip"
+      data-algo-pocket-grid={pocket ? "pipeline" : undefined}
       style={{
         display: "grid",
         gridTemplateColumns: pocket
-          ? "repeat(2, minmax(0, 1fr))"
+          ? "repeat(auto-fit, minmax(150px, 1fr))"
           : dense
             ? "repeat(auto-fit, minmax(108px, 1fr))"
             : "repeat(auto-fit, minmax(132px, 1fr))",
@@ -289,9 +291,7 @@ export const AlgoPipelineOverview = ({
               display: "grid",
               gridTemplateColumns: grouped
                 ? "minmax(0, 1fr)"
-                : failurePoint
-                  ? "minmax(0, 1fr) auto auto"
-                  : "minmax(0, 1fr) auto",
+                : "minmax(0, 1fr) auto auto",
               alignItems: "center",
               gap: sp(grouped ? 1 : 4),
               minWidth: 0,

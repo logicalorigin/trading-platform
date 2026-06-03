@@ -16,6 +16,12 @@ const marketTimeFormatter = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
   hour12: false,
 });
+const marketDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: MARKET_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 
 const finite = (value) => {
   const n = Number(value);
@@ -37,19 +43,34 @@ export const buildIntradaySeries = (queryData) => {
       ? queryData.points
       : [];
   let baselineNav = null;
-  const points = rawPoints
+  const normalizedPoints = rawPoints
     .map((point) => {
       const ts = timestampMsForPoint(point);
       const nav = finite(point?.netLiquidation);
-      if (baselineNav == null && nav != null) baselineNav = nav;
-      const pnl =
-        finite(point?.cumulativePnl) ??
-        (nav != null && baselineNav != null ? nav - baselineNav : null);
-      if (ts == null || pnl == null) return null;
-      return { timestampMs: ts, pnl };
+      if (ts == null || nav == null) return null;
+      return {
+        point,
+        timestampMs: ts,
+        marketDate: marketDateFormatter.format(new Date(ts)),
+        nav,
+      };
     })
     .filter(Boolean)
     .sort((a, b) => a.timestampMs - b.timestampMs);
+  const latestMarketDate = normalizedPoints[normalizedPoints.length - 1]?.marketDate;
+  const sessionPoints = latestMarketDate
+    ? normalizedPoints.filter((point) => point.marketDate === latestMarketDate)
+    : normalizedPoints;
+  const points = sessionPoints
+    .map(({ point, timestampMs, nav }) => {
+      if (baselineNav == null) baselineNav = nav;
+      const pnl =
+        finite(point?.cumulativePnl) ??
+        (baselineNav != null ? nav - baselineNav : null);
+      if (pnl == null) return null;
+      return { timestampMs, pnl };
+    })
+    .filter(Boolean);
   return points;
 };
 

@@ -7,7 +7,7 @@ const bridgeStreamsSource = readFileSync(
   "utf8",
 );
 
-test("account monitor skips routine IBKR equity quote demand under Massive realtime", () => {
+test("account monitor keeps IBKR equity position demand under Massive realtime", () => {
   const requestBlock = bridgeStreamsSource.match(
     /function marketDataRequestFromInstrument\([\s\S]*?\n}\n\nfunction prewarmAccountMonitorQuotes/,
   )?.[0];
@@ -20,8 +20,8 @@ test("account monitor skips routine IBKR equity quote demand under Massive realt
 
   assert.ok(requestBlock);
   assert.match(requestBlock, /massiveStocksRealtime/);
-  assert.match(requestBlock, /if \(options\.massiveStocksRealtime\) \{/);
-  assert.match(requestBlock, /return null;/);
+  assert.doesNotMatch(requestBlock, /if \(options\.massiveStocksRealtime\) \{\s*return null;\s*\}/);
+  assert.match(requestBlock, /return symbol \? \{ assetClass: "equity", symbol \} : null;/);
   assert.match(requestBlock, /requiresGreeks: !options\.massiveStocksRealtime/);
 
   assert.ok(prewarmBlock);
@@ -34,14 +34,15 @@ test("account monitor skips routine IBKR equity quote demand under Massive realt
   assert.match(refreshBlock, /marketDataRequestFromInstrument\(order, \{/);
 });
 
-test("foreground equity quote SSE uses bridge stream instead of Massive quote firehose", () => {
+test("foreground equity quote SSE uses Massive when realtime stocks are configured", () => {
   const subscribeBlock = bridgeStreamsSource.match(
     /export function subscribeQuoteSnapshots\([\s\S]*?\n}\n\nexport function subscribePositionQuoteSnapshots/,
   )?.[0];
 
   assert.ok(subscribeBlock);
+  assert.match(subscribeBlock, /isMassiveStocksRealtimeConfigured\(\)/);
+  assert.match(subscribeBlock, /subscribeMassiveStockQuoteSnapshots\(normalizedSymbols, onSnapshot\)/);
   assert.match(subscribeBlock, /subscribeBridgeQuoteSnapshots\(normalizedSymbols, onSnapshot\)/);
-  assert.doesNotMatch(subscribeBlock, /subscribeMassiveStockQuoteSnapshots/);
 });
 
 test("position quote SSE uses Massive when realtime stocks are configured", () => {

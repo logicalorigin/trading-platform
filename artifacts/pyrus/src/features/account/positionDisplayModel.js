@@ -31,7 +31,10 @@ const firstText = (...values) => {
 const normalizeQuoteSource = (value, fallback) => {
   const source = firstText(value);
   if (!source) return fallback ?? null;
-  return /massive|massive/i.test(source) ? fallback ?? "unknown" : source;
+  if (/massive/i.test(source)) {
+    return fallback === "option_quote" ? "option_quote" : "massive";
+  }
+  return source;
 };
 
 const buildQuote = (quote, fallbackMark, source) => {

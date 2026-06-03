@@ -18,6 +18,11 @@ const PRESSURE_THRESHOLD_ROWS = [
   },
   {
     group: "Browser memory",
+    label: "Limit ratio",
+    summary: "watch 60% / high 75% / critical 90%",
+  },
+  {
+    group: "Browser memory",
     label: "Heuristic",
     unit: "MB",
     thresholds: MEMORY_PRESSURE_THRESHOLDS.browserMemoryMb.heuristic,
@@ -139,7 +144,7 @@ const buildThresholdSummary = (thresholds, unit = "") =>
 const buildThresholdRows = () =>
   PRESSURE_THRESHOLD_ROWS.map((row) => ({
     ...row,
-    summary: buildThresholdSummary(row.thresholds, row.unit),
+    summary: row.summary || buildThresholdSummary(row.thresholds, row.unit),
   }));
 
 const buildDriverRows = (signal) => {
@@ -200,6 +205,10 @@ export const buildMemoryPressurePopoverModel = (
       {
         label: "Estimate",
         value: formatMemoryDetailValue(signal?.browserMemoryMb, "MB", 1),
+      },
+      {
+        label: "Reported limit",
+        value: formatMemoryDetailValue(signal?.browserMemoryLimitMb, "MB", 1),
       },
       {
         label: "Source",

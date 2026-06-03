@@ -130,7 +130,11 @@ import {
 import { createFlowUniverseOptionabilityVerifier } from "./flow-universe-optionability-verifier";
 import { createFlowUniversePlanner } from "./flow-universe-planner";
 import { fetchBridgeQuoteSnapshots } from "./bridge-quote-stream";
-import { subscribeStockMinuteAggregates } from "./stock-aggregate-stream";
+import {
+  getCurrentStockMinuteAggregates,
+  subscribeStockMinuteAggregates,
+} from "./stock-aggregate-stream";
+import { getCurrentMassiveStockQuoteSnapshots } from "./massive-stock-quote-stream";
 import {
   fetchBridgeOptionQuoteSnapshots,
   getCurrentBridgeOptionQuoteSnapshots,
@@ -144,7 +148,12 @@ import {
   runBridgeWork,
 } from "./bridge-governor";
 import { listIbkrExecutions } from "./ibkr-account-bridge";
-import { getBridgeOrderReadSuppression } from "./bridge-order-read-state";
+import {
+  clearBridgeOrderReadSuppression,
+  getBridgeOrderReadSuppression,
+  markBridgeOrderReadsSuppressed,
+  shouldProbeBridgeOrderReadSuppression,
+} from "./bridge-order-read-state";
 import { resolveIbkrLaneSymbols } from "./ibkr-lane-policy";
 import {
   loadStoredMarketBars,
@@ -703,13 +712,63 @@ const IBKR_WATCHLIST_PREWARM_BRIDGE_RECONCILE_TIMEOUT_MS =
     "IBKR_WATCHLIST_PREWARM_BRIDGE_RECONCILE_TIMEOUT_MS",
     1_500,
   );
+const WATCHLIST_LIST_CACHE_TTL_MS = 5_000;
+const WATCHLIST_LIST_STALE_TTL_MS = 60_000;
+const WATCHLIST_LIST_PREWARM_THROTTLE_MS = 15_000;
 const LIVE_WARMUP_BACKGROUND_HOLD_MS = Math.max(
   5_000,
   Number.parseInt(
     process.env["IBKR_LIVE_WARMUP_BACKGROUND_HOLD_MS"] ?? "15000",
     10,
-  ) || 15_000,
+) || 15_000,
 );
+
+type WatchlistSnapshot = Awaited<ReturnType<typeof listWatchlistsFromDb>>;
+
+let watchlistListCache:
+  | {
+      value: WatchlistSnapshot;
+      freshUntil: number;
+      staleUntil: number;
+    }
+  | null = null;
+let watchlistListInFlight: Promise<WatchlistSnapshot> | null = null;
+let lastListWatchlistPrewarmSignature: string | null = null;
+let lastListWatchlistPrewarmAt = 0;
+
+function cacheWatchlistSnapshot(
+  snapshot: WatchlistSnapshot,
+  nowMs = Date.now(),
+): WatchlistSnapshot {
+  watchlistListCache = {
+    value: snapshot,
+    freshUntil: nowMs + WATCHLIST_LIST_CACHE_TTL_MS,
+    staleUntil: nowMs + WATCHLIST_LIST_STALE_TTL_MS,
+  };
+  return snapshot;
+}
+
+function invalidateWatchlistListCache(): void {
+  watchlistListCache = null;
+  watchlistListInFlight = null;
+}
+
+function scheduleIbkrWatchlistPrewarmFromListRead(
+  watchlists: WatchlistRecord[],
+  reason: string,
+  nowMs = Date.now(),
+): void {
+  const signature = collectWatchlistSymbols(watchlists).join(",");
+  if (
+    signature === lastListWatchlistPrewarmSignature &&
+    nowMs - lastListWatchlistPrewarmAt < WATCHLIST_LIST_PREWARM_THROTTLE_MS
+  ) {
+    return;
+  }
+  lastListWatchlistPrewarmSignature = signature;
+  lastListWatchlistPrewarmAt = nowMs;
+  scheduleIbkrWatchlistPrewarm(watchlists, reason);
+}
 
 export function resolveIbkrWatchlistPrewarmSymbolLimit(
   candidateSymbolCount: number,
@@ -2601,8 +2660,14 @@ function queueOptionsFlowScannerRefresh(input: {
     return false;
   }
   syncOptionsFlowScannerEffectiveConcurrency();
+  const [underlying] = selectOptionsFlowScannerPromotableSymbols([
+    input.underlying,
+  ]);
+  if (!underlying) {
+    return false;
+  }
   optionsFlowScanner
-    .requestScan([input.underlying], {
+    .requestScan([underlying], {
       ...input.scannerRequest,
       phase:
         input.scannerRequest.phase ??
@@ -2954,6 +3019,102 @@ export type ResilientOrdersResponse = {
   };
 };
 
+type OrderVisibilityCacheEntry = {
+  payload: ResilientOrdersResponse;
+  cachedAt: number;
+  expiresAt: number;
+  staleExpiresAt: number;
+};
+
+const orderVisibilityCache = new Map<string, OrderVisibilityCacheEntry>();
+const orderVisibilityInFlight = new Map<
+  string,
+  Promise<ResilientOrdersResponse>
+>();
+
+function orderVisibilityCacheTtlMs(): number {
+  const configured = Number.parseInt(
+    process.env["IBKR_ORDER_VISIBILITY_CACHE_TTL_MS"] ?? "2000",
+    10,
+  );
+  return Number.isFinite(configured) && configured > 0 ? configured : 2_000;
+}
+
+function orderVisibilityStaleTtlMs(): number {
+  const configured = Number.parseInt(
+    process.env["IBKR_ORDER_VISIBILITY_STALE_TTL_MS"] ?? "120000",
+    10,
+  );
+  return Number.isFinite(configured) && configured > 0 ? configured : 120_000;
+}
+
+function orderVisibilityWaitMs(): number {
+  const configured = Number.parseInt(
+    process.env["IBKR_ORDER_VISIBILITY_WAIT_MS"] ?? "1200",
+    10,
+  );
+  return Number.isFinite(configured) && configured >= 0 ? configured : 1_200;
+}
+
+function markOrderVisibilitySnapshotStale(
+  payload: ResilientOrdersResponse,
+  input: {
+    reason: string;
+    message: string;
+    timeoutMs?: number;
+  },
+): ResilientOrdersResponse {
+  return {
+    ...payload,
+    degraded: true,
+    stale: true,
+    reason: input.reason,
+    debug: {
+      message: input.message,
+      code: input.reason,
+      timeoutMs: input.timeoutMs,
+    },
+  };
+}
+
+function orderVisibilityFallback(input: {
+  reason: string;
+  message: string;
+  timeoutMs?: number;
+}): ResilientOrdersResponse {
+  return {
+    orders: [],
+    degraded: true,
+    stale: true,
+    reason: input.reason,
+    debug: {
+      message: input.message,
+      code: input.reason,
+      timeoutMs: input.timeoutMs,
+    },
+  };
+}
+
+function orderVisibilityCacheKey(input: {
+  accountId?: string;
+  mode?: "paper" | "live";
+  status?:
+    | "pending_submit"
+    | "submitted"
+    | "accepted"
+    | "partially_filled"
+    | "filled"
+    | "canceled"
+    | "rejected"
+    | "expired";
+}): string {
+  return JSON.stringify({
+    accountId: input.accountId ?? null,
+    mode: input.mode ?? getRuntimeMode(),
+    status: input.status ?? null,
+  });
+}
+
 export async function listOrdersWithResilience(input: {
   accountId?: string;
   mode?: "paper" | "live";
@@ -2970,7 +3131,7 @@ export async function listOrdersWithResilience(input: {
   const client = getIbkrClient();
   const timeoutMs = orderReadTimeoutMs();
   const suppression = getBridgeOrderReadSuppression();
-  if (suppression) {
+  if (suppression && !shouldProbeBridgeOrderReadSuppression(suppression)) {
     void recordOrderReadDegraded({
       accountId: input.accountId,
       mode: input.mode,
@@ -3062,9 +3223,12 @@ export async function listOrdersWithResilience(input: {
           new HttpError(504, "IBKR order read timed out.", {
             code: "orders_timeout",
             detail: `Order read did not respond within ${timeoutMs}ms.`,
-          }),
+        }),
       ),
     );
+    if (!result.degraded) {
+      clearBridgeOrderReadSuppression("orders_timeout");
+    }
     if (result.degraded) {
       void recordOrderReadDegraded({
         accountId: input.accountId,
@@ -3093,6 +3257,14 @@ export async function listOrdersWithResilience(input: {
     };
   } catch (error) {
     const debug = serializeOrderReadDebug(error, timeoutMs);
+    if (debug.code === "orders_timeout") {
+      markBridgeOrderReadsSuppressed({
+        reason: "orders_timeout",
+        message:
+          "Open-orders reads are paused after the bridge order endpoint did not respond.",
+        ttlMs: 60_000,
+      });
+    }
     void recordOrderReadDegraded({
       accountId: input.accountId,
       mode: input.mode,
@@ -3112,6 +3284,114 @@ export async function listOrdersWithResilience(input: {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function listOrdersForVisibility(input: {
+  accountId?: string;
+  mode?: "paper" | "live";
+  status?:
+    | "pending_submit"
+    | "submitted"
+    | "accepted"
+    | "partially_filled"
+    | "filled"
+    | "canceled"
+    | "rejected"
+    | "expired";
+}): Promise<ResilientOrdersResponse> {
+  const key = orderVisibilityCacheKey(input);
+  const now = Date.now();
+  const cached = orderVisibilityCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return cached.payload;
+  }
+  if (cached && cached.staleExpiresAt <= now) {
+    orderVisibilityCache.delete(key);
+  }
+  const staleCached =
+    cached && cached.staleExpiresAt > now ? cached.payload : null;
+  const pending = orderVisibilityInFlight.get(key);
+  if (pending) {
+    if (staleCached) {
+      return markOrderVisibilitySnapshotStale(staleCached, {
+        reason: "orders_refreshing",
+        message: "Open-orders visibility is refreshing in the background.",
+      });
+    }
+    const waitMs = orderVisibilityWaitMs();
+    return Promise.race([
+      pending,
+      new Promise<ResilientOrdersResponse>((resolve) => {
+        const timeout = setTimeout(() => {
+          resolve(
+            orderVisibilityFallback({
+              reason: "orders_refreshing",
+              message:
+                "Open-orders visibility is refreshing in the background.",
+              timeoutMs: waitMs,
+            }),
+          );
+        }, waitMs);
+        timeout.unref?.();
+      }),
+    ]);
+  }
+
+  const request = listOrdersWithResilience(input)
+    .then((payload) => {
+      const cachedAt = Date.now();
+      orderVisibilityCache.set(key, {
+        payload,
+        cachedAt,
+        expiresAt: cachedAt + orderVisibilityCacheTtlMs(),
+        staleExpiresAt: cachedAt + orderVisibilityStaleTtlMs(),
+      });
+      return payload;
+    })
+    .catch((error) => {
+      logger.warn(
+        { err: error, key },
+        "Open-orders visibility refresh failed",
+      );
+      return orderVisibilityFallback({
+        reason: "orders_visibility_error",
+        message:
+          error instanceof Error && error.message
+            ? error.message
+            : "Open-orders visibility refresh failed.",
+      });
+    })
+    .finally(() => {
+      if (orderVisibilityInFlight.get(key) === request) {
+        orderVisibilityInFlight.delete(key);
+      }
+    });
+  orderVisibilityInFlight.set(key, request);
+
+  if (staleCached) {
+    request.catch(() => {});
+    return markOrderVisibilitySnapshotStale(staleCached, {
+      reason: "orders_refreshing",
+      message: "Open-orders visibility is refreshing in the background.",
+    });
+  }
+
+  const waitMs = orderVisibilityWaitMs();
+  return Promise.race([
+    request,
+    new Promise<ResilientOrdersResponse>((resolve) => {
+      const timeout = setTimeout(() => {
+        resolve(
+          orderVisibilityFallback({
+            reason: "orders_refreshing",
+            message: "Open-orders visibility is refreshing in the background.",
+            timeoutMs: waitMs,
+          }),
+        );
+      }, waitMs);
+      timeout.unref?.();
+    }),
+  ]);
 }
 
 const DEFAULT_RUNTIME_DIAGNOSTICS_MARKET_DATA_INGEST_TIMEOUT_MS = 1_500;
@@ -3496,16 +3776,94 @@ export async function listBrokerConnections() {
 
 export async function listWatchlists() {
   const nowMs = Date.now();
+  if (watchlistListCache && watchlistListCache.freshUntil > nowMs) {
+    scheduleIbkrWatchlistPrewarmFromListRead(
+      watchlistListCache.value.watchlists,
+      "list-cache",
+      nowMs,
+    );
+    return watchlistListCache.value;
+  }
+
   if (watchlistDbBackoff.isActive(nowMs)) {
-    const fallback = buildBuiltInWatchlistSnapshot();
-    scheduleIbkrWatchlistPrewarm(fallback.watchlists, "list-fallback");
+    if (watchlistListCache && watchlistListCache.staleUntil > nowMs) {
+      scheduleIbkrWatchlistPrewarmFromListRead(
+        watchlistListCache.value.watchlists,
+        "list-stale-db-backoff",
+        nowMs,
+      );
+      return watchlistListCache.value;
+    }
+    const fallback = cacheWatchlistSnapshot(buildBuiltInWatchlistSnapshot(), nowMs);
+    scheduleIbkrWatchlistPrewarmFromListRead(
+      fallback.watchlists,
+      "list-fallback",
+      nowMs,
+    );
     return fallback;
   }
 
+  const inFlight = watchlistListInFlight;
+  if (inFlight) {
+    if (watchlistListCache && watchlistListCache.staleUntil > nowMs) {
+      scheduleIbkrWatchlistPrewarmFromListRead(
+        watchlistListCache.value.watchlists,
+        "list-stale-inflight",
+        nowMs,
+      );
+      return watchlistListCache.value;
+    }
+    const result = await inFlight;
+    scheduleIbkrWatchlistPrewarmFromListRead(
+      result.watchlists,
+      "list-inflight",
+      Date.now(),
+    );
+    return result;
+  }
+
+  const request = listWatchlistsFromDb()
+    .then((result) => {
+      watchlistDbBackoff.clear();
+      return cacheWatchlistSnapshot(result);
+    })
+    .finally(() => {
+      if (watchlistListInFlight === request) {
+        watchlistListInFlight = null;
+      }
+    });
+  watchlistListInFlight = request;
+
+  if (watchlistListCache && watchlistListCache.staleUntil > nowMs) {
+    void request
+      .then((result) =>
+        scheduleIbkrWatchlistPrewarmFromListRead(
+          result.watchlists,
+          "list-refresh",
+          Date.now(),
+        ),
+      )
+      .catch((error) => {
+        logger.warn(
+          { err: error },
+          "watchlist database refresh failed after stale list read",
+        );
+      });
+    scheduleIbkrWatchlistPrewarmFromListRead(
+      watchlistListCache.value.watchlists,
+      "list-stale-refreshing",
+      nowMs,
+    );
+    return watchlistListCache.value;
+  }
+
   try {
-    const result = await listWatchlistsFromDb();
-    watchlistDbBackoff.clear();
-    scheduleIbkrWatchlistPrewarm(result.watchlists, "list");
+    const result = await request;
+    scheduleIbkrWatchlistPrewarmFromListRead(
+      result.watchlists,
+      "list",
+      Date.now(),
+    );
     return result;
   } catch (error) {
     if (isTransientPostgresError(error)) {
@@ -3515,16 +3873,24 @@ export async function listWatchlists() {
         message: "watchlist database unavailable; serving built-in watchlists",
         nowMs,
       });
-      const fallback = buildBuiltInWatchlistSnapshot();
-      scheduleIbkrWatchlistPrewarm(fallback.watchlists, "list-fallback");
+      const fallback = cacheWatchlistSnapshot(buildBuiltInWatchlistSnapshot(), nowMs);
+      scheduleIbkrWatchlistPrewarmFromListRead(
+        fallback.watchlists,
+        "list-fallback",
+        nowMs,
+      );
       return fallback;
     }
     logger.warn(
       { err: error },
       "watchlist database unavailable; serving built-in watchlists",
     );
-    const fallback = buildBuiltInWatchlistSnapshot();
-    scheduleIbkrWatchlistPrewarm(fallback.watchlists, "list-fallback");
+    const fallback = cacheWatchlistSnapshot(buildBuiltInWatchlistSnapshot(), nowMs);
+    scheduleIbkrWatchlistPrewarmFromListRead(
+      fallback.watchlists,
+      "list-fallback",
+      nowMs,
+    );
     return fallback;
   }
 }
@@ -3582,6 +3948,7 @@ export async function createWatchlist(input: {
   }
 
   const created = await getWatchlistById(watchlist.id);
+  invalidateWatchlistListCache();
   scheduleIbkrWatchlistPrewarmFromDb("create");
   return created;
 }
@@ -3626,6 +3993,7 @@ export async function updateWatchlist(
   }
 
   const updated = await getWatchlistById(watchlistId);
+  invalidateWatchlistListCache();
   scheduleIbkrWatchlistPrewarmFromDb("update");
   return updated;
 }
@@ -3661,6 +4029,7 @@ export async function deleteWatchlist(watchlistId: string) {
     }
   }
 
+  invalidateWatchlistListCache();
   scheduleIbkrWatchlistPrewarmFromDb("delete");
   return { ok: true };
 }
@@ -3706,6 +4075,7 @@ export async function addWatchlistSymbol(
   });
 
   const updated = await getWatchlistById(watchlistId);
+  invalidateWatchlistListCache();
   scheduleIbkrWatchlistPrewarmFromDb("add-symbol");
   return updated;
 }
@@ -3738,6 +4108,7 @@ export async function removeWatchlistSymbol(
     .where(eq(watchlistItemsTable.id, itemId));
   await rebalanceWatchlistSortOrder(watchlistId);
   const updated = await getWatchlistById(watchlistId);
+  invalidateWatchlistListCache();
   scheduleIbkrWatchlistPrewarmFromDb("remove-symbol");
   return updated;
 }
@@ -3785,6 +4156,7 @@ export async function reorderWatchlistSymbols(
   );
 
   const updated = await getWatchlistById(watchlistId);
+  invalidateWatchlistListCache();
   scheduleIbkrWatchlistPrewarmFromDb("reorder");
   return updated;
 }
@@ -3909,7 +4281,7 @@ export async function listOrders(input: {
     | "rejected"
     | "expired";
 }) {
-  return listOrdersWithResilience(input);
+  return listOrdersForVisibility(input);
 }
 
 export async function listExecutions(input: {
@@ -4244,6 +4616,125 @@ function massiveQuoteToBrokerQuote(
   };
 }
 
+function massiveAggregateToBrokerQuote(
+  aggregate: ReturnType<typeof getCurrentStockMinuteAggregates>[number],
+): (QuoteSnapshot & {
+  source: Exclude<StockQuoteSnapshotSource, "ibkr">;
+}) | null {
+  const price = Number(aggregate.close);
+  if (!Number.isFinite(price) || price <= 0) {
+    return null;
+  }
+  const updatedAtMs = Number.isFinite(aggregate.startMs)
+    ? Math.min(Date.now(), Number(aggregate.startMs))
+    : Date.now();
+  const updatedAt = new Date(updatedAtMs);
+  const delayed = Boolean(aggregate.delayed);
+  return {
+    symbol: aggregate.symbol,
+    price,
+    bid: price,
+    ask: price,
+    bidSize: 0,
+    askSize: 0,
+    change: 0,
+    changePercent: 0,
+    open: aggregate.open,
+    high: aggregate.high,
+    low: aggregate.low,
+    prevClose: null,
+    volume: aggregate.accumulatedVolume ?? aggregate.volume ?? null,
+    openInterest: null,
+    impliedVolatility: null,
+    delta: null,
+    gamma: null,
+    theta: null,
+    vega: null,
+    updatedAt,
+    providerContractId: null,
+    transport: "tws",
+    delayed,
+    freshness: delayed ? "delayed" : "live",
+    marketDataMode: delayed ? "delayed" : "live",
+    dataUpdatedAt: updatedAt,
+    ageMs: getAgeMs(updatedAt),
+    cacheAgeMs: null,
+    latency: aggregate.latency ?? null,
+    source: "massive",
+  };
+}
+
+function getMassiveRealtimeSocketQuoteSnapshots(symbols: string[]): Array<
+  QuoteSnapshot & {
+    source: Exclude<StockQuoteSnapshotSource, "ibkr">;
+  }
+> {
+  const quotesBySymbol = new Map<
+    string,
+    QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }
+  >();
+  getCurrentMassiveStockQuoteSnapshots(symbols).forEach((quote) => {
+    const symbol = normalizeSymbol(quote.symbol);
+    if (symbol) {
+      quotesBySymbol.set(symbol, { ...quote, source: "massive" });
+    }
+  });
+  getCurrentStockMinuteAggregates(symbols).forEach((aggregate) => {
+    const symbol = normalizeSymbol(aggregate.symbol);
+    if (!symbol || quotesBySymbol.has(symbol)) {
+      return;
+    }
+    const quote = massiveAggregateToBrokerQuote(aggregate);
+    if (quote) {
+      quotesBySymbol.set(symbol, quote);
+    }
+  });
+  return symbols.flatMap((symbol) => {
+    const quote = quotesBySymbol.get(symbol);
+    return quote ? [quote] : [];
+  });
+}
+
+function quoteHasDayChangeContext(
+  quote: (QuoteSnapshot & { source: StockQuoteSnapshotSource }) | undefined,
+): boolean {
+  if (!quote) {
+    return false;
+  }
+  const change = Number(quote.change);
+  const prevClose = Number(quote.prevClose);
+  return (
+    (Number.isFinite(change) && change !== 0) ||
+    (Number.isFinite(prevClose) && prevClose > 0)
+  );
+}
+
+function mergeMassiveRealtimeQuoteWithRestDayChange(
+  realtimeQuote: QuoteSnapshot & { source: StockQuoteSnapshotSource },
+  restQuote: QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> },
+): QuoteSnapshot & { source: StockQuoteSnapshotSource } {
+  return {
+    ...restQuote,
+    price: realtimeQuote.price,
+    last: realtimeQuote.last ?? realtimeQuote.price,
+    mark: realtimeQuote.mark,
+    bid: realtimeQuote.bid,
+    ask: realtimeQuote.ask,
+    bidSize: realtimeQuote.bidSize,
+    askSize: realtimeQuote.askSize,
+    updatedAt: realtimeQuote.updatedAt,
+    dataUpdatedAt: realtimeQuote.dataUpdatedAt,
+    transport: realtimeQuote.transport,
+    delayed: realtimeQuote.delayed,
+    freshness: realtimeQuote.freshness,
+    marketDataMode: realtimeQuote.marketDataMode,
+    ageMs: realtimeQuote.ageMs,
+    cacheAgeMs: realtimeQuote.cacheAgeMs,
+    latency: realtimeQuote.latency,
+    source: "massive",
+  };
+}
+
 type GetQuoteSnapshotsInput = {
   symbols: string;
   allowMassiveFallback?: boolean;
@@ -4251,6 +4742,7 @@ type GetQuoteSnapshotsInput = {
   admissionIntent?: MarketDataIntent;
   admissionFallbackProvider?: MarketDataFallbackProvider;
   ttlMs?: number;
+  tradingSession?: "overnight" | null;
 };
 
 type QuoteSnapshotsServiceResponse = {
@@ -4318,6 +4810,7 @@ function quoteSnapshotCacheKey(input: {
   admissionOwner?: string | null;
   admissionIntent?: MarketDataIntent | null;
   admissionFallbackProvider?: MarketDataFallbackProvider | null;
+  tradingSession?: "overnight" | null;
 }): string {
   const providerMode = isMassiveStocksRealtimeConfigured()
     ? "massive"
@@ -4329,7 +4822,8 @@ function quoteSnapshotCacheKey(input: {
         input.admissionFallbackProvider ?? ""
       }`
     : "";
-  return `${providerMode}:${input.symbols.join(",")}${ownerKey}`;
+  const sessionKey = input.tradingSession ? `:${input.tradingSession}` : "";
+  return `${providerMode}:${input.symbols.join(",")}${ownerKey}${sessionKey}`;
 }
 
 function markQuoteSnapshotResponseStale(
@@ -4382,6 +4876,7 @@ async function getQuoteSnapshotsUncached(input: {
   admissionIntent?: MarketDataIntent;
   admissionFallbackProvider?: MarketDataFallbackProvider;
   ttlMs?: number;
+  tradingSession?: "overnight" | null;
 }): Promise<QuoteSnapshotsServiceResponse> {
   const symbols = input.symbolsList;
   if (!symbols.length) {
@@ -4393,30 +4888,50 @@ async function getQuoteSnapshotsUncached(input: {
     };
   }
   const massiveConfig = getMassiveRuntimeConfig();
-  if (isMassiveStocksRealtimeConfigured(massiveConfig)) {
-    let massiveQuotes: Array<
-      QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }
-    > = [];
-    try {
-      massiveQuotes = (
-        await withTimeout(
-          getMassiveClient().getQuoteSnapshots(symbols),
-          quoteSnapshotMassiveFallbackTimeoutMs(),
-          () =>
-            new Error(
-              `Quote snapshot Massive stock fetch timed out after ${quoteSnapshotMassiveFallbackTimeoutMs()}ms.`,
-            ),
-        )
-      ).map(massiveQuoteToBrokerQuote);
-    } catch {
-      massiveQuotes = [];
-    }
+  const useMassiveRealtimePrimary =
+    input.tradingSession !== "overnight" &&
+    isMassiveStocksRealtimeConfigured(massiveConfig);
+  if (useMassiveRealtimePrimary) {
     const quotesBySymbol = new Map<
       string,
       QuoteSnapshot & { source: StockQuoteSnapshotSource }
     >();
-    massiveQuotes.forEach((quote) => {
+    getMassiveRealtimeSocketQuoteSnapshots(symbols).forEach((quote) => {
       quotesBySymbol.set(normalizeSymbol(quote.symbol), quote);
+    });
+    const symbolsNeedingMassiveDetails = symbols.filter(
+      (symbol) => !quoteHasDayChangeContext(quotesBySymbol.get(symbol)),
+    );
+    let massiveQuotes: Array<
+      QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }
+    > = [];
+    if (symbolsNeedingMassiveDetails.length > 0) {
+      try {
+        massiveQuotes = (
+          await withTimeout(
+            getMassiveClient().getQuoteSnapshots(symbolsNeedingMassiveDetails),
+            quoteSnapshotMassiveFallbackTimeoutMs(),
+            () =>
+              new Error(
+                `Quote snapshot Massive stock fetch timed out after ${quoteSnapshotMassiveFallbackTimeoutMs()}ms.`,
+              ),
+          )
+        ).map(massiveQuoteToBrokerQuote);
+      } catch {
+        massiveQuotes = [];
+      }
+    }
+    massiveQuotes.forEach((quote) => {
+      const symbol = normalizeSymbol(quote.symbol);
+      const realtimeQuote = quotesBySymbol.get(symbol);
+      if (realtimeQuote) {
+        quotesBySymbol.set(
+          symbol,
+          mergeMassiveRealtimeQuoteWithRestDayChange(realtimeQuote, quote),
+        );
+      } else {
+        quotesBySymbol.set(symbol, quote);
+      }
     });
     const quotes = symbols.flatMap((symbol) => {
       const quote = quotesBySymbol.get(symbol);
@@ -4451,6 +4966,7 @@ async function getQuoteSnapshotsUncached(input: {
           input.admissionFallbackProvider ??
           (input.allowMassiveFallback === true ? "massive" : "cache"),
         ttlMs: input.ttlMs,
+        tradingSession: input.tradingSession,
       }),
       quoteSnapshotBridgeFetchTimeoutMs(),
       () =>
@@ -4541,6 +5057,7 @@ export async function getQuoteSnapshots(
     admissionOwner: input.admissionOwner,
     admissionIntent: input.admissionIntent,
     admissionFallbackProvider: input.admissionFallbackProvider,
+    tradingSession: input.tradingSession,
   });
   const now = Date.now();
   const cached = quoteSnapshotCache.get(key);
@@ -4560,6 +5077,7 @@ export async function getQuoteSnapshots(
     admissionIntent: input.admissionIntent,
     admissionFallbackProvider: input.admissionFallbackProvider,
     ttlMs: input.ttlMs,
+    tradingSession: input.tradingSession,
   })
     .then((value) => {
       const cachedAt = Date.now();
@@ -7864,7 +8382,7 @@ function mergeBrokerHistoryBars(
 // a small TTL of a few seconds dramatically reduces request volume.
 const BARS_CACHE_TTL_MS = 30_000;
 const BARS_CACHE_STALE_TTL_MS = 10 * 60_000;
-const BARS_CACHE_MAX_ENTRIES = 256;
+const BARS_CACHE_MAX_ENTRIES = 1_024;
 const BARS_PROVIDER_BUDGET_MS = readPositiveIntegerEnv(
   "BARS_PROVIDER_BUDGET_MS",
   3_000,
@@ -9527,9 +10045,12 @@ async function getBaseBarsImpl(
         primaryBarsPromise,
         overnightBarsPromise,
       ]);
-      const fallbackOvernightBars = overnightBars.length
-        ? []
-        : await fetchOvernightExchangeBars(IBKR_OVERNIGHT_FALLBACK_EXCHANGE);
+      const shouldFetchFallbackOvernightExchange =
+        fullBrokerRecovery || !brokerHistoryMayBeRecentLimited;
+      const fallbackOvernightBars =
+        overnightBars.length || !shouldFetchFallbackOvernightExchange
+          ? []
+          : await fetchOvernightExchangeBars(IBKR_OVERNIGHT_FALLBACK_EXCHANGE);
       return mergeBrokerHistoryBars(
         primaryBars,
         markIbkrOvernightHistoryBars(
@@ -9931,6 +10452,7 @@ type IbkrOptionExpirationsInput = {
   maxExpirations?: number;
   recordBridgeFailure?: boolean;
   bypassBridgeBackoff?: boolean;
+  foregroundWaitMs?: number | null;
   signal?: AbortSignal;
 };
 type IbkrOptionExpirationDates = Awaited<
@@ -10079,6 +10601,10 @@ const OPTION_EXPIRATION_STALE_TTL_MS = readPositiveIntegerEnv(
   "OPTION_EXPIRATION_STALE_TTL_MS",
   24 * 60 * 60_000,
 );
+export const OPTION_EXPIRATION_PUBLIC_FOREGROUND_WAIT_MS = readPositiveIntegerEnv(
+  "OPTION_EXPIRATION_PUBLIC_FOREGROUND_WAIT_MS",
+  1_500,
+);
 const OPTION_CONTRACT_RESOLUTION_CACHE_TTL_MS = readPositiveIntegerEnv(
   "OPTION_CONTRACT_RESOLUTION_CACHE_TTL_MS",
   24 * 60 * 60_000,
@@ -10195,6 +10721,10 @@ const OPTIONS_FLOW_RADAR_FALLBACK_DEEP_CANDIDATES = readNonNegativeIntegerEnv(
 );
 const OPTIONS_FLOW_SCANNER_DEFAULT_LINE_BUDGET = 200;
 const OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET = 100;
+const OPTIONS_FLOW_SCANNER_PER_TICKER_LINE_BUDGET = readPositiveIntegerEnv(
+  "OPTIONS_FLOW_SCANNER_PER_TICKER_LINE_BUDGET",
+  1,
+);
 const OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_RADAR_DEEP_LINE_BUDGET",
   OPTIONS_FLOW_SCANNER_DEFAULT_PER_SCAN_LINE_BUDGET,
@@ -10222,7 +10752,7 @@ const OPTIONS_FLOW_SCANNER_STRIKE_COVERAGE = readOptionChainStrikeCoverageEnv(
 );
 const OPTIONS_FLOW_EXPIRATION_SCAN_COUNT = readNonNegativeIntegerEnv(
   "OPTIONS_FLOW_EXPIRATION_SCAN_COUNT",
-  OPTIONS_FLOW_UNIVERSE_MODE === "watchlist" ? 0 : 4,
+  1,
 );
 const OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET = readPositiveIntegerEnv(
   "OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET",
@@ -10395,6 +10925,40 @@ function resolveOptionsFlowScannerPerScanLineBudget(
   );
 }
 
+function resolveOptionsFlowScannerTickerLineBudget(input: {
+  config: OptionsFlowRuntimeConfig;
+  explicitLineBudget?: number | null;
+  phaseLineCap?: number;
+}): number {
+  if (
+    Number.isFinite(input.explicitLineBudget) &&
+    (input.explicitLineBudget ?? 0) > 0
+  ) {
+    return Math.max(
+      1,
+      Math.min(
+        Math.floor(input.explicitLineBudget as number),
+        Math.max(1, Math.floor(input.config.scannerLineBudget || 1)),
+      ),
+    );
+  }
+
+  const phaseLineBudget =
+    typeof input.phaseLineCap === "number" && Number.isFinite(input.phaseLineCap)
+      ? resolveOptionsFlowScannerPerScanLineBudget(
+          input.config,
+          input.phaseLineCap,
+        )
+      : Math.max(1, Math.floor(input.config.scannerLineBudget || 1));
+  return Math.max(
+    1,
+    Math.min(
+      phaseLineBudget,
+      Math.max(1, Math.floor(OPTIONS_FLOW_SCANNER_PER_TICKER_LINE_BUDGET)),
+    ),
+  );
+}
+
 function syncOptionsFlowScannerEffectiveConcurrency(
   config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
 ): number {
@@ -10424,10 +10988,10 @@ function getOptionsFlowScannerQuoteLeaseTtlMs(): number {
 function buildOptionsFlowSeedScannerRequest(
   config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
 ): OptionsFlowScannerRequest {
-  const lineBudget = resolveOptionsFlowScannerPerScanLineBudget(
+  const lineBudget = resolveOptionsFlowScannerTickerLineBudget({
     config,
-    OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET,
-  );
+    phaseLineCap: OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET,
+  });
   return {
     limit: Math.min(config.scannerLimit, lineBudget),
     lineBudget,
@@ -10441,23 +11005,20 @@ function buildOptionsFlowSeedScannerRequest(
 function buildOptionsFlowExpandedScannerRequest(
   config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
 ): OptionsFlowScannerRequest {
-  const lineBudget = resolveOptionsFlowScannerPerScanLineBudget(
+  const lineBudget = resolveOptionsFlowScannerTickerLineBudget({
     config,
-    Math.min(
+    phaseLineCap: Math.min(
       config.radarEnabled
         ? config.radarDeepLineBudget
         : OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET,
       OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET,
     ),
-  );
+  });
   return {
     limit: Math.min(config.scannerLimit, lineBudget),
     lineBudget,
     phase: "expanded",
-    expirationScanCount: Math.max(
-      1,
-      Math.min(config.expirationScanCount || 1, 4),
-    ),
+    expirationScanCount: Math.max(1, config.expirationScanCount || 1),
     strikeCoverage: "standard",
     allowPartial: true,
   };
@@ -10826,12 +11387,18 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
         normalizedSymbol &&
         !optionsFlowExpandedSymbolsThisCycle.has(normalizedSymbol)
       ) {
-        optionsFlowExpandedSymbolsThisCycle.add(normalizedSymbol);
         const expandedRequest = buildOptionsFlowExpandedScannerRequest(
           getOptionsFlowRuntimeConfig(),
         );
+        const [expandedSymbol] = selectOptionsFlowScannerPromotableSymbols([
+          normalizedSymbol,
+        ]);
+        if (!expandedSymbol) {
+          return;
+        }
+        optionsFlowExpandedSymbolsThisCycle.add(normalizedSymbol);
         optionsFlowScanner
-          .requestScan([normalizedSymbol], {
+          .requestScan([expandedSymbol], {
             ...expandedRequest,
             unusualThreshold: request.unusualThreshold,
           })
@@ -10848,6 +11415,66 @@ const optionsFlowScanner = createOptionsFlowScanner<unknown>({
     logger.warn({ err: error, ...context }, "Options flow scanner error");
   },
 });
+
+function resolveOptionsFlowScannerDeepQueueLimit(
+  config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
+): number {
+  return Math.max(0, resolveOptionsFlowScannerEffectiveConcurrency(config));
+}
+
+function getOptionsFlowScannerDeepQueueState(
+  config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
+): {
+  limit: number;
+  backlog: number;
+  available: number;
+  busySymbols: Set<string>;
+} {
+  const diagnostics = optionsFlowScanner.getDiagnostics();
+  const limit = resolveOptionsFlowScannerDeepQueueLimit(config);
+  const busySymbols = new Set(
+    [
+      ...diagnostics.activeSymbols,
+      ...diagnostics.queuedSymbols,
+      ...diagnostics.drainingSymbols,
+    ].map((symbol) => normalizeSymbol(symbol).toUpperCase()),
+  );
+  const backlog = busySymbols.size;
+  return {
+    limit,
+    backlog,
+    available: Math.max(0, limit - backlog),
+    busySymbols,
+  };
+}
+
+function selectOptionsFlowScannerPromotableSymbols(
+  symbols: readonly string[],
+  config: OptionsFlowRuntimeConfig = getOptionsFlowRuntimeConfig(),
+): string[] {
+  const queueState = getOptionsFlowScannerDeepQueueState(config);
+  if (queueState.available <= 0) {
+    return [];
+  }
+  const selected: string[] = [];
+  const seen = new Set<string>();
+  for (const symbol of symbols) {
+    const normalized = normalizeSymbol(symbol).toUpperCase();
+    if (
+      !normalized ||
+      seen.has(normalized) ||
+      queueState.busySymbols.has(normalized)
+    ) {
+      continue;
+    }
+    selected.push(normalized);
+    seen.add(normalized);
+    if (selected.length >= queueState.available) {
+      break;
+    }
+  }
+  return selected;
+}
 
 const optionsFlowRadarScanner = createOptionsFlowRadarScanner({
   normalizeSymbol,
@@ -10885,10 +11512,17 @@ const optionsFlowRadarScanner = createOptionsFlowRadarScanner({
       return;
     }
     const config = getOptionsFlowRuntimeConfig();
+    const promotableSymbols = selectOptionsFlowScannerPromotableSymbols(
+      symbols,
+      config,
+    );
+    if (!promotableSymbols.length) {
+      return;
+    }
     const expandedRequest = buildOptionsFlowExpandedScannerRequest(config);
     const deepLineBudget = Math.max(1, expandedRequest.lineBudget ?? 1);
     syncOptionsFlowScannerEffectiveConcurrency(config);
-    await optionsFlowScanner.requestScan(symbols, {
+    await optionsFlowScanner.requestScan(promotableSymbols, {
       ...expandedRequest,
       limit: Math.min(config.scannerLimit, deepLineBudget),
       lineBudget: deepLineBudget,
@@ -11397,19 +12031,23 @@ export function startOptionsFlowScanner(): void {
   const resolveRadarPromotionCapacity = () => {
     const runtimeConfig = getOptionsFlowRuntimeConfig();
     syncMarketDataAdmissionRuntimeDefaults(runtimeConfig);
-    const lineBudget = resolveOptionsFlowScannerPerScanLineBudget(
-      runtimeConfig,
-      runtimeConfig.radarDeepLineBudget,
-    );
+    const lineBudget = resolveOptionsFlowScannerTickerLineBudget({
+      config: runtimeConfig,
+      phaseLineCap: runtimeConfig.radarDeepLineBudget,
+    });
     const schedulableLines = getOptionsFlowScannerSchedulableLineCap();
     const effectiveConcurrency =
       resolveOptionsFlowScannerEffectiveConcurrency(runtimeConfig);
-    return schedulableLines <= 0 || effectiveConcurrency <= 0
+    const queueState = getOptionsFlowScannerDeepQueueState(runtimeConfig);
+    return schedulableLines <= 0 ||
+      effectiveConcurrency <= 0 ||
+      queueState.available <= 0
       ? 0
       : Math.max(
           1,
           Math.min(
             effectiveConcurrency,
+            queueState.available,
             Math.floor(schedulableLines / lineBudget),
           ),
         );
@@ -11461,12 +12099,15 @@ export function startOptionsFlowScanner(): void {
       },
       intervalMs: resolveDeepIntervalMs,
       batchSize: () => {
-        syncOptionsFlowScannerEffectiveConcurrency(
-          getOptionsFlowRuntimeConfig(),
-        );
+        const runtimeConfig = getOptionsFlowRuntimeConfig();
+        syncOptionsFlowScannerEffectiveConcurrency(runtimeConfig);
+        const queueState = getOptionsFlowScannerDeepQueueState(runtimeConfig);
         return Math.max(
           0,
-          Math.floor(getOptionsFlowRuntimeConfig().scannerBatchSize || 0),
+          Math.min(
+            Math.floor(runtimeConfig.scannerBatchSize || 0),
+            queueState.available,
+          ),
         );
       },
       onCycle: () => {
@@ -11877,7 +12518,10 @@ function selectAggregateFlowSeedSymbols(input: {
   snapshotSymbols: ReadonlySet<string>;
   batchSize: number;
 }): string[] {
-  const batchSize = Math.max(1, Math.floor(input.batchSize || 1));
+  const batchSize = Math.max(0, Math.floor(input.batchSize || 0));
+  if (batchSize <= 0) {
+    return [];
+  }
   const selected: string[] = [];
   const seen = new Set<string>();
   const append = (symbolInput: string): boolean => {
@@ -11951,16 +12595,10 @@ export async function listAggregateFlowEvents(
       : undefined;
   const filters = normalizeFlowEventsFilters(input);
   const runtimeConfig = getOptionsFlowRuntimeConfig();
-  const requestedLineBudget =
-    Number.isFinite(input.lineBudget) && (input.lineBudget ?? 0) > 0
-      ? Math.max(
-          1,
-          Math.min(
-            Math.floor(input.lineBudget as number),
-            runtimeConfig.scannerLineBudget,
-          ),
-        )
-      : runtimeConfig.scannerLineBudget;
+  const requestedLineBudget = resolveOptionsFlowScannerTickerLineBudget({
+    config: runtimeConfig,
+    explicitLineBudget: input.lineBudget,
+  });
   const snapshotLimit = Math.max(
     1,
     Math.min(limit, runtimeConfig.scannerLimit, requestedLineBudget),
@@ -12001,11 +12639,14 @@ export async function listAggregateFlowEvents(
     limit,
     Math.max(1, OPTIONS_FLOW_AGGREGATE_MIN_SNAPSHOT_SYMBOLS),
   );
+  const aggregateSeedQueueState =
+    getOptionsFlowScannerDeepQueueState(runtimeConfig);
   const seedBatchSize = Math.max(
-    1,
+    0,
     Math.min(
       runtimeConfig.scannerBatchSize,
       OPTIONS_FLOW_AGGREGATE_SEED_BATCH_SIZE,
+      aggregateSeedQueueState.available,
       Math.max(1, minSeededSnapshotSymbols - snapshots.length),
     ),
   );
@@ -12653,6 +13294,9 @@ export function getOptionsFlowScannerDiagnostics() {
   syncMarketDataAdmissionRuntimeDefaults(config);
   const resourcePressure = getApiResourcePressureSnapshot();
   const scannerPressure = getOptionsFlowScannerPressureGate(resourcePressure);
+  const sessionBlockReason =
+    getCachedOptionsFlowSessionBlockReason() ??
+    (isRegularTradingHours() ? null : "market-session-quiet");
   const backgroundBlockedReason = getOptionsFlowScannerBackgroundBlockReason();
   const scannerFillMode =
     backgroundBlockedReason === "live-warmup"
@@ -12683,22 +13327,26 @@ export function getOptionsFlowScannerDiagnostics() {
     config.scannerLineBudget,
     schedulableFlowScannerLineCap,
   );
-  const seedLineBudget = resolveOptionsFlowScannerPerScanLineBudget(
+  const seedLineBudget = resolveOptionsFlowScannerTickerLineBudget({
     config,
-    OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET,
-  );
-  const expandedLineBudget = resolveOptionsFlowScannerPerScanLineBudget(
+    phaseLineCap: OPTIONS_FLOW_SCANNER_SEED_LINE_BUDGET,
+  });
+  const expandedLineBudget = resolveOptionsFlowScannerTickerLineBudget({
     config,
-    OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET,
-  );
-  const radarDeepLineBudget = resolveOptionsFlowScannerPerScanLineBudget(
+    phaseLineCap: OPTIONS_FLOW_SCANNER_EXPANDED_LINE_BUDGET,
+  });
+  const radarDeepLineBudget = resolveOptionsFlowScannerTickerLineBudget({
     config,
-    config.radarDeepLineBudget,
-  );
+    phaseLineCap: config.radarDeepLineBudget,
+  });
   const maxDeepScanLines =
     effectiveConcurrency <= 0
       ? 0
       : Math.min(effectiveFlowScannerLineCap, scannerTargetLineBudget);
+  const deepQueueState = getOptionsFlowScannerDeepQueueState(config);
+  const deepQueueLimit = deepQueueState.limit;
+  const deepQueueBacklog = deepQueueState.backlog;
+  const deepQueueAvailable = deepQueueState.available;
   const lastSkippedReason = currentOptionsFlowScannerSkipReason(
     deepScanner,
     config,
@@ -12733,6 +13381,7 @@ export function getOptionsFlowScannerDiagnostics() {
     delayedMarketData,
     marketDataModeDegraded,
     scannerAlwaysOn: config.scannerAlwaysOn,
+    sessionBlockReason,
     snapshotTtlMs: FLOW_EVENTS_CACHE_TTL_MS,
     snapshotStaleTtlMs: OPTIONS_FLOW_SCANNER_SNAPSHOT_STALE_TTL_MS,
     aggregateMinSnapshotSymbols: OPTIONS_FLOW_AGGREGATE_MIN_SNAPSHOT_SYMBOLS,
@@ -12767,6 +13416,9 @@ export function getOptionsFlowScannerDiagnostics() {
       schedulablePoolCap: schedulableFlowScannerLineCap,
       configuredConcurrency: config.scannerConcurrency,
       effectiveConcurrency,
+      deepQueueLimit,
+      deepQueueBacklog,
+      deepQueueAvailable,
       scannerLineBudget: config.scannerLineBudget,
       scannerTargetLineBudget,
       seedLineBudget,
@@ -12794,16 +13446,23 @@ export async function __runOptionsFlowScannerOnceForTests(
   symbols: readonly string[],
   input: Partial<OptionsFlowScannerRequest> = {},
 ) {
+  const config = getOptionsFlowRuntimeConfig();
+  const lineBudget =
+    input.lineBudget ??
+    resolveOptionsFlowScannerTickerLineBudget({
+      config,
+      phaseLineCap: config.scannerLineBudget,
+    });
   return optionsFlowScanner.runOnce(symbols, {
     limit: Math.max(
       1,
       Math.min(
-        input.limit ?? getOptionsFlowRuntimeConfig().scannerLimit,
-        getOptionsFlowRuntimeConfig().scannerLineBudget,
+        input.limit ?? config.scannerLimit,
+        input.lineBudget ?? config.scannerLineBudget,
       ),
     ),
     unusualThreshold: input.unusualThreshold,
-    lineBudget: input.lineBudget,
+    lineBudget,
     phase: input.phase ?? "manual",
     expirationScanCount: input.expirationScanCount,
     strikeCoverage: input.strikeCoverage,
@@ -13053,6 +13712,43 @@ function buildOptionExpirationCacheKey(
     underlying: normalizeSymbol(input.underlying),
     maxExpirations: input.maxExpirations ?? null,
   });
+}
+
+function deferredOptionExpirationsResponse(input: {
+  requestedAt: number;
+  durable: {
+    expirations: IbkrOptionExpirationDates;
+    debug: RequestDebugMetadata;
+  } | null;
+  reason: string;
+}): {
+  expirations: IbkrOptionExpirationDates;
+  debug: RequestDebugMetadata;
+} {
+  if (input.durable?.expirations.length) {
+    return {
+      expirations: input.durable.expirations,
+      debug: {
+        ...input.durable.debug,
+        totalMs: Math.max(0, Date.now() - input.requestedAt),
+        upstreamMs: null,
+        stale: true,
+        degraded: true,
+        reason: input.reason,
+      },
+    };
+  }
+  return {
+    expirations: [],
+    debug: {
+      cacheStatus: "miss",
+      totalMs: Math.max(0, Date.now() - input.requestedAt),
+      upstreamMs: null,
+      stale: true,
+      degraded: true,
+      reason: input.reason,
+    },
+  };
 }
 
 function buildOptionContractResolutionCacheKey(input: {
@@ -13917,17 +14613,24 @@ function isOptionUpstreamBackedOff(
   kind: "chain" | "expiration",
   key: string,
 ): boolean {
+  return getOptionUpstreamBackoffRemainingMs(kind, key) > 0;
+}
+
+function getOptionUpstreamBackoffRemainingMs(
+  kind: "chain" | "expiration",
+  key: string,
+): number {
   const until = optionUpstreamBackoffUntilByKey.get(
     getOptionBackoffKey(kind, key),
   );
   if (!until) {
-    return false;
+    return 0;
   }
   if (until <= Date.now()) {
     optionUpstreamBackoffUntilByKey.delete(getOptionBackoffKey(kind, key));
-    return false;
+    return 0;
   }
-  return true;
+  return Math.max(0, until - Date.now());
 }
 
 function recordOptionUpstreamBackoff(
@@ -14024,6 +14727,22 @@ function waitForOptionChainRetry(
     timeout = setTimeout(finish, ms);
     timeout.unref?.();
     signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+function normalizeOptionForegroundWaitMs(
+  value: number | null | undefined,
+): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return Math.max(0, Math.floor(value));
+}
+
+function optionForegroundTimeout(ms: number): Promise<"timeout"> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve("timeout"), ms);
+    timeout.unref?.();
   });
 }
 
@@ -14276,6 +14995,29 @@ async function getCachedIbkrOptionChainWithDebug(
   });
   if (durable && durable.debug.stale !== true) {
     return durable;
+  }
+  const optionChainBackoffRemainingMs = getOptionUpstreamBackoffRemainingMs(
+    "chain",
+    key,
+  );
+  if (
+    !normalizedInput.bypassBridgeBackoff &&
+    optionChainBackoffRemainingMs > 0
+  ) {
+    return (
+      durable ?? {
+        contracts: [],
+        debug: {
+          cacheStatus: "miss",
+          totalMs: Math.max(0, Date.now() - requestedAt),
+          upstreamMs: null,
+          stale: true,
+          degraded: true,
+          reason: "options_backoff",
+          backoffRemainingMs: optionChainBackoffRemainingMs,
+        },
+      }
+    );
   }
 
   if (
@@ -14602,13 +15344,43 @@ async function getCachedIbkrOptionExpirationsWithDebug(
     };
   }
 
-  const durable = await loadDurableOptionExpirationsForRequest({
+  const foregroundWaitMs = normalizeOptionForegroundWaitMs(
+    input.foregroundWaitMs,
+  );
+  const durableRequest = loadDurableOptionExpirationsForRequest({
     key,
     request: input,
     requestedAt,
   });
+  const durable =
+    foregroundWaitMs === null
+      ? await durableRequest
+      : await Promise.race([
+          durableRequest.catch(() => null),
+          optionForegroundTimeout(Math.min(250, foregroundWaitMs)),
+        ]).then((result) => (result === "timeout" ? null : result));
   if (durable && shouldUseDurableOptionExpirationsForRequest(input, durable)) {
     return durable;
+  }
+  const optionExpirationBackoffRemainingMs = getOptionUpstreamBackoffRemainingMs(
+    "expiration",
+    key,
+  );
+  if (!input.bypassBridgeBackoff && optionExpirationBackoffRemainingMs > 0) {
+    return (
+      durable ?? {
+        expirations: [],
+        debug: {
+          cacheStatus: "miss",
+          totalMs: Math.max(0, Date.now() - requestedAt),
+          upstreamMs: null,
+          stale: true,
+          degraded: true,
+          reason: "options_backoff",
+          backoffRemainingMs: optionExpirationBackoffRemainingMs,
+        },
+      }
+    );
   }
 
   if (
@@ -14634,6 +15406,27 @@ async function getCachedIbkrOptionExpirationsWithDebug(
 
   if (inFlight) {
     try {
+      if (foregroundWaitMs !== null) {
+        const timedResult = await Promise.race([
+          inFlight,
+          optionForegroundTimeout(foregroundWaitMs),
+        ]);
+        if (timedResult === "timeout") {
+          return deferredOptionExpirationsResponse({
+            requestedAt,
+            durable,
+            reason: "option_expirations_refresh_inflight_deferred",
+          });
+        }
+        return {
+          expirations: timedResult,
+          debug: {
+            cacheStatus: "inflight",
+            totalMs: Math.max(0, Date.now() - requestedAt),
+            upstreamMs: null,
+          },
+        };
+      }
       const expirations = await inFlight;
       return {
         expirations,
@@ -14691,7 +15484,23 @@ async function getCachedIbkrOptionExpirationsWithDebug(
   const upstreamStartedAt = Date.now();
   let expirations: IbkrOptionExpirationDates;
   try {
-    expirations = await refreshOptionExpirationCache(key, input);
+    const refresh = refreshOptionExpirationCache(key, input);
+    if (foregroundWaitMs !== null) {
+      const timedResult = await Promise.race([
+        refresh,
+        optionForegroundTimeout(foregroundWaitMs),
+      ]);
+      if (timedResult === "timeout") {
+        return deferredOptionExpirationsResponse({
+          requestedAt,
+          durable,
+          reason: "option_expirations_refresh_deferred",
+        });
+      }
+      expirations = timedResult;
+    } else {
+      expirations = await refresh;
+    }
   } catch (error) {
     recordOptionUpstreamBackoff("expiration", key, error);
     if (cached && isTransientOptionUpstreamError(error)) {
@@ -15014,6 +15823,7 @@ export async function getOptionExpirationsWithDebug(input: {
   maxExpirations?: number;
   recordBridgeFailure?: boolean;
   bypassBridgeBackoff?: boolean;
+  foregroundWaitMs?: number | null;
   signal?: AbortSignal;
 }): Promise<GetOptionExpirationsResultWithDebug> {
   const requestedAt = Date.now();
@@ -15023,6 +15833,7 @@ export async function getOptionExpirationsWithDebug(input: {
     maxExpirations: input.maxExpirations,
     recordBridgeFailure: input.recordBridgeFailure,
     bypassBridgeBackoff: input.bypassBridgeBackoff,
+    foregroundWaitMs: input.foregroundWaitMs,
     signal: input.signal,
   }).catch((error) => {
     if (
@@ -16608,8 +17419,10 @@ export async function listFlowEvents(input: {
           ),
         )
       : null;
-  const scannerLineBudget =
-    explicitLineBudget ?? runtimeConfig.scannerLineBudget;
+  const scannerLineBudget = resolveOptionsFlowScannerTickerLineBudget({
+    config: runtimeConfig,
+    explicitLineBudget,
+  });
   const scannerLimitFloor = nonblockingScannerRead
     ? scannerLineBudget
     : runtimeConfig.scannerLimit;
@@ -16765,15 +17578,7 @@ export async function listFlowEvents(input: {
       : runtimeConfig.expirationScanCount,
     strikeCoverage: "standard" as const,
   };
-  const scannerSnapshotLimit = nonblockingScannerRead
-    ? Math.max(
-        1,
-        Math.min(
-          scannerRequest.limit,
-          scannerRequest.lineBudget ?? scannerRequest.limit,
-        ),
-      )
-    : scannerRequest.limit;
+  const scannerSnapshotLimit = scannerRequest.limit;
   const rawScannerSnapshot = getOptionsFlowRuntimeConfig().scannerEnabled
     ? optionsFlowScanner.getSnapshot(underlying, {
         limit: scannerSnapshotLimit,
@@ -17256,10 +18061,17 @@ async function listFlowEventsUncached(input: {
         ibkrReason ??= "options_flow_historical_hydration_degraded";
       }
       if (liveHydration.errorMessage) {
-        ibkrError ??= liveHydration.errorMessage;
-        ibkrReason ??= liveHydration.blockedReason
-          ? "options_flow_live_quote_blocked"
-          : "options_flow_quote_hydration_failed";
+        if (
+          liveHydration.blockedReason === "market_session_quiet" ||
+          liveHydration.blockedReason === "market-session-quiet"
+        ) {
+          ibkrReason ??= "options_flow_scanner_market_session_quiet";
+        } else {
+          ibkrError ??= liveHydration.errorMessage;
+          ibkrReason ??= liveHydration.blockedReason
+            ? "options_flow_live_quote_blocked"
+            : "options_flow_quote_hydration_failed";
+        }
       } else if (
         liveHydration.acceptedCount > 0 &&
         liveHydration.returnedCount === 0 &&
@@ -17304,6 +18116,16 @@ async function listFlowEventsUncached(input: {
     (c) => (c.mark ?? 0) > 0 && (c.volume ?? 0) > 0,
   );
   ibkrQualifiedContractCount = qualifiedContracts.length;
+  if (
+    !isRegularTradingHours() &&
+    ibkrError === null &&
+    ibkrQualifiedContractCount === 0 &&
+    ibkrReason !== "options_flow_no_expirations" &&
+    ibkrReason !== "options_flow_expirations_degraded_empty" &&
+    input.allowMassiveFallback !== true
+  ) {
+    ibkrReason = "options_flow_scanner_market_session_quiet";
+  }
   if (ibkrStatus !== "error") {
     ibkrStatus =
       ibkrQualifiedContractCount > 0

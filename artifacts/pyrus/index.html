@@ -199,6 +199,15 @@
           const tagName =
             typeof target.tagName === "string" ? target.tagName.toLowerCase() : "";
           if (!tagName) return null;
+          const attr = (name) => {
+            try {
+              return typeof target.getAttribute === "function"
+                ? target.getAttribute(name) || ""
+                : "";
+            } catch {
+              return "";
+            }
+          };
           const url =
             typeof target.currentSrc === "string" && target.currentSrc
               ? target.currentSrc
@@ -206,20 +215,50 @@
                 ? target.src
                 : typeof target.href === "string"
                   ? target.href
-                  : "";
-          const rel = typeof target.rel === "string" ? target.rel : "";
-          const as = typeof target.as === "string" ? target.as : "";
+                  : attr("src") || attr("href") || "";
+          const rel = typeof target.rel === "string" ? target.rel : attr("rel");
+          const as = typeof target.as === "string" ? target.as : attr("as");
+          const type = typeof target.type === "string" ? target.type : attr("type");
+          const id = typeof target.id === "string" ? target.id : attr("id");
+          const inlineModuleImport =
+            !url && tagName === "script" && type === "module"
+              ? String(target.textContent || "").match(/import\s+[^"']*["']([^"']+)["']/)?.[1] ||
+                ""
+              : "";
           return {
             tagName,
             url,
             rel,
             as,
+            type,
+            id,
+            inlineModuleImport,
           };
+        };
+
+        const resourcePathname = (url) => {
+          try {
+            return new URL(url, window.location.href).pathname;
+          } catch {
+            return "";
+          }
+        };
+
+        const isNonCriticalDevScript = (target) => {
+          if (target.tagName !== "script") return false;
+          const pathname = resourcePathname(target.url || target.inlineModuleImport);
+          const id = String(target.id || "").toLowerCase();
+          return (
+            pathname === "/@vite/client" ||
+            pathname === "/@react-refresh" ||
+            pathname.startsWith("/@replit/") ||
+            id === "replit-dev-banner"
+          );
         };
 
         const isFatalResourceError = (target) => {
           if (!target) return false;
-          if (target.tagName === "script") return true;
+          if (target.tagName === "script") return !isNonCriticalDevScript(target);
           if (target.tagName !== "link") return false;
           const rel = String(target.rel || "").toLowerCase();
           const as = String(target.as || "").toLowerCase();

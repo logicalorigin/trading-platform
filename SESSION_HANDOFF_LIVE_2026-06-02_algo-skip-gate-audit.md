@@ -1,0 +1,133 @@
+# Algo Skip Gate Audit Handoff
+
+- Last Updated (MT): `2026-06-02 11:43:53 MDT`
+- Last Updated (UTC): `2026-06-02T17:43:53Z`
+- Scope: Inspect Algo page skip reasons, especially expiry-related and Greeks-related skips, and verify whether gates are receiving the data they need or failing silently.
+
+## Current Status
+
+- Using `/investigate`; no fixes should be applied until root cause is established.
+- Enabled deployment under audit: `7e2e4e6f-749f-4e65-a011-87d3559a23b0` (`Pyrus Signals Options Shadow Paper`).
+- `SESSION_HANDOFF_CURRENT.md` currently points to the IBKR bridge/sidecar recovery stream; this audit is tracked separately to avoid overwriting that pointer midstream.
+- Live snapshot before restart at `2026-06-02T14:57-14:59Z`: 8 fresh signals, 8 blocked candidates, 0 contracts selected. Recent skip reasons included `candidate_resolution_timeout`, `greek_selector_no_candidates`, `option_expiration_backoff`, and `no_expiration_in_dte_window`.
+- Post-restart live snapshot at `2026-06-02T15:09:41Z`: API served the patched read model. Algo cockpit/state returned 7 candidates, 5 blocked, 0 selected contracts, 0 open positions. Existing skipped rows now expose preserved diagnostics in the read model.
+- Root cause found: many Greek skips are not true Greek-score failures. Events show `chainDebug.reason = options_upstream_failure`, `contractCount = 0`, `greekSelection.candidateCount = 0`; the backend was letting `greek_selector_no_candidates` mask `option_chain_backoff`.
+- Post-restart rows confirmed the diagnostic distinction:
+  - `VIXY` still shows `no_expiration_in_dte_window` with `expirationsDebug.returnedCount = 6`; that is a valid DTE-window miss, not missing chain data.
+  - `UUUU`, `VXX`, `AMZN`, and `APLD` still show historical `greek_selector_no_candidates` reasons from `2026-06-02T14:47-14:52Z`, but now expose `chainDebug.reason = options_upstream_failure`, first `chainAttempts[].contractCount = 0`, `optionMarketDataBackoff.reason = option_chain_backoff`, and `contractSelection.greekSelection.candidateCount = 0`.
+- No fresh post-patch `signal_options_candidate_skipped` event had emitted by `2026-06-02T15:11Z`, so the live event-stream reason precedence has not yet been proven on a newly emitted skip. Unit coverage proves the new no-contract reason helper returns `option_chain_backoff` for empty/degraded chains while preserving real Greek rejections.
+- Expiration backoff rows are valid as data/backoff gates when `expirationsDebug.reason = options_upstream_failure`. VIXY-style `no_expiration_in_dte_window` rows with `returnedCount = 6` are true DTE-window misses under profile target/min/max, not a data-missing case.
+- Implemented a narrow backend fix in `artifacts/api-server/src/services/signal-options-automation.ts`: preserve skipped candidate diagnostics (`selectedExpiration`, `contractSelection`, `chainDebug`, `chainAttempts`, `expirationsDebug`, `optionMarketDataBackoff`, `liveQuoteDemand`) and prefer `option_chain_backoff` over empty Greek selector fallback when chain data is empty/degraded.
+- Focused test file passed via `node --import tsx --test src/services/signal-options-automation.test.ts` from `artifacts/api-server` (`126/126`).
+- `pnpm --filter @workspace/api-server build` passed.
+- `pnpm --filter @workspace/api-server typecheck` is blocked by pre-existing unrelated `src/services/ibkr-line-usage.test.ts(814,3): Type 'never' has no call signatures`.
+- Line usage after restart is not the skip blocker. `/api/settings/ibkr-line-usage` responded at `2026-06-02T15:11Z`: sidecar apply complete, no sidecar error, desired/bridge line count 0, Signal Options active lines 0, recent rejected lines 0.
+- IBKR bridge/session after restart is strict-ready/live: `/api/session` at `2026-06-02T15:11:34Z` showed connected/authenticated, live mode, live market data available, selected account `U24762790`; only warning is lane backoff/no active quote consumers.
+- Current runtime blocker after restart: API resource pressure became `critical`, so route admission shed deferred analytics. At `2026-06-02T15:11:34Z`, full Algo state, full cockpit, and diagnostics latest returned fast `503` with `code = api-resource-pressure-critical`, `routeClass = deferred-analytics`, `pressureLevel = critical`; `/api/healthz` and `/api/session` still returned `200`.
+- API process pressure snapshot from `ps`: `dist/index.mjs` around 84% CPU, RSS about 1.6 GB. System memory was available, so the pressure driver appears latency/CPU rather than RAM exhaustion.
+- Diagnostics immediately before critical shedding showed API p95 latency warnings, one automation scan failure, and `Signal-options worker scan timed out for 7e2e4e6f-749f-4e65-a011-87d3559a23b0 after 120000ms`; scanner was then blocked by `api-pressure-gate` / `critical-scanner-shed`.
+- STA lag diagnosis after user observed batch arrivals:
+  - Live events were emitted around `2026-06-02T15:13:49-15:14:34Z`, but the Algo cockpit/STA view was reading stale cached cockpit/state snapshots. This matched the observed "signals load in a batch" behavior.
+  - `/signal-monitor/matrix` was the dominant slow route at about `12.3s` p95; `/settings/ibkr-line-usage` showed scanner line usage was active but Signal Options line usage stayed at `0` active lines and `0` recent rejections.
+  - `AlgoScreen.jsx` always preferred non-empty `cockpit.signals/candidates` over `signalOptionsState.signals/candidates`. Under high pressure, the Algo SSE stream emits critical-only payloads with fresh `signalOptionsState` but no full cockpit. A stale non-empty cockpit therefore masked fresher state rows until the 15s REST fallback arrived, causing batch visibility in the STA table.
+  - Implemented a narrow frontend fix: `preferNonEmptySourceArray` now chooses the fallback if it has newer row timestamps, or if timestamps tie and the fallback has more rows. Cockpit still wins when it is equally fresh/richer.
+  - Implemented a backend pressure fix: route latency is capped at `high` in `resource-pressure.ts`; latency alone can no longer mark the whole API `critical`. Real critical pressure still comes from RSS/heap hard pressure.
+  - Cleaned `route-admission.ts` so `/diagnostics/latest` remains clearly classified as `active-screen`; tests already expected it to stay reachable under critical pressure.
+- Validation for STA/pressure fixes:
+  - `node --import tsx --test src/services/resource-pressure.test.ts src/services/route-admission.test.ts` from `artifacts/api-server`: passed `18/18`.
+  - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js`: passed `34/34`.
+  - `pnpm --filter @workspace/api-server build`: passed.
+  - Scoped `git diff --check` for touched files: passed.
+- Runtime note: the API bundle was rebuilt at `2026-06-02T15:20Z`, but the running API process (`node --enable-source-maps ./dist/index.mjs`, PID `64344`) was still the pre-build process with elapsed time about seven minutes. Restart through Replit default **Run Replit App** is required before the backend pressure fix is live.
+- Current deeper audit for the latest request:
+  - Live Signal Options state around `2026-06-02T15:29-15:33Z` showed 8 current STA candidates: VST, TSM, AVGO, TLN, POWL, ARM, GEV, and APLD. Signal pickup SLO passed for those rows, but contract decision SLO failed for all eight.
+  - Skip diagnostics by candidate: GEV/ARM were blocked by expiration upstream/backoff; AVGO/TLN/TSM/VST were blocked by option-chain upstream/backoff; POWL was a true `no_expiration_in_dte_window` miss; APLD had an old `greek_selector_no_candidates` label but diagnostics showed empty/degraded chain and should classify as chain backoff once retried under the new read model.
+  - Signal Options line usage was `0` active/recent for entry candidates. Code confirmed live quote demand is declared only after `selectedQuote` exists, so empty expiration/chain results never request Signal Options lines.
+  - Action scans process newest-first but sequentially. Each candidate can spend up to `SIGNAL_OPTIONS_CANDIDATE_RESOLUTION_TIMEOUT_MS = 9_000` before the next candidate starts, which explains action decisions landing in visible batches under option-chain stalls.
+  - STA retention bug found: `buildStatePayload` seeds candidates from current signal snapshots and then discards any historical event-backed candidate whose id is not in the current set. The frontend also passes only `signalOptionsSignals` when that array is non-empty, so older candidate rows disappear even though event history exists.
+- Implemented latest fixes:
+  - `signal-options-automation.ts`: backend state now retains recent event-backed candidates instead of filtering them to the current signal snapshot ids.
+  - `signal-options-automation.ts`: Greek selector entry resolution now uses metadata chain discovery first, prehydrates the Greek-selector candidate provider contract ids through the `signal-options-entry:*` live-demand owner, then runs the existing Greek scorer on hydrated quotes. Selected-contract live hydration still runs after selection.
+  - `AlgoScreen.jsx`: `visibleSignalRows` now merges current signal snapshots with candidate-backed signal rows, deduped by signal key or symbol/timeframe/direction/signalAt.
+  - `OperationsSignalTable.jsx`: STA pagination size changed from 30 to 20.
+- Fresh live runtime pull after Replit restarted the app:
+  - `/signal-options/state?view=full` returned `signalCount = 8`, `candidateCount = 75`, proving retention is active.
+  - Fresh current signals at `2026-06-02T15:35Z` latest bar: CLSK sell 15:30, HUT sell 15:25, APH buy 15:20, VST buy 15:10, TSM buy 15:05, AVGO sell 15:00, TLN buy 15:00, POWL buy 14:55.
+  - Current candidates: CLSK/HUT are valid `bear_regime_gate_failed`; APH and POWL are valid `no_expiration_in_dte_window` with expirations returned; VST/AVGO/TLN/ARM are expiration/chain upstream failures and/or 9s candidate timeouts; TSM is chain upstream failure plus timeout; GEV latest was `bridge_health_unavailable`; APLD remains an older masked `greek_selector_no_candidates` row with chain backoff diagnostics.
+  - Signal-monitor profile still has `pollIntervalSeconds = 60`, cache was stale/refreshing, so signal detection is inherently up to a minute behind even before action work.
+  - Cockpit still showed scan running and `contract_selected` attention: `7 candidates blocked at contract selection`.
+  - Line usage after restart showed bridge active lines `0`/remaining `200`, Signal Options admission `0 active / 0 requested / 0 rejected`. Options-meta scheduler had p95 around 8.9s, control lane was degraded around 5.0s p95. This still points at options metadata/control timing, not line exhaustion.
+- Latest validation:
+  - `node --import tsx --test src/services/signal-options-automation.test.ts` from `artifacts/api-server`: passed `126/126`.
+  - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js src/screens/algo/algoHelpers.test.js`: passed `52/52`.
+  - `pnpm --filter @workspace/api-server build`: passed.
+  - `pnpm --filter @workspace/pyrus typecheck`: passed.
+  - Scoped `git diff --check` for latest touched files and this handoff: passed.
+  - `pnpm --filter @workspace/api-server typecheck` still fails in unrelated IBKR tests: `src/services/ibkr-account-bridge.test.ts` lines 135/142 and `src/services/ibkr-line-usage.test.ts` line 819, all `Type 'never' has no call signatures`.
+- Follow-up UI timestamp change:
+  - `SignalsScreen.jsx`: Signal drilldown price chart now shows `Signal Time` and `Since` fact tiles, and the vertical signal marker label includes side, absolute app time, and elapsed age.
+  - `OperationsSignalRow.jsx`: Algo STA row sparkline now exposes a hover/accessibility title with absolute signal time and elapsed age.
+  - Added `SignalsScreen.test.js` source coverage and extended `OperationsSignalRow.test.js`.
+  - Added `e2e/signals-chart-time.spec.ts` and extended `e2e/algo-signal-row.spec.ts`.
+  - Validation: focused source tests passed `53/53`; `pnpm --filter @workspace/pyrus typecheck` passed; scoped `git diff --check` passed; headless Playwright via `node scripts/runPlaywrightInReplit.mjs e2e/signals-chart-time.spec.ts e2e/algo-signal-row.spec.ts --grep "signals drilldown chart|desktop signal hero rows"` passed `2/2`.
+- Latest root cause for 5m STA batch/late arrivals:
+  - User reported CGNX/IEF/MSTR/VRT arriving as a batch with `10m since` and `0/8 bars`.
+  - Live signal-monitor events confirmed the issue: CGNX/IEF/MSTR/VRT had `signalAt = 2026-06-02T16:15:00Z` but `emittedAt ~= 2026-06-02T16:23:35Z` (8.6m apparent lag). NVDA earlier was `15:45Z -> 15:55:27Z` (10.5m), and later old-code events still showed 6-12m lags.
+  - `0/8 bars` is only the candidate signal-age/fresh-window display; it does not throttle STA. The delay is upstream in completed-bar acceptance/evaluation and then the Signal Options worker action path.
+  - The completed-bar cache key correctly changes at the bar boundary, but the cache/retry rule accepted a payload whose latest bar was still behind the expected just-completed intraday bar because it was not yet 15m "stale." A right-after-boundary REST/cache result could therefore be cached under the new boundary while missing the expected 5m edge.
+  - Signal monitor profile/explicit-symbol scans also did not explicitly prime the Massive stock aggregate stream for the symbols they were evaluating; the stream was mostly kept alive indirectly by matrix/UI consumers.
+  - The Signal Options worker already had `requestRunSoon`, but newly inserted signal monitor events did not wake it, leaving STA to wait for the next worker poll/action cycle.
+- Latest fixes for real-time signal pickup:
+  - `signal-monitor.ts`: added expected latest completed intraday bar detection. `shouldRetrySignalMonitorCompletedBars` and completed-bars cache bypass now retry when latest live/history bars are behind the expected completed edge, even if they are not 15m stale.
+  - `signal-monitor.ts`: profile universe scans and explicit-symbol scans now prime the Massive stock aggregate stream before symbol evaluation, so the live AM stream can fill the latest completed edge.
+  - `signal-monitor.ts`: a successful new `signalMonitorEventsTable` insert now emits `signal_monitor_event_created` via the existing Algo cockpit event bus.
+  - `signal-options-worker.ts`: worker subscribes to cockpit changes on start and calls `requestRunSoon()` on `signal_monitor_event_created`, so STA does not wait for the next 60s poll after a new signal is persisted.
+  - Added regression tests for missing expected live edge retry/cache bypass, profile scan aggregate priming, and worker wake on signal event.
+  - Validation: focused API suite passed `254/254` with `signal-monitor`, `signal-options-automation`, `signal-options-worker`, `bridge-option-quote-stream`, `algo-gateway`, `stock-aggregate-stream`, `massive-stock-aggregate-stream`, and `massive-stock-websocket` tests.
+  - `pnpm --filter @workspace/api-server build` passed at `2026-06-02T16:50:49Z`.
+  - Scoped `git diff --check` passed for the touched API/Pyrus files.
+  - Runtime note: Replit spawned API processes at `2026-06-02T16:50:09Z` and `2026-06-02T16:50:40Z`, both before the rebuilt `dist/index.mjs` mtime `2026-06-02T16:50:49Z`; the live app still needs a default Replit Run App restart before these latest changes are active.
+- Latest PWR live diagnosis after user reported `10m since signal`:
+  - PWR event was `signalAt = 2026-06-02T16:55:00Z`, `emittedAt = 2026-06-02T17:03:49.949Z`, lag `8.8m`.
+  - State endpoint at `2026-06-02T17:06:13Z` had PWR `latestBarAt = 16:55Z`, then at `2026-06-02T17:11:40Z` had PWR `latestBarAt = 17:05Z`, `barsSinceSignal = 2`.
+  - Massive AM stream had PWR `lastAggregateAt = 2026-06-02T17:06:01Z` but only `eventCount = 2` and `lastQuoteAt = null`. Root cause: under Massive real-time mode the stock aggregate stream subscribed to Massive `AM` only, so quiet symbols did not get quote-derived synthetic minute bars. The existing quote-to-minute-bar heartbeat path only ran on the IBKR-derived provider branch.
+  - Follow-on root cause: each new 5m completed boundary generated a new completed-bars cache key and could force a full REST/history hydration even when the previous warm cache plus live stream edge was enough. This produced hundreds of `signal-matrix` bar cache misses/in-flight REST loads and delayed signal insertion.
+  - `Awaiting scan` explanation for STA: Signal Monitor has inserted or exposed the signal, but Signal Options action worker has not yet processed that row. The worker has to rotate through position marks and candidate action scans, and the action candidate cannot reserve an option quote line until IBKR option expiration/chain metadata selects a provider contract id. Rows can therefore sit in `Awaiting scan` before contract selection, then still spend up to `SIGNAL_OPTIONS_CANDIDATE_RESOLUTION_TIMEOUT_MS = 9_000` inside metadata/chain/quote hydration.
+- Latest fixes after PWR report:
+  - `stock-aggregate-stream.ts`: Massive real-time aggregate provider now also subscribes to Massive stock quote snapshots (`Q/T`) through the shared Massive WebSocket and feeds those quote ticks into the same minute accumulator/history used by Signal Monitor.
+  - `stock-aggregate-stream.ts`: Massive quote-derived accumulators emit flat carry-forward heartbeat bars while quotes are quiet, matching the existing IBKR-derived behavior.
+  - `signal-monitor.ts`: `loadSignalMonitorCompletedBars` now attempts a previous-cache + live-stream-edge fast path before starting a full REST/history fetch. It only returns early when the merged stream bars advance beyond the previous cached latest bar and satisfy the expected completed edge; otherwise it falls back to the existing full fetch/retry path.
+  - `bridge-option-quote-stream.ts`: retained snapshot demand can opt out of lease release on local abort via `releaseLeasesOnAbort: false`.
+  - `signal-options-automation.ts`: selected-contract entry resolution records provisional `liveQuoteDemand` as soon as the provider contract id is known, and retained Signal Options snapshot demand survives local hydration timeout so selected contracts remain visible/diagnosable instead of dropping line usage back to zero immediately.
+  - Added regression coverage for Massive quote-derived aggregate bars/heartbeats, retained Signal Options snapshot demand after abort, live-edge cache merge, and worker wakeups.
+- Latest validation after PWR fixes:
+  - Focused API suite passed `254/254`:
+    - `signal-monitor.test.ts`
+    - `stock-aggregate-stream.test.ts`
+    - `massive-stock-aggregate-stream.test.ts`
+    - `massive-stock-websocket.test.ts`
+    - `bridge-option-quote-stream.test.ts`
+    - `signal-options-automation.test.ts`
+    - `signal-options-worker.test.ts`
+  - `pnpm --filter @workspace/api-server build` passed at `2026-06-02T17:15Z`.
+  - Live lightweight checks before final restart/build reload:
+    - `/api/healthz` OK.
+    - Latest events still show old-code lag examples (`ZBRA 6.6m`, `QCOM 5.4m`, `LMT 8.6m`, `PWR 8.8m`, `UUP 40m`), so the next post-build/restart signal is the real validation point.
+    - `/api/settings/ibkr-line-usage` showed automation preview lines active for `algo-operations:LMT/MSTR/RKLB`, but `signalOptions.activeLineCount = 0`; old rows still predate the retained Signal Options demand fix.
+- Latest STA diagnostics UI patch after user requested the simplest fix:
+  - Scope deliberately narrowed to visibility of the contract-selection path, not another data-source rewrite.
+  - `OperationsSignalRow.jsx`: existing `process` column is now labeled `Stage`, defaults visible, and resolves pending candidates into concrete phases: `Queued`, `Resolving contract`, `Resolving chain`, `Contract selected`, `Waiting quote`, `Waiting greeks`, `Backoff`, `Chain empty`, `Blocked`, or `Priced`.
+  - `OperationsSignalRow.jsx`: contract/quote cells no longer collapse unresolved candidate rows to generic `Selecting`; pending rows surface available live-demand details such as `awaiting_quote`, `awaiting_greeks`, hydration attempts, wait time, cache age, and requested contract count.
+  - `OperationsSignalRow.jsx`: Stage animation now follows live-demand pending state even if the broader scan-running flag has already dropped.
+  - `OperationsSignalTable.jsx`: column visibility version bumped to `8` so the default STA layout includes `Stage` and `Sync` for diagnosing event/candidate mismatches.
+  - Regression test added for a candidate with selected contract metadata but pending live quote demand; rendered output shows `Waiting quote`, `Awaiting Quote`, attempts/wait timing, `Quote pending`, and no `Selecting`.
+  - Validation: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js` passed `20/20`; `pnpm --filter @workspace/pyrus typecheck` passed; `pnpm --filter @workspace/pyrus build` passed.
+  - Browser smoke against the already running app showed no console/page errors, but direct Algo navigation in safe QA mode did not activate the route in that running instance; static render/typecheck/build cover the patched component.
+
+## Next Steps
+
+1. Restart through Replit default **Run Replit App** so the API process loads the `2026-06-02T17:15Z` build and the web app serves the latest STA diagnostics bundle.
+2. Watch the next 5m signal after restart/build reload: expected behavior is signal event emission shortly after the completed-bar safety window (`bar close + ~2s`) plus evaluation time, using Massive `AM` plus Massive `Q/T` quote-derived synthetic bars instead of waiting on full REST hydration.
+3. Verify new STA rows now include retained `liveQuoteDemand` / contract-resolution diagnostics after a fresh scan. Old rows still show stale `liveQuoteDemand: null` because they were emitted before the latest patches.
+4. Use the new `Stage`/`Sync` columns to identify whether late trades are stuck before metadata (`Resolving contract/chain`), after metadata (`Waiting quote/greeks`), on admission/backoff (`Backoff`, `Unavailable`, `Rejected`), or on event/candidate mismatch (`Sync`).
+5. Continue investigating option metadata/quote failures if fresh post-restart rows still show metadata-only contracts or `candidate_resolution_timeout`; live source has bounded signal-options quote hydration, but the running process was stale before restart.

@@ -60,6 +60,7 @@ const unitTestFiles = [
   "src/features/platform/algoTuningImpactModel.test.js",
   "src/features/platform/marketActivityLaneModel.test.js",
   "src/features/platform/memoryPressureModel.test.js",
+  "src/features/platform/FooterMemoryPressureIndicator.test.js",
   "src/features/platform/appWorkScheduler.test.js",
   "src/features/platform/workPressureModel.test.js",
   "src/features/platform/runtimeControlModel.test.js",

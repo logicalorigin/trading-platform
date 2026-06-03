@@ -15,6 +15,10 @@ import {
   optionContractsTable,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
+import {
+  createTransientPostgresBackoff,
+  isTransientPostgresError,
+} from "../lib/transient-db-error";
 import { normalizeSymbol } from "../lib/values";
 import type { OptionChainContract } from "../providers/ibkr/client";
 
@@ -31,6 +35,11 @@ type DurableOptionMetadataCounters = {
 export type DurableOptionMetadataDiagnostics = DurableOptionMetadataCounters & {
   disabled: number;
   disabledReason: string | null;
+  activeBackoffs: Array<{
+    scope: string;
+    reason: string | null;
+    failedUntilMs: number;
+  }>;
   snapshotRetentionMs: number;
 };
 
@@ -50,8 +59,20 @@ const counters: DurableOptionMetadataCounters = {
   prunedRows: 0,
 };
 
-let durableOptionMetadataDisabled = false;
-let disabledReason: string | null = null;
+type DurableOptionMetadataOperation =
+  | "persist_option_chain"
+  | "load_option_expirations"
+  | "load_option_chain";
+
+type DurableOptionMetadataBackoffEntry = {
+  backoff: ReturnType<typeof createTransientPostgresBackoff>;
+  reason: string | null;
+};
+
+const durableOptionMetadataBackoffs = new Map<
+  string,
+  DurableOptionMetadataBackoffEntry
+>();
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   const value = Number.parseInt(process.env[name] ?? "", 10);
@@ -81,7 +102,7 @@ function isDurableOptionMetadataEnvDisabled(): boolean {
 }
 
 function isDurableOptionMetadataDisabled(): boolean {
-  return durableOptionMetadataDisabled || isDurableOptionMetadataEnvDisabled();
+  return isDurableOptionMetadataEnvDisabled();
 }
 
 function getErrorMessage(error: unknown): string {
@@ -90,14 +111,96 @@ function getErrorMessage(error: unknown): string {
     : "Durable option metadata store failed.";
 }
 
-function disableAfterError(error: unknown, operation: string): void {
-  durableOptionMetadataDisabled = true;
-  disabledReason = `${operation}: ${getErrorMessage(error)}`;
+function durableOptionMetadataScope(input: {
+  operation: DurableOptionMetadataOperation;
+  underlying?: string | null;
+}): string {
+  const underlying = normalizeSymbol(input.underlying ?? "");
+  return `${input.operation}:${underlying || "all"}`;
+}
+
+function durableOptionMetadataBackoffEntry(
+  scope: string,
+): DurableOptionMetadataBackoffEntry {
+  const existing = durableOptionMetadataBackoffs.get(scope);
+  if (existing) {
+    return existing;
+  }
+  const created = {
+    backoff: createTransientPostgresBackoff(),
+    reason: null,
+  };
+  durableOptionMetadataBackoffs.set(scope, created);
+  return created;
+}
+
+function isDurableOptionMetadataBackoffActive(scope: string): boolean {
+  const entry = durableOptionMetadataBackoffs.get(scope);
+  if (!entry?.backoff.isActive(Date.now())) {
+    return false;
+  }
   counters.disabled += 1;
-  logger.debug(
-    { err: error, operation },
-    "Durable option metadata store disabled after database error",
-  );
+  return true;
+}
+
+function clearDurableOptionMetadataBackoff(scope: string): void {
+  const entry = durableOptionMetadataBackoffs.get(scope);
+  if (!entry) {
+    return;
+  }
+  entry.backoff.clear();
+  entry.reason = null;
+}
+
+function markDurableOptionMetadataFailure(
+  error: unknown,
+  input: {
+    operation: DurableOptionMetadataOperation;
+    underlying?: string | null;
+  },
+): void {
+  if (!isTransientPostgresError(error)) {
+    logger.debug(
+      { err: error, operation: input.operation, underlying: input.underlying },
+      "Durable option metadata store operation failed without scoped backoff",
+    );
+    return;
+  }
+
+  const scope = durableOptionMetadataScope(input);
+  const entry = durableOptionMetadataBackoffEntry(scope);
+  entry.reason = `${input.operation}: ${getErrorMessage(error)}`;
+  counters.disabled += 1;
+  entry.backoff.markFailure({
+    error,
+    logger,
+    message: "Durable option metadata store entered scoped database backoff",
+    nowMs: Date.now(),
+  });
+}
+
+function activeDurableOptionMetadataBackoffs(nowMs = Date.now()) {
+  return Array.from(durableOptionMetadataBackoffs.entries())
+    .map(([scope, entry]) => ({
+      scope,
+      reason: entry.reason,
+      failedUntilMs: entry.backoff.snapshot().failedUntilMs,
+      active: entry.backoff.isActive(nowMs),
+    }))
+    .filter((entry) => entry.active)
+    .map(({ active: _active, ...entry }) => entry);
+}
+
+function optionChainUnderlyingFromContracts(
+  contracts: OptionChainContract[],
+): string | null {
+  for (const contract of contracts) {
+    const underlying = normalizeSymbol(contract.contract.underlying);
+    if (underlying) {
+      return underlying;
+    }
+  }
+  return null;
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -387,7 +490,16 @@ export async function persistDurableOptionChain(input: {
   source?: string;
   asOf?: Date;
 }): Promise<void> {
-  if (isDurableOptionMetadataDisabled() || input.contracts.length === 0) {
+  const underlying = optionChainUnderlyingFromContracts(input.contracts);
+  const scope = durableOptionMetadataScope({
+    operation: "persist_option_chain",
+    underlying,
+  });
+  if (
+    isDurableOptionMetadataDisabled() ||
+    isDurableOptionMetadataBackoffActive(scope) ||
+    input.contracts.length === 0
+  ) {
     return;
   }
 
@@ -425,10 +537,14 @@ export async function persistDurableOptionChain(input: {
       }
     }
     await pruneOldSnapshots(asOf.getTime());
+    clearDurableOptionMetadataBackoff(scope);
     counters.writeSuccess += 1;
   } catch (error) {
     counters.writeFailure += 1;
-    disableAfterError(error, "persist_option_chain");
+    markDurableOptionMetadataFailure(error, {
+      operation: "persist_option_chain",
+      underlying,
+    });
   }
 }
 
@@ -486,14 +602,23 @@ export async function loadDurableOptionExpirations(input: {
   staleMaxAgeMs: number;
   now?: Date;
 }): Promise<DurableOptionMetadataLoad<Date[]> | null> {
-  if (isDurableOptionMetadataDisabled()) {
+  const underlying = normalizeSymbol(input.underlying);
+  const scope = durableOptionMetadataScope({
+    operation: "load_option_expirations",
+    underlying,
+  });
+  if (
+    isDurableOptionMetadataDisabled() ||
+    isDurableOptionMetadataBackoffActive(scope)
+  ) {
     counters.miss += 1;
     return null;
   }
 
   try {
-    const underlyingInstrumentId = await getUnderlyingInstrumentId(input.underlying);
+    const underlyingInstrumentId = await getUnderlyingInstrumentId(underlying);
     if (!underlyingInstrumentId) {
+      clearDurableOptionMetadataBackoff(scope);
       return recordLoadResult<Date[]>(null);
     }
 
@@ -547,9 +672,13 @@ export async function loadDurableOptionExpirations(input: {
       typeof input.maxExpirations === "number" && input.maxExpirations > 0
         ? expirations.slice(0, Math.floor(input.maxExpirations))
         : expirations;
+    clearDurableOptionMetadataBackoff(scope);
     return recordLoadResult({ value, freshness, ageMs });
   } catch (error) {
-    disableAfterError(error, "load_option_expirations");
+    markDurableOptionMetadataFailure(error, {
+      operation: "load_option_expirations",
+      underlying,
+    });
     return null;
   }
 }
@@ -563,15 +692,23 @@ export async function loadDurableOptionChain(input: {
   staleMaxAgeMs: number;
   now?: Date;
 }): Promise<DurableOptionMetadataLoad<OptionChainContract[]> | null> {
-  if (isDurableOptionMetadataDisabled()) {
+  const underlying = normalizeSymbol(input.underlying);
+  const scope = durableOptionMetadataScope({
+    operation: "load_option_chain",
+    underlying,
+  });
+  if (
+    isDurableOptionMetadataDisabled() ||
+    isDurableOptionMetadataBackoffActive(scope)
+  ) {
     counters.miss += 1;
     return null;
   }
 
   try {
-    const underlying = normalizeSymbol(input.underlying);
     const underlyingInstrumentId = await getUnderlyingInstrumentId(underlying);
     if (!underlyingInstrumentId) {
+      clearDurableOptionMetadataBackoff(scope);
       return recordLoadResult<OptionChainContract[]>(null);
     }
 
@@ -761,29 +898,38 @@ export async function loadDurableOptionChain(input: {
     if (!freshness) {
       return recordLoadResult<OptionChainContract[]>(null);
     }
+    clearDurableOptionMetadataBackoff(scope);
     return recordLoadResult({ value: contracts, freshness, ageMs });
   } catch (error) {
-    disableAfterError(error, "load_option_chain");
+    markDurableOptionMetadataFailure(error, {
+      operation: "load_option_chain",
+      underlying,
+    });
     return null;
   }
 }
 
 export function getDurableOptionMetadataDiagnostics(): DurableOptionMetadataDiagnostics {
   const envDisabled = isDurableOptionMetadataEnvDisabled();
+  const activeBackoffs = activeDurableOptionMetadataBackoffs();
+  const activeBackoffReason =
+    activeBackoffs.map((entry) => entry.reason).filter(Boolean)[0] ?? null;
   return {
     ...counters,
     disabled:
-      durableOptionMetadataDisabled || envDisabled ? counters.disabled || 1 : 0,
+      envDisabled || activeBackoffs.length
+        ? counters.disabled || activeBackoffs.length || 1
+        : 0,
     disabledReason: envDisabled
       ? "OPTION_METADATA_DISABLED"
-      : disabledReason,
+      : activeBackoffReason,
+    activeBackoffs,
     snapshotRetentionMs: OPTION_METADATA_SNAPSHOT_RETENTION_MS,
   };
 }
 
 export function __resetDurableOptionMetadataStoreForTests(): void {
-  durableOptionMetadataDisabled = false;
-  disabledReason = null;
+  durableOptionMetadataBackoffs.clear();
   counters.freshHit = 0;
   counters.staleHit = 0;
   counters.miss = 0;

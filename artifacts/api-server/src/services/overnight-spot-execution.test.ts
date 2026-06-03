@@ -150,6 +150,57 @@ test("overnight spot scan executes shadow orders only when actions are requested
   assert.equal(shadowOrders[0].sourceEventId, "event-1");
   assert.equal(shadowOrders[0].tradingSession, "overnight");
   assert.equal(shadowOrders[0].includeOvernight, true);
+  assert.equal(shadowOrders[0].requestedFillPrice, 100.1);
+});
+
+test("overnight spot scan records shadow order failures and continues", async () => {
+  const { dependencies, events, shadowOrders } = createDependencies({
+    loadSignalStates: async () => [
+      signalState({ symbol: "SPY" }),
+      signalState({ symbol: "QQQ" }),
+    ],
+    loadQuotes: async () =>
+      new Map([
+        ["SPY", quote()],
+        [
+          "QQQ",
+          {
+            ...quote(),
+            symbol: "QQQ",
+          },
+        ],
+      ]),
+    placeShadowOrder: async (order) => {
+      if (order.symbol === "SPY") {
+        throw new Error("shadow fill rejected");
+      }
+      shadowOrders.push(order);
+      return { id: `shadow-${shadowOrders.length}`, status: "filled" };
+    },
+  });
+
+  const result = await runOvernightSpotSignalScan(
+    {
+      deploymentId: "deployment-1",
+      runActions: true,
+      now,
+    },
+    dependencies,
+  );
+
+  assert.equal(result.failedCount, 1);
+  assert.equal(result.executedCount, 1);
+  assert.equal(shadowOrders.length, 1);
+  assert.equal(shadowOrders[0].symbol, "QQQ");
+  assert.deepEqual(
+    events.map((event) => event.eventType),
+    [
+      "overnight_spot_shadow_entry",
+      "overnight_spot_order_failed",
+      "overnight_spot_shadow_entry",
+    ],
+  );
+  assert.equal(events[1].payload.error, "shadow fill rejected");
 });
 
 test("overnight spot scan skips duplicate signal tuples by client order id", async () => {
@@ -216,6 +267,12 @@ test("overnight spot action scans only hydrate actionable signal quotes", async 
         fresh: false,
         status: "stale",
       }),
+      signalState({
+        symbol: "TSLA",
+        currentSignalAt: new Date("2026-06-03T02:20:00.000Z"),
+        fresh: false,
+        status: "ok",
+      }),
     ],
     loadQuotes: async (symbols) => {
       requestedQuoteSymbols.push(symbols);
@@ -245,6 +302,69 @@ test("overnight spot action scans only hydrate actionable signal quotes", async 
   assert.deepEqual(requestedQuoteSymbols, [["AAPL"]]);
   assert.equal(result.candidateCount, 1);
   assert.equal(result.executedCount, 1);
+});
+
+test("overnight spot action scans use max signal age instead of dashboard freshness", async () => {
+  const requestedQuoteSymbols: string[][] = [];
+  const { dependencies, events, shadowOrders } = createDependencies({
+    loadDeployment: async () =>
+      deployment({
+        symbolUniverse: ["AAPL"],
+        config: {
+          parameters: {
+            signalTimeframe: "15m",
+          },
+          overnightSpot: {
+            enabled: true,
+            executionMode: "shadow",
+            accountId: "DU1234567",
+            defaultOrderNotional: 1_000,
+            maxOrderNotional: 1_500,
+            maxShareQuantity: 10,
+            maxSignalAgeMs: 12 * 60 * 60 * 1_000,
+          },
+        },
+      }),
+    loadSignalStates: async () => [
+      signalState({
+        symbol: "AAPL",
+        currentSignalAt: new Date("2026-06-03T01:50:00.000Z"),
+        fresh: false,
+        status: "ok",
+        barsSinceSignal: 8,
+      }),
+    ],
+    loadQuotes: async (symbols) => {
+      requestedQuoteSymbols.push(symbols);
+      return new Map([
+        [
+          "AAPL",
+          {
+            bid: 100,
+            ask: 100.1,
+            mid: 100.05,
+            updatedAt: now,
+          },
+        ],
+      ]);
+    },
+  });
+
+  const result = await runOvernightSpotSignalScan(
+    {
+      deploymentId: "deployment-1",
+      runActions: true,
+      now,
+    },
+    dependencies,
+  );
+
+  assert.deepEqual(requestedQuoteSymbols, [["AAPL"]]);
+  assert.equal(result.candidateCount, 1);
+  assert.equal(result.executedCount, 1);
+  assert.equal(shadowOrders.length, 1);
+  assert.equal(events[0].payload.signal.actionable, true);
+  assert.equal(events[0].payload.signal.metadata.fresh, false);
 });
 
 test("overnight spot scan records blocked exit signals without sending orders", async () => {

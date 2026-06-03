@@ -20,6 +20,11 @@ test("Trade spot chart wires pan and zoom history hydration through the shared p
   assert.match(source, /role:\s*effectiveChartHydrationRole/);
   assert.match(source, /intervalChangeRevision/);
   assert.match(source, /setIntervalChangeRevision\(\(revision\) => revision \+ 1\)/);
+  assert.doesNotMatch(source, /setTf\(\(currentTimeframe\) =>/);
+  assert.match(
+    source,
+    /setTf\(nextAlgoTimeframe\);[\s\S]*onWorkspaceChartChange\?\.\(\{ timeframe: nextAlgoTimeframe \}\)/,
+  );
   assert.match(source, /viewportLayoutKey=\{chartViewportLayoutKey\}/);
   assert.match(source, /progressiveBars\.expandForVisibleRange\(range,\s*bars\.length,\s*\{/);
   assert.match(source, /isHydratingRequestedWindow:/);

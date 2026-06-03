@@ -17,6 +17,8 @@ import {
 
 const router: IRouter = Router();
 const IBKR_LINE_USAGE_ROUTE_CACHE_TTL_MS = 2_000;
+const IBKR_LINE_USAGE_COMPACT_DETAIL = "compact";
+const IBKR_LINE_USAGE_FULL_DETAIL = "full";
 
 type IbkrLineUsageRouteSnapshot = Awaited<
   ReturnType<typeof getIbkrLineUsageSnapshot>
@@ -27,6 +29,311 @@ let ibkrLineUsageRouteCache: {
   expiresAt: number;
 } | null = null;
 let ibkrLineUsageRouteInFlight: Promise<IbkrLineUsageRouteSnapshot> | null = null;
+
+type JsonRecord = Record<string, unknown>;
+
+function asJsonRecord(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : {};
+}
+
+function pickJsonRecord(
+  value: unknown,
+  keys: readonly string[],
+): JsonRecord {
+  const record = asJsonRecord(value);
+  return Object.fromEntries(
+    keys
+      .filter((key) => Object.prototype.hasOwnProperty.call(record, key))
+      .map((key) => [key, record[key]]),
+  );
+}
+
+function compactOptionsFlowScanner(value: unknown): JsonRecord {
+  const scanner = asJsonRecord(value);
+  return {
+    ...pickJsonRecord(scanner, [
+      "enabled",
+      "started",
+      "scannerMode",
+      "scannerFillMode",
+      "limitingReason",
+      "activeScanPhase",
+      "marketDataMode",
+      "delayedMarketData",
+      "marketDataModeDegraded",
+      "scannerAlwaysOn",
+      "sessionBlockReason",
+      "backgroundBlockedReason",
+      "lineBudget",
+      "seedLineBudget",
+      "expandedLineBudget",
+      "lastSkippedReason",
+      "radarDegradedReason",
+      "lastBatch",
+      "promotedSymbols",
+      "lineUtilization",
+      "deepScanner",
+      "radar",
+    ]),
+    coverage: pickJsonRecord(scanner["coverage"], [
+      "mode",
+      "targetSize",
+      "activeTargetSize",
+      "selectedSymbols",
+      "selectedShortfall",
+      "stale",
+      "fallbackUsed",
+      "cooldownCount",
+      "verifiedSymbols",
+      "needsVerificationSymbols",
+      "rejectedSymbols",
+      "verificationBacklogSymbols",
+      "scannedSymbols",
+      "cycleScannedSymbols",
+      "lastScannedAt",
+      "oldestScanAt",
+      "newestScanAt",
+      "currentBatch",
+      "lastScanAt",
+      "degradedReason",
+      "batchSize",
+      "intervalMs",
+      "lineBudget",
+      "concurrency",
+      "estimatedCycleMs",
+      "radarCurrentBatch",
+      "deepActiveSymbols",
+      "deepLastBatch",
+      "scannerPhase",
+      "lastScanAgeMs",
+      "coverageHealth",
+      "marketSessionQuiet",
+      "coverageTargetMs",
+      "radarSelectedSymbols",
+      "radarEstimatedCycleMs",
+      "radarBatchSize",
+      "radarIntervalMs",
+      "radarLastError",
+      "radarLastFailedAt",
+      "radarFailureCount",
+      "radarLastRunDurationMs",
+      "promotedSymbols",
+    ]),
+  };
+}
+
+function compactStreamDiagnostics(value: unknown): JsonRecord {
+  return pickJsonRecord(value, [
+    "provider",
+    "activeProvider",
+    "activeConsumerCount",
+    "unionSymbolCount",
+    "requestedSymbolCount",
+    "unionProviderContractIdCount",
+    "requestedProviderContractIdCount",
+    "nonLiveSymbolCount",
+    "nonLiveProviderContractIdCount",
+    "cachedQuoteCount",
+    "eventCount",
+    "reconnectCount",
+    "streamGapCount",
+    "dataGapCount",
+    "recentGapCount",
+    "recentDataGapCount",
+    "lastEventAt",
+    "lastEventAgeMs",
+    "lastSignalAt",
+    "lastSignalAgeMs",
+    "freshnessAgeMs",
+    "dataFreshnessAgeMs",
+    "transportFreshnessAgeMs",
+    "streamActive",
+    "reconnectScheduled",
+    "lastError",
+    "lastErrorAt",
+    "lastStreamStatus",
+    "pressure",
+    "massiveDelayedWebSocket",
+    "subscribedSymbolCount",
+    "lastMessageAt",
+    "lastMessageAgeMs",
+    "configured",
+    "connected",
+    "state",
+  ]);
+}
+
+function compactLineUsageSnapshot(
+  snapshot: IbkrLineUsageRouteSnapshot,
+): JsonRecord {
+  const root = asJsonRecord(snapshot);
+  const admission = asJsonRecord(root["admission"]);
+  const historicalWork = asJsonRecord(root["historicalWork"]);
+  const bridge = asJsonRecord(root["bridge"]);
+  const bridgeDiagnostics = asJsonRecord(bridge["diagnostics"]);
+  const streams = asJsonRecord(root["streams"]);
+  const drift = asJsonRecord(root["drift"]);
+  const driftReconciliation = asJsonRecord(drift["reconciliation"]);
+  const marketDataWorkPlan = asJsonRecord(root["marketDataWorkPlan"]);
+  const sidecar = asJsonRecord(root["sidecar"]);
+
+  return {
+    updatedAt: root["updatedAt"],
+    detail: IBKR_LINE_USAGE_COMPACT_DETAIL,
+    admission: {
+      ...pickJsonRecord(admission, [
+        "schemaVersion",
+        "generatedAt",
+        "budget",
+        "pressure",
+        "activeLineCount",
+        "reserveLineCount",
+        "usableRemainingLineCount",
+        "activeEquityLineCount",
+        "routineEquityLineCount",
+        "optionSupportEquityLineCount",
+        "manualDepthEquityLineCount",
+        "activeOptionLineCount",
+        "automationExecutionLineCount",
+        "automationExecutionRemainingLineCount",
+        "executionLineCount",
+        "automationLineCount",
+        "automationRemainingLineCount",
+        "accountMonitorLineCount",
+        "accountMonitorRemainingLineCount",
+        "accountMonitor",
+        "visibleLineCount",
+        "visibleRemainingLineCount",
+        "flowScannerLineCount",
+        "flowScannerChargedLineCount",
+        "flowScannerSharedLineCount",
+        "flowScannerActivity",
+        "flowScannerRemainingLineCount",
+        "poolUsage",
+        "leaseCount",
+        "intentUsage",
+        "counters",
+        "signalOptions",
+        "shadowAccount",
+      ]),
+      optionsFlowScanner: compactOptionsFlowScanner(
+        admission["optionsFlowScanner"],
+      ),
+    },
+    historicalWork: {
+      admission: historicalWork["admission"] ?? null,
+      bridge: historicalWork["bridge"] ?? null,
+    },
+    policy: root["policy"],
+    allocation: root["allocation"],
+    lineUtilizationAudit: pickJsonRecord(root["lineUtilizationAudit"], [
+      "status",
+      "warnings",
+      "bridgeActiveLineCount",
+      "bridgeLineBudget",
+      "apiActiveLineCount",
+      "usableLineCount",
+      "usableRemainingLineCount",
+    ]),
+    bridge: {
+      activeLineCount: bridge["activeLineCount"],
+      lineBudget: bridge["lineBudget"],
+      remainingLineCount: bridge["remainingLineCount"],
+      error: bridge["error"],
+      diagnostics: {
+        connected: bridgeDiagnostics["connected"],
+        pressure: bridgeDiagnostics["pressure"],
+        subscriptions: pickJsonRecord(bridgeDiagnostics["subscriptions"], [
+          "activeQuoteSubscriptions",
+          "marketDataLineBudget",
+          "marketDataLineBudgetRemaining",
+          "activeEquitySubscriptions",
+          "activeOptionSubscriptions",
+          "prewarmSymbolCount",
+        ]),
+      },
+    },
+    governor: root["governor"],
+    governorConfig: root["governorConfig"],
+    streams: {
+      quoteStreams: compactStreamDiagnostics(streams["quoteStreams"]),
+      optionQuoteStreams: compactStreamDiagnostics(streams["optionQuoteStreams"]),
+      stockAggregates: compactStreamDiagnostics(streams["stockAggregates"]),
+    },
+    warmup: root["warmup"],
+    accountMonitor: root["accountMonitor"],
+    signalOptions: root["signalOptions"],
+    shadowAccount: root["shadowAccount"],
+    drift: {
+      admissionVsBridgeLineDelta: drift["admissionVsBridgeLineDelta"],
+      reconciliation: {
+        ...pickJsonRecord(driftReconciliation, [
+          "status",
+          "apiLineCount",
+          "totalApiLineCount",
+          "snapshotOnlyApiLineCount",
+          "bridgeLineCount",
+          "matchedLineCount",
+          "apiOnlyLineCount",
+          "bridgeOnlyLineCount",
+          "snapshotOnlyApiLineSample",
+          "apiOnlyLineSample",
+          "bridgeOnlyLineSample",
+          "snapshotOnlyApiGroups",
+          "apiOnlyGroups",
+          "bridgeOnlyGroups",
+          "persistentBridgeOnlyGraceMs",
+          "persistentBridgeOnlyLineCount",
+          "persistentBridgeOnlyLineSample",
+          "persistentApiOnlyGraceMs",
+          "persistentApiOnlyLineCount",
+          "persistentApiOnlyLineSample",
+        ]),
+      },
+    },
+    marketDataWorkPlan: {
+      summary: marketDataWorkPlan["summary"],
+      bridge: marketDataWorkPlan["bridge"],
+      scanner: marketDataWorkPlan["scanner"],
+      totals: marketDataWorkPlan["totals"],
+    },
+    sidecar: pickJsonRecord(sidecar, [
+      "diagnosticsOnly",
+      "routingEnabled",
+      "applyEnabled",
+      "applyTarget",
+      "applyError",
+      "applyPending",
+      "applyGenerationId",
+      "applyStartedAt",
+      "applyCompletedAt",
+      "comparison",
+    ]),
+  };
+}
+
+function readIbkrLineUsageDetail(req: Request): "compact" | "full" {
+  const value = String(
+    req.query["detail"] ?? req.query["view"] ?? req.query["mode"] ?? "",
+  )
+    .trim()
+    .toLowerCase();
+  return value === IBKR_LINE_USAGE_FULL_DETAIL ||
+    req.query["full"] === "true"
+    ? IBKR_LINE_USAGE_FULL_DETAIL
+    : IBKR_LINE_USAGE_COMPACT_DETAIL;
+}
+
+function formatIbkrLineUsageRouteSnapshot(
+  snapshot: IbkrLineUsageRouteSnapshot,
+  detail: "compact" | "full",
+): IbkrLineUsageRouteSnapshot | JsonRecord {
+  return detail === IBKR_LINE_USAGE_FULL_DETAIL
+    ? snapshot
+    : compactLineUsageSnapshot(snapshot);
+}
 
 async function getCachedIbkrLineUsageSnapshot(): Promise<IbkrLineUsageRouteSnapshot> {
   const now = Date.now();
@@ -85,8 +392,13 @@ router.put("/settings/ibkr-lanes", async (req, res) => {
   res.json(await updateIbkrLaneArchitecture(req.body ?? {}));
 });
 
-router.get("/settings/ibkr-line-usage", async (_req, res) => {
-  res.json(await getCachedIbkrLineUsageSnapshot());
+router.get("/settings/ibkr-line-usage", async (req, res) => {
+  res.json(
+    formatIbkrLineUsageRouteSnapshot(
+      await getCachedIbkrLineUsageSnapshot(),
+      readIbkrLineUsageDetail(req),
+    ),
+  );
 });
 
 function writeSseEvent(res: Response, event: string, data: unknown): void {
@@ -104,13 +416,21 @@ async function startIbkrLineUsageSse(req: Request, res: Response): Promise<void>
 
   let closed = false;
   let writeInFlight = false;
+  const detail = readIbkrLineUsageDetail(req);
   const writeSnapshot = async () => {
     if (closed || writeInFlight) {
       return;
     }
     writeInFlight = true;
     try {
-      writeSseEvent(res, "ibkr-line-usage", await getCachedIbkrLineUsageSnapshot());
+      writeSseEvent(
+        res,
+        "ibkr-line-usage",
+        formatIbkrLineUsageRouteSnapshot(
+          await getCachedIbkrLineUsageSnapshot(),
+          detail,
+        ),
+      );
     } catch (error) {
       writeSseEvent(res, "error", {
         message:

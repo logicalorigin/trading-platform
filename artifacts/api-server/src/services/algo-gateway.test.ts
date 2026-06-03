@@ -65,6 +65,23 @@ test("algo Gateway readiness accepts the live-data configured state", () => {
   assert.equal(readiness.reason, null);
 });
 
+test("algo Gateway readiness accepts live stream proof while health is refreshing", () => {
+  const readiness = resolveAlgoGatewayReadiness({
+    configured: true,
+    healthFresh: false,
+    connected: true,
+    authenticated: true,
+    accountsLoaded: true,
+    configuredLiveMarketDataMode: true,
+    streamFresh: true,
+    streamState: "live",
+    strictReady: true,
+  });
+
+  assert.equal(readiness.ready, true);
+  assert.equal(readiness.reason, null);
+});
+
 test("algo Gateway readiness blocks quiet market sessions", () => {
   const readiness = resolveAlgoGatewayReadiness({
     configured: true,

@@ -1,4 +1,4 @@
-type AlgoCockpitChange = {
+export type AlgoCockpitChange = {
   deploymentId?: string | null;
   mode?: "paper" | "live" | null;
   reason: string;

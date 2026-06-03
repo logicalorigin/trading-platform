@@ -297,6 +297,10 @@ function markShadowAccountDbUnavailable(error: unknown): void {
   });
 }
 
+function clearShadowAccountDbBackoff(): void {
+  shadowAccountDbBackoff.clear();
+}
+
 type WatchlistBacktestStartingBook = {
   totals: ShadowTotals;
   baseMarketValue: number;
@@ -464,6 +468,9 @@ let shadowReadCacheVersion = 0;
 let shadowReadCacheTtlMsForTests: number | null = null;
 let shadowReadCacheStaleTtlMsForTests: number | null = null;
 let shadowReadCacheStaleWaitMsForTests: number | null = null;
+type ShadowReadCacheOptions = {
+  allowStale?: (value: unknown) => boolean;
+};
 const shadowOptionQuoteCache = new Map<
   string,
   {
@@ -513,6 +520,7 @@ function invalidateShadowReadCachesAfterBackgroundMarkRefresh() {
 async function withShadowReadCache<T>(
   key: string,
   factory: () => Promise<T>,
+  options: ShadowReadCacheOptions = {},
 ): Promise<T> {
   const now = Date.now();
   const cached = shadowReadCache.get(key);
@@ -524,11 +532,23 @@ async function withShadowReadCache<T>(
   }
   const inFlight = shadowReadInFlight.get(key);
   if (inFlight) {
-    return resolveShadowReadRequest(inFlight as Promise<T>, cached);
+    return resolveShadowReadRequest(inFlight as Promise<T>, cached, options);
   }
   const version = shadowReadCacheVersion;
   const request = factory()
     .then((value) => {
+      const serveCachedValue =
+        cached &&
+        cached.staleExpiresAt > Date.now() &&
+        options.allowStale &&
+        options.allowStale(cached.value) &&
+        !options.allowStale(value);
+      if (serveCachedValue) {
+        return markShadowReadValueStale(cached.value as T, {
+          cachedAt: cached.cachedAt,
+          now: Date.now(),
+        });
+      }
       if (version === shadowReadCacheVersion) {
         const cachedAt = Date.now();
         shadowReadCache.set(key, {
@@ -549,7 +569,7 @@ async function withShadowReadCache<T>(
   request.catch((error) => {
     logger.debug({ err: error, key }, "Shadow account cached read failed");
   });
-  return resolveShadowReadRequest(request, cached);
+  return resolveShadowReadRequest(request, cached, options);
 }
 
 function shadowReadCacheTtlMs(): number {
@@ -606,9 +626,13 @@ async function resolveShadowReadRequest<T>(
         value: unknown;
       }
     | undefined,
+  options: ShadowReadCacheOptions = {},
 ): Promise<T> {
   const now = Date.now();
   if (!cached || cached.staleExpiresAt <= now) {
+    return request;
+  }
+  if (options.allowStale && !options.allowStale(cached.value)) {
     return request;
   }
 
@@ -626,6 +650,17 @@ async function resolveShadowReadRequest<T>(
       timeout.unref?.();
     }),
   ]);
+}
+
+function shadowReadCacheValueHasRows(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (!value || typeof value !== "object") {
+    return true;
+  }
+  const positions = (value as { positions?: unknown }).positions;
+  return Array.isArray(positions) ? positions.length > 0 : true;
 }
 
 function trackShadowFreshStateRefresh(
@@ -2325,6 +2360,7 @@ async function readOpenShadowPositionsForSourceCached(
   return withShadowReadCache(
     `open-positions:${shadowSourceCacheKey(source)}`,
     () => readOpenShadowPositionsForSource(source),
+    { allowStale: shadowReadCacheValueHasRows },
   );
 }
 
@@ -3054,6 +3090,52 @@ async function fetchShadowOptionUnderlyingMarkets(
   const payload = await getBoundedShadowUnderlyingQuoteSnapshots(
     symbols.join(","),
   );
+
+  const quoteList = Array.isArray(payload.quotes)
+    ? (payload.quotes as Array<Partial<QuoteSnapshot> | Record<string, unknown>>)
+    : [];
+  return new Map(
+    quoteList
+      .map((quote) => {
+        const symbol = normalizeSymbol(
+          String((quote as Record<string, unknown>).symbol ?? ""),
+        ).toUpperCase();
+        return [symbol, quote] as const;
+      })
+      .filter((entry): entry is readonly [string, Partial<QuoteSnapshot> | Record<string, unknown>] =>
+        Boolean(entry[0]),
+      ),
+  );
+}
+
+async function fetchShadowEquityPositionQuotes(
+  positions: ShadowPositionRow[],
+): Promise<Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>> {
+  const symbols = Array.from(
+    new Set(
+      positions
+        .filter(
+          (position) =>
+            position.assetClass === "equity" &&
+            !asOptionContract(position.optionContract),
+        )
+        .map((position) => normalizeSymbol(position.symbol).toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+
+  if (!symbols.length) {
+    return new Map();
+  }
+
+  const payload = await getQuoteSnapshots({
+    symbols: symbols.join(","),
+    allowMassiveFallback: true,
+    admissionOwner: `shadow-equity-position-quotes:${symbols.join(",")}`,
+    admissionIntent: "visible-live",
+    admissionFallbackProvider: "massive",
+    ttlMs: 15_000,
+  }).catch(() => ({ quotes: [] }));
 
   const quoteList = Array.isArray(payload.quotes)
     ? (payload.quotes as Array<Partial<QuoteSnapshot> | Record<string, unknown>>)
@@ -4816,16 +4898,16 @@ async function fetchShadowOptionDayChangeQuotes(
           if (options.requiresGreeks) {
             rememberShadowOptionGreekQuote(providerContractId, quote);
           }
-          (aliasesByProviderContractId.get(providerContractId) ?? new Set()).forEach(
-            (alias) => {
-              quoteByProviderContractId.set(alias, quote);
-              rememberShadowOptionQuote(alias, quote);
-              if (options.requiresGreeks) {
-                rememberShadowOptionGreekQuote(alias, quote);
-              }
-            },
-          );
-        }
+	          (aliasesByProviderContractId.get(providerContractId) ?? new Set()).forEach(
+	            (alias) => {
+	              quoteByProviderContractId.set(alias, quote);
+	              rememberShadowOptionQuote(alias, quote);
+	              if (options.requiresGreeks) {
+	                rememberShadowOptionGreekQuote(alias, quote);
+	              }
+	            },
+	          );
+	}
       });
     });
   }
@@ -5919,10 +6001,10 @@ export async function getShadowAccountEquityHistory(input: {
         benchmark: input.benchmark,
       });
     }
-    throw error;
-  }
-    },
-  );
+	    throw error;
+	  }
+	    },
+	  );
 }
 
 function buildShadowAccountAllocationResponse(input: {
@@ -6070,9 +6152,7 @@ export async function getShadowAccountPositions(input: {
       }
   try {
   const totals = source ? await computeShadowTotalsForSource(source) : await ensureFreshShadowState(true);
-  if (isShadowAccountDbBackoffActive()) {
-    return buildEmptyShadowAccountPositionsResponse({ totals, degraded: true });
-  }
+  clearShadowAccountDbBackoff();
   const orders = await db
     .select()
     .from(shadowOrdersTable)
@@ -6098,6 +6178,7 @@ export async function getShadowAccountPositions(input: {
       position.assetClass === "option" &&
       Boolean(asOptionContract(position.optionContract)),
   );
+  const equityQuoteBySymbolPromise = fetchShadowEquityPositionQuotes(filtered);
   const [liveOptionQuotes, underlyingMarkets] = hasOptionPositions && includeLiveQuotes
     ? await Promise.all([
         waitForShadowOptionDayChangeQuotes(
@@ -6114,6 +6195,7 @@ export async function getShadowAccountPositions(input: {
         new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>(),
         new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>(),
       ];
+  const equityQuoteBySymbol = await equityQuoteBySymbolPromise;
   const optionQuoteByProviderContractId = new Map([
     ...cachedOptionQuotes,
     ...liveOptionQuotes,
@@ -6130,6 +6212,14 @@ export async function getShadowAccountPositions(input: {
     const quantity = toNumber(position.quantity) ?? 0;
     const averageCost = toNumber(position.averageCost) ?? 0;
     const contract = asOptionContract(position.optionContract);
+    const symbolKey = normalizeSymbol(position.symbol).toUpperCase();
+    const rawEquityQuote = contract
+      ? null
+      : equityQuoteBySymbol.get(symbolKey) ?? null;
+    const equityQuote =
+      shadowQuoteText(rawEquityQuote, "source") === "massive"
+        ? rawEquityQuote
+        : null;
     const underlyingSymbol = normalizeSymbol(
       String(contract?.underlying ?? position.symbol),
     ).toUpperCase();
@@ -6155,10 +6245,11 @@ export async function getShadowAccountPositions(input: {
 	        ? rawOptionQuote
 	        : null;
 	    const pricing = buildShadowOptionPricingPolicy({
-	      quote: liveOptionQuote,
+	      quote: contract ? liveOptionQuote : equityQuote,
 	      fallbackMark: toNumber(position.mark) ?? 0,
 	      fallbackSource: "shadow_ledger",
-	      quoteSource: "option_quote",
+	      quoteSource: contract ? "option_quote" : "massive",
+	      requireTwoSidedQuote: contract ? undefined : false,
 	    });
 	    const mark = pricing.valuationMark ?? toNumber(position.mark) ?? 0;
 	    const sourceOrder = ordersByPositionKey.get(position.positionKey);
@@ -6193,11 +6284,12 @@ export async function getShadowAccountPositions(input: {
 	      Number.isFinite(multiplier)
 	        ? (mark - averageCost) * quantity * multiplier
 	        : toNumber(position.unrealizedPnl) ?? 0;
-	    const quoteDayChange = liveOptionQuote && pricing.valuationEligible
+	    const displayDayChangeQuote = contract ? liveOptionQuote : equityQuote;
+	    const quoteDayChange = displayDayChangeQuote && pricing.valuationEligible
 	      ? buildShadowPositionDayChangeFromQuote({
 	          quantity,
 	          multiplier,
-	          quote: liveOptionQuote,
+	          quote: displayDayChangeQuote,
 	        })
 	      : null;
 	    const storedDayChange = dayChanges.get(position.id) ?? {
@@ -6208,8 +6300,10 @@ export async function getShadowAccountPositions(input: {
 	    const dayStart = shadowPositionDayChangeDayStart(position, observedAt);
 	    const sameDayPosition =
 	      openedAt instanceof Date && openedAt.getTime() >= dayStart.getTime();
+	    const hasFiniteValuationMark =
+	      Number.isFinite(mark) && Number.isFinite(averageCost);
 	    const valuationDayChange =
-	      pricing.valuationEligible && sameDayPosition
+	      sameDayPosition && hasFiniteValuationMark
 	        ? {
 	            dayChange: unrealizedPnl,
 	            dayChangePercent: averageCost
@@ -6232,10 +6326,12 @@ export async function getShadowAccountPositions(input: {
             quote: displayOptionQuote,
           })
         : null;
+    const positionQuoteSnapshot =
+      optionQuoteSnapshot ?? (equityQuote as QuoteSnapshot | null);
     const rawPositionQuote = buildPositionQuoteFromSnapshot(
-      optionQuoteSnapshot,
+      positionQuoteSnapshot,
       mark,
-      optionQuoteSnapshot ? "option_quote" : "shadow_ledger",
+      optionQuoteSnapshot ? "option_quote" : equityQuote ? "massive" : "shadow_ledger",
     );
 	    const positionQuote =
 	      rawPositionQuote &&
@@ -6365,7 +6461,7 @@ export async function getShadowAccountPositions(input: {
 	      netLiquidation: responseNetLiquidation,
 	    },
 	    updatedAt: totals.updatedAt,
-	  };
+      };
   } catch (error) {
     if (isTransientPostgresError(error)) {
       markShadowAccountDbUnavailable(error);
@@ -6377,6 +6473,7 @@ export async function getShadowAccountPositions(input: {
     throw error;
   }
     },
+    { allowStale: shadowReadCacheValueHasRows },
   );
 }
 
@@ -7563,7 +7660,8 @@ export async function getShadowAccountOrders(input: {
     }
     throw error;
   }
-  });
+  },
+  );
 }
 
 export async function getShadowAccountRisk(input: {
@@ -8216,69 +8314,73 @@ export async function getShadowAccountCashActivity(input: { source?: string | nu
   if (isShadowAccountDbBackoffActive()) {
     return buildFallback();
   }
-  try {
-  const account = await ensureShadowAccount();
-  const rawFills = await db
-    .select()
-    .from(shadowFillsTable)
-    .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID))
-    .orderBy(desc(shadowFillsTable.occurredAt))
-    .limit(200);
-  const ordersById = await readShadowOrdersByFillOrderId(rawFills);
-  const fills = source
-    ? rawFills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
-    : rawFills.filter((fill) =>
-        isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
-      );
-  const feesYtd = fills.reduce((sum, fill) => sum + Math.abs(toNumber(fill.fees) ?? 0), 0);
-  const totals = source ? await computeShadowTotalsForSource(source) : await computeShadowTotals();
-  return {
-    accountId: SHADOW_ACCOUNT_ID,
-    currency: SHADOW_CURRENCY,
-    settledCash: totals.cash,
-    unsettledCash: 0,
-    totalCash: totals.cash,
-    dividendsMonth: 0,
-    dividendsYtd: 0,
-    interestPaidEarnedYtd: 0,
-    feesYtd,
-    activities: [
-      {
-        id: "shadow-initial-deposit",
+  return withShadowReadCache(`cash-activity:${shadowSourceCacheKey(source)}`, async () => {
+    try {
+      const account = await ensureShadowAccount();
+      const rawFills = await db
+        .select()
+        .from(shadowFillsTable)
+        .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID))
+        .orderBy(desc(shadowFillsTable.occurredAt))
+        .limit(200);
+      const ordersById = await readShadowOrdersByFillOrderId(rawFills);
+      const fills = source
+        ? rawFills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
+        : rawFills.filter((fill) =>
+            isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
+          );
+      const feesYtd = fills.reduce((sum, fill) => sum + Math.abs(toNumber(fill.fees) ?? 0), 0);
+      const totals = source
+        ? await computeShadowTotalsForSource(source)
+        : await computeShadowTotals();
+      return {
         accountId: SHADOW_ACCOUNT_ID,
-        date: account.createdAt,
-        type: "Deposit",
-        description: "Shadow account starting balance",
-        amount: SHADOW_STARTING_BALANCE,
         currency: SHADOW_CURRENCY,
-        source: "SHADOW_LEDGER",
-      },
-      ...fills.map((fill) => {
-        const metadata = shadowSourceMetadata(ordersById.get(fill.orderId));
-        return {
-          id: fill.id,
-          accountId: SHADOW_ACCOUNT_ID,
-          date: fill.occurredAt,
-          type: "Trade",
-          description: `${fill.side.toUpperCase()} ${toNumber(fill.quantity) ?? 0} ${fill.symbol}`,
-          amount: toNumber(fill.cashDelta) ?? 0,
-          currency: SHADOW_CURRENCY,
-          source: metadata.strategyLabel || "SHADOW_LEDGER",
-          sourceType: metadata.sourceType,
-          strategyLabel: metadata.strategyLabel,
-        };
-      }),
-    ],
-    dividends: [],
-    updatedAt: new Date(),
-  };
-  } catch (error) {
-    if (isTransientPostgresError(error)) {
-      markShadowAccountDbUnavailable(error);
-      return buildFallback();
+        settledCash: totals.cash,
+        unsettledCash: 0,
+        totalCash: totals.cash,
+        dividendsMonth: 0,
+        dividendsYtd: 0,
+        interestPaidEarnedYtd: 0,
+        feesYtd,
+        activities: [
+          {
+            id: "shadow-initial-deposit",
+            accountId: SHADOW_ACCOUNT_ID,
+            date: account.createdAt,
+            type: "Deposit",
+            description: "Shadow account starting balance",
+            amount: SHADOW_STARTING_BALANCE,
+            currency: SHADOW_CURRENCY,
+            source: "SHADOW_LEDGER",
+          },
+          ...fills.map((fill) => {
+            const metadata = shadowSourceMetadata(ordersById.get(fill.orderId));
+            return {
+              id: fill.id,
+              accountId: SHADOW_ACCOUNT_ID,
+              date: fill.occurredAt,
+              type: "Trade",
+              description: `${fill.side.toUpperCase()} ${toNumber(fill.quantity) ?? 0} ${fill.symbol}`,
+              amount: toNumber(fill.cashDelta) ?? 0,
+              currency: SHADOW_CURRENCY,
+              source: metadata.strategyLabel || "SHADOW_LEDGER",
+              sourceType: metadata.sourceType,
+              strategyLabel: metadata.strategyLabel,
+            };
+          }),
+        ],
+        dividends: [],
+        updatedAt: new Date(),
+      };
+    } catch (error) {
+      if (isTransientPostgresError(error)) {
+        markShadowAccountDbUnavailable(error);
+        return buildFallback();
+      }
+      throw error;
     }
-    throw error;
-  }
+  });
 }
 
 function timeZoneParts(date: Date, timeZone = WATCHLIST_BACKTEST_TIME_ZONE) {

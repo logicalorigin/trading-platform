@@ -30,6 +30,8 @@ const signalOptionsWorkerStateModule = await import("./signal-options-worker-sta
 const storageHealthModule = await import("./storage-health");
 const {
   collectDiagnosticSnapshot,
+  __resetDiagnosticThresholdOverridesCacheForTests,
+  __setDiagnosticThresholdOverrideRowsLoaderForTests,
   exportDiagnostics,
   getDiagnosticThresholds,
   listDiagnosticHistory,
@@ -164,6 +166,200 @@ test("diagnostics do not page on low-sample startup latency", async () => {
   assert.equal(api?.metrics.latencyAlertMinSamples, 20);
 });
 
+test("diagnostics degrade but do not mark latency-only API pressure critical", async () => {
+  for (let index = 0; index < 20; index += 1) {
+    recordApiRequest({
+      method: "GET",
+      path: "/api/algo/events",
+      statusCode: 200,
+      durationMs: 5_200,
+    });
+  }
+
+  const collected = await collectDiagnosticSnapshot({
+    runtime: {
+      api: {
+        uptimeMs: 30_000,
+        memoryMb: {
+          heapUsed: 128,
+          heapTotal: 256,
+          rss: 512,
+          external: 16,
+        },
+      },
+      ibkr: {
+        configured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        competing: false,
+        accountCount: 1,
+        lastTickleAt: new Date().toISOString(),
+        liveMarketDataAvailable: true,
+      },
+    },
+    probes: {
+      accounts: { ok: true, count: 1 },
+      positions: { ok: true, count: 2 },
+      orders: { ok: true, count: 3 },
+    },
+  });
+
+  const api = collected.snapshots.find((snapshot) => snapshot.subsystem === "api");
+
+  assert.equal(api?.metrics.p95LatencyMs, 5_200);
+  assert.equal(api?.metrics.p95_latency_ms, 5_200);
+  assert.equal(api?.status, "degraded");
+  assert.equal(api?.severity, "warning");
+  assert.equal(collected.status, "degraded");
+  assert.equal(collected.severity, "warning");
+});
+
+test("diagnostics do not use raw heap megabytes as a pressure severity driver", async () => {
+  const collected = await collectDiagnosticSnapshot({
+    runtime: {
+      api: {
+        uptimeMs: 30_000,
+        memoryMb: {
+          heapUsed: 1_500,
+          heapTotal: 1_800,
+          rss: 1_900,
+          external: 16,
+        },
+      },
+      ibkr: {
+        configured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        competing: false,
+        accountCount: 1,
+        lastTickleAt: new Date().toISOString(),
+        liveMarketDataAvailable: true,
+      },
+    },
+    probes: {
+      accounts: { ok: true, count: 1 },
+      positions: { ok: true, count: 2 },
+      orders: { ok: true, count: 3 },
+    },
+  });
+
+  const api = collected.snapshots.find((snapshot) => snapshot.subsystem === "api");
+  const heapThresholdEvent = collected.events.find(
+    (event) => event.code === "api.heap_used_mb",
+  );
+
+  assert.equal(api?.metrics.heapUsedMb, 1_500);
+  assert.equal(api?.severity, "info");
+  assert.equal(heapThresholdEvent, undefined);
+});
+
+test("diagnostics keep active scans past the stale window warning until timeout", async () => {
+  const nowMs = Date.now();
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: true,
+    deploymentCount: 1,
+    activeDeploymentCount: 1,
+    maintenance: emptyWorkerMaintenanceSnapshot(),
+    deployments: [
+      {
+        deploymentId: "deployment-1",
+        lastCheckedAtMs: nowMs - 360_000,
+        failedUntilMs: 0,
+        lastSuccessAt: new Date(nowMs - 360_000).toISOString(),
+        lastError: null,
+        currentScanStartedAt: new Date(nowMs - 360_000).toISOString(),
+        currentScanAgeMs: 360_000,
+        lastScanDurationMs: 12_000,
+        timedOut: false,
+        unsettledAfterTimeout: false,
+        lastScanOutcome: "scan_running",
+        scanCount: 4,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 8,
+        lastFreshSignalCount: 8,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: new Date(nowMs - 360_000).toISOString(),
+        lastOldestSignalBarAt: new Date(nowMs - 360_000).toISOString(),
+        lastCandidateCount: 0,
+        lastBlockedCandidateCount: 0,
+      },
+    ],
+  }));
+
+  const collected = await collectDiagnosticSnapshot(healthyDiagnosticInput());
+  const automation = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "automation",
+  );
+  const longScanEvent = collected.events.find(
+    (event) => event.code === "signal_options_scan_long_running",
+  );
+  const staleEvent = collected.events.find(
+    (event) => event.code === "signal_options_scan_stale",
+  );
+
+  assert.equal(automation?.status, "degraded");
+  assert.equal(automation?.severity, "warning");
+  assert.equal(automation?.metrics.activeLongScanCount, 1);
+  assert.equal(automation?.metrics.timedOutDeploymentCount, 0);
+  assert.equal(longScanEvent?.severity, "warning");
+  assert.equal(staleEvent, undefined);
+});
+
+test("diagnostics mark timed-out active scans critical", async () => {
+  const nowMs = Date.now();
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: true,
+    deploymentCount: 1,
+    activeDeploymentCount: 1,
+    maintenance: emptyWorkerMaintenanceSnapshot(),
+    deployments: [
+      {
+        deploymentId: "deployment-1",
+        lastCheckedAtMs: nowMs - 360_000,
+        failedUntilMs: 0,
+        lastSuccessAt: new Date(nowMs - 360_000).toISOString(),
+        lastError: null,
+        currentScanStartedAt: new Date(nowMs - 360_000).toISOString(),
+        currentScanAgeMs: 360_000,
+        lastScanDurationMs: 12_000,
+        timedOut: true,
+        timeoutReason: "scan_timeout",
+        unsettledAfterTimeout: true,
+        lastScanOutcome: "timed_out_unsettled",
+        scanCount: 4,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 8,
+        lastFreshSignalCount: 8,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: new Date(nowMs - 360_000).toISOString(),
+        lastOldestSignalBarAt: new Date(nowMs - 360_000).toISOString(),
+        lastCandidateCount: 0,
+        lastBlockedCandidateCount: 0,
+      },
+    ],
+  }));
+
+  const collected = await collectDiagnosticSnapshot(healthyDiagnosticInput());
+  const automation = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "automation",
+  );
+
+  assert.equal(automation?.status, "down");
+  assert.equal(automation?.severity, "critical");
+  assert.equal(automation?.metrics.timedOutDeploymentCount, 1);
+  assert.equal(automation?.metrics.unsettledAfterTimeoutCount, 1);
+});
+
 test("diagnostics collect API latency and runtime snapshots without broker mutations", async () => {
   recordApiRequest({
     method: "GET",
@@ -235,6 +431,191 @@ test("diagnostics collect API latency and runtime snapshots without broker mutat
   assert.equal(typeof runtime?.metrics.recorderDir, "string");
   assert.equal(storage?.status, "ok");
   assert.equal(storage?.metrics.status, "ok");
+});
+
+test("diagnostics exclude long-lived streams from API latency pressure", async () => {
+  recordApiRequest({
+    method: "GET",
+    path: "/api/example",
+    statusCode: 200,
+    durationMs: 42,
+  });
+  recordApiRequest({
+    method: "GET",
+    path: "/streams/accounts/shadow",
+    statusCode: 500,
+    durationMs: 109_540,
+  });
+
+  const collected = await collectDiagnosticSnapshot(healthyDiagnosticInput());
+  const api = collected.snapshots.find((snapshot) => snapshot.subsystem === "api");
+  const resourcePressure = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "resource-pressure",
+  );
+  const dominantDrivers = Array.isArray(
+    resourcePressure?.metrics.dominantDrivers,
+  )
+    ? resourcePressure?.metrics.dominantDrivers
+    : [];
+
+  assert.equal(api?.metrics.requestCount5m, 2);
+  assert.equal(api?.metrics.latencySampleCount5m, 1);
+  assert.equal(api?.metrics.longLivedRequestCount5m, 1);
+  assert.equal(api?.metrics.rawP95LatencyMs, 42);
+  assert.equal(api?.metrics.slowRouteCount5m, 0);
+  assert.equal(api?.metrics.dominantSlowRoute, null);
+  assert.equal(api?.metrics.dominantSlowRouteP95Ms, null);
+  assert.equal(
+    Array.isArray(api?.metrics.errorRoutes) &&
+      api.metrics.errorRoutes.some(
+        (route) =>
+          route.path === "/streams/accounts/shadow" &&
+          route.errorCount5m === 1,
+      ),
+    true,
+  );
+  assert.equal(api?.metrics.dominantErrorRoute, "/streams/accounts/shadow");
+  assert.equal(resourcePressure?.metrics.pressureLevel, "normal");
+  assert.equal(resourcePressure?.metrics.apiPressureLevel, "normal");
+  assert.equal(
+    dominantDrivers.some((driver) => driver?.kind === "api-latency"),
+    false,
+  );
+});
+
+test("diagnostics do not let one route outlier drive API resource pressure", async () => {
+  for (let index = 0; index < 40; index += 1) {
+    recordApiRequest({
+      method: "GET",
+      path: "/api/fast",
+      statusCode: 200,
+      durationMs: 42,
+    });
+  }
+  for (let index = 0; index < 6; index += 1) {
+    recordApiRequest({
+      method: "GET",
+      path: "/algo/deployments",
+      statusCode: 200,
+      durationMs: 50,
+    });
+  }
+  recordApiRequest({
+    method: "GET",
+    path: "/algo/deployments",
+    statusCode: 200,
+    durationMs: 20_730,
+  });
+
+  const collected = await collectDiagnosticSnapshot(healthyDiagnosticInput());
+  const api = collected.snapshots.find((snapshot) => snapshot.subsystem === "api");
+  const resourcePressure = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "resource-pressure",
+  );
+  const dominantDrivers = Array.isArray(
+    resourcePressure?.metrics.dominantDrivers,
+  )
+    ? resourcePressure?.metrics.dominantDrivers
+    : [];
+
+  assert.equal(api?.metrics.rawP95LatencyMs, 50);
+  assert.equal(api?.metrics.dominantSlowRoute, "/algo/deployments");
+  assert.equal(api?.metrics.dominantSlowRouteP95Ms, 20_730);
+  assert.equal(api?.metrics.dominantSlowRoutePressureP95Ms, null);
+  assert.equal(resourcePressure?.metrics.pressureLevel, "normal");
+  assert.equal(resourcePressure?.metrics.apiPressureLevel, "normal");
+  assert.equal(
+    dominantDrivers.some((driver) => driver?.kind === "api-latency"),
+    false,
+  );
+});
+
+test("diagnostics keep sustained slow route pressure high", async () => {
+  for (let index = 0; index < 100; index += 1) {
+    recordApiRequest({
+      method: "GET",
+      path: "/api/fast",
+      statusCode: 200,
+      durationMs: 42,
+    });
+  }
+  for (let index = 0; index < 4; index += 1) {
+    recordApiRequest({
+      method: "GET",
+      path: "/accounts/shadow/cash-activity",
+      statusCode: 200,
+      durationMs: 50,
+    });
+  }
+  for (let index = 0; index < 3; index += 1) {
+    recordApiRequest({
+      method: "GET",
+      path: "/accounts/shadow/cash-activity",
+      statusCode: 200,
+      durationMs: 13_869,
+    });
+  }
+
+  const collected = await collectDiagnosticSnapshot(healthyDiagnosticInput());
+  const api = collected.snapshots.find((snapshot) => snapshot.subsystem === "api");
+  const resourcePressure = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "resource-pressure",
+  );
+  const dominantDrivers = Array.isArray(
+    resourcePressure?.metrics.dominantDrivers,
+  )
+    ? resourcePressure?.metrics.dominantDrivers
+    : [];
+
+  assert.equal(api?.metrics.rawP95LatencyMs, 50);
+  assert.equal(api?.metrics.dominantSlowRoute, "/accounts/shadow/cash-activity");
+  assert.equal(api?.metrics.dominantSlowRouteP95Ms, 13_869);
+  assert.equal(api?.metrics.dominantSlowRoutePressureP95Ms, 13_869);
+  assert.equal(api?.metrics.dominantSlowRoutePressureSlowCount5m, 3);
+  assert.equal(resourcePressure?.metrics.apiPressureLevel, "high");
+  assert.equal(
+    dominantDrivers.some((driver) => driver?.kind === "api-latency"),
+    true,
+  );
+});
+
+test("diagnostics do not let decorative routes drive API resource pressure", async () => {
+  for (let index = 0; index < 80; index += 1) {
+    recordApiRequest({
+      method: "GET",
+      path: "/api/fast",
+      statusCode: 200,
+      durationMs: 42,
+    });
+  }
+  for (let index = 0; index < 3; index += 1) {
+    recordApiRequest({
+      method: "GET",
+      path: "/universe/logos",
+      statusCode: 200,
+      durationMs: 28_665,
+    });
+  }
+
+  const collected = await collectDiagnosticSnapshot(healthyDiagnosticInput());
+  const api = collected.snapshots.find((snapshot) => snapshot.subsystem === "api");
+  const resourcePressure = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "resource-pressure",
+  );
+  const dominantDrivers = Array.isArray(
+    resourcePressure?.metrics.dominantDrivers,
+  )
+    ? resourcePressure?.metrics.dominantDrivers
+    : [];
+
+  assert.equal(api?.metrics.dominantSlowRoute, "/universe/logos");
+  assert.equal(api?.metrics.dominantSlowRouteP95Ms, 28_665);
+  assert.equal(api?.metrics.dominantSlowRoutePressureP95Ms, null);
+  assert.equal(resourcePressure?.metrics.apiPressureLevel, "normal");
+  assert.equal(
+    dominantDrivers.some((driver) => driver?.kind === "api-latency"),
+    false,
+  );
 });
 
 test("diagnostics warn on long-running workspace test processes", async () => {
@@ -914,6 +1295,45 @@ test("diagnostics expose defaults, browser events, and memory-backed history", a
   assert.ok(history.points.length > 0);
 });
 
+test("diagnostic threshold reads reuse short-lived override cache", async () => {
+  let loadCount = 0;
+  const restore = __setDiagnosticThresholdOverrideRowsLoaderForTests(async () => {
+    loadCount += 1;
+    return [
+      {
+        metricKey: "api.p95_latency_ms",
+        warning: 1234,
+        critical: 5678,
+        enabled: false,
+        audible: false,
+      },
+    ];
+  });
+
+  try {
+    const first = await getDiagnosticThresholds();
+    const second = await getDiagnosticThresholds();
+    const firstApiThreshold = first.find(
+      (threshold) => threshold.metricKey === "api.p95_latency_ms",
+    );
+    const secondApiThreshold = second.find(
+      (threshold) => threshold.metricKey === "api.p95_latency_ms",
+    );
+
+    assert.equal(loadCount, 1);
+    assert.equal(firstApiThreshold?.warning, 1234);
+    assert.equal(firstApiThreshold?.critical, 5678);
+    assert.equal(secondApiThreshold?.enabled, false);
+    assert.equal(secondApiThreshold?.audible, false);
+
+    __resetDiagnosticThresholdOverridesCacheForTests();
+    await getDiagnosticThresholds();
+    assert.equal(loadCount, 2);
+  } finally {
+    restore();
+  }
+});
+
 test("diagnostics clamp raw history and export limits under API pressure", async () => {
   updateApiResourcePressure({
     rssMb: resolveApiRssPressureThresholds().critical + 1,
@@ -1507,6 +1927,73 @@ test("diagnostics include resource pressure and browser isolation readiness", as
   assert.equal(collected.footerMemoryPressure?.browserMemoryMb, 256);
   assert.equal(isolation?.metrics.crossOriginIsolated, true);
   assert.equal(isolation?.metrics.memoryApiUsed, true);
+});
+
+test("diagnostics use browser heap limit before classifying browser memory as critical", async () => {
+  await recordClientDiagnosticsMetrics({
+    memory: {
+      source: "performance.memory",
+      confidence: "medium",
+      usedJsHeapSize: 2_600 * 1024 * 1024,
+      jsHeapSizeLimit: 4_096 * 1024 * 1024,
+    },
+    isolation: {
+      crossOriginIsolated: false,
+      memoryApiAvailable: true,
+      memoryApiUsed: false,
+    },
+    workload: { chartScopeCount: 2 },
+  });
+
+  const collected = await collectDiagnosticSnapshot({
+    runtime: {
+      api: {
+        uptimeMs: 10_000,
+        memoryMb: {
+          heapUsed: 128,
+          heapTotal: 256,
+          rss: 512,
+          external: 16,
+          arrayBuffers: 4,
+        },
+        resourceCaches: {
+          bars: { entries: 2, maxEntries: 256, inFlight: 0 },
+        },
+      },
+      ibkr: {
+        configured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        competing: false,
+        lastTickleAt: new Date().toISOString(),
+      },
+    },
+    probes: {
+      accounts: { ok: true, count: 1 },
+      positions: { ok: true, count: 1 },
+      orders: { ok: true, count: 0 },
+    },
+  });
+
+  const resourcePressure = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "resource-pressure",
+  );
+  const browserThresholdEvents = collected.events.filter(
+    (event) => event.code === "resource_pressure.browser_memory_mb",
+  );
+
+  assert.equal(resourcePressure?.status, "degraded");
+  assert.equal(resourcePressure?.severity, "warning");
+  assert.equal(resourcePressure?.metrics.browserMemoryMb, 2600);
+  assert.equal(resourcePressure?.metrics.browserMemoryLimitMb, 4096);
+  assert.equal(resourcePressure?.metrics.browserMemoryLimitPercent, 63.5);
+  assert.equal(collected.footerMemoryPressure?.level, "watch");
+  assert.equal(collected.footerMemoryPressure?.browserMemoryLimitMb, 4096);
+  assert.equal(
+    browserThresholdEvents.some((event) => event.severity === "critical"),
+    false,
+  );
 });
 
 test("diagnostics treat full bounded caches as warning pressure, not outage", async () => {

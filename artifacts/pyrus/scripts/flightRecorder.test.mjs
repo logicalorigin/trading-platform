@@ -10,6 +10,7 @@ import test from "node:test";
 import {
   classifyPreviousRun,
   createFlightRecorder,
+  readReplitRuntimeSnapshot,
 } from "./flightRecorder.mjs";
 
 function previousRun(overrides = {}) {
@@ -59,9 +60,15 @@ test("classifies clean, child-exit, replacement, and pressure restarts", () => {
     }),
     [],
     { bootId: "btime:200" },
+    {
+      dbToken: { issuedAt: "2026-06-03T12:53:31.000Z" },
+      runtimeFiles: { pid1Flags: { mtimeIso: "2026-06-03T12:53:31.000Z" } },
+    },
   );
   assert.equal(replacedUnderPressure.classification, "container-replaced");
   assert.equal(replacedUnderPressure.severity, "critical");
+  assert.match(replacedUnderPressure.evidence.join(" "), /replit-db-token-issued/);
+  assert.match(replacedUnderPressure.evidence.join(" "), /replit-pid1-flags-mtime/);
   assert.deepEqual(replacedUnderPressure.contributingReasons, [
     "suspected-resource-pressure",
   ]);
@@ -120,4 +127,19 @@ test("flight recorder writes sanitized current state and persisted incidents", (
     .map((line) => JSON.parse(line));
   assert.equal(incidents.length, 1);
   assert.equal(incidents[0].classification, "api-child-exit");
+});
+
+test("Replit runtime snapshot records only safe runtime evidence", () => {
+  const snapshot = readReplitRuntimeSnapshot({
+    REPLIT_CLUSTER: "riker",
+    REPLIT_SESSION: "session-123",
+    REPLIT_DB_URL: "https://kv.replit.com/v0/not-a-secret-in-test",
+    REPLIT_AUTH_TOKEN: "secret",
+  });
+
+  assert.equal(snapshot.env.REPLIT_CLUSTER, "riker");
+  assert.equal(snapshot.env.REPLIT_SESSION, "session-123");
+  assert.equal(Object.hasOwn(snapshot.env, "REPLIT_AUTH_TOKEN"), false);
+  assert.equal(snapshot.dbToken, null);
+  assert.equal(typeof snapshot.runtimeFiles, "object");
 });

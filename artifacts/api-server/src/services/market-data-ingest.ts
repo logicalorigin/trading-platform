@@ -42,6 +42,11 @@ export type LatestGexSnapshot = {
   stale: boolean;
 };
 
+export type LatestChartGexSnapshotOptions = {
+  maxExpirations: number;
+  strikesAroundMoney: number;
+};
+
 export type BlockedGexJobDiagnostic = {
   symbol: string;
   dedupeBucket: string;
@@ -278,6 +283,339 @@ function isGexResponsePayload(payload: unknown): payload is GexResponse {
       Array.isArray((payload as { options?: unknown }).options) &&
       Array.isArray((payload as { snapshots?: unknown }).snapshots),
   );
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function numberOrFallback(value: unknown, fallback: number): number {
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function stringOrFallback(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function parseGexSourceStatus(value: unknown): GexResponse["source"]["status"] {
+  return value === "ok" || value === "partial" || value === "unavailable"
+    ? value
+    : "partial";
+}
+
+function parseGexProvider(value: unknown): GexResponse["source"]["provider"] {
+  return value === "ibkr" ? "ibkr" : "massive";
+}
+
+function parseExpirationCoverage(
+  value: unknown,
+): GexResponse["source"]["expirationCoverage"] {
+  const record = asRecord(value);
+  return {
+    requestedCount: numberOrFallback(record?.["requestedCount"], 0),
+    returnedCount: numberOrFallback(record?.["returnedCount"], 0),
+    loadedCount: numberOrFallback(record?.["loadedCount"], 0),
+    failedCount: numberOrFallback(record?.["failedCount"], 0),
+    complete: record?.["complete"] === true,
+    capped: record?.["capped"] === true,
+  };
+}
+
+function parseConfidenceCounts(
+  value: unknown,
+): GexResponse["source"]["flowClassificationConfidenceCounts"] {
+  const record = asRecord(value);
+  return {
+    high: numberOrFallback(record?.["high"], 0),
+    medium: numberOrFallback(record?.["medium"], 0),
+    low: numberOrFallback(record?.["low"], 0),
+    none: numberOrFallback(record?.["none"], 0),
+  };
+}
+
+function parseBasisCounts(
+  value: unknown,
+): GexResponse["source"]["flowClassificationBasisCounts"] {
+  const record = asRecord(value);
+  return {
+    quoteMatch: numberOrFallback(record?.["quoteMatch"], 0),
+    tickTest: numberOrFallback(record?.["tickTest"], 0),
+    none: numberOrFallback(record?.["none"], 0),
+  };
+}
+
+function compactGexSnapshotPayload(input: {
+  symbol: string;
+  computedAt: Date;
+  ticker: unknown;
+  spot: unknown;
+  timestamp: unknown;
+  netGex: unknown;
+  options: unknown;
+  source: unknown;
+  flowContext: unknown;
+  flowContextStatus: unknown;
+}): GexResponse | null {
+  const spot = numberOrFallback(input.spot, 0);
+  const options = Array.isArray(input.options)
+    ? (input.options as GexResponse["options"])
+    : [];
+  if (spot <= 0 || options.length === 0) {
+    return null;
+  }
+
+  const source = asRecord(input.source);
+  const ticker = stringOrFallback(input.ticker, input.symbol);
+  const timestamp = stringOrFallback(
+    input.timestamp,
+    input.computedAt.toISOString(),
+  );
+  const flowContext = asRecord(input.flowContext);
+  const flowStatus =
+    source?.["flowStatus"] === "ok" ? "ok" : ("unavailable" as const);
+
+  return {
+    ticker,
+    tickerDetails: {
+      ticker,
+      name: ticker,
+      sector: "",
+      industry: "",
+      marketCap: null,
+      exchangeShortName: "",
+      country: "",
+      isEtf: false,
+      isFund: false,
+    },
+    profile: {
+      price: spot,
+      dayLow: spot,
+      dayHigh: spot,
+      yearLow: null,
+      yearHigh: null,
+      mktCap: null,
+    },
+    spot,
+    timestamp,
+    isStale: false,
+    options,
+    snapshots: [
+      {
+        ts: timestamp,
+        netGex: numberOrFallback(input.netGex, 0),
+      },
+    ],
+    flowContext: flowContext
+      ? {
+          bullishShare: numberOrFallback(flowContext["bullishShare"], 0),
+          todayVol: numberOrFallback(flowContext["todayVol"], 0),
+          avg30dVol:
+            flowContext["avg30dVol"] == null
+              ? null
+              : numberOrFallback(flowContext["avg30dVol"], 0),
+          netDelta: numberOrFallback(flowContext["netDelta"], 0),
+          refDelta: numberOrFallback(flowContext["refDelta"], 0),
+          eventCount: numberOrFallback(flowContext["eventCount"], 0),
+          volumeBaselineReady: flowContext["volumeBaselineReady"] === true,
+        }
+      : null,
+    flowContextStatus: input.flowContextStatus === "ok" ? "ok" : "unavailable",
+    source: {
+      provider: parseGexProvider(source?.["provider"]),
+      status: parseGexSourceStatus(source?.["status"]),
+      expirationCoverage: parseExpirationCoverage(
+        source?.["expirationCoverage"],
+      ),
+      optionCount: numberOrFallback(source?.["optionCount"], options.length),
+      usableOptionCount: numberOrFallback(
+        source?.["usableOptionCount"],
+        options.length,
+      ),
+      withGamma: numberOrFallback(source?.["withGamma"], options.length),
+      withOpenInterest: numberOrFallback(
+        source?.["withOpenInterest"],
+        options.length,
+      ),
+      withImpliedVolatility: numberOrFallback(
+        source?.["withImpliedVolatility"],
+        options.length,
+      ),
+      quoteUpdatedAt:
+        typeof source?.["quoteUpdatedAt"] === "string"
+          ? source["quoteUpdatedAt"]
+          : null,
+      chainUpdatedAt:
+        typeof source?.["chainUpdatedAt"] === "string"
+          ? source["chainUpdatedAt"]
+          : null,
+      flowStatus,
+      flowEventCount: numberOrFallback(source?.["flowEventCount"], 0),
+      classifiedFlowEventCount: numberOrFallback(
+        source?.["classifiedFlowEventCount"],
+        0,
+      ),
+      flowClassificationCoverage: numberOrFallback(
+        source?.["flowClassificationCoverage"],
+        0,
+      ),
+      flowClassificationBasisCounts: parseBasisCounts(
+        source?.["flowClassificationBasisCounts"],
+      ),
+      flowClassificationConfidenceCounts: parseConfidenceCounts(
+        source?.["flowClassificationConfidenceCounts"],
+      ),
+      message:
+        typeof source?.["message"] === "string" ? source["message"] : null,
+    },
+  };
+}
+
+export async function getLatestChartGexSnapshot(
+  symbolInput: string,
+  maxAgeMs: number,
+  options: LatestChartGexSnapshotOptions,
+): Promise<LatestGexSnapshot | null> {
+  const symbol = normalizeSymbol(symbolInput);
+  if (!symbol) {
+    return null;
+  }
+  const dbModule = await loadDbModule();
+  if (!dbModule) {
+    return null;
+  }
+
+  const maxExpirations = Math.max(1, Math.floor(options.maxExpirations));
+  const strikesPerExpiration =
+    Math.max(1, Math.floor(options.strikesAroundMoney)) * 2 + 1;
+  const { pool } = dbModule;
+  try {
+    const result = await pool.query<{
+      computed_at: Date;
+      ticker: string | null;
+      spot: number | string | null;
+      timestamp: string | null;
+      net_gex: number | string | null;
+      source: unknown;
+      flow_context: unknown;
+      flow_context_status: string | null;
+      options: unknown;
+    }>(
+      `
+with latest as (
+  select computed_at, spot, net_gex, payload
+  from gex_snapshots
+  where symbol = $1
+  order by computed_at desc
+  limit 1
+), base as (
+  select
+    computed_at,
+    payload->>'ticker' as ticker,
+    coalesce(nullif(payload->>'spot', '')::double precision, spot::double precision) as spot,
+    payload->>'timestamp' as timestamp,
+    net_gex::double precision as net_gex,
+    payload->'source' as source,
+    payload->'flowContext' as flow_context,
+    payload->>'flowContextStatus' as flow_context_status
+  from latest
+), expirations as (
+  select expiration_date
+  from latest,
+    lateral (
+      select distinct option_row->>'expirationDate' as expiration_date
+      from jsonb_array_elements(payload->'options') option_row
+      where jsonb_typeof(payload->'options') = 'array'
+        and jsonb_typeof(option_row) = 'object'
+        and option_row ? 'expirationDate'
+        and (option_row->>'expirationDate') >= to_char(current_date, 'YYYY-MM-DD')
+      order by expiration_date
+      limit $2
+    ) expiration_rows
+), ranked as (
+  select
+    option_row,
+    dense_rank() over (
+      partition by option_row->>'expirationDate'
+      order by
+        abs((option_row->>'strike')::double precision - (select spot from base)),
+        (option_row->>'strike')::double precision
+    ) as strike_rank
+  from latest
+  join lateral jsonb_array_elements(payload->'options') option_row on true
+  join expirations on expirations.expiration_date = option_row->>'expirationDate'
+  where jsonb_typeof(payload->'options') = 'array'
+    and jsonb_typeof(option_row) = 'object'
+    and option_row ? 'strike'
+), selected as (
+  select option_row
+  from ranked
+  where strike_rank <= $3
+)
+select
+  base.computed_at,
+  base.ticker,
+  base.spot,
+  base.timestamp,
+  base.net_gex,
+  base.source,
+  base.flow_context,
+  base.flow_context_status,
+  coalesce(
+    jsonb_agg(selected.option_row) filter (where selected.option_row is not null),
+    '[]'::jsonb
+  ) as options
+from base
+left join selected on true
+group by
+  base.computed_at,
+  base.ticker,
+  base.spot,
+  base.timestamp,
+  base.net_gex,
+  base.source,
+  base.flow_context,
+  base.flow_context_status
+      `,
+      [symbol, maxExpirations, strikesPerExpiration],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+    const computedAt = new Date(row.computed_at);
+    const payload = compactGexSnapshotPayload({
+      symbol,
+      computedAt,
+      ticker: row.ticker,
+      spot: row.spot,
+      timestamp: row.timestamp,
+      netGex: row.net_gex,
+      options: row.options,
+      source: row.source,
+      flowContext: row.flow_context,
+      flowContextStatus: row.flow_context_status,
+    });
+    if (!payload) {
+      return null;
+    }
+
+    const ageMs = Math.max(0, Date.now() - computedAt.getTime());
+    return {
+      payload,
+      computedAt,
+      ageMs,
+      stale: ageMs > maxAgeMs,
+    };
+  } catch (error) {
+    logger.debug(
+      { err: error, symbol },
+      "Failed to read compact GEX ingest snapshot",
+    );
+    return null;
+  }
 }
 
 export async function getLatestGexSnapshot(

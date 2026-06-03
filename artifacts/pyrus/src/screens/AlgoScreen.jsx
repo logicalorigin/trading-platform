@@ -41,6 +41,7 @@ import {
   STRATEGY_SIGNAL_TIMEFRAMES,
   asRecord,
   boundedNumberFrom,
+  buildVisibleSignalRows,
   buildExpandedSignalOptionsProfile,
   candidateMatchesReasonCategory,
   candidateReasonCategory,
@@ -77,6 +78,7 @@ import {
 import {
   bridgeRuntimeMessage,
   bridgeRuntimeTone,
+  hasGatewayLiveDataProof,
 } from "../features/platform/bridgeRuntimeModel";
 import { requestIbkrReconnect } from "../features/platform/ibkrBridgeSession";
 import { QUERY_DEFAULTS } from "../features/platform/queryDefaults";
@@ -114,14 +116,16 @@ import { retryDynamicImport } from "../lib/dynamicImport";
 let algoRightRailImport = null;
 const loadAlgoRightRail = () => {
   if (!algoRightRailImport) {
-    algoRightRailImport = import("./algo/AlgoRightRail.jsx")
-      .then((module) => ({
-        default: module.AlgoRightRail,
-      }))
-      .catch((error) => {
-        algoRightRailImport = null;
-        throw error;
-      });
+    algoRightRailImport = retryDynamicImport(
+      () =>
+        import("./algo/AlgoRightRail.jsx").then((module) => ({
+          default: module.AlgoRightRail,
+        })),
+      { label: "AlgoRightRail" },
+    ).catch((error) => {
+      algoRightRailImport = null;
+      throw error;
+    });
   }
   return algoRightRailImport;
 };
@@ -133,6 +137,7 @@ const loadAlgoLivePage = () => {
       () =>
         import("./algo/AlgoLivePage").then((module) => ({
           default: module.AlgoLivePage,
+          preloadAlgoLivePageModules: module.preloadAlgoLivePageModules,
         })),
       { label: "AlgoLivePage" },
     ).catch((error) => {
@@ -144,6 +149,11 @@ const loadAlgoLivePage = () => {
 };
 const LazyAlgoLivePage = lazy(loadAlgoLivePage);
 
+export const preloadScreenModules = () =>
+  Promise.allSettled([
+    loadAlgoLivePage().then((module) => module.preloadAlgoLivePageModules?.()),
+  ]);
+
 const ALGO_CRITICAL_FALLBACK_DELAY_MS = 1_000;
 const ALGO_DERIVED_FALLBACK_DELAY_MS = 6_000;
 const EMPTY_ALGO_DEPLOYMENTS = Object.freeze([]);
@@ -154,12 +164,63 @@ const EMPTY_SIGNAL_OPTIONS_SIGNALS = Object.freeze([]);
 const EMPTY_SIGNAL_OPTIONS_POSITIONS = Object.freeze([]);
 const retainPreviousData = (previousData) => previousData;
 
+const sourceArrayTimestampMs = (item) => {
+  const record = asRecord(item);
+  return Math.max(
+    Date.parse(record.updatedAt || "") || 0,
+    Date.parse(record.createdAt || "") || 0,
+    Date.parse(record.signalAt || "") || 0,
+    Date.parse(record.currentSignalAt || "") || 0,
+    Date.parse(record.lastEvaluatedAt || "") || 0,
+    Date.parse(record.latestBarAt || "") || 0,
+  );
+};
+
+const sourceArrayLatestTimestampMs = (items) =>
+  (Array.isArray(items) ? items : []).reduce(
+    (latest, item) => Math.max(latest, sourceArrayTimestampMs(item)),
+    0,
+  );
+
+const latestIsoFromRows = (items, fields) => {
+  const latestMs = (Array.isArray(items) ? items : []).reduce((latest, item) => {
+    const record = asRecord(item);
+    return Math.max(
+      latest,
+      ...fields.map((field) => Date.parse(record[field] || "") || 0),
+    );
+  }, 0);
+  return latestMs ? new Date(latestMs).toISOString() : null;
+};
+
 const preferNonEmptySourceArray = (primary, fallback, emptyValue) => {
   const primaryArray = Array.isArray(primary) ? primary : null;
   const fallbackArray = Array.isArray(fallback) ? fallback : null;
+  if (primaryArray?.length && fallbackArray?.length) {
+    const primaryLatestMs = sourceArrayLatestTimestampMs(primaryArray);
+    const fallbackLatestMs = sourceArrayLatestTimestampMs(fallbackArray);
+    if (fallbackLatestMs > primaryLatestMs) return fallbackArray;
+    if (
+      fallbackLatestMs === primaryLatestMs &&
+      fallbackArray.length > primaryArray.length
+    ) {
+      return fallbackArray;
+    }
+    return primaryArray;
+  }
   if (primaryArray?.length) return primaryArray;
   if (fallbackArray?.length) return fallbackArray;
   return primaryArray || fallbackArray || emptyValue;
+};
+
+const isAlgoExecutionScanStageRunning = (stage) => {
+  const record = asRecord(stage);
+  const scanAgeMs = Number(record.scanAgeMs);
+  return (
+    String(record.status || "").toLowerCase() === "running" ||
+    record.running === true ||
+    Boolean(record.scanStartedAt && Number.isFinite(scanAgeMs) && scanAgeMs >= 0)
+  );
 };
 
 const AlgoLiveLoading = () => (
@@ -272,12 +333,16 @@ const DEFAULT_ALGO_RUNTIME_HELPERS = Object.freeze({
 let algoRuntimeHelpersImport = null;
 const loadAlgoRuntimeHelpers = () => {
   if (!algoRuntimeHelpersImport) {
-    algoRuntimeHelpersImport = Promise.all([
-      import("../features/platform/algoTransitionsModel"),
-      import("../features/platform/algoActivitySummary"),
-      import("../features/platform/algoKpiHistoryStore"),
-      import("./algoCockpitDiagnosticsModel"),
-    ])
+    algoRuntimeHelpersImport = retryDynamicImport(
+      () =>
+        Promise.all([
+          import("../features/platform/algoTransitionsModel"),
+          import("../features/platform/algoActivitySummary"),
+          import("../features/platform/algoKpiHistoryStore"),
+          import("./algoCockpitDiagnosticsModel"),
+        ]),
+      { label: "AlgoRuntimeHelpers", reloadOnFailure: false },
+    )
       .then(([transitions, activity, kpi, diagnostics]) => ({
         buildTransitionsBufferStore:
           transitions.buildTransitionsBufferStore ||
@@ -317,11 +382,11 @@ const isGatewayReadyForAlgo = (session) => {
   const bridge = asRecord(session?.ibkrBridge);
   return Boolean(
     session?.configured?.ibkr &&
-      bridge.healthFresh &&
       bridge.connected &&
       bridge.authenticated &&
       bridge.accountsLoaded &&
-      bridge.configuredLiveMarketDataMode,
+      bridge.configuredLiveMarketDataMode &&
+      (bridge.healthFresh || hasGatewayLiveDataProof(bridge)),
   );
 };
 
@@ -411,7 +476,6 @@ export const AlgoScreen = ({
     if (!isVisible) {
       return undefined;
     }
-    void loadAlgoRightRail().catch(() => undefined);
     void loadAlgoLivePage().catch(() => undefined);
     return undefined;
   }, [isVisible]);
@@ -469,28 +533,27 @@ export const AlgoScreen = ({
     }, ALGO_DERIVED_FALLBACK_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [algoCockpitStreamFreshness.algoFullFresh, isVisible]);
-  const algoCriticalReady = Boolean(
+  const algoCriticalDataReady = Boolean(
     isVisible &&
       (algoCockpitStreamFreshness.algoCriticalFresh ||
         algoCriticalFallbackReady),
   );
+  const algoDerivedReady = Boolean(
+    isVisible &&
+      (algoCockpitStreamFreshness.algoFullFresh ||
+        algoDerivedFallbackReady),
+  );
   useEffect(() => {
-    const derivedReady = Boolean(
-      isVisible &&
-        (algoCockpitStreamFreshness.algoFullFresh ||
-          algoDerivedFallbackReady),
-    );
     onReadinessChange?.({
-      criticalReady: algoCriticalReady,
-      derivedReady,
-      backgroundAllowed: derivedReady,
+      criticalReady: Boolean(isVisible),
+      derivedReady: algoDerivedReady,
+      backgroundAllowed: Boolean(isVisible && !safeQaMode && algoDerivedReady),
     });
   }, [
-    algoCriticalReady,
-    algoCockpitStreamFreshness.algoFullFresh,
-    algoDerivedFallbackReady,
+    algoDerivedReady,
     isVisible,
     onReadinessChange,
+    safeQaMode,
   ]);
   const markAlgoTiming = useCallback((stage, detail) => {
     if (algoTimingStagesRef.current.has(stage)) {
@@ -506,7 +569,7 @@ export const AlgoScreen = ({
     markAlgoTiming("route-module-loaded");
   }, [isVisible, markAlgoTiming]);
   useEffect(() => {
-    if (!algoCriticalReady) {
+    if (!algoCriticalDataReady) {
       return;
     }
     markAlgoTiming("critical-data-ready", {
@@ -516,7 +579,7 @@ export const AlgoScreen = ({
     });
   }, [
     algoCockpitStreamFreshness.algoCriticalFresh,
-    algoCriticalReady,
+    algoCriticalDataReady,
     markAlgoTiming,
   ]);
   useEffect(() => {
@@ -541,6 +604,9 @@ export const AlgoScreen = ({
     algoLiveDataQueriesEnabled &&
       algoDerivedFallbackReady &&
       !algoCockpitStreamFreshness.algoFullFresh,
+  );
+  const algoBackgroundQueriesEnabled = Boolean(
+    algoDerivedQueriesEnabled && !safeQaMode,
   );
   const algoPostCriticalQueriesEnabled = Boolean(
     algoLiveDataQueriesEnabled &&
@@ -639,9 +705,9 @@ export const AlgoScreen = ({
       query: {
         ...QUERY_DEFAULTS,
         enabled: Boolean(
-          algoCriticalQueriesEnabled && focusedDeployment?.id && !safeQaMode,
+          algoBackgroundQueriesEnabled && focusedDeployment?.id,
         ),
-        refetchInterval: algoRoutineRefetchInterval,
+        refetchInterval: algoDerivedRefetchInterval,
         retry: false,
       },
     },
@@ -662,7 +728,9 @@ export const AlgoScreen = ({
     "shadow",
     {
       mode: "paper",
-      assetClass: "Options",
+      assetClass: "all",
+      source: "automation",
+      liveQuotes: false,
     },
     {
       query: {
@@ -1114,32 +1182,37 @@ export const AlgoScreen = ({
 
   const runShadowScanMutation = useRunSignalOptionsShadowScan({
     mutation: {
-      onSuccess: (state) => {
+      onSuccess: (state, variables) => {
+        const requestedByAuto = variables?.requestSource === "auto";
         refreshAlgoQueries();
         if (
           state?.status === "already_running" ||
           state?.reason === "signal_options_scan_running"
         ) {
-          toast.push({
-            kind: "info",
-            title: "Signal-options scan already running",
-            body: "The active signal-options scan will finish before another one starts.",
-          });
+          if (!requestedByAuto) {
+            toast.push({
+              kind: "info",
+              title: "Algo & Execution scan already running",
+              body: "The active options strategy scan will finish before another one starts.",
+            });
+          }
           return;
         }
         setSelectedCandidateId(state?.candidates?.[0]?.id || null);
-        toast.push({
-          kind: "success",
-          title: "Signal-options scan complete",
-          body: `${state?.candidates?.length || 0} signal-option candidates in the queue.`,
-        });
+        if (!requestedByAuto) {
+          toast.push({
+            kind: "success",
+            title: "Options strategy scan complete",
+            body: `${state?.candidates?.length || 0} options strategy candidates in the queue.`,
+          });
+        }
       },
       onError: (error) => {
         const errorCopy = describeUserFacingRuntimeError(error, {
-          title: "Signal-options scan failed",
-          detail: "The signal-options scan could not finish.",
-          rateLimitedTitle: "Signal-options scan delayed",
-          safeQaTitle: "Signal-options scan paused",
+          title: "Options strategy scan failed",
+          detail: "The Algo & Execution options scan could not finish.",
+          rateLimitedTitle: "Options strategy scan delayed",
+          safeQaTitle: "Options strategy scan paused",
         });
         toast.push({
           kind: "error",
@@ -1466,8 +1539,9 @@ export const AlgoScreen = ({
     saveAllInFlightRef.current = true;
     setSaveAllPending(true);
     try {
-      const { saveAllAlgoAdjustments } = await import(
-        "./algo/saveAllAlgoAdjustments"
+      const { saveAllAlgoAdjustments } = await retryDynamicImport(
+        () => import("./algo/saveAllAlgoAdjustments"),
+        { label: "SaveAllAlgoAdjustments", reloadOnFailure: false },
       );
       const result = await saveAllAlgoAdjustments({
         deploymentId: focusedDeployment?.id,
@@ -1676,6 +1750,32 @@ export const AlgoScreen = ({
     ],
   ];
 
+  const visibleSignalRows = useMemo(
+    () =>
+      buildVisibleSignalRows({
+        signals: signalOptionsSignals,
+        candidates: signalOptionsCandidates,
+      }),
+    [signalOptionsCandidates, signalOptionsSignals],
+  );
+  const signalTableScanFallback = useMemo(() => {
+    const pollIntervalSeconds = Number(signalMonitorProfile?.pollIntervalSeconds);
+    return {
+      lastSignalScanAt: latestIsoFromRows(visibleSignalRows, [
+        "lastEvaluatedAt",
+        "updatedAt",
+      ]),
+      latestSignalBarAt: latestIsoFromRows(visibleSignalRows, ["latestBarAt"]),
+      latestSignalAt: latestIsoFromRows(visibleSignalRows, [
+        "currentSignalAt",
+        "signalAt",
+      ]),
+      pollIntervalMs:
+        Number.isFinite(pollIntervalSeconds) && pollIntervalSeconds > 0
+          ? pollIntervalSeconds * 1000
+          : null,
+    };
+  }, [signalMonitorProfile, visibleSignalRows]);
   const cockpitStageItems = cockpitPipelineStages.length
     ? cockpitPipelineStages
     : [
@@ -1683,25 +1783,38 @@ export const AlgoScreen = ({
           id: "scan_universe",
           label: "Signal Symbols",
           status: gatewayReady ? "waiting" : "blocked",
-          count: focusedDeployment?.symbolUniverse?.length || 0,
-          latestAt: focusedDeployment?.lastEvaluatedAt || null,
-          detail: gatewayReady ? "ready to scan" : bridgeRuntimeMessage(session),
+          count:
+            visibleSignalRows.length ||
+            focusedDeployment?.symbolUniverse?.length ||
+            0,
+          latestAt:
+            signalTableScanFallback.lastSignalScanAt ||
+            focusedDeployment?.lastEvaluatedAt ||
+            null,
+          lastSignalScanAt: signalTableScanFallback.lastSignalScanAt,
+          latestSignalBarAt: signalTableScanFallback.latestSignalBarAt,
+          latestSignalAt: signalTableScanFallback.latestSignalAt,
+          pollIntervalMs: signalTableScanFallback.pollIntervalMs,
+          signalSourcePolicy: signalOptionsState?.signalSourcePolicy || null,
+          detail:
+            gatewayReady && signalTableScanFallback.lastSignalScanAt
+              ? "signal stream cache current"
+              : gatewayReady
+                ? "ready to scan"
+                : bridgeRuntimeMessage(session),
         },
       ];
+  const algoExecutionScanRunning = cockpitStageItems.some((stage) => {
+    const record = asRecord(stage);
+    return (
+      String(record.id || "") === "scan_universe" &&
+      isAlgoExecutionScanStageRunning(record)
+    );
+  });
   const selectedStage =
     cockpitStageItems.find((stage) => stage.id === selectedPipelineStageId) ||
     cockpitStageItems[0] ||
     null;
-  const visibleSignalRows = signalOptionsSignals.length
-    ? signalOptionsSignals
-    : signalOptionsCandidates.map((candidate) => ({
-        ...asRecord(candidate.signal),
-        symbol: candidate.symbol,
-        timeframe: candidate.timeframe,
-        direction: candidate.direction,
-        signalAt: candidate.signalAt,
-        signalPrice: candidate.signalPrice,
-      }));
   const algoSignalSurfaceSettled = Boolean(
     focusedDeployment?.id &&
       (signalOptionsStateSettled || cockpitSettled),
@@ -1720,6 +1833,7 @@ export const AlgoScreen = ({
       !gatewayReady ||
       !algoSignalSurfaceSettled ||
       !algoSignalSurfaceEmpty ||
+      algoExecutionScanRunning ||
       runShadowScanMutation.isPending ||
       autoInitialScanDeploymentIdsRef.current.has(deploymentId)
     ) {
@@ -1727,8 +1841,9 @@ export const AlgoScreen = ({
     }
 
     autoInitialScanDeploymentIdsRef.current.add(deploymentId);
-    runShadowScanMutation.mutate({ deploymentId });
+    runShadowScanMutation.mutate({ deploymentId, requestSource: "auto" });
   }, [
+    algoExecutionScanRunning,
     algoSignalSurfaceEmpty,
     algoSignalSurfaceSettled,
     focusedDeployment?.enabled,
@@ -1892,6 +2007,7 @@ export const AlgoScreen = ({
           signalOptionsProfile={signalOptionsProfile}
           onOpenCandidateInTrade={handleOpenCandidateInTrade}
           safeQaMode={safeQaMode}
+          backgroundQueriesEnabled={algoBackgroundQueriesEnabled}
           signalOptionsPositions={signalOptionsPositions}
           signalOptionsLedgerPositionsQuery={signalOptionsLedgerPositionsQuery}
           symbolIndex={symbolIndex}
@@ -1909,9 +2025,11 @@ export const AlgoScreen = ({
           enableDeploymentMutation={enableDeploymentMutation}
           pauseDeploymentMutation={pauseDeploymentMutation}
           runShadowScanMutation={runShadowScanMutation}
+          algoExecutionScanRunning={algoExecutionScanRunning}
           algoIsPhone={algoIsPhone}
           algoIsNarrow={algoIsNarrow}
           algoLayoutWidth={algoRootSize.width}
+          rightRailFallback={<AlgoRightRailLoading />}
           rightRail={
             <Suspense fallback={<AlgoRightRailLoading />}>
               <LazyAlgoRightRail

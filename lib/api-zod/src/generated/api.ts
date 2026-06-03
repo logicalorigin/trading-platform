@@ -1244,6 +1244,8 @@ export const GetAccountPositionsParams = zod.object({
 
 export const GetAccountPositionsQueryParams = zod.object({
   "assetClass": zod.coerce.string().optional(),
+  "source": zod.coerce.string().optional().describe('Optional source scope for shadow ledger positions, such as `automation`.'),
+  "liveQuotes": zod.coerce.boolean().optional().describe('Set to `false` to skip blocking live option quote hydration for shadow positions.'),
   "mode": zod.enum(['paper', 'live']).optional()
 })
 
@@ -1364,7 +1366,7 @@ export const GetAccountPositionsResponse = zod.object({
   "updatedAt": zod.coerce.date().nullable(),
   "freshness": zod.string().nullable(),
   "marketDataMode": zod.string().nullable(),
-  "source": zod.enum(['bridge_quote', 'option_quote', 'position_mark', 'shadow_ledger', 'unknown'])
+  "source": zod.enum(['bridge_quote', 'massive', 'option_quote', 'position_mark', 'shadow_ledger', 'unknown'])
 }),zod.null()]).optional()
 })),
   "totals": zod.record(zod.string(), zod.unknown()),
@@ -1506,7 +1508,7 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "updatedAt": zod.coerce.date().nullable(),
   "freshness": zod.string().nullable(),
   "marketDataMode": zod.string().nullable(),
-  "source": zod.enum(['bridge_quote', 'option_quote', 'position_mark', 'shadow_ledger', 'unknown'])
+  "source": zod.enum(['bridge_quote', 'massive', 'option_quote', 'position_mark', 'shadow_ledger', 'unknown'])
 }),zod.null()]).optional()
 })),
   "activity": zod.array(zod.object({
@@ -1985,7 +1987,7 @@ export const ListPositionsResponse = zod.object({
   "updatedAt": zod.coerce.date().nullable(),
   "freshness": zod.string().nullable(),
   "marketDataMode": zod.string().nullable(),
-  "source": zod.enum(['bridge_quote', 'option_quote', 'position_mark', 'shadow_ledger', 'unknown'])
+  "source": zod.enum(['bridge_quote', 'massive', 'option_quote', 'position_mark', 'shadow_ledger', 'unknown'])
 }),zod.null()]).optional()
 }))
 })
@@ -2384,7 +2386,8 @@ export const CancelOrderResponse = zod.object({
  * @summary Get latest quotes for symbols
  */
 export const GetQuoteSnapshotsQueryParams = zod.object({
-  "symbols": zod.coerce.string().describe('Comma-separated ticker symbols.')
+  "symbols": zod.coerce.string().describe('Comma-separated ticker symbols.'),
+  "tradingSession": zod.enum(['overnight']).optional().describe('Optional trading session override for quote routing. Use `overnight` to force IBKR overnight-capable quote snapshots.')
 })
 
 export const GetQuoteSnapshotsResponse = zod.object({

@@ -29,6 +29,19 @@ const screenModuleLabel = (screenId) => `${screenId}ScreenPreload`;
 export const getPreloadedScreenComponent = (screenId) =>
   SCREEN_MODULE_COMPONENTS.get(screenId) || null;
 
+const preloadNestedScreenModules = async (mod) => {
+  if (typeof mod?.preloadScreenModules !== "function") {
+    return;
+  }
+
+  try {
+    const nestedPreload = mod.preloadScreenModules();
+    await nestedPreload?.catch?.(() => undefined);
+  } catch {
+    // Nested preloads are opportunistic; the visible route render still retries.
+  }
+};
+
 export const loadScreenModule = (
   screenId,
   { label = screenModuleLabel(screenId), reloadOnFailure = true } = {},
@@ -52,7 +65,8 @@ export const loadScreenModule = (
     label,
     reloadOnFailure,
   })
-    .then((mod) => {
+    .then(async (mod) => {
+      await preloadNestedScreenModules(mod);
       if (mod?.default) {
         SCREEN_MODULE_COMPONENTS.set(screenId, mod.default);
       }

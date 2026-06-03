@@ -5,6 +5,7 @@ import {
   useGetQuoteSnapshots,
 } from "@workspace/api-client-react";
 import {
+  getStoredBrokerMinuteAggregates,
   useBrokerStockAggregateStream,
   useStockMinuteAggregateSymbolsVersion,
 } from "../charting/useMassiveStockAggregateStream";
@@ -61,6 +62,27 @@ const SPARKLINE_HISTORY_LIMIT = 720;
 const QUOTE_STREAM_DIAGNOSTICS_GLOBAL =
   "__PYRUS_MARKET_DATA_SUBSCRIPTION_DIAGNOSTICS__";
 
+const normalizeRuntimeSymbol = (symbol) =>
+  String(symbol || "").trim().toUpperCase();
+
+const summarizeSparklineBars = (barsBySymbol = {}) =>
+  Object.fromEntries(
+    Object.entries(barsBySymbol || {}).map(([symbol, bars]) => [
+      symbol,
+      {
+        count: Array.isArray(bars) ? bars.length : 0,
+        first:
+          Array.isArray(bars) && bars.length
+            ? (bars[0]?.timestamp ?? bars[0]?.time ?? bars[0]?.t ?? null)
+            : null,
+        last:
+          Array.isArray(bars) && bars.length
+            ? (bars.at(-1)?.timestamp ?? bars.at(-1)?.time ?? bars.at(-1)?.t ?? null)
+            : null,
+      },
+    ]),
+  );
+
 export const resolveQuoteStreamDisabledReason = ({
   pageVisible,
   quoteStreamRuntimeEnabled,
@@ -91,6 +113,21 @@ const thinBarsForSparkline = (bars, limit = SPARKLINE_RENDER_POINT_LIMIT) => {
     return bars[sourceIndex];
   });
 };
+
+const hasUsableSparklineBars = (bars) => Array.isArray(bars) && bars.length >= 2;
+
+const aggregateToSparklineBar = (aggregate) => ({
+  timestamp:
+    Number.isFinite(aggregate?.startMs)
+      ? new Date(aggregate.startMs).toISOString()
+      : null,
+  time: aggregate?.startMs ?? null,
+  open: aggregate?.open ?? null,
+  high: aggregate?.high ?? null,
+  low: aggregate?.low ?? null,
+  close: aggregate?.close ?? null,
+  volume: aggregate?.volume ?? null,
+});
 
 export const MarketDataSubscriptionProvider = ({
   watchlistSymbols,
@@ -146,8 +183,34 @@ export const MarketDataSubscriptionProvider = ({
     ],
     [lowPriorityHistoryEnabled, prioritySparklineSymbols, sparklineSymbols],
   );
+  const aggregateSparklineBarsBySymbol = useMemo(() => {
+    return Object.fromEntries(
+      requestedSparklineSymbols
+        .map((symbol) => {
+          const normalized = normalizeRuntimeSymbol(symbol);
+          if (!normalized) {
+            return null;
+          }
+          const bars = thinBarsForSparkline(
+            getStoredBrokerMinuteAggregates(normalized).map(aggregateToSparklineBar),
+          );
+          return hasUsableSparklineBars(bars) ? [normalized, bars] : null;
+        })
+        .filter(Boolean),
+    );
+  }, [marketAggregateStoreVersion, requestedSparklineSymbols]);
+  const historySparklineSymbols = useMemo(
+    () =>
+      requestedSparklineSymbols.filter(
+        (symbol) =>
+          !hasUsableSparklineBars(
+            aggregateSparklineBarsBySymbol[normalizeRuntimeSymbol(symbol)],
+          ),
+      ),
+    [aggregateSparklineBarsBySymbol, requestedSparklineSymbols],
+  );
   const sparklineHistoryEnabled = Boolean(
-    sparklineHistoryRuntimeEnabled && requestedSparklineSymbols.length > 0,
+    sparklineHistoryRuntimeEnabled && historySparklineSymbols.length > 0,
   );
   const eventSourceAvailable =
     typeof window === "undefined" || typeof window.EventSource !== "undefined";
@@ -172,6 +235,29 @@ export const MarketDataSubscriptionProvider = ({
   );
   const marketAggregateStreamRuntimeActive = Boolean(
     pageVisible && marketStockAggregateStreamingEnabled && marketScreenActive,
+  );
+  const streamCoveredQuoteSymbols = useMemo(() => {
+    const symbols = [
+      ...(quoteStreamRuntimeActive ? streamedQuoteSymbols : []),
+      ...(positionQuoteStreamRuntimeActive ? positionQuoteSymbols : []),
+    ];
+    return new Set(symbols.map(normalizeRuntimeSymbol).filter(Boolean));
+  }, [
+    positionQuoteStreamRuntimeActive,
+    positionQuoteSymbols,
+    quoteStreamRuntimeActive,
+    streamedQuoteSymbols,
+  ]);
+  const restQuoteSymbols = useMemo(
+    () =>
+      quoteSymbols.filter(
+        (symbol) => !streamCoveredQuoteSymbols.has(normalizeRuntimeSymbol(symbol)),
+      ),
+    [quoteSymbols, streamCoveredQuoteSymbols],
+  );
+  const restQuoteSymbolsKey = useMemo(
+    () => restQuoteSymbols.join(","),
+    [restQuoteSymbols],
   );
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -246,7 +332,7 @@ export const MarketDataSubscriptionProvider = ({
   useRuntimeWorkloadFlag("market:sparklines", sparklineHistoryEnabled, {
     kind: "poll",
     label: "Market sparklines",
-    detail: `${requestedSparklineSymbols.length}s`,
+    detail: `${historySparklineSymbols.length}s`,
     priority: 6,
   });
   useRuntimeWorkloadFlag(
@@ -265,10 +351,10 @@ export const MarketDataSubscriptionProvider = ({
   );
 
   const quotesQuery = useGetQuoteSnapshots(
-    { symbols: quoteSymbols.join(",") },
+    { symbols: restQuoteSymbolsKey },
     {
       query: {
-        enabled: Boolean(pageVisible && quoteSymbols.length > 0),
+        enabled: Boolean(pageVisible && restQuoteSymbolsKey),
         staleTime: 60_000,
         retry: false,
       },
@@ -280,12 +366,12 @@ export const MarketDataSubscriptionProvider = ({
       SPARKLINE_HISTORY_TIMEFRAME,
       SPARKLINE_HISTORY_LIMIT,
       SPARKLINE_RENDER_POINT_LIMIT,
-      requestedSparklineSymbols,
+      historySparklineSymbols,
     ],
     enabled: sparklineHistoryEnabled,
     queryFn: async () => {
       const results = await settleWithConcurrency(
-        requestedSparklineSymbols,
+        historySparklineSymbols,
         Math.max(1, Math.floor(Number(sparklineConcurrency) || 1)),
         (symbol) =>
           getBarsRequest(
@@ -305,7 +391,7 @@ export const MarketDataSubscriptionProvider = ({
 
       return Object.fromEntries(
         results.map((result, index) => [
-          requestedSparklineSymbols[index],
+          historySparklineSymbols[index],
           result.status === "fulfilled"
             ? thinBarsForSparkline(result.value.bars || [])
             : [],
@@ -316,6 +402,27 @@ export const MarketDataSubscriptionProvider = ({
     retry: false,
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
+  const sparklineBarsBySymbol = useMemo(
+    () =>
+      Object.fromEntries(
+        requestedSparklineSymbols
+          .map((symbol) => {
+            const normalized = normalizeRuntimeSymbol(symbol);
+            const bars =
+              aggregateSparklineBarsBySymbol[normalized] ||
+              sparklineQuery.data?.[symbol] ||
+              sparklineQuery.data?.[normalized] ||
+              [];
+            return hasUsableSparklineBars(bars) ? [normalized, bars] : null;
+          })
+          .filter(Boolean),
+      ),
+    [
+      aggregateSparklineBarsBySymbol,
+      requestedSparklineSymbols,
+      sparklineQuery.data,
+    ],
+  );
   const marketPerformanceQuery = useQuery({
     queryKey: ["market-performance-baselines", MARKET_PERFORMANCE_SYMBOLS],
     enabled:
@@ -390,20 +497,40 @@ export const MarketDataSubscriptionProvider = ({
     activeWatchlistItemsKey,
     quotesQuery.dataUpdatedAt || 0,
     sparklineQuery.dataUpdatedAt || 0,
+    Object.keys(sparklineBarsBySymbol).join(","),
     marketPerformanceQuery.dataUpdatedAt || 0,
     marketAggregateStoreVersion,
   ].join("::");
 
   useEffect(() => {
-    syncRuntimeMarketData(
+    const changedSymbolCount = syncRuntimeMarketData(
       watchlistSymbols,
       activeWatchlistItems,
       quotesQuery.data?.quotes,
       {
-        sparklineBarsBySymbol: sparklineQuery.data,
+        sparklineBarsBySymbol,
         performanceBaselineBySymbol: marketPerformanceQuery.data,
       },
     );
+    if (typeof window !== "undefined") {
+      window[QUOTE_STREAM_DIAGNOSTICS_GLOBAL] = {
+        ...(window[QUOTE_STREAM_DIAGNOSTICS_GLOBAL] || {}),
+        sparkline: {
+          enabled: sparklineHistoryEnabled,
+          requestedSymbols: requestedSparklineSymbols,
+          requestedSymbolCount: requestedSparklineSymbols.length,
+          historySymbols: historySparklineSymbols,
+          historySymbolCount: historySparklineSymbols.length,
+          queryStatus: sparklineQuery.status,
+          fetchStatus: sparklineQuery.fetchStatus,
+          dataUpdatedAt: sparklineQuery.dataUpdatedAt || null,
+          dataSymbols: Object.keys(sparklineBarsBySymbol || {}),
+          dataSummary: summarizeSparklineBars(sparklineBarsBySymbol),
+          changedSymbolCount,
+          syncedAt: new Date().toISOString(),
+        },
+      };
+    }
   }, [marketDataSyncKey]);
 
   return children;

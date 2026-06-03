@@ -140,6 +140,50 @@ function value(input) {
   return input === null || input === undefined || input === "" ? "unknown" : String(input);
 }
 
+function incidentAttribution(incident) {
+  if (!incident) {
+    return "none";
+  }
+  if (incident.classification === "container-replaced") {
+    return [
+      "Replit runtime/container replacement observed from guest boot evidence",
+      "host trigger unavailable inside guest",
+    ].join("; ");
+  }
+  if (incident.classification === "api-child-exit") {
+    return "PYRUS API child process exited inside the workspace";
+  }
+  if (incident.classification === "web-child-exit") {
+    return "PYRUS web child process exited inside the workspace";
+  }
+  if (incident.classification === "suspected-resource-pressure") {
+    return "guest resource pressure observed before restart";
+  }
+  if (incident.classification === "same-container-supervisor-abrupt") {
+    return "supervisor stopped without clean shutdown in the same container";
+  }
+  return "classification-specific attribution unavailable";
+}
+
+function printReplitSnapshot(snapshot) {
+  console.log("\nReplit Runtime");
+  if (!snapshot || typeof snapshot !== "object") {
+    console.log("  none recorded");
+    return;
+  }
+
+  const env = snapshot.env ?? {};
+  const dbToken = snapshot.dbToken ?? {};
+  const files = snapshot.runtimeFiles ?? {};
+  console.log(`  session: ${value(env.REPLIT_SESSION)}`);
+  console.log(`  cluster: ${value(env.REPLIT_CLUSTER)}`);
+  console.log(`  container: ${value(env.REPLIT_CONTAINER)}`);
+  console.log(`  pid1 version: ${value(env.REPLIT_PID1_VERSION)}`);
+  console.log(`  db token issued: ${value(dbToken.issuedAt)}`);
+  console.log(`  env latest mtime: ${value(files.envLatest?.mtimeIso)}`);
+  console.log(`  pid1 flags mtime: ${value(files.pid1Flags?.mtimeIso)}`);
+}
+
 function printEventTail(title, events) {
   console.log(`\n${title}`);
   if (events.length === 0) {
@@ -199,6 +243,7 @@ function printEvidence(evidence) {
   console.log(`  pid: ${value(supervisorInfo.pid)}`);
   console.log(`  lock acquired: ${value(supervisorInfo.lockAcquired)}`);
   console.log(`  boot: ${value(supervisor.boot?.bootId)}`);
+  printReplitSnapshot(supervisor.replit);
 
   console.log("\nAPI");
   console.log(`  updated: ${value(api.updatedAt)}`);
@@ -215,6 +260,7 @@ function printEvidence(evidence) {
     console.log(`  classification: ${value(latest.classification)}`);
     console.log(`  confidence: ${value(latest.confidence)}`);
     console.log(`  severity: ${value(latest.severity)}`);
+    console.log(`  attribution: ${incidentAttribution(latest)}`);
     console.log(`  message: ${value(latest.message)}`);
     const reasons = Array.isArray(latest.contributingReasons)
       ? latest.contributingReasons.join(", ")

@@ -192,13 +192,22 @@ export const buildAttentionStream = ({
   const stream = [];
   (Array.isArray(attentionItems) ? attentionItems : []).forEach((item, index) => {
     const record = asRecord(item);
+    const stage = record.stage ? String(record.stage) : "";
+    const summary = record.summary || record.detail || record.action || "";
+    const detail = record.detail || record.summary || record.action || "";
     stream.push({
       id: record.id || `attention-${index}`,
       kind: "attention",
-      kindLabel: record.stage ? String(record.stage).toUpperCase() : "ATTENTION",
+      kindLabel: stage ? stage.toUpperCase() : "ATTENTION",
       severity: record.severity || "info",
       title: record.symbol || record.title || record.stage || "Attention",
-      summary: record.summary || record.detail || "",
+      symbol: record.symbol || null,
+      stage,
+      summary,
+      detail,
+      action: record.action || "",
+      observedAt: record.occurredAt || record.observedAt || record.at || "",
+      reason: record.reason || record.code || "",
     });
   });
   (Array.isArray(ruleAdherence) ? ruleAdherence : []).forEach((rule, index) => {
@@ -209,7 +218,7 @@ export const buildAttentionStream = ({
       id: `rule-${record.id || index}`,
       kind: "rule",
       kindLabel: "RULE",
-      severity: status === "fail" ? "critical" : "warning",
+      severity: "warning",
       title: record.label || record.id || "Rule",
       summary: record.detail || "",
     });

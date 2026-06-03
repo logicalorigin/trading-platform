@@ -96,6 +96,7 @@ const activeRequestFamilies = new Set([
   "flow-tape-visible",
   "option-chart-visible",
   "signal-matrix",
+  "trade-visible",
 ]);
 const chartRequestFamilies = new Set([
   "chart-bars",
@@ -267,11 +268,17 @@ export function classifyApiRoute(input: {
     return "live-data";
   }
 
-  if (
-    path === "/quotes/snapshot" ||
-    path === "/options/quotes" ||
-    path === "/market-depth"
-  ) {
+  if (path === "/quotes/snapshot") {
+    if (isVisibleRouteRequestContext(routeContext)) {
+      return "active-screen";
+    }
+    if (isDeferredRouteRequestContext(routeContext)) {
+      return "deferred-analytics";
+    }
+    return "live-data";
+  }
+
+  if (path === "/options/quotes" || path === "/market-depth") {
     return "live-data";
   }
 
@@ -285,7 +292,8 @@ export function classifyApiRoute(input: {
   }
 
   if (
-    /^\/algo\/deployments\/[^/]+\/signal-options\/shadow-scan$/.test(path)
+    /^\/algo\/deployments\/[^/]+\/signal-options\/shadow-scan$/.test(path) ||
+    /^\/algo\/deployments\/[^/]+\/overnight-spot\/scan$/.test(path)
   ) {
     return "automation-control";
   }
@@ -300,7 +308,8 @@ export function classifyApiRoute(input: {
   if (
     path === "/signal-monitor/matrix" ||
     path === "/signal-monitor/state" ||
-    path === "/diagnostics/latest"
+    path === "/diagnostics/latest" ||
+    (method === "GET" && path === "/diagnostics/thresholds")
   ) {
     return "active-screen";
   }

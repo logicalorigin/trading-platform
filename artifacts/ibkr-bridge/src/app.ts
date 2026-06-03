@@ -508,9 +508,16 @@ app.get("/quotes/snapshot", async (req, res) => {
     .split(",")
     .map((symbol) => symbol.trim())
     .filter(Boolean);
+  const tradingSession =
+    req.query.tradingSession === "overnight" ||
+    req.query.includeOvernight === "true"
+      ? "overnight"
+      : null;
 
   res.json({
-    quotes: await ibkrBridgeService.getQuoteSnapshots(symbols),
+    quotes: await ibkrBridgeService.getQuoteSnapshots(symbols, {
+      tradingSession,
+    }),
   });
 });
 

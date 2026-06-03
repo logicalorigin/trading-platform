@@ -2233,15 +2233,24 @@ async function readSignalMonitorEventMetadata(input: {
   };
 }
 
-async function listSignalOptionsSignalSnapshots(deployment: AlgoDeployment) {
+async function listSignalOptionsSignalSnapshots(
+  deployment: AlgoDeployment,
+  options: { preferStoredMonitorState?: boolean } = {},
+) {
   const universe = new Set(
     deployment.symbolUniverse
       .map((symbol) => normalizeSymbol(symbol).toUpperCase())
       .filter(Boolean),
   );
-  const signalState = await getSignalMonitorState({
-    environment: deployment.mode,
-  }).catch((error) => {
+  const signalState = await (options.preferStoredMonitorState
+    ? getSignalMonitorStoredState({
+        environment: deployment.mode,
+        markNonCurrentStale: true,
+      })
+    : getSignalMonitorState({
+        environment: deployment.mode,
+      })
+  ).catch((error) => {
     logger.warn?.(
       { err: error, deploymentId: deployment.id },
       "Failed to read signal monitor state for signal-options cockpit",
@@ -2420,14 +2429,12 @@ function shouldDeferSignalOptionsHeavyWork() {
   const pressure = getApiResourcePressureSnapshot();
   const caps = pressure.caps.signalOptions;
   const hardPressureBlock = isApiResourcePressureHardBlock(pressure);
-  const pressureLoadShedding = pressure.level !== "normal";
+  const pressureCapsBlockWork =
+    caps.positionMarksAllowed === false || caps.actionScansAllowed === false;
   return {
     pressure,
     defer:
-      pressureLoadShedding ||
-      hardPressureBlock ||
-      caps.positionMarksAllowed === false ||
-      caps.actionScansAllowed === false,
+      hardPressureBlock || pressureCapsBlockWork,
   };
 }
 
@@ -4619,13 +4626,11 @@ async function loadSignalOptionsMonitorState(input: {
       markNonCurrentStale: true,
     });
     throwIfSignalOptionsScanAborted(input.signal);
-    if (
-      input.forceEvaluate !== true &&
-      !shouldRefreshSignalOptionsMonitorState({
-        evaluated: stored,
-        universe: input.universe,
-      })
-    ) {
+    const monitorStateNeedsRefresh = shouldRefreshSignalOptionsMonitorState({
+      evaluated: stored,
+      universe: input.universe,
+    });
+    if (input.forceEvaluate !== true && !monitorStateNeedsRefresh) {
       return {
         ...stored,
         signalOptionsBatch: {
@@ -4647,6 +4652,7 @@ async function loadSignalOptionsMonitorState(input: {
       isStockAggregateStreamingAvailable();
     if (
       input.forceEvaluate !== true &&
+      input.source !== "worker" &&
       (streamFirstMonitorAvailable || input.preferStoredMonitorState === true)
     ) {
       return {
@@ -6780,10 +6786,19 @@ function buildCockpitPipeline(input: {
   const lastHeavyWorkDeferred =
     scanState.heavyWorkDeferred || workerState.lastHeavyWorkDeferred;
   const activeScanPhase = scanState.phase ?? workerState.lastActiveScanPhase;
-  const resourcePressureLevel = workerState.lastResourcePressureLevel;
+  const currentResourcePressure = getApiResourcePressureSnapshot();
+  const currentResourcePressureBlocksActionWork =
+    isApiResourcePressureHardBlock(currentResourcePressure) ||
+    currentResourcePressure.caps.signalOptions.actionScansAllowed === false ||
+    currentResourcePressure.caps.signalOptions.positionMarksAllowed === false;
+  const lastResourcePressureLevel = workerState.lastResourcePressureLevel;
+  const resourcePressureLevel =
+    lastHeavyWorkDeferred && currentResourcePressureBlocksActionWork
+      ? currentResourcePressure.level
+      : null;
   const heavyWorkDeferredByPressure =
     lastHeavyWorkDeferred &&
-    resourcePressureLevel === "critical";
+    currentResourcePressureBlocksActionWork;
   const contractSelectionPendingUpstream =
     actionMapped.length > 0 &&
     selectedContracts.length === 0 &&
@@ -6857,6 +6872,7 @@ function buildCockpitPipeline(input: {
         SIGNAL_OPTIONS_SIGNAL_SOURCE_POLICY,
       heavyWorkDeferred: lastHeavyWorkDeferred,
       resourcePressureLevel,
+      lastResourcePressureLevel,
       pressurePaused: pressurePauseState.paused,
       pressurePauseStartedAt:
         pressurePauseState.startedAt?.toISOString() ?? null,
@@ -9350,6 +9366,7 @@ async function withFreshSignalOptionsStateSignals(
     cacheMode?: SignalOptionsDashboardCacheMode;
     view?: SignalOptionsDashboardView;
     refreshSignalsFromMonitorState?: boolean;
+    preferStoredMonitorState?: boolean;
   },
 ): Promise<SignalOptionsDashboardSnapshot["state"]> {
   if (
@@ -9364,6 +9381,9 @@ async function withFreshSignalOptionsStateSignals(
       (async () => {
         const signalSnapshots = await listSignalOptionsSignalSnapshots(
           snapshot.deployment,
+          {
+            preferStoredMonitorState: input.preferStoredMonitorState === true,
+          },
         );
         return input.view === "full"
           ? attachSignalOptionsContractPreviews({
@@ -9390,12 +9410,33 @@ async function withFreshSignalOptionsStateSignals(
   }
 }
 
+async function buildSignalOptionsFastSummaryState(input: {
+  deploymentId: string;
+  cacheMode?: SignalOptionsDashboardCacheMode;
+  refreshSignalsFromMonitorState?: boolean;
+}) {
+  const snapshot = await buildSignalOptionsColdDashboardSnapshot({
+    deploymentId: input.deploymentId,
+    view: "summary",
+    reason: "signal_options_state_summary_fast_signal_state",
+  });
+  return withFreshSignalOptionsStateSignals(snapshot, {
+    cacheMode: input.cacheMode,
+    view: "summary",
+    refreshSignalsFromMonitorState: true,
+    preferStoredMonitorState: true,
+  });
+}
+
 export async function listSignalOptionsAutomationState(input: {
   deploymentId: string;
   cacheMode?: SignalOptionsDashboardCacheMode;
   view?: SignalOptionsDashboardView;
   refreshSignalsFromMonitorState?: boolean;
 }) {
+  if ((input.view ?? "summary") !== "full") {
+    return buildSignalOptionsFastSummaryState(input);
+  }
   const snapshot = await getSignalOptionsDashboardSnapshot(input);
   return withFreshSignalOptionsStateSignals(snapshot, input);
 }

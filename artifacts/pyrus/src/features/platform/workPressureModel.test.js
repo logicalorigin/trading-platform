@@ -41,6 +41,21 @@ test("resolveIbkrWorkPressure promotes lane backoff and stalls", () => {
   );
 });
 
+test("resolveIbkrWorkPressure ignores stale lane errors after strict readiness recovers", () => {
+  assert.equal(
+    resolveIbkrWorkPressure({
+      configured: true,
+      authenticated: true,
+      healthFresh: true,
+      streamFresh: true,
+      strictReady: true,
+      streamState: "live",
+      lastError: "Lane is backed off.",
+    }),
+    WORK_PRESSURE_STATE.normal,
+  );
+});
+
 test("resolveIbkrWorkPressure reflects scheduler lane pressure", () => {
   assert.equal(
     resolveIbkrWorkPressure({
@@ -56,6 +71,25 @@ test("resolveIbkrWorkPressure reflects scheduler lane pressure", () => {
       },
     }),
     WORK_PRESSURE_STATE.degraded,
+  );
+});
+
+test("resolveIbkrWorkPressure still reflects active scheduler backoff on ready bridges", () => {
+  assert.equal(
+    resolveIbkrWorkPressure({
+      configured: true,
+      authenticated: true,
+      healthFresh: true,
+      streamFresh: true,
+      strictReady: true,
+      lastError: "Lane is backed off.",
+      bridgeDiagnostics: {
+        scheduler: {
+          control: { pressure: "backoff" },
+        },
+      },
+    }),
+    WORK_PRESSURE_STATE.backoff,
   );
 });
 

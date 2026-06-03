@@ -17,6 +17,12 @@ test("inspect script highlights uncaught Postgres disconnect evidence", () => {
         classification: "container-replaced",
         confidence: "medium",
         severity: "warning",
+        currentReplit: {
+          dbToken: { issuedAt: "2026-06-03T12:53:31.000Z" },
+          runtimeFiles: {
+            pid1Flags: { mtimeIso: "2026-06-03T12:53:31.000Z" },
+          },
+        },
         evidence: [
           "previous-boot:btime:1780220834",
           "current-boot:btime:1780242802",
@@ -61,6 +67,8 @@ test("inspect script highlights uncaught Postgres disconnect evidence", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Latest Incident/);
     assert.match(result.stdout, /classification: container-replaced/);
+    assert.match(result.stdout, /attribution: Replit runtime\/container replacement observed/);
+    assert.match(result.stdout, /host trigger unavailable inside guest/);
     assert.match(result.stdout, /Recent Postgres Disconnects/);
     assert.match(result.stdout, /Connection terminated unexpectedly/);
     assert.match(result.stdout, /api-process-exit/);

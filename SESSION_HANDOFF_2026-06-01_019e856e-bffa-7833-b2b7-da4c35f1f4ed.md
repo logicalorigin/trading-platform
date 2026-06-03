@@ -3,24 +3,24 @@
 ## Session Metadata
 
 - Session ID: `019e856e-bffa-7833-b2b7-da4c35f1f4ed`
-- Saved At (MT): `2026-06-01 18:16:03 MDT`
-- Saved At (UTC): `2026-06-02T00:16:03.198Z`
-- Summary: 2026-06-01 18:16:03 MDT | 019e856e-bffa-7833-b2b7-da4c35f1f4ed | please pick up this session: └ SESSION_HANDOFF_CURRENT.md (+20 -18) 4 5 -- Last Updated (MT): `2026-06-01 16:5 3:1…
+- Saved At (MT): `2026-06-01 18:39:05 MDT`
+- Saved At (UTC): `2026-06-02T00:39:05.009Z`
+- Summary: 2026-06-01 18:39:05 MDT | 019e856e-bffa-7833-b2b7-da4c35f1f4ed | please pick up this session: └ SESSION_HANDOFF_CURRENT.md (+20 -18) 4 5 -- Last Updated (MT): `2026-06-01 16:5 3:1…
 - Repo Root: `/home/runner/workspace`
 - Thread CWD: `/home/runner/workspace`
 - Rollout Path: `/home/runner/.codex/sessions/2026/06/01/rollout-2026-06-01T17-04-48-019e856e-bffa-7833-b2b7-da4c35f1f4ed.jsonl`
 - Branch: `main`
-- HEAD: `9256e61f4dd65a1c6c6f327f4b54de77aed2adbf`
-- Latest Commit: `docs: add metadata-as-rules audit`
+- HEAD: `9489d72ed09be58488b39845883b8033a3bd8e7a`
+- Latest Commit: `docs: refresh signal matrix and memory handoffs`
 - Latest Commit Session ID: `unknown`
 - Title: please pick up this session: └ SESSION_HANDOFF_CURRENT.md (+20 -18) 4 5 -- Last Updated (MT): `2026-06-01 16:5 3:15 MDT…
 - Model: `gpt-5.5`
 - Reasoning Effort: `xhigh`
-- Tokens Used: `33299989`
+- Tokens Used: `50652198`
 
 ## Current User Request
 
-please pick up this session:
+please pick up this session: 
   └ SESSION_HANDOFF_CURRENT.md (+20 -18)
      4
      5 -- Last Updated (MT): `2026-06-01 16:5
@@ -330,6 +330,8 @@ please pick up this session:
 - `SESSION_HANDOFF_2026-06-01_75218067-d9b9-4264-8b7a-3243c1a06ca1.md`
 - `SESSION_HANDOFF_2026-06-01_019e8583-e862-7bb1-8560-5db3658c7345.md`
 - `SESSION_HANDOFF_2026-06-01_019e856f-e49f-7fb0-941e-fd5c610c8e35.md`
+- `SESSION_HANDOFF_2026-06-01_019e856e-09fe-7de1-b9bc-28878b14c985.md`
+- `SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md`
 - `SESSION_HANDOFF_2026-06-01_019e84ed-e068-7de2-ad5e-d900df7d26c1.md`
 - `SESSION_HANDOFF_2026-06-01_019e84aa-d2bd-7103-91a9-a73c9fcfb9c1.md`
 - `SESSION_HANDOFF_2026-06-01_019e84aa-c1d5-79e1-adba-5a743d03c8cc.md`
@@ -419,7 +421,8 @@ please pick up this session:
 
 ## Recent User Messages
 
-- `2026-06-01T23:05:21.801Z` please pick up this session:
+- `2026-06-01 18:30:08 MDT` i want to do a deep [$qa](/home/runner/workspace/.agents/skills/gstack/qa/SKILL.md) on the algo page
+- `2026-06-01T23:05:21.801Z` please pick up this session: 
   └ SESSION_HANDOFF_CURRENT.md (+20 -18)
      4
      5 -- Last Updated (MT): `2026-06-01 16:5
@@ -732,6 +735,7 @@ please pick up this session:
 - `2026-06-01T23:57:52.720Z` please review our worktree and help me plan out cleaning it up, merging it, and committing it
 - `2026-06-02T00:02:21.646Z` Implement the plan.
 - `2026-06-02T00:04:48.478Z` on main btw please
+- `2026-06-02T00:30:08.881Z` i want to do a deep $qa on the algo page
 
 ## Session Activity Summary
 
@@ -741,43 +745,73 @@ please pick up this session:
 - `2026-06-01T23:06:09.038Z` Tool: exec_command _UPD=$(~/.claude/skills/gstack/bin/gstack-update-check 2>/dev/null || .claude/skills/gstack/bin/gstack-update-check 2>/dev/null || true) [ -n "$_UPD" ] && echo "$_UPD" || true mkd…
 - `2026-06-01T23:06:24.933Z` Agent: I’m restoring from the repo handoff files first, then I’ll compare them against the live worktree. The pasted diff points at residual API pressure as the active thread, so I’ll ve…
 - `2026-06-01T23:06:24.940Z` Tool: exec_command sed -n '1,220p' SESSION_HANDOFF_MASTER.md
-- … 707 lower-signal transcript events omitted …
-- `2026-06-02T00:15:21.789Z` Tool: update_plan {"plan":[{"step":"Create safety snapshot and landing branch","status":"completed"},{"step":"Clean workspace hazards and restore startup config","status":"compl…
-- `2026-06-02T00:15:26.049Z` Agent: First validation is the Replit startup guard, then the API codegen drift audit.
-- `2026-06-02T00:15:27.105Z` Tool: exec_command pnpm run audit:replit-startup
-- `2026-06-02T00:15:31.714Z` Agent: Startup config audit passes. I’m running the API codegen drift audit next with the hot-validation override.
-- `2026-06-02T00:15:32.920Z` Tool: exec_command PYRUS_ALLOW_HOT_VALIDATION=1 pnpm run audit:api-codegen
-- `2026-06-02T00:15:58.480Z` Agent: The codegen audit reran successfully far enough to compare outputs, and it found drift. I’m inspecting the generated diff; if it’s only deterministic generated output, I’ll commit…
-- `2026-06-02T00:15:58.487Z` Tool: exec_command git status --short -- lib/api-client-react/src/generated lib/api-zod/src/generated lib/api-spec
-- `2026-06-02T00:15:58.487Z` Tool: exec_command git diff --stat -- lib/api-client-react/src/generated lib/api-zod/src/generated lib/api-spec | sed -n '1,220p'
-- `2026-06-02T00:15:58.488Z` Tool: exec_command git diff -- lib/api-zod/src/generated/api.ts | tail -n 60
-- `2026-06-02T00:15:58.488Z` Tool: exec_command git diff --check -- lib/api-client-react/src/generated lib/api-zod/src/generated lib/api-spec
+- … 1029 lower-signal transcript events omitted …
+- `2026-06-02T00:34:54.609Z` Tool: exec_command sed -n '1720,1918p' artifacts/pyrus/src/screens/AlgoScreen.jsx && sed -n '1,260p' artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx
+- `2026-06-02T00:34:54.609Z` Tool: exec_command rg -n "algo-operations-header-wave|algo-operations-header-wave-badge|algo-settings-drawer-open|algo-signal-column|algo-signal-table|data-testid" artifacts/pyrus/src/screens/algo/A…
+- `2026-06-02T00:35:10.473Z` Agent: I’m building the live pass around stable selectors: `algo-screen`, `algo-live-content`, `algo-operations-header-wave-badge`, `algo-operations-signal-table`, and the settings drawe…
+- `2026-06-02T00:36:02.398Z` Tool: exec_command pnpm --dir artifacts/pyrus exec node --input-type=module - <<'NODE' import { chromium } from '@playwright/test'; import { mkdir, writeFile } from 'node:fs/promises'; import path f…
+- `2026-06-02T00:36:22.919Z` Agent: The first live script hit a bug in my evidence collector (`label` wasn’t passed into the browser context), not in the app. I’m rerunning with that fixed and a `finally` close so a…
+- `2026-06-02T00:37:15.883Z` Tool: exec_command pnpm --dir artifacts/pyrus exec node --input-type=module - <<'NODE' import { chromium } from '@playwright/test'; import { mkdir, writeFile } from 'node:fs/promises'; import path f…
+- `2026-06-02T00:37:51.242Z` Agent: The live Playwright run is still executing. It’s waiting through the Algo route’s real safe-QA hydration windows and capturing desktop/mobile screenshots plus console and API resp…
+- `2026-06-02T00:37:52.543Z` Tool: write_stdin session 75583
+- `2026-06-02T00:38:25.983Z` Agent: The live page didn’t expose `platform-screen-nav` within 45 seconds. I’m treating that as a real QA finding until proven otherwise, and I’m doing a bounded diagnostic load now to…
+- `2026-06-02T00:38:44.531Z` Tool: exec_command pnpm --dir artifacts/pyrus exec node --input-type=module - <<'NODE' import { chromium } from '@playwright/test'; import { mkdir, writeFile } from 'node:fs/promises'; import path f…
 
 ## High-Signal Changed Files
 
-- `artifacts/api-server/src/services/readiness.test.ts`
-- `artifacts/pyrus/src/components/platform/primitives.jsx`
-- `artifacts/pyrus/src/features/signals/signalsRowModel.js`
-- `lib/api-zod/src/generated/api.ts`
+- `SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md`
+- `SESSION_HANDOFF_CURRENT.md`
+- `SESSION_HANDOFF_MASTER.md`
+- `artifacts/api-server/src/services/diagnostics.test.ts`
+- `artifacts/api-server/src/services/diagnostics.ts`
+- `artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx`
+- `artifacts/pyrus/src/features/platform/memoryPressureClient.js`
+- `artifacts/pyrus/src/features/platform/memoryPressureModel.test.js`
+- `artifacts/pyrus/src/features/platform/memoryPressurePopoverModel.js`
+- `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js`
+- `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js`
+- `artifacts/pyrus/src/screens/DiagnosticsScreen.jsx`
+- `artifacts/pyrus/src/screens/SettingsScreen.jsx`
+- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`
 
 ## Repo State Snapshot
 
 ```text
-## main...origin/main [ahead 4]
- M artifacts/api-server/src/services/readiness.test.ts
- M artifacts/pyrus/src/components/platform/primitives.jsx
- M artifacts/pyrus/src/features/signals/signalsRowModel.js
- M lib/api-zod/src/generated/api.ts
+## main...origin/main
+ M SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md
+ M SESSION_HANDOFF_CURRENT.md
+ M SESSION_HANDOFF_MASTER.md
+ M artifacts/api-server/src/services/diagnostics.test.ts
+ M artifacts/api-server/src/services/diagnostics.ts
+ M artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx
+ M artifacts/pyrus/src/features/platform/memoryPressureClient.js
+ M artifacts/pyrus/src/features/platform/memoryPressureModel.test.js
+ M artifacts/pyrus/src/features/platform/memoryPressurePopoverModel.js
+ M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js
+ M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js
+ M artifacts/pyrus/src/screens/DiagnosticsScreen.jsx
+ M artifacts/pyrus/src/screens/SettingsScreen.jsx
+ M artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js
 ```
 
 ## Diff Summary
 
 ```text
- .../api-server/src/services/readiness.test.ts      |   3 +-
- .../pyrus/src/components/platform/primitives.jsx   | 132 +++++---
- .../pyrus/src/features/signals/signalsRowModel.js  | 331 +++++++++++++++++++++
- lib/api-zod/src/generated/api.ts                   |   2 +
- 4 files changed, 433 insertions(+), 35 deletions(-)
+ ...6-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md |  42 +++++++--
+ SESSION_HANDOFF_CURRENT.md                         |  27 +++---
+ SESSION_HANDOFF_MASTER.md                          |   2 +-
+ .../api-server/src/services/diagnostics.test.ts    |  67 ++++++++++++++
+ artifacts/api-server/src/services/diagnostics.ts   | 101 +++++++++++++++++++--
+ .../src/features/platform/PlatformWatchlist.jsx    |  94 ++++++++++++++++---
+ .../src/features/platform/memoryPressureClient.js  |   1 +
+ .../features/platform/memoryPressureModel.test.js  |  12 +++
+ .../platform/memoryPressurePopoverModel.js         |  11 ++-
+ .../features/platform/useMemoryPressureSignal.js   |   4 +
+ .../platform/useMemoryPressureSignal.test.js       |   7 ++
+ artifacts/pyrus/src/screens/DiagnosticsScreen.jsx  |  20 +++-
+ artifacts/pyrus/src/screens/SettingsScreen.jsx     |   1 +
+ .../src/screens/algo/OperationsSignalRow.test.js   |  20 +++-
+ 14 files changed, 361 insertions(+), 48 deletions(-)
 ```
 
 ## Validations Detected In Transcript

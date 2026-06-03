@@ -221,7 +221,10 @@ test("useChartPositionOverlays reads account positions for risk overlays", () =>
   assert.match(source, /useAccountSection/);
   assert.match(source, /useRuntimeTickerSnapshot/);
   assert.match(source, /const runtimeMark = finiteNumber/);
+  assert.match(source, /const CHART_POSITION_QUOTE_REQUEST_OPTIONS = buildHydrationRequestOptions\(/);
+  assert.match(source, /HYDRATION_PRIORITY\.visible,\s*"chart-visible"/);
   assert.match(source, /enabled:\s*Boolean\(enabled && !isOption && symbol && runtimeMark == null\)/);
+  assert.match(source, /request:\s*CHART_POSITION_QUOTE_REQUEST_OPTIONS/);
   assert.match(source, /if \(runtimeMark != null\) \{/);
   assert.doesNotMatch(source, /useListPositions/);
 });

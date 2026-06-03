@@ -9,6 +9,7 @@ const signalKeys = {
   msft: "MSFT:5m:sell:visual",
   nvda: "NVDA:5m:buy:visual",
 };
+const matrixTimeframes = ["1m", "2m", "5m", "15m", "1h", "1d"];
 
 const basePrices: Record<string, number> = {
   AAPL: 150,
@@ -169,15 +170,24 @@ const candidates = [
 ];
 
 const matrixStates = [
+  ["AAPL", "1m", "buy", true, 0],
   ["AAPL", "2m", "buy", true, 0],
   ["AAPL", "5m", "buy", true, 1],
   ["AAPL", "15m", "buy", true, 1],
+  ["AAPL", "1h", "buy", true, 2],
+  ["AAPL", "1d", "buy", true, 3],
+  ["MSFT", "1m", "sell", false, 9],
   ["MSFT", "2m", "sell", false, 10],
   ["MSFT", "5m", "sell", false, 12],
   ["MSFT", "15m", "buy", false, 8],
+  ["MSFT", "1h", "sell", false, 14],
+  ["MSFT", "1d", "sell", false, 18],
+  ["NVDA", "1m", "buy", true, 0],
   ["NVDA", "2m", "buy", true, 1],
   ["NVDA", "5m", "buy", true, 2],
   ["NVDA", "15m", "sell", false, 6],
+  ["NVDA", "1h", "buy", true, 3],
+  ["NVDA", "1d", "buy", true, 4],
 ].map(([symbol, timeframe, currentSignalDirection, fresh, barsSinceSignal]) => ({
   symbol,
   timeframe,
@@ -193,6 +203,11 @@ const matrixStates = [
 type MockApiOptions = {
   cockpitPipelineStages?: unknown[];
   candidates?: typeof candidates;
+  matrixRequests?: Array<{
+    cells?: unknown;
+    symbols?: unknown;
+    timeframes?: unknown;
+  }>;
   signals?: typeof signalRows;
 };
 
@@ -400,14 +415,26 @@ async function installMockApi(page: Page, options: MockApiOptions = {}) {
         profile: null,
         states: matrixStates.filter((state) => state.timeframe === "5m"),
         events: [],
+        universeSymbols: ["AAPL", "MSFT", "NVDA"],
         evaluatedAt: nowIso,
       };
     } else if (url.pathname === "/api/signal-monitor/events") {
       body = { events: [] };
     } else if (url.pathname === "/api/signal-monitor/matrix") {
+      let requestBody: Record<string, unknown> = {};
+      try {
+        requestBody = route.request().postDataJSON() as Record<string, unknown>;
+      } catch {
+        requestBody = {};
+      }
+      options.matrixRequests?.push({
+        cells: requestBody.cells,
+        symbols: requestBody.symbols,
+        timeframes: requestBody.timeframes,
+      });
       body = {
         states: matrixStates,
-        timeframes: ["2m", "5m", "15m"],
+        timeframes: matrixTimeframes,
         evaluatedAt: nowIso,
         skippedSymbols: [],
         truncated: false,
@@ -464,28 +491,51 @@ async function installMockApi(page: Page, options: MockApiOptions = {}) {
   });
 }
 
+async function openScreen(
+  page: Page,
+  width: number,
+  height: number,
+  screen: "algo" | "signals",
+  options: MockApiOptions = {},
+) {
+  await page.setViewportSize({ width, height });
+  await installMockApi(page, options);
+  await page.addInitScript((initialScreen) => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.localStorage.setItem(
+      "pyrus:state:v1",
+      JSON.stringify({
+        screen: initialScreen,
+        sym: "AAPL",
+        theme: "dark",
+        sidebarCollapsed: true,
+      }),
+    );
+  }, screen);
+  await page.goto("/?pyrusQa=safe", { waitUntil: "domcontentloaded" });
+}
+
+async function openSignals(
+  page: Page,
+  width: number,
+  height: number,
+  options: MockApiOptions = {},
+) {
+  await openScreen(page, width, height, "signals", options);
+  await expect(page.getByTestId("signals-screen")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("signals-table-row").first()).toBeVisible({
+    timeout: 30_000,
+  });
+}
+
 async function openAlgo(
   page: Page,
   width: number,
   height: number,
   options: MockApiOptions = {},
 ) {
-  await page.setViewportSize({ width, height });
-  await installMockApi(page, options);
-  await page.addInitScript(() => {
-    window.localStorage.clear();
-    window.sessionStorage.clear();
-    window.localStorage.setItem(
-      "pyrus:state:v1",
-      JSON.stringify({
-        screen: "algo",
-        sym: "AAPL",
-        theme: "dark",
-        sidebarCollapsed: true,
-      }),
-    );
-  });
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await openScreen(page, width, height, "algo", options);
   await expect(page.getByTestId("algo-screen")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("algo-operations-signal-table")).toBeVisible({
     timeout: 30_000,
@@ -496,11 +546,55 @@ async function openAlgo(
   await page.waitForTimeout(8_000);
 }
 
+test("e2e audit: Signals six-frame matrix flows into STA contract selection", async ({ page }) => {
+  const matrixRequests: NonNullable<MockApiOptions["matrixRequests"]> = [];
+  await openSignals(page, 1440, 900, { matrixRequests });
+
+  const aaplSignalRow = page.locator(
+    '[data-testid="signals-table-row"][data-symbol="AAPL"]',
+  );
+  await expect(aaplSignalRow).toBeVisible();
+  await expect(aaplSignalRow).toHaveAttribute(
+    "data-matrix-hydrated-count",
+    "6",
+    { timeout: 30_000 },
+  );
+  expect(
+    matrixRequests.some((request) =>
+      JSON.stringify(request).includes('"1d"'),
+    ),
+  ).toBeTruthy();
+
+  await page
+    .getByTestId("platform-screen-nav")
+    .getByRole("button", { name: "Algo" })
+    .click();
+  await expect(page.getByTestId("algo-screen")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("algo-operations-signal-table")).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const aaplStaRow = page.getByTestId("algo-signal-row-AAPL");
+  await expect(aaplStaRow).toBeVisible();
+  await expect(aaplStaRow.locator('[data-testid="watchlist-signal-dot-1d"]')).toHaveAttribute(
+    "data-direction",
+    "buy",
+  );
+  await expect(aaplStaRow).toContainText("Priced");
+  await expect(aaplStaRow).toContainText("05/22 155C");
+  await expect(aaplStaRow).toContainText("conid aapl-call-155");
+  await expect(aaplStaRow.getByTestId("algo-signal-greeks-grid")).toBeVisible();
+});
+
 test("visual review: desktop signal hero rows", async ({ page }) => {
   await openAlgo(page, 1440, 900);
 
   const aaplRow = page.getByTestId("algo-signal-row-AAPL");
   await expect(aaplRow.getByTestId("algo-verdict-try")).toBeVisible();
+  await expect(aaplRow.getByTestId("algo-signal-hero-sparkline")).toHaveAttribute(
+    "title",
+    /Signal .* · .* since/,
+  );
   await expect(page.getByTestId("algo-signal-dots").first()).toBeVisible();
   await expect(page.getByTestId("algo-signal-row-action-submit").first()).toBeVisible();
   await expect(page.getByTestId("algo-spread-gauge").first()).toBeVisible();
@@ -597,6 +691,35 @@ test("visual review: desktop signal hero rows", async ({ page }) => {
     path: "/tmp/algo-signal-row-desktop.png",
     animations: "disabled",
   });
+});
+
+test("STA row Age shows signal time and Signal button opens Trade contract", async ({
+  page,
+}) => {
+  await openAlgo(page, 1440, 900);
+
+  const aaplRow = page.getByTestId("algo-signal-row-AAPL");
+  await expect(aaplRow).toBeVisible();
+  const ageCell = aaplRow.getByRole("cell").nth(1);
+  await expect(ageCell).toContainText(/\d{1,2}:\d{2}/);
+  await expect(ageCell).not.toContainText(/\bsince\b/i);
+  await expect(ageCell).not.toContainText(/\b5m\b/);
+  await expect(ageCell).not.toContainText(/\b1\/8\b/);
+  await expect(ageCell).not.toContainText(/\b1 bars?\b/i);
+
+  const tradeButton = aaplRow.getByRole("button", {
+    name: "Open AAPL contract in Trade",
+  });
+  await expect(tradeButton).toBeEnabled();
+  await tradeButton.click();
+
+  await expect(page.getByTestId("trade-top-zone")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByText("Signal-options context")).toBeVisible();
+  await expect(page.getByText("MATCHED")).toBeVisible();
+  await expect(page.getByText(/planned 05\/22 155C/)).toBeVisible();
+  await expect(page.getByText("AAPL 05/22 155C").first()).toBeVisible();
 });
 
 test("signal table status suppresses heavy deferred once contracts exist", async ({ page }) => {

@@ -29,6 +29,7 @@ const buildSparklineFromHistoricalBars = (bars, fallback) => {
   return bars.map((bar, index) => ({
     i: index,
     v: bar.close,
+    timestamp: bar.timestamp ?? bar.time ?? bar.t ?? null,
   }));
 };
 
@@ -279,6 +280,30 @@ export const syncRuntimeMarketData = (
     }
   });
 
+  Object.entries(sparklineBarsBySymbol).forEach(([symbol, sparkBars]) => {
+    const normalized = symbol.toUpperCase();
+    if (!Array.isArray(sparkBars) || sparkBars.length < 2) {
+      return;
+    }
+    const fallbackName = resolveRuntimeQuoteFallbackName(
+      normalized,
+      watchlistNameBySymbol,
+    );
+    const currentTradeInfo = ensureTradeTickerInfo(normalized, fallbackName);
+    if (
+      applyRuntimeTickerInfoPatch(normalized, fallbackName, {
+        name: fallbackName,
+        spark: buildSparklineFromHistoricalBars(
+          sparkBars,
+          currentTradeInfo.spark,
+        ),
+        sparkBars,
+      }).changed
+    ) {
+      changedSymbols.add(normalized);
+    }
+  });
+
   INDICES.forEach((item) => {
     const quote = quoteBySymbol[item.sym.toUpperCase()];
     const prevClose = quote?.prevClose ?? item.prevClose ?? null;
@@ -382,4 +407,6 @@ export const syncRuntimeMarketData = (
   if (changedSymbols.size > 0) {
     notifyRuntimeTickerSnapshotSymbols(Array.from(changedSymbols));
   }
+
+  return changedSymbols.size;
 };

@@ -21,13 +21,25 @@ test("buildAttentionStream returns empty when there's nothing to flag", () => {
 test("buildAttentionStream surfaces cockpit attention items first", () => {
   const stream = buildAttentionStream({
     attentionItems: [
-      { id: "a1", severity: "critical", symbol: "AAPL", summary: "spread" },
+      {
+        id: "a1",
+        severity: "critical",
+        stage: "contract_selected",
+        symbol: "AAPL",
+        summary: "spread",
+        detail: "wide option spread",
+        action: "Inspect option quote hydration.",
+      },
     ],
   });
   assert.equal(stream.length, 1);
   assert.equal(stream[0].kind, "attention");
   assert.equal(stream[0].severity, "critical");
   assert.equal(stream[0].title, "AAPL");
+  assert.equal(stream[0].symbol, "AAPL");
+  assert.equal(stream[0].stage, "contract_selected");
+  assert.equal(stream[0].detail, "wide option spread");
+  assert.equal(stream[0].action, "Inspect option quote hydration.");
 });
 
 test("buildAttentionStream maps rule failures and warnings, skips passing rules", () => {
@@ -40,7 +52,7 @@ test("buildAttentionStream maps rule failures and warnings, skips passing rules"
   });
   assert.equal(stream.length, 2);
   assert.equal(stream[0].kind, "rule");
-  assert.equal(stream[0].severity, "critical");
+  assert.equal(stream[0].severity, "warning");
   assert.equal(stream[1].severity, "warning");
 });
 

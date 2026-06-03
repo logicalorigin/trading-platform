@@ -9,7 +9,6 @@ test("signals table exposes sort keys for all visible signal columns", () => {
   const signalsSource = source();
 
   for (const sortKey of [
-    "action",
     "age",
     "coverage",
     "mtf",
@@ -21,8 +20,9 @@ test("signals table exposes sort keys for all visible signal columns", () => {
     "verdict",
     "vol",
   ]) {
-    assert.match(signalsSource, new RegExp(`${sortKey}: "${sortKey === "action" ? "symbol" : sortKey}"`));
+    assert.match(signalsSource, new RegExp(`${sortKey}: "${sortKey}"`));
   }
+  assert.doesNotMatch(signalsSource, /action:\s*"symbol"/);
   assert.match(signalsSource, /SIGNALS_TABLE_TIMEFRAMES\.map\(\(timeframe\) => \[/);
   assert.match(signalsSource, /`tf-\$\{timeframe\}`,\s*`tf-\$\{timeframe\}`/);
   assert.match(signalsSource, /sortKey: columnSortKey/);

@@ -4730,16 +4730,23 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       .slice(0, Math.max(1, input.limit ?? 50));
   }
 
-  async getQuoteSnapshots(symbols: string[]): Promise<QuoteSnapshot[]> {
+  async getQuoteSnapshots(
+    symbols: string[],
+    options: { tradingSession?: "overnight" | null } = {},
+  ): Promise<QuoteSnapshot[]> {
     await this.refreshSession();
 
     const normalizedSymbols = Array.from(
       new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
     );
+    const exchange =
+      options.tradingSession === "overnight" ? "OVERNIGHT" : "SMART";
 
     const results: QuoteSnapshot[] = [];
     const liveProviderContractIdsBySymbol =
-      await this.ensureQuoteSubscriptionsForSymbols(normalizedSymbols);
+      options.tradingSession === "overnight"
+        ? new Map<string, string>()
+        : await this.ensureQuoteSubscriptionsForSymbols(normalizedSymbols);
 
     for (const symbol of normalizedSymbols) {
       const resolved = await this.resolveStockContract(symbol);
@@ -4769,7 +4776,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
         contract: {
           ...resolved.contract,
           conId: resolved.resolved.conid,
-          exchange: "SMART",
+          exchange,
         },
         symbol,
         providerContractId,

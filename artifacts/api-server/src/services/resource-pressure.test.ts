@@ -26,11 +26,11 @@ test("resource pressure escalates from API RSS", () => {
 
 test("RSS pressure scales with the container memory limit", () => {
   assert.deepEqual(resolveApiRssPressureThresholds(16_384), {
-    watch: 4_096,
-    high: 5_734,
-    critical: 8_192,
+    watch: 6_144,
+    high: 8_192,
+    critical: 12_288,
   });
-  assert.equal(resolveApiRssHardBlockMb(16_384), 11_469);
+  assert.equal(resolveApiRssHardBlockMb(16_384), 13_926);
 });
 
 test("resource pressure escalates from API heap pressure", () => {

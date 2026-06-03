@@ -92,8 +92,11 @@ const MULTI_CHART_LAYOUT_CARD_WIDTH = {
   "3x3": 340,
 };
 
+const MARKET_CHART_SOLO_DEFAULT_HEIGHT = 560;
+const MARKET_CHART_SOLO_LEGACY_DEFAULT_HEIGHT = 720;
+
 const MULTI_CHART_LAYOUT_CARD_HEIGHT = {
-  "1x1": 720,
+  "1x1": MARKET_CHART_SOLO_DEFAULT_HEIGHT,
   "2x2": 410,
   "2x3": 380,
   "3x3": 340,
@@ -120,6 +123,26 @@ const MARKET_CHART_FLOW_HISTORY_TRANSIENT_REASONS = new Set([
   "options_flow_historical_provider_timeout",
   "options_flow_historical_refreshing",
 ]);
+
+const migrateMarketGridTrackSessionDefaults = (state) => {
+  const soloState = state?.["1x1"];
+  const soloRowHeights = soloState?.rowHeights;
+  if (
+    !Array.isArray(soloRowHeights) ||
+    soloRowHeights.length !== 1 ||
+    Math.abs(soloRowHeights[0] - MARKET_CHART_SOLO_LEGACY_DEFAULT_HEIGHT) >= 1
+  ) {
+    return state;
+  }
+
+  return {
+    ...(state || {}),
+    "1x1": {
+      ...soloState,
+      rowHeights: [MARKET_CHART_SOLO_DEFAULT_HEIGHT],
+    },
+  };
+};
 
 const MARKET_CHART_FLOW_PENDING_SOURCE = {
   provider: "massive",
@@ -303,7 +326,7 @@ export const MultiChartGrid = ({
   );
   const [gridBodyWidth, setGridBodyWidth] = useState(0);
   const [marketGridTrackState, setMarketGridTrackState] = useState(() =>
-    readMarketGridTrackSession(),
+    migrateMarketGridTrackSessionDefaults(readMarketGridTrackSession()),
   );
   const [chartViewportLayoutRevision, setChartViewportLayoutRevision] =
     useState(0);

@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/popover";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { FailurePointContent } from "../../components/platform/FailurePointTooltip.jsx";
-import { FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
+import { FONT_WEIGHTS, MISSING_VALUE, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import {
   MEMORY_PRESSURE_THRESHOLDS,
   resolveBrowserMemoryThresholds,
@@ -104,12 +104,8 @@ const CLUSTER_BAR_GAP = 6;
 const CLUSTER_LABEL_GAP = 2;
 const CLUSTER_PADDING_X = 2;
 const BROWSER_MEMORY_REFERENCE_MB = 600;
-const DEFAULT_API_RSS_THRESHOLDS = { watch: 2048, high: 3072, critical: 4096 };
 
 const fallbackMiniDriver = { level: null, score: 0 };
-
-const rawPercentFillPercent = (value) =>
-  Number.isFinite(value) ? Math.round(clamp(value, 0, 100)) : null;
 
 const finiteNumber = (value) => {
   const number = Number(value);
@@ -166,12 +162,6 @@ const levelFromThresholds = (value, thresholds, fallback = "normal") => {
   return "normal";
 };
 
-const buildApiMemoryLabel = (rssMb, heapPercent) => {
-  if (rssMb !== null) return `API ${formatMetric(rssMb, "M")}`;
-  if (heapPercent !== null) return `API ${formatMetric(heapPercent, "%")}`;
-  return "API --";
-};
-
 const buildApiMemoryDetail = (rssMb, heapPercent) => {
   if (rssMb !== null && heapPercent !== null) {
     return `API RSS ${formatMetric(rssMb, "M")} / heap ${formatMetric(heapPercent, "%")}`;
@@ -219,12 +209,6 @@ const readBrowserMemoryLimitMb = (signal) =>
 const readApiRssMb = (signal) =>
   finiteNumber(signal?.apiRssMb) ?? finiteNumber(signal?.server?.rssMb);
 
-const readApiRssThresholds = (signal) =>
-  normalizeThresholds(
-    signal?.apiRssThresholds ?? signal?.server?.apiRssThresholds,
-    DEFAULT_API_RSS_THRESHOLDS,
-  );
-
 const miniTrackStyle = () => ({
   position: "relative",
   display: "block",
@@ -259,6 +243,301 @@ const miniLabelStyle = (bar, showLabels) => ({
   overflow: "hidden",
 });
 
+const sourceNumber = (value) => {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
+const firstSourceNumber = (...values) => {
+  for (const value of values) {
+    const number = sourceNumber(value);
+    if (number !== null) return number;
+  }
+  return null;
+};
+
+const formatSourceCount = (value) =>
+  Number.isFinite(value) ? Math.round(value).toLocaleString() : "--";
+
+const sourceLevelFromLineUsage = ({ used, cap, free, limited }) => {
+  if (!Number.isFinite(used) || !Number.isFinite(cap) || cap <= 0) {
+    return "normal";
+  }
+  const ratio = used / cap;
+  if (ratio >= 0.95 || (Number.isFinite(free) && free <= 0)) {
+    return "critical";
+  }
+  if (limited || ratio >= 0.85) {
+    return "high";
+  }
+  if (ratio >= 0.65) {
+    return "watch";
+  }
+  return "normal";
+};
+
+const findLineUsageRow = (lineUsage, id) =>
+  Array.isArray(lineUsage?.rows)
+    ? lineUsage.rows.find((row) => row?.id === id) || null
+    : null;
+
+const buildIbkrSourcePressureBar = (runtimeControl) => {
+  const lineUsage = runtimeControl?.lineUsage || {};
+  const total = lineUsage.total || findLineUsageRow(lineUsage, "total") || {};
+  const bridge = lineUsage.bridge || {};
+  const allocation = lineUsage.allocation || {};
+  const used = firstSourceNumber(
+    total.used,
+    lineUsage.activeLineCount,
+    bridge.used,
+  );
+  const cap = firstSourceNumber(
+    total.effectiveCap,
+    total.cap,
+    bridge.cap,
+    allocation.bridgeLineBudget,
+    allocation.targetFillLines,
+  );
+  const computedFree =
+    Number.isFinite(used) && Number.isFinite(cap) ? Math.max(0, cap - used) : null;
+  const free = firstSourceNumber(
+    total.free,
+    bridge.free,
+    allocation.remainingToTargetLineCount,
+    computedFree,
+  );
+  const state = String(
+    total.streamState || bridge.streamState || lineUsage.pressure?.state || "",
+  ).toLowerCase();
+  const limited =
+    Number(lineUsage.warnings) > 0 ||
+    state.includes("limited") ||
+    state.includes("backoff") ||
+    state.includes("stalled");
+  const fillPercent =
+    Number.isFinite(used) && Number.isFinite(cap) && cap > 0
+      ? Math.round(clamp((used / cap) * 100, 0, 100))
+      : 0;
+  const level = sourceLevelFromLineUsage({ used, cap, free, limited });
+  const hasRatio = Number.isFinite(used) && Number.isFinite(cap);
+  const label = hasRatio
+    ? `IBKR ${formatSourceCount(used)}/${formatSourceCount(cap)}`
+    : "IBKR --";
+  const detail = hasRatio
+    ? `IBKR ${formatSourceCount(used)} of ${formatSourceCount(cap)}${
+        Number.isFinite(free) ? ` · ${formatSourceCount(free)} free` : ""
+      }`
+    : "IBKR line usage unavailable";
+
+  return {
+    key: "ibkr",
+    level,
+    fillPercent,
+    label,
+    detail,
+  };
+};
+
+const normalizeProviderStatus = (status) =>
+  String(status || "").trim().toLowerCase().replaceAll("_", "-");
+
+const providerStatusLevel = (status, configured) => {
+  const normalized = normalizeProviderStatus(status);
+  if (["degraded", "error", "failed"].includes(normalized)) return "high";
+  if (["stale", "delayed", "reconnecting", "checking"].includes(normalized)) {
+    return "watch";
+  }
+  if (!configured || ["idle", "unknown", "unconfigured", "missing"].includes(normalized)) {
+    return "normal";
+  }
+  return "normal";
+};
+
+const providerStatusLabel = (status, fallback = "--") => {
+  const normalized = normalizeProviderStatus(status);
+  if (!normalized) return fallback;
+  if (normalized === "ok" || normalized === "healthy" || normalized === "ready") {
+    return "OK";
+  }
+  if (normalized === "degraded") return "Degraded";
+  if (normalized === "unconfigured" || normalized === "missing") return "--";
+  return normalized
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+};
+
+const firstUsefulText = (...values) => {
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (text && text !== MISSING_VALUE && text !== "--") {
+      return text;
+    }
+  }
+  return null;
+};
+
+const buildMassiveSourcePressureBar = (runtimeControl) => {
+  const massive = runtimeControl?.massive || {};
+  const rest = massive.rest || {};
+  const websocket = massive.websocket || {};
+  const configured = Boolean(
+    massive.configured ||
+      massive.providerIdentity === "massive" ||
+      rest.status ||
+      websocket.status,
+  );
+  const rawStatus =
+    normalizeProviderStatus(rest.status) === "degraded" ||
+    normalizeProviderStatus(websocket.status) === "degraded"
+      ? "degraded"
+      : massive.status || rest.status || websocket.status || null;
+  const level = providerStatusLevel(rawStatus, configured);
+  const statusLabel =
+    configured || rawStatus ? providerStatusLabel(massive.label || rawStatus) : "--";
+  const issue = firstUsefulText(massive.lastError, rest.lastError, websocket.lastError);
+  const activity = firstUsefulText(
+    websocket.channelSummary,
+    Number.isFinite(websocket.subscribedSymbolCount)
+      ? `${formatSourceCount(websocket.subscribedSymbolCount)} symbols`
+      : null,
+    rest.lastRequestSummary,
+  );
+  const detail = [`Massive ${statusLabel}`, issue || activity]
+    .filter(Boolean)
+    .join(" · ");
+  const fillPercent =
+    level === "high" ? 88 : level === "watch" ? 42 : statusLabel === "OK" ? 18 : 0;
+
+  return {
+    key: "massive",
+    level,
+    fillPercent,
+    label: `Massive ${statusLabel}`,
+    detail: detail || "Massive --",
+  };
+};
+
+export const buildApiSourcePressureBars = (runtimeControl) => [
+  buildIbkrSourcePressureBar(runtimeControl),
+  buildMassiveSourcePressureBar(runtimeControl),
+];
+
+const ApiSourcePressureTooltip = ({ bar }) => (
+  <div
+    style={{
+      display: "grid",
+      gap: sp(3),
+      maxWidth: dim(260),
+      color: CSS_COLOR.text,
+      fontFamily: T.sans,
+      fontSize: textSize("caption"),
+      lineHeight: 1.35,
+    }}
+  >
+    <div
+      style={{
+        color: pressureTone(bar.level),
+        fontWeight: FONT_WEIGHTS.medium,
+      }}
+    >
+      {bar.label}
+    </div>
+    <div style={{ color: CSS_COLOR.textSec }}>{bar.detail}</div>
+  </div>
+);
+
+export const FooterApiSourcePressureIndicator = ({ runtimeControl }) => {
+  const { preferences } = useMemoryPressurePreferences();
+  const bars = useMemo(
+    () => buildApiSourcePressureBars(runtimeControl),
+    [runtimeControl],
+  );
+  const level = maxPressureLevel(...bars.map((bar) => bar.level));
+  const title = bars.map((bar) => bar.detail).join(" | ");
+
+  return (
+    <span
+      data-testid="footer-api-source-pressure-cluster"
+      role="group"
+      aria-label={`API source pressure. ${title}`}
+      title={title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: dim(CLUSTER_BAR_GAP),
+        minWidth: 0,
+        maxWidth: "min(44vw, 280px)",
+        padding: sp("4px 8px"),
+        borderRadius: dim(RADII.pill),
+        border: `1px solid ${pressureBorder(level)}`,
+        background: pressureBackground(level),
+        overflow: "hidden",
+        whiteSpace: "nowrap",
+        flexShrink: 1,
+      }}
+    >
+      <span
+        style={{
+          color: CSS_COLOR.textMuted,
+          fontSize: textSize("caption"),
+          fontFamily: T.sans,
+          fontWeight: FONT_WEIGHTS.medium,
+          letterSpacing: "0.04em",
+          textTransform: "uppercase",
+          whiteSpace: "nowrap",
+        }}
+      >
+        API
+      </span>
+      <span
+        className="ra-pressure-mini-cluster"
+        data-cluster-expanded="true"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: dim(CLUSTER_BAR_GAP),
+          minWidth: dim(CLUSTER_BAR_WIDTH * 2 + CLUSTER_BAR_GAP),
+          height: dim(18),
+          overflow: "hidden",
+        }}
+      >
+        {bars.map((bar) => (
+          <AppTooltip key={bar.key} content={<ApiSourcePressureTooltip bar={bar} />}>
+            <span
+              className="ra-pressure-mini-slot"
+              data-testid={`footer-api-source-pressure-slot-${bar.key}`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr)",
+                gap: dim(CLUSTER_LABEL_GAP),
+                height: "100%",
+                minWidth: dim(CLUSTER_BAR_WIDTH),
+                maxWidth: dim(86),
+              }}
+            >
+              <span aria-hidden="true" style={miniTrackStyle(bar)}>
+                <span
+                  data-testid={`footer-api-source-pressure-fill-${bar.key}`}
+                  style={miniFillStyle(bar)}
+                />
+              </span>
+              <span
+                className="ra-pressure-mini-label"
+                style={miniLabelStyle(bar, preferences.showCompactLabel)}
+              >
+                {bar.label}
+              </span>
+            </span>
+          </AppTooltip>
+        ))}
+      </span>
+    </span>
+  );
+};
+
 const MiniPressureBars = ({ signal, showLabels = true }) => {
   if (!signal) {
     return null;
@@ -268,14 +547,11 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
     ? signal.pressureDrivers
     : [];
   const browserDriver = findMiniDriver(drivers, "browser-memory") || fallbackMiniDriver;
-  const apiRssDriver = findMiniDriver(drivers, "api-rss");
-  const apiHeapDriver = findMiniDriver(drivers, "api-heap") || fallbackMiniDriver;
   const queryCacheDriver =
     findMiniDriver(drivers, "query-cache") || fallbackMiniDriver;
   const runtimeStoreDriver =
     findMiniDriver(drivers, "runtime-stores") || fallbackMiniDriver;
   const browserThresholds = browserThresholdsForSignal(signal);
-  const apiRssThresholds = readApiRssThresholds(signal);
   const queryCountThresholds = normalizeThresholds(
     MEMORY_PRESSURE_THRESHOLDS.queryCache.queryCount,
   );
@@ -287,25 +563,12 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
   );
   const browserMemoryMb = finiteNumber(signal.browserMemoryMb);
   const browserMemoryLimitMb = readBrowserMemoryLimitMb(signal);
-  const apiRssMb = readApiRssMb(signal);
-  const apiHeapUsedPercent = finiteNumber(signal.apiHeapUsedPercent);
   const queryCount = finiteNumber(signal.queryCount);
   const heavyQueryCount = finiteNumber(signal.heavyQueryCount);
   const storeEntryCount = finiteNumber(signal.storeEntryCount) ?? 0;
   const browserLevel = maxPressureLevel(
     browserDriver.level,
     levelFromThresholds(browserMemoryMb, browserThresholds),
-  );
-  const apiRssLevel = maxPressureLevel(
-    apiRssDriver?.level,
-    levelFromThresholds(apiRssMb, apiRssThresholds),
-  );
-  const apiHeapLevel = maxPressureLevel(
-    apiHeapDriver.level,
-    levelFromThresholds(
-      apiHeapUsedPercent,
-      MEMORY_PRESSURE_THRESHOLDS.apiHeapUsedPercent,
-    ),
   );
   const queryCountLevel = levelFromThresholds(queryCount, queryCountThresholds);
   const heavyQueryCountLevel = levelFromThresholds(
@@ -328,20 +591,6 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
       ),
       label: `Browser ${formatMetric(browserMemoryMb, "M")}`,
       detail: buildBrowserMemoryDetail(browserMemoryMb, browserMemoryLimitMb),
-    },
-    {
-      key: "api",
-      level: maxPressureLevel(apiRssLevel, apiHeapLevel),
-      fillPercent: Math.max(
-        thresholdFillPercent(
-          apiRssMb,
-          apiRssThresholds,
-          DEFAULT_API_RSS_THRESHOLDS.critical,
-        ),
-        rawPercentFillPercent(apiHeapUsedPercent) ?? 0,
-      ),
-      label: buildApiMemoryLabel(apiRssMb, apiHeapUsedPercent),
-      detail: buildApiMemoryDetail(apiRssMb, apiHeapUsedPercent),
     },
     {
       key: "cache",
@@ -378,7 +627,9 @@ const MiniPressureBars = ({ signal, showLabels = true }) => {
         marginLeft: sp(2),
         borderRadius: dim(RADII.sm),
         minWidth: dim(
-          CLUSTER_BAR_WIDTH * 4 + CLUSTER_BAR_GAP * 3 + CLUSTER_PADDING_X * 2,
+          CLUSTER_BAR_WIDTH * bars.length +
+            CLUSTER_BAR_GAP * Math.max(0, bars.length - 1) +
+            CLUSTER_PADDING_X * 2,
         ),
         height: dim(18),
         alignSelf: "center",

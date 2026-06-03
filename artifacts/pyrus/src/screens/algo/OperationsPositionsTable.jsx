@@ -89,21 +89,21 @@ export const OperationsPositionsTable = ({
     [accountPositionsQuery, response, rows, useAccountPositionRows],
   );
   const positionsSourceLabel = useAccountPositionRows
-    ? "Shadow account positions + live option quotes"
-    : "Runtime positions + live option quotes";
+    ? "Shadow algo positions"
+    : "Runtime algo positions";
 
   return (
     <div data-testid="algo-operations-positions-table">
       <PositionsPanel
         query={query}
         currency="USD"
-        assetFilter="Options"
+        assetFilter="all"
         onAssetFilterChange={() => undefined}
         sourceFilter="all"
         onJumpToChart={(symbol) => setAlgoFocus(symbol, "position")}
         onPositionSelect={(row) => setAlgoFocus(row?.symbol, "position")}
         rightRail={positionsSourceLabel}
-        emptyBody="Open shadow option positions will appear here once an entry signal fills."
+        emptyBody="Open shadow algo positions will appear here once an entry signal fills."
         showFilters={false}
         isPhone={algoIsPhone}
         liveOptionQuotesEnabled={true}

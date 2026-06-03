@@ -142,6 +142,9 @@ const MARKET_ICON_BY_KEY = {
 const logoCache = new Map();
 const logoInFlight = new Map();
 const LOGO_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const LOGO_BATCH_DELAY_MS = 0;
+let logoBatchQueue = new Map();
+let logoBatchTimer = null;
 
 const readCachedLogo = (ticker) => {
   const cached = logoCache.get(ticker);
@@ -170,6 +173,53 @@ const writeCachedLogo = (ticker, logoUrl) => {
   });
 };
 
+const flushTickerLogoBatch = async () => {
+  const batch = logoBatchQueue;
+  logoBatchQueue = new Map();
+  const symbols = Array.from(batch.keys());
+  if (!symbols.length) return;
+
+  const logosBySymbol = new Map();
+  let shouldCache = false;
+  try {
+    const response = await fetch(
+      `/api/universe/logos?symbols=${encodeURIComponent(symbols.join(","))}`,
+      { headers: { accept: "application/json" } },
+    );
+    if (response.ok) {
+      const payload = await response.json();
+      const logos = Array.isArray(payload?.logos) ? payload.logos : [];
+      for (const logo of logos) {
+        const symbol = normalizeIdentitySymbol(
+          logo?.symbol ?? logo?.ticker ?? logo?.rootSymbol,
+        );
+        if (symbol) {
+          logosBySymbol.set(symbol, logo?.logoUrl || null);
+        }
+      }
+      shouldCache = true;
+    }
+  } catch {
+    // The icon fallback is intentionally non-blocking.
+  }
+
+  for (const symbol of symbols) {
+    const logoUrl = logosBySymbol.get(symbol) || null;
+    if (shouldCache) {
+      writeCachedLogo(symbol, logoUrl);
+    }
+    batch.get(symbol)?.(logoUrl);
+  }
+};
+
+const scheduleTickerLogoBatch = () => {
+  if (logoBatchTimer !== null) return;
+  logoBatchTimer = setTimeout(() => {
+    logoBatchTimer = null;
+    void flushTickerLogoBatch();
+  }, LOGO_BATCH_DELAY_MS);
+};
+
 const fetchTickerLogo = async (ticker) => {
   const normalized = normalizeIdentitySymbol(ticker);
   if (!normalized) return null;
@@ -180,24 +230,28 @@ const fetchTickerLogo = async (ticker) => {
   const inFlight = logoInFlight.get(normalized);
   if (inFlight) return inFlight;
 
-  const request = fetch(
-    `/api/universe/logos?symbols=${encodeURIComponent(normalized)}`,
-    { headers: { accept: "application/json" } },
-  )
-    .then(async (response) => {
-      if (!response.ok) return null;
-      const payload = await response.json();
-      const logoUrl = payload?.logos?.[0]?.logoUrl || null;
-      writeCachedLogo(normalized, logoUrl);
-      return logoUrl;
-    })
-    .catch(() => null)
-    .finally(() => {
-      logoInFlight.delete(normalized);
-    });
+  const request = new Promise((resolve) => {
+    logoBatchQueue.set(normalized, resolve);
+    scheduleTickerLogoBatch();
+  }).finally(() => {
+    logoInFlight.delete(normalized);
+  });
 
   logoInFlight.set(normalized, request);
   return request;
+};
+
+export const __marketIdentityLogoTestHooks = {
+  fetchTickerLogo,
+  reset() {
+    logoCache.clear();
+    logoInFlight.clear();
+    logoBatchQueue.clear();
+    if (logoBatchTimer !== null) {
+      clearTimeout(logoBatchTimer);
+      logoBatchTimer = null;
+    }
+  },
 };
 
 export const normalizeIdentitySymbol = (value) =>

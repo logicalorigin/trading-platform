@@ -242,6 +242,18 @@ test("diagnostics surfaces use generated clients for generated REST endpoints", 
   assert.match(diagnosticsScreen, /getLatestDiagnostics/);
   assert.match(diagnosticsScreen, /getDiagnosticEventDetail/);
   assert.match(diagnosticsScreen, /recordClientDiagnosticEvent/);
+  assert.match(
+    diagnosticsScreen,
+    /import \{ isPyrusSafeQaMode \} from "\.\.\/app\/qa-mode";/,
+  );
+  assert.match(
+    diagnosticsScreen,
+    /function postClientEvent\(input\) \{\s*if \(isPyrusSafeQaMode\(\)\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    diagnosticsScreen,
+    /function postClientMetrics\(input\) \{\s*if \(isPyrusSafeQaMode\(\)\) \{\s*return;\s*\}/,
+  );
   assert.doesNotMatch(diagnosticsScreen, /fetch\(`\/api\/diagnostics\/history/);
   assert.doesNotMatch(diagnosticsScreen, /fetch\(`\/api\/diagnostics\/events/);
   assert.doesNotMatch(diagnosticsScreen, /fetch\("\/api\/diagnostics\/latest"/);

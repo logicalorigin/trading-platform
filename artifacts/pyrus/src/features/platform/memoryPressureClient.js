@@ -88,6 +88,7 @@ export async function collectBrowserResourceMetrics({
           trend: memoryPressureState.trend,
           sourceQuality: memoryPressureState.sourceQuality,
           browserMemoryMb: memoryPressureState.browserMemoryMb,
+          browserMemoryLimitMb: memoryPressureState.browserMemoryLimitMb,
           browserSource: memoryPressureState.browserSource,
           apiHeapUsedPercent: memoryPressureState.apiHeapUsedPercent,
           dominantDrivers: memoryPressureState.dominantDrivers,

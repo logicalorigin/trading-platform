@@ -40,6 +40,7 @@ const ENV_KEYS = [
   "IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP",
   "IBKR_BRIDGE_GOVERNOR_QUOTES_BACKOFF_MS",
   "IBKR_BRIDGE_GOVERNOR_QUOTES_FAILURE_THRESHOLD",
+  "IBKR_LIVE_OPTION_QUOTE_SNAPSHOT_TIMEOUT_MS",
 ] as const;
 
 const originalEnv = Object.fromEntries(
@@ -1008,9 +1009,15 @@ test("option quote snapshot abort releases flow scanner leases immediately", asy
   assert.equal(getMarketDataAdmissionDiagnostics().activeLineCount, 0);
 });
 
-test("option quote snapshot abort can retain flow scanner leases", async () => {
+test("retained signal option snapshot demand survives local hydration abort", async () => {
   setEnv({
-    IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP: "1",
+    IBKR_MARKET_DATA_APP_MAX_LINES: "10",
+    IBKR_MARKET_DATA_RESERVE_LINES: "0",
+    IBKR_MARKET_DATA_EXECUTION_LINES: "0",
+    IBKR_MARKET_DATA_ACCOUNT_MONITOR_LINES: "0",
+    IBKR_MARKET_DATA_VISIBLE_LINES: "0",
+    IBKR_MARKET_DATA_AUTOMATION_LINES: "4",
+    IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "0",
   });
   const controller = new AbortController();
   const providerContractId = structuredOptionProviderContractId();
@@ -1023,7 +1030,6 @@ test("option quote snapshot abort can retain flow scanner leases", async () => {
       };
     },
     async getOptionQuoteSnapshots(input) {
-      assert.equal(input.signal, controller.signal);
       return new Promise<QuoteSnapshot[]>((_resolve, reject) => {
         input.signal?.addEventListener(
           "abort",
@@ -1041,24 +1047,33 @@ test("option quote snapshot abort can retain flow scanner leases", async () => {
   const request = fetchBridgeOptionQuoteSnapshots({
     underlying: "META",
     providerContractIds: [providerContractId],
-    owner: "flow-scanner:META",
-    intent: "flow-scanner-live",
-    fallbackProvider: "none",
-    requiresGreeks: false,
+    owner: "signal-options-entry:deployment:signal",
+    intent: "automation-live",
+    fallbackProvider: "cache",
+    requiresGreeks: true,
+    ttlMs: 1_000,
     releaseLeasesOnComplete: false,
     releaseLeasesOnAbort: false,
     signal: controller.signal,
   });
 
   await waitFor(
-    () => getMarketDataAdmissionDiagnostics().flowScannerLineCount === 1,
+    () => getMarketDataAdmissionDiagnostics().signalOptions.activeLineCount > 0,
   );
-  controller.abort(new Error("scanner timeout"));
-  assert.equal(getMarketDataAdmissionDiagnostics().flowScannerLineCount, 1);
+  const admittedLineCount =
+    getMarketDataAdmissionDiagnostics().signalOptions.activeLineCount;
+  controller.abort(new Error("candidate timeout"));
+  assert.equal(
+    getMarketDataAdmissionDiagnostics().signalOptions.activeLineCount,
+    admittedLineCount,
+  );
 
   const payload = await request;
-  assert.match(payload.debug?.errorMessage ?? "", /scanner timeout/i);
-  assert.equal(getMarketDataAdmissionDiagnostics().activeLineCount, 1);
+  assert.match(payload.debug?.errorMessage ?? "", /candidate timeout/i);
+  assert.equal(
+    getMarketDataAdmissionDiagnostics().signalOptions.activeLineCount,
+    admittedLineCount,
+  );
 });
 
 test("option quote snapshots keep cached rejected contracts in the payload", async () => {
@@ -1552,6 +1567,57 @@ test("option quote snapshots expose bridge hydration errors in debug metadata", 
   const diagnostics = getMarketDataAdmissionDiagnostics();
   assert.equal(diagnostics.flowScannerLineCount, 0);
   assert.equal(diagnostics.activeLineCount, 0);
+});
+
+test("automation live option quote snapshots time out stalled upstream hydration with debug metadata", async () => {
+  setEnv({
+    IBKR_LIVE_OPTION_QUOTE_SNAPSHOT_TIMEOUT_MS: "25",
+  });
+  let aborted = false;
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    getOptionQuoteSnapshots(input) {
+      return new Promise<QuoteSnapshot[]>((_, reject) => {
+        input.signal?.addEventListener(
+          "abort",
+          () => {
+            aborted = true;
+            reject(input.signal?.reason ?? new Error("aborted"));
+          },
+          { once: true },
+        );
+      });
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const startedAt = Date.now();
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "NVDA",
+    providerContractIds: ["5001"],
+    owner: "signal-options-entry:deployment:signal",
+    intent: "automation-live",
+    fallbackProvider: "cache",
+    requiresGreeks: true,
+    ttlMs: 1_000,
+    releaseLeasesOnComplete: false,
+  });
+
+  assert.equal(aborted, true);
+  assert.equal(payload.quotes.length, 0);
+  assert.ok(Date.now() - startedAt < 1_000);
+  assert.match(payload.debug?.errorMessage ?? "", /timed out after 25ms/);
+  assert.equal(payload.debug?.acceptedCount, 1);
+  assert.equal(payload.debug?.returnedCount, 0);
+  assert.deepEqual(payload.debug?.missingProviderContractIds, ["5001"]);
 });
 
 test("option quote snapshots do not release same-owner live stream leases", async () => {

@@ -9,6 +9,10 @@ import { useUserPreferences } from "../preferences/useUserPreferences";
 import { useAccountSelection } from "../platform/platformContexts.jsx";
 import { useAccountSection } from "../platform/useAccountSection.js";
 import { useStoredOptionQuoteSnapshot } from "../platform/live-streams";
+import {
+  HYDRATION_PRIORITY,
+  buildHydrationRequestOptions,
+} from "../platform/hydrationCoordinator";
 import { useRuntimeTickerSnapshot } from "../platform/runtimeTickerStore";
 import { listBrokerExecutionsRequest } from "../trade/tradeBrokerRequests.js";
 import type { ChartModel } from "./types";
@@ -21,6 +25,10 @@ import {
 } from "./chartPositionOverlays";
 
 const POSITION_OVERLAY_STORAGE_PREFIX = "chart-positions-overlay";
+const CHART_POSITION_QUOTE_REQUEST_OPTIONS = buildHydrationRequestOptions(
+  HYDRATION_PRIORITY.visible,
+  "chart-visible",
+);
 
 const normalizeSymbol = (value: unknown): string =>
   String(value || "")
@@ -172,6 +180,7 @@ export const useChartPositionOverlays = ({
         refetchInterval: false,
         retry: false,
       },
+      request: CHART_POSITION_QUOTE_REQUEST_OPTIONS,
     },
   );
   const optionQuote = useStoredOptionQuoteSnapshot(

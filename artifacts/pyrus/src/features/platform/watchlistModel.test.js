@@ -200,6 +200,14 @@ test("watchlist signal matrix groups timeframe dots by symbol", () => {
   assert.equal(matrix.SPY["5m"].currentSignalDirection, "sell");
   assert.equal(matrix.QQQ["1h"].currentSignalDirection, "buy");
   assert.equal(matrix.IWM, undefined);
+
+  const staMatrix = buildSignalMatrixBySymbol(
+    [
+      { symbol: "IWM", timeframe: "1d", currentSignalDirection: "buy", fresh: true },
+    ],
+    ["1m", "2m", "5m", "15m", "1h", "1d"],
+  );
+  assert.equal(staMatrix.IWM["1d"].currentSignalDirection, "buy");
 });
 
 test("signal sort ignores legacy monitor state when matrix is missing", () => {

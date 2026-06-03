@@ -90,7 +90,10 @@ type Subscriber = {
 type BridgeQuoteClient = {
   getQuoteSnapshots(
     symbols: string[],
-    options?: { signal?: AbortSignal },
+    options?: {
+      signal?: AbortSignal;
+      tradingSession?: "overnight" | null;
+    },
   ): Promise<QuoteSnapshot[]>;
   streamMutableQuoteSnapshots?(
     symbols: string[],
@@ -945,6 +948,7 @@ export async function fetchBridgeQuoteSnapshots(
     intent?: MarketDataIntent;
     fallbackProvider?: MarketDataFallbackProvider;
     ttlMs?: number;
+    tradingSession?: "overnight" | null;
   } = {},
 ): Promise<QuoteSnapshotPayload> {
   const normalizedSymbols = normalizeSymbols(symbols);
@@ -960,6 +964,9 @@ export async function fetchBridgeQuoteSnapshots(
     typeof options.owner === "string" && options.owner.trim()
       ? options.owner.trim()
       : `bridge-quote-snapshot:${nextSnapshotOwnerId++}`;
+  const explicitOwner = Boolean(
+    typeof options.owner === "string" && options.owner.trim(),
+  );
   const intent = options.intent ?? "visible-live";
   const fallbackProvider = options.fallbackProvider ?? "massive";
   const admission = admitMarketDataLeases({
@@ -987,9 +994,12 @@ export async function fetchBridgeQuoteSnapshots(
   const cachedQuotesBySymbol = new Map(
     cachedQuotes.map((quote) => [normalizeSymbol(quote.symbol), quote]),
   );
-  const hydrateSymbols = admittedSymbols.filter((symbol) =>
-    shouldHydrateQuoteSnapshot(cachedQuotesBySymbol.get(symbol)),
-  );
+  const hydrateSymbols =
+    options.tradingSession === "overnight"
+      ? admittedSymbols
+      : admittedSymbols.filter((symbol) =>
+          shouldHydrateQuoteSnapshot(cachedQuotesBySymbol.get(symbol)),
+        );
 
   try {
     if (hydrateSymbols.length > 0) {
@@ -1003,6 +1013,7 @@ export async function fetchBridgeQuoteSnapshots(
         try {
           return await bridgeClient.getQuoteSnapshots(hydrateSymbols, {
             signal: controller.signal,
+            tradingSession: options.tradingSession,
           });
         } finally {
           clearTimeout(timeout);
@@ -1026,7 +1037,9 @@ export async function fetchBridgeQuoteSnapshots(
       );
     }
   } finally {
-    releaseMarketDataLeases(owner, "snapshot_complete");
+    if (!explicitOwner) {
+      releaseMarketDataLeases(owner, "snapshot_complete");
+    }
   }
 
   return {

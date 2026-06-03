@@ -1,5 +1,4 @@
 import {
-  Suspense,
   useEffect,
   useMemo,
   useRef,
@@ -12,6 +11,7 @@ import {
   Pause,
   Play,
   RefreshCw,
+  Settings as SettingsIcon,
   ShieldAlert,
   ShieldCheck,
   X,
@@ -45,7 +45,6 @@ import {
 import { filterAccountPositionRowsForDeployment } from "./algoAccountPositions";
 import { buildAttentionStream } from "../algoCockpitDiagnosticsModel";
 import { useIbkrOptionQuoteStream } from "../../features/platform/live-streams";
-import { lazyWithRetry } from "../../lib/dynamicImport";
 import { normalizeLegacyAlgoBrandText } from "./algoBranding.js";
 import { IbkrStatusWave } from "../../features/platform/IbkrConnectionStatus";
 import {
@@ -53,38 +52,12 @@ import {
   streamStateTokenVar,
 } from "../../features/platform/streamSemantics";
 import { buildAlgoStatusFailurePoint } from "../../features/platform/failurePointModel.js";
+import { OperationsPositionsTable } from "./OperationsPositionsTable";
+import { OperationsSignalTable } from "./OperationsSignalTable";
 
-const LazyOperationsPositionsTable = lazyWithRetry(
-  () => import("./OperationsPositionsTable").then((module) => ({
-    default: module.OperationsPositionsTable,
-  })),
-  { label: "OperationsPositionsTable" },
-);
-const LazyOperationsSignalTable = lazyWithRetry(
-  () => import("./OperationsSignalTable").then((module) => ({
-    default: module.OperationsSignalTable,
-  })),
-  { label: "OperationsSignalTable" },
-);
+const ALGO_RIGHT_RAIL_DEFER_MS = 1_500;
 
-const AlgoDeferredBlock = ({ label }) => (
-  <div
-    data-testid="algo-deferred-block"
-    style={{
-      minHeight: dim(160),
-      display: "grid",
-      placeItems: "center",
-      border: `1px dashed ${CSS_COLOR.border}`,
-      borderRadius: dim(RADII.sm),
-      color: CSS_COLOR.textDim,
-      fontFamily: T.sans,
-      fontSize: textSize("caption"),
-      background: CSS_COLOR.bg1,
-    }}
-  >
-    {label}
-  </div>
-);
+export const preloadAlgoLivePageModules = () => Promise.resolve();
 
 const EmptyOperationsState = ({
   candidateDrafts,
@@ -548,6 +521,7 @@ export const AlgoLivePage = ({
   signalOptionsProfile,
   onOpenCandidateInTrade,
   safeQaMode = false,
+  backgroundQueriesEnabled = false,
   // Positions
   signalOptionsPositions,
   signalOptionsLedgerPositionsQuery,
@@ -570,14 +544,17 @@ export const AlgoLivePage = ({
   enableDeploymentMutation,
   pauseDeploymentMutation,
   runShadowScanMutation,
+  algoExecutionScanRunning,
   // Layout
   algoIsPhone,
   algoIsNarrow,
   algoLayoutWidth = 0,
   // Slots
   rightRail,
+  rightRailFallback = null,
 }) => {
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
+  const [rightRailRenderAllowed, setRightRailRenderAllowed] = useState(false);
   const settingsDrawerRef = useRef(null);
   const focusedDeploymentId = focusedDeployment?.id || null;
   const focusedLedgerPositions = useMemo(
@@ -659,8 +636,17 @@ export const AlgoLivePage = ({
     if (!settingsDrawerOpen) return;
     settingsDrawerRef.current?.focus();
   }, [settingsDrawerOpen]);
+  useEffect(() => {
+    const timerId = window.setTimeout(
+      () => setRightRailRenderAllowed(true),
+      ALGO_RIGHT_RAIL_DEFER_MS,
+    );
+    return () => window.clearTimeout(timerId);
+  }, []);
+  const renderedRightRail = rightRailRenderAllowed ? rightRail : rightRailFallback;
 
-  if (!deployments.length) {
+  const showEmptyOperationsState = Boolean(setupDataSettled && !deployments.length);
+  if (showEmptyOperationsState) {
     return (
       <EmptyOperationsState
         candidateDrafts={candidateDrafts}
@@ -702,21 +688,23 @@ export const AlgoLivePage = ({
   const DeploymentToggleIcon = focusedDeployment?.enabled ? Pause : Play;
   const deploymentToggleLabel = focusedDeployment?.enabled ? "Pause" : "Resume";
   const scanMutationPending = Boolean(runShadowScanMutation?.isPending);
-  const scanButtonLabel = scanMutationPending ? "Scanning" : "Scan";
+  const scanOperationRunning =
+    scanMutationPending || Boolean(algoExecutionScanRunning);
+  const scanButtonLabel = scanOperationRunning ? "Scanning" : "Scan";
   const safeQaControlsPaused = Boolean(safeQaMode);
   const deploymentToggleDisabled =
     safeQaControlsPaused ||
     enableDeploymentMutation?.isPending ||
     pauseDeploymentMutation?.isPending;
   const scanButtonDisabled =
-    safeQaControlsPaused || runShadowScanMutation?.isPending;
+    safeQaControlsPaused || scanOperationRunning;
   const deploymentToggleActionLabel = safeQaControlsPaused
     ? "Deployment controls paused in safe QA"
     : deploymentToggleLabel;
   const scanButtonActionLabel = safeQaControlsPaused
-    ? "Signal-options scan paused in safe QA"
-    : scanMutationPending
-      ? scanButtonLabel
+    ? "Options strategy scan paused in safe QA"
+    : scanOperationRunning
+      ? "Options strategy scan already running"
       : "Scan now";
   const operationsStatus = resolveOperationsStatus({
     gatewayReady,
@@ -733,7 +721,7 @@ export const AlgoLivePage = ({
     cockpitTradePath,
   });
   const headerScanWave = resolveHeaderScanWave({
-    scanRunning: scanMutationPending,
+    scanRunning: scanOperationRunning,
     refreshPending,
     deploymentEnabled: Boolean(focusedDeployment?.enabled),
     gatewayReady,
@@ -803,7 +791,7 @@ export const AlgoLivePage = ({
   );
   const maxOpenSymbols =
     riskRecord.maxOpenSymbols ?? cockpitKpis?.maxOpenSymbols ?? "?";
-  const scanStatusLabel = scanMutationPending
+  const scanStatusLabel = scanOperationRunning
     ? "scan running"
     : refreshPending
       ? "syncing state"
@@ -883,25 +871,6 @@ export const AlgoLivePage = ({
           requiresGreeks={group.requiresGreeks}
         />
       ))}
-
-      {algoIsPhone ? (
-        <button
-          type="button"
-          data-testid="algo-settings-drawer-open"
-          onClick={() => setSettingsDrawerOpen(true)}
-          style={{
-            ...compactButtonStyle({ active: true, fill: false }),
-            alignSelf: "flex-end",
-            minHeight: dim(26),
-            padding: sp("4px 9px"),
-            border: `1px solid ${CSS_COLOR.accent}`,
-            background: CSS_COLOR.accent,
-            color: CSS_COLOR.onAccent,
-          }}
-        >
-          Settings
-        </button>
-      ) : null}
 
       <div
         data-testid="algo-live-grid"
@@ -1081,6 +1050,33 @@ export const AlgoLivePage = ({
                 flexWrap: "wrap",
               }}
             >
+              {algoIsPhone ? (
+                <button
+                  type="button"
+                  data-testid="algo-settings-drawer-open"
+                  onClick={() => setSettingsDrawerOpen(true)}
+                  aria-label="Open algo settings"
+                  title="Settings"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: dim(32),
+                    height: dim(32),
+                    border: `1px solid ${CSS_COLOR.border}`,
+                    borderRadius: dim(RADII.pill),
+                    background: CSS_COLOR.bg1,
+                    color: CSS_COLOR.accent,
+                    cursor: "pointer",
+                  }}
+                >
+                  <SettingsIcon
+                    size={HEADER_ICON_SIZE}
+                    strokeWidth={2}
+                    aria-hidden="true"
+                  />
+                </button>
+              ) : null}
               {focusedDeployment ? (
                 <div
                   role="group"
@@ -1141,25 +1137,29 @@ export const AlgoLivePage = ({
             data-testid="algo-operations-overview"
             style={{
               display: "grid",
-              gap: sp(algoIsPhone ? 3 : 5),
-              padding: sp(algoIsPhone ? "5px" : denseOperationsLayout ? "6px" : "7px"),
-              border: `1px solid ${CSS_COLOR.border}`,
-              borderRadius: dim(RADII.sm),
+              gap: sp(algoIsPhone ? 2 : 5),
+              padding: sp(algoIsPhone ? "4px 0" : denseOperationsLayout ? "6px" : "7px"),
+              border: algoIsPhone ? 0 : `1px solid ${CSS_COLOR.border}`,
+              borderTop: algoIsPhone ? `1px solid ${CSS_COLOR.border}` : undefined,
+              borderBottom: algoIsPhone ? `1px solid ${CSS_COLOR.border}` : undefined,
+              borderRadius: algoIsPhone ? 0 : dim(RADII.sm),
               background: CSS_COLOR.bg1,
               minWidth: 0,
             }}
           >
             <div
               data-testid="algo-snapshot-details"
-              data-algo-pocket-grid={algoIsPocketWidth ? "two" : undefined}
+              data-algo-pocket-grid={algoIsPhone ? "metrics" : algoIsPocketWidth ? "two" : undefined}
               style={{
                 display: "grid",
-                gridTemplateColumns: algoIsPocketWidth
+                gridTemplateColumns: algoIsPhone
+                  ? "repeat(2, minmax(0, 1fr))"
+                  : algoIsPocketWidth
                   ? "repeat(2, minmax(0, 1fr))"
                   : denseOperationsLayout
                     ? "repeat(auto-fit, minmax(140px, 1fr))"
                     : "repeat(auto-fit, minmax(160px, 1fr))",
-                gap: sp(4),
+                gap: sp(algoIsPhone ? 2 : 4),
                 minWidth: 0,
               }}
             >
@@ -1172,6 +1172,7 @@ export const AlgoLivePage = ({
                   tone={metric.color}
                   icon={metric.icon}
                   severity={metric.severity}
+                  dense={algoIsPhone}
                 />
               ))}
             </div>
@@ -1180,7 +1181,7 @@ export const AlgoLivePage = ({
               stages={cockpitStageItems}
               selectedStageId={selectedStage?.id}
               onSelectStage={(id) => setSelectedPipelineStageId(id)}
-              pocket={algoIsPocketWidth}
+              pocket={algoIsPhone || algoIsPocketWidth}
               dense={denseOperationsLayout}
               grouped
             />
@@ -1224,32 +1225,29 @@ export const AlgoLivePage = ({
             ) : null}
           </section>
 
-          <Suspense fallback={<AlgoDeferredBlock label="Loading signal table..." />}>
-            <LazyOperationsSignalTable
-              signals={visibleSignalRows}
-              candidates={signalOptionsCandidates}
-              signalMatrixStates={signalMatrixStates}
-              onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
-              cockpitGeneratedAt={cockpitGeneratedAt}
-              cockpitStageItems={cockpitStageItems}
-              events={events}
-              algoIsPhone={algoIsPhone}
-              algoIsNarrow={algoIsNarrow}
-              safeQaMode={safeQaMode}
-              onOpenCandidateInTrade={onOpenCandidateInTrade}
-            />
-          </Suspense>
+          <OperationsSignalTable
+            signals={visibleSignalRows}
+            candidates={signalOptionsCandidates}
+            signalMatrixStates={signalMatrixStates}
+            onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
+            cockpitGeneratedAt={cockpitGeneratedAt}
+            cockpitStageItems={cockpitStageItems}
+            events={events}
+            algoIsPhone={algoIsPhone}
+            algoIsNarrow={algoIsNarrow}
+            safeQaMode={safeQaMode}
+            backgroundQueriesEnabled={backgroundQueriesEnabled}
+            onOpenCandidateInTrade={onOpenCandidateInTrade}
+          />
 
-          <Suspense fallback={<AlgoDeferredBlock label="Loading positions..." />}>
-            <LazyOperationsPositionsTable
-              positions={signalOptionsPositions}
-              accountPositionsQuery={signalOptionsLedgerPositionsQuery}
-              symbolIndex={symbolIndex}
-              deploymentId={focusedDeploymentId}
-              signalOptionsProfile={signalOptionsProfile}
-              algoIsPhone={algoIsPhone}
-            />
-          </Suspense>
+          <OperationsPositionsTable
+            positions={signalOptionsPositions}
+            accountPositionsQuery={signalOptionsLedgerPositionsQuery}
+            symbolIndex={symbolIndex}
+            deploymentId={focusedDeploymentId}
+            signalOptionsProfile={signalOptionsProfile}
+            algoIsPhone={algoIsPhone}
+          />
         </div>
 
         {!algoIsPhone ? (
@@ -1266,7 +1264,7 @@ export const AlgoLivePage = ({
               top: dim(44),
             }}
           >
-            {rightRail}
+            {renderedRightRail}
           </div>
         ) : null}
       </div>
@@ -1336,7 +1334,7 @@ export const AlgoLivePage = ({
                   </button>
                 </div>
                 <div style={{ flex: "1 1 auto", minHeight: 0 }}>
-                  {rightRail}
+                  {renderedRightRail}
                 </div>
               </div>
             </div>

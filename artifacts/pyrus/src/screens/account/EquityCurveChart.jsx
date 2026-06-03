@@ -34,15 +34,23 @@ const BENCHMARK_PRICE_SCALE_ID = "right";
 const chartColor = resolveCanvasColor;
 const chartColorAlpha = resolveCanvasAlphaColor;
 
-const sliceFiniteSeries = (data, valueKey) =>
-  data
-    .map((point) => {
-      const value = Number(point?.[valueKey]);
-      const time = Number(point?.timestampMs);
-      if (!Number.isFinite(value) || !Number.isFinite(time)) return null;
-      return { time: Math.floor(time / 1000), value };
-    })
-    .filter(Boolean);
+export const sliceFiniteSeries = (data, valueKey) => {
+  const pointsBySecond = new Map(
+    data
+      .map((point) => {
+        if (point?.[valueKey] == null || point?.timestampMs == null) return null;
+        const value = Number(point?.[valueKey]);
+        const timestampMs = Number(point?.timestampMs);
+        if (!Number.isFinite(value) || !Number.isFinite(timestampMs)) return null;
+        return { timestampMs, time: Math.floor(timestampMs / 1000), value };
+      })
+      .filter(Boolean)
+      .sort((left, right) => left.timestampMs - right.timestampMs)
+      .map((point) => [point.time, { time: point.time, value: point.value }]),
+  );
+
+  return [...pointsBySecond.values()].sort((left, right) => left.time - right.time);
+};
 
 const buildPriceFormatter = (chartMode, currency, maskValues) => (value) =>
   chartMode === "pnl"

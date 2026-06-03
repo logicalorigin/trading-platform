@@ -231,6 +231,29 @@ test("long-only policy allows exits only against an existing long position", () 
   }
 });
 
+test("long-only policy blocks duplicate entries when a long position is already open", () => {
+  const result = planOvernightSpotOrder({
+    profile: profile(),
+    signal: overnightSpotSignalFromPyrus({
+      symbol: "SPY",
+      signal: pyrusSignal(),
+    }),
+    quote: quote(),
+    existingPositionQuantity: 3,
+    now,
+  });
+
+  assert.equal(result.status, "blocked");
+  if (result.status === "blocked") {
+    assert.ok(
+      result.blockers.some(
+        (blocker) =>
+          blocker.code === "overnight_spot_same_direction_position_open",
+      ),
+    );
+  }
+});
+
 test("stale quotes and wide overnight spreads block orders", () => {
   const stale = planOvernightSpotOrder({
     profile: profile(),

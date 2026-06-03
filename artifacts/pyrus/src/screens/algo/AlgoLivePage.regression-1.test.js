@@ -27,7 +27,7 @@ test("safe QA mode disables algo header mutation controls", () => {
   );
   assert.match(
     livePageSource,
-    /const scanButtonDisabled =[\s\S]*safeQaControlsPaused \|\| runShadowScanMutation\?\.isPending;/,
+    /const scanButtonDisabled =[\s\S]*safeQaControlsPaused \|\| scanOperationRunning;/,
   );
   assert.match(
     livePageSource,
@@ -35,6 +35,7 @@ test("safe QA mode disables algo header mutation controls", () => {
   );
   assert.match(
     livePageSource,
-    /Signal-options scan paused in safe QA/,
+    /Options strategy scan paused in safe QA/,
   );
+  assert.match(livePageSource, /Options strategy scan already running/);
 });

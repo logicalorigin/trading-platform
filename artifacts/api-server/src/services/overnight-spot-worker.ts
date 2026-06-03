@@ -11,7 +11,10 @@ import {
 } from "./overnight-spot-execution";
 import { getApiResourcePressureSnapshot } from "./resource-pressure";
 import type { ApiResourcePressureSnapshot } from "./resource-pressure";
-import { subscribeAlgoCockpitChanges } from "./algo-cockpit-events";
+import {
+  subscribeAlgoCockpitChanges,
+  type AlgoCockpitChange,
+} from "./algo-cockpit-events";
 import {
   registerOvernightSpotWorkerSnapshotGetter,
   type OvernightSpotWorkerSnapshot,
@@ -20,13 +23,13 @@ import {
 const WORKER_WAKEUP_MS = 5_000;
 const DEFAULT_POLL_INTERVAL_SECONDS = 60;
 const FAILED_DEPLOYMENT_RETRY_MS = 60_000;
+const DEFAULT_WORKER_SCAN_TIMEOUT_MS = 45_000;
+const WORKER_SCAN_TIMEOUT_MIN_MS = 5_000;
+const WORKER_SCAN_TIMEOUT_MAX_MS = 300_000;
 export const OVERNIGHT_SPOT_WORKER_ADVISORY_LOCK_KEY = 1_930_514_023;
 
 type ReleaseLock = () => Promise<void>;
 type WorkerLogger = Pick<typeof logger, "debug" | "info" | "warn">;
-type WorkerCockpitChange = {
-  reason: string;
-};
 
 type WorkerDependencies = {
   listDeployments: () => Promise<OvernightSpotWorkerDeployment[]>;
@@ -44,8 +47,9 @@ type WorkerDependencies = {
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
   now: () => Date;
   logger: WorkerLogger;
+  scanTimeoutMs: number | null;
   subscribeCockpitChanges: (
-    listener: (change: WorkerCockpitChange) => void,
+    listener: (change: AlgoCockpitChange) => void,
   ) => () => void;
 };
 
@@ -73,6 +77,8 @@ type DeploymentRuntime = {
   lastBlockedCount: number;
   lastSkippedCount: number;
   lastFailedCount: number;
+  timedOut: boolean;
+  unsettledAfterTimeout: boolean;
 };
 
 const activeDeploymentIds = new Set<string>();
@@ -88,6 +94,25 @@ function positiveInteger(value: unknown, fallback: number, min: number, max: num
   return Number.isFinite(resolved)
     ? Math.min(max, Math.max(min, Math.round(resolved)))
     : fallback;
+}
+
+function resolveWorkerScanTimeoutMs(value: unknown): number | null {
+  if (value === null || value === false) {
+    return null;
+  }
+  const configured =
+    value === undefined
+      ? process.env["OVERNIGHT_SPOT_WORKER_SCAN_TIMEOUT_MS"]
+      : value;
+  if (configured === null || configured === "" || configured === "0") {
+    return null;
+  }
+  return positiveInteger(
+    configured,
+    DEFAULT_WORKER_SCAN_TIMEOUT_MS,
+    WORKER_SCAN_TIMEOUT_MIN_MS,
+    WORKER_SCAN_TIMEOUT_MAX_MS,
+  );
 }
 
 function deploymentSignature(deployment: OvernightSpotWorkerDeployment) {
@@ -137,12 +162,39 @@ function createDeploymentRuntime(signature: string): DeploymentRuntime {
     lastBlockedCount: 0,
     lastSkippedCount: 0,
     lastFailedCount: 0,
+    timedOut: false,
+    unsettledAfterTimeout: false,
   };
+}
+
+class OvernightSpotWorkerScanTimeoutError extends Error {
+  readonly scanPromise: Promise<OvernightSpotSignalScanResult>;
+  readonly timeoutMs: number;
+
+  constructor(input: {
+    deploymentId: string;
+    scanPromise: Promise<OvernightSpotSignalScanResult>;
+    timeoutMs: number;
+  }) {
+    super(
+      `Overnight spot worker scan timed out for ${input.deploymentId} after ${input.timeoutMs}ms.`,
+    );
+    this.name = "OvernightSpotWorkerScanTimeoutError";
+    this.scanPromise = input.scanPromise;
+    this.timeoutMs = input.timeoutMs;
+  }
+}
+
+function isWorkerScanTimeoutError(
+  error: unknown,
+): error is OvernightSpotWorkerScanTimeoutError {
+  return error instanceof OvernightSpotWorkerScanTimeoutError;
 }
 
 async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
   const client = await pool.connect();
   let clientError: Error | null = null;
+  let transactionOpen = false;
   const detachClientErrorHandler = attachPostgresClientErrorHandler(client, {
     context: "overnight-spot-worker-advisory-lock",
     onError: (error) => {
@@ -161,28 +213,41 @@ async function acquirePostgresAdvisoryLock(): Promise<ReleaseLock | null> {
   };
 
   try {
+    await client.query("begin");
+    transactionOpen = true;
     const result = await client.query<{ locked: boolean }>(
-      "select pg_try_advisory_lock($1) as locked",
+      "select pg_try_advisory_xact_lock($1) as locked",
       [OVERNIGHT_SPOT_WORKER_ADVISORY_LOCK_KEY],
     );
     const locked = result.rows[0]?.locked === true;
     if (!locked) {
+      await client.query("rollback");
+      transactionOpen = false;
       releaseClient();
       return null;
     }
 
     return async () => {
+      let releaseError: unknown;
       try {
-        if (!clientError) {
-          await client.query("select pg_advisory_unlock($1)", [
-            OVERNIGHT_SPOT_WORKER_ADVISORY_LOCK_KEY,
-          ]);
+        if (!clientError && transactionOpen) {
+          await client.query("commit");
+          transactionOpen = false;
         }
+      } catch (error) {
+        releaseError = error;
       } finally {
-        releaseClient();
+        if (transactionOpen) {
+          await client.query("rollback").catch(() => {});
+          transactionOpen = false;
+        }
+        releaseClient(releaseError);
       }
     };
   } catch (error) {
+    if (transactionOpen) {
+      await client.query("rollback").catch(() => {});
+    }
     releaseClient(error);
     throw error;
   }
@@ -209,10 +274,48 @@ function defaultDependencies(
     clearTimer: options.clearTimer ?? clearTimeout,
     now: options.now ?? (() => new Date()),
     logger: options.logger ?? logger,
+    scanTimeoutMs: resolveWorkerScanTimeoutMs(options.scanTimeoutMs),
     subscribeCockpitChanges:
-      options.subscribeCockpitChanges ??
-      ((listener) => subscribeAlgoCockpitChanges((change) => listener(change))),
+      options.subscribeCockpitChanges ?? subscribeAlgoCockpitChanges,
   };
+}
+
+async function runDeploymentScanWithTimeout(input: {
+  deployment: OvernightSpotWorkerDeployment;
+  dependencies: WorkerDependencies;
+}) {
+  const { deployment, dependencies } = input;
+  const scanPromise = dependencies.scanDeployment({
+    deploymentId: deployment.id,
+    runActions: true,
+    recordSignals: true,
+  });
+  if (dependencies.scanTimeoutMs === null) {
+    return scanPromise;
+  }
+  const timeoutMs = dependencies.scanTimeoutMs;
+
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = dependencies.setTimer(() => {
+      reject(
+        new OvernightSpotWorkerScanTimeoutError({
+          deploymentId: deployment.id,
+          scanPromise,
+          timeoutMs,
+        }),
+      );
+    }, timeoutMs);
+    timeout.unref?.();
+  });
+
+  try {
+    return await Promise.race([scanPromise, timeoutPromise]);
+  } finally {
+    if (timeout) {
+      dependencies.clearTimer(timeout);
+    }
+  }
 }
 
 async function runDeployment(input: {
@@ -226,13 +329,16 @@ async function runDeployment(input: {
   }
 
   const scanStartedAtMs = dependencies.now().getTime();
+  let leaveActiveUntilSettled = false;
+  let timedOutScanPromise: Promise<OvernightSpotSignalScanResult> | null = null;
   activeDeploymentIds.add(deployment.id);
   runtime.currentScanStartedAtMs = scanStartedAtMs;
+  runtime.timedOut = false;
+  runtime.unsettledAfterTimeout = false;
   try {
-    const result = await dependencies.scanDeployment({
-      deploymentId: deployment.id,
-      runActions: true,
-      recordSignals: true,
+    const result = await runDeploymentScanWithTimeout({
+      deployment,
+      dependencies,
     });
     runtime.scanCount += 1;
     runtime.failureCount = 0;
@@ -244,6 +350,12 @@ async function runDeployment(input: {
     runtime.lastSkippedCount = result.skippedCount;
     runtime.lastFailedCount = result.failedCount;
   } catch (error) {
+    if (isWorkerScanTimeoutError(error)) {
+      leaveActiveUntilSettled = true;
+      timedOutScanPromise = error.scanPromise;
+      runtime.timedOut = true;
+      runtime.unsettledAfterTimeout = true;
+    }
     const message =
       error instanceof Error && error.message
         ? error.message
@@ -262,7 +374,14 @@ async function runDeployment(input: {
     runtime.lastCheckedAtMs = scanEndedAtMs;
     runtime.nextScanDueAtMs = scanEndedAtMs + runtime.pollIntervalMs;
     runtime.currentScanStartedAtMs = null;
-    activeDeploymentIds.delete(deployment.id);
+    if (leaveActiveUntilSettled && timedOutScanPromise) {
+      timedOutScanPromise.finally(() => {
+        runtime.unsettledAfterTimeout = false;
+        activeDeploymentIds.delete(deployment.id);
+      }).catch(() => {});
+    } else {
+      activeDeploymentIds.delete(deployment.id);
+    }
   }
 }
 
@@ -455,6 +574,8 @@ export function createOvernightSpotWorker(
             lastBlockedCount: runtime.lastBlockedCount,
             lastSkippedCount: runtime.lastSkippedCount,
             lastFailedCount: runtime.lastFailedCount,
+            timedOut: runtime.timedOut,
+            unsettledAfterTimeout: runtime.unsettledAfterTimeout,
             nextScanDueAt: dateString(runtime.nextScanDueAtMs),
             nextScanDueInMs:
               runtime.nextScanDueAtMs === null

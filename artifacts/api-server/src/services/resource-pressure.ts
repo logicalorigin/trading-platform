@@ -62,11 +62,11 @@ const NORMAL_INPUTS: ApiResourcePressureSnapshot["inputs"] = {
 };
 
 const FALLBACK_API_RSS_PRESSURE_THRESHOLDS = {
-  watch: 2_048,
-  high: 3_072,
-  critical: 4_096,
+  watch: 3_072,
+  high: 4_608,
+  critical: 6_144,
 } as const;
-const FALLBACK_API_RSS_HARD_BLOCK_MB = 6_144;
+const FALLBACK_API_RSS_HARD_BLOCK_MB = 7_168;
 const CGROUP_MEMORY_MAX_PATH = "/sys/fs/cgroup/memory.max";
 const MB = 1024 * 1024;
 
@@ -155,9 +155,9 @@ export function resolveApiRssPressureThresholds(
 
   if (memoryLimitMb !== null && memoryLimitMb >= 8_192) {
     return {
-      watch: Math.round(memoryLimitMb * 0.25),
-      high: Math.round(memoryLimitMb * 0.35),
-      critical: Math.round(memoryLimitMb * 0.5),
+      watch: Math.round(memoryLimitMb * 0.375),
+      high: Math.round(memoryLimitMb * 0.5),
+      critical: Math.round(memoryLimitMb * 0.75),
     };
   }
 
@@ -172,7 +172,7 @@ export function resolveApiRssHardBlockMb(
     return configured;
   }
   if (memoryLimitMb !== null && memoryLimitMb >= 8_192) {
-    return Math.round(memoryLimitMb * 0.7);
+    return Math.round(memoryLimitMb * 0.85);
   }
   return FALLBACK_API_RSS_HARD_BLOCK_MB;
 }

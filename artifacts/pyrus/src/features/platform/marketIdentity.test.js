@@ -1,12 +1,24 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { afterEach, test } from "node:test";
 import {
+  __marketIdentityLogoTestHooks,
   buildMarketIdentityChips,
   countryCodeToFlagEmoji,
   normalizeCountryCode,
   resolveMarketIdentity,
   stableTickerColor,
 } from "./marketIdentity.jsx";
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  __marketIdentityLogoTestHooks.reset();
+  if (originalFetch) {
+    globalThis.fetch = originalFetch;
+  } else {
+    delete globalThis.fetch;
+  }
+});
 
 test("normalizeCountryCode and countryCodeToFlagEmoji normalize flags", () => {
   assert.equal(normalizeCountryCode(" us "), "US");
@@ -67,4 +79,43 @@ test("buildMarketIdentityChips returns stable display chips", () => {
 test("stableTickerColor is deterministic and ticker-specific", () => {
   assert.equal(stableTickerColor("NVDA"), stableTickerColor("nvda"));
   assert.notEqual(stableTickerColor("NVDA"), stableTickerColor("MSFT"));
+});
+
+test("fetchTickerLogo batches same-turn visible logo hydration", async () => {
+  const requestedUrls = [];
+  globalThis.fetch = async (url, init) => {
+    requestedUrls.push(String(url));
+    assert.equal(init?.headers?.accept, "application/json");
+    return new Response(
+      JSON.stringify({
+        logos: [
+          { symbol: "AAPL", logoUrl: "/logos/aapl.svg" },
+          { symbol: "MSFT", logoUrl: "/logos/msft.svg" },
+          { symbol: "NVDA", logoUrl: "/logos/nvda.svg" },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+
+  const results = await Promise.all([
+    __marketIdentityLogoTestHooks.fetchTickerLogo("aapl"),
+    __marketIdentityLogoTestHooks.fetchTickerLogo("MSFT"),
+    __marketIdentityLogoTestHooks.fetchTickerLogo("nvda"),
+  ]);
+
+  assert.deepEqual(results, [
+    "/logos/aapl.svg",
+    "/logos/msft.svg",
+    "/logos/nvda.svg",
+  ]);
+  assert.equal(requestedUrls.length, 1);
+
+  const requestUrl = new URL(requestedUrls[0], "http://pyrus.local");
+  assert.equal(requestUrl.pathname, "/api/universe/logos");
+  assert.deepEqual(requestUrl.searchParams.get("symbols")?.split(","), [
+    "AAPL",
+    "MSFT",
+    "NVDA",
+  ]);
 });
