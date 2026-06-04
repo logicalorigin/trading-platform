@@ -48,6 +48,20 @@ test("resolveReturnsCalendarData uses the dedicated calendar query payload", () 
   assert.deepEqual(resolved.equityPoints, performanceEquity.points);
 });
 
+test("account screen scopes position option quote stream owner to the active account", () => {
+  const source = readFileSync(new URL("../AccountScreen.jsx", import.meta.url), "utf8");
+
+  assert.match(source, /const accountOptionQuoteOwner = useMemo/);
+  assert.match(
+    source,
+    /`account-position-option-quotes:\$\{accountRequestId \|\| SHADOW_ACCOUNT_ID\}`/,
+  );
+  assert.match(
+    source,
+    /<PositionOptionQuoteStreams[\s\S]*?groups=\{accountOptionQuoteGroups\}[\s\S]*?owner=\{accountOptionQuoteOwner\}/,
+  );
+});
+
 test("account screen wires shadow account queries through the paper ledger path", () => {
   const source = readFileSync(new URL("../AccountScreen.jsx", import.meta.url), "utf8");
   const cssSource = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
@@ -87,9 +101,12 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /buildPerformanceCalendarParams\(accountDataParams\)/);
   assert.match(source, /const ACCOUNT_DERIVED_STALE_MS = 120_000/);
   assert.match(source, /const ACCOUNT_HISTORY_STALE_MS = 120_000/);
-  assert.match(source, /const retainPreviousData = \(previousData\) => previousData/);
-  assert.match(source, /const retainPreviousRangeData = \(range\) => \(previousData\) =>/);
-  assert.match(source, /const retainPreviousDateData = \(date\) => \(previousData\) =>/);
+  assert.match(source, /const retainPreviousAccountData = \(accountId\) => \(previousData\) =>/);
+  assert.match(source, /const retainPreviousAccountRangeData =\s*\(accountId, range, benchmark = null\) =>/);
+  assert.match(source, /const retainPreviousAccountDateData = \(accountId, date\) => \(previousData\) =>/);
+  assert.match(source, /const retainPreviousData = useMemo\(\s*\(\) => retainPreviousAccountData\(accountRequestId\),/);
+  assert.match(source, /const retainPreviousRangeData = useCallback\(\s*\(targetRange, benchmark = null\) =>\s*retainPreviousAccountRangeData\(accountRequestId, targetRange, benchmark\),/);
+  assert.match(source, /const retainPreviousDateData = useCallback\(\s*\(date\) => retainPreviousAccountDateData\(accountRequestId, date\),/);
   assert.match(source, /const equityHistoryQueriesEnabled\s*=\s*Boolean\(derivedAccountQueriesEnabled\)/);
   assert.match(source, /const secondaryAccountQueriesEnabled\s*=\s*Boolean\(derivedAccountQueriesEnabled\)/);
   assert.match(source, /const benchmarkQueriesEnabled\s*=\s*Boolean\(equityHistoryQueriesEnabled\)/);

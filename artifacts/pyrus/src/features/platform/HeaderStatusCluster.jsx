@@ -75,7 +75,9 @@ import {
 import {
   buildIbkrDeactivateOperationStepper,
   buildIbkrLaunchOperationStepper,
+  getIbkrLaunchActionProgressLabel,
 } from "./ibkrConnectionOperationStepperModel";
+import { buildIbkrConnectionInsightModel } from "./ibkrConnectionInsightModel";
 import { buildHeaderIbkrPopoverModel } from "./ibkrPopoverModel";
 import { platformJsonRequest } from "./platformJsonRequest";
 import { useRuntimeControlSnapshot } from "./useRuntimeControlSnapshot";
@@ -121,14 +123,23 @@ const CSS_COLOR = Object.freeze({
 const cssColorMix = (color, percent) =>
   `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 
+const getIbkrInsightToneColor = (tone) => {
+  if (tone === "success") return CSS_COLOR.green;
+  if (tone === "attention") return CSS_COLOR.amber;
+  if (tone === "error") return CSS_COLOR.red;
+  if (tone === "idle") return CSS_COLOR.textMuted;
+  return CSS_COLOR.accent;
+};
+
 const IBKR_LOGIN_HANDOFF_ALGORITHM = "RSA-OAEP-256-CHUNKED";
 const IBKR_LOGIN_HANDOFF_POLL_MS = 250;
-const IBKR_LOGIN_HANDOFF_REQUEST_TIMEOUT_MS = 10_000;
+const IBKR_LOGIN_HANDOFF_REQUEST_TIMEOUT_MS = 35_000;
+const IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS = 30_000;
 const IBKR_LOGIN_HANDOFF_WAIT_MS = 240_000;
 const IBKR_LOGIN_HANDOFF_RSA_CHUNK_SIZE = 400;
 const IBKR_BRIDGE_RECOGNITION_POLL_MS = 1_000;
 const IBKR_BRIDGE_ACTIVATION_STATUS_POLL_MS = 1_000;
-const IBKR_DESKTOP_JOB_POLL_MS = 750;
+const IBKR_DESKTOP_JOB_POLL_MS = 250;
 const IBKR_DESKTOP_SHUTDOWN_WAIT_MS = 35_000;
 
 const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -183,7 +194,10 @@ const waitForIbkrLoginKey = async ({ activationId, managementToken }) => {
         `/api/ibkr/activation/${encodeURIComponent(activationId)}/login-key/read`,
         {
           method: "POST",
-          body: { managementToken },
+          body: {
+            managementToken,
+            waitMs: IBKR_LOGIN_HANDOFF_REQUEST_WAIT_MS,
+          },
           timeoutMs: IBKR_LOGIN_HANDOFF_REQUEST_TIMEOUT_MS,
         },
       );
@@ -1624,7 +1638,7 @@ const HeaderIbkrProviderRows = ({ rows }) => {
   );
 };
 
-const HeaderIbkrAdvancedDetails = ({ model }) => {
+const HeaderIbkrAdvancedDetails = ({ insightModel, model }) => {
   const initialMode = model.autoOpenDetails
     ? "all"
     : model.priorityDetailGroup
@@ -1669,6 +1683,27 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
     openMode === "priority" && model.priorityDetailGroup
       ? model.priorityDetailGroup
       : null;
+  const insightRows = Array.isArray(insightModel?.timelineRows)
+    ? insightModel.timelineRows.filter((row) => row.status !== "pending")
+    : [];
+  const detailGroups = insightRows.length
+    ? [
+        {
+          title: "Launch",
+          rows: insightRows.map((row) => ({
+            label: row.label,
+            tone: getIbkrInsightToneColor(row.tone),
+            value: [
+              row.statusLabel,
+              row.elapsedLabel,
+              row.ownerLabel,
+            ].filter(Boolean).join(" · "),
+            wrap: true,
+          })),
+        },
+        ...model.detailGroups,
+      ]
+    : model.detailGroups;
 
   return (
     <div
@@ -1722,7 +1757,7 @@ const HeaderIbkrAdvancedDetails = ({ model }) => {
             border: "none",
           }}
         >
-          {model.detailGroups.map((group) => {
+          {detailGroups.map((group) => {
             const groupKey = group.title.toLowerCase();
             const groupOpen =
               !expandedGroupTitle || groupKey === expandedGroupTitle;
@@ -1822,10 +1857,71 @@ const getIbkrOperationStepIconAnimation = (step, active) => {
   return "ibkrStepIconPulse 1.35s ease-in-out infinite";
 };
 
-const HeaderIbkrOperationStepper = ({ model }) => {
+const getIbkrOperationActivityLabel = (activity) => {
+  if (!activity) return null;
+  if (activity.status === "current") return "Working";
+  if (activity.status === "warning") return "Needs attention";
+  if (activity.status === "error") return "Failed";
+  return activity.status;
+};
+
+const normalizeIbkrStepperCopy = (value) =>
+  String(value || "").replace(/\s+/g, " ").trim();
+
+const IBKR_STEPPER_COPY_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "for",
+  "from",
+  "is",
+  "of",
+  "on",
+  "the",
+  "to",
+  "with",
+]);
+
+const fingerprintIbkrStepperCopy = (value) =>
+  normalizeIbkrStepperCopy(value)
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .split(/\s+/)
+    .filter((word) => word && !IBKR_STEPPER_COPY_STOP_WORDS.has(word))
+    .join(" ");
+
+const isDuplicateIbkrStepperCopy = (left, right) => {
+  const leftFingerprint = fingerprintIbkrStepperCopy(left);
+  const rightFingerprint = fingerprintIbkrStepperCopy(right);
+  if (!leftFingerprint || !rightFingerprint) return false;
+  if (leftFingerprint === rightFingerprint) return true;
+  if (Math.min(leftFingerprint.length, rightFingerprint.length) < 24) return false;
+  return leftFingerprint.includes(rightFingerprint) || rightFingerprint.includes(leftFingerprint);
+};
+
+const HeaderIbkrOperationStepper = ({ insightModel, model }) => {
   if (!model?.steps?.length) {
     return null;
   }
+  const insightTone = insightModel
+    ? getIbkrInsightToneColor(insightModel.tone)
+    : CSS_COLOR.textSec;
+  const activity = model.activity || null;
+  const ActivityIcon = activity
+    ? IBKR_OPERATION_STEP_ICONS[activity.icon] || Activity
+    : Activity;
+  const activityTone = getIbkrOperationStepTone(activity?.status);
+  const normalizedLatestMessage = normalizeIbkrStepperCopy(model.latestMessage);
+  const showInsightDetail = Boolean(
+    insightModel?.detail &&
+      !isDuplicateIbkrStepperCopy(insightModel.detail, activity?.detail),
+  );
+  const showLatestMessage = Boolean(
+    normalizedLatestMessage &&
+      !isDuplicateIbkrStepperCopy(normalizedLatestMessage, insightModel?.detail) &&
+      !isDuplicateIbkrStepperCopy(normalizedLatestMessage, insightModel?.statusLine) &&
+      !isDuplicateIbkrStepperCopy(normalizedLatestMessage, activity?.detail),
+  );
 
   return (
     <div
@@ -1852,14 +1948,46 @@ const HeaderIbkrOperationStepper = ({ model }) => {
       >
         <span
           style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(6),
             color: CSS_COLOR.text,
             fontSize: textSize("paragraphMuted"),
             fontWeight: FONT_WEIGHTS.medium,
             minWidth: 0,
           }}
         >
+          {activity ? (
+            <RefreshCw
+              aria-hidden="true"
+              data-ibkr-operation-title-spinner="true"
+              size={dim(12)}
+              strokeWidth={2.2}
+              style={{
+                color: activityTone,
+                animation: "premiumFlowSpin 860ms linear infinite",
+                flex: "0 0 auto",
+                willChange: "transform",
+              }}
+            />
+          ) : null}
           {model.title}
         </span>
+        {activity ? (
+          <span
+            style={{
+              color: activityTone,
+              flex: "0 0 auto",
+              fontSize: fs(8),
+              fontVariantNumeric: "tabular-nums",
+              fontWeight: FONT_WEIGHTS.medium,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+            }}
+          >
+            {getIbkrOperationActivityLabel(activity)}
+          </span>
+        ) : null}
       </div>
       <div
         role="list"
@@ -1878,6 +2006,11 @@ const HeaderIbkrOperationStepper = ({ model }) => {
           const warned = step.status === "warning";
           const failed = step.status === "error" || step.status === "canceled";
           const current = step.status === "current";
+          const activeLine =
+            model.operation === "deactivate" &&
+            current &&
+            index > 0 &&
+            model.steps[index - 1]?.status !== "complete";
           const StepIcon = IBKR_OPERATION_STEP_ICONS[step.icon] || Activity;
           const StatusIcon = complete
             ? Check
@@ -1914,12 +2047,17 @@ const HeaderIbkrOperationStepper = ({ model }) => {
                     background:
                       model.steps[index - 1]?.status === "complete"
                         ? CSS_COLOR.green
-                        : CSS_COLOR.borderLight,
+                        : activeLine
+                          ? `linear-gradient(90deg, ${CSS_COLOR.borderLight}, ${tone}, ${CSS_COLOR.borderLight})`
+                          : CSS_COLOR.borderLight,
                     transformOrigin: "left center",
                     animation:
                       model.steps[index - 1]?.status === "complete"
                         ? "ibkrStepLineFill 540ms ease-out"
-                        : "none",
+                        : activeLine
+                          ? "ibkrStepLineChase 1.05s ease-in-out infinite"
+                          : "none",
+                    backgroundSize: activeLine ? "180% 100%" : undefined,
                   }}
                 />
               ) : null}
@@ -1961,6 +2099,7 @@ const HeaderIbkrOperationStepper = ({ model }) => {
                   style={{
                     opacity: step.status === "pending" ? 0.62 : 1,
                     transformOrigin: "center",
+                    willChange: current ? "transform, opacity, filter" : undefined,
                     animation: complete
                       ? "ibkrStepCheckPop 340ms ease-out"
                       : getIbkrOperationStepIconAnimation(step, current),
@@ -1992,7 +2131,113 @@ const HeaderIbkrOperationStepper = ({ model }) => {
           );
         })}
       </div>
-      {model.latestMessage ? (
+      {activity ? (
+        <div
+          data-testid={`ibkr-operation-activity-${model.operation}`}
+          style={{
+            display: "grid",
+            gap: sp(7),
+            padding: sp("8px 9px"),
+            background: cssColorMix(activityTone, 6),
+            border: `1px solid ${cssColorMix(activityTone, 28)}`,
+            borderRadius: dim(RADII.sm),
+            minWidth: 0,
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "auto minmax(0, 1fr)",
+              gap: sp(8),
+              alignItems: "center",
+              minWidth: 0,
+            }}
+          >
+            <span
+              aria-hidden="true"
+              data-ibkr-deactivate-activity-glyph="true"
+              style={{
+                width: dim(22),
+                height: dim(22),
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: dim(RADII.pill),
+                background: activityTone,
+                color: CSS_COLOR.onAccent,
+                boxShadow: `0 0 0 3px ${cssColorMix(activityTone, 14)}`,
+              }}
+            >
+              <ActivityIcon
+                size={dim(12)}
+                strokeWidth={2.4}
+                style={{
+                  animation: getIbkrOperationStepIconAnimation(activity, true),
+                  transformOrigin: "center",
+                  willChange: "transform, opacity, filter",
+                }}
+              />
+            </span>
+            <div
+              style={{
+                display: "grid",
+                gap: sp(2),
+                minWidth: 0,
+              }}
+            >
+              <div
+                style={{
+                  color: activityTone,
+                  fontSize: textSize("paragraphMuted"),
+                  fontWeight: FONT_WEIGHTS.medium,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {activity.label || activity.id}
+              </div>
+              {activity.detail ? (
+                <div
+                  style={{
+                    color: CSS_COLOR.textSec,
+                    fontSize: fs(10),
+                    lineHeight: 1.3,
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {activity.detail}
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <div
+            aria-hidden="true"
+            data-ibkr-deactivate-progress-track="true"
+            style={{
+              position: "relative",
+              height: dim(3),
+              overflow: "hidden",
+              borderRadius: dim(RADII.pill),
+              background: cssColorMix(activityTone, 16),
+            }}
+          >
+            <span
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "44%",
+                borderRadius: dim(RADII.pill),
+                background: activityTone,
+                animation: "ibkrDeactivateProgressSweep 1.15s ease-in-out infinite",
+                willChange: "transform, opacity",
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
+      {showLatestMessage ? (
         <div
           style={{
             color: CSS_COLOR.textSec,
@@ -2001,7 +2246,76 @@ const HeaderIbkrOperationStepper = ({ model }) => {
             overflowWrap: "anywhere",
           }}
         >
-          {model.latestMessage}
+          {normalizedLatestMessage}
+        </div>
+      ) : null}
+      {insightModel ? (
+        <div
+          data-testid="ibkr-connection-insight"
+          style={{
+            display: "grid",
+            gap: sp(5),
+            paddingTop: sp(8),
+            borderTop: `1px solid ${CSS_COLOR.borderLight}`,
+            color: CSS_COLOR.textSec,
+            fontSize: textSize("paragraphMuted"),
+            lineHeight: 1.35,
+            minWidth: 0,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: sp(8),
+              minWidth: 0,
+            }}
+          >
+            <span
+              style={{
+                minWidth: 0,
+                color: insightTone,
+                fontWeight: FONT_WEIGHTS.medium,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {insightModel.statusLine}
+            </span>
+            {insightModel.elapsedLabel ? (
+              <span
+                style={{
+                  flex: "0 0 auto",
+                  color: CSS_COLOR.textMuted,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {insightModel.elapsedLabel}
+              </span>
+            ) : null}
+          </div>
+          {showInsightDetail ? (
+            <div
+              style={{
+                color: CSS_COLOR.textSec,
+                overflowWrap: "anywhere",
+              }}
+            >
+              {insightModel.detail}
+            </div>
+          ) : null}
+          {insightModel.action ? (
+            <div
+              style={{
+                color: insightTone,
+                overflowWrap: "anywhere",
+              }}
+            >
+              {insightModel.action}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -2055,6 +2369,8 @@ export const HeaderStatusCluster = ({
     );
   const [bridgeActivationActive, setBridgeActivationActive] = useState(false);
   const [bridgeLauncherBusy, setBridgeLauncherBusy] = useState(false);
+  const [bridgeLaunchCancelInFlight, setBridgeLaunchCancelInFlight] =
+    useState(false);
   const [bridgeLauncherError, setBridgeLauncherError] = useState(null);
   const [bridgeLauncherNotice, setBridgeLauncherNotice] = useState(null);
   const [bridgeActivationStatus, setBridgeActivationStatus] = useState(null);
@@ -2143,6 +2459,11 @@ export const HeaderStatusCluster = ({
   const desktopReconnectReady = Boolean(
     desktopReconnectNeeded && ibkrRuntimeState?.reconnectAvailable,
   );
+  const desktopReconnectKnownBad = Boolean(
+    desktopReconnectNeeded &&
+      (ibkrRuntimeState?.desktopAgentKnownBad ||
+        ibkrRuntimeState?.desktopAgentCompatibility === "known_bad"),
+  );
   const desktopReconnectUpgradeRequired = Boolean(
     desktopReconnectNeeded && ibkrRuntimeState?.desktopAgentUpgradeRequired,
   );
@@ -2173,6 +2494,9 @@ export const HeaderStatusCluster = ({
       ? "IB Gateway activation is running from the Windows helper. Wait for the bridge to attach before launching again."
       : null);
   const bridgeLaunchOperationModel = useMemo(() => {
+    const launchRequestPending = Boolean(
+      bridgeLauncherBusy && !bridgeLaunchCancelInFlight,
+    );
     const hasProgress = Boolean(
       bridgeActivationStatus?.latestProgress ||
         bridgeActivationStatus?.recentProgress?.length,
@@ -2182,27 +2506,58 @@ export const HeaderStatusCluster = ({
         (bridgeLauncherError && hasProgress) ||
         gatewayConnectedForBridge,
     );
-    if (!bridgeLaunchInFlight && !hasProgress && !hasTerminalLaunchState) {
+    if (
+      !launchRequestPending &&
+      !bridgeLaunchInFlight &&
+      !hasProgress &&
+      !hasTerminalLaunchState
+    ) {
       return null;
     }
     return buildIbkrLaunchOperationStepper({
       activationStatus: bridgeActivationStatus,
       error: bridgeLauncherError,
       gatewayConnected: gatewayConnectedForBridge,
-      inFlight: bridgeLaunchInFlight,
+      inFlight: bridgeLaunchInFlight || launchRequestPending,
       message: gatewayConnectedForBridge
         ? "IB Gateway bridge attached."
         : bridgePopoverMessage,
     });
   }, [
     bridgeActivationStatus,
+    bridgeLaunchCancelInFlight,
     bridgeLaunchInFlight,
     bridgeLauncherError,
+    bridgeLauncherBusy,
     bridgePopoverMessage,
     gatewayConnectedForBridge,
   ]);
   const bridgeOperationModel =
     bridgeManualOperationModel || bridgeLaunchOperationModel;
+  const bridgeConnectionInsightModel = useMemo(() => {
+    if (bridgeOperationModel?.operation && bridgeOperationModel.operation !== "launch") {
+      return null;
+    }
+    return buildIbkrConnectionInsightModel({
+      activationStatus: bridgeActivationStatus,
+      bridgeOperationModel,
+      busy: bridgeLauncherBusy,
+      cancelInFlight: bridgeLaunchCancelInFlight,
+      error: bridgeLauncherError,
+      gatewayConnected: gatewayConnectedForBridge,
+      inFlight: bridgeLaunchInFlight,
+      now: marketClockNow,
+    });
+  }, [
+    bridgeActivationStatus,
+    bridgeLaunchCancelInFlight,
+    bridgeLaunchInFlight,
+    bridgeLauncherBusy,
+    bridgeLauncherError,
+    bridgeOperationModel,
+    gatewayConnectedForBridge,
+    marketClockNow,
+  ]);
   const popoverLatencyMs = Number.isFinite(gatewayConnection?.lastPingMs)
     ? gatewayConnection.lastPingMs
     : gatewayLatencyStats?.totalMs?.p95;
@@ -2226,6 +2581,12 @@ export const HeaderStatusCluster = ({
   const autoLoginPrimaryCancelsLaunch = Boolean(
     bridgeLaunchCancelable && !bridgeCredentialResumeAvailable,
   );
+  const bridgeCredentialSecondaryCancelsLaunch = bridgeLaunchCancelable;
+  const bridgeCredentialSecondaryActionDisabled = Boolean(
+    bridgeCredentialSecondaryCancelsLaunch
+      ? bridgeLaunchCancelInFlight
+      : bridgeLauncherBusy,
+  );
   const desktopAgentOnlineForLaunch =
     ibkrRuntimeState?.desktopAgentOnline === true;
   const remoteDesktopLaunchBrowser = shouldUseRemoteIbkrLaunchBrowser({
@@ -2233,27 +2594,34 @@ export const HeaderStatusCluster = ({
   });
   const autoLoginActionDisabled = Boolean(
     gatewayConnectedForBridge ||
-      bridgeLauncherBusy ||
+      bridgeLaunchCancelInFlight ||
+      (!autoLoginPrimaryCancelsLaunch && bridgeLauncherBusy) ||
       (!autoLoginPrimaryCancelsLaunch && !autoLoginCredentialsReady) ||
       (!bridgeLaunchCancelable && bridgeLaunchInFlight),
   );
-  const autoLoginActionLabel = bridgeLauncherBusy
-      ? "Preparing"
-      : bridgeCredentialResumeAvailable
-        ? "Send credentials"
-        : autoLoginPrimaryCancelsLaunch
-          ? "Cancel launch"
-      : bridgeLaunchInFlight
-      ? "Launching"
-      : desktopReconnectUpgradeRequired
-        ? "Launch and update helper"
-      : desktopReconnectReady
-        ? "Reconnect on desktop"
-      : gatewayReconnectNeeded
-        ? "Reconnect with credentials"
-        : remoteDesktopLaunchBrowser
-          ? "Launch on desktop"
-          : "Launch with credentials";
+  const autoLoginProgressActionLabel = getIbkrLaunchActionProgressLabel({
+    activationStatus: bridgeActivationStatus,
+    busy: bridgeLauncherBusy,
+    inFlight: bridgeLaunchInFlight,
+  });
+  let autoLoginActionLabel = "Launch with credentials";
+  if (bridgeLauncherBusy || bridgeLaunchInFlight) {
+    autoLoginActionLabel = autoLoginProgressActionLabel;
+  } else if (bridgeCredentialResumeAvailable) {
+    autoLoginActionLabel = "Send credentials";
+  } else if (autoLoginPrimaryCancelsLaunch) {
+    autoLoginActionLabel = "Cancel launch";
+  } else if (desktopReconnectKnownBad) {
+    autoLoginActionLabel = "Launch and repair helper";
+  } else if (desktopReconnectUpgradeRequired) {
+    autoLoginActionLabel = "Launch and update helper";
+  } else if (desktopReconnectReady) {
+    autoLoginActionLabel = "Reconnect on desktop";
+  } else if (gatewayReconnectNeeded) {
+    autoLoginActionLabel = "Reconnect with credentials";
+  } else if (remoteDesktopLaunchBrowser) {
+    autoLoginActionLabel = "Launch on desktop";
+  }
   const showCredentialForm = !gatewayConnectedForBridge;
   const surfaceStyle = {
     display: "flex",
@@ -2374,6 +2742,7 @@ export const HeaderStatusCluster = ({
 
   const clearBridgeLaunchSessionState = useCallback(() => {
     setBridgeActivationActive(false);
+    setBridgeLaunchCancelInFlight(false);
     setBridgeLaunchInFlightUntil(0);
     setBridgeActivationId(null);
     setBridgeManagementToken(null);
@@ -2588,6 +2957,37 @@ export const HeaderStatusCluster = ({
     setAutoLoginPassword("");
   }, [bridgeLauncherBusy]);
 
+  const appendBridgeActivationProgress = useCallback(
+    ({ activationId, message, status, step }) => {
+      if (!activationId || !step) {
+        return;
+      }
+      const latestProgress = {
+        activationId,
+        bridgeUrl: null,
+        helperVersion:
+          ibkrRuntimeState?.desktopAgentExpectedHelperVersion || null,
+        message,
+        status,
+        step,
+        updatedAt: new Date().toISOString(),
+      };
+      setBridgeActivationStatus((current) => {
+        const recentProgress = Array.isArray(current?.recentProgress)
+          ? current.recentProgress
+          : [];
+        return {
+          ...(current || {}),
+          active: current?.active ?? true,
+          canceled: current?.canceled ?? false,
+          latestProgress,
+          recentProgress: [...recentProgress, latestProgress].slice(-20),
+        };
+      });
+    },
+    [ibkrRuntimeState?.desktopAgentExpectedHelperVersion],
+  );
+
   const deliverIbkrLoginCredentials = useCallback(
     async ({ activationId, managementToken, username, password }) => {
       const handoff = await waitForIbkrLoginKey({
@@ -2603,6 +3003,12 @@ export const HeaderStatusCluster = ({
         return;
       }
 
+      appendBridgeActivationProgress({
+        activationId,
+        status: "waiting_gateway",
+        step: "encrypting_credentials",
+        message: "Encrypting one-time IBKR credentials in this browser.",
+      });
       const envelope = await encryptIbkrLoginEnvelope({
         publicKeyJwk: handoff.key.publicKeyJwk,
         payload: {
@@ -2624,13 +3030,19 @@ export const HeaderStatusCluster = ({
           timeoutMs: 0,
         },
       );
+      appendBridgeActivationProgress({
+        activationId,
+        status: "waiting_gateway",
+        step: "credentials_sent_to_pyrus",
+        message: "Encrypted credentials sent to Pyrus for the Windows helper.",
+      });
       setAutoLoginPassword("");
       setBridgeActivationActive(true);
       setBridgeLauncherNotice(
         "Encrypted credentials delivered. Approve the IBKR Mobile/2FA prompt.",
       );
     },
-    [clearBridgeLaunchSessionState],
+    [appendBridgeActivationProgress, clearBridgeLaunchSessionState],
   );
 
   const handleSubmitAutoLogin = useCallback(async (event) => {
@@ -2745,6 +3157,25 @@ export const HeaderStatusCluster = ({
         }
 
         setBridgeActivationActive(true);
+        appendBridgeActivationProgress({
+          activationId: payload.activationId,
+          status: "starting_bridge",
+          step: useRemoteDesktopLaunch
+            ? "queued_on_pyrus"
+            : "helper_launch_requested",
+          message: useRemoteDesktopLaunch
+            ? "IBKR launch request queued in Pyrus for the Windows desktop."
+            : "Windows helper launch requested from this browser.",
+        });
+        if (useRemoteDesktopLaunch) {
+          appendBridgeActivationProgress({
+            activationId: payload.activationId,
+            status: "starting_bridge",
+            step: "waiting_desktop_agent",
+            message:
+              "Waiting for the Windows desktop helper to claim the launch request. The v7 desktop agent keeps a fast claim request open.",
+          });
+        }
         const inFlightUntil = Date.now() + IBKR_BRIDGE_CREDENTIAL_LAUNCH_WINDOW_MS;
         setBridgeLaunchInFlightUntil(inFlightUntil);
         writeIbkrBridgeSessionValue(
@@ -2753,7 +3184,7 @@ export const HeaderStatusCluster = ({
         );
         setBridgeLauncherNotice(
           useRemoteDesktopLaunch
-            ? "Waiting for the Windows desktop helper to request encrypted credentials."
+            ? "Waiting for the Windows desktop helper to claim the launch request. The v7 desktop agent keeps a fast claim request open."
             : "Waiting for the Windows helper to request encrypted credentials.",
         );
         return { payload, useRemoteDesktopLaunch };
@@ -2818,6 +3249,7 @@ export const HeaderStatusCluster = ({
   }, [
     autoLoginPassword,
     autoLoginUsername,
+    appendBridgeActivationProgress,
     bridgeActivationId,
     bridgeCredentialResumeAvailable,
     bridgeManagementToken,
@@ -2828,11 +3260,14 @@ export const HeaderStatusCluster = ({
 
   const handleCancelBridgeLaunch = useCallback(async () => {
     if (!bridgeActivationId || !bridgeManagementToken) {
-      setBridgeLauncherError("No active IB Gateway launch can be canceled.");
+      setBridgeLauncherError(null);
+      setBridgeLauncherNotice("No active IB Gateway launch remained.");
+      clearBridgeLaunchSessionState();
       return;
     }
 
     bridgeLaunchCancelRequestedRef.current = true;
+    setBridgeLaunchCancelInFlight(true);
     setBridgeLauncherBusy(true);
     setBridgeLauncherError(null);
     try {
@@ -2916,6 +3351,7 @@ export const HeaderStatusCluster = ({
       }
     } finally {
       setBridgeLauncherBusy(false);
+      setBridgeLaunchCancelInFlight(false);
     }
   }, [
     bridgeActivationId,
@@ -3462,28 +3898,34 @@ export const HeaderStatusCluster = ({
                     ) : null}
                     {autoLoginActionLabel}
                   </button>
-                  <button
-                    type="button"
-                    onClick={
-                      bridgeCredentialResumeAvailable
-                        ? handleCancelBridgeLaunch
-                        : handleClearCredentialForm
-                    }
-                    disabled={bridgeLauncherBusy}
-                    aria-disabled={bridgeLauncherBusy}
+	                  <button
+	                    type="button"
+	                    onClick={
+	                      bridgeCredentialSecondaryCancelsLaunch
+	                        ? handleCancelBridgeLaunch
+	                        : handleClearCredentialForm
+	                    }
+	                    disabled={bridgeCredentialSecondaryActionDisabled}
+	                    aria-disabled={bridgeCredentialSecondaryActionDisabled}
                     style={{
                       minHeight: dim(28),
                       border: `1px solid ${CSS_COLOR.border}`,
                       borderRadius: dim(RADII.sm),
                       background: CSS_COLOR.bg0,
                       color: CSS_COLOR.textSec,
-                      cursor: bridgeLauncherBusy ? "default" : "pointer",
+	                      cursor: bridgeCredentialSecondaryActionDisabled
+	                        ? "default"
+	                        : "pointer",
                       fontSize: textSize("paragraphMuted"),
                       fontWeight: FONT_WEIGHTS.medium,
                       fontFamily: T.sans,
                     }}
                   >
-                    {bridgeCredentialResumeAvailable ? "Cancel" : "Clear"}
+	                    {bridgeCredentialSecondaryCancelsLaunch
+	                      ? bridgeLaunchCancelInFlight
+	                        ? "Canceling"
+	                        : "Cancel"
+	                      : "Clear"}
                   </button>
                 </div>
               </form>
@@ -3512,7 +3954,10 @@ export const HeaderStatusCluster = ({
               </div>
             ) : null}
 
-            <HeaderIbkrOperationStepper model={bridgeOperationModel} />
+            <HeaderIbkrOperationStepper
+              insightModel={bridgeConnectionInsightModel}
+              model={bridgeOperationModel}
+            />
 
             <HeaderIbkrConnectionSummary model={gatewayPopoverModel} />
             <HeaderMarketDataLineUsage
@@ -3520,7 +3965,10 @@ export const HeaderStatusCluster = ({
               compactLineUsage={gatewayPopoverModel.compactLineUsage}
             />
 
-            <HeaderIbkrAdvancedDetails model={gatewayPopoverModel} />
+            <HeaderIbkrAdvancedDetails
+              insightModel={bridgeConnectionInsightModel}
+              model={gatewayPopoverModel}
+            />
           </div>
           </>
         ), document.body) : null}

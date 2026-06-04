@@ -8,8 +8,8 @@ import {
 const originalMassiveEnv = Object.fromEntries(
   [
     "MASSIVE_API_KEY",
-  "MASSIVE_MARKET_DATA_API_KEY",
-  "MASSIVE_API_BASE_URL",
+    "MASSIVE_MARKET_DATA_API_KEY",
+    "MASSIVE_API_BASE_URL",
   ].map((key) => [key, process.env[key]]),
 );
 
@@ -25,8 +25,6 @@ function restoreMassiveEnv(): void {
 
 function configureMassiveEnv(): void {
   process.env.MASSIVE_API_KEY = "test-massive-key";
-  delete process.env.MASSIVE_MARKET_DATA_API_KEY;
-  delete process.env.MASSIVE_API_KEY;
   delete process.env.MASSIVE_MARKET_DATA_API_KEY;
 }
 

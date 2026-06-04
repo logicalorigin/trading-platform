@@ -349,7 +349,7 @@ test("account daily P&L override makes today match the account summary", () => {
   assert.equal(overridden[0].pnlSource, "account-summary");
 });
 
-test("account daily P&L override rejects position quote-change summaries", () => {
+test("account daily P&L override accepts live position summaries", () => {
   const series = buildDailyPnlSeries({
     startDate: new Date(2026, 4, 27),
     endDate: new Date(2026, 4, 27),
@@ -365,8 +365,9 @@ test("account daily P&L override rejects position quote-change summaries", () =>
     new Date(2026, 4, 27, 12),
   );
 
-  assert.equal(overridden[0].pnl, -25);
-  assert.equal(overridden[0].pnlSource, "total");
+  assert.equal(overridden[0].pnl, 23_600);
+  assert.equal(overridden[0].total, 23_600);
+  assert.equal(overridden[0].pnlSource, "account-summary");
 });
 
 test("buildDailyPnlSeries does not pile sparse multi-day NAV gaps into the latest day", () => {

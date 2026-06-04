@@ -5,9 +5,11 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { EnvironmentMode } from './environmentMode';
 
 export interface CancelOrderRequest {
   accountId: string;
+  mode: EnvironmentMode;
   confirm?: boolean;
   /** @nullable */
   manualIndicator?: boolean | null;

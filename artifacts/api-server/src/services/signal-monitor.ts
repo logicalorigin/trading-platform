@@ -41,6 +41,10 @@ import {
   listWatchlists,
   listWatchlistsRuntimeFallback,
 } from "./platform";
+import {
+  getHighBetaUniverseAvailabilityStatus,
+  getHighBetaUniversePreview,
+} from "./high-beta-universe";
 import { notifyAlgoCockpitChanged } from "./algo-cockpit-events";
 import {
   getApiResourcePressureSnapshot,
@@ -49,6 +53,8 @@ import {
 import {
   getCurrentStockMinuteAggregates,
   getRecentStockMinuteAggregateHistory,
+  isBackgroundStockAggregateStreamingEnabled,
+  isForegroundSignalMatrixStockAggregateStreamingEnabled,
   isStockAggregateStreamingAvailable,
   subscribeMutableStockMinuteAggregates,
   type StockMinuteAggregateSubscription,
@@ -83,11 +89,13 @@ type SignalMonitorProfileSymbolEvaluationPressureCapMode =
 type SignalMonitorUniverseMode =
   | "selected_watchlist"
   | "all_watchlists"
-  | "all_watchlists_plus_universe";
+  | "all_watchlists_plus_universe"
+  | "high_beta_500";
 type SignalMonitorUniverseSource =
   | "selected_watchlist"
   | "all_watchlists"
-  | "watchlists_plus_ranked_universe";
+  | "watchlists_plus_ranked_universe"
+  | "high_beta_500";
 export type EvaluationMode = "hydrate" | "incremental";
 export type SignalMonitorBarSnapshot = Awaited<
   ReturnType<typeof getBars>
@@ -159,9 +167,11 @@ const SIGNAL_MONITOR_COMPLETED_BARS_CACHE_MAX_ENTRIES = 2048;
 const SIGNAL_MONITOR_STALE_RETRY_BROKER_WINDOW_MINUTES = 240;
 const SIGNAL_MONITOR_STALE_RETRY_BARS = 64;
 const SIGNAL_MONITOR_MATRIX_BARS_LIMIT = 240;
-const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY = "native_timeframes_live_retry";
+const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY =
+  "native_timeframes_live_retry_exact_backfill";
 const SIGNAL_MONITOR_MATRIX_BAR_LOAD_TIMEOUT_MS = 12_000;
 const SIGNAL_MONITOR_MATRIX_STREAM_KEEPALIVE_MS = 5 * 60_000;
+const SIGNAL_MONITOR_MATRIX_STREAM_SYMBOL_CAP = 80;
 const DEFAULT_SIGNAL_MONITOR_BAR_SOURCE_POLICY: SignalMonitorBarSourcePolicy =
   "mixed";
 const SIGNAL_MONITOR_BARS_PRIORITY = 8;
@@ -171,9 +181,9 @@ const SIGNAL_MONITOR_BARS_FAMILY = "signal-matrix";
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
 const DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE: SignalMonitorUniverseMode =
   "all_watchlists";
-const SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT = 250;
+const SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT = 500;
 const SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT = 10;
-const DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS = SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT;
+const DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS = 250;
 const DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY = 6;
 const DEFAULT_SIGNAL_MONITOR_POLL_SECONDS = 60;
 const SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS: Record<
@@ -208,8 +218,8 @@ const SIGNAL_MONITOR_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
   number
 > = {
-  normal: 150,
-  watch: 150,
+  normal: 240,
+  watch: 240,
   high: 20,
   critical: 10,
 };
@@ -217,8 +227,8 @@ const SIGNAL_MONITOR_FOREGROUND_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
   number
 > = {
-  normal: 150,
-  watch: 150,
+  normal: 240,
+  watch: 240,
   high: 60,
   critical: 10,
 };
@@ -226,8 +236,8 @@ const SIGNAL_MONITOR_STA_VISIBLE_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
   number
 > = {
-  normal: 150,
-  watch: 150,
+  normal: 240,
+  watch: 240,
   high: 120,
   critical: 10,
 };
@@ -307,7 +317,11 @@ function resolveSignalMonitorUniverseScope(
       settings["universeScope"] ??
       "",
   ).trim();
-  if (raw === "selected_watchlist" || raw === "all_watchlists_plus_universe") {
+  if (
+    raw === "selected_watchlist" ||
+    raw === "all_watchlists_plus_universe" ||
+    raw === "high_beta_500"
+  ) {
     return raw;
   }
   if (raw === "all_watchlists_only") {
@@ -317,6 +331,71 @@ function resolveSignalMonitorUniverseScope(
     return "all_watchlists";
   }
   return DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE;
+}
+
+function resolveSignalMonitorProfileUpdateDefaults(input: {
+  currentMaxSymbols: number;
+  currentPyrusSignalsSettings: Record<string, unknown>;
+  inputMaxSymbols?: number;
+  inputPyrusSignalsSettings?: Record<string, unknown>;
+}) {
+  const pyrusSignalsSettings =
+    input.inputPyrusSignalsSettings === undefined
+      ? asRecord(input.currentPyrusSignalsSettings)
+      : asRecord(input.inputPyrusSignalsSettings);
+  const universeScope = resolveSignalMonitorUniverseScope(pyrusSignalsSettings);
+  const explicitMaxSymbols =
+    input.inputMaxSymbols === undefined
+      ? undefined
+      : positiveInteger(
+          input.inputMaxSymbols,
+          DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
+          1,
+          SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+        );
+  const highBetaRequested = universeScope === "high_beta_500";
+  const maxSymbols =
+    explicitMaxSymbols ??
+    (highBetaRequested
+      ? SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT
+      : positiveInteger(
+          input.currentMaxSymbols,
+          DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
+          1,
+          SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+        ));
+
+  return {
+    pyrusSignalsSettings,
+    universeScope,
+    maxSymbols,
+    highBetaRequested,
+  };
+}
+
+async function assertHighBetaSignalMonitorUniverseAvailable(input: {
+  universeScope: SignalMonitorUniverseMode;
+}) {
+  if (input.universeScope !== "high_beta_500") {
+    return;
+  }
+
+  const status = await getHighBetaUniverseAvailabilityStatus({
+    limit: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+  });
+  if (status.available) {
+    return;
+  }
+
+  throw new HttpError(409, "High Beta 500 universe is unavailable.", {
+    code: "high_beta_universe_unavailable",
+    detail:
+      status.unavailableDetail ??
+      "High Beta 500 requires a configured research provider or a cached high-beta universe.",
+    data: {
+      highBetaUniverse: status,
+    },
+  });
 }
 
 function parseSignalTimeframe(value: unknown): SignalMonitorTimeframe {
@@ -444,6 +523,12 @@ function shouldAwaitSignalMonitorMatrixExactCellRefresh(input: {
     input.pressure === "high" &&
     (foregroundLeader || isStaVisiblePageSignalMonitorMatrixRequest(input))
   );
+}
+
+function shouldAllowSignalMonitorMatrixHistoricalFallback(input: {
+  exactCells: boolean;
+}): boolean {
+  return input.exactCells;
 }
 
 function resolveSignalMonitorMatrixExactCells(input: {
@@ -1419,6 +1504,22 @@ async function updateRuntimeSignalMonitorProfile(input: {
     updatedAt: new Date(),
     lastError: SIGNAL_MONITOR_RUNTIME_FALLBACK_MESSAGE,
   };
+  const profileUpdateDefaults = resolveSignalMonitorProfileUpdateDefaults({
+    currentMaxSymbols: Math.min(
+      profile.maxSymbols,
+      SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+    ),
+    currentPyrusSignalsSettings: asRecord(profile.pyrusSignalsSettings),
+    inputMaxSymbols: input.maxSymbols,
+    inputPyrusSignalsSettings: input.pyrusSignalsSettings,
+  });
+  const nextEnabled =
+    typeof input.enabled === "boolean" ? input.enabled : profile.enabled;
+  if (nextEnabled) {
+    await assertHighBetaSignalMonitorUniverseAvailable({
+      universeScope: profileUpdateDefaults.universeScope,
+    });
+  }
 
   if (typeof input.enabled === "boolean") {
     updated.enabled = input.enabled;
@@ -1438,7 +1539,7 @@ async function updateRuntimeSignalMonitorProfile(input: {
     updated.timeframe = parseSignalTimeframe(input.timeframe);
   }
   if (input.pyrusSignalsSettings !== undefined) {
-    updated.pyrusSignalsSettings = asRecord(input.pyrusSignalsSettings);
+    updated.pyrusSignalsSettings = profileUpdateDefaults.pyrusSignalsSettings;
   }
   if (input.freshWindowBars !== undefined) {
     updated.freshWindowBars = positiveInteger(input.freshWindowBars, 3, 1, 20);
@@ -1451,13 +1552,8 @@ async function updateRuntimeSignalMonitorProfile(input: {
       3600,
     );
   }
-  if (input.maxSymbols !== undefined) {
-    updated.maxSymbols = positiveInteger(
-      input.maxSymbols,
-      DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
-      1,
-      250,
-    );
+  if (input.maxSymbols !== undefined || profileUpdateDefaults.highBetaRequested) {
+    updated.maxSymbols = profileUpdateDefaults.maxSymbols;
   }
   if (input.evaluationConcurrency !== undefined) {
     updated.evaluationConcurrency = positiveInteger(
@@ -1766,9 +1862,13 @@ function resolveSignalMonitorUniverseFromWatchlists(input: {
   const pinnedSourceSymbols =
     universeScope === "selected_watchlist"
       ? selectedWatchlistSymbols
-      : allWatchlistSymbols;
+      : universeScope === "high_beta_500"
+        ? []
+        : allWatchlistSymbols;
   const sourceSymbols =
-    universeScope === "all_watchlists_plus_universe"
+    universeScope === "high_beta_500"
+      ? (input.expansionUniverse?.symbols ?? [])
+      : universeScope === "all_watchlists_plus_universe"
       ? [...pinnedSourceSymbols, ...(input.expansionUniverse?.symbols ?? [])]
       : pinnedSourceSymbols;
   const resolved = resolveSymbolUniverse(
@@ -1789,7 +1889,9 @@ function resolveSignalMonitorUniverseFromWatchlists(input: {
       ? "selected_watchlist"
       : universeScope === "all_watchlists"
         ? "all_watchlists"
-        : "watchlists_plus_ranked_universe";
+        : universeScope === "high_beta_500"
+          ? "high_beta_500"
+          : "watchlists_plus_ranked_universe";
 
   return {
     ...resolved,
@@ -1848,6 +1950,53 @@ function loadSignalMonitorExpansionUniverse(): SignalMonitorExpansionUniverse {
   }
 }
 
+async function loadSignalMonitorHighBetaUniverse(
+  maxSymbols: number,
+): Promise<SignalMonitorExpansionUniverse> {
+  try {
+    const preview = await getHighBetaUniversePreview({
+      limit: Math.min(SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT, Math.max(1, maxSymbols)),
+      dryRun: true,
+    });
+    return {
+      symbols: preview.accepted.map((row) => row.symbol),
+      fallbackUsed: false,
+      degradedReason:
+        preview.acceptedCount < Math.min(maxSymbols, SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT)
+          ? `High-beta universe accepted ${preview.acceptedCount} of ${preview.limit} requested symbols.`
+          : null,
+      rankedAt: preview.generatedAt,
+    };
+  } catch (error) {
+    logger.warn(
+      { err: error },
+      "Signal monitor high-beta universe expansion unavailable",
+    );
+    return {
+      symbols: [],
+      fallbackUsed: true,
+      degradedReason:
+        error instanceof Error
+          ? error.message
+          : "Signal monitor high-beta universe expansion unavailable.",
+      rankedAt: null,
+    };
+  }
+}
+
+async function loadSignalMonitorExpansionUniverseForScope(input: {
+  universeScope: SignalMonitorUniverseMode;
+  maxSymbols: number;
+}): Promise<SignalMonitorExpansionUniverse | null> {
+  if (input.universeScope === "all_watchlists_plus_universe") {
+    return loadSignalMonitorExpansionUniverse();
+  }
+  if (input.universeScope === "high_beta_500") {
+    return loadSignalMonitorHighBetaUniverse(input.maxSymbols);
+  }
+  return null;
+}
+
 export async function resolveSignalMonitorProfileUniverse(
   profile: DbSignalMonitorProfile,
   options: { ensureWatchlist?: boolean } = {},
@@ -1859,10 +2008,10 @@ export async function resolveSignalMonitorProfileUniverse(
   const { watchlists } = await listWatchlists();
   const settings = asRecord(hydratedProfile.pyrusSignalsSettings);
   const universeScope = resolveSignalMonitorUniverseScope(settings);
-  const expansionUniverse =
-    universeScope === "all_watchlists_plus_universe"
-      ? loadSignalMonitorExpansionUniverse()
-      : null;
+  const expansionUniverse = await loadSignalMonitorExpansionUniverseForScope({
+    universeScope,
+    maxSymbols: hydratedProfile.maxSymbols,
+  });
   const universe = resolveSignalMonitorUniverseFromWatchlists({
     profile: hydratedProfile,
     watchlists,
@@ -2302,9 +2451,15 @@ function loadSignalMonitorStreamCompletedBars(input: {
 }
 
 function primeSignalMonitorMatrixStockAggregateStream(symbols: string[]): void {
+  if (
+    !isBackgroundStockAggregateStreamingEnabled() &&
+    !isForegroundSignalMatrixStockAggregateStreamingEnabled()
+  ) {
+    return;
+  }
   const normalizedSymbols = Array.from(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
-  );
+  ).slice(0, SIGNAL_MONITOR_MATRIX_STREAM_SYMBOL_CAP);
   if (!normalizedSymbols.length) {
     return;
   }
@@ -4321,10 +4476,13 @@ function resolveSignalMonitorProfileSymbolEvaluationSettings(input: {
   if (pressureCapMode === "bypass-soft") {
     const maxSymbols =
       input.maxSymbolsOverride === undefined
-        ? 250
+        ? SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT
         : Math.max(
             0,
-            Math.min(250, Math.floor(Number(input.maxSymbolsOverride) || 0)),
+            Math.min(
+              SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+              Math.floor(Number(input.maxSymbolsOverride) || 0),
+            ),
           );
     return {
       ...cappedSettings,
@@ -4351,7 +4509,7 @@ function resolveSignalMonitorProfileSymbolEvaluationSettings(input: {
           0,
           Math.min(
             cappedSettings.profile.maxSymbols,
-            250,
+            SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
             Math.floor(Number(input.maxSymbolsOverride) || 0),
           ),
         );
@@ -5167,9 +5325,17 @@ async function resolveRuntimeSignalMonitorProfileUniverse(
   profile: DbSignalMonitorProfile,
 ) {
   const { watchlists } = listWatchlistsRuntimeFallback();
+  const universeScope = resolveSignalMonitorUniverseScope(
+    asRecord(profile.pyrusSignalsSettings),
+  );
+  const expansionUniverse = await loadSignalMonitorExpansionUniverseForScope({
+    universeScope,
+    maxSymbols: profile.maxSymbols,
+  });
   return resolveSignalMonitorUniverseFromWatchlists({
     profile,
     watchlists,
+    expansionUniverse,
   });
 }
 
@@ -5316,6 +5482,10 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
   const cellsBySymbol = exactCells.exact
     ? signalMonitorMatrixCellsBySymbol(exactCells.cells)
     : null;
+  const allowHistoricalFallback =
+    shouldAllowSignalMonitorMatrixHistoricalFallback({
+      exactCells: exactCells.exact,
+    });
   const startedAt = Date.now();
   const disabledResponse = signalMonitorMatrixDisabled({
     profile,
@@ -5382,7 +5552,7 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
               timeframes: requestedTimeframes,
               evaluatedAt,
               includeProvisionalLiveEdge: true,
-              allowHistoricalFallback: false,
+              allowHistoricalFallback,
             });
           }),
         );
@@ -5511,6 +5681,10 @@ export async function evaluateSignalMonitorMatrix(input: {
   const cellsBySymbol = exactCells.exact
     ? signalMonitorMatrixCellsBySymbol(exactCells.cells)
     : null;
+  const allowHistoricalFallback =
+    shouldAllowSignalMonitorMatrixHistoricalFallback({
+      exactCells: exactCells.exact,
+    });
   const evaluatedAt = new Date();
   const concurrency = resolveSignalMonitorMatrixConcurrency({
     matrixSettings,
@@ -5575,7 +5749,7 @@ export async function evaluateSignalMonitorMatrix(input: {
             timeframes: requestedTimeframes,
             evaluatedAt,
             includeProvisionalLiveEdge: true,
-            allowHistoricalFallback: false,
+            allowHistoricalFallback,
           });
         }),
       );
@@ -5798,6 +5972,22 @@ export async function updateSignalMonitorProfile(input: {
 
   try {
     const profile = await getOrCreateProfile(environment);
+    const profileUpdateDefaults = resolveSignalMonitorProfileUpdateDefaults({
+      currentMaxSymbols: Math.min(
+        profile.maxSymbols,
+        SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+      ),
+      currentPyrusSignalsSettings: asRecord(profile.pyrusSignalsSettings),
+      inputMaxSymbols: input.maxSymbols,
+      inputPyrusSignalsSettings: input.pyrusSignalsSettings,
+    });
+    const nextEnabled =
+      typeof input.enabled === "boolean" ? input.enabled : profile.enabled;
+    if (nextEnabled) {
+      await assertHighBetaSignalMonitorUniverseAvailable({
+        universeScope: profileUpdateDefaults.universeScope,
+      });
+    }
     const patch: Partial<typeof signalMonitorProfilesTable.$inferInsert> = {
       updatedAt: new Date(),
     };
@@ -5815,7 +6005,7 @@ export async function updateSignalMonitorProfile(input: {
       patch.timeframe = parseSignalTimeframe(input.timeframe);
     }
     if (input.pyrusSignalsSettings !== undefined) {
-      patch.pyrusSignalsSettings = asRecord(input.pyrusSignalsSettings);
+      patch.pyrusSignalsSettings = profileUpdateDefaults.pyrusSignalsSettings;
     }
     if (input.freshWindowBars !== undefined) {
       patch.freshWindowBars = positiveInteger(input.freshWindowBars, 3, 1, 20);
@@ -5828,13 +6018,11 @@ export async function updateSignalMonitorProfile(input: {
         3600,
       );
     }
-    if (input.maxSymbols !== undefined) {
-      patch.maxSymbols = positiveInteger(
-        input.maxSymbols,
-        DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
-        1,
-        250,
-      );
+    if (
+      input.maxSymbols !== undefined ||
+      profileUpdateDefaults.highBetaRequested
+    ) {
+      patch.maxSymbols = profileUpdateDefaults.maxSymbols;
     }
     if (input.evaluationConcurrency !== undefined) {
       patch.evaluationConcurrency = positiveInteger(
@@ -5889,6 +6077,8 @@ export const __signalMonitorInternalsForTests = {
   resolveSignalMonitorMatrixExactCells,
   resolveSignalMonitorMatrixExactCellCap,
   shouldAwaitSignalMonitorMatrixExactCellRefresh,
+  shouldAllowSignalMonitorMatrixHistoricalFallback,
+  resolveSignalMonitorProfileUpdateDefaults,
   resolveSignalMonitorMatrixConcurrency,
   shouldBypassSoftSignalMonitorMatrixPressure,
   isStaVisiblePageSignalMonitorMatrixRequest,

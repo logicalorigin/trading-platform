@@ -759,6 +759,37 @@ test("signal monitor matrix exact cells canonicalize and enforce pressure caps",
   assert.deepEqual(resolved.timeframes, ["1m", "5m"]);
   assert.equal(resolved.cacheKeyPart, "QQQ:1m,SPY:5m");
 
+  const normalCells = Array.from({ length: 240 }, (_value, index) => ({
+    symbol: `NORM${String(index + 1).padStart(3, "0")}`,
+    timeframe: "1m" as const,
+  }));
+  const normalResolved =
+    __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
+      cells: normalCells,
+      allowedSymbols: normalCells.map((cell) => cell.symbol),
+      pressure: "normal",
+    });
+  assert.equal(normalResolved.cells.length, 240);
+  assert.throws(
+    () =>
+      __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
+        cells: [
+          ...normalCells,
+          { symbol: "NORM241", timeframe: "1m" as const },
+        ],
+        allowedSymbols: [
+          ...normalCells.map((cell) => cell.symbol),
+          "NORM241",
+        ],
+        pressure: "normal",
+      }),
+    (error) =>
+      typeof error === "object" &&
+      error !== null &&
+      "statusCode" in error &&
+      (error as { statusCode?: number }).statusCode === 400,
+  );
+
   assert.throws(
     () =>
       __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
@@ -1330,7 +1361,7 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
   assert.match(source, /const SIGNAL_MONITOR_MATRIX_BARS_LIMIT = 240;/);
   assert.match(
     source,
-    /const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY = "native_timeframes_live_retry";/,
+    /const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY =\s*"native_timeframes_live_retry_exact_backfill";/,
   );
   assert.match(
     source,
@@ -1412,6 +1443,10 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
     source,
     /primeSignalMonitorMatrixStockAggregateStream\(symbols\)/,
   );
+  assert.match(source, /isBackgroundStockAggregateStreamingEnabled/);
+  assert.match(source, /isForegroundSignalMatrixStockAggregateStreamingEnabled/);
+  assert.match(source, /SIGNAL_MONITOR_MATRIX_STREAM_SYMBOL_CAP/);
+  assert.match(source, /\.slice\(0, SIGNAL_MONITOR_MATRIX_STREAM_SYMBOL_CAP\)/);
   assert.match(source, /subscribeMutableStockMinuteAggregates/);
   assert.match(source, /getCurrentStockMinuteAggregates/);
   assert.match(source, /isStockAggregateStreamingAvailable/);
@@ -1539,7 +1574,7 @@ test("automatic signal matrix reads fast-return complete stored rows before back
   );
 });
 
-test("signal monitor matrix evaluations use live-edge no-REST bars and preserve stored rows", () => {
+test("signal monitor matrix exact-cell evaluations backfill cold live-edge history", () => {
   const source = readFileSync(
     new URL("./signal-monitor.ts", import.meta.url),
     "utf8",
@@ -1551,6 +1586,10 @@ test("signal monitor matrix evaluations use live-edge no-REST bars and preserve 
   const matrixBlock =
     source.match(
       /export async function evaluateSignalMonitorMatrix[\s\S]*?export async function getSignalMonitorProfile/,
+    )?.[0] ?? "";
+  const runtimeMatrixBlock =
+    source.match(
+      /async function evaluateSignalMonitorMatrixRuntime[\s\S]*?export async function evaluateSignalMonitorMatrix/,
     )?.[0] ?? "";
 
   assert.match(matrixSymbolBlock, /includeProvisionalLiveEdge\?: boolean/);
@@ -1582,8 +1621,36 @@ test("signal monitor matrix evaluations use live-edge no-REST bars and preserve 
     /isSignalMonitorLiveEdgeHistoryUnavailableError\(error\)[\s\S]*return null/,
   );
   assert.match(
+    source,
+    /function shouldAllowSignalMonitorMatrixHistoricalFallback/,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldAllowSignalMonitorMatrixHistoricalFallback({
+      exactCells: true,
+    }),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldAllowSignalMonitorMatrixHistoricalFallback({
+      exactCells: false,
+    }),
+    false,
+  );
+  assert.match(
     matrixBlock,
-    /evaluateSignalMonitorMatrixSymbol\(\{[\s\S]*includeProvisionalLiveEdge: true[\s\S]*allowHistoricalFallback: false/,
+    /const allowHistoricalFallback =\s*shouldAllowSignalMonitorMatrixHistoricalFallback\(\{[\s\S]*exactCells: exactCells\.exact/,
+  );
+  assert.match(
+    runtimeMatrixBlock,
+    /const allowHistoricalFallback =\s*shouldAllowSignalMonitorMatrixHistoricalFallback\(\{[\s\S]*exactCells: exactCells\.exact/,
+  );
+  assert.match(
+    matrixBlock,
+    /evaluateSignalMonitorMatrixSymbol\(\{[\s\S]*includeProvisionalLiveEdge: true[\s\S]*allowHistoricalFallback,/,
+  );
+  assert.match(
+    runtimeMatrixBlock,
+    /evaluateSignalMonitorMatrixSymbol\(\{[\s\S]*includeProvisionalLiveEdge: true[\s\S]*allowHistoricalFallback,/,
   );
 });
 
@@ -2180,7 +2247,7 @@ test("intraday delayed matrix bars are degraded instead of fresh", () => {
 
 test("signal monitor matrix preserves requested coverage while narrowing concurrency under API resource pressure", () => {
   const configured = profile({
-    maxSymbols: 250,
+    maxSymbols: 500,
     evaluationConcurrency: 10,
   });
   const lowProfile = profile({
@@ -2193,28 +2260,28 @@ test("signal monitor matrix preserves requested coverage while narrowing concurr
       configured,
       "normal",
     ),
-    { pressure: "normal", maxSymbols: 250, concurrency: 10 },
+    { pressure: "normal", maxSymbols: 500, concurrency: 10 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
       configured,
       "watch",
     ),
-    { pressure: "watch", maxSymbols: 250, concurrency: 8 },
+    { pressure: "watch", maxSymbols: 500, concurrency: 8 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
       configured,
       "high",
     ),
-    { pressure: "high", maxSymbols: 250, concurrency: 4 },
+    { pressure: "high", maxSymbols: 500, concurrency: 4 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
       configured,
       "critical",
     ),
-    { pressure: "critical", maxSymbols: 250, concurrency: 1 },
+    { pressure: "critical", maxSymbols: 500, concurrency: 1 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
@@ -2368,7 +2435,7 @@ test("explicit leader signal matrix requests bypass soft pressure concurrency on
 
 test("signal monitor profile evaluations rotate through pressure-aware historical caps", () => {
   const configured = profile({
-    maxSymbols: 250,
+    maxSymbols: 500,
     evaluationConcurrency: 10,
   });
 
@@ -2382,7 +2449,7 @@ test("signal monitor profile evaluations rotate through pressure-aware historica
       capped: false,
       profile: {
         ...configured,
-        maxSymbols: 250,
+        maxSymbols: 500,
         evaluationConcurrency: 10,
       },
     },
@@ -2394,7 +2461,7 @@ test("signal monitor profile evaluations rotate through pressure-aware historica
     ).profile,
     {
       ...configured,
-      maxSymbols: 250,
+      maxSymbols: 500,
       evaluationConcurrency: 10,
     },
   );
@@ -2405,7 +2472,7 @@ test("signal monitor profile evaluations rotate through pressure-aware historica
     ).profile,
     {
       ...configured,
-      maxSymbols: 250,
+      maxSymbols: 500,
       evaluationConcurrency: 10,
     },
   );
@@ -2432,9 +2499,76 @@ test("signal monitor profile universe does not inherit the historical-bars lane 
   assert.doesNotMatch(source, /Historical Bars lane is dropping/);
 });
 
+test("signal monitor profile updates share the 500 symbol cap", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const runtimeUpdateBlock =
+    source.match(
+      /async function updateRuntimeSignalMonitorProfile[\s\S]*?runtimeSignalMonitorProfiles\.set/,
+    )?.[0] ?? "";
+  const storedUpdateBlock =
+    source.match(
+      /export async function updateSignalMonitorProfile[\s\S]*?const \[updated\] = await db/,
+    )?.[0] ?? "";
+  const explicitEvaluationBlock =
+    source.match(
+      /function resolveSignalMonitorProfileSymbolEvaluationSettings[\s\S]*?\n}\n\nexport async function evaluateSignalMonitorProfileSymbols/,
+    )?.[0] ?? "";
+
+  assert.match(runtimeUpdateBlock, /SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT/);
+  assert.match(storedUpdateBlock, /SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT/);
+  assert.match(explicitEvaluationBlock, /SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT/);
+  assert.doesNotMatch(runtimeUpdateBlock, /maxSymbols[\s\S]{0,160}250,\n/);
+  assert.doesNotMatch(storedUpdateBlock, /maxSymbols[\s\S]{0,160}250,\n/);
+});
+
+test("high-beta signal monitor profile updates default to 500 symbols", () => {
+  const result =
+    __signalMonitorInternalsForTests.resolveSignalMonitorProfileUpdateDefaults({
+      currentMaxSymbols: 250,
+      currentPyrusSignalsSettings: {},
+      inputMaxSymbols: undefined,
+      inputPyrusSignalsSettings: {
+        __signalMonitorUniverseScope: "high_beta_500",
+      },
+    });
+
+  assert.equal(result.universeScope, "high_beta_500");
+  assert.equal(result.maxSymbols, 500);
+  assert.equal(result.highBetaRequested, true);
+
+  const explicitLower =
+    __signalMonitorInternalsForTests.resolveSignalMonitorProfileUpdateDefaults({
+      currentMaxSymbols: 250,
+      currentPyrusSignalsSettings: {},
+      inputMaxSymbols: 300,
+      inputPyrusSignalsSettings: {
+        __signalMonitorUniverseScope: "high_beta_500",
+      },
+    });
+  assert.equal(explicitLower.maxSymbols, 300);
+});
+
+test("high-beta signal monitor profile updates are guarded by universe availability", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /assertHighBetaSignalMonitorUniverseAvailable/);
+  assert.match(source, /high_beta_universe_unavailable/);
+  assert.match(source, /getHighBetaUniverseAvailabilityStatus/);
+  assert.match(
+    source,
+    /resolveSignalMonitorProfileUpdateDefaults\([\s\S]*?profile\.maxSymbols/,
+  );
+});
+
 test("explicit signal monitor symbol evaluations can bypass soft pressure caps", () => {
   const configured = profile({
-    maxSymbols: 250,
+    maxSymbols: 500,
     evaluationConcurrency: 10,
   });
 
@@ -2442,7 +2576,7 @@ test("explicit signal monitor symbol evaluations can bypass soft pressure caps",
     __signalMonitorInternalsForTests.resolveSignalMonitorProfileSymbolEvaluationSettings(
       {
         profile: configured,
-        maxSymbolsOverride: 90,
+        maxSymbolsOverride: 500,
         pressureLevel: "critical",
       },
     );
@@ -2450,7 +2584,7 @@ test("explicit signal monitor symbol evaluations can bypass soft pressure caps",
     __signalMonitorInternalsForTests.resolveSignalMonitorProfileSymbolEvaluationSettings(
       {
         profile: configured,
-        maxSymbolsOverride: 90,
+        maxSymbolsOverride: 500,
         pressureCapMode: "bypass-soft",
         evaluationConcurrencyOverride: 6,
         pressureLevel: "critical",
@@ -2459,7 +2593,7 @@ test("explicit signal monitor symbol evaluations can bypass soft pressure caps",
 
   assert.equal(capped.profile.maxSymbols, 8);
   assert.equal(capped.profile.evaluationConcurrency, 1);
-  assert.equal(bypass.profile.maxSymbols, 90);
+  assert.equal(bypass.profile.maxSymbols, 500);
   assert.equal(bypass.profile.evaluationConcurrency, 6);
   assert.equal(bypass.pressure, "critical");
   assert.equal(bypass.capped, false);
@@ -2768,6 +2902,45 @@ test("signal monitor explicit expansion scope adds ranked universe symbols", () 
   assert.equal(result.universe.expansionSymbols, 3);
   assert.equal(result.universe.shortfall, 0);
   assert.equal(result.universe.source, "watchlists_plus_ranked_universe");
+});
+
+test("signal monitor high-beta scope uses ranked beta symbols instead of watchlists", () => {
+  const result =
+    __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists(
+      {
+        profile: profile({
+          watchlistId: "core",
+          maxSymbols: 4,
+          pyrusSignalsSettings: {
+            __signalMonitorUniverseScope: "high_beta_500",
+          },
+        }),
+        watchlists: [
+          {
+            id: "core",
+            name: "Core",
+            isDefault: true,
+            updatedAt: baseDate,
+            items: [{ symbol: "SPY" }, { symbol: "NVDA" }] as never,
+          },
+        ],
+        expansionUniverse: {
+          symbols: ["IONQ", "ACHR", "PLTR", "MSTR", "TSLA"],
+          fallbackUsed: false,
+          degradedReason: null,
+          rankedAt: baseDate,
+        },
+      },
+    );
+
+  assert.deepEqual(result.symbols, ["IONQ", "ACHR", "PLTR", "MSTR"]);
+  assert.deepEqual(result.skippedSymbols, ["TSLA"]);
+  assert.deepEqual(result.watchlistSymbols, ["SPY", "NVDA"]);
+  assert.equal(result.universe.configuredMaxSymbols, 4);
+  assert.equal(result.universe.pinnedSymbols, 0);
+  assert.equal(result.universe.expansionSymbols, 4);
+  assert.equal(result.universe.shortfall, 0);
+  assert.equal(result.universe.source, "high_beta_500");
 });
 
 test("signal monitor marks built-in fallback universes as non-authoritative", () => {
@@ -3222,7 +3395,7 @@ test("signal matrix automatic debounce can reuse stale cache without refreshing"
 
 test("signal matrix environment clear removes source-strategy cache and automatic markers", () => {
   const key =
-    "signal-matrix:native_timeframes_live_retry:paper:profile:default:SPY:2m:1:normal:3:{}";
+    "signal-matrix:native_timeframes_live_retry_exact_backfill:paper:profile:default:SPY:2m:1:normal:3:{}";
   const staleValue = { states: [{ symbol: "SPY" }], evaluatedAt: "old" };
   __signalMonitorInternalsForTests.clearSignalMonitorMatrixEvaluationCache();
   __signalMonitorInternalsForTests.seedSignalMonitorMatrixCache(

@@ -22,6 +22,7 @@ const { __resetBridgeGovernorForTests } = await import("./bridge-governor");
 const {
   __resetIbkrAccountBridgeCacheForTests,
   listIbkrExecutions,
+  listIbkrPositions,
 } = await import("./ibkr-account-bridge");
 
 function wait(ms: number): Promise<void> {
@@ -50,6 +51,33 @@ function execution(id: string, price: number) {
     contractDescription: null,
     providerContractId: null,
     orderRef: null,
+  };
+}
+
+function optionPosition(id: string, marketPrice: number) {
+  return {
+    id,
+    accountId: "U1",
+    symbol: "F",
+    description: "F 2026-06-26 15 C",
+    assetClass: "option",
+    quantity: 5,
+    averagePrice: 1.04,
+    marketPrice,
+    marketValue: marketPrice * 5 * 100,
+    unrealizedPnl: (marketPrice - 1.04) * 5 * 100,
+    unrealizedPnlPercent: ((marketPrice - 1.04) / 1.04) * 100,
+    currency: "USD",
+    updatedAt: "2026-06-04T18:00:00.000Z",
+    providerContractId: "880754762",
+    optionContract: {
+      underlying: "F",
+      expirationDate: "2026-06-26T00:00:00.000Z",
+      strike: 15,
+      right: "call",
+      multiplier: 100,
+      providerContractId: "880754762",
+    },
   };
 }
 
@@ -228,6 +256,145 @@ test("IBKR execution cold reads return quickly while the bridge refresh warms ca
     assert.fail("execution cache did not warm after background refresh");
   } finally {
     releaseMaybe(releaseExecution);
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+test("IBKR position reads preserve non-empty cache when a refresh returns empty", async () => {
+  let positionRequests = 0;
+  const server = http.createServer((req, res) => {
+    if (!req.url?.startsWith("/positions")) {
+      res.writeHead(404).end();
+      return;
+    }
+
+    positionRequests += 1;
+    const positions =
+      positionRequests === 1 ? [optionPosition("first-position", 0.82)] : [];
+    res
+      .writeHead(200, { "Content-Type": "application/json" })
+      .end(JSON.stringify({ positions }));
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address() as AddressInfo;
+
+  try {
+    setIbkrBridgeRuntimeOverride({
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      apiToken: "test-token",
+    });
+    primeBridgeHealthForSession({
+      configured: true,
+      connected: true,
+      authenticated: true,
+      competing: false,
+      selectedAccountId: "U1",
+      accounts: ["U1"],
+      lastTickleAt: new Date(),
+      lastError: null,
+      lastRecoveryAttemptAt: null,
+      lastRecoveryError: null,
+      updatedAt: new Date(),
+      transport: "tws",
+      connectionTarget: "127.0.0.1:4001",
+      sessionMode: "live",
+      clientId: 101,
+      marketDataMode: "live",
+      liveMarketDataAvailable: true,
+      brokerServerConnected: true,
+      socketConnected: true,
+      bridgeReachable: true,
+      accountsLoaded: true,
+      diagnostics: { scheduler: {}, subscriptions: {} },
+    });
+
+    const first = await listIbkrPositions({ accountId: "U1", mode: "live" });
+    assert.equal(first.length, 1);
+    assert.equal(first[0]?.symbol, "F");
+    await wait(5);
+
+    const staleWhileRefreshing = await listIbkrPositions({
+      accountId: "U1",
+      mode: "live",
+    });
+    assert.equal(staleWhileRefreshing.length, 1);
+
+    for (let attempt = 0; attempt < 10 && positionRequests < 2; attempt += 1) {
+      await wait(10);
+    }
+    assert.equal(positionRequests, 2);
+    await wait(20);
+
+    process.env["IBKR_ACCOUNT_CACHE_TTL_MS"] = "1000";
+    const preserved = await listIbkrPositions({ accountId: "U1", mode: "live" });
+    assert.equal(preserved.length, 1);
+    assert.equal(preserved[0]?.id, "first-position");
+  } finally {
+    process.env["IBKR_ACCOUNT_CACHE_TTL_MS"] = "1";
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+test("IBKR position reads allow empty payloads without a non-empty stale cache", async () => {
+  let positionRequests = 0;
+  const server = http.createServer((req, res) => {
+    if (!req.url?.startsWith("/positions")) {
+      res.writeHead(404).end();
+      return;
+    }
+
+    positionRequests += 1;
+    res
+      .writeHead(200, { "Content-Type": "application/json" })
+      .end(JSON.stringify({ positions: [] }));
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address() as AddressInfo;
+
+  try {
+    setIbkrBridgeRuntimeOverride({
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      apiToken: "test-token",
+    });
+    primeBridgeHealthForSession({
+      configured: true,
+      connected: true,
+      authenticated: true,
+      competing: false,
+      selectedAccountId: "U1",
+      accounts: ["U1"],
+      lastTickleAt: new Date(),
+      lastError: null,
+      lastRecoveryAttemptAt: null,
+      lastRecoveryError: null,
+      updatedAt: new Date(),
+      transport: "tws",
+      connectionTarget: "127.0.0.1:4001",
+      sessionMode: "live",
+      clientId: 101,
+      marketDataMode: "live",
+      liveMarketDataAvailable: true,
+      brokerServerConnected: true,
+      socketConnected: true,
+      bridgeReachable: true,
+      accountsLoaded: true,
+      diagnostics: { scheduler: {}, subscriptions: {} },
+    });
+
+    const positions = await listIbkrPositions({ accountId: "U1", mode: "live" });
+    assert.deepEqual(positions, []);
+    assert.equal(positionRequests, 1);
+  } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });

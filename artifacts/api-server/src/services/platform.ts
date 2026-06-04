@@ -70,7 +70,6 @@ import {
 import {
   MassiveMarketDataClient,
   computeUnusualMetrics,
-  getMassiveApiDiagnostics,
   resolvePremiumDistributionClassificationConfidence,
   type BarSnapshot as MassiveBarSnapshot,
   type MarketDataProvider,
@@ -130,6 +129,11 @@ import {
   subscribeStockMinuteAggregates,
 } from "./stock-aggregate-stream";
 import { getCurrentMassiveStockQuoteSnapshots } from "./massive-stock-quote-stream";
+import {
+  enrichStockQuoteWithDayChangeContext,
+  getSymbolsNeedingStockQuoteDayChangeContext,
+  recordStockQuoteDayChangeContexts,
+} from "./stock-quote-day-change-context";
 import {
   fetchBridgeOptionQuoteSnapshots,
   getCurrentBridgeOptionQuoteSnapshots,
@@ -206,7 +210,10 @@ import {
   getIbkrClient,
   getRuntimeBridgeHealthState,
 } from "./platform-bridge-health";
-import { getRuntimeMarketDataDiagnostics } from "./platform-market-data-diagnostics";
+import {
+  getRuntimeMarketDataDiagnostics,
+  getRuntimeMassiveProviderDiagnostics,
+} from "./platform-market-data-diagnostics";
 import { getPythonComputeDiagnostics } from "./python-compute";
 import { getSseStreamDiagnostics } from "./sse-stream-diagnostics";
 export { __setIbkrBridgeClientFactoryForTests } from "./platform-bridge-health";
@@ -2738,239 +2745,6 @@ function nsToMs(value: number): number {
   return Math.round((value / 1_000_000) * 10) / 10;
 }
 
-function toFiniteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function asStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string")
-    : [];
-}
-
-function uniqueStrings(values: string[]): string[] {
-  return Array.from(new Set(values.filter(Boolean))).sort();
-}
-
-function buildMassiveWebSocketDiagnostics(input: {
-  config: ReturnType<typeof getMassiveRuntimeConfig>;
-  streams: ReturnType<typeof getRuntimeMarketDataDiagnostics>;
-}) {
-  const providerIdentity = getMassiveProviderIdentity(input.config);
-  const configured = providerIdentity === "massive";
-  const quote = input.streams.massiveStockQuotes;
-  const stockAggregates = input.streams.stockAggregates;
-  const aggregate = stockAggregates.massiveDelayedWebSocket;
-  const aggregateIsMassive =
-    aggregate.providerIdentity === "massive" ||
-    stockAggregates.provider === "massive-websocket" ||
-    stockAggregates.activeProvider === "massive-websocket";
-  const aggregateStreamConfigured = Boolean(
-    aggregate.configured ||
-      stockAggregates.provider === "massive-websocket" ||
-      stockAggregates.activeProvider === "massive-websocket" ||
-      stockAggregates.provider === "massive-delayed-websocket" ||
-      stockAggregates.activeProvider === "massive-delayed-websocket",
-  );
-  const aggregateStreamEventCount =
-    toFiniteNumber(stockAggregates.eventCount) ??
-    (aggregateIsMassive ? (toFiniteNumber(aggregate.eventCount) ?? 0) : 0);
-  const aggregateStreamLastMessageAgeMs =
-    toFiniteNumber(stockAggregates.lastAggregateAgeMs) ??
-    (aggregateIsMassive ? toFiniteNumber(aggregate.lastMessageAgeMs) : null);
-  const aggregateStreamLastMessageAt =
-    stockAggregates.lastAggregateAt ??
-    (aggregateIsMassive ? (aggregate.lastMessageAt ?? null) : null);
-  const feeds = [
-    {
-      id: "stock-quotes",
-      label: "Stock quotes/trades",
-      configured: Boolean(quote.configured),
-      mode: quote.mode ?? "real-time",
-      socketHost: quote.socketHost ?? "socket.massive.com",
-      availableChannels: asStringArray(quote.availableChannels),
-      subscribedChannels: asStringArray(quote.subscribedChannels),
-      subscribedSymbolCount: toFiniteNumber(quote.subscribedSymbolCount) ?? 0,
-      subscriptionCount: toFiniteNumber(quote.subscriptionCount) ?? 0,
-      activeConsumerCount: toFiniteNumber(quote.activeConsumerCount) ?? 0,
-      connected: Boolean(quote.connected),
-      authState: quote.authState ?? "idle",
-      eventCount: toFiniteNumber(quote.eventCount) ?? 0,
-      lastMessageAgeMs: toFiniteNumber(quote.lastMessageAgeMs),
-      lastMessageAt: quote.lastMessageAt ?? null,
-      lastSocketMessageAgeMs: toFiniteNumber(quote.lastSocketMessageAgeMs),
-      lastSocketMessageAt: quote.lastSocketMessageAt ?? null,
-      reconnectCount: toFiniteNumber(quote.reconnectCount) ?? 0,
-      lastProviderStatus: quote.lastProviderStatus ?? null,
-      lastProviderMessage: quote.lastProviderMessage ?? null,
-      lastProviderStatusAt: quote.lastProviderStatusAt ?? null,
-      lastCloseCode: toFiniteNumber(quote.lastCloseCode),
-      lastCloseReason: quote.lastCloseReason ?? null,
-      lastCloseAt: quote.lastCloseAt ?? null,
-      lastError: quote.lastError ?? null,
-      lastErrorAt: quote.lastErrorAt ?? null,
-    },
-    {
-      id: "stock-aggregates",
-      label: "Stock minute aggregates",
-      configured: aggregateStreamConfigured,
-      mode: aggregate.mode ?? (configured ? "delayed" : null),
-      streamProvider: stockAggregates.activeProvider ?? stockAggregates.provider,
-      socketHost: aggregateIsMassive ? aggregate.socketHost : null,
-      availableChannels: aggregateIsMassive
-        ? asStringArray(aggregate.availableChannels)
-        : [],
-      subscribedChannels: aggregateIsMassive
-        ? asStringArray(aggregate.subscribedChannels)
-        : [],
-      subscribedSymbolCount: aggregateIsMassive
-        ? (toFiniteNumber(stockAggregates.unionSymbolCount) ??
-          toFiniteNumber(aggregate.subscribedSymbolCount) ??
-          0)
-        : 0,
-      subscriptionCount: aggregateIsMassive
-        ? (toFiniteNumber(aggregate.subscriptionCount) ?? 0)
-        : 0,
-      activeConsumerCount: aggregateIsMassive
-        ? (toFiniteNumber(stockAggregates.activeConsumerCount) ??
-          toFiniteNumber(aggregate.activeConsumerCount) ??
-          0)
-        : 0,
-      connected: Boolean(aggregateIsMassive && aggregate.connected),
-      authState: aggregate.authState ?? "idle",
-      eventCount: aggregateStreamEventCount,
-      lastMessageAgeMs: aggregateStreamLastMessageAgeMs,
-      lastMessageAt: aggregateStreamLastMessageAt,
-      rawWebSocketEventCount: aggregateIsMassive
-        ? (toFiniteNumber(aggregate.eventCount) ?? 0)
-        : 0,
-      rawWebSocketLastMessageAgeMs: aggregateIsMassive
-        ? toFiniteNumber(aggregate.lastMessageAgeMs)
-        : null,
-      rawWebSocketLastMessageAt: aggregateIsMassive
-        ? (aggregate.lastMessageAt ?? null)
-        : null,
-      lastSocketMessageAgeMs: aggregateIsMassive
-        ? toFiniteNumber(aggregate.lastSocketMessageAgeMs)
-        : null,
-      lastSocketMessageAt: aggregateIsMassive
-        ? (aggregate.lastSocketMessageAt ?? null)
-        : null,
-      reconnectCount: aggregateIsMassive
-        ? (toFiniteNumber(aggregate.reconnectCount) ?? 0)
-        : 0,
-      lastProviderStatus: aggregateIsMassive
-        ? (aggregate.lastProviderStatus ?? null)
-        : null,
-      lastProviderMessage: aggregateIsMassive
-        ? (aggregate.lastProviderMessage ?? null)
-        : null,
-      lastProviderStatusAt: aggregateIsMassive
-        ? (aggregate.lastProviderStatusAt ?? null)
-        : null,
-      lastCloseCode: aggregateIsMassive
-        ? toFiniteNumber(aggregate.lastCloseCode)
-        : null,
-      lastCloseReason: aggregateIsMassive
-        ? (aggregate.lastCloseReason ?? null)
-        : null,
-      lastCloseAt: aggregateIsMassive ? (aggregate.lastCloseAt ?? null) : null,
-      lastError: aggregateIsMassive ? (aggregate.lastError ?? null) : null,
-      lastErrorAt: aggregateIsMassive ? (aggregate.lastErrorAt ?? null) : null,
-    },
-  ];
-  const activeFeeds = feeds.filter(
-    (feed) =>
-      feed.configured &&
-      (feed.connected ||
-        feed.subscribedSymbolCount > 0 ||
-        feed.activeConsumerCount > 0),
-  );
-  const lastErrorFeed = feeds.find((feed) => feed.configured && feed.lastError);
-  const lastMessageAges = feeds
-    .map((feed) => feed.lastMessageAgeMs)
-    .filter((value): value is number => Number.isFinite(value));
-  const lastMessageTimes = feeds
-    .map((feed) =>
-      feed.lastMessageAt ? Date.parse(String(feed.lastMessageAt)) : Number.NaN,
-    )
-    .filter(Number.isFinite);
-  const lastSocketMessageAges = feeds
-    .map((feed) => feed.lastSocketMessageAgeMs)
-    .filter((value): value is number => Number.isFinite(value));
-  const lastSocketMessageTimes = feeds
-    .map((feed) =>
-      feed.lastSocketMessageAt
-        ? Date.parse(String(feed.lastSocketMessageAt))
-        : Number.NaN,
-    )
-    .filter(Number.isFinite);
-  const lastProviderStatusFeed = feeds.find(
-    (feed) => feed.configured && feed.lastProviderStatus,
-  );
-  const lastCloseFeed = feeds.find(
-    (feed) => feed.configured && feed.lastCloseCode !== null,
-  );
-
-  return {
-    status: !configured
-      ? "unconfigured"
-      : lastErrorFeed
-        ? "degraded"
-        : activeFeeds.length
-          ? "ok"
-          : "idle",
-    configured,
-    providerIdentity,
-    mode:
-      activeFeeds.find((feed) => feed.mode)?.mode ??
-      (configured
-        ? isMassiveStocksRealtimeConfigured(input.config)
-          ? "real-time"
-          : "delayed"
-        : null),
-    activeChannels: uniqueStrings(
-      activeFeeds.flatMap((feed) => feed.subscribedChannels),
-    ),
-    availableChannels: uniqueStrings(
-      feeds
-        .filter((feed) => feed.configured)
-        .flatMap((feed) => feed.availableChannels),
-    ),
-    subscribedSymbolCount: Math.max(
-      0,
-      ...feeds.map((feed) => feed.subscribedSymbolCount),
-    ),
-    activeConsumerCount: feeds.reduce(
-      (total, feed) => total + feed.activeConsumerCount,
-      0,
-    ),
-    eventCount: feeds.reduce((total, feed) => total + feed.eventCount, 0),
-    lastMessageAgeMs: lastMessageAges.length
-      ? Math.min(...lastMessageAges)
-      : null,
-    lastMessageAt: lastMessageTimes.length
-      ? new Date(Math.max(...lastMessageTimes)).toISOString()
-      : null,
-    lastSocketMessageAgeMs: lastSocketMessageAges.length
-      ? Math.min(...lastSocketMessageAges)
-      : null,
-    lastSocketMessageAt: lastSocketMessageTimes.length
-      ? new Date(Math.max(...lastSocketMessageTimes)).toISOString()
-      : null,
-    reconnectCount: Math.max(0, ...feeds.map((feed) => feed.reconnectCount)),
-    lastProviderStatus: lastProviderStatusFeed?.lastProviderStatus ?? null,
-    lastProviderMessage: lastProviderStatusFeed?.lastProviderMessage ?? null,
-    lastProviderStatusAt: lastProviderStatusFeed?.lastProviderStatusAt ?? null,
-    lastCloseCode: lastCloseFeed?.lastCloseCode ?? null,
-    lastCloseReason: lastCloseFeed?.lastCloseReason ?? null,
-    lastCloseAt: lastCloseFeed?.lastCloseAt ?? null,
-    lastError: lastErrorFeed?.lastError ?? null,
-    lastErrorAt: lastErrorFeed?.lastErrorAt ?? null,
-    feeds,
-  };
-}
-
 function orderReadTimeoutMs(): number {
   const configured = Number.parseInt(
     process.env["IBKR_ORDER_READ_TIMEOUT_MS"] ?? "9000",
@@ -3552,13 +3326,10 @@ export async function getRuntimeDiagnostics() {
       },
     },
     providers: {
-      massive: {
-        ...getMassiveApiDiagnostics(massiveRuntimeConfig),
-        websocket: buildMassiveWebSocketDiagnostics({
-          config: massiveRuntimeConfig,
-          streams: marketDataStreams,
-        }),
-      },
+      massive: getRuntimeMassiveProviderDiagnostics({
+        config: massiveRuntimeConfig,
+        streams: marketDataStreams,
+      }),
     },
     storage: getCachedStorageHealthSnapshot(),
     ibkr: {
@@ -3569,7 +3340,10 @@ export async function getRuntimeDiagnostics() {
       runtimeOverrideActive: Boolean(bridgeOverride),
       runtimeOverrideUpdatedAt: bridgeOverride?.updatedAt ?? null,
       desktopAgentOnline: ibkrRuntime.desktopAgentOnline,
+      desktopAgentCompatibility: ibkrRuntime.desktopAgentCompatibility,
+      desktopAgentCompatible: ibkrRuntime.desktopAgentCompatible,
       desktopAgentHelperVersion: ibkrRuntime.desktopAgentHelperVersion,
+      desktopAgentKnownBad: ibkrRuntime.desktopAgentKnownBad,
       desktopAgentExpectedHelperVersion:
         ibkrRuntime.desktopAgentExpectedHelperVersion,
       desktopAgentUpgradeRequired: ibkrRuntime.desktopAgentUpgradeRequired,
@@ -4382,6 +4156,25 @@ function assertLiveOrderConfirmed(
   );
 }
 
+function requireExplicitOrderActionMode(
+  mode: "paper" | "live" | null | undefined,
+  action: string,
+): "paper" | "live" {
+  if (mode === "paper" || mode === "live") {
+    return mode;
+  }
+
+  throw new HttpError(
+    400,
+    `${action} requires an explicit paper or live mode.`,
+    {
+      code: "ibkr_order_mode_required",
+      detail: "mode must be either 'paper' or 'live'.",
+      expose: true,
+    },
+  );
+}
+
 type GatewayTradingHealth = Partial<
   Awaited<ReturnType<IbkrBridgeClient["getHealth"]>>
 >;
@@ -4626,14 +4419,19 @@ export async function replaceOrder(input: {
 export async function cancelOrder(input: {
   accountId: string;
   orderId: string;
+  mode?: "paper" | "live" | null;
   confirm?: boolean | null;
   manualIndicator?: boolean | null;
   extOperator?: string | null;
 }) {
-  assertLiveOrderConfirmed(getRuntimeMode(), input.confirm);
+  const mode = requireExplicitOrderActionMode(input.mode, "Order cancellation");
+  assertLiveOrderConfirmed(mode, input.confirm);
   await assertIbkrGatewayTradingAvailable();
   const client = getIbkrClient();
-  return client.cancelOrder(input);
+  return client.cancelOrder({
+    ...input,
+    mode,
+  });
 }
 
 function positiveIntegerEnv(name: string, fallback: number): number {
@@ -4745,7 +4543,13 @@ function getMassiveRealtimeSocketQuoteSnapshots(symbols: string[]): Array<
   getCurrentMassiveStockQuoteSnapshots(symbols).forEach((quote) => {
     const symbol = normalizeSymbol(quote.symbol);
     if (symbol) {
-      quotesBySymbol.set(symbol, { ...quote, source: "massive" });
+      quotesBySymbol.set(
+        symbol,
+        enrichStockQuoteWithDayChangeContext({
+          ...quote,
+          source: "massive",
+        }),
+      );
     }
   });
   getCurrentStockMinuteAggregates(symbols).forEach((aggregate) => {
@@ -4755,7 +4559,7 @@ function getMassiveRealtimeSocketQuoteSnapshots(symbols: string[]): Array<
     }
     const quote = massiveAggregateToBrokerQuote(aggregate);
     if (quote) {
-      quotesBySymbol.set(symbol, quote);
+      quotesBySymbol.set(symbol, enrichStockQuoteWithDayChangeContext(quote));
     }
   });
   return symbols.flatMap((symbol) => {
@@ -4770,7 +4574,7 @@ type GetQuoteSnapshotsInput = {
   admissionOwner?: string;
   admissionIntent?: MarketDataIntent;
   admissionFallbackProvider?: MarketDataFallbackProvider;
-  ttlMs?: number;
+  ttlMs?: number | null;
   tradingSession?: "overnight" | null;
 };
 
@@ -4792,6 +4596,10 @@ const quoteSnapshotCache = new Map<string, QuoteSnapshotCacheEntry>();
 const quoteSnapshotInFlight = new Map<
   string,
   Promise<QuoteSnapshotsServiceResponse>
+>();
+const massiveQuoteDayChangeContextInFlight = new Map<
+  string,
+  Promise<Array<QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }>>
 >();
 let quoteSnapshotCacheTtlMsForTests: number | null = null;
 let quoteSnapshotStaleTtlMsForTests: number | null = null;
@@ -4831,6 +4639,59 @@ function quoteSnapshotMassiveFallbackTimeoutMs(): number {
     "QUOTE_SNAPSHOT_MASSIVE_FALLBACK_TIMEOUT_MS",
     2_000,
   );
+}
+
+async function refreshMassiveQuoteDayChangeContext(
+  symbols: string[],
+): Promise<
+  Array<QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }>
+> {
+  const missingOrStaleSymbols = getSymbolsNeedingStockQuoteDayChangeContext(
+    symbols,
+  );
+  if (!missingOrStaleSymbols.length || !getMassiveRuntimeConfig()) {
+    return [];
+  }
+
+  const key = missingOrStaleSymbols.join(",");
+  const existing = massiveQuoteDayChangeContextInFlight.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  let request!: Promise<
+    Array<QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }>
+  >;
+  request = withTimeout(
+    getMassiveClient().getQuoteSnapshots(missingOrStaleSymbols),
+    quoteSnapshotMassiveFallbackTimeoutMs(),
+    () =>
+      new Error(
+        `Quote snapshot Massive day-change context timed out after ${quoteSnapshotMassiveFallbackTimeoutMs()}ms.`,
+      ),
+  )
+    .then((quotes) => {
+      const mapped = quotes.map(massiveQuoteToBrokerQuote);
+      recordStockQuoteDayChangeContexts(mapped);
+      return mapped;
+    })
+    .catch((error): Array<
+      QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }
+    > => {
+      logger.debug(
+        { err: error, symbols: missingOrStaleSymbols },
+        "Massive quote day-change context refresh failed",
+      );
+      return [];
+    })
+    .finally(() => {
+      if (massiveQuoteDayChangeContextInFlight.get(key) === request) {
+        massiveQuoteDayChangeContextInFlight.delete(key);
+      }
+    });
+
+  massiveQuoteDayChangeContextInFlight.set(key, request);
+  return request;
 }
 
 function quoteSnapshotCacheKey(input: {
@@ -4904,7 +4765,7 @@ async function getQuoteSnapshotsUncached(input: {
   admissionOwner?: string;
   admissionIntent?: MarketDataIntent;
   admissionFallbackProvider?: MarketDataFallbackProvider;
-  ttlMs?: number;
+  ttlMs?: number | null;
   tradingSession?: "overnight" | null;
 }): Promise<QuoteSnapshotsServiceResponse> {
   const symbols = input.symbolsList;
@@ -4921,13 +4782,40 @@ async function getQuoteSnapshotsUncached(input: {
     input.tradingSession !== "overnight" &&
     isMassiveStocksRealtimeConfigured(massiveConfig);
   if (useMassiveRealtimePrimary) {
-    const quotes = getMassiveRealtimeSocketQuoteSnapshots(symbols);
+    const contextQuotes = await refreshMassiveQuoteDayChangeContext(symbols);
+    const quotesBySymbol = new Map<
+      string,
+      QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }
+    >();
+    contextQuotes.forEach((quote) => {
+      const symbol = normalizeSymbol(quote.symbol);
+      if (symbol) {
+        quotesBySymbol.set(symbol, quote);
+      }
+    });
+    getMassiveRealtimeSocketQuoteSnapshots(symbols).forEach((quote) => {
+      const symbol = normalizeSymbol(quote.symbol);
+      if (symbol) {
+        quotesBySymbol.set(symbol, quote);
+      }
+    });
+    const quotes = symbols.flatMap((symbol) => {
+      const quote = quotesBySymbol.get(symbol);
+      return quote ? [quote] : [];
+    });
+    const liveSymbols = new Set(
+      getMassiveRealtimeSocketQuoteSnapshots(symbols).map((quote) =>
+        normalizeSymbol(quote.symbol),
+      ),
+    );
 
     return {
       quotes,
       transport: quotes[0]?.transport ?? null,
       delayed: quotes.some((quote) => quote.delayed),
-      fallbackUsed: false,
+      fallbackUsed: contextQuotes.some(
+        (quote) => !liveSymbols.has(normalizeSymbol(quote.symbol)),
+      ),
     };
   }
   const bridgeClient = getIbkrClient();
@@ -4985,6 +4873,7 @@ async function getQuoteSnapshotsUncached(input: {
             ),
         )
       ).map(massiveQuoteToBrokerQuote);
+      recordStockQuoteDayChangeContexts(massiveQuotes);
       massiveQuotes.forEach((quote) => {
         recordMarketDataFallback({
           owner: "quote-snapshot",
@@ -8405,7 +8294,7 @@ const BARS_BROKER_BACKFILL_EMPTY_RETRY_DELAY_MS = readPositiveIntegerEnv(
 );
 const BARS_BROKER_LIVE_EDGE_MIN_PRIORITY = 6;
 const BARS_HIGH_PRESSURE_STALE_REFRESH_MIN_PRIORITY = 8;
-const BARS_FULL_BROKER_RECOVERY_MIN_PRIORITY = 10;
+const BARS_FULL_BROKER_RECOVERY_MIN_PRIORITY = 8;
 const BARS_SYNTHESIS_ONLY_CACHE_TTL_MS = readPositiveIntegerEnv(
   "BARS_SYNTHESIS_ONLY_CACHE_TTL_MS",
   BARS_CACHE_TTL_MS,
@@ -10016,7 +9905,12 @@ async function getBaseBarsImpl(
     const fullBrokerRecovery =
       recoveryMode === "full" &&
       isBrokerBackfillSensitiveBarsRequest(brokerHistoryInput);
-    const brokerHistoryBudgetMs = fullBrokerRecovery
+    const liveEdgeBrokerBackfill =
+      recoveryMode === "live-edge" &&
+      shouldAttemptBrokerLiveEdgeHistory(options) &&
+      isBrokerBackfillSensitiveBarsRequest(brokerHistoryInput);
+    const brokerBackfillBudget = fullBrokerRecovery || liveEdgeBrokerBackfill;
+    const brokerHistoryBudgetMs = brokerBackfillBudget
       ? BARS_BROKER_BACKFILL_BUDGET_MS
       : BARS_PROVIDER_BUDGET_MS;
     const fetchBridgeHistory = (exchange?: string | null) =>
@@ -10099,7 +9993,7 @@ async function getBaseBarsImpl(
     const bars = await fetchOnce();
     const elapsedMs = Math.max(0, Date.now() - startedAt);
     if (
-      fullBrokerRecovery &&
+      brokerBackfillBudget &&
       bars.length === 0 &&
       elapsedMs < brokerHistoryBudgetMs - 250
     ) {
@@ -10479,6 +10373,7 @@ type IbkrOptionChainInput = {
   recordBridgeFailure?: boolean;
   bypassBridgeBackoff?: boolean;
   signal?: AbortSignal;
+  emptyRetryDelaysMs?: readonly number[];
 };
 type IbkrOptionChainContracts = Awaited<
   ReturnType<IbkrBridgeClient["getOptionChain"]>
@@ -11579,6 +11474,10 @@ export function getOptionsFlowLaneSourceSymbols(): {
 
 const MASSIVE_STOCK_UNIVERSE_STREAM_REFRESH_MS = 30_000;
 const MASSIVE_STOCK_UNIVERSE_STREAM_DEFAULT_SYMBOL_CAP = 1_000;
+const MASSIVE_STOCK_UNIVERSE_STREAM_ENABLED = readBooleanEnv(
+  "MASSIVE_STOCK_UNIVERSE_STREAM_ENABLED",
+  false,
+);
 let massiveStockUniverseAggregateUnsubscribe: (() => void) | null = null;
 let massiveStockUniverseRefreshTimer: NodeJS.Timeout | null = null;
 let massiveStockUniverseSignature = "";
@@ -11588,6 +11487,7 @@ let massiveStockUniverseLastReason: string | null = null;
 let massiveStockUniverseLastStatus:
   | "idle"
   | "active"
+  | "disabled"
   | "empty"
   | "not_configured"
   | "resource_pressure"
@@ -11637,6 +11537,10 @@ function refreshMassiveStockUniverseStreams(reason: string): void {
   const resourcePressure = getApiResourcePressureSnapshot();
   massiveStockUniverseLastPressureLevel = resourcePressure.level;
 
+  if (!MASSIVE_STOCK_UNIVERSE_STREAM_ENABLED) {
+    closeMassiveStockUniverseStreams("disabled");
+    return;
+  }
   if (!isMassiveStocksRealtimeConfigured()) {
     closeMassiveStockUniverseStreams("not_configured");
     return;
@@ -11678,6 +11582,10 @@ function refreshMassiveStockUniverseStreams(reason: string): void {
 }
 
 export function startMassiveStockUniverseStreams(): void {
+  if (!MASSIVE_STOCK_UNIVERSE_STREAM_ENABLED) {
+    closeMassiveStockUniverseStreams("disabled");
+    return;
+  }
   if (massiveStockUniverseRefreshTimer) {
     return;
   }
@@ -11790,10 +11698,16 @@ export function startOptionsFlowScanner(): void {
       enforceOptionsFlowScannerPressureControls() ||
       getOptionsFlowScannerBackgroundBlockReason()
     ) {
+      stopMassiveStockUniverseStreams();
       return [];
     }
-    startMassiveStockUniverseStreams();
-    return getOptionsFlowScannerLaneResolution().admittedSymbols;
+    const admittedSymbols = getOptionsFlowScannerLaneResolution().admittedSymbols;
+    if (admittedSymbols.length > 0) {
+      startMassiveStockUniverseStreams();
+    } else {
+      stopMassiveStockUniverseStreams();
+    }
+    return admittedSymbols;
   };
   const initialSymbols = resolveScannerSymbols();
 
@@ -13243,6 +13157,7 @@ export const __platformQuoteSnapshotTestInternals = {
   resetQuoteSnapshotCache() {
     quoteSnapshotCache.clear();
     quoteSnapshotInFlight.clear();
+    massiveQuoteDayChangeContextInFlight.clear();
     quoteSnapshotCacheTtlMsForTests = null;
     quoteSnapshotStaleTtlMsForTests = null;
     quoteSnapshotStaleWaitMsForTests = null;
@@ -14392,7 +14307,11 @@ function optionForegroundTimeout(ms: number): Promise<"timeout"> {
 function optionChainCacheInput(
   input: IbkrOptionChainInput,
 ): IbkrOptionChainInput {
-  const { signal: _signal, ...cacheInput } = input;
+  const {
+    signal: _signal,
+    emptyRetryDelaysMs: _emptyRetryDelaysMs,
+    ...cacheInput
+  } = input;
   return cacheInput;
 }
 
@@ -14801,8 +14720,10 @@ function refreshOptionChainCache(
         () => getIbkrClient().getOptionChain(input),
         bridgeWorkOptions,
       );
+      const emptyRetryDelaysMs =
+        input.emptyRetryDelaysMs ?? OPTION_CHAIN_EMPTY_RETRY_DELAYS_MS;
       if (!ibkrValue.length && shouldRetryEmptyOptionChain(input)) {
-        for (const delayMs of OPTION_CHAIN_EMPTY_RETRY_DELAYS_MS) {
+        for (const delayMs of emptyRetryDelaysMs) {
           await waitForOptionChainRetry(delayMs, input.signal);
           ibkrValue = await runBridgeWork(
             "options",
@@ -15362,75 +15283,123 @@ export async function batchOptionChains(input: {
     );
   }
 
-  const results = await mapWithConcurrency(
-    expirationDates,
-    getOptionsFlowRuntimeConfig().optionChainBatchConcurrency,
-    async (expirationDate) => {
-      try {
-        throwIfOptionRequestAborted(input.signal);
-        const { contracts, debug } = await getCachedIbkrOptionChainWithDebug({
-          underlying,
-          expirationDate,
-          contractType: input.contractType,
-          maxExpirations: 1,
-          strikesAroundMoney: input.strikesAroundMoney,
-          strikeCoverage: input.strikeCoverage,
-          underlyingSpotPrice: input.underlyingSpotPrice,
-          quoteHydration: input.quoteHydration,
-          allowDelayedSnapshotHydration: input.allowDelayedSnapshotHydration,
-          recordBridgeFailure: input.recordBridgeFailure,
-          bypassBridgeBackoff: input.bypassBridgeBackoff,
-          signal: input.signal,
-        });
+  type BatchOptionChainFetchResult = {
+    expirationDate: Date;
+    contracts: IbkrOptionChainContracts;
+    debug: RequestDebugMetadata;
+    error: string | null;
+  };
+  const fetchBatchExpiration = async (
+    expirationDate: Date,
+  ): Promise<BatchOptionChainFetchResult> => {
+    try {
+      throwIfOptionRequestAborted(input.signal);
+      const { contracts, debug } = await getCachedIbkrOptionChainWithDebug({
+        underlying,
+        expirationDate,
+        contractType: input.contractType,
+        maxExpirations: 1,
+        strikesAroundMoney: input.strikesAroundMoney,
+        strikeCoverage: input.strikeCoverage,
+        underlyingSpotPrice: input.underlyingSpotPrice,
+        quoteHydration: input.quoteHydration,
+        allowDelayedSnapshotHydration: input.allowDelayedSnapshotHydration,
+        recordBridgeFailure: input.recordBridgeFailure,
+        bypassBridgeBackoff: input.bypassBridgeBackoff,
+        signal: input.signal,
+        emptyRetryDelaysMs: [],
+      });
 
-        const resultDebug: RequestDebugMetadata =
-          contracts.length > 0
-            ? debug
-            : {
-                ...debug,
-                degraded: true,
-                reason: debug.reason ?? "options_successful_empty",
-              };
-        if (contracts.length === 0) {
-          recordOptionDegradedEvent({
-            kind: "chain",
-            underlying,
-            expirationDate,
-            reason: resultDebug.reason ?? "options_successful_empty",
-            message: "IBKR returned an empty option-chain batch result.",
-          });
-        }
-
-        return {
-          expirationDate,
-          status: contracts.length ? "loaded" : "failed",
-          contracts,
-          error: contracts.length
-            ? null
-            : "IBKR returned an empty option chain.",
-          debug: resultDebug,
-        } satisfies BatchOptionChainResult;
-      } catch (error) {
-        if (isUnderlyingResolutionError(error)) {
-          throw error;
-        }
-
-        return {
-          expirationDate,
-          status: "failed",
-          contracts: [],
-          error: formatOptionChainBatchError(error),
-          debug: {
-            cacheStatus: "miss",
-            totalMs: 0,
-            upstreamMs: null,
-            degraded: true,
-            reason: "options_batch_failure",
-          },
-        } satisfies BatchOptionChainResult;
+      return {
+        expirationDate,
+        contracts,
+        debug,
+        error: null,
+      };
+    } catch (error) {
+      if (isUnderlyingResolutionError(error)) {
+        throw error;
       }
-    },
+
+      return {
+        expirationDate,
+        contracts: [],
+        error: formatOptionChainBatchError(error),
+        debug: {
+          cacheStatus: "miss",
+          totalMs: 0,
+          upstreamMs: null,
+          degraded: true,
+          reason: "options_batch_failure",
+        },
+      };
+    }
+  };
+  const finalizeBatchResult = (
+    entry: BatchOptionChainFetchResult,
+  ): BatchOptionChainResult => {
+    if (entry.error) {
+      return {
+        expirationDate: entry.expirationDate,
+        status: "failed",
+        contracts: [],
+        error: entry.error,
+        debug: entry.debug,
+      };
+    }
+
+    const resultDebug: RequestDebugMetadata =
+      entry.contracts.length > 0
+        ? entry.debug
+        : {
+            ...entry.debug,
+            degraded: true,
+            reason: entry.debug.reason ?? "options_successful_empty",
+          };
+    if (entry.contracts.length === 0) {
+      recordOptionDegradedEvent({
+        kind: "chain",
+        underlying,
+        expirationDate: entry.expirationDate,
+        reason: resultDebug.reason ?? "options_successful_empty",
+        message: "IBKR returned an empty option-chain batch result.",
+      });
+    }
+
+    return {
+      expirationDate: entry.expirationDate,
+      status: entry.contracts.length ? "loaded" : "failed",
+      contracts: entry.contracts,
+      error: entry.contracts.length
+        ? null
+        : "IBKR returned an empty option chain.",
+      debug: resultDebug,
+    };
+  };
+
+  const fetchResults = await mapWithConcurrency(
+    expirationDates,
+    Math.min(1, getOptionsFlowRuntimeConfig().optionChainBatchConcurrency),
+    async (expirationDate) => fetchBatchExpiration(expirationDate),
   );
+
+  for (const entry of fetchResults) {
+    if (entry.error || entry.contracts.length > 0) {
+      continue;
+    }
+    for (const delayMs of OPTION_CHAIN_EMPTY_RETRY_DELAYS_MS) {
+      await waitForOptionChainRetry(delayMs, input.signal);
+      const retry = await fetchBatchExpiration(entry.expirationDate);
+      entry.contracts = retry.contracts;
+      entry.debug = retry.debug;
+      entry.error = retry.error;
+      if (entry.error || entry.contracts.length > 0) {
+        break;
+      }
+    }
+  }
+
+  const results = fetchResults.map(finalizeBatchResult);
 
   const returnedCount = results.reduce(
     (total, result) => total + result.contracts.length,

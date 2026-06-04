@@ -29,3 +29,18 @@ test("IBKR line usage route coalesces expensive snapshots", () => {
     /formatIbkrLineUsageRouteSnapshot\(\s*await getCachedIbkrLineUsageSnapshot\(\),\s*detail,\s*\)/,
   );
 });
+
+test("compact IBKR line usage keeps Massive provider diagnostics for header/footer parity", () => {
+  const routeSource = readFileSync(
+    new URL("./settings.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(routeSource, /const providers = asJsonRecord\(root\["providers"\]\)/);
+  assert.match(routeSource, /const massiveProvider = asJsonRecord\(providers\["massive"\]\)/);
+  assert.match(routeSource, /massiveStockQuotes: compactStreamDiagnostics/);
+  assert.match(routeSource, /providers:\s*\{\s*massive:/);
+  assert.match(routeSource, /"stocksRealtimeConfigured"/);
+  assert.match(routeSource, /"activeChannels"/);
+  assert.match(routeSource, /feeds: Array\.isArray\(massiveProviderWebSocket\["feeds"\]\)/);
+});

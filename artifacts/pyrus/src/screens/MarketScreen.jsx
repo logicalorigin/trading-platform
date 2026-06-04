@@ -61,6 +61,10 @@ import {
 import { MarketIdentityInline } from "../features/platform/marketIdentity";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
+import { DataIssueInlineIcon } from "../components/platform/DataIssueInlineIcon.jsx";
+import {
+  collectDataIssuesFromRecord,
+} from "../features/platform/dataIssueModel.js";
 import { lazyWithRetry, retryDynamicImport } from "../lib/dynamicImport";
 import {
   buildMarketRenderDiagnostics,
@@ -515,10 +519,32 @@ const MarketScreenInner = ({
       ? "earnings · live"
       : earningsQuery.isError
         ? "offline"
-        : earningsQuery.isPending
-          ? "loading"
+      : earningsQuery.isPending
+        ? "loading"
       : "empty"
     : "research off";
+  const newsIssues = collectDataIssuesFromRecord(
+    {
+      status: newsQuery.isError
+        ? "error"
+        : newsQuery.isPending
+          ? "loading"
+          : newsItems.length
+            ? "ok"
+            : "unavailable",
+      errorMessage: newsQuery.error?.message,
+      unavailableDetail:
+        newsQuery.isPending || newsItems.length
+          ? null
+          : "Provider-backed headlines are not available for this card.",
+    },
+    {
+      valueLabel: "Market news",
+      source: "news provider",
+      nextAction:
+        "Check the provider-backed news feed before relying on this card for live headlines.",
+    },
+  );
   const marketDetailGridTemplate = `repeat(${marketPulseColumns}, minmax(0, 1fr))`;
   const sectorFlowGridTemplate = `repeat(${sectorFlowColumns}, minmax(0, 1fr))`;
   const leadershipGridTemplate = `repeat(${leadershipColumns}, minmax(0, 1fr))`;
@@ -546,6 +572,21 @@ const MarketScreenInner = ({
         .map((sector) => ({ ...sector, net: sector.calls - sector.puts }))
         .sort((left, right) => Math.abs(right.net) - Math.abs(left.net))[0]
     : null;
+  const sectorFlowIssues = collectDataIssuesFromRecord(
+    {
+      status: flowStatus === "live" ? "ok" : flowStatus,
+      unavailableDetail:
+        flowStatus === "live" || flowStatus === "loading"
+          ? null
+          : `Sector flow is ${flowStatus || "unavailable"}.`,
+    },
+    {
+      valueLabel: "Sector flow",
+      source: "market flow",
+      nextAction:
+        "Inspect Flow before treating sector premium skew as current.",
+    },
+  );
   const marketPulseItems = [
     {
       label: "Breadth",
@@ -794,14 +835,17 @@ const MarketScreenInner = ({
             >
               <CardTitle
                 right={
-                  <span
-                    style={{
-                      color: flowStatus === "live" ? CSS_COLOR.accent : CSS_COLOR.textMuted,
-                      fontFamily: T.sans,
-                      fontSize: textSize("body"),
-                    }}
-                  >
-                    {flowStatus === "live" ? "option premium" : `flow ${flowStatus}`}
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: sp(4) }}>
+                    <span
+                      style={{
+                        color: flowStatus === "live" ? CSS_COLOR.accent : CSS_COLOR.textMuted,
+                        fontFamily: T.sans,
+                        fontSize: textSize("body"),
+                      }}
+                    >
+                      {flowStatus === "live" ? "option premium" : `flow ${flowStatus}`}
+                    </span>
+                    <DataIssueInlineIcon issues={sectorFlowIssues} side="bottom" align="end" />
                   </span>
                 }
               >
@@ -1102,17 +1146,20 @@ const MarketScreenInner = ({
           <Card className="ra-panel-enter" style={{ padding: sp("6px 10px") }}>
             <CardTitle
               right={
-                <span
-                  style={{
-                    fontSize: textSize("caption"),
-                    color:
-                      newsStatusLabel === "live · news"
-                        ? CSS_COLOR.accent
-                        : CSS_COLOR.textDim,
-                    fontFamily: T.sans,
-                  }}
-                >
-                  {newsStatusLabel}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: sp(4) }}>
+                  <span
+                    style={{
+                      fontSize: textSize("caption"),
+                      color:
+                        newsStatusLabel === "live · news"
+                          ? CSS_COLOR.accent
+                          : CSS_COLOR.textDim,
+                      fontFamily: T.sans,
+                    }}
+                  >
+                    {newsStatusLabel}
+                  </span>
+                  <DataIssueInlineIcon issues={newsIssues} side="bottom" align="end" />
                 </span>
               }
             >

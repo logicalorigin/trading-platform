@@ -20,6 +20,7 @@ import {
 } from "./signal-options-automation";
 import { runShadowOptionMaintenance } from "./shadow-account";
 import {
+  isBackgroundStockAggregateStreamingEnabled,
   isStockAggregateStreamingAvailable,
   subscribeMutableStockMinuteAggregates,
   type StockMinuteAggregateMessage,
@@ -565,7 +566,10 @@ function defaultDependencies(
     subscribeCockpitChanges:
       options.subscribeCockpitChanges ?? subscribeAlgoCockpitChanges,
     isAggregateStreamingAvailable:
-      options.isAggregateStreamingAvailable ?? isStockAggregateStreamingAvailable,
+      options.isAggregateStreamingAvailable ??
+      (() =>
+        isBackgroundStockAggregateStreamingEnabled() &&
+        isStockAggregateStreamingAvailable()),
     subscribeAggregates:
       options.subscribeAggregates ?? subscribeMutableStockMinuteAggregates,
     evaluateStreamSignalSymbols:

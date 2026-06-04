@@ -119,7 +119,7 @@ test("scanner fills the bridge budget by default", () => {
   assert.equal(diagnostics.flowScannerLineCount, 200);
 });
 
-test("flow scanner keeps at most one active option lease per underlying", () => {
+test("flow scanner single-contract refresh replaces the same owner's option lease per underlying", () => {
   setEnv({});
 
   const first = admitMarketDataLeases({
@@ -164,6 +164,58 @@ test("flow scanner keeps at most one active option lease per underlying", () => 
   assert.equal(
     diagnostics.flowScannerTickerSlots.duplicateActiveUnderlyingCount,
     0,
+  );
+});
+
+test("flow scanner retained option demand can keep multi-contract streams per underlying", () => {
+  setEnv({});
+
+  const batched = admitMarketDataLeases({
+    owner: "flow-scanner:SPY:batch",
+    intent: "flow-scanner-live",
+    replaceOwnerExisting: false,
+    requests: [
+      {
+        assetClass: "option",
+        providerContractId: "SPY-2026-05-15-500-C",
+        underlying: "SPY",
+      },
+      {
+        assetClass: "option",
+        providerContractId: "SPY-2026-05-15-505-C",
+        underlying: "SPY",
+      },
+    ],
+  });
+  const secondOwner = admitMarketDataLeases({
+    owner: "flow-scanner:SPY:second",
+    intent: "flow-scanner-live",
+    replaceOwnerExisting: false,
+    requests: [
+      {
+        assetClass: "option",
+        providerContractId: "SPY-2026-05-15-510-C",
+        underlying: "SPY",
+      },
+    ],
+  });
+
+  assert.equal(batched.admitted.length, 2);
+  assert.equal(batched.demoted.length, 0);
+  assert.equal(secondOwner.admitted.length, 1);
+  assert.equal(secondOwner.demoted.length, 0);
+
+  const leases = getMarketDataLeasesSnapshot().filter(
+    (lease) => lease.intent === "flow-scanner-live",
+  );
+  assert.equal(leases.length, 3);
+  assert.deepEqual(
+    leases.map((lease) => lease.providerContractId).sort(),
+    [
+      "SPY-2026-05-15-500-C",
+      "SPY-2026-05-15-505-C",
+      "SPY-2026-05-15-510-C",
+    ],
   );
 });
 

@@ -417,8 +417,21 @@ export interface IbkrBridgeLauncherResponse {
   managementToken: string;
 }
 
+export type IbkrRemoteDesktopHelperCompatibility = typeof IbkrRemoteDesktopHelperCompatibility[keyof typeof IbkrRemoteDesktopHelperCompatibility];
+
+
+export const IbkrRemoteDesktopHelperCompatibility = {
+  compatible: 'compatible',
+  known_bad: 'known_bad',
+  update_required: 'update_required',
+} as const;
+
 export interface IbkrRemoteDesktop {
   desktopId: string;
+  helperCompatibility: IbkrRemoteDesktopHelperCompatibility;
+  helperCompatible: boolean;
+  helperKnownBad: boolean;
+  helperUpdateRequired: boolean;
   /** @nullable */
   helperVersion: string | null;
   /** @nullable */
@@ -432,6 +445,43 @@ export interface IbkrRemoteDesktopsResponse {
   desktops: IbkrRemoteDesktop[];
   helperVersion: string;
   onlineCount: number;
+}
+
+/**
+ * @nullable
+ */
+export type IbkrBridgeHelperMetadataRuntimeDesktopAgentCompatibility = typeof IbkrBridgeHelperMetadataRuntimeDesktopAgentCompatibility[keyof typeof IbkrBridgeHelperMetadataRuntimeDesktopAgentCompatibility] | null;
+
+
+export const IbkrBridgeHelperMetadataRuntimeDesktopAgentCompatibility = {
+  compatible: 'compatible',
+  known_bad: 'known_bad',
+  update_required: 'update_required',
+} as const;
+
+export interface IbkrBridgeHelperMetadataRuntime {
+  /** @nullable */
+  desktopAgentCompatibility: IbkrBridgeHelperMetadataRuntimeDesktopAgentCompatibility;
+  desktopAgentCompatible: boolean;
+  desktopAgentExpectedHelperVersion: string;
+  /** @nullable */
+  desktopAgentHelperVersion: string | null;
+  desktopAgentKnownBad: boolean;
+  desktopAgentOnline: boolean;
+  desktopAgentUpgradeRequired: boolean;
+  reconnectAvailable: boolean;
+  runtimeOverrideActive: boolean;
+  /** @nullable */
+  runtimeOverrideUpdatedAt: string | null;
+}
+
+export interface IbkrBridgeHelperMetadataResponse {
+  desktops: IbkrRemoteDesktop[];
+  helperVersion: string;
+  latestDesktop: IbkrRemoteDesktop | null;
+  onlineCount: number;
+  onlineDesktop: IbkrRemoteDesktop | null;
+  runtime: IbkrBridgeHelperMetadataRuntime;
 }
 
 export interface IbkrRemoteDesktopRegisterResponse {
@@ -544,6 +594,132 @@ export interface IbkrRemoteDesktopJobStatusResponse {
   state: IbkrRemoteDesktopJobStatusResponseState;
 }
 
+export interface IbkrBridgeActivationPhaseTiming {
+  /** @nullable */
+  completedAt: string | null;
+  /** @nullable */
+  elapsedMs: number | null;
+  /** @nullable */
+  startedAt: string | null;
+}
+
+export interface IbkrBridgeActivationPhaseDurations {
+  request: IbkrBridgeActivationPhaseTiming;
+  update: IbkrBridgeActivationPhaseTiming;
+  credentials: IbkrBridgeActivationPhaseTiming;
+  gateway: IbkrBridgeActivationPhaseTiming;
+  twoFactor: IbkrBridgeActivationPhaseTiming;
+  bridge: IbkrBridgeActivationPhaseTiming;
+  tunnel: IbkrBridgeActivationPhaseTiming;
+}
+
+export type IbkrBridgeActivationTimelineRowId = typeof IbkrBridgeActivationTimelineRowId[keyof typeof IbkrBridgeActivationTimelineRowId];
+
+
+export const IbkrBridgeActivationTimelineRowId = {
+  request: 'request',
+  update: 'update',
+  credentials: 'credentials',
+  gateway: 'gateway',
+  twoFactor: 'twoFactor',
+  bridge: 'bridge',
+  tunnel: 'tunnel',
+} as const;
+
+export type IbkrBridgeActivationTimelineRowOwner = typeof IbkrBridgeActivationTimelineRowOwner[keyof typeof IbkrBridgeActivationTimelineRowOwner];
+
+
+export const IbkrBridgeActivationTimelineRowOwner = {
+  none: 'none',
+  pyrus: 'pyrus',
+  desktopHelper: 'desktopHelper',
+  ibGateway: 'ibGateway',
+  ibkrMobile: 'ibkrMobile',
+  cloudflareTunnel: 'cloudflareTunnel',
+  user: 'user',
+} as const;
+
+export type IbkrBridgeActivationTimelineRowStatus = typeof IbkrBridgeActivationTimelineRowStatus[keyof typeof IbkrBridgeActivationTimelineRowStatus];
+
+
+export const IbkrBridgeActivationTimelineRowStatus = {
+  pending: 'pending',
+  active: 'active',
+  complete: 'complete',
+  attention: 'attention',
+  error: 'error',
+  canceled: 'canceled',
+} as const;
+
+export type IbkrBridgeActivationTimelineRow = IbkrBridgeActivationPhaseTiming & {
+  id: IbkrBridgeActivationTimelineRowId;
+  label: string;
+  owner: IbkrBridgeActivationTimelineRowOwner;
+  status: IbkrBridgeActivationTimelineRowStatus;
+};
+
+export type IbkrBridgeActivationInsightCurrentOwner = typeof IbkrBridgeActivationInsightCurrentOwner[keyof typeof IbkrBridgeActivationInsightCurrentOwner];
+
+
+export const IbkrBridgeActivationInsightCurrentOwner = {
+  none: 'none',
+  pyrus: 'pyrus',
+  desktopHelper: 'desktopHelper',
+  ibGateway: 'ibGateway',
+  ibkrMobile: 'ibkrMobile',
+  cloudflareTunnel: 'cloudflareTunnel',
+  user: 'user',
+} as const;
+
+export type IbkrBridgeActivationInsightCurrentPhase = typeof IbkrBridgeActivationInsightCurrentPhase[keyof typeof IbkrBridgeActivationInsightCurrentPhase];
+
+
+export const IbkrBridgeActivationInsightCurrentPhase = {
+  idle: 'idle',
+  request: 'request',
+  update: 'update',
+  credentials: 'credentials',
+  gateway: 'gateway',
+  twoFactor: 'twoFactor',
+  bridge: 'bridge',
+  tunnel: 'tunnel',
+  complete: 'complete',
+  canceled: 'canceled',
+  error: 'error',
+} as const;
+
+export type IbkrBridgeActivationInsightSeverity = typeof IbkrBridgeActivationInsightSeverity[keyof typeof IbkrBridgeActivationInsightSeverity];
+
+
+export const IbkrBridgeActivationInsightSeverity = {
+  idle: 'idle',
+  progress: 'progress',
+  attention: 'attention',
+  error: 'error',
+  success: 'success',
+} as const;
+
+export interface IbkrBridgeActivationInsight {
+  currentOwner: IbkrBridgeActivationInsightCurrentOwner;
+  currentPhase: IbkrBridgeActivationInsightCurrentPhase;
+  /** @nullable */
+  currentPhaseElapsedMs: number | null;
+  /** @nullable */
+  currentPhaseStartedAt: string | null;
+  detail: string;
+  /** @nullable */
+  normalAfterMs: number | null;
+  phaseDurations: IbkrBridgeActivationPhaseDurations;
+  /** @nullable */
+  recommendedAction: string | null;
+  severity: IbkrBridgeActivationInsightSeverity;
+  stale: boolean;
+  /** @nullable */
+  staleAfterMs: number | null;
+  timeline: IbkrBridgeActivationTimelineRow[];
+  title: string;
+}
+
 export interface IbkrBridgeActivationProgress {
   activationId: string;
   /** @nullable */
@@ -563,6 +739,46 @@ export interface IbkrBridgeActivationStatusResponse {
   active: boolean;
   canceled: boolean;
   expiresAt: string;
+  insight: IbkrBridgeActivationInsight;
+  latestProgress: IbkrBridgeActivationProgress | null;
+  recentProgress: IbkrBridgeActivationProgress[];
+}
+
+export type IbkrBridgeActivationDiagnosticsLatestActivationProgressStepTimings = {[key: string]: string};
+
+export type IbkrBridgeActivationDiagnosticsLatestActivationTimings = { [key: string]: unknown };
+
+export interface IbkrBridgeActivationDiagnosticsLatestActivation {
+  canceled: boolean;
+  expiresAt: string;
+  issuedAt: string;
+  /** @nullable */
+  lastLoginEnvelopeSubmitAttemptAt: string | null;
+  /** @nullable */
+  lastLoginEnvelopeSubmitErrorCode: string | null;
+  /** @nullable */
+  lastLoginKeyReadAt: string | null;
+  /** @nullable */
+  lastLoginKeyReadReadyAt: string | null;
+  loginEnvelopeSubmitAttemptCount: number;
+  loginEnvelopeSubmitted: boolean;
+  /** @nullable */
+  loginEnvelopeSubmittedAt: string | null;
+  /** @nullable */
+  loginHandoffCreatedAt: string | null;
+  loginHandoffReady: boolean;
+  loginKeyReadCount: number;
+  progressStepTimings: IbkrBridgeActivationDiagnosticsLatestActivationProgressStepTimings;
+  timings: IbkrBridgeActivationDiagnosticsLatestActivationTimings;
+  [key: string]: unknown;
+ }
+
+export interface IbkrBridgeActivationDiagnosticsResponse {
+  activeCount: number;
+  latestActivation: IbkrBridgeActivationDiagnosticsLatestActivation | null;
+  /** @nullable */
+  latestActivationId: string | null;
+  insight: IbkrBridgeActivationInsight;
   latestProgress: IbkrBridgeActivationProgress | null;
   recentProgress: IbkrBridgeActivationProgress[];
 }
@@ -625,13 +841,29 @@ export interface SessionMarketDataProviders {
   research: typeof SessionMarketDataProvidersResearch[keyof typeof SessionMarketDataProvidersResearch];
 }
 
+/**
+ * @nullable
+ */
+export type SessionIbkrRuntimeDesktopAgentCompatibility = typeof SessionIbkrRuntimeDesktopAgentCompatibility[keyof typeof SessionIbkrRuntimeDesktopAgentCompatibility] | null;
+
+
+export const SessionIbkrRuntimeDesktopAgentCompatibility = {
+  compatible: 'compatible',
+  known_bad: 'known_bad',
+  update_required: 'update_required',
+} as const;
+
 export interface SessionIbkrRuntime {
   runtimeOverrideActive: boolean;
   /** @nullable */
   runtimeOverrideUpdatedAt: string | null;
   desktopAgentOnline: boolean;
   /** @nullable */
+  desktopAgentCompatibility: SessionIbkrRuntimeDesktopAgentCompatibility;
+  desktopAgentCompatible: boolean;
+  /** @nullable */
   desktopAgentHelperVersion: string | null;
+  desktopAgentKnownBad: boolean;
   desktopAgentExpectedHelperVersion: string;
   desktopAgentUpgradeRequired: boolean;
   reconnectAvailable: boolean;
@@ -865,6 +1097,18 @@ export const RuntimeIbkrDiagnosticsTransport = {
 /**
  * @nullable
  */
+export type RuntimeIbkrDiagnosticsDesktopAgentCompatibility = typeof RuntimeIbkrDiagnosticsDesktopAgentCompatibility[keyof typeof RuntimeIbkrDiagnosticsDesktopAgentCompatibility] | null;
+
+
+export const RuntimeIbkrDiagnosticsDesktopAgentCompatibility = {
+  compatible: 'compatible',
+  known_bad: 'known_bad',
+  update_required: 'update_required',
+} as const;
+
+/**
+ * @nullable
+ */
 export type RuntimeIbkrDiagnosticsMarketDataMode = typeof RuntimeIbkrDiagnosticsMarketDataMode[keyof typeof RuntimeIbkrDiagnosticsMarketDataMode] | null;
 
 
@@ -902,7 +1146,11 @@ export interface RuntimeIbkrDiagnostics {
   runtimeOverrideUpdatedAt: string | null;
   desktopAgentOnline: boolean;
   /** @nullable */
+  desktopAgentCompatibility: RuntimeIbkrDiagnosticsDesktopAgentCompatibility;
+  desktopAgentCompatible: boolean;
+  /** @nullable */
   desktopAgentHelperVersion: string | null;
+  desktopAgentKnownBad: boolean;
   desktopAgentExpectedHelperVersion: string;
   desktopAgentUpgradeRequired: boolean;
   reconnectAvailable: boolean;
@@ -1099,9 +1347,173 @@ export interface DiagnosticEventRecordResponse {
 
 export interface DiagnosticExportResponse { [key: string]: unknown }
 
+export type ResearchHighBetaUniverseAvailabilityStatusCacheStatus = typeof ResearchHighBetaUniverseAvailabilityStatusCacheStatus[keyof typeof ResearchHighBetaUniverseAvailabilityStatusCacheStatus];
+
+
+export const ResearchHighBetaUniverseAvailabilityStatusCacheStatus = {
+  fresh: 'fresh',
+  memory_cache: 'memory_cache',
+  stale_cache: 'stale_cache',
+  unavailable: 'unavailable',
+} as const;
+
+export interface ResearchHighBetaUniverseAvailabilityStatus {
+  available: boolean;
+  configured: boolean;
+  provider: ResearchProvider | null;
+  validatorProvider: 'massive' | null;
+  limit: number;
+  cacheTtlMs: number;
+  /** @nullable */
+  lastGeneratedAt: string | null;
+  /** @nullable */
+  lastAcceptedCount: number | null;
+  cacheStatus: ResearchHighBetaUniverseAvailabilityStatusCacheStatus;
+  /** @nullable */
+  unavailableCode: string | null;
+  /** @nullable */
+  unavailableDetail: string | null;
+}
+
 export interface ResearchStatus {
   configured: boolean;
   provider: ResearchProvider | null;
+  highBetaUniverse: ResearchHighBetaUniverseAvailabilityStatus;
+}
+
+export type ResearchHighBetaUniverseRejectReason = typeof ResearchHighBetaUniverseRejectReason[keyof typeof ResearchHighBetaUniverseRejectReason];
+
+
+export const ResearchHighBetaUniverseRejectReason = {
+  invalid_candidate: 'invalid_candidate',
+  inactive_fmp: 'inactive_fmp',
+  non_us_fmp: 'non_us_fmp',
+  reference_unavailable: 'reference_unavailable',
+  inactive_massive: 'inactive_massive',
+  unsupported_market: 'unsupported_market',
+  unsupported_security_type: 'unsupported_security_type',
+  quote_unavailable: 'quote_unavailable',
+  low_liquidity: 'low_liquidity',
+  non_optionable: 'non_optionable',
+} as const;
+
+export type ResearchHighBetaUniverseAcceptedSymbolScoreSource = typeof ResearchHighBetaUniverseAcceptedSymbolScoreSource[keyof typeof ResearchHighBetaUniverseAcceptedSymbolScoreSource];
+
+
+export const ResearchHighBetaUniverseAcceptedSymbolScoreSource = {
+  blended_options_opportunity_v1: 'blended_options_opportunity_v1',
+} as const;
+
+export type ResearchHighBetaUniverseAcceptedSymbolScoreWeights = {
+  beta: number;
+  intradayVolatility: number;
+  liquidity: number;
+  optionsTradability: number;
+};
+
+export type ResearchHighBetaUniverseAcceptedSymbolScore = {
+  source: ResearchHighBetaUniverseAcceptedSymbolScoreSource;
+  betaScore: number;
+  intradayVolatilityScore: number;
+  liquidityScore: number;
+  optionsTradabilityScore: number;
+  weights: ResearchHighBetaUniverseAcceptedSymbolScoreWeights;
+};
+
+export interface ResearchHighBetaUniverseAcceptedSymbol {
+  rank: number;
+  symbol: string;
+  /** @nullable */
+  name: string | null;
+  beta: number;
+  /** @nullable */
+  intradayVolatility: number | null;
+  optionContractCount: number;
+  opportunityScore: number;
+  score: ResearchHighBetaUniverseAcceptedSymbolScore;
+  /** @nullable */
+  price: number | null;
+  /** @nullable */
+  volume: number | null;
+  /** @nullable */
+  dollarVolume: number | null;
+  /** @nullable */
+  marketCap: number | null;
+  /** @nullable */
+  exchange: string | null;
+  /** @nullable */
+  massiveMarket: string | null;
+  /** @nullable */
+  massiveType: string | null;
+  optionable: boolean;
+  /** @nullable */
+  quoteUpdatedAt: string | null;
+}
+
+export interface ResearchHighBetaUniverseRejectedSymbol {
+  symbol: string;
+  /** @nullable */
+  beta: number | null;
+  reason: ResearchHighBetaUniverseRejectReason;
+  /** @nullable */
+  detail: string | null;
+}
+
+export type ResearchHighBetaUniverseResponseSourceStatus = typeof ResearchHighBetaUniverseResponseSourceStatus[keyof typeof ResearchHighBetaUniverseResponseSourceStatus];
+
+
+export const ResearchHighBetaUniverseResponseSourceStatus = {
+  fresh: 'fresh',
+  memory_cache: 'memory_cache',
+  stale_cache: 'stale_cache',
+} as const;
+
+export type ResearchHighBetaUniverseResponseRejectedByReason = {[key: string]: number};
+
+export type ResearchHighBetaUniverseResponseSourceProvider = typeof ResearchHighBetaUniverseResponseSourceProvider[keyof typeof ResearchHighBetaUniverseResponseSourceProvider];
+
+
+export const ResearchHighBetaUniverseResponseSourceProvider = {
+  fmp: 'fmp',
+} as const;
+
+export type ResearchHighBetaUniverseResponseSource = {
+  provider: ResearchHighBetaUniverseResponseSourceProvider;
+  endpoint: string;
+  betaField: string;
+  candidateLimit: number;
+  exchanges: string[];
+};
+
+export type ResearchHighBetaUniverseResponseValidationProvider = typeof ResearchHighBetaUniverseResponseValidationProvider[keyof typeof ResearchHighBetaUniverseResponseValidationProvider];
+
+
+export const ResearchHighBetaUniverseResponseValidationProvider = {
+  massive: 'massive',
+} as const;
+
+export type ResearchHighBetaUniverseResponseValidation = {
+  provider: ResearchHighBetaUniverseResponseValidationProvider;
+  minPrice: number;
+  minVolume: number;
+  minDollarVolume: number;
+  minMarketCap: number;
+  requireOptionable: boolean;
+};
+
+export interface ResearchHighBetaUniverseResponse {
+  generatedAt: string;
+  dryRun: boolean;
+  sourceStatus: ResearchHighBetaUniverseResponseSourceStatus;
+  limit: number;
+  importedCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  rejectedByReason: ResearchHighBetaUniverseResponseRejectedByReason;
+  accepted: ResearchHighBetaUniverseAcceptedSymbol[];
+  rejectedSample: ResearchHighBetaUniverseRejectedSymbol[];
+  source: ResearchHighBetaUniverseResponseSource;
+  validation: ResearchHighBetaUniverseResponseValidation;
 }
 
 export interface ResearchFundamentals {
@@ -1920,6 +2332,7 @@ export interface ReplaceOrderRequest {
 
 export interface CancelOrderRequest {
   accountId: string;
+  mode: EnvironmentMode;
   confirm?: boolean;
   /** @nullable */
   manualIndicator?: boolean | null;
@@ -2857,6 +3270,10 @@ export interface AccountPositionRow {
   marketValue: number;
   /** Position weight in percentage points. */
   weightPercent: number | null;
+  /** Position weight against the full account net liquidation, in percentage points. */
+  accountWeightPercent?: number | null;
+  /** Position weight against the current response scope, in percentage points. */
+  scopedWeightPercent?: number | null;
   betaWeightedDelta: number | null;
   lots: AccountPositionLot[];
   openOrders: Order[];
@@ -3076,6 +3493,7 @@ export interface AccountOrdersResponse {
 }
 
 export interface CancelAccountOrderRequest {
+  mode: EnvironmentMode;
   confirm?: boolean;
 }
 
@@ -4359,7 +4777,7 @@ export interface UpdateSignalMonitorProfileRequest {
   pollIntervalSeconds?: number;
   /**
    * @minimum 1
-   * @maximum 250
+   * @maximum 500
    */
   maxSymbols?: number;
   /**
@@ -4376,6 +4794,7 @@ export const SignalMonitorUniverseSummaryMode = {
   selected_watchlist: 'selected_watchlist',
   all_watchlists: 'all_watchlists',
   all_watchlists_plus_universe: 'all_watchlists_plus_universe',
+  high_beta_500: 'high_beta_500',
 } as const;
 
 export type SignalMonitorUniverseSummarySource = typeof SignalMonitorUniverseSummarySource[keyof typeof SignalMonitorUniverseSummarySource];
@@ -4385,6 +4804,7 @@ export const SignalMonitorUniverseSummarySource = {
   selected_watchlist: 'selected_watchlist',
   all_watchlists: 'all_watchlists',
   watchlists_plus_ranked_universe: 'watchlists_plus_ranked_universe',
+  high_beta_500: 'high_beta_500',
 } as const;
 
 export interface SignalMonitorUniverseSummary {
@@ -4616,6 +5036,7 @@ export type SignalMonitorMatrixResponseCoverageSourceStrategy = typeof SignalMon
 export const SignalMonitorMatrixResponseCoverageSourceStrategy = {
   native_timeframes: 'native_timeframes',
   native_timeframes_live_retry: 'native_timeframes_live_retry',
+  native_timeframes_live_retry_exact_backfill: 'native_timeframes_live_retry_exact_backfill',
 } as const;
 
 export type SignalMonitorMatrixResponseCoverageCacheStatus = typeof SignalMonitorMatrixResponseCoverageCacheStatus[keyof typeof SignalMonitorMatrixResponseCoverageCacheStatus];
@@ -6263,6 +6684,30 @@ to?: string;
  * Opaque cursor from the previous response.
  */
 cursor?: string;
+};
+
+export type GetResearchHighBetaUniverseParams = {
+/**
+ * @minimum 1
+ * @maximum 500
+ */
+limit?: number;
+/**
+ * @minimum 1
+ * @maximum 5000
+ */
+candidateLimit?: number;
+minBeta?: number;
+minPrice?: number;
+minVolume?: number;
+minDollarVolume?: number;
+minMarketCap?: number;
+/**
+ * Comma-separated FMP exchanges to query. Defaults to NASDAQ, NYSE, and AMEX.
+ */
+exchanges?: string;
+dryRun?: boolean;
+refresh?: boolean;
 };
 
 export type GetResearchFundamentalsParams = {

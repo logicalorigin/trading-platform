@@ -288,6 +288,20 @@ const prefersReducedMotion = () =>
       window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches,
   );
 
+const memoryPressureWorkloadInputsChanged = (
+  current,
+  workloadStats,
+  reducedMotionEnabled,
+) => {
+  const kindCounts = workloadStats.kindCounts || {};
+  return (
+    current.activeWorkloadCount !== workloadStats.activeCount ||
+    current.pollCount !== (kindCounts.poll || 0) ||
+    current.streamCount !== (kindCounts.stream || 0) ||
+    current.reducedMotionEnabled !== reducedMotionEnabled
+  );
+};
+
 export const useMemoryPressureMonitor = () => {
   const pageVisible = usePageVisible();
   const safeQaMode = isPyrusSafeQaMode();
@@ -332,6 +346,17 @@ export const useMemoryPressureMonitor = () => {
 
     const current = getMemoryPressureSnapshot();
     const kindCounts = workloadStats.kindCounts || {};
+    const reducedMotionEnabled = prefersReducedMotion();
+    if (
+      !memoryPressureWorkloadInputsChanged(
+        current,
+        workloadStats,
+        reducedMotionEnabled,
+      )
+    ) {
+      latestRef.current = current;
+      return;
+    }
     const next = buildMemoryPressureState(
       {
         observedAt: new Date().toISOString(),
@@ -357,7 +382,7 @@ export const useMemoryPressureMonitor = () => {
     const mergedNext = mergeMemoryPressureRuntimeState(next, current.server);
     const snapshot = {
       ...mergedNext,
-      reducedMotionEnabled: prefersReducedMotion(),
+      reducedMotionEnabled,
       measurement: current.measurement,
       server: current.server,
     };

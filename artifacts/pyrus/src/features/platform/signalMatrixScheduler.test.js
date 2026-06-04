@@ -664,8 +664,8 @@ test("signal matrix scheduler treats active Signals table rows as foreground hyd
   assert.deepEqual(plan.backgroundSymbols, []);
   assert.equal(plan.backgroundPaused, true);
   assert.equal(plan.coverage.missingSymbols, symbols.length);
-  assert.equal(plan.coverage.requestSymbolLimit, 25);
-  assert.equal(plan.coverage.requestTaskLimit, 150);
+  assert.equal(plan.coverage.requestSymbolLimit, 40);
+  assert.equal(plan.coverage.requestTaskLimit, 240);
   assert.equal(plan.coverage.requestTaskCount, 108);
   assert.equal(plan.coverage.requestedTaskCount, 108);
   assert.equal(plan.coverage.pendingSymbols, 0);
@@ -697,7 +697,7 @@ test("signal matrix scheduler caps explicit Signals screen chunks when backgroun
   assert.deepEqual(plan.backgroundSymbols, []);
   assert.equal(plan.backgroundPaused, true);
   assert.equal(plan.coverage.requestSymbolLimit, 12);
-  assert.equal(plan.coverage.requestTaskLimit, 150);
+  assert.equal(plan.coverage.requestTaskLimit, 240);
   assert.equal(plan.coverage.requestTaskCount, 72);
   assert.equal(plan.coverage.requestedTaskCount, 540);
   assert.equal(plan.coverage.pendingSymbols, 78);
@@ -706,18 +706,18 @@ test("signal matrix scheduler caps explicit Signals screen chunks when backgroun
   assert.equal(plan.coverage.missingSymbols, symbols.length);
 });
 
-test("signal matrix active screen limits stay full until critical pressure", () => {
+test("signal matrix active screen limits back off under high API pressure", () => {
   assert.equal(
     resolveSignalMatrixActiveScreenRequestSymbolLimit("normal"),
-    250,
+    500,
   );
-  assert.equal(resolveSignalMatrixActiveScreenRequestSymbolLimit("watch"), 250);
-  assert.equal(resolveSignalMatrixActiveScreenRequestSymbolLimit("high"), 250);
+  assert.equal(resolveSignalMatrixActiveScreenRequestSymbolLimit("watch"), 500);
+  assert.equal(resolveSignalMatrixActiveScreenRequestSymbolLimit("high"), 12);
   assert.equal(
     resolveSignalMatrixActiveScreenRequestSymbolLimit("critical"),
     6,
   );
-  assert.equal(resolveSignalMatrixActiveScreenRequestSymbolLimit("bogus"), 250);
+  assert.equal(resolveSignalMatrixActiveScreenRequestSymbolLimit("bogus"), 500);
 });
 
 test("signal matrix active screen task limits cover STA page hydration under normal pressure", () => {
@@ -735,15 +735,15 @@ test("signal matrix active screen task limits cover STA page hydration under nor
       resolveSignalMatrixActiveScreenRequestTaskLimit("normal"),
   });
 
-  assert.deepEqual(plan.requestSymbols, symbols.slice(0, 25));
+  assert.deepEqual(plan.requestSymbols, symbols);
   assert.deepEqual(plan.timeframes, MATRIX_TIMEFRAMES);
-  assert.equal(plan.coverage.requestSymbolLimit, 25);
-  assert.equal(plan.coverage.requestTaskLimit, 150);
-  assert.equal(plan.coverage.requestTaskCount, 150);
+  assert.equal(plan.coverage.requestSymbolLimit, 40);
+  assert.equal(plan.coverage.requestTaskLimit, 240);
+  assert.equal(plan.coverage.requestTaskCount, 180);
   assert.equal(plan.coverage.requestedTaskCount, 180);
-  assert.equal(plan.coverage.pendingSymbols, 5);
-  assert.equal(plan.coverage.queuedTaskCount, 30);
-  assert.equal(plan.coverage.pendingTaskCount, 30);
+  assert.equal(plan.coverage.pendingSymbols, 0);
+  assert.equal(plan.coverage.queuedTaskCount, 0);
+  assert.equal(plan.coverage.pendingTaskCount, 0);
 });
 
 test("signal matrix active screen task limits still constrain critical pressure", () => {
@@ -768,7 +768,7 @@ test("signal matrix active screen task limits still constrain critical pressure"
   assert.equal(plan.coverage.pendingTaskCount, 38);
 });
 
-test("signal matrix scheduler hydrates a full STA visible page under high pressure", () => {
+test("signal matrix scheduler chunks STA visible page hydration under high pressure", () => {
   const symbols = Array.from({ length: 20 }, (_value, index) => `STA${index + 1}`);
   const plan = buildSignalMatrixRequestPlan({
     symbols,
@@ -792,11 +792,15 @@ test("signal matrix scheduler hydrates a full STA visible page under high pressu
 });
 
 test("signal matrix catchup and busy queue delays back off under pressure", () => {
-  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("normal"), 150);
-  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("watch"), 150);
+  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("normal"), 240);
+  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("watch"), 240);
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("high"), 60);
   assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("critical"), 10);
-  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("bogus"), 150);
+  assert.equal(resolveSignalMatrixActiveScreenRequestTaskLimit("bogus"), 240);
+  assert.equal(resolveSignalMatrixStaVisiblePageRequestTaskLimit("normal"), 240);
+  assert.equal(resolveSignalMatrixStaVisiblePageRequestTaskLimit("watch"), 240);
+  assert.equal(resolveSignalMatrixStaVisiblePageRequestTaskLimit("high"), 120);
+  assert.equal(resolveSignalMatrixStaVisiblePageRequestTaskLimit("critical"), 10);
 
   assert.equal(resolveSignalMatrixBusyQueueDelayMs("normal"), 0);
   assert.equal(resolveSignalMatrixBusyQueueDelayMs("watch"), 2_500);
@@ -815,8 +819,8 @@ test("signal matrix request plans stay inside API exact-cell pressure caps", () 
     (_value, index) => `CAP${index + 1}`,
   );
   const cases = [
-    ["normal", 150],
-    ["watch", 150],
+    ["normal", 240],
+    ["watch", 240],
     ["high", 60],
     ["critical", 10],
   ];
@@ -836,7 +840,7 @@ test("signal matrix request plans stay inside API exact-cell pressure caps", () 
     assert.equal(plan.coverage.requestTaskCount, exactCellLimit);
     assert.equal(plan.requestCells.length <= exactCellLimit, true);
   });
-  assert.equal(resolveSignalMatrixExactCellLimit("bogus"), 150);
+  assert.equal(resolveSignalMatrixExactCellLimit("bogus"), 240);
 });
 
 test("signal matrix request plan chunks critical active pressure before API admission", () => {

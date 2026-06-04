@@ -340,8 +340,8 @@ test("memory watch pressure is telemetry-only for work scheduling", () => {
   assert.equal(schedule.pressureCaps.broadMarketSymbolLimit, null);
   assert.equal(schedule.pressureCaps.broadFlowSymbolLimit, null);
   assert.deepEqual(schedule.pressureCaps.broadFlowScannerConfig, {});
-  assert.equal(schedule.pressureCaps.signalMatrixWideSymbolLimit, 250);
-  assert.equal(schedule.pressureCaps.signalMatrixNarrowSymbolLimit, 250);
+  assert.equal(schedule.pressureCaps.signalMatrixWideSymbolLimit, 500);
+  assert.equal(schedule.pressureCaps.signalMatrixNarrowSymbolLimit, 500);
   assert.equal(schedule.streams.lowPriorityHistory, true);
   assert.equal(schedule.hiddenScreenPreload.codeOnly, true);
   assert.equal(schedule.hiddenScreenPreload.mountScreens, false);
@@ -374,7 +374,7 @@ test("critical memory pressure stalls heavy hydration but keeps core quote reade
   assert.equal(schedule.hiddenScreenPreload.codeOnly, false);
 });
 
-test("high memory pressure keeps broad flow owned without scanner throughput caps", () => {
+test("high memory pressure keeps broad flow owned while capping heavy signal hydration", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "flow",
@@ -389,9 +389,11 @@ test("high memory pressure keeps broad flow owned without scanner throughput cap
   assert.equal(schedule.streams.broadFlowRuntime, true);
   assert.equal(schedule.pressureCaps.broadFlowSymbolLimit, null);
   assert.deepEqual(schedule.pressureCaps.broadFlowScannerConfig, {});
-  assert.equal(schedule.pressureCaps.signalMatrixWideSymbolLimit, 250);
-  assert.equal(schedule.pressureCaps.signalMatrixNarrowSymbolLimit, 250);
-  assert.equal(schedule.pressureCaps.sparklineConcurrency, 4);
+  assert.equal(schedule.pressureCaps.signalMatrixWideSymbolLimit, 12);
+  assert.equal(schedule.pressureCaps.signalMatrixNarrowSymbolLimit, 8);
+  assert.equal(schedule.pressureCaps.signalMatrixPollMinMs, 60_000);
+  assert.equal(schedule.pressureCaps.sparklineConcurrency, 2);
+  assert.equal(schedule.pressureCaps.prioritySparklineSymbolLimit, 8);
 });
 
 test("pauses broad flow runtime while page is hidden", () => {

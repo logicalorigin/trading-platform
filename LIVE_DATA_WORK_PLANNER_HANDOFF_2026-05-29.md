@@ -122,6 +122,24 @@ Provider policy:
 - Massive/Polygon owns stock snapshots, stock quote/aggregate fallback, historical/provider data, and persisted ingest provider paths.
 - Rust worker owns persisted `stock_snapshot`, `option_chain_snapshot`, and `gex_snapshot` jobs only. Historical bars, option flow events, flow summaries, and backfills remain future work unless already wired elsewhere.
 
+### 1a. Massive Realtime Backend Data Map Update (2026-06-04)
+
+Current Massive-owned stock data paths:
+
+- Watchlist/sidebar price and `% day change`: `/api/streams/quotes` and `/api/quotes/snapshot` are Massive-first when realtime Massive is configured. Live `Q/T` socket prices remain primary; REST quote snapshots refresh a short day-change context (`prevClose`, open/high/low, daily volume) so live socket ticks do not overwrite valid `% day change` with zero/null placeholders.
+- High Beta 500 monitoring universe: FMP owns the research screener/ranking source; Massive owns reference, quote/liquidity, and optionability validation; `signal-monitor` owns the active profile universe and state/matrix evaluation. `/api/research/status` exposes `highBetaUniverse` availability/cache state, and High Beta 500 profile updates default to the 500-symbol cap when enabled or applied.
+- High Beta 500 quote hydration: the frontend quote stream pins visible/header/recent symbols but rotates over the effective signal-monitor universe, not only the watchlist sidebar symbols. This is the intended path for keeping High Beta 500 prices and `% day change` moving without opening all 500 realtime quote subscriptions at once.
+- Signal table and STA/algo signal bubbles: `signal-monitor` still owns indicator evaluation. Visible matrix/profile batches now prime a short-lived foreground stock aggregate stream through `PYRUS_SIGNAL_MATRIX_STOCK_AGGREGATE_STREAMS_ENABLED` (default `true`, capped) even when the broad background universe stream remains disabled. REST/history remains the cold-start and gap-fill path.
+- Broad universe aggregate stream: stays opt-in through `PYRUS_BACKGROUND_STOCK_AGGREGATE_STREAMS_ENABLED` / the existing broad universe controls. Do not use the broad stream to justify visible matrix realtime freshness; visible batches have their own foreground stream.
+- Header/footer data-line diagnostics: `/api/settings/ibkr-line-usage` now carries compact `providers.massive` diagnostics plus `streams.massiveStockQuotes` and `streams.stockAggregates`. The header may be running without full runtime diagnostics, so it must be able to build the same Massive provider status that the footer builds from the shared line-usage stream.
+
+Operational checks:
+
+- Price updating but `% day change` resetting to `0` points to missing quote day-change context, not a watchlist rendering bug.
+- High Beta 500 showing about `90` configured/resolved symbols means the profile did not apply `high_beta_500`, the backend availability guard blocked it, or a frontend/backend contract stripped the high-beta universe status/cap.
+- Filled signal bubbles that stop advancing at the live edge point to foreground aggregate stream admission, not only matrix REST history.
+- Header/footer disagreement on Massive status means the compact line-usage provider map regressed or the frontend fallback stopped reading `lineUsageSnapshot.providers.massive`.
+
 ### 2. Make Scanner Rotation Plan-Aware
 
 - Replace simple round-robin emission with planned windows.

@@ -156,7 +156,41 @@ test("buildIbkrSidecarDesiredGeneration preserves option provider contract ids",
   assert.equal(generation.desiredLines[0]?.owners[0]?.intent, "flow-scanner-live");
 });
 
-test("buildIbkrSidecarDesiredGeneration skips unresolved option provider contract ids", () => {
+test("buildIbkrSidecarDesiredGeneration preserves numeric real-account option conids", () => {
+  admitMarketDataLeases({
+    owner: "account-position-option-quotes:U24762790",
+    intent: "account-monitor-live",
+    requests: [
+      {
+        assetClass: "option",
+        symbol: "SPY",
+        providerContractId: "885885495",
+      },
+    ],
+    fallbackProvider: "cache",
+  });
+
+  const generation = buildIbkrSidecarDesiredGeneration({
+    admission: getMarketDataAdmissionDiagnostics(),
+    generatedAt: "2026-06-02T15:01:30.000Z",
+    plannerGeneration: "planner-real-option-conid-test",
+  });
+
+  assert.equal(generation.summary.desiredLineCount, 1);
+  assert.equal(generation.summary.desiredOptionLineCount, 1);
+  assert.equal(generation.desiredLines[0]?.lineKey, "option:885885495");
+  assert.equal(
+    generation.desiredLines[0]?.contract.providerContractId,
+    "885885495",
+  );
+  assert.equal(generation.desiredLines[0]?.contract.symbol, "SPY");
+  assert.equal(
+    generation.desiredLines[0]?.owners[0]?.owner,
+    "account-position-option-quotes:U24762790",
+  );
+});
+
+test("buildIbkrSidecarDesiredGeneration skips malformed option provider contract ids", () => {
   const validProviderContractId = structuredOptionProviderContractId({
     underlying: "SPY",
     expiration: "20260619",
@@ -170,7 +204,7 @@ test("buildIbkrSidecarDesiredGeneration skips unresolved option provider contrac
       {
         assetClass: "option",
         symbol: "SPY",
-        providerContractId: "72063691",
+        providerContractId: "unresolved-provider-id",
       },
       {
         assetClass: "option",

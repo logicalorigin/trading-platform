@@ -41,6 +41,30 @@ test("watchlist quote rotation reports pin overflow instead of exceeding cap", (
   assert.equal(batch.batchCap, 2);
 });
 
+test("watchlist quote rotation can hydrate a broader signal universe", () => {
+  const first = buildWatchlistQuoteRotationBatch({
+    watchlistSymbols: ["AAPL", "MSFT"],
+    rotationSymbols: ["AAPL", "MSFT", "TSLA", "NVDA", "AMD"],
+    pinnedSymbols: ["AAPL"],
+    batchSize: 3,
+    cursor: 0,
+  });
+
+  assert.deepEqual(first.symbols, ["AAPL", "MSFT", "TSLA"]);
+  assert.equal(first.universeSize, 5);
+  assert.equal(first.rotatingUniverseSize, 4);
+
+  const second = buildWatchlistQuoteRotationBatch({
+    watchlistSymbols: ["AAPL", "MSFT"],
+    rotationSymbols: ["AAPL", "MSFT", "TSLA", "NVDA", "AMD"],
+    pinnedSymbols: ["AAPL"],
+    batchSize: 3,
+    cursor: first.nextCursor,
+  });
+
+  assert.deepEqual(second.symbols, ["AAPL", "NVDA", "AMD"]);
+});
+
 test("watchlist quote rotation diagnostics count recent full-universe coverage", () => {
   const diagnostics = buildWatchlistQuoteRotationDiagnostics({
     batch: { symbols: ["AAPL"], batchSize: 1, batchCap: 2 },
@@ -56,4 +80,23 @@ test("watchlist quote rotation diagnostics count recent full-universe coverage",
 
   assert.equal(diagnostics.cycleCoverageCount, 2);
   assert.equal(diagnostics.cycleCoveragePct, 66.7);
+});
+
+test("watchlist quote rotation diagnostics count the broader rotation universe", () => {
+  const diagnostics = buildWatchlistQuoteRotationDiagnostics({
+    batch: { symbols: ["AAPL", "TSLA"], batchSize: 2, batchCap: 3 },
+    watchlistSymbols: ["AAPL"],
+    rotationSymbols: ["AAPL", "TSLA", "NVDA", "AMD"],
+    lastTouchedAtBySymbol: {
+      AAPL: "2026-05-26T17:50:00.000Z",
+      TSLA: "2026-05-26T17:49:55.000Z",
+      NVDA: "2026-05-26T17:47:00.000Z",
+    },
+    nowMs: Date.parse("2026-05-26T17:50:15.000Z"),
+    cycleWindowMs: 60_000,
+  });
+
+  assert.equal(diagnostics.universeSize, 4);
+  assert.equal(diagnostics.cycleCoverageCount, 2);
+  assert.equal(diagnostics.cycleCoveragePct, 50);
 });

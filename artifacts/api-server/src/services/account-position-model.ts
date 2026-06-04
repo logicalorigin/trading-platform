@@ -152,12 +152,27 @@ export function positionSignedNotional(position: BrokerPositionSnapshot): number
     Number.isFinite(marketValue) &&
     Math.abs(marketValue) > POSITION_QUANTITY_EPSILON
   ) {
+    if (position.optionContract) {
+      const quantity = Number(position.quantity);
+      const multiplier = positionMultiplier(position);
+      const marketPrice = positionMarketPrice(position);
+      if (
+        Number.isFinite(quantity) &&
+        Number.isFinite(multiplier) &&
+        Number.isFinite(marketPrice) &&
+        Math.abs(quantity) > POSITION_QUANTITY_EPSILON &&
+        multiplier > 0 &&
+        marketPrice > 0
+      ) {
+        return marketPrice * quantity * multiplier;
+      }
+    }
     return marketValue;
   }
 
-  const averagePrice = Number(position.averagePrice);
+  const averagePrice = positionAveragePrice(position);
   const quantity = Number(position.quantity);
-  const multiplier = Number(position.optionContract?.multiplier ?? 1);
+  const multiplier = positionMultiplier(position);
   if (
     Number.isFinite(averagePrice) &&
     Number.isFinite(quantity) &&
@@ -173,7 +188,8 @@ export function positionSignedNotional(position: BrokerPositionSnapshot): number
 }
 
 export function positionMultiplier(position: BrokerPositionSnapshot): number {
-  return Number(position.optionContract?.multiplier ?? 1);
+  const multiplier = Number(position.optionContract?.multiplier ?? 1);
+  return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
 }
 
 export function canHydratePositionFromEquityQuote(
@@ -182,13 +198,86 @@ export function canHydratePositionFromEquityQuote(
   return !position.optionContract && position.assetClass !== "option";
 }
 
+const optionPriceLooksContractScaled = (
+  price: number,
+  position: BrokerPositionSnapshot,
+  multiplier: number,
+): boolean => {
+  if (!position.optionContract || multiplier <= 1 || price <= 0) {
+    return false;
+  }
+
+  const quantity = Math.abs(Number(position.quantity));
+  const marketValue = Math.abs(Number(position.marketValue));
+  const unrealizedPnl = Number(position.unrealizedPnl);
+  const rawAveragePrice = Number(position.averagePrice);
+  const rawMarketPrice = Number(position.marketPrice);
+  const rawPriceIsFlatFallback =
+    Number.isFinite(rawAveragePrice) &&
+    Number.isFinite(rawMarketPrice) &&
+    Math.abs(rawAveragePrice - rawMarketPrice) <= 1e-9 &&
+    Number.isFinite(unrealizedPnl) &&
+    Math.abs(unrealizedPnl) <= 0.01;
+  if (price >= multiplier * 0.5 && rawPriceIsFlatFallback) {
+    return true;
+  }
+
+  const inferredCostBasis =
+    Number.isFinite(marketValue) && Number.isFinite(unrealizedPnl)
+      ? Math.abs(marketValue - unrealizedPnl)
+      : null;
+
+  if (
+    inferredCostBasis != null &&
+    inferredCostBasis > POSITION_QUANTITY_EPSILON &&
+    quantity > POSITION_QUANTITY_EPSILON
+  ) {
+    const contractScaledBasis = Math.abs(price * quantity);
+    const premiumBasis = Math.abs(price * quantity * multiplier);
+    const contractScaledDistance =
+      Math.abs(contractScaledBasis - inferredCostBasis) / inferredCostBasis;
+    const premiumDistance =
+      Math.abs(premiumBasis - inferredCostBasis) / inferredCostBasis;
+    if (contractScaledDistance <= 0.02 && premiumDistance > 0.02) {
+      return true;
+    }
+    if (premiumDistance <= 0.02 && contractScaledDistance > 0.02) {
+      return false;
+    }
+  }
+
+  return price >= multiplier * 0.5;
+};
+
+export function normalizePositionOptionPremiumPrice(
+  position: BrokerPositionSnapshot,
+  value: unknown,
+): number {
+  const price = Number(value);
+  if (!Number.isFinite(price)) {
+    return 0;
+  }
+  const multiplier = positionMultiplier(position);
+  return optionPriceLooksContractScaled(price, position, multiplier)
+    ? price / multiplier
+    : price;
+}
+
+export function positionAveragePrice(position: BrokerPositionSnapshot): number {
+  return normalizePositionOptionPremiumPrice(position, position.averagePrice);
+}
+
+export function positionMarketPrice(position: BrokerPositionSnapshot): number {
+  return normalizePositionOptionPremiumPrice(position, position.marketPrice);
+}
+
 export function buildPositionMarketHydration(
   position: BrokerPositionSnapshot,
   quote: QuoteSnapshot | null | undefined,
   options: PositionMarketHydrationOptions = {},
 ): PositionMarketHydration {
   const quantity = Number(position.quantity);
-  const averagePrice = Number(position.averagePrice);
+  const averagePrice = positionAveragePrice(position);
   const multiplier = positionMultiplier(position);
   const quoteChange = finiteNumberOrNull(quote?.change);
   const quotePrevClose = finiteNumberOrNull(quote?.prevClose);
@@ -197,10 +286,11 @@ export function buildPositionMarketHydration(
     canHydratePositionFromEquityQuote(position),
   );
   const hasQuoteMark = quoteMark !== null;
+  const marketPrice = positionMarketPrice(position);
   const mark = hasQuoteMark
     ? quoteMark
-    : Math.abs(Number(position.marketPrice) || 0) > POSITION_QUANTITY_EPSILON
-      ? position.marketPrice
+    : Math.abs(marketPrice || 0) > POSITION_QUANTITY_EPSILON
+      ? marketPrice
       : averagePrice;
   const marketValue =
     Number.isFinite(mark) &&

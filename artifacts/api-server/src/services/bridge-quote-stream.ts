@@ -947,7 +947,7 @@ export async function fetchBridgeQuoteSnapshots(
     owner?: string;
     intent?: MarketDataIntent;
     fallbackProvider?: MarketDataFallbackProvider;
-    ttlMs?: number;
+    ttlMs?: number | null;
     tradingSession?: "overnight" | null;
   } = {},
 ): Promise<QuoteSnapshotPayload> {
@@ -976,7 +976,7 @@ export async function fetchBridgeQuoteSnapshots(
       assetClass: "equity" as const,
       symbol,
     })),
-    ttlMs: options.ttlMs ?? 10_000,
+    ttlMs: options.ttlMs === undefined ? 10_000 : options.ttlMs,
     fallbackProvider,
   });
   const admittedSymbols = admission.admitted

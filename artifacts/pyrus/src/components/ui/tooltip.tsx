@@ -1,4 +1,5 @@
 import * as React from "react"
+import { createPortal } from "react-dom"
 import * as TooltipPrimitive from "@radix-ui/react-tooltip"
 
 import { cn } from "@/lib/utils"
@@ -56,84 +57,6 @@ const nativeTitleFromContent = (content: React.ReactNode) => {
   return undefined
 }
 
-const INTERACTIVE_TRIGGER_TAGS = new Set([
-  "a",
-  "button",
-  "input",
-  "select",
-  "summary",
-  "textarea",
-])
-
-const INTERACTIVE_TRIGGER_ROLES = new Set([
-  "button",
-  "checkbox",
-  "link",
-  "menuitem",
-  "option",
-  "radio",
-  "switch",
-  "tab",
-])
-
-type InteractiveTooltipTriggerProps = {
-  asChild?: boolean
-  children?: React.ReactNode
-  href?: string
-  onClick?: React.MouseEventHandler<HTMLElement>
-  role?: string
-}
-
-function hasInteractiveTooltipDescendant(node: React.ReactNode): boolean {
-  return React.Children.toArray(node).some(
-    (child) =>
-      React.isValidElement<InteractiveTooltipTriggerProps>(child) &&
-      (isInteractiveTooltipTrigger(child) ||
-        hasInteractiveTooltipDescendant(child.props.children)),
-  )
-}
-
-function hasCompositeTooltipDescendant(node: React.ReactNode): boolean {
-  return React.Children.toArray(node).some((child) => {
-    if (!React.isValidElement<{ children?: React.ReactNode }>(child)) {
-      return false
-    }
-    if (typeof child.type !== "string") {
-      return true
-    }
-    return hasCompositeTooltipDescendant(child.props.children)
-  })
-}
-
-function isInteractiveTooltipTrigger(
-  trigger: React.ReactElement<InteractiveTooltipTriggerProps>,
-): boolean {
-  if (typeof trigger.type === "string") {
-    const tagName = trigger.type.toLowerCase()
-    if (INTERACTIVE_TRIGGER_TAGS.has(tagName)) return true
-    if (tagName === "a" && trigger.props.href) return true
-  }
-  if (trigger.props.role && INTERACTIVE_TRIGGER_ROLES.has(trigger.props.role)) {
-    return true
-  }
-  if (
-    trigger.props.asChild &&
-    hasInteractiveTooltipDescendant(trigger.props.children)
-  ) {
-    return true
-  }
-  return typeof trigger.props.onClick === "function"
-}
-
-function canUseRadixTooltipTrigger(
-  trigger: React.ReactElement<InteractiveTooltipTriggerProps>,
-): boolean {
-  if (typeof trigger.type !== "string") return false
-  if (isInteractiveTooltipTrigger(trigger)) return false
-  if (hasInteractiveTooltipDescendant(trigger.props.children)) return false
-  return !hasCompositeTooltipDescendant(trigger.props.children)
-}
-
 const disabledTriggerLayoutStyle = (
   children: React.ReactElement<{ style?: React.CSSProperties }>,
 ): React.CSSProperties | undefined => {
@@ -169,84 +92,276 @@ const withNativeTitle = (
   return React.cloneElement(children, { title })
 }
 
+type TooltipDomTriggerProps = {
+  "aria-describedby"?: string
+  onBlur?: React.FocusEventHandler<HTMLElement>
+  onFocus?: React.FocusEventHandler<HTMLElement>
+  onKeyDown?: React.KeyboardEventHandler<HTMLElement>
+  onPointerDown?: React.PointerEventHandler<HTMLElement>
+  onPointerEnter?: React.PointerEventHandler<HTMLElement>
+  onPointerLeave?: React.PointerEventHandler<HTMLElement>
+  title?: string
+}
+
+type AppTooltipPosition = {
+  top: number
+  left: number
+}
+
+const TOOLTIP_VIEWPORT_MARGIN = 8
+
+const useIsomorphicLayoutEffect =
+  typeof window === "undefined" ? React.useEffect : React.useLayoutEffect
+
+const composeTooltipHandler =
+  <Event extends React.SyntheticEvent<HTMLElement>>(
+    existing: ((event: Event) => void) | undefined,
+    next: (event: Event) => void,
+  ) =>
+  (event: Event) => {
+    existing?.(event)
+    if (!event.defaultPrevented) {
+      next(event)
+    }
+  }
+
+const clampTooltipValue = (value: number, min: number, max: number) => {
+  if (max < min) return min
+  return Math.min(Math.max(value, min), max)
+}
+
+const resolveTooltipCoordinate = (
+  triggerRect: DOMRect,
+  tooltipRect: DOMRect | null,
+  side: NonNullable<AppTooltipProps["side"]>,
+  align: NonNullable<AppTooltipProps["align"]>,
+  sideOffset: number,
+): AppTooltipPosition => {
+  const tooltipWidth = tooltipRect?.width ?? 0
+  const tooltipHeight = tooltipRect?.height ?? 0
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight
+
+  let top = triggerRect.bottom + sideOffset
+  let left = triggerRect.left + triggerRect.width / 2 - tooltipWidth / 2
+
+  if (side === "top") {
+    top = triggerRect.top - sideOffset - tooltipHeight
+  } else if (side === "left") {
+    top = triggerRect.top + triggerRect.height / 2 - tooltipHeight / 2
+    left = triggerRect.left - sideOffset - tooltipWidth
+  } else if (side === "right") {
+    top = triggerRect.top + triggerRect.height / 2 - tooltipHeight / 2
+    left = triggerRect.right + sideOffset
+  }
+
+  if (side === "top" || side === "bottom") {
+    if (align === "start") {
+      left = triggerRect.left
+    } else if (align === "end") {
+      left = triggerRect.right - tooltipWidth
+    }
+  } else if (align === "start") {
+    top = triggerRect.top
+  } else if (align === "end") {
+    top = triggerRect.bottom - tooltipHeight
+  }
+
+  return {
+    top: clampTooltipValue(
+      top,
+      TOOLTIP_VIEWPORT_MARGIN,
+      viewportHeight - tooltipHeight - TOOLTIP_VIEWPORT_MARGIN,
+    ),
+    left: clampTooltipValue(
+      left,
+      TOOLTIP_VIEWPORT_MARGIN,
+      viewportWidth - tooltipWidth - TOOLTIP_VIEWPORT_MARGIN,
+    ),
+  }
+}
+
+const tooltipPositionsEqual = (
+  left: AppTooltipPosition | null,
+  right: AppTooltipPosition,
+) => {
+  if (!left) return false
+  return (
+    Math.round(left.top) === Math.round(right.top) &&
+    Math.round(left.left) === Math.round(right.left)
+  )
+}
+
 function AppTooltip({
   content,
   children,
   disabled = false,
   side = "top",
   align = "center",
-  sideOffset,
+  sideOffset = 7,
   className,
   contentClassName,
 }: AppTooltipProps) {
   const [open, setOpen] = React.useState(false)
-
-  if (
+  const [position, setPosition] = React.useState<AppTooltipPosition | null>(null)
+  const tooltipId = React.useId()
+  const triggerRef = React.useRef<HTMLElement | null>(null)
+  const contentRef = React.useRef<HTMLDivElement | null>(null)
+  const nativeTitle = nativeTitleFromContent(content)
+  const tooltipDisabled =
     disabled ||
     content == null ||
     content === false ||
     (typeof content === "string" && !content.trim())
-  ) {
-    return <>{children}</>
-  }
 
-  const nativeTitle = nativeTitleFromContent(content)
+  const updatePosition = React.useCallback(() => {
+    const trigger = triggerRef.current
+    if (!trigger || typeof window === "undefined") return
+    const nextPosition = resolveTooltipCoordinate(
+      trigger.getBoundingClientRect(),
+      contentRef.current?.getBoundingClientRect() ?? null,
+      side,
+      align,
+      sideOffset,
+    )
+    setPosition((currentPosition) =>
+      tooltipPositionsEqual(currentPosition, nextPosition)
+        ? currentPosition
+        : nextPosition,
+      )
+  }, [align, side, sideOffset])
+
+  const showTooltip = React.useCallback(
+    (event: React.SyntheticEvent<HTMLElement>) => {
+      if (tooltipDisabled) return
+      triggerRef.current = event.currentTarget
+      setOpen(true)
+      updatePosition()
+    },
+    [tooltipDisabled, updatePosition],
+  )
+
+  const hideTooltip = React.useCallback(() => {
+    setOpen(false)
+  }, [])
+
+  const tooltipTriggerProps = React.useCallback(
+    (props: TooltipDomTriggerProps): TooltipDomTriggerProps => ({
+      "aria-describedby": open
+        ? [props["aria-describedby"], tooltipId].filter(Boolean).join(" ")
+        : props["aria-describedby"],
+      title: props.title || nativeTitle,
+      onPointerEnter: composeTooltipHandler(
+        props.onPointerEnter,
+        (event: React.PointerEvent<HTMLElement>) => {
+          if (event.pointerType !== "touch") {
+            showTooltip(event)
+          }
+        },
+      ),
+      onPointerLeave: composeTooltipHandler(props.onPointerLeave, hideTooltip),
+      onFocus: composeTooltipHandler(props.onFocus, showTooltip),
+      onBlur: composeTooltipHandler(props.onBlur, hideTooltip),
+      onKeyDown: composeTooltipHandler(
+        props.onKeyDown,
+        (event: React.KeyboardEvent<HTMLElement>) => {
+          if (event.key === "Escape") {
+            hideTooltip()
+          }
+        },
+      ),
+      onPointerDown: composeTooltipHandler(
+        props.onPointerDown,
+        (event: React.PointerEvent<HTMLElement>) => {
+          if (event.pointerType === "touch" || event.pointerType === "pen") {
+            triggerRef.current = event.currentTarget
+            setOpen((currentOpen) => !currentOpen)
+            updatePosition()
+          }
+        },
+      ),
+    }),
+    [hideTooltip, nativeTitle, open, showTooltip, tooltipId, updatePosition],
+  )
+
   const trigger = isDisabledDomButton(children) ? (
     <span
       className={cn("ra-tooltip-disabled-trigger", className)}
       style={disabledTriggerLayoutStyle(children)}
-      title={nativeTitle}
+      {...tooltipTriggerProps({ title: nativeTitle })}
     >
       {children}
     </span>
+  ) : React.isValidElement<TooltipDomTriggerProps>(children) &&
+    typeof children.type === "string" ? (
+    React.cloneElement(children, tooltipTriggerProps(children.props))
   ) : React.isValidElement<{ title?: string }>(children) ? (
     withNativeTitle(children, nativeTitle)
   ) : (
-    <span className={className} title={nativeTitle}>
+    <span
+      className={className}
+      {...tooltipTriggerProps({ title: nativeTitle })}
+    >
       {children}
     </span>
   )
-  if (
-    React.isValidElement<InteractiveTooltipTriggerProps>(trigger) &&
-    !canUseRadixTooltipTrigger(trigger)
-  ) {
-    return <>{trigger}</>
+
+  useIsomorphicLayoutEffect(() => {
+    if (open && !tooltipDisabled) updatePosition()
+  }, [content, open, tooltipDisabled, updatePosition])
+
+  React.useEffect(() => {
+    if (!open || tooltipDisabled) return undefined
+    const handleWindowChange = () => updatePosition()
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (triggerRef.current?.contains(target)) return
+      if (contentRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    window.addEventListener("resize", handleWindowChange)
+    window.addEventListener("scroll", handleWindowChange, true)
+    document.addEventListener("pointerdown", handlePointerDown, true)
+    return () => {
+      window.removeEventListener("resize", handleWindowChange)
+      window.removeEventListener("scroll", handleWindowChange, true)
+      document.removeEventListener("pointerdown", handlePointerDown, true)
+    }
+  }, [open, tooltipDisabled, updatePosition])
+
+  if (tooltipDisabled) {
+    return <>{children}</>
   }
 
-  const touchTrigger =
-    React.isValidElement<
-      InteractiveTooltipTriggerProps & {
-        onPointerDown?: React.PointerEventHandler<HTMLElement>
-      }
-    >(trigger) && !isInteractiveTooltipTrigger(trigger)
-      ? React.cloneElement(trigger, {
-          onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
-            trigger.props.onPointerDown?.(event)
-            if (event.defaultPrevented) return
-            if (event.pointerType !== "touch" && event.pointerType !== "pen") return
-            if (!open) {
-              event.preventDefault()
-              event.stopPropagation()
-              setOpen(true)
-              return
-            }
-            setOpen(false)
-          },
-        })
-      : trigger
+  const tooltip =
+    open && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            id={tooltipId}
+            ref={contentRef}
+            role="tooltip"
+            className={cn("ra-tooltip-content", contentClassName)}
+            style={{
+              position: "fixed",
+              top: position?.top ?? 0,
+              left: position?.left ?? 0,
+              maxWidth: "min(360px, calc(100vw - 16px))",
+              visibility: position ? "visible" : "hidden",
+              zIndex: 90,
+            }}
+          >
+            {content}
+          </div>,
+          document.body,
+        )
+      : null
 
   return (
-    <Tooltip open={open} onOpenChange={setOpen}>
-      <TooltipTrigger asChild>{touchTrigger}</TooltipTrigger>
-      <TooltipContent
-        side={side}
-        align={align}
-        sideOffset={sideOffset}
-        className={contentClassName}
-      >
-        {content}
-      </TooltipContent>
-    </Tooltip>
+    <>
+      {trigger}
+      {tooltip}
+    </>
   )
 }
 

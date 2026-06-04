@@ -102,6 +102,7 @@ import type {
   GetResearchEarningsCalendarParams,
   GetResearchFinancialsParams,
   GetResearchFundamentalsParams,
+  GetResearchHighBetaUniverseParams,
   GetResearchSecFilingsParams,
   GetResearchSnapshotsParams,
   GetResearchTranscriptParams,
@@ -112,9 +113,11 @@ import type {
   GexDashboardResponse,
   HealthStatus,
   IbkrBridgeActivationCancelResponse,
+  IbkrBridgeActivationDiagnosticsResponse,
   IbkrBridgeActivationStatusResponse,
   IbkrBridgeAttachResponse,
   IbkrBridgeDetachResponse,
+  IbkrBridgeHelperMetadataResponse,
   IbkrBridgeLauncherResponse,
   IbkrBridgeLoginEnvelopeClaimResponse,
   IbkrBridgeLoginKeyReadResponse,
@@ -170,6 +173,7 @@ import type {
   ResearchFilingsResponse,
   ResearchFinancialsResponse,
   ResearchFundamentalsResponse,
+  ResearchHighBetaUniverseResponse,
   ResearchSnapshotsResponse,
   ResearchStatus,
   ResearchTranscriptResponse,
@@ -2171,6 +2175,81 @@ export function useGetIbkrBridgeLauncher<TData = Awaited<ReturnType<typeof getIb
 
 
 /**
+ * @summary Read paired IBKR helper metadata without starting a launch
+ */
+export const getGetIbkrBridgeHelperMetadataUrl = () => {
+
+
+
+
+  return `/api/ibkr/bridge/helper-metadata`
+}
+
+export const getIbkrBridgeHelperMetadata = async ( options?: RequestInit): Promise<IbkrBridgeHelperMetadataResponse> => {
+
+  return customFetch<IbkrBridgeHelperMetadataResponse>(getGetIbkrBridgeHelperMetadataUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetIbkrBridgeHelperMetadataQueryKey = () => {
+    return [
+    `/api/ibkr/bridge/helper-metadata`
+    ] as const;
+    }
+
+
+export const getGetIbkrBridgeHelperMetadataQueryOptions = <TData = Awaited<ReturnType<typeof getIbkrBridgeHelperMetadata>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeHelperMetadata>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetIbkrBridgeHelperMetadataQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIbkrBridgeHelperMetadata>>> = ({ signal }) => getIbkrBridgeHelperMetadata({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeHelperMetadata>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetIbkrBridgeHelperMetadataQueryResult = NonNullable<Awaited<ReturnType<typeof getIbkrBridgeHelperMetadata>>>
+export type GetIbkrBridgeHelperMetadataQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Read paired IBKR helper metadata without starting a launch
+ */
+
+export function useGetIbkrBridgeHelperMetadata<TData = Awaited<ReturnType<typeof getIbkrBridgeHelperMetadata>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeHelperMetadata>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetIbkrBridgeHelperMetadataQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
  * @summary List paired Windows desktop agents for remote IBKR bridge launch
  */
 export const getListIbkrRemoteDesktopsUrl = () => {
@@ -2599,6 +2678,81 @@ export const useReadIbkrRemoteDesktopJobStatus = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getReadIbkrRemoteDesktopJobStatusMutationOptions(options));
     }
+
+/**
+ * @summary Read the latest IBKR bridge activation diagnostics
+ */
+export const getGetIbkrBridgeActivationDiagnosticsUrl = () => {
+
+
+
+
+  return `/api/ibkr/activation/diagnostics`
+}
+
+export const getIbkrBridgeActivationDiagnostics = async ( options?: RequestInit): Promise<IbkrBridgeActivationDiagnosticsResponse> => {
+
+  return customFetch<IbkrBridgeActivationDiagnosticsResponse>(getGetIbkrBridgeActivationDiagnosticsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetIbkrBridgeActivationDiagnosticsQueryKey = () => {
+    return [
+    `/api/ibkr/activation/diagnostics`
+    ] as const;
+    }
+
+
+export const getGetIbkrBridgeActivationDiagnosticsQueryOptions = <TData = Awaited<ReturnType<typeof getIbkrBridgeActivationDiagnostics>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeActivationDiagnostics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetIbkrBridgeActivationDiagnosticsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getIbkrBridgeActivationDiagnostics>>> = ({ signal }) => getIbkrBridgeActivationDiagnostics({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeActivationDiagnostics>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetIbkrBridgeActivationDiagnosticsQueryResult = NonNullable<Awaited<ReturnType<typeof getIbkrBridgeActivationDiagnostics>>>
+export type GetIbkrBridgeActivationDiagnosticsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Read the latest IBKR bridge activation diagnostics
+ */
+
+export function useGetIbkrBridgeActivationDiagnostics<TData = Awaited<ReturnType<typeof getIbkrBridgeActivationDiagnostics>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getIbkrBridgeActivationDiagnostics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetIbkrBridgeActivationDiagnosticsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
 
 /**
  * @summary Queue an IBKR bridge launch on a paired Windows desktop agent
@@ -9256,6 +9410,89 @@ export function useGetResearchStatus<TData = Awaited<ReturnType<typeof getResear
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetResearchStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * Builds a dry-run high-beta universe from the existing FMP screener integration and validates candidates through Massive market-data/reference/options coverage.
+ * @summary Preview the high-beta STA universe
+ */
+export const getGetResearchHighBetaUniverseUrl = (params?: GetResearchHighBetaUniverseParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/research/high-beta-universe?${stringifiedParams}` : `/api/research/high-beta-universe`
+}
+
+export const getResearchHighBetaUniverse = async (params?: GetResearchHighBetaUniverseParams, options?: RequestInit): Promise<ResearchHighBetaUniverseResponse> => {
+
+  return customFetch<ResearchHighBetaUniverseResponse>(getGetResearchHighBetaUniverseUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetResearchHighBetaUniverseQueryKey = (params?: GetResearchHighBetaUniverseParams,) => {
+    return [
+    `/api/research/high-beta-universe`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetResearchHighBetaUniverseQueryOptions = <TData = Awaited<ReturnType<typeof getResearchHighBetaUniverse>>, TError = ErrorType<unknown>>(params?: GetResearchHighBetaUniverseParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getResearchHighBetaUniverse>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetResearchHighBetaUniverseQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getResearchHighBetaUniverse>>> = ({ signal }) => getResearchHighBetaUniverse(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getResearchHighBetaUniverse>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetResearchHighBetaUniverseQueryResult = NonNullable<Awaited<ReturnType<typeof getResearchHighBetaUniverse>>>
+export type GetResearchHighBetaUniverseQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Preview the high-beta STA universe
+ */
+
+export function useGetResearchHighBetaUniverse<TData = Awaited<ReturnType<typeof getResearchHighBetaUniverse>>, TError = ErrorType<unknown>>(
+ params?: GetResearchHighBetaUniverseParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getResearchHighBetaUniverse>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetResearchHighBetaUniverseQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

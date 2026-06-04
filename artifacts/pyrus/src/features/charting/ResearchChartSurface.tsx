@@ -4110,6 +4110,75 @@ const positionRiskLineOverlaysEqual = (
   return true;
 };
 
+const positionBubbleOverlaysEqual = (
+  left: PositionBubbleOverlay[],
+  right: PositionBubbleOverlay[],
+): boolean => {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+
+  for (let index = 0; index < left.length; index += 1) {
+    const current = left[index];
+    const next = right[index];
+    if (
+      current.id !== next.id ||
+      current.dataTestId !== next.dataTestId ||
+      current.color !== next.color ||
+      current.border !== next.border ||
+      current.fill !== next.fill ||
+      current.label !== next.label ||
+      current.detail !== next.detail ||
+      !numbersClose(current.left, next.left) ||
+      !numbersClose(current.top, next.top) ||
+      !numbersClose(current.width, next.width) ||
+      !numbersClose(current.height, next.height)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const positionOffPaneOverlaysEqual = (
+  left: PositionOffPaneOverlay[],
+  right: PositionOffPaneOverlay[],
+): boolean => {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+
+  for (let index = 0; index < left.length; index += 1) {
+    const current = left[index];
+    const next = right[index];
+    if (
+      current.id !== next.id ||
+      current.dataTestId !== next.dataTestId ||
+      current.color !== next.color ||
+      current.border !== next.border ||
+      current.fill !== next.fill ||
+      current.direction !== next.direction ||
+      current.label !== next.label ||
+      !numbersClose(current.left, next.left) ||
+      !numbersClose(current.top, next.top) ||
+      !numbersClose(current.width, next.width) ||
+      !numbersClose(current.height, next.height)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const gexProjectionConeSvgOverlaysEqual = (
+  left: GexProjectionConeSvgOverlay | null,
+  right: GexProjectionConeSvgOverlay | null,
+): boolean => {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return JSON.stringify(left) === JSON.stringify(right);
+};
+
 const indicatorBadgeOverlaysEqual = (
   left: IndicatorBadgeOverlay[],
   right: IndicatorBadgeOverlay[],
@@ -7052,6 +7121,23 @@ const ResearchChartSurfaceComponent = ({
       positionRiskLineOverlaysEqual(current, next) ? current : next,
     );
   };
+  const syncPositionBubbleOverlaysState = (next: PositionBubbleOverlay[]) => {
+    setPositionBubbleOverlays((current) =>
+      positionBubbleOverlaysEqual(current, next) ? current : next,
+    );
+  };
+  const syncPositionOffPaneOverlaysState = (next: PositionOffPaneOverlay[]) => {
+    setPositionOffPaneOverlays((current) =>
+      positionOffPaneOverlaysEqual(current, next) ? current : next,
+    );
+  };
+  const syncGexProjectionConeSvgOverlayState = (
+    next: GexProjectionConeSvgOverlay | null,
+  ) => {
+    setGexProjectionConeSvgOverlay((current) =>
+      gexProjectionConeSvgOverlaysEqual(current, next) ? current : next,
+    );
+  };
   const syncSelectedTradeConnectorState = (
     next: TradeConnectorOverlay | null,
   ) => {
@@ -9817,9 +9903,9 @@ const ResearchChartSurfaceComponent = ({
       !containerRef.current
     ) {
       syncOverlayState(setWindowOverlays, []);
-      setGexProjectionConeSvgOverlay(null);
-      setPositionBubbleOverlays([]);
-      setPositionOffPaneOverlays([]);
+      syncGexProjectionConeSvgOverlayState(null);
+      syncPositionBubbleOverlaysState([]);
+      syncPositionOffPaneOverlaysState([]);
       syncPositionRiskLineOverlaysState([]);
       syncOverlayState(setZoneOverlays, []);
       syncOverlayState(setVerticalDrawingOverlays, []);
@@ -9830,7 +9916,7 @@ const ResearchChartSurfaceComponent = ({
       syncChartEventOverlaysState([]);
       syncFlowClusterOverlaysState([]);
       syncFlowVolumeOverlaysState([]);
-      setFlowTooltip(null);
+      setFlowTooltip((current) => (current === null ? current : null));
       syncIndicatorDashboardOverlayState(null);
       syncTradeThresholdOverlaysState([]);
       syncSelectedTradeConnectorState(null);
@@ -9859,7 +9945,7 @@ const ResearchChartSurfaceComponent = ({
         extendedSessionWindows,
       ),
     );
-    setGexProjectionConeSvgOverlay(
+    syncGexProjectionConeSvgOverlayState(
       buildGexProjectionConeSvgOverlay({
         chart: chartRef.current,
         series: activePriceSeriesRef.current,
@@ -9873,7 +9959,7 @@ const ResearchChartSurfaceComponent = ({
         dataTestId,
       }),
     );
-    setPositionBubbleOverlays(
+    syncPositionBubbleOverlaysState(
       positionOverlaysEnabled
         ? buildPositionBubbleOverlays(
             activePriceSeriesRef.current,
@@ -9884,7 +9970,7 @@ const ResearchChartSurfaceComponent = ({
           )
         : [],
     );
-    setPositionOffPaneOverlays(
+    syncPositionOffPaneOverlaysState(
       positionOverlaysEnabled && resolvedPositionOverlays.density === "mini"
         ? buildPositionOffPaneOverlays({
             entryLines: resolvedPositionOverlays.entryLines,

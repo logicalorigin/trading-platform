@@ -2,25 +2,29 @@
 
 This is a pointer to the active durable handoff. Do not use this file as the full session narrative.
 
-- Last Updated (MT): `2026-06-03 20:20:12 MDT`
-- Last Updated (UTC): `2026-06-04T02:20:12.575Z`
-- Native Codex Session ID: `019e906b-b44d-76d2-a8d5-020be84bba6e`
-- Summary: 2026-06-03 20:20:12 MDT | 019e906b-b44d-76d2-a8d5-020be84bba6e | please get yourself up to speed on this platform/repo and find the most recently dropped sessions
-- Handoff: `SESSION_HANDOFF_2026-06-03_019e906b-b44d-76d2-a8d5-020be84bba6e.md`
+- Last Updated (MT): `2026-06-04 13:13:05 MDT`
+- Last Updated (UTC): `2026-06-04T19:13:05.926Z`
+- Native Codex Session ID: `019e940a-cceb-7790-889f-d5534cc0814c`
+- Summary: 2026-06-04 13:13:05 MDT | 019e940a-cceb-7790-889f-d5534cc0814c | please find the 3 sessions we ust dropped
+- Handoff: `SESSION_HANDOFF_2026-06-04_019e940a-cceb-7790-889f-d5534cc0814c.md`
 - Master Index: `SESSION_HANDOFF_MASTER.md`
 
 ## Current Status
 
-- Current recovery pass completed. Local Codex runtime storage contains two repo rollouts after the latest reconnect: interrupted `019e9066-b78f-7160-b516-c85c2e7fe345` and this session `019e906b-b44d-76d2-a8d5-020be84bba6e`.
-- Newest concrete dropped/interrupted Codex session: `019e9066-b78f-7160-b516-c85c2e7fe345`, rollout `/home/runner/.codex/sessions/2026/06/03/rollout-2026-06-03T20-11-51-019e9066-b78f-7160-b516-c85c2e7fe345.jsonl`.
-- Newest durable pre-disconnect workstream note: `SESSION_HANDOFF_LIVE_2026-06-03_signals-table-matrix-audit.md`; prior recovery locator `SESSION_HANDOFF_2026-06-03_019e8ed9-7dcd-7812-982f-a2d96ed0676f.md` points there for continuation.
-- Worktree is `main` ahead of `origin/main` by 2 commits with existing dirty app changes in `artifacts/api-server/src/services/platform.ts`, `artifacts/api-server/src/services/runtime-flight-recorder.ts`, and `artifacts/ibkr-bridge/src/tws-provider.ts`.
+- Dropped-session recovery completed for the current request.
+- Local Codex runtime/session storage only retained this current thread after the reset; the three dropped sessions are recoverable from repo handoffs:
+  - `019e934b-5d2a-7ab2-8676-71145b8a4c03`
+  - `019e92c2-ff99-78e0-a36f-3ddb9c03a700`
+  - `019e92c1-77d0-7fd0-b7e3-01bb797e2227`
+- Replit/PYRUS runtime is currently up under the Run App supervisor, but the flight recorder shows recent abrupt/web-exit incidents and current API pressure/bar 429 symptoms.
+- No app source files were changed by this recovery pass; only handoff metadata was added/updated.
 
 ## Next Recommended Steps
 
-1. Resume from `SESSION_HANDOFF_LIVE_2026-06-03_signals-table-matrix-audit.md` for the substantive PYRUS/API work.
-2. Review the `submitRawOrders` reindent in `artifacts/ibkr-bridge/src/tws-provider.ts` before landing the current dirty changes.
+1. Decide which recovered session to resume.
+2. Use `SESSION_HANDOFF_2026-06-04_019e934b-5d2a-7ab2-8676-71145b8a4c03.md` plus the prior current-pointer note for the latest root-shell/max-depth follow-up.
+3. Use `SESSION_HANDOFF_2026-06-04_019e92c2-ff99-78e0-a36f-3ddb9c03a700.md` for the signal-matrix hydration thread.
 
 ## Validation Snapshot
 
-- Recovery commands only; no tests or typechecks were run in this session.
+- None detected in this session transcript.

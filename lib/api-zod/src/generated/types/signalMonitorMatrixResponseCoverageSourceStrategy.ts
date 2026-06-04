@@ -12,4 +12,5 @@ export type SignalMonitorMatrixResponseCoverageSourceStrategy = typeof SignalMon
 export const SignalMonitorMatrixResponseCoverageSourceStrategy = {
   native_timeframes: 'native_timeframes',
   native_timeframes_live_retry: 'native_timeframes_live_retry',
+  native_timeframes_live_retry_exact_backfill: 'native_timeframes_live_retry_exact_backfill',
 } as const;

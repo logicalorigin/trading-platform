@@ -12,6 +12,7 @@ import {
   getMassiveStockWebSocketDiagnostics,
   subscribeMassiveStockWebSocket,
 } from "./massive-stock-websocket";
+import { enrichStockQuoteWithDayChangeContext } from "./stock-quote-day-change-context";
 
 type MassiveStockQuote = QuoteSnapshot & { source: "massive" };
 type QuoteSnapshotPayload = {
@@ -101,7 +102,7 @@ function quoteFromState(state: QuoteState): MassiveStockQuote | null {
   }
 
   const now = Date.now();
-  return {
+  const quote: MassiveStockQuote = {
     symbol: state.symbol,
     price,
     last: state.last,
@@ -135,6 +136,7 @@ function quoteFromState(state: QuoteState): MassiveStockQuote | null {
     latency: null,
     source: "massive",
   };
+  return enrichStockQuoteWithDayChangeContext(quote);
 }
 
 function getCurrentPayload(symbols: string[]): QuoteSnapshotPayload {
@@ -212,7 +214,6 @@ function handleWebSocketMessage(message: unknown): void {
     mergeQuoteState({
       symbol,
       last: readNumber(record, ["p", "price"]),
-      volume: readNumber(record, ["s", "size"]),
       updatedAt,
     });
   }

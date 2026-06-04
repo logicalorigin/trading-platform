@@ -740,23 +740,35 @@ test("algo signal enrichment derives counters scoring gates and sync", () => {
     label: "+2.0%",
     detail: "+10.00",
   });
-  assert.deepEqual(resolveSignalMove({ signalPrice: 500 }, null, { underlyingPrice: 510 }), {
-    value: 10,
-    pct: 2,
-    label: "+2.0%",
-    detail: "+10.00",
+  assert.deepEqual(resolveSignalMove({ signalPrice: 500 }, { last: 507.5 }), {
+    value: 7.5,
+    pct: 1.5,
+    label: "+1.5%",
+    detail: "+7.50",
   });
-  assert.deepEqual(resolveSignalMove({ signalPrice: 500 }, null, { currentPrice: 490 }), {
+  assert.deepEqual(resolveSignalMove({ signalPrice: 500 }, { mark: 495 }), {
+    value: -5,
+    pct: -1,
+    label: "-1.0%",
+    detail: "-5.00",
+  });
+  assert.deepEqual(resolveSignalMove({ signalPrice: 500 }, { price: 490 }), {
     value: -10,
     pct: -2,
     label: "-2.0%",
     detail: "-10.00",
   });
-  assert.deepEqual(resolveSignalMove({}, null, { signalPrice: 500, currentPrice: 510 }), {
+  assert.deepEqual(resolveSignalMove({}, { price: 510 }, { signalPrice: 500 }), {
     value: 10,
     pct: 2,
     label: "+2.0%",
     detail: "+10.00",
+  });
+  assert.deepEqual(resolveSignalMove({}, null, { signalPrice: 500, currentPrice: 510 }), {
+    value: null,
+    pct: null,
+    label: "—",
+    detail: "—",
   });
   assert.deepEqual(
     resolveSignalMove(
@@ -765,10 +777,10 @@ test("algo signal enrichment derives counters scoring gates and sync", () => {
       { signalPrice: 500, underlyingPrice: 510 },
     ),
     {
-      value: 10,
-      pct: 2,
-      label: "+2.0%",
-      detail: "+10.00",
+      value: null,
+      pct: null,
+      label: "—",
+      detail: "—",
     },
   );
   assert.deepEqual(resolveSignalMove({ signalPrice: 500 }, null, {}), {

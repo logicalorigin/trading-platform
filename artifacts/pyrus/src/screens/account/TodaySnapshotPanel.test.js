@@ -22,6 +22,7 @@ test("today snapshot heatmap uses the same live option rows as positions", () =>
   assert.match(positionsSource, /getOpenPositionRows/);
   assert.doesNotMatch(positionsSource, /filter\(isOpenPositionRow\)/);
   assert.match(source, /useLiveOptionPositionRows/);
+  assert.match(source, /marketDataOwner: "today-positions"/);
   assert.match(source, /PositionOptionQuoteStreams/);
   assert.match(source, /positions=\{livePositionRows\}/);
 });

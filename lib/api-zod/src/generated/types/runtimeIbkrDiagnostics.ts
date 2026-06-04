@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { EnvironmentMode } from './environmentMode';
+import type { RuntimeIbkrDiagnosticsDesktopAgentCompatibility } from './runtimeIbkrDiagnosticsDesktopAgentCompatibility';
 import type { RuntimeIbkrDiagnosticsMarketDataMode } from './runtimeIbkrDiagnosticsMarketDataMode';
 import type { RuntimeIbkrDiagnosticsStreamState } from './runtimeIbkrDiagnosticsStreamState';
 import type { RuntimeIbkrDiagnosticsTransport } from './runtimeIbkrDiagnosticsTransport';
@@ -21,7 +22,11 @@ export interface RuntimeIbkrDiagnostics {
   runtimeOverrideUpdatedAt: Date | null;
   desktopAgentOnline: boolean;
   /** @nullable */
+  desktopAgentCompatibility: RuntimeIbkrDiagnosticsDesktopAgentCompatibility;
+  desktopAgentCompatible: boolean;
+  /** @nullable */
   desktopAgentHelperVersion: string | null;
+  desktopAgentKnownBad: boolean;
   desktopAgentExpectedHelperVersion: string;
   desktopAgentUpgradeRequired: boolean;
   reconnectAvailable: boolean;

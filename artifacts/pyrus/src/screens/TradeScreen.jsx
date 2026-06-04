@@ -117,6 +117,10 @@ import {
   QUERY_DEFAULTS,
 } from "../features/platform/queryDefaults";
 import {
+  collectChartSourceDataIssues,
+  collectQuoteDataIssues,
+} from "../features/platform/dataIssueModel.js";
+import {
   usePositions,
   useToast,
 } from "../features/platform/platformContexts.jsx";
@@ -170,6 +174,7 @@ import {
 } from "../features/platform/runtimeCache";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import { MetricChip } from "../components/platform/primitives.jsx";
+import { DataIssueInlineIcon } from "../components/platform/DataIssueInlineIcon.jsx";
 import {
   BROAD_MARKET_FLOW_STORE_KEY,
   useMarketFlowSnapshotForStoreKey,
@@ -317,6 +322,8 @@ const TradeContractContextStrip = ({
   barFreshness,
   barUpdatedAt,
   flowBadge,
+  quoteIssues = [],
+  sourceIssues = [],
 }) => {
   const sourceTone =
     statusTone === "good"
@@ -371,6 +378,7 @@ const TradeContractContextStrip = ({
         dot
         style={{ maxWidth: dim(94) }}
       />
+      <DataIssueInlineIcon issues={sourceIssues} side="bottom" align="center" />
       <MetricChip
         label="B/A"
         value={`${formatContextPrice(bid)} / ${formatContextPrice(ask)}`}
@@ -378,6 +386,7 @@ const TradeContractContextStrip = ({
         title={`Quote freshness: ${quoteFreshness || "unknown"}`}
         style={{ maxWidth: dim(112) }}
       />
+      <DataIssueInlineIcon issues={quoteIssues} side="bottom" align="center" />
       <MetricChip
         label="Spr"
         value={
@@ -1376,6 +1385,37 @@ const TradeContractDetailPanel = ({
     rawBarFreshness,
   );
   const statusLabel = optionChartSourceState.label;
+  const quoteIssues = collectQuoteDataIssues(
+    {
+      ...(liveQuote || {}),
+      freshness: quoteFreshness,
+      updatedAt: quoteUpdatedAt,
+      status: isFiniteNumber(bid) && isFiniteNumber(ask)
+        ? liveQuote?.status
+        : isFiniteNumber(mark)
+          ? "metadata"
+          : "unavailable",
+      unavailableDetail:
+        isFiniteNumber(bid) && isFiniteNumber(ask)
+          ? null
+          : isFiniteNumber(mark)
+            ? "Option mark is available, but bid/ask is missing."
+            : "Option quote bid, ask, and mark are unavailable.",
+    },
+    {
+      valueLabel: `${contractLabel} quote`,
+      source: "trade option quote",
+      nextAction:
+        "Check quote hydration or wait for the IBKR option stream before using this contract for order pricing.",
+    },
+  );
+  const sourceIssues = collectChartSourceDataIssues(optionChartSourceState, {
+    valueLabel: `${contractLabel} chart`,
+    source: "trade option chart",
+    observedAt: barUpdatedAt,
+    nextAction:
+      "Confirm the option chart source is live before relying on the displayed option history.",
+  });
   const optionChartEmptyCopy = getOptionChartEmptyCopy({
     emptyReason: chartEmptyReason,
     requestFailed: chartRequestFailed,
@@ -1693,6 +1733,8 @@ const TradeContractDetailPanel = ({
                       barFreshness={barFreshness}
                       barUpdatedAt={barUpdatedAt}
                       flowBadge={displayBars.length ? chartFlowBadge : null}
+                      quoteIssues={quoteIssues}
+                      sourceIssues={sourceIssues}
                     />
                   }
                   rightSlot={({ iconOnly }) => (

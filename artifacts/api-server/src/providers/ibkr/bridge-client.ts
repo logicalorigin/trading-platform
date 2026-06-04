@@ -1979,6 +1979,7 @@ export class IbkrBridgeClient {
   async cancelOrder(input: {
     accountId: string;
     orderId: string;
+    mode?: RuntimeMode | null;
     confirm?: boolean | null;
     manualIndicator?: boolean | null;
     extOperator?: string | null;

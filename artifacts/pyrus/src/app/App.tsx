@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import LogoLoader from "../components/LogoLoader";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
+import { useBootHandoffElapsedMs } from "./bootLoaderHandoff";
 import {
   completeBootProgressTask,
   failBootProgressTask,
@@ -56,10 +57,11 @@ type AppProps = {
 
 function AppShellFallback({ bootLoaderElapsedMs = null }: AppProps) {
   const progress = useBootProgress();
+  const bootHandoffElapsedMs = useBootHandoffElapsedMs(bootLoaderElapsedMs);
 
   return (
     <LogoLoader
-      bootHandoffElapsedMs={bootLoaderElapsedMs}
+      bootHandoffElapsedMs={bootHandoffElapsedMs}
       label="Starting PYRUS"
       progress={progress}
       testId="app-loading-fallback"

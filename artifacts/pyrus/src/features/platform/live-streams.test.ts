@@ -21,6 +21,7 @@ import {
   mergeOptionQuoteSnapshotForCache,
   mergeOptionChainContracts,
   mergeQuotesIntoCache,
+  patchAccountPositionsFromOptionQuotes,
   patchOptionQuotesIntoContracts,
   queueAccountPagePayloadToCache,
 } from "./live-streams";
@@ -180,21 +181,26 @@ test("account page owns one account-monitor option quote stream for positions su
   assert.match(accountScreenSource, /accountQueriesEnabled && accountCriticalReady/);
   assert.doesNotMatch(accountScreenSource, /!shadowMode && accountQueriesEnabled && accountCriticalReady/);
   assert.match(accountScreenSource, /currentPositionsCount=\{openAccountPositions\.length\}/);
+  assert.match(accountScreenSource, /const accountOptionQuoteOwner = useMemo/);
   assert.match(accountScreenSource, /<PositionOptionQuoteStreams/);
   assert.match(accountScreenSource, /groups=\{accountOptionQuoteGroups\}/);
   assert.match(accountScreenSource, /enabled=\{accountLiveOptionQuotesEnabled\}/);
+  assert.match(accountScreenSource, /owner=\{accountOptionQuoteOwner\}/);
   assert.match(accountScreenSource, /streamLiveOptionQuotes=\{false\}/);
   assert.match(todaySource, /getOpenPositionRows\(positionsQuery\?\.data\?\.positions \|\| \[\]\)/);
   assert.match(todaySource, /streamLiveOptionQuotes = true/);
   assert.match(positionsSource, /streamLiveOptionQuotes = true/);
-  assert.match(positionsSource, /useRegisterPositionMarketDataSymbols\(\s*`positions:\$\{surfaceId\}`,\s*positionUnderlyingSymbols,\s*liveOptionQuotesEnabled,\s*\)/);
+  assert.match(positionsSource, /marketDataOwner: `positions:\$\{surfaceId\}`/);
+  assert.match(positionsSource, /useRegisterPositionMarketDataSymbols\(\s*marketDataOwner,\s*positionUnderlyingSymbols/);
   assert.match(quoteStreamsSource, /intent: "account-monitor-live"/);
-  assert.match(quoteStreamsSource, /owner: "account-position-option-quotes:ui"/);
+  assert.match(quoteStreamsSource, /owner = "account-position-option-quotes:ui"/);
+  assert.match(quoteStreamsSource, /owner,\s*\n\s*intent: "account-monitor-live"/);
+  assert.match(quoteStreamsSource, /requiresGreeks: false/);
   assert.doesNotMatch(quoteStreamsSource, /account-positions:\$\{underlying\}/);
-  assert.match(quoteStreamsSource, /underlying: null/);
-  assert.doesNotMatch(quoteStreamsSource, /groups\.set\(underlying/);
+  assert.match(quoteStreamsSource, /const underlying = rowOptionUnderlying\(row\)/);
+  assert.match(quoteStreamsSource, /groups\.set\(key, group\)/);
   assert.doesNotMatch(quoteStreamsSource, /enabled && underlying/);
-  assert.doesNotMatch(quoteStreamsSource, /key=\{group\.underlying\}/);
+  assert.match(quoteStreamsSource, /key=\{group\.underlying \|\| group\.providerContractIds\.join\(","\)\}/);
 });
 
 test("option quote REST fallback preserves websocket owner and intent", () => {
@@ -602,6 +608,82 @@ test("option quote cache merge preserves usable prices from partial zero snapsho
   assert.equal(merged.openInterest, 250);
   assert.equal(merged.delta, 0.52);
   assert.equal(merged.updatedAt, "2026-04-28T14:30:00.000Z");
+});
+
+test("option quote stream patches shared account positions and totals", () => {
+  const current = {
+    accountId: "U1",
+    currency: "USD",
+    updatedAt: "2026-06-04T18:00:00.000Z",
+    totals: {
+      cash: 1_000,
+      grossLong: 520,
+      grossShort: 0,
+      netExposure: 520,
+      unrealizedPnl: 0,
+      weightPercent: 0,
+    },
+    positions: [
+      {
+        id: "U1:880754762",
+        accountId: "U1",
+        accounts: ["U1"],
+        symbol: "F",
+        description: "F 2026-06-05 11 C",
+        assetClass: "Options",
+        optionContract: {
+          underlying: "F",
+          multiplier: 100,
+          sharesPerContract: 100,
+          providerContractId: "880754762",
+        },
+        sector: "Consumer Cyclical",
+        quantity: 5,
+        averageCost: 1.04,
+        mark: 1.04,
+        dayChange: null,
+        dayChangePercent: null,
+        unrealizedPnl: 0,
+        unrealizedPnlPercent: 0,
+        marketValue: 520,
+        weightPercent: 0,
+        betaWeightedDelta: null,
+        lots: [],
+        openOrders: [],
+        source: "IBKR_POSITIONS",
+      },
+    ],
+  };
+
+  const patched = patchAccountPositionsFromOptionQuotes(current as any, [
+    {
+      symbol: "F",
+      providerContractId: "880754762",
+      bid: 0.8,
+      ask: 0.84,
+      price: 0.82,
+      change: -0.22,
+      changePercent: -21.15,
+      updatedAt: "2026-06-04T18:00:01.000Z",
+      source: "option_quote",
+    } as any,
+  ]) as any;
+
+  assert.notEqual(patched, current);
+  assert.equal(Number(patched.positions[0].mark.toFixed(2)), 0.82);
+  assert.equal(Number(patched.positions[0].marketValue.toFixed(2)), 410);
+  assert.equal(Math.round(patched.positions[0].unrealizedPnl), -110);
+  assert.equal(Math.round(patched.positions[0].dayChange), -110);
+  assert.equal(patched.positions[0].quote.bid, 0.8);
+  assert.equal(patched.positions[0].quote.ask, 0.84);
+  assert.equal(Number(patched.positions[0].quote.mid.toFixed(2)), 0.82);
+  assert.equal(patched.positions[0].quote.last, 0.82);
+  assert.equal(Number(patched.positions[0].quote.mark.toFixed(2)), 0.82);
+  assert.equal(patched.positions[0].quote.source, "option_quote");
+  assert.equal(patched.positions[0].optionContract.providerContractId, "880754762");
+  assert.equal(Number(patched.totals.netExposure.toFixed(2)), 410);
+  assert.equal(Number(patched.totals.grossLong.toFixed(2)), 410);
+  assert.equal(Math.round(patched.totals.unrealizedPnl), -110);
 });
 
 const stockQuote = (

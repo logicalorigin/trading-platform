@@ -37,6 +37,39 @@ const SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_BUDGET_MS = 15_000;
 const SIGNAL_OPTIONS_MANUAL_SCAN_ACTION_ITEM_LIMIT = 4;
 const OVERNIGHT_SPOT_SCAN_ROUTE_TIMEOUT_MS = 30_000;
 
+type ContinuingSignalOptionsRouteTimeoutPolicy = {
+  continuation: "continue-in-background";
+  reason: string;
+};
+
+type AbortableSignalOptionsRouteTimeoutPolicy = {
+  continuation: "abort-at-route-budget";
+  reason: string;
+};
+
+type SignalOptionsRouteTimeoutPolicy =
+  | ContinuingSignalOptionsRouteTimeoutPolicy
+  | AbortableSignalOptionsRouteTimeoutPolicy;
+
+const SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES = {
+  state: {
+    continuation: "continue-in-background",
+    reason: "dashboard state builds refresh shared caches",
+  },
+  cockpit: {
+    continuation: "continue-in-background",
+    reason: "cockpit builds refresh shared caches",
+  },
+  shadowScan: {
+    continuation: "abort-at-route-budget",
+    reason: "manual Signal Options scans can trigger side-effectful action work",
+  },
+  overnightSpotScan: {
+    continuation: "abort-at-route-budget",
+    reason: "manual Overnight Spot scans can trigger side-effectful action work",
+  },
+} as const satisfies Record<string, SignalOptionsRouteTimeoutPolicy>;
+
 function signalOptionsAdmissionCacheMode(admission: ReturnType<typeof getApiRouteAdmission>) {
   return admission.cacheOnly ? "cache-only" : undefined;
 }
@@ -50,12 +83,13 @@ function signalOptionsRequestCacheMode(
     : signalOptionsAdmissionCacheMode(admission);
 }
 
-function withSignalOptionsRouteTimeout<T>(
+function withContinuingSignalOptionsRouteTimeout<T>(
   promise: Promise<T>,
   input: {
     timeoutMs: number;
     code: string;
     detail: string;
+    policy: ContinuingSignalOptionsRouteTimeoutPolicy;
   },
 ): Promise<T> {
   promise.catch(() => {});
@@ -65,7 +99,7 @@ function withSignalOptionsRouteTimeout<T>(
       reject(
         new HttpError(504, "Signal Options route timed out.", {
           code: input.code,
-          detail: input.detail,
+          detail: `${input.detail} Timed-out work may continue in the background because ${input.policy.reason}.`,
         }),
       );
     }, input.timeoutMs);
@@ -84,6 +118,7 @@ function withAbortableSignalOptionsRouteTimeout<T>(
     timeoutMs: number;
     code: string;
     detail: string;
+    policy: AbortableSignalOptionsRouteTimeoutPolicy;
   },
 ): Promise<T> {
   const controller = new AbortController();
@@ -94,7 +129,7 @@ function withAbortableSignalOptionsRouteTimeout<T>(
     timeout = setTimeout(() => {
       const error = new HttpError(504, "Signal Options route timed out.", {
         code: input.code,
-        detail: input.detail,
+        detail: `${input.detail} Timed-out work is aborted because ${input.policy.reason}.`,
       });
       controller.abort(error);
       reject(error);
@@ -235,7 +270,7 @@ router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, r
       : SIGNAL_OPTIONS_STATE_SUMMARY_ROUTE_TIMEOUT_MS;
   res.json(
     withRouteAdmissionMetadata(
-      await withSignalOptionsRouteTimeout(
+      await withContinuingSignalOptionsRouteTimeout(
         listSignalOptionsAutomationState({
           deploymentId: req.params.deploymentId,
           cacheMode: signalOptionsRequestCacheMode(req.query.cacheMode, admission),
@@ -247,6 +282,7 @@ router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, r
           code: "signal_options_state_route_timeout",
           detail:
             "Signal Options state did not respond within the route budget.",
+          policy: SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES.state,
         },
       ),
       admission,
@@ -263,7 +299,7 @@ router.get("/algo/deployments/:deploymentId/cockpit", async (req, res): Promise<
       : SIGNAL_OPTIONS_COCKPIT_SUMMARY_ROUTE_TIMEOUT_MS;
   res.json(
     withRouteAdmissionMetadata(
-      await withSignalOptionsRouteTimeout(
+      await withContinuingSignalOptionsRouteTimeout(
         getAlgoDeploymentCockpit({
           deploymentId: req.params.deploymentId,
           cacheMode: signalOptionsRequestCacheMode(req.query.cacheMode, admission),
@@ -274,6 +310,7 @@ router.get("/algo/deployments/:deploymentId/cockpit", async (req, res): Promise<
           code: "signal_options_cockpit_route_timeout",
           detail:
             "Signal Options cockpit did not respond within the route budget.",
+          policy: SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES.cockpit,
         },
       ),
       admission,
@@ -327,6 +364,7 @@ router.post("/algo/deployments/:deploymentId/signal-options/shadow-scan", async 
         code: "signal_options_shadow_scan_route_timeout",
         detail:
           "Signal Options shadow scan did not finish within the route budget.",
+        policy: SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES.shadowScan,
       },
     ),
   );
@@ -352,18 +390,20 @@ router.post("/algo/deployments/:deploymentId/overnight-spot/scan", async (req, r
 
   res.json(
     await withAbortableSignalOptionsRouteTimeout(
-      () =>
+      (signal) =>
         runOvernightSpotSignalScan({
           deploymentId: req.params.deploymentId,
           forceEvaluate,
           runActions,
           recordSignals,
+          signal,
         }),
       {
         timeoutMs: OVERNIGHT_SPOT_SCAN_ROUTE_TIMEOUT_MS,
         code: "overnight_spot_scan_route_timeout",
         detail:
           "Overnight spot scan did not finish within the route budget.",
+        policy: SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES.overnightSpotScan,
       },
     ),
   );

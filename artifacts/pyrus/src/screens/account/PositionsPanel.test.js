@@ -348,11 +348,14 @@ test("positions automation metrics distinguish stop distance and breached stops"
 test("positions panel overlays live option quotes onto displayed rows and totals", () => {
   assert.match(quoteStreamsSource, /useIbkrOptionQuoteStream/);
   assert.match(quoteStreamsSource, /intent: "account-monitor-live"/);
-  assert.match(quoteStreamsSource, /owner: "account-position-option-quotes:ui"/);
+  assert.match(quoteStreamsSource, /owner = "account-position-option-quotes:ui"/);
+  assert.match(quoteStreamsSource, /owner,\s*\n\s*intent: "account-monitor-live"/);
   assert.doesNotMatch(quoteStreamsSource, /account-positions:\$\{underlying\}/);
   assert.match(source, /useStoredOptionQuoteSnapshotVersion/);
   assert.match(source, /getStoredOptionQuoteSnapshot/);
   assert.match(source, /applyLiveOptionQuoteToRow/);
+  assert.match(source, /applyLiveEquityQuoteToRow/);
+  assert.match(source, /useRegisterPositionMarketDataSymbols/);
   assert.match(source, /buildDisplayTotals/);
   assert.match(source, /displayTotals\.netExposure/);
 });
@@ -400,13 +403,63 @@ test("positions display totals tolerate missing totals while positions load", ()
   assert.equal(totals.netLiquidation, null);
 });
 
+test("positions panel overlays Massive equity snapshots onto displayed rows", () => {
+  const { applyLiveEquityQuoteToRow } = __positionsPanelInternalsForTests;
+  const patched = applyLiveEquityQuoteToRow(
+    {
+      id: "real-fcel",
+      symbol: "FCEL",
+      assetClass: "Stocks",
+      quantity: 100,
+      averageCost: 1.5,
+      mark: 1.8,
+      marketValue: 180,
+      unrealizedPnl: 30,
+      unrealizedPnlPercent: 20,
+      dayChange: 0,
+      dayChangePercent: 0,
+      quote: {
+        bid: 1.79,
+        ask: 1.81,
+        mark: 1.8,
+        source: "position_mark",
+      },
+    },
+    {
+      symbol: "FCEL",
+      price: 2.1,
+      bid: 2.09,
+      ask: 2.11,
+      chg: 0.2,
+      pct: 10.53,
+      source: "massive",
+      transport: "websocket",
+      dataUpdatedAt: "2026-06-04T14:30:00.000Z",
+    },
+  );
+
+  assert.equal(patched.mark, 2.1);
+  assert.equal(patched.marketPrice, 2.1);
+  assert.equal(Math.round(patched.marketValue), 210);
+  assert.equal(Math.round(patched.unrealizedPnl), 60);
+  assert.equal(Number(patched.unrealizedPnlPercent.toFixed(2)), 40);
+  assert.equal(Number(patched.dayChange.toFixed(2)), 20);
+  assert.equal(patched.dayChangePercent, 10.53);
+  assert.equal(patched.quote.bid, 2.09);
+  assert.equal(patched.quote.ask, 2.11);
+  assert.equal(patched.quote.source, "massive");
+  assert.equal(patched.quote.transport, "websocket");
+  assert.equal(patched.underlyingMarket.price, 2.1);
+});
+
 test("positions panel renders compact underlying sparklines inside position rows", () => {
   assert.match(source, /import \{ MicroSparkline \}/);
   assert.match(source, /import \{ Button \} from "\.\.\/\.\.\/components\/ui\/Button\.jsx"/);
   assert.match(source, /useRuntimeTickerSnapshots\(positionSparklineSymbols\)/);
   assert.match(source, /const positionUnderlyingSymbols = useMemo/);
-  assert.match(source, /useRegisterPositionMarketDataSymbols\(\s*`positions:\$\{surfaceId\}`,\s*positionUnderlyingSymbols,\s*liveOptionQuotesEnabled,\s*\)/);
-  assert.match(source, /useRuntimeTickerSnapshots\(positionUnderlyingSymbols\)/);
+  assert.match(source, /marketDataOwner: `positions:\$\{surfaceId\}`/);
+  assert.match(source, /useRegisterPositionMarketDataSymbols\(\s*marketDataOwner,\s*positionUnderlyingSymbols/);
+  assert.match(source, /useRuntimeTickerSnapshots\(\s*registerMarketDataSymbols \? positionUnderlyingSymbols : \[\]/);
   assert.match(source, /denseColumnSortValue\(a, sort\.id, underlyingSnapshotsBySymbol\)/);
   assert.match(source, /const resolvePositionSparklineSymbol/);
   assert.match(source, /const resolvePositionUnderlyingSymbol/);
@@ -655,7 +708,7 @@ test("positions panel starts live streams from hydrated option quote conids", ()
 
   assert.deepEqual(groups, [
     {
-      underlying: null,
+      underlying: "HOOD",
       providerContractIds: ["123456789"],
     },
   ]);

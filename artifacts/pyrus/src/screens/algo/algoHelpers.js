@@ -971,8 +971,6 @@ export const resolveSignalMove = (signal, tickerSnapshot = null, candidate = nul
     record.currentPrice,
     record.last,
     record.mark,
-    candidateRecord.underlyingPrice,
-    candidateRecord.currentPrice,
   );
   if (signalPrice == null || currentPrice == null || signalPrice <= 0) {
     return { value: null, pct: null, label: MISSING_VALUE, detail: MISSING_VALUE };

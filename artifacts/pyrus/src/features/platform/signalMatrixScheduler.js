@@ -9,14 +9,14 @@ const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze([
   "1d",
 ]);
 const SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 150,
-  watch: 150,
+  normal: 240,
+  watch: 240,
   high: 60,
   critical: 10,
 });
 const STA_VISIBLE_PAGE_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 150,
-  watch: 150,
+  normal: 240,
+  watch: 240,
   high: 120,
   critical: 10,
 });
@@ -27,21 +27,21 @@ const REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
   critical: 10,
 });
 const ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 150,
-  watch: 150,
+  normal: 240,
+  watch: 240,
   high: 60,
   critical: 10,
 });
 const STA_VISIBLE_PAGE_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 150,
-  watch: 150,
+  normal: 240,
+  watch: 240,
   high: 120,
   critical: 10,
 });
 const ACTIVE_SCREEN_REQUEST_SYMBOL_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 250,
-  watch: 250,
-  high: 250,
+  normal: 500,
+  watch: 500,
+  high: 12,
   critical: 6,
 });
 const BUSY_QUEUE_DELAY_MS_BY_PRESSURE = Object.freeze({

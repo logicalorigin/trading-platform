@@ -108,6 +108,7 @@ const SIGNALS_PAGE_SIZE = 20;
 const SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
 const SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT = 120;
 const SIGNAL_TABLE_SPARKLINE_CONCURRENCY = 4;
+const SIGNAL_TABLE_SPARKLINE_RETRY_INTERVAL_MS = 30_000;
 const SIGNAL_TABLE_QUOTE_REQUEST_OPTIONS = buildBarsRequestOptions(
   BARS_REQUEST_PRIORITY.active,
   "algo-signal-table",
@@ -304,6 +305,23 @@ const hasUsableSparklineData = (value) =>
 const hasUsableQuoteSnapshot = (value) => {
   const price = Number(value?.price ?? value?.last ?? value?.mark);
   return Number.isFinite(price);
+};
+
+const resolveRowTickerSnapshot = (runtimeSnapshot, quoteSnapshot) => {
+  if (!runtimeSnapshot) return quoteSnapshot || null;
+  if (!quoteSnapshot || hasUsableQuoteSnapshot(runtimeSnapshot)) {
+    return runtimeSnapshot;
+  }
+  return {
+    ...quoteSnapshot,
+    ...runtimeSnapshot,
+    price: runtimeSnapshot.price ?? quoteSnapshot.price ?? null,
+    last: runtimeSnapshot.last ?? quoteSnapshot.last ?? null,
+    mark: runtimeSnapshot.mark ?? quoteSnapshot.mark ?? null,
+    updatedAt: runtimeSnapshot.updatedAt ?? quoteSnapshot.updatedAt ?? null,
+    dataUpdatedAt:
+      runtimeSnapshot.dataUpdatedAt ?? quoteSnapshot.dataUpdatedAt ?? null,
+  };
 };
 
 const timestampMs = (value) => {
@@ -587,17 +605,19 @@ export const buildAlgoSignalMatrixHydrationRequest = ({
 
   if (
     !matrixHydrationPlan.symbols.length ||
-    !matrixHydrationPlan.missingSymbols.length
+    !matrixHydrationPlan.requestSymbols.length
   ) {
     return null;
   }
 
   return {
-    symbols: matrixHydrationPlan.symbols,
+    symbols: matrixHydrationPlan.requestSymbols,
     prioritySymbols: matrixHydrationPlan.requestSymbols,
     missingSymbols: matrixHydrationPlan.missingSymbols,
     requestSymbols: matrixHydrationPlan.requestSymbols,
-    timeframes: matrixHydrationPlan.timeframes,
+    requestCells: matrixHydrationPlan.requestCells,
+    timeframes: matrixHydrationPlan.requestTimeframes,
+    requestTimeframes: matrixHydrationPlan.requestTimeframes,
     clientRole: "algo-sta",
     requestOrigin: "sta-visible-page",
     reason: "algo-signal-table",
@@ -1139,6 +1159,18 @@ export const OperationsSignalTable = ({
       request: SIGNAL_TABLE_QUOTE_REQUEST_OPTIONS,
     },
   );
+  const rowQuoteSnapshotsBySymbol = useMemo(
+    () =>
+      Object.fromEntries(
+        (rowQuotesQuery.data?.quotes || [])
+          .map((quote) => {
+            const symbol = String(quote?.symbol || "").toUpperCase();
+            return symbol && hasUsableQuoteSnapshot(quote) ? [symbol, quote] : null;
+          })
+          .filter(Boolean),
+      ),
+    [rowQuotesQuery.data],
+  );
   const rowSparklineQuery = useQuery({
     queryKey: ["algo-signal-row-sparklines", rowSparklineSymbolsKey],
     queryFn: async () => {
@@ -1153,6 +1185,7 @@ export const OperationsSignalTable = ({
               timeframe: SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
               limit: SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT,
               outsideRth: true,
+              assetClass: "equity",
               source: "trades",
             },
             SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS,
@@ -1170,6 +1203,11 @@ export const OperationsSignalTable = ({
     },
     ...BARS_QUERY_DEFAULTS,
     enabled: Boolean(signalRowHydrationQueriesEnabled && rowSparklineSymbolsKey),
+    staleTime: 15_000,
+    refetchInterval: rowSparklineSymbolsKey
+      ? SIGNAL_TABLE_SPARKLINE_RETRY_INTERVAL_MS
+      : false,
+    refetchOnMount: true,
     retry: false,
     gcTime: HEAVY_PAYLOAD_GC_MS,
   });
@@ -1779,6 +1817,7 @@ export const OperationsSignalTable = ({
             ) : (
               pageRows.map(({ signal, candidate, scoreBreakdown, auditProgression }, rowIndex) => {
                 const symbol = asRecord(signal).symbol;
+                const symbolKey = String(symbol || "").toUpperCase();
                 return (
                   <OperationsSignalRow
                     key={asRecord(signal).signalKey || symbol}
@@ -1789,7 +1828,10 @@ export const OperationsSignalTable = ({
                     tfMatrix={signalMatrixBySymbol?.[String(symbol || "").toUpperCase()] || null}
                     timeframes={SIGNALS_TABLE_TIMEFRAMES}
                     tickerSnapshot={
-                      tickerSnapshotsBySymbol?.[String(symbol || "").toUpperCase()] || null
+                      resolveRowTickerSnapshot(
+                        tickerSnapshotsBySymbol?.[symbolKey] || null,
+                        rowQuoteSnapshotsBySymbol?.[symbolKey] || null,
+                      )
                     }
                     alt={rowIndex % 2 === 1}
                     columns={visibleColumns}

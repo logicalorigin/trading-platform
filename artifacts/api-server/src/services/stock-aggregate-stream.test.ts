@@ -14,6 +14,7 @@ import {
   getRecentStockMinuteAggregateHistory,
   getStockAggregateStreamDiagnostics,
   hasRecentStockAggregateSourceActivity,
+  isForegroundSignalMatrixStockAggregateStreamingEnabled,
   resolvePreferredStockAggregateStreamSource,
   subscribeStockMinuteAggregates,
 } from "./stock-aggregate-stream";
@@ -24,6 +25,7 @@ const ENV_KEYS = [
   "MASSIVE_API_BASE_URL",
   "MASSIVE_STOCKS_RECENCY",
   "IBKR_BRIDGE_RUNTIME_OVERRIDE_FILE",
+  "PYRUS_SIGNAL_MATRIX_STOCK_AGGREGATE_STREAMS_ENABLED",
 ] as const;
 
 function withAggregateRuntimeEnv<T>(
@@ -105,6 +107,19 @@ test("stock aggregate stream source resolver uses Massive only as a delayed fall
       massiveDelayedConfigured: false,
     }),
     "none",
+  );
+});
+
+test("foreground signal matrix stock aggregate streaming is enabled by default and env gated", () => {
+  withAggregateRuntimeEnv({}, () => {
+    assert.equal(isForegroundSignalMatrixStockAggregateStreamingEnabled(), true);
+  });
+
+  withAggregateRuntimeEnv(
+    { PYRUS_SIGNAL_MATRIX_STOCK_AGGREGATE_STREAMS_ENABLED: "false" },
+    () => {
+      assert.equal(isForegroundSignalMatrixStockAggregateStreamingEnabled(), false);
+    },
   );
 });
 

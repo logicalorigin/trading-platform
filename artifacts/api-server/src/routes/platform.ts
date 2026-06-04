@@ -43,6 +43,7 @@ import {
   ListPositionsResponse,
   PlaceOrderBody,
   ReplaceOrderBody,
+  CancelAccountOrderBody,
   CancelOrderBody,
   BatchOptionChainsBody,
   BatchOptionChainsResponse,
@@ -162,18 +163,20 @@ import {
   attachLegacyIbkrBridgeRuntime,
   attachIbkrBridgeRuntime,
   cancelLegacyIbkrBridgeActivation,
-  claimLegacyIbkrBridgeLoginEnvelope,
-  claimIbkrRemoteDesktopLaunchJob,
+  claimLegacyIbkrBridgeLoginEnvelopeWithWait,
+  claimIbkrRemoteDesktopLaunchJobWithWait,
   completeIbkrRemoteDesktopJob,
   createIbkrRemoteBridgeLaunch,
   createIbkrRemoteBridgeShutdown,
   detachIbkrBridgeRuntime,
+  getIbkrBridgeActivationDiagnostics,
+  getIbkrBridgeHelperMetadata,
   getIbkrBridgeLauncher,
   heartbeatIbkrRemoteDesktop,
   listIbkrRemoteDesktops,
   readIbkrRemoteDesktopJobStatus,
   readLegacyIbkrBridgeActivationStatus,
-  readLegacyIbkrBridgeLoginKey,
+  readLegacyIbkrBridgeLoginKeyWithWait,
   recordLegacyIbkrBridgeActivationProgress,
   registerIbkrRemoteDesktop,
   submitLegacyIbkrBridgeLoginEnvelope,
@@ -1117,6 +1120,10 @@ router.get("/ibkr/bridge/launcher", async (req, res) => {
   );
 });
 
+router.get("/ibkr/bridge/helper-metadata", async (_req, res) => {
+  res.json(getIbkrBridgeHelperMetadata());
+});
+
 router.get("/ibkr/desktops", async (_req, res) => {
   res.json(listIbkrRemoteDesktops());
 });
@@ -1130,7 +1137,7 @@ router.post("/ibkr/desktop/heartbeat", async (req, res) => {
 });
 
 router.post("/ibkr/desktop/jobs/claim", async (req, res) => {
-  res.json(claimIbkrRemoteDesktopLaunchJob(req.body));
+  res.json(await claimIbkrRemoteDesktopLaunchJobWithWait(req.body));
 });
 
 router.post("/ibkr/desktop/jobs/complete", async (req, res) => {
@@ -1139,6 +1146,10 @@ router.post("/ibkr/desktop/jobs/complete", async (req, res) => {
 
 router.post("/ibkr/desktop/jobs/status", async (req, res) => {
   res.json(readIbkrRemoteDesktopJobStatus(req.body));
+});
+
+router.get("/ibkr/activation/diagnostics", async (_req, res) => {
+  res.json(getIbkrBridgeActivationDiagnostics());
 });
 
 router.post("/ibkr/remote-launch", async (req, res) => {
@@ -1188,7 +1199,12 @@ router.post("/ibkr/activation/:activationId/login-key", async (req, res) => {
 });
 
 router.post("/ibkr/activation/:activationId/login-key/read", async (req, res) => {
-  res.json(readLegacyIbkrBridgeLoginKey(req.params.activationId, req.body));
+  res.json(
+    await readLegacyIbkrBridgeLoginKeyWithWait(
+      req.params.activationId,
+      req.body,
+    ),
+  );
 });
 
 router.post("/ibkr/activation/:activationId/login-envelope", async (req, res) => {
@@ -1201,7 +1217,10 @@ router.post(
   "/ibkr/activation/:activationId/login-envelope/claim",
   async (req, res) => {
     res.json(
-      claimLegacyIbkrBridgeLoginEnvelope(req.params.activationId, req.body),
+      await claimLegacyIbkrBridgeLoginEnvelopeWithWait(
+        req.params.activationId,
+        req.body,
+      ),
     );
   },
 );
@@ -1390,11 +1409,13 @@ router.get("/accounts/:accountId/orders", async (req, res) => {
 });
 
 router.post("/accounts/:accountId/orders/:orderId/cancel", async (req, res) => {
+  const body = CancelAccountOrderBody.parse(req.body);
   res.json(
     await cancelAccountOrder({
       accountId: req.params.accountId,
       orderId: req.params.orderId,
-      confirm: req.body?.confirm === true,
+      mode: body.mode,
+      confirm: body.confirm ?? false,
     }),
   );
 });
@@ -1602,6 +1623,7 @@ router.post("/orders/:orderId/cancel", async (req, res) => {
   res.json(await cancelOrder({
     accountId: body.accountId,
     orderId: req.params.orderId,
+    mode: body.mode,
     confirm: body.confirm ?? false,
     manualIndicator:
       typeof body.manualIndicator === "boolean"

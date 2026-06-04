@@ -1726,6 +1726,7 @@ function rotateFlowScannerLeasesForRequest(input: {
 }
 
 function releaseFlowScannerUnderlyingConflicts(input: {
+  owner: string;
   symbol: string | null;
 }): MarketDataLease[] {
   const symbol = normalizeSymbol(input.symbol ?? "");
@@ -1736,6 +1737,7 @@ function releaseFlowScannerUnderlyingConflicts(input: {
   Array.from(leases.values())
     .filter(
       (lease) =>
+        lease.owner === input.owner &&
         lease.intent === "flow-scanner-live" &&
         lease.pool === "flow-scanner" &&
         lease.assetClass === "option" &&
@@ -2029,9 +2031,14 @@ export function admitMarketDataLeases(input: {
       return;
     }
 
-    if (pool === "flow-scanner" && normalized.assetClass === "option") {
+    if (
+      pool === "flow-scanner" &&
+      normalized.assetClass === "option" &&
+      normalizedRequests.length === 1
+    ) {
       demoted.push(
         ...releaseFlowScannerUnderlyingConflicts({
+          owner: input.owner,
           symbol: normalized.symbol,
         }),
       );

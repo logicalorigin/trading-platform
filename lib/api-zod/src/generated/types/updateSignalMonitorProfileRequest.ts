@@ -28,7 +28,7 @@ export interface UpdateSignalMonitorProfileRequest {
   pollIntervalSeconds?: number;
   /**
    * @minimum 1
-   * @maximum 250
+   * @maximum 500
    */
   maxSymbols?: number;
   /**

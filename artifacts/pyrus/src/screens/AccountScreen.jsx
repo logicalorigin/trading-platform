@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
 import {
   getGetAccountAllocationQueryOptions,
   getGetAccountClosedTradesQueryOptions,
@@ -46,13 +47,16 @@ import {
 } from "../features/platform/runtimeCache";
 import {
   setAccountSectionTransitionSnapshot,
+  useAccountSectionTransitionSnapshot,
 } from "../features/platform/accountSectionTransitionStore.js";
 import { useToast } from "../features/platform/platformContexts.jsx";
 import DeferredRender from "../components/platform/DeferredRender";
+import { LoadingSpinner, SegmentedControl } from "../components/platform/primitives.jsx";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
 import { responsiveFlags, useElementSize, useViewport } from "../lib/responsive";
 import { retryDynamicImport } from "../lib/dynamicImport";
+import { AppTooltip } from "@/components/ui/tooltip";
 import {
   CSS_COLOR,
   cssColorMix,
@@ -222,6 +226,116 @@ const LazySetupHealthPanel = lazy(() =>
   ),
 );
 
+const finiteAccountNumber = (value) => {
+  if (value == null || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const livePositionsDayPnlMetric = ({
+  positionsResponse,
+  fallbackMetric,
+  currency,
+}) => {
+  const rows = getOpenPositionRows(positionsResponse?.positions || []);
+  let hasDayChange = false;
+  const value = rows.reduce((sum, row) => {
+    const dayChange = finiteAccountNumber(row?.dayChange);
+    if (dayChange == null) return sum;
+    hasDayChange = true;
+    return sum + dayChange;
+  }, 0);
+  if (!hasDayChange) {
+    return fallbackMetric;
+  }
+  return {
+    ...(fallbackMetric || {}),
+    value,
+    totalDayPnl: value,
+    currency: currency || fallbackMetric?.currency || positionsResponse?.currency || "USD",
+    source: "IBKR_POSITIONS",
+    field: "OpenPositionsDayChange",
+    updatedAt:
+      positionsResponse?.updatedAt ||
+      fallbackMetric?.updatedAt ||
+      new Date().toISOString(),
+  };
+};
+
+const livePositionsNetLiquidation = (positionsResponse, fallbackValue = null) => {
+  const totals = positionsResponse?.totals || {};
+  const netLiquidation = finiteAccountNumber(totals.netLiquidation);
+  if (netLiquidation != null) {
+    return netLiquidation;
+  }
+  const cash = finiteAccountNumber(
+    totals.cash ?? totals.totalCash ?? totals.totalCashValue,
+  );
+  const netExposure = finiteAccountNumber(totals.netExposure);
+  if (cash != null && netExposure != null) {
+    return cash + netExposure;
+  }
+  return finiteAccountNumber(fallbackValue);
+};
+
+const equityQueryWithLivePositionsTerminal = ({
+  query,
+  netLiquidation,
+  currency,
+  updatedAt,
+}) => {
+  const data = query?.data;
+  const nav = finiteAccountNumber(netLiquidation);
+  if (!data || nav == null) {
+    return query;
+  }
+
+  const timestamp = updatedAt || new Date().toISOString();
+  const existingPoints = Array.isArray(data.points) ? data.points : [];
+  const lastPoint = existingPoints[existingPoints.length - 1] || null;
+  const terminalPoint = {
+    ...(lastPoint || {}),
+    timestamp,
+    netLiquidation: nav,
+    currency: currency || data.currency || "USD",
+    source: "IBKR_POSITIONS",
+    deposits: finiteAccountNumber(lastPoint?.deposits) ?? 0,
+    withdrawals: finiteAccountNumber(lastPoint?.withdrawals) ?? 0,
+    dividends: finiteAccountNumber(lastPoint?.dividends) ?? 0,
+    fees: finiteAccountNumber(lastPoint?.fees) ?? 0,
+    benchmarkPercent: lastPoint?.benchmarkPercent ?? null,
+  };
+  const terminalMs = new Date(timestamp).getTime();
+  const withoutPriorTerminal = existingPoints.filter((point, index) => {
+    const pointMs = new Date(point?.timestamp).getTime();
+    if (Number.isFinite(pointMs) && Number.isFinite(terminalMs) && pointMs === terminalMs) {
+      return false;
+    }
+    return !(index === existingPoints.length - 1 && point?.source === "IBKR_POSITIONS");
+  });
+  const points = [...withoutPriorTerminal, terminalPoint]
+    .filter((point) => Number.isFinite(new Date(point?.timestamp).getTime()))
+    .sort(
+      (left, right) =>
+        new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+    );
+  const adjusted = calculateTransferAdjustedReturnSeries(points);
+  return {
+    ...query,
+    data: {
+      ...data,
+      currency: terminalPoint.currency,
+      asOf: timestamp,
+      terminalPointSource: "live_positions",
+      liveTerminalIncluded: true,
+      points: points.map((point, index) => ({
+        ...point,
+        returnPercent: adjusted[index]?.returnPercent ?? point.returnPercent ?? 0,
+      })),
+    },
+  };
+};
+
 const AccountPanelSuspenseFallback = ({
   detail = "Preparing account data.",
   minHeight = 160,
@@ -295,11 +409,26 @@ const ACCOUNT_LIVE_STALE_MS = 5_000;
 const ACCOUNT_DERIVED_STALE_MS = 120_000;
 const ACCOUNT_HISTORY_STALE_MS = 120_000;
 
-const retainPreviousData = (previousData) => previousData;
-const retainPreviousRangeData = (range) => (previousData) =>
-  previousData?.range === range ? previousData : undefined;
-const retainPreviousDateData = (date) => (previousData) =>
-  previousData?.date === date ? previousData : undefined;
+const accountIdMatches = (data, accountId) =>
+  Boolean(
+    data &&
+      accountId &&
+      String(data.accountId || "").trim() === String(accountId || "").trim(),
+  );
+const retainPreviousAccountData = (accountId) => (previousData) =>
+  accountIdMatches(previousData, accountId) ? previousData : undefined;
+const retainPreviousAccountRangeData =
+  (accountId, range, benchmark = null) =>
+  (previousData) =>
+    accountIdMatches(previousData, accountId) &&
+    previousData?.range === range &&
+    (benchmark == null || previousData?.benchmark === benchmark)
+      ? previousData
+      : undefined;
+const retainPreviousAccountDateData = (accountId, date) => (previousData) =>
+  accountIdMatches(previousData, accountId) && previousData?.date === date
+    ? previousData
+    : undefined;
 
 const QUERY_OPTIONS = {
   query: {
@@ -366,6 +495,115 @@ const resolveAccountMode = ({ shadowMode = false, environment } = {}) => {
     return "paper";
   }
   return environment === "paper" ? "paper" : "live";
+};
+
+const ACCOUNT_SECTION_OPTIONS = [
+  { value: "real", label: "Real" },
+  { value: "shadow", label: "Shadow" },
+];
+
+const AccountSectionTransitionStatus = ({ compact = false }) => {
+  const { transitioning, targetSection } = useAccountSectionTransitionSnapshot();
+  if (!transitioning || !targetSection) {
+    return null;
+  }
+
+  const label = `Loading ${targetSection}...`;
+  const tone = targetSection === "shadow" ? CSS_COLOR.pink : CSS_COLOR.green;
+  return (
+    <span
+      data-testid="account-section-transition"
+      aria-live="polite"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: sp(5),
+        minHeight: dim(compact ? 22 : 24),
+        padding: sp("0 8px"),
+        borderRadius: dim(RADII.pill),
+        border: `1px solid ${CSS_COLOR.border}`,
+        background: CSS_COLOR.bg1,
+        color: CSS_COLOR.textSec,
+        fontFamily: T.sans,
+        fontSize: textSize("label"),
+        whiteSpace: "nowrap",
+        flex: "0 0 auto",
+      }}
+    >
+      <LoadingSpinner size={14} color={tone} />
+      {label}
+    </span>
+  );
+};
+
+const AccountSectionStrip = ({
+  compact = false,
+  onSectionIntent,
+  section,
+  setSection,
+  shadowMode = false,
+}) => {
+  const activeTone = shadowMode ? CSS_COLOR.pink : CSS_COLOR.green;
+  return (
+    <section
+      data-testid="account-section-strip"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: sp(8),
+        minWidth: 0,
+        minHeight: dim(compact ? 26 : 30),
+        padding: sp("0 3px"),
+        overflow: "hidden",
+      }}
+    >
+      <AppTooltip content="Switch between live broker account and shadow paper account">
+        <div
+          data-testid="account-section-tabs"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            minWidth: 0,
+            flex: "0 0 auto",
+          }}
+        >
+          <SegmentedControl
+            options={ACCOUNT_SECTION_OPTIONS}
+            value={section}
+            onChange={setSection}
+            onOptionIntent={onSectionIntent}
+            ariaLabel="Account section"
+            buttonTestId="account-section"
+          />
+        </div>
+      </AppTooltip>
+      <div
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: sp(6),
+          minWidth: 0,
+          flex: "1 1 auto",
+          overflow: "hidden",
+        }}
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            width: dim(6),
+            height: dim(6),
+            borderRadius: dim(RADII.pill),
+            background: activeTone,
+            boxShadow: `0 0 0 3px ${cssColorMix(activeTone, 14)}`,
+            flex: "0 0 auto",
+          }}
+        />
+        <AccountSectionTransitionStatus compact={compact} />
+      </div>
+    </section>
+  );
 };
 
 const readAccountWorkspaceDefault = (key, fallback) => {
@@ -748,6 +986,19 @@ const AccountScreenInner = ({
   const effectiveOrderTab =
     shadowMode && orderTab === "working" ? "history" : orderTab;
   const accountRequestId = shadowMode ? SHADOW_ACCOUNT_ID : activeAccountId;
+  const retainPreviousData = useMemo(
+    () => retainPreviousAccountData(accountRequestId),
+    [accountRequestId],
+  );
+  const retainPreviousRangeData = useCallback(
+    (targetRange, benchmark = null) =>
+      retainPreviousAccountRangeData(accountRequestId, targetRange, benchmark),
+    [accountRequestId],
+  );
+  const retainPreviousDateData = useCallback(
+    (date) => retainPreviousAccountDateData(accountRequestId, date),
+    [accountRequestId],
+  );
   const inactiveAccountSection = shadowMode ? "real" : "shadow";
   const accountQueriesEnabled = Boolean(
     isVisible &&
@@ -1816,9 +2067,46 @@ const AccountScreenInner = ({
     () => getOpenPositionRows(positionsQuery.data?.positions || []),
     [positionsQuery.data],
   );
+  const livePositionsDayPnl = useMemo(
+    () =>
+      livePositionsDayPnlMetric({
+        positionsResponse: positionsQuery.data,
+        fallbackMetric: displaySummaryData?.metrics?.dayPnl,
+        currency,
+      }),
+    [currency, displaySummaryData?.metrics?.dayPnl, positionsQuery.data],
+  );
+  const livePositionNetLiquidation = useMemo(
+    () =>
+      livePositionsNetLiquidation(
+        positionsQuery.data,
+        displaySummaryData?.metrics?.netLiquidation?.value,
+      ),
+    [displaySummaryData?.metrics?.netLiquidation?.value, positionsQuery.data],
+  );
+  const equityQueryForDisplay = useMemo(
+    () =>
+      equityQueryWithLivePositionsTerminal({
+        query: equityQuery,
+        netLiquidation: livePositionNetLiquidation,
+        currency,
+        updatedAt: positionsQuery.data?.updatedAt || displaySummaryData?.updatedAt,
+      }),
+    [
+      currency,
+      displaySummaryData?.updatedAt,
+      equityQuery,
+      livePositionNetLiquidation,
+      positionsQuery.data?.updatedAt,
+    ],
+  );
   const accountOptionQuoteGroups = useMemo(
     () => buildPositionOptionQuoteGroups(openAccountPositions),
     [openAccountPositions],
+  );
+  const accountOptionQuoteOwner = useMemo(
+    () => `account-position-option-quotes:${accountRequestId || SHADOW_ACCOUNT_ID}`,
+    [accountRequestId],
   );
   const accountLiveOptionQuotesEnabled = Boolean(
     accountQueriesEnabled && accountCriticalReady,
@@ -1859,10 +2147,14 @@ const AccountScreenInner = ({
       return;
     }
     try {
+      const orderMode =
+        order.mode === "live" || order.mode === "paper"
+          ? order.mode
+          : modeParams.mode;
       await cancelOrderMutation.mutateAsync({
         accountId: order.accountId,
         orderId: order.id,
-        data: { confirm: true },
+        data: { mode: orderMode, confirm: true },
       });
     } catch {}
   };
@@ -1912,6 +2204,7 @@ const AccountScreenInner = ({
         <PositionOptionQuoteStreams
           groups={accountOptionQuoteGroups}
           enabled={accountLiveOptionQuotesEnabled}
+          owner={accountOptionQuoteOwner}
         />
 
         <DeferredPanelSuspense
@@ -1938,6 +2231,14 @@ const AccountScreenInner = ({
           />
         </DeferredPanelSuspense>
 
+        <AccountSectionStrip
+          compact={accountIsPhone}
+          onSectionIntent={prefetchAccountSectionLiveQueries}
+          section={accountSection}
+          setSection={setAccountSection}
+          shadowMode={shadowMode}
+        />
+
         <div
           className="ra-panel-enter ra-account-overview-grid"
         >
@@ -1952,7 +2253,7 @@ const AccountScreenInner = ({
                 maskValues={maskAccountValues}
                 tradesData={returnsCalendarTradesData}
                 equityPoints={returnsCalendarEquityPoints}
-                dailyPnl={displaySummaryData?.metrics?.dayPnl}
+                dailyPnl={livePositionsDayPnl}
                 isPhone={accountIsPhone}
               />
             </DeferredPanelSuspense>
@@ -1989,7 +2290,7 @@ const AccountScreenInner = ({
               detail="Preparing account chart and date inspector."
             >
               <LazyEquityCurvePanel
-                query={equityQuery}
+                query={equityQueryForDisplay}
                 benchmarkQueries={{
                   SPY: spyBenchmarkQuery,
                   QQQ: qqqBenchmarkQuery,
@@ -2004,9 +2305,7 @@ const AccountScreenInner = ({
                 rightRail={shadowMode ? shadowSourceLabel : undefined}
                 sourceLabel={shadowSourceLabel}
                 maskValues={maskAccountValues}
-                currentNetLiquidation={
-                  displaySummaryData?.metrics?.netLiquidation?.value
-                }
+                currentNetLiquidation={livePositionNetLiquidation}
                 activeInspectionDate={activeEquityInspectionDate}
                 pinnedInspectionDate={pinnedEquityDate}
                 onHoverInspectionDate={setHoveredEquityDate}

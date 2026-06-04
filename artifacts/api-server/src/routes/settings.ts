@@ -161,6 +161,10 @@ function compactLineUsageSnapshot(
   const bridge = asJsonRecord(root["bridge"]);
   const bridgeDiagnostics = asJsonRecord(bridge["diagnostics"]);
   const streams = asJsonRecord(root["streams"]);
+  const providers = asJsonRecord(root["providers"]);
+  const massiveProvider = asJsonRecord(providers["massive"]);
+  const massiveProviderRest = asJsonRecord(massiveProvider["rest"]);
+  const massiveProviderWebSocket = asJsonRecord(massiveProvider["websocket"]);
   const drift = asJsonRecord(root["drift"]);
   const driftReconciliation = asJsonRecord(drift["reconciliation"]);
   const marketDataWorkPlan = asJsonRecord(root["marketDataWorkPlan"]);
@@ -247,7 +251,51 @@ function compactLineUsageSnapshot(
     streams: {
       quoteStreams: compactStreamDiagnostics(streams["quoteStreams"]),
       optionQuoteStreams: compactStreamDiagnostics(streams["optionQuoteStreams"]),
+      massiveStockQuotes: compactStreamDiagnostics(streams["massiveStockQuotes"]),
       stockAggregates: compactStreamDiagnostics(streams["stockAggregates"]),
+    },
+    providers: {
+      massive: {
+        ...pickJsonRecord(massiveProvider, [
+          "configured",
+          "providerIdentity",
+          "baseUrlHost",
+          "stocksRealtimeConfigured",
+          "status",
+          "lastSuccessAt",
+          "lastFailureAt",
+          "lastError",
+        ]),
+        rest: pickJsonRecord(massiveProviderRest, [
+          "status",
+          "lastRequest",
+          "recentRequests",
+          "lastSuccessAt",
+          "lastFailureAt",
+          "lastError",
+        ]),
+        websocket: {
+          ...pickJsonRecord(massiveProviderWebSocket, [
+            "status",
+            "configured",
+            "providerIdentity",
+            "mode",
+            "activeChannels",
+            "availableChannels",
+            "subscribedSymbolCount",
+            "activeConsumerCount",
+            "eventCount",
+            "lastMessageAt",
+            "lastMessageAgeMs",
+            "reconnectCount",
+            "lastError",
+            "lastErrorAt",
+          ]),
+          feeds: Array.isArray(massiveProviderWebSocket["feeds"])
+            ? massiveProviderWebSocket["feeds"]
+            : [],
+        },
+      },
     },
     warmup: root["warmup"],
     accountMonitor: root["accountMonitor"],

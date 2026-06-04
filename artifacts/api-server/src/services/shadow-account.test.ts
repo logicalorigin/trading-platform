@@ -70,6 +70,27 @@ test("shadow position risk overlay keeps hard stop separate from trailing stop",
   });
 });
 
+test("shadow account position weights expose account and scoped percentages", () => {
+  const weighted =
+    __shadowWatchlistBacktestInternalsForTests.applyShadowAccountPositionWeights(
+      [
+        {
+          id: "position-a",
+          marketValue: 100,
+          weightPercent: null,
+        },
+      ],
+      {
+        accountNetLiquidation: 1_000,
+        scopedNetLiquidation: 250,
+      },
+    );
+
+  assert.equal(weighted[0]?.accountWeightPercent, 10);
+  assert.equal(weighted[0]?.scopedWeightPercent, 40);
+  assert.equal(weighted[0]?.weightPercent, 40);
+});
+
 test("shadow position risk overlay can carry take-profit without stop lines", () => {
   const riskOverlay =
     __shadowWatchlistBacktestInternalsForTests.buildShadowPositionRiskOverlay({
@@ -448,6 +469,11 @@ test("shadow filtered positions reuse fresh all-positions cache", async () => {
     assert.equal(filtered.totals.unrealizedPnl, -5);
     assert.equal(filtered.totals.netLiquidation, 1000);
     assert.equal(filtered.positions[0].weightPercent, 5);
+    assert.equal(filtered.positions[0].scopedWeightPercent, 5);
+    assert.ok(
+      Math.abs(filtered.positions[0].accountWeightPercent - 4.545454545454546) <
+        1e-9,
+    );
   } finally {
     internals.setShadowReadCacheWindowsForTests({
       ttlMs: null,

@@ -22,6 +22,8 @@ test("memory pressure monitor streams server diagnostics outside safe QA mode", 
   assert.match(source, /source\.addEventListener\("ready"/);
   assert.match(source, /source\.addEventListener\("snapshot"/);
   assert.match(source, /const workloadStats = useRuntimeWorkloadStats\(pageVisible\)/);
+  assert.match(source, /memoryPressureWorkloadInputsChanged/);
+  assert.match(source, /current\.activeWorkloadCount !== workloadStats\.activeCount/);
   assert.match(source, /if \(!streamDiagnosticsAvailable && !safeQaMode && now >= nextServerRefreshAtRef\.current\)/);
   assert.match(source, /const API_PRESSURE_EVENT = "pyrus:api-pressure"/);
   assert.match(source, /window\.addEventListener\(API_PRESSURE_EVENT, handleApiPressure\)/);

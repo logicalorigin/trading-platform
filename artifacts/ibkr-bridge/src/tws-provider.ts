@@ -4534,32 +4534,70 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     };
   }
 
-  applyMarketDataGeneration(
+  async applyMarketDataGeneration(
     generation: IbkrMarketDataDesiredGeneration,
-  ): IbkrMarketDataGenerationStatus {
+  ): Promise<IbkrMarketDataGenerationStatus> {
     this.appliedMarketDataGeneration = generation;
-    const desiredSymbols = new Set<string>();
-    const desiredProviderContractIds = new Set<string>();
+    const desiredSymbols: string[] = [];
+    const desiredProviderContractIds: string[] = [];
 
     generation.desiredLines.forEach((line) => {
       if (line.assetClass === "equity" && line.contract.symbol) {
         const symbol = normalizeSymbol(line.contract.symbol);
-        if (symbol) {
-          desiredSymbols.add(symbol);
+        if (symbol && !desiredSymbols.includes(symbol)) {
+          desiredSymbols.push(symbol);
         }
       } else if (
         line.assetClass === "option" &&
         line.contract.providerContractId
       ) {
         const providerContractId = line.contract.providerContractId.trim();
-        if (providerContractId) {
-          desiredProviderContractIds.add(providerContractId);
+        if (
+          providerContractId &&
+          !desiredProviderContractIds.includes(providerContractId)
+        ) {
+          desiredProviderContractIds.push(providerContractId);
         }
       }
     });
-    this.trimUnusedQuoteSubscriptions(
+    const budgeted = this.limitQuoteDemandForBudget(
       desiredSymbols,
       desiredProviderContractIds,
+      "generation",
+      "option",
+    );
+    if (budgeted.symbols.size > 0) {
+      await runBridgeLane("market-subscriptions", async () => {
+        for (const symbol of desiredSymbols) {
+          if (!budgeted.symbols.has(symbol)) {
+            continue;
+          }
+          try {
+            const resolved = await this.resolveStockContract(symbol);
+            await this.ensureQuoteSubscription(resolved);
+          } catch (error) {
+            this.recordError(error);
+          }
+        }
+      });
+    }
+    if (budgeted.providerContractIds.size > 0) {
+      await runBridgeLane("option-quotes", async () => {
+        for (const providerContractId of desiredProviderContractIds) {
+          if (!budgeted.providerContractIds.has(providerContractId)) {
+            continue;
+          }
+          try {
+            await this.ensureOptionQuoteSubscription(providerContractId);
+          } catch (error) {
+            this.recordError(error);
+          }
+        }
+      });
+    }
+    this.trimUnusedQuoteSubscriptions(
+      budgeted.symbols,
+      budgeted.providerContractIds,
     );
     return this.getMarketDataGenerationStatus();
   }

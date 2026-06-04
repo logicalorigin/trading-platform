@@ -142,7 +142,10 @@ export const GetSessionResponse = zod.object({
   "runtimeOverrideActive": zod.boolean(),
   "runtimeOverrideUpdatedAt": zod.coerce.date().nullable(),
   "desktopAgentOnline": zod.boolean(),
+  "desktopAgentCompatibility": zod.union([zod.literal('compatible'),zod.literal('known_bad'),zod.literal('update_required'),zod.literal(null)]).nullable(),
+  "desktopAgentCompatible": zod.boolean(),
   "desktopAgentHelperVersion": zod.string().nullable(),
+  "desktopAgentKnownBad": zod.boolean(),
   "desktopAgentExpectedHelperVersion": zod.string(),
   "desktopAgentUpgradeRequired": zod.boolean(),
   "reconnectAvailable": zod.boolean()
@@ -235,7 +238,10 @@ export const GetRuntimeDiagnosticsResponse = zod.object({
   "runtimeOverrideActive": zod.boolean(),
   "runtimeOverrideUpdatedAt": zod.coerce.date().nullable(),
   "desktopAgentOnline": zod.boolean(),
+  "desktopAgentCompatibility": zod.union([zod.literal('compatible'),zod.literal('known_bad'),zod.literal('update_required'),zod.literal(null)]).nullable(),
+  "desktopAgentCompatible": zod.boolean(),
   "desktopAgentHelperVersion": zod.string().nullable(),
+  "desktopAgentKnownBad": zod.boolean(),
   "desktopAgentExpectedHelperVersion": zod.string(),
   "desktopAgentUpgradeRequired": zod.boolean(),
   "reconnectAvailable": zod.boolean(),
@@ -548,11 +554,72 @@ export const GetIbkrBridgeLauncherResponse = zod.object({
 
 
 /**
+ * @summary Read paired IBKR helper metadata without starting a launch
+ */
+export const GetIbkrBridgeHelperMetadataResponse = zod.object({
+  "desktops": zod.array(zod.object({
+  "desktopId": zod.string(),
+  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
+  "helperCompatible": zod.boolean(),
+  "helperKnownBad": zod.boolean(),
+  "helperUpdateRequired": zod.boolean(),
+  "helperVersion": zod.string().nullable(),
+  "label": zod.string().nullable(),
+  "lastSeenAt": zod.coerce.date(),
+  "online": zod.boolean(),
+  "registeredAt": zod.coerce.date()
+})),
+  "helperVersion": zod.string(),
+  "latestDesktop": zod.union([zod.object({
+  "desktopId": zod.string(),
+  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
+  "helperCompatible": zod.boolean(),
+  "helperKnownBad": zod.boolean(),
+  "helperUpdateRequired": zod.boolean(),
+  "helperVersion": zod.string().nullable(),
+  "label": zod.string().nullable(),
+  "lastSeenAt": zod.coerce.date(),
+  "online": zod.boolean(),
+  "registeredAt": zod.coerce.date()
+}),zod.null()]),
+  "onlineCount": zod.number(),
+  "onlineDesktop": zod.union([zod.object({
+  "desktopId": zod.string(),
+  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
+  "helperCompatible": zod.boolean(),
+  "helperKnownBad": zod.boolean(),
+  "helperUpdateRequired": zod.boolean(),
+  "helperVersion": zod.string().nullable(),
+  "label": zod.string().nullable(),
+  "lastSeenAt": zod.coerce.date(),
+  "online": zod.boolean(),
+  "registeredAt": zod.coerce.date()
+}),zod.null()]),
+  "runtime": zod.object({
+  "desktopAgentCompatibility": zod.union([zod.literal('compatible'),zod.literal('known_bad'),zod.literal('update_required'),zod.literal(null)]).nullable(),
+  "desktopAgentCompatible": zod.boolean(),
+  "desktopAgentExpectedHelperVersion": zod.string(),
+  "desktopAgentHelperVersion": zod.string().nullable(),
+  "desktopAgentKnownBad": zod.boolean(),
+  "desktopAgentOnline": zod.boolean(),
+  "desktopAgentUpgradeRequired": zod.boolean(),
+  "reconnectAvailable": zod.boolean(),
+  "runtimeOverrideActive": zod.boolean(),
+  "runtimeOverrideUpdatedAt": zod.coerce.date().nullable()
+})
+})
+
+
+/**
  * @summary List paired Windows desktop agents for remote IBKR bridge launch
  */
 export const ListIbkrRemoteDesktopsResponse = zod.object({
   "desktops": zod.array(zod.object({
   "desktopId": zod.string(),
+  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
+  "helperCompatible": zod.boolean(),
+  "helperKnownBad": zod.boolean(),
+  "helperUpdateRequired": zod.boolean(),
   "helperVersion": zod.string().nullable(),
   "label": zod.string().nullable(),
   "lastSeenAt": zod.coerce.date(),
@@ -572,6 +639,10 @@ export const RegisterIbkrRemoteDesktopBody = zod.record(zod.string(), zod.unknow
 export const RegisterIbkrRemoteDesktopResponse = zod.object({
   "desktop": zod.object({
   "desktopId": zod.string(),
+  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
+  "helperCompatible": zod.boolean(),
+  "helperKnownBad": zod.boolean(),
+  "helperUpdateRequired": zod.boolean(),
   "helperVersion": zod.string().nullable(),
   "label": zod.string().nullable(),
   "lastSeenAt": zod.coerce.date(),
@@ -591,6 +662,10 @@ export const HeartbeatIbkrRemoteDesktopBody = zod.record(zod.string(), zod.unkno
 export const HeartbeatIbkrRemoteDesktopResponse = zod.object({
   "desktop": zod.object({
   "desktopId": zod.string(),
+  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
+  "helperCompatible": zod.boolean(),
+  "helperKnownBad": zod.boolean(),
+  "helperUpdateRequired": zod.boolean(),
   "helperVersion": zod.string().nullable(),
   "label": zod.string().nullable(),
   "lastSeenAt": zod.coerce.date(),
@@ -659,6 +734,110 @@ export const ReadIbkrRemoteDesktopJobStatusResponse = zod.object({
 
 
 /**
+ * @summary Read the latest IBKR bridge activation diagnostics
+ */
+export const GetIbkrBridgeActivationDiagnosticsResponse = zod.object({
+  "activeCount": zod.number(),
+  "latestActivation": zod.union([zod.object({
+  "canceled": zod.boolean(),
+  "expiresAt": zod.coerce.date(),
+  "issuedAt": zod.coerce.date(),
+  "lastLoginEnvelopeSubmitAttemptAt": zod.coerce.date().nullable(),
+  "lastLoginEnvelopeSubmitErrorCode": zod.string().nullable(),
+  "lastLoginKeyReadAt": zod.coerce.date().nullable(),
+  "lastLoginKeyReadReadyAt": zod.coerce.date().nullable(),
+  "loginEnvelopeSubmitAttemptCount": zod.number(),
+  "loginEnvelopeSubmitted": zod.boolean(),
+  "loginEnvelopeSubmittedAt": zod.coerce.date().nullable(),
+  "loginHandoffCreatedAt": zod.coerce.date().nullable(),
+  "loginHandoffReady": zod.boolean(),
+  "loginKeyReadCount": zod.number(),
+  "progressStepTimings": zod.record(zod.string(), zod.coerce.date()),
+  "timings": zod.record(zod.string(), zod.unknown())
+}),zod.null()]),
+  "latestActivationId": zod.string().nullable(),
+  "insight": zod.object({
+  "currentOwner": zod.enum(['none', 'pyrus', 'desktopHelper', 'ibGateway', 'ibkrMobile', 'cloudflareTunnel', 'user']),
+  "currentPhase": zod.enum(['idle', 'request', 'update', 'credentials', 'gateway', 'twoFactor', 'bridge', 'tunnel', 'complete', 'canceled', 'error']),
+  "currentPhaseElapsedMs": zod.number().nullable(),
+  "currentPhaseStartedAt": zod.coerce.date().nullable(),
+  "detail": zod.string(),
+  "normalAfterMs": zod.number().nullable(),
+  "phaseDurations": zod.object({
+  "request": zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+}),
+  "update": zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+}),
+  "credentials": zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+}),
+  "gateway": zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+}),
+  "twoFactor": zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+}),
+  "bridge": zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+}),
+  "tunnel": zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+})
+}),
+  "recommendedAction": zod.string().nullable(),
+  "severity": zod.enum(['idle', 'progress', 'attention', 'error', 'success']),
+  "stale": zod.boolean(),
+  "staleAfterMs": zod.number().nullable(),
+  "timeline": zod.array(zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+}).and(zod.object({
+  "id": zod.enum(['request', 'update', 'credentials', 'gateway', 'twoFactor', 'bridge', 'tunnel']),
+  "label": zod.string(),
+  "owner": zod.enum(['none', 'pyrus', 'desktopHelper', 'ibGateway', 'ibkrMobile', 'cloudflareTunnel', 'user']),
+  "status": zod.enum(['pending', 'active', 'complete', 'attention', 'error', 'canceled'])
+}))),
+  "title": zod.string()
+}),
+  "latestProgress": zod.union([zod.object({
+  "activationId": zod.string(),
+  "status": zod.string().nullable(),
+  "step": zod.string().nullable(),
+  "message": zod.string().nullable(),
+  "helperVersion": zod.string().nullable(),
+  "bridgeUrl": zod.string().nullable(),
+  "updatedAt": zod.coerce.date()
+}),zod.null()]),
+  "recentProgress": zod.array(zod.object({
+  "activationId": zod.string(),
+  "status": zod.string().nullable(),
+  "step": zod.string().nullable(),
+  "message": zod.string().nullable(),
+  "helperVersion": zod.string().nullable(),
+  "bridgeUrl": zod.string().nullable(),
+  "updatedAt": zod.coerce.date()
+}))
+})
+
+
+/**
  * @summary Queue an IBKR bridge launch on a paired Windows desktop agent
  */
 export const CreateIbkrRemoteBridgeLaunchBody = zod.record(zod.string(), zod.unknown())
@@ -685,6 +864,10 @@ export const CreateIbkrRemoteBridgeLaunchResponse = zod.object({
   "remoteLaunch": zod.object({
   "desktop": zod.object({
   "desktopId": zod.string(),
+  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
+  "helperCompatible": zod.boolean(),
+  "helperKnownBad": zod.boolean(),
+  "helperUpdateRequired": zod.boolean(),
   "helperVersion": zod.string().nullable(),
   "label": zod.string().nullable(),
   "lastSeenAt": zod.coerce.date(),
@@ -709,6 +892,10 @@ export const CreateIbkrRemoteBridgeShutdownResponse = zod.object({
   "action": zod.enum(['shutdown']),
   "desktop": zod.object({
   "desktopId": zod.string(),
+  "helperCompatibility": zod.enum(['compatible', 'known_bad', 'update_required']),
+  "helperCompatible": zod.boolean(),
+  "helperKnownBad": zod.boolean(),
+  "helperUpdateRequired": zod.boolean(),
   "helperVersion": zod.string().nullable(),
   "label": zod.string().nullable(),
   "lastSeenAt": zod.coerce.date(),
@@ -750,6 +937,66 @@ export const ReadIbkrBridgeActivationStatusResponse = zod.object({
   "active": zod.boolean(),
   "canceled": zod.boolean(),
   "expiresAt": zod.coerce.date(),
+  "insight": zod.object({
+  "currentOwner": zod.enum(['none', 'pyrus', 'desktopHelper', 'ibGateway', 'ibkrMobile', 'cloudflareTunnel', 'user']),
+  "currentPhase": zod.enum(['idle', 'request', 'update', 'credentials', 'gateway', 'twoFactor', 'bridge', 'tunnel', 'complete', 'canceled', 'error']),
+  "currentPhaseElapsedMs": zod.number().nullable(),
+  "currentPhaseStartedAt": zod.coerce.date().nullable(),
+  "detail": zod.string(),
+  "normalAfterMs": zod.number().nullable(),
+  "phaseDurations": zod.object({
+  "request": zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+}),
+  "update": zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+}),
+  "credentials": zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+}),
+  "gateway": zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+}),
+  "twoFactor": zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+}),
+  "bridge": zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+}),
+  "tunnel": zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+})
+}),
+  "recommendedAction": zod.string().nullable(),
+  "severity": zod.enum(['idle', 'progress', 'attention', 'error', 'success']),
+  "stale": zod.boolean(),
+  "staleAfterMs": zod.number().nullable(),
+  "timeline": zod.array(zod.object({
+  "completedAt": zod.coerce.date().nullable(),
+  "elapsedMs": zod.number().nullable(),
+  "startedAt": zod.coerce.date().nullable()
+}).and(zod.object({
+  "id": zod.enum(['request', 'update', 'credentials', 'gateway', 'twoFactor', 'bridge', 'tunnel']),
+  "label": zod.string(),
+  "owner": zod.enum(['none', 'pyrus', 'desktopHelper', 'ibGateway', 'ibkrMobile', 'cloudflareTunnel', 'user']),
+  "status": zod.enum(['pending', 'active', 'complete', 'attention', 'error', 'canceled'])
+}))),
+  "title": zod.string()
+}),
   "latestProgress": zod.union([zod.object({
   "activationId": zod.string(),
   "status": zod.string().nullable(),
@@ -1280,6 +1527,8 @@ export const GetAccountPositionsResponse = zod.object({
   "unrealizedPnlPercent": zod.number().describe('Unrealized P&L in percentage points.'),
   "marketValue": zod.number(),
   "weightPercent": zod.number().nullable().describe('Position weight in percentage points.'),
+  "accountWeightPercent": zod.number().nullish().describe('Position weight against the full account net liquidation, in percentage points.'),
+  "scopedWeightPercent": zod.number().nullish().describe('Position weight against the current response scope, in percentage points.'),
   "betaWeightedDelta": zod.number().nullable(),
   "lots": zod.array(zod.object({
   "accountId": zod.string(),
@@ -1422,6 +1671,8 @@ export const GetAccountPositionsAtDateResponse = zod.object({
   "unrealizedPnlPercent": zod.number().describe('Unrealized P&L in percentage points.'),
   "marketValue": zod.number(),
   "weightPercent": zod.number().nullable().describe('Position weight in percentage points.'),
+  "accountWeightPercent": zod.number().nullish().describe('Position weight against the full account net liquidation, in percentage points.'),
+  "scopedWeightPercent": zod.number().nullish().describe('Position weight against the current response scope, in percentage points.'),
   "betaWeightedDelta": zod.number().nullable(),
   "lots": zod.array(zod.object({
   "accountId": zod.string(),
@@ -1661,6 +1912,7 @@ export const CancelAccountOrderParams = zod.object({
 })
 
 export const CancelAccountOrderBody = zod.object({
+  "mode": zod.enum(['paper', 'live']),
   "confirm": zod.boolean().optional()
 })
 
@@ -2369,6 +2621,7 @@ export const CancelOrderParams = zod.object({
 
 export const CancelOrderBody = zod.object({
   "accountId": zod.string(),
+  "mode": zod.enum(['paper', 'live']),
   "confirm": zod.boolean().optional(),
   "manualIndicator": zod.boolean().nullish(),
   "extOperator": zod.string().nullish()
@@ -4246,7 +4499,7 @@ export const updateSignalMonitorProfileBodyFreshWindowBarsMax = 20;
 export const updateSignalMonitorProfileBodyPollIntervalSecondsMin = 15;
 export const updateSignalMonitorProfileBodyPollIntervalSecondsMax = 3600;
 
-export const updateSignalMonitorProfileBodyMaxSymbolsMax = 250;
+export const updateSignalMonitorProfileBodyMaxSymbolsMax = 500;
 
 export const updateSignalMonitorProfileBodyEvaluationConcurrencyMax = 10;
 
@@ -4331,13 +4584,13 @@ export const EvaluateSignalMonitorResponse = zod.object({
   "skippedSymbols": zod.array(zod.string()),
   "universeSymbols": zod.array(zod.string()).describe('Every symbol in the resolved signal-tracked universe, including symbols with missing, stale, or skipped state.'),
   "universe": zod.object({
-  "mode": zod.enum(['selected_watchlist', 'all_watchlists', 'all_watchlists_plus_universe']),
+  "mode": zod.enum(['selected_watchlist', 'all_watchlists', 'all_watchlists_plus_universe', 'high_beta_500']),
   "configuredMaxSymbols": zod.number(),
   "resolvedSymbols": zod.number(),
   "pinnedSymbols": zod.number(),
   "expansionSymbols": zod.number(),
   "shortfall": zod.number(),
-  "source": zod.enum(['selected_watchlist', 'all_watchlists', 'watchlists_plus_ranked_universe']),
+  "source": zod.enum(['selected_watchlist', 'all_watchlists', 'watchlists_plus_ranked_universe', 'high_beta_500']),
   "fallbackUsed": zod.boolean(),
   "degradedReason": zod.string().nullable(),
   "rankedAt": zod.coerce.date().nullable()
@@ -4426,7 +4679,7 @@ export const EvaluateSignalMonitorMatrixResponse = zod.object({
   "totalSymbols": zod.number(),
   "timeframes": zod.number(),
   "taskCount": zod.number(),
-  "sourceStrategy": zod.enum(['native_timeframes', 'native_timeframes_live_retry']).optional(),
+  "sourceStrategy": zod.enum(['native_timeframes', 'native_timeframes_live_retry', 'native_timeframes_live_retry_exact_backfill']).optional(),
   "sourceRequestCount": zod.number().optional(),
   "hydratedSymbols": zod.number().optional(),
   "missingSymbols": zod.number().optional(),
@@ -4486,13 +4739,13 @@ export const GetSignalMonitorStateResponse = zod.object({
   "skippedSymbols": zod.array(zod.string()),
   "universeSymbols": zod.array(zod.string()).describe('Every symbol in the resolved signal-tracked universe, including symbols with missing, stale, or skipped state.'),
   "universe": zod.object({
-  "mode": zod.enum(['selected_watchlist', 'all_watchlists', 'all_watchlists_plus_universe']),
+  "mode": zod.enum(['selected_watchlist', 'all_watchlists', 'all_watchlists_plus_universe', 'high_beta_500']),
   "configuredMaxSymbols": zod.number(),
   "resolvedSymbols": zod.number(),
   "pinnedSymbols": zod.number(),
   "expansionSymbols": zod.number(),
   "shortfall": zod.number(),
-  "source": zod.enum(['selected_watchlist', 'all_watchlists', 'watchlists_plus_ranked_universe']),
+  "source": zod.enum(['selected_watchlist', 'all_watchlists', 'watchlists_plus_ranked_universe', 'high_beta_500']),
   "fallbackUsed": zod.boolean(),
   "degradedReason": zod.string().nullable(),
   "rankedAt": zod.coerce.date().nullable()
@@ -4546,7 +4799,115 @@ export const ListSignalMonitorEventsResponse = zod.object({
  */
 export const GetResearchStatusResponse = zod.object({
   "configured": zod.boolean(),
-  "provider": zod.union([zod.enum(['fmp']),zod.null()])
+  "provider": zod.union([zod.enum(['fmp']),zod.null()]),
+  "highBetaUniverse": zod.object({
+  "available": zod.boolean(),
+  "configured": zod.boolean(),
+  "provider": zod.union([zod.enum(['fmp']),zod.null()]),
+  "validatorProvider": zod.union([zod.enum(['massive']),zod.null()]),
+  "limit": zod.number(),
+  "cacheTtlMs": zod.number(),
+  "lastGeneratedAt": zod.coerce.date().nullable(),
+  "lastAcceptedCount": zod.number().nullable(),
+  "cacheStatus": zod.enum(['fresh', 'memory_cache', 'stale_cache', 'unavailable']),
+  "unavailableCode": zod.string().nullable(),
+  "unavailableDetail": zod.string().nullable()
+})
+})
+
+
+/**
+ * Builds a dry-run high-beta universe from the existing FMP screener integration and validates candidates through Massive market-data/reference/options coverage.
+ * @summary Preview the high-beta STA universe
+ */
+export const getResearchHighBetaUniverseQueryLimitDefault = 500;
+export const getResearchHighBetaUniverseQueryLimitMax = 500;
+
+export const getResearchHighBetaUniverseQueryCandidateLimitDefault = 1500;
+export const getResearchHighBetaUniverseQueryCandidateLimitMax = 5000;
+
+export const getResearchHighBetaUniverseQueryMinBetaDefault = 1;
+export const getResearchHighBetaUniverseQueryMinPriceDefault = 5;
+export const getResearchHighBetaUniverseQueryMinVolumeDefault = 500000;
+export const getResearchHighBetaUniverseQueryMinDollarVolumeDefault = 10000000;
+export const getResearchHighBetaUniverseQueryMinMarketCapDefault = 250000000;
+export const getResearchHighBetaUniverseQueryDryRunDefault = true;
+export const getResearchHighBetaUniverseQueryRefreshDefault = false;
+
+export const GetResearchHighBetaUniverseQueryParams = zod.object({
+  "limit": zod.coerce.number().min(1).max(getResearchHighBetaUniverseQueryLimitMax).default(getResearchHighBetaUniverseQueryLimitDefault),
+  "candidateLimit": zod.coerce.number().min(1).max(getResearchHighBetaUniverseQueryCandidateLimitMax).default(getResearchHighBetaUniverseQueryCandidateLimitDefault),
+  "minBeta": zod.coerce.number().default(getResearchHighBetaUniverseQueryMinBetaDefault),
+  "minPrice": zod.coerce.number().default(getResearchHighBetaUniverseQueryMinPriceDefault),
+  "minVolume": zod.coerce.number().default(getResearchHighBetaUniverseQueryMinVolumeDefault),
+  "minDollarVolume": zod.coerce.number().default(getResearchHighBetaUniverseQueryMinDollarVolumeDefault),
+  "minMarketCap": zod.coerce.number().default(getResearchHighBetaUniverseQueryMinMarketCapDefault),
+  "exchanges": zod.coerce.string().optional().describe('Comma-separated FMP exchanges to query. Defaults to NASDAQ, NYSE, and AMEX.'),
+  "dryRun": zod.coerce.boolean().default(getResearchHighBetaUniverseQueryDryRunDefault),
+  "refresh": zod.coerce.boolean().default(getResearchHighBetaUniverseQueryRefreshDefault)
+})
+
+export const GetResearchHighBetaUniverseResponse = zod.object({
+  "generatedAt": zod.coerce.date(),
+  "dryRun": zod.boolean(),
+  "sourceStatus": zod.enum(['fresh', 'memory_cache', 'stale_cache']),
+  "limit": zod.number(),
+  "importedCount": zod.number(),
+  "acceptedCount": zod.number(),
+  "rejectedCount": zod.number(),
+  "rejectedByReason": zod.record(zod.string(), zod.number()),
+  "accepted": zod.array(zod.object({
+  "rank": zod.number(),
+  "symbol": zod.string(),
+  "name": zod.string().nullable(),
+  "beta": zod.number(),
+  "intradayVolatility": zod.number().nullable(),
+  "optionContractCount": zod.number(),
+  "opportunityScore": zod.number(),
+  "score": zod.object({
+  "source": zod.enum(['blended_options_opportunity_v1']),
+  "betaScore": zod.number(),
+  "intradayVolatilityScore": zod.number(),
+  "liquidityScore": zod.number(),
+  "optionsTradabilityScore": zod.number(),
+  "weights": zod.object({
+  "beta": zod.number(),
+  "intradayVolatility": zod.number(),
+  "liquidity": zod.number(),
+  "optionsTradability": zod.number()
+})
+}),
+  "price": zod.number().nullable(),
+  "volume": zod.number().nullable(),
+  "dollarVolume": zod.number().nullable(),
+  "marketCap": zod.number().nullable(),
+  "exchange": zod.string().nullable(),
+  "massiveMarket": zod.string().nullable(),
+  "massiveType": zod.string().nullable(),
+  "optionable": zod.boolean(),
+  "quoteUpdatedAt": zod.coerce.date().nullable()
+})),
+  "rejectedSample": zod.array(zod.object({
+  "symbol": zod.string(),
+  "beta": zod.number().nullable(),
+  "reason": zod.enum(['invalid_candidate', 'inactive_fmp', 'non_us_fmp', 'reference_unavailable', 'inactive_massive', 'unsupported_market', 'unsupported_security_type', 'quote_unavailable', 'low_liquidity', 'non_optionable']),
+  "detail": zod.string().nullable()
+})),
+  "source": zod.object({
+  "provider": zod.enum(['fmp']),
+  "endpoint": zod.string(),
+  "betaField": zod.string(),
+  "candidateLimit": zod.number(),
+  "exchanges": zod.array(zod.string())
+}),
+  "validation": zod.object({
+  "provider": zod.enum(['massive']),
+  "minPrice": zod.number(),
+  "minVolume": zod.number(),
+  "minDollarVolume": zod.number(),
+  "minMarketCap": zod.number(),
+  "requireOptionable": zod.boolean()
+})
 })
 
 

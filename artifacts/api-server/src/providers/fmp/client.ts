@@ -45,6 +45,21 @@ export type ResearchSnapshot = {
   sharesOut: number | null;
 };
 
+export type FmpHighBetaScreenerCandidate = {
+  symbol: string;
+  name: string | null;
+  beta: number;
+  price: number | null;
+  volume: number | null;
+  marketCap: number | null;
+  exchange: string | null;
+  exchangeShortName: string | null;
+  country: string | null;
+  isEtf: boolean | null;
+  isActivelyTrading: boolean | null;
+  source: "fmp-company-screener";
+};
+
 export type ResearchIncomeStatementPeriod = {
   rev: number | null;
   cogs: number | null;
@@ -216,6 +231,22 @@ function normalizeMillions(value: unknown, digits = 1): number | null {
   }
 
   return round(numeric / 1_000_000, digits);
+}
+
+function asBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes"].includes(normalized)) return true;
+    if (["false", "0", "no"].includes(normalized)) return false;
+  }
+  return null;
 }
 
 function getField(record: Record<string, unknown> | null, key: string): unknown {
@@ -727,6 +758,47 @@ function fromProviderSymbol(symbol: string): string {
   return FMP_PROVIDER_SYMBOLS_REVERSE[normalized] ?? normalized;
 }
 
+function mapHighBetaScreenerCandidate(
+  entry: unknown,
+): FmpHighBetaScreenerCandidate | null {
+  const record = asRecord(entry);
+  if (!record) {
+    return null;
+  }
+
+  const symbol = fromProviderSymbol(asString(record["symbol"]) ?? "");
+  const beta = asNumber(record["beta"]);
+  if (!symbol || beta === null || beta <= 0) {
+    return null;
+  }
+
+  return {
+    symbol,
+    name: firstDefined(
+      asString(record["companyName"]),
+      asString(record["company"]),
+      asString(record["name"]),
+    ),
+    beta: round(beta, 2) ?? beta,
+    price: asNumber(record["price"]),
+    volume: firstDefined(
+      asNumber(record["volume"]),
+      asNumber(record["avgVolume"]),
+      asNumber(record["averageVolume"]),
+    ),
+    marketCap: firstDefined(
+      asNumber(record["marketCap"]),
+      asNumber(record["mktCap"]),
+    ),
+    exchange: asString(record["exchange"]),
+    exchangeShortName: asString(record["exchangeShortName"]),
+    country: asString(record["country"]),
+    isEtf: asBoolean(record["isEtf"]),
+    isActivelyTrading: asBoolean(record["isActivelyTrading"]),
+    source: "fmp-company-screener",
+  };
+}
+
 export class FmpResearchClient {
   constructor(private readonly config: FmpRuntimeConfig) {}
 
@@ -737,12 +809,76 @@ export class FmpResearchClient {
   private async fetchStable<T>(
     path: string,
     params: Record<string, QueryValue> = {},
+    init: RequestInit = {},
   ): Promise<T> {
     return fetchJson<T>(this.buildUrl(path, params), {
+      ...init,
       headers: {
         accept: "application/json",
         apikey: this.config.apiKey,
       },
+    });
+  }
+
+  async getHighBetaScreenerCandidates(input: {
+    exchanges?: string[];
+    limit?: number;
+    betaMoreThan?: number;
+    priceMoreThan?: number;
+    volumeMoreThan?: number;
+    marketCapMoreThan?: number;
+    country?: string;
+    includeEtfs?: boolean;
+    signal?: AbortSignal;
+  } = {}): Promise<FmpHighBetaScreenerCandidate[]> {
+    const exchanges = (input.exchanges?.length
+      ? input.exchanges
+      : ["NASDAQ", "NYSE", "AMEX"]
+    )
+      .map((exchange) => String(exchange || "").trim().toUpperCase())
+      .filter(Boolean);
+    const limit = Math.max(1, Math.min(Math.floor(input.limit ?? 1000), 5000));
+
+    const payloads = await Promise.all(
+      exchanges.map((exchange) =>
+        this.fetchStable<unknown[]>(
+          "/company-screener",
+          {
+            exchange,
+            country: input.country ?? "US",
+            betaMoreThan: input.betaMoreThan ?? 1,
+            priceMoreThan: input.priceMoreThan ?? 1,
+            volumeMoreThan: input.volumeMoreThan ?? 100_000,
+            marketCapMoreThan: input.marketCapMoreThan,
+            isEtf: input.includeEtfs === false ? false : undefined,
+            isActivelyTrading: true,
+            limit,
+          },
+          { signal: input.signal },
+        ).catch(() => []),
+      ),
+    );
+
+    const bySymbol = new Map<string, FmpHighBetaScreenerCandidate>();
+    payloads
+      .flatMap((payload) => getRecordArray(payload))
+      .map(mapHighBetaScreenerCandidate)
+      .filter((candidate): candidate is FmpHighBetaScreenerCandidate =>
+        Boolean(candidate),
+      )
+      .forEach((candidate) => {
+        const current = bySymbol.get(candidate.symbol);
+        if (!current || candidate.beta > current.beta) {
+          bySymbol.set(candidate.symbol, candidate);
+        }
+      });
+
+    return [...bySymbol.values()].sort((left, right) => {
+      if (right.beta !== left.beta) return right.beta - left.beta;
+      const rightVolume = right.volume ?? 0;
+      const leftVolume = left.volume ?? 0;
+      if (rightVolume !== leftVolume) return rightVolume - leftVolume;
+      return left.symbol.localeCompare(right.symbol);
     });
   }
 

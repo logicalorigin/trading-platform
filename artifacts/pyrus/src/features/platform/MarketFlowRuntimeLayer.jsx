@@ -22,6 +22,25 @@ const buildPendingFlowSource = (reason = "options_flow_refreshing") => ({
 });
 const BROAD_FLOW_STARTUP_DELAY_MS = 2_500;
 
+const normalizeRuntimeSymbols = (symbols = []) =>
+  Array.from(
+    new Set(
+      (symbols || [])
+        .map((symbol) => symbol?.trim?.().toUpperCase?.() || "")
+        .filter(Boolean),
+    ),
+  );
+
+const useStableRuntimeSymbols = (symbols = []) => {
+  const normalized = normalizeRuntimeSymbols(symbols);
+  const key = normalized.join(",");
+  const ref = useRef({ key: "", symbols: [] });
+  if (ref.current.key !== key) {
+    ref.current = { key, symbols: normalized };
+  }
+  return ref.current;
+};
+
 const resolveTradeFlowPublishSource = (snapshot, symbol) =>
   snapshot?.providerSummary?.sourcesBySymbol?.[symbol] ||
   snapshot?.providerSummary?.erroredSource ||
@@ -53,8 +72,12 @@ export const SharedMarketFlowRuntime = memo(({
   enabled = true,
   intervalMs = 10_000,
 }) => {
-  const storeKey = useMemo(() => buildMarketFlowStoreKey(symbols), [symbols]);
-  const snapshot = useLiveMarketFlow(symbols, {
+  const stableSymbols = useStableRuntimeSymbols(symbols);
+  const storeKey = useMemo(
+    () => buildMarketFlowStoreKey(stableSymbols.symbols),
+    [stableSymbols.key],
+  );
+  const snapshot = useLiveMarketFlow(stableSymbols.symbols, {
     enabled,
     intervalMs,
     blocking: true,
@@ -62,8 +85,8 @@ export const SharedMarketFlowRuntime = memo(({
 
   useEffect(() => {
     publishMarketFlowSnapshot(storeKey, snapshot);
-    publishRuntimeTradeFlowSnapshots(symbols, snapshot);
-  }, [storeKey, snapshot, symbols]);
+    publishRuntimeTradeFlowSnapshots(stableSymbols.symbols, snapshot);
+  }, [storeKey, snapshot, stableSymbols]);
 
   useEffect(() => () => {
     clearMarketFlowSnapshot(storeKey);
@@ -79,6 +102,7 @@ export const BroadFlowScannerRuntime = memo(({
   startupDelayMs = BROAD_FLOW_STARTUP_DELAY_MS,
 }) => {
   const ownerTokenRef = useRef(Symbol("broad-flow-scanner-runtime"));
+  const stableSymbols = useStableRuntimeSymbols(symbols);
   const flowScannerControl = useFlowScannerControlState();
   const [startupReady, setStartupReady] = useState(false);
   const scannerEnabled = Boolean(flowScannerControl.enabled);
@@ -110,7 +134,7 @@ export const BroadFlowScannerRuntime = memo(({
       }),
     [flowScannerControl.config, scannerConfig],
   );
-  const snapshot = useLiveMarketFlow(symbols, {
+  const snapshot = useLiveMarketFlow(stableSymbols.symbols, {
     enabled: runtimeActive,
     scannerConfig: broadScannerConfig,
     blocking: false,
@@ -135,9 +159,9 @@ export const BroadFlowScannerRuntime = memo(({
       return undefined;
     }
     publishMarketFlowSnapshot(BROAD_MARKET_FLOW_STORE_KEY, snapshot);
-    publishRuntimeTradeFlowSnapshots(symbols, snapshot);
+    publishRuntimeTradeFlowSnapshots(stableSymbols.symbols, snapshot);
     return undefined;
-  }, [runtimeActive, snapshot, symbols]);
+  }, [runtimeActive, snapshot, stableSymbols]);
 
   return null;
 });

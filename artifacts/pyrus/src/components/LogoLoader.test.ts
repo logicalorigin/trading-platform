@@ -32,6 +32,10 @@ const indexHtmlSource = readFileSync(new URL("../../index.html", import.meta.url
 const mainSource = readFileSync(new URL("../main.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../app/App.tsx", import.meta.url), "utf8");
 const appContentSource = readFileSync(new URL("../app/AppContent.tsx", import.meta.url), "utf8");
+const bootLoaderHandoffSource = readFileSync(
+  new URL("../app/bootLoaderHandoff.ts", import.meta.url),
+  "utf8",
+);
 const appHeaderSource = readFileSync(
   new URL("../features/platform/AppHeader.jsx", import.meta.url),
   "utf8",
@@ -325,38 +329,19 @@ test("Pyrus mark surfaces use the intended ring assets", () => {
   assert.match(globalCssSource, /\.brand-loader-mark\s*\{[\s\S]*?opacity:\s*1/);
   assert.match(globalCssSource, /\.brand-loader-mark\s*\{[\s\S]*?transform-origin:\s*50% 50%/);
   assert.match(globalCssSource, /\.brand-loader-mark\s*\{[\s\S]*?will-change:\s*opacity, transform, filter/);
-  assert.match(globalCssSource, /@keyframes brand-loader-word-enter/);
-  assert.match(
-    globalCssSource,
-    /@keyframes brand-loader-word-enter\s*\{[\s\S]*?0%\s*\{[\s\S]*?opacity:\s*0;[\s\S]*?transform:\s*translateY\(8px\) scale\(0\.985\);[\s\S]*?filter:\s*blur\(3px\) brightness\(0\.8\);/,
-  );
-  assert.match(
-    globalCssSource,
-    /@keyframes brand-loader-word-enter\s*\{[\s\S]*?64%\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*translateY\(0\) scale\(1\.006\);[\s\S]*?filter:\s*blur\(0\) brightness\(1\.12\);/,
-  );
-  assert.match(
-    globalCssSource,
-    /@keyframes brand-loader-word-enter\s*\{[\s\S]*?100%\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*translateY\(0\) scale\(1\);[\s\S]*?filter:\s*blur\(0\) brightness\(1\);/,
-  );
+  assert.doesNotMatch(globalCssSource, /@keyframes brand-loader-word-enter/);
+  assert.doesNotMatch(globalCssSource, /--brand-loader-word-delay/);
+  assert.doesNotMatch(globalCssSource, /--brand-loader-word-duration/);
   assert.match(globalCssSource, /\.brand-loader-word\s*\{/);
-  assert.match(globalCssSource, /--brand-loader-word-delay:\s*180ms/);
-  assert.match(globalCssSource, /--brand-loader-word-duration:\s*520ms/);
-  assert.match(
-    globalCssSource,
-    /\.brand-loader-word\s*\{[\s\S]*?animation:\s*brand-loader-word-enter var\(--brand-loader-word-duration\) cubic-bezier\(0\.16, 1, 0\.3, 1\) calc\(var\(--brand-loader-word-delay\) - var\(--brand-loader-handoff-offset, 0ms\)\) both;/,
-  );
   assert.match(globalCssSource, /\.brand-loader-word\s*\{[\s\S]*?height:\s*26px/);
   assert.match(globalCssSource, /\.brand-loader-word\s*\{[\s\S]*?mix-blend-mode:\s*screen/);
+  assert.match(globalCssSource, /\.brand-loader-word\s*\{[\s\S]*?opacity:\s*1/);
   assert.match(globalCssSource, /\.brand-loader-progress\s*\{/);
   assert.match(globalCssSource, /\.brand-loader-progress-row\s*\{/);
   assert.match(globalCssSource, /\.brand-loader-progress-track\s*\{/);
   assert.match(globalCssSource, /\.brand-loader-progress-fill\s*\{/);
   assert.match(globalCssSource, /\.pyrus-boot-progress-overlay\s*\{/);
-  assert.match(
-    globalCssSource,
-    /\[data-tone="panel"\] \.brand-loader-word\s*\{[\s\S]*?--brand-loader-word-delay:\s*80ms;[\s\S]*?--brand-loader-word-duration:\s*360ms;[\s\S]*?height:\s*18px/,
-  );
-  assert.match(globalCssSource, /\.brand-loader-word\s*\{[\s\S]*?will-change:\s*opacity, transform, filter/);
+  assert.match(globalCssSource, /\[data-tone="panel"\] \.brand-loader-word\s*\{[\s\S]*?height:\s*18px/);
   assert.match(globalCssSource, /\.pyrus-lockup-descriptor\s*\{/);
   assert.match(globalCssSource, /letter-spacing:\s*0\.32em/);
   assert.doesNotMatch(globalCssSource, /\.pyrus-loader-mark::before/);
@@ -390,18 +375,25 @@ test("static HTML renders the tracked Pyrus boot loader before React mounts", ()
   assert.match(indexHtmlSource, /class="pyrus-boot-word"[\s\S]*width="213"[\s\S]*height="26"/);
   assert.match(indexHtmlSource, /aria-label="Loading PYRUS"/);
   assert.match(indexHtmlSource, /role="status"/);
+  assert.match(indexHtmlSource, /\.pyrus-boot-loader\s*\{[\s\S]*?flex-direction:\s*column/);
   assert.match(indexHtmlSource, /\.pyrus-boot-lockup\s*\{[^}]*gap:\s*24px/);
   assert.match(indexHtmlSource, /\.pyrus-boot-mark\s*\{[\s\S]*?animation:[\s\S]*?pyrus-boot-mark 680ms[\s\S]*?pyrus-boot-mark-live 1800ms[\s\S]*?760ms infinite/);
-  assert.match(indexHtmlSource, /\.pyrus-boot-word\s*\{[\s\S]*?animation:\s*pyrus-boot-word 520ms[\s\S]*?180ms both/);
+  assert.doesNotMatch(indexHtmlSource, /animation:\s*pyrus-boot-word/);
+  assert.doesNotMatch(indexHtmlSource, /@keyframes pyrus-boot-word/);
   assert.match(indexHtmlSource, /\.pyrus-boot-word\s*\{[^}]*height:\s*26px/);
   assert.match(indexHtmlSource, /\.pyrus-boot-word\s*\{[^}]*width:\s*213px/);
   assert.match(indexHtmlSource, /\.pyrus-boot-word\s*\{[^}]*object-fit:\s*contain/);
   assert.match(indexHtmlSource, /\.pyrus-boot-word\s*\{[^}]*mix-blend-mode:\s*screen/);
+  assert.match(indexHtmlSource, /\.pyrus-boot-word\s*\{[^}]*opacity:\s*1/);
   assert.match(indexHtmlSource, /@keyframes pyrus-boot-mark\s*\{[\s\S]*?0%\s*\{[\s\S]*?opacity:\s*0\.86;[\s\S]*?transform:\s*rotate\(-10deg\) scale\(0\.985\);[\s\S]*?filter:\s*brightness\(0\.82\) saturate\(0\.92\);/);
   assert.match(indexHtmlSource, /@keyframes pyrus-boot-mark\s*\{[\s\S]*?62%\s*\{[\s\S]*?transform:\s*rotate\(2deg\) scale\(1\.018\);[\s\S]*?filter:\s*brightness\(1\.24\) saturate\(1\.08\);/);
   assert.match(indexHtmlSource, /@keyframes pyrus-boot-mark-live\s*\{[\s\S]*?48%\s*\{[\s\S]*?transform:\s*scale\(1\.014\);[\s\S]*?filter:\s*brightness\(1\.16\) saturate\(1\.06\);/);
-  assert.match(indexHtmlSource, /@keyframes pyrus-boot-word\s*\{[\s\S]*?0%\s*\{[\s\S]*?transform:\s*translateY\(8px\) scale\(0\.985\);[\s\S]*?filter:\s*blur\(3px\) brightness\(0\.8\);/);
-  assert.match(indexHtmlSource, /@keyframes pyrus-boot-word\s*\{[\s\S]*?64%\s*\{[\s\S]*?transform:\s*translateY\(0\) scale\(1\.006\);[\s\S]*?filter:\s*blur\(0\) brightness\(1\.12\);/);
+  assert.match(indexHtmlSource, /class="pyrus-boot-progress"[\s\S]*Loading boot shell[\s\S]*0%/);
+  assert.match(indexHtmlSource, /\.pyrus-boot-progress\s*\{[\s\S]*?margin-top:\s*32px/);
+  assert.match(indexHtmlSource, /\.pyrus-boot-progress\s*\{[\s\S]*?width:\s*360px/);
+  assert.match(indexHtmlSource, /\.pyrus-boot-progress-track\s*\{[\s\S]*?height:\s*7px/);
+  assert.match(indexHtmlSource, /\.pyrus-boot-progress-fill\s*\{[\s\S]*?linear-gradient\(90deg, #168bff, #5ce3a2 56%, #efcb6a\)/);
+  assert.doesNotMatch(indexHtmlSource, /@media \(max-width: 520px\)[\s\S]*?\.pyrus-boot-mark/);
   assert.doesNotMatch(indexHtmlSource, /<div class="pyrus-boot-word">PYRUS<\/div>/);
   for (const [, bootWordStyles] of indexHtmlSource.matchAll(/\.pyrus-boot-word\s*\{([^}]*)\}/g)) {
     assert.doesNotMatch(bootWordStyles, /font-size:/);
@@ -469,15 +461,18 @@ test("app boot and screen routing use the React loader after the static shell", 
   assert.match(appSource, /completeBootProgressTask\("app-content-chunk"\)/);
   assert.match(appSource, /failBootProgressTask\("app-content-chunk"/);
   assert.doesNotMatch(appSource, /await mod\.preloadInitialAppContentRoute\(\)/);
+  assert.match(appSource, /import \{ useBootHandoffElapsedMs \} from "\.\/bootLoaderHandoff"/);
   assert.match(appSource, /type AppProps = \{[\s\S]*?bootLoaderElapsedMs\?: number \| null/);
   assert.match(appSource, /function AppShellFallback\(\{ bootLoaderElapsedMs = null \}: AppProps\)/);
-  assert.match(appSource, /bootHandoffElapsedMs=\{bootLoaderElapsedMs\}/);
+  assert.match(appSource, /const bootHandoffElapsedMs = useBootHandoffElapsedMs\(bootLoaderElapsedMs\);/);
+  assert.match(appSource, /bootHandoffElapsedMs=\{bootHandoffElapsedMs\}/);
   assert.match(appSource, /progress=\{progress\}/);
   assert.match(appSource, /testId="app-loading-fallback"/);
   assert.match(appSource, /<Suspense fallback=\{<AppShellFallback bootLoaderElapsedMs=\{bootLoaderElapsedMs\} \/>\}>/);
   assert.match(appSource, /<AppContent bootLoaderElapsedMs=\{bootLoaderElapsedMs\} \/>/);
 
   assert.match(appContentSource, /import LogoLoader from "\.\.\/components\/LogoLoader"/);
+  assert.match(appContentSource, /import \{ useBootHandoffElapsedMs \} from "\.\/bootLoaderHandoff"/);
   assert.match(appContentSource, /BOOT_SCREEN_MODULE_PRELOAD_TASK_IDS/);
   assert.match(appContentSource, /useBootProgress/);
   assert.match(appContentSource, /type AppContentProps = \{[\s\S]*?bootLoaderElapsedMs\?: number \| null/);
@@ -493,12 +488,18 @@ test("app boot and screen routing use the React loader after the static shell", 
   assert.match(appContentSource, /const InitialRouteComponent = getPreloadedInitialAppContentRoute\(labMode\)/);
   assert.match(appContentSource, /<InitialRouteComponent \/>/);
   assert.match(appContentSource, /function AppContentRouteFallback\(\{ bootLoaderElapsedMs = null \}: AppContentProps\)/);
-  assert.match(appContentSource, /bootHandoffElapsedMs=\{bootLoaderElapsedMs\}/);
+  assert.match(appContentSource, /const bootHandoffElapsedMs = useBootHandoffElapsedMs\(bootLoaderElapsedMs\);/);
+  assert.match(appContentSource, /bootHandoffElapsedMs=\{bootHandoffElapsedMs\}/);
   assert.match(appContentSource, /progress=\{progress\}/);
   assert.match(appContentSource, /testId="app-content-route-loading"/);
   assert.match(appContentSource, /import \{ PlatformErrorBoundary \} from "\.\.\/components\/platform\/PlatformErrorBoundary"/);
   assert.match(appContentSource, /reportCategory="react-workspace-chunk"/);
   assert.match(appContentSource, /<Suspense fallback=\{<AppContentRouteFallback bootLoaderElapsedMs=\{bootLoaderElapsedMs\} \/>\}>/);
+  assert.match(bootLoaderHandoffSource, /export const readCurrentBootHandoffElapsedMs/);
+  assert.match(bootLoaderHandoffSource, /__PYRUS_BOOT_LOADER_STARTED_AT__/);
+  assert.match(bootLoaderHandoffSource, /return Math\.max\(0, nowMs\(\) - startedAt\)/);
+  assert.match(bootLoaderHandoffSource, /export const useBootHandoffElapsedMs/);
+  assert.match(bootLoaderHandoffSource, /useMemo/);
   assert.doesNotMatch(appSource, /APP_LOADING_FALLBACK_PALETTES/);
   assert.doesNotMatch(appSource, /function AppLoadingFallback/);
 

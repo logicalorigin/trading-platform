@@ -56,6 +56,22 @@ function isStructuredIbkrOptionProviderContractId(
   }
 }
 
+function isNumericIbkrOptionProviderContractId(
+  providerContractId: string | null,
+): boolean {
+  const raw = providerContractId?.trim() ?? "";
+  return /^[1-9]\d+$/.test(raw);
+}
+
+function isIbkrOptionProviderContractIdResolvable(
+  providerContractId: string | null,
+): boolean {
+  return (
+    isNumericIbkrOptionProviderContractId(providerContractId) ||
+    isStructuredIbkrOptionProviderContractId(providerContractId)
+  );
+}
+
 function ownerKey(owner: IbkrMarketDataLineOwner): string {
   return `${owner.owner}\u0000${owner.intent}\u0000${owner.pool ?? ""}`;
 }
@@ -90,7 +106,7 @@ function createMutableDesiredLine(input: {
   }
   if (
     assetClass === "option" &&
-    !isStructuredIbkrOptionProviderContractId(parsed.providerContractId)
+    !isIbkrOptionProviderContractIdResolvable(parsed.providerContractId)
   ) {
     return null;
   }

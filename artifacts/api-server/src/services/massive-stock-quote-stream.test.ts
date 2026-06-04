@@ -6,6 +6,10 @@ import {
   getCurrentMassiveStockQuoteSnapshots,
   getMassiveStockQuoteStreamDiagnostics,
 } from "./massive-stock-quote-stream";
+import {
+  __stockQuoteDayChangeContextTestInternals,
+  recordStockQuoteDayChangeContext,
+} from "./stock-quote-day-change-context";
 
 const ENV_KEYS = [
   "MASSIVE_API_KEY",
@@ -38,6 +42,7 @@ function withMassiveRealtimeEnv(task: () => void): void {
 
 test.afterEach(() => {
   __massiveStockQuoteStreamInternalsForTests.reset();
+  __stockQuoteDayChangeContextTestInternals.reset();
 });
 
 test("Massive stock quote stream maps quote and trade messages to live snapshots", () => {
@@ -67,6 +72,37 @@ test("Massive stock quote stream maps quote and trade messages to live snapshots
   assert.equal(quote?.ask, 500.2);
   assert.equal(quote?.freshness, "live");
   assert.equal(quote?.delayed, false);
+  assert.equal(quote?.volume, null);
+});
+
+test("Massive stock quote stream carries day-change context onto live trade prices", () => {
+  recordStockQuoteDayChangeContext({
+    symbol: "SPY",
+    price: 499,
+    change: 1,
+    changePercent: 0.20080321285140562,
+    open: 495,
+    high: 501,
+    low: 494,
+    prevClose: 498,
+    volume: 1_000_000,
+    updatedAt: new Date("2026-05-27T20:29:00.000Z"),
+  });
+  __massiveStockQuoteStreamInternalsForTests.handleWebSocketMessage({
+    ev: "T",
+    sym: "SPY",
+    p: 500.12,
+    s: 100,
+    t: Date.parse("2026-05-27T20:30:01.000Z"),
+  });
+
+  const [quote] = getCurrentMassiveStockQuoteSnapshots(["SPY"]);
+
+  assert.equal(quote?.price, 500.12);
+  assert.equal(quote?.prevClose, 498);
+  assert.equal(quote?.change, 2.1200000000000045);
+  assert.equal(quote?.changePercent, 0.4257028112449808);
+  assert.equal(quote?.volume, 1_000_000);
 });
 
 test("Massive stock quote stream diagnostics expose WebSocket channels", () => {

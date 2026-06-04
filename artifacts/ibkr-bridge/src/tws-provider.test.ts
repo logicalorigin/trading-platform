@@ -264,7 +264,7 @@ test("market data generation status flags active lines outside an empty applied 
   assert.equal(status.lines[0]?.state, "unexpected");
 });
 
-test("market data generation apply releases bridge-only quote subscriptions", () => {
+test("market data generation apply releases bridge-only quote subscriptions", async () => {
   const provider = new TwsIbkrBridgeProvider({
     host: "127.0.0.1",
     port: 4002,
@@ -304,7 +304,7 @@ test("market data generation apply releases bridge-only quote subscriptions", ()
     },
   });
 
-  const status = provider.applyMarketDataGeneration({
+  const status = await provider.applyMarketDataGeneration({
     schemaVersion: 1,
     generationId: "api-generation-test",
     source: "api-market-data-work-planner",
@@ -349,6 +349,97 @@ test("market data generation apply releases bridge-only quote subscriptions", ()
   assert.equal(status.generationId, "api-generation-test");
   assert.equal(status.summary.liveLineCount, 1);
   assert.equal(status.lines[0]?.owners[0]?.owner, "shadow-position-day-change:mixed");
+});
+
+test("market data generation apply ensures desired quote subscriptions", async () => {
+  const provider = new TwsIbkrBridgeProvider({
+    host: "127.0.0.1",
+    port: 4002,
+    clientId: 101,
+    defaultAccountId: "U1",
+    mode: "paper",
+    marketDataType: MarketDataType.REALTIME,
+  });
+  const internals = provider as unknown as {
+    resolveStockContract(symbol: string): Promise<{
+      contract: Record<string, unknown>;
+      resolved: {
+        symbol: string;
+        providerContractId: string;
+        conid: number;
+      };
+    }>;
+    ensureQuoteSubscription(resolved: {
+      resolved: {
+        symbol: string;
+        providerContractId: string;
+        conid: number;
+      };
+    }): Promise<string>;
+    ensureOptionQuoteSubscription(providerContractId: string): Promise<string>;
+  };
+  const ensuredSymbols: string[] = [];
+  const ensuredProviderContractIds: string[] = [];
+  internals.resolveStockContract = async (symbol) => ({
+    contract: {},
+    resolved: {
+      symbol,
+      providerContractId: `${symbol}-conid`,
+      conid: 100,
+    },
+  });
+  internals.ensureQuoteSubscription = async (resolved) => {
+    ensuredSymbols.push(resolved.resolved.symbol);
+    return resolved.resolved.providerContractId;
+  };
+  internals.ensureOptionQuoteSubscription = async (providerContractId) => {
+    ensuredProviderContractIds.push(providerContractId);
+    return providerContractId;
+  };
+
+  const status = await provider.applyMarketDataGeneration({
+    schemaVersion: 1,
+    generationId: "api-generation-ensure-test",
+    source: "api-market-data-work-planner",
+    generatedAt: "2026-06-02T01:05:00.000Z",
+    desiredLines: [
+      {
+        lineKey: "equity:FCEL",
+        assetClass: "equity",
+        contract: {
+          symbol: "FCEL",
+          providerContractId: null,
+        },
+        intent: "account-monitor-live",
+        owners: [],
+        priority: 90,
+        reason: "test",
+      },
+      {
+        lineKey: "option:885885495",
+        assetClass: "option",
+        contract: {
+          symbol: "SPY",
+          providerContractId: "885885495",
+        },
+        intent: "account-monitor-live",
+        owners: [],
+        priority: 90,
+        reason: "test",
+      },
+    ],
+    summary: {
+      desiredLineCount: 2,
+      desiredEquityLineCount: 1,
+      desiredOptionLineCount: 1,
+      ownerCount: 0,
+    },
+  });
+
+  assert.deepEqual(ensuredSymbols, ["FCEL"]);
+  assert.deepEqual(ensuredProviderContractIds, ["885885495"]);
+  assert.equal(status.mode, "executor");
+  assert.equal(status.generationId, "api-generation-ensure-test");
 });
 
 test("option quote snapshots trim temporary subscriptions after request", async () => {

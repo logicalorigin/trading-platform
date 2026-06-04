@@ -74,6 +74,8 @@ import {
   choosePositionQuote,
   filterOpenBrokerPositions,
   isOpenBrokerPosition,
+  positionAveragePrice,
+  positionMarketPrice,
   positionReferenceSymbol,
   positionSignedNotional,
   POSITION_QUANTITY_EPSILON,
@@ -144,8 +146,12 @@ import {
 import {
   declareIbkrLiveDemand,
   readIbkrLiveDemandState,
+  releaseIbkrLiveDemand,
 } from "./ibkr-live-demand-coordinator";
-import { admitMarketDataLeases } from "./market-data-admission";
+import {
+  admitMarketDataLeases,
+  releaseMarketDataLeases,
+} from "./market-data-admission";
 import type {
   BrokerAccountSnapshot,
   BrokerExecutionSnapshot,
@@ -157,11 +163,13 @@ import type {
 } from "../providers/ibkr/client";
 
 const COMBINED_ACCOUNT_ID = "combined";
-const ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS = 15_000;
-const ACCOUNT_MONITOR_OPTION_QUOTE_TTL_MS = 15_000;
+const ACCOUNT_POSITION_MARKET_DATA_TTL_MS = null;
 const ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS = 2_000;
 const ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS = 5_000;
 const ACCOUNT_ROUTE_DERIVED_RESPONSE_CACHE_TTL_MS = 15_000;
+const ACCOUNT_POSITION_EMPTY_RETRY_COUNT = 3;
+const ACCOUNT_POSITION_EMPTY_RETRY_DELAY_MS = 750;
+const ACCOUNT_POSITION_EXPOSURE_EPSILON = 1;
 const FLEX_SEND_REQUEST_URL =
   "https://www.interactivebrokers.com/Universal/servlet/FlexStatementService.SendRequest";
 const FLEX_GET_STATEMENT_URL =
@@ -1228,21 +1236,93 @@ async function readPositionsForUniverseUncached(
   universe: AccountUniverse,
   mode: RuntimeMode,
 ): Promise<BrokerPositionSnapshot[]> {
-  if (!universe.isCombined && universe.accountIds[0]) {
-    return filterOpenBrokerPositions(
-      await listIbkrPositions({
-        accountId: universe.accountIds[0],
-        mode,
-      }),
+  const readOpenPositions = async (): Promise<BrokerPositionSnapshot[]> => {
+    if (!universe.isCombined && universe.accountIds[0]) {
+      return filterOpenBrokerPositions(
+        await listIbkrPositions({
+          accountId: universe.accountIds[0],
+          mode,
+        }),
+      );
+    }
+
+    const positions = await Promise.all(
+      universe.accountIds.map((accountId) =>
+        listIbkrPositions({ accountId, mode }),
+      ),
     );
+    return filterOpenBrokerPositions(positions.flat());
+  };
+
+  const firstPositions = await readOpenPositions();
+  if (
+    firstPositions.length ||
+    !accountUniverseLikelyHasPositionExposure(universe)
+  ) {
+    return firstPositions;
   }
 
-  const positions = await Promise.all(
-    universe.accountIds.map((accountId) =>
-      listIbkrPositions({ accountId, mode }),
-    ),
+  for (let attempt = 1; attempt <= ACCOUNT_POSITION_EMPTY_RETRY_COUNT; attempt += 1) {
+    await waitForAccountPositionRetry(ACCOUNT_POSITION_EMPTY_RETRY_DELAY_MS);
+    const retryPositions = await readOpenPositions();
+    if (retryPositions.length) {
+      logger.warn(
+        {
+          accountId: universe.requestedAccountId,
+          attempt,
+          mode,
+          positionCount: retryPositions.length,
+        },
+        "Recovered IBKR account positions after an empty live read",
+      );
+      return retryPositions;
+    }
+  }
+
+  logger.warn(
+    {
+      accountId: universe.requestedAccountId,
+      mode,
+      netLiquidation: sumAccounts(universe.accounts, "netLiquidation"),
+      totalCash:
+        sumAccounts(universe.accounts, "totalCashValue") ??
+        sumAccounts(universe.accounts, "cash"),
+      grossPositionValue: sumAccounts(universe.accounts, "grossPositionValue"),
+    },
+    "IBKR account positions remained empty despite non-cash account exposure",
   );
-  return filterOpenBrokerPositions(positions.flat());
+  return firstPositions;
+}
+
+function accountUniverseLikelyHasPositionExposure(universe: AccountUniverse): boolean {
+  if (universe.source !== "live") {
+    return false;
+  }
+
+  const grossPositionValue = sumAccounts(universe.accounts, "grossPositionValue");
+  if (
+    grossPositionValue !== null &&
+    Math.abs(grossPositionValue) > ACCOUNT_POSITION_EXPOSURE_EPSILON
+  ) {
+    return true;
+  }
+
+  const netLiquidation = sumAccounts(universe.accounts, "netLiquidation");
+  const totalCash =
+    sumAccounts(universe.accounts, "totalCashValue") ??
+    sumAccounts(universe.accounts, "cash");
+  return (
+    netLiquidation !== null &&
+    totalCash !== null &&
+    Math.abs(netLiquidation - totalCash) > ACCOUNT_POSITION_EXPOSURE_EPSILON
+  );
+}
+
+function waitForAccountPositionRetry(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, ms);
+    timeout.unref?.();
+  });
 }
 
 async function listOrdersForUniverse(
@@ -1301,6 +1381,14 @@ async function listExecutionsForUniverse(
 async function fetchEquityQuoteSnapshotsForPositions(
   positions: BrokerPositionSnapshot[],
 ): Promise<Map<string, QuoteSnapshot>> {
+  const accountKey = Array.from(
+    new Set(
+      positions
+        .map((position) => String(position.accountId || "").trim())
+        .filter(Boolean),
+    ),
+  ).sort().join("+") || "mixed";
+  const admissionOwner = `account-position-equity-quotes:${accountKey}`;
   const symbols = Array.from(
     new Set(
       positions
@@ -1312,14 +1400,6 @@ async function fetchEquityQuoteSnapshotsForPositions(
   let quotesBySymbol = new Map<string, QuoteSnapshot>();
 
   if (symbols.length) {
-    const accountKey = Array.from(
-      new Set(
-        positions
-          .map((position) => String(position.accountId || "").trim())
-          .filter(Boolean),
-      ),
-    ).sort().join("+") || "mixed";
-    const admissionOwner = `account-position-equity-quotes:${accountKey}`;
     admitMarketDataLeases({
       owner: admissionOwner,
       intent: "account-monitor-live",
@@ -1327,7 +1407,7 @@ async function fetchEquityQuoteSnapshotsForPositions(
         assetClass: "equity" as const,
         symbol,
       })),
-      ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
+      ttlMs: ACCOUNT_POSITION_MARKET_DATA_TTL_MS,
       fallbackProvider: "massive",
     });
     const payload = await getQuoteSnapshots({
@@ -1336,13 +1416,15 @@ async function fetchEquityQuoteSnapshotsForPositions(
       admissionOwner,
       admissionIntent: "account-monitor-live",
       admissionFallbackProvider: "massive",
-      ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
+      ttlMs: ACCOUNT_POSITION_MARKET_DATA_TTL_MS,
     }).catch(() => ({
       quotes: [],
     }));
     quotesBySymbol = new Map(
       (payload.quotes || []).map((quote) => [normalizeSymbol(quote.symbol), quote]),
     );
+  } else {
+    releaseMarketDataLeases(admissionOwner, "account_position_set_empty");
   }
 
   return quotesBySymbol;
@@ -1361,32 +1443,42 @@ async function fetchOptionQuoteSnapshotsForPositions(
     return new Map();
   }
 
-  const accountKey = Array.from(
-    new Set(
-      positions
-        .map((position) => String(position.accountId || "").trim())
-        .filter(Boolean),
-    ),
-  ).sort().join("+") || "mixed";
-  const owner = `account-position-option-quotes:${accountKey}`;
+  const owner = declareAccountPositionOptionQuoteDemands(positions, "mixed");
   let quoteEntries: QuoteSnapshot[] = [];
   try {
-    declareIbkrLiveDemand({
-      owner,
-      providerContractIds: uniqueProviderContractIds,
-      intent: "account-monitor-live",
-      fallbackProvider: "cache",
-      requiresGreeks: false,
-      ttlMs: ACCOUNT_MONITOR_OPTION_QUOTE_TTL_MS,
-    });
-    quoteEntries = readIbkrLiveDemandState({
-      owner,
-      providerContractIds: uniqueProviderContractIds,
-      requiresGreeks: false,
-    }).states.flatMap((state) => (state.quote ? [state.quote] : []));
+    const positionsByUnderlying = positions.reduce((map, position) => {
+      const providerContractId =
+        position.optionContract?.providerContractId?.trim();
+      const underlying = normalizeSymbol(position.optionContract?.underlying ?? "");
+      if (!providerContractId || !underlying) {
+        return map;
+      }
+      map.set(underlying, [
+        ...(map.get(underlying) ?? []),
+        providerContractId,
+      ]);
+      return map;
+    }, new Map<string, string[]>());
+
+    Array.from(positionsByUnderlying.entries()).forEach(
+      ([underlying, underlyingProviderContractIds]) => {
+        const ownerForUnderlying = `${owner}:${underlying}`;
+        const providerContractIdsForUnderlying = Array.from(
+          new Set(underlyingProviderContractIds),
+        );
+        quoteEntries.push(
+          ...readIbkrLiveDemandState({
+            owner: ownerForUnderlying,
+            underlying,
+            providerContractIds: providerContractIdsForUnderlying,
+            requiresGreeks: false,
+          }).states.flatMap((state) => (state.quote ? [state.quote] : [])),
+        );
+      },
+    );
   } catch (error) {
     logger.debug?.(
-      { err: error, accountKey },
+      { err: error, owner },
       "Unable to read account position option quote demand",
     );
   }
@@ -1398,6 +1490,86 @@ async function fetchOptionQuoteSnapshotsForPositions(
         return providerContractId ? [[providerContractId, quote] as const] : [];
       }),
   );
+}
+
+type AccountPositionOptionQuoteDemandRow = {
+  accountId?: string | null;
+  accounts?: string[] | null;
+  optionContract?: {
+    underlying?: string | null;
+    providerContractId?: string | null;
+  } | null;
+};
+
+const accountPositionOptionDemandOwnersByAccountKey = new Map<string, Set<string>>();
+
+function accountPositionOptionQuoteOwnerKey(
+  rows: AccountPositionOptionQuoteDemandRow[],
+  fallbackAccountKey: string,
+): string {
+  return Array.from(
+    new Set(
+      rows
+        .flatMap((row) =>
+          Array.isArray(row.accounts) && row.accounts.length
+            ? row.accounts
+            : [row.accountId],
+        )
+        .map((accountId) => String(accountId || "").trim())
+        .filter(Boolean),
+    ),
+  ).sort().join("+") || fallbackAccountKey || "mixed";
+}
+
+function declareAccountPositionOptionQuoteDemands(
+  rows: AccountPositionOptionQuoteDemandRow[],
+  fallbackAccountKey: string,
+): string {
+  const accountKey = accountPositionOptionQuoteOwnerKey(rows, fallbackAccountKey);
+  const owner = `account-position-option-quotes:${accountKey}`;
+  const nextOwners = new Set<string>();
+  const positionsByUnderlying = rows.reduce((map, row) => {
+    const providerContractId = row.optionContract?.providerContractId?.trim();
+    const underlying = normalizeSymbol(row.optionContract?.underlying ?? "");
+    if (!providerContractId || !underlying) {
+      return map;
+    }
+    map.set(underlying, [
+      ...(map.get(underlying) ?? []),
+      providerContractId,
+    ]);
+    return map;
+  }, new Map<string, string[]>());
+
+  Array.from(positionsByUnderlying.entries()).forEach(
+    ([underlying, underlyingProviderContractIds]) => {
+      const ownerForUnderlying = `${owner}:${underlying}`;
+      nextOwners.add(ownerForUnderlying);
+      declareIbkrLiveDemand({
+        owner: ownerForUnderlying,
+        underlying,
+        providerContractIds: Array.from(new Set(underlyingProviderContractIds)),
+        intent: "account-monitor-live",
+        fallbackProvider: "cache",
+        requiresGreeks: false,
+        ttlMs: ACCOUNT_POSITION_MARKET_DATA_TTL_MS,
+      });
+    },
+  );
+  const previousOwners =
+    accountPositionOptionDemandOwnersByAccountKey.get(accountKey) ?? new Set<string>();
+  previousOwners.forEach((previousOwner) => {
+    if (!nextOwners.has(previousOwner)) {
+      releaseIbkrLiveDemand(previousOwner, "account_position_set_changed");
+    }
+  });
+  if (nextOwners.size) {
+    accountPositionOptionDemandOwnersByAccountKey.set(accountKey, nextOwners);
+  } else {
+    accountPositionOptionDemandOwnersByAccountKey.delete(accountKey);
+  }
+
+  return owner;
 }
 
 function positionMarketHydrationCacheKey(
@@ -3754,7 +3926,7 @@ export async function getAccountPositions(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
-  return readAccountRouteResponseCache(
+  const response = await readAccountRouteResponseCache(
     "positions",
     {
       accountId: input.accountId,
@@ -3765,6 +3937,11 @@ export async function getAccountPositions(input: {
     () => getAccountPositionsUncached({ ...input, mode }),
     ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS,
   );
+  declareAccountPositionOptionQuoteDemands(
+    response.positions,
+    response.accountId || input.accountId,
+  );
+  return response;
 }
 
 async function getAccountPositionsUncached(input: {
@@ -3896,13 +4073,13 @@ async function getAccountPositionsUncached(input: {
             hydratedMarket?.marketValue ?? positionSignedNotional(position);
           const positionMark =
             hydratedMarket?.mark ??
-            (Math.abs(Number(position.marketPrice) || 0) > POSITION_QUANTITY_EPSILON
-              ? position.marketPrice
-              : position.averagePrice);
+            (Math.abs(positionMarketPrice(position) || 0) > POSITION_QUANTITY_EPSILON
+              ? positionMarketPrice(position)
+              : positionAveragePrice(position));
           const marketValueWeight = Math.abs(positionValue);
 
           current.quantity += position.quantity;
-          current.averageCostAccumulator += position.averagePrice * quantityWeight;
+          current.averageCostAccumulator += positionAveragePrice(position) * quantityWeight;
           current.markAccumulator += positionMark * quantityWeight;
           current.averageWeight += quantityWeight;
           current.unrealizedWeight += marketValueWeight;
@@ -4025,9 +4202,9 @@ async function getAccountPositionsUncached(input: {
           hydratedMarket?.marketValue ?? positionSignedNotional(position);
         const mark =
           hydratedMarket?.mark ??
-          (Math.abs(Number(position.marketPrice) || 0) > POSITION_QUANTITY_EPSILON
-            ? position.marketPrice
-            : position.averagePrice);
+          (Math.abs(positionMarketPrice(position) || 0) > POSITION_QUANTITY_EPSILON
+            ? positionMarketPrice(position)
+            : positionAveragePrice(position));
         const greek = greekEnrichment.byPositionId.get(position.id);
         const referenceSymbol = positionReferenceSymbol(position);
         const openedAt = bestOpenedAtForPosition(
@@ -4047,7 +4224,7 @@ async function getAccountPositionsUncached(input: {
           marketDataSymbol: accountPositionMarketDataSymbol(position),
           sector: sectorForSymbol(referenceSymbol),
           quantity: position.quantity,
-          averageCost: position.averagePrice,
+          averageCost: positionAveragePrice(position),
           mark,
           dayChange: hydratedMarket?.dayChange ?? null,
           dayChangePercent: hydratedMarket?.dayChangePercent ?? null,
@@ -4946,6 +5123,7 @@ export async function getAccountOrders(input: {
 export async function cancelAccountOrder(input: {
   accountId: string;
   orderId: string;
+  mode?: RuntimeMode | null;
   confirm?: boolean | null;
 }) {
   if (isShadowAccountId(input.accountId)) {
@@ -4957,9 +5135,22 @@ export async function cancelAccountOrder(input: {
     };
   }
 
-  if (getRuntimeMode() === "live" && input.confirm !== true) {
+  const mode = input.mode;
+  if (mode !== "paper" && mode !== "live") {
+    throw new HttpError(
+      400,
+      "Order cancellation requires an explicit paper or live mode.",
+      {
+        code: "ibkr_order_mode_required",
+        detail: "mode must be either 'paper' or 'live'.",
+        expose: true,
+      },
+    );
+  }
+
+  if (mode === "live" && input.confirm !== true) {
     throw new HttpError(409, "Live order cancellation requires confirmation.", {
-      code: "ibkr_live_cancel_confirmation_required",
+      code: "ibkr_live_order_confirmation_required",
       expose: true,
     });
   }
@@ -4968,6 +5159,7 @@ export async function cancelAccountOrder(input: {
   return getIbkrClient().cancelOrder({
     accountId: input.accountId,
     orderId: input.orderId,
+    mode,
     confirm: input.confirm,
   });
 }

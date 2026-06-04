@@ -26,6 +26,8 @@ import {
 import {
   DiagnosticThresholdSettingsPanel,
 } from "./settings/DiagnosticThresholdSettingsPanel";
+import { DataIssueInlineIcon } from "../components/platform/DataIssueInlineIcon.jsx";
+import { collectDataIssuesFromRecord } from "../features/platform/dataIssueModel.js";
 import {
   readLocalAlertPreferences,
   writeLocalAlertPreferences,
@@ -135,9 +137,53 @@ const SETTINGS_TABS = [
 
 const SIGNAL_TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
 const SIGNAL_MONITOR_ENVIRONMENT = "paper";
+const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
+const SIGNAL_MONITOR_UNIVERSE_SCOPE_OPTIONS = Object.freeze([
+  { value: "selected_watchlist", label: "Selected Watchlist" },
+  { value: "all_watchlists", label: "All Watchlists" },
+  { value: "all_watchlists_plus_universe", label: "Watchlists + Ranked" },
+  { value: "high_beta_500", label: "High Beta 500" },
+]);
+const SIGNAL_MONITOR_UNIVERSE_SCOPE_VALUES = new Set(
+  SIGNAL_MONITOR_UNIVERSE_SCOPE_OPTIONS.map((option) => option.value),
+);
+const describeHighBetaUniverseAvailability = (status) => {
+  if (!status) {
+    return {
+      label: "checking",
+      detail: MISSING_VALUE,
+      tone: CSS_COLOR.textDim,
+    };
+  }
+  const accepted =
+    typeof status.lastAcceptedCount === "number"
+      ? `${status.lastAcceptedCount}/${status.limit || 500}`
+      : MISSING_VALUE;
+  if (status.available) {
+    const cacheLabel =
+      status.cacheStatus === "stale_cache"
+        ? "cached"
+        : status.cacheStatus === "memory_cache"
+          ? "memory"
+          : "fresh";
+    return {
+      label: `${cacheLabel} ${accepted}`,
+      detail: status.lastGeneratedAt || MISSING_VALUE,
+      tone:
+        status.cacheStatus === "stale_cache"
+          ? CSS_COLOR.amber
+          : CSS_COLOR.green,
+    };
+  }
+  return {
+    label: status.unavailableCode || "unavailable",
+    detail: status.unavailableDetail || MISSING_VALUE,
+    tone: CSS_COLOR.amber,
+  };
+};
 const SIGNAL_MONITOR_LIMITS = Object.freeze({
   pollIntervalSeconds: { min: 15, max: 3600 },
-  maxSymbols: { min: 1, max: 250 },
+  maxSymbols: { min: 1, max: 500 },
   evaluationConcurrency: { min: 1, max: 10 },
   freshWindowBars: { min: 1, max: 20 },
 });
@@ -162,6 +208,12 @@ const pickSignalMonitorEditableSettings = (profile) => {
     evaluationConcurrency: Number(source.evaluationConcurrency),
     pyrusSignalsSettings: source.pyrusSignalsSettings || {},
   };
+};
+const resolveSignalMonitorUniverseScope = (settings) => {
+  const raw = settings?.[SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY];
+  return SIGNAL_MONITOR_UNIVERSE_SCOPE_VALUES.has(raw)
+    ? raw
+    : "all_watchlists";
 };
 const signalMonitorEditableSettingsJson = (profile) =>
   JSON.stringify(pickSignalMonitorEditableSettings(profile));
@@ -446,7 +498,35 @@ function Panel({ title, action, children }) {
   );
 }
 
-function StateRow({ label, value, tone = CSS_COLOR.textSec }) {
+const inferSettingsStateIssueStatus = (value) => {
+  const text = String(value ?? "").toLowerCase();
+  if (!text || text === MISSING_VALUE.toLowerCase()) return null;
+  if (/error|failed|offline|down|unavailable/.test(text)) return "error";
+  if (/degraded|stale|lagging|incomplete|not configured|no active|delayed|frozen/.test(text)) {
+    return "degraded";
+  }
+  return null;
+};
+
+function StateRow({ label, value, tone = CSS_COLOR.textSec, issue = null, issues = null }) {
+  const inferredIssueStatus = inferSettingsStateIssueStatus(value);
+  const displayIssues =
+    issues ||
+    (issue ? [issue] : null) ||
+    (inferredIssueStatus
+      ? collectDataIssuesFromRecord(
+          {
+            status: inferredIssueStatus,
+            reason: value,
+          },
+          {
+            valueLabel: label,
+            source: "settings",
+            nextAction:
+              "Open the related diagnostics or settings section before relying on this backend state.",
+          },
+        )
+      : []);
   return (
     <div
       style={{
@@ -463,6 +543,10 @@ function StateRow({ label, value, tone = CSS_COLOR.textSec }) {
       <span style={{ color: CSS_COLOR.textDim, minWidth: 0 }}>{label}</span>
       <span
         style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: sp(4),
           color: tone,
           fontWeight: FONT_WEIGHTS.regular,
           textAlign: "right",
@@ -470,7 +554,8 @@ function StateRow({ label, value, tone = CSS_COLOR.textSec }) {
           overflowWrap: "anywhere",
         }}
       >
-        {value ?? MISSING_VALUE}
+        <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{value ?? MISSING_VALUE}</span>
+        <DataIssueInlineIcon issues={displayIssues} side="left" align="center" />
       </span>
     </div>
   );
@@ -2762,9 +2847,13 @@ function FlowScannerSettingsPanel() {
 
 function SignalMonitorSettingsPanel({ enabled, watchlists }) {
   const monitor = useSignalMonitorSettings({ enabled });
+  const research = useResearchStatus({ enabled });
   const draft = monitor.draft;
   const states = monitor.state?.states || [];
   const liveProfile = monitor.state?.profile || monitor.profile || null;
+  const highBetaUniverseStatus = describeHighBetaUniverseAvailability(
+    research.status?.highBetaUniverse,
+  );
   const statusSnapshot = useMemo(
     () =>
       buildSignalMonitorStatusSnapshot({
@@ -2824,6 +2913,22 @@ function SignalMonitorSettingsPanel({ enabled, watchlists }) {
             </label>
             <SelectField label="Timeframe" value={draft.timeframe} onChange={(value) => monitor.patchDraft({ timeframe: value })} options={SIGNAL_TIMEFRAMES} />
             <SelectField label="Watchlist Source" value={draft.watchlistId || ""} onChange={(value) => monitor.patchDraft({ watchlistId: value || null })} options={watchlistOptions} />
+            <SelectField
+              label="Universe"
+              value={resolveSignalMonitorUniverseScope(draft.pyrusSignalsSettings)}
+              onChange={(value) =>
+                monitor.patchDraft({
+                  pyrusSignalsSettings: {
+                    ...(draft.pyrusSignalsSettings || {}),
+                    [SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY]: value,
+                  },
+                  ...(value === "high_beta_500"
+                    ? { maxSymbols: SIGNAL_MONITOR_LIMITS.maxSymbols.max }
+                    : {}),
+                })
+              }
+              options={SIGNAL_MONITOR_UNIVERSE_SCOPE_OPTIONS}
+            />
             <NumberField label="Poll Seconds" value={draft.pollIntervalSeconds} {...SIGNAL_MONITOR_LIMITS.pollIntervalSeconds} onChange={(value) => monitor.patchDraft({ pollIntervalSeconds: value })} />
             <NumberField label="Symbol Limit" value={draft.maxSymbols} {...SIGNAL_MONITOR_LIMITS.maxSymbols} onChange={(value) => monitor.patchDraft({ maxSymbols: value })} />
             <NumberField label="Concurrency" value={draft.evaluationConcurrency} {...SIGNAL_MONITOR_LIMITS.evaluationConcurrency} onChange={(value) => monitor.patchDraft({ evaluationConcurrency: value })} />
@@ -2838,6 +2943,8 @@ function SignalMonitorSettingsPanel({ enabled, watchlists }) {
         <StateRow label="Tracked symbols" value={statusSnapshot.stateSummary.total} />
         <StateRow label="Pinned symbols" value={statusSnapshot.pinnedSymbols ?? MISSING_VALUE} />
         <StateRow label="Expanded symbols" value={statusSnapshot.expansionSymbols ?? MISSING_VALUE} />
+        <StateRow label="High Beta 500" value={highBetaUniverseStatus.label} tone={highBetaUniverseStatus.tone} />
+        <StateRow label="High Beta Cache" value={highBetaUniverseStatus.detail} tone={highBetaUniverseStatus.tone} />
         <StateRow label="Fresh signals" value={statusSnapshot.stateSummary.fresh} />
         <StateRow label="Recent events" value={monitor.events.length} />
         <StateRow label="Signal Source" value={statusSnapshot.universeSource || MISSING_VALUE} tone={statusSnapshot.universeFallbackUsed ? CSS_COLOR.amber : CSS_COLOR.textSec} />
@@ -2923,6 +3030,9 @@ function ResearchProviderPanel({ backendSnapshot, enabled }) {
   const research = useResearchStatus({ enabled });
   const providers = safeRecord(backendSnapshot?.summary?.providers);
   const stockDataProvider = resolveStockDataProvider(providers);
+  const highBetaUniverseStatus = describeHighBetaUniverseAvailability(
+    research.status?.highBetaUniverse,
+  );
   return (
     <Panel title="Research / Provider Wiring" action={<button type="button" onClick={research.reload} style={smallButton()}>Refresh</button>}>
       {research.error && (
@@ -2932,6 +3042,8 @@ function ResearchProviderPanel({ backendSnapshot, enabled }) {
       )}
       <StateRow label="Research provider" value={research.status?.provider || "none"} tone={research.status?.configured ? CSS_COLOR.green : CSS_COLOR.amber} />
       <StateRow label="Research configured" value={research.status?.configured ? "yes" : "no"} tone={research.status?.configured ? CSS_COLOR.green : CSS_COLOR.amber} />
+      <StateRow label="High Beta 500" value={highBetaUniverseStatus.label} tone={highBetaUniverseStatus.tone} />
+      <StateRow label="High Beta Cache" value={highBetaUniverseStatus.detail} tone={highBetaUniverseStatus.tone} />
       <StateRow label="Stock data provider" value={stockDataProvider.configured ? `${stockDataProvider.label} configured` : "missing"} tone={stockDataProvider.configured ? CSS_COLOR.green : CSS_COLOR.amber} />
       <StateRow label="IBKR provider" value={providers.ibkr ? "configured" : "missing"} tone={providers.ibkr ? CSS_COLOR.green : CSS_COLOR.amber} />
     </Panel>

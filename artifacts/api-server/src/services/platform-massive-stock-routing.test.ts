@@ -68,12 +68,18 @@ test("broker position display equity quotes use Massive-primary quote routing", 
   assert.doesNotMatch(enrichBlock, /fetchBridgeQuoteSnapshots/);
 });
 
-test("Massive stock universe stream honors configurable symbol cap before IBKR lane caps", () => {
+test("Massive stock universe stream is opt-in and honors configurable symbol cap before IBKR lane caps", () => {
   const universeBlock = platformSource.match(
     /function resolveMassiveStockUniverseSymbols\(\)[\s\S]*?\n}\n/,
   )?.[0];
   const refreshBlock = platformSource.match(
     /function refreshMassiveStockUniverseStreams\([\s\S]*?\n}\n\nexport function startMassiveStockUniverseStreams/,
+  )?.[0];
+  const startBlock = platformSource.match(
+    /export function startMassiveStockUniverseStreams\(\): void \{[\s\S]*?\n}\n\nexport function stopMassiveStockUniverseStreams/,
+  )?.[0];
+  const scannerStartBlock = platformSource.match(
+    /export function startOptionsFlowScanner\(\): void \{[\s\S]*?\n  const initialSymbols = resolveScannerSymbols\(\);/,
   )?.[0];
 
   assert.ok(universeBlock);
@@ -87,6 +93,9 @@ test("Massive stock universe stream honors configurable symbol cap before IBKR l
   assert.doesNotMatch(universeBlock, /resolveIbkrLaneSymbols/);
 
   assert.ok(refreshBlock);
+  assert.match(platformSource, /const MASSIVE_STOCK_UNIVERSE_STREAM_ENABLED = readBooleanEnv\(\s*"MASSIVE_STOCK_UNIVERSE_STREAM_ENABLED",\s*false,\s*\)/);
+  assert.match(refreshBlock, /!MASSIVE_STOCK_UNIVERSE_STREAM_ENABLED/);
+  assert.match(refreshBlock, /closeMassiveStockUniverseStreams\("disabled"\)/);
   assert.match(
     refreshBlock,
     /const resourcePressure = getApiResourcePressureSnapshot\(\)/,
@@ -99,6 +108,40 @@ test("Massive stock universe stream honors configurable symbol cap before IBKR l
   );
   assert.doesNotMatch(refreshBlock, /subscribeMassiveStockQuoteSnapshots/);
   assert.match(refreshBlock, /subscribeStockMinuteAggregates/);
+
+  assert.ok(startBlock);
+  assert.match(startBlock, /!MASSIVE_STOCK_UNIVERSE_STREAM_ENABLED/);
+  assert.match(startBlock, /closeMassiveStockUniverseStreams\("disabled"\)/);
+
+  assert.ok(scannerStartBlock);
+  assert.match(scannerStartBlock, /const admittedSymbols = getOptionsFlowScannerLaneResolution\(\)\.admittedSymbols/);
+  assert.match(scannerStartBlock, /if \(admittedSymbols\.length > 0\) \{/);
+  assert.match(scannerStartBlock, /startMassiveStockUniverseStreams\(\)/);
+  assert.match(scannerStartBlock, /stopMassiveStockUniverseStreams\(\)/);
+});
+
+test("signal matrix uses its own foreground aggregate stream gate instead of the broad universe flag", () => {
+  const signalMonitorSource = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const stockAggregateSource = readFileSync(
+    new URL("./stock-aggregate-stream.ts", import.meta.url),
+    "utf8",
+  );
+  const primeBlock = signalMonitorSource.match(
+    /function primeSignalMonitorMatrixStockAggregateStream\(symbols: string\[\]\): void \{[\s\S]*?\n}\n\nexport function aggregateCompletedMinuteBars/,
+  )?.[0];
+
+  assert.ok(primeBlock);
+  assert.match(
+    stockAggregateSource,
+    /function isForegroundSignalMatrixStockAggregateStreamingEnabled\(\): boolean \{[\s\S]*"PYRUS_SIGNAL_MATRIX_STOCK_AGGREGATE_STREAMS_ENABLED",\s*true,/,
+  );
+  assert.match(primeBlock, /isBackgroundStockAggregateStreamingEnabled\(\)/);
+  assert.match(primeBlock, /isForegroundSignalMatrixStockAggregateStreamingEnabled\(\)/);
+  assert.match(primeBlock, /SIGNAL_MONITOR_MATRIX_STREAM_SYMBOL_CAP/);
+  assert.match(primeBlock, /subscribeMutableStockMinuteAggregates/);
 });
 
 test("Massive historical synthesis checks are recency-aware", () => {
@@ -138,7 +181,7 @@ test("visible chart bars do not force full broker-history recovery", () => {
   assert.match(constantsBlock, /const BARS_BROKER_LIVE_EDGE_MIN_PRIORITY = 6;/);
   assert.match(
     constantsBlock,
-    /const BARS_FULL_BROKER_RECOVERY_MIN_PRIORITY = 10;/,
+    /const BARS_FULL_BROKER_RECOVERY_MIN_PRIORITY = 8;/,
   );
   assert.match(liveEdgeBlock, /priority >= BARS_BROKER_LIVE_EDGE_MIN_PRIORITY/);
   assert.match(
@@ -161,7 +204,7 @@ test("visible chart bars do not force full broker-history recovery", () => {
   assert.match(fetchBrokerHistoryBlock, /recoveryMode === "full" &&/);
   assert.match(
     fetchBrokerHistoryBlock,
-    /fullBrokerRecovery\s*\?\s*BARS_BROKER_BACKFILL_BUDGET_MS\s*:\s*BARS_PROVIDER_BUDGET_MS/,
+    /brokerBackfillBudget\s*\?\s*BARS_BROKER_BACKFILL_BUDGET_MS\s*:\s*BARS_PROVIDER_BUDGET_MS/,
   );
   assert.match(
     fetchBrokerHistoryBlock,
@@ -169,7 +212,7 @@ test("visible chart bars do not force full broker-history recovery", () => {
   );
   assert.match(
     fetchBrokerHistoryBlock,
-    /fullBrokerRecovery &&\s*\n\s*bars\.length === 0/,
+    /brokerBackfillBudget &&\s*\n\s*bars\.length === 0/,
   );
   assert.match(
     platformSource,

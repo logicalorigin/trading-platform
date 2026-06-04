@@ -310,9 +310,15 @@ export const normalizeMassiveRuntimeDiagnostics = (
   runtimeDiagnostics,
   lineUsageSnapshot = null,
 ) => {
-  const massive = recordOrEmpty(runtimeDiagnostics?.providers?.massive);
+  const lineUsageMassive = recordOrEmpty(lineUsageSnapshot?.providers?.massive);
+  const runtimeMassive = recordOrEmpty(runtimeDiagnostics?.providers?.massive);
+  const massive = {
+    ...lineUsageMassive,
+    ...runtimeMassive,
+  };
   const observedAt = firstUsefulTimestamp(
     runtimeDiagnostics?.timestamp,
+    lineUsageMassive.observedAt,
     lineUsageSnapshot?.updatedAt,
   );
   const rest = {
@@ -320,16 +326,21 @@ export const normalizeMassiveRuntimeDiagnostics = (
     lastSuccessAt: massive.lastSuccessAt,
     lastFailureAt: massive.lastFailureAt,
     lastError: massive.lastError,
-    ...recordOrEmpty(massive.rest),
+    ...recordOrEmpty(lineUsageMassive.rest),
+    ...recordOrEmpty(runtimeMassive.rest),
   };
   const fallbackWebSocket = fallbackMassiveWebSocketFromLineUsage(lineUsageSnapshot);
   const websocket = {
     ...fallbackWebSocket,
-    ...recordOrEmpty(massive.websocket),
+    ...recordOrEmpty(lineUsageMassive.websocket),
+    ...recordOrEmpty(runtimeMassive.websocket),
   };
   const restStatus = normalizeProviderStatus(rest.status);
   const websocketStatus = normalizeProviderStatus(websocket.status);
-  const fallbackConfigured = Boolean(Object.keys(fallbackWebSocket).length);
+  const fallbackConfigured = Boolean(
+    Object.keys(fallbackWebSocket).length ||
+      Object.keys(lineUsageMassive).length,
+  );
   const status =
     restStatus === "degraded" || websocketStatus === "degraded"
       ? "degraded"

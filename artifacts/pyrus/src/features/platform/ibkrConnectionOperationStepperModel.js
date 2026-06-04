@@ -33,6 +33,9 @@ const LAUNCH_STEP_PHASES = {
   request: new Set([
     "checking_gateway_socket",
     "helper_launched",
+    "helper_launch_requested",
+    "queued_on_pyrus",
+    "waiting_desktop_agent",
   ]),
   update: new Set([
     "helper_updated",
@@ -41,12 +44,16 @@ const LAUNCH_STEP_PHASES = {
   credentials: new Set([
     "autologin_preflight",
     "credentials_delivered",
+    "credentials_received",
+    "credentials_sent_to_pyrus",
+    "encrypting_credentials",
     "waiting_secure_credentials",
   ]),
   gateway: new Set([
     "credentials_submitted",
     "gateway_foreground_fallback",
     "gateway_login_window_active",
+    "gateway_login_window_unconfirmed",
     "gateway_login_window_wait",
     "gateway_login_window_waiting",
     "gateway_process_started",
@@ -89,6 +96,99 @@ const LAUNCH_STEP_PHASES = {
 };
 
 const HELPER_UPDATE_PROGRESS_STEPS = LAUNCH_STEP_PHASES.update;
+
+const LAUNCH_ACTION_LABEL_BY_STEP = {
+  autologin_preflight: "Preparing handoff",
+  bridge_bundle_fallback: "Preparing bridge",
+  bridge_bundle_ready: "Preparing bridge",
+  bridge_reused: "Starting bridge",
+  bridge_restart_for_bundle: "Restarting bridge",
+  bridge_unhealthy: "Checking bridge",
+  building_bridge: "Building bridge",
+  checking_gateway_socket: "Checking Gateway",
+  cloning_repo: "Preparing bridge",
+  connected: "Connected",
+  credentials_delivered: "Credentials sent",
+  credentials_received: "Credentials sent",
+  credentials_sent_to_pyrus: "Credentials sent",
+  credentials_submitted: "Waiting for 2FA",
+  downloading_bridge_bundle: "Downloading bridge",
+  encrypting_credentials: "Encrypting",
+  gateway_login_window_active: "Typing credentials",
+  gateway_login_window_unconfirmed: "Check Gateway",
+  gateway_login_window_wait: "Finding Gateway",
+  gateway_login_window_waiting: "Finding Gateway",
+  gateway_process_started: "Opening Gateway",
+  gateway_ready: "Gateway ready",
+  gateway_reconnect_required: "Reconnecting Gateway",
+  gateway_running_waiting_login: "Finding Gateway",
+  gateway_running_waiting_socket: "Checking Gateway",
+  gateway_socket_ready: "Starting bridge",
+  gateway_window_login: "Logging in",
+  helper_launched: "Launching helper",
+  helper_launch_requested: "Opening helper",
+  helper_updated: "Updating helper",
+  installing_dependencies: "Preparing bridge",
+  installing_prerequisite: "Installing helper",
+  launching_gateway: "Opening Gateway",
+  local_bridge_ready: "Starting tunnel",
+  preparing_bridge: "Preparing bridge",
+  queued_on_pyrus: "Queued",
+  retrying_tunnel: "Retrying tunnel",
+  sidecar_ready: "Starting bridge",
+  sidecar_restart_for_helper: "Restarting sidecar",
+  starting_bridge: "Starting bridge",
+  starting_gateway: "Opening Gateway",
+  starting_ibc: "Starting Gateway",
+  starting_sidecar: "Starting sidecar",
+  starting_tunnel: "Starting tunnel",
+  tunnel_reused: "Validating tunnel",
+  typing_gateway_credentials: "Typing credentials",
+  updating_helper: "Updating helper",
+  updating_repo: "Preparing bridge",
+  validating_tunnel: "Validating tunnel",
+  waiting_2fa: "Waiting for 2FA",
+  waiting_bridge_gateway_api: "Connecting bridge",
+  waiting_desktop_agent: "Waiting desktop",
+  waiting_secure_credentials: "Waiting credentials",
+  waiting_tunnel_dns: "Waiting tunnel DNS",
+};
+
+export const getIbkrLaunchActionProgressLabel = ({
+  activationStatus,
+  busy = false,
+  fallback = "Preparing",
+  inFlight = false,
+} = {}) => {
+  const recentProgress = normalizeProgressEvents(activationStatus?.recentProgress);
+  const latestProgress =
+    activationStatus?.latestProgress || recentProgress.at(-1) || null;
+  const latestStep = String(latestProgress?.step || "");
+  if (latestStep && LAUNCH_ACTION_LABEL_BY_STEP[latestStep]) {
+    return LAUNCH_ACTION_LABEL_BY_STEP[latestStep];
+  }
+
+  const latestStatus = String(latestProgress?.status || "");
+  if (latestStatus === "starting_tunnel") {
+    return "Starting tunnel";
+  }
+  if (latestStatus === "starting_bridge") {
+    return "Starting bridge";
+  }
+  if (latestStatus === "waiting_gateway") {
+    return "Checking Gateway";
+  }
+  if (latestStatus === "connected") {
+    return "Connected";
+  }
+  if (inFlight) {
+    return "Launching";
+  }
+  if (busy) {
+    return fallback;
+  }
+  return fallback;
+};
 
 const getLaunchOperationSteps = (events) => {
   const shouldShowUpdate = events.some((event) =>
@@ -254,13 +354,41 @@ export const buildIbkrDeactivateOperationStepper = ({
     refresh: normalizeStatus(refresh),
     desktop: normalizeStatus(desktop),
   };
+  const steps = IBKR_DEACTIVATE_OPERATION_STEPS.map((step) => ({
+    ...step,
+    status: statusById[step.id],
+  }));
+  const activeStep =
+    [...steps].reverse().find((step) => step.status === "current") || null;
+  const activityByStepId = {
+    queue: {
+      detail: "Sending the shutdown request to the paired Windows desktop.",
+      label: "Queueing Windows shutdown",
+    },
+    detach: {
+      detail: "Clearing the active bridge runtime and persisted session handoff.",
+      label: "Detaching backend runtime",
+    },
+    refresh: {
+      detail: "Refreshing session, runtime diagnostics, and line usage state.",
+      label: "Refreshing connection state",
+    },
+    desktop: {
+      detail: "Waiting for the desktop helper to close IB Gateway.",
+      label: "Stopping IB Gateway",
+    },
+  };
+
   return {
+    activity: activeStep
+      ? {
+          ...activeStep,
+          ...(activityByStepId[activeStep.id] || {}),
+        }
+      : null,
     operation: "deactivate",
     title: "Deactivate IBKR",
     latestMessage: message,
-    steps: IBKR_DEACTIVATE_OPERATION_STEPS.map((step) => ({
-      ...step,
-      status: statusById[step.id],
-    })),
+    steps,
   };
 };

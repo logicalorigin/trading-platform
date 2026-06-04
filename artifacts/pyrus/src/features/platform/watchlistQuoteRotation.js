@@ -22,12 +22,13 @@ export const uniqueNormalizedSymbols = (symbols = []) => {
 
 export function buildWatchlistQuoteRotationBatch({
   watchlistSymbols = [],
+  rotationSymbols = watchlistSymbols,
   pinnedSymbols = [],
   cursor = 0,
   batchSize = DEFAULT_BATCH_SIZE,
 } = {}) {
   const cap = Math.max(1, Math.floor(Number(batchSize) || DEFAULT_BATCH_SIZE));
-  const universe = uniqueNormalizedSymbols(watchlistSymbols);
+  const universe = uniqueNormalizedSymbols(rotationSymbols);
   const orderedPins = uniqueNormalizedSymbols(pinnedSymbols);
   const batch = orderedPins.slice(0, cap);
   const batchSet = new Set(batch);
@@ -71,12 +72,13 @@ export function buildWatchlistQuoteRotationBatch({
 export function buildWatchlistQuoteRotationDiagnostics({
   batch = {},
   watchlistSymbols = [],
+  rotationSymbols = watchlistSymbols,
   lastTouchedAtBySymbol = {},
   nowMs = Date.now(),
   cycleWindowMs = DEFAULT_CYCLE_WINDOW_MS,
   disabledReason = null,
 } = {}) {
-  const universe = uniqueNormalizedSymbols(watchlistSymbols);
+  const universe = uniqueNormalizedSymbols(rotationSymbols);
   const cutoff = Math.max(0, nowMs - Math.max(1, cycleWindowMs));
   const touchedSymbols = universe.filter((symbol) => {
     const touchedAt = Date.parse(String(lastTouchedAtBySymbol[symbol] || ""));

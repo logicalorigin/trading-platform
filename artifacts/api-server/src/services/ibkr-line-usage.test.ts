@@ -122,6 +122,15 @@ test.afterEach(() => {
   );
 });
 
+test("getIbkrLineUsageSnapshot includes Massive provider diagnostics for UI data-line parity", async () => {
+  const snapshot = await getIbkrLineUsageSnapshot();
+
+  assert.equal(typeof snapshot.providers.massive.configured, "boolean");
+  assert.equal(typeof snapshot.providers.massive.websocket.status, "string");
+  assert.ok(Array.isArray(snapshot.providers.massive.websocket.feeds));
+  assert.equal(typeof snapshot.streams.massiveStockQuotes.configured, "boolean");
+});
+
 test("getIbkrLineUsageSnapshot reports visible prewarm demand without filler", async () => {
   const visibleSymbols = Array.from({ length: 90 }, (_, index) => `WL${index}`);
   __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
@@ -827,6 +836,65 @@ test("line-usage generation coordinator routes desired generation to Python side
   assert.equal(snapshot.drift.reconciliation.status, "matched");
   assert.equal(snapshot.drift.reconciliation.apiOnlyLineCount, 0);
   assert.equal(snapshot.drift.reconciliation.bridgeOnlyLineCount, 0);
+  assert.equal(snapshot.sidecar.comparison.status, "matched");
+});
+
+test("line-usage generation coordinator falls back to bridge apply when Python sidecar fails", async () => {
+  process.env["IBKR_ASYNC_SIDECAR_ROUTING_ENABLED"] = "true";
+  let bridgeApplyCount = 0;
+  let sidecarApplyCount = 0;
+  let bridgeAppliedLineKeys: string[] = [];
+  __setIbkrLineUsageBridgeClientFactoryForTests(() => ({
+    getLaneDiagnostics: async () => ({
+      subscriptions: {
+        activeQuoteSubscriptions: 0,
+        marketDataLineBudget: 190,
+        activeEquitySymbols: [],
+        activeOptionProviderContractIds: [],
+      },
+    }),
+    applyMarketDataGeneration: async (
+      generation: IbkrMarketDataDesiredGeneration,
+    ) => {
+      bridgeApplyCount += 1;
+      bridgeAppliedLineKeys = generation.desiredLines.map((line) => line.lineKey);
+      return {
+        ...buildLiveSidecarGenerationStatus(generation),
+        source: "tws-bridge",
+      };
+    },
+  }));
+  __setIbkrLineUsageAsyncSidecarClientFactoryForTests(() => ({
+    applyMarketDataGeneration: async () => {
+      sidecarApplyCount += 1;
+      throw new Error("IBKR async sidecar returned 502 Bad Gateway.");
+    },
+  }));
+  admitMarketDataLeases({
+    owner: "account-position-option-quotes:U1:SPY",
+    intent: "account-monitor-live",
+    requests: [
+      {
+        assetClass: "option",
+        symbol: "SPY",
+        providerContractId: "885885495",
+      },
+    ],
+    fallbackProvider: "cache",
+  });
+
+  const firstSnapshot = await runIbkrLineUsageGenerationCoordinatorOnce();
+  await flushAsyncWork();
+  const snapshot = await getIbkrLineUsageSnapshot();
+
+  assert.equal(sidecarApplyCount, 1);
+  assert.equal(bridgeApplyCount, 1);
+  assert.deepEqual(bridgeAppliedLineKeys, ["option:885885495"]);
+  assert.equal(firstSnapshot.sidecar.applyPending, true);
+  assert.equal(snapshot.sidecar.routingEnabled, true);
+  assert.equal(snapshot.sidecar.applyTarget, "tws-bridge");
+  assert.equal(snapshot.sidecar.applyError, null);
+  assert.equal(snapshot.sidecar.bridgeGenerationStatus?.source, "tws-bridge");
   assert.equal(snapshot.sidecar.comparison.status, "matched");
 });
 

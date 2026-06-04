@@ -149,6 +149,12 @@ export const bridgeRuntimeMessage = (session) => {
     const runtimeIbkr = session?.runtime?.ibkr;
     if (runtimeIbkr?.desktopAgentOnline && !runtimeIbkr?.runtimeOverrideActive) {
       if (runtimeIbkr?.desktopAgentUpgradeRequired) {
+        if (
+          runtimeIbkr?.desktopAgentKnownBad ||
+          runtimeIbkr?.desktopAgentCompatibility === "known_bad"
+        ) {
+          return "Windows desktop helper is online, but it is a blocked helper version. Launch IBKR to repair the helper before reconnecting Gateway.";
+        }
         return "Windows desktop helper is online but must update before reconnecting IB Gateway.";
       }
       return "Windows desktop helper is online. Reconnect IBKR to attach the current Gateway tunnel.";

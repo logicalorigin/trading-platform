@@ -40,6 +40,7 @@ export const TodaySnapshotPanel = ({
     rows: openPositionRows,
     enabled: liveOptionQuotesEnabled,
     totals: positionsQuery?.data?.totals,
+    marketDataOwner: "today-positions",
   });
   const positionsInitialLoading =
     (positionsQuery?.isPending || positionsQuery?.isLoading) && !positionsQuery?.data;

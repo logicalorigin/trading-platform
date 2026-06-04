@@ -488,6 +488,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/IbkrBridgeLauncherResponse"
 
+  /ibkr/bridge/helper-metadata:
+    get:
+      operationId: getIbkrBridgeHelperMetadata
+      tags: [broker]
+      summary: Read paired IBKR helper metadata without starting a launch
+      responses:
+        "200":
+          description: IBKR helper metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IbkrBridgeHelperMetadataResponse"
+
   /ibkr/desktops:
     get:
       operationId: listIbkrRemoteDesktops
@@ -595,6 +608,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/IbkrRemoteDesktopJobStatusResponse"
+
+  /ibkr/activation/diagnostics:
+    get:
+      operationId: getIbkrBridgeActivationDiagnostics
+      tags: [broker]
+      summary: Read the latest IBKR bridge activation diagnostics
+      responses:
+        "200":
+          description: Activation diagnostics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IbkrBridgeActivationDiagnosticsResponse"
 
   /ibkr/remote-launch:
     post:
@@ -3236,6 +3262,85 @@ paths:
               schema:
                 $ref: "#/components/schemas/ResearchStatus"
 
+  /research/high-beta-universe:
+    get:
+      operationId: getResearchHighBetaUniverse
+      tags: [research]
+      summary: Preview the high-beta STA universe
+      description: Builds a dry-run high-beta universe from the existing FMP screener integration and validates candidates through Massive market-data/reference/options coverage.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 500
+        - name: candidateLimit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+            default: 1500
+        - name: minBeta
+          in: query
+          required: false
+          schema:
+            type: number
+            default: 1
+        - name: minPrice
+          in: query
+          required: false
+          schema:
+            type: number
+            default: 5
+        - name: minVolume
+          in: query
+          required: false
+          schema:
+            type: number
+            default: 500000
+        - name: minDollarVolume
+          in: query
+          required: false
+          schema:
+            type: number
+            default: 10000000
+        - name: minMarketCap
+          in: query
+          required: false
+          schema:
+            type: number
+            default: 250000000
+        - name: exchanges
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated FMP exchanges to query. Defaults to NASDAQ, NYSE, and AMEX.
+        - name: dryRun
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+        - name: refresh
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: High-beta universe preview and validation diagnostics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchHighBetaUniverseResponse"
+
   /research/fundamentals:
     get:
       operationId: getResearchFundamentals
@@ -4459,6 +4564,15 @@ components:
       properties:
         desktopId:
           type: string
+        helperCompatibility:
+          type: string
+          enum: [compatible, known_bad, update_required]
+        helperCompatible:
+          type: boolean
+        helperKnownBad:
+          type: boolean
+        helperUpdateRequired:
+          type: boolean
         helperVersion:
           type: [string, "null"]
         label:
@@ -4473,6 +4587,10 @@ components:
           format: date-time
       required:
         - desktopId
+        - helperCompatibility
+        - helperCompatible
+        - helperKnownBad
+        - helperUpdateRequired
         - helperVersion
         - label
         - lastSeenAt
@@ -4494,6 +4612,72 @@ components:
         - desktops
         - helperVersion
         - onlineCount
+
+    IbkrBridgeHelperMetadataRuntime:
+      type: object
+      properties:
+        desktopAgentCompatibility:
+          type: [string, "null"]
+          enum: [compatible, known_bad, update_required, null]
+        desktopAgentCompatible:
+          type: boolean
+        desktopAgentExpectedHelperVersion:
+          type: string
+        desktopAgentHelperVersion:
+          type: [string, "null"]
+        desktopAgentKnownBad:
+          type: boolean
+        desktopAgentOnline:
+          type: boolean
+        desktopAgentUpgradeRequired:
+          type: boolean
+        reconnectAvailable:
+          type: boolean
+        runtimeOverrideActive:
+          type: boolean
+        runtimeOverrideUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+      required:
+        - desktopAgentCompatibility
+        - desktopAgentCompatible
+        - desktopAgentExpectedHelperVersion
+        - desktopAgentHelperVersion
+        - desktopAgentKnownBad
+        - desktopAgentOnline
+        - desktopAgentUpgradeRequired
+        - reconnectAvailable
+        - runtimeOverrideActive
+        - runtimeOverrideUpdatedAt
+
+    IbkrBridgeHelperMetadataResponse:
+      type: object
+      properties:
+        desktops:
+          type: array
+          items:
+            $ref: "#/components/schemas/IbkrRemoteDesktop"
+        helperVersion:
+          type: string
+        latestDesktop:
+          oneOf:
+            - $ref: "#/components/schemas/IbkrRemoteDesktop"
+            - type: "null"
+        onlineCount:
+          type: integer
+        onlineDesktop:
+          oneOf:
+            - $ref: "#/components/schemas/IbkrRemoteDesktop"
+            - type: "null"
+        runtime:
+          $ref: "#/components/schemas/IbkrBridgeHelperMetadataRuntime"
+      required:
+        - desktops
+        - helperVersion
+        - latestDesktop
+        - onlineCount
+        - onlineDesktop
+        - runtime
 
     IbkrRemoteDesktopRegisterResponse:
       type: object
@@ -4664,6 +4848,120 @@ components:
         - ok
         - state
 
+    IbkrBridgeActivationPhaseTiming:
+      type: object
+      properties:
+        completedAt:
+          type: [string, "null"]
+          format: date-time
+        elapsedMs:
+          type: [integer, "null"]
+        startedAt:
+          type: [string, "null"]
+          format: date-time
+      required:
+        - completedAt
+        - elapsedMs
+        - startedAt
+
+    IbkrBridgeActivationPhaseDurations:
+      type: object
+      properties:
+        request:
+          $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
+        update:
+          $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
+        credentials:
+          $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
+        gateway:
+          $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
+        twoFactor:
+          $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
+        bridge:
+          $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
+        tunnel:
+          $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
+      required:
+        - request
+        - update
+        - credentials
+        - gateway
+        - twoFactor
+        - bridge
+        - tunnel
+
+    IbkrBridgeActivationTimelineRow:
+      allOf:
+        - $ref: "#/components/schemas/IbkrBridgeActivationPhaseTiming"
+        - type: object
+          properties:
+            id:
+              type: string
+              enum: [request, update, credentials, gateway, twoFactor, bridge, tunnel]
+            label:
+              type: string
+            owner:
+              type: string
+              enum: [none, pyrus, desktopHelper, ibGateway, ibkrMobile, cloudflareTunnel, user]
+            status:
+              type: string
+              enum: [pending, active, complete, attention, error, canceled]
+          required:
+            - id
+            - label
+            - owner
+            - status
+
+    IbkrBridgeActivationInsight:
+      type: object
+      properties:
+        currentOwner:
+          type: string
+          enum: [none, pyrus, desktopHelper, ibGateway, ibkrMobile, cloudflareTunnel, user]
+        currentPhase:
+          type: string
+          enum: [idle, request, update, credentials, gateway, twoFactor, bridge, tunnel, complete, canceled, error]
+        currentPhaseElapsedMs:
+          type: [integer, "null"]
+        currentPhaseStartedAt:
+          type: [string, "null"]
+          format: date-time
+        detail:
+          type: string
+        normalAfterMs:
+          type: [integer, "null"]
+        phaseDurations:
+          $ref: "#/components/schemas/IbkrBridgeActivationPhaseDurations"
+        recommendedAction:
+          type: [string, "null"]
+        severity:
+          type: string
+          enum: [idle, progress, attention, error, success]
+        stale:
+          type: boolean
+        staleAfterMs:
+          type: [integer, "null"]
+        timeline:
+          type: array
+          items:
+            $ref: "#/components/schemas/IbkrBridgeActivationTimelineRow"
+        title:
+          type: string
+      required:
+        - currentOwner
+        - currentPhase
+        - currentPhaseElapsedMs
+        - currentPhaseStartedAt
+        - detail
+        - normalAfterMs
+        - phaseDurations
+        - recommendedAction
+        - severity
+        - stale
+        - staleAfterMs
+        - timeline
+        - title
+
     IbkrBridgeActivationProgress:
       type: object
       properties:
@@ -4701,6 +4999,8 @@ components:
         expiresAt:
           type: string
           format: date-time
+        insight:
+          $ref: "#/components/schemas/IbkrBridgeActivationInsight"
         latestProgress:
           oneOf:
             - $ref: "#/components/schemas/IbkrBridgeActivationProgress"
@@ -4713,6 +5013,98 @@ components:
         - active
         - canceled
         - expiresAt
+        - insight
+        - latestProgress
+        - recentProgress
+
+    IbkrBridgeActivationDiagnosticsLatestActivation:
+      type: object
+      additionalProperties: true
+      properties:
+        canceled:
+          type: boolean
+        expiresAt:
+          type: string
+          format: date-time
+        issuedAt:
+          type: string
+          format: date-time
+        lastLoginEnvelopeSubmitAttemptAt:
+          type: [string, "null"]
+          format: date-time
+        lastLoginEnvelopeSubmitErrorCode:
+          type: [string, "null"]
+        lastLoginKeyReadAt:
+          type: [string, "null"]
+          format: date-time
+        lastLoginKeyReadReadyAt:
+          type: [string, "null"]
+          format: date-time
+        loginEnvelopeSubmitAttemptCount:
+          type: integer
+        loginEnvelopeSubmitted:
+          type: boolean
+        loginEnvelopeSubmittedAt:
+          type: [string, "null"]
+          format: date-time
+        loginHandoffCreatedAt:
+          type: [string, "null"]
+          format: date-time
+        loginHandoffReady:
+          type: boolean
+        loginKeyReadCount:
+          type: integer
+        progressStepTimings:
+          type: object
+          additionalProperties:
+            type: string
+            format: date-time
+        timings:
+          type: object
+          additionalProperties: true
+      required:
+        - canceled
+        - expiresAt
+        - issuedAt
+        - lastLoginEnvelopeSubmitAttemptAt
+        - lastLoginEnvelopeSubmitErrorCode
+        - lastLoginKeyReadAt
+        - lastLoginKeyReadReadyAt
+        - loginEnvelopeSubmitAttemptCount
+        - loginEnvelopeSubmitted
+        - loginEnvelopeSubmittedAt
+        - loginHandoffCreatedAt
+        - loginHandoffReady
+        - loginKeyReadCount
+        - progressStepTimings
+        - timings
+
+    IbkrBridgeActivationDiagnosticsResponse:
+      type: object
+      properties:
+        activeCount:
+          type: integer
+        latestActivation:
+          oneOf:
+            - $ref: "#/components/schemas/IbkrBridgeActivationDiagnosticsLatestActivation"
+            - type: "null"
+        latestActivationId:
+          type: [string, "null"]
+        insight:
+          $ref: "#/components/schemas/IbkrBridgeActivationInsight"
+        latestProgress:
+          oneOf:
+            - $ref: "#/components/schemas/IbkrBridgeActivationProgress"
+            - type: "null"
+        recentProgress:
+          type: array
+          items:
+            $ref: "#/components/schemas/IbkrBridgeActivationProgress"
+      required:
+        - activeCount
+        - latestActivation
+        - latestActivationId
+        - insight
         - latestProgress
         - recentProgress
 
@@ -4828,8 +5220,15 @@ components:
           format: date-time
         desktopAgentOnline:
           type: boolean
+        desktopAgentCompatibility:
+          type: [string, "null"]
+          enum: [compatible, known_bad, update_required, null]
+        desktopAgentCompatible:
+          type: boolean
         desktopAgentHelperVersion:
           type: [string, "null"]
+        desktopAgentKnownBad:
+          type: boolean
         desktopAgentExpectedHelperVersion:
           type: string
         desktopAgentUpgradeRequired:
@@ -4840,7 +5239,10 @@ components:
         - runtimeOverrideActive
         - runtimeOverrideUpdatedAt
         - desktopAgentOnline
+        - desktopAgentCompatibility
+        - desktopAgentCompatible
         - desktopAgentHelperVersion
+        - desktopAgentKnownBad
         - desktopAgentExpectedHelperVersion
         - desktopAgentUpgradeRequired
         - reconnectAvailable
@@ -5163,8 +5565,15 @@ components:
           format: date-time
         desktopAgentOnline:
           type: boolean
+        desktopAgentCompatibility:
+          type: [string, "null"]
+          enum: [compatible, known_bad, update_required, null]
+        desktopAgentCompatible:
+          type: boolean
         desktopAgentHelperVersion:
           type: [string, "null"]
+        desktopAgentKnownBad:
+          type: boolean
         desktopAgentExpectedHelperVersion:
           type: string
         desktopAgentUpgradeRequired:
@@ -5253,7 +5662,10 @@ components:
         - runtimeOverrideActive
         - runtimeOverrideUpdatedAt
         - desktopAgentOnline
+        - desktopAgentCompatibility
+        - desktopAgentCompatible
         - desktopAgentHelperVersion
+        - desktopAgentKnownBad
         - desktopAgentExpectedHelperVersion
         - desktopAgentUpgradeRequired
         - reconnectAvailable
@@ -5576,9 +5988,270 @@ components:
           oneOf:
             - $ref: "#/components/schemas/ResearchProvider"
             - type: "null"
+        highBetaUniverse:
+          $ref: "#/components/schemas/ResearchHighBetaUniverseAvailabilityStatus"
       required:
         - configured
         - provider
+        - highBetaUniverse
+
+    ResearchHighBetaUniverseAvailabilityStatus:
+      type: object
+      properties:
+        available:
+          type: boolean
+        configured:
+          type: boolean
+        provider:
+          oneOf:
+            - $ref: "#/components/schemas/ResearchProvider"
+            - type: "null"
+        validatorProvider:
+          oneOf:
+            - type: string
+              enum: [massive]
+            - type: "null"
+        limit:
+          type: integer
+        cacheTtlMs:
+          type: integer
+        lastGeneratedAt:
+          type: [string, "null"]
+          format: date-time
+        lastAcceptedCount:
+          type: [integer, "null"]
+        cacheStatus:
+          type: string
+          enum: [fresh, memory_cache, stale_cache, unavailable]
+        unavailableCode:
+          type: [string, "null"]
+        unavailableDetail:
+          type: [string, "null"]
+      required:
+        - available
+        - configured
+        - provider
+        - validatorProvider
+        - limit
+        - cacheTtlMs
+        - lastGeneratedAt
+        - lastAcceptedCount
+        - cacheStatus
+        - unavailableCode
+        - unavailableDetail
+
+    ResearchHighBetaUniverseRejectReason:
+      type: string
+      enum:
+        - invalid_candidate
+        - inactive_fmp
+        - non_us_fmp
+        - reference_unavailable
+        - inactive_massive
+        - unsupported_market
+        - unsupported_security_type
+        - quote_unavailable
+        - low_liquidity
+        - non_optionable
+
+    ResearchHighBetaUniverseAcceptedSymbol:
+      type: object
+      properties:
+        rank:
+          type: integer
+        symbol:
+          type: string
+        name:
+          type: [string, "null"]
+        beta:
+          type: number
+        intradayVolatility:
+          type: [number, "null"]
+        optionContractCount:
+          type: integer
+        opportunityScore:
+          type: number
+        score:
+          type: object
+          properties:
+            source:
+              type: string
+              enum: [blended_options_opportunity_v1]
+            betaScore:
+              type: number
+            intradayVolatilityScore:
+              type: number
+            liquidityScore:
+              type: number
+            optionsTradabilityScore:
+              type: number
+            weights:
+              type: object
+              properties:
+                beta:
+                  type: number
+                intradayVolatility:
+                  type: number
+                liquidity:
+                  type: number
+                optionsTradability:
+                  type: number
+              required:
+                - beta
+                - intradayVolatility
+                - liquidity
+                - optionsTradability
+          required:
+            - source
+            - betaScore
+            - intradayVolatilityScore
+            - liquidityScore
+            - optionsTradabilityScore
+            - weights
+        price:
+          type: [number, "null"]
+        volume:
+          type: [number, "null"]
+        dollarVolume:
+          type: [number, "null"]
+        marketCap:
+          type: [number, "null"]
+        exchange:
+          type: [string, "null"]
+        massiveMarket:
+          type: [string, "null"]
+        massiveType:
+          type: [string, "null"]
+        optionable:
+          type: boolean
+        quoteUpdatedAt:
+          type: [string, "null"]
+          format: date-time
+      required:
+        - rank
+        - symbol
+        - name
+        - beta
+        - intradayVolatility
+        - optionContractCount
+        - opportunityScore
+        - score
+        - price
+        - volume
+        - dollarVolume
+        - marketCap
+        - exchange
+        - massiveMarket
+        - massiveType
+        - optionable
+        - quoteUpdatedAt
+
+    ResearchHighBetaUniverseRejectedSymbol:
+      type: object
+      properties:
+        symbol:
+          type: string
+        beta:
+          type: [number, "null"]
+        reason:
+          $ref: "#/components/schemas/ResearchHighBetaUniverseRejectReason"
+        detail:
+          type: [string, "null"]
+      required:
+        - symbol
+        - beta
+        - reason
+        - detail
+
+    ResearchHighBetaUniverseResponse:
+      type: object
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        dryRun:
+          type: boolean
+        sourceStatus:
+          type: string
+          enum: [fresh, memory_cache, stale_cache]
+        limit:
+          type: integer
+        importedCount:
+          type: integer
+        acceptedCount:
+          type: integer
+        rejectedCount:
+          type: integer
+        rejectedByReason:
+          type: object
+          additionalProperties:
+            type: number
+        accepted:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchHighBetaUniverseAcceptedSymbol"
+        rejectedSample:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchHighBetaUniverseRejectedSymbol"
+        source:
+          type: object
+          properties:
+            provider:
+              type: string
+              enum: [fmp]
+            endpoint:
+              type: string
+            betaField:
+              type: string
+            candidateLimit:
+              type: integer
+            exchanges:
+              type: array
+              items:
+                type: string
+          required:
+            - provider
+            - endpoint
+            - betaField
+            - candidateLimit
+            - exchanges
+        validation:
+          type: object
+          properties:
+            provider:
+              type: string
+              enum: [massive]
+            minPrice:
+              type: number
+            minVolume:
+              type: number
+            minDollarVolume:
+              type: number
+            minMarketCap:
+              type: number
+            requireOptionable:
+              type: boolean
+          required:
+            - provider
+            - minPrice
+            - minVolume
+            - minDollarVolume
+            - minMarketCap
+            - requireOptionable
+      required:
+        - generatedAt
+        - dryRun
+        - sourceStatus
+        - limit
+        - importedCount
+        - acceptedCount
+        - rejectedCount
+        - rejectedByReason
+        - accepted
+        - rejectedSample
+        - source
+        - validation
 
     ResearchFundamentals:
       type: object
@@ -7139,6 +7812,8 @@ components:
       properties:
         accountId:
           type: string
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
         confirm:
           type: boolean
         manualIndicator:
@@ -7147,6 +7822,7 @@ components:
           type: [string, "null"]
       required:
         - accountId
+        - mode
 
     CancelOrderResponse:
       type: object
@@ -8394,6 +9070,14 @@ components:
           type: number
           nullable: true
           description: Position weight in percentage points.
+        accountWeightPercent:
+          type: number
+          nullable: true
+          description: Position weight against the full account net liquidation, in percentage points.
+        scopedWeightPercent:
+          type: number
+          nullable: true
+          description: Position weight against the current response scope, in percentage points.
         betaWeightedDelta:
           type: number
           nullable: true
@@ -8886,8 +9570,12 @@ components:
     CancelAccountOrderRequest:
       type: object
       properties:
+        mode:
+          $ref: "#/components/schemas/EnvironmentMode"
         confirm:
           type: boolean
+      required:
+        - mode
 
     AccountRiskResponse:
       type: object
@@ -11185,7 +11873,7 @@ components:
         maxSymbols:
           type: integer
           minimum: 1
-          maximum: 250
+          maximum: 500
         evaluationConcurrency:
           type: integer
           minimum: 1
@@ -11196,7 +11884,7 @@ components:
       properties:
         mode:
           type: string
-          enum: [selected_watchlist, all_watchlists, all_watchlists_plus_universe]
+          enum: [selected_watchlist, all_watchlists, all_watchlists_plus_universe, high_beta_500]
         configuredMaxSymbols:
           type: integer
         resolvedSymbols:
@@ -11209,7 +11897,7 @@ components:
           type: integer
         source:
           type: string
-          enum: [selected_watchlist, all_watchlists, watchlists_plus_ranked_universe]
+          enum: [selected_watchlist, all_watchlists, watchlists_plus_ranked_universe, high_beta_500]
         fallbackUsed:
           type: boolean
         degradedReason:
@@ -11590,7 +12278,7 @@ components:
               type: integer
             sourceStrategy:
               type: string
-              enum: [native_timeframes, native_timeframes_live_retry]
+              enum: [native_timeframes, native_timeframes_live_retry, native_timeframes_live_retry_exact_backfill]
             sourceRequestCount:
               type: integer
             hydratedSymbols:

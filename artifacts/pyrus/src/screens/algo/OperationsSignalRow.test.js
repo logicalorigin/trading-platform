@@ -74,11 +74,20 @@ test("algo signal table requests matrix hydration for visible STA rows", () => {
   });
 
   assert.deepEqual(request, {
-    symbols: ["ASML", "USO"],
+    symbols: ["ASML"],
     prioritySymbols: ["ASML"],
     missingSymbols: ["ASML"],
     requestSymbols: ["ASML"],
+    requestCells: [
+      { symbol: "ASML", timeframe: "1m" },
+      { symbol: "ASML", timeframe: "2m" },
+      { symbol: "ASML", timeframe: "5m" },
+      { symbol: "ASML", timeframe: "15m" },
+      { symbol: "ASML", timeframe: "1h" },
+      { symbol: "ASML", timeframe: "1d" },
+    ],
     timeframes: ["1m", "2m", "5m", "15m", "1h", "1d"],
+    requestTimeframes: ["1m", "2m", "5m", "15m", "1h", "1d"],
     clientRole: "algo-sta",
     requestOrigin: "sta-visible-page",
     reason: "algo-signal-table",
@@ -333,7 +342,7 @@ test("signal table sorting honors column key and direction", () => {
   );
   assert.deepEqual(
     sortRows(rows, "move", null, "desc").map((row) => row.signal.symbol),
-    ["TSLA", "MSFT", "AAPL"],
+    ["TSLA", "AAPL", "MSFT"],
   );
   assert.deepEqual(
     sortRows(rows, "quoteAge", null, "asc").map((row) => row.signal.symbol),
@@ -1314,6 +1323,9 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /buildSignalMatrixBySymbol\(signalMatrixStates, SIGNALS_TABLE_TIMEFRAMES\)/);
   assert.match(tableSource, /useGetQuoteSnapshots\(/);
   assert.match(tableSource, /applyRuntimeQuoteSnapshots\(rowQuotesQuery\.data\?\.quotes \|\| \[\]\)/);
+  assert.match(tableSource, /const rowQuoteSnapshotsBySymbol = useMemo/);
+  assert.match(tableSource, /resolveRowTickerSnapshot/);
+  assert.match(tableSource, /rowQuoteSnapshotsBySymbol\?\.\[symbolKey\] \|\| null/);
   assert.match(tableSource, /queryKey: \["algo-signal-row-sparklines", rowSparklineSymbolsKey\]/);
   assert.match(
     tableSource,
@@ -1323,6 +1335,10 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /SIGNAL_TABLE_SPARKLINE_REQUEST_OPTIONS/);
   assert.match(tableSource, /SIGNAL_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m"/);
   assert.match(tableSource, /SIGNAL_TABLE_SPARKLINE_HISTORY_LIMIT = 120/);
+  assert.match(tableSource, /SIGNAL_TABLE_SPARKLINE_RETRY_INTERVAL_MS = 30_000/);
+  assert.match(tableSource, /assetClass: "equity"/);
+  assert.match(tableSource, /refetchInterval:\s*rowSparklineSymbolsKey/);
+  assert.match(tableSource, /refetchOnMount: true/);
   assert.match(tableSource, /thinBarsForSignalSparkline/);
   assert.match(tableSource, /publishRuntimeTickerSnapshot\(symbol, symbol, \{ sparkBars \}\)/);
   assert.match(tableSource, /useRuntimeTickerSnapshots\(rowSymbols\)/);
@@ -1339,6 +1355,10 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(tableSource, /compareFiniteValues\(\s*scoreSortValue\(a\.scoreBreakdown\),\s*scoreSortValue\(b\.scoreBreakdown\),\s*sortDirection,/);
   assert.match(rowSource, /resolveSignalMove\(signalRecord,\s*tickerSnapshot,\s*candidate\)/);
   assert.match(tableSource, /resolveSignalMove\(row\.signal,\s*null,\s*row\.candidate\)/);
+  assert.doesNotMatch(
+    readSource("./algoHelpers.js"),
+    /candidateRecord\.(underlyingPrice|currentPrice)/,
+  );
   assert.match(tableSource, /signalMoveSortValue\(a\)/);
   assert.match(tableSource, /quoteAgeSortValue\(rowMetricCandidate\(a\)\)/);
   assert.match(tableSource, /spreadSortValue\(rowMetricCandidate\(a\)\)/);

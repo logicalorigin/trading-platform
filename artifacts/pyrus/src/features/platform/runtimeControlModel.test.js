@@ -1288,6 +1288,61 @@ test("builds runtime control snapshot with Massive diagnostics", () => {
   assert.equal(snapshot.massive.websocket.feeds[0].lastMessageAt, "2026-06-03T16:00:00.000Z");
 });
 
+test("builds runtime control Massive diagnostics from line usage for header and footer parity", () => {
+  const snapshot = buildRuntimeControlSnapshot({
+    lineUsageSnapshot: {
+      updatedAt: "2026-06-03T16:00:03.000Z",
+      providers: {
+        massive: {
+          configured: true,
+          providerIdentity: "massive",
+          baseUrlHost: "api.massive.com",
+          stocksRealtimeConfigured: true,
+          rest: {
+            status: "ok",
+            lastRequest: {
+              purpose: "quote snapshot",
+              symbolCount: 3,
+              resultCount: 3,
+              durationMs: 37,
+            },
+          },
+          websocket: {
+            status: "ok",
+            mode: "real-time",
+            activeChannels: ["Q", "T"],
+            availableChannels: ["AM", "Q", "T"],
+            subscribedSymbolCount: 8,
+            activeConsumerCount: 2,
+            eventCount: 44,
+            lastMessageAt: "2026-06-03T16:00:02.000Z",
+            lastMessageAgeMs: 500,
+            feeds: [
+              {
+                id: "stock-quotes",
+                label: "Stock quotes/trades",
+                configured: true,
+                subscribedSymbolCount: 8,
+                activeConsumerCount: 2,
+                eventCount: 44,
+                lastMessageAt: "2026-06-03T16:00:02.000Z",
+                lastMessageAgeMs: 500,
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(snapshot.massive.configured, true);
+  assert.equal(snapshot.massive.providerIdentity, "massive");
+  assert.equal(snapshot.massive.rest.lastRequestSummary, "quote snapshot · 3 rows");
+  assert.equal(snapshot.massive.websocket.channelSummary, "Q, T");
+  assert.equal(snapshot.massive.websocket.subscribedSymbolCount, 8);
+  assert.equal(snapshot.massive.websocket.feeds[0].eventCount, 44);
+});
+
 test("builds runtime control snapshot with Massive REST failure category", () => {
   const snapshot = buildRuntimeControlSnapshot({
     runtimeDiagnostics: {

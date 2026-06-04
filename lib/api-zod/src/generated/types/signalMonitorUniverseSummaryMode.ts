@@ -13,4 +13,5 @@ export const SignalMonitorUniverseSummaryMode = {
   selected_watchlist: 'selected_watchlist',
   all_watchlists: 'all_watchlists',
   all_watchlists_plus_universe: 'all_watchlists_plus_universe',
+  high_beta_500: 'high_beta_500',
 } as const;

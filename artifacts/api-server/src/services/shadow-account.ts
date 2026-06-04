@@ -6568,6 +6568,8 @@ type ShadowAccountPositionsResponseRow = Record<string, unknown> & {
   unrealizedPnl: number;
   unrealizedPnlPercent?: number | null;
   weightPercent: number | null;
+  accountWeightPercent?: number | null;
+  scopedWeightPercent?: number | null;
   optionContract?: unknown;
   underlyingMarket?: unknown;
   optionQuote?: unknown;
@@ -6592,6 +6594,44 @@ type ShadowAccountPositionsResponseShape = Record<string, unknown> & {
   };
   updatedAt: Date | string;
 };
+
+type ShadowAccountPositionWeightRow = Record<string, unknown> & {
+  marketValue?: unknown;
+  weightPercent?: number | null;
+  accountWeightPercent?: number | null;
+  scopedWeightPercent?: number | null;
+};
+
+function applyShadowAccountPositionWeights<T extends ShadowAccountPositionWeightRow>(
+  rows: readonly T[],
+  input: {
+    accountNetLiquidation: number | null;
+    scopedNetLiquidation: number | null;
+  },
+): Array<
+  T & {
+    weightPercent: number | null;
+    accountWeightPercent: number | null;
+    scopedWeightPercent: number | null;
+  }
+> {
+  return rows.map((row) => {
+    const marketValue = toNumber(row.marketValue) ?? 0;
+    const scopedWeightPercent = weightPercent(
+      marketValue,
+      input.scopedNetLiquidation,
+    );
+    return {
+      ...row,
+      weightPercent: scopedWeightPercent,
+      accountWeightPercent: weightPercent(
+        marketValue,
+        input.accountNetLiquidation,
+      ),
+      scopedWeightPercent,
+    };
+  });
+}
 
 function shadowPositionsReadCacheKey(input: {
   assetClassFilter: "options" | "stocks" | "all" | null;
@@ -6632,18 +6672,17 @@ function filterShadowAccountPositionsResponseForAssetClass(
       normalizePositionAssetClass(position.assetClass) === assetClassFilter,
   );
   const cash = toNumber(response.totals.cash) ?? 0;
+  const accountNetLiquidation =
+    toNumber(response.totals.netLiquidation) ?? null;
   const responseMarketValue = rows.reduce(
     (sum, row) => sum + (toNumber(row.marketValue) ?? 0),
     0,
   );
   const responseNetLiquidation = cash + responseMarketValue;
-  const weightedRows = rows.map((row) => ({
-    ...row,
-    weightPercent: weightPercent(
-      toNumber(row.marketValue) ?? 0,
-      responseNetLiquidation,
-    ),
-  }));
+  const weightedRows = applyShadowAccountPositionWeights(rows, {
+    accountNetLiquidation,
+    scopedNetLiquidation: responseNetLiquidation,
+  });
 
   return {
     ...response,
@@ -6737,7 +6776,8 @@ export async function getShadowAccountPositions(input: {
     async () => {
       kickSignalOptionsAutomationMirrorRepairForRead(source);
   try {
-  const totals = source ? await computeShadowTotalsForSource(source) : await ensureFreshShadowState(true);
+	  const totals = source ? await computeShadowTotalsForSource(source) : await ensureFreshShadowState(true);
+	  const accountTotals = source ? await ensureFreshShadowState(true) : totals;
   clearShadowAccountDbBackoff();
   const orders = source
     ? (await readShadowOrdersForSource(source))
@@ -7035,10 +7075,10 @@ export async function getShadowAccountPositions(input: {
 	    0,
 	  );
 	  const responseNetLiquidation = totals.cash + responseMarketValue;
-	  const weightedRows = rows.map((row) => ({
-	    ...row,
-	    weightPercent: weightPercent(row.marketValue, responseNetLiquidation),
-	  }));
+		  const weightedRows = applyShadowAccountPositionWeights(rows, {
+		    accountNetLiquidation: accountTotals.netLiquidation,
+		    scopedNetLiquidation: responseNetLiquidation,
+		  });
 
 	  return {
 	    accountId: SHADOW_ACCOUNT_ID,
@@ -7347,6 +7387,11 @@ export async function getShadowAccountPositionsAtDate(input: {
     return sum + book.quantity * book.mark * multiplier;
   }, 0);
   const nav = cash + marketValueTotal;
+  const isScopedHistoricalResponse =
+    Boolean(source) || Boolean(input.assetClass && input.assetClass !== "all");
+  const accountNetLiquidation = isScopedHistoricalResponse
+    ? (await computeShadowSnapshotTotalsAt(null, window.end)).netLiquidation
+    : nav;
   const positions = filteredPositions.map(([key, book]) => {
     const multiplier = marketMultiplier({
       assetClass: book.assetClass,
@@ -7356,6 +7401,7 @@ export async function getShadowAccountPositionsAtDate(input: {
       Math.abs(book.quantity) > 0 ? book.totalCost / Math.abs(book.quantity) / multiplier : 0;
     const marketValue = book.quantity * book.mark * multiplier;
     const unrealizedPnl = marketValue - book.totalCost;
+    const scopedWeightPercent = weightPercent(marketValue, nav);
     return {
       id: `SHADOW:${key}:${window.date}`,
       accountId: SHADOW_ACCOUNT_ID,
@@ -7381,7 +7427,9 @@ export async function getShadowAccountPositionsAtDate(input: {
       unrealizedPnlPercent:
         book.totalCost > 0 ? (unrealizedPnl / Math.abs(book.totalCost)) * 100 : 0,
       marketValue,
-      weightPercent: weightPercent(marketValue, nav),
+      weightPercent: scopedWeightPercent,
+      accountWeightPercent: weightPercent(marketValue, accountNetLiquidation),
+      scopedWeightPercent,
       betaWeightedDelta: null,
       lots: [
         {
@@ -11728,6 +11776,7 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   withShadowReadCache,
   readReusableShadowPositionsResponseForAssetClass,
   filterShadowAccountPositionsResponseForAssetClass,
+  applyShadowAccountPositionWeights,
   trackShadowFreshStateRefresh,
   getShadowFreshStateInFlight: () => shadowFreshStateInFlight,
   getShadowFreshStateCache: () => shadowFreshStateCache,

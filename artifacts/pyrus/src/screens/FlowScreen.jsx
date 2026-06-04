@@ -76,6 +76,12 @@ import {
   Pill,
   Skeleton,
 } from "../components/platform/primitives.jsx";
+import { DataIssueInlineIcon } from "../components/platform/DataIssueInlineIcon.jsx";
+import {
+  collectCoverageDataIssues,
+  collectDataIssuesFromRecord,
+  combineDataIssues,
+} from "../features/platform/dataIssueModel.js";
 import { MeasuredChartFrame } from "../features/charting/MeasuredChartFrame.jsx";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { DenseVirtualTable } from "../components/platform/DenseVirtualTable.jsx";
@@ -2420,6 +2426,46 @@ const FlowOverviewPanel = ({
                 : flowScannerCoverageActive
                   ? "The scanner is active, but the latest hydrated batch did not contain prints that match the current scanner settings."
                 : "IBKR returned no active snapshot flow for the tracked symbols.";
+  const flowDataIssues = combineDataIssues(
+    collectDataIssuesFromRecord(
+      {
+        status: displayableFlowError
+          ? "error"
+          : flowQuality?.label === "Degraded"
+            ? "degraded"
+            : staleFlowEvents
+              ? "stale"
+              : providerSummary.fallbackUsed
+                ? "fallback"
+                : flowStatus,
+        errorMessage: displayableFlowError,
+        fallbackUsed: providerSummary.fallbackUsed,
+        reason:
+          providerSummary?.coverage?.degradedReason ||
+          providerSummary?.erroredSource?.errorMessage ||
+          providerSummary?.reason ||
+          flowQuality?.detail,
+        updatedAt: newestScanAt,
+      },
+      {
+        valueLabel: "Flow tape",
+        source: providerSummary?.label || "flow scanner",
+        nextAction:
+          "Inspect the scanner source and coverage before treating the visible flow tape as complete.",
+      },
+    ),
+    collectCoverageDataIssues(
+      {
+        ...coverage,
+        coverageHealth: coverage.coverageHealth,
+        updatedAt: newestScanAt,
+      },
+      {
+        valueLabel: "Flow scanner coverage",
+        source: "flow scanner",
+      },
+    ),
+  );
 
   const activeTicker = normalizeTickerSymbol(
     selectedEvt?.ticker ||
@@ -4413,6 +4459,7 @@ const FlowOverviewPanel = ({
             >
               {feedStateLabel}
             </span>
+            <DataIssueInlineIcon issues={flowDataIssues} side="bottom" align="center" />
             {pinnedEvent ? (
               <AppTooltip content={getFlowContractLabel(pinnedEvent)}><button
                 type="button"

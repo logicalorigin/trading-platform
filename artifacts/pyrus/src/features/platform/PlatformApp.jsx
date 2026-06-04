@@ -284,9 +284,11 @@ input[type=range]{accent-color:var(--ra-color-accent)}
 @keyframes ibkrStepIconBoot{0%,100%{opacity:0.78;transform:translateY(1px) scale(0.96)}52%{opacity:1;transform:translateY(-1px) scale(1.05)}}
 @keyframes ibkrStepIconLink{0%,100%{filter:drop-shadow(0 0 0 color-mix(in srgb,var(--ra-text-on-accent) 0%,transparent));transform:scaleX(0.92) scaleY(0.98)}50%{filter:drop-shadow(0 0 4px color-mix(in srgb,var(--ra-text-on-accent) 68%,transparent));transform:scaleX(1.08) scaleY(1.02)}}
 @keyframes ibkrStepIconTunnel{0%,100%{opacity:0.72;transform:translateY(0) scale(0.94)}45%{opacity:1;transform:translateY(-1px) scale(1.08)}}
-@keyframes ibkrStepIconQueue{0%,100%{transform:rotate(-8deg) scale(0.98)}50%{transform:rotate(8deg) scale(1.02)}}
-@keyframes ibkrStepIconDetach{0%,100%{filter:brightness(0.9);transform:translateX(0) rotate(0deg)}40%{filter:brightness(1.25);transform:translateX(-1px) rotate(-7deg)}70%{transform:translateX(1px) rotate(5deg)}}
-@keyframes ibkrStepIconPower{0%,100%{opacity:0.74;transform:scale(0.92)}50%{opacity:1;transform:scale(1.08)}}
+@keyframes ibkrStepIconQueue{0%,100%{opacity:.76;transform:rotate(-12deg) scale(.94)}45%{opacity:1;transform:rotate(12deg) scale(1.08)}70%{transform:rotate(0deg) scale(1.02)}}
+@keyframes ibkrStepIconDetach{0%,100%{filter:brightness(.86);transform:translateX(0) rotate(0deg) scale(.96)}36%{filter:brightness(1.28);transform:translateX(-2px) rotate(-10deg) scale(1.05)}68%{filter:brightness(1.12);transform:translateX(2px) rotate(7deg) scale(1.02)}}
+@keyframes ibkrStepIconPower{0%,100%{opacity:.68;transform:scale(.88)}48%{opacity:1;transform:scale(1.12)}70%{transform:scale(.98)}}
+@keyframes ibkrStepLineChase{0%{background-position:100% 0;opacity:.52}50%{opacity:1}100%{background-position:-100% 0;opacity:.52}}
+@keyframes ibkrDeactivateProgressSweep{0%{opacity:.42;transform:translateX(-115%)}45%{opacity:1}100%{opacity:.42;transform:translateX(230%)}}
 @keyframes ibkrStepCheckPop{0%{opacity:0;transform:scale(0.68)}68%{opacity:1;transform:scale(1.14)}100%{opacity:1;transform:scale(1)}}
 @keyframes ibkrStepLineFill{from{opacity:0.35;transform:scaleX(0)}to{opacity:1;transform:scaleX(1)}}
 @keyframes headerBroadcastScroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
@@ -294,7 +296,7 @@ input[type=range]{accent-color:var(--ra-color-accent)}
 @media (prefers-reduced-motion: reduce){[data-pulse-hit]{animation:none!important}}
 @media (prefers-reduced-motion: reduce){[data-premium-flow-glyph]{animation:none!important}}
 @media (prefers-reduced-motion: reduce){[data-ibkr-wave] *{animation:none!important}}
-@media (prefers-reduced-motion: reduce){[data-ibkr-bridge-spinner],[data-ibkr-state-pulse],[data-ibkr-step-complete] *,[data-ibkr-step-motion],[data-ibkr-step-motion] *,[data-ibkr-step-line]{animation:none!important}}
+@media (prefers-reduced-motion: reduce){[data-ibkr-bridge-spinner],[data-ibkr-operation-title-spinner],[data-ibkr-deactivate-activity-glyph] svg,[data-ibkr-deactivate-progress-track] span,[data-ibkr-state-pulse],[data-ibkr-step-complete] *,[data-ibkr-step-motion],[data-ibkr-step-motion] *,[data-ibkr-step-line]{animation:none!important}}
 @media (prefers-reduced-motion: reduce){[data-header-broadcast-track]{animation:none!important;transform:none!important}}
 [data-header-broadcast-viewport]:hover [data-header-broadcast-track],[data-header-broadcast-viewport]:focus-within [data-header-broadcast-track]{animation-play-state:paused!important}
 `;
@@ -319,7 +321,8 @@ const SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS = 6_000;
 const SIGNAL_MATRIX_CATCHUP_COOLDOWN_MS = 30_000;
 const SIGNAL_MATRIX_PARTIAL_CACHE_CATCHUP_DELAY_MS = 10_000;
 const SIGNAL_MATRIX_TRUNCATED_CATCHUP_DELAY_MS = 5_000;
-const SIGNAL_MATRIX_REQUEST_TIMEOUT_MS = 30_000;
+const SIGNAL_MATRIX_STA_VISIBLE_CATCHUP_DELAY_MS = 2_500;
+const SIGNAL_MATRIX_REQUEST_TIMEOUT_MS = 45_000;
 const SIGNAL_MATRIX_REQUEST_WATCHDOG_GRACE_MS = 3_000;
 const SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS = 1_000;
 const SIGNAL_MATRIX_EXACT_CELL_LIMIT_RETRY_TTL_MS = 60_000;
@@ -372,12 +375,32 @@ const signalMatrixSymbolListsEqual = (left = [], right = []) =>
   left.length === right.length &&
   left.every((symbol, index) => symbol === right[index]);
 
+const SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT = 500;
+const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
+const SIGNAL_MONITOR_UNIVERSE_SCOPES = new Set([
+  "selected_watchlist",
+  "all_watchlists",
+  "all_watchlists_plus_universe",
+  "high_beta_500",
+]);
+
+const resolveSignalMonitorUniverseScopeSetting = (settings) => {
+  const raw = asRecord(settings)[SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY];
+  const value = typeof raw === "string" ? raw : "";
+  return SIGNAL_MONITOR_UNIVERSE_SCOPES.has(value) ? value : null;
+};
+
 const buildSignalMonitorPyrusSettingsPatch = (currentSettings, draftSettings) => {
   const current = asRecord(currentSettings);
   const resolved = resolvePyrusSignalsRuntimeSettings(draftSettings || {});
+  const universeScope =
+    resolveSignalMonitorUniverseScopeSetting(draftSettings) ??
+    resolveSignalMonitorUniverseScopeSetting(currentSettings) ??
+    "all_watchlists";
   return {
     ...current,
     ...resolved,
+    [SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY]: universeScope,
     marketStructure: {
       ...asRecord(current.marketStructure),
       timeHorizon: resolved.timeHorizon,
@@ -3170,6 +3193,17 @@ export default function PlatformApp() {
     () => resolveRecentSignalMarketDataSymbols(signalMonitorStates),
     [signalMonitorStates],
   );
+  const quoteStreamRotationSymbols = useMemo(
+    () =>
+      [
+        ...new Set(
+          [...watchlistSymbols, ...signalMonitorDisplaySymbols]
+            .map(normalizeTickerSymbol)
+            .filter(Boolean),
+        ),
+      ],
+    [signalMonitorDisplaySymbols, watchlistSymbols],
+  );
   const quoteStreamPinnedSymbols = useMemo(
     () =>
       [
@@ -3200,12 +3234,14 @@ export default function PlatformApp() {
     () =>
       buildWatchlistQuoteRotationBatch({
         watchlistSymbols,
+        rotationSymbols: quoteStreamRotationSymbols,
         pinnedSymbols: quoteStreamPinnedSymbols,
         cursor: watchlistQuoteRotationCursor,
         batchSize: WATCHLIST_QUOTE_STREAM_BATCH_SIZE,
       }),
     [
       quoteStreamPinnedSymbols,
+      quoteStreamRotationSymbols,
       watchlistQuoteRotationCursor,
       watchlistSymbols,
     ],
@@ -3249,6 +3285,7 @@ export default function PlatformApp() {
       setWatchlistQuoteRotationCursor((cursor) =>
         buildWatchlistQuoteRotationBatch({
           watchlistSymbols,
+          rotationSymbols: quoteStreamRotationSymbols,
           pinnedSymbols: quoteStreamPinnedSymbols,
           cursor,
           batchSize: WATCHLIST_QUOTE_STREAM_BATCH_SIZE,
@@ -3259,6 +3296,7 @@ export default function PlatformApp() {
   }, [
     quoteStreamGateReason,
     quoteStreamPinnedSymbols,
+    quoteStreamRotationSymbols,
     watchlistQuoteRotationBatch.rotatingUniverseSize,
     watchlistSymbols,
   ]);
@@ -3267,9 +3305,7 @@ export default function PlatformApp() {
       return;
     }
     const universe = new Set(
-      [...watchlistSymbols, ...streamedQuoteSymbols]
-        .map(normalizeTickerSymbol)
-        .filter(Boolean),
+      quoteStreamRotationSymbols.map(normalizeTickerSymbol).filter(Boolean),
     );
     const touchedAt = new Date().toISOString();
     setWatchlistQuoteLastTouchedBySymbol((current) => {
@@ -3284,18 +3320,25 @@ export default function PlatformApp() {
       });
       return next;
     });
-  }, [quoteStreamGateReason, streamedQuoteSymbols.length, streamedQuoteSymbolsKey, watchlistSymbols]);
+  }, [
+    quoteStreamGateReason,
+    quoteStreamRotationSymbols,
+    streamedQuoteSymbols.length,
+    streamedQuoteSymbolsKey,
+  ]);
   const watchlistQuoteStreamDiagnostics = useMemo(
     () =>
       buildWatchlistQuoteRotationDiagnostics({
         batch: watchlistQuoteRotationBatch,
         watchlistSymbols,
+        rotationSymbols: quoteStreamRotationSymbols,
         lastTouchedAtBySymbol: watchlistQuoteLastTouchedBySymbol,
         cycleWindowMs: WATCHLIST_QUOTE_STREAM_CYCLE_WINDOW_MS,
         disabledReason: quoteStreamGateReason,
       }),
     [
       quoteStreamGateReason,
+      quoteStreamRotationSymbols,
       watchlistQuoteLastTouchedBySymbol,
       watchlistQuoteRotationBatch,
       watchlistSymbols,
@@ -3613,6 +3656,17 @@ export default function PlatformApp() {
     () => resolveSignalMatrixCatchupDelayMs(signalMatrixPressureLevel),
     [signalMatrixPressureLevel],
   );
+  const signalMatrixEffectiveCatchupDelayMs = useMemo(() => {
+    if (signalMatrixCatchupDelayMs == null) {
+      return null;
+    }
+    return signalMatrixStaVisibleRequestActive
+      ? Math.min(
+          signalMatrixCatchupDelayMs,
+          SIGNAL_MATRIX_STA_VISIBLE_CATCHUP_DELAY_MS,
+        )
+      : signalMatrixCatchupDelayMs;
+  }, [signalMatrixCatchupDelayMs, signalMatrixStaVisibleRequestActive]);
   const signalMatrixRuntimeReady = Boolean(
       signalMonitorWorkVisible &&
       !signalMatrixStartupProtectionActive &&
@@ -3753,7 +3807,7 @@ export default function PlatformApp() {
         signalMatrixRequestSymbolLimit,
       requestTimeframes: signalMatrixRequestTimeframes,
       busyQueueDelayMs: signalMatrixBusyQueueDelayMs,
-      catchupDelayMs: signalMatrixCatchupDelayMs,
+      catchupDelayMs: signalMatrixEffectiveCatchupDelayMs,
       requestTimeoutMs: SIGNAL_MATRIX_REQUEST_TIMEOUT_MS,
       inFlight: signalMatrixEvaluationInFlightRef.current,
       inFlightAgeMs:
@@ -3819,7 +3873,7 @@ export default function PlatformApp() {
     signalMatrixRequestTimeframes,
     signalMatrixRequestTimeframesKey,
     signalMatrixBusyQueueDelayMs,
-    signalMatrixCatchupDelayMs,
+    signalMatrixEffectiveCatchupDelayMs,
     signalMatrixPollMs,
     signalMatrixPressureLevel,
     signalMatrixPriorityReady,
@@ -3888,7 +3942,7 @@ export default function PlatformApp() {
             expectedResponseStateCount;
         const activeSignalsCatchupPending = Boolean(
           !profileDisabled &&
-            signalMatrixCatchupDelayMs != null &&
+            signalMatrixEffectiveCatchupDelayMs != null &&
           signalsScreenMatrixSymbols.length > 0 &&
             (lastPlan?.coverage?.missingTaskCount ??
               lastPlan?.coverage?.missingSymbols ??
@@ -3899,7 +3953,7 @@ export default function PlatformApp() {
         );
         const progressiveMatrixCatchupPending = Boolean(
           !profileDisabled &&
-            signalMatrixCatchupDelayMs != null &&
+            signalMatrixEffectiveCatchupDelayMs != null &&
             (lastPlan?.coverage?.pendingTaskCount ??
               lastPlan?.coverage?.pendingSymbols ??
               0) > 0 &&
@@ -3918,7 +3972,7 @@ export default function PlatformApp() {
 
         if (
           !profileDisabled &&
-          signalMatrixCatchupDelayMs != null &&
+          signalMatrixEffectiveCatchupDelayMs != null &&
           (data?.truncated || skippedSymbols.length || partialStatePayload)
         ) {
           signalMatrixRotationCursorRef.current = 0;
@@ -3933,21 +3987,21 @@ export default function PlatformApp() {
               data?.truncated || skippedSymbols.length
                 ? Math.max(
                     SIGNAL_MATRIX_TRUNCATED_CATCHUP_DELAY_MS,
-                    signalMatrixCatchupDelayMs ?? 0,
+                    signalMatrixEffectiveCatchupDelayMs ?? 0,
                   )
                 : Math.max(
                     SIGNAL_MATRIX_PARTIAL_CACHE_CATCHUP_DELAY_MS,
-                    signalMatrixCatchupDelayMs ?? 0,
+                    signalMatrixEffectiveCatchupDelayMs ?? 0,
                   );
           }
         } else if (activeSignalsCatchupPending) {
           signalMatrixQueuedEvaluationRef.current = true;
           signalMatrixQueuedEvaluationDelayMsRef.current =
-            signalMatrixCatchupDelayMs;
+            signalMatrixEffectiveCatchupDelayMs;
         } else if (progressiveMatrixCatchupPending) {
           signalMatrixQueuedEvaluationRef.current = true;
           signalMatrixQueuedEvaluationDelayMsRef.current =
-            signalMatrixCatchupDelayMs;
+            signalMatrixEffectiveCatchupDelayMs;
         }
 
         setSignalMatrixSnapshot((current) => {
@@ -4163,7 +4217,7 @@ export default function PlatformApp() {
     signalMatrixRequestTimeframes,
     signalMatrixRequestTimeframesKey,
     signalMatrixBusyQueueDelayMs,
-    signalMatrixCatchupDelayMs,
+    signalMatrixEffectiveCatchupDelayMs,
     scheduleSignalMatrixEvaluation,
     memoryPressureSignal?.server?.apiPressureLevel,
     memoryPressureSignal?.server?.effectivePressureLevel,
@@ -4609,7 +4663,10 @@ export default function PlatformApp() {
   const handleChangeSignalMonitorMaxSymbols = useCallback((maxSymbols) => {
     const numeric = Number(maxSymbols);
     if (!Number.isFinite(numeric)) return;
-    const clamped = Math.max(1, Math.min(250, Math.round(numeric)));
+    const clamped = Math.max(
+      1,
+      Math.min(SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT, Math.round(numeric)),
+    );
     updateSignalMonitorProfileMutation.mutate(
       {
         data: {

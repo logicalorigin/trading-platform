@@ -35,74 +35,8 @@ import { PyrusBrandLockup } from "../../components/brand/PyrusLogo";
 import { PortfolioPulseZone } from "./PortfolioPulseZone.jsx";
 import { CommandPalette } from "./CommandPalette.jsx";
 import { SCREENS, preloadScreenModule } from "./screenRegistry.jsx";
-import { useAccountSectionTransitionSnapshot } from "./accountSectionTransitionStore.js";
-import { useAccountSection } from "./useAccountSection.js";
-import { LoadingSpinner, SegmentedControl } from "../../components/platform/primitives.jsx";
 import { useUserPreferences } from "../preferences/useUserPreferences";
 import { computeUnseenCount, useNotificationSnapshot } from "./notificationStore.js";
-
-const ACCOUNT_SECTION_OPTIONS = [
-  { value: "real", label: "Real" },
-  { value: "shadow", label: "Shadow" },
-];
-
-const AccountSectionTabs = () => {
-  const [section, setSection] = useAccountSection();
-  return (
-    <AppTooltip content="Switch between live broker account and shadow paper account">
-      <div
-        data-testid="header-account-section-tabs"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          flex: "0 0 auto",
-        }}
-      >
-        <SegmentedControl
-          options={ACCOUNT_SECTION_OPTIONS}
-          value={section}
-          onChange={setSection}
-          ariaLabel="Account section"
-          buttonTestId="header-account-section"
-        />
-      </div>
-    </AppTooltip>
-  );
-};
-
-const AccountSectionTransitionStatus = () => {
-  const { transitioning, targetSection } = useAccountSectionTransitionSnapshot();
-  if (!transitioning || !targetSection) {
-    return null;
-  }
-
-  const label = `Loading ${targetSection}...`;
-  const tone = targetSection === "shadow" ? CSS_COLOR.pink : CSS_COLOR.green;
-  return (
-    <span
-      data-testid="header-account-section-transition"
-      aria-live="polite"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(5),
-        minHeight: dim(24),
-        padding: sp("0 8px"),
-        borderRadius: dim(RADII.pill),
-        border: `1px solid ${CSS_COLOR.border}`,
-        background: CSS_COLOR.bg1,
-        color: CSS_COLOR.textSec,
-        fontFamily: T.sans,
-        fontSize: textSize("label"),
-        whiteSpace: "nowrap",
-        flex: "0 0 auto",
-      }}
-    >
-      <LoadingSpinner size={14} color={tone} />
-      {label}
-    </span>
-  );
-};
 
 const ICONIZED_SCREEN_IDS = new Set(["settings"]);
 
@@ -768,8 +702,6 @@ const AppHeaderInner = ({
                   ) : null}
                 </button>
               </AppTooltip>
-              <AccountSectionTabs />
-              <AccountSectionTransitionStatus />
               <HeaderAccountStripComponent
                 accounts={accounts}
                 primaryAccountId={primaryAccountId}
@@ -844,6 +776,7 @@ const AppHeaderInner = ({
         onChangeSignalMonitorTimeframe={onChangeSignalMonitorTimeframe}
         onChangeSignalMonitorFreshWindowBars={onChangeSignalMonitorFreshWindowBars}
         onChangeSignalMonitorMaxSymbols={onChangeSignalMonitorMaxSymbols}
+        safeQaMode={safeQaMode}
         signalMatrixStates={
           headerSignalMatrixStates?.length ? headerSignalMatrixStates : signalMatrixStates
         }

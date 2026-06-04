@@ -39,6 +39,10 @@ export interface AccountPositionRow {
   marketValue: number;
   /** Position weight in percentage points. */
   weightPercent: number | null;
+  /** Position weight against the full account net liquidation, in percentage points. */
+  accountWeightPercent?: number | null;
+  /** Position weight against the current response scope, in percentage points. */
+  scopedWeightPercent?: number | null;
   betaWeightedDelta: number | null;
   lots: AccountPositionLot[];
   openOrders: Order[];

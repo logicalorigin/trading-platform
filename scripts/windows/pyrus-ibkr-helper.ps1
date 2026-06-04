@@ -18,7 +18,7 @@ param(
     [string]$ActivationUrl,
     [string]$LaunchUrl,
     [string]$ApiBaseUrl,
-    [int]$AgentPollSeconds = 5,
+    [int]$AgentPollSeconds = 1,
     [string]$RepoDir = (Join-Path $env:USERPROFILE 'pyrus-trading-platform'),
     [string]$RepoUrl = 'https://github.com/logicalorigin/trading-platform.git',
     [string]$Branch = 'main',
@@ -49,7 +49,7 @@ $AutoLoginSettingsFile = Join-Path $AutoLoginDir 'auto-login.json'
 $AutoLoginCredentialFile = Join-Path $AutoLoginDir 'credential.json'
 $AutoLoginRuntimeRoot = Join-Path $StateDir 'ibc-runtime'
 $RunLog = Join-Path $LogDir 'bridge-launch.log'
-$HelperVersion = '2026-06-03.ib-async-sidecar-v6'
+$HelperVersion = '2026-06-04.ib-async-sidecar-v8-foreground-guard'
 $LoginHandoffAlgorithm = 'RSA-OAEP-256-CHUNKED'
 $script:BridgeBundleHash = ''
 $script:SensitiveValues = New-Object System.Collections.Generic.List[string]
@@ -364,8 +364,9 @@ function Claim-DesktopAgentLaunchJob([string]$BaseUrl) {
         desktopSecret = $identity['desktopSecret']
         helperVersion = $HelperVersion
         label = Get-DesktopAgentLabel
+        waitMs = 25000
     }
-    return Invoke-DesktopAgentPost -BaseUrl $BaseUrl -Path '/api/ibkr/desktop/jobs/claim' -Body $body -TimeoutSec 10
+    return Invoke-DesktopAgentPost -BaseUrl $BaseUrl -Path '/api/ibkr/desktop/jobs/claim' -Body $body -TimeoutSec 30
 }
 
 function Complete-DesktopAgentJob([string]$BaseUrl, [string]$JobId, [string]$CompletionToken, [bool]$Ok, [string]$Message) {
@@ -552,7 +553,7 @@ function Start-DesktopAgent([string]$PreferredBaseUrl = '') {
             Write-Log "Desktop agent polling failed: $($_.Exception.Message)"
         }
 
-        $sleepSeconds = [Math]::Max(2, [Math]::Min(30, $AgentPollSeconds))
+        $sleepSeconds = [Math]::Max(1, [Math]::Min(30, $AgentPollSeconds))
         Start-Sleep -Seconds $sleepSeconds
     }
 }
@@ -1565,6 +1566,9 @@ public static class PyrusWin32Window {
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
     public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
 }
 "@
@@ -1624,6 +1628,46 @@ function Get-VisibleTopLevelWindows {
     } catch {
         Write-Log "Visible window enumeration skipped: $($_.Exception.Message)"
         return @()
+    }
+}
+
+function Get-ForegroundWindowSnapshot {
+    try {
+        Initialize-WindowApi
+        $handle = [PyrusWin32Window]::GetForegroundWindow()
+        if ($handle -eq [IntPtr]::Zero) {
+            return $null
+        }
+
+        $titleBuilder = New-Object System.Text.StringBuilder 512
+        [void][PyrusWin32Window]::GetWindowText($handle, $titleBuilder, $titleBuilder.Capacity)
+        [uint32]$processId = 0
+        [void][PyrusWin32Window]::GetWindowThreadProcessId($handle, [ref]$processId)
+        if ($processId -le 0) {
+            return $null
+        }
+
+        $processName = ''
+        $processPath = ''
+        try {
+            $process = Get-Process -Id ([int]$processId) -ErrorAction Stop
+            $processName = [string]$process.ProcessName
+            try {
+                $processPath = [string]$process.Path
+            } catch {}
+        } catch {}
+
+        return [pscustomobject]@{
+            Handle = $handle
+            ProcessId = [int]$processId
+            ProcessName = $processName
+            ProcessPath = $processPath
+            CommandText = ''
+            Title = $titleBuilder.ToString()
+        }
+    } catch {
+        Write-Log "Foreground window inspection skipped: $($_.Exception.Message)"
+        return $null
     }
 }
 
@@ -1747,6 +1791,38 @@ function Test-IBGatewayCredentialWindowCandidate($Window) {
     return $true
 }
 
+function Get-ForegroundIBGatewayCredentialWindowCandidate {
+    $window = Get-ForegroundWindowSnapshot
+    if ($window -and (Test-IBGatewayCredentialWindowCandidate $window)) {
+        return $window
+    }
+
+    return $null
+}
+
+function Assert-IBGatewayCredentialWindowForeground([string]$Context = 'before typing credentials') {
+    $window = Get-ForegroundIBGatewayCredentialWindowCandidate
+    if ($window) {
+        return $window
+    }
+
+    $foreground = Get-ForegroundWindowSnapshot
+    $detail = ''
+    if ($foreground) {
+        $title = ([string]$foreground.Title).Trim()
+        $processName = ([string]$foreground.ProcessName).Trim()
+        $processId = [int]$foreground.ProcessId
+        if ($title) {
+            $detail = " Foreground window is '$title' (process '$processName', pid $processId)."
+        } else {
+            $detail = " Foreground process is '$processName' (pid $processId)."
+        }
+    }
+
+    Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_unconfirmed' -Message (Truncate-Message "IB Gateway login window is not active $Context. Refusing to type credentials into the wrong window.$detail")
+    throw (Truncate-Message "IB Gateway login window is not active $Context; refused to type credentials into the wrong window.$detail")
+}
+
 function Get-IBGatewayWindowCandidate([switch]$RequireCredentialWindow) {
     $windows = @(Get-VisibleTopLevelWindows | Where-Object {
         if ($RequireCredentialWindow) {
@@ -1777,7 +1853,10 @@ function Activate-IBGatewayWindowCandidate($Window) {
         Start-Sleep -Milliseconds 150
         if ([PyrusWin32Window]::SetForegroundWindow($Window.Handle)) {
             Start-Sleep -Milliseconds 250
-            return $true
+            if (Get-ForegroundIBGatewayCredentialWindowCandidate) {
+                return $true
+            }
+            Write-Log "SetForegroundWindow reported success, but IB Gateway login window is still not foreground."
         }
     } catch {
         Write-Log "Could not activate IB Gateway window handle $($Window.Handle): $($_.Exception.Message)"
@@ -1876,11 +1955,11 @@ function Wait-IBGatewayWindow([int]$TimeoutSeconds = 90, [switch]$AllowForegroun
                 Write-Log "Activating IB Gateway window pid=$($process.Id) title='$($process.MainWindowTitle)'."
                 if ($shell.AppActivate([int]$process.Id)) {
                     Start-Sleep -Seconds 1
-                    $activatedCredentialWindow = Get-IBGatewayWindowCandidate -RequireCredentialWindow
+                    $activatedCredentialWindow = Get-ForegroundIBGatewayCredentialWindowCandidate
                     if ($activatedCredentialWindow) {
                         return $shell
                     }
-                    Write-Log "Activated Gateway process pid=$($process.Id), but a credential window is still not confirmed."
+                    Write-Log "Activated Gateway process pid=$($process.Id), but the Gateway credential window is still not foreground."
                 }
             } catch {
                 Write-Log "Could not activate IB Gateway window by PID $($process.Id): $($_.Exception.Message)"
@@ -1891,11 +1970,11 @@ function Wait-IBGatewayWindow([int]$TimeoutSeconds = 90, [switch]$AllowForegroun
             try {
                 if ($shell.AppActivate($title)) {
                     Start-Sleep -Seconds 1
-                    $activatedCredentialWindow = Get-IBGatewayWindowCandidate -RequireCredentialWindow
+                    $activatedCredentialWindow = Get-ForegroundIBGatewayCredentialWindowCandidate
                     if ($activatedCredentialWindow) {
                         return $shell
                     }
-                    Write-Log "Activated Gateway title '$title', but a credential window is still not confirmed."
+                    Write-Log "Activated Gateway title '$title', but the Gateway credential window is still not foreground."
                 }
             } catch {}
         }
@@ -1918,15 +1997,10 @@ function Wait-IBGatewayWindow([int]$TimeoutSeconds = 90, [switch]$AllowForegroun
     }
 
     if ($AllowForegroundFallback) {
-        Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_foreground_fallback' -Message 'Could not confirm the Gateway window title. Click the IB Gateway username field now; Pyrus will type credentials in 5 seconds.'
+        Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_unconfirmed' -Message 'Could not confirm IB Gateway as the active login window. Pyrus will not type credentials into another app.'
         Write-Host ''
-        Write-Host 'Pyrus could not confirm the IB Gateway login window.'
-        Write-Host 'Click the IB Gateway username field now. Pyrus will type credentials in 5 seconds.'
-        for ($i = 0; $i -lt 10; $i++) {
-            Assert-ActivationNotCanceled
-            Start-Sleep -Milliseconds 500
-        }
-        return $shell
+        Write-Host 'Pyrus could not confirm IB Gateway as the active login window.'
+        Write-Host 'Credentials were not typed because another app may have focus.'
     }
 
     throw 'Timed out waiting for the IB Gateway login window.'
@@ -2088,12 +2162,9 @@ function Invoke-IBGatewayCredentialTyping($Credential) {
         $windowWaitSeconds = 45
     }
     $shell = Wait-IBGatewayWindow -TimeoutSeconds $windowWaitSeconds -AllowForegroundFallback
-    $activeGatewayWindow = Get-IBGatewayWindowCandidate -RequireCredentialWindow
-    if ($activeGatewayWindow) {
-        [void](Activate-IBGatewayWindowCandidate -Window $activeGatewayWindow)
-        Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_active' -Message "IB Gateway login window is active; typing one-time credentials."
-        Start-Sleep -Milliseconds 700
-    }
+    [void](Assert-IBGatewayCredentialWindowForeground -Context 'before typing credentials')
+    Send-BridgeProgress -Status 'waiting_gateway' -Step 'gateway_login_window_active' -Message "IB Gateway login window is active; typing one-time credentials."
+    Start-Sleep -Milliseconds 700
     $clipboardText = $null
     $hadClipboardText = $false
     try {
@@ -2105,11 +2176,14 @@ function Invoke-IBGatewayCredentialTyping($Credential) {
 
         Send-BridgeProgress -Status 'waiting_gateway' -Step 'typing_gateway_credentials' -Message 'Typing IBKR credentials into IB Gateway.'
         Start-Sleep -Milliseconds 1500
+        [void](Assert-IBGatewayCredentialWindowForeground -Context 'before username entry')
         Invoke-ControlKey -VirtualKey 0x41 -AfterMilliseconds 300
         Invoke-SendKeysPaste -Shell $shell -Text ([string]$Credential.username)
         Invoke-KeyTap -VirtualKey 0x09 -AfterMilliseconds 500
+        [void](Assert-IBGatewayCredentialWindowForeground -Context 'before password entry')
         Invoke-ControlKey -VirtualKey 0x41 -AfterMilliseconds 300
         Invoke-SendKeysPaste -Shell $shell -Text ([string]$Credential.password)
+        [void](Assert-IBGatewayCredentialWindowForeground -Context 'before credential submit')
         Invoke-KeyTap -VirtualKey 0x0D -AfterMilliseconds 250
     } finally {
         try {

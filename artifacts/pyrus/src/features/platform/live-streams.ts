@@ -201,6 +201,14 @@ type LiveOptionQuoteSnapshot = QuoteSnapshot & {
   vega?: number | null;
 };
 
+type AccountOptionQuotePatch = Partial<LiveOptionQuoteSnapshot> &
+  Record<string, unknown>;
+
+type AccountPositionRowWithOptionQuote =
+  AccountPositionsResponse["positions"][number] & {
+    optionQuote?: AccountOptionQuotePatch | null;
+  };
+
 const hasUsableOptionQuoteData = (quote: LiveOptionQuoteSnapshot): boolean =>
   (isFiniteNumber(quote.bid) && quote.bid > 0) ||
   (isFiniteNumber(quote.ask) && quote.ask > 0) ||
@@ -736,6 +744,249 @@ const cacheOptionQuoteSnapshot = (
   scheduleOptionQuoteNotification(normalizedProviderContractId);
 
   return cachedQuote;
+};
+
+const finiteOptionNumber = (...values: unknown[]): number | null => {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") {
+      continue;
+    }
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric;
+    }
+  }
+  return null;
+};
+
+const optionPositionProviderContractId = (
+  row: AccountPositionRow,
+): string => {
+  const rowWithOptionQuote = row as AccountPositionRowWithOptionQuote;
+  const contract = row.optionContract as
+    | (NonNullable<AccountPositionRow["optionContract"]> & { conid?: unknown })
+    | null
+    | undefined;
+  return normalizeProviderContractId(
+    row.optionContract?.providerContractId ||
+      (typeof contract?.conid === "string" || typeof contract?.conid === "number"
+        ? String(contract.conid)
+        : null) ||
+      (typeof rowWithOptionQuote.optionQuote?.providerContractId === "string"
+        ? rowWithOptionQuote.optionQuote.providerContractId
+        : null),
+  );
+};
+
+const optionQuotePositionSource = (
+  source: LiveOptionQuoteSnapshot["source"] | undefined,
+): NonNullable<AccountPositionRow["quote"]>["source"] =>
+  source === "massive" ? "massive" : "option_quote";
+
+const optionQuoteDisplayMark = (
+  quote: LiveOptionQuoteSnapshot,
+  fallback: unknown,
+): number | null =>
+  positiveOptionQuotePrice(
+    (quote as LiveOptionQuoteSnapshot & { mark?: unknown }).mark,
+    (quote as LiveOptionQuoteSnapshot & { mid?: unknown }).mid,
+    optionQuoteMidpoint(quote.bid, quote.ask),
+    (quote as LiveOptionQuoteSnapshot & { last?: unknown }).last,
+    quote.price,
+    fallback,
+  );
+
+const patchAccountPositionRowFromOptionQuote = (
+  row: AccountPositionRow,
+  quote: LiveOptionQuoteSnapshot,
+): AccountPositionRow => {
+  const rowWithOptionQuote = row as AccountPositionRowWithOptionQuote;
+  const providerContractId = optionPositionProviderContractId(row);
+  if (!providerContractId || providerContractId !== normalizeProviderContractId(quote.providerContractId)) {
+    return row;
+  }
+
+  const mark = optionQuoteDisplayMark(quote, row.mark);
+  const quantity = finiteOptionNumber(row.quantity);
+  const averageCost = finiteOptionNumber(row.averageCost);
+  const multiplier =
+    finiteOptionNumber(
+      row.optionContract?.multiplier,
+      row.optionContract?.sharesPerContract,
+    ) ?? 100;
+  const marketValue =
+    mark !== null && quantity !== null ? mark * quantity * multiplier : row.marketValue;
+  const unrealizedPnl =
+    mark !== null && averageCost !== null && quantity !== null
+      ? (mark - averageCost) * quantity * multiplier
+      : row.unrealizedPnl;
+  const costBasis =
+    averageCost !== null && quantity !== null
+      ? Math.abs(averageCost * quantity * multiplier)
+      : null;
+  const unrealizedPnlPercent =
+    unrealizedPnl !== null && costBasis && costBasis > 0
+      ? (unrealizedPnl / costBasis) * 100
+      : row.unrealizedPnlPercent;
+  const perContractDayChange = finiteOptionNumber(
+    (quote as LiveOptionQuoteSnapshot & { dayChange?: unknown }).dayChange,
+    quote.change,
+  );
+  const dayChange =
+    perContractDayChange !== null && quantity !== null
+      ? perContractDayChange * quantity * multiplier
+      : row.dayChange;
+  const dayChangePercent =
+    finiteOptionNumber(
+      (quote as LiveOptionQuoteSnapshot & { dayChangePercent?: unknown }).dayChangePercent,
+      quote.changePercent,
+      row.dayChangePercent,
+    );
+  const bid = finiteOptionNumber(quote.bid);
+  const ask = finiteOptionNumber(quote.ask);
+  const mid = optionQuoteMidpoint(bid, ask);
+  const spread =
+    bid !== null && ask !== null ? ask - bid : finiteOptionNumber(row.quote?.spread);
+  const spreadPercent =
+    spread !== null && mark !== null && mark > 0
+      ? (spread / mark) * 100
+      : finiteOptionNumber(row.quote?.spreadPercent);
+  const source = optionQuotePositionSource(quote.source);
+  const updatedAt = quote.dataUpdatedAt ?? quote.updatedAt ?? row.quote?.updatedAt ?? null;
+  const last = finiteOptionNumber(
+    (quote as LiveOptionQuoteSnapshot & { last?: unknown }).last,
+    quote.price,
+    row.quote?.last,
+  );
+  const currentOptionQuote = rowWithOptionQuote.optionQuote || {};
+  const optionQuote = {
+    ...currentOptionQuote,
+    ...quote,
+    providerContractId,
+    bid: bid ?? finiteOptionNumber(currentOptionQuote.bid) ?? null,
+    ask: ask ?? finiteOptionNumber(currentOptionQuote.ask) ?? null,
+    mid: mid ?? finiteOptionNumber(currentOptionQuote.mid) ?? null,
+    last: last ?? finiteOptionNumber(currentOptionQuote.last) ?? null,
+    price: finiteOptionNumber(quote.price, currentOptionQuote.price) ?? null,
+    mark: mark ?? finiteOptionNumber(currentOptionQuote.mark) ?? null,
+    spread,
+    spreadPercent,
+    dayChange:
+      perContractDayChange ??
+      finiteOptionNumber(currentOptionQuote.dayChange) ??
+      null,
+    dayChangePercent:
+      dayChangePercent ?? finiteOptionNumber(currentOptionQuote.dayChangePercent) ?? null,
+    bidSize: finiteOptionNumber(quote.bidSize, currentOptionQuote.bidSize) ?? null,
+    askSize: finiteOptionNumber(quote.askSize, currentOptionQuote.askSize) ?? null,
+    volume: finiteOptionNumber(quote.volume, currentOptionQuote.volume) ?? null,
+    openInterest:
+      finiteOptionNumber(quote.openInterest, currentOptionQuote.openInterest) ?? null,
+    impliedVolatility:
+      finiteOptionNumber(
+        quote.impliedVolatility,
+        currentOptionQuote.impliedVolatility,
+      ) ?? null,
+    delta: finiteOptionNumber(quote.delta, currentOptionQuote.delta) ?? null,
+    gamma: finiteOptionNumber(quote.gamma, currentOptionQuote.gamma) ?? null,
+    theta: finiteOptionNumber(quote.theta, currentOptionQuote.theta) ?? null,
+    vega: finiteOptionNumber(quote.vega, currentOptionQuote.vega) ?? null,
+    freshness: quote.freshness ?? currentOptionQuote.freshness ?? null,
+    marketDataMode: quote.marketDataMode ?? currentOptionQuote.marketDataMode ?? null,
+    updatedAt,
+    dataUpdatedAt: quote.dataUpdatedAt ?? currentOptionQuote.dataUpdatedAt ?? null,
+    source,
+    transport: quote.transport ?? currentOptionQuote.transport ?? null,
+    delayed: quote.delayed ?? currentOptionQuote.delayed ?? null,
+  };
+
+  return {
+    ...row,
+    optionQuote,
+    mark: mark ?? row.mark,
+    marketValue,
+    unrealizedPnl,
+    unrealizedPnlPercent,
+    dayChange,
+    dayChangePercent,
+    quote: {
+      ...(row.quote || {}),
+      bid: bid ?? row.quote?.bid ?? null,
+      ask: ask ?? row.quote?.ask ?? null,
+      mid: mid ?? row.quote?.mid ?? null,
+      last,
+      mark: mark ?? row.quote?.mark ?? null,
+      spread,
+      spreadPercent,
+      bidSize: finiteOptionNumber(quote.bidSize, row.quote?.bidSize),
+      askSize: finiteOptionNumber(quote.askSize, row.quote?.askSize),
+      freshness: quote.freshness ?? row.quote?.freshness ?? null,
+      marketDataMode: quote.marketDataMode ?? row.quote?.marketDataMode ?? null,
+      updatedAt,
+      source,
+    },
+  } as AccountPositionRow;
+};
+
+const recomputeAccountPositionTotals = (
+  currentTotals: AccountPositionsResponse["totals"] | undefined,
+  rows: AccountPositionRow[],
+): AccountPositionsResponse["totals"] => ({
+  ...(currentTotals || {}),
+  weightPercent: rows.reduce((sum, row) => sum + (row.weightPercent ?? 0), 0),
+  unrealizedPnl: rows.reduce((sum, row) => sum + (row.unrealizedPnl ?? 0), 0),
+  grossLong: rows
+    .filter((row) => row.marketValue > 0)
+    .reduce((sum, row) => sum + row.marketValue, 0),
+  grossShort: Math.abs(
+    rows
+      .filter((row) => row.marketValue < 0)
+      .reduce((sum, row) => sum + row.marketValue, 0),
+  ),
+  netExposure: rows.reduce((sum, row) => sum + row.marketValue, 0),
+});
+
+export const patchAccountPositionsFromOptionQuotes = (
+  current: AccountPositionsResponse | undefined,
+  quotes: LiveOptionQuoteSnapshot[],
+): AccountPositionsResponse | undefined => {
+  if (!current?.positions?.length || !quotes.length) {
+    return current;
+  }
+  const quoteByProviderContractId = new Map(
+    quotes.flatMap((quote) => {
+      const providerContractId = normalizeProviderContractId(quote.providerContractId);
+      return providerContractId ? [[providerContractId, quote] as const] : [];
+    }),
+  );
+  if (!quoteByProviderContractId.size) {
+    return current;
+  }
+
+  let changed = false;
+  const positions = current.positions.map((row) => {
+    const quote = quoteByProviderContractId.get(optionPositionProviderContractId(row));
+    if (!quote) {
+      return row;
+    }
+    const next = patchAccountPositionRowFromOptionQuote(row, quote);
+    if (next !== row && !valuesEqualJson(next, row)) {
+      changed = true;
+      return next;
+    }
+    return row;
+  });
+
+  if (!changed) {
+    return current;
+  }
+
+  return maybeReuseAccountPositionsResponse(current, {
+    ...current,
+    positions,
+    totals: recomputeAccountPositionTotals(current.totals, positions),
+    updatedAt: new Date().toISOString(),
+  });
 };
 
 export const mergeOptionQuoteSnapshotForCache = (
@@ -4592,6 +4843,7 @@ export const useIbkrOptionQuoteStream = ({
   intent?: OptionQuoteStreamIntent;
   requiresGreeks?: boolean;
 }) => {
+  const queryClient = useQueryClient();
   const pageVisible = usePageVisible();
   const normalizedUnderlying = underlying?.trim?.().toUpperCase?.() || "";
   const providerContractIdSignature = providerContractIds
@@ -4656,7 +4908,24 @@ export const useIbkrOptionQuoteStream = ({
         );
       }
 
-      quotes.forEach(cacheOptionQuoteSnapshot);
+      const cachedQuotes = quotes.map(cacheOptionQuoteSnapshot);
+      queryClient
+        .getQueryCache()
+        .findAll({
+          predicate: (query) => {
+            const path = queryKeyPath(query.queryKey);
+            return Boolean(
+              path?.startsWith("/api/accounts/") && path.endsWith("/positions"),
+            );
+          },
+        })
+        .forEach((query) => {
+          queryClient.setQueryData(
+            query.queryKey,
+            (current: AccountPositionsResponse | undefined) =>
+              patchAccountPositionsFromOptionQuotes(current, cachedQuotes),
+          );
+        });
     };
 
     const flushQueuedQuotes = () => {
@@ -4971,6 +5240,7 @@ export const useIbkrOptionQuoteStream = ({
     normalizedUnderlying,
     normalizedOwner,
     pageVisible,
+    queryClient,
     requiresGreeks,
     webSocketUrl,
   ]);

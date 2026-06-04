@@ -9,6 +9,7 @@ import {
 } from "./platform";
 import { __massiveStockQuoteStreamInternalsForTests } from "./massive-stock-quote-stream";
 import { __stockAggregateStreamTestInternals } from "./stock-aggregate-stream";
+import { __stockQuoteDayChangeContextTestInternals } from "./stock-quote-day-change-context";
 import {
   __resetBridgeQuoteStreamForTests,
   __setBridgeQuoteClientForTests,
@@ -102,6 +103,7 @@ test.afterEach(() => {
   __setMassiveMarketDataClientFactoryForTests(null);
   __massiveStockQuoteStreamInternalsForTests.reset();
   __stockAggregateStreamTestInternals.reset();
+  __stockQuoteDayChangeContextTestInternals.reset();
   __resetMarketDataAdmissionForTests();
   __resetBridgeGovernorForTests();
   resetBridgeGovernorOverrides();
@@ -206,7 +208,7 @@ test("getQuoteSnapshots serves bounded stale cache while a refresh is stuck", as
   assert.equal(typeof stale.quotes[0]?.cacheAgeMs, "number");
 });
 
-test("getQuoteSnapshots uses Massive socket cache for real-time stock snapshots without REST or bridge", async () => {
+test("getQuoteSnapshots enriches Massive socket cache with REST day-change context without bridge", async () => {
   process.env["MASSIVE_API_KEY"] = "massive-test-key";
 
   let massiveCalls = 0;
@@ -262,7 +264,7 @@ test("getQuoteSnapshots uses Massive socket cache for real-time stock snapshots 
   try {
     const payload = await getQuoteSnapshots({ symbols: "SPY,QQQ" });
 
-    assert.equal(massiveCalls, 0);
+    assert.equal(massiveCalls, 1);
     assert.equal(bridgeCalls, 0);
     assert.equal(payload.delayed, false);
     assert.equal(payload.fallbackUsed, false);
@@ -273,12 +275,19 @@ test("getQuoteSnapshots uses Massive socket cache for real-time stock snapshots 
         ["QQQ", "massive", "live"],
       ],
     );
+    assert.equal(payload.quotes[0]?.price, 500);
+    assert.equal(payload.quotes[0]?.prevClose, 499);
+    assert.equal(payload.quotes[0]?.change, 1);
+    assert.ok(
+      Math.abs((payload.quotes[0]?.changePercent ?? 0) - 0.20040080160320642) <
+        0.000000001,
+    );
   } finally {
     delete process.env["MASSIVE_API_KEY"];
   }
 });
 
-test("getQuoteSnapshots preserves Massive quote socket prices without REST fallback", async () => {
+test("getQuoteSnapshots preserves Massive quote socket prices when REST context is empty", async () => {
   process.env["MASSIVE_API_KEY"] = "massive-test-key";
 
   let massiveCalls = 0;
@@ -302,7 +311,7 @@ test("getQuoteSnapshots preserves Massive quote socket prices without REST fallb
   try {
     const payload = await getQuoteSnapshots({ symbols: "SPY,QQQ" });
 
-    assert.equal(massiveCalls, 0);
+    assert.equal(massiveCalls, 1);
     assert.deepEqual(
       payload.quotes.map((item) => [item.symbol, item.source, item.price]),
       [["SPY", "massive", 512.25]],
@@ -312,7 +321,7 @@ test("getQuoteSnapshots preserves Massive quote socket prices without REST fallb
   }
 });
 
-test("getQuoteSnapshots does not use Massive REST day-change fields for live socket prices", async () => {
+test("getQuoteSnapshots uses Massive REST day-change context without replacing live socket prices", async () => {
   process.env["MASSIVE_API_KEY"] = "massive-test-key";
 
   let massiveCalls = 0;
@@ -352,11 +361,15 @@ test("getQuoteSnapshots does not use Massive REST day-change fields for live soc
     const payload = await getQuoteSnapshots({ symbols: "SPY" });
     const [snapshot] = payload.quotes;
 
-    assert.equal(massiveCalls, 0);
+    assert.equal(massiveCalls, 1);
     assert.equal(snapshot?.source, "massive");
     assert.equal(snapshot?.price, 512.25);
-    assert.equal(snapshot?.change, 0);
-    assert.equal(snapshot?.prevClose, null);
+    assert.equal(snapshot?.change, -1.25);
+    assert.ok(
+      Math.abs((snapshot?.changePercent ?? 0) - -0.24342745861733204) <
+        0.000000001,
+    );
+    assert.equal(snapshot?.prevClose, 513.5);
   } finally {
     delete process.env["MASSIVE_API_KEY"];
   }
@@ -393,7 +406,7 @@ test("getQuoteSnapshots seeds Massive snapshots from aggregate socket cache", as
   try {
     const payload = await getQuoteSnapshots({ symbols: "PWR" });
 
-    assert.equal(massiveCalls, 0);
+    assert.equal(massiveCalls, 1);
     assert.deepEqual(
       payload.quotes.map((item) => [item.symbol, item.source, item.price]),
       [["PWR", "massive", 700]],

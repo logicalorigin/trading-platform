@@ -432,15 +432,31 @@ const preserveMarketFlowSnapshotEvents = (current, next) => ({
   staleFlowEvents: true,
 });
 
+const areStructuredValuesEquivalent = (left, right) => {
+  if (left === right) return true;
+  try {
+    return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+  } catch {
+    return false;
+  }
+};
+
 export const publishMarketFlowSnapshot = (storeKey, snapshot) => {
   const entry = ensureEntry(storeKey);
   if (entry.snapshot === snapshot) {
     return;
   }
   const nextSnapshot = snapshot || EMPTY_MARKET_FLOW_SNAPSHOT;
-  entry.snapshot = shouldPreserveMarketFlowSnapshot(entry.snapshot, nextSnapshot)
+  const nextSnapshotForStore = shouldPreserveMarketFlowSnapshot(
+    entry.snapshot,
+    nextSnapshot,
+  )
     ? preserveMarketFlowSnapshotEvents(entry.snapshot, nextSnapshot)
     : nextSnapshot;
+  if (areStructuredValuesEquivalent(entry.snapshot, nextSnapshotForStore)) {
+    return;
+  }
+  entry.snapshot = nextSnapshotForStore;
   if (isBroadMarketFlowStoreKey(storeKey)) {
     if (hasSnapshotFlowEvents(entry.snapshot)) {
       persistLastBroadMarketFlowSnapshot(entry.snapshot);
@@ -505,6 +521,11 @@ export const getMarketFlowStoreEntryCount = () => storeEntries.size;
 
 export const getMarketFlowSnapshotForStoreKey = (storeKey) =>
   getMarketFlowSnapshot(storeKey);
+
+export const getMarketFlowSnapshotVersionForTests = getMarketFlowSnapshotVersion;
+
+export const subscribeToMarketFlowSnapshotForTests =
+  subscribeToMarketFlowSnapshot;
 
 export const resetMarketFlowStoreForTests = () => {
   storeEntries.clear();

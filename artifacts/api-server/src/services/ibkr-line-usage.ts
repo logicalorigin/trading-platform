@@ -13,11 +13,13 @@ import {
 } from "./bridge-governor";
 import { getBridgeOptionQuoteStreamDiagnostics } from "./bridge-option-quote-stream";
 import { getBridgeQuoteStreamDiagnostics } from "./bridge-quote-stream";
+import { getMassiveStockQuoteStreamDiagnostics } from "./massive-stock-quote-stream";
 import {
   getMarketDataAdmissionDiagnostics,
   setMarketDataAdmissionBridgeLineBudget,
   type MarketDataLease,
 } from "./market-data-admission";
+import { getRuntimeMassiveProviderDiagnostics } from "./platform-market-data-diagnostics";
 import { buildMarketDataWorkPlan } from "./market-data-work-planner";
 import { buildIbkrSidecarDesiredGeneration } from "./ibkr-sidecar-generation";
 import { getIbkrHistoricalAdmissionSnapshot } from "./ibkr-historical-admission";
@@ -943,6 +945,21 @@ async function applyMarketDataGeneration(input: {
   const result = input.routeToAsyncSidecar
     ? await applyAsyncSidecarMarketDataGeneration(input)
     : await applyBridgeMarketDataGeneration(input);
+  if (input.routeToAsyncSidecar && result.error) {
+    const fallback = await applyBridgeMarketDataGeneration(input);
+    return {
+      ...fallback,
+      error:
+        fallback.error && result.error
+          ? `Async sidecar apply failed: ${result.error}; bridge fallback failed: ${fallback.error}`
+          : fallback.error,
+      enabled: true,
+      pending: false,
+      generationId,
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
+  }
   return {
     ...result,
     enabled: true,
@@ -1473,7 +1490,14 @@ async function buildIbkrLineUsageSnapshot(options: {
   };
   const quoteStreams = getBridgeQuoteStreamDiagnostics();
   const optionQuoteStreams = getBridgeOptionQuoteStreamDiagnostics();
+  const massiveStockQuotes = getMassiveStockQuoteStreamDiagnostics();
   const stockAggregates = getStockAggregateStreamDiagnostics();
+  const massiveProvider = getRuntimeMassiveProviderDiagnostics({
+    streams: {
+      massiveStockQuotes,
+      stockAggregates,
+    },
+  });
   const initialDriftReconciliation = buildLineDriftReconciliation({
     admission,
     subscriptions,
@@ -1592,7 +1616,11 @@ async function buildIbkrLineUsageSnapshot(options: {
     streams: {
       quoteStreams,
       optionQuoteStreams,
+      massiveStockQuotes,
       stockAggregates,
+    },
+    providers: {
+      massive: massiveProvider,
     },
     warmup,
     accountMonitor: buildAccountMonitorLineUsage({ admission, warmup }),

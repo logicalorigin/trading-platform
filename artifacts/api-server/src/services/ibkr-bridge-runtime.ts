@@ -13,7 +13,11 @@ const BRIDGE_VALIDATION_TIMEOUT_MS = 20_000;
 const LEGACY_ACTIVATION_TTL_MS = 60 * 60_000;
 const REMOTE_DESKTOP_STALE_MS = 90_000;
 const REMOTE_LAUNCH_JOB_TTL_MS = 10 * 60_000;
-const BRIDGE_HELPER_VERSION = "2026-06-03.ib-async-sidecar-v6";
+const MAX_LONG_POLL_WAIT_MS = 30_000;
+const BRIDGE_HELPER_VERSION = "2026-06-04.ib-async-sidecar-v8-foreground-guard";
+const KNOWN_BAD_BRIDGE_HELPER_VERSIONS = new Set([
+  "2026-06-04.ib-async-sidecar-v6-fast-agent",
+]);
 const PYRUS_IBKR_PROTOCOL_SCHEME = "pyrus-ibkr";
 const LOGIN_HANDOFF_ALGORITHM = "RSA-OAEP-256-CHUNKED";
 const REMOTE_DESKTOPS_FILE_ENV_NAMES = [
@@ -21,6 +25,10 @@ const REMOTE_DESKTOPS_FILE_ENV_NAMES = [
   "PYRUS_IBKR_BRIDGE_REMOTE_DESKTOPS_FILE",
 ];
 type IbkrProtocolScheme = typeof PYRUS_IBKR_PROTOCOL_SCHEME;
+type IbkrRemoteHelperCompatibility =
+  | "compatible"
+  | "known_bad"
+  | "update_required";
 
 type LauncherResult = {
   activationId: string;
@@ -55,6 +63,10 @@ type IbkrRemoteDesktop = {
 
 type IbkrRemoteDesktopSummary = {
   desktopId: string;
+  helperCompatibility: IbkrRemoteHelperCompatibility;
+  helperCompatible: boolean;
+  helperKnownBad: boolean;
+  helperUpdateRequired: boolean;
   helperVersion: string | null;
   label: string | null;
   lastSeenAt: string;
@@ -112,11 +124,40 @@ type RemoteDesktopJobStatusResult = {
   state: "queued" | "claimed" | "completed" | "failed" | "expired";
 };
 
+type RemoteDesktopLaunchJobClaimResult =
+  | {
+      helperVersion: string;
+      ready: false;
+    }
+  | {
+      action: "launch";
+      activationId: string | null;
+      completionToken?: string | null;
+      expiresAt: string;
+      helperVersion: string;
+      jobId: string;
+      launchUrl: string;
+      ready: true;
+      shutdown?: boolean;
+    }
+  | {
+      action: "shutdown";
+      completionToken: string | null;
+      expiresAt: string;
+      helperVersion: string;
+      jobId: string;
+      launchUrl: string;
+      ready: true;
+    };
+
 export type IbkrBridgeRuntimeSessionState = {
   runtimeOverrideActive: boolean;
   runtimeOverrideUpdatedAt: Date | null;
   desktopAgentOnline: boolean;
+  desktopAgentCompatibility: IbkrRemoteHelperCompatibility | null;
+  desktopAgentCompatible: boolean;
   desktopAgentHelperVersion: string | null;
+  desktopAgentKnownBad: boolean;
   desktopAgentExpectedHelperVersion: string;
   desktopAgentUpgradeRequired: boolean;
   reconnectAvailable: boolean;
@@ -137,6 +178,17 @@ type LegacyBridgeActivation = {
   bridgeToken: string;
   canceledAt: number | null;
   loginHandoff: LegacyBridgeLoginHandoff | null;
+  loginEnvelopeSubmitAttemptCount: number;
+  loginEnvelopeClaimedAt: number | null;
+  loginEnvelopeReceivedAt: number | null;
+  loginKeyReadCount: number;
+  loginKeyPublishedAt: number | null;
+  remoteLaunchJobClaimedAt: number | null;
+  remoteLaunchJobCreatedAt: number | null;
+  lastLoginEnvelopeSubmitAttemptAt: number | null;
+  lastLoginEnvelopeSubmitErrorCode: string | null;
+  lastLoginKeyReadAt: number | null;
+  lastLoginKeyReadReadyAt: number | null;
   managementToken: string;
   issuedAt: number;
   expiresAt: number;
@@ -173,12 +225,96 @@ type LegacyBridgeActivationProgressSnapshot = Omit<
   updatedAt: string;
 };
 
+type IbkrActivationPhase =
+  | "idle"
+  | "request"
+  | "update"
+  | "credentials"
+  | "gateway"
+  | "twoFactor"
+  | "bridge"
+  | "tunnel"
+  | "complete"
+  | "canceled"
+  | "error";
+
+type IbkrActivationOwner =
+  | "none"
+  | "pyrus"
+  | "desktopHelper"
+  | "ibGateway"
+  | "ibkrMobile"
+  | "cloudflareTunnel"
+  | "user";
+
+type IbkrActivationSeverity =
+  | "idle"
+  | "progress"
+  | "attention"
+  | "error"
+  | "success";
+
+type IbkrActivationTimelinePhase = Exclude<
+  IbkrActivationPhase,
+  "idle" | "complete" | "canceled" | "error"
+>;
+
+type IbkrActivationPhaseTiming = {
+  startedAt: string | null;
+  completedAt: string | null;
+  elapsedMs: number | null;
+};
+
+type IbkrActivationTimelineRow = IbkrActivationPhaseTiming & {
+  id: IbkrActivationTimelinePhase;
+  label: string;
+  owner: IbkrActivationOwner;
+  status: "pending" | "active" | "complete" | "attention" | "error" | "canceled";
+};
+
+type IbkrActivationInsight = {
+  currentPhase: IbkrActivationPhase;
+  currentOwner: IbkrActivationOwner;
+  currentPhaseStartedAt: string | null;
+  currentPhaseElapsedMs: number | null;
+  detail: string;
+  normalAfterMs: number | null;
+  phaseDurations: Record<IbkrActivationTimelinePhase, IbkrActivationPhaseTiming>;
+  recommendedAction: string | null;
+  severity: IbkrActivationSeverity;
+  stale: boolean;
+  staleAfterMs: number | null;
+  timeline: IbkrActivationTimelineRow[];
+  title: string;
+};
+
 type LegacyBridgeActivationStatusResult = {
   active: boolean;
   canceled: boolean;
   expiresAt: string;
+  insight: IbkrActivationInsight;
   latestProgress: LegacyBridgeActivationProgressSnapshot | null;
   recentProgress: LegacyBridgeActivationProgressSnapshot[];
+};
+
+type IbkrBridgeHelperMetadataResult = {
+  desktops: IbkrRemoteDesktopSummary[];
+  helperVersion: string;
+  latestDesktop: IbkrRemoteDesktopSummary | null;
+  onlineCount: number;
+  onlineDesktop: IbkrRemoteDesktopSummary | null;
+  runtime: {
+    desktopAgentCompatibility: IbkrRemoteHelperCompatibility | null;
+    desktopAgentCompatible: boolean;
+    desktopAgentExpectedHelperVersion: string;
+    desktopAgentHelperVersion: string | null;
+    desktopAgentKnownBad: boolean;
+    desktopAgentOnline: boolean;
+    desktopAgentUpgradeRequired: boolean;
+    reconnectAvailable: boolean;
+    runtimeOverrideActive: boolean;
+    runtimeOverrideUpdatedAt: string | null;
+  };
 };
 
 type LegacyBridgeLoginKeyReadResult =
@@ -215,6 +351,84 @@ let latestLegacyBridgeActivationId: string | null = null;
 const ibkrRemoteDesktops = new Map<string, IbkrRemoteDesktop>();
 const ibkrRemoteLaunchJobs = new Map<string, IbkrRemoteLaunchJob>();
 let ibkrRemoteDesktopsLoaded = false;
+const remoteDesktopJobWaiters = new Map<string, Set<() => void>>();
+const legacyLoginKeyWaiters = new Map<string, Set<() => void>>();
+const legacyLoginEnvelopeWaiters = new Map<string, Set<() => void>>();
+
+function readLongPollWaitMs(
+  body: unknown,
+  maxWaitMs = MAX_LONG_POLL_WAIT_MS,
+): number {
+  if (!body || typeof body !== "object") {
+    return 0;
+  }
+  const rawWaitMs = (body as Record<string, unknown>).waitMs;
+  const waitMs =
+    typeof rawWaitMs === "number"
+      ? rawWaitMs
+      : typeof rawWaitMs === "string"
+        ? Number(rawWaitMs)
+        : 0;
+  if (!Number.isFinite(waitMs) || waitMs <= 0) {
+    return 0;
+  }
+  return Math.min(maxWaitMs, Math.max(0, Math.floor(waitMs)));
+}
+
+function waitForNotification(
+  waiters: Map<string, Set<() => void>>,
+  key: string,
+  waitMs: number,
+): Promise<void> {
+  if (!key || waitMs <= 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const resolveOnce = () => {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      const entries = waiters.get(key);
+      entries?.delete(resolveOnce);
+      if (entries && entries.size === 0) {
+        waiters.delete(key);
+      }
+      resolve();
+    };
+
+    const entries = waiters.get(key) ?? new Set<() => void>();
+    entries.add(resolveOnce);
+    waiters.set(key, entries);
+    timeout = setTimeout(resolveOnce, waitMs);
+  });
+}
+
+function notifyWaiters(
+  waiters: Map<string, Set<() => void>>,
+  key: string,
+): void {
+  const entries = waiters.get(key);
+  if (!entries) {
+    return;
+  }
+  for (const resolve of Array.from(entries)) {
+    resolve();
+  }
+}
+
+function notifyLegacyActivationWaiters(activationId: string): void {
+  notifyWaiters(legacyLoginKeyWaiters, activationId);
+  notifyWaiters(legacyLoginEnvelopeWaiters, activationId);
+}
+
+function notifyAllWaiters(waiters: Map<string, Set<() => void>>): void {
+  for (const key of Array.from(waiters.keys())) {
+    notifyWaiters(waiters, key);
+  }
+}
 
 function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
@@ -273,6 +487,35 @@ function normalizeOptionalHttpUrl(rawUrl: string): string {
   }
 
   return url.toString();
+}
+
+function rewriteIbkrProtocolHelperVersion(
+  rawUrl: string,
+  helperVersion: string | null,
+): string {
+  if (!helperVersion || !isIbkrRemoteHelperCompatible(helperVersion)) {
+    return rawUrl;
+  }
+
+  try {
+    const url = new URL(rawUrl);
+    url.searchParams.set("helperVersion", helperVersion);
+    return url.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+function rewriteIbkrProtocolLaunchForDesktop(
+  rawUrl: string,
+  desktop: IbkrRemoteDesktop,
+  helperVersion: string | null,
+): string {
+  const launchUrl = rewriteIbkrProtocolScheme(
+    rawUrl,
+    selectIbkrProtocolSchemeForDesktop(desktop),
+  );
+  return rewriteIbkrProtocolHelperVersion(launchUrl, helperVersion);
 }
 
 function asString(
@@ -504,6 +747,7 @@ function pruneLegacyBridgeActivations(now = Date.now()): void {
     if (activation.expiresAt <= now) {
       legacyBridgeActivations.delete(activationId);
       legacyBridgeActivationProgress.delete(activationId);
+      notifyLegacyActivationWaiters(activationId);
       if (latestLegacyBridgeActivationId === activationId) {
         latestLegacyBridgeActivationId = null;
       }
@@ -556,27 +800,61 @@ function isIbkrRemoteHelperHeartbeatOnline(
   return timestamp != null && now - timestamp <= REMOTE_DESKTOP_STALE_MS;
 }
 
+function classifyIbkrRemoteHelperVersion(
+  helperVersion: string | null | undefined,
+): IbkrRemoteHelperCompatibility {
+  if (!helperVersion) {
+    return "update_required";
+  }
+  if (KNOWN_BAD_BRIDGE_HELPER_VERSIONS.has(helperVersion)) {
+    return "known_bad";
+  }
+  if (
+    helperVersion === BRIDGE_HELPER_VERSION ||
+    helperVersion.startsWith(`${BRIDGE_HELPER_VERSION}-`)
+  ) {
+    return "compatible";
+  }
+  return "update_required";
+}
+
+function isIbkrRemoteHelperCompatible(
+  helperVersion: string | null | undefined,
+): boolean {
+  return classifyIbkrRemoteHelperVersion(helperVersion) === "compatible";
+}
+
+function hasOnlineCompatibleIbkrRemoteHelper(
+  desktop: IbkrRemoteDesktop,
+  now = Date.now(),
+): boolean {
+  return Object.entries(desktop.helperHeartbeatAtByVersion).some(
+    ([helperVersion, timestamp]) =>
+      isIbkrRemoteHelperCompatible(helperVersion) &&
+      isIbkrRemoteHelperHeartbeatOnline(timestamp, now),
+  );
+}
+
 function resolveEffectiveIbkrRemoteHelper(
   desktop: IbkrRemoteDesktop,
   now = Date.now(),
 ): { helperVersion: string | null; lastHeartbeatAt: number | null } {
-  const currentHelperHeartbeatAt =
-    desktop.helperHeartbeatAtByVersion[BRIDGE_HELPER_VERSION] ??
-    (desktop.helperVersion === BRIDGE_HELPER_VERSION
-      ? desktop.lastHeartbeatAt
-      : null);
-  if (isIbkrRemoteHelperHeartbeatOnline(currentHelperHeartbeatAt, now)) {
-    return {
-      helperVersion: BRIDGE_HELPER_VERSION,
-      lastHeartbeatAt: currentHelperHeartbeatAt,
-    };
-  }
-
-  const latestOnlineHelper = Object.entries(desktop.helperHeartbeatAtByVersion)
+  const onlineHelpers = Object.entries(desktop.helperHeartbeatAtByVersion)
     .filter(([, timestamp]) =>
       isIbkrRemoteHelperHeartbeatOnline(timestamp, now),
     )
-    .sort((left, right) => right[1] - left[1])[0];
+    .sort((left, right) => right[1] - left[1]);
+  const latestCompatibleHelper = onlineHelpers.find(([helperVersion]) =>
+    isIbkrRemoteHelperCompatible(helperVersion),
+  );
+  if (latestCompatibleHelper) {
+    return {
+      helperVersion: latestCompatibleHelper[0],
+      lastHeartbeatAt: latestCompatibleHelper[1],
+    };
+  }
+
+  const latestOnlineHelper = onlineHelpers[0];
   if (latestOnlineHelper) {
     return {
       helperVersion: latestOnlineHelper[0],
@@ -629,14 +907,11 @@ function canIbkrRemoteHelperClaimJobs(
   helperVersion: string | null,
   now = Date.now(),
 ): boolean {
-  if (helperVersion === BRIDGE_HELPER_VERSION) {
+  if (isIbkrRemoteHelperCompatible(helperVersion)) {
     return true;
   }
 
-  return !isIbkrRemoteHelperHeartbeatOnline(
-    desktop.helperHeartbeatAtByVersion[BRIDGE_HELPER_VERSION],
-    now,
-  );
+  return !hasOnlineCompatibleIbkrRemoteHelper(desktop, now);
 }
 
 function summarizeIbkrRemoteDesktop(
@@ -644,9 +919,15 @@ function summarizeIbkrRemoteDesktop(
   now = Date.now(),
 ): IbkrRemoteDesktopSummary {
   const effectiveHelper = resolveEffectiveIbkrRemoteHelper(desktop, now);
+  const helperVersion = effectiveHelper.helperVersion ?? desktop.helperVersion;
+  const helperCompatibility = classifyIbkrRemoteHelperVersion(helperVersion);
   return {
     desktopId: desktop.desktopId,
-    helperVersion: effectiveHelper.helperVersion ?? desktop.helperVersion,
+    helperCompatibility,
+    helperCompatible: helperCompatibility === "compatible",
+    helperKnownBad: helperCompatibility === "known_bad",
+    helperUpdateRequired: helperCompatibility !== "compatible",
+    helperVersion,
     label: desktop.label,
     lastSeenAt: new Date(
       effectiveHelper.lastHeartbeatAt ?? desktop.lastSeenAt,
@@ -818,6 +1099,7 @@ function createLegacyBridgeActivation(input: {
         updatedAt: new Date(now),
       });
       legacyBridgeActivationProgress.set(existingActivationId, events.slice(-20));
+      notifyLegacyActivationWaiters(existingActivationId);
     }
   }
   const activationId = randomBytes(16).toString("hex");
@@ -827,12 +1109,24 @@ function createLegacyBridgeActivation(input: {
     bridgeToken: input.bridgeToken,
     canceledAt: null,
     loginHandoff: null,
+    loginEnvelopeSubmitAttemptCount: 0,
+    loginEnvelopeClaimedAt: null,
+    loginEnvelopeReceivedAt: null,
+    loginKeyReadCount: 0,
+    loginKeyPublishedAt: null,
+    remoteLaunchJobClaimedAt: null,
+    remoteLaunchJobCreatedAt: null,
+    lastLoginEnvelopeSubmitAttemptAt: null,
+    lastLoginEnvelopeSubmitErrorCode: null,
+    lastLoginKeyReadAt: null,
+    lastLoginKeyReadReadyAt: null,
     managementToken: input.managementToken,
     issuedAt: now,
     expiresAt: now + LEGACY_ACTIVATION_TTL_MS,
   });
   legacyBridgeActivationProgress.set(activationId, []);
   latestLegacyBridgeActivationId = activationId;
+  notifyLegacyActivationWaiters(activationId);
 
   return {
     activationId,
@@ -1239,22 +1533,53 @@ export function getIbkrBridgeRuntimeSessionState(): IbkrBridgeRuntimeSessionStat
   const onlineDesktop =
     remoteDesktops.desktops.find((desktop) => desktop.online) ?? null;
   const desktopAgentHelperVersion = onlineDesktop?.helperVersion ?? null;
+  const desktopAgentCompatibility = onlineDesktop
+    ? onlineDesktop.helperCompatibility
+    : null;
+  const desktopAgentCompatible =
+    desktopAgentCompatibility === "compatible";
+  const desktopAgentKnownBad = desktopAgentCompatibility === "known_bad";
   const desktopAgentUpgradeRequired = Boolean(
-    onlineDesktop && desktopAgentHelperVersion !== BRIDGE_HELPER_VERSION,
+    onlineDesktop && !desktopAgentCompatible,
   );
 
   return {
     runtimeOverrideActive: Boolean(runtimeOverride),
     runtimeOverrideUpdatedAt: runtimeOverride?.updatedAt ?? null,
     desktopAgentOnline: Boolean(onlineDesktop),
+    desktopAgentCompatibility,
+    desktopAgentCompatible,
     desktopAgentHelperVersion,
+    desktopAgentKnownBad,
     desktopAgentExpectedHelperVersion: BRIDGE_HELPER_VERSION,
     desktopAgentUpgradeRequired,
     reconnectAvailable: Boolean(
       !runtimeOverride &&
         onlineDesktop &&
-        desktopAgentHelperVersion === BRIDGE_HELPER_VERSION,
+        desktopAgentCompatible,
     ),
+  };
+}
+
+export function getIbkrBridgeHelperMetadata(): IbkrBridgeHelperMetadataResult {
+  const remoteDesktops = listIbkrRemoteDesktops();
+  const runtime = getIbkrBridgeRuntimeSessionState();
+  const onlineDesktop =
+    remoteDesktops.desktops.find((desktop) => desktop.online) ?? null;
+
+  return {
+    desktops: remoteDesktops.desktops,
+    helperVersion: remoteDesktops.helperVersion,
+    latestDesktop: remoteDesktops.desktops[0] ?? null,
+    onlineCount: remoteDesktops.onlineCount,
+    onlineDesktop,
+    runtime: {
+      ...runtime,
+      runtimeOverrideUpdatedAt:
+        runtime.runtimeOverrideUpdatedAt == null
+          ? null
+          : runtime.runtimeOverrideUpdatedAt.toISOString(),
+    },
   };
 }
 
@@ -1373,31 +1698,9 @@ export function heartbeatIbkrRemoteDesktop(body: unknown): {
   };
 }
 
-export function claimIbkrRemoteDesktopLaunchJob(body: unknown):
-  | {
-      helperVersion: string;
-      ready: false;
-    }
-  | {
-      action: "launch";
-      activationId: string | null;
-      completionToken?: string | null;
-      expiresAt: string;
-      helperVersion: string;
-      jobId: string;
-      launchUrl: string;
-      ready: true;
-      shutdown?: boolean;
-    }
-    | {
-      action: "shutdown";
-      completionToken: string | null;
-      expiresAt: string;
-      helperVersion: string;
-      jobId: string;
-      launchUrl: string;
-      ready: true;
-} {
+export function claimIbkrRemoteDesktopLaunchJob(
+  body: unknown,
+): RemoteDesktopLaunchJobClaimResult {
   const desktop = assertIbkrRemoteDesktopAuthenticated(body);
   const payload = body as Record<string, unknown>;
   const helperVersion =
@@ -1425,10 +1728,22 @@ export function claimIbkrRemoteDesktopLaunchJob(body: unknown):
         continue;
       }
       job.claimedAt = now;
-      const launchUrl = rewriteIbkrProtocolScheme(
+      const launchUrl = rewriteIbkrProtocolLaunchForDesktop(
         job.launchUrl,
-        selectIbkrProtocolSchemeForDesktop(desktop),
+        desktop,
+        helperVersion,
       );
+      if (isIbkrRemoteHelperCompatible(helperVersion)) {
+        return {
+          action: "shutdown",
+          completionToken: readProtocolUrlParam(launchUrl, "completionToken"),
+          expiresAt: new Date(job.expiresAt).toISOString(),
+          helperVersion: BRIDGE_HELPER_VERSION,
+          jobId: job.jobId,
+          launchUrl,
+          ready: true,
+        };
+      }
 
       return {
         action: "launch",
@@ -1453,9 +1768,14 @@ export function claimIbkrRemoteDesktopLaunchJob(body: unknown):
     }
 
     job.claimedAt = now;
-    const launchUrl = rewriteIbkrProtocolScheme(
+    const activation = legacyBridgeActivations.get(job.activationId);
+    if (activation) {
+      activation.remoteLaunchJobClaimedAt = activation.remoteLaunchJobClaimedAt ?? now;
+    }
+    const launchUrl = rewriteIbkrProtocolLaunchForDesktop(
       job.launchUrl,
-      selectIbkrProtocolSchemeForDesktop(desktop),
+      desktop,
+      helperVersion,
     );
 
     return {
@@ -1473,6 +1793,27 @@ export function claimIbkrRemoteDesktopLaunchJob(body: unknown):
     helperVersion: BRIDGE_HELPER_VERSION,
     ready: false,
   };
+}
+
+export async function claimIbkrRemoteDesktopLaunchJobWithWait(
+  body: unknown,
+): Promise<RemoteDesktopLaunchJobClaimResult> {
+  const initial = claimIbkrRemoteDesktopLaunchJob(body);
+  const waitMs = readLongPollWaitMs(body);
+  if (initial.ready || waitMs <= 0 || !body || typeof body !== "object") {
+    return initial;
+  }
+
+  const desktopId = readOptionalString(
+    (body as Record<string, unknown>).desktopId,
+    160,
+  );
+  if (!desktopId) {
+    return initial;
+  }
+
+  await waitForNotification(remoteDesktopJobWaiters, desktopId, waitMs);
+  return claimIbkrRemoteDesktopLaunchJob(body);
 }
 
 export function createIbkrRemoteBridgeLaunch(input: {
@@ -1517,6 +1858,11 @@ export function createIbkrRemoteBridgeLaunch(input: {
     statusTokenHash: null,
   };
   ibkrRemoteLaunchJobs.set(jobId, job);
+  const activation = legacyBridgeActivations.get(launcher.activationId);
+  if (activation) {
+    activation.remoteLaunchJobCreatedAt = now;
+  }
+  notifyWaiters(remoteDesktopJobWaiters, desktop.desktopId);
 
   return {
     ...launcher,
@@ -1599,6 +1945,7 @@ export function createIbkrRemoteBridgeShutdown(input: {
     statusTokenHash: hashRemoteJobToken(statusToken),
   };
   ibkrRemoteLaunchJobs.set(jobId, job);
+  notifyWaiters(remoteDesktopJobWaiters, desktop.desktopId);
 
   return {
     helperVersion: BRIDGE_HELPER_VERSION,
@@ -1726,6 +2073,372 @@ function serializeLegacyBridgeActivationProgress(
   };
 }
 
+const IBKR_ACTIVATION_TIMELINE_PHASES: Array<{
+  id: IbkrActivationTimelinePhase;
+  label: string;
+  owner: IbkrActivationOwner;
+}> = [
+  { id: "request", label: "Request", owner: "pyrus" },
+  { id: "update", label: "Update", owner: "desktopHelper" },
+  { id: "credentials", label: "Credentials", owner: "pyrus" },
+  { id: "gateway", label: "Gateway", owner: "ibGateway" },
+  { id: "twoFactor", label: "2FA", owner: "ibkrMobile" },
+  { id: "bridge", label: "Bridge", owner: "desktopHelper" },
+  { id: "tunnel", label: "Tunnel", owner: "cloudflareTunnel" },
+];
+
+const IBKR_ACTIVATION_PHASE_INDEX = new Map(
+  IBKR_ACTIVATION_TIMELINE_PHASES.map((phase, index) => [phase.id, index]),
+);
+
+const IBKR_ACTIVATION_STALE_AFTER_MS: Record<
+  IbkrActivationTimelinePhase,
+  number | null
+> = {
+  request: 8_000,
+  update: 20_000,
+  credentials: 12_000,
+  gateway: 25_000,
+  twoFactor: 30_000,
+  bridge: 30_000,
+  tunnel: 45_000,
+};
+
+const IBKR_ACTIVATION_NORMAL_AFTER_MS: Record<
+  IbkrActivationTimelinePhase,
+  number | null
+> = {
+  request: 2_000,
+  update: 8_000,
+  credentials: 5_000,
+  gateway: 10_000,
+  twoFactor: 15_000,
+  bridge: 10_000,
+  tunnel: 15_000,
+};
+
+const IBKR_ACTIVATION_PHASE_DETAIL: Record<
+  IbkrActivationTimelinePhase,
+  { action: string | null; detail: string; title: string }
+> = {
+  request: {
+    action: null,
+    detail: "Pyrus sent the launch request and is waiting for the desktop helper.",
+    title: "Waiting on Windows helper",
+  },
+  update: {
+    action: "Let the desktop helper finish updating, then keep this popover open.",
+    detail: "The Windows helper is updating before it can continue the IBKR launch.",
+    title: "Updating Windows helper",
+  },
+  credentials: {
+    action: "Keep this popover open while Pyrus hands encrypted credentials to the helper.",
+    detail: "Pyrus is preparing or delivering the one-time encrypted IBKR credentials.",
+    title: "Waiting for encrypted credentials",
+  },
+  gateway: {
+    action: "If IB Gateway shows a prompt, clear it on the Windows desktop.",
+    detail: "The Windows desktop is opening IB Gateway and preparing the login window.",
+    title: "Waiting for IB Gateway",
+  },
+  twoFactor: {
+    action: "Approve the IBKR Mobile prompt or clear any Gateway prompt on Windows.",
+    detail: "Credentials were submitted and IBKR is waiting for mobile or 2FA approval.",
+    title: "Waiting for IBKR Mobile approval",
+  },
+  bridge: {
+    action: null,
+    detail: "The local bridge is starting and connecting to the Gateway API socket.",
+    title: "Starting bridge",
+  },
+  tunnel: {
+    action: "If this stays slow, retry the connection after the current attempt settles.",
+    detail: "The bridge is ready and the public tunnel is being validated.",
+    title: "Waiting for tunnel",
+  },
+};
+
+const IBKR_ACTIVATION_STEP_PHASE: Record<string, IbkrActivationTimelinePhase> = {
+  autologin_preflight: "credentials",
+  bridge_bundle_fallback: "bridge",
+  bridge_bundle_ready: "bridge",
+  bridge_reused: "bridge",
+  bridge_restart_for_bundle: "bridge",
+  bridge_unhealthy: "bridge",
+  building_bridge: "bridge",
+  checking_gateway_socket: "request",
+  cloning_repo: "bridge",
+  credentials_delivered: "credentials",
+  credentials_received: "credentials",
+  credentials_sent_to_pyrus: "credentials",
+  credentials_submitted: "twoFactor",
+  downloading_bridge_bundle: "bridge",
+  encrypting_credentials: "credentials",
+  gateway_foreground_fallback: "gateway",
+  gateway_login_window_active: "gateway",
+  gateway_login_window_unconfirmed: "gateway",
+  gateway_login_window_wait: "gateway",
+  gateway_login_window_waiting: "gateway",
+  gateway_process_started: "gateway",
+  gateway_ready: "gateway",
+  gateway_reconnect_required: "bridge",
+  gateway_running_waiting_login: "gateway",
+  gateway_running_waiting_socket: "gateway",
+  gateway_socket_ready: "bridge",
+  gateway_window_login: "gateway",
+  helper_launched: "request",
+  helper_launch_requested: "request",
+  helper_updated: "update",
+  installing_dependencies: "bridge",
+  launching_gateway: "gateway",
+  local_bridge_ready: "tunnel",
+  preparing_bridge: "bridge",
+  queued_on_pyrus: "request",
+  retrying_tunnel: "tunnel",
+  starting_bridge: "bridge",
+  starting_gateway: "gateway",
+  starting_ibc: "gateway",
+  starting_tunnel: "tunnel",
+  tunnel_reused: "tunnel",
+  typing_gateway_credentials: "gateway",
+  updating_helper: "update",
+  updating_repo: "bridge",
+  validating_tunnel: "tunnel",
+  waiting_2fa: "twoFactor",
+  waiting_bridge_gateway_api: "bridge",
+  waiting_desktop_agent: "request",
+  waiting_secure_credentials: "credentials",
+  waiting_tunnel_dns: "tunnel",
+};
+
+function isoFromTimestamp(timestamp: number | null | undefined): string | null {
+  return timestamp == null ? null : new Date(timestamp).toISOString();
+}
+
+function getActivationPhaseForProgress(
+  event: LegacyBridgeActivationProgress | LegacyBridgeActivationProgressSnapshot | null,
+): IbkrActivationTimelinePhase {
+  const step = String(event?.step || "");
+  if (step && IBKR_ACTIVATION_STEP_PHASE[step]) {
+    return IBKR_ACTIVATION_STEP_PHASE[step];
+  }
+  const status = String(event?.status || "");
+  if (status === "connected" || status === "starting_tunnel") {
+    return "tunnel";
+  }
+  if (status === "starting_bridge") {
+    return "bridge";
+  }
+  if (status === "waiting_gateway") {
+    return "gateway";
+  }
+  return "request";
+}
+
+function getActivationProgressTime(
+  event: LegacyBridgeActivationProgress,
+): number {
+  return event.updatedAt.getTime();
+}
+
+function buildEmptyPhaseDurations(): Record<
+  IbkrActivationTimelinePhase,
+  IbkrActivationPhaseTiming
+> {
+  return Object.fromEntries(
+    IBKR_ACTIVATION_TIMELINE_PHASES.map((phase) => [
+      phase.id,
+      { completedAt: null, elapsedMs: null, startedAt: null },
+    ]),
+  ) as Record<IbkrActivationTimelinePhase, IbkrActivationPhaseTiming>;
+}
+
+function buildIbkrActivationInsight(input: {
+  activation: LegacyBridgeActivation | null;
+  activationId: string | null;
+  recentProgress: LegacyBridgeActivationProgress[];
+  now?: number;
+}): IbkrActivationInsight {
+  const now = input.now ?? Date.now();
+  const phaseDurations = buildEmptyPhaseDurations();
+  const activation = input.activation;
+  if (!activation) {
+    return {
+      currentOwner: "none",
+      currentPhase: "idle",
+      currentPhaseElapsedMs: null,
+      currentPhaseStartedAt: null,
+      detail: "No IBKR launch is active.",
+      normalAfterMs: null,
+      phaseDurations,
+      recommendedAction: null,
+      severity: "idle",
+      stale: false,
+      staleAfterMs: null,
+      timeline: IBKR_ACTIVATION_TIMELINE_PHASES.map((phase) => ({
+        ...phaseDurations[phase.id],
+        id: phase.id,
+        label: phase.label,
+        owner: phase.owner,
+        status: "pending",
+      })),
+      title: "Idle",
+    };
+  }
+
+  const phaseStartMs = new Map<IbkrActivationTimelinePhase, number>();
+  const markPhaseStart = (
+    phase: IbkrActivationTimelinePhase,
+    timestamp: number | null | undefined,
+  ) => {
+    if (timestamp == null) {
+      return;
+    }
+    const current = phaseStartMs.get(phase);
+    if (current == null || timestamp < current) {
+      phaseStartMs.set(phase, timestamp);
+    }
+  };
+
+  markPhaseStart("request", activation.issuedAt);
+  markPhaseStart("request", activation.remoteLaunchJobCreatedAt);
+  markPhaseStart("request", activation.remoteLaunchJobClaimedAt);
+  markPhaseStart("credentials", activation.loginKeyPublishedAt);
+  markPhaseStart("credentials", activation.lastLoginKeyReadReadyAt);
+  markPhaseStart("credentials", activation.lastLoginKeyReadAt);
+  markPhaseStart("credentials", activation.loginEnvelopeReceivedAt);
+  markPhaseStart("twoFactor", activation.lastLoginEnvelopeSubmitAttemptAt);
+  markPhaseStart("twoFactor", activation.loginEnvelopeClaimedAt);
+
+  for (const event of input.recentProgress) {
+    markPhaseStart(getActivationPhaseForProgress(event), getActivationProgressTime(event));
+  }
+
+  const latestProgress = input.recentProgress.at(-1) ?? null;
+  const latestStatus = String(latestProgress?.status || "");
+  const latestStep = String(latestProgress?.step || "");
+  const errorState = latestStatus === "error" || latestStep === "error";
+  const canceledState =
+    Boolean(activation.canceledAt) ||
+    latestStatus === "canceled" ||
+    latestStep === "cancel_requested";
+  const connectedState = latestStatus === "connected" || latestStep === "connected";
+  const activePhase = latestProgress
+    ? getActivationPhaseForProgress(latestProgress)
+    : "request";
+  const activePhaseIndex = IBKR_ACTIVATION_PHASE_INDEX.get(activePhase) ?? 0;
+  const terminalPhase: IbkrActivationPhase | null = errorState
+    ? "error"
+    : canceledState
+      ? "canceled"
+      : connectedState
+        ? "complete"
+        : null;
+  const currentPhase = terminalPhase ?? activePhase;
+  const currentPhaseStartedMs = phaseStartMs.get(activePhase) ?? activation.issuedAt;
+  const currentPhaseElapsedMs = Math.max(0, now - currentPhaseStartedMs);
+  const staleAfterMs =
+    terminalPhase == null ? IBKR_ACTIVATION_STALE_AFTER_MS[activePhase] : null;
+  const normalAfterMs =
+    terminalPhase == null ? IBKR_ACTIVATION_NORMAL_AFTER_MS[activePhase] : null;
+  const stale = Boolean(
+    terminalPhase == null &&
+      staleAfterMs != null &&
+      currentPhaseElapsedMs >= staleAfterMs,
+  );
+  const phaseMeta = IBKR_ACTIVATION_PHASE_DETAIL[activePhase];
+  const severity: IbkrActivationSeverity = errorState || canceledState
+    ? "error"
+    : connectedState
+      ? "success"
+      : stale
+        ? "attention"
+        : "progress";
+  const currentOwner: IbkrActivationOwner = errorState
+    ? "pyrus"
+    : canceledState
+      ? "user"
+      : connectedState
+        ? "none"
+        : activePhase === "request" && latestStep === "waiting_desktop_agent"
+          ? "desktopHelper"
+          : phaseMeta
+            ? IBKR_ACTIVATION_TIMELINE_PHASES.find((phase) => phase.id === activePhase)
+                ?.owner ?? "pyrus"
+            : "pyrus";
+
+  for (const [index, phase] of IBKR_ACTIVATION_TIMELINE_PHASES.entries()) {
+    const startedMs = phaseStartMs.get(phase.id) ?? null;
+    const nextStartedMs =
+      IBKR_ACTIVATION_TIMELINE_PHASES.slice(index + 1)
+        .map((nextPhase) => phaseStartMs.get(nextPhase.id) ?? null)
+        .find((value) => value != null) ?? null;
+    const completedMs =
+      startedMs != null && (index < activePhaseIndex || connectedState)
+        ? nextStartedMs ?? now
+        : null;
+    phaseDurations[phase.id] = {
+      completedAt: isoFromTimestamp(completedMs),
+      elapsedMs:
+        startedMs == null
+          ? null
+          : Math.max(0, (completedMs ?? now) - startedMs),
+      startedAt: isoFromTimestamp(startedMs),
+    };
+  }
+
+  const timeline = IBKR_ACTIVATION_TIMELINE_PHASES.map((phase, index) => {
+    let status: IbkrActivationTimelineRow["status"] = "pending";
+    if (terminalPhase === "canceled" && index === activePhaseIndex) {
+      status = "canceled";
+    } else if (terminalPhase === "error" && index === activePhaseIndex) {
+      status = "error";
+    } else if (connectedState || index < activePhaseIndex) {
+      status = "complete";
+    } else if (index === activePhaseIndex) {
+      status = stale ? "attention" : "active";
+    }
+    return {
+      ...phaseDurations[phase.id],
+      id: phase.id,
+      label: phase.label,
+      owner: phase.owner,
+      status,
+    };
+  });
+
+  return {
+    currentOwner,
+    currentPhase,
+    currentPhaseElapsedMs: terminalPhase == null ? currentPhaseElapsedMs : null,
+    currentPhaseStartedAt:
+      terminalPhase == null ? isoFromTimestamp(currentPhaseStartedMs) : null,
+    detail:
+      terminalPhase === "complete"
+        ? "IB Gateway bridge is attached."
+        : terminalPhase === "canceled"
+          ? "The IBKR launch was canceled."
+          : terminalPhase === "error"
+            ? latestProgress?.message || "The IBKR launch reported an error."
+            : phaseMeta.detail,
+    normalAfterMs,
+    phaseDurations,
+    recommendedAction: terminalPhase == null && stale ? phaseMeta.action : null,
+    severity,
+    stale,
+    staleAfterMs,
+    timeline,
+    title:
+      terminalPhase === "complete"
+        ? "Connected"
+        : terminalPhase === "canceled"
+          ? "Launch canceled"
+          : terminalPhase === "error"
+            ? "Launch error"
+            : phaseMeta.title,
+  };
+}
+
 export function readLegacyIbkrBridgeActivationStatus(
   activationId: string,
   body: unknown,
@@ -1765,13 +2478,20 @@ export function readLegacyIbkrBridgeActivationStatus(
   assertLegacyBridgeActivationIsCurrent(activationId, activation, {
     allowCanceled: true,
   });
-  const recentProgress = (legacyBridgeActivationProgress.get(activationId) ?? [])
-    .map(serializeLegacyBridgeActivationProgress);
+  const rawRecentProgress = legacyBridgeActivationProgress.get(activationId) ?? [];
+  const recentProgress = rawRecentProgress.map(
+    serializeLegacyBridgeActivationProgress,
+  );
 
   return {
     active: true,
     canceled: Boolean(activation.canceledAt),
     expiresAt: new Date(activation.expiresAt).toISOString(),
+    insight: buildIbkrActivationInsight({
+      activation,
+      activationId,
+      recentProgress: rawRecentProgress,
+    }),
     latestProgress: recentProgress.at(-1) ?? null,
     recentProgress,
   };
@@ -1799,6 +2519,7 @@ export function cancelLegacyIbkrBridgeActivation(
       updatedAt: new Date(),
     });
     legacyBridgeActivationProgress.set(activationId, events.slice(-20));
+    notifyLegacyActivationWaiters(activationId);
   }
 
   return { ok: true, canceled: true };
@@ -1822,13 +2543,16 @@ export function submitLegacyIbkrBridgeLoginKey(
     });
   }
 
+  const now = Date.now();
+  activation.loginKeyPublishedAt = now;
   activation.loginHandoff = {
     algorithm: LOGIN_HANDOFF_ALGORITHM,
-    createdAt: Date.now(),
+    createdAt: now,
     envelope: null,
     helperInstanceId,
     publicKeyJwk: readJsonObject(payload.publicKeyJwk, "publicKeyJwk"),
   };
+  notifyWaiters(legacyLoginKeyWaiters, activationId);
 
   return { ok: true };
 }
@@ -1841,10 +2565,14 @@ export function readLegacyIbkrBridgeLoginKey(
     activationId,
     body,
   );
+  const now = Date.now();
+  activation.loginKeyReadCount += 1;
+  activation.lastLoginKeyReadAt = now;
   const handoff = activation.loginHandoff;
   if (!handoff) {
     return { ready: false };
   }
+  activation.lastLoginKeyReadReadyAt = now;
 
   return {
     algorithm: handoff.algorithm,
@@ -1855,6 +2583,20 @@ export function readLegacyIbkrBridgeLoginKey(
   };
 }
 
+export async function readLegacyIbkrBridgeLoginKeyWithWait(
+  activationId: string,
+  body: unknown,
+): Promise<LegacyBridgeLoginKeyReadResult> {
+  const initial = readLegacyIbkrBridgeLoginKey(activationId, body);
+  const waitMs = readLongPollWaitMs(body);
+  if (initial.ready || waitMs <= 0) {
+    return initial;
+  }
+
+  await waitForNotification(legacyLoginKeyWaiters, activationId, waitMs);
+  return readLegacyIbkrBridgeLoginKey(activationId, body);
+}
+
 export function submitLegacyIbkrBridgeLoginEnvelope(
   activationId: string,
   body: unknown,
@@ -1863,6 +2605,10 @@ export function submitLegacyIbkrBridgeLoginEnvelope(
     activationId,
     body,
   );
+  const now = Date.now();
+  activation.loginEnvelopeSubmitAttemptCount += 1;
+  activation.lastLoginEnvelopeSubmitAttemptAt = now;
+  activation.lastLoginEnvelopeSubmitErrorCode = null;
   const payload = body as Record<string, unknown>;
   const helperInstanceId = asString(
     payload.helperInstanceId,
@@ -1871,6 +2617,8 @@ export function submitLegacyIbkrBridgeLoginEnvelope(
   );
   const algorithm = asString(payload.algorithm, "algorithm", 80);
   if (algorithm !== LOGIN_HANDOFF_ALGORITHM) {
+    activation.lastLoginEnvelopeSubmitErrorCode =
+      "unsupported_ibkr_bridge_login_handoff_algorithm";
     throw new HttpError(400, "IB Gateway login handoff algorithm is unsupported.", {
       code: "unsupported_ibkr_bridge_login_handoff_algorithm",
     });
@@ -1878,16 +2626,22 @@ export function submitLegacyIbkrBridgeLoginEnvelope(
 
   const handoff = activation.loginHandoff;
   if (!handoff) {
+    activation.lastLoginEnvelopeSubmitErrorCode =
+      "ibkr_bridge_login_key_not_ready";
     throw new HttpError(409, "IB Gateway helper is not ready for credentials.", {
       code: "ibkr_bridge_login_key_not_ready",
     });
   }
   if (!safeStringEquals(handoff.helperInstanceId, helperInstanceId)) {
+    activation.lastLoginEnvelopeSubmitErrorCode =
+      "ibkr_bridge_login_handoff_mismatch";
     throw new HttpError(409, "IB Gateway credential handoff helper changed.", {
       code: "ibkr_bridge_login_handoff_mismatch",
     });
   }
   if (handoff.envelope) {
+    activation.lastLoginEnvelopeSubmitErrorCode =
+      "ibkr_bridge_login_envelope_already_submitted";
     throw new HttpError(409, "IB Gateway credentials were already submitted.", {
       code: "ibkr_bridge_login_envelope_already_submitted",
     });
@@ -1896,8 +2650,22 @@ export function submitLegacyIbkrBridgeLoginEnvelope(
   handoff.envelope = {
     algorithm: LOGIN_HANDOFF_ALGORITHM,
     ciphertextChunks: readStringArray(payload.ciphertextChunks, "ciphertextChunks"),
-    submittedAt: Date.now(),
+    submittedAt: now,
   };
+  activation.loginEnvelopeReceivedAt = now;
+  const events = legacyBridgeActivationProgress.get(activationId) ?? [];
+  events.push({
+    activationId,
+    status: "waiting_gateway",
+    step: "credentials_received",
+    message:
+      "Encrypted IBKR credentials were received by Pyrus for the Windows helper.",
+    helperVersion: BRIDGE_HELPER_VERSION,
+    bridgeUrl: null,
+    updatedAt: new Date(),
+  });
+  legacyBridgeActivationProgress.set(activationId, events.slice(-20));
+  notifyWaiters(legacyLoginEnvelopeWaiters, activationId);
 
   return { ok: true };
 }
@@ -1927,7 +2695,9 @@ export function claimLegacyIbkrBridgeLoginEnvelope(
   }
 
   const envelope = handoff.envelope;
+  activation.loginEnvelopeClaimedAt = Date.now();
   activation.loginHandoff = null;
+  notifyLegacyActivationWaiters(activationId);
   return {
     envelope: {
       algorithm: envelope.algorithm,
@@ -1937,9 +2707,51 @@ export function claimLegacyIbkrBridgeLoginEnvelope(
   };
 }
 
+export async function claimLegacyIbkrBridgeLoginEnvelopeWithWait(
+  activationId: string,
+  body: unknown,
+): Promise<LegacyBridgeLoginEnvelopeClaimResult> {
+  const initial = claimLegacyIbkrBridgeLoginEnvelope(activationId, body);
+  const waitMs = readLongPollWaitMs(body);
+  if (initial.ready || initial.canceled || waitMs <= 0) {
+    return initial;
+  }
+
+  await waitForNotification(legacyLoginEnvelopeWaiters, activationId, waitMs);
+  return claimLegacyIbkrBridgeLoginEnvelope(activationId, body);
+}
+
 export function getIbkrBridgeActivationDiagnostics(): {
   activeCount: number;
+  latestActivation: {
+    canceled: boolean;
+    expiresAt: string;
+    issuedAt: string;
+    lastLoginEnvelopeSubmitAttemptAt: string | null;
+    lastLoginEnvelopeSubmitErrorCode: string | null;
+    lastLoginKeyReadAt: string | null;
+    lastLoginKeyReadReadyAt: string | null;
+    loginEnvelopeSubmitAttemptCount: number;
+    loginEnvelopeSubmitted: boolean;
+    loginEnvelopeSubmittedAt: string | null;
+    loginHandoffCreatedAt: string | null;
+    loginHandoffReady: boolean;
+    loginKeyReadCount: number;
+    progressStepTimings: Record<string, string>;
+    timings: {
+      issuedAt: string;
+      launchJobClaimedAt: string | null;
+      launchJobCreatedAt: string | null;
+      loginEnvelopeClaimedAt: string | null;
+      loginEnvelopeReceivedAt: string | null;
+      loginEnvelopeSubmitAttemptAt: string | null;
+      loginKeyPublishedAt: string | null;
+      loginKeyReadAt: string | null;
+      loginKeyReadReadyAt: string | null;
+    };
+  } | null;
   latestActivationId: string | null;
+  insight: IbkrActivationInsight;
   latestProgress: LegacyBridgeActivationProgress | null;
   recentProgress: LegacyBridgeActivationProgress[];
 } {
@@ -1950,10 +2762,79 @@ export function getIbkrBridgeActivationDiagnostics(): {
   const recentProgress = latestLegacyBridgeActivationId
     ? (legacyBridgeActivationProgress.get(latestLegacyBridgeActivationId) ?? [])
     : [];
+  const latestActivation = latestLegacyBridgeActivationId
+    ? legacyBridgeActivations.get(latestLegacyBridgeActivationId) ?? null
+    : null;
+  const latestLoginHandoff = latestActivation?.loginHandoff ?? null;
+  const toIso = (timestamp: number | null | undefined): string | null =>
+    timestamp == null ? null : new Date(timestamp).toISOString();
+  const progressStepTimings: Record<string, string> = {};
+  for (const event of recentProgress) {
+    if (event.step && !progressStepTimings[event.step]) {
+      progressStepTimings[event.step] = event.updatedAt.toISOString();
+    }
+  }
 
   return {
     activeCount,
+    latestActivation: latestActivation
+      ? {
+          canceled: Boolean(latestActivation.canceledAt),
+          expiresAt: new Date(latestActivation.expiresAt).toISOString(),
+          issuedAt: new Date(latestActivation.issuedAt).toISOString(),
+          lastLoginEnvelopeSubmitAttemptAt:
+            latestActivation.lastLoginEnvelopeSubmitAttemptAt == null
+              ? null
+              : new Date(
+                  latestActivation.lastLoginEnvelopeSubmitAttemptAt,
+                ).toISOString(),
+          lastLoginEnvelopeSubmitErrorCode:
+            latestActivation.lastLoginEnvelopeSubmitErrorCode,
+          lastLoginKeyReadAt:
+            latestActivation.lastLoginKeyReadAt == null
+              ? null
+              : new Date(latestActivation.lastLoginKeyReadAt).toISOString(),
+          lastLoginKeyReadReadyAt:
+            latestActivation.lastLoginKeyReadReadyAt == null
+              ? null
+              : new Date(
+                  latestActivation.lastLoginKeyReadReadyAt,
+                ).toISOString(),
+          loginEnvelopeSubmitAttemptCount:
+            latestActivation.loginEnvelopeSubmitAttemptCount,
+          loginEnvelopeSubmitted: Boolean(latestLoginHandoff?.envelope),
+          loginEnvelopeSubmittedAt: latestLoginHandoff?.envelope
+            ? new Date(latestLoginHandoff.envelope.submittedAt).toISOString()
+            : null,
+          loginHandoffCreatedAt: latestLoginHandoff
+            ? new Date(latestLoginHandoff.createdAt).toISOString()
+            : null,
+          loginHandoffReady: Boolean(latestLoginHandoff),
+          loginKeyReadCount: latestActivation.loginKeyReadCount,
+          progressStepTimings,
+          timings: {
+            issuedAt: new Date(latestActivation.issuedAt).toISOString(),
+            launchJobClaimedAt: toIso(latestActivation.remoteLaunchJobClaimedAt),
+            launchJobCreatedAt: toIso(latestActivation.remoteLaunchJobCreatedAt),
+            loginEnvelopeClaimedAt: toIso(latestActivation.loginEnvelopeClaimedAt),
+            loginEnvelopeReceivedAt: toIso(
+              latestActivation.loginEnvelopeReceivedAt,
+            ),
+            loginEnvelopeSubmitAttemptAt: toIso(
+              latestActivation.lastLoginEnvelopeSubmitAttemptAt,
+            ),
+            loginKeyPublishedAt: toIso(latestActivation.loginKeyPublishedAt),
+            loginKeyReadAt: toIso(latestActivation.lastLoginKeyReadAt),
+            loginKeyReadReadyAt: toIso(latestActivation.lastLoginKeyReadReadyAt),
+          },
+        }
+      : null,
     latestActivationId: latestLegacyBridgeActivationId,
+    insight: buildIbkrActivationInsight({
+      activation: latestActivation,
+      activationId: latestLegacyBridgeActivationId,
+      recentProgress,
+    }),
     latestProgress: recentProgress.at(-1) ?? null,
     recentProgress,
   };
@@ -2095,6 +2976,7 @@ export async function attachIbkrBridgeRuntime(
   if (bridgeId) {
     legacyBridgeActivations.delete(bridgeId);
     legacyBridgeActivationProgress.delete(bridgeId);
+    notifyLegacyActivationWaiters(bridgeId);
     if (latestLegacyBridgeActivationId === bridgeId) {
       latestLegacyBridgeActivationId = null;
     }
@@ -2168,6 +3050,9 @@ export function resetIbkrBridgeRuntimeStateForTests(): void {
   latestLegacyBridgeActivationId = null;
   ibkrRemoteDesktops.clear();
   ibkrRemoteLaunchJobs.clear();
+  notifyAllWaiters(remoteDesktopJobWaiters);
+  notifyAllWaiters(legacyLoginKeyWaiters);
+  notifyAllWaiters(legacyLoginEnvelopeWaiters);
   ibkrRemoteDesktopsLoaded = true;
   rmSync(getIbkrRemoteDesktopsFile(), { force: true });
 }

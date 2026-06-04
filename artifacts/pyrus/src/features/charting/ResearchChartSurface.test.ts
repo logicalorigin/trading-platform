@@ -182,6 +182,12 @@ test("ResearchChartSurface mounts position bubbles and mini off-pane indicators"
   assert.match(overlayLayerGate, /positionRiskLineOverlays\.length/);
   assert.match(source, /dataTestId: `chart-position-pnl-\$\{bubble\.id\}`/);
   assert.match(source, /dataTestId: `chart-position-offpane-\$\{indicator\.id\}`/);
+  assert.match(source, /positionBubbleOverlaysEqual/);
+  assert.match(source, /syncPositionBubbleOverlaysState/);
+  assert.match(source, /positionOffPaneOverlaysEqual/);
+  assert.match(source, /syncPositionOffPaneOverlaysState/);
+  assert.match(source, /gexProjectionConeSvgOverlaysEqual/);
+  assert.match(source, /syncGexProjectionConeSvgOverlayState/);
   assert.match(source, /data-chart-position-risk-line=""/);
   assert.match(source, /resolvedPositionOverlays\.riskLinePaths/);
   assert.match(source, /resolvedPositionOverlays\.density === "mini"/);
@@ -354,16 +360,11 @@ test("ResearchChartFrame exposes shared placement policies without visible pan o
     frameSource.match(/\? `Indicators \$\{selectedStudies\.length\}`/g)?.length,
     2,
   );
-  assert.match(tooltipSource, /isInteractiveTooltipTrigger/);
-  assert.match(tooltipSource, /hasInteractiveTooltipDescendant/);
-  assert.match(
-    tooltipSource,
-    /trigger\.props\.asChild &&[\s\S]*hasInteractiveTooltipDescendant\(trigger\.props\.children\)/,
-  );
-  assert.match(tooltipSource, /hasCompositeTooltipDescendant/);
-  assert.match(tooltipSource, /canUseRadixTooltipTrigger/);
-  assert.match(tooltipSource, /!canUseRadixTooltipTrigger\(trigger\)/);
-  assert.match(tooltipSource, /<TooltipTrigger asChild>\{touchTrigger\}<\/TooltipTrigger>/);
+  assert.match(tooltipSource, /createPortal/);
+  assert.match(tooltipSource, /resolveTooltipCoordinate/);
+  assert.match(tooltipSource, /composeTooltipHandler/);
+  assert.doesNotMatch(tooltipSource, /canUseRadixTooltipTrigger/);
+  assert.doesNotMatch(tooltipSource, /<TooltipTrigger asChild>/);
 });
 
 test("ResearchChartWidgetHeader exposes a density-gated context slot", () => {

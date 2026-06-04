@@ -5,6 +5,7 @@ import { AppProviders } from "./AppProviders";
 import LogoLoader from "../components/LogoLoader";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
+import { useBootHandoffElapsedMs } from "./bootLoaderHandoff";
 // @ts-ignore JS module owns workspace state persistence for the platform shell.
 import { _initialState } from "../lib/workspaceState";
 // @ts-ignore JS module keeps screen chunk preload state outside the React registry.
@@ -512,10 +513,11 @@ export default AppContent;
 
 function AppContentRouteFallback({ bootLoaderElapsedMs = null }: AppContentProps) {
   const progress = useBootProgress();
+  const bootHandoffElapsedMs = useBootHandoffElapsedMs(bootLoaderElapsedMs);
 
   return (
     <LogoLoader
-      bootHandoffElapsedMs={bootLoaderElapsedMs}
+      bootHandoffElapsedMs={bootHandoffElapsedMs}
       label="Loading workspace"
       progress={progress}
       testId="app-content-route-loading"

@@ -26,6 +26,7 @@ import {
 } from "./signal-monitor";
 import {
   hasRecentStockAggregateSourceActivity,
+  isBackgroundStockAggregateStreamingEnabled,
   isStockAggregateStreamingAvailable,
   subscribeMutableStockMinuteAggregates,
   type StockMinuteAggregateMessage,
@@ -223,6 +224,7 @@ function defaultDependencies(
       options.isStockAggregateStreamingAvailable ??
       (() =>
         process.env["SIGNAL_MONITOR_STREAM_FIRST_WORKER"] !== "0" &&
+        isBackgroundStockAggregateStreamingEnabled() &&
         isStockAggregateStreamingAvailable()),
     hasRecentStockAggregateSourceActivity:
       options.hasRecentStockAggregateSourceActivity ??

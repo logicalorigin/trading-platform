@@ -5,9 +5,11 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { ResearchHighBetaUniverseAvailabilityStatus } from './researchHighBetaUniverseAvailabilityStatus';
 import type { ResearchProvider } from './researchProvider';
 
 export interface ResearchStatus {
   configured: boolean;
   provider: ResearchProvider | null;
+  highBetaUniverse: ResearchHighBetaUniverseAvailabilityStatus;
 }

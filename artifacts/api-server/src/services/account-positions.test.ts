@@ -32,11 +32,14 @@ test("account position quote hydration uses Massive for equities and IBKR for op
   assert.match(optionBody, /declareIbkrLiveDemand/);
   assert.match(optionBody, /readIbkrLiveDemandState/);
   assert.match(optionBody, /const owner = `account-position-option-quotes:\$\{accountKey\}`/);
-  assert.match(optionBody, /providerContractIds: uniqueProviderContractIds/);
+  assert.match(optionBody, /const ownerForUnderlying = `\$\{owner\}:\$\{underlying\}`/);
+  assert.match(optionBody, /underlying,/);
+  assert.match(optionBody, /providerContractIds: providerContractIdsForUnderlying/);
   assert.match(optionBody, /intent: "account-monitor-live"/);
-  assert.doesNotMatch(optionBody, /account-position-option-quotes:\$\{underlying\}/);
   assert.doesNotMatch(optionBody, /fetchOptionQuoteSnapshotPayload/);
   assert.match(underlyingBody, /allowMassiveFallback: false/);
+  assert.match(source, /averageCost: positionAveragePrice\(position\)/);
+  assert.match(source, /positionMarketPrice\(position\)/);
 });
 
 test("account summary day P&L uses latest market-day NAV history", async () => {
@@ -497,6 +500,109 @@ test("same-day option position hydration uses option quote mark and entry basis"
   assert.equal(Number(hydrated.unrealizedPnl.toFixed(2)), 30);
   assert.equal(Number(hydrated.dayChange?.toFixed(2)), 30);
   assert.equal(Number(hydrated.dayChangePercent?.toFixed(6)), 25);
+  assert.equal(hydrated.source, "QUOTE_SNAPSHOT");
+});
+
+test("option position hydration normalizes contract-scaled broker prices to premiums", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const { positionSignedNotional } = await import("./account-position-model");
+  const position = {
+    id: "U1:SPY:CALL",
+    accountId: "U1",
+    symbol: "SPY",
+    assetClass: "option",
+    quantity: 5,
+    averagePrice: 206.69825,
+    marketPrice: 206.69825,
+    marketValue: 103_349.125,
+    unrealizedPnl: 0,
+    unrealizedPnlPercent: 0,
+    optionContract: {
+      underlying: "SPY",
+      expirationDate: "2026-06-04",
+      strike: 753,
+      right: "call",
+      multiplier: 100,
+      providerContractId: "885885495",
+    },
+  } as any;
+  const hydrated =
+    __accountPositionInternalsForTests.buildPositionMarketHydration(
+      position,
+      null,
+    );
+
+  assert.equal(Number(hydrated.mark.toFixed(6)), 2.066982);
+  assert.equal(Number(hydrated.marketValue.toFixed(2)), 1033.49);
+  assert.equal(Number(hydrated.unrealizedPnl.toFixed(2)), 0);
+  assert.equal(hydrated.source, "IBKR_POSITIONS");
+  assert.equal(Number(positionSignedNotional(position).toFixed(2)), 1033.49);
+});
+
+test("option position hydration uses normalized entry basis with live quote marks", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const hydrated =
+    __accountPositionInternalsForTests.buildPositionMarketHydration(
+      {
+        id: "U1:F:CALL",
+        accountId: "U1",
+        symbol: "F",
+        assetClass: "option",
+        quantity: 5,
+        averagePrice: 103.96825,
+        marketPrice: 103.96825,
+        marketValue: 51_984.125,
+        unrealizedPnl: 0,
+        unrealizedPnlPercent: 0,
+        optionContract: {
+          underlying: "F",
+          expirationDate: "2026-06-26",
+          strike: 15,
+          right: "call",
+          multiplier: 100,
+          providerContractId: "880754762",
+        },
+      } as any,
+      {
+        symbol: "F 260626C00015000",
+        price: 0.87,
+        mark: 0.895,
+        last: 0.87,
+        bid: 0.87,
+        ask: 0.92,
+        bidSize: 902,
+        askSize: 1434,
+        change: -0.26,
+        changePercent: -23.00884955752211,
+        open: null,
+        high: null,
+        low: null,
+        prevClose: 1.155,
+        volume: 80,
+        openInterest: 500,
+        impliedVolatility: 0.2,
+        delta: 0.5,
+        gamma: 0.01,
+        theta: -0.02,
+        vega: 0.08,
+        providerContractId: "880754762",
+        delayed: false,
+        freshness: "live",
+        marketDataMode: "live",
+        dataUpdatedAt: new Date("2026-06-04T16:51:10.402Z"),
+        ageMs: null,
+        cacheAgeMs: 0,
+        latency: null,
+        transport: "tws",
+        updatedAt: new Date("2026-06-04T16:51:10.402Z"),
+      },
+    );
+
+  assert.equal(hydrated.mark, 0.895);
+  assert.equal(Number(hydrated.marketValue.toFixed(2)), 447.5);
+  assert.equal(Number(hydrated.unrealizedPnl.toFixed(2)), -72.34);
+  assert.equal(Number(hydrated.unrealizedPnlPercent.toFixed(6)), -13.916027);
+  assert.equal(Number(hydrated.dayChange?.toFixed(2)), -130);
   assert.equal(hydrated.source, "QUOTE_SNAPSHOT");
 });
 

@@ -88,6 +88,8 @@ async function runCachedAccountRead<T extends unknown[]>({
   staleTtlMs,
   label,
   initialWaitMs,
+  cacheEmptyPayload = true,
+  preserveNonEmptyStaleOnEmpty = false,
   work,
 }: {
   cache: Map<string, CacheEntry<T>>;
@@ -97,6 +99,8 @@ async function runCachedAccountRead<T extends unknown[]>({
   staleTtlMs: number;
   label: string;
   initialWaitMs?: number | null;
+  cacheEmptyPayload?: boolean;
+  preserveNonEmptyStaleOnEmpty?: boolean;
   work: () => Promise<T>;
 }): Promise<T> {
   const cached = cache.get(key);
@@ -150,7 +154,21 @@ async function runCachedAccountRead<T extends unknown[]>({
 
   const promise = runBridgeWork("account", work)
     .then((payload) => {
-      cache.set(key, { payload, cachedAt: Date.now() });
+      if (
+        preserveNonEmptyStaleOnEmpty &&
+        payload.length === 0 &&
+        staleCached &&
+        staleCached.payload.length > 0
+      ) {
+        logger.warn(
+          { label, key, cacheAgeMs: cacheAgeMs(staleCached) },
+          "Preserving non-empty IBKR account bridge cache after empty refresh",
+        );
+        return staleCached.payload;
+      }
+      if (payload.length > 0 || cacheEmptyPayload) {
+        cache.set(key, { payload, cachedAt: Date.now() });
+      }
       return payload;
     })
     .catch((error) => {
@@ -226,6 +244,8 @@ export function listIbkrPositions(input: {
     freshTtlMs: accountFreshTtlMs(),
     staleTtlMs: accountStaleTtlMs(),
     label: "positions",
+    cacheEmptyPayload: false,
+    preserveNonEmptyStaleOnEmpty: true,
     work: async () =>
       (await bridgeClient.listPositions(input)).filter(
         (position) => Math.abs(Number(position.quantity)) > 1e-9,

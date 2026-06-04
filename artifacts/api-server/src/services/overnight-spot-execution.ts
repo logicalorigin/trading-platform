@@ -80,19 +80,23 @@ export type OvernightSpotExecutionDependencies = {
   evaluateSignals: (input: {
     deploymentId: string;
     deployment: OvernightSpotDeployment;
+    signal?: AbortSignal;
   }) => Promise<void>;
   loadSignalStates: (input: {
     deployment: OvernightSpotDeployment;
     profile: OvernightSpotProfile;
     timeframe: string;
+    signal?: AbortSignal;
   }) => Promise<OvernightSpotSignalState[]>;
   loadQuotes: (
     symbols: string[],
+    signal?: AbortSignal,
   ) => Promise<Map<string, OvernightSpotQuote | null>>;
   loadPositionQuantities: (input: {
     deployment: OvernightSpotDeployment;
     profile: OvernightSpotProfile;
     symbols: string[];
+    signal?: AbortSignal;
   }) => Promise<Map<string, number>>;
   findExistingEventByClientOrderId: (input: {
     deploymentId: string;
@@ -152,7 +156,16 @@ type RunOvernightSpotSignalScanInput = {
   recordSignals?: boolean;
   now?: Date;
   env?: Record<string, string | undefined>;
+  signal?: AbortSignal;
 };
+
+function throwIfOvernightSpotScanAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) {
+    return;
+  }
+  const reason = signal.reason;
+  throw reason instanceof Error ? reason : new Error("Overnight spot scan aborted.");
+}
 
 function dateOrNull(value: unknown): Date | null {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
@@ -524,7 +537,9 @@ export async function runOvernightSpotSignalScan(
   input: RunOvernightSpotSignalScanInput,
   dependencies: OvernightSpotExecutionDependencies = defaultOvernightSpotExecutionDependencies,
 ): Promise<OvernightSpotSignalScanResult> {
+  throwIfOvernightSpotScanAborted(input.signal);
   const deployment = await dependencies.loadDeployment(input.deploymentId);
+  throwIfOvernightSpotScanAborted(input.signal);
   const profile = resolveOvernightSpotProfile({
     config: deployment.config,
     providerAccountId: deployment.providerAccountId,
@@ -538,18 +553,22 @@ export async function runOvernightSpotSignalScan(
     await dependencies.evaluateSignals({
       deploymentId: deployment.id,
       deployment,
+      signal: input.signal,
     });
+    throwIfOvernightSpotScanAborted(input.signal);
   }
 
   const states = (await dependencies.loadSignalStates({
     deployment,
     profile,
     timeframe,
+    signal: input.signal,
   })).filter(
     (state) =>
       state.currentSignalDirection === "buy" ||
       state.currentSignalDirection === "sell",
   );
+  throwIfOvernightSpotScanAborted(input.signal);
   const actionStates =
     runActions && profile.requireActionableSignal
       ? states.filter((state) =>
@@ -560,17 +579,20 @@ export async function runOvernightSpotSignalScan(
     new Set(actionStates.map((state) => normalizeSymbol(state.symbol).toUpperCase())),
   );
   const [quotes, positionQuantities] = await Promise.all([
-    dependencies.loadQuotes(symbols),
+    dependencies.loadQuotes(symbols, input.signal),
     dependencies.loadPositionQuantities({
       deployment,
       profile,
       symbols,
+      signal: input.signal,
     }),
   ]);
+  throwIfOvernightSpotScanAborted(input.signal);
 
   const results: OvernightSpotSignalScanResult["results"] = [];
 
   for (const state of actionStates) {
+    throwIfOvernightSpotScanAborted(input.signal);
     const signal = signalStateToSignal(state, {
       actionable: isSignalStateActionableForOvernightSpot({ state, profile, now }),
     });
@@ -582,6 +604,7 @@ export async function runOvernightSpotSignalScan(
       deploymentId: deployment.id,
       clientOrderId,
     });
+    throwIfOvernightSpotScanAborted(input.signal);
     if (
       existing &&
       shouldSkipExistingClientOrderEvent({
@@ -613,6 +636,7 @@ export async function runOvernightSpotSignalScan(
       env: input.env,
     });
 
+    throwIfOvernightSpotScanAborted(input.signal);
     const handled =
       plan.status === "ready"
         ? await handleReadyPlan({
@@ -634,6 +658,7 @@ export async function runOvernightSpotSignalScan(
             recordSignals,
             now,
           });
+    throwIfOvernightSpotScanAborted(input.signal);
 
     results.push({
       symbol: signal.symbol,
@@ -674,11 +699,14 @@ export async function listEnabledOvernightSpotDeployments() {
 async function loadSignalStates(input: {
   deployment: OvernightSpotDeployment;
   timeframe: string;
+  signal?: AbortSignal;
 }) {
+  throwIfOvernightSpotScanAborted(input.signal);
   const profile = await getSignalMonitorProfileRow({
     environment: input.deployment.mode,
     ensureWatchlist: false,
   });
+  throwIfOvernightSpotScanAborted(input.signal);
   const symbols = input.deployment.symbolUniverse
     .map((symbol) => normalizeSymbol(symbol).toUpperCase())
     .filter(Boolean);
@@ -696,6 +724,7 @@ async function loadSignalStates(input: {
         eq(signalMonitorSymbolStatesTable.active, true),
       ),
     );
+  throwIfOvernightSpotScanAborted(input.signal);
   return states.map((state): OvernightSpotSignalState => ({
     profileId: profile.id,
     symbol: state.symbol,
@@ -715,12 +744,14 @@ async function loadSignalStates(input: {
   }));
 }
 
-async function loadQuotes(symbols: string[]) {
+async function loadQuotes(symbols: string[], signal?: AbortSignal) {
+  throwIfOvernightSpotScanAborted(signal);
   if (!symbols.length) {
     return new Map<string, OvernightSpotQuote | null>();
   }
   const quotes = new Map<string, OvernightSpotQuote | null>();
   for (let index = 0; index < symbols.length; index += OVERNIGHT_SPOT_QUOTE_BATCH_SIZE) {
+    throwIfOvernightSpotScanAborted(signal);
     const batch = symbols.slice(index, index + OVERNIGHT_SPOT_QUOTE_BATCH_SIZE);
     const response = await getQuoteSnapshots({
       symbols: batch.join(","),
@@ -729,6 +760,7 @@ async function loadQuotes(symbols: string[]) {
       admissionIntent: "automation-live",
       tradingSession: "overnight",
     });
+    throwIfOvernightSpotScanAborted(signal);
     response.quotes.forEach((quote) => {
       quotes.set(normalizeSymbol(quote.symbol).toUpperCase(), quote);
     });
@@ -740,7 +772,9 @@ async function loadPositionQuantities(input: {
   deployment: OvernightSpotDeployment;
   profile: OvernightSpotProfile;
   symbols: string[];
+  signal?: AbortSignal;
 }) {
+  throwIfOvernightSpotScanAborted(input.signal);
   const symbols = new Set(
     input.symbols.map((symbol) => normalizeSymbol(symbol).toUpperCase()),
   );
@@ -757,6 +791,7 @@ async function loadPositionQuantities(input: {
       accountId: input.profile.accountId ?? input.deployment.providerAccountId,
       mode: input.deployment.mode,
     });
+    throwIfOvernightSpotScanAborted(input.signal);
     for (const position of positions.positions) {
       if (position.assetClass !== "equity" || position.optionContract) {
         continue;
@@ -781,6 +816,7 @@ async function loadPositionQuantities(input: {
         inArray(shadowPositionsTable.symbol, Array.from(symbols)),
       ),
     );
+  throwIfOvernightSpotScanAborted(input.signal);
   for (const row of rows) {
     const symbol = normalizeSymbol(row.symbol).toUpperCase();
     quantities.set(symbol, (quantities.get(symbol) ?? 0) + (asNumber(row.quantity) ?? 0));
@@ -855,11 +891,14 @@ async function insertExecutionEvent(input: OvernightSpotExecutionEventInput) {
 
 async function evaluateSignals(input: {
   deployment: OvernightSpotDeployment;
+  signal?: AbortSignal;
 }) {
+  throwIfOvernightSpotScanAborted(input.signal);
   await evaluateSignalMonitor({
     environment: input.deployment.mode,
     mode: "incremental",
   });
+  throwIfOvernightSpotScanAborted(input.signal);
 }
 
 export const defaultOvernightSpotExecutionDependencies: OvernightSpotExecutionDependencies = {

@@ -60,6 +60,7 @@ import {
   toneForValue,
 } from "./accountUtils";
 import { MicroSparkline } from "../../components/platform/primitives.jsx";
+import { DataIssueInlineIcon } from "../../components/platform/DataIssueInlineIcon.jsx";
 import {
   SortableColumnHeaderCell,
   TableHeaderDndContext,
@@ -91,6 +92,7 @@ import {
 import { PositionRowActionMenu } from "../../features/account/PositionRowActionMenu.jsx";
 import { useRegisterPositionMarketDataSymbols } from "../../features/platform/positionMarketDataStore";
 import { useRuntimeTickerSnapshots } from "../../features/platform/runtimeTickerStore";
+import { collectQuoteDataIssues } from "../../features/platform/dataIssueModel.js";
 import {
   SPARKLINE_RENDER_POINT_LIMIT,
   TABLE_SPARKLINE_COMPACT_HEIGHT,
@@ -568,6 +570,158 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
       delta != null && quantity != null && multiplier != null
         ? delta * quantity * multiplier
         : row.betaWeightedDelta,
+  };
+};
+
+const isOptionPosition = (row) =>
+  Boolean(row?.optionContract) ||
+  ["option", "options"].includes(String(row?.assetClass || "").toLowerCase());
+
+const resolvePositionUnderlyingSymbol = (row) => {
+  const symbol = firstDisplayText(
+    row?.marketDataSymbol,
+    row?.optionContract?.underlying,
+    row?.underlyingMarket?.symbol,
+    row?.symbol,
+  );
+  const normalized = normalizeTickerSymbol(symbol);
+  return normalized && !isInternalOptionIdentifier(normalized) ? normalized : "";
+};
+
+const resolvePositionSparklineSymbol = (row) => resolvePositionUnderlyingSymbol(row);
+
+const mergeLiveEquityQuote = (quote, liveQuote) => {
+  if (!liveQuote) return quote || null;
+  const current = quote || {};
+  const bid = firstPositiveFiniteNumber(liveQuote.bid, current.bid);
+  const ask = firstPositiveFiniteNumber(liveQuote.ask, current.ask);
+  const mid = firstPositiveFiniteNumber(liveQuote.mid, current.mid, quoteMid({ bid, ask }));
+  const mark = firstPositiveFiniteNumber(
+    liveQuote.mark,
+    liveQuote.price,
+    liveQuote.last,
+    mid,
+    current.mark,
+    current.price,
+    current.last,
+  );
+  const spread = bid != null && ask != null ? ask - bid : firstFiniteNumber(current.spread);
+  const spreadPercent =
+    spread != null && mark != null && mark > 0
+      ? (spread / mark) * 100
+      : firstFiniteNumber(current.spreadPercent);
+
+  return {
+    ...current,
+    bid,
+    ask,
+    mid,
+    last: firstPositiveFiniteNumber(liveQuote.last, liveQuote.price, current.last, current.price),
+    price: firstPositiveFiniteNumber(liveQuote.price, liveQuote.last, current.price, current.last),
+    mark,
+    dayChange: firstFiniteNumber(
+      liveQuote.dayChange,
+      liveQuote.chg,
+      liveQuote.change,
+      liveQuote.netChange,
+      current.dayChange,
+    ),
+    dayChangePercent: firstFiniteNumber(
+      liveQuote.dayChangePercent,
+      liveQuote.pct,
+      liveQuote.changePercent,
+      liveQuote.percentChange,
+      current.dayChangePercent,
+    ),
+    spread,
+    spreadPercent,
+    bidSize: firstFiniteNumber(liveQuote.bidSize, current.bidSize),
+    askSize: firstFiniteNumber(liveQuote.askSize, current.askSize),
+    volume: firstFiniteNumber(liveQuote.volume, current.volume),
+    freshness: firstText(liveQuote.freshness, current.freshness),
+    marketDataMode: firstText(liveQuote.marketDataMode, current.marketDataMode),
+    quoteUpdatedAt: firstText(liveQuote.dataUpdatedAt, liveQuote.updatedAt, current.quoteUpdatedAt),
+    dataUpdatedAt: firstText(liveQuote.dataUpdatedAt, liveQuote.updatedAt, current.dataUpdatedAt),
+    updatedAt: firstText(liveQuote.updatedAt, current.updatedAt),
+    source: firstText(liveQuote.source, current.source, "massive"),
+    transport: firstText(liveQuote.transport, current.transport),
+  };
+};
+
+const applyLiveEquityQuoteToRow = (row, liveQuote) => {
+  if (!liveQuote || isOptionPosition(row)) return row;
+  const quote = mergeLiveEquityQuote(row.quote, liveQuote);
+  const mark = firstPositiveFiniteNumber(
+    quote?.mark,
+    quote?.mid,
+    quoteMid(quote),
+    quote?.last,
+    quote?.price,
+    row.mark,
+    row.marketPrice,
+  );
+  const quantity = firstFiniteNumber(row.quantity);
+  const averageCost = firstFiniteNumber(row.averageCost, row.averagePrice);
+  const perShareDayChange = firstFiniteNumber(
+    quote?.dayChange,
+    liveQuote.dayChange,
+    liveQuote.chg,
+    liveQuote.change,
+    liveQuote.netChange,
+  );
+  const dayChangePercent = firstFiniteNumber(
+    quote?.dayChangePercent,
+    liveQuote.dayChangePercent,
+    liveQuote.pct,
+    liveQuote.changePercent,
+    liveQuote.percentChange,
+    row.dayChangePercent,
+  );
+  const marketValue =
+    mark != null && quantity != null ? mark * quantity : row.marketValue;
+  const unrealizedPnl =
+    mark != null && averageCost != null && quantity != null
+      ? (mark - averageCost) * quantity
+      : row.unrealizedPnl;
+  const costBasis =
+    averageCost != null && quantity != null ? Math.abs(averageCost * quantity) : null;
+  const unrealizedPnlPercent =
+    unrealizedPnl != null && costBasis
+      ? (unrealizedPnl / costBasis) * 100
+      : row.unrealizedPnlPercent;
+  const dayChange =
+    perShareDayChange != null && quantity != null
+      ? perShareDayChange * quantity
+      : row.dayChange;
+  const underlyingMarket = {
+    ...(row.underlyingMarket || {}),
+    symbol: resolvePositionUnderlyingSymbol(row) || row.underlyingMarket?.symbol || row.symbol,
+    price: firstPositiveFiniteNumber(liveQuote.price, liveQuote.mark, liveQuote.last, mark),
+    bid: quote?.bid,
+    ask: quote?.ask,
+    mark,
+    previousClose: firstPositiveFiniteNumber(
+      liveQuote.prevClose,
+      row.underlyingMarket?.previousClose,
+      row.previousClose,
+    ),
+    updatedAt: firstText(liveQuote.dataUpdatedAt, liveQuote.updatedAt, row.underlyingMarket?.updatedAt),
+    dataUpdatedAt: firstText(liveQuote.dataUpdatedAt, row.underlyingMarket?.dataUpdatedAt),
+    source: firstText(liveQuote.source, row.underlyingMarket?.source, "massive"),
+    transport: firstText(liveQuote.transport, row.underlyingMarket?.transport),
+  };
+
+  return {
+    ...row,
+    quote,
+    mark,
+    marketPrice: mark,
+    dayChange,
+    dayChangePercent,
+    unrealizedPnl,
+    unrealizedPnlPercent,
+    marketValue,
+    underlyingMarket,
   };
 };
 
@@ -1057,7 +1211,27 @@ export const useLiveOptionPositionRows = ({
   rows: inputRows = [],
   enabled = true,
   totals = null,
+  marketDataOwner = "positions:live-rows",
+  registerMarketDataSymbols = true,
+  equitySnapshotsBySymbol = null,
 } = {}) => {
+  const positionUnderlyingSymbols = useMemo(
+    () =>
+      Array.from(
+        new Set(inputRows.map(resolvePositionUnderlyingSymbol).filter(Boolean)),
+      ),
+    [inputRows],
+  );
+  useRegisterPositionMarketDataSymbols(
+    marketDataOwner,
+    positionUnderlyingSymbols,
+    Boolean(enabled && registerMarketDataSymbols),
+  );
+  const runtimeEquitySnapshotsBySymbol = useRuntimeTickerSnapshots(
+    registerMarketDataSymbols ? positionUnderlyingSymbols : [],
+  );
+  const liveEquitySnapshotsBySymbol =
+    equitySnapshotsBySymbol || runtimeEquitySnapshotsBySymbol;
   const optionQuoteGroups = useMemo(
     () => buildPositionOptionQuoteGroups(inputRows),
     [inputRows],
@@ -1075,27 +1249,35 @@ export const useLiveOptionPositionRows = ({
     enabled ? providerContractIds : [],
   );
   const rows = useMemo(() => {
-    if (!enabled || !providerContractIds.length) {
+    if (!enabled) {
       return applyDisplayWeights(inputRows);
     }
-    const liveQuoteByProviderContractId = Object.fromEntries(
-      providerContractIds.map((providerContractId) => [
-        providerContractId,
-        getStoredOptionQuoteSnapshot(providerContractId),
-      ]),
-    );
+    const liveQuoteByProviderContractId = providerContractIds.length
+      ? Object.fromEntries(
+          providerContractIds.map((providerContractId) => [
+            providerContractId,
+            getStoredOptionQuoteSnapshot(providerContractId),
+          ]),
+        )
+      : {};
     return applyDisplayWeights(
-      inputRows.map((row) =>
-        applyLiveOptionQuoteToRow(
+      inputRows.map((row) => {
+        const optionPatchedRow = applyLiveOptionQuoteToRow(
           row,
           liveQuoteByProviderContractId[
             rowOptionProviderContractId(row)
           ],
-        ),
-      ),
+        );
+        const symbol = resolvePositionUnderlyingSymbol(optionPatchedRow);
+        return applyLiveEquityQuoteToRow(
+          optionPatchedRow,
+          symbol ? liveEquitySnapshotsBySymbol?.[symbol] : null,
+        );
+      }),
     );
   }, [
     enabled,
+    liveEquitySnapshotsBySymbol,
     inputRows,
     providerContractIds,
     quoteVersion,
@@ -1110,10 +1292,13 @@ export const useLiveOptionPositionRows = ({
     displayTotals,
     optionQuoteGroups,
     providerContractIds,
+    positionUnderlyingSymbols,
+    underlyingSnapshotsBySymbol: liveEquitySnapshotsBySymbol,
   };
 };
 
 export const __positionsPanelInternalsForTests = {
+  applyLiveEquityQuoteToRow,
   applyLiveOptionQuoteToRow,
   automationPositionMetrics,
   automationStopTone,
@@ -1123,23 +1308,6 @@ export const __positionsPanelInternalsForTests = {
   optionInlineDetail,
   positionOpenedOnCurrentMarketDay,
 };
-
-const isOptionPosition = (row) =>
-  Boolean(row?.optionContract) ||
-  ["option", "options"].includes(String(row?.assetClass || "").toLowerCase());
-
-const resolvePositionUnderlyingSymbol = (row) => {
-  const symbol = firstDisplayText(
-    row?.marketDataSymbol,
-    row?.optionContract?.underlying,
-    row?.underlyingMarket?.symbol,
-    row?.symbol,
-  );
-  const normalized = normalizeTickerSymbol(symbol);
-  return normalized && !isInternalOptionIdentifier(normalized) ? normalized : "";
-};
-
-const resolvePositionSparklineSymbol = (row) => resolvePositionUnderlyingSymbol(row);
 
 const resolvePositionUnderlyingPrice = (row, snapshotsBySymbol = {}) => {
   const symbol = resolvePositionUnderlyingSymbol(row);
@@ -1335,13 +1503,43 @@ const PositionQuoteCell = ({ row, maskValues }) => {
     formatAccountPercent(value, 1, maskValues),
   );
   const detail = [spread, formatQuoteUpdatedDetail(quote)].filter(Boolean).join(" · ");
+  const quoteIssues = collectQuoteDataIssues(
+    {
+      ...(quote || {}),
+      freshness: quote?.quoteFreshness ?? quote?.freshness,
+      status: quoteHasBidAsk ? quote?.status : quote?.mark != null ? "metadata" : "unavailable",
+      unavailableDetail: quoteHasBidAsk
+        ? null
+        : quote?.mark != null
+          ? "Only a mark is available; bid and ask are missing."
+          : "Bid, ask, and mark are unavailable.",
+    },
+    {
+      valueLabel: `${row?.symbol || row?.underlyingSymbol || "Position"} quote`,
+      source: "account positions",
+      nextAction:
+        "Check the IBKR quote stream or refresh positions before relying on this valuation.",
+    },
+  );
   return (
     <td style={{ ...tableCellStyle, textAlign: "right", minWidth: dim(104) }}>
       <div style={{ color: quoteHasBidAsk ? CSS_COLOR.text : CSS_COLOR.textDim, fontFamily: T.data }}>
         {bidAsk}
       </div>
-      <div style={cellSubTextStyle(CSS_COLOR.textDim)}>
-        {detail || (quote?.mark != null ? "mark only" : "quote unavailable")}
+      <div
+        style={{
+          ...cellSubTextStyle(CSS_COLOR.textDim),
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: sp(4),
+          maxWidth: "100%",
+        }}
+      >
+        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+          {detail || (quote?.mark != null ? "mark only" : "quote unavailable")}
+        </span>
+        <DataIssueInlineIcon issues={quoteIssues} side="left" align="center" />
       </div>
     </td>
   );
@@ -2990,24 +3188,18 @@ export const PositionsPanel = ({
     if (!needle) return sourceFilteredRows;
     return sourceFilteredRows.filter((row) => positionSearchText(row).includes(needle));
   }, [sourceFilteredRows, symbolSearch]);
-  const { rows, displayTotals, optionQuoteGroups } = useLiveOptionPositionRows({
+  const {
+    rows,
+    displayTotals,
+    optionQuoteGroups,
+    positionUnderlyingSymbols,
+    underlyingSnapshotsBySymbol,
+  } = useLiveOptionPositionRows({
     rows: filteredRows,
     enabled: liveOptionQuotesEnabled,
     totals: query.data?.totals,
+    marketDataOwner: `positions:${surfaceId}`,
   });
-  const positionUnderlyingSymbols = useMemo(
-    () =>
-      Array.from(
-        new Set(rows.map(resolvePositionUnderlyingSymbol).filter(Boolean)),
-      ),
-    [rows],
-  );
-  useRegisterPositionMarketDataSymbols(
-    `positions:${surfaceId}`,
-    positionUnderlyingSymbols,
-    liveOptionQuotesEnabled,
-  );
-  const underlyingSnapshotsBySymbol = useRuntimeTickerSnapshots(positionUnderlyingSymbols);
   const sortedRows = useMemo(() => {
     if (!sort.id || !sort.dir) return rows;
     const copy = [...rows];

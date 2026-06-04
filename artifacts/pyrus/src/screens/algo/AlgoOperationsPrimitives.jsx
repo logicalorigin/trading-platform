@@ -70,6 +70,9 @@ export const AlgoOverviewMetric = ({
       <div style={{ minWidth: 0, display: "grid", gap: sp(1) }}>
         <span
           style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(3),
             color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
@@ -81,7 +84,17 @@ export const AlgoOverviewMetric = ({
             whiteSpace: "nowrap",
           }}
         >
-          {label}
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+            {label}
+          </span>
+          {failurePoint ? (
+            <FailurePointInlineIcon
+              point={failurePoint}
+              side="top"
+              align="start"
+              size={dense ? 10 : 11}
+            />
+          ) : null}
         </span>
         <span
           style={{

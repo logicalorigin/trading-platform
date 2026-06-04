@@ -6,6 +6,8 @@ import {
   GetResearchFinancialsResponse,
   GetResearchFundamentalsQueryParams,
   GetResearchFundamentalsResponse,
+  GetResearchHighBetaUniverseQueryParams,
+  GetResearchHighBetaUniverseResponse,
   GetResearchSnapshotsQueryParams,
   GetResearchSnapshotsResponse,
   GetResearchSecFilingsQueryParams,
@@ -21,6 +23,7 @@ import {
   getResearchFilings,
   getResearchFinancials,
   getResearchFundamentals,
+  getResearchHighBetaUniverse,
   getResearchSnapshots,
   getResearchStatus,
   getResearchTranscript,
@@ -48,6 +51,15 @@ function coerceDateQueryFields<T extends Record<string, unknown>>(
 
 router.get("/research/status", async (_req, res) => {
   const data = GetResearchStatusResponse.parse(await getResearchStatus());
+
+  res.json(data);
+});
+
+router.get("/research/high-beta-universe", async (req, res) => {
+  const query = GetResearchHighBetaUniverseQueryParams.parse(req.query);
+  const data = GetResearchHighBetaUniverseResponse.parse(
+    await getResearchHighBetaUniverse(query),
+  );
 
   res.json(data);
 });

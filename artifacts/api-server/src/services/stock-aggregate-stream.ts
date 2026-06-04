@@ -55,6 +55,31 @@ type MassiveQuoteSnapshotPayload = Parameters<
   Parameters<typeof subscribeMassiveStockQuoteSnapshots>[1]
 >[0];
 
+function readBooleanEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw.trim() === "") {
+    return fallback;
+  }
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
+export function isBackgroundStockAggregateStreamingEnabled(): boolean {
+  return readBooleanEnv(
+    "PYRUS_BACKGROUND_STOCK_AGGREGATE_STREAMS_ENABLED",
+    false,
+  );
+}
+
+export function isForegroundSignalMatrixStockAggregateStreamingEnabled(): boolean {
+  return readBooleanEnv(
+    "PYRUS_SIGNAL_MATRIX_STOCK_AGGREGATE_STREAMS_ENABLED",
+    true,
+  );
+}
+
 type MinuteAccumulator = {
   startMs: number;
   endMs: number;

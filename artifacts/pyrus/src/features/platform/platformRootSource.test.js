@@ -102,6 +102,7 @@ test("safe QA mode disables platform live and diagnostics side effects", () => {
   assert.match(headerSource, /safeQaMode = false/);
   assert.match(headerSource, /<HeaderStatusClusterComponent[\s\S]*safeQaMode=\{safeQaMode\}/);
   assert.match(headerSource, /enabled=\{sessionMetadataSettled && !safeQaMode\}/);
+  assert.match(headerSource, /<HeaderBroadcastScrollerStackComponent[\s\S]*safeQaMode=\{safeQaMode\}/);
   const statusSource = readFileSync(
     new URL("./HeaderStatusCluster.jsx", import.meta.url),
     "utf8",
@@ -122,6 +123,10 @@ test("IBKR header and footer line usage subscribe to the shared line-usage strea
     new URL("./HeaderStatusCluster.jsx", import.meta.url),
     "utf8",
   );
+  const runtimeControlModelSource = readFileSync(
+    new URL("./runtimeControlModel.js", import.meta.url),
+    "utf8",
+  );
 
   const footerRuntimeBlock = appSource.match(
     /const footerApiSourceRuntime = useRuntimeControlSnapshot\([\s\S]*?\n  \}\);/,
@@ -134,6 +139,9 @@ test("IBKR header and footer line usage subscribe to the shared line-usage strea
   assert.ok(headerRuntimeBlock);
   assert.match(footerRuntimeBlock, /lineUsageStreamEnabled:\s*true/);
   assert.match(headerRuntimeBlock, /lineUsageStreamEnabled:\s*true/);
+  assert.match(runtimeControlModelSource, /lineUsageSnapshot\?\.providers\?\.massive/);
+  assert.match(runtimeControlModelSource, /lineUsageMassive\.websocket/);
+  assert.match(runtimeControlModelSource, /runtimeMassive\.websocket/);
 });
 
 test("IBKR connection header avoids scanner-confusing glyphs", () => {
@@ -614,12 +622,29 @@ test("mobile IBKR header dropdown uses a phone sheet outside clipped header chro
   assert.match(statusSource, /const bridgeCredentialResumeAvailable = Boolean/);
   assert.match(statusSource, /const desktopReconnectNeeded = Boolean/);
   assert.match(statusSource, /desktopReconnectNeeded/);
+  assert.match(statusSource, /desktopReconnectKnownBad/);
   assert.match(statusSource, /desktopReconnectUpgradeRequired/);
+  assert.match(statusSource, /Launch and repair helper/);
   assert.match(statusSource, /Reconnect on desktop/);
   assert.match(statusSource, /const deliverIbkrLoginCredentials = useCallback/);
+  assert.match(statusSource, /const appendBridgeActivationProgress = useCallback/);
+  assert.match(statusSource, /step: "encrypting_credentials"/);
+  assert.match(statusSource, /step: "credentials_sent_to_pyrus"/);
+  assert.match(statusSource, /"queued_on_pyrus"/);
+  assert.match(statusSource, /"waiting_desktop_agent"/);
+  assert.match(statusSource, /v7 desktop agent keeps a fast claim request open/);
   assert.match(statusSource, /"Sending credentials to the active Windows helper\."/);
-  assert.match(statusSource, /bridgeCredentialResumeAvailable[\s\S]*\? "Send credentials"/);
+  assert.match(statusSource, /else if \(bridgeCredentialResumeAvailable\) \{\s*autoLoginActionLabel = "Send credentials";\s*\}/);
   assert.match(statusSource, /type=\{autoLoginPrimaryCancelsLaunch \? "button" : "submit"\}/);
+  assert.match(statusSource, /const launchRequestPending = Boolean\(/);
+  assert.match(statusSource, /bridgeLauncherBusy && !bridgeLaunchCancelInFlight/);
+  assert.match(statusSource, /!launchRequestPending &&\s*!bridgeLaunchInFlight &&\s*!hasProgress &&\s*!hasTerminalLaunchState/);
+  assert.match(statusSource, /inFlight:\s*bridgeLaunchInFlight \|\| launchRequestPending/);
+  assert.match(statusSource, /const \[bridgeLaunchCancelInFlight/);
+  assert.match(statusSource, /const bridgeCredentialSecondaryCancelsLaunch = bridgeLaunchCancelable/);
+  assert.match(statusSource, /bridgeCredentialSecondaryActionDisabled/);
+  assert.match(statusSource, /bridgeCredentialSecondaryCancelsLaunch[\s\S]*\? handleCancelBridgeLaunch[\s\S]*: handleClearCredentialForm/);
+  assert.doesNotMatch(statusSource, /onClick=\{\s*bridgeCredentialResumeAvailable[\s\S]*\? handleCancelBridgeLaunch[\s\S]*: handleClearCredentialForm/);
   const deactivateStart = statusSource.indexOf(
     "const handleDeactivate = useCallback",
   );
@@ -675,7 +700,11 @@ test("mobile IBKR header dropdown uses a phone sheet outside clipped header chro
   assert.match(setupHealthSource, /onReconnect=\{requestIbkrReconnect\}/);
 });
 
-test("account section transition status renders in the platform header", () => {
+test("account section transition status renders on the account screen", () => {
+  const accountScreenSource = readFileSync(
+    new URL("../../screens/AccountScreen.jsx", import.meta.url),
+    "utf8",
+  );
   const appHeaderSource = readFileSync(
     new URL("./AppHeader.jsx", import.meta.url),
     "utf8",
@@ -685,12 +714,14 @@ test("account section transition status renders in the platform header", () => {
     "utf8",
   );
 
-  assert.match(appHeaderSource, /useAccountSectionTransitionSnapshot/);
-  assert.match(appHeaderSource, /const AccountSectionTransitionStatus = \(\) =>/);
-  assert.match(appHeaderSource, /data-testid="header-account-section-transition"/);
-  assert.match(appHeaderSource, /`Loading \$\{targetSection\}\.\.\.`/);
-  assert.match(appHeaderSource, /<LoadingSpinner size=\{14\}/);
-  assert.match(appHeaderSource, /<AccountSectionTabs \/>[\s\S]*<AccountSectionTransitionStatus \/>/);
+  assert.doesNotMatch(appHeaderSource, /header-account-section/);
+  assert.match(accountScreenSource, /useAccountSectionTransitionSnapshot/);
+  assert.match(accountScreenSource, /const AccountSectionTransitionStatus = \(\{ compact = false \}\) =>/);
+  assert.match(accountScreenSource, /data-testid="account-section-transition"/);
+  assert.match(accountScreenSource, /`Loading \$\{targetSection\}\.\.\.`/);
+  assert.match(accountScreenSource, /<LoadingSpinner size=\{14\}/);
+  assert.match(accountScreenSource, /buttonTestId="account-section"/);
+  assert.match(accountScreenSource, /<AccountSectionStrip/);
   assert.match(transitionStoreSource, /useSyncExternalStore/);
   assert.match(transitionStoreSource, /setAccountSectionTransitionSnapshot/);
   assert.match(transitionStoreSource, /targetSection === "real" \|\| next\.targetSection === "shadow"/);
@@ -1380,16 +1411,11 @@ test("mobile primitives keep pinch zoom and touch fallbacks available", () => {
   assert.doesNotMatch(indexHtml, /maximum-scale/);
   assert.match(cssSource, /font-size:\s*max\(16px,\s*1em\)/);
   assert.match(cssSource, /\.ra-shell\[data-viewport="phone"\] \.ra-touch-target/);
-  assert.match(tooltipSource, /isInteractiveTooltipTrigger/);
-  assert.match(tooltipSource, /hasInteractiveTooltipDescendant/);
-  assert.match(tooltipSource, /hasCompositeTooltipDescendant/);
-  assert.match(tooltipSource, /canUseRadixTooltipTrigger/);
-  assert.match(
-    tooltipSource,
-    /trigger\.props\.asChild &&[\s\S]*hasInteractiveTooltipDescendant\(trigger\.props\.children\)/,
-  );
-  assert.match(tooltipSource, /!canUseRadixTooltipTrigger\(trigger\)/);
-  assert.match(tooltipSource, /<TooltipTrigger asChild>\{touchTrigger\}<\/TooltipTrigger>/);
+  assert.match(tooltipSource, /createPortal/);
+  assert.match(tooltipSource, /resolveTooltipCoordinate/);
+  assert.match(tooltipSource, /composeTooltipHandler/);
+  assert.doesNotMatch(tooltipSource, /canUseRadixTooltipTrigger/);
+  assert.doesNotMatch(tooltipSource, /<TooltipTrigger asChild>/);
   assert.match(tooltipSource, /event\.pointerType !== "touch"/);
   assert.match(tooltipSource, /setOpen\(true\)/);
 });
@@ -1703,9 +1729,12 @@ test("shared flow hydrates visible flow while broad scanner stays broad and nonb
     /if \(!runtimeActive\) \{\s*clearMarketFlowSnapshot\(BROAD_MARKET_FLOW_STORE_KEY\)/,
   );
   assert.doesNotMatch(broadRuntime, /!\s*symbols\.length/);
+  assert.match(source, /const useStableRuntimeSymbols = \(symbols = \[\]\) =>/);
+  assert.match(sharedRuntime, /const stableSymbols = useStableRuntimeSymbols\(symbols\)/);
+  assert.match(broadRuntime, /const stableSymbols = useStableRuntimeSymbols\(symbols\)/);
   assert.match(broadRuntime, /clearMarketFlowSnapshot\(BROAD_MARKET_FLOW_STORE_KEY\)/);
-  assert.match(sharedRuntime, /useLiveMarketFlow\(symbols,\s*\{[\s\S]*blocking:\s*true/);
-  assert.match(broadRuntime, /useLiveMarketFlow\(symbols,\s*\{[\s\S]*blocking:\s*false/);
+  assert.match(sharedRuntime, /useLiveMarketFlow\(stableSymbols\.symbols,\s*\{[\s\S]*blocking:\s*true/);
+  assert.match(broadRuntime, /useLiveMarketFlow\(stableSymbols\.symbols,\s*\{[\s\S]*blocking:\s*false/);
   assert.doesNotMatch(runtimeLayerSource, /activeSymbols=\{/);
   assert.doesNotMatch(platformAppSource, /broadFlowActiveSymbols/);
 });
@@ -1759,6 +1788,8 @@ test("Broad scanner owns Flow across the visible app after startup", () => {
   assert.match(headerSource, /useRuntimeControlSnapshot/);
   assert.match(headerSource, /listAggregateFlowEventsRequest/);
   assert.match(headerSource, /headerAggregateFlowEvents/);
+  assert.match(headerSource, /enabled:\s*Boolean\(enabled && !safeQaMode && broadScanEnabled\)/);
+  assert.match(headerSource, /lineUsageEnabled:\s*Boolean\(enabled && !safeQaMode && broadScanEnabled\)/);
   assert.match(headerSource, /runtimeDiagnosticsEnabled:\s*false/);
   assert.match(headerSource, /lineUsageStreamEnabled:\s*false/);
   assert.match(headerSource, /const broadScanRuntimeActive = Boolean/);
@@ -1870,6 +1901,13 @@ test("initial market-data fanout starts with the visible watchlist slice", () =>
   );
   assert.match(source, /buildWatchlistQuoteRotationBatch/);
   assert.match(source, /WATCHLIST_QUOTE_STREAM_BATCH_SIZE/);
+  assert.match(source, /const quoteStreamRotationSymbols = useMemo/);
+  assert.match(source, /signalMonitorDisplaySymbols/);
+  assert.match(source, /rotationSymbols:\s*quoteStreamRotationSymbols/);
+  assert.match(
+    source,
+    /buildWatchlistQuoteRotationDiagnostics\([\s\S]*rotationSymbols:\s*quoteStreamRotationSymbols/,
+  );
   assert.doesNotMatch(
     source,
     /pressure-stalled/,
@@ -2098,7 +2136,8 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.match(source, /effectiveRequestSymbolLimit:\s*[\s\S]*lastPlan\?\.coverage\?\.effectiveRequestSymbolLimit/);
   assert.match(source, /requestTimeframes:\s*signalMatrixRequestTimeframes/);
   assert.match(source, /busyQueueDelayMs:\s*signalMatrixBusyQueueDelayMs/);
-  assert.match(source, /catchupDelayMs:\s*signalMatrixCatchupDelayMs/);
+  assert.match(source, /catchupDelayMs:\s*signalMatrixEffectiveCatchupDelayMs/);
+  assert.match(source, /SIGNAL_MATRIX_STA_VISIBLE_CATCHUP_DELAY_MS = 2_500/);
   assert.match(source, /const progressiveMatrixCatchupPending = Boolean/);
   assert.match(source, /data\?\.profile\?\.enabled === false/);
   assert.match(source, /signalMatrixQueuedEvaluationDelayMsRef\.current = Math\.max/);
@@ -2112,7 +2151,7 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.match(source, /const signalMatrixPriorityReady = Boolean/);
   assert.match(source, /signalMatrixForegroundReady &&/);
   assert.match(source, /const signalMatrixRuntimeReady = Boolean/);
-  assert.match(source, /const SIGNAL_MATRIX_REQUEST_TIMEOUT_MS = 30_000/);
+  assert.match(source, /const SIGNAL_MATRIX_REQUEST_TIMEOUT_MS = 45_000/);
   assert.match(source, /const SIGNAL_MATRIX_REQUEST_WATCHDOG_GRACE_MS = 3_000/);
   assert.match(source, /SIGNAL_MATRIX_GLOBAL_REQUEST_COORDINATOR_KEY/);
   assert.match(source, /claimSignalMatrixRequestLease/);
@@ -2168,7 +2207,14 @@ test("settings signal monitor uses generated API ownership path", () => {
   assert.match(source, /useListSignalMonitorEvents/);
   assert.match(source, /useUpdateSignalMonitorProfile/);
   assert.match(source, /useEvaluateSignalMonitor/);
-  assert.match(source, /maxSymbols:\s*\{\s*min:\s*1,\s*max:\s*250\s*\}/);
+  assert.match(source, /maxSymbols:\s*\{\s*min:\s*1,\s*max:\s*500\s*\}/);
+  assert.match(source, /__signalMonitorUniverseScope/);
+  assert.match(source, /high_beta_500/);
+  assert.match(source, /High Beta 500/);
+  assert.match(source, /useResearchStatus\(\{ enabled \}\)/);
+  assert.match(source, /highBetaUniverse/);
+  assert.match(source, /describeHighBetaUniverseAvailability/);
+  assert.match(source, /value === "high_beta_500"[\s\S]*maxSymbols:\s*SIGNAL_MONITOR_LIMITS\.maxSymbols\.max/);
   assert.match(source, /freshWindowBars:\s*\{\s*min:\s*1,\s*max:\s*20\s*\}/);
   assert.match(source, /evaluationConcurrency:\s*\{\s*min:\s*1,\s*max:\s*10\s*\}/);
   assert.match(source, /const SIGNAL_MONITOR_ENVIRONMENT = "paper"/);
@@ -2340,6 +2386,13 @@ test("signals screen is registered as a first-class platform route", () => {
   assert.match(signalsScreenSource, /useGetSignalMonitorState/);
   assert.match(signalsScreenSource, /useListSignalMonitorEvents/);
   assert.doesNotMatch(signalsScreenSource, /evaluateSignalMonitorMatrix/);
+  assert.match(signalsScreenSource, /SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT = 500/);
+  assert.match(signalsScreenSource, /__signalMonitorUniverseScope/);
+  assert.match(signalsScreenSource, /high_beta_500/);
+  assert.match(signalsScreenSource, /High Beta 500/);
+  assert.match(signalsScreenSource, /useGetResearchStatus/);
+  assert.match(signalsScreenSource, /highBetaUniverseStatus/);
+  assert.match(signalsScreenSource, /describeHighBetaUniverseAvailability/);
   assert.match(signalsScreenSource, /buildSignalsMatrixHydrationPlan/);
   assert.match(signalsScreenSource, /onRequestSignalMatrixHydration/);
   assert.match(signalsScreenSource, /prioritySymbols:\s*matrixHydrationPlan\.requestSymbols/);
@@ -2356,11 +2409,8 @@ test("signals screen is registered as a first-class platform route", () => {
     priorityHydrationStart,
     priorityHydrationEnd,
   );
-  assert.match(priorityHydrationBlock, /\.\.\.visibleHydrationSymbols/);
-  assert.match(
-    priorityHydrationBlock,
-    /filteredRows\.map\(\(row\) => row\.symbol\)/,
-  );
+  assert.match(priorityHydrationBlock, /visibleHydrationSymbols\.filter\(Boolean\)/);
+  assert.doesNotMatch(priorityHydrationBlock, /filteredRows\.map/);
   assert.match(priorityHydrationBlock, /seen\.has\(symbol\)/);
   const matrixHydratedStart = signalsScreenSource.indexOf(
     "const isHydratedSignalMatrixState =",

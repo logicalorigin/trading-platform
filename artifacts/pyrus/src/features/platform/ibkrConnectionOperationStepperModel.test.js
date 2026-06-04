@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildIbkrDeactivateOperationStepper,
   buildIbkrLaunchOperationStepper,
+  getIbkrLaunchActionProgressLabel,
 } from "./ibkrConnectionOperationStepperModel.js";
 
 const statuses = (model) => model.steps.map((step) => [step.label, step.status]);
@@ -92,6 +93,8 @@ test("IBKR launch stepper maps helper progress through connection phases", () =>
             { step: "helper_launched" },
             { step: "checking_gateway_socket" },
             { step: "waiting_secure_credentials" },
+            { step: "encrypting_credentials" },
+            { step: "credentials_sent_to_pyrus" },
           ],
         },
         inFlight: true,
@@ -100,6 +103,64 @@ test("IBKR launch stepper maps helper progress through connection phases", () =>
     [
       ["Request", "complete"],
       ["Credentials", "current"],
+      ["Gateway", "pending"],
+      ["Bridge", "pending"],
+      ["Tunnel", "pending"],
+    ],
+  );
+
+  assert.equal(
+    getIbkrLaunchActionProgressLabel({
+      activationStatus: {
+        latestProgress: { step: "encrypting_credentials" },
+      },
+      inFlight: true,
+    }),
+    "Encrypting",
+  );
+  assert.equal(
+    getIbkrLaunchActionProgressLabel({
+      activationStatus: {
+        latestProgress: { step: "credentials_received" },
+      },
+      inFlight: true,
+    }),
+    "Credentials sent",
+  );
+  assert.equal(
+    getIbkrLaunchActionProgressLabel({
+      activationStatus: {
+        latestProgress: { step: "queued_on_pyrus" },
+      },
+      inFlight: true,
+    }),
+    "Queued",
+  );
+  assert.equal(
+    getIbkrLaunchActionProgressLabel({
+      activationStatus: {
+        latestProgress: { step: "waiting_desktop_agent" },
+      },
+      inFlight: true,
+    }),
+    "Waiting desktop",
+  );
+  assert.deepEqual(
+    statuses(
+      buildIbkrLaunchOperationStepper({
+        activationStatus: {
+          latestProgress: { step: "waiting_desktop_agent" },
+          recentProgress: [
+            { step: "queued_on_pyrus" },
+            { step: "waiting_desktop_agent" },
+          ],
+        },
+        inFlight: true,
+      }),
+    ),
+    [
+      ["Request", "current"],
+      ["Credentials", "pending"],
       ["Gateway", "pending"],
       ["Bridge", "pending"],
       ["Tunnel", "pending"],
@@ -266,6 +327,45 @@ test("IBKR launch stepper handles complete, cancel, and error outcomes", () => {
   );
 });
 
+test("IBKR launch action label reflects the latest operation phase", () => {
+  assert.equal(
+    getIbkrLaunchActionProgressLabel({
+      activationStatus: {
+        latestProgress: { step: "updating_helper" },
+      },
+      busy: true,
+    }),
+    "Updating helper",
+  );
+  assert.equal(
+    getIbkrLaunchActionProgressLabel({
+      activationStatus: {
+        latestProgress: { step: "waiting_secure_credentials" },
+      },
+      inFlight: true,
+    }),
+    "Waiting credentials",
+  );
+  assert.equal(
+    getIbkrLaunchActionProgressLabel({
+      activationStatus: {
+        latestProgress: { step: "gateway_login_window_unconfirmed" },
+      },
+      inFlight: true,
+    }),
+    "Check Gateway",
+  );
+  assert.equal(
+    getIbkrLaunchActionProgressLabel({
+      activationStatus: {
+        latestProgress: { status: "starting_bridge" },
+      },
+      inFlight: true,
+    }),
+    "Starting bridge",
+  );
+});
+
 test("IBKR deactivate stepper keeps synthesized queue/detach/refresh/desktop states", () => {
   assert.deepEqual(
     icons(buildIbkrDeactivateOperationStepper()),
@@ -294,4 +394,30 @@ test("IBKR deactivate stepper keeps synthesized queue/detach/refresh/desktop sta
       ["Desktop", "warning"],
     ],
   );
+
+  const detaching = buildIbkrDeactivateOperationStepper({
+    queue: "current",
+    detach: "current",
+    message: "Queueing Windows shutdown and detaching backend runtime.",
+  });
+  assert.equal(detaching.activity.id, "detach");
+  assert.equal(detaching.activity.label, "Detaching backend runtime");
+  assert.equal(detaching.activity.motion, "detach");
+
+  const waitingForDesktop = buildIbkrDeactivateOperationStepper({
+    queue: "complete",
+    detach: "complete",
+    refresh: "complete",
+    desktop: "current",
+  });
+  assert.equal(waitingForDesktop.activity.id, "desktop");
+  assert.equal(waitingForDesktop.activity.label, "Stopping IB Gateway");
+
+  const finished = buildIbkrDeactivateOperationStepper({
+    queue: "complete",
+    detach: "complete",
+    refresh: "complete",
+    desktop: "complete",
+  });
+  assert.equal(finished.activity, null);
 });

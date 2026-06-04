@@ -5,7 +5,11 @@ import test from "node:test";
 import type { IbkrBridgeClient } from "../providers/ibkr/bridge-client";
 import type { BrokerOrderSnapshot, PlaceOrderInput } from "../providers/ibkr/client";
 import { HttpError } from "../lib/errors";
-import { PlaceOrderBody } from "@workspace/api-zod";
+import {
+  CancelAccountOrderBody,
+  CancelOrderBody,
+  PlaceOrderBody,
+} from "@workspace/api-zod";
 
 process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
 process.env["DIAGNOSTICS_SUPPRESS_DB_WARNINGS"] = "1";
@@ -117,6 +121,21 @@ test("normalized order request schema preserves the live confirmation flag", () 
   assert.equal(parsed.confirm, true);
 });
 
+test("normalized cancel request schemas preserve order mode", () => {
+  const cancelOrder = CancelOrderBody.parse({
+    accountId: "DU1234567",
+    mode: "live",
+    confirm: true,
+  });
+  const cancelAccountOrder = CancelAccountOrderBody.parse({
+    mode: "paper",
+    confirm: true,
+  });
+
+  assert.equal(cancelOrder.mode, "live");
+  assert.equal(cancelAccountOrder.mode, "paper");
+});
+
 test("live order mutations require explicit confirmation before gateway checks", async () => {
   const assertConfirmationRequired = (error: unknown) => {
     assert.ok(error instanceof HttpError);
@@ -148,6 +167,16 @@ test("live order mutations require explicit confirmation before gateway checks",
         mode: "live",
         confirm: false,
         order: {},
+      }),
+    assertConfirmationRequired,
+  );
+  await assert.rejects(
+    () =>
+      cancelOrder({
+        accountId: "DU1234567",
+        orderId: "order-1",
+        mode: "live",
+        confirm: false,
       }),
     assertConfirmationRequired,
   );
@@ -247,7 +276,13 @@ test("Gateway disconnected blocks live order mutations but still allows live pre
     },
   );
   await assert.rejects(
-    () => cancelOrder({ accountId: "DU1234567", orderId: "order-1", confirm: true }),
+    () =>
+      cancelOrder({
+        accountId: "DU1234567",
+        orderId: "order-1",
+        mode: "paper",
+        confirm: true,
+      }),
     (error) => {
       assertGatewayUnavailable(error, "gateway_socket_disconnected");
       return true;

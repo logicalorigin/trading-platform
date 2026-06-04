@@ -3195,6 +3195,7 @@ export class IbkrClient {
   async cancelOrder(input: {
     accountId: string;
     orderId: string;
+    mode?: RuntimeMode | null;
     manualIndicator?: boolean | null;
     extOperator?: string | null;
   }): Promise<CancelOrderSnapshot> {

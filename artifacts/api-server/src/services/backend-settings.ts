@@ -433,7 +433,6 @@ export async function runBackendSettingsAction(actionId: string, input: unknown)
         runtimeOverrideActive: false,
         cleared: false,
         reason: "no_override",
-        snapshot: await getBackendSettingsSnapshot(),
       };
     }
 
@@ -457,7 +456,6 @@ export async function runBackendSettingsAction(actionId: string, input: unknown)
         updatedAt: current.updatedAt.toISOString(),
         tokenConfigured: Boolean(current.apiToken),
       },
-      snapshot: await getBackendSettingsSnapshot(),
     };
   }
 

@@ -12,6 +12,11 @@ import {
 } from "../providers/fmp/client";
 import { getQuoteSnapshots } from "./platform";
 import { firstDefined, normalizeSymbol } from "../lib/values";
+import {
+  getHighBetaUniverseAvailabilityStatus,
+  getHighBetaUniversePreview,
+  type HighBetaUniversePreview,
+} from "./high-beta-universe";
 
 function getResearchClient(): FmpResearchClient {
   const config = getFmpRuntimeConfig();
@@ -34,11 +39,44 @@ function getOptionalResearchClient(): FmpResearchClient | null {
 
 export async function getResearchStatus() {
   const configured = Boolean(getOptionalResearchClient());
+  const highBetaUniverse = await getHighBetaUniverseAvailabilityStatus({
+    limit: 500,
+  });
 
   return {
     configured,
     provider: configured ? ("fmp" as const) : null,
+    highBetaUniverse,
   };
+}
+
+function parseExchangeList(value: unknown): string[] | undefined {
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+  const exchanges = value
+    .split(",")
+    .map((exchange) => exchange.trim().toUpperCase())
+    .filter(Boolean);
+  return exchanges.length ? exchanges : undefined;
+}
+
+export async function getResearchHighBetaUniverse(input: {
+  limit?: number;
+  candidateLimit?: number;
+  minBeta?: number;
+  minPrice?: number;
+  minVolume?: number;
+  minDollarVolume?: number;
+  minMarketCap?: number;
+  exchanges?: string;
+  dryRun?: boolean;
+  refresh?: boolean;
+}): Promise<HighBetaUniversePreview> {
+  return getHighBetaUniversePreview({
+    ...input,
+    exchanges: parseExchangeList(input.exchanges),
+  });
 }
 
 export async function getResearchFundamentals(input: {

@@ -420,6 +420,22 @@ test("bridgeRuntimeTone surfaces desktop reconnect when IBKR is unconfigured", (
     }),
     /must update/,
   );
+
+  assert.match(
+    bridgeRuntimeMessage({
+      configured: { ibkr: false },
+      runtime: {
+        ibkr: {
+          runtimeOverrideActive: false,
+          desktopAgentOnline: true,
+          desktopAgentKnownBad: true,
+          desktopAgentCompatibility: "known_bad",
+          desktopAgentUpgradeRequired: true,
+        },
+      },
+    }),
+    /blocked helper version/,
+  );
 });
 
 test("bridgeRuntimeTone keeps reconnect-needed streams out of generic offline tone", () => {

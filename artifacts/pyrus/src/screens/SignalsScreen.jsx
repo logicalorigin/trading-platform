@@ -7,6 +7,7 @@ import {
 } from "react";
 import {
   useGetBars,
+  useGetResearchStatus,
   useGetSignalMonitorProfile,
   useGetSignalMonitorState,
   useListSignalMonitorEvents,
@@ -39,6 +40,8 @@ import {
   StatusPill,
 } from "../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
+import { DataIssueInlineIcon } from "../components/platform/DataIssueInlineIcon.jsx";
+import { collectDataIssuesFromRecord } from "../features/platform/dataIssueModel.js";
 import {
   DEFAULT_PYRUS_SIGNALS_SETTINGS,
   PYRUS_SIGNALS_BOS_CONFIRMATION_OPTIONS,
@@ -123,6 +126,56 @@ const isHydratedSignalMatrixState = (state) =>
           (state.lastEvaluatedAt || state.lastError))),
   );
 const SIGNAL_TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "1h", "1d"];
+const SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT = 500;
+const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
+const SIGNAL_MONITOR_UNIVERSE_SCOPE_OPTIONS = Object.freeze([
+  { value: "selected_watchlist", label: "Selected Watchlist" },
+  { value: "all_watchlists", label: "All Watchlists" },
+  { value: "all_watchlists_plus_universe", label: "Watchlists + Ranked" },
+  { value: "high_beta_500", label: "High Beta 500" },
+]);
+const SIGNAL_MONITOR_UNIVERSE_SCOPE_VALUES = new Set(
+  SIGNAL_MONITOR_UNIVERSE_SCOPE_OPTIONS.map((option) => option.value),
+);
+const describeHighBetaUniverseAvailability = (status) => {
+  if (!status) {
+    return {
+      label: "checking",
+      tone: CSS_COLOR.textDim,
+    };
+  }
+  const accepted =
+    typeof status.lastAcceptedCount === "number"
+      ? `${status.lastAcceptedCount}/${status.limit || SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT}`
+      : MISSING_VALUE;
+  if (status.available) {
+    return {
+      label:
+        status.cacheStatus === "stale_cache"
+          ? `cached ${accepted}`
+          : `ready ${accepted}`,
+      tone:
+        status.cacheStatus === "stale_cache"
+          ? CSS_COLOR.amber
+          : CSS_COLOR.green,
+    };
+  }
+  return {
+    label: status.unavailableCode || "unavailable",
+    tone: CSS_COLOR.amber,
+  };
+};
+const resolveSignalMonitorUniverseScope = (settings) => {
+  const raw = settings?.[SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY];
+  return SIGNAL_MONITOR_UNIVERSE_SCOPE_VALUES.has(raw)
+    ? raw
+    : "all_watchlists";
+};
+const resolveSignalMonitorSettingsDraft = (settings) => ({
+  ...resolvePyrusSignalsRuntimeSettings(settings || {}),
+  [SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY]:
+    resolveSignalMonitorUniverseScope(settings),
+});
 const SIGNALS_COLUMN_IDS = [
   "symbol",
   "signal",
@@ -568,6 +621,27 @@ function MetricTile({
 
 function StatusCell({ row }) {
   const tone = toneForStatus(row.status);
+  const issues = collectDataIssuesFromRecord(
+    {
+      status:
+        row.status === SIGNALS_ROW_STATUS.problem
+          ? row.lastError
+            ? "error"
+            : "unavailable"
+          : row.status === SIGNALS_ROW_STATUS.activeStale
+            ? "stale"
+            : row.status,
+      lastError: row.lastError,
+      reason: row.coverageReason,
+      lastEvaluatedAt: row.lastEvaluatedAt,
+    },
+    {
+      valueLabel: `${row.symbol || "Signal"} monitor state`,
+      source: "signals monitor",
+      nextAction:
+        "Review the row detail or rerun the signal scan before relying on this signal state.",
+    },
+  );
   return (
     <span style={{ display: "inline-flex", minWidth: 0, alignItems: "center", gap: sp(8) }}>
       <DirectionBadge direction={row.direction} />
@@ -581,12 +655,32 @@ function StatusCell({ row }) {
       >
         {row.statusLabel}
       </span>
+      <DataIssueInlineIcon issues={issues} side="bottom" align="center" />
     </span>
   );
 }
 
 function CoverageCell({ row }) {
   const tone = toneForStatus(row.status);
+  const issues = collectDataIssuesFromRecord(
+    {
+      status:
+        row.status === SIGNALS_ROW_STATUS.problem
+          ? "unavailable"
+          : row.status === SIGNALS_ROW_STATUS.activeStale
+            ? "stale"
+            : row.status,
+      reason: row.coverageReason,
+      lastError: row.lastError,
+      lastEvaluatedAt: row.lastEvaluatedAt,
+    },
+    {
+      valueLabel: `${row.symbol || "Signal"} coverage`,
+      source: "signals monitor",
+      nextAction:
+        "Treat this signal as incomplete until coverage refreshes or the monitor explains the row state.",
+    },
+  );
   return (
     <span style={{ display: "inline-flex", minWidth: 0, alignItems: "center", gap: sp(6) }}>
       <span
@@ -602,6 +696,7 @@ function CoverageCell({ row }) {
       <span style={{ ...cellTextStyle, color: CSS_COLOR.textSec }}>
         {row.coverageReason || MISSING_VALUE}
       </span>
+      <DataIssueInlineIcon issues={issues} side="bottom" align="center" />
     </span>
   );
 }
@@ -611,6 +706,26 @@ function CompactIntervalCell({ timeframe, state }) {
   const problem = isProblemSignalState(state);
   const direction = hydrated && !problem ? getCurrentSignalDirection(state) : "";
   const tone = problem ? CSS_COLOR.red : toneForDirection(direction);
+  const issues = collectDataIssuesFromRecord(
+    {
+      status: problem
+        ? state?.lastError
+          ? "error"
+          : state?.status || "unavailable"
+        : normalizeSignalStatus(state) === "stale"
+          ? "stale"
+          : normalizeSignalStatus(state),
+      lastError: state?.lastError,
+      lastEvaluatedAt: state?.lastEvaluatedAt,
+      latestBarAt: state?.latestBarAt,
+    },
+    {
+      valueLabel: `${timeframe} signal cell`,
+      source: "signal matrix",
+      nextAction:
+        "Open the signal drilldown before trusting this interval's direction.",
+    },
+  );
   const intervalAge = hydrated
     ? formatTime(state.currentSignalAt || state.latestBarAt || state.lastEvaluatedAt)
     : MISSING_VALUE;
@@ -641,6 +756,7 @@ function CompactIntervalCell({ timeframe, state }) {
         }}
       >
         <Icon size={13} strokeWidth={2} aria-hidden="true" />
+        <DataIssueInlineIcon issues={issues} side="bottom" align="center" />
         <span
           style={{
             minWidth: 0,
@@ -913,11 +1029,17 @@ function OperationalSettingsPanel({
   applying,
   draft,
   dirty,
+  highBetaUniverseStatus,
   onPatch,
   onApply,
   onReset,
 }) {
   if (!draft) return null;
+  const highBetaUniverse = describeHighBetaUniverseAvailability(
+    highBetaUniverseStatus,
+  );
+  const highBetaSelected =
+    draft[SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY] === "high_beta_500";
   return (
     <Card
       data-testid="signals-indicator-controls"
@@ -986,6 +1108,19 @@ function OperationalSettingsPanel({
         }}
       >
         <SettingsGroup title="Structure">
+          <FieldSelect
+            label="Universe"
+            value={draft[SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY]}
+            options={SIGNAL_MONITOR_UNIVERSE_SCOPE_OPTIONS}
+            onChange={(value) =>
+              onPatch({ [SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY]: value })
+            }
+          />
+          {highBetaSelected ? (
+            <StatusPill color={highBetaUniverse.tone} variant="outline">
+              {highBetaUniverse.label}
+            </StatusPill>
+          ) : null}
           <NumberField label="Horizon" value={draft.timeHorizon} min={2} max={40} onCommit={(value) => onPatch({ timeHorizon: value })} />
           <FieldSelect
             label="BOS"
@@ -1777,7 +1912,7 @@ function SignalsHydrationStrip({
     ? "Hydration idle"
     : complete
       ? "Fully hydrated"
-      : `Hydrating ${missing} remaining`;
+      : `Hydrating ${missing} cells remaining`;
 
   return (
     <div
@@ -1812,7 +1947,7 @@ function SignalsHydrationStrip({
           }}
         >
           {hasUniverse
-            ? `${hydrated}/${total} symbols · ${visibleCount} visible prioritized`
+            ? `${hydrated}/${total} cells · ${visibleCount} visible prioritized`
             : "Waiting for monitor universe"}
         </span>
       </div>
@@ -2050,7 +2185,7 @@ export default function SignalsScreen({
   const [visibleHydrationSymbols, setVisibleHydrationSymbols] = useState([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsDraft, setSettingsDraft] = useState(() =>
-    resolvePyrusSignalsRuntimeSettings(DEFAULT_PYRUS_SIGNALS_SETTINGS),
+    resolveSignalMonitorSettingsDraft(DEFAULT_PYRUS_SIGNALS_SETTINGS),
   );
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [settingsApplying, setSettingsApplying] = useState(false);
@@ -2092,9 +2227,16 @@ export default function SignalsScreen({
       retry: false,
     },
   });
+  const researchStatusQuery = useGetResearchStatus({
+    query: {
+      enabled: active && settingsOpen,
+      staleTime: 30_000,
+      retry: false,
+    },
+  });
   const profile = stateQuery.data?.profile || profileQuery.data || null;
   const profileIndicatorSettings = useMemo(
-    () => resolvePyrusSignalsRuntimeSettings(profile?.pyrusSignalsSettings || {}),
+    () => resolveSignalMonitorSettingsDraft(profile?.pyrusSignalsSettings || {}),
     [profile?.pyrusSignalsSettings],
   );
   const profileIndicatorSettingsSignature = useMemo(
@@ -2200,16 +2342,14 @@ export default function SignalsScreen({
     () => {
       const seen = new Set();
       const symbols = [];
-      [...visibleHydrationSymbols, ...filteredRows.map((row) => row.symbol)]
-        .filter(Boolean)
-        .forEach((symbol) => {
-          if (seen.has(symbol)) return;
-          seen.add(symbol);
-          symbols.push(symbol);
-        });
+      visibleHydrationSymbols.filter(Boolean).forEach((symbol) => {
+        if (seen.has(symbol)) return;
+        seen.add(symbol);
+        symbols.push(symbol);
+      });
       return symbols;
     },
-    [filteredRows, visibleHydrationSymbols],
+    [visibleHydrationSymbols],
   );
   const matrixHydrationPlan = useMemo(
     () =>
@@ -2712,6 +2852,19 @@ export default function SignalsScreen({
       : stateQuery.data?.cacheStatus === "stale"
         ? CSS_COLOR.amber
         : CSS_COLOR.textDim;
+  const cacheIssues = collectDataIssuesFromRecord(
+    {
+      cacheStatus: stateQuery.data?.cacheStatus,
+      status: stateQuery.data?.cacheStatus === "stale" ? "stale" : "ok",
+      updatedAt: stateQuery.data?.updatedAt || stateQuery.data?.lastEvaluatedAt,
+    },
+    {
+      valueLabel: "Signals cache",
+      source: "signals monitor",
+      nextAction:
+        "Refresh or wait for the next monitor scan before treating cached signal data as current.",
+    },
+  );
   const matrixHydrationTotal = matrixHydrationPlan.totalCellCount;
   const matrixHydrationHydrated = matrixHydrationPlan.hydratedCellCount;
   const matrixHydrationMissing = matrixHydrationPlan.missingCellCount;
@@ -2796,9 +2949,12 @@ export default function SignalsScreen({
               {profile?.enabled ? "Monitor on" : "Monitor off"}
             </StatusPill>
             {stateQuery.data?.cacheStatus ? (
-              <StatusPill color={cacheTone} variant="outline">
-                {stateQuery.data.cacheStatus}
-              </StatusPill>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: sp(4) }}>
+                <StatusPill color={cacheTone} variant="outline">
+                  {stateQuery.data.cacheStatus}
+                </StatusPill>
+                <DataIssueInlineIcon issues={cacheIssues} side="bottom" align="center" />
+              </span>
             ) : null}
             <StatusPill color={matrixHydrationTone} variant="outline">
               {matrixHydrationLabel}
@@ -2944,7 +3100,7 @@ export default function SignalsScreen({
             label="Limit"
             value={profile?.maxSymbols ?? 50}
             min={1}
-            max={250}
+            max={SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT}
             onCommit={onChangeMonitorMaxSymbols}
           />
           <div style={{ display: "inline-flex", gap: sp(6), alignItems: "end" }}>
@@ -3005,6 +3161,9 @@ export default function SignalsScreen({
             applying={settingsApplying}
             draft={settingsDraft}
             dirty={settingsDirty}
+            highBetaUniverseStatus={
+              researchStatusQuery.data?.highBetaUniverse || null
+            }
             onPatch={patchSettingsDraft}
             onApply={applySettingsDraft}
             onReset={resetSettingsDraft}

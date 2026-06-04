@@ -5,12 +5,14 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { IbkrBridgeActivationInsight } from './ibkrBridgeActivationInsight';
 import type { IbkrBridgeActivationProgress } from './ibkrBridgeActivationProgress';
 
 export interface IbkrBridgeActivationStatusResponse {
   active: boolean;
   canceled: boolean;
   expiresAt: Date;
+  insight: IbkrBridgeActivationInsight;
   latestProgress: IbkrBridgeActivationProgress | null;
   recentProgress: IbkrBridgeActivationProgress[];
 }

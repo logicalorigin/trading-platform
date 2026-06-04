@@ -304,6 +304,36 @@ test("overnight spot action scans only hydrate actionable signal quotes", async 
   assert.equal(result.executedCount, 1);
 });
 
+test("overnight spot scan aborts before side-effectful order work", async () => {
+  const controller = new AbortController();
+  const timeoutError = new Error("route budget exceeded");
+  let quoteSignal: AbortSignal | undefined;
+  const { dependencies, events, shadowOrders } = createDependencies({
+    loadQuotes: async (_symbols, signal) => {
+      quoteSignal = signal;
+      controller.abort(timeoutError);
+      return new Map([["SPY", quote()]]);
+    },
+  });
+
+  await assert.rejects(
+    runOvernightSpotSignalScan(
+      {
+        deploymentId: "deployment-1",
+        runActions: true,
+        now,
+        signal: controller.signal,
+      },
+      dependencies,
+    ),
+    (error) => error === timeoutError,
+  );
+
+  assert.equal(quoteSignal, controller.signal);
+  assert.equal(events.length, 0);
+  assert.equal(shadowOrders.length, 0);
+});
+
 test("overnight spot action scans use max signal age instead of dashboard freshness", async () => {
   const requestedQuoteSymbols: string[][] = [];
   const { dependencies, events, shadowOrders } = createDependencies({

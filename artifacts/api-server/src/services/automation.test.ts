@@ -18,6 +18,15 @@ test("algo strategy settings API patches deployment and signal monitor settings"
   const shadowScanRouteSource = routeSource.match(
     /router\.post\("\/algo\/deployments\/:deploymentId\/signal-options\/shadow-scan"[\s\S]*?\n}\);/,
   )?.[0] ?? "";
+  const stateRouteSource = routeSource.match(
+    /router\.get\("\/algo\/deployments\/:deploymentId\/signal-options\/state"[\s\S]*?\n}\);/,
+  )?.[0] ?? "";
+  const cockpitRouteSource = routeSource.match(
+    /router\.get\("\/algo\/deployments\/:deploymentId\/cockpit"[\s\S]*?\n}\);/,
+  )?.[0] ?? "";
+  const overnightSpotScanRouteSource = routeSource.match(
+    /router\.post\("\/algo\/deployments\/:deploymentId\/overnight-spot\/scan"[\s\S]*?\n}\);/,
+  )?.[0] ?? "";
 
   assert.match(
     routeSource,
@@ -41,11 +50,22 @@ test("algo strategy settings API patches deployment and signal monitor settings"
     routeSource,
     /view === "full"[\s\S]*\? SIGNAL_OPTIONS_COCKPIT_FULL_ROUTE_TIMEOUT_MS[\s\S]*: SIGNAL_OPTIONS_COCKPIT_SUMMARY_ROUTE_TIMEOUT_MS/,
   );
-  assert.match(routeSource, /withSignalOptionsRouteTimeout/);
+  assert.match(routeSource, /SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES/);
+  assert.match(routeSource, /continuation:\s*"continue-in-background"/);
+  assert.match(routeSource, /continuation:\s*"abort-at-route-budget"/);
+  assert.match(routeSource, /withContinuingSignalOptionsRouteTimeout/);
   assert.match(routeSource, /withAbortableSignalOptionsRouteTimeout/);
   assert.match(routeSource, /signal_options_state_route_timeout/);
   assert.match(routeSource, /signal_options_cockpit_route_timeout/);
   assert.match(routeSource, /signal_options_shadow_scan_route_timeout/);
+  assert.match(routeSource, /overnight_spot_scan_route_timeout/);
+  assert.match(stateRouteSource, /withContinuingSignalOptionsRouteTimeout/);
+  assert.match(stateRouteSource, /policy:\s*SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES\.state/);
+  assert.match(cockpitRouteSource, /withContinuingSignalOptionsRouteTimeout/);
+  assert.match(cockpitRouteSource, /policy:\s*SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES\.cockpit/);
+  assert.match(shadowScanRouteSource, /policy:\s*SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES\.shadowScan/);
+  assert.match(overnightSpotScanRouteSource, /policy:\s*SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES\.overnightSpotScan/);
+  assert.match(overnightSpotScanRouteSource, /signal,/);
   assert.match(routeSource, /req\.query\.view === "full" \? "full" : "summary"/);
   assert.match(routeSource, /function readOptionalBoolean/);
   assert.match(routeSource, /function signalOptionsAdmissionCacheMode/);

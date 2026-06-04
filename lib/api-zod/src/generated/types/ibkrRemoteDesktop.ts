@@ -5,9 +5,14 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { IbkrRemoteDesktopHelperCompatibility } from './ibkrRemoteDesktopHelperCompatibility';
 
 export interface IbkrRemoteDesktop {
   desktopId: string;
+  helperCompatibility: IbkrRemoteDesktopHelperCompatibility;
+  helperCompatible: boolean;
+  helperKnownBad: boolean;
+  helperUpdateRequired: boolean;
   /** @nullable */
   helperVersion: string | null;
   /** @nullable */

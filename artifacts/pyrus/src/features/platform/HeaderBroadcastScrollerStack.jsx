@@ -1510,6 +1510,7 @@ export const HeaderBroadcastScrollerStack = memo(({
   onChangeSignalMonitorFreshWindowBars,
   onChangeSignalMonitorMaxSymbols,
   signalMatrixStates = [],
+  safeQaMode = false,
 }) => {
   const rootRef = useRef(null);
   const viewport = useViewport();
@@ -1527,9 +1528,9 @@ export const HeaderBroadcastScrollerStack = memo(({
   const broadScanEnabled = Boolean(flowScannerControl.enabled);
   const broadScanOwnerActive = Boolean(flowScannerControl.ownerActive);
   const flowRuntimeControl = useRuntimeControlSnapshot({
-    enabled: Boolean(enabled && broadScanEnabled),
+    enabled: Boolean(enabled && !safeQaMode && broadScanEnabled),
     runtimeDiagnosticsEnabled: false,
-    lineUsageEnabled: Boolean(enabled && broadScanEnabled),
+    lineUsageEnabled: Boolean(enabled && !safeQaMode && broadScanEnabled),
     lineUsageStreamEnabled: false,
     lineUsagePollInterval: 5_000,
   });
@@ -1567,6 +1568,7 @@ export const HeaderBroadcastScrollerStack = memo(({
       }, headerFlowVisibleRequestOptions({ signal })),
     enabled: Boolean(
       enabled &&
+        !safeQaMode &&
         broadScanEnabled &&
         !broadFlowSnapshot.flowEvents?.length &&
         !broadFlowSnapshot.staleFlowEvents,
@@ -1978,7 +1980,9 @@ export const HeaderBroadcastScrollerStack = memo(({
       ? "healthy"
       : "no-subscribers";
   const signalUniverseLabel =
-    signalStatusSnapshot.universeMode === "all_watchlists_plus_universe"
+    signalStatusSnapshot.universeMode === "high_beta_500"
+      ? "High Beta 500"
+      : signalStatusSnapshot.universeMode === "all_watchlists_plus_universe"
       ? "Watchlist Sources + Candidate Set"
       : signalStatusSnapshot.universeMode === "all_watchlists"
         ? "All Watchlist Sources"

@@ -5,6 +5,7 @@
  * Internal trading platform API for Massive market data and IBKR execution.
  * OpenAPI spec version: 0.2.0
  */
+import type { SessionIbkrRuntimeDesktopAgentCompatibility } from './sessionIbkrRuntimeDesktopAgentCompatibility';
 
 export interface SessionIbkrRuntime {
   runtimeOverrideActive: boolean;
@@ -12,7 +13,11 @@ export interface SessionIbkrRuntime {
   runtimeOverrideUpdatedAt: Date | null;
   desktopAgentOnline: boolean;
   /** @nullable */
+  desktopAgentCompatibility: SessionIbkrRuntimeDesktopAgentCompatibility;
+  desktopAgentCompatible: boolean;
+  /** @nullable */
   desktopAgentHelperVersion: string | null;
+  desktopAgentKnownBad: boolean;
   desktopAgentExpectedHelperVersion: string;
   desktopAgentUpgradeRequired: boolean;
   reconnectAvailable: boolean;

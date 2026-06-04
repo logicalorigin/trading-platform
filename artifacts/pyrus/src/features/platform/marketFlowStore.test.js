@@ -9,12 +9,14 @@ import {
   clearMarketFlowSnapshot,
   getFlowScannerControlState,
   getMarketFlowSnapshotForStoreKey,
+  getMarketFlowSnapshotVersionForTests,
   getMarketFlowStoreEntryCount,
   publishMarketFlowSnapshot,
   releaseFlowScannerOwner,
   resetFlowScannerControlForTests,
   resetMarketFlowStoreForTests,
   setFlowScannerControlState,
+  subscribeToMarketFlowSnapshotForTests,
 } from "./marketFlowStore.js";
 import {
   DEFAULT_FLOW_SCANNER_CONFIG,
@@ -147,6 +149,69 @@ test("marketFlowStore preserves existing flow events across transient degraded e
     snapshot.providerSummary.sourcesBySymbol.AAPL.ibkrReason,
     "options_flow_quote_hydration_empty",
   );
+});
+
+test("marketFlowStore does not notify subscribers for equivalent snapshots", () => {
+  resetMarketFlowStoreForTests();
+  const storeKey = buildMarketFlowStoreKey(["SPY", "QQQ"]);
+  let notifications = 0;
+  const unsubscribe = subscribeToMarketFlowSnapshotForTests(storeKey, () => {
+    notifications += 1;
+  });
+  const snapshot = {
+    ...EMPTY_MARKET_FLOW_SNAPSHOT,
+    hasLiveFlow: true,
+    flowStatus: "live",
+    providerSummary: {
+      ...EMPTY_MARKET_FLOW_SNAPSHOT.providerSummary,
+      label: "Flow live",
+      coverage: {
+        ...EMPTY_MARKET_FLOW_SNAPSHOT.providerSummary.coverage,
+        totalSymbols: 500,
+        scannedSymbols: 120,
+      },
+    },
+    flowEvents: [
+      {
+        id: "flow-1",
+        underlying: "SPY",
+        premium: 125000,
+        occurredAt: "2026-06-04T15:10:00.000Z",
+      },
+    ],
+  };
+
+  publishMarketFlowSnapshot(storeKey, snapshot);
+  assert.equal(notifications, 1);
+  const versionAfterFirstPublish =
+    getMarketFlowSnapshotVersionForTests(storeKey);
+
+  publishMarketFlowSnapshot(storeKey, JSON.parse(JSON.stringify(snapshot)));
+
+  assert.equal(getMarketFlowSnapshotVersionForTests(storeKey), versionAfterFirstPublish);
+  assert.equal(notifications, 1);
+  unsubscribe();
+});
+
+test("marketFlowStore still notifies subscribers for changed flow snapshots", () => {
+  resetMarketFlowStoreForTests();
+  const storeKey = buildMarketFlowStoreKey(["SPY"]);
+  let notifications = 0;
+  const unsubscribe = subscribeToMarketFlowSnapshotForTests(storeKey, () => {
+    notifications += 1;
+  });
+
+  publishMarketFlowSnapshot(storeKey, buildLiveSnapshot("SPY"));
+  const versionAfterFirstPublish =
+    getMarketFlowSnapshotVersionForTests(storeKey);
+  publishMarketFlowSnapshot(storeKey, {
+    ...buildLiveSnapshot("SPY"),
+    flowEvents: [{ id: "SPY-2", underlying: "SPY" }],
+  });
+
+  assert.equal(getMarketFlowSnapshotVersionForTests(storeKey), versionAfterFirstPublish + 1);
+  assert.equal(notifications, 2);
+  unsubscribe();
 });
 
 test("marketFlowStore preserves flow events across scanner line-budget pauses", () => {
