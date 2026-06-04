@@ -545,6 +545,19 @@ export type GexProjectionConeOverlay = {
   points: GexProjectionConePoint[];
 };
 
+export type GexZeroGammaOverlayLine = {
+  price: number;
+  color?: string;
+  title?: string;
+  lineWidth?: number;
+  axisLabelVisible?: boolean;
+};
+
+export type GexChartOverlay = {
+  zeroGammaLine?: GexZeroGammaOverlayLine | null;
+  projectionCone?: GexProjectionConeOverlay | null;
+};
+
 const CHART_SCALE_PREFS_STORAGE_PREFIX = "pyrus:chart-scale-prefs:";
 const LEGACY_CHART_SCALE_PREFS_STORAGE_PREFIX = "pyrus:chart-scale-prefs:";
 
@@ -1481,7 +1494,7 @@ type ResearchChartSurfaceProps = {
     lineWidth?: number;
     axisLabelVisible?: boolean;
   }>;
-  gexProjectionCone?: GexProjectionConeOverlay | null;
+  gexOverlay?: GexChartOverlay | null;
   chartEvents?: ChartEvent[];
   chartFlowDiagnostics?: FlowChartEventConversion | null;
   positionOverlays?: ChartPositionOverlays | null;
@@ -2964,6 +2977,7 @@ const buildGexProjectionConeSvgOverlay = ({
   chartTimeframe,
   viewportWidth,
   viewportHeight,
+  anchorPrice,
   dataTestId,
 }: {
   chart: ChartApi;
@@ -2974,6 +2988,7 @@ const buildGexProjectionConeSvgOverlay = ({
   chartTimeframe?: string | null;
   viewportWidth: number;
   viewportHeight: number;
+  anchorPrice?: number | null;
   dataTestId?: string;
 }): GexProjectionConeSvgOverlay | null => {
   if (
@@ -3005,9 +3020,15 @@ const buildGexProjectionConeSvgOverlay = ({
   const lastX =
     chart.timeScale().timeToCoordinate(lastBar.time) ??
     Math.max(20, viewportWidth * 0.55);
+  const latestSpotPrice =
+    isFiniteNumber(anchorPrice) && Number(anchorPrice) > 0
+      ? Number(anchorPrice)
+      : isFiniteNumber(lastBar.c) && Number(lastBar.c) > 0
+        ? Number(lastBar.c)
+        : overlay.spot;
   const anchorY =
+    resolvePriceCoordinate(latestSpotPrice) ??
     resolvePriceCoordinate(overlay.spot) ??
-    resolvePriceCoordinate(lastBar.c) ??
     viewportHeight / 2;
   if (!isFiniteNumber(lastX) || !isFiniteNumber(anchorY)) {
     return null;
@@ -3120,6 +3141,7 @@ const buildGexProjectionConeSvgOverlay = ({
       qualityStatus: point.qualityStatus,
     }));
   const forecastTone = theme.cyan || theme.blue || theme.accent || theme.text;
+  const centerTone = theme.green || forecastTone;
   const qualityTone =
     overlay.qualityStatus === "ok" ? forecastTone : theme.amber || forecastTone;
   const svgXBounds = resolveGexProjectionSvgXBounds(viewportWidth);
@@ -3151,7 +3173,7 @@ const buildGexProjectionConeSvgOverlay = ({
     innerFill: withAlpha(forecastTone, overlay.qualityStatus === "ok" ? "34" : "2b"),
     innerStroke: withAlpha(forecastTone, overlay.qualityStatus === "ok" ? "80" : "68"),
     centerHaloStroke: withAlpha(theme.bg2, "d8"),
-    centerStroke: withAlpha(forecastTone, "f2"),
+    centerStroke: withAlpha(centerTone, "f2"),
     axisStroke: withAlpha(theme.textMuted, "58"),
     axisLabelFill: withAlpha(theme.textMuted, "e0"),
     qualityStatus: overlay.qualityStatus,
@@ -6294,7 +6316,7 @@ const ResearchChartSurfaceComponent = ({
   defaultScaleMode = "linear",
   drawings = EMPTY_DRAWINGS,
   referenceLines = EMPTY_REFERENCE_LINES,
-  gexProjectionCone = null,
+  gexOverlay = null,
   chartEvents = EMPTY_CHART_EVENTS,
   chartFlowDiagnostics = null,
   positionOverlays = EMPTY_CHART_POSITION_OVERLAYS,
@@ -6316,6 +6338,14 @@ const ResearchChartSurfaceComponent = ({
   crosshairSyncGroupId = null,
   crosshairSyncInstanceId = null,
 }: ResearchChartSurfaceProps) => {
+  const gexProjectionCone = gexOverlay?.projectionCone ?? null;
+  const gexZeroGammaLine = gexOverlay?.zeroGammaLine ?? null;
+  const effectiveReferenceLines = useMemo(() => {
+    if (!gexZeroGammaLine || !isFiniteNumber(gexZeroGammaLine.price)) {
+      return referenceLines;
+    }
+    return [...referenceLines, gexZeroGammaLine];
+  }, [gexZeroGammaLine, referenceLines]);
   const { preferences: userPreferences } = useUserPreferences();
   const resolvedPositionOverlays =
     positionOverlays || EMPTY_CHART_POSITION_OVERLAYS;
@@ -9727,7 +9757,7 @@ const ResearchChartSurfaceComponent = ({
         addPriceLine(drawingLine);
       });
 
-    referenceLines
+    effectiveReferenceLines
       .filter(
         (line) =>
           typeof line?.price === "number" && isFiniteNumber(line.price),
@@ -9774,7 +9804,7 @@ const ResearchChartSurfaceComponent = ({
     resolvedPositionOverlays.density,
     resolvedPositionOverlays.entryLines,
     positionOverlaysEnabled,
-    referenceLines,
+    effectiveReferenceLines,
     theme.amber,
     theme.green,
     theme.red,
@@ -9839,6 +9869,7 @@ const ResearchChartSurfaceComponent = ({
         chartTimeframe: legend?.timeframe || footprintContext?.timeframe || null,
         viewportWidth,
         viewportHeight,
+        anchorPrice: latestQuotePrice,
         dataTestId,
       }),
     );
@@ -10007,6 +10038,7 @@ const ResearchChartSurfaceComponent = ({
     deferredModel.indicatorZones,
     extendedSessionWindows,
     hydrationScopeKey,
+    latestQuotePrice,
     overlayRevision,
     plotSize.height,
     plotSize.width,

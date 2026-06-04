@@ -2,8 +2,240 @@
 
 - Session ID: pending
 - CWD: `/home/runner/workspace`
-- Saved At (MT): `2026-06-03 07:09:23 MDT`
+- Saved At (MT): `2026-06-03 18:30:56 MDT`
 - User request: pick up the last session auditing the Signals table and how data comes in, is cached, and is saved in the matrix.
+
+## 2026-06-03 GEX Overlay Anchor Follow-Up
+
+- User asked whether the start of the GEX overlay should line up with the latest spot price.
+- Finding: yes. `buildGexProjectionConeSvgOverlay()` was anchoring the projection cone start to `overlay.spot` from the GEX payload before considering the rendered chart's latest bar/quote. That can make the cone start visibly off the current spot when the GEX payload spot is delayed or sampled separately.
+- Fix in `artifacts/pyrus/src/features/charting/ResearchChartSurface.tsx`:
+  - Added an optional `anchorPrice` input to the GEX projection SVG builder.
+  - The cone start now anchors by priority: `latestQuotePrice`, then latest chart bar close, then GEX payload `overlay.spot` as a final fallback.
+  - Added `latestQuotePrice` to the overlay sync effect dependencies so quote-only changes rebuild the cone position.
+- Guard in `artifacts/pyrus/src/features/gex/gexProjectionChartWiring.test.js`:
+  - Added assertions for the quote/bar/payload fallback order and the `latestQuotePrice` dependency.
+- Validation:
+  - PASS: focused chart/GEX suite, 140/140 tests.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+- No Replit startup, artifact, workflow, env, runtime-setting, or live broker/data-line actions were changed.
+
+## 2026-06-03 6-3 API Diagnosis Follow-Up - Active Matrix Cadence
+
+- User accepted the remaining caveat that the active STA Signal Matrix snapshot still reported `pollMs: 60000` under high pressure and asked to fix it.
+- Root cause:
+  - The high-pressure cap table was no longer forcing 60s; `appWorkScheduler.js` has `signalMatrixPollMinMs: 0` for high.
+  - `PlatformApp.jsx` still computed `signalMatrixPollMs` from `signalMonitorPollMs`, so the active STA matrix inherited the backend Signal Monitor evaluator profile interval, usually 60s and potentially 5m.
+- Fix in `artifacts/pyrus/src/features/platform/PlatformApp.jsx`:
+  - Added `signalMatrixForegroundPollMs = signalMonitorDisplayPollMs`.
+  - Added `signalMatrixBackgroundPollMs = signalMonitorPollMs`.
+  - Active Signals/Algo matrix requests now use the foreground display cadence as their base poll; background matrix work keeps the profile poll interval.
+  - Existing pressure floors still apply afterward, so critical pressure can still raise the floor.
+- Guard in `artifacts/pyrus/src/features/platform/platformRootSource.test.js`:
+  - Added source-level assertions that active matrix polling uses foreground display cadence and background matrix polling uses the profile poll interval.
+  - RED confirmed before the implementation patch; the focused test failed on the missing `signalMatrixForegroundPollMs` contract.
+- Updated `docs/backend-data-map.md`:
+  - Matrix refresh cadence now explicitly says active Signals/STA matrix polling must not inherit the backend evaluator profile poll interval.
+- Validation:
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/features/platform/signalMatrixScheduler.test.js` - 100/100.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+  - PASS: scoped `git diff --check`.
+  - PASS: safe browser STA sample at `http://127.0.0.1:18747/?pyrusQa=safe` showed Signal Matrix snapshot `pressureLevel: "high"`, `serverPressureLevel: "high"`, and `pollMs: 15000` instead of 60000; follow-up sample saw `/api/signal-monitor/matrix` return `200` with `sourceStrategy: "native_timeframes_live_retry"`, STA `lastPlanExactCellLimit: 120`, no freshness warning, and no console/page errors.
+- Runtime note:
+  - The table header can still show `ready to scan` as Signal Options action-scan status text after-hours. That is separate from the matrix polling cadence; this fix removed the 60s active matrix cadence inheritance.
+- No Replit startup, artifact, workflow, env, or runtime-setting control-plane files were changed.
+
+## 2026-06-03 6-3 API Diagnosis Implementation - Matrix Pressure And Candle-Close Pickup
+
+- User asked to implement the plan after the `/bars`, high-pressure, Massive ingestion, and STA pickup diagnosis.
+- Implemented the Signal Matrix scheduler fix in `artifacts/pyrus/src/features/platform/signalMatrixScheduler.js`:
+  - Hydrated intraday cells now requeue at `latestBar + timeframe + grace` instead of waiting for a stale 2x timeframe window.
+  - Added coverage for immediate 1m candle-close pickup, no pre-grace requeue, and 5m close pickup.
+- Implemented frontend pressure/cap fixes in `artifacts/pyrus/src/features/platform/PlatformApp.jsx`:
+  - Unknown server pressure now falls back to `normal`, not artificial `high`.
+  - Foreground exact-cell high-pressure limits now preserve useful visible hydration instead of shrinking active work to the old generic 20-cell path.
+  - Matrix cap rejections now read exposed API error `data.maxCells`, store a short-lived retry cap, and immediately retry inside the server-admitted limit.
+- Implemented backend Signal Monitor matrix fixes in `artifacts/api-server/src/services/signal-monitor.ts` and `artifacts/api-server/src/app.ts`:
+  - Generic exact-cell high-pressure cap remains 20.
+  - Foreground `leader` + `startup`/`poll` exact-cell requests are admitted up to 60 under high pressure.
+  - STA visible-page requests remain admitted up to 120 under high pressure.
+  - Critical pressure remains capped at 10.
+  - Foreground exact-cell leaders stay source-backed under high pressure instead of cache-only.
+  - Exact-cell leaders can await a fresh matrix refresh under normal/watch and protected high-pressure foreground/STA request classes.
+  - Matrix live-edge evaluation uses Massive aggregate stream/cache bars with `includeProvisionalLiveEdge: true` and `allowHistoricalFallback: false`; when live-edge history is not warm, stored state is preserved and historical REST is not used for live pickup.
+  - API problem JSON exposes `error.data` for exposed `HttpError`s so the client can honor the backend cap response.
+  - Tightened the exact-cell cap helper type so the foreground `cells` contract is explicit.
+- Updated `docs/backend-data-map.md` with the 6-3 API diagnosis rules:
+  - Signal matrix pickup is candle-close + short grace, not a 5m polling/stale-window gate.
+  - Live STA matrix pickup should use Massive WebSocket aggregate/cache data; `/bars` is chart/backtest/historical and must not be the live Signal Monitor trigger.
+  - Pressure caps are documented by request class: generic high 20, foreground high 60, STA visible high 120, critical 10.
+- Validation:
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/platform/platformRootSource.test.js` - 100/100.
+  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts` - 77/77.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+  - PASS: `pnpm --filter @workspace/api-server run typecheck`.
+  - PASS: scoped `git diff --check`.
+  - PASS: backend data-map fence check: 28 fences, 13 Mermaid blocks, even fence count.
+  - PASS: health checks on `http://127.0.0.1:18747/api/healthz` and `http://127.0.0.1:8080/api/healthz`.
+  - PASS: runtime matrix smoke against `http://127.0.0.1:18747/api/signal-monitor/matrix` returned `200` in about 3.8s for a `leader` + `poll` exact-cell request with `sourceStrategy: "native_timeframes_live_retry"` and no cap/503 failure. The after-hours sample returned zero states, consistent with no-REST live-edge behavior when stream cache history is not warmed.
+  - PASS: safe browser STA table sample at `http://127.0.0.1:18747/?pyrusQa=safe` rendered `Signals to Actions · All 248 of 248 signals`, 20 visible rows, no freshness warning, no `ready to scan` empty state, no console/page errors, 120 visible-row signal dots with 70 active buy/sell dots, and two `/api/signal-monitor/matrix` responses at `200` with `sourceStrategy: "native_timeframes_live_retry"` and 29/67 returned states.
+  - Note: the safe browser Signal Matrix snapshot reported high pressure with `pollMs: 60000`, `activeScreenRequestTaskLimit: 60`, and STA `lastPlanExactCellLimit: 120`. This is the high-pressure periodic floor, not the old 5m stale wait; visible STA request revisions still queue immediate matrix evaluation when the visible row payload changes.
+- No Replit startup, artifact, workflow, env, or runtime-setting control-plane files were changed.
+
+## 2026-06-03 Post-Restart Radar Verification + Matrix Admission Guard
+
+- User restarted the app and asked to check the cleanup.
+- Radar removal verification:
+  - PASS: live API JSON scan across `/api/settings/ibkr-line-usage?detail=full`, `/api/settings/ibkr-lanes`, and `/api/diagnostics/latest` on ports `18747` and `8080` found `radarHitCount: 0`.
+  - PASS: active-code scan found no `radar|Radar|RADAR` matches in `artifacts/api-server/src`, `artifacts/pyrus/src/features/platform`, `artifacts/pyrus/src/screens/algo`, `AlgoScreen.jsx`, or `DiagnosticsScreen.jsx`.
+  - PASS: safe Algo browser check at `http://127.0.0.1:18747/?pyrusQa=safe` rendered `algo-screen` and `algo-operations-signal-table` with `radarTextCount: 0`, `pageErrorCount: 0`, and no console warnings/errors.
+- QA found and fixed an unrelated Signal Monitor matrix startup issue:
+  - Symptom before the fix: under API pressure `high`, the generic startup matrix request could send 48 cells before the frontend had observed server pressure; backend admission correctly rejected it with `signal_monitor_matrix_cells_limit_exceeded` because generic high-pressure requests are capped at 20 cells.
+  - Fix in `artifacts/pyrus/src/features/platform/PlatformApp.jsx`: active-screen matrix requests now use a conservative high-pressure admission cap until server pressure is observed; live reevaluation recomputes the exact-cell cap immediately before request dispatch. The explicit STA visible-page path still keeps the 120-cell high-pressure exception for `clientRole: "algo-sta"` and `requestOrigin: "sta-visible-page"`.
+  - Guard updated in `artifacts/pyrus/src/features/platform/platformRootSource.test.js`.
+  - Post-fix live safe Algo check: `/api/signal-monitor/matrix` returned `200`; `window.__PYRUS_SIGNAL_MATRIX_SNAPSHOT__` reported `pressureLevel: "high"`, `serverPressureLevel: "high"`, `lastPlanTaskCount: 20`, and `lastPlanExactCellLimit: 20`.
+- Line-usage check after restart:
+  - Runtime budget remains `bridgeLineBudget: 200`.
+  - Dedicated app consumers are active: account-monitor, shadow-account, visible, and automation option lines.
+  - Flow scanner allocation is not currently filling because the market session is `after` with `quietReason: "market_session_quiet"`; runtime shows `scannerPlannedHorizonCount: 0`, `scannerEffectiveConcurrency: 8`, and `scannerMaxDeepScanLines: 187`.
+  - This is an after-hours quiet-session pause, not the old 8-10-line scanner underfill or ticker grouping path.
+- Validation:
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/platform/platformRootSource.test.js` - 95/95.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+  - PASS: `git diff --check`.
+  - PASS: post-restart safe Algo Playwright check described above.
+- No Replit startup, artifact, workflow, env, or runtime-setting control-plane changes were made.
+
+### Second Restart Check - 2026-06-03T23:20:36Z
+
+- User restarted again and asked to check.
+- Health:
+  - PASS: `http://127.0.0.1:18747/api/healthz` returned `200`.
+  - PASS: `http://127.0.0.1:8080/api/healthz` returned `200`.
+  - Runtime diagnostics were normal-action with `bridgeLineBudget: 200`.
+- Radar verification:
+  - PASS: live JSON scan across line-usage, lanes, latest diagnostics, and runtime diagnostics on ports `18747` and `8080` found `radarHitCount: 0`.
+  - PASS: active-code radar scan still has no matches in scanner/backend/UI paths.
+  - PASS: safe Algo browser check rendered the operations signal table with `radarTextCount: 0`, `pageErrorCount: 0`, and no console warnings/errors.
+- Matrix verification:
+  - Generic startup matrix request was `20` cells (`clientRole: "leader"`, `requestOrigin: "startup"`), proving the high-pressure startup cap is active.
+  - STA visible-page matrix request was `101` cells (`clientRole: "algo-sta"`, `requestOrigin: "sta-visible-page"`), inside the 120-cell exception.
+- Line usage:
+  - After Algo load: `bridgeLineBudget: 200`, `activeLineCount: 12`, `scannerLineCount: 0`, `scannerEffectiveLineCap: 188`.
+  - Runtime session remains `after` with `quietReason: "market_session_quiet"`, so scanner fill is intentionally quiet and RTH is required to prove full scanner line fill.
+- No Replit startup, artifact, workflow, env, or runtime-setting control-plane changes were made.
+
+## 2026-06-03 Options-Flow Radar Concept Removal
+
+- User clarified the radar icons/concept should be gone and there should be no intentional scanner mention left.
+- Removed the active backend radar scanner path:
+  - Deleted `artifacts/api-server/src/services/options-flow-radar-scanner.ts`.
+  - Removed radar runtime config, diagnostics, coverage, settings compaction, lane override bounds, test-only exports, quote backoff state, and aggregate fallback reads from `platform.ts`, `flow-universe.ts`, `settings.ts`, and `ibkr-lanes.ts`.
+  - Direct flow scanner coverage now reports only `blocked`, `deep`, or `idle`; aggregate seeding uses lane/current-batch symbols, not radar promotions.
+- Cleaned tests and frontend:
+  - Removed obsolete radar scanner/promotion/fallback tests and kept direct scanner, backfill, and generic priority ordering coverage.
+  - Replaced active scanner `Radar` lucide icons with `ScanLine` in `OperationsSignalRow.jsx`, `PipelineStrip.jsx`, and `PlatformAlgoMonitorSidebar.jsx`.
+  - Removed frontend runtime-model compatibility reads for `scanner.radar`/`radarDegradedReason`, and renamed active synthetic activity fallback helpers in `headerBroadcastModel.js` and `useLiveMarketFlow.js`.
+- Search result:
+  - PASS: no `radar|Radar|RADAR` matches in active scanner/backend/UI paths: `artifacts/api-server/src`, `artifacts/pyrus/src/features/platform`, `artifacts/pyrus/src/screens/algo`, `AlgoScreen.jsx`, `DiagnosticsScreen.jsx`.
+  - Remaining repo matches are static research/defense datasets where radar is literal company/theme content, not the scanner concept.
+- Validation:
+  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/options-flow-scanner.test.ts` - 70/70.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/account-positions.test.ts src/services/watchlist-prewarm.test.ts src/routes/settings.test.ts src/services/market-data-admission.test.ts src/services/ibkr-line-usage.test.ts src/services/flow-universe-planner.test.ts` - 115/115.
+  - PASS: `pnpm --filter @workspace/api-server run typecheck`.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/runtimeControlModel.test.js src/features/platform/headerBroadcastModel.test.js` - 60/60.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js src/features/platform/platformRootSource.test.js` - 91/91.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+  - PASS: `git diff --check`.
+- No Replit startup, artifact, workflow, or env control-plane files were changed for this cleanup.
+
+## 2026-06-03 STA Source Stability + Visible Matrix Hydration
+
+- User reported the Algo STA table symptoms as one cluster: GLW/SYM showing 5m care, missing signal bubbles, missing sparklines, mostly empty Move column, and SPY appearing then disappearing.
+- Implemented stable STA action source handling:
+  - `artifacts/pyrus/src/screens/algo/algoHelpers.js`: added `resolveStableStaActionSnapshot`.
+  - `artifacts/pyrus/src/screens/AlgoScreen.jsx`: resolves Signal Options cockpit/state rows as one whole source, keeps the last successful action snapshot when a source error would shrink the table, and passes `signalOptionsSourceHealth` downstream.
+  - `artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx` and `OperationsSignalTable.jsx`: carry and display compact stale/degraded source health.
+- Implemented visible-page STA matrix hydration:
+  - `OperationsSignalTable.jsx`: visible-page matrix requests now include `clientRole: "algo-sta"` and `requestOrigin: "sta-visible-page"`.
+  - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`: preserves that request metadata, recomputes the STA request limits under live pressure, and sends the metadata to `/api/signal-monitor/matrix`.
+  - `artifacts/pyrus/src/features/platform/signalMatrixScheduler.js`: generic high-pressure matrix planning remains capped at 20 cells, but the STA visible-page request class can plan up to 120 cells; critical remains capped at 10.
+- Implemented backend admission:
+  - `artifacts/api-server/src/services/signal-monitor.ts`: `resolveSignalMonitorMatrixExactCells` now allows the 120-cell high-pressure cap only for `algo-sta` + `sta-visible-page`; generic high-pressure exact-cell requests still throw above 20.
+  - Updated OpenAPI/generated request enums in `lib/api-spec/openapi.yaml`, `lib/api-zod/src/generated/api.ts`, `lib/api-zod/src/generated/types/*`, and `lib/api-client-react/src/generated/api.schemas.ts`.
+- Updated `docs/backend-data-map.md` during the work:
+  - Signal Options flow now includes the STA stable action snapshot.
+  - Handling rules document source-health stale/degraded behavior, the STA request metadata, and the backend exact-cell exception.
+- Validation:
+  - PASS: `git diff --check -- ...` scoped to touched STA/API/docs files.
+  - PASS: `node --import tsx --test src/screens/algo/algoHelpers.test.js src/screens/algo/OperationsSignalRow.test.js src/features/platform/platformRootSource.test.js src/features/platform/signalMatrixScheduler.test.js` from `artifacts/pyrus` - 159/159.
+  - PASS: `node --import tsx --test src/services/signal-monitor.test.ts` from `artifacts/api-server` - 71/71.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+  - PASS: backend data map fence check: 28 fences, 13 Mermaid blocks, even fence count.
+  - RESOLVED later in this session: `pnpm --filter @workspace/api-server run typecheck` now passes after the options-flow radar cleanup above.
+
+## 2026-06-03 Backend Data Map Property Sketch
+
+- User asked to revisit the backend data map and draw a ReadMe-style property/data-flow sketch showing how data moves around the app.
+- User clarified the desired output should look like a wireframe map, citing `https://mcpmarket.com/tools/skills/wireframe-ui-generator` as an example of ASCII/text-based wireframes and flow diagrams.
+- Updated `docs/backend-data-map.md` with:
+  - New comprehensive backend spec section with system boundaries, route-family contracts, state ownership, backend invariants, and validation requirements grounded in the current API route/service/schema layout.
+  - All visual diagrams are now embedded inline inside `docs/backend-data-map.md`, not linked as sidecar SVG files. The inline diagrams are: comprehensive spec overview, routing map, data wiring diagnostic map, and data-use rules map.
+  - Visual review proof: extracted the four inline SVG blocks from `docs/backend-data-map.md`, rendered them to PNGs with ImageMagick, and inspected them; fixed a clipped routing-map title, removed a misleading cross-lane connector, shortened rules-map labels that crowded the right edge, and removed a decorative overview connector that crossed text.
+  - A diagnostic front door: `How To Diagnose A Data Wiring Issue`, including a six-step protocol for tracing where identity/source/freshness/actionability/failure reason disappears.
+  - A concrete STA example for `Monitor only · Awaiting scan · now`: actionable Signal Options rows require backend candidate shells and explicit contract-selection state; UI may project that state, but must not relabel a missing actionable candidate as benign monitor-only state.
+  - A plain-text wireframe routing map visible without Mermaid rendering. It lays out ingest sources, ingest adapters, backend routing hubs, state/cache, API surfaces, client state, and app usage.
+  - A design/formatting pass that makes the map lane-card based, adds a legend/read order, labels Mermaid as a rendering companion, replaces the duplicate plain-text summary with a Route Index table, and promotes waterfall labels to section headings.
+  - Mermaid companion wording/syntax adjusted after the user supplied `https://blog.starmorph.com/blog/mermaid-js-tutorial`: left-to-right flowchart, subgraphs for zones, labeled solid runtime arrows, and labeled dotted generated-contract arrows.
+  - An explicit line-based backend data-flow wiring diagram showing UI commands, IBKR, Massive, research/reference sources, backend services, DB/cache, workers, REST/SSE, generated/client state, and final Pyrus screens connected with labeled arrows.
+  - A simple top-down property flow sketch from provider/runtime inputs and durable state through backend read models, route payloads, generated clients/UI state, and visible screens.
+  - A property-class table covering identity, freshness/trust, actionability, value payload, diagnostics, and UI-derived properties.
+  - A focused Signal Options property flow sketch from signal monitor state through signal snapshots, candidate shells, execution events, state payloads, dashboard candidates, table joins, and row status.
+  - Signal-options handling rules that codify the recent blocker: `Monitor only` is valid only for non-actionable rows; actionable rows require candidate shells and explicit contract-selection status.
+  - Route, diagnostic, use-rule, and better-use indexes to make wiring issues diagnosable before code edits.
+  - No-guess API audit sections: `No-Guess API Rules`, `Exact API Surface Inventory`, and `API Consumer And Ingestion Matrix`.
+  - Exact API inventory now lists all 165 Express route handlers inline. Validation compared the MD inventory to `artifacts/api-server/src/routes/*.ts` and found 165/165 rows with no missing or extra routes. OpenAPI method coverage is 159/165, with the 6 manual/direct surfaces explicitly listed.
+  - A bug-hunting readiness audit matrix that drills common failures and proves where the spec points first: STA candidate missing, rounded STA signal time, disappearing STA sparkline, empty STA Move, stale prices/bars, matrix holes, account lag, order/fill mismatch, Flow/GEX stale, research missing, pressure, backtest stuck, generated-client drift, SSE readiness misuse, and provider failure/no-data confusion.
+  - Targeted `First Files To Inspect` rows for STA signal time restoration, STA sparkline disappearance, and empty STA Move diagnosis.
+  - Waterfall-style Mermaid sketches for the basic route path, styled app property path, Signal Options, live market data, order/execution, and backtest flows.
+- Validation:
+  - PASS: no trailing whitespace in `docs/backend-data-map.md`, `SESSION_HANDOFF_CURRENT.md`, or this handoff.
+  - PASS: scoped handoff `git diff --check -- SESSION_HANDOFF_CURRENT.md SESSION_HANDOFF_LIVE_2026-06-03_signals-table-matrix-audit.md`.
+  - PASS: extracted inline SVG block 1 renders to 1800x1180 PNG via ImageMagick.
+  - PASS: extracted inline SVG block 2 renders to 1600x1080 PNG via ImageMagick.
+  - PASS: extracted inline SVG block 3 renders to 1800x1380 PNG via ImageMagick.
+  - PASS: extracted inline SVG block 4 renders to 1600x1080 PNG via ImageMagick.
+  - PASS: no `docs/backend-data-*.svg` sidecar files remain.
+  - PASS: API route inventory check: 165 route handlers in source, 165 rows in the Markdown inventory, no missing or extra routes.
+  - PASS: API coverage check: 159 OpenAPI/generated route methods and 6 explicit manual/direct surfaces.
+  - BLOCKED by pre-existing docs references: `pnpm run audit:markdown-paths` fails on `REPO_CLEANUP_INVENTORY.md` polygon provider paths and `scripts/README.md: scripts/reports/shadow-massive-options-audit/`, not on `docs/backend-data-map.md`.
+  - Mermaid CLI `mmdc` is not installed locally, so render validation was limited to simple Mermaid syntax review plus scoped diff checks.
+- No runtime/startup/Replit control-plane files were touched for this docs update.
+
+## 2026-06-03 STA Contract-Selection Blocker Work
+
+- `2026-06-03T20:05:24Z` Agent: User asked to implement the plan that treats `Monitor only · Awaiting scan · now` as a symptom of missing contract-selection state. Work has started in default mode.
+- Current intended shape:
+  - Backend: add durable Signal Options candidate shells for fresh actionable STA signals and explicit contract-selection status (`pending` / `selected` / `blocked` / `deferred`) without doing live execution in cache-only summary paths.
+  - Frontend: render that status in STA rows/drill instead of benign monitor-only fallback for actionable signals.
+- Important repo state:
+  - Worktree already contains unrelated prior modifications across signal monitor, signal-options, flow scanner, Massive quote, Replit guardrail, and handoff files. Do not revert those.
+  - Existing signal-options files already include prior live-edge/no-historical-fallback changes.
+- Implemented at `2026-06-03T20:21:09Z`:
+  - `artifacts/api-server/src/services/signal-options-automation.ts`: added explicit Signal Options contract-selection status, candidate shell builder, event/merge status propagation, cache-refresh candidate shell hydration, and fast-summary candidates/data-quality.
+  - `artifacts/api-server/src/services/signal-options-automation.test.ts`: added RED/GREEN coverage for pending shell candidates, blocked skipped events, selected contract-selection events, and fast-summary source guard against `candidates: []`.
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx`: STA rows now show `Contract pending`, `Action deferred`, blocked contract-selection reasons, and `Candidate missing` for actionable signals with no candidate; `Monitor only` is reserved for non-actionable signals.
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`: added render coverage for pending shells and missing actionable candidates.
+- Validation for this task:
+  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts` - 138/138.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js` - 26/26.
+  - PASS: `pnpm --filter @workspace/api-server run typecheck`.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+- Post-restart runtime check at `2026-06-03T20:27:33Z`:
+  - PASS: `/api/algo/deployments/7e2e4e6f-749f-4e65-a011-87d3559a23b0/signal-options/state?view=summary` returned 2 actionable signals and 2 matching candidates with `missingActionableCandidateCount: 0`; sample candidates carried `contractSelectionStatus: "deferred"`.
+  - PASS: follow-up cache-only state sample returned 23 signals, 3 actionable signals, 3 candidates, and `missingActionableCandidateCount: 0`; sample candidates carried `contractSelectionStatus: "pending"`.
+  - PASS: safe browser check at `http://127.0.0.1:18747/?pyrusQa=safe` reached `algo-screen`, `algo-live-content`, `algo-operations-signal-table`, and `algo-signal-table-body`; STA table text reported 22 rows, rendered `Action deferred`, and did not contain `Monitor only · Awaiting scan`.
+  - Screenshot: `/tmp/pyrus-sta-check.png`.
 
 ## Current Status
 
@@ -1028,3 +1260,476 @@
   - Watch the next Signal Monitor events and STA summary/cockpit rows for at least five minutes.
   - Expected result: new current-bar signals should be evaluated from Massive aggregate callbacks, written to `signal_monitor_symbol_states`, and picked up by STA without waiting until the clean 5-minute bar boundary or the next full worker poll.
   - Also verify cockpit `scan_universe` no longer sits in `signal_refresh` because worker polls should report `signalOptionsBatch.source = "stored_state"` / `reason = "stream_live_primary"` instead of triggering large REST-backed refreshes.
+
+## 2026-06-03 STA One-Candle Wait Rule Removal
+
+- User clarified the desired invariant: when a signal fires at candle close, STA must pick it up immediately; any rule that waits one more 5m candle is errant.
+- Root cause found:
+  - `artifacts/api-server/src/services/signal-options-automation.ts` computed `expectedLatestSignalOptionsMonitorBarAt()` from `now - timeframe`, so at `14:00:03` on a 5m profile it still expected `13:55`, not the just-closed `14:00` candle. That made stale stored state look acceptable for one full candle and allowed the worker to regress into 5m-late behavior.
+  - Stream-rolled minute aggregates also stamped completed candles at the last child minute's inclusive end (`14:34:59.999`) instead of the exact candle close (`14:35:00.000`), which could make just-closed stream bars look one millisecond behind the expected live edge.
+- Fix implemented:
+  - `signal-options-automation.ts`: `expectedLatestSignalOptionsMonitorBarAt()` now uses `input.now` directly, so the expected bar is the just-closed candle boundary.
+  - `signal-monitor.ts`: stream aggregate bars now normalize inclusive minute ends to exact close boundaries, and completed multi-minute rollups stamp `dataUpdatedAt` at `bucketEndMs`.
+  - Added/updated tests in `signal-monitor.test.ts` and `signal-options-automation.test.ts` so `14:00:03` requires `14:00`, and stream bars close exactly on candle boundaries.
+- Validation:
+  - PASS: `node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts` - 230/230.
+  - PASS: `pnpm --filter @workspace/api-server typecheck`.
+  - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 13:16:37 MDT`.
+  - PASS: scoped `git diff --check`.
+- Runtime caveat:
+  - Live API PID `6175` started at `2026-06-03 13:11:52 MDT`, before the `13:16:37 MDT` rebuild. Restart via default Run Replit App is required before live STA proof.
+
+## 2026-06-03 STA WebSocket-Only Live Pickup Contract
+
+- User reported `UUUU` appeared in STA roughly 7 minutes late and asked to watch STA while fixing the live signal path.
+- Live evidence before final patches:
+  - Massive stock aggregate WebSocket was active (`activeProvider: "massive-websocket"`), subscribed to `UUUU`, and had sub-100ms aggregate age.
+  - `UUUU` signal event: `signal_at = 2026-06-03T19:25:00Z`, `emitted_at = 2026-06-03T19:31:54.305Z`, lag `414.305s`.
+  - A watcher reproduced the empty table symptom against the running API: `signalCount: 0`, `reason: "signal_options_state_summary_fast_cache_only_fallback"`, while recent Massive REST aggregate calls still included `UUUU`.
+  - Later samples returned `9` rows and `UUUU`, proving stored state existed; the empty STA surface was a cold cache-only summary fallback, not absence of Signal Monitor data.
+- Root causes:
+  - The Signal Options summary `cache-only` path could return a cold empty snapshot even when `refreshSignalsFromMonitorState: true` requested cheap stored Signal Monitor hydration.
+  - The fast summary path could return fresh/stale dashboard cache before honoring the explicit stored-signal refresh request, allowing STA to hold old/empty rows.
+  - Stream-triggered Signal Monitor evaluation still had a REST historical-bar fallback if cached history was not warm enough, so the Massive WebSocket path could regress into 5m historical aggregate REST fetches under load.
+- Fix implemented:
+  - `artifacts/api-server/src/services/signal-options-automation.ts`
+    - `buildSignalOptionsFastSummarySnapshot()` now treats `refreshSignalsFromMonitorState: true` as authoritative for summary signals.
+    - Fresh/stale summary cache is only a fallback while the fast stored-signal refresh runs.
+    - `cache-only + refreshSignalsFromMonitorState` now starts the fast stored-state refresh instead of returning a cold empty snapshot.
+  - `artifacts/api-server/src/services/signal-monitor.ts`
+    - Added `allowHistoricalFallback?: boolean` through live-edge bar loading, symbol evaluation, batch evaluation, and explicit profile-symbol evaluation.
+    - Added `SignalMonitorLiveEdgeHistoryUnavailableError`.
+    - When `allowHistoricalFallback === false`, live-edge evaluation can use WebSocket bars alone or cached history plus WebSocket edge, but cannot fall through to REST historical bars.
+    - If cached history is not warm, `evaluateSignalMonitorSymbol()` preserves the current stored row instead of upserting `unavailable` and clearing STA-visible state.
+  - `artifacts/api-server/src/services/signal-options-worker.ts`
+    - Stream aggregate symbol evaluator now passes `includeProvisionalLiveEdge: true` and `allowHistoricalFallback: false`.
+  - Additional tightening:
+    - Scheduled Signal Options monitor full/batch refresh calls now also pass `allowHistoricalFallback: streamFirstMonitorAvailable ? false : undefined`.
+    - This prevents worker/manual Signal Options monitor refreshes from silently falling back to REST historical bars while Massive aggregate streaming is available.
+  - `artifacts/api-server/src/routes/automation.ts`
+    - Explicit `?cacheMode=cache-only` is honored for state/cockpit/performance diagnostics and pressure fallbacks.
+- Regression coverage:
+  - `signal-monitor.test.ts`: provisional live-edge path tries cached history before REST, strict no-REST mode exists before recursive base load, and no-history strict mode preserves stored state.
+  - `signal-options-worker.test.ts`: stream evaluator asserts `allowHistoricalFallback: false`.
+  - `signal-options-automation.test.ts`: fast summary refresh honors `refreshSignalsFromMonitorState` before returning fresh/stale cache or cold cache-only fallback.
+  - `automation.test.ts`: route cache-mode override source guard.
+- Validation:
+  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-worker.test.ts src/services/signal-options-automation.test.ts src/services/automation.test.ts` - 235/235.
+  - PASS: `pnpm --filter @workspace/api-server typecheck`.
+  - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 13:55:22 MDT`.
+  - PASS: scoped `git diff --check`.
+- Runtime status:
+  - Replit-owned API PID `20587` started at `2026-06-03 13:49:36 MDT`, before the final `13:55:22 MDT` build, so the running API still cannot include the strict no-REST scheduled-refresh patch.
+  - Live route samples after the earlier rebuild no longer reproduced the 0-row cache-only fallback and returned `8-10` STA rows including `UUUU`.
+  - Short watcher found one fast event (`SMCI` lag `8.364s`) and one delayed event (`AMZN` lag `453.373s`) on the boundary process; final proof must be run after the `13:55:22 MDT` build is loaded.
+  - Current cache-only state route still returns rows but can be slow (`19.4s` in the latest sample), so route latency remains a separate live pressure issue to monitor.
+- Required post-restart proof:
+  - Restart only through Replit's default Run Replit App entry.
+  - Confirm API PID start time is after `2026-06-03 13:55:22 MDT`.
+  - Watch `/api/algo/deployments/7e2e4e6f-749f-4e65-a011-87d3559a23b0/signal-options/state?view=summary&cacheMode=cache-only` and the visible STA table.
+  - Expected: `signalCount` remains nonzero through cache-only stream snapshots; UUUU/source rows hydrate from `pyrus-signals`; new current-bar signals emit within seconds of WebSocket aggregate close; stream-triggered Signal Monitor evaluation should not create 5m Massive REST aggregate calls for those symbols.
+
+## 2026-06-03 Flow Scanner Aggregate Timestamp And Line-Usage Audit
+
+- User reported flow scanner lane pills still showing repeated same-ticker runs and asked whether aggregate scanner events are mapped to occurrence time rather than discovery time.
+- Root causes found:
+  - Pyrus broad flow scanner lane had already been changed to sort pills by event recency, but backend aggregate/background scanner events still usually derived `occurredAt` from quote `dataUpdatedAt`/`updatedAt`.
+  - Background aggregate scans use `phase: "seed"` / `phase: "expanded"`, and the old code only hydrated historical option bars for `phase: "manual"`.
+  - Historical candidate selection ran the rotating contract selector independently from live candidate selection, so even when historical bars were enabled they could attach to a different contract subset than the rows that published.
+- Fix implemented:
+  - `artifacts/api-server/src/services/platform.ts`
+    - Added local `FlowScannerContract` / `FlowScannerContracts` metadata with optional `flowOccurredAt`.
+    - Historical option-bar hydration now stamps `flowOccurredAt` and live quote hydration preserves it.
+    - Background/manual scanner paths hydrate a bounded historical subset; historical hydration errors remain user-visible only on manual scans, while background scans fall back silently.
+    - Historical candidates are now sliced from the already selected live candidates instead of rerunning the rotating selector over all metadata contracts.
+    - Candidate event construction now prefers `flowOccurredAt` before quote/data update timestamps.
+  - `artifacts/api-server/src/services/options-flow-scanner.test.ts`
+    - Added aggregate regression: seed scanner snapshot with live quote time `14:35` and historical option-bar time `14:31` must publish aggregate `occurredAt = 14:31`.
+    - Updated background scanner quote test to assert historical bars are sampled for selected live contracts.
+- Live line-usage evidence after restart:
+  - `/api/settings/ibkr-line-usage?detail=full` returned `flowScannerLineCount = 154`, `activeScanPhase = "expanded"`, `seedLineBudget = 24`, `expandedLineBudget = 24`.
+  - Full lease parsing showed 154 flow-scanner leases across 7 symbols: `AAOI`, `AAPL`, `ALAB`, `DIA`, `SPY`, `COIN`, `AMZN`, with `22` option-contract lines each.
+  - Conclusion: current scanner allocation is not one line per ticker. It is one line per selected option contract, capped by a per-ticker contract budget. A true one-line-per-ticker model remains a separate allocation/concurrency redesign; simply setting per-ticker line budget to `1` would recreate the prior 8-10 line underfill because scanner concurrency is capped at 8.
+- Validation:
+  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/options-flow-scanner.test.ts` - 85/85.
+  - PASS: `pnpm --filter @workspace/api-server run typecheck`.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --test src/features/platform/marketFlowScannerConfig.test.js` - 12/12.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js` - 65/65.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+  - PASS: scoped `git diff --check`.
+
+## 2026-06-03 Realtime Massive Quote No-REST Tightening
+
+- User reported slow spot prices around the app and asked whether all Massive ingestion is WebSocket-backed rather than REST.
+- Answer from source/runtime audit:
+  - Not all Massive ingestion can or should be WebSocket-only. Historical bars, backfills, option-chain snapshots, option trade/quote research, logos, and ticker search still use Massive REST where historical/snapshot APIs are the correct tool.
+  - Live stock quotes/trades/minute aggregates should be WebSocket-backed. Runtime after restart shows Massive WebSocket `AM`, `Q`, and `T` active against `socket.massive.com`, `92` subscribed symbols, `5` active consumers, and last message age about `22ms` in the sample.
+  - Recent Massive REST requests still exist, but the sample families were `stock_aggregates` bars for chart/signal/history work, not live quote snapshots.
+- Fix implemented:
+  - `artifacts/api-server/src/services/platform.ts`: realtime Massive `getQuoteSnapshots()` no longer calls `getMassiveClient().getQuoteSnapshots()` to fill missing day-change fields. It returns only Massive stock Q/T socket cache plus stock aggregate socket cache.
+  - `artifacts/api-server/src/services/platform-quote-snapshot.test.ts`: updated regressions so realtime Massive quote snapshots assert `massiveCalls === 0` and `bridgeCalls === 0`; socket prices and aggregate-cache prices are preserved without REST fallback.
+  - `artifacts/pyrus/src/features/charting/useMassiveStockAggregateStream.ts`: frontend live aggregate type now includes `source: "massive-websocket"`.
+- Validation:
+  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/platform-quote-snapshot.test.ts` - 7/7.
+  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-worker.test.ts src/services/signal-options-automation.test.ts src/services/automation.test.ts src/services/platform-quote-snapshot.test.ts` - 242/242.
+  - PASS: `pnpm --filter @workspace/api-server typecheck`.
+  - PASS: `pnpm --filter @workspace/pyrus typecheck`.
+  - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 14:01:17 MDT`.
+  - PASS: scoped `git diff --check`.
+- Live proof after Replit default Run Replit App restart:
+  - Replit workflow restarted at `2026-06-03 14:01:55 MDT`; API PID `25990` started after the `14:01:17 MDT` build, so the no-REST quote fix is loaded.
+  - `/api/quotes/snapshot?symbols=SPY,QQQ,UUUU,AMZN` returned `count: 4`, `fallbackUsed: false`, `delayed: false`, `source: "massive"` for all rows.
+  - SPY/QQQ/AMZN had sub-second `ageMs` (`190ms`, `171ms`, `119ms` in the sample). UUUU was about `204s` old, consistent with no recent post-close tick and aggregate-cache fallback rather than a REST wait.
+  - Diagnostics immediately after restart were healthy (`api p95: 16ms`, `eventLoopP95: 46ms`), then degraded under signal-monitor/bars pressure (`api p95: 4585ms`) while WebSocket provider health remained OK.
+- STA live status after restart:
+  - Cache-only state route returned `200` and `11` signal rows from `pyrus-signals`; no 0-row cache-only fallback reproduced.
+  - Rows were marked `fresh: true` in the sample, with examples including SPY, ROK, AVGO, SMCI, CRWV, AMZN, VXX, TDY, VIXY, USO, UUP.
+  - Cockpit cache-only returned `503 signal_options_cockpit_cache_unavailable` under high pressure because no warmed cockpit payload existed after restart. This is a remaining cache-warm/pressure issue, separate from Massive live quote source selection.
+- Remaining risk:
+  - Route pressure still makes spot updates and STA surfaces feel slow even when the provider WebSocket is fresh. Slow routes after restart included signal-monitor events/profile/state/matrix and `/bars`.
+  - The strict no-REST contract is now true for realtime Massive stock quote snapshots, but not for historical/chart/backfill/option research lanes.
+
+## 2026-06-03 Flow Scanner One-Line-Per-Ticker Allocation
+
+- User asked to implement the reviewed plan for scanner line use: one active option quote line per ticker, broad ticker-slot coverage, bounded metadata workers, and app-wide IBKR lane respect.
+- Fix implemented:
+  - `artifacts/api-server/src/services/market-data-admission.ts`
+    - Added flow-scanner per-underlying exclusivity: a new `flow-scanner-live` option lease for a ticker demotes the previous active scanner option lease for that ticker before budget checks.
+    - Added `flowScannerTickerSlots` diagnostics with active ticker-slot count, per-ticker contract limit, active underlying sample, and duplicate-underlying count/sample.
+  - `artifacts/api-server/src/services/platform.ts`
+    - Runtime defaults now use one live contract line per ticker (`seedLineBudget = expandedLineBudget = radarDeepLineBudget = 1`).
+    - Scanner/radar batch defaults now target the 200-line scanner pool, while metadata worker concurrency remains capped at 8.
+    - Deep queue capacity is ticker-slot capacity, not worker concurrency, so 50-200 tickers can be queued while only bounded workers run.
+    - Scanner diagnostics now expose target/active/eligible ticker slots, ticker-slot shortfall, shortfall reason, per-ticker limit, and duplicate-underlying count.
+  - `artifacts/api-server/src/services/ibkr-lanes.ts`
+    - Runtime setting bounds now allow scanner/radar batch and promotion counts up to 500 while keeping scanner concurrency capped at 8.
+  - Tests updated so pool-fill fixtures use many ticker underlyings, while same-underlying fixtures assert rotation/exclusivity.
+- Validation:
+  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/market-data-admission.test.ts` - 41/41.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/options-flow-scanner.test.ts` - 86/86.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/flow-universe-planner.test.ts` - 10/10.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/ibkr-lane-policy.test.ts src/services/ibkr-line-usage.test.ts` - 27/27.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/watchlist-prewarm.test.ts` - 21/21.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/features/platform/marketFlowScannerConfig.test.js` - 77/77.
+  - PASS: `pnpm --filter @workspace/api-server run typecheck`.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+  - PASS: scoped `git diff --check`.
+- Runtime note:
+  - No Replit startup config, artifact startup command, `.replit`, or environment control-plane changes were made.
+
+## 2026-06-03 STA Signal Time, Sparkline, And Source-Churn Fix
+
+- Implemented regression fixes for the live STA symptoms:
+  - Signal Monitor stored state now restores precise event `signalAt` from `signal_monitor_events.event_key` candidates instead of treating a completed 5m bar close as the display time.
+  - Signal Options stored-state fast path now uses the same Signal Monitor event-key lookup and no longer carries a local duplicate key builder.
+  - Runtime market-data sync now treats omitted/undersized sparkline bars as "no update" instead of clearing existing STA `sparkBars`.
+  - Signal Monitor matrix persistence now skips the active profile timeframe so stale matrix/current-bar hydration cannot overwrite the primary state row consumed by Signal Options.
+- Live audit findings:
+  - The observed "ROKU" row was `ROK`; the paper deployment includes `ROK` and does not include `ROKU`.
+  - `ROK` had a real 5m buy event at `2026-06-03T23:07:27.563Z`, but its active 5m state row was later overwritten to `status=stale`, `current_signal_at=NULL`, `latest_bar_at=2026-06-03T20:35:00Z` at `23:08:39.715Z`. That is why it popped out of STA.
+  - The same source-churn pattern appeared for `BAH`; fresh/cached Signal Options snapshots could briefly show a row, then the shared stored state row could be nulled by stale matrix persistence.
+  - `/signal-monitor/events` had 243 paper events for `2026-06-03`, but STA currently paginates Signal Options' current visible signal snapshots, not the full same-day event log. Showing every same-day signal needs an intentional event-backed STA row source.
+- Data map updated:
+  - Added rules for signal event timing, STA sparkline ownership, active-timeframe matrix persistence, empty Move diagnosis, and current-vs-all-day STA pagination.
+- Validation:
+  - PASS: `node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-automation.test.ts` from `artifacts/api-server` - 210/210.
+  - PASS: `node --import tsx --test src/features/platform/runtimeMarketDataModel.test.js src/screens/algo/OperationsSignalRow.test.js src/screens/algo/algoHelpers.test.js src/features/platform/signalMatrixScheduler.test.js` from `artifacts/pyrus` - 99/99.
+  - PASS: `pnpm --filter @workspace/api-server run typecheck`.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+  - PASS: scoped `git diff --check`.
+  - Post-restart live check at `2026-06-03T20:49Z` showed the one-line-per-ticker model was loaded: `perTickerLiveContractLimit: 1`, ticker target around `187-188`, `duplicateActiveUnderlyingCount: 0`, and radar scanning broad batches around `187-188` symbols.
+  - That check also exposed a remaining underfill in `options-flow-radar-scanner.ts`: radar only used fallback promotions when there were zero hot promotions, so a small hot set still produced only 3-4 deep scanner symbols.
+  - Follow-up fix in `artifacts/api-server/src/services/options-flow-radar-scanner.ts`: fallback candidates now top off remaining promotion capacity after hot promotions instead of only running when the hot list is empty.
+  - Follow-up validation:
+    - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/options-flow-scanner.test.ts` - 87/87, including the new hot-plus-fallback top-off regression.
+    - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/market-data-admission.test.ts src/services/flow-universe-planner.test.ts src/services/ibkr-lane-policy.test.ts src/services/ibkr-line-usage.test.ts` - 78/78.
+    - PASS: `pnpm --filter @workspace/api-server run typecheck`.
+    - PASS: `pnpm --filter @workspace/api-server run build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 14:50:57 MDT`.
+    - PASS: scoped `git diff --check`.
+  - Runtime caveat after the follow-up fix: the running API process had loaded the pre-top-off bundle, so live diagnostics still showed radar scanned `187-188` symbols but promoted only `3`. A normal Replit default Run restart is required to load the rebuilt bundle.
+  - After-hours caveat: live scanner quote lines were `0` because `bridge-option-quote-stream` intentionally blocks `flow-scanner-live` admissions outside NYSE RTH. Recent admission events showed `action: "fallback"`, `owner: "flow-scanner:AAOI"`, `reason: "market_session_quiet"`. During RTH, expected behavior remains active scanner line count ramping toward `min(scannerSchedulableLineCap, eligibleOptionableTickerCount)` with zero duplicate scanner underlyings.
+
+## 2026-06-03 STA Visible Row Hydration Fix
+
+- User symptoms treated as one STA cluster:
+  - GLW/SYM showing 5m increments.
+  - Not all STA signal bubbles hydrating.
+  - Not all STA sparklines hydrating.
+  - Move column mostly empty.
+  - SPY was the only fully hydrated row, then SPY appeared/disappeared.
+- Investigation evidence:
+  - `/api/bars?symbol=NRG&timeframe=1m...` with the table's old `algo-signal-sparkline` background-style request returned `429`, `X-Pyrus-Route-Class: deferred-analytics`, `X-Pyrus-Pressure-Level: high`, `X-Pyrus-Admission-Reason: api-resource-pressure-high`.
+  - The same bars request with active STA headers returned `200`, `X-Pyrus-Route-Class: active-screen`, `X-Pyrus-Admission-Action: allow`.
+  - `/api/quotes/snapshot` could return current visible-row quotes, so blank Move was a frontend hydration gate/admission issue, not missing quote capability.
+  - `OperationsSignalTable` only ran quote/sparkline fallbacks when `backgroundQueriesEnabled` was true; `AlgoScreen` sets that false when the cockpit stream is fresh. That made visible STA rows rely on incidental runtime snapshots from elsewhere.
+  - STA bubbles use the separate signal-matrix scheduler. The table does request the visible page immediately, but under high pressure the active-screen exact-cell cap is `20` cells per request, so a 20-row page with six timeframes hydrates progressively across multiple scheduler passes.
+- Fix implemented:
+  - `artifacts/pyrus/src/screens/AlgoScreen.jsx`: added `algoVisibleRowHydrationQueriesEnabled` independent of derived/background polling and passed it into the Algo live page.
+  - `artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx`: threaded `rowHydrationQueriesEnabled` into `OperationsSignalTable`.
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx`: quote/sparkline row fallbacks now use the visible row gate and active request headers (`algo-signal-table`, `algo-signal-sparkline`) instead of the deferred background path.
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js` and `artifacts/pyrus/src/features/platform/platformRootSource.test.js`: source-contract tests now assert the dedicated visible-row gate and active request options.
+- SPY/source-churn finding:
+  - Recent signal-monitor events did include SPY 5m buy events, but Signal Options cockpit/state endpoints were timing out or shed under high pressure during the probe, and the last successful cockpit summary did not include SPY.
+  - `buildVisibleSignalRows` already merges Signal Options signal rows with candidate fallbacks; the disappearance occurs before that, when the selected source array changes. No monitor-event-to-STA merge was implemented because that is a product semantics change.
+  - Matrix bubble incompleteness remains a pressure/cap tradeoff unless we intentionally raise the active-screen exact-cell cap or add a dedicated visible-page matrix lane.
+- Validation:
+  - PASS: `node --import tsx --test src/screens/algo/OperationsSignalRow.test.js src/features/platform/platformRootSource.test.js` from `artifacts/pyrus` - 91/91.
+  - PASS: `node --import tsx --test src/screens/algo/algoHelpers.test.js` from `artifacts/pyrus` - 36/36.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+  - PASS: scoped `git diff --check`.
+  - PASS: `docs/backend-data-map.md` fence check (`8` fences, `4` Mermaid blocks, even fence count).
+- Runtime note:
+  - No Replit startup config, artifact startup command, `.replit`, or environment control-plane changes were made.
+
+## 2026-06-03 STA Same-Day Signal History Fix
+
+- User challenged the previous conclusion that full-day STA rows required a future event-backed source. Live proof showed that same-day signal data already existed:
+  - `/api/signal-monitor/events?environment=paper&limit=500` returned `500` events, including `245` events dated `2026-06-03` in the sample.
+  - `/api/algo/deployments/7e2e4e6f-749f-4e65-a011-87d3559a23b0/signal-options/state?view=summary` returned only the current action snapshot set (`10` signals in the sample).
+- Root cause:
+  - `Signal Options` intentionally collapses to current/fresh monitor states for actionability.
+  - `AlgoScreen` fed `OperationsSignalTable` only `buildVisibleSignalRows({ signals: signalOptionsSignals, candidates: signalOptionsCandidates })`.
+  - `PlatformApp` already fetched `signalMonitorEvents`, but `PlatformScreenRouter` did not pass them to `AlgoScreen`, and `buildVisibleSignalRows` ignored event history.
+- Fix implemented:
+  - `artifacts/pyrus/src/screens/algo/algoHelpers.js`
+    - Added `buildStaSignalHistoryRows`.
+    - Converts same-day `signalMonitorEvents` into STA row-shaped, non-actionable history rows.
+    - Uses the New York market date (`America/New_York`) instead of UTC for "same day".
+    - Uses the backend-compatible signal key `profileId:symbol:timeframe:direction:signalAt` so current action rows dedupe/overlay matching event rows.
+    - Keeps older same-day events visible even when the current Signal Options row ages out.
+  - `artifacts/pyrus/src/features/platform/PlatformScreenRouter.jsx`
+    - Passes `signalMonitorEvents` and `signalMonitorEventsLoaded` into `MemoAlgoScreen`.
+  - `artifacts/pyrus/src/screens/AlgoScreen.jsx`
+    - Merges loaded `signalMonitorEvents` into `visibleSignalRows` with `focusedDeployment.symbolUniverse` as the STA universe filter.
+  - `docs/backend-data-map.md`
+    - Updated STA ownership from "current visible snapshots only / future gap" to "same-day Signal Monitor event history plus current Signal Options action overlay".
+    - Documented the then-remaining scale caveat: existing event endpoint capped at 500 rows. Superseded by the `17:57` cursor-pagination section below.
+- Validation so far:
+  - PASS: `node --import tsx --test src/screens/algo/algoHelpers.test.js` from `artifacts/pyrus` - 40/40.
+  - PASS: `node --import tsx --test src/screens/algo/algoHelpers.test.js src/features/platform/platformRootSource.test.js src/screens/algo/OperationsSignalRow.test.js` from `artifacts/pyrus` - 132/132.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+  - PASS: scoped `git diff --check`.
+  - PASS: backend data map fence check (`28` fences, `13` Mermaid blocks, even fence count).
+  - PASS: focused expanded Pyrus bundle: `node --import tsx --test src/screens/algo/algoHelpers.test.js src/screens/algo/OperationsSignalRow.test.js src/features/platform/platformRootSource.test.js src/features/platform/runtimeMarketDataModel.test.js src/features/platform/signalMatrixScheduler.test.js` - 169/169.
+  - PASS: live payload sanity through `buildVisibleSignalRows`: event endpoint returned `500`, Signal Options state returned `8` current signals, merged rows returned `239` (`231` history + `8` current) for `2026-06-03T23:35:00Z`.
+  - PASS: safe-mode browser check at `http://127.0.0.1:18747/?pyrusQa=safe`: Algo STA table rendered `All 237 of 237 signals`, pagination `Rows 1-20 of 237`, and no page/console errors after hot reload.
+- Superseded caveat:
+  - This section originally recorded the `500`-row event endpoint cap as remaining work. The `2026-06-03 STA Event Pagination and Source Filters` section below replaces that caveat with the implemented cursor-paged contract.
+
+## 2026-06-03 Radar-Style UI Icon Cleanup
+
+- User reported radar-looking icons still visible in the IBKR connection area after the earlier radar scanner cleanup.
+- Root cause:
+  - The earlier cleanup removed literal `radar` strings and the old scanner/radar code path, but active UI still used lucide `RadioTower` under non-radar names.
+  - `HeaderStatusCluster.jsx` mapped the IBKR gateway tile key `radioTower`, WebSocket provider icon, and operation-step fallback to `RadioTower`.
+- Fix implemented:
+  - IBKR connection/header:
+    - `HeaderStatusCluster.jsx`: removed `RadioTower` import, changed gateway tile rendering to `MonitorUp`, WebSocket provider rendering to `Network`, and unknown operation-step fallback to `Activity`.
+    - `ibkrPopoverModel.js`: changed the Gateway tile `iconKey` from `radioTower` to `gateway`.
+    - `IbkrConnectionStatus.jsx`: replaced quiet/standby/default `RadioTower` status glyphs with `Activity`, `CircleOff`, or `PlugZap`.
+  - Active non-IBKR UI:
+    - Replaced Algo route/monitor/toast/notification/pulse/deploy `RadioTower` glyphs with `Bot`.
+    - Replaced active scanner status `RadioTower` with `RefreshCw`.
+    - Replaced Algo halt `positionMarkFeed` `RadioTower` with `Activity`.
+  - Added `platformRootSource.test.js` guards:
+    - IBKR connection header must not contain `RadioTower`/`radioTower` or emit the old gateway `iconKey: "radioTower"`.
+    - Active non-test Pyrus source must not import `RadioTower`.
+- Validation:
+  - PASS: `rg -n "\bRadioTower\b|\bradioTower\b" artifacts/pyrus/src ...` now only finds the source guard itself.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js` - 67/67.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+  - PASS: scoped `git diff --check`.
+- Runtime note:
+  - No Replit startup config, artifact startup command, `.replit`, environment variables, or Replit control-plane operations were touched.
+
+## 2026-06-03 Post-Restart Radar Icon Check
+
+- Restart validation at `2026-06-03T23:38:00Z`:
+  - Frontend served at `http://127.0.0.1:18747/?pyrusQa=safe`.
+  - `/api/healthz` returned `{"status":"ok"}`.
+  - `/api/readiness` returned `appReadiness.status: "ready"`.
+  - Readiness diagnostics remain warning because of latency/browser samples; broker trading is blocked by after-hours `market_session_quiet`.
+  - Served runtime source for `HeaderStatusCluster.jsx`, `IbkrConnectionStatus.jsx`, `AppHeader.jsx`, and `PlatformShell.jsx` returned HTTP `200` and no `RadioTower`/`radioTower` matches.
+  - Safe Playwright check mounted the app, found the IBKR connection trigger, opened the IBKR dialog, saw `radarTextCount: 0`, and recorded no console warnings/errors or page errors.
+  - Focused guard suite still passes: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js` - 67/67.
+
+## 2026-06-03 Massive SkillsMP API Handling Pass
+
+- User provided `https://skillsmp.com/skills/massive-com-codex-plugin-plugins-massive-skills-debug-skill-md` after asking to search SkillsMP for Massive-related skills that could improve the platform Massive API connection.
+- Skills installed:
+  - Third-party `foreztgump/massive-skill` installed as `~/.codex/skills/massive`.
+  - Massive-owned `massive-debug`, `massive-discover`, `massive-options`, and `massive-dashboard` installed from `massive-com/codex-plugin`.
+  - Restart Codex to load these installed skills as active skills.
+- Guidance applied:
+  - Massive debug guidance distinguishes 401 auth, 403 entitlement/plan, 404 ticker or endpoint shape, 429 rate limit, and empty options results/date-window issues.
+  - Official Massive docs confirmed REST auth supports `apiKey` query params and `Authorization: Bearer`; stock full-market snapshots are a batch endpoint; option-chain snapshots support `expiration_date` filters, `contract_type`, `order`, `sort`, and `limit`; Options Basic is rate-limited while Starter/Developer/Advanced unlock snapshots/trades/quotes/Greeks by tier.
+- Backend fix in `artifacts/api-server/src/providers/massive/market-data.ts`:
+  - REST diagnostics now read `HttpError.statusCode` instead of looking only for `error.status`.
+  - Added `MassiveRestFailureKind`: `auth`, `entitlement`, `rate_limit`, `not_found`, `invalid_request`, `network`, `upstream`, `unknown`.
+  - `MassiveRestActivity` now includes `errorKind` and `diagnosticHint`, while continuing to redact API keys.
+  - Fixed diagnostics timestamp parsing for Massive nanosecond trade query params by routing numeric timestamps through the existing `toDate` scaler. Before this, `new Date(<nanoseconds>).toISOString()` could throw and silently drop historical option trade hydration.
+- Frontend/runtime fix in `artifacts/pyrus/src/features/platform/runtimeControlModel.js`:
+  - Massive REST normalization now exposes `lastHttpStatus`, `lastErrorKind`, and `lastDiagnosticHint`.
+  - Failed REST summaries render actionable categories, for example `option chain snapshot SPY · entitlement (403)`.
+- Tests added:
+  - `artifacts/api-server/src/providers/massive/market-data.test.ts`: provider HTTP failures classify as degraded, preserve `httpStatus: 403`, set `errorKind: entitlement`, and avoid leaking API keys.
+  - `artifacts/pyrus/src/features/platform/runtimeControlModel.test.js`: runtime snapshot preserves and renders the Massive REST failure category.
+- Validation:
+  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/providers/massive/market-data.test.ts` - 23/23.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/runtimeControlModel.test.js` - 42/42.
+  - PASS: `pnpm --filter @workspace/api-server run typecheck`.
+- Worktree note:
+  - `runtimeControlModel.js` and `runtimeControlModel.test.js` already had unrelated scanner wording/coverage edits in the dirty worktree. Do not revert those while handling the Massive diagnostics changes.
+
+## 2026-06-03 API Diagnosis Implementation Slice
+
+- Started implementation at `2026-06-03T23:45:19Z`.
+- Scope:
+  - Remove the artificial unknown-pressure-to-high fallback from the signal matrix foreground admission path.
+  - Keep real high pressure protected with explicit caps instead of silent 5-minute-style throttling.
+  - Refresh hydrated signal matrix cells at the next candle close plus a small grace window, not after a 2x timeframe stale window.
+  - Wire matrix evaluations through the existing live-edge/no-REST bar path so STA pickup uses warmed WebSocket aggregate state first and preserves stored states if cache history is not warm.
+  - Update `docs/backend-data-map.md` with the final backend rules once code and tests settle.
+- Dirty-worktree rule remains in force: many unrelated files are already modified; do not revert them while handling this slice.
+
+## 2026-06-03 STA Event Pagination and Source Filters
+
+- Implemented the follow-up to remove the `500` total-history cap from Signal Monitor events:
+  - `/signal-monitor/events` now accepts `from`, `to`, `cursor`, and page-size `limit`.
+  - Response now includes `nextCursor` and `hasMore`.
+  - DB ordering is stable on `signalAt desc, id desc`; cursor pagination uses both fields to avoid duplicate/skipped rows when signals share a timestamp.
+  - Runtime fallback uses the same filter/page helper and retains `20_000` recent runtime events instead of `500`.
+  - OpenAPI and generated zod/react client outputs were regenerated.
+- STA frontend changes:
+  - `PlatformApp` now fetches Signal Monitor events through a generated-request `useQuery` wrapper that follows every `nextCursor` for a rolling 36-hour window.
+  - Invalidation now targets the base Signal Monitor event query key instead of the old `{ limit: 500 }` key.
+  - `OperationsSignalTable` adds `Current` and `History` filters; historical rows are identified by `signal.sourceType === "signal_monitor_event"`.
+  - Added `artifacts/pyrus/scripts/qaStaSignalHistory.mjs` and package script `qa:sta-history` for safe browser regression checks against an already-running app.
+- Backend data map updated:
+  - `/signal-monitor/events` is documented as cursor-paged.
+  - STA same-day signal visibility rule now says clients must follow `nextCursor` until `hasMore` is false.
+  - Added the Signal Monitor event-history contract note: `signalAt`, not `emittedAt`, defines the day window.
+- Validation:
+  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test --test-name-pattern "signal monitor event" src/services/signal-monitor.test.ts` - 5/5.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js src/features/platform/platformRootSource.test.js src/screens/algo/algoHelpers.test.js` - 135/135.
+  - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
+  - PASS: `pnpm --filter @workspace/api-server run typecheck`.
+  - PASS: `pnpm --filter @workspace/pyrus run qa:sta-history` against `http://127.0.0.1:18747/?pyrusQa=safe`: API same-day events `243`, STA visible total `244`, pagination `Rows 1-20 of 244`.
+  - PASS: scoped `git diff --check`.
+  - PASS: backend data-map fence check (`28` fences, `13` Mermaid blocks, even fence count).
+  - BLOCKED by hot-runtime guard: `pnpm run audit:api-codegen` regenerated generated outputs but failed when `pnpm -w run typecheck:libs` refused to run because the live PYRUS/Replit runtime is hot. Targeted package typechecks passed without forcing `PYRUS_ALLOW_HOT_VALIDATION=1`.
+- Runtime/config note:
+  - No Replit startup config, artifact startup command, `.replit`, environment variables, or Replit control-plane operations were touched.
+  - The worktree had pre-existing staged/dirty changes in several touched files; do not revert or unstage unrelated changes without explicit instruction.
+
+## 2026-06-03 STA History Backoff and Action Cockpit Batch Copy
+
+- User reported Action Cockpit text: `Signals · All 249/249 · Signal 10m · Bar 11m · worker waiting 5s; last batch 0/90 symbols · Massive Primary · Action Cockpit`.
+- Root cause:
+  - The `batch` wording was an internal Signal Options worker monitor-refresh counter leaking into Action Cockpit copy.
+  - `lastBatchSize: 0` with `lastBatchUniverseCount: 90` did not mean STA had zero signals or that the table was capped; it meant that worker pass evaluated zero monitor-refresh symbols while stored/current signal state was already available.
+  - The table symptom still mattered because the same debug pass found a transient Signal Monitor DB fallback/backoff window where event history could appear empty.
+- Fix implemented:
+  - `artifacts/api-server/src/services/signal-options-automation.ts` no longer renders zero-size monitor refreshes as `last batch 0/N symbols`.
+  - Zero-size refresh/current-state path now renders `signal state current`.
+  - Non-empty worker refresh progress renders `last refresh N/N symbols`, preserving operator useful progress without exposing `batch` terminology.
+  - Diagnostic fields `lastBatchSize` and `lastBatchUniverseCount` remain in the backend payload for debugging.
+- Tests added in `artifacts/api-server/src/services/signal-options-automation.test.ts`:
+  - Zero-size current-state cockpit stage asserts `worker waiting 5s; signal state current` and no `batch` or `0/90` user-facing copy.
+  - Non-empty monitor refresh asserts `worker waiting 5s; last refresh 12/90 symbols` and no `batch` wording.
+- STA history QA guard fixed:
+  - `artifacts/pyrus/scripts/qaStaSignalHistory.mjs` now waits for visible STA history to hydrate instead of checking before the visible total settles.
+  - The guard now reports `waitedMs` and fails only after the expected same-day event count should have appeared.
+- Runtime finding:
+  - During the audit, `/signal-monitor/events` briefly returned empty because Signal Monitor was in runtime fallback profile `runtime-fallback-paper` with `Postgres is unavailable; using runtime-only signal monitor evaluation.`
+  - After the DB backoff cleared, storage health returned OK, the real paper profile returned, `/signal-monitor/events` returned `515` rows for the 36-hour sample window, and the STA history guard passed with API same-day events `248` and visible STA total `249`.
+  - This means empty STA history during fallback is a real operational signal to sample profile/state/storage health, not a clean no-data state.
+- Backend data map updated:
+  - Added Signal Monitor persistence/fallback rules.
+  - Added the Action Cockpit worker status-copy rule.
+  - Added bug-hunting rows for same-day history disappearing and `last batch 0/N symbols` copy.
+- Validation:
+  - PASS: `node --check artifacts/pyrus/scripts/qaStaSignalHistory.mjs`.
+  - PASS: `pnpm --filter @workspace/pyrus run qa:sta-history` after recovery: API same-day events `248`, visible total `249`, rendered rows `20`, pagination `Rows 1-20 of 249`.
+  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts` - 140/140.
+  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-worker.test.ts src/services/signal-options-automation.test.ts src/services/signal-monitor.test.ts` - 244/244.
+  - PASS: `pnpm --filter @workspace/api-server run typecheck`.
+  - PASS: scoped `git diff --check`.
+  - PASS: backend data-map fence check (`28` fences, `13` Mermaid blocks, even fence count).
+- Runtime/config note:
+  - The running API process predates this source/dist fix, so the live endpoint can still show old `last batch` copy until a normal Replit Run App reload.
+  - No supervisor process was killed and no Replit startup/control-plane configuration was touched.
+
+## 2026-06-03 Signal Matrix Stream-First Fresh Signal Fix
+
+- Continued the larger 6-3 API diagnosis list around `/bars`, pressure, and STA pickup.
+- Live runtime evidence at `2026-06-04T00:15-00:16Z`:
+  - API pressure was `high` because route latency was high, not because API memory was high. Slow routes included `/accounts/shadow/positions`, `/signal-monitor/state`, and `/bars`.
+  - Browser diagnostics showed `/api/bars` as a visible hot spot: `87` timings in 5m, p95 about `34s`, `27` errors.
+  - STA-marked `/api/bars` with `x-pyrus-request-family: algo-signal-sparkline` and priority `8` returned `200`, `active-screen`, `allow`; background `sparkline` priority `-2` returned `429`, `deferred-analytics`, `api-resource-pressure-high`.
+  - Bars hydration counters showed heavy `signal-matrix` use of the shared bar hydration lane, while Massive aggregate WebSocket was configured and subscribed.
+- Root cause:
+  - `evaluateSignalMonitorMatrixSymbol()` had `evaluateSignalMonitorMatrixStateFromStreamBars()`, but the normal matrix path still waited on `loadSignalMonitorCompletedBars()` first.
+  - Stream-only matrix evaluation was used only after a 12s bar-load timeout, or through the warm-cache merge in `loadSignalMonitorCompletedBars()`.
+  - After a restart or under pressure, cache history can be cold, so a just-closed Massive aggregate WebSocket signal could be delayed or dropped to stored-state fallback instead of winning immediately.
+- Fix:
+  - `artifacts/api-server/src/services/signal-monitor.ts` now evaluates live-edge Massive aggregate WebSocket/cache bars before history loading when matrix calls request provisional live edge.
+  - A new `isFreshSignalMonitorMatrixStreamState()` guard short-circuits only for fresh `buy`/`sell` stream states.
+  - Non-signal or stale stream states continue into the existing no-REST/stored-state path, so older context is not erased by a short stream window.
+  - Timeout fallback reuses the already-computed stream state instead of recomputing it.
+  - `docs/backend-data-map.md` now documents the exact invariant: fresh stream buy/sell wins before history; stale/no-signal stream output must not wipe stored context.
+- Validation:
+  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts` - 78/78.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/features/platform/signalMatrixScheduler.test.js src/screens/algo/OperationsSignalRow.test.js` - 127/127.
+  - PASS: `pnpm --filter @workspace/api-server exec tsc --noEmit --pretty false`.
+- Restart/runtime note:
+  - The running API process will need the normal Replit Run App reload before live STA proof reflects this stream-first backend change.
+  - No Replit startup config, artifact startup command, `.replit`, environment variables, or control-plane operations were touched.
+
+## 2026-06-03 `/bars` Stale Refresh Pressure Gate
+
+- Continued the larger 6-3 API diagnosis list after stream-first STA pickup, focusing on why `/bars` still showed high p95 and high provider fetch pressure.
+- Runtime evidence from the prior sample:
+  - `/api/bars` browser diagnostics showed p95 around `34s` and `27` errors.
+  - `barsHydrationCounters` showed high `backgroundRefresh` and `providerFetch`.
+  - STA-marked `/bars` requests with active priority were admitted under high pressure, while background sparkline requests were correctly shed by route admission.
+- Root cause:
+  - Route admission was not the remaining issue for visible STA `/bars` calls.
+  - Stale `/bars` cache hits returned immediately, but still scheduled background refresh work whenever chart hydration background refresh was enabled.
+  - Under route-latency pressure this created a feedback loop: stale cache protected the response path, while hidden refreshes still competed for provider/bridge work.
+- Fix:
+  - `artifacts/api-server/src/services/platform.ts` now gates stale-hit background refresh by API pressure.
+  - Normal/watch pressure keeps the previous background refresh behavior.
+  - High pressure only allows stale-hit background refresh for active-priority requests (`priority >= 8`), preserving visible chart/STA refresh while suppressing low-priority fanout.
+  - Critical pressure suppresses stale-hit background refresh entirely.
+  - Added `backgroundRefreshPressureSkipped` to bars hydration counters.
+  - `docs/backend-data-map.md` now documents `/bars` as a chart/backtest/historical surface and the stale refresh pressure invariant.
+- Validation:
+  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test --test-name-pattern "suppresses stale background refresh|refresh policy|marks stale cached" src/services/option-chain-batch.test.ts` - 3/3.
+  - PASS: `pnpm --filter @workspace/api-server exec tsc --noEmit --pretty false`.
+  - Note: a mis-scoped broader `option-chain-batch.test.ts` run executed unrelated tests and still failed 5 existing cases outside this slice; the new high-pressure stale-refresh tests passed in that broader run.
+- Restart/runtime note:
+  - The running API process will need a normal Replit Run App reload before live diagnostics include this pressure gate.
+  - No Replit startup config, artifact startup command, `.replit`, environment variables, or control-plane operations were touched.
+
+## 2026-06-03 Shadow Positions Filter Cache Reuse
+
+- Continued the larger API pressure list after the `/bars` stale-refresh gate.
+- Runtime evidence:
+  - New diagnostics at `2026-06-04T00:33Z` showed `/accounts/shadow/positions` remained the dominant route-latency pressure driver, p95 about `16s`.
+  - `/bars` counters already showed the stale-refresh gate active in the running process: `backgroundRefreshPressureSkipped` was nonzero and server `/bars` p95 had fallen to about `3.1s`.
+  - Direct probes showed shadow all-positions/no-live-quotes serving in about `2.25s`, while a cold `assetClass=Options&liveQuotes=false` key still took about `9.5s`.
+- Root cause:
+  - `getShadowAccountPositions()` built separate read-cache keys for `all`, `Options`, and `Stocks`.
+  - The frontend can request filtered views, so an `Options` key could rebuild the shadow ledger and position enrichment path even when the equivalent all-positions response for the same source/live-quote mode was already cached.
+- Fix:
+  - `artifacts/api-server/src/services/shadow-account.ts` now reuses all-positions cache for filtered shadow position reads.
+  - Fresh all-cache can satisfy filtered `Stocks`/`Options` reads immediately and reweights totals for the filtered rows.
+  - Stale all-cache can satisfy filtered reads only under high/critical API pressure, preserving stale/degraded flags; normal pressure still attempts a fresh filtered read.
+  - `docs/backend-data-map.md` now documents filtered shadow positions as views over the all-positions ledger response.
+- Validation:
+  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test --test-name-pattern "shadow filtered positions|shadow read cache|shadow account positions route" src/services/shadow-account.test.ts src/services/account-positions.test.ts` - 7/7.
+  - PASS: `pnpm --filter @workspace/api-server exec tsc --noEmit --pretty false`.
+- Runtime/config note:
+  - A direct post-change endpoint probe still returned in about `3.25s` on the running app, likely due to current cache/process contention; source-level tests and typecheck are the proof for this slice.
+  - No Replit startup config, artifact startup command, `.replit`, environment variables, or control-plane operations were touched.

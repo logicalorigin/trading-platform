@@ -13,7 +13,7 @@ import {
   type ChartDisplayType,
   type ChartViewportSnapshot,
   type ChartLegendMetadata,
-  type GexProjectionConeOverlay,
+  type GexChartOverlay,
   type MobileChartInteractionMode,
   type ChartSurfaceControls,
   type OverlayContent,
@@ -296,7 +296,7 @@ type ResearchChartFrameProps = {
   hideCrosshair?: boolean;
   drawings?: ResearchDrawing[];
   referenceLines?: ReferenceLine[];
-  gexProjectionCone?: GexProjectionConeOverlay | null;
+  gexOverlay?: GexChartOverlay | null;
   chartEvents?: ChartEvent[];
   chartFlowDiagnostics?: FlowChartEventConversion | null;
   latestQuotePrice?: number | null;
@@ -355,7 +355,7 @@ export const ResearchChartFrame = ({
   hideCrosshair = false,
   drawings = EMPTY_DRAWINGS,
   referenceLines = EMPTY_REFERENCE_LINES,
-  gexProjectionCone = null,
+  gexOverlay = null,
   chartEvents = EMPTY_CHART_EVENTS,
   chartFlowDiagnostics = null,
   latestQuotePrice = null,
@@ -473,7 +473,7 @@ export const ResearchChartFrame = ({
             bottomOverlayHeight={resolvedSurfaceBottomOverlayHeight}
             drawings={drawings}
             referenceLines={referenceLines}
-            gexProjectionCone={gexProjectionCone}
+            gexOverlay={gexOverlay}
             chartEvents={chartEvents}
             chartFlowDiagnostics={chartFlowDiagnostics}
             latestQuotePrice={latestQuotePrice}

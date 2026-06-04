@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-test("TradeEquityPanel wires the GEX projection cone into the shared chart frame", () => {
+test("TradeEquityPanel wires the combined GEX overlay into the shared chart frame", () => {
   const source = readFileSync(
     new URL("../trade/TradeEquityPanel.jsx", import.meta.url),
     "utf8",
@@ -10,16 +10,23 @@ test("TradeEquityPanel wires the GEX projection cone into the shared chart frame
 
   assert.match(source, /useGexProjectionConeOverlay/);
   assert.match(source, /const gexProjection = useGexProjectionConeOverlay/);
-  assert.match(source, /gexProjectionCone=\{gexProjection\.overlay\}/);
+  assert.match(source, /const chartGexOverlay = useMemo/);
+  assert.match(source, /zeroGammaLine:\s*gexOverlay\?\.zeroGammaLine \|\| null/);
+  assert.match(source, /projectionCone:\s*gexProjection\.overlay \|\| null/);
+  assert.match(source, /gexOverlay=\{chartGexOverlay\}/);
+  assert.doesNotMatch(source, /gexProjectionCone=\{gexProjection\.overlay\}/);
 });
 
-test("MarketChartCell only enables GEX projection fetches for active chart cells", () => {
+test("MarketChartCell bounds GEX projection fetches to active hydrated chart cells", () => {
   const source = readFileSync(
     new URL("../market/MarketChartCell.jsx", import.meta.url),
     "utf8",
   );
 
-  assert.match(source, /gexProjectionEnabled=\{Boolean\(isActive \|\| fullFrame\)\}/);
+  assert.match(source, /const chartGexOverlayEnabled = Boolean\(ticker && historicalDataEnabled\)/);
+  assert.match(source, /const chartGexProjectionEnabled = Boolean\(/);
+  assert.match(source, /ticker && historicalDataEnabled && \(isActive \|\| fullFrame\)/);
+  assert.match(source, /gexProjectionEnabled=\{chartGexProjectionEnabled\}/);
 });
 
 test("Trade screen keeps the spot chart drawable in narrow layouts", () => {
@@ -33,7 +40,7 @@ test("Trade screen keeps the spot chart drawable in narrow layouts", () => {
   assert.match(source, /tradeIsNarrow\s*\?\s*tradeNarrowChartFrameStyle/);
 });
 
-test("Research chart frame forwards the GEX projection cone to the chart surface", () => {
+test("Research chart frame forwards the combined GEX overlay to the chart surface", () => {
   const frameSource = readFileSync(
     new URL("../charting/ResearchChartFrame.tsx", import.meta.url),
     "utf8",
@@ -43,8 +50,12 @@ test("Research chart frame forwards the GEX projection cone to the chart surface
     "utf8",
   );
 
-  assert.match(frameSource, /gexProjectionCone\?: GexProjectionConeOverlay \| null/);
-  assert.match(frameSource, /gexProjectionCone=\{gexProjectionCone\}/);
+  assert.match(surfaceSource, /export type GexChartOverlay =/);
+  assert.match(frameSource, /gexOverlay\?: GexChartOverlay \| null/);
+  assert.match(frameSource, /gexOverlay=\{gexOverlay\}/);
+  assert.match(surfaceSource, /const gexProjectionCone = gexOverlay\?\.projectionCone \?\? null/);
+  assert.match(surfaceSource, /const gexZeroGammaLine = gexOverlay\?\.zeroGammaLine \?\? null/);
+  assert.match(surfaceSource, /const effectiveReferenceLines = useMemo/);
   assert.match(surfaceSource, /data-chart-gex-projection-cone/);
   assert.match(surfaceSource, /data-chart-gex-projection-future-axis/);
   assert.match(surfaceSource, /formatGexProjectionAxisLabel/);
@@ -65,8 +76,21 @@ test("Research chart frame forwards the GEX projection cone to the chart surface
   assert.match(surfaceSource, /buildGexProjectionConeSvgOverlay/);
   assert.match(surfaceSource, /centerDots/);
   assert.match(surfaceSource, /data-chart-gex-projection-center-dot/);
+  assert.match(surfaceSource, /const centerTone = theme\.green \|\| forecastTone/);
+  assert.match(surfaceSource, /centerStroke:\s*withAlpha\(centerTone,\s*"f2"\)/);
   assert.match(surfaceSource, /buildGexProjectionFallbackPriceCoordinate/);
   assert.match(surfaceSource, /fallbackPriceToCoordinate/);
+  assert.match(surfaceSource, /anchorPrice\?: number \| null/);
+  assert.match(surfaceSource, /anchorPrice: latestQuotePrice/);
+  assert.match(surfaceSource, /latestQuotePrice,\s*overlayRevision/);
+  assert.match(
+    surfaceSource,
+    /const latestSpotPrice =[\s\S]*isFiniteNumber\(anchorPrice\)[\s\S]*lastBar\.c[\s\S]*overlay\.spot/,
+  );
+  assert.match(
+    surfaceSource,
+    /resolvePriceCoordinate\(latestSpotPrice\) \?\?[\s\S]*resolvePriceCoordinate\(overlay\.spot\)/,
+  );
   assert.match(surfaceSource, /The GEX cone depends on priceToCoordinate/);
   assert.match(surfaceSource, /activePriceSeriesRef\.current = candleSeries;\s*\/\/ The GEX cone depends on priceToCoordinate; rebuild overlays after series attach\.\s*setOverlayRevision/);
 });

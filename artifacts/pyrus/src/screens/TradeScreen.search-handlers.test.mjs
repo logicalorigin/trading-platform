@@ -78,11 +78,12 @@ test("Trade tab labels show live price before hiding percent on phone", () => {
 });
 
 test("Trade spot chart adds the GEX zero-gamma reference line", () => {
-  assert.match(source, /useGexZeroGamma\(activeTicker,\s*\{\s*enabled:\s*tradeLiveStreamsEnabled/);
+  assert.match(source, /useGexZeroGamma\(activeTicker,\s*\{\s*enabled:\s*tradePrimaryChartDataEnabled/);
   assert.match(source, /useGexZeroGammaReferenceLine\(gexZeroGamma\)/);
-  assert.match(source, /const equityReferenceLines = useMemo/);
-  assert.match(source, /gexZeroGammaReferenceLine[\s\S]*\?\s*\[\.\.\.workspaceReferenceLines,\s*gexZeroGammaReferenceLine\]/);
-  assert.match(source, /referenceLines=\{equityReferenceLines\}/);
+  assert.match(source, /const equityGexOverlay = useMemo/);
+  assert.match(source, /zeroGammaLine:\s*gexZeroGammaReferenceLine/);
+  assert.match(source, /referenceLines=\{workspaceReferenceLines\}/);
+  assert.match(source, /gexOverlay=\{equityGexOverlay\}/);
 });
 
 test("TradeScreen option price chart lets the chart surface own empty state", () => {
@@ -132,7 +133,7 @@ test("TradeScreen keeps option chain snapshots warm while hidden", () => {
   assert.match(source, /provider:\s*"ibkr"/);
 });
 
-test("TradeScreen queues active and tracked ticker flow refreshes through the scanner", () => {
+test("TradeScreen queues aggregate and historical ticker flow refreshes through the scanner", () => {
   assert.match(source, /const TRADE_FLOW_REFRESH_MS = 5_000/);
   assert.match(source, /const TRADE_FLOW_HISTORY_REFRESH_MS = 15_000/);
   assert.match(source, /const tradeFlowRefreshMs = background/);
@@ -148,11 +149,15 @@ test("TradeScreen queues active and tracked ticker flow refreshes through the sc
   assert.match(source, /cacheStatus:\s*cached\?\.meta\?\.cacheStatus \|\| "runtime-cache"/);
   assert.match(
     source,
-    /listFlowEventsRequest\(\{\s*underlying:\s*ticker,\s*limit:\s*TRADE_FLOW_LIVE_LIMIT,\s*blocking:\s*false,\s*queueRefresh:\s*true,/,
+    /listAggregateFlowEventsRequest\(\s*\{\s*limit:\s*TRADE_FLOW_AGGREGATE_LIMIT,\s*scope:\s*"all",\s*\}/,
+  );
+  assert.match(
+    source,
+    /listFlowEventsRequest\(\s*\{\s*underlying:\s*ticker,\s*limit:\s*TRADE_FLOW_HISTORY_LIMIT,[\s\S]*?blocking:\s*false,/,
   );
   assert.doesNotMatch(
     source,
-    /listFlowEventsRequest\(\{\s*underlying:\s*ticker,\s*limit:\s*TRADE_FLOW_LIVE_LIMIT,\s*blocking:\s*true,/,
+    /listFlowEventsRequest\(\s*\{\s*underlying:\s*ticker,\s*limit:\s*TRADE_FLOW_HISTORY_LIMIT,[\s\S]*?blocking:\s*true,/,
   );
 });
 

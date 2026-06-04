@@ -8360,6 +8360,7 @@ const BARS_BROKER_BACKFILL_EMPTY_RETRY_DELAY_MS = readPositiveIntegerEnv(
   750,
 );
 const BARS_BROKER_LIVE_EDGE_MIN_PRIORITY = 6;
+const BARS_HIGH_PRESSURE_STALE_REFRESH_MIN_PRIORITY = 8;
 const BARS_FULL_BROKER_RECOVERY_MIN_PRIORITY = 10;
 const BARS_SYNTHESIS_ONLY_CACHE_TTL_MS = readPositiveIntegerEnv(
   "BARS_SYNTHESIS_ONLY_CACHE_TTL_MS",
@@ -8401,6 +8402,7 @@ const barsHydrationCounters = {
   cursorContinuation: 0,
   cursorFallback: 0,
   backgroundRefresh: 0,
+  backgroundRefreshPressureSkipped: 0,
   synthesisCacheServed: 0,
   synthesisCacheBypassed: 0,
 };
@@ -8576,6 +8578,26 @@ function isChartHydrationDedupeEnabled(): boolean {
 
 function isChartHydrationBackgroundEnabled(): boolean {
   return readBooleanEnv("CHART_HYDRATION_BACKGROUND_ENABLED", true);
+}
+
+function shouldRefreshStaleBarsInBackground(
+  options: GetBarsOptions = {},
+): boolean {
+  if (!isChartHydrationBackgroundEnabled() || options.signal?.aborted) {
+    return false;
+  }
+  const pressureLevel = getApiResourcePressureSnapshot().level;
+  if (pressureLevel === "critical") {
+    return false;
+  }
+  if (pressureLevel === "high") {
+    return (
+      typeof options.priority === "number" &&
+      Number.isFinite(options.priority) &&
+      options.priority >= BARS_HIGH_PRESSURE_STALE_REFRESH_MIN_PRIORITY
+    );
+  }
+  return true;
 }
 
 function pruneChartHistoryCursors(now = Date.now()): void {
@@ -9190,14 +9212,20 @@ export async function getBarsWithDebug(
   if (reusableStale) {
     barsHydrationCounters.cacheHit += 1;
     barsHydrationCounters.staleServed += 1;
-    if (isChartHydrationBackgroundEnabled()) {
+    if (
+      shouldRefreshStaleBarsInBackground({
+        priority: options.priority,
+        family: debugContext.family,
+        signal: options.signal,
+      })
+    ) {
       barsHydrationCounters.backgroundRefresh += 1;
-      if (!options.signal?.aborted) {
-        refreshBarsCache(key, sanitizedInput, {
-          priority: options.priority,
-          family: debugContext.family,
-        }).catch(() => {});
-      }
+      refreshBarsCache(key, sanitizedInput, {
+        priority: options.priority,
+        family: debugContext.family,
+      }).catch(() => {});
+    } else if (isChartHydrationBackgroundEnabled()) {
+      barsHydrationCounters.backgroundRefreshPressureSkipped += 1;
     }
     return withBarsDebug(reusableStale.value, {
       ...debugContext,
@@ -13156,6 +13184,7 @@ export const __platformBarsCacheTestInternals = {
     byPayloadClass: { ...barsHydrationBreakdown.byPayloadClass },
     byFamilyCacheStatus: { ...barsHydrationBreakdown.byFamilyCacheStatus },
   }),
+  shouldRefreshStaleBarsInBackground,
   shouldFetchHistoricalSynthesisForRecentCoverage,
   resolveRecentCoverageStaleToleranceMs,
 };

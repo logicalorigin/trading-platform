@@ -176,13 +176,19 @@ export const MarketChartCell = ({
   const timeframe = MARKET_CHART_TIMEFRAMES.includes(hydratedTimeframe)
     ? hydratedTimeframe
     : "5m";
+  const chartGexOverlayEnabled = Boolean(ticker && historicalDataEnabled);
+  const chartGexProjectionEnabled = Boolean(
+    ticker && historicalDataEnabled && (isActive || fullFrame),
+  );
   const gexZeroGamma = useGexZeroGamma(ticker, {
-    enabled: Boolean(ticker && isActive),
+    enabled: chartGexOverlayEnabled,
   });
   const gexZeroGammaReferenceLine =
     useGexZeroGammaReferenceLine(gexZeroGamma);
-  const gexReferenceLines = useMemo(
-    () => (gexZeroGammaReferenceLine ? [gexZeroGammaReferenceLine] : []),
+  const gexOverlay = useMemo(
+    () => ({
+      zeroGammaLine: gexZeroGammaReferenceLine,
+    }),
     [gexZeroGammaReferenceLine],
   );
   const [pendingTickerSelection, setPendingTickerSelection] = useState(null);
@@ -586,8 +592,8 @@ export const MarketChartCell = ({
               }
               workspaceChart={{ timeframe }}
               onWorkspaceChartChange={handleWorkspaceChartChange}
-              referenceLines={gexReferenceLines}
-              gexProjectionEnabled={Boolean(isActive || fullFrame)}
+              gexOverlay={gexOverlay}
+              gexProjectionEnabled={chartGexProjectionEnabled}
               crosshairSyncGroupId={crosshairSyncGroupId}
               crosshairSyncInstanceId={crosshairSyncInstanceId}
             />

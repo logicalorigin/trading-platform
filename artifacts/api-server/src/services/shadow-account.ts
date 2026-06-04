@@ -92,6 +92,7 @@ import {
   type AccountGreekScenarios,
 } from "./account-greek-scenarios";
 import { buildAccountRiskRecommendations } from "./account-risk-recommendations";
+import { getApiResourcePressureSnapshot } from "./resource-pressure";
 
 export const SHADOW_ACCOUNT_ID = "shadow";
 export const SHADOW_ACCOUNT_DISPLAY_NAME = "Shadow";
@@ -6552,18 +6553,187 @@ function buildEmptyShadowAccountPositionsResponse(input: {
   };
 }
 
+type ShadowAccountPositionsResponseRow = Record<string, unknown> & {
+  id: string;
+  symbol: string;
+  assetClass: string;
+  description?: unknown;
+  sector?: string;
+  quantity?: number;
+  averageCost?: number;
+  mark?: number;
+  dayChange?: number | null;
+  dayChangePercent?: number | null;
+  marketValue: number;
+  unrealizedPnl: number;
+  unrealizedPnlPercent?: number | null;
+  weightPercent: number | null;
+  optionContract?: unknown;
+  underlyingMarket?: unknown;
+  optionQuote?: unknown;
+};
+
+type ShadowAccountPositionsResponseShape = Record<string, unknown> & {
+  accountId: string;
+  currency: string;
+  degraded: boolean;
+  reason: string | null;
+  positions: ShadowAccountPositionsResponseRow[];
+  totals: Record<string, unknown> & {
+    weightPercent: number | null;
+    unrealizedPnl: number;
+    grossLong: number;
+    grossShort: number;
+    netExposure: number;
+    cash: number;
+    totalCash: number;
+    buyingPower: number;
+    netLiquidation: number;
+  };
+  updatedAt: Date | string;
+};
+
+function shadowPositionsReadCacheKey(input: {
+  assetClassFilter: "options" | "stocks" | "all" | null;
+  source: ShadowSourceScope | null;
+  includeLiveQuotes: boolean;
+}): string {
+  return `positions:${input.assetClassFilter || "all"}:${shadowSourceCacheKey(
+    input.source,
+  )}:${input.includeLiveQuotes ? "live-quotes" : "cached-quotes"}`;
+}
+
+function isShadowAccountPositionsResponseShape(
+  value: unknown,
+): value is ShadowAccountPositionsResponseShape {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      Array.isArray((value as { positions?: unknown }).positions) &&
+      (value as { positions: unknown[] }).positions.every(
+        (position) =>
+          position &&
+          typeof position === "object" &&
+          typeof (position as { id?: unknown }).id === "string" &&
+          typeof (position as { symbol?: unknown }).symbol === "string" &&
+          typeof (position as { assetClass?: unknown }).assetClass === "string",
+      ) &&
+      (value as { totals?: unknown }).totals &&
+      typeof (value as { totals?: unknown }).totals === "object",
+  );
+}
+
+function filterShadowAccountPositionsResponseForAssetClass(
+  response: ShadowAccountPositionsResponseShape,
+  assetClassFilter: "options" | "stocks",
+): ShadowAccountPositionsResponseShape {
+  const rows = response.positions.filter(
+    (position) =>
+      normalizePositionAssetClass(position.assetClass) === assetClassFilter,
+  );
+  const cash = toNumber(response.totals.cash) ?? 0;
+  const responseMarketValue = rows.reduce(
+    (sum, row) => sum + (toNumber(row.marketValue) ?? 0),
+    0,
+  );
+  const responseNetLiquidation = cash + responseMarketValue;
+  const weightedRows = rows.map((row) => ({
+    ...row,
+    weightPercent: weightPercent(
+      toNumber(row.marketValue) ?? 0,
+      responseNetLiquidation,
+    ),
+  }));
+
+  return {
+    ...response,
+    positions: weightedRows,
+    totals: {
+      ...response.totals,
+      weightPercent: weightedRows.reduce(
+        (sum, row) => sum + (toNumber(row.weightPercent) ?? 0),
+        0,
+      ),
+      unrealizedPnl: weightedRows.reduce(
+        (sum, row) => sum + (toNumber(row.unrealizedPnl) ?? 0),
+        0,
+      ),
+      grossLong: responseMarketValue,
+      grossShort: 0,
+      netExposure: responseMarketValue,
+      cash,
+      totalCash: cash,
+      buyingPower: Math.max(0, cash),
+      netLiquidation: responseNetLiquidation,
+    },
+  };
+}
+
+function readReusableShadowPositionsResponseForAssetClass(input: {
+  assetClassFilter: "options" | "stocks" | "all" | null;
+  source: ShadowSourceScope | null;
+  includeLiveQuotes: boolean;
+}): ShadowAccountPositionsResponseShape | null {
+  if (!input.assetClassFilter || input.assetClassFilter === "all") {
+    return null;
+  }
+
+  const now = Date.now();
+  const cached = shadowReadCache.get(
+    shadowPositionsReadCacheKey({
+      assetClassFilter: "all",
+      source: input.source,
+      includeLiveQuotes: input.includeLiveQuotes,
+    }),
+  );
+  if (!cached || cached.staleExpiresAt <= now) {
+    return null;
+  }
+  const cacheIsFresh = cached.expiresAt > now;
+  if (!cacheIsFresh) {
+    const pressureLevel = getApiResourcePressureSnapshot().level;
+    if (pressureLevel !== "high" && pressureLevel !== "critical") {
+      return null;
+    }
+  }
+  if (!isShadowAccountPositionsResponseShape(cached.value)) {
+    return null;
+  }
+
+  const baseResponse = cacheIsFresh
+    ? cached.value
+    : markShadowReadValueStale(cached.value, {
+        cachedAt: cached.cachedAt,
+        now,
+      });
+  return filterShadowAccountPositionsResponseForAssetClass(
+    baseResponse,
+    input.assetClassFilter,
+  );
+}
+
 export async function getShadowAccountPositions(input: {
   assetClass?: string | null;
   source?: string | null;
   liveQuotes?: boolean;
-}) {
+}): Promise<ShadowAccountPositionsResponseShape> {
   const source = normalizeShadowSourceScope(input.source);
   const assetClassFilter = normalizePositionAssetClass(input.assetClass);
   const includeLiveQuotes = input.liveQuotes !== false;
+  const reusableFiltered = readReusableShadowPositionsResponseForAssetClass({
+    assetClassFilter,
+    source,
+    includeLiveQuotes,
+  });
+  if (reusableFiltered) {
+    return reusableFiltered;
+  }
   return withShadowReadCache(
-    `positions:${assetClassFilter || "all"}:${shadowSourceCacheKey(source)}:${
-      includeLiveQuotes ? "live-quotes" : "cached-quotes"
-    }`,
+    shadowPositionsReadCacheKey({
+      assetClassFilter,
+      source,
+      includeLiveQuotes,
+    }),
     async () => {
       kickSignalOptionsAutomationMirrorRepairForRead(source);
   try {
@@ -11556,6 +11726,8 @@ export const __shadowWatchlistBacktestInternalsForTests = {
         : null;
   },
   withShadowReadCache,
+  readReusableShadowPositionsResponseForAssetClass,
+  filterShadowAccountPositionsResponseForAssetClass,
   trackShadowFreshStateRefresh,
   getShadowFreshStateInFlight: () => shadowFreshStateInFlight,
   getShadowFreshStateCache: () => shadowFreshStateCache,

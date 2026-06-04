@@ -79,6 +79,28 @@ const parseVisibleStaTotal = async (page) => {
   };
 };
 
+const staHistoryExpectationSatisfied = (visible, expectedSameDayEvents) => {
+  if (expectedSameDayEvents <= 0) return true;
+  if (expectedSameDayEvents > 500) return visible.total > 500;
+  if (expectedSameDayEvents > 20) return visible.total > 20;
+  return visible.total > 0;
+};
+
+const waitForVisibleStaHistory = async (page, expectedSameDayEvents, timeoutMs = 90_000) => {
+  const startedAt = Date.now();
+  let visible = await parseVisibleStaTotal(page);
+
+  while (Date.now() - startedAt < timeoutMs) {
+    if (staHistoryExpectationSatisfied(visible, expectedSameDayEvents)) {
+      return { visible, waitedMs: Date.now() - startedAt };
+    }
+    await page.waitForTimeout(1_000);
+    visible = await parseVisibleStaTotal(page);
+  }
+
+  return { visible, waitedMs: Date.now() - startedAt };
+};
+
 const browser = await chromium.launch({ headless });
 const context = await browser.newContext();
 await context.addInitScript(({ key }) => {
@@ -97,15 +119,15 @@ try {
     return Boolean(table?.textContent?.match(/\b(All|Current|History)\b/));
   });
 
-  const visible = await parseVisibleStaTotal(page);
+  const { visible, waitedMs } = await waitForVisibleStaHistory(page, expectedSameDayEvents);
   if (expectedSameDayEvents > 20 && visible.total <= 20) {
     throw new Error(
-      `STA expected a paginated same-day history but rendered ${visible.total} total rows. API same-day events: ${expectedSameDayEvents}.`,
+      `STA expected a paginated same-day history but rendered ${visible.total} total rows after ${waitedMs}ms. API same-day events: ${expectedSameDayEvents}.`,
     );
   }
   if (expectedSameDayEvents > 500 && visible.total <= 500) {
     throw new Error(
-      `STA appears capped at ${visible.total} rows while API same-day events exceed 500 (${expectedSameDayEvents}).`,
+      `STA appears capped at ${visible.total} rows after ${waitedMs}ms while API same-day events exceed 500 (${expectedSameDayEvents}).`,
     );
   }
 
@@ -118,6 +140,7 @@ try {
         visibleTotal: visible.total,
         renderedRows: visible.renderedRows,
         paginationText: visible.paginationText,
+        waitedMs,
       },
       null,
       2,

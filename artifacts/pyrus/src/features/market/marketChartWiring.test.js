@@ -133,15 +133,18 @@ test("Market chart cells delegate rendering to the Trade spot chart path", () =>
   assert.doesNotMatch(source, /useUnderfilledChartBackfill/);
 });
 
-test("Market active chart cell adds the GEX zero-gamma reference line", () => {
+test("Market hydrated chart cell adds the GEX zero-gamma reference line", () => {
   const source = readLocalSource("./MarketChartCell.jsx");
 
   assert.doesNotMatch(source, /MARKET_GEX_REFERENCE_DELAY_MS/);
   assert.doesNotMatch(source, /gexReferenceReady/);
-  assert.match(source, /useGexZeroGamma\(ticker,\s*\{\s*enabled: Boolean\(ticker && isActive\)/);
+  assert.match(source, /const chartGexOverlayEnabled = Boolean\(ticker && historicalDataEnabled\)/);
+  assert.match(source, /useGexZeroGamma\(ticker,\s*\{\s*enabled: chartGexOverlayEnabled/);
   assert.match(source, /useGexZeroGammaReferenceLine\(gexZeroGamma\)/);
-  assert.match(source, /const gexReferenceLines = useMemo/);
-  assert.match(source, /referenceLines=\{gexReferenceLines\}/);
+  assert.match(source, /const gexOverlay = useMemo/);
+  assert.match(source, /zeroGammaLine:\s*gexZeroGammaReferenceLine/);
+  assert.match(source, /gexOverlay=\{gexOverlay\}/);
+  assert.doesNotMatch(source, /referenceLines=\{gexReferenceLines\}/);
 });
 
 test("Market chart grid uses one-column phone density", () => {

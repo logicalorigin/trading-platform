@@ -45,6 +45,10 @@ const { __resetIbkrHistoricalAdmissionForTests } = await import(
 const { __setMarketDataStoreDisabledForTests } = await import(
   "./market-data-store"
 );
+const {
+  __resetApiResourcePressureForTests,
+  updateApiResourcePressure,
+} = await import("./resource-pressure");
 
 const originalMassiveApiKey = process.env["MASSIVE_API_KEY"];
 const originalMassiveMarketDataApiKey =
@@ -222,6 +226,7 @@ test.afterEach(() => {
   __resetMarketDataAdmissionForTests();
   __resetIbkrHistoricalAdmissionForTests();
   __resetOptionChainCachesForTests();
+  __resetApiResourcePressureForTests();
   __resetBridgeGovernorForTests();
   if (originalMassiveApiKey === undefined) {
     delete process.env["MASSIVE_API_KEY"];
@@ -1368,6 +1373,119 @@ test("getBarsWithDebug marks stale cached bar history as warming", async () => {
     assert.equal(historyCalls, 1);
   } finally {
     Date.now = originalNow;
+    if (originalBackgroundEnabled === undefined) {
+      delete process.env["CHART_HYDRATION_BACKGROUND_ENABLED"];
+    } else {
+      process.env["CHART_HYDRATION_BACKGROUND_ENABLED"] =
+        originalBackgroundEnabled;
+    }
+  }
+});
+
+test("getBarsWithDebug suppresses stale background refresh for non-active requests under high API pressure", async () => {
+  const originalNow = Date.now;
+  const originalBackgroundEnabled =
+    process.env["CHART_HYDRATION_BACKGROUND_ENABLED"];
+  let now = Date.parse("2026-05-01T20:00:00.000Z");
+  let historyCalls = 0;
+
+  Date.now = () => now;
+  process.env["CHART_HYDRATION_BACKGROUND_ENABLED"] = "1";
+  updateApiResourcePressure({ dominantSlowRouteP95Ms: 6_000 });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          marketDataMode: "live",
+        }),
+        getHistoricalBars: async () => {
+          historyCalls += 1;
+          return [brokerBar(null, 501)];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  try {
+    const input = {
+      symbol: "PRESSURESTALE",
+      timeframe: "1m" as const,
+      limit: 1,
+      assetClass: "equity" as const,
+      allowHistoricalSynthesis: false,
+    };
+
+    const first = await getBarsWithDebug(input, {
+      priority: 5,
+      family: "signal-matrix",
+    });
+    now += 31_000;
+    const second = await getBarsWithDebug(input, {
+      priority: 5,
+      family: "signal-matrix",
+    });
+    await wait(25);
+
+    const counters = __platformBarsCacheTestInternals.getBarsHydrationCounters();
+    assert.equal(first.debug.cacheStatus, "miss");
+    assert.equal(second.debug.cacheStatus, "hit");
+    assert.equal(second.debug.stale, true);
+    assert.equal(historyCalls, 1);
+    assert.equal(counters.backgroundRefresh, 0);
+    assert.equal(counters.backgroundRefreshPressureSkipped, 1);
+  } finally {
+    Date.now = originalNow;
+    __resetApiResourcePressureForTests();
+    if (originalBackgroundEnabled === undefined) {
+      delete process.env["CHART_HYDRATION_BACKGROUND_ENABLED"];
+    } else {
+      process.env["CHART_HYDRATION_BACKGROUND_ENABLED"] =
+        originalBackgroundEnabled;
+    }
+  }
+});
+
+test("stale bars refresh policy preserves active work under high pressure", () => {
+  const originalBackgroundEnabled =
+    process.env["CHART_HYDRATION_BACKGROUND_ENABLED"];
+  process.env["CHART_HYDRATION_BACKGROUND_ENABLED"] = "1";
+
+  try {
+    __resetApiResourcePressureForTests();
+    assert.equal(
+      __platformBarsCacheTestInternals.shouldRefreshStaleBarsInBackground({
+        priority: 5,
+        family: "signal-matrix",
+      }),
+      true,
+    );
+
+    updateApiResourcePressure({ dominantSlowRouteP95Ms: 6_000 });
+    assert.equal(
+      __platformBarsCacheTestInternals.shouldRefreshStaleBarsInBackground({
+        priority: 5,
+        family: "signal-matrix",
+      }),
+      false,
+    );
+    assert.equal(
+      __platformBarsCacheTestInternals.shouldRefreshStaleBarsInBackground({
+        priority: 8,
+        family: "chart-visible",
+      }),
+      true,
+    );
+
+    updateApiResourcePressure({ apiHeapUsedPercent: 91 });
+    assert.equal(
+      __platformBarsCacheTestInternals.shouldRefreshStaleBarsInBackground({
+        priority: 8,
+        family: "chart-visible",
+      }),
+      false,
+    );
+  } finally {
+    __resetApiResourcePressureForTests();
     if (originalBackgroundEnabled === undefined) {
       delete process.env["CHART_HYDRATION_BACKGROUND_ENABLED"];
     } else {

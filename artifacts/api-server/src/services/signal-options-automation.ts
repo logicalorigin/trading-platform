@@ -7146,9 +7146,18 @@ function buildCockpitPipeline(input: {
     input.now,
   );
   const nextDueAge = formatSignalOptionsScanAge(workerState.nextDueInMs);
-  const lastBatchDetail =
+  const lastRefreshDetail =
+    workerState.lastBatchUniverseCount &&
+    workerState.lastBatchUniverseCount > 0 &&
+    workerState.lastBatchSize &&
+    workerState.lastBatchSize > 0
+      ? workerState.lastBatchFullUniverse
+        ? `${workerState.lastBatchUniverseCount} symbols`
+        : `${workerState.lastBatchSize}/${workerState.lastBatchUniverseCount} symbols`
+      : null;
+  const currentSignalStateDetail =
     workerState.lastBatchUniverseCount && workerState.lastBatchUniverseCount > 0
-      ? `${workerState.lastBatchSize ?? 0}/${workerState.lastBatchUniverseCount} symbols`
+      ? "signal state current"
       : null;
   const lastSignalScanAt =
     scanState.lastSignalScanAt ?? workerState.lastSignalScanAt ?? null;
@@ -7268,10 +7277,18 @@ function buildCockpitPipeline(input: {
               ? `scan running for ${scanRunningAge}`
               : "scan running"
             : workerState.nextDueInMs !== null && workerState.nextDueInMs > 0
-              ? `worker waiting ${nextDueAge ?? "for next interval"}${lastBatchDetail ? `; last batch ${lastBatchDetail}` : ""}`
+              ? `worker waiting ${nextDueAge ?? "for next interval"}${
+                  lastRefreshDetail
+                    ? `; last refresh ${lastRefreshDetail}`
+                    : currentSignalStateDetail
+                      ? `; ${currentSignalStateDetail}`
+                      : ""
+                }`
               : input.readiness.ready
-                ? lastBatchDetail
-                  ? `${input.deployment.symbolUniverse.length} symbols ready; last batch ${lastBatchDetail}`
+                ? lastRefreshDetail
+                  ? `${input.deployment.symbolUniverse.length} symbols ready; last refresh ${lastRefreshDetail}`
+                  : currentSignalStateDetail
+                    ? `${input.deployment.symbolUniverse.length} symbols ready; ${currentSignalStateDetail}`
                   : `${input.deployment.symbolUniverse.length} symbols ready`
                 : input.readiness.message,
     },

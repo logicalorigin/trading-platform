@@ -7174,6 +7174,174 @@ test("cockpit contract stage reports upstream action scan instead of missing con
   }
 });
 
+test("cockpit scan stage does not render stored signal state as zero-symbol batch", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const deployment = {
+    id: "deployment-stored-signal-state",
+    name: "Signal Options Paper",
+    mode: "paper",
+    enabled: true,
+    providerAccountId: "DU123",
+    symbolUniverse: Array.from({ length: 90 }, (_, index) => `SYM${index}`),
+    lastEvaluatedAt: new Date("2026-04-28T17:59:00.000Z"),
+    lastSignalAt: null,
+    lastError: null,
+    updatedAt: now,
+  } as never;
+  const readiness = {
+    ready: true,
+    reason: null,
+    message: "ready",
+  } as never;
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: false,
+    deploymentCount: 1,
+    activeDeploymentCount: 0,
+    maintenance: signalOptionsEmptyWorkerMaintenanceSnapshot(),
+    deployments: [
+      {
+        deploymentId: "deployment-stored-signal-state",
+        lastCheckedAtMs: now.getTime() - 10_000,
+        failedUntilMs: 0,
+        lastSuccessAt: new Date("2026-04-28T17:59:00.000Z").toISOString(),
+        lastError: null,
+        currentScanStartedAt: null,
+        currentScanAgeMs: null,
+        lastScanDurationMs: 250,
+        scanCount: 3,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 90,
+        lastFreshSignalCount: 90,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: "2026-04-28T17:59:00.000Z",
+        lastOldestSignalBarAt: "2026-04-28T17:59:00.000Z",
+        lastCandidateCount: 0,
+        lastBlockedCandidateCount: 0,
+        lastBatchSymbols: [],
+        lastBatchSize: 0,
+        lastBatchUniverseCount: 90,
+        lastBatchStartIndex: null,
+        lastBatchNextIndex: null,
+        lastBatchCapacity: 12,
+        lastBatchFullUniverse: false,
+        pollIntervalMs: 60_000,
+        nextScanDueAt: new Date(now.getTime() + 5_000).toISOString(),
+        nextScanDueInMs: 5_000,
+      },
+    ],
+  }));
+  try {
+    const stages =
+      __signalOptionsAutomationInternalsForTests.buildCockpitPipeline({
+        deployment,
+        readiness,
+        candidates: [],
+        activePositions: [],
+        risk: {},
+        events: [],
+        now,
+      });
+    const scanStage = stages.find((stage) => stage.id === "scan_universe");
+
+    assert.equal(
+      scanStage?.detail,
+      "worker waiting 5s; signal state current",
+    );
+    assert.doesNotMatch(scanStage?.detail ?? "", /batch|0\/90/);
+    assert.equal(scanStage?.lastBatchSize, 0);
+    assert.equal(scanStage?.lastBatchUniverseCount, 90);
+  } finally {
+    resetSignalOptionsWorkerSnapshotForTests();
+  }
+});
+
+test("cockpit scan stage labels non-empty worker monitor refresh without batch wording", () => {
+  const now = new Date("2026-04-28T18:00:00.000Z");
+  const deployment = {
+    id: "deployment-partial-refresh",
+    name: "Signal Options Paper",
+    mode: "paper",
+    enabled: true,
+    providerAccountId: "DU123",
+    symbolUniverse: Array.from({ length: 90 }, (_, index) => `SYM${index}`),
+    lastEvaluatedAt: new Date("2026-04-28T17:59:00.000Z"),
+    lastSignalAt: null,
+    lastError: null,
+    updatedAt: now,
+  } as never;
+  const readiness = {
+    ready: true,
+    reason: null,
+    message: "ready",
+  } as never;
+  registerSignalOptionsWorkerSnapshotGetter(() => ({
+    started: true,
+    tickRunning: false,
+    deploymentCount: 1,
+    activeDeploymentCount: 0,
+    maintenance: signalOptionsEmptyWorkerMaintenanceSnapshot(),
+    deployments: [
+      {
+        deploymentId: "deployment-partial-refresh",
+        lastCheckedAtMs: now.getTime() - 10_000,
+        failedUntilMs: 0,
+        lastSuccessAt: new Date("2026-04-28T17:59:00.000Z").toISOString(),
+        lastError: null,
+        currentScanStartedAt: null,
+        currentScanAgeMs: null,
+        lastScanDurationMs: 2_500,
+        scanCount: 3,
+        totalFailureCount: 0,
+        failureCount: 0,
+        lastFailureAt: null,
+        lastSignalCount: 90,
+        lastFreshSignalCount: 90,
+        lastStaleSignalCount: 0,
+        lastUnavailableSignalCount: 0,
+        lastLatestSignalBarAt: "2026-04-28T17:59:00.000Z",
+        lastOldestSignalBarAt: "2026-04-28T17:59:00.000Z",
+        lastCandidateCount: 0,
+        lastBlockedCandidateCount: 0,
+        lastBatchSymbols: ["SYM0", "SYM1"],
+        lastBatchSize: 12,
+        lastBatchUniverseCount: 90,
+        lastBatchStartIndex: 0,
+        lastBatchNextIndex: 12,
+        lastBatchCapacity: 12,
+        lastBatchFullUniverse: false,
+        pollIntervalMs: 60_000,
+        nextScanDueAt: new Date(now.getTime() + 5_000).toISOString(),
+        nextScanDueInMs: 5_000,
+      },
+    ],
+  }));
+  try {
+    const stages =
+      __signalOptionsAutomationInternalsForTests.buildCockpitPipeline({
+        deployment,
+        readiness,
+        candidates: [],
+        activePositions: [],
+        risk: {},
+        events: [],
+        now,
+      });
+    const scanStage = stages.find((stage) => stage.id === "scan_universe");
+
+    assert.equal(
+      scanStage?.detail,
+      "worker waiting 5s; last refresh 12/90 symbols",
+    );
+    assert.doesNotMatch(scanStage?.detail ?? "", /batch/);
+  } finally {
+    resetSignalOptionsWorkerSnapshotForTests();
+  }
+});
+
 test("cockpit scan stage exposes resource-pressure pause state", () => {
   const now = new Date("2026-04-28T18:00:00.000Z");
   const pauseStartedAt = new Date("2026-04-28T17:52:00.000Z");

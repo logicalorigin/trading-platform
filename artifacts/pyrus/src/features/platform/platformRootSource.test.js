@@ -1968,6 +1968,12 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.match(source, /SIGNAL_MONITOR_DISPLAY_POLL_MS\s*=\s*15_000/);
   assert.match(source, /const signalMonitorDisplayPollMs = Math\.min\(/);
   assert.match(source, /const signalMonitorRuntimePollMs = Math\.max/);
+  assert.match(source, /const signalMatrixForegroundPollMs = signalMonitorDisplayPollMs/);
+  assert.match(source, /const signalMatrixBackgroundPollMs = signalMonitorPollMs/);
+  assert.match(
+    source,
+    /signalMatrixRequestActive\s*\?\s*signalMatrixForegroundPollMs\s*:\s*signalMatrixBackgroundPollMs/,
+  );
   assert.match(source, /SIGNAL_MATRIX_TIMEFRAMES\s*=\s*\["1m", "2m", "5m", "15m", "1h", "1d"\]/);
   assert.doesNotMatch(source, /SIGNAL_MATRIX_AUTOMATIC_TIMEFRAMES/);
   assert.match(source, /const signalMonitorForegroundReady = Boolean/);

@@ -1555,9 +1555,27 @@ test("signal monitor matrix evaluations use live-edge no-REST bars and preserve 
 
   assert.match(matrixSymbolBlock, /includeProvisionalLiveEdge\?: boolean/);
   assert.match(matrixSymbolBlock, /allowHistoricalFallback\?: boolean/);
+  const streamStateIndex = matrixSymbolBlock.indexOf(
+    "const liveEdgeStreamState",
+  );
+  const streamFreshIndex = matrixSymbolBlock.indexOf(
+    "isFreshSignalMonitorMatrixStreamState(liveEdgeStreamState)",
+  );
+  const loadIndex = matrixSymbolBlock.indexOf("loadSignalMonitorCompletedBars");
+  assert.ok(streamStateIndex >= 0);
+  assert.ok(streamFreshIndex > streamStateIndex);
+  assert.ok(loadIndex > streamFreshIndex);
+  assert.match(
+    matrixSymbolBlock,
+    /isFreshSignalMonitorMatrixStreamState\(liveEdgeStreamState\)[\s\S]*return liveEdgeStreamState/,
+  );
   assert.match(
     matrixSymbolBlock,
     /loadSignalMonitorCompletedBars\(\{[\s\S]*includeProvisionalLiveEdge: input\.includeProvisionalLiveEdge[\s\S]*allowHistoricalFallback: input\.allowHistoricalFallback/,
+  );
+  assert.match(
+    matrixSymbolBlock,
+    /isSignalMonitorMatrixBarLoadTimeout\(error\)[\s\S]*if \(liveEdgeStreamState\)[\s\S]*return liveEdgeStreamState/,
   );
   assert.match(
     matrixSymbolBlock,
@@ -1566,6 +1584,60 @@ test("signal monitor matrix evaluations use live-edge no-REST bars and preserve 
   assert.match(
     matrixBlock,
     /evaluateSignalMonitorMatrixSymbol\(\{[\s\S]*includeProvisionalLiveEdge: true[\s\S]*allowHistoricalFallback: false/,
+  );
+});
+
+test("signal monitor matrix only short-circuits history for fresh stream signals", () => {
+  const baseState = {
+    id: "profile:SPY:5m",
+    profileId: "profile",
+    symbol: "SPY",
+    timeframe: "5m",
+    currentSignalAt: new Date("2026-06-03T14:35:00.000Z"),
+    currentSignalPrice: 101,
+    latestBarAt: new Date("2026-06-03T14:35:00.000Z"),
+    barsSinceSignal: 0,
+    active: true,
+    lastEvaluatedAt: new Date("2026-06-03T14:35:01.000Z"),
+    lastError: null,
+    indicatorSnapshot: null,
+  };
+
+  assert.equal(
+    __signalMonitorInternalsForTests.isFreshSignalMonitorMatrixStreamState({
+      ...baseState,
+      currentSignalDirection: "buy",
+      fresh: true,
+      status: "ok",
+    }),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.isFreshSignalMonitorMatrixStreamState({
+      ...baseState,
+      currentSignalDirection: null,
+      fresh: true,
+      status: "ok",
+    }),
+    false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.isFreshSignalMonitorMatrixStreamState({
+      ...baseState,
+      currentSignalDirection: "sell",
+      fresh: false,
+      status: "ok",
+    }),
+    false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.isFreshSignalMonitorMatrixStreamState({
+      ...baseState,
+      currentSignalDirection: "buy",
+      fresh: true,
+      status: "stale",
+    }),
+    false,
   );
 });
 

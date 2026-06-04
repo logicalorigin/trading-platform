@@ -13,6 +13,10 @@ import {
   computeShadowOrderFees,
   SHADOW_STARTING_BALANCE,
 } from "./shadow-account";
+import {
+  __resetApiResourcePressureForTests,
+  updateApiResourcePressure,
+} from "./resource-pressure";
 import { tunedSignalOptionsExecutionProfile } from "@workspace/backtest-core";
 
 test("shadow account snapshot stream uses the visible-page cadence", () => {
@@ -384,6 +388,143 @@ test("shadow read cache preserves non-empty positions when refresh returns empty
     staleWaitMs: null,
   });
   internals.invalidateShadowFreshStateCache();
+});
+
+test("shadow filtered positions reuse fresh all-positions cache", async () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: 60_000,
+    staleTtlMs: 60_000,
+    staleWaitMs: 5,
+  });
+
+  try {
+    await internals.withShadowReadCache(
+      "positions:all:ledger:cached-quotes",
+      async () => ({
+        accountId: "shadow",
+        currency: "USD",
+        degraded: false,
+        reason: null,
+        positions: [
+          {
+            id: "stock-position",
+            symbol: "SPY",
+            assetClass: "Stocks",
+            marketValue: 100,
+            unrealizedPnl: 10,
+          },
+          {
+            id: "option-position",
+            symbol: "SPY 600C",
+            assetClass: "Options",
+            marketValue: 50,
+            unrealizedPnl: -5,
+          },
+        ],
+        totals: {
+          cash: 950,
+          grossLong: 150,
+          netExposure: 150,
+          netLiquidation: 1100,
+          unrealizedPnl: 5,
+        },
+        updatedAt: "2026-06-04T00:00:00.000Z",
+      }),
+    );
+
+    const filtered =
+      internals.readReusableShadowPositionsResponseForAssetClass({
+        assetClassFilter: "options",
+        source: null,
+        includeLiveQuotes: false,
+      }) as any;
+
+    assert.equal(filtered.positions.length, 1);
+    assert.equal(filtered.positions[0].id, "option-position");
+    assert.equal(filtered.totals.grossLong, 50);
+    assert.equal(filtered.totals.netExposure, 50);
+    assert.equal(filtered.totals.unrealizedPnl, -5);
+    assert.equal(filtered.totals.netLiquidation, 1000);
+    assert.equal(filtered.positions[0].weightPercent, 5);
+  } finally {
+    internals.setShadowReadCacheWindowsForTests({
+      ttlMs: null,
+      staleTtlMs: null,
+      staleWaitMs: null,
+    });
+    internals.invalidateShadowFreshStateCache();
+  }
+});
+
+test("shadow filtered positions reuse stale all-positions cache only under pressure", async () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: 0,
+    staleTtlMs: 60_000,
+    staleWaitMs: 5,
+  });
+
+  try {
+    await internals.withShadowReadCache(
+      "positions:all:ledger:cached-quotes",
+      async () => ({
+        accountId: "shadow",
+        currency: "USD",
+        degraded: false,
+        reason: null,
+        positions: [
+          {
+            id: "option-position",
+            symbol: "SPY 600C",
+            assetClass: "Options",
+            marketValue: 50,
+            unrealizedPnl: -5,
+          },
+        ],
+        totals: {
+          cash: 950,
+          grossLong: 50,
+          netExposure: 50,
+          netLiquidation: 1000,
+          unrealizedPnl: -5,
+        },
+        updatedAt: "2026-06-04T00:00:00.000Z",
+      }),
+    );
+
+    assert.equal(
+      internals.readReusableShadowPositionsResponseForAssetClass({
+        assetClassFilter: "options",
+        source: null,
+        includeLiveQuotes: false,
+      }),
+      null,
+    );
+
+    updateApiResourcePressure({ dominantSlowRouteP95Ms: 6_000 });
+    const filtered =
+      internals.readReusableShadowPositionsResponseForAssetClass({
+        assetClassFilter: "options",
+        source: null,
+        includeLiveQuotes: false,
+      }) as any;
+
+    assert.equal(filtered.positions.length, 1);
+    assert.equal(filtered.stale, true);
+    assert.equal(filtered.degraded, true);
+    assert.equal(filtered.reason, "shadow_read_stale_cache");
+  } finally {
+    __resetApiResourcePressureForTests();
+    internals.setShadowReadCacheWindowsForTests({
+      ttlMs: null,
+      staleTtlMs: null,
+      staleWaitMs: null,
+    });
+    internals.invalidateShadowFreshStateCache();
+  }
 });
 
 test("shadow fresh-state refresh remains in-flight until settled", async () => {

@@ -3503,8 +3503,13 @@ export default function PlatformApp() {
       signalMonitorDisplayReady &&
       signalMatrixPrioritySymbols.length,
   );
+  const signalMatrixForegroundPollMs = signalMonitorDisplayPollMs;
+  const signalMatrixBackgroundPollMs = signalMonitorPollMs;
+  const signalMatrixBasePollMs = signalMatrixRequestActive
+    ? signalMatrixForegroundPollMs
+    : signalMatrixBackgroundPollMs;
   const signalMatrixPollMs = Math.max(
-    signalMonitorPollMs,
+    signalMatrixBasePollMs,
     signalMatrixPressureCaps.signalMatrixPollMinMs || 0,
   );
   const signalMatrixActiveScreenRequestSymbolLimit = useMemo(

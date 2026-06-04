@@ -3530,7 +3530,7 @@ const TradeScreenInner = ({
     tradeAnalysisWorkEnabled && stockAggregateStreamingEnabled,
   );
   const gexZeroGamma = useGexZeroGamma(activeTicker, {
-    enabled: tradeLiveStreamsEnabled,
+    enabled: tradePrimaryChartDataEnabled,
   });
   const gexZeroGammaReferenceLine =
     useGexZeroGammaReferenceLine(gexZeroGamma);
@@ -4089,12 +4089,11 @@ const TradeScreenInner = ({
         })),
     [activeWorkspace.levels],
   );
-  const equityReferenceLines = useMemo(
-    () =>
-      gexZeroGammaReferenceLine
-        ? [...workspaceReferenceLines, gexZeroGammaReferenceLine]
-        : workspaceReferenceLines,
-    [gexZeroGammaReferenceLine, workspaceReferenceLines],
+  const equityGexOverlay = useMemo(
+    () => ({
+      zeroGammaLine: gexZeroGammaReferenceLine,
+    }),
+    [gexZeroGammaReferenceLine],
   );
 
   const tradeMobileTabButtonStyle = (active) => ({
@@ -4159,7 +4158,8 @@ const TradeScreenInner = ({
           },
         })
       }
-      referenceLines={equityReferenceLines}
+      referenceLines={workspaceReferenceLines}
+      gexOverlay={equityGexOverlay}
       signalMonitorProfile={signalMonitorProfile}
       crosshairSyncGroupId={tradeCrosshairSync ? "trade" : null}
       crosshairSyncInstanceId={tradeCrosshairSync ? "trade-equity" : null}

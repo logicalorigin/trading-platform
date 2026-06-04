@@ -125,6 +125,7 @@ export const TradeEquityPanel = ({
   crosshairSyncGroupId = null,
   crosshairSyncInstanceId = null,
   gexProjectionEnabled = true,
+  gexOverlay = null,
 }) => {
   const queryClient = useQueryClient();
   const effectiveChartHydrationRole =
@@ -176,6 +177,13 @@ export const TradeEquityPanel = ({
   const gexProjection = useGexProjectionConeOverlay(ticker, {
     enabled: Boolean(gexProjectionEnabled && ticker && historicalDataEnabled),
   });
+  const chartGexOverlay = useMemo(
+    () => ({
+      zeroGammaLine: gexOverlay?.zeroGammaLine || null,
+      projectionCone: gexProjection.overlay || null,
+    }),
+    [gexOverlay?.zeroGammaLine, gexProjection.overlay],
+  );
   const hasAnchoredTickerSearch =
     typeof onSearchOpenChange === "function" && searchContent != null;
   const { studies: availableStudies, indicatorRegistry } =
@@ -1010,7 +1018,7 @@ export const TradeEquityPanel = ({
           selectedStudies: selectedIndicators,
         }}
         referenceLines={referenceLines}
-        gexProjectionCone={gexProjection.overlay}
+        gexOverlay={chartGexOverlay}
         drawings={drawings}
         drawMode={drawMode}
         onAddDrawing={addDrawing}

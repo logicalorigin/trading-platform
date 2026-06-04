@@ -414,6 +414,7 @@ function resolveSignalMonitorMatrixExactCellCap(input: {
   pressure: ApiResourcePressureLevel;
   clientRole?: SignalMonitorMatrixClientRole;
   requestOrigin?: SignalMonitorMatrixRequestOrigin;
+  cells?: readonly SignalMonitorMatrixCellRequest[];
 }) {
   if (isStaVisiblePageSignalMonitorMatrixRequest(input)) {
     return SIGNAL_MONITOR_STA_VISIBLE_MATRIX_EXACT_CELL_CAPS[input.pressure];
@@ -4075,6 +4076,25 @@ function evaluateSignalMonitorMatrixStateFromStreamBars(input: {
   });
 }
 
+function isFreshSignalMonitorMatrixStreamState(
+  state:
+    | Pick<
+        SignalMonitorMatrixStateResult,
+        "status" | "fresh" | "currentSignalDirection" | "currentSignalAt"
+      >
+    | null
+    | undefined,
+): state is SignalMonitorMatrixStateResult {
+  return Boolean(
+    state &&
+      state.status === "ok" &&
+      state.fresh &&
+      (state.currentSignalDirection === "buy" ||
+        state.currentSignalDirection === "sell") &&
+      state.currentSignalAt,
+  );
+}
+
 async function evaluateSymbolsInBatches(input: {
   profile: DbSignalMonitorProfile;
   symbols: string[];
@@ -4456,6 +4476,18 @@ async function evaluateSignalMonitorMatrixSymbol(input: {
   const timeframes = parseSignalMatrixTimeframes(input.timeframes);
   const results = await Promise.all(
     timeframes.map(async (timeframe) => {
+      const liveEdgeStreamState = input.includeProvisionalLiveEdge
+        ? evaluateSignalMonitorMatrixStateFromStreamBars({
+            profile: input.profile,
+            symbol: input.symbol,
+            timeframe,
+            evaluatedAt: input.evaluatedAt,
+          })
+        : null;
+      if (isFreshSignalMonitorMatrixStreamState(liveEdgeStreamState)) {
+        return liveEdgeStreamState;
+      }
+
       try {
         const completedBars = await withSignalMonitorMatrixBarLoadTimeout(
           loadSignalMonitorCompletedBars({
@@ -4483,14 +4515,8 @@ async function evaluateSignalMonitorMatrixSymbol(input: {
         });
       } catch (error) {
         if (isSignalMonitorMatrixBarLoadTimeout(error)) {
-          const streamState = evaluateSignalMonitorMatrixStateFromStreamBars({
-            profile: input.profile,
-            symbol: input.symbol,
-            timeframe,
-            evaluatedAt: input.evaluatedAt,
-          });
-          if (streamState) {
-            return streamState;
+          if (liveEdgeStreamState) {
+            return liveEdgeStreamState;
           }
         }
         if (isSignalMonitorLiveEdgeHistoryUnavailableError(error)) {
@@ -5879,6 +5905,7 @@ export const __signalMonitorInternalsForTests = {
   loadSignalMonitorStreamCompletedBars,
   isSignalMonitorMatrixBarLoadTimeout,
   evaluateSignalMonitorMatrixStateFromStreamBars,
+  isFreshSignalMonitorMatrixStreamState,
   resolveSignalMonitorBrokerRecentWindowMinutes,
   isSignalMonitorStateCurrentForLane,
   stateToResponseForSnapshot,
