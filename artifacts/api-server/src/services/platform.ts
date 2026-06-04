@@ -3737,6 +3737,19 @@ export function getPlatformResourceDiagnostics() {
       ttlMs: UNIVERSE_LOGO_CACHE_TTL_MS,
       ...countExpired(universeLogoCache.values()),
     },
+    quoteSnapshots: {
+      entries: quoteSnapshotCache.size,
+      inFlight: quoteSnapshotInFlight.size,
+      ttlMs: quoteSnapshotCacheTtlMs(),
+      staleTtlMs: quoteSnapshotStaleTtlMs(),
+      ...countExpired(quoteSnapshotCache.values()),
+    },
+    flowPremiumDistribution: {
+      entries: flowPremiumDistributionCache.size,
+      inFlight: flowPremiumDistributionInFlight.size,
+      ttlMs: FLOW_PREMIUM_DISTRIBUTION_CACHE_TTL_MS,
+      ...countExpired(flowPremiumDistributionCache.values()),
+    },
     universeIbkrHydration: {
       queued: universeCatalogIbkrHydrationQueue.length,
       queuedUnique: universeCatalogIbkrHydrationQueued.size,
