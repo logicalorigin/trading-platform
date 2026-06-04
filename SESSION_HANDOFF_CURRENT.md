@@ -22,7 +22,7 @@ This is a pointer to the active durable handoff. Do not use this file as the ful
 ## Next Recommended Steps
 
 1. Decide which recovered session to resume.
-2. Use `SESSION_HANDOFF_2026-06-04_019e934b-5d2a-7ab2-8676-71145b8a4c03.md` plus the prior current-pointer note for the latest root-shell/max-depth follow-up.
+2. Use `SESSION_HANDOFF_2026-06-04_019e934b-5d2a-7ab2-8676-71145b8a4c03.md` for the latest root-shell/max-depth follow-up.
 3. Use `SESSION_HANDOFF_2026-06-04_019e92c2-ff99-78e0-a36f-3ddb9c03a700.md` for the signal-matrix hydration thread.
 
 ## Validation Snapshot
