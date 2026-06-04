@@ -389,10 +389,52 @@ export function appendRuntimeFlightRecorderEvent(
   }
 }
 
+const RSS_PRESSURE_REARM_RATIO = 0.9;
+const RSS_PRESSURE_MIN_REWARN_MS = 60_000;
+let memoryPressureActive = false;
+let lastMemoryPressureWarnAt = 0;
+
+function rssPressureThresholdBytes(): number {
+  const raw = Number(process.env.API_RSS_WARN_BYTES);
+  return Number.isFinite(raw) && raw > 0 ? raw : 1_536 * 1024 * 1024;
+}
+
+// Observability only: records an event (no action taken, not a memory cap) when
+// RSS crosses a configurable threshold so a future container eviction under
+// memory pressure is attributable from the flight recorder.
+function recordMemoryPressureIfNeeded(): void {
+  try {
+    const memory = process.memoryUsage();
+    const threshold = rssPressureThresholdBytes();
+    if (memory.rss < threshold * RSS_PRESSURE_REARM_RATIO) {
+      memoryPressureActive = false;
+      return;
+    }
+    if (memory.rss < threshold) {
+      return;
+    }
+    const now = Date.now();
+    if (memoryPressureActive && now - lastMemoryPressureWarnAt < RSS_PRESSURE_MIN_REWARN_MS) {
+      return;
+    }
+    memoryPressureActive = true;
+    lastMemoryPressureWarnAt = now;
+    appendRuntimeFlightRecorderEvent("api-memory-pressure", {
+      rssBytes: memory.rss,
+      heapUsedBytes: memory.heapUsed,
+      externalBytes: memory.external,
+      thresholdBytes: threshold,
+    });
+  } catch {
+    // Recorder writes must not affect runtime behavior.
+  }
+}
+
 export function writeRuntimeFlightRecorderHeartbeat(): JsonRecord | null {
   try {
     const heartbeat = buildApiHeartbeat();
     atomicWriteJson(path.join(recorderDir(), "api-current.json"), heartbeat);
+    recordMemoryPressureIfNeeded();
     return heartbeat;
   } catch (error) {
     logger.debug({ err: error }, "Runtime flight recorder heartbeat failed");

@@ -2159,11 +2159,29 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
 
     this.tickleTimer = setInterval(
       () => {
+        this.pruneContractCaches();
         void this.tickle().catch(() => {});
       },
       Math.max(10_000, this.tickleIntervalMs),
     );
     this.tickleTimer.unref?.();
+  }
+
+  private pruneContractCaches(now = Date.now()): void {
+    // Resolved-contract entries are treated as misses once older than the TTL
+    // but were never deleted, so the maps grew one entry per distinct
+    // symbol/contract for the process lifetime. Dropping aged-out entries keeps
+    // them proportional to recently-requested contracts.
+    for (const [key, entry] of this.stockContracts) {
+      if (now - entry.cachedAt >= CONTRACT_CACHE_TTL_MS) {
+        this.stockContracts.delete(key);
+      }
+    }
+    for (const [key, entry] of this.optionContracts) {
+      if (now - entry.cachedAt >= CONTRACT_CACHE_TTL_MS) {
+        this.optionContracts.delete(key);
+      }
+    }
   }
 
   shutdown(): void {
@@ -2205,6 +2223,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       }
     });
     this.depthSubscriptions.clear();
+    this.depthByKey.clear();
 
     try {
       this.api.disconnect();
@@ -2793,6 +2812,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
       }
     });
     this.depthSubscriptions.clear();
+    this.depthByKey.clear();
 
     this.baseSubscriptionsStarted = false;
     this.accountSummaryInitialized = false;
@@ -5748,7 +5768,10 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
 
       this.depthSubscriptions.set(key, {
         contract,
-        stop: () => subscription.unsubscribe(),
+        stop: () => {
+          subscription.unsubscribe();
+          this.depthByKey.delete(key);
+        },
       });
     }
 
@@ -5827,51 +5850,51 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
     };
   }
 
-	  async submitRawOrders(input: {
-	    accountId?: string | null;
-	    mode?: RuntimeMode | null;
-	    confirm?: boolean | null;
-	    orders: Record<string, unknown>[];
-	  }): Promise<Record<string, unknown>> {
-	    await this.refreshSession();
-	    const accountId = await this.requireAccountId(input.accountId);
-	    const structuredOrders = input.orders.map((rawOrder) =>
-	      this.parseStructuredRawOrder(rawOrder, accountId),
-	    );
-	    const baseOrderId = await this.api.getNextValidOrderId();
-	    if (!Number.isFinite(baseOrderId) || baseOrderId <= 0) {
-	      throw new HttpError(502, "TWS did not return a valid order id.", {
-	        code: "ibkr_tws_invalid_order_id",
-	      });
-	    }
-	    const submittedOrderIds = structuredOrders.map((_, index) =>
-	      String(baseOrderId + index),
-	    );
+          async submitRawOrders(input: {
+            accountId?: string | null;
+            mode?: RuntimeMode | null;
+            confirm?: boolean | null;
+            orders: Record<string, unknown>[];
+          }): Promise<Record<string, unknown>> {
+            await this.refreshSession();
+            const accountId = await this.requireAccountId(input.accountId);
+            const structuredOrders = input.orders.map((rawOrder) =>
+              this.parseStructuredRawOrder(rawOrder, accountId),
+            );
+            const baseOrderId = await this.api.getNextValidOrderId();
+            if (!Number.isFinite(baseOrderId) || baseOrderId <= 0) {
+              throw new HttpError(502, "TWS did not return a valid order id.", {
+                code: "ibkr_tws_invalid_order_id",
+              });
+            }
+            const submittedOrderIds = structuredOrders.map((_, index) =>
+              String(baseOrderId + index),
+            );
 
-	    structuredOrders.forEach((structured, index) => {
-	      const orderId = baseOrderId + index;
-	      const order = {
-	        ...structured.order,
-	        orderId,
-	        account: accountId,
-	      } as Order & Record<string, unknown>;
-	      const parentOrderIndex = asNumber(order["parentOrderIndex"]);
+            structuredOrders.forEach((structured, index) => {
+              const orderId = baseOrderId + index;
+              const order = {
+                ...structured.order,
+                orderId,
+                account: accountId,
+              } as Order & Record<string, unknown>;
+              const parentOrderIndex = asNumber(order["parentOrderIndex"]);
 
-	      delete order["parentOrderIndex"];
-	      if (
-	        Number.isFinite(parentOrderIndex) &&
-	        parentOrderIndex !== null &&
-	        parentOrderIndex >= 0 &&
-	        parentOrderIndex < structuredOrders.length
-	      ) {
-	        order.parentId = baseOrderId + parentOrderIndex;
-	      }
+              delete order["parentOrderIndex"];
+              if (
+                Number.isFinite(parentOrderIndex) &&
+                parentOrderIndex !== null &&
+                parentOrderIndex >= 0 &&
+                parentOrderIndex < structuredOrders.length
+              ) {
+                order.parentId = baseOrderId + parentOrderIndex;
+              }
 
-	      this.api.placeOrder(orderId, structured.contract, order);
-	    });
+              this.api.placeOrder(orderId, structured.contract, order);
+            });
 
-	    return {
-	      submittedOrderIds,
+            return {
+              submittedOrderIds,
       message: `Submitted ${submittedOrderIds.length} order${submittedOrderIds.length === 1 ? "" : "s"}.`,
     };
   }

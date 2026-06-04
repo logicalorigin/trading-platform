@@ -2130,6 +2130,14 @@ const flowPremiumDistributionDeepRefreshInFlight = new Map<
   Promise<void>
 >();
 
+function pruneFlowPremiumDistributionCache(now: number): void {
+  for (const [key, entry] of flowPremiumDistributionCache) {
+    if (entry.staleExpiresAt <= now) {
+      flowPremiumDistributionCache.delete(key);
+    }
+  }
+}
+
 function getMassiveProviderHost(): string | null {
   const config = getMassiveRuntimeConfig();
   if (!config) return null;
@@ -5007,6 +5015,19 @@ async function getQuoteSnapshotsUncached(input: {
   };
 }
 
+function pruneQuoteSnapshotCache(now: number): void {
+  // The entry TTL fields only gate fresh-vs-stale at read time; without this
+  // eviction pass expired entries are never freed, so the cache would grow one
+  // entry per distinct symbol-set seen for the whole process lifetime. Dropping
+  // entries past their stale window keeps the cache proportional to live demand
+  // within the stale TTL instead.
+  for (const [key, entry] of quoteSnapshotCache) {
+    if (entry.staleExpiresAt <= now) {
+      quoteSnapshotCache.delete(key);
+    }
+  }
+}
+
 export async function getQuoteSnapshots(
   input: GetQuoteSnapshotsInput,
 ): Promise<QuoteSnapshotsServiceResponse> {
@@ -5051,6 +5072,7 @@ export async function getQuoteSnapshots(
         expiresAt: cachedAt + quoteSnapshotCacheTtlMs(),
         staleExpiresAt: cachedAt + quoteSnapshotStaleTtlMs(),
       });
+      pruneQuoteSnapshotCache(cachedAt);
       return value;
     })
     .finally(() => {
@@ -5163,6 +5185,14 @@ const universeLogoCache = new Map<
   { expiresAt: number; value: UniverseLogoRecord }
 >();
 const universeLogoInFlight = new Map<string, Promise<UniverseLogoRecord>>();
+
+function pruneUniverseLogoCache(now: number): void {
+  for (const [key, entry] of universeLogoCache) {
+    if (entry.expiresAt <= now) {
+      universeLogoCache.delete(key);
+    }
+  }
+}
 type UniverseCatalogSearchResponse = UniverseSearchResponse & {
   listingRows: UniverseCatalogListingHydrationRecord[];
 };
@@ -6890,6 +6920,7 @@ async function fetchUniverseLogoRecord(
 
 async function getUniverseLogoRecord(symbol: string, signal?: AbortSignal) {
   const normalizedSymbol = normalizeSymbol(symbol);
+  pruneUniverseLogoCache(Date.now());
   const cached = universeLogoCache.get(normalizedSymbol);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.value;
@@ -12378,6 +12409,7 @@ export async function getFlowPremiumDistribution(
     coverageMode,
     symbols: universeSymbols,
   });
+  pruneFlowPremiumDistributionCache(requestedAt);
   const cached = flowPremiumDistributionCache.get(cacheKey);
   if (cached && cached.expiresAt > requestedAt) {
     return withFlowPremiumDistributionCacheState(cached.value, "fresh");
