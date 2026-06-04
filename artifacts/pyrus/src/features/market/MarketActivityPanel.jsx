@@ -1134,7 +1134,6 @@ export const MarketActivityPanel = ({
                 }
                 disabled={!watchlists.length}
                 aria-label="Signal monitor watchlist"
-                title="Signal monitor watchlist"
                 style={{
                   marginBottom: sp(3),
                   ...compactControlStyle(null, true),

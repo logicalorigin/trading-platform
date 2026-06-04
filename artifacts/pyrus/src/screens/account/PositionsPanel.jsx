@@ -25,6 +25,7 @@ import {
 import {
   PositionOptionQuoteStreams,
   buildPositionOptionQuoteGroups,
+  structuredOptionProviderContractId,
 } from "./PositionOptionQuoteStreams.jsx";
 import {
   CSS_COLOR,
@@ -219,12 +220,15 @@ const firstDisplayText = (...values) => {
 };
 
 const optionProviderContractId = (contract) => {
-  return normalizedProviderContractId(contract?.providerContractId || contract?.conid);
+  return (
+    structuredOptionProviderContractId(contract) ||
+    normalizedProviderContractId(contract?.providerContractId || contract?.conid)
+  );
 };
 
 const rowOptionProviderContractId = (row) =>
-  optionProviderContractId(row?.optionContract) ||
-  normalizedProviderContractId(row?.optionQuote?.providerContractId);
+  normalizedProviderContractId(row?.optionQuote?.providerContractId) ||
+  optionProviderContractId(row?.optionContract);
 
 const formatOptionRightLabel = (value) => {
   const normalized = String(value || "").trim().toLowerCase();
@@ -1440,20 +1444,21 @@ const PositionTrendSparkline = ({
   if (data.length < 2) return null;
 
   return (
-    <span
-      data-testid="account-position-sparkline"
-      title={`${symbol} intraday trend`}
-      style={positionSparklineShellStyle(compact, inline)}
-    >
-      <MicroSparkline
-        data={data}
-        positive={resolvePositionSparklinePositive(row, snapshot)}
-        width={compact ? TABLE_SPARKLINE_COMPACT_WIDTH : TABLE_SPARKLINE_WIDTH}
+    <AppTooltip content={`${symbol} intraday trend`}>
+      <span
+        data-testid="account-position-sparkline"
+        style={positionSparklineShellStyle(compact, inline)}
+      >
+        <MicroSparkline
+          data={data}
+          positive={resolvePositionSparklinePositive(row, snapshot)}
+          width={compact ? TABLE_SPARKLINE_COMPACT_WIDTH : TABLE_SPARKLINE_WIDTH}
         height={compact ? TABLE_SPARKLINE_COMPACT_HEIGHT : TABLE_SPARKLINE_HEIGHT}
         style={{ width: "100%", height: "100%" }}
         ariaHidden
-      />
-    </span>
+        />
+      </span>
+    </AppTooltip>
   );
 };
 
@@ -1570,24 +1575,27 @@ const PositionSignalRiskCell = ({ row, currency, maskValues }) => {
   }
   return (
     <td style={{ ...tableCellStyle, minWidth: dim(174), maxWidth: dim(224) }}>
-      <div
-        style={{
-          color: CSS_COLOR.textSec,
-          fontFamily: T.data,
-          fontSize: textSize("body"),
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-        title={[
+      <AppTooltip
+        content={[
           metrics.signalMain,
           metrics.signalDetail,
           metrics.riskMain,
           metrics.riskDetail,
         ].filter((item) => item && item !== MISSING_VALUE).join(" · ")}
       >
-        {metrics.signalMain}
-      </div>
+        <div
+          style={{
+            color: CSS_COLOR.textSec,
+            fontFamily: T.data,
+            fontSize: textSize("body"),
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {metrics.signalMain}
+        </div>
+      </AppTooltip>
       <div
         style={{
           marginTop: sp(1),
@@ -1679,25 +1687,26 @@ const DenseStackedValue = ({
   align = "right",
   title,
 }) => (
-  <span
-    title={title}
-    style={{
-      display: "grid",
-      gap: sp(1),
-      minWidth: 0,
-      maxWidth: "100%",
-      overflow: "hidden",
-    }}
-  >
-    <span style={denseColumnTextStyle({ align, color: primaryTone })}>
-      {primary || MISSING_VALUE}
-    </span>
-    {secondary ? (
-      <span style={denseColumnSubTextStyle({ align, color: secondaryTone })}>
-        {secondary}
+  <AppTooltip content={title}>
+    <span
+      style={{
+        display: "grid",
+        gap: sp(1),
+        minWidth: 0,
+        maxWidth: "100%",
+        overflow: "hidden",
+      }}
+    >
+      <span style={denseColumnTextStyle({ align, color: primaryTone })}>
+        {primary || MISSING_VALUE}
       </span>
-    ) : null}
-  </span>
+      {secondary ? (
+        <span style={denseColumnSubTextStyle({ align, color: secondaryTone })}>
+          {secondary}
+        </span>
+      ) : null}
+    </span>
+  </AppTooltip>
 );
 
 const compactGreekNumber = (value, digits = 2) => {
@@ -1719,27 +1728,28 @@ const DenseGreekCell = ({ row, title }) => {
     );
   }
   return (
-    <span
-      title={title}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: sp(3),
-        width: "100%",
-        minWidth: 0,
-        overflow: "hidden",
-        color: CSS_COLOR.textSec,
-        fontFamily: T.data,
-        fontSize: textSize("caption"),
-        fontVariantNumeric: "tabular-nums",
-        lineHeight: 1,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {delta ? <span aria-label={`Delta ${delta}`}>Δ{delta}</span> : null}
-      {theta ? <span aria-label={`Theta ${theta}`}>θ{theta}</span> : null}
-    </span>
+    <AppTooltip content={title}>
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: sp(3),
+          width: "100%",
+          minWidth: 0,
+          overflow: "hidden",
+          color: CSS_COLOR.textSec,
+          fontFamily: T.data,
+          fontSize: textSize("caption"),
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {delta ? <span aria-label={`Delta ${delta}`}>Δ{delta}</span> : null}
+        {theta ? <span aria-label={`Theta ${theta}`}>θ{theta}</span> : null}
+      </span>
+    </AppTooltip>
   );
 };
 
@@ -1938,57 +1948,58 @@ const DensePositionSymbol = ({
         compact
         inline
       />
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          onPositionSelect?.(row);
-          onJumpToChart?.(row.symbol);
-        }}
-        style={{
-          border: "none",
-          padding: 0,
-          background: "transparent",
-          color: CSS_COLOR.text,
-          cursor: "pointer",
-          textAlign: "left",
-          minWidth: 0,
-          flex: "1 1 auto",
-        }}
-        title={title || row.symbol}
-      >
-        <span
-          data-testid="account-position-symbol"
+      <AppTooltip content={title || row.symbol}>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onPositionSelect?.(row);
+            onJumpToChart?.(row.symbol);
+          }}
           style={{
-            display: "block",
-            maxWidth: "100%",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            fontFamily: T.mono,
-            fontSize: textSize("body"),
+            border: "none",
+            padding: 0,
+            background: "transparent",
             color: CSS_COLOR.text,
+            cursor: "pointer",
+            textAlign: "left",
+            minWidth: 0,
+            flex: "1 1 auto",
           }}
         >
-          {row.symbol || MISSING_VALUE}
-        </span>
-        {contractDetail ? (
-          <div
+          <span
+            data-testid="account-position-symbol"
             style={{
-              marginTop: sp(1),
-              color: CSS_COLOR.textDim,
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
+              display: "block",
+              maxWidth: "100%",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
-              maxWidth: "100%",
+              fontFamily: T.mono,
+              fontSize: textSize("body"),
+              color: CSS_COLOR.text,
             }}
           >
-            {contractDetail}
-          </div>
-        ) : null}
-      </button>
+            {row.symbol || MISSING_VALUE}
+          </span>
+          {contractDetail ? (
+            <div
+              style={{
+                marginTop: sp(1),
+                color: CSS_COLOR.textDim,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                maxWidth: "100%",
+              }}
+            >
+              {contractDetail}
+            </div>
+          ) : null}
+        </button>
+      </AppTooltip>
     </div>
   );
 };
@@ -2017,37 +2028,40 @@ const DenseSignalCell = ({ row, currency, maskValues }) => {
     timeframe,
   ].filter(Boolean).join(" ") || metrics.signalMain;
   return (
-    <span
-      title={[metrics.signalMain, metrics.signalDetail, metrics.riskMain, metrics.riskDetail]
+    <AppTooltip
+      content={[metrics.signalMain, metrics.signalDetail, metrics.riskMain, metrics.riskDetail]
         .filter((item) => item && item !== MISSING_VALUE)
         .join(" · ")}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: sp(3),
-        width: "100%",
-        minWidth: 0,
-        overflow: "hidden",
-        color: tone,
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
-        lineHeight: 1,
-        whiteSpace: "nowrap",
-      }}
     >
-      <Zap size={11} strokeWidth={2} aria-hidden="true" style={{ flexShrink: 0 }} />
       <span
         style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: sp(3),
+          width: "100%",
           minWidth: 0,
           overflow: "hidden",
-          textOverflow: "ellipsis",
+          color: tone,
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
+          lineHeight: 1,
           whiteSpace: "nowrap",
         }}
       >
-        {compactLabel}
+        <Zap size={11} strokeWidth={2} aria-hidden="true" style={{ flexShrink: 0 }} />
+        <span
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {compactLabel}
+        </span>
       </span>
-    </span>
+    </AppTooltip>
   );
 };
 
@@ -2210,24 +2224,25 @@ const DenseUnderlyingPriceCell = ({
   const flashClassName = useValueFlash(underlyingPrice);
   return (
     <td style={denseTableCellStyle(column, expanded)}>
-      <span
-        className={flashClassName}
-        title={positionUnderlyingPriceTitle(row, snapshotsBySymbol, maskValues)}
-        style={{
-          ...denseColumnTextStyle({
-            align: column.align,
-            color: underlyingPrice != null ? CSS_COLOR.text : CSS_COLOR.textDim,
-          }),
-          display: "inline-flex",
-          justifyContent: denseVisualAlign(column.align),
-          maxWidth: "100%",
-          padding: sp("1px 2px"),
-          borderRadius: dim(RADII.xs),
-          whiteSpace: "nowrap",
-        }}
-      >
-        {formatAccountPrice(underlyingPrice, 2, maskValues)}
-      </span>
+      <AppTooltip content={positionUnderlyingPriceTitle(row, snapshotsBySymbol, maskValues)}>
+        <span
+          className={flashClassName}
+          style={{
+            ...denseColumnTextStyle({
+              align: column.align,
+              color: underlyingPrice != null ? CSS_COLOR.text : CSS_COLOR.textDim,
+            }),
+            display: "inline-flex",
+            justifyContent: denseVisualAlign(column.align),
+            maxWidth: "100%",
+            padding: sp("1px 2px"),
+            borderRadius: dim(RADII.xs),
+            whiteSpace: "nowrap",
+          }}
+        >
+          {formatAccountPrice(underlyingPrice, 2, maskValues)}
+        </span>
+      </AppTooltip>
     </td>
   );
 };
@@ -2351,7 +2366,7 @@ const DensePositionCell = ({
     );
   } else if (column.id === "stop") {
     return (
-      <td style={denseTableCellStyle(column, expanded)} title={managementTitle}>
+      <td style={denseTableCellStyle(column, expanded)}>
         <DenseStackedValue
           primary={formatTradeManagementPrice(management.stop, maskValues)}
           secondary={tradeManagementStopSubtext(management, maskValues)}
@@ -2368,12 +2383,13 @@ const DensePositionCell = ({
               : CSS_COLOR.textDim
           }
           align={column.align}
+          title={managementTitle}
         />
       </td>
     );
   } else if (column.id === "trail") {
     return (
-      <td style={denseTableCellStyle(column, expanded)} title={managementTitle}>
+      <td style={denseTableCellStyle(column, expanded)}>
         <DenseStackedValue
           primary={formatTradeManagementPrice(management.trail, maskValues)}
           secondary={tradeManagementTrailSubtext(management, maskValues)}
@@ -2382,6 +2398,7 @@ const DensePositionCell = ({
             management.trail ? tradeManagementDistanceTone(management) : CSS_COLOR.textDim
           }
           align={column.align}
+          title={managementTitle}
         />
       </td>
     );
@@ -2466,10 +2483,12 @@ const DensePositionCell = ({
   }
 
   return (
-    <td style={denseTableCellStyle(column, expanded)} title={title}>
-      <span style={denseColumnTextStyle({ align: column.align, color })}>
-        {content}
-      </span>
+    <td style={denseTableCellStyle(column, expanded)}>
+      <AppTooltip content={title}>
+        <span style={denseColumnTextStyle({ align: column.align, color })}>
+          {content}
+        </span>
+      </AppTooltip>
     </td>
   );
 };
@@ -2993,25 +3012,28 @@ export const PositionsAtDateInspector = ({
                                 minWidth: 0,
                               }}
                             >
-                              <span
-                                data-testid="account-position-date-symbol"
-                                title={[
+                              <AppTooltip
+                                content={[
                                   row.symbol,
                                   optionInlineDetail(row, maskValues),
                                   row.description,
                                   display.openedLabel,
                                 ].filter(Boolean).join(" · ")}
-                                style={{
-                                  display: "block",
-                                  maxWidth: dim(132),
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                  fontFamily: T.mono,
-                                }}
                               >
-                                {row.symbol || MISSING_VALUE}
-                              </span>
+                                <span
+                                  data-testid="account-position-date-symbol"
+                                  style={{
+                                    display: "block",
+                                    maxWidth: dim(132),
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                    fontFamily: T.mono,
+                                  }}
+                                >
+                                  {row.symbol || MISSING_VALUE}
+                                </span>
+                              </AppTooltip>
                               {compactPositionContractDetail(row) ? (
                                 <div style={cellSubTextStyle(CSS_COLOR.textDim)}>
                                   {compactPositionContractDetail(row)}

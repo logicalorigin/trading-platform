@@ -1234,18 +1234,19 @@ function SignalDenseFact({
       >
         {label}
       </span>
-      <span
-        title={String(value || MISSING_VALUE)}
-        style={{
-          ...cellTextStyle,
-          color: tone,
-          fontSize: textSize("bodyStrong"),
-          fontWeight: FONT_WEIGHTS.medium,
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
-        {value || MISSING_VALUE}
-      </span>
+      <AppTooltip content={String(value || MISSING_VALUE)}>
+        <span
+          style={{
+            ...cellTextStyle,
+            color: tone,
+            fontSize: textSize("bodyStrong"),
+            fontWeight: FONT_WEIGHTS.medium,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {value || MISSING_VALUE}
+        </span>
+      </AppTooltip>
     </div>
   );
 }

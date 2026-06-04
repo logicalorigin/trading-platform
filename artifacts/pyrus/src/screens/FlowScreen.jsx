@@ -1599,21 +1599,22 @@ const PremiumDistributionWidget = ({
         </div>
       </div>
       {widgetHydrationWarning ? (
-        <div
-          title={widgetHydrationWarning}
-          style={{
-            color: CSS_COLOR.amber,
-            fontFamily: T.sans,
-            fontSize: fs(6),
-            fontWeight: FONT_WEIGHTS.regular,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            minWidth: 0,
-          }}
-        >
-          {formatCoveragePercent(widget.classificationCoverage)} classified
-        </div>
+        <AppTooltip content={widgetHydrationWarning}>
+          <div
+            style={{
+              color: CSS_COLOR.amber,
+              fontFamily: T.sans,
+              fontSize: fs(6),
+              fontWeight: FONT_WEIGHTS.regular,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              minWidth: 0,
+            }}
+          >
+            {formatCoveragePercent(widget.classificationCoverage)} classified
+          </div>
+        </AppTooltip>
       ) : null}
     </div>
   );

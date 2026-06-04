@@ -26,8 +26,6 @@ import {
 import {
   DiagnosticThresholdSettingsPanel,
 } from "./settings/DiagnosticThresholdSettingsPanel";
-import { DataIssueInlineIcon } from "../components/platform/DataIssueInlineIcon.jsx";
-import { collectDataIssuesFromRecord } from "../features/platform/dataIssueModel.js";
 import {
   readLocalAlertPreferences,
   writeLocalAlertPreferences,
@@ -498,35 +496,7 @@ function Panel({ title, action, children }) {
   );
 }
 
-const inferSettingsStateIssueStatus = (value) => {
-  const text = String(value ?? "").toLowerCase();
-  if (!text || text === MISSING_VALUE.toLowerCase()) return null;
-  if (/error|failed|offline|down|unavailable/.test(text)) return "error";
-  if (/degraded|stale|lagging|incomplete|not configured|no active|delayed|frozen/.test(text)) {
-    return "degraded";
-  }
-  return null;
-};
-
-function StateRow({ label, value, tone = CSS_COLOR.textSec, issue = null, issues = null }) {
-  const inferredIssueStatus = inferSettingsStateIssueStatus(value);
-  const displayIssues =
-    issues ||
-    (issue ? [issue] : null) ||
-    (inferredIssueStatus
-      ? collectDataIssuesFromRecord(
-          {
-            status: inferredIssueStatus,
-            reason: value,
-          },
-          {
-            valueLabel: label,
-            source: "settings",
-            nextAction:
-              "Open the related diagnostics or settings section before relying on this backend state.",
-          },
-        )
-      : []);
+function StateRow({ label, value, tone = CSS_COLOR.textSec }) {
   return (
     <div
       style={{
@@ -555,7 +525,6 @@ function StateRow({ label, value, tone = CSS_COLOR.textSec, issue = null, issues
         }}
       >
         <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{value ?? MISSING_VALUE}</span>
-        <DataIssueInlineIcon issues={displayIssues} side="left" align="center" />
       </span>
     </div>
   );

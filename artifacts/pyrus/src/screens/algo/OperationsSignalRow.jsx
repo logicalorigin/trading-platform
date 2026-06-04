@@ -8,6 +8,7 @@ import {
   ScanLine,
   Send,
 } from "lucide-react";
+import { AppTooltip } from "@/components/ui/tooltip";
 import {
   CSS_COLOR,
   cssColorAlpha,
@@ -861,47 +862,48 @@ const StatusPill = ({
   const tone = toneOverride || meta.tone;
   if (compact) {
     return (
+      <AppTooltip content={meta.label}>
+        <span
+          className={classNames(
+            "ra-signal-status-pill",
+            motionState ? `ra-signal-status-pill-${motionState}` : null,
+            className,
+          )}
+          aria-label={meta.label}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: sp(3),
+            minWidth: dim(34),
+            height: dim(20),
+            flex: "0 0 auto",
+            padding: sp("0 6px"),
+            borderRadius: dim(RADII.pill),
+            border: `1px solid ${cssColorAlpha(tone, "44")}`,
+            background: cssColorAlpha(tone, "18"),
+            color: tone,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.medium,
+          }}
+        >
+          {Icon ? (
+            <Icon size={12} strokeWidth={1.9} aria-hidden="true" />
+          ) : null}
+          <span>{compactPillLabel(meta.label)}</span>
+        </span>
+      </AppTooltip>
+    );
+  }
+  return (
+    <AppTooltip content={meta.label}>
       <span
         className={classNames(
           "ra-signal-status-pill",
           motionState ? `ra-signal-status-pill-${motionState}` : null,
           className,
         )}
-        title={meta.label}
-        aria-label={meta.label}
         style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: sp(3),
-          minWidth: dim(34),
-          height: dim(20),
-          flex: "0 0 auto",
-          padding: sp("0 6px"),
-          borderRadius: dim(RADII.pill),
-          border: `1px solid ${cssColorAlpha(tone, "44")}`,
-          background: cssColorAlpha(tone, "18"),
-          color: tone,
-          fontSize: textSize("caption"),
-          fontWeight: FONT_WEIGHTS.medium,
-        }}
-      >
-        {Icon ? (
-          <Icon size={12} strokeWidth={1.9} aria-hidden="true" />
-        ) : null}
-        <span>{compactPillLabel(meta.label)}</span>
-      </span>
-    );
-  }
-  return (
-    <span
-      className={classNames(
-        "ra-signal-status-pill",
-        motionState ? `ra-signal-status-pill-${motionState}` : null,
-        className,
-      )}
-      title={meta.label}
-      style={{
         display: "inline-flex",
         alignItems: "center",
         gap: sp(3),
@@ -917,7 +919,7 @@ const StatusPill = ({
         lineHeight: 1.2,
         verticalAlign: "middle",
       }}
-    >
+      >
       {Icon ? (
         <Icon
           size={SIGNAL_ICON_SIZE}
@@ -936,7 +938,8 @@ const StatusPill = ({
       >
         {meta.label}
       </span>
-    </span>
+      </span>
+    </AppTooltip>
   );
 };
 
@@ -1181,86 +1184,89 @@ const DataCell = ({
 }) => {
   const hasDetail = hasDisplayValue(detail) || Boolean(detailExtra);
   return (
-    <span
-      className={signalCellClassName(motionState, className)}
-      title={[
+    <AppTooltip
+      content={[
         titleValue ?? (typeof value === "string" ? value : null),
         hasDisplayValue(detail) ? detail : null,
       ].filter(Boolean).join(" · ")}
-      style={{
-        display: "grid",
-        gap: 0,
-        minWidth: 0,
-        color: tone,
-        overflow: "hidden",
-        lineHeight: 1.12,
-      }}
     >
       <span
+        className={signalCellClassName(motionState, className)}
         style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: sp(3),
+          display: "grid",
+          gap: 0,
           minWidth: 0,
+          color: tone,
           overflow: "hidden",
-          whiteSpace: "nowrap",
           lineHeight: 1.12,
         }}
       >
-        {icon ? (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              flex: "0 0 auto",
-            }}
-          >
-            {icon}
-          </span>
-        ) : null}
         <span
           style={{
-            minWidth: 0,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {value}
-        </span>
-      </span>
-      {hasDetail ? (
-        <span
-          style={{
-            color: detailTone,
-            fontSize: textSize("caption"),
             display: "inline-flex",
             alignItems: "center",
             gap: sp(3),
             minWidth: 0,
+            overflow: "hidden",
+            whiteSpace: "nowrap",
             lineHeight: 1.12,
           }}
         >
-          {hasDisplayValue(detail) ? (
+          {icon ? (
             <span
               style={{
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                display: "inline-flex",
+                alignItems: "center",
+                flex: "0 0 auto",
               }}
             >
-              {detail}
+              {icon}
             </span>
           ) : null}
-          {detailExtra ? (
-            <span style={{ flex: "0 0 auto", display: "inline-flex" }}>
-              {detailExtra}
-            </span>
-          ) : null}
+          <span
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {value}
+          </span>
         </span>
-      ) : null}
-    </span>
+        {hasDetail ? (
+          <span
+            style={{
+              color: detailTone,
+              fontSize: textSize("caption"),
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(3),
+              minWidth: 0,
+              lineHeight: 1.12,
+            }}
+          >
+            {hasDisplayValue(detail) ? (
+              <span
+                style={{
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {detail}
+              </span>
+            ) : null}
+            {detailExtra ? (
+              <span style={{ flex: "0 0 auto", display: "inline-flex" }}>
+                {detailExtra}
+              </span>
+            ) : null}
+          </span>
+        ) : null}
+      </span>
+    </AppTooltip>
   );
 };
 
@@ -1286,34 +1292,33 @@ const GreeksGridCell = ({
   }
 
   return (
-    <span
-      className={signalCellClassName(motionState)}
-      data-algo-greeks-grid="2x2"
-      data-testid="algo-signal-greeks-grid"
-      title={titleValue}
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-        gridTemplateRows: "repeat(2, minmax(0, 1fr))",
-        alignItems: "stretch",
-        columnGap: 0,
-        rowGap: 0,
-        minWidth: 0,
-        width: "100%",
-        height: "100%",
-        color: tone,
-        overflow: "hidden",
-        lineHeight: 1,
-      }}
-    >
+    <AppTooltip content={titleValue}>
+      <span
+        className={signalCellClassName(motionState)}
+        data-algo-greeks-grid="2x2"
+        data-testid="algo-signal-greeks-grid"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+          gridTemplateRows: "repeat(2, minmax(0, 1fr))",
+          alignItems: "stretch",
+          columnGap: 0,
+          rowGap: 0,
+          minWidth: 0,
+          width: "100%",
+          height: "100%",
+          color: tone,
+          overflow: "hidden",
+          lineHeight: 1,
+        }}
+      >
       {items.map((item, index) => {
         const leftColumn = index % 2 === 0;
         const topRow = index < 2;
         return (
-          <span
-            key={item.key}
-            data-testid={`algo-signal-greek-${item.key}`}
-            title={`${item.title} ${item.value}`}
+          <AppTooltip key={item.key} content={`${item.title} ${item.value}`}>
+            <span
+              data-testid={`algo-signal-greek-${item.key}`}
             style={{
               display: "grid",
               gridTemplateColumns: "max-content minmax(0, 1fr)",
@@ -1352,10 +1357,12 @@ const GreeksGridCell = ({
             >
               {item.value}
             </span>
-          </span>
+            </span>
+          </AppTooltip>
         );
       })}
-    </span>
+      </span>
+    </AppTooltip>
   );
 };
 
@@ -1363,18 +1370,18 @@ const PlanCell = ({ plan, titleValue, motionState = null }) => {
   const detail = hasDisplayValue(plan?.detail) ? plan.detail : MISSING_VALUE;
   const intentTokens = actionIntentTokens(plan?.main);
   return (
-    <span
-      className={signalCellClassName(motionState)}
-      data-testid="algo-signal-plan-cell"
-      title={[titleValue, plan?.main, detail].filter(hasDisplayValue).join(" · ")}
-      style={{
-        display: "grid",
-        gap: 0,
-        minWidth: 0,
-        overflow: "hidden",
-        lineHeight: 1.08,
-      }}
-    >
+    <AppTooltip content={[titleValue, plan?.main, detail].filter(hasDisplayValue).join(" · ")}>
+      <span
+        className={signalCellClassName(motionState)}
+        data-testid="algo-signal-plan-cell"
+        style={{
+          display: "grid",
+          gap: 0,
+          minWidth: 0,
+          overflow: "hidden",
+          lineHeight: 1.08,
+        }}
+      >
       <span
         data-testid="algo-signal-plan-intent"
         style={{
@@ -1423,7 +1430,8 @@ const PlanCell = ({ plan, titleValue, motionState = null }) => {
           {detail}
         </span>
       ) : null}
-    </span>
+      </span>
+    </AppTooltip>
   );
 };
 
@@ -1549,27 +1557,28 @@ const SignalHeroCell = ({
           {price}
         </span>
         {sparklineData.length >= 2 ? (
-          <span
-            data-testid="algo-signal-hero-sparkline"
-            role="img"
-            title={signalChartTitle(signalRecord) || undefined}
-            aria-label={signalChartTitle(signalRecord) || undefined}
-            style={{
-              width: dim(40),
-              height: dim(14),
-              minWidth: dim(40),
-              overflow: "hidden",
-              flex: "0 0 auto",
-            }}
-          >
-            <MicroSparkline
-              data={sparklineData}
-              positive={direction.primitive === "buy"}
-              width={40}
-              height={14}
-              style={{ width: "100%", height: "100%" }}
-            />
-          </span>
+          <AppTooltip content={signalChartTitle(signalRecord) || undefined}>
+            <span
+              data-testid="algo-signal-hero-sparkline"
+              role="img"
+              aria-label={signalChartTitle(signalRecord) || undefined}
+              style={{
+                width: dim(40),
+                height: dim(14),
+                minWidth: dim(40),
+                overflow: "hidden",
+                flex: "0 0 auto",
+              }}
+            >
+              <MicroSparkline
+                data={sparklineData}
+                positive={direction.primitive === "buy"}
+                width={40}
+                height={14}
+                style={{ width: "100%", height: "100%" }}
+              />
+            </span>
+          </AppTooltip>
         ) : null}
         {showSignalMove ? (
           <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -1652,61 +1661,63 @@ const DecisionCell = ({
         lineHeight: 1.12,
       }}
     >
-      <span
-        className={classNames(
-          "ra-signal-decision-pill",
-          verdict?.bucket ? `ra-signal-decision-pill-${verdict.bucket}` : null,
-        )}
-        title={compactJoin([decisionLabel, statusMeta.label, detailTitle])}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: sp(4),
-          width: "fit-content",
-          maxWidth: "100%",
-          minWidth: 0,
-          padding: sp("2px 7px 2px 3px"),
-          borderRadius: dim(RADII.pill),
-          border: `1px solid ${cssColorAlpha(verdict?.tone || statusMeta.tone, "40")}`,
-          background: cssColorAlpha(verdict?.tone || statusMeta.tone, "1C"),
-          color: verdict?.tone || statusMeta.tone,
-          overflow: "hidden",
-          whiteSpace: "nowrap",
-        }}
-      >
-        <VerdictGlyph
-          signal={actionabilitySignalRecord}
-          signalRecord={actionabilitySignalRecord}
-          blocker={blocker}
-          statusMeta={statusMeta}
-          size={18}
-        />
+      <AppTooltip content={compactJoin([decisionLabel, statusMeta.label, detailTitle])}>
+        <span
+          className={classNames(
+            "ra-signal-decision-pill",
+            verdict?.bucket ? `ra-signal-decision-pill-${verdict.bucket}` : null,
+          )}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: sp(4),
+            width: "fit-content",
+            maxWidth: "100%",
+            minWidth: 0,
+            padding: sp("2px 7px 2px 3px"),
+            borderRadius: dim(RADII.pill),
+            border: `1px solid ${cssColorAlpha(verdict?.tone || statusMeta.tone, "40")}`,
+            background: cssColorAlpha(verdict?.tone || statusMeta.tone, "1C"),
+            color: verdict?.tone || statusMeta.tone,
+            overflow: "hidden",
+            whiteSpace: "nowrap",
+          }}
+        >
+          <VerdictGlyph
+            signal={actionabilitySignalRecord}
+            signalRecord={actionabilitySignalRecord}
+            blocker={blocker}
+            statusMeta={statusMeta}
+            size={18}
+          />
+          <span
+            style={{
+              fontWeight: FONT_WEIGHTS.medium,
+              fontSize: fs(12),
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {decisionLabel}
+          </span>
+        </span>
+      </AppTooltip>
+      <AppTooltip content={detailTitle}>
         <span
           style={{
-            fontWeight: FONT_WEIGHTS.medium,
-            fontSize: fs(12),
+            color: decisionDetailMeta?.tone || CSS_COLOR.textMuted,
+            fontSize: textSize("caption"),
+            lineHeight: 1.12,
             minWidth: 0,
             overflow: "hidden",
             textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
           }}
         >
-          {decisionLabel}
+          {detailText}
         </span>
-      </span>
-      <span
-        title={detailTitle}
-        style={{
-          color: decisionDetailMeta?.tone || CSS_COLOR.textMuted,
-          fontSize: textSize("caption"),
-          lineHeight: 1.12,
-          minWidth: 0,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {detailText}
-      </span>
+      </AppTooltip>
     </span>
   );
 };
@@ -1787,30 +1798,30 @@ const ProcessTrailCell = ({
     .join("\n");
 
   return (
-    <span
-      data-testid="algo-signal-process-cell"
-      className={signalCellClassName(
-        selectionStage?.motionState ||
-          (latestStage?.id === "blocked"
-          ? "blocked"
-          : latestStage?.id === "submitted" ||
-              latestStage?.id === "filled" ||
-              latestStage?.id === "managed" ||
-              latestStage?.id === "closed"
-            ? "ready"
-            : scanActive
-              ? "evaluating"
-              : null),
-      )}
-      title={compactJoin([selectionStage?.title, title || detail])}
-      style={{
-        display: "grid",
-        gap: sp(2),
-        minWidth: 0,
-        overflow: "hidden",
-        lineHeight: 1.12,
-      }}
-    >
+    <AppTooltip content={compactJoin([selectionStage?.title, title || detail])}>
+      <span
+        data-testid="algo-signal-process-cell"
+        className={signalCellClassName(
+          selectionStage?.motionState ||
+            (latestStage?.id === "blocked"
+            ? "blocked"
+            : latestStage?.id === "submitted" ||
+                latestStage?.id === "filled" ||
+                latestStage?.id === "managed" ||
+                latestStage?.id === "closed"
+              ? "ready"
+              : scanActive
+                ? "evaluating"
+                : null),
+        )}
+        style={{
+          display: "grid",
+          gap: sp(2),
+          minWidth: 0,
+          overflow: "hidden",
+          lineHeight: 1.12,
+        }}
+      >
       <span
         style={{
           display: "inline-flex",
@@ -1846,17 +1857,17 @@ const ProcessTrailCell = ({
             {stageIds.map((stageId) => {
               const markerMeta = processStageMeta({ id: stageId });
               return (
-                <span
-                  key={stageId}
-                  title={markerMeta.label}
-                  style={{
-                    width: dim(5),
-                    height: dim(5),
-                    borderRadius: dim(RADII.pill),
-                    background: markerMeta.tone,
-                    opacity: stageId === latestStage?.id ? 1 : 0.5,
-                  }}
-                />
+                <AppTooltip key={stageId} content={markerMeta.label}>
+                  <span
+                    style={{
+                      width: dim(5),
+                      height: dim(5),
+                      borderRadius: dim(RADII.pill),
+                      background: markerMeta.tone,
+                      opacity: stageId === latestStage?.id ? 1 : 0.5,
+                    }}
+                  />
+                </AppTooltip>
               );
             })}
           </span>
@@ -1875,7 +1886,8 @@ const ProcessTrailCell = ({
       >
         {detail}
       </span>
-    </span>
+      </span>
+    </AppTooltip>
   );
 };
 
@@ -1907,37 +1919,38 @@ const RowActionButton = ({ action, onAction }) => {
   }
   const Icon = action.Icon;
   return (
-    <button
-      type="button"
-      className={classNames(
-        "ra-signal-action-button",
-        action.id === "submit" ? "ra-signal-action-button-ready" : null,
-      )}
-      data-testid={`algo-signal-row-action-${action.id}`}
-      title={action.title || action.label}
-      aria-label={action.label}
-      onClick={(event) => {
-        event.stopPropagation();
-        onAction?.(action.id);
-      }}
-      onKeyDown={(event) => {
-        event.stopPropagation();
-      }}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: dim(28),
-        height: dim(24),
-        borderRadius: dim(RADII.sm),
-        border: `1px solid ${cssColorAlpha(action.tone, "44")}`,
-        background: cssColorAlpha(action.tone, "18"),
-        color: action.tone,
-        cursor: "pointer",
-      }}
-    >
-      <Icon size={14} strokeWidth={1.9} aria-hidden="true" />
-    </button>
+    <AppTooltip content={action.title || action.label}>
+      <button
+        type="button"
+        className={classNames(
+          "ra-signal-action-button",
+          action.id === "submit" ? "ra-signal-action-button-ready" : null,
+        )}
+        data-testid={`algo-signal-row-action-${action.id}`}
+        aria-label={action.label}
+        onClick={(event) => {
+          event.stopPropagation();
+          onAction?.(action.id);
+        }}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+        }}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: dim(28),
+          height: dim(24),
+          borderRadius: dim(RADII.sm),
+          border: `1px solid ${cssColorAlpha(action.tone, "44")}`,
+          background: cssColorAlpha(action.tone, "18"),
+          color: action.tone,
+          cursor: "pointer",
+        }}
+      >
+        <Icon size={14} strokeWidth={1.9} aria-hidden="true" />
+      </button>
+    </AppTooltip>
   );
 };
 
@@ -1945,35 +1958,36 @@ const SignalTradeButton = ({ symbol, onOpen }) => {
   if (!onOpen) return null;
   const label = `Open ${symbol || "selected"} contract in Trade`;
   return (
-    <button
-      type="button"
-      data-testid="algo-signal-open-trade"
-      title={label}
-      aria-label={label}
-      onClick={(event) => {
-        event.stopPropagation();
-        onOpen();
-      }}
-      onKeyDown={(event) => {
-        event.stopPropagation();
-      }}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: dim(20),
-        height: dim(20),
-        minWidth: dim(20),
-        borderRadius: dim(RADII.sm),
-        border: `1px solid ${cssColorAlpha(CSS_COLOR.accent, "44")}`,
-        background: cssColorAlpha(CSS_COLOR.accent, "16"),
-        color: CSS_COLOR.accent,
-        cursor: "pointer",
-        flex: "0 0 auto",
-      }}
-    >
-      <ArrowUpRight size={12} strokeWidth={1.9} aria-hidden="true" />
-    </button>
+    <AppTooltip content={label}>
+      <button
+        type="button"
+        data-testid="algo-signal-open-trade"
+        aria-label={label}
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpen();
+        }}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+        }}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: dim(20),
+          height: dim(20),
+          minWidth: dim(20),
+          borderRadius: dim(RADII.sm),
+          border: `1px solid ${cssColorAlpha(CSS_COLOR.accent, "44")}`,
+          background: cssColorAlpha(CSS_COLOR.accent, "16"),
+          color: CSS_COLOR.accent,
+          cursor: "pointer",
+          flex: "0 0 auto",
+        }}
+      >
+        <ArrowUpRight size={12} strokeWidth={1.9} aria-hidden="true" />
+      </button>
+    </AppTooltip>
   );
 };
 

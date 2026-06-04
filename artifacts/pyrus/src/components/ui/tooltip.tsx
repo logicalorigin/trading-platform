@@ -51,12 +51,6 @@ const isDisabledDomButton = (
   children.type === "button" &&
   Boolean(children.props.disabled)
 
-const nativeTitleFromContent = (content: React.ReactNode) => {
-  if (typeof content === "string") return content.trim() || undefined
-  if (typeof content === "number") return String(content)
-  return undefined
-}
-
 const disabledTriggerLayoutStyle = (
   children: React.ReactElement<{ style?: React.CSSProperties }>,
 ): React.CSSProperties | undefined => {
@@ -82,14 +76,6 @@ const disabledTriggerLayoutStyle = (
   return Object.values(layoutStyle).some((value) => value != null)
     ? layoutStyle
     : undefined
-}
-
-const withNativeTitle = (
-  children: React.ReactElement<{ title?: string }>,
-  title: string | undefined,
-) => {
-  if (!title || children.props.title) return children
-  return React.cloneElement(children, { title })
 }
 
 type TooltipDomTriggerProps = {
@@ -207,7 +193,6 @@ function AppTooltip({
   const tooltipId = React.useId()
   const triggerRef = React.useRef<HTMLElement | null>(null)
   const contentRef = React.useRef<HTMLDivElement | null>(null)
-  const nativeTitle = nativeTitleFromContent(content)
   const tooltipDisabled =
     disabled ||
     content == null ||
@@ -250,7 +235,7 @@ function AppTooltip({
       "aria-describedby": open
         ? [props["aria-describedby"], tooltipId].filter(Boolean).join(" ")
         : props["aria-describedby"],
-      title: props.title || nativeTitle,
+      title: undefined,
       onPointerEnter: composeTooltipHandler(
         props.onPointerEnter,
         (event: React.PointerEvent<HTMLElement>) => {
@@ -281,26 +266,24 @@ function AppTooltip({
         },
       ),
     }),
-    [hideTooltip, nativeTitle, open, showTooltip, tooltipId, updatePosition],
+    [hideTooltip, open, showTooltip, tooltipId, updatePosition],
   )
 
   const trigger = isDisabledDomButton(children) ? (
     <span
       className={cn("ra-tooltip-disabled-trigger", className)}
       style={disabledTriggerLayoutStyle(children)}
-      {...tooltipTriggerProps({ title: nativeTitle })}
+      {...tooltipTriggerProps({})}
     >
       {children}
     </span>
   ) : React.isValidElement<TooltipDomTriggerProps>(children) &&
     typeof children.type === "string" ? (
     React.cloneElement(children, tooltipTriggerProps(children.props))
-  ) : React.isValidElement<{ title?: string }>(children) ? (
-    withNativeTitle(children, nativeTitle)
   ) : (
     <span
       className={className}
-      {...tooltipTriggerProps({ title: nativeTitle })}
+      {...tooltipTriggerProps({})}
     >
       {children}
     </span>

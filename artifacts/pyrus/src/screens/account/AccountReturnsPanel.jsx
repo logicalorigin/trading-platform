@@ -325,20 +325,19 @@ const MonthCalendarGrid = ({
             calendarStyle,
           );
           return (
-            <button
-              key={day.iso}
-              type="button"
-              className="ra-interactive"
-              data-testid="account-pnl-calendar-day"
-              data-active={isActive ? "true" : undefined}
-              data-pinned={isPinned ? "true" : undefined}
-              aria-label={dayAriaLabel(day, currency, maskValues)}
-              aria-pressed={isPinned ? "true" : "false"}
-              aria-current={day.isToday ? "date" : undefined}
-              title={dayTooltip(day, currency, maskValues)}
-              onPointerEnter={() => onHoverDay(day.iso)}
-              onFocus={() => onHoverDay(day.iso)}
-              onClick={() => onPinDay(day.iso)}
+            <AppTooltip key={day.iso} content={dayTooltip(day, currency, maskValues)}>
+              <button
+                type="button"
+                className="ra-interactive"
+                data-testid="account-pnl-calendar-day"
+                data-active={isActive ? "true" : undefined}
+                data-pinned={isPinned ? "true" : undefined}
+                aria-label={dayAriaLabel(day, currency, maskValues)}
+                aria-pressed={isPinned ? "true" : "false"}
+                aria-current={day.isToday ? "date" : undefined}
+                onPointerEnter={() => onHoverDay(day.iso)}
+                onFocus={() => onHoverDay(day.iso)}
+                onClick={() => onPinDay(day.iso)}
               style={{
                 appearance: "none",
                 boxSizing: "border-box",
@@ -417,7 +416,8 @@ const MonthCalendarGrid = ({
                   {formatCalendarCellValue(displayPnl, maskValues)}
                 </span>
               </div>
-            </button>
+              </button>
+            </AppTooltip>
           );
         })}
       </div>

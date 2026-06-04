@@ -363,9 +363,11 @@ test("critical memory pressure stalls heavy hydration but keeps core quote reade
   assert.equal(schedule.pressureCaps.broadFlowRuntimeEnabled, true);
   assert.equal(schedule.pressureCaps.broadFlowSymbolLimit, null);
   assert.deepEqual(schedule.pressureCaps.broadFlowScannerConfig, {});
-  assert.equal(schedule.pressureCaps.signalMatrixWideSymbolLimit, 8);
-  assert.equal(schedule.pressureCaps.signalMatrixNarrowSymbolLimit, 8);
-  assert.equal(schedule.pressureCaps.sparklineEnabled, false);
+  assert.equal(schedule.pressureCaps.signalMatrixWideSymbolLimit, 500);
+  assert.equal(schedule.pressureCaps.signalMatrixNarrowSymbolLimit, 500);
+  assert.equal(schedule.pressureCaps.sparklineEnabled, true);
+  assert.equal(schedule.pressureCaps.sparklineConcurrency, 4);
+  assert.equal(schedule.pressureCaps.prioritySparklineSymbolLimit, null);
   assert.equal(schedule.classes.foregroundIbkr, false);
   assert.equal(schedule.classes.realtimeIbkr, true);
   assert.equal(schedule.streams.watchlistQuoteStream, true);
@@ -374,7 +376,7 @@ test("critical memory pressure stalls heavy hydration but keeps core quote reade
   assert.equal(schedule.hiddenScreenPreload.codeOnly, false);
 });
 
-test("high memory pressure keeps broad flow owned while capping heavy signal hydration", () => {
+test("high memory pressure keeps broad flow owned without capping Massive-backed signal hydration", () => {
   const schedule = buildPlatformWorkSchedule({
     ...baseInput,
     activeScreen: "flow",
@@ -389,11 +391,11 @@ test("high memory pressure keeps broad flow owned while capping heavy signal hyd
   assert.equal(schedule.streams.broadFlowRuntime, true);
   assert.equal(schedule.pressureCaps.broadFlowSymbolLimit, null);
   assert.deepEqual(schedule.pressureCaps.broadFlowScannerConfig, {});
-  assert.equal(schedule.pressureCaps.signalMatrixWideSymbolLimit, 12);
-  assert.equal(schedule.pressureCaps.signalMatrixNarrowSymbolLimit, 8);
+  assert.equal(schedule.pressureCaps.signalMatrixWideSymbolLimit, 500);
+  assert.equal(schedule.pressureCaps.signalMatrixNarrowSymbolLimit, 500);
   assert.equal(schedule.pressureCaps.signalMatrixPollMinMs, 60_000);
-  assert.equal(schedule.pressureCaps.sparklineConcurrency, 2);
-  assert.equal(schedule.pressureCaps.prioritySparklineSymbolLimit, 8);
+  assert.equal(schedule.pressureCaps.sparklineConcurrency, 4);
+  assert.equal(schedule.pressureCaps.prioritySparklineSymbolLimit, null);
 });
 
 test("pauses broad flow runtime while page is hidden", () => {

@@ -1620,6 +1620,56 @@ test("automation live option quote snapshots time out stalled upstream hydration
   assert.deepEqual(payload.debug?.missingProviderContractIds, ["5001"]);
 });
 
+test("account monitor live option quote snapshots time out stalled upstream hydration with debug metadata", async () => {
+  setEnv({
+    IBKR_LIVE_OPTION_QUOTE_SNAPSHOT_TIMEOUT_MS: "25",
+  });
+  let aborted = false;
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    getOptionQuoteSnapshots(input) {
+      return new Promise<QuoteSnapshot[]>((_, reject) => {
+        input.signal?.addEventListener(
+          "abort",
+          () => {
+            aborted = true;
+            reject(input.signal?.reason ?? new Error("aborted"));
+          },
+          { once: true },
+        );
+      });
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+
+  const startedAt = Date.now();
+  const payload = await fetchBridgeOptionQuoteSnapshots({
+    underlying: "F",
+    providerContractIds: ["5002"],
+    owner: "account-position-option-quotes:U1:F",
+    intent: "account-monitor-live",
+    fallbackProvider: "cache",
+    requiresGreeks: false,
+    ttlMs: 1_000,
+  });
+
+  assert.equal(aborted, true);
+  assert.equal(payload.quotes.length, 0);
+  assert.ok(Date.now() - startedAt < 1_000);
+  assert.match(payload.debug?.errorMessage ?? "", /timed out after 25ms/);
+  assert.equal(payload.debug?.acceptedCount, 1);
+  assert.equal(payload.debug?.returnedCount, 0);
+  assert.deepEqual(payload.debug?.missingProviderContractIds, ["5002"]);
+});
+
 test("option quote snapshots do not release same-owner live stream leases", async () => {
   __setBridgeOptionQuoteClientForTests({
     async getHealth() {

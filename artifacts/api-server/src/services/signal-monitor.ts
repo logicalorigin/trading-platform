@@ -171,7 +171,6 @@ const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY =
   "native_timeframes_live_retry_exact_backfill";
 const SIGNAL_MONITOR_MATRIX_BAR_LOAD_TIMEOUT_MS = 12_000;
 const SIGNAL_MONITOR_MATRIX_STREAM_KEEPALIVE_MS = 5 * 60_000;
-const SIGNAL_MONITOR_MATRIX_STREAM_SYMBOL_CAP = 80;
 const DEFAULT_SIGNAL_MONITOR_BAR_SOURCE_POLICY: SignalMonitorBarSourcePolicy =
   "mixed";
 const SIGNAL_MONITOR_BARS_PRIORITY = 8;
@@ -183,7 +182,7 @@ const DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE: SignalMonitorUniverseMode =
   "all_watchlists";
 const SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT = 500;
 const SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT = 10;
-const DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS = 250;
+const DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS = SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT;
 const DEFAULT_SIGNAL_MONITOR_EVALUATION_CONCURRENCY = 6;
 const DEFAULT_SIGNAL_MONITOR_POLL_SECONDS = 60;
 const SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS: Record<
@@ -196,22 +195,37 @@ const SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS: Record<
   },
   watch: {
     maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
-    concurrency: 8,
+    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
   },
   high: {
     maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
-    concurrency: 4,
+    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
   },
-  critical: { maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT, concurrency: 1 },
+  critical: {
+    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
+  },
 };
 const SIGNAL_MONITOR_AUTOMATIC_MATRIX_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,
   { maxSymbols: number; concurrency: number }
 > = {
-  normal: { maxSymbols: 32, concurrency: 2 },
-  watch: { maxSymbols: 16, concurrency: 2 },
-  high: { maxSymbols: 8, concurrency: 1 },
-  critical: { maxSymbols: 8, concurrency: 1 },
+  normal: {
+    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
+  },
+  watch: {
+    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
+  },
+  high: {
+    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
+  },
+  critical: {
+    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
+  },
 };
 const SIGNAL_MONITOR_MATRIX_SOFT_BYPASS_MAX_SYMBOLS = 12;
 const SIGNAL_MONITOR_MATRIX_EXACT_CELL_CAPS: Record<
@@ -220,8 +234,8 @@ const SIGNAL_MONITOR_MATRIX_EXACT_CELL_CAPS: Record<
 > = {
   normal: 240,
   watch: 240,
-  high: 20,
-  critical: 10,
+  high: 240,
+  critical: 240,
 };
 const SIGNAL_MONITOR_FOREGROUND_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
@@ -229,8 +243,8 @@ const SIGNAL_MONITOR_FOREGROUND_MATRIX_EXACT_CELL_CAPS: Record<
 > = {
   normal: 240,
   watch: 240,
-  high: 60,
-  critical: 10,
+  high: 240,
+  critical: 240,
 };
 const SIGNAL_MONITOR_STA_VISIBLE_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
@@ -238,8 +252,8 @@ const SIGNAL_MONITOR_STA_VISIBLE_MATRIX_EXACT_CELL_CAPS: Record<
 > = {
   normal: 240,
   watch: 240,
-  high: 120,
-  critical: 10,
+  high: 240,
+  critical: 240,
 };
 const SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,
@@ -257,7 +271,10 @@ const SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS: Record<
     maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
     concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
   },
-  critical: { maxSymbols: 8, concurrency: 1 },
+  critical: {
+    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
+  },
 };
 const signalMonitorReadDbBackoff = createTransientPostgresBackoff();
 const runtimeSignalMonitorProfiles = new Map<
@@ -1267,8 +1284,9 @@ function isAutomaticSignalMonitorMatrixRequest(input: {
   requestOrigin?: SignalMonitorMatrixRequestOrigin;
 }) {
   return (
-    (input.clientRole === "leader" || input.clientRole === "follower") &&
-    (input.requestOrigin === "startup" || input.requestOrigin === "poll")
+    isStaVisiblePageSignalMonitorMatrixRequest(input) ||
+    ((input.clientRole === "leader" || input.clientRole === "follower") &&
+      (input.requestOrigin === "startup" || input.requestOrigin === "poll"))
   );
 }
 
@@ -2459,7 +2477,7 @@ function primeSignalMonitorMatrixStockAggregateStream(symbols: string[]): void {
   }
   const normalizedSymbols = Array.from(
     new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
-  ).slice(0, SIGNAL_MONITOR_MATRIX_STREAM_SYMBOL_CAP);
+  );
   if (!normalizedSymbols.length) {
     return;
   }
@@ -3192,6 +3210,14 @@ async function upsertSymbolState(input: {
     lastError: input.lastError ?? null,
     updatedAt: input.evaluatedAt,
   };
+  const existing = await readStoredSignalMonitorSymbolState({
+    profileId: input.profileId,
+    symbol: input.symbol,
+    timeframe: input.timeframe,
+  });
+  if (existing && shouldPreserveExistingSignalMonitorSymbolState(existing, values)) {
+    return existing;
+  }
 
   const [state] = await db
     .insert(signalMonitorSymbolStatesTable)
@@ -4095,9 +4121,72 @@ function matrixBarsSinceSignalOrNull(value: unknown): number | null {
   return Number.isFinite(numeric) ? Math.max(0, Math.floor(numeric)) : null;
 }
 
+function signalMonitorStoredStateActivityMs(input: {
+  currentSignalAt?: Date | string | null;
+  latestBarAt?: Date | string | null;
+}): number {
+  return Math.max(
+    dateOrNull(input.currentSignalAt)?.getTime() ?? 0,
+    dateOrNull(input.latestBarAt)?.getTime() ?? 0,
+  );
+}
+
+function signalMonitorStoredStateQuality(input: {
+  currentSignalAt?: Date | string | null;
+  currentSignalDirection?: string | null;
+  status?: string | null;
+}): number {
+  const status = String(input.status || "unknown").trim().toLowerCase();
+  const statusScore =
+    status === "ok"
+      ? 4
+      : status === "stale"
+        ? 3
+        : status === "unavailable"
+          ? 2
+          : 1;
+  const signalScore =
+    input.currentSignalDirection === "buy" ||
+    input.currentSignalDirection === "sell" ||
+    dateOrNull(input.currentSignalAt)
+      ? 1
+      : 0;
+  return statusScore + signalScore;
+}
+
+function shouldPreserveExistingSignalMonitorSymbolState(
+  existing: {
+    currentSignalAt?: Date | string | null;
+    currentSignalDirection?: string | null;
+    latestBarAt?: Date | string | null;
+    status?: string | null;
+  } | null,
+  incoming: {
+    currentSignalAt?: Date | string | null;
+    currentSignalDirection?: string | null;
+    latestBarAt?: Date | string | null;
+    status?: string | null;
+  },
+): boolean {
+  if (!existing) {
+    return false;
+  }
+  const existingActivityMs = signalMonitorStoredStateActivityMs(existing);
+  const incomingActivityMs = signalMonitorStoredStateActivityMs(incoming);
+  if (existingActivityMs > incomingActivityMs) {
+    return true;
+  }
+  if (existingActivityMs < incomingActivityMs) {
+    return false;
+  }
+  return (
+    signalMonitorStoredStateQuality(existing) >
+    signalMonitorStoredStateQuality(incoming)
+  );
+}
+
 function shouldPersistSignalMonitorMatrixState(
   state: SignalMonitorMatrixStateResult,
-  options: { profileTimeframe?: SignalMonitorTimeframe | null } = {},
 ): boolean {
   const symbol = normalizeSymbol(state.symbol);
   const timeframe = String(state.timeframe || "") as SignalMonitorMatrixTimeframe;
@@ -4105,7 +4194,6 @@ function shouldPersistSignalMonitorMatrixState(
   return Boolean(
     symbol &&
       SIGNAL_MONITOR_MATRIX_TIMEFRAMES.includes(timeframe) &&
-      timeframe !== options.profileTimeframe &&
       state.active !== false &&
       (status === "ok" || status === "stale") &&
       !state.lastError &&
@@ -4118,9 +4206,8 @@ async function persistSignalMonitorMatrixStatesBestEffort(input: {
   states: SignalMonitorMatrixStateResult[];
   evaluatedAt: Date;
 }) {
-  const profileTimeframe = resolveSignalMonitorTimeframe(input.profile.timeframe);
   const states = input.states.filter((state) =>
-    shouldPersistSignalMonitorMatrixState(state, { profileTimeframe }),
+    shouldPersistSignalMonitorMatrixState(state),
   );
   if (!states.length) {
     return;
@@ -6092,6 +6179,7 @@ export const __signalMonitorInternalsForTests = {
   hydrateSignalMonitorMatrixStatesFromStoredStates,
   hasCompleteSignalMonitorMatrixCoverage,
   shouldPersistSignalMonitorMatrixState,
+  shouldPreserveExistingSignalMonitorSymbolState,
   loadSignalMonitorStreamCompletedBars,
   isSignalMonitorMatrixBarLoadTimeout,
   evaluateSignalMonitorMatrixStateFromStreamBars,

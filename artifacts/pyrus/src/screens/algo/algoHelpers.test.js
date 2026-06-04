@@ -954,6 +954,42 @@ test("visible signal rows prefer live signal rows over same-family candidate fal
   );
 });
 
+test("visible signal rows preserve nested candidate signal timestamps", () => {
+  const rows = buildVisibleSignalRows({
+    signals: [],
+    candidates: [
+      {
+        id: "amd-old",
+        symbol: "AMD",
+        direction: "buy",
+        signal: {
+          symbol: "AMD",
+          direction: "buy",
+          signalAt: "2026-05-23T22:00:00.000Z",
+        },
+      },
+      {
+        id: "nvda-new",
+        symbol: "NVDA",
+        direction: "sell",
+        signal: {
+          symbol: "NVDA",
+          direction: "sell",
+          signalAt: "2026-05-23T22:05:00.000Z",
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    rows.map((row) => [row.symbol, row.signalAt]),
+    [
+      ["AMD", "2026-05-23T22:00:00.000Z"],
+      ["NVDA", "2026-05-23T22:05:00.000Z"],
+    ],
+  );
+});
+
 test("visible signal rows include same-day signal-monitor history without duplicating live action rows", () => {
   const rows = buildVisibleSignalRows({
     signals: [
@@ -1180,6 +1216,104 @@ test("STA action snapshot keeps last successful rows when the action source is f
   assert.deepEqual(stable.candidates.map((candidate) => candidate.id), [
     "spy-candidate",
   ]);
+});
+
+test("STA action snapshot ignores transient stale summaries that would pop rows out", () => {
+  const previous = resolveStableStaActionSnapshot({
+    signalOptionsState: {
+      cachedAt: "2026-06-04T19:20:00.000Z",
+      cacheStatus: "hit",
+      signals: [
+        {
+          symbol: "AVGO",
+          timeframe: "5m",
+          direction: "sell",
+          signalAt: "2026-06-04T19:17:57.041Z",
+        },
+        {
+          symbol: "GOOGL",
+          timeframe: "5m",
+          direction: "sell",
+          signalAt: "2026-06-04T19:05:00.000Z",
+        },
+        {
+          symbol: "VST",
+          timeframe: "5m",
+          direction: "buy",
+          signalAt: "2026-06-04T19:05:00.000Z",
+        },
+      ],
+      candidates: [
+        { id: "avgo-candidate", symbol: "AVGO" },
+        { id: "googl-candidate", symbol: "GOOGL" },
+        { id: "vst-candidate", symbol: "VST" },
+      ],
+      activePositions: [],
+    },
+  });
+
+  const stable = resolveStableStaActionSnapshot({
+    cockpit: {
+      cachedAt: "2026-06-04T19:20:10.000Z",
+      cacheStatus: "stale",
+      stale: true,
+      reason: "signal_options_state_summary_stale_timeout_fallback",
+      signals: [
+        {
+          symbol: "AVGO",
+          timeframe: "5m",
+          direction: "sell",
+          signalAt: "2026-06-04T19:17:57.041Z",
+        },
+      ],
+      candidates: [{ id: "avgo-candidate", symbol: "AVGO" }],
+      activePositions: [],
+    },
+    previousSnapshot: previous,
+  });
+
+  assert.equal(stable.cacheable, false);
+  assert.equal(stable.sourceHealth.stale, true);
+  assert.equal(stable.sourceHealth.degraded, true);
+  assert.deepEqual(
+    stable.signals.map((signal) => signal.symbol),
+    ["AVGO", "GOOGL", "VST"],
+  );
+  assert.deepEqual(stable.candidates.map((candidate) => candidate.id), [
+    "avgo-candidate",
+    "googl-candidate",
+    "vst-candidate",
+  ]);
+});
+
+test("STA action snapshot prefers live rows over newer transient rows", () => {
+  const resolved = resolveStableStaActionSnapshot({
+    cockpit: {
+      signals: [
+        {
+          signalKey: "spy-live",
+          symbol: "SPY",
+          signalAt: "2026-06-03T14:35:00.000Z",
+        },
+      ],
+    },
+    signalOptionsState: {
+      stale: true,
+      signals: [
+        {
+          signalKey: "tsla-stale",
+          symbol: "TSLA",
+          signalAt: "2026-06-03T14:40:00.000Z",
+        },
+      ],
+    },
+  });
+
+  assert.equal(resolved.source, "cockpit");
+  assert.deepEqual(
+    resolved.signals.map((signal) => signal.symbol),
+    ["SPY"],
+  );
 });
 
 test("STA action snapshot accepts row removals after a healthy action-source update", () => {

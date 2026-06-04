@@ -1026,6 +1026,111 @@ test("applyShadowAccountPayloadToCache keeps good shadow values over degraded st
   assert.equal(patched.metrics.netLiquidation.source, "SHADOW_LEDGER");
 });
 
+test("applyShadowAccountPayloadToCache preserves live shadow option quotes over stream snapshots", () => {
+  const positionsKey = [
+    "/api/accounts/shadow/positions",
+    { mode: "paper", assetClass: "Options" },
+  ];
+  const initialData = new Map<string, unknown>([
+    [
+      JSON.stringify(positionsKey),
+      {
+        accountId: "shadow",
+        positions: [
+          {
+            id: "shadow-spy-option",
+            accountId: "shadow",
+            assetClass: "Options",
+            symbol: "SPY",
+            quantity: 2,
+            averageCost: 1,
+            mark: 1.24,
+            marketValue: 248,
+            unrealizedPnl: 48,
+            unrealizedPnlPercent: 24,
+            dayChange: 8,
+            dayChangePercent: 3.3,
+            optionContract: {
+              underlying: "SPY",
+              providerContractId: "9001",
+              multiplier: 100,
+            },
+            optionQuote: {
+              providerContractId: "9001",
+              bid: 1.2,
+              ask: 1.28,
+              mark: 1.24,
+              dayChange: 0.04,
+              dayChangePercent: 3.3,
+              delta: 0.42,
+              source: "option_quote",
+              updatedAt: "2026-06-04T18:00:05.000Z",
+            },
+            quote: {
+              providerContractId: "9001",
+              bid: 1.2,
+              ask: 1.28,
+              mark: 1.24,
+              source: "option_quote",
+              updatedAt: "2026-06-04T18:00:05.000Z",
+            },
+          },
+        ],
+        totals: { netExposure: 248, grossLong: 248, unrealizedPnl: 48 },
+      },
+    ],
+  ]);
+  const { queryClient, writes } = createMockQueryClient(
+    [positionsKey],
+    initialData,
+  );
+
+  applyShadowAccountPayloadToCache(queryClient as any, {
+    summary: { accountId: "shadow", metrics: {} },
+    positions: {
+      accountId: "shadow",
+      positions: [
+        {
+          id: "shadow-spy-option",
+          accountId: "shadow",
+          assetClass: "Options",
+          symbol: "SPY",
+          quantity: 2,
+          averageCost: 1,
+          mark: 1,
+          marketValue: 200,
+          unrealizedPnl: 0,
+          unrealizedPnlPercent: 0,
+          dayChange: null,
+          dayChangePercent: null,
+          optionContract: {
+            underlying: "SPY",
+            providerContractId: "9001",
+            multiplier: 100,
+          },
+        },
+      ],
+      totals: { netExposure: 200, grossLong: 200, unrealizedPnl: 0 },
+    },
+    workingOrders: { accountId: "shadow", tab: "working", orders: [] },
+    historyOrders: { accountId: "shadow", tab: "history", orders: [] },
+    allocation: { accountId: "shadow", assetClass: [] },
+    risk: { accountId: "shadow", margin: {} },
+    updatedAt: "2026-06-04T18:00:06.000Z",
+  } as any);
+
+  const patched = writes.get(JSON.stringify(positionsKey)) as any;
+  const row = patched.positions[0];
+  assert.equal(row.optionQuote.bid, 1.2);
+  assert.equal(row.optionQuote.ask, 1.28);
+  assert.equal(row.quote.bid, 1.2);
+  assert.equal(row.quote.ask, 1.28);
+  assert.equal(Number(row.mark.toFixed(2)), 1.24);
+  assert.equal(Number(row.marketValue.toFixed(2)), 248);
+  assert.equal(Number(row.dayChange.toFixed(2)), 8);
+  assert.equal(row.optionQuote.delta, 0.42);
+});
+
 test("applyAccountPagePayloadToCache seeds visible account page query caches", () => {
   const summaryKey = ["/api/accounts/combined/summary", { mode: "paper" }];
   const positionsKey = [
@@ -1160,6 +1265,104 @@ test("applyAccountPagePayloadToCache seeds visible account page query caches", (
   assert.equal(writes.get(JSON.stringify(sourceScopedTradesKey)), undefined);
   assert.equal(writes.get(JSON.stringify(sourceScopedEquityKey)), undefined);
   assert.equal((writes.get(JSON.stringify(healthKey)) as any)?.flexConfigured, true);
+});
+
+test("applyAccountPageCriticalPayloadToCache keeps live option quotes while accepting position updates", () => {
+  const positionsKey = [
+    "/api/accounts/combined/positions",
+    { mode: "live", assetClass: "Options" },
+  ];
+  const initialData = new Map<string, unknown>([
+    [
+      JSON.stringify(positionsKey),
+      {
+        accountId: "combined",
+        positions: [
+          {
+            id: "spy-option",
+            accountId: "combined",
+            assetClass: "Options",
+            symbol: "SPY",
+            quantity: 2,
+            averageCost: 1,
+            mark: 1.24,
+            marketValue: 248,
+            unrealizedPnl: 48,
+            unrealizedPnlPercent: 24,
+            optionContract: {
+              underlying: "SPY",
+              providerContractId: "9001",
+              multiplier: 100,
+            },
+            optionQuote: {
+              providerContractId: "9001",
+              bid: 1.2,
+              ask: 1.28,
+              mark: 1.24,
+              source: "option_quote",
+              updatedAt: "2026-06-04T18:00:05.000Z",
+            },
+          },
+        ],
+        totals: { netExposure: 248, grossLong: 248, unrealizedPnl: 48 },
+      },
+    ],
+  ]);
+  const { queryClient, writes } = createMockQueryClient(
+    [
+      ["/api/accounts/combined/summary", { mode: "live" }],
+      positionsKey,
+      ["/api/accounts/combined/orders", { mode: "live", tab: "working" }],
+      ["/api/accounts/combined/allocation", { mode: "live" }],
+      ["/api/accounts/combined/risk", { mode: "live" }],
+    ],
+    initialData,
+  );
+
+  applyAccountPageCriticalPayloadToCache(queryClient as any, {
+    stream: "account-page-critical",
+    accountId: "combined",
+    mode: "live",
+    orderTab: "working",
+    assetClass: "Options",
+    updatedAt: "2026-06-04T18:00:06.000Z",
+    summary: { accountId: "combined", metrics: {} },
+    positions: {
+      accountId: "combined",
+      positions: [
+        {
+          id: "spy-option",
+          accountId: "combined",
+          assetClass: "Options",
+          symbol: "SPY",
+          quantity: 3,
+          averageCost: 1,
+          mark: 1,
+          marketValue: 300,
+          unrealizedPnl: 0,
+          unrealizedPnlPercent: 0,
+          optionContract: {
+            underlying: "SPY",
+            providerContractId: "9001",
+            multiplier: 100,
+          },
+        },
+      ],
+      totals: { netExposure: 300, grossLong: 300, unrealizedPnl: 0 },
+    },
+    orders: { accountId: "combined", tab: "working", orders: [] },
+    allocation: { accountId: "combined", assetClass: [] },
+    risk: { accountId: "combined", margin: {} },
+  } as any);
+
+  const patched = writes.get(JSON.stringify(positionsKey)) as any;
+  const row = patched.positions[0];
+  assert.equal(row.quantity, 3);
+  assert.equal(row.optionQuote.bid, 1.2);
+  assert.equal(row.optionQuote.ask, 1.28);
+  assert.equal(Number(row.mark.toFixed(2)), 1.24);
+  assert.equal(Number(row.marketValue.toFixed(2)), 372);
+  assert.equal(Number(row.unrealizedPnl.toFixed(2)), 72);
 });
 
 test("applyAccountPageDerivedPayloadToCache keeps selected 1Y and calendar equity caches separate", () => {

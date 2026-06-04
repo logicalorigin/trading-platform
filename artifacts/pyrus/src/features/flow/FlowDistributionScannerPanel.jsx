@@ -3,6 +3,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { AppTooltip } from "@/components/ui/tooltip";
 import { Card, DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { useViewportBelow } from "../../lib/responsive";
 import { CSS_COLOR, cssColorMix, FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens";
@@ -137,21 +138,22 @@ const SourceStrip = ({ sourceLabel, sourceTone, sourceWarning, warningTone }) =>
       </span>
     ) : null}
     {sourceWarning ? (
-      <div
-        title={sourceWarning}
-        style={{
-          color: warningTone || CSS_COLOR.amber,
-          fontFamily: T.sans,
-          fontSize: fs(7),
-          fontWeight: FONT_WEIGHTS.regular,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          minWidth: 0,
-        }}
-      >
-        {sourceWarning}
-      </div>
+      <AppTooltip content={sourceWarning}>
+        <div
+          style={{
+            color: warningTone || CSS_COLOR.amber,
+            fontFamily: T.sans,
+            fontSize: fs(7),
+            fontWeight: FONT_WEIGHTS.regular,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            minWidth: 0,
+          }}
+        >
+          {sourceWarning}
+        </div>
+      </AppTooltip>
     ) : null}
   </div>
 );

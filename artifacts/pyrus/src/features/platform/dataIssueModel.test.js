@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   collectChartSourceDataIssues,
@@ -7,6 +8,8 @@ import {
   collectQuoteDataIssues,
   getPrimaryDataIssue,
 } from "./dataIssueModel.js";
+
+const readSource = (relativePath) => readFileSync(new URL(relativePath, import.meta.url), "utf8");
 
 test("collectQuoteDataIssues surfaces stale delayed fallback quote state", () => {
   const issues = collectQuoteDataIssues(
@@ -95,4 +98,33 @@ test("collectChartSourceDataIssues maps chart source booleans", () => {
     issues.map((issue) => issue.title),
     ["Stale option chart", "Option chart using fallback data"],
   );
+});
+
+test("data issue markers stay on data surfaces instead of shell and settings chrome", () => {
+  const shellSources = [
+    ["App header", "./AppHeader.jsx"],
+    ["Header status", "./HeaderStatusCluster.jsx"],
+    ["Header broadcast", "./HeaderBroadcastScrollerStack.jsx"],
+    ["Platform shell root", "./PlatformApp.jsx"],
+    ["Settings", "../../screens/SettingsScreen.jsx"],
+  ];
+
+  for (const [label, path] of shellSources) {
+    const source = readSource(path);
+    assert.doesNotMatch(source, /DataIssueInlineIcon/, `${label} should not render data issue icons`);
+    assert.doesNotMatch(source, /dataIssueModel/, `${label} should not infer data issues`);
+  }
+
+  const dataSurfaceSources = [
+    "../../screens/account/PositionsPanel.jsx",
+    "../../screens/TradeScreen.jsx",
+    "../../screens/SignalsScreen.jsx",
+    "../../screens/FlowScreen.jsx",
+    "../../screens/GexScreen.jsx",
+    "../../screens/MarketScreen.jsx",
+  ];
+
+  for (const path of dataSurfaceSources) {
+    assert.match(readSource(path), /DataIssueInlineIcon/);
+  }
 });

@@ -6,6 +6,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getGexDashboard as getGexDashboardRequest } from "@workspace/api-client-react";
+import { AppTooltip } from "@/components/ui/tooltip";
 import {
   AlertTriangle,
   Search,
@@ -947,9 +948,9 @@ const HeatmapCard = ({ rows, spot }) => {
                     );
                     const valueLabel = hasValue ? formatHeatmapCellValue(value) : "";
                     return (
-                      <td
+                      <AppTooltip
                         key={expiration.key}
-                        title={
+                        content={
                           hasValue
                             ? buildGexHeatmapCellTitle({
                                 strike,
@@ -960,24 +961,27 @@ const HeatmapCard = ({ rows, spot }) => {
                               })
                             : undefined
                         }
-                        style={{
-                          minWidth: dim(74),
-                          padding: sp("6px 7px"),
-                          textAlign: "center",
-                          borderBottom: `1px solid ${CSS_COLOR.border}`,
-                          borderRight: `1px solid ${cssColorMix(CSS_COLOR.border, 55)}`,
-                          background: hasValue ? cellColor(value) : CSS_COLOR.bg0,
-                          color:
-                            hasValue &&
-                            Math.abs(value) > model.maxAbs * 0.5
-                              ? CSS_COLOR.text
-                              : CSS_COLOR.textSec,
-                          fontVariantNumeric: "tabular-nums",
-                          whiteSpace: "nowrap",
-                        }}
                       >
-                        {valueLabel}
-                      </td>
+                        <td
+                          style={{
+                            minWidth: dim(74),
+                            padding: sp("6px 7px"),
+                            textAlign: "center",
+                            borderBottom: `1px solid ${CSS_COLOR.border}`,
+                            borderRight: `1px solid ${cssColorMix(CSS_COLOR.border, 55)}`,
+                            background: hasValue ? cellColor(value) : CSS_COLOR.bg0,
+                            color:
+                              hasValue &&
+                              Math.abs(value) > model.maxAbs * 0.5
+                                ? CSS_COLOR.text
+                                : CSS_COLOR.textSec,
+                            fontVariantNumeric: "tabular-nums",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {valueLabel}
+                        </td>
+                      </AppTooltip>
                     );
                   })}
                 </tr>
@@ -1341,27 +1345,28 @@ const ProfileGammaBarCell = ({ value, maxAbs, color, align = "left" }) => {
   const width = maxAbs > 0 ? Math.max(4, Math.min(100, (magnitude / maxAbs) * 100)) : 0;
   return (
     <td style={{ ...tableCellStyle, minWidth: dim(86) }}>
-      <div
-        title={formatHeatmapCellValue(value)}
-        style={{
-          height: dim(8),
-          width: "100%",
-          background: CSS_COLOR.bg0,
-          border: `1px solid ${cssColorMix(CSS_COLOR.border, 55)}`,
-          display: "flex",
-          justifyContent: align === "right" ? "flex-end" : "flex-start",
-        }}
-      >
-        {width > 0 ? (
-          <span
-            style={{
-              display: "block",
-              width: `${width}%`,
-              background: cssColorMix(color, 68),
-            }}
-          />
-        ) : null}
-      </div>
+      <AppTooltip content={formatHeatmapCellValue(value)}>
+        <div
+          style={{
+            height: dim(8),
+            width: "100%",
+            background: CSS_COLOR.bg0,
+            border: `1px solid ${cssColorMix(CSS_COLOR.border, 55)}`,
+            display: "flex",
+            justifyContent: align === "right" ? "flex-end" : "flex-start",
+          }}
+        >
+          {width > 0 ? (
+            <span
+              style={{
+                display: "block",
+                width: `${width}%`,
+                background: cssColorMix(color, 68),
+              }}
+            />
+          ) : null}
+        </div>
+      </AppTooltip>
     </td>
   );
 };

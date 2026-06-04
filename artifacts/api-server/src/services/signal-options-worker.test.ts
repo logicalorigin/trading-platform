@@ -197,7 +197,7 @@ test("signal-options worker evaluates changed stream symbols from Massive aggreg
   worker.stop();
 });
 
-test("signal-options stream signal evaluator uses provisional live-edge bars", () => {
+test("signal-options stream signal evaluator uses provisional live-edge bars with bounded backfill", () => {
   const source = readFileSync(
     new URL("./signal-options-worker.ts", import.meta.url),
     "utf8",
@@ -209,7 +209,7 @@ test("signal-options stream signal evaluator uses provisional live-edge bars", (
 
   assert.match(streamEvaluatorBlock, /barSourcePolicy: "mixed"/);
   assert.match(streamEvaluatorBlock, /includeProvisionalLiveEdge: true/);
-  assert.match(streamEvaluatorBlock, /allowHistoricalFallback: false/);
+  assert.match(streamEvaluatorBlock, /allowHistoricalFallback: true/);
 });
 
 test("signal-options worker skips a tick when advisory lock is unavailable", async () => {

@@ -11473,7 +11473,6 @@ export function getOptionsFlowLaneSourceSymbols(): {
 }
 
 const MASSIVE_STOCK_UNIVERSE_STREAM_REFRESH_MS = 30_000;
-const MASSIVE_STOCK_UNIVERSE_STREAM_DEFAULT_SYMBOL_CAP = 1_000;
 const MASSIVE_STOCK_UNIVERSE_STREAM_ENABLED = readBooleanEnv(
   "MASSIVE_STOCK_UNIVERSE_STREAM_ENABLED",
   false,
@@ -11495,16 +11494,8 @@ let massiveStockUniverseLastStatus:
 let massiveStockUniverseLastError: string | null = null;
 let massiveStockUniverseLastPressureLevel: string | null = null;
 
-function massiveStockUniverseStreamSymbolCap(): number {
-  return positiveIntegerEnv(
-    "MASSIVE_STOCK_UNIVERSE_STREAM_SYMBOL_CAP",
-    MASSIVE_STOCK_UNIVERSE_STREAM_DEFAULT_SYMBOL_CAP,
-  );
-}
-
 function resolveMassiveStockUniverseSymbols(): string[] {
   const sources = getOptionsFlowLaneSourceSymbols();
-  const symbolCap = massiveStockUniverseStreamSymbolCap();
   return Array.from(
     new Set(
       [
@@ -11517,7 +11508,6 @@ function resolveMassiveStockUniverseSymbols(): string[] {
         .filter(Boolean),
     ),
   )
-    .slice(0, symbolCap)
     .sort();
 }
 
@@ -11615,7 +11605,6 @@ export function getMassiveStockUniverseStreamDiagnostics() {
     status: massiveStockUniverseLastStatus,
     symbolCount: symbols.length,
     symbolSample: symbols.slice(0, 20),
-    symbolCap: massiveStockUniverseStreamSymbolCap(),
     refreshIntervalMs: MASSIVE_STOCK_UNIVERSE_STREAM_REFRESH_MS,
     pressureLevel: massiveStockUniverseLastPressureLevel,
     pressureBlocked: massiveStockUniverseLastStatus === "resource_pressure",

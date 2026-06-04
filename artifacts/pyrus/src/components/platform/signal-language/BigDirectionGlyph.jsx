@@ -53,7 +53,6 @@ export const BigDirectionGlyph = ({
     <AppTooltip content={label}>
       <span
         className={className}
-        title={label}
         aria-label={label}
         style={{
           display: "inline-grid",

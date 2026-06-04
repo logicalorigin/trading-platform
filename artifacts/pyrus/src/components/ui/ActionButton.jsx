@@ -1,5 +1,6 @@
 import { RotateCcw } from "lucide-react";
 import React, { useEffect, useMemo, useState } from "react";
+import { AppTooltip } from "@/components/ui/tooltip";
 import { FONT_WEIGHTS, RADII, T, dim, fs, sp } from "../../lib/uiTokens.jsx";
 import { Button } from "./Button.jsx";
 
@@ -89,25 +90,26 @@ export const ActionButton = ({
     }
     if (errorActive) {
       return (
-        <span
-          data-testid="action-button-retry"
-          title={errorMessage || "Retry"}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: sp(3),
-            padding: sp("1px 5px"),
-            borderRadius: dim(RADII.pill),
-            background: cssColorMix(CSS_COLOR.red, 7),
-            color: CSS_COLOR.red,
-            fontSize: fs(9),
-            fontWeight: FONT_WEIGHTS.medium,
-            lineHeight: 1.2,
-          }}
-        >
-          <RotateCcw size={10} strokeWidth={2.4} />
-          Retry
-        </span>
+        <AppTooltip content={errorMessage || "Retry"}>
+          <span
+            data-testid="action-button-retry"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: sp(3),
+              padding: sp("1px 5px"),
+              borderRadius: dim(RADII.pill),
+              background: cssColorMix(CSS_COLOR.red, 7),
+              color: CSS_COLOR.red,
+              fontSize: fs(9),
+              fontWeight: FONT_WEIGHTS.medium,
+              lineHeight: 1.2,
+            }}
+          >
+            <RotateCcw size={10} strokeWidth={2.4} />
+            Retry
+          </span>
+        </AppTooltip>
       );
     }
     return null;

@@ -738,7 +738,7 @@ test("signal monitor matrix coverage counts settled unavailable states as evalua
   assert.equal(value.coverage.missingSymbols, 0);
 });
 
-test("signal monitor matrix exact cells canonicalize and enforce pressure caps", () => {
+test("signal monitor matrix exact cells canonicalize and enforce the shared cell limit", () => {
   const resolved =
     __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
       cells: [
@@ -790,26 +790,21 @@ test("signal monitor matrix exact cells canonicalize and enforce pressure caps",
       (error as { statusCode?: number }).statusCode === 400,
   );
 
-  assert.throws(
-    () =>
-      __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
-        cells: Array.from({ length: 21 }, (_value, index) => ({
-          symbol: `SYM${index}`,
-          timeframe: "1m",
-        })),
-        allowedSymbols: Array.from({ length: 21 }, (_value, index) => `SYM${index}`),
-        pressure: "high",
-      }),
-    (error) =>
-      typeof error === "object" &&
-      error !== null &&
-      "statusCode" in error &&
-      (error as { statusCode?: number }).statusCode === 400,
-  );
+  const highPressureCells = Array.from({ length: 240 }, (_value, index) => ({
+    symbol: `HIGH${index}`,
+    timeframe: "1m" as const,
+  }));
+  const highPressureResolved =
+    __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
+      cells: highPressureCells,
+      allowedSymbols: highPressureCells.map((cell) => cell.symbol),
+      pressure: "high",
+    });
+  assert.equal(highPressureResolved.cells.length, 240);
 });
 
-test("signal monitor matrix exact cells allow protected high-pressure foreground exceptions", () => {
-  const staCells = Array.from({ length: 120 }, (_value, index) => ({
+test("signal monitor matrix exact cells keep protected foreground coverage wide under pressure", () => {
+  const staCells = Array.from({ length: 240 }, (_value, index) => ({
     symbol: `STA${String(index + 1).padStart(3, "0")}`,
     timeframe: "1m" as const,
   }));
@@ -825,20 +820,20 @@ test("signal monitor matrix exact cells allow protected high-pressure foreground
     });
 
   assert.equal(resolved.exact, true);
-  assert.equal(resolved.cells.length, 120);
+  assert.equal(resolved.cells.length, 240);
   assert.equal(
     __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly({
       cells: staCells,
       clientRole: "algo-sta",
-      requestOrigin: "sta-visible-page",
-    }),
+        requestOrigin: "sta-visible-page",
+      }),
     false,
   );
   assert.throws(
     () =>
       __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
-        cells: [...staCells, { symbol: "STA121", timeframe: "1m" as const }],
-        allowedSymbols: [...allowedSymbols, "STA121"],
+        cells: [...staCells, { symbol: "STA241", timeframe: "1m" as const }],
+        allowedSymbols: [...allowedSymbols, "STA241"],
         pressure: "high",
         clientRole: "algo-sta",
         requestOrigin: "sta-visible-page",
@@ -850,7 +845,7 @@ test("signal monitor matrix exact cells allow protected high-pressure foreground
       (error as { statusCode?: number }).statusCode === 400,
   );
 
-  const leaderCells = Array.from({ length: 60 }, (_value, index) => ({
+  const leaderCells = Array.from({ length: 240 }, (_value, index) => ({
     symbol: `LEAD${String(index + 1).padStart(3, "0")}`,
     timeframe: "1m" as const,
   }));
@@ -865,7 +860,7 @@ test("signal monitor matrix exact cells allow protected high-pressure foreground
     });
 
   assert.equal(leaderResolved.exact, true);
-  assert.equal(leaderResolved.cells.length, 60);
+  assert.equal(leaderResolved.cells.length, 240);
   assert.equal(
     __signalMonitorInternalsForTests.shouldAwaitSignalMonitorMatrixExactCellRefresh(
       {
@@ -880,8 +875,8 @@ test("signal monitor matrix exact cells allow protected high-pressure foreground
   assert.throws(
     () =>
       __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
-        cells: [...leaderCells, { symbol: "LEAD061", timeframe: "1m" as const }],
-        allowedSymbols: [...leaderSymbols, "LEAD061"],
+        cells: [...leaderCells, { symbol: "LEAD241", timeframe: "1m" as const }],
+        allowedSymbols: [...leaderSymbols, "LEAD241"],
         pressure: "high",
         clientRole: "leader",
         requestOrigin: "poll",
@@ -982,9 +977,8 @@ test("signal monitor matrix persists clean usable current and stale matrix cells
         currentSignalAt: null,
         currentSignalPrice: null,
       } as never,
-      { profileTimeframe: "5m" },
     ),
-    false,
+    true,
   );
   assert.equal(
     __signalMonitorInternalsForTests.shouldPersistSignalMonitorMatrixState(
@@ -996,7 +990,6 @@ test("signal monitor matrix persists clean usable current and stale matrix cells
         currentSignalAt: null,
         currentSignalPrice: null,
       } as never,
-      { profileTimeframe: "5m" },
     ),
     true,
   );
@@ -1030,12 +1023,56 @@ test("signal monitor matrix persists clean usable current and stale matrix cells
   );
 });
 
+test("signal monitor symbol state upserts preserve newer matrix activity", () => {
+  const existing = {
+    status: "ok",
+    currentSignalDirection: "buy",
+    currentSignalAt: new Date("2026-06-04T19:35:00.000Z"),
+    latestBarAt: new Date("2026-06-04T19:35:00.000Z"),
+  };
+
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldPreserveExistingSignalMonitorSymbolState(
+      existing,
+      {
+        status: "ok",
+        currentSignalDirection: "buy",
+        currentSignalAt: new Date("2026-06-04T19:05:00.000Z"),
+        latestBarAt: new Date("2026-06-04T19:05:00.000Z"),
+      },
+    ),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldPreserveExistingSignalMonitorSymbolState(
+      existing,
+      {
+        status: "ok",
+        currentSignalDirection: null,
+        currentSignalAt: null,
+        latestBarAt: new Date("2026-06-04T19:40:00.000Z"),
+      },
+    ),
+    false,
+  );
+});
+
 test("automatic signal matrix requests can fast-return stored states", () => {
   assert.equal(
     __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromStoredStateFast(
       {
         clientRole: "leader",
         requestOrigin: "startup",
+        states: [{ symbol: "SPY", timeframe: "5m" }],
+      },
+    ),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromStoredStateFast(
+      {
+        clientRole: "algo-sta",
+        requestOrigin: "sta-visible-page",
         states: [{ symbol: "SPY", timeframe: "5m" }],
       },
     ),
@@ -1445,8 +1482,8 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
   );
   assert.match(source, /isBackgroundStockAggregateStreamingEnabled/);
   assert.match(source, /isForegroundSignalMatrixStockAggregateStreamingEnabled/);
-  assert.match(source, /SIGNAL_MONITOR_MATRIX_STREAM_SYMBOL_CAP/);
-  assert.match(source, /\.slice\(0, SIGNAL_MONITOR_MATRIX_STREAM_SYMBOL_CAP\)/);
+  assert.doesNotMatch(source, /SIGNAL_MONITOR_MATRIX_STREAM_SYMBOL_CAP/);
+  assert.doesNotMatch(source, /\.slice\(0,\s*SIGNAL_MONITOR_MATRIX_STREAM_SYMBOL_CAP\)/);
   assert.match(source, /subscribeMutableStockMinuteAggregates/);
   assert.match(source, /getCurrentStockMinuteAggregates/);
   assert.match(source, /isStockAggregateStreamingAvailable/);
@@ -2245,7 +2282,7 @@ test("intraday delayed matrix bars are degraded instead of fresh", () => {
   assert.equal(daily.status, "ok");
 });
 
-test("signal monitor matrix preserves requested coverage while narrowing concurrency under API resource pressure", () => {
+test("signal monitor matrix preserves requested coverage and concurrency under API resource pressure", () => {
   const configured = profile({
     maxSymbols: 500,
     evaluationConcurrency: 10,
@@ -2267,21 +2304,21 @@ test("signal monitor matrix preserves requested coverage while narrowing concurr
       configured,
       "watch",
     ),
-    { pressure: "watch", maxSymbols: 500, concurrency: 8 },
+    { pressure: "watch", maxSymbols: 500, concurrency: 10 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
       configured,
       "high",
     ),
-    { pressure: "high", maxSymbols: 500, concurrency: 4 },
+    { pressure: "high", maxSymbols: 500, concurrency: 10 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
       configured,
       "critical",
     ),
-    { pressure: "critical", maxSymbols: 500, concurrency: 1 },
+    { pressure: "critical", maxSymbols: 500, concurrency: 10 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
@@ -2296,7 +2333,7 @@ test("signal monitor matrix preserves requested coverage while narrowing concurr
       "normal",
       { automatic: true },
     ),
-    { pressure: "normal", maxSymbols: 32, concurrency: 2 },
+    { pressure: "normal", maxSymbols: 500, concurrency: 10 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
@@ -2304,7 +2341,7 @@ test("signal monitor matrix preserves requested coverage while narrowing concurr
       "watch",
       { automatic: true },
     ),
-    { pressure: "watch", maxSymbols: 16, concurrency: 2 },
+    { pressure: "watch", maxSymbols: 500, concurrency: 10 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
@@ -2312,7 +2349,7 @@ test("signal monitor matrix preserves requested coverage while narrowing concurr
       "high",
       { automatic: true },
     ),
-    { pressure: "high", maxSymbols: 8, concurrency: 1 },
+    { pressure: "high", maxSymbols: 500, concurrency: 10 },
   );
   assert.deepEqual(
     __signalMonitorInternalsForTests.cappedSignalMatrixSettings(
@@ -2320,7 +2357,7 @@ test("signal monitor matrix preserves requested coverage while narrowing concurr
       "critical",
       { automatic: true },
     ),
-    { pressure: "critical", maxSymbols: 8, concurrency: 1 },
+    { pressure: "critical", maxSymbols: 500, concurrency: 10 },
   );
 });
 
@@ -2433,7 +2470,7 @@ test("explicit leader signal matrix requests bypass soft pressure concurrency on
   );
 });
 
-test("signal monitor profile evaluations rotate through pressure-aware historical caps", () => {
+test("signal monitor profile evaluations keep the configured coverage under pressure", () => {
   const configured = profile({
     maxSymbols: 500,
     evaluationConcurrency: 10,
@@ -2483,8 +2520,8 @@ test("signal monitor profile evaluations rotate through pressure-aware historica
     ).profile,
     {
       ...configured,
-      maxSymbols: 8,
-      evaluationConcurrency: 1,
+      maxSymbols: 500,
+      evaluationConcurrency: 10,
     },
   );
 });
@@ -2566,7 +2603,7 @@ test("high-beta signal monitor profile updates are guarded by universe availabil
   );
 });
 
-test("explicit signal monitor symbol evaluations can bypass soft pressure caps", () => {
+test("explicit signal monitor symbol evaluations keep requested coverage under pressure", () => {
   const configured = profile({
     maxSymbols: 500,
     evaluationConcurrency: 10,
@@ -2591,8 +2628,8 @@ test("explicit signal monitor symbol evaluations can bypass soft pressure caps",
       },
     );
 
-  assert.equal(capped.profile.maxSymbols, 8);
-  assert.equal(capped.profile.evaluationConcurrency, 1);
+  assert.equal(capped.profile.maxSymbols, 500);
+  assert.equal(capped.profile.evaluationConcurrency, 10);
   assert.equal(bypass.profile.maxSymbols, 500);
   assert.equal(bypass.profile.evaluationConcurrency, 6);
   assert.equal(bypass.pressure, "critical");

@@ -1,4 +1,5 @@
 import React from "react";
+import { AppTooltip } from "@/components/ui/tooltip";
 import { RADII, dim } from "../../lib/uiTokens.jsx";
 
 const CSS_COLOR = {
@@ -39,21 +40,22 @@ export const PulseDot = ({ active = true, tone, color, size = 6, label }) => {
   return (
     <>
       <style>{PULSE_CSS}</style>
-      <span
-        data-testid="pulse-dot"
-        title={label}
-        aria-label={label}
-        className={active ? "ra-pulse" : undefined}
-        style={{
-          ["--ra-pulse-color"]: cssColorMix(resolvedColor, 25),
-          display: "inline-block",
-          width: dim(size),
-          height: dim(size),
-          borderRadius: dim(RADII.pill),
-          background: resolvedColor,
-          flexShrink: 0,
-        }}
-      />
+      <AppTooltip content={label}>
+        <span
+          data-testid="pulse-dot"
+          aria-label={label}
+          className={active ? "ra-pulse" : undefined}
+          style={{
+            ["--ra-pulse-color"]: cssColorMix(resolvedColor, 25),
+            display: "inline-block",
+            width: dim(size),
+            height: dim(size),
+            borderRadius: dim(RADII.pill),
+            background: resolvedColor,
+            flexShrink: 0,
+          }}
+        />
+      </AppTooltip>
     </>
   );
 };

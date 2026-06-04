@@ -15,6 +15,7 @@ import {
   ShieldAlert,
   TrendingDown,
 } from "lucide-react";
+import { AppTooltip } from "@/components/ui/tooltip";
 import {
   CSS_COLOR,
   cssColorAlpha,
@@ -308,14 +309,14 @@ const ControlToggleCell = ({
     .join(" · ");
 
   return (
-    <div
-      data-testid={`algo-halt-control-${control.id}`}
-      data-state={status.state}
-      title={title}
-      style={{
-        position: "relative",
-        display: "flex",
-        flexDirection: "column",
+    <AppTooltip content={title}>
+      <div
+        data-testid={`algo-halt-control-${control.id}`}
+        data-state={status.state}
+        style={{
+          position: "relative",
+          display: "flex",
+          flexDirection: "column",
         gap: sp(2),
         minHeight: valueField ? dim(42) : dim(22),
         padding: sp("2px 0 2px 4px"),
@@ -409,7 +410,8 @@ const ControlToggleCell = ({
           patchProfileDraftPath={patchProfileDraftPath}
         />
       ) : null}
-    </div>
+      </div>
+    </AppTooltip>
   );
 };
 
@@ -435,26 +437,28 @@ const CompactStandaloneSettingCell = ({
   const label = field.compactLabel || field.label;
 
   return (
-    <div
-      data-testid={`algo-halt-control-${id}`}
-      title={[
+    <AppTooltip
+      content={[
         field.label,
         formatSettingValue(field, currentValue),
         dirty ? `was ${formatSettingValue(field, previousValue)}` : null,
       ]
         .filter(Boolean)
         .join(" · ")}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: sp(2),
-        minHeight: dim(42),
-        padding: sp("2px 0"),
-        minWidth: 0,
-        width: "100%",
-        boxSizing: "border-box",
-      }}
     >
+      <div
+        data-testid={`algo-halt-control-${id}`}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: sp(2),
+          minHeight: dim(42),
+          padding: sp("2px 0"),
+          minWidth: 0,
+          width: "100%",
+          boxSizing: "border-box",
+        }}
+      >
       <div
         style={{
           display: "flex",
@@ -510,7 +514,8 @@ const CompactStandaloneSettingCell = ({
         ariaLabel={field.label}
         patchProfileDraftPath={patchProfileDraftPath}
       />
-    </div>
+      </div>
+    </AppTooltip>
   );
 };
 
@@ -550,33 +555,34 @@ export const HaltStrip = ({
         minWidth: 0,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: sp(4),
-          minWidth: 0,
-        }}
-        title={`Halt controls ${overall.label}`}
-      >
-        <span
+      <AppTooltip content={`Halt controls ${overall.label}`}>
+        <div
           style={{
-            color: focusedDeployment ? overall.color : CSS_COLOR.textMuted,
-            fontFamily: T.sans,
-            fontSize: textSize("body"),
-            fontWeight: FONT_WEIGHTS.label,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: sp(4),
             minWidth: 0,
           }}
         >
-          {focusedDeployment
-            ? `Pyrus · ${normalizeLegacyAlgoBrandText(focusedDeployment.name)}`
-            : "No deployment selected"}
-        </span>
-      </div>
+          <span
+            style={{
+              color: focusedDeployment ? overall.color : CSS_COLOR.textMuted,
+              fontFamily: T.sans,
+              fontSize: textSize("body"),
+              fontWeight: FONT_WEIGHTS.label,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              minWidth: 0,
+            }}
+          >
+            {focusedDeployment
+              ? `Pyrus · ${normalizeLegacyAlgoBrandText(focusedDeployment.name)}`
+              : "No deployment selected"}
+          </span>
+        </div>
+      </AppTooltip>
       {dirty ? (
         <div
           style={{
@@ -611,23 +617,24 @@ export const HaltStrip = ({
               minWidth: 0,
             }}
           >
-            <span
-              title={`${group.label} halt controls ${rollup.label}`}
-              style={{
-                color: (STATUS_TONES[rollup.state] || STATUS_TONES.armed).color,
-                fontFamily: T.sans,
-                fontSize: textSize("micro"),
-                fontWeight: 600,
-                letterSpacing: 0,
-                textTransform: "uppercase",
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {HALT_GROUP_LABELS[group.id] || group.label}
-            </span>
+            <AppTooltip content={`${group.label} halt controls ${rollup.label}`}>
+              <span
+                style={{
+                  color: (STATUS_TONES[rollup.state] || STATUS_TONES.armed).color,
+                  fontFamily: T.sans,
+                  fontSize: textSize("micro"),
+                  fontWeight: 600,
+                  letterSpacing: 0,
+                  textTransform: "uppercase",
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {HALT_GROUP_LABELS[group.id] || group.label}
+              </span>
+            </AppTooltip>
           </div>
           <div
             data-testid={`algo-halt-group-${group.id}`}

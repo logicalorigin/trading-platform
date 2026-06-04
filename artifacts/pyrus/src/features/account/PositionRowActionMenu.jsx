@@ -120,20 +120,21 @@ const QuoteStrip = ({ items = [] }) => {
           >
             {item.label}
           </div>
-          <div
-            style={{
-              color: item.tone || CSS_COLOR.textSec,
-              fontFamily: T.data,
-              fontSize: textSize("caption"),
-              fontVariantNumeric: "tabular-nums",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-            title={item.value}
-          >
-            {item.value}
-          </div>
+          <AppTooltip content={item.value}>
+            <div
+              style={{
+                color: item.tone || CSS_COLOR.textSec,
+                fontFamily: T.data,
+                fontSize: textSize("caption"),
+                fontVariantNumeric: "tabular-nums",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {item.value}
+            </div>
+          </AppTooltip>
         </div>
       ))}
     </div>

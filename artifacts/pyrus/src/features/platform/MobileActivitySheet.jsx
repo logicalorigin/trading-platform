@@ -10,6 +10,8 @@ export const MobileActivitySheet = ({
   environment = "paper",
   dataEnabled = open,
   signalMatrixStates = [],
+  signalMonitorEvents = [],
+  signalMonitorEventsLoaded = false,
   onOpenAlgo,
   onOpenTradeSymbol,
 }) => (
@@ -35,6 +37,8 @@ export const MobileActivitySheet = ({
         dataEnabled={Boolean(open && dataEnabled)}
         environment={environment}
         signalMatrixStates={signalMatrixStates}
+        signalMonitorEvents={signalMonitorEvents}
+        signalMonitorEventsLoaded={signalMonitorEventsLoaded}
         onOpenAlgo={onOpenAlgo}
         onOpenTradeSymbol={onOpenTradeSymbol}
         compactLayout

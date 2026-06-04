@@ -3,6 +3,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { AppTooltip } from "@/components/ui/tooltip";
 import {
   DndContext,
   KeyboardSensor,
@@ -785,23 +786,24 @@ const SortableSignalColumnRow = ({
         zIndex: isDragging ? 2 : "auto",
       }}
     >
-      <button
-        ref={setActivatorNodeRef}
-        type="button"
-        aria-label={`Drag ${column.label} column`}
-        title="Drag to reorder"
-        data-testid={`algo-signal-column-drag-${columnId}`}
-        style={{
-          ...iconOnlyButtonStyle(false),
-          width: dim(22),
-          cursor: isDragging ? "grabbing" : "grab",
-          touchAction: "none",
-        }}
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical size={13} strokeWidth={1.9} aria-hidden="true" />
-      </button>
+      <AppTooltip content="Drag to reorder">
+        <button
+          ref={setActivatorNodeRef}
+          type="button"
+          aria-label={`Drag ${column.label} column`}
+          data-testid={`algo-signal-column-drag-${columnId}`}
+          style={{
+            ...iconOnlyButtonStyle(false),
+            width: dim(22),
+            cursor: isDragging ? "grabbing" : "grab",
+            touchAction: "none",
+          }}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical size={13} strokeWidth={1.9} aria-hidden="true" />
+        </button>
+      </AppTooltip>
       <label
         style={{
           display: "inline-flex",
@@ -820,38 +822,41 @@ const SortableSignalColumnRow = ({
           disabled={locked}
           onChange={() => onToggle(columnId)}
         />
-        <span
-          title={column.toggleLabel || column.label}
-          style={{
-            minWidth: 0,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {column.toggleLabel || column.label}
-        </span>
+        <AppTooltip content={column.toggleLabel || column.label}>
+          <span
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {column.toggleLabel || column.label}
+          </span>
+        </AppTooltip>
       </label>
-      <button
-        type="button"
-        disabled={index === 0}
-        aria-label={`Move ${column.label} column up`}
-        title="Move up"
-        onClick={() => onMove(columnId, -1)}
-        style={iconOnlyButtonStyle(index === 0)}
-      >
-        <ArrowUp size={13} strokeWidth={1.9} aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        disabled={index === totalCount - 1}
-        aria-label={`Move ${column.label} column down`}
-        title="Move down"
-        onClick={() => onMove(columnId, 1)}
-        style={iconOnlyButtonStyle(index === totalCount - 1)}
-      >
-        <ArrowDown size={13} strokeWidth={1.9} aria-hidden="true" />
-      </button>
+      <AppTooltip content="Move up">
+        <button
+          type="button"
+          disabled={index === 0}
+          aria-label={`Move ${column.label} column up`}
+          onClick={() => onMove(columnId, -1)}
+          style={iconOnlyButtonStyle(index === 0)}
+        >
+          <ArrowUp size={13} strokeWidth={1.9} aria-hidden="true" />
+        </button>
+      </AppTooltip>
+      <AppTooltip content="Move down">
+        <button
+          type="button"
+          disabled={index === totalCount - 1}
+          aria-label={`Move ${column.label} column down`}
+          onClick={() => onMove(columnId, 1)}
+          style={iconOnlyButtonStyle(index === totalCount - 1)}
+        >
+          <ArrowDown size={13} strokeWidth={1.9} aria-hidden="true" />
+        </button>
+      </AppTooltip>
     </div>
   );
 };
@@ -928,15 +933,16 @@ const OperationsSignalColumnDrawer = ({
             Show, hide, and order signal fields.
           </span>
         </div>
-        <button
-          type="button"
-          aria-label="Close signal column drawer"
-          title="Close columns"
-          onClick={onClose}
-          style={iconOnlyButtonStyle(false)}
-        >
-          <X size={13} strokeWidth={1.9} aria-hidden="true" />
-        </button>
+        <AppTooltip content="Close columns">
+          <button
+            type="button"
+            aria-label="Close signal column drawer"
+            onClick={onClose}
+            style={iconOnlyButtonStyle(false)}
+          >
+            <X size={13} strokeWidth={1.9} aria-hidden="true" />
+          </button>
+        </AppTooltip>
       </div>
 
       <DndContext
@@ -1501,8 +1507,8 @@ export const OperationsSignalTable = ({
             minWidth: 0,
           }}
         >
-          <span
-            title={[
+          <AppTooltip
+            content={[
               freshness.latestSignalAt
                 ? `Latest signal ${freshness.latestSignalAt}`
                 : null,
@@ -1517,39 +1523,42 @@ export const OperationsSignalTable = ({
             ]
               .filter(Boolean)
               .join(" · ")}
-            style={{
-              color: CSS_COLOR.text,
-              display: "flex",
-              alignItems: "center",
-              gap: sp(4),
-              fontFamily: T.sans,
-              fontSize: fs(algoIsPhone ? 10 : 12),
-              fontWeight: 600,
-              lineHeight: 1.1,
-              minWidth: 0,
-            }}
           >
-            <IbkrStatusWave
-              status={signalScanWave.status}
-              wave={signalScanWave.wave}
-              color={signalScanWave.color}
-              width={algoIsPhone ? 22 : 28}
-              height={12}
-              decorative={false}
-              ariaLabel="Signal scan activity"
-              dataTestId="algo-signal-scan-wave"
-            />
             <span
               style={{
+                color: CSS_COLOR.text,
+                display: "flex",
+                alignItems: "center",
+                gap: sp(4),
+                fontFamily: T.sans,
+                fontSize: fs(algoIsPhone ? 10 : 12),
+                fontWeight: 600,
+                lineHeight: 1.1,
                 minWidth: 0,
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
               }}
             >
-              {algoIsPhone ? `Signals · ${mobileStatusLine}` : `Signals to Actions · ${statusLine}`}
+              <IbkrStatusWave
+                status={signalScanWave.status}
+                wave={signalScanWave.wave}
+                color={signalScanWave.color}
+                width={algoIsPhone ? 22 : 28}
+                height={12}
+                decorative={false}
+                ariaLabel="Signal scan activity"
+                dataTestId="algo-signal-scan-wave"
+              />
+              <span
+                style={{
+                  minWidth: 0,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {algoIsPhone ? `Signals · ${mobileStatusLine}` : `Signals to Actions · ${statusLine}`}
+              </span>
             </span>
-          </span>
+          </AppTooltip>
         </div>
         <div
           style={{
@@ -1685,20 +1694,21 @@ export const OperationsSignalTable = ({
             </select>
           ) : null}
           {!algoIsPhone ? (
-            <button
-              type="button"
-              aria-expanded={columnsOpen}
-              aria-controls="algo-signal-column-drawer"
-              title="Choose signal table columns"
-              onClick={() => setColumnsOpen((value) => !value)}
-              style={columnControlButtonStyle(columnsOpen, CSS_COLOR.accent)}
-            >
-              <Columns3 size={13} strokeWidth={1.8} aria-hidden="true" />
-              <span>Columns</span>
-              <span style={{ color: columnsOpen ? CSS_COLOR.accent : CSS_COLOR.textMuted }}>
-                {visibleColumns.length}
-              </span>
-            </button>
+            <AppTooltip content="Choose signal table columns">
+              <button
+                type="button"
+                aria-expanded={columnsOpen}
+                aria-controls="algo-signal-column-drawer"
+                onClick={() => setColumnsOpen((value) => !value)}
+                style={columnControlButtonStyle(columnsOpen, CSS_COLOR.accent)}
+              >
+                <Columns3 size={13} strokeWidth={1.8} aria-hidden="true" />
+                <span>Columns</span>
+                <span style={{ color: columnsOpen ? CSS_COLOR.accent : CSS_COLOR.textMuted }}>
+                  {visibleColumns.length}
+                </span>
+              </button>
+            </AppTooltip>
           ) : null}
           {!algoIsPhone ? (
             <span

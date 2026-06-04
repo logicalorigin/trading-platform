@@ -6,7 +6,7 @@ import {
   useListAlgoDeployments,
   useListExecutionEvents,
 } from "@workspace/api-client-react";
-import React, { memo, useEffect, useMemo, useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Ban,
@@ -55,9 +55,11 @@ import {
   candidateBlockerLabel,
   findSignalOptionsCandidateForSignal,
   resolveSignalScoreBreakdown,
+  resolveStableStaActionSnapshot,
   signalActionLabel,
   signalOptionsActionColor,
   signalOptionsActionLabel,
+  buildVisibleSignalRows,
 } from "../../screens/algo/algoHelpers";
 import { normalizeLegacyAlgoBrandText } from "../../screens/algo/algoBranding.js";
 import { setAlgoFocus } from "./algoFocusStore";
@@ -475,46 +477,47 @@ const SignalActionStatusPill = ({ signal, candidate, blocker, statusMeta }) => {
   const tone = statusMeta.tone || CSS_COLOR.textDim;
   const label = statusMeta.label || signalOptionsActionLabel("candidate");
   return (
-    <span
-      title={label}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: sp(3),
-        minWidth: 0,
-        maxWidth: dim(88),
-        height: dim(22),
-        padding: sp("0 7px 0 3px"),
-        borderRadius: dim(RADII.pill),
-        border: `1px solid ${cssColorAlpha(tone, "44")}`,
-        background: cssColorAlpha(tone, "18"),
-        color: tone,
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
-        fontWeight: FONT_WEIGHTS.medium,
-        lineHeight: 1,
-        overflow: "hidden",
-        whiteSpace: "nowrap",
-      }}
-    >
-      <VerdictGlyph
-        signal={signal}
-        signalRecord={signal}
-        blocker={blocker}
-        statusMeta={statusMeta}
-        size={12}
-      />
+    <AppTooltip content={label}>
       <span
         style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: sp(3),
           minWidth: 0,
+          maxWidth: dim(88),
+          height: dim(22),
+          padding: sp("0 7px 0 3px"),
+          borderRadius: dim(RADII.pill),
+          border: `1px solid ${cssColorAlpha(tone, "44")}`,
+          background: cssColorAlpha(tone, "18"),
+          color: tone,
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.medium,
+          lineHeight: 1,
           overflow: "hidden",
-          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
         }}
       >
-        {compactStatusLabel(label)}
+        <VerdictGlyph
+          signal={signal}
+          signalRecord={signal}
+          blocker={blocker}
+          statusMeta={statusMeta}
+          size={12}
+        />
+        <span
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {compactStatusLabel(label)}
+        </span>
       </span>
-    </span>
+    </AppTooltip>
   );
 };
 
@@ -540,15 +543,15 @@ const SignalActionRow = ({ row, onOpenAlgo, signalStatesByTimeframe = null }) =>
   const signalKey = firstText(signal.signalKey, candidate.signalKey, row.id);
 
   return (
-    <button
-      type="button"
-      data-testid="algo-monitor-signal-action-row"
-      title={`${symbol || MISSING_VALUE} ${actionLabel} - ${detail}`}
-      onClick={() => {
-        if (symbol) setAlgoFocus(symbol, "action");
-        onOpenAlgo?.({ signalKey, symbol: symbol || undefined });
-      }}
-      style={{
+    <AppTooltip content={`${symbol || MISSING_VALUE} ${actionLabel} - ${detail}`}>
+      <button
+        type="button"
+        data-testid="algo-monitor-signal-action-row"
+        onClick={() => {
+          if (symbol) setAlgoFocus(symbol, "action");
+          onOpenAlgo?.({ signalKey, symbol: symbol || undefined });
+        }}
+        style={{
         display: "grid",
         gridTemplateColumns: "minmax(0, 1fr) auto",
         alignItems: "center",
@@ -564,9 +567,9 @@ const SignalActionRow = ({ row, onOpenAlgo, signalStatesByTimeframe = null }) =>
         textAlign: "left",
         cursor: "pointer",
         fontFamily: T.sans,
-      }}
-      className="ra-interactive ra-focus-rail"
-    >
+        }}
+        className="ra-interactive ra-focus-rail"
+      >
       <span style={{ display: "grid", gap: sp(3), minWidth: 0 }}>
         <span
           style={{
@@ -667,7 +670,8 @@ const SignalActionRow = ({ row, onOpenAlgo, signalStatesByTimeframe = null }) =>
         blocker={blocker}
         statusMeta={statusMeta}
       />
-    </button>
+      </button>
+    </AppTooltip>
   );
 };
 
@@ -678,75 +682,76 @@ const CompactMetric = ({
   tone = CSS_COLOR.textSec,
   icon: Icon,
 }) => (
-  <div
-    title={`${label}: ${value}${detail ? ` · ${detail}` : ""}`}
-    style={{
-      display: "grid",
-      gridTemplateColumns: Icon ? `${dim(16)} minmax(0, 1fr)` : "minmax(0, 1fr)",
-      alignItems: "center",
-      gap: sp(5),
-      minWidth: 0,
-      minHeight: dim(34),
-      padding: sp("5px 6px"),
-      border: `1px solid ${CSS_COLOR.borderLight}`,
-      borderRadius: dim(RADII.xs),
-      background: CSS_COLOR.bg1,
-    }}
-  >
-    {Icon ? (
-      <Icon
-        size={13}
-        strokeWidth={1.8}
-        aria-hidden="true"
-        style={{ color: tone }}
-      />
-    ) : null}
-    <span style={{ display: "grid", gap: sp(1), minWidth: 0 }}>
-      <span
-        style={{
-          color: CSS_COLOR.textMuted,
-          fontFamily: T.sans,
-          fontSize: textSize("caption"),
-          letterSpacing: "0.04em",
-          textTransform: "uppercase",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {label}
-      </span>
-      <span
-        style={{
-          color: tone,
-          fontFamily: T.sans,
-          fontSize: fs(11),
-          fontWeight: FONT_WEIGHTS.medium,
-          lineHeight: 1.12,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {value}
-      </span>
-      {detail ? (
+  <AppTooltip content={`${label}: ${value}${detail ? ` · ${detail}` : ""}`}>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: Icon ? `${dim(16)} minmax(0, 1fr)` : "minmax(0, 1fr)",
+        alignItems: "center",
+        gap: sp(5),
+        minWidth: 0,
+        minHeight: dim(34),
+        padding: sp("5px 6px"),
+        border: `1px solid ${CSS_COLOR.borderLight}`,
+        borderRadius: dim(RADII.xs),
+        background: CSS_COLOR.bg1,
+      }}
+    >
+      {Icon ? (
+        <Icon
+          size={13}
+          strokeWidth={1.8}
+          aria-hidden="true"
+          style={{ color: tone }}
+        />
+      ) : null}
+      <span style={{ display: "grid", gap: sp(1), minWidth: 0 }}>
         <span
           style={{
-            color: CSS_COLOR.textDim,
+            color: CSS_COLOR.textMuted,
             fontFamily: T.sans,
             fontSize: textSize("caption"),
-            lineHeight: 1.1,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
           }}
         >
-          {detail}
+          {label}
         </span>
-      ) : null}
-    </span>
-  </div>
+        <span
+          style={{
+            color: tone,
+            fontFamily: T.sans,
+            fontSize: fs(11),
+            fontWeight: FONT_WEIGHTS.medium,
+            lineHeight: 1.12,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {value}
+        </span>
+        {detail ? (
+          <span
+            style={{
+              color: CSS_COLOR.textDim,
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              lineHeight: 1.1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {detail}
+          </span>
+        ) : null}
+      </span>
+    </div>
+  </AppTooltip>
 );
 
 const OpsSummaryBand = ({ title, metrics }) => (
@@ -824,50 +829,51 @@ const IntakeMiniFunnel = ({ stages }) => {
       {stages.slice(0, 6).map((stage, index) => {
         const tone = pipelineStageTone(stage.status);
         const count = Number(stage.count);
+        const stageLabel = `${stage.label || shortPipelineLabel(stage)}: ${
+          Number.isFinite(count) ? count.toLocaleString() : MISSING_VALUE
+        }`;
         return (
-          <span
-            key={stage.id || index}
-            title={`${stage.label || shortPipelineLabel(stage)}: ${
-              Number.isFinite(count) ? count.toLocaleString() : MISSING_VALUE
-            }`}
-            style={{
-              display: "grid",
-              gap: sp(1),
-              minWidth: dim(58),
-              maxWidth: dim(72),
-              padding: sp("5px 6px"),
-              border: `1px solid ${cssColorAlpha(tone, "44")}`,
-              borderRadius: dim(RADII.xs),
-              background: cssColorAlpha(tone, "10"),
-              fontFamily: T.sans,
-              flex: "1 0 0",
-            }}
-          >
+          <AppTooltip key={stage.id || index} content={stageLabel}>
             <span
               style={{
-                color: tone,
-                fontSize: fs(11),
-                fontWeight: FONT_WEIGHTS.medium,
-                fontVariantNumeric: "tabular-nums",
-                lineHeight: 1,
+                display: "grid",
+                gap: sp(1),
+                minWidth: dim(58),
+                maxWidth: dim(72),
+                padding: sp("5px 6px"),
+                border: `1px solid ${cssColorAlpha(tone, "44")}`,
+                borderRadius: dim(RADII.xs),
+                background: cssColorAlpha(tone, "10"),
+                fontFamily: T.sans,
+                flex: "1 0 0",
               }}
             >
-              {Number.isFinite(count) ? count.toLocaleString() : MISSING_VALUE}
+              <span
+                style={{
+                  color: tone,
+                  fontSize: fs(11),
+                  fontWeight: FONT_WEIGHTS.medium,
+                  fontVariantNumeric: "tabular-nums",
+                  lineHeight: 1,
+                }}
+              >
+                {Number.isFinite(count) ? count.toLocaleString() : MISSING_VALUE}
+              </span>
+              <span
+                style={{
+                  color: CSS_COLOR.textMuted,
+                  fontSize: textSize("caption"),
+                  lineHeight: 1.1,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  textTransform: "uppercase",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {shortPipelineLabel(stage)}
+              </span>
             </span>
-            <span
-              style={{
-                color: CSS_COLOR.textMuted,
-                fontSize: textSize("caption"),
-                lineHeight: 1.1,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                textTransform: "uppercase",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {shortPipelineLabel(stage)}
-            </span>
-          </span>
+          </AppTooltip>
         );
       })}
     </div>
@@ -880,38 +886,39 @@ const PositionTile = ({ position, onOpenTradeSymbol }) => {
   const quantity = numberFrom(position?.quantity);
   const contractLabel = readPositionContractLabel(position);
   return (
-    <button
-      type="button"
-      title={`${symbol} ${contractLabel} - ${quantity ?? MISSING_VALUE} contracts`}
-      onClick={() => symbol && onOpenTradeSymbol?.(symbol)}
-      style={{
-        display: "grid",
-        gap: sp(2),
-        minWidth: 0,
-        minHeight: dim(42),
-        padding: sp("6px 7px"),
-        border: `1px solid ${CSS_COLOR.borderLight}`,
-        borderRadius: dim(RADII.xs),
-        background: CSS_COLOR.bg1,
-        color: CSS_COLOR.text,
-        textAlign: "left",
-        cursor: symbol ? "pointer" : "default",
-        fontFamily: T.sans,
-      }}
-      className="ra-interactive"
-    >
-      <span style={{ display: "flex", justifyContent: "space-between", gap: sp(5), minWidth: 0 }}>
-        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label }}>
-          {symbol || MISSING_VALUE}
+    <AppTooltip content={`${symbol} ${contractLabel} - ${quantity ?? MISSING_VALUE} contracts`}>
+      <button
+        type="button"
+        onClick={() => symbol && onOpenTradeSymbol?.(symbol)}
+        style={{
+          display: "grid",
+          gap: sp(2),
+          minWidth: 0,
+          minHeight: dim(42),
+          padding: sp("6px 7px"),
+          border: `1px solid ${CSS_COLOR.borderLight}`,
+          borderRadius: dim(RADII.xs),
+          background: CSS_COLOR.bg1,
+          color: CSS_COLOR.text,
+          textAlign: "left",
+          cursor: symbol ? "pointer" : "default",
+          fontFamily: T.sans,
+        }}
+        className="ra-interactive"
+      >
+        <span style={{ display: "flex", justifyContent: "space-between", gap: sp(5), minWidth: 0 }}>
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: textSize("caption"), fontWeight: FONT_WEIGHTS.label }}>
+            {symbol || MISSING_VALUE}
+          </span>
+          <span style={{ color: toneForNumber(pnl, CSS_COLOR.textDim), fontSize: textSize("caption"), whiteSpace: "nowrap" }}>
+            {pnl == null ? MISSING_VALUE : formatMoney(pnl, 0)}
+          </span>
         </span>
-        <span style={{ color: toneForNumber(pnl, CSS_COLOR.textDim), fontSize: textSize("caption"), whiteSpace: "nowrap" }}>
-          {pnl == null ? MISSING_VALUE : formatMoney(pnl, 0)}
+        <span style={{ minWidth: 0, color: CSS_COLOR.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: textSize("caption") }}>
+          {quantity ?? MISSING_VALUE}x {contractLabel}
         </span>
-      </span>
-      <span style={{ minWidth: 0, color: CSS_COLOR.textDim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: textSize("caption") }}>
-        {quantity ?? MISSING_VALUE}x {contractLabel}
-      </span>
-    </button>
+      </button>
+    </AppTooltip>
   );
 };
 
@@ -921,6 +928,8 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   externalStreamFreshness = null,
   environment = "paper",
   signalMatrixStates = [],
+  signalMonitorEvents = [],
+  signalMonitorEventsLoaded = false,
   headerAccessory = null,
   onOpenAlgo,
   onOpenTradeSymbol,
@@ -1026,27 +1035,64 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
 
   const cockpit = cockpitQuery.data || null;
   const automationState = automationStateQuery.data || null;
+  const previousStaActionSnapshotRef = useRef(null);
+  const staActionSnapshot = useMemo(
+    () =>
+      resolveStableStaActionSnapshot({
+        cockpit,
+        signalOptionsState: automationState,
+        previousSnapshot: previousStaActionSnapshotRef.current,
+        cockpitFailed: cockpitQuery.isError,
+        signalOptionsStateFailed: automationStateQuery.isError,
+      }),
+    [automationState, cockpit, cockpitQuery.isError, automationStateQuery.isError],
+  );
+  useEffect(() => {
+    if (staActionSnapshot.cacheable) {
+      previousStaActionSnapshotRef.current = staActionSnapshot;
+    }
+  }, [staActionSnapshot]);
   const performance = performanceQuery.data || null;
   const performanceSummary = asRecord(performance?.summary);
   const openExposure = asRecord(performance?.openExposure);
   const cockpitKpis = asRecord(cockpit?.kpis);
   const cockpitRisk = asRecord(cockpit?.risk);
-  const activePositions = cockpit?.activePositions?.length
-    ? cockpit.activePositions
-    : automationState?.activePositions || [];
+  const activePositions = Array.isArray(staActionSnapshot.activePositions)
+    ? staActionSnapshot.activePositions
+    : [];
   const ledgerPositions = (ledgerPositionsQuery.data?.positions || []).filter((row) =>
     rowDeploymentIds(row).includes(deploymentId),
   );
   const displayedPositions = activePositions.length ? activePositions : ledgerPositions;
   const events = eventsQuery.data?.events || cockpit?.events || automationState?.events || [];
-  const signalOptionsCandidates = cockpit?.candidates || automationState?.candidates || [];
-  const signalOptionsSignals = cockpit?.signals || automationState?.signals || [];
+  const signalOptionsCandidates = Array.isArray(staActionSnapshot.candidates)
+    ? staActionSnapshot.candidates
+    : [];
+  const signalOptionsSignals = Array.isArray(staActionSnapshot.signals)
+    ? staActionSnapshot.signals
+    : [];
+  const signalMonitorEventRows = signalMonitorEventsLoaded ? signalMonitorEvents : [];
+  const visibleStaSignals = useMemo(
+    () =>
+      buildVisibleSignalRows({
+        signals: signalOptionsSignals,
+        candidates: signalOptionsCandidates,
+        signalEvents: signalMonitorEventRows,
+        universeSymbols: focusedDeployment?.symbolUniverse || [],
+      }),
+    [
+      focusedDeployment?.symbolUniverse,
+      signalMonitorEventRows,
+      signalOptionsCandidates,
+      signalOptionsSignals,
+    ],
+  );
   const signalActionRows = useMemo(() => {
     return buildAlgoMonitorSignalActionRows({
-      signals: signalOptionsSignals,
+      signals: visibleStaSignals,
       candidates: signalOptionsCandidates,
     });
-  }, [signalOptionsCandidates, signalOptionsSignals]);
+  }, [signalOptionsCandidates, visibleStaSignals]);
   const signalMatrixBySymbol = useMemo(
     () => buildSignalMatrixBySymbol(signalMatrixStates),
     [signalMatrixStates],
@@ -1071,7 +1117,10 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   const wins = numberFrom(performanceSummary.wins, 0) ?? 0;
   const losses = numberFrom(performanceSummary.losses, 0) ?? 0;
   const blockedCount = numberFrom(cockpitKpis.blockedCandidates);
-  const candidateCount = numberFrom(cockpitKpis.candidates, automationState?.candidates?.length);
+  const candidateCount = numberFrom(
+    cockpitKpis.candidates,
+    signalOptionsCandidates.length,
+  );
   const openPremium = numberFrom(openExposure.openPremium, cockpitRisk.openPremium, cockpitKpis.openPremium);
   const openSymbols = numberFrom(openExposure.openSymbols, cockpitRisk.openSymbols, cockpitKpis.openSymbols, 0) ?? 0;
   const maxOpenSymbols = numberFrom(openExposure.maxOpenSymbols, cockpitRisk.maxOpenSymbols, cockpitKpis.maxOpenSymbols);

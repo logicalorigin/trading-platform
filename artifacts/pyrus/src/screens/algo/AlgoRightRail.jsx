@@ -1,6 +1,7 @@
 import {
   useEffect,
 } from "react";
+import { AppTooltip } from "@/components/ui/tooltip";
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
@@ -55,7 +56,6 @@ const WireTrailStatusBand = ({ profile, positions }) => {
   return (
     <section
       data-testid="algo-wire-trail-status"
-      title={`Wire trail ${summary.statusLabel.toLowerCase()}: ${summary.activePositions}/${summary.openPositions} active, ${summary.greekFallbackPositions} Greek fallback`}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -111,44 +111,44 @@ const WireTrailStatusBand = ({ profile, positions }) => {
         }}
       >
         {cells.map((cell) => (
-          <div
-            key={cell.label}
-            title={`${cell.label}: ${cell.value}`}
-            style={{
-              minWidth: 0,
-              border: `1px solid ${CSS_COLOR.border}`,
-              borderRadius: RADII.xs,
-              background: CSS_COLOR.bg1,
-              padding: `${sp(4)}px ${sp(5)}px`,
-            }}
-          >
+          <AppTooltip key={cell.label} content={`${cell.label}: ${cell.value}`}>
             <div
               style={{
-                color: CSS_COLOR.textMuted,
-                fontFamily: T.data,
-                fontSize: textSize("micro"),
-                fontWeight: FONT_WEIGHTS.label,
-                lineHeight: 1.1,
-              }}
-            >
-              {cell.label}
-            </div>
-            <div
-              style={{
-                color: CSS_COLOR.text,
-                fontFamily: T.data,
-                fontSize: textSize("label"),
-                fontWeight: FONT_WEIGHTS.label,
-                lineHeight: 1.25,
                 minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                border: `1px solid ${CSS_COLOR.border}`,
+                borderRadius: RADII.xs,
+                background: CSS_COLOR.bg1,
+                padding: `${sp(4)}px ${sp(5)}px`,
               }}
             >
-              {cell.value}
+              <div
+                style={{
+                  color: CSS_COLOR.textMuted,
+                  fontFamily: T.data,
+                  fontSize: textSize("micro"),
+                  fontWeight: FONT_WEIGHTS.label,
+                  lineHeight: 1.1,
+                }}
+              >
+                {cell.label}
+              </div>
+              <div
+                style={{
+                  color: CSS_COLOR.text,
+                  fontFamily: T.data,
+                  fontSize: textSize("label"),
+                  fontWeight: FONT_WEIGHTS.label,
+                  lineHeight: 1.25,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {cell.value}
+              </div>
             </div>
-          </div>
+          </AppTooltip>
         ))}
       </div>
     </section>

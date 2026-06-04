@@ -1,6 +1,7 @@
 import {
   useMemo,
 } from "react";
+import { AppTooltip } from "@/components/ui/tooltip";
 import {
   CSS_COLOR,
   cssColorMix,
@@ -221,35 +222,35 @@ export const ExpiryCalendarHeatmap = ({ positions, currency = "USD", maskValues 
                   const intensity = day.notional / max;
                   const baseColor = day.isThirdFri ? CSS_COLOR.red : day.isFri ? CSS_COLOR.amber : CSS_COLOR.accent;
                   const opacity = day.notional > 0 ? 0.3 + intensity * 0.7 : 0.3;
+                  const title =
+                    day.notional > 0
+                      ? `${day.iso} · ${formatAccountMoney(
+                          day.notional,
+                          currency,
+                          true,
+                          maskValues,
+                        )} notional${
+                          day.isThirdFri
+                            ? " · monthly exp"
+                            : day.isFri
+                              ? " · weekly Fri"
+                              : ""
+                        }`
+                      : `${day.iso} · no expiry`;
                   return (
-                    <div
-                      key={di}
-                      title={
-                        day.notional > 0
-                          ? `${day.iso} · ${formatAccountMoney(
-                              day.notional,
-                              currency,
-                              true,
-                              maskValues,
-                            )} notional${
-                              day.isThirdFri
-                                ? " · monthly exp"
-                                : day.isFri
-                                  ? " · weekly Fri"
-                                  : ""
-                            }`
-                          : `${day.iso} · no expiry`
-                      }
-                      style={{
-                        height: dim(14),
-                        borderRadius: dim(RADII.xs),
-                        background: day.notional > 0 ? baseColor : `${cssColorMix(CSS_COLOR.border, 27)}`,
-                        opacity,
-                        border: day.isThirdFri ? `1px solid ${CSS_COLOR.red}` : "none",
-                        boxSizing: "border-box",
-                        cursor: day.notional > 0 ? "pointer" : "default",
-                      }}
-                    />
+                    <AppTooltip key={di} content={title}>
+                      <div
+                        style={{
+                          height: dim(14),
+                          borderRadius: dim(RADII.xs),
+                          background: day.notional > 0 ? baseColor : `${cssColorMix(CSS_COLOR.border, 27)}`,
+                          opacity,
+                          border: day.isThirdFri ? `1px solid ${CSS_COLOR.red}` : "none",
+                          boxSizing: "border-box",
+                          cursor: day.notional > 0 ? "pointer" : "default",
+                        }}
+                      />
+                    </AppTooltip>
                   );
                 })}
               </div>

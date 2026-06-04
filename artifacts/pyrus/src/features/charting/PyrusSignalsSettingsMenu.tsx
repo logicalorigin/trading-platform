@@ -577,7 +577,6 @@ export function PyrusSignalsSettingsMenu({
           <button
             type="button"
             aria-label="Pyrus Signals overlay"
-            title="Tune Pyrus Signals overlay settings"
             disabled={disabled}
             style={triggerStyle(theme, dense, disabled)}
           >

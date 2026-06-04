@@ -135,31 +135,29 @@ const MobileHeaderChip = ({ label, value, tone = CSS_COLOR.text }) => (
 );
 
 const MobileIconButton = ({ Icon, label, onClick, testId, active = false }) => (
-  <AppTooltip content={label}>
-    <button
-      className="ra-interactive ra-mobile-icon-button"
-      data-testid={testId}
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      aria-pressed={active}
-      style={{
-        width: dim(44),
-        minWidth: dim(44),
-        height: dim(44),
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        border: `1px solid ${active ? CSS_COLOR.accent : CSS_COLOR.border}`,
-        background: active ? `${cssColorMix(CSS_COLOR.accent, 9)}` : CSS_COLOR.bg1,
-        color: active ? CSS_COLOR.accent : CSS_COLOR.textSec,
-        borderRadius: dim(RADII.pill),
-        cursor: "pointer",
-      }}
-    >
-      <Icon size={16} strokeWidth={2.2} />
-    </button>
-  </AppTooltip>
+  <button
+    className="ra-interactive ra-mobile-icon-button"
+    data-testid={testId}
+    type="button"
+    onClick={onClick}
+    aria-label={label}
+    aria-pressed={active}
+    style={{
+      width: dim(44),
+      minWidth: dim(44),
+      height: dim(44),
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      border: `1px solid ${active ? CSS_COLOR.accent : CSS_COLOR.border}`,
+      background: active ? `${cssColorMix(CSS_COLOR.accent, 9)}` : CSS_COLOR.bg1,
+      color: active ? CSS_COLOR.accent : CSS_COLOR.textSec,
+      borderRadius: dim(RADII.pill),
+      cursor: "pointer",
+    }}
+  >
+    <Icon size={16} strokeWidth={2.2} />
+  </button>
 );
 
 const MobileHeaderContext = ({ activeScreen, selectedSymbol }) => {
@@ -516,56 +514,57 @@ const AppHeaderInner = ({
               {SCREENS.map((screen) => {
                 const isIconized = ICONIZED_SCREEN_IDS.has(screen.id);
                 return (
-                  <AppTooltip key={screen.id} content={screen.label}>
-                    <button
-                      className={joinMotionClasses(
-                        "ra-interactive",
-                        activeScreen === screen.id && "ra-focus-rail",
-                      )}
-                      onClick={() => handleSetScreen(screen.id)}
-                      onFocus={() => handleScreenIntent(screen.id)}
-                      onPointerEnter={() => handleScreenIntent(screen.id)}
-                      onPointerDown={() => handleScreenIntent(screen.id)}
-                      style={{
-                        ...motionVars({ accent: CSS_COLOR.accent }),
-                        padding: isIconized ? sp("2px 4px") : sp("2px 5px"),
-                        minHeight: dim(22),
-                        fontSize: textSize("body"),
-                        fontWeight: FONT_WEIGHTS.medium,
-                        fontFamily: T.sans,
-                        background: "transparent",
-                        border: "none",
-                        borderRadius: 0,
-                        cursor: "pointer",
-                        color: activeScreen === screen.id ? CSS_COLOR.text : CSS_COLOR.textSec,
-                        boxShadow:
-                          activeScreen === screen.id
-                            ? `inset 0 -1px 0 ${CSS_COLOR.accent}`
-                            : "none",
-                        transition: "color 0.18s ease, box-shadow 0.18s ease",
-                        position: "relative",
-                        whiteSpace: "nowrap",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: sp(2),
-                      }}
-                      onMouseEnter={(event) => {
-                        handleScreenIntent(screen.id);
-                        if (activeScreen === screen.id) return;
-                        event.currentTarget.style.color = CSS_COLOR.text;
-                      }}
-                      onMouseLeave={(event) => {
-                        if (activeScreen === screen.id) return;
-                        event.currentTarget.style.color = CSS_COLOR.textSec;
-                      }}
-                    >
-                      {isIconized ? (
-                        <SettingsIcon size={dim(14)} strokeWidth={2} aria-hidden="true" />
-                      ) : (
-                        screen.label
-                      )}
-                    </button>
-                  </AppTooltip>
+                  <button
+                    key={screen.id}
+                    className={joinMotionClasses(
+                      "ra-interactive",
+                      activeScreen === screen.id && "ra-focus-rail",
+                    )}
+                    onClick={() => handleSetScreen(screen.id)}
+                    onFocus={() => handleScreenIntent(screen.id)}
+                    onPointerEnter={() => handleScreenIntent(screen.id)}
+                    onPointerDown={() => handleScreenIntent(screen.id)}
+                    aria-label={screen.label}
+                    aria-current={activeScreen === screen.id ? "page" : undefined}
+                    style={{
+                      ...motionVars({ accent: CSS_COLOR.accent }),
+                      padding: isIconized ? sp("2px 4px") : sp("2px 5px"),
+                      minHeight: dim(22),
+                      fontSize: textSize("body"),
+                      fontWeight: FONT_WEIGHTS.medium,
+                      fontFamily: T.sans,
+                      background: "transparent",
+                      border: "none",
+                      borderRadius: 0,
+                      cursor: "pointer",
+                      color: activeScreen === screen.id ? CSS_COLOR.text : CSS_COLOR.textSec,
+                      boxShadow:
+                        activeScreen === screen.id
+                          ? `inset 0 -1px 0 ${CSS_COLOR.accent}`
+                          : "none",
+                      transition: "color 0.18s ease, box-shadow 0.18s ease",
+                      position: "relative",
+                      whiteSpace: "nowrap",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: sp(2),
+                    }}
+                    onMouseEnter={(event) => {
+                      handleScreenIntent(screen.id);
+                      if (activeScreen === screen.id) return;
+                      event.currentTarget.style.color = CSS_COLOR.text;
+                    }}
+                    onMouseLeave={(event) => {
+                      if (activeScreen === screen.id) return;
+                      event.currentTarget.style.color = CSS_COLOR.textSec;
+                    }}
+                  >
+                    {isIconized ? (
+                      <SettingsIcon size={dim(14)} strokeWidth={2} aria-hidden="true" />
+                    ) : (
+                      screen.label
+                    )}
+                  </button>
                 );
               })}
             </div>

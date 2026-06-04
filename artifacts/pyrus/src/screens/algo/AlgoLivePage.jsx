@@ -5,6 +5,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { AppTooltip } from "@/components/ui/tooltip";
 import {
   Activity,
   Layers,
@@ -1053,31 +1054,32 @@ export const AlgoLivePage = ({
               }}
             >
               {algoIsPhone ? (
-                <button
-                  type="button"
-                  data-testid="algo-settings-drawer-open"
-                  onClick={() => setSettingsDrawerOpen(true)}
-                  aria-label="Open algo settings"
-                  title="Settings"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: dim(32),
-                    height: dim(32),
-                    border: `1px solid ${CSS_COLOR.border}`,
-                    borderRadius: dim(RADII.pill),
-                    background: CSS_COLOR.bg1,
-                    color: CSS_COLOR.accent,
-                    cursor: "pointer",
-                  }}
-                >
-                  <SettingsIcon
-                    size={HEADER_ICON_SIZE}
-                    strokeWidth={2}
-                    aria-hidden="true"
-                  />
-                </button>
+                <AppTooltip content="Settings">
+                  <button
+                    type="button"
+                    data-testid="algo-settings-drawer-open"
+                    onClick={() => setSettingsDrawerOpen(true)}
+                    aria-label="Open algo settings"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: dim(32),
+                      height: dim(32),
+                      border: `1px solid ${CSS_COLOR.border}`,
+                      borderRadius: dim(RADII.pill),
+                      background: CSS_COLOR.bg1,
+                      color: CSS_COLOR.accent,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <SettingsIcon
+                      size={HEADER_ICON_SIZE}
+                      strokeWidth={2}
+                      aria-hidden="true"
+                    />
+                  </button>
+                </AppTooltip>
               ) : null}
               {focusedDeployment ? (
                 <div
@@ -1093,43 +1095,45 @@ export const AlgoLivePage = ({
                     background: CSS_COLOR.bg1,
                   }}
                 >
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleToggleDeployment?.(focusedDeployment)
-                    }
-                    disabled={deploymentToggleDisabled}
-                    aria-label={deploymentToggleActionLabel}
-                    title={deploymentToggleActionLabel}
-                    style={headerActionButtonStyle({
-                      color: focusedDeployment.enabled ? CSS_COLOR.amber : CSS_COLOR.green,
-                      disabled: deploymentToggleDisabled,
-                    })}
-                  >
-                    <DeploymentToggleIcon
-                      size={HEADER_ICON_SIZE}
+                  <AppTooltip content={deploymentToggleActionLabel}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleToggleDeployment?.(focusedDeployment)
+                      }
+                      disabled={deploymentToggleDisabled}
+                      aria-label={deploymentToggleActionLabel}
+                      style={headerActionButtonStyle({
+                        color: focusedDeployment.enabled ? CSS_COLOR.amber : CSS_COLOR.green,
+                        disabled: deploymentToggleDisabled,
+                      })}
+                    >
+                      <DeploymentToggleIcon
+                        size={HEADER_ICON_SIZE}
+                        strokeWidth={2}
+                        aria-hidden="true"
+                      />
+                    </button>
+                  </AppTooltip>
+                  <AppTooltip content={scanButtonActionLabel}>
+                    <button
+                      type="button"
+                      onClick={handleRunShadowScan}
+                      disabled={scanButtonDisabled}
+                      aria-label={scanButtonActionLabel}
+                      style={headerActionButtonStyle({
+                        color: CSS_COLOR.accent,
+                        disabled: scanButtonDisabled,
+                        divided: true,
+                      })}
+                    >
+                      <RefreshCw
+                        size={HEADER_ICON_SIZE}
                       strokeWidth={2}
                       aria-hidden="true"
                     />
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleRunShadowScan}
-                    disabled={scanButtonDisabled}
-                    aria-label={scanButtonActionLabel}
-                    title={scanButtonActionLabel}
-                    style={headerActionButtonStyle({
-                      color: CSS_COLOR.accent,
-                      disabled: scanButtonDisabled,
-                      divided: true,
-                    })}
-                  >
-                    <RefreshCw
-                      size={HEADER_ICON_SIZE}
-                      strokeWidth={2}
-                      aria-hidden="true"
-                    />
-                  </button>
+                  </AppTooltip>
                 </div>
               ) : null}
             </div>
@@ -1317,25 +1321,26 @@ export const AlgoLivePage = ({
                     flex: "0 0 auto",
                   }}
                 >
-                  <button
-                    type="button"
-                    data-testid="algo-settings-drawer-close"
-                    aria-label="Close algo settings"
-                    title="Close settings"
-                    onClick={() => setSettingsDrawerOpen(false)}
-                    style={{
-                      ...compactButtonStyle(),
-                      width: dim(30),
-                      minWidth: dim(30),
-                      height: dim(30),
-                      padding: 0,
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <X size={15} strokeWidth={2} aria-hidden="true" />
-                  </button>
+                  <AppTooltip content="Close settings">
+                    <button
+                      type="button"
+                      data-testid="algo-settings-drawer-close"
+                      aria-label="Close algo settings"
+                      onClick={() => setSettingsDrawerOpen(false)}
+                      style={{
+                        ...compactButtonStyle(),
+                        width: dim(30),
+                        minWidth: dim(30),
+                        height: dim(30),
+                        padding: 0,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <X size={15} strokeWidth={2} aria-hidden="true" />
+                    </button>
+                  </AppTooltip>
                 </div>
                 <div style={{ flex: "1 1 auto", minHeight: 0 }}>
                   {renderedRightRail}

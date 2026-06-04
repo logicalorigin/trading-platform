@@ -381,6 +381,16 @@ const buildStaActionSourceSnapshot = (sourceName, source) => {
   const candidates = staSourceArray(record.candidates);
   const activePositions = staSourceArray(record.activePositions);
   const rowCount = signals.length + candidates.length + activePositions.length;
+  const cacheStatus = normalizeMatchKey(record.cacheStatus).toLowerCase();
+  const reason = normalizeMatchKey(record.reason).toLowerCase();
+  const transient = Boolean(
+    record.stale === true ||
+      record.degraded === true ||
+      record.refreshing === true ||
+      cacheStatus === "stale" ||
+      reason.includes("timeout") ||
+      reason.includes("cache"),
+  );
   return {
     source: sourceName,
     signals,
@@ -393,6 +403,7 @@ const buildStaActionSourceSnapshot = (sourceName, source) => {
       activePositions,
     ]),
     hasRows: rowCount > 0,
+    transient,
   };
 };
 
@@ -401,6 +412,7 @@ const chooseStaActionSourceSnapshot = (snapshots) =>
     .filter((snapshot) => snapshot.hasRows)
     .sort(
       (left, right) =>
+        Number(left.transient) - Number(right.transient) ||
         right.latestMs - left.latestMs ||
         right.rowCount - left.rowCount ||
         (left.source === "cockpit" ? -1 : 1),
@@ -446,12 +458,32 @@ export const resolveStableStaActionSnapshot = ({
     staSourceArray(previous.activePositions).length;
   const previousSource = String(previous.source || "");
   const hasPrevious = previousRowCount > 0;
+  const previousLatestMs = staSourceLatestTimestampMs(previous, [
+    staSourceArray(previous.signals),
+    staSourceArray(previous.candidates),
+    staSourceArray(previous.activePositions),
+  ]);
   const currentRowCount = currentSnapshot?.rowCount || 0;
   const previousSourceFailed = failedSources.includes(previousSource);
+  const transientEmptyRefresh = Boolean(
+    hasPrevious &&
+      !currentSnapshot &&
+      [cockpitSnapshot, stateSnapshot].some((snapshot) => snapshot.transient),
+  );
+  const transientRegressiveRefresh = Boolean(
+    hasPrevious &&
+      currentSnapshot?.transient &&
+      (currentRowCount < previousRowCount ||
+        (previousLatestMs > 0 &&
+          currentSnapshot.latestMs > 0 &&
+          currentSnapshot.latestMs < previousLatestMs)),
+  );
   const actionSourceDegraded = Boolean(
-    failedSources.length &&
+    (failedSources.length &&
       hasPrevious &&
-      (!currentSnapshot || currentRowCount < previousRowCount || previousSourceFailed),
+      (!currentSnapshot || currentRowCount < previousRowCount || previousSourceFailed)) ||
+      transientEmptyRefresh ||
+      transientRegressiveRefresh,
   );
 
   if (actionSourceDegraded) {
@@ -695,13 +727,14 @@ export const buildVisibleSignalRows = ({
 
   candidateList.forEach((candidate) => {
     const candidateRecord = asRecord(candidate);
+    const nestedSignal = asRecord(candidateRecord.signal);
     const candidateSignal = {
-      ...asRecord(candidateRecord.signal),
-      symbol: candidateRecord.symbol,
-      timeframe: candidateRecord.timeframe,
-      direction: candidateRecord.direction,
-      signalAt: candidateRecord.signalAt,
-      signalPrice: candidateRecord.signalPrice,
+      ...nestedSignal,
+      symbol: candidateRecord.symbol ?? nestedSignal.symbol,
+      timeframe: candidateRecord.timeframe ?? nestedSignal.timeframe,
+      direction: candidateRecord.direction ?? nestedSignal.direction,
+      signalAt: candidateRecord.signalAt ?? nestedSignal.signalAt,
+      signalPrice: candidateRecord.signalPrice ?? nestedSignal.signalPrice,
     };
     const familyKey = signalRowFamilyKey(candidateSignal);
     if (familyKey && visibleSignalFamilies.has(familyKey)) return;

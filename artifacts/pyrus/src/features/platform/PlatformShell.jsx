@@ -671,6 +671,7 @@ export const PlatformShell = ({
   signalMonitorStates,
   signalMonitorProfile,
   signalMonitorEvents,
+  signalMonitorEventsLoaded = false,
   signalMatrixStates,
   headerSignalMatrixStates,
   selectedSymbol,
@@ -1071,6 +1072,8 @@ export const PlatformShell = ({
       environment={environment}
       dataEnabled={algoFrameRuntimeEnabled}
       signalMatrixStates={signalMatrixStates}
+      signalMonitorEvents={signalMonitorEvents}
+      signalMonitorEventsLoaded={signalMonitorEventsLoaded}
       onOpenAlgo={(focus) => {
         setMobileActivityOpen(false);
         handleSetScreen("algo", focus);
@@ -1238,6 +1241,8 @@ export const PlatformShell = ({
             isVisible={!activitySidebarCollapsed}
             dataEnabled={algoFrameRuntimeEnabled}
             signalMatrixStates={signalMatrixStates}
+            signalMonitorEvents={signalMonitorEvents}
+            signalMonitorEventsLoaded={signalMonitorEventsLoaded}
             externalStreamFreshness={
               algoFrameRuntimeEnabled ? algoCockpitStreamFreshness : null
             }

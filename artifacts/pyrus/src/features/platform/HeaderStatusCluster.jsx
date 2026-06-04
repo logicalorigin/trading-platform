@@ -737,7 +737,6 @@ const HeaderIbkrTriggerSummary = ({
           <span
             data-testid="header-ibkr-line-usage"
             aria-label={`Market data lines ${lineDisplayValue}`}
-            title={`Market data lines ${lineDisplayValue}`}
             style={{
               display: "inline-flex",
               alignItems: "baseline",
@@ -1278,43 +1277,45 @@ const HeaderProviderChip = ({ chip, baseTone, compact = false }) => {
   }
   const tone = chip.tone || baseTone || CSS_COLOR.textSec;
   return (
-    <span
-      title={chip.title || chip.label}
-      style={{
-        minHeight: dim(compact ? 18 : 20),
-        display: "inline-flex",
-        alignItems: "center",
-        gap: sp(3),
-        maxWidth: "100%",
-        padding: sp(compact ? "2px 5px" : "3px 6px"),
-        border: `1px solid ${cssColorMix(tone, compact ? 24 : 30)}`,
-        borderRadius: dim(RADII.pill),
-        background: cssColorMix(tone, compact ? 5 : 7),
-        color: tone,
-        fontSize: fs(compact ? 8 : 9),
-        lineHeight: 1,
-        fontVariantNumeric: "tabular-nums",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {chip.iconKey ? (
-        <HeaderProviderIcon
-          iconKey={chip.iconKey}
-          color={tone}
-          size={compact ? 8 : 9}
-          strokeWidth={2.35}
-        />
-      ) : null}
+    <AppTooltip content={chip.title || chip.label}>
       <span
         style={{
+          minHeight: dim(compact ? 18 : 20),
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(3),
+          maxWidth: "100%",
+          padding: sp(compact ? "2px 5px" : "3px 6px"),
+          border: `1px solid ${cssColorMix(tone, compact ? 24 : 30)}`,
+          borderRadius: dim(RADII.pill),
+          background: cssColorMix(tone, compact ? 5 : 7),
+          color: tone,
+          fontSize: fs(compact ? 8 : 9),
+          lineHeight: 1,
+          fontVariantNumeric: "tabular-nums",
+          whiteSpace: "nowrap",
           minWidth: 0,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
         }}
       >
-        {chip.label}
+        {chip.iconKey ? (
+          <HeaderProviderIcon
+            iconKey={chip.iconKey}
+            color={tone}
+            size={compact ? 8 : 9}
+            strokeWidth={2.35}
+          />
+        ) : null}
+        <span
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {chip.label}
+        </span>
       </span>
-    </span>
+    </AppTooltip>
   );
 };
 
@@ -1325,28 +1326,29 @@ const HeaderProviderChannelChip = ({ channel, tone }) => {
   const active = channel.active === true;
   const color = active ? tone || CSS_COLOR.green : CSS_COLOR.textDim;
   return (
-    <span
-      title={channel.title || channel.label}
-      style={{
-        minWidth: dim(24),
-        minHeight: dim(19),
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: sp("2px 6px"),
-        border: `1px solid ${cssColorMix(color, active ? 44 : 20)}`,
-        borderRadius: dim(RADII.xs),
-        background: active ? cssColorMix(color, 11) : CSS_COLOR.bg0,
-        color,
-        fontSize: fs(9),
-        fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
-        lineHeight: 1,
-        fontVariantNumeric: "tabular-nums",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {channel.label}
-    </span>
+    <AppTooltip content={channel.title || channel.label}>
+      <span
+        style={{
+          minWidth: dim(24),
+          minHeight: dim(19),
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: sp("2px 6px"),
+          border: `1px solid ${cssColorMix(color, active ? 44 : 20)}`,
+          borderRadius: dim(RADII.xs),
+          background: active ? cssColorMix(color, 11) : CSS_COLOR.bg0,
+          color,
+          fontSize: fs(9),
+          fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
+          lineHeight: 1,
+          fontVariantNumeric: "tabular-nums",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {channel.label}
+      </span>
+    </AppTooltip>
   );
 };
 
@@ -1399,20 +1401,21 @@ const HeaderProviderLane = ({ lane, providerTone }) => {
           size={14}
         />
       </div>
-      <div
-        title={lane.detail ? `${lane.value} · ${lane.detail}` : lane.value}
-        style={{
-          minWidth: 0,
-          color: tone,
-          fontSize: textSize("paragraphMuted"),
-          fontWeight: FONT_WEIGHTS.medium,
-          lineHeight: 1.25,
-          overflowWrap: "anywhere",
-          textWrap: "pretty",
-        }}
-      >
-        {lane.value || MISSING_VALUE}
-      </div>
+      <AppTooltip content={lane.detail ? `${lane.value} · ${lane.detail}` : lane.value}>
+        <div
+          style={{
+            minWidth: 0,
+            color: tone,
+            fontSize: textSize("paragraphMuted"),
+            fontWeight: FONT_WEIGHTS.medium,
+            lineHeight: 1.25,
+            overflowWrap: "anywhere",
+            textWrap: "pretty",
+          }}
+        >
+          {lane.value || MISSING_VALUE}
+        </div>
+      </AppTooltip>
       {channels.length ? (
         <div
           aria-label={`${lane.label} channels`}
@@ -1523,21 +1526,22 @@ const HeaderMassiveProviderPanel = ({ row }) => (
         />
       ) : null}
       {row.detail ? (
-        <span
-          title={row.detail}
-          style={{
-            minWidth: 0,
-            flex: "1 1 150px",
-            color: CSS_COLOR.textDim,
-            fontSize: fs(9),
-            lineHeight: 1.3,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {row.detail}
-        </span>
+        <AppTooltip content={row.detail}>
+          <span
+            style={{
+              minWidth: 0,
+              flex: "1 1 150px",
+              color: CSS_COLOR.textDim,
+              fontSize: fs(9),
+              lineHeight: 1.3,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {row.detail}
+          </span>
+        </AppTooltip>
       ) : null}
     </div>
     {Array.isArray(row.summary) && row.summary.length ? (
@@ -1584,26 +1588,27 @@ const HeaderGenericProviderRow = ({ row }) => (
     >
       {row.label}
     </span>
-    <span
-      style={{
-        minWidth: 0,
-        color: row.tone || CSS_COLOR.textSec,
-        fontSize: textSize("paragraphMuted"),
-        fontWeight: FONT_WEIGHTS.medium,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-      }}
-      title={row.detail ? `${row.value} · ${row.detail}` : row.value}
-    >
-      {row.value}
-      {row.detail ? (
-        <span style={{ color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular }}>
-          {" · "}
-          {row.detail}
-        </span>
-      ) : null}
-    </span>
+    <AppTooltip content={row.detail ? `${row.value} · ${row.detail}` : row.value}>
+      <span
+        style={{
+          minWidth: 0,
+          color: row.tone || CSS_COLOR.textSec,
+          fontSize: textSize("paragraphMuted"),
+          fontWeight: FONT_WEIGHTS.medium,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {row.value}
+        {row.detail ? (
+          <span style={{ color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular }}>
+            {" · "}
+            {row.detail}
+          </span>
+        ) : null}
+      </span>
+    </AppTooltip>
   </div>
 );
 

@@ -12193,62 +12193,62 @@ const ResearchChartSurfaceComponent = ({
                       ? "32"
                       : "22";
                 return (
-                  <div
-                    key={`footprint-${overlay.id}`}
-                    title={overlay.title}
-                    data-testid={
-                      dataTestId ? `${dataTestId}-footprint-cell` : undefined
-                    }
-                    data-chart-footprint-cell=""
-                    data-chart-footprint-tone={overlay.tone}
-                    data-chart-footprint-poc={overlay.isPoc ? "true" : "false"}
-                    data-chart-footprint-buy-imbalance={
-                      overlay.buyImbalance ? "true" : "false"
-                    }
-                    data-chart-footprint-sell-imbalance={
-                      overlay.sellImbalance ? "true" : "false"
-                    }
-                    style={{
-                      position: "absolute",
-                      left: overlay.left,
-                      top: overlay.top,
-                      width: overlay.width,
-                      height: overlay.height,
-                      boxSizing: "border-box",
-                      border: `1px solid ${withAlpha(
-                        overlay.isPoc ? theme.amber : color,
-                        overlay.isPoc ? "e0" : "8c",
-                      )}`,
-                      borderLeft: overlay.sellImbalance
-                        ? `3px solid ${withAlpha(theme.red, "e6")}`
-                        : undefined,
-                      borderRight: overlay.buyImbalance
-                        ? `3px solid ${withAlpha(theme.green, "e6")}`
-                        : undefined,
-                      background: withAlpha(color, alpha),
-                      color: theme.text,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      padding: "0 2px",
-                      fontFamily: theme.mono,
-                      fontSize:
-                        overlay.width <= 34
-                          ? TYPE_CSS_VAR.micro
-                          : TYPE_CSS_VAR.label,
-                      lineHeight: 1,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "clip",
-                      boxShadow: overlay.isPoc
-                        ? `0 0 0 1px ${withAlpha(theme.amber, "54")}`
-                        : "none",
-                      pointerEvents: "auto",
-                      cursor: "help",
-                    }}
-                  >
-                    {overlay.text}
-                  </div>
+                  <AppTooltip key={`footprint-${overlay.id}`} content={overlay.title}>
+                    <div
+                      data-testid={
+                        dataTestId ? `${dataTestId}-footprint-cell` : undefined
+                      }
+                      data-chart-footprint-cell=""
+                      data-chart-footprint-tone={overlay.tone}
+                      data-chart-footprint-poc={overlay.isPoc ? "true" : "false"}
+                      data-chart-footprint-buy-imbalance={
+                        overlay.buyImbalance ? "true" : "false"
+                      }
+                      data-chart-footprint-sell-imbalance={
+                        overlay.sellImbalance ? "true" : "false"
+                      }
+                      style={{
+                        position: "absolute",
+                        left: overlay.left,
+                        top: overlay.top,
+                        width: overlay.width,
+                        height: overlay.height,
+                        boxSizing: "border-box",
+                        border: `1px solid ${withAlpha(
+                          overlay.isPoc ? theme.amber : color,
+                          overlay.isPoc ? "e0" : "8c",
+                        )}`,
+                        borderLeft: overlay.sellImbalance
+                          ? `3px solid ${withAlpha(theme.red, "e6")}`
+                          : undefined,
+                        borderRight: overlay.buyImbalance
+                          ? `3px solid ${withAlpha(theme.green, "e6")}`
+                          : undefined,
+                        background: withAlpha(color, alpha),
+                        color: theme.text,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: "0 2px",
+                        fontFamily: theme.mono,
+                        fontSize:
+                          overlay.width <= 34
+                            ? TYPE_CSS_VAR.micro
+                            : TYPE_CSS_VAR.label,
+                        lineHeight: 1,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "clip",
+                        boxShadow: overlay.isPoc
+                          ? `0 0 0 1px ${withAlpha(theme.amber, "54")}`
+                          : "none",
+                        pointerEvents: "auto",
+                        cursor: "help",
+                      }}
+                    >
+                      {overlay.text}
+                    </div>
+                  </AppTooltip>
                 );
               })}
               {windowOverlays.map((overlay) => (
@@ -13153,49 +13153,51 @@ const ResearchChartSurfaceComponent = ({
                         </div>
 
                         {contractRow ? (
-                          <div
-                            data-chart-flow-tooltip-top-contract="true"
-                            title={contractRow}
-                            style={{
-                              color: theme.textMuted,
-                              fontFamily: theme.mono,
-                              fontSize: TYPE_CSS_VAR.label,
-                              lineHeight: 1.2,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                              marginBottom: 4,
-                            }}
-                          >
-                            {contractRow}
-                          </div>
+                          <AppTooltip content={contractRow}>
+                            <div
+                              data-chart-flow-tooltip-top-contract="true"
+                              style={{
+                                color: theme.textMuted,
+                                fontFamily: theme.mono,
+                                fontSize: TYPE_CSS_VAR.label,
+                                lineHeight: 1.2,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                marginBottom: 4,
+                              }}
+                            >
+                              {contractRow}
+                            </div>
+                          </AppTooltip>
                         ) : null}
 
-                        <div
-                          data-chart-flow-tooltip-bias-bar="true"
-                          title={model.flowMix}
-                          style={{
-                            height: 7,
-                            display: "flex",
-                            overflow: "hidden",
-                            borderRadius: RADII.pill,
-                            border: `1px solid ${withAlpha(theme.border, "80")}`,
-                            background: withAlpha(theme.bg4, "80"),
-                            marginBottom: 2,
-                          }}
-                        >
-                          {biasSegments.map((segment) => (
-                            <div
-                              key={segment.key}
-                              title={`${segment.prefix} ${segment.label}`}
-                              style={{
-                                width: `${segment.percent}%`,
-                                minWidth: segment.percent > 0 ? 3 : 0,
-                                background: withAlpha(segment.color, "d8"),
-                              }}
-                            />
-                          ))}
-                        </div>
+                        <AppTooltip content={model.flowMix}>
+                          <div
+                            data-chart-flow-tooltip-bias-bar="true"
+                            style={{
+                              height: 7,
+                              display: "flex",
+                              overflow: "hidden",
+                              borderRadius: RADII.pill,
+                              border: `1px solid ${withAlpha(theme.border, "80")}`,
+                              background: withAlpha(theme.bg4, "80"),
+                              marginBottom: 2,
+                            }}
+                          >
+                            {biasSegments.map((segment) => (
+                              <AppTooltip key={segment.key} content={`${segment.prefix} ${segment.label}`}>
+                                <div
+                                  style={{
+                                    width: `${segment.percent}%`,
+                                    minWidth: segment.percent > 0 ? 3 : 0,
+                                    background: withAlpha(segment.color, "d8"),
+                                  }}
+                                />
+                              </AppTooltip>
+                            ))}
+                          </div>
+                        </AppTooltip>
                         <div
                           style={{
                             display: "flex",

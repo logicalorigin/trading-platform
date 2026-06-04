@@ -714,6 +714,40 @@ test("positions panel starts live streams from hydrated option quote conids", ()
   ]);
 });
 
+test("positions panel derives structured IBKR option ids before numeric account conids", () => {
+  const groups = buildPositionOptionQuoteGroups([
+    {
+      symbol: "SPY",
+      optionContract: {
+        underlying: "SPY",
+        expirationDate: "2026-06-04",
+        strike: 753,
+        right: "call",
+        providerContractId: "885885495",
+        multiplier: 100,
+      },
+    },
+  ]);
+  const [providerContractId] = groups[0].providerContractIds;
+  const payload = JSON.parse(
+    Buffer.from(providerContractId.slice("twsopt:".length), "base64url").toString(
+      "utf8",
+    ),
+  );
+
+  assert.deepEqual(groups[0].underlying, "SPY");
+  assert.deepEqual(payload, {
+    v: 1,
+    u: "SPY",
+    e: "20260604",
+    s: 753,
+    r: "C",
+    x: "SMART",
+    tc: "SPY",
+    m: 100,
+  });
+});
+
 test("positions panel live quote overlay replaces stale provider source labels", () => {
   const patched =
     __positionsPanelInternalsForTests.applyLiveOptionQuoteToRow(

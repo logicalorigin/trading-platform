@@ -28,6 +28,30 @@ test("watchlist quote rotation keeps pins and rotates the remainder inside the c
   assert.deepEqual(second.symbols, ["SPY", "AAPL", "TSLA", "QQQ"]);
 });
 
+test("watchlist quote rotation is uncapped by default for Massive quote fanout", () => {
+  const batch = buildWatchlistQuoteRotationBatch({
+    watchlistSymbols: ["AAPL", "MSFT", "NVDA", "TSLA", "SPY", "QQQ"],
+    rotationSymbols: ["AAPL", "MSFT", "NVDA", "TSLA", "SPY", "QQQ", "AVGO"],
+    pinnedSymbols: ["spy", "AAPL", "GOOGL"],
+    cursor: 2,
+  });
+
+  assert.deepEqual(batch.symbols, [
+    "SPY",
+    "AAPL",
+    "GOOGL",
+    "TSLA",
+    "QQQ",
+    "AVGO",
+    "MSFT",
+    "NVDA",
+  ]);
+  assert.equal(batch.batchSize, 8);
+  assert.equal(batch.batchCap, null);
+  assert.equal(batch.capped, false);
+  assert.deepEqual(batch.pinOverflowSymbols, []);
+});
+
 test("watchlist quote rotation reports pin overflow instead of exceeding cap", () => {
   const batch = buildWatchlistQuoteRotationBatch({
     watchlistSymbols: ["AAPL", "MSFT", "NVDA"],

@@ -68,7 +68,7 @@ test("broker position display equity quotes use Massive-primary quote routing", 
   assert.doesNotMatch(enrichBlock, /fetchBridgeQuoteSnapshots/);
 });
 
-test("Massive stock universe stream is opt-in and honors configurable symbol cap before IBKR lane caps", () => {
+test("Massive stock universe stream is opt-in and avoids IBKR lane caps", () => {
   const universeBlock = platformSource.match(
     /function resolveMassiveStockUniverseSymbols\(\)[\s\S]*?\n}\n/,
   )?.[0];
@@ -84,12 +84,13 @@ test("Massive stock universe stream is opt-in and honors configurable symbol cap
 
   assert.ok(universeBlock);
   assert.match(universeBlock, /getOptionsFlowLaneSourceSymbols\(\)/);
-  assert.match(universeBlock, /massiveStockUniverseStreamSymbolCap\(\)/);
+  assert.doesNotMatch(universeBlock, /massiveStockUniverseStreamSymbolCap/);
   assert.match(universeBlock, /\.\.\.sources\.candidateBuiltInSymbols/);
   assert.match(universeBlock, /\.\.\.sources\.candidateWatchlistSymbols/);
   assert.match(universeBlock, /\.\.\.sources\.candidatePrioritySymbols/);
   assert.match(universeBlock, /\.\.\.sources\.flowUniverseSymbols/);
-  assert.match(universeBlock, /\.slice\(0, symbolCap\)\s*\.sort\(\)/);
+  assert.doesNotMatch(universeBlock, /\.slice\(0,/);
+  assert.match(universeBlock, /\.sort\(\)/);
   assert.doesNotMatch(universeBlock, /resolveIbkrLaneSymbols/);
 
   assert.ok(refreshBlock);
@@ -140,7 +141,7 @@ test("signal matrix uses its own foreground aggregate stream gate instead of the
   );
   assert.match(primeBlock, /isBackgroundStockAggregateStreamingEnabled\(\)/);
   assert.match(primeBlock, /isForegroundSignalMatrixStockAggregateStreamingEnabled\(\)/);
-  assert.match(primeBlock, /SIGNAL_MONITOR_MATRIX_STREAM_SYMBOL_CAP/);
+  assert.doesNotMatch(primeBlock, /SIGNAL_MONITOR_MATRIX_STREAM_SYMBOL_CAP/);
   assert.match(primeBlock, /subscribeMutableStockMinuteAggregates/);
 });
 

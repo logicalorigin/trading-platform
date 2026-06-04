@@ -156,11 +156,6 @@ const SHADOW_DAY_CHANGE_QUOTE_TASK_MAX_WAIT_MS = Math.max(
   250,
   SHADOW_DAY_CHANGE_QUOTE_MAX_WAIT_MS - 100,
 );
-const SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS = 750;
-const SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS = Math.max(
-  500,
-  SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS - 250,
-);
 const SHADOW_GREEK_QUOTE_MAX_WAIT_MS = 3_500;
 const SHADOW_GREEK_QUOTE_TASK_MAX_WAIT_MS = Math.max(
   500,
@@ -478,6 +473,7 @@ let shadowReadCacheStaleTtlMsForTests: number | null = null;
 let shadowReadCacheStaleWaitMsForTests: number | null = null;
 type ShadowReadCacheOptions = {
   allowStale?: (value: unknown) => boolean;
+  staleStrategy?: "wait" | "immediate";
 };
 const shadowOptionQuoteCache = new Map<
   string,
@@ -642,6 +638,12 @@ async function resolveShadowReadRequest<T>(
   }
   if (options.allowStale && !options.allowStale(cached.value)) {
     return request;
+  }
+  if (options.staleStrategy === "immediate") {
+    return markShadowReadValueStale(cached.value as T, {
+      cachedAt: cached.cachedAt,
+      now,
+    });
   }
 
   return Promise.race([
@@ -2133,6 +2135,93 @@ function readCachedShadowOptionGreekQuotes(
   return quotes;
 }
 
+function declareShadowPositionOptionQuoteDemands(
+  positions: Array<{
+    symbol: string;
+    optionContract?: unknown;
+  }>,
+  options: {
+    intent?: MarketDataIntent;
+    ownerPrefix?: string;
+    requiresGreeks?: boolean;
+  } = {},
+) {
+  const idsByUnderlying = new Map<string, Set<string>>();
+  const aliasesByProviderContractId = new Map<string, Set<string>>();
+  const addProviderContractId = (
+    underlying: string,
+    providerContractId: string | null | undefined,
+    alias?: string | null,
+  ) => {
+    const normalizedUnderlying = normalizeSymbol(underlying).toUpperCase();
+    const normalizedProviderContractId = String(providerContractId ?? "").trim();
+    if (!normalizedUnderlying || !normalizedProviderContractId) {
+      return;
+    }
+    const ids = idsByUnderlying.get(normalizedUnderlying) ?? new Set<string>();
+    ids.add(normalizedProviderContractId);
+    idsByUnderlying.set(normalizedUnderlying, ids);
+    if (alias && alias !== normalizedProviderContractId) {
+      const aliases =
+        aliasesByProviderContractId.get(normalizedProviderContractId) ??
+        new Set<string>();
+      aliases.add(alias);
+      aliasesByProviderContractId.set(normalizedProviderContractId, aliases);
+    }
+  };
+
+  positions.forEach((position) => {
+    const contract = asOptionContract(position.optionContract);
+    if (!contract || isPriorOptionExpiration(contract)) {
+      return;
+    }
+    const underlying = normalizeSymbol(contract.underlying || position.symbol).toUpperCase();
+    const quoteIdentifier = shadowOptionQuoteIdentifier(contract);
+    const providerContractId = shadowOptionProviderContractIdForContract(contract);
+    addProviderContractId(underlying, providerContractId, quoteIdentifier);
+  });
+
+  idsByUnderlying.forEach((providerContractIdsForUnderlying, underlying) => {
+    const providerContractIds = Array.from(providerContractIdsForUnderlying);
+    if (!providerContractIds.length) {
+      return;
+    }
+    const owner = options.ownerPrefix ?? "shadow-position:ledger:day-change";
+    declareIbkrLiveDemand({
+      underlying,
+      providerContractIds,
+      owner,
+      intent: options.intent ?? "account-monitor-live",
+      fallbackProvider: "cache",
+      requiresGreeks: options.requiresGreeks ?? false,
+      ttlMs: SHADOW_OPTION_QUOTE_CACHE_TTL_MS,
+    });
+    readIbkrLiveDemandState({
+      underlying,
+      providerContractIds,
+      owner,
+      requiresGreeks: options.requiresGreeks ?? false,
+    }).states.flatMap((state) => (state.quote ? [state.quote] : [])).forEach((quote) => {
+      const providerContractId = String(quote.providerContractId || "").trim();
+      if (!providerContractId) {
+        return;
+      }
+      rememberShadowOptionQuote(providerContractId, quote);
+      if (options.requiresGreeks) {
+        rememberShadowOptionGreekQuote(providerContractId, quote);
+      }
+      (aliasesByProviderContractId.get(providerContractId) ?? new Set()).forEach(
+        (alias) => {
+          rememberShadowOptionQuote(alias, quote);
+          if (options.requiresGreeks) {
+            rememberShadowOptionGreekQuote(alias, quote);
+          }
+        },
+      );
+    });
+  });
+}
+
 function mergeShadowGreekQuoteMaps(
   cachedQuotes: Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>,
   liveQuotes: Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>,
@@ -2423,7 +2512,10 @@ async function readOpenShadowPositionsForSourceCached(
   return withShadowReadCache(
     `open-positions:${shadowSourceCacheKey(source)}`,
     () => readOpenShadowPositionsForSource(source),
-    { allowStale: shadowReadCacheValueHasRows },
+    {
+      allowStale: shadowReadCacheValueHasRows,
+      staleStrategy: "immediate",
+    },
   );
 }
 
@@ -2600,6 +2692,100 @@ function shadowSnapshotLedgerSource(source: string | null | undefined): ShadowSo
   return null;
 }
 
+type ShadowLedgerBundleForSource = {
+  account: ShadowAccountRow;
+  fills: ShadowFillRow[];
+  ordersById: Map<string, ShadowOrderRow>;
+  selectedFills: ShadowFillRow[];
+  selectedOrders: ShadowOrderRow[];
+  selectedOrdersByPositionKey: Map<string, ShadowOrderRow>;
+  positions: ShadowPositionRow[];
+  totals: ShadowTotals;
+};
+
+async function readShadowLedgerBundleForSource(
+  source: ShadowSourceScope | null,
+  options: {
+    useCurrentTimestampForOpenPositions?: boolean;
+    now?: Date;
+  } = {},
+): Promise<ShadowLedgerBundleForSource> {
+  const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
+  const { fills, ordersById } = source
+    ? await readShadowFillsWithOrdersForSource(source)
+    : await readShadowFillsWithOrders();
+  const selectedFills = source
+    ? fills.filter((fill) =>
+        shadowOrderMatchesSource(ordersById.get(fill.orderId), source),
+      )
+    : fills.filter((fill) =>
+        isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
+      );
+  const selectedOrders = selectedFills
+    .map((fill) => ordersById.get(fill.orderId))
+    .filter((order): order is ShadowOrderRow => Boolean(order));
+  const selectedPositionKeys = shadowPositionKeysForOrders(selectedOrders);
+  const selectedOrdersByPositionKey = shadowOrdersByPositionKey(selectedOrders);
+  const positionCandidates = source
+    ? await readOpenShadowPositionsForKeys(selectedPositionKeys)
+    : await readOpenShadowPositions();
+  const positions = positionCandidates.filter((position) =>
+    selectedPositionKeys.has(position.positionKey) &&
+      (source
+        ? positionMatchesShadowSource(position, source)
+        : isDefaultShadowLedgerAnalyticsPosition(position)) &&
+      !isExpiredHistoricalShadowOptionPosition(
+        position,
+        selectedOrdersByPositionKey.get(position.positionKey),
+        options.now,
+      ),
+  );
+  const totals = buildShadowTotalsFromLedger({
+    account,
+    fills: selectedFills,
+    positions,
+  });
+  const historicalSignalOptionsOpenPositions =
+    source !== "automation" &&
+    positions.length > 0 &&
+    positions.every((position) => {
+      const sourceOrder = selectedOrdersByPositionKey.get(position.positionKey);
+      return Boolean(
+        sourceOrder && isHistoricalSignalOptionsShadowOrder(sourceOrder),
+      );
+    });
+  const terminalTotals = historicalSignalOptionsOpenPositions
+    ? {
+        ...totals,
+        updatedAt: latestHistoricalShadowTotalsDate(
+          positions,
+          selectedFills,
+          totals.updatedAt,
+        ),
+      }
+    : totals;
+  const responseTotals =
+    options.useCurrentTimestampForOpenPositions &&
+    !historicalSignalOptionsOpenPositions
+      ? withCurrentOpenPositionTerminalTimestamp(
+          terminalTotals,
+          positions.length,
+          options.now,
+        )
+      : terminalTotals;
+
+  return {
+    account,
+    fills,
+    ordersById,
+    selectedFills,
+    selectedOrders,
+    selectedOrdersByPositionKey,
+    positions,
+    totals: responseTotals,
+  };
+}
+
 type ShadowPositionBookEntry = {
   key: string;
   quantity: number;
@@ -2771,64 +2957,12 @@ async function computeShadowTotalsForSource(
     now?: Date;
   } = {},
 ): Promise<ShadowTotals> {
-  const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
-  const { fills, ordersById } = source
-    ? await readShadowFillsWithOrdersForSource(source as ShadowSourceScope)
-    : await readShadowFillsWithOrders();
-  const selectedFills = source
-    ? fills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
-    : fills.filter((fill) =>
-        isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
-      );
-  const selectedOrders = selectedFills.map((fill) => ordersById.get(fill.orderId));
-  const selectedPositionKeys = shadowPositionKeysForOrders(selectedOrders);
-  const selectedOrdersByPositionKey = shadowOrdersByPositionKey(selectedOrders);
-  const positionCandidates = source
-    ? await readOpenShadowPositionsForKeys(selectedPositionKeys)
-    : await readOpenShadowPositions();
-  const positions = positionCandidates.filter((position) =>
-    selectedPositionKeys.has(position.positionKey) &&
-      (source
-        ? positionMatchesShadowSource(position, source)
-        : isDefaultShadowLedgerAnalyticsPosition(position)) &&
-      !isExpiredHistoricalShadowOptionPosition(
-        position,
-        selectedOrdersByPositionKey.get(position.positionKey),
-        options.now,
-      ),
-  );
-  const totals = buildShadowTotalsFromLedger({
-    account,
-    fills: selectedFills,
-    positions,
-  });
-  const historicalSignalOptionsOpenPositions =
-    source !== "automation" &&
-    positions.length > 0 &&
-    (await Promise.all(
-      positions.map(async (position) => {
-        const sourceOrder = await findSignalOptionsEntryOrderForPosition(position);
-        return Boolean(sourceOrder && isHistoricalSignalOptionsShadowOrder(sourceOrder));
-      }),
-    )).every(Boolean);
-  const terminalTotals = historicalSignalOptionsOpenPositions
-    ? {
-        ...totals,
-        updatedAt: latestHistoricalShadowTotalsDate(
-          positions,
-          selectedFills,
-          totals.updatedAt,
-        ),
-      }
-    : totals;
-  return options.useCurrentTimestampForOpenPositions &&
-    !historicalSignalOptionsOpenPositions
-    ? withCurrentOpenPositionTerminalTimestamp(
-        terminalTotals,
-        positions.length,
-        options.now,
-      )
-    : terminalTotals;
+  return (
+    await readShadowLedgerBundleForSource(
+      source as ShadowSourceScope | null,
+      options,
+    )
+  ).totals;
 }
 
 async function computeShadowTotals(): Promise<ShadowTotals> {
@@ -5063,16 +5197,16 @@ async function fetchShadowOptionDayChangeQuotes(
           if (options.requiresGreeks) {
             rememberShadowOptionGreekQuote(providerContractId, quote);
           }
-	          (aliasesByProviderContractId.get(providerContractId) ?? new Set()).forEach(
-	            (alias) => {
-	              quoteByProviderContractId.set(alias, quote);
-	              rememberShadowOptionQuote(alias, quote);
-	              if (options.requiresGreeks) {
-	                rememberShadowOptionGreekQuote(alias, quote);
-	              }
-	            },
-	          );
-	}
+          (aliasesByProviderContractId.get(providerContractId) ?? new Set()).forEach(
+            (alias) => {
+              quoteByProviderContractId.set(alias, quote);
+              rememberShadowOptionQuote(alias, quote);
+              if (options.requiresGreeks) {
+                rememberShadowOptionGreekQuote(alias, quote);
+              }
+            },
+          );
+        }
       });
     });
   }
@@ -6775,342 +6909,355 @@ export async function getShadowAccountPositions(input: {
     }),
     async () => {
       kickSignalOptionsAutomationMirrorRepairForRead(source);
-  try {
-	  const totals = source ? await computeShadowTotalsForSource(source) : await ensureFreshShadowState(true);
-	  const accountTotals = source ? await ensureFreshShadowState(true) : totals;
-  clearShadowAccountDbBackoff();
-  const orders = source
-    ? (await readShadowOrdersForSource(source))
-        .sort((left, right) => right.placedAt.getTime() - left.placedAt.getTime())
-        .slice(0, 1000)
-    : await db
-        .select()
-        .from(shadowOrdersTable)
-        .where(eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID))
-        .orderBy(desc(shadowOrdersTable.placedAt))
-        .limit(1000);
-  const positions = await readOpenShadowPositionsForSourceCached(source);
-  const filtered =
-    assetClassFilter && assetClassFilter !== "all"
-      ? positions.filter(
+      try {
+        void kickShadowPositionMarkRefresh();
+        const ledgerBundle = await readShadowLedgerBundleForSource(source);
+        const totals = ledgerBundle.totals;
+        const accountTotals = source
+          ? (await readShadowLedgerBundleForSource(null)).totals
+          : totals;
+        clearShadowAccountDbBackoff();
+        const orders = (source
+          ? ledgerBundle.selectedOrders
+          : Array.from(ledgerBundle.ordersById.values()))
+          .sort((left, right) => right.placedAt.getTime() - left.placedAt.getTime())
+          .slice(0, 1000);
+        const positions = ledgerBundle.positions;
+        const filtered =
+          assetClassFilter && assetClassFilter !== "all"
+            ? positions.filter(
+                (position) =>
+                  normalizePositionAssetClass(assetClassLabel(position)) ===
+                  assetClassFilter,
+              )
+            : positions;
+        const ordersByPositionKey = shadowOrdersByPositionKey(orders);
+        const automationManagementEvents =
+          await latestShadowAutomationManagementEvents(
+            filtered,
+            ordersByPositionKey,
+          );
+        const cachedOptionQuotes = readCachedShadowOptionQuotes(filtered);
+        const hasOptionPositions = filtered.some(
           (position) =>
-            normalizePositionAssetClass(assetClassLabel(position)) === assetClassFilter,
-        )
-      : positions;
-  const ordersByPositionKey = shadowOrdersByPositionKey(orders);
-  const automationManagementEvents = await latestShadowAutomationManagementEvents(
-    filtered,
-    ordersByPositionKey,
-  );
-  const cachedOptionQuotes = readCachedShadowOptionQuotes(filtered);
-  const hasOptionPositions = filtered.some(
-    (position) =>
-      position.assetClass === "option" &&
-      Boolean(asOptionContract(position.optionContract)),
-  );
-  const positionQuoteOwnerPrefix = `shadow-position:${shadowSourceCacheKey(source)}`;
-  const equityQuoteBySymbolPromise = includeLiveQuotes
-    ? fetchShadowEquityPositionQuotes(filtered, {
-        owner: `${positionQuoteOwnerPrefix}:equity`,
-      })
-    : Promise.resolve(
-        new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>(),
-      );
-  const [liveOptionQuotes, underlyingMarkets] = hasOptionPositions && includeLiveQuotes
-    ? await Promise.all([
-        waitForShadowOptionDayChangeQuotes(
-          fetchShadowOptionDayChangeQuotes(filtered, {
+            position.assetClass === "option" &&
+            Boolean(asOptionContract(position.optionContract)),
+        );
+        const positionQuoteOwnerPrefix = `shadow-position:${shadowSourceCacheKey(source)}`;
+        if (hasOptionPositions && includeLiveQuotes) {
+          declareShadowPositionOptionQuoteDemands(filtered, {
             intent: "visible-live",
             ownerPrefix: `${positionQuoteOwnerPrefix}:option-visible`,
-            taskMaxWaitMs: SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS,
-          }).catch(() => new Map()),
-          SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS,
-        ),
-        fetchShadowOptionUnderlyingMarkets(filtered),
-      ])
-    : [
-        new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>(),
-        new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>(),
-      ];
-  const equityQuoteBySymbol = await equityQuoteBySymbolPromise;
-  const optionQuoteByProviderContractId = new Map([
-    ...cachedOptionQuotes,
-    ...liveOptionQuotes,
-  ]);
-	  const observedAt = new Date();
-	  const dayChanges = await readShadowPositionDayChanges(
-	    filtered,
-	    observedAt,
-	    optionQuoteByProviderContractId,
-	    { fetchMissingOptionQuotes: false },
-	  );
-  const peakMarkByPositionId = await readShadowPositionPeakMarkPrices(filtered);
-  const rows = filtered.map((position) => {
-    const quantity = toNumber(position.quantity) ?? 0;
-    const averageCost = toNumber(position.averageCost) ?? 0;
-    const contract = asOptionContract(position.optionContract);
-    const symbolKey = normalizeSymbol(position.symbol).toUpperCase();
-    const rawEquityQuote = contract
-      ? null
-      : equityQuoteBySymbol.get(symbolKey) ?? null;
-    const equityQuote =
-      shadowQuoteText(rawEquityQuote, "source") === "massive"
-        ? rawEquityQuote
-        : null;
-    const underlyingSymbol = normalizeSymbol(
-      String(contract?.underlying ?? position.symbol),
-    ).toUpperCase();
-    const multiplier = marketMultiplier({
-      assetClass: position.assetClass as ShadowAssetClass,
-      optionContract: contract,
-    });
-    const quoteIdentifier = shadowOptionQuoteIdentifier(contract);
-    const rawOptionQuote = quoteIdentifier
-      ? optionQuoteByProviderContractId.get(quoteIdentifier)
-      : null;
-    const fallbackProviderContractId =
-      contract && !isPriorOptionExpiration(contract)
-        ? shadowOptionProviderContractIdForContract(contract)
-        : null;
-    const responseProviderContractId =
-      shadowOptionQuoteProviderContractId(rawOptionQuote, quoteIdentifier) ??
-      fallbackProviderContractId;
-	    const liveOptionQuote =
-	      responseProviderContractId &&
-	      rawOptionQuote &&
-	      (!contract || isShadowOptionTradingSession(observedAt, contract))
-	        ? rawOptionQuote
-	        : null;
-	    const pricing = buildShadowOptionPricingPolicy({
-	      quote: contract ? liveOptionQuote : equityQuote,
-	      fallbackMark: toNumber(position.mark) ?? 0,
-	      fallbackSource: "shadow_ledger",
-	      quoteSource: contract ? "option_quote" : "massive",
-	      requireTwoSidedQuote: contract ? undefined : false,
-	    });
-	    const mark = pricing.valuationMark ?? toNumber(position.mark) ?? 0;
-	    const sourceOrder = ordersByPositionKey.get(position.positionKey);
-	    const automationContext = buildShadowAutomationContext({
-	      position,
-	      sourceOrder,
-	      latestEvent: automationManagementEvents.get(position.positionKey),
-      peakMarkPrice: peakMarkByPositionId.get(position.id) ?? null,
-    });
-    const automationEventOptionQuote =
-      responseProviderContractId &&
-      !shadowQuoteHasBidAsk(liveOptionQuote as Record<string, unknown> | null)
-        ? shadowOrderOptionQuoteFallback(sourceOrder, mark)
-        : null;
-    const displayOptionQuote =
-      automationEventOptionQuote ??
-      (responseProviderContractId ? liveOptionQuote : null);
-	    const displayOptionQuoteSource =
-	      automationEventOptionQuote
-	        ? "automation_event_quote"
-	        : displayOptionQuote
-	          ? "option_quote"
-	          : "shadow_ledger";
-	    const marketValue =
-	      Number.isFinite(mark) && Number.isFinite(quantity) && Number.isFinite(multiplier)
-	        ? quantity * mark * multiplier
-	        : toNumber(position.marketValue) ?? 0;
-	    const unrealizedPnl =
-	      Number.isFinite(mark) &&
-	      Number.isFinite(averageCost) &&
-	      Number.isFinite(quantity) &&
-	      Number.isFinite(multiplier)
-	        ? (mark - averageCost) * quantity * multiplier
-	        : toNumber(position.unrealizedPnl) ?? 0;
-	    const displayDayChangeQuote = contract ? liveOptionQuote : equityQuote;
-	    const quoteDayChange = displayDayChangeQuote && pricing.valuationEligible
-	      ? buildShadowPositionDayChangeFromQuote({
-	          quantity,
-	          multiplier,
-	          quote: displayDayChangeQuote,
-	        })
-	      : null;
-	    const storedDayChange = dayChanges.get(position.id) ?? {
-	      dayChange: null,
-	      dayChangePercent: null,
-	    };
-	    const openedAt = position.openedAt ?? position.asOf;
-	    const dayStart = shadowPositionDayChangeDayStart(position, observedAt);
-	    const sameDayPosition =
-	      openedAt instanceof Date && openedAt.getTime() >= dayStart.getTime();
-	    const hasFiniteValuationMark =
-	      Number.isFinite(mark) && Number.isFinite(averageCost);
-	    const valuationDayChange =
-	      sameDayPosition && hasFiniteValuationMark
-	        ? {
-	            dayChange: unrealizedPnl,
-	            dayChangePercent: averageCost
-	              ? ((mark - averageCost) / Math.abs(averageCost)) * 100
-	              : null,
-	          }
-	        : quoteDayChange;
-	    const dayChange =
-	      pricing.valuationEligible && valuationDayChange?.dayChange != null
-	        ? valuationDayChange
-	        : storedDayChange.dayChange == null && quoteDayChange?.dayChange != null
-	          ? quoteDayChange
-	        : storedDayChange;
-    const attribution = buildPositionSourceAttribution(position, orders);
-    const optionQuoteSnapshot =
-      displayOptionQuote && responseProviderContractId
-        ? shadowQuoteSnapshotFromOptionRecord({
+          });
+        }
+        const equityQuoteBySymbol = new Map<
+          string,
+          Partial<QuoteSnapshot> | Record<string, unknown>
+        >();
+        const underlyingMarkets = new Map<
+          string,
+          Partial<QuoteSnapshot> | Record<string, unknown>
+        >();
+        const optionQuoteByProviderContractId = new Map(cachedOptionQuotes);
+        const observedAt = new Date();
+        const dayChanges = await readShadowPositionDayChanges(
+          filtered,
+          observedAt,
+          optionQuoteByProviderContractId,
+          { fetchMissingOptionQuotes: false },
+        );
+        const peakMarkByPositionId =
+          await readShadowPositionPeakMarkPrices(filtered);
+        const rows = filtered.map((position) => {
+          const quantity = toNumber(position.quantity) ?? 0;
+          const averageCost = toNumber(position.averageCost) ?? 0;
+          const contract = asOptionContract(position.optionContract);
+          const symbolKey = normalizeSymbol(position.symbol).toUpperCase();
+          const rawEquityQuote = contract
+            ? null
+            : equityQuoteBySymbol.get(symbolKey) ?? null;
+          const equityQuote =
+            shadowQuoteText(rawEquityQuote, "source") === "massive"
+              ? rawEquityQuote
+              : null;
+          const underlyingSymbol = normalizeSymbol(
+            String(contract?.underlying ?? position.symbol),
+          ).toUpperCase();
+          const multiplier = marketMultiplier({
+            assetClass: position.assetClass as ShadowAssetClass,
+            optionContract: contract,
+          });
+          const quoteIdentifier = shadowOptionQuoteIdentifier(contract);
+          const rawOptionQuote = quoteIdentifier
+            ? optionQuoteByProviderContractId.get(quoteIdentifier)
+            : null;
+          const fallbackProviderContractId =
+            contract && !isPriorOptionExpiration(contract)
+              ? shadowOptionProviderContractIdForContract(contract)
+              : null;
+          const responseProviderContractId =
+            shadowOptionQuoteProviderContractId(rawOptionQuote, quoteIdentifier) ??
+            fallbackProviderContractId;
+          const liveOptionQuote =
+            responseProviderContractId &&
+            rawOptionQuote &&
+            (!contract || isShadowOptionTradingSession(observedAt, contract))
+              ? rawOptionQuote
+              : null;
+          const pricing = buildShadowOptionPricingPolicy({
+            quote: contract ? liveOptionQuote : equityQuote,
+            fallbackMark: toNumber(position.mark) ?? 0,
+            fallbackSource: "shadow_ledger",
+            quoteSource: contract ? "option_quote" : "massive",
+            requireTwoSidedQuote: contract ? undefined : false,
+          });
+          const mark = pricing.valuationMark ?? toNumber(position.mark) ?? 0;
+          const sourceOrder = ordersByPositionKey.get(position.positionKey);
+          const automationContext = buildShadowAutomationContext({
+            position,
+            sourceOrder,
+            latestEvent: automationManagementEvents.get(position.positionKey),
+            peakMarkPrice: peakMarkByPositionId.get(position.id) ?? null,
+          });
+          const automationEventOptionQuote =
+            responseProviderContractId &&
+            !shadowQuoteHasBidAsk(
+              liveOptionQuote as Record<string, unknown> | null,
+            )
+              ? shadowOrderOptionQuoteFallback(sourceOrder, mark)
+              : null;
+          const displayOptionQuote =
+            automationEventOptionQuote ??
+            (responseProviderContractId ? liveOptionQuote : null);
+          const displayOptionQuoteSource = automationEventOptionQuote
+            ? "automation_event_quote"
+            : displayOptionQuote
+              ? "option_quote"
+              : "shadow_ledger";
+          const marketValue =
+            Number.isFinite(mark) &&
+            Number.isFinite(quantity) &&
+            Number.isFinite(multiplier)
+              ? quantity * mark * multiplier
+              : toNumber(position.marketValue) ?? 0;
+          const unrealizedPnl =
+            Number.isFinite(mark) &&
+            Number.isFinite(averageCost) &&
+            Number.isFinite(quantity) &&
+            Number.isFinite(multiplier)
+              ? (mark - averageCost) * quantity * multiplier
+              : toNumber(position.unrealizedPnl) ?? 0;
+          const displayDayChangeQuote = contract ? liveOptionQuote : equityQuote;
+          const quoteDayChange =
+            displayDayChangeQuote && pricing.valuationEligible
+              ? buildShadowPositionDayChangeFromQuote({
+                  quantity,
+                  multiplier,
+                  quote: displayDayChangeQuote,
+                })
+              : null;
+          const storedDayChange = dayChanges.get(position.id) ?? {
+            dayChange: null,
+            dayChangePercent: null,
+          };
+          const openedAt = position.openedAt ?? position.asOf;
+          const dayStart = shadowPositionDayChangeDayStart(position, observedAt);
+          const sameDayPosition =
+            openedAt instanceof Date &&
+            openedAt.getTime() >= dayStart.getTime();
+          const hasFiniteValuationMark =
+            Number.isFinite(mark) && Number.isFinite(averageCost);
+          const valuationDayChange =
+            sameDayPosition && hasFiniteValuationMark
+              ? {
+                  dayChange: unrealizedPnl,
+                  dayChangePercent: averageCost
+                    ? ((mark - averageCost) / Math.abs(averageCost)) * 100
+                    : null,
+                }
+              : quoteDayChange;
+          const dayChange =
+            pricing.valuationEligible && valuationDayChange?.dayChange != null
+              ? valuationDayChange
+              : storedDayChange.dayChange == null &&
+                  quoteDayChange?.dayChange != null
+                ? quoteDayChange
+                : storedDayChange;
+          const attribution = buildPositionSourceAttribution(position, orders);
+          const optionQuoteSnapshot =
+            displayOptionQuote && responseProviderContractId
+              ? shadowQuoteSnapshotFromOptionRecord({
+                  symbol: position.symbol,
+                  providerContractId: responseProviderContractId,
+                  quote: displayOptionQuote,
+                })
+              : null;
+          const positionQuoteSnapshot =
+            optionQuoteSnapshot ?? (equityQuote as QuoteSnapshot | null);
+          const rawPositionQuote = buildPositionQuoteFromSnapshot(
+            positionQuoteSnapshot,
+            mark,
+            optionQuoteSnapshot
+              ? "option_quote"
+              : equityQuote
+                ? "massive"
+                : "shadow_ledger",
+          );
+          const positionQuote =
+            rawPositionQuote &&
+            (displayOptionQuoteSource === "automation_event_quote" ||
+              !pricing.valuationEligible)
+              ? {
+                  ...rawPositionQuote,
+                  mark,
+                  spreadPercent:
+                    rawPositionQuote.spread != null && mark > 0
+                      ? (rawPositionQuote.spread / mark) * 100
+                      : rawPositionQuote.spreadPercent,
+                }
+              : rawPositionQuote;
+          const riskOverlay = buildShadowPositionRiskOverlay({
+            automationContext,
+            openedAt,
+          });
+          return {
+            id: position.id,
+            accountId: SHADOW_ACCOUNT_ID,
+            accounts: [SHADOW_ACCOUNT_ID],
             symbol: position.symbol,
-            providerContractId: responseProviderContractId,
-            quote: displayOptionQuote,
-          })
-        : null;
-    const positionQuoteSnapshot =
-      optionQuoteSnapshot ?? (equityQuote as QuoteSnapshot | null);
-    const rawPositionQuote = buildPositionQuoteFromSnapshot(
-      positionQuoteSnapshot,
-      mark,
-      optionQuoteSnapshot ? "option_quote" : equityQuote ? "massive" : "shadow_ledger",
-    );
-	    const positionQuote =
-	      rawPositionQuote &&
-	      (displayOptionQuoteSource === "automation_event_quote" ||
-	        !pricing.valuationEligible)
-	        ? {
-	            ...rawPositionQuote,
-	            mark,
-	            spreadPercent:
-	              rawPositionQuote.spread != null && mark > 0
-                ? (rawPositionQuote.spread / mark) * 100
-                : rawPositionQuote.spreadPercent,
-          }
-        : rawPositionQuote;
-    const riskOverlay = buildShadowPositionRiskOverlay({
-      automationContext,
-      openedAt,
-    });
-    return {
-      id: position.id,
-      accountId: SHADOW_ACCOUNT_ID,
-      accounts: [SHADOW_ACCOUNT_ID],
-      symbol: position.symbol,
-      marketDataSymbol: shadowPositionMarketDataSymbol(position),
-      description: positionDescription(position),
-      assetClass: assetClassLabel(position),
-      optionContract: optionPayload(
-        asOptionContract(position.optionContract),
-        responseProviderContractId,
-      ),
-      underlyingMarket: contract
-        ? shadowUnderlyingMarketPayload({
-            symbol: underlyingSymbol,
-            quote: underlyingMarkets.get(underlyingSymbol),
-          })
-        : null,
-      sector: "Shadow Holdings",
-      quantity,
-      averageCost,
-      mark,
-      dayChange: dayChange.dayChange,
-      dayChangePercent: dayChange.dayChangePercent,
-      unrealizedPnl,
-      unrealizedPnlPercent: averageCost ? ((mark - averageCost) / averageCost) * 100 : null,
-      marketValue,
-      weightPercent: weightPercent(marketValue, totals.netLiquidation),
-      betaWeightedDelta: null,
-      lots: [
-        {
+            marketDataSymbol: shadowPositionMarketDataSymbol(position),
+            description: positionDescription(position),
+            assetClass: assetClassLabel(position),
+            optionContract: optionPayload(
+              asOptionContract(position.optionContract),
+              responseProviderContractId,
+            ),
+            underlyingMarket: contract
+              ? shadowUnderlyingMarketPayload({
+                  symbol: underlyingSymbol,
+                  quote: underlyingMarkets.get(underlyingSymbol),
+                })
+              : null,
+            sector: "Shadow Holdings",
+            quantity,
+            averageCost,
+            mark,
+            dayChange: dayChange.dayChange,
+            dayChangePercent: dayChange.dayChangePercent,
+            unrealizedPnl,
+            unrealizedPnlPercent: averageCost
+              ? ((mark - averageCost) / averageCost) * 100
+              : null,
+            marketValue,
+            weightPercent: weightPercent(marketValue, totals.netLiquidation),
+            betaWeightedDelta: null,
+            lots: [
+              {
+                accountId: SHADOW_ACCOUNT_ID,
+                symbol: position.symbol,
+                quantity,
+                averageCost,
+                marketPrice: mark,
+                marketValue,
+                unrealizedPnl,
+                asOf: position.asOf,
+                source: "SHADOW_LEDGER",
+              },
+            ],
+            openOrders: [],
+            source: "SHADOW_LEDGER",
+            openedAt,
+            openedAtSource: "shadow_position",
+            pricingPolicy: "shadow_canonical",
+            valuationEligible: pricing.valuationEligible,
+            valuationSource: pricing.valuationSource,
+            valuationReason: pricing.valuationReason,
+            quote: positionQuote,
+            optionQuote:
+              displayOptionQuote && responseProviderContractId
+                ? shadowOptionQuotePayload({
+                    symbol: position.symbol,
+                    providerContractId: responseProviderContractId,
+                    quote: displayOptionQuote,
+                    fallbackMark: mark,
+                    source: displayOptionQuoteSource,
+                    pricing:
+                      displayOptionQuoteSource === "option_quote"
+                        ? pricing
+                        : {
+                            ...pricing,
+                            valuationEligible: false,
+                            valuationSource: "shadow_ledger",
+                            valuationReason: displayOptionQuoteSource,
+                          },
+                  })
+                : null,
+            stopLoss:
+              riskOverlay?.activeStopPrice ??
+              automationContext?.activeStopPrice ??
+              automationContext?.stopPrice ??
+              automationContext?.stopLossPrice ??
+              null,
+            takeProfit:
+              automationContext?.takeProfitPrice ??
+              automationContext?.targetPrice ??
+              null,
+            riskOverlay,
+            ...(automationContext ? { automationContext } : {}),
+            ...attribution,
+          };
+        });
+
+        const responseMarketValue = rows.reduce(
+          (sum, row) => sum + (toNumber(row.marketValue) ?? 0),
+          0,
+        );
+        const responseNetLiquidation = totals.cash + responseMarketValue;
+        const weightedRows = applyShadowAccountPositionWeights(rows, {
+          accountNetLiquidation: accountTotals.netLiquidation,
+          scopedNetLiquidation: responseNetLiquidation,
+        });
+
+        return {
           accountId: SHADOW_ACCOUNT_ID,
-          symbol: position.symbol,
-          quantity,
-          averageCost,
-          marketPrice: mark,
-          marketValue,
-          unrealizedPnl,
-          asOf: position.asOf,
-          source: "SHADOW_LEDGER",
-        },
-      ],
-      openOrders: [],
-      source: "SHADOW_LEDGER",
-	      openedAt,
-	      openedAtSource: "shadow_position",
-	      pricingPolicy: "shadow_canonical",
-	      valuationEligible: pricing.valuationEligible,
-	      valuationSource: pricing.valuationSource,
-	      valuationReason: pricing.valuationReason,
-	      quote: positionQuote,
-	      optionQuote:
-	        displayOptionQuote && responseProviderContractId
-	          ? shadowOptionQuotePayload({
-	              symbol: position.symbol,
-	              providerContractId: responseProviderContractId,
-	              quote: displayOptionQuote,
-	              fallbackMark: mark,
-	              source: displayOptionQuoteSource,
-	              pricing:
-	                displayOptionQuoteSource === "option_quote"
-	                  ? pricing
-	                  : {
-	                      ...pricing,
-	                      valuationEligible: false,
-	                      valuationSource: "shadow_ledger",
-	                      valuationReason: displayOptionQuoteSource,
-	                    },
-	            })
-	          : null,
-      stopLoss:
-        riskOverlay?.activeStopPrice ??
-        automationContext?.activeStopPrice ??
-        automationContext?.stopPrice ??
-        automationContext?.stopLossPrice ??
-        null,
-      takeProfit: automationContext?.takeProfitPrice ?? automationContext?.targetPrice ?? null,
-      riskOverlay,
-      ...(automationContext ? { automationContext } : {}),
-      ...attribution,
-    };
-  });
-
-	  const responseMarketValue = rows.reduce(
-	    (sum, row) => sum + (toNumber(row.marketValue) ?? 0),
-	    0,
-	  );
-	  const responseNetLiquidation = totals.cash + responseMarketValue;
-		  const weightedRows = applyShadowAccountPositionWeights(rows, {
-		    accountNetLiquidation: accountTotals.netLiquidation,
-		    scopedNetLiquidation: responseNetLiquidation,
-		  });
-
-	  return {
-	    accountId: SHADOW_ACCOUNT_ID,
-	    currency: SHADOW_CURRENCY,
-	    degraded: false,
-	    reason: null,
-	    positions: weightedRows,
-	    totals: {
-	      weightPercent: weightedRows.reduce((sum, row) => sum + (row.weightPercent ?? 0), 0),
-	      unrealizedPnl: weightedRows.reduce((sum, row) => sum + row.unrealizedPnl, 0),
-	      grossLong: responseMarketValue,
-	      grossShort: 0,
-	      netExposure: responseMarketValue,
-	      cash: totals.cash,
-	      totalCash: totals.cash,
-	      buyingPower: Math.max(0, totals.cash),
-	      netLiquidation: responseNetLiquidation,
-	    },
-	    updatedAt: totals.updatedAt,
-      };
-  } catch (error) {
-    if (isTransientPostgresError(error)) {
-      markShadowAccountDbUnavailable(error);
-      return buildEmptyShadowAccountPositionsResponse({
-        totals: buildFallbackShadowTotals(),
-        degraded: true,
-      });
-    }
-    throw error;
-  }
+          currency: SHADOW_CURRENCY,
+          degraded: false,
+          reason: null,
+          positions: weightedRows,
+          totals: {
+            weightPercent: weightedRows.reduce(
+              (sum, row) => sum + (row.weightPercent ?? 0),
+              0,
+            ),
+            unrealizedPnl: weightedRows.reduce(
+              (sum, row) => sum + row.unrealizedPnl,
+              0,
+            ),
+            grossLong: responseMarketValue,
+            grossShort: 0,
+            netExposure: responseMarketValue,
+            cash: totals.cash,
+            totalCash: totals.cash,
+            buyingPower: Math.max(0, totals.cash),
+            netLiquidation: responseNetLiquidation,
+          },
+          updatedAt: totals.updatedAt,
+        };
+      } catch (error) {
+        if (isTransientPostgresError(error)) {
+          markShadowAccountDbUnavailable(error);
+          return buildEmptyShadowAccountPositionsResponse({
+            totals: buildFallbackShadowTotals(),
+            degraded: true,
+          });
+        }
+        throw error;
+      }
     },
-    { allowStale: shadowReadCacheValueHasRows },
+    {
+      allowStale: shadowReadCacheValueHasRows,
+      staleStrategy: "immediate",
+    },
   );
 }
 

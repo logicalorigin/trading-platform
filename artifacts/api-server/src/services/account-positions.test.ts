@@ -99,6 +99,40 @@ test("account page live reads coalesce repeated critical fan-out work", () => {
   );
 });
 
+test("account positions return IBKR position reads without empty-result retry sleeps", () => {
+  const source = readFileSync(new URL("./account.ts", import.meta.url), "utf8");
+  const positionsReadBody = source.match(
+    /async function readPositionsForUniverseUncached\([\s\S]*?\nasync function listOrdersForUniverse/,
+  )?.[0];
+
+  assert.ok(positionsReadBody);
+  assert.match(positionsReadBody, /return readOpenPositions\(\);/);
+  assert.doesNotMatch(source, /ACCOUNT_POSITION_EMPTY_RETRY/);
+  assert.doesNotMatch(source, /waitForAccountPositionRetry/);
+  assert.doesNotMatch(source, /Recovered IBKR account positions after an empty live read/);
+  assert.doesNotMatch(source, /positions remained empty despite non-cash account exposure/);
+});
+
+test("account positions do not refresh IBKR option chains inline for Greeks", () => {
+  const source = readFileSync(new URL("./account.ts", import.meta.url), "utf8");
+  const positionsBody = source.match(
+    /async function getAccountPositionsUncached\([\s\S]*?\nexport async function getAccountPositionsAtDate/,
+  )?.[0];
+  const greekBody = source.match(
+    /async function getCachedOptionChainContracts\([\s\S]*?\nasync function fetchFlexEndpoint/,
+  )?.[0];
+
+  assert.ok(positionsBody);
+  assert.ok(greekBody);
+  assert.match(
+    positionsBody,
+    /enrichPositionGreeks\(result,\s*\{\s*refreshChains:\s*false\s*\}\)/,
+  );
+  assert.match(greekBody, /const refreshChains = options\.refreshChains !== false/);
+  assert.match(greekBody, /if \(!refreshChains\) \{/);
+  assert.match(greekBody, /IBKR option-chain Greek refresh skipped/);
+});
+
 test("shadow account positions route forwards automation scope and live quote opt-out", () => {
   const routeSource = readFileSync(new URL("../routes/platform.ts", import.meta.url), "utf8");
   const accountSource = readFileSync(new URL("./account.ts", import.meta.url), "utf8");
@@ -537,6 +571,77 @@ test("option position hydration normalizes contract-scaled broker prices to prem
   assert.equal(Number(hydrated.unrealizedPnl.toFixed(2)), 0);
   assert.equal(hydrated.source, "IBKR_POSITIONS");
   assert.equal(Number(positionSignedNotional(position).toFixed(2)), 1033.49);
+});
+
+test("account option quote lookup aliases numeric conids to structured IBKR option ids", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const position = {
+    id: "U1:SPY:CALL",
+    accountId: "U1",
+    symbol: "SPY",
+    assetClass: "option",
+    quantity: 2,
+    averagePrice: 206.69825,
+    marketPrice: 206.69825,
+    optionContract: {
+      underlying: "SPY",
+      expirationDate: "2026-06-04",
+      strike: 753,
+      right: "call",
+      multiplier: 100,
+      providerContractId: "885885495",
+    },
+  } as any;
+
+  const structuredProviderContractId =
+    __accountPositionInternalsForTests.structuredOptionProviderContractIdForRow(
+      position,
+    );
+  const payload = JSON.parse(
+    Buffer.from(
+      String(structuredProviderContractId).slice("twsopt:".length),
+      "base64url",
+    ).toString("utf8"),
+  );
+
+  assert.deepEqual(payload, {
+    v: 1,
+    u: "SPY",
+    e: "20260604",
+    s: 753,
+    r: "C",
+    x: "SMART",
+    tc: "SPY",
+    m: 100,
+  });
+  assert.deepEqual(
+    __accountPositionInternalsForTests.optionQuoteProviderContractIdsForPosition(
+      position,
+    ),
+    [structuredProviderContractId, "885885495"],
+  );
+
+  const quote = {
+    symbol: "SPY20260604C753",
+    price: 5.18,
+    bid: 5.13,
+    ask: 5.27,
+    providerContractId: structuredProviderContractId,
+    source: "ibkr",
+    delayed: false,
+    freshness: "live",
+    marketDataMode: "live",
+    dataUpdatedAt: new Date("2026-06-04T19:32:09.364Z"),
+    updatedAt: new Date("2026-06-04T19:32:09.364Z"),
+  } as any;
+
+  assert.equal(
+    __accountPositionInternalsForTests.optionQuoteForPosition(
+      position,
+      new Map([[String(structuredProviderContractId), quote]]),
+    )?.bid,
+    5.13,
+  );
 });
 
 test("option position hydration uses normalized entry basis with live quote marks", async () => {

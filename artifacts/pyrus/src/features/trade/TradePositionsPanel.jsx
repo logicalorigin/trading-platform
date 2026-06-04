@@ -405,27 +405,28 @@ const TradeSpotPriceCell = ({ position, snapshotsBySymbol }) => {
   const spotPrice = resolveTradeSpotPrice(position, snapshotsBySymbol);
   const flashClassName = useValueFlash(spotPrice);
   return (
-    <span
-      title={tradeSpotTitle(position, snapshotsBySymbol)}
-      style={tradeOpenPositionCellStyle(
-        "spot",
-        isFiniteNumber(spotPrice) ? CSS_COLOR.text : CSS_COLOR.textDim,
-      )}
-    >
+    <AppTooltip content={tradeSpotTitle(position, snapshotsBySymbol)}>
       <span
-        className={flashClassName}
-        style={{
-          display: "inline-flex",
-          justifyContent: "center",
-          maxWidth: "100%",
-          padding: sp("1px 2px"),
-          borderRadius: dim(RADII.xs),
-          whiteSpace: "nowrap",
-        }}
+        style={tradeOpenPositionCellStyle(
+          "spot",
+          isFiniteNumber(spotPrice) ? CSS_COLOR.text : CSS_COLOR.textDim,
+        )}
       >
-        {isFiniteNumber(spotPrice) ? formatPriceValue(spotPrice) : MISSING_VALUE}
+        <span
+          className={flashClassName}
+          style={{
+            display: "inline-flex",
+            justifyContent: "center",
+            maxWidth: "100%",
+            padding: sp("1px 2px"),
+            borderRadius: dim(RADII.xs),
+            whiteSpace: "nowrap",
+          }}
+        >
+          {isFiniteNumber(spotPrice) ? formatPriceValue(spotPrice) : MISSING_VALUE}
+        </span>
       </span>
-    </span>
+    </AppTooltip>
   );
 };
 
@@ -470,27 +471,28 @@ const TradePositionSparkline = ({ position, snapshotsBySymbol }) => {
   if (data.length < 2) return null;
 
   return (
-    <span
-      data-testid="trade-position-sparkline"
-      title={`${symbol} intraday trend`}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        width: dim(34),
-        height: dim(11),
-        flexShrink: 0,
-        overflow: "hidden",
-      }}
-    >
-      <MicroSparkline
-        data={data}
-        positive={isFiniteNumber(position?.pct) ? position.pct >= 0 : null}
-        width={34}
-        height={11}
-        style={{ width: "100%", height: "100%" }}
-        ariaHidden
-      />
-    </span>
+    <AppTooltip content={`${symbol} intraday trend`}>
+      <span
+        data-testid="trade-position-sparkline"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          width: dim(34),
+          height: dim(11),
+          flexShrink: 0,
+          overflow: "hidden",
+        }}
+      >
+        <MicroSparkline
+          data={data}
+          positive={isFiniteNumber(position?.pct) ? position.pct >= 0 : null}
+          width={34}
+          height={11}
+          style={{ width: "100%", height: "100%" }}
+          ariaHidden
+        />
+      </span>
+    </AppTooltip>
   );
 };
 
@@ -1607,14 +1609,14 @@ export const TradePositionsPanel = ({
                   }}
                 >
                   {OPEN_POSITION_COLUMNS.map((column) => (
-                    <span
-                      key={column.id}
-                      role="columnheader"
-                      title={column.title}
-                      style={tradeOpenPositionHeaderCellStyle(column)}
-                    >
-                      {column.label}
-                    </span>
+                    <AppTooltip key={column.id} content={column.title}>
+                      <span
+                        role="columnheader"
+                        style={tradeOpenPositionHeaderCellStyle(column)}
+                      >
+                        {column.label}
+                      </span>
+                    </AppTooltip>
                   ))}
                 </div>
               {openPositions.map((p, rowIndex) => {
@@ -1735,33 +1737,36 @@ export const TradePositionsPanel = ({
                       position={p}
                       snapshotsBySymbol={tickerSnapshotsBySymbol}
                     />
-                    <span
-                      title={[display.ageLabel, display.openedSourceLabel].filter(Boolean).join(" · ") || undefined}
-                      style={tradeOpenPositionCellStyle(
-                        "opened",
-                        display.openedLabel ? CSS_COLOR.textSec : CSS_COLOR.textDim,
-                      )}
-                    >
-                      {openedText}
-                    </span>
-                    <span
-                      title={[spread, quoteFreshness].filter(Boolean).join(" · ")}
-                      style={tradeOpenPositionCellStyle(
-                        "bid",
-                        display.quote?.bid != null ? CSS_COLOR.textSec : CSS_COLOR.textDim,
-                      )}
-                    >
-                      {bidText}
-                    </span>
-                    <span
-                      title={[spread, quoteFreshness].filter(Boolean).join(" · ")}
-                      style={tradeOpenPositionCellStyle(
-                        "ask",
-                        display.quote?.ask != null ? CSS_COLOR.textSec : CSS_COLOR.textDim,
-                      )}
-                    >
-                      {askText}
-                    </span>
+                    <AppTooltip content={[display.ageLabel, display.openedSourceLabel].filter(Boolean).join(" · ") || undefined}>
+                      <span
+                        style={tradeOpenPositionCellStyle(
+                          "opened",
+                          display.openedLabel ? CSS_COLOR.textSec : CSS_COLOR.textDim,
+                        )}
+                      >
+                        {openedText}
+                      </span>
+                    </AppTooltip>
+                    <AppTooltip content={[spread, quoteFreshness].filter(Boolean).join(" · ")}>
+                      <span
+                        style={tradeOpenPositionCellStyle(
+                          "bid",
+                          display.quote?.bid != null ? CSS_COLOR.textSec : CSS_COLOR.textDim,
+                        )}
+                      >
+                        {bidText}
+                      </span>
+                    </AppTooltip>
+                    <AppTooltip content={[spread, quoteFreshness].filter(Boolean).join(" · ")}>
+                      <span
+                        style={tradeOpenPositionCellStyle(
+                          "ask",
+                          display.quote?.ask != null ? CSS_COLOR.textSec : CSS_COLOR.textDim,
+                        )}
+                      >
+                        {askText}
+                      </span>
+                    </AppTooltip>
                     <span style={tradeOpenPositionCellStyle("quantity", CSS_COLOR.textDim)}>
                       {p.qty}
                     </span>
@@ -1771,36 +1776,38 @@ export const TradePositionsPanel = ({
                     <span style={tradeOpenPositionCellStyle("mark", CSS_COLOR.text)}>
                       {markText}
                     </span>
-                    <span
-                      title={managementTitle}
-                      style={tradeOpenPositionCellStyle(
-                        "stop",
-                        management.stop
-                          ? management.trail
-                            ? CSS_COLOR.textSec
-                            : tradeManagementTone(management)
-                          : CSS_COLOR.textDim,
-                      )}
-                    >
-                      <TradeManagementLevelCell
-                        value={tradeManagementPrice(management.stop)}
-                        badge={tradeManagementStopBadge(management)}
-                        badgeTone={tradeManagementBadgeTone(management)}
-                      />
-                    </span>
-                    <span
-                      title={managementTitle}
-                      style={tradeOpenPositionCellStyle(
-                        "trail",
-                        management.trail ? tradeManagementTone(management) : CSS_COLOR.textDim,
-                      )}
-                    >
-                      <TradeManagementLevelCell
-                        value={tradeManagementPrice(management.trail)}
-                        badge={tradeManagementTrailBadge(management)}
-                        badgeTone={tradeManagementBadgeTone(management)}
-                      />
-                    </span>
+                    <AppTooltip content={managementTitle}>
+                      <span
+                        style={tradeOpenPositionCellStyle(
+                          "stop",
+                          management.stop
+                            ? management.trail
+                              ? CSS_COLOR.textSec
+                              : tradeManagementTone(management)
+                            : CSS_COLOR.textDim,
+                        )}
+                      >
+                        <TradeManagementLevelCell
+                          value={tradeManagementPrice(management.stop)}
+                          badge={tradeManagementStopBadge(management)}
+                          badgeTone={tradeManagementBadgeTone(management)}
+                        />
+                      </span>
+                    </AppTooltip>
+                    <AppTooltip content={managementTitle}>
+                      <span
+                        style={tradeOpenPositionCellStyle(
+                          "trail",
+                          management.trail ? tradeManagementTone(management) : CSS_COLOR.textDim,
+                        )}
+                      >
+                        <TradeManagementLevelCell
+                          value={tradeManagementPrice(management.trail)}
+                          badge={tradeManagementTrailBadge(management)}
+                          badgeTone={tradeManagementBadgeTone(management)}
+                        />
+                      </span>
+                    </AppTooltip>
                     <span style={tradeOpenPositionCellStyle("pnl", tradePnlTone(p.pnl))}>
                       {tradeSignedMoney(p.pnl)}
                     </span>

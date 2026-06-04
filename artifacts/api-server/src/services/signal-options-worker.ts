@@ -478,7 +478,7 @@ async function evaluateSignalOptionsStreamSignalSymbols(input: {
     evaluationConcurrencyOverride: Math.min(6, symbols.length),
     barSourcePolicy: "mixed",
     includeProvisionalLiveEdge: true,
-    allowHistoricalFallback: false,
+    allowHistoricalFallback: true,
     signal: input.signal,
   });
 }

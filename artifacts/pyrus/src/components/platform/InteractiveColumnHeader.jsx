@@ -23,6 +23,7 @@ import {
   dim,
   sp,
 } from "../../lib/uiTokens.jsx";
+import { AppTooltip } from "@/components/ui/tooltip";
 
 export const sortDirectionToAria = (direction) =>
   direction === "asc"
@@ -98,6 +99,8 @@ export const ColumnHeaderCell = forwardRef(function ColumnHeaderCell({
     : undefined;
   const sortColor = active ? CSS_COLOR.text : CSS_COLOR.textMuted;
   const tableCellElement = Element === "th" || Element === "td";
+  const sortTooltip = sortTitle || title || `Sort by ${labelText}`;
+  const dragTooltip = dragTitle || `Drag ${labelText} column`;
   const content = (
     <>
       <span
@@ -134,7 +137,6 @@ export const ColumnHeaderCell = forwardRef(function ColumnHeaderCell({
       data-testid={testId}
       role={role}
       scope={scope}
-      title={title}
       aria-sort={ariaSort}
       style={{
         minWidth: 0,
@@ -161,86 +163,90 @@ export const ColumnHeaderCell = forwardRef(function ColumnHeaderCell({
         }}
       >
         {reorderable ? (
-          <button
-            ref={dragHandleRef}
-            type="button"
-            aria-label={dragLabel || `Drag ${labelText} column`}
-            title={dragTitle}
-            data-testid={`column-drag-${id}`}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flex: "0 0 auto",
-              width: dim(18),
-              height: dim(18),
-              border: `1px solid ${CSS_COLOR.border}`,
-              borderRadius: dim(RADII.xs),
-              background: "transparent",
-              color: CSS_COLOR.textMuted,
-              cursor: "grab",
-              padding: 0,
-              touchAction: "none",
-            }}
-            onClick={(event) => event.stopPropagation()}
-            {...dragAttributes}
-            {...dragListeners}
-          >
-            <GripVertical size={12} strokeWidth={1.9} aria-hidden="true" />
-          </button>
+          <AppTooltip content={dragTooltip}>
+            <button
+              ref={dragHandleRef}
+              type="button"
+              aria-label={dragLabel || dragTooltip}
+              data-testid={`column-drag-${id}`}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flex: "0 0 auto",
+                width: dim(18),
+                height: dim(18),
+                border: `1px solid ${CSS_COLOR.border}`,
+                borderRadius: dim(RADII.xs),
+                background: "transparent",
+                color: CSS_COLOR.textMuted,
+                cursor: "grab",
+                padding: 0,
+                touchAction: "none",
+              }}
+              onClick={(event) => event.stopPropagation()}
+              {...dragAttributes}
+              {...dragListeners}
+            >
+              <GripVertical size={12} strokeWidth={1.9} aria-hidden="true" />
+            </button>
+          </AppTooltip>
         ) : null}
         {sortable ? (
-          <button
-            type="button"
-            aria-pressed={active}
-            aria-label={`${sortTitle || `Sort by ${labelText}`}; ${
-              active ? `currently ${ariaSort}` : "not sorted"
-            }`}
-            title={sortTitle || `Sort by ${labelText}`}
-            onClick={onSort}
-            style={{
-              minWidth: 0,
-              width: "100%",
-              height: "100%",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: justifyForAlign(align),
-              gap: sp(3),
-              border: 0,
-              background: "transparent",
-              color: sortColor,
-              cursor: "pointer",
-              fontFamily: T.sans,
-              fontSize: "inherit",
-              fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
-              letterSpacing: "inherit",
-              lineHeight: "inherit",
-              padding: 0,
-              textAlign: align,
-              textDecoration: active ? `underline ${CSS_COLOR.accent}` : "none",
-              textUnderlineOffset: dim(3),
-              textTransform: "inherit",
-            }}
-          >
-            {content}
-          </button>
+          <AppTooltip content={sortTooltip}>
+            <button
+              type="button"
+              aria-pressed={active}
+              aria-label={`${sortTooltip}; ${
+                active ? `currently ${ariaSort}` : "not sorted"
+              }`}
+              onClick={onSort}
+              style={{
+                minWidth: 0,
+                width: "100%",
+                height: "100%",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: justifyForAlign(align),
+                gap: sp(3),
+                border: 0,
+                background: "transparent",
+                color: sortColor,
+                cursor: "pointer",
+                fontFamily: T.sans,
+                fontSize: "inherit",
+                fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
+                letterSpacing: "inherit",
+                lineHeight: "inherit",
+                padding: 0,
+                textAlign: align,
+                textDecoration: active ? `underline ${CSS_COLOR.accent}` : "none",
+                textUnderlineOffset: dim(3),
+                textTransform: "inherit",
+              }}
+            >
+              {content}
+            </button>
+          </AppTooltip>
         ) : (
-          <span
-            style={{
-              minWidth: 0,
-              width: "100%",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: justifyForAlign(align),
-              gap: sp(3),
-              color: active ? CSS_COLOR.text : "inherit",
-              fontFamily: "inherit",
-              fontSize: "inherit",
-              overflow: "hidden",
-            }}
-          >
-            {content}
-          </span>
+          <AppTooltip content={title}>
+            <span
+              style={{
+                minWidth: 0,
+                width: "100%",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: justifyForAlign(align),
+                gap: sp(3),
+                color: active ? CSS_COLOR.text : "inherit",
+                fontFamily: "inherit",
+                fontSize: "inherit",
+                overflow: "hidden",
+              }}
+            >
+              {content}
+            </span>
+          </AppTooltip>
         )}
       </span>
     </Element>

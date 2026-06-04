@@ -8,12 +8,53 @@ const normalizedProviderContractId = (value) => {
   return text && !isOpraOptionTicker(text) ? text : "";
 };
 
+const optionRightCode = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "call" || normalized === "c") return "C";
+  if (normalized === "put" || normalized === "p") return "P";
+  return "";
+};
+
+const optionExpirationKey = (value) => {
+  const text = String(value || "").trim();
+  const dateOnly = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (dateOnly) return `${dateOnly[1]}${dateOnly[2]}${dateOnly[3]}`;
+  if (/^\d{8}$/.test(text)) return text;
+  return "";
+};
+
+export const structuredOptionProviderContractId = (contract) => {
+  const underlying = String(contract?.underlying || "").trim().toUpperCase();
+  const expiration = optionExpirationKey(contract?.expirationDate);
+  const strike = Number(contract?.strike);
+  const right = optionRightCode(contract?.right);
+  if (!underlying || !expiration || !Number.isFinite(strike) || !right) {
+    return "";
+  }
+  const multiplier = Number(contract?.multiplier ?? contract?.sharesPerContract ?? 100);
+  const payload = {
+    v: 1,
+    u: underlying,
+    e: expiration,
+    s: strike,
+    r: right,
+    x: "SMART",
+    tc: underlying,
+    m: Number.isFinite(multiplier) && multiplier > 0 ? Math.trunc(multiplier) : 100,
+  };
+  return `twsopt:${btoa(JSON.stringify(payload))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/, "")}`;
+};
+
 const optionProviderContractId = (contract) =>
+  structuredOptionProviderContractId(contract) ||
   normalizedProviderContractId(contract?.providerContractId || contract?.conid);
 
 const rowOptionProviderContractId = (row) =>
-  optionProviderContractId(row?.optionContract) ||
-  normalizedProviderContractId(row?.optionQuote?.providerContractId);
+  normalizedProviderContractId(row?.optionQuote?.providerContractId) ||
+  optionProviderContractId(row?.optionContract);
 
 const rowOptionUnderlying = (row) => {
   const text = String(

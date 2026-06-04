@@ -6,6 +6,7 @@ import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
+import { AppTooltip } from "@/components/ui/tooltip";
 import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, fs, sp, textSize } from "../../lib/uiTokens.jsx";
 
 const WL_DOTS = 16;
@@ -116,20 +117,20 @@ const SidebarTile = ({ icon: Icon, label, value, detail, tone }) => {
 const InlineIndicator = ({ icon: Icon, label, value, tone }) => {
   const accent = tone || CSS_COLOR.text;
   return (
-    <div
-      data-testid={`algo-hero-inline-${String(label).toLowerCase()}`}
-      title={label}
-      style={{
-        display: "inline-flex",
-        alignItems: "baseline",
-        gap: sp(3),
-        padding: sp("4px 8px"),
-        background: CSS_COLOR.bg1,
-        borderRadius: dim(RADII.pill),
-        flexShrink: 0,
-        minWidth: 0,
-      }}
-    >
+    <AppTooltip content={label}>
+      <div
+        data-testid={`algo-hero-inline-${String(label).toLowerCase()}`}
+        style={{
+          display: "inline-flex",
+          alignItems: "baseline",
+          gap: sp(3),
+          padding: sp("4px 8px"),
+          background: CSS_COLOR.bg1,
+          borderRadius: dim(RADII.pill),
+          flexShrink: 0,
+          minWidth: 0,
+        }}
+      >
       <Icon size={12} color={accent} aria-label={label} style={{ alignSelf: "center" }} />
       <span
         style={{
@@ -143,7 +144,8 @@ const InlineIndicator = ({ icon: Icon, label, value, tone }) => {
       >
         {value}
       </span>
-    </div>
+      </div>
+    </AppTooltip>
   );
 };
 

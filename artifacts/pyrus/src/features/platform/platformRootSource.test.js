@@ -5,6 +5,7 @@ import test from "node:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { renderToString } from "react-dom/server";
+import ts from "typescript";
 import { TooltipProvider } from "../../components/ui/tooltip";
 import {
   buildAlgoMonitorSignalActionRows,
@@ -36,6 +37,42 @@ const collectSourceFiles = (directoryUrl) => {
   }
 
   return files;
+};
+
+const hasJsxAttribute = (attributes, name) =>
+  attributes.properties?.some((property) => property.name?.getText?.() === name);
+
+const collectNativeTitleAttributes = () => {
+  const hits = [];
+  for (const filePath of collectSourceFiles(pyrusSrcRoot)) {
+    if (isTestSourceFile(filePath)) continue;
+    const source = readFileSync(filePath, "utf8");
+    if (!source.includes("title=")) continue;
+    const sourceFile = ts.createSourceFile(
+      filePath,
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      /\.(?:tsx|jsx)$/.test(filePath) ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+
+    const visit = (node) => {
+      if (
+        (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
+        hasJsxAttribute(node.attributes, "title")
+      ) {
+        const tagName = node.tagName?.getText(sourceFile);
+        if (tagName && /^[a-z]/.test(tagName) && tagName !== "iframe") {
+          const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+          hits.push(`${relative(repoRoot.pathname, filePath)}:${position.line + 1}: <${tagName}>`);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+
+    visit(sourceFile);
+  }
+  return hits;
 };
 
 test("platform root no longer depends on the retired PyrusPlatform module", () => {
@@ -756,7 +793,14 @@ test("compact platform header stays flat and exposes line usage", () => {
     new URL("./HeaderBroadcastScrollerStack.jsx", import.meta.url),
     "utf8",
   );
+  const tooltipSource = readFileSync(
+    new URL("../../components/ui/tooltip.tsx", import.meta.url),
+    "utf8",
+  );
 
+  const screenNavBlock = appHeaderSource.match(
+    /data-testid="platform-screen-nav"[\s\S]*?<div aria-hidden="true"/,
+  )?.[0] ?? "";
   const navBlock = appHeaderSource.match(
     /data-testid="platform-screen-nav"[\s\S]*?<HeaderKpiStripComponent/,
   )?.[0] ?? "";
@@ -790,11 +834,16 @@ test("compact platform header stays flat and exposes line usage", () => {
   assert.match(navBlock, /minWidth:\s*0/);
   assert.match(navBlock, /overflow:\s*"hidden"/);
   assert.doesNotMatch(navBlock, /overflowX:\s*"auto"/);
+  assert.doesNotMatch(screenNavBlock, /<AppTooltip/);
+  assert.match(screenNavBlock, /aria-current=\{activeScreen === screen\.id \? "page" : undefined\}/);
   assert.match(controlsBlock, /flexWrap:\s*"nowrap"/);
   assert.match(controlsBlock, /maxWidth:\s*"100%"/);
   assert.match(controlsBlock, /minWidth:\s*0/);
   assert.match(controlsBlock, /overflow:\s*"hidden"/);
   assert.doesNotMatch(controlsBlock, /overflowX:\s*"auto"/);
+  assert.doesNotMatch(tooltipSource, /nativeTitleFromContent|withNativeTitle/);
+  assert.doesNotMatch(tooltipSource, /title:\s*props\.title\s*\|\||title:\s*nativeTitle/);
+  assert.match(tooltipSource, /title:\s*undefined/);
 
   assert.match(accountSource, /background:\s*"transparent"/);
   assert.match(accountSource, /border:\s*"none"/);
@@ -830,7 +879,7 @@ test("compact platform header stays flat and exposes line usage", () => {
     lineUsageIndex + 700,
   );
   assert.match(lineUsageSnippet, /aria-label=\{`Market data lines \$\{lineDisplayValue\}`\}/);
-  assert.match(lineUsageSnippet, /title=\{`Market data lines \$\{lineDisplayValue\}`\}/);
+  assert.doesNotMatch(lineUsageSnippet, /title=\{`Market data lines \$\{lineDisplayValue\}`\}/);
   assert.doesNotMatch(lineUsageSnippet, /<AppTooltip/);
   assert.match(runtimeControlHookSource, /useRef/);
   assert.match(runtimeControlHookSource, /lineUsageRequestRef/);
@@ -856,6 +905,10 @@ test("compact platform header stays flat and exposes line usage", () => {
   assert.doesNotMatch(broadcastSource, /data-testid="header-signal-scan-toggle"/);
   assert.doesNotMatch(broadcastSource, /data-testid="header-unusual-broad-toggle"/);
   assert.doesNotMatch(broadcastSource, /data-testid="header-algo-open"/);
+});
+
+test("Pyrus UI avoids native browser title tooltips on DOM elements", () => {
+  assert.deepEqual(collectNativeTitleAttributes(), []);
 });
 
 test("Algo monitor is frame-owned and replaces the activity sidebar feed", () => {
@@ -1347,6 +1400,7 @@ test("Algo monitor sidebar prefers cockpit signals to stale automation state row
     {
       activePositions: [],
       events: [],
+      stale: true,
       signals: [
         {
           signalKey: "tsla-stale",
@@ -1832,7 +1886,7 @@ test("Broad scanner owns Flow across the visible app after startup", () => {
   assert.doesNotMatch(schedulerSource, /flowScreenActive/);
 });
 
-test("signal monitor symbols only join quote stream fanout as bounded recent pins", () => {
+test("signal monitor symbols join quote stream fanout as uncapped recent pins", () => {
   const source = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
   const routerSource = readFileSync(
     new URL("./PlatformScreenRouter.jsx", import.meta.url),
@@ -1844,7 +1898,8 @@ test("signal monitor symbols only join quote stream fanout as bounded recent pin
 
   assert.ok(runtimeSymbolBlock, "PlatformApp must define runtime market-data symbols");
   assert.doesNotMatch(runtimeSymbolBlock, /signalMonitorSymbols/);
-  assert.match(source, /const RECENT_SIGNAL_QUOTE_PIN_LIMIT = 4;/);
+  assert.doesNotMatch(source, /RECENT_SIGNAL_QUOTE_PIN_LIMIT/);
+  assert.doesNotMatch(source, /\.slice\(0,\s*RECENT_SIGNAL_QUOTE_PIN_LIMIT\)/);
   assert.match(source, /resolveRecentSignalMarketDataSymbols\(signalMonitorStates\)/);
   assert.match(source, /recentSignalMarketDataSymbols/);
   assert.match(
@@ -1854,7 +1909,7 @@ test("signal monitor symbols only join quote stream fanout as bounded recent pin
   );
 });
 
-test("initial market-data fanout starts with the visible watchlist slice", () => {
+test("initial market-data fanout starts with the full visible watchlist", () => {
   const source = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
   const quoteSymbolsBlock = source.match(
     /const quoteSymbols = useMemo\(\(\) => \{[\s\S]*?\n  \}\);/,
@@ -1869,11 +1924,9 @@ test("initial market-data fanout starts with the visible watchlist slice", () =>
     /const streamedQuoteSymbols = useMemo\([\s\S]*?\n  \);/,
   )?.[0];
 
-  assert.match(source, /const INITIAL_MARKET_DATA_WATCHLIST_LIMIT = 8;/);
-  assert.match(
-    source,
-    /watchlistSymbols\.slice\(0,\s*INITIAL_MARKET_DATA_WATCHLIST_LIMIT\)/,
-  );
+  assert.doesNotMatch(source, /INITIAL_MARKET_DATA_WATCHLIST_LIMIT/);
+  assert.match(source, /const visibleWatchlistMarketDataSymbols = useMemo/);
+  assert.match(source, /\(\) => watchlistSymbols,\s*\n\s*\[watchlistSymbols\]/);
   assert.match(source, /const broadMarketDataHydrationReady = Boolean/);
   assert.match(source, /activeScreenBackgroundAllowed/);
   assert.match(source, /screenWarmupPhase === "ready"/);
@@ -1897,10 +1950,11 @@ test("initial market-data fanout starts with the visible watchlist slice", () =>
   assert.doesNotMatch(
     streamedQuoteSymbolsBlock ?? "",
     /watchlistSymbols/,
-    "quote streams should use bounded rotation rather than raw full watchlist subscription",
+    "quote streams should use quote rotation rather than a separate raw watchlist subscription path",
   );
   assert.match(source, /buildWatchlistQuoteRotationBatch/);
   assert.match(source, /WATCHLIST_QUOTE_STREAM_BATCH_SIZE/);
+  assert.match(source, /batchSize:\s*WATCHLIST_QUOTE_STREAM_BATCH_SIZE/);
   assert.match(source, /const quoteStreamRotationSymbols = useMemo/);
   assert.match(source, /signalMonitorDisplaySymbols/);
   assert.match(source, /rotationSymbols:\s*quoteStreamRotationSymbols/);
@@ -1923,7 +1977,7 @@ test("initial market-data fanout starts with the visible watchlist slice", () =>
   );
 });
 
-test("visible watchlist and open position symbols join bounded priority sparkline hydration", () => {
+test("visible watchlist and open position symbols join uncapped priority sparkline hydration", () => {
   const source = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
   const providerSource = readFileSync(
     new URL("./MarketDataSubscriptionProvider.jsx", import.meta.url),
@@ -1946,12 +2000,12 @@ test("visible watchlist and open position symbols join bounded priority sparklin
     /const quoteStreamPinnedSymbols = useMemo\([\s\S]*?\n  \);/,
   )?.[0];
 
-  assert.match(source, /const OPEN_POSITION_MARKET_DATA_LIMIT = 16;/);
+  assert.doesNotMatch(source, /OPEN_POSITION_MARKET_DATA_LIMIT/);
   assert.match(source, /const resolveOpenPositionMarketDataSymbol/);
   assert.match(source, /position\?\.marketDataSymbol/);
   assert.match(source, /position\?\.optionContract\?\.underlying/);
   assert.match(source, /openPositionMarketDataWeight\(right\)/);
-  assert.match(source, /symbols\.length >= OPEN_POSITION_MARKET_DATA_LIMIT/);
+  assert.doesNotMatch(source, /symbols\.length >= OPEN_POSITION_MARKET_DATA_LIMIT/);
   assert.match(runtimeSymbolBlock ?? "", /quoteSymbols, \.\.\.openPositionMarketDataSymbols/);
   assert.match(runtimeSymbolBlock ?? "", /sparklineSymbols, \.\.\.openPositionMarketDataSymbols/);
   assert.match(runtimeSymbolBlock ?? "", /\[\.\.\.new Set\(streamedQuoteSymbols\)\]/);

@@ -186,7 +186,7 @@ test("default paper signal-options startup uses full signal monitor coverage", (
   )?.[0];
 
   assert.ok(monitorBody);
-  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 250/);
+  assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_MAX_SYMBOLS = 500/);
   assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_CONCURRENCY = 6/);
   assert.match(source, /SIGNAL_OPTIONS_MONITOR_FULL_REFRESH_CONCURRENCY = 6/);
   assert.match(source, /DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS = 60/);

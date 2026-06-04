@@ -973,7 +973,6 @@ export const FooterMemoryPressureIndicator = ({ signal, runtimeControl = null })
           type="button"
           data-testid="footer-memory-pressure-indicator"
           aria-label={`${title}. Open memory details.`}
-          title={title}
           style={{
             appearance: "none",
             display: "inline-flex",

@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { AppTooltip } from "@/components/ui/tooltip";
 import { buildAlgoTuningImpact } from "../../features/platform/algoTuningImpactModel";
 import {
   CSS_COLOR,
@@ -259,38 +260,40 @@ const CompactLabel = ({ label, dirty, previousValue, field, impact }) => (
       {label}
     </span>
     {dirty ? (
-      <span
-        role="status"
-        aria-label={`${label} unsaved`}
-        title={`was: ${formatSettingValue(field, previousValue)}`}
-        style={{
-          width: dim(5),
-          height: dim(5),
-          borderRadius: dim(RADII.pill),
-          background: CSS_COLOR.accent,
-          flex: "0 0 auto",
-          opacity: 1,
-          transition: "opacity 120ms ease",
-        }}
-      />
+      <AppTooltip content={`was: ${formatSettingValue(field, previousValue)}`}>
+        <span
+          role="status"
+          aria-label={`${label} unsaved`}
+          style={{
+            width: dim(5),
+            height: dim(5),
+            borderRadius: dim(RADII.pill),
+            background: CSS_COLOR.accent,
+            flex: "0 0 auto",
+            opacity: 1,
+            transition: "opacity 120ms ease",
+          }}
+        />
+      </AppTooltip>
     ) : null}
     {impact ? (
-      <span
-        title={impact.title}
-        style={{
-          color: impact.color,
-          background: impact.background,
-          borderRadius: dim(RADII.xs),
-          fontFamily: T.sans,
-          fontSize: textSize("micro"),
-          lineHeight: 1,
-          marginLeft: "auto",
-          padding: sp("0 4px"),
-          flex: "0 0 auto",
-        }}
-      >
-        {impact.label}
-      </span>
+      <AppTooltip content={impact.title}>
+        <span
+          style={{
+            color: impact.color,
+            background: impact.background,
+            borderRadius: dim(RADII.xs),
+            fontFamily: T.sans,
+            fontSize: textSize("micro"),
+            lineHeight: 1,
+            marginLeft: "auto",
+            padding: sp("0 4px"),
+            flex: "0 0 auto",
+          }}
+        >
+          {impact.label}
+        </span>
+      </AppTooltip>
     ) : null}
   </span>
 );
@@ -543,13 +546,6 @@ export const CompactSettingCell = ({
     <label
       htmlFor={field.type === "boolean" ? undefined : id}
       className={className}
-      title={[
-        field.label,
-        formatSettingValue(field, value),
-        dirty ? `was ${formatSettingValue(field, previousValue)}` : null,
-      ]
-        .filter(Boolean)
-        .join(" · ")}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -869,7 +865,6 @@ const DteTimelineEditor = ({
     <div
       className="algo-cell--full"
       data-testid="algo-contract-dte-timeline"
-      title={`DTE ${formatDteWindowLabel({ minValue, targetValue, maxValue })}`}
       style={{
         display: "grid",
         gap: sp(7),
@@ -1130,16 +1125,16 @@ const ChainStrikeButton = ({
   onSelect,
   onMove,
 }) => (
-  <button
-    type="button"
-    role="checkbox"
-    aria-checked={selected}
-    aria-label={`${side} strike slot ${slot}; ${label}${selected ? `; priority ${order}` : ""}`}
-    data-testid={`algo-strike-ladder-${side.toLowerCase()}-${slot}`}
-    title={`${side} ${label}`}
-    className={selected ? "ra-interactive ra-focus-rail" : "ra-interactive"}
-    disabled={disabled}
-    onClick={() => onSelect(slot)}
+  <AppTooltip content={`${side} ${label}`}>
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={selected}
+      aria-label={`${side} strike slot ${slot}; ${label}${selected ? `; priority ${order}` : ""}`}
+      data-testid={`algo-strike-ladder-${side.toLowerCase()}-${slot}`}
+      className={selected ? "ra-interactive ra-focus-rail" : "ra-interactive"}
+      disabled={disabled}
+      onClick={() => onSelect(slot)}
     onKeyDown={(event) => {
       if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
         event.preventDefault();
@@ -1173,7 +1168,7 @@ const ChainStrikeButton = ({
       whiteSpace: "nowrap",
       transition: "border-color 140ms ease, background 140ms ease, color 140ms ease, transform 120ms ease",
     }}
-  >
+    >
     {selected ? (
       <span
         aria-hidden="true"
@@ -1196,7 +1191,8 @@ const ChainStrikeButton = ({
       </span>
     ) : null}
     <span aria-hidden="true">{label}</span>
-  </button>
+    </button>
+  </AppTooltip>
 );
 
 export const ContractSelectionCell = ({
@@ -1398,21 +1394,22 @@ export const ContractSelectionCell = ({
         disabled={disabled}
         dirtyFieldKeys={dirtyFieldKeys}
       />
-      <div
-        data-testid="algo-contract-selection-summary"
-        title={contractSummary}
-        className="tnum"
-        style={{
-          color: CSS_COLOR.textDim,
-          fontFamily: T.data,
-          fontSize: textSize("micro"),
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {contractSummary}
-      </div>
+      <AppTooltip content={contractSummary}>
+        <div
+          data-testid="algo-contract-selection-summary"
+          className="tnum"
+          style={{
+            color: CSS_COLOR.textDim,
+            fontFamily: T.data,
+            fontSize: textSize("micro"),
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {contractSummary}
+        </div>
+      </AppTooltip>
       <div
         data-testid="algo-mini-chain"
         style={{
@@ -2073,46 +2070,49 @@ const ProgressiveTrailPreview = ({ steps }) => {
       }}
     >
       {visibleSteps.map((step, index) => (
-        <span
+        <AppTooltip
           key={`${step.activationPct}-${index}`}
-          title={`Activation ${formatExitPct(step.activationPct)}, lock ${formatExitPct(step.minLockedGainPct)}, giveback ${formatExitPct(step.givebackPct)}`}
-          style={{
-            minWidth: 0,
-            display: "grid",
-            gap: sp(1),
-            padding: sp("4px 5px"),
-            border: `1px solid ${CSS_COLOR.borderLight}`,
-            borderRadius: dim(RADII.xs),
-            background: cssColorMix(CSS_COLOR.green, 7),
-          }}
+          content={`Activation ${formatExitPct(step.activationPct)}, lock ${formatExitPct(step.minLockedGainPct)}, giveback ${formatExitPct(step.givebackPct)}`}
         >
           <span
-            className="tnum"
             style={{
-              color: CSS_COLOR.green,
-              fontFamily: T.data,
-              fontSize: textSize("caption"),
-              fontWeight: FONT_WEIGHTS.emphasis,
-              lineHeight: 1,
+              minWidth: 0,
+              display: "grid",
+              gap: sp(1),
+              padding: sp("4px 5px"),
+              border: `1px solid ${CSS_COLOR.borderLight}`,
+              borderRadius: dim(RADII.xs),
+              background: cssColorMix(CSS_COLOR.green, 7),
             }}
           >
-            {formatExitPct(step.activationPct)}
+            <span
+              className="tnum"
+              style={{
+                color: CSS_COLOR.green,
+                fontFamily: T.data,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.emphasis,
+                lineHeight: 1,
+              }}
+            >
+              {formatExitPct(step.activationPct)}
+            </span>
+            <span
+              className="tnum"
+              style={{
+                color: CSS_COLOR.textMuted,
+                fontFamily: T.data,
+                fontSize: textSize("micro"),
+                lineHeight: 1.15,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              L {formatExitPct(step.minLockedGainPct)} / G {formatExitPct(step.givebackPct)}
+            </span>
           </span>
-          <span
-            className="tnum"
-            style={{
-              color: CSS_COLOR.textMuted,
-              fontFamily: T.data,
-              fontSize: textSize("micro"),
-              lineHeight: 1.15,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            L {formatExitPct(step.minLockedGainPct)} / G {formatExitPct(step.givebackPct)}
-          </span>
-        </span>
+        </AppTooltip>
       ))}
     </div>
   );
@@ -2192,47 +2192,50 @@ const WireTrailPreview = ({ rungs }) => {
       }}
     >
       {visibleRungs.map((rung, index) => (
-        <span
+        <AppTooltip
           key={`${rung.activationPct}-${rung.rung}-${index}`}
-          title={`${formatExitPct(rung.activationPct)} ${wireRungLabel(rung.rung)}`}
-          style={{
-            minWidth: 0,
-            display: "grid",
-            gap: sp(1),
-            padding: sp("4px 5px"),
-            border: `1px solid ${CSS_COLOR.borderLight}`,
-            borderRadius: dim(RADII.xs),
-            background: cssColorMix(CSS_COLOR.cyan, 7),
-          }}
+          content={`${formatExitPct(rung.activationPct)} ${wireRungLabel(rung.rung)}`}
         >
           <span
-            className="tnum"
             style={{
-              color: CSS_COLOR.cyan,
-              fontFamily: T.data,
-              fontSize: textSize("caption"),
-              fontWeight: FONT_WEIGHTS.emphasis,
-              lineHeight: 1,
+              minWidth: 0,
+              display: "grid",
+              gap: sp(1),
+              padding: sp("4px 5px"),
+              border: `1px solid ${CSS_COLOR.borderLight}`,
+              borderRadius: dim(RADII.xs),
+              background: cssColorMix(CSS_COLOR.cyan, 7),
             }}
           >
-            {formatExitPct(rung.activationPct)}
+            <span
+              className="tnum"
+              style={{
+                color: CSS_COLOR.cyan,
+                fontFamily: T.data,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.emphasis,
+                lineHeight: 1,
+              }}
+            >
+              {formatExitPct(rung.activationPct)}
+            </span>
+            <span
+              style={{
+                color: CSS_COLOR.textMuted,
+                fontFamily: T.sans,
+                fontSize: textSize("micro"),
+                fontWeight: FONT_WEIGHTS.label,
+                lineHeight: 1,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {wireRungLabel(rung.rung)}
+            </span>
           </span>
-          <span
-            style={{
-              color: CSS_COLOR.textMuted,
-              fontFamily: T.sans,
-              fontSize: textSize("micro"),
-              fontWeight: FONT_WEIGHTS.label,
-              lineHeight: 1,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              textTransform: "uppercase",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {wireRungLabel(rung.rung)}
-          </span>
-        </span>
+        </AppTooltip>
       ))}
     </div>
   );
@@ -2618,54 +2621,54 @@ const SectionSummaryStrip = ({
       {items.map((item) => {
         const tone = item.dirty ? CSS_COLOR.accent : item.tone || CSS_COLOR.textSec;
         return (
-          <span
-            key={item.id}
-            title={`${item.label}: ${item.value}`}
-            style={{
-              minWidth: 0,
-              display: "grid",
-              gap: sp(1),
-              padding: sp("4px 5px"),
-              border: `1px solid ${
-                item.dirty ? cssColorMix(CSS_COLOR.accent, 38) : CSS_COLOR.borderLight
-              }`,
-              borderRadius: dim(RADII.xs),
-              background: item.dirty
-                ? cssColorMix(CSS_COLOR.accent, 6)
-                : CSS_COLOR.bg1,
-            }}
-          >
+          <AppTooltip key={item.id} content={`${item.label}: ${item.value}`}>
             <span
               style={{
-                color: CSS_COLOR.textMuted,
-                fontFamily: T.sans,
-                fontSize: textSize("micro"),
-                fontWeight: FONT_WEIGHTS.label,
-                lineHeight: 1,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                textTransform: "uppercase",
-                whiteSpace: "nowrap",
+                minWidth: 0,
+                display: "grid",
+                gap: sp(1),
+                padding: sp("4px 5px"),
+                border: `1px solid ${
+                  item.dirty ? cssColorMix(CSS_COLOR.accent, 38) : CSS_COLOR.borderLight
+                }`,
+                borderRadius: dim(RADII.xs),
+                background: item.dirty
+                  ? cssColorMix(CSS_COLOR.accent, 6)
+                  : CSS_COLOR.bg1,
               }}
             >
-              {item.label}
+              <span
+                style={{
+                  color: CSS_COLOR.textMuted,
+                  fontFamily: T.sans,
+                  fontSize: textSize("micro"),
+                  fontWeight: FONT_WEIGHTS.label,
+                  lineHeight: 1,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  textTransform: "uppercase",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {item.label}
+              </span>
+              <span
+                className="tnum"
+                style={{
+                  color: tone,
+                  fontFamily: T.data,
+                  fontSize: textSize("caption"),
+                  fontWeight: FONT_WEIGHTS.emphasis,
+                  lineHeight: 1.15,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {item.value}
+              </span>
             </span>
-            <span
-              className="tnum"
-              style={{
-                color: tone,
-                fontFamily: T.data,
-                fontSize: textSize("caption"),
-                fontWeight: FONT_WEIGHTS.emphasis,
-                lineHeight: 1.15,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {item.value}
-            </span>
-          </span>
+          </AppTooltip>
         );
       })}
     </div>

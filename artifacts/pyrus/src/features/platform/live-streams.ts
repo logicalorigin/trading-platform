@@ -209,6 +209,15 @@ type AccountPositionRowWithOptionQuote =
     optionQuote?: AccountOptionQuotePatch | null;
   };
 
+type LiveOptionQuotePatchSnapshot = LiveOptionQuoteSnapshot &
+  AccountOptionQuotePatch & {
+    mid?: number | null;
+    mark?: number | null;
+    last?: number | null;
+    spread?: number | null;
+    spreadPercent?: number | null;
+  };
+
 const hasUsableOptionQuoteData = (quote: LiveOptionQuoteSnapshot): boolean =>
   (isFiniteNumber(quote.bid) && quote.bid > 0) ||
   (isFiniteNumber(quote.ask) && quote.ask > 0) ||
@@ -759,6 +768,61 @@ const finiteOptionNumber = (...values: unknown[]): number | null => {
   return null;
 };
 
+const optionRightCode = (value: unknown): "C" | "P" | null => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "call" || normalized === "c") {
+    return "C";
+  }
+  if (normalized === "put" || normalized === "p") {
+    return "P";
+  }
+  return null;
+};
+
+const optionExpirationKey = (value: unknown): string | null => {
+  const text = String(value ?? "").trim();
+  const dateOnly = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (dateOnly) {
+    return `${dateOnly[1]}${dateOnly[2]}${dateOnly[3]}`;
+  }
+  if (/^\d{8}$/.test(text)) {
+    return text;
+  }
+  return null;
+};
+
+const base64UrlEncode = (value: string): string => {
+  const encoded = btoa(value);
+  return encoded.replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+};
+
+const structuredOptionProviderContractId = (
+  contract: AccountPositionRow["optionContract"] | null | undefined,
+): string | null => {
+  const underlying = String(contract?.underlying ?? "").trim().toUpperCase();
+  const expiration = optionExpirationKey(contract?.expirationDate);
+  const strike = finiteOptionNumber(contract?.strike);
+  const right = optionRightCode(contract?.right);
+  if (!underlying || !expiration || strike === null || !right) {
+    return null;
+  }
+  const multiplier = Math.trunc(
+    finiteOptionNumber(contract?.multiplier, contract?.sharesPerContract) ?? 100,
+  );
+  return `twsopt:${base64UrlEncode(
+    JSON.stringify({
+      v: 1,
+      u: underlying,
+      e: expiration,
+      s: strike,
+      r: right,
+      x: "SMART",
+      tc: underlying,
+      m: multiplier > 0 ? multiplier : 100,
+    }),
+  )}`;
+};
+
 const optionPositionProviderContractId = (
   row: AccountPositionRow,
 ): string => {
@@ -768,12 +832,13 @@ const optionPositionProviderContractId = (
     | null
     | undefined;
   return normalizeProviderContractId(
-    row.optionContract?.providerContractId ||
+    (typeof rowWithOptionQuote.optionQuote?.providerContractId === "string"
+      ? rowWithOptionQuote.optionQuote.providerContractId
+      : null) ||
+      structuredOptionProviderContractId(row.optionContract) ||
+      row.optionContract?.providerContractId ||
       (typeof contract?.conid === "string" || typeof contract?.conid === "number"
         ? String(contract.conid)
-        : null) ||
-      (typeof rowWithOptionQuote.optionQuote?.providerContractId === "string"
-        ? rowWithOptionQuote.optionQuote.providerContractId
         : null),
   );
 };
@@ -2039,6 +2104,227 @@ const mergeStableRowsById = <T extends { id?: unknown }>(
   return allRowsUnchangedInPlace ? current : merged;
 };
 
+const quotePatchTimestampMs = (
+  quote: AccountOptionQuotePatch | null | undefined,
+): number | null =>
+  getUpdatedAtTime(
+    typeof quote?.dataUpdatedAt === "string" && quote.dataUpdatedAt
+      ? quote.dataUpdatedAt
+      : typeof quote?.updatedAt === "string"
+        ? quote.updatedAt
+        : null,
+  );
+
+const quotePatchHasUsableOptionData = (
+  quote: AccountOptionQuotePatch | null | undefined,
+): boolean =>
+  Boolean(
+    quote &&
+      [
+        quote.bid,
+        quote.ask,
+        quote.mid,
+        quote.mark,
+        quote.last,
+        quote.price,
+        quote.dayChange,
+        quote.dayChangePercent,
+        quote.openInterest,
+        quote.volume,
+        quote.impliedVolatility,
+        quote.delta,
+        quote.gamma,
+        quote.theta,
+        quote.vega,
+      ].some((value) => finiteOptionNumber(value) !== null),
+  );
+
+const quotePatchForPositionRow = (
+  row: AccountPositionRow | undefined,
+): AccountOptionQuotePatch | null => {
+  if (!row) {
+    return null;
+  }
+  const rowWithOptionQuote = row as AccountPositionRowWithOptionQuote;
+  const quote = row.quote as AccountOptionQuotePatch | null | undefined;
+  const optionQuote = rowWithOptionQuote.optionQuote;
+  if (!quote && !optionQuote) {
+    return null;
+  }
+  return {
+    ...(quote || {}),
+    ...(optionQuote || {}),
+  };
+};
+
+const pickOptionQuoteNumber = (
+  primary: AccountOptionQuotePatch | null | undefined,
+  secondary: AccountOptionQuotePatch | null | undefined,
+  field: string,
+): number | null =>
+  finiteOptionNumber(
+    primary?.[field as keyof AccountOptionQuotePatch],
+    secondary?.[field as keyof AccountOptionQuotePatch],
+  );
+
+const pickOptionQuoteValue = (
+  primary: AccountOptionQuotePatch | null | undefined,
+  secondary: AccountOptionQuotePatch | null | undefined,
+  field: string,
+): unknown =>
+  primary?.[field as keyof AccountOptionQuotePatch] ??
+  secondary?.[field as keyof AccountOptionQuotePatch] ??
+  null;
+
+const mergeLiveOptionQuoteFields = (
+  current: AccountPositionRow,
+  next: AccountPositionRow,
+): AccountPositionRow => {
+  const currentProviderContractId = optionPositionProviderContractId(current);
+  const nextProviderContractId = optionPositionProviderContractId(next);
+  const providerContractId = nextProviderContractId || currentProviderContractId;
+  if (
+    !providerContractId ||
+    (currentProviderContractId &&
+      nextProviderContractId &&
+      currentProviderContractId !== nextProviderContractId)
+  ) {
+    return next;
+  }
+
+  const currentQuote = quotePatchForPositionRow(current);
+  if (!quotePatchHasUsableOptionData(currentQuote)) {
+    return next;
+  }
+
+  const nextQuote = quotePatchForPositionRow(next);
+  const currentTimestamp = quotePatchTimestampMs(currentQuote);
+  const nextTimestamp = quotePatchTimestampMs(nextQuote);
+  const currentIsNewer =
+    currentTimestamp !== null &&
+    nextTimestamp !== null &&
+    currentTimestamp > nextTimestamp;
+  const preferCurrent =
+    !quotePatchHasUsableOptionData(nextQuote) || currentIsNewer;
+  const primary = preferCurrent ? currentQuote : nextQuote;
+  const secondary = preferCurrent ? nextQuote : currentQuote;
+  const updatedAt =
+    currentIsNewer || !nextTimestamp
+      ? currentQuote?.updatedAt ?? nextQuote?.updatedAt ?? null
+      : nextQuote?.updatedAt ?? currentQuote?.updatedAt ?? null;
+  const dataUpdatedAt =
+    currentIsNewer || !nextTimestamp
+      ? currentQuote?.dataUpdatedAt ?? nextQuote?.dataUpdatedAt ?? null
+      : nextQuote?.dataUpdatedAt ?? currentQuote?.dataUpdatedAt ?? null;
+  const quoteSource = pickOptionQuoteValue(primary, secondary, "source");
+  const mergedQuote = {
+    ...(secondary || {}),
+    ...(primary || {}),
+    providerContractId,
+    bid: pickOptionQuoteNumber(primary, secondary, "bid"),
+    ask: pickOptionQuoteNumber(primary, secondary, "ask"),
+    mid:
+      pickOptionQuoteNumber(primary, secondary, "mid") ??
+      optionQuoteMidpoint(
+        pickOptionQuoteNumber(primary, secondary, "bid"),
+        pickOptionQuoteNumber(primary, secondary, "ask"),
+      ),
+    last: pickOptionQuoteNumber(primary, secondary, "last"),
+    price: pickOptionQuoteNumber(primary, secondary, "price"),
+    mark: pickOptionQuoteNumber(primary, secondary, "mark"),
+    spread: pickOptionQuoteNumber(primary, secondary, "spread"),
+    spreadPercent: pickOptionQuoteNumber(primary, secondary, "spreadPercent"),
+    dayChange: pickOptionQuoteNumber(primary, secondary, "dayChange"),
+    dayChangePercent: pickOptionQuoteNumber(
+      primary,
+      secondary,
+      "dayChangePercent",
+    ),
+    bidSize: pickOptionQuoteNumber(primary, secondary, "bidSize"),
+    askSize: pickOptionQuoteNumber(primary, secondary, "askSize"),
+    volume: pickOptionQuoteNumber(primary, secondary, "volume"),
+    openInterest: pickOptionQuoteNumber(primary, secondary, "openInterest"),
+    impliedVolatility: pickOptionQuoteNumber(
+      primary,
+      secondary,
+      "impliedVolatility",
+    ),
+    delta: pickOptionQuoteNumber(primary, secondary, "delta"),
+    gamma: pickOptionQuoteNumber(primary, secondary, "gamma"),
+    theta: pickOptionQuoteNumber(primary, secondary, "theta"),
+    vega: pickOptionQuoteNumber(primary, secondary, "vega"),
+    freshness: pickOptionQuoteValue(primary, secondary, "freshness"),
+    marketDataMode: pickOptionQuoteValue(primary, secondary, "marketDataMode"),
+    source: quoteSource === "massive" ? "massive" : "ibkr",
+    transport: pickOptionQuoteValue(primary, secondary, "transport"),
+    delayed: pickOptionQuoteValue(primary, secondary, "delayed"),
+    updatedAt,
+    dataUpdatedAt,
+  } as unknown as LiveOptionQuotePatchSnapshot;
+
+  const patched = patchAccountPositionRowFromOptionQuote(next, mergedQuote);
+  if (patched !== next || !valuesEqualJson(patched, next)) {
+    return patched;
+  }
+
+  const fallbackRow = {
+    ...next,
+    optionQuote: mergedQuote,
+    quote: {
+      ...(next.quote || {}),
+      bid: mergedQuote.bid ?? next.quote?.bid ?? null,
+      ask: mergedQuote.ask ?? next.quote?.ask ?? null,
+      mid: mergedQuote.mid ?? next.quote?.mid ?? null,
+      mark: mergedQuote.mark ?? next.quote?.mark ?? null,
+      last: mergedQuote.last ?? next.quote?.last ?? null,
+      spread: mergedQuote.spread ?? next.quote?.spread ?? null,
+      spreadPercent: mergedQuote.spreadPercent ?? next.quote?.spreadPercent ?? null,
+      bidSize: mergedQuote.bidSize ?? next.quote?.bidSize ?? null,
+      askSize: mergedQuote.askSize ?? next.quote?.askSize ?? null,
+      freshness: mergedQuote.freshness ?? next.quote?.freshness ?? null,
+      marketDataMode:
+        mergedQuote.marketDataMode ?? next.quote?.marketDataMode ?? null,
+      source: optionQuotePositionSource(mergedQuote.source),
+      updatedAt: mergedQuote.updatedAt ?? next.quote?.updatedAt ?? null,
+    },
+  };
+  return fallbackRow as AccountPositionRow;
+};
+
+const mergeAccountPositionRowsById = (
+  currentRows: AccountPositionRow[] | undefined,
+  nextRows: AccountPositionRow[] | undefined,
+): AccountPositionRow[] => {
+  const current = currentRows || [];
+  const next = nextRows || [];
+  if (!current.length) {
+    return next;
+  }
+
+  const currentById = new Map<string, AccountPositionRow>();
+  current.forEach((row) => {
+    const id = rowIdOf(row);
+    if (id) {
+      currentById.set(id, row);
+    }
+  });
+
+  let allRowsUnchangedInPlace = current.length === next.length;
+  const merged = next.map((row, index) => {
+    const id = rowIdOf(row);
+    const previous = id ? currentById.get(id) : undefined;
+    const candidate = previous ? mergeLiveOptionQuoteFields(previous, row) : row;
+    const resolved =
+      previous && valuesEqualJson(previous, candidate) ? previous : candidate;
+    if (resolved !== current[index]) {
+      allRowsUnchangedInPlace = false;
+    }
+    return resolved;
+  });
+
+  return allRowsUnchangedInPlace ? current : merged;
+};
+
 const maybeReuseAccountPositionsResponse = (
   current: AccountPositionsResponse | undefined,
   next: AccountPositionsResponse,
@@ -2046,7 +2332,10 @@ const maybeReuseAccountPositionsResponse = (
   if (!current) {
     return next;
   }
-  const positions = mergeStableRowsById(current.positions, next.positions);
+  const positions = mergeAccountPositionRowsById(
+    current.positions,
+    next.positions,
+  );
   const merged =
     positions === next.positions
       ? next
@@ -2852,7 +3141,10 @@ export const applyShadowAccountPayloadToCache = (
           (current: AccountPositionsResponse | undefined) =>
             preferNonDegradedAccountResponse(
               current,
-              shadowPositionsForQuery(payload.positions, query.queryKey),
+              maybeReuseAccountPositionsResponse(
+                current,
+                shadowPositionsForQuery(payload.positions, query.queryKey),
+              ),
             ),
         );
       } else if (path === "/api/accounts/shadow/orders") {

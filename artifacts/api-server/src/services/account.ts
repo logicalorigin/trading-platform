@@ -164,12 +164,10 @@ import type {
 
 const COMBINED_ACCOUNT_ID = "combined";
 const ACCOUNT_POSITION_MARKET_DATA_TTL_MS = null;
+const ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS = ACCOUNT_POSITION_MARKET_DATA_TTL_MS;
 const ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS = 2_000;
 const ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS = 5_000;
 const ACCOUNT_ROUTE_DERIVED_RESPONSE_CACHE_TTL_MS = 15_000;
-const ACCOUNT_POSITION_EMPTY_RETRY_COUNT = 3;
-const ACCOUNT_POSITION_EMPTY_RETRY_DELAY_MS = 750;
-const ACCOUNT_POSITION_EXPOSURE_EPSILON = 1;
 const FLEX_SEND_REQUEST_URL =
   "https://www.interactivebrokers.com/Universal/servlet/FlexStatementService.SendRequest";
 const FLEX_GET_STATEMENT_URL =
@@ -1254,75 +1252,7 @@ async function readPositionsForUniverseUncached(
     return filterOpenBrokerPositions(positions.flat());
   };
 
-  const firstPositions = await readOpenPositions();
-  if (
-    firstPositions.length ||
-    !accountUniverseLikelyHasPositionExposure(universe)
-  ) {
-    return firstPositions;
-  }
-
-  for (let attempt = 1; attempt <= ACCOUNT_POSITION_EMPTY_RETRY_COUNT; attempt += 1) {
-    await waitForAccountPositionRetry(ACCOUNT_POSITION_EMPTY_RETRY_DELAY_MS);
-    const retryPositions = await readOpenPositions();
-    if (retryPositions.length) {
-      logger.warn(
-        {
-          accountId: universe.requestedAccountId,
-          attempt,
-          mode,
-          positionCount: retryPositions.length,
-        },
-        "Recovered IBKR account positions after an empty live read",
-      );
-      return retryPositions;
-    }
-  }
-
-  logger.warn(
-    {
-      accountId: universe.requestedAccountId,
-      mode,
-      netLiquidation: sumAccounts(universe.accounts, "netLiquidation"),
-      totalCash:
-        sumAccounts(universe.accounts, "totalCashValue") ??
-        sumAccounts(universe.accounts, "cash"),
-      grossPositionValue: sumAccounts(universe.accounts, "grossPositionValue"),
-    },
-    "IBKR account positions remained empty despite non-cash account exposure",
-  );
-  return firstPositions;
-}
-
-function accountUniverseLikelyHasPositionExposure(universe: AccountUniverse): boolean {
-  if (universe.source !== "live") {
-    return false;
-  }
-
-  const grossPositionValue = sumAccounts(universe.accounts, "grossPositionValue");
-  if (
-    grossPositionValue !== null &&
-    Math.abs(grossPositionValue) > ACCOUNT_POSITION_EXPOSURE_EPSILON
-  ) {
-    return true;
-  }
-
-  const netLiquidation = sumAccounts(universe.accounts, "netLiquidation");
-  const totalCash =
-    sumAccounts(universe.accounts, "totalCashValue") ??
-    sumAccounts(universe.accounts, "cash");
-  return (
-    netLiquidation !== null &&
-    totalCash !== null &&
-    Math.abs(netLiquidation - totalCash) > ACCOUNT_POSITION_EXPOSURE_EPSILON
-  );
-}
-
-function waitForAccountPositionRetry(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(resolve, ms);
-    timeout.unref?.();
-  });
+  return readOpenPositions();
 }
 
 async function listOrdersForUniverse(
@@ -1407,7 +1337,7 @@ async function fetchEquityQuoteSnapshotsForPositions(
         assetClass: "equity" as const,
         symbol,
       })),
-      ttlMs: ACCOUNT_POSITION_MARKET_DATA_TTL_MS,
+      ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
       fallbackProvider: "massive",
     });
     const payload = await getQuoteSnapshots({
@@ -1416,7 +1346,7 @@ async function fetchEquityQuoteSnapshotsForPositions(
       admissionOwner,
       admissionIntent: "account-monitor-live",
       admissionFallbackProvider: "massive",
-      ttlMs: ACCOUNT_POSITION_MARKET_DATA_TTL_MS,
+      ttlMs: ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS,
     }).catch(() => ({
       quotes: [],
     }));
@@ -1434,8 +1364,7 @@ async function fetchOptionQuoteSnapshotsForPositions(
   positions: BrokerPositionSnapshot[],
 ): Promise<Map<string, QuoteSnapshot>> {
   const providerContractIds = positions.flatMap((position) => {
-    const providerContractId = position.optionContract?.providerContractId?.trim();
-    return providerContractId ? [providerContractId] : [];
+    return optionQuoteProviderContractIdsForPosition(position);
   });
   const uniqueProviderContractIds = Array.from(new Set(providerContractIds));
 
@@ -1447,15 +1376,15 @@ async function fetchOptionQuoteSnapshotsForPositions(
   let quoteEntries: QuoteSnapshot[] = [];
   try {
     const positionsByUnderlying = positions.reduce((map, position) => {
-      const providerContractId =
-        position.optionContract?.providerContractId?.trim();
       const underlying = normalizeSymbol(position.optionContract?.underlying ?? "");
-      if (!providerContractId || !underlying) {
+      const providerContractIdsForPosition =
+        optionQuoteProviderContractIdsForPosition(position);
+      if (!providerContractIdsForPosition.length || !underlying) {
         return map;
       }
       map.set(underlying, [
         ...(map.get(underlying) ?? []),
-        providerContractId,
+        ...providerContractIdsForPosition,
       ]);
       return map;
     }, new Map<string, string[]>());
@@ -1483,13 +1412,30 @@ async function fetchOptionQuoteSnapshotsForPositions(
     );
   }
 
-  return new Map(
+  const quotesByProviderContractId = new Map(
     quoteEntries
       .flatMap((quote) => {
         const providerContractId = String(quote.providerContractId ?? "").trim();
         return providerContractId ? [[providerContractId, quote] as const] : [];
       }),
   );
+  positions.forEach((position) => {
+    const providerContractIdsForPosition =
+      optionQuoteProviderContractIdsForPosition(position);
+    const quote = providerContractIdsForPosition
+      .map((providerContractId) =>
+        quotesByProviderContractId.get(providerContractId),
+      )
+      .find((candidate): candidate is QuoteSnapshot => Boolean(candidate));
+    if (!quote) {
+      return;
+    }
+    providerContractIdsForPosition.forEach((providerContractId) => {
+      quotesByProviderContractId.set(providerContractId, quote);
+    });
+  });
+
+  return quotesByProviderContractId;
 }
 
 type AccountPositionOptionQuoteDemandRow = {
@@ -1497,9 +1443,111 @@ type AccountPositionOptionQuoteDemandRow = {
   accounts?: string[] | null;
   optionContract?: {
     underlying?: string | null;
+    expirationDate?: Date | string | null;
+    strike?: number | string | null;
+    right?: string | null;
+    multiplier?: number | string | null;
+    sharesPerContract?: number | string | null;
     providerContractId?: string | null;
+    conid?: string | number | null;
   } | null;
 };
+
+function finiteOptionNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function optionExpirationKey(value: unknown): string | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return formatDateOnly(value).replaceAll("-", "");
+  }
+  const text = String(value ?? "").trim();
+  if (/^\d{8}$/.test(text)) {
+    return text;
+  }
+  const dateOnly = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (dateOnly) {
+    return `${dateOnly[1]}${dateOnly[2]}${dateOnly[3]}`;
+  }
+  const parsed = text ? new Date(text) : null;
+  return parsed && !Number.isNaN(parsed.getTime())
+    ? formatDateOnly(parsed).replaceAll("-", "")
+    : null;
+}
+
+function optionRightCode(value: unknown): "C" | "P" | null {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "call" || normalized === "c") {
+    return "C";
+  }
+  if (normalized === "put" || normalized === "p") {
+    return "P";
+  }
+  return null;
+}
+
+function structuredOptionProviderContractIdForRow(
+  row: AccountPositionOptionQuoteDemandRow,
+): string | null {
+  const contract = row.optionContract;
+  const underlying = normalizeSymbol(contract?.underlying ?? "");
+  const expiration = optionExpirationKey(contract?.expirationDate);
+  const strike = finiteOptionNumber(contract?.strike);
+  const right = optionRightCode(contract?.right);
+  if (!underlying || !expiration || strike === null || !right) {
+    return null;
+  }
+  const multiplier =
+    Math.trunc(
+      finiteOptionNumber(contract?.multiplier) ??
+        finiteOptionNumber(contract?.sharesPerContract) ??
+        100,
+    ) || 100;
+  return `twsopt:${Buffer.from(
+    JSON.stringify({
+      v: 1,
+      u: underlying,
+      e: expiration,
+      s: strike,
+      r: right,
+      x: "SMART",
+      tc: underlying,
+      m: multiplier,
+    }),
+    "utf8",
+  ).toString("base64url")}`;
+}
+
+function primaryOptionProviderContractIdForRow(
+  row: AccountPositionOptionQuoteDemandRow,
+): string | null {
+  const raw =
+    row.optionContract?.providerContractId ??
+    row.optionContract?.conid ??
+    null;
+  const text = String(raw ?? "").trim();
+  return text || null;
+}
+
+function optionQuoteProviderContractIdsForPosition(
+  row: AccountPositionOptionQuoteDemandRow,
+): string[] {
+  const structuredProviderContractId =
+    structuredOptionProviderContractIdForRow(row);
+  const primaryProviderContractId = primaryOptionProviderContractIdForRow(row);
+  return Array.from(
+    new Set(
+      [structuredProviderContractId, primaryProviderContractId].filter(
+        (providerContractId): providerContractId is string =>
+          Boolean(providerContractId),
+      ),
+    ),
+  );
+}
 
 const accountPositionOptionDemandOwnersByAccountKey = new Map<string, Set<string>>();
 
@@ -1529,14 +1577,14 @@ function declareAccountPositionOptionQuoteDemands(
   const owner = `account-position-option-quotes:${accountKey}`;
   const nextOwners = new Set<string>();
   const positionsByUnderlying = rows.reduce((map, row) => {
-    const providerContractId = row.optionContract?.providerContractId?.trim();
     const underlying = normalizeSymbol(row.optionContract?.underlying ?? "");
-    if (!providerContractId || !underlying) {
+    const providerContractIds = optionQuoteProviderContractIdsForPosition(row);
+    if (!providerContractIds.length || !underlying) {
       return map;
     }
     map.set(underlying, [
       ...(map.get(underlying) ?? []),
-      providerContractId,
+      ...providerContractIds,
     ]);
     return map;
   }, new Map<string, string[]>());
@@ -1643,9 +1691,8 @@ async function hydratePositionMarketsUncached(
 
   return new Map(
     positions.map((position) => {
-      const providerContractId = position.optionContract?.providerContractId?.trim() ?? "";
       const quote = position.optionContract
-        ? optionQuotesByProviderContractId?.get(providerContractId)
+        ? optionQuoteForPosition(position, optionQuotesByProviderContractId)
         : positionQuotes.get(normalizeSymbol(positionReferenceSymbol(position)));
       const openedAt = bestOpenedAtForPosition(
         position,
@@ -1920,9 +1967,8 @@ function quoteForPosition(
   equityQuoteSnapshots: Map<string, QuoteSnapshot>,
   optionQuoteSnapshots: Map<string, QuoteSnapshot>,
 ): PositionQuoteSnapshot | null {
-  const providerContractId = position.optionContract?.providerContractId?.trim() ?? "";
   const snapshot = position.optionContract
-    ? optionQuoteSnapshots.get(providerContractId)
+    ? optionQuoteForPosition(position, optionQuoteSnapshots)
     : equityQuoteSnapshots.get(normalizeSymbol(positionReferenceSymbol(position)));
   const enriched = buildPositionQuoteFromSnapshot(
     snapshot,
@@ -1934,6 +1980,23 @@ function quoteForPosition(
         : "bridge_quote",
   );
   return choosePositionQuote(position.quote, enriched);
+}
+
+function optionQuoteForPosition(
+  position: AccountPositionOptionQuoteDemandRow,
+  optionQuoteSnapshots: Map<string, QuoteSnapshot> | undefined,
+): QuoteSnapshot | null {
+  if (!optionQuoteSnapshots) {
+    return null;
+  }
+  const providerContractIds = optionQuoteProviderContractIdsForPosition(position);
+  for (const providerContractId of providerContractIds) {
+    const quote = optionQuoteSnapshots.get(providerContractId);
+    if (quote) {
+      return quote;
+    }
+  }
+  return null;
 }
 
 function earlierPositionOpen(
@@ -1984,6 +2047,7 @@ async function hydrateOptionUnderlyingPrices(
 
 async function getCachedOptionChainContracts(
   positions: OptionPositionSnapshot[],
+  options: { refreshChains?: boolean } = {},
 ): Promise<{ contracts: OptionChainContract[]; error: string | null }> {
   if (!positions.length) {
     return {
@@ -1995,12 +2059,20 @@ async function getCachedOptionChainContracts(
   const { underlying, expirationDate } = positions[0].optionContract;
   const cacheKey = optionChainGroupKey(positions[0].optionContract);
   const now = Date.now();
+  const refreshChains = options.refreshChains !== false;
   const cached = optionGreekChainCache.get(cacheKey);
 
-  if (cached && cached.expiresAt > now) {
+  if (cached && (cached.expiresAt > now || !refreshChains)) {
     return {
       contracts: cached.contracts,
       error: cached.error,
+    };
+  }
+
+  if (!refreshChains) {
+    return {
+      contracts: [],
+      error: `IBKR option-chain Greek refresh skipped for ${underlying} ${formatDateOnly(expirationDate)}; account positions use live option quote Greeks.`,
     };
   }
 
@@ -2062,6 +2134,7 @@ async function getCachedOptionChainContracts(
 
 async function enrichPositionGreeks(
   positions: BrokerPositionSnapshot[],
+  options: { refreshChains?: boolean } = {},
 ): Promise<OptionGreekEnrichmentResult> {
   const byPositionId = new Map<string, PositionGreekSnapshot>();
   const warnings = new Set<string>();
@@ -2109,7 +2182,9 @@ async function enrichPositionGreeks(
 
   await Promise.all(
     optionGroups.map(async ([key, group]) => {
-      const result = await getCachedOptionChainContracts(group);
+      const result = await getCachedOptionChainContracts(group, {
+        refreshChains: options.refreshChains,
+      });
       chainResults.set(key, result);
       if (result.error) {
         warnings.add(result.error);
@@ -3965,7 +4040,9 @@ async function getAccountPositionsUncached(input: {
     positionsPromise,
     listOrdersForUniverse(universe, mode),
     getPositionLots(universe.accountIds),
-    positionsPromise.then((result) => enrichPositionGreeks(result)),
+    positionsPromise.then((result) =>
+      enrichPositionGreeks(result, { refreshChains: false }),
+    ),
     positionsPromise.then((result) => fetchEquityQuoteSnapshotsForPositions(result)),
     positionsPromise.then((result) => fetchOptionQuoteSnapshotsForPositions(result)),
     positionsPromise.then((result) =>
@@ -4180,9 +4257,12 @@ async function getAccountPositionsUncached(input: {
         sourceAttribution: [],
         openedAt: row.openedAt,
         openedAtSource: row.openedAtSource,
+        optionQuote: row.optionContract
+          ? optionQuoteForPosition(row, optionQuoteSnapshots)
+          : null,
         quote: buildPositionQuoteFromSnapshot(
-          row.optionContract?.providerContractId
-            ? optionQuoteSnapshots.get(row.optionContract.providerContractId)
+          row.optionContract
+            ? optionQuoteForPosition(row, optionQuoteSnapshots)
             : equityQuoteSnapshots.get(normalizeSymbol(row.marketDataSymbol || row.symbol)),
           row.averageWeight > 0 ? row.markAccumulator / row.averageWeight : 0,
           row.optionContract
@@ -4246,6 +4326,9 @@ async function getAccountPositionsUncached(input: {
           sourceAttribution: [],
           openedAt: openedAt.openedAt,
           openedAtSource: openedAt.openedAtSource,
+          optionQuote: position.optionContract
+            ? optionQuoteForPosition(position, optionQuoteSnapshots)
+            : null,
           quote: quoteForPosition(
             position,
             mark,
@@ -5735,6 +5818,9 @@ export const __accountPositionInternalsForTests = {
   flexOpenPositionOpenedAt,
   isOpenBrokerPosition,
   normalizeMarketDataSymbol,
+  optionQuoteForPosition,
+  optionQuoteProviderContractIdsForPosition,
+  structuredOptionProviderContractIdForRow,
   selectFlexOpenPositionCandidate,
   selectBalanceBoundaryRows,
   withAccountPositionLotsReadFallback,

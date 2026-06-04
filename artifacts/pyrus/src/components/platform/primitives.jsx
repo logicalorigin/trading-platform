@@ -1,4 +1,5 @@
 import React, { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { AppTooltip } from "@/components/ui/tooltip";
 import { ELEVATION, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../lib/uiTokens.jsx";
 import { motionVars } from "../../lib/motion.jsx";
 import { useNumberTick } from "../../lib/numberTick.js";
@@ -966,9 +967,11 @@ const AppMetricTooltip = ({ content, children }) => {
     return children;
   }
   return (
-    <span title={content} style={{ display: "inline-flex", minWidth: 0 }}>
-      {children}
-    </span>
+    <AppTooltip content={content}>
+      <span style={{ display: "inline-flex", minWidth: 0 }}>
+        {children}
+      </span>
+    </AppTooltip>
   );
 };
 

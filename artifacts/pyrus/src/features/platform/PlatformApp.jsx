@@ -328,9 +328,6 @@ const SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS = 1_000;
 const SIGNAL_MATRIX_EXACT_CELL_LIMIT_RETRY_TTL_MS = 60_000;
 const SIGNAL_MATRIX_GLOBAL_REQUEST_COORDINATOR_KEY =
   "__PYRUS_SIGNAL_MATRIX_REQUEST_COORDINATOR__";
-const INITIAL_MARKET_DATA_WATCHLIST_LIMIT = 8;
-const OPEN_POSITION_MARKET_DATA_LIMIT = 16;
-const RECENT_SIGNAL_QUOTE_PIN_LIMIT = 4;
 const RECENT_SIGNAL_QUOTE_PIN_MS = 30 * 60_000;
 const SCREEN_SHELL_WARM_MOUNT_IDLE_DELAY_MS = 2_000;
 const SCREEN_SHELL_WARM_MOUNT_IDLE_STAGGER_MS = 700;
@@ -586,8 +583,7 @@ const resolveRecentSignalMarketDataSymbols = (
     })
     .map((state) => normalizeTickerSymbol(state?.symbol))
     .filter(Boolean)
-    .filter((symbol, index, symbols) => symbols.indexOf(symbol) === index)
-    .slice(0, RECENT_SIGNAL_QUOTE_PIN_LIMIT);
+    .filter((symbol, index, symbols) => symbols.indexOf(symbol) === index);
 };
 
 const resolveQuoteStreamGateReason = ({
@@ -1426,7 +1422,7 @@ export default function PlatformApp() {
     };
   }, []);
   const visibleWatchlistMarketDataSymbols = useMemo(
-    () => watchlistSymbols.slice(0, INITIAL_MARKET_DATA_WATCHLIST_LIMIT),
+    () => watchlistSymbols,
     [watchlistSymbols],
   );
   const broadMarketDataSymbols = useMemo(() => {
@@ -2554,7 +2550,6 @@ export default function PlatformApp() {
           openPositionMarketDataWeight(left),
       )
       .forEach((position) => {
-        if (symbols.length >= OPEN_POSITION_MARKET_DATA_LIMIT) return;
         const symbol = resolveOpenPositionMarketDataSymbol(position);
         if (!symbol || seen.has(symbol)) return;
         seen.add(symbol);
@@ -5064,6 +5059,9 @@ export default function PlatformApp() {
             signalMonitorStates={signalMonitorStates}
             signalMonitorProfile={signalMonitorProfile}
             signalMonitorEvents={signalMonitorEvents}
+            signalMonitorEventsLoaded={Boolean(
+              signalMonitorEventsQuery.data || signalMonitorEventsQuery.isFetched,
+            )}
             signalMatrixStates={signalMatrixSnapshot.states}
             headerSignalMatrixStates={headerBroadcastSignalMatrixStates}
             selectedSymbol={sym}

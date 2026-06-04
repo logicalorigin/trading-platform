@@ -1,4 +1,4 @@
-const DEFAULT_BATCH_SIZE = 40;
+const DEFAULT_BATCH_SIZE = null;
 const DEFAULT_CYCLE_WINDOW_MS = 60_000;
 
 const normalizeSymbol = (symbol) =>
@@ -27,14 +27,16 @@ export function buildWatchlistQuoteRotationBatch({
   cursor = 0,
   batchSize = DEFAULT_BATCH_SIZE,
 } = {}) {
-  const cap = Math.max(1, Math.floor(Number(batchSize) || DEFAULT_BATCH_SIZE));
+  const requestedCap = Number(batchSize);
+  const capped = Number.isFinite(requestedCap) && requestedCap > 0;
+  const cap = capped ? Math.max(1, Math.floor(requestedCap)) : null;
   const universe = uniqueNormalizedSymbols(rotationSymbols);
   const orderedPins = uniqueNormalizedSymbols(pinnedSymbols);
-  const batch = orderedPins.slice(0, cap);
+  const batch = capped ? orderedPins.slice(0, cap) : orderedPins.slice();
   const batchSet = new Set(batch);
-  const pinOverflowSymbols = orderedPins.slice(cap);
+  const pinOverflowSymbols = capped ? orderedPins.slice(cap) : [];
   const rotatingUniverse = universe.filter((symbol) => !batchSet.has(symbol));
-  const rotatingSlots = Math.max(0, cap - batch.length);
+  const rotatingSlots = capped ? Math.max(0, cap - batch.length) : rotatingUniverse.length;
   const start = rotatingUniverse.length
     ? Math.max(0, Math.floor(Number(cursor) || 0)) % rotatingUniverse.length
     : 0;
@@ -62,6 +64,7 @@ export function buildWatchlistQuoteRotationBatch({
     rotatingUniverseSize: rotatingUniverse.length,
     batchSize: batch.length,
     batchCap: cap,
+    capped,
     nextCursor: rotatingUniverse.length
       ? (start + rotatingSymbols.length) % rotatingUniverse.length
       : 0,
@@ -89,7 +92,8 @@ export function buildWatchlistQuoteRotationDiagnostics({
     disabledReason,
     currentBatch: batch.symbols || [],
     batchSize: batch.batchSize ?? 0,
-    batchCap: batch.batchCap ?? DEFAULT_BATCH_SIZE,
+    batchCap: batch.batchCap ?? null,
+    capped: batch.capped === true,
     pinnedSymbols: batch.pinnedSymbols || [],
     pinOverflowSymbols: batch.pinOverflowSymbols || [],
     rotatingSymbols: batch.rotatingSymbols || [],

@@ -5,6 +5,7 @@ import {
   useState,
 } from "react";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
+import { AppTooltip } from "@/components/ui/tooltip";
 import {
   CSS_COLOR,
   cssColorAlpha,
@@ -246,20 +247,21 @@ const AuditDetailPanel = ({ row }) => {
           >
             {label}
           </div>
-          <div
-            style={{
-              color: CSS_COLOR.textSec,
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-              lineHeight: 1.35,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-            title={String(value)}
-          >
-            {String(value)}
-          </div>
+          <AppTooltip content={String(value)}>
+            <div
+              style={{
+                color: CSS_COLOR.textSec,
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                lineHeight: 1.35,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {String(value)}
+            </div>
+          </AppTooltip>
         </div>
       ))}
     </div>
@@ -368,27 +370,28 @@ export const AlgoAuditPanel = ({
           </div>
         </div>
         {focus.focusedSymbol ? (
-          <button
-            type="button"
-            onClick={clearAlgoFocus}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: sp(3),
-              background: `${cssColorMix(CSS_COLOR.accent, 7)}`,
-              border: `1px solid ${cssColorMix(CSS_COLOR.accent, 33)}`,
-              borderRadius: dim(RADII.xs),
-              color: CSS_COLOR.accent,
-              cursor: "pointer",
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-              padding: sp("3px 5px"),
-            }}
-            title="Clear focused symbol"
-          >
-            {focus.focusedSymbol}
-            <X size={12} aria-hidden="true" />
-          </button>
+          <AppTooltip content="Clear focused symbol">
+            <button
+              type="button"
+              onClick={clearAlgoFocus}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: sp(3),
+                background: `${cssColorMix(CSS_COLOR.accent, 7)}`,
+                border: `1px solid ${cssColorMix(CSS_COLOR.accent, 33)}`,
+                borderRadius: dim(RADII.xs),
+                color: CSS_COLOR.accent,
+                cursor: "pointer",
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                padding: sp("3px 5px"),
+              }}
+            >
+              {focus.focusedSymbol}
+              <X size={12} aria-hidden="true" />
+            </button>
+          </AppTooltip>
         ) : (
           <span
             style={{ fontSize: textSize("body"), color: CSS_COLOR.textDim, fontFamily: T.sans }}
@@ -703,41 +706,47 @@ export const AlgoAuditPanel = ({
                     }}
                   >
                     {isExpanded ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />}
-                    <span
+                    <AppTooltip content={`${formatEnumLabel(event.eventType)} · ${event.summary}`}>
+                      <span
+                        style={{
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.medium }}>
+                          {formatEnumLabel(event.eventType)}
+                        </span>
+                        <span style={{ color: CSS_COLOR.textDim }}> · </span>
+                        {event.detailText || event.summary}
+                      </span>
+                    </AppTooltip>
+                  </button>
+                  <AppTooltip content={event.summary}>
+                    <div
                       style={{
-                        minWidth: 0,
+                        color: CSS_COLOR.textDim,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
                       }}
-                      title={`${formatEnumLabel(event.eventType)} · ${event.summary}`}
                     >
-                      <span style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.medium }}>
-                        {formatEnumLabel(event.eventType)}
-                      </span>
-                      <span style={{ color: CSS_COLOR.textDim }}> · </span>
-                      {event.detailText || event.summary}
-                    </span>
-                  </button>
-                  <div
-                    style={{
-                      color: CSS_COLOR.textDim,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                    title={event.summary}
-                  >
-                    {event.summary}
-                  </div>
+                      {event.summary}
+                    </div>
+                  </AppTooltip>
                 </Cell>
                 <Cell>
-                  <div title={event.contract.label || undefined}>
-                    {event.contract.label || MISSING_VALUE}
-                  </div>
-                  <div style={{ color: CSS_COLOR.textDim }} title={event.contract.providerContractId || event.contract.ticker}>
-                    {shortId(event.contract.providerContractId || event.contract.ticker)}
-                  </div>
+                  <AppTooltip content={event.contract.label || undefined}>
+                    <div>
+                      {event.contract.label || MISSING_VALUE}
+                    </div>
+                  </AppTooltip>
+                  <AppTooltip content={event.contract.providerContractId || event.contract.ticker}>
+                    <div style={{ color: CSS_COLOR.textDim }}>
+                      {shortId(event.contract.providerContractId || event.contract.ticker)}
+                    </div>
+                  </AppTooltip>
                 </Cell>
                 <Cell align="right">
                   <div>{formatBidAsk(event)}</div>
@@ -752,21 +761,24 @@ export const AlgoAuditPanel = ({
                   </div>
                 </Cell>
                 <Cell align="right">
-                  <div title={event.account || "system"}>
-                    {renderMeta(event.account, "system")}
-                  </div>
-                  <div
-                    style={{ color: CSS_COLOR.textDim }}
-                    title={normalizeLegacyAlgoBrandText(
+                  <AppTooltip content={event.account || "system"}>
+                    <div>
+                      {renderMeta(event.account, "system")}
+                    </div>
+                  </AppTooltip>
+                  <AppTooltip
+                    content={normalizeLegacyAlgoBrandText(
                       event.source || event.metadata.deploymentName,
                     )}
                   >
-                    {renderMeta(
-                      normalizeLegacyAlgoBrandText(
-                        event.source || event.metadata.deploymentName,
-                      ),
-                    )}
-                  </div>
+                    <div style={{ color: CSS_COLOR.textDim }}>
+                      {renderMeta(
+                        normalizeLegacyAlgoBrandText(
+                          event.source || event.metadata.deploymentName,
+                        ),
+                      )}
+                    </div>
+                  </AppTooltip>
                 </Cell>
               </div>
               {isExpanded ? <AuditDetailPanel row={event} /> : null}

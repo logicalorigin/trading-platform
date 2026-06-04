@@ -620,24 +620,25 @@ const ALGO_CONTEXT_ICONS = {
 const HeaderAlgoContextIcon = ({ context, compact = false }) => {
   if (context.kind === "quantity" || context.kind === "dte") {
     return (
-      <span
-        aria-label={context.label}
-        title={context.label}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          flexShrink: 0,
-          color: context.kind === "dte" ? CSS_COLOR.textMuted : CSS_COLOR.textSec,
-          fontFamily: T.sans,
-          fontSize: textSize("caption"),
-          fontWeight: FONT_WEIGHTS.medium,
-          fontVariantNumeric: "tabular-nums",
-          lineHeight: 1,
-          whiteSpace: "nowrap",
-        }}
-      >
-        {context.valueLabel || ""}
-      </span>
+      <AppTooltip content={context.label}>
+        <span
+          aria-label={context.label}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            flexShrink: 0,
+            color: context.kind === "dte" ? CSS_COLOR.textMuted : CSS_COLOR.textSec,
+            fontFamily: T.sans,
+            fontSize: textSize("caption"),
+            fontWeight: FONT_WEIGHTS.medium,
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 1,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {context.valueLabel || ""}
+        </span>
+      </AppTooltip>
     );
   }
 
@@ -651,45 +652,46 @@ const HeaderAlgoContextIcon = ({ context, compact = false }) => {
     : context.label;
 
   return (
-    <span
-      aria-label={label}
-      title={label}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        minWidth: 0,
-        maxWidth: dim(contextMaxWidth),
-        flexShrink: isContract || hasValue ? 1 : 0,
-        gap: hasValue ? sp(2) : 0,
-        color: tone,
-        fontFamily: T.sans,
-        fontSize: textSize("caption"),
-        fontWeight: FONT_WEIGHTS.medium,
-        fontVariantNumeric: "tabular-nums",
-        lineHeight: 1,
-        whiteSpace: "nowrap",
-        overflow: "hidden",
-      }}
-    >
-      <Icon
-        size={isContract ? (compact ? 12 : 13) : compact ? 11 : 12}
-        strokeWidth={2.2}
-        aria-hidden="true"
-      />
-      {hasValue ? (
-        <span
-          style={{
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            minWidth: 0,
-            maxWidth: dim(contextMaxWidth - (isContract ? 16 : 14)),
-            whiteSpace: "nowrap",
-          }}
-        >
-          {context.valueLabel}
-        </span>
-      ) : null}
-    </span>
+    <AppTooltip content={label}>
+      <span
+        aria-label={label}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          minWidth: 0,
+          maxWidth: dim(contextMaxWidth),
+          flexShrink: isContract || hasValue ? 1 : 0,
+          gap: hasValue ? sp(2) : 0,
+          color: tone,
+          fontFamily: T.sans,
+          fontSize: textSize("caption"),
+          fontWeight: FONT_WEIGHTS.medium,
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1,
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+        }}
+      >
+        <Icon
+          size={isContract ? (compact ? 12 : 13) : compact ? 11 : 12}
+          strokeWidth={2.2}
+          aria-hidden="true"
+        />
+        {hasValue ? (
+          <span
+            style={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              minWidth: 0,
+              maxWidth: dim(contextMaxWidth - (isContract ? 16 : 14)),
+              whiteSpace: "nowrap",
+            }}
+          >
+            {context.valueLabel}
+          </span>
+        ) : null}
+      </span>
+    </AppTooltip>
   );
 };
 
@@ -1456,7 +1458,6 @@ const HeaderBroadcastLane = ({
           <span
             role="status"
             aria-label={emptyLabel}
-            title={emptyLabel}
             style={{
               display: "inline-flex",
               alignItems: "center",

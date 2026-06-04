@@ -37,7 +37,6 @@ export const ConfluenceChip = ({
     <AppTooltip content={label}>
       <span
         data-testid="algo-confluence-chip"
-        title={label}
         aria-label={label}
         style={{
           display: "inline-flex",

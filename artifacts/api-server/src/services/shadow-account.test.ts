@@ -303,6 +303,52 @@ test("shadow read cache serves marked stale data when refresh exceeds budget", a
   internals.invalidateShadowFreshStateCache();
 });
 
+test("shadow read cache can serve stale positions immediately", async () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: 0,
+    staleTtlMs: 60_000,
+    staleWaitMs: 50,
+  });
+
+  await internals.withShadowReadCache(
+    "unit-immediate-stale-cache",
+    async () => ({
+      positions: [{ symbol: "F" }],
+      degraded: false,
+      reason: null,
+      debug: null,
+    }),
+  );
+  const started = Date.now();
+  const stale = await internals.withShadowReadCache(
+    "unit-immediate-stale-cache",
+    async () =>
+      new Promise<Record<string, unknown>>(() => {
+        // Intentionally unresolved; positions should serve stale immediately.
+      }),
+    {
+      allowStale: (value) =>
+        Array.isArray((value as { positions?: unknown })?.positions) &&
+        ((value as { positions?: unknown[] }).positions?.length ?? 0) > 0,
+      staleStrategy: "immediate",
+    },
+  );
+
+  assert.ok(Date.now() - started < 50);
+  assert.equal(stale.degraded, true);
+  assert.equal(stale.reason, "shadow_read_stale_cache");
+  assert.deepEqual(stale.positions, [{ symbol: "F" }]);
+
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: null,
+    staleTtlMs: null,
+    staleWaitMs: null,
+  });
+  internals.invalidateShadowFreshStateCache();
+});
+
 test("shadow read cache can refuse stale empty position responses", async () => {
   const internals = __shadowWatchlistBacktestInternalsForTests;
   const allowStaleWithRows = (value: unknown) => {
@@ -1418,12 +1464,13 @@ test("shadow account automation reads kick signal-options mirror repair without 
   assert.match(source, /readShadowFillsForOrderIds\(orderIds\)/);
   assert.match(source, /readOpenShadowPositionsForKeys\(sourcePositionKeys\)/);
   assert.match(source, /readOpenShadowPositionsForKeys\(selectedPositionKeys\)/);
-  assert.match(
-    positionsBody,
-    /const totals = source \? await computeShadowTotalsForSource\(source\) : await ensureFreshShadowState\(true\);/,
-  );
+  assert.match(positionsBody, /void kickShadowPositionMarkRefresh\(\);/);
+  assert.match(positionsBody, /const ledgerBundle = await readShadowLedgerBundleForSource\(source\);/);
+  assert.match(positionsBody, /const totals = ledgerBundle\.totals;/);
+  assert.match(positionsBody, /const positions = ledgerBundle\.positions;/);
+  assert.doesNotMatch(positionsBody, /ensureFreshShadowState\(true\)/);
   assert.match(positionsBody, /clearShadowAccountDbBackoff\(\);/);
-  assert.match(positionsBody, /\{ allowStale: shadowReadCacheValueHasRows \}/);
+  assert.match(positionsBody, /staleStrategy: "immediate"/);
   assert.doesNotMatch(
     positionsBody,
     /source \? \{ allowStale: shadowReadCacheValueHasRows \} : undefined/,
@@ -1926,7 +1973,7 @@ test("shadow equity history historical terminal prefers market time over refresh
 test("shadow equity history keeps historical backfill positions on historical time", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const totalsBody = source.match(
-    /async function computeShadowTotalsForSource\([\s\S]*?\nasync function computeShadowTotals\(\)/,
+    /async function readShadowLedgerBundleForSource\([\s\S]*?\nasync function computeShadowTotalsForSource/,
   )?.[0];
 
   assert.ok(totalsBody);
@@ -3509,26 +3556,24 @@ test("shadow positions include hydrated option quote payloads", () => {
 
   assert.ok(positionsBody);
   assert.match(positionsBody, /optionQuoteByProviderContractId/);
-  assert.match(positionsBody, /fetchShadowOptionDayChangeQuotes\(filtered,\s*\{/);
+  assert.match(positionsBody, /declareShadowPositionOptionQuoteDemands\(filtered,\s*\{/);
   assert.match(positionsBody, /intent: "visible-live"/);
   assert.match(positionsBody, /const positionQuoteOwnerPrefix = `shadow-position:\$\{shadowSourceCacheKey\(source\)\}`/);
   assert.match(positionsBody, /ownerPrefix: `\$\{positionQuoteOwnerPrefix\}:option-visible`/);
   assert.doesNotMatch(positionsBody, /shadow-position-visible/);
-  assert.match(positionsBody, /SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS/);
-  assert.match(positionsBody, /SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS/);
-  assert.match(positionsBody, /waitForShadowOptionDayChangeQuotes/);
-  assert.match(source, /const SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS = 750;/);
-  assert.match(source, /const SHADOW_UNDERLYING_QUOTE_MAX_WAIT_MS = 750;/);
-  assert.match(source, /const SHADOW_EQUITY_POSITION_QUOTE_MAX_WAIT_MS = 750;/);
-  assert.match(
-    positionsBody,
-    /const equityQuoteBySymbolPromise = includeLiveQuotes[\s\S]*fetchShadowEquityPositionQuotes\(filtered,\s*\{[\s\S]*owner: `\$\{positionQuoteOwnerPrefix\}:equity`,[\s\S]*Promise\.resolve/,
-  );
+  assert.doesNotMatch(positionsBody, /waitForShadowOptionDayChangeQuotes/);
+  assert.doesNotMatch(positionsBody, /fetchShadowOptionDayChangeQuotes\(filtered/);
+  assert.doesNotMatch(positionsBody, /fetchShadowEquityPositionQuotes\(filtered/);
+  assert.doesNotMatch(positionsBody, /fetchShadowOptionUnderlyingMarkets\(filtered/);
+  assert.doesNotMatch(positionsBody, /SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS/);
+  assert.doesNotMatch(positionsBody, /SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS/);
+  assert.doesNotMatch(positionsBody, /await Promise\.all\(\[/);
+  assert.match(positionsBody, /const equityQuoteBySymbol = new Map/);
+  assert.match(positionsBody, /const optionQuoteByProviderContractId = new Map\(cachedOptionQuotes\)/);
   assert.match(positionsBody, /\{ fetchMissingOptionQuotes: false \}/);
-  assert.match(positionsBody, /Promise\.all/);
-  assert.match(positionsBody, /fetchShadowOptionUnderlyingMarkets\(filtered\)/);
-  assert.match(source, /getBoundedShadowUnderlyingQuoteSnapshots/);
-  assert.match(source, /SHADOW_UNDERLYING_QUOTE_MAX_WAIT_MS/);
+  assert.match(positionsBody, /readShadowLedgerBundleForSource\(source\)/);
+  assert.match(positionsBody, /void kickShadowPositionMarkRefresh\(\)/);
+  assert.match(positionsBody, /staleStrategy: "immediate"/);
   assert.match(positionsBody, /ordersByPositionKey/);
   assert.match(positionsBody, /shadowOptionQuoteProviderContractId/);
   assert.match(positionsBody, /fallbackProviderContractId/);
@@ -3726,7 +3771,10 @@ test("shadow quote hydration routes spot display quotes to Massive and option ma
   assert.match(equityPositionQuoteBody, /Promise\.race/);
   assert.match(equityPositionQuoteBody, /SHADOW_EQUITY_POSITION_QUOTE_MAX_WAIT_MS/);
   assert.match(positionsBody, /shadowQuoteText\(rawEquityQuote,\s*"source"\) === "massive"/);
-  assert.match(positionsBody, /optionQuoteSnapshot \? "option_quote" : equityQuote \? "massive"/);
+  assert.match(
+    positionsBody,
+    /optionQuoteSnapshot\s*\?\s*"option_quote"\s*:\s*equityQuote\s*\?\s*"massive"/,
+  );
   assert.match(positionsBody, /sameDayPosition && hasFiniteValuationMark/);
   assert.match(boundedUnderlyingBody, /allowMassiveFallback: false/);
   assert.match(boundedUnderlyingBody, /admissionOwner: `shadow-underlying-mark:\$\{symbols\}`/);

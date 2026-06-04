@@ -1483,7 +1483,7 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   let upstreamErrorMessage: string | null = null;
   const snapshotTimeoutMs = liveOptionQuoteSnapshotTimeoutMs();
   const upstreamTimeout =
-    isSignalOptionsLiveQuoteIntent && hydrateProviderContractIds.length > 0
+    isLiveQuoteSnapshotIntent && hydrateProviderContractIds.length > 0
       ? timeoutSignal({
           signal: input.signal,
           timeoutMs: snapshotTimeoutMs,

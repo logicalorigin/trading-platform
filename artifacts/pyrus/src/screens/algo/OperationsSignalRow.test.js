@@ -562,7 +562,7 @@ test("signal row renders an accessible Trade button in the Signal cell for selec
 
   assert.match(html, /data-testid="algo-signal-open-trade"/);
   assert.match(html, /aria-label="Open AAPL contract in Trade"/);
-  assert.match(html, /title="Open AAPL contract in Trade"/);
+  assert.doesNotMatch(html, /title="Open AAPL contract in Trade"/);
 });
 
 test("signal row labels STA option columns when blocked before contract selection", () => {
@@ -883,7 +883,7 @@ test("signal row renders advisory signal matrix verdict column", () => {
   assert.match(html, /Ready/);
   assert.match(html, /Bull Trend/);
   assert.match(html, /100%/);
-  assert.match(html, /Ready Buy trend/);
+  assert.doesNotMatch(html, /title=/);
 });
 
 test("signal row uses primary signal state when the matrix is missing the profile timeframe", () => {
@@ -937,7 +937,7 @@ test("signal row uses primary signal state when the matrix is missing the profil
 
   assert.match(html, /Ready/);
   assert.match(html, /100%/);
-  assert.match(html, /Ready Buy trend/);
+  assert.doesNotMatch(html, /title=/);
   assert.match(html, /data-timeframe="5m"/);
   assert.match(html, /5m BUY fresh/);
 });
@@ -1396,7 +1396,8 @@ test("algo signal table builds matrix and runtime ticker snapshots once per tabl
   assert.match(rowSource, /const signalChartTitle = \(signalRecord\) => \{/);
   assert.match(rowSource, /Signal \$\{formatAppTime\(signalTimestamp\)\}/);
   assert.match(rowSource, /\$\{formatRelativeTimeShort\(signalTimestamp\)\} since/);
-  assert.match(rowSource, /data-testid="algo-signal-hero-sparkline"[\s\S]*role="img"[\s\S]*title=\{signalChartTitle\(signalRecord\) \|\| undefined\}/);
+  assert.match(rowSource, /<AppTooltip content=\{signalChartTitle\(signalRecord\) \|\| undefined\}>[\s\S]*data-testid="algo-signal-hero-sparkline"[\s\S]*role="img"[\s\S]*aria-label=\{signalChartTitle\(signalRecord\) \|\| undefined\}/);
+  assert.doesNotMatch(rowSource, /data-testid="algo-signal-hero-sparkline"[\s\S]*title=\{signalChartTitle\(signalRecord\) \|\| undefined\}/);
   assert.match(
     tableSource,
     /data-testid="algo-signal-table-scroll"[\s\S]*?overflowX: "auto"/,
