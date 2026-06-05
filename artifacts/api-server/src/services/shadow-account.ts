@@ -5713,6 +5713,9 @@ async function readShadowPositionDayChanges(
     | null = null,
   options: {
     fetchMissingOptionQuotes?: boolean;
+    fetchOptionQuoteOptions?: Parameters<
+      typeof fetchShadowOptionDayChangeQuotes
+    >[1];
   } = {},
 ): Promise<Map<string, ShadowPositionDayChange>> {
   const changes = new Map<string, ShadowPositionDayChange>();
@@ -5767,9 +5770,10 @@ async function readShadowPositionDayChanges(
       missingQuotePositions.length > 0
     ) {
       const fetched = await waitForShadowOptionDayChangeQuotes(
-        fetchShadowOptionDayChangeQuotes(missingQuotePositions).catch(
-          () => new Map(),
-        ),
+        fetchShadowOptionDayChangeQuotes(
+          missingQuotePositions,
+          options.fetchOptionQuoteOptions,
+        ).catch(() => new Map()),
       );
       optionQuoteByProviderContractId = new Map([
         ...(optionQuoteByProviderContractId ?? new Map()),
@@ -7346,6 +7350,64 @@ function readReusableShadowPositionsResponseForAssetClass(input: {
   );
 }
 
+function readReusableLiveQuotedShadowPositionsResponse(input: {
+  assetClassFilter: "options" | "stocks" | "all" | null;
+  source: ShadowSourceScope | null;
+  includeLiveQuotes: boolean;
+}): ShadowAccountPositionsResponseShape | null {
+  if (input.includeLiveQuotes) {
+    return null;
+  }
+
+  const now = Date.now();
+  const cached = shadowReadCache.get(
+    shadowPositionsReadCacheKey({
+      assetClassFilter: input.assetClassFilter ?? "all",
+      source: input.source,
+      includeLiveQuotes: true,
+    }),
+  );
+  if (!cached || cached.staleExpiresAt <= now) {
+    return null;
+  }
+  const cacheIsFresh = cached.expiresAt > now;
+  if (!cacheIsFresh) {
+    const pressureLevel = getApiResourcePressureSnapshot().level;
+    if (pressureLevel !== "high" && pressureLevel !== "critical") {
+      return null;
+    }
+  }
+  if (!isShadowAccountPositionsResponseShape(cached.value)) {
+    return null;
+  }
+
+  const baseResponse = cacheIsFresh
+    ? cached.value
+    : markShadowReadValueStale(cached.value, {
+        cachedAt: cached.cachedAt,
+        now,
+      });
+  recordShadowReadDiagnostic({
+    key: shadowPositionsReadCacheKey({
+      assetClassFilter: input.assetClassFilter ?? "all",
+      source: input.source,
+      includeLiveQuotes: false,
+    }),
+    status: "cache_hit",
+    startedAt: now,
+    servedStale: !cacheIsFresh,
+    cacheAgeMs: now - cached.cachedAt,
+  });
+
+  if (input.assetClassFilter && input.assetClassFilter !== "all") {
+    return filterShadowAccountPositionsResponseForAssetClass(
+      baseResponse,
+      input.assetClassFilter,
+    );
+  }
+  return baseResponse;
+}
+
 export async function getShadowAccountPositions(input: {
   assetClass?: string | null;
   source?: string | null;
@@ -7354,6 +7416,14 @@ export async function getShadowAccountPositions(input: {
   const source = normalizeShadowSourceScope(input.source);
   const assetClassFilter = normalizePositionAssetClass(input.assetClass);
   const includeLiveQuotes = input.liveQuotes !== false;
+  const reusableLiveQuoted = readReusableLiveQuotedShadowPositionsResponse({
+    assetClassFilter,
+    source,
+    includeLiveQuotes,
+  });
+  if (reusableLiveQuoted) {
+    return reusableLiveQuoted;
+  }
   const reusableFiltered = readReusableShadowPositionsResponseForAssetClass({
     assetClassFilter,
     source,
@@ -7428,8 +7498,23 @@ export async function getShadowAccountPositions(input: {
           filtered,
           observedAt,
           optionQuoteByProviderContractId,
-          { fetchMissingOptionQuotes: false },
+          {
+            fetchMissingOptionQuotes: includeLiveQuotes,
+            fetchOptionQuoteOptions: includeLiveQuotes
+              ? {
+                  intent: "visible-live",
+                  ownerPrefix: `${positionQuoteOwnerPrefix}:option-visible`,
+                }
+              : undefined,
+          },
         );
+        if (includeLiveQuotes) {
+          readCachedShadowOptionQuotes(filtered).forEach(
+            (quote, providerContractId) => {
+              optionQuoteByProviderContractId.set(providerContractId, quote);
+            },
+          );
+        }
         const peakMarkByPositionId =
           await readShadowPositionPeakMarkPrices(filtered);
         const rows = filtered.map((position) => {
@@ -8297,6 +8382,24 @@ export async function getShadowAccountClosedTrades(input: {
       ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
     },
   );
+}
+
+function buildDeferredShadowClosedTradesForFastRisk() {
+  return {
+    accountId: SHADOW_ACCOUNT_ID,
+    currency: SHADOW_CURRENCY,
+    degraded: false,
+    reason: null,
+    trades: [],
+    summary: {
+      count: 0,
+      winners: 0,
+      losers: 0,
+      realizedPnl: 0,
+      commissions: 0,
+    },
+    updatedAt: new Date(),
+  };
 }
 
 function fillRowToClosedTrade(fill: ShadowFillRow, order?: ShadowOrderRow) {
@@ -9336,7 +9439,10 @@ async function buildShadowAccountRisk(input: {
           ? await computeShadowTotalsForSource(source)
           : await ensureFreshShadowState(true));
     const closedTrades =
-      input.closedTrades ?? (await getShadowAccountClosedTrades({ source }));
+      input.closedTrades ??
+      (fastDetail
+        ? buildDeferredShadowClosedTradesForFastRisk()
+        : await getShadowAccountClosedTrades({ source }));
     const degraded = Boolean(
       isShadowAccountDbBackoffActive() ||
         positionsResponse.degraded ||

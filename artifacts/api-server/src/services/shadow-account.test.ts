@@ -3993,7 +3993,7 @@ test("shadow default day-change quotes are requested only for rows needing fallb
   assert.match(dayChangeBody, /shadowPositionNeedsDayChangeQuote/);
   assert.match(
     dayChangeBody,
-    /fetchShadowOptionDayChangeQuotes\(missingQuotePositions\)/,
+    /fetchShadowOptionDayChangeQuotes\(\s*missingQuotePositions,\s*options\.fetchOptionQuoteOptions,\s*\)/,
   );
   assert.ok(fetchQuotesBody);
   assert.match(fetchQuotesBody, /shadowOptionQuoteIdentifier\(contract\)/);
@@ -4025,8 +4025,8 @@ test("shadow positions include hydrated option quote payloads", () => {
   assert.match(positionsBody, /const positionQuoteOwnerPrefix = `shadow-position:\$\{shadowSourceCacheKey\(source\)\}`/);
   assert.match(positionsBody, /ownerPrefix: `\$\{positionQuoteOwnerPrefix\}:option-visible`/);
   assert.doesNotMatch(positionsBody, /shadow-position-visible/);
-  assert.doesNotMatch(positionsBody, /waitForShadowOptionDayChangeQuotes/);
-  assert.doesNotMatch(positionsBody, /fetchShadowOptionDayChangeQuotes\(filtered/);
+  assert.match(positionsBody, /fetchMissingOptionQuotes: includeLiveQuotes/);
+  assert.match(positionsBody, /fetchOptionQuoteOptions: includeLiveQuotes/);
   assert.match(positionsBody, /fetchShadowEquityPositionQuotes\(filtered,\s*\{/);
   assert.match(positionsBody, /owner: `\$\{positionQuoteOwnerPrefix\}:equity-visible`/);
   assert.match(positionsBody, /fetchShadowOptionUnderlyingMarkets\(filtered\)/);
@@ -4036,7 +4036,7 @@ test("shadow positions include hydrated option quote payloads", () => {
   assert.match(positionsBody, /await Promise\.all\(\[/);
   assert.match(positionsBody, /new Map<string, Partial<QuoteSnapshot> \| Record<string, unknown>>\(\)/);
   assert.match(positionsBody, /const optionQuoteByProviderContractId = new Map\(cachedOptionQuotes\)/);
-  assert.match(positionsBody, /\{ fetchMissingOptionQuotes: false \}/);
+  assert.match(positionsBody, /readCachedShadowOptionQuotes\(filtered\)\.forEach/);
   assert.match(positionsBody, /readShadowLedgerBundleForSource\(source\)/);
   assert.match(positionsBody, /void kickShadowPositionMarkRefresh\(\)/);
   assert.match(positionsBody, /staleStrategy: "never"/);
@@ -4055,6 +4055,29 @@ test("shadow positions include hydrated option quote payloads", () => {
   assert.match(positionsBody, /shadowUnderlyingMarketPayload/);
   assert.match(positionsBody, /optionPayload\(\s*asOptionContract\(position\.optionContract\),\s*responseProviderContractId,/);
   assert.doesNotMatch(positionsBody, /massive_option_quote/);
+});
+
+test("shadow cached-quote positions can reuse live-quote position responses", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const reuseBody = source.match(
+    /function readReusableLiveQuotedShadowPositionsResponse\([\s\S]*?\nexport async function getShadowAccountPositions/,
+  )?.[0];
+  const positionsBody = source.match(
+    /export async function getShadowAccountPositions\([\s\S]*?\nexport async function getShadowAccountPositionsAtDate/,
+  )?.[0];
+
+  assert.ok(reuseBody);
+  assert.match(reuseBody, /if \(input\.includeLiveQuotes\) \{/);
+  assert.match(reuseBody, /includeLiveQuotes: true/);
+  assert.match(reuseBody, /includeLiveQuotes: false/);
+  assert.match(reuseBody, /status: "cache_hit"/);
+  assert.match(reuseBody, /filterShadowAccountPositionsResponseForAssetClass/);
+  assert.ok(positionsBody);
+  assert.match(positionsBody, /const reusableLiveQuoted = readReusableLiveQuotedShadowPositionsResponse/);
+  assert.ok(
+    positionsBody.indexOf("readReusableLiveQuotedShadowPositionsResponse") <
+      positionsBody.indexOf("readReusableShadowPositionsResponseForAssetClass"),
+  );
 });
 
 test("shadow automation event quotes preserve bid ask without repricing marks", () => {
@@ -4112,6 +4135,11 @@ test("shadow fast risk skips live greek hydration for account-page critical read
   assert.match(riskBody, /resolveAccountPortfolioRisk/);
   assert.match(riskBody, /const greekScenarios = fastDetail/);
   assert.match(riskBody, /buildDeferredShadowGreekScenarios/);
+  assert.match(riskBody, /buildDeferredShadowClosedTradesForFastRisk/);
+  assert.match(
+    riskBody,
+    /fastDetail[\s\S]*\? buildDeferredShadowClosedTradesForFastRisk\(\)[\s\S]*: await getShadowAccountClosedTrades\(\{ source \}\)/,
+  );
 });
 
 test("shadow risk reuses injected position totals for account-page critical reads", () => {

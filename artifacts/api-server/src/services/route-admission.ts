@@ -90,6 +90,7 @@ const normalizeFetchPriority = (value: unknown): number | null => {
 };
 
 const activeRequestFamilies = new Set([
+  "account-trade-forensics",
   "chart-visible",
   "flow-visible",
   "flow-scanner-visible",

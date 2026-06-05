@@ -2201,6 +2201,89 @@ const pickOptionQuoteValue = (
   secondary?.[field as keyof AccountOptionQuotePatch] ??
   null;
 
+const preserveHydratedOptionDayChangeFields = (
+  current: AccountPositionRow,
+  next: AccountPositionRow,
+  candidate: AccountPositionRow,
+): AccountPositionRow => {
+  const currentDayChange = finiteOptionNumber(current.dayChange);
+  const currentDayChangePercent = finiteOptionNumber(current.dayChangePercent);
+  if (currentDayChange === null && currentDayChangePercent === null) {
+    return candidate;
+  }
+
+  const nextDayChange = finiteOptionNumber(next.dayChange);
+  const nextDayChangePercent = finiteOptionNumber(next.dayChangePercent);
+  const candidateDayChange = finiteOptionNumber(candidate.dayChange);
+  const candidateDayChangePercent = finiteOptionNumber(candidate.dayChangePercent);
+  const shouldPreserveDayChange =
+    candidateDayChange === null &&
+    nextDayChange === null &&
+    currentDayChange !== null;
+  const shouldPreserveDayChangePercent =
+    candidateDayChangePercent === null &&
+    nextDayChangePercent === null &&
+    currentDayChangePercent !== null;
+
+  const currentOptionQuote =
+    (current as AccountPositionRowWithOptionQuote).optionQuote ?? null;
+  const candidateOptionQuote =
+    (candidate as AccountPositionRowWithOptionQuote).optionQuote ?? null;
+  const currentOptionDayChange = finiteOptionNumber(currentOptionQuote?.dayChange);
+  const currentOptionDayChangePercent = finiteOptionNumber(
+    currentOptionQuote?.dayChangePercent,
+  );
+  const candidateOptionDayChange = finiteOptionNumber(
+    candidateOptionQuote?.dayChange,
+  );
+  const candidateOptionDayChangePercent = finiteOptionNumber(
+    candidateOptionQuote?.dayChangePercent,
+  );
+  const shouldPreserveOptionDayChange =
+    candidateOptionDayChange === null && currentOptionDayChange !== null;
+  const shouldPreserveOptionDayChangePercent =
+    candidateOptionDayChangePercent === null &&
+    currentOptionDayChangePercent !== null;
+
+  if (
+    !shouldPreserveDayChange &&
+    !shouldPreserveDayChangePercent &&
+    !shouldPreserveOptionDayChange &&
+    !shouldPreserveOptionDayChangePercent
+  ) {
+    return candidate;
+  }
+
+  const optionQuote =
+    shouldPreserveOptionDayChange || shouldPreserveOptionDayChangePercent
+      ? {
+          ...(candidateOptionQuote || {}),
+          providerContractId:
+            candidateOptionQuote?.providerContractId ??
+            currentOptionQuote?.providerContractId ??
+            optionPositionProviderContractId(candidate),
+          dayChange: shouldPreserveOptionDayChange
+            ? currentOptionQuote?.dayChange
+            : candidateOptionQuote?.dayChange,
+          dayChangePercent: shouldPreserveOptionDayChangePercent
+            ? currentOptionQuote?.dayChangePercent
+            : candidateOptionQuote?.dayChangePercent,
+        }
+      : candidateOptionQuote;
+
+  return {
+    ...candidate,
+    dayChange: shouldPreserveDayChange ? current.dayChange : candidate.dayChange,
+    dayChangePercent: shouldPreserveDayChangePercent
+      ? current.dayChangePercent
+      : candidate.dayChangePercent,
+    ...((shouldPreserveOptionDayChange || shouldPreserveOptionDayChangePercent) &&
+    optionQuote
+      ? { optionQuote }
+      : {}),
+  } as AccountPositionRow;
+};
+
 const mergeLiveOptionQuoteFields = (
   current: AccountPositionRow,
   next: AccountPositionRow,
@@ -2219,7 +2302,7 @@ const mergeLiveOptionQuoteFields = (
 
   const currentQuote = quotePatchForPositionRow(current);
   if (!quotePatchHasUsableOptionData(currentQuote)) {
-    return next;
+    return preserveHydratedOptionDayChangeFields(current, next, next);
   }
 
   const nextQuote = quotePatchForPositionRow(next);
@@ -2289,7 +2372,7 @@ const mergeLiveOptionQuoteFields = (
 
   const patched = patchAccountPositionRowFromOptionQuote(next, mergedQuote);
   if (patched !== next || !valuesEqualJson(patched, next)) {
-    return patched;
+    return preserveHydratedOptionDayChangeFields(current, next, patched);
   }
 
   const fallbackRow = {
@@ -2313,7 +2396,11 @@ const mergeLiveOptionQuoteFields = (
       updatedAt: mergedQuote.updatedAt ?? next.quote?.updatedAt ?? null,
     },
   };
-  return fallbackRow as AccountPositionRow;
+  return preserveHydratedOptionDayChangeFields(
+    current,
+    next,
+    fallbackRow as AccountPositionRow,
+  );
 };
 
 const mergeAccountPositionRowsById = (

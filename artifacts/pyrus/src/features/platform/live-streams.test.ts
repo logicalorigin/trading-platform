@@ -1264,6 +1264,91 @@ test("applyShadowAccountPayloadToCache preserves live shadow option quotes over 
   assert.equal(row.optionQuote.delta, 0.42);
 });
 
+test("applyShadowAccountPayloadToCache preserves hydrated shadow option day change over null stream snapshots", () => {
+  const positionsKey = [
+    "/api/accounts/shadow/positions",
+    { mode: "paper", assetClass: "Options" },
+  ];
+  const optionContract = {
+    underlying: "SPY",
+    expirationDate: "2026-06-08T00:00:00.000Z",
+    strike: 758,
+    right: "put",
+    providerContractId: "9001",
+    multiplier: 100,
+  };
+  const initialData = new Map<string, unknown>([
+    [
+      JSON.stringify(positionsKey),
+      {
+        accountId: "shadow",
+        positions: [
+          {
+            id: "shadow-spy-option",
+            accountId: "shadow",
+            assetClass: "Options",
+            symbol: "SPY",
+            quantity: 6,
+            averageCost: 2.1,
+            mark: 2.48,
+            marketValue: 1488,
+            unrealizedPnl: 228,
+            unrealizedPnlPercent: 18.1,
+            dayChange: 84,
+            dayChangePercent: 5.98,
+            optionContract,
+          },
+        ],
+        totals: { netExposure: 1488, grossLong: 1488, unrealizedPnl: 228 },
+      },
+    ],
+  ]);
+  const { queryClient, writes } = createMockQueryClient(
+    [positionsKey],
+    initialData,
+  );
+
+  applyShadowAccountPayloadToCache(queryClient as any, {
+    summary: { accountId: "shadow", metrics: {} },
+    positions: {
+      accountId: "shadow",
+      positions: [
+        {
+          id: "shadow-spy-option",
+          accountId: "shadow",
+          assetClass: "Options",
+          symbol: "SPY",
+          quantity: 6,
+          averageCost: 2.1,
+          mark: 2.48,
+          marketValue: 1488,
+          unrealizedPnl: 228,
+          unrealizedPnlPercent: 18.1,
+          dayChange: null,
+          dayChangePercent: null,
+          optionContract,
+          optionQuote: {
+            providerContractId: "9001",
+            mark: 2.48,
+            source: "automation_event_quote",
+          },
+        },
+      ],
+      totals: { netExposure: 1488, grossLong: 1488, unrealizedPnl: 228 },
+    },
+    workingOrders: { accountId: "shadow", tab: "working", orders: [] },
+    historyOrders: { accountId: "shadow", tab: "history", orders: [] },
+    allocation: { accountId: "shadow", assetClass: [] },
+    risk: { accountId: "shadow", margin: {} },
+    updatedAt: "2026-06-04T18:00:06.000Z",
+  } as any);
+
+  const patched = writes.get(JSON.stringify(positionsKey)) as any;
+  const row = patched.positions[0];
+  assert.equal(row.dayChange, 84);
+  assert.equal(row.dayChangePercent, 5.98);
+});
+
 test("applyShadowAccountPayloadToCache preserves structured live shadow option quotes over numeric stream snapshots", () => {
   const positionsKey = [
     "/api/accounts/shadow/positions",

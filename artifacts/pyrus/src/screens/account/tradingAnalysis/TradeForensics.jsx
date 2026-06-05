@@ -2,6 +2,10 @@ import {
   useMemo,
 } from "react";
 import { useGetBars } from "@workspace/api-client-react";
+import {
+  BARS_REQUEST_PRIORITY,
+  buildBarsRequestOptions,
+} from "../../../features/platform/queryDefaults";
 import { CSS_COLOR, FONT_WEIGHTS, RADII, T, dim, sp, textSize } from "../../../lib/uiTokens.jsx";
 import { formatAppDate, formatAppDateTime } from "../../../lib/timeZone";
 import {
@@ -53,6 +57,10 @@ export const TradePriceChart = ({ trade, currency, maskValues }) => {
         staleTime: 60_000,
         retry: false,
       },
+      request: buildBarsRequestOptions(
+        BARS_REQUEST_PRIORITY.active,
+        "account-trade-forensics",
+      ),
     },
   );
   const bars = useMemo(() => {

@@ -141,6 +141,15 @@ test("classifies broker-critical routes separately from analytics routes", () =>
   );
   assert.equal(
     classifyApiRoute({
+      method: "GET",
+      path: "/api/bars?symbol=SPY",
+      requestFamily: "account-trade-forensics",
+      fetchPriority: 8,
+    }),
+    "active-screen",
+  );
+  assert.equal(
+    classifyApiRoute({
       method: "POST",
       path: "/api/bars/batch",
       requestFamily: "signals-table-sparkline",
@@ -370,6 +379,34 @@ test("route admission lets visible option expirations survive high API pressure"
   assert.equal(backgroundExpirations.routeClass, "deferred-analytics");
   assert.equal(backgroundExpirations.action, "shed");
   assert.equal(backgroundExpirations.statusCode, 429);
+});
+
+test("route admission lets account trade forensics bars survive high API pressure", () => {
+  const visibleBars = resolveApiRouteAdmission({
+    routeClass: classifyApiRoute({
+      method: "GET",
+      path: "/api/bars?symbol=SPY&timeframe=5m",
+      requestFamily: "account-trade-forensics",
+      fetchPriority: 8,
+    }),
+    pressureLevel: "high",
+    now: new Date("2026-06-05T00:00:00.000Z"),
+  });
+  const untaggedBars = resolveApiRouteAdmission({
+    routeClass: classifyApiRoute({
+      method: "GET",
+      path: "/api/bars?symbol=SPY&timeframe=5m",
+    }),
+    pressureLevel: "high",
+    now: new Date("2026-06-05T00:00:00.000Z"),
+  });
+
+  assert.equal(visibleBars.routeClass, "active-screen");
+  assert.equal(visibleBars.action, "allow");
+  assert.equal(visibleBars.reason, null);
+  assert.equal(untaggedBars.routeClass, "deferred-analytics");
+  assert.equal(untaggedBars.action, "shed");
+  assert.equal(untaggedBars.statusCode, 429);
 });
 
 test("route admission sheds deferred work at high API pressure", () => {
