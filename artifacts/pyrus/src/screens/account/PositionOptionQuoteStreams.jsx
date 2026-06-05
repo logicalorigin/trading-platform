@@ -67,6 +67,18 @@ const rowOptionUnderlying = (row) => {
   return text || null;
 };
 
+export const optionQuoteStreamGroupOwner = (
+  owner = "account-position-option-quotes:ui",
+  group = {},
+) => {
+  const baseOwner =
+    String(owner || "").trim() || "account-position-option-quotes:ui";
+  const scope = String(group?.underlying || "__unknown__")
+    .trim()
+    .toUpperCase();
+  return `${baseOwner}:${scope || "__UNKNOWN__"}`;
+};
+
 export const buildPositionOptionQuoteGroups = (rows) => {
   const groups = new Map();
   rows.forEach((row) => {
@@ -110,14 +122,17 @@ export const PositionOptionQuoteStreams = ({
   owner = "account-position-option-quotes:ui",
 }) => (
   <>
-    {groups.map((group) => (
-      <PositionOptionQuoteStreamGroup
-        key={group.underlying || group.providerContractIds.join(",")}
-        underlying={group.underlying}
-        providerContractIds={group.providerContractIds}
-        enabled={enabled}
-        owner={owner}
-      />
-    ))}
+    {groups.map((group) => {
+      const streamOwner = optionQuoteStreamGroupOwner(owner, group);
+      return (
+        <PositionOptionQuoteStreamGroup
+          key={group.underlying || group.providerContractIds.join(",")}
+          underlying={group.underlying}
+          providerContractIds={group.providerContractIds}
+          enabled={enabled}
+          owner={streamOwner}
+        />
+      );
+    })}
   </>
 );

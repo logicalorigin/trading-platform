@@ -71,6 +71,7 @@ import {
   assertIbkrGatewayTradingAvailable,
   batchOptionChains,
   getBars,
+  getOptionChartBarsWithDebug,
   getQuoteSnapshots,
   listWatchlists,
 } from "./platform";
@@ -169,6 +170,8 @@ const SHADOW_GREEK_QUOTE_TASK_MAX_WAIT_MS = Math.max(
 );
 const SHADOW_UNDERLYING_QUOTE_MAX_WAIT_MS = 750;
 const SHADOW_EQUITY_POSITION_QUOTE_MAX_WAIT_MS = 750;
+const SHADOW_OPTION_DAY_CHANGE_BAR_LOOKBACK_WEEKDAYS = 5;
+const SHADOW_OPTION_DAY_CHANGE_BAR_LIMIT = 3_000;
 const SHADOW_ACCOUNT_DB_FALLBACK_REASON =
   "Shadow account database is unavailable; using runtime-only shadow account fallback.";
 const STRUCTURED_OPTION_PROVIDER_CONTRACT_ID_PREFIX = "twsopt:";
@@ -5311,20 +5314,30 @@ function shadowQuotePreviousMark(
 function buildShadowPositionDayChangeFromQuote(
   input: ShadowQuoteDayChangeInput,
 ): ShadowPositionDayChange {
+  const quoteRecord = input.quote as Record<string, unknown> | undefined;
+  const quoteSource = readString(quoteRecord?.source);
+  const quoteFreshness = readString(
+    quoteRecord?.freshness ?? quoteRecord?.quoteFreshness,
+  );
+  const historicalOptionDayChange =
+    quoteSource === "massive-option-aggregates" ||
+    quoteFreshness === "historical_option_bars";
   const pricing = buildShadowOptionPricingPolicy({
     quote: input.quote,
     fallbackMark: null,
     requireTwoSidedQuote: false,
   });
-  if (!pricing.valuationEligible) {
+  if (!pricing.valuationEligible && !historicalOptionDayChange) {
     return { dayChange: null, dayChangePercent: null };
   }
-  const mark = pricing.valuationMark;
+  const mark = historicalOptionDayChange
+    ? shadowQuoteMarkPrice(input.quote)
+    : pricing.valuationMark;
   const previousMark = shadowQuotePreviousMark(input.quote, mark);
   const perContractChange =
     mark != null && previousMark != null
       ? mark - previousMark
-      : toNumber((input.quote as Record<string, unknown> | undefined)?.change);
+      : toNumber(quoteRecord?.change);
   if (
     perContractChange == null ||
     input.quantity === 0 ||
@@ -5333,9 +5346,7 @@ function buildShadowPositionDayChangeFromQuote(
   ) {
     return { dayChange: null, dayChangePercent: null };
   }
-  const quotePercent = toNumber(
-    (input.quote as Record<string, unknown> | undefined)?.changePercent,
-  );
+  const quotePercent = toNumber(quoteRecord?.changePercent);
   return {
     dayChange: perContractChange * input.quantity * input.multiplier,
     dayChangePercent:
@@ -5343,6 +5354,193 @@ function buildShadowPositionDayChangeFromQuote(
         ? (perContractChange / Math.abs(previousMark)) * 100
         : quotePercent,
   };
+}
+
+function shadowMassiveOptionTicker(contract: ShadowOptionContract) {
+  const underlying = normalizeSymbol(contract.underlying)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  if (!underlying || !Number.isFinite(contract.strike) || contract.strike <= 0) {
+    return null;
+  }
+  const expirationDate = dateOrNull(contract.expirationDate);
+  if (!expirationDate) {
+    return null;
+  }
+  const yy = String(expirationDate.getUTCFullYear()).slice(-2);
+  const mm = String(expirationDate.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(expirationDate.getUTCDate()).padStart(2, "0");
+  const side = contract.right === "put" ? "P" : "C";
+  const strike = String(Math.round(contract.strike * 1000)).padStart(8, "0");
+  return `O:${underlying}${yy}${mm}${dd}${side}${strike}`;
+}
+
+function latestPositiveCloseBarForMarketDate(
+  bars: BrokerBarSnapshot[],
+  marketDate: string,
+) {
+  return bars
+    .filter((bar) => {
+      const timestamp = dateOrNull(bar.timestamp);
+      return (
+        timestamp &&
+        marketDateKey(timestamp) === marketDate &&
+        readPositiveNumber(bar.close) !== null
+      );
+    })
+    .sort(
+      (left, right) =>
+        (dateOrNull(right.timestamp)?.getTime() ?? 0) -
+        (dateOrNull(left.timestamp)?.getTime() ?? 0),
+    )[0] ?? null;
+}
+
+function shadowMassiveOptionDayChangeQuote(input: {
+  contract: ShadowOptionContract;
+  providerContractId: string;
+  bars: BrokerBarSnapshot[];
+}): Partial<QuoteSnapshot> | Record<string, unknown> | null {
+  const sortedBars = input.bars
+    .filter((bar) => readPositiveNumber(bar.close) !== null && dateOrNull(bar.timestamp))
+    .sort(
+      (left, right) =>
+        (dateOrNull(left.timestamp)?.getTime() ?? 0) -
+        (dateOrNull(right.timestamp)?.getTime() ?? 0),
+    );
+  const latest = sortedBars.at(-1) ?? null;
+  const latestAt = dateOrNull(latest?.timestamp);
+  const latestClose = readPositiveNumber(latest?.close);
+  if (!latest || !latestAt || latestClose === null) {
+    return null;
+  }
+  const latestMarketDate = marketDateKey(latestAt);
+  const previousMarketDate = addWeekdaysToMarketDate(latestMarketDate, -1);
+  const previous = latestPositiveCloseBarForMarketDate(
+    sortedBars,
+    previousMarketDate,
+  );
+  const previousClose = readPositiveNumber(previous?.close);
+  if (previousClose === null || previousClose <= 0) {
+    return null;
+  }
+  const change = latestClose - previousClose;
+  const updatedAt = latestAt.toISOString();
+  return {
+    symbol: input.contract.underlying,
+    providerContractId: input.providerContractId,
+    price: latestClose,
+    mark: latestClose,
+    last: latestClose,
+    prevClose: previousClose,
+    change,
+    changePercent: (change / Math.abs(previousClose)) * 100,
+    volume: toNumber(latest.volume),
+    freshness: "historical_option_bars",
+    marketDataMode: "historical",
+    source: "massive-option-aggregates",
+    transport: "rest",
+    delayed: true,
+    updatedAt,
+    dataUpdatedAt: updatedAt,
+  };
+}
+
+function shadowOptionQuoteCanBuildDayChange(
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined,
+) {
+  const dayChange = buildShadowPositionDayChangeFromQuote({
+    quantity: 1,
+    multiplier: 1,
+    quote,
+  });
+  return dayChange.dayChange !== null && dayChange.dayChangePercent !== null;
+}
+
+async function fetchShadowMassiveOptionDayChangeQuotes(
+  positions: Array<{
+    symbol: string;
+    optionContract?: unknown;
+  }>,
+): Promise<Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>> {
+  if (!getMassiveRuntimeConfig()) {
+    return new Map();
+  }
+  const now = new Date();
+  const to = now;
+  const from = zonedDateTimeToUtc({
+    marketDate: addWeekdaysToMarketDate(
+      previousWeekdayOrSame(marketDateKey(now)),
+      -SHADOW_OPTION_DAY_CHANGE_BAR_LOOKBACK_WEEKDAYS,
+    ),
+    hour: 0,
+    minute: 0,
+  });
+  const requests = new Map<
+    string,
+    {
+      contract: ShadowOptionContract;
+      providerContractId: string;
+      optionTicker: string;
+    }
+  >();
+  positions.forEach((position) => {
+    const contract = asOptionContract(position.optionContract);
+    const providerContractId = shadowOptionQuoteIdentifier(contract);
+    if (!contract || !providerContractId || isPriorOptionExpiration(contract)) {
+      return;
+    }
+    const optionTicker = shadowMassiveOptionTicker(contract);
+    if (!optionTicker || requests.has(providerContractId)) {
+      return;
+    }
+    requests.set(providerContractId, {
+      contract,
+      providerContractId,
+      optionTicker,
+    });
+  });
+  if (!requests.size) {
+    return new Map();
+  }
+
+  const quotes = new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>();
+  const results = await Promise.allSettled(
+    Array.from(requests.values()).map(async (request) => {
+      const result = await getOptionChartBarsWithDebug({
+        underlying: request.contract.underlying,
+        expirationDate: request.contract.expirationDate,
+        strike: request.contract.strike,
+        right: request.contract.right,
+        optionTicker: request.optionTicker,
+        providerContractId: request.contract.providerContractId,
+        skipBrokerContractResolution: true,
+        timeframe: "1m",
+        from,
+        to,
+        limit: SHADOW_OPTION_DAY_CHANGE_BAR_LIMIT,
+        outsideRth: false,
+      });
+      const quote = shadowMassiveOptionDayChangeQuote({
+        contract: request.contract,
+        providerContractId: request.providerContractId,
+        bars: result.bars,
+      });
+      if (!quote) {
+        return;
+      }
+      quotes.set(request.providerContractId, quote);
+      rememberShadowOptionQuote(request.providerContractId, quote);
+    }),
+  );
+  results.forEach((result) => {
+    if (result.status === "rejected") {
+      logger.debug?.(
+        { err: result.reason },
+        "Shadow Massive option day-change quote fallback failed",
+      );
+    }
+  });
+  return quotes;
 }
 
 function isOpraOptionTicker(value: string): boolean {
@@ -5561,6 +5759,33 @@ async function fetchShadowOptionDayChangeQuotes(
       ]);
     }),
   );
+  const missingMassiveQuotePositions = positions.filter((position) => {
+    const quoteIdentifier = shadowOptionQuoteIdentifier(
+      asOptionContract(position.optionContract),
+    );
+    const quote = quoteIdentifier
+      ? quoteByProviderContractId.get(quoteIdentifier)
+      : null;
+    return Boolean(
+      quoteIdentifier && !shadowOptionQuoteCanBuildDayChange(quote),
+    );
+  });
+  if (missingMassiveQuotePositions.length > 0) {
+    const massiveQuotes = await fetchShadowMassiveOptionDayChangeQuotes(
+      missingMassiveQuotePositions,
+    ).catch((error) => {
+      logger.debug?.(
+        { err: error },
+        "Shadow Massive option day-change quote fallback failed",
+      );
+      return new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>();
+    });
+    massiveQuotes.forEach((quote, providerContractId) => {
+      if (!quoteByProviderContractId.has(providerContractId)) {
+        quoteByProviderContractId.set(providerContractId, quote);
+      }
+    });
+  }
   return quoteByProviderContractId;
 }
 
@@ -12789,6 +13014,8 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   shadowPositionDayChangeBaselineMarketValue,
   shadowPositionDayChangeDayStart,
   buildShadowPositionDayChangeFromQuote,
+  shadowMassiveOptionTicker,
+  shadowMassiveOptionDayChangeQuote,
   calculateLatestShadowMarketDayPnlFromHistory,
   shadowQuoteMarkPrice,
   buildShadowOptionPricingPolicy,

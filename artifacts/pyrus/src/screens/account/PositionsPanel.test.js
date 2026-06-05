@@ -11,6 +11,7 @@ import {
   __positionsPanelInternalsForTests,
   buildPositionOptionQuoteGroups,
 } from "./PositionsPanel.jsx";
+import { optionQuoteStreamGroupOwner } from "./PositionOptionQuoteStreams.jsx";
 
 const source = readFileSync(new URL("./PositionsPanel.jsx", import.meta.url), "utf8");
 const rowActionMenuSource = readFileSync(
@@ -345,10 +346,40 @@ test("positions automation metrics distinguish stop distance and breached stops"
   assert.equal(breachedStop.stopTone, CSS_COLOR.red);
 });
 
+test("position option quote stream owners are scoped per underlying", () => {
+  const baseOwner = "account-position-option-quotes:shadow";
+
+  assert.equal(
+    optionQuoteStreamGroupOwner(baseOwner, {
+      underlying: "spy",
+      providerContractIds: ["spy-contract"],
+    }),
+    "account-position-option-quotes:shadow:SPY",
+  );
+  assert.equal(
+    optionQuoteStreamGroupOwner(baseOwner, {
+      underlying: "QQQ",
+      providerContractIds: ["qqq-contract"],
+    }),
+    "account-position-option-quotes:shadow:QQQ",
+  );
+  assert.notEqual(
+    optionQuoteStreamGroupOwner(baseOwner, {
+      underlying: "SPY",
+      providerContractIds: ["spy-contract"],
+    }),
+    optionQuoteStreamGroupOwner(baseOwner, {
+      underlying: "QQQ",
+      providerContractIds: ["qqq-contract"],
+    }),
+  );
+});
+
 test("positions panel overlays live option quotes onto displayed rows and totals", () => {
   assert.match(quoteStreamsSource, /useIbkrOptionQuoteStream/);
   assert.match(quoteStreamsSource, /intent: "account-monitor-live"/);
   assert.match(quoteStreamsSource, /owner = "account-position-option-quotes:ui"/);
+  assert.match(quoteStreamsSource, /optionQuoteStreamGroupOwner\(owner, group\)/);
   assert.match(quoteStreamsSource, /owner,\s*\n\s*intent: "account-monitor-live"/);
   assert.doesNotMatch(quoteStreamsSource, /account-positions:\$\{underlying\}/);
   assert.match(source, /useStoredOptionQuoteSnapshotVersion/);
