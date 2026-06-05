@@ -153,6 +153,7 @@ const SHADOW_STATE_REFRESH_TTL_MS = 2_000;
 const SHADOW_BENCHMARK_BARS_CACHE_TTL_MS = 60_000;
 const SHADOW_BENCHMARK_BARS_MAX_WAIT_MS = 750;
 const SHADOW_EQUITY_HISTORY_MARK_REFRESH_MAX_WAIT_MS = 1_000;
+const SHADOW_SUMMARY_EQUITY_HISTORY_MAX_WAIT_MS = 500;
 const SHADOW_DAY_CHANGE_QUOTE_MAX_WAIT_MS = 1_250;
 const SHADOW_DAY_CHANGE_QUOTE_TASK_MAX_WAIT_MS = Math.max(
   250,
@@ -5886,32 +5887,73 @@ function calculateLatestShadowMarketDayPnlFromHistory(
   };
 }
 
+function emptyShadowAccountSummaryReturnMetrics(): ShadowAccountSummaryReturnMetrics {
+  return {
+    dayPnl: null,
+    dayPnlField: "EquityHistoryMarketDayPnl",
+    dayPnlCapitalBase: null,
+  };
+}
+
+function shadowAccountSummaryReturnMetricsFromHistory(
+  history: ShadowAccountEquityHistory,
+): ShadowAccountSummaryReturnMetrics {
+  const dayPnl = calculateLatestShadowMarketDayPnlFromHistory(history.points);
+  return {
+    dayPnl: dayPnl?.value ?? null,
+    dayPnlField: dayPnl
+      ? `EquityHistoryMarketDayPnl:${dayPnl.marketDate}`
+      : "EquityHistoryMarketDayPnl",
+    dayPnlCapitalBase: dayPnl?.capitalBase ?? null,
+  };
+}
+
 async function resolveShadowAccountSummaryReturnMetrics(input: {
   source?: string | null;
 }): Promise<ShadowAccountSummaryReturnMetrics> {
+  const cached = readFreshCachedShadowEquityHistoryReturnMetrics({
+    source: input.source,
+  });
+  if (cached) {
+    return cached;
+  }
+
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const historyRequest = getShadowAccountEquityHistory({
+    range: "1D",
+    source: input.source,
+  });
+  historyRequest.catch((error) => {
+    logger.debug?.(
+      { err: error, source: input.source ?? null },
+      "Shadow account summary background equity-history P&L refresh failed",
+    );
+  });
+
   try {
-    const history = await getShadowAccountEquityHistory({
-      range: "1D",
-      source: input.source,
-    });
-    const dayPnl = calculateLatestShadowMarketDayPnlFromHistory(history.points);
-    return {
-      dayPnl: dayPnl?.value ?? null,
-      dayPnlField: dayPnl
-        ? `EquityHistoryMarketDayPnl:${dayPnl.marketDate}`
-        : "EquityHistoryMarketDayPnl",
-      dayPnlCapitalBase: dayPnl?.capitalBase ?? null,
-    };
+    const history = await Promise.race([
+      historyRequest,
+      new Promise<ShadowAccountEquityHistory | null>((resolve) => {
+        timeout = setTimeout(
+          () => resolve(null),
+          SHADOW_SUMMARY_EQUITY_HISTORY_MAX_WAIT_MS,
+        );
+        timeout.unref?.();
+      }),
+    ]);
+    return history
+      ? shadowAccountSummaryReturnMetricsFromHistory(history)
+      : emptyShadowAccountSummaryReturnMetrics();
   } catch (error) {
     logger.debug?.(
       { err: error, source: input.source ?? null },
       "Shadow account summary equity-history P&L unavailable",
     );
-    return {
-      dayPnl: null,
-      dayPnlField: "EquityHistoryMarketDayPnl",
-      dayPnlCapitalBase: null,
-    };
+    return emptyShadowAccountSummaryReturnMetrics();
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
   }
 }
 
@@ -8126,41 +8168,13 @@ export async function getShadowAccountClosedTrades(input: {
           : rawFills.filter((fill) =>
               isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
             );
-        const { roundTrips } = buildShadowAnalysisRoundTrips(
-          fills.map((fill) =>
-            shadowAnalysisTradeEvent(fill, ordersById.get(fill.orderId)),
-          ),
+        const events = fills.map((fill) =>
+          shadowAnalysisTradeEvent(fill, ordersById.get(fill.orderId)),
         );
-        const trades = roundTrips
-          .filter((trade) => {
-            const closeDate = new Date(trade.closeDate);
-            if (input.from && closeDate < input.from) return false;
-            if (input.to && closeDate > input.to) return false;
-            if (
-              input.symbol &&
-              trade.symbol !== normalizeSymbol(input.symbol).toUpperCase()
-            ) {
-              return false;
-            }
-            return true;
-          })
+        const { roundTrips } = buildShadowAnalysisRoundTrips(events);
+        const closedTrades = roundTrips
           .map(shadowRoundTripToClosedTrade)
-          .filter((trade) => {
-            if (
-              input.assetClass &&
-              input.assetClass !== "all" &&
-              trade.assetClass.toLowerCase() !== input.assetClass.toLowerCase()
-            ) {
-              return false;
-            }
-            if (input.pnlSign === "winners" && (trade.realizedPnl ?? 0) <= 0) {
-              return false;
-            }
-            if (input.pnlSign === "losers" && (trade.realizedPnl ?? 0) >= 0) {
-              return false;
-            }
-            return true;
-          })
+          .filter((trade) => shadowTradeMatchesClosedTradeInput(trade, input))
           .sort((left, right) => {
             const leftTime = left.closeDate
               ? new Date(left.closeDate).getTime()
@@ -8170,6 +8184,12 @@ export async function getShadowAccountClosedTrades(input: {
               : 0;
             return rightTime - leftTime;
           });
+        const trades = mergeShadowActivityTrades(
+          closedTrades,
+          events,
+          roundTrips,
+          input,
+        );
         return {
           accountId: SHADOW_ACCOUNT_ID,
           currency: SHADOW_CURRENCY,
@@ -8283,6 +8303,7 @@ type ShadowAnalysisTradeEvent = {
 
 type ShadowAnalysisRoundTrip = {
   id: string;
+  entryIds: string[];
   symbol: string;
   assetClass: string;
   quantity: number;
@@ -8302,6 +8323,7 @@ type ShadowAnalysisRoundTrip = {
 };
 
 type ShadowAnalysisOpenLot = {
+  id: string;
   symbol: string;
   assetClass: string;
   quantity: number;
@@ -8627,6 +8649,136 @@ function shadowRoundTripToClosedTrade(trade: ShadowAnalysisRoundTrip) {
   };
 }
 
+function shadowTradeEventToActivityTrade(event: ShadowAnalysisTradeEvent) {
+  const position = readRecord(event.metadata.position) ?? {};
+  const candidate = readRecord(event.metadata.candidate) ?? {};
+  const selectedContract = firstRecord(
+    event.metadata.selectedContract,
+    position.selectedContract,
+    candidate.selectedContract,
+  );
+  const contract = asOptionContract(selectedContract);
+  const optionRight =
+    readString(contract?.right) ??
+    readString(selectedContract.right) ??
+    readString(candidate.optionRight);
+  const expirationDate =
+    contract?.expirationDate == null
+      ? readString(selectedContract.expirationDate)
+      : optionDateKey(contract.expirationDate);
+  const selectedExpiration =
+    readRecord(event.metadata.selectedExpiration) ?? {};
+  const realizedPnl = event.realizedPnl === 0 ? null : event.realizedPnl;
+
+  return {
+    id: event.id,
+    source: "SHADOW_ACTIVITY",
+    accountId: SHADOW_ACCOUNT_ID,
+    symbol: event.symbol,
+    side: event.side,
+    assetClass: event.assetClass === "option" ? "Options" : "Stocks",
+    quantity: event.quantity,
+    openDate: event.side === "buy" ? event.occurredAt : null,
+    closeDate: event.occurredAt,
+    avgOpen: event.side === "buy" ? event.price : null,
+    avgClose: event.price,
+    realizedPnl,
+    realizedPnlPercent: null,
+    holdDurationMinutes: null,
+    fees: event.fees,
+    commissions: event.fees,
+    currency: SHADOW_CURRENCY,
+    sourceType: event.sourceType,
+    strategyLabel: event.strategyLabel,
+    candidateId: event.candidateId,
+    deploymentId: event.deploymentId,
+    deploymentName: event.deploymentName,
+    sourceEventId: event.sourceEventId,
+    selectedContract: Object.keys(selectedContract).length
+      ? selectedContract
+      : optionPayload(contract),
+    optionContract: optionPayload(contract),
+    optionRight,
+    expirationDate,
+    dte: roundTripDte({
+      expirationDate,
+      openDate: event.occurredAt,
+      selectedExpiration,
+    }),
+    strike: toNumber(contract?.strike ?? selectedContract.strike),
+    metadata: {
+      activity: event.metadata,
+    },
+  };
+}
+
+function shadowTradeMatchesClosedTradeInput(
+  trade: ReturnType<typeof shadowRoundTripToClosedTrade> | ReturnType<typeof shadowTradeEventToActivityTrade>,
+  input: {
+    from?: Date | null;
+    to?: Date | null;
+    symbol?: string | null;
+    assetClass?: string | null;
+    pnlSign?: string | null;
+  },
+) {
+  const closeDate = trade.closeDate ? new Date(trade.closeDate) : null;
+  if (!closeDate || Number.isNaN(closeDate.getTime())) return false;
+  if (input.from && closeDate < input.from) return false;
+  if (input.to && closeDate > input.to) return false;
+  if (
+    input.symbol &&
+    normalizeSymbol(trade.symbol).toUpperCase() !==
+      normalizeSymbol(input.symbol).toUpperCase()
+  ) {
+    return false;
+  }
+  if (
+    input.assetClass &&
+    input.assetClass !== "all" &&
+    trade.assetClass.toLowerCase() !== input.assetClass.toLowerCase()
+  ) {
+    return false;
+  }
+  if (input.pnlSign === "winners" && (trade.realizedPnl ?? 0) <= 0) {
+    return false;
+  }
+  if (input.pnlSign === "losers" && (trade.realizedPnl ?? 0) >= 0) {
+    return false;
+  }
+  return true;
+}
+
+function mergeShadowActivityTrades(
+  closedTrades: ReturnType<typeof shadowRoundTripToClosedTrade>[],
+  events: ShadowAnalysisTradeEvent[],
+  roundTrips: ShadowAnalysisRoundTrip[],
+  input: {
+    from?: Date | null;
+    to?: Date | null;
+    symbol?: string | null;
+    assetClass?: string | null;
+    pnlSign?: string | null;
+  },
+) {
+  const representedFillIds = new Set<string>();
+  roundTrips.forEach((trade) => {
+    representedFillIds.add(trade.id);
+    trade.entryIds.forEach((id) => representedFillIds.add(id));
+  });
+  const activityTrades = events
+    .filter((event) => !representedFillIds.has(event.id))
+    .map(shadowTradeEventToActivityTrade)
+    .filter((trade) => shadowTradeMatchesClosedTradeInput(trade, input));
+
+  if (!activityTrades.length) return closedTrades;
+  return [...closedTrades, ...activityTrades].sort((left, right) => {
+    const leftTime = left.closeDate ? new Date(left.closeDate).getTime() : 0;
+    const rightTime = right.closeDate ? new Date(right.closeDate).getTime() : 0;
+    return rightTime - leftTime;
+  });
+}
+
 function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
   const lotsByKey = new Map<string, ShadowAnalysisOpenLot[]>();
   const roundTrips: ShadowAnalysisRoundTrip[] = [];
@@ -8638,6 +8790,7 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
     lotsByKey.set(key, lots);
     if (event.side === "buy") {
       lots.push({
+        id: event.id,
         symbol: event.symbol,
         assetClass: event.assetClass,
         quantity: event.quantity,
@@ -8658,6 +8811,7 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
     let entryFees = 0;
     let earliestEntry: Date | null = null;
     let entryMetadata: Record<string, unknown> | null = null;
+    const entryIds: string[] = [];
     while (remaining > 0.000001 && lots.length) {
       const lot = lots[0]!;
       const closeQuantity = Math.min(remaining, lot.quantity);
@@ -8666,6 +8820,9 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
       entryValue += closeQuantity * lot.entryPrice;
       entryFees += lot.fees * closeRatio;
       entryMetadata ??= lot.metadata;
+      if (!entryIds.includes(lot.id)) {
+        entryIds.push(lot.id);
+      }
       if (!earliestEntry || lot.entryAt.getTime() < earliestEntry.getTime()) {
         earliestEntry = lot.entryAt;
       }
@@ -8694,6 +8851,7 @@ function buildShadowAnalysisRoundTrips(events: ShadowAnalysisTradeEvent[]) {
         : null;
     roundTrips.push({
       id: event.id,
+      entryIds,
       symbol: event.symbol,
       assetClass: event.assetClass,
       quantity: event.quantity,
@@ -12427,6 +12585,9 @@ export const __shadowWatchlistBacktestInternalsForTests = {
   latestHistoricalShadowTotalsDate,
   isLiveShadowOrder,
   isDefaultShadowLedgerAnalyticsOrder,
+  buildShadowAnalysisRoundTrips,
+  mergeShadowActivityTrades,
+  shadowTradeEventToActivityTrade,
   isLiveShadowPosition,
   isDefaultShadowLedgerAnalyticsPosition,
   isExpiredHistoricalShadowOptionPosition,

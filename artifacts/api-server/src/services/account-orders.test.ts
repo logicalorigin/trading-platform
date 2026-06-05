@@ -169,3 +169,115 @@ test("account order internals avoid duplicating filled orders already represente
   assert.equal(rows.length, 1);
   assert.equal(rows[0].source, "FLEX");
 });
+
+test("account order internals reconstruct realized P&L from live option executions", async () => {
+  const { __accountOrderInternalsForTests } = await import("./account");
+  const optionContract = {
+    ticker: "SPY20260608P758",
+    underlying: "SPY",
+    expirationDate: new Date("2026-06-08T00:00:00.000Z"),
+    strike: 758,
+    right: "put",
+    multiplier: 100,
+    sharesPerContract: 100,
+    providerContractId: "spy-put",
+  };
+  const executions = [
+    {
+      id: "buy-spy-put",
+      accountId: "U24762790",
+      symbol: "SPY",
+      assetClass: "option",
+      side: "buy",
+      quantity: 6,
+      price: 3.08,
+      netAmount: null,
+      exchange: "SMART",
+      executedAt: new Date("2026-06-04T17:36:31.463Z"),
+      orderDescription: null,
+      contractDescription: "SPY Jun08'26 758 PUT",
+      providerContractId: "spy-put",
+      optionContract,
+      orderRef: null,
+    },
+    {
+      id: "sell-spy-put",
+      accountId: "U24762790",
+      symbol: "SPY",
+      assetClass: "option",
+      side: "sell",
+      quantity: 6,
+      price: 3.58,
+      netAmount: null,
+      exchange: "SMART",
+      executedAt: new Date("2026-06-04T18:36:31.463Z"),
+      orderDescription: null,
+      contractDescription: "SPY Jun08'26 758 PUT",
+      providerContractId: "spy-put",
+      optionContract,
+      orderRef: null,
+    },
+  ] as any[];
+
+  const rows =
+    __accountOrderInternalsForTests.buildLiveExecutionActivityTrades(
+      executions,
+      "USD",
+    );
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].source, "LIVE_EXECUTION");
+  assert.equal(rows[0].symbol, "SPY");
+  assert.equal(rows[0].assetClass, "Options");
+  assert.equal(rows[0].quantity, 6);
+  assert.equal(Number(rows[0].realizedPnl?.toFixed(2)), 300);
+  assert.equal(rows[0].optionRight, "put");
+  assert.equal(typeof rows[0].dte, "number");
+});
+
+test("account order internals keep unmatched live executions as manual activity without flat P&L", async () => {
+  const { __accountOrderInternalsForTests } = await import("./account");
+  const executions = [
+    {
+      id: "open-spy-put",
+      accountId: "U24762790",
+      symbol: "SPY",
+      assetClass: "option",
+      side: "buy",
+      quantity: 6,
+      price: 3.08,
+      netAmount: null,
+      exchange: "SMART",
+      executedAt: new Date("2026-06-04T17:36:31.463Z"),
+      orderDescription: null,
+      contractDescription: "SPY Jun08'26 758 PUT",
+      providerContractId: "spy-put",
+      optionContract: {
+        ticker: "SPY20260608P758",
+        underlying: "SPY",
+        expirationDate: new Date("2026-06-08T00:00:00.000Z"),
+        strike: 758,
+        right: "put",
+        multiplier: 100,
+        sharesPerContract: 100,
+        providerContractId: "spy-put",
+      },
+      orderRef: null,
+    },
+  ] as any[];
+
+  const rows = __accountOrderInternalsForTests.mergeLiveExecutionActivityTrades(
+    [],
+    executions,
+    {
+      from: new Date("2026-06-04T00:00:00.000Z"),
+      to: new Date("2026-06-04T23:59:59.999Z"),
+    },
+    "USD",
+  );
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].source, "LIVE_EXECUTION");
+  assert.equal(rows[0].realizedPnl, null);
+  assert.equal(rows[0].sourceType, "manual");
+});

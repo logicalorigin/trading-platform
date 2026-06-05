@@ -277,9 +277,10 @@ async function runProfile(input: {
     const universe = await dependencies.resolveUniverse(evaluationProfile, {
       ensureWatchlist: false,
     });
-    onUniverseResolved?.(profile.id, universe.watchlistSymbols);
+    const universeSymbols = universe.symbols;
+    onUniverseResolved?.(profile.id, universeSymbols);
     const resolvedBatch = resolveSignalMonitorEvaluationBatch({
-      sourceSymbols: universe.watchlistSymbols,
+      sourceSymbols: universeSymbols,
       maxSymbols: evaluationProfile.maxSymbols,
       cursor: runtime.evaluationCursor,
     });
@@ -287,7 +288,7 @@ async function runProfile(input: {
     const streamingAvailable = dependencies.isStockAggregateStreamingAvailable();
     const streamFresh = streamingAvailable
       ? dependencies.hasRecentStockAggregateSourceActivity({
-          symbols: universe.watchlistSymbols,
+          symbols: universeSymbols,
           now: evaluatedAt,
           maxAgeMs: streamFreshnessWindowMs({
             profile: evaluationProfile,

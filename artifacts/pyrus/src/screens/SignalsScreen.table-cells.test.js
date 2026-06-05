@@ -45,7 +45,9 @@ test("signals timeframe cells show compact bars with elapsed interval age", () =
   assert.match(signalsSource, /const signalRowSparklineFallbackPrice = \(row\) =>/);
   assert.match(signalsSource, /row\?\.latestEvent\?\.signalPrice/);
   assert.match(signalsSource, /row\?\.latestEvent\?\.close/);
-  assert.match(signalsSource, /const current = signalSparklineFallbackPrice\(state, fallbackPrice\)/);
+  assert.match(signalsSource, /const signalSparklineSyntheticFallbackPrice = \(symbol\) =>/);
+  assert.match(signalsSource, /signalSparklineSyntheticFallbackPrice\(symbol\)/);
+  assert.match(signalsSource, /signalSparklineFallbackPrice\(state, fallbackPrice\) \?\?/);
   assert.doesNotMatch(signalsSource, /hydrated[\s\S]*\? buildSignalsTableFallbackSparklineData/);
   assert.match(signalsSource, /data-sparkline-source=\{sparklineSource\}/);
   assert.match(signalsSource, /<MicroSparkline/);

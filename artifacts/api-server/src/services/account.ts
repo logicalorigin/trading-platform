@@ -5089,6 +5089,281 @@ const accountTradeActivityMatchKey = (trade: NormalizedAccountTrade): string =>
     dateIsoDay(trade.closeDate),
   ].join("|");
 
+const accountTradeMatchesClosedTradeFilters = (
+  trade: NormalizedAccountTrade,
+  input: AccountClosedTradeFilters,
+): boolean => {
+  const closeDate = trade.closeDate;
+  if (!closeDate || Number.isNaN(closeDate.getTime())) return false;
+  if (input.from && closeDate < input.from) return false;
+  if (input.to && closeDate > input.to) return false;
+  if (input.symbol && normalizeSymbol(trade.symbol) !== normalizeSymbol(input.symbol)) {
+    return false;
+  }
+  if (
+    input.assetClass &&
+    input.assetClass !== "all" &&
+    trade.assetClass.toLowerCase() !== input.assetClass.toLowerCase()
+  ) {
+    return false;
+  }
+  if (input.pnlSign === "winners" && (trade.realizedPnl ?? 0) <= 0) {
+    return false;
+  }
+  if (input.pnlSign === "losers" && (trade.realizedPnl ?? 0) >= 0) {
+    return false;
+  }
+  return matchesHoldDurationBucket(trade.holdDurationMinutes, input.holdDuration);
+};
+
+const LIVE_EXECUTION_LOOKBACK_MAX_DAYS = 7;
+
+const executionLookbackDays = (input: AccountClosedTradeFilters): number => {
+  if (!input.from) return LIVE_EXECUTION_LOOKBACK_MAX_DAYS;
+  const ageMs = Date.now() - input.from.getTime();
+  if (!Number.isFinite(ageMs) || ageMs <= 0) return 1;
+  return Math.max(
+    1,
+    Math.min(
+      LIVE_EXECUTION_LOOKBACK_MAX_DAYS,
+      Math.ceil(ageMs / 86_400_000) + 1,
+    ),
+  );
+};
+
+const executionMultiplier = (execution: BrokerExecutionSnapshot): number => {
+  const explicit = toNumber(execution.optionContract?.multiplier);
+  if (explicit != null && explicit > 0) return explicit;
+  return execution.assetClass === "option" ? 100 : 1;
+};
+
+const executionAssetClassLabel = (execution: BrokerExecutionSnapshot): string =>
+  normalizeTradeAssetClassLabel({
+    assetClass: execution.assetClass,
+    symbol: execution.symbol,
+  });
+
+const executionContractKey = (execution: BrokerExecutionSnapshot): string =>
+  [
+    execution.accountId,
+    executionAssetClassLabel(execution).toLowerCase(),
+    normalizeSymbol(
+      execution.optionContract?.ticker ||
+        execution.contractDescription ||
+        execution.symbol,
+    ),
+    execution.providerContractId || "noconid",
+  ].join("|");
+
+type LiveExecutionLot = {
+  id: string;
+  side: BrokerExecutionSnapshot["side"];
+  quantity: number;
+  price: number;
+  executedAt: Date;
+  optionContract: BrokerOrderSnapshot["optionContract"] | null;
+};
+
+const normalizeLiveExecutionOptionContract = (
+  optionContract: BrokerExecutionSnapshot["optionContract"] | null | undefined,
+): BrokerOrderSnapshot["optionContract"] | null =>
+  optionContract
+    ? {
+        ...optionContract,
+        providerContractId: optionContract.providerContractId ?? null,
+      }
+    : null;
+
+const optionDteFromContract = (
+  optionContract: BrokerExecutionSnapshot["optionContract"] | null | undefined,
+  activityDate: Date,
+): number | null => {
+  if (!optionContract) return null;
+  return optionDteFromOrder({ optionContract } as BrokerOrderSnapshot, activityDate);
+};
+
+const liveExecutionActivityTrade = (
+  execution: BrokerExecutionSnapshot,
+  currency: string,
+): NormalizedAccountTrade => {
+  const activityDate = execution.executedAt;
+  const optionRight = execution.optionContract?.right
+    ? String(execution.optionContract.right).toLowerCase()
+    : null;
+  return {
+    id: execution.id,
+    source: "LIVE_EXECUTION",
+    accountId: execution.accountId,
+    symbol: normalizeSymbol(execution.symbol),
+    side: execution.side,
+    assetClass: executionAssetClassLabel(execution),
+    quantity: Math.abs(toNumber(execution.quantity) ?? 0),
+    openDate: execution.side === "buy" ? activityDate : null,
+    closeDate: activityDate,
+    avgOpen: execution.side === "buy" ? toNumber(execution.price) : null,
+    avgClose: toNumber(execution.price),
+    realizedPnl: null,
+    realizedPnlPercent: null,
+    holdDurationMinutes: null,
+    commissions: null,
+    currency,
+    sourceType: "manual",
+    strategyLabel: "Manual",
+    optionContract: normalizeLiveExecutionOptionContract(execution.optionContract),
+    optionRight,
+    dte: optionDteFromContract(execution.optionContract, activityDate),
+  };
+};
+
+const buildLiveExecutionActivityTrades = (
+  executions: BrokerExecutionSnapshot[],
+  currency: string,
+): NormalizedAccountTrade[] => {
+  const sorted = [...executions].sort(
+    (left, right) => left.executedAt.getTime() - right.executedAt.getTime(),
+  );
+  const lotsByKey = new Map<string, LiveExecutionLot[]>();
+  const representedExecutionIds = new Set<string>();
+  const trades: NormalizedAccountTrade[] = [];
+
+  for (const execution of sorted) {
+    const quantity = Math.abs(toNumber(execution.quantity) ?? 0);
+    const price = toNumber(execution.price);
+    if (!quantity || price == null || Number.isNaN(execution.executedAt.getTime())) {
+      continue;
+    }
+
+    const key = executionContractKey(execution);
+    const lots = lotsByKey.get(key) ?? [];
+    lotsByKey.set(key, lots);
+
+    if (!lots.length || lots[0]?.side === execution.side) {
+      lots.push({
+        id: execution.id,
+        side: execution.side,
+        quantity,
+        price,
+        executedAt: execution.executedAt,
+        optionContract: normalizeLiveExecutionOptionContract(execution.optionContract),
+      });
+      continue;
+    }
+
+    let remaining = quantity;
+    let matchedQuantity = 0;
+    let openValue = 0;
+    let realizedPnl = 0;
+    let earliestOpen: Date | null = null;
+    let representativeOpen: LiveExecutionLot | null = null;
+    const multiplier = executionMultiplier(execution);
+
+    while (remaining > POSITION_QUANTITY_EPSILON && lots.length) {
+      const lot = lots[0]!;
+      const closeQuantity = Math.min(remaining, lot.quantity);
+      matchedQuantity += closeQuantity;
+      openValue += closeQuantity * lot.price;
+      earliestOpen =
+        !earliestOpen || lot.executedAt.getTime() < earliestOpen.getTime()
+          ? lot.executedAt
+          : earliestOpen;
+      representativeOpen ??= lot;
+      representedExecutionIds.add(lot.id);
+      representedExecutionIds.add(execution.id);
+      realizedPnl +=
+        lot.side === "buy"
+          ? (price - lot.price) * closeQuantity * multiplier
+          : (lot.price - price) * closeQuantity * multiplier;
+      lot.quantity -= closeQuantity;
+      remaining -= closeQuantity;
+      if (lot.quantity <= POSITION_QUANTITY_EPSILON) {
+        lots.shift();
+      }
+    }
+
+    if (matchedQuantity > POSITION_QUANTITY_EPSILON) {
+      const avgOpen = openValue / matchedQuantity;
+      const optionContract =
+        normalizeLiveExecutionOptionContract(execution.optionContract) ??
+        representativeOpen?.optionContract ??
+        null;
+      const optionRight = optionContract?.right
+        ? String(optionContract.right).toLowerCase()
+        : null;
+      trades.push({
+        id: execution.id,
+        source: "LIVE_EXECUTION",
+        accountId: execution.accountId,
+        symbol: normalizeSymbol(execution.symbol),
+        side: execution.side,
+        assetClass: executionAssetClassLabel(execution),
+        quantity: matchedQuantity,
+        openDate: earliestOpen,
+        closeDate: execution.executedAt,
+        avgOpen,
+        avgClose: price,
+        realizedPnl,
+        realizedPnlPercent:
+          avgOpen > 0 ? ((price - avgOpen) / Math.abs(avgOpen)) * 100 : null,
+        holdDurationMinutes: earliestOpen
+          ? (execution.executedAt.getTime() - earliestOpen.getTime()) / 60_000
+          : null,
+        commissions: null,
+        currency,
+        sourceType: "manual",
+        strategyLabel: "Manual",
+        optionContract,
+        optionRight,
+        dte: optionDteFromContract(optionContract, execution.executedAt),
+      });
+    }
+
+    if (remaining > POSITION_QUANTITY_EPSILON) {
+      lots.push({
+        id: `${execution.id}:unmatched`,
+        side: execution.side,
+        quantity: remaining,
+        price,
+        executedAt: execution.executedAt,
+        optionContract: normalizeLiveExecutionOptionContract(execution.optionContract),
+      });
+    }
+  }
+
+  for (const execution of sorted) {
+    if (representedExecutionIds.has(execution.id)) continue;
+    trades.push(liveExecutionActivityTrade(execution, currency));
+  }
+
+  return trades.sort((left, right) => {
+    const leftTime = left.closeDate?.getTime() ?? 0;
+    const rightTime = right.closeDate?.getTime() ?? 0;
+    return rightTime - leftTime;
+  });
+};
+
+const mergeLiveExecutionActivityTrades = (
+  trades: NormalizedAccountTrade[],
+  executions: BrokerExecutionSnapshot[],
+  input: AccountClosedTradeFilters = {},
+  currency = "USD",
+): NormalizedAccountTrade[] => {
+  const seen = new Set(trades.map(accountTradeActivityMatchKey));
+  const executionTrades = buildLiveExecutionActivityTrades(executions, currency)
+    .filter((trade) => accountTradeMatchesClosedTradeFilters(trade, input))
+    .filter((trade) => {
+      const key = accountTradeActivityMatchKey(trade);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  if (!executionTrades.length) return trades;
+  return [...trades, ...executionTrades].sort((left, right) => {
+    const leftTime = left.closeDate?.getTime() ?? 0;
+    const rightTime = right.closeDate?.getTime() ?? 0;
+    return rightTime - leftTime;
+  });
+};
+
 const brokerOrderActivityMatchKey = (order: BrokerOrderSnapshot): string =>
   [
     order.accountId,
@@ -5202,6 +5477,26 @@ const mergeLiveOrderActivityTrades = (
   });
 };
 
+async function listExecutionsForUniverse(
+  universe: AccountUniverse,
+  mode: RuntimeMode,
+  input: AccountClosedTradeFilters,
+): Promise<BrokerExecutionSnapshot[]> {
+  const days = executionLookbackDays(input);
+  const executions = await Promise.all(
+    universe.accountIds.map((accountId) =>
+      listIbkrExecutions({
+        accountId,
+        mode,
+        days,
+        limit: 500,
+        symbol: input.symbol ?? undefined,
+      }),
+    ),
+  );
+  return executions.flat();
+}
+
 async function listClosedTradesForUniverse(
   universe: AccountUniverse,
   input: AccountClosedTradeFilters,
@@ -5296,12 +5591,19 @@ export async function getAccountClosedTrades(input: {
 
   const mode = input.mode ?? getRuntimeMode();
   const universe = await getLiveAccountUniverse(input.accountId, mode);
-  const [flexTrades, orderResult] = await Promise.all([
+  const [flexTrades, executions, orderResult] = await Promise.all([
     listClosedTradesForUniverse(universe, input),
+    listExecutionsForUniverse(universe, mode, input),
     listOrdersForUniverse(universe, mode),
   ]);
-  const trades = mergeLiveOrderActivityTrades(
+  const executionTrades = mergeLiveExecutionActivityTrades(
     flexTrades,
+    executions,
+    input,
+    universe.primaryCurrency,
+  );
+  const trades = mergeLiveOrderActivityTrades(
+    executionTrades,
     orderResult.orders,
     input,
     universe.primaryCurrency,
@@ -6194,6 +6496,8 @@ export const __accountMarginInternalsForTests = {
 };
 
 export const __accountOrderInternalsForTests = {
+  buildLiveExecutionActivityTrades,
+  mergeLiveExecutionActivityTrades,
   mergeLiveOrderActivityTrades,
   normalizeOrderTab,
   normalizeTradeAssetClassLabel,

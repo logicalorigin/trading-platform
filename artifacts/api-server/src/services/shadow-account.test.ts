@@ -373,6 +373,141 @@ test("shadow closed-trades cache key includes filters and canonical dates", () =
   );
 });
 
+test("shadow closed-trades internals include unmatched option fills as activity", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const spyContract = {
+    ticker: "SPY20260608P758",
+    underlying: "SPY",
+    expirationDate: "2026-06-08",
+    strike: 758,
+    right: "put",
+    multiplier: 100,
+    sharesPerContract: 100,
+    providerContractId: "spy-put",
+  };
+  const openSpy = {
+    id: "open-spy",
+    orderId: "order-open-spy",
+    accountId: "shadow",
+    symbol: "SPY",
+    side: "buy",
+    assetClass: "option",
+    quantity: 6,
+    price: 3.08,
+    grossAmount: 1848,
+    fees: 4.04,
+    realizedPnl: 0,
+    cashDelta: -1852.04,
+    occurredAt: "2026-06-04T17:36:31.463Z",
+    occurredAtDate: new Date("2026-06-04T17:36:31.463Z"),
+    sourceType: "automation",
+    strategyLabel: "Signal Options",
+    candidateId: "candidate-spy",
+    deploymentId: "deployment-spy",
+    deploymentName: "Shadow",
+    sourceEventId: null,
+    metadata: {
+      selectedContract: spyContract,
+      selectedExpiration: { dte: 4 },
+      candidate: { optionRight: "put" },
+    },
+  } as any;
+  const { roundTrips } = internals.buildShadowAnalysisRoundTrips([openSpy]);
+
+  const trades = internals.mergeShadowActivityTrades(
+    [],
+    [openSpy],
+    roundTrips,
+    {
+      from: new Date("2026-06-04T00:00:00.000Z"),
+      to: new Date("2026-06-04T23:59:59.999Z"),
+    },
+  );
+
+  assert.equal(trades.length, 1);
+  assert.equal(trades[0]?.source, "SHADOW_ACTIVITY");
+  assert.equal(trades[0]?.symbol, "SPY");
+  assert.equal(trades[0]?.realizedPnl, null);
+  assert.equal(trades[0]?.optionRight, "put");
+  assert.equal(trades[0]?.dte, 4);
+});
+
+test("shadow closed-trades internals do not duplicate fills consumed by a round trip", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const events = [
+    {
+      id: "buy-apld",
+      orderId: "order-buy-apld",
+      accountId: "shadow",
+      symbol: "APLD",
+      side: "buy",
+      assetClass: "option",
+      quantity: 10,
+      price: 1.27,
+      grossAmount: 1270,
+      fees: 6.73,
+      realizedPnl: 0,
+      cashDelta: -1276.73,
+      occurredAt: "2026-06-04T16:45:57.546Z",
+      occurredAtDate: new Date("2026-06-04T16:45:57.546Z"),
+      sourceType: "automation",
+      strategyLabel: "Signal Options",
+      candidateId: "candidate-apld",
+      deploymentId: "deployment-apld",
+      deploymentName: "Shadow",
+      sourceEventId: null,
+      metadata: {},
+    },
+    {
+      id: "sell-apld",
+      orderId: "order-sell-apld",
+      accountId: "shadow",
+      symbol: "APLD",
+      side: "sell",
+      assetClass: "option",
+      quantity: 10,
+      price: 1.66,
+      grossAmount: 1660,
+      fees: 6.73,
+      realizedPnl: 383.27,
+      cashDelta: 1653.27,
+      occurredAt: "2026-06-04T18:54:34.947Z",
+      occurredAtDate: new Date("2026-06-04T18:54:34.947Z"),
+      sourceType: "automation",
+      strategyLabel: "Signal Options",
+      candidateId: "candidate-apld",
+      deploymentId: "deployment-apld",
+      deploymentName: "Shadow",
+      sourceEventId: null,
+      metadata: {},
+    },
+  ] as any[];
+  const { roundTrips } = internals.buildShadowAnalysisRoundTrips(events);
+
+  const trades = internals.mergeShadowActivityTrades(
+    [
+      {
+        id: "sell-apld",
+        source: "SHADOW",
+        accountId: "shadow",
+        symbol: "APLD",
+        assetClass: "Options",
+        closeDate: "2026-06-04T18:54:34.947Z",
+        realizedPnl: 383.27,
+      },
+    ] as any,
+    events,
+    roundTrips,
+    {
+      from: new Date("2026-06-04T00:00:00.000Z"),
+      to: new Date("2026-06-04T23:59:59.999Z"),
+    },
+  );
+
+  assert.equal(trades.length, 1);
+  assert.equal(trades[0]?.id, "sell-apld");
+});
+
 test("shadow read cache serves marked stale data when refresh exceeds budget", async () => {
   const internals = __shadowWatchlistBacktestInternalsForTests;
   internals.invalidateShadowFreshStateCache();
@@ -1635,9 +1770,16 @@ test("shadow account summary day pnl uses equity history instead of position day
   const summaryBody = source.match(
     /export async function getShadowAccountSummary\([\s\S]*?\nfunction isWatchlistBacktestRunSnapshotSource/,
   )?.[0];
+  const returnMetricsBody = source.match(
+    /async function resolveShadowAccountSummaryReturnMetrics\([\s\S]*?\nfunction buildShadowAccountSummaryResponse/,
+  )?.[0];
 
   assert.ok(summaryBody);
+  assert.ok(returnMetricsBody);
   assert.match(summaryBody, /resolveShadowAccountSummaryReturnMetrics/);
+  assert.match(returnMetricsBody, /readFreshCachedShadowEquityHistoryReturnMetrics/);
+  assert.match(returnMetricsBody, /Promise\.race/);
+  assert.match(returnMetricsBody, /SHADOW_SUMMARY_EQUITY_HISTORY_MAX_WAIT_MS/);
   assert.match(source, /EquityHistoryMarketDayPnl/);
   assert.doesNotMatch(summaryBody, /readShadowPositionDayChanges/);
 });

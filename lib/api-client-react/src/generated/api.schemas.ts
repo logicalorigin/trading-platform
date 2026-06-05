@@ -3345,8 +3345,11 @@ export type AccountTradeSource = typeof AccountTradeSource[keyof typeof AccountT
 
 export const AccountTradeSource = {
   LIVE: 'LIVE',
+  LIVE_ORDER: 'LIVE_ORDER',
+  LIVE_EXECUTION: 'LIVE_EXECUTION',
   FLEX: 'FLEX',
   SHADOW: 'SHADOW',
+  SHADOW_ACTIVITY: 'SHADOW_ACTIVITY',
 } as const;
 
 export type AccountTradeSourceType = typeof AccountTradeSourceType[keyof typeof AccountTradeSourceType];
@@ -6339,6 +6342,7 @@ status?: OrderStatus;
 
 export type ListExecutionsParams = {
 accountId?: string;
+mode?: EnvironmentMode;
 /**
  * @minimum 1
  */

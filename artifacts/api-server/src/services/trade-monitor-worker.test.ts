@@ -381,15 +381,16 @@ test("trade monitor worker does not run REST-backed profile polls while stock st
   let loadCalls = 0;
   let evaluateCalls = 0;
   let subscribedSymbols: string[] = [];
+  let freshnessSymbols: string[] = [];
   const worker = createTradeMonitorWorker({
     listProfiles: async () => [profile({ pollIntervalSeconds: 15 })],
     resolveUniverse: async (inputProfile) => ({
       profile: inputProfile,
-      symbols: ["AAPL", "MSFT"],
+      symbols: ["AAPL", "MSFT", "QQQ"],
       watchlistSymbols: ["AAPL", "MSFT"],
       skippedSymbols: [],
       truncated: false,
-      universe: signalMonitorTestUniverse(inputProfile, ["AAPL", "MSFT"]),
+      universe: signalMonitorTestUniverse(inputProfile, ["AAPL", "MSFT", "QQQ"]),
     }),
     loadCompletedBars: async () => {
       loadCalls += 1;
@@ -407,7 +408,10 @@ test("trade monitor worker does not run REST-backed profile polls while stock st
     }) => input.profile,
     updateProfileLastError: async () => {},
     isStockAggregateStreamingAvailable: () => true,
-    hasRecentStockAggregateSourceActivity: () => true,
+    hasRecentStockAggregateSourceActivity: (input) => {
+      freshnessSymbols = input.symbols;
+      return true;
+    },
     acquireTickLock: async () => async () => {},
     subscribeStockMinuteAggregates: (symbols) => {
       subscribedSymbols = symbols;
@@ -426,7 +430,8 @@ test("trade monitor worker does not run REST-backed profile polls while stock st
 
   await worker.runOnce();
 
-  assert.deepEqual(subscribedSymbols, ["AAPL", "MSFT"]);
+  assert.deepEqual(subscribedSymbols, ["AAPL", "MSFT", "QQQ"]);
+  assert.deepEqual(freshnessSymbols, ["AAPL", "MSFT", "QQQ"]);
   assert.equal(loadCalls, 0);
   assert.equal(evaluateCalls, 0);
 });
@@ -435,15 +440,16 @@ test("trade monitor worker falls back to history when stock streaming source act
   let loadCalls = 0;
   let evaluateCalls = 0;
   let subscribedSymbols: string[] = [];
+  let freshnessSymbols: string[] = [];
   const worker = createTradeMonitorWorker({
     listProfiles: async () => [profile({ pollIntervalSeconds: 15 })],
     resolveUniverse: async (inputProfile) => ({
       profile: inputProfile,
-      symbols: ["AAPL", "MSFT"],
+      symbols: ["AAPL", "MSFT", "QQQ"],
       watchlistSymbols: ["AAPL", "MSFT"],
       skippedSymbols: [],
       truncated: false,
-      universe: signalMonitorTestUniverse(inputProfile, ["AAPL", "MSFT"]),
+      universe: signalMonitorTestUniverse(inputProfile, ["AAPL", "MSFT", "QQQ"]),
     }),
     loadCompletedBars: async () => {
       loadCalls += 1;
@@ -461,7 +467,10 @@ test("trade monitor worker falls back to history when stock streaming source act
     }) => input.profile,
     updateProfileLastError: async () => {},
     isStockAggregateStreamingAvailable: () => true,
-    hasRecentStockAggregateSourceActivity: () => false,
+    hasRecentStockAggregateSourceActivity: (input) => {
+      freshnessSymbols = input.symbols;
+      return false;
+    },
     acquireTickLock: async () => async () => {},
     subscribeStockMinuteAggregates: (symbols) => {
       subscribedSymbols = symbols;
@@ -480,9 +489,10 @@ test("trade monitor worker falls back to history when stock streaming source act
 
   await worker.runOnce();
 
-  assert.deepEqual(subscribedSymbols, ["AAPL", "MSFT"]);
-  assert.equal(loadCalls, 2);
-  assert.equal(evaluateCalls, 2);
+  assert.deepEqual(subscribedSymbols, ["AAPL", "MSFT", "QQQ"]);
+  assert.deepEqual(freshnessSymbols, ["AAPL", "MSFT", "QQQ"]);
+  assert.equal(loadCalls, 3);
+  assert.equal(evaluateCalls, 3);
 });
 
 test("trade monitor worker evaluates a streamed aggregate without waiting for the next poll", async () => {
@@ -680,18 +690,23 @@ test("trade monitor worker batches simultaneous streamed aggregates behind one l
   assert.equal(lockCalls, 1);
 });
 
-test("trade monitor worker rotates across all watchlist symbols under the per-pass cap", async () => {
+test("trade monitor worker rotates across all resolved universe symbols under the per-pass cap", async () => {
   const evaluatedSymbols: string[] = [];
   let now = new Date("2026-04-24T14:33:00.000Z");
   const worker = createTradeMonitorWorker({
     listProfiles: async () => [profile({ maxSymbols: 2 })],
     resolveUniverse: async (inputProfile) => ({
       profile: inputProfile,
-      symbols: ["AAPL", "MSFT"],
-      watchlistSymbols: ["AAPL", "MSFT", "NVDA", "TSLA"],
-      skippedSymbols: ["NVDA", "TSLA"],
-      truncated: true,
-      universe: signalMonitorTestUniverse(inputProfile, ["AAPL", "MSFT"]),
+      symbols: ["AAPL", "MSFT", "NVDA", "TSLA"],
+      watchlistSymbols: ["AAPL", "MSFT"],
+      skippedSymbols: [],
+      truncated: false,
+      universe: signalMonitorTestUniverse(inputProfile, [
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "TSLA",
+      ]),
     }),
     loadCompletedBars: async () => ({
       bars: [],

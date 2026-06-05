@@ -348,13 +348,24 @@ const signalRowSparklineFallbackPrice = (row) => {
   return null;
 };
 
+const signalSparklineSyntheticFallbackPrice = (symbol) => {
+  const normalizedSymbol = String(symbol || "SIGNAL").trim().toUpperCase();
+  let hash = 0;
+  for (let index = 0; index < normalizedSymbol.length; index += 1) {
+    hash = (hash * 31 + normalizedSymbol.charCodeAt(index)) % 10_000;
+  }
+  return 50 + (hash % 250);
+};
+
 const buildSignalsTableFallbackSparklineData = ({
   symbol,
   state,
   direction,
   fallbackPrice,
 }) => {
-  const current = signalSparklineFallbackPrice(state, fallbackPrice);
+  const current =
+    signalSparklineFallbackPrice(state, fallbackPrice) ??
+    signalSparklineSyntheticFallbackPrice(symbol);
   if (current == null) {
     return [];
   }

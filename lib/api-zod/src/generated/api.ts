@@ -1803,7 +1803,7 @@ export const GetAccountClosedTradesResponse = zod.object({
   "currency": zod.string(),
   "trades": zod.array(zod.object({
   "id": zod.string(),
-  "source": zod.enum(['LIVE', 'FLEX', 'SHADOW']),
+  "source": zod.enum(['LIVE', 'LIVE_ORDER', 'LIVE_EXECUTION', 'FLEX', 'SHADOW', 'SHADOW_ACTIVITY']),
   "accountId": zod.string(),
   "symbol": zod.string(),
   "side": zod.string(),
@@ -3490,6 +3490,7 @@ export const StreamOrdersQueryParams = zod.object({
 
 export const ListExecutionsQueryParams = zod.object({
   "accountId": zod.coerce.string().optional(),
+  "mode": zod.enum(['paper', 'live']).optional(),
   "days": zod.coerce.number().min(1).optional(),
   "limit": zod.coerce.number().min(1).optional(),
   "symbol": zod.coerce.string().optional(),

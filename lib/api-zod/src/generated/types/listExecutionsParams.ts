@@ -8,6 +8,7 @@
 
 export type ListExecutionsParams = {
 accountId?: string;
+mode?: 'paper' | 'live';
 /**
  * @minimum 1
  */

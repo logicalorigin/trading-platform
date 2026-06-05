@@ -11,6 +11,9 @@ export type AccountTradeSource = typeof AccountTradeSource[keyof typeof AccountT
 
 export const AccountTradeSource = {
   LIVE: 'LIVE',
+  LIVE_ORDER: 'LIVE_ORDER',
+  LIVE_EXECUTION: 'LIVE_EXECUTION',
   FLEX: 'FLEX',
   SHADOW: 'SHADOW',
+  SHADOW_ACTIVITY: 'SHADOW_ACTIVITY',
 } as const;
