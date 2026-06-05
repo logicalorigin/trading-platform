@@ -12,5 +12,4 @@ export type DiagnosticSeverity = typeof DiagnosticSeverity[keyof typeof Diagnost
 export const DiagnosticSeverity = {
   info: 'info',
   warning: 'warning',
-  critical: 'critical',
 } as const;

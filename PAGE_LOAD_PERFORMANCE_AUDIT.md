@@ -30,9 +30,9 @@ Cache and dedup are actually solid (in-flight maps + single-flight on account pa
 | # | What's slow | Where | Brainstorm |
 |---|---|---|---|
 | 1 | **All bridge lanes `concurrency: 1`** — account, historical, options-meta, option-quotes. API parallelism (5 account calls in `Promise.all`) collapses back to serial at the bridge. | `ibkr-bridge/src/work-scheduler.ts:73-119` | Raise account/historical to 2-3; coordinate with IBKR API rate limits to find safe ceiling |
-| 2 | **Account derived has a 6s boot delay** before SSE clients get full payload | `services/account-page-streams.ts:25-26` | Ship critical immediately; load derived in background; cache benchmark equity longer (5 min, not 30s) |
+| 2 | **Account derived has a 6s boot delay** before SSE clients get full payload | `services/account-page-streams.ts:25-26` | Ship priority immediately; load derived in background; cache benchmark equity longer (5 min, not 30s) |
 | 3 | **Quote timeout 30s, backoff 15s** → retries fire while underlying issue is still present (thundering herd) | `providers/ibkr/bridge-client.ts:562` + `services/bridge-governor.ts:56` | Make backoff ≥ timeout; add exponential backoff (5s/10s/30s) |
-| 4 | **Cache TTL is 1s** for critical/live; at scale, every TTL window is a stampede risk | `services/account-page-streams.ts` | Adaptive TTL (extend under load); probabilistic early refresh; jitter |
+| 4 | **Cache TTL is 1s** for priority/live; at scale, every TTL window is a stampede risk | `services/account-page-streams.ts` | Adaptive TTL (extend under load); probabilistic early refresh; jitter |
 | 5 | **SSE slow-clients get hard-killed at 256 chunks** | `ibkr-bridge/src/sse-writer.ts:74-80` | Drop intermediate snapshots first; flow-control by client drain rate; only kill on extended stall |
 | 6 | **Transient DB error → 60s flow universe lockout** | `lib/transient-db-error.ts:28` | Per-query backoff with exponential ramp, not a global 60s |
 | 7 | **TWS subscription churn O(N) on every listener add/remove** | `ibkr-bridge/src/tws-provider.ts:2505-2703` | Batch listener deltas over 100ms; rebalance once |
@@ -52,7 +52,7 @@ Replit cold start is **15-50s end-to-end**, dominated by two things:
 | 4 | **Supervisor lock waits up to 8s** on restart | `scripts/runDevApp.mjs:30` (`PYRUS_DEV_LOCK_WAIT_MS`) | Drop to 3s; aggressive takeover when prior process is unresponsive |
 | 5 | **Workspace libs rebundled on every API build** | `build.mjs` external list | Pre-build `lib/*/dist/`, mark workspace libs as `external` in dev |
 | 6 | **Vite config runs `git status/rev-parse/branch` on every start** (100-300ms) | `vite.config.ts:17-27` | Cache to `.vite-fingerprint`; refresh only when `.git/HEAD` mtime changes |
-| 7 | **Background services fire-and-forget after healthz** — first call hits a cold service | `index.ts:153-174` | Either pre-warm critical (watchlist, account) before healthz, or return cached defaults on first hit |
+| 7 | **Background services fire-and-forget after healthz** — first call hits a cold service | `index.ts:153-174` | Either pre-warm priority (watchlist, account) before healthz, or return cached defaults on first hit |
 | 8 | **`esbuild-plugin-pino` worker extraction** adds dev overhead nobody needs | `build.mjs:107` | Use console logging in dev; pino only in prod |
 
 ---
@@ -80,18 +80,18 @@ End-to-end "click → interactive" on the account screen, cold:
 ```
 Replit start
   ├─ Supervisor lock wait        0-8s   (#4 startup)
-  ├─ API esbuild compile         8-25s  (#1 startup)   ← critical path
+  ├─ API esbuild compile         8-25s  (#1 startup)   ← priority path
   ├─ API listen + healthz        <1s
-  ├─ Vite prebundle (1st req)    3-10s  (#2 startup)   ← critical path
+  ├─ Vite prebundle (1st req)    3-10s  (#2 startup)   ← priority path
   └─ React hydrate + bootstrap   1-3s
                                  ───────
   First paint                    13-47s
 
 Account screen open
-  ├─ Critical SSE payload        500ms-1.5s   (#1 backend — bridge serialization)
+  ├─ Priority SSE payload        500ms-1.5s   (#1 backend — bridge serialization)
   ├─ Derived 6s boot delay       6s           (#2 backend)
   ├─ Recharts mount × 4          200-600ms    (#5 frontend)
   └─ Every 5s thereafter         4-5 req/5s   (#1 frontend)
 ```
 
-The fixes line up against the longest segments: bridge concurrency for the 1.5s critical payload, derived boot delay for the 6s wait, AccountScreen refetch tuning for the steady-state load, esbuild + Vite prebundling for the cold start.
+The fixes line up against the longest segments: bridge concurrency for the 1.5s priority payload, derived boot delay for the 6s wait, AccountScreen refetch tuning for the steady-state load, esbuild + Vite prebundling for the cold start.

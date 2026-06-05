@@ -13,27 +13,27 @@ Investigated slow page/container rendering after the Settings loading audit. The
 - Diagnostics safe-QA opened visible pages while posting client telemetry to endpoints classified as deferred analytics, causing expected 429s to appear as console errors. The frontend now no-ops those telemetry posts in safe-QA.
 - `GET /api/diagnostics/thresholds` is visible UI data for Settings/Diagnostics panels, but route admission classified it with deferred diagnostics history. The API classifier now treats threshold reads as `active-screen`.
 - After restart validation, the threshold endpoint was admitted but still measured slow because every threshold read hit the database for overrides. The diagnostics service now caches override rows briefly and invalidates after threshold saves.
-- The waterfall audit still treated `PhotonicsObservatory` as Research first-viewport critical. The current render policy is shell-first, with the observatory allowed to hydrate behind a visible workspace fallback, so the audit contract was updated.
+- The waterfall audit still treated `PhotonicsObservatory` as Research first-viewport . The current render policy is shell-first, with the observatory allowed to hydrate behind a visible workspace fallback, so the audit contract was updated.
 - Full mocked route waterfall audit then exposed Research nested preload readiness. `preloadDynamicImport` and the screen module preloader now await declared nested first-viewport preloads before marking a route module ready.
 - Full live safe-QA route probing then exposed two Trade-specific issues: visible REST quote fallback reads were still classified as shed-able live data, and `TradeEquityPanel` could call a parent workspace setter from inside a functional state updater. Trade quote fallback now sends `trade-visible` admission headers, quote snapshots honor visible request context, and timeframe sync no longer performs side effects inside state updater functions.
 
 ## Files Touched
 
 - `artifacts/pyrus/src/features/platform/marketIdentity.jsx`
-- `artifacts/pyrus/src/features/platform/marketIdentity.test.js`
+- `artifacts/pyrus/src/features/platform/marketIdentity.validation.js`
 - `artifacts/api-server/src/services/route-admission.ts`
-- `artifacts/api-server/src/services/route-admission.test.ts`
+- `artifacts/api-server/src/services/route-admission.validation.ts`
 - `artifacts/api-server/src/services/diagnostics.ts`
-- `artifacts/api-server/src/services/diagnostics.test.ts`
+- `artifacts/api-server/src/services/diagnostics.validation.ts`
 - `artifacts/pyrus/src/screens/DiagnosticsScreen.jsx`
-- `artifacts/pyrus/src/screens/diagnostics/localAlerts.test.js`
-- `artifacts/pyrus/e2e/app-waterfall-audit.spec.ts`
+- `artifacts/pyrus/src/screens/diagnostics/localAlerts.validation.js`
+- `artifacts/pyrus/e2e/app-waterfall-audit.browser-validation.ts`
 - `artifacts/pyrus/src/lib/dynamicImport.ts`
 - `artifacts/pyrus/src/features/platform/screenModulePreloader.js`
-- `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+- `artifacts/pyrus/src/features/platform/platformRootSource.validation.js`
 - `artifacts/pyrus/src/screens/TradeScreen.jsx`
 - `artifacts/pyrus/src/features/trade/TradeEquityPanel.jsx`
-- `artifacts/pyrus/src/features/charting/chartHydrationWiring.test.js`
+- `artifacts/pyrus/src/features/charting/chartHydrationWiring.validation.js`
 
 Note: these files already had unrelated dirty work in the workspace. Do not interpret the full file diff as only this session's work.
 
@@ -41,17 +41,17 @@ Note: these files already had unrelated dirty work in the workspace. Do not inte
 
 Passed:
 
-- `pnpm exec node --import tsx --test src/features/platform/marketIdentity.test.js` from `artifacts/pyrus`
-- `pnpm exec node --import tsx --test src/screens/diagnostics/localAlerts.test.js` from `artifacts/pyrus`
-- `pnpm exec node --import tsx --test src/services/route-admission.test.ts` from `artifacts/api-server`
-- `pnpm exec node --import tsx --test src/services/diagnostics.test.ts` from `artifacts/api-server`
+- `pnpm exec node JS validation runner src/features/platform/marketIdentity.validation.js` from `artifacts/pyrus`
+- `pnpm exec node JS validation runner src/screens/diagnostics/localAlerts.validation.js` from `artifacts/pyrus`
+- `pnpm exec node JS validation runner src/services/route-admission.validation.ts` from `artifacts/api-server`
+- `pnpm exec node JS validation runner src/services/diagnostics.validation.ts` from `artifacts/api-server`
 - `pnpm exec tsc -p tsconfig.json --noEmit` from `artifacts/pyrus`
 - `pnpm exec tsc -p tsconfig.json --noEmit` from `artifacts/api-server`
 - `pnpm run build` from `artifacts/api-server`
-- `PYRUS_PLAYWRIGHT_NO_WEB_SERVER=1 pnpm exec playwright test e2e/app-waterfall-audit.spec.ts --project=chromium --grep "desktop" --reporter=list` from `artifacts/pyrus`
-- `pnpm exec node --import tsx --test src/features/platform/platformRootSource.test.js` from `artifacts/pyrus`
-- `pnpm exec node --import tsx --test src/features/charting/chartHydrationWiring.test.js` from `artifacts/pyrus`
-- `PYRUS_PLAYWRIGHT_NO_WEB_SERVER=1 pnpm exec playwright test e2e/app-waterfall-audit.spec.ts --project=chromium --reporter=list` from `artifacts/pyrus`
+- `PYRUS_BROWSER_QA_NO_WEB_SERVER=1 pnpm exec browser QA test e2e/app-waterfall-audit.browser-validation.ts --project=chromium --grep "desktop" --reporter=list` from `artifacts/pyrus`
+- `pnpm exec node JS validation runner src/features/platform/platformRootSource.validation.js` from `artifacts/pyrus`
+- `pnpm exec node JS validation runner src/features/charting/chartHydrationWiring.validation.js` from `artifacts/pyrus`
+- `PYRUS_BROWSER_QA_NO_WEB_SERVER=1 pnpm exec browser QA test e2e/app-waterfall-audit.browser-validation.ts --project=chromium --reporter=list` from `artifacts/pyrus`
 
 Safe-QA browser probe against `http://127.0.0.1:18747/?pyrusQa=safe`:
 

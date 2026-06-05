@@ -28,7 +28,7 @@ What the app is
 
 PYRUS is a sophisticated real-time options/equities trading dashboard. It includes a multi-pane charting Market view, a Signals scanner (tracking ~90–540 tickers with BUY/SELL verdicts across multiple timeframes), an options Flow tape with a flow scanner, a GEX (gamma exposure) workspace, and Trade, Account, Research, Algo, Backtest, and Diagnostics sections. It connects to IBKR and shows REAL/SHADOW account modes.
 
-Critical findings
+ findings
 
 1. Market-data API is being rate-limited (HTTP 429) on load. This is the most serious issue. On every page load the app fires a large burst of concurrent /api/bars?... requests (SPY, QQQ, IWM, VIXY, AAPL, MSFT, NVDA, AMZN, TSLA, TQQQ, SQQQ, DIA, plus scanner symbols like FCEL, INDI, FRMI). The majority come back 429 Too Many Requests. The downstream effect is visible throughout the UI: charts display a "STALE" badge, the Signals matrix shows "AVOID 0% / No Data" for most rows, and the Flow scanner reports "Stale." Recommendation: throttle/queue bar requests with a concurrency limit, add client-side caching/deduplication (the same symbols are requested repeatedly), and implement exponential backoff with retry on 429.
 
@@ -198,7 +198,7 @@ What the app is
 
 PYRUS is a sophisticated real-time options/equities trading dashboard. It includes a multi-pane charting Market view, a Signals scanner (tracking ~90–540 tickers with BUY/SELL verdicts across multiple timeframes), an options Flow tape with a flow scanner, a GEX (gamma exposure) workspace, and Trade, Account, Research, Algo, Backtest, and Diagnostics sections. It connects to IBKR and shows REAL/SHADOW account modes.
 
-Critical findings
+ findings
 
 1. Market-data API is being rate-limited (HTTP 429) on load. This is the most serious issue. On every page load the app fires a large burst of concurrent /api/bars?... requests (SPY, QQQ, IWM, VIXY, AAPL, MSFT, NVDA, AMZN, TSLA, TQQQ, SQQQ, DIA, plus scanner symbols like FCEL, INDI, FRMI). The majority come back 429 Too Many Requests. The downstream effect is visible throughout the UI: charts display a "STALE" badge, the Signals matrix shows "AVOID 0% / No Data" for most rows, and the Flow scanner reports "Stale." Recommendation: throttle/queue bar requests with a concurrency limit, add client-side caching/deduplication (the same symbols are requested repeatedly), and implement exponential backoff with retry on 429.
 
@@ -239,7 +239,7 @@ What the app is
 
 PYRUS is a sophisticated real-time options/equities trading dashboard. It includes a multi-pane charting Market view, a Signals scanner (tracking ~90–540 tickers with BUY/SELL verdicts across multiple timeframes), an options Flow tape with a flow scanner, a GEX (gamma exposure) workspace, and Trade, Account, Research, Algo, Backtest, and Diagnostics sections. It connects to IBKR and shows REAL/SHADOW account modes.
 
-Critical findings
+ findings
 
 1. Market-data API is being rate-limited (HTTP 429) on load. This is the most serious issue. On every page load the app fires a large burst of concurrent /api/bars?... requests (SPY, QQQ, IWM, VIXY, AAPL, MSFT, NVDA, AMZN, TSLA, TQQQ, SQQQ, DIA, plus scanner symbols like FCEL, INDI, FRMI). The majority come back 429 Too Many Requests. The downstream effect is visible throughout the UI: charts display a "STALE" badge, the Signals matrix shows "AVOID 0% / No Data" for most rows, and the Flow scanner reports "Stale." Recommendation: throttle/queue bar requests with a concurrency limit, add client-side caching/deduplication (the same symbols are requested repeatedly), and implement exponential backoff with retry on 429.
 
@@ -303,7 +303,7 @@ Would you like me to retry the GEX/Trade/Diagnostics screens now that the tab ha
 - `artifacts/pyrus/index.html`
 - `artifacts/pyrus/src/app/App.tsx`
 - `artifacts/pyrus/src/app/AppContent.tsx`
-- `artifacts/pyrus/src/components/LogoLoader.test.ts`
+- `artifacts/pyrus/src/components/LogoLoader.validation.ts`
 - `artifacts/pyrus/src/index.css`
 
 ## Repo State Snapshot
@@ -318,13 +318,13 @@ Would you like me to retry the GEX/Trade/Diagnostics screens now that the tab ha
  M artifacts/pyrus/index.html
  M artifacts/pyrus/src/app/App.tsx
  M artifacts/pyrus/src/app/AppContent.tsx
- M artifacts/pyrus/src/components/LogoLoader.test.ts
+ M artifacts/pyrus/src/components/LogoLoader.validation.ts
  M artifacts/pyrus/src/index.css
 ?? SESSION_HANDOFF_2026-06-03_019e9066-b78f-7160-b516-c85c2e7fe345.md
 ?? SESSION_HANDOFF_2026-06-03_019e9071-13a9-7603-a5fd-ed951f5273d5.md
 ?? SESSION_HANDOFF_LIVE_2026-06-03_api-safety-quality-gate-implementation.md
 ?? artifacts/api-server/src/lib/api-auth.ts
-?? artifacts/api-server/src/routes/api-auth.test.ts
+?? artifacts/api-server/src/routes/api-auth.validation.ts
 ?? artifacts/api-server/src/routes/auth.ts
 ?? artifacts/pyrus/src/app/bootLoaderHandoff.ts
 ```
@@ -340,7 +340,7 @@ Would you like me to retry the GEX/Trade/Diagnostics screens now that the tab ha
  artifacts/pyrus/index.html                         | 96 ++++++++++++++--------
  artifacts/pyrus/src/app/App.tsx                    |  4 +-
  artifacts/pyrus/src/app/AppContent.tsx             |  4 +-
- artifacts/pyrus/src/components/LogoLoader.test.ts  | 59 ++++++-------
+ artifacts/pyrus/src/components/LogoLoader.validation.ts  | 59 ++++++-------
  artifacts/pyrus/src/index.css                      | 27 ------
  10 files changed, 162 insertions(+), 143 deletions(-)
 ```

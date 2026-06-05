@@ -42,7 +42,7 @@ Can you actually build this? Not just technically, but practically.
 **Time-to-value:**
 - How quickly can you get something in front of users?
 - Is there a version that delivers value in days/weeks, not months?
-- What's the critical path? What has to happen first?
+- What's the dependency path? What has to happen first?
 
 **Red flags:**
 - "We just need to solve [very hard research problem] first"

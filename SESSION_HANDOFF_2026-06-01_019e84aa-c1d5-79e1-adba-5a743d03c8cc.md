@@ -190,7 +190,7 @@ CIEN
 Last 60s
 Awaiting next scan
 Signals to Actions · All 7 of 7 signals · Signal 14m · Bar 9m · worker waiting 1s; last batch 0/90 symbols · Massive Primary
-- `2026-06-01T21:44:50.455Z` why does algo page say critical
+- `2026-06-01T21:44:50.455Z` why does algo page show that status?
 - `2026-06-01T22:41:41.090Z` i want to redesign this upper area of the algo page and clean up and redundancies and duplications we might have in that area
 - `2026-06-01T22:55:44.291Z` what was this working on?
 
@@ -219,17 +219,17 @@ Signals to Actions · All 7 of 7 signals · Signal 14m · Bar 9m · worker waiti
 - `SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md`
 - `SESSION_HANDOFF_CURRENT.md`
 - `SESSION_HANDOFF_MASTER.md`
-- `artifacts/api-server/src/services/diagnostics.test.ts`
+- `artifacts/api-server/src/services/diagnostics.validation.ts`
 - `artifacts/api-server/src/services/diagnostics.ts`
 - `artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx`
 - `artifacts/pyrus/src/features/platform/memoryPressureClient.js`
-- `artifacts/pyrus/src/features/platform/memoryPressureModel.test.js`
+- `artifacts/pyrus/src/features/platform/memoryPressureModel.validation.js`
 - `artifacts/pyrus/src/features/platform/memoryPressurePopoverModel.js`
 - `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js`
-- `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js`
+- `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.validation.js`
 - `artifacts/pyrus/src/screens/DiagnosticsScreen.jsx`
 - `artifacts/pyrus/src/screens/SettingsScreen.jsx`
-- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`
+- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js`
 
 ## Repo State Snapshot
 
@@ -238,17 +238,17 @@ Signals to Actions · All 7 of 7 signals · Signal 14m · Bar 9m · worker waiti
  M SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md
  M SESSION_HANDOFF_CURRENT.md
  M SESSION_HANDOFF_MASTER.md
- M artifacts/api-server/src/services/diagnostics.test.ts
+ M artifacts/api-server/src/services/diagnostics.validation.ts
  M artifacts/api-server/src/services/diagnostics.ts
  M artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx
  M artifacts/pyrus/src/features/platform/memoryPressureClient.js
- M artifacts/pyrus/src/features/platform/memoryPressureModel.test.js
+ M artifacts/pyrus/src/features/platform/memoryPressureModel.validation.js
  M artifacts/pyrus/src/features/platform/memoryPressurePopoverModel.js
  M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js
- M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js
+ M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.validation.js
  M artifacts/pyrus/src/screens/DiagnosticsScreen.jsx
  M artifacts/pyrus/src/screens/SettingsScreen.jsx
- M artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js
+ M artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js
 ```
 
 ## Diff Summary
@@ -257,17 +257,17 @@ Signals to Actions · All 7 of 7 signals · Signal 14m · Bar 9m · worker waiti
  ...6-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md |  42 +++++++--
  SESSION_HANDOFF_CURRENT.md                         |  27 +++---
  SESSION_HANDOFF_MASTER.md                          |   2 +-
- .../api-server/src/services/diagnostics.test.ts    |  67 ++++++++++++++
+ .../api-server/src/services/diagnostics.validation.ts    |  67 ++++++++++++++
  artifacts/api-server/src/services/diagnostics.ts   | 101 +++++++++++++++++++--
  .../src/features/platform/PlatformWatchlist.jsx    |  94 ++++++++++++++++---
  .../src/features/platform/memoryPressureClient.js  |   1 +
- .../features/platform/memoryPressureModel.test.js  |  12 +++
+ .../features/platform/memoryPressureModel.validation.js  |  12 +++
  .../platform/memoryPressurePopoverModel.js         |  11 ++-
  .../features/platform/useMemoryPressureSignal.js   |   4 +
- .../platform/useMemoryPressureSignal.test.js       |   7 ++
+ .../platform/useMemoryPressureSignal.validation.js       |   7 ++
  artifacts/pyrus/src/screens/DiagnosticsScreen.jsx  |  20 +++-
  artifacts/pyrus/src/screens/SettingsScreen.jsx     |   1 +
- .../src/screens/algo/OperationsSignalRow.test.js   |  20 +++-
+ .../src/screens/algo/OperationsSignalRow.validation.js   |  20 +++-
  14 files changed, 361 insertions(+), 48 deletions(-)
 ```
 
@@ -278,7 +278,7 @@ Signals to Actions · All 7 of 7 signals · Signal 14m · Bar 9m · worker waiti
 ## What Changed This Session
 
 - Restored D-session scope from `SESSION_HANDOFF_2026-06-01_019e8366-b25f-7921-bbd5-2bfc17403296.md`.
-- Patched `scripts/windows/pyrus-ibkr-helper.ps1` so `Wait-IBGatewayWindow` no longer falls back to typing into a generic/empty-title Gateway process after `AppActivate`; it now requires a confirmed credential window before returning control to autologin. Added source assertions in `artifacts/api-server/src/services/ibkr-bridge-runtime.test.ts`.
+- Patched `scripts/windows/pyrus-ibkr-helper.ps1` so `Wait-IBGatewayWindow` no longer falls back to typing into a generic/empty-title Gateway process after `AppActivate`; it now requires a confirmed credential window before returning control to autologin. Added source assertions in `artifacts/api-server/src/services/ibkr-bridge-runtime.validation.ts`.
 - Added signal-options candidate contract-selection diagnostics in `artifacts/api-server/src/services/signal-options-automation.ts`: after metadata contract resolution, before live quote hydration, it emits non-ledger `signal_options_candidate_created` without canonical `signalKey`, so cockpit can show selected contracts without suppressing future retries after a crash.
 - Fixed the resulting fresh-start blocker: `esbuild` rejected duplicate `const stored` in `loadSignalOptionsMonitorState`; renamed the hard-pressure fallback value to `refreshedStored`.
 - Fixed Massive provider UI normalization in `artifacts/pyrus/src/features/platform/runtimeControlModel.js` and `ibkrPopoverModel.js`: flat `providers.massive.status/baseUrl/lastSuccessAt` is honored, empty REST request data no longer renders as `request`, and freshness wins over repeated host text when no richer REST/WS detail exists.
@@ -298,7 +298,7 @@ Signals to Actions · All 7 of 7 signals · Signal 14m · Bar 9m · worker waiti
 - Signal Options deployment `7e2e4e6f-749f-4e65-a011-87d3559a23b0` is enabled, last evaluated at `2026-06-01T20:10:49.642Z`, last signal at `2026-06-01T20:05:00.000Z`, with `lastError: null`.
 - IBKR runtime is connected and strict-ready, but the paired Windows desktop helper is still stale: reported helper `2026-05-27.launch-sequence-v24`, expected helper `2026-06-01.launch-sequence-v25`, `desktopAgentUpgradeRequired: true`. The code fix exists in the API-served helper script, but live Gateway autologin is not yet proven against v25.
 - Current line pressure is low but diagnostics are not healthy. Admission reports 3 active app lines out of 200 usable, scanner cap 197/200, signal-options active 1, shadow-account active 3. Bridge diagnostics separately reports 39 active quote subscriptions, 161 remaining, and scheduler pressure `stalled` across control, market-subscriptions, historical, and options-meta lanes.
-- `/api/diagnostics/latest` remains `down`/`critical`: API latency/errors elevated (`p95LatencyMs` about 3429, p99 about 6306, dominant slow route `/accounts/shadow/positions` p95 about 18072, one `/api/positions` error), runtime still reports the historical `api-child-exit`, and browser/resource-pressure/isolation/orders are degraded. IBKR, market-data, chart-hydration, accounts, automation, and storage snapshots are OK.
+- `/api/diagnostics/latest` remains `down`/``: API latency/errors elevated (`p95LatencyMs` about 3429, p99 about 6306, dominant slow route `/accounts/shadow/positions` p95 about 18072, one `/api/positions` error), runtime still reports the historical `api-child-exit`, and browser/resource-pressure/isolation/orders are degraded. IBKR, market-data, chart-hydration, accounts, automation, and storage snapshots are OK.
 - Cockpit responds. Snapshot at `2026-06-01T20:11:08Z`: readiness false due `market_session_quiet`, 13 candidates, 1 selected contract (`HOOD20260605C90`), but no `signal_options_candidate_created` marker was present in the payload. The marker patch is built, but live evidence remains unproven until a fresh contract-selection event takes that path.
 - Signals page interval containers should populate in a broad active-screen pass after restart instead of trickling through small page-local hydration chunks.
 - Greek position-management diagnostics are implemented and validated but non-enforcing; deployment exit settings were not changed.

@@ -244,7 +244,7 @@
           }
         };
 
-        const isNonCriticalDevScript = (target) => {
+        const isOptionalDevScript = (target) => {
           if (target.tagName !== "script") return false;
           const pathname = resourcePathname(target.url || target.inlineModuleImport);
           const id = String(target.id || "").toLowerCase();
@@ -258,7 +258,7 @@
 
         const isFatalResourceError = (target) => {
           if (!target) return false;
-          if (target.tagName === "script") return !isNonCriticalDevScript(target);
+          if (target.tagName === "script") return !isOptionalDevScript(target);
           if (target.tagName !== "link") return false;
           const rel = String(target.rel || "").toLowerCase();
           const as = String(target.as || "").toLowerCase();

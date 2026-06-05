@@ -23,7 +23,7 @@ The flow scanner could still look degraded or inert after the earlier pressure/O
 - Added scanner-specific pressure gating:
   - Ignores `automation` pressure drivers for scanner throttling.
   - Still honors hard resource blocks.
-  - Still throttles for non-automation high/critical pressure.
+  - Still throttles for non-automation high pressure.
 - Added radar quote failure containment:
   - Batch quote hydration failures retry per symbol.
   - Full radar quote failure opens a short local radar backoff.
@@ -41,8 +41,8 @@ The flow scanner could still look degraded or inert after the earlier pressure/O
 
 ## Validation
 
-- Passed: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/options-flow-scanner.test.ts src/services/ibkr-line-usage.test.ts` (`87` tests).
-- Passed: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/runtimeControlModel.test.js src/features/platform/platformRootSource.test.js` (`87` tests).
+- Passed: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/options-flow-scanner.validation.ts src/services/ibkr-line-usage.validation.ts` (`87` tests).
+- Passed: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/runtimeControlModel.validation.js src/features/platform/platformRootSource.validation.js` (`87` tests).
 - Passed: `pnpm --filter @workspace/api-server run typecheck`.
 - Passed: `pnpm --filter @workspace/pyrus run typecheck`.
 - Passed: `pnpm --filter @workspace/api-server run build`.

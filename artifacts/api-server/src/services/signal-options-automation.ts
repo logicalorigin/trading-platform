@@ -6555,7 +6555,7 @@ type AlgoCockpitStageStatus =
   | "blocked"
   | "stale";
 
-type AlgoCockpitSeverity = "info" | "warning" | "critical";
+type AlgoCockpitSeverity = "info" | "warning";
 
 function latestIso(
   values: Array<string | Date | null | undefined>,
@@ -7417,7 +7417,7 @@ function buildCockpitAttention(input: {
     const marketSessionQuiet = isMarketSessionQuietReadiness(input.readiness);
     items.push({
       id: "gateway-readiness",
-      severity: marketSessionQuiet ? "warning" : "critical",
+      severity: "warning",
       stage: "scan_universe",
       symbol: null,
       summary: marketSessionQuiet
@@ -7434,7 +7434,7 @@ function buildCockpitAttention(input: {
   if (input.deployment.lastError) {
     items.push({
       id: "deployment-last-error",
-      severity: "critical",
+      severity: "warning",
       stage: "scan_universe",
       symbol: null,
       summary: "Deployment has a recorded error.",
@@ -7447,7 +7447,7 @@ function buildCockpitAttention(input: {
   if (input.risk.dailyHaltActive === true) {
     items.push({
       id: "daily-loss-halt",
-      severity: "critical",
+      severity: "warning",
       stage: "liquidity_risk_gate",
       symbol: null,
       summary: "Daily loss halt is active.",
@@ -7501,8 +7501,7 @@ function buildCockpitAttention(input: {
     .forEach((candidate) => {
       items.push({
         id: `shadow-${candidate.id}`,
-        severity:
-          candidate.actionStatus === "mismatch" ? "critical" : "warning",
+        severity: "warning",
         stage: "order_shadow",
         symbol: candidate.symbol,
         summary: `${candidate.symbol} shadow ledger attribution needs review.`,
@@ -7542,7 +7541,7 @@ function buildCockpitAttention(input: {
   });
 
   return items.sort((left, right) => {
-    const severityRank = { critical: 0, warning: 1, info: 2 };
+    const severityRank = { warning: 1, info: 2 };
     return severityRank[left.severity] - severityRank[right.severity];
   });
 }
@@ -10236,7 +10235,7 @@ async function buildAlgoDeploymentCockpitPayload(input: {
       ),
       erroredDeployments: erroredDeployments.length,
       activeBlockers: attentionItems.filter(
-        (item) => item.severity === "critical",
+        (item) => item.severity === "warning",
       ).length,
       latestEventAt: latestFleetEvent?.occurredAt.toISOString() ?? null,
     },

@@ -34,15 +34,15 @@ Completed the first safe vertical slices:
 - `lib/ibkr-contracts/src/index.ts`
 - `lib/ibkr-contracts/package.json`
 - `artifacts/api-server/src/services/ibkr-sidecar-generation.ts`
-- `artifacts/api-server/src/services/ibkr-sidecar-generation.test.ts`
+- `artifacts/api-server/src/services/ibkr-sidecar-generation.validation.ts`
 - `artifacts/api-server/src/services/ibkr-line-usage.ts`
-- `artifacts/api-server/src/services/ibkr-line-usage.test.ts`
+- `artifacts/api-server/src/services/ibkr-line-usage.validation.ts`
 - `artifacts/api-server/src/providers/ibkr/bridge-client.ts`
 - `artifacts/ibkr-bridge/src/provider.ts`
 - `artifacts/ibkr-bridge/src/app.ts`
 - `artifacts/ibkr-bridge/src/service.ts`
 - `artifacts/ibkr-bridge/src/tws-provider.ts`
-- `artifacts/ibkr-bridge/src/tws-provider.test.ts`
+- `artifacts/ibkr-bridge/src/tws-provider.validation.ts`
 - `python/ibkr_sidecar/pyproject.toml`
 - `python/ibkr_sidecar/src/pyrus_ibkr_sidecar/__init__.py`
 - `python/ibkr_sidecar/src/pyrus_ibkr_sidecar/registry.py`
@@ -56,15 +56,15 @@ Completed the first safe vertical slices:
 
 ## Validation
 
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-sidecar-generation.test.ts`: pass.
-- `pnpm --filter @workspace/api-server exec node --import tsx --test --test-name-pattern "applies desired generation|active scanner drift" src/services/ibkr-line-usage.test.ts`: pass.
-- `pnpm --filter @workspace/api-server exec node --import tsx --test ../ibkr-bridge/src/tws-provider.test.ts --test-name-pattern "market data generation"` from workspace root: pass; Node ran the file, 52 tests passed.
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/ibkr-sidecar-generation.validation.ts`: pass.
+- `pnpm --filter @workspace/api-server exec node JS validation runner --validation-name-pattern "applies desired generation|active scanner drift" src/services/ibkr-line-usage.validation.ts`: pass.
+- `pnpm --filter @workspace/api-server exec node JS validation runner ../ibkr-bridge/src/tws-provider.validation.ts --validation-name-pattern "market data generation"` from workspace root: pass; Node ran the file, 52 tests passed.
 - `pnpm --filter @workspace/api-server run typecheck`: pass.
 - `pnpm --filter @workspace/api-server run build`: pass.
 - `pnpm --filter @workspace/ibkr-bridge run typecheck`: pass.
 - `pnpm --filter @workspace/ibkr-bridge run build`: pass.
 - `pnpm --filter @workspace/ibkr-contracts exec tsc -p tsconfig.json --noEmit`: pass.
-- `PYTHONPATH=python/ibkr_sidecar/src python -m pytest python/ibkr_sidecar/tests`: pass, 9 tests. FastAPI TestClient emitted the existing Starlette `httpx` deprecation warning.
+- `PYTHONPATH=python/ibkr_sidecar/src python -m Python validation python/ibkr_sidecar/tests`: pass, 9 tests. FastAPI TestClient emitted the existing Starlette `httpx` deprecation warning.
 - `PYTHONPATH=python/ibkr_sidecar/src python -m ruff check python/ibkr_sidecar/src python/ibkr_sidecar/tests`: pass.
 - `PYTHONPATH=python/ibkr_sidecar/src python -m mypy python/ibkr_sidecar/src`: pass.
 - Scoped `git diff --check` for IBKR slice files: pass.
@@ -89,7 +89,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
 
 - Started API-side Python sidecar routing slice after user approved the next step.
 - Planned scope: add a TS client for Python sidecar `POST /market-data/generation`, route desired-generation apply to it only when `IBKR_ASYNC_SIDECAR_ROUTING_ENABLED` is truthy, and skip TS bridge generation apply in that mode to avoid duplicate IBKR market-data subscriptions.
-- Active files for this slice: `artifacts/api-server/src/services/ibkr-line-usage.ts`, `artifacts/api-server/src/services/ibkr-line-usage.test.ts`, and new API-side sidecar client file.
+- Active files for this slice: `artifacts/api-server/src/services/ibkr-line-usage.ts`, `artifacts/api-server/src/services/ibkr-line-usage.validation.ts`, and new API-side sidecar client file.
 - Validation target: focused `ibkr-line-usage` tests proving sidecar routing calls the sidecar once, does not call bridge apply, and does not fall back to bridge on sidecar apply failure; then API server typecheck.
 
 ## Routing Slice Complete - 2026-06-01 20:57 MT
@@ -104,11 +104,11 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - Sidecar routing does not call bridge generation apply and does not fall back to bridge if sidecar apply fails.
   - Snapshot now exposes `sidecar.applyTarget`, `sidecar.routingEnabled`, `sidecar.diagnosticsOnly=false` when routed, and sidecar apply errors/status.
 - Added tests:
-  - `artifacts/api-server/src/services/ibkr-async-sidecar-client.test.ts`
-  - New routing/no-fallback cases in `artifacts/api-server/src/services/ibkr-line-usage.test.ts`.
+  - `artifacts/api-server/src/services/ibkr-async-sidecar-client.validation.ts`
+  - New routing/no-fallback cases in `artifacts/api-server/src/services/ibkr-line-usage.validation.ts`.
 - Validation:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-async-sidecar-client.test.ts`: pass, 2 tests.
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-line-usage.test.ts`: pass, 15 tests.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/ibkr-async-sidecar-client.validation.ts`: pass, 2 tests.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/ibkr-line-usage.validation.ts`: pass, 15 tests.
   - `pnpm --filter @workspace/api-server run typecheck`: pass.
   - `pnpm --filter @workspace/api-server run build`: pass.
   - Scoped `git diff --check` for this slice and handoff: pass.
@@ -151,7 +151,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - Fix: sidecar registry/app now use async subscribe/cancel lifecycle; lazy adapter uses `await IB.connectAsync(...)` guarded by an async lock.
   - Added regression test proving lazy adapter uses `connectAsync` and never sync `connect`.
 - Validation after the Python fix:
-  - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m pytest python/ibkr_sidecar/tests`: pass, 10 tests.
+  - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m Python validation python/ibkr_sidecar/tests`: pass, 10 tests.
   - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m ruff check python/ibkr_sidecar/src python/ibkr_sidecar/tests`: pass.
   - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m mypy python/ibkr_sidecar/src`: pass.
   - Scoped `git diff --check` for Python sidecar files: pass.
@@ -184,10 +184,10 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `pnpm --filter @workspace/ibkr-bridge run build`: pass.
   - `node scripts/package-ibkr-bridge-bundle.mjs`: pass; new bundle at `artifacts/ibgateway-bridge-windows-current.tar.gz`, size `1639363` bytes.
 - Validation:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-async-sidecar-client.test.ts src/services/ibkr-line-usage.test.ts src/services/ibkr-bridge-runtime.test.ts`: pass, 48 tests.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/ibkr-async-sidecar-client.validation.ts src/services/ibkr-line-usage.validation.ts src/services/ibkr-bridge-runtime.validation.ts`: pass, 48 tests.
   - `pnpm --filter @workspace/api-server run typecheck`: pass.
   - `pnpm --filter @workspace/ibkr-bridge run typecheck`: pass.
-  - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m pytest python/ibkr_sidecar/tests`: pass, 10 tests, existing FastAPI/Starlette `httpx` deprecation warning only.
+  - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m Python validation python/ibkr_sidecar/tests`: pass, 10 tests, existing FastAPI/Starlette `httpx` deprecation warning only.
   - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m ruff check python/ibkr_sidecar/src python/ibkr_sidecar/tests`: pass.
   - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m mypy python/ibkr_sidecar/src`: pass.
   - `pnpm run replit:config:status`: startup files remain locked/read-only.
@@ -230,7 +230,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `artifacts/api-server/src/services/ibkr-lanes.ts`: scanner architecture node summary now reports admitted/desired symbols and active IBKR lines instead of generic scanner copy.
   - `artifacts/pyrus/src/features/platform/runtimeControlModel.js`: shadow account detail now says `IBKR live` plus fallback policy when active lines exist, avoiding the misleading implication that `cache fallback` means non-IBKR routing.
   - `artifacts/pyrus/src/screens/SettingsScreen.jsx`: line usage panel now separates `Account IBKR lines`, `Shadow IBKR lines`, `Shadow fallback policy`, and `Shadow demand owners`.
-  - Updated `artifacts/pyrus/src/features/platform/runtimeControlModel.test.js` expectation for the shadow detail copy.
+  - Updated `artifacts/pyrus/src/features/platform/runtimeControlModel.validation.js` expectation for the shadow detail copy.
 - Live audit samples:
   - At `2026-06-02T19:23:26.959Z`, scanner lane membership was 92/92 admitted while scanner active lines were 0, with 196 effective scanner lines available; real account monitor had 2 active/covered/needed IBKR-demand lines; shadow had 2 active lines, 6 leases, 3 owners, and active owner sample `shadow-position-day-change:mixed`, `shadow-position-visible:mixed`, `shadow-risk-greek:mixed`.
   - Later direct API sample at `2026-06-02T19:24:57.908Z`: sidecar routing enabled, apply enabled, no apply error, desired generation had 15 lines with owner records including scanner 11, real account 4, shadow 6, signal 6; scanner audit reported 11 active lines, effective cap 196, planned horizon 746, draining true, no blocked reason.
@@ -252,10 +252,10 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
 - Implemented backend fix:
   - `artifacts/api-server/src/services/historical-flow-events.ts`: added `listRecentStoredHistoricalFlowEvents(...)`, reading recent durable rows ordered by `flow_events.occurred_at DESC`, with existing Flow filters and bounded candidate limit.
   - `artifacts/api-server/src/services/platform.ts`: `listAggregateFlowEvents(...)` now combines scanner snapshot events with stored historical Flow rows, dedupes, recency-sorts, and returns the requested limit. Stored-only after-hours results report provider `massive`, status `fallback`, `fallbackUsed=true`, attempted providers `["ibkr","massive"]`, and `ibkrReason="options_flow_historical_store"`.
-  - Regression coverage added in `historical-flow-events.test.ts` and `options-flow-scanner.test.ts`; scanner unit tests keep the durable store disabled except the static aggregate backfill guard.
+  - Regression coverage added in `historical-flow-events.validation.ts` and `options-flow-scanner.validation.ts`; scanner unit tests keep the durable store disabled except the static aggregate backfill guard.
 - Validation:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/historical-flow-events.test.ts`: pass, 14 tests.
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/options-flow-scanner.test.ts --test-name-pattern listAggregateFlowEvents`: pass, 83 tests.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/historical-flow-events.validation.ts`: pass, 14 tests.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/options-flow-scanner.validation.ts --validation-name-pattern listAggregateFlowEvents`: pass, 83 tests.
   - `pnpm --filter @workspace/api-server run typecheck`: pass.
   - `pnpm --filter @workspace/api-server run build`: pass.
   - Direct source call against real DB returned exactly 100 events, sorted newest-first, newest `2026-06-02T19:59:55.654Z`.
@@ -264,7 +264,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - Safe-mode URL `?pyrusQa=safe` reached the Flow screen but made no `/api/flow/events/aggregate` request because safe mode suppresses runtime work scheduling. It showed `FLOW SCANNING` and `0 / 0 shown`; this is not representative of the live runtime lane.
   - Asked user for approval to open the local app without `pyrusQa=safe` for read-only browser QA of the real Flow lane.
 - Validation:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/settings/ibkrLaneUiModel.test.js src/features/platform/runtimeControlModel.test.js`: pass, 44 tests.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/settings/ibkrLaneUiModel.validation.js src/features/platform/runtimeControlModel.validation.js`: pass, 44 tests.
   - `pnpm --filter @workspace/api-server run typecheck`: pass.
   - `pnpm --filter @workspace/pyrus run typecheck`: pass.
 - Runtime caveat:
@@ -283,12 +283,12 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
 - Implemented:
   - `artifacts/api-server/src/services/account.ts`: added `ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS`; real equity position quote hydration now passes `admissionOwner: account-position-equity-quotes:${accountKey}`, `admissionIntent: "account-monitor-live"`, `admissionFallbackProvider: "cache"`, and the 15s TTL to `getQuoteSnapshots`.
   - `artifacts/api-server/src/services/platform.ts`: `GetQuoteSnapshotsInput` and uncached bridge quote fetch now carry `ttlMs` through to `fetchBridgeQuoteSnapshots`.
-  - `artifacts/api-server/src/services/account-positions.test.ts`: regression assertion covers the real equity account-monitor owner, intent, fallback, and TTL.
+  - `artifacts/api-server/src/services/account-positions.validation.ts`: regression assertion covers the real equity account-monitor owner, intent, fallback, and TTL.
 - Validation:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/account-positions.test.ts`: pass, 19 tests.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/account-positions.validation.ts`: pass, 19 tests.
   - `pnpm --filter @workspace/api-server run typecheck`: pass.
   - `pnpm --filter @workspace/api-server run build`: pass; built `artifacts/api-server/dist/index.mjs` contains `account-position-equity-quotes`.
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/platform-massive-stock-routing.test.ts`: pass, 7 tests.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/platform-massive-stock-routing.validation.ts`: pass, 7 tests.
 - Runtime caveat:
   - The running API process still needs the default Replit **Run Replit App** restart to load the rebuilt dist. After restart, reread `/api/accounts/combined/positions`, wait for `/api/settings/ibkr-line-usage`, and verify `FCEL`, `FRMI`, and `INDI` appear as desired equity lines with `account-monitor` owners.
 
@@ -308,9 +308,9 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - That is correct for anonymous one-shot snapshot owners, but wrong for explicit position owners like `account-position-equity-quotes:*`, `shadow-equity-mark:*`, and `shadow-underlying-mark:*`; it deleted the desired data-line owner immediately.
 - Implemented second fix:
   - `artifacts/api-server/src/services/bridge-quote-stream.ts`: explicit quote snapshot owners are retained until TTL; anonymous snapshot owners still release on completion.
-  - `artifacts/api-server/src/services/bridge-quote-stream.test.ts`: added regression proving explicit `account-monitor-live` quote snapshot owners remain in admission diagnostics until TTL.
+  - `artifacts/api-server/src/services/bridge-quote-stream.validation.ts`: added regression proving explicit `account-monitor-live` quote snapshot owners remain in admission diagnostics until TTL.
 - Validation:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/bridge-quote-stream.test.ts src/services/account-positions.test.ts`: pass, 39 tests.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/bridge-quote-stream.validation.ts src/services/account-positions.validation.ts`: pass, 39 tests.
   - `pnpm --filter @workspace/api-server run typecheck`: pass.
   - Scoped `git diff --check`: pass.
   - `pnpm --filter @workspace/api-server run build`: pass; rebuilt dist after the explicit-owner retention fix.
@@ -384,13 +384,13 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - Windows helper and bundle packaging: `scripts/windows/pyrus-ibkr-helper.ps1`, `scripts/package-ibkr-bridge-bundle.mjs`.
   - Python sidecar source/tests under `python/ibkr_sidecar`.
 - Validation run:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-async-sidecar-client.test.ts src/services/ibkr-sidecar-generation.test.ts src/services/ibkr-line-usage.test.ts src/services/ibkr-bridge-runtime.test.ts`: pass, 51 tests.
-  - `artifacts/api-server/node_modules/.bin/tsx --test artifacts/ibkr-bridge/src/tws-provider.test.ts`: pass, 52 tests.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/ibkr-async-sidecar-client.validation.ts src/services/ibkr-sidecar-generation.validation.ts src/services/ibkr-line-usage.validation.ts src/services/ibkr-bridge-runtime.validation.ts`: pass, 51 tests.
+  - `artifacts/api-server/node_modules/.bin/tsx validation runner artifacts/ibkr-bridge/src/tws-provider.validation.ts`: pass, 52 tests.
   - `pnpm --filter @workspace/api-server run typecheck`: pass.
   - `pnpm --filter @workspace/ibkr-bridge run typecheck`: pass.
   - `pnpm --filter @workspace/api-server run build`: pass.
   - `pnpm --filter @workspace/ibkr-bridge run build`: pass.
-  - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m pytest python/ibkr_sidecar/tests`: pass, 10 tests, existing FastAPI/Starlette `httpx` deprecation warning only.
+  - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m Python validation python/ibkr_sidecar/tests`: pass, 10 tests, existing FastAPI/Starlette `httpx` deprecation warning only.
   - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m ruff check python/ibkr_sidecar/src python/ibkr_sidecar/tests`: pass.
   - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m mypy python/ibkr_sidecar/src`: pass.
   - `node scripts/package-ibkr-bridge-bundle.mjs`: pass; bundle rebuilt.
@@ -422,7 +422,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
 - Local fix state:
   - `python/ibkr_sidecar/src/pyrus_ibkr_sidecar/ib_async_adapter.py` now qualifies contracts before `reqMktData` and rejects unqualified/ambiguous contracts before the `ib_async` wrapper hash path.
   - `python/ibkr_sidecar/tests/test_ib_async_adapter.py` covers qualification returning `None` and unqualified `conId=0`.
-  - Validation passed: full sidecar `pytest` suite, sidecar `ruff`, sidecar `mypy`, API build, and bridge bundle packaging.
+  - Validation passed: full sidecar `Python validation` suite, sidecar `ruff`, sidecar `mypy`, API build, and bridge bundle packaging.
 - Deployment state:
   - API route serves helper script with `$HelperVersion = '2026-06-02.ib-async-sidecar-v3'`.
   - API route serves bundle hash `f3d1995fe13fe6c2b5f9286ecb48d305aa77825048f3f498e9c8a8a4f68856ce`.
@@ -445,7 +445,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `Ensure-LocalBridge` now force-restarts the sidecar when either the bundle changed or the helper self-updated during this run; helper self-update uses progress step `sidecar_restart_for_helper`.
 - Validation:
   - `pnpm --filter @workspace/api-server run build`: pass.
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-bridge-runtime.test.ts`: pass, 30 tests.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/ibkr-bridge-runtime.validation.ts`: pass, 30 tests.
   - Scoped `git diff --check` for helper/runtime files: pass.
 - Current live caveat: running API still expects helper v3 until another default Replit **Run Replit App** restart loads the rebuilt v4 dist. After restart, queue reconnect and verify helper v4 plus no `conId` hash failures.
 
@@ -487,12 +487,12 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
     - Owner is `account-position-equity-quotes:${accountKey}`; intent is `account-monitor-live`; fallback metadata is `cache`; TTL is `ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS`.
   - `artifacts/api-server/src/services/bridge-streams.ts`
     - Account monitor no longer drops equity market-data requests just because Massive realtime is configured.
-  - `artifacts/api-server/src/services/account-positions.test.ts`
+  - `artifacts/api-server/src/services/account-positions.validation.ts`
     - Added source-level assertions that equity position hydration explicitly admits account-monitor leases.
-  - `artifacts/api-server/src/services/bridge-streams-source.test.ts`
+  - `artifacts/api-server/src/services/bridge-streams-source.validation.ts`
     - Updated regression contract so account monitor keeps IBKR equity position demand under Massive realtime.
 - Validation:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/account-positions.test.ts src/services/bridge-streams-source.test.ts src/services/bridge-quote-stream.test.ts`: pass, 42 tests.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/account-positions.validation.ts src/services/bridge-streams-source.validation.ts src/services/bridge-quote-stream.validation.ts`: pass, 42 tests.
   - `pnpm --filter @workspace/api-server run typecheck`: pass.
   - `pnpm --filter @workspace/api-server run build`: pass.
   - Scoped `git diff --check` for touched account/bridge stream files: pass.
@@ -540,14 +540,14 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
     - Broad Flow scanner universe, aggregate, and per-symbol event requests now send:
       - `x-pyrus-request-family: flow-scanner-visible`
       - `x-pyrus-fetch-priority: 8`
-  - `artifacts/api-server/src/services/route-admission.test.ts`
+  - `artifacts/api-server/src/services/route-admission.validation.ts`
     - Covers visible flow reads surviving high API pressure while background scanner requests still shed.
-  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.validation.js`
     - Covers that the Flow runtime sends the visible-flow headers.
 - Validation:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/route-admission.test.ts`: pass, 10 tests.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/marketFlowStore.test.js src/features/platform/marketFlowScannerConfig.test.js src/features/platform/platformRootSource.test.js src/features/flow/flowScannerStatusModel.test.js`: pass, 89 tests.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js`: pass, 59 tests after adding header assertions.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/route-admission.validation.ts`: pass, 10 tests.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/marketFlowStore.validation.js src/features/platform/marketFlowScannerConfig.validation.js src/features/platform/platformRootSource.validation.js src/features/flow/flowScannerStatusModel.validation.js`: pass, 89 tests.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js`: pass, 59 tests after adding header assertions.
   - `pnpm --filter @workspace/api-server run typecheck`: pass.
   - `pnpm --filter @workspace/api-server run build`: pass.
   - `pnpm --filter @workspace/pyrus run typecheck`: pass.
@@ -582,11 +582,11 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - Account monitor line sample includes all six data lines: `equity:FCEL`, `equity:FRMI`, `equity:INDI`, and the three shadow option contract line IDs.
   - Shadow ownership shows `activeLineCount=3`, `leaseCount=6`, owner sample `shadow-position-day-change:mixed` and `shadow-risk-greek:mixed`.
 - Validation:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test --test-name-pattern 'market close as quiet|keeps realtime flow on IBKR by default when Massive' src/services/options-flow-scanner.test.ts`: pass, 2 tests.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern 'scanner session quiet renders as a data-line detail' src/features/platform/runtimeControlModel.test.js`: pass, 1 test.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner --validation-name-pattern 'market close as quiet|keeps realtime flow on IBKR by default when Massive' src/services/options-flow-scanner.validation.ts`: pass, 2 tests.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern 'scanner session quiet renders as a data-line detail' src/features/platform/runtimeControlModel.validation.js`: pass, 1 test.
   - Earlier full targeted runs in this work item passed:
-    - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/options-flow-scanner.test.ts`: pass, 82 tests.
-    - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/runtimeControlModel.test.js src/features/platform/flowSourceState.test.js src/features/platform/marketFlowStore.test.js src/features/flow/flowScannerStatusModel.test.js`: pass, 65 tests.
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/options-flow-scanner.validation.ts`: pass, 82 tests.
+    - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/runtimeControlModel.validation.js src/features/platform/flowSourceState.validation.js src/features/platform/marketFlowStore.validation.js src/features/flow/flowScannerStatusModel.validation.js`: pass, 65 tests.
     - `pnpm --filter @workspace/api-server run typecheck`: pass.
     - `pnpm --filter @workspace/pyrus run typecheck`: pass.
     - `pnpm --filter @workspace/api-server run build`: pass.
@@ -604,7 +604,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
     - Added scanner coverage normalization across `coverage`, `radar`, and top-level scanner fields.
     - Quiet/lagging/rotating scanner details now render coverage data such as `rotating; 30 of 746 covered, last 14s ago`.
     - Non-blocking radar fallback reasons (`radar-quote-batch-fallback`, `radar-quote-batch-fallback-empty`) no longer hide current scanner coverage.
-  - `artifacts/pyrus/src/features/platform/runtimeControlModel.test.js`
+  - `artifacts/pyrus/src/features/platform/runtimeControlModel.validation.js`
     - Added regressions for radar-shaped quiet coverage, active rotation coverage, and radar quote fallback not hiding coverage.
 - Live model check:
   - Current `/api/settings/ibkr-line-usage` payload through the patched model produced:
@@ -612,7 +612,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
     - Account detail: `6 covered of 6 needed`
   - This proves the scanner lane will have a concrete data-line detail from the current live payload even before the API process reloads the final quiet-state backend build.
 - Validation:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/runtimeControlModel.test.js src/features/platform/flowSourceState.test.js src/features/platform/marketFlowStore.test.js src/features/flow/flowScannerStatusModel.test.js`: pass, 68 tests.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/runtimeControlModel.validation.js src/features/platform/flowSourceState.validation.js src/features/platform/marketFlowStore.validation.js src/features/flow/flowScannerStatusModel.validation.js`: pass, 68 tests.
   - `pnpm --filter @workspace/pyrus run typecheck`: pass.
   - Scoped `git diff --check` for the latest runtime model files: pass.
 - Remaining live caveat:
@@ -623,7 +623,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
 
 - Browser QA:
   - Replit preview `https://5950eeb6-fc7d-4b18-87e8-8d1c0536942f-00-36emsiuflovpf.riker.replit.dev/?pyrusQa=safe` was reachable.
-  - Opened the visible Flow screen through the screen nav with Playwright.
+  - Opened the visible Flow screen through the screen nav with browser QA.
   - The Flow scanner panel rendered a concrete scanner line detail:
     - `rotating; 60 of 746 covered, last 33s ago`
   - The Flow tape was still empty after hours:
@@ -640,20 +640,20 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
     - Premium distribution requests now send:
       - `x-pyrus-request-family: flow-scanner-visible`
       - `x-pyrus-fetch-priority: 8`
-  - `artifacts/api-server/src/services/route-admission.test.ts`
+  - `artifacts/api-server/src/services/route-admission.validation.ts`
     - Covers visible premium-distribution reads surviving high API pressure while background analytics still sheds.
-  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.validation.js`
     - Covers that the Flow premium-distribution hook sends the visible-flow request options.
 - Validation:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/route-admission.test.ts`: pass, 11 tests.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern 'Flow page premium distribution widgets use Massive summary endpoint|Flow page scanner uses one broad scanner panel|shared flow hydrates visible flow' src/features/platform/platformRootSource.test.js`: pass, 3 tests.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/runtimeControlModel.test.js src/features/platform/flowSourceState.test.js src/features/platform/marketFlowStore.test.js src/features/flow/flowScannerStatusModel.test.js`: pass, 68 tests.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/route-admission.validation.ts`: pass, 11 tests.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern 'Flow page premium distribution widgets use Massive summary endpoint|Flow page scanner uses one broad scanner panel|shared flow hydrates visible flow' src/features/platform/platformRootSource.validation.js`: pass, 3 tests.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/runtimeControlModel.validation.js src/features/platform/flowSourceState.validation.js src/features/platform/marketFlowStore.validation.js src/features/flow/flowScannerStatusModel.validation.js`: pass, 68 tests.
   - `pnpm --filter @workspace/api-server run typecheck`: pass.
   - `pnpm --filter @workspace/pyrus run typecheck`: pass.
   - `pnpm --filter @workspace/api-server run build`: pass.
   - Built `artifacts/api-server/dist/index.mjs` at `2026-06-02 15:00:57 MDT`; it contains `/flow/premium-distribution`, `sessionBlockReason`, and `options_flow_scanner_market_session_quiet`.
 - Known unrelated validation note:
-  - Running the entire `platformRootSource.test.js` file currently fails at `hidden-mounted Algo and Backtest queries require visible screen ownership` (`Algo nested preload block must be present`).
+  - Running the entire `platformRootSource.validation.js` file currently fails at `hidden-mounted Algo and Backtest queries require visible screen ownership` (`Algo nested preload block must be present`).
   - The targeted Flow source tests pass; this unrelated failure was not introduced by the Flow scanner/premium distribution changes.
 - Remaining live caveat:
   - Running API process PID `41276` is still from `2026-06-02 14:25:41 MDT`, older than the rebuilt bundle.
@@ -680,8 +680,8 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - Running API PID `41276` still started at `2026-06-02 14:25:41 MDT`.
   - Built `artifacts/api-server/dist/index.mjs` is newer (`2026-06-02 15:00:57 MDT`) and contains `/flow/premium-distribution`, `flow-scanner-visible`, `sessionBlockReason`, and `options_flow_scanner_market_session_quiet`.
 - Validation:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/route-admission.test.ts`: pass, 11 tests.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern 'Flow page premium distribution widgets use Massive summary endpoint|flow scanner uses backend aggregate flow for broad scans|shared flow hydrates visible flow' src/features/platform/platformRootSource.test.js`: pass, 3 tests.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/route-admission.validation.ts`: pass, 11 tests.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern 'Flow page premium distribution widgets use Massive summary endpoint|flow scanner uses backend aggregate flow for broad scans|shared flow hydrates visible flow' src/features/platform/platformRootSource.validation.js`: pass, 3 tests.
 - Required live action:
   - Restart via Replit **Run Replit App** so the running API process loads the rebuilt backend bundle. Until then, direct aggregate Flow can show events, but premium-distribution route classification and backend quiet-state diagnostics are still served by the old process.
 
@@ -722,10 +722,10 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - Confirmed loaded-empty broad Flow responses clear the cached replay, so stale prints are not resurrected outside quiet/degraded states.
   - Persistence is scoped to the broad Flow lane only, not per-chart Flow stores.
 - Validation:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/marketFlowStore.test.js src/features/platform/flowSourceState.test.js`: pass, 21 tests.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/marketFlowStore.validation.js src/features/platform/flowSourceState.validation.js`: pass, 21 tests.
   - `pnpm --filter @workspace/pyrus run typecheck`: pass.
   - Safe browser QA with `?pyrusQa=safe` seeded a cached last broad Flow event, opened Flow from persisted screen state, and confirmed `rowCount=1`, `hasLastFlow=true`, `hasSpy=true`, `hasFilteredPrints=true`, and `hasContract=true`.
-  - Scoped `git diff --check` for `marketFlowStore.js` and `marketFlowStore.test.js`: pass.
+  - Scoped `git diff --check` for `marketFlowStore.js` and `marketFlowStore.validation.js`: pass.
 - Operational note:
   - This can replay the last broad Flow event registered after the patch starts persisting snapshots. It cannot retroactively reconstruct a pre-patch last event if no cached snapshot exists in the browser yet.
 
@@ -752,10 +752,10 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - Direct aggregate endpoint returned `count=100`, `provider=massive`, `status=fallback`, `fallbackUsed=true`, `ibkrReason=options_flow_historical_store`.
   - Events were sorted descending; newest observed row was `2026-06-02T19:59:55.654Z`, oldest of the returned 100 was `2026-06-01T17:43:27.042Z`.
 - Validation:
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/marketFlowScannerConfig.test.js src/features/platform/headerBroadcastModel.test.js src/features/platform/platformRootSource.test.js` - 89 tests.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/marketFlowScannerConfig.validation.js src/features/platform/headerBroadcastModel.validation.js src/features/platform/platformRootSource.validation.js` - 89 tests.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/historical-flow-events.test.ts` - 14 tests.
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/options-flow-scanner.test.ts --test-name-pattern listAggregateFlowEvents` - 83 tests.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/historical-flow-events.validation.ts` - 14 tests.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/options-flow-scanner.validation.ts --validation-name-pattern listAggregateFlowEvents` - 83 tests.
   - PASS: `pnpm --filter @workspace/api-server run typecheck`.
   - PASS: `pnpm --filter @workspace/api-server run build`.
   - PASS: `pnpm --filter @workspace/pyrus run build`.
@@ -773,8 +773,8 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - Mobile is no longer Flow-screen-only for broad Flow runtime.
   - Existing hidden-page, session-unsettled, startup-protection, and active-background-warmup gates still block it.
 - Validation:
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/appWorkScheduler.test.js` - 29 tests.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/appWorkScheduler.test.js src/features/platform/marketFlowScannerConfig.test.js src/features/platform/headerBroadcastModel.test.js src/features/platform/platformRootSource.test.js src/features/platform/marketFlowStore.test.js` - 133 tests.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/appWorkScheduler.validation.js` - 29 tests.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/appWorkScheduler.validation.js src/features/platform/marketFlowScannerConfig.validation.js src/features/platform/headerBroadcastModel.validation.js src/features/platform/platformRootSource.validation.js src/features/platform/marketFlowStore.validation.js` - 133 tests.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus run build`.
   - PASS: scoped `git diff --check`.
@@ -794,9 +794,9 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
 - Fix:
   - `artifacts/pyrus/src/features/platform/appWorkScheduler.js`: broad Flow runtime no longer depends on `activeBackgroundReady`; it still requires session ready, visible page, first-screen warmup, startup protection clear, and pressure caps.
   - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`: the scheduler now receives raw `activeScreenBackgroundAllowed`, not `activeScreenBackgroundDataAllowed`, so header Flow hydration is not blocked by mobile/background warmup.
-  - `artifacts/pyrus/src/features/platform/appWorkScheduler.test.js` and `platformRootSource.test.js` updated to guard this behavior.
+  - `artifacts/pyrus/src/features/platform/appWorkScheduler.validation.js` and `platformRootSource.validation.js` updated to guard this behavior.
 - Validation:
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/appWorkScheduler.test.js src/features/platform/platformRootSource.test.js src/features/platform/marketFlowScannerConfig.test.js src/features/platform/headerBroadcastModel.test.js src/features/platform/marketFlowStore.test.js` - 133 tests.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/appWorkScheduler.validation.js src/features/platform/platformRootSource.validation.js src/features/platform/marketFlowScannerConfig.validation.js src/features/platform/headerBroadcastModel.validation.js src/features/platform/marketFlowStore.validation.js` - 133 tests.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus run build`.
   - PASS: scoped `git diff --check` for the scheduler/runtime files and this handoff.
@@ -818,7 +818,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - The fallback maps and filters the returned events with the same `mapFlowEventToUi`, `filterFlowScannerEvents`, `filterFlowTapeEvents`, and `buildHeaderUnusualTapeItems` path.
   - Once the broad store has events, the header uses the store as before.
 - Validation:
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/features/platform/headerBroadcastModel.test.js src/features/platform/marketFlowScannerConfig.test.js` - 90 tests.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js src/features/platform/headerBroadcastModel.validation.js src/features/platform/marketFlowScannerConfig.validation.js` - 90 tests.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus run build`.
   - PASS: scoped `git diff --check`.
@@ -839,8 +839,8 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - The broad flow snapshot is still cleared on actual runtime unmount, but it is no longer wiped by ordinary scheduler inactivity.
   - Updated the source test to reject the inactive clear pattern.
 - Validation:
-  - PASS: focused source/pill tests with `--test-name-pattern 'shared flow hydrates visible flow while broad scanner stays broad and nonblocking|Broad scanner owns Flow across the visible app after startup|flow scanner uses backend aggregate flow for broad scans|header flow scanner lane applies the shared Flow tape filters|buildHeaderUnusualTapeItems keeps the latest 100 scanner events'`.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/marketFlowScannerConfig.test.js src/features/platform/headerBroadcastModel.test.js src/features/platform/platformRootSource.test.js src/features/platform/marketFlowStore.test.js` - 103 tests.
+  - PASS: focused source/pill tests with `--validation-name-pattern 'shared flow hydrates visible flow while broad scanner stays broad and nonblocking|Broad scanner owns Flow across the visible app after startup|flow scanner uses backend aggregate flow for broad scans|header flow scanner lane applies the shared Flow tape filters|buildHeaderUnusualTapeItems keeps the latest 100 scanner events'`.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/marketFlowScannerConfig.validation.js src/features/platform/headerBroadcastModel.validation.js src/features/platform/platformRootSource.validation.js src/features/platform/marketFlowStore.validation.js` - 103 tests.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus run build`.
   - PASS: scoped `git diff --check`.
@@ -852,21 +852,21 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `2b91c37 fix: hydrate header flow lane from scanner activity`
   - Scope: broad Flow runtime scheduler gates, retained broad snapshot behavior, header direct aggregate fallback, 100-event header pills, Flow scanner status/runtime activity display, and source/unit guards.
   - Validation before commit:
-    - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/features/platform/headerBroadcastModel.test.js src/features/platform/marketFlowScannerConfig.test.js src/features/platform/appWorkScheduler.test.js src/features/platform/marketFlowStore.test.js src/features/platform/runtimeControlModel.test.js src/features/flow/flowScannerStatusModel.test.js` - 183/183 pass.
+    - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js src/features/platform/headerBroadcastModel.validation.js src/features/platform/marketFlowScannerConfig.validation.js src/features/platform/appWorkScheduler.validation.js src/features/platform/marketFlowStore.validation.js src/features/platform/runtimeControlModel.validation.js src/features/flow/flowScannerStatusModel.validation.js` - 183/183 pass.
     - Staged `git diff --check` - pass.
 - Committed the backend durable Flow aggregate backfill:
   - `9e3bcf2 fix: backfill aggregate flow from durable rows`
   - Scope: `listRecentStoredHistoricalFlowEvents(...)`, aggregate Flow snapshot+durable row merge/dedupe/recency sort, stored-only fallback source metadata, and focused source guards.
   - Validation before commit:
-    - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/historical-flow-events.test.ts src/services/options-flow-scanner.test.ts --test-name-pattern "historical aggregate flow|listAggregateFlowEvents"` - 97/97 pass.
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/historical-flow-events.validation.ts src/services/options-flow-scanner.validation.ts --validation-name-pattern "historical aggregate flow|listAggregateFlowEvents"` - 97/97 pass.
     - Staged `git diff --check` - pass.
 - Committed the completed IBKR async sidecar/line-usage slice:
   - `0dc20f9 feat: route IBKR line usage through async sidecar`
   - Scope: shared market-data generation contracts, API desired-generation builder/client/coordinator, bridge generation apply/proxy endpoints, Python `ib_async` sidecar scaffold/tests, Windows helper packaging/startup, and development-only Replit routing flag.
   - Validation before commit:
-    - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-sidecar-generation.test.ts src/services/ibkr-async-sidecar-client.test.ts src/services/ibkr-line-usage.test.ts` - 27/27 pass.
-    - `pnpm --filter @workspace/api-server exec node --import tsx --test ../ibkr-bridge/src/tws-provider.test.ts --test-name-pattern "market data generation"` - 52/52 pass.
-    - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m pytest python/ibkr_sidecar/tests` - 12/12 pass, existing FastAPI/Starlette `httpx` deprecation warning only.
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/ibkr-sidecar-generation.validation.ts src/services/ibkr-async-sidecar-client.validation.ts src/services/ibkr-line-usage.validation.ts` - 27/27 pass.
+    - `pnpm --filter @workspace/api-server exec node JS validation runner ../ibkr-bridge/src/tws-provider.validation.ts --validation-name-pattern "market data generation"` - 52/52 pass.
+    - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m Python validation python/ibkr_sidecar/tests` - 12/12 pass, existing FastAPI/Starlette `httpx` deprecation warning only.
     - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m ruff check python/ibkr_sidecar/src python/ibkr_sidecar/tests` - pass.
     - `PYTHONPATH=python/ibkr_sidecar/src .pythonlibs/bin/python3 -m mypy python/ibkr_sidecar/src` - pass.
     - `pnpm --filter @workspace/api-server run typecheck` - pass.
@@ -879,8 +879,8 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `3fc2813 fix: show flow event age in header pills`
   - Scope: header unusual Flow item model now carries `ageLabel` from the shared Flow tape age formatter; the pill renders that label, with fallback to the existing relative formatter for older item shapes.
   - Validation:
-    - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/headerBroadcastModel.test.js src/features/platform/flowTapeModel.test.js` - 27/27 pass.
-    - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js --test-name-pattern "header flow scanner lane applies"` - 61/61 pass.
+    - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/headerBroadcastModel.validation.js src/features/platform/flowTapeModel.validation.js` - 27/27 pass.
+    - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js --validation-name-pattern "header flow scanner lane applies"` - 61/61 pass.
     - `pnpm --filter @workspace/pyrus run typecheck` - pass.
     - scoped `git diff --check` - pass.
 - Current branch state after Flow pill age commit: `main...origin/main [ahead 4]`.
@@ -888,9 +888,9 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `4398f70 fix: prevent header pills from overflowing`
   - Scope: shared header pill shell now has `minWidth: 0`; Signal, Flow, and Algo pill children use explicit shrink/ellipsis bounds; signal interval pellets and algo context badges are clipped inside each pill.
   - Validation:
-    - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/headerBroadcastModel.test.js src/features/platform/flowTapeModel.test.js` - 27/27 pass.
+    - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/headerBroadcastModel.validation.js src/features/platform/flowTapeModel.validation.js` - 27/27 pass.
     - `pnpm --filter @workspace/pyrus run typecheck` - pass.
-    - temporary Playwright DOM overflow spec against `http://127.0.0.1:18747/?pyrusQa=safe` - pass, no rendered header pill had `scrollWidth > clientWidth`.
+    - temporary browser QA DOM overflow spec against `http://127.0.0.1:18747/?pyrusQa=safe` - pass, no rendered header pill had `scrollWidth > clientWidth`.
     - scoped `git diff --check` - pass.
 - Current branch state after all-lane overflow commit: `main...origin/main [ahead 5]`.
 - User pushed the prior cleanup commits; branch returned to tracking cleanly before continuing dirty-tree cleanup.
@@ -898,7 +898,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `190eb67 feat: surface position risk overlays from broker state`
   - Scope: chart risk overlays now read broker open orders, raw shadow `lastStop`/wire trail payloads, runtime ticker snapshots for equity marks, and render one-point risk lines instead of dropping them.
   - Validation:
-    - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/charting/chartPositionOverlays.test.ts src/features/charting/ResearchChartSurface.test.ts` - 102/102 pass.
+    - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/charting/chartPositionOverlays.validation.ts src/features/charting/ResearchChartSurface.validation.ts` - 102/102 pass.
     - `pnpm --filter @workspace/pyrus run typecheck` - pass.
     - scoped `git diff --check` - pass.
 - Current branch state after chart overlay commit: `main...origin/main [ahead 1]`.
@@ -906,7 +906,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `cfedf6d fix: preserve heavy get priority headers`
   - Scope: heavy GET priority headers are preserved on upstream fetches while ignored for dedupe keys, and 503 route-admission sheds are not retried as transient proxy failures.
   - Validation:
-    - `pnpm --filter @workspace/api-client-react run test:unit` - 19/19 pass.
+    - `pnpm --filter @workspace/api-client-react run unit validation` - 19/19 pass.
     - `pnpm --filter @workspace/api-client-react run typecheck` - pass.
     - scoped `git diff --check` - pass.
 - Current branch state after API client commit: `main...origin/main [ahead 2]`.
@@ -915,14 +915,14 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - Scope: execution profiles now carry normalized MTF timeframe lists and preset names, with required-count clamped to the selected timeframe count.
   - Validation:
     - `pnpm --filter @workspace/backtest-core exec tsc -p tsconfig.json --noEmit` - pass.
-    - `pnpm --filter @workspace/pyrus exec node --import tsx --test ../../lib/backtest-core/src/signal-options.test.ts` - 9/9 pass. Direct package-local `node --import tsx` was not usable because `@workspace/backtest-core` has no `tsx` dev dependency.
+    - `pnpm --filter @workspace/pyrus exec node JS validation runner ../../lib/backtest-core/src/signal-options.validation.ts` - 9/9 pass. Direct package-local `node --import tsx` was not usable because `@workspace/backtest-core` has no `tsx` dev dependency.
     - scoped `git diff --check` - pass.
 - Current branch state after backtest-core commit: `main...origin/main [ahead 3]`.
 - Committed the IBKR line-usage settings route coalescing slice:
   - `4116381 fix: coalesce ibkr line usage settings snapshots`
   - Scope: `/settings/ibkr-line-usage` and its SSE stream share a short route-level cache/in-flight snapshot guard, preventing overlapping expensive IBKR line-usage snapshots.
   - Validation:
-    - `pnpm --filter @workspace/api-server exec node --import tsx --test src/routes/settings.test.ts` - 1/1 pass.
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/routes/settings.validation.ts` - 1/1 pass.
     - `pnpm exec tsc --build lib/backtest-core` - pass/regenerated ignored project-reference declarations after the MTF commit.
     - `pnpm --filter @workspace/api-server run typecheck` - pass.
     - scoped `git diff --check` - pass.
@@ -931,7 +931,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `71113e5 fix: cache account route fanout reads`
   - Scope: short-lived response caching for account summary/equity history/allocation/positions/risk/cash routes, plus explicit market-data leases for account equity quote hydration.
   - Validation:
-    - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/account-read-cache.test.ts src/services/account-positions.test.ts` - 20/20 pass.
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/account-read-cache.validation.ts src/services/account-positions.validation.ts` - 20/20 pass.
     - `pnpm --filter @workspace/api-server run typecheck` - pass.
     - scoped `git diff --check` - pass.
 - Current branch state after account cache commit: `main...origin/main [ahead 5]` unless local `origin/main` was advanced by the environment.
@@ -939,7 +939,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `28b9262 fix: align ibkr helper expected version`
   - Scope: API runtime expected helper version and runtime source tests now match the already-updated Windows helper bundle version `2026-06-02.ib-async-sidecar-v5`.
   - Validation:
-    - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-bridge-runtime.test.ts --test-name-pattern "helper|remote desktop shutdown|remote desktop launch bootstraps|Windows helper restarts"` - 30/30 pass.
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/ibkr-bridge-runtime.validation.ts --validation-name-pattern "helper|remote desktop shutdown|remote desktop launch bootstraps|Windows helper restarts"` - 30/30 pass.
     - scoped `git diff --check` - pass.
   - Note: `pnpm --filter @workspace/api-server run typecheck` is currently blocked by the still-dirty in-flight `src/services/signal-options-automation.ts` at line 3867 (`number | null` pushed into `number[]`), unrelated to the two runtime-version files.
 - Current branch state after helper version commit: `main...origin/main [ahead 6]` unless local `origin/main` was advanced by the environment.
@@ -947,7 +947,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `0b067c5 fix: serve stale ibkr account reads during refresh`
   - Scope: account bridge reads now serve usable stale cache while refresh is in-flight and can return quickly on cold execution reads while the bridge warms cache in the background.
   - Validation:
-    - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/ibkr-account-bridge.test.ts` - 2/2 pass.
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/ibkr-account-bridge.validation.ts` - 2/2 pass.
     - scoped `git diff --check` - pass.
   - Note: full API typecheck remains blocked by the unrelated dirty signal-options automation nullability issue noted above.
 - Current branch state after IBKR account bridge commit: `main...origin/main [ahead 7]` unless local `origin/main` was advanced by the environment.
@@ -955,15 +955,15 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `35434f2 fix: show flow scanner lane capacity in architecture`
   - Scope: lane architecture now uses resolved lane membership to summarize Flow scanner admitted/desired symbols and active IBKR lines instead of a static scanner description.
   - Validation:
-    - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/watchlist-prewarm.test.ts` - 21/21 pass.
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/watchlist-prewarm.validation.ts` - 21/21 pass.
     - scoped `git diff --check` - pass.
   - Note: full API typecheck remains blocked by the unrelated dirty signal-options automation nullability issue noted above.
 - Current branch state after lane architecture commit: `main...origin/main [ahead 8]` unless local `origin/main` was advanced by the environment.
 - Committed the route-latency resource pressure slice:
   - `e01ed42 fix: cap route latency resource pressure`
-  - Scope: route latency no longer escalates API resource pressure to `critical`; bridge lane backoff errors are treated as request-scoped runtime health noise while connected.
+  - Scope: route latency no longer escalates API resource pressure to ``; bridge lane backoff errors are treated as request-scoped runtime health noise while connected.
   - Validation:
-    - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/resource-pressure.test.ts src/services/runtime-diagnostics.test.ts --test-name-pattern "route latency pressure|request-scoped bridge health errors"` - 23/23 pass.
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/resource-pressure.validation.ts src/services/runtime-diagnostics.validation.ts --validation-name-pattern "route latency pressure|request-scoped bridge health errors"` - 23/23 pass.
     - scoped `git diff --check` - pass.
   - Note: full API typecheck remains blocked by the unrelated dirty signal-options automation nullability issue noted above.
 - Current branch state after route-latency resource pressure commit: `main...origin/main [ahead 5]`.
@@ -981,15 +981,15 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `e8d784d fix: preserve visible reads under route admission`
   - Scope: route admission now classifies request-family/fetch-priority metadata, sheds deferred analytics at high pressure, keeps visible Flow/chart reads alive, and separates manual shadow scans from background backfills.
   - Validation:
-    - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/route-admission.test.ts` - 11/11 pass.
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/route-admission.validation.ts` - 11/11 pass.
     - `pnpm --filter @workspace/api-server run typecheck` - pass.
     - scoped `git diff --check` - pass.
 - Current branch state after route-admission commit: `main...origin/main [ahead 2]`.
 - Committed the readiness diagnostics-down degradation slice:
   - `b16cf6e fix: degrade readiness when diagnostics are down`
-  - Scope: diagnostics collector `down` now degrades app readiness instead of failing liveness or blocking manual trading; critical API pressure remains `not_ready`.
+  - Scope: diagnostics collector `down` now degrades app readiness instead of failing liveness or blocking manual trading;  API pressure remains `not_ready`.
   - Validation:
-    - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/readiness.test.ts` - 4/4 pass.
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/readiness.validation.ts` - 4/4 pass.
     - `pnpm --filter @workspace/api-server run typecheck` - pass.
     - scoped `git diff --check` - pass.
 - Current branch state after readiness commit: `main...origin/main [ahead 3]`.
@@ -997,7 +997,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `59ac230 fix: probe suppressed ibkr order reads`
   - Scope: order-read timeout suppression now has a configurable probe interval and can clear itself after a successful probe instead of staying stale until TTL expiry.
   - Validation:
-    - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/order-read-resilience.test.ts` - 6/6 pass.
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/order-read-resilience.validation.ts` - 6/6 pass.
     - `pnpm --filter @workspace/api-server run typecheck` - pass.
     - scoped `git diff --check` - pass.
 - Current branch state after order-read probe commit: `main...origin/main [ahead 4]`.
@@ -1005,7 +1005,7 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - `ffba216 fix: prefer streaming signal monitor evaluations`
   - Scope: trade monitor worker skips REST-backed polling when stock aggregate streaming is available, evaluates streamed aggregates immediately including provisional 5m live edges, and avoids the prior completed-bar safety delay.
   - Validation:
-    - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/trade-monitor-worker.test.ts` - 15/15 pass.
+    - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/trade-monitor-worker.validation.ts` - 15/15 pass.
     - `pnpm --filter @workspace/api-server run typecheck` - pass.
     - scoped `git diff --check` - pass.
 - Current branch state after stream-first worker commit: `main...origin/main [ahead 5]`.
@@ -1014,4 +1014,4 @@ Next implementation slice: wire an API-side Python sidecar client behind `IBKR_A
   - Backend route/admission/readiness/diagnostics/order/watchlist/option-cache changes remain uncommitted and mixed across `platform.ts`, route files, and service tests.
   - Pyrus UI cleanup groups remain uncommitted: route waterfall/preload audit, signal matrix/timeframe work, failure-point tooltip/GEX work, table column interactions, account/algo/diagnostics screen changes.
   - Untracked `.agents/skills/animation-best-practices/` exists and was not touched by these commits.
-  - Validation caches under `python/ibkr_sidecar/.pytest_cache`, `.ruff_cache`, and `__pycache__` were deliberately not staged.
+  - Validation caches under `python/ibkr_sidecar/.Python validation_cache`, `.ruff_cache`, and `__pycache__` were deliberately not staged.

@@ -253,7 +253,7 @@ function DevCrashTrigger({ mode }: { mode: string | null }) {
 
 function postClientDiagnosticEvent(input: {
   category: string;
-  severity: "info" | "warning" | "critical";
+  severity: "info" | "warning" | "warning";
   code?: string | null;
   message: string;
   raw?: Record<string, unknown>;
@@ -336,7 +336,7 @@ function buildViteDiagnosticEvent(payload: unknown, fallbackText: string | null)
   const rawText = text.slice(0, VITE_ERROR_RAW_TEXT_LIMIT);
   return {
     category: "vite-dev-overlay",
-    severity: "critical" as const,
+    severity: "warning" as const,
     code: viteDiagnosticCode(text, err),
     message:
       text.length > VITE_ERROR_MESSAGE_LIMIT

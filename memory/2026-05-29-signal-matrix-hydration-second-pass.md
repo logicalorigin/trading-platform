@@ -20,9 +20,9 @@ Multiple regressions combined:
 ## Fix
 
 - Moved signal hydration bootstrap declarations before diagnostics reads in `PlatformApp.jsx`.
-- Raised frontend scheduler caps to `normal:24`, `watch:18`, `high:12`, `critical:6`.
+- Raised frontend scheduler caps to `normal:24`, `watch:18`, `high:12`, `priority:6`.
 - Decoupled backend matrix caps from profile `maxSymbols`; matrix now uses pressure caps directly.
-- Raised backend matrix concurrency to `normal/watch:4`, `high:2`, `critical:1`.
+- Raised backend matrix concurrency to `normal/watch:4`, `high:2`, `priority:1`.
 - Ordered matrix signal symbols with `buildHeaderSignalContextSymbols` so the header signal lane's visible symbols enter early matrix batches.
 - Added bootstrap gating for signal profile/state, not just matrix runtime, so low-priority streams wait while the signal lane is bootstrapping.
 - Added a 90s request timeout plus a watchdog grace path that clears stuck `inFlight` state and schedules another matrix pass.
@@ -36,10 +36,10 @@ Multiple regressions combined:
 
 ## Validation
 
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts`
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts`
 - `pnpm --filter @workspace/api-server run typecheck`
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js`
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "signal monitor display refreshes separately from evaluator cadence|screen shell warmup preloads top-level code without default hidden page mounting" src/features/platform/platformRootSource.test.js`
+- `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/signalMatrixScheduler.validation.js`
+- `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "signal monitor display refreshes separately from evaluator cadence|screen shell warmup preloads top-level code without default hidden page mounting" src/features/platform/platformRootSource.validation.js`
 - `pnpm --filter @workspace/pyrus run typecheck`
 - `git diff --check --` for the touched signal matrix files
 

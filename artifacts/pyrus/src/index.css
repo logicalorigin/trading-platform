@@ -371,7 +371,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
   --ra-toast-info: var(--ra-blue-500);
   --ra-toast-success: var(--ra-green-500);
   --ra-toast-warning: var(--ra-amber-500);
-  --ra-toast-critical: var(--ra-red-500);
   --ra-category-automation: var(--ra-pink-500);
   --ra-category-replay: var(--ra-cyan-500);
   --ra-category-backtest: var(--ra-purple-500);

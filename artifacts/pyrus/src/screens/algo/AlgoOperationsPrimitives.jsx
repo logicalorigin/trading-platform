@@ -10,7 +10,6 @@ import {
 } from "../../features/platform/failurePointModel.js";
 
 const overviewSeverityBackground = (severity) => {
-  if (severity === "critical") return CSS_COLOR.redBg;
   if (severity === "warning") return CSS_COLOR.amberBg;
   return "transparent";
 };
@@ -25,22 +24,17 @@ export const AlgoOverviewMetric = ({
   dense = false,
 }) => {
   const iconTone =
-    severity === "critical"
-      ? CSS_COLOR.red
-      : severity === "warning"
-        ? CSS_COLOR.amber
-        : tone || CSS_COLOR.textSec;
+    severity === "warning"
+      ? CSS_COLOR.amber
+      : tone || CSS_COLOR.textSec;
   const failurePoint =
-    severity === "critical" || severity === "warning"
+    severity === "warning"
       ? buildAlgoMetricFailurePoint({
           label,
           value,
           detail,
           severity,
-          nextAction:
-            severity === "critical"
-              ? "Inspect the Algo risk and audit panels before enabling new scans."
-              : "Review this metric against the current Signal Options profile.",
+          nextAction: "Review this metric against the current Signal Options profile.",
         })
       : null;
   const metricBody = (

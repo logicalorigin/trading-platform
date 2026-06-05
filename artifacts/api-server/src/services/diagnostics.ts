@@ -53,7 +53,7 @@ const SIGNAL_OPTIONS_GATEWAY_BLOCKED_EVENT =
 const SIGNAL_OPTIONS_SKIPPED_EVENT = "signal_options_candidate_skipped";
 const SIGNAL_OPTIONS_EXIT_EVENT = "signal_options_shadow_exit";
 
-export type DiagnosticSeverity = "info" | "warning" | "critical";
+export type DiagnosticSeverity = "info" | "warning";
 export type DiagnosticStatus = "ok" | "degraded" | "down" | "unknown";
 export type DiagnosticSubsystem =
   | "api"
@@ -77,7 +77,6 @@ export type DiagnosticThreshold = {
   subsystem: DiagnosticSubsystem;
   unit: "ms" | "count" | "mb" | "percent";
   warning: number;
-  critical: number;
   enabled: boolean;
   audible: boolean;
   description: string;
@@ -132,7 +131,6 @@ export type DiagnosticEventStatus = "open" | "resolved";
 type DiagnosticThresholdOverrideRow = {
   metricKey: string;
   warning: number | null;
-  critical: number | null;
   enabled: boolean;
   audible: boolean;
 };
@@ -202,9 +200,6 @@ const SNAPSHOT_RETENTION_DAYS = SNAPSHOT_RETENTION_MS / (24 * 60 * 60 * 1000);
 const STORAGE_WARNING_DATABASE_MB = Number(
   process.env["STORAGE_WARNING_DATABASE_MB"] ?? "15360",
 );
-const STORAGE_CRITICAL_DATABASE_MB = Number(
-  process.env["STORAGE_CRITICAL_DATABASE_MB"] ?? "18432",
-);
 const DEFAULT_COLLECTION_INTERVAL_MS = 15_000;
 const REQUEST_WINDOW_MS = 5 * 60 * 1000;
 const API_LATENCY_ALERT_MIN_SAMPLES = 20;
@@ -257,7 +252,6 @@ const BROWSER_MEMORY_MB_FALLBACK_PRESSURE = Object.freeze({
   high: 1_500,
 });
 const API_LATENCY_WARNING_MS = 1_000;
-const API_LATENCY_CRITICAL_MS = 10_000;
 const ACTIONABLE_ISOLATION_REPORT_TYPES = new Set(["coep", "coop"]);
 const ACTIONABLE_ISOLATION_BODY_TYPES = new Set(["coep", "coop", "corp"]);
 const DIAGNOSTIC_RAW_MAX_DEPTH = 4;
@@ -292,7 +286,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "api",
     unit: "ms",
     warning: API_LATENCY_WARNING_MS,
-    critical: API_LATENCY_CRITICAL_MS,
     enabled: true,
     audible: true,
     description: "Recent API request p95 latency once enough samples exist.",
@@ -303,7 +296,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "ibkr",
     unit: "ms",
     warning: 30_000,
-    critical: 120_000,
     enabled: true,
     audible: true,
     description: "Age of the last bridge/TWS tickle or heartbeat.",
@@ -314,7 +306,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "market-data",
     unit: "ms",
     warning: 2_000,
-    critical: 10_000,
     enabled: true,
     audible: true,
     description: "Age of the freshest live quote/bar stream event.",
@@ -325,7 +316,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "market-data",
     unit: "ms",
     warning: 5_000,
-    critical: 30_000,
     enabled: true,
     audible: true,
     description: "Largest unrecovered market data stream gap.",
@@ -336,7 +326,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "api",
     unit: "mb",
     warning: 750,
-    critical: 1_000,
     enabled: false,
     audible: false,
     description:
@@ -348,7 +337,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "resource-pressure",
     unit: "percent",
     warning: 70,
-    critical: 85,
     enabled: true,
     audible: false,
     description: "Node heap used as a percentage of the V8 heap limit.",
@@ -359,7 +347,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "resource-pressure",
     unit: "mb",
     warning: BROWSER_MEMORY_MB_FALLBACK_PRESSURE.high,
-    critical: BROWSER_MEMORY_MB_FALLBACK_PRESSURE.high,
     enabled: false,
     audible: false,
     description:
@@ -371,7 +358,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "resource-pressure",
     unit: "percent",
     warning: BROWSER_MEMORY_LIMIT_PRESSURE.watch,
-    critical: BROWSER_MEMORY_LIMIT_PRESSURE.high,
     enabled: true,
     audible: false,
     description: "Browser heap usage as a percentage of the browser-reported heap limit.",
@@ -382,7 +368,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "isolation",
     unit: "count",
     warning: 1,
-    critical: 10,
     enabled: true,
     audible: false,
     description: "Recent actionable COOP/COEP isolation reports received from browsers.",
@@ -393,7 +378,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "ibkr",
     unit: "count",
     warning: 1,
-    critical: 3,
     enabled: true,
     audible: true,
     description: "Known IBKR pacing/subscription errors in the last five minutes.",
@@ -404,7 +388,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "orders",
     unit: "count",
     warning: 1,
-    critical: 1,
     enabled: true,
     audible: true,
     description: "Read-only account, position, or order probe failures.",
@@ -415,7 +398,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "automation",
     unit: "ms",
     warning: 120_000,
-    critical: 300_000,
     enabled: true,
     audible: false,
     description: "Age of the latest successful signal-options worker scan.",
@@ -426,7 +408,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "automation",
     unit: "count",
     warning: 1,
-    critical: 3,
     enabled: true,
     audible: true,
     description: "Signal-options scans blocked by IB Gateway readiness in the last hour.",
@@ -437,7 +418,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "automation",
     unit: "count",
     warning: 1,
-    critical: 3,
     enabled: true,
     audible: true,
     description: "Signal-options worker scan failures in the current API process.",
@@ -448,7 +428,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "chart-hydration",
     unit: "ms",
     warning: 1_500,
-    critical: 4_000,
     enabled: true,
     audible: false,
     description: "Browser-observed p95 latency for loading older chart bars.",
@@ -459,7 +438,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "chart-hydration",
     unit: "count",
     warning: 3,
-    critical: 10,
     enabled: true,
     audible: false,
     description: "Server-side fallback count after opaque chart history cursors could not be used.",
@@ -470,7 +448,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "chart-hydration",
     unit: "count",
     warning: 1,
-    critical: 5,
     enabled: true,
     audible: false,
     description: "Browser-side chart hydration payload shape errors.",
@@ -481,7 +458,6 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "chart-hydration",
     unit: "count",
     warning: 3,
-    critical: 10,
     enabled: true,
     audible: false,
     description: "Older-history chart prepend pages that returned no new bars.",
@@ -700,9 +676,6 @@ function percentile(values: number[], percentileValue: number): number | null {
 }
 
 function maxSeverity(values: DiagnosticSeverity[]): DiagnosticSeverity {
-  if (values.includes("critical")) {
-    return "critical";
-  }
   if (values.includes("warning")) {
     return "warning";
   }
@@ -710,9 +683,6 @@ function maxSeverity(values: DiagnosticSeverity[]): DiagnosticSeverity {
 }
 
 function statusFromSeverity(severity: DiagnosticSeverity): DiagnosticStatus {
-  if (severity === "critical") {
-    return "down";
-  }
   if (severity === "warning") {
     return "degraded";
   }
@@ -1144,9 +1114,6 @@ function classifyApiSnapshot(metrics: JsonRecord): DiagnosticSeverity {
     0;
   const latencyAlertReady =
     latencySampleCount >= API_LATENCY_ALERT_MIN_SAMPLES;
-  if ((latencyAlertReady && p95 >= API_LATENCY_CRITICAL_MS) || errors >= 3) {
-    return "critical";
-  }
   if ((latencyAlertReady && p95 >= API_LATENCY_WARNING_MS) || errors > 0) {
     return "warning";
   }
@@ -1169,7 +1136,7 @@ function classifyIbkrCode(message: string): {
     return {
       code,
       category: IBKR_CODE_CATEGORY[code] ?? "bridge",
-      severity: "critical",
+      severity: "warning",
     };
   }
 
@@ -1350,7 +1317,7 @@ function classifyMarketDataSnapshot(metrics: JsonRecord): DiagnosticSeverity {
     (freshnessAgeMs !== null && freshnessAgeMs >= 10_000) ||
     (maxGapMs !== null && maxGapMs >= 30_000)
   ) {
-    return "critical";
+    return "warning";
   }
 
   if (
@@ -1382,9 +1349,6 @@ function buildBrowserMetrics(): JsonRecord {
   const warningCount = recentBrowserEvents.filter(
     (event) => event.severity === "warning",
   ).length;
-  const criticalCount = recentBrowserEvents.filter(
-    (event) => event.severity === "critical",
-  ).length;
   const lastEvent = recentBrowserEvents.sort(
     (left, right) => Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt),
   )[0];
@@ -1392,7 +1356,6 @@ function buildBrowserMetrics(): JsonRecord {
   return {
     eventCount5m: recentBrowserEvents.length,
     warningCount5m: warningCount,
-    criticalCount5m: criticalCount,
     activeDiagnosticsClients: subscribers.size,
     latestClientAt: latest?.observedAt ?? null,
     firstScreenId: textValue(navigation["firstScreenId"]),
@@ -1428,9 +1391,6 @@ function buildBrowserMetrics(): JsonRecord {
 }
 
 function classifyBrowserSnapshot(metrics: JsonRecord): DiagnosticSeverity {
-  if ((numeric(metrics["criticalCount5m"]) ?? 0) > 0) {
-    return "critical";
-  }
   if (
     (numeric(metrics["warningCount5m"]) ?? 0) > 0 ||
     (numeric(metrics["screenReadyP95Ms"]) ?? 0) >= 4_000 ||
@@ -1654,7 +1614,7 @@ function classifyChartHydrationSnapshot(metrics: JsonRecord): DiagnosticSeverity
     duplicateOlderPageCount >= 10 ||
     (prependP95Ms !== null && prependP95Ms >= 4_000)
   ) {
-    return "critical";
+    return "warning";
   }
 
   if (
@@ -1686,7 +1646,7 @@ function buildChartHydrationDiagnosticEvents(
       subsystem: "chart-hydration",
       category: "payload",
       code: "chart_hydration_payload_shape_error",
-      severity: payloadShapeErrors >= 5 ? "critical" : "warning",
+      severity: payloadShapeErrors >= 5 ? "warning" : "warning",
       message: "Chart hydration received malformed bar payloads.",
       dimensions: { payloadShapeErrors },
       raw,
@@ -1698,7 +1658,7 @@ function buildChartHydrationDiagnosticEvents(
       subsystem: "chart-hydration",
       category: "cursor",
       code: "chart_hydration_cursor_fallbacks",
-      severity: cursorFallbackCount >= 10 ? "critical" : "warning",
+      severity: cursorFallbackCount >= 10 ? "warning" : "warning",
       message: "Chart history cursors are falling back to windowed provider fetches.",
       dimensions: { cursorFallbackCount },
       raw,
@@ -1710,7 +1670,7 @@ function buildChartHydrationDiagnosticEvents(
       subsystem: "chart-hydration",
       category: "latency",
       code: "chart_hydration_slow_prepend",
-      severity: prependP95Ms >= 4_000 ? "critical" : "warning",
+      severity: prependP95Ms >= 4_000 ? "warning" : "warning",
       message: "Loading older chart bars is slower than expected.",
       dimensions: { prependP95Ms },
       raw,
@@ -1722,7 +1682,7 @@ function buildChartHydrationDiagnosticEvents(
       subsystem: "chart-hydration",
       category: "pagination",
       code: "chart_hydration_duplicate_pages",
-      severity: duplicateOlderPageCount >= 10 ? "critical" : "warning",
+      severity: duplicateOlderPageCount >= 10 ? "warning" : "warning",
       message: "Chart history prepend requests are returning duplicate older pages.",
       dimensions: { duplicateOlderPageCount },
       raw,
@@ -1852,7 +1812,7 @@ function buildIbkrDiagnosticEvents(
       subsystem: "ibkr",
       category: staleTunnel ? "stale-tunnel" : "bridge-health",
       code: staleTunnel ? "ibkr_bridge_stale_tunnel" : healthErrorCode,
-      severity: "critical",
+      severity: "warning",
       message: staleTunnel
         ? compactErrorMessage(
             "IB Gateway bridge tunnel is stale or unreachable",
@@ -1876,7 +1836,7 @@ function buildIbkrDiagnosticEvents(
       subsystem: "ibkr",
       category: "gateway-socket",
       code: "ibkr_gateway_socket_disconnected",
-      severity: "critical",
+      severity: "warning",
       message: "IB Gateway bridge is reachable, but the TWS socket is disconnected.",
       raw: ibkrRaw,
     });
@@ -1898,7 +1858,7 @@ function buildIbkrDiagnosticEvents(
       subsystem: "ibkr",
       category: "authentication",
       code: "ibkr_gateway_login_required",
-      severity: "critical",
+      severity: "warning",
       message: "IB Gateway bridge is connected, but the broker session is not authenticated.",
       raw: ibkrRaw,
     });
@@ -1909,7 +1869,7 @@ function buildIbkrDiagnosticEvents(
       subsystem: "ibkr",
       category: "competing-session",
       code: "10197",
-      severity: "critical",
+      severity: "warning",
       message: "IB Gateway reports a competing client session.",
       raw: ibkrRaw,
     });
@@ -1990,10 +1950,10 @@ function classifyIbkrSnapshot(metrics: JsonRecord): DiagnosticSeverity {
     return "warning";
   }
   if (!metrics["reachable"] || !metrics["connected"]) {
-    return "critical";
+    return "warning";
   }
   if (!metrics["authenticated"] || metrics["competing"]) {
-    return "critical";
+    return "warning";
   }
   if (metrics["healthFresh"] === false) {
     return "warning";
@@ -2009,7 +1969,7 @@ function classifyIbkrSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   }
   const heartbeatAgeMs = numeric(metrics["heartbeatAgeMs"]);
   if (heartbeatAgeMs !== null && heartbeatAgeMs >= 180_000) {
-    return "critical";
+    return "warning";
   }
   if (heartbeatAgeMs !== null && heartbeatAgeMs >= 90_000) {
     return "warning";
@@ -2049,7 +2009,6 @@ function buildProbeMetrics(probes: JsonRecord): {
 }
 
 const SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS = 120_000;
-const SIGNAL_OPTIONS_SCAN_STALE_CRITICAL_MS = 300_000;
 
 async function buildAutomationMetrics(): Promise<{
   metrics: JsonRecord;
@@ -2459,7 +2418,7 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
     orphanOpenOptionCount > 0 ||
     (signalOptionsDeploymentCount === 0 && expirationMaintenanceDueCount > 0)
   ) {
-    return "critical";
+    return "warning";
   }
 
   if (
@@ -2471,9 +2430,9 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
       activeLongScanCount === 0 &&
       enabledDeployments > 0 &&
       latestScanAgeMs !== null &&
-      latestScanAgeMs >= SIGNAL_OPTIONS_SCAN_STALE_CRITICAL_MS)
+      latestScanAgeMs >= SIGNAL_OPTIONS_SCAN_STALE_WARNING_MS)
   ) {
-    return "critical";
+    return "warning";
   }
 
   if (
@@ -2608,7 +2567,7 @@ function buildIsolationMetrics(): JsonRecord {
 
 function classifyIsolationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   const reportCount = numeric(metrics["reportCount5m"]) ?? 0;
-  if (reportCount >= 10) return "critical";
+  if (reportCount >= 10) return "warning";
   if (reportCount > 0) return "warning";
   return "info";
 }
@@ -2876,19 +2835,13 @@ async function buildDatabaseStorageStats(): Promise<JsonRecord> {
   const warningMb = Number.isFinite(STORAGE_WARNING_DATABASE_MB)
     ? STORAGE_WARNING_DATABASE_MB
     : 15360;
-  const criticalMb = Number.isFinite(STORAGE_CRITICAL_DATABASE_MB)
-    ? STORAGE_CRITICAL_DATABASE_MB
-    : 18432;
   return {
     databaseMb: roundMetric(databaseMb),
     warningDatabaseMb: warningMb,
-    criticalDatabaseMb: criticalMb,
     storagePressureLevel:
-      databaseMb >= criticalMb
-        ? "critical"
-        : databaseMb >= warningMb
-          ? "warning"
-          : "ok",
+      databaseMb >= warningMb
+        ? "warning"
+        : "ok",
   };
 }
 
@@ -2936,9 +2889,6 @@ function classifyStorageSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   const status = textValue(metrics["status"]);
   if (status === "ok") {
     const pressure = textValue(metrics["storagePressureLevel"]);
-    if (pressure === "critical") {
-      return "critical";
-    }
     if (pressure === "warning") {
       return "warning";
     }
@@ -2947,7 +2897,7 @@ function classifyStorageSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   if (status === "degraded") {
     return "warning";
   }
-  return "critical";
+  return "warning";
 }
 
 function storageSnapshotSummary(metrics: JsonRecord): string {
@@ -2977,7 +2927,7 @@ function classifyRuntimeRecorderSnapshot(metrics: JsonRecord): DiagnosticSeverit
     classification === "web-child-exit" ||
     classification === "suspected-resource-pressure"
   ) {
-    return "critical";
+    return "warning";
   }
   if (classification === "container-replaced" || longRunningTestProcessCount > 0) {
     return "warning";
@@ -3464,7 +3414,6 @@ let diagnosticThresholdOverrideRowsLoader: () => Promise<
     .select({
       metricKey: diagnosticThresholdOverridesTable.metricKey,
       warning: diagnosticThresholdOverridesTable.warning,
-      critical: diagnosticThresholdOverridesTable.critical,
       enabled: diagnosticThresholdOverridesTable.enabled,
       audible: diagnosticThresholdOverridesTable.audible,
     })
@@ -3489,7 +3438,6 @@ function mapThresholdOverrideRows(
       row.metricKey,
       {
         warning: row.warning ?? undefined,
-        critical: row.critical ?? undefined,
         enabled: row.enabled,
         audible: row.audible,
       },
@@ -3567,12 +3515,7 @@ async function evaluateThresholds(
           return;
         }
 
-        const severity =
-          value >= threshold.critical
-            ? "critical"
-            : value >= threshold.warning
-              ? "warning"
-              : null;
+        const severity = value >= threshold.warning ? "warning" : null;
         if (!severity) {
           return;
         }
@@ -3894,7 +3837,7 @@ export async function collectDiagnosticSnapshot(
     ),
     buildSnapshot(
       "accounts",
-      accountFailures > 0 ? "critical" : "info",
+      accountFailures > 0 ? "warning" : "info",
       accountFailures > 0
         ? "Account or position read probe failed"
         : "Account and position read probes are healthy",
@@ -3903,7 +3846,7 @@ export async function collectDiagnosticSnapshot(
     ),
     buildSnapshot(
       "orders",
-      orderFailures > 0 ? "critical" : orderReadDegraded ? "warning" : "info",
+      orderFailures > 0 ? "warning" : orderReadDegraded ? "warning" : "info",
       orderFailures > 0
         ? "Order visibility read probe failed"
         : orderReadDegraded
@@ -3953,7 +3896,7 @@ export async function collectDiagnosticSnapshot(
   const bridgeDependentSeverity = (
     defaultSeverity: DiagnosticSeverity,
   ): DiagnosticSeverity =>
-    staleTunnelRootCauseIncidentKey && defaultSeverity === "critical"
+    staleTunnelRootCauseIncidentKey && defaultSeverity === "warning"
       ? "warning"
       : defaultSeverity;
   activeEvents.push(
@@ -3972,7 +3915,7 @@ export async function collectDiagnosticSnapshot(
       subsystem: "market-data",
       category: "stream",
       code: "bridge_quote_stream_error",
-      severity: bridgeDependentSeverity("critical"),
+      severity: bridgeDependentSeverity("warning"),
       message: marketDataLastError,
       dimensions: withBridgeRootCause(),
       raw: asJsonRecord(probes["marketData"]),
@@ -3984,7 +3927,7 @@ export async function collectDiagnosticSnapshot(
       subsystem: orderFailures > 0 ? "orders" : "accounts",
       category: "visibility",
       code: "read_probe_failed",
-      severity: bridgeDependentSeverity("critical"),
+      severity: bridgeDependentSeverity("warning"),
       message: "Read-only account/order diagnostics probe failed",
       dimensions: withBridgeRootCause(),
       raw: probes,
@@ -4007,7 +3950,7 @@ export async function collectDiagnosticSnapshot(
     const status = textValue(storageMetrics["status"]) ?? "unavailable";
     const reason = textValue(storageMetrics["reason"]);
     const pressure = textValue(storageMetrics["storagePressureLevel"]);
-    if (status === "ok" && (pressure === "warning" || pressure === "critical")) {
+    if (status === "ok" && (pressure === "warning" || pressure === "high")) {
       activeEvents.push({
         subsystem: "storage",
         category: "capacity",
@@ -4017,7 +3960,6 @@ export async function collectDiagnosticSnapshot(
         dimensions: {
           databaseMb: storageMetrics["databaseMb"] ?? null,
           warningDatabaseMb: storageMetrics["warningDatabaseMb"] ?? null,
-          criticalDatabaseMb: storageMetrics["criticalDatabaseMb"] ?? null,
         },
         raw: storageMetrics,
       });
@@ -4052,7 +3994,7 @@ export async function collectDiagnosticSnapshot(
       code: "signal_options_gateway_blocked",
       severity: bridgeDependentSeverity(
         (numeric(automation.metrics["gatewayBlockedCount"]) ?? 0) >= 3
-          ? "critical"
+          ? "warning"
           : "warning",
       ),
       message: "Signal-options scans are blocked by IB Gateway readiness.",
@@ -4070,7 +4012,7 @@ export async function collectDiagnosticSnapshot(
       code: "signal_options_worker_failure",
       severity: bridgeDependentSeverity(
         (numeric(automation.metrics["failureCount"]) ?? 0) >= 3
-          ? "critical"
+          ? "warning"
           : "warning",
       ),
       message:
@@ -4122,9 +4064,7 @@ export async function collectDiagnosticSnapshot(
       subsystem: "automation",
       category: "freshness",
       code: "signal_options_scan_stale",
-      severity: bridgeDependentSeverity(
-        automationSeverity === "critical" ? "critical" : "warning",
-      ),
+      severity: bridgeDependentSeverity("warning"),
       message: "Signal-options worker scans are stale or the worker is stopped.",
       dimensions: withBridgeRootCause({
         staleScanCount: automation.metrics["staleScanCount"],
@@ -4165,7 +4105,7 @@ export async function collectDiagnosticSnapshot(
       subsystem: "automation",
       category: "deployment",
       code: "signal_options_deployment_missing",
-      severity: "critical",
+      severity: "warning",
       message:
         "Open shadow option positions exist, but no signal-options deployment is present to manage entries and exits.",
       dimensions: {
@@ -4180,7 +4120,7 @@ export async function collectDiagnosticSnapshot(
       subsystem: "automation",
       category: "ledger-maintenance",
       code: "signal_options_orphan_shadow_options",
-      severity: "critical",
+      severity: "warning",
       message:
         "Open shadow option positions are orphaned from their signal-options deployment.",
       dimensions: {
@@ -4201,7 +4141,7 @@ export async function collectDiagnosticSnapshot(
       subsystem: "automation",
       category: "ledger-maintenance",
       code: "shadow_option_expiry_pending",
-      severity: automationSeverity === "critical" ? "critical" : "warning",
+      severity: "warning",
       message: "Open shadow option positions are due for expiration maintenance.",
       dimensions: {
         expirationMaintenanceDueCount,
@@ -4380,7 +4320,6 @@ export async function updateDiagnosticThresholds(
   overrides: Array<{
     metricKey: string;
     warning?: number | null;
-    critical?: number | null;
     enabled?: boolean;
     audible?: boolean;
   }>,
@@ -4395,10 +4334,6 @@ export async function updateDiagnosticThresholds(
       typeof override.warning === "number" && Number.isFinite(override.warning)
         ? override.warning
         : null;
-    const critical =
-      typeof override.critical === "number" && Number.isFinite(override.critical)
-        ? override.critical
-        : null;
     await safeDb(
       "update diagnostic threshold override",
       async () => {
@@ -4407,7 +4342,6 @@ export async function updateDiagnosticThresholds(
           .values({
             metricKey: override.metricKey,
             warning,
-            critical,
             enabled: override.enabled ?? true,
             audible: override.audible ?? true,
           })
@@ -4415,7 +4349,6 @@ export async function updateDiagnosticThresholds(
             target: diagnosticThresholdOverridesTable.metricKey,
             set: {
               warning,
-              critical,
               enabled: override.enabled ?? true,
               audible: override.audible ?? true,
               updatedAt: new Date(),

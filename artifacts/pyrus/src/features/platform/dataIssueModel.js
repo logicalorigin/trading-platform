@@ -5,7 +5,6 @@ const SEVERITY_RANK = {
   warning: 1,
   attention: 1,
   degraded: 1,
-  critical: 2,
   error: 2,
 };
 
@@ -71,10 +70,13 @@ const reasonLooksQuiet = (...values) =>
 
 const normalizeSeverity = (severity) => {
   const normalized = normalizeToken(severity);
-  if (normalized === "critical" || normalized === "error" || normalized === "down") {
-    return "critical";
-  }
-  if (normalized === "warning" || normalized === "attention" || normalized === "degraded") {
+  if (
+    normalized === "warning" ||
+    normalized === "error" ||
+    normalized === "down" ||
+    normalized === "attention" ||
+    normalized === "degraded"
+  ) {
     return "warning";
   }
   return "info";
@@ -193,7 +195,7 @@ export const collectDataIssuesFromRecord = (recordValue, options = {}) => {
       issues,
       seen,
       build({
-        severity: "critical",
+        severity: "warning",
         title: `${valueLabel} unavailable`,
         summary: errorText || `${valueLabel} failed in the backend.`,
         reason: reason || status || sourceStatus || "error",
@@ -212,7 +214,7 @@ export const collectDataIssuesFromRecord = (recordValue, options = {}) => {
       issues,
       seen,
       build({
-        severity: errorText ? "critical" : "warning",
+        severity: "warning",
         title: `${valueLabel} unavailable`,
         summary:
           unavailableDetail ||

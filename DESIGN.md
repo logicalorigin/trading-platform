@@ -9,7 +9,7 @@ Color must describe meaning, not mood.
 - Directional market intent uses blue for buy, call-side, bullish, long, inflow pressure, and red for sell, put-side, bearish, short, outflow pressure.
 - Financial outcome uses green for positive P&L, positive return, gain, and red for negative P&L, negative return, loss.
 - Operational health uses green for healthy, live, connected, configured, synced; amber for stale, pending, delayed, degraded, limited; red for error, unavailable, failed, blocked, offline.
-- Risk and attention use amber for watch/elevated and red for critical/danger.
+- Risk and attention use amber for watch/elevated and red for priority/danger.
 - Neutral metadata uses muted text and border tones.
 
 Green is not banned. It is banned only when the user is reading directional market intent.
@@ -41,7 +41,7 @@ Empty states are product states. Do not ship bare "No items found" copy without 
 
 ## Live Trust Flow
 
-Normal use does not need a long storyboard. Trust-critical anomalies do:
+Normal use does not need a long storyboard. Trust-priority anomalies do:
 
 1. Stale data: show amber freshness/source context without moving the layout.
 2. Missing data: state what is missing and whether the user can refresh, wait, or configure.

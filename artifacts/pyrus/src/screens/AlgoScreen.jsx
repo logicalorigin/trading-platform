@@ -1,7 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Suspense,
-  lazy,
   useCallback,
   useEffect,
   useMemo,
@@ -69,6 +67,11 @@ import {
   signalOptionsActionColor,
   signalOptionsActionLabel,
 } from "./algo/algoHelpers";
+import {
+  AlgoLivePage,
+  preloadAlgoLivePageModules,
+} from "./algo/AlgoLivePage";
+import { AlgoRightRail } from "./algo/AlgoRightRail.jsx";
 import { normalizeLegacyAlgoBrandText } from "./algo/algoBranding.js";
 import { useServerSyncedDraft } from "./algo/useServerSyncedDraft";
 import { useRuntimeWorkloadFlag } from "../features/platform/workloadStats";
@@ -114,48 +117,9 @@ import {
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import { retryDynamicImport } from "../lib/dynamicImport";
 
-let algoRightRailImport = null;
-const loadAlgoRightRail = () => {
-  if (!algoRightRailImport) {
-    algoRightRailImport = retryDynamicImport(
-      () =>
-        import("./algo/AlgoRightRail.jsx").then((module) => ({
-          default: module.AlgoRightRail,
-        })),
-      { label: "AlgoRightRail" },
-    ).catch((error) => {
-      algoRightRailImport = null;
-      throw error;
-    });
-  }
-  return algoRightRailImport;
-};
-const LazyAlgoRightRail = lazy(loadAlgoRightRail);
-let algoLivePageImport = null;
-const loadAlgoLivePage = () => {
-  if (!algoLivePageImport) {
-    algoLivePageImport = retryDynamicImport(
-      () =>
-        import("./algo/AlgoLivePage").then((module) => ({
-          default: module.AlgoLivePage,
-          preloadAlgoLivePageModules: module.preloadAlgoLivePageModules,
-        })),
-      { label: "AlgoLivePage" },
-    ).catch((error) => {
-      algoLivePageImport = null;
-      throw error;
-    });
-  }
-  return algoLivePageImport;
-};
-const LazyAlgoLivePage = lazy(loadAlgoLivePage);
+export const preloadScreenModules = () => preloadAlgoLivePageModules();
 
-const ALGO_LIVE_PAGE_HYDRATION_DELAY_MS = 650;
-
-export const preloadScreenModules = () => Promise.resolve();
-
-const ALGO_CRITICAL_FALLBACK_DELAY_MS = 1_000;
-const ALGO_DERIVED_FALLBACK_DELAY_MS = 6_000;
+const ALGO_PRIMARY_FALLBACK_DELAY_MS = 1_000;
 const EMPTY_ALGO_DEPLOYMENTS = Object.freeze([]);
 const EMPTY_ALGO_DRAFTS = Object.freeze([]);
 const EMPTY_ALGO_EVENTS = Object.freeze([]);
@@ -222,67 +186,6 @@ const isAlgoExecutionScanStageRunning = (stage) => {
     Boolean(record.scanStartedAt && Number.isFinite(scanAgeMs) && scanAgeMs >= 0)
   );
 };
-
-const AlgoLiveLoading = () => (
-  <div
-    data-testid="algo-live-loading"
-    style={{
-      minHeight: dim(220),
-      display: "grid",
-      placeItems: "center",
-      border: `1px dashed ${CSS_COLOR.border}`,
-      borderRadius: dim(RADII.sm),
-      color: CSS_COLOR.textDim,
-      fontFamily: T.sans,
-      fontSize: textSize("caption"),
-      background: CSS_COLOR.bg1,
-    }}
-  >
-    Loading signal operations...
-  </div>
-);
-
-const AlgoRightRailLoading = () => (
-  <div
-    data-testid="algo-right-rail-loading"
-    style={{
-      minHeight: dim(260),
-      height: "100%",
-      display: "grid",
-      alignContent: "start",
-      gap: sp(8),
-      padding: sp(10),
-      border: `1px dashed ${CSS_COLOR.border}`,
-      borderRadius: dim(RADII.sm),
-      background: CSS_COLOR.bg1,
-      color: CSS_COLOR.textDim,
-      fontFamily: T.sans,
-      fontSize: textSize("caption"),
-    }}
-  >
-    <span>Loading algo controls...</span>
-    <span
-      aria-hidden="true"
-      className="ra-skeleton-shimmer"
-      style={{
-        display: "block",
-        minHeight: dim(96),
-        borderRadius: dim(RADII.sm),
-        background: cssColorMix(CSS_COLOR.textMuted, 10),
-      }}
-    />
-    <span
-      aria-hidden="true"
-      className="ra-skeleton-shimmer"
-      style={{
-        display: "block",
-        minHeight: dim(140),
-        borderRadius: dim(RADII.sm),
-        background: cssColorMix(CSS_COLOR.textMuted, 8),
-      }}
-    />
-  </div>
-);
 
 const signalOptionsRuleColor = (status) => {
   if (status === "fail") return CSS_COLOR.red;
@@ -474,18 +377,6 @@ export const AlgoScreen = ({
     selectedAccountId ||
     session?.ibkrBridge?.selectedAccountId ||
     null;
-  const [algoLiveHydrationReady, setAlgoLiveHydrationReady] = useState(false);
-  useEffect(() => {
-    if (!isVisible) {
-      setAlgoLiveHydrationReady(false);
-      return undefined;
-    }
-    const hydrationTimer = window.setTimeout(
-      () => setAlgoLiveHydrationReady(true),
-      ALGO_LIVE_PAGE_HYDRATION_DELAY_MS,
-    );
-    return () => window.clearTimeout(hydrationTimer);
-  }, [isVisible]);
   useEffect(() => {
     if (!isVisible || algoRuntimeHelpers !== DEFAULT_ALGO_RUNTIME_HELPERS) {
       return undefined;
@@ -511,8 +402,7 @@ export const AlgoScreen = ({
   const shadowAccountStreamFreshness = useShadowAccountSnapshotStream({
     enabled: algoLiveDataQueriesEnabled,
   });
-  const [algoCriticalFallbackReady, setAlgoCriticalFallbackReady] = useState(false);
-  const [algoDerivedFallbackReady, setAlgoDerivedFallbackReady] = useState(false);
+  const [algoPrimaryFallbackReady, setAlgoPrimaryFallbackReady] = useState(false);
   const algoTimingStagesRef = useRef(new Set());
   const autoInitialScanDeploymentIdsRef = useRef(new Set());
   useEffect(() => {
@@ -521,47 +411,20 @@ export const AlgoScreen = ({
     }
   }, [isVisible]);
   useEffect(() => {
-    if (!isVisible || algoCockpitStreamFreshness.algoCriticalFresh) {
-      setAlgoCriticalFallbackReady(false);
+    if (!isVisible || algoCockpitStreamFreshness.algoPrimaryFresh) {
+      setAlgoPrimaryFallbackReady(false);
       return undefined;
     }
     const timer = window.setTimeout(() => {
-      setAlgoCriticalFallbackReady(true);
-    }, ALGO_CRITICAL_FALLBACK_DELAY_MS);
+      setAlgoPrimaryFallbackReady(true);
+    }, ALGO_PRIMARY_FALLBACK_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [algoCockpitStreamFreshness.algoCriticalFresh, isVisible]);
-  useEffect(() => {
-    if (!isVisible || algoCockpitStreamFreshness.algoFullFresh) {
-      setAlgoDerivedFallbackReady(false);
-      return undefined;
-    }
-    const timer = window.setTimeout(() => {
-      setAlgoDerivedFallbackReady(true);
-    }, ALGO_DERIVED_FALLBACK_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [algoCockpitStreamFreshness.algoFullFresh, isVisible]);
-  const algoCriticalDataReady = Boolean(
+  }, [algoCockpitStreamFreshness.algoPrimaryFresh, isVisible]);
+  const algoPrimaryDataReady = Boolean(
     isVisible &&
-      (algoCockpitStreamFreshness.algoCriticalFresh ||
-        algoCriticalFallbackReady),
+      (algoCockpitStreamFreshness.algoPrimaryFresh ||
+        algoPrimaryFallbackReady),
   );
-  const algoDerivedReady = Boolean(
-    isVisible &&
-      (algoCockpitStreamFreshness.algoFullFresh ||
-        algoDerivedFallbackReady),
-  );
-  useEffect(() => {
-    onReadinessChange?.({
-      criticalReady: Boolean(isVisible),
-      derivedReady: algoDerivedReady,
-      backgroundAllowed: Boolean(isVisible && !safeQaMode && algoDerivedReady),
-    });
-  }, [
-    algoDerivedReady,
-    isVisible,
-    onReadinessChange,
-    safeQaMode,
-  ]);
   const markAlgoTiming = useCallback((stage, detail) => {
     if (algoTimingStagesRef.current.has(stage)) {
       return;
@@ -576,55 +439,37 @@ export const AlgoScreen = ({
     markAlgoTiming("route-module-loaded");
   }, [isVisible, markAlgoTiming]);
   useEffect(() => {
-    if (!algoCriticalDataReady) {
+    if (!algoPrimaryDataReady) {
       return;
     }
-    markAlgoTiming("critical-data-ready", {
-      source: algoCockpitStreamFreshness.algoCriticalFresh
+    markAlgoTiming("primary-data-ready", {
+      source: algoCockpitStreamFreshness.algoPrimaryFresh
         ? "stream"
-        : "rest-fallback",
+        : "rest-catchup",
     });
   }, [
-    algoCockpitStreamFreshness.algoCriticalFresh,
-    algoCriticalDataReady,
-    markAlgoTiming,
-  ]);
-  useEffect(() => {
-    if (
-      !isVisible ||
-      !(algoCockpitStreamFreshness.algoFullFresh || algoDerivedFallbackReady)
-    ) {
-      return;
-    }
-    markAlgoTiming("derived-data-ready", {
-      source: algoCockpitStreamFreshness.algoFullFresh ? "stream" : "rest-fallback",
-    });
-  }, [
-    algoCockpitStreamFreshness.algoFullFresh,
-    algoDerivedFallbackReady,
-    isVisible,
+    algoCockpitStreamFreshness.algoPrimaryFresh,
+    algoPrimaryDataReady,
     markAlgoTiming,
   ]);
   const algoSetupQueriesEnabled = Boolean(isVisible);
-  const algoCriticalQueriesEnabled = Boolean(algoLiveDataQueriesEnabled);
-  const algoDerivedQueriesEnabled = Boolean(
+  const algoPrimaryQueriesEnabled = Boolean(algoLiveDataQueriesEnabled);
+  const algoDerivedRestQueriesEnabled = Boolean(
     algoLiveDataQueriesEnabled &&
-      algoDerivedFallbackReady &&
       !algoCockpitStreamFreshness.algoFullFresh,
   );
   const algoBackgroundQueriesEnabled = Boolean(
-    algoDerivedQueriesEnabled && !safeQaMode,
+    algoDerivedRestQueriesEnabled && !safeQaMode,
   );
   const algoVisibleRowHydrationQueriesEnabled = Boolean(
     algoLiveDataQueriesEnabled && !safeQaMode,
   );
-  const algoPostCriticalQueriesEnabled = Boolean(
+  const algoPostPrimaryQueriesEnabled = Boolean(
     algoLiveDataQueriesEnabled &&
-      algoDerivedFallbackReady &&
       !shadowAccountStreamFreshness.accountFresh,
   );
   const algoRoutineRefetchInterval =
-    isVisible && !algoCockpitStreamFreshness.algoCriticalFresh
+    isVisible && !algoCockpitStreamFreshness.algoPrimaryFresh
       ? QUERY_DEFAULTS.refetchInterval
       : false;
   const algoDerivedRefetchInterval =
@@ -632,13 +477,13 @@ export const AlgoScreen = ({
       ? QUERY_DEFAULTS.refetchInterval
       : false;
   const signalOptionsLedgerPositionsRefetchInterval =
-    algoPostCriticalQueriesEnabled && !shadowAccountStreamFreshness.accountFresh
+    algoPostPrimaryQueriesEnabled && !shadowAccountStreamFreshness.accountFresh
       ? 60_000
       : false;
   useRuntimeWorkloadFlag("algo:cockpit", isVisible, {
-    kind: algoCockpitStreamFreshness.algoCriticalFresh ? "stream" : "poll",
+    kind: algoCockpitStreamFreshness.algoPrimaryFresh ? "stream" : "poll",
     label: "Algo cockpit",
-    detail: algoCockpitStreamFreshness.algoCriticalFresh ? "SSE" : "15s fallback",
+    detail: algoCockpitStreamFreshness.algoPrimaryFresh ? "SSE" : "REST catch-up",
     priority: 7,
   });
   const draftsQuery = useListBacktestDraftStrategies({
@@ -693,7 +538,7 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: Boolean(algoCriticalQueriesEnabled && focusedDeployment?.id),
+        enabled: Boolean(algoPrimaryQueriesEnabled && focusedDeployment?.id),
         refetchInterval: algoRoutineRefetchInterval,
         placeholderData: retainPreviousData,
         retry: false,
@@ -703,7 +548,7 @@ export const AlgoScreen = ({
   const cockpitQuery = useGetAlgoDeploymentCockpit(focusedDeployment?.id || "", {
     query: {
       ...QUERY_DEFAULTS,
-      enabled: Boolean(algoDerivedQueriesEnabled && focusedDeployment?.id),
+      enabled: Boolean(algoDerivedRestQueriesEnabled && focusedDeployment?.id),
       refetchInterval: algoDerivedRefetchInterval,
       placeholderData: retainPreviousData,
       retry: false,
@@ -727,7 +572,7 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: Boolean(algoDerivedQueriesEnabled && focusedDeployment?.id),
+        enabled: Boolean(algoDerivedRestQueriesEnabled && focusedDeployment?.id),
         refetchInterval: algoDerivedRefetchInterval,
         placeholderData: retainPreviousData,
         retry: false,
@@ -745,7 +590,7 @@ export const AlgoScreen = ({
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: algoPostCriticalQueriesEnabled,
+        enabled: algoPostPrimaryQueriesEnabled,
         staleTime: shadowAccountStreamFreshness.accountFresh
           ? 30_000
           : QUERY_DEFAULTS.staleTime,
@@ -771,7 +616,45 @@ export const AlgoScreen = ({
   const cockpitSettled = Boolean(
     cockpitQuery.data || cockpitQuery.isFetched || cockpitQuery.isError,
   );
+  const signalMonitorProfileSettled = Boolean(
+    signalMonitorProfileQuery.data ||
+      signalMonitorProfileQuery.isFetched ||
+      signalMonitorProfileQuery.isError,
+  );
   const algoSetupDataSettled = Boolean(deploymentsSettled && draftsSettled);
+  const algoDerivedRestSettled = Boolean(
+    !focusedDeployment?.id ||
+      (cockpitSettled && signalMonitorProfileSettled),
+  );
+  const algoDerivedReady = Boolean(
+    isVisible &&
+      (algoCockpitStreamFreshness.algoFullFresh || algoDerivedRestSettled),
+  );
+  useEffect(() => {
+    onReadinessChange?.({
+      primaryReady: Boolean(isVisible),
+      derivedReady: algoDerivedReady,
+      backgroundAllowed: Boolean(isVisible && !safeQaMode && algoDerivedReady),
+    });
+  }, [
+    algoDerivedReady,
+    isVisible,
+    onReadinessChange,
+    safeQaMode,
+  ]);
+  useEffect(() => {
+    if (!isVisible || !algoDerivedReady) {
+      return;
+    }
+    markAlgoTiming("derived-data-ready", {
+      source: algoCockpitStreamFreshness.algoFullFresh ? "stream" : "rest-catchup",
+    });
+  }, [
+    algoCockpitStreamFreshness.algoFullFresh,
+    algoDerivedReady,
+    isVisible,
+    markAlgoTiming,
+  ]);
   const cockpit = cockpitQuery.data || null;
   const {
     buildTransitionsBufferStore,
@@ -1781,6 +1664,7 @@ export const AlgoScreen = ({
         candidates: signalOptionsCandidates,
         signalEvents: signalMonitorEventsLoaded ? signalMonitorEvents : [],
         universeSymbols: focusedDeployment?.symbolUniverse || [],
+        includeSignalHistory: true,
       }),
     [
       focusedDeployment?.symbolUniverse,
@@ -2004,109 +1888,100 @@ export const AlgoScreen = ({
           minWidth: 0,
         }}
       >
-        {algoLiveHydrationReady ? (
-          <Suspense fallback={<AlgoLiveLoading />}>
-            <LazyAlgoLivePage
-              deployments={deployments}
-              candidateDrafts={candidateDrafts}
-              setupDataSettled={algoSetupDataSettled}
-              selectedDraft={selectedDraft}
-              setSelectedDraftId={setSelectedDraftId}
-              deploymentName={deploymentName}
-              setDeploymentName={setDeploymentName}
-              symbolUniverseInput={symbolUniverseInput}
-              setSymbolUniverseInput={setSymbolUniverseInput}
-              handleCreateDeployment={handleCreateDeployment}
-              createDeploymentMutation={createDeploymentMutation}
-              cockpitKpis={cockpitKpis}
-              cockpitRisk={cockpit?.risk}
-              cockpitGeneratedAt={cockpit?.generatedAt}
-              refreshPending={deploymentsQuery.isFetching || cockpitQuery.isFetching}
-              cockpitSignalFreshness={cockpitSignalFreshness}
-              cockpitTradePath={cockpitTradePath}
-              signalOptionsPerformanceSummary={signalOptionsPerformanceSummary}
-              cockpitStageItems={cockpitStageItems}
-              selectedStage={selectedStage}
-              setSelectedPipelineStageId={setSelectedPipelineStageId}
-              cockpitAttentionItems={cockpitAttentionItems}
-              signalOptionsRuleAdherence={signalOptionsRuleAdherence}
-              gatewayReady={gatewayReady}
-              transitions={visibleTransitions}
-              visibleSignalRows={visibleSignalRows}
-              signalOptionsCandidates={signalOptionsCandidates}
-              signalOptionsSourceHealth={signalOptionsSourceHealth}
-              signalMatrixStates={signalMatrixStates}
-              onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
-              selectedCandidate={selectedCandidate}
-              signalOptionsProfile={signalOptionsProfile}
-              onOpenCandidateInTrade={handleOpenCandidateInTrade}
-              safeQaMode={safeQaMode}
-              backgroundQueriesEnabled={algoBackgroundQueriesEnabled}
-              rowHydrationQueriesEnabled={algoVisibleRowHydrationQueriesEnabled}
-              signalOptionsPositions={signalOptionsPositions}
-              signalOptionsLedgerPositionsQuery={signalOptionsLedgerPositionsQuery}
-              symbolIndex={symbolIndex}
-              events={events}
-              userPreferences={userPreferences}
-              strategySettingsDraft={strategySettingsDraft}
-              activitySummary={activitySummary}
-              focusedDeployment={focusedDeployment}
-              onSelectDeployment={setFocusedDeploymentId}
-              accountId={activeAccountId}
-              environment={environment}
-              bridgeTone={bridgeTone}
-              handleToggleDeployment={handleToggleDeployment}
-              handleRunShadowScan={handleRunShadowScan}
-              enableDeploymentMutation={enableDeploymentMutation}
-              pauseDeploymentMutation={pauseDeploymentMutation}
-              runShadowScanMutation={runShadowScanMutation}
-              algoExecutionScanRunning={algoExecutionScanRunning}
-              algoIsPhone={algoIsPhone}
-              algoIsNarrow={algoIsNarrow}
-              algoLayoutWidth={algoRootSize.width}
-              rightRailFallback={<AlgoRightRailLoading />}
-              rightRail={
-                <Suspense fallback={<AlgoRightRailLoading />}>
-                  <LazyAlgoRightRail
-                    cockpit={cockpit}
-                    signalOptionsPositions={signalOptionsPositions}
-                    profileDraft={profileDraft}
-                    profileBaseline={profileDraftState.baseline}
-                    profileDirty={profileDirty}
-                    patchProfileDraftPath={patchProfileDraftPath}
-                    strategySettingsDraft={strategySettingsDraft}
-                    strategyBaseline={strategySettingsDraftState.baseline}
-                    strategyDirty={strategyDirty}
-                    patchStrategySettingsPath={patchStrategySettingsPath}
-                    focusedDeployment={focusedDeployment}
-                    controlBaselineReady={controlBaselineReady}
-                    saveAllPending={saveAllPending}
-                    handleApplyExpandedCapacity={handleApplyExpandedCapacity}
-                    handleSaveAllAdjustments={handleSaveAllAdjustments}
-                    handleDiscardAllAdjustments={handleDiscardAllAdjustments}
-                    updateProfileMutation={updateProfileMutation}
-                    updateStrategySettingsMutation={updateStrategySettingsMutation}
-                    cockpitSkipCategoryRows={cockpitSkipCategoryRows}
-                    cockpitSkipReasonRows={cockpitSkipReasonRows}
-                    cockpitReadinessRows={cockpitReadinessRows}
-                    cockpitMarkHealthRows={cockpitMarkHealthRows}
-                    cockpitLifecycleRows={cockpitLifecycleRows}
-                    cockpitEntryGateRows={cockpitEntryGateRows}
-                    cockpitOptionChainRows={cockpitOptionChainRows}
-                    cockpitSignalFreshness={cockpitSignalFreshness}
-                    cockpitTradePath={cockpitTradePath}
-                    diagExpansion={diagExpansion}
-                    setDiagExpansion={setDiagExpansion}
-                    algoIsPhone={algoIsPhone}
-                    algoIsNarrow={algoIsNarrow}
-                  />
-                </Suspense>
-              }
-            />
-          </Suspense>
-        ) : (
-          <AlgoLiveLoading />
-        )}
+        <AlgoLivePage
+            deployments={deployments}
+            candidateDrafts={candidateDrafts}
+            setupDataSettled={algoSetupDataSettled}
+            selectedDraft={selectedDraft}
+            setSelectedDraftId={setSelectedDraftId}
+            deploymentName={deploymentName}
+            setDeploymentName={setDeploymentName}
+            symbolUniverseInput={symbolUniverseInput}
+            setSymbolUniverseInput={setSymbolUniverseInput}
+            handleCreateDeployment={handleCreateDeployment}
+            createDeploymentMutation={createDeploymentMutation}
+            cockpitKpis={cockpitKpis}
+            cockpitRisk={cockpit?.risk}
+            cockpitGeneratedAt={cockpit?.generatedAt}
+            refreshPending={deploymentsQuery.isFetching || cockpitQuery.isFetching}
+            cockpitSignalFreshness={cockpitSignalFreshness}
+            cockpitTradePath={cockpitTradePath}
+            signalOptionsPerformanceSummary={signalOptionsPerformanceSummary}
+            cockpitStageItems={cockpitStageItems}
+            selectedStage={selectedStage}
+            setSelectedPipelineStageId={setSelectedPipelineStageId}
+            cockpitAttentionItems={cockpitAttentionItems}
+            signalOptionsRuleAdherence={signalOptionsRuleAdherence}
+            gatewayReady={gatewayReady}
+            transitions={visibleTransitions}
+            visibleSignalRows={visibleSignalRows}
+            signalOptionsCandidates={signalOptionsCandidates}
+            signalOptionsSourceHealth={signalOptionsSourceHealth}
+            signalMatrixStates={signalMatrixStates}
+            onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
+            selectedCandidate={selectedCandidate}
+            signalOptionsProfile={signalOptionsProfile}
+            onOpenCandidateInTrade={handleOpenCandidateInTrade}
+            safeQaMode={safeQaMode}
+            backgroundQueriesEnabled={algoBackgroundQueriesEnabled}
+            rowHydrationQueriesEnabled={algoVisibleRowHydrationQueriesEnabled}
+            signalOptionsPositions={signalOptionsPositions}
+            signalOptionsLedgerPositionsQuery={signalOptionsLedgerPositionsQuery}
+            symbolIndex={symbolIndex}
+            events={events}
+            userPreferences={userPreferences}
+            strategySettingsDraft={strategySettingsDraft}
+            activitySummary={activitySummary}
+            focusedDeployment={focusedDeployment}
+            onSelectDeployment={setFocusedDeploymentId}
+            accountId={activeAccountId}
+            environment={environment}
+            bridgeTone={bridgeTone}
+            handleToggleDeployment={handleToggleDeployment}
+            handleRunShadowScan={handleRunShadowScan}
+            enableDeploymentMutation={enableDeploymentMutation}
+            pauseDeploymentMutation={pauseDeploymentMutation}
+            runShadowScanMutation={runShadowScanMutation}
+            algoExecutionScanRunning={algoExecutionScanRunning}
+            algoIsPhone={algoIsPhone}
+            algoIsNarrow={algoIsNarrow}
+            algoLayoutWidth={algoRootSize.width}
+            rightRail={
+              <AlgoRightRail
+                cockpit={cockpit}
+                signalOptionsPositions={signalOptionsPositions}
+                profileDraft={profileDraft}
+                profileBaseline={profileDraftState.baseline}
+                profileDirty={profileDirty}
+                patchProfileDraftPath={patchProfileDraftPath}
+                strategySettingsDraft={strategySettingsDraft}
+                strategyBaseline={strategySettingsDraftState.baseline}
+                strategyDirty={strategyDirty}
+                patchStrategySettingsPath={patchStrategySettingsPath}
+                focusedDeployment={focusedDeployment}
+                controlBaselineReady={controlBaselineReady}
+                saveAllPending={saveAllPending}
+                handleApplyExpandedCapacity={handleApplyExpandedCapacity}
+                handleSaveAllAdjustments={handleSaveAllAdjustments}
+                handleDiscardAllAdjustments={handleDiscardAllAdjustments}
+                updateProfileMutation={updateProfileMutation}
+                updateStrategySettingsMutation={updateStrategySettingsMutation}
+                cockpitSkipCategoryRows={cockpitSkipCategoryRows}
+                cockpitSkipReasonRows={cockpitSkipReasonRows}
+                cockpitReadinessRows={cockpitReadinessRows}
+                cockpitMarkHealthRows={cockpitMarkHealthRows}
+                cockpitLifecycleRows={cockpitLifecycleRows}
+                cockpitEntryGateRows={cockpitEntryGateRows}
+                cockpitOptionChainRows={cockpitOptionChainRows}
+                cockpitSignalFreshness={cockpitSignalFreshness}
+                cockpitTradePath={cockpitTradePath}
+                diagExpansion={diagExpansion}
+                setDiagExpansion={setDiagExpansion}
+                algoIsPhone={algoIsPhone}
+                algoIsNarrow={algoIsNarrow}
+              />
+            }
+          />
       </div>
     </div>
     </div>

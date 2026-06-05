@@ -62,7 +62,6 @@ export type ReadinessStatusAppReadinessDiagnosticsSeverity = typeof ReadinessSta
 export const ReadinessStatusAppReadinessDiagnosticsSeverity = {
   info: 'info',
   warning: 'warning',
-  critical: 'critical',
 } as const;
 
 export type ReadinessStatusAppReadiness = {
@@ -1224,7 +1223,6 @@ export type DiagnosticSeverity = typeof DiagnosticSeverity[keyof typeof Diagnost
 export const DiagnosticSeverity = {
   info: 'info',
   warning: 'warning',
-  critical: 'critical',
 } as const;
 
 export type DiagnosticStatus = typeof DiagnosticStatus[keyof typeof DiagnosticStatus];
@@ -1280,7 +1278,6 @@ export interface DiagnosticThreshold {
   subsystem: string;
   unit: string;
   warning: number;
-  critical: number;
   enabled: boolean;
   audible: boolean;
   description: string;
@@ -1331,7 +1328,6 @@ export interface DiagnosticThresholdsResponse {
 export type DiagnosticThresholdsUpdateRequestThresholdsItem = {
   metricKey: string;
   warning?: number;
-  critical?: number;
   enabled?: boolean;
   audible?: boolean;
 };
@@ -4600,7 +4596,6 @@ export type AlgoCockpitAttentionItemSeverity = typeof AlgoCockpitAttentionItemSe
 export const AlgoCockpitAttentionItemSeverity = {
   info: 'info',
   warning: 'warning',
-  critical: 'critical',
 } as const;
 
 export interface AlgoCockpitAttentionItem {

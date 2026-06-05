@@ -338,7 +338,7 @@ const formatCompactStatusValue = (value) =>
 
 const pressureLevelBlocksActionWork = (value) => {
   const normalized = String(value || "").trim().toLowerCase();
-  return normalized === "critical";
+  return normalized === "warning";
 };
 
 const resolveSignalScanWave = (freshness) => {
@@ -596,10 +596,11 @@ export const buildAlgoSignalMatrixHydrationRequest = ({
 } = {}) => {
   const symbols = rowMatrixSymbols(rows);
   if (!symbols.length) return null;
+  const prioritySymbols = rowMatrixSymbols(pageRows);
 
   const matrixHydrationPlan = buildSignalsMatrixHydrationPlan({
     symbols,
-    prioritySymbols: rowMatrixSymbols(pageRows),
+    prioritySymbols,
     currentStates,
     timeframes,
   });
@@ -612,8 +613,10 @@ export const buildAlgoSignalMatrixHydrationRequest = ({
   }
 
   return {
-    symbols: matrixHydrationPlan.requestSymbols,
-    prioritySymbols: matrixHydrationPlan.requestSymbols,
+    symbols: matrixHydrationPlan.symbols,
+    prioritySymbols: prioritySymbols.length
+      ? prioritySymbols
+      : matrixHydrationPlan.requestSymbols,
     missingSymbols: matrixHydrationPlan.missingSymbols,
     requestSymbols: matrixHydrationPlan.requestSymbols,
     requestCells: matrixHydrationPlan.requestCells,

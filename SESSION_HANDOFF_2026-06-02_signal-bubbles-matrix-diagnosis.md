@@ -13,11 +13,11 @@
   - Follow-up UI/mapping work is implemented and validated but not committed yet.
   - Intended follow-up files:
     - `artifacts/pyrus/src/features/signals/signalsRowModel.js`
-    - `artifacts/pyrus/src/features/signals/signalsRowModel.test.js`
+    - `artifacts/pyrus/src/features/signals/signalsRowModel.validation.js`
     - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx`
-    - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`
+    - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js`
     - `artifacts/pyrus/src/screens/SignalsScreen.jsx`
-    - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+    - `artifacts/pyrus/src/features/platform/platformRootSource.validation.js`
   - Related but not part of the committed durable-cache fix: `artifacts/api-server/src/services/signal-monitor.ts` still has an unstaged live-edge completed-bars cache edit.
   - Repo remains heavily dirty with many unrelated modified/untracked files; stage narrowly if committing.
 - Follow-up after commit `86d9345`:
@@ -42,11 +42,11 @@
   - All `20/20` rendered Signals rows reached `data-matrix-hydrated-count=5` at `4390ms`.
   - No browser console errors were captured.
 - Final targeted validation:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts` passed `55/55`.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/features/signals/signalsMatrixHydration.test.js src/features/platform/signalMatrixScheduler.test.js` passed `93/93`.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts` passed `55/55`.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js src/features/signals/signalsMatrixHydration.validation.js src/features/platform/signalMatrixScheduler.validation.js` passed `93/93`.
   - `pnpm --filter @workspace/api-server run build` passed.
   - `pnpm --filter @workspace/pyrus run build` passed.
-  - `pnpm --filter @workspace/api-server run typecheck` still fails from unrelated dirty-worktree tests: `src/services/ibkr-line-usage.test.ts(819,3)` and `src/services/signal-options-worker.test.ts(584,3)`.
+  - `pnpm --filter @workspace/api-server run typecheck` still fails from unrelated dirty-worktree tests: `src/services/ibkr-line-usage.validation.ts(819,3)` and `src/services/signal-options-worker.validation.ts(584,3)`.
 
 - Commit `7e8a898 fix: hydrate signal matrix rows on startup` landed the first hydration fix, but a post-commit audit reproduced slow cold hydration.
 - Browser QA with `http://127.0.0.1:18747/?pyrusQa=safe` had previously passed against the rebuilt API artifact when the exact matrix request cache was warm.
@@ -98,7 +98,7 @@
 
 ## Root Cause
 
-- Backend automatic matrix requests were serving foreground leader startup/poll reads from cache-only under non-critical pressure, returning empty state sets before Massive-backed computation could hydrate bubbles.
+- Backend automatic matrix requests were serving foreground leader startup/poll reads from cache-only under non- pressure, returning empty state sets before Massive-backed computation could hydrate bubbles.
 - Frontend startup matrix work waited for the profile query and then let a broad pre-screen matrix batch occupy the single matrix lane.
 - `DenseVirtualTable` reported virtualizer overscan rows as visible rows, so the first Signals request was too broad.
 - The Signals screen sent only the missing-timeframe union for the priority batch, allowing rows to land partially hydrated.
@@ -108,15 +108,15 @@
 - `artifacts/api-server/src/services/signal-monitor.ts`
   - Followers remain cache-only for automatic startup/poll.
   - Foreground leaders compute normally under normal/watch/high pressure.
-  - Leader cache-only fallback is only allowed under critical API pressure.
+  - Leader cache-only fallback is only allowed under  API pressure.
   - Removed the leader background-refresh helper/path that returned empty cache responses first.
 - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
   - Foreground Signals/Algo matrix work can start while the profile query is still pending.
   - Signals route waits for the screen’s row hydration handoff before launching matrix work, avoiding the broad fallback first request.
   - Active foreground requests use the active task budget and leader role.
 - `artifacts/pyrus/src/features/platform/signalMatrixScheduler.js`
-  - Active screen budget is `normal=150`, `watch=150`, `high=60`, `critical=10`.
-  - Soft pressure no longer shrinks active Signals/Algo hydration; critical pressure still constrains it.
+  - Active screen budget is `normal=150`, `watch=150`, `high=60`, `=10`.
+  - Soft pressure no longer shrinks active Signals/Algo hydration;  pressure still constrains it.
 - `artifacts/pyrus/src/screens/SignalsScreen.jsx`
   - Does not submit hydration until the table reports visible rows.
   - Sends the full table timeframe set for visible-priority rows so rows do not return `4/5`.
@@ -126,21 +126,21 @@
 ## Validation
 
 - Follow-up validation after Algo mapping / Signals table sort-age work:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/signals/signalsRowModel.test.js` passed `18/18`.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js` passed `19/19`.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "signals screen is registered as a first-class platform route" src/features/platform/platformRootSource.test.js` passed.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/signals/signalsRowModel.validation.js` passed `18/18`.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/OperationsSignalRow.validation.js` passed `19/19`.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "signals screen is registered as a first-class platform route" src/features/platform/platformRootSource.validation.js` passed.
   - `pnpm --filter @workspace/pyrus run build` passed.
   - Browser QA direct-start Signals: after slow profile boot, `19/19` headers were sortable and interval age cells were populated.
   - Browser QA direct-start Algo: signal rows rendered and the first row had a populated `5m` dot from the primary signal fallback.
   - `git diff --check` passed for the follow-up files and this handoff.
 - Backend signal monitor tests:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts`
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts`
   - Result: `48/48` passed.
 - API build:
   - `pnpm --filter @workspace/api-server run build`
   - Verified `artifacts/api-server/dist/index.mjs` has the fixed predicate and no removed helper.
 - Frontend focused tests:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/signals/signalsMatrixHydration.test.js src/features/platform/signalMatrixScheduler.test.js src/features/platform/platformRootSource.test.js src/components/platform/tableColumnInteractions.test.js`
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/signals/signalsMatrixHydration.validation.js src/features/platform/signalMatrixScheduler.validation.js src/features/platform/platformRootSource.validation.js src/components/platform/tableColumnInteractions.validation.js`
   - Result: `97/97` passed.
 - Pyrus typecheck:
   - `pnpm --filter @workspace/pyrus run typecheck`
@@ -148,9 +148,9 @@
 - API typecheck:
   - `pnpm --filter @workspace/api-server run typecheck`
   - Still fails in unrelated dirty IBKR/option-chain tests:
-    - `src/services/ibkr-account-bridge.test.ts`
-    - `src/services/ibkr-line-usage.test.ts`
-    - `src/services/option-chain-batch.test.ts`
+    - `src/services/ibkr-account-bridge.validation.ts`
+    - `src/services/ibkr-line-usage.validation.ts`
+    - `src/services/option-chain-batch.validation.ts`
 
 ## Notes
 

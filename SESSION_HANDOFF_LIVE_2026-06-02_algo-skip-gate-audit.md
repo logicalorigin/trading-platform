@@ -18,24 +18,24 @@
 - No fresh post-patch `signal_options_candidate_skipped` event had emitted by `2026-06-02T15:11Z`, so the live event-stream reason precedence has not yet been proven on a newly emitted skip. Unit coverage proves the new no-contract reason helper returns `option_chain_backoff` for empty/degraded chains while preserving real Greek rejections.
 - Expiration backoff rows are valid as data/backoff gates when `expirationsDebug.reason = options_upstream_failure`. VIXY-style `no_expiration_in_dte_window` rows with `returnedCount = 6` are true DTE-window misses under profile target/min/max, not a data-missing case.
 - Implemented a narrow backend fix in `artifacts/api-server/src/services/signal-options-automation.ts`: preserve skipped candidate diagnostics (`selectedExpiration`, `contractSelection`, `chainDebug`, `chainAttempts`, `expirationsDebug`, `optionMarketDataBackoff`, `liveQuoteDemand`) and prefer `option_chain_backoff` over empty Greek selector fallback when chain data is empty/degraded.
-- Focused test file passed via `node --import tsx --test src/services/signal-options-automation.test.ts` from `artifacts/api-server` (`126/126`).
+- Focused test file passed via `node JS validation runner src/services/signal-options-automation.validation.ts` from `artifacts/api-server` (`126/126`).
 - `pnpm --filter @workspace/api-server build` passed.
-- `pnpm --filter @workspace/api-server typecheck` is blocked by pre-existing unrelated `src/services/ibkr-line-usage.test.ts(814,3): Type 'never' has no call signatures`.
+- `pnpm --filter @workspace/api-server typecheck` is blocked by pre-existing unrelated `src/services/ibkr-line-usage.validation.ts(814,3): Type 'never' has no call signatures`.
 - Line usage after restart is not the skip blocker. `/api/settings/ibkr-line-usage` responded at `2026-06-02T15:11Z`: sidecar apply complete, no sidecar error, desired/bridge line count 0, Signal Options active lines 0, recent rejected lines 0.
 - IBKR bridge/session after restart is strict-ready/live: `/api/session` at `2026-06-02T15:11:34Z` showed connected/authenticated, live mode, live market data available, selected account `U24762790`; only warning is lane backoff/no active quote consumers.
-- Current runtime blocker after restart: API resource pressure became `critical`, so route admission shed deferred analytics. At `2026-06-02T15:11:34Z`, full Algo state, full cockpit, and diagnostics latest returned fast `503` with `code = api-resource-pressure-critical`, `routeClass = deferred-analytics`, `pressureLevel = critical`; `/api/healthz` and `/api/session` still returned `200`.
+- Current runtime blocker after restart: API resource pressure became ``, so route admission shed deferred analytics. At `2026-06-02T15:11:34Z`, full Algo state, full cockpit, and diagnostics latest returned fast `503` with `code = api-resource-pressure-`, `routeClass = deferred-analytics`, `pressureLevel = `; `/api/healthz` and `/api/session` still returned `200`.
 - API process pressure snapshot from `ps`: `dist/index.mjs` around 84% CPU, RSS about 1.6 GB. System memory was available, so the pressure driver appears latency/CPU rather than RAM exhaustion.
-- Diagnostics immediately before critical shedding showed API p95 latency warnings, one automation scan failure, and `Signal-options worker scan timed out for 7e2e4e6f-749f-4e65-a011-87d3559a23b0 after 120000ms`; scanner was then blocked by `api-pressure-gate` / `critical-scanner-shed`.
+- Diagnostics immediately before  shedding showed API p95 latency warnings, one automation scan failure, and `Signal-options worker scan timed out for 7e2e4e6f-749f-4e65-a011-87d3559a23b0 after 120000ms`; scanner was then blocked by `api-pressure-gate` / `-scanner-shed`.
 - STA lag diagnosis after user observed batch arrivals:
   - Live events were emitted around `2026-06-02T15:13:49-15:14:34Z`, but the Algo cockpit/STA view was reading stale cached cockpit/state snapshots. This matched the observed "signals load in a batch" behavior.
   - `/signal-monitor/matrix` was the dominant slow route at about `12.3s` p95; `/settings/ibkr-line-usage` showed scanner line usage was active but Signal Options line usage stayed at `0` active lines and `0` recent rejections.
-  - `AlgoScreen.jsx` always preferred non-empty `cockpit.signals/candidates` over `signalOptionsState.signals/candidates`. Under high pressure, the Algo SSE stream emits critical-only payloads with fresh `signalOptionsState` but no full cockpit. A stale non-empty cockpit therefore masked fresher state rows until the 15s REST fallback arrived, causing batch visibility in the STA table.
+  - `AlgoScreen.jsx` always preferred non-empty `cockpit.signals/candidates` over `signalOptionsState.signals/candidates`. Under high pressure, the Algo SSE stream emits -only payloads with fresh `signalOptionsState` but no full cockpit. A stale non-empty cockpit therefore masked fresher state rows until the 15s REST fallback arrived, causing batch visibility in the STA table.
   - Implemented a narrow frontend fix: `preferNonEmptySourceArray` now chooses the fallback if it has newer row timestamps, or if timestamps tie and the fallback has more rows. Cockpit still wins when it is equally fresh/richer.
-  - Implemented a backend pressure fix: route latency is capped at `high` in `resource-pressure.ts`; latency alone can no longer mark the whole API `critical`. Real critical pressure still comes from RSS/heap hard pressure.
-  - Cleaned `route-admission.ts` so `/diagnostics/latest` remains clearly classified as `active-screen`; tests already expected it to stay reachable under critical pressure.
+  - Implemented a backend pressure fix: route latency is capped at `high` in `resource-pressure.ts`; latency alone can no longer mark the whole API ``. Real  pressure still comes from RSS/heap hard pressure.
+  - Cleaned `route-admission.ts` so `/diagnostics/latest` remains clearly classified as `active-screen`; tests already expected it to stay reachable under  pressure.
 - Validation for STA/pressure fixes:
-  - `node --import tsx --test src/services/resource-pressure.test.ts src/services/route-admission.test.ts` from `artifacts/api-server`: passed `18/18`.
-  - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js`: passed `34/34`.
+  - `node JS validation runner src/services/resource-pressure.validation.ts src/services/route-admission.validation.ts` from `artifacts/api-server`: passed `18/18`.
+  - `pnpm --dir artifacts/pyrus exec node JS validation runner src/screens/algo/algoHelpers.validation.js`: passed `34/34`.
   - `pnpm --filter @workspace/api-server build`: passed.
   - Scoped `git diff --check` for touched files: passed.
 - Runtime note: the API bundle was rebuilt at `2026-06-02T15:20Z`, but the running API process (`node --enable-source-maps ./dist/index.mjs`, PID `64344`) was still the pre-build process with elapsed time about seven minutes. Restart through Replit default **Run Replit App** is required before the backend pressure fix is live.
@@ -58,18 +58,18 @@
   - Cockpit still showed scan running and `contract_selected` attention: `7 candidates blocked at contract selection`.
   - Line usage after restart showed bridge active lines `0`/remaining `200`, Signal Options admission `0 active / 0 requested / 0 rejected`. Options-meta scheduler had p95 around 8.9s, control lane was degraded around 5.0s p95. This still points at options metadata/control timing, not line exhaustion.
 - Latest validation:
-  - `node --import tsx --test src/services/signal-options-automation.test.ts` from `artifacts/api-server`: passed `126/126`.
-  - `pnpm --dir artifacts/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js src/screens/algo/algoHelpers.test.js`: passed `52/52`.
+  - `node JS validation runner src/services/signal-options-automation.validation.ts` from `artifacts/api-server`: passed `126/126`.
+  - `pnpm --dir artifacts/pyrus exec node JS validation runner src/screens/algo/OperationsSignalRow.validation.js src/screens/algo/algoHelpers.validation.js`: passed `52/52`.
   - `pnpm --filter @workspace/api-server build`: passed.
   - `pnpm --filter @workspace/pyrus typecheck`: passed.
   - Scoped `git diff --check` for latest touched files and this handoff: passed.
-  - `pnpm --filter @workspace/api-server typecheck` still fails in unrelated IBKR tests: `src/services/ibkr-account-bridge.test.ts` lines 135/142 and `src/services/ibkr-line-usage.test.ts` line 819, all `Type 'never' has no call signatures`.
+  - `pnpm --filter @workspace/api-server typecheck` still fails in unrelated IBKR tests: `src/services/ibkr-account-bridge.validation.ts` lines 135/142 and `src/services/ibkr-line-usage.validation.ts` line 819, all `Type 'never' has no call signatures`.
 - Follow-up UI timestamp change:
   - `SignalsScreen.jsx`: Signal drilldown price chart now shows `Signal Time` and `Since` fact tiles, and the vertical signal marker label includes side, absolute app time, and elapsed age.
   - `OperationsSignalRow.jsx`: Algo STA row sparkline now exposes a hover/accessibility title with absolute signal time and elapsed age.
-  - Added `SignalsScreen.test.js` source coverage and extended `OperationsSignalRow.test.js`.
-  - Added `e2e/signals-chart-time.spec.ts` and extended `e2e/algo-signal-row.spec.ts`.
-  - Validation: focused source tests passed `53/53`; `pnpm --filter @workspace/pyrus typecheck` passed; scoped `git diff --check` passed; headless Playwright via `node scripts/runPlaywrightInReplit.mjs e2e/signals-chart-time.spec.ts e2e/algo-signal-row.spec.ts --grep "signals drilldown chart|desktop signal hero rows"` passed `2/2`.
+  - Added `SignalsScreen.validation.js` source coverage and extended `OperationsSignalRow.validation.js`.
+  - Added `e2e/signals-chart-time.browser-validation.ts` and extended `e2e/algo-signal-row.browser-validation.ts`.
+  - Validation: focused source tests passed `53/53`; `pnpm --filter @workspace/pyrus typecheck` passed; scoped `git diff --check` passed; headless browser QA via `node scripts/runbrowser QAInReplit.mjs e2e/signals-chart-time.browser-validation.ts e2e/algo-signal-row.browser-validation.ts --grep "signals drilldown chart|desktop signal hero rows"` passed `2/2`.
 - Latest root cause for 5m STA batch/late arrivals:
   - User reported CGNX/IEF/MSTR/VRT arriving as a batch with `10m since` and `0/8 bars`.
   - Live signal-monitor events confirmed the issue: CGNX/IEF/MSTR/VRT had `signalAt = 2026-06-02T16:15:00Z` but `emittedAt ~= 2026-06-02T16:23:35Z` (8.6m apparent lag). NVDA earlier was `15:45Z -> 15:55:27Z` (10.5m), and later old-code events still showed 6-12m lags.
@@ -102,13 +102,13 @@
   - Added regression coverage for Massive quote-derived aggregate bars/heartbeats, retained Signal Options snapshot demand after abort, live-edge cache merge, and worker wakeups.
 - Latest validation after PWR fixes:
   - Focused API suite passed `254/254`:
-    - `signal-monitor.test.ts`
-    - `stock-aggregate-stream.test.ts`
-    - `massive-stock-aggregate-stream.test.ts`
-    - `massive-stock-websocket.test.ts`
-    - `bridge-option-quote-stream.test.ts`
-    - `signal-options-automation.test.ts`
-    - `signal-options-worker.test.ts`
+    - `signal-monitor.validation.ts`
+    - `stock-aggregate-stream.validation.ts`
+    - `massive-stock-aggregate-stream.validation.ts`
+    - `massive-stock-websocket.validation.ts`
+    - `bridge-option-quote-stream.validation.ts`
+    - `signal-options-automation.validation.ts`
+    - `signal-options-worker.validation.ts`
   - `pnpm --filter @workspace/api-server build` passed at `2026-06-02T17:15Z`.
   - Live lightweight checks before final restart/build reload:
     - `/api/healthz` OK.
@@ -121,7 +121,7 @@
   - `OperationsSignalRow.jsx`: Stage animation now follows live-demand pending state even if the broader scan-running flag has already dropped.
   - `OperationsSignalTable.jsx`: column visibility version bumped to `8` so the default STA layout includes `Stage` and `Sync` for diagnosing event/candidate mismatches.
   - Regression test added for a candidate with selected contract metadata but pending live quote demand; rendered output shows `Waiting quote`, `Awaiting Quote`, attempts/wait timing, `Quote pending`, and no `Selecting`.
-  - Validation: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js` passed `20/20`; `pnpm --filter @workspace/pyrus typecheck` passed; `pnpm --filter @workspace/pyrus build` passed.
+  - Validation: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/OperationsSignalRow.validation.js` passed `20/20`; `pnpm --filter @workspace/pyrus typecheck` passed; `pnpm --filter @workspace/pyrus build` passed.
   - Browser smoke against the already running app showed no console/page errors, but direct Algo navigation in safe QA mode did not activate the route in that running instance; static render/typecheck/build cover the patched component.
 
 ## Next Steps

@@ -4306,7 +4306,7 @@ export default function PhotonicsObservatory({
   useEffect(() => {
     const derivedReady = Boolean(isVisible && researchDataReady);
     onReadinessChange?.({
-      criticalReady: Boolean(isVisible),
+      primaryReady: Boolean(isVisible),
       derivedReady,
       backgroundAllowed: derivedReady,
     });

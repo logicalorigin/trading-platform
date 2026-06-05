@@ -23,7 +23,7 @@
 - API availability guardrails confirmed: only `PlatformApp` owns `useEvaluateSignalMonitorMatrix`; followers are cache-only; automatic duplicate requests are debounced; `/signal-monitor/state` polling is a stale-fast persisted-state read and does not fetch bars.
 - Algo Monitor action signals come from `getSignalMonitorState` filtered by deployment universe in `signal-options-automation.ts`, so active action symbols that appear in the sidebar are already represented in `signalMonitorSymbols` and join the matrix universe; stale fallback candidates still render their single recorded signal without creating source calls.
 - Browser audit found a real remaining UI hydration gap: under Replit/API pressure the matrix endpoint worked, but the frontend scheduler was only asking for tiny batches and treating stale partial cache responses as complete. Visible 2m/15m dots could stay unhydrated/pending while 5m fell back to the legacy persisted signal state.
-- Scheduler now mirrors the backend matrix caps (`normal:8`, `watch:6`, `high:4`, `critical:2`) instead of starving the frontend at `3/2/1/1`, and it no longer fills spare matrix capacity with already-fresh background symbols.
+- Scheduler now mirrors the backend matrix caps (`normal:8`, `watch:6`, `high:4`, `:2`) instead of starving the frontend at `3/2/1/1`, and it no longer fills spare matrix capacity with already-fresh background symbols.
 - `SignalDots` now distinguishes truly missing matrix state as `pending` instead of rendering it as `none/no signal - unknown`, matching the header interval context and making hydration gaps visible.
 - `PlatformApp` now queues a bounded matrix follow-up when a symbol-set change arrives while a matrix request is in flight, when the API truncates/skips a matrix batch, or when a stale partial cache payload returns fewer states than the request should have produced. Partial/truncated follow-ups are delayed/cooldown-bound to avoid hammering Massive/API availability.
 - Added `window.__PYRUS_SIGNAL_MATRIX_SNAPSHOT__` dev diagnostics with last plan, pressure level, queue state, states, skipped/truncated flags, and coverage for future visual QA.
@@ -41,9 +41,9 @@
   - Matrix `inFlight` could remain stuck after HMR/network interruption.
 - Applied second-pass fixes:
   - Moved signal bootstrap declarations before diagnostics reads.
-  - Raised scheduler caps to `normal:24`, `watch:18`, `high:12`, `critical:6`.
+  - Raised scheduler caps to `normal:24`, `watch:18`, `high:12`, `:6`.
   - Decoupled backend matrix caps from profile `maxSymbols`; matrix now uses pressure caps directly.
-  - Raised backend matrix concurrency to `normal/watch:4`, `high:2`, `critical:1`.
+  - Raised backend matrix concurrency to `normal/watch:4`, `high:2`, `:1`.
   - Ordered matrix signal priorities from `buildHeaderSignalContextSymbols` so visible header signal-lane symbols are requested early.
   - Added signal profile/state bootstrap gating before low-priority streams and histories start.
   - Added a 90s request timeout plus watchdog grace path to clear stuck matrix `inFlight` and retry.
@@ -54,22 +54,22 @@
 ## Active Files
 
 - artifacts/api-server/src/providers/polygon/market-data.ts
-- artifacts/api-server/src/providers/polygon/market-data.test.ts
+- artifacts/api-server/src/providers/polygon/market-data.validation.ts
 - artifacts/api-server/src/services/platform.ts
 - artifacts/api-server/src/services/signal-monitor.ts
-- artifacts/api-server/src/services/signal-monitor.test.ts
+- artifacts/api-server/src/services/signal-monitor.validation.ts
 - artifacts/pyrus/src/features/platform/MobileActivitySheet.jsx
 - artifacts/pyrus/src/features/platform/PlatformAlgoMonitorSidebar.jsx
 - artifacts/pyrus/src/features/platform/PlatformShell.jsx
 - artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx
 - artifacts/pyrus/src/features/platform/headerBroadcastModel.js
-- artifacts/pyrus/src/features/platform/headerBroadcastModel.test.js
+- artifacts/pyrus/src/features/platform/headerBroadcastModel.validation.js
 - artifacts/pyrus/src/features/platform/watchlistModel.js
-- artifacts/pyrus/src/features/platform/watchlistModel.test.js
+- artifacts/pyrus/src/features/platform/watchlistModel.validation.js
 - artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx
 - artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx
-- artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js
-- artifacts/pyrus/src/features/platform/platformRootSource.test.js
+- artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js
+- artifacts/pyrus/src/features/platform/platformRootSource.validation.js
 - lib/api-spec/openapi.yaml
 - lib/api-zod/src/generated/api.ts
 - lib/api-zod/src/generated/types/signalMonitorMatrixResponseCoverageSourceStrategy.ts
@@ -78,50 +78,50 @@
 ## Validation Status
 
 - Pre-implementation fact checks confirmed Massive `range/2/minute` and `range/15/minute` return OK, and native/synthetic OHLCV match where both exist.
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/providers/polygon/market-data.test.ts` passed.
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts` passed.
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/platform/watchlistModel.test.js` passed.
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/providers/polygon/market-data.validation.ts` passed.
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts` passed.
+- `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/signalMatrixScheduler.validation.js src/features/platform/watchlistModel.validation.js` passed.
 - `pnpm --filter @workspace/api-server run typecheck` passed.
 - `pnpm --filter @workspace/api-client-react run typecheck` passed.
 - `pnpm run audit:api-codegen` passed after regenerating clients from the updated OpenAPI spec.
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "mobile shell uses bottom navigation|Algo monitor" src/features/platform/platformRootSource.test.js` passed.
-- `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/platform/watchlistModel.test.js src/screens/algo/OperationsSignalRow.test.js src/features/platform/headerBroadcastModel.test.js` passed.
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts src/providers/polygon/market-data.test.ts` passed.
+- `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "mobile shell uses bottom navigation|Algo monitor" src/features/platform/platformRootSource.validation.js` passed.
+- `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/signalMatrixScheduler.validation.js src/features/platform/watchlistModel.validation.js src/screens/algo/OperationsSignalRow.validation.js src/features/platform/headerBroadcastModel.validation.js` passed.
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts src/providers/polygon/market-data.validation.ts` passed.
 - `pnpm --filter @workspace/pyrus run typecheck` passed.
 - `git diff --check -- ...` passed for the touched signal-matrix/API/frontend files.
 - Live one-symbol runtime probe passed: `evaluateSignalMonitorMatrix({ symbols: ["SPY"], timeframes: ["2m","5m","15m"] })` returned `status: ok` for all three timeframes, `coverage.sourceStrategy: "native_timeframes"`, `sourceRequestCount: 3`, and `missingSymbols: 0`.
-- Full `platformRootSource.test.js` was not clean as a whole because four unrelated pre-existing source assertions fail against other dirty worktree changes; the focused new Algo Monitor/mobile assertions passed.
+- Full `platformRootSource.validation.js` was not clean as a whole because four unrelated pre-existing source assertions fail against other dirty worktree changes; the focused new Algo Monitor/mobile assertions passed.
 - Additional validation after visual audit fixes:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/platform/watchlistModel.test.js src/features/platform/headerBroadcastModel.test.js` passed.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/signalMatrixScheduler.validation.js src/features/platform/watchlistModel.validation.js src/features/platform/headerBroadcastModel.validation.js` passed.
   - `pnpm --filter @workspace/pyrus run typecheck` passed.
-  - `git diff --check -- artifacts/pyrus/src/features/platform/signalMatrixScheduler.js artifacts/pyrus/src/features/platform/signalMatrixScheduler.test.js artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx artifacts/pyrus/src/features/platform/PlatformApp.jsx` passed.
-  - `OperationsSignalRow.test.js` currently fails on an unrelated pre-existing dirty-worktree mismatch: `DEFAULT_SIGNAL_VISIBLE_COLUMNS` no longer includes `sync` in `OperationsSignalRow.jsx`, while the test still expects it.
+  - `git diff --check -- artifacts/pyrus/src/features/platform/signalMatrixScheduler.js artifacts/pyrus/src/features/platform/signalMatrixScheduler.validation.js artifacts/pyrus/src/components/platform/signal-language/SignalDots.jsx artifacts/pyrus/src/features/platform/PlatformApp.jsx` passed.
+  - `OperationsSignalRow.validation.js` currently fails on an unrelated pre-existing dirty-worktree mismatch: `DEFAULT_SIGNAL_VISIBLE_COLUMNS` no longer includes `sync` in `OperationsSignalRow.jsx`, while the test still expects it.
 - Additional suggestion-row validation:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/platform/watchlistModel.test.js src/features/platform/headerBroadcastModel.test.js` passed with the new symbol-set regression.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/signalMatrixScheduler.validation.js src/features/platform/watchlistModel.validation.js src/features/platform/headerBroadcastModel.validation.js` passed with the new symbol-set regression.
   - `pnpm --filter @workspace/pyrus run typecheck` passed.
   - `memory/2026-05-29-signal-bubble-suggestion-hydration.md` saved the debug report.
 - Additional fallback-removal validation:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/headerBroadcastModel.test.js src/features/platform/watchlistModel.test.js src/features/platform/signalMatrixScheduler.test.js` passed.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "shared signal dots preserve watchlist behavior after extraction|algo signal table builds matrix" src/screens/algo/OperationsSignalRow.test.js` passed.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/headerBroadcastModel.validation.js src/features/platform/watchlistModel.validation.js src/features/platform/signalMatrixScheduler.validation.js` passed.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "shared signal dots preserve watchlist behavior after extraction|algo signal table builds matrix" src/screens/algo/OperationsSignalRow.validation.js` passed.
   - `pnpm --filter @workspace/pyrus run typecheck` passed.
   - `git diff --check --` passed for the fallback-removal files.
 - Additional second-pass validation:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts` passed.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts` passed.
   - `pnpm --filter @workspace/api-server run typecheck` passed.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js` passed.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "signal monitor display refreshes separately from evaluator cadence|screen shell warmup preloads top-level code without default hidden page mounting" src/features/platform/platformRootSource.test.js` passed.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/signalMatrixScheduler.validation.js` passed.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "signal monitor display refreshes separately from evaluator cadence|screen shell warmup preloads top-level code without default hidden page mounting" src/features/platform/platformRootSource.validation.js` passed.
   - `pnpm --filter @workspace/pyrus run typecheck` passed.
-  - `git diff --check -- artifacts/api-server/src/services/signal-monitor.ts artifacts/api-server/src/services/signal-monitor.test.ts artifacts/pyrus/src/features/platform/PlatformApp.jsx artifacts/pyrus/src/features/platform/platformRootSource.test.js artifacts/pyrus/src/features/platform/signalMatrixScheduler.js artifacts/pyrus/src/features/platform/signalMatrixScheduler.test.js` passed.
+  - `git diff --check -- artifacts/api-server/src/services/signal-monitor.ts artifacts/api-server/src/services/signal-monitor.validation.ts artifacts/pyrus/src/features/platform/PlatformApp.jsx artifacts/pyrus/src/features/platform/platformRootSource.validation.js artifacts/pyrus/src/features/platform/signalMatrixScheduler.js artifacts/pyrus/src/features/platform/signalMatrixScheduler.validation.js` passed.
   - Temporary rebuilt API on port 18092 returned 54 matrix states for 18 requested symbols with no skipped symbols/truncation in about 11.1s.
   - Browser visual QA passed as noted above.
 - Additional "no dots hydrated" pass:
   - Removed the remaining emergency 1m/5m aggregation fallback from `loadSignalMonitorCompletedBars`; matrix hydration now uses native 2m/5m/15m bars only and surfaces missing native data instead of silently switching source.
-  - Decoupled signal-matrix scheduling pressure from broader UI memory pressure: signal matrix now uses server/API pressure unless the browser app is truly `critical`, so chart/cache watch drivers do not shrink the signal universe or slow the matrix poll.
+  - Decoupled signal-matrix scheduling pressure from broader UI memory pressure: signal matrix now uses server/API pressure unless the browser app is truly ``, so chart/cache watch drivers do not shrink the signal universe or slow the matrix poll.
   - Raised signal-matrix historical bar priority from 4/6 to 8/9 so bounded signal hydration preempts visible chart/history backfills during startup.
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts` passed after native-only fallback removal and priority bump.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "signal monitor display refreshes separately from evaluator cadence" src/features/platform/platformRootSource.test.js` passed.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts` passed after native-only fallback removal and priority bump.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "signal monitor display refreshes separately from evaluator cadence" src/features/platform/platformRootSource.validation.js` passed.
   - `pnpm --filter @workspace/pyrus run typecheck` passed.
-  - `git diff --check -- artifacts/api-server/src/services/signal-monitor.ts artifacts/api-server/src/services/signal-monitor.test.ts artifacts/pyrus/src/features/platform/PlatformApp.jsx artifacts/pyrus/src/features/platform/platformRootSource.test.js artifacts/pyrus/src/features/platform/signalMatrixScheduler.js artifacts/pyrus/src/features/platform/signalMatrixScheduler.test.js` passed.
+  - `git diff --check -- artifacts/api-server/src/services/signal-monitor.ts artifacts/api-server/src/services/signal-monitor.validation.ts artifacts/pyrus/src/features/platform/PlatformApp.jsx artifacts/pyrus/src/features/platform/platformRootSource.validation.js artifacts/pyrus/src/features/platform/signalMatrixScheduler.js artifacts/pyrus/src/features/platform/signalMatrixScheduler.validation.js` passed.
   - Live browser after frontend hot update showed `pressureLevel: "watch"`, `appPressureLevel: "watch"`, `serverPressureLevel: "watch"`, `pollMs: 60000`, `universeCount: 57`, `priorityCount: 32`, `stateCount: 108`, `coverage.requestedSymbols: 18`, `coverage.hydratedSymbols: 18`, `coverage.sourceStrategy: "native_timeframes"`, `coverage.truncated: false`; visible dot directions counted `buy: 97`, `sell: 140`, `pending: 54`. Remaining pending dots are lower-priority symbols awaiting the next rotation, not a disconnected signal lane.
 - Post-restart verification:
   - Running `artifacts/api-server/dist/index.mjs` contains the latest native-only source strategy, `SIGNAL_MONITOR_BARS_PRIORITY = 8`, `SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY = 9`, and `providerTimeframe = input.timeframe`.

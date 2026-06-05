@@ -70,7 +70,7 @@ Before deprecating anything, answer these questions:
 
 Don't deprecate without a working alternative. The replacement must:
 
-- Cover all critical use cases of the old system
+- Cover all required use cases of the old system
 - Have documentation and migration guides
 - Be proven in production (not just "theoretically better")
 
@@ -198,7 +198,7 @@ Zombie code is code that nobody owns but everybody depends on. It's not actively
 
 After completing a deprecation:
 
-- [ ] Replacement is production-proven and covers all critical use cases
+- [ ] Replacement is production-proven and covers all required use cases
 - [ ] Migration guide exists with concrete steps and examples
 - [ ] All active consumers have been migrated (verified by metrics/logs)
 - [ ] Old code, tests, documentation, and configuration are fully removed

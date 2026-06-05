@@ -315,8 +315,8 @@ function pressureEvidence(previous) {
   if (eventLoopP95Ms !== null && eventLoopP95Ms >= 1000) {
     evidence.push(`event-loop-p95:${eventLoopP95Ms}ms`);
   }
-  if (apiPressure?.level === "critical") {
-    evidence.push("api-pressure:critical");
+  if (apiPressure?.level === "warning") {
+    evidence.push("api-pressure:warning");
   }
   if ((safeNumber(memoryEvents.oom) ?? 0) > 0) {
     evidence.push(`cgroup-oom:${memoryEvents.oom}`);
@@ -336,15 +336,15 @@ function lastRelevantChildExit(events, previous) {
 
 function incidentSeverity(classification, contributingReasons) {
   if (classification === "api-child-exit" || classification === "web-child-exit") {
-    return "critical";
+    return "warning";
   }
   if (classification === "container-replaced") {
     return contributingReasons.includes("suspected-resource-pressure")
-      ? "critical"
+      ? "warning"
       : "warning";
   }
   if (classification === "suspected-resource-pressure") {
-    return "critical";
+    return "warning";
   }
   if (classification === "same-container-supervisor-abrupt") {
     return "warning";

@@ -12,5 +12,4 @@ export type AlgoCockpitAttentionItemSeverity = typeof AlgoCockpitAttentionItemSe
 export const AlgoCockpitAttentionItemSeverity = {
   info: 'info',
   warning: 'warning',
-  critical: 'critical',
 } as const;

@@ -19,7 +19,6 @@ import {
   getOptionQuoteSnapshots,
 } from "@workspace/api-client-react";
 import { calculateTransferAdjustedReturnSeries } from "@workspace/account-math";
-import { usePageVisible } from "./usePageVisible";
 import {
   recordOptionHydrationMetric,
   setOptionHydrationDiagnostics,
@@ -69,6 +68,14 @@ type QuoteStreamPayload = {
 };
 
 const QUOTE_STREAM_CACHE_FLUSH_MS = 100;
+
+const scheduleRealtimeFlush = (callback: () => void): ReturnType<typeof setTimeout> | null => {
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(callback);
+    return null;
+  }
+  return setTimeout(callback, 0);
+};
 
 type AccountStreamPayload = {
   accounts: AccountsResponse["accounts"];
@@ -134,8 +141,8 @@ type AccountPageLivePayload = {
   risk: AccountRiskResponse;
 };
 
-type AccountPageCriticalPayload = {
-  stream?: "account-page-critical";
+type AccountPagePrimaryPayload = {
+  stream?: "account-page-primary";
   accountId: string;
   mode: StreamMode;
   orderTab: "working" | "history";
@@ -167,7 +174,7 @@ type AccountPageDerivedPayload = {
 
 type AlgoCockpitStreamPayload = {
   stream?: "algo-cockpit-bootstrap" | "algo-cockpit-live";
-  phase?: "critical" | "full";
+  phase?: "primary" | "full";
   mode: StreamMode;
   deploymentId: string | null;
   updatedAt: string;
@@ -199,6 +206,19 @@ type LiveOptionQuoteSnapshot = QuoteSnapshot & {
   gamma?: number | null;
   theta?: number | null;
   vega?: number | null;
+  underlyingPrice?: number | null;
+  status?: string | null;
+  reason?: string | null;
+  quoteStatus?: string | null;
+  quoteReason?: string | null;
+  greeksStatus?: string | null;
+  greeksReason?: string | null;
+  demandStatus?: string | null;
+  demandReason?: string | null;
+  quoteFreshness?: string | null;
+  greeksFreshness?: string | null;
+  unavailableDetail?: string | null;
+  cacheAgeMs?: number | null;
 };
 
 type AccountOptionQuotePatch = Partial<LiveOptionQuoteSnapshot> &
@@ -224,6 +244,7 @@ const hasUsableOptionQuoteData = (quote: LiveOptionQuoteSnapshot): boolean =>
   (isFiniteNumber(quote.price) && quote.price > 0) ||
   (isFiniteNumber(quote.volume) && quote.volume > 0) ||
   (isFiniteNumber(quote.openInterest) && quote.openInterest > 0) ||
+  (isFiniteNumber(quote.underlyingPrice) && quote.underlyingPrice > 0) ||
   isFiniteNumber(quote.impliedVolatility) ||
   isFiniteNumber(quote.delta) ||
   isFiniteNumber(quote.gamma) ||
@@ -606,14 +627,27 @@ const areOptionQuoteSnapshotsEquivalent = (
   left.gamma === right.gamma &&
   left.theta === right.theta &&
   left.vega === right.vega &&
+  left.underlyingPrice === right.underlyingPrice &&
   left.updatedAt === right.updatedAt &&
   left.source === right.source &&
   left.transport === right.transport &&
   left.delayed === right.delayed &&
   left.freshness === right.freshness &&
+  left.status === right.status &&
+  left.reason === right.reason &&
+  left.quoteStatus === right.quoteStatus &&
+  left.quoteReason === right.quoteReason &&
+  left.greeksStatus === right.greeksStatus &&
+  left.greeksReason === right.greeksReason &&
+  left.demandStatus === right.demandStatus &&
+  left.demandReason === right.demandReason &&
+  left.quoteFreshness === right.quoteFreshness &&
+  left.greeksFreshness === right.greeksFreshness &&
+  left.unavailableDetail === right.unavailableDetail &&
   left.marketDataMode === right.marketDataMode &&
   left.dataUpdatedAt === right.dataUpdatedAt &&
-  left.ageMs === right.ageMs;
+  left.ageMs === right.ageMs &&
+  left.cacheAgeMs === right.cacheAgeMs;
 
 const normalizeProviderContractId = (
   providerContractId: string | null | undefined,
@@ -690,11 +724,7 @@ const scheduleOptionQuoteNotification = (providerContractId: string) => {
   }
 
   optionQuoteNotifyScheduled = true;
-  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-    window.requestAnimationFrame(flushOptionQuoteNotifications);
-    return;
-  }
-  setTimeout(flushOptionQuoteNotifications, 0);
+  scheduleRealtimeFlush(flushOptionQuoteNotifications);
 };
 
 const cacheOptionQuoteSnapshot = (
@@ -859,6 +889,90 @@ const optionPositionProviderContractIds = (
     ),
   ].filter(Boolean)));
 };
+
+const optionQuoteStatusRank = (status: unknown): number => {
+  switch (String(status ?? "").trim().toLowerCase()) {
+    case "live":
+      return 5;
+    case "stale":
+      return 4;
+    case "pending":
+      return 3;
+    case "unavailable":
+      return 2;
+    case "rejected":
+      return 1;
+    default:
+      return 0;
+  }
+};
+
+const optionQuoteSnapshotStatusRank = (
+  quote: LiveOptionQuoteSnapshot | null | undefined,
+): number =>
+  optionQuoteStatusRank(
+    quote?.quoteStatus ??
+      quote?.status ??
+      quote?.quoteFreshness ??
+      quote?.freshness,
+  );
+
+const optionQuoteSnapshotTimestampMs = (
+  quote: LiveOptionQuoteSnapshot | null | undefined,
+): number | null =>
+  getUpdatedAtTime(
+    typeof quote?.dataUpdatedAt === "string" && quote.dataUpdatedAt
+      ? quote.dataUpdatedAt
+      : quote?.updatedAt,
+  );
+
+const compareLiveOptionQuoteSnapshots = (
+  left: LiveOptionQuoteSnapshot | null | undefined,
+  right: LiveOptionQuoteSnapshot | null | undefined,
+): number => {
+  if (!left && !right) return 0;
+  if (left && !right) return 1;
+  if (!left && right) return -1;
+
+  const leftStatusRank = optionQuoteSnapshotStatusRank(left);
+  const rightStatusRank = optionQuoteSnapshotStatusRank(right);
+  if (leftStatusRank !== rightStatusRank) {
+    return leftStatusRank - rightStatusRank;
+  }
+
+  const leftFreshnessRank = optionQuoteStatusRank(left?.freshness);
+  const rightFreshnessRank = optionQuoteStatusRank(right?.freshness);
+  if (leftFreshnessRank !== rightFreshnessRank) {
+    return leftFreshnessRank - rightFreshnessRank;
+  }
+
+  const leftTimestamp = optionQuoteSnapshotTimestampMs(left);
+  const rightTimestamp = optionQuoteSnapshotTimestampMs(right);
+  if (leftTimestamp !== null && rightTimestamp !== null && leftTimestamp !== rightTimestamp) {
+    return leftTimestamp - rightTimestamp;
+  }
+  if (leftTimestamp !== null && rightTimestamp === null) return 1;
+  if (leftTimestamp === null && rightTimestamp !== null) return -1;
+
+  const leftCacheAge = finiteOptionNumber(left?.cacheAgeMs, left?.ageMs);
+  const rightCacheAge = finiteOptionNumber(right?.cacheAgeMs, right?.ageMs);
+  if (leftCacheAge !== null && rightCacheAge !== null && leftCacheAge !== rightCacheAge) {
+    return rightCacheAge - leftCacheAge;
+  }
+  if (leftCacheAge !== null && rightCacheAge === null) return 1;
+  if (leftCacheAge === null && rightCacheAge !== null) return -1;
+
+  return 0;
+};
+
+const freshestOptionQuoteSnapshotForProviderContractIds = (
+  providerContractIds: string[],
+  quoteByProviderContractId: Map<string, LiveOptionQuoteSnapshot>,
+): LiveOptionQuoteSnapshot | null =>
+  providerContractIds.reduce<LiveOptionQuoteSnapshot | null>((best, providerContractId) => {
+    const quote = quoteByProviderContractId.get(providerContractId) ?? null;
+    return compareLiveOptionQuoteSnapshots(quote, best) > 0 ? quote : best;
+  }, null);
 
 const optionQuotePositionSource = (
   source: LiveOptionQuoteSnapshot["source"] | undefined,
@@ -1041,11 +1155,13 @@ const patchAccountPositionRowFromOptionQuote = (
     quote.price,
     row.quote?.last,
   );
-  const currentOptionQuote = rowWithOptionQuote.optionQuote || {};
+  const currentOptionQuote: AccountOptionQuotePatch =
+    rowWithOptionQuote.optionQuote || {};
+  const currentPositionQuote = row.quote as AccountOptionQuotePatch | null | undefined;
   const optionQuote = {
     ...currentOptionQuote,
     ...quote,
-    providerContractId,
+    providerContractId: quoteProviderContractId,
     bid: bid ?? finiteOptionNumber(currentOptionQuote.bid) ?? null,
     ask: ask ?? finiteOptionNumber(currentOptionQuote.ask) ?? null,
     mid: mid ?? finiteOptionNumber(currentOptionQuote.mid) ?? null,
@@ -1074,10 +1190,36 @@ const patchAccountPositionRowFromOptionQuote = (
     gamma: finiteOptionNumber(quote.gamma, currentOptionQuote.gamma) ?? null,
     theta: finiteOptionNumber(quote.theta, currentOptionQuote.theta) ?? null,
     vega: finiteOptionNumber(quote.vega, currentOptionQuote.vega) ?? null,
+    underlyingPrice:
+      finiteOptionNumber(quote.underlyingPrice, currentOptionQuote.underlyingPrice) ??
+      null,
     freshness: quote.freshness ?? currentOptionQuote.freshness ?? null,
+    status: quote.status ?? quote.quoteStatus ?? currentOptionQuote.status ?? null,
+    reason: quote.reason ?? quote.quoteReason ?? currentOptionQuote.reason ?? null,
+    quoteStatus: quote.quoteStatus ?? quote.status ?? currentOptionQuote.quoteStatus ?? null,
+    quoteReason: quote.quoteReason ?? currentOptionQuote.quoteReason ?? null,
+    greeksStatus: quote.greeksStatus ?? currentOptionQuote.greeksStatus ?? null,
+    greeksReason: quote.greeksReason ?? currentOptionQuote.greeksReason ?? null,
+    demandStatus: quote.demandStatus ?? currentOptionQuote.demandStatus ?? null,
+    demandReason: quote.demandReason ?? currentOptionQuote.demandReason ?? null,
+    quoteFreshness:
+      quote.quoteFreshness ??
+      quote.freshness ??
+      currentOptionQuote.quoteFreshness ??
+      currentOptionQuote.freshness ??
+      null,
+    greeksFreshness: quote.greeksFreshness ?? currentOptionQuote.greeksFreshness ?? null,
+    unavailableDetail:
+      quote.unavailableDetail ??
+      quote.quoteReason ??
+      quote.reason ??
+      currentOptionQuote.unavailableDetail ??
+      null,
     marketDataMode: quote.marketDataMode ?? currentOptionQuote.marketDataMode ?? null,
     updatedAt,
     dataUpdatedAt: quote.dataUpdatedAt ?? currentOptionQuote.dataUpdatedAt ?? null,
+    ageMs: finiteOptionNumber(quote.ageMs, currentOptionQuote.ageMs) ?? null,
+    cacheAgeMs: finiteOptionNumber(quote.cacheAgeMs, currentOptionQuote.cacheAgeMs) ?? null,
     source,
     transport: quote.transport ?? currentOptionQuote.transport ?? null,
     delayed: quote.delayed ?? currentOptionQuote.delayed ?? null,
@@ -1105,8 +1247,30 @@ const patchAccountPositionRowFromOptionQuote = (
       bidSize: finiteOptionNumber(quote.bidSize, row.quote?.bidSize),
       askSize: finiteOptionNumber(quote.askSize, row.quote?.askSize),
       freshness: quote.freshness ?? row.quote?.freshness ?? null,
+      status: quote.status ?? quote.quoteStatus ?? row.quote?.status ?? null,
+      reason: quote.reason ?? quote.quoteReason ?? row.quote?.reason ?? null,
+      quoteStatus: quote.quoteStatus ?? quote.status ?? row.quote?.quoteStatus ?? null,
+      quoteReason: quote.quoteReason ?? row.quote?.quoteReason ?? null,
+      greeksStatus: quote.greeksStatus ?? row.quote?.greeksStatus ?? null,
+      greeksReason: quote.greeksReason ?? row.quote?.greeksReason ?? null,
+      demandStatus: quote.demandStatus ?? row.quote?.demandStatus ?? null,
+      demandReason: quote.demandReason ?? row.quote?.demandReason ?? null,
+      quoteFreshness:
+        quote.quoteFreshness ?? quote.freshness ?? row.quote?.quoteFreshness ?? null,
+      greeksFreshness: quote.greeksFreshness ?? row.quote?.greeksFreshness ?? null,
+      unavailableDetail:
+        quote.unavailableDetail ??
+        quote.quoteReason ??
+        quote.reason ??
+        row.quote?.unavailableDetail ??
+        null,
       marketDataMode: quote.marketDataMode ?? row.quote?.marketDataMode ?? null,
       updatedAt,
+      dataUpdatedAt: quote.dataUpdatedAt ?? row.quote?.dataUpdatedAt ?? null,
+      ageMs: finiteOptionNumber(quote.ageMs, row.quote?.ageMs),
+      cacheAgeMs: finiteOptionNumber(quote.cacheAgeMs, row.quote?.cacheAgeMs),
+      underlyingPrice:
+        optionQuote.underlyingPrice ?? currentPositionQuote?.underlyingPrice ?? null,
       source,
     },
   } as AccountPositionRow;
@@ -1149,9 +1313,10 @@ export const patchAccountPositionsFromOptionQuotes = (
 
   let changed = false;
   const positions = current.positions.map((row) => {
-    const quote = optionPositionProviderContractIds(row)
-      .map((providerContractId) => quoteByProviderContractId.get(providerContractId))
-      .find((candidate): candidate is LiveOptionQuoteSnapshot => Boolean(candidate));
+    const quote = freshestOptionQuoteSnapshotForProviderContractIds(
+      optionPositionProviderContractIds(row),
+      quoteByProviderContractId,
+    );
     if (!quote) {
       return row;
     }
@@ -1184,6 +1349,10 @@ export const mergeOptionQuoteSnapshotForCache = (
   const currentAsk = positiveOptionQuotePrice(currentQuote?.ask);
   const incomingBid = positiveOptionQuotePrice(quote.bid);
   const incomingAsk = positiveOptionQuotePrice(quote.ask);
+  const incomingUnderlyingPrice = positiveOptionQuotePrice(quote.underlyingPrice);
+  const currentUnderlyingPrice = positiveOptionQuotePrice(
+    currentQuote?.underlyingPrice,
+  );
   const incomingHasUsablePrice =
     positiveOptionQuotePrice(quote.price, quote.bid, quote.ask) != null;
   return {
@@ -1202,6 +1371,12 @@ export const mergeOptionQuoteSnapshotForCache = (
     changePercent: incomingHasUsablePrice
       ? quote.changePercent
       : currentQuote?.changePercent ?? quote.changePercent,
+    underlyingPrice:
+      incomingUnderlyingPrice ??
+      currentUnderlyingPrice ??
+      quote.underlyingPrice ??
+      currentQuote?.underlyingPrice ??
+      null,
   };
 };
 
@@ -2265,6 +2440,7 @@ const quotePatchHasUsableOptionData = (
         quote.dayChange,
         quote.dayChangePercent,
         quote.openInterest,
+        quote.underlyingPrice,
         quote.volume,
         quote.impliedVolatility,
         quote.delta,
@@ -2272,6 +2448,16 @@ const quotePatchHasUsableOptionData = (
         quote.theta,
         quote.vega,
       ].some((value) => finiteOptionNumber(value) !== null),
+  );
+
+const quotePatchHasMarketQuote = (
+  quote: AccountOptionQuotePatch | null | undefined,
+): boolean =>
+  Boolean(
+    quote &&
+      [quote.bid, quote.ask, quote.mid].some(
+        (value) => finiteOptionNumber(value) !== null,
+      ),
   );
 
 const quotePatchForPositionRow = (
@@ -2426,6 +2612,24 @@ const mergeLiveOptionQuoteFields = (
     !quotePatchHasUsableOptionData(nextQuote) || currentIsNewer;
   const primary = preferCurrent ? currentQuote : nextQuote;
   const secondary = preferCurrent ? nextQuote : currentQuote;
+  const providerQuote = quotePatchHasMarketQuote(primary)
+    ? primary
+    : quotePatchHasMarketQuote(secondary)
+      ? secondary
+      : primary ?? secondary;
+  const supportedProviderContractIds = new Set([
+    ...optionPositionProviderContractIds(current),
+    ...optionPositionProviderContractIds(next),
+  ]);
+  const mergedProviderContractId =
+    [
+      normalizeProviderContractId(providerQuote?.providerContractId),
+      normalizeProviderContractId(primary?.providerContractId),
+      normalizeProviderContractId(secondary?.providerContractId),
+      nextProviderContractId,
+      currentProviderContractId,
+    ].find((candidate) => candidate && supportedProviderContractIds.has(candidate)) ||
+    providerContractId;
   const updatedAt =
     currentIsNewer || !nextTimestamp
       ? currentQuote?.updatedAt ?? nextQuote?.updatedAt ?? null
@@ -2438,7 +2642,7 @@ const mergeLiveOptionQuoteFields = (
   const mergedQuote = {
     ...(secondary || {}),
     ...(primary || {}),
-    providerContractId,
+    providerContractId: mergedProviderContractId,
     bid: pickOptionQuoteNumber(primary, secondary, "bid"),
     ask: pickOptionQuoteNumber(primary, secondary, "ask"),
     mid:
@@ -2471,11 +2675,36 @@ const mergeLiveOptionQuoteFields = (
     gamma: pickOptionQuoteNumber(primary, secondary, "gamma"),
     theta: pickOptionQuoteNumber(primary, secondary, "theta"),
     vega: pickOptionQuoteNumber(primary, secondary, "vega"),
+    underlyingPrice: pickOptionQuoteNumber(primary, secondary, "underlyingPrice"),
     freshness: pickOptionQuoteValue(primary, secondary, "freshness"),
+    status:
+      pickOptionQuoteValue(primary, secondary, "status") ??
+      pickOptionQuoteValue(primary, secondary, "quoteStatus"),
+    reason:
+      pickOptionQuoteValue(primary, secondary, "reason") ??
+      pickOptionQuoteValue(primary, secondary, "quoteReason"),
+    quoteStatus:
+      pickOptionQuoteValue(primary, secondary, "quoteStatus") ??
+      pickOptionQuoteValue(primary, secondary, "status"),
+    quoteReason: pickOptionQuoteValue(primary, secondary, "quoteReason"),
+    greeksStatus: pickOptionQuoteValue(primary, secondary, "greeksStatus"),
+    greeksReason: pickOptionQuoteValue(primary, secondary, "greeksReason"),
+    demandStatus: pickOptionQuoteValue(primary, secondary, "demandStatus"),
+    demandReason: pickOptionQuoteValue(primary, secondary, "demandReason"),
+    quoteFreshness:
+      pickOptionQuoteValue(primary, secondary, "quoteFreshness") ??
+      pickOptionQuoteValue(primary, secondary, "freshness"),
+    greeksFreshness: pickOptionQuoteValue(primary, secondary, "greeksFreshness"),
+    unavailableDetail:
+      pickOptionQuoteValue(primary, secondary, "unavailableDetail") ??
+      pickOptionQuoteValue(primary, secondary, "quoteReason") ??
+      pickOptionQuoteValue(primary, secondary, "reason"),
     marketDataMode: pickOptionQuoteValue(primary, secondary, "marketDataMode"),
     source: quoteSource === "massive" ? "massive" : "ibkr",
     transport: pickOptionQuoteValue(primary, secondary, "transport"),
     delayed: pickOptionQuoteValue(primary, secondary, "delayed"),
+    ageMs: pickOptionQuoteNumber(primary, secondary, "ageMs"),
+    cacheAgeMs: pickOptionQuoteNumber(primary, secondary, "cacheAgeMs"),
     updatedAt,
     dataUpdatedAt,
   } as unknown as LiveOptionQuotePatchSnapshot;
@@ -2485,6 +2714,7 @@ const mergeLiveOptionQuoteFields = (
     return preserveHydratedOptionDayChangeFields(current, next, patched);
   }
 
+  const nextPositionQuote = next.quote as AccountOptionQuotePatch | null | undefined;
   const fallbackRow = {
     ...next,
     optionQuote: mergedQuote,
@@ -2500,10 +2730,36 @@ const mergeLiveOptionQuoteFields = (
       bidSize: mergedQuote.bidSize ?? next.quote?.bidSize ?? null,
       askSize: mergedQuote.askSize ?? next.quote?.askSize ?? null,
       freshness: mergedQuote.freshness ?? next.quote?.freshness ?? null,
+      status: mergedQuote.status ?? mergedQuote.quoteStatus ?? next.quote?.status ?? null,
+      reason: mergedQuote.reason ?? mergedQuote.quoteReason ?? next.quote?.reason ?? null,
+      quoteStatus:
+        mergedQuote.quoteStatus ?? mergedQuote.status ?? next.quote?.quoteStatus ?? null,
+      quoteReason: mergedQuote.quoteReason ?? next.quote?.quoteReason ?? null,
+      greeksStatus: mergedQuote.greeksStatus ?? next.quote?.greeksStatus ?? null,
+      greeksReason: mergedQuote.greeksReason ?? next.quote?.greeksReason ?? null,
+      demandStatus: mergedQuote.demandStatus ?? next.quote?.demandStatus ?? null,
+      demandReason: mergedQuote.demandReason ?? next.quote?.demandReason ?? null,
+      quoteFreshness:
+        mergedQuote.quoteFreshness ??
+        mergedQuote.freshness ??
+        next.quote?.quoteFreshness ??
+        null,
+      greeksFreshness: mergedQuote.greeksFreshness ?? next.quote?.greeksFreshness ?? null,
+      unavailableDetail:
+        mergedQuote.unavailableDetail ??
+        mergedQuote.quoteReason ??
+        mergedQuote.reason ??
+        next.quote?.unavailableDetail ??
+        null,
       marketDataMode:
         mergedQuote.marketDataMode ?? next.quote?.marketDataMode ?? null,
       source: optionQuotePositionSource(mergedQuote.source),
       updatedAt: mergedQuote.updatedAt ?? next.quote?.updatedAt ?? null,
+      dataUpdatedAt: mergedQuote.dataUpdatedAt ?? next.quote?.dataUpdatedAt ?? null,
+      ageMs: mergedQuote.ageMs ?? next.quote?.ageMs ?? null,
+      cacheAgeMs: mergedQuote.cacheAgeMs ?? next.quote?.cacheAgeMs ?? null,
+      underlyingPrice:
+        mergedQuote.underlyingPrice ?? nextPositionQuote?.underlyingPrice ?? null,
     },
   };
   return preserveHydratedOptionDayChangeFields(
@@ -2635,7 +2891,7 @@ const emitAccountLiveSlices = () => {
 };
 
 const applyAccountLivePayloadToSelectorStore = (
-  payload: AccountPageCriticalPayload | AccountPageLivePayload,
+  payload: AccountPagePrimaryPayload | AccountPageLivePayload,
 ) => {
   const key = accountLiveScopeKey(payload);
   if (!key) {
@@ -3520,9 +3776,13 @@ const accountPositionsQueryRequestsLiveQuotes = (
   params: Record<string, unknown> | null,
 ): boolean => params?.liveQuotes === true || params?.liveQuotes === "true";
 
-const shouldApplyCriticalAccountPositions = (
-  payload: AccountPageCriticalPayload,
-): boolean => payload.accountId !== "shadow";
+const shouldApplyPrimaryAccountPositions = (
+  payload: AccountPagePrimaryPayload,
+): boolean => Boolean(payload.accountId);
+
+const primaryAccountPositionsUseLiveQuotes = (
+  payload: Pick<AccountPagePrimaryPayload | AccountPageLivePayload, "accountId">,
+): boolean => payload.accountId === "shadow";
 
 const orderTabParamMatches = (
   params: Record<string, unknown> | null,
@@ -3561,7 +3821,7 @@ const accountRiskParams = (mode: StreamMode) => ({
   detail: "fast" as const,
 });
 
-type SeedAccountPageCriticalQueryKeysOptions = {
+type SeedAccountPagePrimaryQueryKeysOptions = {
   seedPositions?: boolean;
   positionsLiveQuotes?: boolean;
 };
@@ -3589,7 +3849,7 @@ const isPerformanceCalendarEquityQuery = (
 const accountPositionsParams = (
   payload: Pick<AccountPageLivePayload, "mode" | "assetClass">,
   options: Pick<
-    SeedAccountPageCriticalQueryKeysOptions,
+    SeedAccountPagePrimaryQueryKeysOptions,
     "positionsLiveQuotes"
   > = {},
 ) => ({
@@ -3618,10 +3878,10 @@ const setAccountPageQueryData = <TValue>(
   queryClient.setQueryData(queryKey as any, value as any);
 };
 
-const seedAccountPageCriticalQueryKeys = (
+const seedAccountPagePrimaryQueryKeys = (
   queryClient: ReturnType<typeof useQueryClient>,
-  payload: AccountPageCriticalPayload | AccountPageLivePayload,
-  options: SeedAccountPageCriticalQueryKeysOptions = {},
+  payload: AccountPagePrimaryPayload | AccountPageLivePayload,
+  options: SeedAccountPagePrimaryQueryKeysOptions = {},
 ) => {
   const modeParams = accountModeParams(payload.mode);
 
@@ -3672,7 +3932,7 @@ const seedAccountPageLiveQueryKeys = (
   queryClient: ReturnType<typeof useQueryClient>,
   payload: AccountPageLivePayload,
 ) => {
-  seedAccountPageCriticalQueryKeys(queryClient, payload, {
+  seedAccountPagePrimaryQueryKeys(queryClient, payload, {
     positionsLiveQuotes: payload.accountId === "shadow",
   });
   setAccountPageQueryData(
@@ -3767,12 +4027,13 @@ const seedAccountPageDerivedQueryKeys = (
   }
 };
 
-export const applyAccountPageCriticalPayloadToCache = (
+export const applyAccountPagePrimaryPayloadToCache = (
   queryClient: ReturnType<typeof useQueryClient>,
-  payload: AccountPageCriticalPayload,
+  payload: AccountPagePrimaryPayload,
 ) => {
-  seedAccountPageCriticalQueryKeys(queryClient, payload, {
-    seedPositions: shouldApplyCriticalAccountPositions(payload),
+  seedAccountPagePrimaryQueryKeys(queryClient, payload, {
+    seedPositions: shouldApplyPrimaryAccountPositions(payload),
+    positionsLiveQuotes: primaryAccountPositionsUseLiveQuotes(payload),
   });
   queryClient
     .getQueryCache()
@@ -3816,9 +4077,10 @@ export const applyAccountPageCriticalPayloadToCache = (
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/positions` &&
-        shouldApplyCriticalAccountPositions(payload) &&
+        shouldApplyPrimaryAccountPositions(payload) &&
         assetClassParamMatches(params, payload.assetClass) &&
-        !accountPositionsQueryRequestsLiveQuotes(params)
+        accountPositionsQueryRequestsLiveQuotes(params) ===
+          primaryAccountPositionsUseLiveQuotes(payload)
       ) {
         queryClient.setQueryData(
           query.queryKey,
@@ -3839,7 +4101,7 @@ export const applyAccountPageCriticalPayloadToCache = (
         );
       }
     });
-  if (shouldApplyCriticalAccountPositions(payload)) {
+  if (shouldApplyPrimaryAccountPositions(payload)) {
     applyAccountLivePayloadToSelectorStore(payload);
   }
 };
@@ -4077,9 +4339,9 @@ type QueuedAccountPagePayload =
       queueKey: string;
     }
   | {
-      kind: "critical";
+      kind: "primary";
       queryClient: ReturnType<typeof useQueryClient>;
-      payload: AccountPageCriticalPayload;
+      payload: AccountPagePrimaryPayload;
       queueKey: string;
     }
   | {
@@ -4097,19 +4359,18 @@ type QueuedAccountPagePayload =
 
 const pendingAccountPagePayloads: QueuedAccountPagePayload[] = [];
 let accountPagePayloadFlushScheduled = false;
-let accountPagePayloadFlushRaf: number | null = null;
 let accountPagePayloadFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 const accountPagePayloadQueueKey = (
   kind: QueuedAccountPagePayload["kind"],
   payload:
     | AccountPageBootstrapPayload
-    | AccountPageCriticalPayload
+    | AccountPagePrimaryPayload
     | AccountPageLivePayload
     | AccountPageDerivedPayload,
 ): string => {
-  if (kind === "critical" || kind === "live") {
-    const livePayload = payload as AccountPageCriticalPayload | AccountPageLivePayload;
+  if (kind === "primary" || kind === "live") {
+    const livePayload = payload as AccountPagePrimaryPayload | AccountPageLivePayload;
     return [
       kind,
       livePayload.accountId,
@@ -4143,17 +4404,9 @@ const accountPagePayloadQueueKey = (
 };
 
 const clearScheduledAccountPagePayloadFlush = () => {
-  if (
-    accountPagePayloadFlushRaf !== null &&
-    typeof window !== "undefined" &&
-    typeof window.cancelAnimationFrame === "function"
-  ) {
-    window.cancelAnimationFrame(accountPagePayloadFlushRaf);
-  }
   if (accountPagePayloadFlushTimer !== null) {
     clearTimeout(accountPagePayloadFlushTimer);
   }
-  accountPagePayloadFlushRaf = null;
   accountPagePayloadFlushTimer = null;
   accountPagePayloadFlushScheduled = false;
 };
@@ -4164,8 +4417,8 @@ export const flushAccountPagePayloadQueue = () => {
   queued.forEach((item) => {
     if (item.kind === "bootstrap") {
       applyAccountPagePayloadToCache(item.queryClient, item.payload);
-    } else if (item.kind === "critical") {
-      applyAccountPageCriticalPayloadToCache(item.queryClient, item.payload);
+    } else if (item.kind === "primary") {
+      applyAccountPagePrimaryPayloadToCache(item.queryClient, item.payload);
     } else if (item.kind === "live") {
       applyAccountPageLivePayloadToCache(item.queryClient, item.payload);
     } else {
@@ -4180,21 +4433,10 @@ const scheduleAccountPagePayloadFlush = () => {
   }
   accountPagePayloadFlushScheduled = true;
 
-  if (
-    typeof window !== "undefined" &&
-    typeof window.requestAnimationFrame === "function"
-  ) {
-    accountPagePayloadFlushRaf = window.requestAnimationFrame(() => {
-      accountPagePayloadFlushRaf = null;
-      flushAccountPagePayloadQueue();
-    });
-    return;
-  }
-
-  accountPagePayloadFlushTimer = setTimeout(() => {
+  accountPagePayloadFlushTimer = scheduleRealtimeFlush(() => {
     accountPagePayloadFlushTimer = null;
     flushAccountPagePayloadQueue();
-  }, 16);
+  });
 };
 
 export function queueAccountPagePayloadToCache(
@@ -4204,8 +4446,8 @@ export function queueAccountPagePayloadToCache(
 ): void;
 export function queueAccountPagePayloadToCache(
   queryClient: ReturnType<typeof useQueryClient>,
-  kind: "critical",
-  payload: AccountPageCriticalPayload,
+  kind: "primary",
+  payload: AccountPagePrimaryPayload,
 ): void;
 export function queueAccountPagePayloadToCache(
   queryClient: ReturnType<typeof useQueryClient>,
@@ -4222,7 +4464,7 @@ export function queueAccountPagePayloadToCache(
   kind: QueuedAccountPagePayload["kind"],
   payload:
     | AccountPageBootstrapPayload
-    | AccountPageCriticalPayload
+    | AccountPagePrimaryPayload
     | AccountPageLivePayload
     | AccountPageDerivedPayload,
 ) {
@@ -4658,7 +4900,6 @@ const useQuoteSnapshotStream = ({
   onQuotes?: (quotes: QuoteSnapshot[]) => void;
 }) => {
   const queryClient = useQueryClient();
-  const pageVisible = usePageVisible();
   const pendingQuoteStreamSnapshotsRef = useRef(new Map<string, QuoteSnapshot>());
   const quoteStreamFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -4717,7 +4958,6 @@ const useQuoteSnapshotStream = ({
 
     if (
       !enabled ||
-      !pageVisible ||
       !streamUrl ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
@@ -4762,7 +5002,7 @@ const useQuoteSnapshotStream = ({
       source.close();
       flushQuoteStreamSnapshots();
     };
-  }, [enabled, onQuotes, pageVisible, queryClient, streamUrl]);
+  }, [enabled, onQuotes, queryClient, streamUrl]);
 };
 
 export const useIbkrQuoteSnapshotStream = ({
@@ -4954,7 +5194,7 @@ export const useAccountPageSnapshotStream = ({
 }) => {
   const queryClient = useQueryClient();
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
-  const [lastCriticalEventAt, setLastCriticalEventAt] = useState<number | null>(null);
+  const [lastPrimaryEventAt, setLastPrimaryEventAt] = useState<number | null>(null);
   const [lastLiveEventAt, setLastLiveEventAt] = useState<number | null>(null);
   const [lastDerivedEventAt, setLastDerivedEventAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -4988,7 +5228,7 @@ export const useAccountPageSnapshotStream = ({
   useEffect(() => {
     if (!enabled) {
       setLastEventAt(null);
-      setLastCriticalEventAt(null);
+      setLastPrimaryEventAt(null);
       setLastLiveEventAt(null);
       setLastDerivedEventAt(null);
       return undefined;
@@ -5008,15 +5248,15 @@ export const useAccountPageSnapshotStream = ({
     }
 
     setLastEventAt(null);
-    setLastCriticalEventAt(null);
+    setLastPrimaryEventAt(null);
     setLastLiveEventAt(null);
     setLastDerivedEventAt(null);
 
-    const markFresh = (kind: "critical" | "live" | "derived" | "both" = "both") => {
+    const markFresh = (kind: "primary" | "live" | "derived" | "both" = "both") => {
       const timestamp = Date.now();
       setLastEventAt(timestamp);
-      if (kind === "critical" || kind === "live" || kind === "both") {
-        setLastCriticalEventAt(timestamp);
+      if (kind === "primary" || kind === "live" || kind === "both") {
+        setLastPrimaryEventAt(timestamp);
       }
       if (kind === "live" || kind === "both") {
         setLastLiveEventAt(timestamp);
@@ -5035,13 +5275,13 @@ export const useAccountPageSnapshotStream = ({
       markFresh("both");
       queueAccountPagePayloadToCache(queryClient, "bootstrap", payload);
     };
-    const handleCritical = (event: MessageEvent<string>) => {
-      const payload = parseJsonPayload<AccountPageCriticalPayload>(event.data);
-      if (!payload || payload.stream !== "account-page-critical") {
+    const handlePrimary = (event: MessageEvent<string>) => {
+      const payload = parseJsonPayload<AccountPagePrimaryPayload>(event.data);
+      if (!payload || payload.stream !== "account-page-primary") {
         return;
       }
-      markFresh("critical");
-      queueAccountPagePayloadToCache(queryClient, "critical", payload);
+      markFresh("primary");
+      queueAccountPagePayloadToCache(queryClient, "primary", payload);
     };
     const handleLive = (event: MessageEvent<string>) => {
       const payload = parseJsonPayload<AccountPageLivePayload>(event.data);
@@ -5062,7 +5302,7 @@ export const useAccountPageSnapshotStream = ({
     const handleFreshness = (event: MessageEvent<string>) => {
       const payload = parseJsonPayload<{
         stream?: string;
-        kind?: "critical" | "live" | "derived";
+        kind?: "primary" | "live" | "derived";
         degraded?: boolean;
         stale?: boolean;
       }>(event.data);
@@ -5075,7 +5315,7 @@ export const useAccountPageSnapshotStream = ({
         return;
       }
       markFresh(
-        payload.kind === "critical" ||
+        payload.kind === "primary" ||
           payload.kind === "live" ||
           payload.kind === "derived"
           ? payload.kind
@@ -5084,13 +5324,13 @@ export const useAccountPageSnapshotStream = ({
     };
 
     source.addEventListener("bootstrap", handleBootstrap as EventListener);
-    source.addEventListener("critical", handleCritical as EventListener);
+    source.addEventListener("primary", handlePrimary as EventListener);
     source.addEventListener("live", handleLive as EventListener);
     source.addEventListener("derived", handleDerived as EventListener);
     source.addEventListener("freshness", handleFreshness as EventListener);
     return () => {
       source.removeEventListener("bootstrap", handleBootstrap as EventListener);
-      source.removeEventListener("critical", handleCritical as EventListener);
+      source.removeEventListener("primary", handlePrimary as EventListener);
       source.removeEventListener("live", handleLive as EventListener);
       source.removeEventListener("derived", handleDerived as EventListener);
       source.removeEventListener("freshness", handleFreshness as EventListener);
@@ -5102,9 +5342,9 @@ export const useAccountPageSnapshotStream = ({
     accountLastEventAt: lastEventAt,
     accountFresh:
       lastEventAt != null && now - lastEventAt <= ACCOUNT_PAGE_STREAM_FRESH_MS,
-    accountCriticalFresh:
-      lastCriticalEventAt != null &&
-      now - lastCriticalEventAt <= ACCOUNT_PAGE_STREAM_FRESH_MS,
+    accountPrimaryFresh:
+      lastPrimaryEventAt != null &&
+      now - lastPrimaryEventAt <= ACCOUNT_PAGE_STREAM_FRESH_MS,
     accountLiveFresh:
       lastLiveEventAt != null && now - lastLiveEventAt <= ACCOUNT_PAGE_STREAM_FRESH_MS,
     accountDerivedFresh:
@@ -5167,12 +5407,12 @@ export const useAlgoCockpitStream = ({
   enabled?: boolean;
   onLiveEvents?: (
     events: ExecutionEventsResponse["events"],
-    context: { phase: "critical" | "full" | null },
+    context: { phase: "primary" | "full" | null },
   ) => void;
 }) => {
   const queryClient = useQueryClient();
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
-  const [lastCriticalEventAt, setLastCriticalEventAt] = useState<number | null>(null);
+  const [lastPrimaryEventAt, setLastPrimaryEventAt] = useState<number | null>(null);
   const [lastFullEventAt, setLastFullEventAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const onLiveEventsRef = useRef(onLiveEvents);
@@ -5188,7 +5428,7 @@ export const useAlgoCockpitStream = ({
   useEffect(() => {
     if (!enabled) {
       setLastEventAt(null);
-      setLastCriticalEventAt(null);
+      setLastPrimaryEventAt(null);
       setLastFullEventAt(null);
       return undefined;
     }
@@ -5207,14 +5447,14 @@ export const useAlgoCockpitStream = ({
     }
 
     setLastEventAt(null);
-    setLastCriticalEventAt(null);
+    setLastPrimaryEventAt(null);
     setLastFullEventAt(null);
 
-    const markFresh = (kind: "critical" | "full" | "heartbeat" = "heartbeat") => {
+    const markFresh = (kind: "primary" | "full" | "heartbeat" = "heartbeat") => {
       const timestamp = Date.now();
       setLastEventAt(timestamp);
-      if (kind === "critical" || kind === "full") {
-        setLastCriticalEventAt(timestamp);
+      if (kind === "primary" || kind === "full") {
+        setLastPrimaryEventAt(timestamp);
       }
       if (kind === "full") {
         setLastFullEventAt(timestamp);
@@ -5230,7 +5470,7 @@ export const useAlgoCockpitStream = ({
       if (!payload || payload.stream !== expectedStream) {
         return;
       }
-      markFresh(payload.phase === "full" ? "full" : "critical");
+      markFresh(payload.phase === "full" ? "full" : "primary");
       applyAlgoCockpitPayloadToCache(queryClient, payload);
       if (expectedStream === "algo-cockpit-live") {
         onLiveEventsRef.current?.(payload.events?.events ?? [], {
@@ -5247,7 +5487,7 @@ export const useAlgoCockpitStream = ({
     const handleFreshness = (event: MessageEvent<string>) => {
       const payload = parseJsonPayload<{
         stream?: string;
-        phase?: "critical" | "full" | null;
+        phase?: "primary" | "full" | null;
         stale?: boolean;
         degraded?: boolean;
       }>(event.data);
@@ -5261,8 +5501,8 @@ export const useAlgoCockpitStream = ({
       }
       if (payload.phase === "full") {
         markFresh("full");
-      } else if (payload.phase === "critical") {
-        markFresh("critical");
+      } else if (payload.phase === "primary") {
+        markFresh("primary");
       } else {
         markFresh("heartbeat");
       }
@@ -5288,8 +5528,8 @@ export const useAlgoCockpitStream = ({
     algoLastEventAt: lastEventAt,
     algoFresh:
       lastEventAt != null && now - lastEventAt <= ALGO_COCKPIT_STREAM_FRESH_MS,
-    algoCriticalFresh:
-      lastCriticalEventAt != null && now - lastCriticalEventAt <= ALGO_COCKPIT_STREAM_FRESH_MS,
+    algoPrimaryFresh:
+      lastPrimaryEventAt != null && now - lastPrimaryEventAt <= ALGO_COCKPIT_STREAM_FRESH_MS,
     algoFullFresh:
       lastFullEventAt != null && now - lastFullEventAt <= ALGO_COCKPIT_STREAM_FRESH_MS,
   };
@@ -5435,7 +5675,6 @@ export const useIbkrOptionChainStream = ({
   enabled?: boolean;
 }) => {
   const queryClient = useQueryClient();
-  const pageVisible = usePageVisible();
   const normalizedUnderlying = underlying?.trim?.().toUpperCase?.() || "";
   const streamUrl = useMemo(
     () =>
@@ -5448,7 +5687,6 @@ export const useIbkrOptionChainStream = ({
   useEffect(() => {
     if (
       !enabled ||
-      !pageVisible ||
       !normalizedUnderlying ||
       !streamUrl ||
       typeof window === "undefined" ||
@@ -5503,7 +5741,7 @@ export const useIbkrOptionChainStream = ({
       source.removeEventListener("chains", handleChains as EventListener);
       source.close();
     };
-  }, [enabled, normalizedUnderlying, pageVisible, queryClient, streamUrl]);
+  }, [enabled, normalizedUnderlying, queryClient, streamUrl]);
 };
 
 export const useIbkrOptionQuoteStream = ({
@@ -5522,7 +5760,6 @@ export const useIbkrOptionQuoteStream = ({
   requiresGreeks?: boolean;
 }) => {
   const queryClient = useQueryClient();
-  const pageVisible = usePageVisible();
   const normalizedUnderlying = underlying?.trim?.().toUpperCase?.() || "";
   const providerContractIdSignature = providerContractIds
     .map((providerContractId) => providerContractId?.trim?.() || "")
@@ -5551,7 +5788,6 @@ export const useIbkrOptionQuoteStream = ({
   useEffect(() => {
     if (
       !enabled ||
-      !pageVisible ||
       normalizedProviderContractIds.length === 0 ||
       typeof window === "undefined"
     ) {
@@ -5563,7 +5799,7 @@ export const useIbkrOptionQuoteStream = ({
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let restFallbackTimer: ReturnType<typeof setInterval> | null = null;
     let stallTimer: ReturnType<typeof setInterval> | null = null;
-    let quoteFlushFrame: number | null = null;
+    let quoteFlushScheduled = false;
     let quoteFlushTimer: ReturnType<typeof setTimeout> | null = null;
     const queuedQuotesByProviderContractId = new Map<
       string,
@@ -5608,7 +5844,7 @@ export const useIbkrOptionQuoteStream = ({
     };
 
     const flushQueuedQuotes = () => {
-      quoteFlushFrame = null;
+      quoteFlushScheduled = false;
       quoteFlushTimer = null;
       if (closed) {
         queuedQuotesByProviderContractId.clear();
@@ -5621,14 +5857,11 @@ export const useIbkrOptionQuoteStream = ({
     };
 
     const scheduleQueuedQuoteFlush = () => {
-      if (quoteFlushFrame !== null || quoteFlushTimer !== null) {
+      if (quoteFlushScheduled) {
         return;
       }
-      if (typeof window.requestAnimationFrame === "function") {
-        quoteFlushFrame = window.requestAnimationFrame(flushQueuedQuotes);
-        return;
-      }
-      quoteFlushTimer = setTimeout(flushQueuedQuotes, 0);
+      quoteFlushScheduled = true;
+      quoteFlushTimer = scheduleRealtimeFlush(flushQueuedQuotes);
     };
 
     const queueQuotes = (quotes: LiveOptionQuoteSnapshot[]) => {
@@ -5686,9 +5919,7 @@ export const useIbkrOptionQuoteStream = ({
       return batch;
     };
 
-    const requestRestSnapshot = async (
-      fallbackMode: "rest-seed" | "rest-rotating",
-    ) => {
+    const requestRestSnapshot = async (fallbackMode: "rest-rotating") => {
       const fallbackProviderContractIds = nextFallbackProviderContractIds();
       if (closed || fallbackProviderContractIds.length === 0) {
         return;
@@ -5716,16 +5947,11 @@ export const useIbkrOptionQuoteStream = ({
         });
         queueQuotes(payload.quotes as LiveOptionQuoteSnapshot[]);
       } catch {
-        setOptionHydrationDiagnostics(
-          fallbackMode === "rest-rotating"
-            ? { fallbackMode, quoteMode: "rest-fallback-error" }
-            : { fallbackMode },
-        );
+        setOptionHydrationDiagnostics({
+          fallbackMode,
+          quoteMode: "rest-fallback-error",
+        });
       }
-    };
-
-    const seedRestSnapshot = () => {
-      void requestRestSnapshot("rest-seed");
     };
 
     const startRestFallback = () => {
@@ -5768,7 +5994,6 @@ export const useIbkrOptionQuoteStream = ({
         requestedQuotes: normalizedProviderContractIds.length,
       });
       socket = new WebSocket(webSocketUrl);
-      seedRestSnapshot();
       stopStallWatchdog();
       stallTimer = setInterval(() => {
         if (closed || !ready || fallbackStarted) {
@@ -5910,14 +6135,11 @@ export const useIbkrOptionQuoteStream = ({
       }
       stopRestFallback();
       stopStallWatchdog();
-      if (quoteFlushFrame !== null) {
-        window.cancelAnimationFrame(quoteFlushFrame);
-        quoteFlushFrame = null;
-      }
       if (quoteFlushTimer !== null) {
         clearTimeout(quoteFlushTimer);
         quoteFlushTimer = null;
       }
+      quoteFlushScheduled = false;
       queuedQuotesByProviderContractId.clear();
       socket?.close();
     };
@@ -5927,7 +6149,6 @@ export const useIbkrOptionQuoteStream = ({
     normalizedProviderContractIds,
     normalizedUnderlying,
     normalizedOwner,
-    pageVisible,
     queryClient,
     requiresGreeks,
     webSocketUrl,

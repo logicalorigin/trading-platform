@@ -1640,14 +1640,6 @@ export default function GexScreen({
     }
   }, [isPhone]);
 
-  useEffect(() => {
-    onReadinessChange?.({
-      criticalReady: Boolean(isVisible),
-      derivedReady: Boolean(isVisible),
-      backgroundAllowed: Boolean(isVisible),
-    });
-  }, [isVisible, onReadinessChange]);
-
   const commitTicker = () => {
     const nextTicker = normalizeGexTicker(tickerDraft);
     setTicker(nextTicker);
@@ -1663,6 +1655,10 @@ export default function GexScreen({
     staleTime: GEX_DASHBOARD_QUERY_STALE_MS,
     refetchInterval: isVisible ? GEX_DASHBOARD_QUERY_REFETCH_MS : false,
     refetchOnWindowFocus: false,
+    placeholderData: (previousData) =>
+      normalizeGexTicker(previousData?.ticker, "") === ticker
+        ? previousData
+        : undefined,
     retry: 1,
   });
   const gexData = gexQuery.data || null;
@@ -1748,7 +1744,7 @@ export default function GexScreen({
   );
   const snapshots = gexData?.snapshots || [];
 
-  const loading = gexQuery.isPending;
+  const loading = gexQuery.isPending && !gexData;
   const chainError = gexQuery.error;
   const noExpirations = !loading && expirationDates.length === 0;
   const backgroundLoading = gexQuery.isFetching && !gexQuery.isPending;
@@ -1776,6 +1772,21 @@ export default function GexScreen({
     (row) => isFiniteNumber(row.impliedVol) && row.impliedVol > 0,
   ).length;
   const dataReady = Boolean(metrics && spot != null && filteredRows.length);
+  const routeDataSettled = Boolean(
+    dataReady ||
+      chainError ||
+      noExpirations ||
+      (gexQuery.isFetched && !gexQuery.isFetching),
+  );
+
+  useEffect(() => {
+    onReadinessChange?.({
+      primaryReady: Boolean(isVisible),
+      derivedReady: Boolean(isVisible && routeDataSettled),
+      backgroundAllowed: Boolean(isVisible && routeDataSettled),
+    });
+  }, [isVisible, onReadinessChange, routeDataSettled]);
+
   const expirationOptions = useMemo(
     () => [
       {
@@ -2112,6 +2123,15 @@ export default function GexScreen({
             loading
             title={`Loading GEX for ${ticker}`}
             detail="Waiting for quote, expiration, and IBKR option-chain snapshots."
+            loadingWaitItems={[
+              {
+                id: "gex-chain",
+                label: `${ticker} GEX inputs`,
+                status: "loading",
+                detail: "quote, expiration, and option-chain snapshots",
+                endpoint: "/api/gex",
+              },
+            ]}
             minHeight={isPhone ? 92 : 72}
           />
         ) : spot == null ? (

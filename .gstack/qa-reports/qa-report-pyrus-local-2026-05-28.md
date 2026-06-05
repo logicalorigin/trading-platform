@@ -54,7 +54,7 @@ Source changes applied:
 - Delayed and staggered background operational screen preloads so they stop competing with the active route.
 - Preloaded the Account platform screen as a priority sibling to the initial screen so Account QA does not wait for low-priority background warmup.
 - Added priority active-screen code preload tracking.
-- Temporarily gates non-critical quote/account/aggregate streams while priority screen code preload is pending.
+- Temporarily gates optional quote/account/aggregate streams while priority screen code preload is pending.
 - Lazy-loaded heavy Algo screen dependencies that previously extended the active route module chain.
 - Added/updated source tests to lock the active-route preload and stream-gating behavior.
 

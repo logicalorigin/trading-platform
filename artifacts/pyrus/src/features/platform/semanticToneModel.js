@@ -83,7 +83,6 @@ const AMBER_OPERATION_TOKENS = new Set([
 
 const RED_OPERATION_TOKENS = new Set([
   "blocked",
-  "critical",
   "down",
   "error",
   "failed",
@@ -103,12 +102,10 @@ const AMBER_RISK_TOKENS = new Set([
 
 const RED_RISK_TOKENS = new Set([
   "blocked",
-  "critical",
   "danger",
   "error",
   "failed",
   "loss",
-  "severe",
 ]);
 
 export const SEMANTIC_TONE = Object.freeze({

@@ -64,13 +64,13 @@ Outputs:
 
 Priority classes, highest first:
 
-1. `execution` for order-critical and visible risk checks.
+1. `execution` for order-priority and visible risk checks.
 2. `signal-options` for STA contract, quote, spread, greeks, and liquidity work.
 3. `shadow-account` for shadow positions and derived position marks.
 4. `visible` for user-visible charts and tables.
 5. `flow-scanner` for broad discovery and ranking.
 
-The controller should target `bridgeBudget - hardReserve`, not a fixed low cap. `hardReserve` should cover execution-critical and visible emergency headroom. Signal-options should also have a minimum reserve, described below.
+The controller should target `bridgeBudget - hardReserve`, not a fixed low cap. `hardReserve` should cover execution-priority and visible emergency headroom. Signal-options should also have a minimum reserve, described below.
 
 ### 2. Dedicated STA Priority Lane
 

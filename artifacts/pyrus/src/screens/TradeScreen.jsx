@@ -91,6 +91,7 @@ import {
   OPTION_CHART_BARS_QUERY_DEFAULTS,
   useOptionChartBars,
 } from "../features/charting/useOptionChartBars.js";
+import { ContainerLoadingStatus } from "../components/platform/ContainerLoadingStatus.jsx";
 import { resolveOptionChartSourceState } from "../features/charting/chartApiBars.js";
 import {
   TradeEquityPanel,
@@ -1446,11 +1447,24 @@ const TradeContractDetailPanel = ({
         : optionIdentityReady
           ? optionChartEmptyCopy.detail
           : "Choose an option row to load chart history.",
+      loadingWaitItems: chartRequestLoading
+        ? [
+            {
+              id: "trade-option-bars",
+              label: `${contractLabel} option history`,
+              status: "loading",
+              detail: `${optionChartTimeframe} bars for selected contract`,
+              endpoint: "/api/chart/option-bars",
+            },
+          ]
+        : [],
     }),
     [
       chartRequestLoading,
+      contractLabel,
       optionChartEmptyCopy.detail,
       optionChartEmptyCopy.title,
+      optionChartTimeframe,
       optionIdentityReady,
     ],
   );
@@ -2087,6 +2101,7 @@ const TradeDeferredPanel = ({
   testId = null,
   detail = null,
   actionLabel = null,
+  loadingWaitItems = null,
   onAction = null,
 }) => (
   <TradePanelShell
@@ -2098,49 +2113,62 @@ const TradeDeferredPanel = ({
     fill
   >
     <div
-      aria-hidden={detail ? undefined : "true"}
       style={{
         minHeight: dim(minHeight),
         flex: 1,
         display: "grid",
-        placeItems: detail ? "center" : "stretch",
-        padding: detail ? sp(10) : 0,
+        placeItems: "center",
+        padding: sp(10),
         background: CSS_COLOR.bg0,
       }}
     >
-      {detail ? (
-        <div
-          style={{
-            display: "grid",
-            gap: sp(8),
-            justifyItems: "center",
-            color: CSS_COLOR.textDim,
-            fontFamily: T.sans,
-            fontSize: textSize("body"),
-            textAlign: "center",
-          }}
-        >
+      <div
+        style={{
+          display: "grid",
+          gap: sp(8),
+          justifyItems: "center",
+          color: CSS_COLOR.textDim,
+          fontFamily: T.sans,
+          fontSize: textSize("body"),
+          textAlign: "center",
+        }}
+      >
+        {detail ? (
           <span>{detail}</span>
-          {actionLabel && typeof onAction === "function" ? (
-            <button
-              type="button"
-              onClick={onAction}
-              style={{
-                padding: sp("4px 8px"),
-                border: `1px solid ${CSS_COLOR.border}`,
-                background: CSS_COLOR.bg1,
-                color: CSS_COLOR.textSec,
-                borderRadius: dim(RADII.xs),
-                fontFamily: T.sans,
-                fontSize: textSize("caption"),
-                cursor: "pointer",
-              }}
-            >
-              {actionLabel}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+        ) : null}
+        <ContainerLoadingStatus
+          items={
+            loadingWaitItems || [
+              {
+                id: `trade-deferred-${title}`,
+                label: `${title} panel`,
+                status: "loading",
+                detail,
+              },
+            ]
+          }
+          testId="trade-deferred-loading-waits"
+          style={{ justifyItems: "center", textAlign: "center" }}
+        />
+        {actionLabel && typeof onAction === "function" ? (
+          <button
+            type="button"
+            onClick={onAction}
+            style={{
+              padding: sp("4px 8px"),
+              border: `1px solid ${CSS_COLOR.border}`,
+              background: CSS_COLOR.bg1,
+              color: CSS_COLOR.textSec,
+              borderRadius: dim(RADII.xs),
+              fontFamily: T.sans,
+              fontSize: textSize("caption"),
+              cursor: "pointer",
+            }}
+          >
+            {actionLabel}
+          </button>
+        ) : null}
+      </div>
     </div>
   </TradePanelShell>
 );
@@ -3534,7 +3562,7 @@ const TradeScreenInner = ({
   const [phoneL2DrawerOpen, setPhoneL2DrawerOpen] = useState(false);
   useEffect(() => {
     onReadinessChange?.({
-      criticalReady: Boolean(isVisible),
+      primaryReady: Boolean(isVisible),
       derivedReady: Boolean(isVisible),
       backgroundAllowed: Boolean(isVisible && !safeQaMode),
     });

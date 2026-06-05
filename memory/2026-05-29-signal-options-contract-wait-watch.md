@@ -42,7 +42,7 @@ The cockpit payload after the restart reported:
 Diagnostics also showed:
 
 - Automation worker scan duration reached ~143.5s.
-- API diagnostics were critical for latency:
+- API diagnostics were priority for latency:
   - API p95 latency ~5.8s.
   - `/signal-monitor/matrix` p95 ~21.8s.
   - `/accounts/shadow/positions` p95 ~16.0s.

@@ -25,7 +25,7 @@ type PlatformErrorBoundaryProps = {
   minHeight?: number | string;
   onReset?: () => void;
   reportCategory?: string;
-  reportSeverity?: "info" | "warning" | "critical";
+  reportSeverity?: "info" | "warning" | "warning";
   buildReportRaw?: (details: {
     label: string;
     error: Error;
@@ -58,7 +58,7 @@ const reportPlatformBoundaryError = (
   info: ErrorInfo,
   options: {
     category?: string;
-    severity?: "info" | "warning" | "critical";
+    severity?: "info" | "warning" | "warning";
     raw?: Record<string, unknown>;
   } = {},
 ) => {

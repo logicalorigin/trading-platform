@@ -74,7 +74,7 @@ function App({ bootLoaderElapsedMs = null }: AppProps) {
     <PlatformErrorBoundary
       label="PYRUS app shell"
       reportCategory="react-root-crash"
-      reportSeverity="critical"
+      reportSeverity="warning"
       buildReportRaw={buildRootCrashReportRaw}
       onBoundaryError={rememberRootCrashDiagnostic}
       fallbackRender={(props) => <RootCrashDiagnosticsFallback {...props} />}

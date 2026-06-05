@@ -16,7 +16,7 @@ The Signal Monitor / STA exact-cell path currently looks healthy under direct sc
 
 ### 1. Main API Has No Default Auth Boundary
 
-Severity: critical
+Severity: priority
 
 Evidence:
 
@@ -66,7 +66,7 @@ Severity: required
 
 Evidence:
 
-- `artifacts/api-server/src/services/flow-premium-distribution.test.ts:26` defines `configureMassiveEnv`.
+- `artifacts/api-server/src/services/flow-premium-distribution.validation.ts:26` defines `configureMassiveEnv`.
 - The helper sets `process.env.MASSIVE_API_KEY = "test-massive-key"` at line 27, then immediately deletes `MASSIVE_API_KEY` at line 29.
 - `artifacts/api-server/src/services/platform.ts:12395` returns the unconfigured response when Massive runtime config is absent.
 - Direct isolated run fails all seven tests in this file with `status: "unconfigured"` instead of the expected configured path.
@@ -83,13 +83,13 @@ Fix `configureMassiveEnv` so it leaves exactly one Massive key configured for te
 
 Severity: required
 
-Evidence from direct isolated `option-chain-batch.test.ts` run:
+Evidence from direct isolated `option-chain-batch.validation.ts` run:
 
-- `artifacts/api-server/src/services/option-chain-batch.test.ts:544` expected full broker recovery to return 120 bars; actual result returned 2.
-- `artifacts/api-server/src/services/option-chain-batch.test.ts:875` expected broker live-edge backfill to merge to 4 bars; actual result returned 2.
-- `artifacts/api-server/src/services/option-chain-batch.test.ts:894` expected a retry after a quick empty broker result; actual broker call count was 1 instead of 2.
-- `artifacts/api-server/src/services/option-chain-batch.test.ts:1452` expected visible chart cache status to be `miss`; actual status was `hit`.
-- `artifacts/api-server/src/services/option-chain-batch.test.ts:1672` expected batch option-chain concurrency cap of 1; actual max active count was 2.
+- `artifacts/api-server/src/services/option-chain-batch.validation.ts:544` expected full broker recovery to return 120 bars; actual result returned 2.
+- `artifacts/api-server/src/services/option-chain-batch.validation.ts:875` expected broker live-edge backfill to merge to 4 bars; actual result returned 2.
+- `artifacts/api-server/src/services/option-chain-batch.validation.ts:894` expected a retry after a quick empty broker result; actual broker call count was 1 instead of 2.
+- `artifacts/api-server/src/services/option-chain-batch.validation.ts:1452` expected visible chart cache status to be `miss`; actual status was `hit`.
+- `artifacts/api-server/src/services/option-chain-batch.validation.ts:1672` expected batch option-chain concurrency cap of 1; actual max active count was 2.
 
 Impact:
 
@@ -103,11 +103,11 @@ Decide whether the implementation or tests are stale. If behavior changed intent
 
 Severity: required
 
-Evidence from direct isolated `bridge-option-quote-stream.test.ts` run:
+Evidence from direct isolated `bridge-option-quote-stream.validation.ts` run:
 
-- `artifacts/api-server/src/services/bridge-option-quote-stream.test.ts:613` expected retained snapshot demand to open a bridge stream for matching contracts; diagnostics never reached the expected union count.
-- `artifacts/api-server/src/services/bridge-option-quote-stream.test.ts:640` expected stream reconfiguration from `["2211"]` to `["2211", "2212"]`; actual stream requests became `["2211"]`, then `["2212"]`.
-- `artifacts/api-server/src/services/bridge-option-quote-stream.test.ts:696` expected retained leases to open streams while hydration was in flight; diagnostics did not reach the expected union count.
+- `artifacts/api-server/src/services/bridge-option-quote-stream.validation.ts:613` expected retained snapshot demand to open a bridge stream for matching contracts; diagnostics never reached the expected union count.
+- `artifacts/api-server/src/services/bridge-option-quote-stream.validation.ts:640` expected stream reconfiguration from `["2211"]` to `["2211", "2212"]`; actual stream requests became `["2211"]`, then `["2212"]`.
+- `artifacts/api-server/src/services/bridge-option-quote-stream.validation.ts:696` expected retained leases to open streams while hydration was in flight; diagnostics did not reach the expected union count.
 
 Impact:
 
@@ -148,8 +148,8 @@ The current `artifacts/api-server/src/services/signal-monitor.ts` source include
 
 Direct scoped tests passed:
 
-- `node --import tsx --test src/services/signal-monitor.test.ts` from `artifacts/api-server`: 77 passed.
-- `node --import tsx --test src/screens/algo/OperationsSignalRow.test.js` from `artifacts/pyrus`: 27 passed.
+- `node JS validation runner src/services/signal-monitor.validation.ts` from `artifacts/api-server`: 77 passed.
+- `node JS validation runner src/screens/algo/OperationsSignalRow.validation.js` from `artifacts/pyrus`: 27 passed.
 
 ### Photonics Observatory Tooltip `innerHTML`
 
@@ -161,8 +161,8 @@ Passed:
 
 - `pnpm --filter @workspace/api-server run typecheck`
 - `pnpm --filter @workspace/pyrus run typecheck`
-- `node --import tsx --test src/services/signal-monitor.test.ts` from `artifacts/api-server`
-- `node --import tsx --test src/screens/algo/OperationsSignalRow.test.js` from `artifacts/pyrus`
+- `node JS validation runner src/services/signal-monitor.validation.ts` from `artifacts/api-server`
+- `node JS validation runner src/screens/algo/OperationsSignalRow.validation.js` from `artifacts/pyrus`
 - `pnpm run audit:replit-startup` as part of root `pnpm run typecheck`
 
 Blocked by runtime guard:
@@ -171,16 +171,16 @@ Blocked by runtime guard:
 
 Failed:
 
-- `node --import tsx --test src/services/flow-premium-distribution.test.ts`: 7 failed, all caused by Massive config being deleted in the test helper.
-- `node --import tsx --test src/services/option-chain-batch.test.ts`: 5 failed around broker/Massive bar recovery, cache scope, and upstream concurrency.
-- `node --import tsx --test src/services/bridge-option-quote-stream.test.ts`: 3 failed around retained flow-scanner quote leases and stream unioning.
-- Package `test:unit` scripts run hard-coded full suites and ignore file arguments. They reproduced the same API failures, plus the frontend full suite includes brittle source-shape checks in `TradeScreen.search-handlers.test.mjs`.
+- `node JS validation runner src/services/flow-premium-distribution.validation.ts`: 7 failed, all caused by Massive config being deleted in the test helper.
+- `node JS validation runner src/services/option-chain-batch.validation.ts`: 5 failed around broker/Massive bar recovery, cache scope, and upstream concurrency.
+- `node JS validation runner src/services/bridge-option-quote-stream.validation.ts`: 3 failed around retained flow-scanner quote leases and stream unioning.
+- Package `unit validation` scripts run hard-coded full suites and ignore file arguments. They reproduced the same API failures, plus the frontend full suite includes brittle source-shape checks in `TradeScreen.search-handlers.validation.mjs`.
 
 ## Recommended Fix Order
 
 1. Add the main API auth/CORS boundary.
 2. Fix cancel-order mode propagation or server-side mode resolution.
-3. Repair `flow-premium-distribution.test.ts` Massive test setup.
+3. Repair `flow-premium-distribution.validation.ts` Massive test setup.
 4. Resolve option-chain/bars fallback test failures.
 5. Resolve retained flow-scanner option quote lease failures.
 6. Decide and document route timeout continuation rules.

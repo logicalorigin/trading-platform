@@ -68,7 +68,7 @@ export type MonitorReport = {
     samples: number;
   };
   verdict: {
-    status: "healthy" | "degraded" | "critical";
+    status: "healthy" | "degraded" | "warning";
     reasons: string[];
   };
   endpoints: Record<string, {
@@ -435,8 +435,8 @@ function reportStatus(samples: MonitorSample[]): MonitorReport["verdict"] {
   const reasons: string[] = [];
   const latest = samples.at(-1);
   const latestSeverity = stringValue(latest?.diagnostics.value?.["severity"]);
-  if (latestSeverity === "critical") {
-    reasons.push("Latest diagnostics severity is critical.");
+  if (latestSeverity === "warning") {
+    reasons.push("Latest diagnostics severity is warning.");
   } else if (latestSeverity === "warning") {
     reasons.push("Latest diagnostics severity is warning.");
   }
@@ -445,17 +445,17 @@ function reportStatus(samples: MonitorSample[]): MonitorReport["verdict"] {
   if (failedEndpoints.length) {
     reasons.push(`${failedEndpoints.length} sampled endpoint(s) had failures.`);
   }
-  if (collectResourceLevels(samples).includes("critical")) {
-    reasons.push("Resource pressure reached critical.");
+  if (collectResourceLevels(samples).includes("warning")) {
+    reasons.push("Resource pressure reached warning.");
   }
 
-  if (reasons.some((reason) => /critical/i.test(reason))) {
-    return { status: "critical", reasons };
+  if (reasons.some((reason) => /warning/i.test(reason))) {
+    return { status: "warning", reasons };
   }
   if (reasons.length) {
     return { status: "degraded", reasons };
   }
-  return { status: "healthy", reasons: ["No sampled critical or degraded signals."] };
+  return { status: "healthy", reasons: ["No sampled warning or degraded signals."] };
 }
 
 function buildOptimizationCandidates(report: Omit<MonitorReport, "optimizationCandidates">): string[] {

@@ -139,7 +139,7 @@ Recommendation:
 
 ## Test Review
 
-Detected framework: Node built-in test runner with `node --import tsx --test`, plus TypeScript typecheck commands.
+Detected framework: Node built-in test runner with `node JS validation runner`, plus TypeScript typecheck commands.
 
 Coverage diagram for planned paths:
 
@@ -176,7 +176,7 @@ Coverage target:
 - UI/source tests: stepper remains immediate, cockpit placement is below the stepper, cancel/deactivate affordances remain present.
 - Browser QA: open `?pyrusQa=safe`, verify popover layout and no text overflow; live full-app IBKR navigation only with explicit approval.
 
-Critical regression tests:
+Priority regression tests:
 - Reading helper metadata must not change activation count.
 - A launch request must render progress UI immediately, before the Windows helper posts the first progress event.
 - Cancel/deactivate buttons must remain usable and communicate in-flight state.
@@ -263,7 +263,7 @@ Dependencies: None.
 Files likely touched:
 - `artifacts/api-server/src/routes/platform.ts`
 - `artifacts/api-server/src/services/ibkr-bridge-runtime.ts`
-- `artifacts/api-server/src/services/ibkr-bridge-runtime.test.ts`
+- `artifacts/api-server/src/services/ibkr-bridge-runtime.validation.ts`
 - `lib/api-spec/openapi.yaml`
 - generated API client files if codegen is required
 
@@ -280,14 +280,14 @@ Acceptance criteria:
 
 Verification:
 - [ ] Backend model tests cover every phase and stale threshold.
-- [ ] Existing `ibkr-bridge-runtime.test.ts` still passes.
+- [ ] Existing `ibkr-bridge-runtime.validation.ts` still passes.
 - [ ] `pnpm --filter @workspace/api-server run typecheck`
 
 Dependencies: Task 1 can be parallel if contract names are coordinated, but Task 2 should land before frontend work.
 
 Files likely touched:
 - `artifacts/api-server/src/services/ibkr-bridge-runtime.ts`
-- `artifacts/api-server/src/services/ibkr-bridge-runtime.test.ts`
+- `artifacts/api-server/src/services/ibkr-bridge-runtime.validation.ts`
 - `lib/api-spec/openapi.yaml`
 - generated API client files if codegen is required
 
@@ -313,13 +313,13 @@ Acceptance criteria:
 
 Verification:
 - [ ] Node tests cover idle, launch start, helper wait, credential wait, Gateway login, 2FA wait, tunnel wait, complete, canceled, and error states.
-- [ ] Existing `ibkrConnectionOperationStepperModel.test.js` still passes.
+- [ ] Existing `ibkrConnectionOperationStepperModel.validation.js` still passes.
 
 Dependencies: Task 2.
 
 Files likely touched:
 - `artifacts/pyrus/src/features/platform/ibkrConnectionCockpitModel.js`
-- `artifacts/pyrus/src/features/platform/ibkrConnectionCockpitModel.test.js`
+- `artifacts/pyrus/src/features/platform/ibkrConnectionCockpitModel.validation.js`
 - possibly `artifacts/pyrus/src/features/platform/bridgeRuntimeModel.js`
 
 Estimated scope: Small to Medium.
@@ -344,7 +344,7 @@ Dependencies: Task 3.
 Files likely touched:
 - `artifacts/pyrus/src/features/platform/HeaderStatusCluster.jsx`
 - `artifacts/pyrus/src/features/platform/ibkrConnectionCockpitModel.js`
-- `artifacts/pyrus/src/features/platform/IbkrConnectionStatus.test.js` or related header source tests
+- `artifacts/pyrus/src/features/platform/IbkrConnectionStatus.validation.js` or related header source tests
 
 Estimated scope: Medium.
 
@@ -367,7 +367,7 @@ Dependencies: Tasks 3 and 4.
 Files likely touched:
 - `artifacts/pyrus/src/features/platform/HeaderStatusCluster.jsx`
 - `artifacts/pyrus/src/features/platform/ibkrConnectionOperationStepperModel.js`
-- `artifacts/pyrus/src/features/platform/ibkrConnectionOperationStepperModel.test.js`
+- `artifacts/pyrus/src/features/platform/ibkrConnectionOperationStepperModel.validation.js`
 
 Estimated scope: Medium.
 
@@ -397,7 +397,7 @@ Dependencies: Task 2.
 
 Files likely touched:
 - `artifacts/api-server/src/services/ibkr-bridge-runtime.ts`
-- `artifacts/api-server/src/services/ibkr-bridge-runtime.test.ts`
+- `artifacts/api-server/src/services/ibkr-bridge-runtime.validation.ts`
 - `artifacts/pyrus/src/features/platform/ibkrConnectionCockpitModel.js`
 
 Estimated scope: Medium.
@@ -457,7 +457,7 @@ Estimated scope: Small if no helper change, Medium if helper change is justified
 | Frontend cockpit | Long label overflows popover | Safe browser QA/source test | Text wraps cleanly, no overlap |
 | Cancel/deactivate | User clicks cancel mid-handoff | UI model/action test | Button disables in-flight and terminal state is clear |
 
-Critical silent gaps to block implementation:
+Priority silent gaps to block implementation:
 - Metadata route mutates activation state.
 - Launch click does not show immediate progress UI.
 - Cancel/deactivate action fires but leaves UI with no terminal or recoverable state.
@@ -511,7 +511,7 @@ Conflict flags:
 - NOT in scope: written.
 - What already exists: written.
 - TODOS.md updates: 0 items proposed; deferred work is captured in this plan.
-- Failure modes: 3 critical silent gaps flagged.
+- Failure modes: 3 priority silent gaps flagged.
 - Outside voice: skipped because this Default-mode skill run avoided extra interactive gates.
 - Parallelization: 3 lanes, 1 backend lane, 1 frontend lane, 1 later helper-decision lane.
 - Lake Score: 5/5 complete recommendations chosen for this scope.
@@ -522,11 +522,11 @@ Synthesized from this review's findings. Each task derives from a specific findi
 
 - [ ] **T1 (P1, human: ~2h / CC: ~20min)** - API runtime - Add read-only helper metadata
   - Surfaced by: Architecture Review A1 - launcher metadata route is read-shaped but activation-producing.
-  - Files: `artifacts/api-server/src/routes/platform.ts`, `artifacts/api-server/src/services/ibkr-bridge-runtime.ts`, `artifacts/api-server/src/services/ibkr-bridge-runtime.test.ts`, `lib/api-spec/openapi.yaml`.
+  - Files: `artifacts/api-server/src/routes/platform.ts`, `artifacts/api-server/src/services/ibkr-bridge-runtime.ts`, `artifacts/api-server/src/services/ibkr-bridge-runtime.validation.ts`, `lib/api-spec/openapi.yaml`.
   - Verify: backend route/unit tests, API typecheck.
 - [ ] **T2 (P1, human: ~4h / CC: ~45min)** - API diagnostics - Add activation insight model
   - Surfaced by: Architecture Review A2 and Test Review - browser needs stable phase/owner/timing fields.
-  - Files: `artifacts/api-server/src/services/ibkr-bridge-runtime.ts`, `artifacts/api-server/src/services/ibkr-bridge-runtime.test.ts`, `lib/api-spec/openapi.yaml`.
+  - Files: `artifacts/api-server/src/services/ibkr-bridge-runtime.ts`, `artifacts/api-server/src/services/ibkr-bridge-runtime.validation.ts`, `lib/api-spec/openapi.yaml`.
   - Verify: all insight branch tests, generated clients if contract changes, API typecheck.
 - [ ] **T3 (P1, human: ~2h / CC: ~25min)** - Pyrus model - Add cockpit model adapter
   - Surfaced by: Code Quality Review Q1 - keep timing/owner derivation out of `HeaderStatusCluster.jsx`.
@@ -555,7 +555,7 @@ Synthesized from this review's findings. Each task derives from a specific findi
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | skipped | Not requested in this pass |
 | Codex Review | `/codex review` | Independent 2nd opinion | 0 | skipped | Not requested; Default-mode plan kept local |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | complete | 8 issues, 3 critical silent gaps |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | complete | 8 issues, 3 priority silent gaps |
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | skipped | Design constraints included in eng plan |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | skipped | Not requested in this pass |
 

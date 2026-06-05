@@ -504,17 +504,12 @@ function writeImportedIncidentIds(ids: Set<string>): void {
 
 function incidentSeverity(incident: RuntimeIncident): DiagnosticSeverity {
   if (
-    incident.severity === "critical" ||
     incident.severity === "warning" ||
     incident.severity === "info"
   ) {
     return incident.severity;
   }
-  const classification = String(incident.classification ?? "");
-  return classification.includes("child-exit") ||
-    classification.includes("resource-pressure")
-    ? "critical"
-    : "warning";
+  return "warning";
 }
 
 export async function importRuntimeFlightRecorderIncidents(

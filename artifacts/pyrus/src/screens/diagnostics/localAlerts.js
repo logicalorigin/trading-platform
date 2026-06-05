@@ -8,7 +8,6 @@ const SEVERITY_RANK = {
   success: 0,
   info: 0,
   warning: 1,
-  critical: 2,
 };
 
 const emptyPreferences = () => ({
@@ -22,7 +21,7 @@ const asRecord = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
 const normalizeSeverity = (value) =>
-  value === "critical" || value === "warning" || value === "success"
+  value === "warning" || value === "success"
     ? value
     : "info";
 
@@ -65,7 +64,7 @@ const eventKey = (event) => {
 };
 
 export function isAlertSeverity(severity) {
-  return severity === "warning" || severity === "critical";
+  return severity === "warning";
 }
 
 export function normalizeDiagnosticAlert(input, { source = "event", nowMs = Date.now() } = {}) {
@@ -147,6 +146,7 @@ export function applyDiagnosticAlert(
     dismissedAlerts = {},
     repeatCooldownMs = LOCAL_ALERT_REPEAT_COOLDOWN_MS,
     maxAlerts = MAX_LOCAL_ALERTS,
+    incrementRepeatCount = true,
   } = {},
 ) {
   const incoming = normalizeDiagnosticAlert(input, { source, nowMs });
@@ -156,10 +156,12 @@ export function applyDiagnosticAlert(
 
   const current = currentAlerts[incoming.key];
   const escalated = current && severityRank(incoming.severity) > severityRank(current.severity);
-  const repeatCount = Math.max(
-    current ? current.repeatCount + 1 : 1,
-    incoming.repeatCount,
-  );
+  const repeatCount = incrementRepeatCount
+    ? Math.max(
+        current ? current.repeatCount + 1 : 1,
+        incoming.repeatCount,
+      )
+    : incoming.repeatCount;
   const previousNotifiedAt = current?.lastNotifiedAt || null;
   const lastNotifiedMs = parseTimeMs(previousNotifiedAt, 0);
   const notificationDue =
@@ -220,6 +222,7 @@ export function syncDiagnosticSnapshotAlerts(currentAlerts, inputs, options = {}
   return reduceDiagnosticAlerts(reconciledAlerts, inputs, {
     ...options,
     source: "snapshot",
+    incrementRepeatCount: false,
     notify: false,
     nowMs,
   });

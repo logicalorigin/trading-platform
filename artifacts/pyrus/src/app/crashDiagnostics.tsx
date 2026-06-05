@@ -20,7 +20,7 @@ const MAX_DEPTH = 5;
 type BrowserDiagnosticEvent = {
   at?: string;
   category: string;
-  severity: "info" | "warning" | "critical";
+  severity: "info" | "warning" | "warning";
   code?: string | null;
   message: string;
   raw?: Record<string, unknown>;

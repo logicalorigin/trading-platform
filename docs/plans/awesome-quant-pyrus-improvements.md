@@ -80,7 +80,7 @@ Use this before adding any package from `awesome-quant`.
 | Check | Required Answer |
 | --- | --- |
 | License | MIT, Apache-2.0, BSD, or equivalent permissive license for direct integration. GPL, AGPL, LGPL, Commons Clause, unclear, or missing license requires explicit approval and usually becomes `reference` only. |
-| Maintenance | Recent activity, low critical issue load, clear release process or stable API. Small projects may still be used as references. |
+| Maintenance | Recent activity, low priority issue load, clear release process or stable API. Small projects may still be used as references. |
 | Runtime fit | Python packages go through `python/pyrus_compute`; TypeScript packages must not bloat the app bundle; Rust code must fit `crates/market-data-worker` without destabilizing ingest. |
 | Install size | Dependency must be measured before adoption. Scientific Python packages need a `uv` lock diff review. |
 | Determinism | Outputs must be deterministic for tests, backtests, and user-visible analytics. |
@@ -112,7 +112,7 @@ This table is the controlling decision record for the first implementation wave.
 | Candidate | Implement? | Exact Implementation | Regression Gate |
 | --- | --- | --- | --- |
 | `flashalpha-fill-simulator` | Yes, as Pyrus-native logic | Do not add the package. Port the fill-model ideas into `lib/backtest-core`: legacy fill remains default; add conservative quote-aware option fills, stale/wide/crossed quote rejection, deterministic same-bar tie break, and post-and-wait fixtures before wiring to the engine. | Existing legacy backtest fixtures must produce identical trades/metrics. New fixtures must cover tight quote fill, missing bid/ask no-fill, crossed quote no-fill, wide spread no-fill, stale quote no-fill, post-and-wait fill/no-fill, and same-bar conflict. Run targeted `backtest-core` tests. |
-| `pandas_market_calendars` | Maybe, spike against `exchange_calendars` | Add a Python compute spike only. Compare NYSE full holidays, early closes, DST transitions, RTH/pre/after/overnight windows, and next open/close API ergonomics. Use it only if it beats the current hand-coded session logic and `exchange_calendars` for Pyrus needs. | Existing `marketSession.test.ts` must still pass. Add fixture dates for Good Friday, Juneteenth, Black Friday early close, July 3 early close when applicable, DST week, weekends, and invalid dates. Backend/frontend session labels must agree on the same fixture table. |
+| `pandas_market_calendars` | Maybe, spike against `exchange_calendars` | Add a Python compute spike only. Compare NYSE full holidays, early closes, DST transitions, RTH/pre/after/overnight windows, and next open/close API ergonomics. Use it only if it beats the current hand-coded session logic and `exchange_calendars` for Pyrus needs. | Existing `marketSession.validation.ts` must still pass. Add fixture dates for Good Friday, Juneteenth, Black Friday early close, July 3 early close when applicable, DST week, weekends, and invalid dates. Backend/frontend session labels must agree on the same fixture table. |
 | `exchange_calendars` | Maybe, spike against `pandas_market_calendars` | Same spike as above. Choose exactly one calendar dependency; do not ship both. Prefer the one with clearer NYSE schedule/early-close support and smaller integration surface. | Same calendar fixture suite as `pandas_market_calendars`. Any selected dependency must run under `python-compute:doctor` and `python-compute:test` without startup config changes. |
 | `empyrical-reloaded` | Not initially; use as parity reference | Keep existing TypeScript `backtest-core` analytics as source of truth. Use `empyrical-reloaded` formulas/test values to add parity fixtures for Sharpe, Sortino, max drawdown, alpha, beta, and annualized volatility. Only integrate into Python compute if native metrics become hard to maintain. | Existing analytics snapshots remain stable unless explicitly versioned. Add fixed-return-series fixture tests comparing Pyrus output against expected values. New metrics must be additive and must not rename existing API fields. |
 | `pyfolio-reloaded` | No direct dependency | Use as a tear-sheet UX/reference for backtest report organization: returns, drawdowns, rolling risk, benchmark comparison, and warning presentation. Build Pyrus-native summaries. | Existing backtesting panels render unchanged for old runs. New tear-sheet sections must be hidden when data is missing and covered by UI model tests. No Python dependency is added. |
@@ -154,7 +154,7 @@ Current implementation state:
 
 - `lib/backtest-core/src/types.ts` now allows optional quote fields on `BacktestBar`: `bid`, `ask`, `mid`, `quoteAsOf`, and `providerContractId`.
 - `lib/backtest-core/src/option-fills.ts` contains an isolated resolver for `legacy_open_slippage`, `conservative_quote`, and `post_and_wait`.
-- `lib/backtest-core/src/option-fills.test.ts` covers legacy open behavior, bid/ask fills, missing quotes, crossed quotes, wide quotes, stale quotes, post-and-wait fill/no-fill, and post-and-wait crossing.
+- `lib/backtest-core/src/option-fills.validation.ts` covers legacy open behavior, bid/ask fills, missing quotes, crossed quotes, wide quotes, stale quotes, post-and-wait fill/no-fill, and post-and-wait crossing.
 - Shared-engine behavior is unchanged. The worker has a dormant internal `conservative_quote` opt-in policy path, but existing backtests remain on the old open-plus-slippage/aggregate-bar model unless `optionFillModel` is explicitly set and quote replay is eligible. `post_and_wait` remains isolated shared-resolver groundwork until worker pending-order aging has end-to-end fixtures.
 
 Plan review correction:
@@ -171,7 +171,7 @@ Implementation stages:
 | Stage | Implement? | Exact Work | Regression Gate |
 | --- | --- | --- | --- |
 | 4A. User-facing path/data audit | Yes, first | Prove which run modes use shared `runBacktest` vs worker `runOptionsBacktest`. Confirm whether `/bars`, `normalizeBar`, `historical_bars`, and chart replay carry bid/ask/quote timestamps. This audit is the gate before any runtime behavior change. | A doc/code comment or test fixture records that current provider option bars are quote-empty. No UI selector is added while the user-facing worker path lacks quote data. |
-| 4B. Shared resolver foundation | Done for first slice | Keep `resolveOptionFill` in `lib/backtest-core` as the single quote-quality and fill-price contract. Do not duplicate quote validation in the worker. | `option-fills.test.ts` stays green and covers the quote rejection matrix. |
+| 4B. Shared resolver foundation | Done for first slice | Keep `resolveOptionFill` in `lib/backtest-core` as the single quote-quality and fill-price contract. Do not duplicate quote validation in the worker. | `option-fills.validation.ts` stays green and covers the quote rejection matrix. |
 | 4C. Quote-data availability decision | Done | Current Massive Options Developer history is aggregate/OHLCV-only for this app path. Historical quote replay remains unavailable, so user-facing conservative fills stay blocked by default. | Decision is recorded with provider/source notes and local tests proving current bars are quote-empty. |
 | 4D. Historical-bar quote storage contract | Done as dormant infrastructure | Add nullable `bid`, `ask`, `mid`, `quoteAsOf`, and `providerContractId` columns to historical bar storage and keep old OHLCV rows valid. | Worker storage fixtures cover old OHLCV rows and quote-enriched rows. |
 | 4E. API bar contract quote fields | Done as dormant infrastructure | Extend internal `Bar` schema and bridge/client types to allow optional quote fields. Generated clients are refreshed. | API contract tests parse both old OHLCV bars and quote-enriched option bars; `audit:api-codegen` passes. |
@@ -179,17 +179,17 @@ Implementation stages:
 | 4G. Worker fill policy | Done, opt-in/internal only | Use the shared resolver for entries, flip exits, risk exits, and run-end liquidation only when internal `optionFillModel` is `conservative_quote` and quote replay is eligible. `post_and_wait` is not enabled in the worker yet. | Worker policy tests cover buy-at-ask, sell-at-bid, missing/stale/crossed/wide no-fill, and legacy-off behavior. |
 | 4H. No-fill warnings and pending rules | Done as dormant infrastructure | Add deterministic warning formatting and entry skip / pending-exit handling in the opt-in worker path. | Helper tests prove warning content; worker end-to-end fixtures cover entry expiry, exit persistence, and run-end liquidation over quote-populated option bars. |
 | 4I. Same-bar conservative tie break | Done as dormant infrastructure | Add same-bar hard-stop handling for long option conflicts in the opt-in worker path. Legacy aggregate behavior remains unchanged when no policy is selected. | Worker helper fixture proves same-bar stop path; public exposure remains blocked by provider-backed quote-data availability rather than missing helper coverage. |
-| 4J. Shared engine opt-in | Done | Add an optional option-fill policy to `ExecutionProfile` only for shared-core synthetic/quote-populated runs and future non-worker option paths. If absent, `runBacktest` executes legacy logic. | Existing `engine.test.ts` legacy trades and metrics are unchanged. New shared-core tests cover quote-populated bars and rejected run-end liquidation without claiming to represent the worker path. |
+| 4J. Shared engine opt-in | Done | Add an optional option-fill policy to `ExecutionProfile` only for shared-core synthetic/quote-populated runs and future non-worker option paths. If absent, `runBacktest` executes legacy logic. | Existing `engine.validation.ts` legacy trades and metrics are unchanged. New shared-core tests cover quote-populated bars and rejected run-end liquidation without claiming to represent the worker path. |
 | 4K. API/UI exposure | Done as no-exposure decision | Do not expose a user-facing fill-model selector until the worker path can enforce the selected model on real provider-backed quote data. No public API/UI schema is changed in this slice. | UI remains unchanged because the selected policy would not yet affect real user-facing option backtests on the current data plan. |
 
 Validation commands for this slice:
 
-- `pnpm --dir artifacts/backtest-worker exec node --import tsx --test src/*.test.ts`
+- `pnpm --dir artifacts/backtest-worker exec node JS validation runner src/*.validation.ts`
 - `pnpm --dir artifacts/backtest-worker run typecheck`
-- `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/bar-contract.test.ts`
+- `pnpm --filter @workspace/api-server exec node JS validation runner src/services/bar-contract.validation.ts`
 - `pnpm --filter @workspace/api-server run typecheck`
-- `pnpm --dir artifacts/api-server exec node --import tsx --test ../../lib/backtest-core/src/option-fills.test.ts ../../lib/backtest-core/src/engine.test.ts`
-- `pnpm --dir artifacts/backtest-worker exec node --import tsx --test src/option-fill-worker-e2e.test.ts`
+- `pnpm --dir artifacts/api-server exec node JS validation runner ../../lib/backtest-core/src/option-fills.validation.ts ../../lib/backtest-core/src/engine.validation.ts`
+- `pnpm --dir artifacts/backtest-worker exec node JS validation runner src/option-fill-worker-e2e.validation.ts`
 - `pnpm run audit:api-codegen`
 - `pnpm run audit:markdown-paths`
 - `git diff --check -- docs/plans/awesome-quant-pyrus-improvements.md artifacts/backtest-worker/src/index.ts artifacts/backtest-worker/src/backtest-bars.ts artifacts/backtest-worker/src/option-fill-policy.ts lib/api-spec/openapi.yaml lib/db/src/schema/backtesting.ts lib/ibkr-contracts/src/client.ts artifacts/api-server/src/providers/ibkr/bridge-client.ts`
@@ -221,7 +221,7 @@ Implementation stages:
 
 | Stage | Implement? | Exact Work | Regression Gate |
 | --- | --- | --- | --- |
-| 5A. Warning model | Done | Added typed warnings in `lib/backtest-core` for low trade count, too many trials, missing out-of-sample window, drawdown duration, unstable Sharpe, and insufficient sample size. Existing metric fields remain unchanged; string warnings remain available. | `analytics.test.ts` covers each warning family, healthy no-warning output, stable payload shape, and existing advanced metric fields. |
+| 5A. Warning model | Done | Added typed warnings in `lib/backtest-core` for low trade count, too many trials, missing out-of-sample window, drawdown duration, unstable Sharpe, and insufficient sample size. Existing metric fields remain unchanged; string warnings remain available. | `analytics.validation.ts` covers each warning family, healthy no-warning output, stable payload shape, and existing advanced metric fields. |
 | 5B. UI display | Yes | Surface warnings in existing backtesting panels without chart rewrites. Missing warning data renders nothing. | UI model tests prove old runs render unchanged and new warnings display without requiring new API fields unless a schema task is opened. |
 
 ### 4. Portfolio Optimization Libraries
@@ -401,7 +401,7 @@ Implementation note:
 
 **Dependencies:** Tasks 1-2
 
-**Files touched:** `lib/backtest-core/src/option-fills.ts`, `lib/backtest-core/src/option-fills.test.ts`, `lib/backtest-core/src/types.ts`, `lib/backtest-core/src/index.ts`
+**Files touched:** `lib/backtest-core/src/option-fills.ts`, `lib/backtest-core/src/option-fills.validation.ts`, `lib/backtest-core/src/types.ts`, `lib/backtest-core/src/index.ts`
 
 **Estimated scope:** Medium
 
@@ -438,7 +438,7 @@ Task 3 resolver contract
 
 **Verification:**
 
-- [x] `pnpm --dir artifacts/backtest-worker exec node --import tsx --test src/backtest-execution-mode.test.ts`
+- [x] `pnpm --dir artifacts/backtest-worker exec node JS validation runner src/backtest-execution-mode.validation.ts`
 - [x] `pnpm --dir artifacts/backtest-worker run typecheck`
 
 **Dependencies:** Task 3
@@ -447,7 +447,7 @@ Task 3 resolver contract
 
 - `artifacts/backtest-worker/src/index.ts`
 - `artifacts/backtest-worker/src/backtest-execution.ts`
-- `artifacts/backtest-worker/src/backtest-execution-mode.test.ts`
+- `artifacts/backtest-worker/src/backtest-execution-mode.validation.ts`
 
 **Estimated scope:** Small
 
@@ -455,7 +455,7 @@ Task 3 resolver contract
 
 - Added `artifacts/backtest-worker/src/backtest-execution.ts` with `resolveBacktestExecutionMode`, `shouldRunOptionsBacktest`, and `shouldRankWalkForwardCandidatesWithSharedCore`.
 - Refactored `artifacts/backtest-worker/src/index.ts` to use those helpers without changing runtime fill behavior.
-- Regression guard: `artifacts/backtest-worker/src/backtest-execution-mode.test.ts` covers supported execution modes, Pyrus Signals option routing, non-Pyrus fallback, and spot-only walk-forward candidate ranking.
+- Regression guard: `artifacts/backtest-worker/src/backtest-execution-mode.validation.ts` covers supported execution modes, Pyrus Signals option routing, non-Pyrus fallback, and spot-only walk-forward candidate ranking.
 
 #### Task 4B: Guard Current Worker Option-Bar Shape
 
@@ -469,7 +469,7 @@ Task 3 resolver contract
 
 **Verification:**
 
-- [x] `pnpm --dir artifacts/backtest-worker exec node --import tsx --test src/option-bar-shape.test.ts`
+- [x] `pnpm --dir artifacts/backtest-worker exec node JS validation runner src/option-bar-shape.validation.ts`
 - [x] `pnpm --dir artifacts/backtest-worker run typecheck`
 
 **Dependencies:** Task 4A
@@ -478,7 +478,7 @@ Task 3 resolver contract
 
 - `artifacts/backtest-worker/src/index.ts`
 - `artifacts/backtest-worker/src/backtest-bars.ts`
-- `artifacts/backtest-worker/src/option-bar-shape.test.ts`
+- `artifacts/backtest-worker/src/option-bar-shape.validation.ts`
 
 **Estimated scope:** Small
 
@@ -486,7 +486,7 @@ Task 3 resolver contract
 
 - Added `artifacts/backtest-worker/src/backtest-bars.ts` with explicit API normalization, persisted-row normalization, nullable quote insert mapping, and aggregate option-bar warning constants.
 - Refactored `artifacts/backtest-worker/src/index.ts` to use the bar helpers for `/bars` responses, historical bar inserts, and cached row loading.
-- Regression guard: `artifacts/backtest-worker/src/option-bar-shape.test.ts` proves current provider bars remain quote-empty and that the warning copy stays explicit.
+- Regression guard: `artifacts/backtest-worker/src/option-bar-shape.validation.ts` proves current provider bars remain quote-empty and that the warning copy stays explicit.
 
 ### Checkpoint: Option Fill Data Gate
 
@@ -523,12 +523,12 @@ Task 3 resolver contract
 - Decision: historical quote data is unavailable for conservative worker fills on the current app path. The worker must keep aggregate option fills and explicit warnings until per-contract historical bid/ask quotes with timestamps are available and persisted end to end.
 - Human/product decision: implement Task 4D-4I as dormant, opt-in infrastructure now, without approving a provider upgrade, public UI selector, or default fill-behavior change.
 - Existing `/bars` source: `artifacts/api-server/src/routes/platform.ts#/bars` calls `getBarsWithDebug`. The generated `Bar` contract now allows optional `bid`, `ask`, `mid`, `quoteAsOf`, and `providerContractId`, but the current provider-backed option path does not populate historical quote records on the Massive Options Developer plan.
-- Existing worker path: `artifacts/backtest-worker/src/backtest-bars.ts` now normalizes, stores, and reloads optional quote fields when present. `artifacts/backtest-worker/src/option-bar-shape.test.ts` remains the guard that current provider bars stay quote-empty.
+- Existing worker path: `artifacts/backtest-worker/src/backtest-bars.ts` now normalizes, stores, and reloads optional quote fields when present. `artifacts/backtest-worker/src/option-bar-shape.validation.ts` remains the guard that current provider bars stay quote-empty.
 - Option chart/reference source: `getOptionChartBarsWithDebug` can fetch Massive option aggregates and can use IBKR midpoint history, but those are still bar-price series, not per-bar NBBO quote records.
 - Option quote snapshot cache: usable for live/current valuation and the explicit `allowStudyFallback` one-bar chart fallback only. It is not a historical quote replay source and must not be used to backfill historical fills.
 - Provider docs: Massive documents `/v3/quotes/{optionsTicker}` as historical option quotes with bid/ask prices, sizes, exchange identifiers, and timestamps, but the same plan table shows the endpoint is not included for Options Developer and is available at Options Advanced/business tiers. Massive options flat-file quotes are likewise not included for Options Developer. Sources: [Massive options quotes](https://massive.com/docs/rest/options/trades-quotes/quotes), [Massive options flat-file quotes](https://massive.com/docs/flat-files/options/quotes).
 - Broker docs: IBKR Client Portal historical bars support a `source` parameter with `Trades`, `Midpoint`, and `Bid_Ask`, but the current bridge returns `BrokerBarSnapshot` as OHLCV bars, not distinct bid/ask quote records. IBKR also documents historical-data limits for expired options and EOD option data, so it is not a sufficient default NBBO replay source for user-facing backtests. Source: [IBKR Client Portal historical market data](https://www.interactivebrokers.com/campus/ibkr-api-page/cpapi-v1/).
-- No live provider check was used for this decision. Repeatable local evidence is covered by `pnpm --dir artifacts/backtest-worker exec node --import tsx --test src/option-bar-shape.test.ts src/option-bar-replay.test.ts src/option-fill-policy.test.ts` and the generated `lib/api-zod/src/generated/types/bar.ts` contract.
+- No live provider check was used for this decision. Repeatable local evidence is covered by `pnpm --dir artifacts/backtest-worker exec node JS validation runner src/option-bar-shape.validation.ts src/option-bar-replay.validation.ts src/option-fill-policy.validation.ts` and the generated `lib/api-zod/src/generated/types/bar.ts` contract.
 - Production-enable criteria: a paid/provider capability is confirmed and wired for historical option quote records. The synthetic quote-populated worker fixtures and shared-engine opt-in are now complete; reopen Task 4K only when real provider-backed quote replay can make the public selector affect user-facing option backtests.
 
 #### Task 4D: Add Historical-Bar Quote Storage Contract
@@ -553,8 +553,8 @@ Task 3 resolver contract
 - `lib/db/src/schema/backtesting.ts`
 - `lib/db/migrations/20260530_historical_bar_quote_fields.sql`
 - `artifacts/backtest-worker/src/backtest-bars.ts`
-- `artifacts/backtest-worker/src/option-bar-shape.test.ts`
-- `artifacts/backtest-worker/src/option-bar-replay.test.ts`
+- `artifacts/backtest-worker/src/option-bar-shape.validation.ts`
+- `artifacts/backtest-worker/src/option-bar-replay.validation.ts`
 
 **Estimated scope:** Medium
 
@@ -590,7 +590,7 @@ Task 3 resolver contract
 - `lib/api-zod/src/generated/types/bar.ts`
 - `artifacts/api-server/src/providers/ibkr/bridge-client.ts`
 - `lib/ibkr-contracts/src/client.ts`
-- `artifacts/api-server/src/services/bar-contract.test.ts`
+- `artifacts/api-server/src/services/bar-contract.validation.ts`
 
 **Estimated scope:** Medium
 
@@ -610,7 +610,7 @@ Task 3 resolver contract
 
 **Verification:**
 
-- [x] `pnpm --dir artifacts/backtest-worker exec node --import tsx --test src/option-bar-replay.test.ts`
+- [x] `pnpm --dir artifacts/backtest-worker exec node JS validation runner src/option-bar-replay.validation.ts`
 - [x] `pnpm --dir artifacts/backtest-worker run typecheck`
 
 **Dependencies:** Task 4D, Task 4E
@@ -619,7 +619,7 @@ Task 3 resolver contract
 
 - `artifacts/backtest-worker/src/index.ts`
 - `artifacts/backtest-worker/src/backtest-bars.ts`
-- `artifacts/backtest-worker/src/option-bar-replay.test.ts`
+- `artifacts/backtest-worker/src/option-bar-replay.validation.ts`
 - `artifacts/backtest-worker/src/option-fill-policy.ts`
 
 **Estimated scope:** Medium
@@ -638,14 +638,14 @@ Task 3 resolver contract
 
 - [x] Worker fixtures cover buy-at-ask, sell-at-bid, missing quote, crossed quote, stale quote, and wide quote.
 - [x] `pnpm --dir artifacts/backtest-worker run typecheck`
-- [x] `pnpm --dir artifacts/api-server exec node --import tsx --test ../../lib/backtest-core/src/option-fills.test.ts`
+- [x] `pnpm --dir artifacts/api-server exec node JS validation runner ../../lib/backtest-core/src/option-fills.validation.ts`
 
 **Dependencies:** Task 4F
 
 **Files likely touched:**
 
 - `artifacts/backtest-worker/src/index.ts`
-- `artifacts/backtest-worker/src/option-fill-policy.test.ts`
+- `artifacts/backtest-worker/src/option-fill-policy.validation.ts`
 - `lib/backtest-core/src/option-fills.ts`
 
 **Estimated scope:** Medium
@@ -671,7 +671,7 @@ Task 3 resolver contract
 **Files likely touched:**
 
 - `artifacts/backtest-worker/src/index.ts`
-- `artifacts/backtest-worker/src/option-fill-policy.test.ts`
+- `artifacts/backtest-worker/src/option-fill-policy.validation.ts`
 
 **Estimated scope:** Medium
 
@@ -696,7 +696,7 @@ Task 3 resolver contract
 **Files likely touched:**
 
 - `artifacts/backtest-worker/src/index.ts`
-- `artifacts/backtest-worker/src/option-fill-policy.test.ts`
+- `artifacts/backtest-worker/src/option-fill-policy.validation.ts`
 
 **Estimated scope:** Small
 
@@ -721,7 +721,7 @@ Task 3 resolver contract
 
 **Verification:**
 
-- [x] `pnpm --dir artifacts/api-server exec node --import tsx --test ../../lib/backtest-core/src/engine.test.ts ../../lib/backtest-core/src/option-fills.test.ts`
+- [x] `pnpm --dir artifacts/api-server exec node JS validation runner ../../lib/backtest-core/src/engine.validation.ts ../../lib/backtest-core/src/option-fills.validation.ts`
 - [x] `pnpm run typecheck:libs`
 
 **Dependencies:** Task 4G, unless needed earlier for synthetic-only tests
@@ -730,7 +730,7 @@ Task 3 resolver contract
 
 - `lib/backtest-core/src/engine.ts`
 - `lib/backtest-core/src/types.ts`
-- `lib/backtest-core/src/engine.test.ts`
+- `lib/backtest-core/src/engine.validation.ts`
 - `lib/backtest-core/src/option-fills.ts`
 
 **Estimated scope:** Medium
@@ -796,7 +796,7 @@ Task 3 resolver contract
 
 **Dependencies:** Task 1
 
-**Files likely touched:** `lib/backtest-core/src/analytics.ts`, `lib/backtest-core/src/types.ts`, `lib/backtest-core/src/analytics.test.ts`, backtesting UI model files
+**Files likely touched:** `lib/backtest-core/src/analytics.ts`, `lib/backtest-core/src/types.ts`, `lib/backtest-core/src/analytics.validation.ts`, backtesting UI model files
 
 **Estimated scope:** Medium
 
@@ -1196,12 +1196,12 @@ QUALITY TARGET: behavior + edge + error for routing and data-shape helpers
 
 Required tests:
 
-- `artifacts/backtest-worker/src/backtest-execution-mode.test.ts`
-- `artifacts/backtest-worker/src/option-bar-shape.test.ts`
+- `artifacts/backtest-worker/src/backtest-execution-mode.validation.ts`
+- `artifacts/backtest-worker/src/option-bar-shape.validation.ts`
 
 Required commands:
 
-- `pnpm --dir artifacts/backtest-worker exec node --import tsx --test src/backtest-execution-mode.test.ts src/option-bar-shape.test.ts`
+- `pnpm --dir artifacts/backtest-worker exec node JS validation runner src/backtest-execution-mode.validation.ts src/option-bar-shape.validation.ts`
 - `pnpm --dir artifacts/backtest-worker run typecheck`
 - `pnpm run audit:markdown-paths`
 
@@ -1214,7 +1214,7 @@ Required commands:
 | Bar-shape test checks only TypeScript types, not normalized runtime objects. | Yes, Task 4B requires normalized/persisted shape proof. | Prevents false confidence that bid/ask are available. |
 | Quote availability relies on an ad hoc live check with no repeatable evidence. | Yes, Task 4C requires a repeatable command or fixture. | Prevents shipping a plan based on a transient provider result. |
 
-Critical silent gaps: none in the scoped `4A-4C` plan after helper extraction.
+Priority silent gaps: none in the scoped `4A-4C` plan after helper extraction.
 
 ### Performance Review
 
@@ -1240,12 +1240,12 @@ Synthesized from this review's findings. Each task derives from a specific findi
 
 - [ ] **T1 (P2, human: ~45m / CC: ~10m)** — backtest-worker — Extract routing helper and tests
   - Surfaced by: Architecture Review — avoid importing the side-effectful worker entrypoint.
-  - Files: `artifacts/backtest-worker/src/backtest-execution.ts`, `artifacts/backtest-worker/src/backtest-execution-mode.test.ts`, `artifacts/backtest-worker/src/index.ts`
-  - Verify: `pnpm --dir artifacts/backtest-worker exec node --import tsx --test src/backtest-execution-mode.test.ts`
+  - Files: `artifacts/backtest-worker/src/backtest-execution.ts`, `artifacts/backtest-worker/src/backtest-execution-mode.validation.ts`, `artifacts/backtest-worker/src/index.ts`
+  - Verify: `pnpm --dir artifacts/backtest-worker exec node JS validation runner src/backtest-execution-mode.validation.ts`
 - [ ] **T2 (P2, human: ~45m / CC: ~10m)** — backtest-worker — Extract bar-shape helper and tests
   - Surfaced by: Test Review — prove current provider option bars are quote-empty at runtime, not only in type declarations.
-  - Files: `artifacts/backtest-worker/src/backtest-bars.ts`, `artifacts/backtest-worker/src/option-bar-shape.test.ts`, `artifacts/backtest-worker/src/index.ts`
-  - Verify: `pnpm --dir artifacts/backtest-worker exec node --import tsx --test src/option-bar-shape.test.ts`
+  - Files: `artifacts/backtest-worker/src/backtest-bars.ts`, `artifacts/backtest-worker/src/option-bar-shape.validation.ts`, `artifacts/backtest-worker/src/index.ts`
+  - Verify: `pnpm --dir artifacts/backtest-worker exec node JS validation runner src/option-bar-shape.validation.ts`
 - [ ] **T3 (P2, human: ~30m / CC: ~5m)** — plan — Record quote-data availability decision
   - Surfaced by: Architecture Review — conservative worker fills must be blocked until quote data is proven.
   - Files: `docs/plans/awesome-quant-pyrus-improvements.md`
@@ -1265,7 +1265,7 @@ Completion summary:
 - NOT in scope: written.
 - What already exists: written.
 - TODOS.md updates: 0 items proposed.
-- Failure modes: 0 critical silent gaps.
+- Failure modes: 0 priority silent gaps.
 - Outside voice: skipped.
 - Parallelization: 1 sequential lane, 0 parallel lanes.
 - Lake Score: 1/1 recommendations chose the complete option.
@@ -1276,7 +1276,7 @@ Completion summary:
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | not run | Not required for scoped `4A-4C` engineering gate |
 | Codex Review | `/codex review` | Independent 2nd opinion | 0 | skipped | Outside voice skipped for scoped review |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | clear | 1 issue found and resolved, 0 critical gaps |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | clear | 1 issue found and resolved, 0 priority gaps |
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | not run | No UI changes in scoped `4A-4C` review |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | not run | No developer workflow changes beyond targeted tests |
 

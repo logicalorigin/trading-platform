@@ -3,19 +3,16 @@ import { FailurePointTooltip } from "../../components/platform/FailurePointToolt
 import { buildFailurePointFromAlgoAttentionItem } from "../../features/platform/failurePointModel.js";
 
 const severityWeight = (severity) => {
-  if (severity === "critical") return 0;
   if (severity === "warning") return 1;
   return 2;
 };
 
 const severityIcon = (severity) => {
-  if (severity === "critical") return "!";
   if (severity === "warning") return "⚠";
   return "·";
 };
 
 const severityColor = (severity) => {
-  if (severity === "critical") return CSS_COLOR.red;
   if (severity === "warning") return CSS_COLOR.amber;
   return CSS_COLOR.cyan;
 };

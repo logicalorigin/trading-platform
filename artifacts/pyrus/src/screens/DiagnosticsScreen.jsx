@@ -200,7 +200,6 @@ const formatFreshnessAge = (value) => {
 };
 
 const severityTone = (severity) => {
-  if (severity === "critical") return "var(--ra-toast-critical)";
   if (severity === "warning") return "var(--ra-toast-warning)";
   if (severity === "success") return "var(--ra-toast-success)";
   return "var(--ra-toast-info)";
@@ -456,11 +455,9 @@ const Sparkline = ({ points, metricKey, subsystem }) => {
       </div>
     );
   }
-  const tone = data.some((point) => point.severity === "critical")
-    ? CSS_COLOR.red
-    : data.some((point) => point.severity === "warning")
-      ? CSS_COLOR.amber
-      : CSS_COLOR.green;
+  const tone = data.some((point) => point.severity === "warning")
+    ? CSS_COLOR.amber
+    : CSS_COLOR.green;
   return (
     <MicroSparkline
       data={values}
@@ -826,7 +823,7 @@ export default function DiagnosticsScreen({
       const oscillator = context.createOscillator();
       const gain = context.createGain();
       oscillator.type = "sine";
-      oscillator.frequency.value = severity === "critical" ? 880 : 520;
+      oscillator.frequency.value = severity === "warning" ? 520 : 440;
       gain.gain.setValueAtTime(0.001, context.currentTime);
       gain.gain.exponentialRampToValueAtTime(
         Math.max(0.001, 0.12 * (alertVolume / 100)),
@@ -855,9 +852,7 @@ export default function DiagnosticsScreen({
     });
     alertsRef.current = result.alerts;
     setAlertsByKey(result.alerts);
-    const notification =
-      result.notifications.find((alert) => alert.severity === "critical") ||
-      result.notifications[0];
+    const notification = result.notifications[0];
     if (notification) {
       playAlert(notification.severity);
       requestDesktopAlert(notification, notificationPreferences);
@@ -1716,7 +1711,6 @@ export default function DiagnosticsScreen({
           <Panel title="Browser Events">
             <StateRow label="Events / 5m" value={formatCount(browserMetrics.eventCount5m)} />
             <StateRow label="Warnings / 5m" value={formatCount(browserMetrics.warningCount5m)} tone={browserMetrics.warningCount5m > 0 ? CSS_COLOR.amber : CSS_COLOR.green} />
-            <StateRow label="Critical / 5m" value={formatCount(browserMetrics.criticalCount5m)} tone={browserMetrics.criticalCount5m > 0 ? CSS_COLOR.red : CSS_COLOR.green} />
             <StateRow label="Last category" value={browserMetrics.lastCategory} />
             <StateRow label="Last event" value={browserMetrics.lastEventAt ? formatAgo(browserMetrics.lastEventAt) : MISSING_VALUE} />
           </Panel>

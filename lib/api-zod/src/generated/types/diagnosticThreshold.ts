@@ -12,7 +12,6 @@ export interface DiagnosticThreshold {
   subsystem: string;
   unit: string;
   warning: number;
-  critical: number;
   enabled: boolean;
   audible: boolean;
   description: string;

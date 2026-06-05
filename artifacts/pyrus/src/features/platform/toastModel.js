@@ -1,7 +1,6 @@
 export const TOAST_OVERLAY_Z_INDEX = 11_000;
 
 const TOAST_KIND_ALIASES = Object.freeze({
-  critical: "error",
   danger: "error",
   warn: "warn",
   warning: "warn",

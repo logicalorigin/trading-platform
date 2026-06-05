@@ -5,7 +5,6 @@ export type ToastKind =
   | "error"
   | "warn"
   | "warning"
-  | "critical"
   | "info"
   | "algo";
 

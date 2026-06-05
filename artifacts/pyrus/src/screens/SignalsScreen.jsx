@@ -258,6 +258,8 @@ const SIGNALS_TABLE_SPARKLINE_BATCH_SIZE = 8;
 const SIGNALS_TABLE_SPARKLINE_BATCH_CONCURRENCY = 1;
 const SIGNALS_TABLE_SPARKLINE_VISIBLE_FALLBACK_LIMIT = 12;
 const SIGNALS_TABLE_FALLBACK_SPARKLINE_POINTS = 18;
+const SIGNALS_TABLE_MIN_HEIGHT_DESKTOP = 560;
+const SIGNALS_TABLE_MIN_HEIGHT_PHONE = 520;
 const SIGNALS_TABLE_SPARKLINE_REQUEST_OPTIONS = buildBarsRequestOptions(
   BARS_REQUEST_PRIORITY.visible,
   "signals-table-sparkline",
@@ -3410,14 +3412,18 @@ export default function SignalsScreen({
     () => {
       const seen = new Set();
       const symbols = [];
-      visibleHydrationSymbols.filter(Boolean).forEach((symbol) => {
+      [
+        selectedSymbol,
+        ...visibleHydrationSymbols,
+        ...filteredRows.map((row) => row?.symbol),
+      ].filter(Boolean).forEach((symbol) => {
         if (seen.has(symbol)) return;
         seen.add(symbol);
         symbols.push(symbol);
       });
       return symbols;
     },
-    [visibleHydrationSymbols],
+    [filteredRows, selectedSymbol, visibleHydrationSymbols],
   );
   const matrixHydrationPlan = useMemo(
     () =>
@@ -3509,7 +3515,7 @@ export default function SignalsScreen({
 
   useEffect(() => {
     onReadinessChange?.({
-      criticalReady: Boolean(active),
+      primaryReady: Boolean(active),
       derivedReady: Boolean(active),
       backgroundAllowed: Boolean(active),
     });
@@ -3518,7 +3524,6 @@ export default function SignalsScreen({
   useEffect(() => {
     if (
       !active ||
-      !visibleHydrationSymbols.length ||
       !matrixHydrationPlan.symbols.length ||
       !matrixHydrationPlan.missingCellCount
     ) {
@@ -3533,11 +3538,12 @@ export default function SignalsScreen({
       requestSymbols: matrixHydrationPlan.requestSymbols,
       requestCells: matrixHydrationPlan.requestCells,
       timeframes: matrixHydrationRequestTimeframes,
+      clientRole: "algo-sta",
+      requestOrigin: "sta-visible-page",
       reason: "signals-screen",
     });
   }, [
     active,
-    visibleHydrationSymbols.length,
     matrixHydrationPlan.missingCellCount,
     matrixHydrationPlan.missingSymbols,
     matrixHydrationPlan.missingTimeframesBySymbol,
@@ -3604,6 +3610,8 @@ export default function SignalsScreen({
       requestSymbols: matrixHydrationPlan.requestSymbols,
       requestCells: matrixHydrationPlan.requestCells,
       timeframes: matrixHydrationRequestTimeframes,
+      clientRole: "algo-sta",
+      requestOrigin: "sta-visible-page",
       reason: "signals-refresh",
       force: true,
     });
@@ -4048,6 +4056,9 @@ export default function SignalsScreen({
   const activeSignalCount = Math.max(1, summary.active || 0);
   const trackedCount = Math.max(1, summary.total || 0);
   const minTableWidth = phone ? dim(1120) : dim(1460);
+  const minTableHeight = phone
+    ? SIGNALS_TABLE_MIN_HEIGHT_PHONE
+    : SIGNALS_TABLE_MIN_HEIGHT_DESKTOP;
   const activeWatchlistId = getActiveWatchlistId(profile, defaultWatchlist);
 
   if (!active) {
@@ -4061,15 +4072,15 @@ export default function SignalsScreen({
         height: "100%",
         minHeight: 0,
         display: "grid",
-        gridTemplateRows: phone ? "auto minmax(360px, 1fr)" : "auto minmax(0, 1fr)",
+        gridTemplateRows: `auto minmax(${dim(minTableHeight)}, 1fr)`,
         gap: sp(10),
         padding: phone ? sp(10) : sp(14),
         background: CSS_COLOR.bg0,
         color: CSS_COLOR.text,
         fontFamily: T.sans,
         overflowX: "hidden",
-        overflowY: phone ? "auto" : "hidden",
-        WebkitOverflowScrolling: phone ? "touch" : undefined,
+        overflowY: "auto",
+        WebkitOverflowScrolling: "touch",
       }}
     >
       <header
@@ -4367,7 +4378,7 @@ export default function SignalsScreen({
 
       <div
         style={{
-          minHeight: 0,
+          minHeight: dim(minTableHeight),
           display: "grid",
           gridTemplateColumns: "minmax(0, 1fr)",
           gap: sp(10),
@@ -4377,7 +4388,7 @@ export default function SignalsScreen({
           noPad
           data-testid="signals-table-card"
           style={{
-            minHeight: 0,
+            minHeight: dim(minTableHeight),
             display: "grid",
             gridTemplateRows: "auto minmax(0, 1fr)",
             overflow: "hidden",
@@ -4404,6 +4415,7 @@ export default function SignalsScreen({
               title="Loading signals"
               detail="Fetching signal monitor state."
               loading
+              loadingEndpoint="/api/signal-monitor/state"
               minHeight={240}
               fill
             />

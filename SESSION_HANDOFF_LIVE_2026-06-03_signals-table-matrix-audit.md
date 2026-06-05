@@ -13,7 +13,7 @@
   - Added an optional `anchorPrice` input to the GEX projection SVG builder.
   - The cone start now anchors by priority: `latestQuotePrice`, then latest chart bar close, then GEX payload `overlay.spot` as a final fallback.
   - Added `latestQuotePrice` to the overlay sync effect dependencies so quote-only changes rebuild the cone position.
-- Guard in `artifacts/pyrus/src/features/gex/gexProjectionChartWiring.test.js`:
+- Guard in `artifacts/pyrus/src/features/gex/gexProjectionChartWiring.validation.js`:
   - Added assertions for the quote/bar/payload fallback order and the `latestQuotePrice` dependency.
 - Validation:
   - PASS: focused chart/GEX suite, 140/140 tests.
@@ -30,14 +30,14 @@
   - Added `signalMatrixForegroundPollMs = signalMonitorDisplayPollMs`.
   - Added `signalMatrixBackgroundPollMs = signalMonitorPollMs`.
   - Active Signals/Algo matrix requests now use the foreground display cadence as their base poll; background matrix work keeps the profile poll interval.
-  - Existing pressure floors still apply afterward, so critical pressure can still raise the floor.
-- Guard in `artifacts/pyrus/src/features/platform/platformRootSource.test.js`:
+  - Existing pressure floors still apply afterward, so  pressure can still raise the floor.
+- Guard in `artifacts/pyrus/src/features/platform/platformRootSource.validation.js`:
   - Added source-level assertions that active matrix polling uses foreground display cadence and background matrix polling uses the profile poll interval.
   - RED confirmed before the implementation patch; the focused test failed on the missing `signalMatrixForegroundPollMs` contract.
 - Updated `docs/backend-data-map.md`:
   - Matrix refresh cadence now explicitly says active Signals/STA matrix polling must not inherit the backend evaluator profile poll interval.
 - Validation:
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/features/platform/signalMatrixScheduler.test.js` - 100/100.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js src/features/platform/signalMatrixScheduler.validation.js` - 100/100.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: scoped `git diff --check`.
   - PASS: safe browser STA sample at `http://127.0.0.1:18747/?pyrusQa=safe` showed Signal Matrix snapshot `pressureLevel: "high"`, `serverPressureLevel: "high"`, and `pollMs: 15000` instead of 60000; follow-up sample saw `/api/signal-monitor/matrix` return `200` with `sourceStrategy: "native_timeframes_live_retry"`, STA `lastPlanExactCellLimit: 120`, no freshness warning, and no console/page errors.
@@ -59,7 +59,7 @@
   - Generic exact-cell high-pressure cap remains 20.
   - Foreground `leader` + `startup`/`poll` exact-cell requests are admitted up to 60 under high pressure.
   - STA visible-page requests remain admitted up to 120 under high pressure.
-  - Critical pressure remains capped at 10.
+  -  pressure remains capped at 10.
   - Foreground exact-cell leaders stay source-backed under high pressure instead of cache-only.
   - Exact-cell leaders can await a fresh matrix refresh under normal/watch and protected high-pressure foreground/STA request classes.
   - Matrix live-edge evaluation uses Massive aggregate stream/cache bars with `includeProvisionalLiveEdge: true` and `allowHistoricalFallback: false`; when live-edge history is not warm, stored state is preserved and historical REST is not used for live pickup.
@@ -68,10 +68,10 @@
 - Updated `docs/backend-data-map.md` with the 6-3 API diagnosis rules:
   - Signal matrix pickup is candle-close + short grace, not a 5m polling/stale-window gate.
   - Live STA matrix pickup should use Massive WebSocket aggregate/cache data; `/bars` is chart/backtest/historical and must not be the live Signal Monitor trigger.
-  - Pressure caps are documented by request class: generic high 20, foreground high 60, STA visible high 120, critical 10.
+  - Pressure caps are documented by request class: generic high 20, foreground high 60, STA visible high 120,  10.
 - Validation:
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/platform/platformRootSource.test.js` - 100/100.
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts` - 77/77.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/signalMatrixScheduler.validation.js src/features/platform/platformRootSource.validation.js` - 100/100.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts` - 77/77.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: `pnpm --filter @workspace/api-server run typecheck`.
   - PASS: scoped `git diff --check`.
@@ -92,7 +92,7 @@
 - QA found and fixed an unrelated Signal Monitor matrix startup issue:
   - Symptom before the fix: under API pressure `high`, the generic startup matrix request could send 48 cells before the frontend had observed server pressure; backend admission correctly rejected it with `signal_monitor_matrix_cells_limit_exceeded` because generic high-pressure requests are capped at 20 cells.
   - Fix in `artifacts/pyrus/src/features/platform/PlatformApp.jsx`: active-screen matrix requests now use a conservative high-pressure admission cap until server pressure is observed; live reevaluation recomputes the exact-cell cap immediately before request dispatch. The explicit STA visible-page path still keeps the 120-cell high-pressure exception for `clientRole: "algo-sta"` and `requestOrigin: "sta-visible-page"`.
-  - Guard updated in `artifacts/pyrus/src/features/platform/platformRootSource.test.js`.
+  - Guard updated in `artifacts/pyrus/src/features/platform/platformRootSource.validation.js`.
   - Post-fix live safe Algo check: `/api/signal-monitor/matrix` returned `200`; `window.__PYRUS_SIGNAL_MATRIX_SNAPSHOT__` reported `pressureLevel: "high"`, `serverPressureLevel: "high"`, `lastPlanTaskCount: 20`, and `lastPlanExactCellLimit: 20`.
 - Line-usage check after restart:
   - Runtime budget remains `bridgeLineBudget: 200`.
@@ -100,10 +100,10 @@
   - Flow scanner allocation is not currently filling because the market session is `after` with `quietReason: "market_session_quiet"`; runtime shows `scannerPlannedHorizonCount: 0`, `scannerEffectiveConcurrency: 8`, and `scannerMaxDeepScanLines: 187`.
   - This is an after-hours quiet-session pause, not the old 8-10-line scanner underfill or ticker grouping path.
 - Validation:
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/platform/platformRootSource.test.js` - 95/95.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/signalMatrixScheduler.validation.js src/features/platform/platformRootSource.validation.js` - 95/95.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: `git diff --check`.
-  - PASS: post-restart safe Algo Playwright check described above.
+  - PASS: post-restart safe Algo browser QA check described above.
 - No Replit startup, artifact, workflow, env, or runtime-setting control-plane changes were made.
 
 ### Second Restart Check - 2026-06-03T23:20:36Z
@@ -140,11 +140,11 @@
   - PASS: no `radar|Radar|RADAR` matches in active scanner/backend/UI paths: `artifacts/api-server/src`, `artifacts/pyrus/src/features/platform`, `artifacts/pyrus/src/screens/algo`, `AlgoScreen.jsx`, `DiagnosticsScreen.jsx`.
   - Remaining repo matches are static research/defense datasets where radar is literal company/theme content, not the scanner concept.
 - Validation:
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/options-flow-scanner.test.ts` - 70/70.
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/account-positions.test.ts src/services/watchlist-prewarm.test.ts src/routes/settings.test.ts src/services/market-data-admission.test.ts src/services/ibkr-line-usage.test.ts src/services/flow-universe-planner.test.ts` - 115/115.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/options-flow-scanner.validation.ts` - 70/70.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/account-positions.validation.ts src/services/watchlist-prewarm.validation.ts src/routes/settings.validation.ts src/services/market-data-admission.validation.ts src/services/ibkr-line-usage.validation.ts src/services/flow-universe-planner.validation.ts` - 115/115.
   - PASS: `pnpm --filter @workspace/api-server run typecheck`.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/runtimeControlModel.test.js src/features/platform/headerBroadcastModel.test.js` - 60/60.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js src/features/platform/platformRootSource.test.js` - 91/91.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/runtimeControlModel.validation.js src/features/platform/headerBroadcastModel.validation.js` - 60/60.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/OperationsSignalRow.validation.js src/features/platform/platformRootSource.validation.js` - 91/91.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: `git diff --check`.
 - No Replit startup, artifact, workflow, or env control-plane files were changed for this cleanup.
@@ -159,7 +159,7 @@
 - Implemented visible-page STA matrix hydration:
   - `OperationsSignalTable.jsx`: visible-page matrix requests now include `clientRole: "algo-sta"` and `requestOrigin: "sta-visible-page"`.
   - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`: preserves that request metadata, recomputes the STA request limits under live pressure, and sends the metadata to `/api/signal-monitor/matrix`.
-  - `artifacts/pyrus/src/features/platform/signalMatrixScheduler.js`: generic high-pressure matrix planning remains capped at 20 cells, but the STA visible-page request class can plan up to 120 cells; critical remains capped at 10.
+  - `artifacts/pyrus/src/features/platform/signalMatrixScheduler.js`: generic high-pressure matrix planning remains capped at 20 cells, but the STA visible-page request class can plan up to 120 cells;  remains capped at 10.
 - Implemented backend admission:
   - `artifacts/api-server/src/services/signal-monitor.ts`: `resolveSignalMonitorMatrixExactCells` now allows the 120-cell high-pressure cap only for `algo-sta` + `sta-visible-page`; generic high-pressure exact-cell requests still throw above 20.
   - Updated OpenAPI/generated request enums in `lib/api-spec/openapi.yaml`, `lib/api-zod/src/generated/api.ts`, `lib/api-zod/src/generated/types/*`, and `lib/api-client-react/src/generated/api.schemas.ts`.
@@ -168,8 +168,8 @@
   - Handling rules document source-health stale/degraded behavior, the STA request metadata, and the backend exact-cell exception.
 - Validation:
   - PASS: `git diff --check -- ...` scoped to touched STA/API/docs files.
-  - PASS: `node --import tsx --test src/screens/algo/algoHelpers.test.js src/screens/algo/OperationsSignalRow.test.js src/features/platform/platformRootSource.test.js src/features/platform/signalMatrixScheduler.test.js` from `artifacts/pyrus` - 159/159.
-  - PASS: `node --import tsx --test src/services/signal-monitor.test.ts` from `artifacts/api-server` - 71/71.
+  - PASS: `node JS validation runner src/screens/algo/algoHelpers.validation.js src/screens/algo/OperationsSignalRow.validation.js src/features/platform/platformRootSource.validation.js src/features/platform/signalMatrixScheduler.validation.js` from `artifacts/pyrus` - 159/159.
+  - PASS: `node JS validation runner src/services/signal-monitor.validation.ts` from `artifacts/api-server` - 71/71.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: backend data map fence check: 28 fences, 13 Mermaid blocks, even fence count.
   - RESOLVED later in this session: `pnpm --filter @workspace/api-server run typecheck` now passes after the options-flow radar cleanup above.
@@ -223,12 +223,12 @@
   - Existing signal-options files already include prior live-edge/no-historical-fallback changes.
 - Implemented at `2026-06-03T20:21:09Z`:
   - `artifacts/api-server/src/services/signal-options-automation.ts`: added explicit Signal Options contract-selection status, candidate shell builder, event/merge status propagation, cache-refresh candidate shell hydration, and fast-summary candidates/data-quality.
-  - `artifacts/api-server/src/services/signal-options-automation.test.ts`: added RED/GREEN coverage for pending shell candidates, blocked skipped events, selected contract-selection events, and fast-summary source guard against `candidates: []`.
+  - `artifacts/api-server/src/services/signal-options-automation.validation.ts`: added RED/GREEN coverage for pending shell candidates, blocked skipped events, selected contract-selection events, and fast-summary source guard against `candidates: []`.
   - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.jsx`: STA rows now show `Contract pending`, `Action deferred`, blocked contract-selection reasons, and `Candidate missing` for actionable signals with no candidate; `Monitor only` is reserved for non-actionable signals.
-  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`: added render coverage for pending shells and missing actionable candidates.
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js`: added render coverage for pending shells and missing actionable candidates.
 - Validation for this task:
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts` - 138/138.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js` - 26/26.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-options-automation.validation.ts` - 138/138.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/OperationsSignalRow.validation.js` - 26/26.
   - PASS: `pnpm --filter @workspace/api-server run typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
 - Post-restart runtime check at `2026-06-03T20:27:33Z`:
@@ -245,22 +245,22 @@
   - Fix: header auto-login retries remote 409 to local Windows protocol when possible and treats stale/terminal 404 launch errors as state-clearing failures instead of continuing to show in-flight launch state.
   - Live sanity at `2026-06-03T18:50:52Z`: IBKR still reports `configured=false`, `desktopAgentOnline=false`, expected helper `2026-06-03.ib-async-sidecar-v6`, no active activation, `streamState=offline`; `/api/ibkr/desktops` still only has the stale offline v5 registration from `2026-06-02T14:00:11.483Z`.
   - Scanner planning in the compact runtime sample is no longer the old 8-line symptom: `scannerState=planned`, `scannerEffectiveConcurrency=8`, `scannerMaxDeepScanLines=200`.
-  - Validation: `node --test artifacts/pyrus/src/features/platform/ibkrBridgeSession.test.js` passed 8/8; `pnpm --filter @workspace/pyrus typecheck` passed; `pnpm --filter @workspace/pyrus build` passed; `git diff --check` passed.
+  - Validation: `node validation runner artifacts/pyrus/src/features/platform/ibkrBridgeSession.validation.js` passed 8/8; `pnpm --filter @workspace/pyrus typecheck` passed; `pnpm --filter @workspace/pyrus build` passed; `git diff --check` passed.
 
 - 2026-06-03 12:47 MT shadow account first-paint follow-up:
-  - Post-restart live check showed the running bundle was patched enough for `/api/accounts/shadow/positions?mode=paper&liveQuotes=false` to return 25 rows with negative unrealized PnL around `-1.98k`, but the account-page SSE still did not emit `critical` within a 14s cap.
-  - Root cause: the shadow account-page critical path still let fast risk call a full `ensureFreshShadowState(true)` because totals were not injected, and it also waited on shadow orders before writing the first event.
-  - Source/build fix: `getShadowAccountRisk()` now derives totals from an injected positions response; shadow account-page critical returns positions-derived summary/allocation/risk with deferred closed trades and a stale deferred orders slice; `fetchAccountPageLivePayload()` refreshes real shadow orders after the critical event.
-  - Direct changed-code proof: `fetchAccountPageCriticalPayload({ accountId: "shadow", mode: "paper", orderTab: "working" })` returned in `1628ms` with 25 positions, `unrealizedPnl: -1980.4528`, `netLiquidation: 172699.7372`, non-degraded summary/positions/risk, and deferred orders. `fetchAccountPageLivePayload()` returned in `2448ms` with real non-stale orders and the same PnL.
-  - Validation: `node --import tsx --test src/services/account-page-streams.test.ts src/services/shadow-account.test.ts` passed 127/127; `pnpm --filter @workspace/api-server typecheck` passed; `pnpm --filter @workspace/api-server build` passed; scoped `git diff --check` passed.
+  - Post-restart live check showed the running bundle was patched enough for `/api/accounts/shadow/positions?mode=paper&liveQuotes=false` to return 25 rows with negative unrealized PnL around `-1.98k`, but the account-page SSE still did not emit `` within a 14s cap.
+  - Root cause: the shadow account-page  path still let fast risk call a full `ensureFreshShadowState(true)` because totals were not injected, and it also waited on shadow orders before writing the first event.
+  - Source/build fix: `getShadowAccountRisk()` now derives totals from an injected positions response; shadow account-page  returns positions-derived summary/allocation/risk with deferred closed trades and a stale deferred orders slice; `fetchAccountPageLivePayload()` refreshes real shadow orders after the  event.
+  - Direct changed-code proof: `fetchAccountPagePayload({ accountId: "shadow", mode: "paper", orderTab: "working" })` returned in `1628ms` with 25 positions, `unrealizedPnl: -1980.4528`, `netLiquidation: 172699.7372`, non-degraded summary/positions/risk, and deferred orders. `fetchAccountPageLivePayload()` returned in `2448ms` with real non-stale orders and the same PnL.
+  - Validation: `node JS validation runner src/services/account-page-streams.validation.ts src/services/shadow-account.validation.ts` passed 127/127; `pnpm --filter @workspace/api-server typecheck` passed; `pnpm --filter @workspace/api-server build` passed; scoped `git diff --check` passed.
   - Runtime caveat: current live API PID `76118` started at `2026-06-03 12:39:16 MDT`; rebuilt `artifacts/api-server/dist/index.mjs` is `2026-06-03 12:48:11 MDT`, so the final SSE proof requires one default Run Replit App restart.
 
 - Recovered `SESSION_HANDOFF_2026-06-02_019e8afa-5620-70f1-a4b6-bf40e41e7aa5.md` and `reports/signals-table-audit-2026-06-03.md`.
 - Continued the audit from the post-restart Signals hydration failure and settled-unavailable patch.
 - Fixed the known Signals action-column bug:
   - `artifacts/pyrus/src/screens/SignalsScreen.jsx`
-  - `artifacts/pyrus/src/screens/SignalsScreen.table-cells.test.js`
-  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/screens/SignalsScreen.table-cells.validation.js`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.validation.js`
 - Updated `reports/signals-table-audit-2026-06-03.md` with the continuation data-flow audit, runtime exact-cell probe, and validation results.
 
 ## Data Flow Summary
@@ -292,7 +292,7 @@
 
 - User restarted the app and asked to verify Signals table hydration/data-source wiring.
 - Post-restart diagnostics initially showed API/resource pressure normal and storage/IBKR/Massive reachable.
-- Cold safe browser probe with `pyrus:state:v1` set to `signals` and local `pyrus:signal-matrix-snapshot:v1` cleared did not produce a valid final sample because the Playwright page/browser closed during polling; diagnostics afterward showed API pressure had risen to `high`, dominated by account/shadow routes.
+- Cold safe browser probe with `pyrus:state:v1` set to `signals` and local `pyrus:signal-matrix-snapshot:v1` cleared did not produce a valid final sample because the browser QA page/browser closed during polling; diagnostics afterward showed API pressure had risen to `high`, dominated by account/shadow routes.
 - Current safe browser sample after restart:
   - 21 visible rows.
   - Distribution `{"1":7,"2":2,"4":3,"6":9}`.
@@ -324,15 +324,15 @@
 - Frontend fix in `artifacts/pyrus/src/features/platform/PlatformApp.jsx`:
   - Raised `SIGNAL_MATRIX_REQUEST_TIMEOUT_MS` from `12_000` to `30_000`, because live source-backed exact-cell chunks were observed at ~16.6s.
 - Regression coverage:
-  - `artifacts/api-server/src/services/signal-monitor.test.ts` now asserts incomplete exact-cell automatic leaders are source-backed and complete stored exact-cell responses remain fast-return eligible.
-  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js` now guards the 30s matrix request timeout.
+  - `artifacts/api-server/src/services/signal-monitor.validation.ts` now asserts incomplete exact-cell automatic leaders are source-backed and complete stored exact-cell responses remain fast-return eligible.
+  - `artifacts/pyrus/src/features/platform/platformRootSource.validation.js` now guards the 30s matrix request timeout.
 - Validation passed:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts --test-name-pattern "automatic signal matrix|coverage detects|matrix coverage|stored hydration"` - 64/64.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts --validation-name-pattern "automatic signal matrix|coverage detects|matrix coverage|stored hydration"` - 64/64.
   - `pnpm --filter @workspace/api-server run typecheck`.
   - `pnpm --filter @workspace/pyrus run typecheck`.
   - `pnpm --filter @workspace/api-server run build`.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/signals/signalsMatrixHydration.test.js src/screens/SignalsScreen.table-cells.test.js` - 41/41.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "signal monitor display refreshes separately|signals screen is registered" src/features/platform/platformRootSource.test.js` - 2/2.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/signalMatrixScheduler.validation.js src/features/signals/signalsMatrixHydration.validation.js src/screens/SignalsScreen.table-cells.validation.js` - 41/41.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "signal monitor display refreshes separately|signals screen is registered" src/features/platform/platformRootSource.validation.js` - 2/2.
   - Scoped `git diff --check`.
 - Runtime note: current API process PID `11921` started at `2026-06-03 07:31:27 MT`, before rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 07:36:08 MT`. A default Run Replit App restart is required before live browser QA can prove the fix.
 
@@ -346,10 +346,10 @@
   - This prevents matrix bootstrap from depending exclusively on the standalone profile request when state already contains the same profile data.
 - Backend safety refinement in `artifacts/api-server/src/services/signal-monitor.ts`:
   - Incomplete exact-cell automatic leader requests only await source-backed matrix evaluation under `normal` or `watch` API pressure.
-  - Under `high`/`critical` pressure, they fall back to stored hydration plus background refresh/catch-up instead of adding blocking foreground source work.
+  - Under `high`/`` pressure, they fall back to stored hydration plus background refresh/catch-up instead of adding blocking foreground source work.
 - Validation passed:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts --test-name-pattern "automatic signal matrix|coverage detects|matrix coverage|stored hydration"` - 64/64.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "signal monitor display refreshes separately|signals screen is registered|paper profile" src/features/platform/platformRootSource.test.js` - 3/3.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts --validation-name-pattern "automatic signal matrix|coverage detects|matrix coverage|stored hydration"` - 64/64.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "signal monitor display refreshes separately|signals screen is registered|paper profile" src/features/platform/platformRootSource.validation.js` - 3/3.
   - `pnpm --filter @workspace/api-server run typecheck`.
   - `pnpm --filter @workspace/pyrus run typecheck`.
   - `pnpm --filter @workspace/api-server run build`.
@@ -360,7 +360,7 @@
 - User reported the live banner: `Signal scan freshness is outside the expected window. Last scan 3m. Latest bar 7m.`
 - Runtime evidence:
   - Market-data diagnostics were not the primary failure: `market-data` was `ok`, stream state `live`, no reconnect/data-gap, and IBKR live market data was available.
-  - API diagnostics showed severe route pressure: API status `down/critical`, p95 around 10s, event-loop p95 around 507ms, and slow routes including signal-options shadow scan, account shadow/flex, flow aggregate, signal-monitor profile/events, and repeated `/api/bars` 429s.
+  - API diagnostics showed  route pressure: API status `down/`, p95 around 10s, event-loop p95 around 507ms, and slow routes including signal-options shadow scan, account shadow/flex, flow aggregate, signal-monitor profile/events, and repeated `/api/bars` 429s.
   - Signal Options state route timed out with `signal_options_state_route_timeout`.
   - Cockpit `scan_universe` showed `signalSourcePolicy: "massive-primary"`, `heavyWorkDeferred: true`, `resourcePressureLevel: "high"`, `lastBatchSize: 0`, `lastBatchCapacity: 12`, and a stale `latestSignalBarAt`.
 - 5 Whys:
@@ -371,12 +371,12 @@
   5. Why did pressure make it user-visible? The API has no fully protected lightweight freshness lane; expensive low-priority and mixed-priority routes can keep the worker in pressure-deferred/stored-state mode, and the UI previously labeled high-pressure deferral as a generic stale-source warning.
 - Repair:
   - `artifacts/api-server/src/services/signal-options-automation.ts`: worker scans no longer take the stale stored-state shortcut. If stored monitor coverage needs refresh, the worker proceeds to the existing bounded batch path; manual/non-worker lightweight paths can still use stored state.
-  - `artifacts/api-server/src/services/signal-options-automation.test.ts`: added source guards for `monitorStateNeedsRefresh`, worker exclusion from the stored shortcut, and batch refresh routing.
-  - `artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx`: pressure-deferred scans now classify only `high` and `critical` as action-work blockers.
-  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`: added a source guard for the high/critical pressure behavior and existing queued-action banner.
+  - `artifacts/api-server/src/services/signal-options-automation.validation.ts`: added source guards for `monitorStateNeedsRefresh`, worker exclusion from the stored shortcut, and batch refresh routing.
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx`: pressure-deferred scans now classify only `high` and `` as action-work blockers.
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js`: added a source guard for the high/ pressure behavior and existing queued-action banner.
 - Validation passed:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts --test-name-pattern "signal-options scans|fresh signal state|cockpit scan stage|contract stage|default paper signal-options startup"` - 136/136.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test --test-name-pattern "signal table|scan|pressure" src/screens/algo/OperationsSignalRow.test.js` - 5/5.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-options-automation.validation.ts --validation-name-pattern "signal-options scans|fresh signal state|cockpit scan stage|contract stage|default paper signal-options startup"` - 136/136.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner --validation-name-pattern "signal table|scan|pressure" src/screens/algo/OperationsSignalRow.validation.js` - 5/5.
   - `pnpm --filter @workspace/api-server run typecheck`.
   - `pnpm --filter @workspace/pyrus run typecheck`.
   - `pnpm --filter @workspace/api-server run build`.
@@ -390,7 +390,7 @@
 
 ## API Line Audit + Massive Watchlist Quote Repair - 2026-06-03
 
-- User reported renewed late signals, a Signal Options scan appearing to run over itself, suspected IBKR/Massive pressure mix-up, an artificially low critical pressure cap, and missing watchlist prices that looked like a Massive issue.
+- User reported renewed late signals, a Signal Options scan appearing to run over itself, suspected IBKR/Massive pressure mix-up, an artificially low  pressure cap, and missing watchlist prices that looked like a Massive issue.
 - Live audit evidence:
   - IBKR was healthy and not line-saturated. Line usage samples showed bridge active lines far below the 200-line budget and `signalOptions.activeLineCount: 0`.
   - Massive aggregate WebSocket was connected/authenticated and subscribed to roughly the watchlist universe.
@@ -405,29 +405,29 @@
   - `artifacts/pyrus/src/features/platform/useRuntimeControlSnapshot.js`: default line usage polling requests compact detail; `lineUsageDetail: "full"` is supported.
   - `artifacts/pyrus/src/screens/SettingsScreen.jsx`: Data Broker settings requests full line usage only when that tab is active.
   - `artifacts/api-server/src/services/diagnostics.ts`: decorative routes remain visible in slow-route diagnostics but no longer drive API resource-pressure escalation.
-  - `artifacts/api-server/src/services/resource-pressure.ts`: raised API RSS thresholds. On a 16 GB container, watch/high/critical moved to `6144/8192/12288 MB`; hard block moved to about `13926 MB`. Route latency remains capped below critical.
+  - `artifacts/api-server/src/services/resource-pressure.ts`: raised API RSS thresholds. On a 16 GB container, watch/high/ moved to `6144/8192/12288 MB`; hard block moved to about `13926 MB`. Route latency remains capped below .
   - `artifacts/pyrus/src/features/platform/FooterMemoryPressureIndicator.jsx`: frontend fallback RSS thresholds aligned to the raised backend fallback.
 - Regression coverage added/updated:
-  - `artifacts/api-server/src/services/platform-quote-snapshot.test.ts`: Massive socket quote cache and aggregate cache preserve prices when REST returns empty.
-  - `artifacts/api-server/src/services/bridge-streams-source.test.ts`: normal foreground quote SSE now expects Massive under realtime config.
-  - `artifacts/api-server/src/routes/settings.test.ts`: line-usage route compaction/full-detail contract.
-  - `artifacts/api-server/src/services/diagnostics.test.ts`: decorative routes do not drive API pressure.
-  - `artifacts/api-server/src/services/resource-pressure.test.ts`: raised RSS thresholds and hard block.
-  - `artifacts/api-server/src/services/signal-options-worker.test.ts`: critical RSS test now uses resolved critical threshold instead of stale low constant.
+  - `artifacts/api-server/src/services/platform-quote-snapshot.validation.ts`: Massive socket quote cache and aggregate cache preserve prices when REST returns empty.
+  - `artifacts/api-server/src/services/bridge-streams-source.validation.ts`: normal foreground quote SSE now expects Massive under realtime config.
+  - `artifacts/api-server/src/routes/settings.validation.ts`: line-usage route compaction/full-detail contract.
+  - `artifacts/api-server/src/services/diagnostics.validation.ts`: decorative routes do not drive API pressure.
+  - `artifacts/api-server/src/services/resource-pressure.validation.ts`: raised RSS thresholds and hard block.
+  - `artifacts/api-server/src/services/signal-options-worker.validation.ts`:  RSS test now uses resolved  threshold instead of stale low constant.
 - Validation passed:
-  - `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/resource-pressure.test.ts src/services/diagnostics.test.ts src/routes/settings.test.ts src/services/signal-options-worker.test.ts src/services/platform-quote-snapshot.test.ts src/services/bridge-streams-source.test.ts src/routes/platform-streams-source.test.ts src/services/massive-stock-quote-stream.test.ts src/services/stock-aggregate-stream.test.ts` - 102/102.
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/features/platform/runtimeControlModel.test.js src/features/platform/useMemoryPressureSignal.test.js src/features/platform/FooterMemoryPressureIndicator.test.js` - 119/119.
+  - `pnpm --filter @workspace/api-server exec node JS validation runner src/services/resource-pressure.validation.ts src/services/diagnostics.validation.ts src/routes/settings.validation.ts src/services/signal-options-worker.validation.ts src/services/platform-quote-snapshot.validation.ts src/services/bridge-streams-source.validation.ts src/routes/platform-streams-source.validation.ts src/services/massive-stock-quote-stream.validation.ts src/services/stock-aggregate-stream.validation.ts` - 102/102.
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js src/features/platform/runtimeControlModel.validation.js src/features/platform/useMemoryPressureSignal.validation.js src/features/platform/FooterMemoryPressureIndicator.validation.js` - 119/119.
   - `pnpm --filter @workspace/api-server typecheck`.
   - `pnpm --filter @workspace/pyrus typecheck`.
   - `pnpm --filter @workspace/api-server build`.
 - Live post-build checks:
   - Running API process still started at `2026-06-03 08:28:00 UTC` and had not reloaded the new quote-stream repair.
   - Compact line usage was active in the running process: latest sample around 40 KB, `detail: "compact"`, heavy `recentEvents` and `lineStates` absent.
-  - Raised RSS thresholds were active in diagnostics: `{ watch: 6144, high: 8192, critical: 12288 }`.
+  - Raised RSS thresholds were active in diagnostics: `{ watch: 6144, high: 8192, : 12288 }`.
   - Direct `/api/quotes/snapshot` still returned zero quotes in the running process, so a default Run Replit App restart is required before validating the quote-stream repair live.
 - Real-time API usage audit while validating:
   - Four low-cadence samples used only `/api/diagnostics/latest` and compact `/api/settings/ibkr-line-usage?detail=compact`.
-  - API remained `down/critical` from latency, with pressure driver `api-latency`.
+  - API remained `down/` from latency, with pressure driver `api-latency`.
   - Dominant pressure route was `/accounts/shadow/equity-history`, p95 around `60-74s`.
   - IBKR stayed `ok`; market-data stayed `ok`; bridge lines ranged roughly `26-46/200`; Signal Options line usage stayed `0`; Massive provider stayed `massive-websocket` with about `95` symbols.
   - Conclusion: after the repairs, remaining live pressure is heavy account/shadow/history route work plus stale running bundle for quote snapshot behavior, not provider line pressure.
@@ -453,14 +453,14 @@
   - `PlatformApp` now creates a footer-scoped `useRuntimeControlSnapshot` with 15s runtime/line-usage polling, disabled outside visible workspace-leader work and safe QA mode.
   - `PlatformShell` threads the snapshot into the footer and mobile More sheet.
 - Regression coverage:
-  - `FooterMemoryPressureIndicator.test.js` covers separate IBKR/Massive slots, fallback slots, and Massive degraded mapping.
-  - Added `FooterMemoryPressureIndicator.test.js` to `artifacts/pyrus/scripts/runUnitTests.mjs` so the footer tests run in the normal unit manifest.
+  - `FooterMemoryPressureIndicator.validation.js` covers separate IBKR/Massive slots, fallback slots, and Massive degraded mapping.
+  - Added `FooterMemoryPressureIndicator.validation.js` to `artifacts/pyrus/scripts/unit validation runner.mjs` so the footer tests run in the normal unit manifest.
 - Validation:
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/features/platform/FooterMemoryPressureIndicator.test.js` - 8/8.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/features/platform/runtimeControlModel.test.js` - 42/42.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/features/platform/platformRootSource.test.js` - 64/64.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/features/platform/FooterMemoryPressureIndicator.validation.js` - 8/8.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/features/platform/runtimeControlModel.validation.js` - 42/42.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/features/platform/platformRootSource.validation.js` - 64/64.
   - PASS: `pnpm --filter @workspace/pyrus typecheck`.
-  - FULL UNIT BLOCKED: `pnpm --filter @workspace/pyrus test:unit` fails in unrelated `src/screens/TradeScreen.search-handlers.test.mjs` source-regex assertion for `listFlowEventsRequest(...)`; footer tests had passed before that suite-level failure.
+  - FULL UNIT BLOCKED: `pnpm --filter @workspace/pyrus unit validation` fails in unrelated `src/screens/TradeScreen.search-handlers.validation.mjs` source-regex assertion for `listFlowEventsRequest(...)`; footer tests had passed before that suite-level failure.
 
 ## Footer Pressure Pill Consolidation - 2026-06-03
 
@@ -475,10 +475,10 @@
     - Desktop footer now passes `apiSourcePressureSnapshot` into `FooterMemoryPressureIndicator` instead of rendering a separate API source sibling.
   - `artifacts/pyrus/src/features/platform/MobileMoreSheet.jsx`
     - Mobile More sheet now uses the same single pressure pill.
-  - `artifacts/pyrus/src/features/platform/FooterMemoryPressureIndicator.test.js`
+  - `artifacts/pyrus/src/features/platform/FooterMemoryPressureIndicator.validation.js`
     - Tests now assert the `IBKR`, `Massive`, `Cache`, `App` order, provider fallback slots, Massive degradation mapping, no browser/runtime compact slots, and no visible `Memory` or level text.
 - Validation:
-  - PASS: `pnpm --filter @workspace/pyrus exec tsx --test src/features/platform/FooterMemoryPressureIndicator.test.js` - 7/7.
+  - PASS: `pnpm --filter @workspace/pyrus exec tsx validation runner src/features/platform/FooterMemoryPressureIndicator.validation.js` - 7/7.
   - PASS: `pnpm --filter @workspace/pyrus typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus build`.
   - PASS: scoped `git diff --check` for the four touched Pyrus files.
@@ -497,9 +497,9 @@
   - Manual scan collisions now use parent/child nomenclature: `Algo & Execution scan already running` with an `options strategy` detail.
   - `artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx`: Scan button, header wave, and status label now include backend worker activity via `scanOperationRunning`, not only local mutation pending state. The button is disabled while the worker is already scanning.
 - Validation:
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js src/screens/algo/AlgoLivePage.regression-1.test.js` - 38/38.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/algoHelpers.validation.js src/screens/algo/AlgoLivePage.regression-1.validation.js` - 38/38.
   - PASS: `pnpm --filter @workspace/pyrus typecheck`.
-  - PASS: `git diff --check -- artifacts/pyrus/src/screens/AlgoScreen.jsx artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx artifacts/pyrus/src/screens/algo/algoHelpers.test.js artifacts/pyrus/src/screens/algo/AlgoLivePage.regression-1.test.js`.
+  - PASS: `git diff --check -- artifacts/pyrus/src/screens/AlgoScreen.jsx artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx artifacts/pyrus/src/screens/algo/algoHelpers.validation.js artifacts/pyrus/src/screens/algo/AlgoLivePage.regression-1.validation.js`.
 - Live API sampling:
   - `curl http://127.0.0.1:5000/api/diagnostics/latest` could not connect from this shell after this patch, so there was no runtime API process available to sample.
   - Did not start a competing full app; Replit default Run App remains the source of truth for full app bring-up.
@@ -524,7 +524,7 @@
   - `artifacts/pyrus/src/screens/AlgoScreen.jsx`
     - Cockpit-stage fallback now derives `lastSignalScanAt`, `latestSignalBarAt`, and `latestSignalAt` from visible STA rows instead of only `focusedDeployment.lastEvaluatedAt`.
   - `artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx`
-    - Frontend pressure blocker no longer treats `high` as queued; only `critical` blocks locally, matching raised caps.
+    - Frontend pressure blocker no longer treats `high` as queued; only `` blocks locally, matching raised caps.
   - `artifacts/api-server/src/services/shadow-account.ts`
     - Shadow read cache now preserves stale non-empty cached values if a refresh returns an empty value that fails the row-preserving `allowStale` policy.
     - `getShadowAccountPositions` always uses the row-preserving stale policy, including unscoped stream reads.
@@ -533,11 +533,11 @@
   - Account-page stream positions changed 22 -> 0 -> 22; shadow stream also emitted 0 then 22. This matched unscoped position reads not using stale row protection.
   - Diagnostics could show footer/resource pressure normal while STA row still displayed stale worker `High`.
 - Validation:
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts src/services/algo-cockpit-streams.test.ts` - 139/139.
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/shadow-account.test.ts` - 113/113.
-  - PASS: combined backend targeted run `src/services/signal-options-automation.test.ts src/services/shadow-account.test.ts` - 249/249.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-options-automation.validation.ts src/services/algo-cockpit-streams.validation.ts` - 139/139.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/shadow-account.validation.ts` - 113/113.
+  - PASS: combined backend targeted run `src/services/signal-options-automation.validation.ts src/services/shadow-account.validation.ts` - 249/249.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/algoHelpers.test.js src/screens/algo/OperationsSignalRow.test.js src/screens/algo/AlgoLivePage.regression-1.test.js` - 62/62.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/algoHelpers.validation.js src/screens/algo/OperationsSignalRow.validation.js src/screens/algo/AlgoLivePage.regression-1.validation.js` - 62/62.
   - PASS: `pnpm --filter @workspace/pyrus typecheck`.
   - PASS: `git diff --check` scoped to touched files.
   - PASS: `pnpm --filter @workspace/api-server run build`.
@@ -582,16 +582,16 @@
   - Example live equity day-change values were populated from Massive where prior-close context existed: `FCEL` about `-355.60`, `FRMI` about `-48.00`, and `INDI` about `-37.50`.
   - Options path remains IBKR option-quote based.
 - Regression coverage and validation:
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/account-positions.test.ts` - 22/22.
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/platform-quote-snapshot.test.ts` - 7/7.
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/shadow-account.test.ts` - 113/113.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/account-positions.validation.ts` - 22/22.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/platform-quote-snapshot.validation.ts` - 7/7.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/shadow-account.validation.ts` - 113/113.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/accountPnlCalendarModel.test.js` - 27/27.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/IntradayPnlPanel.test.js` - 4/4.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/features/account/positionDisplayModel.test.js` - 9/9.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/AccountReturnsPanel.test.js` - 9/9.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/accountCalendarData.test.js` - 11/11.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/AccountHeroBlock.test.js` - 6/6.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/accountPnlCalendarModel.validation.js` - 27/27.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/IntradayPnlPanel.validation.js` - 4/4.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/features/account/positionDisplayModel.validation.js` - 9/9.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/AccountReturnsPanel.validation.js` - 9/9.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/accountCalendarData.validation.js` - 11/11.
+  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx src/screens/account/AccountHeroBlock.validation.js` - 6/6.
   - PASS: `pnpm --filter @workspace/pyrus typecheck`.
   - PASS: scoped `git diff --check` for account/P&L touched files.
 
@@ -601,8 +601,8 @@
 - Current pickup step: verify the prior source-lineage/account-P&L patches are present in the current tree, rerun targeted account/P&L validation, and then recheck the live Account API/UI if the rebuilt app bundle is active.
 - Pickup result:
   - Confirmed source patches are present in `artifacts/api-server/src/services/account.ts`, `artifacts/api-server/src/services/account-position-model.ts`, `artifacts/pyrus/src/screens/account/accountPnlCalendarModel.js`, `artifacts/pyrus/src/screens/account/IntradayPnlPanel.jsx`, and `artifacts/pyrus/src/features/account/positionDisplayModel.js`.
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/account-positions.test.ts src/services/platform-quote-snapshot.test.ts src/services/shadow-account.test.ts` - 142/142.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/account/accountPnlCalendarModel.test.js src/screens/account/IntradayPnlPanel.test.js src/features/account/positionDisplayModel.test.js src/screens/account/AccountReturnsPanel.test.js src/screens/account/accountCalendarData.test.js src/screens/account/AccountHeroBlock.test.js` - 66/66.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/account-positions.validation.ts src/services/platform-quote-snapshot.validation.ts src/services/shadow-account.validation.ts` - 142/142.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/account/accountPnlCalendarModel.validation.js src/screens/account/IntradayPnlPanel.validation.js src/features/account/positionDisplayModel.validation.js src/screens/account/AccountReturnsPanel.validation.js src/screens/account/accountCalendarData.validation.js src/screens/account/AccountHeroBlock.validation.js` - 66/66.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus typecheck`.
   - Live API check: `GET /api/accounts/combined/summary?mode=live&source=account-page` returned `dayPnl.value` about `-472.90`, `source: "LOCAL_LEDGER"`, `field: "EquityHistoryMarketDayPnl:2026-06-03"`; no `23.6k` class value.
@@ -640,12 +640,12 @@
   - `artifacts/api-server/src/services/shadow-account.ts` now reconciles ledger rows with one sorted forward fill cursor.
   - Benchmark shadow equity-history requests normalize benchmark keys, reuse the base no-benchmark shadow history, and only overlay benchmark percents.
   - Medium ranges (`1M`, `3M`, `6M`, `YTD`) reuse a warmed one-year base history and then slice/rebase transfer-adjusted returns for the requested window.
-  - `artifacts/api-server/src/services/shadow-account.test.ts` has regression guards for benchmark base-history reuse, medium-range reuse/rebase, and one-pass reconciliation.
+  - `artifacts/api-server/src/services/shadow-account.validation.ts` has regression guards for benchmark base-history reuse, medium-range reuse/rebase, and one-pass reconciliation.
 - Validation:
   - RED confirmed before patch: the new focused regression tests failed before the corresponding implementation.
   - PASS after patch: focused benchmark/cursor regression run, 2/2.
   - PASS after patch: focused medium-range reuse regression run.
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/shadow-account.test.ts src/services/signal-options-automation.test.ts src/services/route-admission.test.ts` - 267/267.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/shadow-account.validation.ts src/services/signal-options-automation.validation.ts src/services/route-admission.validation.ts` - 267/267.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/api-server run build`.
   - PASS: scoped `git diff --check`.
@@ -677,11 +677,11 @@
 - Repairs implemented:
   - `artifacts/api-server/src/services/shadow-account.ts`: shadow account summary day P&L now resolves from 1D shadow equity-history market-day NAV movement and labels the metric as `EquityHistoryMarketDayPnl:<marketDate>`.
   - `artifacts/api-server/src/services/shadow-account.ts`: zero baseline marks are not authoritative for open nonzero-cost positions; cached/stream dayChange falls back to entry cost basis instead of full market value.
-  - `artifacts/api-server/src/services/shadow-account.test.ts`: added regressions for same-day zero-baseline positions, overnight/pre-day-start zero-baseline positions, and summary day P&L using equity history instead of position day-change totals.
+  - `artifacts/api-server/src/services/shadow-account.validation.ts`: added regressions for same-day zero-baseline positions, overnight/pre-day-start zero-baseline positions, and summary day P&L using equity history instead of position day-change totals.
 - Validation:
   - RED before fix: same-day baseline test failed before helper export/behavior; overnight zero-baseline test failed with baseline `0`; summary-source test failed because `getShadowAccountSummary` used `readShadowPositionDayChanges`.
   - PASS: focused baseline/source tests, 3/3.
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/shadow-account.test.ts` - 119/119.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/shadow-account.validation.ts` - 119/119.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/api-server run build`.
   - PASS: scoped `git diff --check`.
@@ -700,16 +700,16 @@
   - `signal-matrix-tiny` succeeded only 3/7 times, with p95 around 15s.
   - `shadow-positions-live-quotes` succeeded only 1/7 times.
   - `shadow-positions-no-live-quotes` still timed out, proving the non-live positions path was still blocked by quote hydration.
-  - Diagnostics showed API pressure high/critical and signal-options worker scan timeout after `120000ms`.
+  - Diagnostics showed API pressure high/ and signal-options worker scan timeout after `120000ms`.
   - Bar hydration inventory showed `signal-matrix` dominating misses/in-flight work.
   - A dev restart occurred during soak; user clarified restarts are expected dev noise unless they directly contribute to runtime issues.
 - Code changes in progress:
-  - `artifacts/api-server/src/services/signal-options-automation.ts`: worker monitor refreshes now use the existing batch path under high/critical API pressure instead of full-universe refresh.
+  - `artifacts/api-server/src/services/signal-options-automation.ts`: worker monitor refreshes now use the existing batch path under high/ API pressure instead of full-universe refresh.
   - `artifacts/api-server/src/services/shadow-account.ts`: equity position display quote hydration is bounded to 750ms and skipped entirely when `liveQuotes=false`.
   - `artifacts/api-server/src/services/route-admission.ts`: diagnostics runtime/client-metrics and visible option expirations are active-screen routes so pressure handling does not blind the next soak.
   - Targeted source-regression tests added in signal-options automation, shadow account, and route admission test files.
 - Validation:
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/signal-options-automation.test.ts src/services/shadow-account.test.ts src/services/route-admission.test.ts` - 264/264.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/signal-options-automation.validation.ts src/services/shadow-account.validation.ts src/services/route-admission.validation.ts` - 264/264.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/api-server run build`.
   - PASS: scoped `git diff --check`.
@@ -734,7 +734,7 @@
   - `artifacts/api-server/src/services/signal-options-automation.ts` now has a direct, deployment-scoped fast stored-state reader for STA summary signals. It reads `signal_monitor_profiles` + `signal_monitor_symbol_states`, filters to the deployment universe and current lane rows, skips event metadata and contract previews, and no longer wraps the fast summary signal read in the 750ms refresh timeout.
   - Fast summary now calls `listSignalOptionsSignalSnapshots(..., { preferStoredMonitorState: true, includeEventMetadata: false })` instead of `staleFast: true`.
 - Validation:
-  - PASS: `node --import tsx --test src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts src/services/algo-cockpit-streams.test.ts src/services/signal-monitor.test.ts src/services/trade-monitor-worker.test.ts` - 245/245.
+  - PASS: `node JS validation runner src/services/signal-options-automation.validation.ts src/services/signal-options-worker.validation.ts src/services/algo-cockpit-streams.validation.ts src/services/signal-monitor.validation.ts src/services/trade-monitor-worker.validation.ts` - 245/245.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/api-server build`.
   - PASS: scoped `git diff --check`.
@@ -750,7 +750,7 @@
   - Header IBKR connection line count and footer IBKR line count did not match, even though they should read the same source.
 - Additional live evidence before the latest patch loaded:
   - Replit-owned API PID `39813` stayed hot at about `89%` CPU and about `2.1 GB` RSS.
-  - `/api/diagnostics/latest` showed API `down/critical`, `/accounts/shadow/positions` as the dominant slow route, and `/api/algo/deployments/7e2e4e6f-749f-4e65-a011-87d3559a23b0/signal-options/state` as the dominant error route.
+  - `/api/diagnostics/latest` showed API `down/`, `/accounts/shadow/positions` as the dominant slow route, and `/api/algo/deployments/7e2e4e6f-749f-4e65-a011-87d3559a23b0/signal-options/state` as the dominant error route.
   - Before the latest cache patch, repeated summary calls could still 504 at the 7s route budget in the old process, while full-state was shed as deferred analytics under high API pressure.
   - Warm shadow automation positions improved after earlier patches: `liveQuotes=true` returned 23 rows, 3 option rows, and 3 option bid/ask rows in roughly 1.5-2.4s when stale-protected cache was warm.
   - Line-usage diagnostics showed API active line count and bridge active line count can differ by a few leases during reconciliation; that is separate from the header/footer UI mismatch.
@@ -778,16 +778,16 @@
   - Flow-scanner line count rotates frequently, so independent polls could display different valid snapshots.
   - Both surfaces now subscribe to the same SSE stream, so they should render the same canonical snapshot.
 - Validation:
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/automation.test.ts` - 1/1.
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/account-positions.test.ts src/services/signal-options-automation.test.ts src/services/shadow-account.test.ts src/services/route-admission.test.ts` - 292/292 before the final fast-summary cache patch.
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/automation.test.ts src/services/account-positions.test.ts src/services/signal-options-automation.test.ts src/services/shadow-account.test.ts src/services/route-admission.test.ts` - 293/293 after the final fast-summary cache patch.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/automation.validation.ts` - 1/1.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/account-positions.validation.ts src/services/signal-options-automation.validation.ts src/services/shadow-account.validation.ts src/services/route-admission.validation.ts` - 292/292 before the final fast-summary cache patch.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/automation.validation.ts src/services/account-positions.validation.ts src/services/signal-options-automation.validation.ts src/services/shadow-account.validation.ts src/services/route-admission.validation.ts` - 293/293 after the final fast-summary cache patch.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/api-server run build`.
-  - PASS after final summary-expiry patch: `pnpm --filter @workspace/api-server exec tsx --test src/services/signal-options-automation.test.ts` - 137/137.
-  - PASS after final summary-expiry patch: `pnpm --filter @workspace/api-server exec tsx --test src/services/automation.test.ts` - 1/1.
+  - PASS after final summary-expiry patch: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/signal-options-automation.validation.ts` - 137/137.
+  - PASS after final summary-expiry patch: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/automation.validation.ts` - 1/1.
   - PASS after final summary-expiry patch: `pnpm --filter @workspace/api-server typecheck`.
   - PASS after final summary-expiry patch: `pnpm --filter @workspace/api-server run build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03T17:17:39Z`.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/features/platform/runtimeControlModel.test.js src/features/platform/IbkrConnectionStatus.test.js` - 153/153.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js src/features/platform/runtimeControlModel.validation.js src/features/platform/IbkrConnectionStatus.validation.js` - 153/153.
   - PASS: `pnpm --filter @workspace/pyrus typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus run build`.
 - Live validation blocker:
@@ -820,10 +820,10 @@
     - Added `signalOptionsStoredMonitorBatch()`.
     - Worker scans now respect `preferStoredMonitorState: true` when Massive stream-first monitor data is available, returning stored signal-monitor state with `reason: "stream_live_primary"` before the full-universe refresh branch.
     - Manual/forced scans can still perform full refreshes.
-  - `artifacts/api-server/src/services/signal-options-automation.test.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.validation.ts`
     - Source regressions assert the worker stored-state stream-primary branch appears before the full-refresh branch and that the stored-state batch helper is present.
 - Validation:
-  - PASS: `node --import tsx --test src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts src/services/algo-cockpit-streams.test.ts src/services/signal-monitor.test.ts` - 229/229.
+  - PASS: `node JS validation runner src/services/signal-options-automation.validation.ts src/services/signal-options-worker.validation.ts src/services/algo-cockpit-streams.validation.ts src/services/signal-monitor.validation.ts` - 229/229.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: scoped `git diff --check`.
   - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at about `2026-06-03T17:08:53Z`.
@@ -849,8 +849,8 @@
   - `artifacts/pyrus/src/features/platform/PlatformApp.jsx`
     - Footer runtime diagnostics refresh cadence is now `3_000ms`; IBKR line usage remains on its separate 2s SSE/polling source; Cache/App bars continue to come from the memory-pressure monitor.
 - Validation:
-  - PASS: `pnpm --filter @workspace/pyrus exec tsx --test src/features/platform/FooterMemoryPressureIndicator.test.js src/features/platform/runtimeControlModel.test.js` - 50/50.
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/runtime-diagnostics.test.ts` - 13/13.
+  - PASS: `pnpm --filter @workspace/pyrus exec tsx validation runner src/features/platform/FooterMemoryPressureIndicator.validation.js src/features/platform/runtimeControlModel.validation.js` - 50/50.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/runtime-diagnostics.validation.ts` - 13/13.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus typecheck`.
   - PASS: `pnpm --filter @workspace/api-server run build`.
@@ -874,12 +874,12 @@
   - `/api/diagnostics/latest` current pressure instead points at shadow/account routes: `/accounts/shadow/risk` p95 about `26.6s`, `/accounts/shadow/summary` about `18.1s`, `/accounts/shadow/positions` about `14.4s`, `/accounts/shadow/equity-history` about `6.2s`.
 - Browser/footer proof:
   - Safe-QA mode proved static layout only because `PlatformApp` intentionally disables footer runtime-control work while `pyrusQa=safe` is active.
-  - Normal-mode read-only Playwright probe showed footer slots as `IBKR 32/200`, `Massive 95 · 4s`, `Cache 41`, `App 29`; later samples showed Massive age/fill advancing independently and Cache/App values changing independently. Browser console showed six unrelated `429 Too Many Requests` resource errors from current API pressure.
+  - Normal-mode read-only browser QA probe showed footer slots as `IBKR 32/200`, `Massive 95 · 4s`, `Cache 41`, `App 29`; later samples showed Massive age/fill advancing independently and Cache/App values changing independently. Browser console showed six unrelated `429 Too Many Requests` resource errors from current API pressure.
 - Validation:
-  - FAIL first, as intended: `pnpm --filter @workspace/api-server exec tsx --test src/services/massive-stock-websocket.test.ts` caught `AM` freshness becoming non-null after only `Q/T` messages.
-  - PASS after fix: `pnpm --filter @workspace/api-server exec tsx --test src/services/massive-stock-websocket.test.ts` - 3/3.
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/massive-stock-websocket.test.ts src/services/runtime-diagnostics.test.ts src/services/stock-aggregate-stream.test.ts src/services/massive-stock-quote-stream.test.ts src/services/massive-stock-aggregate-stream.test.ts` - 33/33.
-  - PASS: `pnpm --filter @workspace/pyrus exec tsx --test src/features/platform/runtimeControlModel.test.js src/features/platform/FooterMemoryPressureIndicator.test.js` - 50/50.
+  - FAIL first, as intended: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/massive-stock-websocket.validation.ts` caught `AM` freshness becoming non-null after only `Q/T` messages.
+  - PASS after fix: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/massive-stock-websocket.validation.ts` - 3/3.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/massive-stock-websocket.validation.ts src/services/runtime-diagnostics.validation.ts src/services/stock-aggregate-stream.validation.ts src/services/massive-stock-quote-stream.validation.ts src/services/massive-stock-aggregate-stream.validation.ts` - 33/33.
+  - PASS: `pnpm --filter @workspace/pyrus exec tsx validation runner src/features/platform/runtimeControlModel.validation.js src/features/platform/FooterMemoryPressureIndicator.validation.js` - 50/50.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus typecheck`.
   - PASS: `pnpm --filter @workspace/api-server run build`.
@@ -903,29 +903,29 @@
 - Root cause framing:
   - Massive was healthy; pressure was from shadow/account route fanout.
   - Account page fallback can fire after 1s if the account-page stream is not fresh.
-  - Shadow critical work was doing summary P&L history, allocation, quote-hydrated positions, orders, and full risk.
-  - Full risk can include live Greek quote/underlying hydration and Python scenario work, so it is the wrong dependency for first critical paint.
+  - Shadow  work was doing summary P&L history, allocation, quote-hydrated positions, orders, and full risk.
+  - Full risk can include live Greek quote/underlying hydration and Python scenario work, so it is the wrong dependency for first  paint.
 - Source fixes implemented:
   - `artifacts/api-server/src/services/shadow-account.ts`
     - Added `detail: "fast" | "full"` to `getShadowAccountRisk`.
     - Fast risk still uses cached Greek snapshots and cached positions, but skips live underlying quote hydration, live Greek quote hydration, and Python scenario execution.
-    - Fast risk returns a normal risk payload with `greekScenarios.status = "disabled"` and warning `Deferred during the account-page critical read.`
+    - Fast risk returns a normal risk payload with `greekScenarios.status = "disabled"` and warning `Deferred during the account-page  read.`
   - `artifacts/api-server/src/services/shadow-account-streams.ts`
     - Shadow account snapshot stream now requests `getShadowAccountRisk({ positionsResponse, closedTrades, detail: "fast" })`.
   - `artifacts/api-server/src/services/account-page-streams.ts`
-    - Shadow account-page critical payload now requests `getAccountPositions(... liveQuotes: false)` and injects those positions plus closed trades into `getShadowAccountRisk(... detail: "fast")`.
-    - Non-shadow account-page critical behavior is unchanged.
+    - Shadow account-page  payload now requests `getAccountPositions(... liveQuotes: false)` and injects those positions plus closed trades into `getShadowAccountRisk(... detail: "fast")`.
+    - Non-shadow account-page  behavior is unchanged.
   - `artifacts/pyrus/src/screens/AccountScreen.jsx`
     - Shadow account positions fallback/prefetch now sends `liveQuotes: false`, matching the stream's first-paint path and avoiding a second visible-live quote-hydrated positions route while the stream warms.
 - One-off service-level proof from changed source code:
   - `shadow positions cached`: `1123ms`, 25 positions, 5 option positions, `degraded=false`.
   - `shadow closed trades`: `1060ms`.
   - `shadow risk fast injected`: `49ms`, `greekScenarios.status="disabled"`, 5/5 option positions matched to cached Greek snapshots.
-  - `account page critical shadow`: `1933ms`, 25 positions, net liquidation `172189.0525`, day P&L `-2400.3851`, 5/5 option Greek snapshot coverage from cache, fast risk scenario warning present.
+  - `account page  shadow`: `1933ms`, 25 positions, net liquidation `172189.0525`, day P&L `-2400.3851`, 5/5 option Greek snapshot coverage from cache, fast risk scenario warning present.
   - Full injected risk after warm cached positions/quotes completed in `98ms` with Python scenarios `completed`; setup positions/trades took `2095ms`.
 - Validation:
-  - PASS: `node --import tsx --test src/services/shadow-account.test.ts src/services/account-page-streams.test.ts` from `artifacts/api-server` - 125/125.
-  - PASS: `node --test artifacts/pyrus/src/screens/account/accountCalendarData.test.js` - 11/11.
+  - PASS: `node JS validation runner src/services/shadow-account.validation.ts src/services/account-page-streams.validation.ts` from `artifacts/api-server` - 125/125.
+  - PASS: `node validation runner artifacts/pyrus/src/screens/account/accountCalendarData.validation.js` - 11/11.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus typecheck`.
   - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 12:00:26 MDT`.
@@ -937,7 +937,7 @@
   - `/api/diagnostics/latest` responded during this handoff update, but returned `status="down"` with empty route latency payload, so it was not useful for proving post-fix route pressure.
 - Expected post-restart proof:
   - Reopen/restart via default Replit Run Replit App.
-  - Account-page critical shadow stream should complete around low-single-digit seconds instead of waiting on full risk/scenario hydration.
+  - Account-page  shadow stream should complete around low-single-digit seconds instead of waiting on full risk/scenario hydration.
   - `/api/accounts/shadow/positions` requests from AccountScreen should include `liveQuotes=false` in shadow mode.
   - Footer API pressure should stop attributing first-load pressure to quote-hydrated shadow positions/full risk fanout once the stream is fresh before fallback.
 
@@ -962,7 +962,7 @@
   - `signal-monitor.ts` emits `signal_monitor_state_refreshed` after stored evaluation metadata persists, covering state changes without inserted events.
   - `signal-options-automation.ts` lets worker scans honor `preferStoredMonitorState: true` and treats stale summary/cockpit cache as fallback-only in summary mode instead of the default answer.
 - Validation after the final STA patch:
-  - PASS: `node --import tsx --test src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts src/services/signal-monitor.test.ts src/services/algo-cockpit-streams.test.ts` - 230/230.
+  - PASS: `node JS validation runner src/services/signal-options-automation.validation.ts src/services/signal-options-worker.validation.ts src/services/signal-monitor.validation.ts src/services/algo-cockpit-streams.validation.ts` - 230/230.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 11:25:24 MDT`.
   - PASS: scoped `git diff --check` for `signal-options-automation`, `signal-options-worker`, and `signal-monitor` source/tests.
@@ -989,10 +989,10 @@
   - `artifacts/api-server/src/services/signal-options-automation.ts`
     - Raised worker default fallback action budget to the same `60_000ms`/`4` items.
   - Tests updated:
-    - `signal-options-worker.test.ts` now asserts worker scans pass `actionWorkBudgetMs = 60_000` and `actionWorkItemLimit = 4`.
-    - `signal-options-automation.test.ts` now asserts worker default budget helper returns deadline `61_000` from `nowMs = 1_000` and item limit `4`.
+    - `signal-options-worker.validation.ts` now asserts worker scans pass `actionWorkBudgetMs = 60_000` and `actionWorkItemLimit = 4`.
+    - `signal-options-automation.validation.ts` now asserts worker default budget helper returns deadline `61_000` from `nowMs = 1_000` and item limit `4`.
 - Validation after burst-cap fix:
-  - PASS: `node --import tsx --test src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts src/services/signal-monitor.test.ts src/services/algo-cockpit-streams.test.ts` - 230/230.
+  - PASS: `node JS validation runner src/services/signal-options-automation.validation.ts src/services/signal-options-worker.validation.ts src/services/signal-monitor.validation.ts src/services/algo-cockpit-streams.validation.ts` - 230/230.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: scoped `git diff --check`.
   - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 11:42:34 MDT`.
@@ -1023,12 +1023,12 @@
   - `artifacts/api-server/src/services/ibkr-async-sidecar-client.ts`
     - Default sidecar request timeout raised from 5s to 30s.
   - Tests updated:
-    - `options-flow-scanner.test.ts` asserts default scanner line budgets are 25 and default symbol scans use the pool-aware line slice.
-    - `ibkr-line-usage.test.ts` asserts async-sidecar generation status drives top-level bridge active count and drift reconciliation to `matched`.
+    - `options-flow-scanner.validation.ts` asserts default scanner line budgets are 25 and default symbol scans use the pool-aware line slice.
+    - `ibkr-line-usage.validation.ts` asserts async-sidecar generation status drives top-level bridge active count and drift reconciliation to `matched`.
 - Validation:
-  - PASS: `node --import tsx --test src/services/ibkr-line-usage.test.ts` - 20/20.
-  - PASS: `node --import tsx --test src/services/options-flow-scanner.test.ts` - 83/83.
-  - PASS: `node --import tsx --test src/services/ibkr-async-sidecar-client.test.ts` - 3/3.
+  - PASS: `node JS validation runner src/services/ibkr-line-usage.validation.ts` - 20/20.
+  - PASS: `node JS validation runner src/services/options-flow-scanner.validation.ts` - 83/83.
+  - PASS: `node JS validation runner src/services/ibkr-async-sidecar-client.validation.ts` - 3/3.
   - PASS: `pnpm --filter @workspace/api-server run typecheck`.
   - PASS: `pnpm --filter @workspace/api-server run build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 11:49:28 MDT`.
   - PASS: `git diff --check`.
@@ -1059,9 +1059,9 @@
   - Under action/route pressure, the fast summary route could wait behind slow dashboard work, hit the route budget, and fall back to stale dashboard cache. This explained stale or empty summary/cockpit responses even while durable stored signal rows were fresh.
   - `artifacts/api-server/src/services/signal-options-automation.ts` now has a dedicated `signalOptionsFastSummaryInFlight` map. Fast summary refresh uses that map, while the heavier dashboard build keeps using the existing summary-dashboard in-flight map.
   - Cache invalidation now clears the fast-summary in-flight map as well.
-  - `artifacts/api-server/src/services/signal-options-automation.test.ts` now guards that the fast summary code reads/sets/deletes `signalOptionsFastSummaryInFlight` and does not share `signalOptionsSummaryDashboardInFlight`.
+  - `artifacts/api-server/src/services/signal-options-automation.validation.ts` now guards that the fast summary code reads/sets/deletes `signalOptionsFastSummaryInFlight` and does not share `signalOptionsSummaryDashboardInFlight`.
 - Validation:
-  - PASS: `node --import tsx --test src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts src/services/signal-monitor.test.ts src/services/algo-cockpit-streams.test.ts` - 230/230.
+  - PASS: `node JS validation runner src/services/signal-options-automation.validation.ts src/services/signal-options-worker.validation.ts src/services/signal-monitor.validation.ts src/services/algo-cockpit-streams.validation.ts` - 230/230.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 11:54:15 MDT`.
   - PASS: scoped `git diff --check`.
@@ -1092,12 +1092,12 @@
     - Added read-time enrichment in `listSignalOptionsStoredSignalStatesFast()`.
     - The fast stored-state reader now bulk builds event keys for stored rows, reads matching `signal_monitor_events.event_key` rows, and replaces rounded stored `currentSignalAt` with the exact event `signal_at` before building STA summary signals/candidates.
     - This makes the STA summary/cockpit path show exact off-boundary signal times immediately after load, even before the background stored-state table has been refreshed by the write-time fix.
-  - `artifacts/api-server/src/services/signal-monitor.test.ts`
+  - `artifacts/api-server/src/services/signal-monitor.validation.ts`
     - Added `signal monitor stored state preserves precise event signal time` guard for event-key construction and the upsert resolver path.
-  - `artifacts/api-server/src/services/signal-options-automation.test.ts`
+  - `artifacts/api-server/src/services/signal-options-automation.validation.ts`
     - Added source guards for `buildSignalOptionsSignalMonitorEventKey`, `signalMonitorEventsTable.eventKey`, and `eventSignalAtByKey` in the fast stored-state path.
 - Validation:
-  - PASS: `node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts src/services/algo-cockpit-streams.test.ts` - 231/231.
+  - PASS: `node JS validation runner src/services/signal-monitor.validation.ts src/services/signal-options-automation.validation.ts src/services/signal-options-worker.validation.ts src/services/algo-cockpit-streams.validation.ts` - 231/231.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 12:23:18 MDT`.
   - PASS: scoped `git diff --check`.
@@ -1109,9 +1109,9 @@
   - Recheck recent `signal_monitor_symbol_states` for symbols with existing precise events; expected `current_signal_at` should remain the precise event time after profile/matrix refreshes, not snap back to `:00` five-minute anchors.
   - Recheck STA candidate rows; expected candidate `signalAt`/nested `signal.signalAt` should be off-boundary when the underlying `signal_monitor_events.signal_at` is off-boundary.
 
-## 2026-06-03 Shadow Account Critical Stream Follow-Up
+## 2026-06-03 Shadow Account  Stream Follow-Up
 
-- User restarted and asked for live verification. The restart did load newer code, but the check found the shadow account SSE still did not emit a `critical` event within a 25s sample; it only sent the SSE retry/ping prelude.
+- User restarted and asked for live verification. The restart did load newer code, but the check found the shadow account SSE still did not emit a `` event within a 25s sample; it only sent the SSE retry/ping prelude.
 - Live route timings against that process showed the remaining blockers:
   - `/api/accounts/shadow/positions?mode=paper&liveQuotes=false`: about `2.08s`, 25 positions, stale cache response.
   - `/api/accounts/shadow/positions?mode=paper&liveQuotes=true`: about `10.79s`, 25 positions.
@@ -1120,43 +1120,43 @@
   - `/api/accounts/shadow/summary?mode=paper`: about `27.67s`.
   - `/api/accounts/shadow/allocation?mode=paper`: about `13.11s`.
 - Root cause of the follow-up miss:
-  - The first patch moved shadow positions and risk to the fast path, but `fetchAccountPageCriticalPayload()` still awaited `getAccountSummary()` and `getAccountAllocation()`.
+  - The first patch moved shadow positions and risk to the fast path, but `fetchAccountPagePayload()` still awaited `getAccountSummary()` and `getAccountAllocation()`.
   - For shadow, those wrappers call the full shadow summary/allocation readers, which in turn can force expensive fresh-state/equity-history work before the first stream event.
-  - AccountScreen also had a 1s critical fallback. If the stream misses that window, React Query can enable REST summary/allocation/risk queries and recreate the pressure we were trying to avoid.
+  - AccountScreen also had a 1s  fallback. If the stream misses that window, React Query can enable REST summary/allocation/risk queries and recreate the pressure we were trying to avoid.
 - Source fixes implemented:
   - `artifacts/api-server/src/services/shadow-account.ts`
     - Added `getShadowAccountSummaryFromPositions()` and `getShadowAccountAllocationFromPositions()`.
-    - These derive critical summary/allocation from the already-fetched `liveQuotes=false` positions response.
+    - These derive  summary/allocation from the already-fetched `liveQuotes=false` positions response.
     - Fast summary does **not** derive day PnL from position day-change totals. It only fills day PnL from a fresh cached `1D` equity-history response when one already exists; otherwise the slower/full path can populate it later without blocking first paint.
   - `artifacts/api-server/src/services/account-page-streams.ts`
-    - Shadow critical branch now fetches positions/orders/closed-trades, derives summary/allocation from positions, and computes injected `detail: "fast"` risk.
-    - Non-shadow critical path remains unchanged.
+    - Shadow  branch now fetches positions/orders/closed-trades, derives summary/allocation from positions, and computes injected `detail: "fast"` risk.
+    - Non-shadow  path remains unchanged.
   - `artifacts/api-server/src/services/shadow-account-streams.ts`
     - Shadow account snapshot base now uses the same position-derived summary/allocation plus fast risk.
   - `artifacts/pyrus/src/screens/AccountScreen.jsx`
-    - Non-shadow critical fallback remains `1_000ms`.
-    - Shadow critical fallback is now `4_000ms`, giving the low-single-digit-second stream critical event time to arrive before REST fallbacks start.
+    - Non-shadow  fallback remains `1_000ms`.
+    - Shadow  fallback is now `4_000ms`, giving the low-single-digit-second stream  event time to arrive before REST fallbacks start.
 - Validation:
-  - PASS: `node --import tsx --test src/services/shadow-account.test.ts src/services/account-page-streams.test.ts` from `artifacts/api-server` - 125/125.
+  - PASS: `node JS validation runner src/services/shadow-account.validation.ts src/services/account-page-streams.validation.ts` from `artifacts/api-server` - 125/125.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 12:24:35 MDT`.
-  - PASS: `node --test artifacts/pyrus/src/screens/account/accountCalendarData.test.js` - 11/11.
+  - PASS: `node validation runner artifacts/pyrus/src/screens/account/accountCalendarData.validation.js` - 11/11.
   - PASS: `pnpm --filter @workspace/pyrus typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus build`; rebuilt `artifacts/pyrus/dist/public/index.html` at `2026-06-03 12:24:59 MDT`.
   - PASS: scoped `git diff --check`.
 - Changed-code proof without live reload:
-  - Direct `fetchAccountPageCriticalPayload({ accountId: "shadow", mode: "paper", orderTab: "working" })` via `node --import tsx` returned in `2666ms`.
-  - Payload had 25 positions, 5 option positions, non-degraded/non-stale positions, net liquidation `172508.9511479999`, 3 allocation asset classes, and `risk.greekScenarios.status = "disabled"` with warning `Deferred during the account-page critical read.`
+  - Direct `fetchAccountPagePayload({ accountId: "shadow", mode: "paper", orderTab: "working" })` via `node --import tsx` returned in `2666ms`.
+  - Payload had 25 positions, 5 option positions, non-degraded/non-stale positions, net liquidation `172508.9511479999`, 3 allocation asset classes, and `risk.greekScenarios.status = "disabled"` with warning `Deferred during the account-page  read.`
 - Post-restart live follow-up:
-  - After restart to live API PID `71623`, `/api/streams/accounts/page?accountId=shadow&mode=paper&orderTab=working` did emit `critical`, proving the position-derived summary/allocation patch was loaded.
-  - Cold critical still landed around the 10-12s window, not before the 4s fallback, because the shadow critical branch still waited on `getAccountClosedTrades()` for fast risk.
+  - After restart to live API PID `71623`, `/api/streams/accounts/page?accountId=shadow&mode=paper&orderTab=working` did emit ``, proving the position-derived summary/allocation patch was loaded.
+  - Cold  still landed around the 10-12s window, not before the 4s fallback, because the shadow  branch still waited on `getAccountClosedTrades()` for fast risk.
   - Live route timings showed positions `0.90s`, working orders `3.15s`, closed trades `5.73s`, allocation REST `9.14s`.
 - Final source fix:
-  - `artifacts/api-server/src/services/account-page-streams.ts` now uses `deferredShadowClosedTrades()` for shadow fast risk in the account-page critical payload instead of calling `getAccountClosedTrades(common)`.
+  - `artifacts/api-server/src/services/account-page-streams.ts` now uses `deferredShadowClosedTrades()` for shadow fast risk in the account-page  payload instead of calling `getAccountClosedTrades(common)`.
   - This keeps realized/all-time closed-trade risk out of the first-paint path; full/derived closed-trade data still loads through the normal derived routes.
   - Direct changed-code proof after this final patch returned in `2497ms` with 25 positions, 0 working orders, non-degraded positions, 3 allocation asset classes, net liquidation `172760.91419999988`, and `risk.greekScenarios.status = "disabled"`.
 - Final validation:
-  - PASS: `node --import tsx --test src/services/account-page-streams.test.ts src/services/shadow-account.test.ts` from `artifacts/api-server` - 125/125.
+  - PASS: `node JS validation runner src/services/account-page-streams.validation.ts src/services/shadow-account.validation.ts` from `artifacts/api-server` - 125/125.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 12:31:37 MDT`.
   - PASS: scoped `git diff --check`.
@@ -1164,9 +1164,9 @@
   - Current live API PID `71623` started at `2026-06-03 12:27:49 MDT`.
   - The final API build with deferred closed-trades was produced at `2026-06-03 12:31:37 MDT`, so final live HTTP/browser proof requires one more restart via the default Replit Run Replit App entry.
 - Required post-restart proof:
-  - Sample `/api/streams/accounts/page?accountId=shadow&mode=paper&orderTab=working`; expected `critical` event before the 4s shadow fallback window.
+  - Sample `/api/streams/accounts/page?accountId=shadow&mode=paper&orderTab=working`; expected `` event before the 4s shadow fallback window.
   - Open Account shadow page and verify first-paint diagnostics no longer show `/accounts/shadow/summary`, `/accounts/shadow/allocation`, or `/accounts/shadow/risk` as immediate fallback pressure drivers.
-  - Recheck `/api/diagnostics/latest`; expected current pressure, if any, should not be dominated by the old shadow critical fanout.
+  - Recheck `/api/diagnostics/latest`; expected current pressure, if any, should not be dominated by the old shadow  fanout.
 
 ## 2026-06-03 IBKR Post-Restart Line Soak + Bridge Helper v6 Timeout Fix
 
@@ -1193,13 +1193,13 @@
     - Sets `$env:PYRUS_IBKR_SIDECAR_PROXY_TIMEOUT_MS = '30000'` before starting the local bridge.
   - `artifacts/api-server/src/services/ibkr-bridge-runtime.ts`
     - Expected helper version bumped to `2026-06-03.ib-async-sidecar-v6`.
-  - `artifacts/ibkr-bridge/src/app.test.ts` and `artifacts/api-server/src/services/ibkr-bridge-runtime.test.ts`
+  - `artifacts/ibkr-bridge/src/app.validation.ts` and `artifacts/api-server/src/services/ibkr-bridge-runtime.validation.ts`
     - Added/updated guards for the 30s proxy default, helper v6, and helper env setting.
   - Rebuilt `@workspace/ibkr-bridge`, repackaged `artifacts/ibgateway-bridge-windows-current.tar.gz`, and rebuilt `@workspace/api-server`.
 - Validation:
-  - PASS: `node --import /home/runner/workspace/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/loader.mjs --test src/app.test.ts` from `artifacts/ibkr-bridge` - 4/4.
-  - PASS: `node --import tsx --test src/services/ibkr-bridge-runtime.test.ts` from `artifacts/api-server` - 30/30.
-  - PASS: `node --import tsx --test src/services/ibkr-line-usage.test.ts` from `artifacts/api-server` - 20/20.
+  - PASS: `node --import /home/runner/workspace/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/loader.mjs --test src/app.validation.ts` from `artifacts/ibkr-bridge` - 4/4.
+  - PASS: `node JS validation runner src/services/ibkr-bridge-runtime.validation.ts` from `artifacts/api-server` - 30/30.
+  - PASS: `node JS validation runner src/services/ibkr-line-usage.validation.ts` from `artifacts/api-server` - 20/20.
   - PASS: `pnpm --filter @workspace/ibkr-bridge run typecheck`.
   - PASS: `pnpm --filter @workspace/ibkr-bridge run build`.
   - PASS: `node scripts/package-ibkr-bridge-bundle.mjs`.
@@ -1228,7 +1228,7 @@
     - Aggregate callbacks queue only the changed symbol per active deployment mode.
     - Stream evaluation is debounced at `250ms`, cooldown-limited to `2s` per mode/symbol, and batched to `24` symbols.
     - The stream evaluator calls `evaluateSignalMonitorProfileSymbols()` with `mode: "incremental"`, `pressureCapMode: "bypass-soft"`, `barSourcePolicy: "mixed"`, and bounded concurrency.
-  - `artifacts/api-server/src/services/signal-options-worker.test.ts`
+  - `artifacts/api-server/src/services/signal-options-worker.validation.ts`
     - Added `signal-options worker evaluates changed stream symbols from Massive aggregates`.
 - Second live symptom after the first fix:
   - `/api/algo/deployments/.../signal-options/state?view=summary` still produced a route timeout in one live sample.
@@ -1250,8 +1250,8 @@
   - That CEG event was later overwritten in current state by another evaluation, so final proof must measure STA-visible stored state/candidate rows, not only `signal_monitor_events`.
   - Current live API PID `76118` started at `2026-06-03 12:39:16 MDT`; the final API bundle was rebuilt at `2026-06-03 12:45:03 MDT`, so the live process cannot include this final worker-poll fix until the next default Replit Run Replit App restart.
 - Validation:
-  - PASS: `node --import tsx --test src/services/signal-options-worker.test.ts src/services/signal-options-automation.test.ts` - 163/163.
-  - PASS: `node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts src/services/algo-cockpit-streams.test.ts` - 232/232.
+  - PASS: `node JS validation runner src/services/signal-options-worker.validation.ts src/services/signal-options-automation.validation.ts` - 163/163.
+  - PASS: `node JS validation runner src/services/signal-monitor.validation.ts src/services/signal-options-automation.validation.ts src/services/signal-options-worker.validation.ts src/services/algo-cockpit-streams.validation.ts` - 232/232.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 12:45:03 MDT`.
   - PASS: scoped `git diff --check`.
@@ -1270,9 +1270,9 @@
 - Fix implemented:
   - `signal-options-automation.ts`: `expectedLatestSignalOptionsMonitorBarAt()` now uses `input.now` directly, so the expected bar is the just-closed candle boundary.
   - `signal-monitor.ts`: stream aggregate bars now normalize inclusive minute ends to exact close boundaries, and completed multi-minute rollups stamp `dataUpdatedAt` at `bucketEndMs`.
-  - Added/updated tests in `signal-monitor.test.ts` and `signal-options-automation.test.ts` so `14:00:03` requires `14:00`, and stream bars close exactly on candle boundaries.
+  - Added/updated tests in `signal-monitor.validation.ts` and `signal-options-automation.validation.ts` so `14:00:03` requires `14:00`, and stream bars close exactly on candle boundaries.
 - Validation:
-  - PASS: `node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-automation.test.ts src/services/signal-options-worker.test.ts` - 230/230.
+  - PASS: `node JS validation runner src/services/signal-monitor.validation.ts src/services/signal-options-automation.validation.ts src/services/signal-options-worker.validation.ts` - 230/230.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 13:16:37 MDT`.
   - PASS: scoped `git diff --check`.
@@ -1309,12 +1309,12 @@
   - `artifacts/api-server/src/routes/automation.ts`
     - Explicit `?cacheMode=cache-only` is honored for state/cockpit/performance diagnostics and pressure fallbacks.
 - Regression coverage:
-  - `signal-monitor.test.ts`: provisional live-edge path tries cached history before REST, strict no-REST mode exists before recursive base load, and no-history strict mode preserves stored state.
-  - `signal-options-worker.test.ts`: stream evaluator asserts `allowHistoricalFallback: false`.
-  - `signal-options-automation.test.ts`: fast summary refresh honors `refreshSignalsFromMonitorState` before returning fresh/stale cache or cold cache-only fallback.
-  - `automation.test.ts`: route cache-mode override source guard.
+  - `signal-monitor.validation.ts`: provisional live-edge path tries cached history before REST, strict no-REST mode exists before recursive base load, and no-history strict mode preserves stored state.
+  - `signal-options-worker.validation.ts`: stream evaluator asserts `allowHistoricalFallback: false`.
+  - `signal-options-automation.validation.ts`: fast summary refresh honors `refreshSignalsFromMonitorState` before returning fresh/stale cache or cold cache-only fallback.
+  - `automation.validation.ts`: route cache-mode override source guard.
 - Validation:
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-worker.test.ts src/services/signal-options-automation.test.ts src/services/automation.test.ts` - 235/235.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts src/services/signal-options-worker.validation.ts src/services/signal-options-automation.validation.ts src/services/automation.validation.ts` - 235/235.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 13:55:22 MDT`.
   - PASS: scoped `git diff --check`.
@@ -1343,7 +1343,7 @@
     - Background/manual scanner paths hydrate a bounded historical subset; historical hydration errors remain user-visible only on manual scans, while background scans fall back silently.
     - Historical candidates are now sliced from the already selected live candidates instead of rerunning the rotating selector over all metadata contracts.
     - Candidate event construction now prefers `flowOccurredAt` before quote/data update timestamps.
-  - `artifacts/api-server/src/services/options-flow-scanner.test.ts`
+  - `artifacts/api-server/src/services/options-flow-scanner.validation.ts`
     - Added aggregate regression: seed scanner snapshot with live quote time `14:35` and historical option-bar time `14:31` must publish aggregate `occurredAt = 14:31`.
     - Updated background scanner quote test to assert historical bars are sampled for selected live contracts.
 - Live line-usage evidence after restart:
@@ -1351,10 +1351,10 @@
   - Full lease parsing showed 154 flow-scanner leases across 7 symbols: `AAOI`, `AAPL`, `ALAB`, `DIA`, `SPY`, `COIN`, `AMZN`, with `22` option-contract lines each.
   - Conclusion: current scanner allocation is not one line per ticker. It is one line per selected option contract, capped by a per-ticker contract budget. A true one-line-per-ticker model remains a separate allocation/concurrency redesign; simply setting per-ticker line budget to `1` would recreate the prior 8-10 line underfill because scanner concurrency is capped at 8.
 - Validation:
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/options-flow-scanner.test.ts` - 85/85.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/options-flow-scanner.validation.ts` - 85/85.
   - PASS: `pnpm --filter @workspace/api-server run typecheck`.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --test src/features/platform/marketFlowScannerConfig.test.js` - 12/12.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js` - 65/65.
+  - PASS: `pnpm --filter @workspace/pyrus exec node validation runner src/features/platform/marketFlowScannerConfig.validation.js` - 12/12.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js` - 65/65.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: scoped `git diff --check`.
 
@@ -1367,11 +1367,11 @@
   - Recent Massive REST requests still exist, but the sample families were `stock_aggregates` bars for chart/signal/history work, not live quote snapshots.
 - Fix implemented:
   - `artifacts/api-server/src/services/platform.ts`: realtime Massive `getQuoteSnapshots()` no longer calls `getMassiveClient().getQuoteSnapshots()` to fill missing day-change fields. It returns only Massive stock Q/T socket cache plus stock aggregate socket cache.
-  - `artifacts/api-server/src/services/platform-quote-snapshot.test.ts`: updated regressions so realtime Massive quote snapshots assert `massiveCalls === 0` and `bridgeCalls === 0`; socket prices and aggregate-cache prices are preserved without REST fallback.
+  - `artifacts/api-server/src/services/platform-quote-snapshot.validation.ts`: updated regressions so realtime Massive quote snapshots assert `massiveCalls === 0` and `bridgeCalls === 0`; socket prices and aggregate-cache prices are preserved without REST fallback.
   - `artifacts/pyrus/src/features/charting/useMassiveStockAggregateStream.ts`: frontend live aggregate type now includes `source: "massive-websocket"`.
 - Validation:
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/platform-quote-snapshot.test.ts` - 7/7.
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-worker.test.ts src/services/signal-options-automation.test.ts src/services/automation.test.ts src/services/platform-quote-snapshot.test.ts` - 242/242.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/platform-quote-snapshot.validation.ts` - 7/7.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts src/services/signal-options-worker.validation.ts src/services/signal-options-automation.validation.ts src/services/automation.validation.ts src/services/platform-quote-snapshot.validation.ts` - 242/242.
   - PASS: `pnpm --filter @workspace/api-server typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus typecheck`.
   - PASS: `pnpm --filter @workspace/api-server build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 14:01:17 MDT`.
@@ -1405,12 +1405,12 @@
     - Runtime setting bounds now allow scanner/radar batch and promotion counts up to 500 while keeping scanner concurrency capped at 8.
   - Tests updated so pool-fill fixtures use many ticker underlyings, while same-underlying fixtures assert rotation/exclusivity.
 - Validation:
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/market-data-admission.test.ts` - 41/41.
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/options-flow-scanner.test.ts` - 86/86.
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/flow-universe-planner.test.ts` - 10/10.
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/ibkr-lane-policy.test.ts src/services/ibkr-line-usage.test.ts` - 27/27.
-  - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/watchlist-prewarm.test.ts` - 21/21.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/features/platform/marketFlowScannerConfig.test.js` - 77/77.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/market-data-admission.validation.ts` - 41/41.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/options-flow-scanner.validation.ts` - 86/86.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/flow-universe-planner.validation.ts` - 10/10.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/ibkr-lane-policy.validation.ts src/services/ibkr-line-usage.validation.ts` - 27/27.
+  - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/watchlist-prewarm.validation.ts` - 21/21.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js src/features/platform/marketFlowScannerConfig.validation.js` - 77/77.
   - PASS: `pnpm --filter @workspace/api-server run typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: scoped `git diff --check`.
@@ -1432,8 +1432,8 @@
 - Data map updated:
   - Added rules for signal event timing, STA sparkline ownership, active-timeframe matrix persistence, empty Move diagnosis, and current-vs-all-day STA pagination.
 - Validation:
-  - PASS: `node --import tsx --test src/services/signal-monitor.test.ts src/services/signal-options-automation.test.ts` from `artifacts/api-server` - 210/210.
-  - PASS: `node --import tsx --test src/features/platform/runtimeMarketDataModel.test.js src/screens/algo/OperationsSignalRow.test.js src/screens/algo/algoHelpers.test.js src/features/platform/signalMatrixScheduler.test.js` from `artifacts/pyrus` - 99/99.
+  - PASS: `node JS validation runner src/services/signal-monitor.validation.ts src/services/signal-options-automation.validation.ts` from `artifacts/api-server` - 210/210.
+  - PASS: `node JS validation runner src/features/platform/runtimeMarketDataModel.validation.js src/screens/algo/OperationsSignalRow.validation.js src/screens/algo/algoHelpers.validation.js src/features/platform/signalMatrixScheduler.validation.js` from `artifacts/pyrus` - 99/99.
   - PASS: `pnpm --filter @workspace/api-server run typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: scoped `git diff --check`.
@@ -1441,8 +1441,8 @@
   - That check also exposed a remaining underfill in `options-flow-radar-scanner.ts`: radar only used fallback promotions when there were zero hot promotions, so a small hot set still produced only 3-4 deep scanner symbols.
   - Follow-up fix in `artifacts/api-server/src/services/options-flow-radar-scanner.ts`: fallback candidates now top off remaining promotion capacity after hot promotions instead of only running when the hot list is empty.
   - Follow-up validation:
-    - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/options-flow-scanner.test.ts` - 87/87, including the new hot-plus-fallback top-off regression.
-    - PASS: `pnpm --filter @workspace/api-server exec tsx --test src/services/market-data-admission.test.ts src/services/flow-universe-planner.test.ts src/services/ibkr-lane-policy.test.ts src/services/ibkr-line-usage.test.ts` - 78/78.
+    - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/options-flow-scanner.validation.ts` - 87/87, including the new hot-plus-fallback top-off regression.
+    - PASS: `pnpm --filter @workspace/api-server exec tsx validation runner src/services/market-data-admission.validation.ts src/services/flow-universe-planner.validation.ts src/services/ibkr-lane-policy.validation.ts src/services/ibkr-line-usage.validation.ts` - 78/78.
     - PASS: `pnpm --filter @workspace/api-server run typecheck`.
     - PASS: `pnpm --filter @workspace/api-server run build`; rebuilt `artifacts/api-server/dist/index.mjs` at `2026-06-03 14:50:57 MDT`.
     - PASS: scoped `git diff --check`.
@@ -1467,14 +1467,14 @@
   - `artifacts/pyrus/src/screens/AlgoScreen.jsx`: added `algoVisibleRowHydrationQueriesEnabled` independent of derived/background polling and passed it into the Algo live page.
   - `artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx`: threaded `rowHydrationQueriesEnabled` into `OperationsSignalTable`.
   - `artifacts/pyrus/src/screens/algo/OperationsSignalTable.jsx`: quote/sparkline row fallbacks now use the visible row gate and active request headers (`algo-signal-table`, `algo-signal-sparkline`) instead of the deferred background path.
-  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js` and `artifacts/pyrus/src/features/platform/platformRootSource.test.js`: source-contract tests now assert the dedicated visible-row gate and active request options.
+  - `artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js` and `artifacts/pyrus/src/features/platform/platformRootSource.validation.js`: source-contract tests now assert the dedicated visible-row gate and active request options.
 - SPY/source-churn finding:
   - Recent signal-monitor events did include SPY 5m buy events, but Signal Options cockpit/state endpoints were timing out or shed under high pressure during the probe, and the last successful cockpit summary did not include SPY.
   - `buildVisibleSignalRows` already merges Signal Options signal rows with candidate fallbacks; the disappearance occurs before that, when the selected source array changes. No monitor-event-to-STA merge was implemented because that is a product semantics change.
   - Matrix bubble incompleteness remains a pressure/cap tradeoff unless we intentionally raise the active-screen exact-cell cap or add a dedicated visible-page matrix lane.
 - Validation:
-  - PASS: `node --import tsx --test src/screens/algo/OperationsSignalRow.test.js src/features/platform/platformRootSource.test.js` from `artifacts/pyrus` - 91/91.
-  - PASS: `node --import tsx --test src/screens/algo/algoHelpers.test.js` from `artifacts/pyrus` - 36/36.
+  - PASS: `node JS validation runner src/screens/algo/OperationsSignalRow.validation.js src/features/platform/platformRootSource.validation.js` from `artifacts/pyrus` - 91/91.
+  - PASS: `node JS validation runner src/screens/algo/algoHelpers.validation.js` from `artifacts/pyrus` - 36/36.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: scoped `git diff --check`.
   - PASS: `docs/backend-data-map.md` fence check (`8` fences, `4` Mermaid blocks, even fence count).
@@ -1505,12 +1505,12 @@
     - Updated STA ownership from "current visible snapshots only / future gap" to "same-day Signal Monitor event history plus current Signal Options action overlay".
     - Documented the then-remaining scale caveat: existing event endpoint capped at 500 rows. Superseded by the `17:57` cursor-pagination section below.
 - Validation so far:
-  - PASS: `node --import tsx --test src/screens/algo/algoHelpers.test.js` from `artifacts/pyrus` - 40/40.
-  - PASS: `node --import tsx --test src/screens/algo/algoHelpers.test.js src/features/platform/platformRootSource.test.js src/screens/algo/OperationsSignalRow.test.js` from `artifacts/pyrus` - 132/132.
+  - PASS: `node JS validation runner src/screens/algo/algoHelpers.validation.js` from `artifacts/pyrus` - 40/40.
+  - PASS: `node JS validation runner src/screens/algo/algoHelpers.validation.js src/features/platform/platformRootSource.validation.js src/screens/algo/OperationsSignalRow.validation.js` from `artifacts/pyrus` - 132/132.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: scoped `git diff --check`.
   - PASS: backend data map fence check (`28` fences, `13` Mermaid blocks, even fence count).
-  - PASS: focused expanded Pyrus bundle: `node --import tsx --test src/screens/algo/algoHelpers.test.js src/screens/algo/OperationsSignalRow.test.js src/features/platform/platformRootSource.test.js src/features/platform/runtimeMarketDataModel.test.js src/features/platform/signalMatrixScheduler.test.js` - 169/169.
+  - PASS: focused expanded Pyrus bundle: `node JS validation runner src/screens/algo/algoHelpers.validation.js src/screens/algo/OperationsSignalRow.validation.js src/features/platform/platformRootSource.validation.js src/features/platform/runtimeMarketDataModel.validation.js src/features/platform/signalMatrixScheduler.validation.js` - 169/169.
   - PASS: live payload sanity through `buildVisibleSignalRows`: event endpoint returned `500`, Signal Options state returned `8` current signals, merged rows returned `239` (`231` history + `8` current) for `2026-06-03T23:35:00Z`.
   - PASS: safe-mode browser check at `http://127.0.0.1:18747/?pyrusQa=safe`: Algo STA table rendered `All 237 of 237 signals`, pagination `Rows 1-20 of 237`, and no page/console errors after hot reload.
 - Superseded caveat:
@@ -1531,12 +1531,12 @@
     - Replaced Algo route/monitor/toast/notification/pulse/deploy `RadioTower` glyphs with `Bot`.
     - Replaced active scanner status `RadioTower` with `RefreshCw`.
     - Replaced Algo halt `positionMarkFeed` `RadioTower` with `Activity`.
-  - Added `platformRootSource.test.js` guards:
+  - Added `platformRootSource.validation.js` guards:
     - IBKR connection header must not contain `RadioTower`/`radioTower` or emit the old gateway `iconKey: "radioTower"`.
     - Active non-test Pyrus source must not import `RadioTower`.
 - Validation:
   - PASS: `rg -n "\bRadioTower\b|\bradioTower\b" artifacts/pyrus/src ...` now only finds the source guard itself.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js` - 67/67.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js` - 67/67.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: scoped `git diff --check`.
 - Runtime note:
@@ -1550,8 +1550,8 @@
   - `/api/readiness` returned `appReadiness.status: "ready"`.
   - Readiness diagnostics remain warning because of latency/browser samples; broker trading is blocked by after-hours `market_session_quiet`.
   - Served runtime source for `HeaderStatusCluster.jsx`, `IbkrConnectionStatus.jsx`, `AppHeader.jsx`, and `PlatformShell.jsx` returned HTTP `200` and no `RadioTower`/`radioTower` matches.
-  - Safe Playwright check mounted the app, found the IBKR connection trigger, opened the IBKR dialog, saw `radarTextCount: 0`, and recorded no console warnings/errors or page errors.
-  - Focused guard suite still passes: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js` - 67/67.
+  - Safe browser QA check mounted the app, found the IBKR connection trigger, opened the IBKR dialog, saw `radarTextCount: 0`, and recorded no console warnings/errors or page errors.
+  - Focused guard suite still passes: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js` - 67/67.
 
 ## 2026-06-03 Massive SkillsMP API Handling Pass
 
@@ -1572,14 +1572,14 @@
   - Massive REST normalization now exposes `lastHttpStatus`, `lastErrorKind`, and `lastDiagnosticHint`.
   - Failed REST summaries render actionable categories, for example `option chain snapshot SPY · entitlement (403)`.
 - Tests added:
-  - `artifacts/api-server/src/providers/massive/market-data.test.ts`: provider HTTP failures classify as degraded, preserve `httpStatus: 403`, set `errorKind: entitlement`, and avoid leaking API keys.
-  - `artifacts/pyrus/src/features/platform/runtimeControlModel.test.js`: runtime snapshot preserves and renders the Massive REST failure category.
+  - `artifacts/api-server/src/providers/massive/market-data.validation.ts`: provider HTTP failures classify as degraded, preserve `httpStatus: 403`, set `errorKind: entitlement`, and avoid leaking API keys.
+  - `artifacts/pyrus/src/features/platform/runtimeControlModel.validation.js`: runtime snapshot preserves and renders the Massive REST failure category.
 - Validation:
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/providers/massive/market-data.test.ts` - 23/23.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/runtimeControlModel.test.js` - 42/42.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner src/providers/massive/market-data.validation.ts` - 23/23.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/runtimeControlModel.validation.js` - 42/42.
   - PASS: `pnpm --filter @workspace/api-server run typecheck`.
 - Worktree note:
-  - `runtimeControlModel.js` and `runtimeControlModel.test.js` already had unrelated scanner wording/coverage edits in the dirty worktree. Do not revert those while handling the Massive diagnostics changes.
+  - `runtimeControlModel.js` and `runtimeControlModel.validation.js` already had unrelated scanner wording/coverage edits in the dirty worktree. Do not revert those while handling the Massive diagnostics changes.
 
 ## 2026-06-03 API Diagnosis Implementation Slice
 
@@ -1610,8 +1610,8 @@
   - STA same-day signal visibility rule now says clients must follow `nextCursor` until `hasMore` is false.
   - Added the Signal Monitor event-history contract note: `signalAt`, not `emittedAt`, defines the day window.
 - Validation:
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test --test-name-pattern "signal monitor event" src/services/signal-monitor.test.ts` - 5/5.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js src/features/platform/platformRootSource.test.js src/screens/algo/algoHelpers.test.js` - 135/135.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner --validation-name-pattern "signal monitor event" src/services/signal-monitor.validation.ts` - 5/5.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/OperationsSignalRow.validation.js src/features/platform/platformRootSource.validation.js src/screens/algo/algoHelpers.validation.js` - 135/135.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: `pnpm --filter @workspace/api-server run typecheck`.
   - PASS: `pnpm --filter @workspace/pyrus run qa:sta-history` against `http://127.0.0.1:18747/?pyrusQa=safe`: API same-day events `243`, STA visible total `244`, pagination `Rows 1-20 of 244`.
@@ -1634,7 +1634,7 @@
   - Zero-size refresh/current-state path now renders `signal state current`.
   - Non-empty worker refresh progress renders `last refresh N/N symbols`, preserving operator useful progress without exposing `batch` terminology.
   - Diagnostic fields `lastBatchSize` and `lastBatchUniverseCount` remain in the backend payload for debugging.
-- Tests added in `artifacts/api-server/src/services/signal-options-automation.test.ts`:
+- Tests added in `artifacts/api-server/src/services/signal-options-automation.validation.ts`:
   - Zero-size current-state cockpit stage asserts `worker waiting 5s; signal state current` and no `batch` or `0/90` user-facing copy.
   - Non-empty monitor refresh asserts `worker waiting 5s; last refresh 12/90 symbols` and no `batch` wording.
 - STA history QA guard fixed:
@@ -1651,8 +1651,8 @@
 - Validation:
   - PASS: `node --check artifacts/pyrus/scripts/qaStaSignalHistory.mjs`.
   - PASS: `pnpm --filter @workspace/pyrus run qa:sta-history` after recovery: API same-day events `248`, visible total `249`, rendered rows `20`, pagination `Rows 1-20 of 249`.
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-automation.test.ts` - 140/140.
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-options-worker.test.ts src/services/signal-options-automation.test.ts src/services/signal-monitor.test.ts` - 244/244.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-options-automation.validation.ts` - 140/140.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-options-worker.validation.ts src/services/signal-options-automation.validation.ts src/services/signal-monitor.validation.ts` - 244/244.
   - PASS: `pnpm --filter @workspace/api-server run typecheck`.
   - PASS: scoped `git diff --check`.
   - PASS: backend data-map fence check (`28` fences, `13` Mermaid blocks, even fence count).
@@ -1679,8 +1679,8 @@
   - Timeout fallback reuses the already-computed stream state instead of recomputing it.
   - `docs/backend-data-map.md` now documents the exact invariant: fresh stream buy/sell wins before history; stale/no-signal stream output must not wipe stored context.
 - Validation:
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/signal-monitor.test.ts` - 78/78.
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/platformRootSource.test.js src/features/platform/signalMatrixScheduler.test.js src/screens/algo/OperationsSignalRow.test.js` - 127/127.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner src/services/signal-monitor.validation.ts` - 78/78.
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/platformRootSource.validation.js src/features/platform/signalMatrixScheduler.validation.js src/screens/algo/OperationsSignalRow.validation.js` - 127/127.
   - PASS: `pnpm --filter @workspace/api-server exec tsc --noEmit --pretty false`.
 - Restart/runtime note:
   - The running API process will need the normal Replit Run App reload before live STA proof reflects this stream-first backend change.
@@ -1701,13 +1701,13 @@
   - `artifacts/api-server/src/services/platform.ts` now gates stale-hit background refresh by API pressure.
   - Normal/watch pressure keeps the previous background refresh behavior.
   - High pressure only allows stale-hit background refresh for active-priority requests (`priority >= 8`), preserving visible chart/STA refresh while suppressing low-priority fanout.
-  - Critical pressure suppresses stale-hit background refresh entirely.
+  -  pressure suppresses stale-hit background refresh entirely.
   - Added `backgroundRefreshPressureSkipped` to bars hydration counters.
   - `docs/backend-data-map.md` now documents `/bars` as a chart/backtest/historical surface and the stale refresh pressure invariant.
 - Validation:
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test --test-name-pattern "suppresses stale background refresh|refresh policy|marks stale cached" src/services/option-chain-batch.test.ts` - 3/3.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner --validation-name-pattern "suppresses stale background refresh|refresh policy|marks stale cached" src/services/option-chain-batch.validation.ts` - 3/3.
   - PASS: `pnpm --filter @workspace/api-server exec tsc --noEmit --pretty false`.
-  - Note: a mis-scoped broader `option-chain-batch.test.ts` run executed unrelated tests and still failed 5 existing cases outside this slice; the new high-pressure stale-refresh tests passed in that broader run.
+  - Note: a mis-scoped broader `option-chain-batch.validation.ts` run executed unrelated tests and still failed 5 existing cases outside this slice; the new high-pressure stale-refresh tests passed in that broader run.
 - Restart/runtime note:
   - The running API process will need a normal Replit Run App reload before live diagnostics include this pressure gate.
   - No Replit startup config, artifact startup command, `.replit`, environment variables, or control-plane operations were touched.
@@ -1725,10 +1725,10 @@
 - Fix:
   - `artifacts/api-server/src/services/shadow-account.ts` now reuses all-positions cache for filtered shadow position reads.
   - Fresh all-cache can satisfy filtered `Stocks`/`Options` reads immediately and reweights totals for the filtered rows.
-  - Stale all-cache can satisfy filtered reads only under high/critical API pressure, preserving stale/degraded flags; normal pressure still attempts a fresh filtered read.
+  - Stale all-cache can satisfy filtered reads only under high/ API pressure, preserving stale/degraded flags; normal pressure still attempts a fresh filtered read.
   - `docs/backend-data-map.md` now documents filtered shadow positions as views over the all-positions ledger response.
 - Validation:
-  - PASS: `pnpm --filter @workspace/api-server exec node --import tsx --test --test-name-pattern "shadow filtered positions|shadow read cache|shadow account positions route" src/services/shadow-account.test.ts src/services/account-positions.test.ts` - 7/7.
+  - PASS: `pnpm --filter @workspace/api-server exec node JS validation runner --validation-name-pattern "shadow filtered positions|shadow read cache|shadow account positions route" src/services/shadow-account.validation.ts src/services/account-positions.validation.ts` - 7/7.
   - PASS: `pnpm --filter @workspace/api-server exec tsc --noEmit --pretty false`.
 - Runtime/config note:
   - A direct post-change endpoint probe still returned in about `3.25s` on the running app, likely due to current cache/process contention; source-level tests and typecheck are the proof for this slice.

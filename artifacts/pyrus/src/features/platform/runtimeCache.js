@@ -5,7 +5,7 @@ export const RUNTIME_CACHE_DB_VERSION = 2;
 export const RUNTIME_CACHE_SCHEMA_VERSION = 2;
 
 export const RUNTIME_CACHE_CLASS = {
-  liveCritical: "live-critical",
+  livePrimary: "live-primary",
   managementLive: "management-live",
   semiLive: "semi-live",
   historicalHeavy: "historical-heavy",
@@ -31,8 +31,8 @@ export const RUNTIME_CACHE_STALE_TTL_MS = {
 };
 
 export const RUNTIME_CACHE_POLICIES = {
-  [RUNTIME_CACHE_CLASS.liveCritical]: {
-    cacheClass: RUNTIME_CACHE_CLASS.liveCritical,
+  [RUNTIME_CACHE_CLASS.livePrimary]: {
+    cacheClass: RUNTIME_CACHE_CLASS.livePrimary,
     ttlMs: 0,
     staleTtlMs: 0,
     persist: false,

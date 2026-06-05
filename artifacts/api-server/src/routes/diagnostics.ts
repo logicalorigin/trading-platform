@@ -46,7 +46,7 @@ function readString(value: unknown): string | null {
 }
 
 function readSeverity(value: unknown): DiagnosticSeverity | undefined {
-  if (value === "info" || value === "warning" || value === "critical") {
+  if (value === "info" || value === "warning") {
     return value;
   }
   return undefined;
@@ -132,7 +132,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function readOptionalFiniteNumber(
   entry: Record<string, unknown>,
-  key: "warning" | "critical",
+  key: "warning",
 ): number | undefined {
   if (entry[key] === undefined || entry[key] === null || entry[key] === "") {
     return undefined;
@@ -231,21 +231,9 @@ router.put("/diagnostics/thresholds", async (req, res) => {
         .map((entry) => asRecord(entry))
         .map((entry) => {
           const warning = readOptionalFiniteNumber(entry, "warning");
-          const critical = readOptionalFiniteNumber(entry, "critical");
-          if (
-            warning !== undefined &&
-            critical !== undefined &&
-            critical < warning
-          ) {
-            throw new HttpError(400, "Invalid diagnostic threshold override.", {
-              code: "invalid_diagnostic_threshold",
-              detail: "critical must be greater than or equal to warning.",
-            });
-          }
           return {
             metricKey: String(entry.metricKey ?? ""),
             warning,
-            critical,
             enabled:
               typeof entry.enabled === "boolean" ? entry.enabled : undefined,
             audible:

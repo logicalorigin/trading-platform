@@ -3,6 +3,7 @@ import {
   useEffect,
 } from "react";
 import LogoLoader from "../components/LogoLoader";
+import { ContainerLoadingStatus } from "../components/platform/ContainerLoadingStatus.jsx";
 import { lazyWithRetry, preloadDynamicImport } from "../lib/dynamicImport";
 import { markRouteDataTiming } from "../features/platform/performanceMetrics";
 import {
@@ -50,6 +51,18 @@ const ResearchWorkspaceFallback = () => (
       minHeight={dim(90)}
       testId="research-workspace-loader"
     />
+    <ContainerLoadingStatus
+      items={[
+        {
+          id: "research-workspace",
+          label: "Research workspace",
+          status: "loading",
+          detail: "Photonics workspace module and research datasets",
+          endpoint: "src/features/research/PhotonicsObservatory.jsx",
+        },
+      ]}
+      testId="research-workspace-loading-waits"
+    />
     <span
       className="ra-skeleton-shimmer"
       style={{
@@ -78,7 +91,7 @@ export const ResearchScreen = ({
 }) => {
   useEffect(() => {
     onReadinessChange?.({
-      criticalReady: Boolean(isVisible),
+      primaryReady: Boolean(isVisible),
       derivedReady: false,
       backgroundAllowed: false,
     });

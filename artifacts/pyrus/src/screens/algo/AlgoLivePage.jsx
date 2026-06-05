@@ -56,8 +56,6 @@ import { buildAlgoStatusFailurePoint } from "../../features/platform/failurePoin
 import { OperationsPositionsTable } from "./OperationsPositionsTable";
 import { OperationsSignalTable } from "./OperationsSignalTable";
 
-const ALGO_RIGHT_RAIL_DEFER_MS = 1_500;
-
 export const preloadAlgoLivePageModules = () => Promise.resolve();
 
 const EmptyOperationsState = ({
@@ -278,7 +276,7 @@ const headerActionButtonStyle = ({ color, disabled = false, divided = false } = 
 
 const resolveAttentionSeverity = (attentionItems = []) => {
   if (!attentionItems?.length) return null;
-  if (attentionItems.some((item) => item?.severity === "critical")) return "critical";
+  if (attentionItems.some((item) => item?.severity === "warning")) return "warning";
   if (attentionItems.some((item) => item?.severity === "warning")) return "warning";
   return "info";
 };
@@ -306,7 +304,7 @@ const resolveHeaderScanWave = ({
     attentionSeverity,
   });
   const status =
-    operationsStatus === "critical"
+    operationsStatus === "warning"
       ? "offline"
       : scanRunning
         ? "healthy"
@@ -328,7 +326,7 @@ const resolveHeaderScanWave = ({
         : state === "capacity-limited"
           ? "attention"
           : state === "offline"
-            ? "critical"
+            ? "warning"
             : "paused";
   return {
     status: state,
@@ -557,7 +555,6 @@ export const AlgoLivePage = ({
   rightRailFallback = null,
 }) => {
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
-  const [rightRailRenderAllowed, setRightRailRenderAllowed] = useState(false);
   const settingsDrawerRef = useRef(null);
   const focusedDeploymentId = focusedDeployment?.id || null;
   const focusedLedgerPositions = useMemo(
@@ -639,14 +636,7 @@ export const AlgoLivePage = ({
     if (!settingsDrawerOpen) return;
     settingsDrawerRef.current?.focus();
   }, [settingsDrawerOpen]);
-  useEffect(() => {
-    const timerId = window.setTimeout(
-      () => setRightRailRenderAllowed(true),
-      ALGO_RIGHT_RAIL_DEFER_MS,
-    );
-    return () => window.clearTimeout(timerId);
-  }, []);
-  const renderedRightRail = rightRailRenderAllowed ? rightRail : rightRailFallback;
+  const renderedRightRail = rightRail ?? rightRailFallback;
 
   const showEmptyOperationsState = Boolean(setupDataSettled && !deployments.length);
   if (showEmptyOperationsState) {
@@ -844,7 +834,7 @@ export const AlgoLivePage = ({
       detail: `loss left ${formatMoney(cockpitKpis?.dailyLossRemaining, 0)}`,
       color: riskRecord.dailyHaltActive ? CSS_COLOR.red : CSS_COLOR.green,
       icon: riskRecord.dailyHaltActive ? ShieldAlert : ShieldCheck,
-      severity: riskRecord.dailyHaltActive ? "critical" : "neutral",
+      severity: riskRecord.dailyHaltActive ? "warning" : "neutral",
     },
     {
       label: "Record",

@@ -1,7 +1,7 @@
 type EvidenceValue = boolean | number | string | null;
 type EvidenceRecord = Record<string, EvidenceValue>;
 
-const warningSeverities = ["info", "warning", "critical"] as const;
+const warningSeverities = ["info", "warning", "alert"] as const;
 const warningScopes = [
   "external",
   "metric",
@@ -40,7 +40,7 @@ type BuildBacktestValidationWarningItemsInput = {
 };
 
 const severityLabels: Record<BacktestValidationWarningSeverity, string> = {
-  critical: "Critical",
+  alert: "Alert",
   info: "Info",
   warning: "Warning",
 };

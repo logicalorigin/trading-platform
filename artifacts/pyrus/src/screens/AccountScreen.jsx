@@ -50,6 +50,7 @@ import {
   useAccountSectionTransitionSnapshot,
 } from "../features/platform/accountSectionTransitionStore.js";
 import { useToast } from "../features/platform/platformContexts.jsx";
+import { ContainerLoadingStatus } from "../components/platform/ContainerLoadingStatus.jsx";
 import DeferredRender from "../components/platform/DeferredRender";
 import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import { LoadingSpinner, SegmentedControl } from "../components/platform/primitives.jsx";
@@ -400,8 +401,10 @@ const equityQueryWithLivePositionsTerminal = ({
 
 const AccountPanelSuspenseFallback = ({
   detail = "Preparing account data.",
+  endpoint,
   minHeight = 160,
   title = "Loading account panel",
+  waitItems,
 }) => (
   <div
     className="ra-deferred-render__placeholder"
@@ -440,6 +443,20 @@ const AccountPanelSuspenseFallback = ({
     >
       {detail}
     </div>
+    <ContainerLoadingStatus
+      items={
+        waitItems || [
+          {
+            id: `${title}:fallback`,
+            label: title,
+            status: "loading",
+            detail,
+            endpoint,
+          },
+        ]
+      }
+      testId="account-panel-fallback-waits"
+    />
     <span
       aria-hidden="true"
       className="ra-deferred-render__skeleton ra-skeleton-shimmer"
@@ -451,8 +468,10 @@ const AccountPanelSuspenseFallback = ({
 const DeferredPanelSuspense = ({
   children,
   detail,
+  endpoint,
   minHeight = 160,
   title,
+  waitItems,
 }) => (
   <PlatformErrorBoundary
     label={title || "Account deferred panel"}
@@ -464,8 +483,10 @@ const DeferredPanelSuspense = ({
       fallback={
         <AccountPanelSuspenseFallback
           detail={detail}
+          endpoint={endpoint}
           minHeight={minHeight}
           title={title}
+          waitItems={waitItems}
         />
       }
     >
@@ -531,8 +552,8 @@ const ACCOUNT_SWITCH_PREFETCH_OPTIONS = {
   },
 };
 const ACCOUNT_SWITCH_KEEP_WARM_MS = 60_000;
-const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 0;
-const SHADOW_ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 0;
+const ACCOUNT_PRIMARY_FALLBACK_DELAY_MS = 0;
+const SHADOW_ACCOUNT_PRIMARY_FALLBACK_DELAY_MS = 0;
 const ACCOUNT_LIVE_FALLBACK_DELAY_MS = 0;
 const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 0;
 const ACCOUNT_INACTIVE_PREWARM_FALLBACK_DELAY_MS = 0;
@@ -1354,13 +1375,13 @@ const AccountScreenInner = ({
   const accountSectionPending = Boolean(
     isVisible && accountSection !== settledAccountSection,
   );
-  const [accountCriticalFallbackReady, setAccountCriticalFallbackReady] = useState(false);
+  const [accountPrimaryFallbackReady, setAccountPrimaryFallbackReady] = useState(false);
   const [accountLiveFallbackReady, setAccountLiveFallbackReady] = useState(false);
   const [accountDerivedFallbackReady, setAccountDerivedFallbackReady] = useState(false);
   const accountTimingStagesRef = useRef(new Set());
-  const accountCriticalFallbackDelayMs = shadowMode
-    ? SHADOW_ACCOUNT_CRITICAL_FALLBACK_DELAY_MS
-    : ACCOUNT_CRITICAL_FALLBACK_DELAY_MS;
+  const accountPrimaryFallbackDelayMs = shadowMode
+    ? SHADOW_ACCOUNT_PRIMARY_FALLBACK_DELAY_MS
+    : ACCOUNT_PRIMARY_FALLBACK_DELAY_MS;
   useEffect(() => {
     if (!isVisible) {
       accountTimingStagesRef.current = new Set();
@@ -1370,19 +1391,19 @@ const AccountScreenInner = ({
     if (
       !accountPageStreamEnabled ||
       accountSectionPending ||
-      accountPageStreamFreshness.accountCriticalFresh
+      accountPageStreamFreshness.accountPrimaryFresh
     ) {
-      setAccountCriticalFallbackReady(false);
+      setAccountPrimaryFallbackReady(false);
       return undefined;
     }
     const timer = window.setTimeout(() => {
-      setAccountCriticalFallbackReady(true);
-    }, accountCriticalFallbackDelayMs);
+      setAccountPrimaryFallbackReady(true);
+    }, accountPrimaryFallbackDelayMs);
     return () => window.clearTimeout(timer);
   }, [
     accountPageStreamEnabled,
-    accountPageStreamFreshness.accountCriticalFresh,
-    accountCriticalFallbackDelayMs,
+    accountPageStreamFreshness.accountPrimaryFresh,
+    accountPrimaryFallbackDelayMs,
     accountSectionPending,
   ]);
   useEffect(() => {
@@ -1421,10 +1442,10 @@ const AccountScreenInner = ({
     accountPageStreamFreshness.accountDerivedFresh,
     accountSectionPending,
   ]);
-  const accountCriticalReady = Boolean(
+  const accountPrimaryReady = Boolean(
     !accountPageStreamEnabled ||
-      accountPageStreamFreshness.accountCriticalFresh ||
-      accountCriticalFallbackReady,
+      accountPageStreamFreshness.accountPrimaryFresh ||
+      accountPrimaryFallbackReady,
   );
   const accountDerivedReady = Boolean(
     !accountPageStreamEnabled ||
@@ -1433,7 +1454,7 @@ const AccountScreenInner = ({
   );
   const inactiveAccountPageStreamEnabled = Boolean(
     accountPageStreamEnabled &&
-      accountPageStreamFreshness.accountCriticalFresh &&
+      accountPageStreamFreshness.accountPrimaryFresh &&
       inactiveAccountPageRequest,
   );
   const inactiveAccountPageStreamFreshness = useAccountPageSnapshotStream({
@@ -1458,7 +1479,7 @@ const AccountScreenInner = ({
   useEffect(() => {
     if (
       !inactiveAccountPageStreamEnabled ||
-      inactiveAccountPageStreamFreshness.accountCriticalFresh
+      inactiveAccountPageStreamFreshness.accountPrimaryFresh
     ) {
       setInactiveAccountPrewarmFallbackReady(false);
       return undefined;
@@ -1469,18 +1490,18 @@ const AccountScreenInner = ({
     return () => window.clearTimeout(timer);
   }, [
     inactiveAccountPageStreamEnabled,
-    inactiveAccountPageStreamFreshness.accountCriticalFresh,
+    inactiveAccountPageStreamFreshness.accountPrimaryFresh,
   ]);
   const inactiveAccountPrewarmEnabled = Boolean(
     isVisible &&
       accountQueriesEnabled &&
-      accountCriticalReady &&
+      accountPrimaryReady &&
       (!inactiveAccountPageStreamEnabled || inactiveAccountPrewarmFallbackReady) &&
-      !inactiveAccountPageStreamFreshness.accountCriticalFresh,
+      !inactiveAccountPageStreamFreshness.accountPrimaryFresh,
   );
   useEffect(() => {
     onReadinessChange?.({
-      criticalReady: Boolean(isVisible),
+      primaryReady: Boolean(isVisible),
       derivedReady: Boolean(isVisible && accountDerivedReady),
       backgroundAllowed: Boolean(isVisible && !safeQaMode && accountDerivedReady),
     });
@@ -1520,7 +1541,7 @@ const AccountScreenInner = ({
     enabled: Boolean(
       accountPageStreamEnabled &&
         !shadowMode &&
-        accountCriticalReady,
+        accountPrimaryReady,
     ),
     runtimeDiagnosticsEnabled: false,
     lineUsageEnabled: true,
@@ -1554,18 +1575,18 @@ const AccountScreenInner = ({
     accountRuntimeControl.lineUsage,
   ]);
   useEffect(() => {
-    if (!isVisible || !accountCriticalReady) {
+    if (!isVisible || !accountPrimaryReady) {
       return;
     }
-    markAccountTiming("critical-data-ready", {
+    markAccountTiming("primary-data-ready", {
       ...accountTimingDetail,
-      source: accountPageStreamFreshness.accountCriticalFresh
+      source: accountPageStreamFreshness.accountPrimaryFresh
         ? "stream"
         : "rest-fallback",
     });
   }, [
-    accountCriticalReady,
-    accountPageStreamFreshness.accountCriticalFresh,
+    accountPrimaryReady,
+    accountPageStreamFreshness.accountPrimaryFresh,
     accountTimingDetail,
     isVisible,
     markAccountTiming,
@@ -1591,7 +1612,7 @@ const AccountScreenInner = ({
     () =>
       buildAccountRefreshPolicy({
         isVisible,
-        accountPageStreamFresh: accountPageStreamFreshness.accountCriticalFresh,
+        accountPageStreamFresh: accountPageStreamFreshness.accountPrimaryFresh,
         accountWarmupPending,
         accountStreamFresh: brokerStreamFreshness.accountFresh,
         orderStreamFresh: brokerStreamFreshness.orderFresh,
@@ -1599,7 +1620,7 @@ const AccountScreenInner = ({
       }),
     [
       accountWarmupPending,
-      accountPageStreamFreshness.accountCriticalFresh,
+      accountPageStreamFreshness.accountPrimaryFresh,
       brokerStreamFreshness.accountFresh,
       brokerStreamFreshness.orderFresh,
       isVisible,
@@ -1611,8 +1632,8 @@ const AccountScreenInner = ({
   const tradesRefreshInterval = refreshPolicy.trades;
   const chartRefreshInterval = refreshPolicy.chart;
   const healthRefreshInterval = refreshPolicy.health;
-  const criticalAccountQueriesEnabled = Boolean(
-    accountQueriesEnabled && accountCriticalReady,
+  const primaryAccountQueriesEnabled = Boolean(
+    accountQueriesEnabled && accountPrimaryReady,
   );
   const liveAccountQueriesEnabled = Boolean(
     accountQueriesEnabled &&
@@ -1637,7 +1658,7 @@ const AccountScreenInner = ({
     accountQueriesEnabled && accountDerivedReady,
   );
   const ordersPanelQueriesEnabled = Boolean(
-    criticalAccountQueriesEnabled,
+    primaryAccountQueriesEnabled,
   );
   const supportPanelQueriesEnabled = Boolean(
     secondaryAccountQueriesEnabled && activatedAccountPanels.support,
@@ -1671,7 +1692,7 @@ const AccountScreenInner = ({
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: liveRefreshInterval,
-      enabled: criticalAccountQueriesEnabled,
+      enabled: primaryAccountQueriesEnabled,
       placeholderData: retainPreviousData,
       ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.summary),
     },
@@ -1758,7 +1779,7 @@ const AccountScreenInner = ({
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: secondaryRefreshInterval,
-      enabled: criticalAccountQueriesEnabled,
+      enabled: primaryAccountQueriesEnabled,
       placeholderData: retainPreviousData,
       ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.allocation),
     },
@@ -1774,7 +1795,7 @@ const AccountScreenInner = ({
       query: {
         ...QUERY_OPTIONS.query,
         refetchInterval: liveRefreshInterval,
-        enabled: criticalAccountQueriesEnabled,
+        enabled: primaryAccountQueriesEnabled,
         placeholderData: retainPreviousData,
         ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.positions),
       },
@@ -1947,7 +1968,7 @@ const AccountScreenInner = ({
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: secondaryRefreshInterval,
-      enabled: criticalAccountQueriesEnabled,
+      enabled: primaryAccountQueriesEnabled,
       placeholderData: retainPreviousData,
       ...getSafeQaInitialQueryOptions(safeQaExposureFixture?.risk),
     },
@@ -2291,7 +2312,7 @@ const AccountScreenInner = ({
     [accountRequestId],
   );
   const accountLiveOptionQuotesEnabled = Boolean(
-    accountQueriesEnabled && accountCriticalReady,
+    accountQueriesEnabled && accountPrimaryReady,
   );
   const shadowAutomationAudit = useMemo(() => {
     const orders = ordersQuery.data?.orders || [];
@@ -2343,8 +2364,8 @@ const AccountScreenInner = ({
   const accountActivePrefetchEnabled = Boolean(
     accountQueriesEnabled &&
       (!accountPageStreamEnabled ||
-        (accountCriticalFallbackReady &&
-          !accountPageStreamFreshness.accountCriticalFresh)),
+        (accountPrimaryFallbackReady &&
+          !accountPageStreamFreshness.accountPrimaryFresh)),
   );
   useEffect(() => {
     if (!accountActivePrefetchEnabled) {
@@ -2393,6 +2414,15 @@ const AccountScreenInner = ({
           minHeight={accountIsPhone ? 58 : 42}
           title="Loading account summary"
           detail="Preparing balances and account status."
+          waitItems={[
+            {
+              id: "account-summary-module",
+              label: "Account summary panel module",
+              status: "loading",
+              detail: "reads balances, equity, positions, trades, and cash",
+              endpoint: "src/screens/account/AccountHeroBlock",
+            },
+          ]}
         >
           <LazyAccountHeroBlock
             summary={displaySummaryData}
@@ -2429,6 +2459,15 @@ const AccountScreenInner = ({
               minHeight={accountIsPhone ? 310 : 350}
               title="Loading returns calendar"
               detail="Preparing realized P&L and equity history."
+              waitItems={[
+                {
+                  id: "account-returns-module",
+                  label: "Returns calendar panel module",
+                  status: "loading",
+                  detail: "reads closed trades and equity history",
+                  endpoint: "src/screens/account/AccountReturnsPanel",
+                },
+              ]}
             >
               <LazyAccountReturnsPanel
                 currency={currency}
@@ -2445,6 +2484,15 @@ const AccountScreenInner = ({
               minHeight={accountIsPhone ? 174 : 246}
               title="Loading exposure"
               detail="Preparing allocation and risk charts."
+              waitItems={[
+                {
+                  id: "account-exposure-module",
+                  label: "Exposure panel module",
+                  status: "loading",
+                  detail: "reads allocation, risk, and open positions",
+                  endpoint: "src/screens/account/PortfolioExposurePanel",
+                },
+              ]}
             >
               <LazyPortfolioExposurePanel
                 allocationQuery={allocationQuery}
@@ -2470,6 +2518,15 @@ const AccountScreenInner = ({
               minHeight={accountIsPhone ? 280 : 314}
               title="Loading equity curve"
               detail="Preparing account chart and date inspector."
+              waitItems={[
+                {
+                  id: "account-equity-module",
+                  label: "Equity curve panel module",
+                  status: "loading",
+                  detail: "reads equity history and benchmark histories",
+                  endpoint: "src/screens/account/EquityCurvePanel",
+                },
+              ]}
             >
               <LazyEquityCurvePanel
                 query={equityQueryForDisplay}
@@ -2517,6 +2574,15 @@ const AccountScreenInner = ({
             minHeight={accountIsPhone ? 430 : 300}
             title="Loading positions"
             detail="Preparing open positions and option quote context."
+            waitItems={[
+              {
+                id: "account-positions-module",
+                label: "Positions panel module",
+                status: "loading",
+                detail: "reads open positions and live option quote context",
+                endpoint: "src/screens/account/PositionsPanel",
+              },
+            ]}
           >
             <LazyPositionsPanel
               query={positionsQuery}
@@ -2548,6 +2614,15 @@ const AccountScreenInner = ({
             minHeight={accountIsPhone ? 340 : 300}
             title="Loading today snapshot"
             detail="Preparing intraday P&L and position treemap."
+            waitItems={[
+              {
+                id: "account-today-module",
+                label: "Today snapshot panel module",
+                status: "loading",
+                detail: "reads positions and intraday P&L",
+                endpoint: "src/screens/account/TodaySnapshotPanel",
+              },
+            ]}
           >
             <TodaySnapshotPanel
               positionsQuery={positionsQuery}
@@ -2574,6 +2649,15 @@ const AccountScreenInner = ({
             minHeight={accountIsPhone ? 760 : 540}
             title="Loading trading analysis"
             detail="Preparing trade lifecycle charts and filters."
+            waitItems={[
+              {
+                id: "account-analysis-module",
+                label: "Trading analysis workbench",
+                status: "loading",
+                detail: "reads closed trades, orders, positions, and calendar metrics",
+                endpoint: "src/screens/account/TradingAnalysisWorkbench",
+              },
+            ]}
           >
             <TradingAnalysisWorkbench
               query={accountAnalysisQuery}
@@ -2605,6 +2689,15 @@ const AccountScreenInner = ({
             minHeight={accountIsPhone ? 360 : 240}
             title="Loading orders"
             detail="Preparing working orders and order history."
+            waitItems={[
+              {
+                id: "account-orders-module",
+                label: "Orders panel module",
+                status: "loading",
+                detail: "reads working orders and order history",
+                endpoint: "src/screens/account/TradesOrdersPanel",
+              },
+            ]}
           >
             <OrdersPanel
               query={ordersQuery}
@@ -2639,6 +2732,15 @@ const AccountScreenInner = ({
               minHeight={168}
               title="Loading cash activity"
               detail="Preparing deposits, withdrawals, and funding history."
+              waitItems={[
+                {
+                  id: "account-cash-module",
+                  label: "Cash activity panel module",
+                  status: "loading",
+                  detail: "reads deposits, withdrawals, and funding history",
+                  endpoint: "src/screens/account/CashFundingPanel",
+                },
+              ]}
             >
               <LazyCashFundingPanel
                 query={cashQuery}
@@ -2722,6 +2824,15 @@ const AccountScreenInner = ({
               minHeight={130}
               title="Loading setup health"
               detail="Preparing broker and Flex health checks."
+              waitItems={[
+                {
+                  id: "account-setup-module",
+                  label: "Setup health panel module",
+                  status: "loading",
+                  detail: "reads broker authentication and Flex health",
+                  endpoint: "src/screens/account/SetupHealthPanel",
+                },
+              ]}
             >
               <LazySetupHealthPanel
                 session={session}
@@ -2746,7 +2857,7 @@ export const AccountScreen = (props) => {
   useEffect(() => {
     if (!isVisible) {
       onReadinessChange?.({
-        criticalReady: false,
+        primaryReady: false,
         derivedReady: false,
         backgroundAllowed: false,
       });

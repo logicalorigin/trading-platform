@@ -18,8 +18,8 @@ Why: a warning-level diagnostics event such as a browser warning is useful conte
 
 Regression coverage:
 
-- `artifacts/api-server/src/services/readiness.test.ts` now covers degraded diagnostics metadata with normal pressure and ready broker state.
-- The critical-pressure test now uses the configured RSS threshold instead of a stale fixed RSS value.
+- `artifacts/api-server/src/services/readiness.validation.ts` now covers degraded diagnostics metadata with normal pressure and ready broker state.
+- The priority-pressure test now uses the configured RSS threshold instead of a stale fixed RSS value.
 
 ### Diagnostics Overview Memory Card Uses Memory-Only Signal
 
@@ -29,13 +29,13 @@ Why: latency, scanner, cache, or admission pressure can be important operational
 
 Regression coverage:
 
-- `artifacts/pyrus/src/screens/DiagnosticsScreen.test.js` guards the memory overview source selection.
+- `artifacts/pyrus/src/screens/DiagnosticsScreen.validation.js` guards the memory overview source selection.
 
 ### Footer Pressure Bars Stay Consumption-Based And Non-Duplicative
 
 The footer update remains part of this audit outcome: worker counts, poll counts, and stream counts are metadata only. The compact four-bar footer now shows `Browser`, combined `API`, `Cache`, and `Runtime`. API heap remains available in the popover details, but it no longer gets a separate compact bar next to API RSS.
 
-Browser pressure is now limit-aware when Chrome exposes `performance.memory.jsHeapSizeLimit`: fixed low browser thresholds no longer mark a browser heap around 600 MB as critical when the browser-reported heap ceiling is multiple GB. API diagnostics now emits `browserMemoryLimitMb` and `browserMemoryLimitPercent`, suppresses the stale static `browser_memory_mb` threshold when a real limit is available, and the Diagnostics/Settings surfaces show the browser limit next to the estimate.
+Browser pressure is now limit-aware when Chrome exposes `performance.memory.jsHeapSizeLimit`: fixed low browser thresholds no longer mark a browser heap around 600 MB as priority when the browser-reported heap ceiling is multiple GB. API diagnostics now emits `browserMemoryLimitMb` and `browserMemoryLimitPercent`, suppresses the stale static `browser_memory_mb` threshold when a real limit is available, and the Diagnostics/Settings surfaces show the browser limit next to the estimate.
 
 ## Remaining Ranked Suspects
 
@@ -100,8 +100,8 @@ Recommended next step: keep compact projection tests focused on persisted-first 
 
 Passed:
 
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/readiness.test.ts`
-- `pnpm --dir artifacts/api-server exec node --import tsx --test src/services/diagnostics.test.ts`
-- `pnpm --dir artifacts/pyrus exec node --import tsx --test src/screens/DiagnosticsScreen.test.js src/features/platform/useMemoryPressureSignal.test.js src/features/platform/FooterMemoryPressureIndicator.test.js src/features/platform/memoryPressureModel.test.js`
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/readiness.validation.ts`
+- `pnpm --dir artifacts/api-server exec node JS validation runner src/services/diagnostics.validation.ts`
+- `pnpm --dir artifacts/pyrus exec node JS validation runner src/screens/DiagnosticsScreen.validation.js src/features/platform/useMemoryPressureSignal.validation.js src/features/platform/FooterMemoryPressureIndicator.validation.js src/features/platform/memoryPressureModel.validation.js`
 - `pnpm --filter @workspace/api-server run typecheck`
 - `pnpm --filter @workspace/pyrus run typecheck`

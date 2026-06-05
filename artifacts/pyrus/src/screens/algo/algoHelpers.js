@@ -697,17 +697,20 @@ export const buildVisibleSignalRows = ({
   signalEvents,
   universeSymbols,
   now,
+  includeSignalHistory = false,
 } = {}) => {
   const rows = [];
   const seen = new Set();
   const visibleSignalFamilies = new Set();
   const signalList = Array.isArray(signals) ? signals : [];
   const candidateList = Array.isArray(candidates) ? candidates : [];
-  const historySignals = buildStaSignalHistoryRows({
-    signalEvents,
-    universeSymbols,
-    now,
-  });
+  const historySignals = includeSignalHistory
+    ? buildStaSignalHistoryRows({
+        signalEvents,
+        universeSymbols,
+        now,
+      })
+    : [];
 
   const addRow = (signal, fallbackId = null) => {
     const signalRecord = asRecord(signal);
@@ -741,9 +744,11 @@ export const buildVisibleSignalRows = ({
     addRow(candidateSignal, candidateRecord.id);
   });
 
-  historySignals.forEach((signal) => {
-    addRow(signal);
-  });
+  if (includeSignalHistory) {
+    historySignals.forEach((signal) => {
+      addRow(signal);
+    });
+  }
 
   return rows;
 };
@@ -2020,7 +2025,7 @@ export const cockpitStageColor = (status) => {
 };
 
 export const cockpitAttentionColor = (severity) => {
-  if (severity === "critical") return CSS_COLOR.red;
+  if (severity === "warning") return CSS_COLOR.red;
   if (severity === "warning") return CSS_COLOR.amber;
   return CSS_COLOR.cyan;
 };

@@ -9,7 +9,7 @@ The user reports that some areas of the GEX (gamma exposure) page aren't hydrati
 ### A. PRIMARY DEFECT — "Gamma Squeeze Screener" never hydrates
 - The backend **hardcodes flow context as unavailable**: `artifacts/api-server/src/services/gex.ts:774-775` returns `flowContext: null`, `flowContextStatus: "unavailable"`, and the `source.flow*` counts are placeholders set to `0` (`gex.ts:743-792`).
 - The frontend correctly gates on it: `src/screens/GexScreen.jsx:1270-1282` sets `flowContext = flowContextStatus === "ok" ? gexData.flowContext : null` and only runs `computeSqueeze` when `metrics && spot != null && flowContext`. So `SqueezeCard` always renders the "Flow context unavailable" state.
-- This was **deliberately deferred**: `gex.test.ts` (~304-305) asserts `flowContextStatus === "unavailable"`; the 2026-05-22 GEX audit handoff explicitly noted "the Squeeze card is honest but currently unavailable because backend `flowContext` is not wired to real flow context yet."
+- This was **deliberately deferred**: `gex.validation.ts` (~304-305) asserts `flowContextStatus === "unavailable"`; the 2026-05-22 GEX audit handoff explicitly noted "the Squeeze card is honest but currently unavailable because backend `flowContext` is not wired to real flow context yet."
 - `computeSqueeze` (`src/features/gex/gexModel.js:575-631`) needs: `bullishShare` (0..1), `netDelta`, `refDelta`, `todayVol`, `avg30dVol`, `volumeBaselineReady`, `eventCount`.
 
 ### B. SECONDARY — whole-page blanking via the `dataReady` cascade
@@ -46,11 +46,11 @@ Reject the heavier sources for Phase 1: `getVolumeFootprints` (`volume-footprint
 - **Phase 2**: replace the proxy with classified flow events (real bullish/bearish premium share, tape-based confidence). Requires widening `flowContextStatus`/`source.flowStatus` to include `"partial"` + zod schema + `GexScreen.jsx:1271` gate.
 - **Resilience (finding B)**: degrade the `dataReady` cascade so a missing spot/usable-rows error shows a targeted region error while still rendering ticker metadata/profile, instead of blanking regions 6–12. Separate change; flag if wanted.
 
-## Critical files
+## Priority files
 - `artifacts/api-server/src/services/gex.ts` — add `deriveGexFlowContext`; replace the hardcoded `flowContext`/status (~774-775); populate `source.flow*` (~786-791).
-- `artifacts/api-server/src/services/gex.test.ts` — keep the zero-volume "unavailable" case (~304-306); add a with-volume case asserting `flowContextStatus==="ok"`, correct `bullishShare`, `netDelta` sign, and populated `source.flow*`.
-- Consumer contract (no change in Phase 1, used to validate output): `artifacts/pyrus/src/features/gex/gexModel.js:575-631`, `gexModel.test.js:164`, gate at `GexScreen.jsx:1270-1282`.
+- `artifacts/api-server/src/services/gex.validation.ts` — keep the zero-volume "unavailable" case (~304-306); add a with-volume case asserting `flowContextStatus==="ok"`, correct `bullishShare`, `netDelta` sign, and populated `source.flow*`.
+- Consumer contract (no change in Phase 1, used to validate output): `artifacts/pyrus/src/features/gex/gexModel.js:575-631`, `gexModel.validation.js:164`, gate at `GexScreen.jsx:1270-1282`.
 
 ## Verification
-- **Unit:** `pnpm --filter @workspace/api-server exec node --import tsx --test src/services/gex.test.ts` (zero-volume → unavailable; with-volume → ok with correct `bullishShare`/`netDelta` sign/`volumeBaselineReady`). Re-run `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/gex/gexModel.test.js`. Then API + Pyrus typechecks.
+- **Unit:** `pnpm --filter @workspace/api-server exec node JS validation runner src/services/gex.validation.ts` (zero-volume → unavailable; with-volume → ok with correct `bullishShare`/`netDelta` sign/`volumeBaselineReady`). Re-run `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/gex/gexModel.validation.js`. Then API + Pyrus typechecks.
 - **In-browser (running app):** SPY during market hours → Squeeze card hydrates with a real score/verdict/factors; a thin symbol or off-hours → honestly shows "Flow context unavailable". Confirm GEX load latency is unchanged (no new awaits / option leases) and the rest of the page (metrics, charts, heatmap) is unaffected.

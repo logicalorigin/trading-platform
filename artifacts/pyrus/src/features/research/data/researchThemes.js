@@ -550,7 +550,7 @@ export const THEMES = {
   },
   uranium: {
     id: "uranium",
-    title: "Uranium & Critical Minerals",
+    title: "Uranium & Strategic Minerals",
     subtitle: "Miners · Enrichment · Rare Earths",
     accent: "#a16207",
     icon: "⚒",

@@ -3,7 +3,7 @@
 - Session ID: `failure-point-tooltips`
 - CWD: `/home/runner/workspace`
 - Started: 2026-06-02
-- User request: Implement hover/tap actionable diagnostic tooltips for failure points across the app, including Algo critical/status indicators.
+- User request: Implement hover/tap actionable diagnostic tooltips for failure points across the app, including Algo /status indicators.
 
 ## Current Step
 
@@ -39,13 +39,13 @@
 ## Validation
 
 - Current clean extraction validation in `/home/runner/workspace-pyrus-failure-tooltips`:
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/failurePointModel.test.js src/components/platform/FailurePointTooltip.test.jsx src/screens/algo/AlgoFailurePointTooltips.test.js src/screens/DiagnosticsScreen.test.js src/features/platform/FooterMemoryPressureIndicator.test.js src/features/platform/IbkrConnectionStatus.test.js src/screens/GexScreen.failure-points.test.js` (62/62).
-  - PASS: `pnpm --filter @workspace/pyrus exec node --import tsx --test src/screens/algo/OperationsSignalRow.test.js` (17/17).
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/failurePointModel.validation.js src/components/platform/FailurePointTooltip.validation.jsx src/screens/algo/AlgoFailurePointTooltips.validation.js src/screens/DiagnosticsScreen.validation.js src/features/platform/FooterMemoryPressureIndicator.validation.js src/features/platform/IbkrConnectionStatus.validation.js src/screens/GexScreen.failure-points.validation.js` (62/62).
+  - PASS: `pnpm --filter @workspace/pyrus exec node JS validation runner src/screens/algo/OperationsSignalRow.validation.js` (17/17).
   - PASS: `PYRUS_ALLOW_HOT_VALIDATION=1 pnpm exec tsc -b lib/db/tsconfig.json lib/api-zod/tsconfig.json lib/account-math/tsconfig.json lib/backtest-core/tsconfig.json lib/pyrus-signals-core/tsconfig.json lib/api-client-react/tsconfig.json`.
   - PASS: `pnpm --filter @workspace/pyrus run typecheck`.
   - PASS: `git diff --check` and staged `git diff --cached --check`.
 - Targeted tests passed:
-  - `pnpm --filter @workspace/pyrus exec node --import tsx --test src/features/platform/failurePointModel.test.js src/components/platform/FailurePointTooltip.test.jsx src/screens/algo/OperationsSignalRow.test.js src/screens/DiagnosticsScreen.test.js src/features/platform/FooterMemoryPressureIndicator.test.js src/features/platform/IbkrConnectionStatus.test.js src/screens/GexScreen.failure-points.test.js`
+  - `pnpm --filter @workspace/pyrus exec node JS validation runner src/features/platform/failurePointModel.validation.js src/components/platform/FailurePointTooltip.validation.jsx src/screens/algo/OperationsSignalRow.validation.js src/screens/DiagnosticsScreen.validation.js src/features/platform/FooterMemoryPressureIndicator.validation.js src/features/platform/IbkrConnectionStatus.validation.js src/screens/GexScreen.failure-points.validation.js`
 - Typecheck passed:
   - `pnpm --filter @workspace/pyrus run typecheck`
 - Diff hygiene passed:

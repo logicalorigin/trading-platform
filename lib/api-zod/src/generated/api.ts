@@ -30,7 +30,7 @@ export const GetReadinessResponse = zod.object({
   "status": zod.enum(['ready', 'degraded', 'not_ready', 'unknown']),
   "reason": zod.string().nullable(),
   "diagnosticsStatus": zod.enum(['ok', 'degraded', 'down', 'unknown']),
-  "diagnosticsSeverity": zod.enum(['info', 'warning', 'critical'])
+  "diagnosticsSeverity": zod.enum(['info', 'warning'])
 }),
   "brokerTradingReadiness": zod.object({
   "status": zod.enum(['ready', 'blocked', 'unknown']),
@@ -293,14 +293,14 @@ export const GetRuntimeDiagnosticsResponse = zod.object({
 export const GetLatestDiagnosticsResponse = zod.object({
   "timestamp": zod.coerce.date().optional(),
   "status": zod.enum(['ok', 'degraded', 'down', 'unknown']).optional(),
-  "severity": zod.enum(['info', 'warning', 'critical']).optional(),
+  "severity": zod.enum(['info', 'warning']).optional(),
   "summary": zod.string().optional(),
   "snapshots": zod.array(zod.object({
   "id": zod.string(),
   "observedAt": zod.coerce.date(),
   "subsystem": zod.string(),
   "status": zod.enum(['ok', 'degraded', 'down', 'unknown']),
-  "severity": zod.enum(['info', 'warning', 'critical']),
+  "severity": zod.enum(['info', 'warning']),
   "summary": zod.string(),
   "dimensions": zod.record(zod.string(), zod.unknown()),
   "metrics": zod.record(zod.string(), zod.unknown()),
@@ -312,7 +312,7 @@ export const GetLatestDiagnosticsResponse = zod.object({
   "subsystem": zod.string(),
   "category": zod.string(),
   "code": zod.string().nullable(),
-  "severity": zod.enum(['info', 'warning', 'critical']),
+  "severity": zod.enum(['info', 'warning']),
   "status": zod.enum(['open', 'resolved']),
   "message": zod.string(),
   "firstSeenAt": zod.coerce.date(),
@@ -327,7 +327,6 @@ export const GetLatestDiagnosticsResponse = zod.object({
   "subsystem": zod.string(),
   "unit": zod.string(),
   "warning": zod.number(),
-  "critical": zod.number(),
   "enabled": zod.boolean(),
   "audible": zod.boolean(),
   "description": zod.string()
@@ -351,7 +350,7 @@ export const ListDiagnosticHistoryResponse = zod.object({
   "points": zod.array(zod.object({
   "at": zod.coerce.date().optional(),
   "subsystem": zod.string().optional(),
-  "severity": zod.enum(['info', 'warning', 'critical']).optional(),
+  "severity": zod.enum(['info', 'warning']).optional(),
   "status": zod.enum(['ok', 'degraded', 'down', 'unknown']).optional(),
   "count": zod.number().optional(),
   "metrics": zod.record(zod.string(), zod.unknown()).optional()
@@ -361,7 +360,7 @@ export const ListDiagnosticHistoryResponse = zod.object({
   "observedAt": zod.coerce.date(),
   "subsystem": zod.string(),
   "status": zod.enum(['ok', 'degraded', 'down', 'unknown']),
-  "severity": zod.enum(['info', 'warning', 'critical']),
+  "severity": zod.enum(['info', 'warning']),
   "summary": zod.string(),
   "dimensions": zod.record(zod.string(), zod.unknown()),
   "metrics": zod.record(zod.string(), zod.unknown()),
@@ -377,7 +376,7 @@ export const ListDiagnosticEventsQueryParams = zod.object({
   "from": zod.date().optional(),
   "to": zod.date().optional(),
   "subsystem": zod.coerce.string().optional(),
-  "severity": zod.enum(['info', 'warning', 'critical']).optional()
+  "severity": zod.enum(['info', 'warning']).optional()
 })
 
 export const ListDiagnosticEventsResponse = zod.object({
@@ -389,7 +388,7 @@ export const ListDiagnosticEventsResponse = zod.object({
   "subsystem": zod.string(),
   "category": zod.string(),
   "code": zod.string().nullable(),
-  "severity": zod.enum(['info', 'warning', 'critical']),
+  "severity": zod.enum(['info', 'warning']),
   "status": zod.enum(['open', 'resolved']),
   "message": zod.string(),
   "firstSeenAt": zod.coerce.date(),
@@ -415,7 +414,7 @@ export const GetDiagnosticEventDetailResponse = zod.object({
   "subsystem": zod.string(),
   "category": zod.string(),
   "code": zod.string().nullable(),
-  "severity": zod.enum(['info', 'warning', 'critical']),
+  "severity": zod.enum(['info', 'warning']),
   "status": zod.enum(['open', 'resolved']),
   "message": zod.string(),
   "firstSeenAt": zod.coerce.date(),
@@ -429,7 +428,7 @@ export const GetDiagnosticEventDetailResponse = zod.object({
   "observedAt": zod.coerce.date(),
   "subsystem": zod.string(),
   "status": zod.enum(['ok', 'degraded', 'down', 'unknown']),
-  "severity": zod.enum(['info', 'warning', 'critical']),
+  "severity": zod.enum(['info', 'warning']),
   "summary": zod.string(),
   "dimensions": zod.record(zod.string(), zod.unknown()),
   "metrics": zod.record(zod.string(), zod.unknown()),
@@ -448,7 +447,6 @@ export const GetDiagnosticThresholdsResponse = zod.object({
   "subsystem": zod.string(),
   "unit": zod.string(),
   "warning": zod.number(),
-  "critical": zod.number(),
   "enabled": zod.boolean(),
   "audible": zod.boolean(),
   "description": zod.string()
@@ -463,7 +461,6 @@ export const UpdateDiagnosticThresholdsBody = zod.object({
   "thresholds": zod.array(zod.object({
   "metricKey": zod.string(),
   "warning": zod.number().optional(),
-  "critical": zod.number().optional(),
   "enabled": zod.boolean().optional(),
   "audible": zod.boolean().optional()
 })).optional()
@@ -476,7 +473,6 @@ export const UpdateDiagnosticThresholdsResponse = zod.object({
   "subsystem": zod.string(),
   "unit": zod.string(),
   "warning": zod.number(),
-  "critical": zod.number(),
   "enabled": zod.boolean(),
   "audible": zod.boolean(),
   "description": zod.string()
@@ -489,7 +485,7 @@ export const UpdateDiagnosticThresholdsResponse = zod.object({
  */
 export const RecordClientDiagnosticEventBody = zod.object({
   "category": zod.string().optional(),
-  "severity": zod.enum(['info', 'warning', 'critical']).optional(),
+  "severity": zod.enum(['info', 'warning']).optional(),
   "code": zod.string().nullish(),
   "message": zod.string().optional(),
   "dimensions": zod.record(zod.string(), zod.unknown()).optional(),
@@ -5650,7 +5646,7 @@ export const GetAlgoDeploymentCockpitResponse = zod.object({
 })),
   "attentionItems": zod.array(zod.object({
   "id": zod.string(),
-  "severity": zod.enum(['info', 'warning', 'critical']),
+  "severity": zod.enum(['info', 'warning']),
   "stage": zod.string(),
   "symbol": zod.string().nullable(),
   "summary": zod.string(),

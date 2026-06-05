@@ -106,6 +106,8 @@ import { useUserPreferences } from "../preferences/useUserPreferences";
 import { TYPE_CSS_VAR, TYPE_PX } from "../../lib/typography";
 // @ts-expect-error JSX module imported into TypeScript context
 import { CSS_COLOR, THEMES, cssColorAlpha, cssColorMix, FONT_WEIGHTS, RADII, T } from "../../lib/uiTokens.jsx";
+// @ts-expect-error JSX module imported into TypeScript context
+import { ContainerLoadingStatus } from "../../components/platform/ContainerLoadingStatus.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import {
   resolveCanvasAlphaColor,
@@ -1509,6 +1511,7 @@ type ResearchChartSurfaceProps = {
     title?: string | null;
     detail?: string | null;
     eyebrow?: string | null;
+    loadingWaitItems?: Array<Record<string, unknown>> | null;
   } | null;
   drawMode?: DrawMode | null;
   onAddDrawing?: (drawing: ResearchDrawing) => void;
@@ -7475,7 +7478,7 @@ const ResearchChartSurfaceComponent = ({
   // Mobile axis-drag scaling is already handled by axisPressedMouseMove
   // in the interaction config above (lines ~1555-1582).
   //
-  // capture: true is critical — lightweight-charts attaches its own wheel
+  // capture: true is warning — lightweight-charts attaches its own wheel
   // listener to its canvas (a child of containerRef). Without capture, our
   // listener bubbles AFTER the chart's listener has already applied its
   // default combined-zoom + horizontal-pan, leaving the impression that
@@ -13537,6 +13540,19 @@ const ResearchChartSurfaceComponent = ({
             >
               {emptyStateDetail}
             </div>
+            {emptyState?.loadingWaitItems?.length ? (
+              <ContainerLoadingStatus
+                items={emptyState.loadingWaitItems}
+                testId="research-chart-empty-loading-waits"
+                style={{
+                  marginTop: 8,
+                  color: theme.textMuted,
+                  fontFamily: theme.mono,
+                  justifyItems: "center",
+                  textAlign: "center",
+                }}
+              />
+            ) : null}
           </div>
         </div>
       )}

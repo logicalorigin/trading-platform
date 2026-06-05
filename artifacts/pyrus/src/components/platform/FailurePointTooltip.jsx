@@ -12,13 +12,13 @@ import {
 } from "../../lib/uiTokens.jsx";
 
 const severityTone = (severity) => {
-  if (severity === "critical") return CSS_COLOR.red;
+  if (severity === "warning") return CSS_COLOR.red;
   if (severity === "warning" || severity === "attention") return CSS_COLOR.amber;
   return CSS_COLOR.cyan;
 };
 
 const severityIcon = (severity) => {
-  if (severity === "critical") return AlertTriangle;
+  if (severity === "warning") return AlertTriangle;
   if (severity === "warning" || severity === "attention") return CircleAlert;
   return Info;
 };

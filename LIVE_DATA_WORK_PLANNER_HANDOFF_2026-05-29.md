@@ -178,7 +178,7 @@ The bridge should coalesce subscription diffs before calling `getMarketData()` o
   - normal: full planned scanner horizon
   - watch: skip speculative hydration and shrink non-visible background work
   - high: pause non-visible chart/flow hydration and limit scanner horizon
-  - critical: preserve visible/account/execution work only; block background scanner expansion
+  - priority: preserve visible/account/execution work only; block background scanner expansion
 
 ### 6. Surface Diagnostics In One Place
 
@@ -202,10 +202,10 @@ Do not allow UI diagnostics to report healthy when data is stale, hidden, delaye
 Static/unit first:
 
 ```bash
-pnpm --dir artifacts/api-server exec node --import tsx --test src/services/ibkr-line-usage.test.ts src/services/market-data-admission.test.ts src/services/options-flow-scanner.test.ts
-pnpm --dir artifacts/api-server exec node --import tsx --test src/services/bridge-quote-stream.test.ts src/services/bridge-option-quote-stream.test.ts src/services/massive-stock-quote-stream.test.ts
-pnpm --dir artifacts/pyrus exec node --test src/features/platform/FooterMemoryPressureIndicator.test.js src/features/platform/memoryPressureModel.test.js src/features/platform/live-streams.test.ts
-pnpm run test:market-data-worker
+pnpm --dir artifacts/api-server exec node JS validation runner src/services/ibkr-line-usage.validation.ts src/services/market-data-admission.validation.ts src/services/options-flow-scanner.validation.ts
+pnpm --dir artifacts/api-server exec node JS validation runner src/services/bridge-quote-stream.validation.ts src/services/bridge-option-quote-stream.validation.ts src/services/massive-stock-quote-stream.validation.ts
+pnpm --dir artifacts/pyrus exec node validation runner src/features/platform/FooterMemoryPressureIndicator.validation.js src/features/platform/memoryPressureModel.validation.js src/features/platform/live-streams.validation.ts
+pnpm run market-data-worker validation
 pnpm run build:market-data-worker
 pnpm run db:market-data:audit
 pnpm --dir artifacts/api-server run typecheck
@@ -229,7 +229,7 @@ Pass criteria:
 
 - Do not stage or revert existing dirty work unless intentionally scoped.
 - Current known dirty files from the parent session included:
-  - `artifacts/pyrus/src/features/platform/platformRootSource.test.js`
+  - `artifacts/pyrus/src/features/platform/platformRootSource.validation.js`
   - `artifacts/pyrus/src/features/platform/useRuntimeControlSnapshot.js`
   - `crates/market-data-worker/src/compute/gex.rs`
 - Handoff files were already dirty before this note was added, likely from active session updates.

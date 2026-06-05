@@ -68,7 +68,6 @@ export const alertSeverityEnum = pgEnum("alert_severity", [
   "info",
   "warning",
   "high",
-  "critical",
 ]);
 export const algoRunStatusEnum = pgEnum("algo_run_status", [
   "queued",

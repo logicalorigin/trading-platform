@@ -214,7 +214,7 @@ export type BacktestValidationWarningCode =
   | "unstable_sharpe"
   | "insufficient_sample_size";
 
-export type BacktestValidationWarningSeverity = "info" | "warning" | "critical";
+export type BacktestValidationWarningSeverity = "info" | "warning";
 
 export type BacktestValidationWarningScope =
   | "external"

@@ -78,7 +78,6 @@ export const diagnosticThresholdOverridesTable = pgTable(
   {
     metricKey: varchar("metric_key", { length: 128 }).primaryKey(),
     warning: doublePrecision("warning"),
-    critical: doublePrecision("critical"),
     enabled: boolean("enabled").notNull().default(true),
     audible: boolean("audible").notNull().default(true),
     ...timestamps,

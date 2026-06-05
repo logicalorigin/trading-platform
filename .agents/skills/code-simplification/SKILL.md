@@ -24,7 +24,7 @@ Simplify code by reducing complexity while preserving exact behavior. The goal i
 
 - Code is already clean and readable — don't simplify for the sake of it
 - You don't understand what the code does yet — comprehend before you simplify
-- The code is performance-critical and the "simpler" version would be measurably slower
+- The code is performance-sensitive and the "simpler" version would be measurably slower
 - You're about to rewrite the module entirely — simplifying throwaway code wastes effort
 
 ## The Five Principles

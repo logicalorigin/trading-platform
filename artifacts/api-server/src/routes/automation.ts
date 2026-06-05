@@ -1,7 +1,7 @@
 import { Router, type IRouter, type Response } from "express";
 import { HttpError } from "../lib/errors";
 import {
-  fetchAlgoCockpitCriticalPayload,
+  fetchAlgoCockpitPrimaryPayload,
   subscribeAlgoCockpitSnapshots,
 } from "../services/algo-cockpit-streams";
 import {
@@ -28,8 +28,6 @@ import {
 } from "../services/route-admission";
 
 const router: IRouter = Router();
-const SIGNAL_OPTIONS_STATE_SUMMARY_ROUTE_TIMEOUT_MS = 7_000;
-const SIGNAL_OPTIONS_STATE_FULL_ROUTE_TIMEOUT_MS = 9_000;
 const SIGNAL_OPTIONS_COCKPIT_SUMMARY_ROUTE_TIMEOUT_MS = 5_000;
 const SIGNAL_OPTIONS_COCKPIT_FULL_ROUTE_TIMEOUT_MS = 9_000;
 const SIGNAL_OPTIONS_SHADOW_SCAN_ROUTE_TIMEOUT_MS = 45_000;
@@ -52,10 +50,6 @@ type SignalOptionsRouteTimeoutPolicy =
   | AbortableSignalOptionsRouteTimeoutPolicy;
 
 const SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES = {
-  state: {
-    continuation: "continue-in-background",
-    reason: "dashboard state builds refresh shared caches",
-  },
   cockpit: {
     continuation: "continue-in-background",
     reason: "cockpit builds refresh shared caches",
@@ -264,27 +258,14 @@ router.patch("/algo/deployments/:deploymentId/strategy-settings", async (req, re
 router.get("/algo/deployments/:deploymentId/signal-options/state", async (req, res): Promise<void> => {
   const admission = getApiRouteAdmission(res);
   const view = req.query.view === "full" ? "full" : "summary";
-  const timeoutMs =
-    view === "full"
-      ? SIGNAL_OPTIONS_STATE_FULL_ROUTE_TIMEOUT_MS
-      : SIGNAL_OPTIONS_STATE_SUMMARY_ROUTE_TIMEOUT_MS;
   res.json(
     withRouteAdmissionMetadata(
-      await withContinuingSignalOptionsRouteTimeout(
-        listSignalOptionsAutomationState({
-          deploymentId: req.params.deploymentId,
-          cacheMode: signalOptionsRequestCacheMode(req.query.cacheMode, admission),
-          view,
-          refreshSignalsFromMonitorState: true,
-        }),
-        {
-          timeoutMs,
-          code: "signal_options_state_route_timeout",
-          detail:
-            "Signal Options state did not respond within the route budget.",
-          policy: SIGNAL_OPTIONS_ROUTE_TIMEOUT_POLICIES.state,
-        },
-      ),
+      await listSignalOptionsAutomationState({
+        deploymentId: req.params.deploymentId,
+        cacheMode: signalOptionsRequestCacheMode(req.query.cacheMode, admission),
+        view,
+        refreshSignalsFromMonitorState: true,
+      }),
       admission,
     ),
   );
@@ -526,7 +507,7 @@ router.get("/streams/algo/cockpit", async (req, res): Promise<void> => {
       mode,
       eventLimit: Number.isFinite(eventLimit) ? eventLimit : undefined,
     };
-    const initialPayload = await fetchAlgoCockpitCriticalPayload(input);
+    const initialPayload = await fetchAlgoCockpitPrimaryPayload(input);
     if (closed) {
       return;
     }

@@ -12,5 +12,4 @@ export type ReadinessStatusAppReadinessDiagnosticsSeverity = typeof ReadinessSta
 export const ReadinessStatusAppReadinessDiagnosticsSeverity = {
   info: 'info',
   warning: 'warning',
-  critical: 'critical',
 } as const;

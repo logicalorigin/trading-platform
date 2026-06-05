@@ -73,7 +73,6 @@ import {
   listAggregateFlowEvents,
   listFlowEvents,
   listOrders,
-  listPositions,
   listWatchlists,
   addWatchlistSymbol,
   placeOrder,
@@ -120,7 +119,7 @@ import {
 import {
   ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS,
   ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS,
-  fetchAccountPageCriticalPayload,
+  fetchAccountPagePrimaryPayload,
   recordAccountPageStreamWrite,
   subscribeAccountPageSnapshots,
 } from "../services/account-page-streams";
@@ -192,6 +191,51 @@ const stockAggregateStreamSessions = new Map<
     setSymbols(symbols: string[]): Promise<void>;
   }
 >();
+
+type AccountPositionsRouteResponse = Awaited<
+  ReturnType<typeof getAccountPositions>
+>;
+type AccountPositionsRouteRow = AccountPositionsRouteResponse["positions"][number];
+
+function finiteRouteNumber(value: unknown): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function legacyPositionAssetClass(row: AccountPositionsRouteRow): "equity" | "option" {
+  const label = String(row.assetClass || "").trim().toLowerCase();
+  return row.optionContract || label.includes("option") ? "option" : "equity";
+}
+
+function legacyPositionsAccountId(accountId: string | undefined): string {
+  return typeof accountId === "string" && accountId.trim()
+    ? accountId.trim()
+    : "combined";
+}
+
+function mapAccountPositionsToLegacyPositions(
+  response: AccountPositionsRouteResponse,
+) {
+  return {
+    positions: response.positions.map((row) => ({
+      id: row.id,
+      accountId: row.accountId,
+      symbol: row.symbol,
+      assetClass: legacyPositionAssetClass(row),
+      quantity: finiteRouteNumber(row.quantity),
+      averagePrice: finiteRouteNumber(row.averageCost),
+      marketPrice: finiteRouteNumber(row.mark),
+      marketValue: finiteRouteNumber(row.marketValue),
+      unrealizedPnl: finiteRouteNumber(row.unrealizedPnl),
+      unrealizedPnlPercent: finiteRouteNumber(row.unrealizedPnlPercent),
+      optionContract: row.optionContract ?? null,
+      openedAt: row.openedAt ?? null,
+      openedAtSource: row.openedAtSource ?? null,
+      quote: row.quote ?? row.optionQuote ?? null,
+    })),
+  };
+}
+
 const LOGO_PROXY_ALLOWED_HOSTS = new Set([
   "s3-symbol-logo.tradingview.com",
   "api.massive.com",
@@ -223,7 +267,8 @@ const isHistoryBarTimeframe = (
   HISTORY_BAR_TIMEFRAMES.includes(value as RouteHistoryBarTimeframe);
 
 function readFetchPriority(req: Request): number | undefined {
-  const raw = req.get("x-pyrus-fetch-priority");
+  const raw =
+    req.get("x-pyrus-fetch-priority") ?? readQueryString(req, "fetchPriority");
   if (!raw) {
     return undefined;
   }
@@ -232,11 +277,26 @@ function readFetchPriority(req: Request): number | undefined {
 }
 
 function readRequestFamily(req: Request): string | undefined {
-  const raw = req.get("x-pyrus-request-family");
+  const raw =
+    req.get("x-pyrus-request-family") ??
+    readQueryString(req, "requestFamily") ??
+    readQueryString(req, "family");
   if (!raw?.trim()) {
     return undefined;
   }
   return raw.trim().slice(0, 64);
+}
+
+function readQueryString(req: Request, key: string): string | undefined {
+  const value = req.query[key];
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const first = value.find((item): item is string => typeof item === "string");
+    return first;
+  }
+  return undefined;
 }
 
 function normalizeStreamSymbols(rawSymbols: unknown): string[] {
@@ -1604,7 +1664,15 @@ router.put("/watchlists/:watchlistId/items/reorder", async (req, res) => {
 
 router.get("/positions", async (req, res) => {
   const query = ListPositionsQueryParams.parse(req.query);
-  const data = ListPositionsResponse.parse(await listPositions(query));
+  const data = ListPositionsResponse.parse(
+    mapAccountPositionsToLegacyPositions(
+      await getAccountPositions({
+        accountId: legacyPositionsAccountId(query.accountId),
+        mode: query.mode,
+        liveQuotes: false,
+      }),
+    ),
+  );
 
   res.json(data);
 });
@@ -2981,9 +3049,9 @@ router.get("/streams/accounts/page", async (req, res) => {
 
   await startSse(req, res, "account-page", async ({ writeEvent }) => {
     const streamStartedAt = Date.now();
-    const initialCriticalPayload = await fetchAccountPageCriticalPayload(input);
-    await writeEvent("critical", initialCriticalPayload);
-    recordAccountPageStreamWrite("critical", streamStartedAt);
+    const initialPrimaryPayload = await fetchAccountPagePrimaryPayload(input);
+    await writeEvent("primary", initialPrimaryPayload);
+    recordAccountPageStreamWrite("primary", streamStartedAt);
     await writeEvent("ready", {
       accountId,
       mode,
@@ -3002,7 +3070,7 @@ router.get("/streams/accounts/page", async (req, res) => {
         });
       },
       {
-        initialCriticalPayload,
+        initialPrimaryPayload,
         initialLiveDelayMs: ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS,
         initialDerivedDelayMs: ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS,
         onPollSuccess: ({ changed, kind }) =>

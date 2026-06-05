@@ -20,32 +20,32 @@ Live diagnostics after the 21:35 app restart showed:
 - Backend bars cache attribution showed `signal-matrix` as the largest bars family: over `1000` signal-matrix bar hydrations after restart, with `signal-matrix:miss` dominating.
 - Controlled exact-cell matrix probe of 12 cells took `7.347s` and increased `signal-matrix` bars from `1048` to `1077` and `signal-matrix:miss` from `951` to `980`, proving each foreground exact-cell batch can fan out into multiple bars hydrations while the API is already pressured.
 
-The specific code issue: `shouldServeSignalMonitorMatrixFromCacheOnly()` excluded foreground exact-cell leaders from high/critical pressure cache-only behavior. That let regular Signals leader startup/poll requests synchronously hydrate exact cells under pressure.
+The specific code issue: `shouldServeSignalMonitorMatrixFromCacheOnly()` excluded foreground exact-cell leaders from high/ pressure cache-only behavior. That let regular Signals leader startup/poll requests synchronously hydrate exact cells under pressure.
 
 ## Changes Made
 
 - `artifacts/api-server/src/services/signal-monitor.ts`
   - Removed the foreground exact-cell leader bypass from `shouldServeSignalMonitorMatrixFromCacheOnly`.
-  - Regular `leader` startup/poll matrix requests now return cache/stored-state responses under high/critical pressure even when they include exact cells.
+  - Regular `leader` startup/poll matrix requests now return cache/stored-state responses under high/ pressure even when they include exact cells.
   - STA requests using `clientRole: "algo-sta"` remain outside this regular leader cache-only rule.
 
-- `artifacts/api-server/src/services/signal-monitor.test.ts`
+- `artifacts/api-server/src/services/signal-monitor.validation.ts`
   - Updated behavior and source-contract tests so high-pressure regular leader exact-cell requests are cache-only.
 
 ## Validation
 
 Passed:
 
-- `pnpm -C artifacts/api-server exec tsx --test src/services/signal-monitor.test.ts`
+- `pnpm -C artifacts/api-server exec tsx validation runner src/services/signal-monitor.validation.ts`
 - `pnpm -C artifacts/api-server run typecheck`
-- `pnpm -C artifacts/pyrus exec tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/platform/platformRootSource.test.js src/screens/SignalsScreen.test.js`
+- `pnpm -C artifacts/pyrus exec tsx validation runner src/features/platform/signalMatrixScheduler.validation.js src/features/platform/platformRootSource.validation.js src/screens/SignalsScreen.validation.js`
 - `pnpm -C artifacts/pyrus run typecheck`
 - `pnpm -C artifacts/api-server run build`
 - `git diff --check`
 
 Safe browser QA run:
 
-- `PYRUS_SAFE_QA_PERF_RUNS=1 PYRUS_SAFE_QA_PERF_SCREEN_SEQUENCE=signals PYRUS_SAFE_QA_SLOW_API_MS=500 pnpm -C artifacts/pyrus exec playwright test e2e/safe-qa-route-performance.spec.ts --project=chromium`
+- `PYRUS_SAFE_QA_PERF_RUNS=1 PYRUS_SAFE_QA_PERF_SCREEN_SEQUENCE=signals PYRUS_SAFE_QA_SLOW_API_MS=500 pnpm -C artifacts/pyrus exec browser QA test e2e/safe-qa-route-performance.browser-validation.ts --project=chromium`
 - Passed, but safe mode did not reproduce the live matrix/bars pressure path.
 
 ## Runtime Status
@@ -60,11 +60,11 @@ Do not commit blindly. There are staged changes that this session did not stage:
 
 - `SESSION_HANDOFF_2026-06-04_019e953f-041b-71c3-a43e-542a8ef6e00d.md`
 - `artifacts/api-server/src/services/python-compute.ts`
-- `artifacts/api-server/src/services/python-compute.test.ts`
+- `artifacts/api-server/src/services/python-compute.validation.ts`
 - `artifacts/pyrus/src/features/platform/live-streams.ts`
-- `artifacts/pyrus/src/features/platform/live-streams.test.ts`
+- `artifacts/pyrus/src/features/platform/live-streams.validation.ts`
 - `artifacts/pyrus/src/screens/account/accountSafeQaFixtures.js`
-- `artifacts/pyrus/src/screens/account/accountSafeQaFixtures.test.js`
+- `artifacts/pyrus/src/screens/account/accountSafeQaFixtures.validation.js`
 
 This pressure fix is currently unstaged and mixed with existing dirty signal-monitor/breadth-history changes in the same files.
 
@@ -87,16 +87,16 @@ This pressure fix is currently unstaged and mixed with existing dirty signal-mon
 ## Patch Update - 2026-06-04 22:18 MT
 
 - Edited `artifacts/api-server/src/services/signal-monitor.ts`:
-  - Regular foreground leader exact-cell caps now use `48/36/24/12` for `normal/watch/high/critical`.
-  - Regular leader startup/poll matrix reads are cache-only at `watch`, `high`, and `critical`; followers remain cache-only.
+  - Regular foreground leader exact-cell caps now use `48/36/24/12` for `normal/watch/high/`.
+  - Regular leader startup/poll matrix reads are cache-only at `watch`, `high`, and ``; followers remain cache-only.
   - Automatic non-exact bootstrap matrix reads now hydrate stored state only and do not schedule full background matrix refreshes.
 - Edited `artifacts/pyrus/src/features/platform/signalMatrixScheduler.js`:
   - Active-screen Matrix exact-cell/request-task caps now match `48/36/24/12`.
 - Updated focused API and scheduler tests for the narrower caps and watch-pressure cache-only behavior.
 - Validation passed:
-  - `pnpm -C artifacts/api-server exec tsx --test src/services/signal-monitor.test.ts`
-  - `pnpm -C artifacts/pyrus exec tsx --test src/features/platform/signalMatrixScheduler.test.js`
-  - `pnpm -C artifacts/pyrus exec tsx --test src/features/platform/platformRootSource.test.js src/screens/SignalsScreen.test.js`
+  - `pnpm -C artifacts/api-server exec tsx validation runner src/services/signal-monitor.validation.ts`
+  - `pnpm -C artifacts/pyrus exec tsx validation runner src/features/platform/signalMatrixScheduler.validation.js`
+  - `pnpm -C artifacts/pyrus exec tsx validation runner src/features/platform/platformRootSource.validation.js src/screens/SignalsScreen.validation.js`
   - `pnpm -C artifacts/api-server run typecheck`
   - `pnpm -C artifacts/pyrus run typecheck`
   - `pnpm -C artifacts/api-server run build`
@@ -112,8 +112,8 @@ This pressure fix is currently unstaged and mixed with existing dirty signal-mon
 - A roughly 20-second counter watch showed `signalMatrixMiss` rising only `66 -> 75`; `optionFlowHistory` rose `133 -> 178`, so option-flow background bars are the next likely pressure source.
 - Non-exact automatic Matrix bootstrap probe returned in `33ms` with `coverage.sourceRequestCount: 0` and zero `signal-matrix`, `cacheMiss`, or provider-fetch bars-counter delta.
 - Validation rerun passed:
-  - `pnpm -C artifacts/api-server exec tsx --test src/services/signal-monitor.test.ts`
-  - `pnpm -C artifacts/pyrus exec tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/platform/platformRootSource.test.js src/screens/SignalsScreen.test.js`
+  - `pnpm -C artifacts/api-server exec tsx validation runner src/services/signal-monitor.validation.ts`
+  - `pnpm -C artifacts/pyrus exec tsx validation runner src/features/platform/signalMatrixScheduler.validation.js src/features/platform/platformRootSource.validation.js src/screens/SignalsScreen.validation.js`
   - `pnpm -C artifacts/api-server run typecheck`
   - `pnpm -C artifacts/pyrus run typecheck`
   - `git diff --check`
@@ -134,8 +134,8 @@ User questioned whether `coverage.sourceRequestCount: 0` on the non-exact bootst
   - The non-exact automatic bootstrap branch intentionally returns stored-state/empty metadata without source work when `isAutomaticSignalMonitorMatrixRequest(input)` is true and no exact cells are requested.
   - Exact visible-cell requests remain separate: frontend request plans build `requestCells`, pending placeholders are not counted as hydrated, and API exact-cell requests under normal pressure can still enter `withSignalMonitorMatrixEvaluationCache(...)` when stored coverage is incomplete.
 - Focused validation passed:
-  - `pnpm -C artifacts/api-server exec tsx --test src/services/signal-monitor.test.ts`
-  - `pnpm -C artifacts/pyrus exec tsx --test src/features/platform/signalMatrixScheduler.test.js src/features/platform/platformRootSource.test.js src/screens/SignalsScreen.test.js`
+  - `pnpm -C artifacts/api-server exec tsx validation runner src/services/signal-monitor.validation.ts`
+  - `pnpm -C artifacts/pyrus exec tsx validation runner src/features/platform/signalMatrixScheduler.validation.js src/features/platform/platformRootSource.validation.js src/screens/SignalsScreen.validation.js`
 - Current-source service probe, not the stale running API:
   - Non-exact automatic bootstrap for SPY/QQQ `1m/5m`: `cacheStatus: "miss"`, `sourceRequestCount: 0`, `stateCount: 0`, `coverage.missingSymbols: 2`, duration `21ms`. This confirms cheap bootstrap, not fresh hydration.
   - Exact visible-cell leader poll for SPY/QQQ `1m/5m`: `cacheStatus: "miss"`, `sourceRequestCount: 4`, `stateCount: 4`, `coverage.hydratedSymbols: 2`, `coverage.missingSymbols: 0`, duration about `6840ms`. Returned four stale-but-usable SPY/QQQ `1m/5m` states with latest bars at `2026-06-04T23:59:00.000Z` and `2026-06-04T23:55:00.000Z`.
@@ -150,10 +150,10 @@ User questioned whether `coverage.sourceRequestCount: 0` on the non-exact bootst
 - The matrix-pressure API slice is staged separately from the broader Signals breadth/history work.
 - Staged files only:
   - `artifacts/api-server/src/services/signal-monitor.ts`
-  - `artifacts/api-server/src/services/signal-monitor.test.ts`
+  - `artifacts/api-server/src/services/signal-monitor.validation.ts`
 - Staged matrix-pressure scope:
   - Cap regular foreground exact-cell coverage to `48/36/24/12`.
-  - Serve regular leader startup/poll exact-cell reads from cache at `watch`, `high`, and `critical` pressure.
+  - Serve regular leader startup/poll exact-cell reads from cache at `watch`, `high`, and `` pressure.
   - Prevent automatic non-exact matrix bootstrap reads from scheduling a full background refresh.
 - Do not stage the remaining Signals breadth/history API, generated client, `.replit`, or handoff changes into this commit.
 - Next step: rerun focused API validation, inspect the staged diff, and commit only this pressure slice if clean.

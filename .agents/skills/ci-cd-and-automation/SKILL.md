@@ -321,7 +321,7 @@ Slow CI pipeline?
 ├── Use matrix builds
 │   └── Shard test suites across multiple runners
 ├── Optimize the test suite
-│   └── Remove slow tests from the critical path, run them on a schedule instead
+│   └── Remove slow tests from the default path, run them on a schedule instead
 └── Use larger runners
     └── GitHub-hosted larger runners or self-hosted for CPU-heavy builds
 ```

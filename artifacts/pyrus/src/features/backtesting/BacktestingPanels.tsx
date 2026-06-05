@@ -989,7 +989,7 @@ function validationWarningColor(
   theme: ThemeTokens,
   severity: BacktestValidationWarningSeverity,
 ): string {
-  if (severity === "critical") {
+  if (severity === "alert") {
     return theme.red;
   }
 
@@ -1004,7 +1004,7 @@ function validationWarningAccentColor(
   theme: ThemeTokens,
   warnings: BacktestValidationWarningItem[],
 ): string {
-  if (warnings.some((warning) => warning.severity === "critical")) {
+  if (warnings.some((warning) => warning.severity === "alert")) {
     return theme.red;
   }
 
@@ -3305,7 +3305,7 @@ export function BacktestWorkspace({
             >
               Uses strategy defaults for the deep parameter set, portfolio
               rules, execution profile, and optimizer tuning. This keeps the
-              main page analysis-first while still putting the critical inputs
+              main page analysis-first while still putting the warning inputs
               above the chart workspace.
             </div>
             <button

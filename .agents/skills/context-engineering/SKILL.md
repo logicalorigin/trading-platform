@@ -116,7 +116,7 @@ Long conversations accumulate stale context. Manage this:
 
 - **Start fresh sessions** when switching between major features
 - **Summarize progress** when context is getting long: "So far we've completed X, Y, Z. Now working on W."
-- **Compact deliberately** — if the tool supports it, compact/summarize before critical work
+- **Compact deliberately** — if the tool supports it, compact/summarize before demanding work
 
 ## Context Packing Strategies
 

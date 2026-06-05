@@ -9,7 +9,6 @@
 export type DiagnosticThresholdsUpdateRequestThresholdsItem = {
   metricKey: string;
   warning?: number;
-  critical?: number;
   enabled?: boolean;
   audible?: boolean;
 };

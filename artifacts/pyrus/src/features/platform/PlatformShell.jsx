@@ -842,7 +842,7 @@ export const PlatformShell = ({
         enabled: algoFrameRuntimeEnabled,
         staleTime: 15_000,
         refetchInterval:
-          algoFrameRuntimeEnabled && !algoCockpitStreamFreshness.algoCriticalFresh
+          algoFrameRuntimeEnabled && !algoCockpitStreamFreshness.algoPrimaryFresh
             ? 30_000
             : false,
         retry: false,

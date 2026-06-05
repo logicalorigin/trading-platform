@@ -4371,7 +4371,7 @@ const FlowOverviewPanel = ({
   const shouldRenderDeferredPanels = showDeferredPanels;
   useEffect(() => {
     onReadinessChange?.({
-      criticalReady: Boolean(isVisible),
+      primaryReady: Boolean(isVisible),
       derivedReady: Boolean(isVisible && shouldRenderDeferredPanels),
       backgroundAllowed: Boolean(isVisible && shouldRenderDeferredPanels),
     });
@@ -6403,7 +6403,7 @@ export const FlowScreen = ({
   useEffect(() => {
     if (!isVisible) {
       onReadinessChange?.({
-        criticalReady: false,
+        primaryReady: false,
         derivedReady: false,
         backgroundAllowed: false,
       });

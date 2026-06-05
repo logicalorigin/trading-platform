@@ -209,7 +209,7 @@ function validateUpload(file: UploadedFile) {
   if (file.size > MAX_SIZE) {
     throw new ValidationError('File too large (max 5MB)');
   }
-  // Don't trust the file extension — check magic bytes if critical
+  // Don't trust the file extension — check magic bytes when content validation matters
 }
 ```
 
@@ -219,13 +219,12 @@ Not all audit findings require immediate action. Use this decision tree:
 
 ```
 npm audit reports a vulnerability
-├── Severity: critical or high
-│   ├── Is the vulnerable code reachable in your app?
-│   │   ├── YES --> Fix immediately (update, patch, or replace the dependency)
-│   │   └── NO (dev-only dep, unused code path) --> Fix soon, but not a blocker
-│   └── Is a fix available?
-│       ├── YES --> Update to the patched version
-│       └── NO --> Check for workarounds, consider replacing the dependency, or add to allowlist with a review date
+├── Is the vulnerable code reachable in your app?
+│   ├── YES --> Fix immediately (update, patch, or replace the dependency)
+│   └── NO (dev-only dep, unused code path) --> Fix soon, but not a blocker
+├── Is a fix available?
+│   ├── YES --> Update to the patched version
+│   └── NO --> Check for workarounds, consider replacing the dependency, or add to allowlist with a review date
 ├── Severity: moderate
 │   ├── Reachable in production? --> Fix in the next release cycle
 │   └── Dev-only? --> Fix when convenient, track in backlog
@@ -334,13 +333,13 @@ For detailed security checklists and pre-commit verification steps, see `referen
 - Missing CORS configuration or wildcard (`*`) origins
 - No rate limiting on authentication endpoints
 - Stack traces or internal errors exposed to users
-- Dependencies with known critical vulnerabilities
+- Dependencies with known vulnerabilities requiring immediate action
 
 ## Verification
 
 After implementing security-relevant code:
 
-- [ ] `npm audit` shows no critical or high vulnerabilities
+- [ ] `npm audit` shows no reachable vulnerabilities requiring immediate action
 - [ ] No secrets in source code or git history
 - [ ] All user input validated at system boundaries
 - [ ] Authentication and authorization checked on every protected endpoint

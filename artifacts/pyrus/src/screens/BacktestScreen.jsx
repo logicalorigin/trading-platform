@@ -76,7 +76,7 @@ export const BacktestScreen = ({
 
   useEffect(() => {
     onReadinessChange?.({
-      criticalReady: Boolean(isVisible),
+      primaryReady: Boolean(isVisible),
       derivedReady: Boolean(isVisible),
       backgroundAllowed: Boolean(isVisible),
     });

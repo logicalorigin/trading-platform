@@ -2937,7 +2937,7 @@ function SettingsStatusStrip({ summary, dirtyCount, compact = false }) {
     {
       label: "Diagnostics",
       value: summary.diagnosticsSeverity || summary.diagnosticsStatus || "unknown",
-      tone: summary.diagnosticsSeverity === "critical" ? CSS_COLOR.red : summary.diagnosticsSeverity === "warning" ? CSS_COLOR.amber : CSS_COLOR.green,
+      tone: summary.diagnosticsSeverity === "warning" ? CSS_COLOR.amber : CSS_COLOR.green,
     },
     {
       label: "Trading",

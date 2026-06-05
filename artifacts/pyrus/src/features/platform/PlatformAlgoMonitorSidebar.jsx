@@ -78,9 +78,6 @@ const QUERY_DEFAULTS = {
   staleTime: 15_000,
 };
 
-const ALGO_MONITOR_CRITICAL_FALLBACK_DELAY_MS = 1_000;
-const ALGO_MONITOR_DERIVED_FALLBACK_DELAY_MS = 6_000;
-
 const ALGO_MONITOR_PIPELINE_LABEL_OVERRIDES = {
   scan_universe: "Universe",
   signal_detected: "Triggers",
@@ -500,10 +497,11 @@ export const buildAlgoMonitorSignalMatrixHydrationRequest = ({
 } = {}) => {
   const symbols = signalActionRowMatrixSymbols(rows);
   if (!symbols.length) return null;
+  const prioritySymbols = signalActionRowMatrixSymbols(visibleRows);
 
   const matrixHydrationPlan = buildSignalsMatrixHydrationPlan({
     symbols,
-    prioritySymbols: signalActionRowMatrixSymbols(visibleRows),
+    prioritySymbols,
     currentStates,
     timeframes,
   });
@@ -516,8 +514,10 @@ export const buildAlgoMonitorSignalMatrixHydrationRequest = ({
   }
 
   return {
-    symbols: matrixHydrationPlan.requestSymbols,
-    prioritySymbols: matrixHydrationPlan.requestSymbols,
+    symbols: matrixHydrationPlan.symbols,
+    prioritySymbols: prioritySymbols.length
+      ? prioritySymbols
+      : matrixHydrationPlan.requestSymbols,
     missingSymbols: matrixHydrationPlan.missingSymbols,
     requestSymbols: matrixHydrationPlan.requestSymbols,
     requestCells: matrixHydrationPlan.requestCells,
@@ -1026,52 +1026,31 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     enabled: Boolean(queryEnabled && deploymentId && !externalStreamFreshness),
   });
   const streamFreshness = externalStreamFreshness || ownStreamFreshness;
-  const [criticalFallbackReady, setCriticalFallbackReady] = useState(false);
-  const [derivedFallbackReady, setDerivedFallbackReady] = useState(false);
-  useEffect(() => {
-    if (!queryEnabled || streamFreshness.algoCriticalFresh) {
-      setCriticalFallbackReady(false);
-      return undefined;
-    }
-    const timer = window.setTimeout(() => {
-      setCriticalFallbackReady(true);
-    }, ALGO_MONITOR_CRITICAL_FALLBACK_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [queryEnabled, streamFreshness.algoCriticalFresh]);
-  useEffect(() => {
-    if (!queryEnabled || streamFreshness.algoFullFresh) {
-      setDerivedFallbackReady(false);
-      return undefined;
-    }
-    const timer = window.setTimeout(() => {
-      setDerivedFallbackReady(true);
-    }, ALGO_MONITOR_DERIVED_FALLBACK_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [queryEnabled, streamFreshness.algoFullFresh]);
-  const criticalRestFallbackEnabled = Boolean(
-    queryEnabled && deploymentId && criticalFallbackReady && !streamFreshness.algoCriticalFresh,
+  const primaryRestCatchupEnabled = Boolean(
+    queryEnabled && deploymentId && !streamFreshness.algoPrimaryFresh,
   );
-  const derivedRestFallbackEnabled = Boolean(
-    queryEnabled && deploymentId && derivedFallbackReady && !streamFreshness.algoFullFresh,
+  const derivedRestCatchupEnabled = Boolean(
+    queryEnabled && deploymentId && !streamFreshness.algoFullFresh,
   );
   const cockpitQuery = useGetAlgoDeploymentCockpit(deploymentId, {
     query: {
       ...QUERY_DEFAULTS,
-      enabled: derivedRestFallbackEnabled,
-      refetchInterval: derivedRestFallbackEnabled ? 30_000 : false,
+      enabled: derivedRestCatchupEnabled,
+      refetchInterval: derivedRestCatchupEnabled ? 30_000 : false,
+      placeholderData: (previousData) => previousData,
     },
   });
   const automationStateQuery = useGetSignalOptionsAutomationState(deploymentId, {
     query: {
       ...QUERY_DEFAULTS,
-      enabled: criticalRestFallbackEnabled,
-      refetchInterval: criticalRestFallbackEnabled ? 30_000 : false,
+      enabled: primaryRestCatchupEnabled,
+      refetchInterval: primaryRestCatchupEnabled ? 30_000 : false,
     },
   });
   const performanceQuery = useGetSignalOptionsPerformance(deploymentId, {
     query: {
       ...QUERY_DEFAULTS,
-      enabled: derivedRestFallbackEnabled,
+      enabled: derivedRestCatchupEnabled,
       refetchInterval: false,
     },
   });
@@ -1080,8 +1059,8 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     {
       query: {
         ...QUERY_DEFAULTS,
-        enabled: criticalRestFallbackEnabled,
-        refetchInterval: criticalRestFallbackEnabled ? 30_000 : false,
+        enabled: primaryRestCatchupEnabled,
+        refetchInterval: primaryRestCatchupEnabled ? 30_000 : false,
       },
     },
   );
@@ -1225,8 +1204,8 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
           label: "Scan",
           value: streamFreshness.algoFullFresh
             ? "live"
-            : streamFreshness.algoCriticalFresh
-              ? "critical"
+            : streamFreshness.algoPrimaryFresh
+              ? "primary"
               : "polling",
           detail: focusedDeployment?.lastEvaluatedAt
             ? formatRelativeTimeShort(focusedDeployment.lastEvaluatedAt)
@@ -1302,8 +1281,7 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
       tone: toneForNumber(performanceSummary.expectancy, CSS_COLOR.textSec),
     },
   ];
-  const loading =
-    queryEnabled && (deploymentsQuery.isLoading || (deploymentId && cockpitQuery.isLoading));
+  const loading = queryEnabled && deploymentsQuery.isLoading && !deployments.length;
 
   return (
     <Card
@@ -1340,6 +1318,8 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
         <DataUnavailableState
           title="Loading algo monitor"
           detail="Pulling deployment cockpit data."
+          loading
+          loadingEndpoint="/api/algo/deployments"
           minHeight={160}
         />
       ) : !focusedDeployment ? (

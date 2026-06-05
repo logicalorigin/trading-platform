@@ -188,7 +188,7 @@ Levels feed `pressureTone` which already returns the four pressure CSS vars:
 - `--ra-pressure-normal` (green-ish)
 - `--ra-pressure-watch` (yellow)
 - `--ra-pressure-high` (orange)
-- `--ra-pressure-critical` (red)
+- `--ra-pressure-priority` (red)
 
 ### Hover-expand mechanics
 
@@ -286,7 +286,7 @@ For the updated/added test (see Tests section):
 - Look for existing tests touching this component:
   - `grep -rln "FooterMemoryPressureIndicator" artifacts/pyrus/src` to find the test file.
   - If a test exists that asserted the old `Browser … · API …` text: update those assertions. Search the test for `Browser ` and `· API` substrings.
-  - If no test file exists yet, create `artifacts/pyrus/src/features/platform/FooterMemoryPressureIndicator.test.js`.
+  - If no test file exists yet, create `artifacts/pyrus/src/features/platform/FooterMemoryPressureIndicator.validation.js`.
 - New assertions:
   1. When `signal.pressureDrivers` includes browser/api/workload entries and `preferences.showCompactLabel === true`, the trigger contains `data-testid="footer-memory-pressure-mini-cluster"`.
   2. Three slots render with `data-testid` of `…-mini-slot-browser`, `…-mini-slot-api`, `…-mini-slot-workload`.
@@ -321,7 +321,7 @@ For the updated/added test (see Tests section):
 
 1. **Type + tests + build**
    - `pnpm --filter @workspace/pyrus typecheck`
-   - `pnpm --filter @workspace/pyrus test:unit` — new/updated indicator test passes.
+   - `pnpm --filter @workspace/pyrus unit validation` — new/updated indicator test passes.
    - `pnpm --filter @workspace/pyrus build`
 
 2. **Manual** (via Replit's Run Replit App entry, per CLAUDE.md)
@@ -331,7 +331,7 @@ For the updated/added test (see Tests section):
    - Tab into the cluster (keyboard focus) — `AppTooltip` reveals the same detail per bar.
    - With `showCompactLabel = false`: cluster does not render; main `Memory + bar + %` looks identical to before.
    - Click anywhere on the trigger — popover still opens with all six driver rows.
-   - Trigger high pressure (open many heavy panels, or simulate via diagnostics): individual bars change color via `--ra-pressure-watch/high/critical` as their drivers cross thresholds.
+   - Trigger high pressure (open many heavy panels, or simulate via diagnostics): individual bars change color via `--ra-pressure-watch/high` as their drivers cross thresholds.
    - Light + dark theme: confirm `pressureTone` tokens flow correctly in both.
    - `data-pyrus-reduced-motion="on"` on `<html>`: width transition disappears; opacity-only fade remains.
 

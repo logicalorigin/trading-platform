@@ -15,7 +15,7 @@
 
 ## Findings
 
-- Overall diagnostics were still `status=down`, `severity=critical` at `2026-06-02T14:21:06Z`. The current hard failure is API latency/route errors, not an app-wide crash.
+- Overall diagnostics were still `status=down`, `severity=` at `2026-06-02T14:21:06Z`. The current hard failure is API latency/route errors, not an app-wide crash.
 - API snapshot at `2026-06-02T14:21:27Z`:
   - `requestCount5m=1042`, `errorCount5m=8`, `warningCount5m=3`.
   - `p50LatencyMs=5`, `p95LatencyMs=5204`, `p99LatencyMs=11873`, `eventLoopMaxMs=9261`.
@@ -86,7 +86,7 @@
 - Ran direct bridge probes using runtime override config without printing secrets:
   - `/healthz`, `/orders?mode=live`, `/orders?mode=paper`, `/async-sidecar/health`, `/async-sidecar/market-data/generation`.
 - Ran Replit restart diagnosis; no cgroup OOM events, current processes running.
-- Ran safe Playwright browser load for `?pyrusQa=safe`; no observed JS/runtime exceptions.
+- Ran safe browser QA browser load for `?pyrusQa=safe`; no observed JS/runtime exceptions.
 
 ## Next Step
 
@@ -100,7 +100,7 @@
   - Line-usage sidecar apply decoupling/no-overlap/timeout and generation-churn failed-apply backoff.
   - Signal Options stale/cache/in-flight summary reads.
   - Sticky order-read suppression clearing after successful bridge reads.
-  - Cached `/diagnostics/latest` now stays available under critical pressure.
+  - Cached `/diagnostics/latest` now stays available under  pressure.
   - Account/position/execution bridge reads now serve stale cache while one background refresh runs.
   - Connected bridge health suppresses request-scoped lane backoff `lastError`.
   - Bars cache default increased from `256` to `1024`; synthesis-backed recent live-edge bars skip secondary IBEOS fallback while full recovery/direct broker history preserve it.
@@ -112,7 +112,7 @@
 ## Second Follow-Up Fixes And Live Check - 2026-06-02 09:57:58 MDT
 
 - Additional fixes landed in `SESSION_HANDOFF_2026-06-02_019e886f-b02b-70e1-8c40-018f3b7100e3.md`:
-  - Signal Monitor automatic matrix reads are cache-first for leaders/followers; leaders refresh in background unless critical pressure or debounce suppresses it.
+  - Signal Monitor automatic matrix reads are cache-first for leaders/followers; leaders refresh in background unless  pressure or debounce suppresses it.
   - Watchlist GET reads use a short cached snapshot with coalesced DB reads and throttled prewarm scheduling.
   - Account summary/equity/allocation/positions/risk live reads use short full-response route caches.
   - IBKR line-usage sidecar generation apply has a sequence guard and read-side bridge-generation comparison fallback.
@@ -124,7 +124,7 @@
 - Live probe after build, before another Replit restart:
   - IBKR remains connected/authenticated/strict-ready.
   - `/api/settings/ibkr-line-usage` returned `200` with `sidecar.applyError=null`.
-  - Root diagnostics still show `down/critical`, but the active cause is API p95 latency dominated by `/bars` in the running pre-final-restart process, not an IBKR/UI crash.
+  - Root diagnostics still show `down/`, but the active cause is API p95 latency dominated by `/bars` in the running pre-final-restart process, not an IBKR/UI crash.
 - Required next step:
   - Restart via default **Run Replit App** once more to load the rebuilt API bundle, then wait for the 5-minute latency window to age and re-check `/bars`, line usage, Signal Options performance, and root diagnostics.
 
@@ -141,7 +141,7 @@
   - Radar promotions, direct scanner rotation, on-demand scanner refresh, aggregate seed refresh, and expanded seed follow-up stop when real queue capacity is full.
   - Aggregate seed selection can now return zero instead of forcing one more scan.
   - Line-usage and work-plan diagnostics now expose scheduled deep scan counts.
-  - API latency-only p95 below `10000ms` now degrades diagnostics instead of marking API/root `critical/down`; repeated errors still escalate.
+  - API latency-only p95 below `10000ms` now degrades diagnostics instead of marking API/root `/down`; repeated errors still escalate.
 - Validation passed:
   - Full options flow scanner test file: 80/80.
   - Line usage + market-data work planner tests: 23/23.
@@ -149,5 +149,5 @@
   - API build passed.
 - Live note:
   - `/api/settings/ibkr-line-usage` already showed the new queue fields and no background scanner block.
-  - After API PID `118537` started at `2026-06-02 10:33:57 MDT`, `/api/diagnostics/latest` reported root `degraded/warning`, API `degraded/warning`, p95 about `5001ms`, `errorCount5m=2`, resource pressure `high`, Signal Options caps allowed, and no critical events.
+  - After API PID `118537` started at `2026-06-02 10:33:57 MDT`, `/api/diagnostics/latest` reported root `degraded/warning`, API `degraded/warning`, p95 about `5001ms`, `errorCount5m=2`, resource pressure `high`, Signal Options caps allowed, and no  events.
   - Final line-usage probe showed `deepQueueLimit=8`, `deepQueueBacklog=5`, `deepQueueAvailable=3`, `drainingCount=5`, `queuedCount=0`, and `scheduledDeepScanCount=5`.

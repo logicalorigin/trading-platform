@@ -139,7 +139,6 @@ export function useDiagnosticThresholdSettings() {
       const original = byKey.get(draft.metricKey) || {};
       return count +
         (draft.warning !== original.warning ||
-        draft.critical !== original.critical ||
         draft.enabled !== original.enabled ||
         draft.audible !== original.audible
           ? 1
@@ -285,7 +284,7 @@ export function DiagnosticThresholdSettingsPanel({
               <div style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("caption"), marginBottom: sp(8) }}>
                 {threshold.metricKey} / {threshold.unit || MISSING_VALUE}
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(8) }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: sp(8) }}>
                 <label style={inputLabel()}>
                   Warn
                   <input
@@ -293,17 +292,6 @@ export function DiagnosticThresholdSettingsPanel({
                     value={threshold.warning ?? ""}
                     onChange={(event) =>
                       updateDraft(index, { warning: Number(event.target.value) })
-                    }
-                    style={inputStyle()}
-                  />
-                </label>
-                <label style={inputLabel()}>
-                  Critical
-                  <input
-                    type="number"
-                    value={threshold.critical ?? ""}
-                    onChange={(event) =>
-                      updateDraft(index, { critical: Number(event.target.value) })
                     }
                     style={inputStyle()}
                   />

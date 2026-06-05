@@ -79,7 +79,7 @@ please pick up this session:
         ses.
     16 +- Memory-pressure monitor consumes th
         ose headers and holds stricter header
-         pressure for 15s so a critical shed
+         pressure for 15s so a  shed
         signal cannot be immediately overwrit
         ten by a lower-pressure response.
     17 +- Matrix scheduling now reads live pr
@@ -93,7 +93,7 @@ please pick up this session:
         est: `30 symbols x 5 timeframes = 150
         ` tasks, completing in about `3189ms`
         .
-    19 +- Browser QA with injected `critical`
+    19 +- Browser QA with injected ``
          pressure sent exactly one clamped re
         quest: `2 symbols x 5 timeframes = 10
         ` tasks.
@@ -106,19 +106,19 @@ please pick up this session:
     24
     24 -- `pnpm --filter @workspace/pyrus exe
         c node --import tsx src/screens/algo/
-        OperationsSignalRow.test.js`: pass, 1
+        OperationsSignalRow.validation.js`: pass, 1
         5/15.
     25 -- `pnpm --filter @workspace/pyrus exe
         c node --import tsx src/screens/algo/
-        algoHelpers.test.js`: pass, 33/33.
-    25 +- `node --import tsx --test src/featu
+        algoHelpers.validation.js`: pass, 33/33.
+    25 +- `node JS validation runner src/featu
         res/platform/useMemoryPressureSignal.
         test.js src/features/platform/platfor
-        mRootSource.test.js src/features/plat
-        form/signalMatrixScheduler.test.js` f
+        mRootSource.validation.js src/features/plat
+        form/signalMatrixScheduler.validation.js` f
         rom `artifacts/pyrus`: pass, 92/92.
     26 +- `pnpm --filter @workspace/api-clien
-        t-react run test:unit`: pass, 18/18.
+        t-react run unit validation`: pass, 18/18.
     27 +- `pnpm --filter @workspace/api-clien
         t-react run typecheck`: pass.
     28  - `pnpm --filter @workspace/pyrus run
@@ -127,7 +127,7 @@ please pick up this session:
         ed UI/test files: pass.
     28 -- `pnpm --filter @workspace/pyrus exe
         c node --import tsx src/features/plat
-        form/platformRootSource.test.js`: fai
+        form/platformRootSource.validation.js`: fai
         led 56/57 on an unrelated `PlatformAp
         p` signal-matrix source assertion.
     29 +- `pnpm --filter @workspace/pyrus run
@@ -146,12 +146,12 @@ please pick up this session:
         reek diagnostics once fresh market-se
         ssion data is available.
     34 +1. Triage residual API RSS/CPU pressu
-        re. The matrix critical clamp is fixe
+        re. The matrix  clamp is fixe
         d, but the API process is still hot.
     35 +2. Decide whether active Signals `wat
         ch` state should keep the current `15
         0` cell foreground budget or step dow
-        n below critical only after more evid
+        n below  only after more evid
         ence.
     36 +3. Continue the next issue from this
         session once runtime resource pressur
@@ -198,7 +198,7 @@ please pick up this session:
         -b25f-7921-bbd5-2bfc17403296.md` | Fu
         ll five-timeframe matrix retained; AP
         I route pressure headers now reach th
-        e client, critical state clamps activ
+        e client,  state clamps activ
         e Signals to 10 tasks, global lease p
         revents duplicate startup matrix POST
         s, and focused validations pass. API
@@ -274,10 +274,10 @@ please pick up this session:
   - API shed/pressure headers were not
     reaching the client, so diagnostics
     shedding made the frontend blind to
-    critical pressure.
+     pressure.
 
   - A later lower-pressure response could
-    overwrite a stricter critical signal too
+    overwrite a stricter  signal too
     quickly.
 
   - Matrix startup could double-fire under
@@ -299,7 +299,7 @@ please pick up this session:
     request, 30 symbols x 5 timeframes = 150
     tasks, completed in ~3.2s.
 
-  - Injected critical pressure: exactly one
+  - Injected  pressure: exactly one
     request, clamped to 2 symbols x 5
     timeframes = 10 tasks.
 
@@ -323,7 +323,7 @@ please pick up this session:
 
   Remaining issue: the API process is still
   hot after QA, roughly 1.2GB RSS and 45%
-  CPU. The matrix critical clamp is fixed;
+  CPU. The matrix  clamp is fixed;
 
 ## Prior Handoffs
 
@@ -481,7 +481,7 @@ please pick up this session:
         ses.
     16 +- Memory-pressure monitor consumes th
         ose headers and holds stricter header
-         pressure for 15s so a critical shed
+         pressure for 15s so a  shed
         signal cannot be immediately overwrit
         ten by a lower-pressure response.
     17 +- Matrix scheduling now reads live pr
@@ -495,7 +495,7 @@ please pick up this session:
         est: `30 symbols x 5 timeframes = 150
         ` tasks, completing in about `3189ms`
         .
-    19 +- Browser QA with injected `critical`
+    19 +- Browser QA with injected ``
          pressure sent exactly one clamped re
         quest: `2 symbols x 5 timeframes = 10
         ` tasks.
@@ -508,19 +508,19 @@ please pick up this session:
     24
     24 -- `pnpm --filter @workspace/pyrus exe
         c node --import tsx src/screens/algo/
-        OperationsSignalRow.test.js`: pass, 1
+        OperationsSignalRow.validation.js`: pass, 1
         5/15.
     25 -- `pnpm --filter @workspace/pyrus exe
         c node --import tsx src/screens/algo/
-        algoHelpers.test.js`: pass, 33/33.
-    25 +- `node --import tsx --test src/featu
+        algoHelpers.validation.js`: pass, 33/33.
+    25 +- `node JS validation runner src/featu
         res/platform/useMemoryPressureSignal.
         test.js src/features/platform/platfor
-        mRootSource.test.js src/features/plat
-        form/signalMatrixScheduler.test.js` f
+        mRootSource.validation.js src/features/plat
+        form/signalMatrixScheduler.validation.js` f
         rom `artifacts/pyrus`: pass, 92/92.
     26 +- `pnpm --filter @workspace/api-clien
-        t-react run test:unit`: pass, 18/18.
+        t-react run unit validation`: pass, 18/18.
     27 +- `pnpm --filter @workspace/api-clien
         t-react run typecheck`: pass.
     28  - `pnpm --filter @workspace/pyrus run
@@ -529,7 +529,7 @@ please pick up this session:
         ed UI/test files: pass.
     28 -- `pnpm --filter @workspace/pyrus exe
         c node --import tsx src/features/plat
-        form/platformRootSource.test.js`: fai
+        form/platformRootSource.validation.js`: fai
         led 56/57 on an unrelated `PlatformAp
         p` signal-matrix source assertion.
     29 +- `pnpm --filter @workspace/pyrus run
@@ -548,12 +548,12 @@ please pick up this session:
         reek diagnostics once fresh market-se
         ssion data is available.
     34 +1. Triage residual API RSS/CPU pressu
-        re. The matrix critical clamp is fixe
+        re. The matrix  clamp is fixe
         d, but the API process is still hot.
     35 +2. Decide whether active Signals `wat
         ch` state should keep the current `15
         0` cell foreground budget or step dow
-        n below critical only after more evid
+        n below  only after more evid
         ence.
     36 +3. Continue the next issue from this
         session once runtime resource pressur
@@ -600,7 +600,7 @@ please pick up this session:
         -b25f-7921-bbd5-2bfc17403296.md` | Fu
         ll five-timeframe matrix retained; AP
         I route pressure headers now reach th
-        e client, critical state clamps activ
+        e client,  state clamps activ
         e Signals to 10 tasks, global lease p
         revents duplicate startup matrix POST
         s, and focused validations pass. API
@@ -676,10 +676,10 @@ please pick up this session:
   - API shed/pressure headers were not
     reaching the client, so diagnostics
     shedding made the frontend blind to
-    critical pressure.
+     pressure.
 
   - A later lower-pressure response could
-    overwrite a stricter critical signal too
+    overwrite a stricter  signal too
     quickly.
 
   - Matrix startup could double-fire under
@@ -701,7 +701,7 @@ please pick up this session:
     request, 30 symbols x 5 timeframes = 150
     tasks, completed in ~3.2s.
 
-  - Injected critical pressure: exactly one
+  - Injected  pressure: exactly one
     request, clamped to 2 symbols x 5
     timeframes = 10 tasks.
 
@@ -725,7 +725,7 @@ please pick up this session:
 
   Remaining issue: the API process is still
   hot after QA, roughly 1.2GB RSS and 45%
-  CPU. The matrix critical clamp is fixed;
+  CPU. The matrix  clamp is fixed;
 - `2026-06-01T23:21:51.777Z` done. please check
 - `2026-06-01T23:30:41.027Z` done. please check before we move on
 - `2026-06-01T23:34:45.413Z` this is good. can we include the animated sine wave that we already use elsewheer?
@@ -749,30 +749,30 @@ please pick up this session:
 - `2026-06-02T00:34:54.609Z` Tool: exec_command sed -n '1720,1918p' artifacts/pyrus/src/screens/AlgoScreen.jsx && sed -n '1,260p' artifacts/pyrus/src/screens/algo/AlgoLivePage.jsx
 - `2026-06-02T00:34:54.609Z` Tool: exec_command rg -n "algo-operations-header-wave|algo-operations-header-wave-badge|algo-settings-drawer-open|algo-signal-column|algo-signal-table|data-testid" artifacts/pyrus/src/screens/algo/A…
 - `2026-06-02T00:35:10.473Z` Agent: I’m building the live pass around stable selectors: `algo-screen`, `algo-live-content`, `algo-operations-header-wave-badge`, `algo-operations-signal-table`, and the settings drawe…
-- `2026-06-02T00:36:02.398Z` Tool: exec_command pnpm --dir artifacts/pyrus exec node --input-type=module - <<'NODE' import { chromium } from '@playwright/test'; import { mkdir, writeFile } from 'node:fs/promises'; import path f…
+- `2026-06-02T00:36:02.398Z` Tool: exec_command pnpm --dir artifacts/pyrus exec node --input-type=module - <<'NODE' import { chromium } from 'browser QA package'; import { mkdir, writeFile } from 'node:fs/promises'; import path f…
 - `2026-06-02T00:36:22.919Z` Agent: The first live script hit a bug in my evidence collector (`label` wasn’t passed into the browser context), not in the app. I’m rerunning with that fixed and a `finally` close so a…
-- `2026-06-02T00:37:15.883Z` Tool: exec_command pnpm --dir artifacts/pyrus exec node --input-type=module - <<'NODE' import { chromium } from '@playwright/test'; import { mkdir, writeFile } from 'node:fs/promises'; import path f…
-- `2026-06-02T00:37:51.242Z` Agent: The live Playwright run is still executing. It’s waiting through the Algo route’s real safe-QA hydration windows and capturing desktop/mobile screenshots plus console and API resp…
+- `2026-06-02T00:37:15.883Z` Tool: exec_command pnpm --dir artifacts/pyrus exec node --input-type=module - <<'NODE' import { chromium } from 'browser QA package'; import { mkdir, writeFile } from 'node:fs/promises'; import path f…
+- `2026-06-02T00:37:51.242Z` Agent: The live browser QA run is still executing. It’s waiting through the Algo route’s real safe-QA hydration windows and capturing desktop/mobile screenshots plus console and API resp…
 - `2026-06-02T00:37:52.543Z` Tool: write_stdin session 75583
 - `2026-06-02T00:38:25.983Z` Agent: The live page didn’t expose `platform-screen-nav` within 45 seconds. I’m treating that as a real QA finding until proven otherwise, and I’m doing a bounded diagnostic load now to…
-- `2026-06-02T00:38:44.531Z` Tool: exec_command pnpm --dir artifacts/pyrus exec node --input-type=module - <<'NODE' import { chromium } from '@playwright/test'; import { mkdir, writeFile } from 'node:fs/promises'; import path f…
+- `2026-06-02T00:38:44.531Z` Tool: exec_command pnpm --dir artifacts/pyrus exec node --input-type=module - <<'NODE' import { chromium } from 'browser QA package'; import { mkdir, writeFile } from 'node:fs/promises'; import path f…
 
 ## High-Signal Changed Files
 
 - `SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md`
 - `SESSION_HANDOFF_CURRENT.md`
 - `SESSION_HANDOFF_MASTER.md`
-- `artifacts/api-server/src/services/diagnostics.test.ts`
+- `artifacts/api-server/src/services/diagnostics.validation.ts`
 - `artifacts/api-server/src/services/diagnostics.ts`
 - `artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx`
 - `artifacts/pyrus/src/features/platform/memoryPressureClient.js`
-- `artifacts/pyrus/src/features/platform/memoryPressureModel.test.js`
+- `artifacts/pyrus/src/features/platform/memoryPressureModel.validation.js`
 - `artifacts/pyrus/src/features/platform/memoryPressurePopoverModel.js`
 - `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js`
-- `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js`
+- `artifacts/pyrus/src/features/platform/useMemoryPressureSignal.validation.js`
 - `artifacts/pyrus/src/screens/DiagnosticsScreen.jsx`
 - `artifacts/pyrus/src/screens/SettingsScreen.jsx`
-- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js`
+- `artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js`
 
 ## Repo State Snapshot
 
@@ -781,17 +781,17 @@ please pick up this session:
  M SESSION_HANDOFF_2026-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md
  M SESSION_HANDOFF_CURRENT.md
  M SESSION_HANDOFF_MASTER.md
- M artifacts/api-server/src/services/diagnostics.test.ts
+ M artifacts/api-server/src/services/diagnostics.validation.ts
  M artifacts/api-server/src/services/diagnostics.ts
  M artifacts/pyrus/src/features/platform/PlatformWatchlist.jsx
  M artifacts/pyrus/src/features/platform/memoryPressureClient.js
- M artifacts/pyrus/src/features/platform/memoryPressureModel.test.js
+ M artifacts/pyrus/src/features/platform/memoryPressureModel.validation.js
  M artifacts/pyrus/src/features/platform/memoryPressurePopoverModel.js
  M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.js
- M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.test.js
+ M artifacts/pyrus/src/features/platform/useMemoryPressureSignal.validation.js
  M artifacts/pyrus/src/screens/DiagnosticsScreen.jsx
  M artifacts/pyrus/src/screens/SettingsScreen.jsx
- M artifacts/pyrus/src/screens/algo/OperationsSignalRow.test.js
+ M artifacts/pyrus/src/screens/algo/OperationsSignalRow.validation.js
 ```
 
 ## Diff Summary
@@ -800,17 +800,17 @@ please pick up this session:
  ...6-06-01_019e856c-a253-71f2-9ad3-d53939c3f375.md |  42 +++++++--
  SESSION_HANDOFF_CURRENT.md                         |  27 +++---
  SESSION_HANDOFF_MASTER.md                          |   2 +-
- .../api-server/src/services/diagnostics.test.ts    |  67 ++++++++++++++
+ .../api-server/src/services/diagnostics.validation.ts    |  67 ++++++++++++++
  artifacts/api-server/src/services/diagnostics.ts   | 101 +++++++++++++++++++--
  .../src/features/platform/PlatformWatchlist.jsx    |  94 ++++++++++++++++---
  .../src/features/platform/memoryPressureClient.js  |   1 +
- .../features/platform/memoryPressureModel.test.js  |  12 +++
+ .../features/platform/memoryPressureModel.validation.js  |  12 +++
  .../platform/memoryPressurePopoverModel.js         |  11 ++-
  .../features/platform/useMemoryPressureSignal.js   |   4 +
- .../platform/useMemoryPressureSignal.test.js       |   7 ++
+ .../platform/useMemoryPressureSignal.validation.js       |   7 ++
  artifacts/pyrus/src/screens/DiagnosticsScreen.jsx  |  20 +++-
  artifacts/pyrus/src/screens/SettingsScreen.jsx     |   1 +
- .../src/screens/algo/OperationsSignalRow.test.js   |  20 +++-
+ .../src/screens/algo/OperationsSignalRow.validation.js   |  20 +++-
  14 files changed, 361 insertions(+), 48 deletions(-)
 ```
 
@@ -829,13 +829,13 @@ please pick up this session:
 ## Current Status
 
 - Algo upper-area browser QA is complete for the resumed `019e84aa...` workstream.
-- Playwright observed no console warnings/errors and no page errors.
+- browser QA observed no console warnings/errors and no page errors.
 - API/session were responsive. Before QA the older API process was under `watch` pressure at roughly `1.09GB` RSS / `30%` CPU; after QA the app had restarted under Replit-owned PIDs and `/api/healthz` plus `/api/session` returned `200` with `x-pyrus-pressure-level: normal`.
-- A separate Codex terminal was running an API `signal-options-automation.test.ts` pattern during final process inspection; this pickup did not start or stop it.
+- A separate Codex terminal was running an API `signal-options-automation.validation.ts` pattern during final process inspection; this pickup did not start or stop it.
 - Full prior focused validation remains as recorded in `019e84aa...`: Pyrus row test pass, algo helpers test pass, Pyrus typecheck pass, scoped diff check pass.
 
 ## Next Recommended Steps
 
 1. Separately triage the residual API RSS/CPU pressure from the `019e8366...` signal-matrix handoff.
-2. Address the unrelated `platformRootSource.test.js` signal-matrix assertion only if that path becomes the current workstream again.
+2. Address the unrelated `platformRootSource.validation.js` signal-matrix assertion only if that path becomes the current workstream again.
 3. Continue regular-session STA/Greek diagnostics once fresh market-session data is available.

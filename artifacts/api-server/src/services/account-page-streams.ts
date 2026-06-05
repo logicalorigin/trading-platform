@@ -33,7 +33,7 @@ export const ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS = 30_000;
 export const ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS = 0;
 export const ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS = 0;
 export const ACCOUNT_PAGE_BENCHMARK_EQUITY_CACHE_TTL_MS = 5 * 60_000;
-export const ACCOUNT_PAGE_SHADOW_CRITICAL_CACHE_TTL_MS = 2_000;
+export const ACCOUNT_PAGE_SHADOW_PRIMARY_CACHE_TTL_MS = 2_000;
 
 type AccountPageSnapshotInput = {
   accountId: string;
@@ -85,8 +85,8 @@ export type AccountPageSnapshotPayload = {
   flexHealth: Awaited<ReturnType<typeof getFlexHealth>> | null;
 };
 
-export type AccountPageCriticalPayload = {
-  stream: "account-page-critical";
+export type AccountPagePrimaryPayload = {
+  stream: "account-page-primary";
   accountId: string;
   mode: RuntimeMode;
   orderTab: OrderTab;
@@ -135,9 +135,9 @@ const accountPageSnapshotInflight = new Map<
   string,
   Promise<AccountPageSnapshotPayload>
 >();
-const accountPageCriticalInflight = new Map<
+const accountPagePrimaryInflight = new Map<
   string,
-  Promise<AccountPageCriticalPayload>
+  Promise<AccountPagePrimaryPayload>
 >();
 const accountPageLiveInflight = new Map<
   string,
@@ -158,20 +158,20 @@ const accountPageBenchmarkEquityCache = new Map<
     expiresAt: number;
   }
 >();
-const accountPageShadowCriticalCache = new Map<
+const accountPageShadowPrimaryCache = new Map<
   string,
-  { value: AccountPageCriticalPayload; expiresAt: number }
+  { value: AccountPagePrimaryPayload; expiresAt: number }
 >();
 let accountPageSnapshotCacheVersion = 0;
 
 type AccountPageTimingKey =
-  | "criticalMs"
+  | "primaryMs"
   | "liveMs"
   | "derivedMs"
-  | "firstCriticalWriteMs"
+  | "firstPrimaryWriteMs"
   | "firstDerivedWriteMs";
 type AccountPageCacheKey =
-  | "criticalHit"
+  | "primaryHit"
   | "liveHit"
   | "derivedHit"
   | "benchmarkHit";
@@ -180,8 +180,8 @@ const accountPageStreamDiagnostics: {
   updatedAt: string | null;
   timings: Record<AccountPageTimingKey, number | null>;
   cache: Record<AccountPageCacheKey, boolean | null> & {
-    criticalHits: number;
-    criticalMisses: number;
+    primaryHits: number;
+    primaryMisses: number;
     liveHits: number;
     liveMisses: number;
     derivedHits: number;
@@ -192,19 +192,19 @@ const accountPageStreamDiagnostics: {
 } = {
   updatedAt: null,
   timings: {
-    criticalMs: null,
+    primaryMs: null,
     liveMs: null,
     derivedMs: null,
-    firstCriticalWriteMs: null,
+    firstPrimaryWriteMs: null,
     firstDerivedWriteMs: null,
   },
   cache: {
-    criticalHit: null,
+    primaryHit: null,
     liveHit: null,
     derivedHit: null,
     benchmarkHit: null,
-    criticalHits: 0,
-    criticalMisses: 0,
+    primaryHits: 0,
+    primaryMisses: 0,
     liveHits: 0,
     liveMisses: 0,
     derivedHits: 0,
@@ -221,8 +221,8 @@ function recordAccountPageTiming(key: AccountPageTimingKey, startedAt: number): 
 
 function recordAccountPageCache(key: AccountPageCacheKey, hit: boolean): void {
   accountPageStreamDiagnostics.cache[key] = hit;
-  if (key === "criticalHit") {
-    accountPageStreamDiagnostics.cache[hit ? "criticalHits" : "criticalMisses"] += 1;
+  if (key === "primaryHit") {
+    accountPageStreamDiagnostics.cache[hit ? "primaryHits" : "primaryMisses"] += 1;
   } else if (key === "liveHit") {
     accountPageStreamDiagnostics.cache[hit ? "liveHits" : "liveMisses"] += 1;
   } else if (key === "derivedHit") {
@@ -234,11 +234,11 @@ function recordAccountPageCache(key: AccountPageCacheKey, hit: boolean): void {
 }
 
 export function recordAccountPageStreamWrite(
-  kind: "critical" | "derived",
+  kind: "primary" | "derived",
   startedAt: number,
 ): void {
   recordAccountPageTiming(
-    kind === "critical" ? "firstCriticalWriteMs" : "firstDerivedWriteMs",
+    kind === "primary" ? "firstPrimaryWriteMs" : "firstDerivedWriteMs",
     startedAt,
   );
 }
@@ -323,9 +323,9 @@ function cacheKeyForInput(input: AccountPageSnapshotInput): string {
 export function clearAccountPageSnapshotCache() {
   accountPageDerivedCache.clear();
   accountPageBenchmarkEquityCache.clear();
-  accountPageShadowCriticalCache.clear();
+  accountPageShadowPrimaryCache.clear();
   accountPageSnapshotInflight.clear();
-  accountPageCriticalInflight.clear();
+  accountPagePrimaryInflight.clear();
   accountPageLiveInflight.clear();
   accountPageDerivedInflight.clear();
   accountPageSnapshotCacheVersion += 1;
@@ -394,8 +394,8 @@ export async function fetchAccountPageLivePayload(
         mode: normalized.mode,
       };
       const isShadow = isShadowAccountId(normalized.accountId);
-      const [critical, intradayEquity, shadowOrders, livePositions] = await Promise.all([
-        fetchAccountPageCriticalPayload(normalized),
+      const [primary, intradayEquity, shadowOrders, livePositions] = await Promise.all([
+        fetchAccountPagePrimaryPayload(normalized),
         getAccountEquityHistory({ ...common, range: "1D" }),
         isShadow
           ? getAccountOrders({ ...common, tab: normalized.orderTab })
@@ -408,7 +408,7 @@ export async function fetchAccountPageLivePayload(
             })
           : Promise.resolve(null),
       ]);
-      const positions = livePositions ?? critical.positions;
+      const positions = livePositions ?? primary.positions;
       const [summary, allocation, risk] =
         isShadow && livePositions
           ? await Promise.all([
@@ -429,7 +429,7 @@ export async function fetchAccountPageLivePayload(
                 detail: "fast",
               }),
             ])
-          : [critical.summary, critical.allocation, critical.risk];
+          : [primary.summary, primary.allocation, primary.risk];
 
       const value: AccountPageLivePayload = {
         stream: "account-page-live",
@@ -442,7 +442,7 @@ export async function fetchAccountPageLivePayload(
         intradayEquity,
         allocation,
         positions,
-        orders: shadowOrders ?? critical.orders,
+        orders: shadowOrders ?? primary.orders,
         risk,
       };
       return value;
@@ -461,9 +461,9 @@ export async function fetchAccountPageLivePayload(
   }
 }
 
-export async function fetchAccountPageCriticalPayload(
+export async function fetchAccountPagePrimaryPayload(
   input: AccountPageSnapshotInput,
-): Promise<AccountPageCriticalPayload> {
+): Promise<AccountPagePrimaryPayload> {
   const normalized = normalizeInput(input);
   const isShadow = isShadowAccountId(normalized.accountId);
   const cacheKey = stableStringify({
@@ -474,19 +474,19 @@ export async function fetchAccountPageCriticalPayload(
   });
   const now = Date.now();
   if (isShadow) {
-    const cached = accountPageShadowCriticalCache.get(cacheKey);
+    const cached = accountPageShadowPrimaryCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
-      recordAccountPageCache("criticalHit", true);
-      recordAccountPageTiming("criticalMs", now);
+      recordAccountPageCache("primaryHit", true);
+      recordAccountPageTiming("primaryMs", now);
       return cached.value;
     }
     if (cached) {
-      accountPageShadowCriticalCache.delete(cacheKey);
+      accountPageShadowPrimaryCache.delete(cacheKey);
     }
   }
-  recordAccountPageCache("criticalHit", false);
+  recordAccountPageCache("primaryHit", false);
 
-  const inFlight = accountPageCriticalInflight.get(cacheKey);
+  const inFlight = accountPagePrimaryInflight.get(cacheKey);
   if (inFlight) {
     return inFlight;
   }
@@ -499,17 +499,17 @@ export async function fetchAccountPageCriticalPayload(
         accountId: normalized.accountId,
         mode: normalized.mode,
       };
-      let summary: AccountPageCriticalPayload["summary"];
-      let allocation: AccountPageCriticalPayload["allocation"];
-      let positions: AccountPageCriticalPayload["positions"];
-      let orders: AccountPageCriticalPayload["orders"];
-      let risk: AccountPageCriticalPayload["risk"];
+      let summary: AccountPagePrimaryPayload["summary"];
+      let allocation: AccountPagePrimaryPayload["allocation"];
+      let positions: AccountPagePrimaryPayload["positions"];
+      let orders: AccountPagePrimaryPayload["orders"];
+      let risk: AccountPagePrimaryPayload["risk"];
 
       if (isShadow) {
         const shadowPositions = await getAccountPositions({
           ...common,
           assetClass: normalized.assetClass,
-          liveQuotes: false,
+          liveQuotes: true,
         });
         positions = shadowPositions;
         orders = deferredShadowOrders(normalized.accountId, normalized.orderTab);
@@ -544,8 +544,8 @@ export async function fetchAccountPageCriticalPayload(
         risk = await getAccountRisk({ ...common, detail: "fast" });
       }
 
-      const value: AccountPageCriticalPayload = {
-        stream: "account-page-critical",
+      const value: AccountPagePrimaryPayload = {
+        stream: "account-page-primary",
         accountId: normalized.accountId,
         mode: normalized.mode,
         orderTab: normalized.orderTab,
@@ -558,23 +558,23 @@ export async function fetchAccountPageCriticalPayload(
         risk,
       };
       if (isShadow && version === accountPageSnapshotCacheVersion) {
-        accountPageShadowCriticalCache.set(cacheKey, {
+        accountPageShadowPrimaryCache.set(cacheKey, {
           value,
-          expiresAt: Date.now() + ACCOUNT_PAGE_SHADOW_CRITICAL_CACHE_TTL_MS,
+          expiresAt: Date.now() + ACCOUNT_PAGE_SHADOW_PRIMARY_CACHE_TTL_MS,
         });
       }
       return value;
     } finally {
-      recordAccountPageTiming("criticalMs", startedAt);
+      recordAccountPageTiming("primaryMs", startedAt);
     }
   })();
 
-  accountPageCriticalInflight.set(cacheKey, request);
+  accountPagePrimaryInflight.set(cacheKey, request);
   try {
     return await request;
   } finally {
-    if (accountPageCriticalInflight.get(cacheKey) === request) {
-      accountPageCriticalInflight.delete(cacheKey);
+    if (accountPagePrimaryInflight.get(cacheKey) === request) {
+      accountPagePrimaryInflight.delete(cacheKey);
     }
   }
 }
@@ -830,7 +830,7 @@ export function subscribeAccountPageSnapshots(
   onDerived: (payload: AccountPageDerivedPayload) => void,
   options: {
     initialPayload?: AccountPageSnapshotPayload;
-    initialCriticalPayload?: AccountPageCriticalPayload;
+    initialPrimaryPayload?: AccountPagePrimaryPayload;
     initialLivePayload?: AccountPageLivePayload;
     initialDerivedPayload?: AccountPageDerivedPayload;
     initialLiveDelayMs?: number;

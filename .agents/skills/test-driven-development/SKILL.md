@@ -167,8 +167,8 @@ Is it pure logic with no side effects?
 Does it cross a boundary (API, database, file system)?
   → Integration test (medium)
 
-Is it a critical user flow that must work end-to-end?
-  → E2E test (large) — limit these to critical paths
+Is it a user flow that must work end-to-end?
+  → E2E test (large) — limit these to core paths
 ```
 
 ## Writing Good Tests

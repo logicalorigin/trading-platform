@@ -188,7 +188,7 @@ export const EDGES = [
   ["CCJ","URA","Top holding"],["NXE","URA","Holding"],["UEC","URA","Holding"],
   ["DNN","URA","Holding"],["CCJ","SPUT","Via spot buys"],
   // Lithium / REE in miners context
-  ["LAC","ALB","Li peer"],["MP","ALB","Critical minerals"],
+  ["LAC","ALB","Li peer"],["MP","ALB","Strategic minerals"],
 
   /* ═══════════════ NUCLEAR EDGES ═══════════════ */
   // Mining → Fuel cycle
@@ -296,7 +296,7 @@ export const EDGES = [
   ["UEC","URA","ETF holding"],["LEU","URA","ETF holding"],
   ["CCJ","SPUT","Spot purchases"],
   // Rare earths / lithium parallel thesis
-  ["MP","LAC","US critical minerals cohort"],["ALB","LAC","Lithium peers"],
+  ["MP","LAC","US strategic minerals cohort"],["ALB","LAC","Lithium peers"],
 
   /* ═══════════════ CRYPTO EDGES ═══════════════ */
   // Hardware/power → Miners

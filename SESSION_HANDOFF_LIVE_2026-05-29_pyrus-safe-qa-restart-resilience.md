@@ -20,15 +20,15 @@ Implement the plan derived from the 5 Whys/root-cause analysis for the Replit co
 - Platform work scheduling treats safe QA mode as not work-visible, disabling startup invalidation bursts, background warmup, broad runtime work, and stock aggregate streaming.
 - Market, Account, and Trade screens accept `safeQaMode` and suppress chart-grid fanout, account live streams, broker freshness streams, trade quote/option/flow runtimes, and background readiness.
 - API route admission now has explicit `allow`, `cache-only`, and `shed` actions with classes for streams, decorative/logo work, live data, deferred analytics, and background maintenance.
-- Safe QA mode sheds streams/decorative/live/deferred/background work server-side; high/critical pressure now sheds lower-priority classes while preserving critical execution.
+- Safe QA mode sheds streams/decorative/live/deferred/background work server-side; high/ pressure now sheds lower-priority classes while preserving  execution.
 - Logo proxy now times out quickly and returns `204` on upstream miss/error instead of surfacing noisy image failures.
 - Flight recorder heartbeat request summary now includes status-family counts, top routes, and recent failures.
 - `AGENTS.md` now requires PYRUS browser QA to use `?pyrusQa=safe`, explicit readiness selectors, no `networkidle`, no raw `@e*` clicks, and explicit approval for live full-app browser navigation.
 
 ## Validation
 
-- `pnpm --filter @workspace/api-server exec node --import tsx src/services/route-admission.test.ts` passed: 5 tests.
-- `pnpm --filter @workspace/pyrus exec node --import tsx src/app/runtime-config.test.ts` passed: 5 tests.
+- `pnpm --filter @workspace/api-server exec node --import tsx src/services/route-admission.validation.ts` passed: 5 tests.
+- `pnpm --filter @workspace/pyrus exec node --import tsx src/app/runtime-config.validation.ts` passed: 5 tests.
 - `pnpm --filter @workspace/api-server run typecheck` passed.
 - `pnpm --filter @workspace/pyrus run typecheck` passed.
 - Re-ran the Pyrus runtime-config QA-mode test and API/Pyrus typechecks after storage/abort hardening; they still passed.

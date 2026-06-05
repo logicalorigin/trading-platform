@@ -14,13 +14,11 @@ import { FailurePointTooltip } from "../../components/platform/FailurePointToolt
 import { buildFailurePointFromAlgoAttentionItem } from "../../features/platform/failurePointModel.js";
 
 const SEVERITY_GLYPH = {
-  critical: "⚠",
   warning: "⚠",
   info: "•",
 };
 
 const severityColor = (severity) => {
-  if (severity === "critical") return CSS_COLOR.red;
   if (severity === "warning") return CSS_COLOR.amber;
   return CSS_COLOR.cyan;
 };

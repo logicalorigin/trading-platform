@@ -261,7 +261,7 @@ const MarketScreenInner = ({
   }, [isVisible]);
   useEffect(() => {
     onReadinessChange?.({
-      criticalReady: Boolean(isVisible),
+      primaryReady: Boolean(isVisible),
       derivedReady: Boolean(isVisible && (safeQaMode || chartGridReady)),
       backgroundAllowed: Boolean(isVisible && !safeQaMode && chartGridReady),
     });
@@ -1371,7 +1371,7 @@ export const MarketScreen = (props) => {
   useEffect(() => {
     if (!isVisible) {
       onReadinessChange?.({
-        criticalReady: false,
+        primaryReady: false,
         derivedReady: false,
         backgroundAllowed: false,
       });

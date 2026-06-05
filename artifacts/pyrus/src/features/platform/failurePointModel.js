@@ -5,21 +5,19 @@ const SEVERITY_RANK = {
   warning: 1,
   attention: 1,
   degraded: 1,
-  critical: 2,
   down: 2,
 };
 
 const STATUS_TO_SEVERITY = {
-  down: "critical",
-  critical: "critical",
+  down: "warning",
   degraded: "warning",
   warning: "warning",
   high: "warning",
   watch: "warning",
   stale: "warning",
-  blocked: "critical",
-  error: "critical",
-  fail: "critical",
+  blocked: "warning",
+  error: "warning",
+  fail: "warning",
   ok: "info",
   healthy: "info",
   normal: "info",
@@ -138,7 +136,6 @@ const defaultNextAction = (source, severity) => {
   if (source === "ibkr") return "Check bridge readiness, stream freshness, and lane pressure before changing trading state.";
   if (source === "resource-pressure") return "Inspect dominant pressure drivers and pause background hydration if latency stays elevated.";
   if (source === "automation") return "Inspect the Signal Options worker phase, latest scan duration, and stale dashboard cache.";
-  if (severity === "critical") return "Open Diagnostics for the subsystem and inspect the latest event detail.";
   if (severity === "warning") return "Review the related diagnostics panel before taking action.";
   return "No action required unless the state changes.";
 };
@@ -319,7 +316,7 @@ export const buildAlgoStatusFailurePoint = ({
   const severity = normalizeSeverity(status);
   const gatewayBlocks = finiteNumber(asRecord(cockpitTradePath).gatewayBlocks) ?? 0;
   const rankedAttention = (Array.isArray(attentionItems) ? attentionItems : [])
-    .filter((item) => ["critical", "warning"].includes(normalizeSeverity(asRecord(item).severity)))
+    .filter((item) => normalizeSeverity(asRecord(item).severity) === "warning")
     .slice(0, 4);
   const causes = compact([
     deploymentEnabled === false ? "Deployment is paused." : null,
@@ -333,7 +330,7 @@ export const buildAlgoStatusFailurePoint = ({
     gatewayReady === false
       ? "Start or repair the broker bridge, then re-check Algo readiness."
       : rankedAttention.length
-        ? "Open the Algo attention/audit detail for the top critical item."
+        ? "Open the Algo attention/audit detail for the top warning item."
         : deploymentEnabled === false
           ? "Resume the deployment only after confirming the intended mode and account."
           : "Run a fresh scan or inspect the Diagnostics tab for stale pipeline state.";

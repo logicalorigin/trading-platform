@@ -19,7 +19,7 @@ import { buildAlgoStatusFailurePoint } from "../../features/platform/failurePoin
 const STATUS_TONE = {
   healthy: CSS_COLOR.green,
   attention: CSS_COLOR.amber,
-  critical: CSS_COLOR.red,
+  warning: CSS_COLOR.amber,
   paused: CSS_COLOR.textDim,
   scanning: CSS_COLOR.cyan,
 };
@@ -27,7 +27,7 @@ const STATUS_TONE = {
 const STATUS_LABEL = {
   healthy: "Healthy",
   attention: "Attention",
-  critical: "Critical",
+  warning: "Warning",
   paused: "Paused",
   scanning: "Scanning",
 };
@@ -39,9 +39,8 @@ export const resolveOperationsStatus = ({
   attentionSeverity,
 }) => {
   if (deploymentEnabled === false) return "paused";
-  if (attentionSeverity === "critical") return "critical";
-  if (!gatewayReady) return "critical";
-  if (attentionSeverity === "warning") return "attention";
+  if (attentionSeverity === "warning") return "warning";
+  if (!gatewayReady) return "warning";
   if (scanOn) return "healthy";
   return "attention";
 };
@@ -73,7 +72,6 @@ export const OperationsStatusOrb = ({
 }) => {
   const attentionSeverity = useMemo(() => {
     if (!attentionItems?.length) return null;
-    if (attentionItems.some((item) => item?.severity === "critical")) return "critical";
     if (attentionItems.some((item) => item?.severity === "warning")) return "warning";
     return "info";
   }, [attentionItems]);
@@ -175,20 +173,16 @@ export const OperationsStatusOrb = ({
           <StatusRow
             label="Attention"
             value={
-              attentionSeverity === "critical"
-                ? `${attentionItems.length} critical`
-                : attentionSeverity === "warning"
-                  ? `${attentionItems.length} review`
-                  : attentionSeverity
+              attentionSeverity === "warning"
+                ? `${attentionItems.length} warning`
+                : attentionSeverity
                     ? `${attentionItems.length} info`
                     : "all clear"
             }
             tone={
-              attentionSeverity === "critical"
-                ? CSS_COLOR.red
-                : attentionSeverity === "warning"
-                  ? CSS_COLOR.amber
-              : CSS_COLOR.green
+              attentionSeverity === "warning"
+                ? CSS_COLOR.amber
+                : CSS_COLOR.green
             }
           />
           {failurePoint?.severity !== "info" ? (

@@ -32,7 +32,7 @@ Ship with confidence. The goal is not just to deploy — it's to deploy safely, 
 ### Security
 
 - [ ] No secrets in code or version control
-- [ ] `npm audit` shows no critical or high vulnerabilities
+- [ ] `npm audit` shows no reachable vulnerabilities requiring immediate action
 - [ ] Input validation on all user-facing endpoints
 - [ ] Authentication and authorization checks in place
 - [ ] Security headers configured (CSP, HSTS, etc.)
@@ -42,7 +42,7 @@ Ship with confidence. The goal is not just to deploy — it's to deploy safely, 
 ### Performance
 
 - [ ] Core Web Vitals within "Good" thresholds
-- [ ] No N+1 queries in critical paths
+- [ ] No N+1 queries in core paths
 - [ ] Images optimized (compression, responsive sizes, lazy loading)
 - [ ] Bundle size within budget
 - [ ] Database queries have appropriate indexes
@@ -114,7 +114,7 @@ return null;
 ```
 1. DEPLOY to staging
    └── Full test suite in staging environment
-   └── Manual smoke test of critical flows
+   └── Manual smoke test of core flows
 
 2. DEPLOY to production (feature flag OFF)
    └── Verify deployment succeeded (health check)
@@ -230,7 +230,7 @@ In the first hour after launch:
 1. Check health endpoint returns 200
 2. Check error monitoring dashboard (no new error types)
 3. Check latency dashboard (no regression)
-4. Test the critical user flow manually
+4. Test the core user flow manually
 5. Verify logs are flowing and readable
 6. Confirm rollback mechanism works (dry run if possible)
 ```
@@ -304,6 +304,6 @@ After deploying:
 - [ ] Health check returns 200
 - [ ] Error rate is normal
 - [ ] Latency is normal
-- [ ] Critical user flow works
+- [ ] Core user flow works
 - [ ] Logs are flowing
 - [ ] Rollback tested or verified ready
