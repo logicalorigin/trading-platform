@@ -634,6 +634,13 @@ function shouldAwaitSignalMonitorMatrixExactCellRefresh(input: {
   if (input.pressure === "normal") {
     return true;
   }
+  if (
+    input.pressure === "watch" &&
+    input.clientRole === "leader" &&
+    (input.requestOrigin === "startup" || input.requestOrigin === "poll")
+  ) {
+    return true;
+  }
   return (
     (input.pressure === "watch" || input.pressure === "high") &&
     isStaVisiblePageSignalMonitorMatrixRequest(input)
@@ -1589,17 +1596,29 @@ function shouldServeSignalMonitorMatrixFromCacheOnly(input: {
   cells?: SignalMonitorMatrixCellRequest[];
 }) {
   const pressureLevel = getApiResourcePressureSnapshot().level;
-  const pressured =
-    pressureLevel === "watch" ||
-    pressureLevel === "high" ||
-    pressureLevel === "critical";
-  return (
-    (input.clientRole === "follower" &&
-      (input.requestOrigin === "startup" || input.requestOrigin === "poll")) ||
-    (input.clientRole === "leader" &&
-      (input.requestOrigin === "startup" || input.requestOrigin === "poll") &&
-      pressured)
-  );
+  const startupOrPoll =
+    input.requestOrigin === "startup" || input.requestOrigin === "poll";
+  const pressured = pressureLevel === "watch" || pressureLevel === "high";
+  const hardPressured = pressureLevel === "critical";
+  if (input.clientRole === "follower" && startupOrPoll) {
+    return true;
+  }
+  if (
+    input.clientRole === "leader" &&
+    startupOrPoll
+  ) {
+    if (hardPressured) {
+      return true;
+    }
+    if (
+      pressured &&
+      isForegroundExactCellLeaderSignalMonitorMatrixRequest(input)
+    ) {
+      return pressureLevel !== "watch";
+    }
+    return pressured;
+  }
+  return false;
 }
 
 function shouldServeSignalMonitorMatrixFromStoredStateFast(input: {

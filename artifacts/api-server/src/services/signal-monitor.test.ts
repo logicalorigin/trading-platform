@@ -964,6 +964,17 @@ test("signal monitor matrix exact cells bound automatic foreground coverage unde
     __signalMonitorInternalsForTests.shouldAwaitSignalMonitorMatrixExactCellRefresh(
       {
         exactCells: true,
+        pressure: "watch",
+        clientRole: "leader",
+        requestOrigin: "poll",
+      },
+    ),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.shouldAwaitSignalMonitorMatrixExactCellRefresh(
+      {
+        exactCells: true,
         pressure: "high",
         clientRole: "leader",
         requestOrigin: "poll",
@@ -1799,7 +1810,7 @@ test("automatic signal matrix reads shed pressured leaders and non-exact bootstr
   assert.notEqual(matrixEnd, -1);
   assert.match(cacheOnlyBody, /input\.clientRole === "follower"/);
   assert.match(cacheOnlyBody, /input\.clientRole === "leader"/);
-  assert.doesNotMatch(
+  assert.match(
     cacheOnlyBody,
     /isForegroundExactCellLeaderSignalMonitorMatrixRequest/,
   );
@@ -3702,7 +3713,7 @@ test("signal matrix cache keeps settled unavailable states without pinning error
   );
 });
 
-test("signal matrix automatic cache-only mode includes foreground leaders at watch pressure", () => {
+test("signal matrix automatic cache-only mode lets foreground exact leaders hydrate at watch pressure", () => {
   __resetApiResourcePressureForTests();
   updateApiResourcePressure({ apiHeapUsedPercent: 72 });
   try {
@@ -3732,7 +3743,7 @@ test("signal matrix automatic cache-only mode includes foreground leaders at wat
           cells: [{ symbol: "SPY", timeframe: "1m" }],
         },
       ),
-      true,
+      false,
     );
     assert.equal(
       __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly(
@@ -3742,7 +3753,7 @@ test("signal matrix automatic cache-only mode includes foreground leaders at wat
           cells: [{ symbol: "SPY", timeframe: "1m" }],
         },
       ),
-      true,
+      false,
     );
     assert.equal(
       __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly(
