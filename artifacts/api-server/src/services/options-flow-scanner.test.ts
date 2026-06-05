@@ -2490,6 +2490,67 @@ test("background listFlowEvents timestamps selected live scanner quotes from his
   );
 });
 
+test("background flow scanner skips optional historical bars under cache pressure", async () => {
+  updateApiResourcePressure({ cacheLevel: "watch" });
+
+  const contract = optionContract("SPY");
+  const providerContractId = contract.contract.providerContractId ?? "";
+  const liveProviderContractIds: string[] = [];
+  let historicalCalls = 0;
+
+  __setBridgeOptionQuoteClientForTests({
+    async getHealth() {
+      return {
+        transport: "tws",
+        marketDataMode: "live",
+        liveMarketDataAvailable: true,
+      };
+    },
+    async getOptionQuoteSnapshots(input: { providerContractIds?: string[] }) {
+      const providerContractIds = input.providerContractIds ?? [];
+      liveProviderContractIds.push(...providerContractIds);
+      return providerContractIds.map((quoteProviderContractId) =>
+        optionQuote(quoteProviderContractId, { volume: 250 }),
+      );
+    },
+    streamOptionQuoteSnapshots() {
+      return () => {};
+    },
+  });
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          transport: "tws",
+          configured: true,
+          connected: true,
+          authenticated: true,
+          liveMarketDataAvailable: true,
+        }),
+        getOptionExpirations: async () => [
+          new Date("2026-05-15T00:00:00.000Z"),
+        ],
+        getOptionChain: async () => [contract],
+        getHistoricalBars: async () => {
+          historicalCalls += 1;
+          return [historicalOptionBar(providerContractId)];
+        },
+      }) as unknown as IbkrBridgeClient,
+  );
+
+  const result = await __runOptionsFlowScannerOnceForTests(["spy"], {
+    limit: 1,
+    lineBudget: 1,
+    phase: "seed",
+    expirationScanCount: 1,
+  });
+
+  assert.deepEqual(result.scannedSymbols, ["SPY"]);
+  assert.deepEqual(result.failedSymbols, []);
+  assert.equal(historicalCalls, 0);
+  assert.deepEqual(liveProviderContractIds, [providerContractId]);
+});
+
 test("listFlowEvents reports scanner live quote market close as quiet", async () => {
   __setBridgeOptionQuoteStreamNowForTests(
     new Date("2026-06-02T20:30:00.000Z"),

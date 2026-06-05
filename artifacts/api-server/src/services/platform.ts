@@ -16612,6 +16612,20 @@ function emptyFlowScannerHistoricalHydration(): FlowScannerHistoricalHydration {
   };
 }
 
+function shouldHydrateFlowScannerHistoricalBars(input: {
+  scanPhase: OptionsFlowScannerScanPhase;
+  pressureSnapshot?: ApiResourcePressureSnapshot;
+}): boolean {
+  if (input.scanPhase === "manual") {
+    return true;
+  }
+  const pressureSnapshot =
+    input.pressureSnapshot ?? getApiResourcePressureSnapshot();
+  return (
+    PRESSURE_LEVEL_RANK[pressureSnapshot.level] < PRESSURE_LEVEL_RANK.watch
+  );
+}
+
 async function hydrateFlowScannerContractsFromHistoricalBars(input: {
   underlying: string;
   candidates: IbkrOptionChainContracts;
@@ -17658,7 +17672,10 @@ async function listFlowEventsUncached(input: {
           liveCandidateContracts,
           lineBudget,
         );
-      const shouldHydrateHistoricalBars = true;
+      const shouldHydrateHistoricalBars =
+        shouldHydrateFlowScannerHistoricalBars({
+          scanPhase,
+        });
       const shouldReportHistoricalHydration =
         shouldHydrateHistoricalBars && scanPhase === "manual";
       const historicalHydration = shouldHydrateHistoricalBars
