@@ -19,9 +19,9 @@ const SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
   high: null,
 });
 const STA_VISIBLE_PAGE_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: null,
-  watch: null,
-  high: null,
+  normal: 6,
+  watch: 6,
+  high: 3,
 });
 const REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
   normal: null,
@@ -34,9 +34,9 @@ const ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
   high: null,
 });
 const STA_VISIBLE_PAGE_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: null,
-  watch: null,
-  high: null,
+  normal: 6,
+  watch: 6,
+  high: 3,
 });
 const ACTIVE_SCREEN_REQUEST_SYMBOL_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 500,
@@ -259,7 +259,7 @@ export function buildSignalMatrixStoredStateBootstrapRequest({
     return null;
   }
 
-  const key = `${universe.join(",")}|${matrixTimeframes.join(",")}`;
+  const key = `${[...universe].sort().join(",")}|${matrixTimeframes.join(",")}`;
   if (key === lastBootstrapKey) {
     return null;
   }

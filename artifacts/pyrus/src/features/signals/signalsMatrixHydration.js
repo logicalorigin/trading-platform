@@ -39,6 +39,22 @@ const uniqueSymbols = (symbols = []) => {
   return result;
 };
 
+export function buildSignalsHydrationManifest({
+  currentSymbols = [],
+  nextSymbols = [],
+  reset = false,
+} = {}) {
+  const baseSymbols = reset ? [] : uniqueSymbols(currentSymbols);
+  const seen = new Set(baseSymbols);
+  const result = [...baseSymbols];
+  uniqueSymbols(nextSymbols).forEach((symbol) => {
+    if (seen.has(symbol)) return;
+    seen.add(symbol);
+    result.push(symbol);
+  });
+  return result;
+}
+
 const buildComputedTimeframesBySymbol = (states = []) => {
   const bySymbol = new Map();
   (Array.isArray(states) ? states : []).forEach((state) => {
@@ -109,11 +125,14 @@ export function buildSignalsMatrixHydrationPlan({
   const matrixTimeframes = requestedTimeframes.length
     ? requestedTimeframes
     : [...SIGNALS_TABLE_TIMEFRAMES];
-  const normalizedPrioritySymbols = uniqueSymbols(prioritySymbols);
-  const normalizedSymbols = uniqueSymbols([
-    ...normalizedPrioritySymbols,
-    ...symbols,
-  ]);
+  const normalizedScopeSymbols = uniqueSymbols(symbols);
+  const normalizedSymbols = normalizedScopeSymbols.length
+    ? normalizedScopeSymbols
+    : uniqueSymbols(prioritySymbols);
+  const scopeSymbolSet = new Set(normalizedSymbols);
+  const normalizedPrioritySymbols = uniqueSymbols(prioritySymbols).filter(
+    (symbol) => scopeSymbolSet.has(symbol),
+  );
   const computedBySymbol = buildComputedTimeframesBySymbol(currentStates);
   const hydratedSymbols = [];
   const missingSymbols = [];
@@ -157,8 +176,8 @@ export function buildSignalsMatrixHydrationPlan({
       ? null
       : Math.max(normalizedChunkSize ?? 1, explicitPriorityChunkSize);
   const prioritySymbolSet = new Set(normalizedPrioritySymbols);
-  const priorityMissingSymbols = missingSymbols.filter((symbol) =>
-    prioritySymbolSet.has(symbol),
+  const priorityMissingSymbols = normalizedPrioritySymbols.filter((symbol) =>
+    missingCellsBySymbol.has(symbol),
   );
   const backgroundMissingSymbols = missingSymbols.filter((symbol) =>
     !prioritySymbolSet.has(symbol),

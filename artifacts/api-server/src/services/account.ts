@@ -1863,17 +1863,13 @@ function primaryOptionProviderContractIdForRow(
 function optionQuoteProviderContractIdsForPosition(
   row: AccountPositionOptionQuoteDemandRow,
 ): string[] {
+  const primaryProviderContractId = primaryOptionProviderContractIdForRow(row);
+  if (primaryProviderContractId && !/^O:/i.test(primaryProviderContractId)) {
+    return [primaryProviderContractId];
+  }
   const structuredProviderContractId =
     structuredOptionProviderContractIdForRow(row);
-  const primaryProviderContractId = primaryOptionProviderContractIdForRow(row);
-  return Array.from(
-    new Set(
-      [structuredProviderContractId, primaryProviderContractId].filter(
-        (providerContractId): providerContractId is string =>
-          Boolean(providerContractId),
-      ),
-    ),
-  );
+  return structuredProviderContractId ? [structuredProviderContractId] : [];
 }
 
 const accountPositionOptionDemandOwnersByAccountKey = new Map<string, Set<string>>();

@@ -346,7 +346,7 @@ const SIGNAL_MATRIX_BACKGROUND_RESUME_DELAY_MS = 6_000;
 const SIGNAL_MATRIX_CATCHUP_COOLDOWN_MS = 30_000;
 const SIGNAL_MATRIX_PARTIAL_CACHE_CATCHUP_DELAY_MS = 10_000;
 const SIGNAL_MATRIX_TRUNCATED_CATCHUP_DELAY_MS = 5_000;
-const SIGNAL_MATRIX_STA_VISIBLE_CATCHUP_DELAY_MS = 2_500;
+const SIGNAL_MATRIX_STA_VISIBLE_CATCHUP_DELAY_MS = 250;
 const SIGNAL_MATRIX_REQUEST_TIMEOUT_MS = 45_000;
 const SIGNAL_MATRIX_REQUEST_WATCHDOG_GRACE_MS = 3_000;
 const SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS = 1_000;
@@ -4158,8 +4158,12 @@ export default function PlatformApp() {
             ? responseTaskCount
             : expectedStateCount;
         const responseRequestedSymbols = Number(data?.coverage?.requestedSymbols);
+        const storedStateBootstrapResponse = Boolean(
+          lastPlan?.coverage?.storedStateBootstrap,
+        );
         const partialStatePayload =
           !profileDisabled &&
+          !storedStateBootstrapResponse &&
           expectedResponseStateCount > 0 &&
           (!Number.isFinite(responseRequestedSymbols) ||
             responseRequestedSymbols > 0) &&
@@ -4183,6 +4187,14 @@ export default function PlatformApp() {
               lastPlan?.coverage?.pendingSymbols ??
               0) > 0 &&
             (lastPlan?.requestSymbols?.length || 0) > 0,
+        );
+        const storedStateBootstrapCatchupPending = Boolean(
+          !profileDisabled &&
+            signalMatrixEffectiveCatchupDelayMs != null &&
+            lastPlan?.coverage?.storedStateBootstrap &&
+            (lastPlan?.coverage?.missingTaskCount ??
+              lastPlan?.coverage?.missingSymbols ??
+              0) > 0,
         );
         const responseStateCount = Array.isArray(data?.states)
           ? data.states.length
@@ -4220,6 +4232,10 @@ export default function PlatformApp() {
                   );
           }
         } else if (activeSignalsCatchupPending) {
+          signalMatrixQueuedEvaluationRef.current = true;
+          signalMatrixQueuedEvaluationDelayMsRef.current =
+            signalMatrixEffectiveCatchupDelayMs;
+        } else if (storedStateBootstrapCatchupPending) {
           signalMatrixQueuedEvaluationRef.current = true;
           signalMatrixQueuedEvaluationDelayMsRef.current =
             signalMatrixEffectiveCatchupDelayMs;
@@ -4397,9 +4413,8 @@ export default function PlatformApp() {
       );
       return;
     }
-    const storedStateBootstrapRequest = signalMatrixRequestActive
-      ? null
-      : buildSignalMatrixStoredStateBootstrapRequest({
+    const storedStateBootstrapRequest =
+      buildSignalMatrixStoredStateBootstrapRequest({
           symbols: signalMatrixUniverseSymbols,
           currentStates: signalMatrixStatesRef.current,
           timeframes: signalMatrixRequestTimeframes,

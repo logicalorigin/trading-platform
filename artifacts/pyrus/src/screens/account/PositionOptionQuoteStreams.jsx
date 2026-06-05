@@ -48,28 +48,22 @@ export const structuredOptionProviderContractId = (contract) => {
     .replace(/=+$/, "")}`;
 };
 
+const primaryOptionProviderContractId = (contract) =>
+  normalizedProviderContractId(contract?.providerContractId) ||
+  normalizedProviderContractId(contract?.conid);
+
 export const optionProviderContractIds = (contract) =>
-  Array.from(
-    new Set(
-      [
-        structuredOptionProviderContractId(contract),
-        normalizedProviderContractId(contract?.providerContractId),
-        normalizedProviderContractId(contract?.conid),
-      ].filter(Boolean),
-    ),
-  );
+  [
+    primaryOptionProviderContractId(contract) ||
+      structuredOptionProviderContractId(contract),
+  ].filter(Boolean);
 
 export const rowOptionProviderContractIds = (row) => {
   const contractProviderContractIds = optionProviderContractIds(row?.optionContract);
-  return Array.from(
-    new Set(
-      [
-        contractProviderContractIds[0],
-        normalizedProviderContractId(row?.optionQuote?.providerContractId),
-        ...contractProviderContractIds.slice(1),
-      ].filter(Boolean),
-    ),
-  );
+  return [
+    contractProviderContractIds[0] ||
+      normalizedProviderContractId(row?.optionQuote?.providerContractId),
+  ].filter(Boolean);
 };
 
 const rowOptionUnderlying = (row) => {

@@ -89,6 +89,7 @@ import {
   SIGNALS_TABLE_TIMEFRAMES,
   buildSignalsRows,
   filterSignalsRows,
+  normalizeSignalsTicker,
   normalizeSignalsBreadthHistory,
   resolveSignalDirectionFlipStates,
   sortSignalsRows,
@@ -97,6 +98,7 @@ import {
   summarizeSignalsTimeframeDirections,
 } from "../features/signals/signalsRowModel.js";
 import {
+  buildSignalsHydrationManifest,
   buildSignalsMatrixHydrationPlan,
 } from "../features/signals/signalsMatrixHydration.js";
 import {
@@ -2600,8 +2602,8 @@ function SignalsHydrationStrip({
   hydrated,
   missing,
   phone,
+  priorityCount,
   total,
-  visibleCount,
 }) {
   const hasUniverse = total > 0;
   const ratio = hasUniverse ? hydrated / total : 0;
@@ -2647,7 +2649,7 @@ function SignalsHydrationStrip({
           }}
         >
           {hasUniverse
-            ? `${hydrated}/${total} cells · ${visibleCount} visible prioritized`
+            ? `${hydrated}/${total} cells · ${priorityCount} manifest prioritized`
             : "Waiting for monitor universe"}
         </span>
       </div>
@@ -2909,6 +2911,9 @@ export default function SignalsScreen({
   const active = isVisible !== false;
   const signalsTimingStagesRef = useRef(new Set());
   const signalsRouteDataStageDetailsRef = useRef(new Map());
+  const signalsHydrationManifestScopeRef = useRef(environment);
+  const [signalsHydrationManifestSymbols, setSignalsHydrationManifestSymbols] =
+    useState([]);
   const markSignalsRouteDataTiming = useCallback((stage, detail = {}) => {
     if (signalsTimingStagesRef.current.has(stage)) {
       return;
@@ -3065,13 +3070,42 @@ export default function SignalsScreen({
     stateResponse.universeSymbols,
     stateResponseReady,
   ]);
-  const signalsHydrationUniverseSymbols = useMemo(
+  const signalsHydrationSourceUniverseSymbols = useMemo(
     () =>
       stateResponse.universeSymbols?.length
         ? stateResponse.universeSymbols
         : signalMonitorSymbols,
     [signalMonitorSymbols, stateResponse.universeSymbols],
   );
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    setSignalsHydrationManifestSymbols((currentSymbols) => {
+      const reset =
+        signalsHydrationManifestScopeRef.current !== environment;
+      signalsHydrationManifestScopeRef.current = environment;
+      const nextSymbols = buildSignalsHydrationManifest({
+        currentSymbols,
+        nextSymbols: signalsHydrationSourceUniverseSymbols,
+        reset,
+      });
+      if (
+        nextSymbols.length === currentSymbols.length &&
+        nextSymbols.every((symbol, index) => symbol === currentSymbols[index])
+      ) {
+        return currentSymbols;
+      }
+      return nextSymbols;
+    });
+  }, [
+    active,
+    environment,
+    signalsHydrationSourceUniverseSymbols,
+  ]);
+  const signalsHydrationUniverseSymbols = signalsHydrationManifestSymbols.length
+    ? signalsHydrationManifestSymbols
+    : signalsHydrationSourceUniverseSymbols;
   const signalEventsForRows = useMemo(
     () =>
       hasProvidedSignalMonitorEvents
@@ -3449,32 +3483,42 @@ export default function SignalsScreen({
   );
   const priorityHydrationSymbols = useMemo(
     () => {
+      const manifestSymbols = new Set(
+        signalsHydrationUniverseSymbols
+          .map((symbol) => normalizeSignalsTicker(symbol))
+          .filter(Boolean),
+      );
       const seen = new Set();
       const symbols = [];
-      const fallbackRows = matrixHydrationFullRequestReady
-        ? filteredRows
-        : filteredRows.slice(0, SIGNALS_MATRIX_INITIAL_HYDRATION_SYMBOL_LIMIT);
       [
         selectedSymbol,
-        ...visibleHydrationSymbols,
-        ...fallbackRows.map((row) => row?.symbol),
+        expandedSymbol,
+        ...signalsHydrationUniverseSymbols.slice(
+          0,
+          SIGNALS_MATRIX_INITIAL_HYDRATION_SYMBOL_LIMIT,
+        ),
       ].filter(Boolean).forEach((symbol) => {
-        if (seen.has(symbol)) return;
-        seen.add(symbol);
-        symbols.push(symbol);
+        const normalizedSymbol = normalizeSignalsTicker(symbol);
+        if (
+          !normalizedSymbol ||
+          (manifestSymbols.size && !manifestSymbols.has(normalizedSymbol)) ||
+          seen.has(normalizedSymbol)
+        ) {
+          return;
+        }
+        seen.add(normalizedSymbol);
+        symbols.push(normalizedSymbol);
       });
       return symbols;
     },
     [
-      filteredRows,
-      matrixHydrationFullRequestReady,
+      expandedSymbol,
       selectedSymbol,
-      visibleHydrationSymbols,
+      signalsHydrationUniverseSymbols,
     ],
   );
-  const matrixHydrationSymbolChunkLimit = matrixHydrationFullRequestReady
-    ? null
-    : SIGNALS_MATRIX_INITIAL_HYDRATION_SYMBOL_LIMIT;
+  const matrixHydrationSymbolChunkLimit =
+    SIGNALS_MATRIX_INITIAL_HYDRATION_SYMBOL_LIMIT;
   const matrixHydrationPlan = useMemo(
     () =>
       captureSignalsRouteDataStage(
@@ -4449,8 +4493,8 @@ export default function SignalsScreen({
             hydrated={matrixHydrationHydrated}
             missing={matrixHydrationMissing}
             phone={phone}
+            priorityCount={priorityHydrationSymbols.length}
             total={matrixHydrationTotal}
-            visibleCount={visibleHydrationSymbols.length}
           />
           {errored ? (
             <DataUnavailableState

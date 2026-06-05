@@ -84,6 +84,7 @@ import {
   type AccountRange,
 } from "./account-ranges";
 import { buildPositionQuoteFromSnapshot } from "./account-position-model";
+import { fetchBridgeOptionQuoteSnapshots } from "./bridge-option-quote-stream";
 import {
   betaForSymbol,
   buildNotionalExposure,
@@ -163,6 +164,7 @@ const SHADOW_DAY_CHANGE_QUOTE_TASK_MAX_WAIT_MS = Math.max(
   250,
   SHADOW_DAY_CHANGE_QUOTE_MAX_WAIT_MS - 100,
 );
+const SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS = 3_000;
 const SHADOW_GREEK_QUOTE_MAX_WAIT_MS = 3_500;
 const SHADOW_GREEK_QUOTE_TASK_MAX_WAIT_MS = Math.max(
   500,
@@ -2438,6 +2440,168 @@ function declareShadowPositionOptionQuoteDemands(
   });
 }
 
+async function fetchVisibleShadowOptionQuotes(
+  positions: Array<{
+    symbol: string;
+    optionContract?: unknown;
+  }>,
+  options: {
+    intent?: MarketDataIntent;
+    ownerPrefix?: string;
+    taskMaxWaitMs?: number;
+    requiresGreeks?: boolean;
+  } = {},
+): Promise<Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>> {
+  const idsByUnderlying = new Map<string, Set<string>>();
+  const aliasesByProviderContractId = new Map<string, Set<string>>();
+  const resolutionGroupsByKey = new Map<string, ShadowOptionProviderResolutionGroup>();
+  const addProviderContractId = (
+    underlying: string,
+    providerContractId: string | null | undefined,
+    alias?: string | null,
+  ) => {
+    const normalizedUnderlying = normalizeSymbol(underlying).toUpperCase();
+    const normalizedProviderContractId = String(providerContractId ?? "").trim();
+    if (!normalizedUnderlying || !normalizedProviderContractId) {
+      return;
+    }
+    const ids = idsByUnderlying.get(normalizedUnderlying) ?? new Set<string>();
+    ids.add(normalizedProviderContractId);
+    idsByUnderlying.set(normalizedUnderlying, ids);
+    if (alias && alias !== normalizedProviderContractId) {
+      const aliases =
+        aliasesByProviderContractId.get(normalizedProviderContractId) ??
+        new Set<string>();
+      aliases.add(alias);
+      aliasesByProviderContractId.set(normalizedProviderContractId, aliases);
+    }
+  };
+
+  positions.forEach((position) => {
+    const contract = asOptionContract(position.optionContract);
+    const quoteIdentifier = shadowOptionQuoteIdentifier(contract);
+    const underlying = normalizeSymbol(contract?.underlying || position.symbol).toUpperCase();
+    if (
+      !contract ||
+      !quoteIdentifier ||
+      !underlying ||
+      isPriorOptionExpiration(contract)
+    ) {
+      return;
+    }
+    const providerContractId = shadowOptionProviderContractIdForContract(contract);
+    if (providerContractId) {
+      addProviderContractId(underlying, providerContractId, quoteIdentifier);
+      return;
+    }
+    if (!isOpraOptionTicker(quoteIdentifier)) {
+      return;
+    }
+    const groupKey = [
+      underlying,
+      optionDateKey(contract.expirationDate),
+      contract.right,
+    ].join("|");
+    const group =
+      resolutionGroupsByKey.get(groupKey) ??
+      {
+        underlying,
+        expirationDate: contract.expirationDate,
+        right: contract.right,
+        contracts: [],
+      };
+    group.contracts.push(contract);
+    resolutionGroupsByKey.set(groupKey, group);
+  });
+
+  const resolvedProviderIds = await resolveShadowIbkrOptionProviderIds(
+    Array.from(resolutionGroupsByKey.values()),
+  );
+  positions.forEach((position) => {
+    const contract = asOptionContract(position.optionContract);
+    const quoteIdentifier = shadowOptionQuoteIdentifier(contract);
+    if (!contract || !quoteIdentifier || !isOpraOptionTicker(quoteIdentifier)) {
+      return;
+    }
+    const providerContractId = resolvedProviderIds.get(quoteIdentifier);
+    if (!providerContractId) {
+      return;
+    }
+    const underlying = normalizeSymbol(contract.underlying || position.symbol).toUpperCase();
+    addProviderContractId(underlying, providerContractId, quoteIdentifier);
+  });
+
+  const quotesByProviderContractId = new Map<
+    string,
+    Partial<QuoteSnapshot> | Record<string, unknown>
+  >();
+  const rememberQuote = (quote: Partial<QuoteSnapshot> | Record<string, unknown>) => {
+    const providerContractId = String(
+      (quote as Record<string, unknown>).providerContractId ?? "",
+    ).trim();
+    if (!providerContractId) {
+      return;
+    }
+    quotesByProviderContractId.set(providerContractId, quote);
+    rememberShadowOptionQuote(providerContractId, quote);
+    if (options.requiresGreeks ?? true) {
+      rememberShadowOptionGreekQuote(providerContractId, quote);
+    }
+    (aliasesByProviderContractId.get(providerContractId) ?? new Set()).forEach(
+      (alias) => {
+        quotesByProviderContractId.set(alias, quote);
+        rememberShadowOptionQuote(alias, quote);
+        if (options.requiresGreeks ?? true) {
+          rememberShadowOptionGreekQuote(alias, quote);
+        }
+      },
+    );
+  };
+
+  const taskMaxWaitMs =
+    options.taskMaxWaitMs ?? SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS;
+  await Promise.allSettled(
+    Array.from(idsByUnderlying.entries()).map(([underlying, providerContractIdsForUnderlying]) => {
+      const providerContractIds = Array.from(providerContractIdsForUnderlying);
+      const demandOwner = options.ownerPrefix ?? "shadow-position:visible-option";
+      const snapshotOwner = `${demandOwner}:snapshot`;
+      const request = fetchBridgeOptionQuoteSnapshots({
+        underlying,
+        providerContractIds,
+        owner: snapshotOwner,
+        intent: options.intent ?? "visible-live",
+        fallbackProvider: "cache",
+        requiresGreeks: options.requiresGreeks ?? true,
+        ttlMs: SHADOW_OPTION_QUOTE_CACHE_TTL_MS,
+      })
+        .then((payload) => {
+          payload.quotes.forEach(rememberQuote);
+          if (payload.quotes.length > 0) {
+            return;
+          }
+          readIbkrLiveDemandState({
+            underlying,
+            providerContractIds,
+            owner: demandOwner,
+            requiresGreeks: options.requiresGreeks ?? true,
+          }).states.flatMap((state) => (state.quote ? [state.quote] : [])).forEach(rememberQuote);
+        })
+        .catch((error) => {
+          logger.debug?.(
+            { err: error },
+            "Shadow visible option quote snapshot failed",
+          );
+        });
+      return Promise.race([
+        request,
+        sleep(taskMaxWaitMs).then(() => undefined),
+      ]);
+    }),
+  );
+
+  return quotesByProviderContractId;
+}
+
 function mergeShadowGreekQuoteMaps(
   cachedQuotes: Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>,
   liveQuotes: Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>,
@@ -3455,6 +3619,21 @@ function shadowOptionQuoteProviderContractId(
   return (
     nonOpraProviderContractId(quoteRecord?.providerContractId) ??
     nonOpraProviderContractId(fallback)
+  );
+}
+
+function shadowOptionQuoteHasDisplayMarketData(
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined,
+) {
+  const quoteRecord = quote as Record<string, unknown> | null | undefined;
+  return (
+    toNumber(quoteRecord?.bid) != null ||
+    toNumber(quoteRecord?.ask) != null ||
+    toNumber(quoteRecord?.delta) != null ||
+    toNumber(quoteRecord?.gamma) != null ||
+    toNumber(quoteRecord?.theta) != null ||
+    toNumber(quoteRecord?.vega) != null ||
+    toNumber(quoteRecord?.impliedVolatility) != null
   );
 }
 
@@ -7682,6 +7861,7 @@ export async function getShadowAccountPositions(input: {
           declareShadowPositionOptionQuoteDemands(filtered, {
             intent: "visible-live",
             ownerPrefix: `${positionQuoteOwnerPrefix}:option-visible`,
+            requiresGreeks: true,
           });
         }
         const [equityQuoteBySymbol, underlyingMarkets] = includeLiveQuotes
@@ -7717,6 +7897,19 @@ export async function getShadowAccountPositions(input: {
               optionQuoteByProviderContractId.set(providerContractId, quote);
             },
           );
+          if (hasOptionPositions) {
+            const visibleOptionQuotes = await fetchVisibleShadowOptionQuotes(
+              filtered,
+              {
+                intent: "visible-live",
+                ownerPrefix: `${positionQuoteOwnerPrefix}:option-visible`,
+                requiresGreeks: true,
+              },
+            );
+            visibleOptionQuotes.forEach((quote, providerContractId) => {
+              optionQuoteByProviderContractId.set(providerContractId, quote);
+            });
+          }
         }
         const peakMarkByPositionId =
           await readShadowPositionPeakMarkPrices(filtered);
@@ -7750,14 +7943,16 @@ export async function getShadowAccountPositions(input: {
           const responseProviderContractId =
             shadowOptionQuoteProviderContractId(rawOptionQuote, quoteIdentifier) ??
             fallbackProviderContractId;
-          const liveOptionQuote =
+          const optionTradingSessionOpen =
+            !contract || isShadowOptionTradingSession(observedAt, contract);
+          const valuationOptionQuote =
             responseProviderContractId &&
             rawOptionQuote &&
-            (!contract || isShadowOptionTradingSession(observedAt, contract))
+            optionTradingSessionOpen
               ? rawOptionQuote
               : null;
           const pricing = buildShadowOptionPricingPolicy({
-            quote: contract ? liveOptionQuote : equityQuote,
+            quote: contract ? valuationOptionQuote : equityQuote,
             fallbackMark: toNumber(position.mark) ?? 0,
             fallbackSource: "shadow_ledger",
             quoteSource: contract ? "option_quote" : "massive",
@@ -7771,7 +7966,11 @@ export async function getShadowAccountPositions(input: {
             peakMarkPrice: peakMarkByPositionId.get(position.id) ?? null,
           });
           const displayOptionQuote =
-            responseProviderContractId ? liveOptionQuote : null;
+            responseProviderContractId &&
+            rawOptionQuote &&
+            shadowOptionQuoteHasDisplayMarketData(rawOptionQuote)
+              ? rawOptionQuote
+              : null;
           const displayOptionQuoteSource = displayOptionQuote
             ? "option_quote"
             : "shadow_ledger";
@@ -7788,7 +7987,9 @@ export async function getShadowAccountPositions(input: {
             Number.isFinite(multiplier)
               ? (mark - averageCost) * quantity * multiplier
               : toNumber(position.unrealizedPnl) ?? 0;
-          const displayDayChangeQuote = contract ? liveOptionQuote : equityQuote;
+          const displayDayChangeQuote = contract
+            ? valuationOptionQuote
+            : equityQuote;
           const quoteDayChange =
             displayDayChangeQuote && pricing.valuationEligible
               ? buildShadowPositionDayChangeFromQuote({

@@ -877,17 +877,19 @@ const optionPositionProviderContractIds = (
     | (NonNullable<AccountPositionRow["optionContract"]> & { conid?: unknown })
     | null
     | undefined;
-  return Array.from(new Set([
-    structuredOptionProviderContractId(row.optionContract) ||
-      "",
-    normalizeIbkrProviderContractId(rowWithOptionQuote.optionQuote?.providerContractId),
-    normalizeIbkrProviderContractId(row.optionContract?.providerContractId),
+  const primaryProviderContractId =
+    normalizeIbkrProviderContractId(row.optionContract?.providerContractId) ||
+    normalizeIbkrProviderContractId(rowWithOptionQuote.optionQuote?.providerContractId) ||
     normalizeIbkrProviderContractId(
       typeof contract?.conid === "string" || typeof contract?.conid === "number"
         ? contract.conid
         : null,
-    ),
-  ].filter(Boolean)));
+    );
+  return [
+    primaryProviderContractId ||
+      structuredOptionProviderContractId(row.optionContract) ||
+      "",
+  ].filter(Boolean);
 };
 
 const optionQuoteStatusRank = (status: unknown): number => {
