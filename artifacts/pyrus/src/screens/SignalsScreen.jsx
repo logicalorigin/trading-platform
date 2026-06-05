@@ -257,6 +257,8 @@ const SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT = 240;
 const SIGNALS_TABLE_SPARKLINE_BATCH_SIZE = 8;
 const SIGNALS_TABLE_SPARKLINE_BATCH_CONCURRENCY = 1;
 const SIGNALS_TABLE_SPARKLINE_VISIBLE_FALLBACK_LIMIT = 12;
+const SIGNALS_MATRIX_INITIAL_HYDRATION_SYMBOL_LIMIT = 32;
+const SIGNALS_MATRIX_FULL_HYDRATION_IDLE_TIMEOUT_MS = 1_500;
 const SIGNALS_TABLE_FALLBACK_SPARKLINE_POINTS = 18;
 const SIGNALS_TABLE_MIN_HEIGHT_DESKTOP = 560;
 const SIGNALS_TABLE_MIN_HEIGHT_PHONE = 520;
@@ -270,6 +272,21 @@ const readSignalsRouteDataTimingNow = () =>
   typeof performance.now === "function"
     ? performance.now()
     : Date.now();
+
+const scheduleSignalsIdleWork = (
+  callback,
+  timeout = SIGNALS_MATRIX_FULL_HYDRATION_IDLE_TIMEOUT_MS,
+) => {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+  if (typeof window.requestIdleCallback === "function") {
+    const idleId = window.requestIdleCallback(callback, { timeout });
+    return () => window.cancelIdleCallback?.(idleId);
+  }
+  const timerId = window.setTimeout(callback, Math.min(timeout, 240));
+  return () => window.clearTimeout(timerId);
+};
 
 const signalSparklineRowKey = (symbol) =>
   String(symbol || "").trim().toUpperCase();
@@ -705,7 +722,7 @@ function DirectionBadge({ direction }) {
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: sp(5),
+        gap: sp(3),
         color: tone,
         fontSize: textSize("captionStrong"),
         fontWeight: FONT_WEIGHTS.label,
@@ -1186,7 +1203,7 @@ function StatusCell({ row }) {
     },
   );
   return (
-    <span style={{ display: "inline-flex", minWidth: 0, alignItems: "center", gap: sp(8) }}>
+    <span style={{ display: "inline-flex", minWidth: 0, alignItems: "center", gap: sp(4) }}>
       <DirectionBadge direction={row.direction} />
       <span
         style={{
@@ -1225,7 +1242,7 @@ function CoverageCell({ row }) {
     },
   );
   return (
-    <span style={{ display: "inline-flex", minWidth: 0, alignItems: "center", gap: sp(6) }}>
+    <span style={{ display: "inline-flex", minWidth: 0, alignItems: "center", gap: sp(4) }}>
       <span
         aria-hidden="true"
         style={{
@@ -1370,7 +1387,7 @@ function CompactIntervalCell({
       <span
         style={{
           display: "grid",
-          gap: sp(2),
+          gap: sp(1),
           width: "100%",
           minWidth: 0,
           color: tone,
@@ -1424,7 +1441,7 @@ function CompactIntervalCell({
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: sp(4),
+            gap: sp(3),
             width: "100%",
             minWidth: 0,
           }}
@@ -1434,9 +1451,9 @@ function CompactIntervalCell({
           <span
             style={{
               minWidth: 0,
-              display: "grid",
-              justifyItems: "end",
-              gap: 0,
+              display: "inline-flex",
+              alignItems: "baseline",
+              gap: sp(3),
               lineHeight: 1.02,
             }}
           >
@@ -1490,7 +1507,7 @@ function StackCell({ row }) {
         style={{
           display: "inline-flex",
           alignItems: "center",
-          gap: sp(5),
+          gap: sp(3),
           color: tone,
           fontSize: textSize("captionStrong"),
           fontWeight: FONT_WEIGHTS.label,
@@ -1562,8 +1579,9 @@ function MatrixVerdictCell({ row }) {
     <AppTooltip content={content || "Signal matrix verdict unavailable"}>
       <span
         style={{
-          display: "grid",
-          gap: sp(1),
+          display: "inline-flex",
+          alignItems: "center",
+          gap: sp(3),
           minWidth: 0,
           color: tone,
           lineHeight: 1.1,
@@ -1573,7 +1591,7 @@ function MatrixVerdictCell({ row }) {
           style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: sp(5),
+            gap: sp(3),
             minWidth: 0,
             fontSize: textSize("captionStrong"),
             fontWeight: FONT_WEIGHTS.label,
@@ -2874,6 +2892,8 @@ export default function SignalsScreen({
   const [expandedSymbol, setExpandedSymbol] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [visibleHydrationSymbols, setVisibleHydrationSymbols] = useState([]);
+  const [matrixHydrationFullRequestReady, setMatrixHydrationFullRequestReady] =
+    useState(false);
   const [signalSparklineBarsBySymbol, setSignalSparklineBarsBySymbol] = useState(
     EMPTY_SIGNAL_SPARKLINE_BARS,
   );
@@ -3229,6 +3249,25 @@ export default function SignalsScreen({
     rows.length,
     signalsRowsReady,
   ]);
+  useEffect(() => {
+    if (!active || !signalsRowsReady || !filteredRows.length) {
+      setMatrixHydrationFullRequestReady(false);
+      return undefined;
+    }
+    setMatrixHydrationFullRequestReady(false);
+    return scheduleSignalsIdleWork(() => {
+      setMatrixHydrationFullRequestReady(true);
+    });
+  }, [
+    active,
+    directionFilter,
+    filteredRows.length,
+    query,
+    signalsRowsReady,
+    sortDirection,
+    sortKey,
+    statusFilter,
+  ]);
   const signalSparklineRows = useMemo(
     () =>
       captureSignalsRouteDataStage(
@@ -3412,10 +3451,13 @@ export default function SignalsScreen({
     () => {
       const seen = new Set();
       const symbols = [];
+      const fallbackRows = matrixHydrationFullRequestReady
+        ? filteredRows
+        : filteredRows.slice(0, SIGNALS_MATRIX_INITIAL_HYDRATION_SYMBOL_LIMIT);
       [
         selectedSymbol,
         ...visibleHydrationSymbols,
-        ...filteredRows.map((row) => row?.symbol),
+        ...fallbackRows.map((row) => row?.symbol),
       ].filter(Boolean).forEach((symbol) => {
         if (seen.has(symbol)) return;
         seen.add(symbol);
@@ -3423,8 +3465,16 @@ export default function SignalsScreen({
       });
       return symbols;
     },
-    [filteredRows, selectedSymbol, visibleHydrationSymbols],
+    [
+      filteredRows,
+      matrixHydrationFullRequestReady,
+      selectedSymbol,
+      visibleHydrationSymbols,
+    ],
   );
+  const matrixHydrationSymbolChunkLimit = matrixHydrationFullRequestReady
+    ? null
+    : SIGNALS_MATRIX_INITIAL_HYDRATION_SYMBOL_LIMIT;
   const matrixHydrationPlan = useMemo(
     () =>
       captureSignalsRouteDataStage(
@@ -3438,8 +3488,11 @@ export default function SignalsScreen({
               ...(stateResponse?.states || []),
             ],
             timeframes: SIGNALS_TABLE_TIMEFRAMES,
+            chunkSize: matrixHydrationSymbolChunkLimit,
+            priorityChunkSize: matrixHydrationSymbolChunkLimit,
           }),
         (value) => ({
+          deferred: !matrixHydrationFullRequestReady,
           hydratedCells: value.hydratedCellCount,
           missingCells: value.missingCellCount,
           prioritySymbols: priorityHydrationSymbols.length,
@@ -3451,6 +3504,8 @@ export default function SignalsScreen({
       ),
     [
       captureSignalsRouteDataStage,
+      matrixHydrationFullRequestReady,
+      matrixHydrationSymbolChunkLimit,
       priorityHydrationSymbols,
       signalMatrixStates,
       signalsHydrationUniverseSymbols,
@@ -3463,6 +3518,7 @@ export default function SignalsScreen({
     }
     markSignalsRouteDataTiming("matrix-hydration-plan-ready", {
       ...(signalsRouteDataStageDetailsRef.current.get("matrix-hydration-plan-ready") || {}),
+      deferred: !matrixHydrationFullRequestReady,
       missingCells: matrixHydrationPlan.missingCellCount,
       requestCells: matrixHydrationPlan.requestCells.length,
       symbols: matrixHydrationPlan.symbols.length,
@@ -3470,6 +3526,7 @@ export default function SignalsScreen({
   }, [
     active,
     markSignalsRouteDataTiming,
+    matrixHydrationFullRequestReady,
     matrixHydrationPlan.missingCellCount,
     matrixHydrationPlan.requestCells.length,
     matrixHydrationPlan.symbols.length,
@@ -3540,10 +3597,13 @@ export default function SignalsScreen({
       timeframes: matrixHydrationRequestTimeframes,
       clientRole: "algo-sta",
       requestOrigin: "sta-visible-page",
-      reason: "signals-screen",
+      reason: matrixHydrationFullRequestReady
+        ? "signals-screen"
+        : "signals-screen-initial",
     });
   }, [
     active,
+    matrixHydrationFullRequestReady,
     matrixHydrationPlan.missingCellCount,
     matrixHydrationPlan.missingSymbols,
     matrixHydrationPlan.missingTimeframesBySymbol,
@@ -3691,11 +3751,13 @@ export default function SignalsScreen({
       {
         id: "symbol",
         header: "Ticker",
-        meta: { width: phone ? "minmax(76px, 1fr)" : "minmax(128px, 1.05fr)" },
+        meta: { width: phone ? "minmax(72px, 0.9fr)" : "minmax(104px, 0.9fr)" },
         cell: ({ row }) => {
           const item = row.original;
           const watchlisted = item.watchlistLabels.length > 0;
           const expanded = item.symbol === expandedSymbol;
+          const secondaryLabel =
+            item.watchlistLabels[0] || `Rank ${item.universeRank}`;
           const watchlistTitle = watchlisted
             ? `In watchlist: ${item.watchlistLabels.join(", ")}`
             : "";
@@ -3711,9 +3773,9 @@ export default function SignalsScreen({
               style={{
                 width: "100%",
                 minWidth: 0,
-                display: "grid",
-                gap: sp(1),
-                justifyItems: "start",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: sp(3),
                 border: "none",
                 background: "transparent",
                 color: CSS_COLOR.text,
@@ -3723,60 +3785,49 @@ export default function SignalsScreen({
                 textAlign: "left",
               }}
             >
-              <span
+              <ChevronDown
+                size={13}
+                strokeWidth={2}
+                aria-hidden="true"
                 style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: sp(4),
-                  maxWidth: "100%",
-                  width: "100%",
-                  minWidth: 0,
+                  color: expanded ? toneForStatus(item.status) : CSS_COLOR.textDim,
+                  flex: "0 0 auto",
+                  transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
+                  transition: "transform 160ms ease-out, color 160ms ease-out",
                 }}
-              >
-                <ChevronDown
-                  size={13}
+              />
+              {watchlisted ? (
+                <Star
+                  size={12}
                   strokeWidth={2}
+                  fill="currentColor"
                   aria-hidden="true"
+                  title={watchlistTitle}
                   style={{
-                    color: expanded ? toneForStatus(item.status) : CSS_COLOR.textDim,
+                    color: CSS_COLOR.amber,
                     flex: "0 0 auto",
-                    transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
-                    transition: "transform 160ms ease-out, color 160ms ease-out",
                   }}
                 />
-                {watchlisted ? (
-                  <Star
-                    size={12}
-                    strokeWidth={2}
-                    fill="currentColor"
-                    aria-hidden="true"
-                    title={watchlistTitle}
-                    style={{
-                      color: CSS_COLOR.amber,
-                      flex: "0 0 auto",
-                    }}
-                  />
-                ) : null}
-                <span
-                  style={{
-                    ...cellTextStyle,
-                    maxWidth: "100%",
-                    fontWeight: FONT_WEIGHTS.label,
-                    letterSpacing: 0,
-                  }}
-                >
-                  {item.symbol}
-                </span>
+              ) : null}
+              <span
+                style={{
+                  ...cellTextStyle,
+                  flex: "0 1 auto",
+                  fontWeight: FONT_WEIGHTS.label,
+                  letterSpacing: 0,
+                }}
+              >
+                {item.symbol}
               </span>
               <span
                 style={{
                   ...cellTextStyle,
-                  maxWidth: "100%",
+                  flex: "1 1 auto",
                   color: CSS_COLOR.textDim,
                   fontSize: fs(10),
                 }}
               >
-                {item.watchlistLabels[0] || `Rank ${item.universeRank}`}
+                {secondaryLabel}
               </span>
             </button>
           );
@@ -3785,25 +3836,25 @@ export default function SignalsScreen({
       {
         id: "signal",
         header: "Signal",
-        meta: { width: phone ? "minmax(104px, 1.25fr)" : "minmax(150px, 1.2fr)" },
+        meta: { width: phone ? "minmax(96px, 1fr)" : "minmax(118px, 0.95fr)" },
         cell: ({ row }) => <StatusCell row={row.original} />,
       },
       {
         id: "stack",
         header: "Stack",
-        meta: { width: phone ? "64px" : "82px" },
+        meta: { width: phone ? "58px" : "64px" },
         cell: ({ row }) => <StackCell row={row.original} />,
       },
       {
         id: "verdict",
         header: "Verdict",
-        meta: { width: phone ? "86px" : "112px" },
+        meta: { width: phone ? "78px" : "84px" },
         cell: ({ row }) => <MatrixVerdictCell row={row.original} />,
       },
       ...SIGNALS_TABLE_TIMEFRAMES.map((timeframe) => ({
         id: `tf-${timeframe}`,
         header: timeframe,
-        meta: { width: phone ? "78px" : "96px", align: "right" },
+        meta: { width: phone ? "70px" : "76px", align: "right" },
         cell: ({ row }) => {
           const symbolKey = signalSparklineRowKey(row.original.symbol);
           return (
@@ -3824,7 +3875,7 @@ export default function SignalsScreen({
       {
         id: "trend",
         header: "Trend",
-        meta: { width: phone ? "62px" : "72px" },
+        meta: { width: phone ? "56px" : "58px" },
         cell: ({ row }) => <TrendCell row={row.original} />,
       },
       phone
@@ -3832,7 +3883,7 @@ export default function SignalsScreen({
         : {
         id: "strength",
         header: "Str",
-        meta: { width: "62px" },
+        meta: { width: "50px" },
         cell: ({ row }) => (
           <span style={{ ...cellTextStyle, color: CSS_COLOR.textSec }}>
             {row.original.dashboardSummary?.strength || MISSING_VALUE}
@@ -3844,7 +3895,7 @@ export default function SignalsScreen({
         : {
         id: "age",
         header: "Age",
-        meta: { width: "72px", align: "right" },
+        meta: { width: "54px", align: "right" },
         cell: ({ row }) => (
           <span style={{ color: CSS_COLOR.textSec, fontVariantNumeric: "tabular-nums" }}>
             {formatAge(row.original.dashboardSummary)}
@@ -3856,7 +3907,7 @@ export default function SignalsScreen({
         : {
         id: "vol",
         header: "Vol",
-        meta: { width: "56px", align: "right" },
+        meta: { width: "44px", align: "right" },
         cell: ({ row }) => (
           <span style={{ color: CSS_COLOR.textSec, fontVariantNumeric: "tabular-nums" }}>
             {formatMetric(row.original.dashboardSummary?.volatilityScore)}
@@ -3868,13 +3919,13 @@ export default function SignalsScreen({
         : {
         id: "mtf",
         header: "MTF",
-        meta: { width: "62px", align: "right" },
+        meta: { width: "50px", align: "right" },
         cell: ({ row }) => <MtfCell row={row.original} />,
       },
       {
         id: "bars",
         header: "Bars",
-        meta: { width: phone ? "56px" : "82px", align: "right" },
+        meta: { width: phone ? "50px" : "58px", align: "right" },
         cell: ({ row }) => (
           <span style={{ color: CSS_COLOR.textSec, fontVariantNumeric: "tabular-nums" }}>
             {formatBars(row.original.barsSinceSignal)}
@@ -3886,7 +3937,7 @@ export default function SignalsScreen({
         : {
         id: "price",
         header: "Price",
-        meta: { width: "96px", align: "right" },
+        meta: { width: "78px", align: "right" },
         cell: ({ row }) => (
           <span style={{ color: CSS_COLOR.textSec, fontVariantNumeric: "tabular-nums" }}>
             {formatQuotePrice(row.original.currentSignalPrice)}
@@ -3898,7 +3949,7 @@ export default function SignalsScreen({
         : {
         id: "latest",
         header: "Latest",
-        meta: { width: "104px" },
+        meta: { width: "76px" },
         cell: ({ row }) => (
           <span style={{ ...cellTextStyle, color: CSS_COLOR.textDim }}>
             {formatTime(row.original.currentSignalAt || row.original.lastEvaluatedAt)}
@@ -3910,13 +3961,13 @@ export default function SignalsScreen({
         : {
         id: "coverage",
         header: "Coverage",
-        meta: { width: "minmax(170px, 1.35fr)" },
+        meta: { width: "minmax(100px, 1fr)" },
         cell: ({ row }) => <CoverageCell row={row.original} />,
       },
       {
         id: "action",
         header: "",
-        meta: { width: phone ? "36px" : "70px", align: "right" },
+        meta: { width: phone ? "34px" : "38px", align: "right" },
         cell: ({ row }) => (
           <AppTooltip content={`Open ${row.original.symbol} in Trade`}>
             <button
@@ -4055,7 +4106,7 @@ export default function SignalsScreen({
     : "Intervals idle";
   const activeSignalCount = Math.max(1, summary.active || 0);
   const trackedCount = Math.max(1, summary.total || 0);
-  const minTableWidth = phone ? dim(1120) : dim(1460);
+  const minTableWidth = phone ? dim(1000) : dim(1360);
   const minTableHeight = phone
     ? SIGNALS_TABLE_MIN_HEIGHT_PHONE
     : SIGNALS_TABLE_MIN_HEIGHT_DESKTOP;
@@ -4456,8 +4507,8 @@ export default function SignalsScreen({
                 minWidth: minTableWidth,
                 minHeight: dim(34),
                 alignItems: "center",
-                columnGap: sp(6),
-                padding: sp("0 10px"),
+                columnGap: sp(2),
+                padding: sp("0 4px"),
                 borderBottom: `1px solid ${CSS_COLOR.border}`,
                 background: CSS_COLOR.bg2,
                 color: CSS_COLOR.textMuted,
@@ -4499,8 +4550,8 @@ export default function SignalsScreen({
                   style: {
                     minWidth: minTableWidth,
                     alignItems: "center",
-                    columnGap: sp(6),
-                    padding: sp("0 10px"),
+                    columnGap: sp(2),
+                    padding: sp("0 4px"),
                     borderBottom: `1px solid ${
                       expandedRow ? cssColorMix(tone, 42) : CSS_COLOR.border
                     }`,
@@ -4521,7 +4572,7 @@ export default function SignalsScreen({
               }}
               getCellProps={() => ({
                 style: {
-                  padding: sp("0 6px"),
+                  padding: sp("0 2px"),
                   fontSize: textSize("body"),
                 },
               })}

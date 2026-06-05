@@ -351,10 +351,12 @@ const SIGNAL_MATRIX_REQUEST_TIMEOUT_MS = 45_000;
 const SIGNAL_MATRIX_REQUEST_WATCHDOG_GRACE_MS = 3_000;
 const SIGNAL_MATRIX_GLOBAL_BUSY_RETRY_MS = 1_000;
 const SIGNAL_MATRIX_EXACT_CELL_LIMIT_RETRY_TTL_MS = 60_000;
+const SIGNAL_MATRIX_OPTIMISTIC_PENDING_CELL_LIMIT = 240;
 const SIGNAL_MATRIX_GLOBAL_REQUEST_COORDINATOR_KEY =
   "__PYRUS_SIGNAL_MATRIX_REQUEST_COORDINATOR__";
 const SIGNAL_MATRIX_SURFACE_REQUEST_REASONS = new Set([
   "algo-monitor-sidebar",
+  "algo-signal-table",
 ]);
 const RECENT_SIGNAL_QUOTE_PIN_MS = 30 * 60_000;
 const SCREEN_SHELL_WARM_MOUNT_IDLE_DELAY_MS = 2_000;
@@ -3625,7 +3627,7 @@ export default function PlatformApp() {
   const signalMatrixStartupProtectionActive =
     startupProtectionActive && !signalMatrixRequestActive;
   const signalMatrixActiveScreenRowsReady = Boolean(
-    screen !== "signals" || signalsScreenMatrixPrioritySymbols.length,
+    screen !== "signals" || signalsScreenMatrixSymbols.length,
   );
   useEffect(() => {
     const mountedScreenIds = Object.keys(mountedScreens).filter(
@@ -4462,8 +4464,12 @@ export default function PlatformApp() {
     signalMatrixLastPlanRef.current = plan;
     signalMatrixEvaluationInFlightRef.current = true;
     signalMatrixEvaluationStartedAtRef.current = Date.now();
+    const optimisticPendingRequestCells =
+      plan.requestCells.length > SIGNAL_MATRIX_OPTIMISTIC_PENDING_CELL_LIMIT
+        ? plan.requestCells.slice(0, SIGNAL_MATRIX_OPTIMISTIC_PENDING_CELL_LIMIT)
+        : plan.requestCells;
     const pendingMatrixStates = buildSignalMatrixPendingStates({
-      requestCells: plan.requestCells,
+      requestCells: optimisticPendingRequestCells,
       currentStates: signalMatrixStatesRef.current,
       evaluatedAt: new Date(signalMatrixEvaluationStartedAtRef.current).toISOString(),
     });
@@ -4484,7 +4490,8 @@ export default function PlatformApp() {
           timeframes: current.timeframes || SIGNAL_MATRIX_TIMEFRAMES,
           coverage: {
             ...(current.coverage || {}),
-            pendingCellCount: pendingMatrixStates.length,
+            optimisticPendingCellCount: pendingMatrixStates.length,
+            pendingCellCount: plan.requestCells.length,
           },
         };
       });
