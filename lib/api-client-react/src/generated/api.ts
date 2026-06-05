@@ -141,6 +141,7 @@ import type {
   ListFlowEventsParams,
   ListOrdersParams,
   ListPositionsParams,
+  ListSignalMonitorBreadthHistoryParams,
   ListSignalMonitorEventsParams,
   NewsResponse,
   OkResponse,
@@ -185,6 +186,7 @@ import type {
   RuntimeDiagnosticsResponse,
   SearchUniverseTickersParams,
   SessionInfo,
+  SignalMonitorBreadthHistoryResponse,
   SignalMonitorEventsResponse,
   SignalMonitorMatrixResponse,
   SignalMonitorProfile,
@@ -9252,6 +9254,88 @@ export function useGetSignalMonitorState<TData = Awaited<ReturnType<typeof getSi
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetSignalMonitorStateQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+/**
+ * @summary List aggregate Pyrus Signals buy/sell breadth history
+ */
+export const getListSignalMonitorBreadthHistoryUrl = (params?: ListSignalMonitorBreadthHistoryParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/signal-monitor/breadth-history?${stringifiedParams}` : `/api/signal-monitor/breadth-history`
+}
+
+export const listSignalMonitorBreadthHistory = async (params?: ListSignalMonitorBreadthHistoryParams, options?: RequestInit): Promise<SignalMonitorBreadthHistoryResponse> => {
+
+  return customFetch<SignalMonitorBreadthHistoryResponse>(getListSignalMonitorBreadthHistoryUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListSignalMonitorBreadthHistoryQueryKey = (params?: ListSignalMonitorBreadthHistoryParams,) => {
+    return [
+    `/api/signal-monitor/breadth-history`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListSignalMonitorBreadthHistoryQueryOptions = <TData = Awaited<ReturnType<typeof listSignalMonitorBreadthHistory>>, TError = ErrorType<unknown>>(params?: ListSignalMonitorBreadthHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSignalMonitorBreadthHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSignalMonitorBreadthHistoryQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSignalMonitorBreadthHistory>>> = ({ signal }) => listSignalMonitorBreadthHistory(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSignalMonitorBreadthHistory>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListSignalMonitorBreadthHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof listSignalMonitorBreadthHistory>>>
+export type ListSignalMonitorBreadthHistoryQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List aggregate Pyrus Signals buy/sell breadth history
+ */
+
+export function useListSignalMonitorBreadthHistory<TData = Awaited<ReturnType<typeof listSignalMonitorBreadthHistory>>, TError = ErrorType<unknown>>(
+ params?: ListSignalMonitorBreadthHistoryParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSignalMonitorBreadthHistory>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListSignalMonitorBreadthHistoryQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

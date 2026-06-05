@@ -84,6 +84,7 @@ import {
 export type SignalMonitorTimeframe = "1m" | "5m" | "15m" | "1h" | "1d";
 export type SignalMonitorMatrixTimeframe = SignalMonitorTimeframe | "2m";
 export type SignalMonitorDirection = "buy" | "sell";
+export type SignalMonitorBreadthHistoryRange = "day" | "week";
 type SignalMonitorStatus = "ok" | "stale" | "unavailable" | "error" | "unknown";
 type SignalMonitorMatrixCacheStatus = "hit" | "stale" | "inflight" | "miss";
 type SignalMonitorMatrixClientRole =
@@ -318,6 +319,16 @@ const MARKET_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   month: "2-digit",
   day: "2-digit",
+});
+const MARKET_DATE_TIME_PARTS_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
 });
 
 export type SignalMonitorProfileRow = DbSignalMonitorProfile;
@@ -1041,11 +1052,195 @@ type SignalMonitorEventResponse = ReturnType<typeof eventToResponse>;
 const SIGNAL_MONITOR_EVENTS_DEFAULT_PAGE_SIZE = 100;
 const SIGNAL_MONITOR_EVENTS_MAX_PAGE_SIZE = 1_000;
 const SIGNAL_MONITOR_RUNTIME_EVENT_RETENTION = 20_000;
+const SIGNAL_MONITOR_BREADTH_HISTORY_RANGES: readonly SignalMonitorBreadthHistoryRange[] =
+  ["day", "week"];
+const SIGNAL_MONITOR_BREADTH_HISTORY_BUCKET_MINUTES: Record<
+  SignalMonitorBreadthHistoryRange,
+  number
+> = {
+  day: 15,
+  week: 120,
+};
 
 type SignalMonitorEventsCursor = {
   signalAt: Date;
   id: string;
 };
+
+type SignalMonitorBreadthHistorySourceRow = {
+  at?: Date | string | null;
+  bucket?: Date | string | null;
+  signalAt?: Date | string | null;
+  direction?: string | null;
+  value?: number | string | bigint | null;
+};
+
+function resolveSignalMonitorBreadthHistoryRange(
+  value: unknown,
+): SignalMonitorBreadthHistoryRange {
+  const normalized = String(value || "").trim();
+  return SIGNAL_MONITOR_BREADTH_HISTORY_RANGES.includes(
+    normalized as SignalMonitorBreadthHistoryRange,
+  )
+    ? (normalized as SignalMonitorBreadthHistoryRange)
+    : "day";
+}
+
+function marketDateTimeParts(date: Date) {
+  const parts = Object.fromEntries(
+    MARKET_DATE_TIME_PARTS_FORMATTER.formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)]),
+  );
+  return {
+    year: Number(parts.year) || date.getUTCFullYear(),
+    month: Number(parts.month) || date.getUTCMonth() + 1,
+    day: Number(parts.day) || date.getUTCDate(),
+    hour: Number(parts.hour) || 0,
+    minute: Number(parts.minute) || 0,
+    second: Number(parts.second) || 0,
+  };
+}
+
+function marketZonedDateTimeToUtc(input: {
+  year: number;
+  month: number;
+  day: number;
+  hour?: number;
+  minute?: number;
+  second?: number;
+}) {
+  const desiredUtcMs = Date.UTC(
+    input.year,
+    input.month - 1,
+    input.day,
+    input.hour ?? 0,
+    input.minute ?? 0,
+    input.second ?? 0,
+  );
+  let utcMs = desiredUtcMs;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = marketDateTimeParts(new Date(utcMs));
+    const renderedUtcMs = Date.UTC(
+      parts.year,
+      parts.month - 1,
+      parts.day,
+      parts.hour,
+      parts.minute,
+      parts.second,
+    );
+    const delta = desiredUtcMs - renderedUtcMs;
+    if (delta === 0) {
+      break;
+    }
+    utcMs += delta;
+  }
+  return new Date(utcMs);
+}
+
+function startOfMarketDate(now: Date) {
+  const parts = marketDateTimeParts(now);
+  return marketZonedDateTimeToUtc({
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+  });
+}
+
+function resolveSignalMonitorBreadthHistoryWindow(input: {
+  range?: unknown;
+  now?: Date;
+}) {
+  const range = resolveSignalMonitorBreadthHistoryRange(input.range);
+  const to = input.now && Number.isFinite(input.now.getTime())
+    ? input.now
+    : new Date();
+  const from =
+    range === "week"
+      ? new Date(to.getTime() - 7 * 24 * 60 * 60_000)
+      : startOfMarketDate(to);
+  const bucketMinutes =
+    SIGNAL_MONITOR_BREADTH_HISTORY_BUCKET_MINUTES[range];
+  return {
+    range,
+    from,
+    to,
+    generatedAt: to,
+    bucketMinutes,
+  };
+}
+
+const alignSignalMonitorBreadthBucketMs = (
+  value: Date | string,
+  bucketMs: number,
+) => {
+  const date = dateOrNull(value);
+  if (!date) {
+    return null;
+  }
+  return Math.floor(date.getTime() / bucketMs) * bucketMs;
+};
+
+function buildSignalMonitorBreadthHistoryResponse(
+  rows: SignalMonitorBreadthHistorySourceRow[],
+  input: {
+    range: SignalMonitorBreadthHistoryRange;
+    from: Date;
+    to: Date;
+    generatedAt: Date;
+    bucketMinutes: number;
+  },
+) {
+  const bucketMs = Math.max(1, input.bucketMinutes) * 60_000;
+  const fromBucketMs =
+    alignSignalMonitorBreadthBucketMs(input.from, bucketMs) ??
+    input.from.getTime();
+  const toBucketMs =
+    alignSignalMonitorBreadthBucketMs(input.to, bucketMs) ??
+    input.to.getTime();
+  const byBucket = new Map<number, { buy: number; sell: number }>();
+
+  for (const row of rows) {
+    const direction = String(row.direction || "").trim().toLowerCase();
+    if (direction !== "buy" && direction !== "sell") {
+      continue;
+    }
+    const bucketValue = row.bucket ?? row.at ?? row.signalAt ?? null;
+    const bucket = bucketValue
+      ? alignSignalMonitorBreadthBucketMs(bucketValue, bucketMs)
+      : null;
+    if (bucket == null || bucket < fromBucketMs || bucket > toBucketMs) {
+      continue;
+    }
+    const count = Math.max(0, Number(row.value ?? 1) || 0);
+    const current = byBucket.get(bucket) ?? { buy: 0, sell: 0 };
+    current[direction] += count;
+    byBucket.set(bucket, current);
+  }
+
+  const points = [];
+  for (let bucket = fromBucketMs; bucket <= toBucketMs; bucket += bucketMs) {
+    const counts = byBucket.get(bucket) ?? { buy: 0, sell: 0 };
+    const buy = Math.round(counts.buy);
+    const sell = Math.round(counts.sell);
+    points.push({
+      at: new Date(bucket),
+      buy,
+      sell,
+      net: buy - sell,
+      total: buy + sell,
+    });
+  }
+
+  return {
+    range: input.range,
+    from: input.from,
+    to: input.to,
+    generatedAt: input.generatedAt,
+    bucketMinutes: input.bucketMinutes,
+    points,
+  };
+}
 
 function resolveSignalMonitorEventsPageSize(limit: unknown): number {
   return positiveInteger(
@@ -6768,6 +6963,9 @@ export const __signalMonitorInternalsForTests = {
   shouldCacheSignalMonitorMatrixEvaluationValue,
   buildSignalMonitorEventKey,
   resolveSignalMonitorEventLookupKeys,
+  resolveSignalMonitorBreadthHistoryRange,
+  resolveSignalMonitorBreadthHistoryWindow,
+  buildSignalMonitorBreadthHistoryResponse,
   encodeSignalMonitorEventsCursor,
   decodeSignalMonitorEventsCursor,
   filterSignalMonitorEventResponses,
@@ -7078,6 +7276,70 @@ export async function evaluateSignalMonitor(input: {
         watchlistId: input.watchlistId,
         barSourcePolicy: input.barSourcePolicy,
       });
+    }
+    throw error;
+  }
+}
+
+export async function listSignalMonitorBreadthHistory(input: {
+  environment?: RuntimeMode;
+  range?: SignalMonitorBreadthHistoryRange;
+  now?: Date;
+}) {
+  const environment = resolveEnvironment(input.environment);
+  const window = resolveSignalMonitorBreadthHistoryWindow({
+    range: input.range,
+    now: input.now,
+  });
+
+  if (isSignalMonitorDbBackoffActive()) {
+    return buildSignalMonitorBreadthHistoryResponse(
+      runtimeSignalMonitorEvents.get(environment) ?? [],
+      window,
+    );
+  }
+
+  const bucketSeconds = window.bucketMinutes * 60;
+  const bucketExpression = sql<Date>`
+    to_timestamp(
+      floor(extract(epoch from ${signalMonitorEventsTable.signalAt}) / ${bucketSeconds})
+      * ${bucketSeconds}
+    )
+  `;
+  const bucketedEvents = db
+    .select({
+      bucket: bucketExpression.as("bucket"),
+      direction: signalMonitorEventsTable.direction,
+    })
+    .from(signalMonitorEventsTable)
+    .where(
+      and(
+        eq(signalMonitorEventsTable.environment, environment),
+        gte(signalMonitorEventsTable.signalAt, window.from),
+        lte(signalMonitorEventsTable.signalAt, window.to),
+      ),
+    )
+    .as("bucketed_signal_monitor_events");
+
+  try {
+    const rows = await db
+      .select({
+        bucket: bucketedEvents.bucket,
+        direction: bucketedEvents.direction,
+        value: sql<number>`count(*)::int`,
+      })
+      .from(bucketedEvents)
+      .groupBy(bucketedEvents.bucket, bucketedEvents.direction)
+      .orderBy(bucketedEvents.bucket);
+
+    return buildSignalMonitorBreadthHistoryResponse(rows, window);
+  } catch (error) {
+    if (isTransientPostgresError(error)) {
+      warnSignalMonitorDbUnavailable(error);
+      return buildSignalMonitorBreadthHistoryResponse(
+        runtimeSignalMonitorEvents.get(environment) ?? [],
+        window,
+      );
     }
     throw error;
   }

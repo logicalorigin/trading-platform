@@ -4989,6 +4989,31 @@ export interface SignalMonitorEvent {
   payload: JsonObject;
 }
 
+export type SignalMonitorBreadthHistoryRange = typeof SignalMonitorBreadthHistoryRange[keyof typeof SignalMonitorBreadthHistoryRange];
+
+
+export const SignalMonitorBreadthHistoryRange = {
+  day: 'day',
+  week: 'week',
+} as const;
+
+export interface SignalMonitorBreadthHistoryPoint {
+  at: string;
+  buy: number;
+  sell: number;
+  net: number;
+  total: number;
+}
+
+export interface SignalMonitorBreadthHistoryResponse {
+  range: SignalMonitorBreadthHistoryRange;
+  from: string;
+  to: string;
+  generatedAt: string;
+  bucketMinutes: number;
+  points: SignalMonitorBreadthHistoryPoint[];
+}
+
 export type SignalMonitorStateResponseCacheStatus = typeof SignalMonitorStateResponseCacheStatus[keyof typeof SignalMonitorStateResponseCacheStatus];
 
 
@@ -6674,6 +6699,11 @@ environment?: EnvironmentMode;
 
 export type GetSignalMonitorStateParams = {
 environment?: EnvironmentMode;
+};
+
+export type ListSignalMonitorBreadthHistoryParams = {
+environment?: EnvironmentMode;
+range?: SignalMonitorBreadthHistoryRange;
 };
 
 export type ListSignalMonitorEventsParams = {

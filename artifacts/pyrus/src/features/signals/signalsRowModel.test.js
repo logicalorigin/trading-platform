@@ -4,9 +4,13 @@ import {
   SIGNALS_ROW_STATUS,
   buildSignalsRows,
   filterSignalsRows,
+  normalizeSignalsBreadthHistory,
   resolveSignalMatrixVerdict,
+  resolveSignalDirectionFlipStates,
   sortSignalsRows,
+  summarizeSignalsNetBias,
   summarizeSignalsRows,
+  summarizeSignalsTimeframeDirections,
 } from "./signalsRowModel.js";
 
 const state = (symbol, patch = {}) => ({
@@ -631,4 +635,166 @@ test("signals row summary and filters use normalized row metadata", () => {
     filterSignalsRows(rows, { query: "s", direction: "sell" }).map((row) => row.symbol),
     ["TSLA"],
   );
+});
+
+test("signals timeframe direction summary aggregates buy and sell matrix states", () => {
+  const rows = buildSignalsRows({
+    stateResponse: response({
+      universeSymbols: ["SPY", "QQQ"],
+    }),
+    matrixStates: [
+      state("SPY", { timeframe: "1m", currentSignalDirection: "buy", fresh: true }),
+      state("SPY", { timeframe: "5m", currentSignalDirection: "sell" }),
+      state("SPY", {
+        timeframe: "1h",
+        currentSignalDirection: "buy",
+        status: "stale",
+      }),
+      state("QQQ", { timeframe: "1m", currentSignalDirection: "sell", fresh: true }),
+      state("QQQ", { timeframe: "5m", currentSignalDirection: "sell", fresh: true }),
+      state("QQQ", { timeframe: "15m", currentSignalDirection: "buy" }),
+    ],
+  });
+
+  const summaries = summarizeSignalsTimeframeDirections(rows);
+  const byTimeframe = Object.fromEntries(
+    summaries.map((summary) => [summary.timeframe, summary]),
+  );
+
+  assert.deepEqual(byTimeframe["1m"], {
+    timeframe: "1m",
+    buy: 1,
+    sell: 1,
+    total: 2,
+    fresh: 2,
+    direction: "mixed",
+  });
+  assert.deepEqual(byTimeframe["5m"], {
+    timeframe: "5m",
+    buy: 0,
+    sell: 2,
+    total: 2,
+    fresh: 1,
+    direction: "sell",
+  });
+  assert.deepEqual(byTimeframe["15m"], {
+    timeframe: "15m",
+    buy: 1,
+    sell: 0,
+    total: 1,
+    fresh: 0,
+    direction: "buy",
+  });
+  assert.deepEqual(byTimeframe["1h"], {
+    timeframe: "1h",
+    buy: 0,
+    sell: 0,
+    total: 0,
+    fresh: 0,
+    direction: null,
+  });
+});
+
+test("signals net bias summarizes current buy sell pressure", () => {
+  const rows = [
+    { symbol: "AAPL", direction: "buy" },
+    { symbol: "MSFT", direction: "buy" },
+    { symbol: "TSLA", direction: "sell" },
+    { symbol: "QQQ", direction: null },
+  ];
+
+  assert.deepEqual(summarizeSignalsNetBias(rows), {
+    buy: 2,
+    sell: 1,
+    total: 3,
+    net: 1,
+    direction: "buy",
+    strength: 1 / 3,
+    label: "Buy +1",
+  });
+});
+
+test("signals breadth history normalizes points and totals for charting", () => {
+  const history = normalizeSignalsBreadthHistory({
+    range: "week",
+    from: "2026-06-01T00:00:00.000Z",
+    to: "2026-06-08T00:00:00.000Z",
+    generatedAt: "2026-06-08T00:01:00.000Z",
+    bucketMinutes: 120,
+    points: [
+      {
+        at: "2026-06-01T14:00:00.000Z",
+        buy: 4,
+        sell: 1,
+        net: 3,
+        total: 5,
+      },
+      {
+        at: "2026-06-01T16:00:00.000Z",
+        buy: 0,
+        sell: 2,
+        net: -2,
+        total: 2,
+      },
+    ],
+  });
+
+  assert.equal(history.range, "week");
+  assert.equal(history.bucketMinutes, 120);
+  assert.equal(history.buyTotal, 4);
+  assert.equal(history.sellTotal, 3);
+  assert.equal(history.net, 1);
+  assert.equal(history.maxTotal, 5);
+  assert.equal(history.maxAbsNet, 3);
+  assert.equal(history.direction, "buy");
+  assert.equal(history.empty, false);
+  assert.deepEqual(
+    history.points.map((point) => ({
+      at: point.at,
+      buy: point.buy,
+      sell: point.sell,
+      net: point.net,
+      total: point.total,
+    })),
+    [
+      {
+        at: "2026-06-01T14:00:00.000Z",
+        buy: 4,
+        sell: 1,
+        net: 3,
+        total: 5,
+      },
+      {
+        at: "2026-06-01T16:00:00.000Z",
+        buy: 0,
+        sell: 2,
+        net: -2,
+        total: 2,
+      },
+    ],
+  );
+});
+
+test("signals direction flip states compare current rows to previous session directions", () => {
+  const flips = resolveSignalDirectionFlipStates(
+    [
+      { symbol: "AAPL", direction: "sell" },
+      { symbol: "MSFT", direction: "buy" },
+      { symbol: "QQQ", direction: null },
+    ],
+    {
+      AAPL: "buy",
+      MSFT: "buy",
+      QQQ: "sell",
+    },
+  );
+
+  assert.deepEqual(flips.nextDirectionsBySymbol, {
+    AAPL: "sell",
+    MSFT: "buy",
+    QQQ: "",
+  });
+  assert.equal(flips.flippedSymbols.has("AAPL"), true);
+  assert.equal(flips.flippedSymbols.has("MSFT"), false);
+  assert.equal(flips.flippedSymbols.has("QQQ"), false);
 });

@@ -2345,6 +2345,11 @@ paths:
           required: false
           schema:
             type: string
+        - name: mode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
         - name: days
           in: query
           required: false
@@ -3203,6 +3208,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SignalMonitorStateResponse"
+
+  /signal-monitor/breadth-history:
+    get:
+      operationId: listSignalMonitorBreadthHistory
+      tags: [signal-monitor]
+      summary: List aggregate Pyrus Signals buy/sell breadth history
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/EnvironmentMode"
+        - name: range
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/SignalMonitorBreadthHistoryRange"
+            default: day
+      responses:
+        "200":
+          description: Signal monitor buy/sell breadth history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalMonitorBreadthHistoryResponse"
 
   /signal-monitor/events:
     get:
@@ -9286,7 +9316,7 @@ components:
           type: string
         source:
           type: string
-          enum: [LIVE, FLEX, SHADOW]
+          enum: [LIVE, LIVE_ORDER, LIVE_EXECUTION, FLEX, SHADOW, SHADOW_ACTIVITY]
         accountId:
           type: string
         symbol:
@@ -12194,6 +12224,59 @@ components:
         - emittedAt
         - source
         - payload
+
+    SignalMonitorBreadthHistoryRange:
+      type: string
+      enum: [day, week]
+
+    SignalMonitorBreadthHistoryPoint:
+      type: object
+      properties:
+        at:
+          type: string
+          format: date-time
+        buy:
+          type: integer
+        sell:
+          type: integer
+        net:
+          type: integer
+        total:
+          type: integer
+      required:
+        - at
+        - buy
+        - sell
+        - net
+        - total
+
+    SignalMonitorBreadthHistoryResponse:
+      type: object
+      properties:
+        range:
+          $ref: "#/components/schemas/SignalMonitorBreadthHistoryRange"
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        generatedAt:
+          type: string
+          format: date-time
+        bucketMinutes:
+          type: integer
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignalMonitorBreadthHistoryPoint"
+      required:
+        - range
+        - from
+        - to
+        - generatedAt
+        - bucketMinutes
+        - points
 
     SignalMonitorStateResponse:
       type: object

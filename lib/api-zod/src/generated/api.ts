@@ -4760,6 +4760,30 @@ export const GetSignalMonitorStateResponse = zod.object({
 
 
 /**
+ * @summary List aggregate Pyrus Signals buy/sell breadth history
+ */
+export const ListSignalMonitorBreadthHistoryQueryParams = zod.object({
+  "environment": zod.enum(['paper', 'live']).optional(),
+  "range": zod.enum(['day', 'week']).optional()
+})
+
+export const ListSignalMonitorBreadthHistoryResponse = zod.object({
+  "range": zod.enum(['day', 'week']),
+  "from": zod.coerce.date(),
+  "to": zod.coerce.date(),
+  "generatedAt": zod.coerce.date(),
+  "bucketMinutes": zod.number(),
+  "points": zod.array(zod.object({
+  "at": zod.coerce.date(),
+  "buy": zod.number(),
+  "sell": zod.number(),
+  "net": zod.number(),
+  "total": zod.number()
+}))
+})
+
+
+/**
  * @summary List Pyrus Signals signal monitor events
  */
 export const listSignalMonitorEventsQueryLimitMax = 1000;

@@ -6,18 +6,9 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { EnvironmentMode } from './environmentMode';
+import type { SignalMonitorBreadthHistoryRange } from './signalMonitorBreadthHistoryRange';
 
-export type ListExecutionsParams = {
-accountId?: string;
-mode?: EnvironmentMode;
-/**
- * @minimum 1
- */
-days?: number;
-/**
- * @minimum 1
- */
-limit?: number;
-symbol?: string;
-providerContractId?: string | null;
+export type ListSignalMonitorBreadthHistoryParams = {
+environment?: EnvironmentMode;
+range?: SignalMonitorBreadthHistoryRange;
 };

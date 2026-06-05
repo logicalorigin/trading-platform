@@ -10,6 +10,7 @@ import {
   useGetResearchStatus,
   useGetSignalMonitorProfile,
   useGetSignalMonitorState,
+  useListSignalMonitorBreadthHistory,
   useListSignalMonitorEvents,
 } from "@workspace/api-client-react";
 import {
@@ -88,8 +89,12 @@ import {
   SIGNALS_TABLE_TIMEFRAMES,
   buildSignalsRows,
   filterSignalsRows,
+  normalizeSignalsBreadthHistory,
+  resolveSignalDirectionFlipStates,
   sortSignalsRows,
+  summarizeSignalsNetBias,
   summarizeSignalsRows,
+  summarizeSignalsTimeframeDirections,
 } from "../features/signals/signalsRowModel.js";
 import {
   buildSignalsMatrixHydrationPlan,
@@ -129,6 +134,10 @@ const SORT_OPTIONS = [
   { value: "bars", label: "Bars" },
   { value: "symbol", label: "Symbol" },
 ];
+const SIGNALS_BREADTH_HISTORY_RANGE_OPTIONS = Object.freeze([
+  { value: "day", label: "Day" },
+  { value: "week", label: "Week" },
+]);
 
 const isHydratedSignalMatrixState = (state) =>
   Boolean(
@@ -793,6 +802,360 @@ function MetricTile({
           ) : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function TimeframeSignalKpiStrip({
+  summaries = [],
+  phone = false,
+  compact = false,
+}) {
+  const items = Array.isArray(summaries) ? summaries : [];
+  if (!items.length) {
+    return null;
+  }
+  const gridTemplateColumns = phone
+    ? "repeat(2, minmax(0, 1fr))"
+    : compact
+      ? "repeat(3, minmax(0, 1fr))"
+      : `repeat(${items.length}, minmax(0, 1fr))`;
+
+  return (
+    <div
+      data-testid="signals-timeframe-kpi-strip"
+      aria-label="Buy and sell signals by timeframe"
+      style={{
+        display: "grid",
+        gridTemplateColumns,
+        border: `1px solid ${CSS_COLOR.border}`,
+        borderRadius: dim(RADII.sm),
+        background: CSS_COLOR.bg1,
+        overflow: "hidden",
+        boxShadow: `inset 0 1px 0 ${cssColorMix(CSS_COLOR.text, 8)}`,
+      }}
+    >
+      {items.map((item) => {
+        const buy = Math.max(0, Number(item.buy) || 0);
+        const sell = Math.max(0, Number(item.sell) || 0);
+        const total = Math.max(0, Number(item.total) || buy + sell);
+        const buyRatio = total ? buy / total : 0;
+        const sellRatio = total ? sell / total : 0;
+        const tone =
+          item.direction === "buy"
+            ? CSS_COLOR.blue
+            : item.direction === "sell"
+              ? CSS_COLOR.red
+              : CSS_COLOR.textMuted;
+        return (
+          <AppTooltip
+            key={item.timeframe}
+            content={`${item.timeframe}: ${formatCount(buy)} buy, ${formatCount(sell)} sell, ${formatCount(item.fresh)} fresh`}
+          >
+            <div
+              data-testid={`signals-timeframe-kpi-${item.timeframe}`}
+              data-buy-count={buy}
+              data-sell-count={sell}
+              style={{
+                display: "grid",
+                gap: sp(5),
+                minWidth: 0,
+                minHeight: dim(44),
+                padding: sp("7px 9px"),
+                borderRight: `1px solid ${CSS_COLOR.borderLight}`,
+              }}
+            >
+              <span
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: sp(6),
+                  minWidth: 0,
+                }}
+              >
+                <span
+                  style={{
+                    color: CSS_COLOR.textMuted,
+                    fontSize: fs(10),
+                    fontWeight: FONT_WEIGHTS.label,
+                    letterSpacing: 0,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {item.timeframe}
+                </span>
+                <span
+                  style={{
+                    color: tone,
+                    fontSize: fs(12),
+                    fontWeight: FONT_WEIGHTS.medium,
+                    fontVariantNumeric: "tabular-nums",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {formatCount(buy)}/{formatCount(sell)}
+                </span>
+              </span>
+              <span
+                aria-hidden="true"
+                style={{
+                  display: "flex",
+                  height: dim(4),
+                  minWidth: 0,
+                  borderRadius: dim(RADII.pill),
+                  background: CSS_COLOR.bg3,
+                  overflow: "hidden",
+                }}
+              >
+                <span
+                  style={{
+                    display: "block",
+                    width: `${Math.round(buyRatio * 100)}%`,
+                    minWidth: buy ? dim(2) : 0,
+                    height: "100%",
+                    background: CSS_COLOR.blue,
+                  }}
+                />
+                <span
+                  style={{
+                    display: "block",
+                    width: `${Math.round(sellRatio * 100)}%`,
+                    minWidth: sell ? dim(2) : 0,
+                    height: "100%",
+                    background: CSS_COLOR.red,
+                  }}
+                />
+              </span>
+              <span
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: sp(6),
+                  color: CSS_COLOR.textDim,
+                  fontSize: fs(10),
+                  fontVariantNumeric: "tabular-nums",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <span style={{ color: CSS_COLOR.blue }}>B {formatCount(buy)}</span>
+                <span style={{ color: CSS_COLOR.red }}>S {formatCount(sell)}</span>
+              </span>
+            </div>
+          </AppTooltip>
+        );
+      })}
+    </div>
+  );
+}
+
+function SignalBreadthHistoryStrip({
+  history,
+  range,
+  onRangeChange,
+  loading = false,
+  error = null,
+  phone = false,
+}) {
+  const chartWidth = 240;
+  const chartHeight = 64;
+  const centerY = Math.round(chartHeight / 2);
+  const points = Array.isArray(history?.points) ? history.points : [];
+  const maxMagnitude = Math.max(1, history?.maxTotal || history?.maxAbsNet || 0);
+  const usableHeight = centerY - 7;
+  const step = points.length > 1 ? chartWidth / (points.length - 1) : chartWidth;
+  const barWidth = Math.max(1, Math.min(5, step * 0.5));
+  const statusLabel = error
+    ? "History unavailable"
+    : loading
+      ? "Loading"
+      : history?.empty
+        ? "No signals"
+        : `${formatCount(history?.buyTotal)} buy / ${formatCount(history?.sellTotal)} sell`;
+  const netTone = toneForDirection(history?.direction);
+  const netLabel =
+    history?.direction === "buy"
+      ? `Buy +${formatCount(Math.abs(history.net))}`
+      : history?.direction === "sell"
+        ? `Sell +${formatCount(Math.abs(history.net))}`
+        : history?.total
+          ? "Balanced"
+          : "Flat";
+
+  return (
+    <div
+      data-testid="signals-breadth-history-strip"
+      aria-label="Aggregate buy and sell signal breadth history"
+      style={{
+        display: "grid",
+        gridTemplateColumns: phone ? "1fr" : "minmax(180px, 0.72fr) minmax(0, 1.8fr)",
+        gap: sp(10),
+        alignItems: "stretch",
+        minWidth: 0,
+        border: `1px solid ${CSS_COLOR.border}`,
+        borderRadius: dim(RADII.sm),
+        background: CSS_COLOR.bg1,
+        overflow: "hidden",
+        boxShadow: `inset 0 1px 0 ${cssColorMix(CSS_COLOR.text, 7)}`,
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          alignContent: "center",
+          gap: sp(8),
+          minWidth: 0,
+          padding: sp("10px 12px"),
+          borderRight: phone ? "none" : `1px solid ${CSS_COLOR.borderLight}`,
+          borderBottom: phone ? `1px solid ${CSS_COLOR.borderLight}` : "none",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: sp(8), minWidth: 0 }}>
+          <span
+            style={{
+              color: CSS_COLOR.textMuted,
+              fontSize: fs(10),
+              fontWeight: FONT_WEIGHTS.label,
+              letterSpacing: 0,
+              textTransform: "uppercase",
+            }}
+          >
+            Breadth
+          </span>
+          <span
+            data-testid="signals-breadth-net"
+            style={{
+              color: netTone,
+              fontSize: fs(13),
+              fontWeight: FONT_WEIGHTS.medium,
+              fontVariantNumeric: "tabular-nums",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {netLabel}
+          </span>
+        </div>
+        <div
+          role="group"
+          aria-label="Signals breadth history range"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: sp(4),
+            minWidth: 0,
+          }}
+        >
+          {SIGNALS_BREADTH_HISTORY_RANGE_OPTIONS.map((option) => {
+            const selected = option.value === range;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                data-testid={
+                  option.value === "day"
+                    ? "signals-breadth-range-day"
+                    : "signals-breadth-range-week"
+                }
+                aria-pressed={selected ? "true" : "false"}
+                onClick={() => onRangeChange?.(option.value)}
+                style={{
+                  minHeight: dim(44),
+                  border: `1px solid ${selected ? CSS_COLOR.accent : CSS_COLOR.borderLight}`,
+                  borderRadius: dim(RADII.xs),
+                  background: selected ? cssColorMix(CSS_COLOR.accent, 12) : CSS_COLOR.bg2,
+                  color: selected ? CSS_COLOR.text : CSS_COLOR.textSec,
+                  fontSize: fs(11),
+                  fontWeight: FONT_WEIGHTS.medium,
+                  fontFamily: T.sans,
+                  cursor: "pointer",
+                }}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateRows: "auto minmax(64px, 1fr)",
+          gap: sp(6),
+          minWidth: 0,
+          padding: sp("9px 12px 10px"),
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: sp(8),
+            minWidth: 0,
+            color: CSS_COLOR.textDim,
+            fontSize: fs(10),
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          <span style={{ color: CSS_COLOR.blue }}>B {formatCount(history?.buyTotal || 0)}</span>
+          <span style={{ color: CSS_COLOR.textDim }}>{statusLabel}</span>
+          <span style={{ color: CSS_COLOR.red }}>S {formatCount(history?.sellTotal || 0)}</span>
+        </div>
+        <svg
+          data-testid="signals-breadth-history-chart"
+          role="img"
+          aria-label={`Signals breadth history ${statusLabel}`}
+          viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+          preserveAspectRatio="none"
+          style={{
+            width: "100%",
+            height: dim(70),
+            display: "block",
+            overflow: "visible",
+          }}
+        >
+          <line
+            x1="0"
+            x2={chartWidth}
+            y1={centerY}
+            y2={centerY}
+            stroke={CSS_COLOR.border}
+            strokeWidth="1"
+          />
+          {points.map((point, index) => {
+            const x = points.length > 1 ? index * step : chartWidth / 2;
+            const buyHeight = Math.round((point.buy / maxMagnitude) * usableHeight);
+            const sellHeight = Math.round((point.sell / maxMagnitude) * usableHeight);
+            return (
+              <g key={`${point.at}-${index}`}>
+                {buyHeight ? (
+                  <rect
+                    x={x - barWidth / 2}
+                    y={centerY - buyHeight}
+                    width={barWidth}
+                    height={buyHeight}
+                    rx="0.8"
+                    fill={CSS_COLOR.blue}
+                    opacity="0.8"
+                  />
+                ) : null}
+                {sellHeight ? (
+                  <rect
+                    x={x - barWidth / 2}
+                    y={centerY}
+                    width={barWidth}
+                    height={sellHeight}
+                    rx="0.8"
+                    fill={CSS_COLOR.red}
+                    opacity="0.8"
+                  />
+                ) : null}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
     </div>
   );
 }
@@ -2343,6 +2706,11 @@ function SignalsRowDrilldown({ row, onJumpToTrade, phone }) {
   }
 
   const statusTone = toneForStatus(row.status);
+  const directionTone = toneForDirection(row.direction);
+  const directionRailTone =
+    row.direction === "buy" || row.direction === "sell"
+      ? `inset 3px 0 0 ${directionTone}`
+      : "inset 3px 0 0 transparent";
   const matrixEntries = SIGNALS_TABLE_TIMEFRAMES.map((timeframe) => ({
     timeframe,
     state: row.matrixStatesByTimeframe?.[timeframe] || null,
@@ -2351,6 +2719,7 @@ function SignalsRowDrilldown({ row, onJumpToTrade, phone }) {
   return (
     <div
       data-testid="signals-row-drilldown"
+      data-signal-direction={row.direction || "none"}
       style={{
         height: "100%",
         minWidth: 0,
@@ -2359,6 +2728,7 @@ function SignalsRowDrilldown({ row, onJumpToTrade, phone }) {
         background: cssColorMix(statusTone, 5),
         borderTop: `1px solid ${cssColorMix(statusTone, 32)}`,
         borderBottom: `1px solid ${CSS_COLOR.border}`,
+        boxShadow: directionRailTone,
       }}
     >
       <div
@@ -2492,6 +2862,7 @@ export default function SignalsScreen({
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [directionFilter, setDirectionFilter] = useState("all");
+  const [breadthHistoryRange, setBreadthHistoryRange] = useState("day");
   const [sortKey, setSortKey] = useState("priority");
   const [sortDirection, setSortDirection] = useState("asc");
   const [columnOrder, setColumnOrder] = useState(() =>
@@ -2511,6 +2882,8 @@ export default function SignalsScreen({
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [settingsApplying, setSettingsApplying] = useState(false);
   const syncedSettingsSignatureRef = useRef("");
+  const previousSignalDirectionsRef = useRef({});
+  const [flippedSignalSymbols, setFlippedSignalSymbols] = useState(() => new Set());
   const active = isVisible !== false;
   const signalsTimingStagesRef = useRef(new Set());
   const signalsRouteDataStageDetailsRef = useRef(new Map());
@@ -2538,6 +2911,10 @@ export default function SignalsScreen({
     [],
   );
   const signalMonitorParams = useMemo(() => ({ environment }), [environment]);
+  const signalMonitorBreadthHistoryParams = useMemo(
+    () => ({ environment, range: breadthHistoryRange }),
+    [breadthHistoryRange, environment],
+  );
   const signalMonitorEventsParams = useMemo(
     () => ({ environment, limit: SIGNALS_EVENT_LIMIT }),
     [environment],
@@ -2573,6 +2950,17 @@ export default function SignalsScreen({
       retry: false,
     },
   });
+  const breadthHistoryQuery = useListSignalMonitorBreadthHistory(
+    signalMonitorBreadthHistoryParams,
+    {
+      query: {
+        enabled: active,
+        staleTime: 15_000,
+        refetchInterval: active ? 30_000 : false,
+        retry: false,
+      },
+    },
+  );
   const researchStatusQuery = useGetResearchStatus({
     query: {
       enabled: active && settingsOpen,
@@ -2762,6 +3150,34 @@ export default function SignalsScreen({
     rows.length,
     signalsRowsReady,
   ]);
+  useEffect(() => {
+    if (!active || !signalsRowsReady) {
+      return;
+    }
+    const flipState = resolveSignalDirectionFlipStates(
+      rows,
+      previousSignalDirectionsRef.current,
+    );
+    previousSignalDirectionsRef.current = flipState.nextDirectionsBySymbol;
+    setFlippedSignalSymbols((current) => {
+      if (
+        current.size === flipState.flippedSymbols.size &&
+        Array.from(current).every((symbol) => flipState.flippedSymbols.has(symbol))
+      ) {
+        return current;
+      }
+      return flipState.flippedSymbols;
+    });
+  }, [active, rows, signalsRowsReady]);
+  useEffect(() => {
+    if (!flippedSignalSymbols.size) {
+      return undefined;
+    }
+    const timeout = window.setTimeout(() => {
+      setFlippedSignalSymbols(new Set());
+    }, 1400);
+    return () => window.clearTimeout(timeout);
+  }, [flippedSignalSymbols]);
   const filteredRows = useMemo(
     () =>
       captureSignalsRouteDataStage(
@@ -3063,6 +3479,15 @@ export default function SignalsScreen({
   const matrixHydrationRequestTimeframes =
     matrixHydrationPlan.timeframes;
   const summary = useMemo(() => summarizeSignalsRows(rows), [rows]);
+  const netBias = useMemo(() => summarizeSignalsNetBias(rows), [rows]);
+  const timeframeSignalSummary = useMemo(
+    () => summarizeSignalsTimeframeDirections(rows),
+    [rows],
+  );
+  const breadthHistory = useMemo(
+    () => normalizeSignalsBreadthHistory(breadthHistoryQuery.data),
+    [breadthHistoryQuery.data],
+  );
   const selectedRow = useMemo(
     () =>
       filteredRows.find((row) => row.symbol === selectedSymbol) ||
@@ -3183,11 +3608,13 @@ export default function SignalsScreen({
       force: true,
     });
     Promise.allSettled([
+      breadthHistoryQuery.refetch(),
       profileQuery.refetch(),
       stateQuery.refetch(),
       eventsQuery.refetch(),
     ]).finally(() => setRefreshing(false));
   }, [
+    breadthHistoryQuery,
     eventsQuery,
     matrixHydrationPlan.missingSymbols,
     matrixHydrationPlan.missingTimeframesBySymbol,
@@ -3634,13 +4061,15 @@ export default function SignalsScreen({
         height: "100%",
         minHeight: 0,
         display: "grid",
-        gridTemplateRows: "auto minmax(0, 1fr)",
+        gridTemplateRows: phone ? "auto minmax(360px, 1fr)" : "auto minmax(0, 1fr)",
         gap: sp(10),
         padding: phone ? sp(10) : sp(14),
         background: CSS_COLOR.bg0,
         color: CSS_COLOR.text,
         fontFamily: T.sans,
-        overflow: "hidden",
+        overflowX: "hidden",
+        overflowY: phone ? "auto" : "hidden",
+        WebkitOverflowScrolling: phone ? "touch" : undefined,
       }}
     >
       <header
@@ -3741,6 +4170,13 @@ export default function SignalsScreen({
             ratio={summary.sell / activeSignalCount}
           />
           <MetricTile
+            label="Net Bias"
+            value={netBias.label}
+            tone={toneForDirection(netBias.direction)}
+            subtitle={`${formatCount(netBias.buy)} buy / ${formatCount(netBias.sell)} sell`}
+            ratio={netBias.strength}
+          />
+          <MetricTile
             label="Attention"
             value={formatCount(summary.problem)}
             tone={CSS_COLOR.amber}
@@ -3748,6 +4184,21 @@ export default function SignalsScreen({
             ratio={summary.problem / trackedCount}
           />
         </div>
+
+        <TimeframeSignalKpiStrip
+          summaries={timeframeSignalSummary}
+          phone={phone}
+          compact={compact}
+        />
+
+        <SignalBreadthHistoryStrip
+          history={breadthHistory}
+          range={breadthHistoryRange}
+          onRangeChange={setBreadthHistoryRange}
+          loading={breadthHistoryQuery.isLoading}
+          error={breadthHistoryQuery.error}
+          phone={phone}
+        />
 
         <Card
           data-testid="signals-toolbar"
@@ -4007,6 +4458,12 @@ export default function SignalsScreen({
                 const activeRow = row.symbol === selectedRow?.symbol;
                 const expandedRow = row.symbol === expandedSymbol;
                 const tone = toneForStatus(row.status);
+                const directionTone = toneForDirection(row.direction);
+                const directionRailTone =
+                  row.direction === "buy" || row.direction === "sell"
+                    ? `inset 3px 0 0 ${directionTone}`
+                    : "inset 3px 0 0 transparent";
+                const flippedRow = flippedSignalSymbols.has(row.symbol);
                 return {
                   role: "button",
                   tabIndex: 0,
@@ -4018,6 +4475,8 @@ export default function SignalsScreen({
                   "aria-controls": getSignalDrilldownId(row.symbol),
                   "aria-expanded": expandedRow ? "true" : "false",
                   "aria-selected": activeRow ? "true" : "false",
+                  "data-signal-direction": row.direction || "none",
+                  "data-signal-flipped": flippedRow ? "true" : "false",
                   "data-matrix-hydrated-count": SIGNALS_TABLE_TIMEFRAMES.filter(
                     (timeframe) =>
                       isHydratedSignalMatrixState(
@@ -4035,13 +4494,16 @@ export default function SignalsScreen({
                     }`,
                     background: expandedRow
                       ? cssColorMix(tone, 12)
+                      : flippedRow
+                        ? cssColorMix(directionTone, 14)
                       : activeRow
                         ? cssColorMix(tone, 8)
                         : row.fresh
                           ? cssColorMix(tone, 5)
                           : "transparent",
+                    boxShadow: directionRailTone,
                     cursor: "pointer",
-                    transition: "background-color 160ms ease-out, border-color 160ms ease-out",
+                    transition: "background-color 160ms ease-out, border-color 160ms ease-out, box-shadow 160ms ease-out",
                   },
                 };
               }}

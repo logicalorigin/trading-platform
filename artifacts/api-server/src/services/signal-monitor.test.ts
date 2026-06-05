@@ -234,6 +234,105 @@ test("signal monitor event history filters by symbol and signalAt window", () =>
   assert.equal(page.hasMore, false);
 });
 
+test("signal monitor breadth history fills compact buy sell buckets", () => {
+  const history =
+    __signalMonitorInternalsForTests.buildSignalMonitorBreadthHistoryResponse(
+      [
+        signalMonitorEventFixture({
+          id: "buy-a",
+          symbol: "AAPL",
+          signalAt: "2026-06-03T15:01:00.000Z",
+          direction: "buy",
+        }),
+        signalMonitorEventFixture({
+          id: "sell-a",
+          symbol: "MSFT",
+          signalAt: "2026-06-03T15:13:00.000Z",
+          direction: "sell",
+        }),
+        signalMonitorEventFixture({
+          id: "buy-b",
+          symbol: "NVDA",
+          signalAt: "2026-06-03T15:30:00.000Z",
+          direction: "buy",
+        }),
+      ] as never,
+      {
+        range: "day",
+        from: new Date("2026-06-03T15:00:00.000Z"),
+        to: new Date("2026-06-03T15:45:00.000Z"),
+        generatedAt: new Date("2026-06-03T15:45:30.000Z"),
+        bucketMinutes: 15,
+      },
+    );
+
+  assert.equal(history.range, "day");
+  assert.equal(history.bucketMinutes, 15);
+  assert.equal(history.generatedAt.toISOString(), "2026-06-03T15:45:30.000Z");
+  assert.deepEqual(
+    history.points.map((point) => ({
+      at: point.at.toISOString(),
+      buy: point.buy,
+      sell: point.sell,
+      net: point.net,
+      total: point.total,
+    })),
+    [
+      {
+        at: "2026-06-03T15:00:00.000Z",
+        buy: 1,
+        sell: 1,
+        net: 0,
+        total: 2,
+      },
+      {
+        at: "2026-06-03T15:15:00.000Z",
+        buy: 0,
+        sell: 0,
+        net: 0,
+        total: 0,
+      },
+      {
+        at: "2026-06-03T15:30:00.000Z",
+        buy: 1,
+        sell: 0,
+        net: 1,
+        total: 1,
+      },
+      {
+        at: "2026-06-03T15:45:00.000Z",
+        buy: 0,
+        sell: 0,
+        net: 0,
+        total: 0,
+      },
+    ],
+  );
+});
+
+test("signal monitor breadth history exposes a generated read route", () => {
+  const serviceSource = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const routeSource = readFileSync(
+    new URL("../routes/signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const block = serviceSource.slice(
+    serviceSource.indexOf("export async function listSignalMonitorBreadthHistory"),
+  );
+
+  assert.match(routeSource, /router\.get\("\/signal-monitor\/breadth-history"/);
+  assert.match(routeSource, /ListSignalMonitorBreadthHistoryQueryParams/);
+  assert.match(routeSource, /ListSignalMonitorBreadthHistoryResponse/);
+  assert.match(block, /signalMonitorEventsTable\.environment/);
+  assert.match(block, /signalMonitorEventsTable\.signalAt/);
+  assert.match(block, /\.as\("bucketed_signal_monitor_events"\)/);
+  assert.match(block, /\.groupBy\(bucketedEvents\.bucket,\s*bucketedEvents\.direction\)/);
+  assert.match(block, /buildSignalMonitorBreadthHistoryResponse/);
+});
+
 test("signal monitor event API is cursor paginated instead of capped at 500 total rows", () => {
   const source = readFileSync(
     new URL("./signal-monitor.ts", import.meta.url),

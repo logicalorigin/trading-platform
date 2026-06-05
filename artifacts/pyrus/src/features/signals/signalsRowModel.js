@@ -1144,3 +1144,153 @@ export const summarizeSignalsRows = (rows = []) => {
   });
   return summary;
 };
+
+export const summarizeSignalsNetBias = (rows = []) => {
+  const summary = summarizeSignalsRows(rows);
+  const buy = summary.buy;
+  const sell = summary.sell;
+  const total = buy + sell;
+  const net = buy - sell;
+  const direction =
+    net > 0 ? "buy" : net < 0 ? "sell" : total ? "mixed" : null;
+  const strength = total ? Math.abs(net) / total : 0;
+  const label =
+    direction === "buy"
+      ? `Buy +${net}`
+      : direction === "sell"
+        ? `Sell +${Math.abs(net)}`
+        : total
+          ? "Balanced"
+          : "No signals";
+  return {
+    buy,
+    sell,
+    total,
+    net,
+    direction,
+    strength,
+    label,
+  };
+};
+
+const normalizeBreadthHistoryRange = (value) =>
+  String(value || "").trim() === "week" ? "week" : "day";
+
+const isoTimestampOrNull = (value) => {
+  const ms = timestampMs(value);
+  return ms ? new Date(ms).toISOString() : null;
+};
+
+const normalizedBreadthCount = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.round(number)) : 0;
+};
+
+export const normalizeSignalsBreadthHistory = (history = null) => {
+  const points = (Array.isArray(history?.points) ? history.points : [])
+    .map((point) => {
+      const at = isoTimestampOrNull(point?.at);
+      if (!at) return null;
+      const buy = normalizedBreadthCount(point?.buy);
+      const sell = normalizedBreadthCount(point?.sell);
+      const total = normalizedBreadthCount(point?.total ?? buy + sell);
+      const netValue = Number(point?.net);
+      const net = Number.isFinite(netValue) ? Math.round(netValue) : buy - sell;
+      return {
+        at,
+        buy,
+        sell,
+        net,
+        total,
+      };
+    })
+    .filter(Boolean);
+  const buyTotal = points.reduce((sum, point) => sum + point.buy, 0);
+  const sellTotal = points.reduce((sum, point) => sum + point.sell, 0);
+  const net = buyTotal - sellTotal;
+  const total = buyTotal + sellTotal;
+  return {
+    range: normalizeBreadthHistoryRange(history?.range),
+    from: isoTimestampOrNull(history?.from),
+    to: isoTimestampOrNull(history?.to),
+    generatedAt: isoTimestampOrNull(history?.generatedAt),
+    bucketMinutes: normalizedBreadthCount(history?.bucketMinutes),
+    points,
+    buyTotal,
+    sellTotal,
+    total,
+    net,
+    maxTotal: points.reduce((max, point) => Math.max(max, point.total), 0),
+    maxAbsNet: points.reduce((max, point) => Math.max(max, Math.abs(point.net)), 0),
+    direction: net > 0 ? "buy" : net < 0 ? "sell" : total ? "mixed" : null,
+    empty: total === 0,
+  };
+};
+
+export const resolveSignalDirectionFlipStates = (
+  rows = [],
+  previousDirectionsBySymbol = {},
+) => {
+  const nextDirectionsBySymbol = {};
+  const flippedSymbols = new Set();
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const symbol = normalizeSignalsTicker(row?.symbol);
+    if (!symbol) return;
+    const direction =
+      row?.direction === "buy" || row?.direction === "sell"
+        ? row.direction
+        : "";
+    const previous = previousDirectionsBySymbol?.[symbol] || "";
+    if (previous && direction && previous !== direction) {
+      flippedSymbols.add(symbol);
+    }
+    nextDirectionsBySymbol[symbol] = direction;
+  });
+  return {
+    nextDirectionsBySymbol,
+    flippedSymbols,
+  };
+};
+
+export const summarizeSignalsTimeframeDirections = (
+  rows = [],
+  timeframes = SIGNALS_TABLE_TIMEFRAMES,
+) => {
+  const summaries = (Array.isArray(timeframes) ? timeframes : SIGNALS_TABLE_TIMEFRAMES)
+    .map((timeframe) => ({
+      timeframe,
+      buy: 0,
+      sell: 0,
+      total: 0,
+      fresh: 0,
+      direction: null,
+    }));
+
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    summaries.forEach((summary) => {
+      const state = row?.matrixStatesByTimeframe?.[summary.timeframe] || null;
+      const direction = getCurrentSignalDirection(state);
+      if (direction !== "buy" && direction !== "sell") {
+        return;
+      }
+      summary[direction] += 1;
+      summary.total += 1;
+      if (isCurrentFreshSignalState(state)) {
+        summary.fresh += 1;
+      }
+    });
+  });
+
+  summaries.forEach((summary) => {
+    summary.direction =
+      summary.buy > summary.sell
+        ? "buy"
+        : summary.sell > summary.buy
+          ? "sell"
+          : summary.total
+            ? "mixed"
+            : null;
+  });
+
+  return summaries;
+};

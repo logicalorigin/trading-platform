@@ -8,6 +8,8 @@ import {
   GetSignalMonitorProfileResponse,
   GetSignalMonitorStateQueryParams,
   GetSignalMonitorStateResponse,
+  ListSignalMonitorBreadthHistoryQueryParams,
+  ListSignalMonitorBreadthHistoryResponse,
   ListSignalMonitorEventsQueryParams,
   ListSignalMonitorEventsResponse,
   UpdateSignalMonitorProfileBody,
@@ -18,6 +20,7 @@ import {
   evaluateSignalMonitorMatrix,
   getSignalMonitorProfile,
   getSignalMonitorState,
+  listSignalMonitorBreadthHistory,
   listSignalMonitorEvents,
   updateSignalMonitorProfile,
 } from "../services/signal-monitor";
@@ -64,6 +67,15 @@ router.get("/signal-monitor/state", async (req, res) => {
   const query = GetSignalMonitorStateQueryParams.parse(req.query);
   const data = GetSignalMonitorStateResponse.parse(
     await getSignalMonitorState({ ...query, staleFast: true }),
+  );
+
+  res.json(data);
+});
+
+router.get("/signal-monitor/breadth-history", async (req, res) => {
+  const query = ListSignalMonitorBreadthHistoryQueryParams.parse(req.query);
+  const data = ListSignalMonitorBreadthHistoryResponse.parse(
+    await listSignalMonitorBreadthHistory(query),
   );
 
   res.json(data);
