@@ -89,20 +89,23 @@ test("signals stack fallback denominator follows configured table timeframes", (
   assert.doesNotMatch(signalsSource, /stack\.label \|\| "0\/5"/);
 });
 
-test("signals table hydrates one shared sparkline timeline per filtered row", () => {
+test("signals table hydrates bounded visible-first sparkline timelines", () => {
   const signalsSource = source();
 
   assert.match(signalsSource, /const signalSparklineRows = useMemo/);
-  assert.match(signalsSource, /filteredRows[\s\S]*\.map\(\(row\) =>/);
+  assert.match(signalsSource, /const visibleSymbolKeys = new Set/);
+  assert.match(signalsSource, /visibleHydrationSymbols[\s\S]*signalSparklineRowKey/);
+  assert.match(signalsSource, /filteredRows\.filter\(\(row\) =>/);
+  assert.match(signalsSource, /filteredRows\.slice\(0, SIGNALS_TABLE_SPARKLINE_VISIBLE_FALLBACK_LIMIT\)/);
   assert.match(signalsSource, /new Map\([\s\S]*rowSparklines\.map\(\(rowSparkline\) => \[/);
-  assert.doesNotMatch(signalsSource, /const visibleSymbolKeys = visibleHydrationSymbols/);
   assert.doesNotMatch(signalsSource, /\.sort\(\(left, right\) => left\.key\.localeCompare\(right\.key\)\)/);
   assert.doesNotMatch(signalsSource, /signalSparklineCellKey\(row\.symbol, timeframe\)/);
   assert.match(signalsSource, /const \[signalSparklineBarsBySymbol, setSignalSparklineBarsBySymbol\] = useState/);
   assert.match(signalsSource, /fetch\("\/api\/bars\/batch"/);
   assert.match(signalsSource, /const SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT = 240/);
-  assert.match(signalsSource, /const SIGNALS_TABLE_SPARKLINE_BATCH_SIZE = 20/);
-  assert.match(signalsSource, /SIGNALS_TABLE_SPARKLINE_BATCH_CONCURRENCY/);
+  assert.match(signalsSource, /const SIGNALS_TABLE_SPARKLINE_BATCH_SIZE = 8/);
+  assert.match(signalsSource, /const SIGNALS_TABLE_SPARKLINE_BATCH_CONCURRENCY = 1/);
+  assert.match(signalsSource, /const SIGNALS_TABLE_SPARKLINE_VISIBLE_FALLBACK_LIMIT = 12/);
   assert.match(signalsSource, /setSignalSparklineBarsBySymbol\(\(current\) =>/);
   assert.match(signalsSource, /thinBarsForSignalsTableSparkline\(item\.bars \|\| \[\]\)/);
   assert.match(signalsSource, /const signalSparklineFetchReady = Boolean/);

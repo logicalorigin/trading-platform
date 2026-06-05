@@ -245,8 +245,9 @@ const SIGNAL_DRILLDOWN_CHART_TIMEFRAMES = new Set([
 const EMPTY_SIGNAL_SPARKLINE_BARS = Object.freeze({});
 const SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
 const SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT = 240;
-const SIGNALS_TABLE_SPARKLINE_BATCH_SIZE = 20;
-const SIGNALS_TABLE_SPARKLINE_BATCH_CONCURRENCY = 2;
+const SIGNALS_TABLE_SPARKLINE_BATCH_SIZE = 8;
+const SIGNALS_TABLE_SPARKLINE_BATCH_CONCURRENCY = 1;
+const SIGNALS_TABLE_SPARKLINE_VISIBLE_FALLBACK_LIMIT = 12;
 const SIGNALS_TABLE_FALLBACK_SPARKLINE_POINTS = 18;
 const SIGNALS_TABLE_SPARKLINE_REQUEST_OPTIONS = buildBarsRequestOptions(
   BARS_REQUEST_PRIORITY.visible,
@@ -2805,7 +2806,17 @@ export default function SignalsScreen({
       captureSignalsRouteDataStage(
         "sparkline-rows-planned",
         () => {
-          const rowSparklines = filteredRows
+          const visibleSymbolKeys = new Set(
+            visibleHydrationSymbols
+              .map((symbol) => signalSparklineRowKey(symbol))
+              .filter(Boolean),
+          );
+          const sourceRows = visibleSymbolKeys.size
+            ? filteredRows.filter((row) =>
+                visibleSymbolKeys.has(signalSparklineRowKey(row.symbol)),
+              )
+            : filteredRows.slice(0, SIGNALS_TABLE_SPARKLINE_VISIBLE_FALLBACK_LIMIT);
+          const rowSparklines = sourceRows
             .map((row) => ({
               key: signalSparklineRowKey(row.symbol),
               symbol: row.symbol,
@@ -2823,10 +2834,11 @@ export default function SignalsScreen({
         (value) => ({
           sparklineRows: value.length,
           sourceRows: filteredRows.length,
+          visibleRows: visibleHydrationSymbols.length,
           timeframe: SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
         }),
       ),
-    [captureSignalsRouteDataStage, filteredRows],
+    [captureSignalsRouteDataStage, filteredRows, visibleHydrationSymbols],
   );
   useEffect(() => {
     if (!active || !signalsRowsReady) {

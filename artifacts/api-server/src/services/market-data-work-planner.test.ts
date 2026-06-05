@@ -250,7 +250,8 @@ test("buildMarketDataWorkPlan defers flow scanner work outside regular trading",
   assert.equal(plan.marketSession.sessionKey, "after");
   assert.equal(plan.marketSession.earlyClose, true);
   assert.equal(plan.marketSession.regularTrading, false);
-  assert.equal(plan.marketSession.quietReason, "market_session_quiet");
+  assert.equal(plan.marketSession.equityTrading, true);
+  assert.equal(plan.marketSession.quietReason, null);
   assert.equal(plan.scanner.state, "session_quiet");
   assert.equal(plan.scanner.limitingReason, "market_session_quiet");
   assert.equal(plan.scanner.sessionEligible, false);

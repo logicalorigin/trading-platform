@@ -205,6 +205,7 @@ export type MarketDataWorkPlan = {
     sessionKey: UsEquityMarketStatus["session"]["key"];
     sessionLabel: string;
     regularTrading: boolean;
+    equityTrading: boolean;
     tradingDay: boolean;
     earlyClose: boolean;
     holidayName: string | null;
@@ -739,15 +740,17 @@ function hashString(value: string): string {
 }
 
 function buildMarketSessionPlan(status: UsEquityMarketStatus): MarketDataWorkPlan["marketSession"] {
+  const equityTrading = status.session.open;
   return {
     exchange: "XNYS",
     sessionKey: status.session.key,
     sessionLabel: status.session.label,
     regularTrading: status.session.key === "rth",
+    equityTrading,
     tradingDay: Boolean(status.calendarDay?.tradingDay),
     earlyClose: Boolean(status.calendarDay?.earlyClose),
     holidayName: status.calendarDay?.holiday ?? null,
-    quietReason: status.session.key === "rth" ? null : "market_session_quiet",
+    quietReason: equityTrading ? null : "market_session_quiet",
     nextOpenAt: status.nextOpenAt ?? null,
     nextCloseAt: status.nextCloseAt ?? null,
   };
@@ -847,7 +850,7 @@ export function buildMarketDataWorkPlan(
         "live option quotes and Greeks needed by trading workflows",
       ],
       massive: [
-        "stock snapshots, delayed/realtime aggregate fallback, historical research, and provider REST data",
+        "stock snapshots, delayed/realtime aggregate fallback, historical research, and provider REST data across open equity sessions",
         "option-chain and GEX source snapshots consumed by persisted ingest",
       ],
       rustWorker: [

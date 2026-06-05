@@ -1822,6 +1822,74 @@ test("diagnostics treat quiet market stream as healthy", async () => {
   );
 });
 
+test("diagnostics surface active Massive stock WebSocket when IBKR is quiet", async () => {
+  const collected = await collectDiagnosticSnapshot({
+    runtime: {
+      ibkr: {
+        configured: true,
+        bridgeUrlConfigured: true,
+        bridgeTokenConfigured: true,
+        reachable: true,
+        connected: true,
+        authenticated: true,
+        competing: false,
+        healthFresh: true,
+        streamFresh: false,
+        strictReady: false,
+        strictReason: "market_session_quiet",
+        streamState: "quiet",
+        streamStateReason: "market_session_quiet",
+        lastTickleAt: new Date().toISOString(),
+      },
+      providers: {
+        massive: {
+          configured: true,
+          websocket: {
+            status: "ok",
+            subscribedSymbolCount: 500,
+            activeConsumerCount: 3,
+            eventCount: 0,
+            reconnectCount: 0,
+            lastSocketMessageAgeMs: 31_000,
+            lastError: null,
+          },
+        },
+      },
+    },
+    probes: {
+      marketData: {
+        activeConsumerCount: 0,
+        unionSymbolCount: 0,
+        cachedQuoteCount: 0,
+        eventCount: 0,
+        lastEventAgeMs: null,
+        freshnessAgeMs: null,
+        streamGapCount: 0,
+        maxGapMs: null,
+        reconnectCount: 0,
+      },
+      accounts: { ok: true, count: 2 },
+      positions: { ok: true, count: 1 },
+      orders: { ok: true, count: 0 },
+    },
+  });
+
+  const marketData = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "market-data",
+  );
+  assert.equal(marketData?.status, "ok");
+  assert.equal(marketData?.metrics.streamState, "live");
+  assert.equal(
+    marketData?.metrics.streamStateReason,
+    "massive_stock_stream_subscribed",
+  );
+  assert.equal(marketData?.metrics.unionSymbolCount, 500);
+  assert.equal(marketData?.metrics.activeConsumerCount, 3);
+  assert.equal(marketData?.metrics.massiveSubscribedSymbolCount, 500);
+  assert.equal(marketData?.metrics.massiveLastSocketMessageAgeMs, 31_000);
+  assert.equal(marketData?.metrics.freshnessAgeMs, null);
+});
+
 test("diagnostics include reconnecting quote-stream errors without truncation", async () => {
   const lastError =
     "Error validating request.-'bO' : cause - Snapshot market data subscription is not applicable to generic ticks";

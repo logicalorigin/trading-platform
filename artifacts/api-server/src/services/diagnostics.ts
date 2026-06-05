@@ -561,6 +561,14 @@ function numeric(value: unknown): number | null {
   return null;
 }
 
+function minFiniteNumber(...values: Array<number | null | undefined>): number | null {
+  const finiteValues = values.filter(
+    (value): value is number =>
+      typeof value === "number" && Number.isFinite(value),
+  );
+  return finiteValues.length ? Math.min(...finiteValues) : null;
+}
+
 function textValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
@@ -1114,13 +1122,52 @@ function classifyIbkrCode(message: string): {
 function buildMarketDataMetrics(probes: JsonRecord, runtime: JsonRecord = {}): JsonRecord {
   const marketData = asJsonRecord(probes["marketData"]);
   const ibkr = asJsonRecord(runtime["ibkr"]);
-  const streamState = textValue(ibkr["streamState"]);
-  const streamStateReason = textValue(ibkr["streamStateReason"]);
-  const activeConsumerCount = numeric(marketData["activeConsumerCount"]) ?? 0;
-  const unionSymbolCount = numeric(marketData["unionSymbolCount"]) ?? 0;
+  const providers = asJsonRecord(runtime["providers"]);
+  const massiveProvider = asJsonRecord(providers["massive"]);
+  const massiveWebSocket = asJsonRecord(massiveProvider["websocket"]);
+  const ibkrStreamState = textValue(ibkr["streamState"]);
+  const ibkrStreamStateReason = textValue(ibkr["streamStateReason"]);
+  const massiveWebSocketStatus = textValue(massiveWebSocket["status"]);
+  const massiveSubscribedSymbolCount =
+    numeric(massiveWebSocket["subscribedSymbolCount"]) ?? 0;
+  const massiveActiveConsumerCount =
+    numeric(massiveWebSocket["activeConsumerCount"]) ?? 0;
+  const massiveEventCount = numeric(massiveWebSocket["eventCount"]) ?? 0;
+  const massiveReconnectCount = numeric(massiveWebSocket["reconnectCount"]) ?? 0;
+  const massiveTransportAgeMs = numeric(
+    massiveWebSocket["lastSocketMessageAgeMs"],
+  );
+  const massiveDataAgeMs = numeric(massiveWebSocket["lastMessageAgeMs"]);
+  const massiveLastError = textValue(massiveWebSocket["lastError"]);
+  const massiveStreamActive =
+    Boolean(massiveProvider["configured"]) &&
+    (massiveWebSocketStatus === "ok" ||
+      massiveSubscribedSymbolCount > 0 ||
+      massiveActiveConsumerCount > 0);
+  const streamState = massiveStreamActive
+    ? massiveLastError
+      ? "reconnecting"
+      : "live"
+    : ibkrStreamState;
+  const streamStateReason = massiveStreamActive
+    ? massiveEventCount > 0
+      ? "massive_stock_stream_active"
+      : "massive_stock_stream_subscribed"
+    : ibkrStreamStateReason;
+  const bridgeActiveConsumerCount =
+    numeric(marketData["activeConsumerCount"]) ?? 0;
+  const activeConsumerCount =
+    bridgeActiveConsumerCount + massiveActiveConsumerCount;
+  const unionSymbolCount = Math.max(
+    numeric(marketData["unionSymbolCount"]) ?? 0,
+    massiveSubscribedSymbolCount,
+  );
   const cachedQuoteCount = numeric(marketData["cachedQuoteCount"]) ?? 0;
-  const eventCount = numeric(marketData["eventCount"]) ?? 0;
-  const reconnectCount = numeric(marketData["reconnectCount"]) ?? 0;
+  const eventCount = (numeric(marketData["eventCount"]) ?? 0) + massiveEventCount;
+  const reconnectCount = Math.max(
+    numeric(marketData["reconnectCount"]) ?? 0,
+    massiveReconnectCount,
+  );
   const streamGapCount =
     numeric(marketData["dataGapCount"]) ??
     numeric(marketData["streamGapCount"]) ??
@@ -1140,9 +1187,13 @@ function buildMarketDataMetrics(probes: JsonRecord, runtime: JsonRecord = {}): J
     numeric(marketData["lastDataGapAgeMs"]) ??
     numeric(marketData["lastGapAgeMs"]);
   const lastEventAgeMs = numeric(marketData["lastEventAgeMs"]);
-  const transportFreshnessAgeMs = numeric(marketData["transportFreshnessAgeMs"]);
+  const transportFreshnessAgeMs = minFiniteNumber(
+    numeric(marketData["transportFreshnessAgeMs"]),
+    massiveTransportAgeMs,
+  );
   const dataFreshnessAgeMs =
-    numeric(marketData["dataFreshnessAgeMs"]) ?? lastEventAgeMs;
+    minFiniteNumber(numeric(marketData["dataFreshnessAgeMs"]), massiveDataAgeMs) ??
+    lastEventAgeMs;
   const freshnessAgeMs =
     transportFreshnessAgeMs ??
     numeric(marketData["freshnessAgeMs"]) ??
@@ -1151,13 +1202,19 @@ function buildMarketDataMetrics(probes: JsonRecord, runtime: JsonRecord = {}): J
     streamState === "live" &&
     freshnessAgeMs !== null &&
     freshnessAgeMs < 2_000;
+  const massiveSubscribedWithoutEvents =
+    massiveStreamActive && massiveEventCount === 0 && !massiveLastError;
   const currentLastError = streamCurrentlyFresh
     ? null
-    : textValue(marketData["lastError"]);
+    : (massiveLastError ?? textValue(marketData["lastError"]));
   const thresholdFreshnessAgeMs =
-    streamState === "quiet" ? null : freshnessAgeMs;
+    streamState === "quiet" || massiveSubscribedWithoutEvents
+      ? null
+      : freshnessAgeMs;
   const thresholdMaxGapMs =
-    streamState === "quiet" || streamCurrentlyFresh
+    streamState === "quiet" ||
+    streamCurrentlyFresh ||
+    massiveSubscribedWithoutEvents
       ? null
       : (recentMaxGapMs ?? maxGapMs);
 
@@ -1191,12 +1248,17 @@ function buildMarketDataMetrics(probes: JsonRecord, runtime: JsonRecord = {}): J
     transportFreshnessAgeMs,
     streamState,
     streamStateReason,
-    streamActive: booleanValue(marketData["streamActive"]),
+    streamActive:
+      booleanValue(marketData["streamActive"]) || massiveStreamActive,
     reconnectScheduled: booleanValue(marketData["reconnectScheduled"]),
     pressure: textValue(marketData["pressure"]),
     lastError: currentLastError,
-    rawLastError: textValue(marketData["lastError"]),
-    lastErrorAt: marketData["lastErrorAt"] ?? null,
+    rawLastError: massiveLastError ?? textValue(marketData["lastError"]),
+    lastErrorAt: massiveWebSocket["lastErrorAt"] ?? marketData["lastErrorAt"] ?? null,
+    massiveActiveConsumerCount,
+    massiveSubscribedSymbolCount,
+    massiveWebSocketStatus,
+    massiveLastSocketMessageAgeMs: massiveTransportAgeMs,
   };
 }
 
@@ -1212,6 +1274,13 @@ function classifyMarketDataSnapshot(metrics: JsonRecord): DiagnosticSeverity {
   const reconnectScheduled = metrics["reconnectScheduled"] === true;
 
   if (activeConsumerCount <= 0) {
+    return "info";
+  }
+
+  if (
+    metrics["streamStateReason"] === "massive_stock_stream_subscribed" &&
+    !metrics["lastError"]
+  ) {
     return "info";
   }
 

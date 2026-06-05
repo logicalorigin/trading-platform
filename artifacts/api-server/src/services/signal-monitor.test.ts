@@ -803,8 +803,8 @@ test("signal monitor matrix exact cells canonicalize and enforce the shared cell
   assert.equal(highPressureResolved.cells.length, 240);
 });
 
-test("signal monitor matrix exact cells keep protected foreground coverage wide under pressure", () => {
-  const staCells = Array.from({ length: 240 }, (_value, index) => ({
+test("signal monitor matrix exact cells bound STA visible coverage while keeping protected leader coverage wide", () => {
+  const staCells = Array.from({ length: 24 }, (_value, index) => ({
     symbol: `STA${String(index + 1).padStart(3, "0")}`,
     timeframe: "1m" as const,
   }));
@@ -820,20 +820,20 @@ test("signal monitor matrix exact cells keep protected foreground coverage wide 
     });
 
   assert.equal(resolved.exact, true);
-  assert.equal(resolved.cells.length, 240);
+  assert.equal(resolved.cells.length, 24);
   assert.equal(
     __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly({
       cells: staCells,
       clientRole: "algo-sta",
-        requestOrigin: "sta-visible-page",
-      }),
+      requestOrigin: "sta-visible-page",
+    }),
     false,
   );
   assert.throws(
     () =>
       __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
-        cells: [...staCells, { symbol: "STA241", timeframe: "1m" as const }],
-        allowedSymbols: [...allowedSymbols, "STA241"],
+        cells: [...staCells, { symbol: "STA025", timeframe: "1m" as const }],
+        allowedSymbols: [...allowedSymbols, "STA025"],
         pressure: "high",
         clientRole: "algo-sta",
         requestOrigin: "sta-visible-page",

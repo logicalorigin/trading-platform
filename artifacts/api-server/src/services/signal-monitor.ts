@@ -273,10 +273,10 @@ const SIGNAL_MONITOR_STA_VISIBLE_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
   number
 > = {
-  normal: 240,
-  watch: 240,
-  high: 240,
-  critical: 240,
+  normal: 48,
+  watch: 36,
+  high: 24,
+  critical: 12,
 };
 const SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,

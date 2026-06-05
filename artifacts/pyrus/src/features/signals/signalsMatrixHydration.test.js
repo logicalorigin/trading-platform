@@ -49,7 +49,7 @@ test("signals matrix hydration requests missing timeframe intent by default", ()
     "1d",
   ]);
   assert.deepEqual(plan.priorityMissingSymbols, []);
-  assert.deepEqual(plan.requestSymbols, ["AAPL", "MSFT", "NVDA"]);
+  assert.deepEqual(plan.requestSymbols, ["AAPL", "MSFT"]);
   assert.deepEqual(plan.requestTimeframes, [
     "2m",
     "5m",
@@ -58,7 +58,7 @@ test("signals matrix hydration requests missing timeframe intent by default", ()
     "1d",
     "1m",
   ]);
-  assert.equal(plan.requestCells.length, 17);
+  assert.equal(plan.requestCells.length, 11);
   assert.deepEqual(
     plan.requestCells.filter((cell) => cell.symbol === "AAPL"),
     [
@@ -249,26 +249,9 @@ test("signals matrix hydration prioritizes visible rows without dropping backgro
     "SMH",
     "AAPL",
   ]);
-  assert.deepEqual(
-    plan.requestSymbols,
-    [
-      "PLTR",
-      "MSFT",
-      "NVDA",
-      "IONQ",
-      "TSLA",
-      "META",
-      "AMZN",
-      "GOOGL",
-      "AMD",
-      "AVGO",
-      "QQQ",
-      "SPY",
-      "SMH",
-    ],
-  );
+  assert.deepEqual(plan.requestSymbols, ["PLTR", "MSFT", "NVDA", "IONQ"]);
   assert.deepEqual(plan.requestTimeframes, ["1m", "2m", "5m", "15m", "1h", "1d"]);
-  assert.equal(plan.requestCells.length, 78);
+  assert.equal(plan.requestCells.length, 24);
   assert.equal(plan.missingCellCount, 84);
 });
 
