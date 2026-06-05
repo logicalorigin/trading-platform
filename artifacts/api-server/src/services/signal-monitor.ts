@@ -191,6 +191,7 @@ const SIGNAL_MONITOR_MATRIX_SOURCE_STRATEGY =
   "native_timeframes_live_retry_exact_backfill";
 const SIGNAL_MONITOR_MATRIX_BAR_LOAD_TIMEOUT_MS = 12_000;
 const SIGNAL_MONITOR_MATRIX_STREAM_KEEPALIVE_MS = 5 * 60_000;
+const SIGNAL_MONITOR_PYTHON_SIGNAL_MATRIX_CONCURRENCY = 2;
 const DEFAULT_SIGNAL_MONITOR_BAR_SOURCE_POLICY: SignalMonitorBarSourcePolicy =
   "mixed";
 const SIGNAL_MONITOR_BARS_PRIORITY = 8;
@@ -732,16 +733,27 @@ function resolveSignalMonitorMatrixConcurrency(input: {
     cells?: SignalMonitorMatrixCellRequest[];
   };
   symbolCount: number;
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
 }) {
+  let concurrency = input.matrixSettings.concurrency;
   if (
     (input.matrixSettings.pressure === "normal" ||
       input.matrixSettings.pressure === "watch") &&
     shouldBypassSoftSignalMonitorMatrixPressure(input.request) &&
     input.symbolCount <= SIGNAL_MONITOR_MATRIX_SOFT_BYPASS_MAX_SYMBOLS
   ) {
-    return Math.max(input.matrixSettings.concurrency, input.symbolCount);
+    concurrency = Math.max(input.matrixSettings.concurrency, input.symbolCount);
   }
-  return input.matrixSettings.concurrency;
+  const env = input.env ?? process.env;
+  if (pythonComputeEnabledForSignalMatrix(env)) {
+    const pythonLimit = readSignalMonitorPositiveInteger(
+      env["PYRUS_PYTHON_SIGNAL_MATRIX_CONCURRENCY"] ??
+        env["PYRUS_PYTHON_COMPUTE_MAX_JOBS"],
+      SIGNAL_MONITOR_PYTHON_SIGNAL_MATRIX_CONCURRENCY,
+    );
+    return Math.max(1, Math.min(concurrency, pythonLimit));
+  }
+  return concurrency;
 }
 
 function signalMonitorMatrixTimeoutError(input: {

@@ -2605,6 +2605,7 @@ test("explicit leader signal matrix requests bypass soft pressure concurrency on
         symbols: ["SPY", "QQQ", "AAPL"],
       },
       symbolCount: 6,
+      env: {},
     }),
     6,
   );
@@ -2617,6 +2618,7 @@ test("explicit leader signal matrix requests bypass soft pressure concurrency on
         symbols: Array.from({ length: 24 }, (_, index) => `T${index}`),
       },
       symbolCount: 24,
+      env: {},
     }),
     4,
   );
@@ -2629,6 +2631,7 @@ test("explicit leader signal matrix requests bypass soft pressure concurrency on
         symbols: ["SPY", "QQQ", "AAPL"],
       },
       symbolCount: 6,
+      env: {},
     }),
     4,
   );
@@ -2645,6 +2648,7 @@ test("explicit leader signal matrix requests bypass soft pressure concurrency on
         symbols: ["SPY", "QQQ", "AAPL"],
       },
       symbolCount: 24,
+      env: {},
     }),
     1,
   );
@@ -2657,8 +2661,42 @@ test("explicit leader signal matrix requests bypass soft pressure concurrency on
         symbols: ["SPY", "QQQ", "AAPL"],
       },
       symbolCount: 24,
+      env: {},
     }),
     4,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.resolveSignalMonitorMatrixConcurrency({
+      matrixSettings: normalMatrixSettings,
+      request: {
+        clientRole: "leader",
+        requestOrigin: "startup",
+        symbols: ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA"],
+      },
+      symbolCount: 6,
+      env: {
+        PYRUS_PYTHON_SIGNAL_MATRIX_ENABLED: "1",
+        PYRUS_PYTHON_RESEARCH_COMPUTE_ENABLED: "1",
+      },
+    }),
+    2,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.resolveSignalMonitorMatrixConcurrency({
+      matrixSettings: normalMatrixSettings,
+      request: {
+        clientRole: "leader",
+        requestOrigin: "startup",
+        symbols: ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA"],
+      },
+      symbolCount: 6,
+      env: {
+        PYRUS_PYTHON_SIGNAL_MATRIX_ENABLED: "1",
+        PYRUS_PYTHON_RESEARCH_COMPUTE_ENABLED: "1",
+        PYRUS_PYTHON_SIGNAL_MATRIX_CONCURRENCY: "3",
+      },
+    }),
+    3,
   );
 });
 

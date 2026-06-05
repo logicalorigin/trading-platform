@@ -720,8 +720,8 @@ export class PythonComputeRouter {
     );
     const routedJobId = prefixedJobId(routed.laneId, result.jobId);
     if (terminalJobStatus(result.status)) {
-      this.activeJobs.delete(routedJobId);
-      this.activeJobs.delete(jobId);
+      this.clearActiveJob(routedJobId);
+      this.clearActiveJob(jobId);
     }
     return {
       ...result,
@@ -739,8 +739,8 @@ export class PythonComputeRouter {
       timeoutMs,
     );
     const routedJobId = prefixedJobId(routed.laneId, result.jobId);
-    this.activeJobs.delete(routedJobId);
-    this.activeJobs.delete(jobId);
+    this.clearActiveJob(routedJobId);
+    this.clearActiveJob(jobId);
     return {
       ...result,
       jobId: routedJobId,
@@ -756,17 +756,28 @@ export class PythonComputeRouter {
     const deadline = Date.now() + timeoutMs;
     const accepted = await this.submitJob(request, timeoutMs);
 
-    while (Date.now() < deadline) {
-      const remainingMs = Math.max(100, deadline - Date.now());
-      const result = await this.getJob(accepted.jobId, remainingMs);
-      if (terminalJobStatus(result.status)) {
-        return result;
+    try {
+      while (Date.now() < deadline) {
+        const remainingMs = Math.max(100, deadline - Date.now());
+        const result = await this.getJob(accepted.jobId, remainingMs);
+        if (terminalJobStatus(result.status)) {
+          return result;
+        }
+        await this.delayFn(Math.min(pollIntervalMs, remainingMs));
       }
-      await this.delayFn(Math.min(pollIntervalMs, remainingMs));
-    }
 
-    await this.cancelJob(accepted.jobId, 1_000).catch(() => null);
-    throw new Error(`Python compute job ${accepted.jobId} timed out after ${timeoutMs}ms.`);
+      await this.cancelJob(accepted.jobId, 1_000).catch(() => null);
+      throw new Error(`Python compute job ${accepted.jobId} timed out after ${timeoutMs}ms.`);
+    } finally {
+      this.clearActiveJob(accepted.jobId);
+    }
+  }
+
+  private clearActiveJob(jobId: string): void {
+    const routed = this.resolveJobRoute(jobId);
+    const routedJobId = prefixedJobId(routed.laneId, routed.innerJobId);
+    this.activeJobs.delete(routedJobId);
+    this.activeJobs.delete(jobId);
   }
 
   private resolveJobRoute(jobId: string): {

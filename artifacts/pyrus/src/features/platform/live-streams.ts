@@ -3221,6 +3221,10 @@ const accountPositionsQueryRequestsLiveQuotes = (
   params: Record<string, unknown> | null,
 ): boolean => params?.liveQuotes === true || params?.liveQuotes === "true";
 
+const shouldApplyCriticalAccountPositions = (
+  payload: AccountPageCriticalPayload,
+): boolean => payload.accountId !== "shadow";
+
 const orderTabParamMatches = (
   params: Record<string, unknown> | null,
   expected: "working" | "history",
@@ -3258,6 +3262,11 @@ const accountRiskParams = (mode: StreamMode) => ({
   detail: "fast" as const,
 });
 
+type SeedAccountPageCriticalQueryKeysOptions = {
+  seedPositions?: boolean;
+  positionsLiveQuotes?: boolean;
+};
+
 export const ACCOUNT_PERFORMANCE_CALENDAR_EQUITY_PURPOSE =
   "performance-calendar";
 
@@ -3280,9 +3289,14 @@ const isPerformanceCalendarEquityQuery = (
 
 const accountPositionsParams = (
   payload: Pick<AccountPageLivePayload, "mode" | "assetClass">,
+  options: Pick<
+    SeedAccountPageCriticalQueryKeysOptions,
+    "positionsLiveQuotes"
+  > = {},
 ) => ({
   mode: payload.mode,
   assetClass: payload.assetClass ?? undefined,
+  liveQuotes: options.positionsLiveQuotes ? true : undefined,
 });
 
 const accountClosedTradeParams = (
@@ -3308,6 +3322,7 @@ const setAccountPageQueryData = <TValue>(
 const seedAccountPageCriticalQueryKeys = (
   queryClient: ReturnType<typeof useQueryClient>,
   payload: AccountPageCriticalPayload | AccountPageLivePayload,
+  options: SeedAccountPageCriticalQueryKeysOptions = {},
 ) => {
   const modeParams = accountModeParams(payload.mode);
 
@@ -3329,15 +3344,20 @@ const seedAccountPageCriticalQueryKeys = (
     (current: AccountRiskResponse | undefined) =>
       preferNonDegradedAccountResponse(current, payload.risk),
   );
-  setAccountPageQueryData(
-    queryClient,
-    getGetAccountPositionsQueryKey(payload.accountId, accountPositionsParams(payload)),
-    (current: AccountPositionsResponse | undefined) =>
-      preferNonDegradedAccountResponse(
-        current,
-        maybeReuseAccountPositionsResponse(current, payload.positions),
+  if (options.seedPositions !== false) {
+    setAccountPageQueryData(
+      queryClient,
+      getGetAccountPositionsQueryKey(
+        payload.accountId,
+        accountPositionsParams(payload, options),
       ),
-  );
+      (current: AccountPositionsResponse | undefined) =>
+        preferNonDegradedAccountResponse(
+          current,
+          maybeReuseAccountPositionsResponse(current, payload.positions),
+        ),
+    );
+  }
   setAccountPageQueryData(
     queryClient,
     getGetAccountOrdersQueryKey(payload.accountId, {
@@ -3353,7 +3373,9 @@ const seedAccountPageLiveQueryKeys = (
   queryClient: ReturnType<typeof useQueryClient>,
   payload: AccountPageLivePayload,
 ) => {
-  seedAccountPageCriticalQueryKeys(queryClient, payload);
+  seedAccountPageCriticalQueryKeys(queryClient, payload, {
+    positionsLiveQuotes: payload.accountId === "shadow",
+  });
   setAccountPageQueryData(
     queryClient,
     getGetAccountEquityHistoryQueryKey(payload.accountId, {
@@ -3445,7 +3467,9 @@ export const applyAccountPageCriticalPayloadToCache = (
   queryClient: ReturnType<typeof useQueryClient>,
   payload: AccountPageCriticalPayload,
 ) => {
-  seedAccountPageCriticalQueryKeys(queryClient, payload);
+  seedAccountPageCriticalQueryKeys(queryClient, payload, {
+    seedPositions: shouldApplyCriticalAccountPositions(payload),
+  });
   queryClient
     .getQueryCache()
     .findAll({
@@ -3488,6 +3512,7 @@ export const applyAccountPageCriticalPayloadToCache = (
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/positions` &&
+        shouldApplyCriticalAccountPositions(payload) &&
         assetClassParamMatches(params, payload.assetClass) &&
         !accountPositionsQueryRequestsLiveQuotes(params)
       ) {
@@ -3510,7 +3535,9 @@ export const applyAccountPageCriticalPayloadToCache = (
         );
       }
     });
-  applyAccountLivePayloadToSelectorStore(payload);
+  if (shouldApplyCriticalAccountPositions(payload)) {
+    applyAccountLivePayloadToSelectorStore(payload);
+  }
 };
 
 export const applyAccountPageLivePayloadToCache = (

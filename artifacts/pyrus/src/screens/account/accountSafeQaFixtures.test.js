@@ -34,6 +34,17 @@ test("safe QA portfolio exposure fixture includes completed Greek shocks and opt
   assert.equal(fixture.risk.accountId, "shadow");
   assert.equal(fixture.positions.accountId, "shadow");
   assert.equal(optionPositions.length, 3);
+  assert.equal(
+    optionPositions.filter(
+      (position) => position.quote?.bid != null && position.quote?.ask != null,
+    ).length,
+    3,
+  );
+  assert.equal(
+    optionPositions.filter((position) => position.underlyingMarket?.price != null)
+      .length,
+    3,
+  );
   assert.equal(greekSummary.status, "completed");
   assert.equal(greekSummary.scenarioCount, 140);
   assert.equal(greekSummary.worst.estimatedPnl, -10217.5);

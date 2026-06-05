@@ -322,6 +322,72 @@ test("python compute router enforces global capacity before submitting more jobs
   assert.equal(router.getDiagnostics().global.rejectedJobs, 1);
 });
 
+test("python compute router clears active jobs when run polling fails", async () => {
+  const router = new PythonComputeRouter({
+    env: {
+      PYRUS_PYTHON_COMPUTE_ENABLED: "1",
+      PYRUS_PYTHON_COMPUTE_GLOBAL_MAX_ACTIVE_JOBS: "1",
+    },
+    runtimes: {
+      risk: {
+        ...fakeRuntime({ laneId: "risk", acceptedJobId: "job-risk-poll" }),
+        getJob: async () => {
+          throw new Error("poll failed");
+        },
+      },
+      research: fakeRuntime({ laneId: "research", acceptedJobId: "job-research-1" }),
+      backtest: fakeRuntime({ laneId: "backtest", acceptedJobId: "job-backtest-1" }),
+    },
+    delay: async () => {},
+  });
+
+  await assert.rejects(
+    () =>
+      router.runJob(
+        {
+          jobType: "greek_scenario_matrix",
+          input: { positions: [] },
+        },
+        { timeoutMs: 1_000, pollIntervalMs: 25 },
+      ),
+    /poll failed/,
+  );
+  assert.equal(router.getDiagnostics().global.activeJobs, 0);
+});
+
+test("python compute router clears active jobs when timeout cancellation fails", async () => {
+  const router = new PythonComputeRouter({
+    env: {
+      PYRUS_PYTHON_COMPUTE_ENABLED: "1",
+      PYRUS_PYTHON_COMPUTE_GLOBAL_MAX_ACTIVE_JOBS: "1",
+    },
+    runtimes: {
+      risk: {
+        ...fakeRuntime({ laneId: "risk", acceptedJobId: "job-risk-timeout" }),
+        cancelJob: async () => {
+          throw new Error("cancel failed");
+        },
+      },
+      research: fakeRuntime({ laneId: "research", acceptedJobId: "job-research-1" }),
+      backtest: fakeRuntime({ laneId: "backtest", acceptedJobId: "job-backtest-1" }),
+    },
+    delay: async () => {},
+  });
+
+  await assert.rejects(
+    () =>
+      router.runJob(
+        {
+          jobType: "greek_scenario_matrix",
+          input: { positions: [] },
+        },
+        { timeoutMs: 0, pollIntervalMs: 25 },
+      ),
+    /timed out after 0ms/,
+  );
+  assert.equal(router.getDiagnostics().global.activeJobs, 0);
+});
+
 test("python compute runtime runs jobs until completion", async () => {
   const root = mkdtempSync(join(tmpdir(), "pyrus-compute-run-"));
   writeFileSync(join(root, "pyproject.toml"), "[project]\nname = 'pyrus-compute'\n");
