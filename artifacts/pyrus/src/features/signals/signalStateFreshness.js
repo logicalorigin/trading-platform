@@ -1,4 +1,10 @@
-const NON_CURRENT_SIGNAL_STATUSES = new Set(["stale", "error", "unavailable", "unknown"]);
+const NON_CURRENT_SIGNAL_STATUSES = new Set([
+  "stale",
+  "error",
+  "pending",
+  "unavailable",
+  "unknown",
+]);
 
 export const normalizeSignalDirection = (value) => {
   const normalized = String(value || "").trim().toLowerCase();

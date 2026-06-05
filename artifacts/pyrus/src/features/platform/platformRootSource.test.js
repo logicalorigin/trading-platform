@@ -2310,7 +2310,10 @@ test("signal monitor display refreshes separately from evaluator cadence", () =>
   assert.match(source, /getSignalMatrixExactCellLimitRejection/);
   assert.match(source, /signalMatrixRejectedExactCellLimitRef/);
   assert.match(source, /SIGNAL_MATRIX_EXACT_CELL_LIMIT_RETRY_TTL_MS/);
-  assert.match(source, /const storedStateBootstrapRequest = buildSignalMatrixStoredStateBootstrapRequest/);
+  assert.match(
+    source,
+    /const storedStateBootstrapRequest = signalMatrixRequestActive\s*\?\s*null\s*:\s*buildSignalMatrixStoredStateBootstrapRequest/,
+  );
   assert.match(source, /signalMatrixStoredStateBootstrapKeyRef/);
   assert.match(source, /cells:\s*storedStateBootstrapRequest\s*\?\s*undefined\s*:\s*plan\.requestCells/);
   assert.match(source, /if \(!signalMatrixRequestActive \|\| !signalMatrixUniverseSymbols\.length\) \{/);

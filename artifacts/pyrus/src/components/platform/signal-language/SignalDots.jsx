@@ -45,9 +45,10 @@ export const SignalDots = ({
   >
     {timeframes.map((timeframe) => {
       const state = statesByTimeframe?.[timeframe];
+      const status = state?.status || "unknown";
       const direction = getCurrentSignalDirection(state);
       const hasDirection = isSignalDirection(direction);
-      const pending = !state;
+      const pending = !state || status === "pending";
       const color =
         direction === "buy"
           ? CSS_COLOR.blue
@@ -55,7 +56,6 @@ export const SignalDots = ({
             ? CSS_COLOR.red
             : CSS_COLOR.textMuted;
       const fresh = Boolean(state?.fresh);
-      const status = state?.status || "unknown";
       const label = pending
         ? `${timeframe} pending`
         : hasDirection

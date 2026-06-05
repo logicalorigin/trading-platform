@@ -9,16 +9,16 @@ const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze([
   "1d",
 ]);
 const SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 240,
-  watch: 240,
-  high: 240,
-  critical: 240,
+  normal: 48,
+  watch: 36,
+  high: 24,
+  critical: 12,
 });
 const STA_VISIBLE_PAGE_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 240,
-  watch: 240,
-  high: 240,
-  critical: 240,
+  normal: 48,
+  watch: 36,
+  high: 24,
+  critical: 12,
 });
 const REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 30,
@@ -27,16 +27,16 @@ const REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
   critical: 30,
 });
 const ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 240,
-  watch: 240,
-  high: 240,
-  critical: 240,
+  normal: 48,
+  watch: 36,
+  high: 24,
+  critical: 12,
 });
 const STA_VISIBLE_PAGE_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
-  normal: 240,
-  watch: 240,
-  high: 240,
-  critical: 240,
+  normal: 48,
+  watch: 36,
+  high: 24,
+  critical: 12,
 });
 const ACTIVE_SCREEN_REQUEST_SYMBOL_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 500,
@@ -69,6 +69,7 @@ const SIGNAL_MATRIX_CANDLE_REFRESH_MAX_GRACE_MS = 15_000;
 const SIGNAL_MATRIX_RETRY_COOLDOWN_FALLBACK_MS = 15_000;
 const NON_HYDRATED_MATRIX_STATUSES = new Set([
   "error",
+  "pending",
   "unknown",
 ]);
 const normalizeSymbol = (symbol) => symbol?.trim?.().toUpperCase?.() || "";
@@ -236,6 +237,8 @@ const normalizeTimeframes = (timeframes = DEFAULT_SIGNAL_MATRIX_TIMEFRAMES) => {
 };
 
 const cellKey = (cell) => `${cell.symbol}:${cell.timeframe}`;
+const isPendingSignalMatrixState = (state) =>
+  normalizeSignalStatus(state) === "pending";
 
 const buildHydrationMap = (states = []) => {
   const bySymbol = new Map();
@@ -320,6 +323,45 @@ export function buildSignalMatrixStoredStateBootstrapRequest({
       storedStateBootstrap: true,
     },
   };
+}
+
+export function buildSignalMatrixPendingStates({
+  requestCells = [],
+  currentStates = [],
+  evaluatedAt = new Date().toISOString(),
+} = {}) {
+  const existingKeys = new Set(
+    (Array.isArray(currentStates) ? currentStates : [])
+      .map(stateKey)
+      .filter(Boolean),
+  );
+  const seenPendingKeys = new Set();
+  return (Array.isArray(requestCells) ? requestCells : [])
+    .map((cell) => {
+      const symbol = normalizeSymbol(cell?.symbol);
+      const timeframe = String(cell?.timeframe || "").trim();
+      const key = symbol && timeframe ? `${symbol}:${timeframe}` : "";
+      if (!key || existingKeys.has(key) || seenPendingKeys.has(key)) {
+        return null;
+      }
+      seenPendingKeys.add(key);
+      return {
+        id: `signal-matrix-pending:${key}`,
+        symbol,
+        timeframe,
+        currentSignalDirection: null,
+        currentSignalAt: null,
+        currentSignalPrice: null,
+        latestBarAt: null,
+        barsSinceSignal: null,
+        fresh: false,
+        status: "pending",
+        active: true,
+        lastEvaluatedAt: evaluatedAt,
+        lastError: null,
+      };
+    })
+    .filter(Boolean);
 }
 
 const isHydratedState = (state) =>
@@ -689,7 +731,11 @@ export function mergeSignalMatrixStates({
       return;
     }
     const current = merged.get(key);
-    if (!current || readStateTimeMs(state) >= readStateTimeMs(current)) {
+    if (
+      !current ||
+      (isPendingSignalMatrixState(current) && !isPendingSignalMatrixState(state)) ||
+      readStateTimeMs(state) >= readStateTimeMs(current)
+    ) {
       merged.set(key, state);
     }
   });

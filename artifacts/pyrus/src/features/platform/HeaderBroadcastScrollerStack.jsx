@@ -446,13 +446,13 @@ const HeaderSignalIntervalContext = ({
     {WATCHLIST_SIGNAL_TIMEFRAMES.map((timeframe, index) => {
       const isLast = index === WATCHLIST_SIGNAL_TIMEFRAMES.length - 1;
       const state = statesByTimeframe?.[timeframe];
+      const status = state?.status || "unknown";
       const direction = normalizeSignalIntervalDirection(state);
       const hasDirection = Boolean(direction);
-      const pending = !state;
+      const pending = !state || status === "pending";
       const color =
         direction === "buy" ? CSS_COLOR.green : direction === "sell" ? CSS_COLOR.red : CSS_COLOR.textMuted;
       const fresh = Boolean(state?.fresh);
-      const status = state?.status || "unknown";
       const selected = timeframe === resolveHeaderSignalTimeframe(selectedTimeframe);
       const label = pending
         ? `${timeframe} pending`

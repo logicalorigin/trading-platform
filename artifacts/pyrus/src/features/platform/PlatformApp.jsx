@@ -88,6 +88,7 @@ import {
   getRuntimeTickerStoreEntryCount,
 } from "./runtimeTickerStore";
 import {
+  buildSignalMatrixPendingStates,
   buildSignalMatrixRequestPlan,
   buildSignalMatrixStoredStateBootstrapRequest,
   buildSignalMatrixSymbolSets,
@@ -4182,12 +4183,14 @@ export default function PlatformApp() {
       );
       return;
     }
-    const storedStateBootstrapRequest = buildSignalMatrixStoredStateBootstrapRequest({
-      symbols: signalMatrixUniverseSymbols,
-      currentStates: signalMatrixStatesRef.current,
-      timeframes: signalMatrixRequestTimeframes,
-      lastBootstrapKey: signalMatrixStoredStateBootstrapKeyRef.current,
-    });
+    const storedStateBootstrapRequest = signalMatrixRequestActive
+      ? null
+      : buildSignalMatrixStoredStateBootstrapRequest({
+          symbols: signalMatrixUniverseSymbols,
+          currentStates: signalMatrixStatesRef.current,
+          timeframes: signalMatrixRequestTimeframes,
+          lastBootstrapKey: signalMatrixStoredStateBootstrapKeyRef.current,
+        });
     const plan = storedStateBootstrapRequest
       ? {
           requestSymbols: storedStateBootstrapRequest.symbols,
@@ -4246,6 +4249,33 @@ export default function PlatformApp() {
     signalMatrixLastPlanRef.current = plan;
     signalMatrixEvaluationInFlightRef.current = true;
     signalMatrixEvaluationStartedAtRef.current = Date.now();
+    const pendingMatrixStates = buildSignalMatrixPendingStates({
+      requestCells: plan.requestCells,
+      currentStates: signalMatrixStatesRef.current,
+      evaluatedAt: new Date(signalMatrixEvaluationStartedAtRef.current).toISOString(),
+    });
+    if (pendingMatrixStates.length) {
+      setSignalMatrixSnapshot((current) => {
+        const nextStates = mergeSignalMatrixStates({
+          currentStates: current.states,
+          incomingStates: pendingMatrixStates,
+          knownSymbols: signalMatrixUniverseRef.current,
+        });
+        if (signalMatrixStatesEqual(current.states, nextStates)) {
+          return current;
+        }
+        signalMatrixStatesRef.current = nextStates;
+        return {
+          ...current,
+          states: nextStates,
+          timeframes: current.timeframes || SIGNAL_MATRIX_TIMEFRAMES,
+          coverage: {
+            ...(current.coverage || {}),
+            pendingCellCount: pendingMatrixStates.length,
+          },
+        };
+      });
+    }
     const automaticRequestOrigin =
       signalMatrixAutomaticRunCountRef.current === 0 ? "startup" : "poll";
     signalMatrixAutomaticRunCountRef.current += 1;

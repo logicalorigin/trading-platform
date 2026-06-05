@@ -888,8 +888,10 @@ function CompactIntervalCell({
   sparklineData = [],
   signalEvents = EMPTY_SIGNAL_EVENTS,
 }) {
+  const status = normalizeSignalStatus(state);
+  const pending = status === "pending";
   const hydrated = isHydratedSignalMatrixState(state);
-  const problem = isProblemSignalState(state);
+  const problem = !pending && isProblemSignalState(state);
   const direction = hydrated && !problem ? getCurrentSignalDirection(state) : "";
   const sparklineFallbackDirection = signalSparklineDirectionOrFallback(
     direction,
@@ -969,7 +971,7 @@ function CompactIntervalCell({
           : state?.status || "unavailable"
         : normalizeSignalStatus(state) === "stale"
           ? "stale"
-          : normalizeSignalStatus(state),
+          : status,
       lastError: state?.lastError,
       lastEvaluatedAt: state?.lastEvaluatedAt,
       latestBarAt: state?.latestBarAt,
@@ -993,9 +995,11 @@ function CompactIntervalCell({
         : Clock3;
   const content = problem
     ? `${timeframe} ${state.status || "error"} · ${state.lastError}`
-    : hydrated
-      ? `${timeframe} ${direction || "none"} · ${formatBars(state.barsSinceSignal)} · ${intervalAge} · ${sparklinePoints.length || 0} bars`
-      : `${timeframe} not hydrated`;
+    : pending
+      ? `${timeframe} pending`
+      : hydrated
+        ? `${timeframe} ${direction || "none"} · ${formatBars(state.barsSinceSignal)} · ${intervalAge} · ${sparklinePoints.length || 0} bars`
+        : `${timeframe} not hydrated`;
   return (
     <AppTooltip content={content}>
       <span
@@ -1082,7 +1086,13 @@ function CompactIntervalCell({
                 fontSize: textSize("captionStrong"),
               }}
             >
-              {problem ? "Err" : hydrated ? formatCompactBars(state.barsSinceSignal) : MISSING_VALUE}
+              {problem
+                ? "Err"
+                : pending
+                  ? "Wait"
+                  : hydrated
+                    ? formatCompactBars(state.barsSinceSignal)
+                    : MISSING_VALUE}
             </span>
             <span
               data-testid={`signals-${timeframe}-age`}
@@ -1092,7 +1102,7 @@ function CompactIntervalCell({
                 fontSize: fs(9),
               }}
             >
-              {hydrated ? intervalAge : ""}
+              {hydrated ? intervalAge : pending ? "queued" : ""}
             </span>
           </span>
         </span>
