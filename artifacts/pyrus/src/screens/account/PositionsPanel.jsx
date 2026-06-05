@@ -502,6 +502,66 @@ const positionOpenedOnCurrentMarketDay = (openedAt, now = new Date()) => {
   return Boolean(openedKey && nowKey && openedKey === nowKey);
 };
 
+const optionPositionMultiplier = (row) => {
+  if (!isOptionPosition(row)) return 1;
+  return firstFiniteNumber(
+    row?.optionContract?.multiplier,
+    row?.optionContract?.sharesPerContract,
+    100,
+  );
+};
+
+const optionPriceLooksContractScaled = (row, price, multiplier) => {
+  if (!isOptionPosition(row) || multiplier == null || multiplier <= 1 || price <= 0) {
+    return false;
+  }
+
+  const quantity = Math.abs(firstFiniteNumber(row?.quantity) ?? 0);
+  const marketValue = Math.abs(firstFiniteNumber(row?.marketValue) ?? 0);
+  const unrealizedPnl = firstFiniteNumber(row?.unrealizedPnl);
+  const rawAveragePrice = firstFiniteNumber(row?.averagePrice, row?.averageCost);
+  const rawMarketPrice = firstFiniteNumber(row?.marketPrice, row?.mark);
+  const rawPriceIsFlatFallback =
+    rawAveragePrice != null &&
+    rawMarketPrice != null &&
+    Math.abs(rawAveragePrice - rawMarketPrice) <= 1e-9 &&
+    unrealizedPnl != null &&
+    Math.abs(unrealizedPnl) <= 0.01;
+  if (price >= multiplier * 0.5 && rawPriceIsFlatFallback) {
+    return true;
+  }
+
+  const inferredCostBasis =
+    marketValue > 0 && unrealizedPnl != null
+      ? Math.abs(marketValue - unrealizedPnl)
+      : null;
+  if (inferredCostBasis != null && inferredCostBasis > 1e-9 && quantity > 1e-9) {
+    const contractScaledBasis = Math.abs(price * quantity);
+    const premiumBasis = Math.abs(price * quantity * multiplier);
+    const contractScaledDistance =
+      Math.abs(contractScaledBasis - inferredCostBasis) / inferredCostBasis;
+    const premiumDistance =
+      Math.abs(premiumBasis - inferredCostBasis) / inferredCostBasis;
+    if (contractScaledDistance <= 0.02 && premiumDistance > 0.02) {
+      return true;
+    }
+    if (premiumDistance <= 0.02 && contractScaledDistance > 0.02) {
+      return false;
+    }
+  }
+
+  return price >= multiplier * 0.5;
+};
+
+const normalizeOptionPremiumPrice = (row, value) => {
+  const price = firstFiniteNumber(value);
+  if (price == null) return null;
+  const multiplier = optionPositionMultiplier(row);
+  return optionPriceLooksContractScaled(row, price, multiplier)
+    ? price / multiplier
+    : price;
+};
+
 const applyLiveOptionQuoteToRow = (row, liveQuote) => {
   const optionQuote = mergeLiveOptionQuote(row.optionQuote, liveQuote);
   if (!optionQuote && !liveQuote) return row;
@@ -523,12 +583,8 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
     row.mark,
   );
   const quantity = firstFiniteNumber(row.quantity);
-  const averageCost = firstFiniteNumber(row.averageCost);
-  const multiplier = firstFiniteNumber(
-    row.optionContract?.multiplier,
-    row.optionContract?.sharesPerContract,
-    100,
-  );
+  const averageCost = normalizeOptionPremiumPrice(row, row.averageCost);
+  const multiplier = optionPositionMultiplier(row);
   const marketValue =
     mark != null && quantity != null && multiplier != null
       ? mark * quantity * multiplier
@@ -568,6 +624,7 @@ const applyLiveOptionQuoteToRow = (row, liveQuote) => {
   return {
     ...row,
     optionQuote: displayOptionQuote,
+    averageCost: averageCost ?? row.averageCost,
     mark,
     dayChange: preserveBackendDayChange ? row.dayChange : dayChange,
     dayChangePercent: preserveBackendDayChange

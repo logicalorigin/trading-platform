@@ -465,6 +465,48 @@ test("positions panel normalizes option quote valuation when live stream has no 
   assert.equal(Number(weighted.weightPercent.toFixed(2)), 0.76);
 });
 
+test("positions panel normalizes contract-scaled option average cost before P&L", () => {
+  const { applyLiveOptionQuoteToRow } = __positionsPanelInternalsForTests;
+  const patched = applyLiveOptionQuoteToRow(
+    {
+      id: "real-f-call",
+      accountId: "U24762790",
+      source: "LIVE",
+      symbol: "F",
+      assetClass: "Options",
+      quantity: 5,
+      averageCost: 103.96825,
+      mark: 103.96825,
+      marketValue: 51_984.125,
+      weightPercent: 754.05,
+      unrealizedPnl: 0,
+      optionContract: {
+        underlying: "F",
+        expirationDate: "2026-06-26",
+        strike: 15,
+        right: "CALL",
+        multiplier: 100,
+        sharesPerContract: 100,
+      },
+      optionQuote: {
+        bid: 0.84,
+        ask: 0.88,
+        mark: 0.86,
+        change: -0.3,
+        changePercent: -26.55,
+        source: "option_quote",
+      },
+    },
+    null,
+  );
+
+  assert.equal(Number(patched.averageCost.toFixed(6)), 1.039683);
+  assert.equal(Number(patched.mark.toFixed(2)), 0.86);
+  assert.equal(Number(patched.marketValue.toFixed(2)), 430);
+  assert.equal(Number(patched.unrealizedPnl.toFixed(2)), -89.84);
+  assert.equal(Number(patched.unrealizedPnlPercent.toFixed(2)), -17.28);
+});
+
 test("positions display totals tolerate missing totals while positions load", () => {
   const { buildDisplayTotals } = __positionsPanelInternalsForTests;
   const totals = buildDisplayTotals([], null);

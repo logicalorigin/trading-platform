@@ -878,6 +878,104 @@ const optionQuoteDisplayMark = (
     fallback,
   );
 
+type OptionPricedPosition = {
+  assetClass?: unknown;
+  optionContract?: {
+    multiplier?: unknown;
+    sharesPerContract?: unknown;
+  } | null;
+  quantity?: unknown;
+  averagePrice?: unknown;
+  averageCost?: unknown;
+  marketPrice?: unknown;
+  mark?: unknown;
+  marketValue?: unknown;
+  unrealizedPnl?: unknown;
+};
+
+const isOptionPricedPosition = (position: OptionPricedPosition): boolean =>
+  Boolean(position.optionContract) ||
+  ["option", "options"].includes(String(position.assetClass || "").toLowerCase());
+
+const optionPositionMultiplier = (position: OptionPricedPosition): number => {
+  if (!isOptionPricedPosition(position)) {
+    return 1;
+  }
+  const multiplier =
+    finiteOptionNumber(
+      position.optionContract?.multiplier,
+      position.optionContract?.sharesPerContract,
+    ) ?? 100;
+  return multiplier > 0 ? multiplier : 100;
+};
+
+const optionPriceLooksContractScaled = (
+  position: OptionPricedPosition,
+  price: number,
+  multiplier: number,
+): boolean => {
+  if (!isOptionPricedPosition(position) || multiplier <= 1 || price <= 0) {
+    return false;
+  }
+
+  const quantity = Math.abs(finiteOptionNumber(position.quantity) ?? 0);
+  const marketValue = Math.abs(finiteOptionNumber(position.marketValue) ?? 0);
+  const unrealizedPnl = finiteOptionNumber(position.unrealizedPnl);
+  const rawAveragePrice = finiteOptionNumber(
+    position.averagePrice,
+    position.averageCost,
+  );
+  const rawMarketPrice = finiteOptionNumber(position.marketPrice, position.mark);
+  const rawPriceIsFlatFallback =
+    rawAveragePrice !== null &&
+    rawMarketPrice !== null &&
+    Math.abs(rawAveragePrice - rawMarketPrice) <= 1e-9 &&
+    unrealizedPnl !== null &&
+    Math.abs(unrealizedPnl) <= 0.01;
+  if (price >= multiplier * 0.5 && rawPriceIsFlatFallback) {
+    return true;
+  }
+
+  const inferredCostBasis =
+    marketValue > 0 && unrealizedPnl !== null
+      ? Math.abs(marketValue - unrealizedPnl)
+      : null;
+  if (
+    inferredCostBasis !== null &&
+    inferredCostBasis > 1e-9 &&
+    quantity > 1e-9
+  ) {
+    const contractScaledBasis = Math.abs(price * quantity);
+    const premiumBasis = Math.abs(price * quantity * multiplier);
+    const contractScaledDistance =
+      Math.abs(contractScaledBasis - inferredCostBasis) / inferredCostBasis;
+    const premiumDistance =
+      Math.abs(premiumBasis - inferredCostBasis) / inferredCostBasis;
+    if (contractScaledDistance <= 0.02 && premiumDistance > 0.02) {
+      return true;
+    }
+    if (premiumDistance <= 0.02 && contractScaledDistance > 0.02) {
+      return false;
+    }
+  }
+
+  return price >= multiplier * 0.5;
+};
+
+const normalizeOptionPremiumPrice = (
+  position: OptionPricedPosition,
+  value: unknown,
+): number | null => {
+  const price = finiteOptionNumber(value);
+  if (price === null) {
+    return null;
+  }
+  const multiplier = optionPositionMultiplier(position);
+  return optionPriceLooksContractScaled(position, price, multiplier)
+    ? price / multiplier
+    : price;
+};
+
 const patchAccountPositionRowFromOptionQuote = (
   row: AccountPositionRow,
   quote: LiveOptionQuoteSnapshot,
@@ -896,12 +994,9 @@ const patchAccountPositionRowFromOptionQuote = (
 
   const mark = optionQuoteDisplayMark(quote, row.mark);
   const quantity = finiteOptionNumber(row.quantity);
-  const averageCost = finiteOptionNumber(row.averageCost);
+  const averageCost = normalizeOptionPremiumPrice(row, row.averageCost);
   const multiplier =
-    finiteOptionNumber(
-      row.optionContract?.multiplier,
-      row.optionContract?.sharesPerContract,
-    ) ?? 100;
+    optionPositionMultiplier(row);
   const marketValue =
     mark !== null && quantity !== null ? mark * quantity * multiplier : row.marketValue;
   const unrealizedPnl =
@@ -991,6 +1086,7 @@ const patchAccountPositionRowFromOptionQuote = (
   return {
     ...row,
     optionQuote,
+    averageCost: averageCost ?? row.averageCost,
     mark: mark ?? row.mark,
     marketValue,
     unrealizedPnl,
@@ -2788,18 +2884,104 @@ const weightPercentFromNav = (
 
 const streamPositionMark = (position: StreamPosition): number =>
   Number.isFinite(position.marketPrice) && Math.abs(position.marketPrice) > 1e-9
-    ? position.marketPrice
-    : position.averagePrice;
+    ? normalizeOptionPremiumPrice(position, position.marketPrice) ?? 0
+    : normalizeOptionPremiumPrice(position, position.averagePrice) ?? 0;
+
+const streamPositionAveragePrice = (position: StreamPosition): number =>
+  normalizeOptionPremiumPrice(position, position.averagePrice) ?? 0;
+
+const streamPositionMarketValue = (position: StreamPosition): number => {
+  const mark = streamPositionMark(position);
+  const quantity = finiteOptionNumber(position.quantity);
+  const multiplier = optionPositionMultiplier(position);
+  return mark !== null && quantity !== null
+    ? mark * quantity * multiplier
+    : position.marketValue;
+};
+
+const streamPositionUnrealizedPnl = (position: StreamPosition): number => {
+  const mark = streamPositionMark(position);
+  const averagePrice = streamPositionAveragePrice(position);
+  const quantity = finiteOptionNumber(position.quantity);
+  const multiplier = optionPositionMultiplier(position);
+  return mark !== null &&
+    averagePrice !== null &&
+    quantity !== null &&
+    multiplier !== null
+    ? (mark - averagePrice) * quantity * multiplier
+    : position.unrealizedPnl;
+};
+
+const streamPositionUnrealizedPnlPercent = (
+  position: StreamPosition,
+): number => {
+  const unrealizedPnl = streamPositionUnrealizedPnl(position);
+  const averagePrice = streamPositionAveragePrice(position);
+  const quantity = finiteOptionNumber(position.quantity);
+  const multiplier = optionPositionMultiplier(position);
+  const costBasis =
+    averagePrice !== null && quantity !== null && multiplier !== null
+      ? Math.abs(averagePrice * quantity * multiplier)
+      : null;
+  return unrealizedPnl !== null && costBasis && costBasis > 0
+    ? (unrealizedPnl / costBasis) * 100
+    : position.unrealizedPnlPercent;
+};
+
+const streamPositionIsFlatCostBasisFallback = (
+  position: StreamPosition,
+): boolean => {
+  const rawAveragePrice = finiteOptionNumber(position.averagePrice);
+  const rawMarketPrice = finiteOptionNumber(position.marketPrice);
+  const quantity = finiteOptionNumber(position.quantity);
+  const marketValue = Math.abs(finiteOptionNumber(position.marketValue) ?? 0);
+  const unrealizedPnl = finiteOptionNumber(position.unrealizedPnl);
+  if (
+    rawAveragePrice === null ||
+    rawMarketPrice === null ||
+    quantity === null ||
+    marketValue <= 0 ||
+    unrealizedPnl === null ||
+    Math.abs(rawAveragePrice - rawMarketPrice) > 1e-9 ||
+    Math.abs(unrealizedPnl) > 0.01
+  ) {
+    return false;
+  }
+
+  const multiplier = optionPositionMultiplier(position);
+  const normalizedAveragePrice = streamPositionAveragePrice(position);
+  const possibleCostBases = [
+    rawAveragePrice * quantity,
+    rawAveragePrice * quantity * multiplier,
+    normalizedAveragePrice * quantity * multiplier,
+  ].map((value) => Math.abs(value));
+  return possibleCostBases.some(
+    (costBasis) =>
+      costBasis > 1e-9 &&
+      Math.abs(costBasis - marketValue) / Math.max(costBasis, marketValue) <=
+        0.02,
+  );
+};
 
 const streamPositionHasMarketMark = (position: StreamPosition): boolean => {
+  if (streamPositionIsFlatCostBasisFallback(position)) {
+    return false;
+  }
+
+  const averagePrice = streamPositionAveragePrice(position);
+  const reportedMarketPrice = normalizeOptionPremiumPrice(
+    position,
+    position.marketPrice,
+  );
+  const multiplier = optionPositionMultiplier(position);
   const hasNonZeroMarketPrice =
-    Number.isFinite(position.marketPrice) && Math.abs(position.marketPrice) > 1e-9;
+    reportedMarketPrice !== null && Math.abs(reportedMarketPrice) > 1e-9;
   const hasNonZeroMarketValue =
     Number.isFinite(position.marketValue) && Math.abs(position.marketValue) > 0.01;
-  const costBasisValue = position.averagePrice * position.quantity;
+  const costBasisValue = averagePrice * position.quantity * multiplier;
   const marketPriceDiffersFromAverage =
     hasNonZeroMarketPrice &&
-    Math.abs(position.marketPrice - position.averagePrice) > 0.005;
+    Math.abs((reportedMarketPrice ?? 0) - averagePrice) > 0.005;
   const marketValueDiffersFromCost =
     Math.abs(position.marketValue - costBasisValue) > 0.01;
   return (
@@ -2914,12 +3096,15 @@ const accountPositionRowFromStream = (
   accountId: string,
 ): AccountPositionRow => {
   const hasMarketMark = streamPositionHasMarketMark(position);
+  const averageCost = streamPositionAveragePrice(position);
   const mark = hasMarketMark
     ? streamPositionMark(position)
     : current?.mark ?? streamPositionMark(position);
   const marketValue = hasMarketMark
-    ? position.marketValue
+    ? streamPositionMarketValue(position)
     : current?.marketValue ?? position.marketValue;
+  const unrealizedPnl = streamPositionUnrealizedPnl(position);
+  const unrealizedPnlPercent = streamPositionUnrealizedPnlPercent(position);
 
   return {
     ...(current || {}),
@@ -2932,15 +3117,15 @@ const accountPositionRowFromStream = (
     optionContract: position.optionContract ?? null,
     sector: current?.sector ?? "",
     quantity: position.quantity,
-    averageCost: position.averagePrice,
+    averageCost,
     mark,
     dayChange: current?.dayChange ?? null,
     dayChangePercent: current?.dayChangePercent ?? null,
     unrealizedPnl: hasMarketMark
-      ? position.unrealizedPnl
+      ? unrealizedPnl
       : current?.unrealizedPnl ?? position.unrealizedPnl,
     unrealizedPnlPercent: hasMarketMark
-      ? position.unrealizedPnlPercent
+      ? unrealizedPnlPercent
       : current?.unrealizedPnlPercent ?? position.unrealizedPnlPercent,
     marketValue,
     weightPercent: hasMarketMark
@@ -2984,13 +3169,21 @@ const patchCombinedAccountPositions = (
 
   payload.positions.forEach((position) => {
     const key = streamPositionGroupKey(position);
+    const averagePrice = streamPositionAveragePrice(position);
     const mark = streamPositionMark(position);
     const hasMarketMark = streamPositionHasMarketMark(position);
+    const currentRow = currentById.get(key);
+    if (!hasMarketMark && !currentRow) {
+      return;
+    }
+    const marketValue = streamPositionMarketValue(position);
+    const unrealizedPnl = streamPositionUnrealizedPnl(position);
+    const unrealizedPnlPercent = streamPositionUnrealizedPnlPercent(position);
     const quantityWeight = Math.abs(position.quantity);
-    const valueWeight = Math.abs(position.marketValue);
+    const valueWeight = Math.abs(marketValue);
     const currentGroup = groups.get(key) ?? {
       first: position,
-      current: currentById.get(key),
+      current: currentRow,
       accounts: new Set<string>(),
       quantity: 0,
       averageCostAccumulator: 0,
@@ -3005,14 +3198,14 @@ const patchCombinedAccountPositions = (
 
     currentGroup.accounts.add(position.accountId);
     currentGroup.quantity += position.quantity;
-    currentGroup.averageCostAccumulator += position.averagePrice * quantityWeight;
+    currentGroup.averageCostAccumulator += averagePrice * quantityWeight;
     currentGroup.markAccumulator += mark * quantityWeight;
     currentGroup.averageWeight += quantityWeight;
     currentGroup.hasMarketMark ||= hasMarketMark;
-    currentGroup.marketValue += position.marketValue;
-    currentGroup.unrealizedPnl += position.unrealizedPnl;
+    currentGroup.marketValue += marketValue;
+    currentGroup.unrealizedPnl += unrealizedPnl;
     currentGroup.unrealizedPnlPercentAccumulator +=
-      (position.unrealizedPnlPercent ?? 0) * valueWeight;
+      (unrealizedPnlPercent ?? 0) * valueWeight;
     currentGroup.unrealizedWeight += valueWeight;
     groups.set(key, currentGroup);
   });
@@ -3102,6 +3295,11 @@ const patchAccountPositionsFromStream = (
           base.positions,
           payload.positions
             .filter((position) => position.accountId === accountId)
+            .filter(
+              (position) =>
+                streamPositionHasMarketMark(position) ||
+                base.positions.some((row) => row.id === position.id),
+            )
             .map((position) =>
               accountPositionRowFromStream(
                 position,

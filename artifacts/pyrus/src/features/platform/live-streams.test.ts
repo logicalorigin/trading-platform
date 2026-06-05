@@ -824,6 +824,60 @@ test("option quote stream aligns patched option marks to two-sided bid ask", () 
   assert.equal(Number(patched.totals.netExposure.toFixed(2)), 430);
 });
 
+test("option quote stream normalizes polluted IBKR option average cost before P&L", () => {
+  const current = {
+    accountId: "combined",
+    positions: [
+      {
+        id: "option:F:2026-06-26:15:call",
+        accountId: "U1",
+        accounts: ["U1"],
+        symbol: "F",
+        assetClass: "Options",
+        optionContract: {
+          underlying: "F",
+          expirationDate: "2026-06-26",
+          strike: 15,
+          right: "call",
+          multiplier: 100,
+          sharesPerContract: 100,
+          providerContractId: "880754762",
+        },
+        quantity: 5,
+        averageCost: 103.96825,
+        mark: 103.96825,
+        marketValue: 51_984.125,
+        unrealizedPnl: 0,
+        unrealizedPnlPercent: 0,
+        dayChange: null,
+        dayChangePercent: null,
+      },
+    ],
+    totals: { netExposure: 51_984.125, grossLong: 51_984.125, unrealizedPnl: 0 },
+  };
+
+  const patched = patchAccountPositionsFromOptionQuotes(current as any, [
+    {
+      symbol: "F20260626C15",
+      providerContractId: "880754762",
+      bid: 0.84,
+      ask: 0.88,
+      price: 0.83,
+      change: -0.3,
+      changePercent: -26.55,
+      updatedAt: "2026-06-04T21:05:01.100Z",
+      source: "option_quote",
+    } as any,
+  ]) as any;
+
+  assert.equal(Number(patched.positions[0].averageCost.toFixed(6)), 1.039683);
+  assert.equal(Number(patched.positions[0].mark.toFixed(2)), 0.86);
+  assert.equal(Number(patched.positions[0].marketValue.toFixed(2)), 430);
+  assert.equal(Number(patched.positions[0].unrealizedPnl.toFixed(2)), -89.84);
+  assert.equal(Number(patched.positions[0].unrealizedPnlPercent.toFixed(2)), -17.28);
+  assert.equal(Number(patched.totals.unrealizedPnl.toFixed(2)), -89.84);
+});
+
 const stockQuote = (
   symbol: string,
   price: number,
@@ -2688,6 +2742,191 @@ test("applyIbkrAccountPayloadToCache does not seed scoped positions from cost-ba
   );
 
   assert.equal(writes.has(JSON.stringify(positionsKey)), false);
+});
+
+test("applyIbkrAccountPayloadToCache does not seed option rows from contract-scaled cost basis", () => {
+  const positionsKey = [
+    "/api/accounts/U1/positions",
+    { mode: "live", assetClass: "Options" },
+  ];
+  const { queryClient, writes } = createMockQueryClient([positionsKey]);
+
+  applyIbkrAccountPayloadToCache(
+    queryClient as any,
+    {
+      accounts: [
+        {
+          id: "U1",
+          providerAccountId: "U1",
+          provider: "ibkr",
+          mode: "live",
+          displayName: "IBKR U1",
+          currency: "USD",
+          cash: 10_000,
+          buyingPower: 50_000,
+          netLiquidation: 100_000,
+          updatedAt: "2026-06-04T21:05:03.000Z",
+        },
+      ],
+      positions: [
+        {
+          id: "U1:880754762",
+          accountId: "U1",
+          symbol: "F",
+          assetClass: "option",
+          quantity: 5,
+          averagePrice: 103.96825,
+          marketPrice: 103.96825,
+          marketValue: 51_984.125,
+          unrealizedPnl: 0,
+          unrealizedPnlPercent: 0,
+          optionContract: {
+            ticker: "F20260626C15",
+            underlying: "F",
+            expirationDate: "2026-06-26T00:00:00.000Z",
+            strike: 15,
+            right: "call",
+            multiplier: 100,
+            sharesPerContract: 100,
+            providerContractId: "880754762",
+          },
+        },
+      ],
+    } as any,
+    { accountId: "U1", mode: "live" },
+  );
+
+  assert.equal(writes.has(JSON.stringify(positionsKey)), false);
+});
+
+test("applyIbkrAccountPayloadToCache does not seed fallback options beside valid stock rows", () => {
+  const positionsKey = [
+    "/api/accounts/U1/positions",
+    { mode: "live", assetClass: "Options" },
+  ];
+  const { queryClient, writes } = createMockQueryClient([positionsKey]);
+
+  applyIbkrAccountPayloadToCache(
+    queryClient as any,
+    {
+      accounts: [
+        {
+          id: "U1",
+          providerAccountId: "U1",
+          provider: "ibkr",
+          mode: "live",
+          displayName: "IBKR U1",
+          currency: "USD",
+          cash: 10_000,
+          buyingPower: 50_000,
+          netLiquidation: 100_000,
+          updatedAt: "2026-06-04T21:05:03.000Z",
+        },
+      ],
+      positions: [
+        {
+          id: "U1:FCEL",
+          accountId: "U1",
+          symbol: "FCEL",
+          assetClass: "stock",
+          quantity: 100,
+          averagePrice: 13.35,
+          marketPrice: 20.97,
+          marketValue: 2_097,
+          unrealizedPnl: 762,
+          unrealizedPnlPercent: 57.06,
+          optionContract: null,
+        },
+        {
+          id: "U1:880754762",
+          accountId: "U1",
+          symbol: "F",
+          assetClass: "option",
+          quantity: 5,
+          averagePrice: 103.96825,
+          marketPrice: 103.96825,
+          marketValue: 51_984.125,
+          unrealizedPnl: 0,
+          unrealizedPnlPercent: 0,
+          optionContract: {
+            ticker: "F20260626C15",
+            underlying: "F",
+            expirationDate: "2026-06-26T00:00:00.000Z",
+            strike: 15,
+            right: "call",
+            multiplier: 100,
+            sharesPerContract: 100,
+            providerContractId: "880754762",
+          },
+        },
+      ],
+    } as any,
+    { accountId: "U1", mode: "live" },
+  );
+
+  const patched = writes.get(JSON.stringify(positionsKey)) as any;
+  assert.deepEqual(patched.positions, []);
+});
+
+test("applyIbkrAccountPayloadToCache normalizes live option stream valuation units", () => {
+  const positionsKey = [
+    "/api/accounts/U1/positions",
+    { mode: "live", assetClass: "Options" },
+  ];
+  const { queryClient, writes } = createMockQueryClient([positionsKey]);
+
+  applyIbkrAccountPayloadToCache(
+    queryClient as any,
+    {
+      accounts: [
+        {
+          id: "U1",
+          providerAccountId: "U1",
+          provider: "ibkr",
+          mode: "live",
+          displayName: "IBKR U1",
+          currency: "USD",
+          cash: 10_000,
+          buyingPower: 50_000,
+          netLiquidation: 100_000,
+          updatedAt: "2026-06-04T21:05:03.000Z",
+        },
+      ],
+      positions: [
+        {
+          id: "U1:880754762",
+          accountId: "U1",
+          symbol: "F",
+          assetClass: "option",
+          quantity: 5,
+          averagePrice: 103.96825,
+          marketPrice: 0.86,
+          marketValue: 430,
+          unrealizedPnl: -89.84125,
+          unrealizedPnlPercent: -17.28,
+          optionContract: {
+            ticker: "F20260626C15",
+            underlying: "F",
+            expirationDate: "2026-06-26T00:00:00.000Z",
+            strike: 15,
+            right: "call",
+            multiplier: 100,
+            sharesPerContract: 100,
+            providerContractId: "880754762",
+          },
+        },
+      ],
+    } as any,
+    { accountId: "U1", mode: "live" },
+  );
+
+  const seeded = writes.get(JSON.stringify(positionsKey)) as any;
+  assert.equal(Number(seeded.positions[0].averageCost.toFixed(6)), 1.039683);
+  assert.equal(Number(seeded.positions[0].mark.toFixed(2)), 0.86);
+  assert.equal(Number(seeded.positions[0].marketValue.toFixed(2)), 430);
+  assert.equal(Number(seeded.positions[0].unrealizedPnl.toFixed(2)), -89.84);
+  assert.equal(Number(seeded.positions[0].unrealizedPnlPercent.toFixed(2)), -17.28);
+  assert.equal(Number(seeded.totals.unrealizedPnl.toFixed(2)), -89.84);
 });
 
 test("applyIbkrAccountPayloadToCache preserves hydrated marks when stream only reports cost basis", () => {
