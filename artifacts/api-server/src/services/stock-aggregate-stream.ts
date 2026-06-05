@@ -120,7 +120,10 @@ let activeStreamSource: StockMinuteAggregateSource | "none" = "none";
 let refreshTimer: NodeJS.Timeout | null = null;
 let fanoutTimer: NodeJS.Timeout | null = null;
 let heartbeatTimer: NodeJS.Timeout | null = null;
-const pendingFanoutBySymbol = new Map<string, StockMinuteAggregateMessage>();
+const pendingFanoutBySymbol = new Map<
+  string,
+  { message: StockMinuteAggregateMessage; observedAt: number }
+>();
 const aggregateStatsBySymbol = new Map<string, SymbolAggregateStats>();
 let aggregateEventCount = 0;
 let aggregateGapCount = 0;
@@ -221,22 +224,39 @@ function recordAggregateHistory(message: StockMinuteAggregateMessage): void {
   }
 
   const normalizedMessage = { ...message, symbol };
-  const existing = aggregateHistoryBySymbol.get(symbol) ?? [];
-  const next = [...existing];
-  const matchingIndex = next.findIndex((entry) => entry.startMs === message.startMs);
-  if (matchingIndex >= 0) {
-    next[matchingIndex] = normalizedMessage;
-  } else {
-    next.push(normalizedMessage);
+  const cutoffMs = message.startMs - AGGREGATE_HISTORY_RETENTION_MS;
+  const history = aggregateHistoryBySymbol.get(symbol);
+  if (!history) {
+    aggregateHistoryBySymbol.set(symbol, [normalizedMessage]);
+    return;
   }
 
-  const cutoffMs = message.startMs - AGGREGATE_HISTORY_RETENTION_MS;
-  aggregateHistoryBySymbol.set(
-    symbol,
-    next
-      .filter((entry) => entry.startMs >= cutoffMs)
-      .sort((left, right) => left.startMs - right.startMs),
-  );
+  const last = history[history.length - 1];
+  if (last?.startMs === message.startMs) {
+    history[history.length - 1] = normalizedMessage;
+  } else if (!last || message.startMs > last.startMs) {
+    history.push(normalizedMessage);
+  } else {
+    const matchingIndex = history.findIndex(
+      (entry) => entry.startMs === message.startMs,
+    );
+    if (matchingIndex >= 0) {
+      history[matchingIndex] = normalizedMessage;
+    } else {
+      const insertIndex = history.findIndex(
+        (entry) => entry.startMs > message.startMs,
+      );
+      history.splice(
+        insertIndex >= 0 ? insertIndex : history.length,
+        0,
+        normalizedMessage,
+      );
+    }
+  }
+
+  while (history.length > 0 && history[0].startMs < cutoffMs) {
+    history.shift();
+  }
 }
 
 function broadcastAggregate(message: StockMinuteAggregateMessage) {
@@ -250,19 +270,27 @@ function broadcastAggregate(message: StockMinuteAggregateMessage) {
 }
 
 function flushAggregateFanout() {
+  if (fanoutTimer) {
+    clearTimeout(fanoutTimer);
+  }
   fanoutTimer = null;
-  const messages = Array.from(pendingFanoutBySymbol.values());
+  const fanoutItems = Array.from(pendingFanoutBySymbol.values());
   pendingFanoutBySymbol.clear();
-  messages.forEach(broadcastAggregate);
+  fanoutItems.forEach(({ message, observedAt }) => {
+    recordAggregateEvent(message.symbol, observedAt);
+    recordAggregateHistory(message);
+    broadcastAggregate(message);
+  });
 }
 
 function scheduleAggregateFanout(
   message: StockMinuteAggregateMessage,
   observedAt = Date.now(),
 ) {
-  recordAggregateEvent(message.symbol, observedAt);
-  recordAggregateHistory(message);
-  pendingFanoutBySymbol.set(aggregateFanoutKey(message), message);
+  pendingFanoutBySymbol.set(aggregateFanoutKey(message), {
+    message,
+    observedAt,
+  });
   if (fanoutTimer) {
     return;
   }

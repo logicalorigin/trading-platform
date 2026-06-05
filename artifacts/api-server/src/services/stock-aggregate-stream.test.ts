@@ -240,6 +240,7 @@ test("stock aggregate diagnostics track per-symbol freshness", () => {
         },
         0,
       );
+      __stockAggregateStreamTestInternals.flushAggregateFanout();
 
       const diagnostics = getStockAggregateStreamDiagnostics();
       assert.equal(diagnostics.perSymbol[0]?.symbol, "SPY");
@@ -291,6 +292,7 @@ test("stock aggregate stream retains recent minute aggregate history", () => {
         },
         60_000,
       );
+      __stockAggregateStreamTestInternals.flushAggregateFanout();
 
       const history = getRecentStockMinuteAggregateHistory({ symbol: "spy" });
       assert.deepEqual(
@@ -311,6 +313,80 @@ test("stock aggregate stream retains recent minute aggregate history", () => {
         getRecentStockMinuteAggregateHistory({ symbol: "SPY" }),
         [],
       );
+    } finally {
+      unsubscribe();
+      __stockAggregateStreamTestInternals.reset();
+    }
+  });
+});
+
+test("stock aggregate stream coalesces repeated same-minute quote updates before fanout", () => {
+  withAggregateRuntimeEnv({}, () => {
+    setIbkrBridgeRuntimeOverride({
+      baseUrl: "https://runtime-bridge.example.com",
+      apiToken: "runtime-token",
+    });
+    __stockAggregateStreamTestInternals.reset();
+    const messages: unknown[] = [];
+    const unsubscribe = subscribeStockMinuteAggregates(["SPY"], (message) => {
+      messages.push(message);
+    });
+
+    try {
+      [100, 101, 99].forEach((price, index) => {
+        __stockAggregateStreamTestInternals.handleQuoteSnapshot(
+          {
+            quotes: [
+              {
+                symbol: "SPY",
+                price,
+                bid: 0,
+                ask: 0,
+                volume: 1_000 + index * 100,
+              } as any,
+            ],
+          },
+          index * 1_000,
+        );
+      });
+
+      let diagnostics = getStockAggregateStreamDiagnostics();
+      assert.equal(messages.length, 0);
+      assert.equal(diagnostics.pendingFanoutCount, 1);
+      assert.equal(diagnostics.perSymbol[0]?.eventCount, 0);
+
+      __stockAggregateStreamTestInternals.flushAggregateFanout();
+
+      assert.equal(messages.length, 1);
+      assert.equal((messages[0] as any).open, 100);
+      assert.equal((messages[0] as any).high, 101);
+      assert.equal((messages[0] as any).low, 99);
+      assert.equal((messages[0] as any).close, 99);
+      assert.equal((messages[0] as any).volume, 200);
+      assert.deepEqual(
+        getRecentStockMinuteAggregateHistory({ symbol: "SPY" }).map((message) => ({
+          startMs: message.startMs,
+          open: message.open,
+          high: message.high,
+          low: message.low,
+          close: message.close,
+          volume: message.volume,
+        })),
+        [
+          {
+            startMs: 0,
+            open: 100,
+            high: 101,
+            low: 99,
+            close: 99,
+            volume: 200,
+          },
+        ],
+      );
+
+      diagnostics = getStockAggregateStreamDiagnostics();
+      assert.equal(diagnostics.pendingFanoutCount, 0);
+      assert.equal(diagnostics.perSymbol[0]?.eventCount, 1);
     } finally {
       unsubscribe();
       __stockAggregateStreamTestInternals.reset();

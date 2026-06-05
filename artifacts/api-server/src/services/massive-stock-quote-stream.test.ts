@@ -5,6 +5,7 @@ import {
   __massiveStockQuoteStreamInternalsForTests,
   getCurrentMassiveStockQuoteSnapshots,
   getMassiveStockQuoteStreamDiagnostics,
+  subscribeMassiveStockQuoteSnapshots,
 } from "./massive-stock-quote-stream";
 import {
   __stockQuoteDayChangeContextTestInternals,
@@ -103,6 +104,61 @@ test("Massive stock quote stream carries day-change context onto live trade pric
   assert.equal(quote?.change, 2.1200000000000045);
   assert.equal(quote?.changePercent, 0.4257028112449808);
   assert.equal(quote?.volume, 1_000_000);
+});
+
+test("Massive stock quote stream batches changed-symbol snapshots", () => {
+  withMassiveRealtimeEnv(() => {
+    const payloads: Array<{ quotes: Array<{ symbol: string; price: number }> }> = [];
+    const unsubscribe = subscribeMassiveStockQuoteSnapshots(
+      ["SPY", "QQQ"],
+      (payload) => {
+        payloads.push(payload);
+      },
+    );
+
+    try {
+      __massiveStockQuoteStreamInternalsForTests.handleWebSocketMessage({
+        ev: "T",
+        sym: "SPY",
+        p: 500,
+        t: Date.parse("2026-05-27T20:30:00.000Z"),
+      });
+      __massiveStockQuoteStreamInternalsForTests.handleWebSocketMessage({
+        ev: "T",
+        sym: "QQQ",
+        p: 450,
+        t: Date.parse("2026-05-27T20:30:00.000Z"),
+      });
+
+      assert.equal(payloads.length, 0);
+      __massiveStockQuoteStreamInternalsForTests.flushSnapshotNotifications();
+
+      assert.equal(payloads.length, 1);
+      assert.deepEqual(
+        payloads[0]?.quotes.map((quote) => [quote.symbol, quote.price]).sort(),
+        [
+          ["QQQ", 450],
+          ["SPY", 500],
+        ],
+      );
+
+      __massiveStockQuoteStreamInternalsForTests.handleWebSocketMessage({
+        ev: "T",
+        sym: "SPY",
+        p: 501,
+        t: Date.parse("2026-05-27T20:30:01.000Z"),
+      });
+      __massiveStockQuoteStreamInternalsForTests.flushSnapshotNotifications();
+
+      assert.equal(payloads.length, 2);
+      assert.deepEqual(
+        payloads[1]?.quotes.map((quote) => [quote.symbol, quote.price]),
+        [["SPY", 501]],
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
 });
 
 test("Massive stock quote stream diagnostics expose WebSocket channels", () => {

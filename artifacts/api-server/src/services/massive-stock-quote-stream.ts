@@ -37,12 +37,15 @@ type QuoteState = {
 const subscribers = new Map<number, Subscriber>();
 const quoteCacheBySymbol = new Map<string, QuoteState>();
 const REFRESH_DEBOUNCE_MS = 150;
+const SNAPSHOT_NOTIFY_FLUSH_MS = 100;
 
 let nextSubscriberId = 1;
 let subscriptionSignature = "";
 let refreshTimer: NodeJS.Timeout | null = null;
+let snapshotNotifyTimer: NodeJS.Timeout | null = null;
 let transportUnsubscribe: (() => void) | null = null;
 let eventCount = 0;
+const pendingSnapshotSymbols = new Set<string>();
 
 export function isMassiveStockQuoteStreamConfigured(): boolean {
   return isMassiveStocksRealtimeConfigured();
@@ -156,16 +159,46 @@ export function getCurrentMassiveStockQuoteSnapshots(
   return getCurrentPayload(symbols).quotes;
 }
 
-function notifySubscribers(symbol: string): void {
+function clearSnapshotNotifyTimer(): void {
+  if (snapshotNotifyTimer) {
+    clearTimeout(snapshotNotifyTimer);
+    snapshotNotifyTimer = null;
+  }
+}
+
+function flushSnapshotNotifications(): void {
+  clearSnapshotNotifyTimer();
+  const symbols = Array.from(pendingSnapshotSymbols);
+  pendingSnapshotSymbols.clear();
+  if (!symbols.length) {
+    return;
+  }
+
   subscribers.forEach((subscriber) => {
-    if (!subscriber.symbols.has(symbol)) {
+    const matchedSymbols = symbols.filter((symbol) => subscriber.symbols.has(symbol));
+    if (!matchedSymbols.length) {
       return;
     }
-    const payload = getCurrentPayload(Array.from(subscriber.symbols));
+    const payload = getCurrentPayload(matchedSymbols);
     if (payload.quotes.length) {
       subscriber.onSnapshot(payload);
     }
   });
+}
+
+function scheduleSnapshotNotification(symbol: string): void {
+  if (!subscribers.size) {
+    return;
+  }
+  pendingSnapshotSymbols.add(symbol);
+  if (snapshotNotifyTimer) {
+    return;
+  }
+  snapshotNotifyTimer = setTimeout(
+    flushSnapshotNotifications,
+    SNAPSHOT_NOTIFY_FLUSH_MS,
+  );
+  snapshotNotifyTimer.unref?.();
 }
 
 function mergeQuoteState(input: Partial<QuoteState> & { symbol: string }): void {
@@ -185,7 +218,7 @@ function mergeQuoteState(input: Partial<QuoteState> & { symbol: string }): void 
     updatedAt: input.updatedAt ?? existing?.updatedAt ?? new Date(),
   });
   eventCount += 1;
-  notifySubscribers(symbol);
+  scheduleSnapshotNotification(symbol);
 }
 
 function handleWebSocketMessage(message: unknown): void {
@@ -287,6 +320,10 @@ export function subscribeMassiveStockQuoteSnapshots(
 
   return () => {
     subscribers.delete(subscriberId);
+    if (!subscribers.size) {
+      pendingSnapshotSymbols.clear();
+      clearSnapshotNotifyTimer();
+    }
     scheduleRefresh();
   };
 }
@@ -298,17 +335,21 @@ export function getMassiveStockQuoteStreamDiagnostics() {
     configured: isMassiveStockQuoteStreamConfigured(),
     activeConsumerCount: subscribers.size,
     cachedQuoteCount: quoteCacheBySymbol.size,
+    pendingSnapshotSymbolCount: pendingSnapshotSymbols.size,
     eventCount,
   };
 }
 
 export const __massiveStockQuoteStreamInternalsForTests = {
   handleWebSocketMessage,
+  flushSnapshotNotifications,
   reset() {
     closeTransport();
     clearRefreshTimer();
+    clearSnapshotNotifyTimer();
     subscribers.clear();
     quoteCacheBySymbol.clear();
+    pendingSnapshotSymbols.clear();
     nextSubscriberId = 1;
     eventCount = 0;
     __massiveStockWebSocketInternalsForTests.reset();
