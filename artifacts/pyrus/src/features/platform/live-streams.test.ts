@@ -24,6 +24,7 @@ import {
   patchAccountPositionsFromOptionQuotes,
   patchOptionQuotesIntoContracts,
   queueAccountPagePayloadToCache,
+  OPTION_QUOTE_WEBSOCKET_STALL_MS,
 } from "./live-streams";
 
 const optionQuote = (
@@ -238,6 +239,10 @@ test("option quote REST fallback preserves websocket owner and intent", () => {
   assert.match(hookBody, /socket = new WebSocket\(webSocketUrl\);\s*seedRestSnapshot\(\);/);
   assert.doesNotMatch(hookBody, /!normalizedUnderlying/);
   assert.match(hookBody, /normalizedProviderContractIds\.length === 0/);
+});
+
+test("option quote websocket stall window exceeds heartbeat cadence", () => {
+  assert.ok(OPTION_QUOTE_WEBSOCKET_STALL_MS >= 30_000);
 });
 
 test("account critical queries stay mounted after page readiness", () => {

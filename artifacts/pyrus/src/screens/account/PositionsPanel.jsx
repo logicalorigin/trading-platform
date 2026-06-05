@@ -488,11 +488,17 @@ const marketDateKey = (value) => {
 const positionOpenedOnCurrentMarketDay = (openedAt, now = new Date()) => {
   const opened = dateOrNull(openedAt);
   const observedAt = dateOrNull(now);
-  if (!opened || !observedAt || opened.getTime() > observedAt.getTime()) {
+  if (!opened || !observedAt) {
     return false;
   }
   const openedKey = marketDateKey(opened);
   const nowKey = marketDateKey(observedAt);
+  if (openedKey && nowKey && openedKey === nowKey) {
+    return true;
+  }
+  if (opened.getTime() > observedAt.getTime()) {
+    return false;
+  }
   return Boolean(openedKey && nowKey && openedKey === nowKey);
 };
 

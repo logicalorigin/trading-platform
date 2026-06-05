@@ -5512,7 +5512,6 @@ async function fetchShadowMassiveOptionDayChangeQuotes(
         strike: request.contract.strike,
         right: request.contract.right,
         optionTicker: request.optionTicker,
-        providerContractId: request.contract.providerContractId,
         skipBrokerContractResolution: true,
         timeframe: "1m",
         from,
@@ -5983,9 +5982,12 @@ async function readShadowPositionDayChanges(
           const quoteIdentifier = shadowOptionQuoteIdentifier(
             asOptionContract(position.optionContract),
           );
+          const quote = quoteIdentifier
+            ? optionQuoteByProviderContractId?.get(quoteIdentifier)
+            : null;
           return (
             quoteIdentifier &&
-            !optionQuoteByProviderContractId?.has(quoteIdentifier)
+            !shadowOptionQuoteCanBuildDayChange(quote)
           );
         })
       : quoteCandidatePositions;

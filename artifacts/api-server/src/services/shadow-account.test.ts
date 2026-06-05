@@ -2355,6 +2355,63 @@ test("shadow option day change ignores frozen quote valuation", () => {
   );
 });
 
+test("shadow option day change can use Massive option aggregate bars", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  const contract = {
+    ticker: "SPY 260608P00758000",
+    underlying: "SPY",
+    expirationDate: new Date("2026-06-08T00:00:00.000Z"),
+    strike: 758,
+    right: "put" as const,
+    multiplier: 100,
+    sharesPerContract: 100,
+    providerContractId: null,
+  };
+
+  assert.equal(
+    internals.shadowMassiveOptionTicker(contract),
+    "O:SPY260608P00758000",
+  );
+
+  const quote = internals.shadowMassiveOptionDayChangeQuote({
+    contract,
+    providerContractId: "twsopt:spy-put",
+    bars: [
+      {
+        timestamp: new Date("2026-06-03T19:59:00.000Z"),
+        close: 2,
+        open: 1.9,
+        high: 2.1,
+        low: 1.8,
+        volume: 100,
+      },
+      {
+        timestamp: new Date("2026-06-04T19:59:00.000Z"),
+        close: 2.5,
+        open: 2.2,
+        high: 2.6,
+        low: 2.1,
+        volume: 150,
+      },
+    ] as never,
+  }) as Record<string, unknown>;
+
+  assert.equal(quote.source, "massive-option-aggregates");
+  assert.equal(quote.providerContractId, "twsopt:spy-put");
+  assert.equal(quote.mark, 2.5);
+  assert.equal(quote.prevClose, 2);
+  assert.equal(quote.change, 0.5);
+  assert.equal(quote.changePercent, 25);
+
+  const dayChange = internals.buildShadowPositionDayChangeFromQuote({
+    quantity: 2,
+    multiplier: 100,
+    quote,
+  });
+  assert.equal(dayChange.dayChange, 100);
+  assert.equal(dayChange.dayChangePercent, 25);
+});
+
 test("shadow positions expose market-data symbols from contract or ledger key", () => {
   const internals = __shadowWatchlistBacktestInternalsForTests;
 
@@ -4003,6 +4060,7 @@ test("shadow default day-change quotes are requested only for rows needing fallb
   assert.match(fetchQuotesBody, /declareIbkrLiveDemand/);
   assert.match(fetchQuotesBody, /readIbkrLiveDemandState/);
   assert.match(fetchQuotesBody, /const owner = options\.ownerPrefix \?\? "shadow-position:ledger:day-change"/);
+  assert.match(fetchQuotesBody, /fetchShadowMassiveOptionDayChangeQuotes/);
   assert.doesNotMatch(fetchQuotesBody, /shadow-position-day-change/);
   assert.doesNotMatch(fetchQuotesBody, /ownerPrefix \?\? "shadow-position:ledger:day-change"}:\$\{quoteUnderlying/);
   assert.doesNotMatch(fetchQuotesBody, /fetchOptionQuoteSnapshotPayload/);
@@ -4301,6 +4359,8 @@ test("shadow quote hydration routes spot display quotes to Massive and option ma
     /optionQuoteSnapshot\s*\?\s*"option_quote"\s*:\s*equityQuote\s*\?\s*"massive"/,
   );
   assert.match(positionsBody, /sameDayPosition && hasFiniteValuationMark/);
+  assert.match(source, /fetchShadowMassiveOptionDayChangeQuotes/);
+  assert.match(source, /source: "massive-option-aggregates"/);
   assert.match(boundedUnderlyingBody, /allowMassiveFallback: false/);
   assert.match(boundedUnderlyingBody, /admissionOwner: `shadow-underlying-mark:\$\{symbols\}`/);
   assert.match(boundedUnderlyingBody, /admissionFallbackProvider: "cache"/);
