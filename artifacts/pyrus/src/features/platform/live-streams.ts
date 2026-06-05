@@ -3217,6 +3217,10 @@ const assetClassParamMatches = (
     : current == null || current === "all";
 };
 
+const accountPositionsQueryRequestsLiveQuotes = (
+  params: Record<string, unknown> | null,
+): boolean => params?.liveQuotes === true || params?.liveQuotes === "true";
+
 const orderTabParamMatches = (
   params: Record<string, unknown> | null,
   expected: "working" | "history",
@@ -3484,7 +3488,8 @@ export const applyAccountPageCriticalPayloadToCache = (
         );
       } else if (
         path === `/api/accounts/${payload.accountId}/positions` &&
-        assetClassParamMatches(params, payload.assetClass)
+        assetClassParamMatches(params, payload.assetClass) &&
+        !accountPositionsQueryRequestsLiveQuotes(params)
       ) {
         queryClient.setQueryData(
           query.queryKey,

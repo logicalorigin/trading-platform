@@ -161,7 +161,8 @@ test("shadow account positions route forwards automation scope and live quote op
   assert.match(accountBody, /liveQuotes\?: boolean/);
   assert.match(accountBody, /getShadowAccountPositions\(\{\s*assetClass: input\.assetClass,\s*source: input\.source,\s*liveQuotes: input\.liveQuotes,/);
   assert.ok(cacheKeyBody);
-  assert.doesNotMatch(cacheKeyBody, /includeLiveQuotes|live-quotes|cached-quotes/);
+  assert.match(cacheKeyBody, /includeLiveQuotes: boolean/);
+  assert.match(cacheKeyBody, /input\.includeLiveQuotes \? "live-quotes" : "cached-quotes"/);
 });
 
 test("live quote and flow defaults require explicit Massive opt-in", () => {

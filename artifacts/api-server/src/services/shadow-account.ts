@@ -52,7 +52,10 @@ import {
   declareIbkrLiveDemand,
   readIbkrLiveDemandState,
 } from "./ibkr-live-demand-coordinator";
-import { notifyShadowAccountChanged } from "./shadow-account-events";
+import {
+  notifyShadowAccountChanged,
+  type ShadowAccountChangeReason,
+} from "./shadow-account-events";
 import { loadStoredMarketBars } from "./market-data-store";
 import type { MarketDataIntent } from "./market-data-admission";
 import {
@@ -3257,6 +3260,33 @@ async function computeShadowTotals(): Promise<ShadowTotals> {
   return computeShadowTotalsForSource(null);
 }
 
+function buildShadowCashActivityTotalsFromAccount(account: ShadowAccountRow): ShadowTotals {
+  const startingBalance = toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
+  const cash = toNumber(account.cash) ?? startingBalance;
+  const realizedPnl = toNumber(account.realizedPnl) ?? 0;
+  const fees = toNumber(account.fees) ?? 0;
+  return {
+    cash,
+    startingBalance,
+    realizedPnl,
+    unrealizedPnl: 0,
+    fees,
+    marketValue: 0,
+    netLiquidation: cash,
+    updatedAt: account.updatedAt,
+  };
+}
+
+async function resolveShadowCashActivityTotals(input: {
+  source: ShadowSourceScope | null;
+  account: ShadowAccountRow;
+}): Promise<ShadowTotals> {
+  if (!input.source) {
+    return buildShadowCashActivityTotalsFromAccount(input.account);
+  }
+  return computeShadowTotalsForSource(input.source);
+}
+
 async function computeWatchlistBacktestStartingBook(): Promise<WatchlistBacktestStartingBook> {
   const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
   const startingBalance = toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
@@ -3311,7 +3341,15 @@ async function computeWatchlistBacktestStartingBook(): Promise<WatchlistBacktest
   };
 }
 
-async function writeShadowBalanceSnapshot(source = "ledger", asOf = new Date()) {
+async function writeShadowBalanceSnapshot(
+  source = "ledger",
+  asOf = new Date(),
+  options: {
+    changeReason?: ShadowAccountChangeReason;
+    invalidateCaches?: boolean;
+  } = {},
+) {
+  const changeReason = options.changeReason ?? "ledger";
   const totals = await computeShadowSnapshotTotalsAt(source, asOf);
   await db.insert(shadowBalanceSnapshotsTable).values({
     accountId: SHADOW_ACCOUNT_ID,
@@ -3325,8 +3363,14 @@ async function writeShadowBalanceSnapshot(source = "ledger", asOf = new Date()) 
     source,
     asOf,
   });
-  invalidateShadowFreshStateCache();
-  notifyShadowAccountChanged();
+  if (changeReason === "mark_refresh") {
+    if (options.invalidateCaches !== false) {
+      invalidateShadowReadCachesAfterBackgroundMarkRefresh();
+    }
+  } else {
+    invalidateShadowFreshStateCache();
+  }
+  notifyShadowAccountChanged({ reason: changeReason });
   return totals;
 }
 
@@ -4979,7 +5023,10 @@ export async function refreshShadowPositionMarks() {
   if (updatedCount) {
     invalidateShadowReadCachesAfterBackgroundMarkRefresh();
     for (const [source, latestMarkAt] of latestMarkAtBySnapshotSource) {
-      await writeShadowBalanceSnapshot(source, latestMarkAt);
+      await writeShadowBalanceSnapshot(source, latestMarkAt, {
+        changeReason: "mark_refresh",
+        invalidateCaches: false,
+      });
     }
   }
 
@@ -7172,10 +7219,12 @@ function applyShadowAccountPositionWeights<T extends ShadowAccountPositionWeight
 function shadowPositionsReadCacheKey(input: {
   assetClassFilter: "options" | "stocks" | "all" | null;
   source: ShadowSourceScope | null;
+  includeLiveQuotes: boolean;
 }): string {
+  const quoteMode = input.includeLiveQuotes ? "live-quotes" : "cached-quotes";
   return `positions:${input.assetClassFilter || "all"}:${shadowSourceCacheKey(
     input.source,
-  )}`;
+  )}:${quoteMode}`;
 }
 
 function isShadowAccountPositionsResponseShape(
@@ -7246,6 +7295,7 @@ function filterShadowAccountPositionsResponseForAssetClass(
 function readReusableShadowPositionsResponseForAssetClass(input: {
   assetClassFilter: "options" | "stocks" | "all" | null;
   source: ShadowSourceScope | null;
+  includeLiveQuotes: boolean;
 }): ShadowAccountPositionsResponseShape | null {
   if (!input.assetClassFilter || input.assetClassFilter === "all") {
     return null;
@@ -7256,6 +7306,7 @@ function readReusableShadowPositionsResponseForAssetClass(input: {
     shadowPositionsReadCacheKey({
       assetClassFilter: "all",
       source: input.source,
+      includeLiveQuotes: input.includeLiveQuotes,
     }),
   );
   if (!cached || cached.staleExpiresAt <= now) {
@@ -7282,6 +7333,7 @@ function readReusableShadowPositionsResponseForAssetClass(input: {
     key: shadowPositionsReadCacheKey({
       assetClassFilter: input.assetClassFilter,
       source: input.source,
+      includeLiveQuotes: input.includeLiveQuotes,
     }),
     status: "cache_hit",
     startedAt: now,
@@ -7305,6 +7357,7 @@ export async function getShadowAccountPositions(input: {
   const reusableFiltered = readReusableShadowPositionsResponseForAssetClass({
     assetClassFilter,
     source,
+    includeLiveQuotes,
   });
   if (reusableFiltered) {
     return reusableFiltered;
@@ -7313,6 +7366,7 @@ export async function getShadowAccountPositions(input: {
     shadowPositionsReadCacheKey({
       assetClassFilter,
       source,
+      includeLiveQuotes,
     }),
     async () => {
       kickSignalOptionsAutomationMirrorRepairForRead(source);
@@ -7357,14 +7411,17 @@ export async function getShadowAccountPositions(input: {
             ownerPrefix: `${positionQuoteOwnerPrefix}:option-visible`,
           });
         }
-        const equityQuoteBySymbol = new Map<
-          string,
-          Partial<QuoteSnapshot> | Record<string, unknown>
-        >();
-        const underlyingMarkets = new Map<
-          string,
-          Partial<QuoteSnapshot> | Record<string, unknown>
-        >();
+        const [equityQuoteBySymbol, underlyingMarkets] = includeLiveQuotes
+          ? await Promise.all([
+              fetchShadowEquityPositionQuotes(filtered, {
+                owner: `${positionQuoteOwnerPrefix}:equity-visible`,
+              }),
+              fetchShadowOptionUnderlyingMarkets(filtered),
+            ])
+          : [
+              new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>(),
+              new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>(),
+            ];
         const optionQuoteByProviderContractId = new Map(cachedOptionQuotes);
         const observedAt = new Date();
         const dayChanges = await readShadowPositionDayChanges(
@@ -9949,7 +10006,7 @@ export async function getShadowAccountCashActivity(input: { source?: string | nu
     `cash-activity:${shadowSourceCacheKey(source)}`,
     async () => {
       try {
-        const account = await ensureShadowAccount();
+        const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
         const rawFills = await db
           .select()
           .from(shadowFillsTable)
@@ -9963,9 +10020,7 @@ export async function getShadowAccountCashActivity(input: { source?: string | nu
               isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
             );
         const feesYtd = fills.reduce((sum, fill) => sum + Math.abs(toNumber(fill.fees) ?? 0), 0);
-        const totals = source
-          ? await computeShadowTotalsForSource(source)
-          : await computeShadowTotals();
+        const totals = await resolveShadowCashActivityTotals({ source, account });
         return {
           accountId: SHADOW_ACCOUNT_ID,
           currency: SHADOW_CURRENCY,
@@ -13831,6 +13886,7 @@ async function recordShadowAutomationMark(
   await writeShadowBalanceSnapshot(
     options.markSource ?? "automation_mark",
     event.occurredAt,
+    { changeReason: "mark_refresh" },
   );
   return row.id;
 }

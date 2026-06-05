@@ -1217,7 +1217,7 @@ const AccountScreenInner = ({
           target.accountId,
           {
             ...positionsParams,
-            liveQuotes: target.accountId === "shadow" ? false : undefined,
+            liveQuotes: target.accountId === "shadow" ? true : undefined,
           },
           ACCOUNT_SWITCH_PREFETCH_OPTIONS,
         ),
@@ -1686,7 +1686,7 @@ const AccountScreenInner = ({
     {
       ...accountDataParams,
       assetClass: assetFilter === "all" ? undefined : assetFilter,
-      liveQuotes: shadowMode ? false : undefined,
+      liveQuotes: shadowMode ? true : undefined,
     },
     {
       query: {

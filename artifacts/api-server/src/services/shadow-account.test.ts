@@ -203,17 +203,18 @@ test("account page snapshot stream uses the one-second visible-page cadence", ()
   assert.equal(ACCOUNT_PAGE_STREAM_INTERVAL_MS, 1_000);
 });
 
-test("shadow account change notifier publishes successful ledger writes", () => {
-  let calls = 0;
-  const unsubscribe = subscribeShadowAccountChanges(() => {
-    calls += 1;
+test("shadow account change notifier publishes typed successful ledger writes", () => {
+  const reasons: string[] = [];
+  const unsubscribe = subscribeShadowAccountChanges((change) => {
+    reasons.push(change.reason);
   });
 
   notifyShadowAccountChanged();
+  notifyShadowAccountChanged({ reason: "mark_refresh" });
   unsubscribe();
   notifyShadowAccountChanged();
 
-  assert.equal(calls, 1);
+  assert.deepEqual(reasons, ["ledger", "mark_refresh"]);
 });
 
 test("shadow read cache coalesces repeated expensive reads until invalidated", async () => {
@@ -804,7 +805,7 @@ test("shadow filtered positions reuse fresh all-positions cache", async () => {
 
   try {
     await internals.withShadowReadCache(
-      "positions:all:ledger",
+      "positions:all:ledger:live-quotes",
       async () => ({
         accountId: "shadow",
         currency: "USD",
@@ -841,6 +842,7 @@ test("shadow filtered positions reuse fresh all-positions cache", async () => {
       internals.readReusableShadowPositionsResponseForAssetClass({
         assetClassFilter: "options",
         source: null,
+        includeLiveQuotes: true,
       }) as any;
 
     assert.equal(filtered.positions.length, 1);
@@ -876,7 +878,7 @@ test("shadow filtered positions reuse stale all-positions cache only under press
 
   try {
     await internals.withShadowReadCache(
-      "positions:all:ledger",
+      "positions:all:ledger:live-quotes",
       async () => ({
         accountId: "shadow",
         currency: "USD",
@@ -906,6 +908,7 @@ test("shadow filtered positions reuse stale all-positions cache only under press
       internals.readReusableShadowPositionsResponseForAssetClass({
         assetClassFilter: "options",
         source: null,
+        includeLiveQuotes: true,
       }),
       null,
     );
@@ -915,6 +918,7 @@ test("shadow filtered positions reuse stale all-positions cache only under press
       internals.readReusableShadowPositionsResponseForAssetClass({
         assetClassFilter: "options",
         source: null,
+        includeLiveQuotes: true,
       }) as any;
 
     assert.equal(filtered.positions.length, 1);
@@ -1008,6 +1012,28 @@ test("shadow mark refresh expires read caches before stream notification snapsho
     refreshBody.indexOf("invalidateShadowReadCachesAfterBackgroundMarkRefresh();") <
       refreshBody.indexOf("await writeShadowBalanceSnapshot("),
   );
+  assert.match(refreshBody, /changeReason: "mark_refresh"/);
+  assert.match(refreshBody, /invalidateCaches: false/);
+});
+
+test("shadow mark refresh snapshot writes avoid full fresh-state invalidation", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const snapshotBody = source.match(
+    /async function writeShadowBalanceSnapshot\([\s\S]*?\nasync function resolveEquityMark/,
+  )?.[0];
+  const markRefreshBranch = snapshotBody?.match(
+    /if \(changeReason === "mark_refresh"\) \{[\s\S]*?\n  \} else \{/,
+  )?.[0];
+
+  assert.ok(snapshotBody);
+  assert.ok(markRefreshBranch);
+  assert.match(source, /type ShadowAccountChangeReason/);
+  assert.match(snapshotBody, /notifyShadowAccountChanged\(\{ reason: changeReason \}\)/);
+  assert.match(
+    markRefreshBranch,
+    /invalidateShadowReadCachesAfterBackgroundMarkRefresh\(\)/,
+  );
+  assert.doesNotMatch(markRefreshBranch, /invalidateShadowFreshStateCache\(\)/);
 });
 
 test("shadow account snapshot invalidation clears stale in-flight base reads", () => {
@@ -1041,6 +1067,33 @@ test("shadow account snapshot invalidation clears stale in-flight base reads", (
   assert.match(
     source,
     /if \(shadowAccountSnapshotBaseInFlight === request\) \{\s*shadowAccountSnapshotBaseInFlight = null;/,
+  );
+});
+
+test("shadow account snapshot stream ignores mark refresh immediate notifications", () => {
+  const source = readFileSync(
+    new URL("./shadow-account-streams.ts", import.meta.url),
+    "utf8",
+  );
+  const immediateBody = source.match(
+    /const unsubscribeImmediate =[\s\S]*?\n  void tick\(\);/,
+  )?.[0];
+  const markRefreshBranch = immediateBody?.match(
+    /if \(change\.reason === "mark_refresh"\) \{[\s\S]*?\n\s*\}/,
+  )?.[0];
+
+  assert.ok(immediateBody);
+  assert.ok(markRefreshBranch);
+  assert.match(source, /type ShadowAccountChange/);
+  assert.match(immediateBody, /subscribeImmediate\?\.?\(\(change\) =>/);
+  assert.match(markRefreshBranch, /return;/);
+  assert.ok(
+    immediateBody.indexOf('change.reason === "mark_refresh"') <
+      immediateBody.indexOf("beforeImmediateSnapshot?.();"),
+  );
+  assert.ok(
+    immediateBody.indexOf('change.reason === "mark_refresh"') <
+      immediateBody.indexOf("void tick();"),
   );
 });
 
@@ -1789,7 +1842,7 @@ test("shadow balance snapshots are timestamped from fills and marks", () => {
 
   assert.match(
     source,
-    /async function writeShadowBalanceSnapshot\(source = "ledger", asOf = new Date\(\)\)/,
+    /async function writeShadowBalanceSnapshot\(\s*source = "ledger",\s*asOf = new Date\(\),\s*options:/,
   );
   assert.match(
     source,
@@ -1801,7 +1854,7 @@ test("shadow balance snapshots are timestamped from fills and marks", () => {
   );
   assert.match(
     source,
-    /await writeShadowBalanceSnapshot\(\s*options\.markSource \?\? "automation_mark",\s*event\.occurredAt,\s*\)/,
+    /await writeShadowBalanceSnapshot\(\s*options\.markSource \?\? "automation_mark",\s*event\.occurredAt,\s*\{ changeReason: "mark_refresh" \},\s*\)/,
   );
   assert.match(source, /shadowMarkSnapshotSourceForPosition\(position\)/);
 });
@@ -3974,12 +4027,14 @@ test("shadow positions include hydrated option quote payloads", () => {
   assert.doesNotMatch(positionsBody, /shadow-position-visible/);
   assert.doesNotMatch(positionsBody, /waitForShadowOptionDayChangeQuotes/);
   assert.doesNotMatch(positionsBody, /fetchShadowOptionDayChangeQuotes\(filtered/);
-  assert.doesNotMatch(positionsBody, /fetchShadowEquityPositionQuotes\(filtered/);
-  assert.doesNotMatch(positionsBody, /fetchShadowOptionUnderlyingMarkets\(filtered/);
+  assert.match(positionsBody, /fetchShadowEquityPositionQuotes\(filtered,\s*\{/);
+  assert.match(positionsBody, /owner: `\$\{positionQuoteOwnerPrefix\}:equity-visible`/);
+  assert.match(positionsBody, /fetchShadowOptionUnderlyingMarkets\(filtered\)/);
   assert.doesNotMatch(positionsBody, /SHADOW_VISIBLE_OPTION_QUOTE_MAX_WAIT_MS/);
   assert.doesNotMatch(positionsBody, /SHADOW_VISIBLE_OPTION_QUOTE_TASK_MAX_WAIT_MS/);
-  assert.doesNotMatch(positionsBody, /await Promise\.all\(\[/);
-  assert.match(positionsBody, /const equityQuoteBySymbol = new Map/);
+  assert.match(positionsBody, /const \[equityQuoteBySymbol, underlyingMarkets\] = includeLiveQuotes/);
+  assert.match(positionsBody, /await Promise\.all\(\[/);
+  assert.match(positionsBody, /new Map<string, Partial<QuoteSnapshot> \| Record<string, unknown>>\(\)/);
   assert.match(positionsBody, /const optionQuoteByProviderContractId = new Map\(cachedOptionQuotes\)/);
   assert.match(positionsBody, /\{ fetchMissingOptionQuotes: false \}/);
   assert.match(positionsBody, /readShadowLedgerBundleForSource\(source\)/);
@@ -4084,7 +4139,33 @@ test("shadow cash activity uses stale read cache protection", () => {
   );
   assert.match(cashActivityBody, /staleStrategy: "immediate"/);
   assert.match(cashActivityBody, /ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS/);
-  assert.match(cashActivityBody, /computeShadowTotals\(\)/);
+  assert.match(cashActivityBody, /resolveShadowCashActivityTotals\(\{ source, account \}\)/);
+  assert.doesNotMatch(cashActivityBody, /computeShadowTotals/);
+});
+
+test("shadow cash activity default totals use the maintained account aggregate", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const cashActivityBody = source.match(
+    /export async function getShadowAccountCashActivity\([\s\S]*?\nfunction timeZoneParts/,
+  )?.[0];
+  const accountTotalsBody = source.match(
+    /function buildShadowCashActivityTotalsFromAccount\([\s\S]*?\nasync function resolveShadowCashActivityTotals/,
+  )?.[0];
+  const resolverBody = source.match(
+    /async function resolveShadowCashActivityTotals\([\s\S]*?\nasync function computeWatchlistBacktestStartingBook/,
+  )?.[0];
+
+  assert.ok(cashActivityBody);
+  assert.ok(accountTotalsBody);
+  assert.ok(resolverBody);
+  assert.match(accountTotalsBody, /toNumber\(account\.cash\)/);
+  assert.match(accountTotalsBody, /updatedAt: account\.updatedAt/);
+  assert.match(
+    resolverBody,
+    /if \(!input\.source\) \{\s*return buildShadowCashActivityTotalsFromAccount\(input\.account\);/,
+  );
+  assert.match(resolverBody, /return computeShadowTotalsForSource\(input\.source\);/);
+  assert.doesNotMatch(cashActivityBody, /computeShadowTotalsForSource|computeShadowTotals\(\)/);
 });
 
 test("shadow risk exposes python greek scenario coverage", () => {

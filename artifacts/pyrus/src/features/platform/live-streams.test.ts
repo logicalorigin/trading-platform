@@ -1624,6 +1624,78 @@ test("applyAccountPageCriticalPayloadToCache keeps live option quotes while acce
   assert.equal(Number(row.unrealizedPnl.toFixed(2)), 72);
 });
 
+test("account page critical payload does not overwrite live-quote shadow positions", () => {
+  const positionsKey = [
+    "/api/accounts/shadow/positions",
+    { mode: "paper", liveQuotes: true },
+  ];
+  const initialData = new Map<string, unknown>([
+    [
+      JSON.stringify(positionsKey),
+      {
+        accountId: "shadow",
+        positions: [
+          {
+            id: "shadow-crwv",
+            accountId: "shadow",
+            assetClass: "Stocks",
+            symbol: "CRWV",
+            quantity: 1,
+            mark: 106.68,
+            quote: {
+              bid: 106.62,
+              ask: 106.74,
+              mark: 106.68,
+              source: "massive",
+            },
+          },
+        ],
+      },
+    ],
+  ]);
+  const { queryClient, writes } = createMockQueryClient(
+    [positionsKey as unknown as unknown[]],
+    initialData,
+  );
+
+  applyAccountPageCriticalPayloadToCache(queryClient as any, {
+    stream: "account-page-critical",
+    accountId: "shadow",
+    mode: "paper",
+    orderTab: "working",
+    assetClass: null,
+    updatedAt: "2026-06-04T21:00:00.000Z",
+    summary: { accountId: "shadow", metrics: {} },
+    positions: {
+      accountId: "shadow",
+      positions: [
+        {
+          id: "shadow-crwv",
+          accountId: "shadow",
+          assetClass: "Stocks",
+          symbol: "CRWV",
+          quantity: 1,
+          mark: 106,
+          quote: {
+            bid: null,
+            ask: null,
+            mark: 106,
+            source: "shadow_ledger",
+          },
+        },
+      ],
+    },
+    orders: { accountId: "shadow", tab: "working", orders: [] },
+    allocation: { accountId: "shadow", assetClass: [] },
+    risk: { accountId: "shadow", margin: {} },
+  } as any);
+
+  const current = writes.get(JSON.stringify(positionsKey)) as any;
+  assert.equal(current.positions[0].quote.bid, 106.62);
+  assert.equal(current.positions[0].quote.ask, 106.74);
+  assert.equal(current.positions[0].quote.source, "massive");
+});
+
 test("applyAccountPageDerivedPayloadToCache keeps selected 1Y and calendar equity caches separate", () => {
   const selectedOneYearEquityKey = [
     "/api/accounts/shadow/equity-history",

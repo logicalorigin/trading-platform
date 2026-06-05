@@ -7,7 +7,10 @@ import {
   getShadowAccountRisk,
   getShadowAccountSummaryFromPositions,
 } from "./shadow-account";
-import { subscribeShadowAccountChanges } from "./shadow-account-events";
+import {
+  subscribeShadowAccountChanges,
+  type ShadowAccountChange,
+} from "./shadow-account-events";
 
 type Unsubscribe = () => void;
 const SHADOW_ACCOUNT_SNAPSHOT_TTL_MS = 2_000;
@@ -90,7 +93,7 @@ function createPollingStream<T>({
   fetchSnapshot: () => Promise<T>;
   onSnapshot: (snapshot: T) => void;
   onPollSuccess?: (input: { snapshot: T; changed: boolean }) => void | Promise<void>;
-  subscribeImmediate?: (listener: () => void) => Unsubscribe;
+  subscribeImmediate?: (listener: (change: ShadowAccountChange) => void) => Unsubscribe;
   beforeImmediateSnapshot?: () => void;
 }): Unsubscribe {
   let active = true;
@@ -135,7 +138,10 @@ function createPollingStream<T>({
   }, intervalMs);
   timer.unref?.();
   const unsubscribeImmediate =
-    subscribeImmediate?.(() => {
+    subscribeImmediate?.((change) => {
+      if (change.reason === "mark_refresh") {
+        return;
+      }
       beforeImmediateSnapshot?.();
       void tick();
     }) ?? (() => undefined);

@@ -1,4 +1,10 @@
-type ShadowAccountChangeListener = () => void;
+export type ShadowAccountChangeReason = "ledger" | "mark_refresh";
+
+export type ShadowAccountChange = {
+  reason: ShadowAccountChangeReason;
+};
+
+type ShadowAccountChangeListener = (change: ShadowAccountChange) => void;
 
 const shadowAccountChangeListeners = new Set<ShadowAccountChangeListener>();
 
@@ -11,6 +17,8 @@ export function subscribeShadowAccountChanges(
   };
 }
 
-export function notifyShadowAccountChanged() {
-  shadowAccountChangeListeners.forEach((listener) => listener());
+export function notifyShadowAccountChanged(
+  change: ShadowAccountChange = { reason: "ledger" },
+) {
+  shadowAccountChangeListeners.forEach((listener) => listener(change));
 }

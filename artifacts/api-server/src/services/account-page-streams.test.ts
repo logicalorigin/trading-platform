@@ -103,5 +103,67 @@ test("shadow account page live payload refreshes deferred orders after critical"
   assert.ok(liveBody);
   assert.match(liveBody, /const isShadow = isShadowAccountId\(normalized\.accountId\);/);
   assert.match(liveBody, /isShadow\s*\?\s*getAccountOrders\(\{ \.\.\.common, tab: normalized\.orderTab \}\)/);
+  assert.match(liveBody, /isShadow\s*\?\s*getAccountPositions\(\{[\s\S]*liveQuotes: true,/);
+  assert.match(liveBody, /const positions = livePositions \?\? critical\.positions/);
+  assert.match(liveBody, /getShadowAccountSummaryFromPositions\(\{/);
+  assert.match(liveBody, /getShadowAccountAllocationFromPositions\(\{/);
+  assert.match(liveBody, /getShadowAccountRisk\(\{/);
   assert.match(liveBody, /orders: shadowOrders \?\? critical\.orders/);
+});
+
+test("shadow account page derived payload serializes expensive reads", () => {
+  const source = readFileSync(new URL("./account-page-streams.ts", import.meta.url), "utf8");
+  const derivedBody = source.match(
+    /export async function fetchAccountPageDerivedPayload\([\s\S]*?\nexport async function fetchAccountPageSnapshotPayload/,
+  )?.[0];
+  const shadowBranch = derivedBody?.match(/if \(isShadow\) \{[\s\S]*?\n      \} else \{/)?.[0];
+
+  assert.ok(derivedBody);
+  assert.ok(shadowBranch);
+  assert.match(derivedBody, /const isShadow = isShadowAccountId\(normalized\.accountId\);/);
+  assert.match(shadowBranch, /equityHistory = await getAccountEquityHistory/);
+  assert.match(shadowBranch, /for \(const benchmark of benchmarkSymbols\)/);
+  assert.match(shadowBranch, /cashActivity = await getAccountCashActivity\(common\)/);
+  assert.match(shadowBranch, /flexHealth = null/);
+  assert.doesNotMatch(shadowBranch, /Promise\.all/);
+});
+
+test("shadow account page bootstrap waits for live before derived", () => {
+  const source = readFileSync(new URL("./account-page-streams.ts", import.meta.url), "utf8");
+  const snapshotBody = source.match(
+    /export async function fetchAccountPageSnapshotPayload\([\s\S]*?\nexport function subscribeAccountPageSnapshots/,
+  )?.[0];
+
+  assert.ok(snapshotBody);
+  assert.match(
+    snapshotBody,
+    /if \(isShadowAccountId\(normalized\.accountId\)\) \{[\s\S]*live = await fetchAccountPageLivePayload\(normalized\);[\s\S]*derived = await fetchAccountPageDerivedPayload\(normalized\);/,
+  );
+  assert.match(
+    snapshotBody,
+    /else \{[\s\S]*\[live, derived\] = await Promise\.all\(\[/,
+  );
+});
+
+test("shadow account page ignores mark refresh for immediate derived reticks", () => {
+  const source = readFileSync(new URL("./account-page-streams.ts", import.meta.url), "utf8");
+  const subscriptionBody = source.match(
+    /const unsubscribeShadowChanges = isShadowAccountId\(input\.accountId\)[\s\S]*?\n\s*:\s*\(\) => undefined;/,
+  )?.[0];
+  const markRefreshBranch = subscriptionBody?.match(
+    /if \(change\.reason === "mark_refresh"\) \{[\s\S]*?\n\s*\}/,
+  )?.[0];
+
+  assert.ok(subscriptionBody);
+  assert.ok(markRefreshBranch);
+  assert.match(subscriptionBody, /subscribeShadowAccountChanges\(\(change\) =>/);
+  assert.match(markRefreshBranch, /return;/);
+  assert.ok(
+    subscriptionBody.indexOf('change.reason === "mark_refresh"') <
+      subscriptionBody.indexOf("clearAccountPageSnapshotCache();"),
+  );
+  assert.ok(
+    subscriptionBody.indexOf('change.reason === "mark_refresh"') <
+      subscriptionBody.indexOf("void tickDerived();"),
+  );
 });

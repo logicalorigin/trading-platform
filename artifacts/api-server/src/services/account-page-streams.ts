@@ -394,13 +394,42 @@ export async function fetchAccountPageLivePayload(
         mode: normalized.mode,
       };
       const isShadow = isShadowAccountId(normalized.accountId);
-      const [critical, intradayEquity, shadowOrders] = await Promise.all([
+      const [critical, intradayEquity, shadowOrders, livePositions] = await Promise.all([
         fetchAccountPageCriticalPayload(normalized),
         getAccountEquityHistory({ ...common, range: "1D" }),
         isShadow
           ? getAccountOrders({ ...common, tab: normalized.orderTab })
           : Promise.resolve(null),
+        isShadow
+          ? getAccountPositions({
+              ...common,
+              assetClass: normalized.assetClass,
+              liveQuotes: true,
+            })
+          : Promise.resolve(null),
       ]);
+      const positions = livePositions ?? critical.positions;
+      const [summary, allocation, risk] =
+        isShadow && livePositions
+          ? await Promise.all([
+              getShadowAccountSummaryFromPositions({
+                positionsResponse:
+                  livePositions as NonNullable<ShadowRiskInput["positionsResponse"]>,
+              }),
+              Promise.resolve(
+                getShadowAccountAllocationFromPositions({
+                  positionsResponse:
+                    livePositions as NonNullable<ShadowRiskInput["positionsResponse"]>,
+                }),
+              ),
+              getShadowAccountRisk({
+                positionsResponse:
+                  livePositions as NonNullable<ShadowRiskInput["positionsResponse"]>,
+                closedTrades: deferredShadowClosedTrades(normalized.accountId),
+                detail: "fast",
+              }),
+            ])
+          : [critical.summary, critical.allocation, critical.risk];
 
       const value: AccountPageLivePayload = {
         stream: "account-page-live",
@@ -409,12 +438,12 @@ export async function fetchAccountPageLivePayload(
         orderTab: normalized.orderTab,
         assetClass: normalized.assetClass,
         updatedAt: new Date().toISOString(),
-        summary: critical.summary,
+        summary,
         intradayEquity,
-        allocation: critical.allocation,
-        positions: critical.positions,
+        allocation,
+        positions,
         orders: shadowOrders ?? critical.orders,
-        risk: critical.risk,
+        risk,
       };
       return value;
     } finally {
@@ -622,35 +651,70 @@ export async function fetchAccountPageDerivedPayload(
         holdDuration: normalized.holdDuration,
       };
       const benchmarkSymbols: BenchmarkSymbol[] = ["SPY", "QQQ", "DIA"];
-      const [
-        equityHistory,
-        benchmarkRows,
-        performanceCalendarEquity,
-        performanceCalendarTrades,
-        closedTrades,
-        cashActivity,
-        flexHealth,
-      ] = await Promise.all([
-        getAccountEquityHistory({ ...common, range: normalized.range }),
-        Promise.all(
-          benchmarkSymbols.map((benchmark) =>
-            fetchAccountPageBenchmarkEquityHistory({
+      let equityHistory: AccountPageDerivedPayload["equityHistory"];
+      let benchmarkRows: AccountPageDerivedPayload["benchmarkEquityHistory"][BenchmarkSymbol][];
+      let performanceCalendarEquity: AccountPageDerivedPayload["performanceCalendarEquity"];
+      let performanceCalendarTrades: AccountPageDerivedPayload["performanceCalendarTrades"];
+      let closedTrades: AccountPageDerivedPayload["closedTrades"];
+      let cashActivity: AccountPageDerivedPayload["cashActivity"];
+      let flexHealth: AccountPageDerivedPayload["flexHealth"];
+      const isShadow = isShadowAccountId(normalized.accountId);
+
+      if (isShadow) {
+        equityHistory = await getAccountEquityHistory({ ...common, range: normalized.range });
+        benchmarkRows = [];
+        for (const benchmark of benchmarkSymbols) {
+          benchmarkRows.push(
+            await fetchAccountPageBenchmarkEquityHistory({
               ...common,
               range: normalized.range,
               benchmark,
               version,
             }),
-          ),
-        ),
-        getAccountEquityHistory({ ...common, range: "1Y" }),
-        getAccountClosedTrades({
+          );
+        }
+        performanceCalendarEquity = await getAccountEquityHistory({
+          ...common,
+          range: "1Y",
+        });
+        performanceCalendarTrades = await getAccountClosedTrades({
           ...common,
           from: normalized.performanceCalendarFrom,
-        }),
-        getAccountClosedTrades(closedTradeInput),
-        getAccountCashActivity(common),
-        isShadowAccountId(normalized.accountId) ? Promise.resolve(null) : getFlexHealth(),
-      ]);
+        });
+        closedTrades = await getAccountClosedTrades(closedTradeInput);
+        cashActivity = await getAccountCashActivity(common);
+        flexHealth = null;
+      } else {
+        [
+          equityHistory,
+          benchmarkRows,
+          performanceCalendarEquity,
+          performanceCalendarTrades,
+          closedTrades,
+          cashActivity,
+          flexHealth,
+        ] = await Promise.all([
+          getAccountEquityHistory({ ...common, range: normalized.range }),
+          Promise.all(
+            benchmarkSymbols.map((benchmark) =>
+              fetchAccountPageBenchmarkEquityHistory({
+                ...common,
+                range: normalized.range,
+                benchmark,
+                version,
+              }),
+            ),
+          ),
+          getAccountEquityHistory({ ...common, range: "1Y" }),
+          getAccountClosedTrades({
+            ...common,
+            from: normalized.performanceCalendarFrom,
+          }),
+          getAccountClosedTrades(closedTradeInput),
+          getAccountCashActivity(common),
+          getFlexHealth(),
+        ]);
+      }
 
       const value: AccountPageDerivedPayload = {
         stream: "account-page-derived",
@@ -712,10 +776,17 @@ export async function fetchAccountPageSnapshotPayload(
   }
 
   const request = (async () => {
-    const [live, derived] = await Promise.all([
-      fetchAccountPageLivePayload(normalized),
-      fetchAccountPageDerivedPayload(normalized),
-    ]);
+    let live: AccountPageLivePayload;
+    let derived: AccountPageDerivedPayload;
+    if (isShadowAccountId(normalized.accountId)) {
+      live = await fetchAccountPageLivePayload(normalized);
+      derived = await fetchAccountPageDerivedPayload(normalized);
+    } else {
+      [live, derived] = await Promise.all([
+        fetchAccountPageLivePayload(normalized),
+        fetchAccountPageDerivedPayload(normalized),
+      ]);
+    }
     const value: AccountPageSnapshotPayload = {
       stream: "account-page-bootstrap",
       accountId: normalized.accountId,
@@ -862,7 +933,10 @@ export function subscribeAccountPageSnapshots(
   firstDerivedTimer.unref?.();
 
   const unsubscribeShadowChanges = isShadowAccountId(input.accountId)
-    ? subscribeShadowAccountChanges(() => {
+    ? subscribeShadowAccountChanges((change) => {
+        if (change.reason === "mark_refresh") {
+          return;
+        }
         clearAccountPageSnapshotCache();
         invalidateShadowAccountSnapshotBaseCache();
         void tickLive();

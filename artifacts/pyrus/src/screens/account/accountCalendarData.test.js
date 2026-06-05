@@ -159,7 +159,7 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /getGetAccountPositionsQueryOptions/);
   assert.match(
     source,
-    /getGetAccountPositionsQueryOptions\(\s*target\.accountId,[\s\S]*liveQuotes: target\.accountId === "shadow" \? false : undefined/,
+    /getGetAccountPositionsQueryOptions\(\s*target\.accountId,[\s\S]*liveQuotes: target\.accountId === "shadow" \? true : undefined/,
   );
   assert.match(source, /getGetAccountOrdersQueryOptions/);
   assert.match(source, /getGetAccountEquityHistoryQueryOptions/);
@@ -182,7 +182,7 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /useGetAccountPositions\([\s\S]*placeholderData:\s*retainPreviousData/);
   assert.match(
     source,
-    /useGetAccountPositions\([\s\S]*liveQuotes: shadowMode \? false : undefined[\s\S]*placeholderData:\s*retainPreviousData/,
+    /useGetAccountPositions\([\s\S]*liveQuotes: shadowMode \? true : undefined[\s\S]*placeholderData:\s*retainPreviousData/,
   );
   assert.match(source, /useGetAccountClosedTrades\(accountRequestId,[\s\S]*placeholderData:\s*retainPreviousData/);
   assert.match(source, /useGetAccountOrders\([\s\S]*placeholderData:\s*retainPreviousData/);
