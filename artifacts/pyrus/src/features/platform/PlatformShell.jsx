@@ -674,6 +674,7 @@ export const PlatformShell = ({
   signalMonitorEventsLoaded = false,
   signalMatrixStates,
   headerSignalMatrixStates,
+  onRequestSignalMatrixHydration,
   selectedSymbol,
   sidebarCollapsed,
   setSidebarCollapsed,
@@ -814,6 +815,17 @@ export const PlatformShell = ({
         (auxiliaryDrawerViewport && (mobileActivityOpen || mobilePulseOpen)) ||
         notificationsOpen
       ),
+  );
+  const desktopActivitySidebarVisible = Boolean(
+    !auxiliaryDrawerViewport && !activitySidebarCollapsed,
+  );
+  const mobileActivityVisible = Boolean(
+    auxiliaryDrawerViewport && mobileActivityOpen,
+  );
+  const algoMonitorSurfaceDataEnabled = Boolean(
+    algoFrameRuntimeEnabled ||
+      (frameAuxiliaryDataEnabled &&
+        (desktopActivitySidebarVisible || mobileActivityVisible)),
   );
   const algoCockpitStreamFreshness = useAlgoCockpitStream({
     deploymentId: null,
@@ -1070,10 +1082,11 @@ export const PlatformShell = ({
       open={auxiliaryDrawerViewport && mobileActivityOpen}
       onClose={() => setMobileActivityOpen(false)}
       environment={environment}
-      dataEnabled={algoFrameRuntimeEnabled}
+      dataEnabled={algoMonitorSurfaceDataEnabled}
       signalMatrixStates={signalMatrixStates}
       signalMonitorEvents={signalMonitorEvents}
       signalMonitorEventsLoaded={signalMonitorEventsLoaded}
+      onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
       onOpenAlgo={(focus) => {
         setMobileActivityOpen(false);
         handleSetScreen("algo", focus);
@@ -1238,11 +1251,12 @@ export const PlatformShell = ({
           ExpandIcon={PanelRightOpen}
         >
           <PlatformAlgoMonitorSidebar
-            isVisible={!activitySidebarCollapsed}
-            dataEnabled={algoFrameRuntimeEnabled}
+            isVisible={desktopActivitySidebarVisible}
+            dataEnabled={algoMonitorSurfaceDataEnabled}
             signalMatrixStates={signalMatrixStates}
             signalMonitorEvents={signalMonitorEvents}
             signalMonitorEventsLoaded={signalMonitorEventsLoaded}
+            onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
             externalStreamFreshness={
               algoFrameRuntimeEnabled ? algoCockpitStreamFreshness : null
             }

@@ -171,27 +171,37 @@ export const HeaderAccountStrip = ({
           </span>
         )}
       </div>
-      {metricItems.map((metric) => (
-        <AppTooltip key={metric.label} content={metric.label}><div
-          key={metric.label}
-          style={{
-            display: "flex",
-            flexDirection: "row",
-            alignItems: "baseline",
-            justifyContent: "center",
-            gap: sp(dense || compact ? 3 : 5),
-            minWidth: "max-content",
-            flex: "0 0 max-content",
-            paddingLeft: sp(dense || compact ? 5 : 8),
-            borderLeft: `1px solid ${CSS_COLOR.borderLight}`,
-          }}
-        >
-          <span style={labelStyle}>{dense || compact ? metric.shortLabel : metric.label}</span>
-          <span style={{ ...valueStyle, color: metric.color }}>
-            {metric.value}
-          </span>
-        </div></AppTooltip>
-      ))}
+      {metricItems.map((metric) => {
+        const visibleLabel = dense || compact ? metric.shortLabel : metric.label;
+        const metricNode = (
+          <div
+            key={metric.label}
+            style={{
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "baseline",
+              justifyContent: "center",
+              gap: sp(dense || compact ? 3 : 5),
+              minWidth: "max-content",
+              flex: "0 0 max-content",
+              paddingLeft: sp(dense || compact ? 5 : 8),
+              borderLeft: `1px solid ${CSS_COLOR.borderLight}`,
+            }}
+          >
+            <span style={labelStyle}>{visibleLabel}</span>
+            <span style={{ ...valueStyle, color: metric.color }}>
+              {metric.value}
+            </span>
+          </div>
+        );
+        return visibleLabel !== metric.label ? (
+          <AppTooltip key={metric.label} content={metric.label}>
+            {metricNode}
+          </AppTooltip>
+        ) : (
+          metricNode
+        );
+      })}
     </div></AppTooltip>
   );
 };

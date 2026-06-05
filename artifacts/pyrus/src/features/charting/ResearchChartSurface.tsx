@@ -2551,10 +2551,8 @@ const GEX_PROJECTION_AXIS_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
 });
 const GEX_PROJECTION_VISIBLE_POINT_LIMIT = 8;
 const GEX_PROJECTION_EXPIRATION_UTC_HOUR = 20;
-const GEX_PROJECTION_AUTO_FIT_MAX_LOGICAL_BARS = 240;
+const GEX_PROJECTION_AUTO_FIT_MAX_LOGICAL_BARS = 360;
 const GEX_PROJECTION_AUTO_FIT_PADDING_BARS = 32;
-const GEX_PROJECTION_DISPLAY_MIN_LOGICAL_OFFSET = 32;
-const GEX_PROJECTION_DISPLAY_MAX_LOGICAL_OFFSET = 160;
 
 const formatGexProjectionAxisLabel = (expirationDate: string): string => {
   const normalized = String(expirationDate || "").slice(0, 10);
@@ -2735,38 +2733,10 @@ export const resolveGexProjectionDisplayLogicalOffsets = ({
     return [];
   }
 
-  const maxDisplayOffset = Math.max(
-    GEX_PROJECTION_DISPLAY_MIN_LOGICAL_OFFSET,
-    Math.min(
-      GEX_PROJECTION_DISPLAY_MAX_LOGICAL_OFFSET,
-      normalizedMaxOffset - GEX_PROJECTION_AUTO_FIT_PADDING_BARS,
-    ),
-  );
-  const shouldCompress = sourceOffsets.some(
-    (point) => point.sourceLogicalOffset > maxDisplayOffset,
-  );
-
-  if (!shouldCompress) {
-    return sourceOffsets.map((point) => ({
-      ...point,
-      logicalOffset: Math.ceil(point.sourceLogicalOffset),
-    }));
-  }
-
-  const span = Math.max(
-    0,
-    maxDisplayOffset - GEX_PROJECTION_DISPLAY_MIN_LOGICAL_OFFSET,
-  );
-  return sourceOffsets.map((point, index) => {
-    const ratio =
-      sourceOffsets.length === 1 ? 0.5 : index / (sourceOffsets.length - 1);
-    return {
-      ...point,
-      logicalOffset: Math.round(
-        GEX_PROJECTION_DISPLAY_MIN_LOGICAL_OFFSET + span * ratio,
-      ),
-    };
-  });
+  return sourceOffsets.map((point) => ({
+    ...point,
+    logicalOffset: Math.ceil(point.sourceLogicalOffset),
+  }));
 };
 
 const buildGexProjectionFallbackPriceCoordinate = ({

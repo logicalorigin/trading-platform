@@ -154,8 +154,6 @@ const OPTION_QUOTE_BRIDGE_CHUNK_SIZE = Math.max(
   Number.parseInt(process.env["OPTION_QUOTE_BRIDGE_CHUNK_SIZE"] ?? "100", 10) ||
     100,
 );
-const FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP_ENV =
-  "IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP";
 const DEFAULT_LIVE_OPTION_QUOTE_SNAPSHOT_TIMEOUT_MS = 2_500;
 
 let nextSubscriberId = 1;
@@ -220,19 +218,6 @@ function normalizeUnderlying(value: string | null | undefined): string | null {
   return normalized || null;
 }
 
-function readOptionalNonNegativeIntegerEnv(name: string): number | null {
-  const value = process.env[name];
-  if (value === undefined || value === "") {
-    return null;
-  }
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
-}
-
-function getFlowScannerLiveOptionQuoteCap(): number | null {
-  return readOptionalNonNegativeIntegerEnv(FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP_ENV);
-}
-
 function isBridgeRuntimeConfigured(): boolean {
   return bridgeRuntimeConfiguredForTests ?? Boolean(getIbkrBridgeRuntimeConfig());
 }
@@ -254,38 +239,6 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw abortReason(signal);
   }
-}
-
-function delayMs(ms: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) {
-    return Promise.reject(abortReason(signal));
-  }
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let cleanup = () => {};
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve();
-    };
-    const abort = () => {
-      if (settled) return;
-      settled = true;
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-      cleanup();
-      reject(abortReason(signal));
-    };
-    cleanup = () => {
-      signal?.removeEventListener("abort", abort);
-    };
-    timeout = setTimeout(finish, Math.max(0, ms));
-    timeout.unref?.();
-    signal?.addEventListener("abort", abort, { once: true });
-  });
 }
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
@@ -434,25 +387,6 @@ function resolveLiveOptionQuotePolicy(input: {
       };
     }
 
-    const cap = getFlowScannerLiveOptionQuoteCap();
-    if (cap === 0) {
-      return {
-        providerContractIds: [],
-        blockedReason: "flow_scanner_live_quotes_disabled",
-        errorCode: "ibkr_live_option_quote_blocked",
-        errorMessage:
-          "IBKR live option quote request blocked because flow scanner live option quotes are disabled.",
-      };
-    }
-
-    if (cap !== null && providerContractIds.length > cap) {
-      return {
-        providerContractIds: providerContractIds.slice(0, cap),
-        blockedReason: "flow_scanner_live_quote_cap",
-        errorCode: null,
-        errorMessage: null,
-      };
-    }
   }
 
   if (
@@ -1510,36 +1444,6 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
         )
       ).flat();
       freshQuotes.forEach(cacheQuote);
-      const missingAfterHydration = hydrateProviderContractIds.filter(
-        (providerContractId) =>
-          shouldHydrateQuoteSnapshot(
-            quoteCacheByProviderContractId.get(providerContractId),
-            { requiresGreeks },
-          ),
-      );
-      if (missingAfterHydration.length > 0) {
-        await delayMs(750, input.signal);
-        const retryQuotes = (
-          await Promise.all(
-            chunkValues(
-              missingAfterHydration,
-              OPTION_QUOTE_BRIDGE_CHUNK_SIZE,
-            ).map((providerContractIds) =>
-              runBridgeWork(
-                bridgeWorkCategory,
-                () =>
-                  bridgeClient.getOptionQuoteSnapshots({
-                    underlying,
-                    providerContractIds,
-                    signal: upstreamTimeout.signal,
-                  }),
-                { ...(bridgeWorkOptions ?? {}), signal: upstreamTimeout.signal },
-              ),
-            ),
-          )
-        ).flat();
-        retryQuotes.forEach(cacheQuote);
-      }
     }
   } catch (error) {
     upstreamErrorMessage = readErrorMessage(error);

@@ -45,7 +45,6 @@ import {
 } from "./platform";
 import {
   listIbkrAccounts,
-  listIbkrExecutions,
   listIbkrPositions,
 } from "./ibkr-account-bridge";
 import {
@@ -134,7 +133,11 @@ import {
   type OptionPositionSnapshot,
   type PositionGreekSnapshot,
 } from "./account-risk-model";
-import { resolveAccountGreekScenarios } from "./account-greek-scenarios";
+import {
+  resolveAccountGreekScenarios,
+  type AccountGreekScenarios,
+} from "./account-greek-scenarios";
+import { resolveAccountPortfolioRisk } from "./account-portfolio-risk";
 import { buildAccountRiskRecommendations } from "./account-risk-recommendations";
 import {
   buildFlexBackfillWindows,
@@ -154,7 +157,6 @@ import {
 } from "./market-data-admission";
 import type {
   BrokerAccountSnapshot,
-  BrokerExecutionSnapshot,
   BrokerOrderSnapshot,
   BrokerPositionSnapshot,
   OptionChainContract,
@@ -166,8 +168,10 @@ const COMBINED_ACCOUNT_ID = "combined";
 const ACCOUNT_POSITION_MARKET_DATA_TTL_MS = null;
 const ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS = ACCOUNT_POSITION_MARKET_DATA_TTL_MS;
 const ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS = 2_000;
-const ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS = 5_000;
+const ACCOUNT_ROUTE_EQUITY_HISTORY_RESPONSE_CACHE_TTL_MS = 5_000;
 const ACCOUNT_ROUTE_DERIVED_RESPONSE_CACHE_TTL_MS = 15_000;
+export const ACCOUNT_FULL_RISK_CACHE_TTL_MS = 30_000;
+export const ACCOUNT_FULL_RISK_STALE_TTL_MS = 5 * 60_000;
 const FLEX_SEND_REQUEST_URL =
   "https://www.interactivebrokers.com/Universal/servlet/FlexStatementService.SendRequest";
 const FLEX_GET_STATEMENT_URL =
@@ -208,6 +212,8 @@ type AccountUniverse = {
   latestSnapshotAt: Date | null;
   staleReason: string | null;
 };
+
+type AccountRiskDetail = "fast" | "full";
 
 type ShortLivedAccountCacheEntry<T> = {
   promise: Promise<T>;
@@ -252,6 +258,16 @@ const accountRouteResponseCache = new Map<
   string,
   ShortLivedAccountCacheEntry<unknown>
 >();
+const accountFullRiskCache = new Map<
+  string,
+  {
+    value: unknown;
+    cachedAt: number;
+    expiresAt: number;
+    staleExpiresAt: number;
+  }
+>();
+const accountFullRiskInflight = new Map<string, Promise<unknown>>();
 
 function readShortLivedAccountCache<T>(
   cache: Map<string, ShortLivedAccountCacheEntry<T>>,
@@ -1287,27 +1303,6 @@ async function listOrdersForUniverse(
   };
 }
 
-async function listExecutionsForUniverse(
-  universe: AccountUniverse,
-  options: {
-    days?: number;
-    limit?: number;
-    symbol?: string;
-  },
-): Promise<BrokerExecutionSnapshot[]> {
-  const executions = await Promise.all(
-    universe.accountIds.map((accountId) =>
-      listIbkrExecutions({
-        accountId,
-        days: options.days,
-        limit: options.limit,
-        symbol: options.symbol,
-      }),
-    ),
-  );
-  return executions.flat();
-}
-
 async function fetchEquityQuoteSnapshotsForPositions(
   positions: BrokerPositionSnapshot[],
 ): Promise<Map<string, QuoteSnapshot>> {
@@ -2261,6 +2256,61 @@ async function enrichPositionGreeks(
     totalOptionPositions: optionPositions.length,
     matchedOptionPositions,
     warnings: Array.from(warnings),
+  };
+}
+
+function buildDeferredPositionGreekEnrichment(
+  positions: BrokerPositionSnapshot[],
+): OptionGreekEnrichmentResult {
+  const byPositionId = new Map<string, PositionGreekSnapshot>();
+  let totalOptionPositions = 0;
+
+  positions.forEach((position) => {
+    const underlying = positionReferenceSymbol(position);
+    if (!hasOptionContract(position)) {
+      const beta = betaForSymbol(underlying);
+      byPositionId.set(position.id, {
+        positionId: position.id,
+        symbol: position.symbol,
+        underlying,
+        delta: position.quantity,
+        betaWeightedDelta: position.quantity * beta,
+        gamma: 0,
+        theta: 0,
+        vega: 0,
+        impliedVolatility: null,
+        source: "IBKR_POSITIONS",
+        matched: true,
+        warning: null,
+      });
+      return;
+    }
+
+    totalOptionPositions += 1;
+    byPositionId.set(position.id, {
+      positionId: position.id,
+      symbol: position.symbol,
+      underlying: position.optionContract.underlying,
+      delta: null,
+      betaWeightedDelta: null,
+      gamma: null,
+      theta: null,
+      vega: null,
+      impliedVolatility: null,
+      source: "IBKR_OPTION_CHAIN",
+      matched: false,
+      warning: "Option Greek enrichment deferred during fast account risk read.",
+    });
+  });
+
+  return {
+    byPositionId,
+    totalOptionPositions,
+    matchedOptionPositions: 0,
+    warnings:
+      totalOptionPositions > 0
+        ? ["Option Greek enrichment deferred during fast account risk read."]
+        : [],
   };
 }
 
@@ -3222,16 +3272,7 @@ export async function getAccountSummary(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
-  return readAccountRouteResponseCache(
-    "summary",
-    {
-      accountId: input.accountId,
-      mode,
-      source: input.source ?? null,
-    },
-    () => getAccountSummaryUncached({ ...input, mode }),
-    ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS,
-  );
+  return getAccountSummaryUncached({ ...input, mode });
 }
 
 async function getAccountSummaryUncached(input: {
@@ -3528,7 +3569,7 @@ export async function getAccountEquityHistory(input: {
     () => getAccountEquityHistoryUncached({ ...input, mode, range }),
     input.benchmark
       ? ACCOUNT_ROUTE_DERIVED_RESPONSE_CACHE_TTL_MS
-      : ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS,
+      : ACCOUNT_ROUTE_EQUITY_HISTORY_RESPONSE_CACHE_TTL_MS,
   );
 }
 
@@ -3852,16 +3893,7 @@ export async function getAccountAllocation(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
-  return readAccountRouteResponseCache(
-    "allocation",
-    {
-      accountId: input.accountId,
-      mode,
-      source: input.source ?? null,
-    },
-    () => getAccountAllocationUncached({ ...input, mode }),
-    ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS,
-  );
+  return getAccountAllocationUncached({ ...input, mode });
 }
 
 async function getAccountAllocationUncached(input: {
@@ -4001,17 +4033,7 @@ export async function getAccountPositions(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
-  const response = await readAccountRouteResponseCache(
-    "positions",
-    {
-      accountId: input.accountId,
-      assetClass: input.assetClass ?? null,
-      mode,
-      source: input.source ?? null,
-    },
-    () => getAccountPositionsUncached({ ...input, mode }),
-    ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS,
-  );
+  const response = await getAccountPositionsUncached({ ...input, mode });
   declareAccountPositionOptionQuoteDemands(
     response.positions,
     response.accountId || input.accountId,
@@ -4790,8 +4812,7 @@ async function getPositionLots(accountIds: string[]) {
           eq(positionLotsTable.instrumentId, instrumentsTable.id),
         )
         .where(inArray(brokerAccountsTable.providerAccountId, accountIds))
-        .orderBy(desc(positionLotsTable.asOf))
-        .limit(500);
+        .orderBy(desc(positionLotsTable.asOf));
 
       return rows.map((row) => ({
         accountId: row.providerAccountId,
@@ -4810,7 +4831,7 @@ async function getPositionLots(accountIds: string[]) {
 
 type NormalizedAccountTrade = {
   id: string;
-  source: "FLEX" | "LIVE";
+  source: "FLEX";
   accountId: string;
   symbol: string;
   side: string;
@@ -4883,19 +4904,6 @@ const normalizeAccountAnnotationMode = (input: {
     return "shadow";
   }
   return input.mode === "live" ? "live" : "paper";
-};
-
-const normalizeClosedTradesLimit = (value: unknown) => {
-  const parsed = Number(value);
-  if (value === undefined || value === null || value === "") {
-    return 500;
-  }
-  if (Number.isFinite(parsed) && parsed <= 0) {
-    return null;
-  }
-  return Number.isFinite(parsed)
-    ? Math.min(10_000, Math.max(1, Math.round(parsed)))
-    : 500;
 };
 
 const normalizeTradeOutcomeBucketCount = (value: unknown) => {
@@ -5001,6 +5009,18 @@ function matchesHoldDurationBucket(
   return true;
 }
 
+const isClosedFlexTradeRow = (row: {
+  openClose?: string | null;
+  realizedPnl?: unknown;
+}) => {
+  const openClose = String(row.openClose ?? "").trim().toLowerCase();
+  if (openClose) {
+    return openClose.startsWith("c") || openClose === "closed";
+  }
+  const realizedPnl = toNumber(row.realizedPnl);
+  return realizedPnl != null && realizedPnl !== 0;
+};
+
 async function listClosedTradesForUniverse(
   universe: AccountUniverse,
   input: {
@@ -5023,27 +5043,20 @@ async function listClosedTradesForUniverse(
     conditions.push(eq(flexTradesTable.symbol, normalizeSymbol(input.symbol)));
   }
 
-  const [flexRows, liveExecutions] = await Promise.all([
-    withOptionalAccountSchemaFallback({
-      tables: ["flex_trades"],
-      fallback: () => [],
-      run: async () =>
-        db
-          .select()
-          .from(flexTradesTable)
-          .where(and(...conditions))
-          .orderBy(desc(flexTradesTable.tradeDate))
-          .limit(500),
-    }),
-    listExecutionsForUniverse(universe, {
-      days: 7,
-      limit: 250,
-      symbol: input.symbol ?? undefined,
-    }).catch(() => []),
-  ]);
+  const flexRows = await withOptionalAccountSchemaFallback({
+    tables: ["flex_trades"],
+    fallback: () => [],
+    run: async () =>
+      db
+        .select()
+        .from(flexTradesTable)
+        .where(and(...conditions))
+        .orderBy(desc(flexTradesTable.tradeDate)),
+  });
 
-  return [
-    ...flexRows.map((row) => ({
+  return flexRows
+    .filter(isClosedFlexTradeRow)
+    .map((row) => ({
       id: row.tradeId,
       source: "FLEX" as const,
       accountId: row.providerAccountId,
@@ -5063,47 +5076,26 @@ async function listClosedTradesForUniverse(
       holdDurationMinutes: null,
       commissions: toNumber(row.commission),
       currency: row.currency,
-    })),
-    ...liveExecutions.map((execution) => ({
-      id: execution.id,
-      source: "LIVE" as const,
-      accountId: execution.accountId,
-      symbol: execution.symbol,
-      side: execution.side,
-      assetClass: normalizeTradeAssetClassLabel({
-        assetClass: execution.assetClass,
-        symbol: execution.symbol,
-      }),
-      quantity: execution.quantity,
-      openDate: null,
-      closeDate: execution.executedAt,
-      avgOpen: null,
-      avgClose: execution.price,
-      realizedPnl: execution.netAmount,
-      realizedPnlPercent: null,
-      holdDurationMinutes: null,
-      commissions: null,
-      currency: universe.primaryCurrency,
-    })),
-  ].filter((trade) => {
-    if (
-      input.assetClass &&
-      input.assetClass !== "all" &&
-      trade.assetClass.toLowerCase() !== input.assetClass.toLowerCase()
-    ) {
-      return false;
-    }
-    if (input.pnlSign === "winners" && (trade.realizedPnl ?? 0) <= 0) {
-      return false;
-    }
-    if (input.pnlSign === "losers" && (trade.realizedPnl ?? 0) >= 0) {
-      return false;
-    }
-    if (!matchesHoldDurationBucket(trade.holdDurationMinutes, input.holdDuration)) {
-      return false;
-    }
-    return true;
-  });
+    }))
+    .filter((trade) => {
+      if (
+        input.assetClass &&
+        input.assetClass !== "all" &&
+        trade.assetClass.toLowerCase() !== input.assetClass.toLowerCase()
+      ) {
+        return false;
+      }
+      if (input.pnlSign === "winners" && (trade.realizedPnl ?? 0) <= 0) {
+        return false;
+      }
+      if (input.pnlSign === "losers" && (trade.realizedPnl ?? 0) >= 0) {
+        return false;
+      }
+      if (!matchesHoldDurationBucket(trade.holdDurationMinutes, input.holdDuration)) {
+        return false;
+      }
+      return true;
+    });
 }
 
 export async function getAccountClosedTrades(input: {
@@ -5247,41 +5239,46 @@ export async function cancelAccountOrder(input: {
   });
 }
 
+function normalizeAccountRiskDetail(detail?: AccountRiskDetail): AccountRiskDetail {
+  return detail === "full" ? "full" : "fast";
+}
+
 export async function getAccountRisk(input: {
   accountId: string;
   mode?: RuntimeMode;
   source?: string | null;
+  detail?: AccountRiskDetail;
 }) {
+  const detail = normalizeAccountRiskDetail(input.detail);
   if (isShadowAccountId(input.accountId)) {
-    return getShadowAccountRisk({ source: input.source });
+    return getShadowAccountRisk({ source: input.source, detail });
   }
 
   const mode = input.mode ?? getRuntimeMode();
-  return readAccountRouteResponseCache(
-    "risk",
-    {
-      accountId: input.accountId,
-      mode,
-      source: input.source ?? null,
-    },
-    () => getAccountRiskUncached({ ...input, mode }),
-    ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS,
-  );
+  if (detail === "full") {
+    return getAccountRiskWithNonBlockingFullDetail({ ...input, mode });
+  }
+  return getAccountRiskUncached({ ...input, mode, detail });
 }
 
 async function getAccountRiskUncached(input: {
   accountId: string;
   mode: RuntimeMode;
   source?: string | null;
+  detail?: AccountRiskDetail;
 }) {
   const mode = input.mode;
+  const detail = normalizeAccountRiskDetail(input.detail);
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const [positions, closedTrades] = await Promise.all([
     listPositionsForUniverse(universe, mode),
     listClosedTradesForUniverse(universe, {}),
   ]);
+  const deferGreekRefresh = detail === "fast";
   const [greekEnrichment, marketHydration, underlyingPrices] = await Promise.all([
-    enrichPositionGreeks(positions),
+    deferGreekRefresh
+      ? Promise.resolve(buildDeferredPositionGreekEnrichment(positions))
+      : enrichPositionGreeks(positions),
     hydratePositionMarkets(positions),
     hydrateOptionUnderlyingPrices(positions),
   ]);
@@ -5423,18 +5420,30 @@ async function getAccountRiskUncached(input: {
     );
   }
 
-  const notional = buildNotionalExposure(positions, {
-    nav,
-    marketHydration,
-    greekByPositionId: greekEnrichment.byPositionId,
-    underlyingPrices,
-  });
-  const greekScenarios = await resolveAccountGreekScenarios({
-    positions,
-    marketHydration,
-    greekByPositionId: greekEnrichment.byPositionId,
-    underlyingPrices,
-  });
+  const notional = deferGreekRefresh
+    ? buildNotionalExposure(positions, {
+        nav,
+        marketHydration,
+        greekByPositionId: greekEnrichment.byPositionId,
+        underlyingPrices,
+      })
+    : (
+        await resolveAccountPortfolioRisk({
+          positions,
+          nav,
+          marketHydration,
+          greekByPositionId: greekEnrichment.byPositionId,
+          underlyingPrices,
+        })
+      ).notional;
+  const greekScenarios = deferGreekRefresh
+    ? buildDeferredAccountGreekScenarios()
+    : await resolveAccountGreekScenarios({
+        positions,
+        marketHydration,
+        greekByPositionId: greekEnrichment.byPositionId,
+        underlyingPrices,
+      });
   const expiryConcentration = buildExpiryConcentration(positions);
   const riskRecommendations = buildAccountRiskRecommendations({
     positions,
@@ -5513,6 +5522,185 @@ async function getAccountRiskUncached(input: {
   };
 }
 
+type AccountRiskPayload = Awaited<ReturnType<typeof getAccountRiskUncached>>;
+
+type AccountFullRiskDetailMetadata = {
+  requested: true;
+  status: "fresh" | "stale" | "pending";
+  cachedAt: string | null;
+  refreshInFlight: boolean;
+  warning: string | null;
+};
+
+function accountFullRiskCacheKey(input: {
+  accountId: string;
+  mode: RuntimeMode;
+  source?: string | null;
+}): string {
+  return stableAccountReadCacheKey("full-risk", {
+    accountId: input.accountId,
+    mode: input.mode,
+    source: input.source ?? null,
+  });
+}
+
+function pruneAccountFullRiskCache(now = Date.now()): void {
+  for (const [cacheKey, entry] of accountFullRiskCache.entries()) {
+    if (entry.staleExpiresAt <= now && !accountFullRiskInflight.has(cacheKey)) {
+      accountFullRiskCache.delete(cacheKey);
+    }
+  }
+}
+
+function markAccountRiskFullDetailStatus(
+  payload: AccountRiskPayload,
+  input: AccountFullRiskDetailMetadata,
+): AccountRiskPayload & { fullRiskDetail: AccountFullRiskDetailMetadata } {
+  return {
+    ...payload,
+    fullRiskDetail: input,
+  };
+}
+
+function markAccountRiskFullRefreshPending(
+  payload: AccountRiskPayload,
+): AccountRiskPayload & { fullRiskDetail: AccountFullRiskDetailMetadata } {
+  return markAccountRiskFullDetailStatus(
+    {
+      ...payload,
+      greekScenarios: buildPendingAccountGreekScenarios(),
+    },
+    {
+      requested: true,
+      status: "pending",
+      cachedAt: null,
+      refreshInFlight: true,
+      warning: "Full account risk detail is refreshing asynchronously.",
+    },
+  );
+}
+
+function refreshAccountFullRiskCache(input: {
+  accountId: string;
+  mode: RuntimeMode;
+  source?: string | null;
+}): Promise<AccountRiskPayload> {
+  const cacheKey = accountFullRiskCacheKey(input);
+  const existing = accountFullRiskInflight.get(cacheKey) as
+    | Promise<AccountRiskPayload>
+    | undefined;
+  if (existing) {
+    return existing;
+  }
+
+  const request = getAccountRiskUncached({ ...input, detail: "full" }).then(
+    (value) => {
+      const cachedAt = Date.now();
+      accountFullRiskCache.set(cacheKey, {
+        value,
+        cachedAt,
+        expiresAt: cachedAt + ACCOUNT_FULL_RISK_CACHE_TTL_MS,
+        staleExpiresAt: cachedAt + ACCOUNT_FULL_RISK_STALE_TTL_MS,
+      });
+      return value;
+    },
+  );
+  accountFullRiskInflight.set(cacheKey, request);
+  request.finally(() => {
+    if (accountFullRiskInflight.get(cacheKey) === request) {
+      accountFullRiskInflight.delete(cacheKey);
+    }
+  }).catch(() => undefined);
+  return request;
+}
+
+function scheduleAccountFullRiskRefresh(input: {
+  accountId: string;
+  mode: RuntimeMode;
+  source?: string | null;
+}): Promise<AccountRiskPayload> {
+  const request = refreshAccountFullRiskCache(input);
+  request.catch((error) => {
+    logger.warn(
+      { err: error, accountId: input.accountId, mode: input.mode },
+      "Account full risk refresh failed",
+    );
+  });
+  return request;
+}
+
+async function getAccountRiskWithNonBlockingFullDetail(input: {
+  accountId: string;
+  mode: RuntimeMode;
+  source?: string | null;
+}) {
+  const mode = input.mode;
+  const cacheKey = accountFullRiskCacheKey(input);
+  const now = Date.now();
+  pruneAccountFullRiskCache(now);
+
+  const cached = accountFullRiskCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return markAccountRiskFullDetailStatus(cached.value as AccountRiskPayload, {
+      requested: true,
+      status: "fresh",
+      cachedAt: new Date(cached.cachedAt).toISOString(),
+      refreshInFlight: false,
+      warning: null,
+    });
+  }
+
+  scheduleAccountFullRiskRefresh({ ...input, mode });
+  if (cached && cached.staleExpiresAt > now) {
+    return markAccountRiskFullDetailStatus(cached.value as AccountRiskPayload, {
+      requested: true,
+      status: "stale",
+      cachedAt: new Date(cached.cachedAt).toISOString(),
+      refreshInFlight: true,
+      warning: "Full account risk detail is stale while a refresh is running.",
+    });
+  }
+
+  const fastRisk = await getAccountRiskUncached({ ...input, mode, detail: "fast" });
+  return markAccountRiskFullRefreshPending(fastRisk);
+}
+
+function buildDeferredAccountGreekScenarios(): AccountGreekScenarios {
+  return {
+    enabled: false,
+    status: "disabled",
+    source: "python_compute",
+    warning: "Deferred during fast account risk read.",
+    coverage: null,
+    result: null,
+    pythonJob: {
+      jobId: null,
+      jobType: "greek_scenario_matrix",
+      durationMs: null,
+      warnings: [],
+      error: null,
+    },
+  };
+}
+
+function buildPendingAccountGreekScenarios(): AccountGreekScenarios {
+  return {
+    enabled: true,
+    status: "pending",
+    source: "python_compute",
+    warning: "Full account risk detail is refreshing asynchronously.",
+    coverage: null,
+    result: null,
+    pythonJob: {
+      jobId: null,
+      jobType: "greek_scenario_matrix",
+      durationMs: null,
+      warnings: [],
+      error: null,
+    },
+  };
+}
+
 export async function getAccountCashActivity(input: {
   accountId: string;
   from?: Date | null;
@@ -5525,18 +5713,7 @@ export async function getAccountCashActivity(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
-  return readAccountRouteResponseCache(
-    "cash-activity",
-    {
-      accountId: input.accountId,
-      from: input.from ? input.from.toISOString() : null,
-      mode,
-      source: input.source ?? null,
-      to: input.to ? input.to.toISOString() : null,
-    },
-    () => getAccountCashActivityUncached({ ...input, mode }),
-    ACCOUNT_ROUTE_LIVE_RESPONSE_CACHE_TTL_MS,
-  );
+  return getAccountCashActivityUncached({ ...input, mode });
 }
 
 async function getAccountCashActivityUncached(input: {
@@ -5814,6 +5991,7 @@ export const __accountPositionInternalsForTests = {
   buildAccountPositionTotals,
   buildPositionMarketHydration,
   buildPositionQuoteFromSnapshot,
+  choosePositionQuote,
   filterOpenBrokerPositions,
   flexOpenPositionOpenedAt,
   isOpenBrokerPosition,
@@ -5841,10 +6019,10 @@ export const __accountOrderInternalsForTests = {
 
 export const __accountTradeAnnotationInternalsForTests = {
   buildAccountTradeAnnotationKey,
+  isClosedFlexTradeRow,
   normalizeAccountAnnotationMode,
   normalizeAnnotationNote,
   normalizeAnnotationTags,
-  normalizeClosedTradesLimit,
 };
 
 export const __accountOverviewInternalsForTests = {
@@ -5856,11 +6034,13 @@ export const __accountOverviewInternalsForTests = {
 
 export const __accountRiskInternalsForTests = {
   betaForSymbol,
+  buildPendingAccountGreekScenarios,
   buildExpiryConcentration,
   buildGreekScenarioMatrixInput,
   buildNotionalExposure,
   matchOptionChainContract,
   mergeOptionChainContracts,
+  normalizeAccountRiskDetail,
   sectorForSymbol,
   sumNullableValues,
   upsertNullableTotal,

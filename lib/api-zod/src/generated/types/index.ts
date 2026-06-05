@@ -272,6 +272,7 @@ export * from './getAccountOrdersParams';
 export * from './getAccountOrdersTab';
 export * from './getAccountPositionsAtDateParams';
 export * from './getAccountPositionsParams';
+export * from './getAccountRiskDetail';
 export * from './getAccountRiskParams';
 export * from './getAccountSummaryParams';
 export * from './getBacktestRunChartParams';

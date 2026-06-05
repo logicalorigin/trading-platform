@@ -147,7 +147,7 @@ test("algo status stays attention for non-critical market-session warnings", () 
 
 test("algo pipeline overview groups redundant stage counts into phases", () => {
   const phases = buildAlgoPipelinePhases([
-    { id: "scan_universe", status: "healthy", count: 90 },
+    { id: "scan_universe", status: "healthy", count: 500 },
     { id: "signal_detected", status: "healthy", count: 7 },
     { id: "action_mapped", status: "healthy", count: 7 },
     { id: "contract_selected", status: "attention", count: 0 },
@@ -161,7 +161,7 @@ test("algo pipeline overview groups redundant stage counts into phases", () => {
     phases.map((phase) => phase.label),
     ["Signal Cycle", "Entry Path", "Orders", "Management"],
   );
-  assert.equal(phases[0].detail, "90 symbols -> 7 signals");
+  assert.equal(phases[0].detail, "500 symbols -> 7 signals");
   assert.equal(phases[1].detail, "7 actions -> 0 contracts");
   assert.equal(phases[1].status, "attention");
   assert.equal(phases[1].selectStageId, "contract_selected");
@@ -194,7 +194,7 @@ test("algo live page upper area suppresses empty duplicate status strips", () =>
           cockpitRisk: { dailyHaltActive: false, openSymbols: 0, maxOpenSymbols: 10 },
           cockpitTradePath: { gatewayBlocks: [] },
           cockpitStageItems: [
-            { id: "scan_universe", status: "healthy", count: 90 },
+            { id: "scan_universe", status: "healthy", count: 500 },
             { id: "signal_detected", status: "healthy", count: 7 },
             { id: "action_mapped", status: "healthy", count: 7 },
             { id: "contract_selected", status: "attention", count: 0 },
@@ -258,7 +258,7 @@ test("algo live page upper area suppresses empty duplicate status strips", () =>
   assert.match(html, /data-testid="algo-operations-header-actions"/);
   assert.match(html, /aria-label="Signal-options scan controls"/);
   assert.match(html, /Signal Cycle/);
-  assert.match(html, /90 symbols -&gt; 7 signals/);
+  assert.match(html, /500 symbols -&gt; 7 signals/);
   assert.match(html, /Entry Path/);
   assert.doesNotMatch(upperHtml, /Pyrus Signals Shadow/);
   assert.match(html, /aria-label="Scan now"/);
@@ -1498,6 +1498,10 @@ test("shared signal dots preserve watchlist behavior after extraction", () => {
     new URL("../../features/platform/PlatformWatchlist.jsx", import.meta.url),
     "utf8",
   );
+  const signalSparklineSource = readFileSync(
+    new URL("../../features/signals/signalSparklineModel.js", import.meta.url),
+    "utf8",
+  );
   const rowSource = readSource("./OperationsSignalRow.jsx");
 
   assert.match(signalDotsSource, /timeframes = SIGNAL_TIMEFRAMES/);
@@ -1532,11 +1536,12 @@ test("shared signal dots preserve watchlist behavior after extraction", () => {
   assert.match(watchlistSource, /signalState\?\.currentSignalDirection/);
   assert.match(watchlistSource, /SIGNALS_ROW_STATUS\.activeStale/);
   assert.match(watchlistSource, /const sparklineSignalDirection = sparklineRow\?\.direction/);
+  assert.match(watchlistSource, /signals\/signalSparklineModel/);
   assert.match(watchlistSource, /buildSignalSparklinePointColors/);
   assert.match(watchlistSource, /extractSparklinePoints/);
-  assert.match(watchlistSource, /const firstSignalColor = signalColorForDirection\(transitions\[0\]\?\.direction\)/);
-  assert.match(watchlistSource, /const latestSignalColor = signalColorForDirection\(transitions\.at\(-1\)\?\.direction\)/);
-  assert.match(watchlistSource, /return latestSignalColor\s*\?\s*sparklinePoints\.map\(\(\) => latestSignalColor\)\s*:\s*null/);
+  assert.match(signalSparklineSource, /const firstSignalColor = signalColorForDirection\(transitions\[0\]\?\.direction\)/);
+  assert.match(signalSparklineSource, /const latestSignalColor = signalColorForDirection\(transitions\.at\(-1\)\?\.direction\)/);
+  assert.match(signalSparklineSource, /return latestSignalColor\s*\?\s*sparklinePoints\.map\(\(\) => latestSignalColor\)\s*:\s*null/);
   assert.match(watchlistSource, /SIGNALS_PAGE_ACTIVE_STATUSES\.has\(sparklineRow\?\.status\)/);
   assert.match(watchlistSource, /data-sparkline-signal-mode=\{sparklineSignalMode\}/);
   assert.match(watchlistSource, /data-sparkline-signal-events=\{signalEvents\.length\}/);

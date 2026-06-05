@@ -505,6 +505,7 @@ export const TradePositionsPanel = ({
   gatewayTradingMessage = "IB Gateway must be connected before trading.",
   onLoadPosition,
   isVisible = false,
+  safeQaMode = false,
   streamingPaused = false,
 }) => {
   const toast = useToast();
@@ -512,7 +513,9 @@ export const TradePositionsPanel = ({
   const pos = usePositions();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState("open");
-  const brokerPanelEnabled = Boolean(isVisible && brokerAuthenticated && accountId);
+  const brokerPanelEnabled = Boolean(
+    isVisible && !safeQaMode && brokerAuthenticated && accountId,
+  );
   const positionsQuery = useListPositions(
     { accountId, mode: environment },
     {
@@ -552,6 +555,7 @@ export const TradePositionsPanel = ({
       !brokerAuthenticated ||
       !accountId ||
       !isVisible ||
+      safeQaMode ||
       streamingPaused ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
@@ -580,7 +584,15 @@ export const TradePositionsPanel = ({
       source.removeEventListener("executions", handleExecutions);
       source.close();
     };
-  }, [accountId, brokerAuthenticated, environment, isVisible, queryClient, streamingPaused]);
+  }, [
+    accountId,
+    brokerAuthenticated,
+    environment,
+    isVisible,
+    queryClient,
+    safeQaMode,
+    streamingPaused,
+  ]);
   const refreshBrokerQueries = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
     queryClient.invalidateQueries({ queryKey: ["/api/positions"] });

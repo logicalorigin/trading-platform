@@ -92,6 +92,26 @@ test("position display preserves zero option bid ask without zeroing mark", () =
   assert.equal(display.quote.mid, null);
 });
 
+test("position display aligns option mark to two-sided bid ask", () => {
+  const display = buildPositionDisplayModel({
+    mark: 1.15,
+    optionQuote: {
+      bid: 0.84,
+      ask: 0.88,
+      mark: 1.15,
+      last: 0.83,
+      price: 0.83,
+      source: "option_quote",
+    },
+  });
+
+  assert.equal(
+    formatPositionBidAskLabel(display.quote, (value) => value.toFixed(2)),
+    "0.84 / 0.88",
+  );
+  assert.equal(Number(display.quote.mark.toFixed(2)), 0.86);
+});
+
 test("position display drops stale Massive quote source labels from account rows", () => {
   const display = buildPositionDisplayModel({
     mark: 2.75,

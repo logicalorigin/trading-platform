@@ -15150,7 +15150,7 @@ async function loadHistoricalBackfillSignalsUncached(input: {
   };
 }
 
-async function resolveDefaultSignalOptionsSymbols() {
+async function resolveDefaultSignalOptionsWatchlistSymbols() {
   const { watchlists } = await listWatchlists();
   const watchlist =
     watchlists.find((item) => item.name.toLowerCase() === "core") ??
@@ -15169,6 +15169,22 @@ async function resolveDefaultSignalOptionsSymbols() {
     .map((symbol) => normalizeSymbol(symbol).toUpperCase())
     .filter(Boolean);
   return Array.from(new Set(symbols));
+}
+
+async function resolveDefaultSignalOptionsSymbols() {
+  const profile = await getSignalMonitorProfileRow({
+    environment: "paper",
+    ensureWatchlist: true,
+  });
+  const universe = await resolveSignalMonitorProfileUniverse(profile, {
+    ensureWatchlist: true,
+  });
+  const signalMonitorSymbols = normalizeSignalOptionsUniverseSymbols(
+    universe.symbols,
+  );
+  return signalMonitorSymbols.length
+    ? signalMonitorSymbols
+    : resolveDefaultSignalOptionsWatchlistSymbols();
 }
 
 function sameSymbolUniverse(
@@ -15239,6 +15255,7 @@ export async function ensureDefaultSignalOptionsPaperDeployment(
     preserveExistingPaused?: boolean;
   } = {},
 ) {
+  await normalizeDefaultSignalOptionsPaperSignalMonitorProfile();
   const symbols = await resolveDefaultSignalOptionsSymbols();
   if (!symbols.length) {
     throw new HttpError(
@@ -15372,7 +15389,6 @@ export async function ensureDefaultSignalOptionsPaperDeployment(
 
   deployment = await normalizeSignalOptionsDeploymentBranding(deployment);
   deployment = await normalizeSignalOptionsDeploymentAccount(deployment);
-  await normalizeDefaultSignalOptionsPaperSignalMonitorProfile();
 
   return {
     strategy: {
@@ -15421,10 +15437,14 @@ async function normalizeDefaultSignalOptionsPaperSignalMonitorProfile() {
   ) {
     patch.pollIntervalSeconds = DEFAULT_SIGNAL_OPTIONS_MONITOR_POLL_SECONDS;
   }
-  if (universeScope === "all_watchlists_plus_universe") {
+  if (
+    !universeScope ||
+    universeScope === "all_watchlists" ||
+    universeScope === "all_watchlists_only"
+  ) {
     patch.pyrusSignalsSettings = withSignalMonitorUniverseScope(
       pyrusSignalsSettings,
-      "all_watchlists",
+      "all_watchlists_plus_universe",
     );
   }
 

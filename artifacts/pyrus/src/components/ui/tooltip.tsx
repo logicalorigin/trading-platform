@@ -178,6 +178,149 @@ const tooltipPositionsEqual = (
   )
 }
 
+const tooltipTextFromContent = (content: React.ReactNode) => {
+  if (typeof content === "string" || typeof content === "number") {
+    return String(content)
+  }
+  return null
+}
+
+const normalizeTooltipText = (value: string) =>
+  value
+    .replace(/[^a-z0-9.%$]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+
+const TOOLTIP_BOILERPLATE_TOKENS = new Set([
+  "a",
+  "an",
+  "by",
+  "choose",
+  "column",
+  "columns",
+  "configure",
+  "filter",
+  "filters",
+  "for",
+  "hide",
+  "in",
+  "open",
+  "row",
+  "rows",
+  "search",
+  "select",
+  "show",
+  "sort",
+  "the",
+  "this",
+  "to",
+])
+
+const tooltipContentTokens = (value: string) =>
+  normalizeTooltipText(value).split(" ").filter(Boolean)
+
+const tooltipTokensContained = (
+  needleTokens: string[],
+  haystackTokens: Set<string>,
+) =>
+  needleTokens.length > 0 &&
+  needleTokens.every((token) => haystackTokens.has(token))
+
+const hasScreenReaderOnlyClass = (element: Element) => {
+  const className = element.getAttribute("class") || ""
+  return /\b(?:sr-only|screen-reader-only|visually-hidden)\b/i.test(className)
+}
+
+const elementHiddenFromTooltipText = (element: Element) => {
+  if (
+    element.getAttribute("aria-hidden") === "true" ||
+    element.hasAttribute("hidden") ||
+    hasScreenReaderOnlyClass(element)
+  ) {
+    return true
+  }
+
+  if (typeof window === "undefined" || !window.getComputedStyle) {
+    return false
+  }
+
+  const style = window.getComputedStyle(element)
+  return style.display === "none" || style.visibility === "hidden"
+}
+
+const collectVisibleTooltipText = (node: Node): string => {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent || ""
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    return ""
+  }
+
+  const element = node as Element
+  if (elementHiddenFromTooltipText(element)) {
+    return ""
+  }
+
+  return Array.from(element.childNodes)
+    .map((child) => collectVisibleTooltipText(child))
+    .join(" ")
+}
+
+const elementHasClippedText = (element: Element): boolean => {
+  const htmlElement =
+    typeof HTMLElement !== "undefined" && element instanceof HTMLElement
+      ? element
+      : null
+  if (
+    htmlElement &&
+    (htmlElement.scrollWidth > htmlElement.clientWidth + 1 ||
+      htmlElement.scrollHeight > htmlElement.clientHeight + 1)
+  ) {
+    return true
+  }
+
+  return Array.from(element.children).some((child) => elementHasClippedText(child))
+}
+
+const isTooltipContentRedundant = (
+  trigger: HTMLElement,
+  content: React.ReactNode,
+) => {
+  const contentText = tooltipTextFromContent(content)
+  if (!contentText) return false
+
+  const triggerText = collectVisibleTooltipText(trigger)
+  const clipped = elementHasClippedText(trigger)
+  const normalizedTriggerText = normalizeTooltipText(triggerText)
+  const normalizedContentText = normalizeTooltipText(contentText)
+  if (
+    !triggerText ||
+    !normalizedTriggerText ||
+    !normalizedContentText
+  ) {
+    return false
+  }
+
+  // Keep exact same-text tooltips only when the UI has clipped the visible value.
+  if (normalizedTriggerText === normalizedContentText) {
+    return !clipped
+  }
+
+  if (clipped) return false
+
+  const triggerTokenSet = new Set(tooltipContentTokens(triggerText))
+  const contentTokens = tooltipContentTokens(contentText)
+  if (tooltipTokensContained(contentTokens, triggerTokenSet)) {
+    return true
+  }
+
+  const meaningTokens = contentTokens.filter(
+    (token) => !TOOLTIP_BOILERPLATE_TOKENS.has(token),
+  )
+  return tooltipTokensContained(meaningTokens, triggerTokenSet)
+}
+
 function AppTooltip({
   content,
   children,
@@ -220,10 +363,14 @@ function AppTooltip({
     (event: React.SyntheticEvent<HTMLElement>) => {
       if (tooltipDisabled) return
       triggerRef.current = event.currentTarget
+      if (isTooltipContentRedundant(event.currentTarget, content)) {
+        setOpen(false)
+        return
+      }
       setOpen(true)
       updatePosition()
     },
-    [tooltipDisabled, updatePosition],
+    [content, tooltipDisabled, updatePosition],
   )
 
   const hideTooltip = React.useCallback(() => {

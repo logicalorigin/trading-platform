@@ -36,3 +36,12 @@ test("diagnostics failure points are wired to overview cards and event rows", ()
   assert.match(source, /const failurePoint = buildFailurePointFromDiagnosticEvent\(event\)/);
   assert.match(source, /const failurePoint = buildFailurePointFromDiagnosticEvent\(alert\)/);
 });
+
+test("diagnostics work planner surfaces inactive persisted worker state", () => {
+  const source = diagnosticsSource();
+
+  assert.match(source, /persistClaimableQueuedJobCount/);
+  assert.match(source, /persistWorkerInactive/);
+  assert.match(source, /label="Persist worker"/);
+  assert.match(source, /ready · inactive/);
+});

@@ -24,6 +24,46 @@ def test_benchmark_matrix_returns_named_metrics() -> None:
     assert result["rows"] == 500
 
 
+def test_signal_matrix_returns_indicator_state_for_completed_bars() -> None:
+    bars = [
+        {
+            "time": 1_800_000_000 + index * 300,
+            "ts": f"2027-01-15T14:{index % 60:02d}:00.000Z",
+            "o": 100 + index * 0.1,
+            "h": 101 + index * 0.1,
+            "l": 99 + index * 0.1,
+            "c": 100.5 + index * 0.1,
+            "v": 100_000 + index,
+        }
+        for index in range(240)
+    ]
+    result, warnings = run_job(
+        JobRequest(
+            jobType="signal_matrix",
+            input={
+                "cells": [
+                    {
+                        "symbol": "SPY",
+                        "timeframe": "5m",
+                        "freshWindowBars": 3,
+                        "settings": {"basisLength": 20, "timeHorizon": 5},
+                        "bars": bars,
+                    }
+                ]
+            },
+        )
+    )
+
+    assert warnings == []
+    assert result["cellCount"] == 1
+    state = result["states"][0]
+    assert state["symbol"] == "SPY"
+    assert state["timeframe"] == "5m"
+    assert state["status"] == "ok"
+    assert state["indicatorSnapshot"]["trendDirection"] in {"bullish", "bearish"}
+    assert state["indicatorSnapshot"]["mtf"][0]["timeframe"] == "1h"
+
+
 def test_portfolio_risk_computes_exposure_and_covariance() -> None:
     result, warnings = run_job(
         JobRequest(

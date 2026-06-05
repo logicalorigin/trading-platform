@@ -37,7 +37,6 @@ const ENV_KEYS = [
   "IBKR_MARKET_DATA_AUTOMATION_LINES",
   "IBKR_MARKET_DATA_FLOW_SCANNER_LINES",
   "IBKR_MARKET_DATA_CONVENIENCE_LINES",
-  "IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP",
   "IBKR_BRIDGE_GOVERNOR_QUOTES_BACKOFF_MS",
   "IBKR_BRIDGE_GOVERNOR_QUOTES_FAILURE_THRESHOLD",
   "IBKR_LIVE_OPTION_QUOTE_SNAPSHOT_TIMEOUT_MS",
@@ -302,7 +301,7 @@ test("option quote snapshots rehydrate fresh price-only cache when Greeks are re
   assert.equal(payload.debug?.upstreamMs !== null, true);
 });
 
-test("option quote snapshots retry price-only bridge results when Greeks are required", async () => {
+test("option quote snapshots return price-only bridge results without delayed Greek retry", async () => {
   let snapshotReads = 0;
   __setBridgeOptionQuoteClientForTests({
     async getHealth() {
@@ -339,11 +338,11 @@ test("option quote snapshots retry price-only bridge results when Greeks are req
     requiresGreeks: true,
   });
 
-  assert.equal(snapshotReads, 2);
+  assert.equal(snapshotReads, 1);
   assert.equal(payload.quotes.length, 1);
-  assert.equal(payload.quotes[0]?.price, 1.24);
-  assert.equal(payload.quotes[0]?.delta, 0.5);
-  assert.equal(payload.quotes[0]?.gamma, 0.01);
+  assert.equal(payload.quotes[0]?.price, 1.23);
+  assert.equal(payload.quotes[0]?.delta, null);
+  assert.equal(payload.quotes[0]?.gamma, null);
 });
 
 test("option quote snapshots do not admit leases or call bridge when runtime is missing", async () => {
@@ -848,9 +847,6 @@ test("retained flow scanner snapshot streams close when quote leases expire", as
 
 test("flow scanner live option snapshots stay admitted under watch pressure", async () => {
   __setBridgeOptionQuoteStreamNowForTests(REGULAR_SESSION_NOW);
-  setEnv({
-    IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP: "2",
-  });
   updateApiResourcePressure({ rssMb: 950 });
   const bridgeRequests: string[][] = [];
   __setBridgeOptionQuoteClientForTests({
@@ -887,9 +883,6 @@ test("flow scanner live option snapshots stay admitted under watch pressure", as
 
 test("flow scanner live option snapshots stay admitted under soft RSS critical pressure", async () => {
   __setBridgeOptionQuoteStreamNowForTests(REGULAR_SESSION_NOW);
-  setEnv({
-    IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP: "2",
-  });
   updateApiResourcePressure({
     rssMb: resolveApiRssPressureThresholds().critical + 1,
   });
@@ -959,9 +952,6 @@ test("flow scanner live option snapshots are blocked only under hard API pressur
 });
 
 test("option quote snapshot abort releases flow scanner leases immediately", async () => {
-  setEnv({
-    IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP: "1",
-  });
   const controller = new AbortController();
   const providerContractId = structuredOptionProviderContractId();
   __setBridgeOptionQuoteClientForTests({
@@ -1086,7 +1076,6 @@ test("option quote snapshots keep cached rejected contracts in the payload", asy
     IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
     IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "1",
     IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
-    IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP: "1",
   });
   const now = new Date("2026-04-28T14:30:00.000Z");
   __setBridgeOptionQuoteStreamNowForTests(now);
@@ -1279,7 +1268,6 @@ test("option quote stream keeps cached rejected contracts subscribed", async () 
     IBKR_MARKET_DATA_AUTOMATION_LINES: "0",
     IBKR_MARKET_DATA_FLOW_SCANNER_LINES: "1",
     IBKR_MARKET_DATA_CONVENIENCE_LINES: "0",
-    IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP: "1",
   });
   const now = new Date("2026-04-28T14:30:00.000Z");
   __setBridgeOptionQuoteStreamNowForTests(now);
@@ -1337,9 +1325,6 @@ test("option quote stream keeps cached rejected contracts subscribed", async () 
 });
 
 test("flow scanner option quote snapshots are not blocked by option-chain governor backoff", async () => {
-  setEnv({
-    IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP: "2",
-  });
   setBridgeGovernorOverrides({ options: { failureThreshold: 1 } });
   await assert.rejects(
     runBridgeWork("options", async () => {
@@ -1464,16 +1449,13 @@ test("signal options position mark snapshots stay allowed under critical pressur
     requiresGreeks: false,
   });
 
-  assert.deepEqual(bridgeRequests, [["3101"], ["3101"]]);
+  assert.deepEqual(bridgeRequests, [["3101"]]);
   assert.equal(payload.debug?.blockedReason, null);
   assert.equal(payload.debug?.acceptedCount, 1);
   assert.equal(getMarketDataAdmissionDiagnostics().activeOptionLineCount, 0);
 });
 
 test("flow scanner option quote snapshots honor quote governor backoff", async () => {
-  setEnv({
-    IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP: "2",
-  });
   process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_FAILURE_THRESHOLD"] = "1";
   process.env["IBKR_BRIDGE_GOVERNOR_QUOTES_BACKOFF_MS"] = "1000";
 
@@ -1528,9 +1510,6 @@ test("flow scanner option quote snapshots honor quote governor backoff", async (
 });
 
 test("option quote snapshots expose bridge hydration errors in debug metadata", async () => {
-  setEnv({
-    IBKR_FLOW_SCANNER_LIVE_OPTION_QUOTE_CAP: "1",
-  });
   __setBridgeOptionQuoteClientForTests({
     async getHealth() {
       return {

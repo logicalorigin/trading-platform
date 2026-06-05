@@ -57,15 +57,14 @@ test("account trade annotation internals prefer shadow mode for shadow account",
   );
 });
 
-test("account closed trade limit keeps default table cap and supports all-trade distributions", async () => {
+test("account closed trades ignore opening FLEX rows without realized P&L", async () => {
   const { __accountTradeAnnotationInternalsForTests } = await import("./account");
-  const { normalizeClosedTradesLimit } = __accountTradeAnnotationInternalsForTests;
+  const { isClosedFlexTradeRow } = __accountTradeAnnotationInternalsForTests;
 
-  assert.equal(normalizeClosedTradesLimit(undefined), 500);
-  assert.equal(normalizeClosedTradesLimit("25"), 25);
-  assert.equal(normalizeClosedTradesLimit(0), null);
-  assert.equal(normalizeClosedTradesLimit("0"), null);
-  assert.equal(normalizeClosedTradesLimit(50_000), 10_000);
+  assert.equal(isClosedFlexTradeRow({ openClose: "O", realizedPnl: "0" }), false);
+  assert.equal(isClosedFlexTradeRow({ openClose: null, realizedPnl: "0" }), false);
+  assert.equal(isClosedFlexTradeRow({ openClose: "C", realizedPnl: "0" }), true);
+  assert.equal(isClosedFlexTradeRow({ openClose: null, realizedPnl: "-42.5" }), true);
 });
 
 test("account trade outcome buckets keep losers left and winners right", async () => {

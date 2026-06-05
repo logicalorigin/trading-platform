@@ -54,6 +54,63 @@ test("market-data ingest only treats numeric refresh buckets as supersedable", (
   );
 });
 
+test("market-data ingest maps claimable queued jobs by kind", () => {
+  const diagnostics =
+    __marketDataIngestInternalsForTests.mapClaimableQueuedJobRows([
+      { kind: "stock_snapshot", value: "3" },
+      { kind: "option_chain_snapshot", value: 2 },
+      { kind: "gex_snapshot", value: "1" },
+    ]);
+
+  assert.equal(diagnostics.count, 6);
+  assert.deepEqual(diagnostics.byKind, {
+    stock_snapshot: 3,
+    option_chain_snapshot: 2,
+    gex_snapshot: 1,
+  });
+});
+
+test("market-data ingest flags an inactive worker when claimable jobs are waiting", () => {
+  assert.deepEqual(
+    __marketDataIngestInternalsForTests.resolveWorkerActivityDiagnostics({
+      configured: true,
+      providerConfigured: true,
+      runningCount: 0,
+      claimableQueuedJobCount: 4,
+    }),
+    {
+      workerLikelyInactive: true,
+      workerInactiveReason: "claimable_jobs_waiting_without_running_worker",
+    },
+  );
+
+  assert.deepEqual(
+    __marketDataIngestInternalsForTests.resolveWorkerActivityDiagnostics({
+      configured: true,
+      providerConfigured: true,
+      runningCount: 1,
+      claimableQueuedJobCount: 4,
+    }),
+    {
+      workerLikelyInactive: false,
+      workerInactiveReason: null,
+    },
+  );
+
+  assert.deepEqual(
+    __marketDataIngestInternalsForTests.resolveWorkerActivityDiagnostics({
+      configured: false,
+      providerConfigured: true,
+      runningCount: 0,
+      claimableQueuedJobCount: 4,
+    }),
+    {
+      workerLikelyInactive: false,
+      workerInactiveReason: null,
+    },
+  );
+});
+
 test("market-data ingest maps blocked GEX diagnostics with counts and ages", () => {
   const now = new Date("2026-05-29T16:00:00.000Z");
   const diagnostics =

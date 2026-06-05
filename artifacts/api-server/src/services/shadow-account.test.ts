@@ -248,6 +248,131 @@ test("shadow read cache coalesces repeated expensive reads until invalidated", a
   assert.equal(calls, 2);
 });
 
+test("shadow read cache supports per-read hot TTL overrides", async () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  let calls = 0;
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: 0,
+    staleTtlMs: 60_000,
+    staleWaitMs: 5,
+  });
+
+  try {
+    const first = await internals.withShadowReadCache(
+      "unit-ttl-override",
+      async () => ({ value: ++calls }),
+      { ttlMs: 60_000 },
+    );
+    const second = await internals.withShadowReadCache(
+      "unit-ttl-override",
+      async () => ({ value: ++calls }),
+      { ttlMs: 60_000 },
+    );
+
+    assert.deepEqual(first, { value: 1 });
+    assert.deepEqual(second, { value: 1 });
+    assert.equal(calls, 1);
+  } finally {
+    internals.setShadowReadCacheWindowsForTests({
+      ttlMs: null,
+      staleTtlMs: null,
+      staleWaitMs: null,
+    });
+    internals.invalidateShadowFreshStateCache();
+  }
+});
+
+test("shadow read diagnostics summarize cache hits, misses, and joins", async () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  let calls = 0;
+  const releaseFirst: {
+    current?: (value: { value: number }) => void;
+  } = {};
+  internals.invalidateShadowFreshStateCache();
+  internals.resetShadowAccountReadDiagnosticsForTests();
+
+  try {
+    const first = internals.withShadowReadCache(
+      "unit-diagnostics:cache",
+      async () =>
+        new Promise<{ value: number }>((resolve) => {
+          calls += 1;
+          releaseFirst.current = resolve;
+        }),
+    );
+    const second = internals.withShadowReadCache(
+      "unit-diagnostics:cache",
+      async () => {
+        calls += 1;
+        return { value: calls };
+      },
+    );
+    const release = releaseFirst.current;
+    if (!release) {
+      throw new Error("Expected shadow read diagnostic test resolver");
+    }
+    release({ value: 1 });
+
+    assert.deepEqual(await first, { value: 1 });
+    assert.deepEqual(await second, { value: 1 });
+    assert.deepEqual(
+      await internals.withShadowReadCache("unit-diagnostics:cache", async () => {
+        calls += 1;
+        return { value: calls };
+      }),
+      { value: 1 },
+    );
+
+    const diagnostics = internals.getShadowAccountReadDiagnostics();
+    const route = diagnostics.routes.find(
+      (entry) => entry.route === "unit-diagnostics",
+    );
+
+    assert.ok(route);
+    assert.equal(route.count, 3);
+    assert.equal(route.missCount, 1);
+    assert.equal(route.inFlightJoinCount, 1);
+    assert.equal(route.hitCount, 1);
+    assert.equal(route.errorCount, 0);
+    assert.equal(diagnostics.cache.entries, 1);
+    assert.ok(
+      diagnostics.recent.every((entry) => entry.route === "unit-diagnostics"),
+    );
+    assert.equal(calls, 1);
+  } finally {
+    internals.resetShadowAccountReadDiagnosticsForTests();
+    internals.invalidateShadowFreshStateCache();
+  }
+});
+
+test("shadow closed-trades cache key includes filters and canonical dates", () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+
+  assert.equal(
+    internals.shadowClosedTradesReadCacheKey({
+      source: null,
+      from: new Date("2026-06-01T00:00:00.000Z"),
+      to: new Date("2026-06-04T00:00:00.000Z"),
+      symbol: " spy ",
+      assetClass: "Options",
+      pnlSign: "winners",
+    }),
+    "closed-trades:ledger:2026-06-01T00:00:00.000Z:2026-06-04T00:00:00.000Z:SPY:options:winners",
+  );
+  assert.equal(
+    internals.shadowClosedTradesReadCacheKey({
+      source: "automation",
+      from: null,
+      to: null,
+      symbol: null,
+      assetClass: null,
+      pnlSign: null,
+    }),
+    "closed-trades:automation:::::",
+  );
+});
+
 test("shadow read cache serves marked stale data when refresh exceeds budget", async () => {
   const internals = __shadowWatchlistBacktestInternalsForTests;
   internals.invalidateShadowFreshStateCache();
@@ -340,6 +465,82 @@ test("shadow read cache can serve stale positions immediately", async () => {
   assert.equal(stale.degraded, true);
   assert.equal(stale.reason, "shadow_read_stale_cache");
   assert.deepEqual(stale.positions, [{ symbol: "F" }]);
+
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: null,
+    staleTtlMs: null,
+    staleWaitMs: null,
+  });
+  internals.invalidateShadowFreshStateCache();
+});
+
+test("shadow read cache can wait indefinitely for fresh positions", async () => {
+  const internals = __shadowWatchlistBacktestInternalsForTests;
+  internals.invalidateShadowFreshStateCache();
+  internals.setShadowReadCacheWindowsForTests({
+    ttlMs: 0,
+    staleTtlMs: 60_000,
+    staleWaitMs: 5,
+  });
+
+  await internals.withShadowReadCache(
+    "unit-never-stale-cache",
+    async () => ({
+      positions: [{ symbol: "F" }],
+      degraded: false,
+      reason: null,
+    }),
+  );
+
+  const freshResolver: {
+    current?: (value: {
+      positions: Array<{ symbol: string }>;
+      degraded: boolean;
+      reason: string | null;
+    }) => void;
+  } = {};
+  const pending = internals.withShadowReadCache(
+    "unit-never-stale-cache",
+    async () =>
+      new Promise<{
+        positions: Array<{ symbol: string }>;
+        degraded: boolean;
+        reason: string | null;
+      }>((resolve) => {
+        freshResolver.current = resolve;
+      }),
+    {
+      allowStale: (value) =>
+        Array.isArray((value as { positions?: unknown })?.positions) &&
+        ((value as { positions?: unknown[] }).positions?.length ?? 0) > 0,
+      staleStrategy: "never",
+    },
+  );
+
+  const early = await Promise.race([
+    pending.then(() => "settled"),
+    new Promise<"pending">((resolve) => {
+      const timeout = setTimeout(() => resolve("pending"), 20);
+      timeout.unref?.();
+    }),
+  ]);
+  assert.equal(early, "pending");
+
+  const completeFresh = freshResolver.current;
+  if (!completeFresh) {
+    throw new Error("Expected never-stale test resolver to be registered");
+  }
+  completeFresh({
+    positions: [{ symbol: "FCEL" }],
+    degraded: false,
+    reason: null,
+  });
+
+  assert.deepEqual(await pending, {
+    positions: [{ symbol: "FCEL" }],
+    degraded: false,
+    reason: null,
+  });
 
   internals.setShadowReadCacheWindowsForTests({
     ttlMs: null,
@@ -468,7 +669,7 @@ test("shadow filtered positions reuse fresh all-positions cache", async () => {
 
   try {
     await internals.withShadowReadCache(
-      "positions:all:ledger:cached-quotes",
+      "positions:all:ledger",
       async () => ({
         accountId: "shadow",
         currency: "USD",
@@ -505,7 +706,6 @@ test("shadow filtered positions reuse fresh all-positions cache", async () => {
       internals.readReusableShadowPositionsResponseForAssetClass({
         assetClassFilter: "options",
         source: null,
-        includeLiveQuotes: false,
       }) as any;
 
     assert.equal(filtered.positions.length, 1);
@@ -541,7 +741,7 @@ test("shadow filtered positions reuse stale all-positions cache only under press
 
   try {
     await internals.withShadowReadCache(
-      "positions:all:ledger:cached-quotes",
+      "positions:all:ledger",
       async () => ({
         accountId: "shadow",
         currency: "USD",
@@ -571,7 +771,6 @@ test("shadow filtered positions reuse stale all-positions cache only under press
       internals.readReusableShadowPositionsResponseForAssetClass({
         assetClassFilter: "options",
         source: null,
-        includeLiveQuotes: false,
       }),
       null,
     );
@@ -581,7 +780,6 @@ test("shadow filtered positions reuse stale all-positions cache only under press
       internals.readReusableShadowPositionsResponseForAssetClass({
         assetClassFilter: "options",
         source: null,
-        includeLiveQuotes: false,
       }) as any;
 
     assert.equal(filtered.positions.length, 1);
@@ -723,11 +921,29 @@ test("shadow account wrappers avoid full snapshot coupling for critical reads", 
   assert.match(summaryBody, /return getShadowAccountSummary\(\{ source: input\.source \}\);/);
   assert.match(allocationBody, /return getShadowAccountAllocation\(\{ source: input\.source \}\);/);
   assert.match(ordersBody, /return getShadowAccountOrders\(\{/);
-  assert.match(riskBody, /return getShadowAccountRisk\(\{ source: input\.source \}\);/);
+  assert.match(
+    riskBody,
+    /return getShadowAccountRisk\(\{ source: input\.source, detail \}\);/,
+  );
   assert.doesNotMatch(
     `${summaryBody}\n${allocationBody}\n${ordersBody}\n${riskBody}`,
     /fetchShadowAccountSnapshotBase/,
   );
+});
+
+test("account risk route accepts fast detail for deferred Greek reads", () => {
+  const source = readFileSync(
+    new URL("../routes/platform.ts", import.meta.url),
+    "utf8",
+  );
+  const routeBody = source.match(
+    /router\.get\("\/accounts\/:accountId\/risk", async \(req, res\) => \{[\s\S]*?\n\}\);/,
+  )?.[0];
+
+  assert.ok(routeBody);
+  assert.match(routeBody, /req\.query\.detail === "fast"/);
+  assert.match(routeBody, /req\.query\.detail === "full"/);
+  assert.match(routeBody, /detail,\s*\}\),/);
 });
 
 test("account page stream invalidation clears stale in-flight payloads", () => {
@@ -746,10 +962,7 @@ test("account page stream invalidation clears stale in-flight payloads", () => {
   assert.match(invalidatorBody, /accountPageDerivedInflight\.clear\(\);/);
   assert.match(invalidatorBody, /accountPageSnapshotCacheVersion \+= 1;/);
   assert.match(source, /const version = accountPageSnapshotCacheVersion;/);
-  assert.match(
-    source,
-    /if \(version === accountPageSnapshotCacheVersion\) \{\s*accountPageLiveCache\.set/,
-  );
+  assert.doesNotMatch(source, /accountPageLiveCache\.set/);
   assert.match(
     source,
     /if \(accountPageLiveInflight\.get\(cacheKey\) === request\) \{\s*accountPageLiveInflight\.delete\(cacheKey\);/,
@@ -901,6 +1114,42 @@ test("shadow medium range equity history reuses and rebases one-year base histor
   assert.deepEqual(
     sliced.events.map((event) => event.type),
     ["deposit", "trade_sell"],
+  );
+});
+
+test("shadow account-page derived reads use longer hot caches and immediate stale responses", () => {
+  const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const immediateDerivedReadPatterns = [
+    /summary:\$\{shadowSourceCacheKey\(source\)\}[\s\S]*?staleStrategy: "immediate"[\s\S]*?ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS/,
+    /allocation:\$\{shadowSourceCacheKey\(source\)\}[\s\S]*?staleStrategy: "immediate"[\s\S]*?ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS/,
+    /shadowClosedTradesReadCacheKey\(\{[\s\S]*?staleStrategy: "immediate"[\s\S]*?ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS/,
+    /orders:\$\{tab\}:\$\{shadowSourceCacheKey\(source\)\}[\s\S]*?staleStrategy: "immediate"[\s\S]*?ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS/,
+    /risk:\$\{shadowSourceCacheKey\(source\)\}:\$\{detail\}[\s\S]*?staleStrategy: "immediate"[\s\S]*?ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS/,
+    /cash-activity:\$\{shadowSourceCacheKey\(source\)\}[\s\S]*?staleStrategy: "immediate"[\s\S]*?ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS/,
+    /equity-history:\$\{range\}:\$\{benchmark\}:\$\{shadowSourceCacheKey\(source\)\}[\s\S]*?staleStrategy: "immediate"[\s\S]*?ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS/,
+  ];
+
+  assert.match(source, /const SHADOW_DERIVED_READ_CACHE_TTL_MS = 10_000;/);
+  immediateDerivedReadPatterns.forEach((pattern) => assert.match(source, pattern));
+  assert.equal(
+    [
+      ...source.matchAll(
+        /equity-history:\$\{range\}::\$\{shadowSourceCacheKey\(source\)\}[\s\S]*?staleStrategy: "immediate"[\s\S]*?ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS/g,
+      ),
+    ].length,
+    2,
+  );
+  assert.match(
+    source,
+    /ledger-bundle:\$\{shadowSourceCacheKey\(source\)\}[\s\S]*?staleStrategy: "never"[\s\S]*?ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS/,
+  );
+  assert.match(
+    source,
+    /open-positions:\$\{shadowSourceCacheKey\(source\)\}[\s\S]*?staleStrategy: "never"[\s\S]*?ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS/,
+  );
+  assert.match(
+    source,
+    /shadowPositionsReadCacheKey\(\{[\s\S]*?staleStrategy: "never"[\s\S]*?ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS/,
   );
 });
 
@@ -1470,7 +1719,8 @@ test("shadow account automation reads kick signal-options mirror repair without 
   assert.match(positionsBody, /const positions = ledgerBundle\.positions;/);
   assert.doesNotMatch(positionsBody, /ensureFreshShadowState\(true\)/);
   assert.match(positionsBody, /clearShadowAccountDbBackoff\(\);/);
-  assert.match(positionsBody, /staleStrategy: "immediate"/);
+  assert.match(positionsBody, /staleStrategy: "never"/);
+  assert.doesNotMatch(positionsBody, /staleStrategy: "immediate"/);
   assert.doesNotMatch(
     positionsBody,
     /source \? \{ allowStale: shadowReadCacheValueHasRows \} : undefined/,
@@ -3573,7 +3823,8 @@ test("shadow positions include hydrated option quote payloads", () => {
   assert.match(positionsBody, /\{ fetchMissingOptionQuotes: false \}/);
   assert.match(positionsBody, /readShadowLedgerBundleForSource\(source\)/);
   assert.match(positionsBody, /void kickShadowPositionMarkRefresh\(\)/);
-  assert.match(positionsBody, /staleStrategy: "immediate"/);
+  assert.match(positionsBody, /staleStrategy: "never"/);
+  assert.doesNotMatch(positionsBody, /staleStrategy: "immediate"/);
   assert.match(positionsBody, /ordersByPositionKey/);
   assert.match(positionsBody, /shadowOptionQuoteProviderContractId/);
   assert.match(positionsBody, /fallbackProviderContractId/);
@@ -3621,7 +3872,7 @@ test("shadow risk reuses projected underlying markets before quote fallback", ()
   assert.match(riskBody, /shadowUnderlyingPricesFromPositionRows\(positionsResponse\.positions\)/);
   assert.match(riskBody, /missingUnderlyingPrice/);
   assert.match(riskBody, /hydrateShadowOptionUnderlyingPrices/);
-  assert.match(source, /: `risk:\$\{shadowSourceCacheKey\(source\)\}`/);
+  assert.match(source, /`risk:\$\{shadowSourceCacheKey\(source\)\}:\$\{detail\}`/);
 });
 
 test("shadow fast risk skips live greek hydration for account-page critical reads", () => {
@@ -3635,12 +3886,14 @@ test("shadow fast risk skips live greek hydration for account-page critical read
 
   assert.ok(getRiskBody);
   assert.match(getRiskBody, /detail\?: "full" \| "fast"/);
-  assert.match(getRiskBody, /input\.detail === "fast" \? "fast" : "full"/);
-  assert.match(getRiskBody, /`risk:\$\{shadowSourceCacheKey\(source\)\}:fast`/);
+  assert.match(getRiskBody, /input\.detail === "full" \? "full" : "fast"/);
+  assert.match(getRiskBody, /`risk:\$\{shadowSourceCacheKey\(source\)\}:\$\{detail\}`/);
   assert.ok(riskBody);
   assert.match(riskBody, /const fastDetail = input\.detail === "fast";/);
   assert.match(riskBody, /missingUnderlyingPrice && !fastDetail/);
   assert.match(riskBody, /const liveGreekQuoteByProviderContractId = fastDetail/);
+  assert.match(riskBody, /const notional = fastDetail/);
+  assert.match(riskBody, /resolveAccountPortfolioRisk/);
   assert.match(riskBody, /const greekScenarios = fastDetail/);
   assert.match(riskBody, /buildDeferredShadowGreekScenarios/);
 });

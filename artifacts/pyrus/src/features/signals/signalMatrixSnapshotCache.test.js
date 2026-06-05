@@ -101,3 +101,52 @@ test("signal matrix snapshot cache filters invalid states and keeps the latest k
   assert.equal(snapshot.states[0].timeframe, "5m");
   assert.equal(snapshot.states[0].currentSignalDirection, "sell");
 });
+
+test("signal matrix snapshot cache preserves the full 500 symbol six-timeframe matrix", () => {
+  const storage = memoryStorage();
+  const timeframes = ["1m", "2m", "5m", "15m", "1h", "1d"];
+  const states = Array.from(
+    { length: 500 },
+    (_value, index) => `SYM${String(index + 1).padStart(3, "0")}`,
+  ).flatMap((symbol) =>
+    timeframes.map((timeframe) =>
+      state({
+        symbol,
+        timeframe,
+        currentSignalDirection: timeframe === "1d" ? "sell" : "buy",
+      }),
+    ),
+  );
+
+  assert.equal(
+    writeSignalMatrixSnapshotCache(
+      {
+        states,
+        timeframes,
+        evaluatedAt: "2026-06-04T21:30:00.000Z",
+      },
+      { storage, nowMs: 1000, timeframes },
+    ),
+    true,
+  );
+
+  const snapshot = readSignalMatrixSnapshotCache({
+    storage,
+    nowMs: 1000,
+    timeframes,
+  });
+
+  assert.equal(snapshot.states.length, 500 * timeframes.length);
+  assert.equal(
+    snapshot.states.filter((entry) => entry.timeframe === "1d").length,
+    500,
+  );
+  assert.ok(
+    snapshot.states.some(
+      (entry) =>
+        entry.symbol === "SYM500" &&
+        entry.timeframe === "1d" &&
+        entry.currentSignalDirection === "sell",
+    ),
+  );
+});

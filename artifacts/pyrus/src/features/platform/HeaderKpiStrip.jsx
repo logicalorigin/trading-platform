@@ -8,7 +8,6 @@ import {
 import { useNumberTick } from "../../lib/numberTick.js";
 import { useRuntimeTickerSnapshot } from "./runtimeTickerStore";
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
-import { AppTooltip } from "@/components/ui/tooltip";
 
 
 const CSS_COLOR = Object.freeze({
@@ -101,7 +100,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
     : priceLabel;
 
   return (
-    <AppTooltip content={`${label} proxy · ${symbol} · ${priceLabel} · ${percentLabel}`}><button
+    <button
       type="button"
       onClick={() => onSelect?.(symbol)}
       className="ra-header-kpi"
@@ -182,7 +181,7 @@ const HeaderKpiStripItem = memo(({ symbol, label, index, onSelect, compact = fal
       >
         {displayPercentLabel}
       </span>
-    </button></AppTooltip>
+    </button>
   );
 });
 

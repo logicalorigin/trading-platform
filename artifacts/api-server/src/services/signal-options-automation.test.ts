@@ -240,6 +240,26 @@ test("default paper signal-options startup uses full signal monitor coverage", (
     /await normalizeDefaultSignalOptionsPaperSignalMonitorProfile\(\)/,
   );
   assert.match(source, /await updateSignalMonitorProfile\(patch\)/);
+  assert.match(
+    source,
+    /await normalizeDefaultSignalOptionsPaperSignalMonitorProfile\(\);\s*const symbols = await resolveDefaultSignalOptionsSymbols\(\)/,
+  );
+  assert.match(
+    source,
+    /async function resolveDefaultSignalOptionsSymbols\(\)[\s\S]*getSignalMonitorProfileRow\(\{[\s\S]*environment:\s*"paper"[\s\S]*resolveSignalMonitorProfileUniverse\(profile/,
+  );
+  assert.match(
+    source,
+    /function resolveDefaultSignalOptionsWatchlistSymbols\(\)[\s\S]*listWatchlists/,
+  );
+  assert.match(
+    source,
+    /universeScope === "all_watchlists"[\s\S]*"all_watchlists_plus_universe"/,
+  );
+  assert.doesNotMatch(
+    source,
+    /universeScope === "all_watchlists_plus_universe"[\s\S]{0,240}"all_watchlists"/,
+  );
 });
 
 test("signal-options scans request Massive-primary signal monitor bars", () => {
@@ -7182,7 +7202,7 @@ test("cockpit scan stage does not render stored signal state as zero-symbol batc
     mode: "paper",
     enabled: true,
     providerAccountId: "DU123",
-    symbolUniverse: Array.from({ length: 90 }, (_, index) => `SYM${index}`),
+    symbolUniverse: Array.from({ length: 500 }, (_, index) => `SYM${index}`),
     lastEvaluatedAt: new Date("2026-04-28T17:59:00.000Z"),
     lastSignalAt: null,
     lastError: null,
@@ -7213,8 +7233,8 @@ test("cockpit scan stage does not render stored signal state as zero-symbol batc
         totalFailureCount: 0,
         failureCount: 0,
         lastFailureAt: null,
-        lastSignalCount: 90,
-        lastFreshSignalCount: 90,
+        lastSignalCount: 500,
+        lastFreshSignalCount: 500,
         lastStaleSignalCount: 0,
         lastUnavailableSignalCount: 0,
         lastLatestSignalBarAt: "2026-04-28T17:59:00.000Z",
@@ -7223,7 +7243,7 @@ test("cockpit scan stage does not render stored signal state as zero-symbol batc
         lastBlockedCandidateCount: 0,
         lastBatchSymbols: [],
         lastBatchSize: 0,
-        lastBatchUniverseCount: 90,
+        lastBatchUniverseCount: 500,
         lastBatchStartIndex: null,
         lastBatchNextIndex: null,
         lastBatchCapacity: 12,
@@ -7251,9 +7271,9 @@ test("cockpit scan stage does not render stored signal state as zero-symbol batc
       scanStage?.detail,
       "worker waiting 5s; signal state current",
     );
-    assert.doesNotMatch(scanStage?.detail ?? "", /batch|0\/90/);
+    assert.doesNotMatch(scanStage?.detail ?? "", /batch|0\/\d+/);
     assert.equal(scanStage?.lastBatchSize, 0);
-    assert.equal(scanStage?.lastBatchUniverseCount, 90);
+    assert.equal(scanStage?.lastBatchUniverseCount, 500);
   } finally {
     resetSignalOptionsWorkerSnapshotForTests();
   }
@@ -7267,7 +7287,7 @@ test("cockpit scan stage labels non-empty worker monitor refresh without batch w
     mode: "paper",
     enabled: true,
     providerAccountId: "DU123",
-    symbolUniverse: Array.from({ length: 90 }, (_, index) => `SYM${index}`),
+    symbolUniverse: Array.from({ length: 500 }, (_, index) => `SYM${index}`),
     lastEvaluatedAt: new Date("2026-04-28T17:59:00.000Z"),
     lastSignalAt: null,
     lastError: null,
@@ -7298,8 +7318,8 @@ test("cockpit scan stage labels non-empty worker monitor refresh without batch w
         totalFailureCount: 0,
         failureCount: 0,
         lastFailureAt: null,
-        lastSignalCount: 90,
-        lastFreshSignalCount: 90,
+        lastSignalCount: 500,
+        lastFreshSignalCount: 500,
         lastStaleSignalCount: 0,
         lastUnavailableSignalCount: 0,
         lastLatestSignalBarAt: "2026-04-28T17:59:00.000Z",
@@ -7308,7 +7328,7 @@ test("cockpit scan stage labels non-empty worker monitor refresh without batch w
         lastBlockedCandidateCount: 0,
         lastBatchSymbols: ["SYM0", "SYM1"],
         lastBatchSize: 12,
-        lastBatchUniverseCount: 90,
+        lastBatchUniverseCount: 500,
         lastBatchStartIndex: 0,
         lastBatchNextIndex: 12,
         lastBatchCapacity: 12,
@@ -7334,7 +7354,7 @@ test("cockpit scan stage labels non-empty worker monitor refresh without batch w
 
     assert.equal(
       scanStage?.detail,
-      "worker waiting 5s; last refresh 12/90 symbols",
+      "worker waiting 5s; last refresh 12/500 symbols",
     );
     assert.doesNotMatch(scanStage?.detail ?? "", /batch/);
   } finally {

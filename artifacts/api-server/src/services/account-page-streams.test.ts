@@ -3,10 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   ACCOUNT_PAGE_BENCHMARK_EQUITY_CACHE_TTL_MS,
-  ACCOUNT_PAGE_CACHE_JITTER_MS,
-  ACCOUNT_PAGE_CRITICAL_LIVE_CACHE_TTL_MS,
   ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS,
   ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS,
+  ACCOUNT_PAGE_SHADOW_CRITICAL_CACHE_TTL_MS,
   getAccountPageStreamDiagnostics,
 } from "./account-page-streams";
 
@@ -15,10 +14,16 @@ test("account page stream starts live and derived work immediately after critica
   assert.equal(ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS, 0);
 });
 
-test("account page stream cache defaults reduce stampedes without slowing derived cadence", () => {
-  assert.equal(ACCOUNT_PAGE_CRITICAL_LIVE_CACHE_TTL_MS, 2_000);
-  assert.equal(ACCOUNT_PAGE_CACHE_JITTER_MS, 250);
+test("account page stream only caches derived benchmark overlays and shadow critical reads", () => {
   assert.equal(ACCOUNT_PAGE_BENCHMARK_EQUITY_CACHE_TTL_MS, 5 * 60_000);
+  assert.equal(ACCOUNT_PAGE_SHADOW_CRITICAL_CACHE_TTL_MS, 2_000);
+  const source = readFileSync(new URL("./account-page-streams.ts", import.meta.url), "utf8");
+
+  assert.match(source, /accountPageShadowCriticalCache/);
+  assert.doesNotMatch(source, /accountPageLiveCache/);
+  assert.doesNotMatch(source, /accountPageSnapshotCache = new Map/);
+  assert.doesNotMatch(source, /ACCOUNT_PAGE_CACHE_JITTER_MS/);
+  assert.match(source, /accountPageShadowCriticalCache\.clear\(\)/);
 });
 
 test("account page stream diagnostics expose cache and timing fields", () => {
@@ -79,7 +84,14 @@ test("shadow account page critical payload uses cached positions and fast risk",
   assert.match(criticalBody, /closedTrades: deferredShadowClosedTrades\(normalized\.accountId\)/);
   assert.match(criticalBody, /detail: "fast"/);
   assert.match(criticalBody, /orders = deferredShadowOrders\(normalized\.accountId, normalized\.orderTab\)/);
-  assert.match(criticalBody, /risk = await getAccountRisk\(common\)/);
+  assert.match(criticalBody, /risk = await getAccountRisk\(\{ \.\.\.common, detail: "fast" \}\)/);
+  assert.match(criticalBody, /accountPageShadowCriticalCache\.get\(cacheKey\)/);
+  assert.match(criticalBody, /accountPageShadowCriticalCache\.set\(cacheKey/);
+  assert.match(criticalBody, /recordAccountPageCache\("criticalHit", true\)/);
+  assert.match(
+    criticalBody,
+    /recordAccountPageCache\("criticalHit", false\);\s*const inFlight = accountPageCriticalInflight\.get\(cacheKey\)/,
+  );
 });
 
 test("shadow account page live payload refreshes deferred orders after critical", () => {

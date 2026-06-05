@@ -450,11 +450,11 @@ const ACCOUNT_SWITCH_PREFETCH_OPTIONS = {
   },
 };
 const ACCOUNT_SWITCH_KEEP_WARM_MS = 60_000;
-const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 1_000;
-const SHADOW_ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 4_000;
-const ACCOUNT_LIVE_FALLBACK_DELAY_MS = 5_000;
-const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 6_000;
-const ACCOUNT_INACTIVE_PREWARM_FALLBACK_DELAY_MS = 5_000;
+const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 0;
+const SHADOW_ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 0;
+const ACCOUNT_LIVE_FALLBACK_DELAY_MS = 0;
+const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 0;
+const ACCOUNT_INACTIVE_PREWARM_FALLBACK_DELAY_MS = 0;
 
 const DEFAULT_EQUITY_BENCHMARK_VISIBILITY = {
   SPY: true,
@@ -1012,6 +1012,13 @@ const AccountScreenInner = ({
     }),
     [environment, shadowMode],
   );
+  const riskParams = useMemo(
+    () => ({
+      ...modeParams,
+      detail: "fast",
+    }),
+    [modeParams],
+  );
   const shadowSourceLabel = shadowMode ? "Shadow Ledger" : "Flex";
   const accountDataParams = useMemo(
     () => ({ ...modeParams }),
@@ -1177,6 +1184,9 @@ const AccountScreenInner = ({
   );
   const prefetchAccountSectionLiveQueries = useCallback(
     (section) => {
+      if (!accountQueriesEnabled) {
+        return;
+      }
       const target = getAccountSectionRequest(section);
       if (!target) {
         return;
@@ -1200,7 +1210,7 @@ const AccountScreenInner = ({
         ),
         getGetAccountRiskQueryOptions(
           target.accountId,
-          mode,
+          { ...mode, detail: "fast" },
           ACCOUNT_SWITCH_PREFETCH_OPTIONS,
         ),
         getGetAccountPositionsQueryOptions(
@@ -1233,7 +1243,7 @@ const AccountScreenInner = ({
         queryClient.prefetchQuery(options);
       });
     },
-    [getAccountSectionRequest, queryClient],
+    [accountQueriesEnabled, getAccountSectionRequest, queryClient],
   );
   const brokerStreamFreshness = useBrokerStreamFreshnessSnapshot(
     !shadowMode && !safeQaMode,
@@ -1785,7 +1795,7 @@ const AccountScreenInner = ({
       },
     },
   );
-  const riskQuery = useGetAccountRisk(accountRequestId, modeParams, {
+  const riskQuery = useGetAccountRisk(accountRequestId, riskParams, {
     query: {
       ...QUERY_OPTIONS.query,
       refetchInterval: secondaryRefreshInterval,

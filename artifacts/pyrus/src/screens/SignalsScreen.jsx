@@ -37,7 +37,9 @@ import {
   Badge,
   Card,
   DataUnavailableState,
+  MicroSparkline,
   StatusPill,
+  extractSparklinePoints,
 } from "../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 import { DataIssueInlineIcon } from "../components/platform/DataIssueInlineIcon.jsx";
@@ -55,6 +57,13 @@ import {
   BARS_REQUEST_PRIORITY,
   buildBarsRequestOptions,
 } from "../features/platform/queryDefaults";
+import { markRouteDataTiming } from "../features/platform/performanceMetrics";
+import {
+  SPARKLINE_RENDER_POINT_LIMIT,
+  TABLE_SPARKLINE_HEIGHT,
+  TABLE_SPARKLINE_WIDTH,
+  buildDetailedFallbackSparklineData,
+} from "../features/platform/sparklineConfig";
 import {
   CSS_COLOR,
   FONT_WEIGHTS,
@@ -85,6 +94,12 @@ import {
 import {
   buildSignalsMatrixHydrationPlan,
 } from "../features/signals/signalsMatrixHydration.js";
+import {
+  EMPTY_SIGNAL_EVENTS,
+  buildSignalEventsBySymbol,
+  buildSignalSparklinePointColors,
+  defaultSignalSparklineColorForDirection,
+} from "../features/signals/signalSparklineModel.js";
 import {
   getCurrentSignalDirection,
   isProblemSignalState,
@@ -169,7 +184,7 @@ const resolveSignalMonitorUniverseScope = (settings) => {
   const raw = settings?.[SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY];
   return SIGNAL_MONITOR_UNIVERSE_SCOPE_VALUES.has(raw)
     ? raw
-    : "all_watchlists";
+    : "all_watchlists_plus_universe";
 };
 const resolveSignalMonitorSettingsDraft = (settings) => ({
   ...resolvePyrusSignalsRuntimeSettings(settings || {}),
@@ -226,6 +241,120 @@ const SIGNAL_DRILLDOWN_CHART_TIMEFRAMES = new Set([
   "4h",
   "1d",
 ]);
+const EMPTY_SIGNAL_SPARKLINE_BARS = Object.freeze({});
+const SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
+const SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT = 720;
+const SIGNALS_TABLE_SPARKLINE_BATCH_SIZE = 72;
+const SIGNALS_TABLE_SPARKLINE_BATCH_CONCURRENCY = 2;
+const SIGNALS_TABLE_FALLBACK_SPARKLINE_POINTS = 18;
+const SIGNALS_TABLE_SPARKLINE_REQUEST_OPTIONS = buildBarsRequestOptions(
+  BARS_REQUEST_PRIORITY.visible,
+  "signals-table-sparkline",
+);
+
+const readSignalsRouteDataTimingNow = () =>
+  typeof performance !== "undefined" &&
+  typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+
+const signalSparklineRowKey = (symbol) =>
+  String(symbol || "").trim().toUpperCase();
+
+const barCloseValue = (bar) => {
+  const close = Number(bar?.close ?? bar?.c);
+  return Number.isFinite(close) ? close : null;
+};
+
+const thinBarsForSignalsTableSparkline = (bars) => {
+  const validBars = Array.isArray(bars)
+    ? bars.filter((bar) => barCloseValue(bar) != null)
+    : [];
+  if (validBars.length <= SPARKLINE_RENDER_POINT_LIMIT) {
+    return validBars;
+  }
+
+  const lastIndex = validBars.length - 1;
+  return Array.from({ length: SPARKLINE_RENDER_POINT_LIMIT }, (_, index) => {
+    const sourceIndex = Math.round(
+      (index * lastIndex) / (SPARKLINE_RENDER_POINT_LIMIT - 1),
+    );
+    return validBars[sourceIndex];
+  });
+};
+
+const chunkSignalSparklineRows = (rows, chunkSize) => {
+  const chunks = [];
+  for (let index = 0; index < rows.length; index += chunkSize) {
+    chunks.push(rows.slice(index, index + chunkSize));
+  }
+  return chunks;
+};
+
+const fetchSignalSparklineBarsBatch = async (rows, signal) => {
+  const headers = new Headers(SIGNALS_TABLE_SPARKLINE_REQUEST_OPTIONS.headers);
+  headers.set("content-type", "application/json");
+  const response = await fetch("/api/bars/batch", {
+    ...SIGNALS_TABLE_SPARKLINE_REQUEST_OPTIONS,
+    method: "POST",
+    signal,
+    headers,
+    body: JSON.stringify({
+      requests: rows.map((row) => ({
+        key: row.key,
+        symbol: row.symbol,
+        timeframe: SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
+        limit: SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT,
+        outsideRth: true,
+        source: "trades",
+      })),
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Bars batch request failed with ${response.status}`);
+  }
+  const payload = await response.json();
+  return Array.isArray(payload?.items) ? payload.items : [];
+};
+
+const signalSparklineFallbackPrice = (state, fallbackPrice) => {
+  const currentSignalPrice = Number(state?.currentSignalPrice);
+  if (Number.isFinite(currentSignalPrice) && currentSignalPrice > 0) {
+    return currentSignalPrice;
+  }
+  const close = Number(state?.close);
+  if (Number.isFinite(close) && close > 0) {
+    return close;
+  }
+  const rowFallbackPrice = Number(fallbackPrice);
+  return Number.isFinite(rowFallbackPrice) && rowFallbackPrice > 0
+    ? rowFallbackPrice
+    : null;
+};
+
+const buildSignalsTableFallbackSparklineData = ({
+  symbol,
+  state,
+  direction,
+  fallbackPrice,
+}) => {
+  const current = signalSparklineFallbackPrice(state, fallbackPrice);
+  if (current == null) {
+    return [];
+  }
+  const previous =
+    direction === "sell"
+      ? current * 1.0025
+      : direction === "buy"
+        ? current * 0.9975
+        : current * 0.999;
+  return buildDetailedFallbackSparklineData({
+    symbol,
+    current,
+    previous,
+    pointCount: SIGNALS_TABLE_FALLBACK_SPARKLINE_POINTS,
+  });
+};
 
 const toneForDirection = (direction) =>
   direction === "buy"
@@ -701,11 +830,85 @@ function CoverageCell({ row }) {
   );
 }
 
-function CompactIntervalCell({ timeframe, state }) {
+function CompactIntervalCell({
+  symbol,
+  timeframe,
+  state,
+  fallbackPrice = null,
+  sparklineData = [],
+  signalEvents = EMPTY_SIGNAL_EVENTS,
+}) {
   const hydrated = isHydratedSignalMatrixState(state);
   const problem = isProblemSignalState(state);
   const direction = hydrated && !problem ? getCurrentSignalDirection(state) : "";
   const tone = problem ? CSS_COLOR.red : toneForDirection(direction);
+  const fallbackSparklineData = useMemo(
+    () =>
+      hydrated
+        ? buildSignalsTableFallbackSparklineData({
+            symbol,
+            state,
+            direction,
+            fallbackPrice,
+          })
+        : [],
+    [direction, fallbackPrice, hydrated, state, symbol],
+  );
+  const displaySparklineData =
+    Array.isArray(sparklineData) && sparklineData.length >= 2
+      ? sparklineData
+      : fallbackSparklineData;
+  const sparklineSource =
+    Array.isArray(sparklineData) && sparklineData.length >= 2
+      ? "bars"
+      : fallbackSparklineData.length >= 2
+        ? "fallback"
+        : "empty";
+  const sparklinePoints = useMemo(
+    () => extractSparklinePoints(displaySparklineData),
+    [displaySparklineData],
+  );
+  const sparklinePointColors = useMemo(
+    () =>
+      buildSignalSparklinePointColors({
+        points: sparklinePoints,
+        row: {
+          timeframe,
+          direction,
+          currentSignalAt: state?.currentSignalAt || null,
+          status:
+            hydrated && direction
+              ? state?.fresh
+                ? SIGNALS_ROW_STATUS.activeFresh
+                : SIGNALS_ROW_STATUS.activeStale
+              : normalizeSignalStatus(state),
+        },
+        signalEvents,
+      }),
+    [
+      direction,
+      hydrated,
+      signalEvents,
+      sparklinePoints,
+      state?.currentSignalAt,
+      state?.fresh,
+      state?.status,
+      timeframe,
+    ],
+  );
+  const sparklineUsesSignalTimeline = Array.isArray(sparklinePointColors);
+  const sparklineSignalColor =
+    hydrated && direction
+      ? defaultSignalSparklineColorForDirection(direction)
+      : null;
+  const sparklineColor = sparklineUsesSignalTimeline
+    ? null
+    : sparklineSignalColor;
+  const sparklineSignalMode = sparklineUsesSignalTimeline
+    ? "timeline"
+    : sparklineColor
+      ? "current"
+      : "price";
   const issues = collectDataIssuesFromRecord(
     {
       status: problem
@@ -739,55 +942,106 @@ function CompactIntervalCell({ timeframe, state }) {
   const content = problem
     ? `${timeframe} ${state.status || "error"} · ${state.lastError}`
     : hydrated
-      ? `${timeframe} ${direction || "none"} · ${formatBars(state.barsSinceSignal)} · ${intervalAge}`
+      ? `${timeframe} ${direction || "none"} · ${formatBars(state.barsSinceSignal)} · ${intervalAge} · ${sparklinePoints.length || 0} bars`
       : `${timeframe} not hydrated`;
   return (
     <AppTooltip content={content}>
       <span
         style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: sp(4),
+          display: "grid",
+          gap: sp(2),
           width: "100%",
           minWidth: 0,
           color: tone,
           fontVariantNumeric: "tabular-nums",
+          lineHeight: 1,
         }}
       >
-        <Icon size={13} strokeWidth={2} aria-hidden="true" />
-        <DataIssueInlineIcon issues={issues} side="bottom" align="center" />
         <span
+          data-testid={`signals-${timeframe}-sparkline`}
+          data-sparkline-signal-mode={sparklineSignalMode}
+          data-sparkline-source={sparklineSource}
+          data-sparkline-signal-direction={direction || undefined}
+          data-sparkline-points={sparklinePoints.length}
           style={{
-            minWidth: 0,
-            display: "grid",
-            justifyItems: "end",
-            gap: 0,
-            lineHeight: 1.02,
+            width: dim(TABLE_SPARKLINE_WIDTH),
+            minWidth: dim(TABLE_SPARKLINE_WIDTH),
+            height: dim(TABLE_SPARKLINE_HEIGHT),
+            justifySelf: "end",
+            overflow: "hidden",
+            borderRadius: dim(RADII.xs),
           }}
         >
+          {sparklinePoints.length >= 2 ? (
+            <MicroSparkline
+              data={displaySparklineData}
+              color={sparklineColor}
+              pointColors={sparklinePointColors}
+              width={TABLE_SPARKLINE_WIDTH}
+              height={TABLE_SPARKLINE_HEIGHT}
+              className="ra-sparkline"
+              ariaHidden
+              style={{ width: "100%", height: "100%" }}
+            />
+          ) : (
+            <span
+              aria-hidden="true"
+              style={{
+                display: "block",
+                width: "100%",
+                height: "100%",
+                borderRadius: dim(RADII.xs),
+                boxShadow: `inset 0 -1px 0 ${cssColorMix(CSS_COLOR.textMuted, 24)}`,
+                background: cssColorMix(CSS_COLOR.textMuted, 7),
+                opacity: hydrated ? 0.75 : 0.35,
+              }}
+            />
+          )}
+        </span>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: sp(4),
+            width: "100%",
+            minWidth: 0,
+          }}
+        >
+          <Icon size={13} strokeWidth={2} aria-hidden="true" />
+          <DataIssueInlineIcon issues={issues} side="bottom" align="center" />
           <span
             style={{
-              ...cellTextStyle,
-              color: hydrated && state?.fresh
-                ? tone
-                : problem
+              minWidth: 0,
+              display: "grid",
+              justifyItems: "end",
+              gap: 0,
+              lineHeight: 1.02,
+            }}
+          >
+            <span
+              style={{
+                ...cellTextStyle,
+                color: hydrated && state?.fresh
                   ? tone
-                  : CSS_COLOR.textDim,
-              fontSize: textSize("captionStrong"),
-            }}
-          >
-            {problem ? "Err" : hydrated ? formatCompactBars(state.barsSinceSignal) : MISSING_VALUE}
-          </span>
-          <span
-            data-testid={`signals-${timeframe}-age`}
-            style={{
-              ...cellTextStyle,
-              color: CSS_COLOR.textDim,
-              fontSize: fs(9),
-            }}
-          >
-            {hydrated ? intervalAge : ""}
+                  : problem
+                    ? tone
+                    : CSS_COLOR.textDim,
+                fontSize: textSize("captionStrong"),
+              }}
+            >
+              {problem ? "Err" : hydrated ? formatCompactBars(state.barsSinceSignal) : MISSING_VALUE}
+            </span>
+            <span
+              data-testid={`signals-${timeframe}-age`}
+              style={{
+                ...cellTextStyle,
+                color: CSS_COLOR.textDim,
+                fontSize: fs(9),
+              }}
+            >
+              {hydrated ? intervalAge : ""}
+            </span>
           </span>
         </span>
       </span>
@@ -2157,6 +2411,7 @@ export default function SignalsScreen({
   signalMonitorEventsLoaded = false,
   signalMatrixStates = [],
   isVisible = true,
+  safeQaMode = false,
   onReadinessChange,
   onSelectSymbol,
   onJumpToTrade,
@@ -2184,6 +2439,9 @@ export default function SignalsScreen({
   const [expandedSymbol, setExpandedSymbol] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [visibleHydrationSymbols, setVisibleHydrationSymbols] = useState([]);
+  const [signalSparklineBarsBySymbol, setSignalSparklineBarsBySymbol] = useState(
+    EMPTY_SIGNAL_SPARKLINE_BARS,
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsDraft, setSettingsDraft] = useState(() =>
     resolveSignalMonitorSettingsDraft(DEFAULT_PYRUS_SIGNALS_SETTINGS),
@@ -2192,6 +2450,31 @@ export default function SignalsScreen({
   const [settingsApplying, setSettingsApplying] = useState(false);
   const syncedSettingsSignatureRef = useRef("");
   const active = isVisible !== false;
+  const signalsTimingStagesRef = useRef(new Set());
+  const signalsRouteDataStageDetailsRef = useRef(new Map());
+  const markSignalsRouteDataTiming = useCallback((stage, detail = {}) => {
+    if (signalsTimingStagesRef.current.has(stage)) {
+      return;
+    }
+    signalsTimingStagesRef.current.add(stage);
+    markRouteDataTiming("signals", stage, detail);
+  }, []);
+  const captureSignalsRouteDataStage = useCallback(
+    (stage, compute, buildDetail = () => ({})) => {
+      const startedAt = readSignalsRouteDataTimingNow();
+      const value = compute();
+      const computeMs = Math.max(
+        0,
+        Math.round(readSignalsRouteDataTimingNow() - startedAt),
+      );
+      signalsRouteDataStageDetailsRef.current.set(stage, {
+        computeMs,
+        ...buildDetail(value),
+      });
+      return value;
+    },
+    [],
+  );
   const signalMonitorParams = useMemo(() => ({ environment }), [environment]);
   const signalMonitorEventsParams = useMemo(
     () => ({ environment, limit: SIGNALS_EVENT_LIMIT }),
@@ -2245,25 +2528,71 @@ export default function SignalsScreen({
     [profileIndicatorSettings],
   );
   const stateResponse = useMemo(
-    () => {
-      if (stateQuery.data) {
-        return {
-          ...stateQuery.data,
-          universeSymbols: stateQuery.data.universeSymbols?.length
-            ? stateQuery.data.universeSymbols
-            : signalMonitorSymbols,
-        };
-      }
-      return {
-        profile,
-        states: [],
-        universeSymbols: signalMonitorSymbols,
-        skippedSymbols: [],
-        universe: null,
-      };
-    },
-    [profile, signalMonitorSymbols, stateQuery.data],
+    () =>
+      captureSignalsRouteDataStage(
+        "state-response-ready",
+        () => {
+          if (stateQuery.data) {
+            return {
+              ...stateQuery.data,
+              universeSymbols: stateQuery.data.universeSymbols?.length
+                ? stateQuery.data.universeSymbols
+                : signalMonitorSymbols,
+            };
+          }
+          return {
+            profile,
+            states: [],
+            universeSymbols: signalMonitorSymbols,
+            skippedSymbols: [],
+            universe: null,
+          };
+        },
+        (value) => ({
+          source: stateQuery.data ? "query" : "fallback",
+          states: Array.isArray(value?.states) ? value.states.length : 0,
+          universeSymbols: Array.isArray(value?.universeSymbols)
+            ? value.universeSymbols.length
+            : 0,
+          skippedSymbols: Array.isArray(value?.skippedSymbols)
+            ? value.skippedSymbols.length
+            : 0,
+        }),
+      ),
+    [
+      captureSignalsRouteDataStage,
+      profile,
+      signalMonitorSymbols,
+      stateQuery.data,
+    ],
   );
+  const stateResponseReady = Boolean(
+    stateQuery.data ||
+      stateQuery.isFetched ||
+      !stateQuery.isLoading ||
+      signalMonitorSymbols.length ||
+      signalMatrixStates.length,
+  );
+  useEffect(() => {
+    if (!active || !stateResponseReady) {
+      return;
+    }
+    markSignalsRouteDataTiming("state-response-ready", {
+      ...(signalsRouteDataStageDetailsRef.current.get("state-response-ready") || {}),
+      states: Array.isArray(stateResponse.states)
+        ? stateResponse.states.length
+        : 0,
+      universeSymbols: Array.isArray(stateResponse.universeSymbols)
+        ? stateResponse.universeSymbols.length
+        : 0,
+    });
+  }, [
+    active,
+    markSignalsRouteDataTiming,
+    stateResponse.states,
+    stateResponse.universeSymbols,
+    stateResponseReady,
+  ]);
   const signalsHydrationUniverseSymbols = useMemo(
     () =>
       stateResponse.universeSymbols?.length
@@ -2271,37 +2600,281 @@ export default function SignalsScreen({
         : signalMonitorSymbols,
     [signalMonitorSymbols, stateResponse.universeSymbols],
   );
-  const rows = useMemo(
+  const signalEventsForRows = useMemo(
     () =>
-      buildSignalsRows({
-        stateResponse,
-        matrixStates: signalMatrixStates,
-        events: hasProvidedSignalMonitorEvents
-          ? providedSignalMonitorEvents.slice(0, SIGNALS_EVENT_LIMIT)
-          : eventsQuery.data?.events || [],
-        watchlists,
-      }),
+      hasProvidedSignalMonitorEvents
+        ? providedSignalMonitorEvents.slice(0, SIGNALS_EVENT_LIMIT)
+        : eventsQuery.data?.events || [],
     [
       eventsQuery.data?.events,
       hasProvidedSignalMonitorEvents,
       providedSignalMonitorEvents,
+    ],
+  );
+  const signalEventsBySymbol = useMemo(
+    () =>
+      captureSignalsRouteDataStage(
+        "events-by-symbol-ready",
+        () => buildSignalEventsBySymbol(signalEventsForRows),
+        (value) => ({
+          events: signalEventsForRows.length,
+          source: hasProvidedSignalMonitorEvents
+            ? "provided"
+            : eventsQuery.data
+              ? "query"
+              : "fallback",
+          symbols: value?.size || 0,
+        }),
+      ),
+    [
+      captureSignalsRouteDataStage,
+      eventsQuery.data,
+      hasProvidedSignalMonitorEvents,
+      signalEventsForRows,
+    ],
+  );
+  const signalEventsReady = Boolean(
+    hasProvidedSignalMonitorEvents ||
+      !eventsQueryEnabled ||
+      eventsQuery.data ||
+      eventsQuery.isFetched ||
+      !eventsQuery.isLoading,
+  );
+  useEffect(() => {
+    if (!active || !signalEventsReady) {
+      return;
+    }
+    markSignalsRouteDataTiming("events-by-symbol-ready", {
+      ...(signalsRouteDataStageDetailsRef.current.get("events-by-symbol-ready") || {}),
+      events: signalEventsForRows.length,
+      symbols: signalEventsBySymbol.size || 0,
+    });
+  }, [
+    active,
+    markSignalsRouteDataTiming,
+    signalEventsBySymbol,
+    signalEventsForRows.length,
+    signalEventsReady,
+  ]);
+  const rows = useMemo(
+    () =>
+      captureSignalsRouteDataStage(
+        "rows-built",
+        () =>
+          buildSignalsRows({
+            stateResponse,
+            matrixStates: signalMatrixStates,
+            events: signalEventsForRows,
+            watchlists,
+          }),
+        (value) => ({
+          events: signalEventsForRows.length,
+          matrixStates: signalMatrixStates.length,
+          rows: value.length,
+          states: Array.isArray(stateResponse?.states)
+            ? stateResponse.states.length
+            : 0,
+          watchlists: watchlists.length,
+        }),
+      ),
+    [
+      captureSignalsRouteDataStage,
+      signalEventsForRows,
       signalMatrixStates,
       stateResponse,
       watchlists,
     ],
   );
+  const signalsRowsReady = Boolean(stateResponseReady && signalEventsReady);
+  useEffect(() => {
+    if (!active || !signalsRowsReady) {
+      return;
+    }
+    markSignalsRouteDataTiming("rows-built", {
+      ...(signalsRouteDataStageDetailsRef.current.get("rows-built") || {}),
+      rows: rows.length,
+    });
+  }, [
+    active,
+    markSignalsRouteDataTiming,
+    rows.length,
+    signalsRowsReady,
+  ]);
   const filteredRows = useMemo(
     () =>
-      sortSignalsRows(
-        filterSignalsRows(rows, {
-          query,
-          status: statusFilter,
-          direction: directionFilter,
+      captureSignalsRouteDataStage(
+        "rows-filtered-sorted",
+        () =>
+          sortSignalsRows(
+            filterSignalsRows(rows, {
+              query,
+              status: statusFilter,
+              direction: directionFilter,
+            }),
+            { sortKey, direction: sortDirection },
+          ),
+        (value) => ({
+          direction: sortDirection,
+          directionFilter,
+          queryActive: Boolean(query.trim()),
+          rows: value.length,
+          sortKey,
+          sourceRows: rows.length,
+          statusFilter,
         }),
-        { sortKey, direction: sortDirection },
       ),
-    [directionFilter, query, rows, sortDirection, sortKey, statusFilter],
+    [
+      captureSignalsRouteDataStage,
+      directionFilter,
+      query,
+      rows,
+      sortDirection,
+      sortKey,
+      statusFilter,
+    ],
   );
+  useEffect(() => {
+    if (!active || !signalsRowsReady) {
+      return;
+    }
+    markSignalsRouteDataTiming("rows-filtered-sorted", {
+      ...(signalsRouteDataStageDetailsRef.current.get("rows-filtered-sorted") || {}),
+      rows: filteredRows.length,
+      sourceRows: rows.length,
+    });
+  }, [
+    active,
+    filteredRows.length,
+    markSignalsRouteDataTiming,
+    rows.length,
+    signalsRowsReady,
+  ]);
+  const signalSparklineRows = useMemo(
+    () =>
+      captureSignalsRouteDataStage(
+        "sparkline-rows-planned",
+        () => {
+          const rowSparklines = filteredRows
+            .map((row) => ({
+              key: signalSparklineRowKey(row.symbol),
+              symbol: row.symbol,
+            }))
+            .filter((rowSparkline) => rowSparkline.key);
+          return Array.from(
+            new Map(
+              rowSparklines.map((rowSparkline) => [
+                rowSparkline.key,
+                rowSparkline,
+              ]),
+            ).values(),
+          ).sort((left, right) => left.key.localeCompare(right.key));
+        },
+        (value) => ({
+          sparklineRows: value.length,
+          sourceRows: filteredRows.length,
+          timeframe: SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME,
+        }),
+      ),
+    [captureSignalsRouteDataStage, filteredRows],
+  );
+  useEffect(() => {
+    if (!active || !signalsRowsReady) {
+      return;
+    }
+    markSignalsRouteDataTiming("sparkline-rows-planned", {
+      ...(signalsRouteDataStageDetailsRef.current.get("sparkline-rows-planned") || {}),
+      sparklineRows: signalSparklineRows.length,
+      rows: filteredRows.length,
+    });
+  }, [
+    active,
+    filteredRows.length,
+    markSignalsRouteDataTiming,
+    signalSparklineRows.length,
+    signalsRowsReady,
+  ]);
+  const signalSparklineRowsKey = useMemo(
+    () => signalSparklineRows.map((row) => row.key).join(","),
+    [signalSparklineRows],
+  );
+  useEffect(() => {
+    if (!active || safeQaMode || !signalSparklineRows.length) {
+      setSignalSparklineBarsBySymbol(EMPTY_SIGNAL_SPARKLINE_BARS);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    const activeKeys = new Set(signalSparklineRows.map((row) => row.key));
+    const batches = chunkSignalSparklineRows(
+      signalSparklineRows,
+      SIGNALS_TABLE_SPARKLINE_BATCH_SIZE,
+    );
+    let cancelled = false;
+    let nextBatchIndex = 0;
+
+    setSignalSparklineBarsBySymbol((current) => {
+      const entries = Object.entries(current).filter(([key]) =>
+        activeKeys.has(key),
+      );
+      return entries.length ? Object.fromEntries(entries) : EMPTY_SIGNAL_SPARKLINE_BARS;
+    });
+
+    const runBatchWorker = async () => {
+      while (!cancelled && !controller.signal.aborted && nextBatchIndex < batches.length) {
+        const batchIndex = nextBatchIndex;
+        nextBatchIndex += 1;
+        const batch = batches[batchIndex];
+        try {
+          const items = await fetchSignalSparklineBarsBatch(
+            batch,
+            controller.signal,
+          );
+          if (cancelled || controller.signal.aborted) {
+            return;
+          }
+          setSignalSparklineBarsBySymbol((current) => {
+            const next = { ...current };
+            items.forEach((item) => {
+              if (!activeKeys.has(item?.key)) return;
+              next[item.key] =
+                item?.status === "fulfilled"
+                  ? thinBarsForSignalsTableSparkline(item.bars || [])
+                  : [];
+            });
+            return next;
+          });
+        } catch {
+          if (cancelled || controller.signal.aborted) {
+            return;
+          }
+          setSignalSparklineBarsBySymbol((current) => {
+            const next = { ...current };
+            batch.forEach((row) => {
+              next[row.key] = [];
+            });
+            return next;
+          });
+        }
+      }
+    };
+
+    const workerCount = Math.max(
+      1,
+      Math.min(SIGNALS_TABLE_SPARKLINE_BATCH_CONCURRENCY, batches.length),
+    );
+    void Promise.allSettled(
+      Array.from({ length: workerCount }, runBatchWorker),
+    );
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [
+    active,
+    safeQaMode,
+    signalSparklineRowsKey,
+  ]);
   useEffect(() => {
     persistState({
       signalsColumnOrder: normalizeColumnOrder(columnOrder, SIGNALS_COLUMN_IDS),
@@ -2354,22 +2927,54 @@ export default function SignalsScreen({
   );
   const matrixHydrationPlan = useMemo(
     () =>
-      buildSignalsMatrixHydrationPlan({
-        symbols: signalsHydrationUniverseSymbols,
-        prioritySymbols: priorityHydrationSymbols,
-        currentStates: [
-          ...signalMatrixStates,
-          ...(stateResponse?.states || []),
-        ],
-        timeframes: SIGNALS_TABLE_TIMEFRAMES,
-      }),
+      captureSignalsRouteDataStage(
+        "matrix-hydration-plan-ready",
+        () =>
+          buildSignalsMatrixHydrationPlan({
+            symbols: signalsHydrationUniverseSymbols,
+            prioritySymbols: priorityHydrationSymbols,
+            currentStates: [
+              ...signalMatrixStates,
+              ...(stateResponse?.states || []),
+            ],
+            timeframes: SIGNALS_TABLE_TIMEFRAMES,
+          }),
+        (value) => ({
+          hydratedCells: value.hydratedCellCount,
+          missingCells: value.missingCellCount,
+          prioritySymbols: priorityHydrationSymbols.length,
+          requestCells: value.requestCells.length,
+          requestSymbols: value.requestSymbols.length,
+          symbols: value.symbols.length,
+          totalCells: value.totalCellCount,
+        }),
+      ),
     [
+      captureSignalsRouteDataStage,
       priorityHydrationSymbols,
       signalMatrixStates,
       signalsHydrationUniverseSymbols,
       stateResponse?.states,
     ],
   );
+  useEffect(() => {
+    if (!active || !stateResponseReady) {
+      return;
+    }
+    markSignalsRouteDataTiming("matrix-hydration-plan-ready", {
+      ...(signalsRouteDataStageDetailsRef.current.get("matrix-hydration-plan-ready") || {}),
+      missingCells: matrixHydrationPlan.missingCellCount,
+      requestCells: matrixHydrationPlan.requestCells.length,
+      symbols: matrixHydrationPlan.symbols.length,
+    });
+  }, [
+    active,
+    markSignalsRouteDataTiming,
+    matrixHydrationPlan.missingCellCount,
+    matrixHydrationPlan.requestCells.length,
+    matrixHydrationPlan.symbols.length,
+    stateResponseReady,
+  ]);
   const matrixHydrationRequestKey = useMemo(
     () =>
       matrixHydrationPlan.requestCells
@@ -2685,13 +3290,22 @@ export default function SignalsScreen({
       ...SIGNALS_TABLE_TIMEFRAMES.map((timeframe) => ({
         id: `tf-${timeframe}`,
         header: timeframe,
-        meta: { width: phone ? "60px" : "76px", align: "right" },
-        cell: ({ row }) => (
-          <CompactIntervalCell
-            timeframe={timeframe}
-            state={row.original.matrixStatesByTimeframe?.[timeframe] || null}
-          />
-        ),
+        meta: { width: phone ? "78px" : "96px", align: "right" },
+        cell: ({ row }) => {
+          const symbolKey = signalSparklineRowKey(row.original.symbol);
+          return (
+            <CompactIntervalCell
+              symbol={row.original.symbol}
+              timeframe={timeframe}
+              state={row.original.matrixStatesByTimeframe?.[timeframe] || null}
+              fallbackPrice={row.original.currentSignalPrice}
+              sparklineData={signalSparklineBarsBySymbol[symbolKey] || []}
+              signalEvents={
+                signalEventsBySymbol.get(symbolKey) || EMPTY_SIGNAL_EVENTS
+              }
+            />
+          );
+        },
       })),
       {
         id: "trend",
@@ -2825,15 +3439,64 @@ export default function SignalsScreen({
         },
       };
     }),
-    [expandedSymbol, handleRowSelect, onJumpToTrade, phone],
+    [
+      expandedSymbol,
+      handleRowSelect,
+      onJumpToTrade,
+      phone,
+      signalEventsBySymbol,
+      signalSparklineBarsBySymbol,
+    ],
   );
   const columns = useMemo(
-    () => orderColumnsById(baseColumns, columnOrder),
-    [baseColumns, columnOrder],
+    () =>
+      captureSignalsRouteDataStage(
+        "columns-ready",
+        () => orderColumnsById(baseColumns, columnOrder),
+        (value) => ({
+          baseColumns: baseColumns.length,
+          columns: value.length,
+          phone,
+        }),
+      ),
+    [baseColumns, captureSignalsRouteDataStage, columnOrder, phone],
   );
+  useEffect(() => {
+    if (!active || !columns.length) {
+      return;
+    }
+    markSignalsRouteDataTiming("columns-ready", {
+      ...(signalsRouteDataStageDetailsRef.current.get("columns-ready") || {}),
+      columns: columns.length,
+    });
+  }, [
+    active,
+    columns.length,
+    markSignalsRouteDataTiming,
+  ]);
 
   const loading = stateQuery.isLoading || profileQuery.isLoading;
   const errored = stateQuery.isError || profileQuery.isError || eventsQuery.isError;
+  useEffect(() => {
+    if (!active || loading || errored) {
+      return;
+    }
+    markSignalsRouteDataTiming("table-ready", {
+      columns: columns.length,
+      filteredRows: filteredRows.length,
+      rows: rows.length,
+      visibleHydrationSymbols: visibleHydrationSymbols.length,
+    });
+  }, [
+    active,
+    columns.length,
+    errored,
+    filteredRows.length,
+    loading,
+    markSignalsRouteDataTiming,
+    rows.length,
+    visibleHydrationSymbols.length,
+  ]);
   const signalsErrorCopy = useMemo(
     () =>
       describeUserFacingRuntimeError(
@@ -2878,7 +3541,7 @@ export default function SignalsScreen({
     : "Intervals idle";
   const activeSignalCount = Math.max(1, summary.active || 0);
   const trackedCount = Math.max(1, summary.total || 0);
-  const minTableWidth = phone ? dim(980) : dim(1320);
+  const minTableWidth = phone ? dim(1120) : dim(1460);
   const activeWatchlistId = getActiveWatchlistId(profile, defaultWatchlist);
 
   if (!active) {
@@ -3221,7 +3884,7 @@ export default function SignalsScreen({
               data={filteredRows}
               getRowId={(row) => row.id}
               lockedColumnIds={SIGNALS_LOCKED_COLUMN_IDS}
-              rowHeight={phone ? 46 : 42}
+              rowHeight={phone ? 58 : 56}
               rowDetailHeight={phone ? 820 : compact ? 720 : 650}
               rowDetailTestId="signals-table-row-drilldown"
               minWidth={minTableWidth}

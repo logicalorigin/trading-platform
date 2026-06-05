@@ -32,9 +32,8 @@ export const ACCOUNT_PAGE_STREAM_INTERVAL_MS = 1_000;
 export const ACCOUNT_PAGE_DERIVED_STREAM_INTERVAL_MS = 30_000;
 export const ACCOUNT_PAGE_LIVE_BOOT_DELAY_MS = 0;
 export const ACCOUNT_PAGE_DERIVED_BOOT_DELAY_MS = 0;
-export const ACCOUNT_PAGE_CRITICAL_LIVE_CACHE_TTL_MS = 2_000;
-export const ACCOUNT_PAGE_CACHE_JITTER_MS = 250;
 export const ACCOUNT_PAGE_BENCHMARK_EQUITY_CACHE_TTL_MS = 5 * 60_000;
+export const ACCOUNT_PAGE_SHADOW_CRITICAL_CACHE_TTL_MS = 2_000;
 
 type AccountPageSnapshotInput = {
   accountId: string;
@@ -132,25 +131,13 @@ export type AccountPageDerivedPayload = {
   flexHealth: AccountPageSnapshotPayload["flexHealth"];
 };
 
-const accountPageSnapshotCache = new Map<
-  string,
-  { value: AccountPageSnapshotPayload; expiresAt: number }
->();
 const accountPageSnapshotInflight = new Map<
   string,
   Promise<AccountPageSnapshotPayload>
 >();
-const accountPageCriticalCache = new Map<
-  string,
-  { value: AccountPageCriticalPayload; expiresAt: number }
->();
 const accountPageCriticalInflight = new Map<
   string,
   Promise<AccountPageCriticalPayload>
->();
-const accountPageLiveCache = new Map<
-  string,
-  { value: AccountPageLivePayload; expiresAt: number }
 >();
 const accountPageLiveInflight = new Map<
   string,
@@ -170,6 +157,10 @@ const accountPageBenchmarkEquityCache = new Map<
     value: Awaited<ReturnType<typeof getAccountEquityHistory>>;
     expiresAt: number;
   }
+>();
+const accountPageShadowCriticalCache = new Map<
+  string,
+  { value: AccountPageCriticalPayload; expiresAt: number }
 >();
 let accountPageSnapshotCacheVersion = 0;
 
@@ -222,10 +213,6 @@ const accountPageStreamDiagnostics: {
     benchmarkMisses: 0,
   },
 };
-
-function cacheTtlMs(baseMs: number): number {
-  return baseMs + Math.floor(Math.random() * (ACCOUNT_PAGE_CACHE_JITTER_MS + 1));
-}
 
 function recordAccountPageTiming(key: AccountPageTimingKey, startedAt: number): void {
   accountPageStreamDiagnostics.timings[key] = Math.max(0, Date.now() - startedAt);
@@ -334,11 +321,9 @@ function cacheKeyForInput(input: AccountPageSnapshotInput): string {
 }
 
 export function clearAccountPageSnapshotCache() {
-  accountPageSnapshotCache.clear();
-  accountPageCriticalCache.clear();
-  accountPageLiveCache.clear();
   accountPageDerivedCache.clear();
   accountPageBenchmarkEquityCache.clear();
+  accountPageShadowCriticalCache.clear();
   accountPageSnapshotInflight.clear();
   accountPageCriticalInflight.clear();
   accountPageLiveInflight.clear();
@@ -396,20 +381,11 @@ export async function fetchAccountPageLivePayload(
     orderTab: normalized.orderTab,
     assetClass: normalized.assetClass,
   });
-  const cached = accountPageLiveCache.get(cacheKey);
-  const now = Date.now();
-  if (cached && cached.expiresAt > now) {
-    recordAccountPageCache("liveHit", true);
-    recordAccountPageTiming("liveMs", now);
-    return cached.value;
-  }
-  recordAccountPageCache("liveHit", false);
   const inFlight = accountPageLiveInflight.get(cacheKey);
   if (inFlight) {
     return inFlight;
   }
 
-  const version = accountPageSnapshotCacheVersion;
   const startedAt = Date.now();
   const request = (async () => {
     try {
@@ -440,13 +416,6 @@ export async function fetchAccountPageLivePayload(
         orders: shadowOrders ?? critical.orders,
         risk: critical.risk,
       };
-      if (version === accountPageSnapshotCacheVersion) {
-        accountPageLiveCache.set(cacheKey, {
-          value,
-          expiresAt:
-            Date.now() + cacheTtlMs(ACCOUNT_PAGE_CRITICAL_LIVE_CACHE_TTL_MS),
-        });
-      }
       return value;
     } finally {
       recordAccountPageTiming("liveMs", startedAt);
@@ -467,20 +436,27 @@ export async function fetchAccountPageCriticalPayload(
   input: AccountPageSnapshotInput,
 ): Promise<AccountPageCriticalPayload> {
   const normalized = normalizeInput(input);
+  const isShadow = isShadowAccountId(normalized.accountId);
   const cacheKey = stableStringify({
     accountId: normalized.accountId,
     mode: normalized.mode,
     orderTab: normalized.orderTab,
     assetClass: normalized.assetClass,
   });
-  const cached = accountPageCriticalCache.get(cacheKey);
   const now = Date.now();
-  if (cached && cached.expiresAt > now) {
-    recordAccountPageCache("criticalHit", true);
-    recordAccountPageTiming("criticalMs", now);
-    return cached.value;
+  if (isShadow) {
+    const cached = accountPageShadowCriticalCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      recordAccountPageCache("criticalHit", true);
+      recordAccountPageTiming("criticalMs", now);
+      return cached.value;
+    }
+    if (cached) {
+      accountPageShadowCriticalCache.delete(cacheKey);
+    }
   }
   recordAccountPageCache("criticalHit", false);
+
   const inFlight = accountPageCriticalInflight.get(cacheKey);
   if (inFlight) {
     return inFlight;
@@ -494,7 +470,6 @@ export async function fetchAccountPageCriticalPayload(
         accountId: normalized.accountId,
         mode: normalized.mode,
       };
-      const isShadow = isShadowAccountId(normalized.accountId);
       let summary: AccountPageCriticalPayload["summary"];
       let allocation: AccountPageCriticalPayload["allocation"];
       let positions: AccountPageCriticalPayload["positions"];
@@ -537,7 +512,7 @@ export async function fetchAccountPageCriticalPayload(
           }),
           getAccountOrders({ ...common, tab: normalized.orderTab }),
         ]);
-        risk = await getAccountRisk(common);
+        risk = await getAccountRisk({ ...common, detail: "fast" });
       }
 
       const value: AccountPageCriticalPayload = {
@@ -553,11 +528,10 @@ export async function fetchAccountPageCriticalPayload(
         orders,
         risk,
       };
-      if (version === accountPageSnapshotCacheVersion) {
-        accountPageCriticalCache.set(cacheKey, {
+      if (isShadow && version === accountPageSnapshotCacheVersion) {
+        accountPageShadowCriticalCache.set(cacheKey, {
           value,
-          expiresAt:
-            Date.now() + cacheTtlMs(ACCOUNT_PAGE_CRITICAL_LIVE_CACHE_TTL_MS),
+          expiresAt: Date.now() + ACCOUNT_PAGE_SHADOW_CRITICAL_CACHE_TTL_MS,
         });
       }
       return value;
@@ -732,17 +706,11 @@ export async function fetchAccountPageSnapshotPayload(
 ): Promise<AccountPageSnapshotPayload> {
   const normalized = normalizeInput(input);
   const cacheKey = cacheKeyForInput(normalized);
-  const cached = accountPageSnapshotCache.get(cacheKey);
-  const now = Date.now();
-  if (cached && cached.expiresAt > now) {
-    return cached.value;
-  }
   const inFlight = accountPageSnapshotInflight.get(cacheKey);
   if (inFlight) {
     return inFlight;
   }
 
-  const version = accountPageSnapshotCacheVersion;
   const request = (async () => {
     const [live, derived] = await Promise.all([
       fetchAccountPageLivePayload(normalized),
@@ -772,13 +740,6 @@ export async function fetchAccountPageSnapshotPayload(
       cashActivity: derived.cashActivity,
       flexHealth: derived.flexHealth,
     };
-    if (version === accountPageSnapshotCacheVersion) {
-      accountPageSnapshotCache.set(cacheKey, {
-        value,
-        expiresAt:
-          Date.now() + cacheTtlMs(ACCOUNT_PAGE_CRITICAL_LIVE_CACHE_TTL_MS),
-      });
-    }
     return value;
   })();
 

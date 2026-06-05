@@ -6,6 +6,8 @@ import {
   type PositionGreekSnapshot,
 } from "./account-risk-model";
 import {
+  resolvePythonComputeLaneDefinitions,
+  routePythonComputeJobType,
   runPythonComputeJob,
   type PythonComputeJobResult,
   type PythonComputeJobType,
@@ -13,7 +15,7 @@ import {
 
 export type AccountGreekScenarios = {
   enabled: boolean;
-  status: "disabled" | "empty" | "completed" | "failed" | "unavailable";
+  status: "disabled" | "empty" | "pending" | "completed" | "failed" | "unavailable";
   source: "python_compute";
   warning: string | null;
   coverage: GreekScenarioInputCoverage | null;
@@ -46,6 +48,18 @@ function truthyEnv(value: string | undefined): boolean {
 function readPositiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function pythonComputeEnabledForJob(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  jobType: PythonComputeJobType,
+): boolean {
+  const laneId = routePythonComputeJobType(jobType);
+  return (
+    resolvePythonComputeLaneDefinitions({ env }).find(
+      (definition) => definition.id === laneId,
+    )?.config.enabled === true
+  );
 }
 
 function disabledAccountGreekScenarios(warning: string | null): AccountGreekScenarios {
@@ -97,7 +111,7 @@ export async function resolveAccountGreekScenarios(
   if (!truthyEnv(env["PYRUS_PYTHON_GREEK_SCENARIOS_ENABLED"])) {
     return disabledAccountGreekScenarios(null);
   }
-  if (!truthyEnv(env["PYRUS_PYTHON_COMPUTE_ENABLED"])) {
+  if (!pythonComputeEnabledForJob(env, "greek_scenario_matrix")) {
     return disabledAccountGreekScenarios("Python compute runtime is disabled.");
   }
 

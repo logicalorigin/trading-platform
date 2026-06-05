@@ -6,7 +6,7 @@ const DEFAULT_SIGNAL_MATRIX_TIMEFRAMES = Object.freeze([
   "1h",
   "1d",
 ]);
-const DEFAULT_MAX_STATES = 750;
+const DEFAULT_MAX_STATES = null;
 
 export const SIGNAL_MATRIX_SNAPSHOT_CACHE_KEY = "pyrus:signal-matrix-snapshot:v1";
 export const SIGNAL_MATRIX_SNAPSHOT_CACHE_TTL_MS = 15 * 60_000;
@@ -77,6 +77,12 @@ const sanitizeState = (state, allowedTimeframes) => {
   };
 };
 
+const normalizeMaxStates = (value) => {
+  if (value == null) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(1, Math.floor(numeric)) : null;
+};
+
 const sanitizeStates = (states, timeframes, maxStates = DEFAULT_MAX_STATES) => {
   const allowedTimeframes = new Set(normalizeTimeframes(timeframes));
   const byKey = new Map();
@@ -86,12 +92,15 @@ const sanitizeStates = (states, timeframes, maxStates = DEFAULT_MAX_STATES) => {
     const key = `${sanitized.symbol}:${sanitized.timeframe}`;
     byKey.set(key, sanitized);
   });
-  return Array.from(byKey.values())
+  const normalizedMaxStates = normalizeMaxStates(maxStates);
+  const sanitizedStates = Array.from(byKey.values())
     .sort((left, right) =>
       left.symbol.localeCompare(right.symbol) ||
       left.timeframe.localeCompare(right.timeframe),
-    )
-    .slice(0, Math.max(1, maxStates));
+    );
+  return normalizedMaxStates == null
+    ? sanitizedStates
+    : sanitizedStates.slice(0, normalizedMaxStates);
 };
 
 export const readSignalMatrixSnapshotCache = ({

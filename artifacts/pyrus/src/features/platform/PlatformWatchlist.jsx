@@ -41,8 +41,14 @@ import { INDICES, MACRO_TICKERS, WATCHLIST } from "../market/marketReferenceData
 import {
   SIGNALS_ROW_STATUS,
   buildSignalsRows,
-  normalizeSignalsTicker,
 } from "../signals/signalsRowModel.js";
+import {
+  EMPTY_SIGNAL_EVENTS,
+  buildSignalEventsBySymbol,
+  buildSignalSparklinePointColors,
+  defaultSignalSparklineColorForDirection,
+  isSignalSparklineDirection,
+} from "../signals/signalSparklineModel.js";
 import { buildFallbackWatchlistItem } from "./runtimeMarketDataModel";
 import { useRuntimeTickerSnapshot, useRuntimeTickerSnapshots } from "./runtimeTickerStore";
 import { MarketIdentityMark } from "./marketIdentity";
@@ -182,8 +188,7 @@ const WATCHLIST_DIRECTION_SORTS = new Set([
   WATCHLIST_SORT_MODE.ALPHA,
 ]);
 
-const isWatchlistSignalDirection = (value) =>
-  value === "buy" || value === "sell";
+const isWatchlistSignalDirection = isSignalSparklineDirection;
 
 const SIGNALS_PAGE_ACTIVE_STATUSES = new Set([
   SIGNALS_ROW_STATUS.activeFresh,
@@ -191,119 +196,7 @@ const SIGNALS_PAGE_ACTIVE_STATUSES = new Set([
 ]);
 
 const EMPTY_SIGNAL_STATES = Object.freeze([]);
-const EMPTY_SIGNAL_EVENTS = Object.freeze([]);
-
-const signalColorForDirection = (direction) =>
-  direction === "buy" ? CSS_COLOR.blue : direction === "sell" ? CSS_COLOR.red : null;
-
-const timestampMs = (value) => {
-  if (value instanceof Date) {
-    const time = value.getTime();
-    return Number.isFinite(time) ? time : null;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value > 10_000_000_000 ? value : value * 1000;
-  }
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Date.parse(value);
-    if (Number.isFinite(parsed)) return parsed;
-    const numeric = Number(value);
-    if (Number.isFinite(numeric)) {
-      return numeric > 10_000_000_000 ? numeric : numeric * 1000;
-    }
-  }
-  return null;
-};
-
-const buildSignalEventsBySymbol = (events = []) => {
-  const bySymbol = new Map();
-  (Array.isArray(events) ? events : []).forEach((event, order) => {
-    const symbol = normalizeSignalsTicker(event?.symbol);
-    const direction = String(event?.direction || "").toLowerCase();
-    const ms = timestampMs(event?.signalAt || event?.emittedAt);
-    if (!symbol || !isWatchlistSignalDirection(direction) || ms == null) {
-      return;
-    }
-    const entries = bySymbol.get(symbol) || [];
-    entries.push({
-      direction,
-      ms,
-      timeframe: String(event?.timeframe || "").trim(),
-      order,
-    });
-    bySymbol.set(symbol, entries);
-  });
-  bySymbol.forEach((entries) => {
-    entries.sort((left, right) => left.ms - right.ms || left.order - right.order);
-  });
-  return bySymbol;
-};
-
-const buildSignalSparklinePointColors = ({
-  points,
-  row,
-  signalEvents = EMPTY_SIGNAL_EVENTS,
-}) => {
-  const sparklinePoints = Array.isArray(points) ? points : [];
-  if (sparklinePoints.length < 2) {
-    return null;
-  }
-
-  const profileTimeframe = String(row?.profileTimeframe || "").trim();
-  const transitions = signalEvents
-    .filter((event) => {
-      if (!profileTimeframe || !event.timeframe) return true;
-      return event.timeframe === profileTimeframe;
-    })
-    .map((event) => ({
-      direction: event.direction,
-      ms: event.ms,
-      order: event.order,
-    }));
-  const rowSignalDirection = row?.direction;
-  const rowSignalMs = timestampMs(row?.currentSignalAt);
-  if (
-    SIGNALS_PAGE_ACTIVE_STATUSES.has(row?.status) &&
-    isWatchlistSignalDirection(rowSignalDirection) &&
-    rowSignalMs != null
-  ) {
-    transitions.push({
-      direction: rowSignalDirection,
-      ms: rowSignalMs,
-      order: Number.MAX_SAFE_INTEGER,
-    });
-  }
-
-  if (!transitions.length) {
-    return null;
-  }
-  transitions.sort((left, right) => left.ms - right.ms || left.order - right.order);
-  const firstSignalColor = signalColorForDirection(transitions[0]?.direction);
-  const latestSignalColor = signalColorForDirection(transitions.at(-1)?.direction);
-  if (!sparklinePoints.some((point) => point.ms != null)) {
-    return latestSignalColor
-      ? sparklinePoints.map(() => latestSignalColor)
-      : null;
-  }
-
-  let transitionIndex = -1;
-  return sparklinePoints.map((point) => {
-    if (point.ms == null) {
-      return transitionIndex >= 0
-        ? signalColorForDirection(transitions[transitionIndex]?.direction)
-        : firstSignalColor;
-    }
-    while (
-      transitionIndex + 1 < transitions.length &&
-      transitions[transitionIndex + 1].ms <= point.ms
-    ) {
-      transitionIndex += 1;
-    }
-    return transitionIndex >= 0
-      ? signalColorForDirection(transitions[transitionIndex]?.direction)
-      : firstSignalColor;
-  });
-};
+const signalColorForDirection = defaultSignalSparklineColorForDirection;
 
 const WatchlistRow = memo(
   ({

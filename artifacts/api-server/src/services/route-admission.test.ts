@@ -111,6 +111,13 @@ test("classifies broker-critical routes separately from analytics routes", () =>
   );
   assert.equal(
     classifyApiRoute({
+      method: "POST",
+      path: "/api/diagnostics/market-data/gex-universe-refresh",
+    }),
+    "active-screen",
+  );
+  assert.equal(
+    classifyApiRoute({
       method: "GET",
       path: "/api/diagnostics/thresholds",
     }),
@@ -129,6 +136,15 @@ test("classifies broker-critical routes separately from analytics routes", () =>
       path: "/api/bars?symbol=SPY",
       requestFamily: "chart-visible",
       fetchPriority: 8,
+    }),
+    "active-screen",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "POST",
+      path: "/api/bars/batch",
+      requestFamily: "signals-table-sparkline",
+      fetchPriority: 2,
     }),
     "active-screen",
   );
@@ -164,6 +180,15 @@ test("classifies broker-critical routes separately from analytics routes", () =>
       method: "GET",
       path: "/api/bars?symbol=SPY",
       requestFamily: "chart-backfill",
+      fetchPriority: -2,
+    }),
+    "deferred-analytics",
+  );
+  assert.equal(
+    classifyApiRoute({
+      method: "POST",
+      path: "/api/bars/batch",
+      requestFamily: "background",
       fetchPriority: -2,
     }),
     "deferred-analytics",
@@ -559,6 +584,14 @@ test("route admission keeps cached latest diagnostics available at critical pres
     pressureLevel: "critical",
     now: new Date("2026-05-28T19:00:00.000Z"),
   });
+  const gexUniverseRefresh = resolveApiRouteAdmission({
+    routeClass: classifyApiRoute({
+      method: "POST",
+      path: "/api/diagnostics/market-data/gex-universe-refresh",
+    }),
+    pressureLevel: "critical",
+    now: new Date("2026-05-28T19:00:00.000Z"),
+  });
   const diagnosticsHistory = resolveApiRouteAdmission({
     routeClass: classifyApiRoute({
       method: "GET",
@@ -572,6 +605,8 @@ test("route admission keeps cached latest diagnostics available at critical pres
   assert.equal(latestDiagnostics.degraded, false);
   assert.equal(runtimeDiagnostics.action, "allow");
   assert.equal(runtimeDiagnostics.degraded, false);
+  assert.equal(gexUniverseRefresh.action, "allow");
+  assert.equal(gexUniverseRefresh.degraded, false);
   assert.equal(diagnosticsHistory.action, "shed");
   assert.equal(diagnosticsHistory.statusCode, 503);
 });

@@ -142,6 +142,53 @@ test("writes API heartbeat and exposes recorder diagnostics", () => {
   assert.match(eventLog, /api-test-event/);
 });
 
+test("flight recorder excludes long-lived streams from latency summary", () => {
+  const dir = useFreshRecorderDir();
+  recordApiRequest({
+    method: "GET",
+    path: "/marketing/shadow-dashboard/stream",
+    statusCode: 200,
+    durationMs: 55_000,
+  });
+  recordApiRequest({
+    method: "POST",
+    path: "/ibkr/desktop/jobs/claim",
+    statusCode: 200,
+    durationMs: 25_456,
+  });
+  recordApiRequest({
+    method: "GET",
+    path: "/accounts/U1/equity-history",
+    statusCode: 200,
+    durationMs: 430,
+  });
+
+  writeRuntimeFlightRecorderHeartbeat();
+  const current = JSON.parse(
+    readFileSync(path.join(dir, "api-current.json"), "utf8"),
+  );
+
+  assert.equal(current.requests.sampleCount, 3);
+  assert.equal(current.requests.latencySampleCount, 1);
+  assert.equal(current.requests.longLivedRequestCount, 2);
+  assert.equal(current.requests.p95Ms, 430);
+  assert.equal(current.requests.dominantSlowRoute.route, "GET /accounts/U1/equity-history");
+  assert.equal(
+    current.requests.topRoutes.some(
+      (route: { route?: string }) =>
+        route.route === "GET /marketing/shadow-dashboard/stream",
+    ),
+    false,
+  );
+  assert.equal(
+    current.requests.topRoutes.some(
+      (route: { route?: string }) =>
+        route.route === "POST /ibkr/desktop/jobs/claim",
+    ),
+    false,
+  );
+});
+
 test("reports long-running workspace test processes in recorder diagnostics", () => {
   useFreshRecorderDir();
   const procRoot = mkdtempSync(path.join(tmpdir(), "pyrus-proc-scan-"));

@@ -23,6 +23,7 @@ import {
   type DiagnosticSnapshot,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
+import { isLongLivedApiRequestUrl } from "../lib/request-logging";
 import {
   isTransientPostgresError,
   summarizeTransientPostgresError,
@@ -875,18 +876,8 @@ function broadcast(message: DiagnosticsStreamMessage): void {
   });
 }
 
-function normalizeApiRequestMetricPath(path: string): string {
-  const withoutQuery = path.split("?")[0] || "/";
-  return withoutQuery.startsWith("/api/")
-    ? withoutQuery.slice(4)
-    : withoutQuery === "/api"
-      ? "/"
-      : withoutQuery;
-}
-
 function isLongLivedApiRequestMetric(sample: ApiRequestSample): boolean {
-  const path = normalizeApiRequestMetricPath(sample.path);
-  return path.startsWith("/streams/") || path.endsWith("/stream");
+  return isLongLivedApiRequestUrl(sample.path);
 }
 
 function buildApiRouteStats(samples: ApiRequestSample[]): JsonRecord[] {

@@ -62,6 +62,12 @@ import {
   buildVisibleSignalRows,
 } from "../../screens/algo/algoHelpers";
 import { normalizeLegacyAlgoBrandText } from "../../screens/algo/algoBranding.js";
+import { buildSignalsMatrixHydrationPlan } from "../signals/signalsMatrixHydration.js";
+import {
+  hydrateSignalMatrixProfileTimeframe,
+  SIGNALS_TABLE_TIMEFRAMES,
+  signalPrimaryStateForMatrix,
+} from "../signals/signalsRowModel.js";
 import { setAlgoFocus } from "./algoFocusStore";
 import { useAlgoCockpitStream } from "./live-streams";
 import { buildSignalMatrixBySymbol } from "./watchlistModel";
@@ -473,6 +479,56 @@ export const buildAlgoMonitorSignalActionRows = ({ signals = [], candidates = []
   });
 };
 
+const signalActionRowMatrixSymbols = (rows = []) => {
+  const seen = new Set();
+  const symbols = [];
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const record = asRecord(row);
+    const symbol = readSignalSymbol(record.signal, record.candidate);
+    if (!symbol || seen.has(symbol)) return;
+    seen.add(symbol);
+    symbols.push(symbol);
+  });
+  return symbols;
+};
+
+export const buildAlgoMonitorSignalMatrixHydrationRequest = ({
+  rows = [],
+  visibleRows = [],
+  currentStates = [],
+  timeframes = SIGNALS_TABLE_TIMEFRAMES,
+} = {}) => {
+  const symbols = signalActionRowMatrixSymbols(rows);
+  if (!symbols.length) return null;
+
+  const matrixHydrationPlan = buildSignalsMatrixHydrationPlan({
+    symbols,
+    prioritySymbols: signalActionRowMatrixSymbols(visibleRows),
+    currentStates,
+    timeframes,
+  });
+
+  if (
+    !matrixHydrationPlan.symbols.length ||
+    !matrixHydrationPlan.requestSymbols.length
+  ) {
+    return null;
+  }
+
+  return {
+    symbols: matrixHydrationPlan.requestSymbols,
+    prioritySymbols: matrixHydrationPlan.requestSymbols,
+    missingSymbols: matrixHydrationPlan.missingSymbols,
+    requestSymbols: matrixHydrationPlan.requestSymbols,
+    requestCells: matrixHydrationPlan.requestCells,
+    timeframes: matrixHydrationPlan.requestTimeframes,
+    requestTimeframes: matrixHydrationPlan.requestTimeframes,
+    clientRole: "algo-sta",
+    requestOrigin: "sta-visible-page",
+    reason: "algo-monitor-sidebar",
+  };
+};
+
 const SignalActionStatusPill = ({ signal, candidate, blocker, statusMeta }) => {
   const tone = statusMeta.tone || CSS_COLOR.textDim;
   const label = statusMeta.label || signalOptionsActionLabel("candidate");
@@ -541,6 +597,12 @@ const SignalActionRow = ({ row, onOpenAlgo, signalStatesByTimeframe = null }) =>
   const score = Number(scoreBreakdown?.score);
   const scoreLabel = Number.isFinite(score) ? score.toFixed(1) : MISSING_VALUE;
   const signalKey = firstText(signal.signalKey, candidate.signalKey, row.id);
+  const primarySignalState = signalPrimaryStateForMatrix(signal);
+  const resolvedSignalStatesByTimeframe = hydrateSignalMatrixProfileTimeframe({
+    matrixStatesByTimeframe: signalStatesByTimeframe || {},
+    primaryState: primarySignalState,
+    profileTimeframe: signal.timeframe || "5m",
+  });
 
   return (
     <AppTooltip content={`${symbol || MISSING_VALUE} ${actionLabel} - ${detail}`}>
@@ -628,7 +690,8 @@ const SignalActionRow = ({ row, onOpenAlgo, signalStatesByTimeframe = null }) =>
         >
           <SignalDots
             testId="algo-monitor-signal-dots"
-            statesByTimeframe={signalStatesByTimeframe}
+            statesByTimeframe={resolvedSignalStatesByTimeframe}
+            timeframes={SIGNALS_TABLE_TIMEFRAMES}
             style={{ minWidth: dim(36), gap: sp(4), flex: "0 0 auto" }}
           />
           <span
@@ -930,6 +993,7 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
   signalMatrixStates = [],
   signalMonitorEvents = [],
   signalMonitorEventsLoaded = false,
+  onRequestSignalMatrixHydration = null,
   headerAccessory = null,
   onOpenAlgo,
   onOpenTradeSymbol,
@@ -1094,10 +1158,27 @@ export const PlatformAlgoMonitorSidebar = memo(function PlatformAlgoMonitorSideb
     });
   }, [signalOptionsCandidates, visibleStaSignals]);
   const signalMatrixBySymbol = useMemo(
-    () => buildSignalMatrixBySymbol(signalMatrixStates),
+    () => buildSignalMatrixBySymbol(signalMatrixStates, SIGNALS_TABLE_TIMEFRAMES),
     [signalMatrixStates],
   );
-  const visibleSignalActionRows = signalActionRows.slice(0, 4);
+  const visibleSignalActionRows = useMemo(
+    () => signalActionRows.slice(0, 4),
+    [signalActionRows],
+  );
+  const signalMatrixHydrationRequest = useMemo(
+    () =>
+      buildAlgoMonitorSignalMatrixHydrationRequest({
+        rows: signalActionRows,
+        visibleRows: visibleSignalActionRows,
+        currentStates: signalMatrixStates,
+        timeframes: SIGNALS_TABLE_TIMEFRAMES,
+      }),
+    [signalActionRows, signalMatrixStates, visibleSignalActionRows],
+  );
+  useEffect(() => {
+    if (!signalMatrixHydrationRequest) return;
+    onRequestSignalMatrixHydration?.(signalMatrixHydrationRequest);
+  }, [onRequestSignalMatrixHydration, signalMatrixHydrationRequest]);
   const latestEvent = events[0] || null;
   const pipelineStages = cockpit?.pipelineStages || [];
   const attentionItems = cockpit?.attentionItems || [];

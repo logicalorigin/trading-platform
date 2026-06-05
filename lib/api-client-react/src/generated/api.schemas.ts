@@ -6076,7 +6076,16 @@ export const GetAccountOrdersTab = {
 
 export type GetAccountRiskParams = {
 mode?: EnvironmentMode;
+detail?: GetAccountRiskDetail;
 };
+
+export type GetAccountRiskDetail = typeof GetAccountRiskDetail[keyof typeof GetAccountRiskDetail];
+
+
+export const GetAccountRiskDetail = {
+  fast: 'fast',
+  full: 'full',
+} as const;
 
 export type GetAccountCashActivityParams = {
 from?: string;

@@ -47,9 +47,31 @@ Persisted GEX payloads include `source.expirationCoverage` so the API and GEX pa
 
 - Option-chain fetches must complete all configured pages before snapshots are persisted. Truncated chains are logged as partial provider requests and fail the job without writing partial chain rows.
 - Same-bucket `gex_snapshot` jobs are claimable only after the matching `stock_snapshot` and `option_chain_snapshot` jobs complete.
-- Queue diagnostics expose GEX jobs blocked by missing or failed prerequisites.
+- Queue diagnostics expose two different failure modes:
+  - blocked GEX jobs are waiting on missing or failed same-bucket stock/option-chain prerequisites.
+  - inactive-worker jobs are claimable now, but no `market-data-worker` process is draining them.
 - Retention is dry-run by default. Use `market-data-worker:retention -- --execute` only after reviewing the reported cutoff and eligible row counts.
 - Replit startup config does not start this worker automatically; run it through the package scripts or the deployment process that owns background workers.
+
+Before investigating stale or missing GEX, verify the worker can reach the queue:
+
+```bash
+pnpm run market-data-worker:doctor
+```
+
+Run the worker continuously in the background-worker environment:
+
+```bash
+pnpm run market-data-worker:run
+```
+
+For a bounded manual drain during diagnostics, cap the run:
+
+```bash
+pnpm run market-data-worker:run --max-jobs 30
+```
+
+After a successful drain, `stock_snapshot` and `option_chain_snapshot` jobs for each symbol should complete first, then same-bucket `gex_snapshot` jobs become claimable and populate `gex_snapshots`.
 
 ## Validation
 

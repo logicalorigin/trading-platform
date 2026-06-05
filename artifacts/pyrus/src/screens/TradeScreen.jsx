@@ -909,6 +909,7 @@ const TradeContractDetailPanel = ({
   chartFrameStyle,
   crosshairSyncGroupId = null,
   crosshairSyncInstanceId = null,
+  positionOverlaysEnabled = true,
 }) => {
   const chainSnapshot = useTradeOptionChainSnapshot(ticker);
   const parentFlowEventsProvided = flowEvents !== undefined;
@@ -1639,18 +1640,22 @@ const TradeContractDetailPanel = ({
               placement="workspace"
               crosshairSyncGroupId={crosshairSyncGroupId}
               crosshairSyncInstanceId={crosshairSyncInstanceId}
-              positionOverlayContext={{
-                surfaceKind: "option",
-                symbol: ticker,
-                optionContract: {
-                  ticker: optionTicker,
-                  underlying: ticker,
-                  expirationDate: optionExpirationIso,
-                  strike: contract.strike,
-                  right: optionRight,
-                  providerContractId,
-                },
-              }}
+              positionOverlayContext={
+                positionOverlaysEnabled
+                  ? {
+                      surfaceKind: "option",
+                      symbol: ticker,
+                      optionContract: {
+                        ticker: optionTicker,
+                        underlying: ticker,
+                        expirationDate: optionExpirationIso,
+                        strike: contract.strike,
+                        right: optionRight,
+                        providerContractId,
+                      },
+                    }
+                  : null
+              }
               chartEvents={chartEvents}
               chartFlowDiagnostics={chartEventConversion}
               emptyState={optionChartEmptyState}
@@ -3416,7 +3421,7 @@ const TradeScreenInner = ({
     { environment },
     {
       query: {
-        enabled: Boolean(environment && isVisible),
+        enabled: Boolean(environment && isVisible && !safeQaMode),
         staleTime: 60_000,
         retry: false,
       },
@@ -4203,6 +4208,7 @@ const TradeScreenInner = ({
       referenceLines={workspaceReferenceLines}
       gexOverlay={equityGexOverlay}
       signalMonitorProfile={signalMonitorProfile}
+      positionOverlaysEnabled={!safeQaMode}
       crosshairSyncGroupId={tradeCrosshairSync ? "trade" : null}
       crosshairSyncInstanceId={tradeCrosshairSync ? "trade-equity" : null}
       frameStyle={
@@ -4230,6 +4236,7 @@ const TradeScreenInner = ({
       liveDataEnabled={tradeAnalysisWorkEnabled}
       optionChartTimeframeOverride={equityTimeframeForOptionSync}
       signalMonitorProfile={signalMonitorProfile}
+      positionOverlaysEnabled={!safeQaMode}
       onOptionChartTimeframeChange={(timeframe) => {
         if (
           tradeTimeframeSync &&
@@ -4322,6 +4329,7 @@ const TradeScreenInner = ({
       gatewayTradingReady={gatewayTradingReady}
       gatewayTradingMessage={gatewayTradingMessage}
       isVisible={isVisible}
+      safeQaMode={safeQaMode}
       streamingPaused={!tradeAnalysisBrokerStreamingEnabled}
       onLoadPosition={handleLoadPosition}
     />

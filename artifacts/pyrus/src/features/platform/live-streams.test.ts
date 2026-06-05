@@ -55,6 +55,27 @@ const optionQuote = (
   updatedAt: "2026-04-25T00:00:00.000Z",
 });
 
+const structuredOptionProviderContractId = (input: {
+  underlying: string;
+  expiration: string;
+  strike: number;
+  right: "C" | "P";
+  multiplier?: number;
+}) =>
+  `twsopt:${Buffer.from(
+    JSON.stringify({
+      v: 1,
+      u: input.underlying,
+      e: input.expiration,
+      s: input.strike,
+      r: input.right,
+      x: "SMART",
+      tc: input.underlying,
+      m: input.multiplier ?? 100,
+    }),
+    "utf8",
+  ).toString("base64url")}`;
+
 test("getOptionChainContractExpirationKey normalizes API datetime strings", () => {
   assert.equal(
     getOptionChainContractExpirationKey(
@@ -213,6 +234,8 @@ test("option quote REST fallback preserves websocket owner and intent", () => {
   assert.match(fallbackCall, /owner: normalizedOwner \|\| undefined/);
   assert.match(fallbackCall, /intent,/);
   assert.match(fallbackCall, /requiresGreeks,/);
+  assert.match(hookBody, /const seedRestSnapshot = \(\) => \{\s*void requestRestSnapshot\("rest-seed"\);/);
+  assert.match(hookBody, /socket = new WebSocket\(webSocketUrl\);\s*seedRestSnapshot\(\);/);
   assert.doesNotMatch(hookBody, /!normalizedUnderlying/);
   assert.match(hookBody, /normalizedProviderContractIds\.length === 0/);
 });
@@ -300,7 +323,7 @@ test("account page stream refreshes freshness on page snapshots", () => {
   assert.doesNotMatch(accountPageHook, /addEventListener\("ready", markFresh/);
 });
 
-test("account page derived freshness stays slow while Account UI fallback is short", () => {
+test("account page derived freshness stays slow while Account UI fallback is immediate", () => {
   const source = readFileSync(new URL("./live-streams.ts", import.meta.url), "utf8");
   const accountScreenSource = readFileSync(
     new URL("../../screens/AccountScreen.jsx", import.meta.url),
@@ -314,7 +337,7 @@ test("account page derived freshness stays slow while Account UI fallback is sho
   );
   assert.match(
     accountScreenSource,
-    /const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 6_000;/,
+    /const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 0;/,
   );
 });
 
@@ -686,6 +709,116 @@ test("option quote stream patches shared account positions and totals", () => {
   assert.equal(Math.round(patched.totals.unrealizedPnl), -110);
 });
 
+test("option quote stream matches structured option ids before stale numeric quote ids", () => {
+  const structuredId = structuredOptionProviderContractId({
+    underlying: "SPY",
+    expiration: "20260604",
+    strike: 753,
+    right: "C",
+  });
+  const current = {
+    accountId: "combined",
+    positions: [
+      {
+        id: "U1:885885495",
+        accountId: "U1",
+        accounts: ["U1"],
+        symbol: "SPY 2026-06-04 C753",
+        assetClass: "Options",
+        optionContract: {
+          underlying: "SPY",
+          expirationDate: "2026-06-04",
+          strike: 753,
+          right: "call",
+          multiplier: 100,
+          providerContractId: "885885495",
+        },
+        optionQuote: {
+          providerContractId: "885885495",
+          bid: null,
+          ask: null,
+        },
+        quantity: 1,
+        averageCost: 1,
+        mark: 1,
+        marketValue: 100,
+        unrealizedPnl: 0,
+        dayChange: null,
+        dayChangePercent: null,
+      },
+    ],
+    totals: { netExposure: 100, grossLong: 100, unrealizedPnl: 0 },
+  };
+
+  const patched = patchAccountPositionsFromOptionQuotes(current as any, [
+    {
+      symbol: "SPY 2026-06-04 C753",
+      providerContractId: structuredId,
+      bid: 0.8,
+      ask: 0.84,
+      price: 0.82,
+      updatedAt: "2026-06-04T18:00:01.000Z",
+      source: "option_quote",
+    } as any,
+  ]) as any;
+
+  assert.notEqual(patched, current);
+  assert.equal(patched.positions[0].optionQuote.providerContractId, structuredId);
+  assert.equal(Number(patched.positions[0].optionQuote.bid.toFixed(2)), 0.8);
+  assert.equal(Number(patched.positions[0].optionQuote.ask.toFixed(2)), 0.84);
+  assert.equal(Number(patched.positions[0].mark.toFixed(2)), 0.82);
+});
+
+test("option quote stream aligns patched option marks to two-sided bid ask", () => {
+  const current = {
+    accountId: "combined",
+    positions: [
+      {
+        id: "option:F:2026-06-26:15:call",
+        accountId: "U1",
+        accounts: ["U1"],
+        symbol: "F",
+        assetClass: "Options",
+        optionContract: {
+          underlying: "F",
+          expirationDate: "2026-06-26",
+          strike: 15,
+          right: "call",
+          multiplier: 100,
+          providerContractId: "880754762",
+        },
+        quantity: 5,
+        averageCost: 1.0396825,
+        mark: 1.15,
+        marketValue: 576.41,
+        unrealizedPnl: 56.57,
+        dayChange: null,
+        dayChangePercent: null,
+      },
+    ],
+    totals: { netExposure: 576.41, grossLong: 576.41, unrealizedPnl: 56.57 },
+  };
+
+  const patched = patchAccountPositionsFromOptionQuotes(current as any, [
+    {
+      symbol: "F20260626C15",
+      providerContractId: "880754762",
+      bid: 0.84,
+      ask: 0.88,
+      price: 0.83,
+      mark: 1.1528208908703232,
+      updatedAt: "2026-06-04T21:05:01.100Z",
+      source: "option_quote",
+    } as any,
+  ]) as any;
+
+  assert.equal(Number(patched.positions[0].mark.toFixed(2)), 0.86);
+  assert.equal(Number(patched.positions[0].marketValue.toFixed(2)), 430);
+  assert.equal(Number(patched.positions[0].quote.mark.toFixed(2)), 0.86);
+  assert.equal(Number(patched.positions[0].optionQuote.mark.toFixed(2)), 0.86);
+  assert.equal(Number(patched.totals.netExposure.toFixed(2)), 430);
+});
+
 const stockQuote = (
   symbol: string,
   price: number,
@@ -910,7 +1043,7 @@ test("applyShadowAccountPayloadToCache patches shadow account caches without inv
       { mode: "paper", tab: "history", source: "signal_options_replay" },
     ],
     ["/api/accounts/shadow/allocation", { mode: "paper" }],
-    ["/api/accounts/shadow/risk", { mode: "paper" }],
+    ["/api/accounts/shadow/risk", { mode: "paper", detail: "fast" }],
     ["/api/accounts/shadow/equity-history", { mode: "paper", range: "ALL" }],
     ["/api/accounts/shadow/closed-trades", { mode: "paper" }],
     ["/api/accounts/shadow/cash-activity", { mode: "paper" }],
@@ -1131,6 +1264,132 @@ test("applyShadowAccountPayloadToCache preserves live shadow option quotes over 
   assert.equal(row.optionQuote.delta, 0.42);
 });
 
+test("applyShadowAccountPayloadToCache preserves structured live shadow option quotes over numeric stream snapshots", () => {
+  const positionsKey = [
+    "/api/accounts/shadow/positions",
+    { mode: "paper", assetClass: "Options" },
+  ];
+  const structuredId = structuredOptionProviderContractId({
+    underlying: "CLSK",
+    expiration: "20260605",
+    strike: 16,
+    right: "C",
+  });
+  const optionContract = {
+    underlying: "CLSK",
+    expirationDate: "2026-06-05T00:00:00.000Z",
+    strike: 16,
+    right: "call",
+    providerContractId: "9002",
+    multiplier: 100,
+  };
+  const initialData = new Map<string, unknown>([
+    [
+      JSON.stringify(positionsKey),
+      {
+        accountId: "shadow",
+        positions: [
+          {
+            id: "shadow-clsk-option",
+            accountId: "shadow",
+            assetClass: "Options",
+            symbol: "CLSK",
+            quantity: 10,
+            averageCost: 1,
+            mark: 1.22,
+            marketValue: 1220,
+            unrealizedPnl: 220,
+            unrealizedPnlPercent: 22,
+            dayChange: 20,
+            dayChangePercent: 1.6,
+            optionContract,
+            optionQuote: {
+              providerContractId: structuredId,
+              bid: 0.91,
+              ask: 1.03,
+              mark: 1.22,
+              dayChange: 0.02,
+              dayChangePercent: 1.6,
+              delta: 0.41,
+              source: "option_quote",
+              updatedAt: "2026-06-04T18:00:05.000Z",
+              dataUpdatedAt: "2026-06-04T18:00:05.000Z",
+            },
+            quote: {
+              providerContractId: structuredId,
+              bid: 0.91,
+              ask: 1.03,
+              mark: 1.22,
+              source: "option_quote",
+              updatedAt: "2026-06-04T18:00:05.000Z",
+            },
+          },
+        ],
+        totals: { netExposure: 1220, grossLong: 1220, unrealizedPnl: 220 },
+      },
+    ],
+  ]);
+  const { queryClient, writes } = createMockQueryClient(
+    [positionsKey],
+    initialData,
+  );
+
+  applyShadowAccountPayloadToCache(queryClient as any, {
+    summary: { accountId: "shadow", metrics: {} },
+    positions: {
+      accountId: "shadow",
+      positions: [
+        {
+          id: "shadow-clsk-option",
+          accountId: "shadow",
+          assetClass: "Options",
+          symbol: "CLSK",
+          quantity: 10,
+          averageCost: 1,
+          mark: 1.22,
+          marketValue: 1220,
+          unrealizedPnl: 220,
+          unrealizedPnlPercent: 22,
+          dayChange: 20,
+          dayChangePercent: 1.6,
+          optionContract,
+          optionQuote: {
+            providerContractId: "9002",
+            mark: 1.22,
+            dayChange: 0.02,
+            dayChangePercent: 1.6,
+            source: "automation_event_quote",
+            updatedAt: "2026-06-04T18:00:06.000Z",
+            dataUpdatedAt: "2026-06-04T18:00:06.000Z",
+          },
+          quote: {
+            providerContractId: "9002",
+            mark: 1.22,
+            source: "automation_event_quote",
+            updatedAt: "2026-06-04T18:00:06.000Z",
+          },
+        },
+      ],
+      totals: { netExposure: 1220, grossLong: 1220, unrealizedPnl: 220 },
+    },
+    workingOrders: { accountId: "shadow", tab: "working", orders: [] },
+    historyOrders: { accountId: "shadow", tab: "history", orders: [] },
+    allocation: { accountId: "shadow", assetClass: [] },
+    risk: { accountId: "shadow", margin: {} },
+    updatedAt: "2026-06-04T18:00:06.000Z",
+  } as any);
+
+  const patched = writes.get(JSON.stringify(positionsKey)) as any;
+  const row = patched.positions[0];
+  assert.equal(row.optionQuote.providerContractId, structuredId);
+  assert.equal(row.optionQuote.bid, 0.91);
+  assert.equal(row.optionQuote.ask, 1.03);
+  assert.equal(row.optionQuote.source, "option_quote");
+  assert.equal(row.quote.bid, 0.91);
+  assert.equal(row.quote.ask, 1.03);
+  assert.equal(row.quote.source, "option_quote");
+});
+
 test("applyAccountPagePayloadToCache seeds visible account page query caches", () => {
   const summaryKey = ["/api/accounts/combined/summary", { mode: "paper" }];
   const positionsKey = [
@@ -1314,7 +1573,7 @@ test("applyAccountPageCriticalPayloadToCache keeps live option quotes while acce
       positionsKey,
       ["/api/accounts/combined/orders", { mode: "live", tab: "working" }],
       ["/api/accounts/combined/allocation", { mode: "live" }],
-      ["/api/accounts/combined/risk", { mode: "live" }],
+      ["/api/accounts/combined/risk", { mode: "live", detail: "fast" }],
     ],
     initialData,
   );
@@ -1437,7 +1696,7 @@ test("queueAccountPagePayloadToCache coalesces account page live writes until fr
     positionsKey,
     ordersKey,
     ["/api/accounts/combined/allocation", { mode: "paper" }],
-    ["/api/accounts/combined/risk", { mode: "paper" }],
+    ["/api/accounts/combined/risk", { mode: "paper", detail: "fast" }],
     ["/api/accounts/combined/equity-history", { mode: "paper", range: "1D" }],
   ]);
   const livePayload = (netLiquidation: number) => ({
@@ -1515,7 +1774,7 @@ test("applyAccountPageCriticalPayloadToCache seeds account operational queries",
     positionsKey,
     ordersKey,
     ["/api/accounts/combined/allocation", { mode: "paper" }],
-    ["/api/accounts/combined/risk", { mode: "paper" }],
+    ["/api/accounts/combined/risk", { mode: "paper", detail: "fast" }],
   ]);
 
   applyAccountPageCriticalPayloadToCache(queryClient as any, {

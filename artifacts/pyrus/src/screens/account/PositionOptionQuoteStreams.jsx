@@ -53,8 +53,8 @@ const optionProviderContractId = (contract) =>
   normalizedProviderContractId(contract?.providerContractId || contract?.conid);
 
 const rowOptionProviderContractId = (row) =>
-  normalizedProviderContractId(row?.optionQuote?.providerContractId) ||
-  optionProviderContractId(row?.optionContract);
+  optionProviderContractId(row?.optionContract) ||
+  normalizedProviderContractId(row?.optionQuote?.providerContractId);
 
 const rowOptionUnderlying = (row) => {
   const text = String(

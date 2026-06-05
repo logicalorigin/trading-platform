@@ -1027,6 +1027,11 @@ export default function DiagnosticsScreen({
     latest?.marketDataWorkPlan || marketDataRaw.marketDataWorkPlan,
   );
   const marketDataWorkPlanSummary = safeRecord(marketDataWorkPlan.summary);
+  const persistClaimableQueuedJobCount =
+    marketDataWorkPlanSummary.persistClaimableQueuedJobCount ?? 0;
+  const persistWorkerInactive = Boolean(
+    marketDataWorkPlanSummary.persistWorkerInactive,
+  );
   const marketDataWorkPlanScanner = safeRecord(marketDataWorkPlan.scanner);
   const marketDataWorkPlanMemory = safeRecord(marketDataWorkPlan.memoryAction);
   const browserMetrics = safeRecord(browserSnapshot?.metrics);
@@ -1565,6 +1570,17 @@ export default function DiagnosticsScreen({
               label="Persist queue"
               value={`${formatCount(marketDataWorkPlanSummary.persistQueuedJobCount)} queued · ${formatCount(marketDataWorkPlanSummary.persistRunningJobCount)} running`}
               tone={(marketDataWorkPlanSummary.persistQueuedJobCount ?? 0) > 0 ? CSS_COLOR.amber : CSS_COLOR.green}
+            />
+            <StateRow
+              label="Persist worker"
+              value={
+                persistWorkerInactive
+                  ? `${formatCount(persistClaimableQueuedJobCount)} ready · inactive`
+                  : (marketDataWorkPlanSummary.persistRunningJobCount ?? 0) > 0
+                    ? `${formatCount(persistClaimableQueuedJobCount)} ready · running`
+                    : `${formatCount(persistClaimableQueuedJobCount)} ready`
+              }
+              tone={persistWorkerInactive ? CSS_COLOR.amber : CSS_COLOR.green}
             />
             <StateRow
               label="Blocked GEX"

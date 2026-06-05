@@ -81,6 +81,33 @@ test("buildDailyPnlSeries groups closed trades by close date using realized P&L"
   );
 });
 
+test("buildDailyPnlSeries dedupes repeated closed trade rows by source account and id", () => {
+  const series = buildDailyPnlSeries({
+    startDate: new Date(2026, 4, 1),
+    endDate: new Date(2026, 4, 1),
+    trades: [
+      trade("2026-05-01T14:30:00.000Z", 100, {
+        id: "T1",
+        accountId: "U1",
+        source: "FLEX",
+      }),
+      trade("2026-05-01T14:30:00.000Z", 100, {
+        id: "T1",
+        accountId: "U1",
+        source: "FLEX",
+      }),
+      trade("2026-05-01T15:30:00.000Z", -20, {
+        id: "T1",
+        accountId: "U2",
+        source: "FLEX",
+      }),
+    ],
+  });
+
+  assert.equal(series[0].realized, 80);
+  assert.equal(series[0].trades, 2);
+});
+
 test("buildDailyPnlSeries keeps date-only ledger rows on their stated calendar day", () => {
   const series = buildDailyPnlSeries({
     startDate: new Date(2026, 4, 13),

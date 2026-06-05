@@ -44,6 +44,44 @@ const buildRuntimeSparklinePatch = (bars, fallbackSpark) =>
       }
     : {};
 
+const areRuntimeValuesEqual = (left, right) => {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right)) return false;
+    if (left.length !== right.length) return false;
+    return left.every((value, index) => areRuntimeValuesEqual(value, right[index]));
+  }
+  if (
+    left &&
+    right &&
+    typeof left === "object" &&
+    typeof right === "object"
+  ) {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    if (leftKeys.length !== rightKeys.length) return false;
+    return leftKeys.every((key) =>
+      Object.hasOwn(right, key) && areRuntimeValuesEqual(left[key], right[key]),
+    );
+  }
+  return false;
+};
+
+const areWatchlistItemsEqual = (left, right) =>
+  areRuntimeValuesEqual(left, right);
+
+const areWatchlistItemsListEqual = (leftItems = [], rightItems = []) =>
+  leftItems.length === rightItems.length &&
+  leftItems.every((item, index) => areWatchlistItemsEqual(item, rightItems[index]));
+
+const replaceWatchlistIfChanged = (nextItems) => {
+  if (areWatchlistItemsListEqual(WATCHLIST, nextItems)) {
+    return false;
+  }
+  WATCHLIST.splice(0, WATCHLIST.length, ...nextItems);
+  return true;
+};
+
 const computeTrailingReturnPercent = (currentPrice, baselinePrice) => {
   if (
     typeof currentPrice !== "number" ||
@@ -269,7 +307,7 @@ export const syncRuntimeMarketData = (
     };
   });
 
-  WATCHLIST.splice(0, WATCHLIST.length, ...nextItems);
+  replaceWatchlistIfChanged(nextItems);
 
   Object.entries(quoteBySymbol).forEach(([symbol, quote]) => {
     const fallbackName = resolveRuntimeQuoteFallbackName(

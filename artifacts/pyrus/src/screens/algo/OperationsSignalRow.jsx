@@ -30,6 +30,7 @@ import {
 import {
   hydrateSignalMatrixProfileTimeframe,
   resolveSignalMatrixVerdict,
+  signalPrimaryStateForMatrix,
 } from "../../features/signals/signalsRowModel.js";
 import { getStoredOptionQuoteSnapshot } from "../../features/platform/live-streams";
 import { useValueFlash } from "../../lib/motion.jsx";
@@ -1076,20 +1077,6 @@ const signalDisplay = (signal) => {
     freshness,
   };
 };
-
-const signalPrimaryStateForMatrix = (signal) => ({
-  symbol: signal?.symbol,
-  timeframe: signal?.timeframe,
-  currentSignalDirection: signal?.currentSignalDirection || signal?.direction,
-  currentSignalAt: signal?.currentSignalAt || signal?.signalAt,
-  currentSignalPrice: signal?.currentSignalPrice ?? signal?.price ?? null,
-  latestBarAt: signal?.latestBarAt || signal?.signalAt || null,
-  barsSinceSignal: signal?.barsSinceSignal,
-  fresh: signal?.fresh,
-  status: signal?.status || "ok",
-  active: signal?.active ?? true,
-  lastEvaluatedAt: signal?.lastEvaluatedAt || signal?.signalAt || null,
-});
 
 const matrixVerdictDisplay = (verdict) => {
   const reasons = Array.isArray(verdict?.reasonCodes) ? verdict.reasonCodes : [];

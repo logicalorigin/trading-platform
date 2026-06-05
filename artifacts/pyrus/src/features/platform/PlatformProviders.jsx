@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   AccountSelectionContext,
   PositionsContext,
@@ -14,20 +15,29 @@ export const PlatformProviders = ({
   selectedAccountId,
   onSelectAccount,
   children,
-}) => (
-  <ThemeContext.Provider value={{ theme, toggle: onToggleTheme }}>
-    <ToastContext.Provider value={toastValue}>
-      <PositionsContext.Provider value={positionsValue}>
-        <AccountSelectionContext.Provider
-          value={{
-            accounts,
-            selectedAccountId,
-            setSelectedAccountId: onSelectAccount,
-          }}
-        >
-          {children}
-        </AccountSelectionContext.Provider>
-      </PositionsContext.Provider>
-    </ToastContext.Provider>
-  </ThemeContext.Provider>
-);
+}) => {
+  const themeValue = useMemo(
+    () => ({ theme, toggle: onToggleTheme }),
+    [onToggleTheme, theme],
+  );
+  const accountSelectionValue = useMemo(
+    () => ({
+      accounts,
+      selectedAccountId,
+      setSelectedAccountId: onSelectAccount,
+    }),
+    [accounts, onSelectAccount, selectedAccountId],
+  );
+
+  return (
+    <ThemeContext.Provider value={themeValue}>
+      <ToastContext.Provider value={toastValue}>
+        <PositionsContext.Provider value={positionsValue}>
+          <AccountSelectionContext.Provider value={accountSelectionValue}>
+            {children}
+          </AccountSelectionContext.Provider>
+        </PositionsContext.Provider>
+      </ToastContext.Provider>
+    </ThemeContext.Provider>
+  );
+};

@@ -321,6 +321,61 @@ test("getQuoteSnapshots preserves Massive quote socket prices when REST context 
   }
 });
 
+test("getQuoteSnapshots keeps REST fallback for missing Massive socket symbols with fresh context", async () => {
+  process.env["MASSIVE_API_KEY"] = "massive-test-key";
+
+  let massiveCalls = 0;
+  __setMassiveMarketDataClientFactoryForTests(
+    () =>
+      ({
+        async getQuoteSnapshots(symbols: string[]) {
+          massiveCalls += 1;
+          return symbols.map((symbol) => ({
+            symbol,
+            price: 21.6,
+            bid: 21.5,
+            ask: 21.65,
+            bidSize: 10,
+            askSize: 12,
+            change: 0.4,
+            changePercent: 1.8867924528301887,
+            open: 21,
+            high: 21.8,
+            low: 20.9,
+            prevClose: 21.2,
+            volume: 2_000,
+            updatedAt: new Date("2026-06-04T20:39:00.000Z"),
+          }));
+        },
+      }) as never,
+  );
+
+  try {
+    const first = await getQuoteSnapshots({
+      symbols: "FCEL",
+      allowMassiveFallback: true,
+    });
+    __platformQuoteSnapshotTestInternals.resetQuoteSnapshotCache();
+    const second = await getQuoteSnapshots({
+      symbols: "FCEL",
+      allowMassiveFallback: true,
+    });
+
+    assert.equal(massiveCalls, 2);
+    assert.deepEqual(
+      first.quotes.map((item) => [item.symbol, item.source, item.bid, item.ask]),
+      [["FCEL", "massive", 21.5, 21.65]],
+    );
+    assert.deepEqual(
+      second.quotes.map((item) => [item.symbol, item.source, item.bid, item.ask]),
+      [["FCEL", "massive", 21.5, 21.65]],
+    );
+    assert.equal(second.fallbackUsed, true);
+  } finally {
+    delete process.env["MASSIVE_API_KEY"];
+  }
+});
+
 test("getQuoteSnapshots uses Massive REST day-change context without replacing live socket prices", async () => {
   process.env["MASSIVE_API_KEY"] = "massive-test-key";
 

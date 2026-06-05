@@ -145,11 +145,11 @@ test("account screen wires shadow account queries through the paper ledger path"
   assert.match(source, /ACCOUNT_SWITCH_PREFETCH_OPTIONS/);
   assert.match(source, /staleTime:\s*90_000/);
   assert.match(source, /const ACCOUNT_SWITCH_KEEP_WARM_MS = 60_000/);
-  assert.match(source, /const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 1_000/);
-  assert.match(source, /const SHADOW_ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 4_000/);
-  assert.match(source, /const ACCOUNT_LIVE_FALLBACK_DELAY_MS = 5_000/);
-  assert.match(source, /const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 6_000/);
-  assert.match(source, /const ACCOUNT_INACTIVE_PREWARM_FALLBACK_DELAY_MS = 5_000/);
+  assert.match(source, /const ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 0/);
+  assert.match(source, /const SHADOW_ACCOUNT_CRITICAL_FALLBACK_DELAY_MS = 0/);
+  assert.match(source, /const ACCOUNT_LIVE_FALLBACK_DELAY_MS = 0/);
+  assert.match(source, /const ACCOUNT_DERIVED_FALLBACK_DELAY_MS = 0/);
+  assert.match(source, /const ACCOUNT_INACTIVE_PREWARM_FALLBACK_DELAY_MS = 0/);
   assert.match(
     source,
     /const accountCriticalFallbackDelayMs = shadowMode[\s\S]*SHADOW_ACCOUNT_CRITICAL_FALLBACK_DELAY_MS[\s\S]*ACCOUNT_CRITICAL_FALLBACK_DELAY_MS/,
@@ -186,7 +186,9 @@ test("account screen wires shadow account queries through the paper ledger path"
   );
   assert.match(source, /useGetAccountClosedTrades\(accountRequestId,[\s\S]*placeholderData:\s*retainPreviousData/);
   assert.match(source, /useGetAccountOrders\([\s\S]*placeholderData:\s*retainPreviousData/);
-  assert.match(source, /useGetAccountRisk\(accountRequestId,[\s\S]*placeholderData:\s*retainPreviousData/);
+  assert.match(source, /const riskParams = useMemo\([\s\S]*detail:\s*"fast"/);
+  assert.match(source, /getGetAccountRiskQueryOptions\([\s\S]*detail:\s*"fast"/);
+  assert.match(source, /useGetAccountRisk\(accountRequestId,\s*riskParams,[\s\S]*placeholderData:\s*retainPreviousData/);
   assert.match(source, /const sectionSwitching = Boolean\(/);
   assert.match(source, /accountSectionPending && summaryQuery\.isPlaceholderData/);
   assert.match(source, /accountSectionPending[\s\S]*setAccountCriticalFallbackReady\(false\)/);

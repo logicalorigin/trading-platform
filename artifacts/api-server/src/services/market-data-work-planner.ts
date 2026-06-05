@@ -69,6 +69,10 @@ type IngestDiagnostics = {
   oldestQueuedAgeMs?: number | null;
   runningCount?: number;
   expiredLeaseCount?: number;
+  claimableQueuedJobCount?: number;
+  claimableQueuedJobsByKind?: Record<string, number>;
+  workerLikelyInactive?: boolean;
+  workerInactiveReason?: string | null;
   blockedGexJobCount?: number;
   oldestBlockedGexAgeMs?: number | null;
   blockedGexJobs?: Array<{
@@ -221,6 +225,8 @@ export type MarketDataWorkPlan = {
     ibkrOptionSymbolCount: number;
     persistQueuedJobCount: number;
     persistRunningJobCount: number;
+    persistClaimableQueuedJobCount: number;
+    persistWorkerInactive: boolean;
     persistBlockedJobCount: number;
     releaseLineCount: number;
     evictLineCount: number;
@@ -449,6 +455,26 @@ function buildPersistJobs(
   }
 
   const rows: MarketDataWorkPlanProviderJob[] = [];
+  if (ingest.workerLikelyInactive) {
+    rows.push({
+      owner: "rust-market-data-worker",
+      provider: "massive",
+      intent: "persisted-forward-refresh",
+      kind: "market_data_worker",
+      status: "blocked",
+      priority: 1,
+      jobCount: readNumber(ingest.claimableQueuedJobCount) ?? 0,
+      symbolCount: 0,
+      symbols: [],
+      oldestAgeMs: ingest.oldestQueuedAgeMs ?? null,
+      reason:
+        ingest.workerInactiveReason ===
+        "claimable_jobs_waiting_without_running_worker"
+          ? "claimable persisted refresh jobs are ready, but no market-data-worker job is running"
+          : "persisted refresh worker appears inactive",
+    });
+  }
+
   (["queued", "running", "failed"] as const).forEach((status) => {
     const jobCount = countQueuedJobs(ingest, status);
     if (jobCount <= 0) {
@@ -805,6 +831,8 @@ export function buildMarketDataWorkPlan(
     scannerHorizon: scanner.plannedHorizonCount,
     marketSession: marketSession.sessionKey,
     queueDepth: input.ingest?.queueDepth ?? null,
+    claimableQueuedJobs: input.ingest?.claimableQueuedJobsByKind ?? null,
+    workerLikelyInactive: input.ingest?.workerLikelyInactive ?? null,
     driftStatus: input.drift?.status ?? null,
   });
 
@@ -846,6 +874,9 @@ export function buildMarketDataWorkPlan(
         countQueuedJobs(input.ingest, "running"),
         readNumber(input.ingest?.runningCount) ?? 0,
       ),
+      persistClaimableQueuedJobCount:
+        readNumber(input.ingest?.claimableQueuedJobCount) ?? 0,
+      persistWorkerInactive: Boolean(input.ingest?.workerLikelyInactive),
       persistBlockedJobCount: input.ingest?.blockedGexJobCount ?? 0,
       releaseLineCount: release.reduce((total, entry) => total + entry.lineCount, 0),
       evictLineCount: evict.reduce((total, entry) => total + entry.lineCount, 0),

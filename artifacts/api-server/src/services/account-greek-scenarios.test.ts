@@ -225,6 +225,38 @@ test("resolveAccountGreekScenarios includes completed Python result", async () =
   assert.equal("coverage" in (capturedInput as Record<string, unknown>), false);
 });
 
+test("resolveAccountGreekScenarios accepts the risk compute lane flag", async () => {
+  let called = false;
+  const result = await resolveAccountGreekScenarios({
+    positions: [optionPosition as any],
+    underlyingPrices: new Map([["SPY", 500]]),
+    greekByPositionId: greekMapFor("U1:SPY-C"),
+    env: {
+      PYRUS_PYTHON_GREEK_SCENARIOS_ENABLED: "1",
+      PYRUS_PYTHON_RISK_COMPUTE_ENABLED: "1",
+    },
+    runJob: async () => {
+      called = true;
+      return {
+        jobId: "risk:job-1",
+        jobType: "greek_scenario_matrix",
+        status: "completed",
+        createdAt: "2026-05-29T20:00:00.000Z",
+        startedAt: "2026-05-29T20:00:00.000Z",
+        completedAt: "2026-05-29T20:00:00.010Z",
+        durationMs: 10,
+        warnings: [],
+        result: { scenarioCount: 45, managementFlags: [] },
+        error: null,
+      };
+    },
+  });
+
+  assert.equal(called, true);
+  assert.equal(result.status, "completed");
+  assert.equal(result.pythonJob.jobId, "risk:job-1");
+});
+
 test("resolveAccountGreekScenarios reports Python failures as advisory", async () => {
   const result: AccountGreekScenarios = await resolveAccountGreekScenarios({
     positions: [optionPosition as any],

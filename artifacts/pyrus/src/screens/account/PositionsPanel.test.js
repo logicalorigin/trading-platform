@@ -452,6 +452,52 @@ test("positions panel overlays Massive equity snapshots onto displayed rows", ()
   assert.equal(patched.underlyingMarket.price, 2.1);
 });
 
+test("positions panel adds spot snapshots to option rows without repricing options", () => {
+  const { applyLiveEquityQuoteToRow } = __positionsPanelInternalsForTests;
+  const patched = applyLiveEquityQuoteToRow(
+    {
+      id: "real-f-option",
+      symbol: "F",
+      assetClass: "Options",
+      quantity: 5,
+      averageCost: 1.04,
+      mark: 0.86,
+      marketValue: 430,
+      unrealizedPnl: -90,
+      dayChange: -150,
+      optionContract: {
+        underlying: "F",
+        multiplier: 100,
+      },
+      optionQuote: {
+        bid: 0.84,
+        ask: 0.88,
+        mark: 0.86,
+        source: "option_quote",
+      },
+    },
+    {
+      symbol: "F",
+      price: 15.32,
+      bid: 15.31,
+      ask: 15.33,
+      chg: -0.39,
+      pct: -2.48,
+      source: "massive",
+      transport: "websocket",
+      dataUpdatedAt: "2026-06-04T21:01:15.555Z",
+    },
+  );
+
+  assert.equal(patched.mark, 0.86);
+  assert.equal(patched.marketValue, 430);
+  assert.equal(patched.unrealizedPnl, -90);
+  assert.equal(patched.dayChange, -150);
+  assert.equal(patched.underlyingMarket.symbol, "F");
+  assert.equal(patched.underlyingMarket.price, 15.32);
+  assert.equal(patched.underlyingMarket.source, "massive");
+});
+
 test("positions panel renders compact underlying sparklines inside position rows", () => {
   assert.match(source, /import \{ MicroSparkline \}/);
   assert.match(source, /import \{ Button \} from "\.\.\/\.\.\/components\/ui\/Button\.jsx"/);
@@ -736,6 +782,43 @@ test("positions panel derives structured IBKR option ids before numeric account 
   );
 
   assert.deepEqual(groups[0].underlying, "SPY");
+  assert.deepEqual(payload, {
+    v: 1,
+    u: "SPY",
+    e: "20260604",
+    s: 753,
+    r: "C",
+    x: "SMART",
+    tc: "SPY",
+    m: 100,
+  });
+});
+
+test("positions panel derives structured IBKR option ids before stale hydrated numeric quotes", () => {
+  const groups = buildPositionOptionQuoteGroups([
+    {
+      symbol: "SPY",
+      optionContract: {
+        underlying: "SPY",
+        expirationDate: "2026-06-04",
+        strike: 753,
+        right: "call",
+        providerContractId: "885885495",
+        multiplier: 100,
+      },
+      optionQuote: {
+        providerContractId: "885885495",
+      },
+    },
+  ]);
+  const [providerContractId] = groups[0].providerContractIds;
+  const payload = JSON.parse(
+    Buffer.from(providerContractId.slice("twsopt:".length), "base64url").toString(
+      "utf8",
+    ),
+  );
+
+  assert.notEqual(providerContractId, "885885495");
   assert.deepEqual(payload, {
     v: 1,
     u: "SPY",

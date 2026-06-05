@@ -211,7 +211,7 @@ const resolveSignalMonitorUniverseScope = (settings) => {
   const raw = settings?.[SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY];
   return SIGNAL_MONITOR_UNIVERSE_SCOPE_VALUES.has(raw)
     ? raw
-    : "all_watchlists";
+    : "all_watchlists_plus_universe";
 };
 const signalMonitorEditableSettingsJson = (profile) =>
   JSON.stringify(pickSignalMonitorEditableSettings(profile));

@@ -79,6 +79,9 @@ test("account summary day P&L uses latest market-day NAV history", async () => {
 
 test("account page live reads coalesce repeated critical fan-out work", () => {
   const source = readFileSync(new URL("./account.ts", import.meta.url), "utf8");
+  const positionsBody = source.match(
+    /export async function getAccountPositions\([\s\S]*?\nasync function getAccountPositionsUncached/,
+  )?.[0];
 
   assert.match(source, /ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS = 2_000/);
   assert.match(source, /liveAccountUniverseReadCache/);
@@ -97,6 +100,9 @@ test("account page live reads coalesce repeated critical fan-out work", () => {
     source,
     /function hydratePositionMarkets[\s\S]*positionMarketHydrationReadCache[\s\S]*hydratePositionMarketsUncached/,
   );
+  assert.ok(positionsBody);
+  assert.doesNotMatch(positionsBody, /readAccountRouteResponseCache/);
+  assert.match(positionsBody, /getAccountPositionsUncached\(\{\s*\.\.\.input,\s*mode\s*\}\)/);
 });
 
 test("account positions return IBKR position reads without empty-result retry sleeps", () => {
@@ -136,11 +142,15 @@ test("account positions do not refresh IBKR option chains inline for Greeks", ()
 test("shadow account positions route forwards automation scope and live quote opt-out", () => {
   const routeSource = readFileSync(new URL("../routes/platform.ts", import.meta.url), "utf8");
   const accountSource = readFileSync(new URL("./account.ts", import.meta.url), "utf8");
+  const shadowSource = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const routeBody = routeSource.match(
     /router\.get\("\/accounts\/:accountId\/positions"[\s\S]*?\n\}\);/,
   )?.[0];
   const accountBody = accountSource.match(
     /export async function getAccountPositions\([\s\S]*?\n  const mode = input\.mode \?\? getRuntimeMode\(\);/,
+  )?.[0];
+  const cacheKeyBody = shadowSource.match(
+    /function shadowPositionsReadCacheKey\([\s\S]*?\nfunction isShadowAccountPositionsResponseShape/,
   )?.[0];
 
   assert.ok(routeBody);
@@ -150,6 +160,8 @@ test("shadow account positions route forwards automation scope and live quote op
   assert.ok(accountBody);
   assert.match(accountBody, /liveQuotes\?: boolean/);
   assert.match(accountBody, /getShadowAccountPositions\(\{\s*assetClass: input\.assetClass,\s*source: input\.source,\s*liveQuotes: input\.liveQuotes,/);
+  assert.ok(cacheKeyBody);
+  assert.doesNotMatch(cacheKeyBody, /includeLiveQuotes|live-quotes|cached-quotes/);
 });
 
 test("live quote and flow defaults require explicit Massive opt-in", () => {
@@ -711,6 +723,72 @@ test("option position hydration uses normalized entry basis with live quote mark
   assert.equal(hydrated.source, "QUOTE_SNAPSHOT");
 });
 
+test("option position hydration aligns valuation mark with two-sided bid ask", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const hydrated =
+    __accountPositionInternalsForTests.buildPositionMarketHydration(
+      {
+        id: "U1:F:CALL",
+        accountId: "U1",
+        symbol: "F",
+        assetClass: "option",
+        quantity: 5,
+        averagePrice: 103.96825,
+        marketPrice: 103.96825,
+        marketValue: 51_984.125,
+        unrealizedPnl: 0,
+        unrealizedPnlPercent: 0,
+        optionContract: {
+          underlying: "F",
+          expirationDate: "2026-06-26",
+          strike: 15,
+          right: "call",
+          multiplier: 100,
+          providerContractId: "880754762",
+        },
+      } as any,
+      {
+        symbol: "F20260626C15",
+        price: 0.83,
+        mark: 1.1528208908703232,
+        last: 0.83,
+        bid: 0.84,
+        ask: 0.88,
+        bidSize: 0,
+        askSize: 552,
+        change: -0.3,
+        changePercent: -26.54867256637168,
+        open: null,
+        high: 1.11,
+        low: 0.77,
+        prevClose: 1.13,
+        volume: 10_122,
+        openInterest: 14_119,
+        impliedVolatility: 0.4331138567836446,
+        delta: 0.6898064538003055,
+        gamma: 0.1965129440851466,
+        theta: -0.01437127944517047,
+        vega: 0.013480208273827454,
+        providerContractId: "880754762",
+        delayed: false,
+        freshness: "stale",
+        marketDataMode: "frozen",
+        dataUpdatedAt: new Date("2026-06-04T21:05:01.100Z"),
+        ageMs: null,
+        cacheAgeMs: 0,
+        latency: null,
+        transport: "tws",
+        updatedAt: new Date("2026-06-04T21:05:01.100Z"),
+      },
+    );
+
+  assert.equal(Number(hydrated.mark.toFixed(2)), 0.86);
+  assert.equal(Number(hydrated.marketValue.toFixed(2)), 430);
+  assert.equal(Number(hydrated.unrealizedPnl.toFixed(2)), -89.84);
+  assert.equal(Number(hydrated.dayChange?.toFixed(2)), -150);
+  assert.equal(hydrated.source, "QUOTE_SNAPSHOT");
+});
+
 test("account position quote display model derives bid ask spread from snapshots", async () => {
   const { __accountPositionInternalsForTests } = await import("./account");
   const quote = __accountPositionInternalsForTests.buildPositionQuoteFromSnapshot(
@@ -820,6 +898,59 @@ test("account position quote display model preserves zero bid ask from IBKR opti
   assert.equal(quote?.ask, 2.5);
   assert.equal(quote?.mark, 2.45);
   assert.equal(quote?.spread, 2.5);
+});
+
+test("account position quote selection prefers Massive bid ask over stale position marks", async () => {
+  const { __accountPositionInternalsForTests } = await import("./account");
+  const positionMark =
+    __accountPositionInternalsForTests.buildPositionQuoteFromSnapshot(null, 21.7);
+  const massiveQuote =
+    __accountPositionInternalsForTests.buildPositionQuoteFromSnapshot(
+      {
+        symbol: "FCEL",
+        price: 21.7,
+        bid: 21.41,
+        ask: 21.66,
+        bidSize: 100,
+        askSize: 200,
+        change: 0.11,
+        changePercent: 0.5092592592592593,
+        open: 21.1,
+        high: 21.9,
+        low: 21,
+        prevClose: 21.59,
+        volume: 12_345,
+        openInterest: null,
+        impliedVolatility: null,
+        delta: null,
+        gamma: null,
+        theta: null,
+        vega: null,
+        providerContractId: null,
+        delayed: false,
+        freshness: "live",
+        marketDataMode: "live",
+        dataUpdatedAt: new Date("2026-06-04T20:20:00.000Z"),
+        ageMs: 0,
+        cacheAgeMs: 0,
+        latency: null,
+        transport: "massive-websocket",
+        updatedAt: new Date("2026-06-04T20:20:00.000Z"),
+        source: "massive",
+      } as any,
+      21.7,
+      "massive",
+    );
+
+  const selected = __accountPositionInternalsForTests.choosePositionQuote(
+    positionMark,
+    massiveQuote,
+  );
+
+  assert.equal(positionMark?.source, "position_mark");
+  assert.equal(selected?.source, "massive");
+  assert.equal(selected?.bid, 21.41);
+  assert.equal(selected?.ask, 21.66);
 });
 
 test("account position internals derive opened date from Flex open-position raw fields", async () => {

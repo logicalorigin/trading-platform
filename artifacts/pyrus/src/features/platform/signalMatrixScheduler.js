@@ -253,6 +253,75 @@ const buildHydrationMap = (states = []) => {
   return bySymbol;
 };
 
+export function buildSignalMatrixStoredStateBootstrapRequest({
+  symbols = [],
+  currentStates = [],
+  timeframes = DEFAULT_SIGNAL_MATRIX_TIMEFRAMES,
+  lastBootstrapKey = null,
+} = {}) {
+  const universe = uniqueSymbols(symbols);
+  const matrixTimeframes = normalizeTimeframes(timeframes);
+  if (!universe.length || !matrixTimeframes.length) {
+    return null;
+  }
+
+  const key = `${universe.join(",")}|${matrixTimeframes.join(",")}`;
+  if (key === lastBootstrapKey) {
+    return null;
+  }
+
+  const requestedStateKeys = new Set(
+    universe.flatMap((symbol) =>
+      matrixTimeframes.map((timeframe) => `${symbol}:${timeframe}`),
+    ),
+  );
+  const presentStateKeys = new Set();
+  (Array.isArray(currentStates) ? currentStates : []).forEach((state) => {
+    const key = stateKey(state);
+    if (requestedStateKeys.has(key)) {
+      presentStateKeys.add(key);
+    }
+  });
+
+  const totalTaskCount = requestedStateKeys.size;
+  const hydratedTaskCount = presentStateKeys.size;
+  if (hydratedTaskCount >= totalTaskCount) {
+    return null;
+  }
+  const hydratedSymbols = universe.filter((symbol) =>
+    matrixTimeframes.every((timeframe) =>
+      presentStateKeys.has(`${symbol}:${timeframe}`),
+    ),
+  ).length;
+
+  return {
+    key,
+    symbols: universe,
+    timeframes: matrixTimeframes,
+    coverage: {
+      totalSymbols: universe.length,
+      requestSymbols: universe.length,
+      prioritySymbols: universe.length,
+      backgroundSymbols: 0,
+      requestTaskCount: totalTaskCount,
+      requestedTaskCount: totalTaskCount,
+      totalTaskCount,
+      hydratedTaskCount,
+      missingTaskCount: totalTaskCount - hydratedTaskCount,
+      pendingTaskCount: 0,
+      queuedTaskCount: 0,
+      hydratedSymbols,
+      missingSymbols: universe.length - hydratedSymbols,
+      pendingSymbols: 0,
+      timeframes: matrixTimeframes.length,
+      matrixTimeframes: matrixTimeframes.length,
+      selectedTimeframe: null,
+      selectedTimeframes: matrixTimeframes,
+      storedStateBootstrap: true,
+    },
+  };
+}
+
 const isHydratedState = (state) =>
   Boolean(
     state &&

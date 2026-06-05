@@ -96,6 +96,7 @@ const activeRequestFamilies = new Set([
   "flow-tape-visible",
   "option-chart-visible",
   "signal-matrix",
+  "signals-table-sparkline",
   "trade-visible",
 ]);
 const chartRequestFamilies = new Set([
@@ -311,6 +312,7 @@ export function classifyApiRoute(input: {
     path === "/diagnostics/latest" ||
     path === "/diagnostics/runtime" ||
     path === "/diagnostics/client-metrics" ||
+    path === "/diagnostics/market-data/gex-universe-refresh" ||
     (method === "GET" && path === "/diagnostics/thresholds")
   ) {
     return "active-screen";
@@ -318,6 +320,7 @@ export function classifyApiRoute(input: {
 
   if (
     path === "/bars" ||
+    path === "/bars/batch" ||
     path === "/options/chart-bars" ||
     path === "/options/chains" ||
     path === "/options/expirations" ||
@@ -337,6 +340,7 @@ export function classifyApiRoute(input: {
   if (
     path.startsWith("/diagnostics/") ||
     path === "/bars" ||
+    path === "/bars/batch" ||
     path.startsWith("/options/") ||
     path.startsWith("/flow/") ||
     (/^\/algo\/deployments\/[^/]+\/signal-options\/state$/.test(path) &&

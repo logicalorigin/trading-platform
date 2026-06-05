@@ -4,6 +4,7 @@ import math
 import statistics
 import time
 from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Any, TypedDict, cast
 
 import numpy as np
@@ -26,6 +27,9 @@ from .models import (
     PortfolioOptimizationInput,
     PortfolioOptimizationObjective,
     PortfolioRiskInput,
+    SignalMatrixBarInput,
+    SignalMatrixInput,
+    SignalMatrixSettingsInput,
 )
 
 THETA_BURDEN_FLAG_PCT = 2.0
@@ -127,6 +131,8 @@ def run_job(request: JobRequest) -> tuple[dict[str, Any], list[str]]:
         return run_portfolio_optimization(PortfolioOptimizationInput.model_validate(request.input))
     if request.jobType == JobType.PORTFOLIO_RISK:
         return run_portfolio_risk(PortfolioRiskInput.model_validate(request.input))
+    if request.jobType == JobType.SIGNAL_MATRIX:
+        return run_signal_matrix(SignalMatrixInput.model_validate(request.input))
     raise ValueError(f"unsupported job type: {request.jobType}")
 
 
@@ -219,6 +225,655 @@ def run_benchmark_matrix(input_data: BenchmarkMatrixInput) -> tuple[dict[str, An
 
 def finite(value: float | None) -> bool:
     return isinstance(value, int | float) and math.isfinite(value)
+
+
+def _round_or_nan(value: float, digits: int = 6) -> float:
+    return round(value, digits) if math.isfinite(value) else math.nan
+
+
+def _signal_sma(values: list[float], period: int) -> list[float]:
+    result = [math.nan] * len(values)
+    if period <= 0:
+        return result
+    rolling_sum = 0.0
+    valid_count = 0
+    for index, value in enumerate(values):
+        if math.isfinite(value):
+            rolling_sum += value
+            valid_count += 1
+        if index >= period:
+            dropped = values[index - period]
+            if math.isfinite(dropped):
+                rolling_sum -= dropped
+                valid_count -= 1
+        if index >= period - 1 and valid_count == period:
+            result[index] = _round_or_nan(rolling_sum / period)
+    return result
+
+
+def _signal_wma(values: list[float], period: int) -> list[float]:
+    result = [math.nan] * len(values)
+    if period <= 0:
+        return result
+    weight_total = period * (period + 1) / 2
+    for index in range(period - 1, len(values)):
+        weighted_sum = 0.0
+        valid = True
+        for offset in range(period):
+            value = values[index - period + 1 + offset]
+            if not math.isfinite(value):
+                valid = False
+                break
+            weighted_sum += value * (offset + 1)
+        if valid:
+            result[index] = _round_or_nan(weighted_sum / weight_total)
+    return result
+
+
+def _signal_stddev(values: list[float], period: int) -> list[float]:
+    result = [math.nan] * len(values)
+    if period <= 0:
+        return result
+    for index in range(period - 1, len(values)):
+        window = values[index - period + 1 : index + 1]
+        if any(not math.isfinite(value) for value in window):
+            continue
+        mean = sum(window) / period
+        variance = sum((value - mean) ** 2 for value in window) / period
+        result[index] = _round_or_nan(math.sqrt(variance))
+    return result
+
+
+def _signal_atr(bars: list[SignalMatrixBarInput], period: int) -> list[float]:
+    result = [math.nan] * len(bars)
+    if period <= 0 or len(bars) < period:
+        return result
+    true_range: list[float] = []
+    for index, bar in enumerate(bars):
+        if index == 0:
+            true_range.append(bar.h - bar.l)
+            continue
+        previous_close = bars[index - 1].c
+        true_range.append(
+            max(bar.h - bar.l, abs(bar.h - previous_close), abs(bar.l - previous_close))
+        )
+    atr = sum(true_range[:period]) / period
+    result[period - 1] = _round_or_nan(atr)
+    for index in range(period, len(true_range)):
+        atr = (atr * (period - 1) + true_range[index]) / period
+        result[index] = _round_or_nan(atr)
+    return result
+
+
+def _signal_adx(bars: list[SignalMatrixBarInput], period: int) -> list[float]:
+    length = len(bars)
+    result = [math.nan] * length
+    if period <= 0 or length <= period * 2:
+        return result
+    true_ranges = [0.0] * length
+    plus_dm = [0.0] * length
+    minus_dm = [0.0] * length
+    for index in range(1, length):
+        current = bars[index]
+        previous = bars[index - 1]
+        up_move = current.h - previous.h
+        down_move = previous.l - current.l
+        true_ranges[index] = max(
+            current.h - current.l,
+            abs(current.h - previous.c),
+            abs(current.l - previous.c),
+        )
+        plus_dm[index] = up_move if up_move > down_move and up_move > 0 else 0
+        minus_dm[index] = down_move if down_move > up_move and down_move > 0 else 0
+    smoothed_tr = sum(true_ranges[1 : period + 1])
+    smoothed_plus = sum(plus_dm[1 : period + 1])
+    smoothed_minus = sum(minus_dm[1 : period + 1])
+    dx = [math.nan] * length
+    for index in range(period, length):
+        if index > period:
+            smoothed_tr = smoothed_tr - smoothed_tr / period + true_ranges[index]
+            smoothed_plus = smoothed_plus - smoothed_plus / period + plus_dm[index]
+            smoothed_minus = smoothed_minus - smoothed_minus / period + minus_dm[index]
+        if not math.isfinite(smoothed_tr) or smoothed_tr <= 0:
+            continue
+        plus_di = smoothed_plus / smoothed_tr * 100
+        minus_di = smoothed_minus / smoothed_tr * 100
+        di_sum = plus_di + minus_di
+        if di_sum <= 0:
+            continue
+        dx[index] = abs(plus_di - minus_di) / di_sum * 100
+    dx_sum = 0.0
+    dx_count = 0
+    for index in range(period, length):
+        if math.isfinite(dx[index]):
+            dx_sum += dx[index]
+            dx_count += 1
+            if dx_count == period:
+                result[index] = _round_or_nan(dx_sum / period)
+                break
+    for index in range(period * 2, length):
+        if not math.isfinite(dx[index]) or not math.isfinite(result[index - 1]):
+            continue
+        result[index] = _round_or_nan((result[index - 1] * (period - 1) + dx[index]) / period)
+    return result
+
+
+def _signal_percent_rank(values: list[float], period: int) -> list[float]:
+    result = [math.nan] * len(values)
+    if period <= 1:
+        return result
+    for index in range(period - 1, len(values)):
+        window = values[index - period + 1 : index + 1]
+        current = values[index]
+        if not math.isfinite(current) or any(not math.isfinite(value) for value in window):
+            continue
+        less_or_equal = sum(1 for value in window if value <= current)
+        result[index] = _round_or_nan(((less_or_equal - 1) / (period - 1)) * 100)
+    return result
+
+
+def _signal_volatility_score(
+    bars: list[SignalMatrixBarInput],
+    shadow_length: int,
+    shadow_stddev: float,
+) -> list[float]:
+    closes = [bar.c for bar in bars]
+    bb_mid = _signal_sma(closes, shadow_length)
+    bb_dev = [
+        value * shadow_stddev if math.isfinite(value) else math.nan
+        for value in _signal_stddev(closes, shadow_length)
+    ]
+    width_pct: list[float] = []
+    for index, mid in enumerate(bb_mid):
+        close = closes[index]
+        dev = bb_dev[index]
+        if not math.isfinite(mid) or not math.isfinite(dev) or close <= 0:
+            width_pct.append(math.nan)
+        else:
+            width_pct.append((dev * 2) / close)
+    rank = _signal_percent_rank(width_pct, 200)
+    return [min(10, max(0, round(value / 10))) if math.isfinite(value) else 0 for value in rank]
+
+
+def _bucket_start_ms(time_ms: int, timeframe: str) -> int:
+    normalized = "1h" if timeframe == "60" else "4h" if timeframe == "240" else timeframe
+    if normalized.isdigit():
+        interval_ms = int(normalized) * 60_000
+        return math.floor(time_ms / interval_ms) * interval_ms
+    if normalized.lower().endswith("m") and normalized[:-1].isdigit():
+        interval_ms = int(normalized[:-1]) * 60_000
+        return math.floor(time_ms / interval_ms) * interval_ms
+    if normalized.lower().endswith("h") and normalized[:-1].isdigit():
+        interval_ms = int(normalized[:-1]) * 60 * 60_000
+        return math.floor(time_ms / interval_ms) * interval_ms
+    if normalized in {"D", "1D", "1d"}:
+        value = datetime.fromtimestamp(time_ms / 1000, tz=timezone.utc)
+        return int(datetime(value.year, value.month, value.day, tzinfo=timezone.utc).timestamp() * 1000)
+    return time_ms
+
+
+def _aggregate_signal_bars(
+    bars: list[SignalMatrixBarInput],
+    timeframe: str,
+) -> list[SignalMatrixBarInput]:
+    aggregated: list[SignalMatrixBarInput] = []
+    for bar in bars:
+        bucket_ms = _bucket_start_ms(bar.time * 1000, timeframe)
+        bucket_time = bucket_ms // 1000
+        if not aggregated or aggregated[-1].time != bucket_time:
+            aggregated.append(
+                SignalMatrixBarInput(
+                    time=bucket_time,
+                    ts=datetime.fromtimestamp(bucket_time, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+                    date=datetime.fromtimestamp(bucket_time, tz=timezone.utc).date().isoformat(),
+                    o=bar.o,
+                    h=bar.h,
+                    l=bar.l,
+                    c=bar.c,
+                    v=bar.v,
+                )
+            )
+            continue
+        last = aggregated[-1]
+        last.h = max(last.h, bar.h)
+        last.l = min(last.l, bar.l)
+        last.c = bar.c
+        last.v += bar.v
+    return aggregated
+
+
+def _signal_trend_direction(bars: list[SignalMatrixBarInput], basis_length: int) -> int:
+    if not bars:
+        return 1
+    basis = _signal_wma([bar.c for bar in bars], basis_length)
+    direction = 1
+    for index in range(len(bars)):
+        if index >= 5 and math.isfinite(basis[index]) and math.isfinite(basis[index - 5]):
+            if basis[index] > basis[index - 5]:
+                direction = 1
+            elif basis[index] < basis[index - 5]:
+                direction = -1
+    return direction
+
+
+def _signal_session_key(bar: SignalMatrixBarInput) -> str | None:
+    value = datetime.fromtimestamp(bar.time, tz=timezone.utc)
+    minutes = value.hour * 60 + value.minute
+    if 8 * 60 <= minutes < 17 * 60:
+        return "london"
+    if 13 * 60 <= minutes < 22 * 60:
+        return "new_york"
+    if 0 <= minutes < 9 * 60:
+        return "tokyo"
+    if minutes >= 22 * 60 or minutes < 7 * 60:
+        return "sydney"
+    return None
+
+
+def _signal_session_matches(selected: str, current: str | None) -> bool:
+    if not current:
+        return False
+    if selected == current:
+        return True
+    if selected == "asia":
+        return current in {"tokyo", "sydney"}
+    if selected in {"new_york_am", "new_york_pm"}:
+        return current == "new_york"
+    return False
+
+
+def _pivot_high(bars: list[SignalMatrixBarInput], pivot_index: int, strength: int) -> float | None:
+    if pivot_index - strength < 0 or pivot_index + strength >= len(bars):
+        return None
+    pivot = bars[pivot_index].h
+    if not math.isfinite(pivot):
+        return None
+    for index in range(pivot_index - strength, pivot_index + strength + 1):
+        if index != pivot_index and bars[index].h > pivot:
+            return None
+    return pivot
+
+
+def _pivot_low(bars: list[SignalMatrixBarInput], pivot_index: int, strength: int) -> float | None:
+    if pivot_index - strength < 0 or pivot_index + strength >= len(bars):
+        return None
+    pivot = bars[pivot_index].l
+    if not math.isfinite(pivot):
+        return None
+    for index in range(pivot_index - strength, pivot_index + strength + 1):
+        if index != pivot_index and bars[index].l < pivot:
+            return None
+    return pivot
+
+
+def _median_positive_bar_interval(bars: list[SignalMatrixBarInput]) -> float:
+    intervals = [
+        bars[index].time - bars[index - 1].time
+        for index in range(1, len(bars))
+        if math.isfinite(bars[index].time - bars[index - 1].time)
+        and bars[index].time - bars[index - 1].time > 0
+    ]
+    if not intervals:
+        return 0
+    intervals.sort()
+    return intervals[len(intervals) // 2]
+
+
+def _has_hard_bar_gap(
+    bars: list[SignalMatrixBarInput],
+    index: int,
+    median_interval: float,
+) -> bool:
+    return index > 0 and median_interval > 0 and bars[index].time - bars[index - 1].time > median_interval * 2
+
+
+def _build_signal_filter_state(
+    bars: list[SignalMatrixBarInput],
+    index: int,
+    direction: int,
+    settings: SignalMatrixSettingsInput,
+    adx: list[float],
+    volatility_score: list[float],
+) -> dict[str, Any]:
+    mtf_directions = [
+        _signal_trend_direction(_aggregate_signal_bars(bars[: index + 1], timeframe), settings.basisLength)
+        for timeframe in [settings.mtf1, settings.mtf2, settings.mtf3]
+    ]
+    current_adx = adx[index]
+    current_volatility_score = volatility_score[index]
+    current_session_key = _signal_session_key(bars[index])
+    mtf_pass = [
+        (not settings.requireMtf1) or mtf_directions[0] == direction,
+        (not settings.requireMtf2) or mtf_directions[1] == direction,
+        (not settings.requireMtf3) or mtf_directions[2] == direction,
+    ]
+    adx_pass = (not settings.requireAdx) or (
+        math.isfinite(current_adx) and current_adx >= settings.adxMin
+    )
+    volatility_pass = (not settings.requireVolScoreRange) or (
+        math.isfinite(current_volatility_score)
+        and settings.volScoreMin <= current_volatility_score <= settings.volScoreMax
+    )
+    session_pass = (not settings.restrictToSelectedSessions) or any(
+        _signal_session_matches(session, current_session_key) for session in settings.sessions
+    )
+    gated_pass = all(mtf_pass) and adx_pass and volatility_pass and session_pass
+    return {
+        "enabled": settings.signalFiltersEnabled,
+        "direction": direction,
+        "mtfDirections": mtf_directions,
+        "adx": current_adx if math.isfinite(current_adx) else None,
+        "volatilityScore": current_volatility_score if math.isfinite(current_volatility_score) else None,
+        "sessionKey": current_session_key,
+        "mtfPass": mtf_pass,
+        "adxPass": adx_pass,
+        "volatilityPass": volatility_pass,
+        "sessionPass": session_pass,
+        "passes": (not settings.signalFiltersEnabled) or gated_pass,
+    }
+
+
+def _event_iso(bar: SignalMatrixBarInput) -> str:
+    return bar.ts or datetime.fromtimestamp(bar.time, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _evaluate_signal_cell(
+    bars: list[SignalMatrixBarInput],
+    settings: SignalMatrixSettingsInput,
+) -> dict[str, Any]:
+    closes = [bar.c for bar in bars]
+    basis = _signal_wma(closes, settings.basisLength)
+    atr_raw = _signal_atr(bars, settings.atrLength)
+    atr_smoothed = _signal_sma(atr_raw, settings.atrSmoothing)
+    upper_band = [
+        _round_or_nan(value + atr_smoothed[index] * settings.volatilityMultiplier)
+        if math.isfinite(value) and math.isfinite(atr_smoothed[index])
+        else math.nan
+        for index, value in enumerate(basis)
+    ]
+    lower_band = [
+        _round_or_nan(value - atr_smoothed[index] * settings.volatilityMultiplier)
+        if math.isfinite(value) and math.isfinite(atr_smoothed[index])
+        else math.nan
+        for index, value in enumerate(basis)
+    ]
+    adx = _signal_adx(bars, settings.adxLength)
+    volume_sma = _signal_sma([bar.v for bar in bars], settings.volumeMaLength)
+    volatility_score = _signal_volatility_score(
+        bars,
+        settings.shadowLength,
+        settings.shadowStdDev,
+    )
+    trend_direction_series = [1] * len(bars)
+    regime_direction = [1] * len(bars)
+    signal_events: list[dict[str, Any]] = []
+    trend_direction = 1
+    market_structure_direction = 0
+    last_swing_high = math.nan
+    previous_swing_high = math.nan
+    last_swing_low = math.nan
+    previous_swing_low = math.nan
+    breakable_high = math.nan
+    breakable_low = math.nan
+    previous_regime_direction: int | None = None
+    median_interval = _median_positive_bar_interval(bars)
+
+    def passes_choch_filters(index: int, direction: str, pivot_level: float) -> bool:
+        current = bars[index]
+        if not math.isfinite(pivot_level):
+            return False
+        current_atr = atr_raw[index]
+        atr_buffer = current_atr * settings.chochAtrBuffer if math.isfinite(current_atr) and settings.chochAtrBuffer > 0 else 0
+        threshold = pivot_level + atr_buffer if direction == "long" else pivot_level - atr_buffer
+        if direction == "long":
+            buffered_break = current.h > threshold if settings.bosConfirmation == "wicks" else current.c > threshold
+        else:
+            buffered_break = current.l < threshold if settings.bosConfirmation == "wicks" else current.c < threshold
+        if not buffered_break:
+            return False
+        if settings.chochBodyExpansionAtr > 0:
+            if not math.isfinite(current_atr):
+                return False
+            if abs(current.c - current.o) < current_atr * settings.chochBodyExpansionAtr:
+                return False
+        if settings.chochVolumeGate > 0:
+            baseline_volume = volume_sma[index]
+            if not math.isfinite(baseline_volume) or current.v < baseline_volume * settings.chochVolumeGate:
+                return False
+        return True
+
+    for index, current in enumerate(bars):
+        hard_gap_bar = _has_hard_bar_gap(bars, index, median_interval)
+        if index >= 5 and math.isfinite(basis[index]) and math.isfinite(basis[index - 5]):
+            if basis[index] > basis[index - 5]:
+                trend_direction = 1
+            elif basis[index] < basis[index - 5]:
+                trend_direction = -1
+        trend_direction_series[index] = trend_direction
+
+        pivot_index = index - settings.timeHorizon
+        if pivot_index >= settings.timeHorizon:
+            pivot_high = _pivot_high(bars, pivot_index, settings.timeHorizon)
+            if pivot_high is not None:
+                previous_swing_high = last_swing_high
+                last_swing_high = pivot_high
+                breakable_high = pivot_high
+            pivot_low = _pivot_low(bars, pivot_index, settings.timeHorizon)
+            if pivot_low is not None:
+                previous_swing_low = last_swing_low
+                last_swing_low = pivot_low
+                breakable_low = pivot_low
+
+        bullish_bos = False
+        bearish_bos = False
+        bullish_choch = False
+        bearish_choch = False
+        if math.isfinite(breakable_high) and (
+            current.h > breakable_high if settings.bosConfirmation == "wicks" else current.c > breakable_high
+        ):
+            if market_structure_direction == 1:
+                bullish_bos = True
+                breakable_high = math.nan
+            elif passes_choch_filters(index, "long", breakable_high):
+                bullish_choch = True
+                market_structure_direction = 1
+                breakable_high = math.nan
+        if math.isfinite(breakable_low) and (
+            current.l < breakable_low if settings.bosConfirmation == "wicks" else current.c < breakable_low
+        ):
+            if market_structure_direction == -1:
+                bearish_bos = True
+                breakable_low = math.nan
+            elif passes_choch_filters(index, "short", breakable_low):
+                bearish_choch = True
+                market_structure_direction = -1
+                breakable_low = math.nan
+
+        regime_direction[index] = market_structure_direction if market_structure_direction != 0 else trend_direction
+        active_regime_direction = regime_direction[index]
+        active_trend_line = lower_band[index] if active_regime_direction == 1 else upper_band[index]
+        regime_flipped = previous_regime_direction is not None and previous_regime_direction != active_regime_direction
+        if not hard_gap_bar and not regime_flipped and math.isfinite(active_trend_line):
+            pass
+        previous_regime_direction = active_regime_direction
+        # The API matrix path evaluates completed bars with includeProvisionalSignals=true.
+        actionable = True
+
+        if bullish_bos or bearish_bos:
+            pass
+        if bullish_choch or bearish_choch:
+            direction_num = 1 if bullish_choch else -1
+            event_direction = "long" if bullish_choch else "short"
+            filter_state = _build_signal_filter_state(
+                bars,
+                index,
+                direction_num,
+                settings,
+                adx,
+                volatility_score,
+            )
+            if filter_state["passes"] and actionable:
+                signal_price = (
+                    current.l - (atr_raw[index] * settings.signalOffsetAtr if math.isfinite(atr_raw[index]) else 0)
+                    if event_direction == "long"
+                    else current.h + (atr_raw[index] * settings.signalOffsetAtr if math.isfinite(atr_raw[index]) else 0)
+                )
+                signal_events.append(
+                    {
+                        "eventType": "buy_signal" if event_direction == "long" else "sell_signal",
+                        "direction": event_direction,
+                        "barIndex": index,
+                        "time": current.time,
+                        "ts": _event_iso(current),
+                        "price": _round_or_nan(signal_price),
+                        "close": current.c,
+                        "actionable": actionable,
+                        "filtered": False,
+                        "filterState": filter_state,
+                    }
+                )
+        _ = previous_swing_high
+        _ = previous_swing_low
+
+    return {
+        "adx": adx,
+        "volatilityScore": volatility_score,
+        "trendDirection": trend_direction_series,
+        "regimeDirection": regime_direction,
+        "signalEvents": signal_events,
+    }
+
+
+def _normalized_indicator_direction(value: float | int | None) -> str | None:
+    if value == 1:
+        return "bullish"
+    if value == -1:
+        return "bearish"
+    return None
+
+
+def _trend_age_bucket(value: int | None) -> str | None:
+    if value is None:
+        return None
+    if value > 50:
+        return "old"
+    if value > 20:
+        return "mature"
+    return "new"
+
+
+def _trend_age(directions: list[int], current_direction: int | None) -> int | None:
+    if not directions or current_direction is None:
+        return None
+    last_index = len(directions) - 1
+    flip_index = 0
+    for index in range(last_index - 1, -1, -1):
+        direction = directions[index] if directions[index] in {1, -1} else None
+        if direction is not None and direction != current_direction:
+            flip_index = index + 1
+            break
+    return max(0, last_index - flip_index)
+
+
+def _finite_rounded(value: Any, digits: int = 1) -> float | None:
+    numeric = float(value) if isinstance(value, int | float) else math.nan
+    if not math.isfinite(numeric):
+        return None
+    return round(numeric, digits)
+
+
+def _signal_indicator_snapshot(
+    bars: list[SignalMatrixBarInput],
+    evaluation: dict[str, Any],
+    settings: SignalMatrixSettingsInput,
+    signal: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not bars:
+        return None
+    last_index = len(bars) - 1
+    regime_direction = cast(list[int], evaluation["regimeDirection"])
+    trend_direction = cast(list[int], evaluation["trendDirection"])
+    current_direction = regime_direction[last_index] if regime_direction[last_index] in {1, -1} else trend_direction[last_index]
+    if current_direction not in {1, -1}:
+        current_direction = None
+    trend_age_bars = _trend_age(regime_direction, current_direction)
+    adx_values = cast(list[float], evaluation["adx"])
+    volatility_values = cast(list[float], evaluation["volatilityScore"])
+    adx = _finite_rounded(adx_values[last_index])
+    volatility_score = _finite_rounded(volatility_values[last_index], 0)
+    mtf = []
+    for timeframe, required in [
+        (settings.mtf1, settings.requireMtf1),
+        (settings.mtf2, settings.requireMtf2),
+        (settings.mtf3, settings.requireMtf3),
+    ]:
+        direction = _signal_trend_direction(_aggregate_signal_bars(bars, timeframe), settings.basisLength)
+        mtf.append(
+            {
+                "timeframe": timeframe,
+                "direction": _normalized_indicator_direction(direction),
+                "required": required,
+                "pass": (not required) or (current_direction is not None and direction == current_direction),
+            }
+        )
+    return {
+        "trendDirection": _normalized_indicator_direction(current_direction),
+        "trendAgeBars": trend_age_bars,
+        "trendAgeBucket": _trend_age_bucket(trend_age_bars),
+        "adx": adx,
+        "strength": None if adx is None else "strong" if adx >= 25 else "weak",
+        "volatilityScore": volatility_score,
+        "mtf": mtf,
+        "filterState": signal.get("filterState") if signal else None,
+    }
+
+
+def run_signal_matrix(input_data: SignalMatrixInput) -> tuple[dict[str, Any], list[str]]:
+    warnings: list[str] = []
+    states: list[dict[str, Any]] = []
+    for cell in input_data.cells:
+        bars = sorted(cell.bars, key=lambda bar: bar.time)
+        if not bars:
+            states.append(
+                {
+                    "symbol": cell.symbol,
+                    "timeframe": cell.timeframe,
+                    "status": "unavailable",
+                    "signal": None,
+                    "barsSinceSignal": None,
+                    "fresh": False,
+                    "indicatorSnapshot": None,
+                    "warning": "No bars were provided for this signal matrix cell.",
+                }
+            )
+            continue
+        evaluation = _evaluate_signal_cell(bars, cell.settings)
+        signal = cast(list[dict[str, Any]], evaluation["signalEvents"])[-1] if evaluation["signalEvents"] else None
+        bars_since_signal = None
+        fresh = False
+        if signal is not None:
+            bars_since_signal = max(0, len(bars) - 1 - int(signal["barIndex"]))
+            fresh = bars_since_signal <= cell.freshWindowBars
+        states.append(
+            {
+                "symbol": cell.symbol,
+                "timeframe": cell.timeframe,
+                "status": "ok",
+                "signal": signal,
+                "barsSinceSignal": bars_since_signal,
+                "fresh": fresh,
+                "indicatorSnapshot": _signal_indicator_snapshot(
+                    bars,
+                    evaluation,
+                    cell.settings,
+                    signal,
+                ),
+                "warning": None,
+            }
+        )
+    if not input_data.cells:
+        warnings.append("signal_matrix received no cells")
+    return {"cellCount": len(input_data.cells), "states": states}, warnings
 
 
 def _normalize_volatility(value: float | None) -> float | None:

@@ -1,0 +1,130 @@
+export const EMPTY_SIGNAL_EVENTS = Object.freeze([]);
+
+const DEFAULT_ACTIVE_SIGNAL_STATUSES = new Set([
+  "active-fresh",
+  "active-stale",
+]);
+
+export const defaultSignalSparklineColorForDirection = (direction) =>
+  direction === "buy"
+    ? "var(--ra-blue-500)"
+    : direction === "sell"
+      ? "var(--ra-red-500)"
+      : null;
+
+export const isSignalSparklineDirection = (value) =>
+  value === "buy" || value === "sell";
+
+export const signalSparklineTimestampMs = (value) => {
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isFinite(time) ? time : null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? value : value * 1000;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric > 10_000_000_000 ? numeric : numeric * 1000;
+    }
+  }
+  return null;
+};
+
+const normalizeSignalSparklineSymbol = (value) =>
+  String(value || "").trim().toUpperCase();
+
+export const buildSignalEventsBySymbol = (events = []) => {
+  const bySymbol = new Map();
+  (Array.isArray(events) ? events : []).forEach((event, order) => {
+    const symbol = normalizeSignalSparklineSymbol(event?.symbol);
+    const direction = String(event?.direction || "").toLowerCase();
+    const ms = signalSparklineTimestampMs(event?.signalAt || event?.emittedAt);
+    if (!symbol || !isSignalSparklineDirection(direction) || ms == null) {
+      return;
+    }
+    const entries = bySymbol.get(symbol) || [];
+    entries.push({
+      direction,
+      ms,
+      timeframe: String(event?.timeframe || "").trim(),
+      order,
+    });
+    bySymbol.set(symbol, entries);
+  });
+  bySymbol.forEach((entries) => {
+    entries.sort((left, right) => left.ms - right.ms || left.order - right.order);
+  });
+  return bySymbol;
+};
+
+export const buildSignalSparklinePointColors = ({
+  points,
+  row,
+  signalEvents = EMPTY_SIGNAL_EVENTS,
+  activeStatuses = DEFAULT_ACTIVE_SIGNAL_STATUSES,
+  signalColorForDirection = defaultSignalSparklineColorForDirection,
+}) => {
+  const sparklinePoints = Array.isArray(points) ? points : [];
+  if (sparklinePoints.length < 2) {
+    return null;
+  }
+
+  const rowTimeframe = String(row?.timeframe || row?.profileTimeframe || "").trim();
+  const transitions = (Array.isArray(signalEvents) ? signalEvents : [])
+    .filter((event) => {
+      if (!rowTimeframe || !event.timeframe) return true;
+      return event.timeframe === rowTimeframe;
+    })
+    .map((event) => ({
+      direction: event.direction,
+      ms: event.ms,
+      order: event.order,
+    }));
+  const rowSignalDirection = row?.direction;
+  const rowSignalMs = signalSparklineTimestampMs(row?.currentSignalAt);
+  if (
+    activeStatuses.has(row?.status) &&
+    isSignalSparklineDirection(rowSignalDirection) &&
+    rowSignalMs != null
+  ) {
+    transitions.push({
+      direction: rowSignalDirection,
+      ms: rowSignalMs,
+      order: Number.MAX_SAFE_INTEGER,
+    });
+  }
+
+  if (!transitions.length) {
+    return null;
+  }
+  transitions.sort((left, right) => left.ms - right.ms || left.order - right.order);
+  const firstSignalColor = signalColorForDirection(transitions[0]?.direction);
+  const latestSignalColor = signalColorForDirection(transitions.at(-1)?.direction);
+  if (!sparklinePoints.some((point) => point.ms != null)) {
+    return latestSignalColor
+      ? sparklinePoints.map(() => latestSignalColor)
+      : null;
+  }
+
+  let transitionIndex = -1;
+  return sparklinePoints.map((point) => {
+    if (point.ms == null) {
+      return transitionIndex >= 0
+        ? signalColorForDirection(transitions[transitionIndex]?.direction)
+        : firstSignalColor;
+    }
+    while (
+      transitionIndex + 1 < transitions.length &&
+      transitions[transitionIndex + 1].ms <= point.ms
+    ) {
+      transitionIndex += 1;
+    }
+    return transitionIndex >= 0
+      ? signalColorForDirection(transitions[transitionIndex]?.direction)
+      : firstSignalColor;
+  });
+};

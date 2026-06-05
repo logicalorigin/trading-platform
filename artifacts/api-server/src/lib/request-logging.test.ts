@@ -102,6 +102,14 @@ test("API request logging silences expected stream closes except 5xx failures", 
   );
   assert.equal(
     resolveApiRequestLogLevel({
+      url: "/marketing/shadow-dashboard/stream",
+      statusCode: 200,
+      responseTimeMs: 55_000,
+    }),
+    "silent",
+  );
+  assert.equal(
+    resolveApiRequestLogLevel({
       url: "/api/streams/accounts/page",
       statusCode: 401,
       responseTimeMs: 40,
@@ -121,6 +129,49 @@ test("API request logging silences expected stream closes except 5xx failures", 
       url: "/api/streams/broker",
       statusCode: 500,
       responseTimeMs: 40_000,
+    }),
+    "error",
+  );
+});
+
+test("API request logging silences expected bridge long-polls", () => {
+  assert.equal(
+    resolveApiRequestLogLevel({
+      url: "/api/ibkr/desktop/jobs/claim",
+      statusCode: 200,
+      responseTimeMs: 25_456,
+    }),
+    "silent",
+  );
+  assert.equal(
+    resolveApiRequestLogLevel({
+      url: "/ibkr/activation/activation-1/login-key/read",
+      statusCode: 200,
+      responseTimeMs: 25_000,
+    }),
+    "silent",
+  );
+  assert.equal(
+    resolveApiRequestLogLevel({
+      url: "/api/ibkr/activation/activation-1/login-envelope/claim",
+      statusCode: 200,
+      responseTimeMs: 25_000,
+    }),
+    "silent",
+  );
+  assert.equal(
+    resolveApiRequestLogLevel({
+      url: "/api/ibkr/desktop/jobs/claim",
+      statusCode: 409,
+      responseTimeMs: 25_456,
+    }),
+    "warn",
+  );
+  assert.equal(
+    resolveApiRequestLogLevel({
+      url: "/api/ibkr/desktop/jobs/claim",
+      statusCode: 500,
+      responseTimeMs: 25_456,
     }),
     "error",
   );

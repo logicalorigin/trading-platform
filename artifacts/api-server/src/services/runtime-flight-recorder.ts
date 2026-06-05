@@ -12,6 +12,7 @@ import {
 import path from "node:path";
 import * as v8 from "node:v8";
 import { logger } from "../lib/logger";
+import { isLongLivedApiRequestUrl } from "../lib/request-logging";
 import type {
   DiagnosticEventPayload,
   DiagnosticSeverity,
@@ -290,7 +291,12 @@ function percentile(values: number[], ratio: number): number | null {
 
 function requestSummary(): JsonRecord {
   const samples = getRecentRequestSamples();
-  const durations = samples.map((sample) => sample.durationMs).filter(Number.isFinite);
+  const latencySamples = samples.filter(
+    (sample) => !isLongLivedApiRequestUrl(sample.path),
+  );
+  const durations = latencySamples
+    .map((sample) => sample.durationMs)
+    .filter(Number.isFinite);
   const byPath = new Map<string, number[]>();
   const byStatusFamily: Record<string, number> = {
     "2xx": 0,
@@ -300,10 +306,13 @@ function requestSummary(): JsonRecord {
     other: 0,
   };
   for (const sample of samples) {
+    const isLatencySample = !isLongLivedApiRequestUrl(sample.path);
     const key = `${sample.method} ${sample.path}`;
-    const current = byPath.get(key) ?? [];
-    current.push(sample.durationMs);
-    byPath.set(key, current);
+    if (isLatencySample) {
+      const current = byPath.get(key) ?? [];
+      current.push(sample.durationMs);
+      byPath.set(key, current);
+    }
     const family =
       sample.statusCode >= 200 && sample.statusCode < 300
         ? "2xx"
@@ -330,6 +339,8 @@ function requestSummary(): JsonRecord {
   }
   return {
     sampleCount: samples.length,
+    latencySampleCount: latencySamples.length,
+    longLivedRequestCount: samples.length - latencySamples.length,
     p95Ms: percentile(durations, 0.95),
     byStatusFamily,
     dominantSlowRoute,

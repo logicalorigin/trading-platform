@@ -227,8 +227,8 @@ const optionProviderContractId = (contract) => {
 };
 
 const rowOptionProviderContractId = (row) =>
-  normalizedProviderContractId(row?.optionQuote?.providerContractId) ||
-  optionProviderContractId(row?.optionContract);
+  optionProviderContractId(row?.optionContract) ||
+  normalizedProviderContractId(row?.optionQuote?.providerContractId);
 
 const formatOptionRightLabel = (value) => {
   const normalized = String(value || "").trim().toLowerCase();
@@ -376,8 +376,8 @@ const mergeLiveOptionQuote = (quote, liveQuote) => {
       current.last,
     ),
     mark: firstPositiveFiniteNumber(
-      liveQuote.mark,
       mid,
+      liveQuote.mark,
       liveQuote.price,
       liveQuote.last,
       current.mark,
@@ -653,7 +653,7 @@ const mergeLiveEquityQuote = (quote, liveQuote) => {
 };
 
 const applyLiveEquityQuoteToRow = (row, liveQuote) => {
-  if (!liveQuote || isOptionPosition(row)) return row;
+  if (!liveQuote) return row;
   const quote = mergeLiveEquityQuote(row.quote, liveQuote);
   const mark = firstPositiveFiniteNumber(
     quote?.mark,
@@ -714,6 +714,13 @@ const applyLiveEquityQuoteToRow = (row, liveQuote) => {
     source: firstText(liveQuote.source, row.underlyingMarket?.source, "massive"),
     transport: firstText(liveQuote.transport, row.underlyingMarket?.transport),
   };
+
+  if (isOptionPosition(row)) {
+    return {
+      ...row,
+      underlyingMarket,
+    };
+  }
 
   return {
     ...row,

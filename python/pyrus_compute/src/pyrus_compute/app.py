@@ -4,7 +4,7 @@ import asyncio
 import os
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -38,8 +38,62 @@ class StoredJob:
     task: asyncio.Task[None] | None = None
 
 
+ALL_CAPABILITIES = [
+    Capability(
+        jobType=JobType.BENCHMARK_MATRIX,
+        schemaVersion=1,
+        description="Synthetic benchmark matrix for Python scientific compute workloads.",
+    ),
+    Capability(
+        jobType=JobType.GREEK_SCENARIO_MATRIX,
+        schemaVersion=1,
+        description="Greek scenario matrix for option position-management analytics.",
+    ),
+    Capability(
+        jobType=JobType.PORTFOLIO_RISK,
+        schemaVersion=1,
+        description="Portfolio exposure, scenario, covariance, and correlation analytics.",
+    ),
+    Capability(
+        jobType=JobType.PORTFOLIO_OPTIMIZATION,
+        schemaVersion=1,
+        description="Advisory portfolio allocation, risk contribution, and turnover analytics.",
+    ),
+    Capability(
+        jobType=JobType.SIGNAL_MATRIX,
+        schemaVersion=1,
+        description="Signal matrix indicator and event evaluation for completed chart bars.",
+    ),
+]
+
+
+def parse_allowed_job_types(raw: str | None) -> set[JobType] | None:
+    if raw is None:
+        return None
+    if raw.strip() == "":
+        return set()
+    return normalize_allowed_job_types(
+        raw_value for raw_value in raw.split(",") if raw_value.strip()
+    )
+
+
+def normalize_allowed_job_types(
+    values: Iterable[JobType | str] | None,
+) -> set[JobType] | None:
+    if values is None:
+        return None
+    return {
+        value if isinstance(value, JobType) else JobType(str(value).strip()) for value in values
+    }
+
+
 class JobStore:
-    def __init__(self, max_workers: int | None = None) -> None:
+    def __init__(
+        self,
+        max_workers: int | None = None,
+        lane: str | None = None,
+        allowed_job_types: Iterable[JobType | str] | None = None,
+    ) -> None:
         worker_count = max_workers or max(1, (os.cpu_count() or 2) - 1)
         self._executor = ThreadPoolExecutor(
             max_workers=worker_count,
@@ -48,6 +102,12 @@ class JobStore:
         self._jobs: dict[str, StoredJob] = {}
         self._completed_jobs = 0
         self._failed_jobs = 0
+        self._lane = lane or os.environ.get("PYRUS_PYTHON_COMPUTE_LANE", "default")
+        self._allowed_job_types = (
+            parse_allowed_job_types(os.environ.get("PYRUS_PYTHON_COMPUTE_ALLOWED_JOB_TYPES"))
+            if allowed_job_types is None
+            else normalize_allowed_job_types(allowed_job_types)
+        )
 
     @property
     def active_jobs(self) -> int:
@@ -65,7 +125,22 @@ class JobStore:
     def failed_jobs(self) -> int:
         return self._failed_jobs
 
+    @property
+    def lane(self) -> str:
+        return self._lane
+
+    @property
+    def allowed_job_types(self) -> set[JobType]:
+        if self._allowed_job_types is None:
+            return {capability.jobType for capability in ALL_CAPABILITIES}
+        return self._allowed_job_types
+
     async def submit(self, request: JobRequest) -> JobAccepted:
+        if request.jobType not in self.allowed_job_types:
+            raise HTTPException(
+                status_code=403,
+                detail="python_compute_job_type_not_allowed_for_lane",
+            )
         if self.active_jobs >= max_concurrent_jobs():
             raise HTTPException(status_code=429, detail="python_compute_job_capacity_exhausted")
 
@@ -184,9 +259,12 @@ def create_app(job_store: JobStore | None = None) -> FastAPI:
             ok=True,
             service="pyrus-compute",
             version=__version__,
+            lane=store.lane,
             activeJobs=store.active_jobs,
+            maxActiveJobs=max_concurrent_jobs(),
             completedJobs=store.completed_jobs,
             failedJobs=store.failed_jobs,
+            allowedJobTypes=sorted(store.allowed_job_types),
         )
 
     @app.get("/capabilities", response_model=CapabilitiesResponse)
@@ -194,34 +272,9 @@ def create_app(job_store: JobStore | None = None) -> FastAPI:
         return CapabilitiesResponse(
             service="pyrus-compute",
             capabilities=[
-                Capability(
-                    jobType=JobType.BENCHMARK_MATRIX,
-                    schemaVersion=1,
-                    description=(
-                        "Synthetic benchmark matrix for Python scientific compute workloads."
-                    ),
-                ),
-                Capability(
-                    jobType=JobType.GREEK_SCENARIO_MATRIX,
-                    schemaVersion=1,
-                    description=(
-                        "Greek scenario matrix for option position-management analytics."
-                    ),
-                ),
-                Capability(
-                    jobType=JobType.PORTFOLIO_RISK,
-                    schemaVersion=1,
-                    description=(
-                        "Portfolio exposure, scenario, covariance, and correlation analytics."
-                    ),
-                ),
-                Capability(
-                    jobType=JobType.PORTFOLIO_OPTIMIZATION,
-                    schemaVersion=1,
-                    description=(
-                        "Advisory portfolio allocation, risk contribution, and turnover analytics."
-                    ),
-                ),
+                capability
+                for capability in ALL_CAPABILITIES
+                if capability.jobType in store.allowed_job_types
             ],
         )
 

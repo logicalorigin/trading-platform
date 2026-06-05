@@ -22,7 +22,62 @@ def test_health_and_capabilities() -> None:
         "greek_scenario_matrix",
         "portfolio_optimization",
         "portfolio_risk",
+        "signal_matrix",
     }
+
+
+def test_lane_capabilities_filter_allowed_job_types() -> None:
+    client = TestClient(
+        create_app(
+            JobStore(
+                max_workers=1,
+                lane="risk",
+                allowed_job_types={"greek_scenario_matrix", "portfolio_risk"},
+            )
+        )
+    )
+
+    health = client.get("/health")
+    assert health.status_code == 200
+    assert health.json()["lane"] == "risk"
+
+    capabilities = client.get("/capabilities")
+    assert capabilities.status_code == 200
+    assert {item["jobType"] for item in capabilities.json()["capabilities"]} == {
+        "greek_scenario_matrix",
+        "portfolio_risk",
+    }
+
+    rejected = client.post(
+        "/jobs",
+        json={
+            "jobType": "portfolio_optimization",
+            "schemaVersion": 1,
+            "input": {"positions": []},
+        },
+    )
+    assert rejected.status_code == 403
+    assert rejected.json()["detail"] == "python_compute_job_type_not_allowed_for_lane"
+
+
+def test_empty_lane_allowlist_rejects_all_jobs() -> None:
+    client = TestClient(
+        create_app(JobStore(max_workers=1, lane="backtest", allowed_job_types=set()))
+    )
+
+    capabilities = client.get("/capabilities")
+    assert capabilities.status_code == 200
+    assert capabilities.json()["capabilities"] == []
+
+    rejected = client.post(
+        "/jobs",
+        json={
+            "jobType": "portfolio_risk",
+            "schemaVersion": 1,
+            "input": {"positions": []},
+        },
+    )
+    assert rejected.status_code == 403
 
 
 def test_job_lifecycle() -> None:

@@ -64,6 +64,9 @@ test("Research chart frame forwards the combined GEX overlay to the chart surfac
   assert.match(surfaceSource, /resolveGexProjectionVisibleLogicalRange/);
   assert.match(surfaceSource, /chartTimeframe: legend\?\.timeframe \|\| footprintContext\?\.timeframe \|\| null/);
   assert.match(surfaceSource, /lastX \+ logicalOffset \* barSpacing/);
+  assert.doesNotMatch(surfaceSource, /GEX_PROJECTION_DISPLAY_MIN_LOGICAL_OFFSET/);
+  assert.doesNotMatch(surfaceSource, /GEX_PROJECTION_DISPLAY_MAX_LOGICAL_OFFSET/);
+  assert.doesNotMatch(surfaceSource, /shouldCompress/);
   assert.doesNotMatch(surfaceSource, /resolveGexProjectionRightOffset/);
   assert.doesNotMatch(surfaceSource, /minimumProjectionOffset/);
   assert.doesNotMatch(surfaceSource, /minimumFutureWidth/);

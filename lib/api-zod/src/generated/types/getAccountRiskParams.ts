@@ -6,7 +6,9 @@
  * OpenAPI spec version: 0.2.0
  */
 import type { EnvironmentMode } from './environmentMode';
+import type { GetAccountRiskDetail } from './getAccountRiskDetail';
 
 export type GetAccountRiskParams = {
 mode?: EnvironmentMode;
+detail?: GetAccountRiskDetail;
 };

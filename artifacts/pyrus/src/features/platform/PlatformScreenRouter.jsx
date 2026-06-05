@@ -149,6 +149,7 @@ export const PlatformScreenRouter = ({
           signalMonitorEvents={signalMonitorEvents}
           signalMonitorEventsLoaded={signalMonitorEventsLoaded}
           isVisible={signalsDataActive}
+          safeQaMode={safeQaMode}
           onSelectSymbol={onSelectSymbol}
           onJumpToTrade={onJumpToTradeFromSignals}
           onScanNow={onScanNow}

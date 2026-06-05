@@ -619,6 +619,18 @@ const normalizeProviderContractId = (
   providerContractId: string | null | undefined,
 ): string => providerContractId?.trim?.() || "";
 
+const isOpraOptionTicker = (providerContractId: string | null | undefined): boolean =>
+  /^O:/i.test(String(providerContractId ?? "").trim());
+
+const normalizeIbkrProviderContractId = (
+  providerContractId: string | number | null | undefined,
+): string => {
+  const normalized = normalizeProviderContractId(
+    providerContractId == null ? null : String(providerContractId),
+  );
+  return normalized && !isOpraOptionTicker(normalized) ? normalized : "";
+};
+
 const subscribeToOptionQuoteSnapshot = (
   providerContractId: string,
   listener: () => void,
@@ -825,22 +837,27 @@ const structuredOptionProviderContractId = (
 
 const optionPositionProviderContractId = (
   row: AccountPositionRow,
-): string => {
+): string => optionPositionProviderContractIds(row)[0] || "";
+
+const optionPositionProviderContractIds = (
+  row: AccountPositionRow,
+): string[] => {
   const rowWithOptionQuote = row as AccountPositionRowWithOptionQuote;
   const contract = row.optionContract as
     | (NonNullable<AccountPositionRow["optionContract"]> & { conid?: unknown })
     | null
     | undefined;
-  return normalizeProviderContractId(
-    (typeof rowWithOptionQuote.optionQuote?.providerContractId === "string"
-      ? rowWithOptionQuote.optionQuote.providerContractId
-      : null) ||
-      structuredOptionProviderContractId(row.optionContract) ||
-      row.optionContract?.providerContractId ||
-      (typeof contract?.conid === "string" || typeof contract?.conid === "number"
-        ? String(contract.conid)
-        : null),
-  );
+  return Array.from(new Set([
+    structuredOptionProviderContractId(row.optionContract) ||
+      "",
+    normalizeIbkrProviderContractId(rowWithOptionQuote.optionQuote?.providerContractId),
+    normalizeIbkrProviderContractId(row.optionContract?.providerContractId),
+    normalizeIbkrProviderContractId(
+      typeof contract?.conid === "string" || typeof contract?.conid === "number"
+        ? contract.conid
+        : null,
+    ),
+  ].filter(Boolean)));
 };
 
 const optionQuotePositionSource = (
@@ -853,9 +870,9 @@ const optionQuoteDisplayMark = (
   fallback: unknown,
 ): number | null =>
   positiveOptionQuotePrice(
-    (quote as LiveOptionQuoteSnapshot & { mark?: unknown }).mark,
     (quote as LiveOptionQuoteSnapshot & { mid?: unknown }).mid,
     optionQuoteMidpoint(quote.bid, quote.ask),
+    (quote as LiveOptionQuoteSnapshot & { mark?: unknown }).mark,
     (quote as LiveOptionQuoteSnapshot & { last?: unknown }).last,
     quote.price,
     fallback,
@@ -866,8 +883,14 @@ const patchAccountPositionRowFromOptionQuote = (
   quote: LiveOptionQuoteSnapshot,
 ): AccountPositionRow => {
   const rowWithOptionQuote = row as AccountPositionRowWithOptionQuote;
-  const providerContractId = optionPositionProviderContractId(row);
-  if (!providerContractId || providerContractId !== normalizeProviderContractId(quote.providerContractId)) {
+  const providerContractIds = optionPositionProviderContractIds(row);
+  const providerContractId = providerContractIds[0] || "";
+  const quoteProviderContractId = normalizeProviderContractId(quote.providerContractId);
+  if (
+    !providerContractId ||
+    !quoteProviderContractId ||
+    !providerContractIds.includes(quoteProviderContractId)
+  ) {
     return row;
   }
 
@@ -1030,7 +1053,9 @@ export const patchAccountPositionsFromOptionQuotes = (
 
   let changed = false;
   const positions = current.positions.map((row) => {
-    const quote = quoteByProviderContractId.get(optionPositionProviderContractId(row));
+    const quote = optionPositionProviderContractIds(row)
+      .map((providerContractId) => quoteByProviderContractId.get(providerContractId))
+      .find((candidate): candidate is LiveOptionQuoteSnapshot => Boolean(candidate));
     if (!quote) {
       return row;
     }
@@ -3158,7 +3183,10 @@ export const applyShadowAccountPayloadToCache = (
           (current: AccountAllocationResponse | undefined) =>
             preferNonDegradedAccountResponse(current, payload.allocation),
         );
-      } else if (path === "/api/accounts/shadow/risk") {
+      } else if (
+        path === "/api/accounts/shadow/risk" &&
+        optionalParamMatches(params, "detail", "fast")
+      ) {
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountRiskResponse | undefined) =>
@@ -3220,6 +3248,11 @@ const performanceCalendarParamsMatch = (
   optionalParamMatches(params, "assetClass", null);
 
 const accountModeParams = (mode: StreamMode) => ({ mode });
+
+const accountRiskParams = (mode: StreamMode) => ({
+  ...accountModeParams(mode),
+  detail: "fast" as const,
+});
 
 export const ACCOUNT_PERFORMANCE_CALENDAR_EQUITY_PURPOSE =
   "performance-calendar";
@@ -3288,7 +3321,7 @@ const seedAccountPageCriticalQueryKeys = (
   );
   setAccountPageQueryData(
     queryClient,
-    getGetAccountRiskQueryKey(payload.accountId, modeParams),
+    getGetAccountRiskQueryKey(payload.accountId, accountRiskParams(payload.mode)),
     (current: AccountRiskResponse | undefined) =>
       preferNonDegradedAccountResponse(current, payload.risk),
   );
@@ -3440,7 +3473,10 @@ export const applyAccountPageCriticalPayloadToCache = (
           (current: AccountAllocationResponse | undefined) =>
             preferNonDegradedAccountResponse(current, payload.allocation),
         );
-      } else if (path === `/api/accounts/${payload.accountId}/risk`) {
+      } else if (
+        path === `/api/accounts/${payload.accountId}/risk` &&
+        optionalParamMatches(params, "detail", "fast")
+      ) {
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountRiskResponse | undefined) =>
@@ -3508,7 +3544,10 @@ export const applyAccountPageLivePayloadToCache = (
           (current: AccountAllocationResponse | undefined) =>
             preferNonDegradedAccountResponse(current, payload.allocation),
         );
-      } else if (path === `/api/accounts/${payload.accountId}/risk`) {
+      } else if (
+        path === `/api/accounts/${payload.accountId}/risk` &&
+        optionalParamMatches(params, "detail", "fast")
+      ) {
         queryClient.setQueryData(
           query.queryKey,
           (current: AccountRiskResponse | undefined) =>
@@ -5187,6 +5226,7 @@ export const useIbkrOptionQuoteStream = ({
     let firstQuoteRecorded = false;
     let lastWebSocketMessageAt = Date.now();
     let socketGeneration = 0;
+    let fallbackCursor = 0;
 
     const applyQuotesNow = (quotes: LiveOptionQuoteSnapshot[]) => {
       if (!quotes.length) {
@@ -5273,36 +5313,78 @@ export const useIbkrOptionQuoteStream = ({
       }
     };
 
+    const nextFallbackProviderContractIds = () => {
+      if (
+        normalizedProviderContractIds.length <=
+        OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE
+      ) {
+        return normalizedProviderContractIds;
+      }
+
+      const start = fallbackCursor % normalizedProviderContractIds.length;
+      const end = start + OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE;
+      const batch =
+        end <= normalizedProviderContractIds.length
+          ? normalizedProviderContractIds.slice(start, end)
+          : [
+              ...normalizedProviderContractIds.slice(start),
+              ...normalizedProviderContractIds.slice(
+                0,
+                end - normalizedProviderContractIds.length,
+              ),
+            ];
+      fallbackCursor =
+        (start + OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE) %
+        normalizedProviderContractIds.length;
+      return batch;
+    };
+
+    const requestRestSnapshot = async (
+      fallbackMode: "rest-seed" | "rest-rotating",
+    ) => {
+      const fallbackProviderContractIds = nextFallbackProviderContractIds();
+      if (closed || fallbackProviderContractIds.length === 0) {
+        return;
+      }
+      const startedAt = Date.now();
+      try {
+        const payload = await getOptionQuoteSnapshots({
+          underlying: normalizedUnderlying,
+          providerContractIds: fallbackProviderContractIds,
+          owner: normalizedOwner || undefined,
+          intent,
+          requiresGreeks,
+        });
+        recordOptionHydrationMetric(
+          "quoteSnapshotMs",
+          Math.max(0, Date.now() - startedAt),
+        );
+        setOptionHydrationDiagnostics({
+          fallbackMode,
+          providerMode: payload.debug?.providerMode ?? undefined,
+          returnedQuotes: payload.debug?.returnedCount ?? payload.quotes.length,
+          requestedQuotes: normalizedProviderContractIds.length,
+          acceptedQuotes: normalizedProviderContractIds.length,
+          rejectedQuotes: 0,
+        });
+        queueQuotes(payload.quotes as LiveOptionQuoteSnapshot[]);
+      } catch {
+        setOptionHydrationDiagnostics(
+          fallbackMode === "rest-rotating"
+            ? { fallbackMode, quoteMode: "rest-fallback-error" }
+            : { fallbackMode },
+        );
+      }
+    };
+
+    const seedRestSnapshot = () => {
+      void requestRestSnapshot("rest-seed");
+    };
+
     const startRestFallback = () => {
       if (closed || restFallbackTimer) {
         return;
       }
-      let fallbackCursor = 0;
-      const nextFallbackProviderContractIds = () => {
-        if (
-          normalizedProviderContractIds.length <=
-          OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE
-        ) {
-          return normalizedProviderContractIds;
-        }
-
-        const start = fallbackCursor % normalizedProviderContractIds.length;
-        const end = start + OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE;
-        const batch =
-          end <= normalizedProviderContractIds.length
-            ? normalizedProviderContractIds.slice(start, end)
-            : [
-                ...normalizedProviderContractIds.slice(start),
-                ...normalizedProviderContractIds.slice(
-                  0,
-                  end - normalizedProviderContractIds.length,
-                ),
-              ];
-        fallbackCursor =
-          (start + OPTION_QUOTE_REST_FALLBACK_BATCH_SIZE) %
-          normalizedProviderContractIds.length;
-        return batch;
-      };
       setOptionHydrationDiagnostics({
         quoteMode: "rest-fallback",
         fallbackMode: "rest-rotating",
@@ -5311,43 +5393,9 @@ export const useIbkrOptionQuoteStream = ({
         rejectedQuotes: 0,
       });
 
-      const poll = async () => {
-        const fallbackProviderContractIds = nextFallbackProviderContractIds();
-        if (closed || fallbackProviderContractIds.length === 0) {
-          return;
-        }
-        const startedAt = Date.now();
-        try {
-          const payload = await getOptionQuoteSnapshots({
-            underlying: normalizedUnderlying,
-            providerContractIds: fallbackProviderContractIds,
-            owner: normalizedOwner || undefined,
-            intent,
-            requiresGreeks,
-          });
-          recordOptionHydrationMetric(
-            "quoteSnapshotMs",
-            Math.max(0, Date.now() - startedAt),
-          );
-          setOptionHydrationDiagnostics({
-            providerMode: payload.debug?.providerMode ?? undefined,
-            returnedQuotes: payload.debug?.returnedCount ?? payload.quotes.length,
-            requestedQuotes: normalizedProviderContractIds.length,
-            acceptedQuotes: normalizedProviderContractIds.length,
-            rejectedQuotes: 0,
-          });
-          queueQuotes(payload.quotes as LiveOptionQuoteSnapshot[]);
-        } catch {
-          setOptionHydrationDiagnostics({
-            quoteMode: "rest-fallback-error",
-            fallbackMode: "rest-rotating",
-          });
-        }
-      };
-
-      void poll();
+      void requestRestSnapshot("rest-rotating");
       restFallbackTimer = setInterval(() => {
-        void poll();
+        void requestRestSnapshot("rest-rotating");
       }, 3_000);
     };
 
@@ -5373,6 +5421,7 @@ export const useIbkrOptionQuoteStream = ({
         requestedQuotes: normalizedProviderContractIds.length,
       });
       socket = new WebSocket(webSocketUrl);
+      seedRestSnapshot();
       stopStallWatchdog();
       stallTimer = setInterval(() => {
         if (closed || !ready || fallbackStarted) {

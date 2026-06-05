@@ -67,7 +67,7 @@ const buildQuote = (quote, fallbackMark, source) => {
     bid != null && ask != null && (bid > 0 || ask > 0)
       ? (bid + ask) / 2
       : quotedMid;
-  const mark = positiveNumber(quote.mark) ?? mid ?? last ?? positiveNumber(fallbackMark);
+  const mark = mid ?? positiveNumber(quote.mark) ?? last ?? positiveNumber(fallbackMark);
   const spread = bid != null && ask != null ? ask - bid : finiteNumber(quote.spread);
   return {
     bid,

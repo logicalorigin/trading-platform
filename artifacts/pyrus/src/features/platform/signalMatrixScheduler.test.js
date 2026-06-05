@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildSignalMatrixStoredStateBootstrapRequest,
   buildSignalMatrixRequestPlan,
   buildSignalMatrixSymbolSets,
   mergeSignalMatrixStates,
@@ -672,6 +673,50 @@ test("signal matrix scheduler treats active Signals table rows as foreground hyd
   assert.equal(plan.coverage.queuedTaskCount, 0);
   assert.equal(plan.coverage.pendingTaskCount, 0);
   assert.equal(plan.coverage.estimatedFullCycleMs, 60_000);
+});
+
+test("signal matrix stored-state bootstrap requests full universe when browser cache is partial", () => {
+  const symbols = Array.from(
+    { length: 500 },
+    (_value, index) => `BOOT${index + 1}`,
+  );
+  const partialStates = hydratedStates(symbols.slice(0, 125));
+  const request = buildSignalMatrixStoredStateBootstrapRequest({
+    symbols,
+    currentStates: partialStates,
+    timeframes: MATRIX_TIMEFRAMES,
+  });
+
+  assert.ok(request);
+  assert.equal(request.key, `${symbols.join(",")}|${MATRIX_TIMEFRAMES.join(",")}`);
+  assert.deepEqual(request.symbols, symbols);
+  assert.deepEqual(request.timeframes, MATRIX_TIMEFRAMES);
+  assert.equal(request.coverage.totalSymbols, 500);
+  assert.equal(request.coverage.requestSymbols, 500);
+  assert.equal(request.coverage.totalTaskCount, 3000);
+  assert.equal(request.coverage.hydratedTaskCount, 750);
+  assert.equal(request.coverage.missingTaskCount, 2250);
+  assert.equal(request.coverage.storedStateBootstrap, true);
+});
+
+test("signal matrix stored-state bootstrap is skipped after full cache or same bootstrap key", () => {
+  const symbols = ["SPY", "QQQ"];
+  const fullStates = hydratedStates(symbols);
+  const completeRequest = buildSignalMatrixStoredStateBootstrapRequest({
+    symbols,
+    currentStates: fullStates,
+    timeframes: MATRIX_TIMEFRAMES,
+  });
+  assert.equal(completeRequest, null);
+
+  const key = `${symbols.join(",")}|${MATRIX_TIMEFRAMES.join(",")}`;
+  const repeatedRequest = buildSignalMatrixStoredStateBootstrapRequest({
+    symbols,
+    currentStates: [],
+    timeframes: MATRIX_TIMEFRAMES,
+    lastBootstrapKey: key,
+  });
+  assert.equal(repeatedRequest, null);
 });
 
 test("signal matrix scheduler caps explicit Signals screen chunks when background is ready", () => {

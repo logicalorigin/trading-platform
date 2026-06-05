@@ -1,9 +1,22 @@
-import { and, desc, eq, gte, inArray, lt, lte, notInArray, or } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  lt,
+  lte,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import {
   db,
   signalMonitorEventsTable,
   signalMonitorProfilesTable,
   signalMonitorSymbolStatesTable,
+  universeCatalogListingsTable,
   type SignalMonitorEvent as DbSignalMonitorEvent,
   type SignalMonitorProfile as DbSignalMonitorProfile,
   type SignalMonitorSymbolState as DbSignalMonitorSymbolState,
@@ -50,6 +63,13 @@ import {
   getApiResourcePressureSnapshot,
   type ApiResourcePressureLevel,
 } from "./resource-pressure";
+import {
+  resolvePythonComputeLaneDefinitions,
+  routePythonComputeJobType,
+  runPythonComputeJob,
+  type PythonComputeJobResult,
+  type PythonComputeJobType,
+} from "./python-compute";
 import {
   getCurrentStockMinuteAggregates,
   getRecentStockMinuteAggregateHistory,
@@ -178,8 +198,11 @@ const SIGNAL_MONITOR_MATRIX_BARS_PRIORITY = 5;
 const SIGNAL_MONITOR_LIVE_EDGE_BARS_PRIORITY = 9;
 const SIGNAL_MONITOR_BARS_FAMILY = "signal-matrix";
 const SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY = "__signalMonitorUniverseScope";
+const SIGNAL_MONITOR_UNIVERSE_SCOPE_DEFAULT_VERSION_KEY =
+  "__signalMonitorUniverseScopeDefaultVersion";
+const SIGNAL_MONITOR_UNIVERSE_SCOPE_DEFAULT_VERSION = 2;
 const DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE: SignalMonitorUniverseMode =
-  "all_watchlists";
+  "all_watchlists_plus_universe";
 const SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT = 500;
 const SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT = 10;
 const DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS = SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT;
@@ -323,6 +346,8 @@ export function withSignalMonitorUniverseScope(
   return {
     ...asRecord(settings),
     [SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY]: universeScope,
+    [SIGNAL_MONITOR_UNIVERSE_SCOPE_DEFAULT_VERSION_KEY]:
+      SIGNAL_MONITOR_UNIVERSE_SCOPE_DEFAULT_VERSION,
   };
 }
 
@@ -383,10 +408,74 @@ function resolveSignalMonitorProfileUpdateDefaults(input: {
         ));
 
   return {
-    pyrusSignalsSettings,
+    pyrusSignalsSettings: withSignalMonitorUniverseScope(
+      pyrusSignalsSettings,
+      universeScope,
+    ),
     universeScope,
     maxSymbols,
     highBetaRequested,
+  };
+}
+
+function signalMonitorUniverseScopeDefaultVersion(
+  settings: Record<string, unknown>,
+): number {
+  const value = Number(settings[SIGNAL_MONITOR_UNIVERSE_SCOPE_DEFAULT_VERSION_KEY]);
+  return Number.isFinite(value) ? Math.floor(value) : 0;
+}
+
+function signalMonitorRawUniverseScope(settings: Record<string, unknown>) {
+  return String(
+    settings[SIGNAL_MONITOR_UNIVERSE_SCOPE_KEY] ??
+      settings["universeScope"] ??
+      "",
+  ).trim();
+}
+
+function buildSignalMonitorLegacyDefaultsPatch(
+  profile: DbSignalMonitorProfile,
+): Partial<typeof signalMonitorProfilesTable.$inferInsert> | null {
+  const settings = asRecord(profile.pyrusSignalsSettings);
+  const rawUniverseScope = signalMonitorRawUniverseScope(settings);
+  const universeScope = resolveSignalMonitorUniverseScope(settings);
+  const defaultVersion = signalMonitorUniverseScopeDefaultVersion(settings);
+  const patch: Partial<typeof signalMonitorProfilesTable.$inferInsert> = {};
+
+  if (
+    universeScope !== "selected_watchlist" &&
+    positiveInteger(
+      profile.maxSymbols,
+      DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS,
+      1,
+      SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+    ) < DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS
+  ) {
+    patch.maxSymbols = DEFAULT_SIGNAL_MONITOR_MAX_SYMBOLS;
+  }
+
+  if (
+    defaultVersion < SIGNAL_MONITOR_UNIVERSE_SCOPE_DEFAULT_VERSION &&
+    (rawUniverseScope === "" ||
+      rawUniverseScope === "all_watchlists" ||
+      rawUniverseScope === "all_watchlists_only")
+  ) {
+    patch.pyrusSignalsSettings = withSignalMonitorUniverseScope(
+      settings,
+      DEFAULT_SIGNAL_MONITOR_UNIVERSE_SCOPE,
+    );
+  }
+
+  if (
+    patch.maxSymbols === undefined &&
+    patch.pyrusSignalsSettings === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    ...patch,
+    updatedAt: new Date(),
   };
 }
 
@@ -1621,7 +1710,7 @@ async function selectProfile(environment: RuntimeMode) {
 async function getOrCreateProfile(environment: RuntimeMode) {
   const existing = await selectProfile(environment);
   if (existing) {
-    return existing;
+    return ensureSignalMonitorProfileDefaults(existing);
   }
 
   const watchlistId = await resolveDefaultWatchlistId();
@@ -1652,7 +1741,26 @@ async function getOrCreateProfile(environment: RuntimeMode) {
       code: "signal_monitor_profile_unavailable",
     });
   }
-  return fallback;
+  return ensureSignalMonitorProfileDefaults(fallback);
+}
+
+async function ensureSignalMonitorProfileDefaults(
+  profile: DbSignalMonitorProfile,
+) {
+  const patch = buildSignalMonitorLegacyDefaultsPatch(profile);
+  if (!patch) {
+    return profile;
+  }
+
+  const [updated] = await db
+    .update(signalMonitorProfilesTable)
+    .set(patch)
+    .where(eq(signalMonitorProfilesTable.id, profile.id))
+    .returning();
+  return updated ?? {
+    ...profile,
+    ...patch,
+  };
 }
 
 export async function getSignalMonitorProfileRow(input: {
@@ -1938,17 +2046,69 @@ function resolveSignalMonitorUniverseFromWatchlists(input: {
   };
 }
 
-function loadSignalMonitorExpansionUniverse(): SignalMonitorExpansionUniverse {
+async function loadSignalMonitorCatalogExpansionSymbols(input: {
+  seedSymbols: string[];
+  maxSymbols: number;
+}): Promise<string[]> {
+  const maxSymbols = Math.min(
+    SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+    Math.max(1, Math.floor(input.maxSymbols || 1)),
+  );
+  const seedSymbols = resolveSymbolUniverse(
+    input.seedSymbols,
+    maxSymbols,
+  ).symbols;
+  if (seedSymbols.length >= maxSymbols) {
+    return seedSymbols;
+  }
+
+  const rows = await db
+    .select({ symbol: universeCatalogListingsTable.normalizedTicker })
+    .from(universeCatalogListingsTable)
+    .where(sql`
+      ${universeCatalogListingsTable.active} = true
+      and (
+        coalesce(${universeCatalogListingsTable.contractMeta}->>'derivativeSecTypes', '') ~* '(^|,)\\s*OPT\\s*(,|$)'
+        or ${universeCatalogListingsTable.contractMeta}->>'optionabilityStatus' = 'verified'
+        or ${universeCatalogListingsTable.contractMeta}->'optionability'->>'status' = 'verified'
+      )
+    `)
+    .orderBy(asc(universeCatalogListingsTable.normalizedTicker))
+    .limit(maxSymbols + seedSymbols.length);
+
+  return resolveSymbolUniverse(
+    [...seedSymbols, ...rows.map((row) => row.symbol)],
+    maxSymbols,
+  ).symbols;
+}
+
+async function loadSignalMonitorExpansionUniverse(
+  maxSymbols: number,
+): Promise<SignalMonitorExpansionUniverse> {
   try {
     const universe = getOptionsFlowUniverse();
     const coverage = universe.coverage ?? {};
-    const symbols = Array.isArray(universe.sources?.flowUniverseSymbols)
-      ? universe.sources.flowUniverseSymbols
-      : (universe.symbols ?? []);
+    const sourceSymbols = Array.isArray(universe.symbols)
+      ? universe.symbols
+      : Array.isArray(universe.sources?.flowUniverseSymbols)
+        ? universe.sources.flowUniverseSymbols
+        : [];
+    const symbols = await loadSignalMonitorCatalogExpansionSymbols({
+      seedSymbols: sourceSymbols,
+      maxSymbols,
+    });
+    const expectedSymbols = Math.min(
+      SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
+      Math.max(1, Math.floor(maxSymbols || 1)),
+    );
     return {
       symbols,
       fallbackUsed: Boolean(coverage.fallbackUsed),
-      degradedReason: coverage.degradedReason ?? null,
+      degradedReason:
+        coverage.degradedReason ??
+        (symbols.length < expectedSymbols
+          ? `Signal monitor expansion universe resolved ${symbols.length}/${expectedSymbols} symbols.`
+          : null),
       rankedAt: dateOrNull(coverage.rankedAt ?? coverage.lastGoodAt ?? null),
     };
   } catch (error) {
@@ -2007,7 +2167,7 @@ async function loadSignalMonitorExpansionUniverseForScope(input: {
   maxSymbols: number;
 }): Promise<SignalMonitorExpansionUniverse | null> {
   if (input.universeScope === "all_watchlists_plus_universe") {
-    return loadSignalMonitorExpansionUniverse();
+    return loadSignalMonitorExpansionUniverse(input.maxSymbols);
   }
   if (input.universeScope === "high_beta_500") {
     return loadSignalMonitorHighBetaUniverse(input.maxSymbols);
@@ -3178,6 +3338,13 @@ async function insertSignalEventBestEffort(input: {
   }
 }
 
+function shouldPersistSignalMonitorStateEvent(input: {
+  fresh: boolean;
+  barsSinceSignal: number;
+}) {
+  return input.fresh && input.barsSinceSignal >= 0;
+}
+
 async function upsertSymbolState(input: {
   profileId: string;
   symbol: string;
@@ -3886,7 +4053,7 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
     const signalBarAt = signalBarEntry?.anchorAt ?? new Date(signal.time * 1000);
     const signalAt = signalBarEntry?.closedAt ?? signalBarAt;
 
-    if (input.mode === "incremental" && fresh && barsSinceSignal === 0) {
+    if (shouldPersistSignalMonitorStateEvent({ fresh, barsSinceSignal })) {
       await insertSignalEventBestEffort({
         profile: input.profile,
         symbol: input.symbol,
@@ -4115,6 +4282,323 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
 type SignalMonitorMatrixStateResult = ReturnType<
   typeof evaluateSignalMonitorMatrixStateFromCompletedBars
 >;
+
+type SignalMonitorMatrixLoadedCell = {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  completedBars: SignalMonitorBarSnapshot[];
+};
+
+type SignalMonitorPythonMatrixSignal = {
+  direction: "long" | "short";
+  barIndex: number;
+  time: number;
+  price: number;
+};
+
+type SignalMonitorPythonMatrixState = {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  status: "ok" | "unavailable";
+  signal: SignalMonitorPythonMatrixSignal | null;
+  barsSinceSignal: number | null;
+  fresh: boolean;
+  indicatorSnapshot: SignalMonitorIndicatorSnapshot | null;
+  warning: string | null;
+};
+
+function truthySignalMonitorEnv(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true";
+}
+
+function readSignalMonitorPositiveInteger(
+  value: string | undefined,
+  fallback: number,
+): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function pythonComputeEnabledForSignalMatrix(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+): boolean {
+  const jobType: PythonComputeJobType = "signal_matrix";
+  const laneId = routePythonComputeJobType(jobType);
+  return (
+    truthySignalMonitorEnv(env["PYRUS_PYTHON_SIGNAL_MATRIX_ENABLED"]) &&
+    resolvePythonComputeLaneDefinitions({ env }).find(
+      (definition) => definition.id === laneId,
+    )?.config.enabled === true
+  );
+}
+
+function signalMonitorMatrixCellKey(input: {
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+}): string {
+  return `${normalizeSymbol(input.symbol).toUpperCase()}:${input.timeframe}`;
+}
+
+function normalizePythonSignalMatrixIndicatorSnapshot(
+  value: unknown,
+): SignalMonitorIndicatorSnapshot | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const trendDirection =
+    record.trendDirection === "bullish" || record.trendDirection === "bearish"
+      ? record.trendDirection
+      : null;
+  const trendAgeBars = matrixBarsSinceSignalOrNull(record.trendAgeBars);
+  const trendAgeBucket =
+    record.trendAgeBucket === "new" ||
+    record.trendAgeBucket === "mature" ||
+    record.trendAgeBucket === "old"
+      ? record.trendAgeBucket
+      : null;
+  const strength =
+    record.strength === "strong" || record.strength === "weak"
+      ? record.strength
+      : null;
+  const mtf: SignalMonitorIndicatorSnapshot["mtf"] = Array.isArray(record.mtf)
+    ? record.mtf
+        .map((entry) => {
+          const mtfRecord = asRecord(entry);
+          const direction: SignalMonitorIndicatorDirection | null =
+            mtfRecord.direction === "bullish" || mtfRecord.direction === "bearish"
+              ? mtfRecord.direction
+              : null;
+          return {
+            timeframe: String(mtfRecord.timeframe ?? ""),
+            direction,
+            required: mtfRecord.required === true,
+            pass: mtfRecord.pass === true,
+          };
+        })
+        .filter((entry) => entry.timeframe)
+    : [];
+  return {
+    trendDirection,
+    trendAgeBars,
+    trendAgeBucket,
+    adx: finiteRoundedValue(record.adx),
+    strength,
+    volatilityScore: finiteRoundedValue(record.volatilityScore, 0),
+    mtf,
+    filterState:
+      record.filterState && typeof record.filterState === "object"
+        ? (record.filterState as PyrusSignalsFilterState)
+        : null,
+  };
+}
+
+function normalizePythonSignalMatrixState(
+  value: unknown,
+): SignalMonitorPythonMatrixState | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const symbol = normalizeSymbol(record.symbol as string).toUpperCase();
+  const timeframe = String(record.timeframe || "") as SignalMonitorMatrixTimeframe;
+  if (!symbol || !SIGNAL_MONITOR_MATRIX_TIMEFRAMES.includes(timeframe)) {
+    return null;
+  }
+  const signalRecord = asRecord(record.signal);
+  let signal: SignalMonitorPythonMatrixSignal | null = null;
+  if (signalRecord.direction === "long" || signalRecord.direction === "short") {
+    const barIndex = Number(signalRecord.barIndex);
+    const time = Number(signalRecord.time);
+    const price = Number(signalRecord.price);
+    if (
+      Number.isFinite(barIndex) &&
+      Number.isFinite(time) &&
+      Number.isFinite(price)
+    ) {
+      signal = {
+        direction: signalRecord.direction,
+        barIndex: Math.max(0, Math.floor(barIndex)),
+        time,
+        price,
+      };
+    }
+  }
+  return {
+    symbol,
+    timeframe,
+    status: record.status === "unavailable" ? "unavailable" : "ok",
+    signal,
+    barsSinceSignal: matrixBarsSinceSignalOrNull(record.barsSinceSignal),
+    fresh: record.fresh === true,
+    indicatorSnapshot: normalizePythonSignalMatrixIndicatorSnapshot(
+      record.indicatorSnapshot,
+    ),
+    warning: typeof record.warning === "string" ? record.warning : null,
+  };
+}
+
+function signalMonitorMatrixStateFromPython(input: {
+  profile: DbSignalMonitorProfile;
+  symbol: string;
+  timeframe: SignalMonitorMatrixTimeframe;
+  evaluatedAt: Date;
+  completedBars: SignalMonitorBarSnapshot[];
+  pythonState: SignalMonitorPythonMatrixState;
+}): SignalMonitorMatrixStateResult | null {
+  const chartBarEntries = barsToPyrusSignalsBarEntries(input.completedBars);
+  const latestBarEntry = chartBarEntries.at(-1);
+  const latestBar = latestBarEntry?.chartBar ?? null;
+  if (!latestBar || !latestBarEntry) {
+    return null;
+  }
+  const latestBarAt = latestBarEntry.closedAt;
+  const latestSourceBar = latestBarEntry.sourceBar;
+  const delayedLatestBar = isSignalMonitorDelayedLatestBar({
+    latestBar: latestSourceBar,
+    timeframe: input.timeframe,
+  });
+  const stale = isSignalMonitorLatestBarUnavailable({
+    latestBarAt,
+    latestBar: latestSourceBar,
+    timeframe: input.timeframe,
+    evaluatedAt: input.evaluatedAt,
+  });
+  const delayedLatestBarError = delayedLatestBar
+    ? "Latest signal monitor bar is delayed; waiting for live broker history."
+    : null;
+  const base = {
+    id: `${input.profile.id}:${input.symbol}:${input.timeframe}`,
+    profileId: input.profile.id,
+    symbol: input.symbol,
+    timeframe: input.timeframe,
+    active: true,
+    lastEvaluatedAt: input.evaluatedAt,
+    lastError: delayedLatestBarError,
+    indicatorSnapshot: input.pythonState.indicatorSnapshot,
+  };
+  const signal = input.pythonState.signal;
+  if (!signal || stale) {
+    return {
+      ...base,
+      currentSignalDirection: null,
+      currentSignalAt: null,
+      currentSignalPrice: null,
+      latestBarAt,
+      barsSinceSignal: null,
+      fresh: false,
+      status: stale ? ("stale" as const) : ("ok" as const),
+    };
+  }
+  const signalBarEntry = chartBarEntries[signal.barIndex] ?? null;
+  if (!signalBarEntry) {
+    return null;
+  }
+  const signalAt = signalBarEntry.closedAt ?? new Date(signal.time * 1000);
+  return {
+    ...base,
+    currentSignalDirection: directionFromSignal({
+      direction: signal.direction,
+      eventType: signal.direction === "long" ? "buy_signal" : "sell_signal",
+    } as PyrusSignalsSignalEvent),
+    currentSignalAt: signalAt,
+    currentSignalPrice: signal.price,
+    latestBarAt,
+    barsSinceSignal:
+      input.pythonState.barsSinceSignal ??
+      Math.max(0, chartBarEntries.length - 1 - signal.barIndex),
+    fresh: input.pythonState.fresh && !stale,
+    status: "ok" as const,
+  };
+}
+
+async function resolveSignalMonitorMatrixPythonStates(input: {
+  profile: DbSignalMonitorProfile;
+  evaluatedAt: Date;
+  cells: SignalMonitorMatrixLoadedCell[];
+  runJob?: typeof runPythonComputeJob;
+}): Promise<Map<string, SignalMonitorMatrixStateResult>> {
+  if (!input.cells.length || !pythonComputeEnabledForSignalMatrix()) {
+    return new Map();
+  }
+  const settings = resolvePyrusSignalsSignalSettings(
+    asRecord(input.profile.pyrusSignalsSettings),
+  );
+  const cells = input.cells
+    .map((cell) => {
+      const entries = barsToPyrusSignalsBarEntries(cell.completedBars);
+      if (!entries.length) {
+        return null;
+      }
+      return {
+        symbol: cell.symbol,
+        timeframe: cell.timeframe,
+        freshWindowBars: input.profile.freshWindowBars,
+        settings,
+        bars: entries.map((entry) => entry.chartBar),
+      };
+    })
+    .filter((cell): cell is NonNullable<typeof cell> => Boolean(cell));
+  if (!cells.length) {
+    return new Map();
+  }
+  const timeoutMs = readSignalMonitorPositiveInteger(
+    process.env["PYRUS_PYTHON_SIGNAL_MATRIX_TIMEOUT_MS"],
+    2_500,
+  );
+  let result: PythonComputeJobResult;
+  try {
+    result = await (input.runJob ?? runPythonComputeJob)(
+      {
+        jobType: "signal_matrix",
+        input: {
+          evaluatedAt: input.evaluatedAt.toISOString(),
+          cells,
+        },
+        options: { timeoutMs },
+      },
+      {
+        timeoutMs,
+        pollIntervalMs: 75,
+      },
+    );
+  } catch (error) {
+    logger.debug({ err: error }, "Signal monitor Python matrix job unavailable");
+    return new Map();
+  }
+  if (result.status !== "completed" || !result.result) {
+    return new Map();
+  }
+  const rawStates = Array.isArray(result.result.states)
+    ? result.result.states
+    : [];
+  const pythonStateByKey = new Map<string, SignalMonitorPythonMatrixState>();
+  rawStates.forEach((rawState) => {
+    const state = normalizePythonSignalMatrixState(rawState);
+    if (state) {
+      pythonStateByKey.set(signalMonitorMatrixCellKey(state), state);
+    }
+  });
+  const resolved = new Map<string, SignalMonitorMatrixStateResult>();
+  input.cells.forEach((cell) => {
+    const pythonState = pythonStateByKey.get(signalMonitorMatrixCellKey(cell));
+    if (!pythonState) {
+      return;
+    }
+    const state = signalMonitorMatrixStateFromPython({
+      profile: input.profile,
+      symbol: cell.symbol,
+      timeframe: cell.timeframe,
+      evaluatedAt: input.evaluatedAt,
+      completedBars: cell.completedBars,
+      pythonState,
+    });
+    if (state) {
+      resolved.set(signalMonitorMatrixCellKey(cell), state);
+    }
+  });
+  return resolved;
+}
 
 function matrixBarsSinceSignalOrNull(value: unknown): number | null {
   const numeric = Number(value);
@@ -4719,8 +5203,11 @@ async function evaluateSignalMonitorMatrixSymbol(input: {
   allowHistoricalFallback?: boolean;
 }) {
   const timeframes = parseSignalMatrixTimeframes(input.timeframes);
+  type MatrixTimeframeEvaluationResult =
+    | { kind: "state"; state: SignalMonitorMatrixStateResult | null }
+    | { kind: "loaded"; cell: SignalMonitorMatrixLoadedCell };
   const results = await Promise.all(
-    timeframes.map(async (timeframe) => {
+    timeframes.map(async (timeframe): Promise<MatrixTimeframeEvaluationResult> => {
       const liveEdgeStreamState = input.includeProvisionalLiveEdge
         ? evaluateSignalMonitorMatrixStateFromStreamBars({
             profile: input.profile,
@@ -4730,7 +5217,7 @@ async function evaluateSignalMonitorMatrixSymbol(input: {
           })
         : null;
       if (isFreshSignalMonitorMatrixStreamState(liveEdgeStreamState)) {
-        return liveEdgeStreamState;
+        return { kind: "state", state: liveEdgeStreamState };
       }
 
       try {
@@ -4749,39 +5236,68 @@ async function evaluateSignalMonitorMatrixSymbol(input: {
             timeframe,
           },
         );
-        return evaluateSignalMonitorMatrixStateFromCompletedBars({
-          profile: input.profile,
-          symbol: input.symbol,
-          timeframe,
-          evaluatedAt: input.evaluatedAt,
-          completedBars: completedBars.bars.slice(
-            -SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
-          ),
-        });
+        return {
+          kind: "loaded",
+          cell: {
+            symbol: input.symbol,
+            timeframe,
+            completedBars: completedBars.bars.slice(
+              -SIGNAL_MONITOR_MATRIX_BARS_LIMIT,
+            ),
+          },
+        };
       } catch (error) {
         if (isSignalMonitorMatrixBarLoadTimeout(error)) {
           if (liveEdgeStreamState) {
-            return liveEdgeStreamState;
+            return { kind: "state", state: liveEdgeStreamState };
           }
         }
         if (isSignalMonitorLiveEdgeHistoryUnavailableError(error)) {
-          return null;
+          return { kind: "state", state: null };
         }
-        return buildSignalMonitorMatrixErrorState({
-          profile: input.profile,
-          symbol: input.symbol,
-          timeframe,
-          evaluatedAt: input.evaluatedAt,
-          error,
-        });
+        return {
+          kind: "state",
+          state: buildSignalMonitorMatrixErrorState({
+            profile: input.profile,
+            symbol: input.symbol,
+            timeframe,
+            evaluatedAt: input.evaluatedAt,
+            error,
+          }),
+        };
       }
     }),
   );
 
+  const loadedCells = results.flatMap((result) =>
+    result.kind === "loaded" ? [result.cell] : [],
+  );
+  const pythonStates = await resolveSignalMonitorMatrixPythonStates({
+    profile: input.profile,
+    evaluatedAt: input.evaluatedAt,
+    cells: loadedCells,
+  });
+  const states = results
+    .map((result) => {
+      if (result.kind === "state") {
+        return result.state;
+      }
+      return (
+        pythonStates.get(signalMonitorMatrixCellKey(result.cell)) ??
+        evaluateSignalMonitorMatrixStateFromCompletedBars({
+          profile: input.profile,
+          symbol: result.cell.symbol,
+          timeframe: result.cell.timeframe,
+          evaluatedAt: input.evaluatedAt,
+          completedBars: result.cell.completedBars,
+        })
+      );
+    })
+    .filter((state): state is SignalMonitorMatrixStateResult =>
+      Boolean(state),
+    );
   const stateByTimeframe = new Map(
-    results
-      .filter((state): state is SignalMonitorMatrixStateResult => Boolean(state))
-      .map((state) => [state.timeframe, state]),
+    states.map((state) => [state.timeframe, state]),
   );
   return {
     states: timeframes
@@ -6168,6 +6684,7 @@ export const __signalMonitorInternalsForTests = {
   resolveSignalMonitorProfileUpdateDefaults,
   resolveSignalMonitorMatrixConcurrency,
   shouldBypassSoftSignalMonitorMatrixPressure,
+  buildSignalMonitorLegacyDefaultsPatch,
   isStaVisiblePageSignalMonitorMatrixRequest,
   isForegroundExactCellLeaderSignalMonitorMatrixRequest,
   buildSignalMonitorCompletedBarsCacheKey,
@@ -6192,6 +6709,9 @@ export const __signalMonitorInternalsForTests = {
   expectedLatestCompletedIntradayBarAt,
   isSignalMonitorMissingExpectedLiveEdge,
   clearSignalMonitorMatrixEvaluationCache,
+  pythonComputeEnabledForSignalMatrix,
+  normalizePythonSignalMatrixState,
+  resolveSignalMonitorMatrixPythonStates,
   withSignalMonitorMatrixEvaluationCache,
   withSignalMonitorMatrixMetadata,
   markAutomaticSignalMonitorMatrixRequest,

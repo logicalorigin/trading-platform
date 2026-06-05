@@ -11,6 +11,7 @@ class JobType(StrEnum):
     GREEK_SCENARIO_MATRIX = "greek_scenario_matrix"
     PORTFOLIO_OPTIMIZATION = "portfolio_optimization"
     PORTFOLIO_RISK = "portfolio_risk"
+    SIGNAL_MATRIX = "signal_matrix"
 
 
 class JobStatus(StrEnum):
@@ -160,6 +161,71 @@ class BenchmarkMatrixInput(BaseModel):
     seed: int = 42_417
 
 
+class SignalMatrixSettingsInput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    timeHorizon: Annotated[int, Field(ge=2, le=40)] = 10
+    bosConfirmation: Literal["close", "wicks"] = "close"
+    chochAtrBuffer: Annotated[float, Field(ge=0, le=20)] = 0
+    chochBodyExpansionAtr: Annotated[float, Field(ge=0, le=20)] = 0
+    chochVolumeGate: Annotated[float, Field(ge=0, le=20)] = 0
+    basisLength: Annotated[int, Field(ge=1, le=240)] = 80
+    atrLength: Annotated[int, Field(ge=1, le=100)] = 14
+    atrSmoothing: Annotated[int, Field(ge=1, le=200)] = 21
+    volatilityMultiplier: Annotated[float, Field(ge=0.1, le=10)] = 2
+    wireSpread: Annotated[float, Field(ge=0.01, le=10)] = 0.5
+    shadowLength: Annotated[int, Field(ge=1, le=120)] = 20
+    shadowStdDev: Annotated[float, Field(ge=0.001, le=50)] = 2
+    adxLength: Annotated[int, Field(ge=1, le=100)] = 14
+    volumeMaLength: Annotated[int, Field(ge=1, le=200)] = 20
+    mtf1: str = Field(default="1h", max_length=16)
+    mtf2: str = Field(default="4h", max_length=16)
+    mtf3: str = Field(default="D", max_length=16)
+    signalFiltersEnabled: bool = False
+    requireMtf1: bool = False
+    requireMtf2: bool = False
+    requireMtf3: bool = False
+    requireAdx: bool = False
+    adxMin: Annotated[float, Field(ge=1, le=100)] = 20
+    requireVolScoreRange: bool = False
+    volScoreMin: Annotated[float, Field(ge=0, le=10)] = 2
+    volScoreMax: Annotated[float, Field(ge=0, le=10)] = 10
+    restrictToSelectedSessions: bool = False
+    sessions: list[str] = Field(default_factory=list, max_length=16)
+    waitForBarClose: bool = True
+    signalOffsetAtr: Annotated[float, Field(ge=0, le=20)] = 3
+
+
+class SignalMatrixBarInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    time: int
+    ts: str | None = None
+    date: str | None = None
+    o: float
+    h: float
+    l: float
+    c: float
+    v: float = 0
+
+
+class SignalMatrixCellInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: Annotated[str, Field(min_length=1, max_length=32)]
+    timeframe: Annotated[str, Field(min_length=1, max_length=16)]
+    freshWindowBars: Annotated[int, Field(ge=0, le=200)] = 3
+    settings: SignalMatrixSettingsInput = Field(default_factory=SignalMatrixSettingsInput)
+    bars: list[SignalMatrixBarInput] = Field(default_factory=list, max_length=5_000)
+
+
+class SignalMatrixInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evaluatedAt: str | None = None
+    cells: list[SignalMatrixCellInput] = Field(default_factory=list, max_length=1_000)
+
+
 class JobOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -218,6 +284,9 @@ class HealthResponse(BaseModel):
     ok: bool
     service: Literal["pyrus-compute"]
     version: str
+    lane: str
     activeJobs: int
+    maxActiveJobs: int
     completedJobs: int
     failedJobs: int
+    allowedJobTypes: list[JobType]

@@ -496,64 +496,67 @@ const HeaderIbkrMetricRail = ({ tiles = [] }) => (
     {tiles.map((tile) => {
       const Icon = getHeaderIbkrIcon(tile.iconKey);
       const label = `${tile.label}: ${tile.value ?? MISSING_VALUE}`;
-      return (
-        <AppTooltip
+      const tileNode = (
+        <span
           key={tile.label}
-          content={tile.detail ? `${label} · ${tile.detail}` : label}
+          aria-label={label}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "auto minmax(0, 1fr)",
+            alignItems: "center",
+            columnGap: sp(6),
+            rowGap: sp(1),
+            minWidth: 0,
+            padding: sp("5px 7px"),
+            borderRadius: dim(RADII.sm),
+            background: `${cssColorMix(tile.tone, 6)}`,
+            color: tile.tone,
+            fontFamily: T.sans,
+            fontSize: textSize("paragraphMuted"),
+            fontWeight: FONT_WEIGHTS.medium,
+            fontVariantNumeric: "tabular-nums",
+          }}
         >
+          <Icon
+            size={dim(12)}
+            strokeWidth={2.2}
+            color={tile.tone}
+            style={{ gridRow: "1 / span 2" }}
+          />
           <span
-            aria-label={label}
             style={{
-              display: "grid",
-              gridTemplateColumns: "auto minmax(0, 1fr)",
-              alignItems: "center",
-              columnGap: sp(6),
-              rowGap: sp(1),
               minWidth: 0,
-              padding: sp("5px 7px"),
-              borderRadius: dim(RADII.sm),
-              background: `${cssColorMix(tile.tone, 6)}`,
-              color: tile.tone,
-              fontFamily: T.sans,
-              fontSize: textSize("paragraphMuted"),
-              fontWeight: FONT_WEIGHTS.medium,
-              fontVariantNumeric: "tabular-nums",
+              color: CSS_COLOR.textMuted,
+              fontSize: fs(8),
+              fontWeight: FONT_WEIGHTS.regular,
+              letterSpacing: "0.04em",
+              lineHeight: 1,
+              textTransform: "uppercase",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
             }}
           >
-            <Icon
-              size={dim(12)}
-              strokeWidth={2.2}
-              color={tile.tone}
-              style={{ gridRow: "1 / span 2" }}
-            />
-            <span
-              style={{
-                minWidth: 0,
-                color: CSS_COLOR.textMuted,
-                fontSize: fs(8),
-                fontWeight: FONT_WEIGHTS.regular,
-                letterSpacing: "0.04em",
-                lineHeight: 1,
-                textTransform: "uppercase",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {tile.label}
-            </span>
-            <span
-              style={{
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {tile.value ?? MISSING_VALUE}
-            </span>
+            {tile.label}
           </span>
+          <span
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {tile.value ?? MISSING_VALUE}
+          </span>
+        </span>
+      );
+      return tile.detail ? (
+        <AppTooltip key={tile.label} content={`${label} · ${tile.detail}`}>
+          {tileNode}
         </AppTooltip>
+      ) : (
+        tileNode
       );
     })}
   </div>
@@ -1276,46 +1279,53 @@ const HeaderProviderChip = ({ chip, baseTone, compact = false }) => {
     return null;
   }
   const tone = chip.tone || baseTone || CSS_COLOR.textSec;
-  return (
-    <AppTooltip content={chip.title || chip.label}>
+  const tooltipContent =
+    chip.title && chip.title !== chip.label ? chip.title : null;
+  const chipNode = (
+    <span
+      style={{
+        minHeight: dim(compact ? 18 : 20),
+        display: "inline-flex",
+        alignItems: "center",
+        gap: sp(3),
+        maxWidth: "100%",
+        padding: sp(compact ? "2px 5px" : "3px 6px"),
+        border: `1px solid ${cssColorMix(tone, compact ? 24 : 30)}`,
+        borderRadius: dim(RADII.pill),
+        background: cssColorMix(tone, compact ? 5 : 7),
+        color: tone,
+        fontSize: fs(compact ? 8 : 9),
+        lineHeight: 1,
+        fontVariantNumeric: "tabular-nums",
+        whiteSpace: "nowrap",
+        minWidth: 0,
+      }}
+    >
+      {chip.iconKey ? (
+        <HeaderProviderIcon
+          iconKey={chip.iconKey}
+          color={tone}
+          size={compact ? 8 : 9}
+          strokeWidth={2.35}
+        />
+      ) : null}
       <span
         style={{
-          minHeight: dim(compact ? 18 : 20),
-          display: "inline-flex",
-          alignItems: "center",
-          gap: sp(3),
-          maxWidth: "100%",
-          padding: sp(compact ? "2px 5px" : "3px 6px"),
-          border: `1px solid ${cssColorMix(tone, compact ? 24 : 30)}`,
-          borderRadius: dim(RADII.pill),
-          background: cssColorMix(tone, compact ? 5 : 7),
-          color: tone,
-          fontSize: fs(compact ? 8 : 9),
-          lineHeight: 1,
-          fontVariantNumeric: "tabular-nums",
-          whiteSpace: "nowrap",
           minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
         }}
       >
-        {chip.iconKey ? (
-          <HeaderProviderIcon
-            iconKey={chip.iconKey}
-            color={tone}
-            size={compact ? 8 : 9}
-            strokeWidth={2.35}
-          />
-        ) : null}
-        <span
-          style={{
-            minWidth: 0,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {chip.label}
-        </span>
+        {chip.label}
       </span>
+    </span>
+  );
+  return tooltipContent ? (
+    <AppTooltip content={tooltipContent}>
+      {chipNode}
     </AppTooltip>
+  ) : (
+    chipNode
   );
 };
 
@@ -1325,30 +1335,37 @@ const HeaderProviderChannelChip = ({ channel, tone }) => {
   }
   const active = channel.active === true;
   const color = active ? tone || CSS_COLOR.green : CSS_COLOR.textDim;
-  return (
-    <AppTooltip content={channel.title || channel.label}>
-      <span
-        style={{
-          minWidth: dim(24),
-          minHeight: dim(19),
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: sp("2px 6px"),
-          border: `1px solid ${cssColorMix(color, active ? 44 : 20)}`,
-          borderRadius: dim(RADII.xs),
-          background: active ? cssColorMix(color, 11) : CSS_COLOR.bg0,
-          color,
-          fontSize: fs(9),
-          fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
-          lineHeight: 1,
-          fontVariantNumeric: "tabular-nums",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {channel.label}
-      </span>
+  const tooltipContent =
+    channel.title && channel.title !== channel.label ? channel.title : null;
+  const channelNode = (
+    <span
+      style={{
+        minWidth: dim(24),
+        minHeight: dim(19),
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: sp("2px 6px"),
+        border: `1px solid ${cssColorMix(color, active ? 44 : 20)}`,
+        borderRadius: dim(RADII.xs),
+        background: active ? cssColorMix(color, 11) : CSS_COLOR.bg0,
+        color,
+        fontSize: fs(9),
+        fontWeight: active ? FONT_WEIGHTS.medium : FONT_WEIGHTS.regular,
+        lineHeight: 1,
+        fontVariantNumeric: "tabular-nums",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {channel.label}
+    </span>
+  );
+  return tooltipContent ? (
+    <AppTooltip content={tooltipContent}>
+      {channelNode}
     </AppTooltip>
+  ) : (
+    channelNode
   );
 };
 
@@ -1401,21 +1418,19 @@ const HeaderProviderLane = ({ lane, providerTone }) => {
           size={14}
         />
       </div>
-      <AppTooltip content={lane.detail ? `${lane.value} · ${lane.detail}` : lane.value}>
-        <div
-          style={{
-            minWidth: 0,
-            color: tone,
-            fontSize: textSize("paragraphMuted"),
-            fontWeight: FONT_WEIGHTS.medium,
-            lineHeight: 1.25,
-            overflowWrap: "anywhere",
-            textWrap: "pretty",
-          }}
-        >
-          {lane.value || MISSING_VALUE}
-        </div>
-      </AppTooltip>
+      <div
+        style={{
+          minWidth: 0,
+          color: tone,
+          fontSize: textSize("paragraphMuted"),
+          fontWeight: FONT_WEIGHTS.medium,
+          lineHeight: 1.25,
+          overflowWrap: "anywhere",
+          textWrap: "pretty",
+        }}
+      >
+        {lane.value || MISSING_VALUE}
+      </div>
       {channels.length ? (
         <div
           aria-label={`${lane.label} channels`}
@@ -1526,22 +1541,20 @@ const HeaderMassiveProviderPanel = ({ row }) => (
         />
       ) : null}
       {row.detail ? (
-        <AppTooltip content={row.detail}>
-          <span
-            style={{
-              minWidth: 0,
-              flex: "1 1 150px",
-              color: CSS_COLOR.textDim,
-              fontSize: fs(9),
-              lineHeight: 1.3,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {row.detail}
-          </span>
-        </AppTooltip>
+        <span
+          style={{
+            minWidth: 0,
+            flex: "1 1 150px",
+            color: CSS_COLOR.textDim,
+            fontSize: fs(9),
+            lineHeight: 1.3,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {row.detail}
+        </span>
       ) : null}
     </div>
     {Array.isArray(row.summary) && row.summary.length ? (
@@ -1588,27 +1601,25 @@ const HeaderGenericProviderRow = ({ row }) => (
     >
       {row.label}
     </span>
-    <AppTooltip content={row.detail ? `${row.value} · ${row.detail}` : row.value}>
-      <span
-        style={{
-          minWidth: 0,
-          color: row.tone || CSS_COLOR.textSec,
-          fontSize: textSize("paragraphMuted"),
-          fontWeight: FONT_WEIGHTS.medium,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {row.value}
-        {row.detail ? (
-          <span style={{ color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular }}>
-            {" · "}
-            {row.detail}
-          </span>
-        ) : null}
-      </span>
-    </AppTooltip>
+    <span
+      style={{
+        minWidth: 0,
+        color: row.tone || CSS_COLOR.textSec,
+        fontSize: textSize("paragraphMuted"),
+        fontWeight: FONT_WEIGHTS.medium,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {row.value}
+      {row.detail ? (
+        <span style={{ color: CSS_COLOR.textDim, fontWeight: FONT_WEIGHTS.regular }}>
+          {" · "}
+          {row.detail}
+        </span>
+      ) : null}
+    </span>
   </div>
 );
 

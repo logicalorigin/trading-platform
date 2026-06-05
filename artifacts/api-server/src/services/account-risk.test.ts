@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 process.env["DATABASE_URL"] ??= "postgres://test:test@127.0.0.1:5432/test";
@@ -7,6 +8,9 @@ process.env["DIAGNOSTICS_SUPPRESS_DB_WARNINGS"] = "1";
 test("account risk internals summarize static risk metadata and nullable totals", async () => {
   const { __accountRiskInternalsForTests } = await import("./account");
 
+  assert.equal(__accountRiskInternalsForTests.normalizeAccountRiskDetail(undefined), "fast");
+  assert.equal(__accountRiskInternalsForTests.normalizeAccountRiskDetail("fast"), "fast");
+  assert.equal(__accountRiskInternalsForTests.normalizeAccountRiskDetail("full"), "full");
   assert.equal(__accountRiskInternalsForTests.sectorForSymbol("AAPL"), "Technology");
   assert.equal(__accountRiskInternalsForTests.sectorForSymbol("UNKNOWN"), "Unknown");
   assert.equal(__accountRiskInternalsForTests.betaForSymbol("TSLA"), 2.1);
@@ -20,6 +24,47 @@ test("account risk internals summarize static risk metadata and nullable totals"
   assert.equal(__accountRiskInternalsForTests.sumNullableValues([null]), null);
   assert.equal(__accountRiskInternalsForTests.upsertNullableTotal(null, 3), 3);
   assert.equal(__accountRiskInternalsForTests.upsertNullableTotal(2, null), 2);
+});
+
+test("account risk full detail is nonblocking and uses a pending cold response", async () => {
+  const { __accountRiskInternalsForTests } = await import("./account");
+  const pending = __accountRiskInternalsForTests.buildPendingAccountGreekScenarios();
+
+  assert.equal(pending.enabled, true);
+  assert.equal(pending.status, "pending");
+  assert.equal(pending.pythonJob.jobType, "greek_scenario_matrix");
+  assert.match(pending.warning ?? "", /refreshing asynchronously/);
+
+  const source = readFileSync(new URL("./account.ts", import.meta.url), "utf8");
+  const getRiskBody = source.match(
+    /export async function getAccountRisk\([\s\S]*?\nasync function getAccountRiskUncached/,
+  )?.[0];
+  const uncachedBody = source.match(
+    /async function getAccountRiskUncached\([\s\S]*?\nfunction accountFullRiskCacheKey/,
+  )?.[0];
+  const fullBody = source.match(
+    /async function getAccountRiskWithNonBlockingFullDetail\([\s\S]*?\nfunction buildDeferredAccountGreekScenarios/,
+  )?.[0];
+
+  assert.ok(getRiskBody);
+  assert.match(getRiskBody, /const detail = normalizeAccountRiskDetail\(input\.detail\);/);
+  assert.match(getRiskBody, /if \(detail === "full"\) \{/);
+  assert.match(getRiskBody, /getAccountRiskWithNonBlockingFullDetail\(\{ \.\.\.input, mode \}\)/);
+  assert.match(getRiskBody, /getAccountRiskUncached\(\{ \.\.\.input, mode, detail \}\)/);
+
+  assert.ok(uncachedBody);
+  assert.match(uncachedBody, /const detail = normalizeAccountRiskDetail\(input\.detail\);/);
+  assert.match(uncachedBody, /const deferGreekRefresh = detail === "fast";/);
+  assert.match(uncachedBody, /const notional = deferGreekRefresh/);
+  assert.match(uncachedBody, /buildNotionalExposure\(positions,/);
+  assert.match(uncachedBody, /const greekScenarios = deferGreekRefresh/);
+  assert.match(uncachedBody, /buildDeferredAccountGreekScenarios\(\)/);
+
+  assert.ok(fullBody);
+  assert.match(fullBody, /const cached = accountFullRiskCache\.get\(cacheKey\);/);
+  assert.match(fullBody, /scheduleAccountFullRiskRefresh\(\{ \.\.\.input, mode \}\);/);
+  assert.match(fullBody, /return markAccountRiskFullRefreshPending\(fastRisk\);/);
+  assert.doesNotMatch(fullBody, /await refreshAccountFullRiskCache/);
 });
 
 test("account risk internals match and merge option-chain contracts", async () => {

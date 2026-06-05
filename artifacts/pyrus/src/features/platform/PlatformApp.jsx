@@ -89,6 +89,7 @@ import {
 } from "./runtimeTickerStore";
 import {
   buildSignalMatrixRequestPlan,
+  buildSignalMatrixStoredStateBootstrapRequest,
   buildSignalMatrixSymbolSets,
   mergeSignalMatrixStates,
   resolveSignalMatrixActiveScreenRequestTaskLimit,
@@ -305,7 +306,7 @@ const WATCHLISTS_QUERY_KEY = ["/api/watchlists"];
 const SIGNAL_MONITOR_DISPLAY_POLL_MS = 15_000;
 const SIGNAL_MATRIX_TIMEFRAMES = ["1m", "2m", "5m", "15m", "1h", "1d"];
 const SIGNAL_MATRIX_TIMEFRAME_SET = new Set(SIGNAL_MATRIX_TIMEFRAMES);
-const PRIORITY_SCREEN_MODULE_PRELOAD_ORDER = ["account"];
+const PRIORITY_SCREEN_MODULE_PRELOAD_ORDER = ["account", "algo"];
 const PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS = 500;
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS = 20_000;
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS = 1_500;
@@ -393,7 +394,7 @@ const buildSignalMonitorPyrusSettingsPatch = (currentSettings, draftSettings) =>
   const universeScope =
     resolveSignalMonitorUniverseScopeSetting(draftSettings) ??
     resolveSignalMonitorUniverseScopeSetting(currentSettings) ??
-    "all_watchlists";
+    "all_watchlists_plus_universe";
   return {
     ...current,
     ...resolved,
@@ -753,7 +754,20 @@ export default function PlatformApp() {
     [],
   );
   const [screen, setScreen] = useState(initialScreen);
-  const signalMatrixRequestActive = screen === "signals" || screen === "algo";
+  const [signalsScreenMatrixRequest, setSignalsScreenMatrixRequest] = useState(() => ({
+    clientRole: null,
+    prioritySymbols: [],
+    requestOrigin: null,
+    symbols: [],
+    timeframes: SIGNAL_MATRIX_TIMEFRAMES,
+    revision: 0,
+  }));
+  const signalMatrixRouteRequestActive = screen === "signals" || screen === "algo";
+  const signalMatrixSurfaceRequestActive = Boolean(
+    signalsScreenMatrixRequest.symbols.length,
+  );
+  const signalMatrixRequestActive =
+    signalMatrixRouteRequestActive || signalMatrixSurfaceRequestActive;
   const signalsScreenSafeWorkVisible = Boolean(
     safeQaMode && pageVisible && workspaceLeader && screen === "signals",
   );
@@ -1007,7 +1021,16 @@ export default function PlatformApp() {
   }, [firstScreenReady, signalMonitorWorkVisible]);
 
   useEffect(() => {
-    setBackgroundResumeReady({ ...EMPTY_BACKGROUND_RESUME_READY, screen });
+    setBackgroundResumeReady((current) => {
+      if (
+        current.screen === screen &&
+        current.signalDisplay === EMPTY_BACKGROUND_RESUME_READY.signalDisplay &&
+        current.signalMatrix === EMPTY_BACKGROUND_RESUME_READY.signalMatrix
+      ) {
+        return current;
+      }
+      return { ...EMPTY_BACKGROUND_RESUME_READY, screen };
+    });
   }, [pageVisible, screen]);
 
   useEffect(() => {
@@ -2673,6 +2696,7 @@ export default function PlatformApp() {
     signalMonitorParams,
     {
       query: {
+        enabled: signalMonitorWorkVisible,
         staleTime: 60_000,
         refetchInterval: signalMonitorWorkVisible ? 60_000 : false,
         retry: false,
@@ -2990,14 +3014,6 @@ export default function PlatformApp() {
       timeframes: SIGNAL_MATRIX_TIMEFRAMES,
     };
   });
-  const [signalsScreenMatrixRequest, setSignalsScreenMatrixRequest] = useState(() => ({
-    clientRole: null,
-    prioritySymbols: [],
-    requestOrigin: null,
-    symbols: [],
-    timeframes: SIGNAL_MATRIX_TIMEFRAMES,
-    revision: 0,
-  }));
   const signalMatrixEvaluationInFlightRef = useRef(false);
   const signalMatrixEvaluationStartedAtRef = useRef(0);
   const signalMatrixRotationCursorRef = useRef(0);
@@ -3012,6 +3028,7 @@ export default function PlatformApp() {
   const signalMatrixLastCatchupQueuedAtRef = useRef(0);
   const signalMatrixRequestOwnerRef = useRef(null);
   const signalMatrixRejectedExactCellLimitRef = useRef(null);
+  const signalMatrixStoredStateBootstrapKeyRef = useRef(null);
   if (!signalMatrixRequestOwnerRef.current) {
     signalMatrixRequestOwnerRef.current = `platform-${Date.now()}-${Math.random()
       .toString(36)
@@ -4165,26 +4182,67 @@ export default function PlatformApp() {
       );
       return;
     }
-    const plan = buildSignalMatrixRequestPlan({
+    const storedStateBootstrapRequest = buildSignalMatrixStoredStateBootstrapRequest({
       symbols: signalMatrixUniverseSymbols,
-      prioritySymbols: signalMatrixPrioritySymbols,
       currentStates: signalMatrixStatesRef.current,
       timeframes: signalMatrixRequestTimeframes,
-      pressureLevel: liveActiveSignalMatrixPressureLevel,
-      backgroundReady: signalMatrixBackgroundReady,
-      startupProtectionActive: signalMatrixStartupProtectionActive,
-      cursor: signalMatrixRotationCursorRef.current,
-      pollMs: signalMatrixPollMs,
-      nowMs,
-      requestSymbolLimit: signalMatrixRequestSymbolLimit,
-      requestTaskLimit: liveSignalMatrixRequestTaskLimit,
-      requestExactCellLimit: liveSignalMatrixRequestExactCellLimit,
+      lastBootstrapKey: signalMatrixStoredStateBootstrapKeyRef.current,
     });
+    const plan = storedStateBootstrapRequest
+      ? {
+          requestSymbols: storedStateBootstrapRequest.symbols,
+          prioritySymbols: storedStateBootstrapRequest.symbols,
+          backgroundSymbols: [],
+          timeframes: storedStateBootstrapRequest.timeframes,
+          matrixTimeframes: storedStateBootstrapRequest.timeframes,
+          requestCells: [],
+          missingCells: [],
+          nextCursor: signalMatrixRotationCursorRef.current,
+          backgroundReady: signalMatrixBackgroundReady,
+          backgroundPaused: false,
+          startupProtectionActive: false,
+          pressureLevel: liveActiveSignalMatrixPressureLevel,
+          coverage: storedStateBootstrapRequest.coverage,
+        }
+      : buildSignalMatrixRequestPlan({
+          symbols: signalMatrixUniverseSymbols,
+          prioritySymbols: signalMatrixPrioritySymbols,
+          currentStates: signalMatrixStatesRef.current,
+          timeframes: signalMatrixRequestTimeframes,
+          pressureLevel: liveActiveSignalMatrixPressureLevel,
+          backgroundReady: signalMatrixBackgroundReady,
+          startupProtectionActive: signalMatrixStartupProtectionActive,
+          cursor: signalMatrixRotationCursorRef.current,
+          pollMs: signalMatrixPollMs,
+          nowMs,
+          requestSymbolLimit: signalMatrixRequestSymbolLimit,
+          requestTaskLimit: liveSignalMatrixRequestTaskLimit,
+          requestExactCellLimit: liveSignalMatrixRequestExactCellLimit,
+        });
     if (!plan.requestSymbols.length) {
       releaseSignalMatrixRequestLease(signalMatrixRequestOwnerRef.current);
+      if (signalMatrixSurfaceRequestActive && !signalMatrixRouteRequestActive) {
+        setSignalsScreenMatrixRequest((current) =>
+          current.symbols.length
+            ? {
+                clientRole: null,
+                prioritySymbols: [],
+                requestOrigin: null,
+                symbols: [],
+                timeframes: SIGNAL_MATRIX_TIMEFRAMES,
+                revision: current.revision + 1,
+              }
+            : current,
+        );
+      }
       return;
     }
-    signalMatrixRotationCursorRef.current = plan.nextCursor;
+    if (storedStateBootstrapRequest) {
+      signalMatrixStoredStateBootstrapKeyRef.current =
+        storedStateBootstrapRequest.key;
+    } else {
+      signalMatrixRotationCursorRef.current = plan.nextCursor;
+    }
     signalMatrixLastPlanRef.current = plan;
     signalMatrixEvaluationInFlightRef.current = true;
     signalMatrixEvaluationStartedAtRef.current = Date.now();
@@ -4195,9 +4253,13 @@ export default function PlatformApp() {
       data: {
         environment: signalMonitorEnvironment,
         watchlistId: null,
-        cells: plan.requestCells,
-        symbols: plan.requestSymbols,
-        timeframes: plan.timeframes,
+        cells: storedStateBootstrapRequest ? undefined : plan.requestCells,
+        symbols: storedStateBootstrapRequest
+          ? storedStateBootstrapRequest.symbols
+          : plan.requestSymbols,
+        timeframes: storedStateBootstrapRequest
+          ? storedStateBootstrapRequest.timeframes
+          : plan.timeframes,
         clientRole: signalsScreenMatrixClientRole || signalMatrixRequestClientRole,
         requestOrigin:
           signalsScreenMatrixRequestOrigin || automaticRequestOrigin,
@@ -4229,8 +4291,10 @@ export default function PlatformApp() {
     signalMonitorDisplayReady,
     signalMatrixRequestActive,
     signalMatrixRequestClientRole,
+    signalMatrixRouteRequestActive,
     signalMatrixStartupProtectionActive,
     signalMatrixStaVisibleRequestActive,
+    signalMatrixSurfaceRequestActive,
     signalsScreenMatrixClientRole,
     signalsScreenMatrixRequestOrigin,
     screen,
@@ -5064,6 +5128,7 @@ export default function PlatformApp() {
             )}
             signalMatrixStates={signalMatrixSnapshot.states}
             headerSignalMatrixStates={headerBroadcastSignalMatrixStates}
+            onRequestSignalMatrixHydration={handleRequestSignalMatrixHydration}
             selectedSymbol={sym}
             sidebarCollapsed={sidebarCollapsed}
             setSidebarCollapsed={setSidebarCollapsed}

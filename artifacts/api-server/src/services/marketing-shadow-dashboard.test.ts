@@ -146,6 +146,7 @@ test("marketing shadow dashboard composes exact shadow account and algo fields",
     getRisk: async (input) => {
       assert.ok(input?.positionsResponse);
       assert.ok(input?.closedTrades);
+      assert.equal(input?.detail, "fast");
       return {
         accountId: "shadow",
         degraded: false,

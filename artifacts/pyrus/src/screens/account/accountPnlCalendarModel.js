@@ -77,6 +77,14 @@ export const monthLabel = (date) => `${MONTH_LABELS[date.getMonth()]} ${date.get
 export const addCalendarMonths = (date, delta) =>
   new Date(date.getFullYear(), date.getMonth() + delta, 1);
 
+const closedTradeCalendarKey = (trade, index) => {
+  const id = String(trade?.id ?? trade?.tradeId ?? "").trim();
+  if (!id) return `row:${index}`;
+  const source = String(trade?.source ?? "").trim().toUpperCase();
+  const accountId = String(trade?.accountId ?? "").trim();
+  return `${source || "UNKNOWN"}:${accountId || "unknown"}:${id}`;
+};
+
 export const findLatestCalendarActivityDate = ({
   trades = [],
   equityPoints = [],
@@ -174,7 +182,7 @@ export const buildDailyPnlSeries = ({
   endDate,
 } = {}) => {
   const tradesByDay = new Map();
-  trades.forEach((trade) => {
+  trades.forEach((trade, index) => {
     const day = pnlBucketDay(trade?.closeDate);
     if (!day) return;
     const realized = finiteNumber(trade?.realizedPnl) ?? finiteNumber(trade?.pnl);
@@ -184,7 +192,11 @@ export const buildDailyPnlSeries = ({
       iso: key,
       realized: 0,
       trades: 0,
+      tradeKeys: new Set(),
     };
+    const tradeKey = closedTradeCalendarKey(trade, index);
+    if (current.tradeKeys.has(tradeKey)) return;
+    current.tradeKeys.add(tradeKey);
     current.realized += realized;
     current.trades += 1;
     tradesByDay.set(key, current);

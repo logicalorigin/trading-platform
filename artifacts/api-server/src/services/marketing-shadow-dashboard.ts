@@ -519,6 +519,7 @@ export async function fetchMarketingShadowDashboardSnapshot(
   const risk = await deps.getRisk({
     positionsResponse: positions,
     closedTrades,
+    detail: "fast",
   });
   const focusedDeployment = selectMarketingDeployment(deployments.deployments);
   const [cockpit, events] = focusedDeployment

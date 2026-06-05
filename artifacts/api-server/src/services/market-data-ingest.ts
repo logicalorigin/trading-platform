@@ -57,6 +57,11 @@ export type BlockedGexJobDiagnostic = {
   lastError: string | null;
 };
 
+export type ClaimableQueuedJobsDiagnostic = {
+  count: number;
+  byKind: Record<string, number>;
+};
+
 const INGEST_JOB_DEFAULT_MAX_ATTEMPTS = 3;
 export const SUPPORTED_MARKET_DATA_INGEST_JOB_KINDS = [
   "stock_snapshot",
@@ -669,6 +674,10 @@ export type MarketDataIngestDiagnostics = {
   oldestQueuedAgeMs: number | null;
   runningCount: number;
   expiredLeaseCount: number;
+  claimableQueuedJobCount: number;
+  claimableQueuedJobsByKind: Record<string, number>;
+  workerLikelyInactive: boolean;
+  workerInactiveReason: string | null;
   blockedGexJobCount: number;
   oldestBlockedGexAgeMs: number | null;
   blockedGexJobs: BlockedGexJobDiagnostic[];
@@ -695,6 +704,32 @@ let marketDataIngestDiagnosticsGetterForTests:
   | (() => Promise<MarketDataIngestDiagnostics>)
   | null = null;
 
+function resolveWorkerActivityDiagnostics(input: {
+  configured: boolean;
+  providerConfigured: boolean;
+  runningCount: number;
+  claimableQueuedJobCount: number;
+}): Pick<
+  MarketDataIngestDiagnostics,
+  "workerLikelyInactive" | "workerInactiveReason"
+> {
+  if (
+    input.configured &&
+    input.providerConfigured &&
+    input.runningCount === 0 &&
+    input.claimableQueuedJobCount > 0
+  ) {
+    return {
+      workerLikelyInactive: true,
+      workerInactiveReason: "claimable_jobs_waiting_without_running_worker",
+    };
+  }
+  return {
+    workerLikelyInactive: false,
+    workerInactiveReason: null,
+  };
+}
+
 export async function getMarketDataIngestDiagnostics(): Promise<MarketDataIngestDiagnostics> {
   if (marketDataIngestDiagnosticsGetterForTests) {
     return marketDataIngestDiagnosticsGetterForTests();
@@ -709,6 +744,10 @@ export async function getMarketDataIngestDiagnostics(): Promise<MarketDataIngest
       oldestQueuedAgeMs: null,
       runningCount: 0,
       expiredLeaseCount: 0,
+      claimableQueuedJobCount: 0,
+      claimableQueuedJobsByKind: {},
+      workerLikelyInactive: false,
+      workerInactiveReason: null,
       blockedGexJobCount: 0,
       oldestBlockedGexAgeMs: null,
       blockedGexJobs: [],
@@ -776,10 +815,24 @@ export async function getMarketDataIngestDiagnostics(): Promise<MarketDataIngest
       ).rows,
       now,
     );
+    const claimableQueuedJobs = mapClaimableQueuedJobRows(
+      (
+        await pool.query<ClaimableQueuedJobRow>(CLAIMABLE_QUEUED_JOBS_SQL)
+      ).rows,
+    );
+    const configured = isMarketDataIngestConfigured();
+    const providerConfigured = isMarketDataIngestProviderConfigured();
+    const runningCount = Number(running?.value ?? 0);
+    const workerActivity = resolveWorkerActivityDiagnostics({
+      configured,
+      providerConfigured,
+      runningCount,
+      claimableQueuedJobCount: claimableQueuedJobs.count,
+    });
 
     return {
-      configured: isMarketDataIngestConfigured(),
-      providerConfigured: isMarketDataIngestProviderConfigured(),
+      configured,
+      providerConfigured,
       queueDepth: Object.fromEntries(
         depthRows.map((row: { status: string; value: unknown }) => [
           row.status,
@@ -789,8 +842,11 @@ export async function getMarketDataIngestDiagnostics(): Promise<MarketDataIngest
       oldestQueuedAgeMs: oldestQueued
         ? Math.max(0, now.getTime() - oldestQueued.createdAt.getTime())
         : null,
-      runningCount: Number(running?.value ?? 0),
+      runningCount,
       expiredLeaseCount: Number(expired?.value ?? 0),
+      claimableQueuedJobCount: claimableQueuedJobs.count,
+      claimableQueuedJobsByKind: claimableQueuedJobs.byKind,
+      ...workerActivity,
       blockedGexJobCount: blockedGex.count,
       oldestBlockedGexAgeMs: blockedGex.oldestAgeMs,
       blockedGexJobs: blockedGex.jobs,
@@ -806,6 +862,10 @@ export async function getMarketDataIngestDiagnostics(): Promise<MarketDataIngest
       oldestQueuedAgeMs: null,
       runningCount: 0,
       expiredLeaseCount: 0,
+      claimableQueuedJobCount: 0,
+      claimableQueuedJobsByKind: {},
+      workerLikelyInactive: false,
+      workerInactiveReason: null,
       blockedGexJobCount: 0,
       oldestBlockedGexAgeMs: null,
       blockedGexJobs: [],
@@ -814,6 +874,11 @@ export async function getMarketDataIngestDiagnostics(): Promise<MarketDataIngest
     };
   }
 }
+
+type ClaimableQueuedJobRow = {
+  kind: string;
+  value: number | string;
+};
 
 type BlockedGexRow = {
   symbol: string;
@@ -825,6 +890,42 @@ type BlockedGexRow = {
   total_count: number | string;
   oldest_created_at: Date | string | null;
 };
+
+const CLAIMABLE_QUEUED_JOBS_SQL = `
+with claimable as (
+  select candidate.kind
+  from market_data_ingest_jobs candidate
+  where candidate.status = 'queued'
+    and (candidate.next_run_at is null or candidate.next_run_at <= now())
+    and (
+      candidate.kind <> 'gex_snapshot'
+      or coalesce(candidate.payload->>'dedupeBucket', '') = ''
+      or (
+        exists (
+          select 1
+          from market_data_ingest_jobs prerequisite
+          where prerequisite.symbol = candidate.symbol
+            and prerequisite.kind = 'stock_snapshot'
+            and prerequisite.status = 'completed'
+            and coalesce(prerequisite.payload->>'dedupeBucket', '') =
+              coalesce(candidate.payload->>'dedupeBucket', '')
+        )
+        and exists (
+          select 1
+          from market_data_ingest_jobs prerequisite
+          where prerequisite.symbol = candidate.symbol
+            and prerequisite.kind = 'option_chain_snapshot'
+            and prerequisite.status = 'completed'
+            and coalesce(prerequisite.payload->>'dedupeBucket', '') =
+              coalesce(candidate.payload->>'dedupeBucket', '')
+        )
+      )
+    )
+)
+select kind, count(*)::bigint as value
+from claimable
+group by kind
+`;
 
 const BLOCKED_GEX_DIAGNOSTICS_SQL = `
 with queued_gex as (
@@ -933,6 +1034,18 @@ const toValidDate = (value: Date | string | null | undefined): Date | null => {
   return null;
 };
 
+function mapClaimableQueuedJobRows(
+  rows: ClaimableQueuedJobRow[],
+): ClaimableQueuedJobsDiagnostic {
+  const byKind = Object.fromEntries(
+    rows.map((row) => [row.kind, Number(row.value ?? 0)]),
+  );
+  return {
+    count: Object.values(byKind).reduce((sum, value) => sum + value, 0),
+    byKind,
+  };
+}
+
 function mapBlockedGexDiagnosticsRows(
   rows: BlockedGexRow[],
   now: Date,
@@ -975,5 +1088,7 @@ export const __marketDataIngestInternalsForTests = {
     marketDataIngestDiagnosticsGetterForTests = getter;
   },
   numericDedupeBucket,
+  mapClaimableQueuedJobRows,
+  resolveWorkerActivityDiagnostics,
   mapBlockedGexDiagnosticsRows,
 };

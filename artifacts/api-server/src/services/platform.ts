@@ -3243,6 +3243,10 @@ function marketDataIngestDiagnosticsTimeoutFallback(
     oldestQueuedAgeMs: null,
     runningCount: 0,
     expiredLeaseCount: 0,
+    claimableQueuedJobCount: 0,
+    claimableQueuedJobsByKind: {},
+    workerLikelyInactive: false,
+    workerInactiveReason: null,
     blockedGexJobCount: 0,
     oldestBlockedGexAgeMs: null,
     blockedGexJobs: [],
@@ -3285,9 +3289,13 @@ export async function getRuntimeDiagnostics() {
   });
   const marketDataIngest = await getRuntimeMarketDataIngestDiagnostics();
   const massiveRuntimeConfig = getMassiveRuntimeConfig();
-  const { getAccountPageStreamDiagnostics } = await import(
-    "./account-page-streams"
-  );
+  const [
+    { getAccountPageStreamDiagnostics },
+    { getShadowAccountReadDiagnostics },
+  ] = await Promise.all([
+    import("./account-page-streams"),
+    import("./shadow-account"),
+  ]);
   const optionsFlowScannerDiagnostics = getOptionsFlowScannerDiagnostics();
   const marketDataAdmissionWithScanner = {
     ...marketDataStreams.marketDataAdmission,
@@ -3318,6 +3326,7 @@ export async function getRuntimeDiagnostics() {
       },
       resourceCaches,
       accountPage: getAccountPageStreamDiagnostics(),
+      shadowAccountReads: getShadowAccountReadDiagnostics(),
       pythonCompute: getPythonComputeDiagnostics(),
       eventLoopDelayMs: {
         mean: nsToMs(eventLoopDelay.mean),
@@ -4643,12 +4652,16 @@ function quoteSnapshotMassiveFallbackTimeoutMs(): number {
 
 async function refreshMassiveQuoteDayChangeContext(
   symbols: string[],
+  options: { force?: boolean } = {},
 ): Promise<
   Array<QuoteSnapshot & { source: Exclude<StockQuoteSnapshotSource, "ibkr"> }>
 > {
-  const missingOrStaleSymbols = getSymbolsNeedingStockQuoteDayChangeContext(
-    symbols,
+  const normalizedSymbols = Array.from(
+    new Set(symbols.map((symbol) => normalizeSymbol(symbol)).filter(Boolean)),
   );
+  const missingOrStaleSymbols = options.force
+    ? normalizedSymbols
+    : getSymbolsNeedingStockQuoteDayChangeContext(normalizedSymbols);
   if (!missingOrStaleSymbols.length || !getMassiveRuntimeConfig()) {
     return [];
   }
@@ -4782,6 +4795,9 @@ async function getQuoteSnapshotsUncached(input: {
     input.tradingSession !== "overnight" &&
     isMassiveStocksRealtimeConfigured(massiveConfig);
   if (useMassiveRealtimePrimary) {
+    const contextRefreshSymbols = new Set(
+      getSymbolsNeedingStockQuoteDayChangeContext(symbols),
+    );
     const contextQuotes = await refreshMassiveQuoteDayChangeContext(symbols);
     const quotesBySymbol = new Map<
       string,
@@ -4793,9 +4809,27 @@ async function getQuoteSnapshotsUncached(input: {
         quotesBySymbol.set(symbol, quote);
       }
     });
-    getMassiveRealtimeSocketQuoteSnapshots(symbols).forEach((quote) => {
+    const socketQuotes = getMassiveRealtimeSocketQuoteSnapshots(symbols);
+    socketQuotes.forEach((quote) => {
       const symbol = normalizeSymbol(quote.symbol);
       if (symbol) {
+        quotesBySymbol.set(symbol, quote);
+      }
+    });
+    const liveSymbols = new Set(
+      socketQuotes.map((quote) => normalizeSymbol(quote.symbol)),
+    );
+    const missingSocketAndContextSymbols = symbols.filter(
+      (symbol) => !quotesBySymbol.has(symbol) && !contextRefreshSymbols.has(symbol),
+    );
+    const fallbackQuotes = missingSocketAndContextSymbols.length
+      ? await refreshMassiveQuoteDayChangeContext(missingSocketAndContextSymbols, {
+          force: true,
+        })
+      : [];
+    fallbackQuotes.forEach((quote) => {
+      const symbol = normalizeSymbol(quote.symbol);
+      if (symbol && !quotesBySymbol.has(symbol)) {
         quotesBySymbol.set(symbol, quote);
       }
     });
@@ -4803,17 +4837,12 @@ async function getQuoteSnapshotsUncached(input: {
       const quote = quotesBySymbol.get(symbol);
       return quote ? [quote] : [];
     });
-    const liveSymbols = new Set(
-      getMassiveRealtimeSocketQuoteSnapshots(symbols).map((quote) =>
-        normalizeSymbol(quote.symbol),
-      ),
-    );
 
     return {
       quotes,
       transport: quotes[0]?.transport ?? null,
       delayed: quotes.some((quote) => quote.delayed),
-      fallbackUsed: contextQuotes.some(
+      fallbackUsed: [...contextQuotes, ...fallbackQuotes].some(
         (quote) => !liveSymbols.has(normalizeSymbol(quote.symbol)),
       ),
     };

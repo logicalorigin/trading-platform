@@ -126,6 +126,7 @@ export const TradeEquityPanel = ({
   crosshairSyncInstanceId = null,
   gexProjectionEnabled = true,
   gexOverlay = null,
+  positionOverlaysEnabled = true,
 }) => {
   const queryClient = useQueryClient();
   const effectiveChartHydrationRole =
@@ -983,10 +984,15 @@ export const TradeEquityPanel = ({
         crosshairSyncGroupId={crosshairSyncGroupId}
         crosshairSyncInstanceId={crosshairSyncInstanceId}
         frameSignalState={showSignalFrameBorder ? signalFrameState : null}
-        positionOverlayContext={{
-          surfaceKind: effectiveChartHydrationRole === "mini" ? "mini" : "spot",
-          symbol: ticker,
-        }}
+        positionOverlayContext={
+          positionOverlaysEnabled
+            ? {
+                surfaceKind:
+                  effectiveChartHydrationRole === "mini" ? "mini" : "spot",
+                symbol: ticker,
+              }
+            : null
+        }
         chartEvents={chartEvents}
         chartFlowDiagnostics={chartEventConversion}
         latestQuotePrice={tickerInfo?.price}

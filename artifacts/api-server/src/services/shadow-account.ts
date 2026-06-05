@@ -91,6 +91,7 @@ import {
   resolveAccountGreekScenarios,
   type AccountGreekScenarios,
 } from "./account-greek-scenarios";
+import { resolveAccountPortfolioRisk } from "./account-portfolio-risk";
 import { buildAccountRiskRecommendations } from "./account-risk-recommendations";
 import { getApiResourcePressureSnapshot } from "./resource-pressure";
 
@@ -455,6 +456,7 @@ let shadowPositionMarkRefreshInFlight:
 const SHADOW_READ_CACHE_TTL_MS = 2_500;
 const SHADOW_READ_CACHE_STALE_TTL_MS = 60_000;
 const SHADOW_READ_CACHE_STALE_WAIT_MS = 1_500;
+const SHADOW_DERIVED_READ_CACHE_TTL_MS = 10_000;
 const SHADOW_OPTION_QUOTE_CACHE_TTL_MS = 15_000;
 const SHADOW_OPTION_PROVIDER_ID_CACHE_TTL_MS = 60 * 60_000;
 const shadowReadCache = new Map<
@@ -473,8 +475,49 @@ let shadowReadCacheStaleTtlMsForTests: number | null = null;
 let shadowReadCacheStaleWaitMsForTests: number | null = null;
 type ShadowReadCacheOptions = {
   allowStale?: (value: unknown) => boolean;
-  staleStrategy?: "wait" | "immediate";
+  staleStrategy?: "wait" | "immediate" | "never";
+  ttlMs?: number;
+  staleTtlMs?: number;
 };
+type ShadowReadDiagnosticStatus =
+  | "cache_hit"
+  | "cache_miss"
+  | "inflight_join"
+  | "operation"
+  | "error";
+type ShadowReadDiagnosticEvent = {
+  key: string;
+  route: string;
+  status: ShadowReadDiagnosticStatus;
+  durationMs: number;
+  servedStale: boolean;
+  cacheAgeMs: number | null;
+  observedAt: Date;
+};
+type ShadowReadDiagnosticStats = {
+  route: string;
+  count: number;
+  hitCount: number;
+  missCount: number;
+  inFlightJoinCount: number;
+  operationCount: number;
+  staleServedCount: number;
+  errorCount: number;
+  totalMs: number;
+  maxMs: number;
+  samplesMs: number[];
+  lastKey: string;
+  lastStatus: ShadowReadDiagnosticStatus;
+  lastDurationMs: number;
+  lastSeenAt: Date;
+};
+const SHADOW_READ_DIAGNOSTIC_RECENT_LIMIT = 80;
+const SHADOW_READ_DIAGNOSTIC_SAMPLE_LIMIT = 120;
+const shadowReadDiagnosticRecent: ShadowReadDiagnosticEvent[] = [];
+const shadowReadDiagnosticStatsByRoute = new Map<
+  string,
+  ShadowReadDiagnosticStats
+>();
 const shadowOptionQuoteCache = new Map<
   string,
   {
@@ -521,6 +564,175 @@ function invalidateShadowReadCachesAfterBackgroundMarkRefresh() {
   shadowReadCacheVersion += 1;
 }
 
+function shadowReadDiagnosticRoute(key: string): string {
+  const route = key.split(":")[0]?.trim();
+  return route || "unknown";
+}
+
+function roundShadowReadDurationMs(startedAt: number, endedAt = Date.now()) {
+  return Math.max(0, Math.round(endedAt - startedAt));
+}
+
+function shadowReadValueIsMarkedStale(value: unknown): boolean {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      ((value as { stale?: unknown }).stale === true ||
+        (value as { reason?: unknown }).reason === "shadow_read_stale_cache"),
+  );
+}
+
+function shadowReadPercentile(samples: number[], percentile: number): number {
+  if (!samples.length) {
+    return 0;
+  }
+  const sorted = [...samples].sort((left, right) => left - right);
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil((percentile / 100) * sorted.length) - 1),
+  );
+  return sorted[index] ?? 0;
+}
+
+function recordShadowReadDiagnostic(input: {
+  key: string;
+  status: ShadowReadDiagnosticStatus;
+  startedAt: number;
+  servedStale?: boolean;
+  cacheAgeMs?: number | null;
+  endedAt?: number;
+}) {
+  const route = shadowReadDiagnosticRoute(input.key);
+  const durationMs = roundShadowReadDurationMs(input.startedAt, input.endedAt);
+  const observedAt = new Date(input.endedAt ?? Date.now());
+  const event: ShadowReadDiagnosticEvent = {
+    key: input.key,
+    route,
+    status: input.status,
+    durationMs,
+    servedStale: Boolean(input.servedStale),
+    cacheAgeMs:
+      typeof input.cacheAgeMs === "number"
+        ? Math.max(0, Math.round(input.cacheAgeMs))
+        : null,
+    observedAt,
+  };
+
+  shadowReadDiagnosticRecent.push(event);
+  while (shadowReadDiagnosticRecent.length > SHADOW_READ_DIAGNOSTIC_RECENT_LIMIT) {
+    shadowReadDiagnosticRecent.shift();
+  }
+
+  const stats =
+    shadowReadDiagnosticStatsByRoute.get(route) ?? {
+      route,
+      count: 0,
+      hitCount: 0,
+      missCount: 0,
+      inFlightJoinCount: 0,
+      operationCount: 0,
+      staleServedCount: 0,
+      errorCount: 0,
+      totalMs: 0,
+      maxMs: 0,
+      samplesMs: [],
+      lastKey: input.key,
+      lastStatus: input.status,
+      lastDurationMs: durationMs,
+      lastSeenAt: observedAt,
+    };
+  stats.count += 1;
+  stats.totalMs += durationMs;
+  stats.maxMs = Math.max(stats.maxMs, durationMs);
+  stats.lastKey = input.key;
+  stats.lastStatus = input.status;
+  stats.lastDurationMs = durationMs;
+  stats.lastSeenAt = observedAt;
+  stats.samplesMs.push(durationMs);
+  while (stats.samplesMs.length > SHADOW_READ_DIAGNOSTIC_SAMPLE_LIMIT) {
+    stats.samplesMs.shift();
+  }
+  if (event.status === "cache_hit") {
+    stats.hitCount += 1;
+  } else if (event.status === "cache_miss") {
+    stats.missCount += 1;
+  } else if (event.status === "inflight_join") {
+    stats.inFlightJoinCount += 1;
+  } else if (event.status === "operation") {
+    stats.operationCount += 1;
+  } else if (event.status === "error") {
+    stats.errorCount += 1;
+  }
+  if (event.servedStale) {
+    stats.staleServedCount += 1;
+  }
+  shadowReadDiagnosticStatsByRoute.set(route, stats);
+}
+
+async function recordShadowReadOperation<T>(
+  key: string,
+  factory: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    const value = await factory();
+    recordShadowReadDiagnostic({
+      key,
+      status: "operation",
+      startedAt,
+      servedStale: shadowReadValueIsMarkedStale(value),
+    });
+    return value;
+  } catch (error) {
+    recordShadowReadDiagnostic({
+      key,
+      status: "error",
+      startedAt,
+    });
+    throw error;
+  }
+}
+
+export function getShadowAccountReadDiagnostics() {
+  const routes = Array.from(shadowReadDiagnosticStatsByRoute.values())
+    .map((stats) => ({
+      route: stats.route,
+      count: stats.count,
+      hitCount: stats.hitCount,
+      missCount: stats.missCount,
+      inFlightJoinCount: stats.inFlightJoinCount,
+      operationCount: stats.operationCount,
+      staleServedCount: stats.staleServedCount,
+      errorCount: stats.errorCount,
+      averageMs: stats.count ? Math.round(stats.totalMs / stats.count) : 0,
+      p95Ms: shadowReadPercentile(stats.samplesMs, 95),
+      maxMs: stats.maxMs,
+      lastKey: stats.lastKey,
+      lastStatus: stats.lastStatus,
+      lastDurationMs: stats.lastDurationMs,
+      lastSeenAt: stats.lastSeenAt,
+    }))
+    .sort((left, right) => right.lastSeenAt.getTime() - left.lastSeenAt.getTime());
+
+  return {
+    cache: {
+      entries: shadowReadCache.size,
+      inFlight: shadowReadInFlight.size,
+      version: shadowReadCacheVersion,
+      ttlMs: shadowReadCacheTtlMs(),
+      staleTtlMs: shadowReadCacheStaleTtlMs(),
+      staleWaitMs: shadowReadStaleWaitMs(),
+    },
+    recent: shadowReadDiagnosticRecent.map((event) => ({ ...event })),
+    routes,
+  };
+}
+
+function resetShadowAccountReadDiagnosticsForTests() {
+  shadowReadDiagnosticRecent.length = 0;
+  shadowReadDiagnosticStatsByRoute.clear();
+}
+
 async function withShadowReadCache<T>(
   key: string,
   factory: () => Promise<T>,
@@ -529,6 +741,12 @@ async function withShadowReadCache<T>(
   const now = Date.now();
   const cached = shadowReadCache.get(key);
   if (cached && cached.expiresAt > now) {
+    recordShadowReadDiagnostic({
+      key,
+      status: "cache_hit",
+      startedAt: now,
+      cacheAgeMs: now - cached.cachedAt,
+    });
     return cached.value as T;
   }
   if (cached && cached.staleExpiresAt <= now) {
@@ -536,9 +754,33 @@ async function withShadowReadCache<T>(
   }
   const inFlight = shadowReadInFlight.get(key);
   if (inFlight) {
-    return resolveShadowReadRequest(inFlight as Promise<T>, cached, options);
+    const startedAt = Date.now();
+    try {
+      const value = await resolveShadowReadRequest(
+        inFlight as Promise<T>,
+        cached,
+        options,
+      );
+      recordShadowReadDiagnostic({
+        key,
+        status: "inflight_join",
+        startedAt,
+        servedStale: shadowReadValueIsMarkedStale(value),
+        cacheAgeMs: cached ? startedAt - cached.cachedAt : null,
+      });
+      return value;
+    } catch (error) {
+      recordShadowReadDiagnostic({
+        key,
+        status: "error",
+        startedAt,
+        cacheAgeMs: cached ? startedAt - cached.cachedAt : null,
+      });
+      throw error;
+    }
   }
   const version = shadowReadCacheVersion;
+  const startedAt = Date.now();
   const request = factory()
     .then((value) => {
       const serveCachedValue =
@@ -558,8 +800,8 @@ async function withShadowReadCache<T>(
         shadowReadCache.set(key, {
           value,
           cachedAt,
-          expiresAt: cachedAt + shadowReadCacheTtlMs(),
-          staleExpiresAt: cachedAt + shadowReadCacheStaleTtlMs(),
+          expiresAt: cachedAt + shadowReadCacheTtlMs(options),
+          staleExpiresAt: cachedAt + shadowReadCacheStaleTtlMs(options),
         });
       }
       return value;
@@ -573,14 +815,38 @@ async function withShadowReadCache<T>(
   request.catch((error) => {
     logger.debug({ err: error, key }, "Shadow account cached read failed");
   });
-  return resolveShadowReadRequest(request, cached, options);
+  try {
+    const value = await resolveShadowReadRequest(request, cached, options);
+    recordShadowReadDiagnostic({
+      key,
+      status: "cache_miss",
+      startedAt,
+      servedStale: shadowReadValueIsMarkedStale(value),
+      cacheAgeMs: cached ? startedAt - cached.cachedAt : null,
+    });
+    return value;
+  } catch (error) {
+    recordShadowReadDiagnostic({
+      key,
+      status: "error",
+      startedAt,
+      cacheAgeMs: cached ? startedAt - cached.cachedAt : null,
+    });
+    throw error;
+  }
 }
 
-function shadowReadCacheTtlMs(): number {
+function shadowReadCacheTtlMs(options: ShadowReadCacheOptions = {}): number {
+  if (typeof options.ttlMs === "number") {
+    return Math.max(0, options.ttlMs);
+  }
   return shadowReadCacheTtlMsForTests ?? SHADOW_READ_CACHE_TTL_MS;
 }
 
-function shadowReadCacheStaleTtlMs(): number {
+function shadowReadCacheStaleTtlMs(options: ShadowReadCacheOptions = {}): number {
+  if (typeof options.staleTtlMs === "number") {
+    return Math.max(0, options.staleTtlMs);
+  }
   return shadowReadCacheStaleTtlMsForTests ?? SHADOW_READ_CACHE_STALE_TTL_MS;
 }
 
@@ -644,6 +910,9 @@ async function resolveShadowReadRequest<T>(
       cachedAt: cached.cachedAt,
       now,
     });
+  }
+  if (options.staleStrategy === "never") {
+    return request;
   }
 
   return Promise.race([
@@ -2514,7 +2783,8 @@ async function readOpenShadowPositionsForSourceCached(
     () => readOpenShadowPositionsForSource(source),
     {
       allowStale: shadowReadCacheValueHasRows,
-      staleStrategy: "immediate",
+      staleStrategy: "never",
+      ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
     },
   );
 }
@@ -2710,80 +2980,91 @@ async function readShadowLedgerBundleForSource(
     now?: Date;
   } = {},
 ): Promise<ShadowLedgerBundleForSource> {
-  const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
-  const { fills, ordersById } = source
-    ? await readShadowFillsWithOrdersForSource(source)
-    : await readShadowFillsWithOrders();
-  const selectedFills = source
-    ? fills.filter((fill) =>
-        shadowOrderMatchesSource(ordersById.get(fill.orderId), source),
-      )
-    : fills.filter((fill) =>
-        isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
+  return withShadowReadCache(
+    `ledger-bundle:${shadowSourceCacheKey(source)}`,
+    async () => {
+      const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
+      const { fills, ordersById } = source
+        ? await readShadowFillsWithOrdersForSource(source)
+        : await readShadowFillsWithOrders();
+      const selectedFills = source
+        ? fills.filter((fill) =>
+            shadowOrderMatchesSource(ordersById.get(fill.orderId), source),
+          )
+        : fills.filter((fill) =>
+            isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
+          );
+      const selectedOrders = selectedFills
+        .map((fill) => ordersById.get(fill.orderId))
+        .filter((order): order is ShadowOrderRow => Boolean(order));
+      const selectedPositionKeys = shadowPositionKeysForOrders(selectedOrders);
+      const selectedOrdersByPositionKey =
+        shadowOrdersByPositionKey(selectedOrders);
+      const positionCandidates = source
+        ? await readOpenShadowPositionsForKeys(selectedPositionKeys)
+        : await readOpenShadowPositions();
+      const positions = positionCandidates.filter(
+        (position) =>
+          selectedPositionKeys.has(position.positionKey) &&
+          (source
+            ? positionMatchesShadowSource(position, source)
+            : isDefaultShadowLedgerAnalyticsPosition(position)) &&
+          !isExpiredHistoricalShadowOptionPosition(
+            position,
+            selectedOrdersByPositionKey.get(position.positionKey),
+            options.now,
+          ),
       );
-  const selectedOrders = selectedFills
-    .map((fill) => ordersById.get(fill.orderId))
-    .filter((order): order is ShadowOrderRow => Boolean(order));
-  const selectedPositionKeys = shadowPositionKeysForOrders(selectedOrders);
-  const selectedOrdersByPositionKey = shadowOrdersByPositionKey(selectedOrders);
-  const positionCandidates = source
-    ? await readOpenShadowPositionsForKeys(selectedPositionKeys)
-    : await readOpenShadowPositions();
-  const positions = positionCandidates.filter((position) =>
-    selectedPositionKeys.has(position.positionKey) &&
-      (source
-        ? positionMatchesShadowSource(position, source)
-        : isDefaultShadowLedgerAnalyticsPosition(position)) &&
-      !isExpiredHistoricalShadowOptionPosition(
-        position,
-        selectedOrdersByPositionKey.get(position.positionKey),
-        options.now,
-      ),
-  );
-  const totals = buildShadowTotalsFromLedger({
-    account,
-    fills: selectedFills,
-    positions,
-  });
-  const historicalSignalOptionsOpenPositions =
-    source !== "automation" &&
-    positions.length > 0 &&
-    positions.every((position) => {
-      const sourceOrder = selectedOrdersByPositionKey.get(position.positionKey);
-      return Boolean(
-        sourceOrder && isHistoricalSignalOptionsShadowOrder(sourceOrder),
-      );
-    });
-  const terminalTotals = historicalSignalOptionsOpenPositions
-    ? {
-        ...totals,
-        updatedAt: latestHistoricalShadowTotalsDate(
-          positions,
-          selectedFills,
-          totals.updatedAt,
-        ),
-      }
-    : totals;
-  const responseTotals =
-    options.useCurrentTimestampForOpenPositions &&
-    !historicalSignalOptionsOpenPositions
-      ? withCurrentOpenPositionTerminalTimestamp(
-          terminalTotals,
-          positions.length,
-          options.now,
-        )
-      : terminalTotals;
+      const totals = buildShadowTotalsFromLedger({
+        account,
+        fills: selectedFills,
+        positions,
+      });
+      const historicalSignalOptionsOpenPositions =
+        source !== "automation" &&
+        positions.length > 0 &&
+        positions.every((position) => {
+          const sourceOrder = selectedOrdersByPositionKey.get(position.positionKey);
+          return Boolean(
+            sourceOrder && isHistoricalSignalOptionsShadowOrder(sourceOrder),
+          );
+        });
+      const terminalTotals = historicalSignalOptionsOpenPositions
+        ? {
+            ...totals,
+            updatedAt: latestHistoricalShadowTotalsDate(
+              positions,
+              selectedFills,
+              totals.updatedAt,
+            ),
+          }
+        : totals;
+      const responseTotals =
+        options.useCurrentTimestampForOpenPositions &&
+        !historicalSignalOptionsOpenPositions
+          ? withCurrentOpenPositionTerminalTimestamp(
+              terminalTotals,
+              positions.length,
+              options.now,
+            )
+          : terminalTotals;
 
-  return {
-    account,
-    fills,
-    ordersById,
-    selectedFills,
-    selectedOrders,
-    selectedOrdersByPositionKey,
-    positions,
-    totals: responseTotals,
-  };
+      return {
+        account,
+        fills,
+        ordersById,
+        selectedFills,
+        selectedOrders,
+        selectedOrdersByPositionKey,
+        positions,
+        totals: responseTotals,
+      };
+    },
+    {
+      staleStrategy: "never",
+      ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+    },
+  );
 }
 
 type ShadowPositionBookEntry = {
@@ -5689,27 +5970,38 @@ function buildShadowAccountSummaryResponse(input: {
 export async function getShadowAccountSummary(input: { source?: string | null } = {}) {
   const source = normalizeShadowSourceScope(input.source);
   kickSignalOptionsAutomationMirrorRepairForRead(source);
-  return withShadowReadCache(`summary:${shadowSourceCacheKey(source)}`, async () => {
-  try {
-    const totals = source
-      ? await computeShadowTotalsForSource(source)
-      : await ensureFreshShadowState(true);
-    const degraded = isShadowAccountDbBackoffActive();
-    const returnMetrics = degraded
-      ? undefined
-      : await resolveShadowAccountSummaryReturnMetrics({ source });
-    return buildShadowAccountSummaryResponse({ totals, returnMetrics, degraded });
-  } catch (error) {
-    if (isTransientPostgresError(error)) {
-      markShadowAccountDbUnavailable(error);
-      return buildShadowAccountSummaryResponse({
-        totals: buildFallbackShadowTotals(),
-        degraded: true,
-      });
-    }
-    throw error;
-  }
-  });
+  return withShadowReadCache(
+    `summary:${shadowSourceCacheKey(source)}`,
+    async () => {
+      try {
+        const totals = source
+          ? await computeShadowTotalsForSource(source)
+          : await ensureFreshShadowState(true);
+        const degraded = isShadowAccountDbBackoffActive();
+        const returnMetrics = degraded
+          ? undefined
+          : await resolveShadowAccountSummaryReturnMetrics({ source });
+        return buildShadowAccountSummaryResponse({
+          totals,
+          returnMetrics,
+          degraded,
+        });
+      } catch (error) {
+        if (isTransientPostgresError(error)) {
+          markShadowAccountDbUnavailable(error);
+          return buildShadowAccountSummaryResponse({
+            totals: buildFallbackShadowTotals(),
+            degraded: true,
+          });
+        }
+        throw error;
+      }
+    },
+    {
+      staleStrategy: "immediate",
+      ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+    },
+  );
 }
 
 function isWatchlistBacktestRunSnapshotSource(source: string | null | undefined) {
@@ -6373,6 +6665,10 @@ export async function getShadowAccountEquityHistory(input: {
           events: base.events.filter((event) => event.type === "deposit"),
         };
       },
+      {
+        staleStrategy: "immediate",
+        ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+      },
     );
   }
   const reusableBaseRange = shadowReusableEquityHistoryRange(range);
@@ -6387,114 +6683,108 @@ export async function getShadowAccountEquityHistory(input: {
           }),
           range,
         ),
+      {
+        staleStrategy: "immediate",
+        ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+      },
     );
   }
   return withShadowReadCache(
     `equity-history:${range}::${shadowSourceCacheKey(source)}`,
     async () => {
-  if (isShadowAccountDbBackoffActive()) {
-    return buildFallbackShadowAccountEquityHistory({
-      range,
-      benchmark: null,
-    });
-  }
-  try {
-  const account = (await readShadowAccount()) ?? (await ensureShadowAccount());
-  const start = accountRangeStart(range);
-  const conditions: SQL<unknown>[] = [eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID)];
-  if (start) {
-    conditions.push(gte(shadowBalanceSnapshotsTable.asOf, start));
-  }
-  const rows = await db
-    .select()
-    .from(shadowBalanceSnapshotsTable)
-    .where(and(...conditions))
-    .orderBy(shadowBalanceSnapshotsTable.asOf);
-  const selection = selectShadowEquityHistoryRows(rows, { source });
-  const totals = selection.includeLiveTerminal
-    ? await computeShadowEquityHistoryTerminalTotals(source)
-    : null;
-  const { fills, ordersById } = await readShadowFillsWithOrders();
-  const ledgerFills = source
-    ? fills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
-    : fills.filter((fill) =>
-        isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
-      );
-  const sourceUsesSimulationSnapshots =
-    source === SIGNAL_OPTIONS_REPLAY_SOURCE || source === WATCHLIST_BACKTEST_SOURCE;
-  const liveLedgerRows = sourceUsesSimulationSnapshots
-    ? selection.rows
-    : source
-      ? filterShadowEquityHistoryRowsToLiveLedger(selection.rows, {
-          account,
-          fills: ledgerFills,
-        })
-      : buildDefaultShadowEquityHistoryRows(selection.rows, {
-          account,
-          fills: ledgerFills,
-          terminalTotals: totals,
+      if (isShadowAccountDbBackoffActive()) {
+        return buildFallbackShadowAccountEquityHistory({
+          range,
+          benchmark: null,
         });
-  const historyRows = selection.includeInitialPoint
-    ? liveLedgerRows.filter((row) => row.source !== "initial")
-    : liveLedgerRows;
-  const compactHistoryRows = compactShadowEquityHistoryRows(historyRows);
-  const compacted = bucketShadowEquityHistoryRows(
-    compactHistoryRows,
-    shadowEquityHistoryBucketSizeMs(range, compactHistoryRows),
-  );
-  const latestCompactedAt = compacted[compacted.length - 1]?.asOf ?? null;
-  const includeLiveTerminal =
-    totals &&
-    (!latestCompactedAt ||
-      totals.updatedAt.getTime() > latestCompactedAt.getTime()) &&
-    (!start || totals.updatedAt.getTime() >= start.getTime());
-  const firstHistoryAt = compactHistoryRows[0]?.asOf ?? null;
-  const initialPointTimestamp =
-    firstHistoryAt && account.createdAt.getTime() > firstHistoryAt.getTime()
-      ? new Date(firstHistoryAt.getTime() - 1)
-      : account.createdAt;
-  const accountStartingBalance =
-    toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
-  const initialPoint = {
-    timestamp: initialPointTimestamp,
-    netLiquidation: accountStartingBalance,
-    currency: SHADOW_CURRENCY,
-    source:
-      source === SIGNAL_OPTIONS_REPLAY_SOURCE
-        ? "SHADOW_OPTIONS_REPLAY"
-        : source === WATCHLIST_BACKTEST_SOURCE
-          ? "SHADOW_BACKTEST"
-          : "SHADOW_LEDGER",
-    deposits: accountStartingBalance,
-    withdrawals: 0,
-    dividends: 0,
-    fees: 0,
-  };
-  const rawSeedPoints = [
-    ...(selection.includeInitialPoint && (!start || initialPoint.timestamp >= start)
-      ? [initialPoint]
-      : []),
-    ...compacted.map((row) => ({
-      timestamp: row.asOf,
-      netLiquidation: toNumber(row.netLiquidation) ?? 0,
-      currency: row.currency,
-      source:
-        source === SIGNAL_OPTIONS_REPLAY_SOURCE
-          ? "SHADOW_OPTIONS_REPLAY"
-          : source === WATCHLIST_BACKTEST_SOURCE
-            ? "SHADOW_BACKTEST"
-            : "SHADOW_LEDGER",
-      deposits: 0,
-      withdrawals: 0,
-      dividends: 0,
-      fees: toNumber(row.fees) ?? 0,
-    })),
-    ...(includeLiveTerminal
-      ? [
-          {
-            timestamp: totals.updatedAt,
-            netLiquidation: totals.netLiquidation,
-            currency: SHADOW_CURRENCY,
+      }
+      try {
+        const account =
+          (await readShadowAccount()) ?? (await ensureShadowAccount());
+        const start = accountRangeStart(range);
+        const conditions: SQL<unknown>[] = [
+          eq(shadowBalanceSnapshotsTable.accountId, SHADOW_ACCOUNT_ID),
+        ];
+        if (start) {
+          conditions.push(gte(shadowBalanceSnapshotsTable.asOf, start));
+        }
+        const rows = await db
+          .select()
+          .from(shadowBalanceSnapshotsTable)
+          .where(and(...conditions))
+          .orderBy(shadowBalanceSnapshotsTable.asOf);
+        const selection = selectShadowEquityHistoryRows(rows, { source });
+        const totals = selection.includeLiveTerminal
+          ? await computeShadowEquityHistoryTerminalTotals(source)
+          : null;
+        const { fills, ordersById } = await readShadowFillsWithOrders();
+        const ledgerFills = source
+          ? fills.filter((fill) =>
+              shadowOrderMatchesSource(ordersById.get(fill.orderId), source),
+            )
+          : fills.filter((fill) =>
+              isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
+            );
+        const sourceUsesSimulationSnapshots =
+          source === SIGNAL_OPTIONS_REPLAY_SOURCE ||
+          source === WATCHLIST_BACKTEST_SOURCE;
+        const liveLedgerRows = sourceUsesSimulationSnapshots
+          ? selection.rows
+          : source
+            ? filterShadowEquityHistoryRowsToLiveLedger(selection.rows, {
+                account,
+                fills: ledgerFills,
+              })
+            : buildDefaultShadowEquityHistoryRows(selection.rows, {
+                account,
+                fills: ledgerFills,
+                terminalTotals: totals,
+              });
+        const historyRows = selection.includeInitialPoint
+          ? liveLedgerRows.filter((row) => row.source !== "initial")
+          : liveLedgerRows;
+        const compactHistoryRows = compactShadowEquityHistoryRows(historyRows);
+        const compacted = bucketShadowEquityHistoryRows(
+          compactHistoryRows,
+          shadowEquityHistoryBucketSizeMs(range, compactHistoryRows),
+        );
+        const latestCompactedAt = compacted[compacted.length - 1]?.asOf ?? null;
+        const includeLiveTerminal =
+          totals &&
+          (!latestCompactedAt ||
+            totals.updatedAt.getTime() > latestCompactedAt.getTime()) &&
+          (!start || totals.updatedAt.getTime() >= start.getTime());
+        const firstHistoryAt = compactHistoryRows[0]?.asOf ?? null;
+        const initialPointTimestamp =
+          firstHistoryAt && account.createdAt.getTime() > firstHistoryAt.getTime()
+            ? new Date(firstHistoryAt.getTime() - 1)
+            : account.createdAt;
+        const accountStartingBalance =
+          toNumber(account.startingBalance) ?? SHADOW_STARTING_BALANCE;
+        const initialPoint = {
+          timestamp: initialPointTimestamp,
+          netLiquidation: accountStartingBalance,
+          currency: SHADOW_CURRENCY,
+          source:
+            source === SIGNAL_OPTIONS_REPLAY_SOURCE
+              ? "SHADOW_OPTIONS_REPLAY"
+              : source === WATCHLIST_BACKTEST_SOURCE
+                ? "SHADOW_BACKTEST"
+                : "SHADOW_LEDGER",
+          deposits: accountStartingBalance,
+          withdrawals: 0,
+          dividends: 0,
+          fees: 0,
+        };
+        const rawSeedPoints = [
+          ...(selection.includeInitialPoint &&
+          (!start || initialPoint.timestamp >= start)
+            ? [initialPoint]
+            : []),
+          ...compacted.map((row) => ({
+            timestamp: row.asOf,
+            netLiquidation: toNumber(row.netLiquidation) ?? 0,
+            currency: row.currency,
             source:
               source === SIGNAL_OPTIONS_REPLAY_SOURCE
                 ? "SHADOW_OPTIONS_REPLAY"
@@ -6504,81 +6794,104 @@ export async function getShadowAccountEquityHistory(input: {
             deposits: 0,
             withdrawals: 0,
             dividends: 0,
-            fees: totals.fees,
-          },
-        ]
-      : []),
-  ];
-  const seedPoints = Array.from(
-    rawSeedPoints
-      .reduce((map, point) => {
-        map.set(point.timestamp.toISOString(), point);
-        return map;
-      }, new Map<string, (typeof rawSeedPoints)[number]>())
-      .values(),
-  ).sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
-  const adjustedReturns = calculateTransferAdjustedReturnSeries(seedPoints);
-  const lastPoint = seedPoints[seedPoints.length - 1] ?? null;
-  const tradeEvents = await getShadowTradeEquityEvents({
-        start,
-        end: lastPoint?.timestamp ?? new Date(),
-        sources: source ? [source] : undefined,
-      });
-  const benchmarkPercents = await resolveShadowBenchmarkPercents({
-    benchmark: null,
-    range,
-    start,
-    points: seedPoints,
-  });
+            fees: toNumber(row.fees) ?? 0,
+          })),
+          ...(includeLiveTerminal
+            ? [
+                {
+                  timestamp: totals.updatedAt,
+                  netLiquidation: totals.netLiquidation,
+                  currency: SHADOW_CURRENCY,
+                  source:
+                    source === SIGNAL_OPTIONS_REPLAY_SOURCE
+                      ? "SHADOW_OPTIONS_REPLAY"
+                      : source === WATCHLIST_BACKTEST_SOURCE
+                        ? "SHADOW_BACKTEST"
+                        : "SHADOW_LEDGER",
+                  deposits: 0,
+                  withdrawals: 0,
+                  dividends: 0,
+                  fees: totals.fees,
+                },
+              ]
+            : []),
+        ];
+        const seedPoints = Array.from(
+          rawSeedPoints
+            .reduce((map, point) => {
+              map.set(point.timestamp.toISOString(), point);
+              return map;
+            }, new Map<string, (typeof rawSeedPoints)[number]>())
+            .values(),
+        ).sort(
+          (left, right) => left.timestamp.getTime() - right.timestamp.getTime(),
+        );
+        const adjustedReturns = calculateTransferAdjustedReturnSeries(seedPoints);
+        const lastPoint = seedPoints[seedPoints.length - 1] ?? null;
+        const tradeEvents = await getShadowTradeEquityEvents({
+          start,
+          end: lastPoint?.timestamp ?? new Date(),
+          sources: source ? [source] : undefined,
+        });
+        const benchmarkPercents = await resolveShadowBenchmarkPercents({
+          benchmark: null,
+          range,
+          start,
+          points: seedPoints,
+        });
 
-  return {
-    accountId: SHADOW_ACCOUNT_ID,
-    range,
-    currency: SHADOW_CURRENCY,
-    flexConfigured: true,
-	    lastFlexRefreshAt: null,
-    benchmark: null,
-    asOf: lastPoint?.timestamp ?? null,
-    latestSnapshotAt: latestCompactedAt,
-    isStale: false,
-    staleReason: null,
-    terminalPointSource:
-      source === SIGNAL_OPTIONS_REPLAY_SOURCE
-        ? "shadow_options_replay"
-        : source === WATCHLIST_BACKTEST_SOURCE
-          ? "shadow_watchlist_backtest"
-          : "shadow_ledger",
-    liveTerminalIncluded: Boolean(includeLiveTerminal),
-    sourceScope: selection.scope,
-    selectedSnapshotSource: selection.selectedSource,
-    points: seedPoints.map((point, index) => ({
-      ...point,
-      returnPercent: adjustedReturns[index]?.returnPercent ?? 0,
-      benchmarkPercent: benchmarkPercents[index] ?? null,
-    })),
-    events: [
-      {
-        timestamp: account.createdAt,
-        type: "deposit",
-        amount: accountStartingBalance,
-        currency: SHADOW_CURRENCY,
-        source: "SHADOW_LEDGER",
-      },
-      ...tradeEvents,
-    ],
-  };
-  } catch (error) {
-    if (isTransientPostgresError(error)) {
-	      markShadowAccountDbUnavailable(error);
-	      return buildFallbackShadowAccountEquityHistory({
-	        range,
-	        benchmark: null,
-	      });
-    }
-	    throw error;
-	  }
-	    },
-	  );
+        return {
+          accountId: SHADOW_ACCOUNT_ID,
+          range,
+          currency: SHADOW_CURRENCY,
+          flexConfigured: true,
+          lastFlexRefreshAt: null,
+          benchmark: null,
+          asOf: lastPoint?.timestamp ?? null,
+          latestSnapshotAt: latestCompactedAt,
+          isStale: false,
+          staleReason: null,
+          terminalPointSource:
+            source === SIGNAL_OPTIONS_REPLAY_SOURCE
+              ? "shadow_options_replay"
+              : source === WATCHLIST_BACKTEST_SOURCE
+                ? "shadow_watchlist_backtest"
+                : "shadow_ledger",
+          liveTerminalIncluded: Boolean(includeLiveTerminal),
+          sourceScope: selection.scope,
+          selectedSnapshotSource: selection.selectedSource,
+          points: seedPoints.map((point, index) => ({
+            ...point,
+            returnPercent: adjustedReturns[index]?.returnPercent ?? 0,
+            benchmarkPercent: benchmarkPercents[index] ?? null,
+          })),
+          events: [
+            {
+              timestamp: account.createdAt,
+              type: "deposit",
+              amount: accountStartingBalance,
+              currency: SHADOW_CURRENCY,
+              source: "SHADOW_LEDGER",
+            },
+            ...tradeEvents,
+          ],
+        };
+      } catch (error) {
+        if (isTransientPostgresError(error)) {
+          markShadowAccountDbUnavailable(error);
+          return buildFallbackShadowAccountEquityHistory({
+            range,
+            benchmark: null,
+          });
+        }
+        throw error;
+      }
+    },
+    {
+      staleStrategy: "immediate",
+      ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+    },
+  );
 }
 
 function buildShadowAccountAllocationResponse(input: {
@@ -6625,28 +6938,39 @@ function buildShadowAccountAllocationResponse(input: {
 export async function getShadowAccountAllocation(input: { source?: string | null } = {}) {
   const source = normalizeShadowSourceScope(input.source);
   kickSignalOptionsAutomationMirrorRepairForRead(source);
-  return withShadowReadCache(`allocation:${shadowSourceCacheKey(source)}`, async () => {
-  try {
-    const totals = source
-      ? await computeShadowTotalsForSource(source)
-      : await ensureFreshShadowState(true);
-    const degraded = isShadowAccountDbBackoffActive();
-    const positions = degraded
-      ? []
-      : await readOpenShadowPositionsForSourceCached(source);
-    return buildShadowAccountAllocationResponse({ totals, positions, degraded });
-  } catch (error) {
-    if (isTransientPostgresError(error)) {
-      markShadowAccountDbUnavailable(error);
-      return buildShadowAccountAllocationResponse({
-        totals: buildFallbackShadowTotals(),
-        positions: [],
-        degraded: true,
-      });
-    }
-    throw error;
-  }
-  });
+  return withShadowReadCache(
+    `allocation:${shadowSourceCacheKey(source)}`,
+    async () => {
+      try {
+        const totals = source
+          ? await computeShadowTotalsForSource(source)
+          : await ensureFreshShadowState(true);
+        const degraded = isShadowAccountDbBackoffActive();
+        const positions = degraded
+          ? []
+          : await readOpenShadowPositionsForSourceCached(source);
+        return buildShadowAccountAllocationResponse({
+          totals,
+          positions,
+          degraded,
+        });
+      } catch (error) {
+        if (isTransientPostgresError(error)) {
+          markShadowAccountDbUnavailable(error);
+          return buildShadowAccountAllocationResponse({
+            totals: buildFallbackShadowTotals(),
+            positions: [],
+            degraded: true,
+          });
+        }
+        throw error;
+      }
+    },
+    {
+      staleStrategy: "immediate",
+      ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+    },
+  );
 }
 
 type ShadowAccountPositionFallbackRow = {
@@ -6770,11 +7094,10 @@ function applyShadowAccountPositionWeights<T extends ShadowAccountPositionWeight
 function shadowPositionsReadCacheKey(input: {
   assetClassFilter: "options" | "stocks" | "all" | null;
   source: ShadowSourceScope | null;
-  includeLiveQuotes: boolean;
 }): string {
   return `positions:${input.assetClassFilter || "all"}:${shadowSourceCacheKey(
     input.source,
-  )}:${input.includeLiveQuotes ? "live-quotes" : "cached-quotes"}`;
+  )}`;
 }
 
 function isShadowAccountPositionsResponseShape(
@@ -6845,7 +7168,6 @@ function filterShadowAccountPositionsResponseForAssetClass(
 function readReusableShadowPositionsResponseForAssetClass(input: {
   assetClassFilter: "options" | "stocks" | "all" | null;
   source: ShadowSourceScope | null;
-  includeLiveQuotes: boolean;
 }): ShadowAccountPositionsResponseShape | null {
   if (!input.assetClassFilter || input.assetClassFilter === "all") {
     return null;
@@ -6856,7 +7178,6 @@ function readReusableShadowPositionsResponseForAssetClass(input: {
     shadowPositionsReadCacheKey({
       assetClassFilter: "all",
       source: input.source,
-      includeLiveQuotes: input.includeLiveQuotes,
     }),
   );
   if (!cached || cached.staleExpiresAt <= now) {
@@ -6879,6 +7200,16 @@ function readReusableShadowPositionsResponseForAssetClass(input: {
         cachedAt: cached.cachedAt,
         now,
       });
+  recordShadowReadDiagnostic({
+    key: shadowPositionsReadCacheKey({
+      assetClassFilter: input.assetClassFilter,
+      source: input.source,
+    }),
+    status: "cache_hit",
+    startedAt: now,
+    servedStale: !cacheIsFresh,
+    cacheAgeMs: now - cached.cachedAt,
+  });
   return filterShadowAccountPositionsResponseForAssetClass(
     baseResponse,
     input.assetClassFilter,
@@ -6896,7 +7227,6 @@ export async function getShadowAccountPositions(input: {
   const reusableFiltered = readReusableShadowPositionsResponseForAssetClass({
     assetClassFilter,
     source,
-    includeLiveQuotes,
   });
   if (reusableFiltered) {
     return reusableFiltered;
@@ -6905,7 +7235,6 @@ export async function getShadowAccountPositions(input: {
     shadowPositionsReadCacheKey({
       assetClassFilter,
       source,
-      includeLiveQuotes,
     }),
     async () => {
       kickSignalOptionsAutomationMirrorRepairForRead(source);
@@ -7256,7 +7585,8 @@ export async function getShadowAccountPositions(input: {
     },
     {
       allowStale: shadowReadCacheValueHasRows,
-      staleStrategy: "immediate",
+      staleStrategy: "never",
+      ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
     },
   );
 }
@@ -7670,6 +8000,39 @@ export async function getShadowAccountPositionsAtDate(input: {
   };
 }
 
+function shadowClosedTradesDateCachePart(value: Date | null | undefined): string {
+  return value instanceof Date && Number.isFinite(value.getTime())
+    ? value.toISOString()
+    : "";
+}
+
+function shadowClosedTradesStringCachePart(value: string | null | undefined): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function shadowClosedTradesSymbolCachePart(value: string | null | undefined): string {
+  return typeof value === "string" ? normalizeSymbol(value).toUpperCase() : "";
+}
+
+function shadowClosedTradesReadCacheKey(input: {
+  source: ShadowSourceScope | null;
+  from?: Date | null;
+  to?: Date | null;
+  symbol?: string | null;
+  assetClass?: string | null;
+  pnlSign?: string | null;
+}): string {
+  return [
+    "closed-trades",
+    shadowSourceCacheKey(input.source),
+    shadowClosedTradesDateCachePart(input.from),
+    shadowClosedTradesDateCachePart(input.to),
+    shadowClosedTradesSymbolCachePart(input.symbol),
+    shadowClosedTradesStringCachePart(input.assetClass),
+    shadowClosedTradesStringCachePart(input.pnlSign),
+  ].join(":");
+}
+
 export async function getShadowAccountClosedTrades(input: {
   from?: Date | null;
   to?: Date | null;
@@ -7679,111 +8042,148 @@ export async function getShadowAccountClosedTrades(input: {
   source?: string | null;
 }) {
   const source = normalizeShadowSourceScope(input.source);
-  if (isShadowAccountDbBackoffActive()) {
-    return {
-      accountId: SHADOW_ACCOUNT_ID,
-      currency: SHADOW_CURRENCY,
-      degraded: true,
-      reason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
-      trades: [],
-      summary: {
-        count: 0,
-        winners: 0,
-        losers: 0,
-        realizedPnl: 0,
-        commissions: 0,
-      },
-      updatedAt: new Date(),
-    };
-  }
-  try {
-  await ensureShadowAccount();
-  const conditions: SQL<unknown>[] = [
-    eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
-  ];
-  if (input.to) conditions.push(lte(shadowFillsTable.occurredAt, input.to));
-  const rawFills = await db
-    .select()
-    .from(shadowFillsTable)
-    .where(and(...conditions))
-    .orderBy(shadowFillsTable.occurredAt);
-  const ordersById = await readShadowOrdersByFillOrderId(rawFills);
-  const fills = source
-    ? rawFills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
-    : rawFills.filter((fill) =>
-        isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
-      );
-  const { roundTrips } = buildShadowAnalysisRoundTrips(
-    fills.map((fill) => shadowAnalysisTradeEvent(fill, ordersById.get(fill.orderId))),
-  );
-  const trades = roundTrips
-    .filter((trade) => {
-      const closeDate = new Date(trade.closeDate);
-      if (input.from && closeDate < input.from) return false;
-      if (input.to && closeDate > input.to) return false;
-      if (
-        input.symbol &&
-        trade.symbol !== normalizeSymbol(input.symbol).toUpperCase()
-      ) {
-        return false;
+  return withShadowReadCache(
+    shadowClosedTradesReadCacheKey({
+      source,
+      from: input.from,
+      to: input.to,
+      symbol: input.symbol,
+      assetClass: input.assetClass,
+      pnlSign: input.pnlSign,
+    }),
+    async () => {
+      if (isShadowAccountDbBackoffActive()) {
+        return {
+          accountId: SHADOW_ACCOUNT_ID,
+          currency: SHADOW_CURRENCY,
+          degraded: true,
+          reason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
+          trades: [],
+          summary: {
+            count: 0,
+            winners: 0,
+            losers: 0,
+            realizedPnl: 0,
+            commissions: 0,
+          },
+          updatedAt: new Date(),
+        };
       }
-      return true;
-    })
-    .map(shadowRoundTripToClosedTrade)
-    .filter((trade) => {
-      if (
-        input.assetClass &&
-        input.assetClass !== "all" &&
-        trade.assetClass.toLowerCase() !== input.assetClass.toLowerCase()
-      ) {
-        return false;
+      try {
+        await ensureShadowAccount();
+        const conditions: SQL<unknown>[] = [
+          eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID),
+        ];
+        if (input.to) {
+          conditions.push(lte(shadowFillsTable.occurredAt, input.to));
+        }
+        const rawFills = await db
+          .select()
+          .from(shadowFillsTable)
+          .where(and(...conditions))
+          .orderBy(shadowFillsTable.occurredAt);
+        const ordersById = await readShadowOrdersByFillOrderId(rawFills);
+        const fills = source
+          ? rawFills.filter((fill) =>
+              shadowOrderMatchesSource(ordersById.get(fill.orderId), source),
+            )
+          : rawFills.filter((fill) =>
+              isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
+            );
+        const { roundTrips } = buildShadowAnalysisRoundTrips(
+          fills.map((fill) =>
+            shadowAnalysisTradeEvent(fill, ordersById.get(fill.orderId)),
+          ),
+        );
+        const trades = roundTrips
+          .filter((trade) => {
+            const closeDate = new Date(trade.closeDate);
+            if (input.from && closeDate < input.from) return false;
+            if (input.to && closeDate > input.to) return false;
+            if (
+              input.symbol &&
+              trade.symbol !== normalizeSymbol(input.symbol).toUpperCase()
+            ) {
+              return false;
+            }
+            return true;
+          })
+          .map(shadowRoundTripToClosedTrade)
+          .filter((trade) => {
+            if (
+              input.assetClass &&
+              input.assetClass !== "all" &&
+              trade.assetClass.toLowerCase() !== input.assetClass.toLowerCase()
+            ) {
+              return false;
+            }
+            if (input.pnlSign === "winners" && (trade.realizedPnl ?? 0) <= 0) {
+              return false;
+            }
+            if (input.pnlSign === "losers" && (trade.realizedPnl ?? 0) >= 0) {
+              return false;
+            }
+            return true;
+          })
+          .sort((left, right) => {
+            const leftTime = left.closeDate
+              ? new Date(left.closeDate).getTime()
+              : 0;
+            const rightTime = right.closeDate
+              ? new Date(right.closeDate).getTime()
+              : 0;
+            return rightTime - leftTime;
+          });
+        return {
+          accountId: SHADOW_ACCOUNT_ID,
+          currency: SHADOW_CURRENCY,
+          degraded: false,
+          reason: null,
+          trades,
+          summary: {
+            count: trades.length,
+            winners: trades.filter((trade) => (trade.realizedPnl ?? 0) > 0)
+              .length,
+            losers: trades.filter((trade) => (trade.realizedPnl ?? 0) < 0)
+              .length,
+            realizedPnl: trades.reduce(
+              (sum, trade) => sum + (trade.realizedPnl ?? 0),
+              0,
+            ),
+            commissions: trades.reduce(
+              (sum, trade) => sum + (trade.commissions ?? 0),
+              0,
+            ),
+          },
+          updatedAt: new Date(),
+        };
+      } catch (error) {
+        if (isTransientPostgresError(error)) {
+          markShadowAccountDbUnavailable(error);
+          return {
+            accountId: SHADOW_ACCOUNT_ID,
+            currency: SHADOW_CURRENCY,
+            degraded: true,
+            reason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
+            trades: [],
+            summary: {
+              count: 0,
+              winners: 0,
+              losers: 0,
+              realizedPnl: 0,
+              commissions: 0,
+            },
+            updatedAt: new Date(),
+          };
+        }
+        throw error;
       }
-      if (input.pnlSign === "winners" && (trade.realizedPnl ?? 0) <= 0) return false;
-      if (input.pnlSign === "losers" && (trade.realizedPnl ?? 0) >= 0) return false;
-      return true;
-    })
-    .sort((left, right) => {
-      const leftTime = left.closeDate ? new Date(left.closeDate).getTime() : 0;
-      const rightTime = right.closeDate ? new Date(right.closeDate).getTime() : 0;
-      return rightTime - leftTime;
-    })
-    .slice(0, 500);
-  return {
-    accountId: SHADOW_ACCOUNT_ID,
-    currency: SHADOW_CURRENCY,
-    degraded: false,
-    reason: null,
-    trades,
-    summary: {
-      count: trades.length,
-      winners: trades.filter((trade) => (trade.realizedPnl ?? 0) > 0).length,
-      losers: trades.filter((trade) => (trade.realizedPnl ?? 0) < 0).length,
-      realizedPnl: trades.reduce((sum, trade) => sum + (trade.realizedPnl ?? 0), 0),
-      commissions: trades.reduce((sum, trade) => sum + (trade.commissions ?? 0), 0),
     },
-    updatedAt: new Date(),
-  };
-  } catch (error) {
-    if (isTransientPostgresError(error)) {
-      markShadowAccountDbUnavailable(error);
-      return {
-        accountId: SHADOW_ACCOUNT_ID,
-        currency: SHADOW_CURRENCY,
-        degraded: true,
-        reason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
-        trades: [],
-        summary: {
-          count: 0,
-          winners: 0,
-          losers: 0,
-          realizedPnl: 0,
-          commissions: 0,
-        },
-        updatedAt: new Date(),
-      };
-    }
-    throw error;
-  }
+    {
+      staleStrategy: "immediate",
+      ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+    },
+  );
 }
 
 function fillRowToClosedTrade(fill: ShadowFillRow, order?: ShadowOrderRow) {
@@ -8562,66 +8962,72 @@ export async function getShadowAccountOrders(input: {
 }) {
   const tab = normalizeOrderTab(input.tab);
   const source = normalizeShadowSourceScope(input.source);
-  return withShadowReadCache(`orders:${tab}:${shadowSourceCacheKey(source)}`, async () => {
-  if (isShadowAccountDbBackoffActive()) {
-    return {
-      accountId: SHADOW_ACCOUNT_ID,
-      tab,
-      currency: SHADOW_CURRENCY,
-      degraded: true,
-      reason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
-      stale: false,
-      debug: null,
-      orders: [],
-      updatedAt: new Date(),
-    };
-  }
-  try {
-  await ensureShadowAccount();
-  const terminalStatuses = ["filled", "canceled", "rejected", "expired"];
-  const orders = await db
-    .select()
-    .from(shadowOrdersTable)
-    .where(eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID))
-    .orderBy(desc(shadowOrdersTable.placedAt))
-    .limit(SHADOW_ORDER_HISTORY_LIMIT);
-  const sourceOrders = source
-    ? orders.filter((order) => shadowOrderMatchesSource(order, source))
-    : orders.filter(isLiveShadowOrder);
-  const filtered = sourceOrders.filter((order) =>
-    tab === "working"
-      ? !terminalStatuses.includes(order.status)
-      : terminalStatuses.includes(order.status),
-  );
-  return {
-    accountId: SHADOW_ACCOUNT_ID,
-    tab,
-    currency: SHADOW_CURRENCY,
-    degraded: false,
-    reason: null,
-    stale: false,
-    debug: null,
-    orders: filtered.map(orderRowToResponse),
-    updatedAt: new Date(),
-  };
-  } catch (error) {
-    if (isTransientPostgresError(error)) {
-      markShadowAccountDbUnavailable(error);
-      return {
-        accountId: SHADOW_ACCOUNT_ID,
-        tab,
-        currency: SHADOW_CURRENCY,
-        degraded: true,
-        reason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
-        stale: false,
-        debug: null,
-        orders: [],
-        updatedAt: new Date(),
-      };
-    }
-    throw error;
-  }
-  },
+  return withShadowReadCache(
+    `orders:${tab}:${shadowSourceCacheKey(source)}`,
+    async () => {
+      if (isShadowAccountDbBackoffActive()) {
+        return {
+          accountId: SHADOW_ACCOUNT_ID,
+          tab,
+          currency: SHADOW_CURRENCY,
+          degraded: true,
+          reason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
+          stale: false,
+          debug: null,
+          orders: [],
+          updatedAt: new Date(),
+        };
+      }
+      try {
+        await ensureShadowAccount();
+        const terminalStatuses = ["filled", "canceled", "rejected", "expired"];
+        const orders = await db
+          .select()
+          .from(shadowOrdersTable)
+          .where(eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID))
+          .orderBy(desc(shadowOrdersTable.placedAt))
+          .limit(SHADOW_ORDER_HISTORY_LIMIT);
+        const sourceOrders = source
+          ? orders.filter((order) => shadowOrderMatchesSource(order, source))
+          : orders.filter(isLiveShadowOrder);
+        const filtered = sourceOrders.filter((order) =>
+          tab === "working"
+            ? !terminalStatuses.includes(order.status)
+            : terminalStatuses.includes(order.status),
+        );
+        return {
+          accountId: SHADOW_ACCOUNT_ID,
+          tab,
+          currency: SHADOW_CURRENCY,
+          degraded: false,
+          reason: null,
+          stale: false,
+          debug: null,
+          orders: filtered.map(orderRowToResponse),
+          updatedAt: new Date(),
+        };
+      } catch (error) {
+        if (isTransientPostgresError(error)) {
+          markShadowAccountDbUnavailable(error);
+          return {
+            accountId: SHADOW_ACCOUNT_ID,
+            tab,
+            currency: SHADOW_CURRENCY,
+            degraded: true,
+            reason: SHADOW_ACCOUNT_DB_FALLBACK_REASON,
+            stale: false,
+            debug: null,
+            orders: [],
+            updatedAt: new Date(),
+          };
+        }
+        throw error;
+      }
+    },
+    {
+      staleStrategy: "immediate",
+      ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+    },
   );
 }
 
@@ -8633,17 +9039,19 @@ export async function getShadowAccountRisk(input: {
   detail?: "full" | "fast";
 } = {}) {
   const source = normalizeShadowSourceScope(input.source);
-  const detail = input.detail === "fast" ? "fast" : "full";
+  const detail = input.detail === "full" ? "full" : "fast";
   const hasInjectedInputs = Boolean(
     input.totals || input.positionsResponse || input.closedTrades,
   );
   if (!hasInjectedInputs) {
-    const cacheKey =
-      detail === "fast"
-        ? `risk:${shadowSourceCacheKey(source)}:fast`
-        : `risk:${shadowSourceCacheKey(source)}`;
-    return withShadowReadCache(cacheKey, () =>
-      buildShadowAccountRisk({ source, detail }),
+    const cacheKey = `risk:${shadowSourceCacheKey(source)}:${detail}`;
+    return withShadowReadCache(
+      cacheKey,
+      () => buildShadowAccountRisk({ source, detail }),
+      {
+        staleStrategy: "immediate",
+        ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+      },
     );
   }
   return buildShadowAccountRisk({ ...input, source, detail });
@@ -8658,225 +9066,258 @@ async function buildShadowAccountRisk(input: {
 }) {
   const source = input.source ?? null;
   const fastDetail = input.detail === "fast";
-  const positionsResponse =
-    input.positionsResponse ??
-    (await getShadowAccountPositions({ source, liveQuotes: false }));
-  const totals =
-    input.totals ??
-    (input.positionsResponse
-      ? shadowTotalsFromPositionsResponse({
-          positionsResponse: input.positionsResponse,
-          startingBalance: await shadowStartingBalanceForFastSummary(),
-        })
-      : source
-        ? await computeShadowTotalsForSource(source)
-        : await ensureFreshShadowState(true));
-  const closedTrades =
-    input.closedTrades ?? (await getShadowAccountClosedTrades({ source }));
-  const degraded = Boolean(
-    isShadowAccountDbBackoffActive() ||
-      positionsResponse.degraded ||
-      closedTrades.degraded,
-  );
-  const positionRows = positionsResponse.positions.map((position) => ({
-    symbol: position.symbol,
-    marketValue: position.marketValue,
-    weightPercent: position.weightPercent,
-    unrealizedPnl: position.unrealizedPnl,
-    dayChange: position.dayChange,
-    sector: position.sector,
-  }));
-  const realizedRows = closedTrades.trades.map((trade) => ({
-    symbol: trade.symbol,
-    marketValue: trade.realizedPnl ?? 0,
-    weightPercent: null,
-    unrealizedPnl: trade.realizedPnl ?? 0,
-    sector: "Shadow Holdings",
-  }));
-  const notionalPositions = positionsResponse.positions.map((position) =>
-    shadowPositionForNotionalRisk(position),
-  );
-  const underlyingPrices =
-    shadowUnderlyingPricesFromPositionRows(positionsResponse.positions);
-  const missingUnderlyingPrice = notionalPositions.some((position) => {
-    const underlying = normalizeSymbol(
-      position.optionContract?.underlying ?? "",
-    ).toUpperCase();
-    return (
-      position.assetClass === "option" &&
-      Boolean(underlying) &&
-      !underlyingPrices.has(underlying)
+  const diagnosticsKey = `risk-build:${shadowSourceCacheKey(source)}:${
+    fastDetail ? "fast" : "full"
+  }:${input.totals || input.positionsResponse || input.closedTrades ? "injected" : "self"}`;
+  const diagnosticsStartedAt = Date.now();
+  try {
+    const positionsResponse =
+      input.positionsResponse ??
+      (await getShadowAccountPositions({ source, liveQuotes: false }));
+    const totals =
+      input.totals ??
+      (input.positionsResponse
+        ? shadowTotalsFromPositionsResponse({
+            positionsResponse: input.positionsResponse,
+            startingBalance: await shadowStartingBalanceForFastSummary(),
+          })
+        : source
+          ? await computeShadowTotalsForSource(source)
+          : await ensureFreshShadowState(true));
+    const closedTrades =
+      input.closedTrades ?? (await getShadowAccountClosedTrades({ source }));
+    const degraded = Boolean(
+      isShadowAccountDbBackoffActive() ||
+        positionsResponse.degraded ||
+        closedTrades.degraded,
     );
-  });
-  if (missingUnderlyingPrice && !fastDetail) {
-    for (const [symbol, price] of await hydrateShadowOptionUnderlyingPrices(
-      notionalPositions,
-    )) {
-      underlyingPrices.set(symbol, price);
+    const positionRows = positionsResponse.positions.map((position) => ({
+      symbol: position.symbol,
+      marketValue: position.marketValue,
+      weightPercent: position.weightPercent,
+      unrealizedPnl: position.unrealizedPnl,
+      dayChange: position.dayChange,
+      sector: position.sector,
+    }));
+    const realizedRows = closedTrades.trades.map((trade) => ({
+      symbol: trade.symbol,
+      marketValue: trade.realizedPnl ?? 0,
+      weightPercent: null,
+      unrealizedPnl: trade.realizedPnl ?? 0,
+      sector: "Shadow Holdings",
+    }));
+    const notionalPositions = positionsResponse.positions.map((position) =>
+      shadowPositionForNotionalRisk(position),
+    );
+    const underlyingPrices =
+      shadowUnderlyingPricesFromPositionRows(positionsResponse.positions);
+    const missingUnderlyingPrice = notionalPositions.some((position) => {
+      const underlying = normalizeSymbol(
+        position.optionContract?.underlying ?? "",
+      ).toUpperCase();
+      return (
+        position.assetClass === "option" &&
+        Boolean(underlying) &&
+        !underlyingPrices.has(underlying)
+      );
+    });
+    if (missingUnderlyingPrice && !fastDetail) {
+      for (const [symbol, price] of await hydrateShadowOptionUnderlyingPrices(
+        notionalPositions,
+      )) {
+        underlyingPrices.set(symbol, price);
+      }
     }
-  }
-  const cachedGreekQuoteByProviderContractId = readCachedShadowOptionGreekQuotes(
-    positionsResponse.positions,
-  );
-  const liveGreekQuoteByProviderContractId = fastDetail
-    ? new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>()
-    : await fetchShadowOptionDayChangeQuotes(
-        positionsResponse.positions,
-        {
-          intent: "account-monitor-live",
-          ownerPrefix: "shadow-risk-greek",
-          taskMaxWaitMs: SHADOW_GREEK_QUOTE_TASK_MAX_WAIT_MS,
-          requiresGreeks: true,
-        },
-      ).catch(() => new Map());
-  const greekQuoteByProviderContractId = mergeShadowGreekQuoteMaps(
-    cachedGreekQuoteByProviderContractId,
-    liveGreekQuoteByProviderContractId,
-  );
-  const greekByPositionId = shadowGreekSnapshotsFromPositionRows(
-    positionsResponse.positions,
-    notionalPositions,
-    greekQuoteByProviderContractId,
-    underlyingPrices,
-  );
-  const notional = buildNotionalExposure(notionalPositions, {
-    nav: totals.netLiquidation,
-    greekByPositionId,
-    underlyingPrices,
-  });
-  const greekScenarios = fastDetail
-    ? buildDeferredShadowGreekScenarios()
-    : await resolveAccountGreekScenarios({
-        positions: notionalPositions,
-        greekByPositionId,
-        underlyingPrices,
-      });
-  const totalOptionPositions = positionsResponse.positions.filter(
-    (position) => position.assetClass === "Options",
-  ).length;
-  const matchedOptionPositions = Array.from(greekByPositionId.values()).filter(
-    (greek) => greek.matched,
-  ).length;
-  const shadowGreekWarning =
-    totalOptionPositions > matchedOptionPositions
-      ? `Matched ${matchedOptionPositions} of ${totalOptionPositions} shadow option positions to option greek snapshots.`
-      : null;
-  const expiryConcentration = buildShadowExpiryConcentration(
-    positionsResponse.positions,
-  );
-  const riskRecommendations = buildAccountRiskRecommendations({
-    positions: notionalPositions,
-    nav: totals.netLiquidation,
-    greekByPositionId,
-    greekScenarios,
-    notional,
-    expiryConcentration,
-  });
+    const cachedGreekQuoteByProviderContractId =
+      readCachedShadowOptionGreekQuotes(positionsResponse.positions);
+    const liveGreekQuoteByProviderContractId = fastDetail
+      ? new Map<string, Partial<QuoteSnapshot> | Record<string, unknown>>()
+      : await fetchShadowOptionDayChangeQuotes(
+          positionsResponse.positions,
+          {
+            intent: "account-monitor-live",
+            ownerPrefix: "shadow-risk-greek",
+            taskMaxWaitMs: SHADOW_GREEK_QUOTE_TASK_MAX_WAIT_MS,
+            requiresGreeks: true,
+          },
+        ).catch(() => new Map());
+    const greekQuoteByProviderContractId = mergeShadowGreekQuoteMaps(
+      cachedGreekQuoteByProviderContractId,
+      liveGreekQuoteByProviderContractId,
+    );
+    const greekByPositionId = shadowGreekSnapshotsFromPositionRows(
+      positionsResponse.positions,
+      notionalPositions,
+      greekQuoteByProviderContractId,
+      underlyingPrices,
+    );
+    const notional = fastDetail
+      ? buildNotionalExposure(notionalPositions, {
+          nav: totals.netLiquidation,
+          greekByPositionId,
+          underlyingPrices,
+        })
+      : (
+          await resolveAccountPortfolioRisk({
+            positions: notionalPositions,
+            nav: totals.netLiquidation,
+            greekByPositionId,
+            underlyingPrices,
+          })
+        ).notional;
+    const greekScenarios = fastDetail
+      ? buildDeferredShadowGreekScenarios()
+      : await resolveAccountGreekScenarios({
+          positions: notionalPositions,
+          greekByPositionId,
+          underlyingPrices,
+        });
+    const totalOptionPositions = positionsResponse.positions.filter(
+      (position) => position.assetClass === "Options",
+    ).length;
+    const matchedOptionPositions = Array.from(greekByPositionId.values()).filter(
+      (greek) => greek.matched,
+    ).length;
+    const shadowGreekWarning =
+      totalOptionPositions > matchedOptionPositions
+        ? `Matched ${matchedOptionPositions} of ${totalOptionPositions} shadow option positions to option greek snapshots.`
+        : null;
+    const expiryConcentration = buildShadowExpiryConcentration(
+      positionsResponse.positions,
+    );
+    const riskRecommendations = buildAccountRiskRecommendations({
+      positions: notionalPositions,
+      nav: totals.netLiquidation,
+      greekByPositionId,
+      greekScenarios,
+      notional,
+      expiryConcentration,
+    });
 
-  return {
-    accountId: SHADOW_ACCOUNT_ID,
-    currency: SHADOW_CURRENCY,
-    degraded,
-    reason: degraded ? SHADOW_ACCOUNT_DB_FALLBACK_REASON : null,
-    concentration: {
-      topPositions: positionRows.slice(0, 5),
-      sectors: [
-        {
-          sector: "Shadow Holdings",
-          value: totals.marketValue,
-          weightPercent: weightPercent(totals.marketValue, totals.netLiquidation),
+    const response = {
+      accountId: SHADOW_ACCOUNT_ID,
+      currency: SHADOW_CURRENCY,
+      degraded,
+      reason: degraded ? SHADOW_ACCOUNT_DB_FALLBACK_REASON : null,
+      concentration: {
+        topPositions: positionRows.slice(0, 5),
+        sectors: [
+          {
+            sector: "Shadow Holdings",
+            value: totals.marketValue,
+            weightPercent: weightPercent(
+              totals.marketValue,
+              totals.netLiquidation,
+            ),
+          },
+        ],
+      },
+      winnersLosers: {
+        todayWinners: positionRows
+          .filter((row) => (row.dayChange ?? 0) > 0)
+          .sort((a, b) => (b.dayChange ?? 0) - (a.dayChange ?? 0))
+          .slice(0, 5),
+        todayLosers: positionRows
+          .filter((row) => (row.dayChange ?? 0) < 0)
+          .sort((a, b) => (a.dayChange ?? 0) - (b.dayChange ?? 0))
+          .slice(0, 5),
+        allTimeWinners: realizedRows
+          .filter((row) => row.unrealizedPnl > 0)
+          .sort((a, b) => b.unrealizedPnl - a.unrealizedPnl)
+          .slice(0, 5),
+        allTimeLosers: realizedRows
+          .filter((row) => row.unrealizedPnl < 0)
+          .sort((a, b) => a.unrealizedPnl - b.unrealizedPnl)
+          .slice(0, 5),
+      },
+      margin: {
+        leverageRatio: totals.netLiquidation
+          ? totals.marketValue / totals.netLiquidation
+          : 0,
+        marginUsed: 0,
+        marginAvailable: totals.cash,
+        maintenanceMargin: 0,
+        maintenanceCushionPercent: null,
+        dayTradingBuyingPower: totals.cash,
+        sma: null,
+        regTInitialMargin: 0,
+        pdtDayTradeCount: null,
+        providerFields: {
+          marginUsed: "Shadow cash account",
+          marginAvailable: "Cash",
+          maintenanceMargin: "None",
+          maintenanceCushionPercent: "Cash account",
+          dayTradingBuyingPower: "Cash",
+          sma: "N/A",
+          regTInitialMargin: "None",
         },
-      ],
-    },
-    winnersLosers: {
-      todayWinners: positionRows
-        .filter((row) => (row.dayChange ?? 0) > 0)
-        .sort((a, b) => (b.dayChange ?? 0) - (a.dayChange ?? 0))
-        .slice(0, 5),
-      todayLosers: positionRows
-        .filter((row) => (row.dayChange ?? 0) < 0)
-        .sort((a, b) => (a.dayChange ?? 0) - (b.dayChange ?? 0))
-        .slice(0, 5),
-      allTimeWinners: realizedRows
-        .filter((row) => row.unrealizedPnl > 0)
-        .sort((a, b) => b.unrealizedPnl - a.unrealizedPnl)
-        .slice(0, 5),
-      allTimeLosers: realizedRows
-        .filter((row) => row.unrealizedPnl < 0)
-        .sort((a, b) => a.unrealizedPnl - b.unrealizedPnl)
-        .slice(0, 5),
-    },
-    margin: {
-      leverageRatio: totals.netLiquidation ? totals.marketValue / totals.netLiquidation : 0,
-      marginUsed: 0,
-      marginAvailable: totals.cash,
-      maintenanceMargin: 0,
-      maintenanceCushionPercent: null,
-      dayTradingBuyingPower: totals.cash,
-      sma: null,
-      regTInitialMargin: 0,
-      pdtDayTradeCount: null,
-      providerFields: {
-        marginUsed: "Shadow cash account",
-        marginAvailable: "Cash",
-        maintenanceMargin: "None",
-        maintenanceCushionPercent: "Cash account",
-        dayTradingBuyingPower: "Cash",
-        sma: "N/A",
-        regTInitialMargin: "None",
       },
-    },
-    greeks: {
-      delta: sumNullableValues(
-        positionsResponse.positions.map(
-          (position) => greekByPositionId.get(position.id)?.delta,
+      greeks: {
+        delta: sumNullableValues(
+          positionsResponse.positions.map(
+            (position) => greekByPositionId.get(position.id)?.delta,
+          ),
         ),
-      ),
-      betaWeightedDelta: sumNullableValues(
-        positionsResponse.positions.map(
-          (position) => greekByPositionId.get(position.id)?.betaWeightedDelta,
+        betaWeightedDelta: sumNullableValues(
+          positionsResponse.positions.map(
+            (position) => greekByPositionId.get(position.id)?.betaWeightedDelta,
+          ),
         ),
-      ),
-      gamma: sumNullableValues(
-        positionsResponse.positions.map(
-          (position) => greekByPositionId.get(position.id)?.gamma,
+        gamma: sumNullableValues(
+          positionsResponse.positions.map(
+            (position) => greekByPositionId.get(position.id)?.gamma,
+          ),
         ),
-      ),
-      theta: sumNullableValues(
-        positionsResponse.positions.map(
-          (position) => greekByPositionId.get(position.id)?.theta,
+        theta: sumNullableValues(
+          positionsResponse.positions.map(
+            (position) => greekByPositionId.get(position.id)?.theta,
+          ),
         ),
-      ),
-      vega: sumNullableValues(
-        positionsResponse.positions.map(
-          (position) => greekByPositionId.get(position.id)?.vega,
+        vega: sumNullableValues(
+          positionsResponse.positions.map(
+            (position) => greekByPositionId.get(position.id)?.vega,
+          ),
         ),
-      ),
-      source: "SHADOW_OPTION_QUOTE",
-      coverage: {
-        optionPositions: totalOptionPositions,
-        matchedOptionPositions,
+        source: "SHADOW_OPTION_QUOTE",
+        coverage: {
+          optionPositions: totalOptionPositions,
+          matchedOptionPositions,
+        },
+        perUnderlying: positionsResponse.positions.map((position) => ({
+          underlying: position.symbol,
+          exposure: position.marketValue,
+          delta: greekByPositionId.get(position.id)?.delta ?? null,
+          betaWeightedDelta:
+            greekByPositionId.get(position.id)?.betaWeightedDelta ?? null,
+          gamma: greekByPositionId.get(position.id)?.gamma ?? null,
+          theta: greekByPositionId.get(position.id)?.theta ?? null,
+          vega: greekByPositionId.get(position.id)?.vega ?? null,
+          positionCount: 1,
+          optionPositionCount: position.assetClass === "Options" ? 1 : 0,
+        })),
+        warning: shadowGreekWarning,
       },
-      perUnderlying: positionsResponse.positions.map((position) => ({
-        underlying: position.symbol,
-        exposure: position.marketValue,
-        delta: greekByPositionId.get(position.id)?.delta ?? null,
-        betaWeightedDelta:
-          greekByPositionId.get(position.id)?.betaWeightedDelta ?? null,
-        gamma: greekByPositionId.get(position.id)?.gamma ?? null,
-        theta: greekByPositionId.get(position.id)?.theta ?? null,
-        vega: greekByPositionId.get(position.id)?.vega ?? null,
-        positionCount: 1,
-        optionPositionCount: position.assetClass === "Options" ? 1 : 0,
-      })),
-      warning: shadowGreekWarning,
-    },
-    notional,
-    greekScenarios,
-    riskRecommendations,
-    expiryConcentration,
-    updatedAt: totals.updatedAt,
-  };
+      notional,
+      greekScenarios,
+      riskRecommendations,
+      expiryConcentration,
+      updatedAt: totals.updatedAt,
+    };
+    recordShadowReadDiagnostic({
+      key: diagnosticsKey,
+      status: "operation",
+      startedAt: diagnosticsStartedAt,
+      servedStale: shadowReadValueIsMarkedStale(response),
+    });
+    return response;
+  } catch (error) {
+    recordShadowReadDiagnostic({
+      key: diagnosticsKey,
+      status: "error",
+      startedAt: diagnosticsStartedAt,
+    });
+    throw error;
+  }
 }
 
 function buildDeferredShadowGreekScenarios(): AccountGreekScenarios {
@@ -9310,73 +9751,80 @@ export async function getShadowAccountCashActivity(input: { source?: string | nu
   if (isShadowAccountDbBackoffActive()) {
     return buildFallback();
   }
-  return withShadowReadCache(`cash-activity:${shadowSourceCacheKey(source)}`, async () => {
-    try {
-      const account = await ensureShadowAccount();
-      const rawFills = await db
-        .select()
-        .from(shadowFillsTable)
-        .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID))
-        .orderBy(desc(shadowFillsTable.occurredAt))
-        .limit(200);
-      const ordersById = await readShadowOrdersByFillOrderId(rawFills);
-      const fills = source
-        ? rawFills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
-        : rawFills.filter((fill) =>
-            isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
-          );
-      const feesYtd = fills.reduce((sum, fill) => sum + Math.abs(toNumber(fill.fees) ?? 0), 0);
-      const totals = source
-        ? await computeShadowTotalsForSource(source)
-        : await computeShadowTotals();
-      return {
-        accountId: SHADOW_ACCOUNT_ID,
-        currency: SHADOW_CURRENCY,
-        settledCash: totals.cash,
-        unsettledCash: 0,
-        totalCash: totals.cash,
-        dividendsMonth: 0,
-        dividendsYtd: 0,
-        interestPaidEarnedYtd: 0,
-        feesYtd,
-        activities: [
-          {
-            id: "shadow-initial-deposit",
-            accountId: SHADOW_ACCOUNT_ID,
-            date: account.createdAt,
-            type: "Deposit",
-            description: "Shadow account starting balance",
-            amount: SHADOW_STARTING_BALANCE,
-            currency: SHADOW_CURRENCY,
-            source: "SHADOW_LEDGER",
-          },
-          ...fills.map((fill) => {
-            const metadata = shadowSourceMetadata(ordersById.get(fill.orderId));
-            return {
-              id: fill.id,
+  return withShadowReadCache(
+    `cash-activity:${shadowSourceCacheKey(source)}`,
+    async () => {
+      try {
+        const account = await ensureShadowAccount();
+        const rawFills = await db
+          .select()
+          .from(shadowFillsTable)
+          .where(eq(shadowFillsTable.accountId, SHADOW_ACCOUNT_ID))
+          .orderBy(desc(shadowFillsTable.occurredAt))
+          .limit(200);
+        const ordersById = await readShadowOrdersByFillOrderId(rawFills);
+        const fills = source
+          ? rawFills.filter((fill) => shadowOrderMatchesSource(ordersById.get(fill.orderId), source))
+          : rawFills.filter((fill) =>
+              isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
+            );
+        const feesYtd = fills.reduce((sum, fill) => sum + Math.abs(toNumber(fill.fees) ?? 0), 0);
+        const totals = source
+          ? await computeShadowTotalsForSource(source)
+          : await computeShadowTotals();
+        return {
+          accountId: SHADOW_ACCOUNT_ID,
+          currency: SHADOW_CURRENCY,
+          settledCash: totals.cash,
+          unsettledCash: 0,
+          totalCash: totals.cash,
+          dividendsMonth: 0,
+          dividendsYtd: 0,
+          interestPaidEarnedYtd: 0,
+          feesYtd,
+          activities: [
+            {
+              id: "shadow-initial-deposit",
               accountId: SHADOW_ACCOUNT_ID,
-              date: fill.occurredAt,
-              type: "Trade",
-              description: `${fill.side.toUpperCase()} ${toNumber(fill.quantity) ?? 0} ${fill.symbol}`,
-              amount: toNumber(fill.cashDelta) ?? 0,
+              date: account.createdAt,
+              type: "Deposit",
+              description: "Shadow account starting balance",
+              amount: SHADOW_STARTING_BALANCE,
               currency: SHADOW_CURRENCY,
-              source: metadata.strategyLabel || "SHADOW_LEDGER",
-              sourceType: metadata.sourceType,
-              strategyLabel: metadata.strategyLabel,
-            };
-          }),
-        ],
-        dividends: [],
-        updatedAt: new Date(),
-      };
-    } catch (error) {
-      if (isTransientPostgresError(error)) {
-        markShadowAccountDbUnavailable(error);
-        return buildFallback();
+              source: "SHADOW_LEDGER",
+            },
+            ...fills.map((fill) => {
+              const metadata = shadowSourceMetadata(ordersById.get(fill.orderId));
+              return {
+                id: fill.id,
+                accountId: SHADOW_ACCOUNT_ID,
+                date: fill.occurredAt,
+                type: "Trade",
+                description: `${fill.side.toUpperCase()} ${toNumber(fill.quantity) ?? 0} ${fill.symbol}`,
+                amount: toNumber(fill.cashDelta) ?? 0,
+                currency: SHADOW_CURRENCY,
+                source: metadata.strategyLabel || "SHADOW_LEDGER",
+                sourceType: metadata.sourceType,
+                strategyLabel: metadata.strategyLabel,
+              };
+            }),
+          ],
+          dividends: [],
+          updatedAt: new Date(),
+        };
+      } catch (error) {
+        if (isTransientPostgresError(error)) {
+          markShadowAccountDbUnavailable(error);
+          return buildFallback();
+        }
+        throw error;
       }
-      throw error;
-    }
-  });
+    },
+    {
+      staleStrategy: "immediate",
+      ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS,
+    },
+  );
 }
 
 function timeZoneParts(date: Date, timeZone = WATCHLIST_BACKTEST_TIME_ZONE) {
@@ -11921,6 +12369,9 @@ export const __shadowWatchlistBacktestInternalsForTests = {
         : null;
   },
   withShadowReadCache,
+  getShadowAccountReadDiagnostics,
+  resetShadowAccountReadDiagnosticsForTests,
+  shadowClosedTradesReadCacheKey,
   readReusableShadowPositionsResponseForAssetClass,
   filterShadowAccountPositionsResponseForAssetClass,
   applyShadowAccountPositionWeights,

@@ -118,15 +118,14 @@ function quoteMarkOrNull(
   preferQuotePrice = false,
 ): number | null {
   const quotePrice = positiveFiniteNumberOrNull(quote?.price);
-  const quoteMark =
-    positiveFiniteNumberOrNull(
-      (quote as (QuoteSnapshot & { mark?: unknown }) | null | undefined)?.mark,
-    ) ??
-    quoteMidOrNull(quote) ??
-    quotePrice ??
-    positiveFiniteNumberOrNull(
-      (quote as (QuoteSnapshot & { last?: unknown }) | null | undefined)?.last,
-    );
+  const quoteMid = quoteMidOrNull(quote);
+  const rawQuoteMark = positiveFiniteNumberOrNull(
+    (quote as (QuoteSnapshot & { mark?: unknown }) | null | undefined)?.mark,
+  );
+  const quoteLast = positiveFiniteNumberOrNull(
+    (quote as (QuoteSnapshot & { last?: unknown }) | null | undefined)?.last,
+  );
+  const quoteMark = quoteMid ?? rawQuoteMark ?? quotePrice ?? quoteLast;
   return preferQuotePrice ? quotePrice ?? quoteMark : quoteMark;
 }
 

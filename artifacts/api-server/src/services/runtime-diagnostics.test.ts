@@ -351,6 +351,9 @@ test("runtime diagnostics are read-only and only inspect bridge health", async (
   );
   assert.equal(typeof diagnostics.api.accountPage.timings, "object");
   assert.equal(typeof diagnostics.api.accountPage.cache, "object");
+  assert.equal(typeof diagnostics.api.shadowAccountReads.cache.entries, "number");
+  assert.ok(Array.isArray(diagnostics.api.shadowAccountReads.routes));
+  assert.ok(Array.isArray(diagnostics.api.shadowAccountReads.recent));
   assert.equal(typeof diagnostics.api.pythonCompute.enabled, "boolean");
   assert.equal(typeof diagnostics.api.pythonCompute.status, "string");
   assert.equal(diagnostics.storage.source, "external-postgres");
@@ -812,6 +815,75 @@ test("runtime diagnostics timebox market data ingest diagnostics", async () => {
     "market_data_ingest_diagnostics_timeout",
   );
   assert.equal(diagnostics.ibkr.streams.marketDataIngest.timeoutMs, 5);
+});
+
+test("runtime diagnostics surface inactive persisted market-data worker", async () => {
+  __setIbkrBridgeClientFactoryForTests(
+    () =>
+      ({
+        getHealth: async () => ({
+          configured: true,
+          authenticated: true,
+          connected: true,
+          competing: false,
+          selectedAccountId: "DU1234567",
+          accounts: ["DU1234567"],
+          lastTickleAt: new Date(),
+          lastError: null,
+          lastRecoveryAttemptAt: null,
+          lastRecoveryError: null,
+          updatedAt: new Date(),
+          transport: "tws",
+          connectionTarget: "127.0.0.1:4001",
+          sessionMode: "live",
+          clientId: 101,
+          marketDataMode: "live",
+          liveMarketDataAvailable: true,
+        }),
+      }) as unknown as IbkrBridgeClient,
+  );
+  __marketDataIngestInternalsForTests.__setMarketDataIngestDiagnosticsGetterForTests(
+    async () => ({
+      configured: true,
+      providerConfigured: true,
+      queueDepth: { queued: 5 },
+      oldestQueuedAgeMs: 10_000,
+      runningCount: 0,
+      expiredLeaseCount: 0,
+      claimableQueuedJobCount: 3,
+      claimableQueuedJobsByKind: {
+        stock_snapshot: 1,
+        option_chain_snapshot: 2,
+      },
+      workerLikelyInactive: true,
+      workerInactiveReason: "claimable_jobs_waiting_without_running_worker",
+      blockedGexJobCount: 0,
+      oldestBlockedGexAgeMs: null,
+      blockedGexJobs: [],
+      recentProviderFailures: [],
+      recentCompletedJobs: [],
+    }),
+  );
+
+  const diagnostics = await getRuntimeDiagnostics();
+
+  assert.equal(
+    diagnostics.ibkr.streams.marketDataIngest.workerLikelyInactive,
+    true,
+  );
+  assert.equal(diagnostics.marketDataWorkPlan.summary.persistWorkerInactive, true);
+  assert.equal(
+    diagnostics.marketDataWorkPlan.summary.persistClaimableQueuedJobCount,
+    3,
+  );
+  assert.ok(
+    diagnostics.marketDataWorkPlan.persistJobs.some(
+      (job) =>
+        job.kind === "market_data_worker" &&
+        job.status === "blocked" &&
+        job.jobCount === 3,
+    ),
+  );
 });
 
 test("runtime diagnostics serves stale cached bridge health without blocking", async () => {

@@ -21,13 +21,19 @@ export type PythonComputeDiagnostics = {
   startedAt: string | null;
   lastError: string | null;
   restartCount: number;
+  laneId?: PythonComputeLaneId;
+  label?: string;
+  jobTypes?: PythonComputeJobType[];
 };
+
+export type PythonComputeLaneId = "risk" | "research" | "backtest";
 
 export type PythonComputeJobType =
   | "benchmark_matrix"
   | "greek_scenario_matrix"
   | "portfolio_optimization"
-  | "portfolio_risk";
+  | "portfolio_risk"
+  | "signal_matrix";
 
 export type PythonComputeJobRequest = {
   jobType: PythonComputeJobType;
@@ -73,10 +79,111 @@ type RuntimeDeps = {
   spawnProcess?: typeof spawn;
   fetch?: typeof fetch;
   delay?: (ms: number) => Promise<void>;
+  laneDefinition?: PythonComputeLaneDefinition;
 };
 
 const DEFAULT_PORT = 18_768;
 const DEFAULT_STARTUP_TIMEOUT_MS = 15_000;
+const DEFAULT_GLOBAL_MAX_ACTIVE_JOBS = 6;
+
+type PythonComputeLaneTemplate = {
+  id: PythonComputeLaneId;
+  label: string;
+  defaultPort: number;
+  enabledEnv: string;
+  rootEnv: string;
+  hostEnv: string;
+  portEnv: string;
+  startupTimeoutEnv: string;
+  fallbackEnvPrefix?: "legacy";
+  jobTypes: PythonComputeJobType[];
+};
+
+export type PythonComputeLaneDefinition = {
+  id: PythonComputeLaneId;
+  label: string;
+  config: RuntimeConfig;
+  jobTypes: PythonComputeJobType[];
+};
+
+export type PythonComputeLaneDiagnostics = PythonComputeDiagnostics & {
+  laneId: PythonComputeLaneId;
+  label: string;
+  jobTypes: PythonComputeJobType[];
+  activeRoutedJobs: number;
+  rejectedJobs: number;
+};
+
+export type PythonComputeRouterDiagnostics = PythonComputeDiagnostics & {
+  lanes: Record<PythonComputeLaneId, PythonComputeLaneDiagnostics>;
+  global: {
+    activeJobs: number;
+    maxActiveJobs: number;
+    rejectedJobs: number;
+  };
+  routing: Record<PythonComputeJobType, PythonComputeLaneId>;
+};
+
+export type PythonComputeRuntimeLike = {
+  start(): Promise<PythonComputeDiagnostics>;
+  stop(): void;
+  getDiagnostics(): PythonComputeDiagnostics;
+  submitJob(
+    request: PythonComputeJobRequest,
+    timeoutMs?: number,
+  ): Promise<PythonComputeJobAccepted>;
+  getJob(jobId: string, timeoutMs?: number): Promise<PythonComputeJobResult>;
+  cancelJob(jobId: string, timeoutMs?: number): Promise<PythonComputeJobResult>;
+};
+
+const PYTHON_COMPUTE_LANE_TEMPLATES: PythonComputeLaneTemplate[] = [
+  {
+    id: "risk",
+    label: "Risk compute",
+    defaultPort: DEFAULT_PORT,
+    enabledEnv: "PYRUS_PYTHON_RISK_COMPUTE_ENABLED",
+    rootEnv: "PYRUS_PYTHON_RISK_COMPUTE_ROOT",
+    hostEnv: "PYRUS_PYTHON_RISK_COMPUTE_HOST",
+    portEnv: "PYRUS_PYTHON_RISK_COMPUTE_PORT",
+    startupTimeoutEnv: "PYRUS_PYTHON_RISK_COMPUTE_STARTUP_TIMEOUT_MS",
+    fallbackEnvPrefix: "legacy",
+    jobTypes: [
+      "greek_scenario_matrix",
+      "portfolio_optimization",
+      "portfolio_risk",
+    ],
+  },
+  {
+    id: "research",
+    label: "Research/chart compute",
+    defaultPort: 18_770,
+    enabledEnv: "PYRUS_PYTHON_RESEARCH_COMPUTE_ENABLED",
+    rootEnv: "PYRUS_PYTHON_RESEARCH_COMPUTE_ROOT",
+    hostEnv: "PYRUS_PYTHON_RESEARCH_COMPUTE_HOST",
+    portEnv: "PYRUS_PYTHON_RESEARCH_COMPUTE_PORT",
+    startupTimeoutEnv: "PYRUS_PYTHON_RESEARCH_COMPUTE_STARTUP_TIMEOUT_MS",
+    jobTypes: ["benchmark_matrix", "signal_matrix"],
+  },
+  {
+    id: "backtest",
+    label: "Backtest compute",
+    defaultPort: 18_771,
+    enabledEnv: "PYRUS_PYTHON_BACKTEST_COMPUTE_ENABLED",
+    rootEnv: "PYRUS_PYTHON_BACKTEST_COMPUTE_ROOT",
+    hostEnv: "PYRUS_PYTHON_BACKTEST_COMPUTE_HOST",
+    portEnv: "PYRUS_PYTHON_BACKTEST_COMPUTE_PORT",
+    startupTimeoutEnv: "PYRUS_PYTHON_BACKTEST_COMPUTE_STARTUP_TIMEOUT_MS",
+    jobTypes: [],
+  },
+];
+
+const JOB_TYPE_LANE: Record<PythonComputeJobType, PythonComputeLaneId> = {
+  benchmark_matrix: "research",
+  greek_scenario_matrix: "risk",
+  portfolio_optimization: "risk",
+  portfolio_risk: "risk",
+  signal_matrix: "research",
+};
 
 function truthyEnv(value: string | undefined): boolean {
   return value === "1" || value?.toLowerCase() === "true";
@@ -85,6 +192,29 @@ function truthyEnv(value: string | undefined): boolean {
 function readPositiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readEnvValue(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  names: string[],
+): string | undefined {
+  for (const name of names) {
+    const value = env[name];
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function legacyEnvName(
+  template: PythonComputeLaneTemplate,
+  suffix: "ENABLED" | "ROOT" | "HOST" | "PORT" | "STARTUP_TIMEOUT_MS",
+): string[] {
+  if (template.fallbackEnvPrefix !== "legacy") {
+    return [];
+  }
+  return [`PYRUS_PYTHON_COMPUTE_${suffix}`];
 }
 
 export function resolvePythonComputeRoot(cwd = process.cwd()): string {
@@ -112,7 +242,57 @@ export function resolvePythonComputeConfig(
   };
 }
 
-export class PythonComputeRuntime {
+function resolvePythonComputeLaneConfig(
+  template: PythonComputeLaneTemplate,
+  deps: RuntimeDeps = {},
+): RuntimeConfig {
+  const env = deps.env ?? process.env;
+  const cwd =
+    readEnvValue(env, [template.rootEnv, ...legacyEnvName(template, "ROOT")]) ??
+    resolvePythonComputeRoot(deps.cwd);
+  return {
+    enabled: truthyEnv(
+      readEnvValue(env, [
+        template.enabledEnv,
+        ...legacyEnvName(template, "ENABLED"),
+      ]),
+    ),
+    cwd,
+    host:
+      readEnvValue(env, [template.hostEnv, ...legacyEnvName(template, "HOST")]) ??
+      "127.0.0.1",
+    port: readPositiveInteger(
+      readEnvValue(env, [template.portEnv, ...legacyEnvName(template, "PORT")]),
+      template.defaultPort,
+    ),
+    startupTimeoutMs: readPositiveInteger(
+      readEnvValue(env, [
+        template.startupTimeoutEnv,
+        ...legacyEnvName(template, "STARTUP_TIMEOUT_MS"),
+      ]),
+      DEFAULT_STARTUP_TIMEOUT_MS,
+    ),
+  };
+}
+
+export function resolvePythonComputeLaneDefinitions(
+  deps: RuntimeDeps = {},
+): PythonComputeLaneDefinition[] {
+  return PYTHON_COMPUTE_LANE_TEMPLATES.map((template) => ({
+    id: template.id,
+    label: template.label,
+    config: resolvePythonComputeLaneConfig(template, deps),
+    jobTypes: [...template.jobTypes],
+  }));
+}
+
+export function routePythonComputeJobType(
+  jobType: PythonComputeJobType,
+): PythonComputeLaneId {
+  return JOB_TYPE_LANE[jobType];
+}
+
+export class PythonComputeRuntime implements PythonComputeRuntimeLike {
   private child: ChildProcess | null = null;
   private diagnostics: PythonComputeDiagnostics;
   private stopping = false;
@@ -120,12 +300,24 @@ export class PythonComputeRuntime {
   private readonly spawnProcess: typeof spawn;
   private readonly fetchFn: typeof fetch;
   private readonly delayFn: (ms: number) => Promise<void>;
+  private readonly laneId: PythonComputeLaneId;
+  private readonly label: string;
+  private readonly jobTypes: PythonComputeJobType[];
 
   constructor(deps: RuntimeDeps = {}) {
-    this.config = resolvePythonComputeConfig(deps);
+    const laneDefinition = deps.laneDefinition;
+    this.config = laneDefinition?.config ?? resolvePythonComputeConfig(deps);
     this.spawnProcess = deps.spawnProcess ?? spawn;
     this.fetchFn = deps.fetch ?? fetch;
     this.delayFn = deps.delay ?? delay;
+    this.laneId = laneDefinition?.id ?? "risk";
+    this.label = laneDefinition?.label ?? "Python compute";
+    this.jobTypes = laneDefinition?.jobTypes ?? [
+      "benchmark_matrix",
+      "greek_scenario_matrix",
+      "portfolio_optimization",
+      "portfolio_risk",
+    ];
     this.diagnostics = {
       enabled: this.config.enabled,
       status: this.config.enabled ? "stopped" : "disabled",
@@ -136,6 +328,9 @@ export class PythonComputeRuntime {
       startedAt: null,
       lastError: null,
       restartCount: 0,
+      laneId: this.laneId,
+      label: this.label,
+      jobTypes: [...this.jobTypes],
     };
   }
 
@@ -168,6 +363,8 @@ export class PythonComputeRuntime {
           ...process.env,
           PYRUS_PYTHON_COMPUTE_HOST: this.config.host,
           PYRUS_PYTHON_COMPUTE_PORT: String(this.config.port),
+          PYRUS_PYTHON_COMPUTE_LANE: this.laneId,
+          PYRUS_PYTHON_COMPUTE_ALLOWED_JOB_TYPES: this.jobTypes.join(","),
         },
         stdio: ["ignore", "pipe", "pipe"],
       },
@@ -374,44 +571,258 @@ export class PythonComputeRuntime {
   }
 }
 
-const pythonComputeRuntime = new PythonComputeRuntime();
+function terminalJobStatus(status: PythonComputeJobResult["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
 
-export async function startPythonComputeRuntime(): Promise<PythonComputeDiagnostics> {
-  return pythonComputeRuntime.start();
+function prefixedJobId(laneId: PythonComputeLaneId, jobId: string): string {
+  return `${laneId}:${jobId}`;
+}
+
+function unprefixJobId(
+  jobId: string,
+): { laneId: PythonComputeLaneId; jobId: string } | null {
+  const [rawLane, ...rest] = jobId.split(":");
+  if (
+    (rawLane === "risk" || rawLane === "research" || rawLane === "backtest") &&
+    rest.length > 0
+  ) {
+    return { laneId: rawLane, jobId: rest.join(":") };
+  }
+  return null;
+}
+
+function readGlobalMaxActiveJobs(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): number {
+  return readPositiveInteger(
+    env["PYRUS_PYTHON_COMPUTE_GLOBAL_MAX_ACTIVE_JOBS"],
+    DEFAULT_GLOBAL_MAX_ACTIVE_JOBS,
+  );
+}
+
+export class PythonComputeRouter {
+  private readonly runtimes: Record<PythonComputeLaneId, PythonComputeRuntimeLike>;
+  private readonly laneDefinitions: Record<PythonComputeLaneId, PythonComputeLaneDefinition>;
+  private readonly delayFn: (ms: number) => Promise<void>;
+  private readonly maxActiveJobs: number;
+  private readonly activeJobs = new Map<
+    string,
+    { laneId: PythonComputeLaneId; innerJobId: string }
+  >();
+  private readonly laneRejectedJobs: Record<PythonComputeLaneId, number> = {
+    risk: 0,
+    research: 0,
+    backtest: 0,
+  };
+  private rejectedJobs = 0;
+
+  constructor(
+    deps: RuntimeDeps & {
+      laneDefinitions?: PythonComputeLaneDefinition[];
+      runtimes?: Partial<Record<PythonComputeLaneId, PythonComputeRuntimeLike>>;
+    } = {},
+  ) {
+    const laneDefinitions = deps.laneDefinitions ?? resolvePythonComputeLaneDefinitions(deps);
+    this.laneDefinitions = Object.fromEntries(
+      laneDefinitions.map((definition) => [definition.id, definition]),
+    ) as Record<PythonComputeLaneId, PythonComputeLaneDefinition>;
+    this.runtimes = {
+      risk:
+        deps.runtimes?.risk ??
+        new PythonComputeRuntime({
+          ...deps,
+          laneDefinition: this.laneDefinitions.risk,
+        }),
+      research:
+        deps.runtimes?.research ??
+        new PythonComputeRuntime({
+          ...deps,
+          laneDefinition: this.laneDefinitions.research,
+        }),
+      backtest:
+        deps.runtimes?.backtest ??
+        new PythonComputeRuntime({
+          ...deps,
+          laneDefinition: this.laneDefinitions.backtest,
+        }),
+    };
+    this.delayFn = deps.delay ?? delay;
+    this.maxActiveJobs = readGlobalMaxActiveJobs(deps.env ?? process.env);
+  }
+
+  async start(): Promise<PythonComputeRouterDiagnostics> {
+    await Promise.all(Object.values(this.runtimes).map((runtime) => runtime.start()));
+    return this.getDiagnostics();
+  }
+
+  stop(): void {
+    Object.values(this.runtimes).forEach((runtime) => runtime.stop());
+    this.activeJobs.clear();
+  }
+
+  getDiagnostics(): PythonComputeRouterDiagnostics {
+    const lanes = Object.fromEntries(
+      (Object.keys(this.runtimes) as PythonComputeLaneId[]).map((laneId) => {
+        const diagnostics = this.runtimes[laneId].getDiagnostics();
+        return [
+          laneId,
+          {
+            ...diagnostics,
+            laneId,
+            label: this.laneDefinitions[laneId].label,
+            jobTypes: [...this.laneDefinitions[laneId].jobTypes],
+            activeRoutedJobs: Array.from(this.activeJobs.values()).filter(
+              (job) => job.laneId === laneId,
+            ).length,
+            rejectedJobs: this.laneRejectedJobs[laneId],
+          },
+        ];
+      }),
+    ) as Record<PythonComputeLaneId, PythonComputeLaneDiagnostics>;
+    const primary = lanes.risk;
+    return {
+      ...primary,
+      lanes,
+      global: {
+        activeJobs: this.activeJobs.size,
+        maxActiveJobs: this.maxActiveJobs,
+        rejectedJobs: this.rejectedJobs,
+      },
+      routing: { ...JOB_TYPE_LANE },
+    };
+  }
+
+  async submitJob(
+    request: PythonComputeJobRequest,
+    timeoutMs = 10_000,
+  ): Promise<PythonComputeJobAccepted> {
+    const laneId = routePythonComputeJobType(request.jobType);
+    if (this.activeJobs.size >= this.maxActiveJobs) {
+      this.rejectedJobs += 1;
+      this.laneRejectedJobs[laneId] += 1;
+      throw new Error("Python compute global capacity exhausted.");
+    }
+    const accepted = await this.runtimes[laneId].submitJob(request, timeoutMs);
+    const routedJobId = prefixedJobId(laneId, accepted.jobId);
+    this.activeJobs.set(routedJobId, { laneId, innerJobId: accepted.jobId });
+    return {
+      ...accepted,
+      jobId: routedJobId,
+    };
+  }
+
+  async getJob(jobId: string, timeoutMs = 10_000): Promise<PythonComputeJobResult> {
+    const routed = this.resolveJobRoute(jobId);
+    const result = await this.runtimes[routed.laneId].getJob(
+      routed.innerJobId,
+      timeoutMs,
+    );
+    const routedJobId = prefixedJobId(routed.laneId, result.jobId);
+    if (terminalJobStatus(result.status)) {
+      this.activeJobs.delete(routedJobId);
+      this.activeJobs.delete(jobId);
+    }
+    return {
+      ...result,
+      jobId: routedJobId,
+    };
+  }
+
+  async cancelJob(
+    jobId: string,
+    timeoutMs = 10_000,
+  ): Promise<PythonComputeJobResult> {
+    const routed = this.resolveJobRoute(jobId);
+    const result = await this.runtimes[routed.laneId].cancelJob(
+      routed.innerJobId,
+      timeoutMs,
+    );
+    const routedJobId = prefixedJobId(routed.laneId, result.jobId);
+    this.activeJobs.delete(routedJobId);
+    this.activeJobs.delete(jobId);
+    return {
+      ...result,
+      jobId: routedJobId,
+    };
+  }
+
+  async runJob(
+    request: PythonComputeJobRequest,
+    options: PythonComputeRunJobOptions = {},
+  ): Promise<PythonComputeJobResult> {
+    const timeoutMs = options.timeoutMs ?? 10_000;
+    const pollIntervalMs = Math.max(25, options.pollIntervalMs ?? 100);
+    const deadline = Date.now() + timeoutMs;
+    const accepted = await this.submitJob(request, timeoutMs);
+
+    while (Date.now() < deadline) {
+      const remainingMs = Math.max(100, deadline - Date.now());
+      const result = await this.getJob(accepted.jobId, remainingMs);
+      if (terminalJobStatus(result.status)) {
+        return result;
+      }
+      await this.delayFn(Math.min(pollIntervalMs, remainingMs));
+    }
+
+    await this.cancelJob(accepted.jobId, 1_000).catch(() => null);
+    throw new Error(`Python compute job ${accepted.jobId} timed out after ${timeoutMs}ms.`);
+  }
+
+  private resolveJobRoute(jobId: string): {
+    laneId: PythonComputeLaneId;
+    innerJobId: string;
+  } {
+    const active = this.activeJobs.get(jobId);
+    if (active) {
+      return active;
+    }
+    const parsed = unprefixJobId(jobId);
+    if (parsed) {
+      return { laneId: parsed.laneId, innerJobId: parsed.jobId };
+    }
+    return { laneId: "risk", innerJobId: jobId };
+  }
+}
+
+const pythonComputeRouter = new PythonComputeRouter();
+
+export async function startPythonComputeRuntime(): Promise<PythonComputeRouterDiagnostics> {
+  return pythonComputeRouter.start();
 }
 
 export function stopPythonComputeRuntime(): void {
-  pythonComputeRuntime.stop();
+  pythonComputeRouter.stop();
 }
 
-export function getPythonComputeDiagnostics(): PythonComputeDiagnostics {
-  return pythonComputeRuntime.getDiagnostics();
+export function getPythonComputeDiagnostics(): PythonComputeRouterDiagnostics {
+  return pythonComputeRouter.getDiagnostics();
 }
 
 export function submitPythonComputeJob(
   request: PythonComputeJobRequest,
   timeoutMs?: number,
 ): Promise<PythonComputeJobAccepted> {
-  return pythonComputeRuntime.submitJob(request, timeoutMs);
+  return pythonComputeRouter.submitJob(request, timeoutMs);
 }
 
 export function getPythonComputeJob(
   jobId: string,
   timeoutMs?: number,
 ): Promise<PythonComputeJobResult> {
-  return pythonComputeRuntime.getJob(jobId, timeoutMs);
+  return pythonComputeRouter.getJob(jobId, timeoutMs);
 }
 
 export function cancelPythonComputeJob(
   jobId: string,
   timeoutMs?: number,
 ): Promise<PythonComputeJobResult> {
-  return pythonComputeRuntime.cancelJob(jobId, timeoutMs);
+  return pythonComputeRouter.cancelJob(jobId, timeoutMs);
 }
 
 export function runPythonComputeJob(
   request: PythonComputeJobRequest,
   options?: PythonComputeRunJobOptions,
 ): Promise<PythonComputeJobResult> {
-  return pythonComputeRuntime.runJob(request, options);
+  return pythonComputeRouter.runJob(request, options);
 }

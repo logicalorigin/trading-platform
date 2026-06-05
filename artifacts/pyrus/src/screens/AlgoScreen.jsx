@@ -150,10 +150,9 @@ const loadAlgoLivePage = () => {
 };
 const LazyAlgoLivePage = lazy(loadAlgoLivePage);
 
-export const preloadScreenModules = () =>
-  Promise.allSettled([
-    loadAlgoLivePage().then((module) => module.preloadAlgoLivePageModules?.()),
-  ]);
+const ALGO_LIVE_PAGE_HYDRATION_DELAY_MS = 650;
+
+export const preloadScreenModules = () => Promise.resolve();
 
 const ALGO_CRITICAL_FALLBACK_DELAY_MS = 1_000;
 const ALGO_DERIVED_FALLBACK_DELAY_MS = 6_000;
@@ -475,12 +474,17 @@ export const AlgoScreen = ({
     selectedAccountId ||
     session?.ibkrBridge?.selectedAccountId ||
     null;
+  const [algoLiveHydrationReady, setAlgoLiveHydrationReady] = useState(false);
   useEffect(() => {
     if (!isVisible) {
+      setAlgoLiveHydrationReady(false);
       return undefined;
     }
-    void loadAlgoLivePage().catch(() => undefined);
-    return undefined;
+    const hydrationTimer = window.setTimeout(
+      () => setAlgoLiveHydrationReady(true),
+      ALGO_LIVE_PAGE_HYDRATION_DELAY_MS,
+    );
+    return () => window.clearTimeout(hydrationTimer);
   }, [isVisible]);
   useEffect(() => {
     if (!isVisible || algoRuntimeHelpers !== DEFAULT_ALGO_RUNTIME_HELPERS) {
@@ -2000,105 +2004,109 @@ export const AlgoScreen = ({
           minWidth: 0,
         }}
       >
-        <Suspense fallback={<AlgoLiveLoading />}>
-        <LazyAlgoLivePage
-          deployments={deployments}
-          candidateDrafts={candidateDrafts}
-          setupDataSettled={algoSetupDataSettled}
-          selectedDraft={selectedDraft}
-          setSelectedDraftId={setSelectedDraftId}
-          deploymentName={deploymentName}
-          setDeploymentName={setDeploymentName}
-          symbolUniverseInput={symbolUniverseInput}
-          setSymbolUniverseInput={setSymbolUniverseInput}
-          handleCreateDeployment={handleCreateDeployment}
-          createDeploymentMutation={createDeploymentMutation}
-          cockpitKpis={cockpitKpis}
-          cockpitRisk={cockpit?.risk}
-          cockpitGeneratedAt={cockpit?.generatedAt}
-          refreshPending={deploymentsQuery.isFetching || cockpitQuery.isFetching}
-          cockpitSignalFreshness={cockpitSignalFreshness}
-          cockpitTradePath={cockpitTradePath}
-          signalOptionsPerformanceSummary={signalOptionsPerformanceSummary}
-          cockpitStageItems={cockpitStageItems}
-          selectedStage={selectedStage}
-          setSelectedPipelineStageId={setSelectedPipelineStageId}
-          cockpitAttentionItems={cockpitAttentionItems}
-          signalOptionsRuleAdherence={signalOptionsRuleAdherence}
-          gatewayReady={gatewayReady}
-          transitions={visibleTransitions}
-          visibleSignalRows={visibleSignalRows}
-          signalOptionsCandidates={signalOptionsCandidates}
-          signalOptionsSourceHealth={signalOptionsSourceHealth}
-          signalMatrixStates={signalMatrixStates}
-          onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
-          selectedCandidate={selectedCandidate}
-          signalOptionsProfile={signalOptionsProfile}
-          onOpenCandidateInTrade={handleOpenCandidateInTrade}
-          safeQaMode={safeQaMode}
-          backgroundQueriesEnabled={algoBackgroundQueriesEnabled}
-          rowHydrationQueriesEnabled={algoVisibleRowHydrationQueriesEnabled}
-          signalOptionsPositions={signalOptionsPositions}
-          signalOptionsLedgerPositionsQuery={signalOptionsLedgerPositionsQuery}
-          symbolIndex={symbolIndex}
-          events={events}
-          userPreferences={userPreferences}
-          strategySettingsDraft={strategySettingsDraft}
-          activitySummary={activitySummary}
-          focusedDeployment={focusedDeployment}
-          onSelectDeployment={setFocusedDeploymentId}
-          accountId={activeAccountId}
-          environment={environment}
-          bridgeTone={bridgeTone}
-          handleToggleDeployment={handleToggleDeployment}
-          handleRunShadowScan={handleRunShadowScan}
-          enableDeploymentMutation={enableDeploymentMutation}
-          pauseDeploymentMutation={pauseDeploymentMutation}
-          runShadowScanMutation={runShadowScanMutation}
-          algoExecutionScanRunning={algoExecutionScanRunning}
-          algoIsPhone={algoIsPhone}
-          algoIsNarrow={algoIsNarrow}
-          algoLayoutWidth={algoRootSize.width}
-          rightRailFallback={<AlgoRightRailLoading />}
-          rightRail={
-            <Suspense fallback={<AlgoRightRailLoading />}>
-              <LazyAlgoRightRail
-                cockpit={cockpit}
-                signalOptionsPositions={signalOptionsPositions}
-                profileDraft={profileDraft}
-                profileBaseline={profileDraftState.baseline}
-                profileDirty={profileDirty}
-                patchProfileDraftPath={patchProfileDraftPath}
-                strategySettingsDraft={strategySettingsDraft}
-                strategyBaseline={strategySettingsDraftState.baseline}
-                strategyDirty={strategyDirty}
-                patchStrategySettingsPath={patchStrategySettingsPath}
-                focusedDeployment={focusedDeployment}
-                controlBaselineReady={controlBaselineReady}
-                saveAllPending={saveAllPending}
-                handleApplyExpandedCapacity={handleApplyExpandedCapacity}
-                handleSaveAllAdjustments={handleSaveAllAdjustments}
-                handleDiscardAllAdjustments={handleDiscardAllAdjustments}
-                updateProfileMutation={updateProfileMutation}
-                updateStrategySettingsMutation={updateStrategySettingsMutation}
-                cockpitSkipCategoryRows={cockpitSkipCategoryRows}
-                cockpitSkipReasonRows={cockpitSkipReasonRows}
-                cockpitReadinessRows={cockpitReadinessRows}
-                cockpitMarkHealthRows={cockpitMarkHealthRows}
-                cockpitLifecycleRows={cockpitLifecycleRows}
-                cockpitEntryGateRows={cockpitEntryGateRows}
-                cockpitOptionChainRows={cockpitOptionChainRows}
-                cockpitSignalFreshness={cockpitSignalFreshness}
-                cockpitTradePath={cockpitTradePath}
-                diagExpansion={diagExpansion}
-                setDiagExpansion={setDiagExpansion}
-                algoIsPhone={algoIsPhone}
-                algoIsNarrow={algoIsNarrow}
-              />
-            </Suspense>
-          }
-        />
-        </Suspense>
+        {algoLiveHydrationReady ? (
+          <Suspense fallback={<AlgoLiveLoading />}>
+            <LazyAlgoLivePage
+              deployments={deployments}
+              candidateDrafts={candidateDrafts}
+              setupDataSettled={algoSetupDataSettled}
+              selectedDraft={selectedDraft}
+              setSelectedDraftId={setSelectedDraftId}
+              deploymentName={deploymentName}
+              setDeploymentName={setDeploymentName}
+              symbolUniverseInput={symbolUniverseInput}
+              setSymbolUniverseInput={setSymbolUniverseInput}
+              handleCreateDeployment={handleCreateDeployment}
+              createDeploymentMutation={createDeploymentMutation}
+              cockpitKpis={cockpitKpis}
+              cockpitRisk={cockpit?.risk}
+              cockpitGeneratedAt={cockpit?.generatedAt}
+              refreshPending={deploymentsQuery.isFetching || cockpitQuery.isFetching}
+              cockpitSignalFreshness={cockpitSignalFreshness}
+              cockpitTradePath={cockpitTradePath}
+              signalOptionsPerformanceSummary={signalOptionsPerformanceSummary}
+              cockpitStageItems={cockpitStageItems}
+              selectedStage={selectedStage}
+              setSelectedPipelineStageId={setSelectedPipelineStageId}
+              cockpitAttentionItems={cockpitAttentionItems}
+              signalOptionsRuleAdherence={signalOptionsRuleAdherence}
+              gatewayReady={gatewayReady}
+              transitions={visibleTransitions}
+              visibleSignalRows={visibleSignalRows}
+              signalOptionsCandidates={signalOptionsCandidates}
+              signalOptionsSourceHealth={signalOptionsSourceHealth}
+              signalMatrixStates={signalMatrixStates}
+              onRequestSignalMatrixHydration={onRequestSignalMatrixHydration}
+              selectedCandidate={selectedCandidate}
+              signalOptionsProfile={signalOptionsProfile}
+              onOpenCandidateInTrade={handleOpenCandidateInTrade}
+              safeQaMode={safeQaMode}
+              backgroundQueriesEnabled={algoBackgroundQueriesEnabled}
+              rowHydrationQueriesEnabled={algoVisibleRowHydrationQueriesEnabled}
+              signalOptionsPositions={signalOptionsPositions}
+              signalOptionsLedgerPositionsQuery={signalOptionsLedgerPositionsQuery}
+              symbolIndex={symbolIndex}
+              events={events}
+              userPreferences={userPreferences}
+              strategySettingsDraft={strategySettingsDraft}
+              activitySummary={activitySummary}
+              focusedDeployment={focusedDeployment}
+              onSelectDeployment={setFocusedDeploymentId}
+              accountId={activeAccountId}
+              environment={environment}
+              bridgeTone={bridgeTone}
+              handleToggleDeployment={handleToggleDeployment}
+              handleRunShadowScan={handleRunShadowScan}
+              enableDeploymentMutation={enableDeploymentMutation}
+              pauseDeploymentMutation={pauseDeploymentMutation}
+              runShadowScanMutation={runShadowScanMutation}
+              algoExecutionScanRunning={algoExecutionScanRunning}
+              algoIsPhone={algoIsPhone}
+              algoIsNarrow={algoIsNarrow}
+              algoLayoutWidth={algoRootSize.width}
+              rightRailFallback={<AlgoRightRailLoading />}
+              rightRail={
+                <Suspense fallback={<AlgoRightRailLoading />}>
+                  <LazyAlgoRightRail
+                    cockpit={cockpit}
+                    signalOptionsPositions={signalOptionsPositions}
+                    profileDraft={profileDraft}
+                    profileBaseline={profileDraftState.baseline}
+                    profileDirty={profileDirty}
+                    patchProfileDraftPath={patchProfileDraftPath}
+                    strategySettingsDraft={strategySettingsDraft}
+                    strategyBaseline={strategySettingsDraftState.baseline}
+                    strategyDirty={strategyDirty}
+                    patchStrategySettingsPath={patchStrategySettingsPath}
+                    focusedDeployment={focusedDeployment}
+                    controlBaselineReady={controlBaselineReady}
+                    saveAllPending={saveAllPending}
+                    handleApplyExpandedCapacity={handleApplyExpandedCapacity}
+                    handleSaveAllAdjustments={handleSaveAllAdjustments}
+                    handleDiscardAllAdjustments={handleDiscardAllAdjustments}
+                    updateProfileMutation={updateProfileMutation}
+                    updateStrategySettingsMutation={updateStrategySettingsMutation}
+                    cockpitSkipCategoryRows={cockpitSkipCategoryRows}
+                    cockpitSkipReasonRows={cockpitSkipReasonRows}
+                    cockpitReadinessRows={cockpitReadinessRows}
+                    cockpitMarkHealthRows={cockpitMarkHealthRows}
+                    cockpitLifecycleRows={cockpitLifecycleRows}
+                    cockpitEntryGateRows={cockpitEntryGateRows}
+                    cockpitOptionChainRows={cockpitOptionChainRows}
+                    cockpitSignalFreshness={cockpitSignalFreshness}
+                    cockpitTradePath={cockpitTradePath}
+                    diagExpansion={diagExpansion}
+                    setDiagExpansion={setDiagExpansion}
+                    algoIsPhone={algoIsPhone}
+                    algoIsNarrow={algoIsNarrow}
+                  />
+                </Suspense>
+              }
+            />
+          </Suspense>
+        ) : (
+          <AlgoLiveLoading />
+        )}
       </div>
     </div>
     </div>

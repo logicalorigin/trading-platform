@@ -102,6 +102,10 @@ test("AccountScreen does not prefetch live account data in safe QA mode", () => 
   assert.match(source, /const accountQueriesEnabled = Boolean\([\s\S]*?!safeQaMode/);
   assert.match(
     source,
-    /useEffect\(\(\) => \{\s*if \(!accountQueriesEnabled\) \{\s*return;\s*\}\s*prefetchAccountSectionLiveQueries\(accountSection\);/,
+    /const prefetchAccountSectionLiveQueries = useCallback\(\s*\(section\) => \{\s*if \(!accountQueriesEnabled\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /const accountActivePrefetchEnabled = Boolean\(\s*accountQueriesEnabled[\s\S]*?useEffect\(\(\) => \{\s*if \(!accountActivePrefetchEnabled\) \{\s*return;\s*\}\s*prefetchAccountSectionLiveQueries\(accountSection\);/,
   );
 });

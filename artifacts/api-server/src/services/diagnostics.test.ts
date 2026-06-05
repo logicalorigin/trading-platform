@@ -483,6 +483,52 @@ test("diagnostics exclude long-lived streams from API latency pressure", async (
   );
 });
 
+test("diagnostics exclude bridge long-polls from API latency pressure", async () => {
+  recordApiRequest({
+    method: "GET",
+    path: "/api/example",
+    statusCode: 200,
+    durationMs: 42,
+  });
+  for (const path of [
+    "/api/ibkr/desktop/jobs/claim",
+    "/ibkr/activation/activation-1/login-key/read",
+    "/api/ibkr/activation/activation-1/login-envelope/claim",
+  ]) {
+    recordApiRequest({
+      method: "POST",
+      path,
+      statusCode: 200,
+      durationMs: 25_456,
+    });
+  }
+
+  const collected = await collectDiagnosticSnapshot(healthyDiagnosticInput());
+  const api = collected.snapshots.find((snapshot) => snapshot.subsystem === "api");
+  const resourcePressure = collected.snapshots.find(
+    (snapshot) => snapshot.subsystem === "resource-pressure",
+  );
+  const dominantDrivers = Array.isArray(
+    resourcePressure?.metrics.dominantDrivers,
+  )
+    ? resourcePressure?.metrics.dominantDrivers
+    : [];
+
+  assert.equal(api?.metrics.requestCount5m, 4);
+  assert.equal(api?.metrics.latencySampleCount5m, 1);
+  assert.equal(api?.metrics.longLivedRequestCount5m, 3);
+  assert.equal(api?.metrics.rawP95LatencyMs, 42);
+  assert.equal(api?.metrics.slowRouteCount5m, 0);
+  assert.equal(api?.metrics.dominantSlowRoute, null);
+  assert.equal(api?.metrics.dominantSlowRoutePressureP95Ms, null);
+  assert.equal(resourcePressure?.metrics.pressureLevel, "normal");
+  assert.equal(resourcePressure?.metrics.apiPressureLevel, "normal");
+  assert.equal(
+    dominantDrivers.some((driver) => driver?.kind === "api-latency"),
+    false,
+  );
+});
+
 test("diagnostics do not let one route outlier drive API resource pressure", async () => {
   for (let index = 0; index < 40; index += 1) {
     recordApiRequest({

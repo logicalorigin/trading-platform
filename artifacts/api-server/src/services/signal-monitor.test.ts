@@ -1491,6 +1491,179 @@ test("signal monitor matrix bars use the priority-aware bars lane", () => {
   assert.match(source, /shouldCacheSignalMonitorMatrixEvaluationValue/);
 });
 
+test("signal monitor matrix can route completed-cell math through guarded Python compute", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const matrixSymbolBlock = source.match(
+    /async function evaluateSignalMonitorMatrixSymbol[\s\S]*?function isHydratedSignalMonitorMatrixStateForCoverage/,
+  )?.[0];
+
+  assert.equal(
+    __signalMonitorInternalsForTests.pythonComputeEnabledForSignalMatrix({
+      PYRUS_PYTHON_SIGNAL_MATRIX_ENABLED: "1",
+    }),
+    false,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.pythonComputeEnabledForSignalMatrix({
+      PYRUS_PYTHON_SIGNAL_MATRIX_ENABLED: "1",
+      PYRUS_PYTHON_RESEARCH_COMPUTE_ENABLED: "1",
+    }),
+    true,
+  );
+  assert.equal(
+    __signalMonitorInternalsForTests.normalizePythonSignalMatrixState({
+      symbol: " spy ",
+      timeframe: "5m",
+      status: "ok",
+      signal: { direction: "long", barIndex: 3, time: 1_800_000_000, price: 501.25 },
+      barsSinceSignal: 1,
+      fresh: true,
+      indicatorSnapshot: {
+        trendDirection: "bullish",
+        trendAgeBars: 8,
+        trendAgeBucket: "new",
+        adx: 26.4,
+        strength: "strong",
+        volatilityScore: 2,
+        mtf: [{ timeframe: "1h", direction: "bullish", required: false, pass: true }],
+        filterState: null,
+      },
+    })?.symbol,
+    "SPY",
+  );
+  assert.match(source, /PYRUS_PYTHON_SIGNAL_MATRIX_ENABLED/);
+  assert.match(source, /const jobType: PythonComputeJobType = "signal_matrix"/);
+  assert.match(source, /routePythonComputeJobType\(jobType\)/);
+  assert.match(source, /jobType: "signal_matrix"/);
+  assert.ok(matrixSymbolBlock);
+  assert.match(matrixSymbolBlock, /resolveSignalMonitorMatrixPythonStates/);
+  assert.match(
+    matrixSymbolBlock,
+    /pythonStates\.get\(signalMonitorMatrixCellKey\(result\.cell\)\) \?\?/,
+  );
+  assert.match(matrixSymbolBlock, /evaluateSignalMonitorMatrixStateFromCompletedBars/);
+});
+
+test("signal monitor matrix maps guarded Python compute states into matrix cells", async () => {
+  const previousSignalFlag = process.env["PYRUS_PYTHON_SIGNAL_MATRIX_ENABLED"];
+  const previousResearchFlag =
+    process.env["PYRUS_PYTHON_RESEARCH_COMPUTE_ENABLED"];
+  process.env["PYRUS_PYTHON_SIGNAL_MATRIX_ENABLED"] = "1";
+  process.env["PYRUS_PYTHON_RESEARCH_COMPUTE_ENABLED"] = "1";
+
+  try {
+    const completedBars = minuteBars(8).map((entry) => ({
+      ...entry,
+      source: "ibkr-history" as const,
+      providerContractId: "test-contract",
+      outsideRth: false,
+      transport: "client_portal" as const,
+      delayed: false,
+      freshness: "live" as const,
+      marketDataMode: "live" as const,
+      dataUpdatedAt: new Date(entry.timestamp.getTime() + 5 * 60_000),
+      ageMs: null,
+    }));
+    const evaluatedAt = completedBars.at(-1)?.dataUpdatedAt ?? baseDate;
+    const submissions: unknown[] = [];
+    const states =
+      await __signalMonitorInternalsForTests.resolveSignalMonitorMatrixPythonStates({
+        profile: profile({ freshWindowBars: 3 }),
+        evaluatedAt,
+        cells: [
+          {
+            symbol: "SPY",
+            timeframe: "5m",
+            completedBars,
+          },
+        ],
+        runJob: async (request) => {
+          submissions.push(request);
+          return {
+            jobId: "research:test-signal-matrix",
+            jobType: "signal_matrix",
+            status: "completed",
+            createdAt: evaluatedAt.toISOString(),
+            startedAt: evaluatedAt.toISOString(),
+            completedAt: evaluatedAt.toISOString(),
+            durationMs: 1,
+            warnings: [],
+            result: {
+              cellCount: 1,
+              states: [
+                {
+                  symbol: "SPY",
+                  timeframe: "5m",
+                  status: "ok",
+                  signal: {
+                    direction: "long",
+                    barIndex: 6,
+                    time: Math.floor(
+                      completedBars[6]!.timestamp.getTime() / 1000,
+                    ),
+                    price: 123.45,
+                  },
+                  barsSinceSignal: 1,
+                  fresh: true,
+                  indicatorSnapshot: {
+                    trendDirection: "bullish",
+                    trendAgeBars: 4,
+                    trendAgeBucket: "new",
+                    adx: 27.1,
+                    strength: "strong",
+                    volatilityScore: 3,
+                    mtf: [
+                      {
+                        timeframe: "1h",
+                        direction: "bullish",
+                        required: false,
+                        pass: true,
+                      },
+                    ],
+                    filterState: null,
+                  },
+                  warning: null,
+                },
+              ],
+            },
+            error: null,
+          };
+        },
+      });
+
+    const request = submissions[0] as {
+      jobType?: string;
+      input?: { cells?: unknown[] };
+    };
+    const state = states.get("SPY:5m");
+
+    assert.equal(request.jobType, "signal_matrix");
+    assert.equal(request.input?.cells?.length, 1);
+    assert.ok(state);
+    assert.equal(state.currentSignalDirection, "buy");
+    assert.equal(state.currentSignalPrice, 123.45);
+    assert.equal(state.barsSinceSignal, 1);
+    assert.equal(state.fresh, true);
+    assert.equal(state.status, "ok");
+    assert.equal(state.indicatorSnapshot?.trendDirection, "bullish");
+  } finally {
+    if (previousSignalFlag === undefined) {
+      delete process.env["PYRUS_PYTHON_SIGNAL_MATRIX_ENABLED"];
+    } else {
+      process.env["PYRUS_PYTHON_SIGNAL_MATRIX_ENABLED"] = previousSignalFlag;
+    }
+    if (previousResearchFlag === undefined) {
+      delete process.env["PYRUS_PYTHON_RESEARCH_COMPUTE_ENABLED"];
+    } else {
+      process.env["PYRUS_PYTHON_RESEARCH_COMPUTE_ENABLED"] =
+        previousResearchFlag;
+    }
+  }
+});
+
 test("automatic signal matrix reads keep followers cache-only and incomplete exact-cell leaders source-backed", () => {
   const source = readFileSync(
     new URL("./signal-monitor.ts", import.meta.url),
@@ -1643,7 +1816,7 @@ test("signal monitor matrix exact-cell evaluations backfill cold live-edge histo
   assert.ok(loadIndex > streamFreshIndex);
   assert.match(
     matrixSymbolBlock,
-    /isFreshSignalMonitorMatrixStreamState\(liveEdgeStreamState\)[\s\S]*return liveEdgeStreamState/,
+    /isFreshSignalMonitorMatrixStreamState\(liveEdgeStreamState\)[\s\S]*return \{ kind: "state", state: liveEdgeStreamState \}/,
   );
   assert.match(
     matrixSymbolBlock,
@@ -1651,11 +1824,11 @@ test("signal monitor matrix exact-cell evaluations backfill cold live-edge histo
   );
   assert.match(
     matrixSymbolBlock,
-    /isSignalMonitorMatrixBarLoadTimeout\(error\)[\s\S]*if \(liveEdgeStreamState\)[\s\S]*return liveEdgeStreamState/,
+    /isSignalMonitorMatrixBarLoadTimeout\(error\)[\s\S]*if \(liveEdgeStreamState\)[\s\S]*return \{ kind: "state", state: liveEdgeStreamState \}/,
   );
   assert.match(
     matrixSymbolBlock,
-    /isSignalMonitorLiveEdgeHistoryUnavailableError\(error\)[\s\S]*return null/,
+    /isSignalMonitorLiveEdgeHistoryUnavailableError\(error\)[\s\S]*return \{ kind: "state", state: null \}/,
   );
   assert.match(
     source,
@@ -1847,8 +2020,27 @@ test("signal monitor evaluates the newest completed bar without an extra bar wai
   );
   assert.match(
     symbolEvaluationBlock ?? "",
+    /shouldPersistSignalMonitorStateEvent\(\{\s*fresh,\s*barsSinceSignal\s*\}\)/,
+  );
+  assert.doesNotMatch(
+    symbolEvaluationBlock ?? "",
     /input\.mode === "incremental" && fresh && barsSinceSignal === 0/,
   );
+});
+
+test("signal monitor persists fresh signals discovered after the exact live-edge bar", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const persistenceGuard =
+    source.match(
+      /function shouldPersistSignalMonitorStateEvent[\s\S]*?\n}\n\nasync function upsertSymbolState/,
+    )?.[0] ?? "";
+
+  assert.match(persistenceGuard, /return input\.fresh && input\.barsSinceSignal >= 0/);
+  assert.doesNotMatch(persistenceGuard, /input\.mode/);
+  assert.doesNotMatch(persistenceGuard, /barsSinceSignal === 0/);
 });
 
 test("signal monitor treats intraday provider timestamps as closed bars", () => {
@@ -2588,6 +2780,44 @@ test("high-beta signal monitor profile updates default to 500 symbols", () => {
   assert.equal(explicitLower.maxSymbols, 300);
 });
 
+test("legacy broad signal monitor profiles migrate to 500-symbol expanded scope", () => {
+  const patch =
+    __signalMonitorInternalsForTests.buildSignalMonitorLegacyDefaultsPatch(
+      profile({
+        maxSymbols: 250,
+        pyrusSignalsSettings: {
+          timeHorizon: 8,
+          __signalMonitorUniverseScope: "all_watchlists",
+        },
+      }),
+    );
+  const settings = patch?.pyrusSignalsSettings as
+    | Record<string, unknown>
+    | undefined;
+
+  assert.equal(patch?.maxSymbols, 500);
+  assert.equal(
+    settings?.["__signalMonitorUniverseScope"],
+    "all_watchlists_plus_universe",
+  );
+  assert.equal(settings?.["__signalMonitorUniverseScopeDefaultVersion"], 2);
+});
+
+test("versioned selected-watchlist signal monitor profiles are not broadened", () => {
+  const patch =
+    __signalMonitorInternalsForTests.buildSignalMonitorLegacyDefaultsPatch(
+      profile({
+        maxSymbols: 50,
+        pyrusSignalsSettings: {
+          __signalMonitorUniverseScope: "selected_watchlist",
+          __signalMonitorUniverseScopeDefaultVersion: 2,
+        },
+      }),
+    );
+
+  assert.equal(patch, null);
+});
+
 test("high-beta signal monitor profile updates are guarded by universe availability", () => {
   const source = readFileSync(
     new URL("./signal-monitor.ts", import.meta.url),
@@ -2841,7 +3071,7 @@ test("signal monitor selected-watchlist scope stays on the configured watchlist"
   assert.deepEqual(result.symbols, ["SPY", "NVDA"]);
 });
 
-test("signal monitor default scope stays on all watchlists", () => {
+test("signal monitor default scope includes ranked universe expansion", () => {
   const result =
     __signalMonitorInternalsForTests.resolveSignalMonitorUniverseFromWatchlists(
       {
@@ -2874,13 +3104,20 @@ test("signal monitor default scope stays on all watchlists", () => {
       },
     );
 
-  assert.deepEqual(result.symbols, ["SPY", "NVDA", "PLTR"]);
-  assert.deepEqual(result.skippedSymbols, []);
+  assert.deepEqual(result.symbols, [
+    "SPY",
+    "NVDA",
+    "PLTR",
+    "AAPL",
+    "MSFT",
+    "TSLA",
+  ]);
+  assert.deepEqual(result.skippedSymbols, ["AMD"]);
   assert.equal(result.universe.configuredMaxSymbols, 6);
   assert.equal(result.universe.pinnedSymbols, 3);
-  assert.equal(result.universe.expansionSymbols, 0);
-  assert.equal(result.universe.shortfall, 3);
-  assert.equal(result.universe.source, "all_watchlists");
+  assert.equal(result.universe.expansionSymbols, 3);
+  assert.equal(result.universe.shortfall, 0);
+  assert.equal(result.universe.source, "watchlists_plus_ranked_universe");
 });
 
 test("signal monitor explicit expansion scope adds ranked universe symbols", () => {

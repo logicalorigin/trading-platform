@@ -2,6 +2,7 @@ import {
   Suspense,
   lazy,
   useEffect,
+  useState,
 } from "react";
 import {
   CSS_COLOR,
@@ -11,6 +12,8 @@ import {
   sp,
 } from "../lib/uiTokens";
 import { retryDynamicImport } from "../lib/dynamicImport";
+
+const BACKTEST_PANEL_HYDRATION_DELAY_MS = 650;
 
 let backtestingPanelsImport = null;
 const loadBacktestingPanels = () => {
@@ -37,7 +40,7 @@ const LazyBacktestWorkspace = lazy(() =>
   })),
 );
 
-export const preloadScreenModules = () => loadBacktestingPanels();
+export const preloadScreenModules = () => Promise.resolve();
 
 const BacktestWorkspaceFallback = () => (
   <div
@@ -69,6 +72,8 @@ export const BacktestScreen = ({
   isVisible = false,
   onReadinessChange,
 }) => {
+  const [panelsHydrationReady, setPanelsHydrationReady] = useState(false);
+
   useEffect(() => {
     onReadinessChange?.({
       criticalReady: Boolean(isVisible),
@@ -76,6 +81,18 @@ export const BacktestScreen = ({
       backgroundAllowed: Boolean(isVisible),
     });
   }, [isVisible, onReadinessChange]);
+
+  useEffect(() => {
+    if (!isVisible || panelsHydrationReady) {
+      return undefined;
+    }
+
+    const hydrationTimer = window.setTimeout(
+      () => setPanelsHydrationReady(true),
+      BACKTEST_PANEL_HYDRATION_DELAY_MS,
+    );
+    return () => window.clearTimeout(hydrationTimer);
+  }, [isVisible, panelsHydrationReady]);
 
   return (
     <div
@@ -86,22 +103,30 @@ export const BacktestScreen = ({
         minWidth: 0,
       }}
     >
-      <Suspense fallback={<BacktestDraftStrategiesFallback />}>
-        <LazyAlgoDraftStrategiesPanel
-          theme={T}
-          scale={{ fs, sp, dim }}
-          isVisible={isVisible}
-        />
-      </Suspense>
-      <Suspense fallback={<BacktestWorkspaceFallback />}>
-        <LazyBacktestWorkspace
-          theme={T}
-          scale={{ fs, sp, dim }}
-          watchlists={watchlists}
-          defaultWatchlistId={defaultWatchlistId}
-          isVisible={isVisible}
-        />
-      </Suspense>
+      {panelsHydrationReady ? (
+        <Suspense fallback={<BacktestDraftStrategiesFallback />}>
+          <LazyAlgoDraftStrategiesPanel
+            theme={T}
+            scale={{ fs, sp, dim }}
+            isVisible={isVisible}
+          />
+        </Suspense>
+      ) : (
+        <BacktestDraftStrategiesFallback />
+      )}
+      {panelsHydrationReady ? (
+        <Suspense fallback={<BacktestWorkspaceFallback />}>
+          <LazyBacktestWorkspace
+            theme={T}
+            scale={{ fs, sp, dim }}
+            watchlists={watchlists}
+            defaultWatchlistId={defaultWatchlistId}
+            isVisible={isVisible}
+          />
+        </Suspense>
+      ) : (
+        <BacktestWorkspaceFallback />
+      )}
     </div>
   );
 };

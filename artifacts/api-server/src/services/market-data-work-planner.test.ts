@@ -99,6 +99,8 @@ test("buildMarketDataWorkPlan splits IBKR live lines from persisted provider job
   assert.equal(plan.summary.ibkrOptionLineCount, 1);
   assert.equal(plan.summary.persistQueuedJobCount, 3);
   assert.equal(plan.summary.persistRunningJobCount, 1);
+  assert.equal(plan.summary.persistClaimableQueuedJobCount, 0);
+  assert.equal(plan.summary.persistWorkerInactive, false);
   assert.equal(plan.summary.persistBlockedJobCount, 1);
   assert.equal(plan.summary.releaseLineCount, 1);
   assert.equal(plan.summary.evictLineCount, 1);
@@ -114,6 +116,44 @@ test("buildMarketDataWorkPlan splits IBKR live lines from persisted provider job
   assert.ok(
     plan.persistJobs.some(
       (job) => job.kind === "gex_snapshot" && job.status === "blocked",
+    ),
+  );
+});
+
+test("buildMarketDataWorkPlan surfaces an inactive persisted worker", () => {
+  const plan = buildMarketDataWorkPlan({
+    generatedAt: "2026-05-29T18:00:00.000Z",
+    admission: getMarketDataAdmissionDiagnostics(),
+    ingest: {
+      configured: true,
+      providerConfigured: true,
+      queueDepth: { queued: 6 },
+      oldestQueuedAgeMs: 12_000,
+      runningCount: 0,
+      claimableQueuedJobCount: 4,
+      claimableQueuedJobsByKind: {
+        stock_snapshot: 2,
+        option_chain_snapshot: 2,
+      },
+      workerLikelyInactive: true,
+      workerInactiveReason: "claimable_jobs_waiting_without_running_worker",
+      blockedGexJobCount: 0,
+      oldestBlockedGexAgeMs: null,
+      blockedGexJobs: [],
+      recentCompletedJobs: [],
+    },
+  });
+
+  assert.equal(plan.summary.persistQueuedJobCount, 6);
+  assert.equal(plan.summary.persistClaimableQueuedJobCount, 4);
+  assert.equal(plan.summary.persistWorkerInactive, true);
+  assert.ok(
+    plan.persistJobs.some(
+      (job) =>
+        job.kind === "market_data_worker" &&
+        job.status === "blocked" &&
+        job.jobCount === 4 &&
+        /market-data-worker/.test(job.reason),
     ),
   );
 });

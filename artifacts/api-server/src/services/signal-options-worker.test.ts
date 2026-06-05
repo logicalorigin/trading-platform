@@ -1114,7 +1114,7 @@ test("signal-options worker accepts lightweight scan summaries", async () => {
     listDeployments: async () => [deployment()],
     scanDeployment: async () => ({
       summary: {
-        signalCount: 90,
+        signalCount: 500,
         freshSignalCount: 6,
         staleSignalCount: 0,
         unavailableSignalCount: 0,
@@ -1124,7 +1124,7 @@ test("signal-options worker accepts lightweight scan summaries", async () => {
         blockedCandidateCount: 4,
         batch: {
           symbols: ["SPY", "QQQ"],
-          universeCount: 90,
+          universeCount: 500,
           batchSize: 2,
           startIndex: 0,
           nextIndex: 2,
@@ -1140,14 +1140,14 @@ test("signal-options worker accepts lightweight scan summaries", async () => {
   await worker.runOnce();
 
   const runtime = worker.getRuntimeSnapshot().deployments[0];
-  assert.equal(runtime?.lastSignalCount, 90);
+  assert.equal(runtime?.lastSignalCount, 500);
   assert.equal(runtime?.lastFreshSignalCount, 6);
   assert.equal(runtime?.lastLatestSignalBarAt, "2026-05-18T18:20:00.000Z");
   assert.equal(runtime?.lastOldestSignalBarAt, "2026-05-18T18:05:00.000Z");
   assert.equal(runtime?.lastCandidateCount, 5);
   assert.equal(runtime?.lastBlockedCandidateCount, 4);
   assert.deepEqual(runtime?.lastBatchSymbols, ["SPY", "QQQ"]);
-  assert.equal(runtime?.lastBatchUniverseCount, 90);
+  assert.equal(runtime?.lastBatchUniverseCount, 500);
   assert.equal(runtime?.lastBatchSize, 2);
   assert.equal(runtime?.lastBatchStartIndex, 0);
   assert.equal(runtime?.lastBatchNextIndex, 2);

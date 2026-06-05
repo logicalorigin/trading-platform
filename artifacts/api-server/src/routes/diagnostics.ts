@@ -16,6 +16,10 @@ import {
   type DiagnosticEventStatus,
   type DiagnosticSeverity,
 } from "../services/diagnostics";
+import {
+  refreshGexUniverseSnapshots,
+  type GexUniverseRefreshScope,
+} from "../services/gex-universe-refresh";
 import { HttpError } from "../lib/errors";
 
 const router: IRouter = Router();
@@ -64,6 +68,60 @@ function readLimit(
     return fallback;
   }
   return Math.min(max, parsed);
+}
+
+function readOptionalPositiveInteger(
+  value: unknown,
+  max: number,
+): number | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return Math.min(max, parsed);
+}
+
+function readOptionalBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  return undefined;
+}
+
+function readGexUniverseRefreshScope(
+  value: unknown,
+): GexUniverseRefreshScope | undefined {
+  if (value === "high_beta_500" || value === "symbols") {
+    return value;
+  }
+  return undefined;
+}
+
+function readStringList(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    const symbols = value
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    return symbols.length > 0 ? symbols : undefined;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const symbols = value
+      .split(/[,\s]+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    return symbols.length > 0 ? symbols : undefined;
+  }
+  return undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -243,6 +301,29 @@ router.post("/diagnostics/storage/prune", async (req, res) => {
     body.olderThanDays === undefined ? undefined : Number(body.olderThanDays);
   const dryRun = body.dryRun !== false;
   res.json(await pruneDiagnosticStorage({ tables, olderThanDays, dryRun }));
+});
+
+router.post("/diagnostics/market-data/gex-universe-refresh", async (req, res) => {
+  const body = asRecord(req.body);
+  const symbols = readStringList(body.symbols);
+  const dryRun = readOptionalBoolean(body.dryRun) ?? true;
+  const result = await refreshGexUniverseSnapshots({
+    scope:
+      readGexUniverseRefreshScope(body.scope) ??
+      (symbols?.length ? "symbols" : "high_beta_500"),
+    symbols,
+    limit: readOptionalPositiveInteger(body.limit, 500),
+    batchSize: readOptionalPositiveInteger(body.batchSize, 100),
+    staleAfterMs: readOptionalPositiveInteger(
+      body.staleAfterMs,
+      Number.MAX_SAFE_INTEGER,
+    ),
+    dryRun,
+    refreshUniverse: readOptionalBoolean(body.refreshUniverse),
+    reason: readString(body.reason) ?? undefined,
+  });
+
+  res.status(dryRun ? 200 : 202).json(result);
 });
 
 router.get("/diagnostics/stream", (req, res) => {

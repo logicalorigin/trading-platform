@@ -7,17 +7,34 @@ const requestPath = (url: string | null | undefined): string => {
   return path.startsWith("/") ? path : `/${path}`;
 };
 
+const apiMountedPath = (url: string | null | undefined): string => {
+  const path = requestPath(url);
+  return path.startsWith("/api/")
+    ? path.slice(4)
+    : path === "/api"
+      ? "/"
+      : path;
+};
+
 export function isApiHealthProbeUrl(url: string | null | undefined): boolean {
   const path = requestPath(url);
   return path === "/healthz" || path === "/api/healthz";
 }
 
 export function isLongLivedStreamUrl(url: string | null | undefined): boolean {
-  const path = requestPath(url);
+  const normalized = apiMountedPath(url);
+  return normalized.startsWith("/streams/") || normalized.endsWith("/stream");
+}
+
+export function isLongLivedApiRequestUrl(
+  url: string | null | undefined,
+): boolean {
+  const normalized = apiMountedPath(url);
   return (
-    path.startsWith("/api/streams/") ||
-    path.startsWith("/api/diagnostics/stream") ||
-    (path.startsWith("/api/") && path.endsWith("/stream"))
+    isLongLivedStreamUrl(normalized) ||
+    normalized === "/ibkr/desktop/jobs/claim" ||
+    /^\/ibkr\/activation\/[^/]+\/login-key\/read$/.test(normalized) ||
+    /^\/ibkr\/activation\/[^/]+\/login-envelope\/claim$/.test(normalized)
   );
 }
 
@@ -48,6 +65,7 @@ export function resolveApiRequestLogLevel(input: {
   if (input.err || input.statusCode >= 500) return "error";
   if (input.statusCode >= 400) return "warn";
   if (isApiHealthProbeUrl(input.url)) return "silent";
+  if (isLongLivedApiRequestUrl(input.url)) return "silent";
   if (input.responseTimeMs >= SLOW_REQUEST_LOG_MS) return "warn";
   if (input.statusCode >= 200 && input.statusCode < 400) return "silent";
   return "info";

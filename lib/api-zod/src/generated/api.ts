@@ -1932,7 +1932,8 @@ export const GetAccountRiskParams = zod.object({
 })
 
 export const GetAccountRiskQueryParams = zod.object({
-  "mode": zod.enum(['paper', 'live']).optional()
+  "mode": zod.enum(['paper', 'live']).optional(),
+  "detail": zod.enum(['fast', 'full']).optional()
 })
 
 export const GetAccountRiskResponse = zod.object({

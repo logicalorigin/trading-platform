@@ -1252,6 +1252,12 @@ paths:
           required: false
           schema:
             $ref: "#/components/schemas/EnvironmentMode"
+        - name: detail
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [fast, full]
       responses:
         "200":
           description: Account risk

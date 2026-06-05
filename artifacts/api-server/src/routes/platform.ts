@@ -666,6 +666,8 @@ const BARS_REQUEST_MAX_WINDOW_DAYS: Record<string, number> = {
   "4h": 365 * 3,
   "1d": 365 * 15,
 };
+const BARS_BATCH_MAX_REQUESTS = 72;
+const BARS_BATCH_CONCURRENCY = 6;
 
 function validateBarsRequestWindow(
   query: ReturnType<typeof GetBarsQueryParams.parse>,
@@ -707,6 +709,66 @@ function readOptionalString(value: unknown, maxLength = 160): string | undefined
     return undefined;
   }
   return trimmed.slice(0, maxLength);
+}
+
+function sendBarsBatchProblem(
+  res: Response,
+  status: number,
+  detail: string,
+  code: string,
+) {
+  res.status(status).type("application/problem+json").json({
+    type: "https://pyrus.local/problems/bars-batch-request-invalid",
+    title: "Bars batch request is invalid",
+    status,
+    detail,
+    code,
+  });
+}
+
+function getBarsBatchRecords(body: unknown): Record<string, unknown>[] | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return null;
+  }
+  const requests = (body as { requests?: unknown }).requests;
+  if (!Array.isArray(requests)) {
+    return null;
+  }
+  if (
+    requests.some(
+      (request) => !request || typeof request !== "object" || Array.isArray(request),
+    )
+  ) {
+    return null;
+  }
+  return requests as Record<string, unknown>[];
+}
+
+function parseBarsBatchRecord(record: Record<string, unknown>, index: number) {
+  const query = GetBarsQueryParams.parse(
+    coerceBooleanQueryFields(
+      coerceDateQueryFields(record, ["from", "to"]),
+      [
+        "outsideRth",
+        "allowHistoricalSynthesis",
+        "allowStudyFallback",
+        "preferCursor",
+      ],
+    ),
+  );
+  const rawBrokerRecentWindowMinutes = Number(record.brokerRecentWindowMinutes);
+  const brokerRecentWindowMinutes =
+    Number.isFinite(rawBrokerRecentWindowMinutes)
+      ? rawBrokerRecentWindowMinutes
+      : null;
+  const key =
+    readOptionalString(record.key, 140) ||
+    `${query.symbol}:${query.timeframe}:${index}`;
+  return {
+    key,
+    query,
+    brokerRecentWindowMinutes,
+  };
 }
 
 function setRequestDebugHeaders(
@@ -1422,11 +1484,14 @@ router.post("/accounts/:accountId/orders/:orderId/cancel", async (req, res) => {
 
 router.get("/accounts/:accountId/risk", async (req, res) => {
   const mode = req.query.mode === "live" ? "live" : req.query.mode === "paper" ? "paper" : undefined;
+  const detail =
+    req.query.detail === "fast" ? "fast" : req.query.detail === "full" ? "full" : undefined;
   res.json(
     await getAccountRisk({
       accountId: req.params.accountId,
       mode,
       source: readOptionalString(req.query.source, 80),
+      detail,
     }),
   );
 });
@@ -1893,6 +1958,117 @@ router.get("/options/resolve-contract", async (req, res) => {
   const data = ResolveOptionContractResponse.parse(raw);
 
   res.json(data);
+});
+
+router.post("/bars/batch", async (req, res) => {
+  const signal = createRequestAbortSignal(req, res);
+  const records = getBarsBatchRecords(req.body);
+  if (!records) {
+    sendBarsBatchProblem(
+      res,
+      400,
+      "Body must include a requests array of bar request objects.",
+      "BARS_BATCH_REQUESTS_REQUIRED",
+    );
+    return;
+  }
+  if (records.length > BARS_BATCH_MAX_REQUESTS) {
+    sendBarsBatchProblem(
+      res,
+      400,
+      `Bars batch requests are limited to ${BARS_BATCH_MAX_REQUESTS} items.`,
+      "BARS_BATCH_TOO_LARGE",
+    );
+    return;
+  }
+
+  let parsedRequests: ReturnType<typeof parseBarsBatchRecord>[];
+  try {
+    parsedRequests = records.map((record, index) =>
+      parseBarsBatchRecord(record, index),
+    );
+  } catch (error) {
+    sendBarsBatchProblem(
+      res,
+      400,
+      error instanceof Error ? error.message : "One or more bar requests are invalid.",
+      "BARS_BATCH_ITEM_INVALID",
+    );
+    return;
+  }
+
+  for (const item of parsedRequests) {
+    if (!validateBarsRequestWindow(item.query, res)) {
+      return;
+    }
+  }
+
+  const items = new Array(parsedRequests.length);
+  let nextIndex = 0;
+  let fulfilledCount = 0;
+  let rejectedCount = 0;
+  const priority = readFetchPriority(req);
+  const family = readRequestFamily(req) || "bars-batch";
+  const workerCount = Math.max(
+    1,
+    Math.min(BARS_BATCH_CONCURRENCY, parsedRequests.length),
+  );
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < parsedRequests.length && !signal.aborted) {
+        const index = nextIndex;
+        nextIndex += 1;
+        const item = parsedRequests[index];
+        try {
+          const raw = await getBarsWithDebug(
+            {
+              ...item.query,
+              brokerRecentWindowMinutes: item.brokerRecentWindowMinutes,
+            },
+            {
+              signal,
+              priority,
+              family,
+            },
+          );
+          const data = GetBarsResponse.parse(raw);
+          fulfilledCount += 1;
+          items[index] = {
+            key: item.key,
+            status: "fulfilled",
+            symbol: data.symbol,
+            timeframe: data.timeframe,
+            bars: data.bars,
+            historySource: data.historySource,
+            marketDataMode: data.marketDataMode,
+            oldestBarAt: data.historyPage?.oldestBarAt ?? null,
+            newestBarAt: data.historyPage?.newestBarAt ?? null,
+          };
+        } catch (error) {
+          rejectedCount += 1;
+          items[index] = {
+            key: item.key,
+            status: "rejected",
+            symbol: item.query.symbol,
+            timeframe: item.query.timeframe,
+            bars: [],
+            error:
+              error instanceof Error
+                ? error.message.slice(0, 240)
+                : "Bars request failed.",
+          };
+        }
+      }
+    }),
+  );
+
+  res.json({
+    requestedCount: parsedRequests.length,
+    fulfilledCount,
+    rejectedCount,
+    items,
+  });
 });
 
 router.get("/options/chart-bars", async (req, res) => {

@@ -185,7 +185,6 @@ const HeaderBroadcastSegment = ({
   accent = CSS_COLOR.borderLight,
   children,
   onClick,
-  title,
   ariaLabel,
   compact = false,
   maxWidth,
@@ -233,11 +232,7 @@ const HeaderBroadcastSegment = ({
     </Component>
   );
 
-  return interactive ? (
-    <AppTooltip content={title}>{segment}</AppTooltip>
-  ) : (
-    segment
-  );
+  return segment;
 };
 
 const headerPillTextStyle = ({
@@ -303,7 +298,6 @@ const HeaderSignalTapeItem = memo(function HeaderSignalTapeItem({
     item.price != null && Number.isFinite(Number(item.price))
       ? formatQuotePrice(Number(item.price))
       : null;
-  const title = `${item.symbol} ${item.directionLabel} ${item.timeframe || ""}`.trim();
 
   return (
     <HeaderBroadcastSegment
@@ -312,7 +306,6 @@ const HeaderSignalTapeItem = memo(function HeaderSignalTapeItem({
       tone={tone}
       accent={item.fresh ? tone : CSS_COLOR.border}
       onClick={(selected) => onClick?.(selected.symbol, selected.raw)}
-      title={title}
       compact={compact}
     >
       <DirectionIcon
@@ -536,7 +529,6 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = fal
     formattedContractLabel ||
     String(item.contract || "").replace(new RegExp(`^${item.symbol}\\s+`, "i"), "");
   const scoreLabel = item.score ? `${item.score.toFixed(1)}x` : null;
-  const title = `${item.symbol} unusual ${contractLabel}`.trim();
 
   return (
     <HeaderBroadcastSegment
@@ -545,7 +537,6 @@ const HeaderUnusualTapeItem = ({ item, duplicate = false, onClick, compact = fal
       tone={tone}
       accent={CSS_COLOR.border}
       onClick={(selected) => onClick?.(selected.raw)}
-      title={title}
       compact={compact}
     >
       <SentimentIcon
@@ -714,7 +705,6 @@ const HeaderAlgoTapeItem = ({ item, duplicate = false, onClick, compact = false 
       tone={tone}
       accent={CSS_COLOR.border}
       onClick={(selected) => onClick?.(selected.raw)}
-      title={title}
       ariaLabel={title}
       compact={compact}
       maxWidth={compact ? 260 : 320}

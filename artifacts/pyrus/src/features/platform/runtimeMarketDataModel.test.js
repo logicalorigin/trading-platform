@@ -4,6 +4,7 @@ import {
   applyRuntimeQuoteSnapshots,
   syncRuntimeMarketData,
 } from "./runtimeMarketDataModel.js";
+import { WATCHLIST } from "../market/marketReferenceData.js";
 import {
   applyRuntimeTickerInfoPatch,
   ensureTradeTickerInfo,
@@ -154,4 +155,37 @@ test("runtime market sync preserves existing sparkline bars when quote batches o
     { i: 0, v: 300, timestamp: "2026-06-01T15:10:00.000Z" },
     { i: 1, v: 302, timestamp: "2026-06-01T15:11:00.000Z" },
   ]);
+});
+
+test("runtime market sync does not replace watchlist rows when computed data is unchanged", () => {
+  const symbol = uniqueSymbol("WATCHNOOP");
+  const previousWatchlist = WATCHLIST.slice();
+  const buildSparkBars = () => [
+    { timestamp: "2026-06-01T15:20:00.000Z", close: 410, volume: 40 },
+    { timestamp: "2026-06-01T15:21:00.000Z", close: 411, volume: 44 },
+  ];
+
+  try {
+    ensureTradeTickerInfo(symbol, symbol);
+    syncRuntimeMarketData(
+      [symbol],
+      [{ symbol, name: "Watch Noop Corp" }],
+      [],
+      { sparklineBarsBySymbol: { [symbol]: buildSparkBars() } },
+    );
+    const firstRow = WATCHLIST[0];
+
+    const changed = syncRuntimeMarketData(
+      [symbol],
+      [{ symbol, name: "Watch Noop Corp" }],
+      [],
+      { sparklineBarsBySymbol: { [symbol]: buildSparkBars() } },
+    );
+
+    assert.equal(changed, 0);
+    assert.equal(WATCHLIST[0], firstRow);
+    assert.equal(WATCHLIST.length, 1);
+  } finally {
+    WATCHLIST.splice(0, WATCHLIST.length, ...previousWatchlist);
+  }
 });
