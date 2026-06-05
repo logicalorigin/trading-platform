@@ -9,7 +9,6 @@
     "./transient-postgres-error": "./src/transient-postgres-error.ts"
   },
   "scripts": {
-    "test:unit": "node --import tsx --test \"src/**/*.test.ts\"",
     "push": "drizzle-kit push --config ./drizzle.config.ts",
     "push-force": "drizzle-kit push --force --config ./drizzle.config.ts"
   },

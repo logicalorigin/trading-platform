@@ -24,7 +24,6 @@ async function buildAll() {
     external: [
       "*.node",
       "lightningcss",
-      "playwright",
       "puppeteer",
       "puppeteer-core",
       "electron",

@@ -432,11 +432,7 @@ export default defineConfig({
       },
     },
     watch: {
-      ignored: [
-        "**/dist/**",
-        "**/playwright-report/**",
-        "**/test-results/**",
-      ],
+      ignored: ["**/dist/**"],
     },
     fs: {
       strict: true,

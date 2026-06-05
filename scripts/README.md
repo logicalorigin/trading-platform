@@ -60,8 +60,7 @@ directory to define separate Replit app runners.
   `PNPM_WORKSPACE` artifact mode, PYRUS keeps its guarded artifact identity, and the
   PYRUS web artifact owns full app bring-up. It also guards the
   Replit-workflow replacement path in `reap-dev-port.mjs`, the duplicate-start
-  supervisor no-op policy, the supervisor lifecycle JSONL evidence path, and the
-  Playwright Replit `webServer` opt-in.
+  supervisor no-op policy, and the supervisor lifecycle JSONL evidence path.
 - `protect-replit-config.mjs` locks or unlocks Replit startup config files
   (`.replit`, `replit.nix`, and artifact TOMLs) with filesystem permissions.
   Keep them locked during routine work; unlock only for an intentional
@@ -120,6 +119,3 @@ directory to define separate Replit app runners.
   `/tmp/pyrus/pyrus-dev-lifecycle-8080.jsonl`, including heartbeats, child
   starts/exits, duplicate-start no-ops, ignored SIGHUP, shutdown, and previous
   heartbeat classification.
-- `artifacts/pyrus/playwright.config.ts` disables Playwright `webServer` startup
-  inside Replit by default. Set `PYRUS_PLAYWRIGHT_ALLOW_WEB_SERVER=1` only for an
-  intentional maintenance run that should let Playwright own app startup.

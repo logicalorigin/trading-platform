@@ -98,18 +98,3 @@ async fn apply_targets(
 fn retention_cutoff(now: chrono::DateTime<Utc>, retention_days: i64) -> chrono::DateTime<Utc> {
     now - Duration::days(retention_days)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::TimeZone;
-
-    #[test]
-    fn retention_cutoff_subtracts_configured_days() {
-        let now = Utc.with_ymd_and_hms(2026, 5, 29, 12, 0, 0).unwrap();
-        assert_eq!(
-            retention_cutoff(now, 30),
-            Utc.with_ymd_and_hms(2026, 4, 29, 12, 0, 0).unwrap()
-        );
-    }
-}

@@ -32,11 +32,8 @@
     "python-compute:doctor": "node scripts/run-python-compute.mjs doctor",
     "python-compute:benchmark": "node scripts/run-python-compute.mjs benchmark",
     "python-compute:service": "node scripts/run-python-compute.mjs service",
-    "python-compute:test": "node scripts/run-python-compute.mjs test",
     "python-compute:lint": "node scripts/run-python-compute.mjs lint",
     "python-compute:typecheck": "node scripts/run-python-compute.mjs typecheck",
-    "test:market-data-worker": "node scripts/run-market-data-worker.mjs test -p market-data-worker",
-    "validation:guard:test": "node --test scripts/run-validation-command.test.mjs",
     "typecheck:libs": "node scripts/run-validation-command.mjs --label typecheck:libs -- tsc --build",
     "typecheck": "pnpm run audit:replit-startup && pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },

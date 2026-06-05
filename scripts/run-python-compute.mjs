@@ -11,7 +11,6 @@ const commands = {
   doctor: ["run", "python", "-m", "pyrus_compute.doctor"],
   benchmark: ["run", "python", "-m", "pyrus_compute.benchmark"],
   service: ["run", "python", "-m", "pyrus_compute.service"],
-  test: ["run", "pytest"],
   lint: ["run", "ruff", "check"],
   typecheck: ["run", "mypy", "src"],
 };

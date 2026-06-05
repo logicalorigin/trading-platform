@@ -31,11 +31,6 @@ delete commandEnv.NIX_LD_LIBRARY_PATH;
 delete commandEnv.REPLIT_LD_AUDIT;
 delete commandEnv.REPLIT_LD_LIBRARY_PATH;
 
-const isTruthyEnv = (value) =>
-  ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
-const browserPrepRequested =
-  isTruthyEnv(process.env.PYRUS_DOCTOR_PREPARE_BROWSER);
-
 const readTextCommand = (command, args) => {
   try {
     return execFileSync(command, args, {
@@ -63,36 +58,6 @@ const runTextCommand = (command, args, options = {}) => {
     stdout: result.stdout || "",
     stderr: result.stderr || "",
     error: result.error?.message || null,
-  };
-};
-
-const runKillableTextCommand = (command, args, options = {}) => {
-  const result = spawnSync(command, args, {
-    cwd: options.cwd || repoRoot,
-    env: options.env || commandEnv,
-    encoding: "utf8",
-    timeout: options.timeout || 5_000,
-    detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const timedOut = result.error?.code === "ETIMEDOUT";
-  let killedProcessGroup = false;
-  if (timedOut && result.pid) {
-    for (const signal of ["SIGTERM", "SIGKILL"]) {
-      try {
-        process.kill(-result.pid, signal);
-        killedProcessGroup = true;
-      } catch {}
-    }
-  }
-  return {
-    status: result.status,
-    signal: result.signal,
-    stdout: result.stdout || "",
-    stderr: result.stderr || "",
-    error: result.error?.message || null,
-    timedOut,
-    killedProcessGroup,
   };
 };
 
@@ -186,20 +151,6 @@ const parseProcessList = () => {
     })
     .filter(Boolean);
 };
-
-const readBrowserPrepScanProcesses = () =>
-  parseProcessList()
-    .filter(
-      (processInfo) =>
-        /(^|\s)find\s/.test(processInfo.cmd) &&
-        /libgbm\.so/.test(processInfo.cmd),
-    )
-    .map((processInfo) => ({
-      pid: processInfo.pid,
-      ppid: processInfo.ppid,
-      etime: processInfo.etime,
-      cmd: processInfo.cmd,
-    }));
 
 const describePathStatus = (targetPath) => {
   if (!existsSync(targetPath)) {
@@ -460,58 +411,6 @@ const readDatabaseReachability = () => {
   };
 };
 
-const readReplitPlaywrightStatus = () => {
-  const prepareScript = path.join(
-    packageRoot,
-    "scripts/preparePlaywrightChromium.mjs",
-  );
-  const command = "pnpm --filter @workspace/pyrus run test:e2e:replit";
-  const directLaunchRisk = Boolean(
-    process.env.LD_LIBRARY_PATH ||
-      process.env.REPLIT_LD_LIBRARY_PATH ||
-      process.env.NIX_LD ||
-      process.env.NIX_LD_LIBRARY_PATH,
-  );
-  if (!browserPrepRequested) {
-    return {
-      command,
-      prepared: false,
-      skipped: true,
-      executable: null,
-      error: null,
-      directLaunchRisk,
-      optInEnv: "PYRUS_DOCTOR_PREPARE_BROWSER=1",
-    };
-  }
-  if (!existsSync(prepareScript)) {
-    return {
-      command,
-      prepared: false,
-      skipped: false,
-      executable: null,
-      error: "preparePlaywrightChromium.mjs was not found",
-      directLaunchRisk,
-    };
-  }
-
-  const result = runKillableTextCommand(process.execPath, [prepareScript], {
-    cwd: packageRoot,
-    env: commandEnv,
-    timeout: 20_000,
-  });
-  const output = `${result.stdout}${result.stderr}`.trim();
-  return {
-    command,
-    prepared: result.status === 0,
-    skipped: false,
-    executable: result.status === 0 ? result.stdout.trim() || null : null,
-    error: result.status === 0 ? null : output || result.error,
-    directLaunchRisk,
-    timedOut: result.timedOut,
-    killedProcessGroup: result.killedProcessGroup,
-  };
-};
-
 const isDistOlderThanRuntimeSources = (distStatus) => {
   if (!distStatus.exists) {
     return false;
@@ -750,20 +649,6 @@ if (!databaseReachability.configured) {
   );
 }
 
-const orphanedBrowserPrepScans = readBrowserPrepScanProcesses();
-for (const processInfo of orphanedBrowserPrepScans) {
-  warnings.push(
-    `Stale browser library scan PID ${processInfo.pid} is still running (${processInfo.etime}): ${processInfo.cmd}`,
-  );
-}
-
-const browserVerification = readReplitPlaywrightStatus();
-if (!browserVerification.skipped && !browserVerification.prepared) {
-  warnings.push(
-    `Replit Playwright Chromium could not be prepared; use ${browserVerification.command} after installing Chromium and checking Nix browser libraries`,
-  );
-}
-
 const snapshot = {
   checkedAt: new Date().toISOString(),
   packageRoot: path.relative(repoRoot, packageRoot),
@@ -791,8 +676,6 @@ const snapshot = {
   viteCache: describePathStatus(path.join(packageRoot, "node_modules/.vite")),
   chartSurfaceFingerprint,
   databaseReachability,
-  orphanedBrowserPrepScans,
-  browserVerification,
   warnings,
   failures,
 };
@@ -821,21 +704,6 @@ if (jsonOnly) {
     }
   } else {
     console.log("postgres: DATABASE_URL not set");
-  }
-  console.log(
-    `browser verification: ${
-      browserVerification.skipped
-        ? `skipped (${browserVerification.optInEnv})`
-        : browserVerification.prepared
-          ? "patched chromium ready"
-          : "patched chromium unavailable"
-    }; command=${browserVerification.command}`,
-  );
-  if (orphanedBrowserPrepScans.length) {
-    console.log("stale browser prep scans:");
-    for (const processInfo of orphanedBrowserPrepScans) {
-      console.log(`- pid ${processInfo.pid} ppid=${processInfo.ppid} ${processInfo.etime} ${processInfo.cmd}`);
-    }
   }
   console.log(`pyrus vite servers: ${pyrusViteServers.length}`);
   for (const server of pyrusViteServers) {

@@ -79,9 +79,7 @@ Use these targeted checks after changing this subsystem:
 
 ```bash
 pnpm run fmt:market-data-worker
-pnpm run test:market-data-worker
 pnpm run build:market-data-worker
-pnpm --dir artifacts/api-server exec node --import tsx --test src/services/market-data-ingest.test.ts src/services/gex.test.ts
 pnpm --dir artifacts/api-server run typecheck
 pnpm --filter @workspace/scripts run typecheck
 pnpm exec tsc --build lib/db

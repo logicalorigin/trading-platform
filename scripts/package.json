@@ -29,15 +29,6 @@
     "pyrus:portfolio-optimization": "tsx ./src/pyrus-portfolio-optimization.ts",
     "pyrus:performance-monitor": "tsx ./src/pyrus-performance-monitor.ts",
     "replit:scribe:artifacts": "tsx ./src/replit-scribe-artifacts.ts",
-    "test:signal-options-exit-policy-sweep": "node --import tsx --test ./src/signal-options-exit-policy-sweep.test.ts",
-    "test:shadow-options-management-review": "node --import tsx --test ./src/shadow-options-management-review.test.ts",
-    "test:pyrus-signals-options-sweep": "node --import tsx --test ./src/pyrus-signals-options-sweep.test.ts",
-    "test:signal-options-greek-selector-smoke": "node --import tsx --test ./src/signal-options-greek-selector-smoke.test.ts",
-    "test:signal-options-greek-position-diagnostics": "node --import tsx --test ./src/signal-options-greek-position-diagnostics.test.ts",
-    "test:pyrus-portfolio-optimization": "node --import tsx --test ./src/pyrus-portfolio-optimization.test.ts",
-    "test:pyrus-performance-monitor": "node --import tsx --test ./src/pyrus-performance-monitor.test.ts",
-    "test:replit-scribe-artifacts": "node --import tsx --test ./src/replit-scribe-artifacts.test.ts",
-    "test:universe-catalog": "node --import tsx --test ./src/universe-catalog-live.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

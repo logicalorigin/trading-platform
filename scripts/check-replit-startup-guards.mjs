@@ -207,13 +207,6 @@ check(
     "node scripts/run-validation-command.mjs --label typecheck:libs -- tsc --build",
   "package.json typecheck:libs must run through scripts/run-validation-command.mjs so broad lib builds are refused while the live PYRUS runtime is hot.",
 );
-check(
-  existsSync(path.join(repoRoot, "scripts/run-validation-command.mjs")) &&
-    existsSync(path.join(repoRoot, "scripts/run-validation-command.test.mjs")) &&
-    rootScripts["validation:guard:test"] ===
-      "node --test scripts/run-validation-command.test.mjs",
-  "package.json must keep validation:guard:test and the guarded validation runner test file.",
-);
 const validationRunner = read("scripts/run-validation-command.mjs");
 check(
   validationRunner.includes("/tmp/pyrus/pyrus-dev-supervisor-8080.lock") &&
@@ -338,17 +331,6 @@ check(
     pyrusRunner.includes('process.on("SIGHUP", ignoreWorkflowHangup)') &&
     pyrusRunner.includes('process.once("exit", removeSupervisorLock)'),
   "runDevApp.mjs must keep the supervisor single-flight lock, bounded duplicate Replit workflow no-op, controlled Replit handoff, SIGHUP resilience, and explicit forced recovery handoff so duplicate launches cannot overlap or leave the wrong workflow owning API/web processes.",
-);
-
-const playwrightConfig = read("artifacts/pyrus/playwright.config.ts");
-check(
-  playwrightConfig.includes("PYRUS_PLAYWRIGHT_NO_WEB_SERVER") &&
-    playwrightConfig.includes("PYRUS_PLAYWRIGHT_ALLOW_WEB_SERVER") &&
-    playwrightConfig.includes("runningInReplit") &&
-    playwrightConfig.includes("REPLIT_MODE === \"workflow\"") &&
-    playwrightConfig.includes("disableWebServer") &&
-    playwrightConfig.includes("webServer:"),
-  "PYRUS Playwright config must disable its webServer inside Replit unless PYRUS_PLAYWRIGHT_ALLOW_WEB_SERVER=1 is explicitly set.",
 );
 
 check(

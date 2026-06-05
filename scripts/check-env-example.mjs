@@ -11,10 +11,8 @@ const platformProvidedEnvVars = new Set(["REPLIT_MODE"]);
 const ignoredDirs = new Set([
   ".git",
   ".turbo",
-  "coverage",
   "dist",
   "node_modules",
-  "playwright-report",
 ]);
 
 const readText = (filePath) => fs.readFileSync(filePath, "utf8");

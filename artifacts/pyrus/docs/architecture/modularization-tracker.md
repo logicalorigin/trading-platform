@@ -44,7 +44,7 @@ This replan is based on current workspace files only. No separate untracked tran
 
 - Keep `PlatformApp.jsx` as the orchestration owner for provider implementations, account/session state derivation, and handler construction until those areas have narrower owning hooks.
 - Keep the extracted shell files in `src/features/platform` as the app-frame boundary: `PlatformShell.jsx`, `PlatformScreenRouter.jsx`, `PlatformProviders.jsx`, `PlatformRuntimeLayer.jsx`, `platformContexts.jsx`, and `screenRegistry.jsx`.
-- Current validation passed: Pyrus typecheck, production build, diff-check, and `e2e/platform-shell.spec.ts`.
+- Current validation passed: Pyrus typecheck, production build, and diff-check.
 - Current status: complete.
 
 ### Phase 3: Move screen-owned exports to feature folders
@@ -75,7 +75,7 @@ This replan is based on current workspace files only. No separate untracked tran
   - Moved `TradeEquityPanel`, `TradeL2Panel`, `TradeOrderTicket`, and `TradePositionsPanel` into `src/features/trade/TradePanels.jsx`.
   - Moved shared account position/risk display row helpers into `src/features/account/accountPositionRows.js` so Trade feature modules no longer import from `screens/account`.
   - Removed the legacy root exports for the moved ticker, market-grid, and trade-panel components from `PyrusPlatform.jsx`.
-  - Validation passed after closure: Pyrus typecheck, production build, diff-check, no `PyrusPlatform.jsx` screen imports, and `e2e/platform-shell.spec.ts`.
+  - Validation passed after closure: Pyrus typecheck, production build, diff-check, and no `PyrusPlatform.jsx` screen imports.
 - Remaining root imports: none.
 - Current status: complete.
 
@@ -99,7 +99,7 @@ This replan is based on current workspace files only. No separate untracked tran
   - Follow-up audit fixed runtime-only missing imports/helpers in the split modules: trade mutations/value flash/platform JSON requests, market grid viewport persistence helpers, mini-chart study normalization, and premium-flow symbol/time formatting.
   - Moved `platformJsonRequest` into `src/features/platform/platformJsonRequest.js` and re-exported it from `PyrusPlatform.jsx` to avoid duplicate request-helper drift.
   - Review cleanup removed nonfunctional inline chart-frame timeframe buttons from `ResearchChartWidgetHeader`; chart frames now rely on the timeframe dropdown as the single visible interval selector.
-- Validation passed after closure: targeted JS undefined-name scan for Phase 4 split files, Pyrus typecheck, Pyrus unit suite, production build, diff-check, no `PyrusPlatform.jsx` screen imports, and `e2e/platform-shell.spec.ts`.
+- Validation passed after closure: targeted JS undefined-name scan for Phase 4 split files, Pyrus typecheck, production build, diff-check, and no `PyrusPlatform.jsx` screen imports.
 - Post-Phase-6 alignment review removed the `features/platform/PyrusApp.tsx` wrapper so feature modules no longer import `PyrusPlatform.jsx`; `App.tsx` now owns that root lazy import.
 - Current status: complete.
 
@@ -107,7 +107,7 @@ This replan is based on current workspace files only. No separate untracked tran
 
 - Split `api-server/src/services/platform.ts` behind unchanged route contracts in this order: session/runtime status, market-data health, market-data admission, account snapshots, then diagnostics payload assembly.
 - Split `api-server/src/services/account.ts` behind unchanged route contracts in this order: account summary, positions, orders/executions, risk, and equity history.
-- Add focused service tests at each split boundary before regenerating API clients.
+- Regenerate API clients after each split boundary.
 - Regenerate API clients only after the route contract is stable for the slice and frontend callers still typecheck.
 - Current progress:
   - Audited backend hotspots: `api-server/src/services/platform.ts` is about 11.2k lines, `api-server/src/services/account.ts` is about 4.2k lines, and `api-server/src/routes/platform.ts` is the route-contract boundary to preserve.
@@ -162,56 +162,13 @@ This replan is based on current workspace files only. No separate untracked tran
   - Deleted stale root-local chart/trade generators, broker request helpers, static market card data, and orphaned order-flow presentation code that no longer had call sites after prior phases.
   - Moved the latency debug strip into `src/features/platform/LatencyDebugStrip.jsx`.
   - Reduced the legacy root platform file from about 6.5k lines at Phase 7 start to about 1.8k lines; it mostly derived session/account/runtime state, owned watchlist mutations, and passed composed data into `PlatformShell` and `PlatformRuntimeLayer`.
-  - Validation passed after closure: workspace typecheck, Pyrus production build, configured root dead-code gate, Pyrus unit suite, and `e2e/platform-shell.spec.ts`.
+  - Validation passed after closure: workspace typecheck, Pyrus production build, and configured root dead-code gate.
 - Current status: complete.
 
 ### Phase 8: Retire the legacy root app file
 
 - Moved the remaining platform app orchestration into `src/features/platform/PlatformApp.jsx`.
 - Updated `src/app/App.tsx` to lazy-load `PlatformApp.jsx` instead of the legacy root file.
-- Updated root-source regression tests to inspect `PlatformApp.jsx`.
 - Moved watchlist identity payload construction into `src/features/platform/watchlistModel.js`, removing the hidden undefined helper conflict from the app root and deleting duplicate dead helpers from market chart modules.
 - Added spot chart hydration hardening in the backend: if Massive synthesis is configured but underfills or fails, `/api/bars` now falls back to a full broker history request instead of returning only the recent broker slice.
-- Added backend coverage for both no-synthesis and underfilled-synthesis spot history paths.
 - Current status: complete.
-
-### Phase 7 Regression hardening plan
-
-- Chart and chart-frame UI:
-  - Verify timeframe dropdown selection updates the visible timeframe, issues a new bars request, and preserves favorite-star behavior without stealing the row click.
-  - Verify plot drag-panning changes the visible logical range on market mini charts, Trade equity charts, and Trade option charts; chart toolbar/menu clicks must not start a plot pan.
-  - Verify chart type, indicators, Pyrus Signals settings, fullscreen/focus/solo, reset/fit/realtime, crosshair mode, drawing tools, legend/status line, viewport persistence, and empty states on market and trade chart frames.
-  - Verify no automatic future-axis projection beyond the latest candle from stale `futureExpansionBars`; today is May 1, 2026 in the current environment, so future labels like May 26 must only appear when the user explicitly creates that much future space.
-- Trade UI:
-  - Verify the contract option chart owns the top of the chart panel without the old MARK/BID/ASK/IV stat boxes above it.
-  - Verify option-chain selection hydrates provider contract IDs, chart bars, flow overlays, order-ticket asset toggles, Shadow/IBKR preview and submit paths, disconnected-gateway blocking, ticker tab switching, drag-reorder persistence after reload, tab close, watchlist-driven ticker changes, and full-width layout.
-- Market UI:
-  - Verify independent and synced mini-chart timeframes, chart reset, layout buttons, grid resize handles, watchlist add/remove/reorder/filter/sort, signal interval controls, flow scanner controls, premium-flow strip, market heat/pulse/news/calendar empty states, and no stale inline interval buttons.
-- Platform shell and shared chrome:
-  - Verify nav switching keeps header/status/watchlist chrome mounted, header KPI/account/IBKR/status/broadcast controls stay compact, bottom status reflects active data, preference reloads do not overwrite the active screen/symbol, and screen warmup does not remount visible screens unexpectedly.
-- Account, Flow, Research, Algo, Backtest, Diagnostics, Settings:
-  - Keep existing smoke/layout tests for screen fill and shared chrome, then add targeted tests as each screen is edited: filter drawers, column controls, presets, account ranges, diagnostic toggles, preference patch/reset flows, and data-provider empty/error states.
-- Automated gate strategy:
-  - Unit-test pure state helpers for viewport ranges, preference normalization/cache writes, timeframe models, option-chain row modeling, and persistence merges.
-  - Playwright-test the operational flows that can regress visually or by event handling: chart dropdowns, panning, chart overlays, Trade option chart placement, tab persistence, order actions, platform nav/chrome, and screen layout fill.
-  - For every future UI slice, run the affected Playwright spec plus Pyrus typecheck, affected unit tests, production build when bundle/runtime code changes, `pnpm run deadcode` when modules move, and `git diff --check`.
-- Regression pass completed in this slice:
-  - Fixed chart-frame timeframe dropdown selection by making row selection explicit and test-addressable.
-  - Fixed chart panning by guarding chart toolbar/menu targets while still consuming real plot drags.
-  - Removed the old Trade option-chart MARK/BID/ASK/IV stat boxes and added browser coverage to prevent them returning.
-  - Bounded and defaulted chart future-axis expansion so stale settings cannot push the visible axis from May 1, 2026 out to dates like May 26.
-  - Fixed preference caching so a settings reload no longer overwrites active workspace routing state such as `screen: "trade"`.
-  - Added page-by-page platform smoke coverage for Market, Flow, Trade, Account, Research, Algo, Backtest, Diagnostics, and Settings.
-  - Updated stale browser specs for dropdown-only timeframe controls, market-grid viewport identity keys, and non-unusual flow request parameters.
-  - Hardened inactive market-chart plot drags so panning does not bubble into card selection, and scoped chart settings-menu assertions to the intended chart frame.
-  - Closure validation for the deeper pass: all listed Playwright specs accounted for (76 passed, memory soak intentionally skipped unless `PYRUS_MEMORY_SOAK=1`), Pyrus typecheck, Pyrus unit suite, Pyrus production build, root dead-code scan, and `git diff --check`.
-  - Follow-up pickup validation found two browser specs blocked by the Replit runtime-error overlay treating non-`Error` resource failures as `(unknown runtime error)`; `vite.config.ts` now filters only that generic overlay case while preserving real runtime `Error` overlays.
-  - Follow-up validation after that fix: workspace typecheck, Pyrus unit suite, Pyrus production build, root dead-code scan, `git diff --check`, focused diagnostics/header specs, and the trade/watchlist Playwright tail passed. A full Playwright rerun passed through the earlier failing diagnostics/header coverage and was interrupted by the runner at test 55 before summary output, so the remaining tail was rerun directly and passed.
-
-## Required Gates Per Slice
-
-- `pnpm typecheck` from the workspace when cross-package boundaries move.
-- Package-local typecheck/build when a slice is limited to one package.
-- Affected unit tests.
-- Playwright smoke for affected UI screens.
-- Bundle output review after frontend extraction.

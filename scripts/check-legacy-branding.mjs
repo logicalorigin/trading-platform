@@ -15,14 +15,10 @@ const ignoredDirs = new Set([
   "node_modules",
   "dist",
   "build",
-  "coverage",
   "output",
   "out-tsc",
-  "test-results",
   "tmp",
   "attached_assets",
-  "playwright-report",
-  "blob-report",
 ]);
 
 const ignoredPathParts = [
@@ -67,16 +63,8 @@ const allowed = [
     line: /./,
   },
   {
-    path: "artifacts/api-server/src/services/algo-branding.test.ts",
-    line: /./,
-  },
-  {
     path: "artifacts/pyrus/src/screens/algo/algoBranding.js",
     line: /./,
-  },
-  {
-    path: "artifacts/api-server/src/services/signal-options-automation.test.ts",
-    line: /\["Ray",\s*"Replica Signal Options Shadow Paper"\]\.join\(""\)/,
   },
   {
     path: "scripts/windows/pyrus-ibkr-helper.ps1",
@@ -89,10 +77,6 @@ const allowed = [
   {
     path: "artifacts/pyrus/src/features/preferences/userPreferenceModel.ts",
     line: /RETIRED_(WORKSPACE_STORAGE_KEY|DASHBOARD_SETTING_KEY)/,
-  },
-  {
-    path: "artifacts/pyrus/src/features/preferences/userPreferenceModel.test.ts",
-    line: /retiredStorageKey/,
   },
   {
     path: "artifacts/pyrus/src/lib/uiTokens.jsx",

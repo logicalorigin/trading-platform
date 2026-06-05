@@ -191,7 +191,7 @@ function riskCategories(input) {
   if (/(restart_workflow|run replit|configure your app|workflow|replit.*restart|dev:replit|riker\.replit|artifact\.toml|\.replit)/.test(text)) {
     categories.push("workflow-risk");
   }
-  if (/(playwright|chromium|chrome|browser\.newpage|page\.goto|pyrusqa=safe|node --input-type=module)/.test(text)) {
+  if (/(chromium|chrome|browser\.newpage|page\.goto|pyrusqa=safe|node --input-type=module)/.test(text)) {
     categories.push("browser-risk");
   }
   if (/(curl .*127\.0\.0\.1|curl .*localhost|psql |signal-monitor\/matrix|diagnostics\/latest|\/api\/streams|sleep \d+)/.test(text)) {
@@ -215,7 +215,7 @@ function outputRiskCategories(output) {
   if (/(restart_workflow|run replit app|configure your app|dev:replit|\.replit-artifact\/artifact\.toml)/.test(text)) {
     categories.push("workflow-risk");
   }
-  if (/(playwright|chromium|chrome crash reports|browser\.newpage|page\.goto)/.test(text)) {
+  if (/(chromium|chrome crash reports|browser\.newpage|page\.goto)/.test(text)) {
     categories.push("browser-risk");
   }
   if (/(curl:|http:\/\/127\.0\.0\.1|http:\/\/localhost|signal-monitor\/matrix|diagnostics\/latest|\/api\/streams)/.test(text)) {

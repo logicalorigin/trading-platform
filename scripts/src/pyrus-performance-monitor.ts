@@ -1,8 +1,6 @@
 export {};
 
-import { createRequire } from "node:module";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -142,38 +140,12 @@ type MonitorOptions = {
   frontendUrl: string;
   apiBaseUrl: string;
   outputDir: string;
-  browser: boolean;
   jsonOnly: boolean;
-};
-
-type BrowserObserver = {
-  launchError: string | null;
-  pageErrors: string[];
-  consoleErrors: string[];
-  requestFailures: string[];
-  sample: () => Promise<BrowserSample | null>;
-  stop: () => Promise<void>;
-};
-
-type PlaywrightPage = {
-  addInitScript: (script: string) => Promise<void>;
-  goto: (url: string, options: JsonRecord) => Promise<unknown>;
-  evaluate: <T>(fn: () => T) => Promise<T>;
-  on: (event: string, listener: (...args: any[]) => void) => void;
-  waitForTimeout: (ms: number) => Promise<void>;
-};
-
-type PlaywrightBrowser = {
-  close: () => Promise<void>;
-  newContext: (options: JsonRecord) => Promise<{
-    newPage: () => Promise<PlaywrightPage>;
-  }>;
 };
 
 const currentFile = fileURLToPath(import.meta.url);
 const scriptsRoot = path.resolve(path.dirname(currentFile), "..");
 const repoRoot = path.resolve(scriptsRoot, "..");
-const pyrusRoot = path.join(repoRoot, "artifacts/pyrus");
 const endpointStats = new Map<string, EndpointStats>();
 
 function asRecord(value: unknown): JsonRecord {
@@ -459,7 +431,7 @@ function schedulerPressureStates(samples: MonitorSample[]): string[] {
   );
 }
 
-function reportStatus(samples: MonitorSample[], browser: BrowserObserver | null): MonitorReport["verdict"] {
+function reportStatus(samples: MonitorSample[]): MonitorReport["verdict"] {
   const reasons: string[] = [];
   const latest = samples.at(-1);
   const latestSeverity = stringValue(latest?.diagnostics.value?.["severity"]);
@@ -473,14 +445,11 @@ function reportStatus(samples: MonitorSample[], browser: BrowserObserver | null)
   if (failedEndpoints.length) {
     reasons.push(`${failedEndpoints.length} sampled endpoint(s) had failures.`);
   }
-  if ((browser?.pageErrors.length ?? 0) > 0) {
-    reasons.push("Browser observer recorded page errors.");
-  }
   if (collectResourceLevels(samples).includes("critical")) {
     reasons.push("Resource pressure reached critical.");
   }
 
-  if (reasons.some((reason) => /critical|page errors/i.test(reason))) {
+  if (reasons.some((reason) => /critical/i.test(reason))) {
     return { status: "critical", reasons };
   }
   if (reasons.length) {
@@ -512,18 +481,11 @@ function buildOptimizationCandidates(report: Omit<MonitorReport, "optimizationCa
   if ((report.ibkr.lineUtilization.max ?? 0) >= 0.85) {
     candidates.push(`Tune market-data line allocation; utilization peaked at ${report.ibkr.lineUtilization.max}.`);
   }
-  if (report.browser.pageErrors.length || report.browser.requestFailures.length) {
-    candidates.push("Fix browser errors/request failures before deeper UI optimization.");
-  }
-  if ((report.browser.longTaskCount.max ?? 0) > 0) {
-    candidates.push(`Inspect client long tasks; browser observer saw ${report.browser.longTaskCount.max} cumulative long tasks.`);
-  }
   return candidates.length ? candidates : ["No obvious hotspot crossed the monitor thresholds; compare raw samples before changing behavior."];
 }
 
 export function buildReport(
   samples: MonitorSample[],
-  browser: BrowserObserver | null,
   diagnosticsEvents: JsonRecord[] = [],
 ): MonitorReport {
   const browserSamples = samples
@@ -542,7 +504,7 @@ export function buildReport(
         : 0,
       samples: samples.length,
     },
-    verdict: reportStatus(samples, browser),
+    verdict: reportStatus(samples),
     endpoints: endpointSummary(),
     api: {
       p95LatencyMs: numberRange(samples.map((sample) => metricFromSnapshot(sample, "api", "p95LatencyMs"))),
@@ -559,15 +521,15 @@ export function buildReport(
       latestDrivers: latestResourceDrivers(samples),
     },
     browser: {
-      enabled: Boolean(browser),
+      enabled: false,
       sampleCount: browserSamples.length,
       jsHeapUsedMb: numberRange(browserSamples.map((sample) => sample.jsHeapUsedMb)),
       apiTimingCount: numberRange(browserSamples.map((sample) => sample.apiTimingCount)),
       longTaskCount: numberRange(browserSamples.map((sample) => sample.longTaskCount)),
-      pageErrors: browser?.pageErrors.slice(-20) ?? [],
-      consoleErrors: browser?.consoleErrors.slice(-20) ?? [],
-      requestFailures: browser?.requestFailures.slice(-20) ?? [],
-      launchError: browser?.launchError ?? null,
+      pageErrors: [],
+      consoleErrors: [],
+      requestFailures: [],
+      launchError: null,
     },
     ibkr: {
       lineUtilization: numberRange(lineUtilization),
@@ -793,177 +755,6 @@ async function readCgroupSnapshot(): Promise<JsonRecord> {
   };
 }
 
-async function resolveChromiumExecutable(): Promise<string | null> {
-  const preparePath = path.join(pyrusRoot, "scripts/preparePlaywrightChromium.mjs");
-  if (!existsSync(preparePath)) return null;
-  try {
-    const module = await import(pathToFileURL(preparePath).href) as {
-      ensurePatchedPlaywrightChromium?: () => Promise<string>;
-    };
-    return module.ensurePatchedPlaywrightChromium
-      ? await module.ensurePatchedPlaywrightChromium()
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-async function startBrowserObserver(frontendUrl: string): Promise<BrowserObserver> {
-  const pageErrors: string[] = [];
-  const consoleErrors: string[] = [];
-  const requestFailures: string[] = [];
-  let browser: PlaywrightBrowser | null = null;
-  let page: PlaywrightPage | null = null;
-
-  try {
-    const require = createRequire(import.meta.url);
-    const playwrightPath = require.resolve("@playwright/test", { paths: [pyrusRoot] });
-    const playwright = require(playwrightPath) as {
-      chromium: {
-        launch: (options: JsonRecord) => Promise<PlaywrightBrowser>;
-      };
-    };
-    const executablePath = await resolveChromiumExecutable();
-    browser = await playwright.chromium.launch({
-      headless: true,
-      ...(executablePath ? { executablePath } : {}),
-    });
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    page = await context.newPage();
-    if (!page) {
-      throw new Error("Playwright did not create a page.");
-    }
-    page.on("pageerror", (error: unknown) => {
-      pageErrors.push(safeError(error));
-    });
-    page.on("console", (message: { type: () => string; text: () => string }) => {
-      if (message.type() === "error") {
-        consoleErrors.push(message.text());
-      }
-    });
-    page.on("requestfailed", (request: { method: () => string; url: () => string; failure: () => { errorText?: string } | null }) => {
-      const failureText = request.failure()?.errorText ?? "";
-      if (!/ERR_ABORTED/.test(failureText)) {
-        requestFailures.push(`${request.method()} ${request.url()} ${failureText}`.trim());
-      }
-    });
-    await page.addInitScript(`
-      (() => {
-        const boundedPush = (target, value, max) => {
-          target.push(value);
-          if (target.length > max) target.splice(0, target.length - max);
-        };
-        window.__PYRUS_MONITOR__ = {
-          apiTimings: [],
-          longTasks: [],
-          screenReady: []
-        };
-        window.addEventListener("pyrus:api-request-timing", (event) => {
-          boundedPush(window.__PYRUS_MONITOR__.apiTimings, event.detail || {}, 240);
-        });
-        window.addEventListener("pyrus:screen-ready", (event) => {
-          boundedPush(window.__PYRUS_MONITOR__.screenReady, event.detail || {}, 80);
-        });
-        if (typeof PerformanceObserver !== "undefined" &&
-            PerformanceObserver.supportedEntryTypes &&
-            PerformanceObserver.supportedEntryTypes.includes("longtask")) {
-          try {
-            const observer = new PerformanceObserver((list) => {
-              for (const entry of list.getEntries()) {
-                boundedPush(window.__PYRUS_MONITOR__.longTasks, {
-                  name: entry.name || "longtask",
-                  durationMs: Math.round(entry.duration),
-                  startedAtMs: Math.round(entry.startTime),
-                  observedAt: new Date().toISOString()
-                }, 160);
-              }
-            });
-            observer.observe({ entryTypes: ["longtask"] });
-          } catch {}
-        }
-      })();
-    `);
-    await page.goto(frontendUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.waitForTimeout(1_000);
-  } catch (error) {
-    const launchError = safeError(error);
-    return {
-      launchError,
-      pageErrors,
-      consoleErrors,
-      requestFailures,
-      sample: async () => ({
-        at: nowIso(),
-        ok: false,
-        url: null,
-        title: null,
-        bodyTextLength: null,
-        domNodeCount: null,
-        jsHeapUsedMb: null,
-        apiTimingCount: 0,
-        longTaskCount: 0,
-        screenReadyCount: 0,
-        error: launchError,
-      }),
-      stop: async () => {
-        if (browser) await browser.close();
-      },
-    };
-  }
-
-  return {
-    launchError: null,
-    pageErrors,
-    consoleErrors,
-    requestFailures,
-    sample: async () => {
-      if (!page) return null;
-      try {
-        return await page.evaluate<BrowserSample>(() => {
-          const win = globalThis as any;
-          const doc = win.document;
-          const perf = win.performance || {};
-          const monitor = win.__PYRUS_MONITOR__ || {};
-          const memory = perf.memory || {};
-          return {
-            at: new Date().toISOString(),
-            ok: true,
-            url: win.location?.href ?? null,
-            title: doc?.title ?? null,
-            bodyTextLength: doc?.body?.innerText?.length ?? 0,
-            domNodeCount: doc?.querySelectorAll("*")?.length ?? 0,
-            jsHeapUsedMb:
-              typeof memory.usedJSHeapSize === "number"
-                ? Math.round(memory.usedJSHeapSize / 1024 / 1024)
-                : null,
-            apiTimingCount: Array.isArray(monitor.apiTimings) ? monitor.apiTimings.length : 0,
-            longTaskCount: Array.isArray(monitor.longTasks) ? monitor.longTasks.length : 0,
-            screenReadyCount: Array.isArray(monitor.screenReady) ? monitor.screenReady.length : 0,
-            error: null,
-          };
-        });
-      } catch (error) {
-        return {
-          at: nowIso(),
-          ok: false,
-          url: null,
-          title: null,
-          bodyTextLength: null,
-          domNodeCount: null,
-          jsHeapUsedMb: null,
-          apiTimingCount: 0,
-          longTaskCount: 0,
-          screenReadyCount: 0,
-          error: safeError(error),
-        };
-      }
-    },
-    stop: async () => {
-      if (browser) await browser.close();
-    },
-  };
-}
-
 function parseOptions(): MonitorOptions {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   return {
@@ -981,7 +772,6 @@ function parseOptions(): MonitorOptions {
     outputDir:
       parseArg("output-dir") ??
       path.join(repoRoot, "scripts/reports/pyrus-performance-monitor", timestamp),
-    browser: !hasFlag("no-browser"),
     jsonOnly: hasFlag("json-only"),
   };
 }
@@ -1005,7 +795,6 @@ async function collectSample(
   startedAtMs: number,
   index: number,
   processes: Array<{ pid: number; role: string }>,
-  browser: BrowserObserver | null,
 ): Promise<MonitorSample> {
   const deep = index === 0 || index * options.intervalMs % options.deepIntervalMs === 0;
   const frontendApiBase = buildUrl(options.frontendUrl, "/api");
@@ -1017,7 +806,6 @@ async function collectSample(
     lineUsage,
     lanes,
     session,
-    browserSample,
     processSnapshots,
     cgroup,
   ] = await Promise.all([
@@ -1032,7 +820,6 @@ async function collectSample(
     deep
       ? fetchJson(options.apiBaseUrl, "/session", 5_000)
       : Promise.resolve(null),
-    browser ? browser.sample() : Promise.resolve(null),
     readProcessSnapshots(processes),
     readCgroupSnapshot(),
   ]);
@@ -1046,7 +833,7 @@ async function collectSample(
     lineUsage,
     lanes,
     session,
-    browser: browserSample,
+    browser: null,
     processes: processSnapshots,
     cgroup,
   };
@@ -1093,7 +880,6 @@ async function main(): Promise<void> {
       "  --frontend-url=http://127.0.0.1:18747/",
       "  --api-base-url=http://127.0.0.1:8080/api",
       "  --output-dir=scripts/reports/pyrus-performance-monitor/<timestamp>",
-      "  --no-browser",
       "  --json-only",
     ].join("\n"));
     return;
@@ -1102,42 +888,34 @@ async function main(): Promise<void> {
   const options = parseOptions();
   endpointStats.clear();
   const processes = await discoverProcesses();
-  const browser = options.browser ? await startBrowserObserver(options.frontendUrl) : null;
   const startedAtMs = Date.now();
   const samples: MonitorSample[] = [];
 
-  try {
-    for (let index = 0; Date.now() - startedAtMs <= options.seconds * 1_000; index += 1) {
-      const dueAt = startedAtMs + index * options.intervalMs;
-      const sample = await collectSample(options, startedAtMs, index, processes, browser);
-      samples.push(sample);
-      const apiMetrics = snapshotMetrics(sample, "api");
-      const resourceMetrics = snapshotMetrics(sample, "resource-pressure");
-      console.log(
-        [
-          `[monitor] ${Math.round(sample.elapsedMs / 1_000)}s`,
-          `samples=${samples.length}`,
-          `apiP95=${String(apiMetrics["p95LatencyMs"] ?? "n/a")}ms`,
-          `rss=${String(apiMetrics["rssMb"] ?? "n/a")}MB`,
-          `pressure=${String(resourceMetrics["pressureLevel"] ?? "n/a")}`,
-          `browser=${sample.browser?.ok === false ? "error" : sample.browser ? "ok" : "off"}`,
-        ].join(" "),
-      );
-      const waitMs = dueAt + options.intervalMs - Date.now();
-      if (waitMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-      }
-    }
-  } finally {
-    if (browser) {
-      await browser.stop();
+  for (let index = 0; Date.now() - startedAtMs <= options.seconds * 1_000; index += 1) {
+    const dueAt = startedAtMs + index * options.intervalMs;
+    const sample = await collectSample(options, startedAtMs, index, processes);
+    samples.push(sample);
+    const apiMetrics = snapshotMetrics(sample, "api");
+    const resourceMetrics = snapshotMetrics(sample, "resource-pressure");
+    console.log(
+      [
+        `[monitor] ${Math.round(sample.elapsedMs / 1_000)}s`,
+        `samples=${samples.length}`,
+        `apiP95=${String(apiMetrics["p95LatencyMs"] ?? "n/a")}ms`,
+        `rss=${String(apiMetrics["rssMb"] ?? "n/a")}MB`,
+        `pressure=${String(resourceMetrics["pressureLevel"] ?? "n/a")}`,
+      ].join(" "),
+    );
+    const waitMs = dueAt + options.intervalMs - Date.now();
+    if (waitMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
   }
 
   const events = samples[0]?.at
     ? await collectDiagnosticsEvents(options.apiBaseUrl, samples[0].at).catch(() => [])
     : [];
-  const report = buildReport(samples, browser, events);
+  const report = buildReport(samples, events);
   const artifacts = await writeArtifacts(options, samples, report);
   console.log(JSON.stringify({
     verdict: report.verdict,
