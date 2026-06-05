@@ -53,6 +53,7 @@ import {
   getIbkrConnection,
   getIbkrConnectionTone,
   IbkrPingWavelength,
+  isIbkrGatewayBridgeAttached,
   resolveIbkrGatewayHealth,
 } from "./IbkrConnectionStatus";
 import { streamStateTokenVar } from "./streamSemantics";
@@ -2468,7 +2469,7 @@ export const HeaderStatusCluster = ({
       session?.runtime?.ibkr?.runtimeOverrideActive,
   );
   const ibkrRuntimeState =
-    session?.runtime?.ibkr || runtimeControl.runtimeDiagnostics?.ibkr || null;
+    runtimeControl.runtimeDiagnostics?.ibkr || session?.runtime?.ibkr || null;
   const desktopReconnectNeeded = Boolean(
     ibkrRuntimeState?.desktopAgentOnline && !bridgeRuntimeOverrideActive,
   );
@@ -2489,13 +2490,10 @@ export const HeaderStatusCluster = ({
       session?.configured?.ibkr ||
       gatewayConnection?.configured,
   );
-  const gatewayConnectedForBridge = Boolean(
-    gatewayConnection?.authenticated &&
-      gatewayConnection?.reachable !== false &&
-      gatewayConnection?.competing !== true &&
-      gatewayConnection?.healthFresh !== false &&
-      gatewayConnection?.accountsLoaded !== false,
-  );
+  const gatewayConnectedForBridge = isIbkrGatewayBridgeAttached({
+    connection: gatewayConnection,
+    runtime: ibkrRuntimeState,
+  });
   const bridgeLaunchInFlight = Boolean(
     !gatewayConnectedForBridge && bridgeLaunchInFlightUntil > marketClockNow,
   );

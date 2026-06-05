@@ -104,6 +104,11 @@ const GATEWAY_DISCONNECT_REASONS = new Set([
 ]);
 
 const STREAM_LIFECYCLE_ONLY_STATES = new Set(["checking", "reconnecting"]);
+const CURRENT_UPTIME_STREAM_STATES = new Set([
+  "healthy",
+  "quiet",
+  "capacity-limited",
+]);
 export const IBKR_RECONNECT_ACTION_STATUSES = new Set([
   "misconfigured",
   "offline",
@@ -133,6 +138,15 @@ const isStreamLifecycleOnlyState = (proof, streamMeta) =>
       !isGatewayDisconnectReason(proof?.strictReason) &&
       !isGatewayDisconnectReason(proof?.streamStateReason),
   );
+
+const hasCurrentUptimeStreamEvidence = (proof) => {
+  const streamState = canonicalizeStreamState(proof?.streamState, "offline");
+  return Boolean(
+    proof?.strictReady === true ||
+      proof?.streamFresh === true ||
+      CURRENT_UPTIME_STREAM_STATES.has(streamState),
+  );
+};
 
 // Status color semantics: green=healthy, accent=in progress, amber=attention, red=error.
 
@@ -299,6 +313,48 @@ const fallbackConnection = (session, key) => {
 
 export const getIbkrConnection = (session, key) =>
   session?.ibkrBridge?.connections?.[key] || fallbackConnection(session, key);
+
+export const hasIbkrGatewayCurrentUptimeProof = ({
+  connection,
+  runtime,
+} = {}) => hasCurrentUptimeStreamEvidence(resolveConnectionProof(connection, runtime));
+
+export const isIbkrGatewayBridgeAttached = ({
+  connection,
+  runtime,
+} = {}) => {
+  const configured = firstBoolean(
+    connection?.configured,
+    runtime?.configured,
+    runtime?.bridgeUrlConfigured,
+  );
+  const bridgeUrlConfigured = runtime?.bridgeUrlConfigured;
+  const competing = firstBoolean(connection?.competing, runtime?.competing);
+  const proof = resolveConnectionProof(connection, runtime);
+  const reachableOrSocket = Boolean(
+    proof.bridgeReachable === true ||
+      proof.socketConnected === true ||
+      connection?.reachable === true ||
+      runtime?.reachable === true ||
+      runtime?.connected === true,
+  );
+  const hasDisconnectReason = Boolean(
+    isGatewayDisconnectReason(proof.strictReason) ||
+      isGatewayDisconnectReason(proof.streamStateReason),
+  );
+
+  return Boolean(
+    configured &&
+      bridgeUrlConfigured !== false &&
+      !competing &&
+      proof.authenticated === true &&
+      proof.accountsLoaded !== false &&
+      proof.brokerServerConnected !== false &&
+      reachableOrSocket &&
+      !hasDisconnectReason &&
+      (proof.healthFresh !== false || hasCurrentUptimeStreamEvidence(proof)),
+  );
+};
 
 export const getIbkrStreamStateMeta = (streamState, streamStateReason) => {
   if (!streamState) {
@@ -558,11 +614,7 @@ export const getIbkrConnectionTone = (connection) => {
     };
   }
 
-  const streamHasCurrentEvidence =
-    proof.streamFresh === true ||
-    ["healthy", "quiet", "capacity-limited"].includes(
-      canonicalizeStreamState(proof.streamState, "offline"),
-    );
+  const streamHasCurrentEvidence = hasCurrentUptimeStreamEvidence(proof);
 
   if (
     proof.healthFresh === false &&
@@ -577,7 +629,12 @@ export const getIbkrConnectionTone = (connection) => {
     };
   }
 
-  if (connection.lastError && !connection.reachable) {
+  if (
+    connection.lastError &&
+    !connection.reachable &&
+    proof.socketConnected !== true &&
+    proof.authenticated !== true
+  ) {
     return {
       label: "error",
       color: CSS_COLOR.red,
@@ -586,7 +643,11 @@ export const getIbkrConnectionTone = (connection) => {
     };
   }
 
-  if (connection.reachable === false) {
+  if (
+    connection.reachable === false &&
+    proof.socketConnected !== true &&
+    proof.authenticated !== true
+  ) {
     return {
       label: "offline",
       color: CSS_COLOR.red,
@@ -672,7 +733,11 @@ export const getIbkrConnectionTone = (connection) => {
     };
   }
 
-  if (connection.reachable) {
+  if (
+    connection.reachable ||
+    proof.bridgeReachable === true ||
+    proof.socketConnected === true
+  ) {
     return {
       label: "login",
       color: CSS_COLOR.amber,
@@ -705,15 +770,7 @@ export const isIbkrWaveActive = (connection) => {
 
   const proof = resolveConnectionProof(connection);
   const streamState = canonicalizeStreamState(proof.streamState, "offline");
-  const connected = Boolean(
-    proof.healthFresh === true &&
-      proof.authenticated === true &&
-      proof.brokerServerConnected !== false &&
-      (proof.bridgeReachable === true ||
-        proof.socketConnected === true ||
-        connection.reachable === true) &&
-      proof.accountsLoaded !== false,
-  );
+  const connected = isIbkrGatewayBridgeAttached({ connection });
 
   return Boolean(
     proof.strictReady === true ||
@@ -764,12 +821,7 @@ export const resolveIbkrGatewayHealth = ({
     runtime?.liveMarketDataAvailable,
   );
   const proof = resolveConnectionProof(connection, runtime);
-  const streamState = canonicalizeStreamState(proof.streamState, "offline");
-  const streamHasCurrentEvidence =
-    proof.streamFresh === true ||
-    streamState === "healthy" ||
-    streamState === "quiet" ||
-    streamState === "capacity-limited";
+  const streamHasCurrentEvidence = hasCurrentUptimeStreamEvidence(proof);
 
   if (!configured || bridgeUrlConfigured === false) {
     return {
@@ -803,7 +855,9 @@ export const resolveIbkrGatewayHealth = ({
   }
 
   if (
-    bridgeReachable === false ||
+    (bridgeReachable === false &&
+      socketConnected !== true &&
+      authenticated !== true) ||
     (bridgeReachable !== true && socketConnected === false)
   ) {
     return {
