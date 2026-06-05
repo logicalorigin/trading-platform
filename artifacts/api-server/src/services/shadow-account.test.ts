@@ -3919,8 +3919,10 @@ test("shadow cash activity uses stale read cache protection", () => {
   assert.ok(cashActivityBody);
   assert.match(
     cashActivityBody,
-    /return withShadowReadCache\(`cash-activity:\$\{shadowSourceCacheKey\(source\)\}`/,
+    /return withShadowReadCache\(\s*`cash-activity:\$\{shadowSourceCacheKey\(source\)\}`/,
   );
+  assert.match(cashActivityBody, /staleStrategy: "immediate"/);
+  assert.match(cashActivityBody, /ttlMs: SHADOW_DERIVED_READ_CACHE_TTL_MS/);
   assert.match(cashActivityBody, /computeShadowTotals\(\)/);
 });
 
