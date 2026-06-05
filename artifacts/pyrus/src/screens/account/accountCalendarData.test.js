@@ -211,7 +211,7 @@ test("account screen wires shadow account queries through the paper ledger path"
   );
   assert.match(
     source,
-    /secondaryAccountQueriesEnabled && activatedAccountPanels\.tradingAnalysis/,
+    /accountQueriesEnabled && accountDerivedReady/,
   );
   assert.match(
     source,
@@ -229,7 +229,7 @@ test("account screen always renders equity-date positions below the equity curve
   const equityPanelIndex = source.indexOf("<LazyEquityCurvePanel");
   const inspectorIndex = source.indexOf("<LazyPositionsAtDateInspector");
   const positionsPanelIndex = source.indexOf("<LazyPositionsPanel");
-  const todayPanelIndex = source.indexOf("<LazyTodaySnapshotPanel");
+  const todayPanelIndex = source.indexOf("<TodaySnapshotPanel");
   const positionsPanelBlock = source.match(
     /testId="account-deferred-positions"[\s\S]*?<LazyPositionsPanel[\s\S]*?\/>/,
   )?.[0] ?? "";

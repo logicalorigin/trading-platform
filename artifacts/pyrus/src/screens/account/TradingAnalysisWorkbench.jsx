@@ -155,6 +155,14 @@ const finiteNumber = (value) => {
 
 const arrayValue = (value) => (Array.isArray(value) ? value : []);
 
+const queryInitialLoading = (query) =>
+  Boolean(
+    !query?.data &&
+      (query?.isLoading ||
+        query?.isFetching ||
+        (query?.isPending && query?.fetchStatus !== "idle")),
+  );
+
 const normalizeText = (value, fallback = "") => {
   const text = String(value ?? "").trim();
   return text || fallback;
@@ -1555,7 +1563,7 @@ const TradesView = ({
     );
   };
 
-  if (query?.isLoading || query?.isPending) {
+  if (queryInitialLoading(query)) {
     return (
       <div style={{ padding: sp(4), display: "grid", gap: sp(3) }}>
         {Array.from({ length: 5 }).map((_, index) => (
@@ -1864,6 +1872,7 @@ export const TradingAnalysisWorkbench = ({
     totalTradeCount: arrayValue(allTrades).length,
     nowMs,
   });
+  const initialLoading = queryInitialLoading(query);
 
   useEffect(() => {
     try {
@@ -1924,7 +1933,7 @@ export const TradingAnalysisWorkbench = ({
           trades={visibleTrades}
           currency={currency}
           maskValues={maskValues}
-          loading={query?.isLoading || query?.isPending}
+          loading={initialLoading}
         />
         <InsightsRow
           analysis={scopedAnalysis}
@@ -1975,7 +1984,7 @@ export const TradingAnalysisWorkbench = ({
                 analysis={scopedAnalysis}
                 currency={currency}
                 maskValues={maskValues}
-                loading={query?.isLoading || query?.isPending}
+                loading={initialLoading}
                 onLensActivate={applyLens}
                 onTradeSelect={onTradeSelect}
               />

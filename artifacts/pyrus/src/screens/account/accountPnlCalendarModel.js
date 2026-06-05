@@ -20,6 +20,13 @@ const MONTH_LABELS = [
 const DAY_MS = 86_400_000;
 const MAX_NAV_BASELINE_GAP_MS = 4 * DAY_MS;
 
+const ACCOUNT_MARKET_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
 const finiteNumber = (value) => {
   if (value == null || value === "") return null;
   const numeric = Number(value);
@@ -92,9 +99,21 @@ const tradeActivityDate = (trade) =>
   trade?.updatedAt ??
   trade?.openDate;
 
+const accountMarketDateKey = (value) => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return ACCOUNT_MARKET_DATE_FORMATTER.format(date);
+};
+
 const explicitAccountActivityTrade = (trade) => {
   const source = String(trade?.source ?? "").trim().toUpperCase();
-  if (source === "LIVE_ORDER" || source === "LIVE" || source === "SHADOW") {
+  if (
+    source === "LIVE_EXECUTION" ||
+    source === "LIVE_ORDER" ||
+    source === "LIVE" ||
+    source === "SHADOW"
+  ) {
     return true;
   }
   return Boolean(
@@ -105,25 +124,41 @@ const explicitAccountActivityTrade = (trade) => {
   );
 };
 
+const tradePnlBucketDay = (trade) => {
+  const explicitMarketDate =
+    typeof trade?.marketDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(trade.marketDate)
+      ? trade.marketDate
+      : null;
+  if (explicitMarketDate) {
+    return pnlBucketDay(explicitMarketDate);
+  }
+  if (explicitAccountActivityTrade(trade)) {
+    const marketDate = accountMarketDateKey(tradeActivityDate(trade));
+    if (marketDate) {
+      return pnlBucketDay(marketDate);
+    }
+  }
+  return pnlBucketDay(tradeActivityDate(trade));
+};
+
 export const findLatestCalendarActivityDate = ({
   trades = [],
   equityPoints = [],
 } = {}) => {
   const candidateDays = [];
-  const consider = (value) => {
-    const day = pnlBucketDay(value);
+  const considerDay = (day) => {
     if (day) candidateDays.push(day);
   };
 
   trades.forEach((trade) => {
     const realized = finiteNumber(trade?.realizedPnl) ?? finiteNumber(trade?.pnl);
     if (realized == null && !explicitAccountActivityTrade(trade)) return;
-    consider(tradeActivityDate(trade));
+    considerDay(tradePnlBucketDay(trade));
   });
 
   equityPoints.forEach((point) => {
     if (finiteNumber(point?.netLiquidation) == null) return;
-    consider(point?.timestamp ?? point?.timestampMs);
+    considerDay(pnlBucketDay(point?.timestamp ?? point?.timestampMs));
   });
 
   if (!candidateDays.length) return null;
@@ -203,7 +238,7 @@ export const buildDailyPnlSeries = ({
 } = {}) => {
   const tradesByDay = new Map();
   trades.forEach((trade, index) => {
-    const day = pnlBucketDay(tradeActivityDate(trade));
+    const day = tradePnlBucketDay(trade);
     if (!day) return;
     const realized = finiteNumber(trade?.realizedPnl) ?? finiteNumber(trade?.pnl);
     if (realized == null && !explicitAccountActivityTrade(trade)) return;
@@ -305,6 +340,7 @@ export const applyAccountDailyPnlOverride = (
     return days;
   }
   const realizedDayPnl = finiteNumber(dailyPnl?.realizedDayPnl);
+  const realizedTradeCount = finiteNumber(dailyPnl?.realizedTradeCount);
   return days.map((day) => {
     if (day.iso !== marketDate) return day;
     const realized = realizedDayPnl ?? day.realized ?? 0;
@@ -315,6 +351,7 @@ export const applyAccountDailyPnlOverride = (
       realized,
       unrealized: totalDayPnl - realized,
       total: totalDayPnl,
+      trades: realizedTradeCount ?? day.trades,
       accountDailyPnl: dailyPnl,
     };
   });

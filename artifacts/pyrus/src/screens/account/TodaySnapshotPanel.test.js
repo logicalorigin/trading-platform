@@ -30,10 +30,8 @@ test("today snapshot heatmap uses the same live option rows as positions", () =>
 test("today snapshot panel handles per-tab loading and error states", () => {
   assert.match(source, /positionsInitialLoading/);
   assert.match(source, /intradayInitialLoading/);
-  assert.match(source, /positionsQuery\?\.isPending/);
-  assert.match(source, /positionsQuery\?\.isLoading/);
+  assert.match(source, /queryInitialLoading/);
+  assert.match(source, /fetchStatus !== "idle"/);
   assert.match(source, /positionsQuery\?\.error/);
-  assert.match(source, /intradayQuery\?\.isPending/);
-  assert.match(source, /intradayQuery\?\.isLoading/);
   assert.match(source, /intradayQuery\?\.error/);
 });

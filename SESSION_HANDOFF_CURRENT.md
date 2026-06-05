@@ -2,29 +2,32 @@
 
 This is a pointer to the active durable handoff. Do not use this file as the full session narrative.
 
-- Last Updated (MT): `2026-06-04 19:56:16 MDT`
-- Last Updated (UTC): `2026-06-05T01:56:16Z`
-- Native Codex Session ID: `019e9539-fcdb-7352-ba37-146876d76a81`
-- Summary: 2026-06-04 19:56:16 MDT | 019e9539-fcdb-7352-ba37-146876d76a81 | Signals table sparkline hydration stays all-filtered-row based; rendered cells use only red/blue signal colors.
-- Handoff: `SESSION_HANDOFF_2026-06-04_019e9539-fcdb-7352-ba37-146876d76a81.md`
+- Last Updated (MT): `2026-06-04 21:28:12 MDT`
+- Last Updated (UTC): `2026-06-05T03:28:12Z`
+- Native Codex Session ID: `account-real-shadow-live-cleanup`
+- Summary: Account real/shadow cleanup verified after extra restart audit: P&L Calendar market-day realized/unrealized/trades, Trading Analysis 1D manual SPY fills, Today Snapshot loading, and Orders History execution fallback.
+- Handoff: `SESSION_HANDOFF_LIVE_2026-06-05_accounts-real-shadow-cleanup.md`
 - Master Index: `SESSION_HANDOFF_MASTER.md`
 
 ## Current Status
 
-- Signals table sparkline follow-up is complete for the latest request.
-- Sparkline hydration planning remains based on all filtered rows, not visible rows; the browser probe verifies the rendered viewport.
-- Non-timeline Signals sparklines now use signal blue/red instead of the shared green/red price fallback; timeline point colors remain signal blue/red.
-- The no-price fallback path now uses a deterministic symbol-based price so visible Signals table cells render SVG sparklines instead of empty placeholders while still reporting `data-sparkline-source="fallback"`.
-- Working tree still contains unrelated dirty backend/account/generated API files from other workstreams; this pass touched only `artifacts/pyrus/src/screens/SignalsScreen.jsx`, `artifacts/pyrus/src/screens/SignalsScreen.table-cells.test.js`, and handoff docs.
+- Live Account page now renders without stuck account loading placeholders in the focused browser checks.
+- Real-account June 4 market-day P&L Calendar shows realized `+$1.4K`, unrealized `-$56.67`, and `Trades 14`.
+- Trading Analysis `1D` shows `14` activity rows, net P&L about `$1.4K`, and SPY option results/details.
+- Orders History shows `16` execution-backed rows, including the SPY option buys/sells.
+- Extra root cause fixed: live execution rows after midnight UTC are now bucketed by account market date for the calendar.
+- Focused Pyrus tests, Pyrus typecheck, live browser probe, and `git diff --check` passed in the latest pass.
 
 ## Next Recommended Steps
 
-1. Keep the unrelated account/backend/generated API dirty work separate from this Signals slice.
-2. If a live data soak is desired, use the existing Replit-run app in `?pyrusQa=safe` and wait longer for `/api/bars/batch`; fallback rendering is already verified for the no-bars window.
+1. Review/land the account real/shadow cleanup slice separately from unrelated dirty Signals/Replit work.
+2. Resume the larger-list platform/header market-data item: recheck Matrix/STA/Massive startup diagnostics and Signals `/bars/batch` fanout, then fix the active shared `/api/bars` 429 route-admission pressure if it still reproduces.
 
 ## Validation Snapshot
 
-- PASS: focused Signals sparkline tests (`9/9`).
-- PASS: Pyrus typecheck and build.
-- PASS: safe-mode Playwright probe: `126` Signals sparkline slots, `126` SVGs, `0` empty, `0` green, red/blue tokens present.
-- PASS: scoped `git diff --check`.
+- PASS: `pnpm -C artifacts/pyrus exec tsx --test src/screens/account/accountCalendarData.test.js src/screens/account/accountPnlCalendarModel.test.js src/screens/account/TodaySnapshotPanel.test.js src/features/platform/platformRootSource.test.js` (`121/121`).
+- PASS: `pnpm -C artifacts/pyrus run typecheck`.
+- PASS: `pnpm -C artifacts/api-server exec tsx --test src/services/account-orders.test.ts src/services/account-page-streams.test.ts src/services/account-positions.test.ts src/services/shadow-account.test.ts` (`184/184`).
+- PASS: `pnpm -C artifacts/api-server run typecheck`.
+- PASS: latest live browser account probe for P&L Calendar, Trading Analysis, Orders, loading placeholders, and max-depth console warning non-reproduction.
+- PASS: `git diff --check`.

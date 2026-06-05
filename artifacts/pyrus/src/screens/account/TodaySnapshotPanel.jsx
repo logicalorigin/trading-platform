@@ -19,6 +19,14 @@ const TABS = [
   { value: "intraday", label: "Intraday" },
 ];
 
+const queryInitialLoading = (query) =>
+  Boolean(
+    !query?.data &&
+      (query?.isLoading ||
+        query?.isFetching ||
+        (query?.isPending && query?.fetchStatus !== "idle")),
+  );
+
 export const TodaySnapshotPanel = ({
   positionsQuery,
   intradayQuery,
@@ -42,10 +50,8 @@ export const TodaySnapshotPanel = ({
     totals: positionsQuery?.data?.totals,
     marketDataOwner: "today-positions",
   });
-  const positionsInitialLoading =
-    (positionsQuery?.isPending || positionsQuery?.isLoading) && !positionsQuery?.data;
-  const intradayInitialLoading =
-    (intradayQuery?.isPending || intradayQuery?.isLoading) && !intradayQuery?.data;
+  const positionsInitialLoading = queryInitialLoading(positionsQuery);
+  const intradayInitialLoading = queryInitialLoading(intradayQuery);
   return (
     <Panel
       title="Today"

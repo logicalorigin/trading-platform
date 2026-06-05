@@ -1632,8 +1632,8 @@ test("Account phone layout keeps dense trading tables horizontally scrollable", 
 
   assert.match(accountSource, /data-layout=\{accountIsPhone \? "phone"/);
   assert.match(accountSource, /<LazyPositionsPanel[\s\S]*isPhone=\{accountIsPhone\}/);
-  assert.match(accountSource, /<LazyTradingAnalysisWorkbench[\s\S]*isPhone=\{accountIsPhone\}/);
-  assert.match(accountSource, /<LazyOrdersPanel[\s\S]*isPhone=\{accountIsPhone\}/);
+  assert.match(accountSource, /<TradingAnalysisWorkbench[\s\S]*isPhone=\{accountIsPhone\}/);
+  assert.match(accountSource, /<OrdersPanel[\s\S]*isPhone=\{accountIsPhone\}/);
   assert.match(positionsSource, /data-testid="account-positions-table-scroll"/);
   assert.match(positionsSource, /ra-dense-table-scroll/);
   assert.doesNotMatch(positionsSource, /data-testid="account-positions-row-list"/);
@@ -1703,9 +1703,9 @@ test("Account panels defer below-fold content and memoize mobile rows", () => {
   assert.match(accountSource, /<DeferredRender[\s\S]*account-deferred-positions/);
   assert.match(accountSource, /<DeferredRender[\s\S]*onActivate=\{\(\) => markAccountPanelActivated\("tradingAnalysis"\)\}[\s\S]*account-deferred-trading-analysis/);
   assert.match(accountSource, /<DeferredRender[\s\S]*onActivate=\{\(\) => markAccountPanelActivated\("orders"\)\}[\s\S]*account-deferred-orders/);
-  assert.match(accountSource, /const LazyTradingAnalysisWorkbench = lazy/);
-  assert.match(accountSource, /const LazyOrdersPanel = lazy/);
-  assert.match(accountSource, /const LazyTodaySnapshotPanel = lazy/);
+  assert.match(accountSource, /import TodaySnapshotPanel from "\.\/account\/TodaySnapshotPanel\.jsx"/);
+  assert.match(accountSource, /import TradingAnalysisWorkbench from "\.\/account\/TradingAnalysisWorkbench\.jsx"/);
+  assert.match(accountSource, /import \{ OrdersPanel \} from "\.\/account\/TradesOrdersPanel\.jsx"/);
   assert.match(accountSource, /const LazyPortfolioExposurePanel = lazy/);
   assert.match(accountSource, /const LazyEquityCurvePanel = lazy/);
   assert.match(accountSource, /const LazyPositionsPanel = lazy/);

@@ -41,7 +41,7 @@ import {
   assertIbkrGatewayTradingAvailable,
   getBars,
   getQuoteSnapshots,
-  listOrdersWithResilience,
+  listOrders,
 } from "./platform";
 import {
   listIbkrAccounts,
@@ -1289,7 +1289,7 @@ async function listOrdersForUniverse(
 }> {
   const results = await Promise.all(
     universe.accountIds.map((accountId) =>
-      listOrdersWithResilience({ accountId, mode }),
+      listOrders({ accountId, mode }),
     ),
   );
   const degraded = results.some((result) => result.degraded);
@@ -5132,7 +5132,8 @@ const executionLookbackDays = (input: AccountClosedTradeFilters): number => {
 };
 
 const executionMultiplier = (execution: BrokerExecutionSnapshot): number => {
-  const explicit = toNumber(execution.optionContract?.multiplier);
+  const optionContract = executionOptionContract(execution);
+  const explicit = toNumber(optionContract?.multiplier);
   if (explicit != null && explicit > 0) return explicit;
   return execution.assetClass === "option" ? 100 : 1;
 };
@@ -5148,7 +5149,7 @@ const executionContractKey = (execution: BrokerExecutionSnapshot): string =>
     execution.accountId,
     executionAssetClassLabel(execution).toLowerCase(),
     normalizeSymbol(
-      execution.optionContract?.ticker ||
+      executionOptionContract(execution)?.ticker ||
         execution.contractDescription ||
         execution.symbol,
     ),
@@ -5174,8 +5175,61 @@ const normalizeLiveExecutionOptionContract = (
       }
     : null;
 
+const parseExecutionOptionContractDescription = (
+  execution: BrokerExecutionSnapshot,
+): BrokerOrderSnapshot["optionContract"] | null => {
+  const description = String(
+    execution.contractDescription ?? execution.orderDescription ?? "",
+  ).trim();
+  if (!description) return null;
+
+  const compact = description.replace(/\s+/g, "");
+  const occMatch = /^([A-Z0-9.]+)(\d{6})([CP])(\d{8})$/i.exec(compact);
+  if (!occMatch) return null;
+
+  const [, rawUnderlying, yymmdd, rightCode, rawStrike] = occMatch;
+  const year = 2000 + Number(yymmdd.slice(0, 2));
+  const month = Number(yymmdd.slice(2, 4));
+  const day = Number(yymmdd.slice(4, 6));
+  const expirationDate = new Date(Date.UTC(year, month - 1, day));
+  const strike = Number(rawStrike) / 1000;
+  if (
+    !rawUnderlying ||
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day) ||
+    Number.isNaN(expirationDate.getTime()) ||
+    expirationDate.getUTCFullYear() !== year ||
+    expirationDate.getUTCMonth() !== month - 1 ||
+    expirationDate.getUTCDate() !== day ||
+    !Number.isFinite(strike)
+  ) {
+    return null;
+  }
+
+  const underlying = normalizeSymbol(rawUnderlying);
+  const right = rightCode.toUpperCase() === "P" ? "put" : "call";
+  const multiplier = 100;
+  return {
+    ticker: `${underlying}${yymmdd}${rightCode.toUpperCase()}${rawStrike}`,
+    underlying,
+    expirationDate,
+    strike,
+    right,
+    multiplier,
+    sharesPerContract: multiplier,
+    providerContractId: execution.providerContractId ?? null,
+  };
+};
+
+const executionOptionContract = (
+  execution: BrokerExecutionSnapshot,
+): BrokerOrderSnapshot["optionContract"] | null =>
+  normalizeLiveExecutionOptionContract(execution.optionContract) ??
+  parseExecutionOptionContractDescription(execution);
+
 const optionDteFromContract = (
-  optionContract: BrokerExecutionSnapshot["optionContract"] | null | undefined,
+  optionContract: BrokerOrderSnapshot["optionContract"] | null | undefined,
   activityDate: Date,
 ): number | null => {
   if (!optionContract) return null;
@@ -5187,8 +5241,9 @@ const liveExecutionActivityTrade = (
   currency: string,
 ): NormalizedAccountTrade => {
   const activityDate = execution.executedAt;
-  const optionRight = execution.optionContract?.right
-    ? String(execution.optionContract.right).toLowerCase()
+  const optionContract = executionOptionContract(execution);
+  const optionRight = optionContract?.right
+    ? String(optionContract.right).toLowerCase()
     : null;
   return {
     id: execution.id,
@@ -5209,9 +5264,9 @@ const liveExecutionActivityTrade = (
     currency,
     sourceType: "manual",
     strategyLabel: "Manual",
-    optionContract: normalizeLiveExecutionOptionContract(execution.optionContract),
+    optionContract,
     optionRight,
-    dte: optionDteFromContract(execution.optionContract, activityDate),
+    dte: optionDteFromContract(optionContract, activityDate),
   };
 };
 
@@ -5244,7 +5299,7 @@ const buildLiveExecutionActivityTrades = (
         quantity,
         price,
         executedAt: execution.executedAt,
-        optionContract: normalizeLiveExecutionOptionContract(execution.optionContract),
+        optionContract: executionOptionContract(execution),
       });
       continue;
     }
@@ -5283,7 +5338,7 @@ const buildLiveExecutionActivityTrades = (
     if (matchedQuantity > POSITION_QUANTITY_EPSILON) {
       const avgOpen = openValue / matchedQuantity;
       const optionContract =
-        normalizeLiveExecutionOptionContract(execution.optionContract) ??
+        executionOptionContract(execution) ??
         representativeOpen?.optionContract ??
         null;
       const optionRight = optionContract?.right
@@ -5324,7 +5379,7 @@ const buildLiveExecutionActivityTrades = (
         quantity: remaining,
         price,
         executedAt: execution.executedAt,
-        optionContract: normalizeLiveExecutionOptionContract(execution.optionContract),
+        optionContract: executionOptionContract(execution),
       });
     }
   }
@@ -5347,14 +5402,14 @@ const mergeLiveExecutionActivityTrades = (
   input: AccountClosedTradeFilters = {},
   currency = "USD",
 ): NormalizedAccountTrade[] => {
-  const seen = new Set(trades.map(accountTradeActivityMatchKey));
+  const representedActivityKeys = new Set(trades.map(accountTradeActivityMatchKey));
+  const seenExecutionIds = new Set<string>();
   const executionTrades = buildLiveExecutionActivityTrades(executions, currency)
     .filter((trade) => accountTradeMatchesClosedTradeFilters(trade, input))
     .filter((trade) => {
-      const key = accountTradeActivityMatchKey(trade);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
+      if (seenExecutionIds.has(trade.id)) return false;
+      seenExecutionIds.add(trade.id);
+      return !representedActivityKeys.has(accountTradeActivityMatchKey(trade));
     });
   if (!executionTrades.length) return trades;
   return [...trades, ...executionTrades].sort((left, right) => {
@@ -5496,6 +5551,129 @@ async function listExecutionsForUniverse(
   );
   return executions.flat();
 }
+
+type AccountOrderRow = {
+  id: string;
+  accountId: string;
+  symbol: string;
+  side: BrokerOrderSnapshot["side"] | BrokerExecutionSnapshot["side"];
+  type: string;
+  assetClass: string;
+  quantity: number;
+  filledQuantity: number;
+  limitPrice: number | null;
+  stopPrice: number | null;
+  timeInForce: string | null;
+  status: string;
+  placedAt: Date;
+  filledAt: Date | null;
+  updatedAt: Date;
+  averageFillPrice: number | null;
+  commission: number | null;
+  source: string;
+  sourceType?: "manual" | "automation" | "watchlist_backtest" | "mixed";
+  strategyLabel?: string;
+  optionContract?: BrokerOrderSnapshot["optionContract"] | null;
+};
+
+const accountOrderRowFromBrokerOrder = (
+  order: BrokerOrderSnapshot,
+): AccountOrderRow => ({
+  id: order.id,
+  accountId: order.accountId,
+  symbol: order.symbol,
+  side: order.side,
+  type: order.type,
+  assetClass: order.assetClass,
+  quantity: order.quantity,
+  filledQuantity: order.filledQuantity,
+  limitPrice: order.limitPrice,
+  stopPrice: order.stopPrice,
+  timeInForce: order.timeInForce,
+  status: order.status,
+  placedAt: order.placedAt,
+  filledAt: order.status === "filled" ? order.updatedAt : null,
+  updatedAt: order.updatedAt,
+  averageFillPrice: null,
+  commission: null,
+  source: "LIVE",
+  sourceType: "manual",
+  strategyLabel: "Manual",
+  optionContract: order.optionContract ?? null,
+});
+
+const accountOrderRowFromExecution = (
+  execution: BrokerExecutionSnapshot,
+): AccountOrderRow => {
+  const quantity = Math.abs(toNumber(execution.quantity) ?? 0);
+  const price = toNumber(execution.price);
+  return {
+    id: `execution:${execution.id}`,
+    accountId: execution.accountId,
+    symbol: normalizeSymbol(execution.symbol),
+    side: execution.side,
+    type: "EXECUTION",
+    assetClass: executionAssetClassLabel(execution),
+    quantity,
+    filledQuantity: quantity,
+    limitPrice: price,
+    stopPrice: null,
+    timeInForce: null,
+    status: "filled",
+    placedAt: execution.executedAt,
+    filledAt: execution.executedAt,
+    updatedAt: execution.executedAt,
+    averageFillPrice: price,
+    commission: null,
+    source: "LIVE_EXECUTION",
+    sourceType: "manual",
+    strategyLabel: "Manual",
+    optionContract: executionOptionContract(execution),
+  };
+};
+
+const mergeExecutionHistoryOrderRows = (
+  orderRows: AccountOrderRow[],
+  executions: BrokerExecutionSnapshot[],
+): AccountOrderRow[] => {
+  if (!executions.length) return orderRows;
+  const seenIds = new Set(orderRows.map((row) => row.id));
+  const existingOrderActivityKeys = new Set(
+    orderRows.map((row) =>
+      [
+        row.accountId,
+        normalizeSymbol(row.symbol),
+        String(row.assetClass || "").toLowerCase(),
+        String(row.side || "").toLowerCase(),
+        activityMatchQuantityKey(row.filledQuantity || row.quantity),
+        activityMatchPriceKey(row.averageFillPrice ?? row.limitPrice ?? row.stopPrice),
+        dateIsoDay(row.filledAt ?? row.updatedAt),
+      ].join("|"),
+    ),
+  );
+  const executionRows: AccountOrderRow[] = [];
+  for (const execution of executions) {
+    const row = accountOrderRowFromExecution(execution);
+    const activityKey = [
+      row.accountId,
+      normalizeSymbol(row.symbol),
+      String(row.assetClass || "").toLowerCase(),
+      String(row.side || "").toLowerCase(),
+      activityMatchQuantityKey(row.filledQuantity || row.quantity),
+      activityMatchPriceKey(row.averageFillPrice ?? row.limitPrice),
+      dateIsoDay(row.filledAt ?? row.updatedAt),
+    ].join("|");
+    if (seenIds.has(row.id) || existingOrderActivityKeys.has(activityKey)) {
+      continue;
+    }
+    seenIds.add(row.id);
+    executionRows.push(row);
+  }
+  if (!executionRows.length) return orderRows;
+  return [...orderRows, ...executionRows].sort(
+    (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime(),
+  );
+};
 
 async function listClosedTradesForUniverse(
   universe: AccountUniverse,
@@ -5645,10 +5823,18 @@ export async function getAccountOrders(input: {
   const mode = input.mode ?? getRuntimeMode();
   const tab = normalizeOrderTab(input.tab);
   const universe = await getLiveAccountUniverse(input.accountId, mode);
-  const orderResult = await listOrdersForUniverse(universe, mode);
+  const [orderResult, executions] = await Promise.all([
+    listOrdersForUniverse(universe, mode),
+    tab === "history"
+      ? listExecutionsForUniverse(universe, mode, {})
+      : Promise.resolve([]),
+  ]);
   const filtered = orderResult.orders.filter((order) =>
     tab === "working" ? workingOrderStatus(order.status) : terminalOrderStatus(order.status),
   );
+  const orderRows = filtered.map(accountOrderRowFromBrokerOrder);
+  const historyRows =
+    tab === "history" ? mergeExecutionHistoryOrderRows(orderRows, executions) : orderRows;
 
   return {
     accountId: universe.requestedAccountId,
@@ -5658,26 +5844,7 @@ export async function getAccountOrders(input: {
     reason: orderResult.reason,
     stale: orderResult.stale,
     debug: orderResult.debug,
-    orders: filtered.map((order) => ({
-      id: order.id,
-      accountId: order.accountId,
-      symbol: order.symbol,
-      side: order.side,
-      type: order.type,
-      assetClass: order.assetClass,
-      quantity: order.quantity,
-      filledQuantity: order.filledQuantity,
-      limitPrice: order.limitPrice,
-      stopPrice: order.stopPrice,
-      timeInForce: order.timeInForce,
-      status: order.status,
-      placedAt: order.placedAt,
-      filledAt: order.status === "filled" ? order.updatedAt : null,
-      updatedAt: order.updatedAt,
-      averageFillPrice: null,
-      commission: null,
-      source: "LIVE",
-    })),
+    orders: historyRows,
     updatedAt: new Date(),
   };
 }
@@ -6496,7 +6663,9 @@ export const __accountMarginInternalsForTests = {
 };
 
 export const __accountOrderInternalsForTests = {
+  accountOrderRowFromExecution,
   buildLiveExecutionActivityTrades,
+  mergeExecutionHistoryOrderRows,
   mergeLiveExecutionActivityTrades,
   mergeLiveOrderActivityTrades,
   normalizeOrderTab,

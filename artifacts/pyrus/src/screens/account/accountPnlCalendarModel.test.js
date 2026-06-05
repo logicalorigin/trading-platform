@@ -183,6 +183,33 @@ test("buildDailyPnlSeries uses browser-local dates for trade buckets", () => {
   );
 });
 
+test("buildDailyPnlSeries buckets live execution rows by market date", () => {
+  const series = buildDailyPnlSeries({
+    startDate: new Date(2026, 5, 4),
+    endDate: new Date(2026, 5, 5),
+    trades: [
+      trade("2026-06-05T03:23:42.544Z", 524, {
+        id: "spy-option-fill",
+        source: "LIVE_EXECUTION",
+        sourceType: "manual",
+        symbol: "SPY",
+      }),
+    ],
+  });
+
+  assert.deepEqual(
+    series.map((day) => ({
+      iso: day.iso,
+      realized: day.realized,
+      trades: day.trades,
+    })),
+    [
+      { iso: "2026-06-04", realized: 524, trades: 1 },
+      { iso: "2026-06-05", realized: 0, trades: 0 },
+    ],
+  );
+});
+
 test("buildDailyPnlSeries ignores invalid dates and non-finite P&L values", () => {
   const series = buildDailyPnlSeries({
     startDate: new Date(2026, 4, 6),
@@ -395,6 +422,32 @@ test("account daily P&L override makes today match the account summary", () => {
   assert.equal(overridden[0].total, -25);
   assert.equal(overridden[0].realized, 5);
   assert.equal(overridden[0].unrealized, -30);
+  assert.equal(overridden[0].pnlSource, "account-summary");
+});
+
+test("account daily P&L override carries realized market-day trades into the footer", () => {
+  const series = buildDailyPnlSeries({
+    startDate: new Date(2026, 5, 4),
+    endDate: new Date(2026, 5, 4),
+  });
+
+  const overridden = applyAccountDailyPnlOverride(
+    series,
+    {
+      marketDate: "2026-06-04",
+      value: 1359.33,
+      realizedDayPnl: 1416,
+      realizedTradeCount: 14,
+      source: "LOCAL_LEDGER",
+    },
+    new Date(2026, 5, 5, 12),
+  );
+
+  assert.equal(overridden[0].iso, "2026-06-04");
+  assert.equal(overridden[0].pnl, 1359.33);
+  assert.equal(overridden[0].realized, 1416);
+  assert.equal(Number(overridden[0].unrealized.toFixed(2)), -56.67);
+  assert.equal(overridden[0].trades, 14);
   assert.equal(overridden[0].pnlSource, "account-summary");
 });
 
