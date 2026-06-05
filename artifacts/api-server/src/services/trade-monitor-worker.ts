@@ -21,6 +21,7 @@ import {
   resolveSignalMonitorProfileUniverse,
   resolveSignalMonitorTimeframe,
   updateSignalMonitorProfileEvaluationMetadata,
+  type SignalMonitorCompletedBarsSnapshot,
   type SignalMonitorProfileRow,
   type SignalMonitorTimeframe,
 } from "./signal-monitor";
@@ -38,6 +39,8 @@ const WORKER_WAKEUP_MS = 5_000;
 const ADVISORY_LOCK_KEY = 1_930_514_021;
 const FAILED_KEY_RETRY_MS = 60_000;
 const STREAM_EVALUATION_FLUSH_MS = 100;
+const HISTORY_FALLBACK_BATCH_SYMBOLS = 48;
+const HISTORY_BAR_LOAD_TIMEOUT_MS = 12_000;
 
 type ReleaseLock = () => Promise<void>;
 type WorkerLogger = Pick<typeof logger, "debug" | "info" | "warn">;
@@ -60,6 +63,8 @@ type WorkerDependencies = {
   subscribeStockMinuteAggregates: typeof subscribeMutableStockMinuteAggregates;
   setTimer: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
+  historyBatchMaxSymbols: number;
+  historyBarLoadTimeoutMs: number;
   now: () => Date;
   logger: WorkerLogger;
 };
@@ -127,6 +132,67 @@ function streamFreshnessWindowMs(input: {
 
 function shouldRememberEvaluatedKey(state: SignalMonitorSymbolState): boolean {
   return state.status === "ok" && Boolean(state.currentSignalAt);
+}
+
+function signalMonitorWorkerBarLoadTimeoutError(input: {
+  symbol: string;
+  timeframe: SignalMonitorTimeframe;
+  timeoutMs: number;
+}) {
+  const error = new Error(
+    `Signal monitor worker bar load timed out for ${input.symbol} ${input.timeframe} after ${input.timeoutMs}ms.`,
+  );
+  const typed = error as Error & {
+    code?: string;
+    symbol?: string;
+    timeframe?: SignalMonitorTimeframe;
+    timeoutMs?: number;
+  };
+  typed.code = "signal_monitor_worker_bar_load_timeout";
+  typed.symbol = input.symbol;
+  typed.timeframe = input.timeframe;
+  typed.timeoutMs = input.timeoutMs;
+  return error;
+}
+
+function isSignalMonitorWorkerBarLoadTimeout(error: unknown): boolean {
+  return (
+    Boolean(error) &&
+    typeof error === "object" &&
+    (error as { code?: unknown }).code ===
+      "signal_monitor_worker_bar_load_timeout"
+  );
+}
+
+function interleaveSignalMonitorWorkerHistorySymbols(input: {
+  symbols: string[];
+  pinnedSymbols: number;
+}) {
+  const pinnedCount = positiveInteger(
+    input.pinnedSymbols,
+    0,
+    0,
+    input.symbols.length,
+  );
+  if (pinnedCount <= 0 || pinnedCount >= input.symbols.length) {
+    return input.symbols;
+  }
+
+  const pinned = input.symbols.slice(0, pinnedCount);
+  const expansion = input.symbols.slice(pinnedCount);
+  const interleaved: string[] = [];
+  const length = Math.max(pinned.length, expansion.length);
+  for (let index = 0; index < length; index += 1) {
+    const pinnedSymbol = pinned[index];
+    const expansionSymbol = expansion[index];
+    if (pinnedSymbol) {
+      interleaved.push(pinnedSymbol);
+    }
+    if (expansionSymbol) {
+      interleaved.push(expansionSymbol);
+    }
+  }
+  return interleaved;
 }
 
 async function updateProfileLastError(
@@ -234,9 +300,92 @@ function defaultDependencies(
       options.subscribeStockMinuteAggregates ?? subscribeMutableStockMinuteAggregates,
     setTimer: options.setTimer ?? setTimeout,
     clearTimer: options.clearTimer ?? clearTimeout,
+    historyBatchMaxSymbols: positiveInteger(
+      options.historyBatchMaxSymbols,
+      HISTORY_FALLBACK_BATCH_SYMBOLS,
+      1,
+      500,
+    ),
+    historyBarLoadTimeoutMs: positiveInteger(
+      options.historyBarLoadTimeoutMs,
+      HISTORY_BAR_LOAD_TIMEOUT_MS,
+      1,
+      120_000,
+    ),
     now: options.now ?? (() => new Date()),
     logger: options.logger ?? logger,
   };
+}
+
+type WorkerCompletedBarsLoadResult =
+  | {
+      kind: "loaded";
+      symbol: string;
+      completedBars: SignalMonitorCompletedBarsSnapshot;
+    }
+  | {
+      kind: "failed";
+      symbol: string;
+      error: unknown;
+    };
+
+async function loadWorkerCompletedBars(input: {
+  symbol: string;
+  timeframe: SignalMonitorTimeframe;
+  evaluatedAt: Date;
+  dependencies: WorkerDependencies;
+}): Promise<WorkerCompletedBarsLoadResult> {
+  const timeoutMs = input.dependencies.historyBarLoadTimeoutMs;
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  let timeoutError: Error | null = null;
+  const loadPromise = input.dependencies
+    .loadCompletedBars({
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+      evaluatedAt: input.evaluatedAt,
+      signal: controller.signal,
+    })
+    .then(
+      (completedBars): WorkerCompletedBarsLoadResult => ({
+        kind: "loaded",
+        symbol: input.symbol,
+        completedBars,
+      }),
+      (error): WorkerCompletedBarsLoadResult => ({
+        kind: "failed",
+        symbol: input.symbol,
+        error,
+      }),
+    );
+  loadPromise.catch(() => {});
+  const timeoutPromise = new Promise<WorkerCompletedBarsLoadResult>((resolve) => {
+    timeout = setTimeout(() => {
+      timeoutError = signalMonitorWorkerBarLoadTimeoutError({
+        symbol: input.symbol,
+        timeframe: input.timeframe,
+        timeoutMs,
+      });
+      controller.abort(timeoutError);
+      resolve({
+        kind: "failed",
+        symbol: input.symbol,
+        error: timeoutError,
+      });
+    }, timeoutMs);
+    timeout.unref?.();
+  });
+
+  try {
+    return await Promise.race([loadPromise, timeoutPromise]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    if (timeoutError && !controller.signal.aborted) {
+      controller.abort(timeoutError);
+    }
+  }
 }
 
 async function runInBatches<T, R>(
@@ -280,8 +429,14 @@ async function runProfile(input: {
     const universeSymbols = universe.symbols;
     onUniverseResolved?.(profile.id, universeSymbols);
     const resolvedBatch = resolveSignalMonitorEvaluationBatch({
-      sourceSymbols: universeSymbols,
-      maxSymbols: evaluationProfile.maxSymbols,
+      sourceSymbols: interleaveSignalMonitorWorkerHistorySymbols({
+        symbols: universeSymbols,
+        pinnedSymbols: universe.universe.pinnedSymbols,
+      }),
+      maxSymbols: Math.min(
+        evaluationProfile.maxSymbols,
+        dependencies.historyBatchMaxSymbols,
+      ),
       cursor: runtime.evaluationCursor,
     });
     runtime.evaluationCursor = resolvedBatch.nextCursor;
@@ -315,87 +470,113 @@ async function runProfile(input: {
       1,
       10,
     );
-    const latestBars = await runInBatches(
-      resolvedBatch.symbols,
-      concurrency,
-      async (symbol) => ({
-        symbol,
-        completedBars: await dependencies.loadCompletedBars({
+    const currentKeys = new Set<string>();
+    for (
+      let index = 0;
+      index < resolvedBatch.symbols.length;
+      index += concurrency
+    ) {
+      const batchSymbols = resolvedBatch.symbols.slice(index, index + concurrency);
+      const latestBars = await Promise.all(
+        batchSymbols.map((symbol) =>
+          loadWorkerCompletedBars({
+            symbol,
+            timeframe,
+            evaluatedAt,
+            dependencies,
+          }),
+        ),
+      );
+      const failedBarLoads = latestBars.filter(
+        (result) => result.kind === "failed",
+      );
+      if (failedBarLoads.length) {
+        const timeoutCount = failedBarLoads.filter((result) =>
+          isSignalMonitorWorkerBarLoadTimeout(result.error),
+        ).length;
+        dependencies.logger.warn?.(
+          {
+            profileId: profile.id,
+            timeframe,
+            failedCount: failedBarLoads.length,
+            timeoutCount,
+            symbols: failedBarLoads.slice(0, 12).map((result) => result.symbol),
+          },
+          "Signal monitor worker skipped slow or failed history bar loads",
+        );
+      }
+      const keysToRecord = new Map<string, string>();
+      const symbolsToEvaluate: Array<{
+        symbol: string;
+        completedBars: Awaited<ReturnType<typeof loadSignalMonitorCompletedBars>>;
+      }> = [];
+
+      latestBars.forEach((result) => {
+        if (result.kind !== "loaded") {
+          return;
+        }
+        const { symbol, completedBars } = result;
+        if (!completedBars.latestBarAt) {
+          return;
+        }
+
+        const key = evaluatedKey({
+          profileId: profile.id,
           symbol,
           timeframe,
-          evaluatedAt,
-        }),
-      }),
-    );
-    const keysToRecord = new Map<string, string>();
-    const currentKeys = new Set<string>();
-    const symbolsToEvaluate: Array<{
-      symbol: string;
-      completedBars: Awaited<ReturnType<typeof loadSignalMonitorCompletedBars>>;
-    }> = [];
-
-    latestBars.forEach(({ symbol, completedBars }) => {
-      if (!completedBars.latestBarAt) {
-        return;
-      }
-
-      const key = evaluatedKey({
-        profileId: profile.id,
-        symbol,
-        timeframe,
-        latestBarAt: completedBars.latestBarAt,
+          latestBarAt: completedBars.latestBarAt,
+        });
+        keysToRecord.set(symbol, key);
+        currentKeys.add(key);
+        if (runtime.evaluatedKeys.has(key)) {
+          return;
+        }
+        const retryAfterMs = runtime.failedKeys.get(key) ?? 0;
+        if (retryAfterMs > evaluatedAtMs) {
+          return;
+        }
+        symbolsToEvaluate.push({ symbol, completedBars });
       });
-      keysToRecord.set(symbol, key);
-      currentKeys.add(key);
-      if (runtime.evaluatedKeys.has(key)) {
-        return;
+
+      if (!symbolsToEvaluate.length) {
+        continue;
       }
-      const retryAfterMs = runtime.failedKeys.get(key) ?? 0;
-      if (retryAfterMs > evaluatedAtMs) {
-        return;
-      }
-      symbolsToEvaluate.push({ symbol, completedBars });
-    });
+
+      const evaluatedStates = await Promise.all(
+        symbolsToEvaluate.map((entry) =>
+          dependencies.evaluateSymbolFromCompletedBars({
+            profile: universe.profile,
+            symbol: entry.symbol,
+            timeframe,
+            mode: "incremental",
+            evaluatedAt,
+            completedBars: entry.completedBars.bars,
+          }),
+        ),
+      );
+      await dependencies.updateProfileEvaluationMetadata({
+        profile: universe.profile,
+        evaluatedAt,
+        states: evaluatedStates,
+      });
+      evaluatedStates.forEach((state) => {
+        const key = keysToRecord.get(state.symbol);
+        if (key) {
+          if (state.status === "error") {
+            runtime.failedKeys.set(key, evaluatedAtMs + FAILED_KEY_RETRY_MS);
+            return;
+          }
+          runtime.failedKeys.delete(key);
+          if (shouldRememberEvaluatedKey(state)) {
+            runtime.evaluatedKeys.add(key);
+          }
+        }
+      });
+    }
 
     Array.from(runtime.failedKeys.keys()).forEach((key) => {
       if (!currentKeys.has(key)) {
         runtime.failedKeys.delete(key);
-      }
-    });
-
-    if (!symbolsToEvaluate.length) {
-      return;
-    }
-
-    const evaluatedStates = await runInBatches(
-      symbolsToEvaluate,
-      concurrency,
-      (entry) =>
-        dependencies.evaluateSymbolFromCompletedBars({
-          profile: universe.profile,
-          symbol: entry.symbol,
-          timeframe,
-          mode: "incremental",
-          evaluatedAt,
-          completedBars: entry.completedBars.bars,
-        }),
-    );
-    await dependencies.updateProfileEvaluationMetadata({
-      profile: universe.profile,
-      evaluatedAt,
-      states: evaluatedStates,
-    });
-    evaluatedStates.forEach((state) => {
-      const key = keysToRecord.get(state.symbol);
-      if (key) {
-        if (state.status === "error") {
-          runtime.failedKeys.set(key, evaluatedAtMs + FAILED_KEY_RETRY_MS);
-          return;
-        }
-        runtime.failedKeys.delete(key);
-        if (shouldRememberEvaluatedKey(state)) {
-          runtime.evaluatedKeys.add(key);
-        }
       }
     });
   } catch (error) {

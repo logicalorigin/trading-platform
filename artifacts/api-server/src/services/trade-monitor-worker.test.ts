@@ -495,6 +495,123 @@ test("trade monitor worker falls back to history when stock streaming source act
   assert.equal(evaluateCalls, 3);
 });
 
+test("trade monitor worker rotates broad history fallback without shrinking stream coverage", async () => {
+  const universeSymbols = ["AAPL", "MSFT", "QQQ", "IWM", "VZ"];
+  const loadedSymbols: string[] = [];
+  const evaluatedSymbols: string[] = [];
+  let subscribedSymbols: string[] = [];
+  const worker = createTradeMonitorWorker({
+    listProfiles: async () => [profile({ maxSymbols: 500 })],
+    resolveUniverse: async (inputProfile) => ({
+      profile: inputProfile,
+      symbols: universeSymbols,
+      watchlistSymbols: ["AAPL", "MSFT"],
+      skippedSymbols: [],
+      truncated: false,
+      universe: {
+        ...signalMonitorTestUniverse(inputProfile, universeSymbols),
+        pinnedSymbols: 2,
+        expansionSymbols: 3,
+      },
+    }),
+    loadCompletedBars: async (input) => {
+      loadedSymbols.push(input.symbol);
+      return {
+        bars: [],
+        latestBarAt: new Date("2026-04-24T14:30:00.000Z"),
+      };
+    },
+    evaluateSymbolFromCompletedBars: async (input: { symbol: string }) => {
+      evaluatedSymbols.push(input.symbol);
+      return symbolState({ symbol: input.symbol });
+    },
+    updateProfileEvaluationMetadata: async (input: {
+      profile: SignalMonitorProfileRow;
+    }) => input.profile,
+    updateProfileLastError: async () => {},
+    isStockAggregateStreamingAvailable: () => true,
+    hasRecentStockAggregateSourceActivity: () => false,
+    acquireTickLock: async () => async () => {},
+    subscribeStockMinuteAggregates: (symbols) => {
+      subscribedSymbols = symbols;
+      return {
+        setSymbols(nextSymbols: string[]) {
+          subscribedSymbols = nextSymbols;
+        },
+        unsubscribe() {
+          subscribedSymbols = [];
+        },
+      };
+    },
+    historyBatchMaxSymbols: 3,
+    now: () => new Date("2026-04-24T14:33:00.000Z"),
+    logger: createNoopLogger(),
+  });
+
+  await worker.runOnce();
+  assert.deepEqual(loadedSymbols, ["AAPL", "QQQ", "MSFT"]);
+  await worker.runOnce();
+
+  assert.deepEqual(subscribedSymbols, [...universeSymbols].sort());
+  assert.deepEqual([...new Set(loadedSymbols)].sort(), [...universeSymbols].sort());
+  assert.deepEqual(
+    [...new Set(evaluatedSymbols)].sort(),
+    [...universeSymbols].sort(),
+  );
+});
+
+test("trade monitor worker skips slow bar loads without blocking loaded siblings", async () => {
+  const loadedSymbols: string[] = [];
+  const evaluatedSymbols: string[] = [];
+  const warnings: string[] = [];
+  const worker = createTradeMonitorWorker({
+    listProfiles: async () => [profile({ maxSymbols: 2 })],
+    resolveUniverse: async (inputProfile) => ({
+      profile: inputProfile,
+      symbols: ["SLOW", "FAST"],
+      watchlistSymbols: ["SLOW", "FAST"],
+      skippedSymbols: [],
+      truncated: false,
+      universe: signalMonitorTestUniverse(inputProfile, ["SLOW", "FAST"]),
+    }),
+    loadCompletedBars: async (input) => {
+      loadedSymbols.push(input.symbol);
+      if (input.symbol === "SLOW") {
+        return new Promise(() => {});
+      }
+      return {
+        bars: [],
+        latestBarAt: new Date("2026-04-24T14:30:00.000Z"),
+      };
+    },
+    evaluateSymbolFromCompletedBars: async (input: { symbol: string }) => {
+      evaluatedSymbols.push(input.symbol);
+      return symbolState({ symbol: input.symbol });
+    },
+    updateProfileEvaluationMetadata: async (input: {
+      profile: SignalMonitorProfileRow;
+    }) => input.profile,
+    updateProfileLastError: async () => {},
+    acquireTickLock: async () => async () => {},
+    historyBarLoadTimeoutMs: 5,
+    now: () => new Date("2026-04-24T14:33:00.000Z"),
+    logger: {
+      ...createNoopLogger(),
+      warn: (...args: unknown[]) => {
+        warnings.push(String(args[1]));
+      },
+    },
+  });
+
+  await worker.runOnce();
+
+  assert.deepEqual(loadedSymbols, ["SLOW", "FAST"]);
+  assert.deepEqual(evaluatedSymbols, ["FAST"]);
+  assert.deepEqual(warnings, [
+    "Signal monitor worker skipped slow or failed history bar loads",
+  ]);
+});
+
 test("trade monitor worker evaluates a streamed aggregate without waiting for the next poll", async () => {
   let evaluateCalls = 0;
   let currentLatestBarAt = new Date("2026-04-24T14:30:00.000Z");
