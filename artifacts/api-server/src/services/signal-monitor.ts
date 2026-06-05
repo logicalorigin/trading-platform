@@ -4936,7 +4936,7 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
   const resolvedBatch = requestedSymbols
     ? {
         ...resolveExplicitSignalMonitorSymbols({
-          symbols: universe.watchlistSymbols.filter((symbol) =>
+          symbols: universe.symbols.filter((symbol) =>
             requestedSymbols.has(symbol),
           ),
           maxSymbols: evaluationSettings.profile.maxSymbols,
@@ -4944,7 +4944,7 @@ export async function evaluateSignalMonitorProfileUniverse(input: {
         nextCursor: 0,
       }
     : resolveSignalMonitorEvaluationBatch({
-        sourceSymbols: universe.watchlistSymbols,
+        sourceSymbols: universe.symbols,
         maxSymbols: evaluationSettings.profile.maxSymbols,
         cursor: signalMonitorEvaluationRotationCursors.get(
           signalMonitorEvaluationRotationKey({
@@ -5995,7 +5995,7 @@ async function evaluateSignalMonitorRuntimeProfileUniverse(input: {
       timeframe,
     });
     const resolvedBatch = resolveSignalMonitorEvaluationBatch({
-      sourceSymbols: universe.watchlistSymbols,
+      sourceSymbols: universe.symbols,
       maxSymbols: evaluationProfile.maxSymbols,
       cursor: signalMonitorEvaluationRotationCursors.get(rotationKey),
     });

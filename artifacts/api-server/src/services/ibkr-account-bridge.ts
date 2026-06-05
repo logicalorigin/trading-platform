@@ -255,6 +255,7 @@ export function listIbkrPositions(input: {
 
 export function listIbkrExecutions(input: {
   accountId?: string;
+  mode?: RuntimeMode;
   days?: number;
   limit?: number;
   symbol?: string;
@@ -262,6 +263,7 @@ export function listIbkrExecutions(input: {
 }): Promise<BrokerExecutionSnapshot[]> {
   const key = stableStringify({
     accountId: input.accountId ?? null,
+    mode: input.mode ?? null,
     days: input.days ?? null,
     limit: input.limit ?? null,
     symbol: input.symbol ?? null,

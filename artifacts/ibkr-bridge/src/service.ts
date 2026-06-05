@@ -339,6 +339,7 @@ export class IbkrBridgeService {
 
   listExecutions(input: {
     accountId?: string;
+    mode: RuntimeMode;
     days?: number;
     limit?: number;
     symbol?: string;

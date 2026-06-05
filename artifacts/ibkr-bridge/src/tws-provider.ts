@@ -4723,6 +4723,7 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
 
   async listExecutions(input: {
     accountId?: string;
+    mode: RuntimeMode;
     days?: number;
     limit?: number;
     symbol?: string;
@@ -4778,6 +4779,8 @@ export class TwsIbkrBridgeProvider implements IbkrBridgeProvider {
           orderDescription: null,
           contractDescription: asString(detail.contract.localSymbol),
           providerContractId,
+          optionContract:
+            assetClass === "option" ? toOptionContractMeta(detail.contract) : null,
           orderRef: asString(detail.execution.orderRef),
         } satisfies BrokerExecutionSnapshot;
       }),

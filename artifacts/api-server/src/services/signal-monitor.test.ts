@@ -2728,6 +2728,26 @@ test("signal monitor profile universe does not inherit the historical-bars lane 
   assert.doesNotMatch(source, /Historical Bars lane is dropping/);
 });
 
+test("signal monitor profile evaluation scans the resolved profile universe", () => {
+  const source = readFileSync(
+    new URL("./signal-monitor.ts", import.meta.url),
+    "utf8",
+  );
+  const storedEvaluationBlock =
+    source.match(
+      /export async function evaluateSignalMonitorProfileUniverse[\s\S]*?return \{[\s\S]*?universe: universe\.universe,[\s\S]*?\n  \};/,
+    )?.[0] ?? "";
+  const runtimeEvaluationBlock =
+    source.match(
+      /async function evaluateSignalMonitorRuntimeProfileUniverse[\s\S]*?return \{[\s\S]*?universe: universe\.universe,[\s\S]*?\n    \};/,
+    )?.[0] ?? "";
+
+  assert.match(storedEvaluationBlock, /sourceSymbols: universe\.symbols/);
+  assert.match(runtimeEvaluationBlock, /sourceSymbols: universe\.symbols/);
+  assert.doesNotMatch(storedEvaluationBlock, /sourceSymbols: universe\.watchlistSymbols/);
+  assert.doesNotMatch(runtimeEvaluationBlock, /sourceSymbols: universe\.watchlistSymbols/);
+});
+
 test("signal monitor profile updates share the 500 symbol cap", () => {
   const source = readFileSync(
     new URL("./signal-monitor.ts", import.meta.url),
@@ -3378,7 +3398,8 @@ test("signal monitor full evaluation preserves sibling matrix timeframe rows", (
     block,
     /ne\(signalMonitorSymbolStatesTable\.timeframe,\s*timeframe\)/,
   );
-  assert.match(block, /universe\.watchlistSymbols/);
+  assert.match(block, /sourceSymbols: universe\.symbols/);
+  assert.doesNotMatch(block, /sourceSymbols: universe\.watchlistSymbols/);
   assert.match(block, /resolveSignalMonitorEvaluationBatch/);
   assert.match(block, /!evaluationSettings\.capped/);
   assert.match(block, /!resolvedBatch\.truncated/);

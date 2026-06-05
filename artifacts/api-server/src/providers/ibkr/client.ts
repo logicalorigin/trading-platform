@@ -1864,6 +1864,7 @@ export class IbkrClient {
 
   async listExecutions(input: {
     accountId?: string;
+    mode?: RuntimeMode;
     days?: number;
     limit?: number;
     symbol?: string;
@@ -1944,6 +1945,8 @@ export class IbkrClient {
           orderDescription: asString(raw["order_description"]) ?? null,
           contractDescription: asString(raw["contract_description_2"]) ?? null,
           providerContractId,
+          optionContract:
+            assetClass === "option" ? parseOptionDetails(raw) : null,
           orderRef: asString(raw["order_ref"]) ?? null,
         } satisfies BrokerExecutionSnapshot;
       }),

@@ -31,6 +31,11 @@ const normalizeText = (value, fallback = "") => {
 
 const normalizeSymbol = (value) => normalizeText(value).toUpperCase();
 
+const tradeRealizedPnl = (trade) =>
+  trade?.realizedPnl == null || trade?.realizedPnl === ""
+    ? null
+    : finiteNumber(trade.realizedPnl);
+
 const normalizeSelectValue = (value, fallback = "all") => {
   const text = normalizeText(value, fallback);
   return text || fallback;
@@ -311,7 +316,7 @@ export const filterAccountAnalysisTrades = ({
 
 const summarizeTrades = (trades) => {
   const rows = arrayValue(trades);
-  const pnls = rows.map((trade) => finiteNumber(trade?.realizedPnl) ?? 0);
+  const pnls = rows.map(tradeRealizedPnl).filter((value) => value != null);
   const realizedPnl = pnls.reduce((sum, value) => sum + value, 0);
   const winners = pnls.filter((value) => value > 0);
   const losers = pnls.filter((value) => value < 0);
@@ -326,8 +331,8 @@ const summarizeTrades = (trades) => {
     losers: losers.length,
     realizedPnl,
     commissions: rows.reduce((sum, trade) => sum + (finiteNumber(trade?.commissions) ?? 0), 0),
-    winRatePercent: rows.length ? (winners.length / rows.length) * 100 : null,
-    expectancy: rows.length ? realizedPnl / rows.length : null,
+    winRatePercent: pnls.length ? (winners.length / pnls.length) * 100 : null,
+    expectancy: pnls.length ? realizedPnl / pnls.length : null,
     profitFactor:
       grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? null : 0,
     averageHoldMinutes: holdRows.length
@@ -338,15 +343,15 @@ const summarizeTrades = (trades) => {
 
 const computeEquityCurveStats = (trades) => {
   const rows = arrayValue(trades)
-    .map((trade) => ({ trade, t: tradeCloseMs(trade) }))
-    .filter((row) => row.t != null)
+    .map((trade) => ({ trade, pnl: tradeRealizedPnl(trade), t: tradeCloseMs(trade) }))
+    .filter((row) => row.t != null && row.pnl != null)
     .sort((left, right) => left.t - right.t);
   let equity = 0;
   let peak = 0;
   let maxDrawdown = 0;
   const curve = [];
-  rows.forEach(({ trade }) => {
-    equity += finiteNumber(trade?.realizedPnl) ?? 0;
+  rows.forEach(({ pnl }) => {
+    equity += pnl;
     if (equity > peak) peak = equity;
     maxDrawdown = Math.max(maxDrawdown, peak - equity);
     curve.push(equity);
@@ -363,7 +368,7 @@ const standardDeviation = (values, mean) => {
 };
 
 const computeSharpeRatio = (trades) => {
-  const pnls = arrayValue(trades).map((trade) => finiteNumber(trade?.realizedPnl) ?? 0);
+  const pnls = arrayValue(trades).map(tradeRealizedPnl).filter((value) => value != null);
   if (pnls.length < 3) return null;
   const mean = pnls.reduce((sum, value) => sum + value, 0) / pnls.length;
   const deviation = standardDeviation(pnls, mean);
@@ -372,7 +377,7 @@ const computeSharpeRatio = (trades) => {
 };
 
 const computeSortinoRatio = (trades) => {
-  const pnls = arrayValue(trades).map((trade) => finiteNumber(trade?.realizedPnl) ?? 0);
+  const pnls = arrayValue(trades).map(tradeRealizedPnl).filter((value) => value != null);
   if (pnls.length < 3) return null;
   const mean = pnls.reduce((sum, value) => sum + value, 0) / pnls.length;
   const downside = pnls.filter((value) => value < 0);
@@ -498,13 +503,14 @@ export const tradeHasOptionFields = (trade) =>
 export const buildSymbolSparklineMap = (trades = []) => {
   const bySymbol = new Map();
   arrayValue(trades)
-    .map((trade) => ({ trade, t: tradeCloseMs(trade) }))
+    .map((trade) => ({ trade, pnl: tradeRealizedPnl(trade), t: tradeCloseMs(trade) }))
+    .filter((row) => row.pnl != null)
     .sort((left, right) => (left.t ?? 0) - (right.t ?? 0))
-    .forEach(({ trade }) => {
+    .forEach(({ trade, pnl }) => {
       const symbol = normalizeSymbol(trade?.symbol) || "UNKNOWN";
       const current = bySymbol.get(symbol) || [];
       const previous = current.length ? current[current.length - 1] : 0;
-      current.push(previous + (finiteNumber(trade?.realizedPnl) ?? 0));
+      current.push(previous + pnl);
       bySymbol.set(symbol, current);
     });
   return bySymbol;

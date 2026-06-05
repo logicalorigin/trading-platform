@@ -85,6 +85,26 @@ const closedTradeCalendarKey = (trade, index) => {
   return `${source || "UNKNOWN"}:${accountId || "unknown"}:${id}`;
 };
 
+const tradeActivityDate = (trade) =>
+  trade?.closeDate ??
+  trade?.filledAt ??
+  trade?.executedAt ??
+  trade?.updatedAt ??
+  trade?.openDate;
+
+const explicitAccountActivityTrade = (trade) => {
+  const source = String(trade?.source ?? "").trim().toUpperCase();
+  if (source === "LIVE_ORDER" || source === "LIVE" || source === "SHADOW") {
+    return true;
+  }
+  return Boolean(
+    trade?.sourceType ||
+      trade?.orderStatus ||
+      trade?.filledAt ||
+      trade?.executedAt,
+  );
+};
+
 export const findLatestCalendarActivityDate = ({
   trades = [],
   equityPoints = [],
@@ -97,8 +117,8 @@ export const findLatestCalendarActivityDate = ({
 
   trades.forEach((trade) => {
     const realized = finiteNumber(trade?.realizedPnl) ?? finiteNumber(trade?.pnl);
-    if (realized == null) return;
-    consider(trade?.closeDate);
+    if (realized == null && !explicitAccountActivityTrade(trade)) return;
+    consider(tradeActivityDate(trade));
   });
 
   equityPoints.forEach((point) => {
@@ -183,10 +203,10 @@ export const buildDailyPnlSeries = ({
 } = {}) => {
   const tradesByDay = new Map();
   trades.forEach((trade, index) => {
-    const day = pnlBucketDay(trade?.closeDate);
+    const day = pnlBucketDay(tradeActivityDate(trade));
     if (!day) return;
     const realized = finiteNumber(trade?.realizedPnl) ?? finiteNumber(trade?.pnl);
-    if (realized == null) return;
+    if (realized == null && !explicitAccountActivityTrade(trade)) return;
     const key = isoCalendarDay(day);
     const current = tradesByDay.get(key) || {
       iso: key,
@@ -197,7 +217,7 @@ export const buildDailyPnlSeries = ({
     const tradeKey = closedTradeCalendarKey(trade, index);
     if (current.tradeKeys.has(tradeKey)) return;
     current.tradeKeys.add(tradeKey);
-    current.realized += realized;
+    current.realized += realized ?? 0;
     current.trades += 1;
     tradesByDay.set(key, current);
   });

@@ -472,6 +472,7 @@ app.get("/orders", async (req, res) => {
 });
 
 app.get("/executions", async (req, res) => {
+  const mode = req.query.mode === "live" ? "live" : "paper";
   const accountId =
     typeof req.query.accountId === "string" ? req.query.accountId : undefined;
   const symbol =
@@ -485,6 +486,7 @@ app.get("/executions", async (req, res) => {
   res.json({
     executions: await ibkrBridgeService.listExecutions({
       accountId,
+      mode,
       symbol,
       providerContractId,
       days:

@@ -45,6 +45,7 @@ import {
 } from "./platform";
 import {
   listIbkrAccounts,
+  listIbkrExecutions,
   listIbkrPositions,
 } from "./ibkr-account-bridge";
 import {
@@ -157,6 +158,7 @@ import {
 } from "./market-data-admission";
 import type {
   BrokerAccountSnapshot,
+  BrokerExecutionSnapshot,
   BrokerOrderSnapshot,
   BrokerPositionSnapshot,
   OptionChainContract,
@@ -4831,7 +4833,7 @@ async function getPositionLots(accountIds: string[]) {
 
 type NormalizedAccountTrade = {
   id: string;
-  source: "FLEX";
+  source: "FLEX" | "LIVE_ORDER" | "LIVE_EXECUTION";
   accountId: string;
   symbol: string;
   side: string;
@@ -4846,6 +4848,22 @@ type NormalizedAccountTrade = {
   holdDurationMinutes: number | null;
   commissions: number | null;
   currency: string;
+  sourceType?: string | null;
+  strategyLabel?: string | null;
+  orderStatus?: BrokerOrderSnapshot["status"] | null;
+  orderType?: BrokerOrderSnapshot["type"] | null;
+  optionContract?: BrokerOrderSnapshot["optionContract"] | null;
+  optionRight?: string | null;
+  dte?: number | null;
+};
+
+type AccountClosedTradeFilters = {
+  from?: Date | null;
+  to?: Date | null;
+  symbol?: string | null;
+  assetClass?: string | null;
+  pnlSign?: string | null;
+  holdDuration?: string | null;
 };
 
 type TradeOutcomeSide = "loss" | "flat" | "win";
@@ -5021,16 +5039,172 @@ const isClosedFlexTradeRow = (row: {
   return realizedPnl != null && realizedPnl !== 0;
 };
 
+const orderActivityDate = (order: BrokerOrderSnapshot): Date =>
+  order.updatedAt instanceof Date ? order.updatedAt : new Date(order.updatedAt);
+
+const orderActivityPrice = (order: BrokerOrderSnapshot): number | null =>
+  toNumber(order.limitPrice) ?? toNumber(order.stopPrice);
+
+const optionDteFromOrder = (
+  order: BrokerOrderSnapshot,
+  activityDate: Date,
+): number | null => {
+  const expiration = order.optionContract?.expirationDate;
+  if (!expiration) return null;
+  const expirationDate =
+    expiration instanceof Date ? expiration : new Date(expiration);
+  if (Number.isNaN(expirationDate.getTime()) || Number.isNaN(activityDate.getTime())) {
+    return null;
+  }
+  const DAY_MS = 86_400_000;
+  return Math.max(
+    0,
+    Math.round((expirationDate.getTime() - activityDate.getTime()) / DAY_MS),
+  );
+};
+
+const dateIsoDay = (date: Date | null | undefined): string => {
+  if (!date || Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+};
+
+const activityMatchPriceKey = (value: unknown): string => {
+  const numeric = toNumber(value);
+  return numeric == null ? "noprice" : String(Math.round(numeric * 10_000) / 10_000);
+};
+
+const activityMatchQuantityKey = (value: unknown): string => {
+  const numeric = toNumber(value);
+  return numeric == null ? "0" : String(Math.round(Math.abs(numeric) * 1_000_000) / 1_000_000);
+};
+
+const accountTradeActivityMatchKey = (trade: NormalizedAccountTrade): string =>
+  [
+    trade.accountId,
+    normalizeSymbol(trade.symbol || ""),
+    String(trade.assetClass || "").toLowerCase(),
+    String(trade.side || "").toLowerCase(),
+    activityMatchQuantityKey(trade.quantity),
+    activityMatchPriceKey(trade.avgClose),
+    dateIsoDay(trade.closeDate),
+  ].join("|");
+
+const brokerOrderActivityMatchKey = (order: BrokerOrderSnapshot): string =>
+  [
+    order.accountId,
+    normalizeSymbol(order.symbol || ""),
+    normalizeTradeAssetClassLabel({
+      assetClass: order.assetClass,
+      symbol: order.symbol,
+    }).toLowerCase(),
+    String(order.side || "").toLowerCase(),
+    activityMatchQuantityKey(order.filledQuantity || order.quantity),
+    activityMatchPriceKey(orderActivityPrice(order)),
+    dateIsoDay(orderActivityDate(order)),
+  ].join("|");
+
+const filledLiveOrderActivity = (order: BrokerOrderSnapshot): boolean =>
+  terminalOrderStatus(order.status) && (toNumber(order.filledQuantity) ?? 0) > 0;
+
+const orderMatchesClosedTradeFilters = (
+  order: BrokerOrderSnapshot,
+  input: AccountClosedTradeFilters,
+): boolean => {
+  const activityDate = orderActivityDate(order);
+  if (Number.isNaN(activityDate.getTime())) return false;
+  if (input.from && activityDate < input.from) return false;
+  if (input.to && activityDate > input.to) return false;
+  if (input.symbol && normalizeSymbol(order.symbol) !== normalizeSymbol(input.symbol)) {
+    return false;
+  }
+  if (
+    input.assetClass &&
+    input.assetClass !== "all" &&
+    normalizeTradeAssetClassLabel({
+      assetClass: order.assetClass,
+      symbol: order.symbol,
+    }).toLowerCase() !== input.assetClass.toLowerCase()
+  ) {
+    return false;
+  }
+  if (input.pnlSign && input.pnlSign !== "all") {
+    return false;
+  }
+  if (!matchesHoldDurationBucket(null, input.holdDuration)) {
+    return false;
+  }
+  return true;
+};
+
+const liveOrderToAccountActivityTrade = (
+  order: BrokerOrderSnapshot,
+  currency: string,
+): NormalizedAccountTrade => {
+  const activityDate = orderActivityDate(order);
+  const quantity = Math.abs(
+    toNumber(order.filledQuantity) ?? toNumber(order.quantity) ?? 0,
+  );
+  const avgClose = orderActivityPrice(order);
+  const optionRight = order.optionContract?.right
+    ? String(order.optionContract.right).toLowerCase()
+    : null;
+  return {
+    id: order.id,
+    source: "LIVE_ORDER",
+    accountId: order.accountId,
+    symbol: normalizeSymbol(order.symbol),
+    side: order.side,
+    assetClass: normalizeTradeAssetClassLabel({
+      assetClass: order.assetClass,
+      symbol: order.symbol,
+    }),
+    quantity,
+    openDate: order.placedAt,
+    closeDate: activityDate,
+    avgOpen: null,
+    avgClose,
+    realizedPnl: null,
+    realizedPnlPercent: null,
+    holdDurationMinutes: null,
+    commissions: null,
+    currency,
+    sourceType: "manual",
+    strategyLabel: "Manual",
+    orderStatus: order.status,
+    orderType: order.type,
+    optionContract: order.optionContract,
+    optionRight,
+    dte: optionDteFromOrder(order, activityDate),
+  };
+};
+
+const mergeLiveOrderActivityTrades = (
+  trades: NormalizedAccountTrade[],
+  orders: BrokerOrderSnapshot[],
+  input: AccountClosedTradeFilters = {},
+  currency = "USD",
+): NormalizedAccountTrade[] => {
+  const seen = new Set(trades.map(accountTradeActivityMatchKey));
+  const activityTrades: NormalizedAccountTrade[] = [];
+  for (const order of orders) {
+    if (!filledLiveOrderActivity(order)) continue;
+    if (!orderMatchesClosedTradeFilters(order, input)) continue;
+    const key = brokerOrderActivityMatchKey(order);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    activityTrades.push(liveOrderToAccountActivityTrade(order, currency));
+  }
+  if (!activityTrades.length) return trades;
+  return [...trades, ...activityTrades].sort((left, right) => {
+    const leftTime = left.closeDate?.getTime() ?? 0;
+    const rightTime = right.closeDate?.getTime() ?? 0;
+    return rightTime - leftTime;
+  });
+};
+
 async function listClosedTradesForUniverse(
   universe: AccountUniverse,
-  input: {
-    from?: Date | null;
-    to?: Date | null;
-    symbol?: string | null;
-    assetClass?: string | null;
-    pnlSign?: string | null;
-    holdDuration?: string | null;
-  },
+  input: AccountClosedTradeFilters,
 ): Promise<NormalizedAccountTrade[]> {
   const conditions = [inArray(flexTradesTable.providerAccountId, universe.accountIds)];
   if (input.from) {
@@ -5122,11 +5296,22 @@ export async function getAccountClosedTrades(input: {
 
   const mode = input.mode ?? getRuntimeMode();
   const universe = await getLiveAccountUniverse(input.accountId, mode);
-  const trades = await listClosedTradesForUniverse(universe, input);
+  const [flexTrades, orderResult] = await Promise.all([
+    listClosedTradesForUniverse(universe, input),
+    listOrdersForUniverse(universe, mode),
+  ]);
+  const trades = mergeLiveOrderActivityTrades(
+    flexTrades,
+    orderResult.orders,
+    input,
+    universe.primaryCurrency,
+  );
 
   return {
     accountId: universe.requestedAccountId,
     currency: universe.primaryCurrency,
+    activityDegraded: orderResult.degraded,
+    activityReason: orderResult.reason,
     trades,
     summary: {
       count: trades.length,
@@ -6009,6 +6194,7 @@ export const __accountMarginInternalsForTests = {
 };
 
 export const __accountOrderInternalsForTests = {
+  mergeLiveOrderActivityTrades,
   normalizeOrderTab,
   normalizeTradeAssetClassLabel,
   orderGroupKey,

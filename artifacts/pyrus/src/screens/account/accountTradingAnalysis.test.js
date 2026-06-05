@@ -76,6 +76,41 @@ test("account trading analysis selects representative trades and issue cards", (
   assert.equal(model.bucketGroups.source[0].key, "automation");
 });
 
+test("account trading analysis counts unknown-P&L manual activity without treating it as flat", () => {
+  const model = buildAccountTradingAnalysisModel({
+    trades: [
+      {
+        id: "known",
+        source: "FLEX",
+        symbol: "AAPL",
+        side: "sell",
+        assetClass: "Stocks",
+        closeDate: "2026-05-01T15:00:00.000Z",
+        realizedPnl: 80,
+        sourceType: "manual",
+        strategyLabel: "Manual",
+      },
+      {
+        id: "manual-live-order",
+        source: "LIVE_ORDER",
+        symbol: "F",
+        side: "buy",
+        assetClass: "Options",
+        closeDate: "2026-05-01T16:00:00.000Z",
+        realizedPnl: null,
+        sourceType: "manual",
+        strategyLabel: "Manual",
+      },
+    ],
+  });
+
+  assert.equal(model.summary.count, 2);
+  assert.equal(model.summary.realizedPnl, 80);
+  assert.equal(model.summary.winRatePercent, 100);
+  assert.equal(model.summary.expectancy, 80);
+  assert.equal(model.bucketGroups.source.find((group) => group.key === "manual").count, 2);
+});
+
 test("account trading analysis builds selected trade details and lifecycle rows", () => {
   const model = buildAccountTradingAnalysisModel({
     trades,

@@ -393,6 +393,47 @@ test("positions display totals preserve cash while recalculating live row values
   assert.equal(totals.netLiquidation, 1000);
 });
 
+test("positions panel normalizes option quote valuation when live stream has no snapshot", () => {
+  const { applyDisplayWeights, applyLiveOptionQuoteToRow } =
+    __positionsPanelInternalsForTests;
+  const row = {
+    id: "real-f-call",
+    accountId: "U24762790",
+    source: "LIVE",
+    symbol: "F",
+    assetClass: "Options",
+    quantity: 5,
+    averageCost: 1.134,
+    mark: 0.86,
+    marketValue: -51556,
+    weightPercent: 754.05,
+    unrealizedPnl: -137,
+    optionContract: {
+      underlying: "F",
+      expirationDate: "2026-06-26",
+      strike: 15,
+      right: "CALL",
+      multiplier: 100,
+    },
+    optionQuote: {
+      bid: 0.86,
+      ask: 0.86,
+      mark: 0.86,
+      delta: 0.62,
+      theta: -0.01,
+      source: "option_quote",
+    },
+  };
+
+  const patched = applyLiveOptionQuoteToRow(row, null);
+  assert.equal(Number(patched.marketValue.toFixed(2)), 430);
+  assert.equal(Number(patched.unrealizedPnl.toFixed(2)), -137);
+  assert.equal(patched.betaWeightedDelta, 310);
+
+  const [weighted] = applyDisplayWeights([patched], { netLiquidation: 56_800 });
+  assert.equal(Number(weighted.weightPercent.toFixed(2)), 0.76);
+});
+
 test("positions display totals tolerate missing totals while positions load", () => {
   const { buildDisplayTotals } = __positionsPanelInternalsForTests;
   const totals = buildDisplayTotals([], null);

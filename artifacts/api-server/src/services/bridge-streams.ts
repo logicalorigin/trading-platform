@@ -682,6 +682,7 @@ export async function fetchAccountSnapshotPayload(input: {
 
 export async function fetchExecutionSnapshotPayload(input: {
   accountId?: string;
+  mode?: "paper" | "live";
   days?: number;
   limit?: number;
   symbol?: string;
@@ -903,6 +904,7 @@ export function subscribeAccountSnapshots(
 export function subscribeExecutionSnapshots(
   input: {
     accountId?: string;
+    mode?: "paper" | "live";
     days?: number;
     limit?: number;
     symbol?: string;

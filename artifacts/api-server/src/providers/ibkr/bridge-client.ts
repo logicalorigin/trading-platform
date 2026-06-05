@@ -264,7 +264,11 @@ function hydrateOrder(raw: BrokerOrderSnapshot): BrokerOrderSnapshot {
 function hydrateExecution(
   raw: BrokerExecutionSnapshot,
 ): BrokerExecutionSnapshot {
-  return { ...raw, executedAt: toDate(raw.executedAt) };
+  return {
+    ...raw,
+    executedAt: toDate(raw.executedAt),
+    optionContract: hydrateOptionContract(raw.optionContract),
+  };
 }
 
 function hydrateMarketDepth(
@@ -927,6 +931,7 @@ export class IbkrBridgeClient {
 
   async listExecutions(input: {
     accountId?: string;
+    mode?: RuntimeMode;
     days?: number;
     limit?: number;
     symbol?: string;
@@ -939,6 +944,7 @@ export class IbkrBridgeClient {
       {},
       {
         accountId: input.accountId,
+        mode: input.mode,
         days: input.days,
         limit: input.limit,
         symbol: input.symbol,

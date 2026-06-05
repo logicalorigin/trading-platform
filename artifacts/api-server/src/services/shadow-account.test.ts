@@ -848,13 +848,23 @@ test("shadow account reads do not synchronously block on mark refresh", () => {
   assert.doesNotMatch(ensureBody, /await refreshShadowPositionMarks/);
 });
 
-test("shadow mark refresh invalidates read caches before stream notification snapshots", () => {
+test("shadow mark refresh expires read caches before stream notification snapshots", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
   const refreshBody = source.match(
     /export async function refreshShadowPositionMarks\(\) \{[\s\S]*?\nasync function ensureFreshShadowState/,
   )?.[0];
+  const invalidatorBody = source.match(
+    /function invalidateShadowReadCachesAfterBackgroundMarkRefresh\(\) \{[\s\S]*?\nfunction shadowReadDiagnosticRoute/,
+  )?.[0];
 
   assert.ok(refreshBody);
+  assert.ok(invalidatorBody);
+  assert.match(invalidatorBody, /for \(const entry of shadowReadCache\.values\(\)\)/);
+  assert.match(
+    invalidatorBody,
+    /entry\.expiresAt = Math\.min\(entry\.expiresAt, now\);/,
+  );
+  assert.doesNotMatch(invalidatorBody, /shadowReadCache\.clear\(\)/);
   assert.match(
     refreshBody,
     /if \(updatedCount\) \{\s*invalidateShadowReadCachesAfterBackgroundMarkRefresh\(\);/,
@@ -1585,6 +1595,8 @@ test("shadow position day changes fall back to option quotes for stale marks", (
     /\(baselineDayChange\.dayChange == null \|\| currentMarkStale\)/,
   );
   assert.match(helperBody, /waitForShadowOptionDayChangeQuotes/);
+  assert.match(helperBody, /readLatestShadowPositionBaselineMarks/);
+  assert.doesNotMatch(helperBody, /\.from\(shadowPositionMarksTable\)/);
   assert.ok(
     helperBody.indexOf("buildShadowPositionDayChangeFromQuote") <
       helperBody.indexOf("if (currentMarkStale)"),
@@ -1671,10 +1683,17 @@ test("signal-options replay mirrors keep replay snapshot sources", () => {
 
 test("source-scoped shadow positions require matching source keys and source prefix", () => {
   const source = readFileSync(new URL("./shadow-account.ts", import.meta.url), "utf8");
+  const defaultOpenPositionsBody = source.match(
+    /async function readOpenDefaultShadowLedgerAnalyticsPositions\([\s\S]*?\nasync function readOpenShadowPositionsForSource/,
+  )?.[0];
 
   assert.match(source, /async function readOpenShadowPositionsForSource/);
   assert.match(source, /async function readOpenShadowPositionsForSourceCached/);
   assert.match(source, /`open-positions:\$\{shadowSourceCacheKey\(source\)\}`/);
+  assert.match(source, /async function readShadowOrdersForAccount/);
+  assert.ok(defaultOpenPositionsBody);
+  assert.match(defaultOpenPositionsBody, /readShadowOrdersForAccount\(\)/);
+  assert.doesNotMatch(defaultOpenPositionsBody, /readShadowFillsWithOrders/);
   assert.match(source, /sourcePositionKeys\.has\(position\.positionKey\)/);
   assert.match(source, /positionMatchesShadowSource\(position, source\)/);
 });

@@ -153,6 +153,34 @@ test("trading analysis kpis include added risk metrics", () => {
   assert.equal(kpis.metrics.maxDrawdown, 80);
 });
 
+test("trading analysis kpis count unknown-P&L manual activity without treating it as flat", () => {
+  const kpis = buildTradingAnalysisKpis({
+    trades: [
+      {
+        id: "known",
+        source: "FLEX",
+        symbol: "AAPL",
+        closeDate: "2026-05-21T15:00:00.000Z",
+        realizedPnl: 120,
+        sourceType: "manual",
+      },
+      {
+        id: "manual-live-order",
+        source: "LIVE_ORDER",
+        symbol: "F",
+        closeDate: "2026-05-21T16:00:00.000Z",
+        realizedPnl: null,
+        sourceType: "manual",
+      },
+    ],
+  });
+
+  assert.equal(kpis.metrics.trades, 2);
+  assert.equal(kpis.metrics.netPnl, 120);
+  assert.equal(kpis.metrics.winRatePercent, 100);
+  assert.equal(kpis.metrics.expectancy, 120);
+});
+
 test("trading analysis active chips describe clearable state", () => {
   const chips = describeActiveAnalysisFilters({
     symbol: "aapl",

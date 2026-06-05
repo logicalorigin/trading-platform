@@ -30,6 +30,7 @@ import {
   isMassiveStocksRealtimeConfigured,
   getProviderConfiguration,
   getRuntimeMode,
+  type RuntimeMode,
 } from "../lib/runtime";
 import { logger } from "../lib/logger";
 import {
@@ -4138,6 +4139,7 @@ export async function listOrders(input: {
 
 export async function listExecutions(input: {
   accountId?: string;
+  mode?: RuntimeMode;
   days?: number;
   limit?: number;
   symbol?: string;

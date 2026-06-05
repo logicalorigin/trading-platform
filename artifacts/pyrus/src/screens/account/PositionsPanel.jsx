@@ -497,9 +497,9 @@ const positionOpenedOnCurrentMarketDay = (openedAt, now = new Date()) => {
 };
 
 const applyLiveOptionQuoteToRow = (row, liveQuote) => {
-  if (!liveQuote) return row;
-  const liveValuationAllowed = shadowRowAllowsLiveOptionValuation(row, liveQuote);
   const optionQuote = mergeLiveOptionQuote(row.optionQuote, liveQuote);
+  if (!optionQuote && !liveQuote) return row;
+  const liveValuationAllowed = shadowRowAllowsLiveOptionValuation(row, liveQuote);
   const displayOptionQuote = liveValuationAllowed
     ? optionQuote
     : {
@@ -801,7 +801,27 @@ const buildDisplayTotals = (rows, fallbackTotals = {}) => {
   return totals;
 };
 
-const applyDisplayWeights = (rows) => rows;
+const applyDisplayWeights = (rows, fallbackTotals = null) => {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const netLiquidation = firstDisplayTotalNumber(
+    fallbackTotals?.netLiquidation,
+    fallbackTotals?.netLiquidity,
+    fallbackTotals?.accountValue,
+  );
+  if (netLiquidation == null || netLiquidation === 0) {
+    return safeRows;
+  }
+  const base = Math.abs(netLiquidation);
+  return safeRows.map((row) => {
+    const marketValue = firstFiniteNumber(row?.marketValue);
+    if (marketValue == null) return row;
+    const weightPercent = (marketValue / base) * 100;
+    return {
+      ...row,
+      weightPercent,
+    };
+  });
+};
 
 const formatQuoteMarkLast = (quote, maskValues) => {
   const mark = firstFiniteNumber(quote?.mark, quote?.mid);
@@ -1261,7 +1281,7 @@ export const useLiveOptionPositionRows = ({
   );
   const rows = useMemo(() => {
     if (!enabled) {
-      return applyDisplayWeights(inputRows);
+      return applyDisplayWeights(inputRows, totals);
     }
     const liveQuoteByProviderContractId = providerContractIds.length
       ? Object.fromEntries(
@@ -1285,12 +1305,14 @@ export const useLiveOptionPositionRows = ({
           symbol ? liveEquitySnapshotsBySymbol?.[symbol] : null,
         );
       }),
+      totals,
     );
   }, [
     enabled,
     liveEquitySnapshotsBySymbol,
     inputRows,
     providerContractIds,
+    totals,
     quoteVersion,
   ]);
   const displayTotals = useMemo(
@@ -1309,6 +1331,7 @@ export const useLiveOptionPositionRows = ({
 };
 
 export const __positionsPanelInternalsForTests = {
+  applyDisplayWeights,
   applyLiveEquityQuoteToRow,
   applyLiveOptionQuoteToRow,
   automationPositionMetrics,

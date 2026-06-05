@@ -22,6 +22,7 @@ import {
   algoDeploymentsTable,
   backtestRunPointsTable,
   db,
+  pool,
   executionEventsTable,
   shadowAccountsTable,
   shadowBalanceSnapshotsTable,
@@ -560,7 +561,10 @@ function invalidateShadowFreshStateCache() {
 function invalidateShadowReadCachesAfterBackgroundMarkRefresh() {
   shadowFreshStateCache = null;
   shadowFreshStateCacheVersion += 1;
-  shadowReadCache.clear();
+  const now = Date.now();
+  for (const entry of shadowReadCache.values()) {
+    entry.expiresAt = Math.min(entry.expiresAt, now);
+  }
   shadowReadCacheVersion += 1;
 }
 
@@ -2715,10 +2719,9 @@ async function readOpenShadowPositionsForKeys(
 }
 
 async function readOpenLiveShadowPositions(): Promise<ShadowPositionRow[]> {
-  const { fills, ordersById } = await readShadowFillsWithOrders();
-  const liveOrders = fills
-    .filter((fill) => isLiveShadowOrder(ordersById.get(fill.orderId)))
-    .map((fill) => ordersById.get(fill.orderId));
+  const liveOrders = (await readShadowOrdersForAccount()).filter((order) =>
+    isLiveShadowOrder(order),
+  );
   const livePositionKeys = shadowPositionKeysForOrders(liveOrders);
   const liveOrdersByPositionKey = shadowOrdersByPositionKey(liveOrders);
   return (await readOpenShadowPositions()).filter(
@@ -2733,12 +2736,9 @@ async function readOpenLiveShadowPositions(): Promise<ShadowPositionRow[]> {
 }
 
 async function readOpenDefaultShadowLedgerAnalyticsPositions(): Promise<ShadowPositionRow[]> {
-  const { fills, ordersById } = await readShadowFillsWithOrders();
-  const selectedOrders = fills
-    .filter((fill) =>
-      isDefaultShadowLedgerAnalyticsOrder(ordersById.get(fill.orderId)),
-    )
-    .map((fill) => ordersById.get(fill.orderId));
+  const selectedOrders = (await readShadowOrdersForAccount()).filter((order) =>
+    isDefaultShadowLedgerAnalyticsOrder(order),
+  );
   const positionKeys = shadowPositionKeysForOrders(selectedOrders);
   const ordersByPositionKey = shadowOrdersByPositionKey(selectedOrders);
   return (await readOpenShadowPositions()).filter(
@@ -2840,12 +2840,18 @@ async function readShadowFillsForOrderIds(
   return rows.flat();
 }
 
+async function readShadowOrdersForAccount(): Promise<ShadowOrderRow[]> {
+  return await db
+    .select()
+    .from(shadowOrdersTable)
+    .where(eq(shadowOrdersTable.accountId, SHADOW_ACCOUNT_ID));
+}
+
 async function readShadowOrdersForSource(
   source: ShadowSourceScope,
 ): Promise<ShadowOrderRow[]> {
   if (source !== "automation") {
-    const { ordersById } = await readShadowFillsWithOrders();
-    return Array.from(ordersById.values()).filter((order) =>
+    return (await readShadowOrdersForAccount()).filter((order) =>
       shadowOrderMatchesSource(order, source),
     );
   }
@@ -5564,6 +5570,44 @@ function groupShadowPositionMarksByPositionId<
   return byPositionId;
 }
 
+async function readLatestShadowPositionBaselineMarks(
+  positionIds: string[],
+  maxDayStart: Date,
+): Promise<ShadowPositionMarkRow[]> {
+  const uniquePositionIds = Array.from(new Set(positionIds.filter(Boolean)));
+  if (!uniquePositionIds.length) {
+    return [];
+  }
+
+  const result = await pool.query<ShadowPositionMarkRow>(
+    `
+      select
+        mark.id,
+        mark.account_id as "accountId",
+        mark.position_id as "positionId",
+        mark.mark,
+        mark.market_value as "marketValue",
+        mark.unrealized_pnl as "unrealizedPnl",
+        mark.source,
+        mark.as_of as "asOf",
+        mark.created_at as "createdAt",
+        mark.updated_at as "updatedAt"
+      from unnest($2::uuid[]) as requested(position_id)
+      join lateral (
+        select *
+        from shadow_position_marks
+        where account_id = $1
+          and position_id = requested.position_id
+          and as_of <= $3
+        order by as_of desc, created_at desc
+        limit 1
+      ) mark on true
+    `,
+    [SHADOW_ACCOUNT_ID, uniquePositionIds, maxDayStart],
+  );
+  return result.rows;
+}
+
 function shadowPositionNeedsDayChangeQuote(input: {
   position: ShadowPositionRow;
   baselineMarksByPositionId: Map<string, ShadowPositionMarkRow[]>;
@@ -5636,18 +5680,10 @@ async function readShadowPositionDayChanges(
     null,
   );
   const positionIds = positions.map((position) => position.id);
-  const baselineMarks = positionIds.length && maxDayStart
-    ? await db
-        .select()
-        .from(shadowPositionMarksTable)
-        .where(
-          and(
-            inArray(shadowPositionMarksTable.positionId, positionIds),
-            lte(shadowPositionMarksTable.asOf, maxDayStart),
-          ),
-        )
-        .orderBy(desc(shadowPositionMarksTable.asOf))
-    : [];
+  const baselineMarks =
+    positionIds.length && maxDayStart
+      ? await readLatestShadowPositionBaselineMarks(positionIds, maxDayStart)
+      : [];
   const baselineMarksByPositionId =
     groupShadowPositionMarksByPositionId(baselineMarks);
   let optionQuoteByProviderContractId:

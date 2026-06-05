@@ -34,7 +34,12 @@ export const getAccountTradeId = (trade) => {
   )}`;
 };
 
-const tradePnl = (trade) => finiteNumber(trade?.realizedPnl) ?? 0;
+const tradePnlValue = (trade) =>
+  trade?.realizedPnl == null || trade?.realizedPnl === ""
+    ? null
+    : finiteNumber(trade.realizedPnl);
+const tradeHasKnownPnl = (trade) => tradePnlValue(trade) != null;
+const tradePnl = (trade) => tradePnlValue(trade) ?? 0;
 const tradeFees = (trade) => finiteNumber(trade?.commissions) ?? 0;
 const tradeQuantity = (trade) => Math.abs(finiteNumber(trade?.quantity) ?? 0);
 const tradeMultiplier = (trade) =>
@@ -148,15 +153,16 @@ const bucketLabel = (kind, value) => {
 
 const summarizeTrades = (trades) => {
   const rows = arrayValue(trades);
-  const realizedPnl = rows.reduce((sum, trade) => sum + tradePnl(trade), 0);
+  const outcomeRows = rows.filter(tradeHasKnownPnl);
+  const realizedPnl = outcomeRows.reduce((sum, trade) => sum + tradePnl(trade), 0);
   const fees = rows.reduce((sum, trade) => sum + tradeFees(trade), 0);
-  const winners = rows.filter((trade) => tradePnl(trade) > 0).length;
-  const losers = rows.filter((trade) => tradePnl(trade) < 0).length;
-  const grossWins = rows
+  const winners = outcomeRows.filter((trade) => tradePnl(trade) > 0).length;
+  const losers = outcomeRows.filter((trade) => tradePnl(trade) < 0).length;
+  const grossWins = outcomeRows
     .filter((trade) => tradePnl(trade) > 0)
     .reduce((sum, trade) => sum + tradePnl(trade), 0);
   const grossLosses = Math.abs(
-    rows
+    outcomeRows
       .filter((trade) => tradePnl(trade) < 0)
       .reduce((sum, trade) => sum + tradePnl(trade), 0),
   );
@@ -166,8 +172,8 @@ const summarizeTrades = (trades) => {
     losers,
     realizedPnl,
     commissions: fees,
-    winRatePercent: rows.length ? (winners / rows.length) * 100 : null,
-    expectancy: rows.length ? realizedPnl / rows.length : null,
+    winRatePercent: outcomeRows.length ? (winners / outcomeRows.length) * 100 : null,
+    expectancy: outcomeRows.length ? realizedPnl / outcomeRows.length : null,
     profitFactor:
       grossLosses > 0 ? grossWins / grossLosses : grossWins > 0 ? null : 0,
   };
@@ -185,7 +191,7 @@ const tradeCloseInstant = (trade) => {
 // vs a return stream). Returns null when fewer than 3 trades or
 // no losing trades (no downside dispersion to measure).
 const computeSortinoRatio = (trades) => {
-  const rows = arrayValue(trades);
+  const rows = arrayValue(trades).filter(tradeHasKnownPnl);
   if (rows.length < 3) return null;
   const pnls = rows.map(tradePnl);
   const mean = pnls.reduce((sum, value) => sum + value, 0) / pnls.length;
@@ -205,7 +211,7 @@ const computeSortinoRatio = (trades) => {
 const computeEquityCurveStats = (trades) => {
   const rows = arrayValue(trades)
     .map((trade) => ({ trade, t: tradeCloseInstant(trade) }))
-    .filter((row) => row.t != null)
+    .filter((row) => row.t != null && tradeHasKnownPnl(row.trade))
     .sort((left, right) => left.t - right.t);
   if (!rows.length) {
     return { totalPnl: 0, peakEquity: 0, maxDrawdown: 0 };
@@ -225,7 +231,7 @@ const computeEquityCurveStats = (trades) => {
 // Calmar ratio = total P&L / max drawdown.
 // Returns null if no drawdown or fewer than 3 trades.
 const computeCalmarRatio = (trades) => {
-  const rows = arrayValue(trades);
+  const rows = arrayValue(trades).filter(tradeHasKnownPnl);
   if (rows.length < 3) return null;
   const { totalPnl, maxDrawdown } = computeEquityCurveStats(rows);
   if (maxDrawdown <= 0) return null;
@@ -265,7 +271,7 @@ const WATERFALL_LIMIT = 40;
 const buildTradeWaterfall = (trades, limit = WATERFALL_LIMIT) => {
   const rows = arrayValue(trades)
     .map((trade) => ({ trade, t: tradeCloseInstant(trade) }))
-    .filter((row) => row.t != null)
+    .filter((row) => row.t != null && tradeHasKnownPnl(row.trade))
     .sort((left, right) => left.t - right.t);
   const sliced = rows.slice(-limit);
   let cumulative = 0;
@@ -813,11 +819,12 @@ export const buildAccountTradingAnalysisModel = ({
   );
   const byStrategy = groupTrades(tradeRows, "strategy", tradeStrategy);
   const byFeeDrag = groupTrades(tradeRows, "feeDrag", feeDragBucket);
+  const knownOutcomeTradeRows = tradeRows.filter(tradeHasKnownPnl);
 
-  const bestTrade = [...tradeRows].sort((left, right) => tradePnl(right) - tradePnl(left))[0] ?? null;
-  const worstTrade = [...tradeRows].sort((left, right) => tradePnl(left) - tradePnl(right))[0] ?? null;
+  const bestTrade = [...knownOutcomeTradeRows].sort((left, right) => tradePnl(right) - tradePnl(left))[0] ?? null;
+  const worstTrade = [...knownOutcomeTradeRows].sort((left, right) => tradePnl(left) - tradePnl(right))[0] ?? null;
   const highestFeeTrade = [...tradeRows].sort((left, right) => tradeFees(right) - tradeFees(left))[0] ?? null;
-  const typicalTrade = findTypicalTrade(tradeRows, summary.expectancy);
+  const typicalTrade = findTypicalTrade(knownOutcomeTradeRows, summary.expectancy);
   const worstSymbol = bySymbol.filter((group) => group.realizedPnl < 0)[0] ?? null;
   const worstSource = bySource.filter((group) => group.realizedPnl < 0)[0] ?? null;
   const lowWinRateGroup =

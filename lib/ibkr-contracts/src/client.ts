@@ -474,6 +474,7 @@ export type BrokerExecutionSnapshot = {
   orderDescription: string | null;
   contractDescription: string | null;
   providerContractId: string | null;
+  optionContract?: OptionContractSnapshot | null;
   orderRef: string | null;
 };
 

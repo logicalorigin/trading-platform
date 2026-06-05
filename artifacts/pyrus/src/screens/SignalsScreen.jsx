@@ -99,6 +99,7 @@ import {
   buildSignalEventsBySymbol,
   buildSignalSparklinePointColors,
   defaultSignalSparklineColorForDirection,
+  isSignalSparklineDirection,
 } from "../features/signals/signalSparklineModel.js";
 import {
   getCurrentSignalDirection,
@@ -243,8 +244,8 @@ const SIGNAL_DRILLDOWN_CHART_TIMEFRAMES = new Set([
 ]);
 const EMPTY_SIGNAL_SPARKLINE_BARS = Object.freeze({});
 const SIGNALS_TABLE_SPARKLINE_HISTORY_TIMEFRAME = "1m";
-const SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT = 720;
-const SIGNALS_TABLE_SPARKLINE_BATCH_SIZE = 72;
+const SIGNALS_TABLE_SPARKLINE_HISTORY_LIMIT = 240;
+const SIGNALS_TABLE_SPARKLINE_BATCH_SIZE = 20;
 const SIGNALS_TABLE_SPARKLINE_BATCH_CONCURRENCY = 2;
 const SIGNALS_TABLE_FALLBACK_SPARKLINE_POINTS = 18;
 const SIGNALS_TABLE_SPARKLINE_REQUEST_OPTIONS = buildBarsRequestOptions(
@@ -332,6 +333,21 @@ const signalSparklineFallbackPrice = (state, fallbackPrice) => {
     : null;
 };
 
+const signalRowSparklineFallbackPrice = (row) => {
+  for (const value of [
+    row?.currentSignalPrice,
+    row?.latestEvent?.signalPrice,
+    row?.latestEvent?.close,
+    row?.primaryState?.currentSignalPrice,
+  ]) {
+    const price = Number(value);
+    if (Number.isFinite(price) && price > 0) {
+      return price;
+    }
+  }
+  return null;
+};
+
 const buildSignalsTableFallbackSparklineData = ({
   symbol,
   state,
@@ -362,6 +378,27 @@ const toneForDirection = (direction) =>
     : direction === "sell"
       ? CSS_COLOR.red
       : CSS_COLOR.textDim;
+
+const latestSignalSparklineEventDirection = (signalEvents) => {
+  const events = Array.isArray(signalEvents) ? signalEvents : EMPTY_SIGNAL_EVENTS;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const direction = String(events[index]?.direction || "").toLowerCase();
+    if (isSignalSparklineDirection(direction)) {
+      return direction;
+    }
+  }
+  return "";
+};
+
+const signalSparklineDirectionOrFallback = (...directions) => {
+  for (const direction of directions) {
+    const normalizedDirection = String(direction || "").toLowerCase();
+    if (isSignalSparklineDirection(normalizedDirection)) {
+      return normalizedDirection;
+    }
+  }
+  return "buy";
+};
 
 const toneForStatus = (status) => {
   switch (status) {
@@ -834,6 +871,7 @@ function CompactIntervalCell({
   symbol,
   timeframe,
   state,
+  rowDirection = "",
   fallbackPrice = null,
   sparklineData = [],
   signalEvents = EMPTY_SIGNAL_EVENTS,
@@ -841,18 +879,21 @@ function CompactIntervalCell({
   const hydrated = isHydratedSignalMatrixState(state);
   const problem = isProblemSignalState(state);
   const direction = hydrated && !problem ? getCurrentSignalDirection(state) : "";
+  const sparklineFallbackDirection = signalSparklineDirectionOrFallback(
+    direction,
+    rowDirection,
+    latestSignalSparklineEventDirection(signalEvents),
+  );
   const tone = problem ? CSS_COLOR.red : toneForDirection(direction);
   const fallbackSparklineData = useMemo(
     () =>
-      hydrated
-        ? buildSignalsTableFallbackSparklineData({
-            symbol,
-            state,
-            direction,
-            fallbackPrice,
-          })
-        : [],
-    [direction, fallbackPrice, hydrated, state, symbol],
+      buildSignalsTableFallbackSparklineData({
+        symbol,
+        state,
+        direction: direction || sparklineFallbackDirection,
+        fallbackPrice,
+      }),
+    [direction, fallbackPrice, sparklineFallbackDirection, state, symbol],
   );
   const displaySparklineData =
     Array.isArray(sparklineData) && sparklineData.length >= 2
@@ -897,18 +938,17 @@ function CompactIntervalCell({
     ],
   );
   const sparklineUsesSignalTimeline = Array.isArray(sparklinePointColors);
-  const sparklineSignalColor =
-    hydrated && direction
-      ? defaultSignalSparklineColorForDirection(direction)
-      : null;
+  const sparklineSignalColor = defaultSignalSparklineColorForDirection(
+    sparklineFallbackDirection,
+  );
   const sparklineColor = sparklineUsesSignalTimeline
     ? null
     : sparklineSignalColor;
   const sparklineSignalMode = sparklineUsesSignalTimeline
     ? "timeline"
-    : sparklineColor
+    : direction
       ? "current"
-      : "price";
+      : "fallback";
   const issues = collectDataIssuesFromRecord(
     {
       status: problem
@@ -961,7 +1001,7 @@ function CompactIntervalCell({
           data-testid={`signals-${timeframe}-sparkline`}
           data-sparkline-signal-mode={sparklineSignalMode}
           data-sparkline-source={sparklineSource}
-          data-sparkline-signal-direction={direction || undefined}
+          data-sparkline-signal-direction={direction || sparklineFallbackDirection}
           data-sparkline-points={sparklinePoints.length}
           style={{
             width: dim(TABLE_SPARKLINE_WIDTH),
@@ -2767,7 +2807,7 @@ export default function SignalsScreen({
                 rowSparkline,
               ]),
             ).values(),
-          ).sort((left, right) => left.key.localeCompare(right.key));
+          );
         },
         (value) => ({
           sparklineRows: value.length,
@@ -2797,8 +2837,14 @@ export default function SignalsScreen({
     () => signalSparklineRows.map((row) => row.key).join(","),
     [signalSparklineRows],
   );
+  const signalSparklineFetchReady = Boolean(
+    active &&
+      !stateQuery.isLoading &&
+      !profileQuery.isLoading &&
+      signalSparklineRows.length,
+  );
   useEffect(() => {
-    if (!active || safeQaMode || !signalSparklineRows.length) {
+    if (!signalSparklineFetchReady) {
       setSignalSparklineBarsBySymbol(EMPTY_SIGNAL_SPARKLINE_BARS);
       return undefined;
     }
@@ -2871,8 +2917,7 @@ export default function SignalsScreen({
       controller.abort();
     };
   }, [
-    active,
-    safeQaMode,
+    signalSparklineFetchReady,
     signalSparklineRowsKey,
   ]);
   useEffect(() => {
@@ -3298,7 +3343,8 @@ export default function SignalsScreen({
               symbol={row.original.symbol}
               timeframe={timeframe}
               state={row.original.matrixStatesByTimeframe?.[timeframe] || null}
-              fallbackPrice={row.original.currentSignalPrice}
+              rowDirection={row.original.direction}
+              fallbackPrice={signalRowSparklineFallbackPrice(row.original)}
               sparklineData={signalSparklineBarsBySymbol[symbolKey] || []}
               signalEvents={
                 signalEventsBySymbol.get(symbolKey) || EMPTY_SIGNAL_EVENTS

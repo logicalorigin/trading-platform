@@ -144,6 +144,28 @@ test("buildDailyPnlSeries includes FLEX, SHADOW, and LIVE source rows", () => {
   assert.equal(series[0].trades, 3);
 });
 
+test("buildDailyPnlSeries counts account activity rows with unknown realized P&L", () => {
+  const series = buildDailyPnlSeries({
+    startDate: new Date(2026, 5, 5),
+    endDate: new Date(2026, 5, 5),
+    trades: [
+      trade("2026-06-05T15:24:00.000Z", null, {
+        id: "manual-live-order",
+        source: "LIVE_ORDER",
+        sourceType: "manual",
+      }),
+      trade("2026-06-05T16:30:00.000Z", 42, {
+        id: "flex-close",
+        source: "FLEX",
+      }),
+    ],
+  });
+
+  assert.equal(series[0].realized, 42);
+  assert.equal(series[0].pnl, 42);
+  assert.equal(series[0].trades, 2);
+});
+
 test("buildDailyPnlSeries uses browser-local dates for trade buckets", () => {
   const localCloseDate = new Date(2026, 4, 5, 23, 45);
   const series = buildDailyPnlSeries({

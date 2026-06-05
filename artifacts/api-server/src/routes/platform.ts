@@ -1703,10 +1703,13 @@ router.post("/orders/:orderId/cancel", async (req, res) => {
 
 router.get("/executions", async (req, res) => {
   const query = req.query as Record<string, unknown>;
+  const mode =
+    query.mode === "live" ? "live" : query.mode === "paper" ? "paper" : undefined;
 
   res.json(await listExecutions({
     accountId:
       typeof query.accountId === "string" ? query.accountId : undefined,
+    mode,
     days:
       typeof query.days === "string" && query.days.trim()
         ? Number(query.days)
@@ -2741,6 +2744,12 @@ router.get("/streams/orders", async (req, res) => {
 });
 
 router.get("/streams/executions", async (req, res) => {
+  const mode =
+    req.query.mode === "live"
+      ? "live"
+      : req.query.mode === "paper"
+        ? "paper"
+        : undefined;
   const accountId =
     typeof req.query.accountId === "string" ? req.query.accountId : undefined;
   const days =
@@ -2763,6 +2772,7 @@ router.get("/streams/executions", async (req, res) => {
       "executions",
       await fetchExecutionSnapshotPayload({
         accountId,
+        mode,
         days,
         limit,
         symbol,
@@ -2779,6 +2789,7 @@ router.get("/streams/executions", async (req, res) => {
     return subscribeExecutionSnapshots(
       {
         accountId,
+        mode,
         days,
         limit,
         symbol,
