@@ -1670,6 +1670,87 @@ test("applyAccountPagePayloadToCache seeds visible account page query caches", (
   assert.equal((writes.get(JSON.stringify(healthKey)) as any)?.flexConfigured, true);
 });
 
+test("derived account page cache preserves closed trades over degraded empty activity", () => {
+  const tradesKey = [
+    "/api/accounts/combined/closed-trades",
+    {
+      mode: "live",
+      from: "2026-05-30T00:00:00.000Z",
+    },
+  ];
+  const calendarTradesKey = [
+    "/api/accounts/combined/closed-trades",
+    { mode: "live", from: "2025-04-01T00:00:00.000Z" },
+  ];
+  const initialData = new Map<string, unknown>([
+    [
+      JSON.stringify(tradesKey),
+      {
+        accountId: "combined",
+        trades: [{ id: "visible-trade" }],
+      },
+    ],
+    [
+      JSON.stringify(calendarTradesKey),
+      {
+        accountId: "combined",
+        trades: [{ id: "calendar-trade" }],
+      },
+    ],
+  ]);
+  const { queryClient, writes } = createMockQueryClient(
+    [tradesKey, calendarTradesKey],
+    initialData,
+  );
+
+  applyAccountPageDerivedPayloadToCache(queryClient as any, {
+    stream: "account-page-derived",
+    accountId: "combined",
+    mode: "live",
+    range: "1W",
+    tradeFilters: {
+      from: "2026-05-30T00:00:00.000Z",
+      to: null,
+      symbol: null,
+      assetClass: null,
+      pnlSign: null,
+      holdDuration: null,
+    },
+    performanceCalendarFrom: "2025-04-01T00:00:00.000Z",
+    updatedAt: "2026-06-05T13:45:00.000Z",
+    equityHistory: { accountId: "combined", range: "1W", points: [] },
+    benchmarkEquityHistory: {},
+    performanceCalendarEquity: {
+      accountId: "combined",
+      range: "1Y",
+      points: [],
+    },
+    performanceCalendarTrades: {
+      accountId: "combined",
+      activityDegraded: true,
+      activityReason: "orders_timeout",
+      trades: [],
+    },
+    closedTrades: {
+      accountId: "combined",
+      activityDegraded: true,
+      activityReason: "orders_timeout",
+      trades: [],
+    },
+    cashActivity: { accountId: "combined", activities: [] },
+    flexHealth: null,
+  } as any);
+
+  assert.equal(
+    (writes.get(JSON.stringify(tradesKey)) as any)?.trades[0]?.id,
+    "visible-trade",
+  );
+  assert.equal(
+    (writes.get(JSON.stringify(calendarTradesKey)) as any)?.trades[0]?.id,
+    "calendar-trade",
+  );
+});
+
 test("applyAccountPageCriticalPayloadToCache keeps live option quotes while accepting position updates", () => {
   const positionsKey = [
     "/api/accounts/combined/positions",

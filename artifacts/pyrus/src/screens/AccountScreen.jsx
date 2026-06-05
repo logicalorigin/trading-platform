@@ -468,7 +468,19 @@ const DeferredPanelSuspense = ({
 
 const ACCOUNT_LIVE_STALE_MS = 5_000;
 const ACCOUNT_DERIVED_STALE_MS = 120_000;
+const ACCOUNT_ACTIVITY_STALE_MS = ACCOUNT_LIVE_STALE_MS;
 const ACCOUNT_HISTORY_STALE_MS = 120_000;
+
+const closedTradesResponseIsDegradedEmpty = (data) =>
+  Boolean(
+    data?.activityDegraded === true &&
+      (!Array.isArray(data?.trades) || data.trades.length === 0),
+  );
+
+const accountActivityRefetchInterval = (fallbackInterval) => (query) =>
+  closedTradesResponseIsDegradedEmpty(query?.state?.data)
+    ? ACCOUNT_ACTIVITY_STALE_MS
+    : fallbackInterval;
 
 const accountIdMatches = (data, accountId) =>
   Boolean(
@@ -1828,7 +1840,8 @@ const AccountScreenInner = ({
     {
       query: {
         ...ACCOUNT_DERIVED_QUERY_OPTIONS.query,
-        refetchInterval: chartRefreshInterval,
+        staleTime: ACCOUNT_ACTIVITY_STALE_MS,
+        refetchInterval: accountActivityRefetchInterval(chartRefreshInterval),
         enabled: performanceCalendarQueriesEnabled,
         placeholderData: retainPreviousData,
       },
@@ -1837,11 +1850,50 @@ const AccountScreenInner = ({
   const tradesQuery = useGetAccountClosedTrades(accountRequestId, closedTradeParams, {
     query: {
       ...ACCOUNT_DERIVED_QUERY_OPTIONS.query,
-      refetchInterval: tradesRefreshInterval,
+      staleTime: ACCOUNT_ACTIVITY_STALE_MS,
+      refetchInterval: accountActivityRefetchInterval(tradesRefreshInterval),
       enabled: tradingAnalysisQueriesEnabled,
       placeholderData: retainPreviousData,
     },
   });
+  const accountAnalysisTrades = useMemo(() => {
+    const calendarTrades = performanceCalendarTradesQuery.data?.trades;
+    const visibleTrades = tradesQuery.data?.trades;
+    if (Array.isArray(calendarTrades) && calendarTrades.length > 0) {
+      return calendarTrades;
+    }
+    if (Array.isArray(visibleTrades)) {
+      return visibleTrades;
+    }
+    return Array.isArray(calendarTrades) ? calendarTrades : [];
+  }, [performanceCalendarTradesQuery.data, tradesQuery.data]);
+  const accountAnalysisQuery = useMemo(
+    () => ({
+      ...tradesQuery,
+      data: tradesQuery.data ?? performanceCalendarTradesQuery.data,
+      error: tradesQuery.error ?? performanceCalendarTradesQuery.error,
+      fetchStatus:
+        tradesQuery.fetchStatus === "idle" &&
+        performanceCalendarTradesQuery.fetchStatus !== "idle"
+          ? performanceCalendarTradesQuery.fetchStatus
+          : tradesQuery.fetchStatus,
+      isFetching: Boolean(
+        tradesQuery.isFetching || performanceCalendarTradesQuery.isFetching,
+      ),
+      isLoading: Boolean(
+        !tradesQuery.data &&
+          !performanceCalendarTradesQuery.data &&
+          (tradesQuery.isLoading || performanceCalendarTradesQuery.isLoading),
+      ),
+      isPending: Boolean(tradesQuery.isPending || performanceCalendarTradesQuery.isPending),
+      refetch: (...args) => {
+        const visibleRefetch = tradesQuery.refetch?.(...args);
+        const calendarRefetch = performanceCalendarTradesQuery.refetch?.(...args);
+        return visibleRefetch ?? calendarRefetch;
+      },
+    }),
+    [performanceCalendarTradesQuery, tradesQuery],
+  );
   const ordersQuery = useGetAccountOrders(
     accountRequestId,
     {
@@ -2516,9 +2568,9 @@ const AccountScreenInner = ({
             detail="Preparing trade lifecycle charts and filters."
           >
             <TradingAnalysisWorkbench
-              query={tradesQuery}
-              trades={tradesQuery.data?.trades || []}
-              allTrades={tradesQuery.data?.trades || []}
+              query={accountAnalysisQuery}
+              trades={accountAnalysisTrades}
+              allTrades={accountAnalysisTrades}
               orders={ordersQuery.data?.orders || []}
               positions={openAccountPositions}
               filters={tradeFilters}

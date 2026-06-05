@@ -2174,7 +2174,8 @@ const isDegradedAccountResponse = (value: unknown): boolean =>
   Boolean(
     value &&
       typeof value === "object" &&
-      (value as { degraded?: unknown }).degraded === true,
+      ((value as { degraded?: unknown }).degraded === true ||
+        (value as { activityDegraded?: unknown }).activityDegraded === true),
   );
 
 const preferNonDegradedAccountResponse = <T>(current: T | undefined, next: T): T => {
@@ -2182,6 +2183,19 @@ const preferNonDegradedAccountResponse = <T>(current: T | undefined, next: T): T
     isDegradedAccountResponse(next) &&
     current &&
     !isDegradedAccountResponse(current)
+  ) {
+    return current;
+  }
+  return reuseEqualJson(current, next);
+};
+
+const preferUsableClosedTradesResponse = (
+  current: AccountClosedTradesResponse | undefined,
+  next: AccountClosedTradesResponse,
+): AccountClosedTradesResponse | undefined => {
+  if (
+    isDegradedAccountResponse(next) &&
+    (!Array.isArray(next.trades) || next.trades.length === 0)
   ) {
     return current;
   }
@@ -3722,7 +3736,8 @@ const seedAccountPageDerivedQueryKeys = (
       payload.accountId,
       accountClosedTradeParams(payload),
     ),
-    payload.closedTrades,
+    (current: AccountClosedTradesResponse | undefined) =>
+      preferUsableClosedTradesResponse(current, payload.closedTrades),
   );
   if (payload.performanceCalendarFrom) {
     setAccountPageQueryData(
@@ -3731,7 +3746,11 @@ const seedAccountPageDerivedQueryKeys = (
         ...modeParams,
         from: payload.performanceCalendarFrom,
       }),
-      payload.performanceCalendarTrades,
+      (current: AccountClosedTradesResponse | undefined) =>
+        preferUsableClosedTradesResponse(
+          current,
+          payload.performanceCalendarTrades,
+        ),
     );
   }
   setAccountPageQueryData(
@@ -3956,11 +3975,22 @@ export const applyAccountPageDerivedPayloadToCache = (
         queryClient.setQueryData(query.queryKey, payload.cashActivity);
       } else if (path === `/api/accounts/${payload.accountId}/closed-trades`) {
         if (closedTradeParamsMatch(params, payload.tradeFilters)) {
-          queryClient.setQueryData(query.queryKey, payload.closedTrades);
+          queryClient.setQueryData(
+            query.queryKey,
+            (current: AccountClosedTradesResponse | undefined) =>
+              preferUsableClosedTradesResponse(current, payload.closedTrades),
+          );
         } else if (
           performanceCalendarParamsMatch(params, payload.performanceCalendarFrom)
         ) {
-          queryClient.setQueryData(query.queryKey, payload.performanceCalendarTrades);
+          queryClient.setQueryData(
+            query.queryKey,
+            (current: AccountClosedTradesResponse | undefined) =>
+              preferUsableClosedTradesResponse(
+                current,
+                payload.performanceCalendarTrades,
+              ),
+          );
         }
       } else if (path === `/api/accounts/${payload.accountId}/equity-history`) {
         const range = normalizeAccountHistoryRange(params?.range) ?? "ALL";

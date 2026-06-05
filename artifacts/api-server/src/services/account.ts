@@ -172,6 +172,8 @@ const ACCOUNT_MONITOR_EQUITY_QUOTE_TTL_MS = ACCOUNT_POSITION_MARKET_DATA_TTL_MS;
 const ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS = 2_000;
 const ACCOUNT_ROUTE_EQUITY_HISTORY_RESPONSE_CACHE_TTL_MS = 5_000;
 const ACCOUNT_ROUTE_DERIVED_RESPONSE_CACHE_TTL_MS = 15_000;
+const ACCOUNT_ROUTE_CLOSED_TRADES_RESPONSE_CACHE_TTL_MS =
+  ACCOUNT_PAGE_SHARED_LIVE_READ_CACHE_TTL_MS;
 export const ACCOUNT_FULL_RISK_CACHE_TTL_MS = 30_000;
 export const ACCOUNT_FULL_RISK_STALE_TTL_MS = 5 * 60_000;
 const FLEX_SEND_REQUEST_URL =
@@ -251,6 +253,14 @@ const liveAccountUniverseReadCache = new Map<
 const accountPositionsReadCache = new Map<
   string,
   ShortLivedAccountCacheEntry<BrokerPositionSnapshot[]>
+>();
+const accountOrdersReadCache = new Map<
+  string,
+  ShortLivedAccountCacheEntry<AccountUniverseOrderResult>
+>();
+const accountExecutionsReadCache = new Map<
+  string,
+  ShortLivedAccountCacheEntry<BrokerExecutionSnapshot[]>
 >();
 const positionMarketHydrationReadCache = new Map<
   string,
@@ -1223,18 +1233,33 @@ async function getFlexBackedAccounts(
   }));
 }
 
-function accountPositionsCacheKey(
+function accountUniverseReadCacheKey(
+  route: string,
   universe: AccountUniverse,
   mode: RuntimeMode,
+  extra: Record<string, unknown> = {},
 ): string {
   return JSON.stringify({
     accountIds: [...universe.accountIds].sort(),
+    ...Object.fromEntries(
+      Object.entries(extra).sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
+    ),
     isCombined: universe.isCombined,
     latestSnapshotAt: universe.latestSnapshotAt?.toISOString() ?? null,
     mode,
     requestedAccountId: universe.requestedAccountId,
+    route,
     source: universe.source,
   });
+}
+
+function accountPositionsCacheKey(
+  universe: AccountUniverse,
+  mode: RuntimeMode,
+): string {
+  return accountUniverseReadCacheKey("positions", universe, mode);
 }
 
 async function listPositionsForUniverse(
@@ -1273,10 +1298,7 @@ async function readPositionsForUniverseUncached(
   return readOpenPositions();
 }
 
-async function listOrdersForUniverse(
-  universe: AccountUniverse,
-  mode: RuntimeMode,
-): Promise<{
+type AccountUniverseOrderResult = {
   orders: BrokerOrderSnapshot[];
   degraded?: boolean;
   reason?: string;
@@ -1286,7 +1308,23 @@ async function listOrdersForUniverse(
     code: string;
     timeoutMs?: number;
   };
-}> {
+};
+
+async function listOrdersForUniverse(
+  universe: AccountUniverse,
+  mode: RuntimeMode,
+): Promise<AccountUniverseOrderResult> {
+  return readShortLivedAccountCache(
+    accountOrdersReadCache,
+    accountUniverseReadCacheKey("orders", universe, mode),
+    () => readOrdersForUniverseUncached(universe, mode),
+  );
+}
+
+async function readOrdersForUniverseUncached(
+  universe: AccountUniverse,
+  mode: RuntimeMode,
+): Promise<AccountUniverseOrderResult> {
   const results = await Promise.all(
     universe.accountIds.map((accountId) =>
       listOrders({ accountId, mode }),
@@ -5538,6 +5576,23 @@ async function listExecutionsForUniverse(
   input: AccountClosedTradeFilters,
 ): Promise<BrokerExecutionSnapshot[]> {
   const days = executionLookbackDays(input);
+  const symbol = input.symbol ? normalizeSymbol(input.symbol) : null;
+  return readShortLivedAccountCache(
+    accountExecutionsReadCache,
+    accountUniverseReadCacheKey("executions", universe, mode, {
+      days,
+      symbol,
+    }),
+    () => readExecutionsForUniverseUncached(universe, mode, input, days),
+  );
+}
+
+async function readExecutionsForUniverseUncached(
+  universe: AccountUniverse,
+  mode: RuntimeMode,
+  input: AccountClosedTradeFilters,
+  days: number,
+): Promise<BrokerExecutionSnapshot[]> {
   const executions = await Promise.all(
     universe.accountIds.map((accountId) =>
       listIbkrExecutions({
@@ -5545,7 +5600,7 @@ async function listExecutionsForUniverse(
         mode,
         days,
         limit: 500,
-        symbol: input.symbol ?? undefined,
+        symbol: input.symbol ? normalizeSymbol(input.symbol) : undefined,
       }),
     ),
   );
@@ -5768,6 +5823,36 @@ export async function getAccountClosedTrades(input: {
   }
 
   const mode = input.mode ?? getRuntimeMode();
+  return readAccountRouteResponseCache(
+    "closed-trades",
+    {
+      accountId: input.accountId,
+      assetClass: input.assetClass ?? null,
+      from: input.from?.toISOString() ?? null,
+      holdDuration: input.holdDuration ?? null,
+      mode,
+      pnlSign: input.pnlSign ?? null,
+      source: input.source ?? null,
+      symbol: input.symbol ? normalizeSymbol(input.symbol) : null,
+      to: input.to?.toISOString() ?? null,
+    },
+    () => getAccountClosedTradesUncached({ ...input, mode }),
+    ACCOUNT_ROUTE_CLOSED_TRADES_RESPONSE_CACHE_TTL_MS,
+  );
+}
+
+async function getAccountClosedTradesUncached(input: {
+  accountId: string;
+  from?: Date | null;
+  to?: Date | null;
+  symbol?: string | null;
+  assetClass?: string | null;
+  pnlSign?: string | null;
+  holdDuration?: string | null;
+  mode: RuntimeMode;
+  source?: string | null;
+}) {
+  const mode = input.mode;
   const universe = await getLiveAccountUniverse(input.accountId, mode);
   const [flexTrades, executions, orderResult] = await Promise.all([
     listClosedTradesForUniverse(universe, input),

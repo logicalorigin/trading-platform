@@ -262,6 +262,85 @@ test("IBKR execution cold reads return quickly while the bridge refresh warms ca
   }
 });
 
+test("IBKR execution reads preserve non-empty cache when a refresh returns empty", async () => {
+  let executionRequests = 0;
+  const server = http.createServer((req, res) => {
+    if (!req.url?.startsWith("/executions")) {
+      res.writeHead(404).end();
+      return;
+    }
+
+    executionRequests += 1;
+    const executions =
+      executionRequests === 1 ? [execution("first-execution", 101)] : [];
+    res
+      .writeHead(200, { "Content-Type": "application/json" })
+      .end(JSON.stringify({ executions }));
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address() as AddressInfo;
+
+  try {
+    setIbkrBridgeRuntimeOverride({
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      apiToken: "test-token",
+    });
+    primeBridgeHealthForSession({
+      configured: true,
+      connected: true,
+      authenticated: true,
+      competing: false,
+      selectedAccountId: "U1",
+      accounts: ["U1"],
+      lastTickleAt: new Date(),
+      lastError: null,
+      lastRecoveryAttemptAt: null,
+      lastRecoveryError: null,
+      updatedAt: new Date(),
+      transport: "tws",
+      connectionTarget: "127.0.0.1:4001",
+      sessionMode: "live",
+      clientId: 101,
+      marketDataMode: "live",
+      liveMarketDataAvailable: true,
+      brokerServerConnected: true,
+      socketConnected: true,
+      bridgeReachable: true,
+      accountsLoaded: true,
+      diagnostics: { scheduler: {}, subscriptions: {} },
+    });
+
+    const first = await listIbkrExecutions({ accountId: "U1", limit: 10 });
+    assert.equal(first.length, 1);
+    assert.equal(first[0]?.id, "first-execution");
+    await wait(5);
+
+    const staleWhileRefreshing = await listIbkrExecutions({
+      accountId: "U1",
+      limit: 10,
+    });
+    assert.equal(staleWhileRefreshing.length, 1);
+
+    for (let attempt = 0; attempt < 10 && executionRequests < 2; attempt += 1) {
+      await wait(10);
+    }
+    assert.equal(executionRequests, 2);
+    await wait(20);
+
+    process.env["IBKR_ACCOUNT_EXECUTION_CACHE_TTL_MS"] = "1000";
+    const preserved = await listIbkrExecutions({ accountId: "U1", limit: 10 });
+    assert.equal(preserved.length, 1);
+    assert.equal(preserved[0]?.id, "first-execution");
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
 test("IBKR position reads preserve non-empty cache when a refresh returns empty", async () => {
   let positionRequests = 0;
   const server = http.createServer((req, res) => {

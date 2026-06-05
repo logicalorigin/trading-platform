@@ -277,6 +277,7 @@ export function listIbkrExecutions(input: {
     staleTtlMs: accountStaleTtlMs(),
     label: "executions",
     initialWaitMs: executionsInitialWaitMs(),
+    preserveNonEmptyStaleOnEmpty: true,
     work: () => bridgeClient.listExecutions(input),
   });
 }
