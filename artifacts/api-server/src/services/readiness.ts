@@ -131,15 +131,6 @@ function buildAppReadiness(input: {
     };
   }
 
-  if (input.pressure.level === "critical") {
-    return {
-      status: "not_ready",
-      reason: "api_resource_pressure_critical",
-      diagnosticsStatus: input.diagnostics.status,
-      diagnosticsSeverity: input.diagnostics.severity,
-    };
-  }
-
   if (input.diagnostics.status === "down") {
     return {
       status: "degraded",

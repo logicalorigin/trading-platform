@@ -20,7 +20,6 @@ import {
 } from "./signal-options-automation";
 import { runShadowOptionMaintenance } from "./shadow-account";
 import {
-  isBackgroundStockAggregateStreamingEnabled,
   isStockAggregateStreamingAvailable,
   subscribeMutableStockMinuteAggregates,
   type StockMinuteAggregateMessage,
@@ -48,8 +47,6 @@ const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_MAX_MS = 3_600_000;
 const SIGNAL_OPTIONS_WORKER_SCAN_TIMEOUT_REASON = "worker_scan_timeout";
 const SIGNAL_OPTIONS_ACTIVE_POSITION_POLL_MS = 5_000;
 const SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_DEBOUNCE_MS = 250;
-const SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_MIN_INTERVAL_MS = 2_000;
-const SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_MAX_BATCH = 24;
 
 type ReleaseLock = () => Promise<void>;
 type WorkerLogger = Pick<typeof logger, "debug" | "info" | "warn">;
@@ -428,31 +425,6 @@ function createDeploymentRuntime(signature: string): DeploymentRuntime {
   };
 }
 
-function markDeploymentSkippedForResourcePressure(
-  runtime: DeploymentRuntime,
-  skippedAtMs: number,
-) {
-  runtime.lastSkippedAtMs = skippedAtMs;
-  runtime.lastSkipReason = "resource_pressure";
-  runtime.skippedScanCount += 1;
-  runtime.pressurePaused = true;
-  runtime.pressurePauseStartedAtMs ??= skippedAtMs;
-}
-
-function shouldSkipDeploymentForResourcePressure(input: {
-  deployment: AlgoDeployment;
-  pressure: ApiResourcePressureSnapshot;
-}) {
-  if (
-    !input.pressure.caps.signalOptions.maintenanceOnly &&
-    !input.pressure.caps.signalOptions.skipDeploymentScans
-  ) {
-    return false;
-  }
-  const profile = resolveSignalOptionsExecutionProfile(input.deployment.config);
-  return profile.infrastructureHaltControls.resourcePressureScanBlockEnabled !== false;
-}
-
 async function evaluateSignalOptionsStreamSignalSymbols(input: {
   mode: AlgoDeployment["mode"];
   symbols: string[];
@@ -478,7 +450,8 @@ async function evaluateSignalOptionsStreamSignalSymbols(input: {
     evaluationConcurrencyOverride: Math.min(6, symbols.length),
     barSourcePolicy: "mixed",
     includeProvisionalLiveEdge: true,
-    allowHistoricalFallback: true,
+    allowHistoricalFallback: false,
+    signalStabilityPolicy: "allow-partial-live-edge",
     signal: input.signal,
   });
 }
@@ -567,9 +540,7 @@ function defaultDependencies(
       options.subscribeCockpitChanges ?? subscribeAlgoCockpitChanges,
     isAggregateStreamingAvailable:
       options.isAggregateStreamingAvailable ??
-      (() =>
-        isBackgroundStockAggregateStreamingEnabled() &&
-        isStockAggregateStreamingAvailable()),
+      (() => isStockAggregateStreamingAvailable()),
     subscribeAggregates:
       options.subscribeAggregates ?? subscribeMutableStockMinuteAggregates,
     evaluateStreamSignalSymbols:
@@ -786,7 +757,6 @@ export function createSignalOptionsWorker(
   const streamSignalSymbols = new Set<string>();
   const streamSignalModes = new Set<AlgoDeployment["mode"]>();
   const pendingStreamSignalEvaluations = new Set<string>();
-  const lastStreamSignalEvaluatedAtMs = new Map<string, number>();
 
   const forceDeploymentsDue = (requestedAtMs: number) => {
     deploymentRuntime.forEach((runtime) => {
@@ -850,11 +820,6 @@ export function createSignalOptionsWorker(
         }
       });
 
-      const pressure = dependencies.getResourcePressure();
-      const pressureBlocksScans =
-        pressure.caps.signalOptions.maintenanceOnly ||
-        pressure.caps.signalOptions.skipDeploymentScans;
-
       for (const deployment of deployments) {
         const signature = deploymentSignature(deployment);
         let runtime = deploymentRuntime.get(deployment.id);
@@ -881,21 +846,6 @@ export function createSignalOptionsWorker(
           nowMs < runtime.nextScanDueAtMs
         ) {
           continue;
-        }
-
-        if (shouldSkipDeploymentForResourcePressure({ deployment, pressure })) {
-          markDeploymentSkippedForResourcePressure(runtime, nowMs);
-          dependencies.logger.debug?.(
-            { deploymentId: deployment.id, pressureLevel: pressure.level },
-            "Signal-options worker skipped deployment scan under resource pressure",
-          );
-          continue;
-        }
-        if (pressureBlocksScans) {
-          dependencies.logger.debug?.(
-            { deploymentId: deployment.id, pressureLevel: pressure.level },
-            "Signal-options worker resource-pressure scan block overridden",
-          );
         }
 
         runtime.lastCheckedAtMs = nowMs;
@@ -1016,28 +966,9 @@ export function createSignalOptionsWorker(
       return;
     }
     streamEvaluationRunning = true;
-    let nextDelayMs: number | null = null;
-    const nowMs = dependencies.now().getTime();
-    const dueKeys: string[] = [];
+    const dueKeys = Array.from(pendingStreamSignalEvaluations);
 
     try {
-      for (const key of pendingStreamSignalEvaluations) {
-        const lastEvaluatedAtMs = lastStreamSignalEvaluatedAtMs.get(key) ?? 0;
-        const waitMs =
-          lastEvaluatedAtMs +
-          SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_MIN_INTERVAL_MS -
-          nowMs;
-        if (waitMs > 0) {
-          nextDelayMs =
-            nextDelayMs === null ? waitMs : Math.min(nextDelayMs, waitMs);
-          continue;
-        }
-        dueKeys.push(key);
-        if (dueKeys.length >= SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_MAX_BATCH) {
-          break;
-        }
-      }
-
       if (!dueKeys.length) {
         return;
       }
@@ -1063,10 +994,6 @@ export function createSignalOptionsWorker(
           }),
         ),
       );
-      const completedAtMs = dependencies.now().getTime();
-      dueKeys.forEach((key) => {
-        lastStreamSignalEvaluatedAtMs.set(key, completedAtMs);
-      });
     } catch (error) {
       dependencies.logger.warn(
         { err: error },
@@ -1075,10 +1002,7 @@ export function createSignalOptionsWorker(
     } finally {
       streamEvaluationRunning = false;
       if (pendingStreamSignalEvaluations.size > 0) {
-        scheduleStreamSignalEvaluation(
-          nextDelayMs ??
-            SIGNAL_OPTIONS_STREAM_SIGNAL_EVALUATION_DEBOUNCE_MS,
-        );
+        scheduleStreamSignalEvaluation(0);
       }
     }
   };

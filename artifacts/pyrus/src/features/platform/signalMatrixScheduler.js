@@ -12,49 +12,41 @@ const SIGNAL_MATRIX_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 48,
   watch: 36,
   high: 24,
-  critical: 12,
 });
 const STA_VISIBLE_PAGE_EXACT_CELL_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 48,
   watch: 36,
   high: 24,
-  critical: 12,
 });
 const REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 30,
   watch: 30,
   high: 30,
-  critical: 30,
 });
 const ACTIVE_SCREEN_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 48,
   watch: 36,
   high: 24,
-  critical: 12,
 });
 const STA_VISIBLE_PAGE_REQUEST_TASK_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 48,
   watch: 36,
   high: 24,
-  critical: 12,
 });
 const ACTIVE_SCREEN_REQUEST_SYMBOL_LIMIT_BY_PRESSURE = Object.freeze({
   normal: 500,
   watch: 500,
   high: 500,
-  critical: 500,
 });
 const BUSY_QUEUE_DELAY_MS_BY_PRESSURE = Object.freeze({
   normal: 0,
   watch: 2_500,
   high: 15_000,
-  critical: 60_000,
 });
 const CATCHUP_DELAY_MS_BY_PRESSURE = Object.freeze({
   normal: 1_500,
   watch: 5_000,
   high: 15_000,
-  critical: null,
 });
 const SIGNAL_MATRIX_TIMEFRAME_MS = Object.freeze({
   "1m": 60_000,
@@ -607,8 +599,7 @@ export function buildSignalMatrixRequestPlan({
   const missingBackgroundUniverse = backgroundUniverse.filter(needsHydration);
   const backgroundAllowed =
     !startupProtected &&
-    Boolean(backgroundReady) &&
-    normalizedPressureLevel !== "critical";
+    Boolean(backgroundReady);
   const prioritySelection = selectMissingCellsForRotatedSymbols({
     symbols: priorityCandidates,
     cursor,

@@ -26,11 +26,7 @@ import {
   type MarketDataIntent,
   type MarketDataLease,
 } from "./market-data-admission";
-import {
-  getApiResourcePressureSnapshot,
-  isApiResourcePressureHardBlock,
-  subscribeApiResourcePressureChanges,
-} from "./resource-pressure";
+import { subscribeApiResourcePressureChanges } from "./resource-pressure";
 
 type OptionQuoteWithSource = QuoteSnapshot & {
   source: "ibkr";
@@ -113,6 +109,7 @@ type BridgeOptionQuoteClient = {
     underlying?: string | null;
     providerContractIds: string[];
     signal?: AbortSignal;
+    timeoutMs?: number;
   }): Promise<QuoteSnapshot[]>;
   streamOptionQuoteSnapshots(
     input: {
@@ -154,8 +151,6 @@ const OPTION_QUOTE_BRIDGE_CHUNK_SIZE = Math.max(
   Number.parseInt(process.env["OPTION_QUOTE_BRIDGE_CHUNK_SIZE"] ?? "100", 10) ||
     100,
 );
-const DEFAULT_LIVE_OPTION_QUOTE_SNAPSHOT_TIMEOUT_MS = 2_500;
-
 let nextSubscriberId = 1;
 let nextSnapshotOwnerId = 1;
 let streamSignature = "";
@@ -239,53 +234,6 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw abortReason(signal);
   }
-}
-
-function readPositiveIntegerEnv(name: string, fallback: number): number {
-  const value = Number.parseInt(process.env[name] ?? "", 10);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
-}
-
-function liveOptionQuoteSnapshotTimeoutMs(): number {
-  return readPositiveIntegerEnv(
-    "IBKR_LIVE_OPTION_QUOTE_SNAPSHOT_TIMEOUT_MS",
-    DEFAULT_LIVE_OPTION_QUOTE_SNAPSHOT_TIMEOUT_MS,
-  );
-}
-
-function timeoutSignal(input: {
-  signal?: AbortSignal;
-  timeoutMs: number;
-  message: string;
-}): { signal?: AbortSignal; cleanup(): void } {
-  const timeoutMs = Math.max(0, Math.floor(input.timeoutMs));
-  if (timeoutMs <= 0) {
-    return { signal: input.signal, cleanup: () => {} };
-  }
-
-  const controller = new AbortController();
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  const abortFromInput = () => controller.abort(abortReason(input.signal));
-  if (input.signal?.aborted) {
-    abortFromInput();
-  } else {
-    input.signal?.addEventListener("abort", abortFromInput, { once: true });
-    timeout = setTimeout(() => {
-      controller.abort(new Error(input.message));
-    }, timeoutMs);
-    timeout.unref?.();
-  }
-
-  return {
-    signal: controller.signal,
-    cleanup: () => {
-      if (timeout) {
-        clearTimeout(timeout);
-        timeout = null;
-      }
-      input.signal?.removeEventListener("abort", abortFromInput);
-    },
-  };
 }
 
 function readTimestampMs(value: unknown): number | null {
@@ -376,33 +324,6 @@ function resolveLiveOptionQuotePolicy(input: {
       };
     }
 
-    const pressure = getApiResourcePressureSnapshot();
-    if (isApiResourcePressureHardBlock(pressure)) {
-      return {
-        providerContractIds: [],
-        blockedReason: "resource_pressure",
-        errorCode: "ibkr_live_option_quote_blocked",
-        errorMessage:
-          "IBKR live option quote request blocked by API resource pressure.",
-      };
-    }
-
-  }
-
-  if (
-    input.intent === "automation-live" &&
-    isAutomationDisplayOrPositionMarkOwner(input.owner)
-  ) {
-    const pressure = getApiResourcePressureSnapshot();
-    if (!pressure.caps.signalOptions.positionMarksAllowed) {
-      return {
-        providerContractIds: [],
-        blockedReason: "resource_pressure_position_marks_blocked",
-        errorCode: "ibkr_live_option_quote_blocked",
-        errorMessage:
-          "IBKR live option quote request blocked because automation position marks are disabled under API pressure.",
-      };
-    }
   }
 
   return {
@@ -1211,6 +1132,8 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
   const bridgeWorkOptions = isLiveQuoteSnapshotIntent
     ? { recordFailure: false }
     : undefined;
+  const bridgeOptionQuoteTimeoutMs =
+    intent === "account-monitor-live" || intent === "visible-live" ? 0 : undefined;
   const ttlMs = Math.max(1, Math.floor(input.ttlMs ?? 10_000));
   const fallbackProvider = input.fallbackProvider ?? "massive";
   const requiresGreeks = input.requiresGreeks ?? true;
@@ -1415,15 +1338,6 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
 
   const upstreamStartedAt = Date.now();
   let upstreamErrorMessage: string | null = null;
-  const snapshotTimeoutMs = liveOptionQuoteSnapshotTimeoutMs();
-  const upstreamTimeout =
-    isLiveQuoteSnapshotIntent && hydrateProviderContractIds.length > 0
-      ? timeoutSignal({
-          signal: input.signal,
-          timeoutMs: snapshotTimeoutMs,
-          message: `IBKR live option quote snapshot timed out after ${snapshotTimeoutMs}ms.`,
-        })
-      : { signal: input.signal, cleanup: () => {} };
   try {
     if (hydrateProviderContractIds.length > 0) {
       const freshQuotes = (
@@ -1436,9 +1350,10 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
               bridgeClient.getOptionQuoteSnapshots({
                 underlying,
                 providerContractIds,
-                signal: upstreamTimeout.signal,
+                signal: input.signal,
+                timeoutMs: bridgeOptionQuoteTimeoutMs,
               }),
-              { ...(bridgeWorkOptions ?? {}), signal: upstreamTimeout.signal },
+              { ...(bridgeWorkOptions ?? {}), signal: input.signal },
             ),
           ),
         )
@@ -1450,7 +1365,6 @@ export async function fetchBridgeOptionQuoteSnapshots(input: {
     lastError = upstreamErrorMessage;
     lastErrorAt = nowProvider();
   } finally {
-    upstreamTimeout.cleanup();
     input.signal?.removeEventListener("abort", releaseOnAbort);
     if (
       releaseLeasesOnComplete ||

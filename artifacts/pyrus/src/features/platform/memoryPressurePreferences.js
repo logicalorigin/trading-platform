@@ -22,8 +22,7 @@ const normalizePreferences = (input = {}) => ({
       : DEFAULT_MEMORY_PRESSURE_PREFERENCES.showCompactLabel,
   alertThreshold:
     input.alertThreshold === "watch" ||
-    input.alertThreshold === "high" ||
-    input.alertThreshold === "critical"
+    input.alertThreshold === "high"
       ? input.alertThreshold
       : DEFAULT_MEMORY_PRESSURE_PREFERENCES.alertThreshold,
 });

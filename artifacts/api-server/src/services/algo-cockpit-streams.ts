@@ -13,11 +13,6 @@ import {
   listSignalOptionsAutomationState,
 } from "./signal-options-automation";
 import { getSignalMonitorProfile } from "./signal-monitor";
-import {
-  getApiResourcePressureSnapshot,
-  isApiResourcePressureHardBlock,
-} from "./resource-pressure";
-
 type Unsubscribe = () => void;
 
 export const ALGO_COCKPIT_STREAM_INTERVAL_MS = 5_000;
@@ -31,7 +26,7 @@ export type AlgoCockpitStreamInput = {
 
 export type AlgoCockpitStreamPayload = {
   stream: "algo-cockpit-bootstrap" | "algo-cockpit-live";
-  phase?: "critical" | "full";
+  phase?: "primary" | "full";
   mode: RuntimeMode;
   deploymentId: string | null;
   updatedAt: string;
@@ -56,15 +51,9 @@ const normalizeMode = (mode: RuntimeMode | undefined): RuntimeMode =>
 const normalizeEventLimit = (limit: number | undefined): number =>
   Math.min(Math.max(Math.floor(limit ?? 20), 1), 100);
 
-export function shouldUseCriticalOnlyAlgoCockpitPayload(pressure: unknown): boolean {
-  if (pressure && typeof pressure === "object" && !Array.isArray(pressure)) {
-    const snapshot = pressure as ReturnType<typeof getApiResourcePressureSnapshot>;
-    return (
-      isApiResourcePressureHardBlock(snapshot) ||
-      snapshot.caps.signalOptions.signalRefreshAllowed === false
-    );
-  }
-  return pressure === "critical";
+export function shouldUsePrimaryOnlyAlgoCockpitPayload(pressure: unknown): boolean {
+  void pressure;
+  return false;
 }
 
 async function resolveAlgoCockpitTarget(input: AlgoCockpitStreamInput = {}) {
@@ -94,17 +83,17 @@ async function resolveAlgoCockpitTarget(input: AlgoCockpitStreamInput = {}) {
   };
 }
 
-export async function fetchAlgoCockpitCriticalPayload(
+export async function fetchAlgoCockpitPrimaryPayload(
   input: AlgoCockpitStreamInput = {},
   stream: AlgoCockpitStreamPayload["stream"] = "algo-cockpit-live",
 ): Promise<AlgoCockpitStreamPayload> {
   const target = await resolveAlgoCockpitTarget(input);
-  const criticalEventLimit = Math.min(target.eventLimit, 20);
+  const primaryEventLimit = Math.min(target.eventLimit, 20);
   const [events, signalOptionsState] = await Promise.all([
     listExecutionEvents(
       target.deploymentId
-        ? { deploymentId: target.deploymentId, limit: criticalEventLimit }
-        : { limit: criticalEventLimit },
+        ? { deploymentId: target.deploymentId, limit: primaryEventLimit }
+        : { limit: primaryEventLimit },
     ),
     target.deploymentId
       ? listSignalOptionsAutomationState({
@@ -115,7 +104,7 @@ export async function fetchAlgoCockpitCriticalPayload(
         }).catch((error) => {
           logger.warn(
             { err: error, deploymentId: target.deploymentId },
-            "Signal-options critical cockpit stream state cache unavailable",
+            "Signal-options primary cockpit stream state cache unavailable",
           );
           return null;
         })
@@ -124,7 +113,7 @@ export async function fetchAlgoCockpitCriticalPayload(
 
   return {
     stream,
-    phase: "critical",
+    phase: "primary",
     mode: target.mode,
     deploymentId: target.deploymentId,
     updatedAt: new Date().toISOString(),
@@ -142,14 +131,6 @@ export async function fetchAlgoCockpitStreamPayload(
   input: AlgoCockpitStreamInput = {},
   stream: AlgoCockpitStreamPayload["stream"] = "algo-cockpit-bootstrap",
 ): Promise<AlgoCockpitStreamPayload> {
-  if (
-    shouldUseCriticalOnlyAlgoCockpitPayload(
-      getApiResourcePressureSnapshot(),
-    )
-  ) {
-    return fetchAlgoCockpitCriticalPayload(input, stream);
-  }
-
   const target = await resolveAlgoCockpitTarget(input);
   const [events, signalOptionsState, cockpit, performance, signalMonitorProfile] =
     await Promise.all([

@@ -56,14 +56,12 @@ const PRESSURE_TOKEN_BY_LEVEL = {
   normal: "--ra-pressure-normal",
   watch: "--ra-pressure-watch",
   high: "--ra-pressure-high",
-  critical: "--ra-pressure-critical",
 };
 
 const PRESSURE_RANK = {
   normal: 0,
   watch: 1,
   high: 2,
-  critical: 3,
 };
 
 const pressureTone = (level) =>
@@ -84,7 +82,6 @@ const FALLBACK_SCORE_BY_LEVEL = {
   normal: 12,
   watch: 38,
   high: 68,
-  critical: 92,
 };
 
 export const memoryPressureFillPercent = (signal) => {
@@ -125,11 +122,9 @@ const findMiniDriver = (drivers, kind) =>
 const normalizeThresholds = (thresholds, fallback = {}) => ({
   watch: finiteNumber(thresholds?.watch) ?? fallback.watch ?? null,
   high: finiteNumber(thresholds?.high) ?? fallback.high ?? null,
-  critical: finiteNumber(thresholds?.critical) ?? fallback.critical ?? null,
 });
 
 const maxThresholdValue = (thresholds, fallbackMax) =>
-  finiteNumber(thresholds?.critical) ??
   finiteNumber(thresholds?.high) ??
   finiteNumber(thresholds?.watch) ??
   fallbackMax;
@@ -146,9 +141,6 @@ const thresholdFillPercent = (value, thresholds, fallbackMax) => {
 const levelFromThresholds = (value, thresholds, fallback = "normal") => {
   const numericValue = finiteNumber(value);
   if (numericValue === null) return fallback;
-  if (Number.isFinite(thresholds?.critical) && numericValue >= thresholds.critical) {
-    return "critical";
-  }
   if (Number.isFinite(thresholds?.high) && numericValue >= thresholds.high) {
     return "high";
   }
@@ -305,7 +297,7 @@ const sourceLevelFromLineUsage = ({ used, cap, free, limited }) => {
   }
   const ratio = used / cap;
   if (ratio >= 0.95 || (Number.isFinite(free) && free <= 0)) {
-    return "critical";
+    return "high";
   }
   if (limited || ratio >= 0.85) {
     return "high";
@@ -1035,11 +1027,6 @@ export const FooterMemoryPressureIndicator = ({ signal, runtimeControl = null })
               >
                 {diagnosticsStatusLabel(diagnosticsStatus)}
               </div>
-              {model.level === "critical" && model.criticalReason ? (
-                <div style={{ ...rowValueStyle, color: pressureTone(model.level) }}>
-                  Critical driver: {model.criticalReason}
-                </div>
-              ) : null}
             </div>
             <LevelPill level={model.level} />
           </div>

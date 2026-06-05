@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-export type ApiResourcePressureLevel = "normal" | "watch" | "high" | "critical";
+export type ApiResourcePressureLevel = "normal" | "watch" | "high";
 
 export type ApiResourcePressureDriver = {
   kind: string;
@@ -48,7 +48,6 @@ const PRESSURE_RANK: Record<ApiResourcePressureLevel, number> = {
   normal: 0,
   watch: 1,
   high: 2,
-  critical: 3,
 };
 
 const NORMAL_INPUTS: ApiResourcePressureSnapshot["inputs"] = {
@@ -64,9 +63,7 @@ const NORMAL_INPUTS: ApiResourcePressureSnapshot["inputs"] = {
 const FALLBACK_API_RSS_PRESSURE_THRESHOLDS = {
   watch: 3_072,
   high: 4_608,
-  critical: 6_144,
 } as const;
-const FALLBACK_API_RSS_HARD_BLOCK_MB = 7_168;
 const CGROUP_MEMORY_MAX_PATH = "/sys/fs/cgroup/memory.max";
 const MB = 1024 * 1024;
 
@@ -80,7 +77,7 @@ const normalizeNumber = (value: unknown): number | null => {
 export function normalizeApiResourcePressureLevel(
   value: unknown,
 ): ApiResourcePressureLevel {
-  if (value === "critical" || value === "high" || value === "watch") {
+  if (value === "high" || value === "watch") {
     return value;
   }
   if (value === "shed") {
@@ -109,10 +106,9 @@ function capLevel(
 
 function levelFromThresholds(
   value: number | null,
-  thresholds: { watch: number; high: number; critical: number },
+  thresholds: { watch: number; high: number },
 ): ApiResourcePressureLevel {
   if (value === null) return "normal";
-  if (value >= thresholds.critical) return "critical";
   if (value >= thresholds.high) return "high";
   if (value >= thresholds.watch) return "watch";
   return "normal";
@@ -141,15 +137,13 @@ function readCgroupMemoryLimitMb(): number | null {
 
 export function resolveApiRssPressureThresholds(
   memoryLimitMb = readCgroupMemoryLimitMb(),
-): { watch: number; high: number; critical: number } {
+): { watch: number; high: number } {
   const envWatch = readPositiveNumberEnv("API_RSS_PRESSURE_WATCH_MB");
   const envHigh = readPositiveNumberEnv("API_RSS_PRESSURE_HIGH_MB");
-  const envCritical = readPositiveNumberEnv("API_RSS_PRESSURE_CRITICAL_MB");
-  if (envWatch !== null || envHigh !== null || envCritical !== null) {
+  if (envWatch !== null || envHigh !== null) {
     return {
       watch: envWatch ?? FALLBACK_API_RSS_PRESSURE_THRESHOLDS.watch,
       high: envHigh ?? FALLBACK_API_RSS_PRESSURE_THRESHOLDS.high,
-      critical: envCritical ?? FALLBACK_API_RSS_PRESSURE_THRESHOLDS.critical,
     };
   }
 
@@ -157,7 +151,6 @@ export function resolveApiRssPressureThresholds(
     return {
       watch: Math.round(memoryLimitMb * 0.375),
       high: Math.round(memoryLimitMb * 0.5),
-      critical: Math.round(memoryLimitMb * 0.75),
     };
   }
 
@@ -167,21 +160,12 @@ export function resolveApiRssPressureThresholds(
 export function resolveApiRssHardBlockMb(
   memoryLimitMb = readCgroupMemoryLimitMb(),
 ): number {
-  const configured = readPositiveNumberEnv("API_RSS_HARD_BLOCK_MB");
-  if (configured !== null) {
-    return configured;
-  }
-  if (memoryLimitMb !== null && memoryLimitMb >= 8_192) {
-    return Math.round(memoryLimitMb * 0.85);
-  }
-  return FALLBACK_API_RSS_HARD_BLOCK_MB;
+  void memoryLimitMb;
+  return Number.POSITIVE_INFINITY;
 }
 
 function routeLatencyLevel(value: number | null): ApiResourcePressureLevel {
   if (value === null) return "normal";
-  // Latency can be caused by one slow background/deferred route while the API
-  // is still healthy enough to serve active screens and diagnostics. Treat it
-  // as load-shedding pressure, not as a hard critical condition.
   if (value >= 5_000) return "high";
   return value >= 1_000 ? "watch" : "normal";
 }
@@ -211,17 +195,6 @@ export function getApiResourcePressureCaps(
   level: ApiResourcePressureLevel = currentSnapshot.level,
 ): ApiResourcePressureCaps {
   switch (level) {
-    case "critical":
-      return {
-        signalOptions: {
-          maintenanceOnly: false,
-          skipDeploymentScans: false,
-          signalRefreshAllowed: true,
-          actionScansAllowed: false,
-          positionMarksAllowed: true,
-          watchlistPrewarmAllowed: false,
-        },
-      };
     case "high":
       return {
         signalOptions: {
@@ -268,7 +241,6 @@ function buildSnapshot(
   const heapLevel = levelFromThresholds(inputs.apiHeapUsedPercent, {
     watch: 70,
     high: 80,
-    critical: 90,
   });
   const slowRouteMs = Math.max(
     inputs.apiP95LatencyMs ?? 0,
@@ -411,18 +383,8 @@ export function getApiResourcePressureSnapshot(): ApiResourcePressureSnapshot {
 export function isApiResourcePressureHardBlock(
   snapshot: ApiResourcePressureSnapshot = currentSnapshot,
 ): boolean {
-  if (snapshot.level !== "critical") {
-    return false;
-  }
-  return snapshot.drivers.some((driver) => {
-    if (driver.level !== "critical") {
-      return false;
-    }
-    if (driver.kind === "api-rss") {
-      return Number(driver.score) >= resolveApiRssHardBlockMb();
-    }
-    return true;
-  });
+  void snapshot;
+  return false;
 }
 
 export function __resetApiResourcePressureForTests(): void {

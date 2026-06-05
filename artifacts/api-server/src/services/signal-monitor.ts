@@ -104,6 +104,9 @@ type SignalMonitorMatrixCellRequest = {
   timeframe: SignalMonitorMatrixTimeframe;
 };
 type SignalMonitorBarSourcePolicy = "mixed" | "ibkr-only";
+type SignalMonitorSignalStabilityPolicy =
+  | "stable-only"
+  | "allow-partial-live-edge";
 type SignalMonitorProfileSymbolEvaluationPressureCapMode =
   | "capped"
   | "bypass-soft";
@@ -118,6 +121,8 @@ type SignalMonitorUniverseSource =
   | "watchlists_plus_ranked_universe"
   | "high_beta_500";
 export type EvaluationMode = "hydrate" | "incremental";
+
+const SIGNAL_MONITOR_LIVE_EVENT_MAX_LAG_MS = 15_000;
 export type SignalMonitorBarSnapshot = Awaited<
   ReturnType<typeof getBars>
 >["bars"][number];
@@ -226,10 +231,6 @@ const SIGNAL_MONITOR_MATRIX_PRESSURE_CAPS: Record<
     maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
     concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
   },
-  critical: {
-    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
-    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
-  },
 };
 const SIGNAL_MONITOR_AUTOMATIC_MATRIX_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,
@@ -247,10 +248,6 @@ const SIGNAL_MONITOR_AUTOMATIC_MATRIX_PRESSURE_CAPS: Record<
     maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
     concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
   },
-  critical: {
-    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
-    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
-  },
 };
 const SIGNAL_MONITOR_MATRIX_SOFT_BYPASS_MAX_SYMBOLS = 12;
 const SIGNAL_MONITOR_MATRIX_EXACT_CELL_CAPS: Record<
@@ -260,7 +257,6 @@ const SIGNAL_MONITOR_MATRIX_EXACT_CELL_CAPS: Record<
   normal: 240,
   watch: 240,
   high: 240,
-  critical: 240,
 };
 const SIGNAL_MONITOR_FOREGROUND_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
@@ -269,7 +265,6 @@ const SIGNAL_MONITOR_FOREGROUND_MATRIX_EXACT_CELL_CAPS: Record<
   normal: 48,
   watch: 36,
   high: 24,
-  critical: 12,
 };
 const SIGNAL_MONITOR_STA_VISIBLE_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
@@ -278,7 +273,6 @@ const SIGNAL_MONITOR_STA_VISIBLE_MATRIX_EXACT_CELL_CAPS: Record<
   normal: 48,
   watch: 36,
   high: 24,
-  critical: 12,
 };
 const SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS: Record<
   ApiResourcePressureLevel,
@@ -293,10 +287,6 @@ const SIGNAL_MONITOR_EVALUATION_PRESSURE_CAPS: Record<
     concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
   },
   high: {
-    maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
-    concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
-  },
-  critical: {
     maxSymbols: SIGNAL_MONITOR_MAX_SYMBOLS_LIMIT,
     concurrency: SIGNAL_MONITOR_EVALUATION_CONCURRENCY_LIMIT,
   },
@@ -1599,7 +1589,6 @@ function shouldServeSignalMonitorMatrixFromCacheOnly(input: {
   const startupOrPoll =
     input.requestOrigin === "startup" || input.requestOrigin === "poll";
   const pressured = pressureLevel === "watch" || pressureLevel === "high";
-  const hardPressured = pressureLevel === "critical";
   if (input.clientRole === "follower" && startupOrPoll) {
     return true;
   }
@@ -1607,9 +1596,6 @@ function shouldServeSignalMonitorMatrixFromCacheOnly(input: {
     input.clientRole === "leader" &&
     startupOrPoll
   ) {
-    if (hardPressured) {
-      return true;
-    }
     if (
       pressured &&
       isForegroundExactCellLeaderSignalMonitorMatrixRequest(input)
@@ -1694,6 +1680,7 @@ async function withSignalMonitorMatrixEvaluationCache<T>(
   factory: () => Promise<T>,
   options: {
     nowMs?: number;
+    awaitStaleRefresh?: boolean;
     onCacheStatus?: (status: SignalMonitorMatrixCacheStatus) => void;
   } = {},
 ): Promise<T> {
@@ -1707,7 +1694,11 @@ async function withSignalMonitorMatrixEvaluationCache<T>(
 
   const inFlight = signalMonitorMatrixEvaluationInFlight.get(key);
   if (inFlight) {
-    if (cached && cached.staleUntil > nowMs) {
+    if (
+      cached &&
+      cached.staleUntil > nowMs &&
+      options.awaitStaleRefresh !== true
+    ) {
       options.onCacheStatus?.("stale");
       return cached.value as T;
     }
@@ -1735,7 +1726,11 @@ async function withSignalMonitorMatrixEvaluationCache<T>(
     });
   signalMonitorMatrixEvaluationInFlight.set(key, request);
 
-  if (cached && cached.staleUntil > nowMs) {
+  if (
+    cached &&
+    cached.staleUntil > nowMs &&
+    options.awaitStaleRefresh !== true
+  ) {
     options.onCacheStatus?.("stale");
     void request.catch((error) => {
       logger.warn(
@@ -1746,7 +1741,9 @@ async function withSignalMonitorMatrixEvaluationCache<T>(
     return cached.value as T;
   }
 
-  options.onCacheStatus?.("miss");
+  options.onCacheStatus?.(
+    cached && cached.staleUntil > nowMs ? "inflight" : "miss",
+  );
   return request;
 }
 
@@ -3108,10 +3105,60 @@ function barsToPyrusSignalsBarEntries(
     .sort((left, right) => left.chartBar.time - right.chartBar.time);
 }
 
+function stableSignalMonitorPyrusBarEntries(
+  entries: SignalMonitorPyrusBarEntry[],
+): SignalMonitorPyrusBarEntry[] {
+  return entries.filter((entry) => entry.sourceBar.partial !== true);
+}
+
+function selectSignalMonitorPyrusBarEntries(
+  entries: SignalMonitorPyrusBarEntry[],
+  policy: SignalMonitorSignalStabilityPolicy = "stable-only",
+): SignalMonitorPyrusBarEntry[] {
+  return policy === "allow-partial-live-edge"
+    ? entries
+    : stableSignalMonitorPyrusBarEntries(entries);
+}
+
 function barsToPyrusSignalsBars(
   inputBars: Awaited<ReturnType<typeof getBars>>["bars"],
 ) {
-  return barsToPyrusSignalsBarEntries(inputBars).map((entry) => entry.chartBar);
+  return stableSignalMonitorPyrusBarEntries(
+    barsToPyrusSignalsBarEntries(inputBars),
+  ).map((entry) => entry.chartBar);
+}
+
+function selectSignalMonitorSignalEvent(
+  signalEvents: PyrusSignalsSignalEvent[],
+  chartBarEntries: SignalMonitorPyrusBarEntry[],
+  policy: SignalMonitorSignalStabilityPolicy = "stable-only",
+): PyrusSignalsSignalEvent | null {
+  for (let index = signalEvents.length - 1; index >= 0; index -= 1) {
+    const signal = signalEvents[index];
+    if (!signal) {
+      continue;
+    }
+    const signalBarEntry = chartBarEntries[signal.barIndex];
+    if (
+      !signalBarEntry ||
+      (policy === "stable-only" && signalBarEntry.sourceBar.partial === true)
+    ) {
+      continue;
+    }
+    return signal;
+  }
+  return null;
+}
+
+function selectStableSignalMonitorSignalEvent(
+  signalEvents: PyrusSignalsSignalEvent[],
+  chartBarEntries: SignalMonitorPyrusBarEntry[],
+): PyrusSignalsSignalEvent | null {
+  return selectSignalMonitorSignalEvent(
+    signalEvents,
+    chartBarEntries,
+    "stable-only",
+  );
 }
 
 type SignalMonitorIndicatorDirection = "bullish" | "bearish";
@@ -3563,10 +3610,22 @@ async function insertSignalEventBestEffort(input: {
 }
 
 function shouldPersistSignalMonitorStateEvent(input: {
+  mode: EvaluationMode;
   fresh: boolean;
   barsSinceSignal: number;
+  signalAt: Date;
+  evaluatedAt: Date;
+  sourceBarPartial?: boolean;
 }) {
-  return input.fresh && input.barsSinceSignal >= 0;
+  const lagMs = input.evaluatedAt.getTime() - input.signalAt.getTime();
+  return (
+    input.mode === "incremental" &&
+    input.fresh &&
+    input.barsSinceSignal === 0 &&
+    input.sourceBarPartial !== true &&
+    lagMs >= 0 &&
+    lagMs <= SIGNAL_MONITOR_LIVE_EVENT_MAX_LAG_MS
+  );
 }
 
 async function upsertSymbolState(input: {
@@ -4204,9 +4263,15 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
   mode: EvaluationMode;
   evaluatedAt: Date;
   completedBars: SignalMonitorBarSnapshot[];
+  signalStabilityPolicy?: SignalMonitorSignalStabilityPolicy;
 }) {
   try {
-    const chartBarEntries = barsToPyrusSignalsBarEntries(input.completedBars);
+    const signalStabilityPolicy =
+      input.signalStabilityPolicy ?? "stable-only";
+    const chartBarEntries = selectSignalMonitorPyrusBarEntries(
+      barsToPyrusSignalsBarEntries(input.completedBars),
+      signalStabilityPolicy,
+    );
     const chartBars = chartBarEntries.map((entry) => entry.chartBar);
     const latestBar = chartBars.at(-1);
     const latestBarEntry = chartBarEntries.at(-1);
@@ -4236,7 +4301,11 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
       settings,
       includeProvisionalSignals: true,
     });
-    const signal = evaluation.signalEvents.at(-1) ?? null;
+    const signal = selectSignalMonitorSignalEvent(
+      evaluation.signalEvents,
+      chartBarEntries,
+      signalStabilityPolicy,
+    );
     const latestBarAt = latestBarEntry.closedAt;
     const latestBarAnchorAt = latestBarEntry.anchorAt;
     const latestSourceBar = latestBarEntry.sourceBar;
@@ -4276,8 +4345,18 @@ export async function evaluateSignalMonitorSymbolFromCompletedBars(input: {
     const signalBarEntry = chartBarEntries[signal.barIndex] ?? null;
     const signalBarAt = signalBarEntry?.anchorAt ?? new Date(signal.time * 1000);
     const signalAt = signalBarEntry?.closedAt ?? signalBarAt;
+    const sourceBarPartial = signalBarEntry?.sourceBar.partial === true;
 
-    if (shouldPersistSignalMonitorStateEvent({ fresh, barsSinceSignal })) {
+    if (
+      shouldPersistSignalMonitorStateEvent({
+        mode: input.mode,
+        fresh,
+        barsSinceSignal,
+        signalAt,
+        evaluatedAt: input.evaluatedAt,
+        sourceBarPartial,
+      })
+    ) {
       await insertSignalEventBestEffort({
         profile: input.profile,
         symbol: input.symbol,
@@ -4336,6 +4415,7 @@ export async function evaluateSignalMonitorSymbol(input: {
   barSourcePolicy?: SignalMonitorBarSourcePolicy;
   includeProvisionalLiveEdge?: boolean;
   allowHistoricalFallback?: boolean;
+  signalStabilityPolicy?: SignalMonitorSignalStabilityPolicy;
   signal?: AbortSignal;
 }) {
   try {
@@ -4354,6 +4434,7 @@ export async function evaluateSignalMonitorSymbol(input: {
     return evaluateSignalMonitorSymbolFromCompletedBars({
       ...input,
       completedBars: completedBars.bars,
+      signalStabilityPolicy: input.signalStabilityPolicy,
     });
   } catch (error) {
     throwIfSignalMonitorAborted(input.signal);
@@ -4405,7 +4486,9 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
     lastError: null as string | null,
     indicatorSnapshot: null as SignalMonitorIndicatorSnapshot | null,
   };
-  const chartBarEntries = barsToPyrusSignalsBarEntries(input.completedBars);
+  const chartBarEntries = stableSignalMonitorPyrusBarEntries(
+    barsToPyrusSignalsBarEntries(input.completedBars),
+  );
   const chartBars = chartBarEntries.map((entry) => entry.chartBar);
   const latestBar = chartBars.at(-1);
   const latestBarEntry = chartBarEntries.at(-1);
@@ -4432,7 +4515,10 @@ export function evaluateSignalMonitorMatrixStateFromCompletedBars(input: {
     settings,
     includeProvisionalSignals: true,
   });
-  const signal = evaluation.signalEvents.at(-1) ?? null;
+  const signal = selectStableSignalMonitorSignalEvent(
+    evaluation.signalEvents,
+    chartBarEntries,
+  );
   const indicatorSnapshot = buildSignalMonitorIndicatorSnapshot({
     chartBars,
     evaluation,
@@ -4670,7 +4756,9 @@ function signalMonitorMatrixStateFromPython(input: {
   completedBars: SignalMonitorBarSnapshot[];
   pythonState: SignalMonitorPythonMatrixState;
 }): SignalMonitorMatrixStateResult | null {
-  const chartBarEntries = barsToPyrusSignalsBarEntries(input.completedBars);
+  const chartBarEntries = stableSignalMonitorPyrusBarEntries(
+    barsToPyrusSignalsBarEntries(input.completedBars),
+  );
   const latestBarEntry = chartBarEntries.at(-1);
   const latestBar = latestBarEntry?.chartBar ?? null;
   if (!latestBar || !latestBarEntry) {
@@ -4750,7 +4838,9 @@ async function resolveSignalMonitorMatrixPythonStates(input: {
   );
   const cells = input.cells
     .map((cell) => {
-      const entries = barsToPyrusSignalsBarEntries(cell.completedBars);
+      const entries = stableSignalMonitorPyrusBarEntries(
+        barsToPyrusSignalsBarEntries(cell.completedBars),
+      );
       if (!entries.length) {
         return null;
       }
@@ -5054,6 +5144,7 @@ async function evaluateSymbolsInBatches(input: {
   barSourcePolicy?: SignalMonitorBarSourcePolicy;
   includeProvisionalLiveEdge?: boolean;
   allowHistoricalFallback?: boolean;
+  signalStabilityPolicy?: SignalMonitorSignalStabilityPolicy;
   signal?: AbortSignal;
 }) {
   const concurrency = positiveInteger(
@@ -5078,6 +5169,7 @@ async function evaluateSymbolsInBatches(input: {
           barSourcePolicy: input.barSourcePolicy,
           includeProvisionalLiveEdge: input.includeProvisionalLiveEdge,
           allowHistoricalFallback: input.allowHistoricalFallback,
+          signalStabilityPolicy: input.signalStabilityPolicy,
           signal: input.signal,
         }),
       ),
@@ -5125,6 +5217,7 @@ export async function updateSignalMonitorProfileEvaluationMetadata(input: {
     mode: input.profile.environment,
     reason: "signal_monitor_state_refreshed",
   });
+  invalidateSignalMonitorStateCache(input.profile.environment);
 
   return updatedProfile ?? input.profile;
 }
@@ -5329,6 +5422,7 @@ export async function evaluateSignalMonitorProfileSymbols(input: {
   barSourcePolicy?: SignalMonitorBarSourcePolicy;
   includeProvisionalLiveEdge?: boolean;
   allowHistoricalFallback?: boolean;
+  signalStabilityPolicy?: SignalMonitorSignalStabilityPolicy;
   signal?: AbortSignal;
 }) {
   throwIfSignalMonitorAborted(input.signal);
@@ -5358,6 +5452,7 @@ export async function evaluateSignalMonitorProfileSymbols(input: {
     barSourcePolicy: input.barSourcePolicy,
     includeProvisionalLiveEdge: input.includeProvisionalLiveEdge,
     allowHistoricalFallback: input.allowHistoricalFallback,
+    signalStabilityPolicy: input.signalStabilityPolicy,
     signal: input.signal,
   });
   throwIfSignalMonitorAborted(input.signal);
@@ -6567,6 +6662,12 @@ export async function evaluateSignalMonitorMatrix(input: {
     cacheKey,
     input,
   );
+  const awaitExactCellRefresh = shouldAwaitSignalMonitorMatrixExactCellRefresh({
+    exactCells: exactCells.exact,
+    pressure: matrixSettings.pressure,
+    clientRole: input.clientRole,
+    requestOrigin: input.requestOrigin,
+  });
   type MatrixResponse = {
     profile: ReturnType<typeof profileToResponse>;
     states: SignalMonitorMatrixStateResult[];
@@ -6679,7 +6780,8 @@ export async function evaluateSignalMonitorMatrix(input: {
     getDebouncedSignalMonitorMatrixCacheValue<MatrixResponse>(cacheKey);
   if (
     cachedMatrix &&
-    (cachedMatrix.cacheStatus === "hit" || automaticRequest.debounced)
+    (cachedMatrix.cacheStatus === "hit" ||
+      (automaticRequest.debounced && !awaitExactCellRefresh))
   ) {
     const hydratedResponse = await hydrateFromStoredStates(cachedMatrix.value);
     return withSignalMonitorMatrixMetadata(hydratedResponse, {
@@ -6712,24 +6814,18 @@ export async function evaluateSignalMonitorMatrix(input: {
         automaticRequest,
       });
     }
-    if (
-      shouldAwaitSignalMonitorMatrixExactCellRefresh({
-        exactCells: exactCells.exact,
-        pressure: matrixSettings.pressure,
-        clientRole: input.clientRole,
-        requestOrigin: input.requestOrigin,
-      }) &&
-      !hasCompleteSignalMonitorMatrixCoverage({
-        states: storedResponse.states,
-        timeframes,
-        requestedSymbols: symbols,
-        requestedCells: exactCells.cells,
-      })
-    ) {
+    const hasCompleteStoredCoverage = hasCompleteSignalMonitorMatrixCoverage({
+      states: storedResponse.states,
+      timeframes,
+      requestedSymbols: symbols,
+      requestedCells: exactCells.cells,
+    });
+    if (!hasCompleteStoredCoverage) {
       const response = await withSignalMonitorMatrixEvaluationCache(
         cacheKey,
         buildFreshMatrixResponse,
         {
+          awaitStaleRefresh: awaitExactCellRefresh,
           onCacheStatus: (status) => {
             cacheStatus = status;
           },
@@ -6769,6 +6865,7 @@ export async function evaluateSignalMonitorMatrix(input: {
     cacheKey,
     buildFreshMatrixResponse,
     {
+      awaitStaleRefresh: awaitExactCellRefresh,
       onCacheStatus: (status) => {
         cacheStatus = status;
       },
@@ -6957,8 +7054,12 @@ export const __signalMonitorInternalsForTests = {
   hydrateSignalMonitorMatrixStatesFromStoredStates,
   hasCompleteSignalMonitorMatrixCoverage,
   shouldPersistSignalMonitorMatrixState,
+  shouldPersistSignalMonitorStateEvent,
   shouldPreserveExistingSignalMonitorSymbolState,
   loadSignalMonitorStreamCompletedBars,
+  stableSignalMonitorPyrusBarEntries,
+  selectSignalMonitorSignalEvent,
+  selectStableSignalMonitorSignalEvent,
   isSignalMonitorMatrixBarLoadTimeout,
   evaluateSignalMonitorMatrixStateFromStreamBars,
   isFreshSignalMonitorMatrixStreamState,
@@ -7045,7 +7146,11 @@ async function readSignalMonitorStateFresh(input: {
       universe,
     } = await resolveSignalMonitorProfileUniverse(profile);
     const timeframe = resolveSignalMonitorTimeframe(hydratedProfile.timeframe);
-    const currentUniverseSymbols = new Set(watchlistSymbols);
+    const currentUniverseSymbols = new Set(
+      symbols
+        .map((symbol) => normalizeSymbol(symbol).toUpperCase())
+        .filter(Boolean),
+    );
     const evaluatedAt = new Date();
     const states = await db
       .select()
@@ -7147,6 +7252,10 @@ const signalMonitorStateInFlight = new Map<
 
 function signalMonitorStateCacheKey(environment: RuntimeMode): string {
   return environment;
+}
+
+function invalidateSignalMonitorStateCache(environment: RuntimeMode): void {
+  signalMonitorStateCache.delete(signalMonitorStateCacheKey(environment));
 }
 
 function attachSignalMonitorStateCacheMetadata(

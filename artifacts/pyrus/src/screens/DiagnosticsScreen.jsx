@@ -756,7 +756,7 @@ export default function DiagnosticsScreen({
   const diagnosticsOpenLoggedRef = useRef(false);
   useEffect(() => {
     onReadinessChange?.({
-      criticalReady: diagnosticsVisible,
+      primaryReady: diagnosticsVisible,
       derivedReady: diagnosticsVisible,
       backgroundAllowed: diagnosticsVisible,
     });
@@ -1124,11 +1124,9 @@ export default function DiagnosticsScreen({
       null,
   };
   const memoryOverviewSeverity =
-    footerSignal.level === "critical"
-      ? "critical"
-      : footerSignal.level === "high" || footerSignal.level === "watch"
-        ? "warning"
-        : "info";
+    footerSignal.level === "high" || footerSignal.level === "watch"
+      ? "warning"
+      : "info";
 
   const selectMetric = (subsystem, metricKey) => {
     setActiveTab("Events");
@@ -1729,7 +1727,7 @@ export default function DiagnosticsScreen({
         <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${dim(280)}px, 1fr))`, gap: sp(14) }}>
           <Panel title="Pressure State">
             <StateRow label="Level" value={String(resourcePressureMetrics.pressureLevel || "normal").toUpperCase()} tone={severityTone(resourcePressureSnapshot?.severity)} />
-            <StateRow label="Footer signal" value={String(footerSignal.level || "normal").toUpperCase()} tone={footerSignal.level === "critical" ? CSS_COLOR.red : footerSignal.level === "high" || footerSignal.level === "watch" ? CSS_COLOR.amber : CSS_COLOR.green} />
+            <StateRow label="Footer signal" value={String(footerSignal.level || "normal").toUpperCase()} tone={footerSignal.level === "high" || footerSignal.level === "watch" ? CSS_COLOR.amber : CSS_COLOR.green} />
             <StateRow label="Trend" value={String(footerSignal.trend || "steady").toUpperCase()} />
             <StateRow label="Recommended action" value={resourcePressureMetrics.recommendedAction} />
             <StateRow label="Diagnostics clients" value={formatCount(resourcePressureMetrics.activeDiagnosticsClients)} />

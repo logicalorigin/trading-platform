@@ -13,5 +13,4 @@ export const ReadinessStatusPressureLevel = {
   normal: 'normal',
   watch: 'watch',
   high: 'high',
-  critical: 'critical',
 } as const;

@@ -1,7 +1,7 @@
 import { MEMORY_PRESSURE_THRESHOLDS } from "./memoryPressureModel.js";
 
 const MISSING_VALUE = "--";
-const THRESHOLD_LEVELS = ["watch", "high", "critical"];
+const THRESHOLD_LEVELS = ["watch", "high"];
 
 const PRESSURE_THRESHOLD_ROWS = [
   {
@@ -19,7 +19,7 @@ const PRESSURE_THRESHOLD_ROWS = [
   {
     group: "Browser memory",
     label: "Limit ratio",
-    summary: "watch 60% / high 75% / critical 90%",
+    summary: "watch 60% / high 75%",
   },
   {
     group: "Browser memory",
@@ -59,12 +59,6 @@ const PRESSURE_THRESHOLD_ROWS = [
     thresholds: MEMORY_PRESSURE_THRESHOLDS.runtimeStores.storeEntryCount,
   },
 ];
-
-const MEMORY_REASON_DRIVER_KINDS = new Set([
-  "api-heap",
-  "api-rss",
-  "browser-memory",
-]);
 
 const numeric = (value) => {
   if (value == null || value === "") return null;
@@ -185,16 +179,8 @@ export const buildMemoryPressurePopoverModel = (
     signal?.server?.heapUsedPercent ??
     apiMetrics?.heapUsedPercent;
   const driverRows = buildDriverRows(signal);
-  const criticalDriver = driverRows.find(
-    (driver) =>
-      driver.level === "critical" && MEMORY_REASON_DRIVER_KINDS.has(driver.kind),
-  );
-
   return {
     level: signal?.level || "normal",
-    criticalReason: criticalDriver
-      ? `${criticalDriver.label}${criticalDriver.detail !== MISSING_VALUE ? ` ${criticalDriver.detail}` : ""}`
-      : null,
     statusRows: [
       { label: "Level", value: String(signal?.level || "normal").toUpperCase() },
       { label: "Load score", value: formatMemoryDetailValue(signal?.score, "pts", 1) },

@@ -124,6 +124,7 @@ type DiagnosticEventInput = {
   message: string;
   dimensions?: JsonRecord;
   raw?: JsonRecord;
+  countOccurrence?: boolean;
 };
 
 export type DiagnosticEventStatus = "open" | "resolved";
@@ -160,7 +161,7 @@ export type DiagnosticsLatestPayload = {
   marketDataWorkPlan?: JsonRecord;
   footerMemoryPressure?: {
     observedAt: string | null;
-    level: "normal" | "watch" | "high" | "critical";
+    level: "normal" | "watch" | "high";
     trend: "steady" | "rising" | "recovering";
     browserMemoryMb: number | null;
     browserMemoryLimitMb: number | null;
@@ -168,7 +169,6 @@ export type DiagnosticsLatestPayload = {
     apiRssThresholds: {
       watch: number;
       high: number;
-      critical: number;
     };
     apiHeapUsedPercent: number | null;
     sourceQuality: string | null;
@@ -244,12 +244,6 @@ const DIAGNOSTIC_LIMIT_CAPS: Record<
     exportHistory: 120,
     exportEvents: 80,
   },
-  critical: {
-    history: 120,
-    events: 80,
-    exportHistory: 60,
-    exportEvents: 40,
-  },
 };
 const MAX_RECENT_EVENTS = 50;
 const CLIENT_METRIC_RETENTION_MS = 10 * 60 * 1000;
@@ -257,12 +251,10 @@ const CLIENT_METRIC_MAX_SAMPLES = 500;
 const BROWSER_MEMORY_LIMIT_PRESSURE = Object.freeze({
   watch: 60,
   high: 75,
-  critical: 90,
 });
 const BROWSER_MEMORY_MB_FALLBACK_PRESSURE = Object.freeze({
   watch: 1_000,
   high: 1_500,
-  critical: 2_500,
 });
 const API_LATENCY_WARNING_MS = 1_000;
 const API_LATENCY_CRITICAL_MS = 10_000;
@@ -367,7 +359,7 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "resource-pressure",
     unit: "mb",
     warning: BROWSER_MEMORY_MB_FALLBACK_PRESSURE.high,
-    critical: BROWSER_MEMORY_MB_FALLBACK_PRESSURE.critical,
+    critical: BROWSER_MEMORY_MB_FALLBACK_PRESSURE.high,
     enabled: false,
     audible: false,
     description:
@@ -379,7 +371,7 @@ const DEFAULT_THRESHOLDS: DiagnosticThreshold[] = [
     subsystem: "resource-pressure",
     unit: "percent",
     warning: BROWSER_MEMORY_LIMIT_PRESSURE.watch,
-    critical: BROWSER_MEMORY_LIMIT_PRESSURE.critical,
+    critical: BROWSER_MEMORY_LIMIT_PRESSURE.high,
     enabled: true,
     audible: false,
     description: "Browser heap usage as a percentage of the browser-reported heap limit.",
@@ -590,13 +582,11 @@ function mb(value: number): number {
 }
 
 function pressureSeverity(level: ResourcePressureLevel): DiagnosticSeverity {
-  if (level === "critical") return "critical";
   if (level === "shed" || level === "high" || level === "watch") return "warning";
   return "info";
 }
 
 function maxPressureLevel(levels: ResourcePressureLevel[]): ResourcePressureLevel {
-  if (levels.includes("critical")) return "critical";
   if (levels.includes("high")) return "high";
   if (levels.includes("shed")) return "shed";
   if (levels.includes("watch")) return "watch";
@@ -605,7 +595,6 @@ function maxPressureLevel(levels: ResourcePressureLevel[]): ResourcePressureLeve
 
 function pressureLevelFromRatio(value: number | null): ResourcePressureLevel {
   if (value === null) return "normal";
-  if (value >= 0.9) return "critical";
   if (value >= 0.8) return "high";
   if (value >= 0.7) return "watch";
   return "normal";
@@ -621,15 +610,11 @@ function browserMemoryPressureLevel(input: {
     input.limitMb > 0
   ) {
     const percent = (input.memoryMb / input.limitMb) * 100;
-    if (percent >= BROWSER_MEMORY_LIMIT_PRESSURE.critical) return "critical";
     if (percent >= BROWSER_MEMORY_LIMIT_PRESSURE.high) return "high";
     if (percent >= BROWSER_MEMORY_LIMIT_PRESSURE.watch) return "watch";
     return "normal";
   }
   if (input.memoryMb === null) return "normal";
-  if (input.memoryMb >= BROWSER_MEMORY_MB_FALLBACK_PRESSURE.critical) {
-    return "critical";
-  }
   if (input.memoryMb >= BROWSER_MEMORY_MB_FALLBACK_PRESSURE.high) {
     return "high";
   }
@@ -888,6 +873,42 @@ function isLongLivedApiRequestMetric(sample: ApiRequestSample): boolean {
   return isLongLivedApiRequestUrl(sample.path);
 }
 
+function incrementApiContextCounter(
+  map: Map<string, number>,
+  value: string | null | undefined,
+): void {
+  if (!value) {
+    return;
+  }
+  map.set(value, (map.get(value) ?? 0) + 1);
+}
+
+function topApiContextCounts(map: Map<string, number>): JsonRecord[] {
+  return Array.from(map.entries())
+    .sort((left, right) => {
+      if (right[1] !== left[1]) {
+        return right[1] - left[1];
+      }
+      return left[0].localeCompare(right[0]);
+    })
+    .slice(0, 5)
+    .map(([value, count]) => ({ value, count }));
+}
+
+function dominantApiContextValue(map: Map<string, number>): string | null {
+  return (topApiContextCounts(map)[0]?.["value"] as string | undefined) ?? null;
+}
+
+function apiPriorityRange(values: number[]): JsonRecord | null {
+  if (!values.length) {
+    return null;
+  }
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
+  };
+}
+
 function buildApiRouteStats(samples: ApiRequestSample[]): JsonRecord[] {
   const byPath = new Map<
     string,
@@ -896,6 +917,13 @@ function buildApiRouteStats(samples: ApiRequestSample[]): JsonRecord[] {
       errors: number;
       durations: number[];
       lastSeenAt: number;
+      routeClass: string | null;
+      requestFamilies: Map<string, number>;
+      slowRequestFamilies: Map<string, number>;
+      requestOrigins: Map<string, number>;
+      clientRoles: Map<string, number>;
+      fetchPriorities: number[];
+      slowFetchPriorities: number[];
     }
   >();
 
@@ -907,11 +935,32 @@ function buildApiRouteStats(samples: ApiRequestSample[]): JsonRecord[] {
         errors: 0,
         durations: [],
         lastSeenAt: 0,
+        routeClass: sample.routeClass ?? null,
+        requestFamilies: new Map<string, number>(),
+        slowRequestFamilies: new Map<string, number>(),
+        requestOrigins: new Map<string, number>(),
+        clientRoles: new Map<string, number>(),
+        fetchPriorities: [],
+        slowFetchPriorities: [],
       };
+    const slow = sample.durationMs >= SLOW_API_ROUTE_MS;
     current.count += 1;
     current.errors += sample.statusCode >= 500 ? 1 : 0;
     current.durations.push(sample.durationMs);
     current.lastSeenAt = Math.max(current.lastSeenAt, sample.recordedAt);
+    current.routeClass ??= sample.routeClass ?? null;
+    incrementApiContextCounter(current.requestFamilies, sample.requestFamily);
+    incrementApiContextCounter(current.requestOrigins, sample.requestOrigin);
+    incrementApiContextCounter(current.clientRoles, sample.clientRole);
+    if (typeof sample.fetchPriority === "number" && Number.isFinite(sample.fetchPriority)) {
+      current.fetchPriorities.push(sample.fetchPriority);
+    }
+    if (slow) {
+      incrementApiContextCounter(current.slowRequestFamilies, sample.requestFamily);
+      if (typeof sample.fetchPriority === "number" && Number.isFinite(sample.fetchPriority)) {
+        current.slowFetchPriorities.push(sample.fetchPriority);
+      }
+    }
     byPath.set(sample.path, current);
   });
 
@@ -922,10 +971,22 @@ function buildApiRouteStats(samples: ApiRequestSample[]): JsonRecord[] {
         value.durations.length > 0 ? Math.max(...value.durations) : null;
       return {
         path,
-        routeClass: classifyApiRoute({
-          method: "GET",
-          path,
-        }),
+        routeClass:
+          value.routeClass ??
+          classifyApiRoute({
+            method: "GET",
+            path,
+          }),
+        dominantRequestFamily: dominantApiContextValue(value.requestFamilies),
+        dominantSlowRequestFamily: dominantApiContextValue(
+          value.slowRequestFamilies,
+        ),
+        requestFamilies: topApiContextCounts(value.requestFamilies),
+        slowRequestFamilies: topApiContextCounts(value.slowRequestFamilies),
+        requestOrigins: topApiContextCounts(value.requestOrigins),
+        clientRoles: topApiContextCounts(value.clientRoles),
+        fetchPriorityRange: apiPriorityRange(value.fetchPriorities),
+        slowFetchPriorityRange: apiPriorityRange(value.slowFetchPriorities),
         requestCount5m: value.count,
         errorCount5m: value.errors,
         p95LatencyMs,
@@ -2425,7 +2486,7 @@ function classifyAutomationSnapshot(metrics: JsonRecord): DiagnosticSeverity {
       pressurePausedDeploymentCount > 0 ||
       (signalCount > 0 &&
         degradedSignalInputCount > 0 &&
-        (unavailableSignalCount > 0 || degradedSignalInputRatio >= 0.1)) ||
+        degradedSignalInputRatio >= 0.1) ||
       gatewayBlockedCount > 0 ||
       failureCount > 0)
   ) {
@@ -2556,7 +2617,6 @@ function toResourcePressureLevel(
   value: unknown,
 ): ApiResourcePressureLevel | null {
   const normalized = textValue(value);
-  if (normalized === "critical") return "critical";
   if (normalized === "high" || normalized === "shed") return "high";
   if (normalized === "watch") return "watch";
   if (normalized === "normal") return "normal";
@@ -2565,9 +2625,8 @@ function toResourcePressureLevel(
 
 function normalizeFooterPressureLevel(
   value: unknown,
-): "normal" | "watch" | "high" | "critical" {
+): "normal" | "watch" | "high" {
   const normalized = textValue(value);
-  if (normalized === "critical") return "critical";
   if (normalized === "high" || normalized === "shed") return "high";
   if (normalized === "watch") return "watch";
   return "normal";
@@ -2602,15 +2661,11 @@ function sanitizeDominantDrivers(
 
 function maxFooterPressureLevel(
   levels: unknown[],
-): "normal" | "watch" | "high" | "critical" {
-  return levels.reduce<"normal" | "watch" | "high" | "critical">(
+): "normal" | "watch" | "high" {
+  return levels.reduce<"normal" | "watch" | "high">(
     (current, next) => {
       const normalized = normalizeFooterPressureLevel(next);
-      return maxPressureLevel([current, normalized]) as
-        | "normal"
-        | "watch"
-        | "high"
-        | "critical";
+      return maxPressureLevel([current, normalized]) as "normal" | "watch" | "high";
     },
     "normal",
   );
@@ -2749,14 +2804,12 @@ function buildResourcePressureMetrics(
       physicalMb: mb(space.physical_space_size),
     })),
     recommendedAction:
-      apiPressureLevel === "critical"
-        ? "Pause optional scanners and clear stale caches."
-        : apiPressureLevel === "high"
-          ? "Shed background hydration and stale cache entries."
-          : level === "critical" || level === "high"
-            ? "Inspect browser memory and workload drivers."
+      apiPressureLevel === "high"
+        ? "Inspect pressure drivers and keep work running."
+        : level === "high"
+          ? "Inspect browser memory and workload drivers."
           : level === "watch"
-            ? "Monitor growth and prepare to shed optional work."
+            ? "Monitor growth while work continues."
             : "No pressure response required.",
   };
 }
@@ -3070,6 +3123,18 @@ async function upsertEvent(
   const now = nowIso();
   const key = incidentKey(input);
   const existing = memoryEvents.get(key);
+  const existingOpen = existing?.status === "open";
+  const countOccurrence =
+    input.countOccurrence !== false || !existingOpen;
+  const eventCount = existing
+    ? countOccurrence
+      ? existing.eventCount + 1
+      : 1
+    : 1;
+  const shouldBroadcast =
+    input.countOccurrence !== false ||
+    !existingOpen ||
+    existing?.severity !== input.severity;
   const raw =
     input.raw === undefined && existing
       ? existing.raw
@@ -3081,7 +3146,7 @@ async function upsertEvent(
         status: "open",
         message: input.message,
         lastSeenAt: now,
-        eventCount: existing.eventCount + 1,
+        eventCount,
         dimensions: input.dimensions ?? existing.dimensions,
         raw,
       }
@@ -3129,7 +3194,10 @@ async function upsertEvent(
             status: "open",
             message: input.message,
             lastSeenAt: new Date(payload.lastSeenAt),
-            eventCount: sql`${diagnosticEventsTable.eventCount} + 1`,
+            eventCount:
+              input.countOccurrence === false
+                ? sql`case when ${diagnosticEventsTable.status} = 'open' then 1 else ${diagnosticEventsTable.eventCount} + 1 end`
+                : sql`${diagnosticEventsTable.eventCount} + 1`,
             dimensions: input.dimensions ?? {},
             raw,
             updatedAt: new Date(),
@@ -3139,7 +3207,9 @@ async function upsertEvent(
     undefined,
   );
 
-  broadcast({ type: "event", payload });
+  if (shouldBroadcast) {
+    broadcast({ type: "event", payload });
+  }
   return payload;
 }
 
@@ -3515,18 +3585,25 @@ async function evaluateThresholds(
           message: `${threshold.label} ${value}${threshold.unit} breached ${severity} threshold`,
           dimensions: { metricKey: threshold.metricKey, unit: threshold.unit },
           raw: { threshold, value, snapshot },
+          countOccurrence: false,
         } satisfies DiagnosticEventInput;
-        activeIncidentKeys.add(incidentKey(eventInput));
+        const key = incidentKey(eventInput);
+        const existing = memoryEvents.get(key);
+        const shouldBroadcastThreshold =
+          existing?.status !== "open" || existing.severity !== severity;
+        activeIncidentKeys.add(key);
         await upsertEvent(eventInput);
-        broadcast({
-          type: "threshold-breach",
-          payload: {
-            threshold,
-            value,
-            severity,
-            observedAt: snapshot.observedAt,
-          },
-        });
+        if (shouldBroadcastThreshold) {
+          broadcast({
+            type: "threshold-breach",
+            payload: {
+              threshold,
+              value,
+              severity,
+              observedAt: snapshot.observedAt,
+            },
+          });
+        }
       }),
     ),
   );
@@ -3580,8 +3657,6 @@ function buildFooterMemoryPressureSummary(
     apiRssThresholds: {
       watch: numeric(resourceRssThresholds["watch"]) ?? fallbackRssThresholds.watch,
       high: numeric(resourceRssThresholds["high"]) ?? fallbackRssThresholds.high,
-      critical:
-        numeric(resourceRssThresholds["critical"]) ?? fallbackRssThresholds.critical,
     },
     apiHeapUsedPercent: numeric(resourceMetrics["heapUsedPercent"]),
     sourceQuality: textValue(resourceMetrics["sourceQuality"]),
@@ -4191,7 +4266,7 @@ export async function collectDiagnosticSnapshot(
     (numeric(automation.metrics["enabledDeployments"]) ?? 0) > 0 &&
     signalCount > 0 &&
     degradedSignalInputCount > 0 &&
-    (unavailableSignalCount > 0 || degradedSignalInputRatio >= 0.1)
+    degradedSignalInputRatio >= 0.1
   ) {
     activeEvents.push({
       subsystem: "automation",
@@ -4217,7 +4292,7 @@ export async function collectDiagnosticSnapshot(
   await Promise.all(
     activeEvents.map((event) => {
       activeIncidentKeys.add(incidentKey(event));
-      return upsertEvent(event);
+      return upsertEvent({ ...event, countOccurrence: false });
     }),
   );
 
@@ -4609,6 +4684,13 @@ export async function pruneDiagnosticStorage(input: {
 
 export function getLatestDiagnostics(): DiagnosticsLatestPayload | null {
   return latestPayload;
+}
+
+export function __resetDiagnosticsStateForTests(): void {
+  memorySnapshots.splice(0, memorySnapshots.length);
+  memoryEvents.clear();
+  clientMetrics.splice(0, clientMetrics.length);
+  latestPayload = null;
 }
 
 export function subscribeDiagnostics(

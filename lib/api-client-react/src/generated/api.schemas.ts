@@ -97,7 +97,6 @@ export const ReadinessStatusPressureLevel = {
   normal: 'normal',
   watch: 'watch',
   high: 'high',
-  critical: 'critical',
 } as const;
 
 export interface ReadinessStatus {
@@ -355,6 +354,16 @@ export type QuoteSource = typeof QuoteSource[keyof typeof QuoteSource];
 export const QuoteSource = {
   ibkr: 'ibkr',
   massive: 'massive',
+} as const;
+
+export type MarketDataTransport = typeof MarketDataTransport[keyof typeof MarketDataTransport];
+
+
+export const MarketDataTransport = {
+  client_portal: 'client_portal',
+  tws: 'tws',
+  massive_rest: 'massive_rest',
+  massive_websocket: 'massive_websocket',
 } as const;
 
 export type BarDataSource = typeof BarDataSource[keyof typeof BarDataSource];
@@ -2062,10 +2071,12 @@ export interface QuoteSnapshot {
   low: number | null;
   prevClose: number | null;
   volume: number | null;
+  /** Underlying reference price from option computations, when available. */
+  underlyingPrice?: number | null;
   /** @nullable */
   providerContractId: string | null;
   source: QuoteSource;
-  transport: IbkrBridgeHealthTransport;
+  transport: MarketDataTransport;
   delayed: boolean;
   freshness?: MarketDataFreshness;
   /** @nullable */
@@ -2115,7 +2126,7 @@ export interface Bar {
   providerContractId?: string | null;
   outsideRth?: boolean;
   partial?: boolean;
-  transport: IbkrBridgeHealthTransport;
+  transport: MarketDataTransport;
   delayed: boolean;
   freshness?: MarketDataFreshness;
   /** @nullable */
@@ -2222,6 +2233,35 @@ export interface PositionQuote {
   freshness: string | null;
   marketDataMode: string | null;
   source: PositionQuoteSource;
+  providerContractId?: string | null;
+  transport?: MarketDataTransport | null;
+  delayed?: boolean | null;
+  dataUpdatedAt?: string | null;
+  ageMs?: number | null;
+  cacheAgeMs?: number | null;
+  status?: string | null;
+  reason?: string | null;
+  quoteStatus?: string | null;
+  quoteReason?: string | null;
+  greeksStatus?: string | null;
+  greeksReason?: string | null;
+  demandStatus?: string | null;
+  demandReason?: string | null;
+  quoteFreshness?: MarketDataFreshness | null;
+  greeksFreshness?: MarketDataFreshness | null;
+  unavailableDetail?: string | null;
+  price?: number | null;
+  dayChange?: number | null;
+  dayChangePercent?: number | null;
+  volume?: number | null;
+  openInterest?: number | null;
+  impliedVolatility?: number | null;
+  delta?: number | null;
+  gamma?: number | null;
+  theta?: number | null;
+  vega?: number | null;
+  /** Underlying reference price from option computations, when available. */
+  underlyingPrice?: number | null;
 }
 
 export interface Position {
@@ -3293,6 +3333,7 @@ export interface AccountPositionRow {
   openedAt?: string | null;
   openedAtSource?: PositionOpenedAtSource | null;
   quote?: PositionQuote | null;
+  optionQuote?: PositionQuote | null;
 }
 
 export interface AccountPositionsResponse {
@@ -3616,7 +3657,7 @@ export interface OrdersResponse {
 
 export interface QuoteSnapshotsResponse {
   quotes: QuoteSnapshot[];
-  transport: IbkrBridgeHealthTransport | null;
+  transport: MarketDataTransport | null;
   delayed: boolean;
   fallbackUsed: boolean;
 }
@@ -3932,7 +3973,7 @@ export interface BarsResponse {
   symbol: string;
   timeframe: ChartBarTimeframe;
   bars: Bar[];
-  transport: IbkrBridgeHealthTransport | null;
+  transport: MarketDataTransport | null;
   delayed: boolean;
   gapFilled: boolean;
   freshness: MarketDataFreshness;
@@ -6274,7 +6315,7 @@ strikesAroundMoney?: number;
  */
 strikeCoverage?: OptionChainStrikeCoverage;
 /**
- * Controls whether option contracts include quote, volume, open-interest, IV, and Greek snapshots. Defaults to snapshot.
+ * Controls whether option contracts include quote, volume, open-interest, IV, and Greek snapshots. Defaults to metadata.
  */
 quoteHydration?: OptionChainQuoteHydration;
 };

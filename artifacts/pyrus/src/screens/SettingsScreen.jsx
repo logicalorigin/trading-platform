@@ -3146,7 +3146,7 @@ function FooterMemorySignalSettingsPanel() {
   const { preferences, updatePreferences } = useMemoryPressurePreferences();
   const memoryPressure = useMemoryPressureSnapshot(true);
 
-  const thresholdOptions = ["watch", "high", "critical"];
+  const thresholdOptions = ["watch", "high"];
 
   return (
     <Panel title="Footer Memory Signal">
@@ -3162,9 +3162,7 @@ function FooterMemorySignalSettingsPanel() {
             label="Current level"
             value={String(memoryPressure.level || "normal").toUpperCase()}
             tone={
-              memoryPressure.level === "critical"
-                ? CSS_COLOR.red
-                : memoryPressure.level === "high" ||
+              memoryPressure.level === "high" ||
                     memoryPressure.level === "watch"
                   ? CSS_COLOR.amber
                   : CSS_COLOR.green
@@ -3270,7 +3268,7 @@ export default function SettingsScreen({
   const backendSettingsEnabled = dataBrokerTabActive || systemTabActive;
   useEffect(() => {
     onReadinessChange?.({
-      criticalReady: settingsVisible,
+      primaryReady: settingsVisible,
       derivedReady: settingsVisible,
       backgroundAllowed: settingsVisible,
     });

@@ -16,7 +16,6 @@ import {
 import { getMarketFlowStoreEntryCount } from "./marketFlowStore";
 import { getOptionQuoteSnapshotCacheSize } from "./live-streams";
 import { getRuntimeTickerStoreEntryCount } from "./runtimeTickerStore";
-import { usePageVisible } from "./usePageVisible";
 import { getTradeFlowStoreEntryCount } from "./tradeFlowStore";
 import { getTradeOptionChainStoreEntryCount } from "./tradeOptionChainStore";
 import { useRuntimeWorkloadStats } from "./workloadStats";
@@ -25,20 +24,18 @@ const SAMPLE_INTERVALS_MS = {
   normal: 15_000,
   watch: 12_000,
   high: 5_000,
-  critical: 5_000,
 };
 
 const SERVER_INTERVALS_MS = {
   normal: 30_000,
   watch: 20_000,
   high: 15_000,
-  critical: 15_000,
 };
 
 const API_PRESSURE_EVENT = "pyrus:api-pressure";
 const API_PRESSURE_HEADER_HOLD_MS = 15_000;
 const DIAGNOSTICS_STREAM_URL = "/api/diagnostics/stream";
-const SERVER_PRESSURE_LEVELS = new Set(["normal", "watch", "high", "critical"]);
+const SERVER_PRESSURE_LEVELS = new Set(["normal", "watch", "high"]);
 
 const jitterMs = (baseMs) => {
   const variance = Math.round(baseMs * 0.12);
@@ -303,9 +300,8 @@ const memoryPressureWorkloadInputsChanged = (
 };
 
 export const useMemoryPressureMonitor = () => {
-  const pageVisible = usePageVisible();
   const safeQaMode = isPyrusSafeQaMode();
-  const workloadStats = useRuntimeWorkloadStats(pageVisible);
+  const workloadStats = useRuntimeWorkloadStats(true);
   const historyRef = useRef([]);
   const latestRef = useRef(getMemoryPressureSnapshot());
   const nextServerRefreshAtRef = useRef(0);
@@ -340,7 +336,7 @@ export const useMemoryPressureMonitor = () => {
 
   useEffect(() => {
     workloadStatsRef.current = workloadStats;
-    if (!pageVisible || typeof window === "undefined") {
+    if (typeof window === "undefined") {
       return;
     }
 
@@ -388,11 +384,10 @@ export const useMemoryPressureMonitor = () => {
     };
     latestRef.current = snapshot;
     setMemoryPressureSnapshot(snapshot);
-  }, [pageVisible, workloadStats]);
+  }, [workloadStats]);
 
   useEffect(() => {
     if (
-      !pageVisible ||
       safeQaMode ||
       typeof window === "undefined" ||
       typeof window.EventSource === "undefined"
@@ -440,10 +435,10 @@ export const useMemoryPressureMonitor = () => {
       closed = true;
       source.close();
     };
-  }, [pageVisible, safeQaMode]);
+  }, [safeQaMode]);
 
   useEffect(() => {
-    if (!pageVisible || typeof window === "undefined") {
+    if (typeof window === "undefined") {
       return undefined;
     }
 
@@ -553,7 +548,7 @@ export const useMemoryPressureMonitor = () => {
         window.clearTimeout(timeoutId);
       }
     };
-  }, [pageVisible, safeQaMode]);
+  }, [safeQaMode]);
 
   return useMemoryPressureSnapshot(true);
 };

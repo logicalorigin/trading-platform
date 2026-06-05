@@ -461,15 +461,6 @@ export function createOvernightSpotWorker(
           continue;
         }
 
-        if (pressure.level === "critical") {
-          markSkipped({
-            runtime,
-            reason: "resource_pressure_critical",
-            nowMs,
-          });
-          continue;
-        }
-
         runtime.nextScanDueAtMs = null;
         await runDeployment({ deployment, runtime, dependencies });
       }

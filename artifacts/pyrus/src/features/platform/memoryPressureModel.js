@@ -2,32 +2,31 @@ const PRESSURE_RANK = {
   normal: 0,
   watch: 1,
   high: 2,
-  critical: 3,
 };
 
 export const MEMORY_PRESSURE_THRESHOLDS = {
   browserMemoryMb: {
-    measureUserAgentSpecificMemory: { watch: 1_000, high: 1_500, critical: 2_500 },
-    "performance.memory": { watch: 1_000, high: 1_500, critical: 2_500 },
-    heuristic: { watch: null, high: null, critical: null },
+    measureUserAgentSpecificMemory: { watch: 1_000, high: 1_500 },
+    "performance.memory": { watch: 1_000, high: 1_500 },
+    heuristic: { watch: null, high: null },
   },
-  browserHeapLimitRatio: { watch: 0.6, high: 0.75, critical: 0.9 },
-  apiHeapUsedPercent: { watch: 70, high: 78, critical: 85 },
+  browserHeapLimitRatio: { watch: 0.6, high: 0.75 },
+  apiHeapUsedPercent: { watch: 70, high: 78 },
   workload: {
-    activeWorkloadCount: { watch: null, high: null, critical: null },
-    pollCount: { watch: null, high: null, critical: null },
-    streamCount: { watch: null, high: null, critical: null },
+    activeWorkloadCount: { watch: null, high: null },
+    pollCount: { watch: null, high: null },
+    streamCount: { watch: null, high: null },
   },
   chartHydration: {
-    chartScopeCount: { watch: 18, high: 30, critical: null },
-    prependScopeCount: { watch: 1, high: 4, critical: null },
+    chartScopeCount: { watch: 18, high: 30 },
+    prependScopeCount: { watch: 1, high: 4 },
   },
   queryCache: {
-    queryCount: { watch: 100, high: 160, critical: 240 },
-    heavyQueryCount: { watch: 12, high: 30, critical: 50 },
+    queryCount: { watch: 100, high: 160 },
+    heavyQueryCount: { watch: 12, high: 30 },
   },
   runtimeStores: {
-    storeEntryCount: { watch: 60, high: 120, critical: 180 },
+    storeEntryCount: { watch: 60, high: 120 },
   },
 };
 
@@ -51,7 +50,7 @@ const round = (value) =>
   Number.isFinite(value) ? Math.round(value * 10) / 10 : null;
 
 const normalizeLevel = (value) => {
-  if (value === "critical" || value === "high" || value === "watch") {
+  if (value === "high" || value === "watch") {
     return value;
   }
   return "normal";
@@ -60,9 +59,6 @@ const normalizeLevel = (value) => {
 const levelFromThresholds = (value, thresholds) => {
   if (!Number.isFinite(value)) {
     return "normal";
-  }
-  if (Number.isFinite(thresholds?.critical) && value >= thresholds.critical) {
-    return "critical";
   }
   if (Number.isFinite(thresholds?.high) && value >= thresholds.high) {
     return "high";
@@ -81,7 +77,6 @@ const dynamicThresholdsFromLimit = (limitMb) => {
   return {
     watch: round(numericLimit * BROWSER_HEAP_LIMIT_RATIOS.watch),
     high: round(numericLimit * BROWSER_HEAP_LIMIT_RATIOS.high),
-    critical: round(numericLimit * BROWSER_HEAP_LIMIT_RATIOS.critical),
   };
 };
 
@@ -116,8 +111,6 @@ const levelAtLeast = (value, minimum) =>
 
 const scoreFromLevel = (level, weight) => {
   switch (normalizeLevel(level)) {
-    case "critical":
-      return weight;
     case "high":
       return weight * 0.72;
     case "watch":
@@ -128,11 +121,6 @@ const scoreFromLevel = (level, weight) => {
 };
 
 const resolveScoreLevel = (score, pressureDrivers) => {
-  if (
-    pressureDrivers.some((driver) => normalizeLevel(driver.level) === "critical")
-  ) {
-    return "critical";
-  }
   if (score >= 50) {
     return "high";
   }
@@ -409,9 +397,7 @@ export const buildMemoryPressureState = (
     levelAtLeast(previousLevel, "watch") &&
     !levelAtLeast(baseLevel, previousLevel)
   ) {
-    if (previousLevel === "critical" && baseLevel !== "critical") {
-      level = maxLevel(baseLevel, "high");
-    } else if (Number.isFinite(previousScore) && score >= previousScore - 10) {
+    if (Number.isFinite(previousScore) && score >= previousScore - 10) {
       level = previousLevel;
     } else if (
       baseLevel === "normal" &&

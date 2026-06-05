@@ -717,13 +717,6 @@ function buildMemoryAction(scanner: ScannerDiagnostics | null | undefined): Mark
     scanner?.scannerPressure?.level ??
     scanner?.resourcePressure?.level ??
     "normal";
-  if (scanner?.scannerPressure?.hardBlocked || level === "critical") {
-    return {
-      level: String(level),
-      action: "shed-background-scanner",
-      reason: "resource pressure is high enough to shed background scanner work",
-    };
-  }
   return {
     level: String(level),
     action: "normal",

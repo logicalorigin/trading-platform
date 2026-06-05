@@ -35,7 +35,6 @@ import {
 import { logger } from "../lib/logger";
 import {
   getApiResourcePressureSnapshot,
-  isApiResourcePressureHardBlock,
   type ApiResourcePressureDriver,
   type ApiResourcePressureLevel,
   type ApiResourcePressureSnapshot,
@@ -1184,15 +1183,10 @@ function getOptionsFlowScannerSchedulableLineCap(): number {
   return Math.max(0, Math.min(staticLineCap, effectiveLineCap));
 }
 
-function isOptionsFlowScannerResourcePressureBlocked(): boolean {
-  return getOptionsFlowScannerPressureGate().hardBlocked;
-}
-
 const PRESSURE_LEVEL_RANK: Record<ApiResourcePressureLevel, number> = {
   normal: 0,
   watch: 1,
   high: 2,
-  critical: 3,
 };
 
 function maxPressureDriverLevel(
@@ -1223,36 +1217,14 @@ function getOptionsFlowScannerPressureGate(
     (driver) => driver.kind !== "automation",
   );
   const level = maxPressureDriverLevel(scannerDrivers);
-  const hardBlocked = isApiResourcePressureHardBlock(snapshot);
   return {
-    level: hardBlocked ? snapshot.level : level,
+    level,
     globalLevel: snapshot.level,
-    hardBlocked,
+    hardBlocked: false,
     throttled: false,
     drivers: scannerDrivers,
     ignoredDrivers,
   };
-}
-
-function releaseOptionsFlowScannerMarketDataLeases(reason: string): void {
-  const owners = new Set(
-    getMarketDataLeasesSnapshot()
-      .filter(
-        (lease) =>
-          lease.ownerClass === "flow-scanner" ||
-          lease.ownerClass === "flow-scanner-benchmark",
-      )
-      .map((lease) => lease.owner),
-  );
-  owners.forEach((owner) => releaseMarketDataLeases(owner, reason));
-}
-
-function enforceOptionsFlowScannerPressureControls(): string | null {
-  if (!isOptionsFlowScannerResourcePressureBlocked()) {
-    return null;
-  }
-  releaseOptionsFlowScannerMarketDataLeases("resource_pressure");
-  return "resource-pressure";
 }
 
 let optionsFlowSessionBlockReason: string | null = null;
@@ -1355,9 +1327,6 @@ function getOptionsFlowScannerBackgroundBlockReason(
   } = {},
 ): string | null {
   const config = input.config ?? getOptionsFlowRuntimeConfig();
-  if (isOptionsFlowScannerResourcePressureBlocked()) {
-    return "resource-pressure";
-  }
   if (!input.ignoreLiveWarmup && isLiveWarmupHoldingBackgroundWork()) {
     return "live-warmup";
   }
@@ -1562,31 +1531,6 @@ function scheduleIbkrWatchlistPrewarm(
     );
     return;
   }
-  const resourcePressure = getApiResourcePressureSnapshot();
-  if (resourcePressure.caps.signalOptions.watchlistPrewarmAllowed === false) {
-    ibkrWatchlistPrewarmSequence += 1;
-    pendingIbkrWatchlistPrewarmSignature = null;
-    pendingIbkrWatchlistPrewarmRerunReason = null;
-    releaseMarketDataLeases(IBKR_WATCHLIST_PREWARM_OWNER, "resource_pressure");
-    releaseMarketDataLeases(
-      IBKR_WATCHLIST_PREWARM_FILLER_OWNER,
-      "resource_pressure",
-    );
-    void syncWatchlistPrewarmBridgeGroups({
-      primarySymbols: [],
-    }).catch((error) => {
-      logger.warn(
-        { err: error, reason, pressureLevel: resourcePressure.level },
-        "IBKR bridge prewarm clear failed under resource pressure",
-      );
-    });
-    logger.debug(
-      { reason, pressureLevel: resourcePressure.level },
-      "IBKR bridge watchlist prewarm deferred under resource pressure",
-    );
-    return;
-  }
-
   const defaultSymbols = collectDefaultWatchlistSymbols(watchlists);
   const accountSymbols = collectAccountMonitorQuoteSymbols();
   const resolvedSymbols = resolveEquityLiveQuoteLaneSymbols(symbols);
@@ -2656,9 +2600,6 @@ function queueOptionsFlowScannerRefresh(input: {
   if (!getOptionsFlowRuntimeConfig().scannerEnabled) {
     return false;
   }
-  if (enforceOptionsFlowScannerPressureControls()) {
-    return false;
-  }
   if (getOptionsFlowScannerBackgroundBlockReason()) {
     return false;
   }
@@ -3223,6 +3164,119 @@ async function listOrdersForVisibility(input: {
       timeout.unref?.();
     }),
   ]);
+}
+
+export function getOrderVisibilityProbe(input: {
+  accountId?: string;
+  mode?: "paper" | "live";
+  status?:
+    | "pending_submit"
+    | "submitted"
+    | "accepted"
+    | "partially_filled"
+    | "filled"
+    | "canceled"
+    | "rejected"
+    | "expired";
+}): ResilientOrdersResponse & {
+  probeOnly: true;
+  cacheStatus: "fresh" | "stale" | "missing";
+} {
+  const key = orderVisibilityCacheKey(input);
+  const now = Date.now();
+  const cached = orderVisibilityCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return {
+      ...cached.payload,
+      probeOnly: true,
+      cacheStatus: "fresh",
+    };
+  }
+  if (cached && cached.staleExpiresAt > now) {
+    const staleEmptySnapshot = !cached.payload.degraded && !cached.payload.orders.length;
+    if (staleEmptySnapshot) {
+      return {
+        ...cached.payload,
+        stale: true,
+        reason: cached.payload.reason ?? "orders_cached_stale",
+        debug: {
+          message:
+            cached.payload.debug?.message ??
+            "Open-orders visibility has a stale cached empty snapshot.",
+          code: cached.payload.reason ?? "orders_cached_stale",
+        },
+        probeOnly: true,
+        cacheStatus: "stale",
+      };
+    }
+    return {
+      ...markOrderVisibilitySnapshotStale(cached.payload, {
+        reason: cached.payload.reason ?? "orders_cached_stale",
+        message:
+          cached.payload.debug?.message ??
+          "Open-orders visibility has a stale cached snapshot.",
+      }),
+      probeOnly: true,
+      cacheStatus: "stale",
+    };
+  }
+  if (cached) {
+    orderVisibilityCache.delete(key);
+  }
+
+  const suppression = getBridgeOrderReadSuppression();
+  if (suppression && !shouldProbeBridgeOrderReadSuppression(suppression)) {
+    return {
+      orders: [],
+      degraded: true,
+      stale: true,
+      reason: suppression.reason,
+      debug: {
+        message: suppression.message,
+        code: suppression.reason,
+      },
+      probeOnly: true,
+      cacheStatus: "missing",
+    };
+  }
+
+  const governor = getBridgeGovernorSnapshot().orders;
+  if (isBridgeWorkBackedOff("orders")) {
+    return {
+      orders: [],
+      degraded: true,
+      stale: true,
+      reason: "orders_backoff",
+      debug: {
+        message: "Bridge order reads are temporarily backed off.",
+        code: "orders_backoff",
+        timeoutMs: orderReadTimeoutMs(),
+      },
+      probeOnly: true,
+      cacheStatus: "missing",
+    };
+  }
+  if (governor.active > 0 || governor.queued > 0) {
+    return {
+      orders: [],
+      degraded: true,
+      stale: true,
+      reason: "orders_busy",
+      debug: {
+        message: "Bridge order reads are busy; skipping diagnostic probe.",
+        code: "orders_busy",
+        timeoutMs: orderReadTimeoutMs(),
+      },
+      probeOnly: true,
+      cacheStatus: "missing",
+    };
+  }
+
+  return {
+    orders: [],
+    probeOnly: true,
+    cacheStatus: "missing",
+  };
 }
 
 const DEFAULT_RUNTIME_DIAGNOSTICS_MARKET_DATA_INGEST_TIMEOUT_MS = 1_500;
@@ -4482,7 +4536,7 @@ function massiveQuoteToBrokerQuote(
     vega: null,
     updatedAt: quote.updatedAt,
     providerContractId: null,
-    transport: "tws",
+    transport: "massive_rest",
     delayed,
     freshness: delayed ? "delayed" : "live",
     marketDataMode: delayed ? "delayed" : "live",
@@ -4530,7 +4584,7 @@ function massiveAggregateToBrokerQuote(
     vega: null,
     updatedAt,
     providerContractId: null,
-    transport: "tws",
+    transport: "massive_websocket",
     delayed,
     freshness: delayed ? "delayed" : "live",
     marketDataMode: delayed ? "delayed" : "live",
@@ -8551,9 +8605,6 @@ function shouldRefreshStaleBarsInBackground(
     return false;
   }
   const pressureLevel = getApiResourcePressureSnapshot().level;
-  if (pressureLevel === "critical") {
-    return false;
-  }
   if (pressureLevel === "high") {
     return (
       typeof options.priority === "number" &&
@@ -9525,7 +9576,7 @@ function mapMassiveBarsToBrokerBars(input: {
       providerContractId: null,
       outsideRth: input.outsideRth,
       partial: false,
-      transport: "tws",
+      transport: "massive_rest",
       delayed: input.delayed,
       freshness: input.delayed ? "delayed" : "live",
       marketDataMode: input.delayed ? "delayed" : "live",
@@ -10285,7 +10336,7 @@ async function getBaseBarsImpl(
         providerContractId: null,
         outsideRth,
         partial: false,
-        transport: "tws",
+        transport: "massive_rest",
         delayed: massiveBarsDelayed,
         freshness: massiveBarsDelayed ? "delayed" : "live",
         dataUpdatedAt: bar.timestamp,
@@ -10817,11 +10868,9 @@ export function resolveOptionsFlowScannerEffectiveConcurrency(
   );
   const pressureSnapshot = getApiResourcePressureSnapshot();
   const scannerPressure = getOptionsFlowScannerPressureGate(pressureSnapshot);
-  const pressureAdjustedConcurrency = scannerPressure.hardBlocked
-    ? 0
-    : scannerPressure.throttled
-      ? Math.min(configuredConcurrency, 1)
-      : configuredConcurrency;
+  const pressureAdjustedConcurrency = scannerPressure.throttled
+    ? Math.min(configuredConcurrency, 1)
+    : configuredConcurrency;
   return flowScannerLineCap <= 0 || pressureAdjustedConcurrency <= 0
     ? 0
     : Math.max(1, Math.min(pressureAdjustedConcurrency, flowScannerLineCap));
@@ -11144,9 +11193,6 @@ const flowUniverseOptionabilityVerifier =
         getOptionsFlowScannerBackgroundBlockReason();
       if (backgroundBlockReason) {
         return backgroundBlockReason;
-      }
-      if (getOptionsFlowScannerPressureGate().throttled) {
-        return "resource-pressure";
       }
       return null;
     },
@@ -11566,11 +11612,6 @@ function refreshMassiveStockUniverseStreams(reason: string): void {
     closeMassiveStockUniverseStreams("not_configured");
     return;
   }
-  if (resourcePressure.level === "critical") {
-    closeMassiveStockUniverseStreams("resource_pressure");
-    return;
-  }
-
   const symbols = resolveMassiveStockUniverseSymbols();
   const signature = symbols.join(",");
   if (!signature) {
@@ -11714,10 +11755,7 @@ export function startOptionsFlowScanner(): void {
   }
 
   const resolveScannerSymbols = () => {
-    if (
-      enforceOptionsFlowScannerPressureControls() ||
-      getOptionsFlowScannerBackgroundBlockReason()
-    ) {
+    if (getOptionsFlowScannerBackgroundBlockReason()) {
       stopMassiveStockUniverseStreams();
       return [];
     }
@@ -11736,7 +11774,6 @@ export function startOptionsFlowScanner(): void {
   const resolveDeepIntervalMs = () => getOptionsFlowDeepScannerIntervalMs();
   optionsFlowScanner.startRotation({
     symbols: () =>
-      enforceOptionsFlowScannerPressureControls() ||
       getOptionsFlowScannerBackgroundBlockReason()
         ? []
         : resolveScannerSymbols(),
@@ -12232,7 +12269,6 @@ export async function listAggregateFlowEvents(
       batchSize: seedBatchSize,
     });
     aggregateSeedBlockReason =
-      enforceOptionsFlowScannerPressureControls() ??
       getOptionsFlowScannerBackgroundBlockReason({
         ignoreLiveWarmup: true,
       }) ??
@@ -13258,7 +13294,7 @@ function buildOptionChainCacheKey(input: IbkrOptionChainInput): string {
       underlyingSpotPrice === null
         ? null
         : Number(underlyingSpotPrice.toFixed(4)),
-    quoteHydration: input.quoteHydration ?? "snapshot",
+    quoteHydration: input.quoteHydration ?? "metadata",
     delayedSnapshotHydration: input.allowDelayedSnapshotHydration !== false,
   });
 }
@@ -13278,7 +13314,7 @@ function buildOptionChainScopeKey(input: IbkrOptionChainInput): string {
       underlyingSpotPrice === null
         ? null
         : Number(underlyingSpotPrice.toFixed(4)),
-    quoteHydration: input.quoteHydration ?? "snapshot",
+    quoteHydration: input.quoteHydration ?? "metadata",
     delayedSnapshotHydration: input.allowDelayedSnapshotHydration !== false,
   });
 }
@@ -13436,7 +13472,7 @@ function mapMassiveOptionBarsToBrokerBars(input: {
     providerContractId: input.providerContractId,
     outsideRth: input.outsideRth,
     partial: false,
-    transport: "tws",
+    transport: "massive_rest",
     delayed: input.delayed,
     freshness: input.delayed ? "delayed" : "live",
     marketDataMode: input.delayed ? "delayed" : "live",
@@ -13833,7 +13869,7 @@ function normalizePublicOptionChainStrikeSelection(input: {
 function normalizePublicOptionChainQuoteHydration(
   value: OptionChainQuoteHydration | undefined,
 ): OptionChainQuoteHydration {
-  return value === "metadata" ? "metadata" : "snapshot";
+  return value === "snapshot" ? "snapshot" : "metadata";
 }
 
 function normalizeUnderlyingSpotPrice(value: unknown): number | null {

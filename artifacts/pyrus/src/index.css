@@ -368,7 +368,6 @@ html[data-pyrus-reduced-motion="on"] .pyrus-lockup-descriptor {
   --ra-pressure-normal: var(--ra-green-500);
   --ra-pressure-watch: var(--ra-amber-400);
   --ra-pressure-high: var(--ra-orange-500);
-  --ra-pressure-critical: var(--ra-red-500);
   --ra-toast-info: var(--ra-blue-500);
   --ra-toast-success: var(--ra-green-500);
   --ra-toast-warning: var(--ra-amber-500);

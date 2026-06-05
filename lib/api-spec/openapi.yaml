@@ -2009,7 +2009,7 @@ paths:
         - name: quoteHydration
           in: query
           required: false
-          description: Controls whether option contracts include quote, volume, open-interest, IV, and Greek snapshots. Defaults to snapshot.
+          description: Controls whether option contracts include quote, volume, open-interest, IV, and Greek snapshots. Defaults to metadata.
           schema:
             $ref: "#/components/schemas/OptionChainQuoteHydration"
       responses:
@@ -4390,7 +4390,7 @@ components:
           required: [status, ready, reason, checks]
         pressureLevel:
           type: string
-          enum: [normal, watch, high, critical]
+          enum: [normal, watch, high]
         degradedReasons:
           type: array
           items:
@@ -4516,6 +4516,10 @@ components:
     QuoteSource:
       type: string
       enum: [ibkr, massive]
+
+    MarketDataTransport:
+      type: string
+      enum: [client_portal, tws, massive_rest, massive_websocket]
 
     BarDataSource:
       type: string
@@ -7269,12 +7273,16 @@ components:
         volume:
           type: number
           nullable: true
+        underlyingPrice:
+          type: number
+          nullable: true
+          description: Underlying reference price from option computations, when available.
         providerContractId:
           type: [string, "null"]
         source:
           $ref: "#/components/schemas/QuoteSource"
         transport:
-          $ref: "#/components/schemas/IbkrBridgeHealthTransport"
+          $ref: "#/components/schemas/MarketDataTransport"
         delayed:
           type: boolean
         freshness:
@@ -7369,7 +7377,7 @@ components:
         partial:
           type: boolean
         transport:
-          $ref: "#/components/schemas/IbkrBridgeHealthTransport"
+          $ref: "#/components/schemas/MarketDataTransport"
         delayed:
           type: boolean
         freshness:
@@ -7604,6 +7612,95 @@ components:
           nullable: true
         source:
           $ref: "#/components/schemas/PositionQuoteSource"
+        providerContractId:
+          type: string
+          nullable: true
+        transport:
+          oneOf:
+            - $ref: "#/components/schemas/MarketDataTransport"
+            - type: "null"
+        delayed:
+          type: boolean
+          nullable: true
+        dataUpdatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        ageMs:
+          type: number
+          nullable: true
+        cacheAgeMs:
+          type: number
+          nullable: true
+        status:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        quoteStatus:
+          type: string
+          nullable: true
+        quoteReason:
+          type: string
+          nullable: true
+        greeksStatus:
+          type: string
+          nullable: true
+        greeksReason:
+          type: string
+          nullable: true
+        demandStatus:
+          type: string
+          nullable: true
+        demandReason:
+          type: string
+          nullable: true
+        quoteFreshness:
+          oneOf:
+            - $ref: "#/components/schemas/MarketDataFreshness"
+            - type: "null"
+        greeksFreshness:
+          oneOf:
+            - $ref: "#/components/schemas/MarketDataFreshness"
+            - type: "null"
+        unavailableDetail:
+          type: string
+          nullable: true
+        price:
+          type: number
+          nullable: true
+        dayChange:
+          type: number
+          nullable: true
+        dayChangePercent:
+          type: number
+          nullable: true
+        volume:
+          type: number
+          nullable: true
+        openInterest:
+          type: number
+          nullable: true
+        impliedVolatility:
+          type: number
+          nullable: true
+        delta:
+          type: number
+          nullable: true
+        gamma:
+          type: number
+          nullable: true
+        theta:
+          type: number
+          nullable: true
+        vega:
+          type: number
+          nullable: true
+        underlyingPrice:
+          type: number
+          nullable: true
+          description: Underlying reference price from option computations, when available.
       required:
         - bid
         - ask
@@ -9170,6 +9267,10 @@ components:
           oneOf:
             - $ref: "#/components/schemas/PositionQuote"
             - type: "null"
+        optionQuote:
+          oneOf:
+            - $ref: "#/components/schemas/PositionQuote"
+            - type: "null"
       required:
         - id
         - accountId
@@ -9970,7 +10071,7 @@ components:
             $ref: "#/components/schemas/QuoteSnapshot"
         transport:
           oneOf:
-            - $ref: "#/components/schemas/IbkrBridgeHealthTransport"
+            - $ref: "#/components/schemas/MarketDataTransport"
             - type: "null"
         delayed:
           type: boolean
@@ -10425,7 +10526,7 @@ components:
             $ref: "#/components/schemas/Bar"
         transport:
           oneOf:
-            - $ref: "#/components/schemas/IbkrBridgeHealthTransport"
+            - $ref: "#/components/schemas/MarketDataTransport"
             - type: "null"
         delayed:
           type: boolean

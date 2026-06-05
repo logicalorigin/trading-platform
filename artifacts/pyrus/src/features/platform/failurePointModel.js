@@ -466,7 +466,7 @@ export const buildMemoryPressureFailurePoint = ({ signal, driver } = {}) => {
   const record = asRecord(signal);
   const driverRecord = asRecord(driver);
   const level = String(driverRecord.level || record.level || "normal").toLowerCase();
-  const severity = level === "critical" ? "critical" : level === "normal" ? "info" : "warning";
+  const severity = level === "normal" ? "info" : "warning";
   const dominantDrivers = Array.isArray(record.dominantDrivers)
     ? record.dominantDrivers
     : Array.isArray(record.pressureDrivers)

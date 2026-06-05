@@ -5,8 +5,8 @@ import {
 } from "./resource-pressure";
 
 export type ApiRouteClass =
-  | "critical-execution"
-  | "critical-position"
+  | "protected-execution"
+  | "protected-position"
   | "automation-control"
   | "active-screen"
   | "live-data"
@@ -190,24 +190,6 @@ const routeAdmissionAction = (input: {
     }
   }
 
-  if (input.pressureLevel === "critical") {
-    if (
-      input.routeClass === "automation-control" ||
-      input.routeClass === "live-data" ||
-      input.routeClass === "stream" ||
-      input.routeClass === "decorative" ||
-      input.routeClass === "deferred-analytics" ||
-      input.routeClass === "background-maintenance"
-    ) {
-      return {
-        action: "shed",
-        reason: "api-resource-pressure-critical",
-        statusCode: input.routeClass === "decorative" ? 204 : 503,
-        retryAfterMs: 15_000,
-      };
-    }
-  }
-
   return {
     action: "allow",
     reason: null,
@@ -249,7 +231,7 @@ export function classifyApiRoute(input: {
     path === "/shadow/orders" ||
     /^\/accounts\/[^/]+\/orders\/[^/]+\/cancel$/.test(path)
   ) {
-    return "critical-execution";
+    return "protected-execution";
   }
 
   if (path.startsWith("/streams/") || path.endsWith("/stream")) {
@@ -290,7 +272,7 @@ export function classifyApiRoute(input: {
     path === "/accounts" ||
     /^\/accounts\/[^/]+\/(summary|positions|orders|risk)$/.test(path)
   ) {
-    return "critical-position";
+    return "protected-position";
   }
 
   if (
@@ -311,6 +293,10 @@ export function classifyApiRoute(input: {
     path === "/signal-monitor/matrix" ||
     path === "/signal-monitor/state" ||
     path === "/diagnostics/latest" ||
+    path === "/diagnostics/history" ||
+    path === "/diagnostics/events" ||
+    /^\/diagnostics\/events\/[^/]+$/.test(path) ||
+    path === "/diagnostics/export" ||
     path === "/diagnostics/runtime" ||
     path === "/diagnostics/client-metrics" ||
     path === "/diagnostics/market-data/gex-universe-refresh" ||
@@ -399,7 +385,7 @@ function readRequestQaMode(req: Request): ApiRouteQaMode {
   );
 }
 
-function readRequestContext(req: Request): ApiRouteRequestContext {
+export function readApiRouteRequestContext(req: Request): ApiRouteRequestContext {
   return {
     requestFamily:
       req.get("x-pyrus-request-family") ??
@@ -423,7 +409,7 @@ function readRequestContext(req: Request): ApiRouteRequestContext {
       req.get("x-pyrus-client-role") ??
       (typeof req.query["clientRole"] === "string"
         ? req.query["clientRole"]
-        : null),
+      : null),
   };
 }
 
@@ -438,7 +424,7 @@ export function apiRouteAdmissionMiddleware(
     routeClass: classifyApiRoute({
       method: req.method,
       path: req.originalUrl || req.url || req.path,
-      ...readRequestContext(req),
+      ...readApiRouteRequestContext(req),
     }),
     pressureLevel: pressure.level,
     qaMode,

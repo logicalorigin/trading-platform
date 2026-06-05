@@ -16,7 +16,7 @@ const PRESSURE_RANK = {
 };
 
 const normalizeMemoryPressureLevel = (value) => {
-  if (value === "critical" || value === "high" || value === "watch") {
+  if (value === "high" || value === "watch") {
     return value;
   }
   return "normal";
@@ -62,19 +62,6 @@ const PRESSURE_CAPS = {
     sparklineConcurrency: 4,
     prioritySparklineSymbolLimit: null,
   },
-  critical: {
-    broadMarketSymbolLimit: null,
-    broadFlowSymbolLimit: null,
-    broadFlowRuntimeEnabled: true,
-    broadFlowScannerConfig: {},
-    signalMatrixWideSymbolLimit: 500,
-    signalMatrixNarrowSymbolLimit: 500,
-    signalDisplayPollMinMs: 120_000,
-    signalMatrixPollMinMs: 120_000,
-    sparklineEnabled: true,
-    sparklineConcurrency: 4,
-    prioritySparklineSymbolLimit: null,
-  },
 };
 
 export const buildPlatformPressureCaps = (level) => ({
@@ -82,7 +69,7 @@ export const buildPlatformPressureCaps = (level) => ({
 });
 
 const memoryHydrationPressureState = (memoryPressureLevel) => {
-  if (memoryPressureLevel === "critical") return "stalled";
+  void memoryPressureLevel;
   return "normal";
 };
 
@@ -94,7 +81,7 @@ const maxHydrationPressureState = (...states) =>
   );
 
 export const buildPlatformWorkSchedule = ({
-  pageVisible = true,
+  runtimeActive = true,
   sessionMetadataSettled = false,
   activeScreen = "market",
   screenWarmupPhase = "initial",
@@ -109,37 +96,35 @@ export const buildPlatformWorkSchedule = ({
   startupProtectionActive = false,
 } = {}) => {
   const screen = normalizeScreen(activeScreen);
-  const visible = Boolean(pageVisible);
+  const runtimeEnabled = Boolean(runtimeActive);
   const sessionReady = Boolean(sessionMetadataSettled);
   const startupProtected = Boolean(startupProtectionActive);
   const memoryPressureLevel = normalizeMemoryPressureLevel(memoryPressure?.level);
   const memoryPressureObserved =
     !memoryPressure ||
     Boolean(memoryPressure.observedAt || memoryPressure.measurement);
-  const memoryAllowsForeground = memoryPressureLevel !== "critical";
-  const memoryAllowsBackground =
-    memoryPressureObserved &&
-    memoryPressureLevel !== "critical";
+  const memoryAllowsForeground = true;
+  const memoryAllowsBackground = memoryPressureObserved;
   const ibkrReady = Boolean(brokerConfigured && brokerAuthenticated);
   const foregroundIbkr = Boolean(
-    visible &&
+    runtimeEnabled &&
       ibkrReady &&
       memoryAllowsForeground &&
       isForegroundWorkAllowed(ibkrWorkPressure),
   );
   const realtimeIbkr = Boolean(
-    visible &&
+    runtimeEnabled &&
       ibkrReady &&
       ibkrWorkPressure !== WORK_PRESSURE_STATE.stalled,
   );
-  const quoteStreamIbkr = Boolean(visible && ibkrReady);
-  const criticalIbkr = Boolean(
-    visible &&
+  const quoteStreamIbkr = Boolean(runtimeEnabled && ibkrReady);
+  const accountRealtimeIbkr = Boolean(
+    runtimeEnabled &&
       ibkrReady &&
       ibkrWorkPressure !== WORK_PRESSURE_STATE.stalled,
   );
   const backgroundIbkr = Boolean(
-    visible &&
+    runtimeEnabled &&
       ibkrReady &&
       !startupProtected &&
       memoryAllowsBackground &&
@@ -155,29 +140,29 @@ export const buildPlatformWorkSchedule = ({
   const activeBackgroundReady = Boolean(activeScreenBackgroundAllowed);
   const broadFlowAllowed = Boolean(
     sessionReady &&
-      visible &&
+      runtimeEnabled &&
       firstScreenReady &&
       !startupProtected &&
       pressureCaps.broadFlowRuntimeEnabled,
   );
   const backgroundHistoryReady = screenWarmupPhase === "ready" && !startupProtected;
-  const pressureBlocksBackgroundAccountRealtime =
-    startupProtected || memoryPressureLevel === "critical";
+  const startupBlocksBackgroundAccountRealtime = startupProtected;
   const foregroundAccountRealtime = Boolean(
     account || trade || tradingEnabled,
   );
   const backgroundAccountRealtime = Boolean(automationEnabled || foregroundIbkr);
-  const accountRealtimeCritical = Boolean(
-    criticalIbkr &&
+  const accountRealtime = Boolean(
+    accountRealtimeIbkr &&
       (foregroundAccountRealtime ||
-        (!pressureBlocksBackgroundAccountRealtime && backgroundAccountRealtime)),
+        (!startupBlocksBackgroundAccountRealtime && backgroundAccountRealtime)),
   );
   const watchlistQuoteStream = Boolean(sessionReady && quoteStreamIbkr);
+  const positionQuoteStream = Boolean(sessionReady && quoteStreamIbkr);
   const idleCodePreloadAllowed = Boolean(
     sessionReady &&
+      runtimeEnabled &&
       firstScreenReady &&
       !startupProtected &&
-      visible &&
       !mobileViewport &&
       activeBackgroundReady &&
       memoryAllowsBackground,
@@ -208,16 +193,16 @@ export const buildPlatformWorkSchedule = ({
       foregroundIbkr,
       realtimeIbkr,
       backgroundIbkr,
-      criticalIbkr,
+      accountRealtimeIbkr,
       idle: Boolean(sessionReady && backgroundIbkr),
       memoryAllowsForeground,
       memoryAllowsBackground,
     },
     streams: {
       watchlistQuoteStream,
+      positionQuoteStream,
       marketStockAggregates: Boolean(foregroundIbkr && market),
-      accountRealtime: accountRealtimeCritical,
-      accountRealtimeCritical,
+      accountRealtime,
       shadowAccountRealtime: Boolean(backgroundIbkr && account),
       sharedFlowRuntime: false,
       broadFlowRuntime: broadFlowAllowed,
@@ -230,7 +215,7 @@ export const buildPlatformWorkSchedule = ({
       ),
     },
     resume: {
-      immediateChartRefresh: visible,
+      immediateChartRefresh: runtimeEnabled,
       backgroundRefresh: backgroundIbkr,
       delayedOptionsRefresh: backgroundIbkr,
     },
@@ -240,7 +225,7 @@ export const buildPlatformWorkSchedule = ({
     },
     leases: {
       activeQuotes: watchlistQuoteStream,
-      activeTrading: accountRealtimeCritical,
+      activeTrading: accountRealtime,
       activeCharting: Boolean(foregroundIbkr && (market || trade)),
       flowDiscovery: broadFlowAllowed,
       passiveVisuals: Boolean(pressureCaps.sparklineEnabled && memoryAllowsForeground),

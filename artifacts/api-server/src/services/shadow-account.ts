@@ -1757,70 +1757,6 @@ function shadowOrdersByPositionKey(orders: Array<ShadowOrderRow | undefined>) {
   return byPositionKey;
 }
 
-function shadowQuoteHasBidAsk(
-  quote: Record<string, unknown> | null | undefined,
-) {
-  return toNumber(quote?.bid) != null && toNumber(quote?.ask) != null;
-}
-
-function shadowOrderOptionQuoteFallback(
-  order: ShadowOrderRow | undefined,
-  fallbackMark: number,
-): Record<string, unknown> | null {
-  if (!order) {
-    return null;
-  }
-  const payload = readRecord(order.payload) ?? {};
-  const candidate = readRecord(payload.candidate) ?? {};
-  const orderPlan = readRecord(payload.orderPlan) ?? {};
-  const candidateOrderPlan = readRecord(candidate.orderPlan) ?? {};
-  const quote = [
-    payload.quote,
-    candidate.quote,
-    payload.liquidity,
-    candidate.liquidity,
-    orderPlan.liquidity,
-    candidateOrderPlan.liquidity,
-  ]
-    .map((value) => readRecord(value))
-    .find((value) => shadowQuoteHasBidAsk(value));
-  if (!quote) {
-    return null;
-  }
-
-  const bid = toNumber(quote.bid);
-  const ask = toNumber(quote.ask);
-  if (bid == null || ask == null) {
-    return null;
-  }
-  const mid = toNumber(quote.mid) ?? (bid + ask) / 2;
-  const updatedAt =
-    readString(quote.updatedAt) ??
-    readString(quote.dataUpdatedAt) ??
-    readString(quote.quoteUpdatedAt) ??
-    order.filledAt?.toISOString?.() ??
-    order.placedAt.toISOString();
-  const freshness =
-    readString(quote.freshness) ??
-    readString(quote.quoteFreshness) ??
-    "automation_event";
-  return {
-    ...quote,
-    bid,
-    ask,
-    mid,
-    mark: fallbackMark,
-    price: fallbackMark,
-    updatedAt,
-    dataUpdatedAt: updatedAt,
-    quoteUpdatedAt: updatedAt,
-    freshness,
-    quoteFreshness: freshness,
-    marketDataMode:
-      readString(quote.marketDataMode) ?? "shadow_ledger",
-  };
-}
-
 function isExpiredHistoricalShadowOptionPosition(
   position: Pick<ShadowPositionRow, "optionContract">,
   sourceOrder?: ShadowOrderRow | null,
@@ -3594,38 +3530,47 @@ function shadowOptionQuotePayload(input: {
   pricing?: ShadowOptionPricingPolicy;
 }) {
   const quoteRecord = input.quote as Record<string, unknown>;
+  const automationEventQuote = input.source === "automation_event_quote";
   const snapshot = shadowQuoteSnapshotFromOptionRecord(input);
-  const displayQuote = buildPositionQuoteFromSnapshot(
-    snapshot,
-    input.fallbackMark,
-    "option_quote",
-  );
+  const displayQuote = automationEventQuote
+    ? null
+    : buildPositionQuoteFromSnapshot(
+        snapshot,
+        input.fallbackMark,
+        "option_quote",
+      );
   const updatedAt = shadowOptionQuoteTimestamp(quoteRecord);
   const valuationEligible = input.pricing?.valuationEligible ?? true;
   const mark =
-    input.source === "automation_event_quote" || !valuationEligible
+    automationEventQuote || !valuationEligible
       ? input.fallbackMark
       : displayQuote?.mark ?? shadowQuoteMarkPrice(quoteRecord) ?? input.fallbackMark;
   const spreadPercent =
-    displayQuote?.spread != null && mark > 0
+    !automationEventQuote && displayQuote?.spread != null && mark > 0
       ? (displayQuote.spread / mark) * 100
       : displayQuote?.spreadPercent ?? null;
+  const hasTwoSidedQuote =
+    !automationEventQuote &&
+    displayQuote?.bid != null &&
+    displayQuote.ask != null;
   return {
     providerContractId: input.providerContractId,
-    bid: displayQuote?.bid ?? toNumber(quoteRecord.bid),
-    ask: displayQuote?.ask ?? toNumber(quoteRecord.ask),
-    mid: displayQuote?.mid ?? null,
-    last: displayQuote?.last ?? toNumber(quoteRecord.last),
+    bid: hasTwoSidedQuote ? displayQuote?.bid ?? null : null,
+    ask: hasTwoSidedQuote ? displayQuote?.ask ?? null : null,
+    mid: hasTwoSidedQuote ? displayQuote?.mid ?? null : null,
+    last: automationEventQuote ? null : displayQuote?.last ?? toNumber(quoteRecord.last),
     price:
-      readPositiveNumber(quoteRecord.price) ??
-      displayQuote?.last ??
-      mark ??
-      null,
+      automationEventQuote
+        ? mark ?? null
+        : readPositiveNumber(quoteRecord.price) ??
+          displayQuote?.last ??
+          mark ??
+          null,
     mark,
-    spread: displayQuote?.spread ?? null,
-    spreadPercent,
-    bidSize: displayQuote?.bidSize ?? toNumber(quoteRecord.bidSize),
-    askSize: displayQuote?.askSize ?? toNumber(quoteRecord.askSize),
+    spread: hasTwoSidedQuote ? displayQuote?.spread ?? null : null,
+    spreadPercent: hasTwoSidedQuote ? spreadPercent : null,
+    bidSize: hasTwoSidedQuote ? displayQuote?.bidSize ?? toNumber(quoteRecord.bidSize) : null,
+    askSize: hasTwoSidedQuote ? displayQuote?.askSize ?? toNumber(quoteRecord.askSize) : null,
     prevClose: toNumber(quoteRecord.prevClose),
     change: toNumber(quoteRecord.change),
     changePercent: toNumber(quoteRecord.changePercent),
@@ -3638,6 +3583,9 @@ function shadowOptionQuotePayload(input: {
     vega: toNumber(quoteRecord.vega),
     openInterest: toNumber(quoteRecord.openInterest),
     volume: toNumber(quoteRecord.volume),
+    underlyingPrice:
+      readPositiveNumber(quoteRecord.underlyingPrice) ??
+      readPositiveNumber(quoteRecord.undPrice),
     updatedAt,
     dataUpdatedAt: updatedAt,
     quoteUpdatedAt: updatedAt,
@@ -3801,6 +3749,34 @@ function shadowUnderlyingMarketPayload(input: {
     freshness: readString(quoteRecord.freshness),
     marketDataMode: readString(quoteRecord.marketDataMode),
     source: "underlying_quote",
+  };
+}
+
+function shadowUnderlyingQuoteFromOptionQuote(
+  symbol: string,
+  quote: Partial<QuoteSnapshot> | Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null {
+  const quoteRecord = quote as Record<string, unknown> | null | undefined;
+  const price =
+    readPositiveNumber(quoteRecord?.underlyingPrice) ??
+    readPositiveNumber(quoteRecord?.undPrice);
+  if (price == null) {
+    return null;
+  }
+  return {
+    symbol,
+    price,
+    mark: price,
+    updatedAt:
+      quoteRecord?.dataUpdatedAt ??
+      quoteRecord?.updatedAt ??
+      quoteRecord?.quoteUpdatedAt,
+    dataUpdatedAt:
+      quoteRecord?.dataUpdatedAt ??
+      quoteRecord?.updatedAt ??
+      quoteRecord?.quoteUpdatedAt,
+    freshness: quoteRecord?.freshness ?? quoteRecord?.quoteFreshness,
+    marketDataMode: quoteRecord?.marketDataMode,
   };
 }
 
@@ -7546,7 +7522,7 @@ function readReusableShadowPositionsResponseForAssetClass(input: {
   const cacheIsFresh = cached.expiresAt > now;
   if (!cacheIsFresh) {
     const pressureLevel = getApiResourcePressureSnapshot().level;
-    if (pressureLevel !== "high" && pressureLevel !== "critical") {
+      if (pressureLevel !== "high") {
       return null;
     }
   }
@@ -7600,7 +7576,7 @@ function readReusableLiveQuotedShadowPositionsResponse(input: {
   const cacheIsFresh = cached.expiresAt > now;
   if (!cacheIsFresh) {
     const pressureLevel = getApiResourcePressureSnapshot().level;
-    if (pressureLevel !== "high" && pressureLevel !== "critical") {
+      if (pressureLevel !== "high") {
       return null;
     }
   }
@@ -7788,28 +7764,17 @@ export async function getShadowAccountPositions(input: {
             requireTwoSidedQuote: contract ? undefined : false,
           });
           const mark = pricing.valuationMark ?? toNumber(position.mark) ?? 0;
-          const sourceOrder = ordersByPositionKey.get(position.positionKey);
           const automationContext = buildShadowAutomationContext({
             position,
-            sourceOrder,
+            sourceOrder: ordersByPositionKey.get(position.positionKey),
             latestEvent: automationManagementEvents.get(position.positionKey),
             peakMarkPrice: peakMarkByPositionId.get(position.id) ?? null,
           });
-          const automationEventOptionQuote =
-            responseProviderContractId &&
-            !shadowQuoteHasBidAsk(
-              liveOptionQuote as Record<string, unknown> | null,
-            )
-              ? shadowOrderOptionQuoteFallback(sourceOrder, mark)
-              : null;
           const displayOptionQuote =
-            automationEventOptionQuote ??
-            (responseProviderContractId ? liveOptionQuote : null);
-          const displayOptionQuoteSource = automationEventOptionQuote
-            ? "automation_event_quote"
-            : displayOptionQuote
-              ? "option_quote"
-              : "shadow_ledger";
+            responseProviderContractId ? liveOptionQuote : null;
+          const displayOptionQuoteSource = displayOptionQuote
+            ? "option_quote"
+            : "shadow_ledger";
           const marketValue =
             Number.isFinite(mark) &&
             Number.isFinite(quantity) &&
@@ -7879,19 +7844,39 @@ export async function getShadowAccountPositions(input: {
                 ? "massive"
                 : "shadow_ledger",
           );
-          const positionQuote =
-            rawPositionQuote &&
-            (displayOptionQuoteSource === "automation_event_quote" ||
-              !pricing.valuationEligible)
+          const optionQuoteHasTwoSidedQuote =
+            optionQuoteSnapshot?.bid != null && optionQuoteSnapshot.ask != null;
+          const marketPositionQuote =
+            rawPositionQuote && optionQuoteSnapshot && !optionQuoteHasTwoSidedQuote
               ? {
                   ...rawPositionQuote,
+                  bid: null,
+                  ask: null,
+                  mid: null,
+                  spread: null,
+                  spreadPercent: null,
+                  bidSize: null,
+                  askSize: null,
                   mark,
-                  spreadPercent:
-                    rawPositionQuote.spread != null && mark > 0
-                      ? (rawPositionQuote.spread / mark) * 100
-                      : rawPositionQuote.spreadPercent,
                 }
               : rawPositionQuote;
+          const positionQuote =
+            marketPositionQuote && !pricing.valuationEligible
+              ? {
+                  ...marketPositionQuote,
+                  mark,
+                  spreadPercent:
+                    marketPositionQuote.spread != null && mark > 0
+                      ? (marketPositionQuote.spread / mark) * 100
+                      : marketPositionQuote.spreadPercent,
+                }
+              : marketPositionQuote;
+          const optionUnderlyingQuote = contract
+            ? shadowUnderlyingQuoteFromOptionQuote(
+                underlyingSymbol,
+                displayOptionQuote,
+              )
+            : null;
           const riskOverlay = buildShadowPositionRiskOverlay({
             automationContext,
             openedAt,
@@ -7911,7 +7896,9 @@ export async function getShadowAccountPositions(input: {
             underlyingMarket: contract
               ? shadowUnderlyingMarketPayload({
                   symbol: underlyingSymbol,
-                  quote: underlyingMarkets.get(underlyingSymbol),
+                  quote:
+                    optionUnderlyingQuote ??
+                    underlyingMarkets.get(underlyingSymbol),
                 })
               : null,
             sector: "Shadow Holdings",
@@ -7957,15 +7944,7 @@ export async function getShadowAccountPositions(input: {
                     quote: displayOptionQuote,
                     fallbackMark: mark,
                     source: displayOptionQuoteSource,
-                    pricing:
-                      displayOptionQuoteSource === "option_quote"
-                        ? pricing
-                        : {
-                            ...pricing,
-                            valuationEligible: false,
-                            valuationSource: "shadow_ledger",
-                            valuationReason: displayOptionQuoteSource,
-                          },
+                    pricing,
                   })
                 : null,
             stopLoss:
@@ -9909,7 +9888,7 @@ function buildDeferredShadowGreekScenarios(): AccountGreekScenarios {
     enabled: false,
     status: "disabled",
     source: "python_compute",
-    warning: "Deferred during the account-page critical read.",
+    warning: "Deferred during the account-page primary read.",
     coverage: null,
     result: null,
     pythonJob: {
