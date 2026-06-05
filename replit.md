@@ -137,7 +137,7 @@ The PYRUS web workflow owns both dev listeners (API `8080`, pyrus `18747`). Thre
 2. **`strictPort: true`** on both `server` and `preview` in `artifacts/pyrus/vite.config.ts` so vite errors instead of silently falling back.
 3. **Process-group supervision** in `artifacts/pyrus/scripts/runDevApp.mjs` plus `exec` in child dev scripts, so workflow SIGTERM stops both API and Vite.
 
-Duplicate-start handling: a second Replit-owned workflow start within the startup guard window is treated as a duplicate Run no-op; after `PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS` (default `30000`) it requests a controlled handoff so the new workflow becomes sole owner. Use `PYRUS_DEV_FORCE_RESTART=1` only for explicit recovery; `PYRUS_DEV_DUPLICATE_CHECK_ONLY=1` for shell smoke tests of the duplicate path. The supervisor writes lifecycle evidence to `/tmp/pyrus/pyrus-dev-lifecycle-8080.jsonl` (heartbeats, child starts/exits, ignored SIGHUP, shutdowns) to distinguish clean shutdowns from external Replit stops.
+Duplicate-start handling: a second Replit-owned workflow start within the startup guard window is treated as an intentional Run-button restart duplicate no-op and exits without restarting API/Vite; after `PYRUS_DEV_DUPLICATE_RESTART_AFTER_MS` (default `30000`) it requests a controlled handoff so the new workflow becomes sole owner. Use `PYRUS_DEV_FORCE_RESTART=1` only for explicit recovery; `PYRUS_DEV_DUPLICATE_CHECK_ONLY=1` for shell smoke tests of the duplicate path. The supervisor writes lifecycle evidence to `/tmp/pyrus/pyrus-dev-lifecycle-8080.jsonl` (heartbeats, child starts/exits, ignored SIGHUP, shutdowns) to distinguish clean shutdowns from external Replit stops.
 
 `reap-dev-port.mjs` is **cgroup-aware**: it reads `/proc/<pid>/cgroup` for itself and each holder. From a normal shell it **refuses to kill** a holder in a different cgroup (protects the live workflow when you run `pnpm ... dev` from a shell). Under `REPLIT_MODE=workflow` it may reclaim the pinned port from a different Replit execution scope. To intentionally restart the live API/web service, use the workflow restart action, not `pnpm dev` from a shell.
 
@@ -156,7 +156,7 @@ Known follow-up: the Windows `ibkr-bridge` (`node dist/index.mjs`, no pnpm wrapp
 
 ## Agent guardrail: files & actions that trigger app bounces
 
-Replit's workspace daemon watches a small set of config files; any save re-evaluates modules/ports/env/stack, which kills shells/terminals, re-mounts the preview, and SIGKILLs workspace-local Postgres. Separately, host-side control-plane writes (set/delete Replit env vars, create/update/remove artifacts) rewrite `/run/replit/env/latest.json` + `toolchain.json` and bounce the PYRUS API/Vite supervisor ~1s later. Neither is normal setup/cleanup work.
+Replit's workspace daemon watches a small set of config files; any save re-evaluates modules/ports/env/stack, which kills shells/terminals, re-mounts the preview, and SIGKILLs workspace-local Postgres. Separately, host-side control-plane writes (set/delete Replit env vars, create/update/remove Replit artifacts) rewrite `/run/replit/env/latest.json` + `/run/replit/toolchain.json` env/toolchain state and bounce the same-container supervisor ~1s later. Neither is normal setup/cleanup work.
 
 **Do not edit these from any agent during routine work or test cycles unless the user explicitly asked for a config change:**
 
@@ -171,7 +171,7 @@ Replit's workspace daemon watches a small set of config files; any save re-evalu
 - Verify a route: `curl -sS http://127.0.0.1:8080/api/healthz` against the running server; `restart_workflow "artifacts/api-server: API Server"` only if the change is in compiled output.
 - For pyrus: `pnpm --filter @workspace/pyrus run typecheck` plus live Vite HMR; only restart the pyrus workflow if you edited `vite.config.ts` or `package.json`.
 
-Root validation is conservative: `pnpm run typecheck:libs` runs through `scripts/run-validation-command.mjs`, which refuses broad `tsc --build` while the Replit-owned supervisor is hot (refusals/executions logged to `.pyrus-runtime/validation/commands.jsonl`). Prefer targeted package checks; use `PYRUS_ALLOW_HOT_VALIDATION=1` only for an intentional maintenance window.
+Root validation is conservative: `pnpm run typecheck:libs` runs through `scripts/run-validation-command.mjs`, which checks `/tmp/pyrus/pyrus-dev-supervisor-8080.lock` and refuses broad `tsc --build` while the Replit-owned supervisor is hot (refusals/executions logged to `.pyrus-runtime/validation/commands.jsonl`). Prefer targeted package checks; use `PYRUS_ALLOW_HOT_VALIDATION=1` only for an intentional maintenance window.
 
 If a test genuinely requires a config change, batch all edits into a single save and warn the user that one workspace reload will happen. To keep watched files read-only during routine work: `pnpm run replit:config:lock` / `pnpm run replit:config:unlock` (re-lock immediately after a batched edit, then run `pnpm run audit:replit-startup`).
 
