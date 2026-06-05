@@ -803,7 +803,7 @@ test("signal monitor matrix exact cells canonicalize and enforce the shared cell
   assert.equal(highPressureResolved.cells.length, 240);
 });
 
-test("signal monitor matrix exact cells bound STA visible coverage while keeping protected leader coverage wide", () => {
+test("signal monitor matrix exact cells bound automatic foreground coverage under pressure", () => {
   const staCells = Array.from({ length: 24 }, (_value, index) => ({
     symbol: `STA${String(index + 1).padStart(3, "0")}`,
     timeframe: "1m" as const,
@@ -845,7 +845,7 @@ test("signal monitor matrix exact cells bound STA visible coverage while keeping
       (error as { statusCode?: number }).statusCode === 400,
   );
 
-  const leaderCells = Array.from({ length: 240 }, (_value, index) => ({
+  const leaderCells = Array.from({ length: 24 }, (_value, index) => ({
     symbol: `LEAD${String(index + 1).padStart(3, "0")}`,
     timeframe: "1m" as const,
   }));
@@ -860,7 +860,7 @@ test("signal monitor matrix exact cells bound STA visible coverage while keeping
     });
 
   assert.equal(leaderResolved.exact, true);
-  assert.equal(leaderResolved.cells.length, 240);
+  assert.equal(leaderResolved.cells.length, 24);
   assert.equal(
     __signalMonitorInternalsForTests.shouldAwaitSignalMonitorMatrixExactCellRefresh(
       {
@@ -870,13 +870,13 @@ test("signal monitor matrix exact cells bound STA visible coverage while keeping
         requestOrigin: "poll",
       },
     ),
-    true,
+    false,
   );
   assert.throws(
     () =>
       __signalMonitorInternalsForTests.resolveSignalMonitorMatrixExactCells({
-        cells: [...leaderCells, { symbol: "LEAD241", timeframe: "1m" as const }],
-        allowedSymbols: [...leaderSymbols, "LEAD241"],
+        cells: [...leaderCells, { symbol: "LEAD025", timeframe: "1m" as const }],
+        allowedSymbols: [...leaderSymbols, "LEAD025"],
         pressure: "high",
         clientRole: "leader",
         requestOrigin: "poll",
@@ -1664,7 +1664,7 @@ test("signal monitor matrix maps guarded Python compute states into matrix cells
   }
 });
 
-test("automatic signal matrix reads keep followers cache-only and incomplete exact-cell leaders source-backed", () => {
+test("automatic signal matrix reads shed pressured leaders and non-exact bootstrap refreshes", () => {
   const source = readFileSync(
     new URL("./signal-monitor.ts", import.meta.url),
     "utf8",
@@ -1700,10 +1700,13 @@ test("automatic signal matrix reads keep followers cache-only and incomplete exa
   assert.notEqual(matrixEnd, -1);
   assert.match(cacheOnlyBody, /input\.clientRole === "follower"/);
   assert.match(cacheOnlyBody, /input\.clientRole === "leader"/);
-  assert.match(cacheOnlyBody, /isForegroundExactCellLeaderSignalMonitorMatrixRequest/);
+  assert.doesNotMatch(
+    cacheOnlyBody,
+    /isForegroundExactCellLeaderSignalMonitorMatrixRequest/,
+  );
   assert.match(
     cacheOnlyBody,
-    /pressureLevel === "high" \|\| pressureLevel === "critical"/,
+    /pressureLevel === "watch"[\s\S]*pressureLevel === "high"[\s\S]*pressureLevel === "critical"/,
   );
   assert.doesNotMatch(
     cacheOnlyBody,
@@ -1725,6 +1728,7 @@ test("automatic signal matrix reads keep followers cache-only and incomplete exa
   assert.ok(matrixFinalRefreshStart > matrixAutomaticStart);
   assert.ok(matrixAutomaticBranchBody);
   assert.match(matrixAutomaticBranchBody, /shouldAwaitSignalMonitorMatrixExactCellRefresh/);
+  assert.match(matrixAutomaticBranchBody, /if \(!exactCells\.exact\) \{/);
   assert.doesNotMatch(matrixAutomaticBranchBody, /matrixSettings\.pressure === "normal"/);
   assert.doesNotMatch(matrixAutomaticBranchBody, /matrixSettings\.pressure === "watch"/);
   assert.match(matrixAutomaticBranchBody, /hasCompleteSignalMonitorMatrixCoverage/);
@@ -3599,9 +3603,9 @@ test("signal matrix cache keeps settled unavailable states without pinning error
   );
 });
 
-test("signal matrix automatic cache-only mode preserves foreground exact-cell leaders under pressure", () => {
+test("signal matrix automatic cache-only mode includes foreground leaders at watch pressure", () => {
   __resetApiResourcePressureForTests();
-  updateApiResourcePressure({ dominantSlowRouteP95Ms: 12_000 });
+  updateApiResourcePressure({ apiHeapUsedPercent: 72 });
   try {
     assert.equal(
       __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly(
@@ -3629,7 +3633,7 @@ test("signal matrix automatic cache-only mode preserves foreground exact-cell le
           cells: [{ symbol: "SPY", timeframe: "1m" }],
         },
       ),
-      false,
+      true,
     );
     assert.equal(
       __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly(
@@ -3639,7 +3643,7 @@ test("signal matrix automatic cache-only mode preserves foreground exact-cell le
           cells: [{ symbol: "SPY", timeframe: "1m" }],
         },
       ),
-      false,
+      true,
     );
     assert.equal(
       __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly(
@@ -3679,6 +3683,19 @@ test("signal matrix automatic cache-only mode preserves foreground exact-cell le
     );
 
     __resetApiResourcePressureForTests();
+    updateApiResourcePressure({ dominantSlowRouteP95Ms: 12_000 });
+    assert.equal(
+      __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly(
+        {
+          clientRole: "leader",
+          requestOrigin: "poll",
+          cells: [{ symbol: "SPY", timeframe: "1m" }],
+        },
+      ),
+      true,
+    );
+
+    __resetApiResourcePressureForTests();
     updateApiResourcePressure({ apiHeapUsedPercent: 91 });
     assert.equal(
       __signalMonitorInternalsForTests.shouldServeSignalMonitorMatrixFromCacheOnly(
@@ -3688,7 +3705,7 @@ test("signal matrix automatic cache-only mode preserves foreground exact-cell le
           cells: [{ symbol: "SPY", timeframe: "1m" }],
         },
       ),
-      false,
+      true,
     );
   } finally {
     __resetApiResourcePressureForTests();

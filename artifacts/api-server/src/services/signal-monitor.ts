@@ -265,10 +265,10 @@ const SIGNAL_MONITOR_FOREGROUND_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
   number
 > = {
-  normal: 240,
-  watch: 240,
-  high: 240,
-  critical: 240,
+  normal: 48,
+  watch: 36,
+  high: 24,
+  critical: 12,
 };
 const SIGNAL_MONITOR_STA_VISIBLE_MATRIX_EXACT_CELL_CAPS: Record<
   ApiResourcePressureLevel,
@@ -620,15 +620,12 @@ function shouldAwaitSignalMonitorMatrixExactCellRefresh(input: {
   if (!input.exactCells) {
     return false;
   }
-  if (input.pressure === "normal" || input.pressure === "watch") {
+  if (input.pressure === "normal") {
     return true;
   }
-  const foregroundLeader =
-    input.clientRole === "leader" &&
-    (input.requestOrigin === "startup" || input.requestOrigin === "poll");
   return (
-    input.pressure === "high" &&
-    (foregroundLeader || isStaVisiblePageSignalMonitorMatrixRequest(input))
+    (input.pressure === "watch" || input.pressure === "high") &&
+    isStaVisiblePageSignalMonitorMatrixRequest(input)
   );
 }
 
@@ -1397,15 +1394,16 @@ function shouldServeSignalMonitorMatrixFromCacheOnly(input: {
   cells?: SignalMonitorMatrixCellRequest[];
 }) {
   const pressureLevel = getApiResourcePressureSnapshot().level;
-  const foregroundExactCellLeader =
-    isForegroundExactCellLeaderSignalMonitorMatrixRequest(input);
+  const pressured =
+    pressureLevel === "watch" ||
+    pressureLevel === "high" ||
+    pressureLevel === "critical";
   return (
     (input.clientRole === "follower" &&
       (input.requestOrigin === "startup" || input.requestOrigin === "poll")) ||
     (input.clientRole === "leader" &&
       (input.requestOrigin === "startup" || input.requestOrigin === "poll") &&
-      !foregroundExactCellLeader &&
-      (pressureLevel === "high" || pressureLevel === "critical"))
+      pressured)
   );
 }
 
@@ -6213,6 +6211,28 @@ async function evaluateSignalMonitorMatrixRuntime(input: {
     });
   }
 
+  if (automaticMatrixRequest && !exactCells.exact) {
+    return withSignalMonitorMatrixMetadata(
+      {
+        profile: profileToResponse(profile),
+        states: [],
+        evaluatedAt: new Date(),
+        timeframes,
+        truncated,
+        skippedSymbols,
+        sourceRequestCount: 0,
+      },
+      {
+        cacheStatus: "miss",
+        requestedSymbols: symbols,
+        totalSymbols: symbols.length + skippedSymbols.length,
+        taskCount: symbols.length * timeframes.length,
+        startedAt,
+        automaticRequest,
+      },
+    );
+  }
+
   const response = await withRuntimeSignalMonitorEvaluationCache(
     cacheKey,
     buildFreshRuntimeMatrixResponse,
@@ -6463,6 +6483,21 @@ export async function evaluateSignalMonitorMatrix(input: {
 
   if (isAutomaticSignalMonitorMatrixRequest(input)) {
     const storedResponse = await hydrateFromStoredStates(buildEmptyMatrixResponse());
+    if (!exactCells.exact) {
+      return withSignalMonitorMatrixMetadata(storedResponse, {
+        cacheStatus: shouldServeSignalMonitorMatrixFromStoredStateFast({
+          ...input,
+          states: storedResponse.states,
+        })
+          ? "stale"
+          : "miss",
+        requestedSymbols: symbols,
+        totalSymbols: symbols.length + skippedSymbols.length,
+        taskCount: symbols.length * timeframes.length,
+        startedAt,
+        automaticRequest,
+      });
+    }
     if (
       shouldAwaitSignalMonitorMatrixExactCellRefresh({
         exactCells: exactCells.exact,
