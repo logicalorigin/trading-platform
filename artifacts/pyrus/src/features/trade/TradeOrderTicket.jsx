@@ -17,6 +17,10 @@ import {
   resolveTradeOptionChainSnapshot,
   useTradeOptionChainSnapshot,
 } from "../platform/tradeOptionChainStore";
+import {
+  toneForDirectionalIntent,
+  toneForOptionSide,
+} from "../platform/semanticToneModel.js";
 import { useToast } from "../platform/platformContexts.jsx";
 import { platformJsonRequest } from "../platform/platformJsonRequest";
 import { useUserPreferences } from "../preferences/useUserPreferences";
@@ -76,6 +80,10 @@ import { AppTooltip } from "@/components/ui/tooltip";
 
 const readinessToneColor = (tone) =>
   tone === "good" ? CSS_COLOR.green : tone === "warn" ? CSS_COLOR.amber : tone === "bad" ? CSS_COLOR.red : CSS_COLOR.textDim;
+const TRADE_BUY_TONE = toneForDirectionalIntent("buy");
+const TRADE_SELL_TONE = toneForDirectionalIntent("sell");
+const toneForOrderSide = (side) =>
+  toneForDirectionalIntent(side, TRADE_BUY_TONE);
 
 const TicketReadinessStrip = ({ model }) => {
   const tone = readinessToneColor(model?.tone);
@@ -167,7 +175,7 @@ export const TradeOrderTicket = ({
       ? (spread / prem) * 100
       : null;
   const delta = isFiniteNumber(rawDelta) ? Math.abs(rawDelta) : null;
-  const contractColor = slot.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red;
+  const contractColor = toneForOptionSide(slot.cp, CSS_COLOR.textDim);
   const expInfo = expiration || {
     value: slot.exp,
     label: slot.exp,
@@ -650,37 +658,29 @@ export const TradeOrderTicket = ({
       <div
         style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: sp(4) }}
       >
-        {["BUY", "SELL"].map((value) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => selectSide(value)}
-            style={{
-              border: `1px solid ${
-                side === value
-                  ? value === "BUY"
-                    ? CSS_COLOR.green
-                    : CSS_COLOR.red
-                  : CSS_COLOR.border
-              }`,
-              background:
-                side === value
-                  ? value === "BUY"
-                    ? CSS_COLOR.green
-                    : CSS_COLOR.red
-                  : "transparent",
-              color: side === value ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
-              borderRadius: dim(RADII.xs),
-              padding: sp("6px 0"),
-              fontFamily: T.sans,
-              fontSize: textSize("caption"),
-              fontWeight: FONT_WEIGHTS.regular,
-              cursor: "pointer",
-            }}
-          >
-            {value}
-          </button>
-        ))}
+        {["BUY", "SELL"].map((value) => {
+          const sideColor = toneForOrderSide(value);
+          return (
+            <button
+              key={value}
+              type="button"
+              onClick={() => selectSide(value)}
+              style={{
+                border: `1px solid ${side === value ? sideColor : CSS_COLOR.border}`,
+                background: side === value ? sideColor : "transparent",
+                color: side === value ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
+                borderRadius: dim(RADII.xs),
+                padding: sp("6px 0"),
+                fontFamily: T.sans,
+                fontSize: textSize("caption"),
+                fontWeight: FONT_WEIGHTS.regular,
+                cursor: "pointer",
+              }}
+            >
+              {value}
+            </button>
+          );
+        })}
       </div>
       <div
         style={{
@@ -1043,6 +1043,7 @@ export const TradeOrderTicket = ({
   }
 
   const isLong = side === "BUY";
+  const selectedSideColor = isLong ? TRADE_BUY_TONE : TRADE_SELL_TONE;
   const qtyNum = Number(qty) || 0;
   const orderPrices = resolveTicketOrderPrices({
     orderType,
@@ -1549,7 +1550,7 @@ export const TradeOrderTicket = ({
       confirmLabel: hasAttachedExits
         ? `${ticketActionLabel} IBKR + ${attachedExitLabel}`
         : `${ticketActionLabel} IBKR ORDER`,
-      confirmTone: isLong ? CSS_COLOR.green : CSS_COLOR.red,
+      confirmTone: selectedSideColor,
       lines: [
         { label: "ACCOUNT", value: accountId || MISSING_VALUE },
         { label: "SYMBOL", value: slot.ticker },
@@ -1765,7 +1766,7 @@ export const TradeOrderTicket = ({
     previewIsPending ||
     sellCallSubmitBlocked ||
     (executionIsShadow && gatewayTradingBlocked);
-  const primarySubmitColor = executionIsShadow ? CSS_COLOR.pink : isLong ? CSS_COLOR.green : CSS_COLOR.red;
+  const primarySubmitColor = executionIsShadow ? CSS_COLOR.pink : selectedSideColor;
   const primarySubmitLabel = executionIsShadow
     ? gatewayTradingBlocked
       ? gatewayTradingBlockedLabel
@@ -2210,7 +2211,7 @@ export const TradeOrderTicket = ({
               style={{
                 fontSize: fs(12),
                 fontWeight: FONT_WEIGHTS.regular,
-                color: CSS_COLOR.green,
+                color: TRADE_BUY_TONE,
                 lineHeight: 1,
               }}
             >
@@ -2227,8 +2228,8 @@ export const TradeOrderTicket = ({
             style={{
               flex: 1,
               padding: sp("4px 0"),
-              background: isLong ? CSS_COLOR.green : "transparent",
-              border: `1px solid ${isLong ? CSS_COLOR.green : CSS_COLOR.border}`,
+              background: isLong ? TRADE_BUY_TONE : "transparent",
+              border: `1px solid ${isLong ? TRADE_BUY_TONE : CSS_COLOR.border}`,
               borderRadius: dim(RADII.xs),
               color: isLong ? CSS_COLOR.onAccent : CSS_COLOR.textSec,
               fontSize: fs(ticketIsOptions ? 8 : 10),

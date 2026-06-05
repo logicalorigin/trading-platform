@@ -111,6 +111,10 @@ import {
   useRuntimeTickerSnapshots,
 } from "../features/platform/runtimeTickerStore";
 import {
+  toneForDirectionalIntent,
+  toneForOptionSide,
+} from "../features/platform/semanticToneModel.js";
+import {
   HEAVY_PAYLOAD_GC_MS,
   BARS_REQUEST_PRIORITY,
   buildBarsRequestOptions,
@@ -299,6 +303,8 @@ const TRADE_OPTION_INDICATOR_PRESET_VERSION = 1;
 const DEFAULT_TRADE_OPTION_STUDIES = [PYRUS_SIGNALS_PINE_SCRIPT_KEY];
 export const TRADE_RECENT_TICKER_LIMIT = 16;
 export const TRADE_TRACKED_TICKER_LIMIT = 8;
+const TRADE_BULLISH_TONE = toneForDirectionalIntent("bullish");
+const TRADE_BEARISH_TONE = toneForDirectionalIntent("bearish");
 
 const formatContextPrice = (value, digits = 2) =>
   isFiniteNumber(value) ? Number(value).toFixed(digits) : MISSING_VALUE;
@@ -1292,7 +1298,12 @@ const TradeContractDetailPanel = ({
         : bearishCount > bullishCount
           ? "bearish"
           : topEvent?.bias || "neutral";
-    const color = bias === "bearish" ? CSS_COLOR.red : bias === "bullish" ? CSS_COLOR.green : CSS_COLOR.amber;
+    const color =
+      bias === "bearish"
+        ? TRADE_BEARISH_TONE
+        : bias === "bullish"
+          ? TRADE_BULLISH_TONE
+          : CSS_COLOR.amber;
     return {
       color,
       label:
@@ -1950,7 +1961,7 @@ const TradeOptionsFlowPanel = ({ ticker }) => {
               >
                 {event.contract || event.ticker || ticker}
               </span>
-              <span style={{ color: event.cp === "P" ? CSS_COLOR.red : CSS_COLOR.green }}>
+              <span style={{ color: toneForOptionSide(event.cp) }}>
                 {event.side || event.cp || "flow"}
               </span>
             </div>

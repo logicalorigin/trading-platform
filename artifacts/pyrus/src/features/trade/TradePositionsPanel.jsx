@@ -77,6 +77,7 @@ import {
 import { DataUnavailableState, MicroSparkline } from "../../components/platform/primitives.jsx";
 import { useRegisterPositionMarketDataSymbols } from "../platform/positionMarketDataStore";
 import { useRuntimeTickerSnapshots } from "../platform/runtimeTickerStore";
+import { toneForDirectionalIntent } from "../platform/semanticToneModel.js";
 import {
   SPARKLINE_RENDER_POINT_LIMIT,
   buildDetailedFallbackSparklineData,
@@ -84,6 +85,11 @@ import {
 import { normalizeTickerSymbol } from "../platform/tickerIdentity";
 import { PositionRowActionMenu } from "../account/PositionRowActionMenu.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
+
+const TRADE_BUY_TONE = toneForDirectionalIntent("buy");
+const TRADE_SELL_TONE = toneForDirectionalIntent("sell");
+const toneForTradeSide = (side) =>
+  toneForDirectionalIntent(side, TRADE_BUY_TONE);
 
 const compactOrderKeyPart = (value) => {
   const normalized = String(value ?? "").trim();
@@ -2105,7 +2111,7 @@ export const TradePositionsPanel = ({
                   </span>
                   <span
                     style={{
-                      color: execution.side === "BUY" ? CSS_COLOR.green : CSS_COLOR.red,
+                      color: execution.side === "BUY" ? TRADE_BUY_TONE : TRADE_SELL_TONE,
                       fontWeight: FONT_WEIGHTS.regular,
                     }}
                   >
@@ -2322,7 +2328,7 @@ export const TradePositionsPanel = ({
                     </span>
                     <span
                       style={{
-                        color: order.side === "buy" ? CSS_COLOR.green : CSS_COLOR.red,
+                        color: toneForTradeSide(order.side),
                         fontWeight: FONT_WEIGHTS.regular,
                       }}
                     >

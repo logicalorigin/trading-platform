@@ -47,6 +47,10 @@ import {
   providerSummaryHasTransientFlowState,
   providerSummaryHasVisibleFlowDegradation,
 } from "../features/platform/flowSourceState.js";
+import {
+  toneForDirectionalIntent,
+  toneForOptionSide,
+} from "../features/platform/semanticToneModel.js";
 import { ContractDetailInline } from "../features/flow/ContractDetailInline.jsx";
 import { FlowDistributionScannerPanel } from "../features/flow/FlowDistributionScannerPanel.jsx";
 import {
@@ -189,6 +193,10 @@ const HAS_PERSISTED_FLOW_FILTERS_OPEN = Object.prototype.hasOwnProperty.call(
   _initialState,
   "flowFiltersOpen",
 );
+const FLOW_BUY_TONE = toneForDirectionalIntent("buy");
+const FLOW_SELL_TONE = toneForDirectionalIntent("sell");
+const FLOW_BULLISH_TONE = toneForDirectionalIntent("bullish");
+const FLOW_BEARISH_TONE = toneForDirectionalIntent("bearish");
 
 const getFlowContractLabel = (event) => {
   if (!event) return "";
@@ -200,8 +208,8 @@ const getFlowContractLabel = (event) => {
 };
 
 const FLOW_PRESET_COLORS = Object.freeze({
-  "ask-calls": CSS_COLOR.green,
-  "bid-puts": CSS_COLOR.red,
+  "ask-calls": FLOW_BUY_TONE,
+  "bid-puts": FLOW_SELL_TONE,
   "zero-dte": CSS_COLOR.amber,
   "premium-50k": CSS_COLOR.text,
   "premium-250k": CSS_COLOR.amber,
@@ -343,10 +351,10 @@ const resolveFlowFillSpreadMeta = (event) => {
     return { fill, bid, ask, spread, spreadPct, label: "Mid", shortLabel: "MID", color: CSS_COLOR.textDim, crossed: false };
   }
   if (position <= 0.9) {
-    return { fill, bid, ask, spread, spreadPct, label: "Ask side", shortLabel: "ASK", color: event?.cp === "P" ? CSS_COLOR.red : CSS_COLOR.green, crossed: false };
+    return { fill, bid, ask, spread, spreadPct, label: "Ask side", shortLabel: "ASK", color: toneForOptionSide(event?.cp), crossed: false };
   }
   if (position <= 1) {
-    return { fill, bid, ask, spread, spreadPct, label: "At ask", shortLabel: "ASK", color: event?.cp === "P" ? CSS_COLOR.red : CSS_COLOR.green, crossed: false };
+    return { fill, bid, ask, spread, spreadPct, label: "At ask", shortLabel: "ASK", color: toneForOptionSide(event?.cp), crossed: false };
   }
   return {
     fill,
@@ -356,7 +364,7 @@ const resolveFlowFillSpreadMeta = (event) => {
     spreadPct,
     label: "Above ask",
     shortLabel: "ASK+",
-    color: event?.cp === "P" ? CSS_COLOR.red : CSS_COLOR.green,
+    color: toneForOptionSide(event?.cp),
     crossed: false,
   };
 };
@@ -485,13 +493,13 @@ const getFlowExecutionMeta = (event) => {
   if (normalizedSide === "BUY") {
     return {
       label: event?.type === "SWEEP" ? "ASK+" : "ASK",
-      color: event?.cp === "P" ? CSS_COLOR.red : CSS_COLOR.green,
+      color: toneForOptionSide(event?.cp),
     };
   }
   if (normalizedSide === "SELL") {
     return {
       label: event?.type === "BLOCK" ? "BID" : "BID-",
-      color: CSS_COLOR.red,
+      color: FLOW_SELL_TONE,
     };
   }
   return { label: "MID", color: CSS_COLOR.textDim };
@@ -643,42 +651,42 @@ const FLOW_PREMIUM_SEGMENT_CONFIG = [
     flow: "inflow",
     bucket: "large",
     label: "Inflow Large",
-    color: CSS_COLOR.green,
+    color: FLOW_BUY_TONE,
   },
   {
     key: "inflow.small",
     flow: "inflow",
     bucket: "small",
     label: "Inflow Small",
-    color: CSS_COLOR.cyan,
+    color: FLOW_BUY_TONE,
   },
   {
     key: "inflow.medium",
     flow: "inflow",
     bucket: "medium",
     label: "Inflow Medium",
-    color: CSS_COLOR.blue,
+    color: FLOW_BUY_TONE,
   },
   {
     key: "outflow.large",
     flow: "outflow",
     bucket: "large",
     label: "Outflow Large",
-    color: CSS_COLOR.red,
+    color: FLOW_SELL_TONE,
   },
   {
     key: "outflow.small",
     flow: "outflow",
     bucket: "small",
     label: "Outflow Small",
-    color: CSS_COLOR.amber,
+    color: FLOW_SELL_TONE,
   },
   {
     key: "outflow.medium",
     flow: "outflow",
     bucket: "medium",
     label: "Outflow Medium",
-    color: CSS_COLOR.pink,
+    color: FLOW_SELL_TONE,
   },
 ];
 
@@ -1277,7 +1285,7 @@ const NetIntensityMeter = ({ netKilo, maxAbsNetKilo }) => {
           bottom: 0,
           left: positive ? "50%" : `${50 - width}%`,
           width: `${width}%`,
-          background: positive ? CSS_COLOR.green : CSS_COLOR.red,
+          background: positive ? FLOW_BUY_TONE : FLOW_SELL_TONE,
         }}
       />
     </div>
@@ -1357,7 +1365,7 @@ const BucketDivergingBar = ({
             bottom: 0,
             left: "50%",
             width: `${buyWidth}%`,
-            background: CSS_COLOR.green,
+            background: FLOW_BUY_TONE,
             opacity: 0.9,
           }}
         />
@@ -1375,7 +1383,7 @@ const BucketDivergingBar = ({
       </div>
       <span
         style={{
-          color: CSS_COLOR.green,
+          color: FLOW_BUY_TONE,
           fontFamily: T.mono,
           fontSize: fs(8),
           textAlign: "left",
@@ -2342,7 +2350,7 @@ const FlowOverviewPanel = ({
             ? "LEAN BEAR"
             : "BEARISH";
   const compassColor =
-    compassScore >= 20 ? CSS_COLOR.green : compassScore >= -20 ? CSS_COLOR.amber : CSS_COLOR.red;
+    compassScore >= 20 ? FLOW_BULLISH_TONE : compassScore >= -20 ? CSS_COLOR.amber : FLOW_BEARISH_TONE;
 
   const maxTickerPrem = Math.max(
     1,
@@ -2920,8 +2928,8 @@ const FlowOverviewPanel = ({
 
   const renderTapeCell = (columnId, event) => {
     const sideColor =
-      event.side === "BUY" ? CSS_COLOR.green : event.side === "SELL" ? CSS_COLOR.red : CSS_COLOR.textDim;
-    const cpColor = event.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red;
+      event.side === "BUY" ? FLOW_BUY_TONE : event.side === "SELL" ? FLOW_SELL_TONE : CSS_COLOR.textDim;
+    const cpColor = toneForOptionSide(event.cp);
     const scoreColor =
       event.score >= 80 ? CSS_COLOR.amber : event.score >= 60 ? CSS_COLOR.green : CSS_COLOR.textDim;
     const typeColor =
@@ -3975,16 +3983,16 @@ const FlowOverviewPanel = ({
     const sentiment = classifyFlowSentiment(event);
     const ageLabel = formatFlowTradeAge(event.occurredAt, flowNowMs);
     const sentimentColor =
-      sentiment === "bull" ? CSS_COLOR.green : sentiment === "bear" ? CSS_COLOR.red : CSS_COLOR.textDim;
+      sentiment === "bull" ? FLOW_BULLISH_TONE : sentiment === "bear" ? FLOW_BEARISH_TONE : CSS_COLOR.textDim;
     const sideColor =
-      event.side === "BUY" ? CSS_COLOR.green : event.side === "SELL" ? CSS_COLOR.red : CSS_COLOR.textDim;
+      event.side === "BUY" ? FLOW_BUY_TONE : event.side === "SELL" ? FLOW_SELL_TONE : CSS_COLOR.textDim;
     const typeColor =
       event.type === "SWEEP"
         ? CSS_COLOR.amber
         : event.type === "BLOCK"
           ? CSS_COLOR.accent
           : CSS_COLOR.purple;
-    const cpColor = event.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red;
+    const cpColor = toneForOptionSide(event.cp);
     const volToOi =
       isFiniteNumber(event.vol) && isFiniteNumber(event.oi) && event.oi > 0
         ? event.vol / event.oi
@@ -4796,7 +4804,7 @@ const FlowOverviewPanel = ({
                         width: `${Math.round(flowSentimentSummary.bullShare * 100)}%`,
                         minWidth:
                           flowSentimentSummary.bullPremium > 0 ? dim(3) : 0,
-                        background: CSS_COLOR.green,
+                        background: FLOW_BULLISH_TONE,
                       }}
                     />
                     <span
@@ -5162,7 +5170,7 @@ const FlowOverviewPanel = ({
                           flexWrap: "wrap",
                         }}
                       >
-                        <Badge color={selectedEvt.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red}>
+                        <Badge color={toneForOptionSide(selectedEvt.cp)}>
                           {selectedEvt.side}
                         </Badge>
                         <Badge color={flowProviderColor(selectedEvt.provider)}>
@@ -5230,7 +5238,7 @@ const FlowOverviewPanel = ({
                         label: "Ask premium",
                         value: fmtM(selectedTickerSideSplit.askPremium),
                         sub: `${selectedTickerSideSplit.askCount} prints`,
-                        color: CSS_COLOR.green,
+                        color: FLOW_BUY_TONE,
                       },
                       {
                         label: "Bid premium",
@@ -5242,7 +5250,7 @@ const FlowOverviewPanel = ({
                         label: "Call premium",
                         value: fmtM(selectedCallPremium),
                         sub: `${selectedTickerEvents.filter((event) => event.cp === "C").length} calls`,
-                        color: CSS_COLOR.green,
+                        color: FLOW_BUY_TONE,
                       },
                       {
                         label: "Put premium",
@@ -5313,7 +5321,7 @@ const FlowOverviewPanel = ({
                               {expiry.label}
                             </span>
                             <span style={{ display: "flex", height: dim(6), background: CSS_COLOR.bg1, overflow: "hidden" }}>
-                              <span style={{ width: `${callPct}%`, background: CSS_COLOR.green }} />
+                              <span style={{ width: `${callPct}%`, background: FLOW_BUY_TONE }} />
                               <span style={{ flex: 1, background: CSS_COLOR.red }} />
                             </span>
                             <span style={{ color: CSS_COLOR.textDim, fontFamily: T.sans, fontSize: textSize("body") }}>
@@ -5350,7 +5358,7 @@ const FlowOverviewPanel = ({
                             cursor: "pointer",
                           }}
                         >
-                          <span style={{ color: strike.event.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red }}>
+                          <span style={{ color: toneForOptionSide(strike.event.cp) }}>
                             {strike.label}
                           </span>
                           <span>{fmtM(strike.premium)}</span>
@@ -5378,7 +5386,7 @@ const FlowOverviewPanel = ({
                             cursor: "pointer",
                           }}
                         >
-                          <span style={{ color: contract.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red }}>
+                          <span style={{ color: toneForOptionSide(contract.cp) }}>
                             {contract.cp}
                             {contract.strike}
                           </span>
@@ -5602,7 +5610,7 @@ const FlowOverviewPanel = ({
                           fontSize: textSize("caption"),
                           fontWeight: FONT_WEIGHTS.regular,
                           fontFamily: T.sans,
-                          color: strike.event.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red,
+                          color: toneForOptionSide(strike.event.cp),
                         }}
                       >
                         {strike.label}
@@ -5627,13 +5635,13 @@ const FlowOverviewPanel = ({
                     <div key={sector.sector} style={{ display: "flex", flexDirection: "column", gap: sp(2) }}>
                       <div style={{ display: "flex", justifyContent: "space-between", fontSize: textSize("body"), fontFamily: T.sans }}>
                         <span style={{ color: CSS_COLOR.text }}>{sector.sector}</span>
-                        <span style={{ color: bullish >= 0 ? CSS_COLOR.green : CSS_COLOR.red }}>
+                        <span style={{ color: bullish >= 0 ? FLOW_BULLISH_TONE : FLOW_BEARISH_TONE }}>
                           {bullish >= 0 ? "+" : "-"}
                           {fmtM(Math.abs(bullish))}
                         </span>
                       </div>
                       <div style={{ display: "flex", height: dim(6), overflow: "hidden", background: CSS_COLOR.bg3 }}>
-                        <div style={{ width: `${callPct}%`, background: CSS_COLOR.green }} />
+                        <div style={{ width: `${callPct}%`, background: FLOW_BUY_TONE }} />
                         <div style={{ flex: 1, background: CSS_COLOR.red }} />
                       </div>
                     </div>
@@ -5742,7 +5750,7 @@ const FlowOverviewPanel = ({
                       fontFamily: T.sans,
                     }}
                   >
-                    <span style={{ color: CSS_COLOR.green }}>■ Calls {fmtM(totalCallPrem)}</span>
+                    <span style={{ color: FLOW_BUY_TONE }}>■ Calls {fmtM(totalCallPrem)}</span>
                     <span style={{ color: CSS_COLOR.red }}>■ Puts {fmtM(totalPutPrem)}</span>
                     <span style={{ color: CSS_COLOR.accent, fontWeight: FONT_WEIGHTS.regular }}>
                       Net {netPrem >= 0 ? "+" : ""}
@@ -5861,7 +5869,7 @@ const FlowOverviewPanel = ({
                         />
                         <span
                           style={{
-                            color: net >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
+                            color: net >= 0 ? FLOW_BULLISH_TONE : FLOW_BEARISH_TONE,
                             fontWeight: FONT_WEIGHTS.regular,
                           }}
                         >
@@ -5883,7 +5891,7 @@ const FlowOverviewPanel = ({
                         <div
                           style={{
                             width: `${callPct}%`,
-                            background: CSS_COLOR.green,
+                            background: FLOW_BUY_TONE,
                             height: "100%",
                           }}
                         />
@@ -5900,7 +5908,7 @@ const FlowOverviewPanel = ({
                           }}
                         >
                           {topContracts.map((contract) => {
-                            const cpColor = contract.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red;
+                            const cpColor = toneForOptionSide(contract.cp);
                             const volLabel =
                               contract.vol >= 1000
                                 ? `${(contract.vol / 1000).toFixed(1)}K`
@@ -6174,7 +6182,7 @@ const FlowOverviewPanel = ({
                           fontSize: fs(10),
                         }}
                       >
-                        <span style={{ color: CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>
+                        <span style={{ color: FLOW_BUY_TONE, fontWeight: FONT_WEIGHTS.regular }}>
                           ${buy.toFixed(0)}M
                         </span>
                         <span style={{ color: CSS_COLOR.red, fontWeight: FONT_WEIGHTS.regular }}>
@@ -6193,7 +6201,7 @@ const FlowOverviewPanel = ({
                         <div
                           style={{
                             width: `${buyPct}%`,
-                            background: CSS_COLOR.green,
+                            background: FLOW_BUY_TONE,
                             opacity: 0.85,
                           }}
                         />
@@ -6215,7 +6223,7 @@ const FlowOverviewPanel = ({
                         {buyPct.toFixed(1)}% buy ·{" "}
                         <span
                           style={{
-                            color: buy >= sell ? CSS_COLOR.green : CSS_COLOR.red,
+                            color: buy >= sell ? FLOW_BULLISH_TONE : FLOW_BEARISH_TONE,
                             fontWeight: FONT_WEIGHTS.regular,
                           }}
                         >
@@ -6336,7 +6344,7 @@ const FlowOverviewPanel = ({
                       <div
                         style={{
                           width: `${callPct}%`,
-                          background: CSS_COLOR.green,
+                          background: FLOW_BUY_TONE,
                           opacity: 0.85,
                         }}
                       />

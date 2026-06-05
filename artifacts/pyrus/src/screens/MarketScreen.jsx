@@ -65,6 +65,9 @@ import { DataIssueInlineIcon } from "../components/platform/DataIssueInlineIcon.
 import {
   collectDataIssuesFromRecord,
 } from "../features/platform/dataIssueModel.js";
+import {
+  toneForDirectionalIntent,
+} from "../features/platform/semanticToneModel.js";
 import { lazyWithRetry, retryDynamicImport } from "../lib/dynamicImport";
 import {
   buildMarketRenderDiagnostics,
@@ -74,6 +77,10 @@ import {
 
 
 const MARKET_PANEL_RETRY_DELAYS_MS = [750, 1_500, 3_000, 5_000, 8_000];
+const MARKET_BULLISH_TONE = toneForDirectionalIntent("bullish");
+const MARKET_BEARISH_TONE = toneForDirectionalIntent("bearish");
+const toneForMarketPressure = (value) =>
+  value == null ? CSS_COLOR.textDim : value >= 0 ? MARKET_BULLISH_TONE : MARKET_BEARISH_TONE;
 
 const loadRawMultiChartGridModule = () =>
   import("../features/market/MultiChartGrid.jsx");
@@ -606,7 +613,7 @@ const MarketScreenInner = ({
       label: "Put / Call",
       value: isFiniteNumber(putCall.total) ? putCall.total.toFixed(2) : MISSING_VALUE,
       sub: putCallBullish == null ? "neutral unavailable" : putCallBullish ? "call skew" : "put skew",
-      tone: putCallBullish == null ? CSS_COLOR.textDim : putCallBullish ? CSS_COLOR.green : CSS_COLOR.red,
+      tone: putCallBullish == null ? CSS_COLOR.textDim : putCallBullish ? MARKET_BULLISH_TONE : MARKET_BEARISH_TONE,
     },
     {
       label: "Vol proxy",
@@ -622,7 +629,7 @@ const MarketScreenInner = ({
       label: "Sector flow",
       value: strongestSectorFlow?.sector || MISSING_VALUE,
       sub: strongestSectorFlow ? `${strongestSectorFlow.net >= 0 ? "+" : "-"}${fmtM(Math.abs(strongestSectorFlow.net))}` : "flow pending",
-      tone: !strongestSectorFlow ? CSS_COLOR.textDim : strongestSectorFlow.net >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
+      tone: !strongestSectorFlow ? CSS_COLOR.textDim : toneForMarketPressure(strongestSectorFlow.net),
     },
   ];
   const marketRenderDiagnostics = buildMarketRenderDiagnostics({
@@ -909,11 +916,11 @@ const MarketScreenInner = ({
                                     left: sector.net >= 0 ? "50%" : undefined,
                                     right: sector.net < 0 ? "50%" : undefined,
                                     width: `${widthPct}%`,
-                                    background: sector.net >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
+                                    background: toneForMarketPressure(sector.net),
                                   }}
                                 />
                               </span>
-                              <span style={{ color: sector.net >= 0 ? CSS_COLOR.green : CSS_COLOR.red, fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular, textAlign: "right" }}>
+                              <span style={{ color: toneForMarketPressure(sector.net), fontFamily: T.sans, fontSize: textSize("body"), fontWeight: FONT_WEIGHTS.regular, textAlign: "right" }}>
                                 {sector.net >= 0 ? "+" : "-"}
                                 {fmtM(Math.abs(sector.net))}
                               </span>

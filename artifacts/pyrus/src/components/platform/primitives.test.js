@@ -271,6 +271,22 @@ test("MicroSparkline + RowSparkValue are exported and composable", () => {
   assert.match(rowSlice[0], /\{sparklineData \? \(/);
 });
 
+test("MicroSparkline documents financial defaults and directional color overrides", () => {
+  const source = readPrimitivesSource();
+  const sparkSlice = source.match(
+    /export const MicroSparkline =[\s\S]*?^\};/m,
+  );
+  assert.ok(sparkSlice, "MicroSparkline declaration not found");
+
+  assert.match(source, /financial green\/red line by default/);
+  assert.match(source, /Directional signal\/pressure sparklines must\s+[\s\S]*?explicit blue\/red color or pointColors/);
+  assert.match(
+    sparkSlice[0],
+    /const lineColor = color \|\| \(resolvedPositive \? CSS_COLOR\.green : CSS_COLOR\.red\)/,
+  );
+  assert.match(sparkSlice[0], /pointColors/);
+});
+
 test("MicroSparkline renders signal-colored line segments", () => {
   const html = renderToStaticMarkup(
     createElement(MicroSparkline, {

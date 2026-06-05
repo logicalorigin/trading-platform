@@ -12,6 +12,10 @@ import {
   resolveTradeOptionChainSnapshot,
   useTradeOptionChainSnapshot,
 } from "../platform/tradeOptionChainStore";
+import {
+  toneForDirectionalIntent,
+  toneForOptionSide,
+} from "../platform/semanticToneModel.js";
 import { useTradeFlowSnapshot } from "../platform/tradeFlowStore";
 import { usePageVisible } from "../platform/usePageVisible";
 import {
@@ -45,6 +49,8 @@ import {
 import { DataUnavailableState } from "../../components/platform/primitives.jsx";
 import { AppTooltip } from "@/components/ui/tooltip";
 
+const TRADE_BUY_TONE = toneForDirectionalIntent("buy");
+const TRADE_SELL_TONE = toneForDirectionalIntent("sell");
 
 export const TradeL2Panel = ({
   slot,
@@ -89,7 +95,7 @@ export const TradeL2Panel = ({
     () => buildMarketOrderFlowFromEvents(effectiveFlowEvents),
     [effectiveFlowEvents],
   );
-  const contractColor = slot.cp === "C" ? CSS_COLOR.green : CSS_COLOR.red;
+  const contractColor = toneForOptionSide(slot.cp, CSS_COLOR.textDim);
   const [tab, setTab] = useState("book");
   const selectedContractMeta =
     slot.cp === "C" ? row?.cContract : row?.pContract;
@@ -370,7 +376,7 @@ export const TradeL2Panel = ({
             >
               BEST BID
             </div>
-            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: CSS_COLOR.green }}>
+            <div style={{ fontSize: fs(11), fontWeight: FONT_WEIGHTS.regular, color: TRADE_BUY_TONE }}>
               {formatQuotePrice(bestBidLevel?.price ?? bid)}
             </div>
           </div>
@@ -449,7 +455,7 @@ export const TradeL2Panel = ({
                 style={{
                   color:
                     typeof level.bidSize === "number" && level.bidSize > 0
-                      ? CSS_COLOR.green
+                      ? TRADE_BUY_TONE
                       : CSS_COLOR.textDim,
                   textAlign: "right",
                   fontWeight: FONT_WEIGHTS.regular,
@@ -595,7 +601,7 @@ export const TradeL2Panel = ({
           >
             <span
               style={{
-                color: execution.side === "buy" ? CSS_COLOR.green : CSS_COLOR.red,
+                color: execution.side === "buy" ? TRADE_BUY_TONE : TRADE_SELL_TONE,
                 fontWeight: FONT_WEIGHTS.regular,
               }}
             >
@@ -752,7 +758,7 @@ export const TradeL2Panel = ({
                     fontSize: fs(10),
                   }}
                 >
-                  <span style={{ color: CSS_COLOR.green, fontWeight: FONT_WEIGHTS.regular }}>
+                  <span style={{ color: TRADE_BUY_TONE, fontWeight: FONT_WEIGHTS.regular }}>
                     $
                     {(
                       tickerFlow.buyXL +
@@ -799,7 +805,7 @@ export const TradeL2Panel = ({
                         <div
                           style={{
                             width: `${buyPct}%`,
-                            background: CSS_COLOR.green,
+                            background: TRADE_BUY_TONE,
                             opacity: 0.85,
                           }}
                         />

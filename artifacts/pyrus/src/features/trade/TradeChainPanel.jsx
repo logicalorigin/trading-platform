@@ -20,6 +20,7 @@ import {
   resolveTradeOptionChainSnapshot,
   useTradeOptionChainSnapshot,
 } from "../platform/tradeOptionChainStore";
+import { toneForOptionSide } from "../platform/semanticToneModel.js";
 import {
   getStoredOptionQuoteSnapshot,
   useStoredOptionQuoteSnapshotVersion,
@@ -365,7 +366,7 @@ const ChainSideRows = forwardRef(function ChainSideRows({
   topPadding = 0,
   bottomPadding = 0,
 }, scrollRef) {
-  const sideColor = side === "C" ? CSS_COLOR.green : CSS_COLOR.red;
+  const sideColor = toneForOptionSide(side, CSS_COLOR.textDim);
   const gridTemplateColumns = buildColumnGrid(columns);
   const sideMinWidth = getSideMinWidth(columns);
 

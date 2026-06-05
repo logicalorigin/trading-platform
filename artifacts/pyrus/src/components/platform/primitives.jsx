@@ -86,19 +86,21 @@ export const extractSparklineValues = (data = []) =>
   extractSparklinePoints(data).map((point) => point.value);
 
 /**
- * MicroSparkline — green/red line + soft area fill + compact detail cues.
+ * MicroSparkline — financial green/red line by default plus compact detail cues.
  * Used in PlatformWatchlist rows and (via RowSparkValue) any row primitive
  * that wants an inline trend indicator.
  *
  *   data       — array of points (any of the shapes extractSparklineValues handles)
- *   positive   — boolean override; null/undefined infers from first-vs-last value
- *   color      — optional stroke/fill tone override for non-P/L sparklines
+ *   positive   — financial outcome override; null infers from first-vs-last value
+ *   color      — required semantic stroke/fill tone for non-financial sparklines
  *   pointColors — optional array of per-point stroke colors for segmented lines
  *   width/height — SVG viewBox size in dim() units before scaling
  *   style      — optional SVG style overrides for responsive sizing
  *
  * Returns null when fewer than 2 valid points are available so callers
- * don't have to feature-check.
+ * don't have to feature-check. Directional signal/pressure sparklines must
+ * pass explicit blue/red color or pointColors; the default green/red contract
+ * is only for financial trend displays.
  */
 export const MicroSparkline = ({
   data = [],

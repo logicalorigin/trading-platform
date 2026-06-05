@@ -73,6 +73,11 @@ import {
 import { MeasuredChartFrame } from "../features/charting/MeasuredChartFrame.jsx";
 import { buildFailurePoint } from "../features/platform/failurePointModel.js";
 import { collectCoverageDataIssues } from "../features/platform/dataIssueModel.js";
+import {
+  toneForDirectionalIntent,
+  toneForFinancialDelta,
+  toneForOptionSide,
+} from "../features/platform/semanticToneModel.js";
 import { BottomSheet } from "../components/platform/BottomSheet.jsx";
 import { responsiveFlags, useElementSize } from "../lib/responsive";
 import {
@@ -89,6 +94,13 @@ import {
 } from "../lib/uiTokens.jsx";
 import { Button } from "../components/ui/Button.jsx";
 import { _initialState, persistState } from "../lib/workspaceState";
+
+const GEX_CALL_TONE = toneForOptionSide("call");
+const GEX_PUT_TONE = toneForOptionSide("put");
+const GEX_BULLISH_TONE = toneForDirectionalIntent("bullish");
+const GEX_BEARISH_TONE = toneForDirectionalIntent("bearish");
+const toneForNetGex = (value) =>
+  value == null ? CSS_COLOR.textDim : value >= 0 ? GEX_BULLISH_TONE : GEX_BEARISH_TONE;
 
 const fetchGexData = async ({ ticker, signal }) => {
   return getGexDashboardRequest(encodeURIComponent(ticker), { signal });
@@ -495,11 +507,11 @@ const GexTooltip = ({ active, payload, spot }) => {
       <div style={{ color: CSS_COLOR.text, fontWeight: FONT_WEIGHTS.emphasis, marginBottom: sp(5) }}>
         ${row.strike} · {fmtPercent((row.strike - spot) / spot)}
       </div>
-      <div style={{ color: row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red }}>
+      <div style={{ color: toneForNetGex(row.netGex) }}>
         Net {fmtCurrency(row.netGex)}
       </div>
-      <div style={{ color: CSS_COLOR.green }}>Call {fmtCurrency(row.callGex)}</div>
-      <div style={{ color: CSS_COLOR.red }}>Put {fmtCurrency(row.putGex)}</div>
+      <div style={{ color: GEX_CALL_TONE }}>Call {fmtCurrency(row.callGex)}</div>
+      <div style={{ color: GEX_PUT_TONE }}>Put {fmtCurrency(row.putGex)}</div>
       <div style={{ color: CSS_COLOR.textSec }}>Call OI {fmtNumber(row.callOi)}</div>
       <div style={{ color: CSS_COLOR.textSec }}>Put OI {fmtNumber(row.putOi)}</div>
     </div>
@@ -565,7 +577,7 @@ const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
               {data.map((row) => (
                 <Cell
                   key={row.strike}
-                  fill={row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red}
+                  fill={toneForNetGex(row.netGex)}
                   stroke={
                     row.strike === callWall || row.strike === putWall
                       ? CSS_COLOR.text
@@ -577,8 +589,8 @@ const StrikeProfileChart = ({ profile, spot, series, callWall, putWall }) => {
             </Bar>
           ) : (
             <>
-              <Bar dataKey="callGex" fill={CSS_COLOR.green} isAnimationActive={false} />
-              <Bar dataKey="putGex" fill={CSS_COLOR.red} isAnimationActive={false} />
+              <Bar dataKey="callGex" fill={GEX_CALL_TONE} isAnimationActive={false} />
+              <Bar dataKey="putGex" fill={GEX_PUT_TONE} isAnimationActive={false} />
             </>
           )}
           </BarChart>
@@ -624,17 +636,17 @@ const ExpiryChart = ({ rows, spot }) => {
               return (
                 <div style={tooltipBoxStyle}>
                   <b>{row.label}</b>
-                  <div style={{ color: CSS_COLOR.green }}>Call {fmtCurrency(row.callGex)}</div>
-                  <div style={{ color: CSS_COLOR.red }}>Put {fmtCurrency(row.putGex)}</div>
-                  <div style={{ color: row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red }}>
+                  <div style={{ color: GEX_CALL_TONE }}>Call {fmtCurrency(row.callGex)}</div>
+                  <div style={{ color: GEX_PUT_TONE }}>Put {fmtCurrency(row.putGex)}</div>
+                  <div style={{ color: toneForNetGex(row.netGex) }}>
                     Net {fmtCurrency(row.netGex)}
                   </div>
                 </div>
               );
             }}
           />
-          <Bar dataKey="callGex" fill={CSS_COLOR.green} stackId="expiry" isAnimationActive={false} />
-          <Bar dataKey="putGex" fill={CSS_COLOR.red} stackId="expiry" isAnimationActive={false} />
+          <Bar dataKey="callGex" fill={GEX_CALL_TONE} stackId="expiry" isAnimationActive={false} />
+          <Bar dataKey="putGex" fill={GEX_PUT_TONE} stackId="expiry" isAnimationActive={false} />
           </BarChart>
         </ResponsiveContainer>
       </MeasuredChartFrame>
@@ -707,7 +719,7 @@ const GammaPriceChart = ({ rows, providerIvCount, spot }) => {
                 return (
                   <div style={tooltipBoxStyle}>
                     <b>{fmtPrice(row.price)}</b>
-                    <div style={{ color: row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red }}>
+                    <div style={{ color: toneForNetGex(row.netGex) }}>
                       Net {fmtCurrency(row.netGex)}
                     </div>
                   </div>
@@ -730,7 +742,7 @@ const GammaPriceChart = ({ rows, providerIvCount, spot }) => {
             ) : null}
             <Bar dataKey="netGex" isAnimationActive={false}>
               {data.map((row) => (
-                <Cell key={row.price} fill={row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red} />
+                <Cell key={row.price} fill={toneForNetGex(row.netGex)} />
               ))}
             </Bar>
             </BarChart>
@@ -804,14 +816,14 @@ const OiChart = ({ rows, spot }) => {
               return (
                 <div style={tooltipBoxStyle}>
                   <b>${row.strike}</b>
-                  <div style={{ color: CSS_COLOR.green }}>Call OI {fmtNumber(row.callOi)}</div>
-                  <div style={{ color: CSS_COLOR.red }}>Put OI {fmtNumber(row.putOi)}</div>
+                  <div style={{ color: GEX_CALL_TONE }}>Call OI {fmtNumber(row.callOi)}</div>
+                  <div style={{ color: GEX_PUT_TONE }}>Put OI {fmtNumber(row.putOi)}</div>
                 </div>
               );
             }}
           />
-          <Bar dataKey="callOi" fill={CSS_COLOR.green} stackId="oi" isAnimationActive={false} />
-          <Bar dataKey="putOi" fill={CSS_COLOR.red} stackId="oi" isAnimationActive={false} />
+          <Bar dataKey="callOi" fill={GEX_CALL_TONE} stackId="oi" isAnimationActive={false} />
+          <Bar dataKey="putOi" fill={GEX_PUT_TONE} stackId="oi" isAnimationActive={false} />
           </BarChart>
         </ResponsiveContainer>
       </MeasuredChartFrame>
@@ -842,8 +854,8 @@ const HeatmapCard = ({ rows, spot }) => {
       Math.max(0.08, Math.abs(value) / model.maxAbs),
     );
     return value > 0
-      ? rgba(CSS_COLOR.green, alpha)
-      : rgba(CSS_COLOR.red, alpha);
+      ? rgba(GEX_BULLISH_TONE, alpha)
+      : rgba(GEX_BEARISH_TONE, alpha);
   };
 
   return (
@@ -1162,7 +1174,7 @@ const SqueezeCard = ({ squeeze, source }) => {
     ["Volume", factors.volumeConfirm, "factorVolume"],
     ["DEX", factors.dexBias, "factorDex"],
   ];
-  const color = squeeze.bias === "BULLISH" ? CSS_COLOR.green : CSS_COLOR.red;
+  const color = squeeze.bias === "BULLISH" ? GEX_BULLISH_TONE : GEX_BEARISH_TONE;
   const displayedClassifiedFlowCount = Number(
     source?.classifiedFlowEventCount || squeeze.flowEventCount || 0,
   );
@@ -1459,7 +1471,7 @@ const ProfileTable = ({ profile, spot }) => {
           key={column.key}
           value={row.callGex}
           maxAbs={maxCallGex}
-          color={CSS_COLOR.green}
+          color={GEX_CALL_TONE}
         />
       );
     }
@@ -1469,7 +1481,7 @@ const ProfileTable = ({ profile, spot }) => {
           key={column.key}
           style={{
             ...tableCellStyle,
-            color: row.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
+            color: toneForNetGex(row.netGex),
           }}
         >
           {fmtCurrency(row.netGex)}
@@ -1478,7 +1490,7 @@ const ProfileTable = ({ profile, spot }) => {
     }
     if (column.key === "callGex") {
       return (
-        <td key={column.key} style={{ ...tableCellStyle, color: CSS_COLOR.green }}>
+        <td key={column.key} style={{ ...tableCellStyle, color: GEX_CALL_TONE }}>
           {fmtCurrency(row.callGex)}
         </td>
       );
@@ -2011,7 +2023,7 @@ export default function GexScreen({
             <div
               style={{
                 color:
-                  quoteChange == null ? CSS_COLOR.textDim : quoteChange >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
+                  toneForFinancialDelta(quoteChange),
                 fontSize: textSize("caption"),
               }}
             >
@@ -2124,14 +2136,14 @@ export default function GexScreen({
                 label="Net GEX"
                 value={fmtCurrency(metrics.netGex)}
                 sub={`Ratio ${Number.isFinite(metrics.ratio) ? metrics.ratio.toFixed(2) : "—"}`}
-                color={metrics.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red}
+                color={toneForNetGex(metrics.netGex)}
                 glossaryKey="netGex"
               />
               <MetricTile
                 label="Call GEX"
                 value={fmtCurrency(metrics.callGex)}
                 sub={`${fmtNumber(metrics.callOi)} OI`}
-                color={CSS_COLOR.green}
+                color={GEX_CALL_TONE}
                 glossaryKey="callGex"
               />
               <MetricTile
@@ -2152,7 +2164,7 @@ export default function GexScreen({
                 label="Call Wall"
                 value={fmtPrice(metrics.callWall)}
                 sub={fmtPercent((metrics.callWall - spot) / spot)}
-                color={CSS_COLOR.green}
+                color={GEX_CALL_TONE}
                 glossaryKey="callWall"
               />
               <MetricTile
@@ -2275,7 +2287,7 @@ const ConcentrationTile = ({ label, value, color, glossaryKey }) => (
 
 const IntradayDeltaPill = ({ label, value, testId }) => {
   const tone =
-    value == null ? CSS_COLOR.textDim : value >= 0 ? CSS_COLOR.green : CSS_COLOR.red;
+    toneForNetGex(value);
   const formatted =
     value == null
       ? "—"
@@ -2330,7 +2342,7 @@ const IntradayChartTooltip = ({ active, payload }) => {
       </div>
       <div
         style={{
-          color: point?.netGex >= 0 ? CSS_COLOR.green : CSS_COLOR.red,
+          color: toneForNetGex(point?.netGex),
           fontWeight: FONT_WEIGHTS.emphasis,
         }}
       >
@@ -2346,8 +2358,8 @@ const IntradayCard = ({ snapshots }) => {
   const lastTone =
     intraday.series.length > 0 &&
     intraday.series[intraday.series.length - 1].netGex >= 0
-      ? CSS_COLOR.green
-      : CSS_COLOR.red;
+      ? GEX_BULLISH_TONE
+      : GEX_BEARISH_TONE;
   return (
     <Card noPad>
       <SectionTitle>Intraday ΔGEX</SectionTitle>
