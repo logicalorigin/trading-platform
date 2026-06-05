@@ -711,6 +711,7 @@ export const PlatformShell = ({
   safeQaMode = false,
   runtimeWatchlistSymbols,
   sessionMetadataSettled,
+  auxiliarySurfacesReady = false,
   frameAuxiliaryDataEnabled = false,
   onFlowAction,
   signalScanEnabled,
@@ -1361,7 +1362,7 @@ export const PlatformShell = ({
         </span>
       </div>
     )}
-    {!isPhone ? <BloombergLiveDockLauncher /> : null}
+    {!isPhone && auxiliarySurfacesReady ? <BloombergLiveDockLauncher /> : null}
   </div>
   );
 };

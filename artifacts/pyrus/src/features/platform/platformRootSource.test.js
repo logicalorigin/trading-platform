@@ -1674,12 +1674,17 @@ test("Account panels defer below-fold content and memoize mobile rows", () => {
   assert.match(deferredRenderSource, /ra-deferred-render__skeleton ra-skeleton-shimmer/);
   assert.match(deferredRenderSource, /rootMargin/);
   assert.match(deferredRenderSource, /requestIdleCallback/);
-  assert.match(deferredRenderSource, /DEFAULT_IDLE_DELAY_MS = 2_500/);
+  assert.match(deferredRenderSource, /idleDelayMs = null/);
+  assert.match(deferredRenderSource, /!Number\.isFinite\(idleDelayMs\) \|\| idleDelayMs < 0/);
+  assert.doesNotMatch(deferredRenderSource, /DEFAULT_IDLE_DELAY_MS = 2_500/);
   assert.match(deferredRenderSource, /const scheduleIdleActivation = useCallback/);
   assert.match(deferredRenderSource, /const cancelIdleActivation = scheduleIdleActivation\(\)/);
+  assert.match(deferredRenderSource, /activate\(\);\s*return undefined;/);
   assert.match(deferredRenderSource, /onActivateRef\.current\?\.\(\)/);
   assert.doesNotMatch(deferredRenderSource, /data-deferred-render="mounted"/);
   assert.match(accountSource, /const AccountPanelSuspenseFallback = /);
+  assert.match(accountSource, /import \{ PlatformErrorBoundary \} from "\.\.\/components\/platform\/PlatformErrorBoundary"/);
+  assert.match(accountSource, /<PlatformErrorBoundary[\s\S]*reportCategory="account-deferred-panel"[\s\S]*reportSeverity="warning"/);
   assert.match(
     accountSource,
     /fallback=\{[\s\S]*<AccountPanelSuspenseFallback[\s\S]*detail=\{detail\}[\s\S]*minHeight=\{minHeight\}[\s\S]*title=\{title\}[\s\S]*\/>[\s\S]*\}/,
@@ -2765,6 +2770,7 @@ test("algo signal-options automation uses generated API ownership path", () => {
 test("screen shell warmup preloads top-level code without default hidden page mounting", () => {
   const appSource = readFileSync(new URL("./PlatformApp.jsx", import.meta.url), "utf8");
   const appHeaderSource = readFileSync(new URL("./AppHeader.jsx", import.meta.url), "utf8");
+  const shellSource = readFileSync(new URL("./PlatformShell.jsx", import.meta.url), "utf8");
   const registrySource = readFileSync(new URL("./screenRegistry.jsx", import.meta.url), "utf8");
   const screenModulePreloaderSource = readFileSync(
     new URL("./screenModulePreloader.js", import.meta.url),
@@ -2895,8 +2901,17 @@ test("screen shell warmup preloads top-level code without default hidden page mo
   assert.match(appSource, /const priorityScreenCodePreloadCompleteRef = useRef\(false\)/);
   assert.match(appSource, /const PRIORITY_SCREEN_MODULE_PRELOAD_ORDER = \["account", "algo"\]/);
   assert.match(appSource, /const PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS = 500/);
+  assert.match(appSource, /const LAUNCH_AUXILIARY_SURFACE_DELAY_MS = 30_000/);
   assert.match(appSource, /priorityScreenCodePreloadQueuedAtMs/);
   assert.match(appSource, /priorityScreenCodePreloadCompleteAtMs/);
+  assert.match(appSource, /auxiliarySurfacesQueuedAtMs/);
+  assert.match(appSource, /auxiliarySurfacesReadyAtMs/);
+  assert.match(appSource, /auxiliarySurfacesReady=\{auxiliarySurfacesReady\}/);
+  assert.match(shellSource, /auxiliarySurfacesReady = false/);
+  assert.match(
+    shellSource,
+    /!isPhone && auxiliarySurfacesReady \? <BloombergLiveDockLauncher \/> : null/,
+  );
   assert.match(appSource, /const priorityScreenCodePreloadPending = Boolean/);
   assert.match(appSource, /!priorityScreenCodePreloadPending &&\s*\(backgroundDataWarmupEnabled \|\| isPhone\)/);
   assert.match(appSource, /quoteStreamRuntimeEnabled=\{\s*!safeQaMode &&\s*workSchedule\.streams\.watchlistQuoteStream &&\s*!priorityScreenCodePreloadPending &&\s*!signalHydrationBootstrapActive\s*\}/);

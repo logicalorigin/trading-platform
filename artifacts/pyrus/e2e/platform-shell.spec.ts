@@ -1491,7 +1491,7 @@ test("account desktop tables grow without vertical inner scroll caps", async ({
     "data-deferred-render",
     "mounted",
   );
-  await tradingAnalysisPanel.getByRole("button", { name: /^Trades$/ }).click();
+  await tradingAnalysisPanel.getByRole("tab", { name: /^Trades$/ }).click();
   await expect(page.getByTestId("account-analysis-trades-view")).toBeVisible();
   await expectNoVerticalInnerScroll(
     page.getByTestId("account-analysis-trades-view"),
@@ -1735,7 +1735,7 @@ test("account phone layout renders dense scan rows for positions trades and orde
     "data-deferred-render",
     "mounted",
   );
-  await tradingAnalysisPanel.getByRole("button", { name: /^Trades$/ }).click();
+  await tradingAnalysisPanel.getByRole("tab", { name: /^Trades$/ }).click();
   await page.getByTestId("account-analysis-trades-view").scrollIntoViewIfNeeded();
   const tradeRows = page.getByTestId("account-analysis-trade-row");
   await expect(tradeRows.first()).toBeVisible({ timeout: 30_000 });

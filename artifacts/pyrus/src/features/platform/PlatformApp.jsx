@@ -311,6 +311,7 @@ const PRIORITY_SCREEN_MODULE_PRELOAD_ORDER = ["account", "algo"];
 const PRIORITY_SCREEN_MODULE_PRELOAD_DELAY_MS = 500;
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_DELAY_MS = 20_000;
 const OPERATIONAL_SCREEN_PRELOAD_IDLE_STAGGER_MS = 1_500;
+const LAUNCH_AUXILIARY_SURFACE_DELAY_MS = 30_000;
 const WATCHLIST_SIDEBAR_WIDTH_DEFAULT = 220;
 const WATCHLIST_SIDEBAR_WIDTH_MIN = 196;
 const WATCHLIST_SIDEBAR_WIDTH_MAX = 320;
@@ -788,6 +789,7 @@ export default function PlatformApp() {
   const [firstScreenReady, setFirstScreenReady] = useState(false);
   const [startupProtectionActive, setStartupProtectionActive] = useState(true);
   const [screenWarmupPhase, setScreenWarmupPhase] = useState("initial");
+  const [auxiliarySurfacesReady, setAuxiliarySurfacesReady] = useState(false);
   const [warmupSnapshotRevision, setWarmupSnapshotRevision] = useState(0);
   const [screenReadiness, setScreenReadiness] = useState({});
   const [backgroundResumeReady, setBackgroundResumeReady] = useState(
@@ -895,6 +897,7 @@ export default function PlatformApp() {
   const screenShellWarmMountCompleteRef = useRef(false);
   const researchWorkspaceCodePreloadCompleteRef = useRef(false);
   const researchWorkspaceDataPreloadCompleteRef = useRef(false);
+  const auxiliarySurfacesReadyRef = useRef(false);
   const warmupTimelineBaseMsRef = useRef(platformNowMs());
   const warmupTimelineRef = useRef({});
   const markWarmupTimeline = useCallback((key) => {
@@ -1215,6 +1218,48 @@ export default function PlatformApp() {
       detail: `${screen} screen ready`,
     });
   }, [activeScreenCriticalReady, markWarmupTimeline, screen]);
+  useEffect(() => {
+    if (
+      auxiliarySurfacesReadyRef.current ||
+      safeQaMode ||
+      isPhone ||
+      !firstScreenReady ||
+      screenWarmupPhase !== "ready" ||
+      startupProtectionActive
+    ) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let cancelIdle = null;
+    markWarmupTimeline("auxiliarySurfacesQueuedAtMs");
+    const timerId = window.setTimeout(() => {
+      if (cancelled) {
+        return;
+      }
+      cancelIdle = scheduleIdleWork(() => {
+        if (cancelled) {
+          return;
+        }
+        auxiliarySurfacesReadyRef.current = true;
+        setAuxiliarySurfacesReady(true);
+        markWarmupTimeline("auxiliarySurfacesReadyAtMs");
+      }, 8_000);
+    }, LAUNCH_AUXILIARY_SURFACE_DELAY_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerId);
+      cancelIdle?.();
+    };
+  }, [
+    firstScreenReady,
+    isPhone,
+    markWarmupTimeline,
+    safeQaMode,
+    screenWarmupPhase,
+    startupProtectionActive,
+  ]);
   const backgroundDataWarmupEnabled = Boolean(
     workspaceLeader &&
       !safeQaMode &&
@@ -3454,6 +3499,7 @@ export default function PlatformApp() {
           researchWorkspaceCodePreloadCompleteRef.current,
         researchWorkspaceDataPreloadComplete:
           researchWorkspaceDataPreloadCompleteRef.current,
+        auxiliarySurfacesReady: auxiliarySurfacesReadyRef.current,
       },
       queues: {
         bootScreenShellWarmMountStarted:
@@ -3484,6 +3530,10 @@ export default function PlatformApp() {
           warmupTimelineRef.current.researchWorkspaceMetaLoadedAtMs != null,
         researchWorkspaceThemeLoaded:
           warmupTimelineRef.current.researchWorkspaceThemeLoadedAtMs != null,
+        auxiliarySurfacesQueued:
+          warmupTimelineRef.current.auxiliarySurfacesQueuedAtMs != null,
+        auxiliarySurfacesReady:
+          warmupTimelineRef.current.auxiliarySurfacesReadyAtMs != null,
       },
       timelineMs: warmupTimelineRef.current,
       screenModulePreloads: getScreenModulePreloadSnapshot(),
@@ -3504,6 +3554,7 @@ export default function PlatformApp() {
         memoryBlocksOperationalPreload,
         memoryAllowsIdlePrefetch,
         priorityScreenCodePreloadPending,
+        auxiliarySurfacesReady,
         signalMonitorDisplayReady,
         signalMatrixBackgroundReady,
       },
@@ -3526,6 +3577,7 @@ export default function PlatformApp() {
     activeScreenBackgroundAllowed,
     activeScreenBackgroundDataAllowed,
     activeScreenFrameReady,
+    auxiliarySurfacesReady,
     backgroundDataWarmupEnabled,
     backgroundResumeReady,
     broadMarketDataHydrationReady,
@@ -5195,6 +5247,7 @@ export default function PlatformApp() {
             safeQaMode={safeQaMode}
             runtimeWatchlistSymbols={runtimeWatchlistSymbols}
             sessionMetadataSettled={sessionMetadataSettled}
+            auxiliarySurfacesReady={auxiliarySurfacesReady}
             frameAuxiliaryDataEnabled={frameAuxiliaryDataEnabled}
             onFlowAction={handleJumpToTradeFromFlow}
             signalScanEnabled={Boolean(

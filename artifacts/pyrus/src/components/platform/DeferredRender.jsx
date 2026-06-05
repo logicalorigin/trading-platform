@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const DEFAULT_ROOT_MARGIN = "360px 0px";
-const DEFAULT_IDLE_DELAY_MS = 2_500;
 
 const DeferredRender = ({
   children,
   className = "",
-  idleDelayMs = DEFAULT_IDLE_DELAY_MS,
+  idleDelayMs = null,
   minHeight = 160,
   onActivate,
   rootMargin = DEFAULT_ROOT_MARGIN,
@@ -32,6 +31,9 @@ const DeferredRender = ({
 
   const scheduleIdleActivation = useCallback(() => {
     if (typeof window === "undefined") {
+      return () => {};
+    }
+    if (!Number.isFinite(idleDelayMs) || idleDelayMs < 0) {
       return () => {};
     }
 
@@ -79,8 +81,13 @@ const DeferredRender = ({
       };
     }
 
-    return scheduleIdleActivation();
-  }, [activated, activate, rootMargin, scheduleIdleActivation]);
+    if (Number.isFinite(idleDelayMs) && idleDelayMs >= 0) {
+      return scheduleIdleActivation();
+    }
+
+    activate();
+    return undefined;
+  }, [activated, activate, idleDelayMs, rootMargin, scheduleIdleActivation]);
 
   return (
     <div

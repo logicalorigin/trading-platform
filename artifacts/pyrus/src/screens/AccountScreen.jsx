@@ -51,6 +51,7 @@ import {
 } from "../features/platform/accountSectionTransitionStore.js";
 import { useToast } from "../features/platform/platformContexts.jsx";
 import DeferredRender from "../components/platform/DeferredRender";
+import { PlatformErrorBoundary } from "../components/platform/PlatformErrorBoundary";
 import { LoadingSpinner, SegmentedControl } from "../components/platform/primitives.jsx";
 import { platformJsonRequest } from "../features/platform/platformJsonRequest";
 import { useUserPreferences } from "../features/preferences/useUserPreferences";
@@ -453,17 +454,24 @@ const DeferredPanelSuspense = ({
   minHeight = 160,
   title,
 }) => (
-  <Suspense
-    fallback={
-      <AccountPanelSuspenseFallback
-        detail={detail}
-        minHeight={minHeight}
-        title={title}
-      />
-    }
+  <PlatformErrorBoundary
+    label={title || "Account deferred panel"}
+    minHeight={minHeight}
+    reportCategory="account-deferred-panel"
+    reportSeverity="warning"
   >
-    {children}
-  </Suspense>
+    <Suspense
+      fallback={
+        <AccountPanelSuspenseFallback
+          detail={detail}
+          minHeight={minHeight}
+          title={title}
+        />
+      }
+    >
+      {children}
+    </Suspense>
+  </PlatformErrorBoundary>
 );
 
 const ACCOUNT_LIVE_STALE_MS = 5_000;
