@@ -56,3 +56,24 @@ env bounce. Tell-tale signs, all together:
 Contrast: same-container bounce keeps `btime`/PID1 stable and only rewrites
 env/toolchain. Confirm health post-cutover (supervisor heartbeating, children
 alive, API RSS normal) and move on — migration reason is host-side, not guest.
+
+## Causality: restarts drop connections, NOT the reverse
+Do not accept "a connection drop forced a restart" without checking exit
+signatures. Representative incident-ledger mix (`incidents.jsonl`):
+~520 `same-container-supervisor-abrupt` (≈515 with evidence
+`last-event:heartbeat` = supervisor SIGKILLed mid-run, no shutdown event)
+≫ 39 `container-replaced` ≫ 54 `web-child-exit` / 25 `api-child-exit`, and the
+child exits are ALL graceful `SIGTERM` (or code `143` = 128+15 = SIGTERM).
+**Zero crash signatures** — no `uncaughtException`, no child `SIGKILL`, no
+`unhandledRejection`. App-level drops are absorbed, not fatal: pg
+`pool.on('error')` (`lib/db/src/pool-error-handler.ts`), bridge/stream
+reconnect+backoff, ws `readyState` checks. The browser's
+`[vite] server connection lost. Polling for restart...` and any IBKR bridge
+`502` storm (cloudflared "Unable to reach the origin") are *downstream symptoms*
+of a restart or an external Windows-bridge/tunnel outage — never the trigger.
+**Latent gap (only way the inverse could ever be true):** there is no global
+`process.on('unhandledRejection')`, and `uncaughtException` is monitor-only
+(`api-server/src/services/runtime-flight-recorder.ts`) → both still terminate
+Node. So a drop escaping as an unhandled rejection is the sole path from a
+connection drop to a restart. Not observed to date; it is a hardening target,
+not a demonstrated cause.
